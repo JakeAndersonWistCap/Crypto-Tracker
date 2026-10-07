@@ -221,6 +221,8 @@ class NearBlocks:
             spec = p.get("nearblocks")
             if spec:
                 self._project(p["name"], spec, window_days, out)
+                if spec.get("balance_history"):
+                    self._balance_history(p["name"], spec, spec["balance_history"], out)
         for p in projects:
             for flow in p.get("near_account_flows") or []:
                 self._account_flow(p["name"], flow, window_days, out)
@@ -268,6 +270,57 @@ class NearBlocks:
                 continue
             bodies[m["path"]] = body
             self._store(name, metric, m, body, window_days, out)
+
+    def _balance_history(self, name: str, spec: dict, bh: dict, out):
+        """THE THREE WALLETS' COMBINED DAILY CLOSE (Jake, 2026-10-07 14:17) — one stats/balance call per account.
+        Each account's close is carried forward over days it did not move; a day is stored only from the first day
+        every account has a balance, so the sum is never a part of the set. Today is not stored (still moving)."""
+        metric, key = bh["metric"], self._key(spec)
+        if not key:
+            out.unconfigured(SOURCE, name, f"{metric}: no {spec['key_env']} in .env", TIER)
+            return
+        from .scrape import robots_verdict
+        scale = 10 ** int(bh.get("yocto_exponent", 24))
+        per: dict = {}
+        for acct in bh["accounts"]:
+            url = spec["base_url"].rstrip("/") + bh["path"].format(account=acct)
+            allowed, why = robots_verdict(url)
+            if not allowed:
+                out.fail(SOURCE, name, f"{metric}: robots.txt disallows {url} — {why}; NOTHING STORED", TIER)
+                return
+            try:
+                body = self._get(url, {"limit": int(bh.get("limit", 400))}, key)
+            except Exception as e:  # noqa: BLE001
+                out.fail(SOURCE, name, f"{metric}: {acct}: {self._scrub(spec, e)} — NOTHING STORED (all-or-nothing)", TIER)
+                return
+            rows = body.get("data") if isinstance(body, dict) else None
+            if not isinstance(rows, list) or not rows or not all(isinstance(r, dict) and "date" in r and "amount" in r
+                                                                 for r in rows[:1]):
+                shape = sorted(rows[0]) if isinstance(rows, list) and rows and isinstance(rows[0], dict) else \
+                    (sorted(body)[:10] if isinstance(body, dict) else type(body).__name__)
+                out.fail(SOURCE, name, f"{metric}: {acct}: stats/balance rows carry {shape}, not (date, amount) — "
+                                       f"NOTHING STORED", TIER)
+                return
+            sr = {}
+            for r in rows:
+                try:
+                    sr[pd.Timestamp(r["date"]).normalize()] = int(r["amount"]) / scale
+                except (KeyError, TypeError, ValueError):
+                    continue
+            per[acct] = pd.Series(sr, dtype=float).sort_index()
+        start = max(s_.index.min() for s_ in per.values())
+        end = today().normalize() - pd.Timedelta(days=1)
+        if start > end:
+            out.fail(SOURCE, name, f"{metric}: no complete day on which all {len(per)} wallets have a balance", TIER)
+            return
+        days = pd.date_range(start, end, freq="D")
+        total = sum(s_.reindex(s_.index.union(days)).ffill().reindex(days) for s_ in per.values())
+        pairs = [(d, float(v)) for d, v in total.items() if v == v]
+        out.add(tidy(pairs, name, metric, f"{SOURCE}:stats/balance[{'+'.join(per)}]", TIER), SOURCE, name,
+                f"{metric}: {len(pairs)} day(s) {pairs[0][0]:%Y-%m-%d}..{pairs[-1][0]:%Y-%m-%d}, latest "
+                f"{pairs[-1][1]:,.1f} NEAR = " + " + ".join(f"{a.split('.')[0]} {s_.iloc[-1]:,.1f}"
+                                                            for a, s_ in per.items())
+                + f"; {bh['flow']} is its daily change (read time). {bh.get('partial', '')}", TIER)
 
     def _store(self, name: str, metric: str, m: dict, body, window_days, out):
         field = m["field"]

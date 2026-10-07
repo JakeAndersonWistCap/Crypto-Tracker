@@ -406,8 +406,17 @@ def _sums_on_common_day(p, rows, long, asof, a=(), b=(), side="ours", **_):
 def _months_match(p, rows, long, asof, daily="gross_burn_tokens", monthly="gross_burn_tokens_dune_monthly",
                   months=3, side="ours", **_):
     """The same COMPLETE calendar months on both sides: our daily rows summed per month vs the monthly
-    series' row for that month (as SQL BX2 does) — never a 90-day window against one monthly row."""
-    d, m = _series(long, p, daily), _series(long, p, monthly)
+    series' row for that month (as SQL BX2 does) — never a 90-day window against one monthly row. `daily` may be a
+    tuple: the series are added on the days every one holds (Sky's Revenue Allocation = SKY buyback $ + USDS paid to
+    the lsSKY farm, 2026-10-07)."""
+    if isinstance(daily, (tuple, list)):
+        parts = [_series(long, p, x) for x in daily]
+        d = sum(x.reindex(sorted(set.intersection(*(set(y.index) for y in parts)))) for x in parts) \
+            if all(len(x) for x in parts) else pd.Series(dtype=float)
+        daily = " + ".join(daily)
+    else:
+        d = _series(long, p, daily)
+    m = _series(long, p, monthly)
     if d.empty or m.empty:
         return None, None, f"no {daily} or {monthly} in the store"
     last_full = (asof.normalize().to_period("M") - 1)

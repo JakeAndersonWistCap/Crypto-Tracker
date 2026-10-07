@@ -20,7 +20,6 @@ import json
 import os
 import sys
 import time
-from pathlib import Path
 from urllib.parse import urlparse
 
 import requests
@@ -2423,7 +2422,7 @@ def near_buyback_inflow_probe():
     import config as _config                              # noqa: PLC0415
     import pandas as _pd                                  # noqa: PLC0415
 
-    flow = next(f for f in _config.PROJECT_BY_NAME["Near"]["near_account_flows"]
+    flow = next(f for f in _config.PROJECT_BY_NAME["Near"]["near_account_flows_retired"]
                 if f["metric"] == "actual_buyback_tokens")
     key = os.environ.get(flow["key_env"], "").strip()
     print(f"  {flow['key_env']}: {'set' if key else 'NOT SET'}")
@@ -3237,27 +3236,22 @@ NEAR_REVENUE_WALLETS = ("fefundsadmin.sputnik-dao.near", "buybacks.multisignatur
                         "1csfundsadmin.sputnik-dao.near")
 
 
-NEAR_PROBE_CACHE = Path(".cache") / "near_buyback_wallets_probe.json"
 NEAR_PAGE_REVENUE_TOTAL = 3_786_229.6       # revenue.near.org "Wallet Breakdown (All-time)", Jake 2026-10-07
 
 
-def near_buyback_wallets(max_pages: int = 40):
-    """The three revenue wallets, measured three ways (Jake, 2026-10-07 12:06):
-      1. month-end liquid balance (stats/balance) — its monthly rise is the net inflow where nothing goes out;
-      2. RECEIPTS whose receiver is the wallet (/v3/accounts/{w}/receipts?receiver=w): every NEAR arriving, including
-         transfers made INSIDE other transactions (an intents.near withdrawal, a DAO payout) that /txns never lists —
-         why the fefunds IN list stopped at 2026-03 while the balance kept rising. Gas refunds (predecessor 'system')
-         and failed receipts are not inflow; hops between the three wallets are not fresh inflow;
-      3. wNEAR (ft-txns on wrap.near).
-    PACED TO THE FREE PLAN (6 calls/min, 333/day: fetch/nearblocks.py's own pacer; a 429 waits a full minute, three
-    times at most). Pages are CACHED and RESUMED, so a run stopped by max_pages or the daily budget continues on the
-    next run from where it stopped. Prints the senders per month (what funded fefunds Nov 2025 - Feb 2026, before the
-    Intents fee switch), the three wallets' total against the page's 3,786,229.6 NEAR, and monthly IN x the month's
-    average NEAR price from metrics.db to set beside the page's monthly net revenue."""
+def near_buyback_wallets():
+    """The three revenue wallets' balances — the BUYBACK ROUTE since Jake's run 2026-10-07 14:17: the wallets have no
+    outflow except between themselves, so the change in their COMBINED liquid balance is the buyback (internal moves
+    cancel). Per wallet: the balance now and the daily close history (stats/balance); then the combined month-end,
+    the combined monthly change, the total against the page's 3,786,229.6 NEAR, and the monthly change x that
+    month's average NEAR price from metrics.db (to set beside the page's monthly net revenue). SIX calls, paced to
+    the free plan by fetch/nearblocks.py's own pacer (6/min; a 429 waits a full minute, three times at most).
+    The receipts read of 2026-10-07 12:06 is DROPPED: it returned 0 against balance rises of 100K+ a month on the
+    14:17 run, and the balance route needs no transaction list."""
     import pandas as pd                                    # noqa: PLC0415
     from fetch import nearblocks as nb                     # noqa: PLC0415
     from fetch.base import redact                          # noqa: PLC0415
-    head("NEAR — the three revenue/buyback wallets: balance, receipts IN/OUT by month, wNEAR (NearBlocks v3, paced)")
+    head("NEAR — the three revenue/buyback wallets: balance now, daily close history, combined change by month")
     try:
         from dotenv import load_dotenv                    # noqa: PLC0415
         load_dotenv()
@@ -3269,15 +3263,11 @@ def near_buyback_wallets(max_pages: int = 40):
         return
     base, hdr = "https://api.nearblocks.io/v3", {**_ua(), "Authorization": f"Bearer {key}"}
     pacer, calls = nb._Pacer(), 0
-    try:
-        cache = json.loads(NEAR_PROBE_CACHE.read_text())
-    except (OSError, ValueError):
-        cache = {}
 
     def get(path, params=None):
         nonlocal calls
         for attempt in range(4):
-            waited = pacer.wait(1)                    # NearBlocks bills ceil(per_page/25): `limit` alone is 1 credit
+            waited = pacer.wait(1)
             if waited:
                 print(f"    (paced {waited:.0f}s — free plan, 6 calls/min)")
             calls += 1
@@ -3291,93 +3281,33 @@ def near_buyback_wallets(max_pages: int = 40):
             r.raise_for_status()
             return r.json()
 
-    def pages(w, kind, path, params, keep):
-        """Rows kept by `keep` for every page, resumed from the cache; (rows, complete)."""
-        c = cache.setdefault(w, {}).setdefault(kind, {"rows": [], "next": None, "done": False})
-        if c["done"]:
-            return c["rows"], True
-        for _ in range(max_pages):
-            j = get(path, {**params, "limit": 100, **({"next": c["next"]} if c["next"] else {})})
-            c["rows"] += [keep(x) for x in (j.get("data") or [])]
-            c["next"] = (j.get("meta") or {}).get("next_page")
-            NEAR_PROBE_CACHE.parent.mkdir(parents=True, exist_ok=True)
-            NEAR_PROBE_CACHE.write_text(json.dumps(cache))
-            if not c["next"]:
-                c["done"] = True
-                NEAR_PROBE_CACHE.write_text(json.dumps(cache))
-                return c["rows"], True
-        return c["rows"], False
-
-    wallets = set(NEAR_REVENUE_WALLETS)
-    month = lambda ns: str(pd.Timestamp(int(ns), unit="ns").to_period("M"))  # noqa: E731
-    grand_in, monthly_all = 0.0, {}
+    closes = {}
     for w in NEAR_REVENUE_WALLETS:
         print(f"\n  {w}")
         try:
             bal = get(f"/accounts/{w}/balance").get("data") or {}
             print(f"    balance now: {int(bal.get('amount') or 0) / 1e24:,.1f} NEAR liquid, "
                   f"{int(bal.get('amount_staked') or 0) / 1e24:,.1f} staked")
-            hist = get(f"/accounts/{w}/stats/balance", {"limit": 365}).get("data") or []
-            rise = {}
+            hist = get(f"/accounts/{w}/stats/balance", {"limit": 400}).get("data") or []
             if hist:
                 hb = pd.Series({pd.Timestamp(h["date"]): int(h["amount"]) / 1e24 for h in hist}).sort_index()
+                closes[w] = hb
                 me = hb.groupby(hb.index.to_period("M")).last()
-                rise = {str(m): v for m, v in me.diff().dropna().items()}
-                print("    month-end liquid balance: " + ", ".join(f"{m} {v:,.0f}" for m, v in me.items()))
-            rec, done_r = pages(w, "receipts", f"/accounts/{w}/receipts", {"receiver": w},
-                                lambda x: {"m": month(x["included_in_block_timestamp"]),
-                                           "from": x.get("predecessor_account_id"),
-                                           "dep": int((x.get("actions_agg") or {}).get("deposit") or 0) / 1e24,
-                                           "ok": (x.get("outcome") or {}).get("status") is not False})
-            out_r, done_o = pages(w, "receipts_out", f"/accounts/{w}/receipts", {"predecessor": w},
-                                  lambda x: {"m": month(x["included_in_block_timestamp"]),
-                                             "to": x.get("receiver_account_id"),
-                                             "dep": int((x.get("actions_agg") or {}).get("deposit") or 0) / 1e24,
-                                             "ok": (x.get("outcome") or {}).get("status") is not False})
-            fts, done_f = pages(w, "wnear", f"/accounts/{w}/ft-txns", {"contract": "wrap.near"},
-                                lambda x: {"m": month(x["block_timestamp"]), "peer": x.get("involved_account_id"),
-                                           "amt": int(x.get("delta_amount") or 0) / 1e24})
-            ins, senders, outs = {}, {}, {}
-            for x in rec:
-                if not x["ok"] or not x["dep"] or x["from"] in wallets or x["from"] == "system":
-                    continue
-                ins[x["m"]] = ins.get(x["m"], 0.0) + x["dep"]
-                senders.setdefault(x["m"], {}).setdefault(x["from"], 0.0)
-                senders[x["m"]][x["from"]] += x["dep"]
-            for x in out_r:
-                if x["ok"] and x["dep"] and x["to"] not in wallets:
-                    outs.setdefault(x["m"], {}).setdefault(x["to"], 0.0)
-                    outs[x["m"]][x["to"]] += x["dep"]
-            for x in fts:
-                if x["peer"] in wallets or not x["amt"]:
-                    continue
-                if x["amt"] > 0:
-                    ins[x["m"]] = ins.get(x["m"], 0.0) + x["amt"]
-                    senders.setdefault(x["m"], {}).setdefault(f"{x['peer']} (wNEAR)", 0.0)
-                    senders[x["m"]][f"{x['peer']} (wNEAR)"] += x["amt"]
-                else:
-                    outs.setdefault(x["m"], {}).setdefault(f"{x['peer']} (wNEAR)", 0.0)
-                    outs[x["m"]][f"{x['peer']} (wNEAR)"] += -x["amt"]
-            tot = sum(ins.values())
-            grand_in += tot
-            for m, v in ins.items():
-                monthly_all[m] = monthly_all.get(m, 0.0) + v
-            complete = done_r and done_o and done_f
-            print(f"    IN (receipts + wNEAR; gas refunds and the other two wallets excluded): {tot:,.1f} NEAR"
-                  + ("" if complete else f"  [PARTIAL: {max_pages} pages per run — run again to continue]"))
-            for m in sorted(set(ins) | set(outs) | set(rise)):
-                o = outs.get(m) or {}
-                top_in = sorted((senders.get(m) or {}).items(), key=lambda kv: -kv[1])[:3]
-                top_out = sorted(o.items(), key=lambda kv: -kv[1])[:3]
-                print(f"      {m}: in {ins.get(m, 0.0):,.1f}"
-                      + (f" from {', '.join(f'{k} {v:,.0f}' for k, v in top_in)}" if top_in else "")
-                      + f"; out {sum(o.values()):,.1f}"
-                      + (f" -> {', '.join(f'{k} {v:,.0f}' for k, v in top_out)}" if top_out else "")
-                      + (f"; balance rise {rise[m]:,.0f}" if m in rise else ""))
+                print(f"    {len(hb)} daily close(s) {hb.index[0].date()}..{hb.index[-1].date()}; month-end: "
+                      + ", ".join(f"{m} {v:,.0f}" for m, v in me.items()))
         except Exception as e:  # noqa: BLE001
             print(f"    FAILED — {redact(str(e))[:200]}")
-    print(f"\n  ALL THREE, IN: {grand_in:,.1f} NEAR vs the page's {NEAR_PAGE_REVENUE_TOTAL:,.1f} "
-          f"({grand_in / NEAR_PAGE_REVENUE_TOTAL - 1:+.1%}); {calls} call(s), {pacer.total} credit(s) this run")
+    if len(closes) < len(NEAR_REVENUE_WALLETS):
+        print(f"\n  {len(closes)} of {len(NEAR_REVENUE_WALLETS)} wallets read — no combined figure. {calls} call(s).")
+        return
+    start = max(s_.index.min() for s_ in closes.values())
+    days = pd.date_range(start, max(s_.index.max() for s_ in closes.values()), freq="D")
+    total = sum(s_.reindex(s_.index.union(days)).ffill().reindex(days) for s_ in closes.values())
+    me = total.groupby(total.index.to_period("M")).last()
+    chg = me.diff()
+    print(f"\n  COMBINED (from {start.date()}, each wallet's close carried over days it did not move):")
+    print(f"    now {total.iloc[-1]:,.1f} NEAR vs the page's {NEAR_PAGE_REVENUE_TOTAL:,.1f} "
+          f"({total.iloc[-1] / NEAR_PAGE_REVENUE_TOTAL - 1:+.1%}); {calls} call(s)")
     try:
         import store as store_mod                          # noqa: PLC0415
         st = store_mod.Store(store_mod.DB_PATH)
@@ -3386,18 +3316,17 @@ def near_buyback_wallets(max_pages: int = 40):
         finally:
             st.close()
         px = px[(px["project"] == "Near") & (px["metric"] == "price_usd")]
-        px = px.assign(m=pd.to_datetime(px["date"]).dt.to_period("M").astype(str)).groupby("m")["value"].mean()
-        print("  MONTHLY IN x THAT MONTH'S AVERAGE NEAR PRICE (metrics.db) — set beside the page's monthly net revenue:")
-        for m in sorted(monthly_all):
-            p = px.get(m)
-            print(f"    {m}: {monthly_all[m]:,.0f} NEAR" + (f" x ${p:,.3f} = ${monthly_all[m] * p:,.0f}" if p else
-                                                          " (no price in metrics.db)"))
-    except Exception as e:  # noqa: BLE001
-        print(f"  (monthly USD not computed: {type(e).__name__}: {str(e)[:120]})")
-    print("  READING IT: a wallet whose OUT lines are empty (or only to the other two) is buyback-and-HOLD — its NEAR")
-    print("  leaves free float but is not burned; an outflow is a burn only if it goes to a key-less account the")
-    print("  protocol names as such. IN by receipts that exceeds the pipeline's txns-based flow means the tier misses")
-    print("  receipt-borne transfers. Nothing was stored. PASTE BACK the section.")
+        px = px.assign(m=pd.to_datetime(px["date"]).dt.to_period("M")).groupby("m")["value"].mean()
+    except Exception:  # noqa: BLE001
+        px = pd.Series(dtype=float)
+    print("    month-end, change (the month's buyback), x the month's average NEAR price:")
+    for m, v in me.items():
+        c, p = chg.get(m), px.get(m)
+        print(f"      {m}: {v:,.0f}" + (f"; change {c:+,.0f}" if c == c and c is not None else "")
+              + (f" x ${p:,.3f} = ${c * p:,.0f}" if p and c == c and c is not None else ""))
+    print("  READING IT: a fall in one wallet matched by a rise in another is consolidation, not a sale; a fall in")
+    print("  the COMBINED figure is a move out of the three — name its destination before calling it anything.")
+    print("  Nothing was stored. PASTE BACK the section.")
 
 
 # ===== SKY — BLOCK ANALITICA'S ENDPOINTS: WHAT THEY RETURN (Jake, 2026-10-07). =====
@@ -3447,30 +3376,77 @@ def sky_ba_endpoints():
 
 
 def geod_residual(days: int = 180):
-    head("GEODNET — where is the ~74M CoinGecko excludes and we count? Solana largest accounts + Polygon sinks")
-    url = "https://api.mainnet-beta.solana.com"
-    try:
-        sup = (rpc(url, "getTokenSupply", [GEODNET_SOL_MINT]).get("result") or {}).get("value") or {}
-        print(f"  Solana mint {GEODNET_SOL_MINT}: supply {sup.get('uiAmountString')} GEOD")
-        big = (rpc(url, "getTokenLargestAccounts", [GEODNET_SOL_MINT]).get("result") or {}).get("value") or []
-    except Exception as e:  # noqa: BLE001
-        print(f"  Solana UNREACHABLE — {e}")
-        big = []
+    """GEODNET's Solana side (Jake, 2026-10-07): Solana supply and largest accounts (with owners) through
+    SOLANA_RPC_URL (Jake's Alchemy app; the public RPC 429s), the Polygon bridge custody (Wormhole NTT manager
+    0x2006B446…, LOCKING) and the shared executor helper 0x6762157b… (should hold ~0), then circulating without
+    double counting:
+        (Polygon total - Polygon exclusions - bridge custody) + (Solana supply - Solana exclusions)
+      = our on-chain set - custody + Solana supply - Solana exclusions
+    (our set already subtracts the Solana burn account, which sits inside Solana supply). No GEODNET-controlled
+    Solana wallet is named in its docs or GIPs, so Solana exclusions are 0 until one is; the largest accounts are
+    listed for that. Reported against Blockworks' 462M. Nothing is stored."""
+    import config                                          # noqa: PLC0415
+    head("GEODNET — the Solana side: supply, largest accounts, bridge custody, circulating without double counting")
+    custody = config.CIRCULATING_ONCHAIN["GEODNET"]["bridge_custody"]
+    sup_v, big, used = None, [], None
+    for url in config.solana_rpc_endpoints():
+        try:
+            sup = (rpc(url, "getTokenSupply", [GEODNET_SOL_MINT]).get("result") or {}).get("value") or {}
+            sup_v = float(sup.get("uiAmountString") or sup.get("uiAmount") or 0) or None
+            big = (rpc(url, "getTokenLargestAccounts", [GEODNET_SOL_MINT]).get("result") or {}).get("value") or []
+            used = url
+            break
+        except Exception as e:  # noqa: BLE001
+            print(f"  Solana RPC {urlparse(url).netloc}: {str(e)[:120]}")
+    if used:
+        print(f"  Solana mint {GEODNET_SOL_MINT}: supply {sup_v:,.2f} GEOD  (via {urlparse(used).netloc})")
+    else:
+        print("  Solana UNREACHABLE on every endpoint — set SOLANA_RPC_URL (Alchemy) in .env")
     if big:
         print(f"\n  {'token account':<46} {'GEOD':>16}  owner (wallet / program)")
         for a in big:
             owner = "?"
             try:
-                v = (rpc(url, "getAccountInfo", [a["address"], {"encoding": "jsonParsed"}]).get("result") or {}).get("value")
+                v = (rpc(used, "getAccountInfo", [a["address"], {"encoding": "jsonParsed"}]).get("result") or {}).get("value")
                 owner = ((((v or {}).get("data") or {}).get("parsed") or {}).get("info") or {}).get("owner") or "?"
             except Exception:  # noqa: BLE001
                 pass
-            print(f"  {a['address']:<46} {float(a.get('uiAmount') or 0):>16,.0f}  {owner}")
-        print("  READING IT: GEODNET's own reward / treasury / bridge accounts are the large ones; any of them not")
-        print("  yet in config (contracts burn_solana_token_account; NONCIRCULATING_CANDIDATES) is a candidate. Its")
-        print("  role must come from GEODNET's docs or a GIP before it is excluded.")
-    print()
-    geodnet_staking_candidates(days)
+            mark = "  <- the burn account (already out of our set)" if a["address"] == GEODNET_SOL_BURN_ACCOUNT else ""
+            print(f"  {a['address']:<46} {float(a.get('uiAmount') or 0):>16,.0f}  {owner}{mark}")
+        print("  READING IT: an account is a Solana EXCLUSION only once GEODNET's docs or a GIP name its owner (mining")
+        print("  distribution, GIP-3 / GIP-7 pools, foundation). Exchange and AMM accounts circulate.")
+    cust = _bal(GEOD_POLYGON, custody["address"], "polygon")
+    helper = next(iter(custody["not_custody"]))
+    hel = _bal(GEOD_POLYGON, helper, "polygon")
+    cust_v = None if cust is None else cust / 1e18
+    print(f"\n  Polygon bridge custody {custody['address']} (NTT manager, LOCKING): "
+          f"{'UNREADABLE' if cust_v is None else f'{cust_v:,.0f} GEOD'}")
+    print(f"  shared executor helper {helper}: {'UNREADABLE' if hel is None else f'{hel / 1e18:,.0f} GEOD'} "
+          f"(a pass-through; expected ~0 — never added to the custody)")
+    if cust_v is not None and sup_v:
+        print(f"  custody - Solana supply = {cust_v - sup_v:+,.0f} GEOD (>= 0 expected: SPL burns on Solana lower "
+              f"supply, not custody)")
+    ours = None
+    try:
+        import store as store_mod                          # noqa: PLC0415
+        from fetch import circulating as circ_mod          # noqa: PLC0415
+        st = store_mod.Store(store_mod.DB_PATH)
+        try:
+            h = st.load_long()
+        finally:
+            st.close()
+        sr = circ_mod.series(h[h["project"] == "GEODNET"], "GEODNET")
+        ours = (sr.index[-1], float(sr.iloc[-1])) if len(sr) else None
+    except Exception as e:  # noqa: BLE001
+        print(f"  (our on-chain set not read from metrics.db: {type(e).__name__}: {str(e)[:100]})")
+    if ours and cust_v is not None and sup_v:
+        circ = ours[1] - cust_v + sup_v
+        print(f"\n  OUR SET ({ours[0].date()}): {ours[1]:,.0f}  - custody {cust_v:,.0f}  + Solana supply {sup_v:,.0f}"
+              f"  - Solana exclusions 0 (none named)\n  = CIRCULATING {circ:,.0f} GEOD vs Blockworks' 462,000,000 "
+              f"({circ / 462e6 - 1:+.1%})")
+    else:
+        print("\n  circulating not computed — needs our set (metrics.db), the custody read and the Solana supply")
+    print("  Nothing was stored. PASTE BACK the section.")
 
 
 # ===== SKY lsSKY REWARDS: EVERY RELEASE, AGAINST THE STREAM ACTIVE THAT DAY (Jake's run 2026-10-07). =====

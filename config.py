@@ -237,7 +237,12 @@ METRICS = {
     # (build_workbook._circulating_views) = on-chain total − the documented non-circulating set.
     "circulating_supply_first_party": {"label": "Circulating supply — the protocol's OWN figure (Hyperliquid tokenDetails.circulatingSupply; Aethir dashboard athCirculatingSupply; NEAR's circulating_supply table in BigQuery)",
                                        "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [1, 3],
-                                       "sanity_min": 0, "sanity_max": 1e15, "only_projects": ("Hyperliquid", "Aethir", "Near", "Plume", "GEODNET")},
+                                       "sanity_min": 0, "sanity_max": 1e15, "only_projects": ("Hyperliquid", "Aethir", "Near", "Plume")},
+    # GEODNET (2026-10-07 afternoon): a third party's figure (Blockworks 462M), used only while the project publishes
+    # none and our on-chain set is unresolved (CIRCULATING_ONCHAIN ratios_use "third_party_reference").
+    "circulating_supply_third_party": {"label": "Circulating supply — a THIRD PARTY's published figure (GEODNET: Blockworks 462M, static), used where the project publishes none and our set is unresolved",
+                                       "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [5],
+                                       "sanity_min": 0, "sanity_max": 1e15, "only_projects": ("GEODNET",)},
     # ===== AETHIR'S STAKE, BY POOL, FROM ITS OWN DASHBOARD (Jake's probes3, 2026-09-30). =====
     # locked_tokens = the on-chain page's totalStaked; these are the parts it shows beside it, and
     # the Ethereum wrapper read (808.7M) that was locked_tokens until then, kept as its own series.
@@ -313,8 +318,9 @@ METRICS = {
     # MAPLE (Jake, 2026-10-07): staking ended (MIP-019); the SYRUP still sitting in stSYRUP is shown, not called a lock.
     "stsyrup_legacy_tokens":    {"label": "SYRUP still held by the legacy stSYRUP vault (staking ended, MIP-019) — NOT a lock", "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 2e9, "only_projects": ("Maple",)},
     # NEAR's other two revenue wallets (Jake, 2026-10-07): native NEAR in, NearBlocks, other two wallets excluded.
-    "near_revenue_inflow_fe_tokens":  {"label": "NEAR into fefundsadmin.sputnik-dao.near (NEAR Intents front-end fund), native, NearBlocks", "kind": "flow", "unit": "tokens", "archetypes": [3], "tiers": [1], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Near",)},
-    "near_revenue_inflow_1cs_tokens": {"label": "NEAR into 1csfundsadmin.sputnik-dao.near (NEAR Intents 1Click fund), native, NearBlocks", "kind": "flow", "unit": "tokens", "archetypes": [3], "tiers": [1], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Near",)},
+    # NEAR (Jake, 2026-10-07 14:17): the three revenue wallets' COMBINED liquid balance at each day's close (NearBlocks
+    # stats/balance); its daily change is NEAR's buyback (actual_buyback_tokens, a read-time view).
+    "buyback_fund_balance_eod":  {"label": "NEAR Intents revenue wallets COMBINED, liquid NEAR at each day's close (fefundsadmin + buybacks.multisignature + 1csfundsadmin; NearBlocks stats/balance)", "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [1], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Near",)},
     # TRAILING-WINDOW REALISED TOKEN YIELD (Ether.fi, Jake 2026-10-07) — read-time views, one row on the latest day.
     "token_yield_trailing_pct": {"label": "Realised token yield, trailing 365 days: reward tokens / AVERAGE staked, annualised over the days covered", "kind": "stock", "unit": "fraction", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 5.0, "only_projects": ("Ether.fi",), "view_only": True},
     "token_yield_share_price_trailing_pct": {"label": "Realised yield from the vault's share price, trailing 365 days (annualised)", "kind": "stock", "unit": "fraction", "archetypes": [3], "tiers": [2], "sanity_min": -1.0, "sanity_max": 5.0, "only_projects": ("Ether.fi",), "view_only": True},
@@ -752,6 +758,7 @@ METRICS = {
     "net_protocol_surplus_usd": {"label": "Net Protocol Surplus (Sky's own accounting — Block Analitica's P&L: net less Security and Maintenance), monthly", "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [3], "sanity_min": -1e10, "sanity_max": 1e11, "only_projects": ("Sky",)},
     # Sky's NPS as it REPORTED the months by hand (insights / financial.skyeco.com), kept as the reference beside the API.
     "net_protocol_surplus_usd_reported": {"label": "Net Protocol Surplus as Sky reported the month (manual, insights.skyeco.com / financial.skyeco.com) — reference", "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [5], "sanity_min": -1e10, "sanity_max": 1e11, "only_projects": ("Sky",), "view_only": True},
+    "revenue_allocation_usd_ba": {"label": "Sky Revenue Allocation per month ($, Block Analitica P&L revenue_distribution less Security and Maintenance = the SKY buyback + the USDS distribution)", "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [3], "sanity_min": -1e9, "sanity_max": 1e10, "only_projects": ("Sky",)},
     "buyback_spending_usd_ba": {"label": "SKY buyback spending per month ($, Block Analitica cash flow 'Buyback Spending') — reference for the flapper buyback", "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [3], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Sky",)},
     "staking_rewards_usd_ba": {"label": "Staking rewards paid per month ($, Block Analitica cash flow 'Staking Rewards') — reference for the USDS-farm rewards", "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [3], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Sky",)},
     # info-sky.blockanalitica.com (Jake, 2026-10-07 12:06) — references only, beside our on-chain reads.
@@ -3287,6 +3294,23 @@ PROJECTS = [
             "definition": "active_accounts = distinct accounts with an action that UTC day "
                           "(NearBlocks action_stats.accounts); txns = transactions that day "
                           "(transaction_stats.txns)",
+            # ===== THE BUYBACK FROM THE THREE WALLETS' BALANCE HISTORY (Jake, 2026-10-07 14:17). =====
+            # GET /v3/accounts/{account}/stats/balance?limit=N -> [{date, amount (yoctoNEAR)}] per day — read live by
+            # near_buyback_wallets on Jake's run (fefundsadmin 1,853,353.1; buybacks.multisignature 1,893,777.6;
+            # 1csfundsadmin 270.9; sum 3,747,402 vs revenue.near.org's 3,786,229.6, -1.0%). THREE calls a run (one
+            # credit each: NearBlocks bills per_page, and this sends `limit`). Each wallet's daily close is carried
+            # forward over days it did not move; a day is stored only once all three have a balance, so the sum is
+            # never two wallets of three. actual_buyback_tokens = the day's change in the sum (build_workbook
+            # _near_buyback_views): internal moves cancel, and the only outflows are between the three.
+            "balance_history": {
+                "path": "/v3/accounts/{account}/stats/balance", "limit": 400,
+                "accounts": ["fefundsadmin.sputnik-dao.near", "buybacks.multisignature.near",
+                             "1csfundsadmin.sputnik-dao.near"],
+                "metric": "buyback_fund_balance_eod", "flow": "actual_buyback_tokens", "yocto_exponent": 24,
+                "field_source": "live: Jake's run 2026-10-07 14:17 (check_offline_items near_buyback_wallets "
+                                "printed date/amount rows for all three wallets)",
+                "partial": "LIQUID NATIVE NEAR ONLY — wNEAR and staked NEAR in these wallets are not in `amount`",
+            },
         },
         # ===== RESOLVED 2026-09-24 — SEE near_account_flows BELOW. FORMERLY =====
         # ===== actual_buyback_tokens_blocked, RENAMED SO IT NO LONGER READS AS A GAP. =====
@@ -3340,7 +3364,13 @@ PROJECTS = [
         # is the native action; wrap.near ft_transfer inflows (an FT, a FUNCTION_CALL, not a
         # native action) are not counted, the same "partial: native NEAR only" caveat already
         # declared on node_api.extra_reads[0] for the STOCK read of these same three wallets.
-        "near_account_flows": [
+        # ===== RETIRED 2026-10-07 (Jake's run 14:17): THE BUYBACK IS THE THREE WALLETS' COMBINED BALANCE CHANGE. =====
+        # The transaction scans below paged slowly (the tier timed out at 60s on pacing) and could not see transfers
+        # made inside other transactions. The three wallets have NO outflow except between themselves (1csfundsadmin
+        # consolidated into the buyback wallet: -7,274 in 2026-07, -502,528 in 2026-09), so the change in their
+        # COMBINED liquid balance is the buyback, internal moves cancelling — nearblocks.balance_history below. Kept as
+        # a record (and for fetch/nearblocks.py's near_account_flows code, which still serves any project declaring one).
+        "near_account_flows_retired": [
             {
                 "key": "buyback_wallet_inflow",
                 "metric": "actual_buyback_tokens",
@@ -3414,10 +3444,10 @@ PROJECTS = [
                                     "near — not the buyback wallet alone (the Run Log line gives "
                                     "each wallet's share). PARTIAL: liquid native NEAR only; wNEAR "
                                     "and any staked NEAR in these wallets are not counted.",
-            "actual_buyback_tokens": "Native NEAR TRANSFERs into buybacks.multisignature.near "
-                                     "(NearBlocks), excluding hops from the other two revenue "
-                                     "wallets. wNEAR inflow not counted; not reconciled to a "
-                                     "balance.",
+            "actual_buyback_tokens": "The day's change in the THREE revenue wallets' combined liquid "
+                                     "NEAR (NearBlocks daily close; internal moves cancel). Bought and "
+                                     "HELD in DAO-controlled wallets, not burned. wNEAR and staked NEAR "
+                                     "not counted.",
         },
         # ===== treasury_holding_tokens — n/a, and the Base contract entry is retired to a record.
         # 2026-09-23. =====
@@ -3563,9 +3593,10 @@ PROJECTS = [
             # ===== THE THREE INTENTS REVENUE WALLETS, READ AS A BALANCE. Wired 2026-09-23. =====
             # buyback_fund_balance is what these accounts HOLD — a stock, read via NEAR's `query`
             # RPC with request_type view_account (spec URL below; result.amount in yoctoNEAR).
-            # ** IT IS NOT DIFFERENCED INTO actual_buyback_tokens, AND MUST NOT BE. ** The
-            # buyback wallet exists to spend, so its delta is inflow minus spending — see
-            # actual_buyback_tokens_blocked, which stays exactly as it is.
+            # ** THIS INTRADAY READ IS NOT DIFFERENCED. ** Since Jake's run 2026-10-07 14:17 established that the
+            # three wallets have no outflow except between themselves, the buyback IS the change in their combined
+            # balance — taken from the DAILY CLOSE history (nearblocks.balance_history, buyback_fund_balance_eod),
+            # not from this read, whose time of day moves run to run.
             # ** THE ADDRESSES ARE AGGREGATOR-SOURCED. ** They come from DefiLlama's near-intents
             # adapter (itself from NEAR's Dune query 6740088), not from NEAR Intents' own docs;
             # wired on Jake's instruction of 2026-09-23 with that caveat carried here and in the
@@ -3909,11 +3940,23 @@ PROJECTS = [
                            "circulation' is NEAR's claim, recorded as such",
                 "project_claim": "permanently remove NEAR from circulation (revenue.near.org)",
                 "open": "fefundsadmin began accumulating 2025-11, before the 2026-02 Intents fee switch: what funded "
-                        "Nov 2025 - Feb 2026 is read from the paced probe's per-month senders (receipts), pending",
+                        "Nov 2025 - Feb 2026 is not established (the probe's receipts read returned nothing on Jake's "
+                        "14:17 run and is dropped; a sender list needs another route)",
                 "read_by": "Jake, 2026-10-07 12:06"},
+            # ALL THREE WALLETS (Jake's run 2026-10-07 14:17): fefundsadmin 1,853,353.1 (rising every month since
+            # 2025-11); buybacks.multisignature 1,893,777.6 (rising since 2026-04; +906,878 in 2026-09); 1csfundsadmin
+            # 270.9 (rose to ~510K by 2026-04, then -7,274 in 2026-07 and -502,528 in 2026-09 — consolidation into the
+            # buyback wallet). Sum 3,747,402 vs the page's 3,786,229.6 (-1.0%). No outflow except between the three.
+            "classification": "buy-and-HOLD in DAO-controlled wallets; the only outflow is consolidation "
+                              "(1csfundsadmin -> buybacks.multisignature, 2026-07 and 2026-09). The buyback is "
+                              "the change in the three wallets' combined balance (Jake, 2026-10-07 14:17)",
         },
         "buyback_destination": "hold", "destination_split": None, "burn_execution": "n/a",
         "destination_effect": "treasury_redeployable",
+        # THE BUYBACK IS DIFFERENCED FROM THE THREE WALLETS' COMBINED DAILY CLOSE (2026-10-07 14:17): declared here so
+        # the route and the telescoping check name the stock; the differencing itself is build_workbook
+        # _near_buyback_views (read time), from nearblocks.balance_history.
+        "cumulative_flow": {"buyback_fund_balance_eod": "actual_buyback_tokens"},
         "destination_source_url": "https://defillama.com/protocol/near-intents",
         "destination_confirmed_date": "2026-09-14",
         # NEAR IS NOT AN EVM CHAIN, BUT THE INTENTS TREASURY IS EVM-READABLE.
@@ -6881,8 +6924,9 @@ PROJECTS = [
         #   CoinGecko total_supply - (total_supply_gross - burn_address_balance [the sum])
         # which is the Solana balance while CoinGecko nets Polygon only and falls to ~0 on its own
         # if it starts netting both. The stored circulating_supply is left as CoinGecko's figure.
-        # GEODNET'S OWN CIRCULATING (POLICY 2026-10-07) is a hand-entered figure: valid for a month, AMBER after 45 days.
-        "manual_granularity": {"circulating_supply_first_party": "monthly"},
+        # GEODNET'S CIRCULATING IN USE (2026-10-07) is a hand-entered THIRD-PARTY figure (Blockworks 462M): valid for a
+        # month, AMBER after 45 days.
+        "manual_granularity": {"circulating_supply_third_party": "monthly"},
         "supply_unnetted_burn": {
             "declared": "2026-09-28 (Jake)", "provider": "CoinGecko",
             "evidence": "total_supply_convention_evidence above: 1e9 - 961,518,067.62 = "
@@ -14322,6 +14366,34 @@ PROJECTS = [
             ],
             "source": "Sky Frontier Foundation's own reporting (insights.skyeco.com)",
             "source_date": "2026-09-18",
+            # ** THE QUARTERLIES ARE ON A DIFFERENT BASIS FROM THE MONTHS (found 2026-10-07). ** Against Sky's own
+            # monthly table below, Q1 46.04M and Q2 33.29M are REVENUE - EXPENSES, BEFORE the revenue allocation
+            # (table: Q1 9.33 + 25.75 + 11.24 = 46.32M; Q2 10.48 + 10.88 + 11.92 = 33.28M), while the monthly NPS Sky
+            # reports is what is REMITTED after the allocation (Q1 25.66M, Q2 29.87M). The months-sum-to-the-quarter
+            # reconciliation compared two bases and is retired (period_reconciliation below).
+            "quarterly_basis": "revenue - expenses (before the revenue allocation); NOT the monthly NPS basis",
+            # ===== SKY'S OWN MONTHLY TABLE (Jake, 2026-10-07): "Remitted to Sky Reserves". =====
+            "sky_monthly_table_2026_10_07": {
+                "read_by": "Jake", "read_on": "2026-10-07", "units": "USD",
+                "definition": "Remitted to Sky Reserves = revenue - expenses - revenue allocation (the SKY buyback and "
+                              "the USDS distribution)",
+                "months": {
+                    "2026-01": {"revenue": 26_050_000, "expenses": 16_720_000, "allocation": 8_540_000, "remitted": 785_460},
+                    "2026-02": {"revenue": 52_250_000, "expenses": 26_500_000, "allocation": 7_720_000, "remitted": 18_030_000},
+                    "2026-03": {"revenue": 45_730_000, "expenses": 34_490_000, "allocation": 4_400_000, "remitted": 6_840_000},
+                    "2026-04": {"revenue": 34_320_000, "expenses": 23_840_000, "allocation": 1_130_000, "remitted": 9_350_000},
+                    "2026-05": {"revenue": 35_560_000, "expenses": 24_680_000, "allocation": 1_160_000, "remitted": 9_710_000},
+                    "2026-06": {"revenue": 37_310_000, "expenses": 25_390_000, "allocation": 1_120_000, "remitted": 10_810_000},
+                    "2026-07": {"revenue": 36_640_000, "expenses": 24_800_000, "allocation": 1_160_000, "remitted": 10_680_000},
+                    "2026-08": {"revenue": 31_850_000, "expenses": 18_740_000, "allocation": 2_480_000, "remitted": 10_630_000},
+                    "2026-09": {"revenue": 30_800_000, "expenses": 18_570_000, "allocation": 5_080_000, "remitted": 7_150_000},
+                },
+                "partial": {"2026-10": {"revenue": 834_580, "expenses": 3_210_000, "allocation": 1_290_000,
+                                        "remitted": -3_670_000, "status": "month to date — NOT a reportable NPS"}},
+                "ytd_2026": {"revenue": 331_350_000, "expenses": 216_930_000, "allocation": 34_090_000,
+                             "remitted": 80_320_000},
+                "stored_as": "manual_overrides.csv net_protocol_surplus_usd_reported, Jan-Sep (the reference)",
+            },
             # ===== financial.skyeco.com/financials/revenue — Jake's reading, 2026-09-29. =====
             # July ($10.52M) and August ($15.75M) are in manual_overrides.csv as monthly rows; the
             # page's own 90-day statement shows those lines are NPS, before the Stage 2 allocation.
@@ -14380,6 +14452,8 @@ PROJECTS = [
             # indistinguishable from a sourced one the moment it is in the store — and this one
             # would then make the quarter reconcile against itself.
             "april_2026_derived": {
+                "superseded": "2026-10-07 — Sky's own table gives April REMITTED 9.35M (pre-allocation 10.48M); the "
+                              "12.77M below mixed the quarter's pre-allocation basis with the months' remitted basis",
                 "usd": 12_770_000,
                 "how": "Q2 2026 $33.29m - May $9.71m - June $10.81m",
                 "status": "DERIVED, NOT SOURCED, AND NOT STORED. Sky has published no April "
@@ -14402,10 +14476,14 @@ PROJECTS = [
         # fetch/sky_accounting.py: monthly NPS (P&L net less Security and Maintenance — Sky's financials page counts S&M
         # as an expense, Block Analitica books it below net revenue), Buyback Spending and Staking Rewards (cash flow).
         # NPS here REPLACES the hand-entered months, which move to net_protocol_surplus_usd_reported as the reference.
+        # NPS = revenue - expense - revenue_distribution ("Remitted to Sky Reserves") — CONFIRMED by Jake against Sky's
+        # own monthly table (2026-10-07 afternoon; net_protocol_surplus_reference.sky_monthly_table_2026_10_07).
         "sky_accounting": {"base_url": "https://sky.data.blockanalitica.com", "from": "2025-01-01",
                            "granularity": "monthly",
+                           "nps_formula": "revenue-expense-revenue_distribution",
                            "metrics": {"nps": "net_protocol_surplus_usd", "buyback": "buyback_spending_usd_ba",
-                                       "staking": "staking_rewards_usd_ba"},
+                                       "staking": "staking_rewards_usd_ba",
+                                       "revenue_allocation": "revenue_allocation_usd_ba"},
                            "docs": "Block Analitica's Balance Sheet / Cash Flow / Profit and Loss API pages, given by "
                                    "Jake 2026-10-07",
                            # info-sky (Jake, 2026-10-07 12:06): cumulative SKY bought, and each farm's daily history.
@@ -14424,17 +14502,15 @@ PROJECTS = [
         # of three compared against the quarter's own total is guaranteed to disagree, and
         # reporting that would be reporting a missing month as an error in the months that are
         # there — so an incomplete quarter is skipped, not flagged.
-        "period_reconciliation": {
+        # RETIRED 2026-10-07: Sky's quarterlies (Q1 46.04M, Q2 33.29M) are revenue - expenses BEFORE the revenue
+        # allocation; the months (Sky's own table, Block Analitica's series) are REMITTED after it. Summing the months
+        # against the quarter compared two bases and would flag every complete quarter. The monthly reference is now
+        # Sky's own table (net_protocol_surplus_reference.sky_monthly_table_2026_10_07; Credibility in_nps).
+        "period_reconciliation_retired": {
             "net_protocol_surplus_usd": {
-                "granularity": "monthly",
-                "against": "quarterly",
-                "reference": "net_protocol_surplus_reference",
-                "tolerance": 0.005,
-                "requires_complete_period": True,
-                "why": "Sky publishes both, and the quarterly figure contains the months. If they "
-                       "disagree beyond half a percent, one of the two publications is wrong or a "
-                       "month has been mis-transcribed — and the stored series is the one every "
-                       "implied-buyback figure is computed from.",
+                "granularity": "monthly", "against": "quarterly", "reference": "net_protocol_surplus_reference",
+                "tolerance": 0.005, "requires_complete_period": True,
+                "retired": "2026-10-07 — the quarterlies are on the pre-allocation basis (quarterly_basis)",
             },
         },
         "fee_split_v2": {
@@ -20453,9 +20529,39 @@ CIRCULATING_ONCHAIN = {
                   "decided_by": "Claude Code 2026-10-06, pending Jake's review"},
     "GEODNET": {"status": "partial", "total": "total_supply_gross",
                 "subtract": ("burn_address_balance", "treasury_holding_tokens"),
-                # POLICY 2026-10-07: GEODNET's own figure (462M, Jake) is primary — a dated manual row of
-                # circulating_supply_first_party; the on-chain set (~516M) is the cross-check (CIRCULATING_POLICY).
-                "ratios_use": "first_party", "metric": "circulating_supply_first_party",
+                # 2026-10-07 (afternoon): the 462M is BLOCKWORKS' figure (app.blockworks.com/projects/geodnet), a third
+                # party, equal to CoinGecko's fixed 462,360,759 and static while mining releases ~122K GEOD/day — GEODNET
+                # publishes no circulating figure of its own. It stays in use, LABELLED as a third party's, until the
+                # Solana side is resolved; then our on-chain set (wallets GEODNET's docs name) becomes primary and the
+                # 462M a static cross-check (Jake). The set (~516M) is the cross-check meanwhile.
+                "ratios_use": "third_party_reference", "metric": "circulating_supply_third_party",
+                # THE BRIDGE (research 2026-10-07): Wormhole NTT, Polygon = the LOCKING hub. The Polygon NttManager
+                # 0x2006B44684b2A579466fC04FAbC5A535946bC7AB holds the GEOD that backs Solana GEOD (GEODNET's docs,
+                # "Crosschain between Polygon and Solana": the bridge spender "for V1" — read via search snippet;
+                # Dedaub's NTT reference @b5d5d812 ntt.md L175: manager, mode LOCKING, token 0xAC0F…9Adb, read live
+                # 2026-09-29). 0x6762157b73941e36cEd0AEf54614DdE545d0F990 is Wormhole's SHARED NttManagerWithExecutor
+                # helper ("for V3" on GEODNET's page; native-token-transfers@47e816c8 nttWithExecutor.ts L38): a
+                # pass-through that should hold ~0 — its inflow already sits in 0x2006, never add the two.
+                # Circulating, never double counting: (Polygon total - Polygon exclusions - bridge custody) +
+                # (Solana supply - Solana exclusions) = our set - custody + Solana supply - Solana exclusions
+                # (python check_offline_items.py geod_residual computes it). Solana mode is BURNING by inference
+                # (hub-and-spoke), and no GEODNET-controlled Solana wallet is named in its docs or GIPs (GIP-3, GIP-7
+                # state amounts, no addresses: geodnet/GIP@a353cf84).
+                "bridge_custody": {"chain": "polygon", "address": "0x2006B44684b2A579466fC04FAbC5A535946bC7AB",
+                                   "role": "Wormhole NTT manager (LOCKING) — GEOD backing Solana GEOD",
+                                   "sources": ["https://docs.geodnet.com/geod-token/crosschain-between-polygon-and-solana "
+                                               "(search snippet, 2026-10-07)",
+                                               "https://github.com/Dedaub/monitoring-cli/blob/b5d5d8127b48383c76d1a7d950f03df8895f5c23/"
+                                               "packages/dedaub-skills/dedaub_skills/skills/dedaub-monitoring/references/"
+                                               "protocols/wormhole/ntt.md (L175, L328)"],
+                                   "not_custody": {"0x6762157b73941e36cEd0AEf54614DdE545d0F990":
+                                                   "Wormhole's shared NttManagerWithExecutor v1 helper (pass-through)"},
+                                   "solana_mint": "7JA5eZdCzztSfQbJvS8aVVxMFfd81Rs9VvwnocV1mKHu",
+                                   "status": "RECORDED, not yet in the set — the custody balance and Solana supply are "
+                                             "read by geod_residual first"},
+                # NO POLYGON STAKING CONTRACT (Jake, 2026-10-07): SuperHex stakes are not held in one Polygon contract —
+                # the hunt is closed; locked_tokens stays the staking-wallet read (contracts.staking_wallet_polygon).
+                "staking_contract_search": "CLOSED 2026-10-07 — no Polygon staking contract holds SuperHex stakes",
                 "decision": "WAS (to 2026-10-07): COINGECKO until the next run's figure is in — since Jake confirmed GEODNET's tokenomics "
                             "page (2026-10-07) the Team, Investor, Vendor/Marketing and Public sale wallets are "
                             "subtracted too (NONCIRCULATING_CANDIDATES, confirm_candidates). Jake's probe put ours "
@@ -20578,15 +20684,20 @@ CIRCULATING_POLICY = {
     "Plume": {"source": "supply.plume.org/supply `result` (automated)", "kind": "first_party",
               "definition": "Plume's own circulating of 10bn total", "staked": "not stated by Plume",
               "add_back": None, "previous": "the same — unchanged"},
-    "GEODNET": {"source": "GEODNET's own figure, 462M (Jake, 2026-10-07) — a dated manual row "
-                          "(manual_overrides.csv circulating_supply_first_party)", "kind": "first_party_manual",
-                "definition": "not published with a method; aggregators carry a FIXED 462,360,759 (CoinGecko, "
-                              "Kraken) — the exact figure is to be read off GEODNET's own page",
+    "GEODNET": {"source": "Blockworks' figure, 462M (app.blockworks.com/projects/geodnet; Jake, 2026-10-07) — a THIRD "
+                          "PARTY, equal to CoinGecko's fixed 462,360,759 and static while mining releases ~122K "
+                          "GEOD/day. GEODNET publishes NO circulating figure of its own (docs, token page, GitHub "
+                          "searched 2026-10-07). A dated manual row (circulating_supply_third_party)",
+                "kind": "third_party_reference",
+                "definition": "not published with a method; static",
+                "plan": "once the Solana side is resolved (bridge custody 0x2006B446… and Solana supply, geod_residual), "
+                        "our on-chain set — built only from wallets GEODNET's docs name — becomes primary, and the "
+                        "462M a labelled static cross-check (Jake, 2026-10-07)",
                 "staked": "not stated", "add_back": None,
                 "previous": "CoinGecko 462,360,759 less the un-netted Solana burn (~430M as the ratios used it); "
                             "the on-chain set reads ~516M (+11.7% on 462M) and is the cross-check",
                 "note": "the un-netted-burn adjustment (supply_unnetted_burn) applies to CoinGecko's figure only, "
-                        "never to GEODNET's own"},
+                        "never to the manual figure in use"},
     "Pendle": {"source": "Pendle's DOCUMENTED method (documentation@3cc3658 Tokenomics.md L24-33), computed on chain",
                "kind": "first_party_method",
                "definition": "total − sPENDLE − vePENDLE − Ecosystem Fund − Governance multisig − Team multisig "
@@ -20893,11 +21004,18 @@ def locked_excluded_from_circulating(project_name: str) -> float:
     return float(sum(e["tokens"] for e in spec.get("declared_exclusions") or () if e.get("locked")))
 
 
+# ratios_use values whose figure is a named series stored as spec["metric"] (an endpoint or a dated manual row): the
+# project's own figure, or — where the project publishes none and our set is unresolved — a labelled third party's.
+MANUAL_PRIMARY_USES = ("first_party", "third_party_reference")
+
+
 def circulating_primary_metric(project_name: str) -> str:
     """The circulating series the ratios use. THE POLICY (Jake, 2026-10-07): the project's OWN published figure
     wherever one exists, CoinGecko only where the project publishes nothing; our on-chain set is the independent
     cross-check, never the replacement. `ratios_use` states the choice per project (CIRCULATING_POLICY says why):
       "first_party"           the project's figure, stored as spec["metric"] (an endpoint or a dated manual row)
+      "third_party_reference" a third party's published figure, stored as spec["metric"], used only where the project
+                              publishes none and our on-chain set is not yet resolved (GEODNET, 2026-10-07)
       "onchain"               the on-chain set IS the project's documented method (Pendle) or a prior decision
       "coingecko"             the project publishes nothing: CoinGecko's circulating
       "coingecko_plus_staked" CoinGecko's figure excludes staked tokens: it + the staked amount, added back once
@@ -20909,7 +21027,7 @@ def circulating_primary_metric(project_name: str) -> str:
         return "circulating_supply"
     if use == "coingecko_plus_staked":
         return "circulating_supply_cg_plus_staked"
-    if use == "first_party" or spec.get("status") == "first_party":
+    if use in MANUAL_PRIMARY_USES or spec.get("status") == "first_party":
         return spec["metric"]
     if use == "onchain" or spec.get("status") == "established":
         return "circulating_supply_onchain"
@@ -22902,6 +23020,8 @@ _C_DEX_ONLY = _c_unv(
     "Market cap / DefiLlama DEX (+ perps) volume — DefiLlama is the only free chain-level DEX aggregate; its "
     "inputs (price, circulating) are checked in the input rows.")
 
+_SKY_NPS_MONTHS = tuple(f"2026-{m:02d}" for m in range(1, 10))   # Sky's own table, Jan-Sep 2026 (Jake, 2026-10-07)
+
 CREDIBILITY: dict = {
     # ---------------------------------------------------------------- Ethereum
     "Ethereum": {
@@ -23060,12 +23180,12 @@ CREDIBILITY: dict = {
         # ALL THREE REVENUE WALLETS SINCE THE BUYBACKS BEGAN (Jake, 2026-10-07: revenue.near.org "Wallet Breakdown
         # (All-time)" 3,786,229.6 NEAR; BUYBACK_START 2026-02-23 in DefiLlama's near-intents adapter, which mirrors
         # the page). Ours is native NEAR only, so it reads LOW by the wNEAR legs.
-        "in_buyback_wallets": _c_in_py("NEAR into the three revenue wallets since 2026-02-23 (native NEAR, NearBlocks)",
-                                       "sum_since", {"metrics": ("actual_buyback_tokens", "near_revenue_inflow_fe_tokens",
-                                                                 "near_revenue_inflow_1cs_tokens"),
-                                                     "since": "2026-02-23"},
-                                       _c_chk("Awaiting a reading of revenue.near.org's wallet breakdown.",
-                                              "manual reading: all-time NEAR into the three wallets")),
+        # Since 2026-10-07 14:17: the three wallets have no outflow except between themselves, so what they HOLD is
+        # what was bought — the combined daily close against the page's all-time figure.
+        "in_buyback_wallets": _c_in("NEAR held by the three revenue wallets (combined liquid close, NearBlocks)",
+                                    "buyback_fund_balance_eod", "now",
+                                    _c_chk("Awaiting a reading of revenue.near.org's wallet breakdown.",
+                                           "manual reading: all-time NEAR into the three wallets")),
         # (overnight 2026-10-06): DefiLlama's NEAR fees beside NearBlocks' own txn_fee (NEAR x same-day price).
         "in_fees": _c_in_py("Fees, last 30 days (DefiLlama)", "common_days_sum",
                             {"a": "fees_usd", "b": "fees_native_tokens", "days": 30, "side": "ours", "b_times_price": True},
@@ -23427,13 +23547,28 @@ CREDIBILITY: dict = {
             "record Sky's own monthly buyback amounts (forum.sky.money settlement posts) and compare month by month")),
         # NPS FROM THE API AGAINST THE MONTHS SKY REPORTED (2026-10-07): the same four months on both sides. Both are Sky's
         # own accounting, so a match says our definition (P&L net less Security and Maintenance) is Sky's.
-        "in_nps": _c_in_py("Net Protocol Surplus, May-Aug 2026 (Block Analitica P&L)", "sum_months",
-                           {"metric": "net_protocol_surplus_usd", "months": ("2026-05", "2026-06", "2026-07", "2026-08")},
+        "in_nps": _c_in_py("Net Protocol Surplus (remitted), Jan-Sep 2026 (Block Analitica P&L: revenue - expense - "
+                           "revenue_distribution)", "sum_months",
+                           {"metric": "net_protocol_surplus_usd", "months": _SKY_NPS_MONTHS},
                            {"formula": "sum_months", "tol": 2.0, "same_source": True,
-                            "args": {"metric": "net_protocol_surplus_usd_reported",
-                                     "months": ("2026-05", "2026-06", "2026-07", "2026-08")},
-                            "source": "the months Sky reported (insights.skyeco.com May/Jun; financial.skyeco.com "
-                                      "Jul/Aug, Jake 2026-09-29)"}, fmt=_C_USD),
+                            "args": {"metric": "net_protocol_surplus_usd_reported", "months": _SKY_NPS_MONTHS},
+                            "source": "Sky's own monthly table, 'Remitted to Sky Reserves' (Jake, 2026-10-07)",
+                            "note": "A month that differs by more than 2% is a Review Queue item against that month "
+                                    "(fetch/sky_accounting.py); August's earlier 15.75M was on another basis."},
+                           fmt=_C_USD),
+        # REVENUE ALLOCATION = SKY BUYBACK + USDS DISTRIBUTION (Jake, 2026-10-07): Block Analitica's monthly allocation
+        # against our flapper buyback ($) + the USDS minted to the lsSKY farm, the same complete months.
+        "in_revenue_allocation": _c_in_py(
+            "SKY buyback $ + USDS paid to the lsSKY farm, latest 3 complete months (ours, summed per month)",
+            "months_match", {"daily": ("actual_buyback_usd", "staking_rewards_usds_usd"),
+                             "monthly": "revenue_allocation_usd_ba", "side": "ours"},
+            {"formula": "months_match", "tol": 15.0,
+             "args": {"daily": ("actual_buyback_usd", "staking_rewards_usds_usd"),
+                      "monthly": "revenue_allocation_usd_ba", "side": "ref"},
+             "source": "Block Analitica P&L revenue_distribution less Security and Maintenance (Sky's Revenue Allocation)",
+             "note": "Ours counts SKY bought at the same-day price and the USDS the Splitter mints to the farm; the "
+                     "allocation also carries any other USDS distribution — ours reads LOW if there is one."},
+            fmt=_C_USD),
         # BLOCK ANALITICA'S CASH FLOW AS REFERENCES (2026-10-07): buyback spending beside our flapper buyback in dollars,
         # staking rewards beside the USDS minted to the lsSKY farm — the same complete months on both sides.
         "in_buyback_usd": _c_in_py("SKY buyback ($), latest 3 complete months: our flapper Exec rows summed per month",

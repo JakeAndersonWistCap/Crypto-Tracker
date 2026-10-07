@@ -1001,6 +1001,9 @@ def served_by(source: str, project: dict) -> set[str] | None:
     if source == "nearblocks":
         m = set((project.get("nearblocks") or {}).get("metrics") or {})
         m |= {f["metric"] for f in project.get("near_account_flows") or []}
+        bh = (project.get("nearblocks") or {}).get("balance_history")
+        if bh:                                   # NEAR's three wallets' daily close (2026-10-07 14:17)
+            m |= {bh["metric"], bh["flow"]}
     elif source == "pendle_api":
         se = project.get("spendle_epochs") or {}
         m = {se["metric"], se["apr_metric"]} if se else set()

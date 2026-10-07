@@ -4389,3 +4389,26 @@ SELECT date, metric, ROUND(value, 2) AS value, source, fetched_at
 -- CE2. THE DELETE.
 -- DELETE FROM metrics
 --  WHERE project = 'Sky' AND metric = 'emissions_tokens' AND source LIKE 'schedule:config%';
+
+-- ========================================================================================
+-- CF. NEAR: THE TRANSACTION-SCAN BUYBACK ROWS GIVE WAY TO THE THREE WALLETS' BALANCE CHANGE  2026-10-07
+--     Jake's run 2026-10-07 14:17: the three revenue wallets have no outflow except between themselves, so NEAR's
+--     buyback is now the daily change in their combined liquid close (buyback_fund_balance_eod, NearBlocks
+--     stats/balance; build_workbook._near_buyback_views). The scans that wrote actual_buyback_tokens (buyback wallet)
+--     and near_revenue_inflow_fe_tokens / near_revenue_inflow_1cs_tokens are retired; the view ignores the stored
+--     scan rows, and the two inflow metrics no longer exist. CF1 lists what goes; CF2 removes ONLY those rows.
+--     Run: python run_sql.py CF, then python run_sql.py --delete CF.
+-- ========================================================================================
+-- CF1. WHAT GOES: NEAR scan rows (source 'nearblocks', no balance-history tag) under the three scan metrics.
+SELECT metric, COUNT(*) AS rows, MIN(date) AS first, MAX(date) AS last, ROUND(SUM(value), 1) AS total
+  FROM metrics
+ WHERE project = 'Near'
+   AND metric IN ('actual_buyback_tokens', 'near_revenue_inflow_fe_tokens', 'near_revenue_inflow_1cs_tokens')
+   AND source = 'nearblocks'
+ GROUP BY metric ORDER BY metric;
+
+-- CF2. THE DELETE.
+-- DELETE FROM metrics
+--  WHERE project = 'Near'
+--    AND metric IN ('actual_buyback_tokens', 'near_revenue_inflow_fe_tokens', 'near_revenue_inflow_1cs_tokens')
+--    AND source = 'nearblocks';

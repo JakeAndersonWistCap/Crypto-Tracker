@@ -6,7 +6,12 @@ supplied 2026-10-07). Every response is {"data": ..., "status": 200, "success": 
 at full precision; history endpoints take group_by=day|month|quarter|year and label each period ("2026-05"). P&L and
 cash flow start 2025-01-01. Read monthly:
 
-  NET PROTOCOL SURPLUS — THE COMBINATION IS ESTABLISHED BY MATCHING, NOT ASSUMED (Jake, 2026-10-07 12:06)
+  NET PROTOCOL SURPLUS = revenue - expense - revenue_distribution ("Remitted to Sky Reserves") — CONFIRMED by Jake
+  against Sky's own monthly table (2026-10-07 afternoon: Jan-Sep 2026; e.g. Aug 31.85M - 18.74M - 2.48M = 10.63M),
+  after the 14:17 run matched May (9,709,132 vs 9,710,000) and June (10,807,203 vs 10,810,000). The formula is
+  DECLARED (spec nps_formula) and always stored; the comparison with the months Sky reported is logged each run and
+  a month beyond NPS_MATCH_TOL becomes a Review Queue item against that month — it never blocks the series.
+  (Before that confirmation the three combinations below were matched, and only a match was stored.)
       GET /v1/accounting/profit-and-loss/history/?group_by=month              -> [{date, type, amount}] per type
           (type: revenue | expense | revenue_distribution; amounts positive, the type carries the sign)
       GET /v1/accounting/profit-and-loss/history/?group_by=month&type=revenue_distribution
@@ -210,16 +215,36 @@ class SkyAccounting:
                 out.fail(SOURCE, name, f"{m}: {bt if isinstance(bt, str) else sm} — NOTHING STORED", TIER)
             elif bt is not None:
                 cands = nps_candidates(bt, sm)
-                chosen, table = choose_nps(cands, reported_nps(name))
-                if chosen is None:
-                    out.fail(SOURCE, name, f"{m}: NO combination meets every month Sky reported within "
-                                           f"{NPS_MATCH_TOL:.0%} — NOTHING STORED. {table}", TIER)
-                    out.gap(name, m, reason=f"Block Analitica's P&L: no combination of revenue / expense / "
-                                            f"revenue_distribution meets Sky's reported months — {table}",
-                            tiers_attempted="3", suggestion="Read the table: the definition moved, or a month differs.")
-                else:
-                    self._store(out, name, m, cands[chosen], last_complete, f"{SOURCE}:pnl.{chosen}",
-                                f"NPS = {chosen}, ESTABLISHED by matching Sky's reported months: {table}")
+                formula = spec.get("nps_formula", "revenue-expense-revenue_distribution")
+                reported = reported_nps(name)
+                _chosen, table = choose_nps(cands, reported)
+                self._store(out, name, m, cands[formula], last_complete, f"{SOURCE}:pnl.{formula}",
+                            f"NPS = {formula} (declared; confirmed against Sky's own table). Against the months Sky "
+                            f"reported: {table}")
+                for mo in sorted(reported):                  # a reported month beyond tolerance: review that month
+                    v = cands[formula].get(mo)
+                    if v is not None and reported[mo] and abs(v / reported[mo] - 1) > NPS_MATCH_TOL \
+                            and pd.Period(mo, "M") <= last_complete:
+                        out.review_item(name, m, "nps_month_differs_from_reported", "review", value=v,
+                                        prior_value=reported[mo], date=month_end(mo), source=f"{SOURCE}:pnl.{formula}",
+                                        tier=TIER, basis=f"{mo}: Block Analitica {formula} {v:,.0f} vs the reported "
+                                                         f"{reported[mo]:,.0f} ({v / reported[mo] - 1:+.1%}) — re-check "
+                                                         f"the reported month at source")
+                # REVENUE ALLOCATION (SKY buyback + USDS distribution) = revenue_distribution less Security and
+                # Maintenance — set beside our flapper buyback $ + the USDS minted to the lsSKY farm, month by month.
+                alloc_m = spec["metrics"].get("revenue_allocation")
+                if alloc_m:
+                    dist, sec = {}, monthly_sum(sm)
+                    for r in bt:
+                        if str(r.get("type")) == "revenue_distribution":
+                            try:
+                                dist[str(r["date"])] = dist.get(str(r["date"]), 0.0) + float(r["amount"])
+                            except (KeyError, TypeError, ValueError):
+                                continue
+                    self._store(out, name, alloc_m, {k: v - sec.get(k, 0.0) for k, v in dist.items()}, last_complete,
+                                f"{SOURCE}:pnl.revenue_distribution-security_and_maintenance",
+                                "Revenue Allocation = revenue_distribution less Security and Maintenance (the SKY "
+                                "buyback + the USDS distribution)")
             # 2-3. CASH-FLOW CATEGORIES (outflows are negative; stored as positive spending)
             for key, category in (("buyback", "Buyback Spending"), ("staking", "Staking Rewards")):
                 m = spec["metrics"].get(key)

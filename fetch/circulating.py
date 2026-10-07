@@ -123,7 +123,7 @@ def _check_first_party_against_set(out, h: pd.DataFrame, name: str, spec: dict) 
     computed (GEODNET), the latest own figure is set against the on-chain set on the same day — a hand-entered monthly
     figure holds for 45 days. Beyond the circulating row's tolerance (5% for a partial set) the PROJECT FIGURE is
     flagged for review; it is not replaced."""
-    if spec.get("ratios_use") != "first_party" or spec.get("status") not in ("established", "partial"):
+    if spec.get("ratios_use") not in config.MANUAL_PRIMARY_USES or spec.get("status") not in ("established", "partial"):
         return
     own, onchain = _daily(h, name, spec["metric"]), series(h, name)
     if own.empty or onchain.empty:
@@ -138,11 +138,12 @@ def _check_first_party_against_set(out, h: pd.DataFrame, name: str, spec: dict) 
     tol = 0.02 if spec["status"] == "established" else 0.05
     diff = float(onchain.iloc[-1]) / fp - 1
     if abs(diff) > tol:
-        out.review_item(name, "circulating_supply_first_party", "first_party_vs_onchain_set", "review",
+        who = "the project's own" if spec.get("ratios_use") == "first_party" else "a THIRD PARTY's (labelled)"
+        out.review_item(name, spec["metric"], "first_party_vs_onchain_set", "review",
                         value=fp, prior_value=float(onchain.iloc[-1]), date=day, source=spec["metric"], tier=2,
-                        basis=f"the project's own circulating {fp:,.0f} (dated {prior.index[-1].date()}) vs our "
+                        basis=f"{who} circulating in use {fp:,.0f} (dated {prior.index[-1].date()}) vs our "
                               f"{spec['status']} on-chain set {float(onchain.iloc[-1]):,.0f} on {day.date()}: the set "
-                              f"reads {diff:+.2%}, beyond ±{tol:.0%}. The project's figure stays primary and is "
+                              f"reads {diff:+.2%}, beyond ±{tol:.0%}. The figure in use stays primary and is "
                               f"flagged for review. Missing from the set: {spec.get('missing', 'n/a')}")
 
 

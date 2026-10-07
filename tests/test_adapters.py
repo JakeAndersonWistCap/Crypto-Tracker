@@ -8343,74 +8343,35 @@ def test_the_offline_checks_cover_H1_to_H3_and_pin_their_paired_reads_to_one_blo
 
 
 def test_nps_stores_months_only_and_reconciles_them_against_the_published_quarter():
-    """Item 2. Sky publishes NPS monthly AND quarterly, and the quarterly figure ALREADY CONTAINS
-    the months. Both in one flow series makes a 90-day window ending June sum May $9.71m + June
-    $10.81m + Q2 $33.29m = $53.81m against a true $33.29m — 62% over — and every implied-buyback
-    figure on the A3 tab is computed from it.
-
-    THE MECHANICAL HALF OF THE SAME PROBLEM: June's month-end and Q2's quarter-end are the same
-    calendar day, and the store keys on (date, project, metric). The two could never have
-    coexisted in the series at all.
-    """
+    """Item 2 (2026-09), revised 2026-10-07. The reference months are Sky's OWN monthly table, "Remitted to Sky
+    Reserves" (revenue - expenses - revenue allocation), Jan-Sep 2026 — August's earlier 15.75M was on another basis
+    and is replaced by 10.63M; September (7.15M) closes the pending item. Quarters stay references and are never
+    stored. The months-to-quarter reconciliation is RETIRED: Sky's quarterlies (Q1 46.04M, Q2 33.29M) are revenue -
+    expenses BEFORE the allocation (the table: 46.32M, 33.28M), the months are after it."""
     import csv
     from pathlib import Path
-    import build_workbook as bw
-
     rows = [r for r in csv.DictReader(
         line for line in (Path(__file__).resolve().parent.parent / "manual_overrides.csv")
         .read_text(encoding="utf-8").splitlines() if not line.startswith("#"))
         if r["metric"] == "net_protocol_surplus_usd_reported"]
-    # July and August added 2026-09-29 from financial.skyeco.com (Jake's reading) — still months. Since 2026-10-07 the
-    # hand-entered months are Sky's REPORTED figures (a reference); net_protocol_surplus_usd is Block Analitica's.
-    assert {r["date"] for r in rows} == {"2026-05-31", "2026-06-30", "2026-07-31", "2026-08-31"}, \
-        f"months only — the quarters and the year are references now: {[r['date'] for r in rows]}"
-    assert {float(r["value"]) for r in rows} == {9_710_000.0, 10_810_000.0, 10_520_000.0, 15_750_000.0}
-
+    assert [r["date"] for r in rows] == [str(pd.Period(f"2026-{m:02d}", "M").end_time.date()) for m in range(1, 10)]
+    vals = {r["date"][:7]: float(r["value"]) for r in rows}
+    assert vals["2026-08"] == 10_630_000 and vals["2026-09"] == 7_150_000 and vals["2026-01"] == 785_460
     ref = config.PROJECT_BY_NAME["Sky"]["net_protocol_surplus_reference"]
+    table = ref["sky_monthly_table_2026_10_07"]["months"]
+    for mo, t in table.items():                    # the table is internally consistent and is what is stored
+        assert abs(t["revenue"] - t["expenses"] - t["allocation"] - t["remitted"]) <= 15_000, mo
+        assert vals[mo] == t["remitted"], mo
+    q1 = sum(table[m]["revenue"] - table[m]["expenses"] for m in ("2026-01", "2026-02", "2026-03"))
+    q2 = sum(table[m]["revenue"] - table[m]["expenses"] for m in ("2026-04", "2026-05", "2026-06"))
     assert [q["usd"] for q in ref["quarterly"]] == [46_040_000, 33_290_000]
-    assert ref["annual"][0]["usd"] == 53_000_000
-    # APRIL IS DERIVED AND STAYS OUT OF THE SERIES. Stored as a flow it would be
-    # indistinguishable from a sourced figure, and it would make the quarter reconcile against
-    # itself — which is the one thing the reconciliation must not do.
-    apr = ref["april_2026_derived"]
-    assert apr["usd"] == 12_770_000 and abs(33_290_000 - 9_710_000 - 10_810_000 - apr["usd"]) < 1
-    assert "NOT STORED" in apr["status"]
-    assert not [r for r in rows if r["date"].startswith("2026-04")], "April must not be in the series"
-
-    # THE CADENCE IS DECLARED, because nothing else can say so: series_granularity resolves from
-    # a contract or a Dune date_col, and a hand-entered series has neither.
+    assert abs(q1 / 46_040_000 - 1) < 0.01 and abs(q2 / 33_290_000 - 1) < 0.001, "the quarterlies are pre-allocation"
+    assert "before the revenue allocation" in ref["quarterly_basis"]
+    assert config.period_reconciliation("Sky", "net_protocol_surplus_usd") is None
+    assert "superseded" in ref["april_2026_derived"]
     assert config.series_granularity("Sky", "net_protocol_surplus_usd") == "monthly"
-
-    # ===== THE RECONCILIATION. =====
-    recon = config.period_reconciliation("Sky", "net_protocol_surplus_usd")
-    assert recon and recon["requires_complete_period"] is True
-
-    def check(months):
-        s = pd.Series({pd.Timestamp(d): v for d, v in months.items()}).sort_index()
-        return bw._reconcile_periods("Sky", "net_protocol_surplus_usd", s, recon)
-
-    # AS THINGS STAND — May and June, no April — NO quarter is complete, so the check is ARMED
-    # AND IDLE. Two months of three against the quarter's own total is guaranteed to disagree,
-    # and flagging that reports a missing month as an error in the months that are there.
-    idle = check({"2026-05-31": 9_710_000, "2026-06-30": 10_810_000})
-    assert idle["status"] == "idle" and "guaranteed to disagree" in idle["why"], idle
-
-    # WITH APRIL PRESENT AND CORRECT, the quarter reconciles.
-    ok = check({"2026-04-30": 12_770_000, "2026-05-31": 9_710_000, "2026-06-30": 10_810_000})
-    assert ok["status"] == "ok" and ok["periods"] == ["2026-Q2"], ok
-
-    # AND A MIS-TRANSCRIBED MONTH IS CAUGHT, with the arithmetic on the row rather than a bare flag.
-    bad = check({"2026-04-30": 12_770_000, "2026-05-31": 97_100_000, "2026-06-30": 10_810_000})
-    assert bad["status"] == "disagrees", bad
-    assert bad["detail"][0]["off_by"] == pytest_approx(87_390_000), bad["detail"]
-    band, why = bw.confidence_for("Sky", "net_protocol_surplus_usd",
-                                  {"status": "manual", "source": "manual", "n_points": 3,
-                                   "covered_days": None, "window_days": None,
-                                   "entered_on": "2026-09-22", "reconciliation": bad},
-                                  pd.Timestamp("2026-09-22"))
-    assert band == "AMBER" and "DOES NOT RECONCILE" in why and "120,680,000" in why, (band, why)
-    print("NPS ok: months only, quarters as references, April derived and unstored, "
-          "reconciliation idle until a quarter is complete and loud when one disagrees")
+    import completeness_report as cr
+    assert ("Sky", "net_protocol_surplus_usd") not in cr.DECISIONS, "September is in: the NEEDS JAKE item is closed"
 
 
 def pytest_approx(x, tol=1.0):
@@ -14361,7 +14322,7 @@ def test_near_account_flow_sums_inflow_excluding_internal_hops(monkeypatch):
     ]
     http = _NearFlowHttp({None: {"cursor": None, "txns": rows}})
     out = FetchOutput()
-    nearblocks.NearBlocks(http=http).run([config.PROJECT_BY_NAME["Near"]], 35, out)
+    nearblocks.NearBlocks(http=http).run([_near_buyback_flow_only()], 35, out)
     df = out.frame()
     flow = df[(df.metric == "actual_buyback_tokens") & (df.source == "nearblocks")]
     assert abs(flow["value"].iloc[0] - 7.5) < 1e-9, \
@@ -14374,11 +14335,22 @@ def test_near_account_flow_sums_inflow_excluding_internal_hops(monkeypatch):
 
 
 def _near_buyback_flow_only() -> dict:
-    """NEAR with only its buyback-wallet flow — the NearBlocks tests below were written for one flow; the other two
-    revenue wallets (2026-10-07) run the same code path with their own state files."""
+    """NEAR with only its (retired, 2026-10-07 14:17) buyback-wallet flow and no balance history — the NearBlocks flow
+    code still serves any project declaring near_account_flows, and these tests exercise it."""
     p = dict(config.PROJECT_BY_NAME["Near"])
-    p["near_account_flows"] = [f for f in p["near_account_flows"] if f["metric"] == "actual_buyback_tokens"]
+    p["near_account_flows"] = [f for f in p["near_account_flows_retired"] if f["metric"] == "actual_buyback_tokens"]
+    p["nearblocks"] = {k: v for k, v in p["nearblocks"].items() if k != "balance_history"}
     return p
+
+
+def _near_with_retired_flow(monkeypatch) -> dict:
+    """The live config's Near, reversibly given its retired buyback flow back (and no balance history) — for tests
+    that drive the flow code through the whole pipeline."""
+    near = config.PROJECT_BY_NAME["Near"]
+    monkeypatch.setitem(near, "near_account_flows",
+                        [f for f in near["near_account_flows_retired"] if f["metric"] == "actual_buyback_tokens"])
+    monkeypatch.delitem(near["nearblocks"], "balance_history")
+    return near
 
 
 
@@ -14410,7 +14382,7 @@ def test_near_account_flow_stores_nothing_when_the_live_shape_differs(monkeypatc
     monkeypatch.setattr(scrape, "robots_verdict", lambda url: (True, "test"))
     http = _NearFlowHttp({None: {"cursor": None, "txns": [{"unexpected": "shape"}]}})
     out = FetchOutput()
-    nearblocks.NearBlocks(http=http).run([config.PROJECT_BY_NAME["Near"]], 35, out)
+    nearblocks.NearBlocks(http=http).run([_near_buyback_flow_only()], 35, out)
     df = out.frame()
     assert df[(df.metric == "actual_buyback_tokens") & (df.source == "nearblocks")].empty
     gaps = {g["metric"]: g["reason"] for g in out.gaps}
@@ -16654,6 +16626,7 @@ def test_seed_nearblocks_finishes_the_first_read_in_one_run_and_records_no_gaps(
     import token_metrics
     from fetch import nearblocks, scrape
     from fetch.base import today
+    _near_with_retired_flow(monkeypatch)
 
     monkeypatch.setenv("NEARBLOCKS_API_KEY", "nb-secret-123")
     monkeypatch.setattr(scrape, "robots_verdict", lambda url: (True, "test"))
@@ -17116,8 +17089,9 @@ def test_geodnet_supply_denominators_net_out_the_burn_coingecko_does_not():
         def D(self, r, m, w):
             return f"D[{m}]"
     expr = bw._circ(R(), 5, config.PROJECT_BY_NAME["GEODNET"])
-    # POLICY 2026-10-07: GEODNET's OWN figure first, used as published; only the CoinGecko fallback is netted
-    assert expr == ("IF(ISNUMBER(D[circulating_supply_first_party]),D[circulating_supply_first_party],"
+    # 2026-10-07: GEODNET's figure in use (Blockworks' 462M, a labelled third party) is used as published; only the
+    # CoinGecko fallback is netted
+    assert expr == ("IF(ISNUMBER(D[circulating_supply_third_party]),D[circulating_supply_third_party],"
                     "IF(ROUND(D[total_supply]-(D[total_supply_gross]-D[burn_address_balance]),2)>=0,"
                     "D[circulating_supply]-ROUND(D[total_supply]-(D[total_supply_gross]-"
                     "D[burn_address_balance]),2),NA()))"), expr
@@ -17219,7 +17193,7 @@ def test_a_nearblocks_read_that_asks_further_back_than_the_kept_history_re_reads
     from fetch import nearblocks
     from fetch.logcache import LogCache
 
-    near = config.PROJECT_BY_NAME["Near"]
+    near = _near_with_retired_flow(monkeypatch)
     flow = near["near_account_flows"][0]
     f = LogCache().root / f"nearblocks-{flow['account']}.json"
     f.parent.mkdir(parents=True, exist_ok=True)
@@ -19227,7 +19201,7 @@ def test_a_narrow_partial_nearblocks_read_never_caps_the_seeds_wider_window(monk
     from fetch import nearblocks, scrape
     from fetch.base import today
     from fetch.logcache import LogCache
-    near = config.PROJECT_BY_NAME["Near"]
+    near = _near_with_retired_flow(monkeypatch)
     flow = near["near_account_flows"][0]
     f = LogCache().root / f"nearblocks-{flow['account']}.json"
     f.parent.mkdir(parents=True, exist_ok=True)
@@ -25353,7 +25327,7 @@ def test_circulating_decisions_are_applied_consistently_and_coingecko_free_float
     chosen = {n: bw.chosen_circulating_metric(config.PROJECT_BY_NAME[n]) for n in config.CIRCULATING_POLICY}
     assert chosen["Pendle"] == "circulating_supply_onchain"            # Pendle's documented method, staked added back
     assert chosen["Aerodrome"] == "circulating_supply_cg_plus_staked"  # CoinGecko + veAERO, added back once
-    assert chosen["GEODNET"] == "circulating_supply_first_party"       # GEODNET's own 462M
+    assert chosen["GEODNET"] == "circulating_supply_third_party"       # Blockworks' 462M (GEODNET publishes none)
     assert chosen["Ethereum"] == "circulating_supply_onchain"
     for n in ("Hyperliquid", "Near", "Aethir", "Plume"):
         assert chosen[n] == "circulating_supply_first_party", n
@@ -25422,7 +25396,7 @@ def test_headline_diff_and_manual_form_make_run_on_a_store(tmp_path, monkeypatch
     assert config.CIRCULATING_ONCHAIN["Aerodrome"]["ratios_use"] == "coingecko_plus_staked", "the decision is restored"
     assert hd.main(["--only", "circulating_policy"]) == 0
     assert "HEADLINES MOVING BEYOND 10%" in capsys.readouterr().out
-    assert config.CIRCULATING_ONCHAIN["GEODNET"]["ratios_use"] == "first_party"
+    assert config.CIRCULATING_ONCHAIN["GEODNET"]["ratios_use"] == "third_party_reference"
     assert config.CIRCULATING_ONCHAIN["Sky"]["ratios_use"] == "coingecko"
     assert config.CIRCULATING_ONCHAIN["Pendle"]["status"] == "established"
     form = tmp_path / "form.csv"
@@ -26139,23 +26113,56 @@ def test_morpho_urd_claims_join_the_measured_emissions_and_bridged_supply_is_cou
     assert "0x50d3d6fD7518682155E3C1B65FDD50e1b35649D9" in note and "0x9D03bb2092270648d7480049d0E58d2FcF0E5123" in note
 
 
-def test_near_three_revenue_wallets_are_measured_and_compared_with_the_page():
-    """A2 (Jake, 2026-10-07): all three wallets the page counts; their sum since the buybacks began vs 3,786,229.6."""
-    import credibility as cred
+def test_near_three_revenue_wallets_are_measured_and_compared_with_the_page(monkeypatch):
+    """Jake's run 2026-10-07 14:17: NEAR's buyback = the change in the THREE revenue wallets' combined liquid close
+    (internal moves cancel; the only outflow is consolidation between them). NearBlocks stats/balance, three calls a
+    run; a day is stored only once every wallet has a balance; the view differences the sum; the credibility row sets
+    what they hold against the page's all-time 3,786,229.6 NEAR. The transaction scans are retired."""
+    import build_workbook as bw
     import check_offline_items as coi
-    flows = config.PROJECT_BY_NAME["Near"]["near_account_flows"]
-    assert {f["account"] for f in flows} == set(coi.NEAR_REVENUE_WALLETS)
-    for f in flows:
-        others = set(coi.NEAR_REVENUE_WALLETS) - {f["account"]}
-        assert others == set(f["exclude_senders"]), f["account"]
-    long = pd.DataFrame([(pd.Timestamp("2026-02-20"), "Near", "actual_buyback_tokens", 999.0),
-                         (pd.Timestamp("2026-03-01"), "Near", "actual_buyback_tokens", 10.0),
-                         (pd.Timestamp("2026-03-01"), "Near", "near_revenue_inflow_fe_tokens", 20.0),
-                         (pd.Timestamp("2026-04-01"), "Near", "near_revenue_inflow_1cs_tokens", 5.0)],
-                        columns=["date", "project", "metric", "value"])
-    spec = config.CREDIBILITY["Near"]["in_buyback_wallets"]["ours"]
-    v, _d, _how = cred.FORMULAS[spec["py"]]("Near", {}, long, pd.Timestamp("2026-10-07"), **spec["args"])
-    assert v == 35.0
+    from fetch import nearblocks, scrape
+    from fetch.base import FetchOutput
+    near = config.PROJECT_BY_NAME["Near"]
+    bh = near["nearblocks"]["balance_history"]
+    assert set(bh["accounts"]) == set(coi.NEAR_REVENUE_WALLETS) and not near.get("near_account_flows")
+    assert config.stock_for_flow("Near", "actual_buyback_tokens") == "buyback_fund_balance_eod"
+    assert "HOLD" in near["destination_decision"]["classification"]
+    monkeypatch.setenv("NEARBLOCKS_API_KEY", "nb-secret-123")
+    monkeypatch.setattr(scrape, "robots_verdict", lambda url: (True, "test"))
+    monkeypatch.setattr(nearblocks, "today", lambda: pd.Timestamp("2026-10-07"))
+    y = 10 ** 24
+    hist = {"fefundsadmin.sputnik-dao.near": [("2026-10-01", 100), ("2026-10-03", 130), ("2026-10-06", 150)],
+            "buybacks.multisignature.near": [("2026-10-02", 50), ("2026-10-05", 90), ("2026-10-07", 999)],
+            "1csfundsadmin.sputnik-dao.near": [("2026-09-20", 40), ("2026-10-05", 0)]}
+    calls = []
+
+    class H:
+        def get(self, url, params=None, headers=None):
+            calls.append(url)
+            for acct, rows in hist.items():
+                if f"/accounts/{acct}/stats/balance" in url:
+                    return {"data": [{"date": d, "amount": str(v * y)} for d, v in rows]}
+            return {"data": []}                       # the daily stats: not this test's subject
+    out = FetchOutput()
+    nb = nearblocks.NearBlocks(http=H(), last_dates={("Near", m): "2026-10-06" for m in near["nearblocks"]["metrics"]})
+    nb.run([near], 35, out)
+    assert sum("/stats/balance" in u for u in calls) == 3
+    f = out.frame()
+    eod = f[f.metric == "buyback_fund_balance_eod"].set_index("date")["value"]
+    # from 10-02 (the last wallet's first day) to 10-06 (today, 10-07, is still moving)
+    assert dict(eod) == {pd.Timestamp("2026-10-02"): 190.0, pd.Timestamp("2026-10-03"): 220.0,
+                         pd.Timestamp("2026-10-04"): 220.0, pd.Timestamp("2026-10-05"): 220.0,
+                         pd.Timestamp("2026-10-06"): 240.0}, "1cs -> buybacks consolidation on 10-05 cancels"
+    g = _grp([(d.strftime("%Y-%m-%d"), "Near", "buyback_fund_balance_eod", v, "nearblocks") for d, v in eod.items()]
+             + [("2026-10-06", "Near", "price_usd", 2.0, "coingecko"),
+                ("2026-10-03", "Near", "actual_buyback_tokens", 5.0, "nearblocks")])
+    bw._near_buyback_views(g)
+    bb = g[("Near", "actual_buyback_tokens")].set_index("date")["value"]
+    assert dict(bb) == {pd.Timestamp("2026-10-03"): 30.0, pd.Timestamp("2026-10-04"): 0.0,
+                        pd.Timestamp("2026-10-05"): 0.0, pd.Timestamp("2026-10-06"): 20.0}, "the scan row is superseded"
+    assert list(g[("Near", "actual_buyback_usd")]["value"]) == [40.0]
+    spec = config.CREDIBILITY["Near"]["in_buyback_wallets"]
+    assert spec["ours"] == {"metric": "buyback_fund_balance_eod", "window": "now"}
     assert coi.near_buyback_wallets in coi.CHECKS and coi.sky_ba_endpoints in coi.CHECKS
     assert "X-API-Key" in config.SOURCE_REGISTER["revenue-dashboard-api-production.up.railway.app"]["key"]
 
@@ -26242,8 +26249,7 @@ def test_sky_accounting_reads_monthly_nps_buyback_and_staking_from_block_analiti
     monkeypatch.setattr(scrape, "robots_verdict", lambda url: (True, "robots.txt read (HTTP 404 = allowed)"))
     monkeypatch.setattr(sa, "today", lambda: pd.Timestamp("2026-10-07"))
     reported = sa.reported_nps("Sky")
-    assert reported == {"2026-05": 9_710_000.0, "2026-06": 10_810_000.0, "2026-07": 10_520_000.0,
-                        "2026-08": 15_750_000.0}
+    assert reported["2026-08"] == 10_630_000.0 and len(reported) == 9      # Sky's own table, Jan-Sep 2026
     sm = {"2026-05": 1.0e6, "2026-06": 1.2e6, "2026-07": 0.9e6, "2026-08": 1.1e6, "2026-09": 1.0e6}
     calls, state = [], {"rev_bias": 0.0}
 
@@ -26258,9 +26264,10 @@ def test_sky_accounting_reads_monthly_nps_buyback_and_staking_from_block_analiti
                 rows = []
                 for m in ("2026-05", "2026-06", "2026-07", "2026-08", "2026-09", "2026-10"):
                     nps = reported.get(m, 12e6) + state["rev_bias"]
-                    rows += [{"date": m, "type": "revenue", "amount": str(30e6 + nps + sm.get(m, 0))},
+                    dist = 5e6 + sm.get(m, 0)                   # Revenue Allocation 5M + Security and Maintenance
+                    rows += [{"date": m, "type": "revenue", "amount": str(30e6 + nps + dist)},
                              {"date": m, "type": "expense", "amount": "30000000"},
-                             {"date": m, "type": "revenue_distribution", "amount": str(5e6)}]
+                             {"date": m, "type": "revenue_distribution", "amount": str(dist)}]
                 return {"data": rows, "status": 200, "success": True}
             if url.endswith("/cash-flow/items/history/") and params["category"] == "Buyback Spending":
                 return {"data": [{"date": "2026-09", "source": "buyback", "category": "Buyback Spending",
@@ -26290,9 +26297,11 @@ def test_sky_accounting_reads_monthly_nps_buyback_and_staking_from_block_analiti
     sa.SkyAccounting(http=H()).run([config.PROJECT_BY_NAME["Sky"]], 90, out)
     f = out.frame()
     nps = f[f.metric == "net_protocol_surplus_usd"].set_index("date")
-    assert nps.loc[pd.Timestamp("2026-08-31"), "value"] == _pytest.approx(15_750_000.0)
+    assert nps.loc[pd.Timestamp("2026-08-31"), "value"] == _pytest.approx(10_630_000.0)
     assert pd.Timestamp("2026-10-31") not in nps.index, "October is incomplete"
-    assert set(nps["source"]) == {"sky_accounting:pnl.revenue-expense-security_and_maintenance"}
+    assert set(nps["source"]) == {"sky_accounting:pnl.revenue-expense-revenue_distribution"}
+    alloc = f[f.metric == "revenue_allocation_usd_ba"].set_index("date")["value"]
+    assert alloc[pd.Timestamp("2026-08-31")] == _pytest.approx(5e6), "distribution less Security and Maintenance"
     bb = f[f.metric == "buyback_spending_usd_ba"].set_index("date")["value"]
     assert dict(bb) == {pd.Timestamp("2026-09-30"): 10.0}
     assert list(f[f.metric == "staking_rewards_usd_ba"].value) == [3.0]
@@ -26307,13 +26316,15 @@ def test_sky_accounting_reads_monthly_nps_buyback_and_staking_from_block_analiti
     assert config.series_granularity("Sky", "net_protocol_surplus_usd") == "monthly"
     assert config.CREDIBILITY["Sky"]["in_nps"]["ref"]["args"]["metric"] == "net_protocol_surplus_usd_reported"
     rows = [ln for ln in open("manual_overrides.csv") if ",Sky,net_protocol_surplus_usd" in ln]
-    assert len(rows) == 4 and all(",Sky,net_protocol_surplus_usd_reported," in ln for ln in rows)
-    # NO combination meets the reported months (every month 5% off): NPS is not stored, the table is printed
+    assert len(rows) == 9 and all(",Sky,net_protocol_surplus_usd_reported," in ln for ln in rows)
+    # THE FORMULA IS DECLARED (confirmed by Sky's table): a month off the reported figure is still stored, and the
+    # month goes to the Review Queue to be re-checked at source
     state["rev_bias"] = 600_000.0
     out = FetchOutput()
     sa.SkyAccounting(http=H()).run([config.PROJECT_BY_NAME["Sky"]], 90, out)
-    assert out.frame()[lambda d: d.metric == "net_protocol_surplus_usd"].empty
-    assert any("NO combination meets" in e.message for e in out.log if e.status == "failed")
+    assert not out.frame()[lambda d: d.metric == "net_protocol_surplus_usd"].empty
+    flagged = [r for r in out.review if r["reason"] == "nps_month_differs_from_reported"]
+    assert len(flagged) == 5 and "re-check the reported month at source" in flagged[0]["basis"]   # May-Sep answered
     # the cumulative-buyback row: the stock's rise vs our flow over the same span
     long = pd.DataFrame({"date": pd.to_datetime(["2026-10-01", "2026-10-03", "2026-10-02", "2026-10-03"]),
                          "project": "Sky", "metric": ["sky_cumulative_buyback_ba"] * 2 + ["actual_buyback_tokens"] * 2,
@@ -26355,7 +26366,7 @@ def test_circulating_policy_project_figure_first_with_the_onchain_set_as_cross_c
               *[(d, "GEODNET", "total_supply_gross", 1e9, "chain") for d in ("2026-10-06", "2026-10-07", "2026-10-08")],
               *[(d, "GEODNET", "burn_address_balance", 68.5e6, "chain") for d in
                 ("2026-10-06", "2026-10-07", "2026-10-08")],
-              ("2026-10-07", "GEODNET", "circulating_supply_first_party", 462e6, "manual")])
+              ("2026-10-07", "GEODNET", "circulating_supply_third_party", 462e6, "manual")])
     bw._market_cap_views(g)
     mc = g[("GEODNET", "market_cap_usd")].set_index("date")["value"]
     assert mc[pd.Timestamp("2026-10-07")] == _pytest.approx(0.10 * 462e6), "own figure, no burn adjustment"
@@ -26363,7 +26374,7 @@ def test_circulating_policy_project_figure_first_with_the_onchain_set_as_cross_c
     assert mc[pd.Timestamp("2026-10-06")] == _pytest.approx(0.10 * (462_360_759.0 - 30e6)), "CoinGecko, netted"
     # 3. the credibility row: GEODNET's figure against our partial on-chain set (5%)
     spec = cred.circulating_input("GEODNET")
-    assert spec["ours"]["metric"] == "circulating_supply_first_party"
+    assert spec["ours"]["metric"] == "circulating_supply_third_party"
     assert spec["ref"]["metric"] == "circulating_supply_onchain" and spec["ref"]["tol"] == 5.0
     assert cred.circulating_input("Aerodrome")["ref"]["metric"] == "circulating_supply_onchain"
     assert cred.circulating_input("Uniswap")["ref"] == {**cred.circulating_input("Uniswap")["ref"], "tol": 2.0,
@@ -26372,7 +26383,7 @@ def test_circulating_policy_project_figure_first_with_the_onchain_set_as_cross_c
     gs = config.circulating_onchain("GEODNET")
     d = pd.Timestamp("2026-10-07")
     rows = [dict(date=d, project="GEODNET", metric=gs["total"], value=1e9, source="x"),
-            dict(date=d, project="GEODNET", metric="circulating_supply_first_party", value=462e6, source="manual")]
+            dict(date=d, project="GEODNET", metric="circulating_supply_third_party", value=462e6, source="manual")]
     rows += [dict(date=d, project="GEODNET", metric=m, value=v, source="x")
              for m, v in zip(gs["subtract"], [68.5e6, 100e6, 315.5e6, 0, 0, 0][:len(gs["subtract"])])]
     h = pd.DataFrame(rows)
@@ -26380,22 +26391,20 @@ def test_circulating_policy_project_figure_first_with_the_onchain_set_as_cross_c
     C.check(out, h, [config.PROJECT_BY_NAME["GEODNET"]])
     fp = [r for r in out.review if r["reason"] == "first_party_vs_onchain_set"]
     assert len(fp) == 1 and "+11.69%" in fp[0]["basis"] and "stays primary" in fp[0]["basis"]
+    assert "THIRD PARTY" in fp[0]["basis"] and fp[0]["metric"] == "circulating_supply_third_party"
 
 
-def test_near_buyback_probe_paces_reads_receipts_and_resumes(tmp_path, monkeypatch, capsys):
-    """Jake's run 2026-10-07 12:06: two wallets failed with HTTP 429 (free plan, 6 calls/min) and fefunds' IN stopped at
-    2026-03 while its balance kept rising (transfers inside other transactions are receipts, not txns). The probe is
-    paced by NearBlocks' own pacer, waits out a 429, reads receipts addressed to the wallet (gas refunds and hops
-    between the three excluded), and caches pages so a stopped run resumes."""
+def test_near_buyback_probe_reads_the_three_balances_paced(monkeypatch, capsys):
+    """Jake's runs 2026-10-07: the probe 429'd at the free plan's 6 calls/min (12:06), and its receipts read returned
+    0 against balance rises of 100K+ a month (14:17) — dropped. It now reads each wallet's balance and daily close
+    history (six calls, paced, a 429 waited out) and prints the COMBINED month-end and monthly change."""
     import check_offline_items as coi
     from fetch import nearblocks as nb
     monkeypatch.setenv("NEARBLOCKS_API_KEY", "k")
-    monkeypatch.setattr(coi, "NEAR_PROBE_CACHE", tmp_path / "probe.json")
     monkeypatch.setattr(coi.time, "sleep", lambda s: None)
     clock = {"t": 0.0}
     monkeypatch.setattr(nb, "_clock", lambda: clock["t"])
     monkeypatch.setattr(nb, "_sleep", lambda sec: clock.__setitem__("t", clock["t"] + sec))
-    ns = lambda d: str(int(pd.Timestamp(d).value))  # noqa: E731
     seen, first = [], {"429": True}
 
     class Resp:
@@ -26408,37 +26417,84 @@ def test_near_buyback_probe_paces_reads_receipts_and_resumes(tmp_path, monkeypat
         def raise_for_status(self):
             if self.status_code >= 400:
                 raise RuntimeError(f"HTTP {self.status_code}")
+    closes = {"fefundsadmin.sputnik-dao.near": [("2026-08-31", 1.0e6), ("2026-09-30", 1.2e6)],
+              "buybacks.multisignature.near": [("2026-08-31", 0.5e6), ("2026-09-30", 1.4e6)],
+              "1csfundsadmin.sputnik-dao.near": [("2026-08-31", 0.5e6), ("2026-09-30", 0.0)]}
 
     def get(url, params=None, headers=None, timeout=None):
-        seen.append((url, dict(params or {})))
+        seen.append(url)
         if first["429"]:
             first["429"] = False
             return Resp(429, {"message": "rate limited"})
+        acct = next(a for a in closes if f"/accounts/{a}/" in url)
         if url.endswith("/stats/balance"):
-            return Resp(200, {"data": [{"date": "2026-03-31", "amount": str(int(1e30))},
-                                       {"date": "2026-04-30", "amount": str(int(5e30))}]})
-        if url.endswith("/balance"):
-            return Resp(200, {"data": {"amount": str(int(5e30)), "amount_staked": "0"}})
-        if url.endswith("/receipts") and (params or {}).get("receiver"):
-            w = params["receiver"]
-            return Resp(200, {"data": [
-                {"included_in_block_timestamp": ns("2026-04-10"), "predecessor_account_id": "intents.near",
-                 "actions_agg": {"deposit": str(int(4e30))}, "outcome": {"status": True}},
-                {"included_in_block_timestamp": ns("2026-04-11"), "predecessor_account_id": "system",
-                 "actions_agg": {"deposit": str(int(1e22))}, "outcome": {"status": True}},
-                {"included_in_block_timestamp": ns("2026-04-12"), "predecessor_account_id":
-                    next(x for x in coi.NEAR_REVENUE_WALLETS if x != w),
-                 "actions_agg": {"deposit": str(int(9e30))}, "outcome": {"status": True}}], "meta": {}})
-        return Resp(200, {"data": [], "meta": {}})
+            return Resp(200, {"data": [{"date": d, "amount": str(int(v * 1e24))} for d, v in closes[acct]]})
+        return Resp(200, {"data": {"amount": str(int(closes[acct][-1][1] * 1e24)), "amount_staked": "0"}})
     monkeypatch.setattr(coi.requests, "get", get)
-    coi.near_buyback_wallets(max_pages=2)
+    coi.near_buyback_wallets()
     out = capsys.readouterr().out
-    assert "HTTP 429 — waiting 60s" in out and "paced" in out, "7+ calls: the 6-per-minute window bites"
-    assert out.count("IN (receipts + wNEAR; gas refunds and the other two wallets excluded): 4,000,000.0 NEAR") == 3
-    assert "2026-04: in 4,000,000.0 from intents.near 4,000,000; out 0.0; balance rise 4,000,000" in out
-    assert "ALL THREE, IN: 12,000,000.0 NEAR" in out
-    assert all("Authorization" not in str(p) for _u, p in seen), "the key travels in a header, never in params"
-    # RESUMED: every page is complete and cached, so a second run reads only the balances
-    n = len(seen)
-    coi.near_buyback_wallets(max_pages=2)
-    assert all(u.endswith(("/balance", "/stats/balance")) for u, _p in seen[n:])
+    assert "HTTP 429 — waiting 60s" in out and "paced" in out
+    assert "2026-08: 2,000,000" in out and "2026-09: 2,600,000; change +600,000" in out
+    assert "now 2,600,000.0 NEAR vs the page's 3,786,229.6" in out
+    assert len(seen) == 7 and not any("receipts" in u for u in seen)
+
+
+def test_sky_revenue_allocation_row_adds_buyback_and_usds_distribution_per_month():
+    """Jake, 2026-10-07: Revenue Allocation = the SKY buyback + the USDS distribution — set month by month against our
+    flapper buyback $ + the USDS minted to the lsSKY farm (months_match with two daily series added)."""
+    import credibility as cred
+    spec = config.CREDIBILITY["Sky"]["in_revenue_allocation"]
+    days = pd.date_range("2026-09-01", "2026-09-30")
+    long = pd.concat([
+        pd.DataFrame({"date": days, "project": "Sky", "metric": "actual_buyback_usd", "value": 10.0}),
+        pd.DataFrame({"date": days, "project": "Sky", "metric": "staking_rewards_usds_usd", "value": 5.0}),
+        pd.DataFrame({"date": [pd.Timestamp("2026-09-30")], "project": "Sky", "metric": "revenue_allocation_usd_ba",
+                      "value": [460.0]})], ignore_index=True)
+    ours = cred.FORMULAS["months_match"]("Sky", {}, long, pd.Timestamp("2026-10-07"), **spec["ours"]["args"])
+    ref = cred.FORMULAS["months_match"]("Sky", {}, long, pd.Timestamp("2026-10-07"), **spec["ref"]["args"])
+    assert ours[0] == 450.0 and ref[0] == 460.0 and ours[1] == "2026-09"
+    assert "actual_buyback_usd + staking_rewards_usds_usd" in ours[2]
+
+
+def test_geod_residual_counts_the_solana_side_once(monkeypatch, capsys):
+    """Jake, 2026-10-07: GEODNET circulating = (Polygon total - exclusions - bridge custody) + (Solana supply - Solana
+    exclusions) = our set - custody + Solana supply (no Solana exclusion named). The custody is the Wormhole NTT
+    manager 0x2006B446… (LOCKING); the shared executor helper 0x6762157b… is a pass-through, never added."""
+    import check_offline_items as coi
+    import store as store_mod
+    spec = config.CIRCULATING_ONCHAIN["GEODNET"]
+    assert spec["bridge_custody"]["address"] == "0x2006B44684b2A579466fC04FAbC5A535946bC7AB"
+    assert spec["ratios_use"] == "third_party_reference" and "CLOSED" in spec["staking_contract_search"]
+    monkeypatch.setenv("SOLANA_RPC_URL", "https://solana.example/key")
+
+    def rpc(url, method, params=None):
+        assert url == "https://solana.example/key"
+        if method == "getTokenSupply":
+            return {"result": {"value": {"uiAmountString": "274760174.65"}}}
+        if method == "getTokenLargestAccounts":
+            return {"result": {"value": [{"address": coi.GEODNET_SOL_BURN_ACCOUNT, "uiAmount": 29e6}]}}
+        return {"result": {"value": {"data": {"parsed": {"info": {"owner": "OwnerX"}}}}}}
+    monkeypatch.setattr(coi, "rpc", rpc)
+    monkeypatch.setattr(coi, "_bal", lambda token, addr, chain: int(280e6 * 1e18) if addr.lower().startswith("0x2006")
+                        else 0)
+    d = pd.Timestamp("2026-10-07")
+    rows = [dict(date=d, project="GEODNET", metric=spec["total"], value=1e9, source="x")]
+    rows += [dict(date=d, project="GEODNET", metric=m, value=v, source="x")
+             for m, v in zip(spec["subtract"], [68.5e6, 100e6, 315.5e6, 0, 0, 0][:len(spec["subtract"])])]
+
+    class FakeStore:
+        def __init__(self, *a, **k):
+            pass
+
+        def load_long(self):
+            return pd.DataFrame(rows)
+
+        def close(self):
+            pass
+    monkeypatch.setattr(store_mod, "Store", FakeStore)
+    coi.geod_residual()
+    out = capsys.readouterr().out
+    assert "supply 274,760,174.65 GEOD" in out and "<- the burn account" in out
+    assert "custody - Solana supply = +5,239,825" in out
+    # our set 516,000,000 - custody 280,000,000 + Solana 274,760,174.65
+    assert "= CIRCULATING 510,760,175 GEOD vs Blockworks' 462,000,000 (+10.6%)" in out

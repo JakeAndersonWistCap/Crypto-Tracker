@@ -103,9 +103,9 @@ DECISIONS = {
     # BUILT (Jake, 2026-10-05): NEAR's rows are arriving (187 days held, backfill in progress), so
     # the old "NEEDS JAKE — BUILDABLE" record is retired. It is MATURING until a full year is held
     # (FULL_YEAR_FROM below); NEEDS JAKE only while the store holds none of it (PENDING_SEED).
-    ("Sky", "net_protocol_surplus_usd"): (
-        "NEEDS JAKE", "September 2026 NPS: a manual monthly row in manual_overrides.csv when Sky "
-                      "publishes it"),
+    # Sky net_protocol_surplus_usd: CLOSED 2026-10-07 — September 2026 NPS is 7.15M in Sky's own table (Jake), now a
+    # reference row, and the series itself is read monthly from Block Analitica (fetch/sky_accounting.py). The current
+    # month is partial and not a reportable NPS until it closes. No decision left.
 }
 # WAITING ON A SERIES THAT NEEDS n DAILY READINGS (Ethereum's yield: a week of d(Eth2Staking)).
 # Ethereum staking_yield_pct's week-long wait on Eth2Staking was lifted 2026-09-30: the

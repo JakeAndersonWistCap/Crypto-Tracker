@@ -1393,6 +1393,43 @@ def _relabel_views(groups: dict) -> None:
             groups[(name, "actual_buyback_usd")] = _as_stored(usd, og.columns)
 
 
+def _near_buyback_views(groups: dict) -> None:
+    """NEAR'S BUYBACK = THE DAY'S CHANGE IN THE THREE REVENUE WALLETS' COMBINED CLOSE (Jake, 2026-10-07 14:17).
+    The wallets have no outflow except between themselves, so internal moves cancel in the sum and its change is
+    what was bought and held. Stored transaction-scan rows of actual_buyback_tokens are superseded (the view replaces
+    the group); actual_buyback_usd = tokens x the same-day price. A negative day (gas, or a move out of the three)
+    is kept as measured and named in its source."""
+    for p in scoped_projects():
+        bh = (p.get("nearblocks") or {}).get("balance_history")
+        if not bh:
+            continue
+        name, g = p["name"], groups.get((p["name"], bh["metric"]))
+        if g is None or g.empty:
+            continue
+        s = (g.assign(date=pd.to_datetime(g["date"]).dt.normalize()).drop_duplicates("date", keep="last")
+             .set_index("date")["value"].astype(float).sort_index())
+        d = s.diff()
+        d = d[(d.index.to_series().diff() == pd.Timedelta(days=1)).values & d.notna().values]
+        if d.empty:
+            continue
+        tok = pd.DataFrame({"date": d.index, "project": name, "metric": bh["flow"], "value": d.values, "tier": 1,
+                            "source": [f"derived:d({bh['metric']})" + ("[NEGATIVE: a move out of the three]" if v < 0
+                                                                       else "") for v in d.values]})
+        groups[(name, bh["flow"])] = _as_stored(tok, g.columns)
+        px = groups.get((name, "price_usd"))
+        if px is None or px.empty:
+            continue
+        pmap = (px.assign(date=pd.to_datetime(px["date"]).dt.normalize()).drop_duplicates("date", keep="last")
+                .set_index("date")["value"].astype(float))
+        both = d[d.index.isin(pmap.index)]
+        if both.empty:
+            continue
+        usd = pd.DataFrame({"date": both.index, "project": name, "metric": "actual_buyback_usd",
+                            "value": (both * pmap.reindex(both.index)).values, "tier": 1,
+                            "source": "derived:tokens*price"})
+        groups[(name, "actual_buyback_usd")] = _as_stored(usd, g.columns)
+
+
 # ===== EVERY VIEW EMITS A STORED ROW'S COLUMNS. Fixed 2026-09-28 after a build crash. =====
 # Run 20260928T142424Z: aggregate() died on latest["is_manual"] — the declared-issuance view built
 # NEAR's series from scratch and copied the stored columns from the derived series it replaced,
@@ -1782,7 +1819,7 @@ def _market_cap_views(groups: dict) -> None:
             adj = (tot.reindex(idx, method="ffill") - (gross.reindex(idx, method="ffill")
                                                        - burned.reindex(idx, method="ffill"))).round(2)
             # The un-netted burn is CoinGecko's: a project's own figure is never adjusted for it (2026-10-07).
-            if chosen != "circulating_supply" and config.circulating_onchain(name).get("ratios_use") == "first_party":
+            if chosen != "circulating_supply" and config.circulating_onchain(name).get("ratios_use") in config.MANUAL_PRIMARY_USES:
                 adj = adj.where(~idx.isin(own.index), 0.0)
             circ = (circ - adj).where(adj >= 0)
         both = price.index.intersection(circ.dropna().index)
@@ -1972,6 +2009,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _monthly_leg_views(groups)
     _measured_emissions_views(groups)
     _usd_history_views(groups)    # BEFORE the burn total, which sums the leg it extends
+    _near_buyback_views(groups)
     _burn_total_views(groups)
     _one_off_views(groups)        # BEFORE the relabel, so a burn-route buyback copies the ongoing flow
     _relabel_views(groups)
@@ -3415,7 +3453,7 @@ def _circ(R: Refs, r, p: dict) -> str:
         # on-chain figure, circulating falls back to CoinGecko + the locked tokens inside it — so free float
         # (circulating − locked) is CoinGecko's own figure, never CoinGecko − locked a SECOND time.
         fb = f"{c}+{_ff_lock(R, r, p)}" if config.coingecko_is_free_float(p["name"]) else c
-        if config.supply_unnetted_burn(p["name"]) and spec.get("ratios_use") == "first_party":
+        if config.supply_unnetted_burn(p["name"]) and spec.get("ratios_use") in config.MANUAL_PRIMARY_USES:
             # The un-netted burn is CoinGecko's: the project's own figure is used as published (GEODNET, 2026-10-07);
             # only the CoinGecko fallback is netted.
             return f"IF(ISNUMBER({own}),{own},{_net_unnetted_burn(R, r, fb)})"

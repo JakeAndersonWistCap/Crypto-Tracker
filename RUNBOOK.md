@@ -527,6 +527,39 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11am. NEAR buyback by balance, Sky NPS confirmed, GEODNET's Solana side — 2026-10-07 (late)
+
+**NEAR.** The buyback is the day's change in the THREE revenue wallets' combined liquid close. Internal moves cancel,
+and the only outflow is consolidation (1csfundsadmin to the buyback wallet).
+- The NearBlocks tier makes three `stats/balance` calls a run (`buyback_fund_balance_eod`), plus the two daily
+  stats calls.
+- `build_workbook._near_buyback_views` differences the series into `actual_buyback_tokens` and prices it as
+  `actual_buyback_usd`.
+- The transaction scans are retired (`near_account_flows_retired`). Their stored rows are listed in
+  orphan_cleanup.sql CF: `python run_sql.py CF`, then `--delete CF`.
+- Credibility `in_buyback_wallets` sets the combined holding against revenue.near.org's 3,786,229.6.
+- `near_buyback_wallets` now reads balances only (6 calls, paced). The receipts read returned 0 and is dropped.
+
+**Sky.**
+- NPS = revenue − expense − revenue_distribution ("Remitted to Sky Reserves"). This is confirmed against Sky's own
+  table and declared as `nps_formula`; it is always stored. A month that differs from the reported figure goes to
+  the Review Queue.
+- Sky's Jan–Sep 2026 table is the reference (manual rows; August corrected to 10.63M; September 7.15M). This closes
+  the NEEDS JAKE item.
+- The quarterlies are pre-allocation (revenue − expenses), so the months-to-quarter reconciliation is retired.
+- Monthly Revenue Allocation (`revenue_allocation_usd_ba`) is compared with our flapper buyback $ + USDS-farm mints
+  (Credibility `in_revenue_allocation`).
+
+**GEODNET.**
+- The 462M is Blockworks' figure, a third party. It is now `circulating_supply_third_party` with `ratios_use`
+  `third_party_reference`, kept until the Solana side is resolved. After that, our on-chain set becomes primary.
+- Bridge custody is the Wormhole NTT manager `0x2006B446…` on Polygon (locking). `0x6762157b…` is Wormhole's shared
+  pass-through helper and is never added.
+- `python check_offline_items.py geod_residual` (needs SOLANA_RPC_URL) reads the Solana supply and largest accounts
+  (with owners) and the custody. It computes our set − custody + Solana supply − Solana exclusions (none named yet)
+  and compares the result with 462M.
+- The Polygon staking-contract search is closed.
+
 ## 11al. Circulating policy, Sky accounting, Aethir table, NEAR wallets — 2026-10-07 (afternoon)
 
 **Circulating policy.** The project's own published figure is primary wherever one exists, and CoinGecko is used
