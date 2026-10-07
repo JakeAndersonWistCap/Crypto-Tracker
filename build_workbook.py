@@ -4006,10 +4006,17 @@ def _trailing_yield_views(groups: dict) -> None:
         covered = (end - t.index[0]).days + 1
         if lk.empty or not lk.mean() or covered <= 0:
             continue
-        v = float(t.sum()) / float(lk.mean()) * 365.0 / covered
-        src = (f"derived:{ty['tokens']} {float(t.sum()):,.0f} / mean {spec['lock']} {float(lk.mean()):,.0f} over "
-               f"{covered} day(s) {t.index[0].date()}..{end.date()} x 365/{covered}"
-               + ("" if covered >= int(n) else f" [covers {covered} of {n} days]"))
+        # TIME-WEIGHTED (Jake's run 2026-10-07 17:08: 25.97% vs the share price's 9.95%): each day's reward over the
+        # ETHFI staked THAT day (last stored value on or before it), summed — what a holder earned, which tracks the
+        # share price. Rewards over the window's AVERAGE stake over-weight top-ups landing when the vault is large.
+        daily = t / lk.reindex(t.index.union(lk.index)).sort_index().ffill().reindex(t.index)
+        daily = daily.replace([float("inf"), float("-inf")], float("nan")).dropna()
+        if daily.empty:
+            continue
+        v = float(daily.sum()) * 365.0 / covered
+        src = (f"derived:sum over {len(daily)} day(s) of {ty['tokens']} / that day's {spec['lock']} "
+               f"({float(t.sum()):,.0f} tokens; average stake {float(lk.mean()):,.0f}), {t.index[0].date()}..{end.date()} "
+               f"x 365/{covered}" + ("" if covered >= int(n) else f" [covers {covered} of {n} days]"))
         groups[(name, "token_yield_trailing_pct")] = _as_stored(pd.DataFrame(
             {"date": [end], "project": [name], "metric": ["token_yield_trailing_pct"], "value": [v],
              "source": [src], "tier": [2]}), tok.columns)

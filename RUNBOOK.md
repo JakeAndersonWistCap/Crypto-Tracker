@@ -527,6 +527,45 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11ao. Jake's run 2026-10-07 17:08: like-for-like circulating, Ether.fi yield, Maple SSF, Aethir distributors, filings
+
+**Circulating, like-for-like.** Where our on-chain figure is primary and stricter than CoinGecko, the spec names the
+subtracted balances CoinGecko still counts (`coingecko_counts`). Ether.fi and Uniswap declare
+`noncirculating_holding_tokens`. The `in_circ` row compares CoinGecko against ours plus those balances on the same
+day, still at ±2%, so a gap left beyond that is a real disagreement. `in_circ_gap` reports the balances themselves:
+the definitional gap, marked N/A because it is recorded, not judged. Sky (CoinGecko vs our total) and Pendle
+(free float + sPENDLE) already compared like-for-like.
+
+**Ether.fi trailing yield (25.97% vs the share price's 9.95%).**
+- The headline was the year's reward tokens over the year's AVERAGE stake. In a vault that grew, with its top-ups
+  landing late (Aug–Sep), that over-weights them.
+- The headline is now time-weighted: each day's reconciled rewards over that day's stake, summed. That is what a
+  holder earned, and it tracks the share price. The same rule applies on Credibility (`trailing_token_yield`).
+- `python check_offline_items.py etherfi_yield_reconcile` replays the cached sETHFI logs offline and prints:
+  - the decomposition by class;
+  - top-ups by sender, with the old 0x2f53 programme apart;
+  - top-ups with a mint-only transaction within 20 blocks (a split deposit);
+  - d(assets-per-share) x average shares, set against the reconciled total and the top-ups;
+  - the yield three ways: over the average stake (old), time-weighted (new) and assets-per-share growth.
+- It also prints what metrics.db stores for each series.
+
+**Maple:**
+- `maple_dao_vs_ssf` found 0xd6d4 is NOT the SSF.
+- `python check_offline_items.py maple_ssf_candidates` rebuilds daily SYRUP balances from each wallet's own transfers,
+  for 0xa9466eab and every address it sent SYRUP to. Each is tested against the page's SSF series on every shared
+  day; a MATCH is all days within 2%.
+
+**Aethir:**
+- `python check_offline_items.py aethir_distributor_match` sets each candidate's daily Arbitrum outflow against the
+  daily rise in the dashboard's checkerRewards, cloudHostRewards and edgeRewards. Those rises are taken from the
+  stored cumulatives, because the emissions_* rises are read-time views.
+- A MATCH is the sums within 10% and a daily correlation of at least 0.8.
+- A matched candidate is wired as that stream's on-chain released-reward measure.
+
+**Blockworks filings:** the probe now lists every address in each filing, with its section, question label and the
+fields beside it. Searching for a "wallet" label found none, because the section is "Labelled Unissued & Operational
+Token Wallets". Cached filings are reused, so no new requests are made.
+
 ## 11an. The full sweep — first-party wallet lists, on-chain circulating, open rows — 2026-10-07 (evening)
 
 **Convention (Jake):** circulating = total supply minus treasury, team/investor unvested, foundation, operating

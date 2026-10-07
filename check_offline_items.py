@@ -3476,15 +3476,251 @@ def aethir_reward_distributors(days: float = 1.0, top: int = 15):
         print(f"    {frm}  {n:>6} transfer(s)  {len(rec):>6} recipient(s)  {tot:>16,.2f} ATH  {_code(frm, 'arbitrum')}")
     try:
         db = pd.read_sql_query("SELECT date, metric, value FROM metrics WHERE project='Aethir' AND metric IN "
-                               "('emissions_checker_tokens','emissions_cloud_host_tokens')",
-                               sqlite3.connect("metrics.db"))
-        for m, g in db.groupby("metric"):
-            g = g.sort_values("date").tail(3)
-            print(f"  dashboard {m}, last days: " + ", ".join(f"{d[:10]} {v:,.0f}" for d, v in zip(g.date, g.value)))
+                               "('eco_checker_rewards_cumulative_tokens','cloud_host_rewards_cumulative_tokens',"
+                               "'edge_rewards_cumulative_tokens')", sqlite3.connect("metrics.db"))
+        for m, g in db.groupby("metric"):           # the daily rises are read-time views: difference the cumulative
+            g = g.assign(date=g["date"].str[:10]).groupby("date")["value"].last().sort_index().diff().dropna().tail(3)
+            print(f"  dashboard daily rise of {m}: " + ", ".join(f"{d} {v:,.0f}" for d, v in g.items()))
     except Exception as e:  # noqa: BLE001
         print(f"  dashboard daily rises unreadable — {e}")
     print("  PASTE BACK the section: a contract whose daily ATH matches a dashboard rise is that reward stream's\n"
           "  distributor, and its outflow becomes the on-chain measure of it.")
+
+
+# ===== ETHER.FI — WHY THE TRAILING YIELD READ 25.97% AGAINST THE SHARE PRICE'S 9.95% (Jake's run 2026-10-07 17:08) =====
+def etherfi_yield_reconcile(days: int = 365):
+    """Offline: the sETHFI scan's cached Transfer history (.cache/logscan) replayed over the last `days`. Prints the
+    decomposition by class; top-ups by sender (the old 0x2f53 programme apart); top-ups with a share mint a few blocks
+    away (a deposit split across transactions would read as a top-up); the year's change in assets-per-share x the
+    average shares; and the yield four ways — rewards over the AVERAGE stake (the old headline), each day's rewards
+    over that day's stake (the new headline), the assets-per-share growth, and metrics.db's stored series."""
+    import sqlite3                                         # noqa: PLC0415
+    from collections import defaultdict                    # noqa: PLC0415
+    import pandas as pd                                    # noqa: PLC0415
+    import config                                          # noqa: PLC0415
+    from fetch.explorer import TRANSFER_TOPIC as T, pad_address  # noqa: PLC0415
+    from fetch.logcache import LogCache, stream_id         # noqa: PLC0415
+    from fetch.share_decompose import CLASSES, decompose   # noqa: PLC0415
+    head("ETHER.FI — the trailing yield reconciled against the share price (cached logs, no requests)")
+    spec = next(s for s in config.PROJECT_BY_NAME["Ether.fi"]["log_scans"] if s["key"] == "sethfi_reward_topups")
+    token, vault, share = spec["token"], spec["holders"][0], spec["share_mint"]["token"]
+    labels = {a.lower() for a in spec.get("sender_labels") or {}}
+    zero = pad_address("0x0000000000000000000000000000000000000000")
+    cache = LogCache()
+    load = lambda addr, topics: cache.load(stream_id(1, addr, topics))["events"]  # noqa: E731
+    ins, outs = load(token, [T, None, pad_address(vault)]), load(token, [T, pad_address(vault), None])
+    mints, burns = load(share, [T, zero]), load(share, [T, None, zero])
+    print(f"  cached: {len(ins):,} ETHFI in, {len(outs):,} out, {len(mints):,} sETHFI mints, {len(burns):,} burns")
+    if not ins or not mints:
+        print("  the cache is empty — run token_metrics.py first (the scan fills .cache/logscan)")
+        return
+    since = pd.Timestamp.now().normalize() - pd.Timedelta(days=days)
+    r = decompose(ins, outs, mints, burns, int(since.timestamp()), labels)
+    a0, a1 = r["aps_start"], r["aps_end"]
+    print(f"  assets-per-share {a0:.6f} -> {a1:.6f} since {since.date()}: {a1 / a0 - 1:+.3%}")
+    for c in CLASSES:
+        b = r["by_class"][c]
+        if b["txs"]:
+            print(f"    {c:<20} {b['txs']:>6} tx  {b['aps']:+.6f}/share  {b['tokens']:>+16,.2f} ETHFI")
+    tot = sum(r["daily"].values())
+    print(f"    {'TOTAL (reconciled)':<20} {'':>9}  {a1 - a0:+.6f}/share  {tot:>+16,.2f} ETHFI")
+    # per transaction: the top-ups by sender, and mints near them
+    tx = defaultdict(lambda: {"in": 0, "out": 0, "mint": 0, "burn": 0, "senders": set(), "block": 0, "ts": 0})
+    for kind, evs in (("in", ins), ("out", outs), ("mint", mints), ("burn", burns)):
+        for e in evs:
+            t = tx[str(e["transactionHash"]).lower()]
+            t[kind] += int(str(e.get("data") or "0x0")[2:66] or "0", 16)
+            t["block"], t["ts"] = int(e["blockNumber"]), int(e.get("timeStamp") or 0)
+            if kind == "in":
+                t["senders"].add("0x" + e["topics"][1][-40:].lower())
+    cut = int(since.timestamp())
+    topups = [t for t in tx.values() if t["ts"] >= cut and t["in"] and not t["mint"] and not t["burn"] and not t["out"]]
+    mint_only = sorted(t["block"] for t in tx.values() if t["ts"] >= cut and t["mint"] and not t["in"])
+    by_sender = defaultdict(float)
+    for t in topups:
+        by_sender[", ".join(sorted(t["senders"]))] += t["in"] / 1e18
+    print(f"  top-ups (no shares minted or burned) in the window: {len(topups)} tx, "
+          f"{sum(by_sender.values()):,.2f} ETHFI, by sender:")
+    names = {k.lower(): v for k, v in (spec.get("sender_labels") or {}).items()}
+    for snd, v in sorted(by_sender.items(), key=lambda kv: -kv[1])[:12]:
+        print(f"    {v:>14,.2f}  {snd}  {names.get(snd, 'UNLABELLED')[:70]}")
+    import bisect                                          # noqa: PLC0415
+    near = [t for t in topups if (i := bisect.bisect_left(mint_only, t["block"] - 20)) < len(mint_only)
+            and mint_only[i] <= t["block"] + 20]
+    print(f"  top-ups with a mint-only transaction within 20 blocks (a split deposit?): {len(near)} tx, "
+          f"{sum(t['in'] for t in near) / 1e18:,.2f} ETHFI" + (" — inspect these" if near else ""))
+    # daily assets and shares, rebuilt
+    a = s = 0
+    eod = {}
+    for t in sorted(tx.values(), key=lambda t: t["block"]):
+        a += t["in"] - t["out"]
+        s += t["mint"] - t["burn"]
+        eod[pd.Timestamp(t["ts"], unit="s").normalize()] = (a / 1e18, s / 1e18)
+    ser = pd.DataFrame(eod, index=["A", "S"]).T.sort_index()
+    ser = ser.reindex(pd.date_range(ser.index[0], pd.Timestamp.now().normalize())).ffill()
+    w = ser[ser.index >= since]
+    daily = pd.Series(r["daily"]).sort_index()
+    tw = float((daily / w["A"].reindex(daily.index)).dropna().sum())
+    print(f"  average assets {w['A'].mean():,.0f} ETHFI, average shares {w['S'].mean():,.0f}; assets "
+          f"{w['A'].iloc[0]:,.0f} -> {w['A'].iloc[-1]:,.0f}")
+    print(f"  d(assets-per-share) x average shares = {(a1 - a0) * w['S'].mean():,.2f} ETHFI vs reconciled "
+          f"{tot:,.2f} vs top-ups {sum(by_sender.values()):,.2f}")
+    print(f"  YIELD, last {days} days:  rewards / AVERAGE assets {tot / w['A'].mean():.2%} (old headline)  |  "
+          f"sum of daily rewards / that day's assets {tw:.2%} (new headline)  |  assets-per-share growth "
+          f"{a1 / a0 - 1:.2%}")
+    try:
+        con = sqlite3.connect("metrics.db")
+        for m in ("sethfi_reward_tokens_reconciled", "sethfi_topup_tokens", "locked_tokens_underlying",
+                  "sethfi_share_price_onchain"):
+            d = pd.read_sql_query("SELECT date, value FROM metrics WHERE project='Ether.fi' AND metric=? "
+                                  "AND date >= ?", con, params=(m, str(since.date())))
+            if d.empty:
+                print(f"  stored {m}: none in the window")
+                continue
+            v = d["value"].astype(float)
+            print(f"  stored {m}: {len(d)} row(s) {d['date'].min()[:10]}..{d['date'].max()[:10]}, sum {v.sum():,.2f}, "
+                  f"mean {v.mean():,.4f}, zeros {int((v == 0).sum())}, first {v.iloc[0]:,.4f}, last {v.iloc[-1]:,.4f}")
+    except Exception as e:  # noqa: BLE001
+        print(f"  metrics.db unreadable — {e}")
+    print("  PASTE BACK the section. The new headline divides each day's rewards by that day's stake; it should sit\n"
+          "  near the assets-per-share growth. A top-up from the old 0x2f53 Safe is a real reward when it happened,\n"
+          "  not a double count, unless the same tokens also appear in another class above.")
+
+
+def _balance_history(token: str, addr: str, chain_id: int = 1):
+    """Daily closing balance of `addr` in `token`, rebuilt from its own Transfer logs (in - out), or (None, why)."""
+    import pandas as pd                                    # noqa: PLC0415
+    ins, d1 = explorer_logs(chain_id, token, [TRANSFER_TOPIC, None, _pad(addr)])
+    outs, d2 = explorer_logs(chain_id, token, [TRANSFER_TOPIC, _pad(addr), None])
+    if ins is None or outs is None:
+        return None, f"logs unreadable ({d1}; {d2})"
+    flows = [(int(e["timeStamp"]), int(e["data"], 16)) for e in ins] + \
+            [(int(e["timeStamp"]), -int(e["data"], 16)) for e in outs]
+    if not flows:
+        return None, "no transfers"
+    s = pd.Series([v for _t, v in flows], index=[pd.Timestamp(t, unit="s").normalize() for t, _v in flows])
+    bal = s.groupby(level=0).sum().sort_index().cumsum() / 1e18
+    return bal.reindex(pd.date_range(bal.index[0], pd.Timestamp.now().normalize())).ffill(), \
+        f"{len(ins)} in / {len(outs)} out"
+
+
+def maple_ssf_candidates(top: int = 8):
+    """Jake's run 2026-10-07 17:08: 0xd6d4 is NOT the SSF; its one large inflow was 28,550,344 SYRUP from
+    0xa9466eab (the registry's treasury, already subtracted) on 2026-06-26. Each candidate — 0xa9466eab and every
+    address it sent SYRUP to — gets its daily SYRUP balance REBUILT from its own Transfer logs and set against the
+    page's SSF syrupHoldings on every shared day (MATCH = all within MAPLE_SSF_MATCH_PCT). Reads only."""
+    import config                                          # noqa: PLC0415
+    from fetch import maple_transparency as mt             # noqa: PLC0415
+    from fetch.scrape import robots_verdict                # noqa: PLC0415
+    head("MAPLE — which wallet IS the Syrup Strategic Fund? (balance histories vs the page's SSF series)")
+    syrup = config.PROJECT_BY_NAME["Maple"]["contracts"]["token"]["address"]
+    reg = "0xa9466EaBd096449d650D5AEB0dD3dA6F52FD0B19"
+    url = "https://maple.finance/transparency"
+    ok, why = robots_verdict(url)
+    if not ok:
+        print(f"  robots DISALLOWS {url} — {why}")
+        return
+    df = mt.ssf_frame(requests.get(url, headers=_ua(), timeout=TIMEOUT).text)
+    if isinstance(df, str):
+        print(f"  SSF series: {df}")
+        return
+    ssf = df.set_index("day")["syrup"]
+    print(f"  SSF syrupHoldings: {len(ssf)} day(s) {ssf.index[0].date()}..{ssf.index[-1].date()}, last {ssf.iloc[-1]:,.0f}")
+    sent, detail = explorer_logs(1, syrup, [TRANSFER_TOPIC, _pad(reg), None])
+    print(f"  SYRUP sent by 0xa9466eab: {detail}")
+    by = {}
+    for e in sent or ():
+        to = "0x" + e["topics"][2][-40:]
+        by[to] = by.get(to, 0.0) + int(e["data"], 16) / 1e18
+    recips = [a for a, _v in sorted(by.items(), key=lambda kv: -kv[1])[:top]]
+    for a in recips:
+        print(f"    -> {a}  {by[a]:,.0f} SYRUP  {_code(a, 'ethereum')}")
+    hits = []
+    for a in [reg, *recips]:
+        bal, how = _balance_history(syrup, a)
+        if bal is None:
+            print(f"  {a}: {how}")
+            continue
+        common = bal.index.intersection(ssf.index)
+        if not len(common):
+            print(f"  {a}: no day shared with the SSF series ({how})")
+            continue
+        pct = (bal.loc[common] / ssf.loc[common] - 1) * 100
+        within = int((pct.abs() <= MAPLE_SSF_MATCH_PCT).sum())
+        match = within == len(common)
+        hits += [a] if match else []
+        print(f"  {a}: balance now {bal.iloc[-1]:,.0f}; vs SSF on {len(common)} day(s): median {pct.median():+.2f}%, "
+              f"{within} within {MAPLE_SSF_MATCH_PCT}%  {'<-- MATCH' if match else ''}  ({how})")
+    print("\n  VERDICT: " + (f"{', '.join(hits)} tracks the SSF on every shared day — it IS the Syrup Strategic Fund"
+                             if hits else "no single candidate tracks the SSF — the fund may span several wallets "
+                                          "or hold SYRUP in another form"))
+    print("  PASTE BACK the section.")
+
+
+# Aethir's dashboard reward streams, as CUMULATIVE stocks (the daily emissions_* rises are read-time views, not stored)
+AETHIR_REWARD_STREAMS = {"checkerRewards": "eco_checker_rewards_cumulative_tokens",
+                         "cloudHostRewards": "cloud_host_rewards_cumulative_tokens",
+                         "edgeRewards": "edge_rewards_cumulative_tokens"}
+AETHIR_DISTRIBUTOR_CANDIDATES = {          # Jake's one-day scan, 2026-10-07 17:08
+    "0x4c34a020f02e5623bddf5d354f47816132534f7e": "325 tx / 189 recipients / 496,530 ATH",
+    "0xef90d0b328dc5896d10c54eca93f1ab764f64367": "56 tx / 55 recipients / 1,170,136 ATH",
+    "0x5cbddc44f31067df328aa7a8da03aca6f2edd2ad": "202 tx / 21 recipients / 2,232,912 ATH",
+}
+AETHIR_MATCH = {"sum_pct": 10.0, "corr": 0.8}
+
+
+def aethir_distributor_match(days: int = 10):
+    """Each candidate's DAILY ATH outflow on Arbitrum over `days`, against each dashboard stream's daily rise (the
+    stored cumulative, differenced). A MATCH = the two sums within AETHIR_MATCH['sum_pct'] and a daily correlation of at
+    least AETHIR_MATCH['corr'] over the shared days. Reads only; a match is wired as that stream's on-chain measure
+    (claims paid = RELEASED rewards)."""
+    import sqlite3                                         # noqa: PLC0415
+    import pandas as pd                                    # noqa: PLC0415
+    head(f"AETHIR — candidate distributors' daily outflow vs the dashboard's reward streams ({days} days)")
+    head_blk = None
+    for url in _rpcs_for("arbitrum"):
+        try:
+            head_blk = int(rpc(url, "eth_blockNumber", [])["result"], 16)
+            break
+        except Exception:  # noqa: BLE001
+            continue
+    if head_blk is None:
+        print("  Arbitrum head block UNREACHABLE")
+        return
+    start = head_blk - int(days * ARBITRUM_BLOCKS_PER_DAY)
+    streams = {}
+    try:
+        con = sqlite3.connect("metrics.db")
+        for label, m in AETHIR_REWARD_STREAMS.items():
+            d = pd.read_sql_query("SELECT date, value FROM metrics WHERE project='Aethir' AND metric=?", con, params=(m,))
+            s = d.assign(date=pd.to_datetime(d["date"]).dt.normalize()).groupby("date")["value"].last().sort_index()
+            streams[label] = s.diff().dropna()
+            print(f"  {label} ({m}): {len(s)} day(s) stored; last rises "
+                  + ", ".join(f"{i.date()} {v:,.0f}" for i, v in streams[label].tail(3).items()))
+    except Exception as e:  # noqa: BLE001
+        print(f"  metrics.db unreadable — {e}")
+        return
+    for addr, seen in AETHIR_DISTRIBUTOR_CANDIDATES.items():
+        logs, detail = explorer_logs(42161, AETHIR_ARB_ATH, [TRANSFER_TOPIC, _pad(addr), None], start, head_blk)
+        if not logs:
+            print(f"\n  {addr} ({seen}): {detail}")
+            continue
+        out = pd.Series([int(e["data"], 16) / 1e18 for e in logs],
+                        index=[pd.Timestamp(int(e["timeStamp"]), unit="s").normalize() for e in logs]).groupby(level=0).sum()
+        print(f"\n  {addr} ({seen}): {len(logs)} transfer(s) out, {out.sum():,.0f} ATH over {len(out)} day(s): "
+              + ", ".join(f"{i.date()} {v:,.0f}" for i, v in out.tail(5).items()))
+        for label, rise in streams.items():
+            common = out.index.intersection(rise.index)
+            if len(common) < 3:
+                print(f"    vs {label}: {len(common)} shared day(s) — too few")
+                continue
+            a, b = out.loc[common], rise.loc[common]
+            gap = (a.sum() / b.sum() - 1) * 100 if b.sum() else float("inf")
+            corr = a.corr(b) if a.std() and b.std() else float("nan")
+            ok = abs(gap) <= AETHIR_MATCH["sum_pct"] and corr >= AETHIR_MATCH["corr"]
+            print(f"    vs {label}: {len(common)} day(s), sums {a.sum():,.0f} vs {b.sum():,.0f} ({gap:+.1f}%), "
+                  f"daily correlation {corr:.2f}  {'<-- MATCH' if ok else ''}")
+    print("\n  PASTE BACK the section: a MATCH is wired as that stream's on-chain measure (claims = released rewards).")
 
 
 # ===== BLOCKWORKS TOKEN TRANSPARENCY FILINGS — THE PROJECTS' OWN LABELLED WALLETS (Jake, 2026-10-07 sweep). =====
@@ -3504,7 +3740,6 @@ BLOCKWORKS_TICKERS = {
 # nothing. Aerodrome's (Jake, 2026-10-07; project id 36aae2e1-9f91-45a7-b97b-27b3fa1f3d49 — the id is NOT queried:
 # app.blockworks.com research data is subscription, so only the open filings API is used).
 BLOCKWORKS_SLUGS = {"Aerodrome": "aerodrome-finance", "Maple": "maple-finance", "Ether.fi": "ether-fi"}
-BLOCKWORKS_WALLET_QUESTION = "wallet"            # matched case-insensitively against each question's label
 BLOCKWORKS_CACHE = os.path.join(".cache", "blockworks")
 
 
@@ -3529,17 +3764,40 @@ def _blockworks_get(url: str, params: dict, cache_name: str):
     return body, "fetched"
 
 
-def _blockworks_wallet_rows(filing: dict) -> list:
-    """(question label, rows) for every question whose label names wallets."""
-    labels = {}
+_BW_EVM = __import__("re").compile(r"0x[0-9a-fA-F]{40}")
+_BW_SOL = __import__("re").compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
+
+
+def _blockworks_addresses(filing: dict) -> list:
+    """EVERY address in a filing (Jake's run 2026-10-07 17:08: the wallet section is 'Labelled Unissued & Operational
+    Token Wallets' and no question label contains 'wallet', so the label search found 0 rows). Walks the whole JSON:
+    an EVM address anywhere in a string, a Solana address only as a whole string; each with its section, question
+    label and the text fields of the object holding it (label, title, function, control...). [(section, question,
+    address, context)], first occurrence per (question, address)."""
+    sect, lab = {}, {}
     for sec in (filing.get("schema") or {}).get("sections") or []:
         for q in sec.get("questions") or []:
-            labels[q.get("id")] = q.get("label") or ""
-    out = []
+            sect[q.get("id")], lab[q.get("id")] = sec.get("name") or "", q.get("label") or ""
+    out, seen = [], set()
+
+    def walk(node, qid, ctx):
+        if isinstance(node, dict):
+            texts = {k: v for k, v in node.items() if isinstance(v, (str, int, float)) and not isinstance(v, bool)}
+            for k, v in node.items():
+                walk(v, qid, texts if texts else ctx)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v, qid, ctx)
+        elif isinstance(node, str):
+            hits = _BW_EVM.findall(node) or ([node] if _BW_SOL.match(node) else [])
+            for a in hits:
+                if (qid, a.lower()) in seen:
+                    continue
+                seen.add((qid, a.lower()))
+                c = "; ".join(f"{k}={str(v)[:60]}" for k, v in ctx.items() if str(v) != node and a not in str(v))
+                out.append((sect.get(qid, ""), lab.get(qid, ""), a, c[:240]))
     for qid, q in (filing.get("questions") or {}).items():
-        label = (q or {}).get("label") or labels.get(qid, "")
-        if BLOCKWORKS_WALLET_QUESTION in label.lower():
-            out.append((qid, label, ((q.get("answer") or {}).get("rows")) or [], q.get("gap")))
+        walk(q, qid, {})
     return out
 
 
@@ -3580,18 +3838,17 @@ def blockworks_filings(only: str | None = None):
             if filing is None:
                 print(f"    filing body {fnote}")
                 continue
-            qs = _blockworks_wallet_rows(filing)
-            if not qs:
-                print("    no question labelled with 'wallet' — attach the cached JSON")
-            for qid, label, rows, gap in qs:
-                print(f"    {qid} '{label}': {len(rows)} row(s)" + (f"; gap: {str(gap)[:120]}" if gap else ""))
-                for row in rows:
-                    cells = "; ".join(f"{k}={str(v)[:70]}" for k, v in (row.items() if isinstance(row, dict)
-                                                                       else enumerate(row)))
-                    print(f"      {cells[:300]}")
-            found[proj] = (fid, sum(len(r) for _q, _l, r, _g in qs))
+            addrs = _blockworks_addresses(filing)
+            print(f"    {len(addrs)} address(es) in the filing:")
+            last = None
+            for sec, label, a, ctx in addrs:
+                if (sec, label) != last:
+                    print(f"    [{sec or 'no section'}] {label or '(no label)'}")
+                    last = (sec, label)
+                print(f"      {a}  {ctx}")
+            found[proj] = (fid, len(addrs))
     print(f"\n  {len(found)} filing(s) read: "
-          + (", ".join(f"{p} ({fid}, {n} wallet row(s))" for p, (fid, n) in found.items()) or "none"))
+          + (", ".join(f"{p} ({fid}, {n} address(es))" for p, (fid, n) in found.items()) or "none"))
     print(f"  Raw JSON cached in {BLOCKWORKS_CACHE}/ — attach those files (or paste this section) and the labelled")
     print("  wallets are wired with the filing as their source. Nothing was stored.")
 
@@ -6786,7 +7043,8 @@ CHECKS = (
     wm_cardano_supply, etherscan_ethsupply2, geod_archive_probe, plume_growthepie,
     chainlink_reward_rates, pendle_spendle_fees, archive_probe, coinmetrics_community,
     hl_af_fills_depth, etherfi_safe_owners, etherfi_sethfi_topups, etherfi_topup_safe, etherfi_cex_test, near_protocol_v87, aethir_pin_keys,
-    robots_and_terms, ultrasound_history, hyperliquid_history_routes, blockworks_filings, maple_dao_vs_ssf, aethir_reward_distributors,
+    robots_and_terms, ultrasound_history, hyperliquid_history_routes, blockworks_filings, maple_dao_vs_ssf, aethir_reward_distributors, etherfi_yield_reconcile, maple_ssf_candidates,
+    aethir_distributor_match,
     plume_sources, aethir_dashboard_xhr, maple_ssf_history, blockworks_geodnet,
     morpho_incentives, settlement_sources, hyperevm_etherscan, maple_ssf_inflows, aethir_pages,
     geod_stake_recipient, geod_stake_wallets, maple_ssf_lp_test, maple_drips, plume_archive, settlement_rebuild_coverage,

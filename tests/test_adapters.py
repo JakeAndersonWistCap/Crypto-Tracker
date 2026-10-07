@@ -14785,7 +14785,7 @@ def test_offline_checks_ambiguous_prefix_refuses_and_names_every_match(monkeypat
     rc = coi.main()
     out = capsys.readouterr().out
     assert rc == 1
-    assert "'aethir' matches 8 checks" in out        # + aethir_reward_distributors (2026-10-07)
+    assert "'aethir' matches 9 checks" in out        # + aethir_reward_distributors, aethir_distributor_match
     for name in ("aethir_staking_probe", "aethir_wrapper_relationship", "aethir_veaethir_probe"):
         assert name in out
     assert "Done." not in out, "a refusal must not claim anything ran"
@@ -14794,7 +14794,7 @@ def test_offline_checks_ambiguous_prefix_refuses_and_names_every_match(monkeypat
     rc2 = coi.main()
     out2 = capsys.readouterr().out
     assert rc2 == 1
-    assert "'maple' matches 7 checks" in out2      # + maple_dao_vs_ssf (2026-10-07)
+    assert "'maple' matches 8 checks" in out2      # + maple_dao_vs_ssf, maple_ssf_candidates (2026-10-07)
     assert all(n in out2 for n in ("maple_dao_multisig", "maple_transparency", "maple_ssf_history",
                                    "maple_ssf_inflows", "maple_ssf_lp_test", "maple_drips", "maple_dao_vs_ssf"))
 
@@ -26234,7 +26234,18 @@ def test_etherfi_headline_is_the_trailing_year_over_average_stake_with_q0_and_th
               ("Ether.fi", "sethfi_share_price_onchain"): sp}
     bw._trailing_yield_views(groups)
     v = float(groups[("Ether.fi", "token_yield_trailing_pct")]["value"].iloc[0])
-    assert len(days) == 364 and v == pytest.approx(100.0 * 364 / float(lock["value"].mean()) * 365 / 364)
+    # time-weighted since Jake's run 2026-10-07 17:08: each day's reward over THAT day's stake
+    assert len(days) == 364 and v == pytest.approx((100.0 * 182 / 80e6 + 100.0 * 182 / 90e6) * 365 / 364)
+    # THE BUG IT FIXES: a vault growing 1M -> 10M with its top-ups landing at the end. Over the AVERAGE stake the
+    # yield read ~1.8x what holders earned; over the day's stake it is what the share price shows (10% here).
+    grow = mk("locked_tokens_underlying", [1e6 + 9e6 * i / (len(days) - 1) for i in range(len(days))])
+    late = mk("sethfi_reward_tokens_reconciled", [0.0] * (len(days) - 10) + [1e5] * 10)
+    g2 = {("Ether.fi", "sethfi_reward_tokens_reconciled"): late, ("Ether.fi", "locked_tokens_underlying"): grow}
+    bw._trailing_yield_views(g2)
+    tw = float(g2[("Ether.fi", "token_yield_trailing_pct")]["value"].iloc[0])
+    avg_based = 1e6 / float(grow["value"].mean()) * 365 / 364
+    assert tw == pytest.approx(1e5 * sum(1 / float(x) for x in grow["value"].iloc[-10:]) * 365 / 364)
+    assert 0.10 < tw < 0.11 and avg_based > 1.75 * tw
     g = float(groups[("Ether.fi", "token_yield_share_price_trailing_pct")]["value"].iloc[0])
     assert g == pytest.approx((sp["value"].iloc[-1] / sp["value"].iloc[0]) ** (365 / 363) - 1)
     assert config.CREDIBILITY["Ether.fi"]["a3_protocol_yield"]["args"]["days"] == 365
@@ -26426,9 +26437,10 @@ def test_circulating_policy_project_figure_first_with_the_onchain_set_as_cross_c
     assert spec["ours"]["metric"] == "circulating_supply_onchain"
     assert spec["ref"]["metric"] == "circulating_supply" and "STATIC" in spec["ref"]["source"]
     assert cred.circulating_input("Aerodrome")["ref"]["metric"] == "circulating_supply_onchain"
-    # Uniswap's on-chain count is primary now (the full sweep), so CoinGecko is its cross-check
-    assert cred.circulating_input("Uniswap")["ref"] == {**cred.circulating_input("Uniswap")["ref"], "tol": 2.0,
-                                                        "metric": "circulating_supply"}
+    # Uniswap's on-chain count is primary now (the full sweep); CoinGecko is its cross-check, like-for-like
+    # (ours + the docs wallets CoinGecko counts — Jake's run 2026-10-07 17:08)
+    assert cred.circulating_input("Uniswap")["ref"]["args"]["b"] == ("circulating_supply",)
+    assert cred.circulating_input("Uniswap")["ref"]["tol"] == 2.0
     # 4. the Review Queue: a figure-in-use-vs-set item exists only while a manual figure is primary (none now)
     gs = config.circulating_onchain("GEODNET")
     assert gs["ratios_use"] == "onchain" and gs["static_cross_check"]["figure"] == 462_360_759
@@ -26608,9 +26620,12 @@ def test_blockworks_filings_probe_reads_the_documented_api_and_prints_the_wallet
     out = capsys.readouterr().out
     assert calls[0] == ("https://api.blockworks.com/v1/ttf/filings", {"tickers": "SYRUP", "latest": "true"})
     assert "Maple [SYRUP]: filing maple-2026-h1 — initial, filed 2026-07-01" in out
-    assert "q7 'Labelled Unissued & Operational Token Wallets': 2 row(s)" in out
-    assert "category=Treasury; chain=Ethereum; address=0x" + "ab" * 20 in out
-    assert "0x" + "cd" * 20 not in out, "only the wallet question's rows"
+    # EVERY address in the filing, under its section and question, with the fields beside it (Jake's run 17:08: the
+    # wallet section's questions carry no 'wallet' label, so a label search found nothing)
+    assert "3 address(es) in the filing" in out
+    assert "[Supply] Labelled Unissued & Operational Token Wallets" in out
+    assert "0x" + "ab" * 20 + "  category=Treasury; chain=Ethereum" in out
+    assert "0x" + "cd" * 20 in out and "[Supply] x" in out
     assert "Morpho [MORPHO]: no filing listed" in out
     assert (tmp_path / "maple-2026-h1.json").exists() and (tmp_path / "list-SYRUP.json").exists()
     n = len(calls)
@@ -26710,3 +26725,67 @@ def test_maple_dao_vs_ssf_probe_matches_on_every_shared_day_and_ranks_senders(tm
     assert "VERDICT (stored series, every shared day within 2.0%): MATCH" in out
     first = [ln for ln in out.splitlines() if "transfer(s)" in ln and "SYRUP" in ln][0]
     assert "0x" + "aa" * 20 in first and "3 transfer(s)" in first and "CODE" in first
+
+
+def test_blockworks_addresses_finds_every_address_with_its_section_label_and_context():
+    """Jake's run 2026-10-07 17:08: 10 filings, 0 rows — the section is 'Labelled Unissued & Operational Token Wallets'
+    and its questions carry no 'wallet' label. Every address is now taken from the whole filing."""
+    import check_offline_items as coi
+    sol = "Dm5BxyMetG3Aq5PaG1BrG7rBYqEMtnkjvPNMExfacVk7"
+    filing = {"schema": {"sections": [{"name": "Labelled Unissued & Operational Token Wallets", "questions": [
+        {"id": "q40", "label": "Treasury wallets"}, {"id": "q41", "label": "Notes"}]}]},
+              "questions": {"q40": {"answer": {"rows": [
+                  {"title": "DAO Treasury", "function": "Treasury", "control": "4 of 7 multisig",
+                   "address": "0x" + "ab" * 20},
+                  {"title": "Solana reserve", "address": sol}]}},
+                            "q41": {"answer": {"text": "the vesting contract 0x" + "cd" * 20 + " releases monthly"}}}}
+    got = coi._blockworks_addresses(filing)
+    assert [a for _s, _l, a, _c in got] == ["0x" + "ab" * 20, sol, "0x" + "cd" * 20]
+    sec, lab, _a, ctx = got[0]
+    assert sec == "Labelled Unissued & Operational Token Wallets" and lab == "Treasury wallets"
+    assert "title=DAO Treasury" in ctx and "control=4 of 7 multisig" in ctx and "address=" not in ctx
+    assert got[2][1] == "Notes", "an address inside free text is found too"
+
+
+def test_onchain_circulating_is_compared_with_coingecko_like_for_like_and_the_gap_is_its_own_row():
+    """Jake's run 2026-10-07 17:08: Ether.fi 797.21M vs CoinGecko 965.35M, Uniswap 612.57M vs 625.08M — our stricter
+    on-chain figures against CoinGecko's broader count. The row now sets CoinGecko against ours PLUS the documented
+    wallets CoinGecko still counts; the wallets' sum is reported on in_circ_gap (N/A, recorded not judged)."""
+    import credibility as cred
+    for n in ("Ether.fi", "Uniswap"):
+        assert config.coingecko_counts_holdings(n) == ("noncirculating_holding_tokens",)
+        spec = cred.circulating_input(n)
+        assert spec["ours"] == {"py": "sums_on_common_day", "args": {
+            "a": ("circulating_supply_onchain", "noncirculating_holding_tokens"), "b": ("circulating_supply",),
+            "side": "ours"}}
+        assert spec["ref"]["formula"] == "sums_on_common_day" and spec["ref"]["args"]["side"] == "ref"
+        assert spec["ref"]["tol"] == 2.0, "no tolerance added: a gap left beyond 2% is a real disagreement"
+    d = pd.Timestamp("2026-10-07")
+    long = pd.DataFrame([dict(date=d, project="Ether.fi", metric=m, value=v) for m, v in (
+        ("circulating_supply_onchain", 797.21e6), ("noncirculating_holding_tokens", 160e6),
+        ("circulating_supply", 965.35e6))])
+    f = cred.FORMULAS["sums_on_common_day"]
+    args = cred.circulating_input("Ether.fi")["ours"]["args"]
+    ours = f("Ether.fi", {}, long, d + pd.Timedelta(days=1), **{**args, "side": "ours"})[0]
+    ref = f("Ether.fi", {}, long, d + pd.Timedelta(days=1), **{**args, "side": "ref"})[0]
+    assert (ours, ref) == (957.21e6, 965.35e6)          # -0.84%: inside 2% once like-for-like
+    # projects without the declaration keep their rows
+    assert not config.coingecko_counts_holdings("Sky") and not config.coingecko_counts_holdings("Pendle")
+
+
+def test_balance_history_is_rebuilt_from_a_wallets_own_transfers(monkeypatch):
+    """maple_ssf_candidates (Jake's run 2026-10-07 17:08): a candidate's daily SYRUP balance = cumulative (in - out)
+    from its own Transfer logs, carried forward to today — a history to set against the SSF series, not one day."""
+    import check_offline_items as coi
+    t0 = int(pd.Timestamp("2026-06-26").timestamp())
+
+    def logs(chain, token, topics, *a, **k):
+        if topics[2] is not None:             # into the wallet
+            return [{"timeStamp": t0, "data": hex(30 * 10 ** 24)}], "1 in"
+        return [{"timeStamp": t0 + 3 * 86400, "data": hex(2 * 10 ** 24)}], "1 out"
+    monkeypatch.setattr(coi, "explorer_logs", logs)
+    bal, how = coi._balance_history("0x" + "11" * 20, "0x" + "22" * 20)
+    assert bal.loc[pd.Timestamp("2026-06-26")] == 30e6 and bal.loc[pd.Timestamp("2026-06-29")] == 28e6
+    assert bal.index[-1] == pd.Timestamp.now().normalize() and bal.iloc[-1] == 28e6 and how == "1 in / 1 out"
+    assert "Maple: 0xd6d4" not in config.circulating_onchain("Maple")["missing"]
+    assert "0xd6d4 is NOT it" in config.circulating_onchain("Maple")["missing"]

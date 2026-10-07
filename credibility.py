@@ -168,8 +168,15 @@ def _trailing_token_yield(p, rows, long, asof, tokens="", lock="", days=365, **_
     avg = float(lk.mean())
     if covered <= 0 or not avg:
         return None, None, "nothing to annualise"
-    v = float(tk.sum()) / avg * 365.0 / covered
-    return v, str(asof.date()), (f"{tokens} {float(tk.sum()):,.0f} / average {lock} {avg:,.0f} over {covered} day(s) "
+    # TIME-WEIGHTED (2026-10-07 17:08, the same rule as build_workbook._trailing_yield_views): each day's reward over
+    # that day's stake, summed
+    daily = (tk / lk.reindex(tk.index.union(lk.index)).sort_index().ffill().reindex(tk.index)).replace(
+        [float("inf"), float("-inf")], float("nan")).dropna()
+    if daily.empty:
+        return None, None, f"no {lock} on or before the reward days"
+    v = float(daily.sum()) * 365.0 / covered
+    return v, str(asof.date()), (f"sum of daily {tokens} / that day's {lock} ({float(tk.sum()):,.0f} tokens; average "
+                                 f"{lock} {avg:,.0f}) over {covered} day(s) "
                                  f"{(asof - pd.Timedelta(days=covered - 1)).date()}..{asof.date()}, x 365/{covered}"
                                  + ("" if covered >= days else f" (the series covers {covered} of {days} days)"))
 
@@ -916,6 +923,20 @@ def circulating_input(name: str) -> dict:
                                 "note": " ".join(x for x in (f"Figure in use: {pol.get('source', ours_m)}.",
                                                               pol.get("add_back") and f"Staked add-back: "
                                                               f"{pol['add_back']}.", partial_note) if x)}}
+    counts = config.coingecko_counts_holdings(name)
+    if counts and ours_m == "circulating_supply_onchain":
+        # LIKE-FOR-LIKE (Jake's run 2026-10-07 17:08): our stricter on-chain figure PLUS the documented wallets
+        # CoinGecko still counts, against CoinGecko on the same day; the wallets' sum is the in_circ_gap row
+        a = ("circulating_supply_onchain", *counts)
+        return {"what": f"Circulating as CoinGecko counts it = OURS ({ours_m}) + {' + '.join(counts)} (documented "
+                        f"wallets our convention excludes and CoinGecko counts)",
+                "ours": {"py": "sums_on_common_day", "args": {"a": a, "b": ("circulating_supply",), "side": "ours"}},
+                "fmt": '#,##0;(#,##0);-',
+                "ref": {"formula": "sums_on_common_day", "args": {"a": a, "b": ("circulating_supply",), "side": "ref"},
+                        "tol": 2.0, "source": "CoinGecko circulating_supply, the same day — compared with ours plus the "
+                                              "wallets it still counts; a gap left beyond tolerance is a real "
+                                              "disagreement",
+                        "note": "The definitional gap (those wallets) is reported on its own row, in_circ_gap."}}
     if ours_m != "circulating_supply":           # first-party / on-chain chosen, no other set: CoinGecko
         static = spec.get("static_cross_check")
         return {**base, "ref": {"metric": "circulating_supply", "window": "now", "tol": 2.0,
@@ -971,6 +992,16 @@ def build_rows(headline_cells: list[dict], rows: dict, long, asof, projects=None
         inputs = dict(config.CREDIBILITY_COMMON_INPUTS)
         inputs.update(price_inputs(name))
         inputs["in_circ"] = circulating_input(name)
+        gap_legs = config.coingecko_counts_holdings(name)
+        if gap_legs and config.circulating_onchain_primary(name):
+            inputs["in_circ_gap"] = {
+                "what": f"Definitional gap: documented wallets our circulating excludes and CoinGecko counts "
+                        f"({' + '.join(gap_legs)})",
+                "ours": {"py": "sums_on_common_day", "args": {"a": gap_legs, "b": gap_legs, "side": "ours"}},
+                "fmt": '#,##0;(#,##0);-',
+                "ref": {"verdict": "N/A", "why": "recorded, not judged: the difference between our convention "
+                                                 "(treasury, team/investor, foundation and operating wallets out) "
+                                                 "and CoinGecko's. in_circ compares like-for-like."}}
         inputs.update(generic_inputs(name))
         inputs.update({k: v for k, v in spec_p.items() if k.startswith("in_")})
         for iid, spec in inputs.items():

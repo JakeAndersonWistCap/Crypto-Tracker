@@ -20614,6 +20614,9 @@ CIRCULATING_ONCHAIN = {
                 # (technical-reference.mdx "Miscellaneous Addresses": the four treasury vesting contracts and the
                 # merkle distributor's unclaimed airdrop — _NONCIRC_WALLETS_FIRST_PARTY). Was "coingecko" (policy round).
                 "ratios_use": "onchain", "was_ratios_use": "coingecko",
+                # LIKE-FOR-LIKE (Jake's run 2026-10-07 17:08: 612.57M vs CoinGecko 625.08M, -2.0%): CoinGecko excludes
+                # the Timelock only, so it still counts the docs' vesting contracts and airdrop distributor
+                "coingecko_counts": ("noncirculating_holding_tokens",),
                 "method": "total − 0x…dEaD − the governance Timelock 0x1a9C…: CoinGecko's own method (its "
                           "supply-breakdown docs name the 'UNI Timelock' as the non-circulating wallet), and it "
                           "reproduces CoinGecko's 623.2M of 890.5M (2026-09-02)",
@@ -20688,6 +20691,9 @@ CIRCULATING_ONCHAIN = {
     "Ether.fi": {"status": "established", "total": "total_supply",
                  "subtract": ("treasury_holding_tokens", "noncirculating_holding_tokens"),
                  "ratios_use": "onchain",
+                 # LIKE-FOR-LIKE (Jake's run 2026-10-07 17:08: 797.21M vs CoinGecko 965.35M, -17.4%): CoinGecko still
+                 # counts the filing's custodian / treasury / foundation wallets we exclude
+                 "coingecko_counts": ("noncirculating_holding_tokens",),
                  "first_party_list": "https://blockworks.com/token-transparency/filing/ether-fi (Jake, 2026-10-07)",
                  "was": {"status": "partial", "subtract": ("treasury_holding_tokens",), "ratios_use": None},
                  "decision": "ON-CHAIN (Jake's sweep, 2026-10-07): total - the treasury 0x0c83… - ether.fi's own filing "
@@ -20709,7 +20715,12 @@ CIRCULATING_ONCHAIN = {
                           "77.66-79.21M vs 23.09M read on-chain 2026-10-05) is settled by maple_dao_vs_ssf — on a "
                           "MATCH the set is complete and on-chain becomes primary. Staked SYRUP: n/a (staking ended); "
                           "stSYRUP and the OFT adapter's balance count as circulating",
-              "missing": "confirmation that 0xd6d4 is the SSF (maple_dao_vs_ssf); why DefiLlama's treasury "
+              # Jake's run 2026-10-07 17:08 (maple_dao_vs_ssf): 0xd6d4 = 23,092,603 SYRUP + 2.81M USDC + 0.76M USDT,
+              # stSYRUP 0 — NO MATCH with the SSF (76,770,012 on 2026-10-06). Its one large inflow: 28,550,344 SYRUP
+              # from 0xa9466eab (the registry treasury, subtracted) on 2026-06-26. Both admin multisigs hold 0 SYRUP.
+              # maple_ssf_candidates tests 0xa9466eab and its recipients against the SSF series.
+              "missing": "the SSF's wallet: 0xd6d4 is NOT it (Jake's run 2026-10-07 17:08); maple_ssf_candidates; "
+                         "why DefiLlama's treasury "
                          "(294.93M) and CoinGecko's implied non-circulating (~77.4M) differ",
               "decided_by": "Claude Code 2026-10-06, pending Jake's review"},
     "Chainlink": {"status": "partial", "total": "total_supply",
@@ -21310,6 +21321,13 @@ def free_float_lock_metrics(project_name: str) -> tuple:
 def coingecko_counted_lock_legs(project_name: str) -> tuple:
     """Lock legs CoinGecko still COUNTS as circulating although its basis is free float (Pendle: sPENDLE)."""
     return tuple((CIRCULATING_ONCHAIN.get(project_name) or {}).get("coingecko_counts_lock_legs", ()))
+
+
+def coingecko_counts_holdings(project_name: str) -> tuple:
+    """Subtracted balances CoinGecko still COUNTS as circulating where our on-chain set is primary (Jake's run
+    2026-10-07 17:08: Ether.fi's filing wallets, Uniswap's docs vesting / airdrop wallets). The like-for-like
+    comparison is CoinGecko against ours PLUS these; their sum is the definitional gap, reported on its own row."""
+    return tuple((CIRCULATING_ONCHAIN.get(project_name) or {}).get("coingecko_counts", ()))
 
 
 def coingecko_counts_total(project_name: str) -> bool:
