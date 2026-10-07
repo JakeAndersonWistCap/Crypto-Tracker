@@ -527,6 +527,45 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11ar. Jake's probes16 + run 2026-10-07 20:57: Ether.fi Accountant, Aerodrome managed locks, trails
+
+**Ether.fi: the 32% was an artefact of cross-chain shares.** sETHFI is a Veda BoringVault.
+- Its "burns without outflow" are shares bridged out by the LayerZero Teller; the ETHFI stays behind. That made
+  ETHFI held ÷ Ethereum-only supply rise with no reward.
+- The yield is now the vault Accountant's `getRate()` growth over the trailing year (headline) and over Q0
+  (`in_yield_q0`). The Accountant is found from the Teller's `accountant()` and must report the same `vault()`.
+  `fetch/share_price.py` reads it today and 365 / 180 / 90 days back, as `sethfi_accountant_rate`.
+- Reference: the genuine reward top-ups over the ETHFI staked, at 25%. The stake leaves out ETHFI sitting in
+  strategy positions, so it reads high.
+- Decomposition classes: `bridge` (burn with no asset out, or mint with no asset in), `strategy` (PositionManager
+  0xCF413A19…) and `oft` (OFT lockbox 0xe0080d2F…). None of the three is a reward. probes15's queue / round-trip
+  classes are retracted.
+- Funding mix: rebuilt from genuine top-ups only (7.63M). The "stakers paying stakers" note is retracted.
+- The OFT lockbox's 31.08M is counted once: inside Ethereum's total, never subtracted, and L2 supply is never added.
+- `etherfi_accountant` prints `getRate()` at the same three blocks as the archive probe.
+
+**Aerodrome: on-chain primary.**
+- Circulating = total − the six filing wallets' liquid AERO − the AERO they deposited into managed veNFTs.
+  `filing_managed_lock_tokens` is read daily by `fetch/ve_managed.py` (`idToManaged` / `weights`).
+- Free float subtracts the lock less those managed locks, so they come out once.
+- CoinGecko's basis is the PERMANENT locks. Like-for-like = ours + the liquid filing wallets vs CoinGecko + permanent
+  locks − the managed locks.
+- The genesis 95M constant is superseded and kept under `was`.
+
+**Maple:** `maple_ssf_trail` compares the 0x58be0049 Safe's owners with 0xd6d4's signers. It then follows the EOA
+0x99f03ca0 (27.5M SYRUP on 2025-10-29) and tests the combination from 2025-10-29. If the trail fragments, it reports
+"awaiting Maple".
+
+**Fluid:** the five recipients are not vesting contracts.
+- The liquidity layer and the Uniswap pool are counted as circulating (recorded).
+- `fluid_avocado_owners` decides the three Avocado wallets. Team-owned wallets get wired, and Fluid then becomes
+  on-chain primary (rule in config).
+
+**Pendle:** spendle/data revenues stop at the 2026-04-07 epoch, so they can't serve as Q0 reference. `in_revenue` is
+CLOSED as single-source.
+
+**Hyperliquid pool release:** `hl_pool_release_compare` prints both sides day by day from `metrics.db`.
+
 ## 11aq. Jake's probes15 + run 2026-10-07 19:07: roots A-O, Ether.fi reclassification, new wallets and probes
 
 **New references (code):**

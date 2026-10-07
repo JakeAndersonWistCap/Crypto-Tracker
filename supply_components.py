@@ -71,6 +71,8 @@ def report(name: str, rows: dict, runlog) -> list[str]:
         legs.append(f"{lm} {_fmt(v)}")
         lock_total += v or 0.0
     x = config.locked_excluded_from_circulating(name) if config.circulating_excludes_declared(name) else 0.0
+    if config.circulating_excludes_declared(name):              # measured (Aerodrome's managed locks, probes16)
+        x += sum(now(m) or 0.0 for m in config.locked_excluded_metrics(name))
     out.append(f"  locked for free float: {'; '.join(legs)}" + (f"; less {x:,.0f} already out of circulating" if x else ""))
     cg, cg_total = now("circulating_supply"), now("total_supply")
     circ_used = now(primary) if primary != "circulating_supply" else None

@@ -3429,6 +3429,10 @@ def _ff_lock(R: Refs, r, p: dict) -> str:
     x = config.locked_excluded_from_circulating(p.get("name", ""))
     if x and config.circulating_excludes_declared(p["name"]):
         return f"MAX(0,{base}-{x:.0f})"
+    # MEASURED locked-and-excluded balances (Aerodrome's filing wallets' managed veNFT AERO, Jake's probes16)
+    xm = [R.D(r, m, "now") for m in config.locked_excluded_metrics(p.get("name", ""))]
+    if xm and config.circulating_excludes_declared(p["name"]):
+        return f"MAX(0,{base}-" + "-".join(xm) + ")"
     return base
 
 
@@ -3781,7 +3785,9 @@ def _token_yield(R: Refs, data_by_key: dict | None = None):
         # THE TRAILING-YEAR HEADLINE (Ether.fi, Jake 2026-10-07): reward tokens over the last `trailing_days` / the
         # AVERAGE staked over them, computed at read time (_trailing_yield_views).
         if ty.get("trailing_days"):
-            ty_cell = R.D(r, "token_yield_trailing_pct", "now")
+            # THE ACCOUNTANT'S RATE GROWTH where declared (Ether.fi, Jake's probes16) — the token count is its reference
+            ty_cell = R.D(r, "token_yield_accountant_trailing_pct" if ty.get("accountant_rate_metric")
+                          else "token_yield_trailing_pct", "now")
             return calc(f"IF(ISNUMBER({ty_cell}),{ty_cell},{NA})")
         tok = R.D(r, ty["tokens"], "q0")
         # PER EPOCH (Pendle, 2026-09-29): the mean distribution of the epochs in Q0 x epochs/yr —
@@ -3994,6 +4000,21 @@ def _trailing_yield_views(groups: dict) -> None:
         if not n:
             continue
         name = p["name"]
+        # THE ACCOUNTANT'S RATE (Ether.fi, Jake's probes16): the vault's true share price, read today and 365 / 180 / 90
+        # days back — its growth over the trailing window is the headline wherever it is stored.
+        acm = ty.get("accountant_rate_metric")
+        ac = groups.get((name, acm)) if acm else None
+        if ac is not None and not ac.empty:
+            a_ = ac.drop_duplicates("date", keep="last").set_index("date")["value"].astype(float).sort_index()
+            a_ = a_[a_.index >= a_.index[-1] - pd.Timedelta(days=int(n) + 3)]
+            span = (a_.index[-1] - a_.index[0]).days if len(a_) > 1 else 0
+            if span >= 7 and a_.iloc[0]:
+                g = (float(a_.iloc[-1]) / float(a_.iloc[0])) ** (365.0 / span) - 1.0
+                groups[(name, "token_yield_accountant_trailing_pct")] = _as_stored(pd.DataFrame(
+                    {"date": [a_.index[-1]], "project": [name], "metric": ["token_yield_accountant_trailing_pct"],
+                     "value": [g], "source": [f"derived:{acm} {float(a_.iloc[0]):.6f} ({a_.index[0].date()}) -> "
+                                               f"{float(a_.iloc[-1]):.6f} ({a_.index[-1].date()}), annualised over "
+                                               f"{span} day(s)"], "tier": [2]}), ac.columns)
         tok, lock = groups.get((name, ty["tokens"])), groups.get((name, spec["lock"]))
         if tok is None or tok.empty or lock is None or lock.empty:
             continue

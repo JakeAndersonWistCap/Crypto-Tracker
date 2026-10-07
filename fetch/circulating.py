@@ -87,6 +87,30 @@ def check(out, h: pd.DataFrame, projects: list[dict]) -> None:
             ours = _daily(h, name, spec["total"])
             basis = (" (ours as the on-chain TOTAL: CoinGecko counts every token; our circulating is stricter by "
                      + " + ".join(spec.get("subtract") or ()) + ")")
+        elif config.coingecko_like_for_like(name):
+            # CoinGecko on OUR basis (Aerodrome, Jake's probes16): it excludes the PERMANENT locks, so CoinGecko +
+            # those − the filing wallets' managed locks is set against our circulating
+            ll = config.coingecko_like_for_like(name)
+            for m in config.coingecko_counts_holdings(name):      # balances CoinGecko still counts, added to ours
+                ours = (ours + _daily(h, name, m)).dropna()
+            cg_adj = _daily(h, name, "circulating_supply")
+            for m in ll.get("plus") or ():
+                cg_adj = (cg_adj + _daily(h, name, m)).dropna()
+            for m in ll.get("minus") or ():
+                cg_adj = (cg_adj - _daily(h, name, m)).dropna()
+            both = pd.concat([ours.rename("ours"), cg_adj.rename("cg")], axis=1).dropna()
+            if both.empty:
+                continue
+            day, row = both.index[-1], both.iloc[-1]
+            diff = row["ours"] / row["cg"] - 1 if row["cg"] > 0 else 0.0
+            if abs(diff) > tol:
+                out.review_item(name, "circulating_supply", "onchain_vs_coingecko", "review",
+                                value=float(row["ours"]), prior_value=float(row["cg"]), date=day, source=SOURCE,
+                                tier=2, basis=f"{st} on-chain circulating {row['ours']:,.0f} vs CoinGecko on our basis "
+                                              f"(+ {' + '.join(ll.get('plus') or ())} − "
+                                              f"{' − '.join(ll.get('minus') or ())}) {row['cg']:,.0f} on "
+                                              f"{day.date()}: {diff:+.2%}, beyond the ±{tol:.0%} tolerance.")
+            continue
         elif config.coingecko_is_free_float(name):
             # CoinGecko's figure EXCLUDES staked/locked tokens (Pendle, Aerodrome; 2026-10-06): it is set against
             # OUR free float — circulating − the locked tokens inside it — never against our circulating.

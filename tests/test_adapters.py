@@ -14794,7 +14794,7 @@ def test_offline_checks_ambiguous_prefix_refuses_and_names_every_match(monkeypat
     rc2 = coi.main()
     out2 = capsys.readouterr().out
     assert rc2 == 1
-    assert "'maple' matches 9 checks" in out2      # + maple_dao_vs_ssf, maple_ssf_candidates, maple_ssf_partial
+    assert "'maple' matches 10 checks" in out2     # + maple_dao_vs_ssf, maple_ssf_candidates, maple_ssf_partial, _trail
     assert all(n in out2 for n in ("maple_dao_multisig", "maple_transparency", "maple_ssf_history",
                                    "maple_ssf_inflows", "maple_ssf_lp_test", "maple_drips", "maple_dao_vs_ssf"))
 
@@ -15300,7 +15300,7 @@ def test_program_silence_flags_ether_fi_and_annotates_its_a3_cells():
                 # 2026-10-06 16:33: the TOKEN yield (top-ups into sETHFI) leads; recipients are established, so
                 # "recipients unconfirmed" is gone — the silence flag stays beside the token note.
                 assert "recipients unconfirmed" not in c.number_format and " · tokens" in c.number_format
-                assert "ETHFI gained by sETHFI holders, RECONCILED" in c.comment.text   # numerator since 2026-10-06
+                assert "BoringVault Accountant's getRate()" in c.comment.text    # the yield since probes16
     print("silence ok: Ether.fi 87d SILENT on five A3 cells; GEODNET staleness is not silence")
 
 
@@ -20371,7 +20371,8 @@ def test_circulating_convention_is_printed_on_every_exclusion_list_with_document
         # Aethir is FIRST_PARTY since Jake's probes3 (2026-09-30): the dashboard's athCirculatingSupply
         # NEAR is FIRST_PARTY since 2026-10-01: its own circulating_supply table in BigQuery
         # PLUME is FIRST_PARTY since 2026-10-07: supply.plume.org/supply (Jake)
-        assert config.circulating_onchain(name)["status"] == {"Aerodrome": "partial", "Aethir": "first_party",
+        # Aerodrome ESTABLISHED since Jake's probes16 (the filing wallets' liquid + managed-lock AERO)
+        assert config.circulating_onchain(name)["status"] == {"Aerodrome": "established", "Aethir": "first_party",
                                                                "Near": "first_party", "Morpho": "partial",
                                                                "Plume": "first_party"}.get(name, "not_established")
         cand = config.NONCIRCULATING_CANDIDATES[name]
@@ -20493,20 +20494,21 @@ def test_hyperliquid_a4_total_burn_uses_the_assistance_fund_leg_before_both_legs
     assert "total_burn_tokens" not in config.HISTORY_FORWARD_ONLY["Hyperliquid"]["metrics"]
 
 
-def test_aerodrome_team_permanent_locks_are_excluded_from_circulating_only():
-    """Jake's decision (2026-09-30): the team's 95M in permanent veNFTs is excluded from circulating
-    and kept in total supply, FDV and the veAERO locked total — a named line on the exclusion list;
-    Flight School and the PGF are listed, not excluded."""
+def test_aerodrome_filing_wallets_liquid_and_managed_locks_are_out_of_circulating():
+    """Jake's probes16 (2026-10-07): the filing wallets' AERO in MANAGED veNFTs (Team 175.8M, Public Goods 174.8M,
+    Flight School 67.0M, Velodrome Foundation airdrop 26.7M) is out of circulating beside their liquid AERO; the genesis
+    95M constant is superseded (kept as a record)."""
     from fetch import circulating as C
     spec = config.circulating_onchain("Aerodrome")
-    assert spec["status"] == "partial" and spec["declared_exclusions"][0]["tokens"] == 95_000_000
-    d = pd.Timestamp("2026-09-29")
-    h = pd.DataFrame([{"date": d, "project": "Aerodrome", "metric": "total_supply", "value": 1.8e9},
-                      {"date": d, "project": "Aerodrome", "metric": "noncirculating_holding_tokens", "value": 50e6}])
-    assert list(C.series(h, "Aerodrome")) == [1.8e9 - 95e6 - 50e6], "the 95M declared + the liquid wallets read"
-    lines = "\n".join(C.report_lines())
-    assert "EXCLUDED: Development Team Funding" in lines and "still in total supply, FDV and the locked total" in lines
-    assert "PENDING (same principle, not excluded): Flight School 50M" in lines
+    assert spec["status"] == "established" and "declared_exclusions" not in spec
+    assert spec["subtract"] == ("noncirculating_holding_tokens", "filing_managed_lock_tokens")
+    assert "95,000,000" in spec["was"]["declared_exclusions"]
+    d = pd.Timestamp("2026-10-07")
+    h = pd.DataFrame([{"date": d, "project": "Aerodrome", "metric": "total_supply", "value": 1_992.8e6},
+                      {"date": d, "project": "Aerodrome", "metric": "noncirculating_holding_tokens", "value": 36.2e6},
+                      {"date": d, "project": "Aerodrome", "metric": "filing_managed_lock_tokens", "value": 444.3e6}])
+    assert list(C.series(h, "Aerodrome")) == [1_992.8e6 - 36.2e6 - 444.3e6]
+    assert len(config.PROJECT_BY_NAME["Aerodrome"]["ve_managed_holdings"]["owners"]) == 6
 
 
 def test_aethir_page_fields_come_from_the_nextjs_server_payload():
@@ -20880,16 +20882,19 @@ def test_free_float_subtracts_locked_tokens_already_out_of_circulating_only_once
         def D(self, r, m, w):
             return f"D[{m}:{w}]"
     aero = config.PROJECT_BY_NAME["Aerodrome"]
-    assert config.locked_excluded_from_circulating("Aerodrome") == 95_000_000
+    # MEASURED since Jake's probes16: the filing wallets' managed-veNFT AERO, not the genesis 95M constant
+    assert config.locked_excluded_from_circulating("Aerodrome") == 0.0
+    assert config.locked_excluded_metrics("Aerodrome") == ("filing_managed_lock_tokens",)
     ff = next(c for c in bw._a2_headline(R()) if c[0].startswith("FREE FLOAT ="))[1]
     cg = copy.deepcopy(config.CIRCULATING_ONCHAIN)
     cg["Aerodrome"].pop("ratios_use")                  # CoinGecko's circulating in use: no adjustment
+    cg["Aerodrome"]["status"] = "partial"
     monkeypatch.setattr(config, "CIRCULATING_ONCHAIN", cg)
     assert "MAX(0" not in (ff(5, aero) or ""), "partial set: CoinGecko circulating, no adjustment"
     monkeypatch.undo()                                 # as configured (2026-10-06): on-chain primary
     cell = ff(5, aero)
     # the lock subtracted is the lock SHOWN: veAERO.supply() for Aerodrome (overnight 2026-10-06)
-    assert "MAX(0,D[ve_locked_supply_tokens:now]-95000000)" in cell, cell
+    assert "MAX(0,D[ve_locked_supply_tokens:now]-D[filing_managed_lock_tokens:now])" in cell, cell
     assert config.locked_excluded_from_circulating("Uniswap") == 0.0
 
 
@@ -25009,11 +25014,10 @@ def test_sethfi_share_price_is_read_at_one_block_now_and_q0_back_for_the_realise
     monkeypatch.setattr(sp, "today", lambda: pd.Timestamp("2026-10-06"))
     spec = config.PROJECT_BY_NAME["Ether.fi"]["share_price_onchain"]
     assert spec["metric"] == "sethfi_share_price_onchain" and spec["days_back"] == 89
-    # the ~89-day archive read stays Q0's reference (in_yield_q0); the trailing year is judged against the year's own
-    # rebuilt assets-per-share since Jake's probes14 (2026-10-07)
-    assert config.CREDIBILITY["Ether.fi"]["in_yield_q0"]["ref"]["args"]["metric"] == "sethfi_share_price_onchain"
-    assert config.CREDIBILITY["Ether.fi"]["a3_protocol_yield"]["args"] == {"metric": "sethfi_aps_reward_only",
-                                                                           "days": 365}   # probes15: reward-only
+    # since Jake's probes16 the yield is the BoringVault Accountant's rate (the held/supply read is Ethereum-only);
+    # the genuine reward top-ups are its reference
+    assert config.CREDIBILITY["Ether.fi"]["in_yield_q0"]["ours"]["args"]["metric"] == "sethfi_accountant_rate"
+    assert config.CREDIBILITY["Ether.fi"]["a3_protocol_yield"]["metric"] == "token_yield_trailing_pct"
 
     class Fn:
         def __init__(self, f):
@@ -25353,7 +25357,7 @@ def test_circulating_decisions_are_applied_consistently_and_coingecko_free_float
     # THE POLICY (2026-10-07): the project's own figure first, CoinGecko where it publishes nothing
     chosen = {n: bw.chosen_circulating_metric(config.PROJECT_BY_NAME[n]) for n in config.CIRCULATING_POLICY}
     assert chosen["Pendle"] == "circulating_supply_onchain"            # Pendle's documented method, staked added back
-    assert chosen["Aerodrome"] == "circulating_supply_cg_plus_staked"  # CoinGecko + veAERO, added back once
+    assert chosen["Aerodrome"] == "circulating_supply_onchain"         # probes16: filing wallets incl. managed locks
     assert chosen["Ethereum"] == "circulating_supply_onchain"
     # THE FULL SWEEP (Jake, 2026-10-07): an on-chain count from wallets the project documents is primary
     for n in ("GEODNET", "Sky", "Uniswap", "Ether.fi"):
@@ -25446,7 +25450,7 @@ def test_headline_diff_and_manual_form_make_run_on_a_store(tmp_path, monkeypatch
     assert hd.main(["--only", "circulating"]) == 0
     out = capsys.readouterr().out
     assert "HEADLINES MOVING BEYOND 10%" in out
-    assert config.CIRCULATING_ONCHAIN["Aerodrome"]["ratios_use"] == "coingecko_plus_staked", "the decision is restored"
+    assert config.CIRCULATING_ONCHAIN["Aerodrome"]["ratios_use"] == "onchain", "the decision is restored"  # probes16
     assert hd.main(["--only", "circulating_policy"]) == 0
     assert "HEADLINES MOVING BEYOND 10%" in capsys.readouterr().out
     assert config.CIRCULATING_ONCHAIN["GEODNET"]["ratios_use"] == "onchain"
@@ -25480,13 +25484,14 @@ def test_free_float_never_subtracts_the_lock_twice_from_coingeckos_free_float_ba
                                                             "Pendle|locked_tokens": {"now": 31.4e6}}, None,
                                                  pd.Timestamp("2026-10-07"))
     assert v is None and "not computed" in how
-    # Aerodrome: the team's 95M leaves the lock once (it is out of circulating already)
+    # Aerodrome (probes16): the filing wallets' managed locks leave the lock once (they are out of circulating already)
     # (the lock subtracted is the one the sheet shows: veAERO.supply(), LOCK_DISPLAY_METRIC)
-    rows = {"Aerodrome|circulating_supply_cg_plus_staked": {"now": 1.85e9},
-            "Aerodrome|ve_locked_supply_tokens": {"now": 0.99e9},
+    rows = {"Aerodrome|circulating_supply_onchain": {"now": 1.51e9},
+            "Aerodrome|ve_locked_supply_tokens": {"now": 1.05e9},
+            "Aerodrome|filing_managed_lock_tokens": {"now": 0.44e9},
             "Aerodrome|locked_tokens": {"now": 0.93e9}}
     v, _d, _h = cred.FORMULAS["free_float_now"]("Aerodrome", rows, None, pd.Timestamp("2026-10-07"))
-    assert v == 1.85e9 - (0.99e9 - 95e6)
+    assert abs(v - (1.51e9 - (1.05e9 - 0.44e9))) < 1
 
     class R:
         def D(self, r, m, w):
@@ -26255,8 +26260,8 @@ def test_etherfi_headline_is_the_trailing_year_over_average_stake_with_q0_and_th
     assert 0.10 < tw < 0.11 and avg_based > 1.75 * tw
     g = float(groups[("Ether.fi", "token_yield_share_price_trailing_pct")]["value"].iloc[0])
     assert g == pytest.approx((sp["value"].iloc[-1] / sp["value"].iloc[0]) ** (365 / 363) - 1)
-    assert config.CREDIBILITY["Ether.fi"]["a3_protocol_yield"]["args"]["days"] == 365
-    assert config.CREDIBILITY["Ether.fi"]["in_yield_q0"]["ours"]["args"]["days"] == 90
+    assert config.CREDIBILITY["Ether.fi"]["a3_protocol_yield"]["metric"] == "token_yield_trailing_pct"   # probes16
+    assert config.CREDIBILITY["Ether.fi"]["in_yield_q0"]["ref"]["args"]["days"] == 90
     long = pd.concat([tok, lock])[["date", "project", "metric", "value"]]
     y, _d, how = cred.FORMULAS["trailing_token_yield"]("Ether.fi", {}, long, pd.Timestamp("2026-10-06"),
                                                       tokens="sethfi_reward_tokens_reconciled",
@@ -26422,9 +26427,10 @@ def test_circulating_policy_project_figure_first_with_the_onchain_set_as_cross_c
               ("2026-10-05", "Aerodrome", "ve_locked_supply_tokens", 1.05e9, "chain"),
               ("2026-10-06", "Aerodrome", "circulating_supply", 1.01e9, "coingecko")])
     bw._cg_plus_staked_views(g)
-    v = g[("Aerodrome", "circulating_supply_cg_plus_staked")]
-    assert list(v["value"]) == [_pytest.approx(1.00e9 + 1.05e9 - 95e6)], "only days where both are read"
-    assert "circulating_supply_cg_plus_staked" in config.metrics_for_project(config.PROJECT_BY_NAME["Aerodrome"])
+    # since Jake's probes16 Aerodrome's on-chain set is primary (filing wallets' liquid + managed-lock AERO), so the
+    # CoinGecko + veAERO view is no longer built for it
+    assert ("Aerodrome", "circulating_supply_cg_plus_staked") not in g
+    assert config.circulating_primary_metric("Aerodrome") == "circulating_supply_onchain"
     # 2. GEODNET market cap: the own figure (one manual day) holds forward; CoinGecko days before it are netted
     g = _grp([("2026-10-06", "GEODNET", "price_usd", 0.10, "coingecko"),
               ("2026-10-07", "GEODNET", "price_usd", 0.10, "coingecko"),
@@ -26446,7 +26452,8 @@ def test_circulating_policy_project_figure_first_with_the_onchain_set_as_cross_c
     spec = cred.circulating_input("GEODNET")     # the set primary; judged by the bridge reconciliation (probes15)
     assert spec["ours"]["metric"] == "circulating_supply_onchain"
     assert spec["ref"]["formula"] == "bridge_reconciled"
-    assert cred.circulating_input("Aerodrome")["ref"]["metric"] == "circulating_supply_onchain"
+    # probes16: ours (on-chain + the liquid filing wallets CoinGecko counts) vs CoinGecko on our basis
+    assert cred.circulating_input("Aerodrome")["ref"]["formula"] == "now_combo"
     # Uniswap's on-chain count is primary now (the full sweep); CoinGecko is its cross-check, like-for-like
     # (ours + the docs wallets CoinGecko counts — Jake's run 2026-10-07 17:08)
     assert cred.circulating_input("Uniswap")["ref"]["metric"] == "circulating_supply"
@@ -26811,8 +26818,9 @@ def test_etherfi_trailing_year_is_judged_against_the_years_own_assets_per_share_
     import manual_refs as mr
     from fetch.share_decompose import decompose
     spec = config.CREDIBILITY["Ether.fi"]["a3_protocol_yield"]
-    assert spec["formula"] == "log_price_growth" and spec["args"] == {"metric": "sethfi_aps_reward_only", "days": 365}
-    assert spec["tol"] == 5.0 and "14.12M" in spec["note"]
+    # RETIRED by Jake's probes16: the rebuilt walk is Ethereum-only (bridged shares left their ETHFI behind); the
+    # reference is now the genuine reward top-ups and the headline the Accountant's rate. The walk stays stored.
+    assert spec["metric"] == "token_yield_trailing_pct" and "RETRACTED" in spec["note"]
     scan = next(s for s in config.PROJECT_BY_NAME["Ether.fi"]["log_scans"] if s["key"] == "sethfi_reward_topups")
     assert scan["decompose"]["aps_metric"] == "sethfi_aps_rebuilt" and "sethfi_aps_rebuilt" in config.METRICS
     days = pd.date_range("2025-10-08", "2026-10-07")
@@ -26821,9 +26829,10 @@ def test_etherfi_trailing_year_is_judged_against_the_years_own_assets_per_share_
     v, _d, how = cred.FORMULAS["log_price_growth"]("Ether.fi", {}, long, pd.Timestamp("2026-10-07"),
                                                    metric="sethfi_aps_rebuilt", days=365)
     assert abs(v - math.log(1.246158 / 0.940728) * 365 / 364) < 1e-6 and "+32.47% compounded" in how
-    assert abs(v - 0.2774) / 0.2774 < 0.05, "the headline's 27.74% sits inside the 5% tolerance once like-for-like"
     mix = config.PROTOCOL_YIELD["Ether.fi"]["funding_mix_2026_10_07"]
-    assert mix["burn_no_outflow"] == 14_119_679 and sum(mix["unlabelled_senders"].values()) == 10_387_920
+    assert mix["genuine_reward_topups"] == 7_625_806 == mix["of_which_old_programme_0x2f53"] + mix[
+        "of_which_topup_safe_0x3fb6"]
+    assert any("14,119,679" in k for k in mix["retracted"])
     ref, ours = mr.reference_for([{"project": "Ether.fi", "row": "in_apy_published", "value": "0.0179",
                                    "read_on": "2026-10-07", "read_by": "Jake", "url": "", "note": ""}], None)
     assert ref["verdict"] == "N/A (recorded)" and "FORWARD rate" in ref["why"] and ours is None
@@ -26952,13 +26961,13 @@ def test_aerodrome_rebase_reference_takes_the_first_read_after_the_flip_within_a
     assert abs(v - 4 * 1e7 * 0.6 ** 2 / 2) < 1e-6 and "first daily read after the flip for 2026-09-10" in how
 
 
-def test_sethfi_queue_burns_and_round_trips_are_not_rewards():
-    """Jake's probes15 1b: a burn by the withdrawal queue and its later payout are ONE withdrawal; vault assets out to
-    a counterparty and back are the holders' own. Both stay in the all-classes walk and leave the reward walk and the
-    reward tokens untouched."""
+def test_sethfi_bridge_moves_strategy_and_oft_flows_are_not_rewards():
+    """Jake's probes16 1b: the vault is a Veda BoringVault (no exit penalty) — a burn with no asset out is sETHFI bridged
+    out, a mint with no asset in is sETHFI bridged back; vault ETHFI out to the PositionManager and back is strategy;
+    flows with the OFT lockbox are token bridging. None is a reward: the reward walk and tokens see the top-up only."""
     from fetch.share_decompose import decompose
-    vault, user, queue, rt, safe, zero = ("0x" + "a" * 40, "0x" + "1" * 40, "0x" + "f" * 40, "0x" + "c" * 40,
-                                          "0x" + "5" * 40, "0x" + "0" * 40)
+    vault, user, pm, oft, safe, zero = ("0x" + "a" * 40, "0x" + "1" * 40, "0x" + "c" * 40, "0x" + "e" * 40,
+                                        "0x" + "5" * 40, "0x" + "0" * 40)
     E = 10 ** 18
 
     def ev(tx, blk, frm, to, amt, ts):
@@ -26966,19 +26975,21 @@ def test_sethfi_queue_burns_and_round_trips_are_not_rewards():
                 "topics": ["0xddf", "0x" + "0" * 24 + frm[2:], "0x" + "0" * 24 + to[2:]], "data": hex(amt)}
     d0 = int(pd.Timestamp("2026-10-01").timestamp())
     ins = [ev("dep", 1, user, vault, 100 * E, d0), ev("top", 3, safe, vault, 10 * E, d0 + 86400),
-           ev("back", 6, rt, vault, 20 * E, d0 + 4 * 86400)]
-    mints = [ev("dep", 1, zero, user, 100 * E, d0)]
-    burns = [ev("qburn", 4, queue, zero, 10 * E, d0 + 2 * 86400)]
-    outs = [ev("qpay", 5, vault, queue, 11 * E, d0 + 3 * 86400), ev("out", 2, vault, rt, 20 * E, d0 + 3600)]
-    r = decompose(ins, outs, mints, burns, d0 + 1800, {safe}, queues={queue}, circular={rt})
+           ev("back", 6, pm, vault, 20 * E, d0 + 4 * 86400), ev("oftin", 8, oft, vault, 5 * E, d0 + 5 * 86400)]
+    mints = [ev("dep", 1, zero, user, 100 * E, d0), ev("bridgein", 7, zero, user, 4 * E, d0 + 5 * 86400)]
+    burns = [ev("bridgeout", 4, user, zero, 10 * E, d0 + 2 * 86400)]
+    outs = [ev("out", 2, vault, pm, 20 * E, d0 + 3600)]
+    r = decompose(ins, outs, mints, burns, d0 + 1800, {safe}, bridge_shapes=True, strategy={pm}, oft={oft})
     by = r["by_class"]
-    assert by["withdrawal_queue"]["txs"] == 2 and by["circular"]["txs"] == 2 and by["topup_identified"]["txs"] == 1
+    assert (by["bridge"]["txs"], by["strategy"]["txs"], by["oft"]["txs"], by["topup_identified"]["txs"]) == (2, 2, 1, 1)
     assert abs(sum(v["aps"] for v in by.values()) - (r["aps_end"] - r["aps_start"])) < 1e-12
     assert abs(sum(r["daily"].values()) - by["topup_identified"]["tokens"]) < 1e-9, "only the top-up is a reward"
-    assert abs(r["aps_reward_end"] / r["aps_start"] - 1.1) < 1e-12, "the reward walk moves by the top-up alone"
-    scan = next(s for s in config.PROJECT_BY_NAME["Ether.fi"]["log_scans"] if s["key"] == "sethfi_reward_topups")
-    assert "0xF4e147Db314947fC1275a8CbB6Cde48c510cd8CF" in scan["decompose"]["withdrawal_queues"]
-    assert "sethfi_aps_reward_only" in config.METRICS
+    assert abs(r["aps_reward_end"] - r["aps_start"] - 0.1) < 1e-12, "the reward walk moves by the top-up alone"
+    dec = next(s for s in config.PROJECT_BY_NAME["Ether.fi"]["log_scans"] if s["key"] == "sethfi_reward_topups")[
+        "decompose"]
+    assert dec["bridge_shapes"] is True and "withdrawal_queues" not in dec
+    assert dec["strategy_counterparties"] == ("0xCF413A1989e33C8Ef59fbA79935d93205C9BE4c7",)
+    assert dec["oft_adapters"] == ("0xe0080d2F853ecDdbd81A643dC10DA075Df26fD3f",)
 
 
 def test_probes15_wallets_records_and_probes():
@@ -26990,7 +27001,7 @@ def test_probes15_wallets_records_and_probes():
     f = config.PROJECT_BY_NAME["Fluid"]["contracts"]["noncirc_igp137_lock"]
     assert e["address"] == "0xe4439b1d150Ab2Febd72D699954c7b4ddE2b66e2"
     assert f["address"] == "0xCaBebC7f76D53582a4be7d9972A2b4F531753fd7"
-    assert "0xcabebc7f" in config.CIRCULATING_ONCHAIN["Fluid"]["missing"]
+    assert "Avocado" in config.CIRCULATING_ONCHAIN["Fluid"]["missing"]        # probes16: igp137 found, vesting none
     assert "14,634 MORPHO" in config.CREDIBILITY["Morpho"]["a2_emissions"]["why"]
     ref, _o = mr.reference_for([{"project": "Aethir", "row": "in_apr_ai", "value": "0.1248", "read_on": "2026-10-07",
                                  "read_by": "Jake"}], None)
@@ -27001,3 +27012,160 @@ def test_probes15_wallets_records_and_probes():
         assert fn in coi.CHECKS
     a0, a1 = coi._v3_amounts(10 ** 18, 2 ** 96, -600, 600)          # price 1 inside the range: both legs
     assert a0 > 0 and a1 > 0 and abs(a0 - a1) / a1 < 1e-9
+
+
+# ===== Jake's probes16 (2026-10-07 20:57) =====
+def test_etherfi_yield_is_the_boringvault_accountant_rate_found_from_the_teller(monkeypatch):
+    """1a: the Teller's accountant(), checked against accountant.vault(), getRate() today and 365 / 180 / 90 days back;
+    the A3 headline is its trailing-year growth (a read-time view), the genuine reward top-ups its reference."""
+    import build_workbook as bw
+    import fetch.share_price as sp
+    from fetch.share_price import SharePrice
+    monkeypatch.setattr(sp, "today", lambda: pd.Timestamp("2026-10-07"))
+    spec = config.PROJECT_BY_NAME["Ether.fi"]["accountant_rate"]
+    assert spec["teller"] == "0x35dD2463fA7a335b721400C5Ad8Ba40bD85c179b" and spec["days_back"] == (365, 180, 90)
+    vault = spec["vault"]
+    rates = {3000: 1.10, 2000: 1.03, 1500: 1.05, 1000: 1.00}
+    days = {2000: "2026-04-10", 1500: "2026-07-09", 1000: "2025-10-07"}
+
+    class Fn:
+        def __init__(self, f):
+            self.f = f
+
+        def call(self, block_identifier=None):
+            return self.f(block_identifier)
+
+    class W3:
+        def __init__(self, vault_seen):
+            self.eth, self.vault_seen, self.blk = self, vault_seen, None
+
+        def contract(self, address, abi):
+            w = self
+
+            class C:
+                pass
+            C.address = address
+
+            class functions:
+                @staticmethod
+                def accountant():
+                    return Fn(lambda b: "0xACC0")
+
+                @staticmethod
+                def vault():
+                    return Fn(lambda b: w.vault_seen)
+
+                @staticmethod
+                def decimals():
+                    return Fn(lambda b: 18)
+
+                @staticmethod
+                def getRate():
+                    return Fn(lambda b: int(rates[b if b in rates else 3000] * 10 ** 18))
+            C.functions = functions
+            return C
+
+        def get_block(self, b):
+            return {"timestamp": int(pd.Timestamp(days[b]).timestamp())}
+
+    class Reader:
+        def __init__(self, w3):
+            self.w = w3
+
+        def web3(self, chain):
+            return self.w
+
+        def checksum(self, a):
+            return a
+
+        def block_number(self, chain):
+            return 3000
+
+    class Daily:
+        def due(self, *a):
+            return True
+
+        def done(self, *a):
+            pass
+    blocks = iter([1000, 2000, 1500])
+
+    class Arch(SharePrice):
+        def _accountant_rate(self, p, spec, out):
+            import fetch.archive as fa
+            monkeypatch.setattr(fa, "resolve_archive", lambda chain, days: (self.reader.w, "host"))
+            monkeypatch.setattr(fa, "block_days_back", lambda aw, d: next(blocks))
+            return super()._accountant_rate(p, spec, out)
+    w = W3(vault)
+    out = FetchOutput()
+    Arch(reader=Reader(w), daily=Daily())._accountant_rate(config.PROJECT_BY_NAME["Ether.fi"], spec, out)
+    f = out.frame().sort_values("date")
+    assert list(f.value) == [1.00, 1.03, 1.05, 1.10] and set(f.metric) == {"sethfi_accountant_rate"}
+    # a Teller whose accountant reports another vault: nothing stored
+    out2 = FetchOutput()
+    Arch(reader=Reader(W3("0xOTHER")), daily=Daily())._accountant_rate(config.PROJECT_BY_NAME["Ether.fi"], spec, out2)
+    assert out2.frame().empty and any("reports vault" in e.message for e in out2.log)
+    # the headline view: growth over the trailing year
+    g = {("Ether.fi", "sethfi_accountant_rate"): f.assign(source="x", tier=2)}
+    bw._trailing_yield_views(g)
+    v = float(g[("Ether.fi", "token_yield_accountant_trailing_pct")]["value"].iloc[0])
+    assert abs(v - (1.10 / 1.00) ** (365 / 365) + 1) < 1e-9
+    ty = config.PROTOCOL_YIELD["Ether.fi"]["token_yield"]
+    assert ty["accountant_rate_metric"] == "sethfi_accountant_rate"
+    assert config.CIRCULATING_ONCHAIN["Ether.fi"]["bridge_custody"]["address"] == "0xe0080d2F853ecDdbd81A643dC10DA075Df26fD3f"
+
+
+def test_aerodrome_managed_deposits_are_read_per_filing_wallet_and_coingecko_is_compared_on_our_basis():
+    """2: weights(tokenId, idToManaged(tokenId)) summed over each filing wallet's veNFTs; CoinGecko + permanent locks −
+    the managed locks against ours + the liquid filing balances CoinGecko counts."""
+    import credibility as cred
+    from fetch.ve_managed import deposits
+
+    class Fn:
+        def __init__(self, v):
+            self.v = v
+
+        def call(self, block_identifier=None):
+            return self.v
+
+    class VE:
+        class functions:
+            @staticmethod
+            def balanceOf(o):
+                return Fn(3)
+
+            @staticmethod
+            def ownerToNFTokenIdList(o, i):
+                return Fn(10 + i)
+
+            @staticmethod
+            def idToManaged(t):
+                return Fn(0 if t == 12 else 99)
+
+            @staticmethod
+            def weights(t, m):
+                return Fn(5 * 10 ** 24 if t == 10 else 7 * 10 ** 24)
+    raw, n, held = deposits(VE, "0xowner", 1)
+    assert (raw, n, held) == (12 * 10 ** 24, 3, 2)
+    rows = {"Aerodrome|circulating_supply": {"now": 999.87e6}, "Aerodrome|permanent_locked_tokens": {"now": 990.2e6},
+            "Aerodrome|filing_managed_lock_tokens": {"now": 444.3e6}}
+    v, _d, how = cred.FORMULAS["now_combo"]("Aerodrome", rows, None, pd.Timestamp("2026-10-07"),
+                                            metrics=("circulating_supply", "permanent_locked_tokens"),
+                                            minus=("filing_managed_lock_tokens",))
+    assert abs(v - (999.87e6 + 990.2e6 - 444.3e6)) < 1 and "filing_managed_lock_tokens" in how
+    assert not config.coingecko_is_free_float("Aerodrome") and config.coingecko_like_for_like("Aerodrome")
+
+
+def test_probes16_records_and_probes():
+    """3-6: the Maple trail, Fluid's recipients (not vesting; pool / liquidity layer counted as circulating), Pendle's
+    stale epoch revenues closed, and the new probes registered."""
+    import check_offline_items as coi
+    m = config.CIRCULATING_ONCHAIN["Maple"]["ssf_trail"]
+    assert m["matched"] == "2025-08-13..2025-10-28" and "0x99f03ca0" in m["diverged"]
+    fl = config.CIRCULATING_ONCHAIN["Fluid"]
+    assert "0x52Aa899454998Be5b000Ad077a46Bbe360F4e497" in fl["counted_as_circulating"]
+    assert "fluid_avocado_owners" in fl["missing"] and not config.circulating_onchain_primary("Fluid")
+    sp = config.PROJECT_BY_NAME["Pendle"]["spendle_epochs"]["revenues_closed"]
+    assert sp["latest_epoch"] == "2026-04-07" and config.CREDIBILITY["Pendle"]["in_revenue"]["ref"]["verdict"] == \
+        "UNVERIFIABLE"
+    for fn in (coi.etherfi_accountant, coi.maple_ssf_trail, coi.fluid_avocado_owners, coi.hl_pool_release_compare):
+        assert fn in coi.CHECKS

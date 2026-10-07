@@ -203,7 +203,8 @@ class LogScan:
             return
         since = today() - pd.Timedelta(days=int(dec.get("window_days", 90)))
         r = decompose(ins[vault], outs[vault], mints, burns, int(since.timestamp()), set(labels),
-                      queues=set(dec.get("withdrawal_queues") or ()), circular=set(dec.get("circular_counterparties") or ()))
+                      bridge_shapes=bool(dec.get("bridge_shapes")), strategy=set(dec.get("strategy_counterparties") or ()),
+                      oft=set(dec.get("oft_adapters") or ()))
         if r["aps_end"] is None or not r["aps_start"]:
             out.fail(SOURCE, name, f"{key}: no shares outstanding — nothing to decompose", TIER)
             return
@@ -233,8 +234,8 @@ class LogScan:
             out.add(tidy(rows, name, dec["aps_metric"], f"{SOURCE}:{key}.aps_walk", TIER), SOURCE, name,
                     f"{dec['aps_metric']} — assets-per-share rebuilt from the Transfer logs, daily since {since.date()}",
                     TIER)
-        # THE REWARD-ONLY WALK (Jake's probes15): the same daily close with queued withdrawals and round trips held
-        # still — the yield's reference once those are named (decompose.withdrawal_queues / circular_counterparties).
+        # THE REWARD-ONLY WALK (Jake's probes15/16): the same daily close with cross-chain share moves, strategy
+        # deployments and OFT bridging held still (decompose.bridge_shapes / strategy_counterparties / oft_adapters).
         if dec.get("aps_reward_metric"):
             eod, rows, cur = r.get("aps_reward_eod") or {}, [], a0
             for d in days:
@@ -245,8 +246,8 @@ class LogScan:
             ar = r.get("aps_reward_end") or a1
             out.add(tidy(rows, name, dec["aps_reward_metric"], f"{SOURCE}:{key}.aps_reward_walk", TIER), SOURCE, name,
                     f"{dec['aps_reward_metric']} — REWARD-ONLY assets-per-share {a0:.6f} -> {ar:.6f} since "
-                    f"{since.date()} ({ar / a0 - 1:+.3%}; all classes {a1 / a0 - 1:+.3%}): withdrawal_queue and "
-                    f"circular transactions held still", TIER)
+                    f"{since.date()} ({ar / a0 - 1:+.3%}; all classes {a1 / a0 - 1:+.3%}): bridge, strategy and "
+                    f"oft transactions held still", TIER)
 
     def _classify_outside(self, chain_id: int, cls: dict, outside: list, holders: list,
                           to_block: int, spec: dict) -> str:

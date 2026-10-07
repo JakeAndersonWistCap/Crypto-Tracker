@@ -57,6 +57,7 @@ from .xref import CrossRefs
 from .staked_eth import StakedEth
 from .sky_accounting import SkyAccounting
 from .share_price import SharePrice
+from .ve_managed import VeManaged
 from .near_bigquery import NearBigQuery
 from .plume_staking import PlumeStaking
 from .scrape import Scrape, entry_ready, load_registry
@@ -114,6 +115,8 @@ TIER_ORDER = [
     ("validatorqueue", 1, lambda ctx: StakedEth()),
     # A share vault's own share price, now and ~Q0 back via archive (Ether.fi sETHFI, 2026-10-06).
     ("share_vault", 2, lambda ctx: SharePrice()),
+    # AERO the filing wallets deposited into managed veNFTs (Aerodrome, Jake's probes16 2026-10-07).
+    ("ve_managed", 2, lambda ctx: VeManaged()),
     # Figures a dashboard draws in the browser, once permitted and pinned (2026-10-02).
     ("browser_capture", 3, lambda ctx: BrowserCapture(stored_long=ctx.get("stored_long"))),
     # NEAR from Google's public BigQuery dataset: its own circulating supply, and the P2P leg of the

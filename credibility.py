@@ -442,6 +442,20 @@ def _bridge_reconciled(p, rows, long, asof, key="", **_):
                         f"filing lists our wallets (confirmed {spec['filing_confirms']})")
 
 
+def _now_combo(p, rows, long, asof, metrics=(), minus=(), **_):
+    """The latest values of `metrics` summed, less those of `minus` (built rows first, as _now_sum) — CoinGecko put on
+    our basis (Aerodrome, Jake's probes16: CoinGecko + permanent locks − the filing wallets' managed locks)."""
+    a, da, ha = _now_sum(p, rows, long, asof, metrics=metrics)
+    if a is None:
+        return None, None, ha
+    if not minus:
+        return a, da, ha
+    b, db, hb = _now_sum(p, rows, long, asof, metrics=minus)
+    if b is None:
+        return None, None, hb
+    return a - b, max(str(da or ""), str(db or "")) or None, f"{ha} − ({hb})"
+
+
 def _free_float_now(p, rows, long, asof, add_back=(), **_):
     """OUR free float now: the circulating the ratios use − the locked tokens inside it (as A2 computes it)."""
     # FROM THE BUILT ROWS (2026-10-06 overnight, A1/A2): the on-chain circulating is a READ-TIME view, absent from
@@ -475,6 +489,12 @@ def _free_float_now(p, rows, long, asof, add_back=(), **_):
             lock = max(0.0, lock - x)
             if x:
                 parts.append(f"less {x:,.0f} declared locked exclusion")
+            for xm in config.locked_excluded_metrics(p):          # measured (Aerodrome's managed locks, probes16)
+                v, _d = now(xm)
+                if v is None:
+                    return None, None, f"no {xm} figure"
+                lock = max(0.0, lock - v)
+                parts.append(f"less {xm} {v:,.0f} (locked, already out of circulating)")
     extra, extra_parts = 0.0, []
     for lm in add_back:                       # lock legs the REFERENCE still counts (Pendle: CoinGecko's sPENDLE)
         v, _d = now(lm)
@@ -762,7 +782,7 @@ FORMULAS = {"sum_months": _sum_months, "free_float_now": _free_float_now, "windo
             "sum_since": _sum_since, "schedule_month": _schedule_month, "rise_vs_flow": _rise_vs_flow,
             "product_on_common_day": _product_on_common_day, "now_sum": _now_sum,
             "log_price_growth": _log_price_growth, "bridge_reconciled": _bridge_reconciled,
-            "daily_delta_plus_flow": _daily_delta_plus_flow, "window_sum": _window_sum}
+            "daily_delta_plus_flow": _daily_delta_plus_flow, "window_sum": _window_sum, "now_combo": _now_combo}
 
 
 def reference(project: str, spec: dict, rows: dict, long, asof) -> dict:
@@ -1075,6 +1095,21 @@ def circulating_input(name: str) -> dict:
                                                               pol.get("add_back") and f"Staked add-back: "
                                                               f"{pol['add_back']}.", partial_note) if x)}}
     counts = config.coingecko_counts_holdings(name)
+    ll = config.coingecko_like_for_like(name)
+    if ll and ours_m == "circulating_supply_onchain":
+        # CoinGecko ON OUR BASIS (Aerodrome, Jake's probes16): it excludes the PERMANENT locks (993.0M vs 990.2M), so
+        # CoinGecko + permanent locks − the filing wallets' managed (permanent) locks; ours adds back the balances
+        # CoinGecko still counts (the filing wallets' liquid AERO)
+        a = ("circulating_supply_onchain", *counts)
+        plus, minus = tuple(ll.get("plus") or ()), tuple(ll.get("minus") or ())
+        return {"what": f"Circulating like-for-like: ours ({' + '.join(a)}) vs CoinGecko + {' + '.join(plus)} − "
+                        f"{' − '.join(minus)}",
+                "ours": {"py": "now_sum", "args": {"metrics": a}}, "fmt": '#,##0;(#,##0);-',
+                "ref": {"formula": "now_combo", "args": {"metrics": ("circulating_supply", *plus), "minus": minus},
+                        "tol": 2.0,
+                        "source": "CoinGecko circulating_supply put on our basis (its exclusion is the permanent "
+                                  "veAERO locks)",
+                        "note": spec.get("decision", "")}}
     if counts and ours_m == "circulating_supply_onchain":
         # LIKE-FOR-LIKE (Jake's run 2026-10-07 17:08): our stricter on-chain figure PLUS the documented wallets
         # CoinGecko still counts, against CoinGecko on the same day; the wallets' sum is the in_circ_gap row

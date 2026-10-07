@@ -15,18 +15,15 @@ transaction's own shape:
     deposit_fee          shares minted against assets in, A/S moved (rounding, or a deposit fee)
     asset_outflow        asset out with no shares burned — A/S fell (a fee taken out, a rescue)
     mixed                anything else (mint and burn in one tx, ...)
-    withdrawal_queue     (Jake's probes15) shares burned BY a declared withdrawal queue, or vault assets paid out TO
-                         one: the burn raises A/S until the queued ETHFI leaves, the payout lowers it again — a
-                         withdrawal in two steps, NOT a reward
-    circular             (Jake's probes15) vault assets sent TO a declared round-trip counterparty, or arriving FROM
-                         one: assets leaving to a contract and coming back are the holders' own, NOT a reward
+    bridge               (Jake's probes16) a Veda BoringVault has no exit penalty: shares burned with NO asset out
+                         are shares BRIDGED to another chain (LayerZeroTellerWithRateLimiting.bridge), shares minted
+                         with NO asset in are shares bridged BACK — cross-chain share moves, the ETHFI stays put
+    strategy             (Jake's probes16) vault assets out to / back from a declared strategy position manager
+    oft                  (Jake's probes16) vault assets out to / back from a declared OFT lockbox (token bridging)
 
-The last two are excluded from the reward: from the daily reward tokens and from the REWARD-ONLY assets-per-share
-walk (aps_reward_eod), which ADDS every other class's change in A/S and holds still across those two.
-
-The per-class changes in A/S sum to (A/S now) - (A/S at the window start) — an identity, not a fit. Each class's
-TOKEN EQUIVALENT is its change in A/S times the shares after the transaction (for a top-up exactly the tokens in;
-for a burn without outflow A/S x the shares burned): what the remaining holders gained, in the asset token.
+The last three are excluded from the reward: from the daily reward tokens and from the REWARD-ONLY assets-per-share
+walk (aps_reward_eod), which ADDS every other class's change in A/S and holds still across those three. (probes15's
+"withdrawal_queue" / "circular" classes were a misreading of the same flows, retracted 2026-10-07 20:57.)
 """
 from __future__ import annotations
 
@@ -36,8 +33,8 @@ import pandas as pd
 
 ZERO = "0x0000000000000000000000000000000000000000"
 CLASSES = ("topup_identified", "topup_unclassified", "burn_no_outflow", "withdrawal_fee", "deposit_fee",
-           "asset_outflow", "mixed", "withdrawal_queue", "circular")
-NOT_REWARD = ("withdrawal_queue", "circular")
+           "asset_outflow", "mixed", "bridge", "strategy", "oft")
+NOT_REWARD = ("bridge", "strategy", "oft")
 
 
 def _addr(topic: str) -> str:
@@ -50,11 +47,12 @@ def _amt(e: dict) -> int:
 
 
 def decompose(ins: list, outs: list, mints: list, burns: list, since_ts: int, labels: set,
-              asset_decimals: int = 18, share_decimals: int = 18, queues=frozenset(), circular=frozenset()) -> dict:
+              asset_decimals: int = 18, share_decimals: int = 18, bridge_shapes: bool = False,
+              strategy=frozenset(), oft=frozenset()) -> dict:
     """{aps_start, aps_end, by_class {cls: {"aps": d, "tokens": t, "txs": n}}, daily {day: tokens}, txs_in_window}.
     ins/outs: asset Transfer logs into / out of the vault; mints/burns: share Transfer logs from / to address(0).
     Every list must be the FULL history (A and S are rebuilt from zero)."""
-    queues, circular = {q.lower() for q in queues}, {c.lower() for c in circular}
+    strategy, oft = {q.lower() for q in strategy}, {c.lower() for c in oft}
     tx: dict = defaultdict(lambda: {"in": 0, "out": 0, "mint": 0, "burn": 0, "senders": set(), "burners": set(),
                                     "payees": set(), "block": 0, "idx": 0, "ts": 0})
     for kind, evs in (("in", ins), ("out", outs), ("mint", mints), ("burn", burns)):
@@ -97,10 +95,14 @@ def decompose(ins: list, outs: list, mints: list, burns: list, since_ts: int, la
         if aps_r is None:
             aps_r = before
         d = after - before
-        if t["mint"] == 0 and ((t["burners"] & queues) or (t["payees"] & queues)):
-            cls = "withdrawal_queue"
-        elif t["mint"] == 0 and t["burn"] == 0 and ((t["senders"] & circular) or (t["payees"] & circular)):
-            cls = "circular"
+        moves = t["senders"] | t["payees"]
+        if t["mint"] == 0 and t["burn"] == 0 and moves & strategy:
+            cls = "strategy"
+        elif t["mint"] == 0 and t["burn"] == 0 and moves & oft:
+            cls = "oft"
+        elif bridge_shapes and ((t["burn"] > 0 and t["out"] == 0 and t["mint"] == 0 and t["in"] == 0)
+                                or (t["mint"] > 0 and t["in"] == 0 and t["burn"] == 0 and t["out"] == 0)):
+            cls = "bridge"
         elif t["mint"] == 0 and t["burn"] == 0 and t["in"] > 0 and t["out"] == 0:
             cls = "topup_identified" if t["senders"] and t["senders"] <= labels else "topup_unclassified"
         elif t["burn"] > 0 and t["mint"] == 0 and t["in"] == 0:
