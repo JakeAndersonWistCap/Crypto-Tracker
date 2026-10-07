@@ -1000,3 +1000,39 @@
   change_threshold_pct: 40
   added: 2026-09-11
   note: "PARKED 2026-09-28 (Jake): disabled, no longer attempted each run; the reserve inflow is read by log_scans.reserve_inflow and the balance by the tier 2 read. BLOCKED BY robots.txt on metrics.chain.link as of the first live run, and NOT worked around. LOW STAKES: this was only ever a cross-check for the tier 2 read of LINK.balanceOf(reserve), which is verified and working, so nothing is lost but the second opinion. Reference points for the series: c.2.17m LINK (Feb 2026), c.5.2m LINK (Jul 2026)."
+
+# ---- PLUME's OWN CIRCULATING SUPPLY (Jake, 2026-10-07). supply.plume.org/supply answers
+# {"result": "6606142167.0...", "total": "10000000000.0..."} — Plume's published circulating and total, in PLUME
+# (strings, whole tokens). It matched our figure exactly on 2026-10-07. Plume's docs: 10bn total; 59% community /
+# ecosystem / foundation, 21% early backers, 20% core contributors; 20% unlocked at TGE.
+- project: Plume
+  metric: circulating_supply_first_party
+  tier: 3
+  enabled: true
+  url: https://supply.plume.org/supply
+  method: json
+  url_contains: /supply
+  json_path: result
+  needs_first_run_check: true
+  sanity_min: 1000000000
+  sanity_max: 10000000000
+  change_threshold_pct: 10
+  added: 2026-10-07
+  note: "Plume's published circulating supply (Jake found the endpoint 2026-10-07; read 6,606,142,167 that day). Whole PLUME, no decimals. robots.txt is checked by the run before the GET; terms not read from here (host unreachable from the build environment)."
+
+# ---- MORPHO's CIRCULATING SUPPLY, TokenOps (Jake, 2026-10-07): api.tokenops.xyz/v1/supplies/circulating/morpho
+# answers a bare number (700190834.6725569 on 2026-10-07). A REFERENCE for Morpho's circulating row, not ours.
+- project: Morpho
+  metric: circulating_supply_tokenops
+  tier: 3
+  enabled: true
+  url: https://api.tokenops.xyz/v1/supplies/circulating/morpho
+  method: json
+  url_contains: /supplies/circulating/morpho
+  json_path: $
+  needs_first_run_check: true
+  sanity_min: 100000000
+  sanity_max: 1000000000
+  change_threshold_pct: 10
+  added: 2026-10-07
+  note: "Credibility reference only (Morpho in_circ). The body is a bare JSON number, so json_path is $ (the whole payload). robots.txt checked per run; terms not read from here."

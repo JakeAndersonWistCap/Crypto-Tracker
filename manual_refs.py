@@ -32,8 +32,9 @@ PAGES: dict = {
                                          "tol_pct": 15.0},
     ("Aerodrome", "in_locked"): {"url": "https://aerodrome.finance/vote", "tile": "total locked veAERO",
                                  "unit": "AERO", "tol_pct": 2.0},
-    ("Sky", "a3_protocol_yield"): {"url": "https://sky.money (page not pinned)", "tile": "SKY staking rewards rate",
-                                   "unit": "fraction", "tol_pct": 15.0},
+    # A3 is the USDS-rewards farm's revenue-funded yield since 2026-10-07, so its page is that farm's.
+    ("Sky", "a3_protocol_yield"): {"url": "https://info.skyeco.com/staking/0x38e4254bd82ed5ee97cd1c4278faae748d998865",
+                                   "tile": "APY (USDS-rewards farm)", "unit": "fraction (0.25 = 25%)", "tol_pct": 15.0},
     ("Sky", "in_buyback"): {"url": "https://forum.sky.money (monthly settlement posts)",
                             "tile": "SKY bought in the month", "unit": "SKY", "tol_pct": 10.0,
                             "monthly_metric": "actual_buyback_tokens"},
@@ -44,9 +45,10 @@ PAGES: dict = {
                                     "fefundsadmin.sputnik-dao.near, 1csfundsadmin.sputnik-dao.near)",
                                     "tile": "Balance (NEAR), the three wallets summed", "unit": "NEAR",
                                     "tol_pct": 2.0},
-    ("Near", "a1_validator_yield"): {"url": "URL not on file — NEAR's published staking APR (near.org staking page "
-                                     "or a validator explorer)", "tile": "staking APR", "unit": "fraction",
-                                     "tol_pct": 15.0},
+    # ONE POOL, NET OF ITS COMMISSION (Jake, 2026-10-07): a near.com staking pool's APR is compared with our GROSS
+    # validator yield — ours should read higher by that pool's commission. The account on that page is not stored.
+    ("Near", "a1_validator_yield"): {"url": "near.com staking (one pool's page)", "tile": "pool APR, NET of the "
+                                     "pool's commission — ours is GROSS", "unit": "fraction", "tol_pct": 15.0},
     # B7 (overnight 2026-10-06): the page is docs.aethir.com/aethir-tokenomics/ath-circulating-supply (a .md
     # variant exists); its robots.txt could not be read from here, so it stays a reading by hand, not a fetch.
     ("Aethir", "in_circ"): {"url": "https://docs.aethir.com/aethir-tokenomics/ath-circulating-supply",
@@ -63,6 +65,34 @@ PAGES: dict = {
                                  "tol_pct": 10.0, "monthly_metric": "emissions_tokens"},
     ("Morpho", "in_circ"): {"url": "URL not on file — Morpho's own stated circulating supply",
                             "tile": "circulating supply (MORPHO)", "unit": "MORPHO", "tol_pct": 2.0},
+    # JAKE'S READINGS OF 2026-10-07 (given in chat): where each was read.
+    ("Hyperliquid", "in_locked"): {"url": "https://app.hyperliquid.xyz/staking", "tile": "Total staked (HYPE)",
+                                   "unit": "HYPE", "tol_pct": 2.0},
+    ("Sky", "in_locked"): {"url": "https://info.skyeco.com/staking", "tile": "staked SKY, SKY-rewards farm + "
+                           "USDS-rewards farm", "unit": "SKY", "tol_pct": 2.0},
+    ("Sky", "in_locked_sky_farm"): {"url": "https://info.skyeco.com/staking/0xb44c2fb4181d7cb06bdff34a46fdfe4a259b40fc",
+                                    "tile": "SKY staked (SKY-rewards farm)", "unit": "SKY", "tol_pct": 2.0},
+    ("Sky", "in_locked_usds_farm"): {"url": "https://info.skyeco.com/staking/0x38e4254bd82ed5ee97cd1c4278faae748d998865",
+                                     "tile": "SKY staked (USDS-rewards farm)", "unit": "SKY", "tol_pct": 2.0},
+    ("Sky", "in_apy_sky_farm"): {"url": "https://info.skyeco.com/staking/0xb44c2fb4181d7cb06bdff34a46fdfe4a259b40fc",
+                                 "tile": "APY (SKY-rewards farm)", "unit": "fraction (0.25 = 25%)", "tol_pct": 15.0},
+    ("Sky", "in_apy_usds_farm"): {"url": "https://info.skyeco.com/staking/0x38e4254bd82ed5ee97cd1c4278faae748d998865",
+                                  "tile": "APY (USDS-rewards farm)", "unit": "fraction (0.25 = 25%)", "tol_pct": 15.0},
+    ("Aethir", "in_apr_ai"): {"url": "https://dashboard.aethir.com", "tile": "AI pool average APR",
+                              "unit": "fraction (0.25 = 25%)", "tol_pct": 5.0, "same_source": True},
+    ("Aethir", "in_apr_gaming"): {"url": "https://dashboard.aethir.com", "tile": "Gaming pool average APR",
+                                  "unit": "fraction (0.25 = 25%)", "tol_pct": 5.0, "same_source": True},
+    ("GEODNET", "in_burn_report_months"): {"url": "GEODNET's monthly burn reports", "tile": "GEOD burned in the month",
+                                           "unit": "GEOD", "tol_pct": 5.0, "monthly_metric": "gross_burn_tokens"},
+    ("Ether.fi", "in_locked"): {"url": "https://etherscan.io/token/0x86B5780b606940Eb59A062aA85a07959518c0161",
+                                "tile": "sETHFI total supply (shares; the ETHFI it holds is higher by the accrued "
+                                        "share price)", "unit": "sETHFI", "tol_pct": 1.0},
+    ("Ether.fi", "in_apy_published"): {"url": "https://app.ether.fi", "tile": "staked-ETHFI APY (the app's published, "
+                                       "forward rate)", "unit": "fraction (0.25 = 25%)", "tol_pct": 25.0},
+    ("Near", "in_buyback_wallets"): {"url": "https://revenue.near.org", "tile": "Wallet Breakdown (All-time), total "
+                                      "NEAR of the three wallets", "unit": "NEAR", "tol_pct": 5.0},
+    ("Aerodrome", "in_voting_power"): {"url": "https://aerodrome.finance", "tile": "total veAERO (voting power — "
+                                       "decays with lock time; NOT AERO locked)", "unit": "veAERO", "tol_pct": 2.0},
     ("Ether.fi", "in_buyback"): {"url": "URL not on file — Ether.fi's weekly buyback posts",
                                  "tile": "ETHFI bought in the month (weeks summed)", "unit": "ETHFI",
                                  "tol_pct": 10.0, "monthly_metric": "actual_buyback_tokens"},
@@ -127,6 +157,8 @@ def reference_for(readings: list[dict], ours: dict | None) -> tuple[dict, dict |
         return ref, {"py": "sum_months", "args": {"metric": metric, "months": months}}
     ref = {"manual": {"value": float(first["value"]), "read_on": first.get("read_on"), "read_by": by,
                       "source": src}, "tol": tol}
+    if pg.get("same_source"):                  # the page ours reads too: FRESH-only at best
+        ref["same_source"] = True
     if first.get("note"):
         ref["note"] = first["note"]
     return ref, None

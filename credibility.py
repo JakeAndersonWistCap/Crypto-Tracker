@@ -128,6 +128,66 @@ def _base_reward_ceiling(p, rows, long, asof, cover_metric="pool_release_tokens"
         f"performance rules")
 
 
+def _rate_on_stake(p, rows, long, asof, flow="", stock="", days=28, price=None, **_):
+    """A farm's reward rate (Jake, 2026-10-07 — Sky's two lsSKY farms): the rewards it received over the last `days`
+    days, annualised, over what is staked in it now (x the token's price when the rewards are in dollars). A simple
+    rate: StakingRewards pays rewards out, it does not compound them."""
+    lo = asof - pd.Timedelta(days=days)
+    fl = _series(long, p, flow)
+    fl = fl[(fl.index > lo) & (fl.index <= asof)]
+    st = _series(long, p, stock)
+    st = st[st.index <= asof]
+    if fl.empty:
+        return None, None, f"no {flow} in the last {days} days"
+    if st.empty or not st.iloc[-1]:
+        return None, None, f"no {stock} stored"
+    base, how_px = float(st.iloc[-1]), ""
+    if price:
+        px = _series(long, p, price)
+        px = px[px.index <= asof]
+        if px.empty or not px.iloc[-1]:
+            return None, None, f"no {price} stored"
+        base *= float(px.iloc[-1])
+        how_px = f" x {price} {float(px.iloc[-1]):,.4f}"
+    v = float(fl.sum()) * 365.0 / days / base
+    return v, str(st.index[-1].date()), (f"{flow} {float(fl.sum()):,.0f} over the last {days} days x 365/{days} / "
+                                         f"{stock} {float(st.iloc[-1]):,.0f} ({st.index[-1].date()}){how_px}")
+
+
+def _trailing_token_yield(p, rows, long, asof, tokens="", lock="", days=365, **_):
+    """REALISED TOKEN YIELD OVER A TRAILING WINDOW (Jake, 2026-10-07 — Ether.fi): the reward tokens holders gained over
+    the last `days` days / the average staked over the stored days of that window, annualised over the days the
+    reward series covers (a series younger than the window is annualised over its own span, and says so)."""
+    lo = asof - pd.Timedelta(days=days)
+    tk = _series(long, p, tokens)
+    lk = _series(long, p, lock)
+    tk, lk = tk[(tk.index > lo) & (tk.index <= asof)], lk[(lk.index > lo) & (lk.index <= asof)]
+    if tk.empty or lk.empty:
+        return None, None, f"no {tokens if tk.empty else lock} in the last {days} days"
+    covered = (asof - max(lo, tk.index[0] - pd.Timedelta(days=1))).days
+    avg = float(lk.mean())
+    if covered <= 0 or not avg:
+        return None, None, "nothing to annualise"
+    v = float(tk.sum()) / avg * 365.0 / covered
+    return v, str(asof.date()), (f"{tokens} {float(tk.sum()):,.0f} / average {lock} {avg:,.0f} over {covered} day(s) "
+                                 f"{(asof - pd.Timedelta(days=covered - 1)).date()}..{asof.date()}, x 365/{covered}"
+                                 + ("" if covered >= days else f" (the series covers {covered} of {days} days)"))
+
+
+def _sum_since(p, rows, long, asof, metrics=(), since="", **_):
+    """Every stored value of `metrics` from `since` to asof, summed — for a figure published as an all-time total
+    from a known start (NEAR's revenue wallets since the buybacks began, 2026-10-07)."""
+    lo, tot, held = pd.Timestamp(since), 0.0, []
+    for m in metrics:
+        sr = _series(long, p, m)
+        sr = sr[(sr.index >= lo) & (sr.index <= asof)]
+        if sr.empty:
+            return None, None, f"no {m} stored since {since}"
+        tot += float(sr.sum())
+        held.append(f"{m} {float(sr.sum()):,.0f} ({sr.index[0].date()}..{sr.index[-1].date()})")
+    return tot, str(asof.date()), "; ".join(held)
+
+
 def _q0(asof):
     return asof - pd.Timedelta(days=90), asof
 
@@ -194,18 +254,19 @@ def _hl_reward_formula(p, rows, long, asof, **_):
         f"2.37% x sqrt(400M / {staked / 1e6:,.1f}M staked) — the documented reward curve")
 
 
-def _share_price_growth(p, rows, long, asof, metric="lock_assets_per_share", **_):
+def _share_price_growth(p, rows, long, asof, metric="lock_assets_per_share", days=None, **_):
     """The staking receipt's own accrual: assets per share, annualised over the longest stretch
-    inside Q0 — what a staker actually earned on-chain."""
-    lo, hi = _q0(asof)
+    inside Q0 (or the trailing `days`, Ether.fi's trailing year since 2026-10-07) — what a staker actually earned
+    on-chain."""
+    lo, hi = _q0(asof) if not days else (asof - pd.Timedelta(days=int(days)), asof)
     sr = _series(long, p, metric)
     sr = sr[(sr.index > lo) & (sr.index <= hi)]
     if len(sr) < 2 or not sr.iloc[0]:
-        return None, None, f"fewer than two {metric} points in Q0"
-    days = (sr.index[-1] - sr.index[0]).days
-    if days < 7:
-        return None, None, f"{metric} covers {days} day(s) — under a week"
-    v = (float(sr.iloc[-1]) / float(sr.iloc[0])) ** (365.0 / days) - 1.0
+        return None, None, f"fewer than two {metric} points in the window"
+    span = (sr.index[-1] - sr.index[0]).days
+    if span < 7:
+        return None, None, f"{metric} covers {span} day(s) — under a week"
+    v = (float(sr.iloc[-1]) / float(sr.iloc[0])) ** (365.0 / span) - 1.0
     return v, str(sr.index[-1].date()), f"{metric} {sr.index[0].date()}..{sr.index[-1].date()}, annualised"
 
 
@@ -486,7 +547,9 @@ FORMULAS = {"sum_months": _sum_months, "free_float_now": _free_float_now, "windo
             "share_price_growth": _share_price_growth, "per_day_x_covered": _per_day_x_covered,
             "value_on": _value_on, "sum_month": _sum_month, "last30_annualised": _last30_annualised,
             "common_day_value": _common_day_value, "months_match": _months_match,
-            "hl_reward_active": _hl_reward_active, "base_reward_ceiling": _base_reward_ceiling}
+            "hl_reward_active": _hl_reward_active, "base_reward_ceiling": _base_reward_ceiling,
+            "rate_on_stake": _rate_on_stake, "trailing_token_yield": _trailing_token_yield,
+            "sum_since": _sum_since}
 
 
 def reference(project: str, spec: dict, rows: dict, long, asof) -> dict:

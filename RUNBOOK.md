@@ -527,6 +527,53 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11ak. Jake's readings and new sources, 2026-10-07
+
+**Readings.**
+- Your 22 readings are in `manual_references.csv`, each dated and with its page, read_by Jake, marked "entered by
+  Claude Code".
+- New rows hold them:
+  - Sky: each farm's stake and APY;
+  - Aethir: AI and Gaming APRs;
+  - GEODNET: burns per month;
+  - Ether.fi: the app's APY;
+  - Aerodrome: voting power;
+  - NEAR: all three wallets.
+- Plume's and Morpho's circulating are now read daily from the APIs, so your readings of them are in config notes
+  rather than manual references, which would go stale.
+- The NEAR pool reading is labelled NET of that pool's commission against our GROSS yield. The account on that page
+  is not stored.
+
+**Wired.**
+- **Plume:** `supply.plume.org/supply` is Plume's own circulating figure and is primary.
+- **Morpho:**
+  - TokenOps' figure is the circulating reference.
+  - The URD `0x330eefa8…` joins Merkl in the emissions scan.
+  - The OFT lockbox and legacy Wrapper are counted once, inside Ethereum totalSupply.
+- **Sky:**
+  - Each farm's stake is read as `lsSKY.balanceOf(farm)`.
+  - The USDS-rewards farm's rewards are USDS minted to it by the Splitter (`count_mints`). They are A3's
+    revenue-funded staking yield, over the SKY staked in that farm.
+  - The SKY farm's rewards stay emissions.
+- **NEAR:**
+  - fefundsadmin and 1csfundsadmin are measured beside the buyback wallet, native NEAR only.
+  - The three together are compared with the page's 3,786,229.6 NEAR.
+- **Ether.fi:**
+  - A3's headline is the trailing-365-day realised yield over the average stake.
+  - Q0 realised, the share-price version and the app's APY are on Credibility.
+  - Dune's "eETH Staking" is ETH restaking and is not used for sETHFI.
+- **Aerodrome:** a voter APR on voting power sits beside the yield on AERO locked.
+- **Aethir:** the docs' schedule gives next-12-month unlock dilution on A2. It uses your three October points. A
+  monthly table reconstructed from search snippets is kept as an unconfirmed candidate.
+- **Maple:** locked tokens are N/A (MIP-019). SYRUP left in stSYRUP is `stsyrup_legacy_tokens`.
+
+**Not wired yet, and why.**
+- **Block Analitica accounting API:** no public schema or category names. `python check_offline_items.py
+  sky_ba_endpoints` prints what each path returns.
+- **revenue.near.org:** its API needs NEAR's private `X-API-Key`.
+- `python check_offline_items.py near_buyback_wallets` measures NEAR and wNEAR in and out by month for the three
+  wallets, the reconciliation with 3,786,229.6, and hold vs burn.
+
 ## 11aj. Jake's run 2026-10-07 09:16: three failures fixed, Sky emissions, Pendle and ETH references
 
 **Failures.**

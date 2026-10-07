@@ -14372,6 +14372,15 @@ def test_near_account_flow_sums_inflow_excluding_internal_hops(monkeypatch):
     print("near account flow ok: 7.5 NEAR summed, two internal hops excluded")
 
 
+def _near_buyback_flow_only() -> dict:
+    """NEAR with only its buyback-wallet flow — the NearBlocks tests below were written for one flow; the other two
+    revenue wallets (2026-10-07) run the same code path with their own state files."""
+    p = dict(config.PROJECT_BY_NAME["Near"])
+    p["near_account_flows"] = [f for f in p["near_account_flows"] if f["metric"] == "actual_buyback_tokens"]
+    return p
+
+
+
 def test_near_account_flow_paginates_via_cursor(monkeypatch):
     from fetch import nearblocks, scrape
     from fetch.base import FetchOutput
@@ -14383,7 +14392,7 @@ def test_near_account_flow_paginates_via_cursor(monkeypatch):
     http = _NearFlowHttp({None: {"cursor": "page2", "txns": page1},
                           "page2": {"cursor": None, "txns": page2}})
     out = FetchOutput()
-    nearblocks.NearBlocks(http=http).run([config.PROJECT_BY_NAME["Near"]], 35, out)
+    nearblocks.NearBlocks(http=http).run([_near_buyback_flow_only()], 35, out)
     df = out.frame()
     flow = df[(df.metric == "actual_buyback_tokens") & (df.source == "nearblocks")]
     assert list(flow["value"]) == [4.0], f"expected 1 + 3 = 4 NEAR across two pages: {flow}"
@@ -14513,7 +14522,7 @@ def test_nearblocks_without_a_key_is_a_named_gap_not_a_silent_skip(monkeypatch):
 
     monkeypatch.delenv("NEARBLOCKS_API_KEY", raising=False)
     out = FetchOutput()
-    nearblocks.NearBlocks(http=_NearBlocksHttp({})).run([config.PROJECT_BY_NAME["Near"]], None, out)
+    nearblocks.NearBlocks(http=_NearBlocksHttp({})).run([_near_buyback_flow_only()], None, out)
     assert {g["metric"] for g in out.gaps} == {"tx_count", "active_addresses", "fees_native_tokens",
                                                "actual_buyback_tokens"}
     assert all("NEARBLOCKS_API_KEY" in g["reason"] for g in out.gaps)
@@ -15604,7 +15613,7 @@ def test_nearblocks_stats_run_first_and_calls_are_paced_to_the_free_plan(monkeyp
     rows = [_near_flow_action("some-user.near", 10 ** 24)]
     http = H({None: {"cursor": "p2", "txns": rows}, "p2": {"cursor": None, "txns": rows}},
              v3={"/v3/txn-stats": {"data": []}, "/v3/address-stats": {"data": []}})
-    nearblocks.NearBlocks(http=http).run([config.PROJECT_BY_NAME["Near"]], 35, FetchOutput())
+    nearblocks.NearBlocks(http=http).run([_near_buyback_flow_only()], 35, FetchOutput())
     kinds = ["flow" if "/v1/account/" in u else "v3" for _, u in stamps]
     # ORDER REVERSED 2026-09-28: the once-a-day stats first (1 credit each), then the buyback
     # read, which resumes across runs — see NearBlocks.run.
@@ -16136,7 +16145,7 @@ def test_nearblocks_buyback_is_incremental_newest_first_and_daily_stats_run_once
             nxt = start + 2 if start + 2 < len(self.txns) else None
             return {"cursor": nxt and str(nxt), "txns": page}
 
-    near = config.PROJECT_BY_NAME["Near"]
+    near = _near_buyback_flow_only()
     h1 = H(history)
     out1 = FetchOutput()
     nearblocks.NearBlocks(http=h1).run([near], 35, out1)
@@ -16531,7 +16540,7 @@ def test_nearblocks_first_read_resumes_across_runs_instead_of_restarting(monkeyp
             nxt = start + 2 if start + 2 < len(history) else None
             return {"cursor": nxt and str(nxt), "txns": history[start:start + 2]}
 
-    near = config.PROJECT_BY_NAME["Near"]
+    near = _near_buyback_flow_only()
     h1 = H(die_after=2)
     out1 = FetchOutput()
     nearblocks.NearBlocks(http=h1).run([near], 35, out1)
@@ -18011,7 +18020,8 @@ def test_pendle_token_yield_is_pendle_distributed_over_real_plus_virtual():
     # TOKENS PRIMARY (2026-09-30): every PROTOCOL_YIELD project gets the token yield — where no
     # token series is declared, holders revenue in tokens at the Q0 AVERAGE price
     sky = str(build(5, config.PROJECT_BY_NAME["Sky"]))
-    assert "D[holders_revenue_usd:q0]/D[price_usd:q0]" in sky and "D[locked_tokens:now]" in sky, sky
+    # Sky's stakers are paid by the USDS-rewards farm since 2026-10-07: USDS from the Splitter over that farm's stake
+    assert "D[staking_rewards_usds_usd:q0]/D[price_usd:q0]" in sky and "D[locked_tokens_usds_farm:now]" in sky, sky
     aero = str(build(5, config.PROJECT_BY_NAME["Aerodrome"]))
     assert "D[holders_revenue_usd:q0]" in aero and "D[ve_locked_supply_tokens:now]" in aero, aero
     assert label.startswith("PROTOCOL STAKING YIELD (tokens)")
@@ -20074,7 +20084,9 @@ def test_fluid_and_morpho_emissions_are_measured_from_their_distributors():
     assert fl["emissions_funding_igps"]["rewards_fluid"]["IGP118"] == 1_000_000
     assert "emissions_tokens" in config.metrics_for_project(mo)
     ms = mo["log_scans"][0]
-    assert ms["holders"] == ["0x3Ef3D8bA38EBe18DB133cEc108f4D14CE00Dd9Ae"] and ms["token"] == \
+    # + the Morpho URD since 2026-10-07 (Jake)
+    assert ms["holders"] == ["0x3Ef3D8bA38EBe18DB133cEc108f4D14CE00Dd9Ae",
+                             "0x330eefa8a787552DC5cAd3C3cA644844B1E61Ddb"] and ms["token"] == \
         mo["contracts"]["token"]["address"]
     sql = (Path(__file__).resolve().parent.parent / "orphan_cleanup.sql").read_text(encoding="utf-8")
     assert "-- BB. CHAINLINK" in sql and "-- BC. FLUID" in sql
@@ -20358,8 +20370,10 @@ def test_circulating_convention_is_printed_on_every_exclusion_list_with_document
         # Aerodrome is PARTIAL since Jake's decision (2026-09-30): the team's 95M permanent veNFTs
         # Aethir is FIRST_PARTY since Jake's probes3 (2026-09-30): the dashboard's athCirculatingSupply
         # NEAR is FIRST_PARTY since 2026-10-01: its own circulating_supply table in BigQuery
+        # PLUME is FIRST_PARTY since 2026-10-07: supply.plume.org/supply (Jake)
         assert config.circulating_onchain(name)["status"] == {"Aerodrome": "partial", "Aethir": "first_party",
-                                                               "Near": "first_party"}.get(name, "not_established")
+                                                               "Near": "first_party",
+                                                               "Plume": "first_party"}.get(name, "not_established")
         cand = config.NONCIRCULATING_CANDIDATES[name]
         assert cand["addresses"] and all(a["source"] and a["address"] for a in cand["addresses"])
     assert any(a["address"] == "0xcBa28b38103307Ec8dA98377ffF9816C164f9AFa"
@@ -23042,7 +23056,9 @@ def test_market_cap_is_price_times_the_circulating_the_ratios_use():
     day without the first-party figure falls back to CoinGecko's circulating exactly as _circ does."""
     import build_workbook as bw
     assert bw.chosen_circulating_metric({"name": "Aethir"}) == "circulating_supply_first_party"
-    assert bw.chosen_circulating_metric({"name": "Plume"}) == "circulating_supply"
+    # Plume publishes its own figure since 2026-10-07 (supply.plume.org); Morpho does not
+    assert bw.chosen_circulating_metric({"name": "Plume"}) == "circulating_supply_first_party"
+    assert bw.chosen_circulating_metric({"name": "Morpho"}) == "circulating_supply"
     g = _grp([("2026-10-03", "Aethir", "price_usd", 0.0075, "coingecko"),
               ("2026-10-04", "Aethir", "price_usd", 0.0075, "coingecko"),
               ("2026-10-03", "Aethir", "circulating_supply", 20.1e9, "coingecko"),
@@ -24585,13 +24601,15 @@ def test_sethfi_scan_counts_top_ups_and_leaves_out_deposits_that_mint_shares(mon
     monkeypatch.setattr(lsm, "today", lambda: pd.Timestamp("2026-10-06"))
     out = _run_scan(monkeypatch, spec, logs, {vault: 11 * E}, name="Ether.fi")
     f = out.frame()
-    # THE SHARE-PRICE DECOMPOSITION (2026-10-06): in the 90 days, the top-up lifts assets-per-share 7/5 -> 10/5
-    # (= 3 tokens to the 5 shares); the deposit at 1:1 below that price pulls it to 11/6. Parts sum exactly.
+    # THE SHARE-PRICE DECOMPOSITION (2026-10-06): the top-up lifts assets-per-share 7/5 -> 10/5 (= 3 tokens to the
+    # 5 shares); the deposit at 1:1 below that price pulls it to 11/6. Parts sum exactly. Since 2026-10-07 the window is
+    # 365 days, so the old programme's 2 on 2026-03-02 is inside it too; days before the window carry no row.
     rec = f[f.metric == "sethfi_reward_tokens_reconciled"].set_index("date")["value"]
-    assert abs(rec[pd.Timestamp("2026-09-15")] - 3.0) < 1e-9 and abs(rec.sum() - (3.0 - 1.0)) < 1e-9
+    assert abs(rec[pd.Timestamp("2026-09-15")] - 3.0) < 1e-9 and abs(rec.sum() - (2.0 + 3.0 - 1.0)) < 1e-9
+    assert rec.index.min() >= pd.Timestamp("2026-10-06") - pd.Timedelta(days=365)
     dline = next(e.message for e in out.log if "assets-per-share" in e.message)
     assert "topup_unclassified +0.600000/share = +3.00 tokens (1 tx)" in dline, dline
-    assert "deposit_fee -0.166667/share = -1.00 tokens (1 tx)" in dline and "1.400000 -> 1.833333" in dline
+    assert "deposit_fee -0.166667/share = -1.00 tokens (1 tx)" in dline and "1.000000 -> 1.833333" in dline   # 365 days: from before the March deposit
     got = f[f.metric == "sethfi_topup_tokens"].set_index("date")["value"]
     assert got.sum() == 5.0, got[got > 0]                                   # 2 (old programme) + 3 (new)
     assert got[pd.Timestamp("2026-09-15")] == 3.0 and got[pd.Timestamp("2026-03-02")] == 2.0
@@ -24991,7 +25009,9 @@ def test_sethfi_share_price_is_read_at_one_block_now_and_q0_back_for_the_realise
     monkeypatch.setattr(sp, "today", lambda: pd.Timestamp("2026-10-06"))
     spec = config.PROJECT_BY_NAME["Ether.fi"]["share_price_onchain"]
     assert spec["metric"] == "sethfi_share_price_onchain" and spec["days_back"] == 89
-    assert config.CREDIBILITY["Ether.fi"]["a3_protocol_yield"]["args"] == {"metric": "sethfi_share_price_onchain"}
+    # over the trailing year since 2026-10-07, like the headline
+    assert config.CREDIBILITY["Ether.fi"]["a3_protocol_yield"]["args"] == {"metric": "sethfi_share_price_onchain",
+                                                                          "days": 365}
 
     class Fn:
         def __init__(self, f):
@@ -25305,8 +25325,11 @@ def test_manual_form_validates_previews_and_wires_a_reading_and_monthly_readings
     good, bad = mf.validate(list(csv.DictReader(open(form))))
     assert len(good) == 3 and len(bad) == 2, bad      # the period-less monthly line and the non-number refused
     assert any("monthly line needs period" in b for b in bad) and any("not a number" in b for b in bad)
+    repo_store = Path(mr.__file__).parent / "manual_references.csv"      # Jake's readings, committed (2026-10-07)
+    before = repo_store.read_bytes() if repo_store.exists() else None
     assert mf.main(["load", str(form), "--yes"]) == 2  # stored, with refusals reported
-    assert (tmp_path / "manual_references.csv").exists() and not (Path(mr.__file__).parent / "manual_references.csv").exists(), \
+    after = repo_store.read_bytes() if repo_store.exists() else None
+    assert (tmp_path / "manual_references.csv").exists() and before == after, \
         "the readings go where STORE points, never into the repo from a test"
     got = mr.by_row(mr.load())
     ref, ours = mr.reference_for(got[("Chainlink", "in_locked")], {"metric": "locked_tokens", "window": "now"})
@@ -25365,7 +25388,7 @@ def test_etherfi_token_yield_numerator_is_the_reconciled_share_price_total():
     py = config.PROTOCOL_YIELD["Ether.fi"]["token_yield"]
     assert py["tokens"] == "sethfi_reward_tokens_reconciled"
     scan = next(s for s in config.PROJECT_BY_NAME["Ether.fi"]["log_scans"] if s["key"] == "sethfi_reward_topups")
-    assert scan["decompose"] == {"metric": "sethfi_reward_tokens_reconciled", "window_days": 90}
+    assert scan["decompose"] == {"metric": "sethfi_reward_tokens_reconciled", "window_days": 365}   # 2026-10-07
     assert "sethfi_reward_tokens_reconciled" in config.metrics_for_project(config.PROJECT_BY_NAME["Ether.fi"])
 
 
@@ -25980,3 +26003,189 @@ def test_manual_readings_given_in_chat_load_without_the_csv(tmp_path, monkeypatc
     assert ref["manual"]["read_by"] == "Jake" and ref["tol"] == 2.0
     assert mf.main(["text", "Chainlink in_locked = 45,200,000 (2026-10-07, staking.chain.link)", "--yes"]) == 0
     assert float(mr.by_row(mr.load())[("Chainlink", "in_locked")][0]["value"]) == 45_200_000   # replaces, not adds
+
+
+def test_jakes_readings_of_2026_10_07_are_stored_against_real_rows_and_name_no_personal_account():
+    """C (Jake, 2026-10-07): every chat reading is in manual_references.csv, dated, with its page, read_by Jake, marked as
+    entered by Claude Code; each maps to a Credibility row that exists; the NEAR staking account is not stored."""
+    import credibility as cred
+    import manual_refs as mr
+    got = mr.load()
+    assert len(got) == 22 and all(r["read_on"] == "2026-10-07" and r["read_by"] == "Jake" and r["url"] for r in got)
+    assert all("entered by Claude Code" in r["note"] for r in got)
+    for r in got:
+        rows = set(config.CREDIBILITY.get(r["project"]) or {}) | set(cred.generic_inputs(r["project"])) | {"in_circ"}
+        assert r["row"] in rows or r["row"].startswith(("a1_", "a2_", "a3_", "a4_")), (r["project"], r["row"])
+    by = mr.by_row(got)
+    assert float(by[("Sky", "in_apy_usds_farm")][0]["value"]) == 0.0461
+    assert [x["period"] for x in by[("GEODNET", "in_burn_report_months")]] == ["2026-07", "2026-08", "2026-09"]
+    assert float(by[("Near", "in_buyback_wallets")][0]["value"]) == 3_786_229.6
+    near = by[("Near", "a1_validator_yield")][0]
+    assert "NET" in near["note"] and ".near" not in (near["url"] + near["note"])        # no account stored
+    # Plume and Morpho circulating are wired as daily references instead of a reading that would go stale
+    assert ("Plume", "in_circ") not in by and ("Morpho", "in_circ") not in by
+    ref, _ = mr.reference_for(by[("Aethir", "in_apr_ai")], None)
+    assert ref.get("same_source") is True
+
+
+def test_sky_two_farms_and_the_revenue_funded_yield_from_minted_usds():
+    """C1 (Jake, 2026-10-07): the USDS-rewards farm's rewards are USDS the Splitter has UsdsJoin MINT to the farm; they
+    are A3's revenue-funded yield over the SKY staked in that farm. Each farm's stake is lsSKY.balanceOf(farm)."""
+    import pytest
+    import credibility as cred
+    sky = config.PROJECT_BY_NAME["Sky"]
+    c = sky["contracts"]
+    assert c["sky_farm_stake"]["address"] == "0xB44C2Fb4181D7Cb06bdFf34A46FdFe4a259B40Fc"
+    assert c["usds_farm_stake"]["address"] == "0x38E4254bD82ED5Ee97CD1C4278FAae748d998865"
+    assert c["usds_farm_stake"]["underlying"] == "lssky" and c["usds_farm_stake"]["metric_override"] == "locked_tokens_usds_farm"
+    scan = next(s for s in sky["log_scans"] if s["key"] == "usds_farm_rewards")
+    assert scan["count_from"] == ["0x0000000000000000000000000000000000000000"] and scan["count_mints"] is True
+    assert scan["token"] == "0xdC035D45d973E3EC169d2276DDab16f1e407384F" and scan["metric"] == "staking_rewards_usds_usd"
+    assert config.PROTOCOL_YIELD["Sky"] == {"revenue": "staking_rewards_usds_usd", "lock": "locked_tokens_usds_farm"}
+    asof = pd.Timestamp("2026-10-07")
+    days = pd.date_range("2026-09-10", "2026-10-07")
+    long = pd.DataFrame([(d, "Sky", "staking_rewards_usds_usd", 100_000.0) for d in days]
+                        + [(asof, "Sky", "locked_tokens_usds_farm", 8_591_470_732.25), (asof, "Sky", "price_usd", 0.0625)],
+                        columns=["date", "project", "metric", "value"])
+    v, d, how = cred.FORMULAS["rate_on_stake"]("Sky", {}, long, asof, flow="staking_rewards_usds_usd",
+                                              stock="locked_tokens_usds_farm", days=28, price="price_usd")
+    assert v == pytest.approx(28 * 100_000 * 365 / 28 / (8_591_470_732.25 * 0.0625)) and d == "2026-10-07"
+    assert "x price_usd" in how
+    assert cred.FORMULAS["rate_on_stake"]("Sky", {}, long[long.metric != "price_usd"], asof,
+                                          flow="staking_rewards_usds_usd", stock="locked_tokens_usds_farm",
+                                          price="price_usd")[0] is None
+
+
+def test_log_scan_counts_mints_only_where_declared():
+    """count_mints (2026-10-07): a mint to the holder counts only on a scan that declares it."""
+    import inspect
+    from fetch import logscan
+    src = inspect.getsource(logscan)
+    assert '(frm in MINT_SENDERS and not spec.get("count_mints"))' in src
+    assert sum(1 for p in config.PROJECTS for s in p.get("log_scans") or [] if s.get("count_mints")) == 1
+
+
+def test_maple_staking_ended_so_nothing_is_locked_and_the_vault_balance_is_shown_apart():
+    """C5 (Jake, 2026-10-07): MIP-019 ended staking — locked tokens N/A, free float = circulating."""
+    import credibility as cred
+    m = config.PROJECT_BY_NAME["Maple"]
+    assert "locked_tokens" not in config.metrics_for_project(m) and "MIP-019" in m["not_applicable"]["locked_tokens"]
+    assert m["contracts"]["stsyrup"]["metric_override"] == "stsyrup_legacy_tokens" and m["free_float_lock_zero"]
+    assert cred.generic_inputs("Maple")["in_locked"]["ref"]["verdict"] == "N/A"
+
+
+def test_plume_and_morpho_circulating_apis_and_the_bare_number_payload(monkeypatch):
+    """A1/A2 (Jake, 2026-10-07): Plume's own circulating is primary (supply.plume.org `result`); TokenOps' Morpho figure
+    is the reference; a bare-number body is read with json_path $."""
+    import pytest
+    import credibility as cred
+    import yaml
+    from fetch import scrape
+    entries = yaml.safe_load(open("sources.yaml"))
+    plume = next(e for e in entries if e["project"] == "Plume" and e["metric"] == "circulating_supply_first_party")
+    morpho = next(e for e in entries if e["project"] == "Morpho" and e["metric"] == "circulating_supply_tokenops")
+    assert plume["json_path"] == "result" and plume["enabled"] and morpho["json_path"] == "$"
+    assert config.CIRCULATING_ONCHAIN["Plume"]["status"] == "first_party"
+    assert cred.circulating_input("Plume")["ours"]["metric"] == "circulating_supply_first_party"
+    assert config.CREDIBILITY["Morpho"]["in_circ"]["ref"]["metric"] == "circulating_supply_tokenops"
+    assert {"supply.plume.org", "api.tokenops.xyz"} <= set(config.SOURCE_REGISTER)
+
+    class R:
+        def __init__(self, body):
+            self.body = body
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return self.body
+    import requests
+    monkeypatch.setattr(requests, "get", lambda *a, **k: R(700190834.6725569))
+    v, detail = scrape.fetch_json(morpho)
+    assert v == pytest.approx(700190834.6725569)
+    monkeypatch.setattr(requests, "get", lambda *a, **k: R({"result": "6606142167.0", "total": "10000000000.0"}))
+    v, _ = scrape.fetch_json(plume)
+    assert v == 6_606_142_167.0
+
+
+def test_morpho_urd_claims_join_the_measured_emissions_and_bridged_supply_is_counted_once():
+    """A3 (Jake, 2026-10-07): the Morpho URD 0x330eefa8… beside Merkl's distributor; the OFT lockbox and legacy wrapper
+    sit inside Ethereum totalSupply once."""
+    scan = config.PROJECT_BY_NAME["Morpho"]["log_scans"][0]
+    assert scan["holders"] == ["0x3Ef3D8bA38EBe18DB133cEc108f4D14CE00Dd9Ae", "0x330eefa8a787552DC5cAd3C3cA644844B1E61Ddb"]
+    assert set(scan["holders"]) <= set(scan["exclude_counterparties"])
+    note = config.CIRCULATING_ONCHAIN["Morpho"]["bridged_and_legacy"]
+    assert "0x50d3d6fD7518682155E3C1B65FDD50e1b35649D9" in note and "0x9D03bb2092270648d7480049d0E58d2FcF0E5123" in note
+
+
+def test_near_three_revenue_wallets_are_measured_and_compared_with_the_page():
+    """A2 (Jake, 2026-10-07): all three wallets the page counts; their sum since the buybacks began vs 3,786,229.6."""
+    import credibility as cred
+    import check_offline_items as coi
+    flows = config.PROJECT_BY_NAME["Near"]["near_account_flows"]
+    assert {f["account"] for f in flows} == set(coi.NEAR_REVENUE_WALLETS)
+    for f in flows:
+        others = set(coi.NEAR_REVENUE_WALLETS) - {f["account"]}
+        assert others == set(f["exclude_senders"]), f["account"]
+    long = pd.DataFrame([(pd.Timestamp("2026-02-20"), "Near", "actual_buyback_tokens", 999.0),
+                         (pd.Timestamp("2026-03-01"), "Near", "actual_buyback_tokens", 10.0),
+                         (pd.Timestamp("2026-03-01"), "Near", "near_revenue_inflow_fe_tokens", 20.0),
+                         (pd.Timestamp("2026-04-01"), "Near", "near_revenue_inflow_1cs_tokens", 5.0)],
+                        columns=["date", "project", "metric", "value"])
+    spec = config.CREDIBILITY["Near"]["in_buyback_wallets"]["ours"]
+    v, _d, _how = cred.FORMULAS[spec["py"]]("Near", {}, long, pd.Timestamp("2026-10-07"), **spec["args"])
+    assert v == 35.0
+    assert coi.near_buyback_wallets in coi.CHECKS and coi.sky_ba_endpoints in coi.CHECKS
+    assert "X-API-Key" in config.SOURCE_REGISTER["revenue-dashboard-api-production.up.railway.app"]["key"]
+
+
+def test_etherfi_headline_is_the_trailing_year_over_average_stake_with_q0_and_the_app_beside_it():
+    """B2 (Jake, 2026-10-07): trailing-365-day realised yield is A3's headline; Q0 realised and the app's APY beside."""
+    import pytest
+    import build_workbook as bw
+    import credibility as cred
+    ty = config.PROTOCOL_YIELD["Ether.fi"]["token_yield"]
+    assert ty["trailing_days"] == 365
+    scan = next(s for s in config.PROJECT_BY_NAME["Ether.fi"]["log_scans"] if s["key"] == "sethfi_reward_topups")
+    assert scan["decompose"]["window_days"] == 365
+    days = pd.date_range("2025-10-08", "2026-10-06")
+    mk = lambda m, vals, src="x": pd.DataFrame({"date": days, "project": "Ether.fi", "metric": m, "value": vals,  # noqa: E731
+                                                "source": src, "tier": 2})
+    tok = mk("sethfi_reward_tokens_reconciled", [100.0] * len(days))
+    lock = mk("locked_tokens_underlying", [80e6 if i < 182 else 90e6 for i in range(len(days))])
+    sp = mk("sethfi_share_price_onchain", [1.0 + 0.0001 * i for i in range(len(days))])
+    groups = {("Ether.fi", "sethfi_reward_tokens_reconciled"): tok, ("Ether.fi", "locked_tokens_underlying"): lock,
+              ("Ether.fi", "sethfi_share_price_onchain"): sp}
+    bw._trailing_yield_views(groups)
+    v = float(groups[("Ether.fi", "token_yield_trailing_pct")]["value"].iloc[0])
+    assert len(days) == 364 and v == pytest.approx(100.0 * 364 / float(lock["value"].mean()) * 365 / 364)
+    g = float(groups[("Ether.fi", "token_yield_share_price_trailing_pct")]["value"].iloc[0])
+    assert g == pytest.approx((sp["value"].iloc[-1] / sp["value"].iloc[0]) ** (365 / 363) - 1)
+    assert config.CREDIBILITY["Ether.fi"]["a3_protocol_yield"]["args"]["days"] == 365
+    assert config.CREDIBILITY["Ether.fi"]["in_yield_q0"]["ours"]["args"]["days"] == 90
+    long = pd.concat([tok, lock])[["date", "project", "metric", "value"]]
+    y, _d, how = cred.FORMULAS["trailing_token_yield"]("Ether.fi", {}, long, pd.Timestamp("2026-10-06"),
+                                                      tokens="sethfi_reward_tokens_reconciled",
+                                                      lock="locked_tokens_underlying", days=90)
+    assert y == pytest.approx(100.0 * 90 / 90e6 * 365 / 90) and "90 day(s)" in how
+    assert config.PROJECT_BY_NAME["Ether.fi"]["do_not_use_for_sethfi"]["source"] == "Dune 'eETH Staking'"
+
+
+def test_aerodrome_voter_apr_on_voting_power_and_aethirs_published_unlock_schedule():
+    """C3/C4 (Jake, 2026-10-07): a voter APR on voting power beside the yield on AERO locked; Aethir's next-12-month
+    unlock dilution from the docs' schedule (Jake's October points; the reconstructed table is not used)."""
+    import pytest
+    import build_workbook as bw
+
+    class R_:
+        def D(self, r, m, w="q0"):
+            return f"D[{m}|{w}]"
+    head, build, *_ = bw._voter_apr_voting_power(R_())
+    assert "VOTING POWER" in head
+    assert "ve_voting_power_tokens" in build(5, config.PROJECT_BY_NAME["Aerodrome"])
+    assert build(5, config.PROJECT_BY_NAME["Pendle"]) == ""
+    ch = config.circulating_schedule_change("Aethir", "2026-10-07")
+    assert ch["last"][2] == pytest.approx(24_053_550_151 / 14_234_731_752 - 1) and round(ch["last"][2], 3) == 0.690
+    assert round(ch["next"][2], 3) == 0.317
+    assert config.CIRCULATING_SCHEDULE["Aethir"]["confirm_candidate_table"] is False
+    assert config.circulating_schedule_change("Pendle", "2026-10-07") is None

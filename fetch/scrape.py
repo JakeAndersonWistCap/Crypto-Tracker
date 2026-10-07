@@ -406,7 +406,8 @@ def fetch_json(entry: dict) -> tuple[float | None, str]:
     r = requests.get(entry["url"], headers={"User-Agent": USER_AGENT}, timeout=(10, 30))
     r.raise_for_status()
     payload = r.json()
-    raw = json_path_get(payload, entry["json_path"])
+    # json_path "$" = the payload itself (Morpho's TokenOps endpoint answers a bare number, 2026-10-07)
+    raw = payload if entry["json_path"] == "$" else json_path_get(payload, entry["json_path"])
     if raw is None:
         return None, f"GET {entry['url']} -> {entry['json_path']!r} not found; payload keys {_keys(payload)}"
     parsed = parse_number(raw)

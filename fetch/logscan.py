@@ -27,6 +27,9 @@ cannot say which inflows are a buyback. Each scan declares its attribution with 
                        Abstraction layer, as DefiLlama's own adapter counts it)
   dedicated_wallet     the holder exists only for this purpose, so every inflow counts except a
                        mint (Ether.fi's buyback wallet, named by three sources)
+  count_mints          with count_from naming the zero address: MINTS to the holder count (Sky's USDS
+                       farm, 2026-10-07 — the Splitter pays it through UsdsJoin.exit, which MINTS USDS
+                       straight to the farm; no other path mints to it). Off by default.
   none established     the scan runs and reconciles, the counterparty table is printed, and
                        NOTHING is stored (Maple's treasury receives SYRUP for other reasons too)
 Transfers between the scan's own holders are internal hops and never count in either direction.
@@ -207,7 +210,8 @@ class LogScan:
         parts = "; ".join(f"{c} {by[c]['aps']:+.6f}/share = {by[c]['tokens']:+,.2f} tokens ({by[c]['txs']} tx)"
                           for c in CLASSES if by[c]["txs"])
         span = max(int(dec.get("window_days", 90)), 1)
-        frame = tidy([(d, r["daily"].get(d, 0.0)) for d in days], name, dec["metric"],
+        # ONLY THE DAYS INSIDE THE WINDOW (2026-10-07): a day before `since` was not decomposed, so it is not a 0.
+        frame = tidy([(d, r["daily"].get(d, 0.0)) for d in days if d >= since.normalize()], name, dec["metric"],
                      f"{SOURCE}:{key}.aps_walk", TIER)
         out.add(frame, SOURCE, name,
                 f"{dec['metric']} — assets-per-share {a0:.6f} -> {a1:.6f} since {since.date()} "
@@ -524,7 +528,7 @@ class LogScan:
                     if frm in internal:
                         continue
                     bought = (not swap) or frm in venues or str(e["transactionHash"]).lower() in paid_txs.get(h, ())
-                    if (frm in excluded or frm in MINT_SENDERS or not bought
+                    if (frm in excluded or (frm in MINT_SENDERS and not spec.get("count_mints")) or not bought
                             or (count_from is not None and frm not in count_from)):
                         uncounted[frm] += _amount(e)
                         uncounted_ev.append((frm, e))

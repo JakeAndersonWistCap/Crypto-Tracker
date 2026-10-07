@@ -152,7 +152,7 @@ def parse_text(text: str) -> tuple[list[dict], list[str]]:
         pg = mr.page_for(project, row)
         if v.endswith("%") and "fraction" in str(pg.get("unit", "")):   # only where the page's unit is a fraction
             try:
-                v = repr(float(v[:-1]) / 100.0)
+                v = f"{float(v[:-1]) / 100.0:.12g}"     # 12.48% -> 0.1248, never 0.12480000000000001
             except ValueError:
                 pass                                     # validate() refuses it with the value shown
         note = ("given in chat; entered by Claude Code" + (f" — {m['note'].strip()}" if m["note"].strip() else ""))

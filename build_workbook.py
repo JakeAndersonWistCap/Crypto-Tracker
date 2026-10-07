@@ -1948,6 +1948,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _restatement_views(groups)
     _buyback_tokens_from_usd_views(groups)
     _emissions_from_metric_views(groups)
+    _trailing_yield_views(groups)
     _native_fee_usd_views(groups)
     _mev_estimate_views(groups)
     _VIEW_BLOCKS_PENDING.clear()
@@ -3494,7 +3495,28 @@ def _a2_headline(R: Refs) -> list[tuple]:
         ("SUPPLY TRAJECTORY = emissions (annualised) ÷ free float — annual dilution %",
          lambda r, p: _free_float_reason(p) or calc(f"{_annualise(R, r, p, 'emissions_tokens', emi(r))}/({ff(r, p)})"), FMT_PCT, "calc", True,
          {"metric": "emissions_tokens", **partial, "partial_fmt": '0.0%" PARTIAL↓";(0.0%)" PARTIAL↓"'}),
+        _published_unlock_column(),
     ]
+
+
+def _published_unlock_column() -> tuple:
+    """A2 (Aethir, Jake 2026-10-07): UNLOCK-DRIVEN dilution from the project's own published circulating schedule
+    (config.CIRCULATING_SCHEDULE), next 12 months, beside supplier emissions — the schedule counts every unlock
+    (team, investors, ecosystem), not only rewards. Blank where no schedule is published."""
+    def build(r, p):
+        ch = config.circulating_schedule_change(p["name"], pd.Timestamp.today())
+        return ch["next"][2] if ch and ch.get("next") else ""
+
+    def note(p):
+        ch = config.circulating_schedule_change(p["name"], pd.Timestamp.today())
+        if not ch:
+            return None
+        spec = config.CIRCULATING_SCHEDULE[p["name"]]
+        parts = [f"{k}: {v[0]} -> {v[1]} {v[2]:+.1%}" for k, v in ch.items() if k in ("last", "next")]
+        return (" · schedule", f"PUBLISHED CIRCULATING SCHEDULE ({spec['source']}, read by {spec['read_by']}): "
+                               + "; ".join(parts) + ". Counts every unlock, not only supplier rewards.")
+    return ("PUBLISHED UNLOCK SCHEDULE — next 12 months, circulating growth from the project's own table (all unlocks)",
+            build, FMT_PCT, "calc", False, {"flag_fn": note})
 
 
 def _eth_yield_parts(R: Refs, r: int, p: dict, spec: dict) -> tuple[str, str, list]:
@@ -3677,6 +3699,11 @@ def _token_yield(R: Refs, data_by_key: dict | None = None):
             tok = f"({rev}/{pq0})"
             return calc(f"IF(AND(ISNUMBER({rev}),ISNUMBER({pq0}),ISNUMBER({base})),"
                         f"{_annualise(R, r, p, spec['revenue'], tok)}/{base},{NA})")
+        # THE TRAILING-YEAR HEADLINE (Ether.fi, Jake 2026-10-07): reward tokens over the last `trailing_days` / the
+        # AVERAGE staked over them, computed at read time (_trailing_yield_views).
+        if ty.get("trailing_days"):
+            ty_cell = R.D(r, "token_yield_trailing_pct", "now")
+            return calc(f"IF(ISNUMBER({ty_cell}),{ty_cell},{NA})")
         tok = R.D(r, ty["tokens"], "q0")
         # PER EPOCH (Pendle, 2026-09-29): the mean distribution of the epochs in Q0 x epochs/yr —
         # a 90-day window holds 6 or 7 fortnightly epochs, and x365/90 would swing by one.
@@ -3873,6 +3900,52 @@ def _emissions_from_metric_views(groups: dict) -> None:
                                                             measured.columns)
         elif held is not None and not held.empty:
             groups[(name, "emissions_tokens")] = held[~held["source"].astype(str).str.startswith("schedule")]
+
+
+def _trailing_yield_views(groups: dict) -> None:
+    """token_yield_trailing_pct := reward tokens over the trailing `trailing_days` / the AVERAGE staked over the stored
+    days of that window, x 365 / the days covered (a series younger than the window is annualised over its own span).
+    token_yield_share_price_trailing_pct := the vault's share price over the same window, annualised. One row each, on
+    the latest day of the reward series (Ether.fi, Jake 2026-10-07: the headline is the trailing year; top-ups arrive
+    in lumps, so 90 days swings with each one)."""
+    for p in scoped_projects():
+        spec = config.PROTOCOL_YIELD.get(p["name"]) or {}
+        ty = spec.get("token_yield") or {}
+        n = ty.get("trailing_days")
+        if not n:
+            continue
+        name = p["name"]
+        tok, lock = groups.get((name, ty["tokens"])), groups.get((name, spec["lock"]))
+        if tok is None or tok.empty or lock is None or lock.empty:
+            continue
+        t = tok.drop_duplicates("date", keep="last").set_index("date")["value"].astype(float).sort_index()
+        end = t.index[-1]
+        lo = end - pd.Timedelta(days=int(n))
+        t = t[t.index > lo]
+        lk = lock.drop_duplicates("date", keep="last").set_index("date")["value"].astype(float).sort_index()
+        lk = lk[(lk.index > lo) & (lk.index <= end)]
+        covered = (end - t.index[0]).days + 1
+        if lk.empty or not lk.mean() or covered <= 0:
+            continue
+        v = float(t.sum()) / float(lk.mean()) * 365.0 / covered
+        src = (f"derived:{ty['tokens']} {float(t.sum()):,.0f} / mean {spec['lock']} {float(lk.mean()):,.0f} over "
+               f"{covered} day(s) {t.index[0].date()}..{end.date()} x 365/{covered}"
+               + ("" if covered >= int(n) else f" [covers {covered} of {n} days]"))
+        groups[(name, "token_yield_trailing_pct")] = _as_stored(pd.DataFrame(
+            {"date": [end], "project": [name], "metric": ["token_yield_trailing_pct"], "value": [v],
+             "source": [src], "tier": [2]}), tok.columns)
+        spm = ty.get("share_price_metric")
+        sp = groups.get((name, spm)) if spm else None
+        if sp is not None and not sp.empty:
+            s_ = sp.drop_duplicates("date", keep="last").set_index("date")["value"].astype(float).sort_index()
+            s_ = s_[(s_.index > end - pd.Timedelta(days=int(n))) & (s_.index <= end)]
+            span = (s_.index[-1] - s_.index[0]).days if len(s_) > 1 else 0
+            if span >= 7 and s_.iloc[0]:
+                g = (float(s_.iloc[-1]) / float(s_.iloc[0])) ** (365.0 / span) - 1.0
+                groups[(name, "token_yield_share_price_trailing_pct")] = _as_stored(pd.DataFrame(
+                    {"date": [s_.index[-1]], "project": [name], "metric": ["token_yield_share_price_trailing_pct"],
+                     "value": [g], "source": [f"derived:{spm} {s_.index[0].date()}..{s_.index[-1].date()}, annualised"],
+                     "tier": [2]}), sp.columns)
 
 
 def _native_fee_usd_views(groups: dict) -> None:
@@ -4113,6 +4186,24 @@ def _protocol_yield(R: Refs, data_by_key: dict | None = None):
              # Ether.fi's yield reads 0 because its buyback has not moved, and its recipient
              # class is unconfirmed under the new programme (2026-09-28).
              "flag_fn": lambda p: _protocol_yield_flag(p, data_by_key or {})})
+
+
+def _voter_apr_voting_power(R: Refs):
+    """A3, Aerodrome (Jake, 2026-10-07): the aggregate voter APR on Aerodrome's own vAPR definition — voter rewards
+    (fees + bribes, annualised) / (veAERO VOTING POWER x price). Voting power decays with lock time, so it is below
+    AERO locked (881.1M vs 1.053bn on 2026-10-07) and this rate is above the yield on AERO locked beside it. Blank
+    where PROTOCOL_YIELD declares no `voting_power`."""
+    def build(r, p):
+        spec = config.PROTOCOL_YIELD.get(p["name"]) or {}
+        if not spec.get("voting_power"):
+            return ""
+        rev, vp, px = R.D(r, spec["revenue"], "q0"), R.D(r, spec["voting_power"], "now"), R.D(r, "price_usd", "now")
+        return calc(f"IF(AND(ISNUMBER({rev}),ISNUMBER({vp}),ISNUMBER({px}),{vp}>0),"
+                    f"{_annualise(R, r, p, spec['revenue'], rev)}/({vp}*{px}),{NA})")
+    return ("VOTER APR ON VOTING POWER ($) — Aerodrome's vAPR definition: voter rewards (fees + bribes, annualised) ÷ "
+            "(veAERO voting power x price). The column to its left divides by AERO LOCKED, so it reads lower",
+            build, FMT_PCT, "calc", False,
+            {"metric_fn": lambda n: (config.PROTOCOL_YIELD.get(n) or {}).get("voting_power")})
 
 
 def _flags(data_by_key: dict, name: str, metrics: list[str]) -> str:
@@ -4686,6 +4777,7 @@ def write_a3(ws, R: Refs, data_by_key: dict):
         _topup_split(R),
         _topup_split_alltime(R),
         _protocol_yield(R, data_by_key),
+        _voter_apr_voting_power(R),
         _published_apr(R),
         _virtual_share(R),
         # ===== PENDLE ONLY: THE OLD, UNMIGRATED CONTRACT'S OWN BALANCE. Added 2026-09-24. =====

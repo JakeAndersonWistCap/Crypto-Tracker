@@ -3225,6 +3225,153 @@ def alchemy_base_logs(chain: str = "base"):
     print("  Nothing was stored. PASTE BACK the section.")
 
 
+# ===== NEAR's THREE REVENUE / BUYBACK WALLETS, MONTH BY MONTH (Jake, 2026-10-07). =====
+# revenue.near.org's "Wallet Breakdown (All-time)": fefundsadmin.sputnik-dao.near 1,846,188.3 NEAR (48.8%),
+# buybacks.multisignature.near 1,384,693 (36.6%), 1csfundsadmin.sputnik-dao.near 555,348.3 (14.7%) — 3,786,229.6
+# in all. The page's backend counts NEAR transfers AND wNEAR ft_transfers into the three, excluding transfers
+# between them (DefiLlama fees/near-intents/index.ts mirrors it: Dune 6740088 / 6732239). NearBlocks v3
+# (Nearblocks/nearblocks @4024051b apps/api/src/routes/v3): /accounts/{a}/balance, /stats/balance (daily end
+# balance, yocto, newest first), /txns and /ft-txns (cursor `next`, limit <= 100). ~1 credit a call.
+NEAR_REVENUE_WALLETS = ("fefundsadmin.sputnik-dao.near", "buybacks.multisignature.near",
+                        "1csfundsadmin.sputnik-dao.near")
+
+
+def near_buyback_wallets(max_pages: int = 40):
+    import pandas as pd                                    # noqa: PLC0415
+    from fetch.base import redact                          # noqa: PLC0415
+    head("NEAR — the three revenue/buyback wallets: NEAR + wNEAR in and out by month (NearBlocks v3)")
+    try:
+        from dotenv import load_dotenv                    # noqa: PLC0415
+        load_dotenv()
+    except Exception:  # noqa: BLE001
+        pass
+    key = os.environ.get("NEARBLOCKS_API_KEY", "").strip()
+    if not key:
+        print("  NEARBLOCKS_API_KEY is not set — nothing read.")
+        return
+    base, hdr = "https://api.nearblocks.io/v3", {**_ua(), "Authorization": f"Bearer {key}"}
+    calls = 0
+
+    def get(path, params=None):
+        nonlocal calls
+        calls += 1
+        r = requests.get(base + path, params=params or {}, headers=hdr, timeout=TIMEOUT)
+        r.raise_for_status()
+        return r.json()
+
+    def pages(path, params):
+        out, nxt = [], None
+        for _ in range(max_pages):
+            j = get(path, {**params, "limit": 100, **({"next": nxt} if nxt else {})})
+            out += j.get("data") or []
+            nxt = (j.get("meta") or {}).get("next_page")
+            if not nxt:
+                return out, True
+        return out, False
+
+    wallets = set(NEAR_REVENUE_WALLETS)
+    grand_in = 0.0
+    for w in NEAR_REVENUE_WALLETS:
+        print(f"\n  {w}")
+        try:
+            bal = get(f"/accounts/{w}/balance").get("data") or {}
+            print(f"    balance now: {int(bal.get('amount') or 0) / 1e24:,.1f} NEAR liquid, "
+                  f"{int(bal.get('amount_staked') or 0) / 1e24:,.1f} staked")
+            hist = get(f"/accounts/{w}/stats/balance", {"limit": 365}).get("data") or []
+            if hist:
+                hb = pd.Series({pd.Timestamp(h["date"]): int(h["amount"]) / 1e24 for h in hist}).sort_index()
+                me = hb.groupby(hb.index.to_period("M")).last()
+                print("    month-end liquid balance: " + ", ".join(f"{m} {v:,.0f}" for m, v in me.tail(9).items()))
+            ins, outs = {}, {}
+            txs, done_t = pages(f"/accounts/{w}/txns", {})
+            for t in txs:
+                dep = int((t.get("actions_agg") or {}).get("deposit") or 0) / 1e24
+                if not dep or (t.get("outcomes") or {}).get("status") is False:
+                    continue
+                m = pd.Timestamp(int(t["block_timestamp"]), unit="ns").to_period("M")
+                sig, rcv = t.get("signer_account_id"), t.get("receiver_account_id")
+                if rcv == w and sig not in wallets:
+                    ins[m] = ins.get(m, 0.0) + dep
+                elif sig == w and rcv not in wallets:
+                    outs.setdefault(m, {}).setdefault(rcv, 0.0)
+                    outs[m][rcv] += dep
+            fts, done_f = pages(f"/accounts/{w}/ft-txns", {"contract": "wrap.near"})
+            for f in fts:
+                amt = int(f.get("delta_amount") or 0) / 1e24
+                m = pd.Timestamp(int(f["block_timestamp"]), unit="ns").to_period("M")
+                peer = f.get("involved_account_id")
+                if peer in wallets:
+                    continue
+                if amt > 0:
+                    ins[m] = ins.get(m, 0.0) + amt
+                elif amt < 0:
+                    outs.setdefault(m, {}).setdefault(f"{peer} (wNEAR)", 0.0)
+                    outs[m][f"{peer} (wNEAR)"] += -amt
+            tot = sum(ins.values())
+            grand_in += tot
+            print(f"    IN (NEAR deposits + wNEAR, excluding the other two wallets): {tot:,.1f} NEAR"
+                  + ("" if done_t and done_f else f"  [PARTIAL: stopped at {max_pages} pages]"))
+            for m in sorted(set(ins) | set(outs)):
+                o = outs.get(m) or {}
+                top = sorted(o.items(), key=lambda kv: -kv[1])[:3]
+                print(f"      {m}: in {ins.get(m, 0.0):,.1f}; out {sum(o.values()):,.1f}"
+                      + (" -> " + ", ".join(f"{k} {v:,.0f}" for k, v in top) if top else ""))
+        except Exception as e:  # noqa: BLE001
+            print(f"    FAILED — {redact(str(e))[:200]}")
+    print(f"\n  ALL THREE, IN: {grand_in:,.1f} NEAR vs the page's 3,786,229.6 "
+          f"({grand_in / 3_786_229.6 - 1:+.1%}); {calls} call(s) (~1 credit each)")
+    print("  READING IT: a wallet whose OUT lines are empty (or only to the other two) is buyback-and-HOLD — its NEAR")
+    print("  leaves free float but is not burned. NEAR has no burn address; an outflow is a burn only if it goes to")
+    print("  a key-less account the protocol names as such. Monthly IN x that month's price is what to set beside the")
+    print("  page's monthly net revenue. Nothing was stored. PASTE BACK the section.")
+
+
+# ===== SKY — BLOCK ANALITICA'S ENDPOINTS: WHAT THEY RETURN (Jake, 2026-10-07). =====
+# The accounting API (sky.data.blockanalitica.com/v1/accounting/...) has no public documentation we could find — no
+# schema, no category names — so nothing is wired from it until its shape is read. The info-sky endpoints below are
+# used in public code (jetstreamgg/tarmac @5b650e1b apps/webapp/src/hooks; DefiLlama fees/makerdao.ts @7bffe3f3).
+# robots.txt is checked first for every host; one GET per path.
+SKY_BA_PATHS = (
+    "https://sky.data.blockanalitica.com/v1/accounting/profit-and-loss/",
+    "https://sky.data.blockanalitica.com/v1/accounting/profit-and-loss/history/",
+    "https://sky.data.blockanalitica.com/v1/accounting/cash-flow/",
+    "https://sky.data.blockanalitica.com/v1/accounting/cash-flow/history/",
+    "https://sky.data.blockanalitica.com/v1/accounting/cash-flow/items/",
+    "https://sky.data.blockanalitica.com/v1/accounting/balance-sheet/",
+    "https://info-sky.blockanalitica.com/api/v1/farms/0xb44c2fb4181d7cb06bdff34a46fdfe4a259b40fc/historic/?p_size=5",
+    "https://info-sky.blockanalitica.com/api/v1/farms/0x38e4254bd82ed5ee97cd1c4278faae748d998865/historic/?p_size=5",
+    "https://info-sky.blockanalitica.com/api/v1/overall/",
+    "https://info-sky.blockanalitica.com/buyback/historic/?days_ago=30&format=json",
+)
+
+
+def sky_ba_endpoints():
+    from fetch.scrape import robots_verdict                # noqa: PLC0415
+    head("SKY — Block Analitica endpoints: robots.txt, then each path's shape (keys, first rows)")
+    for url in SKY_BA_PATHS:
+        ok, why = robots_verdict(url)
+        print(f"\n  {url}\n    robots: {'ALLOWED' if ok else 'DISALLOWED'} — {why}")
+        if not ok:
+            continue
+        try:
+            r = requests.get(url, headers=_ua(), timeout=TIMEOUT)
+            print(f"    HTTP {r.status_code}, {len(r.content):,} bytes, {r.headers.get('content-type', '?')}")
+            j = r.json()
+            body = j.get("data", j) if isinstance(j, dict) else j
+            rows = body.get("results", body) if isinstance(body, dict) else body
+            if isinstance(rows, list):
+                print(f"    {len(rows)} row(s); keys of the first: {sorted(rows[0]) if rows and isinstance(rows[0], dict) else '-'}")
+                for row in rows[:3]:
+                    print(f"      {json.dumps(row)[:300]}")
+            else:
+                print(f"    keys: {sorted(rows)[:40] if isinstance(rows, dict) else type(rows).__name__}")
+                print(f"      {json.dumps(rows)[:600]}")
+        except Exception as e:  # noqa: BLE001
+            print(f"    FAILED — {type(e).__name__}: {str(e)[:200]}")
+    print("\n  WANTED: monthly Net Protocol Surplus; the cash-flow category for buyback spending (its exact name);")
+    print("  staking-reward lines; per-farm apr / total_staked. Nothing was stored. PASTE BACK the section.")
+
+
 def geod_residual(days: int = 180):
     head("GEODNET — where is the ~74M CoinGecko excludes and we count? Solana largest accounts + Polygon sinks")
     url = "https://api.mainnet-beta.solana.com"
@@ -6316,7 +6463,7 @@ CHECKS = (
     maple_dao_multisig, pendle_spendle_virtual, pendle_compounding_ledger, aerodrome_lock_inputs,
     uniswap_firepit_threshold, near_buyback_inflow_probe,
     fluid_buyback_destination, aethir_staking_probe, aethir_wrapper_relationship,
-    aethir_veaethir_probe, geodnet_staking_candidates, geod_candidate_wallets, sky_lssky_releases, geod_residual, alchemy_base_logs, chainlink_revenue_coverage,
+    aethir_veaethir_probe, geodnet_staking_candidates, geod_candidate_wallets, sky_lssky_releases, geod_residual, alchemy_base_logs, near_buyback_wallets, sky_ba_endpoints, chainlink_revenue_coverage,
     maple_transparency, sky_burn_breakdown, geod_solana_burn_account, near_block_supply,
     wm_cardano_supply, etherscan_ethsupply2, geod_archive_probe, plume_growthepie,
     chainlink_reward_rates, pendle_spendle_fees, archive_probe, coinmetrics_community,

@@ -309,6 +309,12 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
     if metric == "fees_native_tokens" and metric in (nb.get("metrics") or {}):   # 2026-10-06: NEAR's txn_fee
         dedicated.append((f"NearBlocks {nb['metrics'][metric]['path']} field {nb['metrics'][metric]['field']!r} "
                           f"(fetch/nearblocks.py; needs {nb.get('key_env')})", "near"))
+    # NEAR's other two revenue wallets (2026-10-07): a NearBlocks inflow read, like the buyback wallet's
+    flow = next((f for f in project.get("near_account_flows") or []
+                 if f["metric"] == metric and metric != "actual_buyback_tokens"), None)
+    if flow:
+        dedicated.append((f"NearBlocks native NEAR inflow into {flow['account']} (near_account_flows.{flow['key']}; "
+                          f"fetch/nearblocks.py; needs {flow['key_env']})", "near_buyback_wallets"))
     gp = project.get("growthepie") or {}
     if metric in (gp.get("metrics") or {}):
         dedicated.append((f"growthepie fundamentals.json ({gp.get('origin_key')!r}, "
