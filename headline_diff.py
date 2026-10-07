@@ -12,6 +12,9 @@ Writes nothing to the store and leaves token_metrics.xlsx alone. Output is ASCII
 
     circulating    2026-10-06: Uniswap / Sky / Pendle on-chain circulating (established), Aerodrome on-chain by
                    decision; before = CoinGecko's circulating for all four
+    circulating_policy  2026-10-07: the project's own figure first, CoinGecko where it publishes nothing — Uniswap
+                   and Sky to CoinGecko, Aerodrome to CoinGecko + veAERO added back, GEODNET to its own 462M; before =
+                   the 2026-10-06 choices (on-chain for Uniswap / Sky / Aerodrome, CoinGecko for GEODNET)
     etherfi_yield  2026-10-06: Ether.fi's token-yield numerator = the reconciled share-price total; before = the
                    top-ups alone (sethfi_topup_tokens)
 """
@@ -29,6 +32,11 @@ BEFORE = {
     "circulating": lambda: [
         *[(config.CIRCULATING_ONCHAIN[n], "status", "partial") for n in ("Uniswap", "Sky", "Pendle")],
         (config.CIRCULATING_ONCHAIN["Aerodrome"], "ratios_use", None)],
+    "circulating_policy": lambda: [
+        (config.CIRCULATING_ONCHAIN["Uniswap"], "ratios_use", None),
+        (config.CIRCULATING_ONCHAIN["Sky"], "ratios_use", None),
+        (config.CIRCULATING_ONCHAIN["Aerodrome"], "ratios_use", "onchain"),
+        (config.CIRCULATING_ONCHAIN["GEODNET"], "ratios_use", None)],
     "etherfi_yield": lambda: [(config.PROTOCOL_YIELD["Ether.fi"]["token_yield"], "tokens", "sethfi_topup_tokens")],
 }
 

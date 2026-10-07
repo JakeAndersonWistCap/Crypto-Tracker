@@ -17116,13 +17116,13 @@ def test_geodnet_supply_denominators_net_out_the_burn_coingecko_does_not():
         def D(self, r, m, w):
             return f"D[{m}]"
     expr = bw._circ(R(), 5, config.PROJECT_BY_NAME["GEODNET"])
-    assert expr == ("IF(ROUND(D[total_supply]-(D[total_supply_gross]-D[burn_address_balance]),2)>=0,"
+    # POLICY 2026-10-07: GEODNET's OWN figure first, used as published; only the CoinGecko fallback is netted
+    assert expr == ("IF(ISNUMBER(D[circulating_supply_first_party]),D[circulating_supply_first_party],"
+                    "IF(ROUND(D[total_supply]-(D[total_supply_gross]-D[burn_address_balance]),2)>=0,"
                     "D[circulating_supply]-ROUND(D[total_supply]-(D[total_supply_gross]-"
-                    "D[burn_address_balance]),2),NA())"), expr
-    # Uniswap's on-chain set is established since 2026-10-06 (CoinGecko's own method): on-chain first, CoinGecko
-    # the fallback, and no burn adjustment (nothing un-netted)
-    assert bw._circ(R(), 5, config.PROJECT_BY_NAME["Uniswap"]) == \
-        "IF(ISNUMBER(D[circulating_supply_onchain]),D[circulating_supply_onchain],D[circulating_supply])"
+                    "D[burn_address_balance]),2),NA()))"), expr
+    # Uniswap publishes no figure (POLICY 2026-10-07): CoinGecko, and no burn adjustment (nothing un-netted)
+    assert bw._circ(R(), 5, config.PROJECT_BY_NAME["Uniswap"]) == "D[circulating_supply]"
     # the arithmetic on Jake's figures: CoinGecko nets Polygon only -> the Solana balance comes out
     tot, gross, burned = 1e9 - 38_586_932.38, 1e9, 38_586_932.38 + 29_407_004.0
     assert round(tot - (gross - burned), 2) == 29_407_004.0
@@ -20032,7 +20032,7 @@ def test_onchain_circulating_excludes_only_documented_sourced_addresses_and_revi
     # (unless a per-project decision says so — Aerodrome, ratios_use)
     R = bw.Refs(100, 10, ["2026-09"])
     assert "circulating_supply_first_party" in bw._circ(R, 5, config.PROJECT_BY_NAME["Hyperliquid"])
-    assert "circulating_supply_onchain" in bw._circ(R, 5, config.PROJECT_BY_NAME["Uniswap"])
+    assert "circulating_supply_onchain" in bw._circ(R, 5, config.PROJECT_BY_NAME["Pendle"])
     assert "circulating_supply_onchain" not in bw._circ(R, 5, config.PROJECT_BY_NAME["Maple"])
 
 
@@ -25349,12 +25349,23 @@ def test_circulating_decisions_are_applied_consistently_and_coingecko_free_float
     EXCLUDE staked/locked (= our free float): used as circulating they subtracted the lock twice in free float."""
     import build_workbook as bw
     import credibility as cred
-    for n in ("Uniswap", "Sky", "Pendle", "Aerodrome"):
-        assert config.circulating_onchain_primary(n)
-        assert bw.chosen_circulating_metric(config.PROJECT_BY_NAME[n]) == "circulating_supply_onchain"
-    for n in ("Chainlink", "Maple", "Fluid", "Ether.fi", "GEODNET"):
+    # THE POLICY (2026-10-07): the project's own figure first, CoinGecko where it publishes nothing
+    chosen = {n: bw.chosen_circulating_metric(config.PROJECT_BY_NAME[n]) for n in config.CIRCULATING_POLICY}
+    assert chosen["Pendle"] == "circulating_supply_onchain"            # Pendle's documented method, staked added back
+    assert chosen["Aerodrome"] == "circulating_supply_cg_plus_staked"  # CoinGecko + veAERO, added back once
+    assert chosen["GEODNET"] == "circulating_supply_first_party"       # GEODNET's own 462M
+    assert chosen["Ethereum"] == "circulating_supply_onchain"
+    for n in ("Hyperliquid", "Near", "Aethir", "Plume"):
+        assert chosen[n] == "circulating_supply_first_party", n
+    for n in ("Uniswap", "Sky", "Chainlink", "Maple", "Fluid", "Ether.fi", "Morpho"):
+        assert chosen[n] == "circulating_supply", n
         assert not config.circulating_onchain_primary(n), n
+    for n in ("Chainlink", "Maple", "Fluid", "Ether.fi", "GEODNET"):
         assert config.circulating_onchain(n).get("decision"), "every decision says why"
+    # every project's entry records the source, its definition, staked tokens and what it replaced
+    assert set(config.CIRCULATING_POLICY) == set(config.CREDIBILITY_PROJECTS)
+    assert all(all(e.get(k) for k in ("source", "definition", "staked", "previous"))
+               for e in config.CIRCULATING_POLICY.values())
     # every wired non-circulating wallet carries its source and the date read, and is not a code-checked holder
     for n, (cnt, sym) in {"Pendle": (3, "PENDLE"), "Aerodrome": (3, "AERO"), "Chainlink": (24, "LINK"),
                           "Maple": (5, "SYRUP"), "Fluid": (1, "FLUID"), "Sky": (2, "SKY")}.items():
@@ -25408,7 +25419,11 @@ def test_headline_diff_and_manual_form_make_run_on_a_store(tmp_path, monkeypatch
     assert hd.main(["--only", "circulating"]) == 0
     out = capsys.readouterr().out
     assert "HEADLINES MOVING BEYOND 10%" in out
-    assert config.CIRCULATING_ONCHAIN["Aerodrome"]["ratios_use"] == "onchain", "the decision is restored"
+    assert config.CIRCULATING_ONCHAIN["Aerodrome"]["ratios_use"] == "coingecko_plus_staked", "the decision is restored"
+    assert hd.main(["--only", "circulating_policy"]) == 0
+    assert "HEADLINES MOVING BEYOND 10%" in capsys.readouterr().out
+    assert config.CIRCULATING_ONCHAIN["GEODNET"]["ratios_use"] == "first_party"
+    assert config.CIRCULATING_ONCHAIN["Sky"]["ratios_use"] == "coingecko"
     assert config.CIRCULATING_ONCHAIN["Pendle"]["status"] == "established"
     form = tmp_path / "form.csv"
     assert mf.main(["make", "--out", str(form)]) == 0
@@ -25438,7 +25453,8 @@ def test_free_float_never_subtracts_the_lock_twice_from_coingeckos_free_float_ba
     assert v is None and "not computed" in how
     # Aerodrome: the team's 95M leaves the lock once (it is out of circulating already)
     # (the lock subtracted is the one the sheet shows: veAERO.supply(), LOCK_DISPLAY_METRIC)
-    rows = {"Aerodrome|circulating_supply_onchain": {"now": 1.85e9}, "Aerodrome|ve_locked_supply_tokens": {"now": 0.99e9},
+    rows = {"Aerodrome|circulating_supply_cg_plus_staked": {"now": 1.85e9},
+            "Aerodrome|ve_locked_supply_tokens": {"now": 0.99e9},
             "Aerodrome|locked_tokens": {"now": 0.93e9}}
     v, _d, _h = cred.FORMULAS["free_float_now"]("Aerodrome", rows, None, pd.Timestamp("2026-10-07"))
     assert v == 1.85e9 - (0.99e9 - 95e6)
@@ -25702,14 +25718,17 @@ def test_sky_circulating_is_compared_like_for_like_with_coingeckos_total():
     import supply_components as sc
     assert config.coingecko_counts_total("Sky") and not config.coingecko_counts_total("Pendle")
     spec = cred.circulating_input("Sky")
-    assert spec["ours"]["metric"] == config.circulating_onchain("Sky")["total"]
-    assert spec["ref"]["metric"] == "circulating_supply" and spec["ref"]["tol"] == 2.0
+    # POLICY 2026-10-07: CoinGecko is the figure in use (Sky publishes none); its like-for-like on-chain cross-check
+    # is our TOTAL
+    assert spec["ours"]["metric"] == "circulating_supply"
+    assert spec["ref"]["metric"] == config.circulating_onchain("Sky")["total"] and spec["ref"]["tol"] == 2.0
     rows = {"Sky|total_supply_protocol": {"now": 23.46e9}, "Sky|circulating_supply_onchain": {"now": 21.37e9},
             "Sky|circulating_supply": {"now": 23.43e9}, "Sky|total_supply": {"now": 23.46e9}}
     for m in config.circulating_onchain("Sky").get("subtract") or ():
         rows.setdefault(f"Sky|{m}", {"now": 1.0})
     text = "\n".join(sc.report("Sky", rows, None))
     assert "STRICTER by 2,090,000,000" in text and "CoinGecko counts every token" in text
+    assert "policy: CoinGecko" in text and "CROSS-CHECK" not in text.split("GAP")[0]
 
 
 def test_aerodrome_buyback_input_is_a_declared_na_so_net_absorption_is_checkable():
@@ -26214,50 +26233,212 @@ def test_aethir_published_schedule_is_the_full_table_and_the_monthly_reference()
 
 
 def test_sky_accounting_reads_monthly_nps_buyback_and_staking_from_block_analitica(monkeypatch):
-    """Jake, 2026-10-07 (with Block Analitica's API docs): NPS = P&L net less Security and Maintenance (Sky's financials
-    page counts S&M as an expense; Block Analitica books it below net revenue); Buyback Spending and Staking Rewards from
-    cash flow, outflows stored positive; complete months only, dated to month-end; robots.txt first."""
+    """Jake, 2026-10-07 (API docs; then the 12:06 run): NPS is the combination of the P&L history's revenue / expense /
+    revenue_distribution that MEETS the months Sky reported (May-Aug 2026) — established by matching, stored only then;
+    Buyback Spending and Staking Rewards from cash flow, outflows stored positive; complete months only, month-end;
+    info-sky's cumulative SKY bought and the two farms' staked / apy / d(total_farmed); robots.txt first."""
     from fetch import sky_accounting as sa
     from fetch import scrape
-    monkeypatch.setattr(scrape, "robots_verdict", lambda url: (True, "robots.txt read (HTTP 200)"))
+    monkeypatch.setattr(scrape, "robots_verdict", lambda url: (True, "robots.txt read (HTTP 404 = allowed)"))
     monkeypatch.setattr(sa, "today", lambda: pd.Timestamp("2026-10-07"))
-    calls = []
+    reported = sa.reported_nps("Sky")
+    assert reported == {"2026-05": 9_710_000.0, "2026-06": 10_810_000.0, "2026-07": 10_520_000.0,
+                        "2026-08": 15_750_000.0}
+    sm = {"2026-05": 1.0e6, "2026-06": 1.2e6, "2026-07": 0.9e6, "2026-08": 1.1e6, "2026-09": 1.0e6}
+    calls, state = [], {"rev_bias": 0.0}
 
     class H:
         def get(self, url, params=None, **_):
             calls.append((url, dict(params or {})))
-            if url.endswith("/profit-and-loss/statement/history/"):
-                return {"data": [{"date": "2026-08", "revenue": "40", "expense": "20", "net": "20.5"},
-                                 {"date": "2026-09", "revenue": "30", "expense": "15", "net": "15"},
-                                 {"date": "2026-10", "revenue": "3", "expense": "1", "net": "2"}],
+            if url.endswith("/profit-and-loss/history/") and (params or {}).get("category"):
+                assert params["type"] == "revenue_distribution" and params["category"] == "Security and Maintenance"
+                return {"data": [{"date": m, "type": "revenue_distribution", "amount": str(v)} for m, v in sm.items()],
                         "status": 200, "success": True}
             if url.endswith("/profit-and-loss/history/"):
-                assert params["type"] == "revenue_distribution" and params["category"] == "Security and Maintenance"
-                return {"data": [{"date": "2026-08", "type": "revenue_distribution", "amount": "4.75"}],
-                        "status": 200, "success": True}
+                rows = []
+                for m in ("2026-05", "2026-06", "2026-07", "2026-08", "2026-09", "2026-10"):
+                    nps = reported.get(m, 12e6) + state["rev_bias"]
+                    rows += [{"date": m, "type": "revenue", "amount": str(30e6 + nps + sm.get(m, 0))},
+                             {"date": m, "type": "expense", "amount": "30000000"},
+                             {"date": m, "type": "revenue_distribution", "amount": str(5e6)}]
+                return {"data": rows, "status": 200, "success": True}
             if url.endswith("/cash-flow/items/history/") and params["category"] == "Buyback Spending":
                 return {"data": [{"date": "2026-09", "source": "buyback", "category": "Buyback Spending",
                                   "type": "outflows", "amount": "-7.5"},
                                  {"date": "2026-09", "source": "flap", "category": "Buyback Spending",
                                   "type": "outflows", "amount": "-2.5"}], "status": 200, "success": True}
-            return {"data": [{"date": "2026-09", "source": "lssky", "category": "Staking Rewards",
-                              "type": "outflows", "amount": "-3"}], "status": 200, "success": True}
+            if url.endswith("/cash-flow/items/history/"):
+                return {"data": [{"date": "2026-09", "source": "lssky", "category": "Staking Rewards",
+                                  "type": "outflows", "amount": "-3"}], "status": 200, "success": True}
+            if url.endswith("/buyback/historic/"):
+                assert params == {"days_ago": 365, "format": "json"}
+                return {"line": [{"date": "2026-10-05", "sky_cumulative_buyback": "1990000000"},
+                                 {"date": "2026-10-06", "sky_cumulative_buyback": "1991000000"},
+                                 {"date": "2026-10-07", "sky_cumulative_buyback": "1991500000"}]}
+            if "/api/v1/farms/0xb44c" in url:
+                return {"results": [{"datetime": "2026-10-05T00:00:00Z", "apy": "0.07", "total_staked": "8.8e9",
+                                     "total_farmed": "100"},
+                                    {"datetime": "2026-10-06T00:00:00Z", "apy": "0.0658", "total_staked": "8.83e9",
+                                     "total_farmed": "160"}]}
+            if "/api/v1/farms/0x38e4" in url:
+                return {"results": [{"date": "2026-10-05", "apy": "0.046", "total_staked": "8.59e9",
+                                     "total_farmed": "50"},
+                                    {"date": "2026-10-06", "apy": "0.0461", "total_staked": "8.6e9",
+                                     "total_farmed": "40"}]}
+            raise AssertionError(url)
     out = FetchOutput()
     sa.SkyAccounting(http=H()).run([config.PROJECT_BY_NAME["Sky"]], 90, out)
     f = out.frame()
-    nps = f[f.metric == "net_protocol_surplus_usd"].set_index("date")["value"]
-    assert dict(nps) == {pd.Timestamp("2026-08-31"): 20.5 - 4.75, pd.Timestamp("2026-09-30"): 15.0}   # Oct incomplete
+    nps = f[f.metric == "net_protocol_surplus_usd"].set_index("date")
+    assert nps.loc[pd.Timestamp("2026-08-31"), "value"] == _pytest.approx(15_750_000.0)
+    assert pd.Timestamp("2026-10-31") not in nps.index, "October is incomplete"
+    assert set(nps["source"]) == {"sky_accounting:pnl.revenue-expense-security_and_maintenance"}
     bb = f[f.metric == "buyback_spending_usd_ba"].set_index("date")["value"]
     assert dict(bb) == {pd.Timestamp("2026-09-30"): 10.0}
-    st = f[f.metric == "staking_rewards_usd_ba"]
-    assert list(st.value) == [3.0]
-    assert all(p.get("group_by") == "month" and p.get("date_from") == "2025-01-01" for _, p in calls)
+    assert list(f[f.metric == "staking_rewards_usd_ba"].value) == [3.0]
+    cum = f[f.metric == "sky_cumulative_buyback_ba"].set_index("date")["value"]
+    assert dict(cum) == {pd.Timestamp("2026-10-05"): 1.99e9, pd.Timestamp("2026-10-06"): 1.991e9}, "complete days"
+    assert list(f[f.metric == "locked_tokens_sky_farm_ba"].value) == [8.8e9, 8.83e9]
+    assert list(f[f.metric == "sky_farm_apy_ba"].value)[-1] == 0.0658
+    assert list(f[f.metric == "sky_farm_rewards_tokens_ba"].value) == [60.0]
+    assert f[f.metric == "usds_farm_rewards_usds_ba"].empty, "a fall of total_farmed is refused, not negative rewards"
+    acct = [p for u, p in calls if "/v1/accounting/" in u]
+    assert all(p.get("group_by") == "month" and p.get("date_from") == "2025-01-01" for p in acct)
     assert config.series_granularity("Sky", "net_protocol_surplus_usd") == "monthly"
     assert config.CREDIBILITY["Sky"]["in_nps"]["ref"]["args"]["metric"] == "net_protocol_surplus_usd_reported"
     rows = [ln for ln in open("manual_overrides.csv") if ",Sky,net_protocol_surplus_usd" in ln]
     assert len(rows) == 4 and all(",Sky,net_protocol_surplus_usd_reported," in ln for ln in rows)
+    # NO combination meets the reported months (every month 5% off): NPS is not stored, the table is printed
+    state["rev_bias"] = 600_000.0
+    out = FetchOutput()
+    sa.SkyAccounting(http=H()).run([config.PROJECT_BY_NAME["Sky"]], 90, out)
+    assert out.frame()[lambda d: d.metric == "net_protocol_surplus_usd"].empty
+    assert any("NO combination meets" in e.message for e in out.log if e.status == "failed")
+    # the cumulative-buyback row: the stock's rise vs our flow over the same span
+    long = pd.DataFrame({"date": pd.to_datetime(["2026-10-01", "2026-10-03", "2026-10-02", "2026-10-03"]),
+                         "project": "Sky", "metric": ["sky_cumulative_buyback_ba"] * 2 + ["actual_buyback_tokens"] * 2,
+                         "value": [100.0, 130.0, 14.0, 15.0]})
+    import credibility as cred
+    assert cred.FORMULAS["rise_vs_flow"]("Sky", {}, long, pd.Timestamp("2026-10-07"), flow="actual_buyback_tokens",
+                                         stock="sky_cumulative_buyback_ba", days=30, side="ref")[0] == 30.0
+    assert cred.FORMULAS["rise_vs_flow"]("Sky", {}, long, pd.Timestamp("2026-10-07"), flow="actual_buyback_tokens",
+                                         stock="sky_cumulative_buyback_ba", days=30, side="ours")[0] == 29.0
     # robots.txt refusal stores nothing
     monkeypatch.setattr(scrape, "robots_verdict", lambda url: (False, "Disallow: /v1/"))
     out = FetchOutput()
     sa.SkyAccounting(http=H()).run([config.PROJECT_BY_NAME["Sky"]], 90, out)
     assert out.frame().empty
+
+
+def test_circulating_policy_project_figure_first_with_the_onchain_set_as_cross_check():
+    """POLICY (Jake, 2026-10-07): the project's own figure first, CoinGecko where it publishes nothing, our on-chain
+    set the cross-check. Aerodrome = CoinGecko + veAERO added back once (less the team's 95M); GEODNET = its own 462M,
+    carried 45 days, never adjusted for CoinGecko's un-netted burn, and flagged for review against the on-chain set."""
+    import build_workbook as bw
+    import credibility as cred
+    from fetch import circulating as C
+    # 1. Aerodrome: CoinGecko 1.00bn + (veAERO 1.05bn - 95M) per day
+    g = _grp([("2026-10-05", "Aerodrome", "circulating_supply", 1.00e9, "coingecko"),
+              ("2026-10-05", "Aerodrome", "ve_locked_supply_tokens", 1.05e9, "chain"),
+              ("2026-10-06", "Aerodrome", "circulating_supply", 1.01e9, "coingecko")])
+    bw._cg_plus_staked_views(g)
+    v = g[("Aerodrome", "circulating_supply_cg_plus_staked")]
+    assert list(v["value"]) == [_pytest.approx(1.00e9 + 1.05e9 - 95e6)], "only days where both are read"
+    assert "circulating_supply_cg_plus_staked" in config.metrics_for_project(config.PROJECT_BY_NAME["Aerodrome"])
+    # 2. GEODNET market cap: the own figure (one manual day) holds forward; CoinGecko days before it are netted
+    g = _grp([("2026-10-06", "GEODNET", "price_usd", 0.10, "coingecko"),
+              ("2026-10-07", "GEODNET", "price_usd", 0.10, "coingecko"),
+              ("2026-10-08", "GEODNET", "price_usd", 0.10, "coingecko"),
+              *[(d, "GEODNET", "circulating_supply", 462_360_759.0, "coingecko") for d in
+                ("2026-10-06", "2026-10-07", "2026-10-08")],
+              *[(d, "GEODNET", "total_supply", 961.5e6, "coingecko") for d in ("2026-10-06", "2026-10-07", "2026-10-08")],
+              *[(d, "GEODNET", "total_supply_gross", 1e9, "chain") for d in ("2026-10-06", "2026-10-07", "2026-10-08")],
+              *[(d, "GEODNET", "burn_address_balance", 68.5e6, "chain") for d in
+                ("2026-10-06", "2026-10-07", "2026-10-08")],
+              ("2026-10-07", "GEODNET", "circulating_supply_first_party", 462e6, "manual")])
+    bw._market_cap_views(g)
+    mc = g[("GEODNET", "market_cap_usd")].set_index("date")["value"]
+    assert mc[pd.Timestamp("2026-10-07")] == _pytest.approx(0.10 * 462e6), "own figure, no burn adjustment"
+    assert mc[pd.Timestamp("2026-10-08")] == _pytest.approx(0.10 * 462e6), "a monthly manual figure holds forward"
+    assert mc[pd.Timestamp("2026-10-06")] == _pytest.approx(0.10 * (462_360_759.0 - 30e6)), "CoinGecko, netted"
+    # 3. the credibility row: GEODNET's figure against our partial on-chain set (5%)
+    spec = cred.circulating_input("GEODNET")
+    assert spec["ours"]["metric"] == "circulating_supply_first_party"
+    assert spec["ref"]["metric"] == "circulating_supply_onchain" and spec["ref"]["tol"] == 5.0
+    assert cred.circulating_input("Aerodrome")["ref"]["metric"] == "circulating_supply_onchain"
+    assert cred.circulating_input("Uniswap")["ref"] == {**cred.circulating_input("Uniswap")["ref"], "tol": 2.0,
+                                                        "metric": "circulating_supply_onchain"}
+    # 4. the Review Queue: the set reads +11.7% on GEODNET's 462M -> the project figure is flagged, not replaced
+    gs = config.circulating_onchain("GEODNET")
+    d = pd.Timestamp("2026-10-07")
+    rows = [dict(date=d, project="GEODNET", metric=gs["total"], value=1e9, source="x"),
+            dict(date=d, project="GEODNET", metric="circulating_supply_first_party", value=462e6, source="manual")]
+    rows += [dict(date=d, project="GEODNET", metric=m, value=v, source="x")
+             for m, v in zip(gs["subtract"], [68.5e6, 100e6, 315.5e6, 0, 0, 0][:len(gs["subtract"])])]
+    h = pd.DataFrame(rows)
+    out = FetchOutput()
+    C.check(out, h, [config.PROJECT_BY_NAME["GEODNET"]])
+    fp = [r for r in out.review if r["reason"] == "first_party_vs_onchain_set"]
+    assert len(fp) == 1 and "+11.69%" in fp[0]["basis"] and "stays primary" in fp[0]["basis"]
+
+
+def test_near_buyback_probe_paces_reads_receipts_and_resumes(tmp_path, monkeypatch, capsys):
+    """Jake's run 2026-10-07 12:06: two wallets failed with HTTP 429 (free plan, 6 calls/min) and fefunds' IN stopped at
+    2026-03 while its balance kept rising (transfers inside other transactions are receipts, not txns). The probe is
+    paced by NearBlocks' own pacer, waits out a 429, reads receipts addressed to the wallet (gas refunds and hops
+    between the three excluded), and caches pages so a stopped run resumes."""
+    import check_offline_items as coi
+    from fetch import nearblocks as nb
+    monkeypatch.setenv("NEARBLOCKS_API_KEY", "k")
+    monkeypatch.setattr(coi, "NEAR_PROBE_CACHE", tmp_path / "probe.json")
+    monkeypatch.setattr(coi.time, "sleep", lambda s: None)
+    clock = {"t": 0.0}
+    monkeypatch.setattr(nb, "_clock", lambda: clock["t"])
+    monkeypatch.setattr(nb, "_sleep", lambda sec: clock.__setitem__("t", clock["t"] + sec))
+    ns = lambda d: str(int(pd.Timestamp(d).value))  # noqa: E731
+    seen, first = [], {"429": True}
+
+    class Resp:
+        def __init__(self, code, body):
+            self.status_code, self._b, self.headers = code, body, {}
+
+        def json(self):
+            return self._b
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise RuntimeError(f"HTTP {self.status_code}")
+
+    def get(url, params=None, headers=None, timeout=None):
+        seen.append((url, dict(params or {})))
+        if first["429"]:
+            first["429"] = False
+            return Resp(429, {"message": "rate limited"})
+        if url.endswith("/stats/balance"):
+            return Resp(200, {"data": [{"date": "2026-03-31", "amount": str(int(1e30))},
+                                       {"date": "2026-04-30", "amount": str(int(5e30))}]})
+        if url.endswith("/balance"):
+            return Resp(200, {"data": {"amount": str(int(5e30)), "amount_staked": "0"}})
+        if url.endswith("/receipts") and (params or {}).get("receiver"):
+            w = params["receiver"]
+            return Resp(200, {"data": [
+                {"included_in_block_timestamp": ns("2026-04-10"), "predecessor_account_id": "intents.near",
+                 "actions_agg": {"deposit": str(int(4e30))}, "outcome": {"status": True}},
+                {"included_in_block_timestamp": ns("2026-04-11"), "predecessor_account_id": "system",
+                 "actions_agg": {"deposit": str(int(1e22))}, "outcome": {"status": True}},
+                {"included_in_block_timestamp": ns("2026-04-12"), "predecessor_account_id":
+                    next(x for x in coi.NEAR_REVENUE_WALLETS if x != w),
+                 "actions_agg": {"deposit": str(int(9e30))}, "outcome": {"status": True}}], "meta": {}})
+        return Resp(200, {"data": [], "meta": {}})
+    monkeypatch.setattr(coi.requests, "get", get)
+    coi.near_buyback_wallets(max_pages=2)
+    out = capsys.readouterr().out
+    assert "HTTP 429 — waiting 60s" in out and "paced" in out, "7+ calls: the 6-per-minute window bites"
+    assert out.count("IN (receipts + wNEAR; gas refunds and the other two wallets excluded): 4,000,000.0 NEAR") == 3
+    assert "2026-04: in 4,000,000.0 from intents.near 4,000,000; out 0.0; balance rise 4,000,000" in out
+    assert "ALL THREE, IN: 12,000,000.0 NEAR" in out
+    assert all("Authorization" not in str(p) for _u, p in seen), "the key travels in a header, never in params"
+    # RESUMED: every page is complete and cached, so a second run reads only the balances
+    n = len(seen)
+    coi.near_buyback_wallets(max_pages=2)
+    assert all(u.endswith(("/balance", "/stats/balance")) for u, _p in seen[n:])

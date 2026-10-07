@@ -527,6 +527,48 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11al. Circulating policy, Sky accounting, Aethir table, NEAR wallets — 2026-10-07 (afternoon)
+
+**Circulating policy.** The project's own published figure is primary wherever one exists, and CoinGecko is used
+only where the project publishes nothing. Our on-chain set is the cross-check: a gap beyond tolerance flags the
+figure in use for review and never replaces it.
+- `CIRCULATING_POLICY` (config) records, for each of the 15 projects, the source used, its definition, how staked
+  tokens are treated, any add-back, and what the ratios used before.
+- `ratios_use` in `CIRCULATING_ONCHAIN` carries the choice (`circulating_primary_metric`):
+  - `first_party` — GEODNET, from a dated manual row (462M, AMBER after 45 days);
+  - `onchain` — Pendle, whose documented method this set is, with sPENDLE + vePENDLE added back;
+  - `coingecko` — Uniswap and Sky;
+  - `coingecko_plus_staked` — Aerodrome: CoinGecko + veAERO − the team's 95M, added once.
+- Unchanged: Ethereum (protocol total); Hyperliquid, NEAR, Aethir and Plume (their own endpoints); Chainlink, Morpho,
+  Maple, Ether.fi and Fluid (CoinGecko).
+- Credibility `in_circ` compares the figure in use with the on-chain set, like-for-like where CoinGecko counts every
+  token (Sky: compared with our total). The Review Queue raises `first_party_vs_onchain_set` when a project's own
+  figure and the set disagree.
+- GEODNET's un-netted Solana burn adjusts CoinGecko's figure only, never GEODNET's own.
+- To see which headlines moved: `python headline_diff.py --only circulating_policy` (needs metrics.db).
+
+**Sky (Block Analitica).**
+- NPS is no longer assumed. The adapter computes three combinations of the P&L history (revenue − expense; minus
+  Security and Maintenance; minus all revenue_distribution). It stores the one that meets every month Sky reported
+  (May–Aug) within 2%. If none does, nothing is stored and the failure prints the table.
+- info-sky provides cumulative SKY bought (`sky_cumulative_buyback_ba`) and, for each farm, total staked, APY as
+  published, and daily rewards = d(total_farmed). A fall in total_farmed is refused, never stored as negative rewards.
+- New Credibility rows set these beside our reads: the rise of the cumulative buyback vs our flapper inflow over the
+  same days; staked; APY (unit read off the first run); and rewards vs the measured release and the USDS mint scan.
+- Sky books "SKY Rewards (USDS-SKY)" as a Direct Expense, which supports treating them as emissions (recorded on the
+  vest stream).
+
+**Aethir.** The full docs.aethir.com table (85 months, Jake 2026-10-07) is the published trajectory and the
+`schedule_month` reference for Aethir's circulating by month.
+
+**NEAR.** fefundsadmin is buy-and-HOLD as measured (OUT = 0; balance only rises), recorded on the destination decision.
+`python check_offline_items.py near_buyback_wallets` is now:
+- paced to the free plan (6/min; a 429 waits a minute);
+- reads RECEIPTS addressed to each wallet, so transfers made inside other transactions are counted, excluding gas
+  refunds and hops between the three wallets;
+- caches pages in `.cache/` and resumes on the next run;
+- prints senders by month (what funded Nov 2025–Feb 2026), the total against 3,786,229.6, and monthly NEAR × price.
+
 ## 11ak. Jake's readings and new sources, 2026-10-07
 
 **Readings.**

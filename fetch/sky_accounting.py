@@ -6,15 +6,17 @@ supplied 2026-10-07). Every response is {"data": ..., "status": 200, "success": 
 at full precision; history endpoints take group_by=day|month|quarter|year and label each period ("2026-05"). P&L and
 cash flow start 2025-01-01. Read monthly:
 
-  NET PROTOCOL SURPLUS = P&L net - "Security and Maintenance"
-      GET /v1/accounting/profit-and-loss/statement/history/?group_by=month   -> [{date, revenue, expense, net}]
+  NET PROTOCOL SURPLUS — THE COMBINATION IS ESTABLISHED BY MATCHING, NOT ASSUMED (Jake, 2026-10-07 12:06)
+      GET /v1/accounting/profit-and-loss/history/?group_by=month              -> [{date, type, amount}] per type
+          (type: revenue | expense | revenue_distribution; amounts positive, the type carries the sign)
       GET /v1/accounting/profit-and-loss/history/?group_by=month&type=revenue_distribution
-          &category=Security%20and%20Maintenance                                -> [{date, type, amount}]
-    WHY THE SUBTRACTION: Sky's own financials page (financial.skyeco.com, Jake's reading 2026-09-29) states NPS as
-    revenue less expenses INCLUDING Security and Maintenance ($99.07M - $61.27M, S&M $8.63M among the expenses).
-    Block Analitica's P&L books Security and Maintenance BELOW net revenue, in revenue_distribution with the SKY
-    buyback and flap — so its `net` is NPS + S&M. Checked against the four months Sky reported (May-Aug 2026,
-    net_protocol_surplus_usd_reported) on Credibility; a month that disagrees says the definition, not the API, moved.
+          &category=Security%20and%20Maintenance                                -> the S&M part of the distribution
+    Three candidates per month: revenue - expense (net revenue); revenue - expense - Security and Maintenance (Sky's
+    financials page counts S&M among the expenses: $99.07M - $61.27M with S&M $8.63M, Jake 2026-09-29); revenue -
+    expense - all revenue_distribution (after the buyback and flap too). Each is set against the months Sky REPORTED
+    (manual_overrides.csv net_protocol_surplus_usd_reported: May-Aug 2026). The candidate that meets EVERY reported
+    month within NPS_MATCH_TOL is stored as net_protocol_surplus_usd, its source naming the combination; if none does,
+    NOTHING is stored and the failure prints every candidate against every month.
 
   BUYBACK SPENDING ($) — cash-flow category "Buyback Spending" (outflows, negative; stored positive)
       GET /v1/accounting/cash-flow/items/history/?group_by=month&category=Buyback%20Spending
@@ -23,8 +25,17 @@ cash flow start 2025-01-01. Read monthly:
     Both summed over sources per month. References, not headlines: buyback spending is set beside our flapper
     buyback in dollars, staking rewards beside the USDS the Splitter mints to the lsSKY farm.
 
-Only COMPLETE months are stored (the current month is still accruing), dated to month-end. robots.txt is read first
-for the host (fetch.scrape.robots_verdict); a refusal stores nothing.
+  CUMULATIVE SKY BOUGHT — info-sky.blockanalitica.com/buyback/historic/?days_ago=N&format=json -> line[] with
+      sky_cumulative_buyback per day (1.977bn on 2026-09-07, Jake). Stored daily as sky_cumulative_buyback_ba; its rise
+      over a window is set beside our flapper counted inflow over the same days (Credibility in_buyback_cumulative_ba).
+
+  THE TWO lsSKY FARMS — info-sky.blockanalitica.com/api/v1/farms/<farm>/historic/ -> daily apy, total_staked,
+      total_farmed (cumulative rewards). Stored per farm: total staked, the APY as published, and daily rewards =
+      d(total_farmed) (a fall — a reset — is refused, never stored as negative rewards). SKY farm rewards are emissions
+      (beside our on-chain release); USDS farm rewards are the revenue-funded staking yield (beside the USDS mint scan).
+
+Only COMPLETE months are stored for the accounting series (the current month is still accruing), dated to month-end.
+robots.txt is read first for each host (fetch.scrape.robots_verdict); a refusal stores nothing from that host.
 """
 from __future__ import annotations
 
@@ -38,6 +49,9 @@ log = logging.getLogger("token_metrics.fetch.sky_accounting")
 
 SOURCE = "sky_accounting"
 TIER = 3
+NPS_MATCH_TOL = 0.02          # a candidate must meet every month Sky reported within 2%
+NPS_CANDIDATES = ("revenue-expense", "revenue-expense-security_and_maintenance",
+                  "revenue-expense-revenue_distribution")
 
 
 def month_end(label: str) -> pd.Timestamp:
@@ -66,16 +80,94 @@ def monthly_sum(rows: list[dict], field: str = "amount", sign: float = 1.0) -> d
     return out
 
 
-def nps(statement: list[dict], security: list[dict]) -> tuple[dict, list[str]]:
-    """{month: P&L net - Security and Maintenance}, and the months refused (no `net`)."""
-    sec = monthly_sum(security)
-    out, refused = {}, []
-    for r in statement:
+def nps_candidates(by_type: list[dict], security: list[dict]) -> dict:
+    """{candidate: {month: value}} from the per-type P&L history and the Security and Maintenance rows. A month is a
+    candidate's only where revenue and expense are both present."""
+    side: dict = {}
+    for r in by_type:
         try:
-            out[str(r["date"])] = float(r["net"]) - sec.get(str(r["date"]), 0.0)
+            side.setdefault(str(r["type"]), {}).setdefault(str(r["date"]), 0.0)
+            side[str(r["type"])][str(r["date"])] += float(r["amount"])
         except (KeyError, TypeError, ValueError):
-            refused.append(str(r.get("date")))
-    return out, refused
+            continue
+    rev, exp = side.get("revenue", {}), side.get("expense", {})
+    dist, sec = side.get("revenue_distribution", {}), monthly_sum(security)
+    months = sorted(set(rev) & set(exp))
+    return {"revenue-expense": {m: rev[m] - exp[m] for m in months},
+            "revenue-expense-security_and_maintenance": {m: rev[m] - exp[m] - sec.get(m, 0.0) for m in months},
+            "revenue-expense-revenue_distribution": {m: rev[m] - exp[m] - dist.get(m, 0.0) for m in months}}
+
+
+def reported_nps(project: str = "Sky", metric: str = "net_protocol_surplus_usd_reported") -> dict:
+    """{month: USD} — the months Sky reported, as hand-entered in manual_overrides.csv."""
+    import csv
+    from pathlib import Path
+    f = Path(__file__).resolve().parent.parent / "manual_overrides.csv"
+    out = {}
+    try:
+        lines = [ln for ln in f.read_text(encoding="utf-8").splitlines() if ln and not ln.startswith("#")]
+    except OSError:
+        return out
+    for r in csv.DictReader(lines):
+        if r.get("project") == project and r.get("metric") == metric:
+            try:
+                out[r["date"][:7]] = float(r["value"])
+            except (KeyError, TypeError, ValueError):
+                continue
+    return out
+
+
+def choose_nps(cands: dict, reported: dict, tol: float = NPS_MATCH_TOL) -> tuple[str | None, str]:
+    """(the candidate meeting every reported month within tol — the closest if several — or None, the table)."""
+    lines, best = [], None
+    for name in NPS_CANDIDATES:
+        vals = cands.get(name) or {}
+        common = [m for m in sorted(reported) if m in vals]
+        errs = {m: (vals[m] / reported[m] - 1) if reported[m] else float("inf") for m in common}
+        worst = max((abs(e) for e in errs.values()), default=float("inf"))
+        lines.append(f"{name}: " + (", ".join(f"{m} {vals[m]:,.0f} vs {reported[m]:,.0f} ({e:+.1%})"
+                                             for m, e in errs.items()) or "no reported month in the answer"))
+        if common and worst <= tol and (best is None or worst < best[1]):
+            best = (name, worst)
+    return (best[0] if best else None), "; ".join(lines)
+
+
+def daily_rows(body) -> list[dict] | str:
+    """The row list of an info-sky answer: a bare list, or under results / data / line."""
+    rows = body
+    for k in ("results", "data", "line"):
+        if isinstance(rows, dict) and k in rows:
+            rows = rows[k]
+    if isinstance(rows, dict) and isinstance(rows.get("results"), list):
+        rows = rows["results"]
+    if not isinstance(rows, list):
+        return f"no row list (top-level keys: {sorted(body)[:12] if isinstance(body, dict) else type(body).__name__})"
+    return rows
+
+
+def day_of(r: dict):
+    for k in ("date", "datetime", "day", "timestamp", "dt"):
+        if r.get(k) is not None:
+            try:
+                return pd.Timestamp(r[k]).tz_localize(None).normalize() if not isinstance(r[k], (int, float)) \
+                    else pd.Timestamp(int(r[k]), unit="s").normalize()
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def daily_series(rows: list[dict], field: str) -> pd.Series:
+    """{day: field} — the last row of each day."""
+    out = {}
+    for r in rows:
+        d = day_of(r) if isinstance(r, dict) else None
+        try:
+            v = float(r[field])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if d is not None:
+            out[d] = v
+    return pd.Series(out, dtype=float).sort_index()
 
 
 class SkyAccounting:
@@ -105,23 +197,29 @@ class SkyAccounting:
             def get(path, **params):
                 return self.http.get(base + path, params={"group_by": "month", "date_from": first, **params})
 
-            # 1. NET PROTOCOL SURPLUS
+            # 1. NET PROTOCOL SURPLUS — the combination that meets the months Sky reported
             m = spec["metrics"]["nps"]
             try:
-                st = _rows(get("/v1/accounting/profit-and-loss/statement/history/"))
+                bt = _rows(get("/v1/accounting/profit-and-loss/history/"))
                 sm = _rows(get("/v1/accounting/profit-and-loss/history/", type="revenue_distribution",
                                category="Security and Maintenance"))
             except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
                 out.fail(SOURCE, name, f"{m}: {e}", TIER)
-                st = sm = None
-            if isinstance(st, str) or isinstance(sm, str):
-                out.fail(SOURCE, name, f"{m}: {st if isinstance(st, str) else sm} — NOTHING STORED", TIER)
-            elif st is not None:
-                vals, refused = nps(st, sm)
-                self._store(out, name, m, vals, last_complete,
-                            f"{SOURCE}:pnl.net-security_and_maintenance",
-                            "P&L net (revenue - expense) less Security and Maintenance (revenue_distribution)"
-                            + (f"; refused month(s) without `net`: {refused}" if refused else ""))
+                bt = sm = None
+            if isinstance(bt, str) or isinstance(sm, str):
+                out.fail(SOURCE, name, f"{m}: {bt if isinstance(bt, str) else sm} — NOTHING STORED", TIER)
+            elif bt is not None:
+                cands = nps_candidates(bt, sm)
+                chosen, table = choose_nps(cands, reported_nps(name))
+                if chosen is None:
+                    out.fail(SOURCE, name, f"{m}: NO combination meets every month Sky reported within "
+                                           f"{NPS_MATCH_TOL:.0%} — NOTHING STORED. {table}", TIER)
+                    out.gap(name, m, reason=f"Block Analitica's P&L: no combination of revenue / expense / "
+                                            f"revenue_distribution meets Sky's reported months — {table}",
+                            tiers_attempted="3", suggestion="Read the table: the definition moved, or a month differs.")
+                else:
+                    self._store(out, name, m, cands[chosen], last_complete, f"{SOURCE}:pnl.{chosen}",
+                                f"NPS = {chosen}, ESTABLISHED by matching Sky's reported months: {table}")
             # 2-3. CASH-FLOW CATEGORIES (outflows are negative; stored as positive spending)
             for key, category in (("buyback", "Buyback Spending"), ("staking", "Staking Rewards")):
                 m = spec["metrics"].get(key)
@@ -138,6 +236,70 @@ class SkyAccounting:
                 self._store(out, name, m, monthly_sum(rows, sign=-1.0), last_complete,
                             f"{SOURCE}:cash-flow.{category.replace(' ', '_')}",
                             f"cash-flow category {category!r}, summed over sources, sign flipped (outflows)")
+            self._info_sky(out, name, spec.get("info_sky") or {})
+
+    def _info_sky(self, out, name: str, spec: dict) -> None:
+        """Cumulative SKY bought and the two farms' daily staked / APY / rewards (info-sky.blockanalitica.com)."""
+        from .scrape import robots_verdict
+        if not spec:
+            return
+        base = spec["base_url"].rstrip("/")
+        allowed, why = robots_verdict(base + "/api/v1/farms/")
+        if not allowed:
+            out.fail(SOURCE, name, f"info-sky: robots.txt disallows {base} — {why}; nothing read", TIER)
+            return
+        last_day = today().normalize() - pd.Timedelta(days=1)       # a complete day only
+
+        def keep(sr: pd.Series) -> list:
+            return [(d, float(v)) for d, v in sr.items() if d <= last_day]
+        bb = spec.get("buyback")
+        if bb:
+            try:
+                rows = daily_rows(self.http.get(base + "/buyback/historic/",
+                                                params={"days_ago": bb.get("days_ago", 365), "format": "json"}))
+            except Exception as e:  # noqa: BLE001
+                rows = f"{e}"
+            sr = daily_series(rows, "sky_cumulative_buyback") if isinstance(rows, list) else None
+            if sr is None or sr.empty:
+                out.fail(SOURCE, name, f"{bb['metric']}: {rows if isinstance(rows, str) else 'no sky_cumulative_buyback rows'}"
+                                       f" — NOTHING STORED", TIER)
+            elif keep(sr):
+                k = keep(sr)
+                out.add(tidy(k, name, bb["metric"], f"{SOURCE}:info-sky.buyback.sky_cumulative_buyback", TIER),
+                        SOURCE, name, f"{bb['metric']}: {len(k)} day(s) {k[0][0]:%Y-%m-%d}..{k[-1][0]:%Y-%m-%d}, "
+                                      f"latest {k[-1][1]:,.0f} SKY", TIER)
+        for farm, m in (spec.get("farms") or {}).items():
+            try:
+                rows = daily_rows(self.http.get(base + f"/api/v1/farms/{farm}/historic/",
+                                                params={"p_size": m.get("p_size", 400)}))
+            except Exception as e:  # noqa: BLE001
+                rows = f"{e}"
+            if isinstance(rows, str):
+                out.fail(SOURCE, name, f"farm {farm[:10]}…: {rows} — NOTHING STORED", TIER)
+                continue
+            for field, metric in (("total_staked", m.get("staked")), ("apy", m.get("apy"))):
+                if not metric:
+                    continue
+                k = keep(daily_series(rows, field))
+                if not k:
+                    out.fail(SOURCE, name, f"{metric}: no `{field}` rows in the farm's history", TIER)
+                    continue
+                out.add(tidy(k, name, metric, f"{SOURCE}:info-sky.farm.{field}", TIER), SOURCE, name,
+                        f"{metric}: {len(k)} day(s), latest {k[-1][1]:,.6g} ({k[-1][0]:%Y-%m-%d}) — `{field}` as "
+                        f"published", TIER)
+            if m.get("rewards"):
+                cum = daily_series(rows, "total_farmed")
+                d = cum.diff().dropna()
+                bad = d[d < 0]
+                d = d[d >= 0]
+                k = keep(d)
+                if k:
+                    out.add(tidy(k, name, m["rewards"], f"{SOURCE}:info-sky.farm.d(total_farmed)", TIER), SOURCE,
+                            name, f"{m['rewards']}: {len(k)} day(s) = d(total_farmed)"
+                                  + (f"; {len(bad)} fall(s) refused (a reset is not negative rewards)" if len(bad)
+                                     else ""), TIER)
+                else:
+                    out.fail(SOURCE, name, f"{m['rewards']}: fewer than two `total_farmed` days", TIER)
 
     @staticmethod
     def _store(out, name, metric, vals: dict, last_complete, source, how):

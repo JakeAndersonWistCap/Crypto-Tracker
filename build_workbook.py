@@ -1715,12 +1715,35 @@ def _customer_revenue_views(groups: dict) -> None:
 
 
 def chosen_circulating_metric(p: dict) -> str:
-    """The circulating series every token ratio uses (_circ): the first-party / on-chain one where the
-    set is established, else CoinGecko's circulating_supply."""
-    spec = config.circulating_onchain(p["name"]) or {}
-    if config.circulating_onchain_primary(p["name"]):
-        return spec.get("metric") or "circulating_supply_onchain"
-    return "circulating_supply"
+    """The circulating series every token ratio uses (_circ): the project's own figure where one exists, else
+    CoinGecko's (config.circulating_primary_metric — the policy of 2026-10-07)."""
+    return config.circulating_primary_metric(p["name"])
+
+
+def _cg_plus_staked_views(groups: dict) -> None:
+    """circulating_supply_cg_plus_staked := CoinGecko's circulating + the staked tokens it excludes, added back ONCE
+    (POLICY 2026-10-07; Aerodrome: veAERO's locked principal less the team's 95M, which is out of circulating by
+    Jake's 2026-09-30 decision). Free float (circulating − the lock inside it) is then CoinGecko's own figure.
+    Only days where both are read."""
+    for p in scoped_projects():
+        name = p["name"]
+        if config.circulating_primary_metric(name) != "circulating_supply_cg_plus_staked":
+            continue
+        cg, lk = groups.get((name, "circulating_supply")), groups.get((name, config.lock_display_metric(name)))
+        if cg is None or cg.empty or lk is None or lk.empty:
+            continue
+        s = lambda g: (g.assign(date=pd.to_datetime(g["date"]).dt.normalize())  # noqa: E731
+                       .drop_duplicates("date", keep="last").set_index("date")["value"].astype(float))
+        x = config.locked_excluded_from_circulating(name)
+        both = pd.concat([s(cg).rename("cg"), s(lk).rename("lk")], axis=1).dropna()
+        if both.empty:
+            continue
+        vals = both["cg"] + (both["lk"] - x).clip(lower=0)
+        view = pd.DataFrame({"date": both.index, "project": name, "metric": "circulating_supply_cg_plus_staked",
+                             "value": vals.values, "tier": 1,
+                             "source": f"derived:circulating_supply+{config.lock_display_metric(name)}"
+                                       + (f"-{x:.0f}" if x else "")})
+        groups[(name, "circulating_supply_cg_plus_staked")] = _as_stored(view, cg.columns)
 
 
 def _market_cap_views(groups: dict) -> None:
@@ -1748,12 +1771,19 @@ def _market_cap_views(groups: dict) -> None:
         price = daily("price_usd")
         chosen = chosen_circulating_metric(p)
         own, fallback = daily(chosen), daily("circulating_supply")
+        # A HAND-ENTERED MONTHLY FIGURE HOLDS UNTIL IT IS STALE (GEODNET's own circulating, 2026-10-07): carried
+        # forward up to 45 days, the AMBER threshold of a monthly manual series.
+        if chosen != "circulating_supply" and not own.empty and config.series_granularity(name, chosen) == "monthly":
+            own = own.reindex(own.index.union(price.index)).ffill(limit=45).dropna()
         circ = own.combine_first(fallback) if chosen != "circulating_supply" else fallback
         if config.supply_unnetted_burn(name):
             tot, gross, burned = daily("total_supply"), daily("total_supply_gross"), daily("burn_address_balance")
             idx = circ.index
             adj = (tot.reindex(idx, method="ffill") - (gross.reindex(idx, method="ffill")
                                                        - burned.reindex(idx, method="ffill"))).round(2)
+            # The un-netted burn is CoinGecko's: a project's own figure is never adjusted for it (2026-10-07).
+            if chosen != "circulating_supply" and config.circulating_onchain(name).get("ratios_use") == "first_party":
+                adj = adj.where(~idx.isin(own.index), 0.0)
             circ = (circ - adj).where(adj >= 0)
         both = price.index.intersection(circ.dropna().index)
         if both.empty:
@@ -1965,6 +1995,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _reward_end_views(groups, asof)
     _net_common_views(groups)     # AFTER the issuance views it differences
     _circulating_views(groups)
+    _cg_plus_staked_views(groups)
     _market_cap_views(groups)     # AFTER the on-chain circulating it may use; BEFORE NRR reads it
     _settlement_views(groups)
     # The latest value of every series, keyed the same way — so a flow can be checked against the
@@ -3378,15 +3409,23 @@ def _circ(R: Refs, r, p: dict) -> str:
     # and the cross-check. A PARTIAL set never replaces CoinGecko — it reads high.
     spec = config.circulating_onchain(p["name"]) or {}
     if config.circulating_onchain_primary(p["name"]):
-        m = spec.get("metric") or "circulating_supply_onchain"
+        m = config.circulating_primary_metric(p["name"])
         own = R.D(r, m, "now")
         # COINGECKO'S FIGURE IS FREE FLOAT for Pendle / Aerodrome (2026-10-06 overnight, A1/A2): on a day with no
         # on-chain figure, circulating falls back to CoinGecko + the locked tokens inside it — so free float
         # (circulating − locked) is CoinGecko's own figure, never CoinGecko − locked a SECOND time.
         fb = f"{c}+{_ff_lock(R, r, p)}" if config.coingecko_is_free_float(p["name"]) else c
+        if config.supply_unnetted_burn(p["name"]) and spec.get("ratios_use") == "first_party":
+            # The un-netted burn is CoinGecko's: the project's own figure is used as published (GEODNET, 2026-10-07);
+            # only the CoinGecko fallback is netted.
+            return f"IF(ISNUMBER({own}),{own},{_net_unnetted_burn(R, r, fb)})"
         c = f"IF(ISNUMBER({own}),{own},{fb})"
     if not config.supply_unnetted_burn(p["name"]):
         return c
+    return _net_unnetted_burn(R, r, c)
+
+
+def _net_unnetted_burn(R: Refs, r, c: str) -> str:
     tot, gross, burned = (R.D(r, m, "now") for m in ("total_supply", "total_supply_gross",
                                                      "burn_address_balance"))
     adj = f"ROUND({tot}-({gross}-{burned}),2)"

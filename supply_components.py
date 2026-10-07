@@ -45,9 +45,14 @@ def report(name: str, rows: dict, runlog) -> list[str]:
             return None
         return None if v != v else v
     date = lambda m: (rows.get(f"{name}|{m}") or {}).get("latest_date")  # noqa: E731
-    out = [f"=== {name}: status {spec.get('status')}, ratios use "
-           f"{'ON-CHAIN' if config.circulating_onchain_primary(name) else 'CoinGecko'}"
+    primary = config.circulating_primary_metric(name)
+    pol = config.CIRCULATING_POLICY.get(name) or {}
+    out = [f"=== {name}: status {spec.get('status')}, ratios use {primary}"
            f"{', CoinGecko basis = FREE FLOAT' if config.coingecko_is_free_float(name) else ''}"]
+    if pol:   # THE POLICY (2026-10-07): the figure in use, its definition, any staked add-back, what it replaced
+        out += [f"  policy: {pol['source']}", f"    definition: {pol['definition']}",
+                f"    staked: {pol['staked']}" + (f"; add-back: {pol['add_back']}" if pol.get("add_back") else ""),
+                f"    previous: {pol['previous']}"]
     if spec.get("total"):
         out.append(f"  total ({spec['total']}): {_fmt(now(spec['total']))}  [{date(spec['total'])}]")
     for m in spec.get("subtract") or ():
@@ -68,7 +73,9 @@ def report(name: str, rows: dict, runlog) -> list[str]:
     x = config.locked_excluded_from_circulating(name) if config.circulating_excludes_declared(name) else 0.0
     out.append(f"  locked for free float: {'; '.join(legs)}" + (f"; less {x:,.0f} already out of circulating" if x else ""))
     cg, cg_total = now("circulating_supply"), now("total_supply")
-    circ_used = onchain if config.circulating_onchain_primary(name) and onchain is not None else None
+    circ_used = now(primary) if primary != "circulating_supply" else None
+    if circ_used is not None and primary != "circulating_supply_onchain":
+        out.append(f"  = {primary}: {_fmt(circ_used)}  [{date(primary)}]")
     if circ_used is None and config.circulating_onchain_primary(name) and config.coingecko_is_free_float(name) and cg:
         circ_used = cg + max(0.0, lock_total - x)
         out.append("  (no on-chain figure today: circulating = CoinGecko + the lock, so free float = CoinGecko)")
@@ -80,7 +87,7 @@ def report(name: str, rows: dict, runlog) -> list[str]:
     if cg and ff is not None:
         if config.coingecko_counts_total(name):
             cmp_to, what = now(spec["total"]), "our TOTAL (CoinGecko counts every token)"
-            out.append(f"  ours is STRICTER by {_fmt((now(spec['total']) or 0) - (circ_used or 0))} "
+            out.append(f"  our on-chain set is STRICTER by {_fmt((now(spec['total']) or 0) - (onchain or circ_used or 0))} "
                        f"({' + '.join(spec.get('subtract') or ())})")
         elif config.coingecko_is_free_float(name) and config.coingecko_counted_lock_legs(name):
             legs = config.coingecko_counted_lock_legs(name)
@@ -92,6 +99,10 @@ def report(name: str, rows: dict, runlog) -> list[str]:
         else:
             cmp_to, what = circ_used, "our circulating"
         out.append(f"  GAP: CoinGecko vs {what}: {cg / cmp_to - 1:+.2%} ({cg - cmp_to:+,.0f})")
+    if primary != "circulating_supply_onchain" and onchain and circ_used:
+        # THE POLICY'S CROSS-CHECK: the figure in use against our on-chain set (beyond tolerance -> review it)
+        out.append(f"  CROSS-CHECK: on-chain set vs the figure in use ({primary}): {onchain / circ_used - 1:+.2%} "
+                   f"({onchain - circ_used:+,.0f})")
     return out
 
 

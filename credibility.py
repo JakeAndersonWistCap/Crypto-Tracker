@@ -497,6 +497,25 @@ def _window_vs_rate(p, rows, long, asof, flow="fees_usd", rate="", days=7, side=
         f"{rate}: mean of {len(inside)} reading(s) in {label} x {days} days"
 
 
+def _rise_vs_flow(p, rows, long, asof, flow="", stock="", days=30, side="ours", **_):
+    """A CUMULATIVE STOCK'S RISE against a FLOW over the same days (Sky, 2026-10-07: Block Analitica's cumulative SKY
+    bought vs our flapper counted inflow). The window is the stock's own: its first and last day within the last `days`
+    complete days; the flow is summed over the days after the first and up to the last, so both cover one span."""
+    end = asof.normalize() - pd.Timedelta(days=1)
+    st = _series(long, p, stock)
+    st = st[(st.index >= end - pd.Timedelta(days=int(days))) & (st.index <= end)]
+    if len(st) < 2:
+        return None, None, f"fewer than two {stock} days in the last {days}"
+    a, b = st.index[0], st.index[-1]
+    if side == "ref":
+        return float(st.iloc[-1] - st.iloc[0]), str(b.date()), f"d({stock}) {a.date()}..{b.date()}"
+    fl = _series(long, p, flow)
+    fl = fl[(fl.index > a) & (fl.index <= b)]
+    if fl.empty:
+        return None, None, f"no {flow} between {a.date()} and {b.date()}"
+    return float(fl.sum()), str(b.date()), f"{flow} summed over ({a.date()}..{b.date()}], {len(fl)} day(s)"
+
+
 def _common_days_sum(p, rows, long, asof, a="", b="", days=30, side="ours", min_days=20, b_times_price=False, **_):
     """TWO DAILY FLOWS OVER THE SAME DAYS (overnight 2026-10-06, B4/B11): each side summed over exactly the days in the
     last `days` complete days on which BOTH are stored — so a series still filling (a scan seeded forward) is never
@@ -559,7 +578,7 @@ FORMULAS = {"sum_months": _sum_months, "free_float_now": _free_float_now, "windo
             "common_day_value": _common_day_value, "months_match": _months_match,
             "hl_reward_active": _hl_reward_active, "base_reward_ceiling": _base_reward_ceiling,
             "rate_on_stake": _rate_on_stake, "trailing_token_yield": _trailing_token_yield,
-            "sum_since": _sum_since, "schedule_month": _schedule_month}
+            "sum_since": _sum_since, "schedule_month": _schedule_month, "rise_vs_flow": _rise_vs_flow}
 
 
 def reference(project: str, spec: dict, rows: dict, long, asof) -> dict:
@@ -809,48 +828,61 @@ def price_inputs(name: str) -> dict:
 
 
 def circulating_input(name: str) -> dict:
-    """The circulating row every project gets, by how its circulating is chosen (config
-    CIRCULATING_ONCHAIN status): an independent figure where one exists, else where to read it."""
+    """The circulating row every project gets. THE POLICY (Jake, 2026-10-07): the figure the ratios use is the
+    project's own where one exists, else CoinGecko's; OUR ON-CHAIN SET is the credibility reference — a gap beyond
+    tolerance flags the figure in use for review and never replaces it. Where definitions differ in a known way the
+    comparison is like-for-like (CoinGecko counting every SKY vs our TOTAL; Pendle's CoinGecko figure vs our free
+    float + sPENDLE). With no on-chain set, CoinGecko is the reference of a first-party figure."""
     from build_workbook import chosen_circulating_metric
     p = config.PROJECT_BY_NAME[name]
     ours_m = chosen_circulating_metric(p)
-    st = (config.circulating_onchain(name) or {}).get("status")
+    spec = config.circulating_onchain(name) or {}
+    st = spec.get("status")
+    pol = (config.CIRCULATING_POLICY.get(name) or {})
     what = f"Circulating supply as the ratios use it ({ours_m}; on-chain status '{st}')"
     base = {"what": what, "ours": {"metric": ours_m, "window": "now"}, "fmt": '#,##0;(#,##0);-'}
-    if config.coingecko_counts_total(name):      # CoinGecko counts every token: like-for-like is our TOTAL
-        spec = config.circulating_onchain(name) or {}
-        return {"what": f"Circulating as CoinGecko counts it = OUR TOTAL ({spec['total']}); ours ({ours_m}) is stricter "
-                        f"by {' + '.join(spec.get('subtract') or ())}",
-                "ours": {"metric": spec["total"], "window": "now"}, "fmt": '#,##0;(#,##0);-',
-                "ref": {"metric": "circulating_supply", "window": "now", "tol": 2.0,
-                        "source": "CoinGecko circulating_supply — it counts (almost) every token, so it is compared "
-                                  "with our on-chain total, not with our stricter circulating",
-                        "note": spec.get("decision", "")}}
-    if config.coingecko_is_free_float(name):     # CoinGecko excludes staked/locked: it is OUR free float
+    has_set = config.circulating_has_onchain_set(name)
+    tol_set = 2.0 if st == "established" else 5.0
+    partial_note = ("Partial set — it reads HIGH wherever non-circulating wallets are not yet identified, so a CHECK "
+                    "questions either the figure in use or our exclusion list; the Config & Sources circulating notes "
+                    "say which wallets are named." if st == "partial" else "")
+    if config.coingecko_counts_total(name) and ours_m == "circulating_supply":
+        # CoinGecko counts every token (Sky): its like-for-like on-chain figure is our TOTAL
+        return {"what": f"Circulating as the ratios use it = CoinGecko's, which counts every token: set against OUR "
+                        f"on-chain TOTAL ({spec['total']}); our on-chain set is stricter by "
+                        f"{' + '.join(spec.get('subtract') or ())}",
+                "ours": {"metric": "circulating_supply", "window": "now"}, "fmt": '#,##0;(#,##0);-',
+                "ref": {"metric": spec["total"], "window": "now", "tol": 2.0,
+                        "source": f"on-chain {spec['total']} — CoinGecko counts (almost) every token, so the like-for-"
+                                  f"like on-chain figure is the total, not our stricter set",
+                        "note": pol.get("definition", "")}}
+    if config.coingecko_is_free_float(name) and ours_m == "circulating_supply_onchain":
         legs = config.coingecko_counted_lock_legs(name)
-        if legs:                                  # ...except legs it still counts (Pendle: sPENDLE, 2026-10-07)
+        if legs:                                  # Pendle: CoinGecko excludes vePENDLE but still counts sPENDLE
             return {"what": f"Circulating as CoinGecko counts it = OUR FREE FLOAT + {' + '.join(legs)} (CoinGecko "
                             f"still counts them); ours is stricter by exactly that",
                     "ours": {"py": "free_float_now", "args": {"add_back": legs}}, "fmt": '#,##0;(#,##0);-',
                     "ref": {"metric": "circulating_supply", "window": "now", "tol": 2.0,
                             "source": "CoinGecko circulating_supply — it excludes the legacy lock but still counts "
                                       f"{', '.join(legs)}, so it is compared with our free float plus those",
-                            "note": (config.circulating_onchain(name) or {}).get("decision", "")}}
+                            "note": spec.get("decision", "")}}
         return {"what": f"Circulating as CoinGecko counts it = OUR FREE FLOAT ({ours_m} − locked)",
                 "ours": {"py": "free_float_now", "args": {}}, "fmt": '#,##0;(#,##0);-',
                 "ref": {"metric": "circulating_supply", "window": "now", "tol": 5.0,
                         "source": "CoinGecko circulating_supply — it excludes staked/locked tokens, so it is "
                                   "compared with our circulating − locked",
-                        "note": (config.circulating_onchain(name) or {}).get("decision", "")}}
-    if ours_m != "circulating_supply":           # first-party / on-chain chosen: CoinGecko is independent
+                        "note": spec.get("decision", "")}}
+    if has_set and ours_m != "circulating_supply_onchain":
+        # the project's figure (or CoinGecko's, or CoinGecko + the staked add-back) against our on-chain set
+        return {**base, "ref": {"metric": "circulating_supply_onchain", "window": "now", "tol": tol_set,
+                                "source": "OUR ON-CHAIN SET — total minus the named non-circulating holders "
+                                          f"({st}); the independent cross-check under the circulating policy",
+                                "note": " ".join(x for x in (f"Figure in use: {pol.get('source', ours_m)}.",
+                                                              pol.get("add_back") and f"Staked add-back: "
+                                                              f"{pol['add_back']}.", partial_note) if x)}}
+    if ours_m != "circulating_supply":           # first-party / on-chain chosen, no other set: CoinGecko
         return {**base, "ref": {"metric": "circulating_supply", "window": "now", "tol": 2.0,
                                 "source": "CoinGecko circulating_supply (an aggregator's own count)"}}
-    if st == "partial":
-        return {**base, "ref": {"metric": "circulating_supply_onchain", "window": "now", "tol": 5.0,
-                                "source": "on-chain: total supply minus the NAMED non-circulating holders (partial set)",
-                                "note": "Partial set — it reads HIGH wherever non-circulating wallets are not yet "
-                                        "identified, so a CHECK questions either CoinGecko's figure or our exclusion "
-                                        "list; the Config & Sources circulating notes say which wallets are named."}}
     return {**base, "ref": {"verdict": "CHECK",
                             "why": "CoinGecko is the only circulating figure we read and no on-chain set is established.",
                             "resolve": "read the project's own circulating figure (tokenomics / transparency page) "

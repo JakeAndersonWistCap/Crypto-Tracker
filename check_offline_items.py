@@ -20,6 +20,7 @@ import json
 import os
 import sys
 import time
+from pathlib import Path
 from urllib.parse import urlparse
 
 import requests
@@ -3236,10 +3237,27 @@ NEAR_REVENUE_WALLETS = ("fefundsadmin.sputnik-dao.near", "buybacks.multisignatur
                         "1csfundsadmin.sputnik-dao.near")
 
 
+NEAR_PROBE_CACHE = Path(".cache") / "near_buyback_wallets_probe.json"
+NEAR_PAGE_REVENUE_TOTAL = 3_786_229.6       # revenue.near.org "Wallet Breakdown (All-time)", Jake 2026-10-07
+
+
 def near_buyback_wallets(max_pages: int = 40):
+    """The three revenue wallets, measured three ways (Jake, 2026-10-07 12:06):
+      1. month-end liquid balance (stats/balance) — its monthly rise is the net inflow where nothing goes out;
+      2. RECEIPTS whose receiver is the wallet (/v3/accounts/{w}/receipts?receiver=w): every NEAR arriving, including
+         transfers made INSIDE other transactions (an intents.near withdrawal, a DAO payout) that /txns never lists —
+         why the fefunds IN list stopped at 2026-03 while the balance kept rising. Gas refunds (predecessor 'system')
+         and failed receipts are not inflow; hops between the three wallets are not fresh inflow;
+      3. wNEAR (ft-txns on wrap.near).
+    PACED TO THE FREE PLAN (6 calls/min, 333/day: fetch/nearblocks.py's own pacer; a 429 waits a full minute, three
+    times at most). Pages are CACHED and RESUMED, so a run stopped by max_pages or the daily budget continues on the
+    next run from where it stopped. Prints the senders per month (what funded fefunds Nov 2025 - Feb 2026, before the
+    Intents fee switch), the three wallets' total against the page's 3,786,229.6 NEAR, and monthly IN x the month's
+    average NEAR price from metrics.db to set beside the page's monthly net revenue."""
     import pandas as pd                                    # noqa: PLC0415
+    from fetch import nearblocks as nb                     # noqa: PLC0415
     from fetch.base import redact                          # noqa: PLC0415
-    head("NEAR — the three revenue/buyback wallets: NEAR + wNEAR in and out by month (NearBlocks v3)")
+    head("NEAR — the three revenue/buyback wallets: balance, receipts IN/OUT by month, wNEAR (NearBlocks v3, paced)")
     try:
         from dotenv import load_dotenv                    # noqa: PLC0415
         load_dotenv()
@@ -3250,27 +3268,49 @@ def near_buyback_wallets(max_pages: int = 40):
         print("  NEARBLOCKS_API_KEY is not set — nothing read.")
         return
     base, hdr = "https://api.nearblocks.io/v3", {**_ua(), "Authorization": f"Bearer {key}"}
-    calls = 0
+    pacer, calls = nb._Pacer(), 0
+    try:
+        cache = json.loads(NEAR_PROBE_CACHE.read_text())
+    except (OSError, ValueError):
+        cache = {}
 
     def get(path, params=None):
         nonlocal calls
-        calls += 1
-        r = requests.get(base + path, params=params or {}, headers=hdr, timeout=TIMEOUT)
-        r.raise_for_status()
-        return r.json()
+        for attempt in range(4):
+            waited = pacer.wait(1)                    # NearBlocks bills ceil(per_page/25): `limit` alone is 1 credit
+            if waited:
+                print(f"    (paced {waited:.0f}s — free plan, 6 calls/min)")
+            calls += 1
+            r = requests.get(base + path, params=params or {}, headers=hdr, timeout=TIMEOUT)
+            pacer.charge(1)
+            if r.status_code == 429 and attempt < 3:
+                wait = float(r.headers.get("Retry-After") or nb.RATE_LIMIT_WAIT)
+                print(f"    HTTP 429 — waiting {wait:.0f}s (attempt {attempt + 1} of 3)")
+                time.sleep(wait)
+                continue
+            r.raise_for_status()
+            return r.json()
 
-    def pages(path, params):
-        out, nxt = [], None
+    def pages(w, kind, path, params, keep):
+        """Rows kept by `keep` for every page, resumed from the cache; (rows, complete)."""
+        c = cache.setdefault(w, {}).setdefault(kind, {"rows": [], "next": None, "done": False})
+        if c["done"]:
+            return c["rows"], True
         for _ in range(max_pages):
-            j = get(path, {**params, "limit": 100, **({"next": nxt} if nxt else {})})
-            out += j.get("data") or []
-            nxt = (j.get("meta") or {}).get("next_page")
-            if not nxt:
-                return out, True
-        return out, False
+            j = get(path, {**params, "limit": 100, **({"next": c["next"]} if c["next"] else {})})
+            c["rows"] += [keep(x) for x in (j.get("data") or [])]
+            c["next"] = (j.get("meta") or {}).get("next_page")
+            NEAR_PROBE_CACHE.parent.mkdir(parents=True, exist_ok=True)
+            NEAR_PROBE_CACHE.write_text(json.dumps(cache))
+            if not c["next"]:
+                c["done"] = True
+                NEAR_PROBE_CACHE.write_text(json.dumps(cache))
+                return c["rows"], True
+        return c["rows"], False
 
     wallets = set(NEAR_REVENUE_WALLETS)
-    grand_in = 0.0
+    month = lambda ns: str(pd.Timestamp(int(ns), unit="ns").to_period("M"))  # noqa: E731
+    grand_in, monthly_all = 0.0, {}
     for w in NEAR_REVENUE_WALLETS:
         print(f"\n  {w}")
         try:
@@ -3278,52 +3318,86 @@ def near_buyback_wallets(max_pages: int = 40):
             print(f"    balance now: {int(bal.get('amount') or 0) / 1e24:,.1f} NEAR liquid, "
                   f"{int(bal.get('amount_staked') or 0) / 1e24:,.1f} staked")
             hist = get(f"/accounts/{w}/stats/balance", {"limit": 365}).get("data") or []
+            rise = {}
             if hist:
                 hb = pd.Series({pd.Timestamp(h["date"]): int(h["amount"]) / 1e24 for h in hist}).sort_index()
                 me = hb.groupby(hb.index.to_period("M")).last()
-                print("    month-end liquid balance: " + ", ".join(f"{m} {v:,.0f}" for m, v in me.tail(9).items()))
-            ins, outs = {}, {}
-            txs, done_t = pages(f"/accounts/{w}/txns", {})
-            for t in txs:
-                dep = int((t.get("actions_agg") or {}).get("deposit") or 0) / 1e24
-                if not dep or (t.get("outcomes") or {}).get("status") is False:
+                rise = {str(m): v for m, v in me.diff().dropna().items()}
+                print("    month-end liquid balance: " + ", ".join(f"{m} {v:,.0f}" for m, v in me.items()))
+            rec, done_r = pages(w, "receipts", f"/accounts/{w}/receipts", {"receiver": w},
+                                lambda x: {"m": month(x["included_in_block_timestamp"]),
+                                           "from": x.get("predecessor_account_id"),
+                                           "dep": int((x.get("actions_agg") or {}).get("deposit") or 0) / 1e24,
+                                           "ok": (x.get("outcome") or {}).get("status") is not False})
+            out_r, done_o = pages(w, "receipts_out", f"/accounts/{w}/receipts", {"predecessor": w},
+                                  lambda x: {"m": month(x["included_in_block_timestamp"]),
+                                             "to": x.get("receiver_account_id"),
+                                             "dep": int((x.get("actions_agg") or {}).get("deposit") or 0) / 1e24,
+                                             "ok": (x.get("outcome") or {}).get("status") is not False})
+            fts, done_f = pages(w, "wnear", f"/accounts/{w}/ft-txns", {"contract": "wrap.near"},
+                                lambda x: {"m": month(x["block_timestamp"]), "peer": x.get("involved_account_id"),
+                                           "amt": int(x.get("delta_amount") or 0) / 1e24})
+            ins, senders, outs = {}, {}, {}
+            for x in rec:
+                if not x["ok"] or not x["dep"] or x["from"] in wallets or x["from"] == "system":
                     continue
-                m = pd.Timestamp(int(t["block_timestamp"]), unit="ns").to_period("M")
-                sig, rcv = t.get("signer_account_id"), t.get("receiver_account_id")
-                if rcv == w and sig not in wallets:
-                    ins[m] = ins.get(m, 0.0) + dep
-                elif sig == w and rcv not in wallets:
-                    outs.setdefault(m, {}).setdefault(rcv, 0.0)
-                    outs[m][rcv] += dep
-            fts, done_f = pages(f"/accounts/{w}/ft-txns", {"contract": "wrap.near"})
-            for f in fts:
-                amt = int(f.get("delta_amount") or 0) / 1e24
-                m = pd.Timestamp(int(f["block_timestamp"]), unit="ns").to_period("M")
-                peer = f.get("involved_account_id")
-                if peer in wallets:
+                ins[x["m"]] = ins.get(x["m"], 0.0) + x["dep"]
+                senders.setdefault(x["m"], {}).setdefault(x["from"], 0.0)
+                senders[x["m"]][x["from"]] += x["dep"]
+            for x in out_r:
+                if x["ok"] and x["dep"] and x["to"] not in wallets:
+                    outs.setdefault(x["m"], {}).setdefault(x["to"], 0.0)
+                    outs[x["m"]][x["to"]] += x["dep"]
+            for x in fts:
+                if x["peer"] in wallets or not x["amt"]:
                     continue
-                if amt > 0:
-                    ins[m] = ins.get(m, 0.0) + amt
-                elif amt < 0:
-                    outs.setdefault(m, {}).setdefault(f"{peer} (wNEAR)", 0.0)
-                    outs[m][f"{peer} (wNEAR)"] += -amt
+                if x["amt"] > 0:
+                    ins[x["m"]] = ins.get(x["m"], 0.0) + x["amt"]
+                    senders.setdefault(x["m"], {}).setdefault(f"{x['peer']} (wNEAR)", 0.0)
+                    senders[x["m"]][f"{x['peer']} (wNEAR)"] += x["amt"]
+                else:
+                    outs.setdefault(x["m"], {}).setdefault(f"{x['peer']} (wNEAR)", 0.0)
+                    outs[x["m"]][f"{x['peer']} (wNEAR)"] += -x["amt"]
             tot = sum(ins.values())
             grand_in += tot
-            print(f"    IN (NEAR deposits + wNEAR, excluding the other two wallets): {tot:,.1f} NEAR"
-                  + ("" if done_t and done_f else f"  [PARTIAL: stopped at {max_pages} pages]"))
-            for m in sorted(set(ins) | set(outs)):
+            for m, v in ins.items():
+                monthly_all[m] = monthly_all.get(m, 0.0) + v
+            complete = done_r and done_o and done_f
+            print(f"    IN (receipts + wNEAR; gas refunds and the other two wallets excluded): {tot:,.1f} NEAR"
+                  + ("" if complete else f"  [PARTIAL: {max_pages} pages per run — run again to continue]"))
+            for m in sorted(set(ins) | set(outs) | set(rise)):
                 o = outs.get(m) or {}
-                top = sorted(o.items(), key=lambda kv: -kv[1])[:3]
-                print(f"      {m}: in {ins.get(m, 0.0):,.1f}; out {sum(o.values()):,.1f}"
-                      + (" -> " + ", ".join(f"{k} {v:,.0f}" for k, v in top) if top else ""))
+                top_in = sorted((senders.get(m) or {}).items(), key=lambda kv: -kv[1])[:3]
+                top_out = sorted(o.items(), key=lambda kv: -kv[1])[:3]
+                print(f"      {m}: in {ins.get(m, 0.0):,.1f}"
+                      + (f" from {', '.join(f'{k} {v:,.0f}' for k, v in top_in)}" if top_in else "")
+                      + f"; out {sum(o.values()):,.1f}"
+                      + (f" -> {', '.join(f'{k} {v:,.0f}' for k, v in top_out)}" if top_out else "")
+                      + (f"; balance rise {rise[m]:,.0f}" if m in rise else ""))
         except Exception as e:  # noqa: BLE001
             print(f"    FAILED — {redact(str(e))[:200]}")
-    print(f"\n  ALL THREE, IN: {grand_in:,.1f} NEAR vs the page's 3,786,229.6 "
-          f"({grand_in / 3_786_229.6 - 1:+.1%}); {calls} call(s) (~1 credit each)")
+    print(f"\n  ALL THREE, IN: {grand_in:,.1f} NEAR vs the page's {NEAR_PAGE_REVENUE_TOTAL:,.1f} "
+          f"({grand_in / NEAR_PAGE_REVENUE_TOTAL - 1:+.1%}); {calls} call(s), {pacer.total} credit(s) this run")
+    try:
+        import store as store_mod                          # noqa: PLC0415
+        st = store_mod.Store(store_mod.DB_PATH)
+        try:
+            px = st.load_long()
+        finally:
+            st.close()
+        px = px[(px["project"] == "Near") & (px["metric"] == "price_usd")]
+        px = px.assign(m=pd.to_datetime(px["date"]).dt.to_period("M").astype(str)).groupby("m")["value"].mean()
+        print("  MONTHLY IN x THAT MONTH'S AVERAGE NEAR PRICE (metrics.db) — set beside the page's monthly net revenue:")
+        for m in sorted(monthly_all):
+            p = px.get(m)
+            print(f"    {m}: {monthly_all[m]:,.0f} NEAR" + (f" x ${p:,.3f} = ${monthly_all[m] * p:,.0f}" if p else
+                                                          " (no price in metrics.db)"))
+    except Exception as e:  # noqa: BLE001
+        print(f"  (monthly USD not computed: {type(e).__name__}: {str(e)[:120]})")
     print("  READING IT: a wallet whose OUT lines are empty (or only to the other two) is buyback-and-HOLD — its NEAR")
-    print("  leaves free float but is not burned. NEAR has no burn address; an outflow is a burn only if it goes to")
-    print("  a key-less account the protocol names as such. Monthly IN x that month's price is what to set beside the")
-    print("  page's monthly net revenue. Nothing was stored. PASTE BACK the section.")
+    print("  leaves free float but is not burned; an outflow is a burn only if it goes to a key-less account the")
+    print("  protocol names as such. IN by receipts that exceeds the pipeline's txns-based flow means the tier misses")
+    print("  receipt-borne transfers. Nothing was stored. PASTE BACK the section.")
 
 
 # ===== SKY — BLOCK ANALITICA'S ENDPOINTS: WHAT THEY RETURN (Jake, 2026-10-07). =====
@@ -3506,7 +3580,8 @@ def geod_candidate_wallets(days: int = 180):
         print(f"  RESULT (approximate — the 2026-10-07 probe's {pr['ours_excluding_all']:,.0f} less today's balance of the "
               f"wallets added since, {extra:,.0f}): ours ~{ours:,.0f} vs CoinGecko {pr['coingecko']:,.0f} = {gap:+.1%} "
               f"-> {'WITHIN' if abs(gap) <= 0.05 else 'OUTSIDE'} the circulating row's 5%. The run's Credibility tab "
-              f"has the exact figure; within 5% -> set CIRCULATING_ONCHAIN['GEODNET']['ratios_use'] = 'onchain'.")
+              f"has the exact figure. Since the policy of 2026-10-07 GEODNET's OWN figure (462M) is primary and this "
+              f"set is its cross-check: outside 5%, the residual is what geod_residual looks for.")
     print("  READING IT: a vesting / allocation wallet sends out in steps to a few recipients (exchanges, OTC);")
     print("  one that never moves is locked in practice. Tokens moved to Solana after the migration are NOT here.")
     print("  Nothing was stored. PASTE BACK the section.")

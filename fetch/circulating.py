@@ -73,6 +73,7 @@ def check(out, h: pd.DataFrame, projects: list[dict]) -> None:
         name = p["name"]
         spec = config.circulating_onchain(name) or {}
         st = spec.get("status")
+        _check_first_party_against_set(out, h, name, spec)
         if st in ("established", "partial"):
             ours = series(h, name)
         elif st == "first_party":
@@ -115,6 +116,34 @@ def check(out, h: pd.DataFrame, projects: list[dict]) -> None:
                             basis=f"{st} on-chain circulating {row['ours']:,.0f} vs CoinGecko "
                                   f"{row['cg']:,.0f} on {day.date()}: {diff:+.2%}, beyond the "
                                   f"±{tol:.0%} tolerance.{partial}{basis}")
+
+
+def _check_first_party_against_set(out, h: pd.DataFrame, name: str, spec: dict) -> None:
+    """THE POLICY'S CROSS-CHECK (Jake, 2026-10-07): where the project's OWN figure is primary and an on-chain set is
+    computed (GEODNET), the latest own figure is set against the on-chain set on the same day — a hand-entered monthly
+    figure holds for 45 days. Beyond the circulating row's tolerance (5% for a partial set) the PROJECT FIGURE is
+    flagged for review; it is not replaced."""
+    if spec.get("ratios_use") != "first_party" or spec.get("status") not in ("established", "partial"):
+        return
+    own, onchain = _daily(h, name, spec["metric"]), series(h, name)
+    if own.empty or onchain.empty:
+        return
+    day = onchain.index[-1]
+    prior = own[(own.index <= day) & (own.index >= day - pd.Timedelta(days=45))]
+    if prior.empty:
+        return
+    fp = float(prior.iloc[-1])
+    if fp <= 0:
+        return
+    tol = 0.02 if spec["status"] == "established" else 0.05
+    diff = float(onchain.iloc[-1]) / fp - 1
+    if abs(diff) > tol:
+        out.review_item(name, "circulating_supply_first_party", "first_party_vs_onchain_set", "review",
+                        value=fp, prior_value=float(onchain.iloc[-1]), date=day, source=spec["metric"], tier=2,
+                        basis=f"the project's own circulating {fp:,.0f} (dated {prior.index[-1].date()}) vs our "
+                              f"{spec['status']} on-chain set {float(onchain.iloc[-1]):,.0f} on {day.date()}: the set "
+                              f"reads {diff:+.2%}, beyond ±{tol:.0%}. The project's figure stays primary and is "
+                              f"flagged for review. Missing from the set: {spec.get('missing', 'n/a')}")
 
 
 def report_lines() -> list[str]:

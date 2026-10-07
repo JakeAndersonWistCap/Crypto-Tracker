@@ -237,7 +237,7 @@ METRICS = {
     # (build_workbook._circulating_views) = on-chain total − the documented non-circulating set.
     "circulating_supply_first_party": {"label": "Circulating supply — the protocol's OWN figure (Hyperliquid tokenDetails.circulatingSupply; Aethir dashboard athCirculatingSupply; NEAR's circulating_supply table in BigQuery)",
                                        "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [1, 3],
-                                       "sanity_min": 0, "sanity_max": 1e15, "only_projects": ("Hyperliquid", "Aethir", "Near", "Plume")},
+                                       "sanity_min": 0, "sanity_max": 1e15, "only_projects": ("Hyperliquid", "Aethir", "Near", "Plume", "GEODNET")},
     # ===== AETHIR'S STAKE, BY POOL, FROM ITS OWN DASHBOARD (Jake's probes3, 2026-09-30). =====
     # locked_tokens = the on-chain page's totalStaked; these are the parts it shows beside it, and
     # the Ethereum wrapper read (808.7M) that was locked_tokens until then, kept as its own series.
@@ -342,6 +342,12 @@ METRICS = {
     "circulating_supply_onchain": {"label": "Circulating supply — on-chain total − the DOCUMENTED non-circulating set (CIRCULATING_ONCHAIN)",
                                    "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [2],
                                    "sanity_min": 0, "sanity_max": 1e15, "view_only": True},
+    # READ-TIME (build_workbook._cg_plus_staked_views, POLICY 2026-10-07): CoinGecko's circulating where it EXCLUDES
+    # staked tokens, plus the staked amount added back once (Aerodrome: veAERO principal less the team's 95M).
+    "circulating_supply_cg_plus_staked": {"label": "Circulating supply — CoinGecko's figure (which excludes staked tokens) + the staked amount, added back once",
+                                          "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [1],
+                                          "sanity_min": 0, "sanity_max": 1e15, "view_only": True,
+                                          "only_projects": ("Aerodrome",)},
     # ===== ETHEREUM DAILY HISTORY FROM ULTRASOUND.MONEY (A1/A3, 2026-09-30). See fetch/ultrasound.py.
     "total_supply_ultrasound":    {"label": "ETH total supply, daily (ultrasound.money supplyByDay: execution + beacon balances − pending deposits)",
                                    "kind": "stock", "unit": "tokens", "archetypes": [1, 4], "tiers": [3],
@@ -748,6 +754,14 @@ METRICS = {
     "net_protocol_surplus_usd_reported": {"label": "Net Protocol Surplus as Sky reported the month (manual, insights.skyeco.com / financial.skyeco.com) — reference", "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [5], "sanity_min": -1e10, "sanity_max": 1e11, "only_projects": ("Sky",), "view_only": True},
     "buyback_spending_usd_ba": {"label": "SKY buyback spending per month ($, Block Analitica cash flow 'Buyback Spending') — reference for the flapper buyback", "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [3], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Sky",)},
     "staking_rewards_usd_ba": {"label": "Staking rewards paid per month ($, Block Analitica cash flow 'Staking Rewards') — reference for the USDS-farm rewards", "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [3], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Sky",)},
+    # info-sky.blockanalitica.com (Jake, 2026-10-07 12:06) — references only, beside our on-chain reads.
+    "sky_cumulative_buyback_ba": {"label": "SKY bought by the flapper, CUMULATIVE (Block Analitica info-sky buyback/historic sky_cumulative_buyback) — reference for our counted flapper inflow", "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [3], "sanity_min": 0, "sanity_max": 3e10, "only_projects": ("Sky",)},
+    "locked_tokens_sky_farm_ba": {"label": "SKY staked in the SKY-rewards farm (Block Analitica info-sky total_staked) — reference for lsSKY.balanceOf(farm)", "kind": "stock", "unit": "tokens", "archetypes": [4], "tiers": [3], "sanity_min": 0, "sanity_max": 3e10, "only_projects": ("Sky",)},
+    "locked_tokens_usds_farm_ba": {"label": "SKY staked in the USDS-rewards farm (Block Analitica info-sky total_staked) — reference for lsSKY.balanceOf(farm)", "kind": "stock", "unit": "tokens", "archetypes": [4], "tiers": [3], "sanity_min": 0, "sanity_max": 3e10, "only_projects": ("Sky",)},
+    "sky_farm_apy_ba": {"label": "SKY-rewards farm APY as Block Analitica publishes it (info-sky `apy`)", "kind": "stock", "unit": "pct", "archetypes": [4], "tiers": [3], "sanity_min": 0, "sanity_max": 1000, "only_projects": ("Sky",)},
+    "usds_farm_apy_ba": {"label": "USDS-rewards farm APY as Block Analitica publishes it (info-sky `apy`)", "kind": "stock", "unit": "pct", "archetypes": [4], "tiers": [3], "sanity_min": 0, "sanity_max": 1000, "only_projects": ("Sky",)},
+    "sky_farm_rewards_tokens_ba": {"label": "SKY rewards to the SKY-rewards farm per day = d(total_farmed) (Block Analitica) — reference for the measured release (emissions)", "kind": "flow", "unit": "tokens", "archetypes": [4], "tiers": [3], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Sky",)},
+    "usds_farm_rewards_usds_ba": {"label": "USDS rewards to the USDS-rewards farm per day = d(total_farmed) (Block Analitica) — reference for the USDS mint scan", "kind": "flow", "unit": "usd", "archetypes": [4], "tiers": [3], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Sky",)},
     # Same pattern for lock rates. Where a project has BOTH a contract read and a published page,
     # the page is stored here rather than over the contract read: a tier 3 page must never
     # overwrite a verified tier 2 contract figure, it cross-checks it.
@@ -3882,6 +3896,21 @@ PROJECTS = [
                                   "signs on permanent supply.",
             "reopen_if": "NEAR publishes a burn transaction or a contract that destroys the repurchased "
                          "NEAR. Do not reopen on dashboard wording alone.",
+            # MEASURED, NOT ONLY SOURCED (Jake's run 2026-10-07 12:06, probe near_buyback_wallets): fefundsadmin holds
+            # 1,852,804.9 NEAR liquid (the page: 1,846,188.3); its month-end balance only rises (2026-02 1,040,973 ->
+            # 2026-10 1,851,007) and OUT is 0 every month. The page's "accumulated" is the current balance of a DAO
+            # treasury — held, not burned. BUY-AND-HOLD: on A3 it leaves free float, it is not a burn, and the DAO can
+            # redeploy it. The other two wallets failed (HTTP 429) on that run and are re-read by the paced probe;
+            # any outflow to a key-less account the protocol names as a burn would reopen this.
+            "measured_2026_10_07": {
+                "wallet": "fefundsadmin.sputnik-dao.near", "liquid_now": 1_852_804.9, "page_figure": 1_846_188.3,
+                "month_end_balance": {"2026-02": 1_040_973, "2026-10": 1_851_007}, "outflows": 0,
+                "verdict": "buy-and-HOLD (DAO treasury, redeployable); the page's 'permanently remove NEAR from "
+                           "circulation' is NEAR's claim, recorded as such",
+                "project_claim": "permanently remove NEAR from circulation (revenue.near.org)",
+                "open": "fefundsadmin began accumulating 2025-11, before the 2026-02 Intents fee switch: what funded "
+                        "Nov 2025 - Feb 2026 is read from the paced probe's per-month senders (receipts), pending",
+                "read_by": "Jake, 2026-10-07 12:06"},
         },
         "buyback_destination": "hold", "destination_split": None, "burn_execution": "n/a",
         "destination_effect": "treasury_redeployable",
@@ -6852,6 +6881,8 @@ PROJECTS = [
         #   CoinGecko total_supply - (total_supply_gross - burn_address_balance [the sum])
         # which is the Solana balance while CoinGecko nets Polygon only and falls to ~0 on its own
         # if it starts netting both. The stored circulating_supply is left as CoinGecko's figure.
+        # GEODNET'S OWN CIRCULATING (POLICY 2026-10-07) is a hand-entered figure: valid for a month, AMBER after 45 days.
+        "manual_granularity": {"circulating_supply_first_party": "monthly"},
         "supply_unnetted_burn": {
             "declared": "2026-09-28 (Jake)", "provider": "CoinGecko",
             "evidence": "total_supply_convention_evidence above: 1e9 - 961,518,067.62 = "
@@ -13434,6 +13465,14 @@ PROJECTS = [
                     "MCD_VEST_SKY_TREASURY, czar = Pause Proxy) — NOT minted: 96,903,706 SKY / 90 days from "
                     "2026-08-13, replaced on 2026-09-13 by 143,208,393 SKY / 90 days (2026-09-10 spell, "
                     "updateFarmVest) to 2026-12-11. Emissions only; gross issuance is a declared zero.",
+            # SKY BOOKS THEM AS AN EXPENSE (Jake, 2026-10-07 12:06): Block Analitica's P&L items carry "SKY Rewards
+            # (USDS-SKY)" under Direct Expenses / Rewards ($32.4M cumulative) — Sky's own accounting treats the SKY paid
+            # to stakers as a cost, i.e. a distribution of existing SKY to holders, not revenue returned: support for
+            # recording them as EMISSIONS (dilution of free float), never as a buyback or yield from revenue.
+            "accounting_support": {"source": "sky.data.blockanalitica.com /v1/accounting/profit-and-loss/items/ — "
+                                             "type expense, category Direct Expenses, subcategory Rewards, 'SKY Rewards "
+                                             "(USDS-SKY)'", "cumulative_usd": 32_400_000,
+                                   "read_by": "Jake, 2026-10-07 12:06"},
         },
         "declared_zero": {
             "gross_issuance_tokens": {
@@ -14368,7 +14407,19 @@ PROJECTS = [
                            "metrics": {"nps": "net_protocol_surplus_usd", "buyback": "buyback_spending_usd_ba",
                                        "staking": "staking_rewards_usd_ba"},
                            "docs": "Block Analitica's Balance Sheet / Cash Flow / Profit and Loss API pages, given by "
-                                   "Jake 2026-10-07"},
+                                   "Jake 2026-10-07",
+                           # info-sky (Jake, 2026-10-07 12:06): cumulative SKY bought, and each farm's daily history.
+                           # Farm addresses: REWARDS_LSSKY_SKY / REWARDS_LSSKY_USDS, the same as contracts
+                           # sky_farm_stake / usds_farm_stake (spells-mainnet addresses_mainnet.sol).
+                           "info_sky": {"base_url": "https://info-sky.blockanalitica.com",
+                                        "buyback": {"metric": "sky_cumulative_buyback_ba", "days_ago": 365},
+                                        "farms": {
+                                            "0xb44c2fb4181d7cb06bdff34a46fdfe4a259b40fc": {
+                                                "staked": "locked_tokens_sky_farm_ba", "apy": "sky_farm_apy_ba",
+                                                "rewards": "sky_farm_rewards_tokens_ba"},
+                                            "0x38e4254bd82ed5ee97cd1c4278faae748d998865": {
+                                                "staked": "locked_tokens_usds_farm_ba", "apy": "usds_farm_apy_ba",
+                                                "rewards": "usds_farm_rewards_usds_ba"}}}},
         # THE MONTHS MUST ADD UP TO THE QUARTER, where every month of it is present. Two months
         # of three compared against the quarter's own total is guaranteed to disagree, and
         # reporting that would be reporting a missing month as an error in the months that are
@@ -20313,6 +20364,7 @@ CIRCULATING_ONCHAIN = {
     # OUR free float, never with our circulating). Decided by Claude Code 2026-10-06, pending Jake's review.
     "Uniswap": {"status": "established", "total": "total_supply_gross",
                 "subtract": ("burn_address_balance", "treasury_holding_tokens"),
+                "ratios_use": "coingecko",          # POLICY 2026-10-07: Uniswap publishes no figure (CIRCULATING_POLICY)
                 "method": "total − 0x…dEaD − the governance Timelock 0x1a9C…: CoinGecko's own method (its "
                           "supply-breakdown docs name the 'UNI Timelock' as the non-circulating wallet), and it "
                           "reproduces CoinGecko's 623.2M of 890.5M (2026-09-02)",
@@ -20323,6 +20375,7 @@ CIRCULATING_ONCHAIN = {
                 "decided_by": "Claude Code 2026-10-06, pending Jake's review"},
     "Sky": {"status": "established", "total": "total_supply",
             "subtract": ("treasury_holding_tokens", "noncirculating_holding_tokens"),
+            "ratios_use": "coingecko",              # POLICY 2026-10-07: Sky publishes no figure (CIRCULATING_POLICY)
             # A3 (overnight 2026-10-06): ours 21.37bn vs CoinGecko 23.43bn — the 2.06bn is OUR exclusions (Pause Proxy
             # + the MKR_SKY converter reserves); aggregators count ~every SKY (CMC 23.42B of 23.46B). The check is
             # therefore like-for-like: CoinGecko vs our TOTAL; ours is recorded as the stricter definition.
@@ -20337,6 +20390,8 @@ CIRCULATING_ONCHAIN = {
             "decided_by": "Claude Code 2026-10-06, pending Jake's review"},
     "Pendle": {"status": "established", "total": "total_supply",
                "subtract": ("treasury_holding_tokens", "noncirculating_holding_tokens"),
+               # POLICY 2026-10-07: this set IS Pendle's documented method with sPENDLE + vePENDLE added back
+               "ratios_use": "onchain",
                "coingecko_basis": "free_float",
                # Free float subtracts BOTH lock legs: sPENDLE (locked_tokens) and the legacy vePENDLE balance —
                # Pendle's own circulating excludes both (Tokenomics.md L26-27).
@@ -20398,7 +20453,10 @@ CIRCULATING_ONCHAIN = {
                   "decided_by": "Claude Code 2026-10-06, pending Jake's review"},
     "GEODNET": {"status": "partial", "total": "total_supply_gross",
                 "subtract": ("burn_address_balance", "treasury_holding_tokens"),
-                "decision": "COINGECKO until the next run's figure is in — since Jake confirmed GEODNET's tokenomics "
+                # POLICY 2026-10-07: GEODNET's own figure (462M, Jake) is primary — a dated manual row of
+                # circulating_supply_first_party; the on-chain set (~516M) is the cross-check (CIRCULATING_POLICY).
+                "ratios_use": "first_party", "metric": "circulating_supply_first_party",
+                "decision": "WAS (to 2026-10-07): COINGECKO until the next run's figure is in — since Jake confirmed GEODNET's tokenomics "
                             "page (2026-10-07) the Team, Investor, Vendor/Marketing and Public sale wallets are "
                             "subtracted too (NONCIRCULATING_CANDIDATES, confirm_candidates). Jake's probe put ours "
                             "at ~536.4M without the public-sale wallet vs CoinGecko 462.4M (+16%); if the run lands "
@@ -20426,8 +20484,11 @@ CIRCULATING_ONCHAIN = {
     # team/foundation-held (Flight School's veNFTs may have been distributed to partner
     # protocols; the PGF is its own fund) is not established, so they are not excluded.
     "Aerodrome": {"status": "partial", "total": "total_supply", "subtract": ("noncirculating_holding_tokens",),
-                  "ratios_use": "onchain", "coingecko_basis": "free_float",
-                  "decision": "ON-CHAIN although partial — CoinGecko's ~970M excludes ALL veAERO (941.5M of 1.90B "
+                  # POLICY 2026-10-07: Aerodrome publishes no figure, so CoinGecko's — which excludes veAERO —
+                  # plus the veAERO locked principal, added back once (less the team's 95M, out of circulating
+                  # by Jake's 2026-09-30 decision). The on-chain set below is the cross-check.
+                  "ratios_use": "coingecko_plus_staked", "coingecko_basis": "free_float",
+                  "decision": "WAS (2026-10-06) ON-CHAIN although partial — CoinGecko's ~970M excludes ALL veAERO (941.5M of 1.90B "
                               "in one snapshot; ~51% locked), i.e. it is the FREE-FLOAT quantity, so using it as "
                               "circulating subtracted veAERO twice in free float. Ours = total − the team's 95M "
                               "(declared) − the Foundation, Public Goods Fund and AirdropDistributor LIQUID balances "
@@ -20485,6 +20546,96 @@ CIRCULATING_ONCHAIN = {
              "why": "NEAR's own circulating_supply table (bigquery-public-data.crypto_near_mainnet_us), "
                     "read by fetch/near_bigquery.py: total − lockups − lockup.near − contributors.near",
              "was": "not_established — no documented non-circulating list in config"},
+}
+# ===== THE CIRCULATING POLICY, PER PROJECT (Jake, 2026-10-07). =====
+# "For circulating supply, the PROJECT'S OWN published figure is primary wherever one exists; CoinGecko only when the
+# project publishes nothing. Our on-chain set stays as the independent cross-check." Order: the project's figure
+# (automated where an endpoint exists, else a dated manual row) -> CoinGecko. A gap to the on-chain set beyond tolerance
+# flags the PROJECT figure for review (Credibility in_circ, Review Queue) and never replaces it. Each entry records the
+# figure used, its DEFINITION, staked tokens (a figure that excludes them has the staked amount added back ONCE), and
+# what the ratios used before. Researched 2026-10-07 by Claude Code, pending Jake's review; `ratios_use` in
+# CIRCULATING_ONCHAIN carries the choice (circulating_primary_metric).
+CIRCULATING_POLICY = {
+    "Ethereum": {"source": "protocol total (ultrasound / execution + beacon supply)", "kind": "protocol",
+                 "definition": "every ETH in existence; burned ETH is already out of the total",
+                 "staked": "included (staked ETH is circulating)", "add_back": None,
+                 "previous": "the same — unchanged"},
+    "Hyperliquid": {"source": "Hyperliquid API tokenDetails.circulatingSupply (automated)", "kind": "first_party",
+                    "definition": "total − Hyperliquid's own nonCirculatingUserBalances (0x43e9…, the burned "
+                                  "Assistance Fund, zero/dead addresses)",
+                    "staked": "included — staked HYPE is not in the non-circulating list", "add_back": None,
+                    "previous": "the same — unchanged"},
+    "Near": {"source": "NEAR's circulating_supply table, BigQuery public dataset (automated)", "kind": "first_party",
+             "definition": "total − every *.lockup.near's locked amount − lockup.near − contributors.near (NEAR "
+                           "explorer method)",
+             "staked": "included — staked NEAR outside lockups counts", "add_back": None,
+             "previous": "the same — unchanged"},
+    "Aethir": {"source": "dashboard.aethir.com athCirculatingSupply (automated, daily); the docs.aethir.com monthly "
+                         "table (Jake, 2026-10-07) is its reference by month", "kind": "first_party",
+               "definition": "Aethir's unlock-schedule circulating (TGE + released allocations)",
+               "staked": "included — the schedule counts unlocked ATH whether staked or not", "add_back": None,
+               "previous": "the same — unchanged"},
+    "Plume": {"source": "supply.plume.org/supply `result` (automated)", "kind": "first_party",
+              "definition": "Plume's own circulating of 10bn total", "staked": "not stated by Plume",
+              "add_back": None, "previous": "the same — unchanged"},
+    "GEODNET": {"source": "GEODNET's own figure, 462M (Jake, 2026-10-07) — a dated manual row "
+                          "(manual_overrides.csv circulating_supply_first_party)", "kind": "first_party_manual",
+                "definition": "not published with a method; aggregators carry a FIXED 462,360,759 (CoinGecko, "
+                              "Kraken) — the exact figure is to be read off GEODNET's own page",
+                "staked": "not stated", "add_back": None,
+                "previous": "CoinGecko 462,360,759 less the un-netted Solana burn (~430M as the ratios used it); "
+                            "the on-chain set reads ~516M (+11.7% on 462M) and is the cross-check",
+                "note": "the un-netted-burn adjustment (supply_unnetted_burn) applies to CoinGecko's figure only, "
+                        "never to GEODNET's own"},
+    "Pendle": {"source": "Pendle's DOCUMENTED method (documentation@3cc3658 Tokenomics.md L24-33), computed on chain",
+               "kind": "first_party_method",
+               "definition": "total − sPENDLE − vePENDLE − Ecosystem Fund − Governance multisig − Team multisig "
+                             "(and the fee wallet)",
+               "staked": "EXCLUDED by Pendle", "add_back": "sPENDLE + vePENDLE added back once — the on-chain set "
+               "never subtracts them, so circulating = Pendle's figure + the staked legs, and free float subtracts "
+               "them once", "previous": "the same — unchanged (the set already was Pendle's method + add-back)"},
+    "Aerodrome": {"source": "CoinGecko + the veAERO locked principal (Aerodrome publishes no figure: its Minter's "
+                            "'circulating' event emits totalSupply)", "kind": "coingecko_plus_staked",
+                  "definition": "CoinGecko's circulating EXCLUDES all veAERO (941.5M of 1.90bn in one snapshot)",
+                  "staked": "EXCLUDED by CoinGecko",
+                  "add_back": "ve_locked_supply_tokens − the team's 95M permanent veNFTs (out of circulating by "
+                              "Jake's 2026-09-30 decision) — added once; free float = CoinGecko's figure",
+                  "previous": "the on-chain set (total − 95M − Foundation/PGF/AirdropDistributor liquid), primary by "
+                              "decision 2026-10-06; it is now the cross-check",
+                  "note": "CoinGecko + the lock may land near the total (CG ~1.0bn + ~1.05bn locked − 95M vs 1.99bn "
+                          "total): beyond the 5% tolerance against the on-chain set, the row flags it"},
+    "Sky": {"source": "CoinGecko — Sky publishes no circulating figure or endpoint", "kind": "coingecko",
+            "definition": "CoinGecko counts (almost) every SKY. A search snippet of Sky's docs says 'the entire supply "
+                          "is now circulating' (not opened from here; unverified) — which would make Sky's figure "
+                          "the total supply, within ~0.5% of CoinGecko",
+            "staked": "included", "add_back": None,
+            "previous": "the on-chain set 21.37bn (total − Pause Proxy − MKR converters); CoinGecko ~23.4bn, +9.6%; "
+                        "the on-chain set is the cross-check, compared like-for-like with our TOTAL"},
+    "Uniswap": {"source": "CoinGecko — Uniswap publishes no circulating figure", "kind": "coingecko",
+                "definition": "total − 0x…dEaD − the governance Timelock (CoinGecko's supply-breakdown docs)",
+                "staked": "n/a (no UNI staking)", "add_back": None,
+                "previous": "the on-chain set, which reproduces CoinGecko (623.2M of 890.5M, 2026-09-02): ~0% change"},
+    "Chainlink": {"source": "CoinGecko, which carries Chainlink's own API figure (DefiLlama: 'sourced from Chainlink's "
+                            "official supply API'); chain.link/circulating-supply is not readable from here",
+                  "kind": "coingecko",
+                  "definition": "1bn − Chainlink's non-circulating wallets (its API list)",
+                  "staked": "included (staked LINK is not in the non-circulating list as far as seen)",
+                  "add_back": None, "previous": "the same — unchanged",
+                  "todo": "a dated reading of chain.link/circulating-supply makes it a first-party manual row"},
+    "Morpho": {"source": "CoinGecko; TokenOps' figure (a vendor Morpho commissioned, per the vendor) stays the "
+                         "reference — Morpho itself was not found to designate it", "kind": "coingecko",
+               "definition": "CoinGecko's own count", "staked": "n/a", "add_back": None,
+               "previous": "the same — unchanged",
+               "todo": "if Morpho's docs or forum designate TokenOps as its figure, TokenOps becomes primary"},
+    "Maple": {"source": "CoinGecko — Maple publishes no figure (its FAQ treats stSYRUP as circulating)",
+              "kind": "coingecko", "definition": "CoinGecko's own count", "staked": "included (Maple FAQ)",
+              "add_back": None, "previous": "the same — unchanged"},
+    "Ether.fi": {"source": "CoinGecko — ether.fi publishes no figure", "kind": "coingecko",
+                 "definition": "CoinGecko's own count", "staked": "included (sETHFI is a holder-owned vault)",
+                 "add_back": None, "previous": "the same — unchanged"},
+    "Fluid": {"source": "CoinGecko — Fluid publishes no figure", "kind": "coingecko",
+              "definition": "CoinGecko's own count", "staked": "n/a", "add_back": None,
+              "previous": "the same — unchanged"},
 }
 # ===== NON-CIRCULATING ADDRESSES NAMED IN EACH PROJECT'S OWN SOURCES (Jake, 2026-09-30). =====
 # Morpho, Aerodrome, Aethir, Plume, NEAR. A LIST, NOT WIRING: nothing here is subtracted until a
@@ -20742,11 +20893,37 @@ def locked_excluded_from_circulating(project_name: str) -> float:
     return float(sum(e["tokens"] for e in spec.get("declared_exclusions") or () if e.get("locked")))
 
 
-def circulating_onchain_primary(project_name: str) -> bool:
-    """Whether the ratios use the on-chain / first-party circulating figure rather than CoinGecko's: an
-    established or first-party set, or a per-project decision (ratios_use "onchain", 2026-10-06)."""
+def circulating_primary_metric(project_name: str) -> str:
+    """The circulating series the ratios use. THE POLICY (Jake, 2026-10-07): the project's OWN published figure
+    wherever one exists, CoinGecko only where the project publishes nothing; our on-chain set is the independent
+    cross-check, never the replacement. `ratios_use` states the choice per project (CIRCULATING_POLICY says why):
+      "first_party"           the project's figure, stored as spec["metric"] (an endpoint or a dated manual row)
+      "onchain"               the on-chain set IS the project's documented method (Pendle) or a prior decision
+      "coingecko"             the project publishes nothing: CoinGecko's circulating
+      "coingecko_plus_staked" CoinGecko's figure excludes staked tokens: it + the staked amount, added back once
+                              (circulating_supply_cg_plus_staked, build_workbook._cg_plus_staked_views)
+    Without `ratios_use`, the status decides as before: first_party -> its metric, established -> on-chain."""
     spec = CIRCULATING_ONCHAIN.get(project_name) or {}
-    return spec.get("status") in ("established", "first_party") or spec.get("ratios_use") == "onchain"
+    use = spec.get("ratios_use")
+    if use == "coingecko":
+        return "circulating_supply"
+    if use == "coingecko_plus_staked":
+        return "circulating_supply_cg_plus_staked"
+    if use == "first_party" or spec.get("status") == "first_party":
+        return spec["metric"]
+    if use == "onchain" or spec.get("status") == "established":
+        return "circulating_supply_onchain"
+    return "circulating_supply"
+
+
+def circulating_onchain_primary(project_name: str) -> bool:
+    """Whether the ratios use a figure other than CoinGecko's plain circulating (circulating_primary_metric)."""
+    return circulating_primary_metric(project_name) != "circulating_supply"
+
+
+def circulating_has_onchain_set(project_name: str) -> bool:
+    """Whether an on-chain set is computed (the cross-check): an established or partial set."""
+    return (CIRCULATING_ONCHAIN.get(project_name) or {}).get("status") in ("established", "partial")
 
 
 def free_float_lock_metrics(project_name: str) -> tuple:
@@ -22417,12 +22594,23 @@ SOURCE_REGISTER = {
     "sky.data.blockanalitica.com": {
         "used_for": "Sky's monthly Net Protocol Surplus (P&L), Buyback Spending and Staking Rewards (cash flow) — "
                     "fetch/sky_accounting.py",
-        "paths": ["/v1/accounting/profit-and-loss/statement/history/", "/v1/accounting/profit-and-loss/history/",
-                  "/v1/accounting/cash-flow/items/history/"],
+        "paths": ["/v1/accounting/profit-and-loss/history/", "/v1/accounting/cash-flow/items/history/"],
         "robots": "checked per run by the pipeline's RFC 9309 reader before the first call",
-        "terms": {"url": "not found", "status": "documented API (pages given by Jake 2026-10-07); terms not read from "
-                                                "here (host unreachable from the build environment)"},
+        "terms": {"url": "not found", "status": "documented API (pages given by Jake 2026-10-07); robots.txt answers "
+                                                "404 = allowed (Jake's run 2026-10-07 12:06, RFC 9309). No terms page "
+                                                "found; the site is unreachable from the build environment, so a terms "
+                                                "link on it is unread — `python check_offline_items.py robots_and_terms`"},
         "licence": "Sky's accounting as Block Analitica publishes it; INTERNAL until terms are read",
+        "key": "none",
+    },
+    "info-sky.blockanalitica.com": {
+        "used_for": "Sky: cumulative SKY bought (buyback/historic) and the two lsSKY farms' daily staked / APY / "
+                    "rewards (api/v1/farms/<farm>/historic/) — fetch/sky_accounting.py, references only",
+        "paths": ["/buyback/historic/", "/api/v1/farms/"],
+        "robots": "checked per run by the pipeline's RFC 9309 reader before the first call",
+        "terms": {"url": "not found", "status": "used by Sky's own webapp (jetstreamgg/tarmac) and DefiLlama's adapter; "
+                                                "no terms page found from here"},
+        "licence": "INTERNAL until terms are read",
         "key": "none",
     },
     "revenue-dashboard-api-production.up.railway.app": {
@@ -23266,6 +23454,60 @@ CREDIBILITY: dict = {
                                         "source": "Block Analitica cash flow, category 'Staking Rewards', same months",
                                         "note": "If Block Analitica's category also carries other farms' rewards, ours "
                                                 "(the USDS farm only) reads LOW."}, fmt=_C_USD),
+        # ===== info-sky.blockanalitica.com (Jake, 2026-10-07 12:06): references beside our on-chain reads. =====
+        # The farm rows sit BESIDE Jake's readings of info.skyeco.com (in_locked_*_farm / in_apy_*_farm), never in place.
+        "in_buyback_cumulative_ba": _c_in_py(
+            "SKY bought, last 30 complete days: our flapper counted inflow summed over the days Block Analitica's "
+            "cumulative rises across", "rise_vs_flow", {"flow": "actual_buyback_tokens", "stock": "sky_cumulative_buyback_ba",
+                                                       "days": 30, "side": "ours"},
+            {"formula": "rise_vs_flow", "tol": 5.0,
+             "args": {"flow": "actual_buyback_tokens", "stock": "sky_cumulative_buyback_ba", "days": 30, "side": "ref"},
+             "source": "Block Analitica info-sky buyback/historic: the rise of sky_cumulative_buyback over the same days",
+             "note": "A window, not the all-time totals: our counted inflow starts where our scan starts (2,016,749,226 "
+                     "cumulative on 2026-10-06 vs Block Analitica's 1.977bn on 2026-09-07 — different start points "
+                     "and dates, so the all-time gap is reported, not judged)."}),
+        "in_locked_sky_farm_ba": _c_in("lsSKY staked in the SKY-rewards farm vs Block Analitica's total_staked",
+                                       "locked_tokens_sky_farm", "now",
+                                       {"metric": "locked_tokens_sky_farm_ba", "window": "now", "tol": 2.0,
+                                        "source": "Block Analitica info-sky farm 0xb44c2fb4… total_staked (daily)"}),
+        "in_locked_usds_farm_ba": _c_in("lsSKY staked in the USDS-rewards farm vs Block Analitica's total_staked",
+                                        "locked_tokens_usds_farm", "now",
+                                        {"metric": "locked_tokens_usds_farm_ba", "window": "now", "tol": 2.0,
+                                         "source": "Block Analitica info-sky farm 0x38e4254b… total_staked (daily)"}),
+        "in_apy_sky_farm_ba": _c_in_py("SKY-rewards farm rate (ours, 28 days annualised) vs Block Analitica's apy",
+                                       "rate_on_stake", {"flow": "emissions_tokens", "stock": "locked_tokens_sky_farm",
+                                                         "days": 28},
+                                       {"metric": "sky_farm_apy_ba", "window": "now", "tol": 15.0,
+                                        "source": "Block Analitica info-sky farm apy, as published",
+                                        "note": "Ours is a simple rate (fraction). If Block Analitica publishes percent "
+                                                "the row reads ~100x apart — the unit is read off the first run."},
+                                       fmt=_C_PCT),
+        "in_apy_usds_farm_ba": _c_in_py("USDS-rewards farm rate (ours, 28 days annualised) vs Block Analitica's apy",
+                                        "rate_on_stake", {"flow": "staking_rewards_usds_usd",
+                                                          "stock": "locked_tokens_usds_farm", "days": 28,
+                                                          "price": "price_usd"},
+                                        {"metric": "usds_farm_apy_ba", "window": "now", "tol": 15.0,
+                                         "source": "Block Analitica info-sky farm apy, as published",
+                                         "note": "As the SKY-farm row: the unit is read off the first run."},
+                                        fmt=_C_PCT),
+        "in_rewards_sky_farm_ba": _c_in_py(
+            "SKY released to the SKY-rewards farm, last 28 days (measured) vs d(total_farmed)", "common_days_sum",
+            {"a": "emissions_tokens", "b": "sky_farm_rewards_tokens_ba", "days": 28, "side": "ours", "min_days": 20},
+            {"formula": "common_days_sum", "tol": 15.0,
+             "args": {"a": "emissions_tokens", "b": "sky_farm_rewards_tokens_ba", "days": 28, "side": "ref",
+                      "min_days": 20},
+             "source": "Block Analitica info-sky: the farm's cumulative rewards (total_farmed), differenced per day",
+             "note": "Ours is the release INTO the farm (distribute() about weekly); theirs is what the farm accrued to "
+                     "stakers — they agree over weeks, not days. Sky books these rewards as an expense "
+                     "(P&L 'SKY Rewards (USDS-SKY)', Direct Expenses / Rewards): emissions, not revenue."}),
+        "in_rewards_usds_farm_ba": _c_in_py(
+            "USDS paid to the USDS-rewards farm, last 28 days (mint scan, $) vs d(total_farmed)", "common_days_sum",
+            {"a": "staking_rewards_usds_usd", "b": "usds_farm_rewards_usds_ba", "days": 28, "side": "ours",
+             "min_days": 20},
+            {"formula": "common_days_sum", "tol": 15.0,
+             "args": {"a": "staking_rewards_usds_usd", "b": "usds_farm_rewards_usds_ba", "days": 28, "side": "ref",
+                      "min_days": 20},
+             "source": "Block Analitica info-sky: the USDS farm's cumulative rewards, differenced per day"}, fmt=_C_USD),
         "in_emissions": _c_in("Emissions Q0 — staking rewards RELEASED from treasury SKY (measured: REWARDS_DIST_LSSKY_SKY -> farm)",
                               "emissions_tokens", "q0",
                               # 2026-10-07: ours is the MEASURED release (SKY REWARDS_DIST_LSSKY_SKY -> REWARDS_LSSKY_SKY,
