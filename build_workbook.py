@@ -1819,7 +1819,9 @@ def _market_cap_views(groups: dict) -> None:
             adj = (tot.reindex(idx, method="ffill") - (gross.reindex(idx, method="ffill")
                                                        - burned.reindex(idx, method="ffill"))).round(2)
             # The un-netted burn is CoinGecko's: a project's own figure is never adjusted for it (2026-10-07).
-            if chosen != "circulating_supply" and config.circulating_onchain(name).get("ratios_use") in config.MANUAL_PRIMARY_USES:
+            # (any figure other than CoinGecko's: a project's own, a labelled manual one, or the on-chain set, which
+            # already nets every burn it counts — GEODNET's Solana burn account included)
+            if chosen != "circulating_supply":
                 adj = adj.where(~idx.isin(own.index), 0.0)
             circ = (circ - adj).where(adj >= 0)
         both = price.index.intersection(circ.dropna().index)
@@ -3453,7 +3455,7 @@ def _circ(R: Refs, r, p: dict) -> str:
         # on-chain figure, circulating falls back to CoinGecko + the locked tokens inside it — so free float
         # (circulating − locked) is CoinGecko's own figure, never CoinGecko − locked a SECOND time.
         fb = f"{c}+{_ff_lock(R, r, p)}" if config.coingecko_is_free_float(p["name"]) else c
-        if config.supply_unnetted_burn(p["name"]) and spec.get("ratios_use") in config.MANUAL_PRIMARY_USES:
+        if config.supply_unnetted_burn(p["name"]):
             # The un-netted burn is CoinGecko's: the project's own figure is used as published (GEODNET, 2026-10-07);
             # only the CoinGecko fallback is netted.
             return f"IF(ISNUMBER({own}),{own},{_net_unnetted_burn(R, r, fb)})"

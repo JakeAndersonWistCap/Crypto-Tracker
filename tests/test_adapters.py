@@ -1871,9 +1871,12 @@ def test_etherfis_two_addresses_have_two_roles_and_neither_is_read_as_a_balance(
     assert "log scan" in bw["route_that_would_work"] and "not a balance read" in bw["route_that_would_work"]
     # THE BUYBACK WALLET IS NEVER DECLARED AS A CONTRACT — its balance is inflow minus spending
     # and reading it would be the error this test exists to refuse.
+    # (the full sweep, 2026-10-07: the old buyback Safe IS read as a HOLDING — bought ETHFI out of circulation —
+    # never as the buyback flow)
     assert not any(c.get("address", "").lower() == bw["address"].lower()
+                   and c.get("metric_override") != "noncirculating_holding_tokens"
                    for c in p["contracts"].values()), \
-        "the buyback wallet must never be read as a balance"
+        "the buyback wallet must never be read as a buyback balance"
     # THE TREASURY WAS WIRED 2026-09-23 ON INSTRUCTION (as treasury_holding, a HOLDING — the
     # right shape for a treasury, unlike the buyback flow). The basis is an aggregator plus the
     # instruction, and the contract entry says so rather than wearing a clean 'verified'.
@@ -2096,12 +2099,28 @@ def test_morphos_own_api_writes_nothing_until_a_live_run_confirms_it():
     # measuring-point change, which blanks the series — the failure this file has now recorded
     # three times. Once confirmed, DefiLlama's lending route stands down COMPLETELY, not
     # "unless the API fails".
+    # The sweep (2026-10-07): DefiLlama's BORROWED side is still stored, under its own reference metric
+    # (borrowed_usd_llama, Morpho's in_supply cross-check) — never supply_units or utilisation_pct.
+    class Llama:
+        calls = []
+
+        def get(self, url, params=None):
+            self.calls.append(url)
+            return {"tvl": [{"date": 1759708800, "totalLiquidityUSD": 9e9}],
+                    "chainTvls": {"borrowed": {"tvl": [{"date": 1759708800, "totalLiquidityUSD": 5.1e9}]}}}
     d = DefiLlama()
-    d.http = object()          # never called: the stand-down happens before any request
+    d.http = Llama()
     out3 = FetchOutput()
     d.lending_supply(confirmed, None, out3)
-    assert out3.frame().empty
+    assert set(out3.frame()["metric"]) == {"borrowed_usd_llama"}
+    assert list(out3.frame()["value"]) == [5.1e9]
+    assert d.http.calls == [f"https://api.llama.fi/protocol/{confirmed['defillama_protocol']}"]
     assert [e for e in out3.log if e.status == "skipped" and "must not alternate" in e.message]
+    d.http = object()          # without the reference key nothing is requested: the stand-down comes first
+    out3b = FetchOutput()
+    d.lending_supply({**confirmed, "lending_supply": {k: v for k, v in confirmed["lending_supply"].items()
+                                                      if k != "borrowed_reference_metric"}}, None, out3b)
+    assert out3b.frame().empty
 
     # ** A MISSPELT BORROW FIELD IS REPORTED, NEVER SUMMED AS ZERO. ** A borrow side reading 0
     # gives utilisation 0.0000 on a lending protocol — a number, not a gap, and entirely
@@ -17090,14 +17109,16 @@ def test_geodnet_supply_denominators_net_out_the_burn_coingecko_does_not():
         def D(self, r, m, w):
             return f"D[{m}]"
     expr = bw._circ(R(), 5, config.PROJECT_BY_NAME["GEODNET"])
-    # 2026-10-07: GEODNET's figure in use (Blockworks' 462M, a labelled third party) is used as published; only the
-    # CoinGecko fallback is netted
-    assert expr == ("IF(ISNUMBER(D[circulating_supply_third_party]),D[circulating_supply_third_party],"
+    # 2026-10-07 evening: GEODNET's ON-CHAIN set is primary — it already nets every burn it counts; only the
+    # CoinGecko fallback is netted for the burn CoinGecko misses
+    assert expr == ("IF(ISNUMBER(D[circulating_supply_onchain]),D[circulating_supply_onchain],"
                     "IF(ROUND(D[total_supply]-(D[total_supply_gross]-D[burn_address_balance]),2)>=0,"
                     "D[circulating_supply]-ROUND(D[total_supply]-(D[total_supply_gross]-"
                     "D[burn_address_balance]),2),NA()))"), expr
-    # Uniswap publishes no figure (POLICY 2026-10-07): CoinGecko, and no burn adjustment (nothing un-netted)
-    assert bw._circ(R(), 5, config.PROJECT_BY_NAME["Uniswap"]) == "D[circulating_supply]"
+    # Uniswap (the full sweep, 2026-10-07): the on-chain count from its documented wallets is primary, CoinGecko the
+    # fallback on a day it is not read — and no burn adjustment (nothing un-netted)
+    assert bw._circ(R(), 5, config.PROJECT_BY_NAME["Uniswap"]) == \
+        "IF(ISNUMBER(D[circulating_supply_onchain]),D[circulating_supply_onchain],D[circulating_supply])"
     # the arithmetic on Jake's figures: CoinGecko nets Polygon only -> the Solana balance comes out
     tot, gross, burned = 1e9 - 38_586_932.38, 1e9, 38_586_932.38 + 29_407_004.0
     assert round(tot - (gross - burned), 2) == 29_407_004.0
@@ -19985,11 +20006,11 @@ def test_onchain_circulating_excludes_only_documented_sourced_addresses_and_revi
     ex = C.exclusions("GEODNET")
     assert {e["key"] for e in ex} >= {"mining_polygon", "ecosystem_polygon", "burn_polygon"}
     assert all(e["address"] and e["source_url"] and e["verified"] for e in ex)
-    assert config.circulating_onchain("Morpho")["status"] == "not_established"
+    assert config.circulating_onchain("Morpho")["status"] == "partial"     # docs wallets wired, vesting missing
     lines = "\n".join(C.report_lines())
     # Uniswap's set is complete since 2026-10-06 (CoinGecko's own method); Maple stays PARTIAL
     assert "Uniswap: ESTABLISHED" in lines and "Maple: PARTIAL" in lines and "MISSING:" in lines \
-        and "Morpho: NOT_ESTABLISHED" in lines
+        and "Morpho: PARTIAL" in lines
     d0, d1 = pd.Timestamp("2026-09-01"), pd.Timestamp("2026-09-02")
     h = pd.DataFrame([
         dict(date=d0, project="Uniswap", metric="total_supply_gross", value=1_000.0, source="x"),
@@ -19997,6 +20018,9 @@ def test_onchain_circulating_excludes_only_documented_sourced_addresses_and_revi
         dict(date=d0, project="Uniswap", metric="burn_address_balance", value=100.0, source="x"),
         dict(date=d1, project="Uniswap", metric="burn_address_balance", value=100.0, source="x"),
         dict(date=d1, project="Uniswap", metric="treasury_holding_tokens", value=300.0, source="x"),
+        # the full sweep's docs wallets (treasury vesting contracts, merkle distributor) — empty on this day
+        dict(date=d0, project="Uniswap", metric="noncirculating_holding_tokens", value=0.0, source="x"),
+        dict(date=d1, project="Uniswap", metric="noncirculating_holding_tokens", value=0.0, source="x"),
         dict(date=d1, project="Uniswap", metric="circulating_supply", value=500.0, source="coingecko")])
     s = C.series(h, "Uniswap")
     assert list(s.index) == [d1] and s.iloc[0] == 600.0, "d0 lacks the treasury balance: not computed"
@@ -20348,7 +20372,7 @@ def test_circulating_convention_is_printed_on_every_exclusion_list_with_document
         # NEAR is FIRST_PARTY since 2026-10-01: its own circulating_supply table in BigQuery
         # PLUME is FIRST_PARTY since 2026-10-07: supply.plume.org/supply (Jake)
         assert config.circulating_onchain(name)["status"] == {"Aerodrome": "partial", "Aethir": "first_party",
-                                                               "Near": "first_party",
+                                                               "Near": "first_party", "Morpho": "partial",
                                                                "Plume": "first_party"}.get(name, "not_established")
         cand = config.NONCIRCULATING_CANDIDATES[name]
         assert cand["addresses"] and all(a["source"] and a["address"] for a in cand["addresses"])
@@ -25328,11 +25352,13 @@ def test_circulating_decisions_are_applied_consistently_and_coingecko_free_float
     chosen = {n: bw.chosen_circulating_metric(config.PROJECT_BY_NAME[n]) for n in config.CIRCULATING_POLICY}
     assert chosen["Pendle"] == "circulating_supply_onchain"            # Pendle's documented method, staked added back
     assert chosen["Aerodrome"] == "circulating_supply_cg_plus_staked"  # CoinGecko + veAERO, added back once
-    assert chosen["GEODNET"] == "circulating_supply_third_party"       # Blockworks' 462M (GEODNET publishes none)
     assert chosen["Ethereum"] == "circulating_supply_onchain"
+    # THE FULL SWEEP (Jake, 2026-10-07): an on-chain count from wallets the project documents is primary
+    for n in ("GEODNET", "Sky", "Uniswap", "Ether.fi"):
+        assert chosen[n] == "circulating_supply_onchain", n
     for n in ("Hyperliquid", "Near", "Aethir", "Plume"):
         assert chosen[n] == "circulating_supply_first_party", n
-    for n in ("Uniswap", "Sky", "Chainlink", "Maple", "Fluid", "Ether.fi", "Morpho"):
+    for n in ("Chainlink", "Maple", "Fluid", "Morpho"):
         assert chosen[n] == "circulating_supply", n
         assert not config.circulating_onchain_primary(n), n
     for n in ("Chainlink", "Maple", "Fluid", "Ether.fi", "GEODNET"):
@@ -25344,12 +25370,30 @@ def test_circulating_decisions_are_applied_consistently_and_coingecko_free_float
     # every wired non-circulating wallet carries its source and the date read, and is not a code-checked holder
     for n, (cnt, sym) in {"Pendle": (3, "PENDLE"), "Aerodrome": (3, "AERO"), "Chainlink": (24, "LINK"),
                           "Maple": (5, "SYRUP"), "Fluid": (1, "FLUID"), "Sky": (2, "SKY")}.items():
-        cs = {k: c for k, c in config.PROJECT_BY_NAME[n]["contracts"].items() if k.startswith("noncirc_")}
+        cs = {k: c for k, c in config.PROJECT_BY_NAME[n]["contracts"].items() if k.startswith("noncirc_")
+              and "first-party wallet list" not in c["provenance"]}        # the 2026-10-06 rows; the sweep's below
         assert len(cs) == cnt, n
         assert all(c["metric_override"] == "noncirculating_holding_tokens" and c["verified"] == "2026-10-06"
                    and c["source_url"].startswith("https://") and c["expected_symbol"] == sym
                    and c["holder_has_code"] is False for c in cs.values()), n
         assert "noncirculating_holding_tokens" in config.circulating_onchain(n)["subtract"], n
+    # THE FULL SWEEP (2026-10-07): wallets the projects themselves document, each with its first-party source and date
+    for n, (cnt, sym, src) in {"Ether.fi": (7, "ETHFI", "https://"), "Morpho": (2, "MORPHO", "https://docs.morpho.org/"),
+                               "Uniswap": (5, "UNI", "https://github.com/Uniswap/docs/blob/1c7597d7"),
+                               "Fluid": (8, "FLUID", "https://github.com/Instadapp/"),
+                               "Chainlink": (3, "LINK", "https://blog.chain.link/")}.items():
+        rows = config._NONCIRC_WALLETS_FIRST_PARTY[n]
+        assert len(rows) == cnt, n
+        cs = {f"noncirc_{r[0]}": config.PROJECT_BY_NAME[n]["contracts"][f"noncirc_{r[0]}"] for r in rows}
+        assert all(c["metric_override"] == "noncirculating_holding_tokens" and c["verified"] == "2026-10-07"
+                   and c["source_url"].startswith(src) and c["expected_symbol"] == sym
+                   and c["holder_has_code"] is False for c in cs.values()), n
+        assert "noncirculating_holding_tokens" in config.circulating_onchain(n)["subtract"], n
+    # never wired: Fluid's delegateCall-only distributor and the ReserveContract entry; Aerodrome's `team` role address
+    every = {c["address"].lower() for p in config.PROJECTS for c in p.get("contracts", {}).values()
+             if isinstance(c, dict) and c.get("metric_override") == "noncirculating_holding_tokens"}
+    assert "0x9d694b7f2ab2c1f328ca3e334ab74afc2814240e" not in every
+    assert "0xe6a41fe61e7a1996b59d508661e3f524d6a32075" not in every
     # GEODNET's allocation wallets: confirmed by Jake from the docs page (2026-10-07) and subtracted
     geo = {k: c for k, c in config.PROJECT_BY_NAME["GEODNET"]["contracts"].items() if k.startswith("noncirc_")}
     assert len(geo) == len(config.NONCIRCULATING_CANDIDATES["GEODNET"]["addresses"]) == 4
@@ -25397,8 +25441,10 @@ def test_headline_diff_and_manual_form_make_run_on_a_store(tmp_path, monkeypatch
     assert config.CIRCULATING_ONCHAIN["Aerodrome"]["ratios_use"] == "coingecko_plus_staked", "the decision is restored"
     assert hd.main(["--only", "circulating_policy"]) == 0
     assert "HEADLINES MOVING BEYOND 10%" in capsys.readouterr().out
-    assert config.CIRCULATING_ONCHAIN["GEODNET"]["ratios_use"] == "third_party_reference"
-    assert config.CIRCULATING_ONCHAIN["Sky"]["ratios_use"] == "coingecko"
+    assert config.CIRCULATING_ONCHAIN["GEODNET"]["ratios_use"] == "onchain"
+    assert config.CIRCULATING_ONCHAIN["Sky"]["ratios_use"] == "onchain"
+    assert hd.main(["--only", "geodnet_onchain"]) == 0
+    assert config.CIRCULATING_ONCHAIN["GEODNET"]["status"] == "established", "restored after the BEFORE build"
     assert config.CIRCULATING_ONCHAIN["Pendle"]["status"] == "established"
     form = tmp_path / "form.csv"
     assert mf.main(["make", "--out", str(form)]) == 0
@@ -25693,17 +25739,17 @@ def test_sky_circulating_is_compared_like_for_like_with_coingeckos_total():
     import supply_components as sc
     assert config.coingecko_counts_total("Sky") and not config.coingecko_counts_total("Pendle")
     spec = cred.circulating_input("Sky")
-    # POLICY 2026-10-07: CoinGecko is the figure in use (Sky publishes none); its like-for-like on-chain cross-check
-    # is our TOTAL
-    assert spec["ours"]["metric"] == "circulating_supply"
-    assert spec["ref"]["metric"] == config.circulating_onchain("Sky")["total"] and spec["ref"]["tol"] == 2.0
+    # THE FULL SWEEP (2026-10-07): our set is primary again; CoinGecko counts every SKY, so it is compared with our
+    # on-chain TOTAL
+    assert spec["ours"]["metric"] == config.circulating_onchain("Sky")["total"]
+    assert spec["ref"]["metric"] == "circulating_supply" and spec["ref"]["tol"] == 2.0
     rows = {"Sky|total_supply_protocol": {"now": 23.46e9}, "Sky|circulating_supply_onchain": {"now": 21.37e9},
             "Sky|circulating_supply": {"now": 23.43e9}, "Sky|total_supply": {"now": 23.46e9}}
     for m in config.circulating_onchain("Sky").get("subtract") or ():
         rows.setdefault(f"Sky|{m}", {"now": 1.0})
     text = "\n".join(sc.report("Sky", rows, None))
     assert "STRICTER by 2,090,000,000" in text and "CoinGecko counts every token" in text
-    assert "policy: CoinGecko" in text and "CROSS-CHECK" not in text.split("GAP")[0]
+    assert "policy: CoinGecko" in text
 
 
 def test_aerodrome_buyback_input_is_a_declared_na_so_net_absorption_is_checkable():
@@ -26367,33 +26413,25 @@ def test_circulating_policy_project_figure_first_with_the_onchain_set_as_cross_c
               *[(d, "GEODNET", "total_supply_gross", 1e9, "chain") for d in ("2026-10-06", "2026-10-07", "2026-10-08")],
               *[(d, "GEODNET", "burn_address_balance", 68.5e6, "chain") for d in
                 ("2026-10-06", "2026-10-07", "2026-10-08")],
-              ("2026-10-07", "GEODNET", "circulating_supply_third_party", 462e6, "manual")])
+              ("2026-10-07", "GEODNET", "circulating_supply_onchain", 516.36e6, "derived"),
+              ("2026-10-08", "GEODNET", "circulating_supply_onchain", 516.48e6, "derived")])
     bw._market_cap_views(g)
     mc = g[("GEODNET", "market_cap_usd")].set_index("date")["value"]
-    assert mc[pd.Timestamp("2026-10-07")] == _pytest.approx(0.10 * 462e6), "own figure, no burn adjustment"
-    assert mc[pd.Timestamp("2026-10-08")] == _pytest.approx(0.10 * 462e6), "a monthly manual figure holds forward"
+    assert mc[pd.Timestamp("2026-10-07")] == _pytest.approx(0.10 * 516.36e6), "the on-chain set, no burn adjustment"
+    assert mc[pd.Timestamp("2026-10-08")] == _pytest.approx(0.10 * 516.48e6)
     assert mc[pd.Timestamp("2026-10-06")] == _pytest.approx(0.10 * (462_360_759.0 - 30e6)), "CoinGecko, netted"
     # 3. the credibility row: GEODNET's figure against our partial on-chain set (5%)
-    spec = cred.circulating_input("GEODNET")
-    assert spec["ours"]["metric"] == "circulating_supply_third_party"
-    assert spec["ref"]["metric"] == "circulating_supply_onchain" and spec["ref"]["tol"] == 5.0
+    spec = cred.circulating_input("GEODNET")     # the set primary; CoinGecko's figure is the labelled STATIC one
+    assert spec["ours"]["metric"] == "circulating_supply_onchain"
+    assert spec["ref"]["metric"] == "circulating_supply" and "STATIC" in spec["ref"]["source"]
     assert cred.circulating_input("Aerodrome")["ref"]["metric"] == "circulating_supply_onchain"
+    # Uniswap's on-chain count is primary now (the full sweep), so CoinGecko is its cross-check
     assert cred.circulating_input("Uniswap")["ref"] == {**cred.circulating_input("Uniswap")["ref"], "tol": 2.0,
-                                                        "metric": "circulating_supply_onchain"}
-    # 4. the Review Queue: the set reads +11.7% on GEODNET's 462M -> the project figure is flagged, not replaced
+                                                        "metric": "circulating_supply"}
+    # 4. the Review Queue: a figure-in-use-vs-set item exists only while a manual figure is primary (none now)
     gs = config.circulating_onchain("GEODNET")
-    d = pd.Timestamp("2026-10-07")
-    rows = [dict(date=d, project="GEODNET", metric=gs["total"], value=1e9, source="x"),
-            dict(date=d, project="GEODNET", metric="circulating_supply_third_party", value=462e6, source="manual")]
-    rows += [dict(date=d, project="GEODNET", metric=m, value=v, source="x")
-             for m, v in zip(gs["subtract"], [68.5e6, 100e6, 315.5e6, 0, 0, 0][:len(gs["subtract"])])]
-    h = pd.DataFrame(rows)
-    out = FetchOutput()
-    C.check(out, h, [config.PROJECT_BY_NAME["GEODNET"]])
-    fp = [r for r in out.review if r["reason"] == "first_party_vs_onchain_set"]
-    assert len(fp) == 1 and "+11.69%" in fp[0]["basis"] and "stays primary" in fp[0]["basis"]
-    assert "THIRD PARTY" in fp[0]["basis"] and fp[0]["metric"] == "circulating_supply_third_party"
-
+    assert gs["ratios_use"] == "onchain" and gs["static_cross_check"]["figure"] == 462_360_759
+    assert "5y7dguBhb2GKDnJnaAG6WEHV22MLY1s3uq3am2Kdcfe" in gs["solana_holders_checked"]
 
 def test_near_buyback_probe_reads_the_three_balances_paced(monkeypatch, capsys):
     """Jake's runs 2026-10-07: the probe 429'd at the free plan's 6 calls/min (12:06), and its receipts read returned
@@ -26465,7 +26503,7 @@ def test_geod_residual_counts_the_solana_side_once(monkeypatch, capsys):
     import store as store_mod
     spec = config.CIRCULATING_ONCHAIN["GEODNET"]
     assert spec["bridge_custody"]["address"] == "0x2006B44684b2A579466fC04FAbC5A535946bC7AB"
-    assert spec["ratios_use"] == "third_party_reference" and "CLOSED" in spec["staking_contract_search"]
+    assert spec["ratios_use"] == "onchain" and "CLOSED" in spec["staking_contract_search"]
     monkeypatch.setenv("SOLANA_RPC_URL", "https://solana.example/key")
 
     def rpc(url, method, params=None):
@@ -26530,3 +26568,79 @@ def test_near_balance_history_never_asks_nearblocks_for_more_than_365_rows(monke
     assert limits == [365, 365, 365]
     eod = out.frame().query("metric == 'buyback_fund_balance_eod'")
     assert list(eod["value"]) == [3.0, 3.0], "all three wallets read; 10-05 and 10-06 stored"
+
+
+def test_blockworks_filings_probe_reads_the_documented_api_and_prints_the_wallet_rows(tmp_path, monkeypatch, capsys):
+    """Jake's sweep (2026-10-07): each project's latest Blockworks Token Transparency filing from the documented API
+    (api.blockworks.com/v1/ttf/filings?tickers=..&latest=true, then /filings/<id>) — robots first, every answer cached
+    and reused, every row of the labelled-wallets question printed; a ticker with no filing says so."""
+    import check_offline_items as coi
+    from fetch import scrape
+    monkeypatch.setattr(coi, "BLOCKWORKS_CACHE", str(tmp_path))
+    monkeypatch.setattr(scrape, "robots_verdict", lambda url: (True, "robots.txt read"))
+
+    class Resp:
+        def __init__(self, code, body=None):
+            self.status_code, self._b, self.headers = code, body, {"content-type": "application/json"}
+
+        def json(self):
+            return self._b
+    listing = {"data": [{"project_slug": "maple", "filings": [
+        {"filing_id": "maple-2026-h1", "filing_type": "initial", "date_filed": "2026-07-01", "filing_status": "live"}]}]}
+    filing = {"schema": {"sections": [{"name": "Supply", "questions": [
+                  {"id": "q7", "label": "Labelled Unissued & Operational Token Wallets"}, {"id": "q8", "label": "x"}]}]},
+              "questions": {"q7": {"answer": {"rows": [
+                                {"category": "Treasury", "chain": "Ethereum", "address": "0x" + "ab" * 20},
+                                {"category": "Foundation", "address": "0xd6d4Bcde6c816F17889f1Dd3000aF0261B03a196"}]},
+                                   "gap": None},
+                            "q8": {"answer": {"rows": [{"address": "0x" + "cd" * 20}]}}}}
+    calls = []
+
+    def get(url, params=None, headers=None, timeout=None):
+        calls.append((url, dict(params or {})))
+        if url.endswith("/v1/ttf/filings"):
+            return Resp(200, listing if params["tickers"] == "SYRUP" else {"data": []})
+        return Resp(200, filing) if url.endswith("/filings/maple-2026-h1") else Resp(404)
+    monkeypatch.setattr(coi.requests, "get", get)
+    coi.blockworks_filings("Maple")
+    coi.blockworks_filings("Morpho")
+    out = capsys.readouterr().out
+    assert calls[0] == ("https://api.blockworks.com/v1/ttf/filings", {"tickers": "SYRUP", "latest": "true"})
+    assert "Maple [SYRUP]: filing maple-2026-h1 — initial, filed 2026-07-01" in out
+    assert "q7 'Labelled Unissued & Operational Token Wallets': 2 row(s)" in out
+    assert "category=Treasury; chain=Ethereum; address=0x" + "ab" * 20 in out
+    assert "0x" + "cd" * 20 not in out, "only the wallet question's rows"
+    assert "Morpho [MORPHO]: no filing listed" in out
+    assert (tmp_path / "maple-2026-h1.json").exists() and (tmp_path / "list-SYRUP.json").exists()
+    n = len(calls)
+    coi.blockworks_filings("Maple")                                   # a cached answer is reused, not re-asked
+    assert len(calls) == n
+
+
+def test_completion_sweep_closes_three_static_checks_with_free_second_sources():
+    """Jake's sweep, part 2 (2026-10-07): three static CHECK rows whose second source we already read are closed in
+    code — NEAR's buyback balance against NearBlocks' daily close, Sky's 90-day buyback against Block Analitica's
+    cumulative, Morpho's listed-market borrow against DefiLlama's borrowed on the same day."""
+    import credibility as cred
+    near = config.CREDIBILITY["Near"]["a3_buyback_locked"]
+    assert near["metric"] == "buyback_fund_balance_eod" and near["window"] == "now" and "verdict" not in near
+    sky = config.CREDIBILITY["Sky"]["in_buyback"]
+    assert sky["ours"]["py"] == "rise_vs_flow" and sky["ref"]["args"]["stock"] == "sky_cumulative_buyback_ba"
+    assert sky["ref"]["args"]["days"] == sky["ours"]["args"]["days"] == 90
+    mo = config.CREDIBILITY["Morpho"]["in_supply"]
+    assert mo["ours"]["py"] == mo["ref"]["formula"] == "product_on_common_day"
+    assert config.PROJECT_BY_NAME["Morpho"]["lending_supply"]["borrowed_reference_metric"] == "borrowed_usd_llama"
+    assert "borrowed_usd_llama" in config.metrics_for_project(config.PROJECT_BY_NAME["Morpho"])
+    d1, d2 = pd.Timestamp("2026-10-05"), pd.Timestamp("2026-10-06")
+    long = pd.DataFrame([dict(date=d, project="Morpho", metric=m, value=v) for d, m, v in (
+        (d1, "supply_units", 5.0e9), (d1, "utilisation_pct", 0.9), (d1, "borrowed_usd_llama", 4.6e9),
+        (d2, "supply_units", 6.0e9), (d2, "utilisation_pct", 0.88),                 # no DefiLlama point on 10-06
+    )])
+    fn = cred.FORMULAS["product_on_common_day"]
+    asof = pd.Timestamp("2026-10-07")
+    ours = fn("Morpho", {}, long, asof, a="supply_units", b="utilisation_pct", ref="borrowed_usd_llama", side="ours")
+    ref = fn("Morpho", {}, long, asof, a="supply_units", b="utilisation_pct", ref="borrowed_usd_llama", side="ref")
+    assert ours[:2] == (4.5e9, "2026-10-05") and ref[:2] == (4.6e9, "2026-10-05"), "the latest day all three hold"
+    none = fn("Morpho", {}, long[long.metric != "borrowed_usd_llama"], asof, a="supply_units", b="utilisation_pct",
+              ref="borrowed_usd_llama")
+    assert none[0] is None and "borrowed_usd_llama" in none[2]

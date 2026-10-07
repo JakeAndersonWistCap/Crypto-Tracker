@@ -3329,6 +3329,105 @@ def near_buyback_wallets():
     print("  Nothing was stored. PASTE BACK the section.")
 
 
+# ===== BLOCKWORKS TOKEN TRANSPARENCY FILINGS — THE PROJECTS' OWN LABELLED WALLETS (Jake, 2026-10-07 sweep). =====
+# Filings are prepared by the projects and carry a "Labelled Unissued & Operational Token Wallets" question. Blockworks'
+# documented, keyless API: GET https://api.blockworks.com/v1/ttf/filings?tickers=<T>&latest=true lists a project's
+# filings ({data: [{project_slug, filings: [{filing_id, filing_type, date_filed, static_url, filing_status}]}]}), and
+# GET https://api.blockworks.com/v1/ttf/filings/<filing_id> returns {schema: {sections: [{name, questions: [{id,
+# label}]}]}, questions: {qN: {answer: {rows: [...]}, gap, label}}}. The wallet question is found by its label; the row
+# keys are not documented, so every field of every row is printed. An address is wired only from a filing that answered.
+BLOCKWORKS_API = "https://api.blockworks.com/v1/ttf"
+BLOCKWORKS_TICKERS = {
+    "Ethereum": "ETH", "Hyperliquid": "HYPE", "Near": "NEAR", "Aethir": "ATH", "Plume": "PLUME", "GEODNET": "GEOD",
+    "Pendle": "PENDLE", "Aerodrome": "AERO", "Sky": "SKY", "Uniswap": "UNI", "Chainlink": "LINK", "Morpho": "MORPHO",
+    "Maple": "SYRUP", "Ether.fi": "ETHFI", "Fluid": "FLUID",
+}
+BLOCKWORKS_WALLET_QUESTION = "wallet"            # matched case-insensitively against each question's label
+BLOCKWORKS_CACHE = os.path.join(".cache", "blockworks")
+
+
+def _blockworks_get(url: str, params: dict, cache_name: str):
+    """One GET, cached under .cache/blockworks/ (a cached answer is reused, not re-asked). Returns (body, note)."""
+    path = os.path.join(BLOCKWORKS_CACHE, cache_name)
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh), "cached"
+    try:
+        r = requests.get(url, params=params, headers=_ua(), timeout=TIMEOUT)
+    except Exception as e:  # noqa: BLE001
+        return None, f"FAILED — {type(e).__name__}: {str(e)[:120]}"
+    if r.status_code != 200:
+        return None, f"HTTP {r.status_code}"
+    try:
+        body = r.json()
+    except ValueError:
+        return None, f"HTTP 200 but not JSON ({r.headers.get('content-type')})"
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(body, fh, indent=1)
+    return body, "fetched"
+
+
+def _blockworks_wallet_rows(filing: dict) -> list:
+    """(question label, rows) for every question whose label names wallets."""
+    labels = {}
+    for sec in (filing.get("schema") or {}).get("sections") or []:
+        for q in sec.get("questions") or []:
+            labels[q.get("id")] = q.get("label") or ""
+    out = []
+    for qid, q in (filing.get("questions") or {}).items():
+        label = (q or {}).get("label") or labels.get(qid, "")
+        if BLOCKWORKS_WALLET_QUESTION in label.lower():
+            out.append((qid, label, ((q.get("answer") or {}).get("rows")) or [], q.get("gap")))
+    return out
+
+
+def blockworks_filings(only: str | None = None):
+    """Each project's latest Blockworks Token Transparency filing (documented API, robots first, every answer cached
+    for paste-back) and every row of its labelled-wallets question."""
+    from fetch.scrape import robots_verdict                # noqa: PLC0415
+    head("BLOCKWORKS TOKEN TRANSPARENCY — each project's labelled wallets (the projects' own filings)")
+    os.makedirs(BLOCKWORKS_CACHE, exist_ok=True)
+    ok, why = robots_verdict(f"{BLOCKWORKS_API}/filings")
+    if not ok:
+        print(f"  robots.txt DISALLOWS {BLOCKWORKS_API} — {why}; nothing read")
+        return
+    found = {}
+    for proj, ticker in BLOCKWORKS_TICKERS.items():
+        if only and proj.lower() != only.lower():
+            continue
+        listing, note = _blockworks_get(f"{BLOCKWORKS_API}/filings", {"tickers": ticker, "latest": "true"},
+                                        f"list-{ticker}.json")
+        if listing is None:
+            print(f"\n  {proj} [{ticker}]: listing {note}")
+            continue
+        filings = [f for d in listing.get("data") or [] for f in d.get("filings") or []]
+        if not filings:
+            print(f"\n  {proj} [{ticker}]: no filing listed")
+            continue
+        for f in filings:
+            fid = f.get("filing_id")
+            print(f"\n  {proj} [{ticker}]: filing {fid} — {f.get('filing_type')}, filed {f.get('date_filed')}, "
+                  f"status {f.get('filing_status')} ({note})")
+            filing, fnote = _blockworks_get(f"{BLOCKWORKS_API}/filings/{fid}", {}, f"{fid}.json")
+            if filing is None:
+                print(f"    filing body {fnote}")
+                continue
+            qs = _blockworks_wallet_rows(filing)
+            if not qs:
+                print("    no question labelled with 'wallet' — attach the cached JSON")
+            for qid, label, rows, gap in qs:
+                print(f"    {qid} '{label}': {len(rows)} row(s)" + (f"; gap: {str(gap)[:120]}" if gap else ""))
+                for row in rows:
+                    cells = "; ".join(f"{k}={str(v)[:70]}" for k, v in (row.items() if isinstance(row, dict)
+                                                                       else enumerate(row)))
+                    print(f"      {cells[:300]}")
+            found[proj] = (fid, sum(len(r) for _q, _l, r, _g in qs))
+    print(f"\n  {len(found)} filing(s) read: "
+          + (", ".join(f"{p} ({fid}, {n} wallet row(s))" for p, (fid, n) in found.items()) or "none"))
+    print(f"  Raw JSON cached in {BLOCKWORKS_CACHE}/ — attach those files (or paste this section) and the labelled")
+    print("  wallets are wired with the filing as their source. Nothing was stored.")
+
+
 # ===== SKY — BLOCK ANALITICA'S ENDPOINTS: WHAT THEY RETURN (Jake, 2026-10-07). =====
 # The accounting API (sky.data.blockanalitica.com/v1/accounting/...) has no public documentation we could find — no
 # schema, no category names — so nothing is wired from it until its shape is read. The info-sky endpoints below are
@@ -6519,7 +6618,7 @@ CHECKS = (
     wm_cardano_supply, etherscan_ethsupply2, geod_archive_probe, plume_growthepie,
     chainlink_reward_rates, pendle_spendle_fees, archive_probe, coinmetrics_community,
     hl_af_fills_depth, etherfi_safe_owners, etherfi_sethfi_topups, etherfi_topup_safe, etherfi_cex_test, near_protocol_v87, aethir_pin_keys,
-    robots_and_terms, ultrasound_history, hyperliquid_history_routes,
+    robots_and_terms, ultrasound_history, hyperliquid_history_routes, blockworks_filings,
     plume_sources, aethir_dashboard_xhr, maple_ssf_history, blockworks_geodnet,
     morpho_incentives, settlement_sources, hyperevm_etherscan, maple_ssf_inflows, aethir_pages,
     geod_stake_recipient, geod_stake_wallets, maple_ssf_lp_test, maple_drips, plume_archive, settlement_rebuild_coverage,

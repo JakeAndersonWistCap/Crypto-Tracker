@@ -386,6 +386,22 @@ def _common_day_value(p, rows, long, asof, metric="price_usd", ref="price_usd_co
     return (va if side == "ours" else vb), str(d.date()), f"{metric if side == 'ours' else ref} on {d.date()} (00:00 UTC)"
 
 
+def _product_on_common_day(p, rows, long, asof, a="", b="", ref="", side="ours", **_):
+    """a x b against ref, all three on the latest day each holds (the sweep, 2026-10-07: Morpho's blue-api supply x
+    utilisation = its listed-market borrow, against DefiLlama's borrowed on the same day)."""
+    sa, sb, sr = (_series(long, p, m) for m in (a, b, ref))
+    if sa.empty or sb.empty or sr.empty:
+        return None, None, "not stored: " + ", ".join(m for m, x in ((a, sa), (b, sb), (ref, sr)) if x.empty)
+    common = sa.index.intersection(sb.index).intersection(sr.index)
+    common = common[common <= asof]
+    if common.empty:
+        return None, None, f"no day on which {a}, {b} and {ref} are all stored"
+    d = common.max()
+    if side == "ours":
+        return float(sa.loc[d] * sb.loc[d]), str(d.date()), f"{a} x {b} on {d.date()}"
+    return float(sr.loc[d]), str(d.date()), f"{ref} on {d.date()}"
+
+
 def _sums_on_common_day(p, rows, long, asof, a=(), b=(), side="ours", **_):
     """Two SUMS OF STOCKS on the latest day every one of their series holds (overnight 2026-10-06, B6: the dashboard's
     aiStaked + gamingStaked vs the two pools' on-chain balances, read on the same day)."""
@@ -587,7 +603,8 @@ FORMULAS = {"sum_months": _sum_months, "free_float_now": _free_float_now, "windo
             "common_day_value": _common_day_value, "months_match": _months_match,
             "hl_reward_active": _hl_reward_active, "base_reward_ceiling": _base_reward_ceiling,
             "rate_on_stake": _rate_on_stake, "trailing_token_yield": _trailing_token_yield,
-            "sum_since": _sum_since, "schedule_month": _schedule_month, "rise_vs_flow": _rise_vs_flow}
+            "sum_since": _sum_since, "schedule_month": _schedule_month, "rise_vs_flow": _rise_vs_flow,
+            "product_on_common_day": _product_on_common_day}
 
 
 def reference(project: str, spec: dict, rows: dict, long, asof) -> dict:
@@ -855,6 +872,16 @@ def circulating_input(name: str) -> dict:
     partial_note = ("Partial set — it reads HIGH wherever non-circulating wallets are not yet identified, so a CHECK "
                     "questions either the figure in use or our exclusion list; the Config & Sources circulating notes "
                     "say which wallets are named." if st == "partial" else "")
+    if config.coingecko_counts_total(name) and ours_m == "circulating_supply_onchain":
+        # our set is primary (Sky since the full sweep, 2026-10-07) and CoinGecko counts every token: the like-for-like
+        # comparison is our on-chain TOTAL against CoinGecko; ours is stricter by exactly the subtracted balances
+        return {"what": f"Circulating as CoinGecko counts it = OUR TOTAL ({spec['total']}); ours ({ours_m}) is stricter "
+                        f"by {' + '.join(spec.get('subtract') or ())}",
+                "ours": {"metric": spec["total"], "window": "now"}, "fmt": '#,##0;(#,##0);-',
+                "ref": {"metric": "circulating_supply", "window": "now", "tol": 2.0,
+                        "source": "CoinGecko circulating_supply — it counts (almost) every token, so it is compared "
+                                  "with our on-chain total, not with our stricter circulating",
+                        "note": spec.get("project_definition") or spec.get("decision", "")}}
     if config.coingecko_counts_total(name) and ours_m == "circulating_supply":
         # CoinGecko counts every token (Sky): its like-for-like on-chain figure is our TOTAL
         return {"what": f"Circulating as the ratios use it = CoinGecko's, which counts every token: set against OUR "
@@ -890,8 +917,11 @@ def circulating_input(name: str) -> dict:
                                                               pol.get("add_back") and f"Staked add-back: "
                                                               f"{pol['add_back']}.", partial_note) if x)}}
     if ours_m != "circulating_supply":           # first-party / on-chain chosen, no other set: CoinGecko
+        static = spec.get("static_cross_check")
         return {**base, "ref": {"metric": "circulating_supply", "window": "now", "tol": 2.0,
-                                "source": "CoinGecko circulating_supply (an aggregator's own count)"}}
+                                "source": "CoinGecko circulating_supply (an aggregator's own count)"
+                                          + (f" — a STATIC figure ({static['who']}: {static['figure']:,}); "
+                                             f"{static['why_static']}" if static else "")}}
     return {**base, "ref": {"verdict": "CHECK",
                             "why": "CoinGecko is the only circulating figure we read and no on-chain set is established.",
                             "resolve": "read the project's own circulating figure (tokenomics / transparency page) "

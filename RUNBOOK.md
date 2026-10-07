@@ -527,6 +527,59 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11an. The full sweep — first-party wallet lists, on-chain circulating, open rows — 2026-10-07 (evening)
+
+**Convention (Jake):** circulating = total supply minus treasury, team/investor unvested, foundation, operating
+reserves and burned tokens. Staked tokens stay IN (they come out only for free float). **Hierarchy:**
+1. The on-chain count, using wallets the PROJECT documents (docs, its Blockworks filing, repo, supply API).
+2. The project's own published figure, as a cross-check (primary only where it documents no wallets).
+3. CoinGecko, as a last resort.
+
+**On-chain is now primary for:** Uniswap, Sky, Ether.fi, GEODNET, Pendle and Aerodrome.
+- **Uniswap** also subtracts the wallets in its docs ("Miscellaneous Addresses"): four treasury vesting contracts and
+  the airdrop merkle distributor.
+- **Sky:** its own definition counts the Pause Proxy treasury as circulating. We record that in `project_definition`
+  but don't follow it.
+- **Ether.fi:** the wallets labelled in its Blockworks filing.
+
+**CoinGecko stays primary, with the reason in each spec's `decision`:**
+- **Chainlink:** our set is now the 27 wallets of its 2022 post. Its current list can't be read from here.
+- **Fluid:** the dedicated wallet for IGP-137's 5M FLUID is unpublished.
+- **Morpho:** the vesting contracts aren't found.
+- **Maple:** no address is found for the Syrup Strategic Fund.
+
+New wallets live in `config._NONCIRC_WALLETS_FIRST_PARTY`, one row per wallet: key, address, chain, symbol, source
+URL, date read and role. Never wired:
+- Aerodrome's `team` role address (no document says it holds tokens).
+- Fluid's delegateCall-only distributor 0x9d694b7f….
+- 0x9Afb8C17…, listed under ReserveContract.
+
+**Headline moves:** Jake runs these against metrics.db:
+
+    python headline_diff.py --only onchain_sweep               # Uniswap / Sky / Ether.fi: CoinGecko -> on-chain
+    python headline_diff.py --only geodnet_onchain             # GEODNET: Blockworks' static 462M -> on-chain
+    python headline_diff.py --only chainlink_onchain_preview   # a PREVIEW (read the sign reversed)
+
+**Blockworks filings probe:** `python check_offline_items.py blockworks_filings`. It reads Blockworks' documented API:
+- List a project's latest filings: `api.blockworks.com/v1/ttf/filings?tickers=<T>&latest=true`.
+- Fetch one filing: `/v1/ttf/filings/<id>`.
+
+It prints every row of each filing's wallet question and caches the JSON under `.cache/blockworks/` (a cached answer
+is reused). Nothing is stored. Attach the cache or paste the section, and the rows are wired with the filing as their
+source.
+
+**Completion sweep (part 2):**
+- Before: 26 static CHECK and 14 UNVERIFIABLE rows. 14 of the CHECKs already had Jake's readings on file, which
+  decide them at build time.
+- Closed in code (a free second source we already read):
+  - **NEAR `a3_buyback_locked`:** the RPC balance against NearBlocks' daily close of the same three wallets.
+  - **Sky `in_buyback`:** 90 days against the rise in Block Analitica's cumulative SKY bought.
+  - **Morpho `in_supply`:** blue-api's listed-market borrow (utilisation x supply) against DefiLlama's borrowed,
+    stored as `borrowed_usd_llama`. That route only adds a reference metric, so blue-api still owns supply and
+    utilisation.
+- What remains, and why, is in the sweep report. In short: DefiLlama-only TVL/DEX and settlement rows need a paid
+  source; several rows need a project to publish a figure, or Jake's reading.
+
 ## 11am. NEAR buyback by balance, Sky NPS confirmed, GEODNET's Solana side — 2026-10-07 (late)
 
 **NEAR.** The buyback is the day's change in the THREE revenue wallets' combined liquid close. Internal moves cancel,

@@ -111,6 +111,8 @@ TIER1_SOURCE = {
     "protocol_tvl_usd": ("DefiLlama", "defillama_protocol"),
     "tvl_usd": ("DefiLlama", "defillama_chain"), "stablecoin_supply_usd": ("DefiLlama", "defillama_chain"),
     "rwa_defillama_usd": ("DefiLlama", "defillama_chain"),
+    # the sweep (2026-10-07): DefiLlama's borrowed side, stored as Morpho's in_supply reference
+    "borrowed_usd_llama": ("DefiLlama", "defillama_protocol"),
 }
 
 # Contract kinds in config that can serve a tier 2 metric. A metric NOT listed here is not

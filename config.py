@@ -944,6 +944,7 @@ METRICS = {
     # for this metric", sending a reader to build a scraper for a figure a tier-1 API already
     # serves. Declaring tier 1 makes the reason text name the route that actually exists.
     "supply_units":               {"label": "Supply units (nodes/hotspots/GPUs)", "kind": "stock", "unit": "units", "archetypes": [2],        "tiers": [1, 5, 3], "sanity_min": 0,    "sanity_max": 1e8},
+    "borrowed_usd_llama":         {"label": "Borrowed $ as DefiLlama counts it (/protocol chainTvls.borrowed; Morpho: every market with priced collateral, all chains) — reference for blue-api's listed-market borrow", "kind": "stock", "unit": "usd", "archetypes": [2], "tiers": [1], "sanity_min": 0, "sanity_max": 1e12, "only_projects": ("Morpho",)},
     "utilisation_pct":            {"label": "Capacity utilisation",            "kind": "stock", "unit": "pct",    "archetypes": [2],          "tiers": [1, 5, 3], "sanity_min": 0,    "sanity_max": 1.0},
     "customer_revenue_usd":       {"label": "End-user revenue",                "kind": "flow",  "unit": "usd",    "archetypes": [2],          "tiers": [5, 3, 1], "sanity_min": 0,  "sanity_max": 1e11},
     "publisher_conviction_usd":   {"label": "Publisher Conviction (pre-purchased demand)", "kind": "stock", "unit": "usd", "archetypes": [2], "tiers": [5, 3], "sanity_min": 0,   "sanity_max": 1e10, "only_projects": ["OriginTrail"]},
@@ -10138,6 +10139,8 @@ PROJECTS = [
         },
         "lending_supply": {
             "borrowed_key": "borrowed",
+            # the sweep (2026-10-07): stored beside blue-api as the in_supply cross-check (fetch/llama.py)
+            "borrowed_reference_metric": "borrowed_usd_llama",
             "supply_units_formula": "tvl + borrowed",
             "utilisation_formula": "borrowed / (tvl + borrowed)",
             "bias": "UNDERSTATES utilisation. The denominator includes borrower collateral, "
@@ -16577,8 +16580,13 @@ PROJECTS = [
                     "0x83971edb4f24df6cf97b1b17d0e692bf11c63dcd":
                         "EOA relaying a Binance withdrawal (5,000,000 ETHFI from Binance 14 on 2026-08-12) — not an "
                         "on-chain purchase; 'bought on a CEX (inferred)' only if etherfi_cex_test finds the payment",
-                    "0x5ec5e6b4eb6827914ca8bc3ae02c39417242adde": "July 2026 sender (2.79M) — unidentified; transfer",
-                    "0x66fcfc15a40f22fad40fd6b6b9741eef4de85721": "July 2026 sender (2.72M) — unidentified; transfer",
+                    # IDENTIFIED (ether.fi's Blockworks filing, Jake 2026-10-07): the July top-up Safe inflows were
+                    # STAKER REWARDS FUNDED FROM TREASURY AND CUSTODIAN ALLOCATIONS — transfers, never buybacks.
+                    "0x5ec5e6b4eb6827914ca8bc3ae02c39417242adde": "ether.fi TREASURY (Blockworks filing) — July 2026 "
+                                                                  "2.79M: treasury-funded staker rewards, a transfer",
+                    "0x66fcfc15a40f22fad40fd6b6b9741eef4de85721": "investor / core-contributor CUSTODIAN origin (Blockworks "
+                                                                  "filing) — July 2026 2.72M: custodian-funded staker "
+                                                                  "rewards, a transfer",
                     "0xe4439b1d150ab2febd72d699954c7b4dde2b66e2": "July 2026 sender (2.14M) — unidentified; transfer",
                 },
                 "sender_labels": {
@@ -16632,6 +16640,8 @@ PROJECTS = [
                     "0x01e42ad3acd58584ffc1d1982ecbbe758996d601": "ether.fi-controlled Safe (same five owners as the "
                                                                   "buyback Safe)",
                     "0x0c83eae1fe72c390a02e426572854931eeff93ba": "protocol treasury (DefiLlama adapter)",
+                    "0x5ec5e6b4eb6827914ca8bc3ae02c39417242adde": "ether.fi Treasury (Blockworks filing)",
+                    "0x66fcfc15a40f22fad40fd6b6b9741eef4de85721": "investor / core-contributor custodian (Blockworks filing)",
                     "0x9008d19f58aabd9ed0d60971565aa8510560ab41": "CoW Protocol GPv2Settlement",
                     "0x3fb6784e263643656f386a0371644931133d7b78": "ether.fi top-up Safe (2-of-5; 4 of 5 owners shared "
                                                                   "with the buyback Safe)",
@@ -17244,6 +17254,99 @@ for _name, _rows in _NONCIRC_WALLETS.items():
         PROJECT_BY_NAME[_name]["contracts"][f"noncirc_{_key}"] = _contract(
             _addr, _chain, "treasury_holding", _sym, _url, verified="2026-10-06", purpose=_why,
             provenance="read 2026-10-06 (credibility burn-down circulating research)", holder_has_code=False,
+            metric_override=_NC)
+
+# ===== THE FULL SWEEP (Jake, 2026-10-07): WALLETS THE PROJECTS THEMSELVES DOCUMENT. =====
+# Circulating = total - treasury - team/investor unvested - foundation - operating reserves - burned; staked tokens
+# stay IN (out only for free float). Rows: (key, address, chain, symbol, source URL, date read, role). A wallet is here
+# only with its first-party source (a project's Blockworks Token Transparency filing, docs, repo or supply API).
+_ETHERFI_FILING = "https://blockworks.com/token-transparency/filing/ether-fi"
+_NONCIRC_WALLETS_FIRST_PARTY = {
+    # ether.fi's Blockworks Token Transparency filing, "Labelled Unissued & Operational Token Wallets" — the
+    # addresses as Jake read them from the filing on 2026-10-07.
+    "Ether.fi": [
+        ("custodian_origin_1", "0x66FCfC15a40F22Fad40fd6b6B9741EEf4De85721", "ethereum", "ETHFI", _ETHERFI_FILING,
+         "2026-10-07", "investor / core-contributor custodian origin (unvested allocations; filing)"),
+        ("custodian_origin_2", "0x1b577834c6C64B38Bcf1eB2319fBAb6f6E3915c1", "ethereum", "ETHFI", _ETHERFI_FILING,
+         "2026-10-07", "investor / core-contributor custodian origin (unvested allocations; filing)"),
+        ("treasury_1", "0x7A6A41F353B3002751d94118aA7f4935dA39bB53", "ethereum", "ETHFI", _ETHERFI_FILING,
+         "2026-10-07", "Treasury (filing) — was the SECONDARY 'Foundation Multisig' candidate, now first-party"),
+        ("treasury_2", "0x7D4bBE471369a066186c18bAF33622796A08d5Cd", "ethereum", "ETHFI", _ETHERFI_FILING,
+         "2026-10-07", "Treasury (filing)"),
+        ("treasury_3", "0x5EC5e6b4eb6827914CA8BC3AE02C39417242ADDE", "ethereum", "ETHFI", _ETHERFI_FILING,
+         "2026-10-07", "Treasury (filing) — a July 2026 sender into the top-up Safe"),
+        ("operating_topup_safe", "0x3FB6784E263643656f386A0371644931133D7b78", "ethereum", "ETHFI", _ETHERFI_FILING,
+         "2026-10-07", "Operating (filing) — the top-up Safe that funds sETHFI rewards; its ETHFI is reserve until "
+                       "paid into the vault"),
+        ("buyback_safe_old", "0x2f5301a3D59388c509C65f8698f521377D41Fd0F", "ethereum", "ETHFI",
+         "https://raw.githubusercontent.com/etherfi-protocol/smart-contracts/master/script/deploys/Deployed.s.sol",
+         "2026-10-07", "OLD-programme buyback Safe (WITHDRAW_REQUEST_NFT_BUYBACK_SAFE) — bought ETHFI held by the "
+                       "protocol is out of circulation"),
+    ],
+}
+_MORPHO_ORG = "https://docs.morpho.org/governance/organization/"
+_NONCIRC_WALLETS_FIRST_PARTY["Morpho"] = [
+    # docs.morpho.org governance / organization, as Jake gave them on 2026-10-07.
+    ("dao_treasury", "0xcBa28b38103307Ec8dA98377ffF9816C164f9AFa", "ethereum", "MORPHO", _MORPHO_ORG, "2026-10-07",
+     "Morpho DAO treasury — morpho.eth, 5/9 multisig (docs.morpho.org governance/organization)"),
+    ("rewards_multisig", "0xF057afeEc22E220f47AD4220871364e9E828b2e9", "ethereum", "MORPHO", _MORPHO_ORG, "2026-10-07",
+     "MORPHO Rewards Multisig — rewards not yet distributed (an operating reserve)"),
+]
+# Uniswap's own docs (Uniswap/docs @1c7597d7, content/ecosystem/governance/technical-reference.mdx L39-40,
+# "Miscellaneous Addresses"): the four year-long treasury vesting contracts (UNI vesting INTO the protocol treasury,
+# Sep 2020 - Sep 2025 — treasury-bound UNI, not holders') and the UNI merkle distributor (the airdrop's unclaimed UNI,
+# in nobody's hands — the same treatment as Aerodrome's airdrop distributor above).
+_UNI_DOCS = ("https://github.com/Uniswap/docs/blob/1c7597d73be0e9a3a4e44aa75b8fb212b40ea136/content/ecosystem/"
+             "governance/technical-reference.mdx")
+_NONCIRC_WALLETS_FIRST_PARTY["Uniswap"] = [
+    *[(f"treasury_vesting_{i}", a, "ethereum", "UNI", _UNI_DOCS, "2026-10-07",
+       "four-year treasury vesting contract (Uniswap docs: vests UNI to the protocol treasury, Sep 2020 - Sep 2025)")
+      for i, a in enumerate(("0x4750c43867EF5F89869132ecCF19B9b6C4286E1a", "0xe3953D9d317B834592aB58AB2c7A6aD22b54075D",
+                             "0x4b4e140D1f131fdaD6fb59C13AF796fD194e4135", "0x3D30B1aB88D487B0F3061F40De76845Bec3F1e94"),
+                            start=1)],
+    ("merkle_distributor", "0x090D4613473dEE047c3f2706764f49E0821D256e", "ethereum", "UNI", _UNI_DOCS, "2026-10-07",
+     "UNI merkle distributor (Uniswap docs: 'Managed UNI airdrop') — unclaimed airdrop UNI"),
+]
+# Fluid's own governance constants (Instadapp/fluid-governance @8891f73d, contracts/payloads/common/constants.sol
+# L60-71, L212-213) and its MerkleDistributors (Instadapp/fluid-contracts-public @9496626, deployments/deployments.md,
+# rewardToken = FLUID 0x6f40…). The FLUID still in a distributor is unclaimed reward. NOT wired: 0x9d694b7f… (its
+# deployment row reads "NONE - Used for delegateCall onBehalfOf" — not a reward pool) and 0x9Afb8C17… (listed under
+# ReserveContract, not a FLUID holding).
+_FLUID_GOV = ("https://github.com/Instadapp/fluid-governance/blob/8891f73d17887e272a5317065961269aee94f7cd/contracts/"
+              "payloads/common/constants.sol")
+_FLUID_DEPLOY = "https://github.com/Instadapp/fluid-contracts-public/blob/9496626/deployments/deployments.md"
+_NONCIRC_WALLETS_FIRST_PARTY["Fluid"] = [
+    ("governance_timelock", "0x2386DC45AdDed673317eF068992F19421B481F4c", "ethereum", "FLUID", _FLUID_GOV, "2026-10-07",
+     "Fluid governance TIMELOCK (constants.sol L60-61) — DAO-controlled"),
+    ("team_multisig_2", "0x1e2e1aeD876f67Fe4Fd54090FD7B8F57Ce234219", "ethereum", "FLUID", _FLUID_GOV, "2026-10-07",
+     "TEAM_MULTISIG_2 (constants.sol L70-71)"),
+    ("foundation", "0xde0377eF25aD02dBcFbc87D632E46bf1972A0Dc3", "ethereum", "FLUID", _FLUID_GOV, "2026-10-07",
+     "FLUID_FOUNDATION (constants.sol L212-213)"),
+    *[(f"merkle_distributor_{k}", a, "ethereum", "FLUID", _FLUID_DEPLOY, "2026-10-07",
+       f"FLUID MerkleDistributor '{label}' (deployments.md) — unclaimed rewards")
+      for k, a, label in (("rewards_dec2024", "0x7060FE0Dd3E31be01EFAc6B28C8D38018fD163B0", "Fluid Rewards - Dec 2024"),
+                          ("cbbtc_wbtc", "0xbAbB3f87424d900aBd83C807C1E01a22a54E726F", "cbBTC-wBTC, Dec 2024"),
+                          ("deusd_usdc", "0xB48BbE313eDB7fAAa28C03684D48F58dD7dEA239", "deUSD-USDC, Jan 2025"),
+                          ("gho_vaults", "0xD833484b198D3d05707832cc1C2D62b520D95B8A", "GHO Vaults, Apr 2025"),
+                          ("eth_usdc_lp", "0x252452ccf245a59A6d1Afab11cF16750029b4620", "ETH-USDC LP, Jul 2025"))],
+]
+# Chainlink's own post (blog.chain.link/sustainably-growing-chainlink, 2022; read via the mirror
+# apachecn/chainlink-blog-zh @a6efb6ef): it lists 27 non-circulating wallets. 24 are wired above from Etherscan's labels;
+# these are the other three, now read. Chainlink's CURRENT list (chain.link/circulating-supply) stays unreadable here.
+_LINK_BLOG = "https://blog.chain.link/sustainably-growing-chainlink/"
+_NONCIRC_WALLETS_FIRST_PARTY["Chainlink"] = [
+    ("blog_2022_7m_a", "0xb9b012cad0A7C1b10CbE33a1B3F623b06fAD1c7C", "ethereum", "LINK", _LINK_BLOG, "2026-10-07",
+     "non-circulating wallet listed in Chainlink's 2022 post (7,000,000 LINK then)"),
+    ("blog_2022_7m_b", "0xa71bbBd288a4e288CfDC08bb2E70DCd74Da4486D", "ethereum", "LINK", _LINK_BLOG, "2026-10-07",
+     "non-circulating wallet listed in Chainlink's 2022 post (7,000,000 LINK then)"),
+    ("blog_2022_400k", "0x37398A324d35c942574650B9eD2987BC640BAD76", "ethereum", "LINK", _LINK_BLOG, "2026-10-07",
+     "non-circulating wallet listed in Chainlink's 2022 post (400,000 LINK then)"),
+]
+for _name, _rows in _NONCIRC_WALLETS_FIRST_PARTY.items():
+    for _key, _addr, _chain, _sym, _url, _date, _why in _rows:
+        PROJECT_BY_NAME[_name]["contracts"][f"noncirc_{_key}"] = _contract(
+            _addr, _chain, "treasury_holding", _sym, _url, verified=_date, purpose=_why,
+            provenance=f"first-party wallet list (full sweep, Jake 2026-10-07): {_url}", holder_has_code=False,
             metric_override=_NC)
 
 
@@ -20449,8 +20552,12 @@ CIRCULATING_ONCHAIN = {
     # "free_float" says CoinGecko's circulating ALREADY excludes staked/locked tokens (so it is compared with
     # OUR free float, never with our circulating). Decided by Claude Code 2026-10-06, pending Jake's review.
     "Uniswap": {"status": "established", "total": "total_supply_gross",
-                "subtract": ("burn_address_balance", "treasury_holding_tokens"),
-                "ratios_use": "coingecko",          # POLICY 2026-10-07: Uniswap publishes no figure (CIRCULATING_POLICY)
+                "subtract": ("burn_address_balance", "treasury_holding_tokens", "noncirculating_holding_tokens"),
+                # THE FULL SWEEP (Jake, 2026-10-07): an on-chain count from wallets the project documents is PRIMARY
+                # (the Timelock and the dead address; vesting ended Sep 2024) plus the wallets in Uniswap's own docs
+                # (technical-reference.mdx "Miscellaneous Addresses": the four treasury vesting contracts and the
+                # merkle distributor's unclaimed airdrop — _NONCIRC_WALLETS_FIRST_PARTY). Was "coingecko" (policy round).
+                "ratios_use": "onchain", "was_ratios_use": "coingecko",
                 "method": "total − 0x…dEaD − the governance Timelock 0x1a9C…: CoinGecko's own method (its "
                           "supply-breakdown docs name the 'UNI Timelock' as the non-circulating wallet), and it "
                           "reproduces CoinGecko's 623.2M of 890.5M (2026-09-02)",
@@ -20461,7 +20568,13 @@ CIRCULATING_ONCHAIN = {
                 "decided_by": "Claude Code 2026-10-06, pending Jake's review"},
     "Sky": {"status": "established", "total": "total_supply",
             "subtract": ("treasury_holding_tokens", "noncirculating_holding_tokens"),
-            "ratios_use": "coingecko",              # POLICY 2026-10-07: Sky publishes no figure (CIRCULATING_POLICY)
+            # THE FULL SWEEP (Jake, 2026-10-07): on-chain from Sky's own addresses (spells-mainnet chainlog: the Pause
+            # Proxy treasury, the MKR_SKY converters' reserve; burns are out of totalSupply) is PRIMARY. Sky's OWN
+            # definition ("the entire supply is now circulating") INCLUDES the treasury, which our convention
+            # excludes — recorded, not followed. Was "coingecko" (policy round, earlier the same day).
+            "ratios_use": "onchain", "was_ratios_use": "coingecko",
+            "project_definition": "Sky: the entire supply is circulating — includes the Pause Proxy treasury, which "
+                                  "our convention (Jake, 2026-10-07) excludes",
             # A3 (overnight 2026-10-06): ours 21.37bn vs CoinGecko 23.43bn — the 2.06bn is OUR exclusions (Pause Proxy
             # + the MKR_SKY converter reserves); aggregators count ~every SKY (CMC 23.42B of 23.46B). The check is
             # therefore like-for-like: CoinGecko vs our TOTAL; ours is recorded as the stricter definition.
@@ -20501,20 +20614,32 @@ CIRCULATING_ONCHAIN = {
                "decided_by": "Claude Code 2026-10-06, pending Jake's review"},
     "Fluid": {"status": "partial", "total": "total_supply",
               "subtract": ("treasury_holding_tokens", "noncirculating_holding_tokens"),
-              "method": "100M − DAO Treasury 0x2884… − Team Multisig 0x4F6F… (fluid-governance@8891f73d)",
-              "decision": "COINGECKO — the on-chain set is near-complete (vesting ended 2025) but the IGP-137 "
-                          "5M moves on from the Team Multisig to an unpublished 'dedicated wallet', and FLUID in "
-                          "the Merkle reward distributors is not classified; CoinGecko's ~79M stays primary",
-              "missing": "the IGP-137 dedicated custody wallet (address not published); FLUID held by the "
-                         "Merkle reward distributors",
+              "method": "100M − DAO Treasury 0x2884… − Team Multisig 0x4F6F… − (the full sweep, 2026-10-07) the "
+                        "governance Timelock, TEAM_MULTISIG_2, FLUID_FOUNDATION (fluid-governance@8891f73d "
+                        "constants.sol) − the five mainnet FLUID MerkleDistributors' unclaimed rewards "
+                        "(fluid-contracts-public deployments.md)",
+              "decision": "COINGECKO — the on-chain set is Fluid's own documented wallets (the full sweep added the "
+                          "Timelock, team multisig 2, the Foundation and the reward distributors) but the IGP-137 "
+                          "5M moves on from the Team Multisig to an unpublished 'dedicated wallet': once moved it "
+                          "would read as circulating here, so CoinGecko's ~79M stays primary until that address is "
+                          "known (the same rule as Morpho's vesting)",
+              "missing": "the IGP-137 dedicated custody wallet (address not published); the L2 MerkleDistributors "
+                         "(they pay bridged FLUID) are not in the set",
               "decided_by": "Claude Code 2026-10-06, pending Jake's review"},
-    "Ether.fi": {"status": "partial", "total": "total_supply", "subtract": ("treasury_holding_tokens",),
-                 "decision": "COINGECKO — ether.fi publishes no circulating method; investor/contributor vesting "
-                             "runs to 2027-02-18 and its contracts are not identified; the 'Foundation Multisig' "
-                             "0x7A6A41F3… is SECONDARY (a search snippet) and is not wired. sETHFI counts as "
-                             "circulating (a holder-owned vault)",
-                 "missing": "vesting contract addresses (to 2027-02-18); a primary source for the Foundation "
-                            "multisig 0x7A6A41F353B3002751d94118aA7f4935dA39bB53",
+    # THE FULL SWEEP (Jake, 2026-10-07): ether.fi's own Blockworks Token Transparency filing labels its unissued and
+    # operational wallets (custodian origins, three treasuries, the operating top-up Safe) — _NONCIRC_WALLETS_FIRST_PARTY.
+    # With them the set is the project's own list, so the on-chain count is PRIMARY; CoinGecko the cross-check.
+    "Ether.fi": {"status": "established", "total": "total_supply",
+                 "subtract": ("treasury_holding_tokens", "noncirculating_holding_tokens"),
+                 "ratios_use": "onchain",
+                 "first_party_list": "https://blockworks.com/token-transparency/filing/ether-fi (Jake, 2026-10-07)",
+                 "was": {"status": "partial", "subtract": ("treasury_holding_tokens",), "ratios_use": None},
+                 "decision": "ON-CHAIN (Jake's sweep, 2026-10-07): total - the treasury 0x0c83… - ether.fi's own filing "
+                             "wallets (two investor/core-contributor custodian origins, three treasuries, the operating "
+                             "top-up Safe) - the old buyback Safe. sETHFI counts as circulating (a holder-owned vault); "
+                             "it comes out only for free float. Was COINGECKO (2026-10-06: no wallet list then)",
+                 "missing": "any wallet the filing adds beyond the six Jake read (blockworks_filings prints the full "
+                            "list)",
                  "decided_by": "Claude Code 2026-10-06, pending Jake's review"},
     "Maple": {"status": "partial", "total": "total_supply",
               "subtract": ("treasury_holding_tokens_chain", "noncirculating_holding_tokens"),
@@ -20529,22 +20654,42 @@ CIRCULATING_ONCHAIN = {
     "Chainlink": {"status": "partial", "total": "total_supply",
                   "subtract": ("buyback_fund_balance", "noncirculating_holding_tokens"),
                   "method": "1B − the LINK Reserve − the 24 Etherscan-labelled 'Chainlink: Noncirculating "
-                            "Supply' wallets",
+                            "Supply' wallets − the other three wallets in Chainlink's 2022 post (27 in all; the full "
+                            "sweep, 2026-10-07)",
                   "decision": "COINGECKO — CoinGecko's ~748M is Chainlink's own figure (DefiLlama: non-circulating "
                               "addresses 'sourced from Chainlink's official supply API'; chain.link/economics "
                               "'748M+'). The on-chain set is its cross-check; whether Chainlink's API also "
                               "excludes the Reserve is not established. Staked LINK counts as circulating",
-                  "missing": "Chainlink's own API address list (chain.link/circulating-supply is unreadable from "
-                             "here) — the 24 labels may not be all of it",
+                  "missing": "Chainlink's CURRENT API address list (chain.link/circulating-supply is unreadable from "
+                             "here): the set is the 27 of its 2022 post, and the legacy Node Operator / Team wallets "
+                             "the page names may add to it. headline_diff.py chainlink_onchain_preview shows what an "
+                             "on-chain primary would move",
                   "decided_by": "Claude Code 2026-10-06, pending Jake's review"},
-    "GEODNET": {"status": "partial", "total": "total_supply_gross",
+    # ON-CHAIN PRIMARY (Jake, 2026-10-07 evening, geod_residual via Alchemy Solana + Solscan): the Solana side is
+    # resolved. The bridge reconciles — Polygon NTT custody 0x2006B446… 274,775,755 vs Solana supply 274,763,344
+    # (+12,411, 0.005%), the Solana incinerator 29,947,004 already excluded — so the Polygon-side set (total - burns
+    # - the wallets GEODNET's docs name) counts the bridged GEOD once, as Solana circulating: 516,361,733. The largest
+    # Solana holders are NOT GEODNET's (SOLANA_HOLDERS_CHECKED below): no Solana exclusion. The 462M (Blockworks =
+    # CoinGecko = Kraken 462,360,759) is a STATIC third-party figure — the ~54.4M gap is ~446 days of mining releases
+    # at ~122K/day, frozen since ~mid-2025 — kept as a labelled cross-check. GEODNET publishes no figure of its own.
+    "GEODNET": {"status": "established", "total": "total_supply_gross",
                 "subtract": ("burn_address_balance", "treasury_holding_tokens"),
-                # 2026-10-07 (afternoon): the 462M is BLOCKWORKS' figure (app.blockworks.com/projects/geodnet), a third
-                # party, equal to CoinGecko's fixed 462,360,759 and static while mining releases ~122K GEOD/day — GEODNET
-                # publishes no circulating figure of its own. It stays in use, LABELLED as a third party's, until the
-                # Solana side is resolved; then our on-chain set (wallets GEODNET's docs name) becomes primary and the
-                # 462M a static cross-check (Jake). The set (~516M) is the cross-check meanwhile.
-                "ratios_use": "third_party_reference", "metric": "circulating_supply_third_party",
+                "ratios_use": "onchain", "metric": "circulating_supply_third_party",
+                "was": {"ratios_use": "third_party_reference", "status": "partial"},
+                "onchain_2026_10_07": {"circulating": 516_361_733, "custody": 274_775_755,
+                                       "solana_supply": 274_763_344, "solana_incinerator": 29_947_004,
+                                       "read_by": "Jake, 2026-10-07 (geod_residual; Alchemy Solana; Solscan)"},
+                "static_cross_check": {"figure": 462_360_759, "who": "Blockworks = CoinGecko = Kraken",
+                                       "why_static": "~54.4M below the set = ~446 days x ~122K GEOD/day of mining "
+                                                     "release: frozen since ~mid-2025"},
+                "solana_holders_checked": {
+                    "BM7Ydwau6f8yKfxsXDK3STUeLcGm6rfrE3sgJaPKAdr8": "33.79M — diversified holder (37 tokens + 28,989 "
+                                                                    "SOL; funded by Binance 2): CIRCULATING",
+                    "H5biaZ2G1xU6hBHVbgzaqN3KuRvdwXmWxhxh5YN8QPuZ": "21.29M — diversified holder (26 tokens): "
+                                                                    "CIRCULATING",
+                    "5y7dguBhb2GKDnJnaAG6WEHV22MLY1s3uq3am2Kdcfe": "8,333,334 — GEOD only, funded by Coinbase Prime: an "
+                                                                   "investor's custody wallet, CIRCULATING",
+                    "read_by": "Jake, 2026-10-07 (Solscan)"},
                 # THE BRIDGE (research 2026-10-07): Wormhole NTT, Polygon = the LOCKING hub. The Polygon NttManager
                 # 0x2006B44684b2A579466fC04FAbC5A535946bC7AB holds the GEOD that backs Solana GEOD (GEODNET's docs,
                 # "Crosschain between Polygon and Solana": the bridge spender "for V1" — read via search snippet;
@@ -20572,13 +20717,14 @@ CIRCULATING_ONCHAIN = {
                 # NO POLYGON STAKING CONTRACT (Jake, 2026-10-07): SuperHex stakes are not held in one Polygon contract —
                 # the hunt is closed; locked_tokens stays the staking-wallet read (contracts.staking_wallet_polygon).
                 "staking_contract_search": "CLOSED 2026-10-07 — no Polygon staking contract holds SuperHex stakes",
-                "decision": "WAS (to 2026-10-07): COINGECKO until the next run's figure is in — since Jake confirmed GEODNET's tokenomics "
+                "decision": "ON-CHAIN since 2026-10-07 evening (Solana side resolved, see above). WAS (to 2026-10-07): COINGECKO until the next run's figure is in — since Jake confirmed GEODNET's tokenomics "
                             "page (2026-10-07) the Team, Investor, Vendor/Marketing and Public sale wallets are "
                             "subtracted too (NONCIRCULATING_CANDIDATES, confirm_candidates). Jake's probe put ours "
                             "at ~536.4M without the public-sale wallet vs CoinGecko 462.4M (+16%); if the run lands "
                             "within the circulating row's 5%, ratios_use becomes 'onchain' (Jake, 2026-10-07)",
-                "missing": "Solana-side allocation wallets after the migration and the burn-pending wallet; the "
-                           "seven Polygon wallets on GEODNET's tokenomics page are all excluded",
+                "missing": "none known: the seven Polygon wallets on GEODNET's tokenomics page are excluded, the bridge "
+                           "reconciles and the largest Solana holders are not GEODNET's (2026-10-07). Was: Solana-side "
+                           "allocation wallets after the migration",
                 "decided_by": "Claude Code 2026-10-07 on Jake's confirmation of docs.geodnet.com 'Tokenomics', "
                               "pending Jake's review"},
     # BRIDGED SUPPLY AND THE LEGACY WRAPPER (Jake, 2026-10-07): our MORPHO total is Ethereum totalSupply() alone, so
@@ -20587,8 +20733,16 @@ CIRCULATING_ONCHAIN = {
     # (their tokens circulate as the bridged / legacy representations) and no other chain's or the legacy token's
     # supply is added, which would count them twice. The reference is TokenOps' published figure
     # (circulating_supply_tokenops: 700,190,834.67 on 2026-10-07, ours 700.15M).
-    "Morpho": {"status": "not_established",
-               "why": "no Morpho DAO treasury, vesting or foundation address is documented in config",
+    # THE FULL SWEEP (Jake, 2026-10-07): the DAO treasury and the Rewards Multisig from Morpho's own docs are wired
+    # (_NONCIRC_WALLETS_FIRST_PARTY). The set is PARTIAL — the initial-distribution VESTING contracts and the Morpho
+    # Association allocation are not yet identified — so it is the cross-check; CoinGecko stays in use until the set
+    # is complete (TokenOps remains the reference: Morpho was not found to designate it).
+    "Morpho": {"status": "partial", "total": "total_supply", "subtract": ("noncirculating_holding_tokens",),
+               "decision": "COINGECKO until the vesting contracts are wired; the on-chain set (total - DAO treasury - "
+                           "Rewards Multisig) is the cross-check and reads HIGH by the unvested allocations",
+               "missing": "the initial-distribution vesting contracts; the Morpho Association allocation wallet",
+               "was": "not_established",
+               "why": "no Morpho DAO treasury, vesting or foundation address was documented in config before 2026-10-07",
                "bridged_and_legacy": "OFTAdapter lockbox 0x50d3d6fD7518682155E3C1B65FDD50e1b35649D9 and legacy "
                                      "Wrapper 0x9D03bb2092270648d7480049d0E58d2FcF0E5123: counted once inside "
                                      "Ethereum totalSupply, never subtracted, no bridged or legacy supply added"},
@@ -20694,7 +20848,10 @@ CIRCULATING_POLICY = {
     "Plume": {"source": "supply.plume.org/supply `result` (automated)", "kind": "first_party",
               "definition": "Plume's own circulating of 10bn total", "staked": "not stated by Plume",
               "add_back": None, "previous": "the same — unchanged"},
-    "GEODNET": {"source": "Blockworks' figure, 462M (app.blockworks.com/projects/geodnet; Jake, 2026-10-07) — a THIRD "
+    "GEODNET": {"now": "ON-CHAIN (Jake, 2026-10-07 evening): total - burns - the wallets GEODNET's docs name; the bridge "
+                       "reconciles (custody 274,775,755 vs Solana supply 274,763,344) and no Solana holder is GEODNET's "
+                       "— 516,361,733. The 462M below is the labelled STATIC cross-check.",
+                "source": "Blockworks' figure, 462M (app.blockworks.com/projects/geodnet; Jake, 2026-10-07) — a THIRD "
                           "PARTY, equal to CoinGecko's fixed 462,360,759 and static while mining releases ~122K "
                           "GEOD/day. GEODNET publishes NO circulating figure of its own (docs, token page, GitHub "
                           "searched 2026-10-07). A dated manual row (circulating_supply_third_party)",
@@ -20725,25 +20882,36 @@ CIRCULATING_POLICY = {
                               "decision 2026-10-06; it is now the cross-check",
                   "note": "CoinGecko + the lock may land near the total (CG ~1.0bn + ~1.05bn locked − 95M vs 1.99bn "
                           "total): beyond the 5% tolerance against the on-chain set, the row flags it"},
-    "Sky": {"source": "CoinGecko — Sky publishes no circulating figure or endpoint", "kind": "coingecko",
+    "Sky": {"now": "ON-CHAIN (full sweep, Jake 2026-10-07): total - the Pause Proxy treasury - the MKR_SKY converters' "
+                   "reserve, from Sky's own chainlog; Sky's definition (entire supply circulating) includes the treasury, "
+                   "which our convention excludes; CoinGecko compared like-for-like with our TOTAL",
+            "source": "CoinGecko — Sky publishes no circulating figure or endpoint", "kind": "coingecko",
             "definition": "CoinGecko counts (almost) every SKY. A search snippet of Sky's docs says 'the entire supply "
                           "is now circulating' (not opened from here; unverified) — which would make Sky's figure "
                           "the total supply, within ~0.5% of CoinGecko",
             "staked": "included", "add_back": None,
             "previous": "the on-chain set 21.37bn (total − Pause Proxy − MKR converters); CoinGecko ~23.4bn, +9.6%; "
                         "the on-chain set is the cross-check, compared like-for-like with our TOTAL"},
-    "Uniswap": {"source": "CoinGecko — Uniswap publishes no circulating figure", "kind": "coingecko",
+    "Uniswap": {"now": "ON-CHAIN (full sweep, Jake 2026-10-07): total - the dead address - the governance Timelock "
+                       "(team/investor vesting ended Sep 2024) - the wallets in Uniswap's own docs (four treasury "
+                       "vesting contracts, the airdrop merkle distributor); CoinGecko the cross-check",
+                "source": "CoinGecko — Uniswap publishes no circulating figure", "kind": "coingecko",
                 "definition": "total − 0x…dEaD − the governance Timelock (CoinGecko's supply-breakdown docs)",
                 "staked": "n/a (no UNI staking)", "add_back": None,
                 "previous": "the on-chain set, which reproduces CoinGecko (623.2M of 890.5M, 2026-09-02): ~0% change"},
-    "Chainlink": {"source": "CoinGecko, which carries Chainlink's own API figure (DefiLlama: 'sourced from Chainlink's "
+    "Chainlink": {"now": "CoinGecko still (full sweep, 2026-10-07): the on-chain set is now the 27 wallets of Chainlink's "
+                         "2022 post (the three not labelled on Etherscan added) — the cross-check; Chainlink's CURRENT "
+                         "list is unreadable here, so headline_diff chainlink_onchain_preview shows what switching does",
+                  "source": "CoinGecko, which carries Chainlink's own API figure (DefiLlama: 'sourced from Chainlink's "
                             "official supply API'); chain.link/circulating-supply is not readable from here",
                   "kind": "coingecko",
                   "definition": "1bn − Chainlink's non-circulating wallets (its API list)",
                   "staked": "included (staked LINK is not in the non-circulating list as far as seen)",
                   "add_back": None, "previous": "the same — unchanged",
                   "todo": "a dated reading of chain.link/circulating-supply makes it a first-party manual row"},
-    "Morpho": {"source": "CoinGecko; TokenOps' figure (a vendor Morpho commissioned, per the vendor) stays the "
+    "Morpho": {"now": "CoinGecko still (full sweep, 2026-10-07): the DAO treasury and Rewards Multisig from Morpho's docs "
+                      "are wired as a PARTIAL set (the cross-check); the vesting contracts are still missing",
+               "source": "CoinGecko; TokenOps' figure (a vendor Morpho commissioned, per the vendor) stays the "
                          "reference — Morpho itself was not found to designate it", "kind": "coingecko",
                "definition": "CoinGecko's own count", "staked": "n/a", "add_back": None,
                "previous": "the same — unchanged",
@@ -20751,10 +20919,16 @@ CIRCULATING_POLICY = {
     "Maple": {"source": "CoinGecko — Maple publishes no figure (its FAQ treats stSYRUP as circulating)",
               "kind": "coingecko", "definition": "CoinGecko's own count", "staked": "included (Maple FAQ)",
               "add_back": None, "previous": "the same — unchanged"},
-    "Ether.fi": {"source": "CoinGecko — ether.fi publishes no figure", "kind": "coingecko",
+    "Ether.fi": {"now": "ON-CHAIN (full sweep, Jake 2026-10-07): total - the treasury 0x0c83… - the wallets ether.fi's "
+                        "Blockworks filing labels (two custodian origins, three treasuries, the operating top-up Safe) - "
+                        "the old buyback Safe; CoinGecko the cross-check",
+                 "source": "CoinGecko — ether.fi publishes no figure", "kind": "coingecko",
                  "definition": "CoinGecko's own count", "staked": "included (sETHFI is a holder-owned vault)",
                  "add_back": None, "previous": "the same — unchanged"},
-    "Fluid": {"source": "CoinGecko — Fluid publishes no figure", "kind": "coingecko",
+    "Fluid": {"now": "CoinGecko still (full sweep, 2026-10-07): Fluid's own constants (Timelock, team multisig 2, "
+                     "Foundation) and its MerkleDistributors are wired as the cross-check; the IGP-137 dedicated "
+                     "wallet is unpublished",
+              "source": "CoinGecko — Fluid publishes no figure", "kind": "coingecko",
               "definition": "CoinGecko's own count", "staked": "n/a", "add_back": None,
               "previous": "the same — unchanged"},
 }
@@ -20998,6 +21172,12 @@ def _apply_confirmed_candidates() -> None:
 
 
 _apply_confirmed_candidates()
+# Every project with a wired non-circulating wallet reads the metric (the full sweep adds projects as their
+# first-party wallet lists arrive — Ether.fi, Morpho, 2026-10-07).
+METRICS["noncirculating_holding_tokens"]["only_projects"] = tuple(sorted(
+    set(METRICS["noncirculating_holding_tokens"]["only_projects"])
+    | {p["name"] for p in PROJECTS if any(c.get("metric_override") == "noncirculating_holding_tokens"
+                                          for c in (p.get("contracts") or {}).values())}))
 METRICS["circulating_supply_onchain"]["only_projects"] = tuple(
     n for n, s in CIRCULATING_ONCHAIN.items() if s["status"] in ("established", "partial"))
 
@@ -23234,9 +23414,14 @@ CREDIBILITY: dict = {
             "settlement volume exists to compare.", "Artemis or another publisher covering NEAR settlement"),
         "a1_nrr_throughput": _C_DEX_ONLY,
         "a1_tvl": _C_SINGLE_DEFILLAMA_TVL,
-        "a3_buyback_locked": _c_chk(
-            "The three Intents wallets' liquid NEAR is read from NEAR RPC; NearBlocks' account pages are a second "
-            "indexer we have not read for it.", "read the three wallets on nearblocks.io by hand and record them"),
+        # THE SWEEP (2026-10-07): the headline is the three wallets' liquid NEAR from NEAR RPC (buyback_fund_balance);
+        # NearBlocks' stats/balance daily close of the same three (buyback_fund_balance_eod, stored since 14:17) is
+        # a second indexer — read automatically, so no reading by hand is needed.
+        "a3_buyback_locked": {"metric": "buyback_fund_balance_eod", "window": "now", "tol": 2.0,
+                              "source": "NearBlocks stats/balance: the three wallets' combined daily close (a second "
+                                        "indexer)",
+                              "note": "Ours is the RPC balance NOW; NearBlocks' is the latest daily CLOSE — a busy day "
+                                      "between the two moves them apart."},
         "in_buyback": _c_in("NEAR into the buyback wallet, Q0 (NearBlocks)", "actual_buyback_tokens", "q0", _c_chk(
             "NEAR Foundation / Intents buyback announcements are not wired; the only figure on file is ~$3M/month "
             "(May 2026, secondary).", "record the Foundation's or Intents' announced buyback amounts per month and "
@@ -23405,10 +23590,20 @@ CREDIBILITY: dict = {
             "Merkl distributor + the Morpho URD 0x330eefa8… outflows on Ethereum (PARTIAL — other URD instances and "
             "other chains unscanned).",
             "sum Merkl's campaign amounts (api.merkl.xyz /v4/campaigns, MORPHO) for the same window and compare"),
-        "in_supply": _c_in("Supply ($, listed markets — blue-api)", "supply_units", "now", _c_chk(
-            "DefiLlama's /protocol/morpho counts collateral (tvl + borrowed) — a different quantity; its borrowed "
-            "figure is not stored.", "store DefiLlama's borrowed as a cross-check and compare it with blue-api's "
-                                     "listed-market borrow (utilisation x supply)"), fmt=_C_USD),
+        # THE SWEEP (2026-10-07): DefiLlama's /protocol/morpho tvl counts collateral, so the comparable figure is the
+        # BORROW side — blue-api's listed-market borrow (utilisation x supply, same day) against DefiLlama's borrowed
+        # (DefiLlama-Adapters@aa45ca13 projects/morpho-blue/index.js L119-142: every market whose collateral has a
+        # price, every configured chain, borrow capped at supply).
+        "in_supply": _c_in_py("Borrowed ($): blue-api listed markets, utilisation x supply on one day",
+                              "product_on_common_day", {"a": "supply_units", "b": "utilisation_pct",
+                                                        "ref": "borrowed_usd_llama", "side": "ours"},
+                              {"formula": "product_on_common_day", "tol": 15.0,
+                               "args": {"a": "supply_units", "b": "utilisation_pct", "ref": "borrowed_usd_llama",
+                                        "side": "ref"},
+                               "source": "DefiLlama /protocol/morpho chainTvls.borrowed, the same day",
+                               "note": "Two populations: blue-api's LISTED markets against DefiLlama's markets with a "
+                                       "priced collateral token — so ours is expected at or below DefiLlama's."},
+                              fmt=_C_USD),
     },
     # ---------------------------------------------------------------- Aerodrome
     "Aerodrome": {
@@ -23551,10 +23746,21 @@ CREDIBILITY: dict = {
                                                 "source": "July 2026 buyback as reported (MEXC news snippet, SECONDARY)"},
                                      "tol": 10.0, "note": "A secondary report of Sky's figure — Sky's own monthly post "
                                                           "would replace it."}),
-        "in_buyback": _c_in("SKY bought Q0 (flapper Exec)", "actual_buyback_tokens", "q0", _c_chk(
-            "Sky's monthly reported buyback figures (its own posts) are not on file — only one secondary July figure "
-            "(row above). The allocation x 0.55 cross-check is rough by construction and is not used here.",
-            "record Sky's own monthly buyback amounts (forum.sky.money settlement posts) and compare month by month")),
+        # THE SWEEP (2026-10-07): Sky's buyback over the quarter against Block Analitica's own count of SKY bought (the
+        # info-sky cumulative Jake gave, Sky's ecosystem data provider) — the rise of its cumulative over the same
+        # days, up to 90 complete days (Q0's length). The 30-day row below is the same comparison over a month.
+        "in_buyback": _c_in_py("SKY bought, last 90 complete days (flapper Exec): our counted inflow over the days Block "
+                               "Analitica's cumulative rises across", "rise_vs_flow",
+                               {"flow": "actual_buyback_tokens", "stock": "sky_cumulative_buyback_ba", "days": 90,
+                                "side": "ours"},
+                               {"formula": "rise_vs_flow", "tol": 5.0,
+                                "args": {"flow": "actual_buyback_tokens", "stock": "sky_cumulative_buyback_ba",
+                                         "days": 90, "side": "ref"},
+                                "source": "Block Analitica info-sky buyback/historic: the rise of sky_cumulative_buyback "
+                                          "over the same days",
+                                "note": "Was a CHECK awaiting Sky's monthly posts; Block Analitica's count is Sky's own "
+                                        "data provider's. The window is Block Analitica's: a shorter span until its "
+                                        "history covers 90 days."}),
         # NPS FROM THE API AGAINST THE MONTHS SKY REPORTED (2026-10-07): the same four months on both sides. Both are Sky's
         # own accounting, so a match says our definition (P&L net less Security and Maintenance) is Sky's.
         "in_nps": _c_in_py("Net Protocol Surplus (remitted), Jan-Sep 2026 (Block Analitica P&L: revenue - expense - "

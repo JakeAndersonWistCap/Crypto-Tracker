@@ -855,6 +855,11 @@ class DefiLlama:
         # now recorded three times.
         api = project.get("lending_api") or {}
         if api.get("status") == "confirmed":
+            # THE SWEEP (2026-10-07, Morpho in_supply): DefiLlama's borrowed side, stored under its OWN metric as a
+            # cross-check for blue-api's borrow (utilisation x supply) — a reference beside the API, never a column
+            # the two routes share, so it cannot alternate with it.
+            if spec.get("borrowed_reference_metric"):
+                self._borrowed_reference(project, spec, slug, window_days, out)
             out.skipped(SOURCE, name,
                         f"supply_units and utilisation_pct: NOT taken from DefiLlama — "
                         f"{api.get('endpoint')} is confirmed and serves them without the "
@@ -914,6 +919,24 @@ class DefiLlama:
                     f"{slug}:{metric} = " + ("tvl + borrowed" if metric == "supply_units"
                                              else "borrowed / (tvl + borrowed)")
                     + " — DENOMINATOR INCLUDES COLLATERAL, see non_comparable", TIER)
+
+    def _borrowed_reference(self, project: dict, spec: dict, slug: str, window_days, out):
+        name, metric = project["name"], spec["borrowed_reference_metric"]
+        try:
+            j = self._protocol(slug)
+        except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
+            out.fail(SOURCE, name, f"{slug}:{metric}: {e}", TIER)
+            return
+        chain_tvls = j.get("chainTvls") or {}
+        borrowed = (chain_tvls.get(spec.get("borrowed_key", "borrowed")) or {}).get("tvl")
+        if not isinstance(borrowed, list) or not borrowed:
+            out.fail(SOURCE, name, f"{slug}:{metric}: no {spec.get('borrowed_key', 'borrowed')!r} series in chainTvls. "
+                                   f"Keys present: {', '.join(sorted(chain_tvls)[:12]) or 'none'}", TIER)
+            return
+        rows = [(datetime.fromtimestamp(int(r["date"]), tz=timezone.utc), float(r["totalLiquidityUSD"]))
+                for r in borrowed if r.get("totalLiquidityUSD") is not None]
+        out.add(window(tidy(rows, name, metric, SOURCE, TIER), window_days), SOURCE, name,
+                f"{slug}:{metric} = chainTvls.borrowed (reference for blue-api's borrow)", TIER)
 
     def chain_tvl(self, project: dict, window_days, out):
         chain, name = project.get("defillama_chain"), project["name"]

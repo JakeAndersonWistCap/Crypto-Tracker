@@ -15,6 +15,13 @@ Writes nothing to the store and leaves token_metrics.xlsx alone. Output is ASCII
     circulating_policy  2026-10-07: the project's own figure first, CoinGecko where it publishes nothing — Uniswap
                    and Sky to CoinGecko, Aerodrome to CoinGecko + veAERO added back, GEODNET to its own 462M; before =
                    the 2026-10-06 choices (on-chain for Uniswap / Sky / Aerodrome, CoinGecko for GEODNET)
+    geodnet_onchain  2026-10-07 evening: GEODNET's on-chain set primary; before = Blockworks' static 462M (labelled)
+    onchain_sweep  2026-10-07 full sweep: the on-chain count from the projects' own wallet lists primary for
+                   Uniswap (+ its docs' vesting contracts and merkle distributor), Sky and Ether.fi (its Blockworks
+                   filing's wallets); before = CoinGecko for all three (the policy round's choices)
+    chainlink_onchain_preview  NOT a change made — a PREVIEW: BEFORE = Chainlink's on-chain set (27 wallets of its
+                   2022 post + the Reserve) as primary, AFTER = CoinGecko (as configured). Read the move with the
+                   sign reversed: it is what switching Chainlink to on-chain would do
     etherfi_yield  2026-10-06: Ether.fi's token-yield numerator = the reconciled share-price total; before = the
                    top-ups alone (sethfi_topup_tokens)
 """
@@ -37,6 +44,19 @@ BEFORE = {
         (config.CIRCULATING_ONCHAIN["Sky"], "ratios_use", None),
         (config.CIRCULATING_ONCHAIN["Aerodrome"], "ratios_use", "onchain"),
         (config.CIRCULATING_ONCHAIN["GEODNET"], "ratios_use", None)],
+    # 2026-10-07 evening: GEODNET's on-chain set primary (Solana side resolved); before = Blockworks' static 462M
+    "geodnet_onchain": lambda: [(config.CIRCULATING_ONCHAIN["GEODNET"], "ratios_use", "third_party_reference"),
+                                (config.CIRCULATING_ONCHAIN["GEODNET"], "status", "partial")],
+    # 2026-10-07 full sweep: the projects' own wallet lists make the on-chain count primary; before = CoinGecko
+    "onchain_sweep": lambda: [
+        (config.CIRCULATING_ONCHAIN["Uniswap"], "ratios_use", "coingecko"),
+        (config.CIRCULATING_ONCHAIN["Uniswap"], "subtract", ("burn_address_balance", "treasury_holding_tokens")),
+        (config.CIRCULATING_ONCHAIN["Sky"], "ratios_use", "coingecko"),
+        (config.CIRCULATING_ONCHAIN["Ether.fi"], "ratios_use", None),
+        (config.CIRCULATING_ONCHAIN["Ether.fi"], "status", "partial"),
+        (config.CIRCULATING_ONCHAIN["Ether.fi"], "subtract", ("treasury_holding_tokens",))],
+    # a PREVIEW, not a change: BEFORE = Chainlink on-chain primary, AFTER = CoinGecko as configured
+    "chainlink_onchain_preview": lambda: [(config.CIRCULATING_ONCHAIN["Chainlink"], "ratios_use", "onchain")],
     "etherfi_yield": lambda: [(config.PROTOCOL_YIELD["Ether.fi"]["token_yield"], "tokens", "sethfi_topup_tokens")],
 }
 
