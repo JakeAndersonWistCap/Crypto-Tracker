@@ -743,7 +743,11 @@ METRICS = {
     # manual_quarterly/manual_overrides.csv with the one known quarterly datapoint (Q2 2026) pending
     # a recurring source (Sky's own quarterly reporting, or insights.skyeco.com if it starts
     # publishing on a rolling basis).
-    "net_protocol_surplus_usd": {"label": "Net Protocol Surplus (Sky's own accounting)", "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [3], "sanity_min": 0, "sanity_max": 1e11, "only_projects": ("Sky",)},
+    "net_protocol_surplus_usd": {"label": "Net Protocol Surplus (Sky's own accounting — Block Analitica's P&L: net less Security and Maintenance), monthly", "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [3], "sanity_min": -1e10, "sanity_max": 1e11, "only_projects": ("Sky",)},
+    # Sky's NPS as it REPORTED the months by hand (insights / financial.skyeco.com), kept as the reference beside the API.
+    "net_protocol_surplus_usd_reported": {"label": "Net Protocol Surplus as Sky reported the month (manual, insights.skyeco.com / financial.skyeco.com) — reference", "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [5], "sanity_min": -1e10, "sanity_max": 1e11, "only_projects": ("Sky",), "view_only": True},
+    "buyback_spending_usd_ba": {"label": "SKY buyback spending per month ($, Block Analitica cash flow 'Buyback Spending') — reference for the flapper buyback", "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [3], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Sky",)},
+    "staking_rewards_usd_ba": {"label": "Staking rewards paid per month ($, Block Analitica cash flow 'Staking Rewards') — reference for the USDS-farm rewards", "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [3], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Sky",)},
     # Same pattern for lock rates. Where a project has BOTH a contract read and a published page,
     # the page is stored here rather than over the contract read: a tier 3 page must never
     # overwrite a verified tier 2 contract figure, it cross-checks it.
@@ -14354,7 +14358,17 @@ PROJECTS = [
         # for it. This is what makes the workbook report the latest COMPLETE month rather than
         # whatever landed in a 30-day window, and what stops a 45-day-old monthly figure reading
         # as stale. Same treatment as GEODNET's monthly buyback series.
-        "manual_granularity": {"net_protocol_surplus_usd": "monthly"},
+        "manual_granularity": {"net_protocol_surplus_usd_reported": "monthly"},
+        # ===== SKY'S ACCOUNTING FROM BLOCK ANALITICA (Jake, 2026-10-07, with the API docs). =====
+        # fetch/sky_accounting.py: monthly NPS (P&L net less Security and Maintenance — Sky's financials page counts S&M
+        # as an expense, Block Analitica books it below net revenue), Buyback Spending and Staking Rewards (cash flow).
+        # NPS here REPLACES the hand-entered months, which move to net_protocol_surplus_usd_reported as the reference.
+        "sky_accounting": {"base_url": "https://sky.data.blockanalitica.com", "from": "2025-01-01",
+                           "granularity": "monthly",
+                           "metrics": {"nps": "net_protocol_surplus_usd", "buyback": "buyback_spending_usd_ba",
+                                       "staking": "staking_rewards_usd_ba"},
+                           "docs": "Block Analitica's Balance Sheet / Cash Flow / Profit and Loss API pages, given by "
+                                   "Jake 2026-10-07"},
         # THE MONTHS MUST ADD UP TO THE QUARTER, where every month of it is present. Two months
         # of three compared against the quarter's own total is guaranteed to disagree, and
         # reporting that would be reporting a missing month as an error in the months that are
@@ -19039,6 +19053,10 @@ def series_granularity(project_name: str, metric: str) -> str:
         for pin in bpg.get("series") or ():
             if pin.get("metric") == metric and pin.get("granularity"):
                 return pin["granularity"]
+    # SKY'S ACCOUNTING API (2026-10-07): monthly periods, declared beside the read (fetch/sky_accounting.py).
+    sa = p.get("sky_accounting") or {}
+    if metric in (sa.get("metrics") or {}).values():
+        return sa.get("granularity", "monthly")
     q = (p.get("dune_queries") or {}).get(metric) or {}
     if str(q.get("date_col") or "").lower() == "month":
         return "monthly"
@@ -20475,55 +20493,76 @@ CIRCULATING_ONCHAIN = {
 # third party's label, not the project's. Under the convention, staked/locked/ve balances are
 # circulating, so staking and ve contracts are listed only where they explain a balance.
 # ===== A PROJECT'S PUBLISHED CIRCULATING SCHEDULE — unlock-driven dilution beside supplier emissions (A2). =====
-# AETHIR (Jake, 2026-10-07): docs.aethir.com "ATH Circulating Supply" publishes a monthly schedule, Jun 2024 .. Jun
-# 2031, then 42bn. The points USED are the three Jake read: Oct 2025 14,234,731,752; Oct 2026 24,053,550,151 (= the
-# dashboard); Oct 2027 31,682,816,667 — last 12 months +69.0%, next 12 months +31.7%. The full monthly table below was
-# RECONSTRUCTED from web-search snippets of that page (labels often one month off, re-placed on fixed points) — it is
-# a candidate, NOT used until Jake checks it against the page and sets confirm_candidate_table.
+# AETHIR (Jake, 2026-10-07): docs.aethir.com "ATH Circulating Supply" publishes the circulating amount for every month,
+# Jun 2024 .. Jun 2031, then 42bn. Jake copied the whole table from the page on 2026-10-07 — it is Aethir's own figure
+# by month (Credibility in_circ) and its published supply trajectory (A2: trailing and forward 12 months).
 CIRCULATING_SCHEDULE = {
     "Aethir": {
         "source": "https://docs.aethir.com/aethir-tokenomics/ath-circulating-supply",
-        "read_by": "Jake, 2026-10-07",
-        "points": {"2025-10": 14_234_731_752, "2026-10": 24_053_550_151, "2027-10": 31_682_816_667},
-        "final": {"after": "2031-06", "tokens": 42_000_000_000},
-        "confirm_candidate_table": False,
-        "candidate_table_source": "web-search snippets of the docs page, months fixed on Jake's three October points, "
-                                  "chuhemiao/portfolio's citation of the page (Jun 2024 3.82B .. Jun 2031 39.84B) and the "
-                                  "dashboard's 21.01B on 2026-06-28 — Claude Code 2026-10-07, pending Jake's check",
-        "candidate_table": {
-            "2024": (3_822_087_402, 4_056_713_543, 4_303_939_685, 4_597_365_827, 4_899_191_969, 5_217_818_110,
-                     5_684_494_252),                                     # Jun..Dec
-            "2025": (6_172_170_394, 6_697_646_536, 7_899_322_677, 8_479_398_819, 9_084_674_961, 9_895_446_319,
-                     10_639_017_677, 11_407_789_036, 12_210_160_394, 14_234_731_752, 14_999_303_110, 15_726_074_469),
-            "2026": (16_606_612_494, 17_487_150_519, 18_367_688_543, 19_248_226_568, 20_128_764_593, 21_009_302_618,
-                     21_775_614_501, 22_541_926_385, 23_308_238_268, 24_053_550_151, 24_798_862_034, 25_544_173_917),
-            "2027": (26_255_885_801, 26_967_597_684, 27_679_309_567, 28_391_021_450, 29_102_733_333, 29_642_550_000,
-                     30_155_766_667, 30_668_983_333, 31_182_200_000, 31_682_816_667, 32_183_433_333, 32_684_050_000),
+        "read_by": "Jake, 2026-10-07 (the full table, copied from the page)",
+        # Jun 2024 .. Jun 2031, ATH circulating at each month, as published; 42,000,000,000 thereafter. Replaces the
+        # snippet-rebuilt candidate of 2026-10-07 (which matched it month for month).
+        "table": {
+            "2024-06": 3822087401.7561, "2024-07": 4056713543, "2024-08": 4303939685, "2024-09": 4597365827,
+            "2024-10": 4899191969, "2024-11": 5217818110, "2024-12": 5684494252, "2025-01": 6172170394,
+            "2025-02": 6697646536, "2025-03": 7899322677, "2025-04": 8479398819, "2025-05": 9084674961,
+            "2025-06": 9895446319, "2025-07": 10639017677, "2025-08": 11407789036, "2025-09": 12210160394,
+            "2025-10": 14234731752, "2025-11": 14999303110, "2025-12": 15726074469, "2026-01": 16606612494,
+            "2026-02": 17487150519, "2026-03": 18367688543, "2026-04": 19248226568, "2026-05": 20128764593,
+            "2026-06": 21009302618, "2026-07": 21775614501, "2026-08": 22541926385, "2026-09": 23308238268,
+            "2026-10": 24053550151, "2026-11": 24798862034, "2026-12": 25544173917, "2027-01": 26255885801,
+            "2027-02": 26967597684, "2027-03": 27679309567, "2027-04": 28391021450, "2027-05": 29102733333,
+            "2027-06": 29642550000, "2027-07": 30155766667, "2027-08": 30668983333, "2027-09": 31182200000,
+            "2027-10": 31682816667, "2027-11": 32183433333, "2027-12": 32684050000, "2028-01": 33163666667,
+            "2028-02": 33643283333, "2028-03": 34122900000, "2028-04": 34602516667, "2028-05": 35082133333,
+            "2028-06": 35561750000, "2028-07": 35998935897, "2028-08": 36436121795, "2028-09": 36873307692,
+            "2028-10": 37302093590, "2028-11": 37730879487, "2028-12": 38028415385, "2029-01": 38109184615,
+            "2029-02": 38189953846, "2029-03": 38270723077, "2029-04": 38351492308, "2029-05": 38432261538,
+            "2029-06": 38513030769, "2029-07": 38584430769, "2029-08": 38655830769, "2029-09": 38727230769,
+            "2029-10": 38794430769, "2029-11": 38861630769, "2029-12": 38928830769, "2030-01": 38987630769,
+            "2030-02": 39046430769, "2030-03": 39105230769, "2030-04": 39164030769, "2030-05": 39222830769,
+            "2030-06": 39281630769, "2030-07": 39330630769, "2030-08": 39379630769, "2030-09": 39428630769,
+            "2030-10": 39477630769, "2030-11": 39526630769, "2030-12": 39575630769, "2031-01": 39620430769,
+            "2031-02": 39665230769, "2031-03": 39710030769, "2031-04": 39754830769, "2031-05": 39799630769,
+            "2031-06": 39844430769,
         },
-        "candidate_table_note": "2028-2031 also reconstructed (Jun 2028 35,561,750,000; Jun 2029 38,513,030,769; Jun "
-                                "2030 39,281,630,769; Jun 2031 39,844,430,769); add once the page is checked",
+        "final": {"after": "2031-06", "tokens": 42_000_000_000},
     },
 }
 
-
 def circulating_schedule_change(project_name: str, asof) -> dict | None:
-    """{"last": (from_month, to_month, pct), "next": (...)} from the CONFIRMED points: the latest point on or before
-    asof's month, the one 12 months before it and the one 12 months after. None where nothing is published."""
+    """{"base", "last": (from, to, pct), "next": (...)} from the published table: asof's month, 12 months before it and
+    12 months after (the final figure once past the table's end). None where nothing is published."""
+    import pandas as _pd
+    if not CIRCULATING_SCHEDULE.get(project_name):
+        return None
+    base = _pd.Timestamp(asof).to_period("M")
+    now = circulating_schedule_value(project_name, base)
+    if now is None:
+        return None
+    out = {"base": str(base)}
+    for key, other in (("last", base - 12), ("next", base + 12)):
+        v = circulating_schedule_value(project_name, other)
+        if v:
+            a, b = (v, now) if key == "last" else (now, v)
+            out[key] = (str(min(base, other)), str(max(base, other)), b / a - 1.0)
+    return out
+
+
+def circulating_schedule_value(project_name: str, month) -> float | None:
+    """The published circulating figure for a month (a Period or "YYYY-MM"); the final figure after the table ends;
+    None before it starts."""
     import pandas as _pd
     spec = CIRCULATING_SCHEDULE.get(project_name)
     if not spec:
         return None
-    pts = {_pd.Period(k, "M"): float(v) for k, v in spec["points"].items()}
-    now = _pd.Timestamp(asof).to_period("M")
-    base = max((m for m in pts if m <= now), default=None)
-    if base is None:
-        return None
-    out = {"base": str(base)}
-    for key, other in (("last", base - 12), ("next", base + 12)):
-        if other in pts:
-            a, b = (pts[other], pts[base]) if key == "last" else (pts[base], pts[other])
-            out[key] = (str(min(base, other)), str(max(base, other)), b / a - 1.0)
-    return out
+    m = _pd.Period(str(month), "M")
+    t = spec["table"]
+    if str(m) in t:
+        return float(t[str(m)])
+    if m > _pd.Period(spec["final"]["after"], "M"):
+        return float(spec["final"]["tokens"])
+    return None
 
 
 NONCIRCULATING_CANDIDATES = {
@@ -22375,6 +22414,17 @@ validate_config()
 # where a key or a published free API is the permission (noted per entry).
 # =======================================================================================
 SOURCE_REGISTER = {
+    "sky.data.blockanalitica.com": {
+        "used_for": "Sky's monthly Net Protocol Surplus (P&L), Buyback Spending and Staking Rewards (cash flow) — "
+                    "fetch/sky_accounting.py",
+        "paths": ["/v1/accounting/profit-and-loss/statement/history/", "/v1/accounting/profit-and-loss/history/",
+                  "/v1/accounting/cash-flow/items/history/"],
+        "robots": "checked per run by the pipeline's RFC 9309 reader before the first call",
+        "terms": {"url": "not found", "status": "documented API (pages given by Jake 2026-10-07); terms not read from "
+                                                "here (host unreachable from the build environment)"},
+        "licence": "Sky's accounting as Block Analitica publishes it; INTERNAL until terms are read",
+        "key": "none",
+    },
     "revenue-dashboard-api-production.up.railway.app": {
         "used_for": "NOT WIRED — revenue.near.org's backend (near/near-revenue-dashboard @526356ad src/lib/api.ts): "
                     "/v1/series/revenue (monthly net revenue), /v1/series/total-fees, /v1/wallets/breakdown",
@@ -22927,15 +22977,15 @@ CREDIBILITY: dict = {
                          "tol": 25.0, "source": "Aethir's published Checker Node schedule",
                          "note": "Until supplier rewards are measured our series IS this schedule (stitched) — then "
                                  "the comparison is circular; it becomes a check once the measured leg takes over."},
+        # THE DOCS' MONTHLY TABLE IS THE REFERENCE (Jake copied it from docs.aethir.com, 2026-10-07): the dashboard
+        # should equal the published month it is in — it read 24,053,550,151 on 2026-10-07, the October step. Both are
+        # Aethir's own figures (one schedule, two pages), so a PASS says the dashboard follows the schedule.
         "in_circ": _c_in("Circulating supply (Aethir dashboard athCirculatingSupply)", "circulating_supply_first_party",
-                         "now", _c_unv(
-            "Aethir's circulating is its own VESTING-SCHEDULE value, not an on-chain count: docs.aethir.com 'ATH "
-            "Circulating Supply' gives monthly steps (20.13B May, 21.01B Jun, 21.78B Jul 2026 per a secondary copy; "
-            "the dashboard read 21.01B on 2026-06-28), and the dashboard stepped 23.31B -> 24.05B on 2026-10-01. "
-            "CoinGecko's 20.13B is the MAY step — stale, not a second measurement. The schedule (current, the "
-            "issuer's own) is the one the ratios use.",
-            "read the docs page's October 2026 step by hand and record it; an on-chain count would need Aethir's "
-            "list of locked/vesting wallets")),
+                         "now", {"formula": "schedule_month", "tol": 0.5, "same_source": True,
+                                 "source": "docs.aethir.com 'ATH Circulating Supply' — the published figure for this "
+                                           "month (config.CIRCULATING_SCHEDULE, copied by Jake 2026-10-07)",
+                                 "note": "CoinGecko's figure lags by a month or more (it showed the May step in late "
+                                         "June), so it is not the reference."}),
         "in_locked": _c_in("ATH staked (dashboard totalStaked)", "locked_tokens", "now", {
             "verdict": "FRESH-only",
             "why": "Only Aethir's dashboard reports all four pools; spot_checks re-read it live on 2026-10-05.",
@@ -23187,9 +23237,35 @@ CREDIBILITY: dict = {
             "Sky's monthly reported buyback figures (its own posts) are not on file — only one secondary July figure "
             "(row above). The allocation x 0.55 cross-check is rough by construction and is not used here.",
             "record Sky's own monthly buyback amounts (forum.sky.money settlement posts) and compare month by month")),
-        "in_nps": _c_in("Net Protocol Surplus (manual monthly)", "net_protocol_surplus_usd", "q0", _c_unv(
-            "The manual NPS rows ARE Sky's own figures (insights.skyeco.com / financial.skyeco.com); there is no "
-            "second publisher of NPS."), fmt=_C_USD),
+        # NPS FROM THE API AGAINST THE MONTHS SKY REPORTED (2026-10-07): the same four months on both sides. Both are Sky's
+        # own accounting, so a match says our definition (P&L net less Security and Maintenance) is Sky's.
+        "in_nps": _c_in_py("Net Protocol Surplus, May-Aug 2026 (Block Analitica P&L)", "sum_months",
+                           {"metric": "net_protocol_surplus_usd", "months": ("2026-05", "2026-06", "2026-07", "2026-08")},
+                           {"formula": "sum_months", "tol": 2.0, "same_source": True,
+                            "args": {"metric": "net_protocol_surplus_usd_reported",
+                                     "months": ("2026-05", "2026-06", "2026-07", "2026-08")},
+                            "source": "the months Sky reported (insights.skyeco.com May/Jun; financial.skyeco.com "
+                                      "Jul/Aug, Jake 2026-09-29)"}, fmt=_C_USD),
+        # BLOCK ANALITICA'S CASH FLOW AS REFERENCES (2026-10-07): buyback spending beside our flapper buyback in dollars,
+        # staking rewards beside the USDS minted to the lsSKY farm — the same complete months on both sides.
+        "in_buyback_usd": _c_in_py("SKY buyback ($), latest 3 complete months: our flapper Exec rows summed per month",
+                                   "months_match", {"daily": "actual_buyback_usd", "monthly": "buyback_spending_usd_ba",
+                                                    "side": "ours"},
+                                   {"formula": "months_match", "tol": 10.0,
+                                    "args": {"daily": "actual_buyback_usd", "monthly": "buyback_spending_usd_ba",
+                                             "side": "ref"},
+                                    "source": "Block Analitica cash flow, category 'Buyback Spending', same months"},
+                                   fmt=_C_USD),
+        "in_staking_rewards": _c_in_py("lsSKY USDS rewards ($), latest 3 complete months: USDS minted to the farm, "
+                                       "summed per month", "months_match",
+                                       {"daily": "staking_rewards_usds_usd", "monthly": "staking_rewards_usd_ba",
+                                        "side": "ours"},
+                                       {"formula": "months_match", "tol": 10.0,
+                                        "args": {"daily": "staking_rewards_usds_usd", "monthly": "staking_rewards_usd_ba",
+                                                 "side": "ref"},
+                                        "source": "Block Analitica cash flow, category 'Staking Rewards', same months",
+                                        "note": "If Block Analitica's category also carries other farms' rewards, ours "
+                                                "(the USDS farm only) reads LOW."}, fmt=_C_USD),
         "in_emissions": _c_in("Emissions Q0 — staking rewards RELEASED from treasury SKY (measured: REWARDS_DIST_LSSKY_SKY -> farm)",
                               "emissions_tokens", "q0",
                               # 2026-10-07: ours is the MEASURED release (SKY REWARDS_DIST_LSSKY_SKY -> REWARDS_LSSKY_SKY,

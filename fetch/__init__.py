@@ -55,6 +55,7 @@ from .browser_capture import BrowserCapture
 from .chainlink_fees import ChainlinkFees
 from .xref import CrossRefs
 from .staked_eth import StakedEth
+from .sky_accounting import SkyAccounting
 from .share_price import SharePrice
 from .near_bigquery import NearBigQuery
 from .plume_staking import PlumeStaking
@@ -120,6 +121,8 @@ TIER_ORDER = [
     ("near_bigquery", 1, lambda ctx: NearBigQuery(stored_long=ctx["stored_long"])),
     # Maple's own transparency page — server-rendered, so a plain GET (no browser).
     ("maple_page", 3, lambda ctx: MapleTransparency()),
+    # Sky's accounting (Block Analitica's documented API): monthly NPS, buyback spending, staking rewards (2026-10-07).
+    ("sky_accounting", 3, lambda ctx: SkyAccounting()),
     # Aethir's own dashboard, from the Next.js server-rendered payload (Jake's probes2, 2026-09-30).
     ("aethir_page", 3, lambda ctx: AethirPages()),
     # Pendle's per-epoch sPENDLE distributions and its own APR (spendle/data, 2026-09-29).

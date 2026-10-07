@@ -8359,8 +8359,9 @@ def test_nps_stores_months_only_and_reconciles_them_against_the_published_quarte
     rows = [r for r in csv.DictReader(
         line for line in (Path(__file__).resolve().parent.parent / "manual_overrides.csv")
         .read_text(encoding="utf-8").splitlines() if not line.startswith("#"))
-        if r["metric"] == "net_protocol_surplus_usd"]
-    # July and August added 2026-09-29 from financial.skyeco.com (Jake's reading) — still months.
+        if r["metric"] == "net_protocol_surplus_usd_reported"]
+    # July and August added 2026-09-29 from financial.skyeco.com (Jake's reading) — still months. Since 2026-10-07 the
+    # hand-entered months are Sky's REPORTED figures (a reference); net_protocol_surplus_usd is Block Analitica's.
     assert {r["date"] for r in rows} == {"2026-05-31", "2026-06-30", "2026-07-31", "2026-08-31"}, \
         f"months only — the quarters and the year are references now: {[r['date'] for r in rows]}"
     assert {float(r["value"]) for r in rows} == {9_710_000.0, 10_810_000.0, 10_520_000.0, 15_750_000.0}
@@ -26011,7 +26012,8 @@ def test_jakes_readings_of_2026_10_07_are_stored_against_real_rows_and_name_no_p
     import credibility as cred
     import manual_refs as mr
     got = mr.load()
-    assert len(got) == 22 and all(r["read_on"] == "2026-10-07" and r["read_by"] == "Jake" and r["url"] for r in got)
+    # 21 since Aethir's in_circ is checked against the docs table itself (Jake copied it, 2026-10-07)
+    assert len(got) == 21 and all(r["read_on"] == "2026-10-07" and r["read_by"] == "Jake" and r["url"] for r in got)
     assert all("entered by Claude Code" in r["note"] for r in got)
     for r in got:
         rows = set(config.CREDIBILITY.get(r["project"]) or {}) | set(cred.generic_inputs(r["project"])) | {"in_circ"}
@@ -26187,5 +26189,75 @@ def test_aerodrome_voter_apr_on_voting_power_and_aethirs_published_unlock_schedu
     ch = config.circulating_schedule_change("Aethir", "2026-10-07")
     assert ch["last"][2] == pytest.approx(24_053_550_151 / 14_234_731_752 - 1) and round(ch["last"][2], 3) == 0.690
     assert round(ch["next"][2], 3) == 0.317
-    assert config.CIRCULATING_SCHEDULE["Aethir"]["confirm_candidate_table"] is False
+    assert len(config.CIRCULATING_SCHEDULE["Aethir"]["table"]) == 85                 # Jun 2024 .. Jun 2031, Jake's copy
     assert config.circulating_schedule_change("Pendle", "2026-10-07") is None
+
+
+def test_aethir_published_schedule_is_the_full_table_and_the_monthly_reference():
+    """Jake copied docs.aethir.com 'ATH Circulating Supply' on 2026-10-07: every month Jun 2024 .. Jun 2031, then 42bn —
+    the trajectory (trailing / forward 12 months) and Aethir's own figure for the month on Credibility."""
+    import pytest
+    import credibility as cred
+    t = config.CIRCULATING_SCHEDULE["Aethir"]["table"]
+    vals = [t[str(m)] for m in pd.period_range("2024-06", "2031-06", freq="M")]
+    assert all(b > a for a, b in zip(vals, vals[1:])) and vals[0] == 3_822_087_401.7561
+    assert config.circulating_schedule_value("Aethir", "2026-10") == 24_053_550_151
+    assert config.circulating_schedule_value("Aethir", "2031-07") == 42_000_000_000
+    assert config.circulating_schedule_value("Aethir", "2024-05") is None
+    ch = config.circulating_schedule_change("Aethir", "2026-12-15")
+    assert ch["next"] == ("2026-12", "2027-12", pytest.approx(32_684_050_000 / 25_544_173_917 - 1))
+    assert ch["last"][2] == pytest.approx(25_544_173_917 / 15_726_074_469 - 1)
+    ref = config.CREDIBILITY["Aethir"]["in_circ"]["ref"]
+    assert ref["formula"] == "schedule_month" and ref["same_source"]
+    v, d, _ = cred.FORMULAS["schedule_month"]("Aethir", {}, None, pd.Timestamp("2026-10-07"))
+    assert v == 24_053_550_151 and d == "2026-10"
+
+
+def test_sky_accounting_reads_monthly_nps_buyback_and_staking_from_block_analitica(monkeypatch):
+    """Jake, 2026-10-07 (with Block Analitica's API docs): NPS = P&L net less Security and Maintenance (Sky's financials
+    page counts S&M as an expense; Block Analitica books it below net revenue); Buyback Spending and Staking Rewards from
+    cash flow, outflows stored positive; complete months only, dated to month-end; robots.txt first."""
+    from fetch import sky_accounting as sa
+    from fetch import scrape
+    monkeypatch.setattr(scrape, "robots_verdict", lambda url: (True, "robots.txt read (HTTP 200)"))
+    monkeypatch.setattr(sa, "today", lambda: pd.Timestamp("2026-10-07"))
+    calls = []
+
+    class H:
+        def get(self, url, params=None, **_):
+            calls.append((url, dict(params or {})))
+            if url.endswith("/profit-and-loss/statement/history/"):
+                return {"data": [{"date": "2026-08", "revenue": "40", "expense": "20", "net": "20.5"},
+                                 {"date": "2026-09", "revenue": "30", "expense": "15", "net": "15"},
+                                 {"date": "2026-10", "revenue": "3", "expense": "1", "net": "2"}],
+                        "status": 200, "success": True}
+            if url.endswith("/profit-and-loss/history/"):
+                assert params["type"] == "revenue_distribution" and params["category"] == "Security and Maintenance"
+                return {"data": [{"date": "2026-08", "type": "revenue_distribution", "amount": "4.75"}],
+                        "status": 200, "success": True}
+            if url.endswith("/cash-flow/items/history/") and params["category"] == "Buyback Spending":
+                return {"data": [{"date": "2026-09", "source": "buyback", "category": "Buyback Spending",
+                                  "type": "outflows", "amount": "-7.5"},
+                                 {"date": "2026-09", "source": "flap", "category": "Buyback Spending",
+                                  "type": "outflows", "amount": "-2.5"}], "status": 200, "success": True}
+            return {"data": [{"date": "2026-09", "source": "lssky", "category": "Staking Rewards",
+                              "type": "outflows", "amount": "-3"}], "status": 200, "success": True}
+    out = FetchOutput()
+    sa.SkyAccounting(http=H()).run([config.PROJECT_BY_NAME["Sky"]], 90, out)
+    f = out.frame()
+    nps = f[f.metric == "net_protocol_surplus_usd"].set_index("date")["value"]
+    assert dict(nps) == {pd.Timestamp("2026-08-31"): 20.5 - 4.75, pd.Timestamp("2026-09-30"): 15.0}   # Oct incomplete
+    bb = f[f.metric == "buyback_spending_usd_ba"].set_index("date")["value"]
+    assert dict(bb) == {pd.Timestamp("2026-09-30"): 10.0}
+    st = f[f.metric == "staking_rewards_usd_ba"]
+    assert list(st.value) == [3.0]
+    assert all(p.get("group_by") == "month" and p.get("date_from") == "2025-01-01" for _, p in calls)
+    assert config.series_granularity("Sky", "net_protocol_surplus_usd") == "monthly"
+    assert config.CREDIBILITY["Sky"]["in_nps"]["ref"]["args"]["metric"] == "net_protocol_surplus_usd_reported"
+    rows = [ln for ln in open("manual_overrides.csv") if ",Sky,net_protocol_surplus_usd" in ln]
+    assert len(rows) == 4 and all(",Sky,net_protocol_surplus_usd_reported," in ln for ln in rows)
+    # robots.txt refusal stores nothing
+    monkeypatch.setattr(scrape, "robots_verdict", lambda url: (False, "Disallow: /v1/"))
+    out = FetchOutput()
+    sa.SkyAccounting(http=H()).run([config.PROJECT_BY_NAME["Sky"]], 90, out)
+    assert out.frame().empty

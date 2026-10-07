@@ -188,6 +188,16 @@ def _sum_since(p, rows, long, asof, metrics=(), since="", **_):
     return tot, str(asof.date()), "; ".join(held)
 
 
+def _schedule_month(p, rows, long, asof, **_):
+    """The project's published circulating figure for asof's month (config.CIRCULATING_SCHEDULE — Aethir's docs table,
+    2026-10-07)."""
+    v = config.circulating_schedule_value(p, pd.Timestamp(asof).to_period("M"))
+    if v is None:
+        return None, None, f"no published circulating figure for {pd.Timestamp(asof).to_period('M')}"
+    return v, str(pd.Timestamp(asof).to_period("M")), (f"{p}'s published circulating for "
+                                                       f"{pd.Timestamp(asof).to_period('M')} (config.CIRCULATING_SCHEDULE)")
+
+
 def _q0(asof):
     return asof - pd.Timedelta(days=90), asof
 
@@ -549,7 +559,7 @@ FORMULAS = {"sum_months": _sum_months, "free_float_now": _free_float_now, "windo
             "common_day_value": _common_day_value, "months_match": _months_match,
             "hl_reward_active": _hl_reward_active, "base_reward_ceiling": _base_reward_ceiling,
             "rate_on_stake": _rate_on_stake, "trailing_token_yield": _trailing_token_yield,
-            "sum_since": _sum_since}
+            "sum_since": _sum_since, "schedule_month": _schedule_month}
 
 
 def reference(project: str, spec: dict, rows: dict, long, asof) -> dict:

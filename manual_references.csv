@@ -7,7 +7,6 @@ Sky,in_locked_usds_farm,,8591470732.25,SKY,2026-10-07,Jake,https://info.skyeco.c
 Sky,in_apy_sky_farm,,0.0658,fraction (0.25 = 25%),2026-10-07,Jake,https://info.skyeco.com/staking/0xb44c2fb4181d7cb06bdff34a46fdfe4a259b40fc,APY (SKY-rewards farm),15.0,given in chat; entered by Claude Code
 Sky,in_apy_usds_farm,,0.0461,fraction (0.25 = 25%),2026-10-07,Jake,https://info.skyeco.com/staking/0x38e4254bd82ed5ee97cd1c4278faae748d998865,APY (USDS-rewards farm),15.0,given in chat; entered by Claude Code
 Sky,a3_protocol_yield,,0.0461,fraction (0.25 = 25%),2026-10-07,Jake,https://info.skyeco.com/staking/0x38e4254bd82ed5ee97cd1c4278faae748d998865,APY (USDS-rewards farm),15.0,given in chat; entered by Claude Code — the USDS-rewards farm APY = the revenue-funded staking yield
-Aethir,in_circ,,24053550151,ATH,2026-10-07,Jake,https://docs.aethir.com/aethir-tokenomics/ath-circulating-supply,the October 2026 step of the monthly table,2.0,given in chat; entered by Claude Code — the Oct 2026 step of the schedule; equals the dashboard
 Aethir,in_apr_ai,,0.1248,fraction (0.25 = 25%),2026-10-07,Jake,https://dashboard.aethir.com,AI pool average APR,5.0,given in chat; entered by Claude Code
 Aethir,in_apr_gaming,,0.14,fraction (0.25 = 25%),2026-10-07,Jake,https://dashboard.aethir.com,Gaming pool average APR,5.0,given in chat; entered by Claude Code
 GEODNET,a2_customer_revenue,2026-07,920549,USD,2026-10-07,Jake,GEODNET monthly burn report,revenue in the month ($),10.0,"given in chat; entered by Claude Code — burn $736,439 / 0.80 (burn = 80% of revenue)"
