@@ -47,8 +47,13 @@ PAGES: dict = {
                                     "tol_pct": 2.0},
     # ONE POOL, NET OF ITS COMMISSION (Jake, 2026-10-07): a near.com staking pool's APR is compared with our GROSS
     # validator yield — ours should read higher by that pool's commission. The account on that page is not stored.
+    # GROSS VS GROSS (Jake's sign-off round, 2026-10-07): the headline is judged against the network reward rate from
+    # BigQuery (config CREDIBILITY); the pool's NET reading stays as its own recorded row ("beside"), never the judge.
     ("Near", "a1_validator_yield"): {"url": "near.com staking (one pool's page)", "tile": "pool APR, NET of the "
-                                     "pool's commission — ours is GROSS", "unit": "fraction", "tol_pct": 15.0},
+                                     "pool's commission — ours is GROSS", "unit": "fraction", "tol_pct": 15.0,
+                                     "beside": "in_validator_yield_net",
+                                     "beside_why": "one pool's APR, NET of its commission — recorded beside the gross "
+                                                   "headline, not judged (a different quantity)"},
     # B7 (overnight 2026-10-06): the page is docs.aethir.com/aethir-tokenomics/ath-circulating-supply (a .md
     # variant exists); its robots.txt could not be read from here, so it stays a reading by hand, not a fetch.
     ("Aethir", "in_circ"): {"url": "https://docs.aethir.com/aethir-tokenomics/ath-circulating-supply",

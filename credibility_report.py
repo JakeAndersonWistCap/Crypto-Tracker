@@ -67,7 +67,7 @@ def read_tab(path: Path, evaluate: bool = True) -> tuple[list, list]:
         def get(r, c):
             return ws.cell(r, c).value
     head = next(r for r in range(1, 60) if ws.cell(r, 1).value == "Project" and ws.cell(r, 2).value == "Tab")
-    summary = [[get(r, c) for c in range(1, 8)] for r in range(5, head - 1) if ws.cell(r, 1).value]
+    summary = [[get(r, c) for c in range(1, 13)] for r in range(5, head - 1) if ws.cell(r, 1).value]
     rows = [[get(r, c) for c in range(1, 13)] for r in range(head + 1, ws.max_row + 1) if ws.cell(r, 1).value]
     return summary, rows
 
@@ -157,10 +157,13 @@ def main(argv=None) -> int:
     if args.project:
         rows = [r for r in rows if str(r[0]).lower() == args.project.lower()]
         summary = [s for s in summary if str(s[0]).lower() in (args.project.lower(), "all")]
-    print("CREDIBILITY - counts by verdict")
-    print(f"  {'Project':<13}{'PASS':>6}{'CHECK':>7}{'FRESH':>7}{'UNVER':>7}{'N/A':>6}{'Rows':>6}")
+    print("CREDIBILITY - counts by verdict, and SIGN-OFF (PASS / N/A / LIMITATION / MATURING / FINDING = signed)")
+    print(f"  {'Project':<13}{'PASS':>6}{'CHECK':>7}{'FRESH':>7}{'UNVER':>7}{'N/A':>6}{'Rows':>6}"
+          f"{'LIMIT':>7}{'MATUR':>7}{'FIND':>6}{'OPEN':>6}  SIGN-OFF")
     for s in summary:
-        print(f"  {a(s[0]):<13}" + "".join(f"{int(x or 0):>{w}}" for x, w in zip(s[1:], (6, 7, 7, 7, 6, 6))))
+        s = list(s) + [None] * (12 - len(s))
+        print(f"  {a(s[0]):<13}" + "".join(f"{int(x or 0):>{w}}" for x, w in
+                                            zip(s[1:11], (6, 7, 7, 7, 6, 6, 7, 7, 6, 6))) + f"  {a(s[11])}")
     if roots is not None:
         print_roots(roots)
     if args.roots:
@@ -172,10 +175,10 @@ def main(argv=None) -> int:
             tol = f"+/-{r[9] * 100:g}%" if isinstance(r[9], (int, float)) else ""
             print(f"  {a(r[0]):<12}| {a(r[2])[:28]:<28}| {a(r[3])[:58]:<58}| {fmt(r[4]):>14} | "
                   f"{fmt(r[6]):>14} {a(r[7] or '')[:10]:<10}| {gap:>8} | {tol:>7} | {a(r[10])}")
-    print("\nCREDIBILITY - every CHECK and UNVERIFIABLE, with what would resolve it")
+    print("\nCREDIBILITY - every OPEN row (not PASS / N/A / LIMITATION / MATURING / FINDING), with what would resolve it")
     for r in rows:
         v = a(r[10])
-        if v.startswith("CHECK") or v.startswith("UNVERIFIABLE"):
+        if not credibility.signed(v):
             print(f"  [{v}] {a(r[0])} - {a(r[3])[:90]}\n      source: {a(r[5])[:160]}\n      {a(r[11])[:600]}")
     return 0
 

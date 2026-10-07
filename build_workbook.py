@@ -2031,6 +2031,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     # declared ETH.Store leg (history_prefix) only if the leg is already in the group.
     _history_leg_views(groups)
     _emissions_model_views(groups)
+    _onchain_release_views(groups)    # BEFORE the issuance views that read pool_release_tokens
     _issuance_views(groups, asof)
     _reward_end_views(groups, asof)
     _net_common_views(groups)     # AFTER the issuance views it differences
@@ -3967,6 +3968,71 @@ def _buyback_tokens_from_usd_views(groups: dict) -> None:
         groups[(name, "actual_buyback_tokens")] = _as_stored(tok, usd.columns)
 
 
+def _onchain_release_views(groups: dict) -> None:
+    """pool_release_tokens := −d(the named non-circulating balances), day over consecutive stored days (Chainlink, Jake's
+    sign-off round 2026-10-07: the on-chain set is primary, so the release is what its wallets actually let out). The
+    CoinGecko-derived series it replaces stays as pool_release_tokens_coingecko — its circulating moves in steps, so
+    it is the cross-check only. Declared by CIRCULATING_ONCHAIN[name]["release_from"]."""
+    for name, spec in config.CIRCULATING_ONCHAIN.items():
+        legs = spec.get("release_from")
+        if not legs or (name, legs[0]) not in groups:
+            continue
+        held = groups.get((name, "pool_release_tokens"))
+        series = []
+        for m in legs:
+            g = groups.get((name, m))
+            if g is None or g.empty:
+                series = None
+                break
+            series.append(g.assign(date=pd.to_datetime(g["date"]).dt.normalize())
+                          .drop_duplicates("date", keep="last").set_index("date")["value"].astype(float))
+        if not series:
+            continue
+        bal = pd.concat(series, axis=1).dropna().sum(axis=1).sort_index()
+        prev = bal.shift(1)
+        step = (bal.index.to_series().diff().dt.days == 1)
+        rel = (prev - bal)[step].dropna()
+        if rel.empty:
+            continue
+        cols = held.columns if held is not None and not held.empty else groups[(name, legs[0])].columns
+        if held is not None and not held.empty:
+            groups[(name, "pool_release_tokens_coingecko")] = _as_stored(
+                held.assign(metric="pool_release_tokens_coingecko"), held.columns)
+        groups[(name, "pool_release_tokens")] = _as_stored(pd.DataFrame(
+            {"date": rel.index, "project": name, "metric": "pool_release_tokens", "value": rel.values,
+             "source": f"derived:-d({'+'.join(legs)})", "tier": 2}), cols)
+    # FIRST-PARTY RELEASE (Hyperliquid, Jake's sign-off round 2026-10-07): d(the project's own circulating) + the
+    # named flows that took tokens back out of it the same day (the Assistance Fund buyback)
+    for name, spec in config.CIRCULATING_ONCHAIN.items():
+        fp = spec.get("release_first_party")
+        if not fp or (name, fp["stock"]) not in groups:
+            continue
+        g = groups[(name, fp["stock"])]
+        if g is None or g.empty:
+            continue
+        stock = (g.assign(date=pd.to_datetime(g["date"]).dt.normalize()).drop_duplicates("date", keep="last")
+                 .set_index("date")["value"].astype(float).sort_index())
+        step = (stock.index.to_series().diff().dt.days == 1)
+        rel = (stock - stock.shift(1))[step].dropna()
+        for m in fp.get("plus") or ():
+            f = groups.get((name, m))
+            if f is None or f.empty:
+                fs = pd.Series(0.0, index=rel.index)
+            else:
+                fs = (f.assign(date=pd.to_datetime(f["date"]).dt.normalize()).groupby("date")["value"].sum()
+                      .astype(float))
+            rel = rel.add(fs.reindex(rel.index).fillna(0.0))
+        if rel.empty:
+            continue
+        held = groups.get((name, "pool_release_tokens"))
+        if held is not None and not held.empty:
+            groups[(name, "pool_release_tokens_coingecko")] = _as_stored(
+                held.assign(metric="pool_release_tokens_coingecko"), held.columns)
+        groups[(name, "pool_release_tokens")] = _as_stored(pd.DataFrame(
+            {"date": rel.index, "project": name, "metric": "pool_release_tokens", "value": rel.values,
+             "source": f"derived:d({fp['stock']})+{'+'.join(fp.get('plus') or ())}", "tier": 2}), g.columns)
+
+
 def _emissions_from_metric_views(groups: dict) -> None:
     """emissions_tokens := the MEASURED release named by config `emissions_from_metric` (Sky, Jake's run
     2026-10-07: the declared vest streams read 73.2M over Q0 where SKY actually released to the farm was 189.1M —
@@ -5218,7 +5284,10 @@ def write_credibility(ws, R: Refs, data_by_key: dict, long: pd.DataFrame, asof) 
            "source: current, not verified — never a PASS · UNVERIFIABLE = no independent source exists (the note "
            f"says why). Our value is the headline cell itself. Parked: {parked or 'none'}.")
     s0 = 4
-    _header(ws, s0, ["Project", "PASS", "CHECK", "FRESH-only", "UNVERIFIABLE", "N/A (no figure by design)", "Rows"])
+    # THE FINISH LINE (overnight sign-off round 2026-10-07): a project is SIGNED OFF when every row is PASS, N/A,
+    # DOCUMENTED LIMITATION, MATURING or VERIFIED FINDING (credibility.SIGNED); OPEN = the rest.
+    _header(ws, s0, ["Project", "PASS", "CHECK", "FRESH-only", "UNVERIFIABLE", "N/A (no figure by design)", "Rows",
+                     "DOCUMENTED LIMITATION", "MATURING", "VERIFIED FINDING", "OPEN", "Sign-off"])
     d_head = s0 + len(projects) + 3
     d0, d1 = d_head + 1, d_head + max(len(rows), 1)
     K, A = f"$K${d0}:$K${d1}", f"$A${d0}:$A${d1}"
@@ -5229,6 +5298,10 @@ def write_credibility(ws, R: Refs, data_by_key: dict, long: pd.DataFrame, asof) 
         for j, v in enumerate(("PASS*", "CHECK*", "FRESH-only*", "UNVERIFIABLE*", "N/A*"), start=2):
             ws.cell(row=r, column=j, value=f'=COUNTIFS({crit}{K},"{v}")')
         ws.cell(row=r, column=7, value=f"=COUNTIF({A},$A{r})" if n != "All" else f"=COUNTA({A})")
+        for j, v in enumerate(("DOCUMENTED LIMITATION*", "MATURING*", "VERIFIED FINDING*"), start=8):
+            ws.cell(row=r, column=j, value=f'=COUNTIFS({crit}{K},"{v}")')
+        ws.cell(row=r, column=11, value=f"=G{r}-B{r}-F{r}-H{r}-I{r}-J{r}")
+        ws.cell(row=r, column=12, value=f'=IF(K{r}=0,"SIGNED OFF","OPEN")').font = F_BOLD
     _header(ws, d_head, CRED_HEAD)
 
     def text(v):                     # a note that starts with "=" must never become a formula
@@ -5265,21 +5338,33 @@ def write_credibility(ws, R: Refs, data_by_key: dict, long: pd.DataFrame, asof) 
             anycheck = "OR(" + ",".join(f'LEFT({x},5)="CHECK"' for x in cells) + ")" if cells else "FALSE"
             allpass = "AND(" + ",".join(f'OR(LEFT({x},4)="PASS",LEFT({x},3)="N/A")' for x in cells) + ")"
             anyunv = "OR(" + ",".join(f'LEFT({x},5)="UNVER"' for x in cells) + ")"
+            # SIGNED INPUTS (sign-off round): every input PASS / N/A / LIMITATION / MATURING / FINDING -> the derived
+            # row carries the weakest of them (MATURING, then LIMITATION, then FINDING)
+            allsigned = "AND(" + ",".join(
+                f'OR(LEFT({x},4)="PASS",LEFT({x},3)="N/A",LEFT({x},10)="DOCUMENTED",LEFT({x},8)="MATURING",'
+                f'LEFT({x},8)="VERIFIED")' for x in cells) + ")"
+            anymat = "OR(" + ",".join(f'LEFT({x},8)="MATURING"' for x in cells) + ")"
+            anylim = "OR(" + ",".join(f'LEFT({x},10)="DOCUMENTED"' for x in cells) + ")"
             if not cells:
                 v = "UNVERIFIABLE (inputs)"
             elif row.get("missing_inputs"):
                 v = f'=IF({anycheck},"CHECK (inputs)","UNVERIFIABLE (inputs)")'
             else:
                 v = (f'=IF({anycheck},"CHECK (inputs)",IF({allpass},"PASS (inputs)",'
-                     f'IF({anyunv},"UNVERIFIABLE (inputs)","FRESH-only (inputs)")))')
+                     f'IF({allsigned},IF({anymat},"MATURING (inputs)",IF({anylim},"DOCUMENTED LIMITATION (inputs)",'
+                     f'"VERIFIED FINDING (inputs)")),'
+                     f'IF({anyunv},"UNVERIFIABLE (inputs)","FRESH-only (inputs)"))))')
         else:
-            ok = "FRESH-only" if row["mode"] == "same_source" else "PASS"
+            # a first-party-only row documented as such (sign-off round): its FRESH-only reads as the limitation
+            ok = ((row.get("fresh_label") or "FRESH-only") if row["mode"] == "same_source" else "PASS")
             v = (f'=IF(NOT(ISNUMBER(G{r})),"CHECK (no reference)",IF(NOT(ISNUMBER(E{r})),"CHECK (no figure)",'
                  f'IF(ABS(I{r})<=J{r},"{ok}","CHECK")))')
         ws.cell(row=r, column=11, value=v).font = F_BOLD
         ws.cell(row=r, column=12, value=text(row.get("note") or ""))
     rng = f"K{d0}:K{d1}"
     for test, fill in (('LEFT({c},4)="PASS"', FILL_GREEN), ('LEFT({c},5)="CHECK"', FILL_RED),
+                       ('LEFT({c},10)="DOCUMENTED"', FILL_GREEN), ('LEFT({c},8)="MATURING"', FILL_AMBER),
+                       ('LEFT({c},8)="VERIFIED"', FILL_GREEN),
                        ('LEFT({c},5)="FRESH"', FILL_AMBER), ('LEFT({c},5)="UNVER"', FILL_UNCONFIRMED),
                        ('LEFT({c},3)="N/A"', FILL_UNCONFIRMED)):
         ws.conditional_formatting.add(rng, FormulaRule(formula=[test.format(c=f"K{d0}")], fill=fill))

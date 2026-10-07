@@ -35,6 +35,39 @@ import config
 
 VERDICTS = ("PASS", "CHECK", "FRESH-only", "UNVERIFIABLE", "N/A")
 
+# THE FINISH LINE (Jake, overnight sign-off round 2026-10-07): a project is SIGNED OFF when every row is one of
+#   PASS                   independently confirmed within tolerance
+#   N/A                    does not apply by design
+#   DOCUMENTED LIMITATION  no free second source exists — the reason AND what would upgrade it are written down
+#   MATURING               fills by a stated date (a forward-only series)
+#   VERIFIED FINDING       our figure is confirmed and the gap is a real-world fact, with the evidence
+# Anything else (CHECK, FRESH-only, UNVERIFIABLE) is OPEN, with its reason. A row becomes a LIMITATION or FINDING
+# only with its evidence on the spec ("evidence", plus "upgrade" / "until") — config._c_lim / _c_find / _c_mat refuse
+# one without.
+SIGNED = ("PASS", "N/A", "DOCUMENTED LIMITATION", "MATURING", "VERIFIED FINDING")
+
+
+def signed(verdict) -> bool:
+    """Whether a verdict (as displayed) counts towards sign-off."""
+    v = str(verdict or "")
+    return any(v.startswith(s) for s in SIGNED)
+
+
+def signoff(rows: list, verdicts: list) -> dict:
+    """{project: {"status": "SIGNED OFF"|"OPEN", "open": [(id, verdict, note)], "counts": {category: n}}} from the
+    built rows and their displayed verdicts (same order)."""
+    out: dict = {}
+    for r, v in zip(rows, verdicts):
+        d = out.setdefault(r["project"], {"open": [], "counts": {}})
+        v = str(v or "")
+        cat = next((s for s in SIGNED if v.startswith(s)), "OPEN")
+        d["counts"][cat] = d["counts"].get(cat, 0) + 1
+        if cat == "OPEN":
+            d["open"].append((r["id"], v, (r.get("note") or "")[:300]))
+    for d in out.values():
+        d["status"] = "SIGNED OFF" if not d["open"] else "OPEN"
+    return out
+
 DERIVED_WHY = ("a ratio we derive — no third party publishes it; its inputs are checked in this "
                "project's input rows below")
 
@@ -110,11 +143,17 @@ def _eth_net_formula(p, rows, long, asof, issuance="gross_issuance_tokens", burn
     if missing:
         return None, None, (f"no burn on {len(missing)} of our {len(days)} common day(s) (neither DefiLlama x price "
                             f"nor the BurntFees counter on the day and the day before), e.g. {missing[0].date()}")
+    # BOTH SIDES, LEG BY LEG (Jake's sign-off round, 2026-10-07): ours on the same days, so a miss names its leg —
+    # issuance (Etherscan d(EthSupply + Eth2Staking) + d(BurntFees) vs the curve) or burn (ours vs DefiLlama / price)
+    o_iss = float(si.reindex(days).sum())
+    o_brn = float(sb.reindex(days).sum())
+    gap = lambda a, b: f"{(a / b - 1):+.1%}" if b else "n/a"             # noqa: E731
     return iss - brn, str(days[-1].date()), (
         f"issuance curve {iss:,.0f} ETH (166.32 x sqrt(that day's staked ETH) over {len(days)} day(s)) − burn "
         f"{brn:,.0f} ETH (DefiLlama / price on {n_llama} day(s)"
         + (f", BurntFees counter on {n_counter}" if n_counter else "") + f"), on our {len(days)} common day(s) "
-        f"{days[0].date()}..{days[-1].date()}")
+        f"{days[0].date()}..{days[-1].date()}. OURS, same days: issuance {o_iss:,.0f} ({gap(o_iss, iss)} vs the "
+        f"curve) − burn {o_brn:,.0f} ({gap(o_brn, brn)} vs the reference burn) = {o_iss - o_brn:,.0f}")
 
 
 def _base_reward_ceiling(p, rows, long, asof, cover_metric="pool_release_tokens", units="supply_units", **_):
@@ -805,7 +844,7 @@ def reference(project: str, spec: dict, rows: dict, long, asof) -> dict:
     elif "formula" in spec:
         val, date, how = FORMULAS[spec["formula"]](project, rows, long, asof, **(spec.get("args") or {}))
         src = src or how
-        if val is None:
+        if val is None or (spec.get("show_how") and how != src):    # show_how: the working beside a named source
             note = (note + " " if note else "") + how
     elif spec.get("align_to"):
         ours = _series(long, project, spec["align_to"])
@@ -838,7 +877,8 @@ def reference(project: str, spec: dict, rows: dict, long, asof) -> dict:
                 "verdict": spec["force_verdict"],
                 "note": (note + " " if note else "") + spec.get("why", "") + (f" RESOLVE: {res}" if res else "")}
     return {"value": val, "date": None if date is None else str(date)[:10], "source": src, "mode": mode,
-            "verdict": None, "note": note}
+            "verdict": None, "note": note,
+            **({"fresh_label": spec["fresh_label"]} if spec.get("fresh_label") else {})}
 
 
 def ours_value(project: str, ours: dict, rows: dict, long, asof):
@@ -1023,6 +1063,12 @@ def price_inputs(name: str) -> dict:
         "ours": {"py": "common_day_value", "args": {"metric": "price_usd", "ref": "price_usd_llama", "side": "ours"}},
         "fmt": fmt,
         "ref": {"formula": "common_day_value", "tol": 2.0, "same_source": not indep,
+                # a native coin's DefiLlama price is CoinGecko's relayed (sign-off round 2026-10-07): where Coinbase
+                # lists it the exchange price is the independent check (in_price) and this row is a third reading;
+                # where it does not (HYPE), the relay agreeing is recorded as a documented limitation
+                **({} if indep else {"fresh_label": "N/A (relay of CoinGecko; Coinbase is the independent check)"
+                                     if product else "DOCUMENTED LIMITATION (DefiLlama relays CoinGecko; no "
+                                                     "exchange candle wired)"}),
                 "args": {"metric": "price_usd", "ref": "price_usd_llama", "side": "ref"},
                 "source": f"DefiLlama coins API, {key}" + ("" if indep else " — CoinGecko's own price relayed"),
                 "note": ("DefiLlama prices a listed token partly from CoinGecko, so a match here is weaker evidence "
@@ -1151,6 +1197,7 @@ def build_rows(headline_cells: list[dict], rows: dict, long, asof, projects=None
     out = []
     for name in names:
         spec_p = config.CREDIBILITY.get(name) or {}
+        beside: dict = {}                            # manual readings recorded beside a headline (manual_refs)
         for hc in [h for h in headline_cells if h["project"] == name]:
             spec = spec_p.get(hc["id"])
             na = by_design_na(name, hc["id"]) if spec is None else None
@@ -1178,7 +1225,17 @@ def build_rows(headline_cells: list[dict], rows: dict, long, asof, projects=None
                 spec = ({"verdict": "UNVERIFIABLE", "why": DERIVED_WHY} if hc["kind"] == "calc" else
                         {"verdict": "CHECK", "why": "no independent reference is wired for this figure yet."})
             if (name, hc["id"]) in manual:           # Jake's reading (manual_form.py) replaces the reference
-                spec = manual_refs.reference_for(manual[(name, hc["id"])], None)[0]
+                pg = manual_refs.page_for(name, hc["id"])
+                if pg.get("beside"):                 # ... unless it is a different quantity: recorded beside it
+                    rd = manual[(name, hc["id"])][0]
+                    beside[pg["beside"]] = {
+                        "what": f"{hc['header']} — {pg.get('tile', 'reading')} (recorded beside the headline)",
+                        "ours": {"cell": f"'{hc['sheet']}'!{hc['cell']}"}, "fmt": hc.get("fmt"),
+                        "ref": {"verdict": "N/A (recorded)",
+                                "why": f"{rd['value']} read {rd.get('read_on')} by {rd.get('read_by') or 'Jake'} "
+                                       f"({rd.get('url') or pg['url']}): {pg.get('beside_why', '')}"}}
+                else:
+                    spec = manual_refs.reference_for(manual[(name, hc["id"])], None)[0]
             ref = reference(name, spec, rows, long, asof)
             out.append({"project": name, "tab": hc["sheet"], "cell": hc["cell"], "id": hc["id"],
                         "what": hc["header"], "ours": {"cell": f"'{hc['sheet']}'!{hc['cell']}"},
@@ -1209,6 +1266,7 @@ def build_rows(headline_cells: list[dict], rows: dict, long, asof, projects=None
                                f"in_circ is judged by the bridge reconciliation."}}
         inputs.update(generic_inputs(name))
         inputs.update({k: v for k, v in spec_p.items() if k.startswith("in_")})
+        inputs.update(beside)
         for iid, spec in inputs.items():
             if spec is None:
                 continue
@@ -1223,6 +1281,8 @@ def build_rows(headline_cells: list[dict], rows: dict, long, asof, projects=None
             if "py" in ours:
                 ours["value"] = ours_value(name, ours, rows, long, asof)
                 cell = f"computed: {ours['py']} {ours.get('args', {})}"
+            elif "cell" in ours:
+                cell = ours["cell"]
             else:
                 cell = f"Data {ours['metric']} ({ours.get('window', 'now')})"
             out.append({"project": name, "tab": "input", "cell": cell, "id": iid, "what": spec["what"],

@@ -3288,7 +3288,8 @@ def near_buyback_wallets():
             bal = get(f"/accounts/{w}/balance").get("data") or {}
             print(f"    balance now: {int(bal.get('amount') or 0) / 1e24:,.1f} NEAR liquid, "
                   f"{int(bal.get('amount_staked') or 0) / 1e24:,.1f} staked")
-            hist = get(f"/accounts/{w}/stats/balance", {"limit": 400}).get("data") or []
+            # 365 rows at most (fetch/nearblocks.STATS_BALANCE_MAX_ROWS: a larger limit is refused with HTTP 422)
+            hist = get(f"/accounts/{w}/stats/balance", {"limit": 365}).get("data") or []
             if hist:
                 hb = pd.Series({pd.Timestamp(h["date"]): int(h["amount"]) / 1e24 for h in hist}).sort_index()
                 closes[w] = hb
@@ -7999,6 +8000,341 @@ def hl_pool_release_compare():
           "AF burns shows up here as the day the two sides part.")
 
 
+
+# ===== JAKE'S SIGN-OFF ROUND (2026-10-07, overnight): on-chain references for rows that were first-party only. Reads
+# only; nothing is stored. =====
+PENDLE_TOKEN = "0x808507121B80c02388fAd14726482e061B8da827"
+PENDLE_SPENDLE = "0x999999999991E178D52Cd95AFd4b00d066664144"
+PENDLE_MERKLE_DEPOSITOR = "0x3dAe3d1734cA3C7B3089D4DD03C9876e0A0102b4"      # deployments/1-core.json @87685c8
+PENDLE_AIRDROP_DISTRIBUTOR = "0x3942F7B55094250644cFfDa7160226Caa349A38E"   # vePendleAirdropDistributor, same file
+
+
+def pendle_spendle_rewards_onchain(days: int = 120):
+    """Pendle a3_protocol_yield, on-chain: sPENDLE rewards are paid by merkle "in the form of sPENDLE" every 14 days
+    (documentation @3cc3658 sPENDLE.md L24-41). The merkle contract funded each epoch is NOT named in deployments/
+    1-core.json, so this reads it from the chain rather than guessing: merkleDepositor.merkleDistributor(), and the
+    vePendleAirdropDistributor, each with PENDLE INTO it per day (who sent it) and PENDLE from it INTO sPENDLE (claims
+    staked). Set against spendle/data's per-epoch distributions in metrics.db (pendle_distributed_tokens) and the
+    82,545 partial epoch Jake read on 2026-09-29; APR = epoch x 365/14 / (sPENDLE PENDLE + virtual)."""
+    import sqlite3                                         # noqa: PLC0415
+    import time as _t                                      # noqa: PLC0415
+    import pandas as pd                                    # noqa: PLC0415
+    head(f"PENDLE — sPENDLE epoch rewards on-chain vs spendle/data ({days} days)")
+    w, _ = eth_call(PENDLE_MERKLE_DEPOSITOR, _selx("merkleDistributor()"))
+    dist = ("0x" + w[-40:]) if w and len(w) >= 42 else None
+    print(f"  merkleDepositor.merkleDistributor() = {dist or 'UNREADABLE'}"
+          + (f" ({_code(dist, 'ethereum')})" if dist else ""))
+    start = _block_at(int(_t.time()) - days * 86400) or 0
+    stored = pd.Series(dtype=float)
+    try:
+        con = sqlite3.connect("metrics.db")
+        d = pd.read_sql_query("SELECT date, metric, value FROM metrics WHERE project='Pendle' AND metric IN "
+                              "('pendle_distributed_tokens','locked_tokens','locked_tokens_virtual')", con)
+        d["date"] = pd.to_datetime(d["date"]).dt.normalize()
+        stored = d[d.metric == "pendle_distributed_tokens"].groupby("date")["value"].last().sort_index()
+        stake = sum(float(d[d.metric == m].sort_values("date")["value"].iloc[-1])
+                    for m in ("locked_tokens", "locked_tokens_virtual") if (d.metric == m).any())
+    except Exception as e:  # noqa: BLE001
+        print(f"  metrics.db unreadable — {e}")
+        stake = 0.0
+    print("  spendle/data distributions (stored): "
+          + (", ".join(f"{i.date()} {v:,.0f}" for i, v in stored.tail(6).items()) or "none"))
+    for label, addr in (("merkleDistributor", dist), ("vePendleAirdropDistributor", PENDLE_AIRDROP_DISTRIBUTOR)):
+        if not addr:
+            continue
+        ins, why = explorer_logs(1, PENDLE_TOKEN, [TRANSFER_TOPIC, None, _pad(addr)], start)
+        if ins is None:
+            print(f"\n  {label} {addr}: {why}")
+            continue
+        by_day, senders = {}, {}
+        for e in ins:
+            amt = int(e["data"], 16) / 1e18
+            if amt <= 0:
+                continue
+            day = pd.Timestamp(int(e["timeStamp"]), unit="s").normalize()
+            by_day[day] = by_day.get(day, 0.0) + amt
+            frm = "0x" + e["topics"][1][-40:]
+            senders[frm] = senders.get(frm, 0.0) + amt
+        print(f"\n  {label} {addr}: {len(ins)} PENDLE transfer(s) IN, {sum(by_day.values()):,.0f} PENDLE")
+        for day, v in sorted(by_day.items())[-10:]:
+            print(f"    {day.date()} {v:,.0f}")
+        for frm, v in sorted(senders.items(), key=lambda kv: -kv[1])[:5]:
+            print(f"    from {frm}: {v:,.0f} ({_code(frm, 'ethereum')})")
+        outs, why = explorer_logs(1, PENDLE_TOKEN, [TRANSFER_TOPIC, _pad(addr), _pad(PENDLE_SPENDLE)], start)
+        staked = sum(int(e["data"], 16) / 1e18 for e in outs or ())
+        print(f"    PENDLE from it INTO sPENDLE (claims staked): {staked:,.0f}" + ("" if outs is not None else f" — {why}"))
+        if by_day and stake:
+            last = sorted(by_day.items())[-1]
+            print(f"    APR if {last[0].date()}'s funding is one epoch: {last[1] * 365 / 14 / stake:.2%} on "
+                  f"{stake:,.0f} sPENDLE PENDLE + virtual")
+    print("  PASTE BACK: the contract whose funding days line up with the 14-day epochs and whose amounts match "
+          "spendle/data (82,545 partial on 2026-09-29) is the on-chain reference; it is wired only after that match.")
+
+MAPLE_REGISTRY_TREASURY = "0xa9466EaBd096449d650D5AEB0dD3dA6F52FD0B19"
+ETHERFI_EETH = "0x35fA164735182de50811E8e2E824cFb9B6118ac2"      # etherfi-protocol/smart-contracts @15ff96d tests
+ETHERFI_FOUNDATION_BUYBACK = "0x2f5301a3D59388c509C65f8698f521377D41Fd0F"
+SWAP_NAME_HINTS = ("pool", "pair", "router", "swap", "settlement", "aggregat", "exchange", "1inch", "0x", "paraswap",
+                   "kyber", "odos", "cow", "uniswap", "balancer", "curve", "poolmanager")
+
+
+def _safes_of(owner: str) -> list:
+    """Safes an address signs for, from Safe's own transaction service (api.safe.global, Ethereum). [] if unreachable."""
+    try:
+        r = requests.get(f"https://safe-transaction-mainnet.safe.global/api/v1/owners/{owner}/safes/", headers=_ua(),
+                         timeout=TIMEOUT)
+        return [s.lower() for s in (r.json() or {}).get("safes") or []] if r.ok else []
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def maple_buyback_inflows(days: int = 365):
+    """Maple in_buyback (sign-off round): every Maple-controlled wallet — 0xd6d4 (DAO), 0x58be0049 (the SSF's partial
+    match), 0xa9466eab (registry treasury) and every Safe sharing a signer with them (Safe transaction service) —
+    and its SYRUP INFLOWS by month, split by whether the sender looks like a swap venue (verified contract name) or
+    not, against the transparency page's monthly buybacks (actual_buyback_tokens in metrics.db). Reads only."""
+    import sqlite3                                         # noqa: PLC0415
+    import time as _t                                      # noqa: PLC0415
+    import pandas as pd                                    # noqa: PLC0415
+    import config                                          # noqa: PLC0415
+    head(f"MAPLE — SYRUP into Maple-controlled wallets from swap venues vs the page's monthly buybacks ({days} days)")
+    syrup = config.PROJECT_BY_NAME["Maple"]["contracts"]["token"]["address"]
+    base = [MAPLE_DAO, MAPLE_SSF_PARTIAL, MAPLE_REGISTRY_TREASURY]
+    wallets = {w.lower() for w in base}
+    for w in base:
+        owners, t = _safe_owners(w)
+        print(f"  {w}: {'Safe ' + str(t) + '-of-' + str(len(owners)) if owners else _code(w, 'ethereum')}")
+        for o in owners:
+            for sf in _safes_of(o):
+                wallets.add(sf)
+    print(f"  wallets scanned: {len(wallets)} (the three + Safes sharing a signer)")
+    start = _block_at(int(_t.time()) - days * 86400) or 0
+    names, rows = {}, []
+    for w in sorted(wallets):
+        ins, why = explorer_logs(1, syrup, [TRANSFER_TOPIC, None, _pad(w)], start)
+        if ins is None:
+            print(f"    {w}: {why}")
+            continue
+        for e in ins:
+            amt = int(e["data"], 16) / 1e18
+            frm = "0x" + e["topics"][1][-40:]
+            if amt <= 0 or frm.lower() in wallets:
+                continue                                    # zero-value (poisoning) and internal moves are not buys
+            rows.append((pd.Timestamp(int(e["timeStamp"]), unit="s"), w, frm.lower(), amt))
+    if not rows:
+        print("  no SYRUP inflows from outside the Maple wallets")
+    df = pd.DataFrame(rows, columns=["ts", "to", "from", "syrup"])
+    for frm in df["from"].unique() if len(df) else ():
+        src = _source(frm)
+        names[frm] = src.get("name") or src.get("why") or "?"
+    if len(df):
+        df["venue"] = df["from"].map(lambda f: any(h in str(names.get(f, "")).lower() for h in SWAP_NAME_HINTS))
+        df["month"] = df["ts"].dt.to_period("M")
+        m = df.pivot_table(index="month", columns="venue", values="syrup", aggfunc="sum").fillna(0.0)
+        m.columns = ["other senders" if not c else "swap venues" for c in m.columns]
+        try:
+            con = sqlite3.connect("metrics.db")
+            pg = pd.read_sql_query("SELECT date, value FROM metrics WHERE project='Maple' AND "
+                                   "metric='actual_buyback_tokens'", con)
+            pg["month"] = pd.to_datetime(pg["date"]).dt.to_period("M")
+            m["page buybacks"] = pg.groupby("month")["value"].sum().reindex(m.index).fillna(0.0)
+        except Exception as e:  # noqa: BLE001
+            print(f"  metrics.db unreadable — {e}")
+        print(m.to_string(float_format=lambda x: f"{x:,.0f}"))
+        top = df.groupby("from")["syrup"].sum().sort_values(ascending=False).head(8)
+        for f, v in top.items():
+            print(f"    from {f}: {v:,.0f} SYRUP — {names.get(f)}")
+    print("  PASTE BACK the table: swap-venue inflows that track the page month by month make the on-chain sum the "
+          "reference; senders that are EOAs / OTC desks (e.g. 0x83971edb…, which also served Ether.fi) mean the buys "
+          "settle off-venue and the row is a documented limitation.")
+
+
+def etherfi_withdrawal_fees(days: int = 365):
+    """Ether.fi in_revenue / in_buyback (sign-off round): eETH (and WETH / ETH-equivalent) INTO the Foundation buyback
+    wallet 0x2f5301a3 by month — DefiLlama's ether-fi-stake adapter says the eETH withdrawal fees are transferred
+    there — beside the ETHFI it received by month (CoW settlements = buys). A fee stream that keeps arriving while
+    no ETHFI is bought is the programme declared but not executing. Reads only."""
+    import time as _t                                      # noqa: PLC0415
+    import pandas as pd                                    # noqa: PLC0415
+    import config                                          # noqa: PLC0415
+    head(f"ETHER.FI — withdrawal fees into 0x2f5301a3 vs ETHFI bought, by month ({days} days)")
+    ethfi = config.PROJECT_BY_NAME["Ether.fi"]["contracts"]["token"]["address"]
+    weth = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+    start = _block_at(int(_t.time()) - days * 86400) or 0
+    out = {}
+    for label, tok in (("eETH in", ETHERFI_EETH), ("WETH in", weth), ("ETHFI in", ethfi)):
+        ins, why = explorer_logs(1, tok, [TRANSFER_TOPIC, None, _pad(ETHERFI_FOUNDATION_BUYBACK)], start)
+        if ins is None:
+            print(f"  {label}: {why}")
+            continue
+        s = pd.Series([int(e["data"], 16) / 1e18 for e in ins],
+                      index=[pd.Timestamp(int(e["timeStamp"]), unit="s").to_period("M") for e in ins])
+        out[label] = s[s > 0].groupby(level=0).sum()
+        senders = {}
+        for e in ins:
+            if not int(e["data"], 16):
+                continue                                    # zero-value (address-poisoning) transfers are not senders
+            senders["0x" + e["topics"][1][-40:]] = senders.get("0x" + e["topics"][1][-40:], 0) + int(e["data"], 16) / 1e18
+        for f, v in sorted(senders.items(), key=lambda kv: -kv[1])[:4]:
+            print(f"    {label} from {f}: {v:,.2f} ({_source(f).get('name') or _code(f, 'ethereum')})")
+    if out:
+        print(pd.DataFrame(out).fillna(0.0).to_string(float_format=lambda x: f"{x:,.2f}"))
+    print("  PASTE BACK the table: eETH arriving every month with ETHFI in = 0 since 2026-04 records the programme as "
+          "declared but not executing (a VERIFIED FINDING); the eETH series is the withdrawal-fee revenue reference.")
+
+
+def _batch_eth_calls(chain: str, calls: list, chunk: int = 50) -> list:
+    """[(to, data)] -> [hex result or None], via JSON-RPC batches on the first endpoint that answers a batch. Errors
+    name the endpoint's host only (a keyed URL is never printed)."""
+    from urllib.parse import urlparse                     # noqa: PLC0415
+    out = [None] * len(calls)
+    for url in _rpcs_for(chain):
+        host = urlparse(url).hostname or "?"
+        try:
+            for i in range(0, len(calls), chunk):
+                body = [{"jsonrpc": "2.0", "id": i + k, "method": "eth_call",
+                         "params": [{"to": to, "data": data}, "latest"]} for k, (to, data) in enumerate(calls[i:i + chunk])]
+                r = requests.post(url, json=body, timeout=TIMEOUT)
+                r.raise_for_status()
+                res = r.json()
+                if not isinstance(res, list):
+                    raise ValueError("no batch support")
+                for j in res:
+                    v = j.get("result")
+                    out[int(j["id"])] = v if v not in (None, "", "0x") else None
+            return out
+        except Exception as e:  # noqa: BLE001
+            print(f"    batch eth_call via {host} refused — {type(e).__name__}; trying the next endpoint")
+    return out
+
+
+def aerodrome_voter_rewards(min_weight_share: float = 0.0):
+    """Aerodrome a3_protocol_yield / in_revenue (sign-off round): what veAERO voters were PAID in the last complete
+    epoch, read from state — each gauge's FeesVotingReward and BribeVotingReward tokenRewardsPerEpoch[token][epoch]
+    (contracts @1ba30815 Reward.sol L34/L245: every notifyRewardAmount adds to it), priced with DefiLlama's coins API,
+    summed; voter APR = that x 52 / (Voter.totalWeight() x AERO price). The Voter is read from veAERO.voter(), not
+    typed in. No log route needed (Base logs are paid). Reads only."""
+    import time as _t                                      # noqa: PLC0415
+    import config                                          # noqa: PLC0415
+    head("AERODROME — fees + bribes paid to voters in the last complete epoch, from the reward contracts' state")
+    c = config.PROJECT_BY_NAME["Aerodrome"]["contracts"]
+    ve = c["ve"]["address"] if isinstance(c["ve"], dict) else c["ve"]
+    aero = c["token"]["address"] if isinstance(c["token"], dict) else c["token"]
+    w, _ = eth_call(ve, _selx("voter()"), chain="base")
+    voter = ("0x" + w[-40:]) if w and len(w) >= 42 else None
+    if not voter:
+        print("  veAERO.voter() unreadable")
+        return
+    n = int(eth_call(voter, _selx("length()"), chain="base")[0] or "0x0", 16)
+    tw = int(eth_call(voter, _selx("totalWeight()"), chain="base")[0] or "0x0", 16) / 1e18
+    week = 7 * 86400
+    epoch = int(_t.time()) // week * week - week                 # the last COMPLETE epoch's start (Thursday 00:00 UTC)
+    print(f"  Voter {voter}: {n} pools, totalWeight {tw:,.0f} veAERO; epoch {_t.strftime('%Y-%m-%d', _t.gmtime(epoch))}")
+    sel_pools, sel_g, sel_f, sel_b, sel_w = (_selx("pools(uint256)"), _selx("gauges(address)"),
+                                             _selx("gaugeToFees(address)"), _selx("gaugeToBribe(address)"),
+                                             _selx("weights(address)"))
+    pools = ["0x" + (x or "0x" + "0" * 64)[-40:] for x in _batch_eth_calls("base", [(voter, sel_pools + _word(i))
+                                                                                    for i in range(n)])]
+    wts = [int(x or "0x0", 16) / 1e18 for x in _batch_eth_calls("base", [(voter, sel_w + _word(int(p, 16)))
+                                                                         for p in pools])]
+    keep = [(p, wt) for p, wt in zip(pools, wts) if wt > 0 and (not tw or wt / tw >= min_weight_share)]
+    print(f"  pools with votes: {len(keep)} of {n}")
+    gauges = ["0x" + (x or "0x" + "0" * 64)[-40:] for x in _batch_eth_calls("base", [(voter, sel_g + _word(int(p, 16)))
+                                                                                     for p, _ in keep])]
+    rewards = []
+    for sel in (sel_f, sel_b):
+        rewards += ["0x" + (x or "0x" + "0" * 64)[-40:] for x in _batch_eth_calls("base", [(voter, sel + _word(int(g, 16)))
+                                                                                          for g in gauges])]
+    rewards = [r for r in rewards if int(r, 16)]
+    lens = [int(x or "0x0", 16) for x in _batch_eth_calls("base", [(r, _selx("rewardsListLength()")) for r in rewards])]
+    pairs = [(r, j) for r, L in zip(rewards, lens) for j in range(min(L, 20))]
+    toks = ["0x" + (x or "0x" + "0" * 64)[-40:] for x in _batch_eth_calls("base", [(r, _selx("rewards(uint256)") + _word(j))
+                                                                                   for r, j in pairs])]
+    sel_t = _selx("tokenRewardsPerEpoch(address,uint256)")
+    amts = [int(x or "0x0", 16) for x in _batch_eth_calls("base", [(r, sel_t + _word(int(t, 16)) + _word(epoch))
+                                                                   for (r, _), t in zip(pairs, toks)])]
+    by_tok = {}
+    for t, a in zip(toks, amts):
+        if a:
+            by_tok[t.lower()] = by_tok.get(t.lower(), 0) + a
+    print(f"  reward contracts {len(rewards)}, (contract, token) pairs {len(pairs)}, tokens paid {len(by_tok)}")
+    keys = [f"base:{t}" for t in list(by_tok) + [aero.lower()]]
+    prices = {}
+    for i in range(0, len(keys), 80):
+        try:
+            r = requests.get("https://coins.llama.fi/prices/current/" + ",".join(keys[i:i + 80]), headers=_ua(),
+                             timeout=TIMEOUT)
+            prices.update({k.split(":", 1)[1].lower(): v for k, v in (r.json().get("coins") or {}).items()})
+        except Exception as e:  # noqa: BLE001
+            print(f"  DefiLlama coins unreachable — {type(e).__name__}")
+    usd, unpriced = 0.0, 0
+    for t, a in by_tok.items():
+        p = prices.get(t)
+        if not p:
+            unpriced += 1
+            continue
+        usd += a / 10 ** int(p.get("decimals") or 18) * float(p["price"])
+    ap = float((prices.get(aero.lower()) or {}).get("price") or 0)
+    print(f"  paid to voters in the epoch: ${usd:,.0f} ({unpriced} token(s) unpriced, left out); AERO ${ap:,.4f}")
+    if tw and ap:
+        print(f"  voter APR = ${usd:,.0f} x 52 / ({tw:,.0f} x ${ap:,.4f}) = {usd * 52 / (tw * ap):.2%}")
+    print("  PASTE BACK the totals: a weekly figure that matches DefiLlama's voter fees + bribes for the same epoch "
+          "(within ~10%) makes this the on-chain reference for a3_protocol_yield and in_revenue.")
+
+SKY_FARMS = {"SKY-rewards farm": "0xB44C2Fb4181D7Cb06bdFf34A46FdFe4a259B40Fc",
+             "USDS-rewards farm": "0x38E4254bD82ED5Ee97CD1C4278FAae748d998865"}
+SKY_FARM_READINGS = {"SKY-rewards farm": 0.0658, "USDS-rewards farm": 0.0461}      # Jake's readings, 2026-10-07
+
+
+def sky_farm_rates():
+    """Sky farm APYs ON-CHAIN (sign-off round): each StakingRewards farm's rewardRate() x 31,536,000 / totalSupply(),
+    with rewardsToken() / stakingToken() priced from DefiLlama where they differ (USDS paid on lsSKY staked), and
+    periodFinish() — a finished period pays nothing. Beside Block Analitica's apy as stored (raw, so its unit is read:
+    a fraction ~0.05 vs a percent ~5) and Jake's readings of info.skyeco.com (6.58% / 4.61%). Reads only."""
+    import sqlite3                                         # noqa: PLC0415
+    import time as _t                                      # noqa: PLC0415
+    head("SKY — farm rates from the farms' own state vs Block Analitica's apy vs Jake's readings")
+    ba = {}
+    try:
+        con = sqlite3.connect("metrics.db")
+        for m in ("sky_farm_apy_ba", "usds_farm_apy_ba"):
+            r = con.execute("SELECT date, value FROM metrics WHERE project='Sky' AND metric=? ORDER BY date DESC "
+                            "LIMIT 1", (m,)).fetchone()
+            ba[m] = r
+    except Exception as e:  # noqa: BLE001
+        print(f"  metrics.db unreadable — {e}")
+    for (label, farm), bam in zip(SKY_FARMS.items(), ("sky_farm_apy_ba", "usds_farm_apy_ba")):
+        rate = _uint(farm, _selx("rewardRate()"), "ethereum")
+        supply = _uint(farm, _selx("totalSupply()"), "ethereum")
+        finish = _uint(farm, _selx("periodFinish()"), "ethereum")
+        rt = eth_call(farm, _selx("rewardsToken()"))[0]
+        stt = eth_call(farm, _selx("stakingToken()"))[0]
+        rt = ("0x" + rt[-40:]) if rt else None
+        stt = ("0x" + stt[-40:]) if stt else None
+        if not rate or not supply:
+            print(f"  {label} {farm}: rewardRate {rate}, totalSupply {supply} — unreadable")
+            continue
+        live = finish and finish > _t.time()
+        apr_tok = rate * 31_536_000 / supply                 # reward tokens per staked token per year (18 dp both)
+        px = {}
+        try:
+            keys = ",".join(f"ethereum:{a}" for a in (rt, stt) if a)
+            j = requests.get(f"https://coins.llama.fi/prices/current/{keys}", headers=_ua(), timeout=TIMEOUT).json()
+            px = {k.split(":", 1)[1].lower(): float(v["price"]) for k, v in (j.get("coins") or {}).items()}
+        except Exception as e:  # noqa: BLE001
+            print(f"    DefiLlama coins unreachable — {type(e).__name__}")
+        p_r, p_s = px.get((rt or "").lower()), px.get((stt or "").lower())
+        apr = apr_tok * p_r / p_s if (p_r and p_s and rt and stt and rt.lower() != stt.lower()) else apr_tok
+        print(f"  {label} {farm}: rewardRate {rate / 1e18:,.4f}/s, staked {supply / 1e18:,.0f}, period "
+              f"{'LIVE' if live else 'FINISHED'} (ends {_t.strftime('%Y-%m-%d', _t.gmtime(finish or 0))})")
+        print(f"    reward {rt} (${p_r}), staked {stt} (${p_s}) -> on-chain APR {apr:.2%}"
+              + ("" if live else " (period finished: pays 0 now)"))
+        r = ba.get(bam)
+        print(f"    Block Analitica {bam}: {r[1] if r else 'not stored'} ({r[0] if r else ''}) — raw, unit as stored; "
+              f"Jake's info.skyeco.com reading {SKY_FARM_READINGS[label]:.2%}")
+    print("  PASTE BACK the three per farm: the on-chain APR is the reference the Block Analitica unit and Jake's "
+          "readings are set against.")
+
+
 CHECKS = (
     sky_chainlog, sky, morpho_blue_api,
     sky_splitter, sky_splitter_params, sky_splitter_history,
@@ -8016,6 +8352,8 @@ CHECKS = (
     aerodrome_filing_wallets, blockworks_wallet_balances,
     etherfi_vault_archive, etherfi_contract_ids, etherfi_accountant, fluid_vesting_recipients, maple_ssf_partial,
     aerodrome_managed_venfts, pendle_epoch_revenues, maple_ssf_trail, fluid_avocado_owners, hl_pool_release_compare,
+    pendle_spendle_rewards_onchain, maple_buyback_inflows, etherfi_withdrawal_fees, aerodrome_voter_rewards,
+    sky_farm_rates,
     plume_sources, aethir_dashboard_xhr, maple_ssf_history, blockworks_geodnet,
     morpho_incentives, settlement_sources, hyperevm_etherscan, maple_ssf_inflows, aethir_pages,
     geod_stake_recipient, geod_stake_wallets, maple_ssf_lp_test, maple_drips, plume_archive, settlement_rebuild_coverage,

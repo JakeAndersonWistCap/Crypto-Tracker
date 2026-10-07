@@ -405,11 +405,35 @@ def report(data: pd.DataFrame, long: pd.DataFrame, asof: pd.Timestamp, only: str
     return out
 
 
+def signoff_lines(only: str | None = None) -> list[str]:
+    """THE FINISH LINE (overnight sign-off round 2026-10-07): each project SIGNED OFF or OPEN from the Credibility tab's
+    evaluated verdicts — signed = PASS / N/A / DOCUMENTED LIMITATION / MATURING / VERIFIED FINDING — with every open
+    row and its reason."""
+    import credibility
+    import credibility_report as cr
+    rows, tab = cr.evaluate(only)
+    if rows is None:
+        return ["\nSIGN-OFF: unavailable (no store, or the tab could not be paired)"]
+    so = credibility.signoff(rows, [t[10] for t in tab])
+    out = ["\nSIGN-OFF (Credibility) — " + ", ".join(
+        f"{k} {v}" for k, v in sorted(pd.Series([d["status"] for d in so.values()]).value_counts().items()))]
+    for name, d in so.items():
+        if only and name != only:
+            continue
+        cnt = ", ".join(f"{k} {v}" for k, v in sorted(d["counts"].items()))
+        out.append(f"  {d['status']:<10} {name:<12} {cnt}")
+        for rid, v, note in d["open"]:
+            out.append(f"      OPEN {rid}: {v} — {note[:200]}")
+    return out
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     ap.add_argument("--db", default="metrics.db")
     ap.add_argument("--project")
     ap.add_argument("--md", metavar="FILE")
+    ap.add_argument("--no-signoff", action="store_true", help="skip the Credibility sign-off section (it builds the "
+                                                               "workbook once, ~1 minute)")
     a = ap.parse_args(argv)
     import build_workbook as bw
     from store import Store
@@ -434,6 +458,8 @@ def main(argv=None) -> int:
     bugs = [(n, m, d) for n, m, v, d in table if v == "BUG"]
     lines.append(f"\nBUGS ({len(bugs)}) — cells that fit no status:" if bugs else "\nBUGS: none")
     lines += [f"  {n}/{m}: {d}" for n, m, d in bugs]
+    signoff = [] if a.no_signoff else signoff_lines(a.project)
+    lines += signoff
     print("\n".join(lines))
     if a.md:
         md = [f"# Data room completeness — {asof.date()}", "",
@@ -441,6 +467,8 @@ def main(argv=None) -> int:
               "| Project | Metric | Status | Detail |", "|---|---|---|---|"]
         md += [f"| {n} | {m} | {v} | {d.replace('|', '/')} |" for n, m, v, d in table]
         md += ["", f"## Bugs ({len(bugs)})", ""] + [f"- {n}/{m}: {d}" for n, m, d in bugs]
+        if signoff:
+            md += ["", "## Sign-off (Credibility)", "", "```"] + signoff + ["```"]
         open(a.md, "w").write("\n".join(md) + "\n")
         print(f"\nwritten {a.md}")
     return 0

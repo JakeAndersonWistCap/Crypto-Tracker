@@ -248,6 +248,7 @@ METRICS = {
     # the Ethereum wrapper read (808.7M) that was locked_tokens until then, kept as its own series.
     "locked_tokens_ai":      {"label": "Staked — AI pool (Aethir dashboard aiStaked)", "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 42e9, "only_projects": ("Aethir",)},
     "emissions_tokens_declared":    {"label": "Emissions per day as DECLARED by the vest streams (reference beside the measured release)", "kind": "flow", "unit": "tokens", "archetypes": [3, 4], "tiers": [1], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Sky",), "view_only": True},
+    "emissions_tokens_gauge_mainnet": {"label": "PENDLE paid out of Pendle's MAINNET GaugeController to its markets (log scan) — the on-chain emissions reference", "kind": "flow", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Pendle",)},
     "emissions_tokens_arbitrum":    {"label": "FLUID claimed out of Fluid's ARBITRUM MerkleDistributors (log scan)", "kind": "flow", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Fluid",)},
     "locked_tokens_ai_onchain":     {"label": "Staked — AI pool, ON-CHAIN (veAethir.balanceOf(AI Pool)) — check on aiStaked", "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [2], "sanity_min": 0, "sanity_max": 42e9, "only_projects": ("Aethir",)},
     "locked_tokens_gaming_onchain": {"label": "Staked — Gaming pool, ON-CHAIN (veAethir.balanceOf(Gaming Pool)) — check on gamingStaked", "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [2], "sanity_min": 0, "sanity_max": 42e9, "only_projects": ("Aethir",)},
@@ -605,6 +606,11 @@ METRICS = {
                  "day's close over the decomposition window — the trailing-365 yield's reference (fetch/share_decompose.py)",
         "kind": "stock", "unit": "ratio", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 100,
         "only_projects": ("Ether.fi",)},
+    "pool_release_tokens_coingecko": {"label": "Released from a pre-minted pool, from CoinGecko's d(circulating) − "
+                                               "d(total) — CROSS-CHECK where the on-chain release is primary (its "
+                                               "circulating moves in steps)", "kind": "flow", "unit": "tokens",
+                                      "archetypes": [1, 3], "tiers": [2], "sanity_min": -1e12, "sanity_max": 1e12,
+                                      "only_projects": ("Chainlink", "Hyperliquid"), "view_only": True},
     "filing_managed_lock_tokens": {"label": "AERO the Blockworks filing wallets deposited into MANAGED veNFTs "
                                             "(VotingEscrow weights[tokenId][idToManaged]) — team / foundation, out of "
                                             "circulating although locked (fetch/ve_managed.py, Jake's probes16)",
@@ -14900,6 +14906,32 @@ PROJECTS = [
                     "change it, and a number copied out of the docs is right until the day it "
                     "is not.",
         },
+        # GAUGE EMISSIONS, ON-CHAIN (Jake's sign-off round, 2026-10-07): PENDLE paid OUT of the mainnet
+        # GaugeController to its markets (redeemMarketReward -> MarketClaimReward + a PENDLE Transfer to the market;
+        # PendleGaugeControllerUpg.sol, pendle-core-v2-public @87685c8). The address is deployments/1-core.json
+        # "gaugeController" (@87685c8, read 2026-10-07). withdrawPendle sends to the owner, so Pendle's own
+        # governance / treasury / multisig addresses (same file, "network") are not emissions. Mainnet only: each
+        # L2's gauge controller is its own contract, not scanned.
+        "log_scans": [
+            {"key": "gauge_pendle_out", "metric": "emissions_tokens_gauge_mainnet", "chain": "ethereum",
+             "token": "0x808507121B80c02388fAd14726482e061B8da827",
+             "holders": ["0x47D74516B33eD5D70ddE7119A40839f6Fcc24e57"],
+             "direction": "out", "store": True, "attribution": "dedicated_wallet",
+             "attribution_sources": [
+                 "https://github.com/pendle-finance/pendle-core-v2-public/blob/main/deployments/1-core.json "
+                 "(gaugeController, @87685c8, read 2026-10-07)",
+                 "contracts/LiquidityMining/GaugeController/PendleGaugeControllerUpg.sol (same commit): "
+                 "redeemMarketReward pays the calling market"],
+             "exclude_counterparties": ["0x0000000000000000000000000000000000000000",
+                                        "0x8270400d528c34e1596EF367eeDEc99080A1b592",   # network.treasury
+                                        "0x8119EC16F0573B7dAc7C0CB94EB504FB32456ee1",   # network.governance
+                                        "0xE6F0489ED91dc27f40f9dbe8f81fccbFC16b9cb1",   # network.devMultisig
+                                        "0x2aD631F72fB16d91c4953A7f4260A97C2fE2f31e",   # governanceProxy
+                                        "0x68d8D192dF476bC01895E16b0ED3945673d777AC"],  # timelockController
+             "partial_reason": "mainnet GaugeController only: PENDLE paid to Ethereum markets; each L2's gauge "
+                               "controller is not scanned",
+             "wired_on": "2026-10-07"},
+        ],
         "name": "Pendle", "symbol": "PENDLE",
         # ===== actual_buyback_tokens — DERIVED FROM THE $ ALLOCATED. 2026-09-28 (Jake). =====
         # FORMERLY actual_buyback_tokens_blocked (2026-09-23, "NO INTERMEDIATE WALLET PUBLISHED"):
@@ -20104,7 +20136,20 @@ UNAVAILABLE = [
      "impact": "What holders receive is measured in TOKENS (sethfi_topup_tokens, the yield's numerator) and what is "
                "bought in tokens (actual_buyback_tokens); DefiLlama's figure is kept as holders_revenue_usd_defillama, "
                "a labelled cross-check.",
-     "reopen_if": "an aggregator or Ether.fi publishes the new programme's spend in dollars."},
+     "reopen_if": "an aggregator or Ether.fi publishes the new programme's spend in dollars.",
+     # RECLASSIFIED FROM BUG (Jake's sign-off round, 2026-10-07): the native routes were checked — what holders
+     # receive is measured on Ether.fi's own contracts, in tokens.
+     "native_checked": [
+         {"source": "the BoringVault Accountant's getRate() (AccountantWithRateProviders, via the Teller's accountant(), "
+                    "checked against vault(); etherfi_accountant, Jake 2026-10-07)",
+          "finding": "the sETHFI true share price, every chain's shares and ETHFI in strategy positions included: "
+                     "+7.93% over the trailing year — the yield holders received, read on-chain"},
+         {"source": "sETHFI vault ETHFI inflows decomposed per transaction (fetch/share_decompose.py; Jake's "
+                    "etherfi_sethfi_topups / probes16)",
+          "finding": "genuine reward top-ups in TOKENS: the old programme 6.49M ETHFI + the top-up Safe 0x3fb6784e… "
+                     "1.14M over the year; bridge / strategy / OFT moves classed apart"},
+         {"source": "the programme page and x.com/ether_fi_Fdn (Jake, 2026-10-07)",
+          "finding": "no dollar figure is published for the new programme's spend"}]},
     # ===== WORLD MOBILE'S TWO BUYBACK CLOSURES WERE REMOVED 2026-09-17, NOT SOFTENED. =====
     # actual_buyback_tokens and actual_buyback_usd were closed here on the grounds that "the
     # destination is undocumented, so a token figure cannot be given a meaning". The MiCA filing
@@ -20715,6 +20760,11 @@ CIRCULATING_ONCHAIN = {
     "Hyperliquid": {"status": "first_party", "metric": "circulating_supply_first_party",
                     "why": "tokenDetails.circulatingSupply — Hyperliquid's own figure; its "
                            "nonCirculatingUserBalances is the documented set (logged each run)",
+                    # THE RELEASE (Jake's sign-off round, 2026-10-07): d(Hyperliquid's own circulating) + the
+                    # Assistance Fund's buyback that day (the AF's HYPE is out of circulating, so a buyback lowers it
+                    # while nothing was locked back). CoinGecko's stepwise delta stays as pool_release_tokens_coingecko.
+                    "release_first_party": {"stock": "circulating_supply_first_party",
+                                            "plus": ("actual_buyback_tokens",)},
                     # Jake's probe 2026-09-30: circulating 298,667,946.69 of total 998,896,684.89;
                     # non-circulating 0x43e9abea…a251 241,495,236.97, the Assistance Fund 0xfefe…
                     # 47,590,997.04 (burned by the 2025-12-27 vote), and zero/dead addresses.
@@ -20807,21 +20857,20 @@ CIRCULATING_ONCHAIN = {
                "decided_by": "Claude Code 2026-10-06, pending Jake's review"},
     # CONFIRMED BY FLUID'S OWN BLOCKWORKS FILING (Jake, 2026-10-07): its wallets are the DAO Treasury 0x2884… and the
     # Team Multisig 0x4F6F…, both already subtracted.
-    "Fluid": {"status": "partial", "total": "total_supply", "filing_confirms": "2026-10-07",
+    # ON-CHAIN PRIMARY (Jake's sign-off round, 2026-10-07): fluid_avocado_owners showed the three Avocado wallets are
+    # NOT the team's — they stay circulating, with the liquidity layer's and the Uniswap pool's FLUID — so the set is
+    # Fluid's whole documented list and primary.
+    "Fluid": {"status": "established", "total": "total_supply", "filing_confirms": "2026-10-07", "ratios_use": "onchain",
               "subtract": ("treasury_holding_tokens", "noncirculating_holding_tokens"),
               "method": "100M − DAO Treasury 0x2884… − Team Multisig 0x4F6F… − (the full sweep, 2026-10-07) the "
                         "governance Timelock, TEAM_MULTISIG_2, FLUID_FOUNDATION (fluid-governance@8891f73d "
                         "constants.sol) − the five mainnet FLUID MerkleDistributors' unclaimed rewards "
                         "(fluid-contracts-public deployments.md)",
-              "decision": "COINGECKO UNTIL THE AVOCADO OWNERS ARE READ, then ON-CHAIN (Jake's probes16, 2026-10-07). The "
-                          "five earlier Team Multisig recipients are NOT vesting contracts: 0x52aa8994… is "
-                          "FluidLiquidityProxy (FLUID supplied to Fluid's liquidity layer, 2.63M) and 0xc1cd3d09… a "
-                          "UniswapV3Pool (2.09M) — tradable market liquidity, COUNTED AS CIRCULATING (recorded below); "
-                          "0xa338ac3e… (3.19M), 0x1716f0c1… (2.5M) and 0x19934bf0… (0.44M) are Avocado smart wallets. "
-                          "RULE: if fluid_avocado_owners shows each Avocado wallet owned by the Team Multisig or its "
-                          "signers, those three are team holdings — wired non-circulating, and with them the set is "
-                          "Fluid's whole documented list, so ratios_use becomes 'onchain'; an Avocado wallet with an "
-                          "unrelated owner stays circulating",
+              "decision": "ON-CHAIN (Jake's sign-off round, 2026-10-07): total − the DAO Treasury − the two Team "
+                          "Multisigs − the governance Timelock − the Foundation − the IGP-137 custody − the reward "
+                          "distributors' unclaimed FLUID. The five earlier Team Multisig recipients are not vesting: "
+                          "the liquidity layer and the Uniswap pool hold market liquidity and the three Avocado "
+                          "wallets are not the team's (fluid_avocado_owners) — all circulating. WAS COINGECKO",
               # IGP-137's description (fluid-governance @8891f73d) routes the 5M through the Team Multisig before a
               # dedicated wallet; fluid_igp137_wallet lists what left the multisig after it arrived.
               # FOUND (Jake's probes15, 2026-10-07): the IGP-137 custody is 0xcabebc7f… (5M, wired as igp137_lock).
@@ -20830,10 +20879,13 @@ CIRCULATING_ONCHAIN = {
                                                                 "layer (2.63M), market liquidity",
                   "0xc1cd3D0913f4633b43FcdDBCd7342bC9b71C676f": "UniswapV3Pool — pool liquidity (2.09M)",
                   "source": "fluid_vesting_recipients, Jake 2026-10-07 20:57"},
-              "missing": "the owners of three Avocado wallets that received FLUID from the Team Multisig — 0xa338ac3e… "
-                         "(3.19M), 0x1716f0c1… (2.5M), 0x19934bf0… (0.44M): python check_offline_items.py "
-                         "fluid_avocado_owners. The L2 MerkleDistributors (they pay bridged FLUID) are not in the "
-                         "set. Was: vesting contracts among the recipients (none, 2026-10-07 20:57)",
+              "avocado_not_team": {"0xa338ac3eF9ba403F3732755fE1cc1A184415B5b8": "3.19M",
+                                   "0x1716f0C19CbDe6644356a79fBE19361B0790f152": "2.5M",
+                                   "0x19934Bf00B1C3cAA244228563257e32d95aFc257": "0.44M",
+                                   "source": "fluid_avocado_owners, Jake 2026-10-07 (sign-off round): not team-owned "
+                                             "— circulating"},
+              "missing": "none known on mainnet: the L2 MerkleDistributors (they pay bridged FLUID) are not in the set. "
+                         "Was: the Avocado wallets' owners (not the team, 2026-10-07)",
               "decided_by": "Claude Code 2026-10-06, pending Jake's review"},
     # THE FULL SWEEP (Jake, 2026-10-07): ether.fi's own Blockworks Token Transparency filing labels its unissued and
     # operational wallets (custodian origins, three treasuries, the operating top-up Safe) — _NONCIRC_WALLETS_FIRST_PARTY.
@@ -20893,15 +20945,20 @@ CIRCULATING_ONCHAIN = {
                          "went to the EOA 0x99f03ca0… — maple_ssf_trail follows it; why DefiLlama's treasury (294.93M) "
                          "and CoinGecko's implied non-circulating (~77.4M) differ",
               "decided_by": "Claude Code 2026-10-06, pending Jake's review"},
-    "Chainlink": {"status": "partial", "total": "total_supply",
+    # ON-CHAIN PRIMARY (Jake's sign-off round, 2026-10-07): all 27 wallets of Chainlink's published list are wired, so
+    # the set is primary and the RELEASE is their net outflow (release_from, build_workbook._onchain_release_views);
+    # CoinGecko's stepwise circulating is the cross-check only. headline_diff.py chainlink_onchain_preview shows the
+    # move. WAS: COINGECKO (2026-10-06).
+    "Chainlink": {"status": "established", "total": "total_supply", "ratios_use": "onchain",
+                  "release_from": ("noncirculating_holding_tokens",),
                   "subtract": ("buyback_fund_balance", "noncirculating_holding_tokens"),
                   "method": "1B − the LINK Reserve − the 24 Etherscan-labelled 'Chainlink: Noncirculating "
                             "Supply' wallets − the other three wallets in Chainlink's 2022 post (27 in all; the full "
                             "sweep, 2026-10-07)",
-                  "decision": "COINGECKO — CoinGecko's ~748M is Chainlink's own figure (DefiLlama: non-circulating "
-                              "addresses 'sourced from Chainlink's official supply API'; chain.link/economics "
-                              "'748M+'). The on-chain set is its cross-check; whether Chainlink's API also "
-                              "excludes the Reserve is not established. Staked LINK counts as circulating",
+                  "decision": "ON-CHAIN (Jake's sign-off round, 2026-10-07): 1B − the LINK Reserve − all 27 "
+                              "non-circulating wallets of Chainlink's published list; the release is their net "
+                              "outflow. CoinGecko's ~748M (Chainlink's supply API, relayed) moves in steps and is the "
+                              "cross-check. WAS COINGECKO (2026-10-06). Staked LINK counts as circulating",
                   "missing": "Chainlink's CURRENT API address list (chain.link/circulating-supply is unreadable from "
                              "here): the set is the 27 of its 2022 post, and the legacy Node Operator / Team wallets "
                              "the page names may add to it. headline_diff.py chainlink_onchain_preview shows what an "
@@ -23460,6 +23517,28 @@ def _c_chk(why: str, resolve: str) -> dict:
     return {"verdict": "CHECK", "why": why, "resolve": resolve}
 
 
+def _c_lim(why: str, evidence: str, upgrade: str) -> dict:
+    """DOCUMENTED LIMITATION (sign-off round 2026-10-07): no free second source exists. Refused without the evidence
+    and without what would upgrade it — a limitation is a finding about the sources, never a shortcut."""
+    if not (why and evidence and upgrade):
+        raise ValueError("a DOCUMENTED LIMITATION needs why, evidence and what would upgrade it")
+    return {"verdict": "DOCUMENTED LIMITATION", "why": f"{why} EVIDENCE: {evidence}", "resolve": f"upgrade: {upgrade}"}
+
+
+def _c_find(why: str, evidence: str) -> dict:
+    """VERIFIED FINDING: our figure is confirmed and the gap is a real-world fact about the project."""
+    if not (why and evidence):
+        raise ValueError("a VERIFIED FINDING needs why and its evidence")
+    return {"verdict": "VERIFIED FINDING", "why": f"{why} EVIDENCE: {evidence}"}
+
+
+def _c_mat(why: str, until: str) -> dict:
+    """MATURING: fills by a stated date (forward-only)."""
+    if not (why and until):
+        raise ValueError("MATURING needs why and the date it fills by")
+    return {"verdict": f"MATURING (until {until})", "why": why}
+
+
 def _c_na(why: str) -> dict:
     return {"verdict": "N/A", "why": why}
 
@@ -23472,12 +23551,18 @@ def _c_in_py(what: str, py: str, args: dict, ref: dict, fmt: str = _C_TOK) -> di
     return {"what": what, "ours": {"py": py, "args": args}, "fmt": fmt, "ref": ref}
 
 
-_C_SINGLE_DEFILLAMA_TVL = _c_unv(
-    "DefiLlama is the only free source of chain TVL we can read (Artemis, Token Terminal and L2Beat are paid "
-    "or do not cover this chain).", "a paid TVL source, or DefiLlama's per-protocol breakdown summed by hand")
-_C_DEX_ONLY = _c_unv(
-    "Market cap / DefiLlama DEX (+ perps) volume — DefiLlama is the only free chain-level DEX aggregate; its "
-    "inputs (price, circulating) are checked in the input rows.")
+# THE CHAINS' A1 ROWS ARE DOCUMENTED LIMITATIONS (sign-off round 2026-10-07, Jake): each names the evidence that no
+# free second source exists and what would upgrade it.
+_C_SINGLE_DEFILLAMA_TVL = _c_lim(
+    "Chain TVL is DefiLlama's only.",
+    "Artemis, Token Terminal and L2Beat chain TVL are paid or do not cover this chain (licensing register, "
+    "2026-10-01..07); DefiLlama's /v2/chains is the one free chain-level TVL.",
+    "a paid TVL source (Artemis / Token Terminal), or DefiLlama's per-protocol breakdown summed by hand")
+_C_DEX_ONLY = _c_lim(
+    "Market cap / DefiLlama DEX (+ perps) volume; its inputs (price, circulating) are checked in the input rows.",
+    "DefiLlama is the only free chain-level DEX aggregate (Artemis / Token Terminal DEX volume are paid; the "
+    "licensing register, 2026-10-01).",
+    "a paid DEX-volume source for the chain")
 
 _SKY_NPS_MONTHS = tuple(f"2026-{m:02d}" for m in range(1, 10))   # Sky's own table, Jan-Sep 2026 (Jake, 2026-10-07)
 
@@ -23504,7 +23589,7 @@ CREDIBILITY: dict = {
                                       "penalties take actual issuance a few % below it."},
         # 2026-10-07: the reference was CoinGecko's d(circulating) over Q0 and read 1.43M ETH (impossible); it is now
         # the issuance curve minus DefiLlama's burn on OUR common days — both independent of our Etherscan reads.
-        "a4_net_change": {"formula": "eth_net_formula", "tol": 20.0,
+        "a4_net_change": {"formula": "eth_net_formula", "tol": 20.0, "show_how": True,
                           "source": "issuance curve (166.32 x sqrt(staked ETH)/day) − DefiLlama burned fees / price, on "
                                     "the same days our issuance and burn are both stored — ours is Etherscan's",
                           "note": "The curve assumes full participation: an upper bound by ~1-2% of issuance."},
@@ -23513,9 +23598,11 @@ CREDIBILITY: dict = {
                                          "Lido's figure, consensus + execution (MEV) rewards of Lido's validators",
                                "note": "Lido's operator set and a 7-day window vs our network-wide figure: a few tenths "
                                        "of a % apart is normal."},
-        "a1_nrr_settlement": _c_unv(
-            "SINGLE SOURCE — settlement volume is Artemis only (Jake's CSV export); Coin Metrics' series is CC BY-NC, "
-            "not usable.", "a second settlement-volume publisher with a usable licence"),
+        "a1_nrr_settlement": _c_lim(
+            "Settlement volume is Artemis only (Jake's CSV export).",
+            "Coin Metrics' settlement series is CC BY-NC (not usable here); no other free publisher of Ethereum "
+            "settlement volume was found (settlement_sources probe, 2026-10-01).",
+            "a second settlement-volume publisher with a usable licence"),
         "a1_nrr_throughput": _C_DEX_ONLY,
         "a1_tvl": _C_SINGLE_DEFILLAMA_TVL,
     },
@@ -23560,19 +23647,17 @@ CREDIBILITY: dict = {
         # B5 (overnight 2026-10-06): CoinGecko's pool release (d circulating - d total, Q0) against LINK actually
         # leaving the 24 Etherscan-labelled 'Chainlink: Noncirculating Supply' wallets over the same window — their
         # summed balance (noncirculating_holding_tokens, our daily read) fell by exactly what was released.
-        "in_issuance": _c_in("Issuance Q0 (pool_release_tokens: CoinGecko d circulating - d total)",
+        # ON-CHAIN RELEASE PRIMARY (Jake's sign-off round, 2026-10-07): ours = the 27 non-circulating wallets' net outflow
+        # (pool_release_tokens, build_workbook._onchain_release_views); CoinGecko's d(circulating) − d(total) is the
+        # cross-check — it moves in steps, so a wide band, judged over Q0.
+        "in_issuance": _c_in("Issuance Q0 (pool_release_tokens: the 27 non-circulating wallets' net outflow)",
                              "pool_release_tokens", "q0",
-                             {"formula": "delta_q0", "args": {"metric": "noncirculating_holding_tokens"},
-                              "scale": -1.0, "tol": 10.0,
-                              "source": "the 24 non-circulating wallets' summed LINK balance: its fall across Q0 "
-                                        "(our on-chain read)",
-                              "note": "The 24 labels are confirmed by three Etherscan label pages and the Dune "
-                                      "spellbook; Chainlink's 2022 post lists 27 — three more (0xb9b012ca…, "
-                                      "0xa71bbBd2…, 0x37398A32…) are NOT verified and not read, and the legacy Node "
-                                      "Operator / Team wallets on chain.link/circulating-supply were not read. A "
-                                      "release from any of those would show here as ours ABOVE the reference. Needs "
-                                      "the balance series back to the Q0 start: `python archive_backfill.py --run "
-                                      "--project Chainlink` fills it from archive reads."}),
+                             {"formula": "delta_diff_q0", "args": {"a": "circulating_supply", "b": "total_supply"},
+                              "tol": 25.0,
+                              "source": "CoinGecko d(circulating) − d(total) across Q0 — Chainlink's supply API as "
+                                        "relayed; stepwise",
+                              "note": "Ours needs the wallets' balance series back to the Q0 start: `python "
+                                      "archive_backfill.py --run --project Chainlink` fills it from archive reads."}),
         # B4 (overnight 2026-10-06): DefiLlama's chainlink fees ARE every token the fee aggregator receives on Ethereum
         # (dimension-adapters fees/chainlink, addTokensReceived to 0xd6e39d42…) — our own log scan of the same
         # receipts, priced by us, is an independent measurement of the same quantity over the same days.
@@ -23611,25 +23696,56 @@ CREDIBILITY: dict = {
         # Jake's probes15 (root B): the daily change of Hyperliquid's OWN circulatingSupply (tokenDetails) net of the
         # Assistance Fund buyback leg, on our own days — no longer a Q0 delta that waited for tokenDetails to span
         # the window
-        "a4_pool_release": {"formula": "daily_delta_plus_flow",
-                            "args": {"cover_metric": "pool_release_tokens", "stock": "circulating_supply_first_party",
-                                     "plus": "actual_buyback_tokens"}, "tol": 20.0,
-                            "note": "Ours is d(CoinGecko circulating) - d(CoinGecko total) per day; the reference is "
-                                    "Hyperliquid's own circulatingSupply change plus the AF buyback that day, same "
-                                    "days."},
+        # VERIFIED FINDING (sign-off round 2026-10-07): the release is now Hyperliquid's own circulating change plus
+        # the AF buyback (release_first_party); the schedule it is judged against publishes a projection that the
+        # contributors' actual monthly distributions fall well short of.
+        "a4_pool_release": _c_find(
+            "Ours is d(Hyperliquid's own circulatingSupply) + the Assistance Fund buyback, per day. Its 2026-10-07 step "
+            "of +3,736,300 HYPE is the October core-contributor distribution (6th-of-month cadence); the published "
+            "schedule projects ~9.92M a month (238M / 24), and the actual distributions are smaller — a real-world "
+            "fact, not a gap in our figure.",
+            "Jake's hl_pool_release_compare run, 2026-10-07: +3,736,300 on 2026-10-07. Reports of the October payout: "
+            "~3.75M HYPE (~$320M) sold OTC to one institution on 2026-09-30 per Hyperliquid's Discord "
+            "(https://coinalertnews.com/news/2026/09/30/hyperliquid-hype-token-unlocks; BeInCrypto via "
+            "https://www.bitrue.com/blog/hype-token-unlock-october) against the scheduled 9.92M; Tokenomist: "
+            "'uniform ~9.92M HYPE/month projected ... 238M Core Contributor allocation / 24 months', 6th-of-month "
+            "cadence since early 2026, first unlock (2025-11) 1.745M "
+            "(https://tokenomist.ai/research/hype-tokenomics-330k-or-9-9m-hype-unlocks). CoinGecko's stepwise delta is "
+            "kept as pool_release_tokens_coingecko (cross-check only)."),
         "a1_validator_yield": {"formula": "hl_reward_formula", "tol": 20.0,
                                "note": "Observed vs the documented curve: 2.48% vs ~2.26% on 2026-10-05; inactive stake "
                                        "earns nothing, which lifts the observed rate (METHODOLOGY_FLAGS)."},
-        "a1_nrr_throughput": _c_unv(
+        "a1_nrr_throughput": _c_lim(
             "Market cap / (DefiLlama DEX + Hyperliquid's own perps volume). Perps volume is checked against ASXN in "
-            "in_perps; DEX volume is DefiLlama only."),
+            "in_perps.",
+            "DEX volume on HyperEVM is DefiLlama's only (Artemis / Token Terminal are paid).",
+            "a paid DEX-volume source for HyperEVM"),
+        # Hyperliquid's settlement NRR: no settlement-volume series exists for HyperCore at all
+        "a1_nrr_settlement": _c_lim(
+            "No settlement volume is built for Hyperliquid (HyperCore is an order book; its transfers are not an "
+            "EVM log stream).",
+            "Artemis does not publish Hyperliquid settlement volume and HyperCore state has no free independent "
+            "indexer (settlement_rebuild_coverage, 2026-10-01).",
+            "a paid indexer of HyperCore transfers (Hypurrscan API / Artemis)"),
         "a1_tvl": _C_SINGLE_DEFILLAMA_TVL,
         "in_circ": {"what": "Circulating supply (Hyperliquid tokenDetails, first-party)",
                     "ours": {"metric": "circulating_supply_first_party", "window": "now"}, "fmt": _C_TOK,
-                    "ref": {"verdict": "FRESH-only",
-                            "why": "Only Hyperliquid publishes this definition (CoinGecko counts ~222M on another "
-                                   "basis); spot_checks re-read tokenDetails live on 2026-10-05 within 0.5%.",
-                            "resolve": "none needed unless the market-cap row fails"}},
+                    "ref": _c_lim(
+                        "Only Hyperliquid publishes this definition (CoinGecko counts ~222M on another basis); the "
+                        "figure is first-party.",
+                        "spot_checks re-read tokenDetails live on 2026-10-05 within 0.5%; its "
+                        "nonCirculatingUserBalances are logged each run (0x43e9abea… 241.5M, the burned AF). HyperCore "
+                        "balances have no free independent indexer (settlement_rebuild_coverage, 2026-10-01).",
+                        "Hypurrscan's API or a paid HyperCore indexer summing the same non-circulating balances")},
+        # FEES (sign-off round): ASXN's 30-day annualised revenue (browser route, INTERNAL checking only) — on
+        # HyperCore the trading fees accrue to the protocol (Assistance Fund + HLP), so fees ≈ revenue; a persistent
+        # gap would be builder / deployer fees that DefiLlama counts as fees and ASXN does not.
+        "in_fees": _c_in_py("Fees, last 30 days annualised (DefiLlama)", "last30_annualised",
+                            {"metric": "fees_usd"},
+                            {"metric": "revenue_annualised_usd_asxn", "window": "now", "tol": 15.0,
+                             "source": "ASXN annualised revenue (30d) — browser route, internal checking only",
+                             "note": "HyperCore fees accrue to the protocol, so fees ≈ revenue; a persistent gap "
+                                     "beyond 15% is the builder / deployer fee share."}, fmt=_C_USD),
         "in_revenue": _c_in_py("Revenue, last 30 days annualised (DefiLlama)", "last30_annualised",
                                {"metric": "revenue_usd"},
                                {"metric": "revenue_annualised_usd_asxn", "window": "now", "tol": 15.0,
@@ -23691,13 +23807,24 @@ CREDIBILITY: dict = {
         "a4_net_change": {"formula": "delta_q0", "args": {"metric": "total_supply_protocol"}, "tol": 15.0,
                           "source": "d(block-header total_supply) across Q0 — on-chain, independent of the declared "
                                     "issuance and DefiLlama-derived burn"},
-        "a1_validator_yield": _c_chk(
-            "No published NEAR staking APR is on file; ours is the DECLARED 2.5% x supply x 90% / stake.",
-            "record NEAR's published staking APR (near.org staking page or a validator explorer) by hand as a "
-            "manual reference"),
-        "a1_nrr_settlement": _c_unv(
-            "SINGLE METHOD, UNVALIDATED: settlement = BigQuery P2P transfers + DefiLlama DEX; no published NEAR "
-            "settlement volume exists to compare.", "Artemis or another publisher covering NEAR settlement"),
+        # GROSS VS GROSS (Jake's sign-off round, 2026-10-07): the network reward rate from the chain — BigQuery's
+        # epoch-first total_supply rises (what was actually minted) over the last 28 days, x 365/28, x the documented
+        # 90% validator share, over the validators' stake. Jake's near.com pool reading (4.56%, NET of that pool's
+        # commission) is kept as its own recorded row, in_validator_yield_net (manual_refs "beside").
+        "a1_validator_yield": {"formula": "rate_on_stake", "scale": 0.9, "tol": 10.0,
+                               "args": {"flow": "gross_issuance_tokens_bigquery", "stock": "locked_tokens",
+                                        "days": 28},
+                               "source": "NEAR block headers (BigQuery): the actual mint over the last 28 days x "
+                                         "365/28 x 90% (validator share) / the validators' stake — the network's "
+                                         "gross reward rate",
+                               "note": "Ours is the DECLARED 2.5% x supply x 90% / stake. The actual mint falls short "
+                                       "of the maximum when validators miss blocks (reward_calculator.rs), so the "
+                                       "reference reads a little lower; beyond 10% one side is wrong."},
+        "a1_nrr_settlement": _c_lim(
+            "Settlement = BigQuery P2P transfers + DefiLlama DEX, rebuilt by Artemis's method.",
+            "No publisher covers NEAR settlement volume: Artemis does not list NEAR settlement, Dune / Flipside "
+            "routes closed (near_settlement_routes, 2026-10-01).",
+            "Artemis or another publisher adding NEAR settlement volume"),
         "a1_nrr_throughput": _C_DEX_ONLY,
         "a1_tvl": _C_SINGLE_DEFILLAMA_TVL,
         # THE SWEEP (2026-10-07): the headline is the three wallets' liquid NEAR from NEAR RPC (buyback_fund_balance);
@@ -23721,27 +23848,58 @@ CREDIBILITY: dict = {
                                 "note": "Revenue swept into the wallets vs what the wallets added: a price move "
                                         "between a sweep and the day's close, and the wNEAR legs (not counted), move "
                                         "them apart."}, fmt=_C_USD),
-        "in_emissions": _c_in("Emissions Q0", "emissions_tokens", "q0", _c_unv(
-            "No measured NEAR emissions series is produced (validator rewards are inside issuance); the declared "
-            "inflation is the issuance row's reference.", "per-epoch validator reward reads")),
+        # (sign-off round 2026-10-07): emissions_tokens is the declared issuance x the documented 90% validator share
+        # (non_comparable.emissions_tokens), so its on-chain reference is BigQuery's epoch-boundary mint x 0.9.
+        "in_emissions": _c_in("Emissions Q0 (declared issuance x 90% to validators)", "emissions_tokens", "q0",
+                              {"metric": "gross_issuance_tokens_bigquery", "window": "q0", "scale": 0.9, "tol": 5.0,
+                               "source": "NEAR block headers (BigQuery): the epoch-first blocks' rise in total_supply "
+                                         "over Q0 x 90% (validator share) — what the chain minted for validators",
+                               "note": "Tolerance 5%, as for a4_gross_issuance: offline validators make the actual "
+                                       "mint fall short of the declared maximum."}),
+        # GAS REVENUE, A SECOND INDEXER (sign-off round 2026-10-07): DefiLlama's NEAR revenue is Allium's
+        # transaction_fee_raw x 0.7 'Burned NEAR' (DefiLlama/dimension-adapters master, fees/near/index.ts, read
+        # 2026-10-07); NearBlocks' txn_fee x the same 0.7 x same-day price is the same quantity from another indexer.
+        # Intents revenue is NOT in it — that is the buyback wallets' (in_buyback / in_buyback_wallets).
+        "in_revenue": _c_in_py("Gas revenue, last 30 days (DefiLlama: 70% of fees burned)", "common_days_sum",
+                               {"a": "revenue_usd", "b": "fees_native_tokens", "days": 30, "side": "ours",
+                                "b_times_price": True},
+                               {"formula": "common_days_sum", "scale": 0.7, "tol": 15.0,
+                                "args": {"a": "revenue_usd", "b": "fees_native_tokens", "days": 30, "side": "ref",
+                                         "b_times_price": True},
+                                "source": "NearBlocks /v3/txn-stats txn_fee x 0.7 (the burned share before v87) x "
+                                          "same-day NEAR price",
+                                "note": "v87 (100% of gas burned) is not active (mainnet protocol 86, 2026-10-06); when "
+                                        "it activates both sides change, DefiLlama's adapter only when it is updated."},
+                               fmt=_C_USD),
+        # MATURING (sign-off round 2026-10-07): the validators' stake is a node read (the `validators` RPC); the
+        # independent figure is a staking explorer's 'total staked', read by hand on Jake's morning run.
+        "in_locked": _c_in("NEAR staked (validators RPC, current_validators)", "locked_tokens", "now", _c_mat(
+            "The stake is the sum of current_validators from NEAR's own RPC; the second figure is a staking "
+            "explorer's 'total staked' (nearblocks.io node explorer or near.com staking), recorded by hand in the "
+            "manual readings form (row in_locked) on the morning run of 2026-10-08.",
+            "2026-10-08")),
     },
     # ---------------------------------------------------------------- Plume
     "Plume": {
         # B10 (overnight 2026-10-06): no primary unlock schedule exists to set against our issuance.
+        # Jake's sign-off round (2026-10-07): Plume's own supply API publishes total = 10,000,000,000, a constant — so
+        # issuance (minting) over Q0 is 0 by the project's own figure; ours (totalSupply increases) is met by 0 only.
         "in_issuance": _c_in("Issuance Q0 (gross_issuance_tokens: PLUME totalSupply increases)", "gross_issuance_tokens",
-                             "q0", _c_unv(
-            "Measured from the token contract's totalSupply. Plume publishes no monthly unlock table (docs / blog "
-            "searched 2026-10-06); the aggregator unlock tables found disagree with each other and cite no primary. NOTE the quantities differ anyway: an UNLOCK moves already-minted PLUME out of a "
-            "vesting wallet (it changes circulating, not totalSupply), while this row counts MINTING (the 10B supply "
-            "is a MINTER_ROLE mint with no cap in the source), so an unlock table could not confirm it.",
-            "a primary Plume emission / mint schedule — none is published")),
+                             "q0", {"manual": {"value": 0, "read_on": "2026-10-07", "read_by": "Jake",
+                                               "source": "supply.plume.org/supply 'total' = 10,000,000,000, constant — "
+                                                         "no minting in Q0 by Plume's own API"},
+                                    "tol": 0.0,
+                                    "note": "A zero reference is met by a zero and nothing else. An UNLOCK moves "
+                                            "already-minted PLUME out of a vesting wallet (circulating), not this "
+                                            "row."}),
         "a1_validator_yield": {"metric": "staking_apy_published", "window": "now", "tol": 5.0,
                                "source": "staking.plume.org net APY 4.5% (manual, Jake 2026-09-30) — the app",
                                "note": "Ours is the contract's gross rate x (1 - stake-weighted commission): 4.497% "
                                        "reconciled on 2026-09-30 (APR vs APY: <0.1% apart at this rate)."},
-        "a1_nrr_settlement": _c_unv(
-            "UNVALIDATED: settlement = Blockscout P2P transfers + DefiLlama DEX, rebuilt here; no published Plume "
-            "settlement volume exists.", "a publisher covering Plume settlement volume"),
+        "a1_nrr_settlement": _c_lim(
+            "Settlement = Blockscout P2P transfers + DefiLlama DEX, rebuilt here by Artemis's method.",
+            "No publisher covers Plume settlement volume (settlement_sources / plume_settlement_routes, 2026-10-01).",
+            "a publisher adding Plume settlement volume"),
         "a1_nrr_throughput": _C_DEX_ONLY,
         "a1_tvl": _C_SINGLE_DEFILLAMA_TVL,
         "in_locked": _c_in_py("PLUME staked on 2026-09-30 (diamond totalAmountStaked)", "value_on",
@@ -23764,6 +23922,7 @@ CREDIBILITY: dict = {
                                _c_chk("Awaiting a reading.", "manual reading: Gaming pool APR"), fmt=_C_PCT),
         "a2_customer_revenue": {"metric": "arr_usd", "window": "now", "scale": 90 / 365, "tol": 25.0,
                                 "same_source": True,
+                                "fresh_label": "MATURING (until 2026-10-17; first-party only)",
                                 "source": "Aethir's own ARR x 90/365 (same dashboard)",
                                 "note": "SAME SOURCE, so FRESH-only at best. ARR is labelled '(1d)' — a ONE-DAY run-rate "
                                         "x 365 — while ours is 90 days of weekly revenue: a growing or lumpy week moves "
@@ -23780,15 +23939,22 @@ CREDIBILITY: dict = {
         # Aethir's own figures (one schedule, two pages), so a PASS says the dashboard follows the schedule.
         "in_circ": _c_in("Circulating supply (Aethir dashboard athCirculatingSupply)", "circulating_supply_first_party",
                          "now", {"formula": "schedule_month", "tol": 0.5, "same_source": True,
+                                 # sign-off round: one schedule on two of Aethir's pages; no free independent count
+                                 # (CoinGecko lags a month or more)
+                                 "fresh_label": "DOCUMENTED LIMITATION (first-party: dashboard = published schedule)",
                                  "source": "docs.aethir.com 'ATH Circulating Supply' — the published figure for this "
                                            "month (config.CIRCULATING_SCHEDULE, copied by Jake 2026-10-07)",
                                  "note": "CoinGecko's figure lags by a month or more (it showed the May step in late "
                                          "June), so it is not the reference."}),
-        "in_locked": _c_in("ATH staked (dashboard totalStaked)", "locked_tokens", "now", {
-            "verdict": "FRESH-only",
-            "why": "Only Aethir's dashboard reports all four pools; spot_checks re-read it live on 2026-10-05.",
-            "resolve": "IDC and edge stake (about 56% of the total) are on no pool we can read; the AI + Gaming part is "
-                       "checked on-chain in in_locked_pools"}),
+        # MATURING (Jake's sign-off round, 2026-10-07): re-judged once aethir_distributor_match has ~10 daily runs of
+        # the dashboard streams stored (from 2026-10-07): a matched distributor puts Aethir's dashboard on-chain; with
+        # none, the row is recorded as a DOCUMENTED LIMITATION (first-party only).
+        "in_locked": _c_in("ATH staked (dashboard totalStaked)", "locked_tokens", "now", _c_mat(
+            "Only Aethir's dashboard reports all four pools (spot_checks re-read it live on 2026-10-05); the AI + "
+            "Gaming part is checked on-chain in in_locked_pools; IDC and edge stake (about 56%) are on no pool we can "
+            "read. Re-judged when aethir_distributor_match has 10 daily runs: a matched distributor makes the "
+            "dashboard checkable on-chain, otherwise DOCUMENTED LIMITATION (first-party only).",
+            "2026-10-17")),
         # B6 (overnight 2026-10-06): 2 of the 4 parts, on-chain — the dashboard's own split vs the pools' balances.
         "in_locked_pools": _c_in_py("ATH staked in the AI + Gaming pools (dashboard aiStaked + gamingStaked)",
                                     "sums_on_common_day",
@@ -23804,27 +23970,33 @@ CREDIBILITY: dict = {
                                      "note": "The pools' supply() summed 785.39M on 2026-09-24; the dashboard's aiStaked + gamingStaked read "
                                              "785.74M in probes4 (a later day): expect a PASS. The pools lock "
                                              "veAethir 1:1 against ATH (wrapper_three_way_match_2026_09_24)."}),
-        "in_arr": _c_in("ARR (Aethir demand-metric)", "arr_usd", "now", {
-            "verdict": "FRESH-only",
-            "why": "First-party only; the last reported ARR elsewhere is $166M (Q3-2025 blog) — too old to compare.",
-            "resolve": "a 2026 ARR figure from Aethir's own reporting (blog / X) recorded as a manual reference"},
-                        fmt=_C_USD),
+        "in_arr": _c_in("ARR (Aethir demand-metric)", "arr_usd", "now", _c_mat(
+            "First-party only; the last reported ARR elsewhere is $166M (Q3-2025 blog) — too old to compare. Re-judged "
+            "with in_locked when aethir_distributor_match has 10 daily runs; a 2026 ARR from Aethir's own reporting "
+            "(blog / X), recorded by hand, would judge it — otherwise DOCUMENTED LIMITATION (first-party only).",
+            "2026-10-17"), fmt=_C_USD),
     },
     # ---------------------------------------------------------------- Maple
     "Maple": {
-        "a3_buyback_locked": {"verdict": "UNVERIFIABLE (awaiting the SSF address)",
-                              "why": "NOT a disagreement (Jake, 2026-10-05): the page's 77.66-79.21M SYRUP is the "
-                                     "Syrup Strategic Fund; the DAO multisig read 23.09M on-chain. Maple's Blockworks "
-                                     "filing (2026-10-07) names 0xd6d4 the Primary DAO address managing stablecoins "
-                                     "and SYRUP, and lists no separate SSF wallet.",
-                              "resolve": "python check_offline_items.py maple_dao_vs_ssf — a MATCH makes 0xd6d4 the "
-                                         "SSF and this row compares its balance with the page"},
+        # DOCUMENTED LIMITATION, "awaiting Maple" (Jake's sign-off round, 2026-10-07): the page's figure is first-party
+        # and the SSF's wallets are not published; the on-chain trail fragments and the purchases settle OTC.
+        "a3_buyback_locked": _c_lim(
+            "Awaiting Maple: the transparency page's Syrup Strategic Fund balance (77.66-79.21M SYRUP) is the "
+            "first-party figure; the SSF's own wallets are not published.",
+            "0xd6d4 is NOT the SSF (maple_dao_vs_ssf; DAO multisig 23.09M on-chain; Maple's Blockworks filing "
+            "2026-10-07 lists no separate SSF wallet). 0x58be0049 (Safe 3-of-5) matched the SSF 2025-08-13..10-28 then "
+            "sent 27.5M to the EOA 0x99f03ca0 and the trail fragments (maple_ssf_trail, Jake 2026-10-07). Buys settle "
+            "OTC: the EOA 0x83971edb… — which also delivered 5M ETHFI to Ether.fi out of Binance — serves both "
+            "(Jake's runs 2026-10-07).",
+            "Maple publishing the SSF's wallet addresses, then their balances against the page"),
         "in_revenue": _c_in_py("Revenue, latest 3 complete months (Maple transparency page, monthly rows)",
                                "months_match", {"daily": "revenue_usd_defillama", "monthly": "revenue_usd",
                                                 "side": "ref"},
                             {"formula": "months_match", "tol": 10.0,
                              "args": {"daily": "revenue_usd_defillama", "monthly": "revenue_usd", "side": "ours"},
-                             "force_verdict": "CHECK",
+                             # VERIFIED FINDING (sign-off round 2026-10-07): Maple's revenue counts lines DefiLlama
+                             # does not read — the gap is coverage, not our figure
+                             "force_verdict": "VERIFIED FINDING",
                              "source": "DefiLlama Maple revenue summed over the SAME complete months",
                              "note": "MONTHS, NOT Q0 (Jake's run 2026-10-05: page Q0 $2.84M vs DefiLlama $3.63M, "
                                      "-21.8%, looked like a reversal — the page's Q0 held Jul + Aug only, its "
@@ -23840,17 +24012,26 @@ CREDIBILITY: dict = {
                                     "dailyRevenue is GROSS of it.) Maple's own revenueUsd definition is not published; "
                                     "the MIP-021 buyback executor and the SSF address are not established either — "
                                     "Blockworks' filing says repurchased SYRUP is held in the DAO treasury.",
-                             "resolve": "Maple's own definition of revenueUsd (which pools, chains, gross or net of the "
-                                        "holders share) from its docs/methodology, then a month-by-month reconciliation. "
-                                        "STATUS 2026-10-07: +16.7% vs DefiLlama on matched months (Jake's run); the "
-                                        "overnight research explains part (Basic-strategy fees and Base unread by "
-                                        "DefiLlama, OTC near zero before its 2026-08-22 fix) but not all — open, no "
-                                        "action (Jake)."},
+                             "resolve": "EVIDENCE (sign-off round 2026-10-07): Maple's revenue is net interest income "
+                                        "(open- and fixed-term loans, all pools) + management / service / origination "
+                                        "fees + strategy fees (~10% performance fee on the Aave, Sky AND Basic "
+                                        "strategies) + OTC revenue, which is OFF-CHAIN (Blockworks' Maple financials "
+                                        "categories, blockworks.com/analytics/maple/maple-financials, read 2026-10-07). "
+                                        "DefiLlama reads the Aave + Sky strategy factories only (not the "
+                                        "basicStrategyFactory 0x876D54… nor Base) and its OTC leg read near zero before "
+                                        "its 2026-08-22 fix (fees/maple-finance.ts @c9ff7c2) — so Maple's figure "
+                                        "exceeding DefiLlama's (+16.7% on matched months, Jake's run 2026-10-07) is "
+                                        "coverage. UPGRADE: Blockworks' Maple revenue month by month (built from "
+                                        "Maple's data) as the second source."},
                             fmt=_C_USD),
-        "in_buyback": _c_in("SYRUP bought Q0 (transparency page)", "actual_buyback_tokens", "q0", _c_chk(
-            "The page is the only source; no buyback executor address is on file, so on-chain purchases cannot be "
-            "summed.", "identify the MIP-021 buyback executor from Maple's docs or the execution transactions, then "
-                       "sum its SYRUP purchases on-chain")),
+        # MATURING (sign-off round 2026-10-07): maple_buyback_inflows scans every Maple-controlled wallet (0xd6d4,
+        # 0x58be0049, 0xa9466eab and the Safes sharing their signers) for SYRUP from swap venues / aggregators by month.
+        "in_buyback": _c_in("SYRUP bought Q0 (transparency page)", "actual_buyback_tokens", "q0", _c_mat(
+            "The page is the only published source; Jake's run of maple_buyback_inflows sets the SYRUP that came into "
+            "Maple-controlled wallets from swap venues against the page month by month — a match wires that sum as "
+            "the reference; buys settling off-venue (OTC via 0x83971edb…, see a3_buyback_locked) make it a "
+            "documented limitation.",
+            "2026-10-08")),
         "in_emissions": _c_in("Emissions Q0", "emissions_tokens", "q0", _c_na(
             "staking rewards sunset by MIP-019 and Drips ended Q4 2025 — no emissions")),
     },
@@ -23888,13 +24069,20 @@ CREDIBILITY: dict = {
         # claims in one series, so the Merkl leg cannot be set against its own half; and 14,634 is a small fraction of
         # a quarter's MORPHO rewards — the URD leg dominates, so the reference that would judge the row is a
         # FIRST-PARTY URD figure (Morpho's rewards API, rewards.morpho.org), not reachable from here.
-        "a2_emissions": _c_chk(
-            "Merkl distributor + the Morpho URD 0x330eefa8… outflows on Ethereum (PARTIAL — other URD instances and "
-            "other chains unscanned). Merkl's own leg is recorded: 14,634 MORPHO scheduled over 90 days, 11 campaigns "
-            "(Jake's morpho_merkl_campaigns, 2026-10-07) — our claims include it and the URD leg on top, so ours "
-            "reading far above it is expected, not a disagreement.",
-            "a first-party URD distribution figure for the same window (Morpho's rewards API, rewards.morpho.org — "
-            "the URD programmes' per-epoch amounts), read on Jake's machine; the Merkl leg is already on file"),
+        # VERIFIED FINDING (Jake's sign-off round, 2026-10-07): the programmed reference for the window is Merkl's only —
+        # Morpho moved every new rewards programme to Merkl in July 2025 and the URD carries legacy programmes, so
+        # what the URD pays out now is earlier rewards being CLAIMED, a real release into circulation in the window.
+        "a2_emissions": _c_find(
+            "Ours is MORPHO claimed in the window (Merkl distributor + the legacy URD 0x330eefa8…, Ethereum): the "
+            "release into circulation. The PROGRAMMED amount for the window is Merkl's only — 14,634 MORPHO over 90 "
+            "days, 11 campaigns — because Morpho moved every new rewards programme to Merkl from July 2025; the rest "
+            "of ours is pre-July-2025 URD rewards claimed late, a real-world fact rather than a gap in our figure.",
+            "Morpho's docs: 'all new reward programs from July 2025 onward use [Merkl]'; the URD 'remains for "
+            "historical programs, such as legacy MORPHO distributions (pre-July 2025)'; the rewards.morpho.org API is "
+            "deprecated in favour of rewards-legacy.morpho.org (docs.morpho.org/build/earn/concepts/rewards, "
+            "developers.morpho.org, searched 2026-10-07). Merkl leg: Jake's morpho_merkl_campaigns, 2026-10-07 "
+            "(api.merkl.xyz/v4/campaigns). Both distributors are scanned to the wei (log_scans.merkl_morpho_out). "
+            "PARTIAL: other URD instances and other chains are unscanned."),
         # THE SWEEP (2026-10-07): DefiLlama's /protocol/morpho tvl counts collateral, so the comparable figure is the
         # BORROW side — blue-api's listed-market borrow (utilisation x supply, same day) against DefiLlama's borrowed
         # (DefiLlama-Adapters@aa45ca13 projects/morpho-blue/index.js L119-142: every market whose collateral has a
@@ -23918,13 +24106,29 @@ CREDIBILITY: dict = {
                                  "ve_voting_power_tokens", "now",
                                  _c_chk("Awaiting a reading of aerodrome.finance's total veAERO voting power.",
                                         "manual reading: total veAERO (voting power)")),
-        "a3_protocol_yield": _c_chk(
-            "Ours is DefiLlama voter fees + bribes / (veAERO supply x price); Aerodrome's own voter APR (its vote "
-            "page) is not read.", "read the average voter APR on aerodrome.finance/vote by hand and record it"),
-        "in_locked": _c_in("veAERO locked supply (veAERO.supply())", "ve_locked_supply_tokens", "now", _c_chk(
-            "No second source for the ve-locked total is wired (Dune 2986047 is closed).",
-            "the vote page's total locked, by hand (manual_form.py). DefiLlama is no route: its Aerodrome adapter exports "
-            "pool TVL only, no staking (DefiLlama-Adapters main, projects/aerodrome-CL/index.js, read 2026-10-07)")),
+        # MATURING (Jake's sign-off round, 2026-10-07): the on-chain reference is what the voters were PAID —
+        # aerodrome_voter_rewards reads every gauge's FeesVotingReward / BribeVotingReward tokenRewardsPerEpoch for the
+        # last complete epoch (Reward.sol @1ba30815), priced, x 52 / (Voter.totalWeight() x price).
+        "a3_protocol_yield": _c_mat(
+            "Ours is DefiLlama voter fees + bribes / (veAERO supply x price). The on-chain reference — fees + bribes "
+            "notified to the voting-reward contracts in the last complete epoch over the votes cast — is read by "
+            "aerodrome_voter_rewards on Jake's morning run; a match within ~10% wires it, a miss is investigated.",
+            "2026-10-08"),
+        "in_revenue": _c_in("Voter revenue Q0 (DefiLlama fees + bribes)", "revenue_usd", "q0", _c_mat(
+            "DefiLlama's figure; the same aerodrome_voter_rewards read (fees + bribes paid into the voting-reward "
+            "contracts per epoch, from state) is the on-chain second source, on Jake's morning run.",
+            "2026-10-08"), fmt=_C_USD),
+        # THE TWO DEFINITIONS, UNTANGLED (sign-off round 2026-10-07): veAERO.supply() is AERO LOCKED (1.053bn, Jake's
+        # read); aerodrome.finance's 881,100,168 is VOTING POWER (veAERO.totalSupply(): each lock's balance decays with
+        # its remaining time, permanent locks do not) — in_voting_power. Both are one contract on Base.
+        "in_locked": _c_in("veAERO locked supply (veAERO.supply())", "ve_locked_supply_tokens", "now", _c_lim(
+            "AERO locked is veAERO.supply() — one contract read; the site's 881,100,168 is VOTING power (decayed), "
+            "judged on in_voting_power, not this.",
+            "Jake read veAERO.supply() = 1.053bn on 2026-10-07 (the same function ours reads). No second indexer: Dune "
+            "2986047 is closed and DefiLlama's Aerodrome adapter exports pool TVL only, no staking (DefiLlama-Adapters "
+            "main, projects/aerodrome-CL/index.js, read 2026-10-07); Base logs are paid, so the Deposit / Withdraw sum "
+            "cannot be rebuilt for free.",
+            "a paid Base log route (Blockscout PRO) to rebuild locked AERO from Deposit / Withdraw events")),
         "in_buyback": _c_in("Buyback", "actual_buyback_tokens", "q0", _c_na(
             "no buyback by design — 100% of fees go to veAERO voters in the pairs' own tokens")),
         # B3 (overnight 2026-10-06): the rebase recomputed from the MINTER's own formula — no free log route serves
@@ -23972,14 +24176,27 @@ CREDIBILITY: dict = {
                                       "top-ups only): the old programme 6.49M ETHFI + the top-up Safe 1.14M. RETRACTED: "
                                       "'exit penalties 14.12M' (they are sETHFI bridged to other chains), and the two "
                                       "'unlabelled senders' (the strategy PositionManager and the ETHFI OFT lockbox)."},
-        "in_buyback": _c_in("ETHFI bought Q0 (DEX fills into 0x2f53… + the top-up Safe 0x3fb6…)", "actual_buyback_tokens", "q0", _c_chk(
-            "OLD wallet dormant since 2026-04-01; the NEW programme (Snapshot passed 2026-09-03) is ACTIVE through the "
-            "top-up Safe 0x3fb6784e… (4 of 5 owners shared with the buyback Safe), which buys on Uniswap v4 and pays "
-            "INTO sETHFI. DefiLlama's ether.fi-stake holders revenue reads $0 over 2026-09-03..10-05 — it does not see "
-            "this route, so it is no reference for it. The programme page (2026-10-07) says every buyback is "
-            "announced on x.com/ether_fi_Fdn and names the Foundation wallet 0x2f53… as the buyback wallet.",
-            "Jake's monthly readings of the Foundation's announced buybacks (x.com/ether_fi_Fdn), set against the "
-            "DEX fills counted here month by month")),
+        # VERIFIED FINDING (Jake's sign-off round, 2026-10-07): the declared programme is not executing at its
+        # declared scale — our measured fills are the real-world figure.
+        "in_buyback": _c_in("ETHFI bought Q0 (DEX fills into 0x2f53… + the top-up Safe 0x3fb6…)", "actual_buyback_tokens",
+                            "q0", _c_find(
+            "The buyback programme is declared (100% of eETH withdrawal fees weekly; Snapshot passed 2026-09-03) but "
+            "is not executing at that scale: our measured DEX fills ARE the real-world buyback.",
+            "No ETHFI bought into the declared Foundation buyback wallet 0x2f5301a3… since 2026-04-01 (the programme "
+            "page, 2026-10-07, names it the buyback wallet and says every buyback is announced on x.com/ether_fi_Fdn); "
+            "the only purchases since are 1.05M ETHFI on Uniswap v4 in 2026-09 through the top-up Safe 0x3fb6784e… "
+            "(4 of 5 owners shared with the buyback Safe), paid INTO sETHFI. DefiLlama's ether.fi-stake holders "
+            "revenue reads $0 over 2026-09-03..10-05. etherfi_withdrawal_fees prints the eETH fees still arriving at "
+            "0x2f53… month by month beside the ETHFI bought.")),
+        # REVENUE (sign-off round): the eETH withdrawal fees are on-chain (DefiLlama's adapter: transferred to
+        # 0x2f5301a3…) but not yet a stored series; etherfi_withdrawal_fees reads them.
+        "in_revenue": _c_in("Revenue Q0 (DefiLlama)", "revenue_usd", "q0", _c_lim(
+            "DefiLlama is the only stored revenue figure for Ether.fi.",
+            "The eETH withdrawal fees (the buyback programme's declared funding) are transferred to 0x2f5301a3… "
+            "(DefiLlama ether-fi-stake adapter; Ether.fi's own test suite names it buybackWallet) — measured by "
+            "etherfi_withdrawal_fees (eETH address 0x35fA1647… from etherfi-protocol/smart-contracts @15ff96d "
+            "test/V0MigrationFork.t.sol:32), not yet stored; Token Terminal / Artemis are paid.",
+            "the eETH inflows into 0x2f5301a3… wired as a log scan and set against DefiLlama's revenue"), fmt=_C_USD),
     },
     # ---------------------------------------------------------------- Fluid
     "Fluid": {
@@ -23989,13 +24206,21 @@ CREDIBILITY: dict = {
                                "tol": 0.0, "note": "A halted programme: 0 is the figure, met only by 0."},
         "a3_fdv_retirement": {"manual": {"value": 0.0, "read_on": "2026-09-24", "read_by": "Jake + Claude Code",
                                          "source": "as the circulating retirement row"}, "tol": 0.0},
-        "a3_buyback_locked": _c_unv(
-            "Before the halt the buyback proxy sent 100% of FLUID bought to the treasury, which has since sent 33.84M "
-            "out; the treasury balance is our read only (DefiLlama's treasury figure is the same address).",
-            "Fluid publishing what the treasury's FLUID is for"),
-        "in_circ": _c_in("Circulating supply (CoinGecko)", "circulating_supply", "now",
-                         {"manual": {"value": 83_696_996, "read_on": "2026-09-23", "read_by": "Claude Code",
-                                     "source": "Tokenomist's FLUID circulating figure"}, "tol": 1.0}),
+        # VERIFIED FINDING (sign-off round 2026-10-07): the buyback is HALTED, so nothing is being locked.
+        "a3_buyback_locked": _c_find(
+            "The buyback programme is halted: no FLUID has been bought since 2026-05-11, so the held balance is the "
+            "pre-halt purchases sitting in the treasury (our read; DefiLlama's treasury is the same address), not a "
+            "running lock.",
+            "Fluid governance halted buybacks on 2026-05-11 (Resolv post-mortem); fluid-governance payloads "
+            "IGP113-IGP140 carry no buyback; the buyback proxy's measured purchases are 0 over Q0 (in_buyback, met by "
+            "0); before the halt it sent 100% of FLUID bought to the treasury, which has since sent 33.84M out"),
+        # Tokenomist's figure, recorded beside the on-chain set (now primary): an aggregator's count, not judged.
+        "in_circ_tokenomist": _c_in("Circulating supply — CoinGecko (Tokenomist's figure recorded beside it)",
+                                    "circulating_supply", "now",
+                                    {"verdict": "N/A (recorded)",
+                                     "why": "Tokenomist read 83,696,996 FLUID on 2026-09-23 (Claude Code) — an "
+                                            "aggregator's count, recorded; in_circ judges our on-chain set against "
+                                            "CoinGecko."}),
         # A6 (overnight 2026-10-06): an N/A row left A3's derived rows "UNCHECKED (buyback has no row)". The halt IS
         # the reference: 0 FLUID bought in Q0, met only by 0 — ours is the buyback proxy's measured purchases.
         "in_buyback": _c_in("FLUID bought Q0 (buyback proxy purchases, measured)", "actual_buyback_tokens", "q0",
@@ -24003,13 +24228,25 @@ CREDIBILITY: dict = {
                                         "source": "Fluid governance: buybacks HALTED 2026-05-11 (Resolv post-mortem); "
                                                   "fluid-governance payloads IGP113-IGP140 carry no buyback"},
                              "tol": 0.0, "note": "A halted programme: 0 is the reference, met only by a measured 0."}),
-        "in_emissions": _c_in("FLUID emitted Q0 (mainnet Merkle claims)", "emissions_tokens", "q0", _c_chk(
-            "PARTIAL: the Arbitrum distributors are scanned since 2026-10-06 (emissions_tokens_arbitrum, beside this "
-            "mainnet series); BASE is not (no free log route) and PLASMA is not (no Plasma RPC from a primary source "
-            "on file). Governance funded "
-            "4,086,500 FLUID to the rewards multisig across IGP101-IGP131 — order of magnitude only, not per window.",
+        "in_emissions": _c_in("FLUID emitted Q0 (mainnet Merkle claims)", "emissions_tokens", "q0", _c_lim(
+            "Mainnet claims (this series) and the Arbitrum distributors (emissions_tokens_arbitrum, since 2026-10-06) "
+            "are measured; BASE and PLASMA are not.",
+            "Base distributor logs need a paid route (Base Blockscout answered 402; no free getLogs range covers the "
+            "distributors' history, alchemy_base_logs 2026-10-06); no Plasma RPC from a primary source is on file. "
+            "Governance funded 4,086,500 FLUID to the rewards multisig across IGP101-IGP131 — order of magnitude only.",
             "a paid Base log route (Blockscout PRO), then all four chains' claims since IGP101 against the funded "
             "4,086,500")),
+        # REVENUE (sign-off round): Fluid publishes revenue on its own dashboard only (DefiLlama's Fluid page: "for
+        # annualized revenue figures, refer to Fluid's official dashboard"); no documented API.
+        "in_revenue": _c_in("Revenue Q0 (DefiLlama — the share of interest going to the treasury)", "revenue_usd",
+                            "q0", _c_lim(
+            "DefiLlama's revenue is the share of interest going to the treasury; Fluid's own figure is on its "
+            "dashboard, with no documented API.",
+            "DefiLlama's Fluid page points to Fluid's official dashboard for revenue and notes fees are not revenue "
+            "(financing costs not deducted); no fluid.io API is documented (searched 2026-10-07). On-chain, the "
+            "Liquidity layer's collectRevenue events record revenue COLLECTED — discretionary and lumpy, so not the "
+            "accrued figure (fluid_revenue_collected prints it).",
+            "a Fluid revenue API, or the collectRevenue log route judged over 6+ months")),
     },
     # ---------------------------------------------------------------- Sky
     "Sky": {
@@ -24059,9 +24296,21 @@ CREDIBILITY: dict = {
                                {"formula": "months_match", "tol": 15.0,
                                 "args": {"daily": "revenue_usd", "monthly": "revenue_usd_ba", "side": "ref"},
                                 "source": "Block Analitica P&L, type 'revenue', the same complete months",
+                                # THE CAUSE (Jake's sign-off round, 2026-10-07): a DEFINITION, and the same upstream.
+                                "force_verdict": "DOCUMENTED LIMITATION (same upstream)",
+                                "why": "DefiLlama's Sky revenue IS Block Analitica's: its makerdao adapter reads "
+                                       "info-sky.blockanalitica.com/api/v1/revenue/historic and books (stability_fee − "
+                                       "savings_rate_cost + liquidation_income + psm_fees) / 365 a day — revenue NET "
+                                       "of the savings rate ('Fees collected minus savings rate paid to DSR "
+                                       "depositors'; DefiLlama/dimension-adapters master fees/makerdao.ts L54-58, "
+                                       "L90, read 2026-10-07). The P&L 'revenue' set beside it is GROSS, so the gap is "
+                                       "the savings-rate expense, and the two are one source — no independent second "
+                                       "figure exists for free.",
+                                "resolve": "Sky's own monthly accounting posts (forum.sky.money), read by hand as a "
+                                           "monthly reference on the same net-of-savings basis",
                                 "note": "Block Analitica's revenue is GROSS (before the savings rate and other "
-                                        "expenses); if DefiLlama's Sky revenue nets out the savings rate the row reads "
-                                        "LOW by about that expense — the first run says which basis DefiLlama uses."},
+                                        "expenses); DefiLlama's nets the savings rate out (fees/makerdao.ts), so the "
+                                        "row reads LOW by about that expense."},
                                fmt=_C_USD),
         "a4_gross_issuance": {"formula": "delta_q0", "args": {"metric": "total_supply_protocol",
                                                               "plus": "sky_stage2_burn_tokens"},
@@ -24100,6 +24349,8 @@ CREDIBILITY: dict = {
                            "revenue_distribution)", "sum_months",
                            {"metric": "net_protocol_surplus_usd", "months": _SKY_NPS_MONTHS},
                            {"formula": "sum_months", "tol": 2.0, "same_source": True,
+                            # sign-off round: Sky's accounting is published only by Sky and its data provider
+                            "fresh_label": "DOCUMENTED LIMITATION (Sky's own accounting on both sides)",
                             "args": {"metric": "net_protocol_surplus_usd_reported", "months": _SKY_NPS_MONTHS},
                             "source": "Sky's own monthly table, 'Remitted to Sky Reserves' (Jake, 2026-10-07)",
                             "note": "A month that differs by more than 2% is a Review Queue item against that month "
@@ -24213,6 +24464,19 @@ CREDIBILITY: dict = {
     },
     # ---------------------------------------------------------------- GEODNET
     "GEODNET": {
+        # REVENUE FROM GEODNET'S OWN MONTHLY BURN REPORTS (sign-off round, Jake 2026-10-07): burned $736,439 / $755,048 /
+        # $728,985 in Jul / Aug / Sep 2026; the burn is 80% of revenue (GEODNET, 2026-07-02), so revenue = burn / 0.80 —
+        # $920,549 + $943,810 + $911,231. Ours (DefiLlama revenue_usd) summed over exactly those months.
+        "in_revenue": _c_in_py("Revenue Jul-Sep 2026 (DefiLlama revenue_usd summed over the three months)", "sum_months",
+                               {"metric": "revenue_usd", "months": ["2026-07", "2026-08", "2026-09"]},
+                               {"manual": {"value": 920_549 + 943_810 + 911_231, "read_on": "2026-10-07",
+                                           "read_by": "Jake",
+                                           "source": "GEODNET monthly burn reports: $736,439 / $755,048 / $728,985 "
+                                                     "burned, revenue = burn / 0.80"},
+                                "tol": 10.0,
+                                "note": "Both sides rest on the burn: DefiLlama books GEODNET's revenue from the burn "
+                                        "too, so a gap means a missed burn day or a price difference, not a different "
+                                        "business."}, fmt=_C_USD),
         # GEODNET'S MONTHLY BURN REPORTS (Jake, 2026-10-07): GEOD burned per month (80% of revenue), month by month
         # against our daily on-chain burn summed over the same months. The dollar side is on a2_customer_revenue.
         "in_burn_report_months": _c_in("GEOD burned per month — our daily on-chain burn summed per month",
@@ -24267,22 +24531,32 @@ CREDIBILITY: dict = {
     "Pendle": {
         # Jake's probes16 (2026-10-07): Pendle's own per-epoch revenues (spendle/data) stop at 2026-04-07 — stale, so no
         # first-party reference for Q0. CLOSED as single-source.
-        "in_revenue": _c_in("Revenue Q0 (DefiLlama)", "revenue_usd", "q0", _c_unv(
-            "DefiLlama is the only current source: Pendle's own spendle/data revenues stop at the 2026-04-07 epoch "
-            "(latest $535,130; all-time $8,353,237 — Jake's pendle_epoch_revenues, 2026-10-07), so they cannot judge "
-            "Q0. CLOSED."), fmt=_C_USD),
+        "in_revenue": _c_in("Revenue Q0 (DefiLlama)", "revenue_usd", "q0", _c_lim(
+            "DefiLlama is the only current source for Pendle's revenue.",
+            "Pendle's own spendle/data revenues stop at the 2026-04-07 epoch (latest $535,130; all-time $8,353,237 — "
+            "Jake's pendle_epoch_revenues, 2026-10-07), so they cannot judge Q0; Token Terminal / Artemis are paid.",
+            "Pendle resuming per-epoch revenues in spendle/data, or a paid second aggregator"), fmt=_C_USD),
         # B9 (overnight 2026-10-06): THE SCHEDULE IS A CEILING, NOT A REFERENCE. Pendle's docs (sPENDLE / tokenomics,
         # read 2026-10-06): weekly emission decays 1.1%/week (x0.989) to week 259, then a terminal 2%/yr of total supply
         # (379,848,538e-12 x totalSupply per week ~ 110K PENDLE/week, ~1.42M over a 91-day Q0). Since April 2026 the
         # Algorithmic Incentive Model pays FIXED DOLLAR incentives, so actual emissions sit at or below that ceiling by
         # design — a two-sided tolerance against it would CHECK whenever AIM pays less, which is not an error.
-        "in_emissions": _c_in("Emissions Q0 (tokens)", "emissions_tokens", "q0", _c_chk(
-            "Our emissions series is the only measure wired. Pendle's schedule gives only a CEILING (~1.42M PENDLE over "
-            "Q0 at the terminal 2%/yr; the decay-phase start time must be read from the contract) and AIM pays less by "
-            "design, so the schedule cannot confirm the figure.",
-            "Pendle's own reported weekly AIM incentive totals (its dashboard or governance posts), summed over Q0")),
+        # ON-CHAIN (Jake's sign-off round, 2026-10-07): the PENDLE the mainnet GaugeController actually paid its markets
+        # (log_scans.gauge_pendle_out, seeded from block 0 on the first run). The schedule stays a CEILING only.
+        "in_emissions": _c_in("Emissions Q0 (tokens)", "emissions_tokens", "q0",
+                              {"metric": "emissions_tokens_gauge_mainnet", "window": "q0", "tol": 25.0,
+                               "source": "PENDLE out of the mainnet GaugeController to its markets (MarketClaimReward "
+                                         "transfers), Q0 — on-chain",
+                               "note": "Mainnet markets only: a CHECK with ours ABOVE the reference by about the L2 "
+                                       "markets' share is that coverage gap, not an error (each L2 gauge controller is "
+                                       "its own contract). The schedule (~1.42M over Q0 at the terminal 2%/yr) is a "
+                                       "ceiling: AIM pays fixed-dollar incentives at or below it."}),
         "a3_protocol_yield": {"metric": "staking_apr_published", "window": "now", "tol": 25.0, "same_source": True,
                               "zero_is_missing": True,
+                              # sign-off round: rewards are paid by merkle "in the form of sPENDLE" (sPENDLE.md); the
+                              # merkle contract funded each epoch is not in Pendle's deployment file, so the on-chain
+                              # figure waits on pendle_spendle_rewards_onchain identifying it from the chain
+                              "fresh_label": "DOCUMENTED LIMITATION (shared input: Pendle's API)",
                               "source": "Pendle's lastEpochApr (spendle/data)",
                               "note": "Ours is PENDLE distributed per epoch (the same API) over on-chain sPENDLE + "
                                       "virtual — a shared input, so FRESH-only at best. NO OTHER ENDPOINT (Jake's "

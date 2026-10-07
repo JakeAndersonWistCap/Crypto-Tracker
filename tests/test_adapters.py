@@ -14794,7 +14794,8 @@ def test_offline_checks_ambiguous_prefix_refuses_and_names_every_match(monkeypat
     rc2 = coi.main()
     out2 = capsys.readouterr().out
     assert rc2 == 1
-    assert "'maple' matches 10 checks" in out2     # + maple_dao_vs_ssf, maple_ssf_candidates, maple_ssf_partial, _trail
+    assert "'maple' matches 11 checks" in out2     # + maple_dao_vs_ssf, maple_ssf_candidates, maple_ssf_partial, _trail,
+    #                                                  maple_buyback_inflows (sign-off round)
     assert all(n in out2 for n in ("maple_dao_multisig", "maple_transparency", "maple_ssf_history",
                                    "maple_ssf_inflows", "maple_ssf_lp_test", "maple_drips", "maple_dao_vs_ssf"))
 
@@ -23694,7 +23695,8 @@ def test_credibility_tab_has_a_row_for_every_headline_cell_of_the_fifteen_projec
     ours = {r[4] for r in rows}
     for h in cells:
         assert f"='{h['sheet']}'!{h['cell']}" in ours, f"{h['project']} {h['id']} has no Credibility row"
-    allowed = ("PASS", "CHECK", "FRESH-only", "UNVERIFIABLE", "N/A")
+    import credibility as cred
+    allowed = ("PASS", "CHECK", "FRESH-only", "UNVERIFIABLE", "N/A") + cred.SIGNED     # + the sign-off categories
     for r in rows:
         v = str(r[10])
         assert v.startswith("=") or v.startswith(allowed), r
@@ -23718,14 +23720,16 @@ def test_credibility_never_counts_a_reread_of_our_own_source_as_pass(tmp_path):
     for k, r in enumerate(rows):
         f = str(ws.cell(head + 1 + k, 11).value)
         if r["mode"] == "same_source":
-            assert '"FRESH-only"' in f and '"PASS"' not in f, f
+            # FRESH-only, or the sign-off category the row's fresh_label names — never PASS (sign-off round)
+            assert ('"FRESH-only"' in f or (r.get("fresh_label") and f'"{r["fresh_label"]}"' in f)) and \
+                '"PASS"' not in f, f
         if r["mode"] == "derived":
             assert "PASS (inputs)" in f or "UNVERIFIABLE (inputs)" in f
             if r.get("missing_inputs"):
                 assert "PASS (inputs)" not in f, "an unchecked input can never let a derived figure PASS"
     # Hyperliquid's first-party circulating has no independent twin: FRESH-only, said so
     hl = next(r for r in rows if r["project"] == "Hyperliquid" and r["id"] == "in_circ")
-    assert hl["verdict"] == "FRESH-only" and "spot_checks" in hl["note"]
+    assert hl["verdict"] == "DOCUMENTED LIMITATION" and "spot_checks" in hl["note"]     # sign-off round
 
 
 def test_credibility_references_computed_from_the_store():
@@ -23761,8 +23765,9 @@ def test_credibility_references_computed_from_the_store():
     ref = cred.reference("Pendle", config.CREDIBILITY["Pendle"]["in_epoch"]["ref"], {}, long, asof)
     assert ref["value"] == 82_545 and "Manual record" in ref["note"]
     ref = cred.reference("Maple", config.CREDIBILITY["Maple"]["in_revenue"]["ref"], {}, long, asof)
-    assert ref["mode"] == "static" and ref["verdict"] == "CHECK" and "UNEXPLAINED" in ref["note"] \
-        and "RESOLVE:" in ref["note"]
+    # sign-off round: Maple's revenue gap is coverage (OTC, Basic strategy, Base) — a VERIFIED FINDING with evidence
+    assert ref["mode"] == "static" and ref["verdict"] == "VERIFIED FINDING" and "UNEXPLAINED" in ref["note"] \
+        and "RESOLVE:" in ref["note"] and "Blockworks" in ref["note"]
 
 
 def test_xref_coinbase_candles_and_lido_apr(tmp_path):
@@ -23907,8 +23912,11 @@ def test_xlcalc_agrees_with_libreoffice_on_every_formula_of_a_built_workbook(tmp
     cells = [(ws.title, c.row, c.column) for ws in wb.worksheets for row in ws.iter_rows() for c in row
              if isinstance(c.value, str) and c.value.startswith("=")]
     ours = {k: xlcalc.display(X.value(*k)) for k in cells}
-    cred = [v for (sh, r, c), v in ours.items() if sh == "Credibility" and c == 11]
-    assert cred and all(str(v).startswith(("PASS", "CHECK", "FRESH-only", "UNVERIFIABLE", "N/A")) for v in cred), \
+    import credibility as _cred
+    # column K: the rows' verdicts (the header block's K holds the numeric OPEN counts since the sign-off round)
+    cred = [v for (sh, r, c), v in ours.items() if sh == "Credibility" and c == 11 and isinstance(v, str)]
+    assert cred and all(str(v).startswith(("PASS", "CHECK", "FRESH-only", "UNVERIFIABLE", "N/A") + _cred.SIGNED)
+                        for v in cred), \
         [v for v in cred if not str(v).startswith(("PASS", "CHECK", "FRESH", "UNVER", "N/A"))][:5]
     if not shutil.which("soffice"):
         return
@@ -23938,7 +23946,8 @@ def test_credibility_report_runs_without_libreoffice(tmp_path, monkeypatch, caps
     assert cr.main(["--open-only", "--project", "Maple"]) == 0
     out = capsys.readouterr().out
     assert "CREDIBILITY - counts by verdict" in out and "Maple" in out
-    assert "[UNVERIFIABLE (awaiting the SSF address)] Maple" in out, out[-1500:]
+    # sign-off round: the SSF row is a documented limitation ("awaiting Maple"), so it is no longer in the open list
+    assert "SIGN-OFF" in out and "awaiting the SSF address" not in out, out[-1500:]
     out.encode("ascii")
 
 
@@ -23947,8 +23956,9 @@ def test_maple_ssf_gap_is_awaiting_an_address_not_a_disagreement():
     import credibility as cred
     ref = cred.reference("Maple", config.CREDIBILITY["Maple"]["a3_buyback_locked"], {}, None,
                          pd.Timestamp("2026-10-05"))
-    assert ref["mode"] == "static" and ref["verdict"] == "UNVERIFIABLE (awaiting the SSF address)"
-    assert "CHECK" not in ref["verdict"]
+    # sign-off round: "awaiting Maple" with the trail and the OTC evidence written down
+    assert ref["mode"] == "static" and ref["verdict"] == "DOCUMENTED LIMITATION"
+    assert "Awaiting Maple" in ref["note"] and "0x83971edb" in ref["note"] and "UPGRADE" not in ref["verdict"]
 
 
 def test_http_429_without_retry_after_waits_blockscout_x_ratelimit_reset_in_ms(monkeypatch):
@@ -25364,7 +25374,10 @@ def test_circulating_decisions_are_applied_consistently_and_coingecko_free_float
         assert chosen[n] == "circulating_supply_onchain", n
     for n in ("Hyperliquid", "Near", "Aethir", "Plume"):
         assert chosen[n] == "circulating_supply_first_party", n
-    for n in ("Chainlink", "Maple", "Fluid", "Morpho"):
+    # sign-off round: Chainlink (all 27 wallets) and Fluid (Avocado wallets not the team's) are on-chain primary
+    for n in ("Chainlink", "Fluid"):
+        assert chosen[n] == "circulating_supply_onchain", n
+    for n in ("Maple", "Morpho"):
         assert chosen[n] == "circulating_supply", n
         assert not config.circulating_onchain_primary(n), n
     for n in ("Chainlink", "Maple", "Fluid", "Ether.fi", "GEODNET"):
@@ -25419,7 +25432,8 @@ def test_circulating_decisions_are_applied_consistently_and_coingecko_free_float
                          "metric": ["circulating_supply_onchain", "locked_tokens"], "value": [250e6, 80e6]})
     v, _d, _how = cred.FORMULAS["free_float_now"]("Pendle", {}, long, pd.Timestamp("2026-10-06"))
     assert v == 170e6
-    assert cred.circulating_input("Chainlink")["ours"]["metric"] == "circulating_supply"
+    # sign-off round: Chainlink's on-chain set (all 27 wallets) is primary, so ours is the on-chain figure
+    assert "circulating_supply_onchain" in str(cred.circulating_input("Chainlink")["ours"])
 
 
 def test_etherfi_token_yield_numerator_is_the_reconciled_share_price_total():
@@ -25672,14 +25686,19 @@ def test_aethir_pool_balances_are_read_on_chain_as_their_own_metrics_and_checked
 def test_chainlink_issuance_is_checked_against_the_24_wallets_outflow():
     """B5: CoinGecko's pool release vs the fall in the 24 non-circulating wallets' balance across Q0."""
     import credibility as cred
+    # sign-off round: OURS is now the wallets' net outflow (on-chain primary, build_workbook._onchain_release_views);
+    # CoinGecko's stepwise d(circulating) - d(total) is the cross-check reference
+    import build_workbook as bw
     spec = config.CREDIBILITY["Chainlink"]["in_issuance"]
-    assert spec["ours"]["metric"] == "pool_release_tokens" and spec["ref"]["scale"] == -1.0
-    asof = pd.Timestamp("2026-10-07")
-    lo, _hi = cred._q0(asof)
-    long = pd.DataFrame({"date": [lo - pd.Timedelta(days=1), asof - pd.Timedelta(days=1)], "project": "Chainlink",
-                         "metric": "noncirculating_holding_tokens", "value": [250e6, 230e6]})
-    got = cred.reference("Chainlink", spec["ref"], {}, long, asof)
-    assert got["value"] == 20e6, "20M LINK left the wallets = 20M released"
+    assert spec["ours"]["metric"] == "pool_release_tokens" and spec["ref"]["formula"] == "delta_diff_q0"
+    days = pd.date_range("2026-10-04", "2026-10-06")
+    cols = ["date", "project", "metric", "value", "source", "tier"]
+    g = pd.DataFrame({"date": days, "project": "Chainlink", "metric": "noncirculating_holding_tokens",
+                      "value": [250e6, 240e6, 230e6], "source": "t", "tier": 2})[cols]
+    groups = {("Chainlink", "noncirculating_holding_tokens"): g}
+    bw._onchain_release_views(groups)
+    rel = groups[("Chainlink", "pool_release_tokens")]["value"].tolist()
+    assert rel == [10e6, 10e6], "10M LINK left the wallets each day = 10M released"
 
 
 def test_aerodrome_rebase_reference_follows_the_minters_formula():
@@ -25843,9 +25862,11 @@ def test_manual_form_pages_cover_the_new_readings_and_never_override_a_formula_r
 
 def test_overnight_records_are_on_file_and_the_maple_factor_is_corrected():
     """B9/B10/B13/B14: research recorded where the rows read it; the wrong holders-share factor removed."""
-    assert config.CREDIBILITY["Pendle"]["in_emissions"]["ref"]["verdict"] == "CHECK"
-    assert "CEILING" in config.CREDIBILITY["Pendle"]["in_emissions"]["ref"]["why"]
-    assert config.CREDIBILITY["Plume"]["in_issuance"]["ref"]["verdict"] == "UNVERIFIABLE"
+    # sign-off round: Pendle's emissions judged by the gauge scan (the schedule stays a ceiling); Plume's issuance by
+    # supply.plume.org's constant total
+    assert config.CREDIBILITY["Pendle"]["in_emissions"]["ref"]["metric"] == "emissions_tokens_gauge_mainnet"
+    assert "ceiling" in config.CREDIBILITY["Pendle"]["in_emissions"]["ref"]["note"]
+    assert config.CREDIBILITY["Plume"]["in_issuance"]["ref"]["manual"]["value"] == 0
     assert "do not wire" in config.SOURCE_REGISTER["api.merkl.xyz"]["licence"]
     why = config.CREDIBILITY["Maple"]["in_revenue"]["ref"]["why"]
     assert "GROSS" in why and "nets a holders" not in why
@@ -26689,7 +26710,7 @@ def test_new_first_party_sources_of_2026_10_07_are_recorded():
     assert "Primary DAO address" in mp["treasury"]["provenance"]
     assert {mp["noncirc_operational_admin"]["address"], mp["noncirc_security_admin"]["address"]} == {
         "0xCe1cE7c7F436DCc4E28Bc8bf86115514d3DC34E8", "0x6b1A78C1943b03086F7Ee53360f9b0672bD60818"}
-    assert "maple_dao_vs_ssf" in config.CREDIBILITY["Maple"]["a3_buyback_locked"]["resolve"]
+    assert "maple_dao_vs_ssf" in config.CREDIBILITY["Maple"]["a3_buyback_locked"]["why"]
     assert config.circulating_onchain("Maple")["status"] == "partial", "on-chain primary only after a MATCH"
     bp = config.PROJECT_BY_NAME["Ether.fi"]["buyback_programme"]
     assert set(bp["streams"]) == {"weekly", "monthly"} and "sETHFI" in bp["destination"]
@@ -26876,7 +26897,8 @@ def test_hyperliquid_pool_release_reference_is_the_first_party_daily_change_plus
     """Root B: on our own days, d(tokenDetails circulating) + that day's AF buyback; forward-only coverage carries the
     per-day mean over our days and says so."""
     import credibility as cred
-    assert config.CREDIBILITY["Hyperliquid"]["a4_pool_release"]["formula"] == "daily_delta_plus_flow"
+    # sign-off round: the row is a VERIFIED FINDING (ours IS this first-party release now); the formula stays
+    assert config.CREDIBILITY["Hyperliquid"]["a4_pool_release"]["verdict"] == "VERIFIED FINDING"
     days = pd.date_range("2026-09-20", "2026-10-06")
     circ = pd.date_range("2026-10-03", "2026-10-06")
     long = pd.concat([pd.DataFrame({"date": days, "project": "Hyperliquid", "metric": "pool_release_tokens",
@@ -27163,9 +27185,151 @@ def test_probes16_records_and_probes():
     assert m["matched"] == "2025-08-13..2025-10-28" and "0x99f03ca0" in m["diverged"]
     fl = config.CIRCULATING_ONCHAIN["Fluid"]
     assert "0x52Aa899454998Be5b000Ad077a46Bbe360F4e497" in fl["counted_as_circulating"]
-    assert "fluid_avocado_owners" in fl["missing"] and not config.circulating_onchain_primary("Fluid")
+    # sign-off round: the Avocado wallets are not the team's -> circulating, and Fluid is on-chain primary
+    assert "fluid_avocado_owners" in fl["avocado_not_team"]["source"] and config.circulating_onchain_primary("Fluid")
     sp = config.PROJECT_BY_NAME["Pendle"]["spendle_epochs"]["revenues_closed"]
     assert sp["latest_epoch"] == "2026-04-07" and config.CREDIBILITY["Pendle"]["in_revenue"]["ref"]["verdict"] == \
-        "UNVERIFIABLE"
+        "DOCUMENTED LIMITATION"                       # sign-off round: closed as single-source, with its evidence
     for fn in (coi.etherfi_accountant, coi.maple_ssf_trail, coi.fluid_avocado_owners, coi.hl_pool_release_compare):
         assert fn in coi.CHECKS
+
+
+def test_signoff_categories_and_evidence_gated_helpers():
+    """Sign-off round 0: a row counts towards sign-off only as PASS / N/A / DOCUMENTED LIMITATION / MATURING /
+    VERIFIED FINDING; each of the last three refuses to exist without its evidence."""
+    import credibility as cred
+    for v in ("PASS", "N/A (recorded)", "DOCUMENTED LIMITATION (first-party only)", "MATURING (until 2026-10-17)",
+              "VERIFIED FINDING", "VERIFIED FINDING (inputs)"):
+        assert cred.signed(v), v
+    for v in ("CHECK", "FRESH-only", "UNVERIFIABLE", "", None, "UNCHECKED"):
+        assert not cred.signed(v), v
+    rows = [{"project": "A", "id": "x"}, {"project": "A", "id": "y"}, {"project": "B", "id": "z"}]
+    s = cred.signoff(rows, ["PASS", "CHECK", "MATURING (until 2026-10-17)"])
+    assert s["A"]["status"] == "OPEN" and s["A"]["open"][0][0] == "y" and s["B"]["status"] == "SIGNED OFF"
+    assert s["B"]["counts"] == {"MATURING": 1}
+    for bad in (lambda: config._c_lim("why", "", "upgrade"), lambda: config._c_lim("why", "ev", ""),
+                lambda: config._c_find("why", ""), lambda: config._c_mat("why", "")):
+        with _pytest.raises(ValueError):
+            bad()
+    assert config._c_mat("w", "2026-10-17")["verdict"] == "MATURING (until 2026-10-17)"
+
+
+def test_every_static_credibility_row_carries_a_signoff_category():
+    """The finish line: no hand-set verdict is left CHECK / UNVERIFIABLE / FRESH-only — each is PASS-able by data or
+    is one of the five categories, with its evidence."""
+    import credibility as cred
+
+    def walk(spec):
+        if isinstance(spec, dict):
+            if "verdict" in spec and isinstance(spec["verdict"], str):
+                yield spec["verdict"]
+            if spec.get("force_verdict"):
+                yield spec["force_verdict"]
+            for k in ("ref",):
+                if isinstance(spec.get(k), dict):
+                    yield from walk(spec[k])
+    import manual_refs
+    manual = manual_refs.by_row()                  # a recorded reading replaces an "awaiting a reading" CHECK
+    bad = [(p, rid, v) for p, rows in config.CREDIBILITY.items() if p in config.CREDIBILITY_PROJECTS
+           for rid, spec in rows.items() if (p, rid) not in manual for v in walk(spec) if not cred.signed(v)]
+    assert not bad, bad
+
+
+def test_same_source_rows_carry_their_signoff_label_and_native_coin_prices_say_why():
+    """A same-source match is never PASS: its fresh_label names the category (Aethir, Sky NPS, Pendle); a native coin's
+    DefiLlama price relays CoinGecko — N/A where Coinbase is the independent check, a limitation for HYPE."""
+    import credibility as cred
+    spec = config.CREDIBILITY["Aethir"]["a2_customer_revenue"]
+    assert spec["fresh_label"].startswith("MATURING (until 2026-10-17")
+    ref = cred.reference("Aethir", spec, {}, pd.DataFrame(columns=["date", "project", "metric", "value"]),
+                         pd.Timestamp("2026-10-07"))
+    assert ref["mode"] == "same_source" and ref["fresh_label"] == spec["fresh_label"]
+    assert cred.signed(config.CREDIBILITY["Pendle"]["a3_protocol_yield"]["fresh_label"])
+    hl = cred.price_inputs("Hyperliquid")["in_price_llama"]["ref"]
+    eth = cred.price_inputs("Ethereum")["in_price_llama"]["ref"]
+    assert hl["same_source"] and hl["fresh_label"].startswith("DOCUMENTED LIMITATION")
+    assert eth["fresh_label"].startswith("N/A (relay of CoinGecko")
+
+
+def test_hyperliquid_release_is_the_first_party_circulating_change_plus_the_af_buyback():
+    """Sign-off round: pool_release_tokens := d(tokenDetails circulating) + the AF buyback that day; CoinGecko's
+    stepwise delta kept as pool_release_tokens_coingecko. The 2026-10-07 +3,736,300 is recorded as a finding."""
+    import build_workbook as bw
+    days = pd.date_range("2026-10-04", "2026-10-07")
+    cols = ["date", "project", "metric", "value", "source", "tier"]
+    mk = lambda m, v: pd.DataFrame({"date": days, "project": "Hyperliquid", "metric": m, "value": v,  # noqa: E731
+                                    "source": "t", "tier": 1})[cols]
+    groups = {("Hyperliquid", "circulating_supply_first_party"): mk("circulating_supply_first_party",
+                                                                     [3e8, 3e8 - 50, 3e8 - 100, 3e8 + 3_736_100]),
+              ("Hyperliquid", "actual_buyback_tokens"): mk("actual_buyback_tokens", [100.0] * 4),
+              ("Hyperliquid", "pool_release_tokens"): mk("pool_release_tokens", [9.0] * 4)}
+    bw._onchain_release_views(groups)
+    rel = groups[("Hyperliquid", "pool_release_tokens")].set_index("date")["value"]
+    assert list(rel.round(6)) == [50.0, 50.0, 3_736_300.0]
+    assert ("Hyperliquid", "pool_release_tokens_coingecko") in groups
+    f = config.CREDIBILITY["Hyperliquid"]["a4_pool_release"]
+    assert f["verdict"] == "VERIFIED FINDING" and "3,736,300" in f["why"] and "9.92M" in f["why"]
+
+
+def test_manual_reading_beside_a_headline_is_recorded_not_the_judge(monkeypatch):
+    """NEAR (sign-off round): the near.com pool APR (NET) is recorded beside the GROSS headline; the headline is
+    judged by the network reward rate from BigQuery issuance over stake."""
+    import credibility as cred
+    import manual_refs
+    reading = {"project": "Near", "row": "a1_validator_yield", "value": "0.0456", "read_on": "2026-10-07",
+               "read_by": "Jake", "url": "", "period": "", "tol_pct": "", "note": ""}
+    monkeypatch.setattr(manual_refs, "by_row", lambda rows=None: {("Near", "a1_validator_yield"): [reading]})
+    hc = [{"project": "Near", "sheet": "A1", "cell": "C9", "id": "a1_validator_yield", "header": "VALIDATOR YIELD",
+           "kind": "calc", "fmt": None}]
+    out = cred.build_rows(hc, {}, pd.DataFrame(columns=["date", "project", "metric", "value"]),
+                          pd.Timestamp("2026-10-07"), projects={"Near"})
+    head = next(r for r in out if r["id"] == "a1_validator_yield")
+    side = next(r for r in out if r["id"] == "in_validator_yield_net")
+    assert head["mode"] == "independent" and "BigQuery" in head["source"]
+    assert side["verdict"] == "N/A (recorded)" and "0.0456" in side["note"] and side["ours"]["cell"] == "'A1'!C9"
+
+
+def test_signoff_round_rows_cite_their_evidence():
+    """The categories carry their evidence: Fluid (halted buyback, on-chain primary), Maple (revenue coverage), Morpho
+    (Merkl since July 2025), Sky revenue (same upstream), NEAR gas revenue (x 0.7), Pendle gauge scan."""
+    c = config.CREDIBILITY
+    assert config.circulating_primary_metric("Fluid") == "circulating_supply_onchain"
+    assert c["Fluid"]["a3_buyback_locked"]["verdict"] == "VERIFIED FINDING" and "2026-05-11" in \
+        c["Fluid"]["a3_buyback_locked"]["why"]
+    assert c["Fluid"]["in_revenue"]["ref"]["verdict"] == "DOCUMENTED LIMITATION"
+    assert c["Maple"]["in_revenue"]["ref"]["force_verdict"] == "VERIFIED FINDING"
+    assert "July 2025" in c["Morpho"]["a2_emissions"]["why"]
+    assert c["Sky"]["in_revenue"]["ref"]["force_verdict"].startswith("DOCUMENTED LIMITATION")
+    assert "makerdao.ts" in c["Sky"]["in_revenue"]["ref"]["why"]
+    nr = c["Near"]["in_revenue"]["ref"]
+    assert nr["scale"] == 0.7 and nr["formula"] == "common_days_sum"
+    assert c["Near"]["in_emissions"]["ref"]["scale"] == 0.9
+    scan = config.PROJECT_BY_NAME["Pendle"]["log_scans"][0]
+    assert scan["holders"] == ["0x47D74516B33eD5D70ddE7119A40839f6Fcc24e57"] and scan["store"]
+    assert c["Pendle"]["in_emissions"]["ref"]["metric"] == "emissions_tokens_gauge_mainnet"
+    assert config.CREDIBILITY["Ethereum"]["a4_net_change"]["show_how"]
+
+
+def test_ethereum_net_change_shows_both_sides_leg_by_leg():
+    """Sign-off round: the reference's working names our issuance and burn on the same days beside the curve and the
+    reference burn, so a miss names its leg."""
+    import credibility as cred
+    days = pd.date_range("2026-09-30", "2026-10-05")
+    long = pd.concat([pd.DataFrame({"date": days, "project": "Ethereum", "metric": m, "value": v})
+                      for m, v in (("gross_issuance_tokens", 2_700.0), ("gross_burn_tokens", 60.0),
+                                   ("beacon_chain_eth", 34_000_000.0), ("price_usd", 4_000.0),
+                                   ("revenue_usd", 240_000.0))], ignore_index=True)
+    v, d, how = cred.FORMULAS["eth_net_formula"]("Ethereum", {}, long, pd.Timestamp("2026-10-06"))
+    assert v is not None and "OURS, same days: issuance 16,200" in how and "burn 360" in how
+    ref = cred.reference("Ethereum", config.CREDIBILITY["Ethereum"]["a4_net_change"], {}, long,
+                         pd.Timestamp("2026-10-06"))
+    assert "OURS, same days" in ref["note"]
+
+
+def test_signoff_round_probes_registered():
+    import check_offline_items as coi
+    for fn in (coi.pendle_spendle_rewards_onchain, coi.maple_buyback_inflows, coi.etherfi_withdrawal_fees,
+               coi.aerodrome_voter_rewards, coi.sky_farm_rates):
+        assert fn in coi.CHECKS
+    import inspect
+    assert '"limit": 365' in inspect.getsource(coi) and '"limit": 400' not in inspect.getsource(coi)

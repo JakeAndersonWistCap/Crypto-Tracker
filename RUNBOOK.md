@@ -527,6 +527,90 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11as. Sign-off round, 2026-10-07 (overnight): finish-line categories, per-project status
+
+**The finish line.** A project is SIGNED OFF when every Credibility row is one of these:
+- PASS
+- N/A
+- DOCUMENTED LIMITATION (no free second source: reason, evidence, what would upgrade it)
+- MATURING (fills by a stated date)
+- VERIFIED FINDING (our figure is confirmed; the gap is a real-world fact, with evidence)
+
+Anything else is OPEN.
+- The Credibility header shows each category's count, OPEN and the sign-off per project.
+- `credibility_report.py` prints LIMIT / MATUR / FIND / OPEN / SIGN-OFF.
+- `completeness_report.py` has a sign-off section (skip it with `--no-signoff`).
+- `config._c_lim` / `_c_find` / `_c_mat` refuse to build a row without its evidence.
+- A same-source match shows its `fresh_label` (a category) in place of FRESH-only.
+- A manual reading of a different quantity can be recorded *beside* a headline (`manual_refs` "beside"). NEAR's 4.56%
+  pool APR, which is NET, is recorded that way.
+
+**What moved (static rows: 37 OPEN before, 0 after; computed rows are judged by the run):**
+- **Fluid:**
+  - On-chain primary. The three Avocado wallets are not the team's, so they count as circulating.
+  - Buyback-locked: VERIFIED FINDING (halted 2026-05-11).
+  - Emissions and revenue: DOCUMENTED LIMITATION. Base logs are paid, and there is no Fluid revenue API.
+  - Tokenomist's figure is recorded beside the row.
+- **Hyperliquid:**
+  - The release is now d(tokenDetails circulating) + the Assistance Fund buyback. CoinGecko's delta is kept as
+    `pool_release_tokens_coingecko`.
+  - 2026-10-07's +3,736,300 is the October contributor payout (~3.75M sold OTC) against a 9.92M/month projection:
+    VERIFIED FINDING.
+  - in_circ: DOCUMENTED LIMITATION.
+  - in_fees is judged against ASXN's 30-day annualised revenue (internal use only).
+- **Aethir:** in_locked, in_arr and customer revenue are MATURING until 2026-10-17 (ten daily runs of
+  `aethir_distributor_match`). in_circ: DOCUMENTED LIMITATION (the dashboard follows the published schedule).
+- **NEAR:**
+  - The validator yield is now gross vs gross. The reference is BigQuery's actual mint over 28 days × 365/28 × 90%,
+    divided by stake.
+  - in_emissions is judged against the BigQuery mint × 0.9.
+  - in_revenue is judged against NearBlocks txn_fee × 0.7 × price. DefiLlama's adapter is Allium fees × 0.7.
+  - in_locked: MATURING to 2026-10-08 (a hand reading of total staked).
+  - The probe's stats/balance limit is now 365.
+- **Pendle:**
+  - in_emissions is judged against PENDLE out of the mainnet GaugeController (new log scan `gauge_pendle_out`,
+    seeded from block 0).
+  - in_revenue: DOCUMENTED LIMITATION.
+  - The yield row: DOCUMENTED LIMITATION (shared API input) until `pendle_spendle_rewards_onchain` finds the funded
+    merkle contract.
+- **Maple:**
+  - Buyback-locked: DOCUMENTED LIMITATION (awaiting Maple; buys settle OTC).
+  - Revenue: VERIFIED FINDING. Maple counts OTC, Basic-strategy and Base revenue that DefiLlama doesn't read
+    (Blockworks categories).
+  - in_buyback: MATURING to 2026-10-08 (`maple_buyback_inflows`).
+- **Ether.fi:**
+  - in_buyback: VERIFIED FINDING. The programme is declared, but nothing has been bought into 0x2f53… since
+    2026-04-01; the only buys are 1.05M via Uniswap v4 in 2026-09.
+  - in_revenue: DOCUMENTED LIMITATION (`etherfi_withdrawal_fees` reads the fees).
+  - The holders_revenue_usd closure now carries its native evidence, so it is no longer a BUG.
+- **Morpho:** a2_emissions is a VERIFIED FINDING. Morpho moved new programmes to Merkl in July 2025 (14,634 scheduled
+  over 90 days); the rest of the claims are legacy URD rewards.
+- **Aerodrome:**
+  - in_locked (AERO locked, 1.053bn) and voting power (881.1M, decayed) are separate rows. in_locked is a DOCUMENTED
+    LIMITATION.
+  - a3 and in_revenue are MATURING to 2026-10-08 (`aerodrome_voter_rewards`, read from state).
+- **Sky:**
+  - in_revenue: DOCUMENTED LIMITATION (same upstream). DefiLlama's Sky revenue is Block Analitica's, net of the
+    savings rate; the P&L figure is gross.
+  - NPS: DOCUMENTED LIMITATION (Sky's own accounting on both sides).
+  - `sky_farm_rates` reads the farms' rewardRate.
+- **Ethereum:** a4_net_change now prints ours leg by leg beside the reference. in_price_llama is N/A (CoinGecko relay;
+  Coinbase is the check).
+- **Chainlink, GEODNET, Plume, Uniswap:** as in section 1 of the round (Chainlink on-chain primary; GEODNET revenue
+  from the burn reports; Plume issuance 0 from supply.plume.org).
+
+**Housekeeping:** zero-value lookalike transfers are dropped in `balance_flow` as well as the log scan.
+
+```bash
+python credibility_report.py                       # per-project SIGN-OFF column
+python completeness_report.py                      # sign-off section at the end
+python headline_diff.py chainlink_onchain_preview
+python archive_backfill.py --project Chainlink     # plan; then --run (also Fluid, Ether.fi, Aerodrome, Maple)
+python check_offline_items.py pendle_spendle_rewards_onchain maple_buyback_inflows etherfi_withdrawal_fees
+python check_offline_items.py aerodrome_voter_rewards sky_farm_rates hl_pool_release_compare
+python token_metrics.py                            # the normal run (Pendle gauge scan seeds from block 0)
+```
+
 ## 11ar. Jake's probes16 + run 2026-10-07 20:57: Ether.fi Accountant, Aerodrome managed locks, trails
 
 **Ether.fi: the 32% was an artefact of cross-chain shares.** sETHFI is a Veda BoringVault.

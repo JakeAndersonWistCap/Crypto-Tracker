@@ -236,6 +236,10 @@ class BalanceFlow:
             i = bisect.bisect_right(bounds, block) - 1
             return dates[i] if 0 <= i < len(dates) - 1 and dates[i + 1] - dates[i] == pd.Timedelta(days=1) else None
 
+        # ADDRESS-POISONING SPAM OUT (Jake's sign-off round, 2026-10-07: the filter applies everywhere): zero-value
+        # inflows from a lookalike of a holder move nothing, but they are not inflows either
+        from .logscan import drop_poison
+        events["in"], _poisoned = drop_poison(events["in"], 1, holders)
         ext_in, burned = {}, {}
         for e in events["in"]:
             if topic_address(e["topics"][1]) in holders:
