@@ -527,6 +527,54 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11aq. Jake's probes15 + run 2026-10-07 19:07: roots A-O, Ether.fi reclassification, new wallets and probes
+
+**New references (code):**
+- **GEODNET `in_circ` (A):** judged by the bridge reconciliation. Polygon NTT custody must be at least the Solana
+  supply, with no slack, and the filing must list our wallets (`bridge_reconciled`, recorded 2026-10-07). The static
+  462M is its own `in_circ_static` row, "N/A (recorded, stale)".
+- **Hyperliquid `a4_pool_release` (B):** the daily change in tokenDetails circulating plus that day's AF buyback, on
+  our own days (`daily_delta_plus_flow`). tokenDetails is read forward-only, so the per-day mean on the shared days
+  is carried over our days, and the source text gives the count.
+- **NEAR (C):** `in_buyback` is relabelled to the three-wallet balance change x price over the 30 days to 2026-10-07.
+  It is judged against revenue.near.org's 30-day net revenue, $2.08M (Jake). The A3 "Buyback to LOCKED supply" cell
+  now shows the held balance for any 'hold' destination; the effective float is unchanged.
+- **Sky (F, G):** `a4_gross_burn` is judged month by month. September is set against the spell's 2,860,943.76 SKY at
+  0.01% (`in_burn_spell_2026_09`). `in_revenue` sets DefiLlama monthly against Block Analitica P&L revenue, a new
+  stored series, `revenue_usd_ba`.
+- **Chainlink `in_revenue` (H):** DefiLlama against our aggregator core scan, over the same 30 days.
+- **Ethereum `a4_net_change` (J):** the issuance curve uses each day's staked ETH. On a day without DefiLlama or a
+  price, the burn is the BurntFees counter, differenced.
+- **Aerodrome `in_emissions` (K):** V / T reads begin after the oldest archive epoch, so the first read within a week
+  of the flip is used, and the source text says so.
+- **Aethir APRs (N):** "N/A (recorded)". Our APR is CLOSED and no verified pool reward-rate read exists.
+- **Pendle (M):** CLOSED. The docs (@3cc3658d) have only `/v1/spendle/data` and `/v1/spendle/:address`.
+
+**Ether.fi:**
+- 0xf4e147db… is classed as a WITHDRAWAL QUEUE: its burns and the vault's payouts to it are one withdrawal.
+- 0xcf413a19… and 0xe0080d2f… are classed as ROUND TRIPS: vault ETHFI goes out to them and comes back.
+- Neither class is a reward. Both are left out of `sethfi_reward_tokens_reconciled` and held still in the new
+  `sethfi_aps_reward_only` walk, which is A3's reference. The all-classes walk is still stored.
+- These classes come from the flows in Jake's trace. `etherfi_contract_ids` confirms them by verified name and decodes
+  the two sample selectors. `etherfi_vault_archive` is the decisive outside check: convertToAssets at ~365d, ~180d and
+  today.
+
+**Wallets wired (non-circulating):**
+- Ether.fi treasury reserve Safe 0xe4439b1d…: 3-of-7, five owners shared with the buyback Safe, 20M ETHFI from
+  Treasury.
+- Fluid IGP-137 custody 0xcabebc7f…: 5M. Fluid stays on CoinGecko until `fluid_vesting_recipients` classifies the
+  five earlier recipients.
+
+**Morpho:** Merkl's leg is recorded: 14,634 MORPHO over 90 days, 11 campaigns. The URD leg dominates, so the row needs
+Morpho's rewards API, read on Jake's machine.
+
+**New probes:**
+- `etherfi_vault_archive`, `etherfi_contract_ids`
+- `fluid_vesting_recipients`
+- `maple_ssf_partial`: identity, matching runs, divergence recipients, v3 LP decomposed, combinations
+- `aerodrome_managed_venfts`: deposits into managed NFTs, every managed NFT's owner, CoinGecko's basis
+- `pendle_epoch_revenues`: Pendle's own per-epoch revenues, raw, before anything is wired
+
 ## 11ap. Jake's probes14 + run 2026-10-07 18:11: like-for-like rows fixed, Ether.fi references, filing wallets
 
 **Like-for-like rows.**

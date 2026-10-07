@@ -4897,8 +4897,12 @@ def write_a3(ws, R: Refs, data_by_key: dict):
         # A hold and a payout move float in OPPOSITE directions, so they never share a formula.
         # Chainlink's Reserve is the case: a multi-day withdrawal timelock with no withdrawals
         # expected for years, so accumulated LINK is locked supply, not a distribution.
+        # THE COLUMN IS FOR HELD BUYBACKS (Jake's probes15, root C): a destination of 'hold' shows the held balance
+        # even where the hold is classed treasury-redeployable (NEAR's three DAO revenue wallets) — that class only
+        # decides whether the effective float above subtracts it, which this cell does not change.
         ("Buyback to LOCKED supply (destination = hold) — reduces effective float",
-         lambda r, p: (calc(f"IF({R.C(r, 'Destination effect on float')}=\"locked_supply\","
+         lambda r, p: (calc(f"IF(OR({R.C(r, 'Destination effect on float')}=\"locked_supply\","
+                            f"{R.C(r, 'Buyback destination')}=\"hold\"),"
                             f"{R.D(r, 'buyback_fund_balance', 'now')},{NA})")), FMT_NUM, "calc", True),
         ("Buyback to YIELD PAYOUT (destination = distribute) — re-enters float, never netted against burn",
          lambda r, p: (calc(f"IF({R.C(r, 'Destination effect on float')}=\"yield_payout\","

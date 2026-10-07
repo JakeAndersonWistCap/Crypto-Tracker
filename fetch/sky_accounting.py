@@ -245,6 +245,19 @@ class SkyAccounting:
                                 f"{SOURCE}:pnl.revenue_distribution-security_and_maintenance",
                                 "Revenue Allocation = revenue_distribution less Security and Maintenance (the SKY "
                                 "buyback + the USDS distribution)")
+                # P&L REVENUE per month (Jake's probes15, root G): the reference for DefiLlama's Sky revenue, month
+                # by month
+                rev_m = spec["metrics"].get("revenue")
+                if rev_m:
+                    revs = {}
+                    for r in bt:
+                        if str(r.get("type")) == "revenue":
+                            try:
+                                revs[str(r["date"])] = revs.get(str(r["date"]), 0.0) + float(r["amount"])
+                            except (KeyError, TypeError, ValueError):
+                                continue
+                    self._store(out, name, rev_m, revs, last_complete, f"{SOURCE}:pnl.revenue",
+                                "P&L revenue (gross, before expenses and distributions)")
             # 2-3. CASH-FLOW CATEGORIES (outflows are negative; stored as positive spending)
             for key, category in (("buyback", "Buyback Spending"), ("staking", "Staking Rewards")):
                 m = spec["metrics"].get(key)

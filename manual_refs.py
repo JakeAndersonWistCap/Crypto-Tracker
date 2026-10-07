@@ -78,10 +78,17 @@ PAGES: dict = {
                                  "tile": "APY (SKY-rewards farm)", "unit": "fraction (0.25 = 25%)", "tol_pct": 15.0},
     ("Sky", "in_apy_usds_farm"): {"url": "https://info.skyeco.com/staking/0x38e4254bd82ed5ee97cd1c4278faae748d998865",
                                   "tile": "APY (USDS-rewards farm)", "unit": "fraction (0.25 = 25%)", "tol_pct": 15.0},
+    # RECORDED, NOT COMPARED (Jake's probes15, root N): our side is CLOSED (config UNAVAILABLE staking_apr_ai /
+    # staking_apr_gaming — the dashboard payload carries the APR series undated) and the two veAethir pools expose no
+    # reward-rate read with a verified ABI, so there is nothing of ours to judge. The reading stands as the figure.
     ("Aethir", "in_apr_ai"): {"url": "https://dashboard.aethir.com", "tile": "AI pool average APR",
-                              "unit": "fraction (0.25 = 25%)", "tol_pct": 5.0, "same_source": True},
+                              "unit": "fraction (0.25 = 25%)", "tol_pct": 5.0, "same_source": True,
+                              "record_only": "our APR is CLOSED (undated dashboard series; no verified pool reward-rate "
+                                             "read) — the reading is the figure, recorded"},
     ("Aethir", "in_apr_gaming"): {"url": "https://dashboard.aethir.com", "tile": "Gaming pool average APR",
-                                  "unit": "fraction (0.25 = 25%)", "tol_pct": 5.0, "same_source": True},
+                                  "unit": "fraction (0.25 = 25%)", "tol_pct": 5.0, "same_source": True,
+                                  "record_only": "our APR is CLOSED (undated dashboard series; no verified pool "
+                                                 "reward-rate read) — the reading is the figure, recorded"},
     ("GEODNET", "in_burn_report_months"): {"url": "GEODNET's monthly burn reports", "tile": "GEOD burned in the month",
                                            "unit": "GEOD", "tol_pct": 5.0, "monthly_metric": "gross_burn_tokens"},
     ("Ether.fi", "in_locked"): {"url": "https://etherscan.io/token/0x86B5780b606940Eb59A062aA85a07959518c0161",

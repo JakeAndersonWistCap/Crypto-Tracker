@@ -484,7 +484,8 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
     # scan did not run at all this pass.
     scan = next((sc for sc in project.get("log_scans") or [] if sc.get("metric") == metric
                  or (sc.get("decompose") or {}).get("metric") == metric
-                 or (sc.get("decompose") or {}).get("aps_metric") == metric), None)
+                 or (sc.get("decompose") or {}).get("aps_metric") == metric
+                 or (sc.get("decompose") or {}).get("aps_reward_metric") == metric), None)
     if scan:
         return (f"read from Transfer events {'INTO' if scan['direction'] == 'in' else 'OUT OF'} "
                 f"{', '.join(scan['holders'])} on {scan['chain']} (log_scans.{scan['key']}) via a "
@@ -1045,6 +1046,8 @@ def served_by(source: str, project: dict) -> set[str] | None:
         # and its daily rebuilt assets-per-share (Jake's probes14, 2026-10-07)
         m |= {sc["decompose"]["aps_metric"] for sc in project.get("log_scans") or []
               if (sc.get("decompose") or {}).get("aps_metric")}
+        m |= {sc["decompose"]["aps_reward_metric"] for sc in project.get("log_scans") or []
+              if (sc.get("decompose") or {}).get("aps_reward_metric")}
         if "actual_buyback_tokens" in m:
             m.add("buyback_last_inflow_date")
     elif source == "coingecko":

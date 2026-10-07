@@ -74,25 +74,47 @@ def _eth_net_formula(p, rows, long, asof, issuance="gross_issuance_tokens", burn
     """ETHEREUM'S NET SUPPLY CHANGE FROM INDEPENDENT SOURCES, OVER OUR OWN COMMON DAYS (Jake's run 2026-10-07: the
     reference was CoinGecko's d(circulating) across Q0 and read 1.43M ETH — impossible; its stored history is not
     one consistent series). Ours is issuance - burn on the days BOTH our series hold (net_supply_change_tokens). The
-    reference takes the SAME days: the issuance curve at our staked ETH (166.32 x sqrt(staked)/365 a day, full
-    participation: an upper bound by ~1-2%) minus DefiLlama's burned fees / same-day price."""
+    reference takes the SAME days: the issuance curve at THAT DAY's staked ETH (beacon_chain_eth, validatorqueue's
+    daily history, the nearest reading on or before the day; 166.32 x sqrt(staked)/365, full participation: an upper
+    bound by ~1-2%) minus the day's burn — DefiLlama's burned fees / same-day price, or, on a day DefiLlama or the
+    price is missing, the protocol's own BurntFees counter differenced (burn_cumulative_tokens). Jake's probes15
+    (root J): both legs from stored series, so a missing DefiLlama day no longer leaves the row without a reference."""
     lo, hi = _q0(asof)
     si, sb = _series(long, p, issuance), _series(long, p, burn)
     days = sorted(d for d in set(si.index) & set(sb.index) if lo < d <= hi)
-    staked = _num((rows.get(f"{p}|beacon_chain_eth") or {}).get("now"))
     if not days:
         return None, None, f"no day on which both {issuance} and {burn} are stored in Q0"
-    if not staked:
-        return None, None, "no staked-ETH figure (beacon_chain_eth) stored"
+    st = _series(long, p, "beacon_chain_eth")
+    if st.empty:
+        staked_now = _num((rows.get(f"{p}|beacon_chain_eth") or {}).get("now"))
+        if not staked_now:
+            return None, None, "no staked-ETH figure (beacon_chain_eth) stored"
+        st = pd.Series([staked_now], index=[days[0]])
     px, rev = _series(long, p, "price_usd"), _series(long, p, "revenue_usd")
-    priced = [d for d in days if d in px.index and px.loc[d] and d in rev.index]
-    if len(priced) < len(days):
-        return None, None, f"DefiLlama burn / price missing on {len(days) - len(priced)} of our {len(days)} common day(s)"
-    iss = 166.32 * math.sqrt(staked) / 365.0 * len(days)
-    brn = float(sum(rev.loc[d] / px.loc[d] for d in days))
+    cum = _series(long, p, "burn_cumulative_tokens")
+    iss = brn = 0.0
+    n_llama = n_counter = 0
+    missing = []
+    for d in days:
+        before = st[st.index <= d]
+        s0 = float(before.iloc[-1]) if len(before) else float(st.iloc[0])
+        iss += 166.32 * math.sqrt(s0) / 365.0
+        if d in px.index and px.loc[d] and d in rev.index:
+            brn += float(rev.loc[d] / px.loc[d])
+            n_llama += 1
+        elif d in cum.index and (d - pd.Timedelta(days=1)) in cum.index:
+            brn += float(cum.loc[d] - cum.loc[d - pd.Timedelta(days=1)])
+            n_counter += 1
+        else:
+            missing.append(d)
+    if missing:
+        return None, None, (f"no burn on {len(missing)} of our {len(days)} common day(s) (neither DefiLlama x price "
+                            f"nor the BurntFees counter on the day and the day before), e.g. {missing[0].date()}")
     return iss - brn, str(days[-1].date()), (
-        f"issuance curve {iss:,.0f} ETH (166.32 x sqrt({staked:,.0f}) over {len(days)} day(s)) − DefiLlama burn "
-        f"{brn:,.0f} ETH, on our {len(days)} common day(s) {days[0].date()}..{days[-1].date()}")
+        f"issuance curve {iss:,.0f} ETH (166.32 x sqrt(that day's staked ETH) over {len(days)} day(s)) − burn "
+        f"{brn:,.0f} ETH (DefiLlama / price on {n_llama} day(s)"
+        + (f", BurntFees counter on {n_counter}" if n_counter else "") + f"), on our {len(days)} common day(s) "
+        f"{days[0].date()}..{days[-1].date()}")
 
 
 def _base_reward_ceiling(p, rows, long, asof, cover_metric="pool_release_tokens", units="supply_units", **_):
@@ -260,6 +282,38 @@ def _delta_diff_q0(p, rows, long, asof, a="circulating_supply_first_party", b="t
     return va - vb, da, f"{ha} - {hb}"
 
 
+def _daily_delta_plus_flow(p, rows, long, asof, cover_metric="pool_release_tokens",
+                           stock="circulating_supply_first_party", plus="actual_buyback_tokens", **_):
+    """A RELEASE FROM A FIRST-PARTY STOCK, DAY BY DAY (Jake's probes15, root B — Hyperliquid): on each of OUR
+    cover_metric days in Q0 where the stock is stored on that day AND the day before, d(stock) + that day's `plus`
+    flow (the Assistance Fund's buyback takes HYPE out of circulation, so adding it back gives the release gross of
+    it). The stock is read forward-only, so where it covers fewer days than ours the per-day mean on the common days
+    is carried over our covered days — said in the source text, with the count."""
+    lo, hi = _q0(asof)
+    cov = _series(long, p, cover_metric)
+    days = [d for d in cov.index if lo < d <= hi]
+    if not days:
+        return None, None, f"no {cover_metric} day in Q0"
+    st, fl = _series(long, p, stock), _series(long, p, plus)
+    common, tot = [], 0.0
+    for d in days:
+        prev = d - pd.Timedelta(days=1)
+        if d in st.index and prev in st.index:
+            tot += float(st.loc[d]) - float(st.loc[prev]) + (float(fl.loc[d]) if d in fl.index else 0.0)
+            common.append(d)
+    if not common:
+        return None, None, (f"{stock} is not stored on any of our {len(days)} {cover_metric} day(s) together with "
+                            f"its previous day (it is read forward-only)")
+    if len(common) == len(days):
+        return tot, str(days[-1].date()), (f"sum of d({stock}) + {plus} on all our {len(days)} {cover_metric} "
+                                           f"day(s) {days[0].date()}..{days[-1].date()}")
+    v = tot / len(common) * len(days)
+    return v, str(common[-1].date()), (
+        f"d({stock}) + {plus} on the {len(common)} of our {len(days)} {cover_metric} day(s) where the stock is "
+        f"stored with its previous day ({common[0].date()}..{common[-1].date()}): {tot:,.0f}, a per-day mean of "
+        f"{tot / len(common):,.0f} carried over our {len(days)} day(s)")
+
+
 def _hl_reward_formula(p, rows, long, asof, **_):
     """Hyperliquid's published staking rate: 2.37% at 400M HYPE staked, scaling as 1/sqrt(staked)
     (VALIDATOR_YIELD.published_rate, read 2026-09-29), at OUR current stake."""
@@ -364,6 +418,28 @@ def _now_sum(p, rows, long, asof, metrics=(), **_):
         parts.append(f"{m} {v:,.0f}")
         day = max(day or str(d or ""), str(d or "")) or None
     return tot, day, " + ".join(parts)
+
+
+def _bridge_reconciled(p, rows, long, asof, key="", **_):
+    """THE RECORDED ON-CHAIN CIRCULATING, GATED ON ITS TWO CONDITIONS (Jake's probes15, root A — GEODNET): the bridge
+    custody holds at least the bridged chain's whole supply (every bridged token backed: a zero-tolerance bound, no
+    slack) and the project's filing lists exactly our wallets (filing_confirms). Both hold -> the recorded figure is
+    the reference; either fails -> no reference, and the note says which."""
+    spec = config.circulating_onchain(p) or {}
+    rec = spec.get(key) or {}
+    cust, sol, circ = _num(rec.get("custody")), _num(rec.get("solana_supply")), _num(rec.get("circulating"))
+    if None in (cust, sol, circ):
+        return None, None, f"no recorded reconciliation '{key}' (custody / bridged supply / circulating)"
+    if cust < sol:
+        return None, None, (f"bridge does NOT reconcile: custody {cust:,.0f} < bridged supply {sol:,.0f} "
+                            f"({sol - cust:,.0f} unbacked)")
+    if not spec.get("filing_confirms"):
+        return None, None, "the project's filing has not confirmed our wallet list"
+    day = key.rsplit("_", 3)[-3:] if key.startswith("onchain_") else None
+    date = "-".join(day) if day else None
+    return circ, date, (f"recorded on-chain circulating {circ:,.0f} ({rec.get('read_by', '')}); bridge reconciles "
+                        f"(custody {cust:,.0f} >= bridged supply {sol:,.0f}, surplus {cust - sol:,.0f}) and the "
+                        f"filing lists our wallets (confirmed {spec['filing_confirms']})")
 
 
 def _free_float_now(p, rows, long, asof, add_back=(), **_):
@@ -533,6 +609,29 @@ def _hl_reward_active(p, rows, long, asof, **_):
         f"({s_off / s_tot:.1%} of stake inactive, TODAY's snapshot only) / 365 x {cov:.0f} day(s)")
 
 
+def _window_sum(p, rows, long, asof, metric="", end="", days=30, times_price=False, **_):
+    """A daily flow summed over the `days` days ending on `end` (a reading's own window — a figure read by hand on one
+    date covers the days before it, not the build's), valued at the same-day price_usd when `times_price`. A day
+    missing its price is a missing day, said in the source text."""
+    hi = pd.Timestamp(end) if end else asof.normalize() - pd.Timedelta(days=1)
+    lo = hi - pd.Timedelta(days=int(days) - 1)
+    sr = _series(long, p, metric)
+    sr = sr[(sr.index >= lo) & (sr.index <= hi)]
+    if sr.empty:
+        return None, None, f"no {metric} in {lo.date()}..{hi.date()}"
+    if times_price:
+        px = _series(long, p, "price_usd").reindex(sr.index)
+        miss = int(px.isna().sum())
+        sr = (sr * px).dropna()
+        if sr.empty:
+            return None, None, f"no price_usd on the {metric} days in {lo.date()}..{hi.date()}"
+    else:
+        miss = 0
+    return float(sr.sum()), str(sr.index[-1].date()), (
+        f"{metric}{' x same-day price' if times_price else ''} summed over {len(sr)} stored day(s) in "
+        f"{lo.date()}..{hi.date()} ({days}-day window)" + (f"; {miss} day(s) without a price left out" if miss else ""))
+
+
 def _last30_annualised(p, rows, long, asof, metric="revenue_usd", **_):
     sr = _series(long, p, metric)
     sr = sr[(sr.index > asof - pd.Timedelta(days=30)) & (sr.index <= asof)]
@@ -625,17 +724,29 @@ def _aero_rebase_formula(p, rows, long, asof, epochs=4, side="ref", **_):
     e = e[e.index < asof.normalize()]
     if len(e) < int(epochs) or v.empty or t.empty:
         return None, None, "Minter emission / veAERO voting supply / total supply not all stored"
-    tot, used = 0.0, []
+    tot, used, after = 0.0, [], []
     for d, em in e.iloc[-int(epochs):].items():
-        vv, tt = v[v.index <= d], t[t.index <= d]
-        if vv.empty or tt.empty:
-            return None, None, f"no veAERO voting supply / total supply on or before {d.date()}"
-        T, V = float(tt.iloc[-1]), float(vv.iloc[-1])
+        # THE NEAREST READING ON OR BEFORE THE FLIP; where the daily V / T reads begin after it (they are read forward
+        # — Jake's probes15, root K: the row sat at "no reference" with four archive epochs stored), the first reading
+        # after it, within one epoch, and said. V and T move by well under 1% a week, far inside the 10% band.
+        def at(sr):
+            b = sr[sr.index <= d]
+            if len(b):
+                return float(b.iloc[-1]), None
+            a = sr[(sr.index > d) & (sr.index <= d + pd.Timedelta(days=7))]
+            return (float(a.iloc[0]), a.index[0]) if len(a) else (None, None)
+        (V, va), (T, ta) = at(v), at(t)
+        if V is None or T is None:
+            return None, None, f"no veAERO voting supply / total supply within a week of {d.date()}"
+        if va is not None or ta is not None:
+            after.append(str(d.date()))
         if T <= 0 or V > T:
             return None, None, f"inconsistent supplies on {d.date()} (V {V:,.0f} > T {T:,.0f})"
         tot += float(em) * ((T - V) / T) ** 2 / 2
         used.append(str(d.date()))
-    return tot, used[-1], f"Minter.calculateGrowth over epochs {', '.join(used)}"
+    return tot, used[-1], (f"Minter.calculateGrowth over epochs {', '.join(used)}"
+                           + (f" (V / T from the first daily read after the flip for {', '.join(after)})"
+                              if after else ""))
 
 
 FORMULAS = {"sum_months": _sum_months, "free_float_now": _free_float_now, "window_vs_rate": _window_vs_rate,
@@ -650,7 +761,8 @@ FORMULAS = {"sum_months": _sum_months, "free_float_now": _free_float_now, "windo
             "rate_on_stake": _rate_on_stake, "trailing_token_yield": _trailing_token_yield,
             "sum_since": _sum_since, "schedule_month": _schedule_month, "rise_vs_flow": _rise_vs_flow,
             "product_on_common_day": _product_on_common_day, "now_sum": _now_sum,
-            "log_price_growth": _log_price_growth}
+            "log_price_growth": _log_price_growth, "bridge_reconciled": _bridge_reconciled,
+            "daily_delta_plus_flow": _daily_delta_plus_flow, "window_sum": _window_sum}
 
 
 def reference(project: str, spec: dict, rows: dict, long, asof) -> dict:
@@ -976,6 +1088,14 @@ def circulating_input(name: str) -> dict:
                                               "wallets it still counts; a gap left beyond tolerance is a real "
                                               "disagreement",
                         "note": "The definitional gap (those wallets) is reported on its own row, in_circ_gap."}}
+    if spec.get("reference") == "bridge_reconciliation" and ours_m == "circulating_supply_onchain":
+        # GEODNET (Jake's probes15, root A): the reconciliation is the judge; the static aggregator figure is its own
+        # "N/A (recorded, stale)" row (in_circ_static)
+        return {**base, "ref": {"formula": "bridge_reconciled", "args": {"key": spec.get("reconciliation_key", "")},
+                                "tol": 2.0,
+                                "note": "PASS needs both: the bridge custody backs the whole bridged supply and the "
+                                        "project's filing lists our wallets. The aggregator's static figure is on "
+                                        "in_circ_static."}}
     if ours_m != "circulating_supply":           # first-party / on-chain chosen, no other set: CoinGecko
         static = spec.get("static_cross_check")
         return {**base, "ref": {"metric": "circulating_supply", "window": "now", "tol": 2.0,
@@ -1043,6 +1163,15 @@ def build_rows(headline_cells: list[dict], rows: dict, long, asof, projects=None
                 "ref": {"verdict": "N/A (recorded)", "why": "recorded, not judged: the difference between our convention "
                                                  "(treasury, team/investor, foundation and operating wallets out) "
                                                  "and CoinGecko's. in_circ compares like-for-like."}}
+        circ_spec = config.circulating_onchain(name) or {}
+        if circ_spec.get("reference") == "bridge_reconciliation" and circ_spec.get("static_cross_check"):
+            st = circ_spec["static_cross_check"]
+            inputs["in_circ_static"] = {
+                "what": f"Aggregator circulating ({st['who']}) — a STATIC figure, recorded beside ours",
+                "ours": {"metric": "circulating_supply", "window": "now"}, "fmt": '#,##0;(#,##0);-',
+                "ref": {"verdict": "N/A (recorded, stale)",
+                        "why": f"recorded, never the judge: {st['figure']:,} ({st['who']}); {st['why_static']}. "
+                               f"in_circ is judged by the bridge reconciliation."}}
         inputs.update(generic_inputs(name))
         inputs.update({k: v for k, v in spec_p.items() if k.startswith("in_")})
         for iid, spec in inputs.items():

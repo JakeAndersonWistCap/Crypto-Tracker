@@ -14794,7 +14794,7 @@ def test_offline_checks_ambiguous_prefix_refuses_and_names_every_match(monkeypat
     rc2 = coi.main()
     out2 = capsys.readouterr().out
     assert rc2 == 1
-    assert "'maple' matches 8 checks" in out2      # + maple_dao_vs_ssf, maple_ssf_candidates (2026-10-07)
+    assert "'maple' matches 9 checks" in out2      # + maple_dao_vs_ssf, maple_ssf_candidates, maple_ssf_partial
     assert all(n in out2 for n in ("maple_dao_multisig", "maple_transparency", "maple_ssf_history",
                                    "maple_ssf_inflows", "maple_ssf_lp_test", "maple_drips", "maple_dao_vs_ssf"))
 
@@ -25012,7 +25012,8 @@ def test_sethfi_share_price_is_read_at_one_block_now_and_q0_back_for_the_realise
     # the ~89-day archive read stays Q0's reference (in_yield_q0); the trailing year is judged against the year's own
     # rebuilt assets-per-share since Jake's probes14 (2026-10-07)
     assert config.CREDIBILITY["Ether.fi"]["in_yield_q0"]["ref"]["args"]["metric"] == "sethfi_share_price_onchain"
-    assert config.CREDIBILITY["Ether.fi"]["a3_protocol_yield"]["args"] == {"metric": "sethfi_aps_rebuilt", "days": 365}
+    assert config.CREDIBILITY["Ether.fi"]["a3_protocol_yield"]["args"] == {"metric": "sethfi_aps_reward_only",
+                                                                           "days": 365}   # probes15: reward-only
 
     class Fn:
         def __init__(self, f):
@@ -25379,10 +25380,11 @@ def test_circulating_decisions_are_applied_consistently_and_coingecko_free_float
                    and c["holder_has_code"] is False for c in cs.values()), n
         assert "noncirculating_holding_tokens" in config.circulating_onchain(n)["subtract"], n
     # THE FULL SWEEP (2026-10-07): wallets the projects themselves document, each with its first-party source and date
-    for n, (cnt, sym, src) in {"Ether.fi": (7, "ETHFI", "https://"), "Morpho": (8, "MORPHO", "https://"),
+    for n, (cnt, sym, src) in {"Ether.fi": (8, "ETHFI", "https://"), "Morpho": (8, "MORPHO", "https://"),
                                "Aerodrome": (4, "AERO", "https://blockworks.com/"),
                                "Uniswap": (5, "UNI", "https://github.com/Uniswap/docs/blob/1c7597d7"),
-                               "Fluid": (8, "FLUID", "https://github.com/Instadapp/"),
+                               # + the IGP-137 custody (probes15), sourced to its address page and Jake's trace
+                               "Fluid": (9, "FLUID", ("https://github.com/Instadapp/", "https://etherscan.io/address/")),
                                "Chainlink": (3, "LINK", "https://blog.chain.link/"),
                                "Maple": (2, "SYRUP", "https://blockworks.com/")}.items():
         rows = config._NONCIRC_WALLETS_FIRST_PARTY[n]
@@ -25422,8 +25424,10 @@ def test_etherfi_token_yield_numerator_is_the_reconciled_share_price_total():
     py = config.PROTOCOL_YIELD["Ether.fi"]["token_yield"]
     assert py["tokens"] == "sethfi_reward_tokens_reconciled"
     scan = next(s for s in config.PROJECT_BY_NAME["Ether.fi"]["log_scans"] if s["key"] == "sethfi_reward_topups")
-    assert scan["decompose"] == {"metric": "sethfi_reward_tokens_reconciled", "window_days": 365,
-                                 "aps_metric": "sethfi_aps_rebuilt"}   # 2026-10-07 (probes14: the daily aps)
+    dec = scan["decompose"]
+    assert (dec["metric"], dec["window_days"], dec["aps_metric"]) == ("sethfi_reward_tokens_reconciled", 365,
+                                                                      "sethfi_aps_rebuilt")   # probes14: the daily aps
+    assert dec["aps_reward_metric"] == "sethfi_aps_reward_only"                              # probes15
     assert "sethfi_reward_tokens_reconciled" in config.metrics_for_project(config.PROJECT_BY_NAME["Ether.fi"])
 
 
@@ -26071,7 +26075,7 @@ def test_jakes_readings_of_2026_10_07_are_stored_against_real_rows_and_name_no_p
     # Plume and Morpho circulating are wired as daily references instead of a reading that would go stale
     assert ("Plume", "in_circ") not in by and ("Morpho", "in_circ") not in by
     ref, _ = mr.reference_for(by[("Aethir", "in_apr_ai")], None)
-    assert ref.get("same_source") is True
+    assert ref["verdict"] == "N/A (recorded)"      # probes15 root N: our APR is CLOSED, the reading is recorded
 
 
 def test_sky_two_farms_and_the_revenue_funded_yield_from_minted_usds():
@@ -26364,6 +26368,9 @@ def test_sky_accounting_reads_monthly_nps_buyback_and_staking_from_block_analiti
     assert set(nps["source"]) == {"sky_accounting:pnl.revenue-expense-revenue_distribution"}
     alloc = f[f.metric == "revenue_allocation_usd_ba"].set_index("date")["value"]
     assert alloc[pd.Timestamp("2026-08-31")] == _pytest.approx(5e6), "distribution less Security and Maintenance"
+    rev = f[f.metric == "revenue_usd_ba"].set_index("date")["value"]         # probes15 root G: P&L revenue per month
+    assert len(rev) and pd.Timestamp("2026-10-31") not in rev.index and set(
+        f[f.metric == "revenue_usd_ba"].source) == {"sky_accounting:pnl.revenue"}
     bb = f[f.metric == "buyback_spending_usd_ba"].set_index("date")["value"]
     assert dict(bb) == {pd.Timestamp("2026-09-30"): 10.0}
     assert list(f[f.metric == "staking_rewards_usd_ba"].value) == [3.0]
@@ -26436,9 +26443,9 @@ def test_circulating_policy_project_figure_first_with_the_onchain_set_as_cross_c
     assert mc[pd.Timestamp("2026-10-08")] == _pytest.approx(0.10 * 516.48e6)
     assert mc[pd.Timestamp("2026-10-06")] == _pytest.approx(0.10 * (462_360_759.0 - 30e6)), "CoinGecko, netted"
     # 3. the credibility row: GEODNET's figure against our partial on-chain set (5%)
-    spec = cred.circulating_input("GEODNET")     # the set primary; CoinGecko's figure is the labelled STATIC one
+    spec = cred.circulating_input("GEODNET")     # the set primary; judged by the bridge reconciliation (probes15)
     assert spec["ours"]["metric"] == "circulating_supply_onchain"
-    assert spec["ref"]["metric"] == "circulating_supply" and "STATIC" in spec["ref"]["source"]
+    assert spec["ref"]["formula"] == "bridge_reconciled"
     assert cred.circulating_input("Aerodrome")["ref"]["metric"] == "circulating_supply_onchain"
     # Uniswap's on-chain count is primary now (the full sweep); CoinGecko is its cross-check, like-for-like
     # (ours + the docs wallets CoinGecko counts — Jake's run 2026-10-07 17:08)
@@ -26804,7 +26811,7 @@ def test_etherfi_trailing_year_is_judged_against_the_years_own_assets_per_share_
     import manual_refs as mr
     from fetch.share_decompose import decompose
     spec = config.CREDIBILITY["Ether.fi"]["a3_protocol_yield"]
-    assert spec["formula"] == "log_price_growth" and spec["args"] == {"metric": "sethfi_aps_rebuilt", "days": 365}
+    assert spec["formula"] == "log_price_growth" and spec["args"] == {"metric": "sethfi_aps_reward_only", "days": 365}
     assert spec["tol"] == 5.0 and "14.12M" in spec["note"]
     scan = next(s for s in config.PROJECT_BY_NAME["Ether.fi"]["log_scans"] if s["key"] == "sethfi_reward_topups")
     assert scan["decompose"]["aps_metric"] == "sethfi_aps_rebuilt" and "sethfi_aps_rebuilt" in config.METRICS
@@ -26828,3 +26835,169 @@ def test_etherfi_trailing_year_is_judged_against_the_years_own_assets_per_share_
     r = decompose([ev("a", 1, t0, 100 * 10 ** 18), ev("b", 2, t0 + 86400, 10 * 10 ** 18)], [],
                   [ev("a", 1, t0, 100 * 10 ** 18)], [], t0 - 1, set())
     assert r["aps_eod"] == {pd.Timestamp("2026-10-02"): 1.1} or abs(r["aps_eod"][pd.Timestamp("2026-10-02")] - 1.1) < 1e-12
+
+
+# ===== Jake's probes15 (2026-10-07): roots A-O and the wallets / decomposition round =====
+def test_geodnet_circulating_is_judged_by_the_bridge_reconciliation_and_the_462m_is_recorded():
+    """Root A: PASS needs the bridge to reconcile (custody >= bridged supply, no slack) and the filing to list our
+    wallets; the static 462M is its own N/A (recorded, stale) row, never the judge."""
+    import copy
+    import credibility as cred
+    spec = cred.circulating_input("GEODNET")
+    assert spec["ref"]["formula"] == "bridge_reconciled" and spec["ref"]["tol"] == 2.0
+    v, d, how = cred.FORMULAS["bridge_reconciled"]("GEODNET", {}, None, None, key="onchain_2026_10_07")
+    assert v == 516_361_733 and d == "2026-10-07" and "surplus 12,411" in how
+    saved = copy.deepcopy(config.CIRCULATING_ONCHAIN["GEODNET"])
+    try:
+        config.CIRCULATING_ONCHAIN["GEODNET"]["onchain_2026_10_07"]["custody"] = 274_763_343
+        v2, _d, how2 = cred.FORMULAS["bridge_reconciled"]("GEODNET", {}, None, None, key="onchain_2026_10_07")
+        assert v2 is None and "does NOT reconcile" in how2 and "1 unbacked" in how2
+        config.CIRCULATING_ONCHAIN["GEODNET"] = {**saved, "filing_confirms": None}
+        v3, _d, how3 = cred.FORMULAS["bridge_reconciled"]("GEODNET", {}, None, None, key="onchain_2026_10_07")
+        assert v3 is None and "filing" in how3
+    finally:
+        config.CIRCULATING_ONCHAIN["GEODNET"] = saved
+    rows = cred.build_rows([], {}, pd.DataFrame(columns=["date", "project", "metric", "value"]),
+                           pd.Timestamp("2026-10-07"), projects=["GEODNET"])
+    st = next(r for r in rows if r["id"] == "in_circ_static")
+    assert st["verdict"] == "N/A (recorded, stale)" and "462,360,759" in st["note"]
+
+
+def test_hyperliquid_pool_release_reference_is_the_first_party_daily_change_plus_the_af_buyback():
+    """Root B: on our own days, d(tokenDetails circulating) + that day's AF buyback; forward-only coverage carries the
+    per-day mean over our days and says so."""
+    import credibility as cred
+    assert config.CREDIBILITY["Hyperliquid"]["a4_pool_release"]["formula"] == "daily_delta_plus_flow"
+    days = pd.date_range("2026-09-20", "2026-10-06")
+    circ = pd.date_range("2026-10-03", "2026-10-06")
+    long = pd.concat([pd.DataFrame({"date": days, "project": "Hyperliquid", "metric": "pool_release_tokens",
+                                    "value": 1_000.0}),
+                      pd.DataFrame({"date": circ, "project": "Hyperliquid", "metric": "circulating_supply_first_party",
+                                    "value": [1e8, 1e8 + 800, 1e8 + 1_600, 1e8 + 2_400]}),
+                      pd.DataFrame({"date": circ, "project": "Hyperliquid", "metric": "actual_buyback_tokens",
+                                    "value": 200.0})], ignore_index=True)
+    v, d, how = cred.FORMULAS["daily_delta_plus_flow"]("Hyperliquid", {}, long, pd.Timestamp("2026-10-07"))
+    assert d == "2026-10-06" and abs(v - 1_000.0 * len(days)) < 1e-6 and "3 of our 17" in how
+
+
+def test_near_buyback_rows_use_the_three_wallet_method_and_jakes_revenue_readings():
+    """Root C: the buyback row is the three wallets' balance change x price over the 30 days to the reading, against
+    revenue.near.org's 30-day net revenue; the A3 held-buyback cell shows a 'hold' destination's balance."""
+    import credibility as cred
+    spec = config.CREDIBILITY["Near"]["in_buyback"]
+    assert spec["ours"] == {"py": "window_sum", "args": {"metric": "actual_buyback_tokens", "end": "2026-10-07",
+                                                         "days": 30, "times_price": True}}
+    assert spec["ref"]["manual"]["value"] == 2_080_000 and spec["ref"]["manual"]["read_by"] == "Jake"
+    days = pd.date_range("2026-09-01", "2026-10-07")
+    long = pd.concat([pd.DataFrame({"date": days, "project": "Near", "metric": "actual_buyback_tokens", "value": 10.0}),
+                      pd.DataFrame({"date": days[:-1], "project": "Near", "metric": "price_usd", "value": 2.0})],
+                     ignore_index=True)
+    v, d, how = cred.FORMULAS["window_sum"]("Near", {}, long, pd.Timestamp("2026-10-08"),
+                                            metric="actual_buyback_tokens", end="2026-10-07", days=30,
+                                            times_price=True)
+    assert v == 29 * 20.0 and d == "2026-10-06" and "1 day(s) without a price left out" in how
+    src = Path(__file__).resolve().parent.parent.joinpath("build_workbook.py").read_text()
+    assert "{R.C(r, 'Buyback destination')}=" in src
+
+
+def test_sky_burn_is_judged_month_by_month_against_the_spell_and_revenue_against_block_analitica():
+    """Roots F and G."""
+    sky = config.CREDIBILITY["Sky"]
+    assert sky["a4_gross_burn"]["inputs"] == ("in_burn_spell_2026_09",)
+    b = sky["in_burn_spell_2026_09"]
+    assert b["ours"]["py"] == "sum_month" and b["ours"]["args"]["month"] == "2026-09"
+    assert b["ref"]["manual"]["value"] == 2_860_943.76 and b["ref"]["tol"] == 0.01
+    r = sky["in_revenue"]
+    assert r["ours"]["args"]["monthly"] == "revenue_usd_ba" and r["ref"]["formula"] == "months_match"
+    assert "revenue_usd_ba" in config.METRICS
+    assert config.PROJECT_BY_NAME["Sky"]["sky_accounting"]["metrics"]["revenue"] == "revenue_usd_ba"
+
+
+def test_chainlink_revenue_reference_is_our_aggregator_scan():
+    """Root H."""
+    r = config.CREDIBILITY["Chainlink"]["in_revenue"]
+    assert r["ours"]["args"]["a"] == "revenue_usd" and r["ref"]["args"]["b"] == "fees_usd_aggregator_scan"
+
+
+def test_ethereum_net_change_reference_falls_back_to_the_burntfees_counter_and_uses_each_days_stake():
+    """Root J: a day DefiLlama misses takes the protocol counter's difference; the issuance curve uses each day's
+    staked ETH (the nearest validatorqueue reading on or before it)."""
+    import credibility as cred
+    days = pd.date_range("2026-10-01", "2026-10-04")
+    long = pd.concat([
+        pd.DataFrame({"date": days, "project": "Ethereum", "metric": "gross_issuance_tokens", "value": 2_700.0}),
+        pd.DataFrame({"date": days, "project": "Ethereum", "metric": "gross_burn_tokens", "value": 100.0}),
+        pd.DataFrame({"date": days[:2], "project": "Ethereum", "metric": "price_usd", "value": 4_000.0}),
+        pd.DataFrame({"date": days[:2], "project": "Ethereum", "metric": "revenue_usd", "value": 400_000.0}),
+        pd.DataFrame({"date": pd.date_range("2026-09-30", "2026-10-04"), "project": "Ethereum",
+                      "metric": "burn_cumulative_tokens", "value": [0.0, 100.0, 200.0, 290.0, 390.0]}),
+        pd.DataFrame({"date": [pd.Timestamp("2026-09-30"), pd.Timestamp("2026-10-03")], "project": "Ethereum",
+                      "metric": "beacon_chain_eth", "value": [36e6, 49e6]})], ignore_index=True)
+    v, d, how = cred.FORMULAS["eth_net_formula"]("Ethereum", {}, long, pd.Timestamp("2026-10-05"))
+    iss = 166.32 / 365 * (2 * 6000 + 2 * 7000)
+    assert abs(v - (iss - (100 + 100 + 90 + 100))) < 1e-6 and "BurntFees counter on 2" in how
+
+
+def test_aerodrome_rebase_reference_takes_the_first_read_after_the_flip_within_a_week():
+    """Root K: four archive epochs and V / T read daily from later on — the first read within a week is used, said."""
+    import credibility as cred
+    ep = pd.date_range("2026-09-10", periods=4, freq="7D")
+    long = pd.concat([
+        pd.DataFrame({"date": ep, "project": "Aerodrome", "metric": "gross_issuance_tokens", "value": 1e7}),
+        pd.DataFrame({"date": pd.date_range("2026-09-12", "2026-10-06"), "project": "Aerodrome",
+                      "metric": "ve_voting_power_tokens", "value": 8e8}),
+        pd.DataFrame({"date": pd.date_range("2026-09-12", "2026-10-06"), "project": "Aerodrome",
+                      "metric": "total_supply", "value": 2e9})], ignore_index=True)
+    v, d, how = cred.FORMULAS["aero_rebase_formula"]("Aerodrome", {}, long, pd.Timestamp("2026-10-07"), side="ref")
+    assert abs(v - 4 * 1e7 * 0.6 ** 2 / 2) < 1e-6 and "first daily read after the flip for 2026-09-10" in how
+
+
+def test_sethfi_queue_burns_and_round_trips_are_not_rewards():
+    """Jake's probes15 1b: a burn by the withdrawal queue and its later payout are ONE withdrawal; vault assets out to
+    a counterparty and back are the holders' own. Both stay in the all-classes walk and leave the reward walk and the
+    reward tokens untouched."""
+    from fetch.share_decompose import decompose
+    vault, user, queue, rt, safe, zero = ("0x" + "a" * 40, "0x" + "1" * 40, "0x" + "f" * 40, "0x" + "c" * 40,
+                                          "0x" + "5" * 40, "0x" + "0" * 40)
+    E = 10 ** 18
+
+    def ev(tx, blk, frm, to, amt, ts):
+        return {"transactionHash": tx, "blockNumber": blk, "logIndex": 0, "timeStamp": ts,
+                "topics": ["0xddf", "0x" + "0" * 24 + frm[2:], "0x" + "0" * 24 + to[2:]], "data": hex(amt)}
+    d0 = int(pd.Timestamp("2026-10-01").timestamp())
+    ins = [ev("dep", 1, user, vault, 100 * E, d0), ev("top", 3, safe, vault, 10 * E, d0 + 86400),
+           ev("back", 6, rt, vault, 20 * E, d0 + 4 * 86400)]
+    mints = [ev("dep", 1, zero, user, 100 * E, d0)]
+    burns = [ev("qburn", 4, queue, zero, 10 * E, d0 + 2 * 86400)]
+    outs = [ev("qpay", 5, vault, queue, 11 * E, d0 + 3 * 86400), ev("out", 2, vault, rt, 20 * E, d0 + 3600)]
+    r = decompose(ins, outs, mints, burns, d0 + 1800, {safe}, queues={queue}, circular={rt})
+    by = r["by_class"]
+    assert by["withdrawal_queue"]["txs"] == 2 and by["circular"]["txs"] == 2 and by["topup_identified"]["txs"] == 1
+    assert abs(sum(v["aps"] for v in by.values()) - (r["aps_end"] - r["aps_start"])) < 1e-12
+    assert abs(sum(r["daily"].values()) - by["topup_identified"]["tokens"]) < 1e-9, "only the top-up is a reward"
+    assert abs(r["aps_reward_end"] / r["aps_start"] - 1.1) < 1e-12, "the reward walk moves by the top-up alone"
+    scan = next(s for s in config.PROJECT_BY_NAME["Ether.fi"]["log_scans"] if s["key"] == "sethfi_reward_topups")
+    assert "0xF4e147Db314947fC1275a8CbB6Cde48c510cd8CF" in scan["decompose"]["withdrawal_queues"]
+    assert "sethfi_aps_reward_only" in config.METRICS
+
+
+def test_probes15_wallets_records_and_probes():
+    """Ether.fi's treasury reserve Safe and Fluid's IGP-137 custody are non-circulating; Morpho's Merkl leg is on file;
+    Aethir's APR readings are recorded (ours CLOSED); Pendle's no-other-endpoint finding is on file; the probes run."""
+    import check_offline_items as coi
+    import manual_refs as mr
+    e = config.PROJECT_BY_NAME["Ether.fi"]["contracts"]["noncirc_treasury_reserve_safe"]
+    f = config.PROJECT_BY_NAME["Fluid"]["contracts"]["noncirc_igp137_lock"]
+    assert e["address"] == "0xe4439b1d150Ab2Febd72D699954c7b4ddE2b66e2"
+    assert f["address"] == "0xCaBebC7f76D53582a4be7d9972A2b4F531753fd7"
+    assert "0xcabebc7f" in config.CIRCULATING_ONCHAIN["Fluid"]["missing"]
+    assert "14,634 MORPHO" in config.CREDIBILITY["Morpho"]["a2_emissions"]["why"]
+    ref, _o = mr.reference_for([{"project": "Aethir", "row": "in_apr_ai", "value": "0.1248", "read_on": "2026-10-07",
+                                 "read_by": "Jake"}], None)
+    assert ref["verdict"] == "N/A (recorded)"
+    assert "@3cc3658d" in config.CREDIBILITY["Pendle"]["a3_protocol_yield"]["note"]
+    for fn in (coi.etherfi_vault_archive, coi.etherfi_contract_ids, coi.fluid_vesting_recipients,
+               coi.maple_ssf_partial, coi.aerodrome_managed_venfts, coi.pendle_epoch_revenues):
+        assert fn in coi.CHECKS
+    a0, a1 = coi._v3_amounts(10 ** 18, 2 ** 96, -600, 600)          # price 1 inside the range: both legs
+    assert a0 > 0 and a1 > 0 and abs(a0 - a1) / a1 < 1e-9
