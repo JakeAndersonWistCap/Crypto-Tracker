@@ -24904,7 +24904,7 @@ CREDIBILITY: dict = {
         # the same arithmetic both sides — rather than setting an average against one epoch. THE ON-CHAIN ROUTE IS NOT
         # IDENTIFIED: the merkleDistributor 0x33305665… was funded 249,852 PENDLE over 120 days from EOAs, which matches
         # none of the epochs (144K/199K/94K/140K/83K), so it is not the per-epoch reward contract — recorded, not wired.
-        "a3_protocol_yield": {"inputs": ("in_epoch_apr", "in_epoch_reproduction"),
+        "a3_protocol_yield": {"inputs": ("in_epoch_apr", "in_epoch_reproduction", "in_epoch_mean"),
                               "source": "the epoch-for-epoch row below (ours for 2026-09-08 vs Jake's 82,545 PENDLE)",
                               "why": "The headline is the Q0 epoch average x 365.25/14 over real + virtual sPENDLE; it "
                                      "is judged through its inputs, epoch for epoch — one average is never set against "
@@ -24926,6 +24926,19 @@ CREDIBILITY: dict = {
              "note": "The epoch where ours and Pendle's differ most is judged; every comparable Q0 epoch is listed. "
                      "An epoch with no stake stored at it (virtual sPENDLE is API-only, its history starts 2026-09) "
                      "is named and not judged."}, fmt=_C_PCT),
+        # THE HEADLINE EQUALS THE MEAN OF THE PER-EPOCH APRs, OR IT STAYS CHECK (Jake's run 2026-10-08 on 3d5dbeb, 5c):
+        # the twin below compares our 82,545 with Jake's 82,545 and passes trivially. Ours = the headline's own
+        # arithmetic (mean distribution / stake now); the reference = the mean over the same Q0 epochs of each epoch's
+        # APR over its own stake. A Q0 epoch with no stake (virtual sPENDLE is API-only, its history starts 2026-09)
+        # leaves no reference — the mean is never formed over a subset. Tolerance 1%: the stake is read daily, not at
+        # the epoch's block.
+        "in_epoch_mean": _c_in_py(
+            "Headline vs the mean of the per-epoch APRs (each epoch over its own sPENDLE + virtual)",
+            "epoch_mean_check", {"side": "ours"},
+            {"formula": "epoch_mean_check", "args": {"side": "ref"}, "tol": 1.0, "show_how": True,
+             "source": "the per-epoch APRs over each epoch's own stake (pendle_epoch_table prints them)",
+             "note": "Equal when the stake was flat across Q0; a headline below every epoch's APR shows up here."},
+            fmt=_C_PCT),
         "in_epoch_apr": _c_in_py("APR of the epoch of 2026-09-08: OUR distribution x 26 / (sPENDLE + virtual) that day",
                                  "epoch_apr", {**_PENDLE_EPOCH, "ours_metric": "pendle_distributed_tokens"},
                                  {"formula": "epoch_apr", "args": _PENDLE_EPOCH, "tol": 1.0,

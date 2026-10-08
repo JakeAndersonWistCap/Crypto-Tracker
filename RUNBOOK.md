@@ -571,6 +571,11 @@ the same build and evaluation path as `python credibility_report.py`. `narrow=Tr
    - This is checked on `in_epoch_reproduction`, tolerance 10%. Pendle's per-epoch APRs are stored as
      `pendle_epoch_apr_published`.
    - Epochs before virtual sPENDLE was first read are named, not judged.
+   - **The headline must also EQUAL the mean of the per-epoch APRs** (`in_epoch_mean`, 1%; Jake's run on 3d5dbeb,
+     5c). The 82,545 twin compares our figure with Jake's and passes trivially; it can't see a headline divided by
+     today's stake when the stake moved over Q0. Each epoch's APR uses its own stake. If any Q0 epoch has no stake,
+     there is no reference: virtual sPENDLE is API-only and starts ~2026-09-11, so the July/August epochs leave the
+     headline CHECK until virtual history covers Q0, around 2026-12-10. The mean is never formed over a subset.
    - `check_offline_items.py pendle_epoch_table` prints the table and the headline arithmetic.
    - The legacy vePENDLE `totalSupplyCurrent()` is read daily, and archive-read by `archive_backfill.py`.
    - The gauge scan runs on its own tier: `explorer_gauge`, 280s scan budget. A timed-out tier now names the series it

@@ -8526,6 +8526,7 @@ def pendle_epoch_table():
     dist = ser.get("pendle_distributed_tokens", pd.Series(dtype=float))
     dist = dist[(dist.index >= q0s) & (dist.index < q0e)]
     f = 365.25 / 14
+    ours_aprs, no_stake = [], []
     print(f"  {'epoch':<11}{'PENDLE':>12}{'shares':>14}{'virtual':>14}{'ours APR':>10}{'Pendle':>9}"
           f"{'no-boost stk':>15}{'APR':>8}{'veSupply':>14}")
     for d, v in dist.items():
@@ -8535,6 +8536,10 @@ def pendle_epoch_table():
         ve, _ = near("vependle_voting_supply_tokens", d)
         pub = ser.get("pendle_epoch_apr_published", pd.Series(dtype=float)).get(d)
         ours = v * f / (sh + vi) if sh is not None and vi is not None and sh + vi else None
+        if ours is None:
+            no_stake.append(str(d.date()))
+        else:
+            ours_aprs.append(ours)
         nb = (sh + lg) if sh is not None and lg is not None else None
         fmt = lambda x, p=0: "—" if x is None else f"{x:,.{p}f}"            # noqa: E731
         pct = lambda x: "—" if x is None else f"{x:.2%}"                     # noqa: E731
@@ -8545,6 +8550,12 @@ def pendle_epoch_table():
     if len(dist) and sh is not None and vi is not None:
         print(f"\n  HEADLINE: mean distributed {dist.mean():,.0f} PENDLE/epoch x 365.25/14 / (shares {sh:,.0f} + "
               f"virtual {vi:,.0f}) = {dist.mean() * f / (sh + vi):.2%}")
+        # 5c (Jake's run 2026-10-08 on 3d5dbeb): the headline must EQUAL the mean of the per-epoch APRs
+        if no_stake:
+            print(f"  MEAN OF PER-EPOCH APRs: not formed — no stake at {', '.join(no_stake)} (the headline stays CHECK)")
+        elif ours_aprs:
+            print(f"  MEAN OF PER-EPOCH APRs (each over its own stake): {sum(ours_aprs) / len(ours_aprs):.2%} — "
+                  f"the headline inherits PASS only within 1% of it")
     print("  Method (pendle-finance spendle-tracker README): APR = distributed / (eligible sPENDLE + virtual sPENDLE) "
           "x 26.09; virtual = locked x (1 + 3 x remaining/2y). A stake without the virtual boost (Jake's 93.9M) "
           "gives the higher APR in the no-boost column.")

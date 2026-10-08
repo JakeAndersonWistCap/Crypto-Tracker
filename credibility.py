@@ -502,6 +502,46 @@ def _epoch_reproduction(p, rows, long, asof, dist="pendle_distributed_tokens", p
     return (worst[1] if side == "ours" else worst[2]), str(worst[0].date()), how
 
 
+def _epoch_mean_check(p, rows, long, asof, dist="pendle_distributed_tokens", stock="locked_tokens_shares",
+                      plus=("locked_tokens_virtual",), epoch_days=14, after_days=7, side="ref", **_):
+    """THE HEADLINE MUST EQUAL THE MEAN OF THE PER-EPOCH APRs (Jake's run 2026-10-08 on 3d5dbeb, Pendle 5c: the twin
+    compares our 82,545 with Jake's 82,545, so it passes trivially and cannot catch a headline below every epoch's APR).
+    Ours = the headline's own arithmetic: the mean Q0 epoch distribution x 365.25/epoch_days / (stake + plus) at the
+    latest reading. The reference = the mean over the SAME Q0 epochs of each epoch's APR over ITS OWN stake (on or
+    before the epoch's start, else within after_days after). A Q0 epoch with no stake means the mean cannot be formed:
+    no reference, the epochs named — never a mean over a subset."""
+    lo, hi = _q0(asof)
+    d_ = _series(long, p, dist)
+    d_ = d_[(d_.index > lo) & (d_.index <= hi)]
+    if d_.empty:
+        return None, None, f"no {dist} epoch in Q0"
+    f = 365.25 / float(epoch_days)
+    now = [_stake_near(long, p, m, hi.normalize(), 0) for m in (stock, *plus)]
+    if any(x is None for x in now):
+        return None, None, f"no {'/'.join(m for m, x in zip((stock, *plus), now) if x is None)} at {hi.date()}"
+    stake_now = sum(x[0] for x in now)
+    head = float(d_.mean()) * f / stake_now
+    how_head = (f"HEADLINE: mean of {len(d_)} Q0 epoch(s) {float(d_.mean()):,.0f} PENDLE x 365.25/{epoch_days} / "
+                f"({' + '.join((stock, *plus))} {stake_now:,.0f} at {now[0][1].date()}) = {head:.3%}")
+    if side == "ours":
+        return head, str(d_.index[-1].date()), how_head
+    table, missing, aprs = [], [], []
+    for day, tokens in d_.items():
+        parts = [_stake_near(long, p, m, day, after_days) for m in (stock, *plus)]
+        if any(x is None for x in parts):
+            missing.append(f"{day.date()} (no {'/'.join(m for m, x in zip((stock, *plus), parts) if x is None)})")
+            continue
+        st = sum(x[0] for x in parts)
+        aprs.append(float(tokens) * f / st)
+        table.append(f"{day.date()}: {float(tokens):,.0f} / {st:,.0f} = {aprs[-1]:.3%}")
+    if missing:
+        return None, None, (f"{how_head}. The MEAN OF PER-EPOCH APRs needs a stake at every Q0 epoch; missing: "
+                            f"{'; '.join(missing)}. Per epoch so far: {'; '.join(table) or 'none'}")
+    mean = sum(aprs) / len(aprs)
+    return mean, str(d_.index[-1].date()), (f"{how_head}; MEAN OF PER-EPOCH APRs (each over its own stake) = "
+                                            f"{mean:.3%}. Per epoch: {'; '.join(table)}")
+
+
 def _epoch_apr(p, rows, long, asof, tokens=0.0, date="", stock="", plus=(), mult=26.0, read_by="", source="",
                ours_metric="", after_days=0, **_):
     """ONE EPOCH'S APR FROM A READING (Jake's run 2026-10-08, Pendle): `tokens` distributed in the epoch read on
@@ -1070,7 +1110,7 @@ FORMULAS = {"sum_months": _sum_months, "free_float_now": _free_float_now, "windo
             "eth_issuance_curve": _eth_issuance_formula, "flow_usd_over_price": _flow_usd_over_price,
             "delta_q0": _delta_q0, "delta_diff_q0": _delta_diff_q0, "hl_reward_formula": _hl_reward_formula,
             "share_price_growth": _share_price_growth, "per_day_x_covered": _per_day_x_covered,
-            "value_on": _value_on, "epoch_apr": _epoch_apr, "epoch_reproduction": _epoch_reproduction, "aero_epoch_revenue": _aero_epoch_revenue, "aero_rebase_apr": _aero_rebase_apr,
+            "value_on": _value_on, "epoch_apr": _epoch_apr, "epoch_reproduction": _epoch_reproduction, "epoch_mean_check": _epoch_mean_check, "aero_epoch_revenue": _aero_epoch_revenue, "aero_rebase_apr": _aero_rebase_apr,
             "aero_epoch_apr": _aero_epoch_apr, "q0_net_flow": _q0_net_flow,
             "negative_release": _negative_release, "sum_month": _sum_month, "last30_annualised": _last30_annualised,
             "common_day_value": _common_day_value, "months_match": _months_match,

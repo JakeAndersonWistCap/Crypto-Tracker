@@ -157,38 +157,63 @@ def test_sky_headline_is_the_usds_farm_yield(tmp_path, monkeypatch):
 
 
 # ------------------------------------------------------------------------------------------------------------ Pendle
-def _pendle_rows(off=1.0):
+def _pendle_rows(off=1.0, virtual_from="2026-07-01", early_stake_x=1.0):
+    """Six Q0 epochs (Pendle's sizes). virtual_from: the first virtual sPENDLE reading (Jake's store: ~2026-09-11).
+    early_stake_x: the stake before 2026-09-01 as a multiple of today's — Pendle's published APR always uses each
+    epoch's own stake, so only the headline-vs-mean check sees a stake that moved."""
     epochs = {pd.Timestamp("2026-07-14"): 144_000, pd.Timestamp("2026-07-28"): 199_000,
               pd.Timestamp("2026-08-11"): 94_000, pd.Timestamp("2026-08-25"): 140_000,
               pd.Timestamp("2026-09-08"): 82_545, pd.Timestamp("2026-09-22"): 83_000}
     sh, vi = 30.3e6, 177.8e6
+    x = lambda d: early_stake_x if d < pd.Timestamp("2026-09-01") else 1.0          # noqa: E731
     rows = []
     for d in _days():
-        rows += [(d, "Pendle", "locked_tokens_shares", sh, "chain:ethereum:spendle", 2),
+        rows += [(d, "Pendle", "locked_tokens_shares", sh * x(d), "chain:ethereum:spendle", 2),
                  (d, "Pendle", "locked_tokens_legacy_vependle", 63.58e6, "chain:ethereum:vependle_legacy", 2),
                  (d, "Pendle", "price_usd", 3.1, "coingecko", 1)]
-        if d >= pd.Timestamp("2026-09-11"):
-            rows.append((d, "Pendle", "locked_tokens_virtual", vi, "scrape:api-v2.pendle.finance", 3))
+        if d >= pd.Timestamp(virtual_from):
+            rows.append((d, "Pendle", "locked_tokens_virtual", vi * x(d), "scrape:api-v2.pendle.finance", 3))
     for d, t in epochs.items():
         rows += [(d, "Pendle", "pendle_distributed_tokens", t, "pendle_api:sPendleHistoricalData.buybackAmounts", 3),
-                 (d, "Pendle", "pendle_epoch_apr_published", t * 365.25 / 14 / (sh + vi) * off,
+                 (d, "Pendle", "pendle_epoch_apr_published", t * 365.25 / 14 / ((sh + vi) * x(d)) * off,
                   "pendle_api:sPendleHistoricalData.aprs", 3)]
     return rows
 
 
-def test_pendle_headline_inherits_only_when_its_arithmetic_reproduces_each_epoch(tmp_path, monkeypatch):
-    """5c. The headline (Q0 epoch average) inherits the twin's verdict ONLY if distributed x 365.25/14 / (sPENDLE +
-    virtual) reproduces Pendle's own APR epoch by epoch; Pendle's APR 1.4x ours holds it at CHECK."""
-    o = _evaluate(tmp_path, monkeypatch, "Pendle", _pendle_rows(1.0))
+def test_pendle_headline_passes_when_it_equals_the_mean_of_the_per_epoch_aprs(tmp_path, monkeypatch):
+    """5c (Jake's run on 3d5dbeb): the headline inherits PASS ONLY if it equals the mean of the per-epoch APRs
+    (each epoch over its own stake) — and each epoch reproduces Pendle's own APR. Flat stake: both hold."""
+    o = _evaluate(tmp_path, monkeypatch, "Pendle", _pendle_rows())
+    assert o["in_epoch_mean"]["verdict"].startswith("PASS"), o["in_epoch_mean"]
+    assert "MEAN OF PER-EPOCH APRs" in o["in_epoch_mean"]["note"]
     assert o["in_epoch_reproduction"]["verdict"].startswith("PASS"), o["in_epoch_reproduction"]
     assert o["a3_protocol_yield"]["verdict"].startswith("PASS"), o["a3_protocol_yield"]
-    # epochs before virtual sPENDLE was first read are named, not judged
-    assert "Not judged" in o["in_epoch_reproduction"]["note"]
 
 
 def test_pendle_headline_is_a_check_when_the_epochs_do_not_reproduce(tmp_path, monkeypatch):
-    o = _evaluate(tmp_path, monkeypatch, "Pendle", _pendle_rows(1.4))
+    o = _evaluate(tmp_path, monkeypatch, "Pendle", _pendle_rows(off=1.4))
     assert o["in_epoch_reproduction"]["verdict"].startswith("CHECK"), o["in_epoch_reproduction"]
+    assert o["a3_protocol_yield"]["verdict"].startswith("CHECK"), o["a3_protocol_yield"]
+
+
+def test_pendle_headline_is_a_check_when_the_stake_moved_and_the_twin_cannot_see_it(tmp_path, monkeypatch):
+    """5a/5c: the stake was twice today's before September. Every epoch still reproduces Pendle's APR and the
+    82,545 twin passes trivially — only the headline-vs-mean row catches the headline (mean distribution over TODAY's
+    stake) sitting above the mean of what each epoch actually paid."""
+    o = _evaluate(tmp_path, monkeypatch, "Pendle", _pendle_rows(early_stake_x=2.0))
+    assert o["in_epoch_reproduction"]["verdict"].startswith("PASS"), o["in_epoch_reproduction"]
+    assert o["in_epoch_apr"]["verdict"].startswith("PASS"), o["in_epoch_apr"]
+    assert o["in_epoch_mean"]["verdict"].startswith("CHECK"), o["in_epoch_mean"]
+    assert o["a3_protocol_yield"]["verdict"].startswith("CHECK"), o["a3_protocol_yield"]
+
+
+def test_pendle_headline_stays_check_while_early_epochs_have_no_stake(tmp_path, monkeypatch):
+    """Jake's store today: virtual sPENDLE (API-only) starts ~2026-09-11, so the July/August epochs have no stake and
+    the mean of per-epoch APRs cannot be formed. No reference, the epochs named — never a mean over a subset."""
+    o = _evaluate(tmp_path, monkeypatch, "Pendle", _pendle_rows(virtual_from="2026-09-11"))
+    em = o["in_epoch_mean"]
+    assert em["verdict"].startswith("CHECK"), em
+    assert "2026-07-14" in em["note"] and "missing" in em["note"]
     assert o["a3_protocol_yield"]["verdict"].startswith("CHECK"), o["a3_protocol_yield"]
 
 
