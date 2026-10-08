@@ -103,7 +103,8 @@ def _eth_issuance_formula(p, rows, long, asof, **_):
         f"166.32 x sqrt({staked:,.0f} ETH staked) x {cov:.0f}/365 — the issuance curve at full participation")
 
 
-def _eth_net_formula(p, rows, long, asof, issuance="gross_issuance_tokens", burn="gross_burn_tokens", **_):
+def _eth_net_formula(p, rows, long, asof, issuance="gross_issuance_tokens", burn="gross_burn_tokens",
+                     net_metric="net_supply_change_tokens", side="ref", **_):
     """ETHEREUM'S NET SUPPLY CHANGE FROM INDEPENDENT SOURCES, OVER OUR OWN COMMON DAYS (Jake's run 2026-10-07: the
     reference was CoinGecko's d(circulating) across Q0 and read 1.43M ETH — impossible; its stored history is not
     one consistent series). Ours is issuance - burn on the days BOTH our series hold (net_supply_change_tokens). The
@@ -122,7 +123,13 @@ def _eth_net_formula(p, rows, long, asof, issuance="gross_issuance_tokens", burn
     st = _series(long, p, "beacon_chain_eth")
     if st.empty:
         return None, None, "no staked-ETH figure (beacon_chain_eth) stored"
-    days = sorted(d for d in set(si.index) & set(sb.index) & set(st.index) if lo < d <= hi)
+    # THE HEADLINE'S OWN DAYS (Jake's run 2026-10-08 11:27: the working printed ours as the full 9-day issuance
+    # 26,838 while the curve covered 6 days). The days are those of the headline's net-change view
+    # (net_supply_change_tokens, built from issuance, burn and staked ETH on the same day), so ours, the legs and the
+    # curve are summed over exactly the days the headline cell sums — never a wider set from another view.
+    nv = _series(long, p, net_metric) if net_metric else pd.Series(dtype=float)
+    pool = set(nv.index) if not nv.empty else set(si.index) & set(sb.index) & set(st.index)
+    days = sorted(d for d in pool & set(si.index) & set(sb.index) & set(st.index) if lo < d <= hi)
     if not days:
         return None, None, f"no day in Q0 on which staked ETH, {issuance} and {burn} are all stored"
     px, rev = _series(long, p, "price_usd"), _series(long, p, "revenue_usd")
@@ -150,12 +157,16 @@ def _eth_net_formula(p, rows, long, asof, issuance="gross_issuance_tokens", burn
     o_iss = float(si.reindex(days).sum())
     o_brn = float(sb.reindex(days).sum())
     gap = lambda a, b: f"{(a / b - 1):+.1%}" if b else "n/a"             # noqa: E731
+    if side == "ours":                    # the judged OURS: issuance − burn summed over exactly these days
+        return o_iss - o_brn, str(days[-1].date()), (f"ours on the {len(days)} common day(s) {days[0].date()}.."
+                                                    f"{days[-1].date()}: issuance {o_iss:,.0f} − burn {o_brn:,.0f}")
     return iss - brn, str(days[-1].date()), (
         f"issuance curve {iss:,.0f} ETH (166.32 x sqrt(that day's staked ETH) over {len(days)} day(s)) − burn "
         f"{brn:,.0f} ETH (DefiLlama / price on {n_llama} day(s)"
         + (f", BurntFees counter on {n_counter}" if n_counter else "") + f"), on our {len(days)} common day(s) "
-        f"{days[0].date()}..{days[-1].date()}. OURS, same days: issuance {o_iss:,.0f} ({gap(o_iss, iss)} vs the "
-        f"curve) − burn {o_brn:,.0f} ({gap(o_brn, brn)} vs the reference burn) = {o_iss - o_brn:,.0f}")
+        f"{days[0].date()}..{days[-1].date()}. OURS, same {len(days)} day(s): issuance {o_iss:,.0f} "
+        f"({o_iss / len(days):,.0f}/day, {gap(o_iss, iss)} vs the curve's {iss / len(days):,.0f}/day) − burn "
+        f"{o_brn:,.0f} ({gap(o_brn, brn)} vs the reference burn) = {o_iss - o_brn:,.0f}")
 
 
 def _base_reward_ceiling(p, rows, long, asof, cover_metric="pool_release_tokens", units="supply_units", **_):
@@ -217,7 +228,7 @@ def _rate_on_stake(p, rows, long, asof, flow="", stock="", days=28, price=None, 
                                          f"{stock} {float(st.iloc[-1]):,.0f} ({st.index[-1].date()}){how_px}")
 
 
-def _reward_rate_apr(p, rows, long, asof, rate="", stock="", **_):
+def _reward_rate_apr(p, rows, long, asof, rate="", stock="", stake_price="", reward_price=None, **_):
     """A StakingRewards farm's rate FROM ITS OWN STATE (Jake's run 2026-10-08, Sky's SKY-rewards farm): the stored
     rewardRate() (reward tokens per second) x 31,536,000 / the stake stored on the same day. Reward and stake are
     the same token, so no price enters."""
@@ -230,8 +241,16 @@ def _reward_rate_apr(p, rows, long, asof, rate="", stock="", **_):
     if not st.loc[d]:
         return None, None, f"{stock} is 0 on {d.date()}"
     v = float(r.loc[d]) * 31_536_000 / float(st.loc[d])
+    how_px = ""
+    if stake_price:                         # reward and stake differ (Sky's USDS farm: USDS paid on lsSKY = 1:1 SKY)
+        px = _series(long, p, stake_price)
+        px = px[px.index <= d]
+        if px.empty or not px.iloc[-1]:
+            return None, None, f"no {stake_price} on or before {d.date()}"
+        v *= float(reward_price if reward_price is not None else 1.0) / float(px.iloc[-1])
+        how_px = f" x ${float(reward_price if reward_price is not None else 1.0):g} / {stake_price} {float(px.iloc[-1]):.4f}"
     return v, str(d.date()), (f"{rate} {float(r.loc[d]):,.4f}/s x 31,536,000 / {stock} {float(st.loc[d]):,.0f} "
-                              f"({d.date()})")
+                              f"({d.date()}){how_px}")
 
 
 def _trailing_token_yield(p, rows, long, asof, tokens="", lock="", days=365, **_):
@@ -436,19 +455,67 @@ def _value_on(p, rows, long, asof, metric="", date="", plus=(), **_):
     return total, date, f"{' + '.join((metric, *plus))} on {date}"
 
 
+def _stake_near(long, p, metric, day, after_days=0):
+    """The stock on or before `day`, else the first reading within `after_days` after it: (value, date) or None."""
+    sr = _series(long, p, metric)
+    before = sr[sr.index <= day]
+    if not before.empty:
+        return float(before.iloc[-1]), before.index[-1]
+    after = sr[(sr.index > day) & (sr.index <= day + pd.Timedelta(days=int(after_days)))]
+    return (float(after.iloc[0]), after.index[0]) if after_days and not after.empty else None
+
+
+def _epoch_reproduction(p, rows, long, asof, dist="pendle_distributed_tokens", published="pendle_epoch_apr_published",
+                        stock="locked_tokens_shares", plus=("locked_tokens_virtual",), epoch_days=14, after_days=7,
+                        side="ref", **_):
+    """DOES THE HEADLINE'S ARITHMETIC REPRODUCE EACH EPOCH? (Jake's run 2026-10-08 11:27, Pendle.) For every Q0 epoch:
+    distributed x 365.25/epoch_days / (stake + plus, on or before the epoch's start, else within after_days after) —
+    against Pendle's own APR for that epoch. Returns the epoch that differs most (ours or Pendle's figure, by side),
+    with the whole table as the working; epochs with no stake or no published APR are listed, not judged."""
+    lo, hi = _q0(asof)
+    d_ = _series(long, p, dist)
+    d_ = d_[(d_.index > lo) & (d_.index <= hi)]
+    pub = _series(long, p, published)
+    if d_.empty:
+        return None, None, f"no {dist} epoch in Q0"
+    table, skipped, worst = [], [], None
+    for day, tokens in d_.items():
+        parts = [_stake_near(long, p, m, day, after_days) for m in (stock, *plus)]
+        if any(x is None for x in parts):
+            skipped.append(f"{day.date()} (no {'/'.join(m for m, x in zip((stock, *plus), parts) if x is None)})")
+            continue
+        staked = sum(x[0] for x in parts)
+        ours = float(tokens) * 365.25 / epoch_days / staked if staked else None
+        theirs = float(pub.loc[day]) if day in pub.index else None
+        if ours is None or theirs is None:
+            skipped.append(f"{day.date()} (no published APR)" if theirs is None else f"{day.date()} (no stake)")
+            continue
+        gap = ours / theirs - 1 if theirs else float("inf")
+        table.append(f"{day.date()}: {float(tokens):,.0f} PENDLE / {staked:,.0f} staked = {ours:.2%} vs Pendle "
+                     f"{theirs:.2%} ({gap:+.1%})")
+        if worst is None or abs(gap) > abs(worst[3]):
+            worst = (day, ours, theirs, gap)
+    if worst is None:
+        return None, None, "no Q0 epoch with both a stake and Pendle's APR stored: " + "; ".join(skipped)
+    how = (f"worst epoch {worst[0].date()}. Per epoch: " + "; ".join(table)
+           + (f". Not judged: {'; '.join(skipped)}" if skipped else ""))
+    return (worst[1] if side == "ours" else worst[2]), str(worst[0].date()), how
+
+
 def _epoch_apr(p, rows, long, asof, tokens=0.0, date="", stock="", plus=(), mult=26.0, read_by="", source="",
-               ours_metric="", **_):
+               ours_metric="", after_days=0, **_):
     """ONE EPOCH'S APR FROM A READING (Jake's run 2026-10-08, Pendle): `tokens` distributed in the epoch read on
     `date` x `mult` epochs a year / the reward-bearing stake stored on that date (stock + plus). With `ours_metric`
     the epoch's tokens are OUR stored figure on that date instead — the like-for-like twin of the same arithmetic."""
     day = pd.Timestamp(date)
-    staked = 0.0
+    staked, late = 0.0, []
     for m in (stock, *plus):
-        sr = _series(long, p, m)
-        sr = sr[sr.index <= day]
-        if sr.empty:
-            return None, None, f"no {m} on or before {date}"
-        staked += float(sr.iloc[-1])
+        got = _stake_near(long, p, m, day, after_days)
+        if got is None:
+            return None, None, f"no {m} on or before {date}" + (f" or within {after_days} days after" if after_days else "")
+        staked += got[0]
+        if got[1] > day:
+            late.append(f"{m} read {got[1].date()}")
     if not staked:
         return None, None, f"no stake on {date}"
     if ours_metric:
@@ -459,7 +526,39 @@ def _epoch_apr(p, rows, long, asof, tokens=0.0, date="", stock="", plus=(), mult
     else:
         who = f"{float(tokens):,.0f} ({read_by}: {source})"
     return float(tokens) * float(mult) / staked, date, \
-        f"{who} x {mult:g} / ({' + '.join((stock, *plus))} {staked:,.0f} on {date})"
+        (f"{who} x {mult:g} / ({' + '.join((stock, *plus))} {staked:,.0f} on {date}"
+         + (f"; {', '.join(late)} — the first reading after the epoch" if late else "") + ")")
+
+
+def _q0_net_flow(p, rows, long, asof, out="", inn="", **_):
+    """SCANNED NET OUTFLOW OVER Q0 (Jake's run 2026-10-08 11:27, Chainlink): Transfer events out of the named wallets
+    minus those into them, each scan reconciled to balanceOf to the wei before it is stored (fetch/logscan.py), summed
+    over the Q0 days — the flow the balance-derived release (the stock's change) is judged by."""
+    lo, hi = _q0(asof)
+    so, si = _series(long, p, out), _series(long, p, inn)
+    so, si = so[(so.index > lo) & (so.index <= hi)], si[(si.index > lo) & (si.index <= hi)]
+    if so.empty or si.empty:
+        return None, None, f"no scanned flow in Q0 ({out if so.empty else inn} not stored)"
+    v = float(so.sum()) - float(si.sum())
+    return v, str(max(so.index.max(), si.index.max()).date()), (
+        f"scanned out {float(so.sum()):,.2f} − in {float(si.sum()):,.2f} over {len(so)} day(s) "
+        f"{so.index.min().date()}..{so.index.max().date()} (each scan reconciled to balanceOf to the wei)")
+
+
+def _negative_release(p, rows, long, asof, release="", out="", inn="", agree_pct=1.0, **_):
+    """A NEGATIVE NET RELEASE, CONFIRMED BY BOTH SIDES (Jake's run 2026-10-08 11:27, Chainlink): the balance-derived
+    release over Q0 and the scanned net outflow are both below zero and agree within agree_pct — tokens came BACK into
+    the non-circulating wallets. Returns that release, or None when the two do not both say so."""
+    lo, hi = _q0(asof)
+    rel = _series(long, p, release)
+    rel = rel[(rel.index > lo) & (rel.index <= hi)]
+    flow, _d, how = _q0_net_flow(p, rows, long, asof, out=out, inn=inn)
+    if rel.empty or flow is None:
+        return None, None, "no release or no scanned flow in Q0"
+    r = float(rel.sum())
+    if not (r < 0 and flow < 0 and abs(r / flow - 1) * 100 <= agree_pct):
+        return None, None, f"release {r:,.2f} vs scanned {flow:,.2f}: not a confirmed negative release"
+    return r, str(rel.index.max().date()), f"balance-derived release {r:,.2f} LINK; {how} = {flow:,.2f}"
 
 
 def _sum_month(p, rows, long, asof, metric="", month="", **_):
@@ -853,13 +952,127 @@ def _aero_rebase_formula(p, rows, long, asof, epochs=4, side="ref", **_):
                               if after else ""))
 
 
+def _aero_epochs(long, p, asof, onchain, flow, epoch_days=7):
+    """The stored on-chain epochs inside Q0 that are COMPLETE and whose every day of `flow` is stored:
+    [(epoch start, on-chain value, our flow summed over the same days)], and the epochs left out with why."""
+    lo, hi = _q0(asof)
+    oc, fl = _series(long, p, onchain), _series(long, p, flow)
+    got, skipped = [], []
+    for e, v in oc[(oc.index > lo) & (oc.index <= hi)].items():
+        days = pd.date_range(e, periods=int(epoch_days), freq="D")
+        if days[-1] >= asof.normalize():
+            skipped.append(f"{e.date()} (epoch not complete)")
+            continue
+        miss = [d for d in days if d not in fl.index]
+        if miss:
+            skipped.append(f"{e.date()} ({len(miss)} day(s) of {flow} missing)")
+            continue
+        got.append((e, float(v), float(fl.loc[days].sum())))
+    return got, skipped
+
+
+def _aero_epoch_revenue(p, rows, long, asof, flow="revenue_usd", onchain="voter_rewards_onchain_usd", side="ref", **_):
+    """THE SAME EPOCH ON BOTH SIDES (Jake's run 2026-10-08 11:27, Aerodrome in_revenue): DefiLlama's fees + bribes summed
+    over the epoch's seven UTC days (Thursday 00:00 start) against the fees + bribes notified to the voting-reward
+    contracts for that epoch (aerodrome_voter_epoch, stored weekly by fetch/aero_voter.py). Judged on the epoch that
+    differs most; every epoch is in the working."""
+    got, skipped = _aero_epochs(long, p, asof, onchain, flow)
+    if not got:
+        return None, None, ("no complete Q0 epoch with both the on-chain read and every DefiLlama day stored"
+                            + (": " + "; ".join(skipped) if skipped else " — fetch/aero_voter.py stores one a week"))
+    unp = _series(long, p, "voter_rewards_unpriced_count")
+    table, worst = [], None
+    for e, oc, ours in got:
+        gap = ours / oc - 1 if oc else float("inf")
+        n = f", {int(unp.loc[e])} token(s) unpriced on-chain" if e in unp.index else ""
+        table.append(f"epoch {e.date()}: DefiLlama ${ours:,.0f} vs on-chain ${oc:,.0f} ({gap:+.1%}{n})")
+        if worst is None or abs(gap) > abs(worst[3]):
+            worst = (e, ours, oc, gap)
+    how = ("; ".join(table) + (f". Not judged: {'; '.join(skipped)}" if skipped else "")
+           + ". Unpriced reward tokens are left out of the on-chain figure, so it can read LOW by their value.")
+    return (worst[1] if side == "ours" else worst[2]), str(worst[0].date()), how
+
+
+def _aero_epoch_apr(p, rows, long, asof, flow="holders_revenue_usd", onchain_apr="voter_rewards_onchain_apr",
+                    onchain_usd="voter_rewards_onchain_usd", stake="voter_total_weight_tokens", rebase="emissions_tokens",
+                    side="ref", **_):
+    """DOES THE HEADLINE'S ARITHMETIC REPRODUCE THE EPOCH? (Jake's run 2026-10-08 11:27, Aerodrome a3: ours 17.31% vs
+    on-chain 12.56%.) Ours = the headline's own arithmetic on one epoch — DefiLlama's dollars over the epoch's days, put
+    in AERO at that week's mean price, x 365.25/7, over the reward-bearing stake (Voter.totalWeight, the headline's
+    denominator: on or before the epoch's start, else the first daily read within 14 days — it is read forward from
+    2026-10-08 and moves well under 1% a week); the reference = the on-chain epoch APR. The working prints the HEADLINE's own numerator and
+    denominator, how far each factor sits from the epoch's, and the veAERO rebase as its own labelled line."""
+    got, skipped = _aero_epochs(long, p, asof, onchain_usd, flow)
+    apr = _series(long, p, onchain_apr)
+    px = _series(long, p, "price_usd")
+    table, worst = [], None
+    for e, _oc, usd in got:
+        days = pd.date_range(e, periods=7, freq="D")
+        pw = px[px.index.isin(days)]
+        st = _stake_near(long, p, stake, e, 14)
+        if e not in apr.index or pw.empty or st is None:
+            skipped.append(f"{e.date()} (no " + ("on-chain APR" if e not in apr.index else "price" if pw.empty
+                                                 else stake) + ")")
+            continue
+        ours = usd / float(pw.mean()) * 365.25 / 7 / st[0]
+        theirs = float(apr.loc[e])
+        gap = ours / theirs - 1 if theirs else float("inf")
+        table.append(f"epoch {e.date()}: ${usd:,.0f} / ${float(pw.mean()):,.4f} x 365.25/7 / {st[0]:,.0f} = {ours:.2%} vs "
+                     f"on-chain {theirs:.2%} ({gap:+.1%})")
+        if worst is None or abs(gap) > abs(worst[3]):
+            worst = (e, ours, theirs, gap)
+    # THE HEADLINE'S OWN NUMERATOR AND DENOMINATOR, beside the epoch's
+    lo, hi = _q0(asof)
+    rq = _series(long, p, flow)
+    rq = rq[(rq.index > lo) & (rq.index <= hi)]
+    pq = px[(px.index > lo) & (px.index <= hi)]
+    sn = _stake_near(long, p, stake, hi, 0)
+    head = ""
+    if len(rq) and len(pq) and sn:
+        tok_yr = float(rq.sum()) / float(pq.mean()) * 365.25 / len(rq)
+        head = (f"HEADLINE: numerator ${float(rq.sum()):,.0f} over {len(rq)} Q0 day(s) (${float(rq.sum()) / len(rq) * 7:,.0f}"
+                f"/week) / Q0 mean price ${float(pq.mean()):,.4f} x 365.25/{len(rq)} = {tok_yr:,.0f} AERO/yr; denominator "
+                f"{stake} {sn[0]:,.0f} -> {tok_yr / sn[0]:.2%}.")
+        if worst is not None:
+            e = worst[0]
+            wk = [u for d, _o, u in got if d == e][0]
+            pe = float(px[px.index.isin(pd.date_range(e, periods=7, freq="D"))].mean())
+            se = _stake_near(long, p, stake, e, 14)[0]
+            head += (f" Against epoch {e.date()}: revenue/week x{float(rq.sum()) / len(rq) * 7 / wk:.2f}, price "
+                     f"x{pe / float(pq.mean()):.2f} (epoch week mean / Q0 mean), stake x{se / sn[0]:.2f}.")
+    rb = _series(long, p, rebase)
+    if not rb.empty and sn:
+        head += (f" REBASE (a separate stream, in neither figure): {float(rb.iloc[-1]):,.0f} AERO in the week of "
+                 f"{rb.index[-1].date()} x 52 / {sn[0]:,.0f} = {float(rb.iloc[-1]) * 52 / sn[0]:.2%} a year to lockers.")
+    if worst is None:
+        return None, None, (head + " No epoch to judge" + (": " + "; ".join(skipped) if skipped else
+                                                           " — fetch/aero_voter.py stores one a week")).strip()
+    how = (head + " Per epoch: " + "; ".join(table) + (f". Not judged: {'; '.join(skipped)}" if skipped else ""))
+    return (worst[1] if side == "ours" else worst[2]), str(worst[0].date()), how
+
+
+def _aero_rebase_apr(p, rows, long, asof, rebase="emissions_tokens", stake="voter_total_weight_tokens", **_):
+    """THE veAERO REBASE AS A RATE, ITS OWN LABELLED ROW (Jake's run 2026-10-08 11:27: ~2.5% at 485K AERO/week): the last
+    complete week's RewardsDistributor tokensPerWeek x 52 / the votes cast. Paid in AERO to lockers — a separate stream
+    from the fees + bribes in a3_protocol_yield, and in neither that figure nor its on-chain reference."""
+    rb = _series(long, p, rebase)
+    rb = rb[rb.index < asof.normalize()]
+    st = _stake_near(long, p, stake, asof.normalize(), 0)
+    if rb.empty or st is None:
+        return None, None, f"no {rebase if rb.empty else stake} stored"
+    return (float(rb.iloc[-1]) * 52 / st[0], str(rb.index[-1].date()),
+            f"{float(rb.iloc[-1]):,.0f} AERO in the week of {rb.index[-1].date()} x 52 / {stake} {st[0]:,.0f}")
+
+
 FORMULAS = {"sum_months": _sum_months, "free_float_now": _free_float_now, "window_vs_rate": _window_vs_rate,
             "aero_rebase_formula": _aero_rebase_formula, "common_days_sum": _common_days_sum, "eth_net_formula": _eth_net_formula,
             "sums_on_common_day": _sums_on_common_day,
             "eth_issuance_curve": _eth_issuance_formula, "flow_usd_over_price": _flow_usd_over_price,
             "delta_q0": _delta_q0, "delta_diff_q0": _delta_diff_q0, "hl_reward_formula": _hl_reward_formula,
             "share_price_growth": _share_price_growth, "per_day_x_covered": _per_day_x_covered,
-            "value_on": _value_on, "epoch_apr": _epoch_apr, "sum_month": _sum_month, "last30_annualised": _last30_annualised,
+            "value_on": _value_on, "epoch_apr": _epoch_apr, "epoch_reproduction": _epoch_reproduction, "aero_epoch_revenue": _aero_epoch_revenue, "aero_rebase_apr": _aero_rebase_apr,
+            "aero_epoch_apr": _aero_epoch_apr, "q0_net_flow": _q0_net_flow,
+            "negative_release": _negative_release, "sum_month": _sum_month, "last30_annualised": _last30_annualised,
             "common_day_value": _common_day_value, "months_match": _months_match,
             "hl_reward_active": _hl_reward_active, "base_reward_ceiling": _base_reward_ceiling,
             "rate_on_stake": _rate_on_stake, "reward_rate_apr": _reward_rate_apr, "trailing_token_yield": _trailing_token_yield,
@@ -934,7 +1147,10 @@ VIEWS_LONG = None
 
 
 def _long_for(spec: dict, long):
-    return VIEWS_LONG if spec.get("use_views") and VIEWS_LONG is not None else long
+    # the flag may sit on the spec or inside its args (Jake's run 2026-10-08 11:27: NEAR's in_buyback carried it in
+    # args, so the row read the raw store and printed "no figure" after the fix that was meant to cure exactly that)
+    on = spec.get("use_views") or (spec.get("args") or {}).get("use_views")
+    return VIEWS_LONG if on and VIEWS_LONG is not None else long
 
 
 def ours_value(project: str, ours: dict, rows: dict, long, asof):
@@ -1028,6 +1244,11 @@ def resolve_alias(name: str, alias: str, have: dict) -> str | None:
     # sourced N/A emissions row stands for the input and counts as checked
     if alias == "@emissions" and name in config.EMISSIONS_DECLARED_ZERO:
         return "in_emissions" if "in_emissions" in have else None
+    # THE EMISSION IS THE GROSS ISSUANCE (Jake's run 2026-10-08 11:27, NEAR): new NEAR is minted to validators, so the
+    # gross-issuance row (BigQuery header supply) is the checked emissions input of buyback − emissions
+    if alias == "@emissions" and name in config.EMISSIONS_ARE_ISSUANCE:
+        row = config.EMISSIONS_ARE_ISSUANCE[name]
+        return row if row in have else None
     # NOTHING IS BOUGHT BY DESIGN (config.BUYBACK_ROUTE_OVERRIDE "none": Aerodrome, Ethereum) — overnight 2026-10-06
     if alias == "@buyback" and (config.BUYBACK_ROUTE_OVERRIDE.get(name) or ("",))[0] == "none":
         return "in_buyback" if "in_buyback" in have else None
@@ -1267,6 +1488,14 @@ def build_rows(headline_cells: list[dict], rows: dict, long, asof, projects=None
                 cl = hc["closed"]
                 spec = {"verdict": "UNVERIFIABLE",
                         "why": f"the figure itself is CLOSED (config UNAVAILABLE): {cl.get('summary', '')}"}
+            if spec is not None and spec.get("finding_when"):
+                # A FINDING THE DATA DECIDES (Jake's run 2026-10-08 11:27, Chainlink a1_fees_issuance): when the
+                # named formula returns a value below the threshold, the row is that VERIFIED FINDING with the working;
+                # otherwise the row's own spec (inputs or reference) stands
+                fw = spec["finding_when"]
+                fv, _fd, fhow = FORMULAS[fw["py"]](name, rows, _long_for(fw, long), asof, **(fw.get("args") or {}))
+                if fv is not None and fv < fw.get("below", 0):
+                    spec = {"verdict": "VERIFIED FINDING", "why": f"{fw['why']} EVIDENCE: {fhow}"}
             if spec is not None and spec.get("inputs"):
                 out.append({"project": name, "tab": hc["sheet"], "cell": hc["cell"], "id": hc["id"],
                             "what": hc["header"], "ours": {"cell": f"'{hc['sheet']}'!{hc['cell']}"},
@@ -1297,8 +1526,16 @@ def build_rows(headline_cells: list[dict], rows: dict, long, asof, projects=None
                 else:
                     spec = manual_refs.reference_for(manual[(name, hc["id"])], None)[0]
             ref = reference(name, spec, rows, long, asof)
+            ours = {"cell": f"'{hc['sheet']}'!{hc['cell']}"}
+            if spec.get("ours_py"):
+                # OURS ON THE REFERENCE'S OWN DAYS (Jake's run 2026-10-08 11:27, Ethereum): the judged figure is
+                # computed over exactly the days the reference covers; the headline cell is named beside it
+                op = spec["ours_py"]
+                ours = {"py": op["py"], "args": op.get("args") or {},
+                        "value": ours_value(name, {**op, "use_views": spec.get("use_views")}, rows, long, asof),
+                        "headline_cell": ours["cell"]}
             out.append({"project": name, "tab": hc["sheet"], "cell": hc["cell"], "id": hc["id"],
-                        "what": hc["header"], "ours": {"cell": f"'{hc['sheet']}'!{hc['cell']}"},
+                        "what": hc["header"], "ours": ours,
                         "fmt": hc.get("fmt"), "tol": spec.get("tol"), **ref})
         inputs = dict(config.CREDIBILITY_COMMON_INPUTS)
         inputs.update(price_inputs(name))

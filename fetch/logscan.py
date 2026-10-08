@@ -125,7 +125,11 @@ class LogScan:
     """Runs every project's `log_scans`, each against one token and one or more holders."""
 
     def __init__(self, explorer: ExplorerLogs | None = None, reader=None,
-                 cache: LogCache | None = None, unbounded: bool = False):
+                 cache: LogCache | None = None, unbounded: bool = False, own_tier: str | None = None):
+        # own_tier: run ONLY the scans declaring that tier (Pendle's gauge scan, Jake's run 2026-10-08 11:27: a long
+        # first seed starved the explorer tier into its 300s timeout); without it, those scans are skipped here.
+        self.own_tier = own_tier
+        self.planned: list[tuple[str, str]] = []     # (project, metric) this run means to serve — named on a timeout
         # unbounded: no per-scan budget — `token_metrics.py --seed geodnet` (2026-09-28) finishes
         # a first read in one sitting instead of 120s a run.
         self.unbounded = unbounded
@@ -161,19 +165,21 @@ class LogScan:
         return ""
 
     def run(self, projects: list[dict], window_days, out):
-        for p in projects:
-            for spec in p.get("log_scans") or []:
-                # ONE SCAN'S FAILURE NEVER STOPS THE TIER (Jake's run 2026-10-06 18:21: one bad log crashed the
-                # adapter and no later scan ran).
-                try:
-                    self._scan(p, spec, window_days, out)
-                except ExplorerTimeout:
-                    raise
-                except Exception as e:  # noqa: BLE001
-                    from .chain import redact_urls
-                    out.fail(SOURCE, p["name"], f"{spec.get('key')}: scan crashed — {type(e).__name__}: "
-                                                f"{redact_urls(e)}. The other scans ran.", TIER)
-                    log.exception("%s/%s crashed", p["name"], spec.get("key"))
+        own = getattr(self, "own_tier", None)
+        todo = [(p, spec) for p in projects for spec in p.get("log_scans") or [] if spec.get("own_tier") == own]
+        self.planned = [(p["name"], spec.get("metric")) for p, spec in todo]
+        for p, spec in todo:
+            # ONE SCAN'S FAILURE NEVER STOPS THE TIER (Jake's run 2026-10-06 18:21: one bad log crashed the
+            # adapter and no later scan ran).
+            try:
+                self._scan(p, spec, window_days, out)
+            except ExplorerTimeout:
+                raise
+            except Exception as e:  # noqa: BLE001
+                from .chain import redact_urls
+                out.fail(SOURCE, p["name"], f"{spec.get('key')}: scan crashed — {type(e).__name__}: "
+                                            f"{redact_urls(e)}. The other scans ran.", TIER)
+                log.exception("%s/%s crashed", p["name"], spec.get("key"))
 
     def _tx_events(self, chain_id: int, rq: dict, to_block: int, topics: list | None = None) -> list:
         """Every log of rq's event on rq's address up to to_block, incremental through the cache."""
@@ -405,7 +411,7 @@ class LogScan:
         # ONE 120s budget for the whole scan, both providers included (config.EXPLORER_SCAN_BUDGET_S).
         budget = getattr(self.explorer, "start_budget", None)
         if budget and not self.unbounded:
-            budget(config.EXPLORER_SCAN_BUDGET_S)
+            budget(float(spec.get("scan_budget_s") or config.EXPLORER_SCAN_BUDGET_S))
         try:
             for h in holders:
                 for way, topics in (("in", [TRANSFER_TOPIC, None, pad_address(h)]),

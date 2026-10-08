@@ -63,6 +63,10 @@ ERC20_ABI = [
     # StakingRewards.rewardRate (Sky's lsSKY farms, 2026-10-08): `uint256 public rewardRate` — reward tokens per second,
     # sky-ecosystem/endgame-toolkit @db3cc6a4 src/synthetix/StakingRewards.sol L44. Only encoded when called.
     {"constant": True, "inputs": [], "name": "rewardRate", "outputs": [{"name": "", "type": "uint256"}], "type": "function"},
+    # vePENDLE.totalSupplyCurrent() (Pendle, 2026-10-08): uint128, state-changing in the contract (it applies pending
+    # slope changes) but read with eth_call, which writes nothing — pendle-core-v2-public @87685c89
+    # VotingEscrowPendleMainchain.sol L124. Only encoded when called.
+    {"constant": False, "inputs": [], "name": "totalSupplyCurrent", "outputs": [{"name": "", "type": "uint128"}], "type": "function"},
     {"constant": True, "inputs": [{"name": "", "type": "uint256"}], "name": "tokensPerWeek", "outputs": [{"name": "", "type": "uint256"}], "type": "function"},
     # ===== veAERO's PERMANENT TRANCHE. Added 2026-09-23 after the read failed for want of it.
     # "The function 'permanentLockBalance' was not found in this contract's abi" — the ADDRESS

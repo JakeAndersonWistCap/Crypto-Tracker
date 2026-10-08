@@ -2027,6 +2027,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _buyback_tokens_from_usd_views(groups)
     _emissions_from_metric_views(groups)
     _trailing_yield_views(groups)
+    _farm_yield_views(groups, asof)
     _native_fee_usd_views(groups)
     _mev_estimate_views(groups)
     _VIEW_BLOCKS_PENDING.clear()
@@ -3784,6 +3785,9 @@ def _token_yield(R: Refs, data_by_key: dict | None = None):
             why = config.PROTOCOL_YIELD_NOT_APPLICABLE.get(p["name"])
             return f"n/a — {why}" if why else ""
         ty = spec.get("token_yield")
+        if ty and ty.get("farm_rate"):            # the farm row's own arithmetic (Sky, Jake's run 2026-10-08 11:27)
+            cell = R.D(r, ty["farm_rate"]["metric"], "now")
+            return calc(f"IF(ISNUMBER({cell}),{cell},{NA})")
         base = R.D(r, spec["lock"], "now")
         if spec.get("lock_add"):
             add = R.D(r, spec["lock_add"], "now")
@@ -4061,6 +4065,35 @@ def _emissions_from_metric_views(groups: dict) -> None:
                                                             measured.columns)
         elif held is not None and not held.empty:
             groups[(name, "emissions_tokens")] = held[~held["source"].astype(str).str.startswith("schedule")]
+
+
+def _farm_yield_views(groups: dict, asof: pd.Timestamp) -> None:
+    """THE FARM'S REVENUE YIELD, AS ITS CREDIBILITY ROW COMPUTES IT (Sky, Jake's run 2026-10-08 11:27: the headline
+    still read 2.72% after only the reference moved). token_yield `farm_rate`: the flow paid over the last `days` days
+    to asof, x 365 / days, over the stake stored on or before asof x the price stored on or before asof —
+    credibility._rate_on_stake's arithmetic, so the headline and the USDS-farm row are one number. One row, at asof."""
+    for p in scoped_projects():
+        fr = ((config.PROTOCOL_YIELD.get(p["name"]) or {}).get("token_yield") or {}).get("farm_rate")
+        if not fr:
+            continue
+        name = p["name"]
+        s = lambda m: (lambda g: None if g is None or g.empty else g.assign(  # noqa: E731
+            date=pd.to_datetime(g["date"]).dt.normalize()).drop_duplicates("date", keep="last")
+            .set_index("date")["value"].astype(float).sort_index())(groups.get((name, m)))
+        fl, st, px = s(fr["flow"]), s(fr["stock"]), s(fr["price"])
+        if fl is None or st is None or px is None:
+            continue
+        lo = asof - pd.Timedelta(days=int(fr["days"]))
+        fl = fl[(fl.index > lo) & (fl.index <= asof)]
+        st, px = st[st.index <= asof], px[px.index <= asof]
+        if fl.empty or st.empty or px.empty or not st.iloc[-1] or not px.iloc[-1]:
+            continue
+        v = float(fl.sum()) * 365.0 / int(fr["days"]) / (float(st.iloc[-1]) * float(px.iloc[-1]))
+        groups[(name, fr["metric"])] = _as_stored(pd.DataFrame(
+            {"date": [st.index[-1]], "project": [name], "metric": [fr["metric"]], "value": [v],
+             "source": [f"derived:{fr['flow']} {float(fl.sum()):,.0f} over {fr['days']}d x 365/{fr['days']} / "
+                        f"({fr['stock']} {float(st.iloc[-1]):,.0f} x {fr['price']} {float(px.iloc[-1]):.4f})"],
+             "tier": [2]}), groups[(name, fr["stock"])].columns)
 
 
 def _trailing_yield_views(groups: dict) -> None:

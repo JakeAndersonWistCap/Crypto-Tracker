@@ -527,6 +527,96 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11av. Jake's run 2026-10-08 11:27: closing the five, and the lapsing MATURING rows
+
+That run signed off 10 projects. Five were OPEN: Ethereum, Chainlink, Near, Sky and Pendle (156 PASS / 12 CHECK).
+Four MATURING rows lapsed on 10-08 or 10-09. Each now has a verdict, not a new date.
+
+**Every item has a fixture test: `tests/test_signoff_fixtures.py`.** Each test writes a store shaped like the real
+one, runs `credibility_report.evaluate(project, asof=..., narrow=True)` and asserts the verdict on the tab. That is
+the same build and evaluation path as `python credibility_report.py`. `narrow=True` builds only that project
+(~1s instead of ~25s).
+
+1. **Ethereum a4_net_change.**
+   - The judged figure (`ours_py`) is OUR issuance − burn, summed over exactly the days the reference uses: the days
+     of the headline's own net view. a4_net_change_pct follows.
+   - The working prints the per-day figures for both.
+   - Jake's exact failing shape was not reproduced here: the fixture passes on both the old and the new code. The
+     test pins the arithmetic instead.
+2. **Chainlink in_issuance: stock vs flow.**
+   - Two log scans run over the 27 non-circulating wallets: `noncirc_out` and `noncirc_in`. Each is reconciled to
+     balanceOf to the wei before anything is stored.
+   - The balance-derived release is judged against the scanned net outflow over Q0 (`q0_net_flow`, 1%).
+   - CoinGecko's d(circulating) moves in steps. It is recorded as `in_issuance_coingecko`, N/A.
+   - When both the release and the scan are negative (tokens RETURNED into the wallets),
+     a1_fees_issuance is a VERIFIED FINDING: "n/a — net release negative in Q0" (`finding_when`).
+   - `check_offline_items.py chainlink_noncirc_transfers` lists every transfer (tx, date, from, to, amount). It then
+     sets archive balanceOf of all 27 wallets at the window's ends against the scanned flow, to the wei.
+3. **NEAR.**
+   - in_buyback had "CHECK (no figure)" because `use_views` sat inside `args`, so the row read the raw store. It now
+     reads the views. The figure is the 30 days to 10-07: Σ d(combined balance) × that day's price.
+   - a3_net_absorption's emissions input is the gross issuance row (`config.EMISSIONS_ARE_ISSUANCE`).
+   - in_locked is judged against NearBlocks `/v3/validators/info` `total_stake`, the sum of current_epoch_stake
+     (Nearblocks/nearblocks @e9e74695). Tolerance 2%, one call a day. Stored as `locked_tokens_nearblocks`.
+4. **Sky.**
+   - The headline VALUE is the USDS-farm row's own arithmetic: the last 28 days' USDS rewards over the farm's stake
+     at the same days' price (`staking_yield_usds_farm_28d_pct`).
+   - The Q0 economy-wide 2.72% stays as the second figure.
+   - `sky_farm_rates` prices lsSKY at SKY.
+   - The USDS farm's `rewardRate()` is read daily (`usds_farm_reward_rate_usds_per_s`). It is a second reference row,
+     `in_apy_usds_farm_rr`, tolerance 15%.
+5. **Pendle.**
+   - The headline (the Q0 epoch average) inherits ONLY if its own arithmetic reproduces Pendle's APR epoch by epoch.
+     The arithmetic is distributed × 365.25/14 / (sPENDLE + virtual).
+   - This is checked on `in_epoch_reproduction`, tolerance 10%. Pendle's per-epoch APRs are stored as
+     `pendle_epoch_apr_published`.
+   - Epochs before virtual sPENDLE was first read are named, not judged.
+   - `check_offline_items.py pendle_epoch_table` prints the table and the headline arithmetic.
+   - The legacy vePENDLE `totalSupplyCurrent()` is read daily, and archive-read by `archive_backfill.py`.
+   - The gauge scan runs on its own tier: `explorer_gauge`, 280s scan budget. A timed-out tier now names the series it
+     gapped.
+   - in_emissions is judged against the gauge scan, tolerance 25%. It is no longer MATURING.
+6. **Aerodrome: what voters were paid, from state, weekly.**
+   - `fetch/aero_voter.py` (source `aero_voter`, tier 2, 180s) runs the same computation as `aerodrome_voter_rewards`
+     for the last COMPLETE epoch. It stores each epoch once, dated the epoch's start:
+     - `voter_rewards_onchain_usd`: priced at the epoch's END
+     - `voter_rewards_unpriced_count`
+     - `voter_rewards_onchain_apr`: × 52 / (totalWeight × price)
+   - It also stores `voter_total_weight_tokens` every day (one eth_call).
+   - in_revenue is DefiLlama over the SAME epoch's seven UTC days against the on-chain figure, 10%.
+   - The headline's denominator is now Voter.totalWeight, the votes cast. It was veAERO.supply(), AERO locked.
+   - `in_voter_apr_epoch` reproduces the headline's own arithmetic on each epoch: DefiLlama $ / the week's mean price
+     × 365.25/7 / totalWeight. It is judged against the on-chain APR, tolerance 10%.
+   - Its working prints the HEADLINE's numerator and denominator, and how far each factor sits from the epoch's:
+     revenue/week, price, stake.
+   - The rebase is its own labelled row, `in_rebase_apr`: tokensPerWeek × 52 / totalWeight, ~2.5%. It is N/A,
+     recorded: a separate stream, in neither figure.
+   - Unpriced tokens are reported by count, with each token's raw amount. A dollar share needs the price that is
+     missing.
+7. **Maple.**
+   - in_buyback is a DOCUMENTED LIMITATION: the page is first-party, and there is no on-chain trail into the
+     documented wallets.
+   - The probe's "page buybacks" column read 0 every month because the table's index held only months WITH an
+     inflow. The page's months now join. A month the page doesn't cover prints n/a. 0x0 transfers get their own
+     column, `minted (0x0)`.
+   - **SYRUP is minted into the treasury.** The RecapitalizationModule issues MIP-009's 3-year 5%-a-year emission,
+     carried into SYRUP by MIP-010. Sources: maple-labs/maple-docs @bd3647e9,
+     technical-resources/syrup/recapitalization-module.md and syrup-tokenomics/README.md L7-15, which gives an
+     expected supply of 1,267,875,000 by September 2026.
+   - Maple now declares `burn_mechanism: no_burn`, so `gross_issuance_tokens` derives as d(total_supply). The mints
+     are gross issuance into non-circulating: FDV moves, free float doesn't.
+   - The emissions N/A wording says so.
+   - `check_offline_items.py maple_syrup_mints` lists every mint and burn with the contract each mint transaction
+     called. It sets minted − burned against archive totalSupply to the wei, and reads the module's
+     `currentIssuanceRate()`. A rate of 0 means the schedule has ended.
+   - A burn found there refutes the no_burn block.
+8. **Plume probe crash, "[Errno 13] Permission denied: '.'".** `.env.example` ships `TOKEN_METRICS_SOURCES=` (empty).
+   `Path("")` is `.`, which exists, and opening a directory on Windows raises Errno 13. An empty value now falls back
+   to `sources.yaml`, and the same applies to `TOKEN_METRICS_CACHE`.
+
+Only Aethir's two rows (until 10-17) are still MATURING.
+
+
 ## 11au. Jake's run 2026-10-08 08:37: closing the rest
 
 That run signed off 4 projects (Aethir, Morpho, Uniswap, GEODNET); 11 were OPEN. Item by item:

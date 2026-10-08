@@ -58,6 +58,7 @@ from .staked_eth import StakedEth
 from .sky_accounting import SkyAccounting
 from .share_price import SharePrice
 from .ve_managed import VeManaged
+from .aero_voter import AeroVoter
 from .near_bigquery import NearBigQuery
 from .plume_staking import PlumeStaking
 from .scrape import Scrape, entry_ready, load_registry
@@ -98,6 +99,9 @@ TIER_ORDER = [
     ("near_rpc", 2, lambda ctx: NearNode(prior_values=ctx["prior_values"])),
     # Transfer-event FLOWS via block-explorer APIs, reconciled to balanceOf before storing.
     ("explorer", 2, lambda ctx: LogScan()),
+    # Pendle's GaugeController seed (millions of logs from block 0) on its own tier and budget, so it cannot starve
+    # the explorer tier (Jake's run 2026-10-08 11:27: explorer timed out at 300s with the gauge scan at 90%).
+    ("explorer_gauge", 2, lambda ctx: LogScan(own_tier="explorer_gauge")),
     # A wallet group's outflow from daily archive balances and its few inflows (GEODNET, B1).
     ("balance_flow", 2, lambda ctx: BalanceFlow()),
     # Chainlink staking v0.2 emission rates from the RewardVault (2026-09-29).
@@ -117,6 +121,9 @@ TIER_ORDER = [
     ("share_vault", 2, lambda ctx: SharePrice()),
     # AERO the filing wallets deposited into managed veNFTs (Aerodrome, Jake's probes16 2026-10-07).
     ("ve_managed", 2, lambda ctx: VeManaged()),
+    # What veAERO voters were paid per epoch, from the reward contracts' state — Aerodrome's on-chain reference for
+    # in_revenue and a3_protocol_yield, stored once a week; Voter.totalWeight daily (Jake's run 2026-10-08 11:27).
+    ("aero_voter", 2, lambda ctx: AeroVoter()),
     # Figures a dashboard draws in the browser, once permitted and pinned (2026-10-02).
     ("browser_capture", 3, lambda ctx: BrowserCapture(stored_long=ctx.get("stored_long"))),
     # NEAR from Google's public BigQuery dataset: its own circulating supply, and the P2P leg of the
@@ -1803,6 +1810,9 @@ TIER_BUDGET_S = {
     "schedule:config": 15, "defillama": 150, "morpho_api": 60, "growthepie": 60,
     "nearblocks": 60, "coingecko": 240, "hypercore_info": 60, "chainlink_fees": 180, "xref": 90, "validatorqueue": 30, "share_vault": 60,
     "chain": 240, "tron_node": 60, "near_rpc": 90, "explorer": 300, "balance_flow": 150, "maple_page": 60,
+    "explorer_gauge": 300,
+    # one epoch a week: ~10 Multicall3 batches + one DefiLlama price call; the daily totalWeight is one eth_call
+    "aero_voter": 180,
     "scrape": 240, "dune": 420, "ultrasound": 60, "plume_staking": 180, "blockscout_stats": 90,
     # one candle call per perp market a day, paced to Hyperliquid's 1200 weight/min (~50 calls/min);
     # the adapter stops itself at 540s and resumes next run, storing only fully-read days
@@ -1971,11 +1981,17 @@ def _abandon(name, st, budget) -> tuple:
     kept = FetchOutput(frames=list(sub.frames), log=list(sub.log), review=list(sub.review),
                        gaps=list(sub.gaps), staged=list(sub.staged), current=set(sub.current))
     waiting = [what for src, what, _ in inflight() if src == name]
+    # NAME WHAT WAS GAPPED (Jake's run 2026-10-08 11:27: "everything else it serves is gapped" named nothing). An
+    # adapter that lists what it planned to serve (LogScan.planned) has those not in the kept frames printed.
+    planned = list(getattr(st.get("adapter"), "planned", None) or [])
+    got = {(str(r.project), str(r.metric)) for f in kept.frames for r in f[["project", "metric"]].itertuples()} \
+        if kept.frames else set()
+    gapped = [f"{pn}/{m}" for pn, m in planned if (pn, m) not in got]
     kept.fail(name, None,
               f"TIER TIMED OUT after {budget:.0f}s — abandoned and the run moved on. Kept the "
               f"{len(kept.frames)} frame(s) it had produced; everything else it serves is gapped "
-              f"for this run. Still waiting on: {'; '.join(waiting) or 'nothing registered'}. "
-              f"Where the time went: {_http_summary(st)}.",
+              f"for this run" + (f": {', '.join(gapped)}" if gapped else "") + ". Still waiting on: "
+              f"{'; '.join(waiting) or 'nothing registered'}. Where the time went: {_http_summary(st)}.",
               st["tier"])
     log.warning("tier %s TIMED OUT after %.0fs — abandoned (waiting on: %s)", name, budget,
                 "; ".join(waiting) or "nothing registered")

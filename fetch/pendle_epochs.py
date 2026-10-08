@@ -187,6 +187,40 @@ class PendleEpochs:
                                stored=a, when=s0.normalize(),
                                source=f"{SOURCE}:{spec['history_key']}.aprs[last complete epoch]")
 
+    @staticmethod
+    def _epoch_aprs(name, spec, payload, out):
+        """PENDLE'S OWN APR, EPOCH BY EPOCH (Jake's run 2026-10-08 11:27): sPendleHistoricalData.aprs, one row per
+        COMPLETE epoch dated the epoch's start — the reference the headline's per-epoch arithmetic must reproduce.
+        A value outside (0, 1) is not a fraction and is not stored."""
+        metric = spec.get("epoch_apr_metric")
+        if not metric:
+            return
+        hist = payload.get(spec["history_key"]) or {}
+        ts, aprs = hist.get(spec["time_field"]) or [], hist.get(spec.get("aprs_field", "aprs")) or []
+        days = int(spec.get("epoch_days", 14))
+        now = pd.Timestamp.now("UTC").tz_localize(None)
+        rows, refused = [], []
+        for t, a in zip(ts, aprs):
+            t = int(float(t))
+            start = pd.Timestamp(t, unit="s" if t < 10**11 else "ms")
+            if start + pd.Timedelta(days=days) > now:
+                continue                                          # in progress: its APR is not final
+            try:
+                v = float(a)
+            except (TypeError, ValueError):
+                refused.append(f"{start.date()} {a!r}")
+                continue
+            if 0 < v < 1:
+                rows.append((start.normalize(), v))
+            else:
+                refused.append(f"{start.date()} {a!r}")
+        if rows:
+            frame = pd.DataFrame([point(name, metric, v, f"{SOURCE}:{spec['history_key']}.aprs", TIER, d).iloc[0]
+                                  for d, v in sorted(rows)])
+            out.add(frame, SOURCE, name, f"{metric}: {len(rows)} complete epoch APR(s) "
+                    f"{min(rows)[0].date()}..{max(rows)[0].date()}"
+                    + (f"; not stored (not a fraction): {', '.join(refused)}" if refused else ""), TIER)
+
     def run(self, projects: list[dict], window_days, out):
         from .scrape import robots_verdict
         now = today()
@@ -250,3 +284,4 @@ class PendleEpochs:
                             f"{d.date()} at {v:,.0f} PENDLE" for d, v in live) if live else "")
                         + note, TIER)
             self._published_apr(name, spec, payload, now, out)
+            self._epoch_aprs(name, spec, payload, out)

@@ -72,8 +72,9 @@ def read_tab(path: Path, evaluate: bool = True) -> tuple[list, list]:
     return summary, rows
 
 
-def evaluate(project: str | None = None, libreoffice: bool = False):
-    """(credibility rows, evaluated tab rows) from metrics.db — or (None, None) when there is no store."""
+def evaluate(project: str | None = None, libreoffice: bool = False, asof=None, narrow: bool = False):
+    """(credibility rows, evaluated tab rows) from metrics.db — or (None, None) when there is no store.
+    `narrow` builds only `project` (fast; the fixture tests drive the real path this way), `asof` pins the date."""
     import store as store_mod
     from build_workbook import CREDIBILITY_ROWS, build_workbook
     if not Path(store_mod.DB_PATH).exists():
@@ -83,7 +84,7 @@ def evaluate(project: str | None = None, libreoffice: bool = False):
         path = Path(tmp) / "credibility.xlsx"
         st = store_mod.Store(store_mod.DB_PATH)
         try:
-            build_workbook(st, path)
+            build_workbook(st, path, asof=asof, only=[project] if (narrow and project) else None)
         finally:
             st.close()
         _summary, tab = read_tab(path, evaluate=not libreoffice)

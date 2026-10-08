@@ -496,9 +496,21 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
     node_api = project.get("node_api") or {}
     # A SECOND FIELD FROM A RESPONSE ALREADY FETCHED — say which, so nobody hunts for a source.
     se = project.get("spendle_epochs") or {}
-    if se and metric in (se.get("metric"), se.get("apr_metric")):
+    if se and metric in (se.get("metric"), se.get("apr_metric"), se.get("epoch_apr_metric")):
         return ("Pendle's spendle/data epoch read is configured but stored nothing this run",
                 f"Read the pendle_api lines in the Run Log for {name}: a units refusal prints the raw values.")
+    # Aerodrome's voter rewards per epoch and Voter.totalWeight (fetch/aero_voter.py, Jake's run 2026-10-08 11:27)
+    ve = project.get("voter_epochs") or {}
+    if ve and metric in (ve.get("usd_metric"), ve.get("unpriced_metric"), ve.get("apr_metric"), ve.get("weight_metric")):
+        return ("the voting-reward contracts' epoch read (fetch/aero_voter.py: tokenRewardsPerEpoch through Multicall3, "
+                "Voter.totalWeight) is configured but stored nothing this run",
+                f"Read the aero_voter lines in the Run Log for {name}; `python check_offline_items.py "
+                f"aerodrome_voter_rewards` runs the same read and prints each step.")
+    vi = (project.get("nearblocks") or {}).get("validators_info") or {}
+    if vi and metric == vi.get("metric"):
+        return (f"NearBlocks {vi['path']} ({vi['field']}, once a day) is configured but stored nothing this run",
+                f"Read the nearblocks lines in the Run Log for {name}; a 401 is the key "
+                f"({(project.get('nearblocks') or {}).get('key_env')}).")
     if project.get("reward_vault_rates") and metric in ("reward_emission_rate_annual", "emissions_tokens",
                                                         "reward_rate_ends_unix"):
         return ("the RewardVault's getRewardBuckets() read is configured but stored nothing this run",
@@ -1012,9 +1024,16 @@ def served_by(source: str, project: dict) -> set[str] | None:
         bh = (project.get("nearblocks") or {}).get("balance_history")
         if bh:                                   # NEAR's three wallets' daily close (2026-10-07 14:17)
             m |= {bh["metric"], bh["flow"]}
+        vi = (project.get("nearblocks") or {}).get("validators_info")
+        if vi:                                   # total_stake, once a day (Jake's run 2026-10-08 11:27)
+            m.add(vi["metric"])
     elif source == "pendle_api":
         se = project.get("spendle_epochs") or {}
-        m = {se["metric"], se["apr_metric"]} if se else set()
+        m = ({se["metric"], se["apr_metric"]} | ({se["epoch_apr_metric"]} if se.get("epoch_apr_metric") else set())
+             if se else set())
+    elif source == "aero_voter":
+        ve = project.get("voter_epochs") or {}
+        m = {ve[k] for k in ("usd_metric", "unpriced_metric", "apr_metric", "weight_metric")} if ve else set()
     elif source == "reward_vault":
         m = ({"reward_emission_rate_annual", "emissions_tokens", "reward_rate_ends_unix"}
              if project.get("reward_vault_rates") else set())

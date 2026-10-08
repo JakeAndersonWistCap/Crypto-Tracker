@@ -52,8 +52,11 @@ log = logging.getLogger("token_metrics.fetch.scrape")
 
 SOURCE = "scrape"
 TIER = 3
-REGISTRY = Path(os.environ.get("TOKEN_METRICS_SOURCES", "sources.yaml"))
-CACHE_DIR = Path(os.environ.get("TOKEN_METRICS_CACHE", ".cache/scrape"))
+# AN EMPTY VALUE IS UNSET (Jake's run 2026-10-08 11:27: plume_supply_read crashed "[Errno 13] Permission denied: '.'").
+# .env.example ships `TOKEN_METRICS_SOURCES=`; Path("") is ".", which exists, and opening a directory on Windows is
+# Errno 13. So "" falls back to the default, like a missing variable.
+REGISTRY = Path(os.environ.get("TOKEN_METRICS_SOURCES") or "sources.yaml")
+CACHE_DIR = Path(os.environ.get("TOKEN_METRICS_CACHE") or ".cache/scrape")
 PAGE_TIMEOUT_MS = int(os.environ.get("TOKEN_METRICS_PAGE_TIMEOUT_MS", 45000))
 
 REQUIRED_FIELDS = ("project", "metric", "url", "method")

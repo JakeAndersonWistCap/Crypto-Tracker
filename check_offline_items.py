@@ -8127,25 +8127,110 @@ def maple_buyback_inflows(days: int = 365):
         src = _source(frm)
         names[frm] = src.get("name") or src.get("why") or "?"
     if len(df):
-        df["venue"] = df["from"].map(lambda f: any(h in str(names.get(f, "")).lower() for h in SWAP_NAME_HINTS))
+        # THREE KINDS OF SENDER (Jake's run 2026-10-08 11:27): 0x0 is a MINT (maple_syrup_mints), not a buy and not an
+        # "other sender"; swap venues by verified name; everything else.
+        zero = "0x" + "0" * 40
+        df["kind"] = df["from"].map(lambda f: "minted (0x0)" if f == zero else "swap venues" if any(
+            h in str(names.get(f, "")).lower() for h in SWAP_NAME_HINTS) else "other senders")
         df["month"] = df["ts"].dt.to_period("M")
-        m = df.pivot_table(index="month", columns="venue", values="syrup", aggfunc="sum").fillna(0.0)
-        m.columns = ["other senders" if not c else "swap venues" for c in m.columns]
+        m = df.pivot_table(index="month", columns="kind", values="syrup", aggfunc="sum")
+        # THE PAGE'S MONTHS JOIN THE TABLE (the join read 0 every month: the index held only months WITH an inflow, so
+        # the page's buyback months never appeared, and a month the page does not cover printed 0 rather than blank).
+        # The page stores its months dated the month's first or last day; both map to the same period. A month the
+        # page does not cover is n/a; a month it lists as no buyback is its stored 0.
+        page = pd.Series(dtype=float)
         try:
             con = sqlite3.connect("metrics.db")
             pg = pd.read_sql_query("SELECT date, value FROM metrics WHERE project='Maple' AND "
                                    "metric='actual_buyback_tokens'", con)
-            pg["month"] = pd.to_datetime(pg["date"]).dt.to_period("M")
-            m["page buybacks"] = pg.groupby("month")["value"].sum().reindex(m.index).fillna(0.0)
+            con.close()
+            pg["month"] = pd.to_datetime(pg["date"], format="mixed").dt.to_period("M")
+            page = pg.groupby("month")["value"].sum()
+            print(f"  page buyback rows in metrics.db: {len(pg)} ({', '.join(str(x) for x in page.index) or 'none'})")
         except Exception as e:  # noqa: BLE001
             print(f"  metrics.db unreadable — {e}")
-        print(m.to_string(float_format=lambda x: f"{x:,.0f}"))
+        lo = df["month"].min()
+        idx = m.index.union(page.index[page.index >= lo]).sort_values()
+        m = m.reindex(idx)
+        for c in ("swap venues", "other senders", "minted (0x0)"):
+            m[c] = m[c].fillna(0.0) if c in m.columns else 0.0
+        m = m[["swap venues", "other senders", "minted (0x0)"]]
+        m["page buybacks"] = page.reindex(idx)
+        print(m.to_string(float_format=lambda x: f"{x:,.0f}", na_rep="n/a"))
         top = df.groupby("from")["syrup"].sum().sort_values(ascending=False).head(8)
         for f, v in top.items():
             print(f"    from {f}: {v:,.0f} SYRUP — {names.get(f)}")
     print("  PASTE BACK the table: swap-venue inflows that track the page month by month make the on-chain sum the "
           "reference; none that track it make the row a documented limitation. (SYRUP going OUT of the SSF trail to "
           "0x83971edb… is the open SSF-selling question, not a buy.)")
+
+
+def maple_syrup_mints(days: int = 365):
+    """MAPLE — WHERE DOES NEW SYRUP COME FROM? (Jake's run 2026-10-08 11:27: maple_buyback_inflows showed 44,401,784 SYRUP
+    minted from 0x0 into Maple's wallets in 2025-10 and 2026-04, against "no emissions".) Every SYRUP Transfer FROM 0x0
+    (mint) and TO 0x0 (burn) over `days`, with tx, date, recipient, amount and the contract each mint transaction
+    called; totalSupply now and `days` back (archive) against minted − burned, to the wei; and the minting contract's
+    currentIssuanceRate(). The governance source is the RecapitalizationModule (maple-labs/maple-docs @bd3647e9
+    technical-resources/syrup/recapitalization-module.md: tokens per second per window, claimed by a
+    RECAPITALIZATION_CLAIMER; MIP-009's 3-year 5%-a-year treasury emission, carried into SYRUP by MIP-010 —
+    maple-for-token-holders/syrup-tokenomics/README.md L7-15: expected supply 1,267,875,000 by September 2026). Reads only."""
+    import time as _t                                      # noqa: PLC0415
+    import config                                          # noqa: PLC0415
+    head(f"MAPLE — SYRUP minted (from 0x0) and burned (to 0x0), last {days} days, against totalSupply")
+    syrup = config.PROJECT_BY_NAME["Maple"]["contracts"]["token"]["address"]
+    zero = "0x" + "0" * 40
+    now = int(_t.time())
+    b0, b1 = _block_at(now - days * 86400), _block_at(now - 3600)
+    if not b0 or not b1:
+        print("  no block for the window ends (explorer block_at refused)")
+        return
+    sums, callers = {}, {}
+    for label, topics in (("MINT", [TRANSFER_TOPIC, _pad(zero), None]), ("BURN", [TRANSFER_TOPIC, None, _pad(zero)])):
+        got, why = explorer_logs(1, syrup, topics, b0 + 1, b1)
+        if got is None:
+            print(f"  {label}s: {why}")
+            return
+        tot = 0
+        for e in sorted(got, key=lambda e: int(e["blockNumber"])):
+            amt = int(e["data"], 16)
+            if not amt:
+                continue
+            tot += amt
+            to = "0x" + e["topics"][2][-40:]
+            called = ""
+            if label == "MINT":
+                for url in _rpcs_for("ethereum"):
+                    try:
+                        tx = rpc(url, "eth_getTransactionByHash", [e["transactionHash"]]).get("result") or {}
+                        called = f" — tx called {tx.get('to')} ({(tx.get('input') or '')[:10]})"
+                        callers[str(tx.get("to")).lower()] = callers.get(str(tx.get("to")).lower(), 0) + amt
+                        break
+                    except Exception:  # noqa: BLE001
+                        continue
+            print(f"  {label} {_t.strftime('%Y-%m-%d', _t.gmtime(int(e['timeStamp'])))} {e['transactionHash']} to {to} "
+                  f"{amt / 1e18:,.4f} SYRUP{called}")
+        sums[label] = tot
+        print(f"  {label}S total: {tot / 1e18:,.4f} SYRUP")
+    ts = {}
+    for label, blk in (("start", b0), ("end", b1)):
+        r, err = eth_call(syrup, _selx("totalSupply()"), hex(blk))
+        if r is None:
+            print(f"  totalSupply at {label} block {blk:,} unreadable — {err} (needs an archive endpoint)")
+            return
+        ts[label] = int(r, 16)
+    d = ts["end"] - ts["start"]
+    print(f"  totalSupply {ts['start'] / 1e18:,.4f} -> {ts['end'] / 1e18:,.4f}: change {d / 1e18:,.4f}; minted − burned "
+          f"{(sums['MINT'] - sums['BURN']) / 1e18:,.4f} -> "
+          + ("MATCH to the wei" if d == sums["MINT"] - sums["BURN"] else f"DIFFER by {d - (sums['MINT'] - sums['BURN'])} wei"))
+    for c, v in sorted(callers.items(), key=lambda kv: -kv[1]):
+        rate, _ = eth_call(c, _selx("currentIssuanceRate()"))
+        src = _source(c)
+        print(f"  minting contract {c} ({src.get('name') or '?'}): {v / 1e18:,.0f} SYRUP minted through it; "
+              + (f"currentIssuanceRate {int(rate, 16) / 1e18:,.6f} SYRUP/s = {int(rate, 16) / 1e18 * 31_536_000:,.0f} a year"
+                 if rate else "currentIssuanceRate() unreadable (not the RecapitalizationModule?)"))
+    print("  PASTE BACK the whole output. Mints into Maple's treasury wallets through the RecapitalizationModule are "
+          "GROSS ISSUANCE INTO NON-CIRCULATING: FDV moves, free float does not (the treasury wallets are excluded from "
+          "circulating). A rate of 0 means the 3-year schedule has ended.")
 
 
 def etherfi_withdrawal_fees(days: int = 365):
@@ -8226,28 +8311,30 @@ def _batch_eth_calls(chain: str, calls: list, chunk: int = 200) -> list:
     return out
 
 
-def aerodrome_voter_rewards(min_weight_share: float = 0.0):
-    """Aerodrome a3_protocol_yield / in_revenue (sign-off round): what veAERO voters were PAID in the last complete
-    epoch, read from state — each gauge's FeesVotingReward and BribeVotingReward tokenRewardsPerEpoch[token][epoch]
-    (contracts @1ba30815 Reward.sol L34/L245: every notifyRewardAmount adds to it), priced with DefiLlama's coins API,
-    summed; voter APR = that x 52 / (Voter.totalWeight() x AERO price). The Voter is read from veAERO.voter(), not
-    typed in. No log route needed (Base logs are paid). Reads only."""
+def aerodrome_voter_epoch(epoch: int | None = None, min_weight_share: float = 0.0, say=print,
+                          price_at_end: bool = False) -> dict:
+    """WHAT veAERO VOTERS WERE PAID IN ONE EPOCH, FROM STATE (the computation behind aerodrome_voter_rewards, and the
+    daily run's weekly store — fetch/aero_voter.py, Jake's run 2026-10-08 11:27). Each gauge's FeesVotingReward and
+    BribeVotingReward tokenRewardsPerEpoch[token][epoch] (contracts @1ba30815 Reward.sol L34/L245) through Multicall3,
+    priced with DefiLlama's coins API — at the current price, or with `price_at_end` at the epoch's END (the weekly
+    store: the price the rewards were worth when the epoch closed, /prices/historical). `epoch` defaults to the last
+    COMPLETE epoch (Thursday 00:00 UTC). Returns {epoch, voter, pools, total_weight, usd, unpriced: [token, ...],
+    unpriced_raw: {token: raw amount}, priced, aero_price, priced_at} or {"error": why}."""
     import time as _t                                      # noqa: PLC0415
     import config                                          # noqa: PLC0415
-    head("AERODROME — fees + bribes paid to voters in the last complete epoch, from the reward contracts' state")
     c = config.PROJECT_BY_NAME["Aerodrome"]["contracts"]
     ve = c["ve"]["address"] if isinstance(c["ve"], dict) else c["ve"]
     aero = c["token"]["address"] if isinstance(c["token"], dict) else c["token"]
     w, _ = eth_call(ve, _selx("voter()"), chain="base")
     voter = ("0x" + w[-40:]) if w and len(w) >= 42 else None
     if not voter:
-        print("  veAERO.voter() unreadable")
-        return
+        return {"error": "veAERO.voter() unreadable"}
     n = int(eth_call(voter, _selx("length()"), chain="base")[0] or "0x0", 16)
     tw = int(eth_call(voter, _selx("totalWeight()"), chain="base")[0] or "0x0", 16) / 1e18
     week = 7 * 86400
-    epoch = int(_t.time()) // week * week - week                 # the last COMPLETE epoch's start (Thursday 00:00 UTC)
-    print(f"  Voter {voter}: {n} pools, totalWeight {tw:,.0f} veAERO; epoch {_t.strftime('%Y-%m-%d', _t.gmtime(epoch))}")
+    if epoch is None:
+        epoch = int(_t.time()) // week * week - week             # the last COMPLETE epoch's start
+    say(f"  Voter {voter}: {n} pools, totalWeight {tw:,.0f} veAERO; epoch {_t.strftime('%Y-%m-%d', _t.gmtime(epoch))}")
     sel_pools, sel_g, sel_f, sel_b, sel_w = (_selx("pools(uint256)"), _selx("gauges(address)"),
                                              _selx("gaugeToFees(address)"), _selx("gaugeToBribe(address)"),
                                              _selx("weights(address)"))
@@ -8256,7 +8343,7 @@ def aerodrome_voter_rewards(min_weight_share: float = 0.0):
     wts = [int(x or "0x0", 16) / 1e18 for x in _batch_eth_calls("base", [(voter, sel_w + _word(int(p, 16)))
                                                                          for p in pools])]
     keep = [(p, wt) for p, wt in zip(pools, wts) if wt > 0 and (not tw or wt / tw >= min_weight_share)]
-    print(f"  pools with votes: {len(keep)} of {n}")
+    say(f"  pools with votes: {len(keep)} of {n}")
     gauges = ["0x" + (x or "0x" + "0" * 64)[-40:] for x in _batch_eth_calls("base", [(voter, sel_g + _word(int(p, 16)))
                                                                                      for p, _ in keep])]
     rewards = []
@@ -8275,29 +8362,193 @@ def aerodrome_voter_rewards(min_weight_share: float = 0.0):
     for t, a in zip(toks, amts):
         if a:
             by_tok[t.lower()] = by_tok.get(t.lower(), 0) + a
-    print(f"  reward contracts {len(rewards)}, (contract, token) pairs {len(pairs)}, tokens paid {len(by_tok)}")
+    say(f"  reward contracts {len(rewards)}, (contract, token) pairs {len(pairs)}, tokens paid {len(by_tok)}")
     keys = [f"base:{t}" for t in list(by_tok) + [aero.lower()]]
     prices = {}
+    at = (f"historical/{min(epoch + week, int(_t.time()) - 60)}/" if price_at_end else "current/")
     for i in range(0, len(keys), 80):
         try:
-            r = requests.get("https://coins.llama.fi/prices/current/" + ",".join(keys[i:i + 80]), headers=_ua(),
+            r = requests.get(f"https://coins.llama.fi/prices/{at}" + ",".join(keys[i:i + 80]), headers=_ua(),
                              timeout=TIMEOUT)
             prices.update({k.split(":", 1)[1].lower(): v for k, v in (r.json().get("coins") or {}).items()})
         except Exception as e:  # noqa: BLE001
-            print(f"  DefiLlama coins unreachable — {type(e).__name__}")
-    usd, unpriced = 0.0, 0
+            say(f"  DefiLlama coins unreachable — {type(e).__name__}")
+    usd, unpriced = 0.0, []
     for t, a in by_tok.items():
         p = prices.get(t)
         if not p:
-            unpriced += 1
+            unpriced.append(t)
             continue
         usd += a / 10 ** int(p.get("decimals") or 18) * float(p["price"])
     ap = float((prices.get(aero.lower()) or {}).get("price") or 0)
-    print(f"  paid to voters in the epoch: ${usd:,.0f} ({unpriced} token(s) unpriced, left out); AERO ${ap:,.4f}")
+    if not by_tok:
+        return {"error": f"no reward token paid in epoch {epoch} across {len(rewards)} reward contracts — not stored"}
+    if not ap:
+        return {"error": "DefiLlama returned no AERO price — the epoch is not stored without one"}
+    return {"epoch": epoch, "voter": voter, "pools": len(keep), "total_weight": tw, "usd": usd,
+            "unpriced": unpriced, "unpriced_raw": {t: by_tok[t] for t in unpriced},
+            "priced": len(by_tok) - len(unpriced), "aero_price": ap,
+            "priced_at": "epoch end" if price_at_end else "now"}
+
+
+def aerodrome_voter_rewards(min_weight_share: float = 0.0):
+    """Aerodrome a3_protocol_yield / in_revenue (sign-off round): what veAERO voters were PAID in the last complete
+    epoch, read from state (aerodrome_voter_epoch) — voter APR = that x 52 / (Voter.totalWeight() x AERO price).
+    No log route needed (Base logs are paid). Reads only; the daily run stores the same figure weekly."""
+    head("AERODROME — fees + bribes paid to voters in the last complete epoch, from the reward contracts' state")
+    r = aerodrome_voter_epoch(min_weight_share=min_weight_share)
+    if r.get("error"):
+        print(f"  {r['error']}")
+        return
+    usd, tw, ap = r["usd"], r["total_weight"], r["aero_price"]
+    print(f"  paid to voters in the epoch: ${usd:,.0f} ({len(r['unpriced'])} token(s) unpriced, left out; "
+          f"{r['priced']} priced); AERO ${ap:,.4f}")
+    if r["unpriced"]:
+        # THEIR SHARE (Jake's run 2026-10-08 11:27): a dollar share needs a price, which is exactly what is missing, so
+        # the share is reported by count, with each token's raw amount for a by-hand look-up.
+        print(f"  UNPRICED (DefiLlama has no price; their value is not in the total): {len(r['unpriced'])} of "
+              f"{len(r['unpriced']) + r['priced']} tokens paid ({len(r['unpriced']) / (len(r['unpriced']) + r['priced']):.0%}"
+              " by count; a dollar share cannot be computed without their price):")
+        for t, raw in sorted(r["unpriced_raw"].items(), key=lambda kv: -kv[1]):
+            print(f"    {t}  raw amount {raw}")
     if tw and ap:
         print(f"  voter APR = ${usd:,.0f} x 52 / ({tw:,.0f} x ${ap:,.4f}) = {usd * 52 / (tw * ap):.2%}")
-    print("  PASTE BACK the totals: a weekly figure that matches DefiLlama's voter fees + bribes for the same epoch "
-          "(within ~10%) makes this the on-chain reference for a3_protocol_yield and in_revenue.")
+    print("  PASTE BACK the totals: the run stores this weekly (voter_rewards_onchain_usd) as the on-chain reference "
+          "for a3_protocol_yield and in_revenue.")
+
+def chainlink_noncirc_transfers(days: int = 90):
+    """CHAINLINK in_issuance (Jake's run 2026-10-08 11:27: ours -400,000 LINK over Q0). (a) Every LINK transfer into or
+    out of the 27 non-circulating wallets over the last `days` days — tx, date, from, to, amount — hops between the
+    wallets marked internal; (b) archive balanceOf of all 27 at the window's start and end blocks against the scanned
+    net outflow, TO THE WEI; (c) says whether a negative release is tokens RETURNED into a Chainlink wallet. Reads only."""
+    import time as _t                                      # noqa: PLC0415
+    import config                                          # noqa: PLC0415
+    head(f"CHAINLINK — transfers in/out of the 27 non-circulating wallets, last {days} days, and stock vs flow")
+    link = "0x514910771AF9Ca656af840dff83E8264EcF986CA"
+    wallets = [w.lower() for w in config._CL_NC]
+    now = int(_t.time())
+    b0, b1 = _block_at(now - days * 86400), _block_at(now - 3600)
+    if not b0 or not b1:
+        print("  no block for the window ends (explorer block_at refused)")
+        return
+    evs, seen = [], set()
+    for w in wallets:
+        for topics in ([TRANSFER_TOPIC, None, _pad(w)], [TRANSFER_TOPIC, _pad(w), None]):
+            got, why = explorer_logs(1, link, topics, b0 + 1, b1)
+            if got is None:
+                print(f"  {w}: {why}")
+                return
+            for e in got:
+                k = (e["transactionHash"], e.get("logIndex"), e["topics"][1], e["topics"][2], e["data"])
+                if k not in seen and int(e["data"], 16):
+                    seen.add(k)
+                    evs.append(e)
+    net_out_wei, rows = 0, []
+    for e in sorted(evs, key=lambda e: int(e["blockNumber"])):
+        frm, to = "0x" + e["topics"][1][-40:], "0x" + e["topics"][2][-40:]
+        amt = int(e["data"], 16)
+        kind = ("internal" if frm in wallets and to in wallets else "OUT" if frm in wallets else "IN")
+        if kind == "OUT":
+            net_out_wei += amt
+        elif kind == "IN":
+            net_out_wei -= amt
+        rows.append((kind, e))
+        print(f"  {kind:<8} {_t.strftime('%Y-%m-%d', _t.gmtime(int(e['timeStamp'])))} {e['transactionHash']} "
+              f"from {frm} to {to} {amt / 1e18:,.4f} LINK")
+    print(f"  scanned net OUTflow blocks {b0 + 1:,}..{b1:,}: {net_out_wei / 1e18:,.6f} LINK ({net_out_wei} wei); "
+          f"{sum(1 for k, _ in rows if k == 'IN')} in, {sum(1 for k, _ in rows if k == 'OUT')} out, "
+          f"{sum(1 for k, _ in rows if k == 'internal')} internal")
+    sel = _selx("balanceOf(address)")
+    tot = {}
+    for label, blk in (("start", b0), ("end", b1)):
+        acc = 0
+        for w in wallets:
+            r, err = eth_call(link, sel + _word(int(w, 16)), hex(blk))
+            if r is None:
+                print(f"  balanceOf({w}) at {label} block {blk:,} unreadable — {err} (needs an archive endpoint)")
+                return
+            acc += int(r, 16)
+        tot[label] = acc
+    stock = tot["start"] - tot["end"]
+    print(f"  archive balances: start {tot['start'] / 1e18:,.6f}, end {tot['end'] / 1e18:,.6f} -> stock change "
+          f"(released) {stock / 1e18:,.6f} LINK ({stock} wei)")
+    print(f"  STOCK vs FLOW: {'MATCH to the wei' if stock == net_out_wei else f'DIFFER by {stock - net_out_wei} wei'}")
+    if net_out_wei < 0:
+        ins = [e for k, e in rows if k == "IN"]
+        senders = {}
+        for e in ins:
+            f = "0x" + e["topics"][1][-40:]
+            senders[f] = senders.get(f, 0) + int(e["data"], 16)
+        print("  NEGATIVE RELEASE: tokens came back INTO the wallets. By sender: " + "; ".join(
+            f"{f} {v / 1e18:,.2f} ({_source(f).get('name') or _code(f, 'ethereum')})" for f, v in
+            sorted(senders.items(), key=lambda kv: -kv[1])))
+    print("  PASTE BACK the whole output: a MATCH with a negative release returned by a Chainlink-controlled sender is "
+          "the VERIFIED FINDING credibility records automatically (a1_fees_issuance n/a).")
+
+
+def pendle_epoch_table():
+    """PENDLE a3_protocol_yield (Jake's run 2026-10-08 11:27). Per Q0 epoch: start, PENDLE distributed, the stake we
+    use (eligible sPENDLE shares + virtual sPENDLE), OUR APR (distributed x 365.25/14 / stake), Pendle's published APR
+    for that epoch, the no-boost stake (shares + legacy vePENDLE PENDLE — Jake's 93.9M basis) and its APR, and the
+    archive vePENDLE voting supply. Then the HEADLINE arithmetic as the workbook does it. Reads metrics.db only."""
+    import sqlite3                                         # noqa: PLC0415
+    import pandas as pd                                    # noqa: PLC0415
+    head("PENDLE — per-epoch distribution, stake and APR (Q0), and the headline arithmetic")
+    want = ("pendle_distributed_tokens", "pendle_epoch_apr_published", "locked_tokens_shares",
+            "locked_tokens_virtual", "locked_tokens_legacy_vependle", "vependle_voting_supply_tokens")
+    try:
+        con = sqlite3.connect("metrics.db")
+        q = ("SELECT date, metric, value FROM metrics WHERE project = 'Pendle' AND metric IN (%s)"
+             % ",".join("?" * len(want)))
+        df = pd.DataFrame(con.execute(q, want).fetchall(), columns=["date", "metric", "value"])
+        con.close()
+    except Exception as e:  # noqa: BLE001
+        print(f"  metrics.db unreadable here ({e})")
+        return
+    if df.empty:
+        print("  no Pendle epoch series in metrics.db — run token_metrics.py first")
+        return
+    df["date"] = pd.to_datetime(df["date"])
+    ser = {m: g.set_index("date")["value"].sort_index() for m, g in df.groupby("metric")}
+    q0e = pd.Timestamp.today().normalize()                 # credibility._q0: the 90 days to the as-of date
+    q0s = q0e - pd.Timedelta(days=90)
+
+    def near(m, d):
+        s = ser.get(m)
+        if s is None or s.empty:
+            return None, ""
+        b = s[s.index <= d]
+        if len(b):
+            return float(b.iloc[-1]), ""
+        a = s[(s.index > d) & (s.index <= d + pd.Timedelta(days=7))]
+        return (float(a.iloc[0]), f" (read {a.index[0].date()})") if len(a) else (None, "")
+
+    dist = ser.get("pendle_distributed_tokens", pd.Series(dtype=float))
+    dist = dist[(dist.index >= q0s) & (dist.index < q0e)]
+    f = 365.25 / 14
+    print(f"  {'epoch':<11}{'PENDLE':>12}{'shares':>14}{'virtual':>14}{'ours APR':>10}{'Pendle':>9}"
+          f"{'no-boost stk':>15}{'APR':>8}{'veSupply':>14}")
+    for d, v in dist.items():
+        sh, n1 = near("locked_tokens_shares", d)
+        vi, n2 = near("locked_tokens_virtual", d)
+        lg, _ = near("locked_tokens_legacy_vependle", d)
+        ve, _ = near("vependle_voting_supply_tokens", d)
+        pub = ser.get("pendle_epoch_apr_published", pd.Series(dtype=float)).get(d)
+        ours = v * f / (sh + vi) if sh is not None and vi is not None and sh + vi else None
+        nb = (sh + lg) if sh is not None and lg is not None else None
+        fmt = lambda x, p=0: "—" if x is None else f"{x:,.{p}f}"            # noqa: E731
+        pct = lambda x: "—" if x is None else f"{x:.2%}"                     # noqa: E731
+        print(f"  {d.date()!s:<11}{fmt(v):>12}{fmt(sh):>14}{fmt(vi):>14}{pct(ours):>10}{pct(pub):>9}"
+              f"{fmt(nb):>15}{pct(v * f / nb if nb else None):>8}{fmt(ve):>14}{n1 or n2}")
+    sh, _ = near("locked_tokens_shares", q0e)
+    vi, _ = near("locked_tokens_virtual", q0e)
+    if len(dist) and sh is not None and vi is not None:
+        print(f"\n  HEADLINE: mean distributed {dist.mean():,.0f} PENDLE/epoch x 365.25/14 / (shares {sh:,.0f} + "
+              f"virtual {vi:,.0f}) = {dist.mean() * f / (sh + vi):.2%}")
+    print("  Method (pendle-finance spendle-tracker README): APR = distributed / (eligible sPENDLE + virtual sPENDLE) "
+          "x 26.09; virtual = locked x (1 + 3 x remaining/2y). A stake without the virtual boost (Jake's 93.9M) "
+          "gives the higher APR in the no-boost column.")
+
 
 def plume_supply_read():
     """PLUME in_circ "no figure" (Jake's run 2026-10-08): every step the run takes for circulating_supply_first_party
@@ -8353,6 +8604,8 @@ def plume_supply_read():
 SKY_FARMS = {"SKY-rewards farm": "0xB44C2Fb4181D7Cb06bdFf34A46FdFe4a259B40Fc",
              "USDS-rewards farm": "0x38E4254bD82ED5Ee97CD1C4278FAae748d998865"}
 SKY_FARM_READINGS = {"SKY-rewards farm": 0.0658, "USDS-rewards farm": 0.0461}      # Jake's readings, 2026-10-07
+SKY_TOKEN = "0x56072C95FAA701256059aa122697B133aDEd9279"      # SKY (developers.skyeco.com key-info; config Sky token)
+SKY_LSSKY = "0xf9A9cfD3229E985B91F99Bc866d42938044FFa1C"      # lsSKY, 1:1 SKY (config Sky lssky)
 
 
 def sky_farm_rates():
@@ -8393,6 +8646,16 @@ def sky_farm_rates():
         except Exception as e:  # noqa: BLE001
             print(f"    DefiLlama coins unreachable — {type(e).__name__}")
         p_r, p_s = px.get((rt or "").lower()), px.get((stt or "").lower())
+        # lsSKY IS 1:1 SKY (Jake's run 2026-10-08 11:27: the USDS farm read 0.40% because DefiLlama has no lsSKY price
+        # and USDS/s was divided by SKY TOKENS): price the staked lsSKY at SKY
+        if p_s is None and stt and stt.lower() == SKY_LSSKY.lower():
+            try:
+                j = requests.get(f"https://coins.llama.fi/prices/current/ethereum:{SKY_TOKEN}", headers=_ua(),
+                                 timeout=TIMEOUT).json()
+                p_s = float(next(iter((j.get("coins") or {}).values()))["price"])
+                print(f"    lsSKY priced at SKY ${p_s} (lsSKY is 1:1 SKY)")
+            except Exception as e:  # noqa: BLE001
+                print(f"    SKY price unreachable — {type(e).__name__}")
         apr = apr_tok * p_r / p_s if (p_r and p_s and rt and stt and rt.lower() != stt.lower()) else apr_tok
         print(f"  {label} {farm}: rewardRate {rate / 1e18:,.4f}/s, staked {supply / 1e18:,.0f}, period "
               f"{'LIVE' if live else 'FINISHED'} (ends {_t.strftime('%Y-%m-%d', _t.gmtime(finish or 0))})")
@@ -8422,8 +8685,8 @@ CHECKS = (
     aerodrome_filing_wallets, blockworks_wallet_balances,
     etherfi_vault_archive, etherfi_contract_ids, etherfi_accountant, fluid_vesting_recipients, maple_ssf_partial,
     aerodrome_managed_venfts, pendle_epoch_revenues, maple_ssf_trail, fluid_avocado_owners, hl_pool_release_compare,
-    pendle_spendle_rewards_onchain, maple_buyback_inflows, etherfi_withdrawal_fees, aerodrome_voter_rewards,
-    sky_farm_rates, plume_supply_read,
+    pendle_spendle_rewards_onchain, maple_buyback_inflows, maple_syrup_mints, etherfi_withdrawal_fees, aerodrome_voter_rewards,
+    sky_farm_rates, plume_supply_read, chainlink_noncirc_transfers, pendle_epoch_table,
     plume_sources, aethir_dashboard_xhr, maple_ssf_history, blockworks_geodnet,
     morpho_incentives, settlement_sources, hyperevm_etherscan, maple_ssf_inflows, aethir_pages,
     geod_stake_recipient, geod_stake_wallets, maple_ssf_lp_test, maple_drips, plume_archive, settlement_rebuild_coverage,

@@ -14794,8 +14794,8 @@ def test_offline_checks_ambiguous_prefix_refuses_and_names_every_match(monkeypat
     rc2 = coi.main()
     out2 = capsys.readouterr().out
     assert rc2 == 1
-    assert "'maple' matches 11 checks" in out2     # + maple_dao_vs_ssf, maple_ssf_candidates, maple_ssf_partial, _trail,
-    #                                                  maple_buyback_inflows (sign-off round)
+    assert "'maple' matches 12 checks" in out2     # + maple_dao_vs_ssf, maple_ssf_candidates, maple_ssf_partial, _trail,
+    #                                                  maple_buyback_inflows (sign-off round), maple_syrup_mints
     assert all(n in out2 for n in ("maple_dao_multisig", "maple_transparency", "maple_ssf_history",
                                    "maple_ssf_inflows", "maple_ssf_lp_test", "maple_drips", "maple_dao_vs_ssf"))
 
@@ -15610,8 +15610,9 @@ def test_nearblocks_stats_run_first_and_calls_are_paced_to_the_free_plan(monkeyp
     nearblocks.NearBlocks(http=http).run([_near_buyback_flow_only()], 35, FetchOutput())
     kinds = ["flow" if "/v1/account/" in u else "v3" for _, u in stamps]
     # ORDER REVERSED 2026-09-28: the once-a-day stats first (1 credit each), then the buyback
-    # read, which resumes across runs — see NearBlocks.run.
-    assert kinds == ["v3", "v3", "flow", "flow"], kinds
+    # read, which resumes across runs — see NearBlocks.run. The third v3 call is /v3/validators/info's total_stake,
+    # once a day (Jake's run 2026-10-08 11:27).
+    assert kinds == ["v3", "v3", "v3", "flow", "flow"], kinds
     # BILLED AS NEARBLOCKS BILLS: ceil(per_page/25), per_page defaulting to 25. The v3 calls send
     # `limit`, so they cost 1 (they were charged 4 until 2026-09-28).
     cost = {"flow": nearblocks.credits_for(nearblocks.FLOW_PER_PAGE), "v3": 1}
@@ -15619,7 +15620,8 @@ def test_nearblocks_stats_run_first_and_calls_are_paced_to_the_free_plan(monkeyp
     for t0, _ in stamps:
         in_window = sum(cost[k] for (t, _), k in zip(stamps, kinds) if t0 <= t < t0 + 60)
         assert in_window <= nearblocks.CREDITS_PER_MINUTE, (t0, in_window, stamps)
-    assert _nearblocks_fake_clock == [], "2+2+1+1 = 6 credits: nothing had to wait"
+    # 1+1+1+2+2 = 7 credits against 6 a minute: the pacer waits once, before the last page
+    assert len(_nearblocks_fake_clock) <= 1, _nearblocks_fake_clock
 
 
 def test_http_429_without_retry_after_waits_the_configured_window(monkeypatch):
@@ -16153,12 +16155,14 @@ def test_nearblocks_buyback_is_incremental_newest_first_and_daily_stats_run_once
     out2 = FetchOutput()
     nearblocks.NearBlocks(http=h2, last_dates={("Near", "tx_count"): yesterday,
                                                 ("Near", "active_addresses"): yesterday,
-                                                ("Near", "fees_native_tokens"): yesterday}).run([near], 35, out2)
+                                                ("Near", "fees_native_tokens"): yesterday,
+                                                ("Near", "locked_tokens_nearblocks"): today()}).run([near], 35, out2)
     assert len(h2.calls) == 1, f"a routine run makes ONE call: {h2.calls}"
     got2 = out2.frame().query("metric == 'actual_buyback_tokens'")
     import pytest
     assert sorted(got2.value) == pytest.approx([1.0, 2.0, 3.0, 7.0]), "the window is re-emitted from kept totals"
-    assert out2.current == {("Near", "tx_count"), ("Near", "active_addresses"), ("Near", "fees_native_tokens")}
+    assert out2.current == {("Near", "tx_count"), ("Near", "active_addresses"), ("Near", "fees_native_tokens"),
+                            ("Near", "locked_tokens_nearblocks")}
     from fetch.gaps import detect
     gaps = detect([near], out2.frame(), out2.current, {}, [])
     assert not [g for g in gaps if g["metric"] in ("tx_count", "active_addresses")], \
@@ -18018,10 +18022,12 @@ def test_pendle_token_yield_is_pendle_distributed_over_real_plus_virtual():
     # TOKENS PRIMARY (2026-09-30): every PROTOCOL_YIELD project gets the token yield — where no
     # token series is declared, holders revenue in tokens at the Q0 AVERAGE price
     sky = str(build(5, config.PROJECT_BY_NAME["Sky"]))
-    # Sky's stakers are paid by the USDS-rewards farm since 2026-10-07: USDS from the Splitter over that farm's stake
-    assert "D[staking_rewards_usds_usd:q0]/D[price_usd:q0]" in sky and "D[locked_tokens_usds_farm:now]" in sky, sky
+    # Sky's stakers are paid by the USDS-rewards farm since 2026-10-07; the headline is that farm row's own arithmetic
+    # (the last 28 days, Jake's run 2026-10-08 11:27), computed at read time
+    assert "D[staking_yield_usds_farm_28d_pct:now]" in sky, sky
     aero = str(build(5, config.PROJECT_BY_NAME["Aerodrome"]))
-    assert "D[holders_revenue_usd:q0]" in aero and "D[ve_locked_supply_tokens:now]" in aero, aero
+    # the reward-bearing stake is the votes cast, Voter.totalWeight (Jake's run 2026-10-08 11:27)
+    assert "D[holders_revenue_usd:q0]" in aero and "D[voter_total_weight_tokens:now]" in aero, aero
     assert label.startswith("PROTOCOL STAKING YIELD (tokens)")
     assert build(5, config.PROJECT_BY_NAME["Fluid"]).startswith("n/a — FLUID staking is not deployed")
     assert abs(4_600_000 / (30_340_000 + 177_780_000) - 0.0221) < 0.001
@@ -23694,6 +23700,11 @@ def test_credibility_tab_has_a_row_for_every_headline_cell_of_the_fifteen_projec
     assert {r[0] for r in rows} == set(config.CREDIBILITY_PROJECTS)
     ours = {r[4] for r in rows}
     for h in cells:
+        # JUDGED ON A RECOMPUTE (Jake's run 2026-10-08 11:27, Ethereum a4_net_change: ours summed over exactly the
+        # reference's days) — the row's ours is that Python figure, not the cell
+        if ((config.CREDIBILITY.get(h["project"]) or {}).get(h["id"]) or {}).get("ours_py"):
+            assert any(r[0] == h["project"] and r[1] and r[4] is not None for r in rows), h["id"]
+            continue
         assert f"='{h['sheet']}'!{h['cell']}" in ours, f"{h['project']} {h['id']} has no Credibility row"
     import credibility as cred
     allowed = ("PASS", "CHECK", "FRESH-only", "UNVERIFIABLE", "N/A") + cred.SIGNED     # + the sign-off categories
@@ -25699,8 +25710,10 @@ def test_chainlink_issuance_is_checked_against_the_24_wallets_outflow():
     spec = config.CREDIBILITY["Chainlink"]["in_issuance"]
     # Jake's run 2026-10-08: LINK's total is a constant 1bn (LinkToken.sol L10), so the reference is d(CoinGecko
     # circulating) over Q0 — the same quantity as d(circ) - d(total) with d(total) = 0
-    assert spec["ours"]["metric"] == "pool_release_tokens" and spec["ref"]["formula"] == "delta_q0"
-    assert spec["ref"]["args"] == {"metric": "circulating_supply"} and "1,000,000,000 LINK" in spec["ref"]["source"]
+    # stock vs flow (Jake's run 2026-10-08 11:27): the release against the scanned net outflow over Q0
+    assert spec["ours"]["metric"] == "pool_release_tokens" and spec["ref"]["formula"] == "q0_net_flow"
+    assert spec["ref"]["args"] == {"out": "noncirc_outflow_scan_tokens", "inn": "noncirc_inflow_scan_tokens"}
+    assert config.CREDIBILITY["Chainlink"]["in_issuance_coingecko"]["ref"]["verdict"] == "N/A (recorded, stepwise)"
     days = pd.date_range("2026-10-04", "2026-10-06")
     cols = ["date", "project", "metric", "value", "source", "tier"]
     g = pd.DataFrame({"date": days, "project": "Chainlink", "metric": "noncirculating_holding_tokens",
@@ -25877,10 +25890,9 @@ def test_overnight_records_are_on_file_and_the_maple_factor_is_corrected():
     """B9/B10/B13/B14: research recorded where the rows read it; the wrong holders-share factor removed."""
     # sign-off round: Pendle's emissions judged by the gauge scan (the schedule stays a ceiling); Plume's issuance by
     # supply.plume.org's constant total
-    # Jake's run 2026-10-08: MATURING until the gauge scan (84%) completes; then the same reference
+    # Jake's run 2026-10-08 11:27: no longer MATURING — judged against the gauge scan (its own tier now)
     pe = config.CREDIBILITY["Pendle"]["in_emissions"]["ref"]
-    assert pe["verdict"].startswith("MATURING") and "emissions_tokens_gauge_mainnet" in pe["why"]
-    assert "ceiling" in pe["why"]
+    assert "verdict" not in pe and pe["metric"] == "emissions_tokens_gauge_mainnet"
     assert config.CREDIBILITY["Plume"]["in_issuance"]["ref"]["manual"]["value"] == 0
     assert "do not wire" in config.SOURCE_REGISTER["api.merkl.xyz"]["licence"]
     why = config.CREDIBILITY["Maple"]["in_revenue"]["ref"]["why"]
@@ -26133,7 +26145,9 @@ def test_sky_two_farms_and_the_revenue_funded_yield_from_minted_usds():
     scan = next(s for s in sky["log_scans"] if s["key"] == "usds_farm_rewards")
     assert scan["count_from"] == ["0x0000000000000000000000000000000000000000"] and scan["count_mints"] is True
     assert scan["token"] == "0xdC035D45d973E3EC169d2276DDab16f1e407384F" and scan["metric"] == "staking_rewards_usds_usd"
-    assert config.PROTOCOL_YIELD["Sky"] == {"revenue": "staking_rewards_usds_usd", "lock": "locked_tokens_usds_farm"}
+    py = config.PROTOCOL_YIELD["Sky"]
+    assert (py["revenue"], py["lock"]) == ("staking_rewards_usds_usd", "locked_tokens_usds_farm")
+    assert py["token_yield"]["farm_rate"]["metric"] == "staking_yield_usds_farm_28d_pct"
     asof = pd.Timestamp("2026-10-07")
     days = pd.date_range("2026-09-10", "2026-10-07")
     long = pd.DataFrame([(d, "Sky", "staking_rewards_usds_usd", 100_000.0) for d in days]
@@ -27268,7 +27282,7 @@ def test_same_source_rows_carry_their_signoff_label_and_native_coin_prices_say_w
                          pd.Timestamp("2026-10-07"))
     assert ref["mode"] == "same_source" and ref["fresh_label"] == spec["fresh_label"]
     # Pendle's a3 is independent since Jake's run 2026-10-08 (his epoch reading), so it carries no fresh_label
-    assert config.CREDIBILITY["Pendle"]["a3_protocol_yield"]["inputs"] == ("in_epoch_apr",)
+    assert config.CREDIBILITY["Pendle"]["a3_protocol_yield"]["inputs"] == ("in_epoch_apr", "in_epoch_reproduction")
     hl = cred.price_inputs("Hyperliquid")["in_price_llama"]["ref"]
     eth = cred.price_inputs("Ethereum")["in_price_llama"]["ref"]
     assert hl["same_source"] and hl["fresh_label"].startswith("DOCUMENTED LIMITATION")
@@ -27332,7 +27346,7 @@ def test_signoff_round_rows_cite_their_evidence():
     assert c["Near"]["in_emissions"]["ref"]["verdict"] == "N/A"
     scan = config.PROJECT_BY_NAME["Pendle"]["log_scans"][0]
     assert scan["holders"] == ["0x47D74516B33eD5D70ddE7119A40839f6Fcc24e57"] and scan["store"]
-    assert c["Pendle"]["in_emissions"]["ref"]["verdict"].startswith("MATURING")       # the scan was at 84%
+    assert c["Pendle"]["in_emissions"]["ref"]["metric"] == "emissions_tokens_gauge_mainnet"   # judged, not MATURING
     assert config.CREDIBILITY["Ethereum"]["a4_net_change"]["show_how"]
 
 
@@ -27346,10 +27360,10 @@ def test_ethereum_net_change_shows_both_sides_leg_by_leg():
                                    ("beacon_chain_eth", 34_000_000.0), ("price_usd", 4_000.0),
                                    ("revenue_usd", 240_000.0))], ignore_index=True)
     v, d, how = cred.FORMULAS["eth_net_formula"]("Ethereum", {}, long, pd.Timestamp("2026-10-06"))
-    assert v is not None and "OURS, same days: issuance 16,200" in how and "burn 360" in how
+    assert v is not None and "OURS, same 6 day(s): issuance 16,200" in how and "burn 360" in how
     ref = cred.reference("Ethereum", config.CREDIBILITY["Ethereum"]["a4_net_change"], {}, long,
                          pd.Timestamp("2026-10-06"))
-    assert "OURS, same days" in ref["note"]
+    assert "OURS, same 6 day(s)" in ref["note"]
 
 
 def test_signoff_round_probes_registered():
@@ -27447,7 +27461,9 @@ def test_sky_yield_headline_is_the_farm_and_the_economy_wide_figure_is_recorded_
     """8: a3 = the USDS farm's revenue yield against its APY on Sky's page (4.61%); the economy-wide yield (holders
     revenue / all staked SKY, ~2.72%) is a labelled second figure, recorded, never the judge."""
     sky = config.CREDIBILITY["Sky"]
-    assert config.PROTOCOL_YIELD["Sky"] == {"revenue": "staking_rewards_usds_usd", "lock": "locked_tokens_usds_farm"}
+    py = config.PROTOCOL_YIELD["Sky"]
+    assert (py["revenue"], py["lock"]) == ("staking_rewards_usds_usd", "locked_tokens_usds_farm")
+    assert py["token_yield"]["farm_rate"]["metric"] == "staking_yield_usds_farm_28d_pct"
     assert sky["a3_protocol_yield"]["manual"]["value"] == 0.0461
     eco = sky["in_yield_economy_wide"]
     assert eco["ours"]["args"]["flow"] == "holders_revenue_usd" and eco["ours"]["args"]["stock"] == "locked_tokens"
@@ -27464,10 +27480,10 @@ def test_etherfi_yield_is_a_documented_limitation_and_pendle_reads_jakes_epoch()
     assert "in_yield_q0" in config.CREDIBILITY["Ether.fi"] and "in_apy_published" in config.CREDIBILITY["Ether.fi"]
     pe = config.CREDIBILITY["Pendle"]
     # Jake, 2026-10-08: the headline stays the Q0 epoch average and INHERITS the epoch-for-epoch row's verdict
-    assert pe["a3_protocol_yield"]["inputs"] == ("in_epoch_apr",)
+    assert pe["a3_protocol_yield"]["inputs"] == ("in_epoch_apr", "in_epoch_reproduction")
     assert "NOT IDENTIFIED" in pe["a3_protocol_yield"]["why"] and "0x33305665" in pe["a3_protocol_yield"]["why"]
     assert pe["in_epoch_apr"]["ref"]["args"]["tokens"] == 82_545 and pe["in_epoch_apr"]["ref"]["tol"] == 1.0
-    assert pe["in_emissions"]["ref"]["verdict"].startswith("MATURING (until 2026-10-09")
+    assert pe["in_emissions"]["ref"]["metric"] == "emissions_tokens_gauge_mainnet"      # judged, not MATURING
     d = pd.Timestamp("2026-09-08")
     long = pd.DataFrame([(d, "Pendle", "locked_tokens_shares", 30_000_000.0),
                          (d, "Pendle", "locked_tokens_virtual", 170_000_000.0),
@@ -27482,8 +27498,10 @@ def test_etherfi_yield_is_a_documented_limitation_and_pendle_reads_jakes_epoch()
            "kind": "calc", "fmt": None}]
     out = cred.build_rows(hc, {}, long, asof, projects={"Pendle"})
     head = next(r for r in out if r["id"] == "a3_protocol_yield")
-    assert head["mode"] == "derived" and head["inputs"] == ("in_epoch_apr",) and not head["missing_inputs"]
-    assert [out[i]["id"] for i in head["input_rows"]] == ["in_epoch_apr"], "the headline inherits the twin's verdict"
+    # ... AND the per-epoch reproduction of its own arithmetic (Jake's run 2026-10-08 11:27): it inherits only if both pass
+    assert head["mode"] == "derived" and head["inputs"] == ("in_epoch_apr", "in_epoch_reproduction")
+    assert not head["missing_inputs"]
+    assert [out[i]["id"] for i in head["input_rows"]] == ["in_epoch_apr", "in_epoch_reproduction"]
 
 
 def test_aerodrome_voting_power_is_judged_by_voter_total_weight_and_the_page_reading_waits_beside_it():

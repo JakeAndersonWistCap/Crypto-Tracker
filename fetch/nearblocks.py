@@ -227,6 +227,8 @@ class NearBlocks:
                 self._project(p["name"], spec, window_days, out)
                 if spec.get("balance_history"):
                     self._balance_history(p["name"], spec, spec["balance_history"], out)
+                if spec.get("validators_info"):
+                    self._validators_info(p["name"], spec, spec["validators_info"], out)
         for p in projects:
             for flow in p.get("near_account_flows") or []:
                 self._account_flow(p["name"], flow, window_days, out)
@@ -274,6 +276,43 @@ class NearBlocks:
                 continue
             bodies[m["path"]] = body
             self._store(name, metric, m, body, window_days, out)
+
+    def _validators_info(self, name: str, spec: dict, vi: dict, out):
+        """THE NETWORK'S CURRENT TOTAL STAKE (Jake's run 2026-10-08 11:27) — /v3/validators/info, one call a day:
+        data.total_stake in yoctoNEAR (the sum of current_epoch_stake, Nearblocks/nearblocks @e9e74695). Stored for
+        today; a second run the same day does not call again."""
+        metric, key = vi["metric"], self._key(spec)
+        if not key:
+            out.unconfigured(SOURCE, name, f"{metric}: no {spec['key_env']} in .env", TIER)
+            return
+        last = self.last_dates.get((name, metric))
+        if last is not None and pd.Timestamp(last).normalize() >= today().normalize():
+            out.mark_current(SOURCE, name, metric, f"{metric}: NOT re-fetched — today's total_stake is stored", TIER)
+            return
+        from .scrape import robots_verdict
+        url = spec["base_url"].rstrip("/") + vi["path"]
+        allowed, why = robots_verdict(url)
+        if not allowed:
+            out.fail(SOURCE, name, f"{metric}: robots.txt disallows {url} — {why}", TIER)
+            return
+        try:
+            body = self._get(url, {}, key)
+        except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
+            out.fail(SOURCE, name, f"{metric}: {vi['path']}: {self._scrub(spec, e)}", TIER)
+            out.gap(name, metric, reason=f"NearBlocks {vi['path']} did not answer: {self._scrub(spec, e)}",
+                    tiers_attempted="1", suggestion="Read the status above; a 401 is the key.")
+            return
+        data = body.get("data") if isinstance(body, dict) else None
+        raw = data.get(vi["field"]) if isinstance(data, dict) else None
+        try:
+            value = int(str(raw)) / 10 ** int(vi.get("yocto_exponent", 24))
+        except (TypeError, ValueError):
+            shape = sorted(data)[:12] if isinstance(data, dict) else type(body).__name__
+            out.fail(SOURCE, name, f"{metric}: {vi['path']} carried {vi['field']}={raw!r} (keys {shape}) — "
+                                   f"NOTHING STORED", TIER)
+            return
+        out.add(tidy([(today(), value)], name, metric, f"{SOURCE}:validators/info", TIER), SOURCE, name,
+                f"{metric}={value:,.0f} NEAR (total_stake {raw} yocto)", TIER)
 
     def _balance_history(self, name: str, spec: dict, bh: dict, out):
         """THE THREE WALLETS' COMBINED DAILY CLOSE (Jake, 2026-10-07 14:17) — one stats/balance call per account.
