@@ -571,11 +571,12 @@ That run signed off 4 projects (Aethir, Morpho, Uniswap, GEODNET); 11 were OPEN.
 9. **Ether.fi a3: DOCUMENTED LIMITATION.** The Accountant's rate (7.91%) is first-party on-chain. The 14.21% top-ups
    figure is built on the retracted decomposition. in_yield_q0 and in_apy_published stay.
 10. **Pendle.**
-    - a3 = Jake's epoch reading: 82,545 × 26 / (sPENDLE + virtual) on 2026-09-08 (`epoch_apr`).
-    - in_epoch_apr is the like-for-like twin, using our 09-08 distribution with the same arithmetic.
+    - The headline stays the Q0 epoch average, the same trailing window as every other project (Jake, 2026-10-08).
+    - It inherits the verdict of in_epoch_apr (the `inputs` pattern). That row compares our distribution for the
+      2026-09-08 epoch against Jake's 82,545 PENDLE, both × 26 / (sPENDLE + virtual) that day (`epoch_apr`). An
+      average is never set against one epoch.
     - The merkleDistributor 0x33305665… (249,852 PENDLE over 120 days, from EOAs) matches none of the epochs, so the
       on-chain route is recorded as NOT IDENTIFIED.
-    - The headline averages the Q0 epochs, so the a3 row measures that average against one epoch.
     - in_emissions is MATURING to 2026-10-09: the gauge scan was at 84%.
 11. **Aerodrome.**
     - in_voting_power is judged by Voter.totalWeight(), 1,021.4M (ours 1.029bn).
@@ -586,9 +587,9 @@ That run signed off 4 projects (Aethir, Morpho, Uniswap, GEODNET); 11 were OPEN.
     - a3 and in_revenue are MATURING to 2026-10-09 for the re-run.
 12. **UTF-8.** completeness_report's .md, logcache's atomic writes, the BigQuery .sql dump and recalc's macro all
     name UTF-8. A test fails any `open(..., "w")` without an encoding.
-13. **Not done (optional): price backfill before 2025-09-12.** A second price source in `price_usd` trips the
-    measuring-point guard, which blanks the series. Doing it properly needs a declared handover per project: a
-    DefiLlama leg before 2025-09-12, CoinGecko after.
+13. **Price backfill before 2025-09-12: skipped (Jake, 2026-10-08).** Q0 and the trailing year are already priced
+    from 2025-09-12. If it is ever wanted: a second price source in `price_usd` trips the measuring-point guard, so it
+    needs a declared handover per project (DefiLlama before 2025-09-12, CoinGecko after).
 
 ```bash
 python check_offline_items.py aerodrome_voter_rewards sky_farm_rates plume_supply_read

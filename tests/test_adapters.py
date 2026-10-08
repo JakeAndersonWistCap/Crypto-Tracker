@@ -27051,7 +27051,7 @@ def test_probes15_wallets_records_and_probes():
     ref, _o = mr.reference_for([{"project": "Aethir", "row": "in_apr_ai", "value": "0.1248", "read_on": "2026-10-07",
                                  "read_by": "Jake"}], None)
     assert ref["verdict"] == "N/A (recorded)"
-    assert "@3cc3658d" in config.CREDIBILITY["Pendle"]["a3_protocol_yield"]["note"]
+    assert "@3cc3658d" in config.CREDIBILITY["Pendle"]["a3_protocol_yield"]["why"]
     for fn in (coi.etherfi_vault_archive, coi.etherfi_contract_ids, coi.fluid_vesting_recipients,
                coi.maple_ssf_partial, coi.aerodrome_managed_venfts, coi.pendle_epoch_revenues):
         assert fn in coi.CHECKS
@@ -27268,7 +27268,7 @@ def test_same_source_rows_carry_their_signoff_label_and_native_coin_prices_say_w
                          pd.Timestamp("2026-10-07"))
     assert ref["mode"] == "same_source" and ref["fresh_label"] == spec["fresh_label"]
     # Pendle's a3 is independent since Jake's run 2026-10-08 (his epoch reading), so it carries no fresh_label
-    assert config.CREDIBILITY["Pendle"]["a3_protocol_yield"]["formula"] == "epoch_apr"
+    assert config.CREDIBILITY["Pendle"]["a3_protocol_yield"]["inputs"] == ("in_epoch_apr",)
     hl = cred.price_inputs("Hyperliquid")["in_price_llama"]["ref"]
     eth = cred.price_inputs("Ethereum")["in_price_llama"]["ref"]
     assert hl["same_source"] and hl["fresh_label"].startswith("DOCUMENTED LIMITATION")
@@ -27463,8 +27463,10 @@ def test_etherfi_yield_is_a_documented_limitation_and_pendle_reads_jakes_epoch()
     assert ef["verdict"] == "DOCUMENTED LIMITATION" and "retracted" in ef["why"] and ef["resolve"].startswith("upgrade:")
     assert "in_yield_q0" in config.CREDIBILITY["Ether.fi"] and "in_apy_published" in config.CREDIBILITY["Ether.fi"]
     pe = config.CREDIBILITY["Pendle"]
-    assert pe["a3_protocol_yield"]["formula"] == "epoch_apr" and pe["a3_protocol_yield"]["args"]["tokens"] == 82_545
-    assert "NOT IDENTIFIED" in pe["a3_protocol_yield"]["note"] and "0x33305665" in pe["a3_protocol_yield"]["note"]
+    # Jake, 2026-10-08: the headline stays the Q0 epoch average and INHERITS the epoch-for-epoch row's verdict
+    assert pe["a3_protocol_yield"]["inputs"] == ("in_epoch_apr",)
+    assert "NOT IDENTIFIED" in pe["a3_protocol_yield"]["why"] and "0x33305665" in pe["a3_protocol_yield"]["why"]
+    assert pe["in_epoch_apr"]["ref"]["args"]["tokens"] == 82_545 and pe["in_epoch_apr"]["ref"]["tol"] == 1.0
     assert pe["in_emissions"]["ref"]["verdict"].startswith("MATURING (until 2026-10-09")
     d = pd.Timestamp("2026-09-08")
     long = pd.DataFrame([(d, "Pendle", "locked_tokens_shares", 30_000_000.0),
@@ -27472,10 +27474,16 @@ def test_etherfi_yield_is_a_documented_limitation_and_pendle_reads_jakes_epoch()
                          (d, "Pendle", "pendle_distributed_tokens", 82_545.0)],
                         columns=["date", "project", "metric", "value"])
     asof = pd.Timestamp("2026-10-08")
-    ref = cred.reference("Pendle", pe["a3_protocol_yield"], {}, long, asof)
-    assert abs(ref["value"] - 82_545 * 26 / 200_000_000) < 1e-12
     twin = pe["in_epoch_apr"]
+    ref = cred.reference("Pendle", twin["ref"], {}, long, asof)
+    assert abs(ref["value"] - 82_545 * 26 / 200_000_000) < 1e-12 and ref["mode"] == "independent"
     assert cred.ours_value("Pendle", twin["ours"], {}, long, asof) == ref["value"], "the same arithmetic both sides"
+    hc = [{"project": "Pendle", "sheet": "A3", "cell": "C9", "id": "a3_protocol_yield", "header": "PROTOCOL YIELD",
+           "kind": "calc", "fmt": None}]
+    out = cred.build_rows(hc, {}, long, asof, projects={"Pendle"})
+    head = next(r for r in out if r["id"] == "a3_protocol_yield")
+    assert head["mode"] == "derived" and head["inputs"] == ("in_epoch_apr",) and not head["missing_inputs"]
+    assert [out[i]["id"] for i in head["input_rows"]] == ["in_epoch_apr"], "the headline inherits the twin's verdict"
 
 
 def test_aerodrome_voting_power_is_judged_by_voter_total_weight_and_the_page_reading_waits_beside_it():

@@ -24683,21 +24683,21 @@ CREDIBILITY: dict = {
             "on Jake's run 2026-10-08; until it completes the reference (PENDLE out to the markets, Q0) reads low. "
             "Then: emissions_tokens_gauge_mainnet over Q0, tol 25% (mainnet markets only — L2 gauges are their own "
             "contracts; the schedule's ~1.42M/Q0 is a ceiling).", "2026-10-09")),
-        # FROM JAKE'S EPOCH READING (Jake's run 2026-10-08): APR = the epoch's distribution x 26 / reward-bearing stake
-        # (real + virtual sPENDLE) on that day. THE ON-CHAIN ROUTE IS NOT IDENTIFIED: the merkleDistributor 0x33305665…
-        # was funded 249,852 PENDLE over 120 days from EOAs, which matches none of the epochs (144K/199K/94K/140K/83K),
-        # so it is not the per-epoch reward contract — recorded, not wired.
-        "a3_protocol_yield": {"formula": "epoch_apr", "args": _PENDLE_EPOCH, "tol": 25.0,
-                              "source": "Jake's reading of Pendle's staking page: 82,545 PENDLE distributed in the "
-                                        "epoch of 2026-09-08, x 26 epochs / (sPENDLE + virtual) stored that day",
-                              "note": "ON-CHAIN ROUTE NOT IDENTIFIED: merkleDistributor 0x33305665… funding (249,852 "
-                                      "PENDLE over 120 days, from EOAs) matches none of the epochs (144K/199K/94K/140K/"
-                                      "83K), so it is not the epoch reward contract. The headline averages the Q0 "
-                                      "epochs; the reference is ONE epoch — in_epoch_apr below is the like-for-like "
-                                      "twin (ours for that epoch, the same arithmetic). Pendle's lastEpochApr "
-                                      "(spendle/data) is the same API as ours, so it is not the reference — and NO OTHER ENDPOINT "
-                                      "exists (Jake's probes15, root M: pendle-finance/documentation @3cc3658d, "
-                                      "ApiOverview.mdx L240-305, lists only /v1/spendle/data and /v1/spendle/:address)."},
+        # JUDGED EPOCH FOR EPOCH (Jake, 2026-10-08): the headline stays the Q0 epoch average (every project's trailing
+        # window) and inherits the verdict of in_epoch_apr — ours for the 2026-09-08 epoch against Jake's 82,545 PENDLE,
+        # the same arithmetic both sides — rather than setting an average against one epoch. THE ON-CHAIN ROUTE IS NOT
+        # IDENTIFIED: the merkleDistributor 0x33305665… was funded 249,852 PENDLE over 120 days from EOAs, which matches
+        # none of the epochs (144K/199K/94K/140K/83K), so it is not the per-epoch reward contract — recorded, not wired.
+        "a3_protocol_yield": {"inputs": ("in_epoch_apr",),
+                              "source": "the epoch-for-epoch row below (ours for 2026-09-08 vs Jake's 82,545 PENDLE)",
+                              "why": "The headline is the Q0 epoch average x 365.25/14 over real + virtual sPENDLE; it "
+                                     "is judged through its inputs, epoch for epoch — one average is never set against "
+                                     "one epoch. ON-CHAIN ROUTE NOT IDENTIFIED: merkleDistributor 0x33305665… funding "
+                                     "(249,852 PENDLE over 120 days, from EOAs) matches none of the epochs (144K/199K/"
+                                     "94K/140K/83K). Pendle's lastEpochApr (spendle/data) is the same API as ours, and "
+                                     "NO OTHER ENDPOINT exists (Jake's probes15, root M: pendle-finance/documentation "
+                                     "@3cc3658d, ApiOverview.mdx L240-305, lists only /v1/spendle/data and "
+                                     "/v1/spendle/:address)."},
         "in_epoch_apr": _c_in_py("APR of the epoch of 2026-09-08: OUR distribution x 26 / (sPENDLE + virtual) that day",
                                  "epoch_apr", {**_PENDLE_EPOCH, "ours_metric": "pendle_distributed_tokens"},
                                  {"formula": "epoch_apr", "args": _PENDLE_EPOCH, "tol": 1.0,
