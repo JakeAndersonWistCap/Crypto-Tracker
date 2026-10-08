@@ -469,7 +469,9 @@ def main(argv=None) -> int:
         md += ["", f"## Bugs ({len(bugs)})", ""] + [f"- {n}/{m}: {d}" for n, m, d in bugs]
         if signoff:
             md += ["", "## Sign-off (Credibility)", "", "```"] + signoff + ["```"]
-        open(a.md, "w").write("\n".join(md) + "\n")
+        # UTF-8, not the platform default (Jake's run 2026-10-08: cp1252 could not encode '\u2212' and the .md crashed)
+        with open(a.md, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(md) + "\n")
         print(f"\nwritten {a.md}")
     return 0
 

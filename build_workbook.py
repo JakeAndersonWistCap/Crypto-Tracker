@@ -1855,6 +1855,11 @@ def _net_common_views(groups: dict) -> None:
         s = lambda g: (g.assign(date=pd.to_datetime(g["date"]).dt.normalize())  # noqa: E731
                        .drop_duplicates("date", keep="last").set_index("date")["value"].astype(float))
         both = pd.concat([s(gi).rename("i"), s(gb).rename("b")], axis=1).dropna()
+        # a day counts only where every REQUIRED series is stored too (Ethereum: staked ETH, so the credibility curve
+        # reference covers exactly the same days — Jake's run 2026-10-08)
+        for m in spec.get("require") or ():
+            g = groups.get((name, m))
+            both = both[both.index.isin(s(g).index)] if g is not None and not g.empty else both.iloc[0:0]
         if both.empty:
             continue
         view = pd.DataFrame({"date": both.index, "project": name, "metric": spec["metric"],
@@ -1990,6 +1995,9 @@ def _issuance_views(groups: dict, asof: pd.Timestamp) -> None:
                     f"{float(c['value'].iloc[-1]):,.0f} on all {len(c)} stored day(s) of the window")
 
 
+_LAST_GROUPS: dict = {}            # aggregate()'s groups after every read-time view
+
+
 def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp,
               gaps: pd.DataFrame | None = None, review: pd.DataFrame | None = None) -> pd.DataFrame:
     """Every project x every metric in the library — so every INDEX/MATCH key resolves."""
@@ -2039,6 +2047,8 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _cg_plus_staked_views(groups)
     _market_cap_views(groups)     # AFTER the on-chain circulating it may use; BEFORE NRR reads it
     _settlement_views(groups)
+    _LAST_GROUPS.clear()
+    _LAST_GROUPS.update(groups)       # the views, for Credibility rows that read them (credibility.VIEWS_LONG)
     # The latest value of every series, keyed the same way — so a flow can be checked against the
     # stock it was differenced from without depending on the order METRICS happens to iterate in.
     latest_value = {}
@@ -5274,6 +5284,9 @@ def write_credibility(ws, R: Refs, data_by_key: dict, long: pd.DataFrame, asof) 
     import credibility as cred
     from openpyxl.formatting.rule import FormulaRule
     in_scope = {p["name"] for p in scoped_projects()}
+    frames = [g for g in _LAST_GROUPS.values() if g is not None and not g.empty]
+    cred.VIEWS_LONG = (pd.concat(frames, ignore_index=True).assign(date=lambda d: pd.to_datetime(d["date"]))
+                       if frames else None)
     rows = cred.build_rows(_HEADLINE_CELLS, data_by_key, long, asof, projects=in_scope)
     projects = [n for n in config.CREDIBILITY_PROJECTS if n in in_scope]
     parked = "; ".join(f"{k}: {v}" for k, v in config.CREDIBILITY_PARKED.items())

@@ -314,6 +314,7 @@ METRICS = {
     # lsSKY staked in each StakingRewards farm = lsSKY.balanceOf(farm); the USDS farm's rewards are surplus the Splitter
     # pays it (revenue-funded), the SKY farm's are treasury SKY released by a vest (emissions_tokens).
     "locked_tokens_sky_farm":   {"label": "lsSKY staked in the SKY-rewards farm (REWARDS_LSSKY_SKY; lsSKY.balanceOf(farm))", "kind": "stock", "unit": "tokens", "archetypes": [4], "tiers": [2], "sanity_min": 0, "sanity_max": 3e10, "only_projects": ("Sky",)},
+    "sky_farm_reward_rate_tokens_per_s": {"label": "SKY-rewards farm rewardRate() — SKY paid per second to lsSKY stakers (REWARDS_LSSKY_SKY's own state)", "kind": "stock", "unit": "tokens", "archetypes": [4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e4, "only_projects": ("Sky",)},
     "locked_tokens_usds_farm":  {"label": "lsSKY staked in the USDS-rewards farm (REWARDS_LSSKY_USDS; lsSKY.balanceOf(farm))", "kind": "stock", "unit": "tokens", "archetypes": [4], "tiers": [2], "sanity_min": 0, "sanity_max": 3e10, "only_projects": ("Sky",)},
     "staking_rewards_usds_usd": {"label": "USDS paid by the Splitter to the lsSKY USDS-rewards farm ($, USDS = 1) — staking rewards funded by protocol surplus", "kind": "flow", "unit": "usd", "archetypes": [4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Sky",)},
     # MAPLE (Jake, 2026-10-07): staking ended (MIP-019); the SYRUP still sitting in stSYRUP is shown, not called a lock.
@@ -340,6 +341,11 @@ METRICS = {
     "ecosystem_rewards_cumulative_tokens": {"label": "Total Rewards Distributed — ecosystem page, ALL programmes (cumulative)", "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 42e9, "only_projects": ("Aethir",)},
     "supply_units_edge":     {"label": "Staked edge devices — a named supply component (GPU containers stay supply_units)", "kind": "stock", "unit": "units", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Aethir",)},
     "supply_units_checker_licences": {"label": "Delegated checker-node licences (numberDelegatedCheckers) — a named supply component", "kind": "stock", "unit": "units", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Aethir",)},
+    "noncirculating_igp137_tokens": {
+        "label": "FLUID in the IGP-137 custody 0xcabebc7f… (5M, locked per IGP-137) — subtracted from on-chain "
+                 "circulating; its own series because CoinGecko still COUNTS it (like-for-like, Jake 2026-10-08)",
+        "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0,
+        "sanity_max": 1e8, "view_only": True, "only_projects": ("Fluid",)},
     "noncirculating_holding_tokens": {
         "label": "Tokens in the project's own NON-CIRCULATING wallets (docs / registry / explorer-labelled; team, "
                  "foundation, ecosystem, converter reserves) — subtracted from on-chain circulating",
@@ -3027,7 +3033,9 @@ PROJECTS = [
         # blocked issuance (forward-only from 2026-09-30) − burn (the full window). The net change is computed on the
         # days BOTH are measured, annualised over those days (build_workbook._net_common_views).
         "net_change_common_days": {"issuance": "gross_issuance_tokens", "burn": "gross_burn_tokens",
-                                   "metric": "net_supply_change_tokens"},
+                                   "metric": "net_supply_change_tokens",
+                                   # IDENTICAL DAYS with the curve reference (Jake's run 2026-10-08): staked ETH too
+                                   "require": ("beacon_chain_eth",)},
         "net_supply_regime": {
             "current": "mildly inflationary",
             "annual_supply_growth_pct": [0.0083, 0.0085],
@@ -3230,6 +3238,10 @@ PROJECTS = [
             "note": "NEAR mints validator rewards on a declared inflation curve.",
         },
         "name": "Near", "symbol": "NEAR",
+        # THE CHAIN'S RECORD IS THE BURN (Jake's run 2026-10-08): block-header total_supply falls are ALL supply
+        # destroyed (gas + failed-receipt burns + other); fees x 0.70 (DefiLlama-derived gross_burn_tokens) is the gas
+        # share only and stays as the labelled cross-check (Credibility a4_gross_burn). Burn yield and crossover read it.
+        "a4_burn_metric": "gross_burn_tokens_bigquery",
         # Issuance = d(block-header total_supply) + burn (2026-09-28): see total_supply_protocol.
         "issuance_supply_metric": "total_supply_protocol",
         # ===== GOOGLE'S PUBLIC NEAR DATASET — LIVE (Jake, 2026-10-01). fetch/near_bigquery.py. =====
@@ -13940,6 +13952,17 @@ PROJECTS = [
                 read_method="escrow_balance_of", token_standard="erc20", underlying="lssky", holder_has_code=True,
                 metric_override="locked_tokens_sky_farm",
                 purpose="lsSKY staked in the SKY-rewards farm — the denominator of its rate (SKY emissions)."),
+            # THE FARM'S OWN RATE (Jake's run 2026-10-08: sky_farm_rates read rewardRate x year / staked = 6.58%, equal to
+            # Block Analitica's apy 0.06575). `uint256 public rewardRate` — sky-ecosystem/endgame-toolkit @db3cc6a4
+            # src/synthetix/StakingRewards.sol L44 — in SKY wei per second, scaled by SKY's decimals.
+            "sky_farm_reward_rate": _contract(
+                "0xB44C2Fb4181D7Cb06bdFf34A46FdFe4a259B40Fc", "ethereum", "stake_principal", "SKY",
+                "https://github.com/sky-ecosystem/endgame-toolkit/blob/db3cc6a4cc4852f3677055b7a37dbd0492ce2f9c/src/synthetix/StakingRewards.sol",
+                verified="2026-10-08", provenance="ChainLog REWARDS_LSSKY_SKY (spells-mainnet addresses_mainnet.sol L594); "
+                                                  "rewardRate() read live by sky_farm_rates on Jake's run 2026-10-08",
+                call="rewardRate", token_standard="erc20", underlying="token", holder_has_code=True,
+                metric_override="sky_farm_reward_rate_tokens_per_s",
+                purpose="SKY paid per second by the SKY-rewards farm — the numerator of its on-chain APR."),
             "usds_farm_stake": _contract(
                 "0x38E4254bD82ED5Ee97CD1C4278FAae748d998865", "ethereum", "stake_underlying", "lssky",
                 "https://github.com/sky-ecosystem/spells-mainnet/blob/3982314/src/test/addresses_mainnet.sol",
@@ -17559,6 +17582,9 @@ for _name, _rows in _NONCIRC_WALLETS_FIRST_PARTY.items():
             _addr, _chain, "treasury_holding", _sym, _url, verified=_date, purpose=_why,
             provenance=f"first-party wallet list (full sweep, Jake 2026-10-07): {_url}", holder_has_code=False,
             metric_override=_NC)
+# FLUID'S IGP-137 CUSTODY GETS ITS OWN SERIES (Jake's run 2026-10-08: on-chain 77.964M vs CoinGecko 83.697M, -6.9%):
+# CoinGecko still counts the 5M, so the like-for-like comparison adds it back — which needs it apart from the rest.
+PROJECT_BY_NAME["Fluid"]["contracts"]["noncirc_igp137_lock"]["metric_override"] = "noncirculating_igp137_tokens"
 
 
 # ===== "DefiLlama Pro tier only" WAS THE WRONG REASON ON NEARLY EVERY ROW. Added 2026-09-23. =====
@@ -20871,7 +20897,10 @@ CIRCULATING_ONCHAIN = {
     # NOT the team's — they stay circulating, with the liquidity layer's and the Uniswap pool's FLUID — so the set is
     # Fluid's whole documented list and primary.
     "Fluid": {"status": "established", "total": "total_supply", "filing_confirms": "2026-10-07", "ratios_use": "onchain",
-              "subtract": ("treasury_holding_tokens", "noncirculating_holding_tokens"),
+              "subtract": ("treasury_holding_tokens", "noncirculating_holding_tokens", "noncirculating_igp137_tokens"),
+              # LIKE-FOR-LIKE (Jake's run 2026-10-08: 77.964M vs CoinGecko 83.697M, -6.9%): CoinGecko still counts the
+              # IGP-137 custody's 5M (moved 2026-08-14); ours + it vs CoinGecko, the 5M on its own gap row (in_circ_gap)
+              "coingecko_counts": ("noncirculating_igp137_tokens",),
               "method": "100M − DAO Treasury 0x2884… − Team Multisig 0x4F6F… − (the full sweep, 2026-10-07) the "
                         "governance Timelock, TEAM_MULTISIG_2, FLUID_FOUNDATION (fluid-governance@8891f73d "
                         "constants.sol) − the five mainnet FLUID MerkleDistributors' unclaimed rewards "
@@ -23527,6 +23556,12 @@ def _c_chk(why: str, resolve: str) -> dict:
     return {"verdict": "CHECK", "why": why, "resolve": resolve}
 
 
+# Jake's epoch reading (Pendle staking page, 2026-09-29) as epoch_apr arguments — the a3 reference and its twin.
+_PENDLE_EPOCH = {"tokens": 82_545, "date": "2026-09-08", "stock": "locked_tokens_shares", "plus": ("locked_tokens_virtual",),
+                        "mult": 26, "read_by": "Jake", "source": "Pendle staking page 'Last Epoch Distribution', read "
+                                                                 "2026-09-29"}
+
+
 def _c_lim(why: str, evidence: str, upgrade: str) -> dict:
     """DOCUMENTED LIMITATION (sign-off round 2026-10-07): no free second source exists. Refused without the evidence
     and without what would upgrade it — a limitation is a finding about the sources, never a shortcut."""
@@ -23547,6 +23582,18 @@ def _c_mat(why: str, until: str) -> dict:
     if not (why and until):
         raise ValueError("MATURING needs why and the date it fills by")
     return {"verdict": f"MATURING (until {until})", "why": why}
+
+
+# NO EMISSION PROGRAMME, SOURCED (Jake's run 2026-10-08: a3_net_absorption read "emissions — no row checks them").
+# The project's N/A emissions row is the checked input of buyback − emissions (credibility.resolve_alias).
+EMISSIONS_DECLARED_ZERO = {
+    "Maple": "staking rewards sunset by MIP-019 and Drips ended after Q4 2025, last claims 2026-02-18 "
+             "(maple-docs @07d8ff8e syrup-tokenomics/staking.md; syrupusdc-usdt-for-lenders/drips-rewards.md)",
+    "Ether.fi": "fixed 1,000,000,000 ETHFI: total and maximum supply 1bn (Binance Research ether.fi profile, "
+                "2024-03; on-chain totalSupply 1,000,000,000 at 0xFe0c30065B384F05761f15d0CC899D4F9F9Cc0eB, "
+                "Routescan) and our own daily total_supply reads flat; no emission programme — sETHFI rewards are "
+                "top-ups from the treasury and buybacks (share decomposition), not new tokens",
+}
 
 
 def _c_na(why: str) -> dict:
@@ -23599,7 +23646,7 @@ CREDIBILITY: dict = {
                                       "penalties take actual issuance a few % below it."},
         # 2026-10-07: the reference was CoinGecko's d(circulating) over Q0 and read 1.43M ETH (impossible); it is now
         # the issuance curve minus DefiLlama's burn on OUR common days — both independent of our Etherscan reads.
-        "a4_net_change": {"formula": "eth_net_formula", "tol": 20.0, "show_how": True,
+        "a4_net_change": {"formula": "eth_net_formula", "tol": 20.0, "show_how": True, "use_views": True,
                           "source": "issuance curve (166.32 x sqrt(staked ETH)/day) − DefiLlama burned fees / price, on "
                                     "the same days our issuance and burn are both stored — ours is Etherscan's",
                           "note": "The curve assumes full participation: an upper bound by ~1-2% of issuance."},
@@ -23662,10 +23709,15 @@ CREDIBILITY: dict = {
         # cross-check — it moves in steps, so a wide band, judged over Q0.
         "in_issuance": _c_in("Issuance Q0 (pool_release_tokens: the 27 non-circulating wallets' net outflow)",
                              "pool_release_tokens", "q0",
-                             {"formula": "delta_diff_q0", "args": {"a": "circulating_supply", "b": "total_supply"},
+                             # LINK's total is FIXED (Jake's run 2026-10-08: total_supply is now-only by design, so
+                             # d(total) had no history): LinkToken.sol declares `uint public constant totalSupply =
+                             # 10**27` (smartcontractkit/LinkToken @8fd6d624 contracts/v0.4/LinkToken.sol L10; the
+                             # token 0x514910771AF9Ca656af840dff83E8264EcF986CA) — d(total) = 0, so the reference is
+                             # d(CoinGecko circulating) across Q0
+                             {"formula": "delta_q0", "args": {"metric": "circulating_supply"},
                               "tol": 25.0,
-                              "source": "CoinGecko d(circulating) − d(total) across Q0 — Chainlink's supply API as "
-                                        "relayed; stepwise",
+                              "source": "CoinGecko d(circulating) across Q0 (total fixed at 1,000,000,000 LINK by the "
+                                        "token contract) — Chainlink's supply API as relayed; stepwise",
                               "note": "Ours needs the wallets' balance series back to the Q0 start: `python "
                                       "archive_backfill.py --run --project Chainlink` fills it from archive reads."}),
         # B4 (overnight 2026-10-06): DefiLlama's chainlink fees ARE every token the fee aggregator receives on Ethereum
@@ -23702,7 +23754,8 @@ CREDIBILITY: dict = {
                           "args": {"metrics": ("buyback_hypercore_asxn_usd", "hyperevm_burn_usd_asxn")}, "tol": 15.0,
                           "source": "ASXN HyperCore buyback + HyperEVM burn ($) / same-day price — ours is Hyperliquid's "
                                     "own Assistance Fund + supply reads",
-                          "note": "ASXN's HyperEVM series lags ~10 days; ASXN is for internal checking only."},
+                          "note": "ASXN's HyperEVM series lags ~10 days (16 on 2026-10-08 — flagged 'LAG GREW', kept as "
+                                  "is); ASXN is for internal checking only."},
         # Jake's probes15 (root B): the daily change of Hyperliquid's OWN circulatingSupply (tokenDetails) net of the
         # Assistance Fund buyback leg, on our own days — no longer a Q0 delta that waited for tokenDetails to span
         # the window
@@ -23750,12 +23803,19 @@ CREDIBILITY: dict = {
         # FEES (sign-off round): ASXN's 30-day annualised revenue (browser route, INTERNAL checking only) — on
         # HyperCore the trading fees accrue to the protocol (Assistance Fund + HLP), so fees ≈ revenue; a persistent
         # gap would be builder / deployer fees that DefiLlama counts as fees and ASXN does not.
+        # VERIFIED FINDING (Jake's run 2026-10-08 08:37): fees are NOT revenue on HyperCore. DefiLlama fees $1.067bn
+        # (30d annualised) vs ASXN revenue $843M: fees exceed revenue by 26.7%, i.e. ~21% of fees (1 − 843 / 1,067)
+        # do not accrue to the protocol — while DefiLlama REVENUE vs ASXN revenue passes (+2.7%, in_revenue).
         "in_fees": _c_in_py("Fees, last 30 days annualised (DefiLlama)", "last30_annualised",
-                            {"metric": "fees_usd"},
-                            {"metric": "revenue_annualised_usd_asxn", "window": "now", "tol": 15.0,
-                             "source": "ASXN annualised revenue (30d) — browser route, internal checking only",
-                             "note": "HyperCore fees accrue to the protocol, so fees ≈ revenue; a persistent gap "
-                                     "beyond 15% is the builder / deployer fee share."}, fmt=_C_USD),
+                            {"metric": "fees_usd"}, _c_find(
+            "DefiLlama's fees are user-paid fees in total; ~21% of them (fees $1.067bn vs ASXN revenue $843M, "
+            "annualised 30d, 2026-10-08: +26.7%) are builder-code fees and HIP-3 deployer fee shares that go to "
+            "builders and market deployers, not to the protocol — so fees ≠ revenue, a real-world split, not an error.",
+            "Jake's run 2026-10-08 08:37: in_fees +26.7% vs ASXN revenue while in_revenue (DefiLlama revenue vs ASXN) "
+            "passes at +2.7% — the revenue sides agree, the fee side carries the non-protocol share. Hyperliquid's docs: "
+            "builder codes let a front end charge its own fee on users' orders, paid to the builder; HIP-3 lets a "
+            "deployer set and keep a share of its perp market's fees (hyperliquid.gitbook.io/hyperliquid-docs: Trading "
+            "› Builder codes; HIP-3). Revenue (the protocol's share) is judged on in_revenue."), fmt=_C_USD),
         "in_revenue": _c_in_py("Revenue, last 30 days annualised (DefiLlama)", "last30_annualised",
                                {"metric": "revenue_usd"},
                                {"metric": "revenue_annualised_usd_asxn", "window": "now", "tol": 15.0,
@@ -23771,11 +23831,16 @@ CREDIBILITY: dict = {
                                               "this row PASSES, inactive stake explains the gap. STATUS 2026-10-07: "
                                               "-22.8% on the run of 2026-10-07 against the total-stake curve; no new "
                                               "research resolves the rest — open, no action (Jake)."}),
-        "in_emissions": _c_in("Emissions Q0 (fall in tokenDetails.futureEmissions)", "emissions_tokens", "q0",
-                              {"metric": "emissions_modelled_tokens", "window": "q0", "tol": 20.0,
-                               "source": "the documented reward curve applied to the daily stake (emissions_modelled_tokens)",
-                               "note": "Observed vs the protocol's own formula; inactive stake earns nothing, which "
-                                       "moves them apart."}),
+        # VERIFIED FINDING (Jake's run 2026-10-08): the full-curve comparison is redundant with in_emissions_active —
+        # observed is -21.3% vs the curve paid on ALL stake and -5.3% (PASS) vs the curve paid on ACTIVE stake only.
+        "in_emissions": _c_in("Emissions Q0 (fall in tokenDetails.futureEmissions) vs the curve on ALL stake",
+                              "emissions_tokens", "q0", _c_find(
+            "Observed emissions read 21.3% below the documented curve applied to TOTAL stake because ~21% of staked "
+            "HYPE sits with inactive or jailed validators and earns nothing; against the curve paid on ACTIVE stake "
+            "only, the same figure passes (in_emissions_active, -5.3%).",
+            "Jake's run 2026-10-08 08:37: in_emissions -21.3% vs emissions_modelled_tokens; in_emissions_active -5.3% "
+            "(PASS). Rate set by total stake, paid on active stake (validatorSummaries isActive / isJailed; "
+            "locked_tokens_inactive quantifies the inactive share).")),
     },
     # ---------------------------------------------------------------- Near
     "Near": {
@@ -23803,12 +23868,19 @@ CREDIBILITY: dict = {
                             fmt=_C_USD),
         # B1 (overnight 2026-10-06): NEAR'S OWN CHAIN as the reference — BigQuery's blocks table, block-header
         # total_supply: within-epoch falls = the burn, epoch-first rises = the mint (fetch/near_bigquery._supply_flows).
-        "a4_gross_burn": {"metric": "gross_burn_tokens_bigquery", "window": "q0", "tol": 10.0,
-                          "source": "NEAR block headers (BigQuery crypto_near_mainnet_us.blocks.total_supply): the "
-                                    "within-epoch falls, summed over Q0",
-                          "note": "Ours is DefiLlama fees x the burned share in force (0.70 before v87). Tolerance 10%: "
-                                  "the chain's burn also carries failed-refund deposits and slashing, and each "
-                                  "epoch-first block's burn is estimated (~1 block in 43,000)."},
+        # VERIFIED FINDING (Jake's run 2026-10-08 08:37): the headline is now the header burn; fees x 0.70 is the
+        # labelled cross-check, and the gap between them is the NON-GAS burn.
+        "a4_gross_burn": {"metric": "gross_burn_tokens", "window": "q0", "tol": 10.0,
+                          "force_verdict": "VERIFIED FINDING",
+                          "why": "Ours (block-header burn, BigQuery) 66,878 NEAR vs fees x 0.70 = 59,505 over Q0 (Jake's run "
+                                 "2026-10-08): the headers record ALL supply destroyed — gas plus failed-receipt "
+                                 "deposits and other protocol burns — so ~7,373 NEAR (~11% of the header burn) is "
+                                 "NON-GAS burn that a fee-based figure cannot see. A real-world split, not an error.",
+                          "source": "CROSS-CHECK: DefiLlama fees x the burned share in force (0.70 before v87) = "
+                                    "gross_burn_tokens, Q0 — the GAS burn only",
+                          "note": "Ours is the block-header burn (BigQuery crypto_near_mainnet_us.blocks.total_supply: "
+                                  "the within-epoch falls, summed over Q0) — primary since 2026-10-08. Each epoch-first "
+                                  "block's burn is estimated (~1 block in 43,000)."},
         "a4_gross_issuance": {"metric": "gross_issuance_tokens_bigquery", "window": "q0", "tol": 5.0,
                               "source": "NEAR block headers (BigQuery): the epoch-first blocks' rise in total_supply, "
                                         "summed over Q0 — what the chain actually minted",
@@ -23851,21 +23923,18 @@ CREDIBILITY: dict = {
         "in_buyback": _c_in_py("NEAR buyback, 30 days to 2026-10-07 ($): the change in the three revenue wallets' "
                                "combined balance x same-day price", "window_sum",
                                {"metric": "actual_buyback_tokens", "end": "2026-10-07", "days": 30,
-                                "times_price": True},
+                                "times_price": True, "use_views": True},
                                {"manual": {"value": 2_080_000, "read_on": "2026-10-07", "read_by": "Jake",
                                            "source": "revenue.near.org — net revenue, last 30 days"},
                                 "tol": 15.0,
                                 "note": "Revenue swept into the wallets vs what the wallets added: a price move "
                                         "between a sweep and the day's close, and the wNEAR legs (not counted), move "
                                         "them apart."}, fmt=_C_USD),
-        # (sign-off round 2026-10-07): emissions_tokens is the declared issuance x the documented 90% validator share
-        # (non_comparable.emissions_tokens), so its on-chain reference is BigQuery's epoch-boundary mint x 0.9.
-        "in_emissions": _c_in("Emissions Q0 (declared issuance x 90% to validators)", "emissions_tokens", "q0",
-                              {"metric": "gross_issuance_tokens_bigquery", "window": "q0", "scale": 0.9, "tol": 5.0,
-                               "source": "NEAR block headers (BigQuery): the epoch-first blocks' rise in total_supply "
-                                         "over Q0 x 90% (validator share) — what the chain minted for validators",
-                               "note": "Tolerance 5%, as for a4_gross_issuance: offline validators make the actual "
-                                       "mint fall short of the declared maximum."}),
+        # ONE ANSWER, NOT TWO (Jake's run 2026-10-08): completeness classes NEAR emissions N/A — the issuance route — so
+        # this row says the same; the mint itself is judged on a4_gross_issuance against BigQuery's headers.
+        "in_emissions": _c_in("Emissions Q0", "emissions_tokens", "q0", _c_na(
+            "the issuance route: NEAR's emission is gross_issuance_tokens (declared protocol rule), judged on "
+            "a4_gross_issuance against the BigQuery header mint (completeness_report DECISIONS, Near emissions_tokens)")),
         # GAS REVENUE, A SECOND INDEXER (sign-off round 2026-10-07): DefiLlama's NEAR revenue is Allium's
         # transaction_fee_raw x 0.7 'Burned NEAR' (DefiLlama/dimension-adapters master, fees/near/index.ts, read
         # 2026-10-07); NearBlocks' txn_fee x the same 0.7 x same-day price is the same quantity from another indexer.
@@ -24046,7 +24115,7 @@ CREDIBILITY: dict = {
             "trail's SYRUP going OUT to 0x83971edb… bears on the open SSF-selling question, not on buys.)",
             "2026-10-08")),
         "in_emissions": _c_in("Emissions Q0", "emissions_tokens", "q0", _c_na(
-            "staking rewards sunset by MIP-019 and Drips ended Q4 2025 — no emissions")),
+            "no emissions — " + EMISSIONS_DECLARED_ZERO["Maple"])),
     },
     # ---------------------------------------------------------------- Morpho
     "Morpho": {
@@ -24117,20 +24186,36 @@ CREDIBILITY: dict = {
         # (881,100,168), which decays with lock time; veAERO.supply() counts AERO locked (in_locked). Both stored.
         "in_voting_power": _c_in("veAERO voting power (veAERO.totalSupply(), decayed weight — NOT AERO locked)",
                                  "ve_voting_power_tokens", "now",
-                                 _c_chk("Awaiting a reading of aerodrome.finance's total veAERO voting power.",
-                                        "manual reading: total veAERO (voting power)")),
+                                 # Jake's run 2026-10-08: aerodrome_voter_rewards read Voter.totalWeight() = 1,021.4M
+                                 # (votes cast, on-chain) against ours 1.029bn — within 1%. The page's 881.1M is
+                                 # recorded on in_voting_power_page, pending a label check.
+                                 {"manual": {"value": 1_021_400_000, "read_on": "2026-10-08", "read_by": "Jake",
+                                             "source": "Voter.totalWeight() on Base (the Voter read from veAERO.voter()), "
+                                                       "read by check_offline_items.py aerodrome_voter_rewards — "
+                                                       "1,021.4M, as printed"},
+                                  "tol": 2.0,
+                                  "note": "Votes cast can only be at or below total voting power (a lock that has not "
+                                          "voted carries power but no weight), so ours reads at or above it; 2% "
+                                          "allows for the votes not yet re-cast this epoch."}),
+        "in_voting_power_page": _c_in("veAERO voting power — aerodrome.finance's tile (recorded beside, label unchecked)",
+                                      "ve_voting_power_tokens", "now",
+                                      _c_chk("Awaiting a reading of aerodrome.finance's total veAERO voting power.",
+                                             "manual reading: total veAERO (voting power)")),
         # MATURING (Jake's sign-off round, 2026-10-07): the on-chain reference is what the voters were PAID —
         # aerodrome_voter_rewards reads every gauge's FeesVotingReward / BribeVotingReward tokenRewardsPerEpoch for the
         # last complete epoch (Reward.sol @1ba30815), priced, x 52 / (Voter.totalWeight() x price).
         "a3_protocol_yield": _c_mat(
             "Ours is DefiLlama voter fees + bribes / (veAERO supply x price). The on-chain reference — fees + bribes "
             "notified to the voting-reward contracts in the last complete epoch over the votes cast — is read by "
-            "aerodrome_voter_rewards on Jake's morning run; a match within ~10% wires it, a miss is investigated.",
-            "2026-10-08"),
+            "aerodrome_voter_rewards on Jake's morning run; a match within ~10% wires it, a miss is investigated. "
+            "Its first read (Jake's run 2026-10-08) came back $10,817/epoch against DefiLlama's ~$1.9M/week because "
+            "Alchemy refused the JSON-RPC batches; it now reads through Multicall3.aggregate3 and is re-run.",
+            "2026-10-09"),
         "in_revenue": _c_in("Voter revenue Q0 (DefiLlama fees + bribes)", "revenue_usd", "q0", _c_mat(
             "DefiLlama's figure; the same aerodrome_voter_rewards read (fees + bribes paid into the voting-reward "
-            "contracts per epoch, from state) is the on-chain second source, on Jake's morning run.",
-            "2026-10-08"), fmt=_C_USD),
+            "contracts per epoch, from state) is the on-chain second source — re-run through Multicall3 after the "
+            "JSON-RPC batches were refused on Jake's run 2026-10-08.",
+            "2026-10-09"), fmt=_C_USD),
         # THE TWO DEFINITIONS, UNTANGLED (sign-off round 2026-10-07): veAERO.supply() is AERO LOCKED (1.053bn, Jake's
         # read); aerodrome.finance's 881,100,168 is VOTING POWER (veAERO.totalSupply(): each lock's balance decays with
         # its remaining time, permanent locks do not) — in_voting_power. Both are one contract on Base.
@@ -24182,13 +24267,18 @@ CREDIBILITY: dict = {
                                      {"metric": "sethfi_accountant_rate", "days": 368},
                                      _c_chk("Awaiting a reading of the app's staked-ETHFI APY.",
                                             "manual reading: app.ether.fi staked-ETHFI APY"), fmt=_C_PCT),
-        "a3_protocol_yield": {"metric": "token_yield_trailing_pct", "window": "now", "tol": 25.0,
-                              "source": "genuine reward top-ups over the trailing 365 days / that day's ETHFI staked "
-                                        "(token_yield_trailing_pct) — the headline is the Accountant's rate growth",
-                              "note": "Funding (PROTOCOL_YIELD Ether.fi funding_mix_2026_10_07, rebuilt from genuine "
-                                      "top-ups only): the old programme 6.49M ETHFI + the top-up Safe 1.14M. RETRACTED: "
-                                      "'exit penalties 14.12M' (they are sETHFI bridged to other chains), and the two "
-                                      "'unlabelled senders' (the strategy PositionManager and the ETHFI OFT lockbox)."},
+        # DOCUMENTED LIMITATION (Jake's run 2026-10-08): the headline (the Accountant's rate growth, 7.91%) is first-party
+        # on-chain; the only second figure (top-ups / staked, 14.21%) is built on the retracted decomposition.
+        "a3_protocol_yield": _c_lim(
+            "The headline is the sETHFI Accountant's own exchange rate grown over the trailing 365 days (7.91% on Jake's "
+            "run 2026-10-08) — first-party, on-chain. No independent second figure exists: the top-ups route (14.21%) "
+            "is built on the decomposition that was retracted, and the app's APY (1.79%) is a forward rate.",
+            "token_yield_trailing_pct read 14.21% from genuine top-ups over staked, but its funding mix "
+            "(funding_mix_2026_10_07) rests on retracted items — 'exit penalties 14.12M' were sETHFI bridged to other "
+            "chains, and the two 'unlabelled senders' were the strategy PositionManager and the ETHFI OFT lockbox. "
+            "The Q0 rows stay: in_yield_q0 (Accountant over Q0) and in_apy_published (the app's APY beside it).",
+            "ether.fi publishing a per-epoch reward ledger for sETHFI, or a top-up decomposition rebuilt without the "
+            "retracted items that reconciles to the Accountant's rate"),
         # VERIFIED FINDING (Jake's sign-off round, 2026-10-07): the declared programme is not executing at its
         # declared scale — our measured fills are the real-world figure.
         "in_buyback": _c_in("ETHFI bought Q0 (DEX fills into 0x2f53… + the top-up Safe 0x3fb6…)", "actual_buyback_tokens",
@@ -24201,6 +24291,8 @@ CREDIBILITY: dict = {
             "(4 of 5 owners shared with the buyback Safe), paid INTO sETHFI. DefiLlama's ether.fi-stake holders "
             "revenue reads $0 over 2026-09-03..10-05. etherfi_withdrawal_fees prints the eETH fees still arriving at "
             "0x2f53… month by month beside the ETHFI bought.")),
+        "in_emissions": _c_in("Emissions Q0", "emissions_tokens", "q0", _c_na(
+            "no emissions — " + EMISSIONS_DECLARED_ZERO["Ether.fi"])),
         # REVENUE (sign-off round): the eETH withdrawal fees are on-chain (DefiLlama's adapter: transferred to
         # 0x2f5301a3…) but not yet a stored series; etherfi_withdrawal_fees reads them.
         "in_revenue": _c_in("Revenue Q0 (DefiLlama)", "revenue_usd", "q0", _c_lim(
@@ -24274,18 +24366,30 @@ CREDIBILITY: dict = {
                                      "locked_tokens_usds_farm", "now",
                                      _c_chk("Awaiting Jake's reading of info.skyeco.com/staking.",
                                             "manual reading: USDS-rewards farm staked")),
-        "in_apy_sky_farm": _c_in_py("SKY-rewards farm rate: SKY released to it, last 28 days annualised / SKY staked in it",
-                                    "rate_on_stake", {"flow": "emissions_tokens", "stock": "locked_tokens_sky_farm",
-                                                      "days": 28},
-                                    _c_chk("Awaiting Jake's reading of the farm's APY.",
-                                           "manual reading: SKY-rewards farm APY"), fmt=_C_PCT),
+        # ON-CHAIN RATE (Jake's run 2026-10-08): the farm's own rewardRate() x year / staked (6.58%, = Block Analitica's
+        # 0.06575). The 28-day released-SKY method lags each weekly distribute(); kept for the USDS farm only.
+        "in_apy_sky_farm": _c_in_py("SKY-rewards farm rate: rewardRate() x 31,536,000 / SKY staked in it (on-chain)",
+                                    "reward_rate_apr", {"rate": "sky_farm_reward_rate_tokens_per_s",
+                                                        "stock": "locked_tokens_sky_farm"},
+                                    {"manual": {"value": 0.0658, "read_on": "2026-10-07", "read_by": "Jake",
+                                                "source": "info.skyeco.com/staking, SKY-rewards farm APY 6.58% (Jake's "
+                                                          "reading; sky_farm_rates read the same 6.58% from the farm's "
+                                                          "own rewardRate on 2026-10-08)"},
+                                     "tol": 5.0, "note": "A simple rate: StakingRewards pays out, it does not compound."},
+                                    fmt=_C_PCT),
         "in_apy_usds_farm": _c_in_py("USDS-rewards farm rate: USDS paid by the Splitter, last 28 days annualised / "
                                      "(SKY staked in it x SKY price)",
                                      "rate_on_stake", {"flow": "staking_rewards_usds_usd",
                                                        "stock": "locked_tokens_usds_farm", "days": 28,
                                                        "price": "price_usd"},
-                                     _c_chk("Awaiting Jake's reading of the farm's APY.",
-                                            "manual reading: USDS-rewards farm APY"), fmt=_C_PCT),
+                                     {"manual": {"value": 0.0461, "read_on": "2026-10-07", "read_by": "Jake",
+                                                 "source": "info.skyeco.com/staking, USDS-rewards farm APY 4.61% "
+                                                           "(Jake's reading)"},
+                                      "tol": 10.0,
+                                      "note": "Ours is USDS PAID over 28 days (the farm's period ends 2026-10-08, so "
+                                              "rewardRate x year would read a rate about to stop); the page shows the "
+                                              "live rate. Tolerance 10%: a 28-day average against a spot rate."},
+                                     fmt=_C_PCT),
         # Jake's probes15 (root F): the spell is the monthly reference. Stage 2 burns began with the 2026-09-10 spell,
         # executed 2026-09-13: Sky.burn(pauseProxy, 2,860,943.76) — a REAL burn (totalSupply falls; a transfer to 0x0
         # reverts in Sky.sol L96-97). The headline is judged by its month row; each later monthly settlement spell
@@ -24339,9 +24443,23 @@ CREDIBILITY: dict = {
                                                     "SKY, not minted; 2026-10-05)"},
         "a4_net_change": {"formula": "delta_q0", "args": {"metric": "total_supply_protocol"}, "tol": 20.0,
                           "source": "d(SKY totalSupply on-chain, archive-backfilled) across Q0"},
-        "a3_protocol_yield": _c_chk(
-            "Ours is DefiLlama holders revenue / (staked SKY x price); Sky's own staking rewards rate (sky.money) is "
-            "not read.", "read the SKY staking rewards rate on sky.money by hand and record it"),
+        # FARM-LEVEL REVENUE YIELD (Jake's run 2026-10-08): the headline is USDS paid by the Splitter / (SKY in the USDS
+        # farm x price) — PROTOCOL_YIELD["Sky"] since 2026-10-07 — against the farm's APY on Sky's own page. The
+        # economy-wide figure (holders revenue / all staked SKY, ~2.72%) is the labelled second figure below.
+        "a3_protocol_yield": {"manual": {"value": 0.0461, "read_on": "2026-10-07", "read_by": "Jake",
+                                         "source": "info.skyeco.com/staking, USDS-rewards farm APY 4.61% (Jake's "
+                                                   "reading) — the farm the headline measures"},
+                              "tol": 10.0,
+                              "note": "Ours is the USDS paid over the trailing window (4.40% on Jake's run 2026-10-08) "
+                                      "against the page's live rate (4.61%). Tolerance 10%: an average against a spot "
+                                      "rate. The economy-wide yield is in_yield_economy_wide."},
+        "in_yield_economy_wide": _c_in_py(
+            "SECOND FIGURE, economy-wide: holders revenue, last 30 days annualised / (ALL staked SKY x price)",
+            "rate_on_stake", {"flow": "holders_revenue_usd", "stock": "locked_tokens", "days": 30, "price": "price_usd"},
+            {"verdict": "N/A (recorded)",
+             "why": "recorded beside the headline, not judged: what all of Sky's holders revenue would pay across every "
+                    "staked SKY (~2.72% on Jake's run 2026-10-08). The headline is what the USDS farm actually pays "
+                    "(a3_protocol_yield)."}, fmt=_C_PCT),
         "in_buyback_july": _c_in_py("SKY bought, July 2026 (flapper Exec)", "sum_month",
                                     {"metric": "actual_buyback_tokens", "month": "2026-07"},
                                     {"manual": {"value": 19_840_000, "read_on": "2026-08-01", "read_by": "Claude Code",
@@ -24429,13 +24547,14 @@ CREDIBILITY: dict = {
                                         "locked_tokens_usds_farm", "now",
                                         {"metric": "locked_tokens_usds_farm_ba", "window": "now", "tol": 2.0,
                                          "source": "Block Analitica info-sky farm 0x38e4254b… total_staked (daily)"}),
-        "in_apy_sky_farm_ba": _c_in_py("SKY-rewards farm rate (ours, 28 days annualised) vs Block Analitica's apy",
-                                       "rate_on_stake", {"flow": "emissions_tokens", "stock": "locked_tokens_sky_farm",
-                                                         "days": 28},
-                                       {"metric": "sky_farm_apy_ba", "window": "now", "tol": 15.0,
-                                        "source": "Block Analitica info-sky farm apy, as published",
-                                        "note": "Ours is a simple rate (fraction). If Block Analitica publishes percent "
-                                                "the row reads ~100x apart — the unit is read off the first run."},
+        "in_apy_sky_farm_ba": _c_in_py("SKY-rewards farm rate (ours, rewardRate x year / staked) vs Block Analitica's apy",
+                                       "reward_rate_apr", {"rate": "sky_farm_reward_rate_tokens_per_s",
+                                                           "stock": "locked_tokens_sky_farm"},
+                                       {"metric": "sky_farm_apy_ba", "window": "now", "tol": 5.0,
+                                        "source": "Block Analitica info-sky farm apy, as published (a fraction: 0.06575 "
+                                                  "on Jake's run 2026-10-08)",
+                                        "note": "Both read the farm's live rate: ours from rewardRate(), theirs as "
+                                                "published — 6.58% vs 0.06575 on Jake's run 2026-10-08."},
                                        fmt=_C_PCT),
         "in_apy_usds_farm_ba": _c_in_py("USDS-rewards farm rate (ours, 28 days annualised) vs Block Analitica's apy",
                                         "rate_on_stake", {"flow": "staking_rewards_usds_usd",
@@ -24445,16 +24564,10 @@ CREDIBILITY: dict = {
                                          "source": "Block Analitica info-sky farm apy, as published",
                                          "note": "As the SKY-farm row: the unit is read off the first run."},
                                         fmt=_C_PCT),
-        "in_rewards_sky_farm_ba": _c_in_py(
-            "SKY released to the SKY-rewards farm, last 28 days (measured) vs d(total_farmed)", "common_days_sum",
-            {"a": "emissions_tokens", "b": "sky_farm_rewards_tokens_ba", "days": 28, "side": "ours", "min_days": 20},
-            {"formula": "common_days_sum", "tol": 15.0,
-             "args": {"a": "emissions_tokens", "b": "sky_farm_rewards_tokens_ba", "days": 28, "side": "ref",
-                      "min_days": 20},
-             "source": "Block Analitica info-sky: the farm's cumulative rewards (total_farmed), differenced per day",
-             "note": "Ours is the release INTO the farm (distribute() about weekly); theirs is what the farm accrued to "
-                     "stakers — they agree over weeks, not days. Sky books these rewards as an expense "
-                     "(P&L 'SKY Rewards (USDS-SKY)', Direct Expenses / Rewards): emissions, not revenue."}),
+        # in_rewards_sky_farm_ba RETIRED (Jake's run 2026-10-08: 0 shared days). Our release INTO the farm lands on the
+        # ~weekly distribute() days only, Block Analitica's accrual every day, so a same-day comparison never reaches 20
+        # days. The release is judged by in_emissions (every declared vest stream) and the farm's rate by
+        # in_apy_sky_farm(_ba) from its own rewardRate.
         "in_rewards_usds_farm_ba": _c_in_py(
             "USDS paid to the USDS-rewards farm, last 28 days (mint scan, $) vs d(total_farmed)", "common_days_sum",
             {"a": "staking_rewards_usds_usd", "b": "usds_farm_rewards_usds_ba", "days": 28, "side": "ours",
@@ -24563,28 +24676,33 @@ CREDIBILITY: dict = {
         # design — a two-sided tolerance against it would CHECK whenever AIM pays less, which is not an error.
         # ON-CHAIN (Jake's sign-off round, 2026-10-07): the PENDLE the mainnet GaugeController actually paid its markets
         # (log_scans.gauge_pendle_out, seeded from block 0 on the first run). The schedule stays a CEILING only.
-        "in_emissions": _c_in("Emissions Q0 (tokens)", "emissions_tokens", "q0",
-                              {"metric": "emissions_tokens_gauge_mainnet", "window": "q0", "tol": 25.0,
-                               "source": "PENDLE out of the mainnet GaugeController to its markets (MarketClaimReward "
-                                         "transfers), Q0 — on-chain",
-                               "note": "Mainnet markets only: a CHECK with ours ABOVE the reference by about the L2 "
-                                       "markets' share is that coverage gap, not an error (each L2 gauge controller is "
-                                       "its own contract). The schedule (~1.42M over Q0 at the terminal 2%/yr) is a "
-                                       "ceiling: AIM pays fixed-dollar incentives at or below it."}),
-        "a3_protocol_yield": {"metric": "staking_apr_published", "window": "now", "tol": 25.0, "same_source": True,
-                              "zero_is_missing": True,
-                              # sign-off round: rewards are paid by merkle "in the form of sPENDLE" (sPENDLE.md); the
-                              # merkle contract funded each epoch is not in Pendle's deployment file, so the on-chain
-                              # figure waits on pendle_spendle_rewards_onchain identifying it from the chain
-                              "fresh_label": "DOCUMENTED LIMITATION (shared input: Pendle's API)",
-                              "source": "Pendle's lastEpochApr (spendle/data)",
-                              "note": "Ours is PENDLE distributed per epoch (the same API) over on-chain sPENDLE + "
-                                      "virtual — a shared input, so FRESH-only at best. NO OTHER ENDPOINT (Jake's "
-                                      "probes15, root M): Pendle's docs (pendle-finance/documentation @3cc3658d, "
-                                      "2026-10-06, ApiOverview.mdx L240-305 and the OpenAPI spec) list only "
-                                      "GET /v1/spendle/data and /v1/spendle/:address for sPENDLE; every ve-pendle "
-                                      "route is deprecated and not updated. A 0 lastEpochApr falls back to the last "
-                                      "complete epoch's aprs entry; with none above 0 the row has no reference."},
+        # MATURING (Jake's run 2026-10-08): the GaugeController scan (log_scans.gauge_pendle_out, seeded from block 0)
+        # stood at 84% of its span — a partial scan reads LOW, so the row waits for the scan to finish on the next run.
+        "in_emissions": _c_in("Emissions Q0 (tokens)", "emissions_tokens", "q0", _c_mat(
+            "the mainnet GaugeController scan (log_scans.gauge_pendle_out, seeded from block 0) was at 84% of its span "
+            "on Jake's run 2026-10-08; until it completes the reference (PENDLE out to the markets, Q0) reads low. "
+            "Then: emissions_tokens_gauge_mainnet over Q0, tol 25% (mainnet markets only — L2 gauges are their own "
+            "contracts; the schedule's ~1.42M/Q0 is a ceiling).", "2026-10-09")),
+        # FROM JAKE'S EPOCH READING (Jake's run 2026-10-08): APR = the epoch's distribution x 26 / reward-bearing stake
+        # (real + virtual sPENDLE) on that day. THE ON-CHAIN ROUTE IS NOT IDENTIFIED: the merkleDistributor 0x33305665…
+        # was funded 249,852 PENDLE over 120 days from EOAs, which matches none of the epochs (144K/199K/94K/140K/83K),
+        # so it is not the per-epoch reward contract — recorded, not wired.
+        "a3_protocol_yield": {"formula": "epoch_apr", "args": _PENDLE_EPOCH, "tol": 25.0,
+                              "source": "Jake's reading of Pendle's staking page: 82,545 PENDLE distributed in the "
+                                        "epoch of 2026-09-08, x 26 epochs / (sPENDLE + virtual) stored that day",
+                              "note": "ON-CHAIN ROUTE NOT IDENTIFIED: merkleDistributor 0x33305665… funding (249,852 "
+                                      "PENDLE over 120 days, from EOAs) matches none of the epochs (144K/199K/94K/140K/"
+                                      "83K), so it is not the epoch reward contract. The headline averages the Q0 "
+                                      "epochs; the reference is ONE epoch — in_epoch_apr below is the like-for-like "
+                                      "twin (ours for that epoch, the same arithmetic). Pendle's lastEpochApr "
+                                      "(spendle/data) is the same API as ours, so it is not the reference — and NO OTHER ENDPOINT "
+                                      "exists (Jake's probes15, root M: pendle-finance/documentation @3cc3658d, "
+                                      "ApiOverview.mdx L240-305, lists only /v1/spendle/data and /v1/spendle/:address)."},
+        "in_epoch_apr": _c_in_py("APR of the epoch of 2026-09-08: OUR distribution x 26 / (sPENDLE + virtual) that day",
+                                 "epoch_apr", {**_PENDLE_EPOCH, "ours_metric": "pendle_distributed_tokens"},
+                                 {"formula": "epoch_apr", "args": _PENDLE_EPOCH, "tol": 1.0,
+                                  "source": "Jake's reading (82,545 PENDLE, Pendle staking page) over the same stake"},
+                                 fmt=_C_PCT),
         "in_buyback": _c_in("PENDLE bought Q0 (DefiLlama holders revenue / same-day price)", "actual_buyback_tokens",
                             "q0", {"metric": "pendle_distributed_tokens", "window": "q0", "tol": 25.0,
                                    "source": "Pendle's own per-epoch distribution (spendle/data buybackAmounts), Q0",

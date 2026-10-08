@@ -98,7 +98,7 @@ def atomic_write_text(path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with file_lock(path):
         tmp = unique_tmp(path)
-        tmp.write_text(text)
+        tmp.write_text(text, encoding="utf-8")
         replace_with_retry(tmp, path)
 
 class LogCache:

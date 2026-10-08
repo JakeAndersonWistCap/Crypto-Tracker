@@ -527,6 +527,76 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11au. Jake's run 2026-10-08 08:37: closing the rest
+
+That run signed off 4 projects (Aethir, Morpho, Uniswap, GEODNET); 11 were OPEN. Item by item:
+
+1. **Ethereum a4_net_change: identical days.** Both sides now use the days that hold issuance, burn AND staked ETH.
+   - The headline view requires `beacon_chain_eth` (`net_change_common_days.require`).
+   - The reference reads the read-time views (`use_views`) instead of the raw store, so it can't see 9 days while
+     the headline sees 6.
+2. **Chainlink in_issuance.** LINK's total is a constant 1bn: `uint public constant totalSupply = 10**27`
+   (smartcontractkit/LinkToken @8fd6d624, contracts/v0.4/LinkToken.sol L10). So issuance = d(CoinGecko circulating)
+   over Q0 (`delta_q0`), and a1_fees_issuance follows.
+3. **Hyperliquid.**
+   - in_fees is a VERIFIED FINDING: $1.067bn of fees against $843M of ASXN revenue. The ~21% difference is builder-code
+     and HIP-3 fees, which don't reach the protocol.
+   - The full-curve emissions row (−21.3%) is a VERIFIED FINDING: ~21% of stake is inactive. It sits beside the
+     active row (−5.3%, PASS).
+   - The 16-day ASXN HyperEVM lag stays flagged as it is.
+4. **NEAR.**
+   - in_buyback had "no figure" because credibility read the raw store, while NEAR's buyback is a read-time view
+     (Δ of the three wallets' balance). It now reads the views, and so do the A3 rows it feeds.
+   - Gross burn: the BigQuery header burn is PRIMARY (`a4_burn_metric`), so burn yield and crossover use it.
+     Fees × 0.70 is the labelled cross-check: a VERIFIED FINDING that ~7,373 NEAR (~11%) of the burn is non-gas.
+   - in_emissions is N/A on the issuance route, the same call as completeness.
+5. **Plume in_circ "no figure": not reproduced here.** The entry is ready and the metric is in scope; supply.plume.org
+   is unreachable from the build environment. `check_offline_items.py plume_supply_read` walks each step the run takes,
+   in order: robots, back-off, cache, the GET (status and first bytes), the json_path, then what metrics.db, run_log,
+   gap_report and review_queue hold. The first step that says no is the cause.
+6. **Maple / Ether.fi a3_net_absorption.** Each has an N/A emissions input row, sourced in
+   `config.EMISSIONS_DECLARED_ZERO`. `resolve_alias` counts it as the declared zero.
+7. **Fluid in_circ: like-for-like.** The IGP-137 custody (0xcabebc7f…, 5M) is its own series,
+   `noncirculating_igp137_tokens`. It is subtracted from ours and added back for the CoinGecko comparison
+   (`coingecko_counts`). 77.964M + 5M = 82.96M against 83.70M is −0.9%. The 5M is shown on the definitional-gap row
+   (in_circ_gap). The remaining ~0.73M isn't attributed.
+8. **Sky.**
+   - a3: the headline is the USDS farm's revenue yield, judged against the farm's APY on Sky's page (4.61%).
+     in_yield_economy_wide (holders revenue / all staked SKY, ~2.72%) is the labelled second figure.
+   - The SKY farm's rate is read on chain: `rewardRate()` on REWARDS_LSSKY_SKY is stored daily as
+     `sky_farm_reward_rate_tokens_per_s` (endgame-toolkit @db3cc6a4 StakingRewards.sol L44). APR = rate ×
+     31,536,000 / staked, 6.58%, matching Block Analitica's 0.06575.
+   - The USDS farm keeps the 28-day paid method, because its period ends today.
+   - in_rewards_sky_farm_ba is retired. Weekly releases against a daily accrual never share 20 days.
+9. **Ether.fi a3: DOCUMENTED LIMITATION.** The Accountant's rate (7.91%) is first-party on-chain. The 14.21% top-ups
+   figure is built on the retracted decomposition. in_yield_q0 and in_apy_published stay.
+10. **Pendle.**
+    - a3 = Jake's epoch reading: 82,545 × 26 / (sPENDLE + virtual) on 2026-09-08 (`epoch_apr`).
+    - in_epoch_apr is the like-for-like twin, using our 09-08 distribution with the same arithmetic.
+    - The merkleDistributor 0x33305665… (249,852 PENDLE over 120 days, from EOAs) matches none of the epochs, so the
+      on-chain route is recorded as NOT IDENTIFIED.
+    - The headline averages the Q0 epochs, so the a3 row measures that average against one epoch.
+    - in_emissions is MATURING to 2026-10-09: the gauge scan was at 84%.
+11. **Aerodrome.**
+    - in_voting_power is judged by Voter.totalWeight(), 1,021.4M (ours 1.029bn).
+    - Jake's 881,100,168 is now in manual_references.csv as `in_voting_power_page`: recorded, pending a check of the
+      page's label.
+    - `aerodrome_voter_rewards` batches through Multicall3.aggregate3 (0xcA11bde0…, mds1/multicall @b667d67e).
+      Alchemy refused the JSON-RPC batches. The code at the address is checked before use.
+    - a3 and in_revenue are MATURING to 2026-10-09 for the re-run.
+12. **UTF-8.** completeness_report's .md, logcache's atomic writes, the BigQuery .sql dump and recalc's macro all
+    name UTF-8. A test fails any `open(..., "w")` without an encoding.
+13. **Not done (optional): price backfill before 2025-09-12.** A second price source in `price_usd` trips the
+    measuring-point guard, which blanks the series. Doing it properly needs a declared handover per project: a
+    DefiLlama leg before 2025-09-12, CoinGecko after.
+
+```bash
+python check_offline_items.py aerodrome_voter_rewards sky_farm_rates plume_supply_read
+python token_metrics.py            # stores the SKY farm's rewardRate; Pendle's gauge scan finishes
+python credibility_report.py
+python completeness_report.py      # writes its .md as UTF-8
+```
+
 ## 11at. Corrections to the sign-off round, 2026-10-08
 
 **Maple: the trail shows SYRUP leaving, not buys settling.** 2968b16 read "buys settle OTC via 0x83971edb". That

@@ -23714,7 +23714,8 @@ def test_credibility_never_counts_a_reread_of_our_own_source_as_pass(tmp_path):
     bw, wb = _cred_build(tmp_path)
     rows = cred.build_rows(bw._HEADLINE_CELLS, {}, None, pd.Timestamp("2026-10-05"))
     same = [r for r in rows if r["mode"] == "same_source"]
-    assert {(r["project"], r["id"]) for r in same} >= {("Aethir", "a2_customer_revenue"), ("Pendle", "a3_protocol_yield")}
+    # Pendle's a3 left this set on Jake's run 2026-10-08: it is judged by his epoch reading (independent)
+    assert {(r["project"], r["id"]) for r in same} >= {("Aethir", "a2_customer_revenue")}
     ws = wb["Credibility"]
     head = next(r for r in range(1, 60) if ws.cell(r, 1).value == "Project" and ws.cell(r, 2).value == "Tab")
     for k, r in enumerate(rows):
@@ -24100,9 +24101,9 @@ def test_credibility_price_rows_compare_one_completed_day_and_months_match_whole
     ours, _, how = cred._months_match("GEODNET", {}, long, asof)
     ref, _, _ = cred._months_match("GEODNET", {}, long, asof, side="ref")
     assert ours == 310.0 + 310.0 + 300.0 and ref == 900.0 and "2026-07, 2026-08, 2026-09" in how, how
-    pend = config.CREDIBILITY["Pendle"]
-    zspec = pend["a3_protocol_yield"]
-    assert zspec["zero_is_missing"] is True
+    # the zero-is-missing rule itself (Pendle's a3 is judged by Jake's epoch reading since 2026-10-08)
+    zspec = {"metric": "staking_apr_published", "window": "now", "tol": 25.0, "same_source": True,
+             "zero_is_missing": True}
     lz = pd.DataFrame([(asof, "Pendle", zspec["metric"], 0.0)], columns=["date", "project", "metric", "value"])
     got = cred.reference("Pendle", zspec, {}, lz, asof)
     assert got["value"] is None and "not published" in got["note"]
@@ -25027,7 +25028,7 @@ def test_sethfi_share_price_is_read_at_one_block_now_and_q0_back_for_the_realise
     # since Jake's probes16 the yield is the BoringVault Accountant's rate (the held/supply read is Ethereum-only);
     # the genuine reward top-ups are its reference
     assert config.CREDIBILITY["Ether.fi"]["in_yield_q0"]["ours"]["args"]["metric"] == "sethfi_accountant_rate"
-    assert config.CREDIBILITY["Ether.fi"]["a3_protocol_yield"]["metric"] == "token_yield_trailing_pct"
+    assert config.CREDIBILITY["Ether.fi"]["a3_protocol_yield"]["verdict"] == "DOCUMENTED LIMITATION"
 
     class Fn:
         def __init__(self, f):
@@ -25407,9 +25408,11 @@ def test_circulating_decisions_are_applied_consistently_and_coingecko_free_float
         rows = config._NONCIRC_WALLETS_FIRST_PARTY[n]
         assert len(rows) == cnt, n
         cs = {f"noncirc_{r[0]}": config.PROJECT_BY_NAME[n]["contracts"][f"noncirc_{r[0]}"] for r in rows}
-        assert all(c["metric_override"] == "noncirculating_holding_tokens" and c["verified"] == "2026-10-07"
+        # Fluid's IGP-137 custody is its own series since Jake's run 2026-10-08 (CoinGecko still counts it)
+        assert all(c["metric_override"] == ("noncirculating_igp137_tokens" if k == "noncirc_igp137_lock"
+                                             else "noncirculating_holding_tokens") and c["verified"] == "2026-10-07"
                    and c["source_url"].startswith(src) and c["expected_symbol"] == sym
-                   and c["holder_has_code"] is False for c in cs.values()), n
+                   and c["holder_has_code"] is False for k, c in cs.items()), n
         assert "noncirculating_holding_tokens" in config.circulating_onchain(n)["subtract"], n
     # never wired: Fluid's delegateCall-only distributor and the ReserveContract entry; Aerodrome's `team` role address
     every = {c["address"].lower() for p in config.PROJECTS for c in p.get("contracts", {}).values()
@@ -25567,7 +25570,11 @@ def test_near_burn_and_issuance_from_block_header_total_supply(tmp_path, monkeyp
     a._supply_flows(cl, spec, st, FetchOutput(), "Near")
     assert cl.windows[-1] == ("2026-10-07", "2026-10-07")
     ref = config.CREDIBILITY["Near"]
-    assert ref["a4_gross_burn"]["metric"] == "gross_burn_tokens_bigquery" and ref["a4_gross_burn"]["tol"] == 10.0
+    # Jake's run 2026-10-08: the BigQuery header burn is PRIMARY (the headline's metric); fees x 0.70 is the labelled
+    # cross-check, and its ~11% non-gas share a VERIFIED FINDING
+    assert config.a4_burn_metric("Near") == "gross_burn_tokens_bigquery"
+    assert ref["a4_gross_burn"]["metric"] == "gross_burn_tokens"
+    assert ref["a4_gross_burn"]["force_verdict"] == "VERIFIED FINDING"
     assert ref["a4_gross_issuance"]["metric"] == "gross_issuance_tokens_bigquery"
 
 
@@ -25690,7 +25697,10 @@ def test_chainlink_issuance_is_checked_against_the_24_wallets_outflow():
     # CoinGecko's stepwise d(circulating) - d(total) is the cross-check reference
     import build_workbook as bw
     spec = config.CREDIBILITY["Chainlink"]["in_issuance"]
-    assert spec["ours"]["metric"] == "pool_release_tokens" and spec["ref"]["formula"] == "delta_diff_q0"
+    # Jake's run 2026-10-08: LINK's total is a constant 1bn (LinkToken.sol L10), so the reference is d(CoinGecko
+    # circulating) over Q0 — the same quantity as d(circ) - d(total) with d(total) = 0
+    assert spec["ours"]["metric"] == "pool_release_tokens" and spec["ref"]["formula"] == "delta_q0"
+    assert spec["ref"]["args"] == {"metric": "circulating_supply"} and "1,000,000,000 LINK" in spec["ref"]["source"]
     days = pd.date_range("2026-10-04", "2026-10-06")
     cols = ["date", "project", "metric", "value", "source", "tier"]
     g = pd.DataFrame({"date": days, "project": "Chainlink", "metric": "noncirculating_holding_tokens",
@@ -25739,13 +25749,16 @@ def test_ethereum_net_supply_change_is_computed_over_the_days_both_series_hold()
     """A5: issuance and burn are both forward-only from late September; Q0 net change = issuance - burn over the
     COMMON days only (a full-window burn against a short issuance would read a false deflation)."""
     spec = config.PROJECT_BY_NAME["Ethereum"]["net_change_common_days"]
-    assert spec == {"issuance": "gross_issuance_tokens", "burn": "gross_burn_tokens", "metric": "net_supply_change_tokens"}
+    # Jake's run 2026-10-08: staked ETH must exist on the same day too, so the reference can use the identical days
+    assert spec == {"issuance": "gross_issuance_tokens", "burn": "gross_burn_tokens", "metric": "net_supply_change_tokens",
+                    "require": ("beacon_chain_eth",)}
     import build_workbook as bw
     days = pd.date_range("2026-09-01", "2026-10-05")
     mk = lambda m, ds, v: pd.DataFrame({"date": ds, "project": "Ethereum", "metric": m, "value": v,  # noqa: E731
                                         "source": "x", "tier": 1})
     groups = {("Ethereum", "gross_burn_tokens"): mk("gross_burn_tokens", days, 100.0),
-              ("Ethereum", "gross_issuance_tokens"): mk("gross_issuance_tokens", days[-7:], 2_700.0)}
+              ("Ethereum", "gross_issuance_tokens"): mk("gross_issuance_tokens", days[-7:], 2_700.0),
+              ("Ethereum", "beacon_chain_eth"): mk("beacon_chain_eth", days, 36e6)}
     bw._net_common_views(groups)
     net = groups[("Ethereum", "net_supply_change_tokens")]
     assert len(net) == 7 and (net["value"] == 2_600.0).all()
@@ -25864,8 +25877,10 @@ def test_overnight_records_are_on_file_and_the_maple_factor_is_corrected():
     """B9/B10/B13/B14: research recorded where the rows read it; the wrong holders-share factor removed."""
     # sign-off round: Pendle's emissions judged by the gauge scan (the schedule stays a ceiling); Plume's issuance by
     # supply.plume.org's constant total
-    assert config.CREDIBILITY["Pendle"]["in_emissions"]["ref"]["metric"] == "emissions_tokens_gauge_mainnet"
-    assert "ceiling" in config.CREDIBILITY["Pendle"]["in_emissions"]["ref"]["note"]
+    # Jake's run 2026-10-08: MATURING until the gauge scan (84%) completes; then the same reference
+    pe = config.CREDIBILITY["Pendle"]["in_emissions"]["ref"]
+    assert pe["verdict"].startswith("MATURING") and "emissions_tokens_gauge_mainnet" in pe["why"]
+    assert "ceiling" in pe["why"]
     assert config.CREDIBILITY["Plume"]["in_issuance"]["ref"]["manual"]["value"] == 0
     assert "do not wire" in config.SOURCE_REGISTER["api.merkl.xyz"]["licence"]
     why = config.CREDIBILITY["Maple"]["in_revenue"]["ref"]["why"]
@@ -25992,7 +26007,8 @@ def test_ethereum_net_change_reference_is_independent_and_uses_our_common_days()
     days = pd.date_range("2026-09-29", "2026-10-06")
     long = pd.concat([pd.DataFrame({"date": days, "project": "Ethereum", "metric": m, "value": v})
                       for m, v in (("gross_issuance_tokens", 2_700.0), ("gross_burn_tokens", 100.0),
-                                   ("price_usd", 4_000.0), ("revenue_usd", 400_000.0))], ignore_index=True)
+                                   ("price_usd", 4_000.0), ("revenue_usd", 400_000.0),
+                                   ("beacon_chain_eth", 36e6))], ignore_index=True)
     rows = {"Ethereum|beacon_chain_eth": {"now": 36e6}}
     v, d, how = cred.FORMULAS["eth_net_formula"]("Ethereum", rows, long, asof)
     iss = 166.32 * (36e6 ** 0.5) / 365 * 8
@@ -26281,7 +26297,8 @@ def test_etherfi_headline_is_the_trailing_year_over_average_stake_with_q0_and_th
     assert 0.10 < tw < 0.11 and avg_based > 1.75 * tw
     g = float(groups[("Ether.fi", "token_yield_share_price_trailing_pct")]["value"].iloc[0])
     assert g == pytest.approx((sp["value"].iloc[-1] / sp["value"].iloc[0]) ** (365 / 363) - 1)
-    assert config.CREDIBILITY["Ether.fi"]["a3_protocol_yield"]["metric"] == "token_yield_trailing_pct"   # probes16
+    # Jake's run 2026-10-08: no independent second figure (the top-ups route rests on the retracted decomposition)
+    assert config.CREDIBILITY["Ether.fi"]["a3_protocol_yield"]["verdict"] == "DOCUMENTED LIMITATION"
     assert config.CREDIBILITY["Ether.fi"]["in_yield_q0"]["ref"]["args"]["days"] == 90
     long = pd.concat([tok, lock])[["date", "project", "metric", "value"]]
     y, _d, how = cred.FORMULAS["trailing_token_yield"]("Ether.fi", {}, long, pd.Timestamp("2026-10-06"),
@@ -26841,7 +26858,8 @@ def test_etherfi_trailing_year_is_judged_against_the_years_own_assets_per_share_
     spec = config.CREDIBILITY["Ether.fi"]["a3_protocol_yield"]
     # RETIRED by Jake's probes16: the rebuilt walk is Ethereum-only (bridged shares left their ETHFI behind); the
     # reference is now the genuine reward top-ups and the headline the Accountant's rate. The walk stays stored.
-    assert spec["metric"] == "token_yield_trailing_pct" and "RETRACTED" in spec["note"]
+    # Jake's run 2026-10-08: a DOCUMENTED LIMITATION naming the retracted items
+    assert spec["verdict"] == "DOCUMENTED LIMITATION" and "retracted" in spec["why"]
     scan = next(s for s in config.PROJECT_BY_NAME["Ether.fi"]["log_scans"] if s["key"] == "sethfi_reward_topups")
     assert scan["decompose"]["aps_metric"] == "sethfi_aps_rebuilt" and "sethfi_aps_rebuilt" in config.METRICS
     days = pd.date_range("2025-10-08", "2026-10-07")
@@ -26916,8 +26934,9 @@ def test_near_buyback_rows_use_the_three_wallet_method_and_jakes_revenue_reading
     revenue.near.org's 30-day net revenue; the A3 held-buyback cell shows a 'hold' destination's balance."""
     import credibility as cred
     spec = config.CREDIBILITY["Near"]["in_buyback"]
+    # use_views (Jake's run 2026-10-08, "no figure"): NEAR's buyback is a read-time view, not a raw stored series
     assert spec["ours"] == {"py": "window_sum", "args": {"metric": "actual_buyback_tokens", "end": "2026-10-07",
-                                                         "days": 30, "times_price": True}}
+                                                         "days": 30, "times_price": True, "use_views": True}}
     assert spec["ref"]["manual"]["value"] == 2_080_000 and spec["ref"]["manual"]["read_by"] == "Jake"
     days = pd.date_range("2026-09-01", "2026-10-07")
     long = pd.concat([pd.DataFrame({"date": days, "project": "Near", "metric": "actual_buyback_tokens", "value": 10.0}),
@@ -26965,8 +26984,9 @@ def test_ethereum_net_change_reference_falls_back_to_the_burntfees_counter_and_u
         pd.DataFrame({"date": days[:2], "project": "Ethereum", "metric": "revenue_usd", "value": 400_000.0}),
         pd.DataFrame({"date": pd.date_range("2026-09-30", "2026-10-04"), "project": "Ethereum",
                       "metric": "burn_cumulative_tokens", "value": [0.0, 100.0, 200.0, 290.0, 390.0]}),
-        pd.DataFrame({"date": [pd.Timestamp("2026-09-30"), pd.Timestamp("2026-10-03")], "project": "Ethereum",
-                      "metric": "beacon_chain_eth", "value": [36e6, 49e6]})], ignore_index=True)
+        # identical days since Jake's run 2026-10-08: staked ETH is stored on each day the net change uses
+        pd.DataFrame({"date": days, "project": "Ethereum", "metric": "beacon_chain_eth",
+                      "value": [36e6, 36e6, 49e6, 49e6]})], ignore_index=True)
     v, d, how = cred.FORMULAS["eth_net_formula"]("Ethereum", {}, long, pd.Timestamp("2026-10-05"))
     iss = 166.32 / 365 * (2 * 6000 + 2 * 7000)
     assert abs(v - (iss - (100 + 100 + 90 + 100))) < 1e-6 and "BurntFees counter on 2" in how
@@ -27247,7 +27267,8 @@ def test_same_source_rows_carry_their_signoff_label_and_native_coin_prices_say_w
     ref = cred.reference("Aethir", spec, {}, pd.DataFrame(columns=["date", "project", "metric", "value"]),
                          pd.Timestamp("2026-10-07"))
     assert ref["mode"] == "same_source" and ref["fresh_label"] == spec["fresh_label"]
-    assert cred.signed(config.CREDIBILITY["Pendle"]["a3_protocol_yield"]["fresh_label"])
+    # Pendle's a3 is independent since Jake's run 2026-10-08 (his epoch reading), so it carries no fresh_label
+    assert config.CREDIBILITY["Pendle"]["a3_protocol_yield"]["formula"] == "epoch_apr"
     hl = cred.price_inputs("Hyperliquid")["in_price_llama"]["ref"]
     eth = cred.price_inputs("Ethereum")["in_price_llama"]["ref"]
     assert hl["same_source"] and hl["fresh_label"].startswith("DOCUMENTED LIMITATION")
@@ -27307,10 +27328,11 @@ def test_signoff_round_rows_cite_their_evidence():
     assert "makerdao.ts" in c["Sky"]["in_revenue_defillama_net"]["ref"]["why"]
     nr = c["Near"]["in_revenue"]["ref"]
     assert nr["scale"] == 0.7 and nr["formula"] == "common_days_sum"
-    assert c["Near"]["in_emissions"]["ref"]["scale"] == 0.9
+    # Jake's run 2026-10-08: N/A on the issuance route — the same call completeness makes
+    assert c["Near"]["in_emissions"]["ref"]["verdict"] == "N/A"
     scan = config.PROJECT_BY_NAME["Pendle"]["log_scans"][0]
     assert scan["holders"] == ["0x47D74516B33eD5D70ddE7119A40839f6Fcc24e57"] and scan["store"]
-    assert c["Pendle"]["in_emissions"]["ref"]["metric"] == "emissions_tokens_gauge_mainnet"
+    assert c["Pendle"]["in_emissions"]["ref"]["verdict"].startswith("MATURING")       # the scan was at 84%
     assert config.CREDIBILITY["Ethereum"]["a4_net_change"]["show_how"]
 
 
@@ -27372,3 +27394,145 @@ def test_maple_ssf_trail_reads_as_syrup_leaving_not_buys_settling():
     assert q["status"].startswith("OPEN") and "inference, not proof" in q["trail_inference"]["reading"]
     assert "OTC via" not in config.CREDIBILITY["Maple"]["in_buyback"]["ref"]["why"]
     assert "settle off-venue" not in inspect.getsource(coi.maple_buyback_inflows)
+
+
+# ---- Jake's run 2026-10-08 08:37: close the rest (RUNBOOK 11au) ----
+
+def test_fluid_igp137_custody_is_its_own_series_and_coingecko_is_compared_like_for_like():
+    """7: on-chain 77.964M vs CoinGecko 83.697M (-6.9%). CoinGecko still counts the IGP-137 custody's 5M, so it is its
+    own series, subtracted from ours and added back for the comparison; the 5M is the definitional gap row."""
+    import credibility as cred
+    c = config.PROJECT_BY_NAME["Fluid"]["contracts"]["noncirc_igp137_lock"]
+    assert c["metric_override"] == "noncirculating_igp137_tokens"
+    assert config.METRICS["noncirculating_igp137_tokens"]["only_projects"] == ("Fluid",)
+    spec = config.circulating_onchain("Fluid")
+    assert "noncirculating_igp137_tokens" in spec["subtract"]
+    assert config.coingecko_counts_holdings("Fluid") == ("noncirculating_igp137_tokens",)
+    row = cred.circulating_input("Fluid")
+    assert tuple(row["ours"]["args"]["metrics"]) == ("circulating_supply_onchain", "noncirculating_igp137_tokens")
+    asof = pd.Timestamp("2026-10-08")
+    long = pd.DataFrame([(asof, "Fluid", "circulating_supply_onchain", 77_964_000.0),
+                         (asof, "Fluid", "noncirculating_igp137_tokens", 5_000_000.0)],
+                        columns=["date", "project", "metric", "value"])
+    v = cred.ours_value("Fluid", row["ours"], {}, long, asof)
+    assert v == 82_964_000.0 and abs(v / 83_697_000 - 1) < 0.02, "like-for-like within 2% (was -6.9%)"
+
+
+def test_sky_farm_rate_comes_from_the_farms_own_reward_rate():
+    """8: in_apy_sky_farm(_ba) = rewardRate x 31,536,000 / staked (6.58% = Block Analitica's 0.06575); the rate is
+    read daily from REWARDS_LSSKY_SKY; the USDS farm keeps the 28-day paid method; in_rewards_sky_farm_ba retired."""
+    import credibility as cred
+    from fetch import chain
+    assert any(f["name"] == "rewardRate" for f in chain.ERC20_ABI)
+    c = config.PROJECT_BY_NAME["Sky"]["contracts"]["sky_farm_reward_rate"]
+    assert c["address"] == config.PROJECT_BY_NAME["Sky"]["contracts"]["sky_farm_stake"]["address"]
+    assert c["call"] == "rewardRate" and c["metric_override"] == "sky_farm_reward_rate_tokens_per_s"
+    assert c["kind"] in chain.PRINCIPAL_KINDS, "scaled by SKY's decimals, the farm has none"
+    sky = config.CREDIBILITY["Sky"]
+    for rid in ("in_apy_sky_farm", "in_apy_sky_farm_ba"):
+        assert sky[rid]["ours"]["py"] == "reward_rate_apr"
+    assert sky["in_apy_usds_farm"]["ours"]["py"] == "rate_on_stake", "the USDS farm keeps the 28-day paid method"
+    assert "in_rewards_sky_farm_ba" not in sky
+    asof = pd.Timestamp("2026-10-08")
+    long = pd.DataFrame([(asof, "Sky", "sky_farm_reward_rate_tokens_per_s", 18.43),
+                         (asof, "Sky", "locked_tokens_sky_farm", 8_831_038_307.55)],
+                        columns=["date", "project", "metric", "value"])
+    v, d, how = cred.FORMULAS["reward_rate_apr"]("Sky", {}, long, asof, rate="sky_farm_reward_rate_tokens_per_s",
+                                                 stock="locked_tokens_sky_farm")
+    assert abs(v - 18.43 * 31_536_000 / 8_831_038_307.55) < 1e-12 and d == "2026-10-08"
+    assert abs(v - 0.0658) < 0.001 and "31,536,000" in how
+
+
+def test_sky_yield_headline_is_the_farm_and_the_economy_wide_figure_is_recorded_beside_it():
+    """8: a3 = the USDS farm's revenue yield against its APY on Sky's page (4.61%); the economy-wide yield (holders
+    revenue / all staked SKY, ~2.72%) is a labelled second figure, recorded, never the judge."""
+    sky = config.CREDIBILITY["Sky"]
+    assert config.PROTOCOL_YIELD["Sky"] == {"revenue": "staking_rewards_usds_usd", "lock": "locked_tokens_usds_farm"}
+    assert sky["a3_protocol_yield"]["manual"]["value"] == 0.0461
+    eco = sky["in_yield_economy_wide"]
+    assert eco["ours"]["args"]["flow"] == "holders_revenue_usd" and eco["ours"]["args"]["stock"] == "locked_tokens"
+    assert eco["ref"]["verdict"] == "N/A (recorded)" and "2.72%" in eco["ref"]["why"]
+
+
+def test_etherfi_yield_is_a_documented_limitation_and_pendle_reads_jakes_epoch():
+    """9 + 10: Ether.fi's Accountant rate has no independent second figure (the top-ups route rests on the retracted
+    decomposition); Pendle's yield is judged by 82,545 x 26 / stake, the merkle route recorded as not identified,
+    and the gauge-scan emissions row MATURING until the scan completes."""
+    import credibility as cred
+    ef = config.CREDIBILITY["Ether.fi"]["a3_protocol_yield"]
+    assert ef["verdict"] == "DOCUMENTED LIMITATION" and "retracted" in ef["why"] and ef["resolve"].startswith("upgrade:")
+    assert "in_yield_q0" in config.CREDIBILITY["Ether.fi"] and "in_apy_published" in config.CREDIBILITY["Ether.fi"]
+    pe = config.CREDIBILITY["Pendle"]
+    assert pe["a3_protocol_yield"]["formula"] == "epoch_apr" and pe["a3_protocol_yield"]["args"]["tokens"] == 82_545
+    assert "NOT IDENTIFIED" in pe["a3_protocol_yield"]["note"] and "0x33305665" in pe["a3_protocol_yield"]["note"]
+    assert pe["in_emissions"]["ref"]["verdict"].startswith("MATURING (until 2026-10-09")
+    d = pd.Timestamp("2026-09-08")
+    long = pd.DataFrame([(d, "Pendle", "locked_tokens_shares", 30_000_000.0),
+                         (d, "Pendle", "locked_tokens_virtual", 170_000_000.0),
+                         (d, "Pendle", "pendle_distributed_tokens", 82_545.0)],
+                        columns=["date", "project", "metric", "value"])
+    asof = pd.Timestamp("2026-10-08")
+    ref = cred.reference("Pendle", pe["a3_protocol_yield"], {}, long, asof)
+    assert abs(ref["value"] - 82_545 * 26 / 200_000_000) < 1e-12
+    twin = pe["in_epoch_apr"]
+    assert cred.ours_value("Pendle", twin["ours"], {}, long, asof) == ref["value"], "the same arithmetic both sides"
+
+
+def test_aerodrome_voting_power_is_judged_by_voter_total_weight_and_the_page_reading_waits_beside_it():
+    """11: the reference is Voter.totalWeight() 1,021.4M (ours 1.029bn, within 1%); Jake's 881,100,168 is kept on its
+    own recorded row pending a label check — the manual store row moved to in_voting_power_page."""
+    import manual_refs
+    aero = config.CREDIBILITY["Aerodrome"]
+    assert aero["in_voting_power"]["ref"]["manual"]["value"] == 1_021_400_000
+    assert abs(1.029e9 / 1_021_400_000 - 1) < aero["in_voting_power"]["ref"]["tol"] / 100
+    rows = manual_refs.by_row()
+    assert ("Aerodrome", "in_voting_power") not in rows
+    rd = rows[("Aerodrome", "in_voting_power_page")]
+    assert float(rd[0]["value"]) == 881_100_168
+    ref, _ = manual_refs.reference_for(rd, None)
+    assert ref["verdict"] == "N/A (recorded)" and "pending a check" in ref["why"]
+
+
+def test_voter_rewards_batches_through_multicall3_not_json_rpc_batches(monkeypatch, capsys):
+    """11: Alchemy refused the JSON-RPC batches ($10,817/epoch vs DefiLlama ~$1.9M/week). Calls now go through
+    Multicall3.aggregate3 (0xcA11bde0…, mds1/multicall) after its code is confirmed; a keyed URL is never printed."""
+    import check_offline_items as coi
+    from eth_abi import decode, encode
+    seen = []
+
+    def fake(url, method, params=None):
+        seen.append(method)
+        if method == "eth_getCode":
+            return {"result": "0x6080"}
+        assert params[0]["to"] == coi.MULTICALL3 and params[0]["data"].startswith("0x82ad56cb")
+        (calls,) = decode(["(address,bool,bytes)[]"], bytes.fromhex(params[0]["data"][10:]))
+        assert all(allow for _, allow, _ in calls)
+        res = [(True, (len(cd)).to_bytes(32, "big")) for _, _, cd in calls]
+        return {"result": "0x" + encode(["(bool,bytes)[]"], [res]).hex()}
+    monkeypatch.setattr(coi, "rpc", fake)
+    monkeypatch.setattr(coi, "_rpcs_for", lambda chain: ["https://base-mainnet.g.alchemy.com/v2/SECRETKEY123"])
+    out = coi._batch_eth_calls("base", [("0x" + "11" * 20, "0x12345678")] * 450, chunk=200)
+    assert len(out) == 450 and all(int(v, 16) == 4 for v in out)
+    assert seen.count("eth_getCode") == 1 and seen.count("eth_call") == 3
+    assert "SECRETKEY123" not in capsys.readouterr().out
+
+
+def test_report_writers_use_utf8(tmp_path, monkeypatch):
+    """12: completeness_report crashed writing its .md on cp1252 ('\\u2212'); every text writer names utf-8."""
+    import pathlib
+    import re
+    root = pathlib.Path(__file__).resolve().parent.parent
+    bad = []
+    for f in list(root.glob("*.py")) + list((root / "fetch").glob("*.py")):
+        for i, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
+            if re.search(r"open\([^)]*['\"][wa]\+?['\"]", line) and "encoding=" not in line:
+                bad.append(f"{f.name}:{i}")
+    assert not bad, bad
+    src = (root / "completeness_report.py").read_text(encoding="utf-8")
+    assert 'open(a.md, "w", encoding="utf-8")' in src
+
+
+def test_plume_supply_probe_is_registered():
+    """5: the read could not be reproduced offline; the probe walks every step the run takes."""
+    import check_offline_items as coi
+    assert coi.plume_supply_read in coi.CHECKS

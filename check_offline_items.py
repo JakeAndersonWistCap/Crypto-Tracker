@@ -5146,7 +5146,7 @@ def near_settlement_routes():
             sql = (here / fn).read_text()
             for k, v in params.items():
                 sql = _re.sub(rf"@{k}\b", lit(v), sql)
-            (out_dir / f"{label}.sql").write_text(sql)
+            (out_dir / f"{label}.sql").write_text(sql, encoding="utf-8")
         print(f"  not run here: {why}.")
         print(f"  Console route: open each file in {out_dir} in console.cloud.google.com/bigquery (project\n"
               f"  near-data-510309); the editor shows 'This query will process N' BEFORE you run — that figure\n"
@@ -8182,28 +8182,47 @@ def etherfi_withdrawal_fees(days: int = 365):
           "declared but not executing (a VERIFIED FINDING); the eETH series is the withdrawal-fee revenue reference.")
 
 
-def _batch_eth_calls(chain: str, calls: list, chunk: int = 50) -> list:
-    """[(to, data)] -> [hex result or None], via JSON-RPC batches on the first endpoint that answers a batch. Errors
-    name the endpoint's host only (a keyed URL is never printed)."""
-    from urllib.parse import urlparse                     # noqa: PLC0415
+# Multicall3, deployed at the same address on 250+ chains (mds1/multicall @b667d67e README.md L25; deployments.json
+# L488-490 lists Base, chainId 8453). aggregate3((address target, bool allowFailure, bytes callData)[]) returns
+# (bool success, bytes returnData)[] — README L87. Its code is checked on the chain before it is used.
+MULTICALL3 = "0xcA11bde05977b3631167028862bE2a173976CA11"
+
+
+def _batch_eth_calls(chain: str, calls: list, chunk: int = 200) -> list:
+    """[(to, data)] -> [hex result or None], through Multicall3.aggregate3 — ONE eth_call per `chunk` calls, with each
+    call allowed to fail on its own. Not JSON-RPC batches: Alchemy refused those on Jake's run 2026-10-08, and the
+    read came back $10,817/epoch against DefiLlama's ~$1.9M/week. Errors name the endpoint's host only (a keyed URL
+    is never printed)."""
+    from eth_abi import decode, encode                    # noqa: PLC0415
     out = [None] * len(calls)
+    code_seen = False
     for url in _rpcs_for(chain):
         host = urlparse(url).hostname or "?"
         try:
+            if not code_seen:
+                code = rpc(url, "eth_getCode", [MULTICALL3, "latest"]).get("result") or "0x"
+                if code in ("0x", "0x0"):
+                    print(f"    Multicall3 has no code on {chain} (via {host}) — nothing read")
+                    return out
+                code_seen = True
             for i in range(0, len(calls), chunk):
-                body = [{"jsonrpc": "2.0", "id": i + k, "method": "eth_call",
-                         "params": [{"to": to, "data": data}, "latest"]} for k, (to, data) in enumerate(calls[i:i + chunk])]
-                r = requests.post(url, json=body, timeout=TIMEOUT)
-                r.raise_for_status()
-                res = r.json()
-                if not isinstance(res, list):
-                    raise ValueError("no batch support")
-                for j in res:
-                    v = j.get("result")
-                    out[int(j["id"])] = v if v not in (None, "", "0x") else None
+                part = calls[i:i + chunk]
+                data = "0x82ad56cb" + encode(["(address,bool,bytes)[]"],
+                                             [[(to, True, bytes.fromhex(d[2:])) for to, d in part]]).hex()
+                j = rpc(url, "eth_call", [{"to": MULTICALL3, "data": data}, "latest"])
+                if "result" not in j:
+                    raise ValueError(f"aggregate3 error: {j.get('error')}")
+                (res,) = decode(["(bool,bytes)[]"], bytes.fromhex(j["result"][2:]))
+                if len(res) != len(part):
+                    raise ValueError(f"aggregate3 returned {len(res)} results for {len(part)} calls")
+                for k, (ok, ret) in enumerate(res):
+                    out[i + k] = ("0x" + ret.hex()) if ok and ret else None
+            failed = sum(1 for v in out if v is None)
+            if failed:
+                print(f"    Multicall3 via {host}: {failed} of {len(calls)} call(s) returned nothing (reverted or empty)")
             return out
         except Exception as e:  # noqa: BLE001
-            print(f"    batch eth_call via {host} refused — {type(e).__name__}; trying the next endpoint")
+            print(f"    Multicall3 aggregate3 via {host} failed — {type(e).__name__}; trying the next endpoint")
     return out
 
 
@@ -8280,6 +8299,57 @@ def aerodrome_voter_rewards(min_weight_share: float = 0.0):
     print("  PASTE BACK the totals: a weekly figure that matches DefiLlama's voter fees + bribes for the same epoch "
           "(within ~10%) makes this the on-chain reference for a3_protocol_yield and in_revenue.")
 
+def plume_supply_read():
+    """PLUME in_circ "no figure" (Jake's run 2026-10-08): every step the run takes for circulating_supply_first_party
+    (sources.yaml, supply.plume.org/supply), in order, so the step that drops it is named — robots.txt, the back-off
+    file, the tier 3 cache, the GET itself (status, content type, the first bytes), the json_path, and then what
+    metrics.db, run_log and gap_report hold for it. Not reproducible from the build environment (host unreachable).
+    Reads only."""
+    import sqlite3                                         # noqa: PLC0415
+    from fetch import scrape as sc                         # noqa: PLC0415
+    head("PLUME — circulating_supply_first_party (supply.plume.org) step by step")
+    e = next((x for x in sc.load_registry() if x.get("project") == "Plume"
+              and x.get("metric") == "circulating_supply_first_party"), None)
+    if e is None:
+        print("  no sources.yaml entry for Plume circulating_supply_first_party")
+        return
+    print(f"  entry_ready: {sc.entry_ready(e)}")
+    print(f"  robots: {sc.robots_verdict(e['url'])}")
+    print(f"  back-off: {sc._Backoff().waiting(e) or 'not backed off'}")
+    print(f"  tier 3 cache: {sc.cache_read(e)}")
+    try:
+        r = requests.get(e["url"], headers={"User-Agent": sc.USER_AGENT}, timeout=(10, 30))
+        print(f"  GET -> HTTP {r.status_code}, {r.headers.get('content-type')}, {len(r.content)} bytes: "
+              f"{r.text[:160]!r}")
+    except Exception as ex:  # noqa: BLE001
+        print(f"  GET failed — {type(ex).__name__}: {str(ex)[:160]}")
+    try:
+        print(f"  fetch_json (the run's own read): {sc.fetch_json(e)}")
+    except Exception as ex:  # noqa: BLE001
+        print(f"  fetch_json raised — {type(ex).__name__}: {str(ex)[:160]}")
+    try:
+        con = sqlite3.connect("metrics.db")
+        q = ("SELECT date, value, source FROM metrics WHERE project='Plume' AND metric='circulating_supply_first_party' "
+             "ORDER BY date DESC LIMIT 5")
+        print(f"  metrics.db rows: {con.execute(q).fetchall() or 'NONE'}")
+        q = ("SELECT ts, status, message FROM run_log WHERE project='Plume' AND message LIKE "
+             "'%circulating_supply_first_party%' ORDER BY ts DESC LIMIT 3")
+        for row in con.execute(q).fetchall():
+            print(f"  run_log: {row[0]} {row[1]} — {str(row[2])[:200]}")
+        q = ("SELECT ts, reason FROM gap_report WHERE project='Plume' AND metric='circulating_supply_first_party' "
+             "ORDER BY ts DESC LIMIT 3")
+        for row in con.execute(q).fetchall():
+            print(f"  gap_report: {row[0]} — {str(row[1])[:200]}")
+        q = ("SELECT ts, reason, action, value FROM review_queue WHERE project='Plume' AND "
+             "metric='circulating_supply_first_party' ORDER BY ts DESC LIMIT 3")
+        for row in con.execute(q).fetchall():
+            print(f"  review_queue: {row}")
+    except Exception as ex:  # noqa: BLE001
+        print(f"  metrics.db unreadable — {ex}")
+    print("  PASTE BACK the lines: the first step that says no (robots, back-off, HTTP status, json_path, or rows "
+          "rejected) is the cause; a stored row with no figure on the tab points at the read-time side instead.")
+
+
 SKY_FARMS = {"SKY-rewards farm": "0xB44C2Fb4181D7Cb06bdFf34A46FdFe4a259B40Fc",
              "USDS-rewards farm": "0x38E4254bD82ED5Ee97CD1C4278FAae748d998865"}
 SKY_FARM_READINGS = {"SKY-rewards farm": 0.0658, "USDS-rewards farm": 0.0461}      # Jake's readings, 2026-10-07
@@ -8353,7 +8423,7 @@ CHECKS = (
     etherfi_vault_archive, etherfi_contract_ids, etherfi_accountant, fluid_vesting_recipients, maple_ssf_partial,
     aerodrome_managed_venfts, pendle_epoch_revenues, maple_ssf_trail, fluid_avocado_owners, hl_pool_release_compare,
     pendle_spendle_rewards_onchain, maple_buyback_inflows, etherfi_withdrawal_fees, aerodrome_voter_rewards,
-    sky_farm_rates,
+    sky_farm_rates, plume_supply_read,
     plume_sources, aethir_dashboard_xhr, maple_ssf_history, blockworks_geodnet,
     morpho_incentives, settlement_sources, hyperevm_etherscan, maple_ssf_inflows, aethir_pages,
     geod_stake_recipient, geod_stake_wallets, maple_ssf_lp_test, maple_drips, plume_archive, settlement_rebuild_coverage,

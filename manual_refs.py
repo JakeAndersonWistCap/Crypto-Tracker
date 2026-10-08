@@ -107,8 +107,15 @@ PAGES: dict = {
                                                       "different quantities, so it is recorded, not judged"},
     ("Near", "in_buyback_wallets"): {"url": "https://revenue.near.org", "tile": "Wallet Breakdown (All-time), total "
                                       "NEAR of the three wallets", "unit": "NEAR", "tol_pct": 5.0},
-    ("Aerodrome", "in_voting_power"): {"url": "https://aerodrome.finance", "tile": "total veAERO (voting power — "
-                                       "decays with lock time; NOT AERO locked)", "unit": "veAERO", "tol_pct": 2.0},
+    # RECORDED, PENDING A LABEL CHECK (Jake's run 2026-10-08): the page's 881,100,168 sits ~14% under both our
+    # veAERO.totalSupply() (1.029bn) and Voter.totalWeight() (1,021.4M), so which quantity the tile shows is unsettled.
+    # in_voting_power is judged by Voter.totalWeight; this reading stays on its own row until the label is checked.
+    ("Aerodrome", "in_voting_power_page"): {"url": "https://aerodrome.finance", "tile": "total veAERO (voting power — "
+                                            "decays with lock time; NOT AERO locked)", "unit": "veAERO", "tol_pct": 2.0,
+                                            "record_only": "recorded, pending a check of which quantity the page's "
+                                                           "tile shows (it reads ~14% under veAERO.totalSupply() and "
+                                                           "Voter.totalWeight()); in_voting_power is judged by "
+                                                           "Voter.totalWeight()"},
     # The programme page (etherfi.gitbook.io/gov/ethfi-buyback-program, Jake 2026-10-07): "All buybacks will be
     # announced on" the Foundation's X account.
     ("Ether.fi", "in_buyback"): {"url": "https://x.com/ether_fi_Fdn (the Foundation's buyback announcements)",

@@ -113,16 +113,18 @@ def _eth_net_formula(p, rows, long, asof, issuance="gross_issuance_tokens", burn
     price is missing, the protocol's own BurntFees counter differenced (burn_cumulative_tokens). Jake's probes15
     (root J): both legs from stored series, so a missing DefiLlama day no longer leaves the row without a reference."""
     lo, hi = _q0(asof)
+    # IDENTICAL DAYS (Jake's run 2026-10-08 08:37: ours 9 days, the curve 6): the issuance is the PRIMARY series the
+    # headline uses (first-party rows only, config ISSUANCE_PRIMARY source_prefix), and a day counts only where staked
+    # ETH, issuance and burn are ALL stored that day — the same rule as the net-change view
+    # (build_workbook._net_common_views, net_change_common_days.require)
+    # (the row reads the VIEWS — use_views — so the issuance here is the primary view the headline differences)
     si, sb = _series(long, p, issuance), _series(long, p, burn)
-    days = sorted(d for d in set(si.index) & set(sb.index) if lo < d <= hi)
-    if not days:
-        return None, None, f"no day on which both {issuance} and {burn} are stored in Q0"
     st = _series(long, p, "beacon_chain_eth")
     if st.empty:
-        staked_now = _num((rows.get(f"{p}|beacon_chain_eth") or {}).get("now"))
-        if not staked_now:
-            return None, None, "no staked-ETH figure (beacon_chain_eth) stored"
-        st = pd.Series([staked_now], index=[days[0]])
+        return None, None, "no staked-ETH figure (beacon_chain_eth) stored"
+    days = sorted(d for d in set(si.index) & set(sb.index) & set(st.index) if lo < d <= hi)
+    if not days:
+        return None, None, f"no day in Q0 on which staked ETH, {issuance} and {burn} are all stored"
     px, rev = _series(long, p, "price_usd"), _series(long, p, "revenue_usd")
     cum = _series(long, p, "burn_cumulative_tokens")
     iss = brn = 0.0
@@ -213,6 +215,23 @@ def _rate_on_stake(p, rows, long, asof, flow="", stock="", days=28, price=None, 
     v = float(fl.sum()) * 365.0 / days / base
     return v, str(st.index[-1].date()), (f"{flow} {float(fl.sum()):,.0f} over the last {days} days x 365/{days} / "
                                          f"{stock} {float(st.iloc[-1]):,.0f} ({st.index[-1].date()}){how_px}")
+
+
+def _reward_rate_apr(p, rows, long, asof, rate="", stock="", **_):
+    """A StakingRewards farm's rate FROM ITS OWN STATE (Jake's run 2026-10-08, Sky's SKY-rewards farm): the stored
+    rewardRate() (reward tokens per second) x 31,536,000 / the stake stored on the same day. Reward and stake are
+    the same token, so no price enters."""
+    r, st = _series(long, p, rate), _series(long, p, stock)
+    r, st = r[r.index <= asof], st[st.index <= asof]
+    common = r.index.intersection(st.index)
+    if common.empty:
+        return None, None, f"no day holds both {rate} and {stock}"
+    d = common.max()
+    if not st.loc[d]:
+        return None, None, f"{stock} is 0 on {d.date()}"
+    v = float(r.loc[d]) * 31_536_000 / float(st.loc[d])
+    return v, str(d.date()), (f"{rate} {float(r.loc[d]):,.4f}/s x 31,536,000 / {stock} {float(st.loc[d]):,.0f} "
+                              f"({d.date()})")
 
 
 def _trailing_token_yield(p, rows, long, asof, tokens="", lock="", days=365, **_):
@@ -415,6 +434,32 @@ def _value_on(p, rows, long, asof, metric="", date="", plus=(), **_):
             return None, None, f"no {m} point on {date}"
         total += float(sr.loc[day])
     return total, date, f"{' + '.join((metric, *plus))} on {date}"
+
+
+def _epoch_apr(p, rows, long, asof, tokens=0.0, date="", stock="", plus=(), mult=26.0, read_by="", source="",
+               ours_metric="", **_):
+    """ONE EPOCH'S APR FROM A READING (Jake's run 2026-10-08, Pendle): `tokens` distributed in the epoch read on
+    `date` x `mult` epochs a year / the reward-bearing stake stored on that date (stock + plus). With `ours_metric`
+    the epoch's tokens are OUR stored figure on that date instead — the like-for-like twin of the same arithmetic."""
+    day = pd.Timestamp(date)
+    staked = 0.0
+    for m in (stock, *plus):
+        sr = _series(long, p, m)
+        sr = sr[sr.index <= day]
+        if sr.empty:
+            return None, None, f"no {m} on or before {date}"
+        staked += float(sr.iloc[-1])
+    if not staked:
+        return None, None, f"no stake on {date}"
+    if ours_metric:
+        sr = _series(long, p, ours_metric)
+        if day not in sr.index:
+            return None, None, f"no {ours_metric} point on {date}"
+        tokens, who = float(sr.loc[day]), f"{ours_metric} {float(sr.loc[day]):,.0f}"
+    else:
+        who = f"{float(tokens):,.0f} ({read_by}: {source})"
+    return float(tokens) * float(mult) / staked, date, \
+        f"{who} x {mult:g} / ({' + '.join((stock, *plus))} {staked:,.0f} on {date})"
 
 
 def _sum_month(p, rows, long, asof, metric="", month="", **_):
@@ -814,10 +859,10 @@ FORMULAS = {"sum_months": _sum_months, "free_float_now": _free_float_now, "windo
             "eth_issuance_curve": _eth_issuance_formula, "flow_usd_over_price": _flow_usd_over_price,
             "delta_q0": _delta_q0, "delta_diff_q0": _delta_diff_q0, "hl_reward_formula": _hl_reward_formula,
             "share_price_growth": _share_price_growth, "per_day_x_covered": _per_day_x_covered,
-            "value_on": _value_on, "sum_month": _sum_month, "last30_annualised": _last30_annualised,
+            "value_on": _value_on, "epoch_apr": _epoch_apr, "sum_month": _sum_month, "last30_annualised": _last30_annualised,
             "common_day_value": _common_day_value, "months_match": _months_match,
             "hl_reward_active": _hl_reward_active, "base_reward_ceiling": _base_reward_ceiling,
-            "rate_on_stake": _rate_on_stake, "trailing_token_yield": _trailing_token_yield,
+            "rate_on_stake": _rate_on_stake, "reward_rate_apr": _reward_rate_apr, "trailing_token_yield": _trailing_token_yield,
             "sum_since": _sum_since, "schedule_month": _schedule_month, "rise_vs_flow": _rise_vs_flow,
             "product_on_common_day": _product_on_common_day, "now_sum": _now_sum,
             "log_price_growth": _log_price_growth, "bridge_reconciled": _bridge_reconciled,
@@ -834,6 +879,7 @@ def reference(project: str, spec: dict, rows: dict, long, asof) -> dict:
         return {"value": None, "date": None, "source": src or "—", "mode": "static",
                 "verdict": spec["verdict"], "note": why + (f" RESOLVE: {res}" if res else "")}
     mode = "same_source" if spec.get("same_source") else "independent"
+    long = _long_for(spec, long)
     scale = float(spec.get("scale", 1.0))
     val = date = None
     if "manual" in spec:
@@ -881,12 +927,22 @@ def reference(project: str, spec: dict, rows: dict, long, asof) -> dict:
             **({"fresh_label": spec["fresh_label"]} if spec.get("fresh_label") else {})}
 
 
+# THE READ-TIME VIEWS AS A LONG FRAME (Jake's run 2026-10-08: NEAR's buyback is the daily change of the three wallets'
+# combined close — a VIEW — so a reference reading the raw store found nothing). Set by build_workbook.write_credibility
+# from the groups aggregate() built; a spec opts in with "use_views": True. Raw store otherwise, as before.
+VIEWS_LONG = None
+
+
+def _long_for(spec: dict, long):
+    return VIEWS_LONG if spec.get("use_views") and VIEWS_LONG is not None else long
+
+
 def ours_value(project: str, ours: dict, rows: dict, long, asof):
     """A Python-computed OUR value (an input compared on one date, or a month), or None when ours is
     a cell / Data reference written as a formula."""
     if "py" not in ours:
         return None
-    v, _d, _how = FORMULAS[ours["py"]](project, rows, long, asof, **(ours.get("args") or {}))
+    v, _d, _how = FORMULAS[ours["py"]](project, rows, _long_for(ours, long), asof, **(ours.get("args") or {}))
     return v
 
 
@@ -968,6 +1024,10 @@ def resolve_alias(name: str, alias: str, have: dict) -> str | None:
         return next((c for c in ALIASES[alias] if c in have), None)
     if alias == "@locked" and p.get("free_float_lock_zero"):
         return next((c for c in ALIASES[alias] if c in have), None)
+    # NOTHING IS EMITTED BY DESIGN (config.EMISSIONS_DECLARED_ZERO: Maple, Ether.fi — Jake's run 2026-10-08): the
+    # sourced N/A emissions row stands for the input and counts as checked
+    if alias == "@emissions" and name in config.EMISSIONS_DECLARED_ZERO:
+        return "in_emissions" if "in_emissions" in have else None
     # NOTHING IS BOUGHT BY DESIGN (config.BUYBACK_ROUTE_OVERRIDE "none": Aerodrome, Ethereum) — overnight 2026-10-06
     if alias == "@buyback" and (config.BUYBACK_ROUTE_OVERRIDE.get(name) or ("",))[0] == "none":
         return "in_buyback" if "in_buyback" in have else None
