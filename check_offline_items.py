@@ -8144,8 +8144,8 @@ def maple_buyback_inflows(days: int = 365):
         for f, v in top.items():
             print(f"    from {f}: {v:,.0f} SYRUP — {names.get(f)}")
     print("  PASTE BACK the table: swap-venue inflows that track the page month by month make the on-chain sum the "
-          "reference; senders that are EOAs / OTC desks (e.g. 0x83971edb…, which also served Ether.fi) mean the buys "
-          "settle off-venue and the row is a documented limitation.")
+          "reference; none that track it make the row a documented limitation. (SYRUP going OUT of the SSF trail to "
+          "0x83971edb… is the open SSF-selling question, not a buy.)")
 
 
 def etherfi_withdrawal_fees(days: int = 365):

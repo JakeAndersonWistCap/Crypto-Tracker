@@ -789,6 +789,7 @@ METRICS = {
     # publishing on a rolling basis).
     "net_protocol_surplus_usd": {"label": "Net Protocol Surplus (Sky's own accounting — Block Analitica's P&L: net less Security and Maintenance), monthly", "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [3], "sanity_min": -1e10, "sanity_max": 1e11, "only_projects": ("Sky",)},
     # Sky's NPS as it REPORTED the months by hand (insights / financial.skyeco.com), kept as the reference beside the API.
+    "revenue_usd_reported": {"label": "Sky revenue as Sky reported the month (its own financials table, 'Revenue' — gross; manual) — reference for Block Analitica's P&L revenue", "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [5], "sanity_min": 0, "sanity_max": 1e11, "only_projects": ("Sky",), "view_only": True},
     "net_protocol_surplus_usd_reported": {"label": "Net Protocol Surplus as Sky reported the month (manual, insights.skyeco.com / financial.skyeco.com) — reference", "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [5], "sanity_min": -1e10, "sanity_max": 1e11, "only_projects": ("Sky",), "view_only": True},
     "revenue_usd_ba": {"label": "Sky revenue per month ($, Block Analitica P&L type 'revenue' — gross, before expenses and distributions) — REFERENCE for DefiLlama's Sky revenue, month by month", "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [3], "sanity_min": -1e9, "sanity_max": 1e10, "only_projects": ("Sky",)},
     "revenue_allocation_usd_ba": {"label": "Sky Revenue Allocation per month ($, Block Analitica P&L revenue_distribution less Security and Maintenance = the SKY buyback + the USDS distribution)", "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [3], "sanity_min": -1e9, "sanity_max": 1e10, "only_projects": ("Sky",)},
@@ -9557,6 +9558,14 @@ PROJECTS = [
             "question": "is the buyback-funded SSF selling SYRUP at market? If so, net absorption = "
                         "buybacks minus SSF sales, not buybacks alone",
             "flagged": "Jake's probes4, 2026-10-01",
+            # THE TRAIL, BESIDE THE QUESTION (Jake, 2026-10-08): an inference about direction, not proof of a sale
+            "trail_inference": {
+                "observed": "SYRUP leaving the SSF trail: 0x58be0049 (matched the SSF 2025-08-13..10-28) -> the EOA "
+                            "0x99f03ca0 (27.5M, 2025-10-29) -> 26 recipients, incl. the EOA 0x83971edb…, which also "
+                            "relayed Ether.fi's 5M ETHFI Binance withdrawal",
+                "reading": "points to SELLING via an OTC-like counterparty — an inference, not proof",
+                "source": "maple_ssf_trail, Jake's runs 2026-10-07; corrected 2026-10-08 (2968b16 had it as buys "
+                          "settling OTC — the wrong direction)"},
         },
         # ===== THE SSF RELEASE IS HELD UNTIL ITS OTHER INFLOWS ARE CLASSIFIED (Jake, 2026-09-30). =====
         "pool_release_tokens_blocked": {
@@ -14470,7 +14479,8 @@ PROJECTS = [
                                         "remitted": -3_670_000, "status": "month to date — NOT a reportable NPS"}},
                 "ytd_2026": {"revenue": 331_350_000, "expenses": 216_930_000, "allocation": 34_090_000,
                              "remitted": 80_320_000},
-                "stored_as": "manual_overrides.csv net_protocol_surplus_usd_reported, Jan-Sep (the reference)",
+                "stored_as": "manual_overrides.csv net_protocol_surplus_usd_reported, Jan-Sep (the reference); "
+                             "the Revenue line as revenue_usd_reported, Jan-Sep (Credibility in_revenue, 2026-10-08)",
             },
             # ===== financial.skyeco.com/financials/revenue — Jake's reading, 2026-09-29. =====
             # July ($10.52M) and August ($15.75M) are in manual_overrides.csv as monthly rows; the
@@ -14549,7 +14559,7 @@ PROJECTS = [
         # for it. This is what makes the workbook report the latest COMPLETE month rather than
         # whatever landed in a 30-day window, and what stops a 45-day-old monthly figure reading
         # as stale. Same treatment as GEODNET's monthly buyback series.
-        "manual_granularity": {"net_protocol_surplus_usd_reported": "monthly"},
+        "manual_granularity": {"net_protocol_surplus_usd_reported": "monthly", "revenue_usd_reported": "monthly"},
         # ===== SKY'S ACCOUNTING FROM BLOCK ANALITICA (Jake, 2026-10-07, with the API docs). =====
         # fetch/sky_accounting.py: monthly NPS (P&L net less Security and Maintenance — Sky's financials page counts S&M
         # as an expense, Block Analitica books it below net revenue), Buyback Spending and Staking Rewards (cash flow).
@@ -23979,15 +23989,18 @@ CREDIBILITY: dict = {
     # ---------------------------------------------------------------- Maple
     "Maple": {
         # DOCUMENTED LIMITATION, "awaiting Maple" (Jake's sign-off round, 2026-10-07): the page's figure is first-party
-        # and the SSF's wallets are not published; the on-chain trail fragments and the purchases settle OTC.
+        # and the SSF's wallets are not published; the on-chain trail fragments. CORRECTED 2026-10-08 (Jake): the trail
+        # shows SYRUP LEAVING the SSF, so it bears on the open SSF-selling question, not on how buys settle.
         "a3_buyback_locked": _c_lim(
             "Awaiting Maple: the transparency page's Syrup Strategic Fund balance (77.66-79.21M SYRUP) is the "
             "first-party figure; the SSF's own wallets are not published.",
             "0xd6d4 is NOT the SSF (maple_dao_vs_ssf; DAO multisig 23.09M on-chain; Maple's Blockworks filing "
             "2026-10-07 lists no separate SSF wallet). 0x58be0049 (Safe 3-of-5) matched the SSF 2025-08-13..10-28 then "
-            "sent 27.5M to the EOA 0x99f03ca0 and the trail fragments (maple_ssf_trail, Jake 2026-10-07). Buys settle "
-            "OTC: the EOA 0x83971edb… — which also delivered 5M ETHFI to Ether.fi out of Binance — serves both "
-            "(Jake's runs 2026-10-07).",
+            "sent 27.5M to the EOA 0x99f03ca0 and the trail fragments (maple_ssf_trail, Jake 2026-10-07). SYRUP LEFT the "
+            "trail: 0x99f03ca0 sent it on to 26 recipients, among them the EOA 0x83971edb…, which also relayed the 5M "
+            "ETHFI Ether.fi withdrew from Binance. That points to SELLING through an OTC-like counterparty — an "
+            "INFERENCE, not proof — and sits with the open question ssf_selling_question (does the buyback-funded SSF "
+            "sell SYRUP?).",
             "Maple publishing the SSF's wallet addresses, then their balances against the page"),
         "in_revenue": _c_in_py("Revenue, latest 3 complete months (Maple transparency page, monthly rows)",
                                "months_match", {"daily": "revenue_usd_defillama", "monthly": "revenue_usd",
@@ -24029,8 +24042,8 @@ CREDIBILITY: dict = {
         "in_buyback": _c_in("SYRUP bought Q0 (transparency page)", "actual_buyback_tokens", "q0", _c_mat(
             "The page is the only published source; Jake's run of maple_buyback_inflows sets the SYRUP that came into "
             "Maple-controlled wallets from swap venues against the page month by month — a match wires that sum as "
-            "the reference; buys settling off-venue (OTC via 0x83971edb…, see a3_buyback_locked) make it a "
-            "documented limitation.",
+            "the reference; no swap-venue inflows that track the page make it a documented limitation. (The SSF "
+            "trail's SYRUP going OUT to 0x83971edb… bears on the open SSF-selling question, not on buys.)",
             "2026-10-08")),
         "in_emissions": _c_in("Emissions Q0", "emissions_tokens", "q0", _c_na(
             "staking rewards sunset by MIP-019 and Drips ended Q4 2025 — no emissions")),
@@ -24291,27 +24304,34 @@ CREDIBILITY: dict = {
              "tol": 0.01,
              "note": "The spell's amount is exact; 0.01% covers only the 2-decimal rounding of the figure as written."}),
         # Jake's probes15 (root G): Block Analitica's P&L revenue against DefiLlama's Sky revenue, month by month.
-        "in_revenue": _c_in_py("Sky revenue, latest 3 complete months (DefiLlama daily, summed per month)",
-                               "months_match", {"daily": "revenue_usd", "monthly": "revenue_usd_ba", "side": "ours"},
-                               {"formula": "months_match", "tol": 15.0,
-                                "args": {"daily": "revenue_usd", "monthly": "revenue_usd_ba", "side": "ref"},
-                                "source": "Block Analitica P&L, type 'revenue', the same complete months",
-                                # THE CAUSE (Jake's sign-off round, 2026-10-07): a DEFINITION, and the same upstream.
-                                "force_verdict": "DOCUMENTED LIMITATION (same upstream)",
-                                "why": "DefiLlama's Sky revenue IS Block Analitica's: its makerdao adapter reads "
-                                       "info-sky.blockanalitica.com/api/v1/revenue/historic and books (stability_fee − "
-                                       "savings_rate_cost + liquidation_income + psm_fees) / 365 a day — revenue NET "
-                                       "of the savings rate ('Fees collected minus savings rate paid to DSR "
-                                       "depositors'; DefiLlama/dimension-adapters master fees/makerdao.ts L54-58, "
-                                       "L90, read 2026-10-07). The P&L 'revenue' set beside it is GROSS, so the gap is "
-                                       "the savings-rate expense, and the two are one source — no independent second "
-                                       "figure exists for free.",
-                                "resolve": "Sky's own monthly accounting posts (forum.sky.money), read by hand as a "
-                                           "monthly reference on the same net-of-savings basis",
-                                "note": "Block Analitica's revenue is GROSS (before the savings rate and other "
-                                        "expenses); DefiLlama's nets the savings rate out (fees/makerdao.ts), so the "
-                                        "row reads LOW by about that expense."},
+        # SKY'S PUBLISHED MONTHLY REVENUE IS THE REFERENCE (Jake, 2026-10-08 — correcting 2968b16, which called the row
+        # single-source): Sky's own financials table (net_protocol_surplus_reference.sky_monthly_table_2026_10_07,
+        # "Revenue" line) against Block Analitica's P&L revenue, the SAME gross basis, the same complete months.
+        "in_revenue": _c_in_py("Sky revenue, Jan-Sep 2026 (Block Analitica P&L, type 'revenue' — gross)", "sum_months",
+                               {"metric": "revenue_usd_ba", "months": _SKY_NPS_MONTHS},
+                               {"formula": "sum_months", "tol": 2.0,
+                                "args": {"metric": "revenue_usd_reported", "months": _SKY_NPS_MONTHS},
+                                "source": "Sky's own monthly financials, 'Revenue' (Jake's table, 2026-10-07): "
+                                          "26.05M, 52.25M, 45.73M, 34.32M, 35.56M, 37.31M, 36.64M, 31.85M, 30.80M",
+                                "note": "Both GROSS (before the savings rate and other expenses). October (834.58K to "
+                                        "2026-10-07) is month to date and not compared. Tolerance 2%, as in_nps: the "
+                                        "table's figures are rounded to 10K."},
                                fmt=_C_USD),
+        # DefiLlama's Sky revenue, kept as a LABELLED CROSS-CHECK: its makerdao adapter books Block Analitica's
+        # (stability_fee − savings_rate_cost + liquidation_income + psm_fees) / 365 a day — NET of the savings rate
+        # (DefiLlama/dimension-adapters master fees/makerdao.ts L54-58, L90, read 2026-10-07), so it reads LOW against
+        # the gross figures by about that expense; recorded beside them, never the judge.
+        "in_revenue_defillama_net": _c_in_py(
+            "Sky revenue, DefiLlama (NET of the savings rate) vs Block Analitica's gross — cross-check, latest 3 months",
+            "months_match", {"daily": "revenue_usd", "monthly": "revenue_usd_ba", "side": "ours"},
+            {"formula": "months_match", "tol": 15.0,
+             "args": {"daily": "revenue_usd", "monthly": "revenue_usd_ba", "side": "ref"},
+             "source": "Block Analitica P&L, type 'revenue' (gross), the same complete months",
+             "force_verdict": "N/A (cross-check: DefiLlama is net of the savings rate)",
+             "why": "Different bases by construction — DefiLlama nets the savings rate out of Block Analitica's revenue "
+                    "(fees/makerdao.ts); the gap is that expense. in_revenue judges the gross figure against Sky's own "
+                    "table."},
+            fmt=_C_USD),
         "a4_gross_issuance": {"formula": "delta_q0", "args": {"metric": "total_supply_protocol",
                                                               "plus": "sky_stage2_burn_tokens"},
                               "tol": 20.0, "source": "observed: d(SKY totalSupply) + Stage 2 burn across Q0 = minting — "

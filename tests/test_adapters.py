@@ -26939,6 +26939,9 @@ def test_sky_burn_is_judged_month_by_month_against_the_spell_and_revenue_against
     assert b["ours"]["py"] == "sum_month" and b["ours"]["args"]["month"] == "2026-09"
     assert b["ref"]["manual"]["value"] == 2_860_943.76 and b["ref"]["tol"] == 0.01
     r = sky["in_revenue"]
+    # 2026-10-08: Block Analitica's gross revenue vs Sky's own table; DefiLlama (net) moved to a cross-check row
+    assert r["ours"]["args"]["metric"] == "revenue_usd_ba" and r["ref"]["formula"] == "sum_months"
+    r = sky["in_revenue_defillama_net"]
     assert r["ours"]["args"]["monthly"] == "revenue_usd_ba" and r["ref"]["formula"] == "months_match"
     assert "revenue_usd_ba" in config.METRICS
     assert config.PROJECT_BY_NAME["Sky"]["sky_accounting"]["metrics"]["revenue"] == "revenue_usd_ba"
@@ -27299,8 +27302,9 @@ def test_signoff_round_rows_cite_their_evidence():
     assert c["Fluid"]["in_revenue"]["ref"]["verdict"] == "DOCUMENTED LIMITATION"
     assert c["Maple"]["in_revenue"]["ref"]["force_verdict"] == "VERIFIED FINDING"
     assert "July 2025" in c["Morpho"]["a2_emissions"]["why"]
-    assert c["Sky"]["in_revenue"]["ref"]["force_verdict"].startswith("DOCUMENTED LIMITATION")
-    assert "makerdao.ts" in c["Sky"]["in_revenue"]["ref"]["why"]
+    # corrected 2026-10-08: Sky's published monthly revenue judges Block Analitica's gross; DefiLlama is a cross-check
+    assert c["Sky"]["in_revenue"]["ref"]["args"]["metric"] == "revenue_usd_reported"
+    assert "makerdao.ts" in c["Sky"]["in_revenue_defillama_net"]["ref"]["why"]
     nr = c["Near"]["in_revenue"]["ref"]
     assert nr["scale"] == 0.7 and nr["formula"] == "common_days_sum"
     assert c["Near"]["in_emissions"]["ref"]["scale"] == 0.9
@@ -27333,3 +27337,38 @@ def test_signoff_round_probes_registered():
         assert fn in coi.CHECKS
     import inspect
     assert '"limit": 365' in inspect.getsource(coi) and '"limit": 400' not in inspect.getsource(coi)
+
+
+def test_sky_revenue_is_judged_against_skys_own_monthly_table_and_defillama_is_a_labelled_cross_check():
+    """Jake, 2026-10-08: not single-source. Sky's financials 'Revenue' (gross) Jan-Sep 2026 against Block Analitica's
+    P&L revenue (gross), the same months; DefiLlama (net of the savings rate) recorded beside it, never the judge."""
+    import credibility as cred
+    from fetch.sky_accounting import reported_nps
+    spec = config.CREDIBILITY["Sky"]["in_revenue"]
+    assert spec["ours"] == {"py": "sum_months", "args": {"metric": "revenue_usd_ba", "months": config._SKY_NPS_MONTHS}}
+    assert spec["ref"]["args"] == {"metric": "revenue_usd_reported", "months": config._SKY_NPS_MONTHS}
+    rep = reported_nps(metric="revenue_usd_reported")
+    table = config.PROJECT_BY_NAME["Sky"]["net_protocol_surplus_reference"]["sky_monthly_table_2026_10_07"]["months"]
+    assert rep == {m: float(v["revenue"]) for m, v in table.items()} and len(rep) == 9
+    assert rep["2026-02"] == 52_250_000 and "2026-10" not in rep, "October is month to date: not stored"
+    long = pd.DataFrame([(pd.Timestamp(m) + pd.offsets.MonthEnd(0), mt, v * k) for m, v in rep.items()
+                         for mt, k in (("revenue_usd_reported", 1.0), ("revenue_usd_ba", 1.01))],
+                        columns=["date", "metric", "value"]).assign(project="Sky")
+    ref = cred.reference("Sky", spec["ref"], {}, long, pd.Timestamp("2026-10-08"))
+    assert ref["mode"] == "independent" and abs(ref["value"] - sum(rep.values())) < 1
+    x = config.CREDIBILITY["Sky"]["in_revenue_defillama_net"]["ref"]
+    assert cred.signed(x["force_verdict"]) and x["force_verdict"].startswith("N/A (cross-check")
+
+
+def test_maple_ssf_trail_reads_as_syrup_leaving_not_buys_settling():
+    """Jake, 2026-10-08: the trail shows SYRUP LEAVING the SSF (0x58be0049 -> 0x99f03ca0 -> 26 recipients incl.
+    0x83971edb) — an inference of selling via an OTC-like counterparty, kept beside the open SSF-selling question."""
+    import inspect
+    import check_offline_items as coi
+    lim = config.CREDIBILITY["Maple"]["a3_buyback_locked"]["why"]
+    assert "settle OTC" not in lim and "Buys settle" not in lim
+    assert "INFERENCE, not proof" in lim and "ssf_selling_question" in lim and "26 recipients" in lim
+    q = config.PROJECT_BY_NAME["Maple"]["ssf_selling_question"]
+    assert q["status"].startswith("OPEN") and "inference, not proof" in q["trail_inference"]["reading"]
+    assert "OTC via" not in config.CREDIBILITY["Maple"]["in_buyback"]["ref"]["why"]
+    assert "settle off-venue" not in inspect.getsource(coi.maple_buyback_inflows)

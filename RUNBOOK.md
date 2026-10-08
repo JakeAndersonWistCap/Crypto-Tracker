@@ -527,6 +527,24 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11at. Corrections to the sign-off round, 2026-10-08
+
+**Maple: the trail shows SYRUP leaving, not buys settling.** 2968b16 read "buys settle OTC via 0x83971edb". That
+was the wrong direction.
+- What was seen: SYRUP LEFT the SSF trail. 0x58be0049 → 0x99f03ca0 → 26 recipients, among them 0x83971edb, which
+  also relayed Ether.fi's 5M ETHFI Binance withdrawal.
+- That points to SELLING through an OTC-like counterparty. It is an inference, not proof.
+- It is recorded beside the open question `ssf_selling_question.trail_inference` ("does the buyback-funded SSF sell
+  SYRUP?"). `a3_buyback_locked`, `in_buyback` and the `maple_buyback_inflows` probe are reworded to match.
+
+**Sky in_revenue: not single-source.** Sky's own financials table has a monthly Revenue line, Jan–Sep 2026: 26.05M,
+52.25M, 45.73M, 34.32M, 35.56M, 37.31M, 36.64M, 31.85M, 30.80M.
+- Those months are stored as `revenue_usd_reported` (manual_overrides.csv, read_by Jake).
+- They judge Block Analitica's P&L revenue on the same gross basis: Jan–Sep summed, tolerance 2%.
+- October (834.58K to date) is month to date and not compared.
+- DefiLlama's revenue is net of the savings rate. It stays as a labelled cross-check row,
+  `in_revenue_defillama_net`, "N/A (cross-check …)", never the judge.
+
 ## 11as. Sign-off round, 2026-10-07 (overnight): finish-line categories, per-project status
 
 **The finish line.** A project is SIGNED OFF when every Credibility row is one of these:
@@ -574,7 +592,7 @@ Anything else is OPEN.
   - The yield row: DOCUMENTED LIMITATION (shared API input) until `pendle_spendle_rewards_onchain` finds the funded
     merkle contract.
 - **Maple:**
-  - Buyback-locked: DOCUMENTED LIMITATION (awaiting Maple; buys settle OTC).
+  - Buyback-locked: DOCUMENTED LIMITATION (awaiting Maple; SSF wallets unpublished). See 11at for the trail.
   - Revenue: VERIFIED FINDING. Maple counts OTC, Basic-strategy and Base revenue that DefiLlama doesn't read
     (Blockworks categories).
   - in_buyback: MATURING to 2026-10-08 (`maple_buyback_inflows`).
@@ -590,8 +608,7 @@ Anything else is OPEN.
     LIMITATION.
   - a3 and in_revenue are MATURING to 2026-10-08 (`aerodrome_voter_rewards`, read from state).
 - **Sky:**
-  - in_revenue: DOCUMENTED LIMITATION (same upstream). DefiLlama's Sky revenue is Block Analitica's, net of the
-    savings rate; the P&L figure is gross.
+  - in_revenue: superseded in 11at (Sky's published monthly revenue is the reference; DefiLlama a cross-check).
   - NPS: DOCUMENTED LIMITATION (Sky's own accounting on both sides).
   - `sky_farm_rates` reads the farms' rewardRate.
 - **Ethereum:** a4_net_change now prints ours leg by leg beside the reference. in_price_llama is N/A (CoinGecko relay;
