@@ -31,6 +31,8 @@ import time
 
 import pandas as pd
 
+import config
+
 from .base import tidy, today
 
 log = logging.getLogger("token_metrics.fetch.aero_voter")
@@ -201,7 +203,7 @@ class AeroVoter:
             # where that day holds no reading (a live daily read is never overwritten)
             if tws and not self.stored(name, spec["weight_metric"], str(when.date())):
                 out.add(tidy([(when, float(tws))], name, spec["weight_metric"],
-                             f"{SOURCE}:Voter.totalWeight:archive", TIER), SOURCE, name,
+                             config.mark_source(f"{SOURCE}:Voter.totalWeight", "archive"), TIER), SOURCE, name,
                         f"{spec['weight_metric']} = {float(tws):,.0f} veAERO at block {r.get('start_block')} (the "
                         f"epoch {when.date()} start, archive)", TIER)
             if e == latest:

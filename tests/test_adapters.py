@@ -25898,7 +25898,9 @@ def test_overnight_records_are_on_file_and_the_maple_factor_is_corrected():
     # Jake's run 2026-10-08 11:27: no longer MATURING — judged against the gauge scan (its own tier now)
     pe = config.CREDIBILITY["Pendle"]["in_emissions"]["ref"]
     # item 2 (Jake's run 2026-10-09 11:41): judged against every chain's gauge scan, not mainnet alone
-    assert "verdict" not in pe and pe["formula"] == "scans_q0" and "emissions_tokens_gauge_mainnet" in pe["args"]["metrics"]
+    # the reference is each chain's DIRECT count (Jake's run 2026-10-09 ~14:10), not the scan series ours sums
+    assert ("verdict" not in pe and pe["formula"] == "scans_q0"
+            and "emissions_tokens_gauge_mainnet_direct" in pe["args"]["metrics"] and pe["args"]["require_all"])
     assert config.CREDIBILITY["Plume"]["in_issuance"]["ref"]["manual"]["value"] == 0
     assert "do not wire" in config.SOURCE_REGISTER["api.merkl.xyz"]["licence"]
     why = config.CREDIBILITY["Maple"]["in_revenue"]["ref"]["why"]
@@ -27385,7 +27387,7 @@ def test_signoff_round_rows_cite_their_evidence():
     assert c["Near"]["in_emissions"]["ref"]["verdict"] == "N/A"
     scan = config.PROJECT_BY_NAME["Pendle"]["log_scans"][0]
     assert scan["holders"] == ["0x47D74516B33eD5D70ddE7119A40839f6Fcc24e57"] and scan["store"]
-    assert "emissions_tokens_gauge_arbitrum" in c["Pendle"]["in_emissions"]["ref"]["args"]["metrics"]   # every chain read
+    assert "emissions_tokens_gauge_arbitrum_direct" in c["Pendle"]["in_emissions"]["ref"]["args"]["metrics"]  # every chain
     assert config.CREDIBILITY["Ethereum"]["a4_net_change"]["show_how"]
 
 

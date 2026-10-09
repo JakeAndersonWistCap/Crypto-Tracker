@@ -483,6 +483,7 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
     # unreconciled, held on attribution), and those win over this. This answers only when the
     # scan did not run at all this pass.
     scan = next((sc for sc in project.get("log_scans") or [] if sc.get("metric") == metric
+                 or sc.get("direct_metric") == metric
                  or (sc.get("decompose") or {}).get("metric") == metric
                  or (sc.get("decompose") or {}).get("aps_metric") == metric
                  or (sc.get("decompose") or {}).get("aps_reward_metric") == metric), None)
@@ -501,7 +502,8 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                 f"Read the pendle_api lines in the Run Log for {name}: a units refusal prints the raw values.")
     # Aerodrome's voter rewards per epoch and Voter.totalWeight (fetch/aero_voter.py, Jake's run 2026-10-08 11:27)
     ve = project.get("voter_epochs") or {}
-    if ve and metric in (ve.get("usd_metric"), ve.get("unpriced_metric"), ve.get("apr_metric"), ve.get("weight_metric")):
+    if ve and metric in (ve.get("usd_metric"), ve.get("unpriced_metric"), ve.get("apr_metric"), ve.get("weight_metric"),
+                         ve.get("fees_metric"), ve.get("bribes_metric")):
         return ("the voting-reward contracts' epoch read (fetch/aero_voter.py: tokenRewardsPerEpoch through Multicall3, "
                 "Voter.totalWeight) is configured but stored nothing this run",
                 f"Read the aero_voter lines in the Run Log for {name}; `python check_offline_items.py "
@@ -1033,7 +1035,8 @@ def served_by(source: str, project: dict) -> set[str] | None:
              if se else set())
     elif source == "aero_voter":
         ve = project.get("voter_epochs") or {}
-        m = {ve[k] for k in ("usd_metric", "unpriced_metric", "apr_metric", "weight_metric")} if ve else set()
+        m = {ve[k] for k in ("usd_metric", "unpriced_metric", "apr_metric", "weight_metric", "fees_metric",
+                             "bribes_metric") if ve.get(k)} if ve else set()
     elif source == "reward_vault":
         m = ({"reward_emission_rate_annual", "emissions_tokens", "reward_rate_ends_unix"}
              if project.get("reward_vault_rates") else set())
@@ -1060,6 +1063,8 @@ def served_by(source: str, project: dict) -> set[str] | None:
         m = set((project.get("transparency_page") or {}).get("metrics") or {})
     elif source == "explorer":
         m = {sc["metric"] for sc in project.get("log_scans") or []}
+        # the direct windowed count beside a scan (Pendle's gauges, Jake's run 2026-10-09 ~14:10)
+        m |= {sc["direct_metric"] for sc in project.get("log_scans") or [] if sc.get("direct_metric")}
         # the share-price decomposition's reconciled series comes out of the same scan (2026-10-06)
         m |= {sc["decompose"]["metric"] for sc in project.get("log_scans") or [] if sc.get("decompose")}
         # and its daily rebuilt assets-per-share (Jake's probes14, 2026-10-07)
