@@ -18029,8 +18029,10 @@ def test_pendle_token_yield_is_pendle_distributed_over_real_plus_virtual():
     # (the last 28 days, Jake's run 2026-10-08 11:27), computed at read time
     assert "D[staking_yield_usds_farm_28d_pct:now]" in sky, sky
     aero = str(build(5, config.PROJECT_BY_NAME["Aerodrome"]))
-    # the reward-bearing stake is the votes cast, Voter.totalWeight (Jake's run 2026-10-08 11:27)
-    assert "D[holders_revenue_usd:q0]" in aero and "D[voter_total_weight_tokens:now]" in aero, aero
+    # the reward-bearing stake is the votes cast (Jake's run 2026-10-08 11:27), and each day's rewards are put in AERO at
+    # that day's price (Jake's price convention, 2026-10-09): the payday row, computed at read time
+    assert "D[token_yield_payday_pct:now]" in aero, aero
+    assert config.PROTOCOL_YIELD["Aerodrome"]["token_yield"]["payday"]["stock"] == "voter_total_weight_tokens"
     assert label.startswith("PROTOCOL STAKING YIELD (tokens)")
     assert build(5, config.PROJECT_BY_NAME["Fluid"]).startswith("n/a — FLUID staking is not deployed")
     assert abs(4_600_000 / (30_340_000 + 177_780_000) - 0.0221) < 0.001
@@ -26150,7 +26152,7 @@ def test_sky_two_farms_and_the_revenue_funded_yield_from_minted_usds():
     assert scan["token"] == "0xdC035D45d973E3EC169d2276DDab16f1e407384F" and scan["metric"] == "staking_rewards_usds_usd"
     py = config.PROTOCOL_YIELD["Sky"]
     assert (py["revenue"], py["lock"]) == ("staking_rewards_usds_usd", "locked_tokens_usds_farm")
-    assert py["token_yield"]["farm_rate"]["metric"] == "staking_yield_usds_farm_28d_pct"
+    assert py["token_yield"]["payday"]["metric"] == "staking_yield_usds_farm_28d_pct"
     asof = pd.Timestamp("2026-10-07")
     days = pd.date_range("2026-09-10", "2026-10-07")
     long = pd.DataFrame([(d, "Sky", "staking_rewards_usds_usd", 100_000.0) for d in days]
@@ -26343,6 +26345,38 @@ def test_aerodrome_voter_apr_on_voting_power_and_aethirs_published_unlock_schedu
     assert round(ch["next"][2], 3) == 0.317
     assert len(config.CIRCULATING_SCHEDULE["Aethir"]["table"]) == 85                 # Jun 2024 .. Jun 2031, Jake's copy
     assert config.circulating_schedule_change("Pendle", "2026-10-07") is None
+
+
+def test_payment_day_convention_one_row_feeds_the_token_dollar_and_voting_power_columns():
+    """Jake's price convention (2026-10-09): Aerodrome's and Sky's token AND dollar yield columns read the one payday
+    row (the price cancels on the same basis); Aerodrome's voting-power column divides the same payday tokens a year.
+    Pendle and Ether.fi (native rewards) keep their own columns."""
+    import build_workbook as bw
+
+    class R_:
+        def D(self, r, m, w="q0"):
+            return f"D[{m}|{w}]"
+    tok = bw._token_yield(R_())[1]
+    usd = bw._protocol_yield(R_())[1]
+    vp = bw._voter_apr_voting_power(R_())[1]
+    for name, metric in (("Aerodrome", "token_yield_payday_pct"), ("Sky", "staking_yield_usds_farm_28d_pct")):
+        p = config.PROJECT_BY_NAME[name]
+        assert f"D[{metric}|now]" in tok(5, p) and f"D[{metric}|now]" in usd(5, p), name
+        assert "price_usd" not in tok(5, p) and "price_usd" not in usd(5, p), name
+    assert "D[rewards_tokens_payday_annual|now]" in vp(5, config.PROJECT_BY_NAME["Aerodrome"])
+    assert "price_usd" in usd(5, config.PROJECT_BY_NAME["Pendle"])
+
+
+def test_payday_yield_sums_each_days_dollars_over_that_days_price():
+    import credibility as cred
+    d = pd.date_range("2026-10-01", "2026-10-04")
+    fl = pd.Series([100.0, 100.0, 100.0, 50.0], index=d)
+    px = pd.Series([1.0, 2.0, 4.0], index=d[:3])                       # 10-04 has no price: left out, named
+    st = pd.Series([1000.0, 3000.0], index=d[1:3])
+    r = cred.payday_yield(fl, px, st, d[0] - pd.Timedelta(days=1), d[-1], 365.0)
+    assert r["tokens"] == 175.0 and r["days"] == 3 and r["stake"] == 2000.0
+    assert r["value"] == 175.0 * 365.0 / 3 / 2000.0 and r["p_eff"] == 300.0 / 175.0
+    assert "2026-10-04" in r["how"] and "no same-day price" in r["how"]
 
 
 def test_aethir_published_schedule_is_the_full_table_and_the_monthly_reference():
@@ -27466,7 +27500,7 @@ def test_sky_yield_headline_is_the_farm_and_the_economy_wide_figure_is_recorded_
     sky = config.CREDIBILITY["Sky"]
     py = config.PROTOCOL_YIELD["Sky"]
     assert (py["revenue"], py["lock"]) == ("staking_rewards_usds_usd", "locked_tokens_usds_farm")
-    assert py["token_yield"]["farm_rate"]["metric"] == "staking_yield_usds_farm_28d_pct"
+    assert py["token_yield"]["payday"]["metric"] == "staking_yield_usds_farm_28d_pct"
     assert sky["a3_protocol_yield"]["manual"]["value"] == 0.0461
     eco = sky["in_yield_economy_wide"]
     assert eco["ours"]["args"]["flow"] == "holders_revenue_usd" and eco["ours"]["args"]["stock"] == "locked_tokens"

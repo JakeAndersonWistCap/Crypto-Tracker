@@ -244,11 +244,54 @@ def _base_reward_ceiling(p, rows, long, asof, cover_metric="pool_release_tokens"
         f"performance rules")
 
 
-def _rate_on_stake(p, rows, long, asof, flow="", stock="", days=28, price=None, **_):
+def payday_yield(flow, price, stake, lo, hi, year=365.0) -> dict | None:
+    """THE PRICE CONVENTION FOR EVERY PROTOCOL YIELD WITH NON-NATIVE REWARDS (Jake, 2026-10-09): rewards are put in the
+    staked token at the PAYMENT-DAY price — tokens = sum over the window's days of $paid_d / price_d — and divided by
+    the stake IN TOKENS over the same window (the mean of the stake's stored days in it), annualised over the days
+    counted. The dollar yield on the same basis is the same number: $paid / (stake x the payment-weighted price
+    $paid / tokens), so the price cancels. A day with a payment and no same-day price is left out of both the tokens
+    and the day count, and named. Series in, one dict out — the workbook view and the Credibility rows call this one
+    function. None when the window has no priced payment day or no stake."""
+    if flow is None or price is None or stake is None:
+        return None
+    fl = flow[(flow.index > lo) & (flow.index <= hi)]
+    px = price[(price.index > lo) & (price.index <= hi)]
+    st = stake[(stake.index > lo) & (stake.index <= hi)]
+    if fl.empty or st.empty:
+        return None
+    priced = [d for d in fl.index if d in px.index and px.loc[d]]
+    no_price = [d for d in fl.index if d not in priced]
+    if not priced:
+        return None
+    usd = float(fl.loc[priced].sum())
+    tokens = float(sum(float(fl.loc[d]) / float(px.loc[d]) for d in priced))
+    mean_stake = float(st.mean())
+    if not mean_stake:
+        return None
+    n = len(priced)
+    value = tokens * float(year) / n / mean_stake
+    p_eff = usd / tokens if tokens else None
+    how = (f"PAYMENT-DAY PRICES: ${usd:,.0f} paid over {n} day(s) {priced[0].date()}..{priced[-1].date()}, each day's "
+           f"$ / that day's price = {tokens:,.0f} tokens (payment-weighted price ${p_eff:,.4f}) x {float(year):g}/{n} / "
+           f"mean stake {mean_stake:,.0f} over its {len(st)} stored day(s) in the window = {value:.2%}"
+           + (f"; left out, no same-day price: {', '.join(str(d.date()) for d in no_price)}" if no_price else ""))
+    return {"value": value, "tokens": tokens, "usd": usd, "days": n, "p_eff": p_eff, "stake": mean_stake,
+            "stake_days": len(st), "last": max(priced[-1], st.index[-1]), "no_price": no_price, "how": how}
+
+
+def _rate_on_stake(p, rows, long, asof, flow="", stock="", days=28, price=None, basis="spot", **_):
     """A farm's reward rate (Jake, 2026-10-07 — Sky's two lsSKY farms): the rewards it received over the last `days`
     days, annualised, over what is staked in it now (x the token's price when the rewards are in dollars). A simple
-    rate: StakingRewards pays rewards out, it does not compound them."""
+    rate: StakingRewards pays rewards out, it does not compound them.
+
+    basis="payday" (Jake's price convention, 2026-10-09): dollar rewards put in tokens at each payment day's price and
+    divided by the mean stake over the same window — payday_yield, the arithmetic of the headline view."""
     lo = asof - pd.Timedelta(days=days)
+    if basis == "payday" and price:
+        r = payday_yield(_series(long, p, flow), _series(long, p, price), _series(long, p, stock), lo, asof, 365.0)
+        if r is None:
+            return None, None, f"no {flow} day with a same-day {price} and no {stock} in the last {days} days"
+        return r["value"], str(r["last"].date()), r["how"]
     fl = _series(long, p, flow)
     fl = fl[(fl.index > lo) & (fl.index <= asof)]
     st = _series(long, p, stock)
@@ -1194,53 +1237,50 @@ def _aero_epoch_apr(p, rows, long, asof, flow="holders_revenue_usd", onchain_apr
                     side="ref", **_):
     """DOES THE HEADLINE'S ARITHMETIC REPRODUCE THE EPOCH? (Jake's run 2026-10-08 11:27, Aerodrome a3: ours 17.31% vs
     on-chain 12.56%.) Ours = the headline's own arithmetic on one epoch — DefiLlama's dollars over the epoch's days, put
-    in AERO at that week's mean price, x 365.25/7, over the reward-bearing stake (Voter.totalWeight, the headline's
+    in AERO at each payment day's price (Jake's price convention, 2026-10-09), x 365.25/7, over the reward-bearing stake (Voter.totalWeight, the headline's
     denominator: on or before the epoch's start, else the first daily read within 14 days — it is read forward from
     2026-10-08 and moves well under 1% a week); the reference = the on-chain epoch APR. The working prints the HEADLINE's own numerator and
     denominator, how far each factor sits from the epoch's, and the veAERO rebase as its own labelled line."""
     got, skipped = _aero_epochs(long, p, asof, onchain_usd, flow)
     apr = _series(long, p, onchain_apr)
     px = _series(long, p, "price_usd")
+    fl = _series(long, p, flow)
     table, worst = [], None
     for e, _oc, usd in got:
         days = pd.date_range(e, periods=7, freq="D")
-        pw = px[px.index.isin(days)]
+        paid = [(d, float(fl.loc[d]), float(px.loc[d])) for d in days if d in fl.index and d in px.index and px.loc[d]]
         st = _stake_near(long, p, stake, e, 14)
-        if e not in apr.index or pw.empty or st is None:
-            skipped.append(f"{e.date()} (no " + ("on-chain APR" if e not in apr.index else "price" if pw.empty
-                                                 else stake) + ")")
+        if e not in apr.index or len(paid) < len([d for d in days if d in fl.index]) or not paid or st is None:
+            skipped.append(f"{e.date()} (no " + ("on-chain APR" if e not in apr.index else stake if st is None
+                                                 else "same-day price on every paid day") + ")")
             continue
-        # THE SAME PRICE ON BOTH SIDES (Jake's run 2026-10-09 ~10:15, 4b): the on-chain dollars are put in AERO at the
-        # SAME week's mean price as ours and annualised the same way, so the comparison is the dollars and the stake —
-        # never two prices. The stored on-chain APR (epoch-end price) is printed beside it.
+        # PAYMENT-DAY PRICES ON BOTH SIDES (Jake's price convention, 2026-10-09): ours = each day's DefiLlama $ / that
+        # day's AERO price; the on-chain dollars (one figure for the epoch) at the same days' payment-weighted price.
+        tok = sum(u / q for _d, u, q in paid)
+        p_eff = sum(u for _d, u, _q in paid) / tok
         oc_usd = [o for d0, o, _u in got if d0 == e][0]
-        ours = usd / float(pw.mean()) * 365.25 / 7 / st[0]
-        theirs = oc_usd / float(pw.mean()) * 365.25 / 7 / st[0]
+        ours = tok * 365.25 / 7 / st[0]
+        theirs = oc_usd / p_eff * 365.25 / 7 / st[0]
         gap = ours / theirs - 1 if theirs else float("inf")
-        table.append(f"epoch {e.date()}: DefiLlama ${usd:,.0f} vs on-chain ${oc_usd:,.0f}, both / ${float(pw.mean()):,.4f} "
-                     f"(the week's mean) x 365.25/7 / {st[0]:,.0f} = {ours:.2%} vs {theirs:.2%} ({gap:+.1%}); the "
-                     f"stored on-chain APR at the epoch-end price is {float(apr.loc[e]):.2%}")
+        table.append(f"epoch {e.date()}: DefiLlama ${usd:,.0f} = {tok:,.0f} AERO at each day's price vs on-chain "
+                     f"${oc_usd:,.0f} at the same days' payment-weighted ${p_eff:,.4f}, x 365.25/7 / {st[0]:,.0f} = "
+                     f"{ours:.2%} vs {theirs:.2%} ({gap:+.1%}); the stored on-chain APR at the epoch-end price is "
+                     f"{float(apr.loc[e]):.2%}")
         if worst is None or abs(gap) > abs(worst[3]):
             worst = (e, ours, theirs, gap)
     # THE HEADLINE'S OWN NUMERATOR AND DENOMINATOR, beside the epoch's
     lo, hi = _q0(asof)
-    rq = _series(long, p, flow)
-    rq = rq[(rq.index > lo) & (rq.index <= hi)]
-    pq = px[(px.index > lo) & (px.index <= hi)]
+    hd = payday_yield(fl, px, _series(long, p, stake), lo, hi, 365.25)
     sn = _stake_near(long, p, stake, hi, 0)
     head = ""
-    if len(rq) and len(pq) and sn:
-        tok_yr = float(rq.sum()) / float(pq.mean()) * 365.25 / len(rq)
-        head = (f"HEADLINE: numerator ${float(rq.sum()):,.0f} over {len(rq)} Q0 day(s) (${float(rq.sum()) / len(rq) * 7:,.0f}"
-                f"/week) / Q0 mean price ${float(pq.mean()):,.4f} x 365.25/{len(rq)} = {tok_yr:,.0f} AERO/yr; denominator "
-                f"{stake} {sn[0]:,.0f} -> {tok_yr / sn[0]:.2%}.")
+    if hd:
+        head = f"HEADLINE: {hd['how']}."
         if worst is not None:
             e = worst[0]
             wk = [u for d, _o, u in got if d == e][0]
-            pe = float(px[px.index.isin(pd.date_range(e, periods=7, freq="D"))].mean())
             se = _stake_near(long, p, stake, e, 14)[0]
-            head += (f" Against epoch {e.date()}: revenue/week x{float(rq.sum()) / len(rq) * 7 / wk:.2f}, price "
-                     f"x{pe / float(pq.mean()):.2f} (epoch week mean / Q0 mean), stake x{se / sn[0]:.2f}.")
+            head += (f" Against epoch {e.date()}: revenue/week x{hd['usd'] / hd['days'] * 7 / wk:.2f}, stake "
+                     f"x{se / hd['stake']:.2f}.")
     rb = _series(long, p, rebase)
     if not rb.empty and sn:
         head += (f" REBASE (a separate stream, in neither figure): {float(rb.iloc[-1]):,.0f} AERO in the week of "
@@ -1276,21 +1316,29 @@ def _price_basis_gap(p, rows, long, asof, flow="holders_revenue_usd", stake="vot
                      price="price_usd", second="price_usd_coinbase", moved=0.05, agree=0.02, value="flag", **_):
     """THE HEADLINE'S PRICE BASIS, CONFIRMED FROM TWO SOURCES (Jake's run 2026-10-09 ~10:15, 4a/b, Aerodrome: the dollars
     agree, the whole headline gap is price — Q0 mean $0.5435 vs $0.8144 now). Returns 1 when AERO's spot differs from
-    its Q0 mean by more than `moved` AND CoinGecko's and Coinbase's Q0 means agree within `agree` (so the mean is
-    confirmed); the working gives the APR at today's price beside the headline's conversion at the Q0 mean."""
+    the payment-weighted Q0 price (the headline's basis, Jake's convention 2026-10-09) by more than `moved` AND
+    CoinGecko's and Coinbase's payment-weighted prices agree within `agree`; -1 when they do not (or Coinbase is
+    missing); 0 otherwise. The working gives the APR at today's price beside the headline at payment-day prices."""
     lo, hi = _q0(asof)
-    a, b = _series(long, p, price), _series(long, p, second)
-    a, b = a[(a.index > lo) & (a.index <= hi)], b[(b.index > lo) & (b.index <= hi)]
+    a_all, b_all = _series(long, p, price), _series(long, p, second)
+    a, b = a_all[(a_all.index > lo) & (a_all.index <= hi)], b_all[(b_all.index > lo) & (b_all.index <= hi)]
     if a.empty:
         return 0.0, None, f"no {price} in Q0"
-    rq = _series(long, p, flow)
-    rq = rq[(rq.index > lo) & (rq.index <= hi)]
+    fl, stk = _series(long, p, flow), _series(long, p, stake)
+    rq = fl[(fl.index > lo) & (fl.index <= hi)]
     sn = _stake_near(long, p, stake, hi.normalize(), 0)
-    mean, spot = float(a.mean()), float(a.iloc[-1])
+    spot = float(a.iloc[-1])
     desc = lambda s, n: (f"{n}: start ${float(s.iloc[0]):,.4f}, min ${float(s.min()):,.4f}, max ${float(s.max()):,.4f}, "  # noqa: E731
                          f"mean ${float(s.mean()):,.4f}, last ${float(s.iloc[-1]):,.4f} ({len(s)} days)")
     how = desc(a, "CoinGecko") + ("; " + desc(b, "Coinbase") if len(b) else "; Coinbase: no Q0 days stored")
-    confirmed = len(b) > 0 and abs(float(b.mean()) / mean - 1) <= agree
+    # THE HEADLINE'S BASIS IS THE PAYMENT-DAY PRICE (Jake's price convention, 2026-10-09): what is compared with today's
+    # price is the payment-weighted Q0 price ($ paid / tokens at each day's price), from each source.
+    pa, pb = payday_yield(fl, a_all, stk, lo, hi, 365.25), payday_yield(fl, b_all, stk, lo, hi, 365.25)
+    if pa is None:
+        return 0.0, None, how + f". No priced {flow} day or no {stake} in Q0"
+    confirmed = pb is not None and abs(pb["p_eff"] / pa["p_eff"] - 1) <= agree
+    how += (f". Payment-weighted Q0 price: CoinGecko ${pa['p_eff']:,.4f}"
+            + (f", Coinbase ${pb['p_eff']:,.4f}" if pb else ", Coinbase n/a"))
     if value == "apr":                                     # the row's own figure: the APR at today's price
         if not len(rq) or not sn:
             return None, None, f"no {flow} in Q0 or no {stake}"
@@ -1298,11 +1346,11 @@ def _price_basis_gap(p, rows, long, asof, flow="holders_revenue_usd", stake="vot
     if len(rq) and sn:
         annual = float(rq.sum()) * 365.25 / len(rq)
         how += (f". AT TODAY'S PRICE: ${annual:,.0f}/yr / ({sn[0]:,.0f} x ${spot:,.4f}) = {annual / (sn[0] * spot):.2%}; "
-                f"the headline converts at the Q0 mean: {annual / (sn[0] * mean):.2%}; AERO {spot / float(a.iloc[0]) - 1:+.1%} "
-                f"over Q0 (spot / Q0 mean x{spot / mean:.2f})")
-    if not confirmed:                                     # -1: the Q0 mean is not confirmed by a second source
-        return -1.0, str(a.index[-1].date()), how + ". The Q0 mean is NOT confirmed by Coinbase."
-    return (1.0 if abs(spot / mean - 1) > moved else 0.0), str(a.index[-1].date()), how
+                f"the headline at payment-day prices: {pa['value']:.2%}; AERO {spot / float(a.iloc[0]) - 1:+.1%} over Q0 "
+                f"(spot / payment-weighted price x{spot / pa['p_eff']:.2f})")
+    if not confirmed:                                     # -1: the basis is not confirmed by a second source
+        return -1.0, str(a.index[-1].date()), how + ". The payment-weighted price is NOT confirmed by Coinbase."
+    return (1.0 if abs(spot / pa["p_eff"] - 1) > moved else 0.0), str(a.index[-1].date()), how
 
 
 def _aero_rebase_apr(p, rows, long, asof, rebase="emissions_tokens", stake="voter_total_weight_tokens", **_):

@@ -416,8 +416,45 @@ def test_aerodrome_price_rise_is_a_finding_and_the_epoch_row_uses_one_price(tmp_
     assert tp["verdict"] == "VERIFIED FINDING", tp
     assert "AT TODAY'S PRICE" in tp["note"] and "Coinbase: start" in tp["note"], tp["note"][:600]
     ep = o["in_voter_apr_epoch"]
-    assert ep["verdict"].startswith("PASS") and "both / $" in ep["note"], ep
+    assert ep["verdict"].startswith("PASS") and "at the same days' payment-weighted" in ep["note"], ep
     assert o["in_revenue"]["verdict"].startswith("PASS"), o["in_revenue"]
+
+
+def test_aerodrome_headline_converts_each_days_rewards_at_that_days_price(tmp_path, monkeypatch):
+    """Jake's price convention (2026-10-09): tokens = sum over Q0 days of $paid_d / price_d, over the mean stake in the
+    same window — not the Q0 simple mean price. With a rising price and flat daily dollars the two differ (the mean of
+    1/p is not 1/mean p), so the headline must equal the payment-day sum exactly."""
+    lo, hi = pd.Timestamp("2026-07-01"), pd.Timestamp("2026-10-07")
+    price = lambda d: 0.27 + (0.8144 - 0.27) * (min(d, hi) - lo).days / (hi - lo).days          # noqa: E731
+    rows = _aero_rows(price=price)
+    o = _evaluate(tmp_path, monkeypatch, "Aerodrome", rows)
+    q0 = [d for d in _days() if pd.Timestamp(ASOF) - pd.Timedelta(days=90) < d <= pd.Timestamp(ASOF)]
+    tokens = sum(WK / 7 / price(d) for d in q0)
+    want = tokens * 365.25 / len(q0) / TW
+    simple_mean = WK / 7 * len(q0) / (sum(price(d) for d in q0) / len(q0)) * 365.25 / len(q0) / TW
+    head = o["a3_protocol_yield"]
+    assert abs(float(head["ours"]) - want) < 1e-9, (head, want)
+    assert abs(want / simple_mean - 1) > 0.05                    # the convention moves the figure on this path
+    assert "payment-weighted Q0 price" in o["in_apr_today_price"]["note"]
+
+
+def test_sky_farm_yield_is_usds_at_each_days_sky_price_over_the_mean_stake(tmp_path, monkeypatch):
+    """Jake's price convention (2026-10-09), Sky's USDS farm: each day's USDS / that day's SKY price over the last 28
+    days, x 365/28, / the mean SKY staked in the farm over the same days. The headline and in_apy_usds_farm are one
+    number."""
+    days = _days("2026-09-01", "2026-10-07")
+    price = lambda d: 0.06 + 0.0005 * (d - days[0]).days                                     # noqa: E731
+    stake = lambda d: 2.0e9 + 1.0e7 * (d - days[0]).days                                     # noqa: E731
+    rows = []
+    for d in days:
+        rows += [(d, "Sky", "staking_rewards_usds_usd", 300_000.0, "chain:ethereum:splitter", 2),
+                 (d, "Sky", "price_usd", price(d), "coingecko", 1),
+                 (d, "Sky", "locked_tokens_usds_farm", stake(d), "chain:ethereum:lssky_usds_farm", 2)]
+    o = _evaluate(tmp_path, monkeypatch, "Sky", rows)
+    win = [d for d in days if pd.Timestamp(ASOF) - pd.Timedelta(days=28) < d <= pd.Timestamp(ASOF)]
+    want = sum(300_000.0 / price(d) for d in win) * 365 / len(win) / (sum(stake(d) for d in win) / len(win))
+    farm = o["in_apy_usds_farm"]
+    assert abs(float(farm["ours"]) - want) < 1e-12, (farm, want)
 
 
 def test_aerodrome_epoch_rows_mature_until_defillama_publishes_the_last_day(tmp_path, monkeypatch):
@@ -442,7 +479,7 @@ def test_aerodrome_revenue_and_yield_are_judged_epoch_for_epoch_against_state(tm
     assert "18 token(s) unpriced" in o["in_revenue"]["note"]
     ep = o["in_voter_apr_epoch"]
     assert ep["verdict"].startswith("PASS"), ep
-    assert "HEADLINE: numerator" in ep["note"] and "denominator voter_total_weight_tokens" in ep["note"]
+    assert "HEADLINE: PAYMENT-DAY PRICES" in ep["note"] and "mean stake" in ep["note"]
     assert "REBASE" in ep["note"]
     assert abs(float(ep["ref"]) - 0.1256) < 0.0005
     rb = o["in_rebase_apr"]

@@ -527,6 +527,28 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11ax. Price convention: payment-day prices (Jake, 2026-10-09)
+
+Every protocol yield with non-native rewards converts them to the staked token at the PAYMENT-DAY price: tokens = the
+sum over the window's days of $paid_d / price_d. They are divided by the stake in tokens over the same window (the mean
+of its stored days there) and annualised over the days counted. A paid day with no same-day price is left out and
+named. One function, `credibility.payday_yield`, is used by the workbook view (`build_workbook._payday_yield_views`)
+and by the Credibility rows that reproduce it.
+
+- **Aerodrome.** `token_yield.payday`: holders revenue (fees + bribes) over 90 days, AERO price, Voter.totalWeight,
+  ×365.25. It replaces the Q0 simple mean price. The dollar column on the same basis is the same number (the price
+  cancels), so it reads the same row. The voting-power column divides the same payday tokens a year
+  (`rewards_tokens_payday_annual`) by voting power. `in_voter_apr_epoch` converts each epoch day at its own price; the
+  on-chain dollars use the epoch's payment-weighted price. `in_apr_today_price` stays as the labelled second figure;
+  it compares spot with the payment-weighted Q0 price, from CoinGecko and Coinbase.
+- **Sky.** `token_yield.payday`: USDS paid to the USDS farm over 28 days, SKY price, the farm's mean stake, ×365. It
+  replaces USDS ×365/28 / (stake × spot). `in_apy_usds_farm(_rr/_ba)` and `in_yield_economy_wide` use `basis: payday`.
+  Their references (Sky's page, rewardRate, Block Analitica) are live spot-price rates, so they now differ from ours
+  by SKY's move over the window as well.
+- **Unchanged:** Pendle and Ether.fi (native rewards). Their dollar columns still divide by stake × spot.
+- `python check_offline_items.py price_basis_before_after` prints, per project from your store: before, the
+  price-basis step alone, after, and the APR at today's price.
+
 ## 11aw. Jake's run 2026-10-09 ~10:15: tested on the real store
 
 That run (on 1cb8f6b) signed off 10 projects. Five were OPEN: Ethereum, Chainlink, Plume, Aerodrome and Pendle. The

@@ -8785,6 +8785,64 @@ def pendle_emissions_q0(days: int = 90):
           "chain of those payouts. A chain the explorer refuses is named, never counted as 0.")
 
 
+def price_basis_before_after():
+    """THE PAYMENT-DAY PRICE CONVENTION, BEFORE AND AFTER (Jake, 2026-10-09: every protocol yield with non-native rewards
+    converts them at the payment-day price — sum over days of $paid_d / price_d — over the stake in tokens over the
+    same window; the dollar yield on the same basis). Per project, from metrics.db: the token and dollar yields as they
+    were computed, as they are now (credibility.payday_yield, the headline's own arithmetic), and the step between —
+    price basis alone (same stake) and then the stake basis (latest -> window mean) — with the APR at today's price
+    beside it. Reads metrics.db only."""
+    import sqlite3                                         # noqa: PLC0415
+    import pandas as pd                                    # noqa: PLC0415
+    import config                                          # noqa: PLC0415
+    import credibility as cred                             # noqa: PLC0415
+    head("PROTOCOL YIELD — payment-day prices, before and after (Aerodrome, Sky)")
+    try:
+        con = sqlite3.connect("metrics.db")
+        df = pd.DataFrame(con.execute("SELECT date, project, metric, value FROM metrics WHERE project IN "
+                                      "('Aerodrome', 'Sky')").fetchall(), columns=["date", "project", "metric", "value"])
+        con.close()
+    except Exception as e:  # noqa: BLE001
+        print(f"  metrics.db unreadable here ({e})")
+        return
+    if df.empty:
+        print("  no Aerodrome / Sky rows in metrics.db — run token_metrics.py first")
+        return
+    df["date"] = pd.to_datetime(df["date"]).dt.normalize()
+    asof = pd.Timestamp.today().normalize()
+    for name in ("Aerodrome", "Sky"):
+        spec = config.PROTOCOL_YIELD[name]["token_yield"]["payday"]
+        s = lambda m: (df[(df.project == name) & (df.metric == m)].drop_duplicates("date", keep="last")  # noqa: E731
+                       .set_index("date")["value"].astype(float).sort_index())
+        fl, px, st = s(spec["flow"]), s(spec["price"]), s(spec["stock"])
+        lo = asof - pd.Timedelta(days=int(spec["days"]))
+        year = float(spec.get("year", 365))
+        w = fl[(fl.index > lo) & (fl.index <= asof)]
+        pw = px[(px.index > lo) & (px.index <= asof)]
+        stn = st[st.index <= asof]
+        new = cred.payday_yield(fl, px, st, lo, asof, year)
+        print(f"\n  {name.upper()} — {spec['flow']} over the last {spec['days']} days / {spec['stock']}")
+        if w.empty or pw.empty or stn.empty or new is None:
+            print(f"    not computable here: flow {len(w)} day(s), price {len(pw)} day(s), stake {len(stn)} reading(s)")
+            continue
+        spot, stake_now = float(pw.iloc[-1]), float(stn.iloc[-1])
+        annual_usd = float(w.sum()) * year / len(w)
+        if name == "Aerodrome":           # BEFORE: tokens at the Q0 simple mean price / the stake at the as-of date
+            tok_before = annual_usd / float(pw.mean()) / stake_now
+            basis = f"Q0 simple mean ${float(pw.mean()):,.4f}"
+        else:                             # BEFORE: USDS x 365/28 / (stake x spot) — the token and $ columns were one
+            tok_before = float(w.sum()) * 365.0 / int(spec["days"]) / (stake_now * spot)
+            basis = f"spot ${spot:,.4f}"
+        usd_before = annual_usd / (stake_now * spot)
+        price_only = new["tokens"] * year / new["days"] / stake_now
+        print(f"    BEFORE  token yield {tok_before:.2%} ({basis}, stake {stake_now:,.0f} at {stn.index[-1].date()}); "
+              f"dollar yield {usd_before:.2%} (${annual_usd:,.0f}/yr / stake x spot ${spot:,.4f})")
+        print(f"    STEP 1  price basis -> payment-day (payment-weighted ${new['p_eff']:,.4f}), same stake: {price_only:.2%}")
+        print(f"    AFTER   token yield = dollar yield {new['value']:.2%} — {new['how']}")
+        print(f"    TODAY'S PRICE APR (labelled second figure): {annual_usd / (stake_now * spot):.2%}")
+    print("\n  PASTE BACK the whole output: these are the before/after figures per project, from your store.")
+
+
 def plume_supply_read():
     """PLUME in_circ "no figure" (Jake's run 2026-10-08): every step the run takes for circulating_supply_first_party
     (sources.yaml, supply.plume.org/supply), in order, so the step that drops it is named — robots.txt, the back-off
@@ -8921,7 +8979,7 @@ CHECKS = (
     etherfi_vault_archive, etherfi_contract_ids, etherfi_accountant, fluid_vesting_recipients, maple_ssf_partial,
     aerodrome_managed_venfts, pendle_epoch_revenues, maple_ssf_trail, fluid_avocado_owners, hl_pool_release_compare,
     pendle_spendle_rewards_onchain, maple_buyback_inflows, maple_syrup_mints, etherfi_withdrawal_fees, aerodrome_voter_rewards,
-    sky_farm_rates, plume_supply_read, chainlink_noncirc_transfers, chainlink_release_steps, aerodrome_price_q0, pendle_epoch_table, pendle_emissions_q0,
+    sky_farm_rates, plume_supply_read, chainlink_noncirc_transfers, chainlink_release_steps, aerodrome_price_q0, pendle_epoch_table, pendle_emissions_q0, price_basis_before_after,
     plume_sources, aethir_dashboard_xhr, maple_ssf_history, blockworks_geodnet,
     morpho_incentives, settlement_sources, hyperevm_etherscan, maple_ssf_inflows, aethir_pages,
     geod_stake_recipient, geod_stake_wallets, maple_ssf_lp_test, maple_drips, plume_archive, settlement_rebuild_coverage,

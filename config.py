@@ -325,7 +325,9 @@ METRICS = {
     # stats/balance); its daily change is NEAR's buyback (actual_buyback_tokens, a read-time view).
     "buyback_fund_balance_eod":  {"label": "NEAR Intents revenue wallets COMBINED, liquid NEAR at each day's close (fefundsadmin + buybacks.multisignature + 1csfundsadmin; NearBlocks stats/balance)", "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [1], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Near",)},
     # TRAILING-WINDOW REALISED TOKEN YIELD (Ether.fi, Jake 2026-10-07) — read-time views, one row on the latest day.
-    "staking_yield_usds_farm_28d_pct": {"label": "Sky USDS-farm revenue yield: USDS paid over the last 28 days x 365/28 / (SKY in the USDS farm x spot price)", "kind": "stock", "unit": "fraction", "archetypes": [3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 5.0, "only_projects": ("Sky",), "view_only": True},
+    "staking_yield_usds_farm_28d_pct": {"label": "Sky USDS-farm revenue yield: USDS paid over the last 28 days, each day / that day's SKY price, x 365/days / the mean SKY in the USDS farm over the same days (payment-day prices)", "kind": "stock", "unit": "fraction", "archetypes": [3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 5.0, "only_projects": ("Sky",), "view_only": True},
+    "token_yield_payday_pct": {"label": "Aerodrome voter yield at payment-day prices: Q0 fees + bribes, each day's $ / that day's AERO price, x 365.25/days / the mean votes cast (Voter.totalWeight) over Q0", "kind": "stock", "unit": "fraction", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 5.0, "only_projects": ("Aerodrome",), "view_only": True},
+    "rewards_tokens_payday_annual": {"label": "Aerodrome voter rewards in AERO a year at payment-day prices (Q0 fees + bribes, each day's $ / that day's price, annualised)", "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e12, "only_projects": ("Aerodrome",), "view_only": True},
     "token_yield_epoch_mean_pct": {"label": "Pendle staking yield: the mean of the Q0 per-epoch APRs, each over its own stake (ours where our stake exists, Pendle's published APR before ~2026-09-11)", "kind": "stock", "unit": "fraction", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 5.0, "only_projects": ("Pendle",), "view_only": True},
     "token_yield_trailing_pct": {"label": "Realised token yield, trailing 365 days: reward tokens / AVERAGE staked, annualised over the days covered", "kind": "stock", "unit": "fraction", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 5.0, "only_projects": ("Ether.fi",), "view_only": True},
     "token_yield_share_price_trailing_pct": {"label": "Realised yield from the vault's share price, trailing 365 days (annualised)", "kind": "stock", "unit": "fraction", "archetypes": [3], "tiers": [2], "sanity_min": -1.0, "sanity_max": 5.0, "only_projects": ("Ether.fi",), "view_only": True},
@@ -18216,16 +18218,18 @@ PROTOCOL_YIELD = {
     # farm's rewards are treasury SKY (emissions, A2), not revenue, and stay out of this column. Until 2026-10-07 the
     # numerator was DefiLlama holders revenue over all staked SKY.
     "Sky": {"revenue": "staking_rewards_usds_usd", "lock": "locked_tokens_usds_farm",
-            # THE HEADLINE IS THE FARM ROW (Jake's run 2026-10-08 11:27: the headline value was still 2.72%): USDS paid
-            # by the Splitter over the last 28 days x 365/28 / (SKY in the USDS farm x spot price) — the arithmetic of
-            # Credibility's in_apy_usds_farm, computed at read time (build_workbook._farm_yield_views)
-            "token_yield": {"farm_rate": {"flow": "staking_rewards_usds_usd", "stock": "locked_tokens_usds_farm",
-                                          "price": "price_usd", "days": 28,
-                                          "metric": "staking_yield_usds_farm_28d_pct"},
-                            "note": "USDS-FARM REVENUE YIELD — USDS paid by the Splitter to the lsSKY USDS-rewards "
-                                    "farm over the last 28 days x 365/28 / (SKY staked in that farm x spot price). "
-                                    "The economy-wide figure (holders revenue / all staked SKY) is Credibility's "
-                                    "in_yield_economy_wide, a labelled second figure."}},
+            # THE HEADLINE IS THE FARM ROW (Jake's run 2026-10-08 11:27): USDS paid by the Splitter over the last 28 days
+            # — the arithmetic of Credibility's in_apy_usds_farm, computed at read time (build_workbook._payday_yield_views).
+            # PAYMENT-DAY PRICES (Jake's price convention, 2026-10-09): each day's USDS / that day's SKY price, x 365/days,
+            # over the MEAN SKY in the farm over the same 28 days. Was: USDS x 365/28 / (SKY in the farm x spot price).
+            "token_yield": {"payday": {"flow": "staking_rewards_usds_usd", "stock": "locked_tokens_usds_farm",
+                                       "price": "price_usd", "days": 28, "year": 365,
+                                       "metric": "staking_yield_usds_farm_28d_pct"},
+                            "note": "USDS-FARM REVENUE YIELD AT PAYMENT-DAY PRICES — USDS paid by the Splitter to the "
+                                    "lsSKY USDS-rewards farm over the last 28 days, each day put in SKY at that day's "
+                                    "price, x 365/days / the mean SKY staked in that farm over the same days. The dollar "
+                                    "column is the same number on this basis. The economy-wide figure (holders revenue / "
+                                    "all staked SKY) is Credibility's in_yield_economy_wide, a labelled second figure."}},
     # AERODROME (Jake, 2026-09-30): no AERO is bought, so the retirement rate is a structural 0 —
     # what stakers earn is the voter rewards. holders_revenue_usd IS those rewards: DefiLlama's
     # aerodrome and aerodrome-slipstream adapters book dailyHoldersRevenue = the staked-LP swap
@@ -18240,8 +18244,20 @@ PROTOCOL_YIELD = {
     # THE STAKE IS THE VOTES CAST (Jake's run 2026-10-08 11:27): voting rewards are paid pro-rata to the votes on each
     # pool, so the reward-bearing stake is Voter.totalWeight (1,021.3M), not AERO locked (veAERO.supply(), 1.053bn) —
     # a lock that has not voted earns nothing. Read daily by fetch/aero_voter.py.
+    # PAYMENT-DAY PRICES (Jake's price convention, 2026-10-09): the voter yield puts each day's fees + bribes in AERO at
+    # THAT day's price (was: the Q0 simple mean price), over the mean votes cast in the same window; the dollar column
+    # and the voting-power column use the same tokens. Today's-price APR: Credibility in_apr_today_price.
     "Aerodrome": {"revenue": "holders_revenue_usd", "lock": "voter_total_weight_tokens",
                   "voting_power": "ve_voting_power_tokens",
+                  "token_yield": {"payday": {"flow": "holders_revenue_usd", "stock": "voter_total_weight_tokens",
+                                             "price": "price_usd", "days": 90, "year": 365.25,
+                                             "metric": "token_yield_payday_pct",
+                                             "annual_metric": "rewards_tokens_payday_annual"},
+                                  "note": "VOTER YIELD AT PAYMENT-DAY PRICES — DefiLlama's Q0 fees + bribes (holders "
+                                          "revenue), each day put in AERO at that day's price, x 365.25/days / the mean "
+                                          "votes cast (Voter.totalWeight) over Q0. Was: the Q0 simple mean price. The "
+                                          "dollar column is the same number on this basis; Credibility's "
+                                          "in_apr_today_price gives the APR at today's price beside it."},
                   "source_url": "https://github.com/DefiLlama/dimension-adapters/blob/master/dexs/aerodrome/index.ts",
                   "read_on": "2026-09-30"},
     # lock_add: rewards are pro-rata over REAL + VIRTUAL sPENDLE (see locked_tokens_virtual), so
@@ -24416,14 +24432,15 @@ CREDIBILITY: dict = {
         # through its inputs, epoch for epoch — never one average against one epoch (as Pendle, 2026-10-08).
         "a3_protocol_yield": {"inputs": ("in_revenue", "in_voter_apr_epoch"),
                               "source": "the per-epoch rows below (on-chain fees + bribes and their APR, stored weekly)",
-                              "why": "The headline is DefiLlama's Q0 fees + bribes in AERO at the Q0 mean price, x "
-                                     "365.25/days, over Voter.totalWeight (the votes cast — the stake voting rewards are "
+                              "why": "The headline is DefiLlama's Q0 fees + bribes in AERO at each payment day's price "
+                                     "(Jake's price convention, 2026-10-09; was the Q0 mean price), x 365.25/days, over "
+                                     "the mean Voter.totalWeight (the votes cast — the stake voting rewards are "
                                      "paid on; it was veAERO.supply(), AERO locked, until 2026-10-08). It inherits the "
                                      "verdicts of the same-epoch revenue row and the per-epoch reproduction of its own "
                                      "arithmetic; the reproduction row prints the headline's numerator and denominator "
                                      "against the epoch's. The veAERO rebase is a separate stream: in_rebase_apr."},
         "in_voter_apr_epoch": _c_in_py(
-            "Per-epoch voter APR, the headline's arithmetic (DefiLlama $ / week's mean price x 365.25/7 / totalWeight)",
+            "Per-epoch voter APR, the headline's arithmetic (DefiLlama $ / each day's price x 365.25/7 / totalWeight)",
             "aero_epoch_apr", {"side": "ours"},
             {"verdict_when": {"py": "aero_epoch_pending", "args": {"flow": "holders_revenue_usd"},
                               "positive": _c_mat("DefiLlama's days for the latest on-chain epoch are not all stored yet "
@@ -24431,7 +24448,8 @@ CREDIBILITY: dict = {
                               "otherwise": {
                 "formula": "aero_epoch_apr", "args": {"side": "ref"}, "tol": 10.0, "show_how": True,
                 "source": "the on-chain epoch's fees + bribes (tokenRewardsPerEpoch, fetch/aero_voter.py) at the SAME "
-                          "price and stake as ours: the week's mean AERO price, x 365.25/7, over Voter.totalWeight",
+                          "price and stake as ours: the epoch's payment-weighted AERO price, x 365.25/7, over "
+                          "Voter.totalWeight",
                 "note": "Judged on the epoch that differs most. Both sides use the same price (Jake's run 2026-10-09, "
                         "4b), so the comparison is the dollars; unpriced reward tokens leave the on-chain side low."}}},
             fmt=_C_PCT),
@@ -24440,16 +24458,19 @@ CREDIBILITY: dict = {
         # MEAN AERO price, so a price that rose over Q0 puts it above the APR at today's price. VERIFIED FINDING only
         # when CoinGecko's and Coinbase's Q0 means agree (confirmed); CHECK otherwise.
         "in_apr_today_price": _c_in_py(
-            "Voter APR at TODAY's AERO price beside the headline (Q0 rewards converted at the Q0 mean price)",
+            "Voter APR at TODAY's AERO price beside the headline (Q0 rewards converted at payment-day prices)",
             "price_basis_gap", {"value": "apr"}, {"verdict_when": {
                 "py": "price_basis_gap", "args": {},
-                "positive": _c_find("The headline converts Q0 rewards to AERO at the Q0 MEAN price (our token-yield "
-                                    "definition); at today's price the same rewards are a lower APR, because AERO rose "
-                                    "over Q0.", "CoinGecko and Coinbase daily prices over Q0, stored"),
-                "negative": _c_chk("AERO's Q0 mean is not confirmed by a second price source (Coinbase missing or "
-                                   "more than 2% apart).", "python check_offline_items.py aerodrome_price_q0"),
-                "otherwise": {"verdict": "N/A (recorded, price flat)", "why": "AERO moved less than 5% over Q0: the headline's Q0-mean "
-                                                       "conversion and today's price give the same APR."}}},
+                "positive": _c_find("The headline converts Q0 rewards to AERO at each PAYMENT DAY's price (our price "
+                                    "convention, Jake 2026-10-09); at today's price the same rewards are a different "
+                                    "APR, because AERO moved over Q0.", "CoinGecko and Coinbase daily prices over Q0, "
+                                    "stored; their payment-weighted Q0 prices agree within 2%"),
+                "negative": _c_chk("AERO's payment-weighted Q0 price is not confirmed by a second price source "
+                                   "(Coinbase missing or more than 2% apart).",
+                                   "python check_offline_items.py aerodrome_price_q0"),
+                "otherwise": {"verdict": "N/A (recorded, price flat)", "why": "AERO's spot is within 5% of its "
+                                                       "payment-weighted Q0 price: the headline and today's price "
+                                                       "give the same APR."}}},
             fmt=_C_PCT),
         "in_rebase_apr": _c_in_py("veAERO rebase as a rate (RewardsDistributor tokensPerWeek x 52 / totalWeight) — a "
                                   "separate stream, in neither yield figure", "aero_rebase_apr", {},
@@ -24632,11 +24653,11 @@ CREDIBILITY: dict = {
                                                           "own rewardRate on 2026-10-08)"},
                                      "tol": 5.0, "note": "A simple rate: StakingRewards pays out, it does not compound."},
                                     fmt=_C_PCT),
-        "in_apy_usds_farm": _c_in_py("USDS-rewards farm rate: USDS paid by the Splitter, last 28 days annualised / "
-                                     "(SKY staked in it x SKY price)",
+        "in_apy_usds_farm": _c_in_py("USDS-rewards farm rate: USDS paid by the Splitter, last 28 days, each day / that "
+                                     "day's SKY price, annualised / the mean SKY staked in it (payment-day prices)",
                                      "rate_on_stake", {"flow": "staking_rewards_usds_usd",
                                                        "stock": "locked_tokens_usds_farm", "days": 28,
-                                                       "price": "price_usd"},
+                                                       "price": "price_usd", "basis": "payday"},
                                      {"manual": {"value": 0.0461, "read_on": "2026-10-07", "read_by": "Jake",
                                                  "source": "info.skyeco.com/staking, USDS-rewards farm APY 4.61% "
                                                            "(Jake's reading)"},
@@ -24713,7 +24734,7 @@ CREDIBILITY: dict = {
         "in_apy_usds_farm_rr": _c_in_py("USDS-rewards farm rate (ours, USDS paid 28 days annualised) vs its rewardRate()",
                                         "rate_on_stake", {"flow": "staking_rewards_usds_usd",
                                                           "stock": "locked_tokens_usds_farm", "days": 28,
-                                                          "price": "price_usd"},
+                                                          "price": "price_usd", "basis": "payday"},
                                         {"formula": "reward_rate_apr", "tol": 15.0,
                                          "args": {"rate": "usds_farm_reward_rate_usds_per_s",
                                                   "stock": "locked_tokens_usds_farm", "stake_price": "price_usd",
@@ -24723,8 +24744,9 @@ CREDIBILITY: dict = {
                                          "note": "A live rate against a 28-day paid average: they part when the "
                                                  "Splitter's kicks change size."}, fmt=_C_PCT),
         "in_yield_economy_wide": _c_in_py(
-            "SECOND FIGURE, economy-wide: holders revenue, last 30 days annualised / (ALL staked SKY x price)",
-            "rate_on_stake", {"flow": "holders_revenue_usd", "stock": "locked_tokens", "days": 30, "price": "price_usd"},
+            "SECOND FIGURE, economy-wide: holders revenue, last 30 days at payment-day prices, annualised / mean ALL staked SKY",
+            "rate_on_stake", {"flow": "holders_revenue_usd", "stock": "locked_tokens", "days": 30, "price": "price_usd",
+                              "basis": "payday"},
             {"verdict": "N/A (recorded)",
              "why": "recorded beside the headline, not judged: what all of Sky's holders revenue would pay across every "
                     "staked SKY (~2.72% on Jake's run 2026-10-08). The headline is what the USDS farm actually pays "
@@ -24828,7 +24850,7 @@ CREDIBILITY: dict = {
         "in_apy_usds_farm_ba": _c_in_py("USDS-rewards farm rate (ours, 28 days annualised) vs Block Analitica's apy",
                                         "rate_on_stake", {"flow": "staking_rewards_usds_usd",
                                                           "stock": "locked_tokens_usds_farm", "days": 28,
-                                                          "price": "price_usd"},
+                                                          "price": "price_usd", "basis": "payday"},
                                         {"metric": "usds_farm_apy_ba", "window": "now", "tol": 15.0,
                                          "source": "Block Analitica info-sky farm apy, as published",
                                          "note": "As the SKY-farm row: the unit is read off the first run."},

@@ -2027,7 +2027,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _buyback_tokens_from_usd_views(groups)
     _emissions_from_metric_views(groups)
     _trailing_yield_views(groups)
-    _farm_yield_views(groups, asof)
+    _payday_yield_views(groups, asof)
     _epoch_mean_views(groups, asof)
     _native_fee_usd_views(groups)
     _mev_estimate_views(groups)
@@ -3787,8 +3787,8 @@ def _token_yield(R: Refs, data_by_key: dict | None = None):
             why = config.PROTOCOL_YIELD_NOT_APPLICABLE.get(p["name"])
             return f"n/a — {why}" if why else ""
         ty = spec.get("token_yield")
-        if ty and ty.get("farm_rate"):            # the farm row's own arithmetic (Sky, Jake's run 2026-10-08 11:27)
-            cell = R.D(r, ty["farm_rate"]["metric"], "now")
+        if ty and ty.get("payday"):               # payment-day prices (Jake's price convention, 2026-10-09)
+            cell = R.D(r, ty["payday"]["metric"], "now")
             return calc(f"IF(ISNUMBER({cell}),{cell},{NA})")
         if ty and ty.get("epoch_mean"):           # the mean of the per-epoch APRs (Pendle, Jake's 5c decision 2026-10-09)
             cell = R.D(r, ty["epoch_mean"]["metric"], "now")
@@ -3833,7 +3833,8 @@ def _token_yield(R: Refs, data_by_key: dict | None = None):
                if ty else None)
         return own or _protocol_yield_flag(p, data_by_key or {})
     return ("PROTOCOL STAKING YIELD (tokens) — primary: tokens paid to stakers per year ÷ reward-bearing stake "
-            "(real + virtual); dollars paid are converted at the Q0 average price where no token series exists",
+            "(real + virtual); dollars paid are converted at each PAYMENT DAY's price (Aerodrome, Sky — Jake's price "
+            "convention 2026-10-09) over the mean stake in the same window",
             build, FMT_PCT, "calc", True,
             {"metric_fn": lambda n: (((config.PROTOCOL_YIELD.get(n) or {}).get("token_yield") or {}).get("tokens")
                                      or (config.PROTOCOL_YIELD.get(n) or {}).get("revenue")),
@@ -4096,33 +4097,35 @@ def _emissions_from_metric_views(groups: dict, after_issuance: bool = False) -> 
             groups[(name, "emissions_tokens")] = held[~held["source"].astype(str).str.startswith("schedule")]
 
 
-def _farm_yield_views(groups: dict, asof: pd.Timestamp) -> None:
-    """THE FARM'S REVENUE YIELD, AS ITS CREDIBILITY ROW COMPUTES IT (Sky, Jake's run 2026-10-08 11:27: the headline
-    still read 2.72% after only the reference moved). token_yield `farm_rate`: the flow paid over the last `days` days
-    to asof, x 365 / days, over the stake stored on or before asof x the price stored on or before asof —
-    credibility._rate_on_stake's arithmetic, so the headline and the USDS-farm row are one number. One row, at asof."""
+def _payday_yield_views(groups: dict, asof: pd.Timestamp) -> None:
+    """THE PROTOCOL YIELD AT PAYMENT-DAY PRICES (Jake's price convention, 2026-10-09 — Aerodrome and Sky): token_yield
+    `payday` = {flow ($ paid), price, stock (the stake in tokens), days, metric, year}: each day's $ / that day's price,
+    summed over the last `days` days to asof, x year / the days counted, over the MEAN stake stored in the same window —
+    credibility.payday_yield, the arithmetic the Credibility rows reproduce. The dollar column on the same basis is the
+    same number (the price cancels), so both columns read this row. One row, at asof."""
+    import credibility as cred                       # noqa: PLC0415
     for p in scoped_projects():
-        fr = ((config.PROTOCOL_YIELD.get(p["name"]) or {}).get("token_yield") or {}).get("farm_rate")
-        if not fr:
+        pd_ = ((config.PROTOCOL_YIELD.get(p["name"]) or {}).get("token_yield") or {}).get("payday")
+        if not pd_:
             continue
         name = p["name"]
         s = lambda m: (lambda g: None if g is None or g.empty else g.assign(  # noqa: E731
             date=pd.to_datetime(g["date"]).dt.normalize()).drop_duplicates("date", keep="last")
             .set_index("date")["value"].astype(float).sort_index())(groups.get((name, m)))
-        fl, st, px = s(fr["flow"]), s(fr["stock"]), s(fr["price"])
-        if fl is None or st is None or px is None:
+        lo = asof - pd.Timedelta(days=int(pd_["days"]))
+        r = cred.payday_yield(s(pd_["flow"]), s(pd_["price"]), s(pd_["stock"]), lo, asof, float(pd_.get("year", 365)))
+        if r is None:
             continue
-        lo = asof - pd.Timedelta(days=int(fr["days"]))
-        fl = fl[(fl.index > lo) & (fl.index <= asof)]
-        st, px = st[st.index <= asof], px[px.index <= asof]
-        if fl.empty or st.empty or px.empty or not st.iloc[-1] or not px.iloc[-1]:
-            continue
-        v = float(fl.sum()) * 365.0 / int(fr["days"]) / (float(st.iloc[-1]) * float(px.iloc[-1]))
-        groups[(name, fr["metric"])] = _as_stored(pd.DataFrame(
-            {"date": [st.index[-1]], "project": [name], "metric": [fr["metric"]], "value": [v],
-             "source": [f"derived:{fr['flow']} {float(fl.sum()):,.0f} over {fr['days']}d x 365/{fr['days']} / "
-                        f"({fr['stock']} {float(st.iloc[-1]):,.0f} x {fr['price']} {float(px.iloc[-1]):.4f})"],
-             "tier": [2]}), groups[(name, fr["stock"])].columns)
+        groups[(name, pd_["metric"])] = _as_stored(pd.DataFrame(
+            {"date": [r["last"]], "project": [name], "metric": [pd_["metric"]], "value": [r["value"]],
+             "source": [f"derived:{pd_['flow']} / same-day {pd_['price']}, {pd_['days']}d, / mean {pd_['stock']} — "
+                        f"{r['how']}"], "tier": [2]}), groups[(name, pd_["flow"])].columns)
+        if pd_.get("annual_metric"):                  # the tokens a year, for a column on another denominator
+            groups[(name, pd_["annual_metric"])] = _as_stored(pd.DataFrame(
+                {"date": [r["last"]], "project": [name], "metric": [pd_["annual_metric"]],
+                 "value": [r["tokens"] * float(pd_.get("year", 365)) / r["days"]],
+                 "source": [f"derived:{pd_['flow']} / same-day {pd_['price']}, {r['days']} day(s), annualised"],
+                 "tier": [2]}), groups[(name, pd_["flow"])].columns)
 
 
 def _epoch_mean_views(groups: dict, asof: pd.Timestamp) -> None:
@@ -4439,6 +4442,13 @@ def _protocol_yield(R: Refs, data_by_key: dict | None = None):
     validator yield by name and by tab, so it can never be summed into archetype-1 Total Yield."""
     def build(r, p):
         spec = config.PROTOCOL_YIELD.get(p["name"])
+        # THE SAME BASIS AS THE TOKEN COLUMN (Jake's price convention, 2026-10-09): at payment-day prices the dollar
+        # yield, $ paid / (stake x the payment-weighted price), is the token yield — the price cancels — so both read
+        # the one payday row. Today's-price APR is a labelled second figure on Credibility (in_apr_today_price).
+        pdy = ((spec or {}).get("token_yield") or {}).get("payday")
+        if pdy:
+            cell = R.D(r, pdy["metric"], "now")
+            return calc(f"IF(ISNUMBER({cell}),{cell},{NA})")
         if spec:
             rev, lock = R.D(r, spec["revenue"], "q0"), R.D(r, spec["lock"], "now")
             px = R.D(r, "price_usd", "now")
@@ -4451,7 +4461,9 @@ def _protocol_yield(R: Refs, data_by_key: dict | None = None):
         why = config.PROTOCOL_YIELD_NOT_APPLICABLE.get(p["name"])
         return f"n/a — {why}" if why else ""
     return ("PROTOCOL STAKING YIELD ($) — alongside: what a REAL staker earns per staked token = holders revenue (annualised) ÷ "
-            "locked value at spot (real + virtual where rewards are shared with virtual balances) — revenue share, NOT a validator yield",
+            "locked value at spot (real + virtual where rewards are shared with virtual balances) — revenue share, NOT a validator yield. "
+            "Aerodrome and Sky: at PAYMENT-DAY prices over the mean stake (Jake's price convention, 2026-10-09), which "
+            "makes it equal to the token column; today's-price APR is a labelled second figure on Credibility",
             build, FMT_PCT, "calc", False,
             {"metric": "holders_revenue_usd",
              "partial_fn": lambda p: (config.lock_partial_reason(p["name"], config.PROTOCOL_YIELD[p["name"]]["lock"])
@@ -4473,11 +4485,15 @@ def _voter_apr_voting_power(R: Refs):
         spec = config.PROTOCOL_YIELD.get(p["name"]) or {}
         if not spec.get("voting_power"):
             return ""
+        pdy = (spec.get("token_yield") or {}).get("payday") or {}
+        if pdy.get("annual_metric"):              # payment-day prices (Jake's price convention, 2026-10-09)
+            ann, vp = R.D(r, pdy["annual_metric"], "now"), R.D(r, spec["voting_power"], "now")
+            return calc(f"IF(AND(ISNUMBER({ann}),ISNUMBER({vp}),{vp}>0),{ann}/{vp},{NA})")
         rev, vp, px = R.D(r, spec["revenue"], "q0"), R.D(r, spec["voting_power"], "now"), R.D(r, "price_usd", "now")
         return calc(f"IF(AND(ISNUMBER({rev}),ISNUMBER({vp}),ISNUMBER({px}),{vp}>0),"
                     f"{_annualise(R, r, p, spec['revenue'], rev)}/({vp}*{px}),{NA})")
-    return ("VOTER APR ON VOTING POWER ($) — Aerodrome's vAPR definition: voter rewards (fees + bribes, annualised) ÷ "
-            "(veAERO voting power x price). The column to its left divides by AERO LOCKED, so it reads lower",
+    return ("VOTER APR ON VOTING POWER — Aerodrome's vAPR denominator: voter rewards (fees + bribes) in AERO at each "
+            "payment day's price, annualised, ÷ veAERO voting power. The yield column divides by the votes cast",
             build, FMT_PCT, "calc", False,
             {"metric_fn": lambda n: (config.PROTOCOL_YIELD.get(n) or {}).get("voting_power")})
 
