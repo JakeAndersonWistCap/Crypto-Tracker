@@ -481,3 +481,42 @@ def test_maple_inflow_table_joins_the_pages_months_and_splits_out_mints(tmp_path
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))
+
+
+# ================================================================================ real dumps (Jake's run 2026-10-09)
+def test_dump_fixture_round_trips_a_store_and_the_verdicts_are_unchanged(tmp_path, monkeypatch):
+    """0. dump_fixture.py exports a project's rows (and review-queue flags) from metrics.db; tests/real_dump.py loads
+    them back verbatim. The verdicts from the reloaded store must equal those from the original — otherwise a test on
+    a real dump would not be testing what Jake's run read. Run-log messages are redacted (no key reaches the file)."""
+    import json
+    import sqlite3
+    import dump_fixture
+    import store as sm
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import real_dump
+    src = tmp_path / "src"
+    src.mkdir()
+    direct = _evaluate(src, monkeypatch, "Pendle", _pendle_rows(virtual_from="2026-09-11"))
+    db = src / "metrics.db"
+    con = sqlite3.connect(db)
+    con.execute("INSERT INTO run_log (run_id, ts, source, tier, project, rows, status, message) VALUES "
+                "('r', '2099-01-01T00:00:00Z', 'x', 1, 'Pendle', 1, 'ok', "
+                "'GET https://api.example.com/v1?apikey=SECRET123 ok')")
+    con.execute("INSERT INTO review_queue (run_id, ts, project, metric, date, value, reason, action) VALUES "
+                "('r', '2026-10-08T00:00:00Z', 'Pendle', 'locked_tokens_virtual', '2026-10-07', 1.0, "
+                "'anchor_unconfirmed', 'stored_flagged')")
+    con.commit()
+    con.close()
+    out = tmp_path / "real_pendle.json"
+    dump_fixture.dump("Pendle", db=str(db), out=str(out))
+    payload = json.loads(out.read_text())
+    assert payload["meta"]["counts"]["metrics"] > 0 and payload["review_queue"][0]["reason"] == "anchor_unconfirmed"
+    assert "SECRET123" not in out.read_text()
+    payload["meta"]["asof"] = ASOF
+    db2 = tmp_path / "reloaded.db"
+    real_dump.to_store(payload, db2)
+    monkeypatch.setattr(sm, "DB_PATH", str(db2))
+    import credibility_report as cr
+    rws, tab = cr.evaluate("Pendle", asof=pd.Timestamp(ASOF), narrow=True)
+    again = {r["id"]: t[10] for r, t in zip(rws, tab) if r["project"] == "Pendle"}
+    assert again == {k: v["verdict"] for k, v in direct.items()}
