@@ -4104,16 +4104,24 @@ def _emissions_from_metric_views(groups: dict, after_issuance: bool = False) -> 
                    for m, g in parts.items() if g is not None and not g.empty}
             if not got:
                 continue
+            missing = [m for m in src_metric if m not in got]
+            if missing:
+                # EVERY LISTED STREAM OR NO COLUMN (Jake's run 2026-10-09 ~14:10: the sum read mainnet only, 77,160, while
+                # Arbitrum paid 6,610.56 — its scan was still seeding). A stream that has stored nothing is not a 0.
+                _VIEW_BLOCKS[(name, "emissions_tokens")] = (
+                    f"BLOCKED — the sum of {', '.join(src_metric)} is not formed: {', '.join(missing)} "
+                    f"stored nothing yet (a log scan stores only once its whole history reconciles). "
+                    f"`python token_metrics.py --seed pendle_gauges` finishes the seed in one sitting")
+                groups.pop((name, "emissions_tokens"), None)
+                continue
             end = min(s.index.max() for s in got.values())
             idx = sorted(set().union(*(s.index for s in got.values())))
             total = pd.concat([s.reindex(idx).fillna(0.0) for s in got.values()], axis=1).sum(axis=1)
             total = total[total.index <= end]
-            missing = [m for m in src_metric if m not in got]
             base = next(iter(parts[m] for m in got))
             groups[(name, "emissions_tokens")] = _as_stored(pd.DataFrame(
                 {"date": total.index, "project": name, "metric": "emissions_tokens", "value": total.values,
-                 "source": f"derived:sum({'+'.join(got)})" + (f"[not yet scanned: {', '.join(missing)}]"
-                                                              if missing else ""), "tier": 2}), base.columns)
+                 "source": f"derived:sum({'+'.join(got)})", "tier": 2}), base.columns)
             continue
         measured = groups.get((name, src_metric))
         held = groups.get((name, "emissions_tokens"))
@@ -4140,12 +4148,14 @@ def _payday_yield_views(groups: dict, asof: pd.Timestamp) -> None:
             date=pd.to_datetime(g["date"]).dt.normalize()).drop_duplicates("date", keep="last")
             .set_index("date")["value"].astype(float).sort_index())(groups.get((name, m)))
         lo = asof - pd.Timedelta(days=int(pd_["days"]))
-        r = cred.payday_yield(s(pd_["flow"]), s(pd_["price"]), s(pd_["stock"]), lo, asof, float(pd_.get("year", 365)))
+        r = cred.payday_yield(s(pd_["flow"]), s(pd_["price"]), s(pd_["stock"]), lo, asof, float(pd_.get("year", 365)),
+                              pd_.get("stake_epoch_days"))
         if r is None:
             continue
+        over = "each epoch's" if pd_.get("stake_epoch_days") else "mean"
         groups[(name, pd_["metric"])] = _as_stored(pd.DataFrame(
             {"date": [r["last"]], "project": [name], "metric": [pd_["metric"]], "value": [r["value"]],
-             "source": [f"derived:{pd_['flow']} / same-day {pd_['price']}, {pd_['days']}d, / mean {pd_['stock']} — "
+             "source": [f"derived:{pd_['flow']} / same-day {pd_['price']}, {pd_['days']}d, / {over} {pd_['stock']} — "
                         f"{r['how']}"], "tier": [2]}), groups[(name, pd_["flow"])].columns)
         if pd_.get("annual_metric"):                  # the tokens a year, for a column on another denominator
             groups[(name, pd_["annual_metric"])] = _as_stored(pd.DataFrame(
@@ -4177,11 +4187,12 @@ def _epoch_mean_views(groups: dict, asof: pd.Timestamp) -> None:
         # BEFORE THE API'S HISTORY: the calibrated on-chain rebuild of virtual sPENDLE (Jake's 1c decision, 2026-10-09)
         fb, cs = None, em.get("calibrate")
         if cs:
-            gv = groups.get((name, cs["ve"]))
-            src = ({} if gv is None or gv.empty else
-                   dict(zip(pd.to_datetime(gv["date"]).dt.normalize(), gv["source"].astype(str))))
-            cal = cred.virtual_rebuild(s(cs["ve"]), src, s(cs["api"]), int(cs.get("max_lock_days", 728)),
-                                       float(cs.get("drift_pp", 0.5)) / 100.0)
+            # THE ONE GUARDED COMPUTATION (credibility.pendle_calibration: read times from fetched_at, the PENDLE-locked
+            # bound — Jake's run 2026-10-09 ~14:10), on the same rows
+            parts = [groups.get((name, cs[k])) for k in ("ve", "api", "legacy") if cs.get(k)]
+            parts = [g for g in parts if g is not None and not g.empty]
+            cal = cred.pendle_calibration(name, pd.concat(parts, ignore_index=True).assign(
+                date=lambda d: pd.to_datetime(d["date"]).dt.normalize()) if parts else None)
             if cal:
                 fb = {cs["api"]: (cal["calibrated"], cal["label"])}
         tab = cred.epoch_apr_table(s(ty["tokens"]), s(em["published"]), stakes, lo, hi, int(ty["epoch_days"]),

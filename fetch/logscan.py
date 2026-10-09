@@ -181,6 +181,44 @@ class LogScan:
                                             f"{redact_urls(e)}. The other scans ran.", TIER)
                 log.exception("%s/%s crashed", p["name"], spec.get("key"))
 
+    def _direct_count(self, name, spec, chain_id, token, holders, excluded, to_block, scale, out) -> None:
+        from .logcache import DailyChecks
+        key, metric = spec["key"], spec["direct_metric"]
+        days_n = int(spec.get("direct_days", 100))
+        daily = DailyChecks(self.cache.root)
+        day = str(today().date())
+        if not daily.due(f"direct:{key}", day):
+            return
+        start = today() - pd.Timedelta(days=days_n)
+        try:
+            b0 = int(self.explorer.block_at(chain_id, int(start.tz_localize("UTC").timestamp())))
+            evs, meta = [], {}
+            for h in holders:
+                got, meta = self.explorer.get_logs(chain_id, token, [TRANSFER_TOPIC, pad_address(h)], b0, to_block)
+                evs += got
+        except (ExplorerRefused, ExplorerTimeout, ValueError) as e:
+            out.fail(SOURCE, name, f"{key}: the direct count ({metric}) could not be read — {e}", TIER)
+            return
+        internal = set(holders)
+        seen, by_day, n = set(), defaultdict(float), 0
+        for e in evs:
+            k = (str(e.get("transactionHash")), str(e.get("logIndex")))
+            to = topic_address(e["topics"][2])
+            if k in seen or to in internal or to in excluded or int(e.get("timeStamp") or 0) <= 0:
+                continue
+            seen.add(k)
+            n += 1
+            by_day[pd.Timestamp(int(e["timeStamp"]), unit="s").normalize()] += _amount(e) / scale
+        days = pd.date_range(start + pd.Timedelta(days=1), today() - pd.Timedelta(days=1), freq="D")
+        frame = tidy([(d, by_day.get(d, 0.0)) for d in days], name, metric,
+                     f"{SOURCE}:direct:{key}", TIER)
+        out.add(frame, SOURCE, name,
+                f"{metric} = {key} counted DIRECTLY: one windowed query from block {b0:,} (the first at or after "
+                f"{start.date()}) to {to_block:,}, no cache, {n:,} transfer(s) to markets, {sum(by_day.values()):,.4f} "
+                f"in total; {len(frame)} complete day(s) {days[0].date()}..{days[-1].date()} stored — the reference "
+                f"for the reconciled scan's series", TIER)
+        daily.done(f"direct:{key}", day)
+
     def _tx_events(self, chain_id: int, rq: dict, to_block: int, topics: list | None = None) -> list:
         """Every log of rq's event on rq's address up to to_block, incremental through the cache."""
         topics = topics or [rq["topic0"]]
@@ -773,6 +811,13 @@ class LogScan:
                 f"this run STORED {len(frame)} daily row(s) covering {stored}"
                 + " (the full reconciled series, every run)"
                 + f". Zeros are observed — the scan covers every block. {summary}", TIER)
+
+        # THE DIRECT COUNT BESIDE IT (Pendle in_emissions, Jake's run 2026-10-09 ~14:10: the row compared the mainnet scan
+        # with itself). Once a day: the same transfers queried afresh over the last direct_days days — one windowed
+        # getLogs from the block at the window's start, no cache, no reconciliation — bucketed by UTC day with the same
+        # exclusions, stored as spec["direct_metric"]. pendle_emissions_q0's computation, as a stored reference.
+        if spec.get("direct_metric") and direction == "out":
+            self._direct_count(name, spec, chain_id, token, holders, excluded, to_block, scale, out)
 
         # A HOLDER'S ALL-TIME BOUGHT SHARE (Jake, 2026-10-06 17:20): of everything the holder ever received (not a
         # hop between holders, not a mint, not address-poisoning spam), the share counted as BOUGHT on-chain — the

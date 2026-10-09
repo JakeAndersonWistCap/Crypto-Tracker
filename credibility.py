@@ -258,16 +258,23 @@ def _base_reward_ceiling(p, rows, long, asof, cover_metric="pool_release_tokens"
         f"performance rules")
 
 
-def payday_yield(flow, price, stake, lo, hi, year=365.0) -> dict | None:
+def payday_yield(flow, price, stake, lo, hi, year=365.0, epoch_days=None) -> dict | None:
     """THE PRICE CONVENTION FOR EVERY PROTOCOL YIELD WITH NON-NATIVE REWARDS (Jake, 2026-10-09): rewards are put in the
     staked token at the PAYMENT-DAY price — tokens = sum over the window's days of $paid_d / price_d — and divided by
     the stake IN TOKENS over the same window (the mean of the stake's stored days in it), annualised over the days
     counted. The dollar yield on the same basis is the same number: $paid / (stake x the payment-weighted price
     $paid / tokens), so the price cancels. A day with a payment and no same-day price is left out of both the tokens
     and the day count, and named. Series in, one dict out — the workbook view and the Credibility rows call this one
-    function. None when the window has no priced payment day or no stake."""
+    function. None when the window has no priced payment day or no stake.
+
+    PER-EPOCH STAKE (`epoch_days`, Aerodrome — Jake's run 2026-10-09 ~14:10, 1c: "mean stake 1,018,617,757 over its 1
+    stored day"): each paid day's tokens are divided by ITS epoch's stake — the reading on the epoch's start (Thursday
+    00:00 UTC; Voter.totalWeight archive-read at the epoch-start block), else the first reading inside that epoch,
+    else the nearest reading at all (named as borrowed) — and summed: value = sum(tokens_d / stake_d) x year / days."""
     if flow is None or price is None or stake is None:
         return None
+    if epoch_days:
+        return _payday_yield_epochs(flow, price, stake, lo, hi, year, int(epoch_days))
     fl = flow[(flow.index > lo) & (flow.index <= hi)]
     px = price[(price.index > lo) & (price.index <= hi)]
     st = stake[(stake.index > lo) & (stake.index <= hi)]
@@ -291,6 +298,68 @@ def payday_yield(flow, price, stake, lo, hi, year=365.0) -> dict | None:
            + (f"; left out, no same-day price: {', '.join(str(d.date()) for d in no_price)}" if no_price else ""))
     return {"value": value, "tokens": tokens, "usd": usd, "days": n, "p_eff": p_eff, "stake": mean_stake,
             "stake_days": len(st), "last": max(priced[-1], st.index[-1]), "no_price": no_price, "how": how}
+
+
+def _payday_epochs(p):
+    """The per-epoch stake setting of project p's payday yield (config token_yield.payday.stake_epoch_days), or None."""
+    return ((((config.PROTOCOL_YIELD.get(p) or {}).get("token_yield") or {}).get("payday") or {})
+            .get("stake_epoch_days"))
+
+
+def _epoch_start(d, epoch_days=7):
+    """The epoch a day falls in: Thursday 00:00 UTC starts (unix weeks) for 7-day epochs."""
+    d = pd.Timestamp(d).normalize()
+    return d - pd.Timedelta(days=(d.dayofweek - 3) % int(epoch_days))
+
+
+def _payday_yield_epochs(flow, price, stake, lo, hi, year, epoch_days):
+    fl = flow[(flow.index > lo) & (flow.index <= hi)]
+    px = price[(price.index > lo) & (price.index <= hi)]
+    st = stake.dropna().sort_index()
+    if fl.empty or st.empty:
+        return None
+    priced = [d for d in fl.index if d in px.index and px.loc[d]]
+    no_price = [d for d in fl.index if d not in priced]
+    if not priced:
+        return None
+    by_epoch, used = {}, {"start": [], "later": [], "borrowed": []}
+    for d in priced:
+        e = _epoch_start(d, epoch_days)
+        if e in by_epoch:
+            continue
+        inside = st[(st.index >= e) & (st.index < e + pd.Timedelta(days=epoch_days))]
+        if e in st.index:
+            by_epoch[e] = float(st.loc[e])
+            used["start"].append(e)
+        elif len(inside):
+            by_epoch[e] = float(inside.iloc[0])
+            used["later"].append((e, inside.index[0]))
+        else:
+            near = st.index[abs((st.index - e).days).argmin()]
+            by_epoch[e] = float(st.loc[near])
+            used["borrowed"].append((e, near))
+    if not all(by_epoch.values()):
+        return None
+    usd = float(fl.loc[priced].sum())
+    tok = {d: float(fl.loc[d]) / float(px.loc[d]) for d in priced}
+    tokens = sum(tok.values())
+    per_stake = sum(t / by_epoch[_epoch_start(d, epoch_days)] for d, t in tok.items())
+    n = len(priced)
+    value = per_stake * float(year) / n
+    eff = tokens / per_stake if per_stake else None
+    p_eff = usd / tokens if tokens else None
+    how = (f"PAYMENT-DAY PRICES, PER-EPOCH STAKE: ${usd:,.0f} paid over {n} day(s) {priced[0].date()}..{priced[-1].date()}, "
+           f"each day's $ / that day's price = {tokens:,.0f} tokens (payment-weighted price ${p_eff:,.4f}); each day "
+           f"over its epoch's stake, x {float(year):g}/{n} = {value:.2%} (effective stake {eff:,.0f} over "
+           f"{len(by_epoch)} epoch(s): {len(used['start'])} read at the epoch's start"
+           + (f", {len(used['later'])} read later in the epoch ({', '.join(f'{e.date()} on {r.date()}' for e, r in used['later'])})"
+              if used["later"] else "")
+           + (f", {len(used['borrowed'])} BORROWED from the nearest reading ("
+              + ", ".join(f"{e.date()} <- {r.date()}" for e, r in used["borrowed"]) + ")" if used["borrowed"] else "")
+           + ")" + (f"; left out, no same-day price: {', '.join(str(d.date()) for d in no_price)}" if no_price else ""))
+    return {"value": value, "tokens": tokens, "usd": usd, "days": n, "p_eff": p_eff, "stake": eff,
+            "stake_days": len(used["start"]), "borrowed": used["borrowed"], "per_epoch": by_epoch,
+            "last": max(priced[-1], st.index[-1]), "no_price": no_price, "how": how}
 
 
 def _rate_on_stake(p, rows, long, asof, flow="", stock="", days=28, price=None, basis="spot", **_):
@@ -690,13 +759,19 @@ def epoch_publish_lag(project: str, metric: str = "pendle_distributed_tokens", e
     return out
 
 
-def virtual_rebuild(ve, ve_src: dict, api, max_lock_days: int = 728, drift: float = 0.005) -> dict | None:
+def virtual_rebuild(ve, ve_src: dict, api, max_lock_days: int = 728, drift: float = 0.005, legacy=None,
+                    ve_at: dict | None = None, min_gap_h: float = 20.0) -> dict | None:
     """VIRTUAL sPENDLE REBUILT ON-CHAIN, CALIBRATED TO PENDLE'S API (Jake's 1c decision, 2026-10-09). Pendle's method per
     lock: virtual = locked x (1 + 3 x remaining/2y), vePENDLE balance = locked x remaining/2y; summed over ACTIVE locks,
-    virtual = active locked + 3 x vePENDLE supply. Active locked is the supply's own decay: a day's fall in vePENDLE
-    totalSupply x max_lock_days (104 weeks) — an expired lock no longer decays, so it drops out. A decay is taken only
-    between consecutive days read at the same measuring point (archive with archive, live with live); a day without one
-    carries the last good decay (the slope is constant until locks expire).
+    virtual = active locked + 3 x vePENDLE supply. Active locked is the supply's own decay: its fall per 24h x
+    max_lock_days (104 weeks) — an expired lock no longer decays, so it drops out.
+
+    THE GUARD (Jake's run 2026-10-09 ~14:10: active 94,954,481 > all 63,524,138 PENDLE locked, from two reads less than
+    a day apart). A read's time is its UTC day start for an archive read (the first block of the day), else its
+    fetched_at when that falls on its own date (otherwise unknown, and the day is skipped). A day's fall is taken from the read the day before only when the two
+    reads are at least `min_gap_h` hours apart, scaled to 24h; and the rebuild is kept only when active locked is no
+    more than the PENDLE locked in vePENDLE that day (`legacy`). A day that fails is SKIPPED — not rebuilt, not in the
+    calibration, never judged for drift — and named. A day with no read the day before carries the last good fall.
 
     CALIBRATION: the mean of API / rebuild over every day both exist; the rebuild x that ratio is the stake used for
     epochs before the API's history. DRIFT: any API day whose ratio is more than `drift` (0.005 = 0.5 percentage
@@ -704,16 +779,46 @@ def virtual_rebuild(ve, ve_src: dict, api, max_lock_days: int = 728, drift: floa
     if ve is None or ve.empty or api is None or api.empty:
         return None
     ve = ve.sort_index()
-    mp = lambda d: "archive" if ":archive" in str(ve_src.get(d, "")) else "live"            # noqa: E731
-    rebuilt, active, last = {}, {}, None
+    ve_at = ve_at or {}
+    base = lambda d: str(ve_src.get(d, "")).replace(":archive", "")                        # noqa: E731
+
+    def when(d):
+        if ":archive" in str(ve_src.get(d, "")):
+            return d                                       # the first block of the UTC day
+        t = pd.Timestamp(ve_at[d]) if ve_at.get(d) else None
+        if t is not None:
+            t = t.tz_convert(None) if t.tzinfo else t
+            if t.normalize() == d:
+                return t
+        return None                                        # a live read at an unknown time of day
+
+    rebuilt, active, last, skipped = {}, {}, None, []
     for prev, d in zip(ve.index[:-1], ve.index[1:]):
-        if (d - prev).days == 1 and mp(d) == mp(prev):
-            dec = float(ve.loc[prev]) - float(ve.loc[d])
+        if (d - prev).days == 1 and base(d) == base(prev):
+            if when(d) is None or when(prev) is None:
+                skipped.append((d, "a live read's time of day is unknown (fetched_at not on its own date)"))
+                continue
+            gap_h = (when(d) - when(prev)).total_seconds() / 3600.0
+            if gap_h < float(min_gap_h):
+                skipped.append((d, f"reads {gap_h:.1f}h apart ({when(prev)} -> {when(d)}), under {min_gap_h:.0f}h"))
+                continue
+            dec = (float(ve.loc[prev]) - float(ve.loc[d])) * 24.0 / gap_h
             if dec > 0:
                 last = dec
-        if last is not None:
-            active[d] = last * int(max_lock_days)
-            rebuilt[d] = active[d] + 3 * float(ve.loc[d])
+        if last is None:
+            continue
+        act = last * int(max_lock_days)
+        if legacy is not None and not legacy.empty:
+            lg = legacy[legacy.index <= d]
+            if lg.empty or (d - lg.index[-1]).days > 1:
+                skipped.append((d, "no PENDLE-locked reading that day to bound active locked by"))
+                continue
+            if act > float(lg.iloc[-1]):
+                skipped.append((d, f"active locked {act:,.0f} > all PENDLE locked {float(lg.iloc[-1]):,.0f} "
+                                   "(impossible)"))
+                continue
+        active[d] = act
+        rebuilt[d] = act + 3 * float(ve.loc[d])
     rb = pd.Series(rebuilt, dtype=float).sort_index()
     days = [(d, float(rb.loc[d]), float(api.loc[d]), float(api.loc[d]) / float(rb.loc[d]))
             for d in api.index if d in rb.index and rb.loc[d]]
@@ -722,7 +827,7 @@ def virtual_rebuild(ve, ve_src: dict, api, max_lock_days: int = 728, drift: floa
     ratios = [r for *_x, r in days]
     mean = sum(ratios) / len(ratios)
     out = {"rebuilt": rb, "active": pd.Series(active, dtype=float).sort_index(), "ratio": mean,
-           "lo": min(ratios), "hi": max(ratios), "days": days,
+           "lo": min(ratios), "hi": max(ratios), "days": days, "skipped": skipped,
            "drift": [(d, r) for d, _b, _a, r in days if abs(r - mean) > drift], "drift_limit": drift,
            "calibrated": rb * mean}
     out["label"] = (f"calibrated on-chain rebuild (x {mean:.4f} = API/rebuild mean over {len(days)} day(s) "
@@ -801,10 +906,13 @@ def pendle_calibration(p, long):
     if not cal or long is None or long.empty:
         return None
     g = long[(long.project == p) & (long.metric == cal["ve"])]
-    src = (dict(zip(pd.to_datetime(g["date"]).dt.normalize(), g["source"].astype(str)))
-           if "source" in g.columns else {})
+    dd = pd.to_datetime(g["date"]).dt.normalize()
+    src = dict(zip(dd, g["source"].astype(str))) if "source" in g.columns else {}
+    at = dict(zip(dd, g["fetched_at"])) if "fetched_at" in g.columns else {}
     return virtual_rebuild(_series(long, p, cal["ve"]), src, _series(long, p, cal["api"]),
-                           int(cal.get("max_lock_days", 728)), float(cal.get("drift_pp", 0.5)) / 100.0)
+                           int(cal.get("max_lock_days", 728)), float(cal.get("drift_pp", 0.5)) / 100.0,
+                           legacy=_series(long, p, cal["legacy"]) if cal.get("legacy") else None, ve_at=at,
+                           min_gap_h=float(cal.get("min_gap_h", 20)))
 
 
 def _pendle_epochs(p, long, asof, dist, published, stock, plus, epoch_days, after_days):
@@ -1194,9 +1302,10 @@ def _hl_reward_active(p, rows, long, asof, **_):
         f"({s_off / s_tot:.1%} of stake inactive, TODAY's snapshot only) / 365 x {cov:.0f} day(s)")
 
 
-def _scans_q0(p, rows, long, asof, metrics=(), labels=(), **_):
+def _scans_q0(p, rows, long, asof, metrics=(), labels=(), require_all=False, **_):
     """THE GAUGE PAYOUTS CHAIN BY CHAIN OVER Q0 (Pendle in_emissions, Jake's run 2026-10-09 11:41): each stored scan's Q0
-    sum, listed per chain; a chain with no stored row is named, never counted as 0."""
+    sum, listed per chain; a chain with no stored row is named, never counted as 0. `require_all` (the reference side,
+    Jake's run 2026-10-09 ~14:10): with any chain missing there is no figure — a partial sum never meets a partial sum."""
     lo, hi = _q0(asof)
     parts, missing = [], []
     for m, lab in zip(metrics, labels or metrics):
@@ -1208,6 +1317,9 @@ def _scans_q0(p, rows, long, asof, metrics=(), labels=(), **_):
         parts.append((lab, float(sr.sum()), sr.index.min(), sr.index.max()))
     if not parts:
         return None, None, "no gauge scan stored in Q0: " + ", ".join(missing)
+    if require_all and missing:
+        return None, None, (f"not every chain is counted yet — NONE STORED for {', '.join(missing)}; stored: "
+                            + "; ".join(f"{lab} {v:,.2f}" for lab, v, _a, _b in parts))
     tot = sum(v for _l, v, _a, _b in parts)
     how = ("; ".join(f"{lab} {v:,.2f} ({a.date()}..{b.date()})" for lab, v, a, b in parts)
            + f" = {tot:,.2f} PENDLE" + (f". NOT YET SCANNED: {', '.join(missing)}" if missing else ""))
@@ -1354,109 +1466,125 @@ def _aero_rebase_formula(p, rows, long, asof, epochs=4, side="ref", **_):
                               if after else ""))
 
 
-def _aero_epochs(long, p, asof, onchain, flow, epoch_days=7):
-    """The stored on-chain epochs inside Q0 that are COMPLETE and whose every day of `flow` is stored:
-    [(epoch start, on-chain value, our flow summed over the same days)], and the epochs left out with why."""
+def _aero_epochs(long, p, asof, onchain, flow, epoch_days=7, fees="voter_rewards_onchain_fees_usd",
+                 bribes="voter_rewards_onchain_bribes_usd"):
+    """THE STORED ON-CHAIN EPOCHS INSIDE Q0, EACH AGAINST ITS LIKE-FOR-LIKE DEFILLAMA FIGURE (Jake's run 2026-10-09
+    ~14:10, 1a). Verified from the contracts (aerodrome-finance/contracts @1ba3081): fees reach FeesVotingReward only
+    through Gauge._claimFees() inside Gauge.notifyRewardAmount (gauges/Gauge.sol L78-102, L197-203), which only the
+    Voter calls, from _distribute()/distribute() (Voter.sol L486-513); Reward._notifyRewardAmount books them to
+    epochStart(block.timestamp) (rewards/Reward.sol L240-247) — the epoch distribute() runs in. So epoch E's fees are
+    those EARNED in E-1; Slipstream's CLGauge does the same (slipstream @f8717fa, contracts/gauge/CLGauge.sol
+    L295-313, L356-382). Bribes are booked to the epoch they are deposited in. DefiLlama books staked-LP fees on the SWAP day and bribes on
+    the NotifyReward day (dimension-adapters @0219a7b dexs/aerodrome/index.ts L59-79, L214-240). LIKE FOR LIKE: ours_E
+    = DefiLlama over E-1's seven days - E-1's bribes + E's bribes, the bribes taken from the on-chain split
+    (BribeVotingReward, the same NotifyReward events DefiLlama reads; its label split is not stored here) — so the
+    comparison tests the fee leg, with the bribe leg the same events on both sides. An epoch whose split is not stored
+    for it or the epoch before, or whose E-1 days are not all in DefiLlama, is left out and named.
+    Returns ([(epoch start, on-chain total, ours like-for-like, detail)], [skipped])."""
     lo, hi = _q0(asof)
     oc, fl = _series(long, p, onchain), _series(long, p, flow)
+    fe, br = _series(long, p, fees), _series(long, p, bribes)
     got, skipped = [], []
     for e, v in oc[(oc.index > lo) & (oc.index <= hi)].items():
         days = pd.date_range(e, periods=int(epoch_days), freq="D")
+        prev = e - pd.Timedelta(days=int(epoch_days))
+        pdays = pd.date_range(prev, periods=int(epoch_days), freq="D")
         if days[-1] >= asof.normalize():
             skipped.append(f"{e.date()} (epoch not complete)")
             continue
-        miss = [d for d in days if d not in fl.index]
-        if miss:
-            skipped.append(f"{e.date()} ({len(miss)} day(s) of {flow} missing)")
+        if e not in br.index or prev not in br.index:
+            skipped.append(f"{e.date()} (on-chain fees/bribes split not stored for "
+                           + " and ".join(str(x.date()) for x in (prev, e) if x not in br.index) + ")")
             continue
-        got.append((e, float(v), float(fl.loc[days].sum())))
+        miss = [d for d in pdays if d not in fl.index]
+        if miss:
+            skipped.append(f"{e.date()} ({len(miss)} day(s) of {flow} missing in the week before)")
+            continue
+        dl_prev = float(fl.loc[pdays].sum())
+        ours = dl_prev - float(br.loc[prev]) + float(br.loc[e])
+        det = {"dl_prev": dl_prev, "b_prev": float(br.loc[prev]), "b": float(br.loc[e]),
+               "f": float(fe.loc[e]) if e in fe.index else None, "days": days, "pdays": pdays}
+        got.append((e, float(v), ours, det))
     return got, skipped
 
 
 def _aero_epoch_revenue(p, rows, long, asof, flow="revenue_usd", onchain="voter_rewards_onchain_usd", side="ref", **_):
-    """THE SAME EPOCH ON BOTH SIDES (Jake's run 2026-10-08 11:27, Aerodrome in_revenue): DefiLlama's fees + bribes summed
-    over the epoch's seven UTC days (Thursday 00:00 start) against the fees + bribes notified to the voting-reward
-    contracts for that epoch (aerodrome_voter_epoch, stored weekly by fetch/aero_voter.py). Judged on the epoch that
-    differs most; every epoch is in the working."""
+    """JUDGED OVER THE QUARTER (Jake's run 2026-10-09 ~14:10, 1b): the sum over every judged Q0 epoch of DefiLlama's
+    like-for-like figure (_aero_epochs: the week before's fees + the epoch's own bribes) against the sum of the fees +
+    bribes notified on-chain for the same epochs; the working lists every epoch's gap and the per-epoch spread."""
     got, skipped = _aero_epochs(long, p, asof, onchain, flow)
     if not got:
-        return None, None, ("no complete Q0 epoch with both the on-chain read and every DefiLlama day stored"
-                            + (": " + "; ".join(skipped) if skipped else " — fetch/aero_voter.py stores one a week"))
+        return None, None, ("no complete Q0 epoch with the on-chain split and DefiLlama's days stored"
+                            + (": " + "; ".join(skipped) if skipped else " — fetch/aero_voter.py stores them"))
     unp = _series(long, p, "voter_rewards_unpriced_count")
-    table, worst = [], None
-    for e, oc, ours in got:
+    table, gaps = [], []
+    for e, oc, ours, d in got:
         gap = ours / oc - 1 if oc else float("inf")
+        gaps.append(gap)
         n = f", {int(unp.loc[e])} token(s) unpriced on-chain" if e in unp.index else ""
-        table.append(f"epoch {e.date()}: DefiLlama ${ours:,.0f} vs on-chain ${oc:,.0f} ({gap:+.1%}{n})")
-        if worst is None or abs(gap) > abs(worst[3]):
-            worst = (e, ours, oc, gap)
-    how = ("; ".join(table) + (f". Not judged: {'; '.join(skipped)}" if skipped else "")
+        fee = (f"; fee leg: DefiLlama {d['dl_prev'] - d['b_prev']:,.0f} vs on-chain {d['f']:,.0f} "
+               f"({(d['dl_prev'] - d['b_prev']) / d['f'] - 1:+.1%})" if d["f"] else "")
+        table.append(f"epoch {e.date()}: DefiLlama {d['pdays'][0].date()}..{d['pdays'][-1].date()} ${d['dl_prev']:,.0f} "
+                     f"- bribes then ${d['b_prev']:,.0f} + bribes now ${d['b']:,.0f} = ${ours:,.0f} vs on-chain "
+                     f"${oc:,.0f} ({gap:+.1%}{n}{fee})")
+    s_ours, s_oc = sum(g[2] for g in got), sum(g[1] for g in got)
+    how = (f"QUARTER: {len(got)} epoch(s) {got[0][0].date()}..{got[-1][0].date()}: DefiLlama like-for-like "
+           f"${s_ours:,.0f} vs on-chain ${s_oc:,.0f} ({s_ours / s_oc - 1:+.1%}); per-epoch spread {min(gaps):+.1%}.."
+           f"{max(gaps):+.1%}, mean |gap| {sum(abs(x) for x in gaps) / len(gaps):.1%}. Per epoch: " + "; ".join(table)
+           + (f". Not judged: {'; '.join(skipped)}" if skipped else "")
            + ". Unpriced reward tokens are left out of the on-chain figure, so it can read LOW by their value.")
-    return (worst[1] if side == "ours" else worst[2]), str(worst[0].date()), how
+    return (s_ours if side == "ours" else s_oc), str(got[-1][0].date()), how
 
 
 def _aero_epoch_apr(p, rows, long, asof, flow="holders_revenue_usd", onchain_apr="voter_rewards_onchain_apr",
                     onchain_usd="voter_rewards_onchain_usd", stake="voter_total_weight_tokens", rebase="emissions_tokens",
                     side="ref", **_):
-    """DOES THE HEADLINE'S ARITHMETIC REPRODUCE THE EPOCH? (Jake's run 2026-10-08 11:27, Aerodrome a3: ours 17.31% vs
-    on-chain 12.56%.) Ours = the headline's own arithmetic on one epoch — DefiLlama's dollars over the epoch's days, put
-    in AERO at each payment day's price (Jake's price convention, 2026-10-09), x 365.25/7, over the reward-bearing stake (Voter.totalWeight, the headline's
-    denominator: on or before the epoch's start, else the first daily read within 14 days — it is read forward from
-    2026-10-08 and moves well under 1% a week); the reference = the on-chain epoch APR. The working prints the HEADLINE's own numerator and
-    denominator, how far each factor sits from the epoch's, and the veAERO rebase as its own labelled line."""
+    """DOES THE HEADLINE'S ARITHMETIC REPRODUCE THE EPOCHS? Over the quarter (Jake's run 2026-10-09 ~14:10, 1b): per
+    judged epoch, ours = DefiLlama's like-for-like dollars (_aero_epochs) and the reference = the on-chain fees +
+    bribes, both put in AERO at the epoch's payment-weighted price (one price on both sides, Jake's price convention),
+    x 365.25/7, over THAT EPOCH's stake (Voter.totalWeight at the epoch's start — archive-read, 1c; else the nearest
+    read within 14 days); the row is the MEAN of the per-epoch APRs on each side. The working prints the HEADLINE's own
+    arithmetic, every epoch, and the veAERO rebase as its own labelled line."""
     got, skipped = _aero_epochs(long, p, asof, onchain_usd, flow)
     apr = _series(long, p, onchain_apr)
     px = _series(long, p, "price_usd")
     fl = _series(long, p, flow)
-    table, worst = [], None
-    for e, _oc, usd in got:
-        days = pd.date_range(e, periods=7, freq="D")
-        paid = [(d, float(fl.loc[d]), float(px.loc[d])) for d in days if d in fl.index and d in px.index and px.loc[d]]
+    table, mine, theirs_l = [], [], []
+    for e, oc, usd, d in got:
+        paid = [(x, float(fl.loc[x]), float(px.loc[x])) for x in d["days"] if x in fl.index and x in px.index
+                and px.loc[x]]
         st = _stake_near(long, p, stake, e, 14)
-        if e not in apr.index or len(paid) < len([d for d in days if d in fl.index]) or not paid or st is None:
-            skipped.append(f"{e.date()} (no " + ("on-chain APR" if e not in apr.index else stake if st is None
-                                                 else "same-day price on every paid day") + ")")
+        if not paid or st is None:
+            skipped.append(f"{e.date()} (no " + (stake if st is None else "same-day price") + ")")
             continue
-        # PAYMENT-DAY PRICES ON BOTH SIDES (Jake's price convention, 2026-10-09): ours = each day's DefiLlama $ / that
-        # day's AERO price; the on-chain dollars (one figure for the epoch) at the same days' payment-weighted price.
-        tok = sum(u / q for _d, u, q in paid)
-        p_eff = sum(u for _d, u, _q in paid) / tok
-        oc_usd = [o for d0, o, _u in got if d0 == e][0]
-        ours = tok * 365.25 / 7 / st[0]
-        theirs = oc_usd / p_eff * 365.25 / 7 / st[0]
-        gap = ours / theirs - 1 if theirs else float("inf")
-        table.append(f"epoch {e.date()}: DefiLlama ${usd:,.0f} = {tok:,.0f} AERO at each day's price vs on-chain "
-                     f"${oc_usd:,.0f} at the same days' payment-weighted ${p_eff:,.4f}, x 365.25/7 / {st[0]:,.0f} = "
-                     f"{ours:.2%} vs {theirs:.2%} ({gap:+.1%}); the stored on-chain APR at the epoch-end price is "
-                     f"{float(apr.loc[e]):.2%}")
-        if worst is None or abs(gap) > abs(worst[3]):
-            worst = (e, ours, theirs, gap)
-    # THE HEADLINE'S OWN NUMERATOR AND DENOMINATOR, beside the epoch's
+        p_eff = sum(u for _x, u, _q in paid) / sum(u / q for _x, u, q in paid)
+        ours = usd / p_eff * 365.25 / 7 / st[0]
+        theirs = oc / p_eff * 365.25 / 7 / st[0]
+        mine.append(ours)
+        theirs_l.append(theirs)
+        table.append(f"epoch {e.date()}: ${usd:,.0f} vs ${oc:,.0f} at ${p_eff:,.4f} x 365.25/7 / {st[0]:,.0f} "
+                     f"(totalWeight {st[1]}) = {ours:.2%} vs {theirs:.2%} ({ours / theirs - 1:+.1%})"
+                     + (f"; stored on-chain APR {float(apr.loc[e]):.2%}" if e in apr.index else ""))
     lo, hi = _q0(asof)
-    hd = payday_yield(fl, px, _series(long, p, stake), lo, hi, 365.25)
+    hd = payday_yield(fl, px, _series(long, p, stake), lo, hi, 365.25, _payday_epochs(p))
     sn = _stake_near(long, p, stake, hi, 0)
-    head = ""
-    if hd:
-        head = f"HEADLINE: {hd['how']}."
-        if worst is not None:
-            e = worst[0]
-            wk = [u for d, _o, u in got if d == e][0]
-            se = _stake_near(long, p, stake, e, 14)[0]
-            head += (f" Against epoch {e.date()}: revenue/week x{hd['usd'] / hd['days'] * 7 / wk:.2f}, stake "
-                     f"x{se / hd['stake']:.2f}.")
+    head = f"HEADLINE: {hd['how']}." if hd else ""
     rb = _series(long, p, rebase)
     if not rb.empty and sn:
         head += (f" REBASE (a separate stream, in neither figure): {float(rb.iloc[-1]):,.0f} AERO in the week of "
                  f"{rb.index[-1].date()} x 52 / {sn[0]:,.0f} = {float(rb.iloc[-1]) * 52 / sn[0]:.2%} a year to lockers.")
-    if worst is None:
+    if not mine:
         return None, None, (head + " No epoch to judge" + (": " + "; ".join(skipped) if skipped else
-                                                           " — fetch/aero_voter.py stores one a week")).strip()
-    how = (head + " Per epoch: " + "; ".join(table) + (f". Not judged: {'; '.join(skipped)}" if skipped else ""))
-    return (worst[1] if side == "ours" else worst[2]), str(worst[0].date()), how
+                                                           " — fetch/aero_voter.py stores them")).strip()
+    m_o, m_t = sum(mine) / len(mine), sum(theirs_l) / len(theirs_l)
+    how = (head + f" QUARTER: mean of {len(mine)} epoch APR(s) {m_o:.2%} vs on-chain {m_t:.2%} "
+           f"({m_o / m_t - 1:+.1%}). Per epoch: " + "; ".join(table)
+           + (f". Not judged: {'; '.join(skipped)}" if skipped else ""))
+    return (m_o if side == "ours" else m_t), str(got[-1][0].date()), how
 
 
 def _aero_epoch_pending(p, rows, long, asof, flow="revenue_usd", onchain="voter_rewards_onchain_usd",
-                        until="2026-10-10", **_):
+                        until="2026-10-10", split="voter_rewards_onchain_bribes_usd", **_):
     """1 while the latest stored on-chain epoch is complete but DefiLlama's days for it are not all stored yet, and
     `until` has not passed (Jake's run 2026-10-09 ~10:15, 4d: MATURING until 2026-10-10 with the exact reason; CHECK if
     still missing then). The working names the epoch and the missing day(s)."""
@@ -1472,15 +1600,23 @@ def _aero_epoch_pending(p, rows, long, asof, flow="revenue_usd", onchain="voter_
         return 0.0, None, ""
     miss = [d for d in days if d not in fl.index]
     no_onchain = e not in oc.index
-    if not miss and not no_onchain:
+    # THE SPLIT TOO (Jake's run 2026-10-09 ~14:10, 1a): the like-for-like reference needs the epoch's bribes and the
+    # epoch before's
+    sp = _series(long, p, split) if split else None
+    no_split = [x for x in (e - pd.Timedelta(days=7), e) if sp is not None and x not in sp.index]
+    if not miss and not no_onchain and not no_split:
         return 0.0, None, ""
+    # STILL MISSING AFTER `until` IS A CHECK (Jake's run 2026-10-09 ~10:15, 4d), not a quarter judged without it
     pending = a <= pd.Timestamp(until)
     why = []
     if no_onchain:
         why.append(f"the on-chain figure (fetch/aero_voter.py, {onchain}) for epoch {e.date()} is not stored")
+    if no_split and not no_onchain:
+        why.append(f"the on-chain fees/bribes split ({split}) for {', '.join(str(x.date()) for x in no_split)} is not "
+                   f"stored (fetch/aero_voter.py backfills every Q0 epoch)")
     if miss:
         why.append(f"DefiLlama's {flow} for {', '.join(str(d.date()) for d in miss)} is not stored")
-    return (1.0 if pending else 0.0), str(e.date()), (
+    return (1.0 if pending else -1.0), str(e.date()), (
         f"epoch {e.date()} (7 UTC days {days[0].date()}..{days[-1].date()}): " + "; ".join(why) + f", as of {a.date()}")
 
 
@@ -1505,7 +1641,8 @@ def _price_basis_gap(p, rows, long, asof, flow="holders_revenue_usd", stake="vot
     how = desc(a, "CoinGecko") + ("; " + desc(b, "Coinbase") if len(b) else "; Coinbase: no Q0 days stored")
     # THE HEADLINE'S BASIS IS THE PAYMENT-DAY PRICE (Jake's price convention, 2026-10-09): what is compared with today's
     # price is the payment-weighted Q0 price ($ paid / tokens at each day's price), from each source.
-    pa, pb = payday_yield(fl, a_all, stk, lo, hi, 365.25), payday_yield(fl, b_all, stk, lo, hi, 365.25)
+    ep = _payday_epochs(p)
+    pa, pb = payday_yield(fl, a_all, stk, lo, hi, 365.25, ep), payday_yield(fl, b_all, stk, lo, hi, 365.25, ep)
     if pa is None:
         return 0.0, None, how + f". No priced {flow} day or no {stake} in Q0"
     confirmed = pb is not None and abs(pb["p_eff"] / pa["p_eff"] - 1) <= agree

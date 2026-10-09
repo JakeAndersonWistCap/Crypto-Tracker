@@ -527,6 +527,59 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11ba. Jake's run 2026-10-09 ~14:10: Aerodrome timing, Q0 backfill, per-epoch stake; Pendle L2 emissions; rebuild guard
+
+That run (on 81a07f3) signed off 14; only Aerodrome stayed OPEN.
+
+1. **Aerodrome.**
+   - **1a. Timing, verified from the contracts.** Fees reach FeesVotingReward only through `Gauge._claimFees()`,
+     called inside `Gauge.notifyRewardAmount`, which only the Voter calls, from `distribute()`:
+     - aerodrome-finance/contracts @1ba3081: `gauges/Gauge.sol` L78-102 and L197-203; `Voter.sol` L486-513.
+     - `Reward._notifyRewardAmount` books the amount to `epochStart(block.timestamp)` (`rewards/Reward.sol` L240-247).
+     - Slipstream's CLGauge does the same (slipstream @f8717fa, `contracts/gauge/CLGauge.sol` L295-313, L356-382).
+
+     So epoch E's fees are those earned in E-1, while bribes are booked to the epoch they are deposited in. DefiLlama
+     books staked-LP fees on the swap day and bribes on the NotifyReward day (dimension-adapters @0219a7b
+     `dexs/aerodrome/index.ts` L59-79, L214-240).
+     - Like-for-like: DefiLlama over E-1's seven days − E-1's bribes + E's bribes. The bribes come from the on-chain
+       split, which is the same NotifyReward events DefiLlama reads; its label split is not stored here.
+     - The row therefore tests the fee leg, which the working prints on its own. The 10% tolerance is unchanged.
+   - **1b. Every Q0 epoch.** `fetch/aero_voter.py` reads every epoch from the one before Q0 to the last complete one in
+     one pass (`check_offline_items.aerodrome_voter_epochs`). It stores:
+     - `voter_rewards_onchain_fees_usd` and `voter_rewards_onchain_bribes_usd` beside the total;
+     - earlier epochs are retried once a day until stored.
+
+     `in_revenue` is judged on the quarter's sum, with every epoch's gap and the per-epoch spread in the working.
+     `in_voter_apr_epoch` is judged on the mean of the per-epoch APRs. A latest epoch still missing after 2026-10-10
+     is CHECK. The pool set is pools with votes now plus, from the archive, pools with votes at the last block of any
+     epoch read.
+   - **1c. Per-epoch stake.** `Voter.totalWeight` is read at each epoch's start block. The block is found from
+     headers by `rpc_block_at`, and the read is stored on the epoch's start date (`:archive`) wherever no live
+     reading exists. The headline (`payday_yield`, `stake_epoch_days: 7`) divides each paid day by its epoch's stake.
+     An epoch without its own reading borrows the nearest one and is named.
+     - Before and after on the real dump: 17.445% and 17.445%. The dump holds one totalWeight reading (2026-10-09),
+       so all 13 epochs borrow it.
+     - The true "after" comes on the next run, once the archive reads land.
+   - `python check_offline_items.py aerodrome_epochs_q0` prints every epoch: fees, bribes, totalWeight at its start
+     and the like-for-like gap.
+2. **Pendle emissions.**
+   - The L2 scans seed from block 0, at 140s a run, and store nothing until their whole history reconciles. Until
+     then the sum read mainnet only.
+   - The emissions column is now refused while any listed scan has stored nothing, and the block reason names it.
+     `python token_metrics.py --seed pendle_gauges` finishes the seeds in one sitting.
+   - The reference is each chain's DIRECT count: once a day, one fresh windowed explorer query with no cache, stored
+     as `emissions_tokens_gauge_<chain>_direct`. Every chain is needed, or there is no reference. This is
+     pendle_emissions_q0's computation, not the series ours is built from.
+3. **Pendle rebuild guard.** A day's fall is taken only from two reads at least 20h apart, scaled to 24h.
+   - Read times: an archive read is at the UTC day start; a live read is at its `fetched_at` when that falls on its
+     date, otherwise unknown and skipped.
+   - Active locked must be no more than all PENDLE locked (`locked_tokens_legacy_vependle`).
+   - A failing day is skipped: never rebuilt, calibrated on or judged for drift.
+   - The probe, the headline and the Credibility rows use the one guarded `credibility.pendle_calibration`. The
+     probe's own unguarded fall (archive 10-08 00:00 → live 10-09 10:41, 34.7h, taken as one day) gave the 94.95M.
+   - On the real dump the 10-09 pair is now 34.7h apart and scaled: active 61.44M, ratio 0.9873. Calibration ×0.9865
+     (0.9862..0.9873), no drift, headline 1.55%.
+
 ## 11az. Pendle 1c: the calibrated on-chain rebuild (Jake's decision, 2026-10-09)
 
 Pendle's per-epoch `aprs` read 0, and the API's virtual sPENDLE is stored only from 2026-09-29. For Q0 epochs before

@@ -58,11 +58,12 @@ def to_store(payload: dict, db: Path) -> None:
 
 
 def long_frame(payload: dict) -> pd.DataFrame:
-    """The dump's metric rows as the long frame credibility's formulas read (date as Timestamp)."""
+    """The dump's metric rows as the long frame credibility's formulas read (date as Timestamp), fetched_at included as
+    store.load_long gives it."""
     df = pd.DataFrame(payload["metrics"])
     df["project"] = payload["meta"]["project"]
     df["date"] = pd.to_datetime(df["date"])
-    return df[["date", "project", "metric", "value", "source", "tier"]]
+    return df[["date", "project", "metric", "value", "source", "tier", "fetched_at"]]
 
 
 def evaluate_real(tmp_path, monkeypatch, project: str) -> dict:

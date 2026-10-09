@@ -251,6 +251,9 @@ METRICS = {
     "emissions_tokens_gauge_mainnet": {"label": "PENDLE paid out of Pendle's MAINNET GaugeController to its markets (log scan) — the on-chain emissions reference", "kind": "flow", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Pendle",)},
     "emissions_tokens_gauge_arbitrum": {"label": "PENDLE paid out of Pendle's ARBITRUM GaugeController to its markets (log scan)", "kind": "flow", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Pendle",)},
     "emissions_tokens_gauge_optimism": {"label": "PENDLE paid out of Pendle's OPTIMISM GaugeController to its markets (log scan)", "kind": "flow", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Pendle",)},
+    "emissions_tokens_gauge_mainnet_direct": {"label": "PENDLE paid out of Pendle's MAINNET GaugeController to its markets, counted DIRECTLY (one windowed explorer query, no cache) — the reference for the reconciled scan", "kind": "flow", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Pendle",)},
+    "emissions_tokens_gauge_arbitrum_direct": {"label": "PENDLE paid out of Pendle's ARBITRUM GaugeController to its markets, counted DIRECTLY (one windowed explorer query, no cache) — the reference for the reconciled scan", "kind": "flow", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Pendle",)},
+    "emissions_tokens_gauge_optimism_direct": {"label": "PENDLE paid out of Pendle's OPTIMISM GaugeController to its markets, counted DIRECTLY (one windowed explorer query, no cache) — the reference for the reconciled scan", "kind": "flow", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Pendle",)},
     "emissions_tokens_arbitrum":    {"label": "FLUID claimed out of Fluid's ARBITRUM MerkleDistributors (log scan)", "kind": "flow", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Fluid",)},
     "locked_tokens_ai_onchain":     {"label": "Staked — AI pool, ON-CHAIN (veAethir.balanceOf(AI Pool)) — check on aiStaked", "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [2], "sanity_min": 0, "sanity_max": 42e9, "only_projects": ("Aethir",)},
     "locked_tokens_gaming_onchain": {"label": "Staked — Gaming pool, ON-CHAIN (veAethir.balanceOf(Gaming Pool)) — check on gamingStaked", "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [2], "sanity_min": 0, "sanity_max": 42e9, "only_projects": ("Aethir",)},
@@ -328,7 +331,7 @@ METRICS = {
     "buyback_fund_balance_eod":  {"label": "NEAR Intents revenue wallets COMBINED, liquid NEAR at each day's close (fefundsadmin + buybacks.multisignature + 1csfundsadmin; NearBlocks stats/balance)", "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [1], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Near",)},
     # TRAILING-WINDOW REALISED TOKEN YIELD (Ether.fi, Jake 2026-10-07) — read-time views, one row on the latest day.
     "staking_yield_usds_farm_28d_pct": {"label": "Sky USDS-farm revenue yield: USDS paid over the last 28 days, each day / that day's SKY price, x 365/days / the mean SKY in the USDS farm over the same days (payment-day prices)", "kind": "stock", "unit": "fraction", "archetypes": [3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 5.0, "only_projects": ("Sky",), "view_only": True},
-    "token_yield_payday_pct": {"label": "Aerodrome voter yield at payment-day prices: Q0 fees + bribes, each day's $ / that day's AERO price, x 365.25/days / the mean votes cast (Voter.totalWeight) over Q0", "kind": "stock", "unit": "fraction", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 5.0, "only_projects": ("Aerodrome",), "view_only": True},
+    "token_yield_payday_pct": {"label": "Aerodrome voter yield at payment-day prices: Q0 fees + bribes, each day's $ / that day's AERO price, over ITS epoch's votes cast (Voter.totalWeight at the epoch start) x 365.25/days", "kind": "stock", "unit": "fraction", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 5.0, "only_projects": ("Aerodrome",), "view_only": True},
     "rewards_tokens_payday_annual": {"label": "Aerodrome voter rewards in AERO a year at payment-day prices (Q0 fees + bribes, each day's $ / that day's price, annualised)", "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e12, "only_projects": ("Aerodrome",), "view_only": True},
     "token_yield_epoch_mean_pct": {"label": "Pendle staking yield: the mean of the Q0 per-epoch APRs, each over its own stake (ours where our stake exists, Pendle's published APR before ~2026-09-11)", "kind": "stock", "unit": "fraction", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 5.0, "only_projects": ("Pendle",), "view_only": True},
     "token_yield_trailing_pct": {"label": "Realised token yield, trailing 365 days: reward tokens / AVERAGE staked, annualised over the days covered", "kind": "stock", "unit": "fraction", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 5.0, "only_projects": ("Ether.fi",), "view_only": True},
@@ -699,6 +702,17 @@ METRICS = {
     "voter_rewards_onchain_usd": {
         "label": "Fees + bribes notified to the veAERO voting-reward contracts for one epoch (tokenRewardsPerEpoch, priced "
                  "at the epoch end; unpriced tokens left out), dated the epoch's start — CREDIBILITY reference only",
+        "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9,
+        "only_projects": ("Aerodrome",)},
+    "voter_rewards_onchain_fees_usd": {
+        "label": "Swap FEES notified to the veAERO FeesVotingReward contracts for one epoch (credited at the epoch's "
+                 "distribute(): fees EARNED in the week before — Gauge._claimFees, contracts @1ba30815), priced at the "
+                 "epoch end, dated the epoch's start — CREDIBILITY reference only",
+        "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9,
+        "only_projects": ("Aerodrome",)},
+    "voter_rewards_onchain_bribes_usd": {
+        "label": "BRIBES notified to the veAERO BribeVotingReward contracts for one epoch (deposited during it), priced "
+                 "at the epoch end, dated the epoch's start — CREDIBILITY reference only",
         "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9,
         "only_projects": ("Aerodrome",)},
     "voter_rewards_unpriced_count": {
@@ -11950,8 +11964,13 @@ PROJECTS = [
         # Aerodrome's Blockworks filing, read on the VotingEscrow every day.
         # WHAT VOTERS WERE PAID PER EPOCH, FROM STATE (fetch/aero_voter.py, Jake's run 2026-10-08 11:27): stored weekly
         # as the on-chain reference for in_revenue and a3_protocol_yield; Voter.totalWeight daily.
+        # EVERY Q0 EPOCH, FEES AND BRIBES APART (Jake's run 2026-10-09 ~14:10, 1a/1b/1c): tokenRewardsPerEpoch is
+        # per-epoch state, so the Q0 epochs (and the one before) are read now; each epoch's totalWeight at its start
+        # block (archive) is the per-epoch stake.
         "voter_epochs": {"usd_metric": "voter_rewards_onchain_usd", "unpriced_metric": "voter_rewards_unpriced_count",
-                         "apr_metric": "voter_rewards_onchain_apr", "weight_metric": "voter_total_weight_tokens"},
+                         "apr_metric": "voter_rewards_onchain_apr", "weight_metric": "voter_total_weight_tokens",
+                         "fees_metric": "voter_rewards_onchain_fees_usd",
+                         "bribes_metric": "voter_rewards_onchain_bribes_usd", "backfill_q0": True, "q0_days": 90},
         "ve_managed_holdings": {
             "metric": "filing_managed_lock_tokens", "chain": "base",
             "escrow": "0xeBf418Fe2512e7E6bd9b87a8F0f294aCDC67e6B4",
@@ -15051,7 +15070,8 @@ PROJECTS = [
         # governance / treasury / multisig addresses (same file, "network") are not emissions. Mainnet only: each
         # L2's gauge controller is its own contract, not scanned.
         "log_scans": [
-            {"key": "gauge_pendle_out", "metric": "emissions_tokens_gauge_mainnet", "chain": "ethereum",
+            {"key": "gauge_pendle_out", "metric": "emissions_tokens_gauge_mainnet", "direct_metric": "emissions_tokens_gauge_mainnet_direct",
+             "chain": "ethereum",
              "token": "0x808507121B80c02388fAd14726482e061B8da827",
              "holders": ["0x47D74516B33eD5D70ddE7119A40839f6Fcc24e57"],
              "direction": "out", "store": True, "attribution": "dedicated_wallet",
@@ -15073,7 +15093,8 @@ PROJECTS = [
              "own_tier": "explorer_gauge", "scan_budget_s": 280,
              "wired_on": "2026-10-07"},
             # ARBITRUM (Jake's run 2026-10-09 11:41: pendle_emissions_q0 read this gauge through the explorer).
-            {"key": "gauge_pendle_out_arbitrum", "metric": "emissions_tokens_gauge_arbitrum", "chain": "arbitrum",
+            {"key": "gauge_pendle_out_arbitrum", "metric": "emissions_tokens_gauge_arbitrum", "direct_metric": "emissions_tokens_gauge_arbitrum_direct",
+             "chain": "arbitrum",
              "token": "0x0c880f6761F1af8d9Aa9C466984b80DAb9a8c9e8",
              "holders": ["0x1e56299ebc8a1010cec26005d12e3e5c5cc2db00"],
              "direction": "out", "store": True, "attribution": "dedicated_wallet",
@@ -15085,7 +15106,8 @@ PROJECTS = [
              "own_tier": "explorer_gauge_l2", "scan_budget_s": 140,
              "wired_on": "2026-10-09"},
             # OPTIMISM (Jake's run 2026-10-09 11:41: pendle_emissions_q0 read this gauge through the explorer).
-            {"key": "gauge_pendle_out_optimism", "metric": "emissions_tokens_gauge_optimism", "chain": "optimism",
+            {"key": "gauge_pendle_out_optimism", "metric": "emissions_tokens_gauge_optimism", "direct_metric": "emissions_tokens_gauge_optimism_direct",
+             "chain": "optimism",
              "token": "0xBC7B1Ff1c6989f006a1185318eD4E7b5796e66E1",
              "holders": ["0x6875e4A945E498FE1B90BbB13CFbAF0b68658C9C"],
              "direction": "out", "store": True, "attribution": "dedicated_wallet",
@@ -18309,13 +18331,15 @@ PROTOCOL_YIELD = {
     # and the voting-power column use the same tokens. Today's-price APR: Credibility in_apr_today_price.
     "Aerodrome": {"revenue": "holders_revenue_usd", "lock": "voter_total_weight_tokens",
                   "voting_power": "ve_voting_power_tokens",
+                  # PER-EPOCH STAKE (Jake's run 2026-10-09 ~14:10, 1c): each paid day over its epoch's
+                  # Voter.totalWeight (archive-read at the epoch-start block), not the mean of the days stored.
                   "token_yield": {"payday": {"flow": "holders_revenue_usd", "stock": "voter_total_weight_tokens",
-                                             "price": "price_usd", "days": 90, "year": 365.25,
+                                             "price": "price_usd", "days": 90, "year": 365.25, "stake_epoch_days": 7,
                                              "metric": "token_yield_payday_pct",
                                              "annual_metric": "rewards_tokens_payday_annual"},
                                   "note": "VOTER YIELD AT PAYMENT-DAY PRICES — DefiLlama's Q0 fees + bribes (holders "
-                                          "revenue), each day put in AERO at that day's price, x 365.25/days / the mean "
-                                          "votes cast (Voter.totalWeight) over Q0. Was: the Q0 simple mean price. The "
+                                          "revenue), each day put in AERO at that day's price, over ITS epoch's votes "
+                                          "cast (Voter.totalWeight at the epoch start), x 365.25/days. The "
                                           "dollar column is the same number on this basis; Credibility's "
                                           "in_apr_today_price gives the APR at today's price beside it."},
                   "source_url": "https://github.com/DefiLlama/dimension-adapters/blob/master/dexs/aerodrome/index.ts",
@@ -18371,9 +18395,14 @@ PROTOCOL_YIELD = {
                                               # history, the on-chain rebuild (active locked + 3 x vePENDLE supply,
                                               # expired locks removed) x the mean API/rebuild ratio; a day more than
                                               # 0.5 percentage points off that mean puts the rebuilt epochs on CHECK.
+                                              # THE GUARD (Jake's run 2026-10-09 ~14:10): active locked never above
+                                              # all PENDLE locked in vePENDLE (`legacy`), and a day's fall only from
+                                              # two reads at least 20h apart — a day that fails is skipped.
                                               "calibrate": {"ve": "vependle_voting_supply_tokens",
                                                             "api": "locked_tokens_virtual",
-                                                            "max_lock_days": 728, "drift_pp": 0.5}},
+                                                            "legacy": "locked_tokens_legacy_vependle",
+                                                            "max_lock_days": 728, "drift_pp": 0.5,
+                                                            "min_gap_h": 20}},
                                "note": "TOKEN YIELD — the MEAN of the Q0 per-epoch APRs, each over its own stake: "
                                        "PENDLE distributed x 365.25/14 / (sPENDLE + virtual sPENDLE) at the epoch, over "
                                        "every Q0 epoch with a published distribution (a 0 inside Pendle's publish lag "
@@ -24504,29 +24533,37 @@ CREDIBILITY: dict = {
         # weekly, priced at the epoch end, and its APR over Voter.totalWeight. The headline (a Q0 average) is judged
         # through its inputs, epoch for epoch — never one average against one epoch (as Pendle, 2026-10-08).
         "a3_protocol_yield": {"inputs": ("in_revenue", "in_voter_apr_epoch", "in_price_confirmed"),
-                              "source": "the per-epoch rows below (on-chain fees + bribes and their APR, stored weekly)",
+                              "source": "the per-epoch rows below (on-chain fees + bribes of every Q0 epoch and their "
+                                        "APR)",
                               "why": "The headline is DefiLlama's Q0 fees + bribes in AERO at each payment day's price "
-                                     "(Jake's price convention, 2026-10-09; was the Q0 mean price), x 365.25/days, over "
-                                     "the mean Voter.totalWeight (the votes cast — the stake voting rewards are "
-                                     "paid on; it was veAERO.supply(), AERO locked, until 2026-10-08). It inherits the "
-                                     "verdicts of the same-epoch revenue row and the per-epoch reproduction of its own "
-                                     "arithmetic; the reproduction row prints the headline's numerator and denominator "
-                                     "against the epoch's. The veAERO rebase is a separate stream: in_rebase_apr."},
+                                     "(Jake's price convention, 2026-10-09), each day over ITS epoch's Voter.totalWeight "
+                                     "(the votes cast, archive-read at the epoch's start block — Jake's run 2026-10-09 "
+                                     "~14:10, 1c; an epoch without its own reading borrows the nearest and is named), "
+                                     "x 365.25/days. It inherits the verdicts of the quarter's revenue row (DefiLlama's "
+                                     "week-before fees + the epoch's bribes against the on-chain credit) and the "
+                                     "per-epoch reproduction of its own arithmetic. The veAERO rebase is a separate "
+                                     "stream: in_rebase_apr."},
         "in_voter_apr_epoch": _c_in_py(
-            "Per-epoch voter APR, the headline's arithmetic (DefiLlama $ / each day's price x 365.25/7 / totalWeight)",
+            "Per-epoch voter APR over the quarter, the headline's arithmetic ($ at the epoch's price x 365.25/7 / its "
+            "totalWeight)",
             "aero_epoch_apr", {"side": "ours"},
             {"verdict_when": {"py": "aero_epoch_pending", "args": {"flow": "holders_revenue_usd"},
                               "positive": _c_mat("The latest complete epoch is not all stored yet: the on-chain epoch "
-                                                 "(read once a week by fetch/aero_voter.py) or a DefiLlama day (it "
-                                                 "publishes a day after the day ends) — the working names which.",
-                                                 "2026-10-10"),
+                                                 "or its fees/bribes split (fetch/aero_voter.py, which backfills every "
+                                                 "Q0 epoch) or a DefiLlama day (it publishes a day after the day ends) "
+                                                 "— the working names which.", "2026-10-10"),
+                              "negative": _c_chk("The latest complete epoch is still not all stored after 2026-10-10 — "
+                                                 "the working names what is missing.",
+                                                 "fetch/aero_voter.py (on-chain) / DefiLlama (its day)"),
                               "otherwise": {
                 "formula": "aero_epoch_apr", "args": {"side": "ref"}, "tol": 10.0, "show_how": True,
-                "source": "the on-chain epoch's fees + bribes (tokenRewardsPerEpoch, fetch/aero_voter.py) at the SAME "
-                          "price and stake as ours: the epoch's payment-weighted AERO price, x 365.25/7, over "
-                          "Voter.totalWeight",
-                "note": "Judged on the epoch that differs most. Both sides use the same price (Jake's run 2026-10-09, "
-                        "4b), so the comparison is the dollars; unpriced reward tokens leave the on-chain side low."}}},
+                "source": "the on-chain fees + bribes of every stored Q0 epoch (tokenRewardsPerEpoch, fetch/aero_voter.py)"
+                          " at the SAME price and stake as ours: each epoch's payment-weighted AERO price, x 365.25/7, "
+                          "over that epoch's Voter.totalWeight (archive-read at its start block)",
+                "note": "JUDGED OVER THE QUARTER (Jake's run 2026-10-09 ~14:10): the mean of the per-epoch APRs on each "
+                        "side; ours uses DefiLlama's like-for-like dollars (the week before's fees + the epoch's own "
+                        "bribes — fees are credited at the next epoch's distribute()). Both sides use the same price, so "
+                        "the comparison is the dollars; unpriced reward tokens leave the on-chain side low."}}},
             fmt=_C_PCT),
         # THE HEADLINE'S PRICE BASIS, A FINDING WHEN AERO MOVED (Jake's run 2026-10-09 ~10:15, 4a/b): the dollars agree
         # (DefiLlama $1,925,083/week vs on-chain $1,902,409 for 2026-10-01); the headline converts Q0 rewards at the Q0
@@ -24563,19 +24600,28 @@ CREDIBILITY: dict = {
                                           "not by the voting-reward contracts: it is in neither the fees + bribes "
                                           "headline nor its on-chain reference, so it is shown here, labelled, and "
                                           "judged as emissions on in_emissions."}, fmt=_C_PCT),
-        "in_revenue": _c_in_py("Voter revenue, one epoch: DefiLlama fees + bribes over the epoch's 7 UTC days",
+        "in_revenue": _c_in_py("Voter revenue, Q0 epochs: DefiLlama's week-before fees + the epoch's bribes, summed",
                                "aero_epoch_revenue", {"side": "ours"},
                                {"verdict_when": {"py": "aero_epoch_pending", "args": {"flow": "revenue_usd"},
                                                  "positive": _c_mat("The latest complete epoch is not all stored "
-                                                                    "yet: the on-chain epoch (fetch/aero_voter.py, "
-                                                                    "weekly) or a DefiLlama day (published a day after "
-                                                                    "it ends) — the working names which.", "2026-10-10"),
+                                                                    "yet: the on-chain epoch or its fees/bribes split "
+                                                                    "(fetch/aero_voter.py) or a DefiLlama day "
+                                                                    "(published a day after it ends) — the working "
+                                                                    "names which.", "2026-10-10"),
+                                                 "negative": _c_chk("The latest complete epoch is still not all "
+                                                                    "stored after 2026-10-10 — the working names what "
+                                                                    "is missing.", "fetch/aero_voter.py (on-chain) / "
+                                                                    "DefiLlama (its day)"),
                                                  "otherwise": {
                                 "formula": "aero_epoch_revenue", "args": {"side": "ref"}, "tol": 10.0, "show_how": True,
-                                "source": "fees + bribes notified to the voting-reward contracts for the SAME epoch "
-                                          "(tokenRewardsPerEpoch, priced at the epoch end) — fetch/aero_voter.py",
-                                "note": "Unpriced reward tokens (DefiLlama has no price) are left out of the on-chain "
-                                        "figure and counted in voter_rewards_unpriced_count."}}},
+                                "source": "fees + bribes notified to the voting-reward contracts for every stored Q0 "
+                                          "epoch (tokenRewardsPerEpoch, priced at the epoch end) — fetch/aero_voter.py",
+                                "note": "JUDGED OVER THE QUARTER (Jake's run 2026-10-09 ~14:10): the summed epochs, the "
+                                        "per-epoch spread in the working. Ours is LIKE FOR LIKE: DefiLlama's week before "
+                                        "the epoch (fees are credited at the next epoch's distribute(): Gauge._claimFees, "
+                                        "contracts @1ba3081) minus that week's bribes plus the epoch's own bribes (the "
+                                        "on-chain split). Unpriced reward tokens are left out of the on-chain figure "
+                                        "and counted in voter_rewards_unpriced_count."}}},
                                fmt=_C_USD),
         # THE TWO DEFINITIONS, UNTANGLED (sign-off round 2026-10-07): veAERO.supply() is AERO LOCKED (1.053bn, Jake's
         # read); aerodrome.finance's 881,100,168 is VOTING POWER (veAERO.totalSupply(): each lock's balance decays with
@@ -25058,17 +25104,24 @@ CREDIBILITY: dict = {
         # OURS = GROSS ISSUANCE (Jake's run 2026-10-09 ~10:15, 5c): the emissions column is gross_issuance_tokens
         # (emissions_from_metric). Against the mainnet gauge's payouts it reads the schedule's ~1.42M against ~77K until
         # pendle_emissions_q0 says where the rest is (L2 gauges, unminted schedule) — CHECK until then, never hidden.
+        # THE REFERENCE IS THE DIRECT COUNT (Jake's run 2026-10-09 ~14:10: the row compared the mainnet scan with itself,
+        # 77,160 vs 77,160, while Arbitrum paid 6,610.56). Ours = the emissions column (the reconciled scans summed by
+        # day — refused while a chain's scan has stored nothing); the reference = each chain's DIRECT count
+        # (fetch/logscan _direct_count: one fresh windowed query, no cache), every chain or no figure.
         "in_emissions": _c_in("Emissions Q0 (tokens) = PENDLE the gauges paid to markets, every chain read",
                               "emissions_tokens", "q0",
                               {"formula": "scans_q0", "tol": 1.0, "show_how": True,
-                               "args": {"metrics": ("emissions_tokens_gauge_mainnet", "emissions_tokens_gauge_arbitrum",
-                                                    "emissions_tokens_gauge_optimism"),
-                                        "labels": ("mainnet", "Arbitrum", "Optimism")},
-                               "source": "each chain's GaugeController scan over Q0 (MarketClaimReward transfers out, "
-                                         "reconciled to balanceOf before storing): mainnet + Arbitrum + Optimism",
-                               "note": "pendle_emissions_q0 (Jake's run 2026-10-09): mainnet 78,019.63 + Arbitrum "
-                                       "6,602.75 + Optimism 0 = 84,622 over its 90 days; mainnet totalSupply unchanged "
-                                       "(0 mints). Chains 56 / 146 / 5000 / 80094: in_emissions_unrouted."}),
+                               "args": {"metrics": ("emissions_tokens_gauge_mainnet_direct",
+                                                    "emissions_tokens_gauge_arbitrum_direct",
+                                                    "emissions_tokens_gauge_optimism_direct"),
+                                        "labels": ("mainnet", "Arbitrum", "Optimism"), "require_all": True},
+                               "source": "each chain's gauge payouts counted DIRECTLY over Q0 (one windowed explorer "
+                                         "query per chain, no cache; pendle_emissions_q0's computation) — not the "
+                                         "reconciled scan series ours is built from",
+                               "note": "pendle_emissions_q0 (Jake's runs 2026-10-09): mainnet 78,019.63 + Arbitrum "
+                                       "6,602.75 (6,610.56 at ~14:10) + Optimism 0 over its 90 days; mainnet "
+                                       "totalSupply unchanged (0 mints). Chains 56 / 146 / 5000 / 80094: "
+                                       "in_emissions_unrouted."}),
         # NET ABSORPTION FOLLOWS THE EMISSIONS ROWS (Jake's run 2026-10-09 11:41, item 2): buyback − the gauge payouts of
         # every chain read; the unrouted chains are its documented limitation too.
         "a3_net_absorption": {"inputs": ("in_buyback", "in_emissions", "in_emissions_unrouted"),

@@ -27604,3 +27604,49 @@ def test_plume_supply_probe_is_registered():
     """5: the read could not be reproduced offline; the probe walks every step the run takes."""
     import check_offline_items as coi
     assert coi.plume_supply_read in coi.CHECKS
+
+
+def test_gauge_direct_count_is_a_fresh_windowed_query_by_utc_day(tmp_path, monkeypatch):
+    """Pendle in_emissions (Jake's run 2026-10-09 ~14:10): the reference is the gauge's payouts counted DIRECTLY — one
+    windowed query from the block at the window's start, no cache — bucketed by UTC day with the scan's exclusions,
+    complete days only, once a day."""
+    from fetch.base import FetchOutput, today
+    from fetch.explorer import TRANSFER_TOPIC, pad_address
+    from fetch.logcache import LogCache
+    from fetch.logscan import LogScan
+    monkeypatch.delenv("TOKEN_METRICS_DAILY_CHECKS", raising=False)
+    gauge, market, treasury = "0x" + "1" * 40, "0x" + "2" * 40, "0x" + "3" * 40
+    d1 = today() - pd.Timedelta(days=3)
+
+    def ev(to, amt, ts, i):
+        return {"topics": [TRANSFER_TOPIC, pad_address(gauge), pad_address(to)], "data": hex(amt),
+                "timeStamp": str(int(ts.tz_localize("UTC").timestamp())), "transactionHash": f"0x{i:064x}",
+                "logIndex": "0x0", "blockNumber": str(5_000 + i)}
+
+    class Stub:
+        calls = []
+
+        def block_at(self, chain_id, ts):
+            return 4_000
+
+        def get_logs(self, chain_id, address, topics, from_block, to_block):
+            self.calls.append((chain_id, address, from_block, to_block))
+            return [ev(market, 5 * 10 ** 18, d1 + pd.Timedelta(hours=1), 1),
+                    ev(market, 2 * 10 ** 18, d1 + pd.Timedelta(hours=23), 2),
+                    ev(treasury, 9 * 10 ** 18, d1 + pd.Timedelta(hours=2), 3),        # excluded counterparty
+                    ev(market, 1 * 10 ** 18, today() + pd.Timedelta(hours=1), 4)], {}  # today: incomplete
+
+    stub = Stub()
+    ls = LogScan(explorer=stub, reader=_FakeReader({}), cache=LogCache(tmp_path))
+    spec = {"key": "gauge_x", "metric": "emissions_tokens_gauge_arbitrum",
+            "direct_metric": "emissions_tokens_gauge_arbitrum_direct", "direct_days": 10}
+    out = FetchOutput()
+    ls._direct_count("Pendle", spec, 42161, "0xtoken", [gauge], {treasury}, 9_000, 10 ** 18, out)
+    f = out.frame()
+    f = f[f.metric == "emissions_tokens_gauge_arbitrum_direct"].set_index("date")["value"]
+    assert stub.calls == [(42161, "0xtoken", 4_000, 9_000)]
+    assert f.loc[d1] == 7.0 and f.sum() == 7.0 and f.index.max() == today() - pd.Timedelta(days=1)
+    assert len(f) == 9
+    out2 = FetchOutput()
+    ls._direct_count("Pendle", spec, 42161, "0xtoken", [gauge], {treasury}, 9_000, 10 ** 18, out2)
+    assert out2.frame().empty and len(stub.calls) == 1, "once a day"

@@ -7,16 +7,22 @@ unpriced, totalWeight 1,021,271,849, APR 12.56%): every voted pool's FeesVotingR
 tokenRewardsPerEpoch[token][epoch] (aerodrome-finance/contracts@1ba30815 Reward.sol L34/L245) through Multicall3,
 priced with DefiLlama's coins API AT THE EPOCH'S END. The Voter is read from veAERO.voter(), not wired by address.
 
-Stored for the last COMPLETE epoch (Thursday 00:00 UTC), dated the epoch's start, once — the epoch's date is kept in
-daily-checks.json so a later run in the same week does not read it again:
+Stored for the last COMPLETE epoch (Thursday 00:00 UTC) and — once a day until stored — every Q0 epoch and the one
+before it (Jake's run 2026-10-09 ~14:10, 1b), each dated the epoch's start:
     voter_rewards_onchain_usd       fees + bribes notified for the epoch, priced tokens only ($)
+    voter_rewards_onchain_fees_usd  the FeesVotingReward part (fees EARNED the week before: Gauge._claimFees runs at
+                                    the epoch's distribute(), Reward._notifyRewardAmount books epochStart(now))
+    voter_rewards_onchain_bribes_usd  the BribeVotingReward part (deposited during the epoch)
     voter_rewards_unpriced_count    reward tokens DefiLlama could not price (their value is not in the $ figure)
     voter_rewards_onchain_apr       $ x 52 / (Voter.totalWeight x AERO price at the epoch end)
 and, every day (one eth_call), Voter.totalWeight() — the votes cast, the reward-bearing stake:
     voter_total_weight_tokens
+plus, for each epoch read with an archive endpoint, Voter.totalWeight AT THE EPOCH'S START BLOCK (source suffix
+:archive) on the epoch's start date where no reading is stored — the per-epoch stake (1c).
 
-LIMIT, SAID ONCE: pools are those with votes when the epoch is read (the first days of the next epoch); a pool voted
-in the epoch and fully unvoted since is missed, so the $ figure can read low by its rewards.
+THE POOL SET: pools with votes now, and (archive) every pool with votes at the last block of any epoch read. Without
+an archive endpoint a pool voted in an epoch and fully unvoted since is missed, and the $ figure can read low by its
+rewards; the log line names the set used.
 """
 from __future__ import annotations
 
@@ -37,6 +43,14 @@ WEEK = 7 * 86400
 def _epoch_reader(epoch=None):
     import check_offline_items as coi                      # noqa: PLC0415 — the probe Jake runs, one computation
     return coi.aerodrome_voter_epoch(epoch=epoch, say=lambda m: log.info("aero_voter:%s", m), price_at_end=True)
+
+
+def _epochs_reader(epochs):
+    """{epoch: result} for several epochs in one pass — the structure read once; the pool set and each epoch's
+    totalWeight at its start block read at past blocks (archive)."""
+    import check_offline_items as coi                      # noqa: PLC0415
+    return coi.aerodrome_voter_epochs(list(epochs), say=lambda m: log.info("aero_voter:%s", m), price_at_end=True,
+                                      archive=True)
 
 
 def _weight_reader() -> float | None:
@@ -70,8 +84,12 @@ class AeroVoter:
     SOURCE = SOURCE
     TIER = TIER
 
-    def __init__(self, epoch_reader=None, weight_reader=None, daily=None, now=None, stored=None, **_ignored):
-        self.epoch_reader = epoch_reader or _epoch_reader
+    def __init__(self, epoch_reader=None, weight_reader=None, daily=None, now=None, stored=None, epochs_reader=None,
+                 **_ignored):
+        # ONE READER FOR MANY EPOCHS (Jake's run 2026-10-09 ~14:10, 1b): a single-epoch reader (the tests') is wrapped.
+        if epochs_reader is None and epoch_reader is not None:
+            epochs_reader = lambda eps: {e: epoch_reader(e) for e in eps}     # noqa: E731
+        self.epochs_reader = epochs_reader or _epochs_reader
         self.weight_reader = weight_reader or _weight_reader
         self.stored = stored or _stored
         if daily is None:
@@ -109,37 +127,84 @@ class AeroVoter:
         self.daily.done(key, day)
 
     def _epoch(self, name, spec, out):
+        """THE LAST COMPLETE EPOCH, AND EVERY Q0 EPOCH BEFORE IT (Jake's run 2026-10-09 ~14:10, 1b: tokenRewardsPerEpoch is
+        per-epoch state, readable now for past epochs — store all of Q0 and judge revenue over the quarter). Targets: the
+        epoch starts from the one before Q0 (its bribes are the previous week's, which the like-for-like reference
+        needs) to the last complete one. The latest is read as before (the store decides, not the marker); the others
+        once a day until their fees/bribes split is stored."""
         now = int(self.now if self.now is not None else time.time())
-        epoch = now // WEEK * WEEK - WEEK                   # the last COMPLETE epoch's start
-        when = pd.Timestamp(epoch, unit="s").normalize()
+        latest = now // WEEK * WEEK - WEEK                   # the last COMPLETE epoch's start
+        day_of = lambda e: pd.Timestamp(e, unit="s").normalize()                 # noqa: E731
+        q0_start = int((pd.Timestamp(now, unit="s").normalize() - pd.Timedelta(days=int(spec.get("q0_days", 90))))
+                       .timestamp())
+        first = q0_start // WEEK * WEEK - WEEK
+        targets = list(range(first, latest + 1, WEEK)) if spec.get("backfill_q0") else [latest]
+        split = spec.get("fees_metric")
         key = f"{SOURCE}:{name}:epoch"
-        if self.daily.get(key) == str(when.date()):
-            # THE STORE DECIDES, NOT THE MARKER (Jake's run 2026-10-09 11:41, 3c: "epoch 2026-10-01 stored already" while
-            # metrics.db held no voter_rewards_onchain_usd — a run that set the marker lost its rows, so the epoch was
-            # never read again and in_revenue read "CHECK (no reference)").
-            if self.stored(name, spec["usd_metric"], str(when.date())):
-                out.mark_current(SOURCE, name, spec["usd_metric"], f"epoch {when.date()} stored already", TIER)
-                return
-            log.info("aero_voter: epoch %s is marked read but no %s row is stored — reading it again",
-                     when.date(), spec["usd_metric"])
+        want = []
+        for e in targets:
+            when = day_of(e)
+            done = self.stored(name, spec["usd_metric"], str(when.date())) and (
+                not split or self.stored(name, split, str(when.date())))
+            if e == latest:
+                if self.daily.get(key) == str(when.date()) and done:
+                    out.mark_current(SOURCE, name, spec["usd_metric"], f"epoch {when.date()} stored already", TIER)
+                    continue
+                if self.daily.get(key) == str(when.date()):
+                    # THE STORE DECIDES, NOT THE MARKER (Jake's run 2026-10-09 11:41, 3c)
+                    log.info("aero_voter: epoch %s is marked read but its rows are not all stored — reading it again",
+                             when.date())
+                want.append(e)
+            elif not done:
+                want.append(e)
+        back = [e for e in want if e != latest]
+        bkey = f"{SOURCE}:{name}:backfill"
+        if back and not self.daily.due(bkey, str(today().date())):
+            log.info("aero_voter: %d earlier epoch(s) still to backfill — tried today already", len(back))
+            want = [e for e in want if e == latest]
+        if not want:
+            return
         try:
-            r = self.epoch_reader(epoch)
+            res = self.epochs_reader(want)
         except Exception as e:  # noqa: BLE001
             from .chain import redact_urls
             out.fail(SOURCE, name, f"{spec['usd_metric']}: {redact_urls(e)}", TIER)
             return
-        if r.get("error"):
-            out.fail(SOURCE, name, f"{spec['usd_metric']}: epoch {when.date()}: {r['error']}", TIER)
+        if isinstance(res, dict) and res.get("error"):
+            out.fail(SOURCE, name, f"{spec['usd_metric']}: {res['error']}", TIER)
             return
-        usd, tw, ap, unp = float(r["usd"]), float(r["total_weight"]), float(r["aero_price"]), len(r["unpriced"])
-        apr = usd * 52 / (tw * ap) if tw and ap else None
         src = f"{SOURCE}:tokenRewardsPerEpoch"
-        rows = [(spec["usd_metric"], usd), (spec["unpriced_metric"], float(unp))]
-        if apr is not None:
-            rows.append((spec["apr_metric"], apr))
-        msg = (f"epoch {when.date()}: ${usd:,.0f} paid to voters over {r['pools']} voted pools ({r['priced']} tokens "
-               f"priced at the epoch end, {unp} unpriced and left out); totalWeight {tw:,.0f}; AERO ${ap:,.4f}"
-               + (f"; APR = ${usd:,.0f} x 52 / ({tw:,.0f} x ${ap:,.4f}) = {apr:.2%}" if apr is not None else ""))
-        for m, v in rows:
-            out.add(tidy([(when, v)], name, m, src, TIER), SOURCE, name, f"{m}: {msg}", TIER)
-        self.daily.set(key, str(when.date()))
+        for e in want:
+            r, when = res.get(e) or {"error": "not read"}, day_of(e)
+            if r.get("error"):
+                out.fail(SOURCE, name, f"{spec['usd_metric']}: epoch {when.date()}: {r['error']}", TIER)
+                continue
+            usd, ap, unp = float(r["usd"]), float(r["aero_price"]), len(r["unpriced"])
+            tws = r.get("total_weight_start")
+            tw = float(tws) if tws else float(r["total_weight"])
+            apr = usd * 52 / (tw * ap) if tw and ap else None
+            rows = [(spec["usd_metric"], usd), (spec["unpriced_metric"], float(unp))]
+            if split and r.get("usd_fees") is not None:
+                rows += [(split, float(r["usd_fees"])), (spec["bribes_metric"], float(r["usd_bribes"]))]
+            if apr is not None:
+                rows.append((spec["apr_metric"], apr))
+            msg = (f"epoch {when.date()}: ${usd:,.0f} paid to voters"
+                   + (f" (fees ${float(r['usd_fees']):,.0f} + bribes ${float(r['usd_bribes']):,.0f})"
+                      if r.get("usd_fees") is not None else "")
+                   + f" over {r['pools']} pools ({r.get('pool_set', 'pools with votes now')}; {r['priced']} tokens "
+                   f"priced at the epoch end, {unp} unpriced and left out); totalWeight {tw:,.0f}"
+                   + (" at the epoch's start block" if tws else " now") + f"; AERO ${ap:,.4f}"
+                   + (f"; APR = ${usd:,.0f} x 52 / ({tw:,.0f} x ${ap:,.4f}) = {apr:.2%}" if apr is not None else ""))
+            for m, v in rows:
+                out.add(tidy([(when, v)], name, m, src, TIER), SOURCE, name, f"{m}: {msg}", TIER)
+            # THE PER-EPOCH STAKE (1c): Voter.totalWeight at the epoch's start block, dated the epoch's start — only
+            # where that day holds no reading (a live daily read is never overwritten)
+            if tws and not self.stored(name, spec["weight_metric"], str(when.date())):
+                out.add(tidy([(when, float(tws))], name, spec["weight_metric"],
+                             f"{SOURCE}:Voter.totalWeight:archive", TIER), SOURCE, name,
+                        f"{spec['weight_metric']} = {float(tws):,.0f} veAERO at block {r.get('start_block')} (the "
+                        f"epoch {when.date()} start, archive)", TIER)
+            if e == latest:
+                self.daily.set(key, str(when.date()))
+        if back:
+            self.daily.done(bkey, str(today().date()))

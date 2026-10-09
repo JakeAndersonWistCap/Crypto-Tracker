@@ -282,7 +282,9 @@ def _pendle_calibrated_rows(late_ratio=0.986):
             if r[2] not in ("locked_tokens_virtual", "pendle_epoch_apr_published")]
     for i, d in enumerate(_days()):
         ve = 44e6 - 30_000 * i
-        rows.append((d, "Pendle", "vependle_voting_supply_tokens", ve, "chain:ethereum:vependle", 2))
+        # archive reads, as Jake's history is: each at the first block of its UTC day (a known read time)
+        rows.append((d, "Pendle", "vependle_voting_supply_tokens", ve, "chain:ethereum:vependle_voting_supply:archive",
+                     2))
         if d >= pd.Timestamp("2026-09-29"):
             ratio = 0.986 if d < pd.Timestamp("2026-10-05") else late_ratio
             rows.append((d, "Pendle", "locked_tokens_virtual", ratio * (30_000 * 728 + 3 * ve),
@@ -339,10 +341,7 @@ def test_pendle_headline_is_a_check_when_our_epochs_miss_pendles_apr_by_more_tha
 
 def test_pendle_emissions_is_judged_against_the_gauge_scan_not_maturing(tmp_path, monkeypatch):
     """The MATURING row (until 2026-10-09) closes with a verdict: the GaugeController scan is the reference."""
-    rows = _pendle_rows(1.0)
-    for d in _days():
-        rows += [(d, "Pendle", "emissions_tokens", 50_000.0, "llama:emissions", 1),
-                 (d, "Pendle", "emissions_tokens_gauge_mainnet", 50_000.0, "explorer:gauge_pendle_out", 2)]
+    rows = _pendle_gauge_rows()
     o = _evaluate(tmp_path, monkeypatch, "Pendle", rows)
     em = o["in_emissions"]
     assert not em["verdict"].startswith("MATURING"), em
@@ -418,17 +417,28 @@ def test_pendle_headline_cell_equals_the_python_on_the_same_store(tmp_path, monk
     assert abs(float(o["a3_protocol_yield"]["ours"]) - v) < 1e-12, (o["a3_protocol_yield"], v)
 
 
-def test_pendle_emissions_are_the_gauge_payouts_of_every_chain_read(tmp_path, monkeypatch):
-    """Item 2 (Jake's run 2026-10-09 11:41): emissions = PENDLE the gauges paid to markets, every chain read (mainnet +
-    Arbitrum + Optimism, summed by day); in_emissions sets that against each chain's scan; the four unrouted chains are a
-    DOCUMENTED LIMITATION; gross issuance is no longer the declared 2%."""
+def _pendle_gauge_rows(arb=70.0, arb_direct=70.0, with_arb=True, with_direct=True):
     rows = _pendle_rows()
     for d in _days():
         rows += [(d, "Pendle", "emissions_tokens_gauge_mainnet", 860.0, "explorer:gauge_pendle_out", 2),
-                 (d, "Pendle", "emissions_tokens_gauge_arbitrum", 70.0, "explorer:gauge_pendle_out_arbitrum", 2),
                  (d, "Pendle", "emissions_tokens_gauge_optimism", 0.0, "explorer:gauge_pendle_out_optimism", 2),
                  (d, "Pendle", "total_supply", 281.5e6, "coingecko", 1)]
-    o = _evaluate(tmp_path, monkeypatch, "Pendle", rows)
+        if with_arb:
+            rows.append((d, "Pendle", "emissions_tokens_gauge_arbitrum", arb, "explorer:gauge_pendle_out_arbitrum", 2))
+        if with_direct:
+            rows += [(d, "Pendle", "emissions_tokens_gauge_mainnet_direct", 860.0, "explorer:direct:gauge_pendle_out", 2),
+                     (d, "Pendle", "emissions_tokens_gauge_arbitrum_direct", arb_direct,
+                      "explorer:direct:gauge_pendle_out_arbitrum", 2),
+                     (d, "Pendle", "emissions_tokens_gauge_optimism_direct", 0.0,
+                      "explorer:direct:gauge_pendle_out_optimism", 2)]
+    return rows
+
+
+def test_pendle_emissions_are_the_gauge_payouts_of_every_chain_read(tmp_path, monkeypatch):
+    """Item 2 (Jake's run 2026-10-09 11:41): emissions = PENDLE the gauges paid to markets, every chain read (mainnet +
+    Arbitrum + Optimism, summed by day). Since ~14:10 the reference is each chain's DIRECT count (one fresh windowed
+    query, no cache), not the scan series ours is built from; the four unrouted chains are a DOCUMENTED LIMITATION."""
+    o = _evaluate(tmp_path, monkeypatch, "Pendle", _pendle_gauge_rows())
     em = o["in_emissions"]
     q0 = [d for d in _days() if pd.Timestamp(ASOF) - pd.Timedelta(days=90) < d <= pd.Timestamp(ASOF)]
     assert abs(float(em["ours"]) - 930.0 * len(q0)) < 1e-6, em
@@ -438,35 +448,71 @@ def test_pendle_emissions_are_the_gauge_payouts_of_every_chain_read(tmp_path, mo
     assert config.ISSUANCE_PRIMARY["Pendle"]["kind"] == "first_party"
 
 
+def test_pendle_emissions_sum_is_refused_while_a_chain_scan_has_stored_nothing(tmp_path, monkeypatch):
+    """Jake's run 2026-10-09 ~14:10: in_emissions stored 77,160 (mainnet only) while Arbitrum paid 6,610.56 — its scan
+    was still seeding. A listed stream with no rows is not a 0: the column is not formed (named, with the seed
+    command) and the row is no PASS."""
+    o = _evaluate(tmp_path, monkeypatch, "Pendle", _pendle_gauge_rows(with_arb=False))
+    em = o["in_emissions"]
+    assert not em["verdict"].startswith("PASS"), em
+    assert not isinstance(em["ours"], (int, float)), em
+
+
+def test_pendle_emissions_reference_is_the_direct_count_not_the_same_series(tmp_path, monkeypatch):
+    """The reference is the direct count: when the reconciled Arbitrum series and its direct count disagree, the row
+    sees it (CHECK); with a chain's direct count missing there is no reference — never a partial sum against a partial
+    sum."""
+    o = _evaluate(tmp_path, monkeypatch, "Pendle", _pendle_gauge_rows(arb=70.0, arb_direct=140.0))
+    assert o["in_emissions"]["verdict"].startswith("CHECK"), o["in_emissions"]
+    (tmp_path / "nodirect").mkdir()
+    o2 = _evaluate(tmp_path / "nodirect", monkeypatch, "Pendle", _pendle_gauge_rows(with_direct=False))
+    assert not o2["in_emissions"]["verdict"].startswith("PASS"), o2["in_emissions"]
+
+
 # --------------------------------------------------------------------------------------------------------- Aerodrome
 WK, TW, PX = 1_918_756.0, 1_021_271_849.0, 0.778            # Jake's read of epoch 2026-10-01
 
 
-def _aero_rows(off=1.0, weight_from=None, price=None, llama_until=None):
+BRIBE = 400_000.0                                            # bribes per epoch in the fixture
+
+
+def _aero_rows(off=1.0, weight_from=None, price=None, llama_until=None, fee_week=None, weights=None):
     """price: a function of the day (default flat PX); CoinGecko and Coinbase both store it. llama_until: the last day
-    DefiLlama has published (default every day)."""
+    DefiLlama has published (default every day). fee_week: the swap fees EARNED in the week starting at a Thursday
+    (default WK - BRIBE). As on-chain (Gauge._claimFees at distribute()): epoch E's fees are those earned in E-1;
+    DefiLlama books each day's fees on the swap day and bribes on the deposit day. weights: {epoch start: totalWeight}
+    stored as the epoch-start archive reads instead of a flat daily TW."""
     price = price or (lambda d: PX)
+    fee_week = fee_week or (lambda e: WK - BRIBE)
+    wk = lambda d: d - pd.Timedelta(days=(d.dayofweek - 3) % 7)                                 # noqa: E731
     rows = []
     for d in _days():
         if llama_until is None or d <= pd.Timestamp(llama_until):
             for m in ("revenue_usd", "holders_revenue_usd"):
-                rows.append((d, "Aerodrome", m, WK / 7 * off, "defillama", 1))
+                rows.append((d, "Aerodrome", m, (fee_week(wk(d)) + BRIBE) / 7 * off, "defillama", 1))
         rows += [(d, "Aerodrome", "price_usd", price(d), "coingecko", 1),
                  (d, "Aerodrome", "price_usd_coinbase", price(d), "xref:coinbase:AERO-USD", 1),
                  (d, "Aerodrome", "ve_locked_supply_tokens", 1.053e9, "chain:base:ve", 2),
                  (d, "Aerodrome", "ve_voting_power_tokens", 881.1e6, "chain:base:ve", 2)]
-        if weight_from is None:
+        if weight_from is None and weights is None:
             rows.append((d, "Aerodrome", "voter_total_weight_tokens", TW, "aero_voter:Voter.totalWeight", 2))
     if weight_from is not None:                              # read forward only, from Jake's next run
         rows.append((pd.Timestamp(weight_from), "Aerodrome", "voter_total_weight_tokens", TW,
                      "aero_voter:Voter.totalWeight", 2))
+    for e, w in (weights or {}).items():
+        rows.append((pd.Timestamp(e), "Aerodrome", "voter_total_weight_tokens", w,
+                     "aero_voter:Voter.totalWeight:archive", 2))
     for e in pd.date_range("2026-07-02", "2026-10-01", freq="7D"):
         rows.append((e, "Aerodrome", "emissions_tokens", 485_000.0, "chain:base:rewards_distributor", 2))
-    e = pd.Timestamp("2026-10-01")
-    rows += [(e, "Aerodrome", "voter_rewards_onchain_usd", WK, "aero_voter:tokenRewardsPerEpoch", 2),
-             (e, "Aerodrome", "voter_rewards_unpriced_count", 18.0, "aero_voter:tokenRewardsPerEpoch", 2),
-             (e, "Aerodrome", "voter_rewards_onchain_apr", WK * 52 / (TW * price(e + pd.Timedelta(days=7))),
-              "aero_voter:tokenRewardsPerEpoch", 2)]
+        fees = fee_week(e - pd.Timedelta(days=7))
+        tw = (weights or {}).get(e, TW)
+        rows += [(e, "Aerodrome", "voter_rewards_onchain_usd", fees + BRIBE, "aero_voter:tokenRewardsPerEpoch", 2),
+                 (e, "Aerodrome", "voter_rewards_onchain_fees_usd", fees, "aero_voter:tokenRewardsPerEpoch", 2),
+                 (e, "Aerodrome", "voter_rewards_onchain_bribes_usd", BRIBE, "aero_voter:tokenRewardsPerEpoch", 2),
+                 (e, "Aerodrome", "voter_rewards_onchain_apr", (fees + BRIBE) * 52 / (tw * price(e + pd.Timedelta(days=7))),
+                  "aero_voter:tokenRewardsPerEpoch", 2)]
+    rows.append((pd.Timestamp("2026-10-01"), "Aerodrome", "voter_rewards_unpriced_count", 18.0,
+                 "aero_voter:tokenRewardsPerEpoch", 2))
     return rows
 
 
@@ -483,7 +529,7 @@ def test_aerodrome_price_rise_is_a_finding_and_the_epoch_row_uses_one_price(tmp_
     assert o["in_price_confirmed"]["verdict"].startswith("PASS"), o["in_price_confirmed"]
     assert "AT TODAY'S PRICE" in tp["note"] and "Coinbase: start" in tp["note"], tp["note"][:600]
     ep = o["in_voter_apr_epoch"]
-    assert ep["verdict"].startswith("PASS") and "at the same days' payment-weighted" in ep["note"], ep
+    assert ep["verdict"].startswith("PASS") and "QUARTER: mean of" in ep["note"], ep
     assert o["in_revenue"]["verdict"].startswith("PASS"), o["in_revenue"]
 
 
@@ -546,7 +592,7 @@ def test_aerodrome_revenue_and_yield_are_judged_epoch_for_epoch_against_state(tm
     assert "18 token(s) unpriced" in o["in_revenue"]["note"]
     ep = o["in_voter_apr_epoch"]
     assert ep["verdict"].startswith("PASS"), ep
-    assert "HEADLINE: PAYMENT-DAY PRICES" in ep["note"] and "mean stake" in ep["note"]
+    assert "HEADLINE: PAYMENT-DAY PRICES, PER-EPOCH STAKE" in ep["note"] and "effective stake" in ep["note"]
     assert "REBASE" in ep["note"]
     assert abs(float(ep["ref"]) - 0.1256) < 0.0005
     rb = o["in_rebase_apr"]
@@ -554,6 +600,49 @@ def test_aerodrome_revenue_and_yield_are_judged_epoch_for_epoch_against_state(tm
     assert o["in_apr_today_price"]["verdict"] == "N/A (recorded, not judged)", o["in_apr_today_price"]
     assert o["a3_protocol_yield"]["verdict"].startswith("PASS"), o["a3_protocol_yield"]
     assert not any(v["verdict"].startswith("MATURING") for v in o.values())
+
+
+def test_aerodrome_revenue_compares_defillamas_week_before_fees_with_the_epochs_credit(tmp_path, monkeypatch):
+    """1a (Jake's run 2026-10-09 ~14:10; contracts @1ba3081 Gauge._claimFees at distribute(), Reward books
+    epochStart(now)): epoch E's fees are those EARNED in E-1. Weekly fees alternating 1.0M / 1.5M put the same-week
+    comparison 20-30% off every week; DefiLlama's week before + the epoch's own bribes matches to the dollar, so the
+    quarter sum PASSES and the working shows the spread and the fee leg."""
+    fee = lambda e: 1.0e6 if (e - pd.Timestamp("2026-07-02")).days // 7 % 2 == 0 else 1.5e6          # noqa: E731
+    o = _evaluate(tmp_path, monkeypatch, "Aerodrome", _aero_rows(fee_week=fee))
+    rv = o["in_revenue"]
+    assert rv["verdict"].startswith("PASS"), rv
+    assert "QUARTER: 12 epoch(s)" in rv["note"] and "mean |gap| 0.0%" in rv["note"], rv["note"][:400]
+    assert "fee leg" in rv["note"] and "bribes then" in rv["note"]
+    assert o["in_voter_apr_epoch"]["verdict"].startswith("PASS"), o["in_voter_apr_epoch"]
+
+
+def test_aerodrome_epoch_without_the_split_is_left_out_and_named(tmp_path, monkeypatch):
+    """1a: the like-for-like figure needs the on-chain bribes of the epoch and of the one before; an epoch without them
+    is not judged, and named."""
+    rows = [r for r in _aero_rows() if not (r[2] == "voter_rewards_onchain_bribes_usd"
+                                            and r[0] == pd.Timestamp("2026-08-20"))]
+    o = _evaluate(tmp_path, monkeypatch, "Aerodrome", rows)
+    rv = o["in_revenue"]
+    assert rv["verdict"].startswith("PASS"), rv
+    assert "QUARTER: 10 epoch(s)" in rv["note"], rv["note"][:300]
+    assert "2026-08-20 (on-chain fees/bribes split not stored for 2026-08-20)" in rv["note"]
+    assert "2026-08-27 (on-chain fees/bribes split not stored for 2026-08-20)" in rv["note"]
+
+
+def test_aerodrome_headline_divides_each_epochs_rewards_by_that_epochs_stake(tmp_path, monkeypatch):
+    """1c (Jake's run 2026-10-09 ~14:10: "mean stake 1,018,617,757 over its 1 stored day"): Voter.totalWeight read at
+    each epoch's start block; each paid day's AERO over ITS epoch's stake. Stakes rising 1% an epoch: the headline is
+    sum(tokens_d / stake_epoch(d)) x 365.25 / days — not tokens / the mean of the readings."""
+    eps = list(pd.date_range("2026-07-02", "2026-10-01", freq="7D"))
+    weights = {e: TW * (1 + 0.01 * i) for i, e in enumerate(eps)}
+    o = _evaluate(tmp_path, monkeypatch, "Aerodrome", _aero_rows(weights=weights))
+    q0 = [d for d in _days() if pd.Timestamp(ASOF) - pd.Timedelta(days=90) < d <= pd.Timestamp(ASOF)]
+    wk = lambda d: d - pd.Timedelta(days=(d.dayofweek - 3) % 7)                                 # noqa: E731
+    want = sum(WK / 7 / PX / weights[wk(d)] for d in q0) * 365.25 / len(q0)
+    head = o["a3_protocol_yield"]
+    assert abs(float(head["ours"]) - want) < 1e-9, (head, want)
+    note = o["in_voter_apr_epoch"]["note"]
+    assert "PER-EPOCH STAKE" in note and "13 read at the epoch's start" in note and "BORROWED" not in note, note[:600]
 
 
 def test_aerodrome_is_a_check_when_defillama_reads_1_4x_the_epoch(tmp_path, monkeypatch):
@@ -603,7 +692,10 @@ def test_aero_voter_stores_the_last_complete_epoch_once_and_the_weight_daily(tmp
     daily = DailyChecks(tmp_path)
     p = config.PROJECT_BY_NAME["Aerodrome"]
     out = FetchOutput()
-    AeroVoter(epoch_reader=epoch_reader, weight_reader=lambda: TW, daily=daily, now=now).run([p], None, out)
+    # only the latest is missing from the store (the Q0 backfill is its own test)
+    latest_only = lambda proj, m, d: d != "2026-10-01"                                         # noqa: E731
+    AeroVoter(epoch_reader=epoch_reader, weight_reader=lambda: TW, daily=daily, now=now,
+              stored=latest_only).run([p], None, out)
     f = out.frame()
     usd = f[f.metric == "voter_rewards_onchain_usd"]
     assert len(usd) == 1 and str(usd["date"].iloc[0])[:10] == "2026-10-01" and usd["value"].iloc[0] == WK
@@ -618,8 +710,46 @@ def test_aero_voter_stores_the_last_complete_epoch_once_and_the_weight_daily(tmp
     # 3c (Jake's run 2026-10-09 11:41): the marker said "stored already" while metrics.db held no row — read it again.
     out3 = FetchOutput()
     AeroVoter(epoch_reader=epoch_reader, weight_reader=lambda: TW, daily=daily, now=now,
-              stored=lambda *a: False).run([p], None, out3)
+              stored=latest_only).run([p], None, out3)
     assert len(calls) == 2 and not out3.frame()[out3.frame().metric == "voter_rewards_onchain_usd"].empty
+
+
+def test_aero_voter_backfills_every_q0_epoch_with_fees_bribes_and_the_start_weight(tmp_path, monkeypatch):
+    """1b/1c (Jake's run 2026-10-09 ~14:10): every epoch from the one before Q0 to the last complete one is read in one
+    pass — fees and bribes apart, and Voter.totalWeight at each epoch's start block stored on the epoch's start date
+    (archive), never over a live reading; earlier epochs are retried once a day, not every run."""
+    from fetch.aero_voter import AeroVoter
+    from fetch.base import FetchOutput
+    from fetch.logcache import DailyChecks
+    monkeypatch.delenv("TOKEN_METRICS_DAILY_CHECKS", raising=False)
+    asked = []
+
+    def epochs_reader(eps):
+        asked.append(list(eps))
+        return {e: {"epoch": e, "voter": "0xv", "pools": 300, "pool_set": "pools with votes now (300)",
+                    "total_weight": TW, "total_weight_start": TW - 1e6, "start_block": 123, "usd": WK,
+                    "usd_fees": WK - BRIBE, "usd_bribes": BRIBE, "unpriced": [], "unpriced_raw": {}, "priced": 120,
+                    "aero_price": PX, "priced_at": "epoch end"} for e in eps}
+    now = int(pd.Timestamp("2026-10-09 12:00").timestamp())
+    daily = DailyChecks(tmp_path)
+    p = config.PROJECT_BY_NAME["Aerodrome"]
+    live = {"2026-10-08"}                                     # a live daily weight already stored that day
+    stored = lambda proj, m, d: m == "voter_total_weight_tokens" and d in live                # noqa: E731
+    out = FetchOutput()
+    AeroVoter(epochs_reader=epochs_reader, weight_reader=lambda: TW, daily=daily, now=now, stored=stored).run(
+        [p], None, out)
+    f = out.frame()
+    starts = sorted(str(d)[:10] for d in f[f.metric == "voter_rewards_onchain_bribes_usd"]["date"])
+    assert len(asked) == 1 and len(asked[0]) == 14, asked
+    assert starts[0] == "2026-07-02" and starts[-1] == "2026-10-01" and len(starts) == 14, starts
+    fe = f[f.metric == "voter_rewards_onchain_fees_usd"]
+    assert (fe["value"] == WK - BRIBE).all()
+    w = f[(f.metric == "voter_total_weight_tokens") & f["source"].str.endswith(":archive")]
+    assert len(w) == 14 and (w["value"] == TW - 1e6).all()
+    out2 = FetchOutput()
+    AeroVoter(epochs_reader=epochs_reader, weight_reader=lambda: TW, daily=daily, now=now,
+              stored=lambda proj, m, d: d == "2026-10-01").run([p], None, out2)
+    assert len(asked) == 1, "earlier epochs are retried once a day, not every run"
 
 
 def test_aero_voter_stores_nothing_on_an_error(tmp_path):

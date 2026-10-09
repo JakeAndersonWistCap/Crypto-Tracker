@@ -107,3 +107,46 @@ def test_real_maple_stays_signed_off(tmp_path, monkeypatch):
     o = evaluate_real(tmp_path, monkeypatch, "Maple")
     bad = {k: v["verdict"] for k, v in o.items() if str(v["verdict"]).startswith("CHECK")}
     assert not bad, bad
+
+
+def _pendle_rebuild_inputs():
+    import credibility as cred
+    payload = load("Pendle")
+    long = long_frame(payload).assign(project="Pendle")
+    g = long[long.metric == "vependle_voting_supply_tokens"].copy()
+    g["date"] = pd.to_datetime(g["date"]).dt.normalize()
+    s = lambda m: (long[long.metric == m].assign(date=lambda d: pd.to_datetime(d["date"]).dt.normalize())  # noqa: E731
+                   .drop_duplicates("date", keep="last").set_index("date")["value"].astype(float).sort_index())
+    return cred, s, dict(zip(g["date"], g["source"])), dict(zip(g["date"], g["fetched_at"]))
+
+
+def test_real_pendle_rebuild_takes_the_archive_to_live_fall_over_its_real_gap():
+    """3 (Jake's run 2026-10-09 ~14:10): on the real rows the 10-08 read is archive (00:00) and the 10-09 read live
+    (10:41) — 34.7h apart. The fall is scaled to 24h, active stays under all PENDLE locked, and no day drifts."""
+    cred, s, src, at = _pendle_rebuild_inputs()
+    cal = cred.virtual_rebuild(s("vependle_voting_supply_tokens"), src, s("locked_tokens_virtual"), 728, 0.005,
+                               legacy=s("locked_tokens_legacy_vependle"), ve_at=at)
+    d = pd.Timestamp("2026-10-09")
+    assert d in cal["active"].index and cal["active"].loc[d] < s("locked_tokens_legacy_vependle").loc[d]
+    assert abs(cal["active"].loc[d] / cal["active"].loc[pd.Timestamp("2026-10-08")] - 1) < 0.01, cal["active"].tail()
+    assert not cal["drift"] and not cal["skipped"], (cal["drift"], cal["skipped"])
+
+
+def test_real_pendle_rebuild_skips_a_day_whose_reads_are_under_20h_apart_or_exceed_all_locked():
+    """3: the same real rows with the 10-08 read moved to a live read at 23:30 (11.2h before 10-09's) — 10-09 is skipped,
+    not rebuilt and not judged; and a day whose active locked would exceed all PENDLE locked is skipped too."""
+    cred, s, src, at = _pendle_rebuild_inputs()
+    d8, d9 = pd.Timestamp("2026-10-08"), pd.Timestamp("2026-10-09")
+    src2 = {**src, d8: "chain:ethereum:vependle_voting_supply"}
+    at2 = {**at, d8: "2026-10-08T23:30:00Z"}
+    cal = cred.virtual_rebuild(s("vependle_voting_supply_tokens"), src2, s("locked_tokens_virtual"), 728, 0.005,
+                               legacy=s("locked_tokens_legacy_vependle"), ve_at=at2)
+    assert d9 not in cal["rebuilt"].index and d9 not in [d for d, *_r in cal["days"]]
+    assert any(d == d9 and "11.2h" in w for d, w in cal["skipped"]), cal["skipped"]
+    assert not any(d == d9 for d, _r in cal["drift"])
+    leg = s("locked_tokens_legacy_vependle").copy()
+    leg.loc[d9] = 50e6                                     # below that day's active locked (~61.4M)
+    cal2 = cred.virtual_rebuild(s("vependle_voting_supply_tokens"), src, s("locked_tokens_virtual"), 728, 0.005,
+                                legacy=leg, ve_at=at)
+    assert d9 not in cal2["rebuilt"].index
+    assert any(d == d9 and "impossible" in w for d, w in cal2["skipped"]), cal2["skipped"]

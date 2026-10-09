@@ -8312,11 +8312,11 @@ def etherfi_withdrawal_fees(days: int = 365):
 MULTICALL3 = "0xcA11bde05977b3631167028862bE2a173976CA11"
 
 
-def _batch_eth_calls(chain: str, calls: list, chunk: int = 200) -> list:
+def _batch_eth_calls(chain: str, calls: list, chunk: int = 200, block: str = "latest") -> list:
     """[(to, data)] -> [hex result or None], through Multicall3.aggregate3 — ONE eth_call per `chunk` calls, with each
     call allowed to fail on its own. Not JSON-RPC batches: Alchemy refused those on Jake's run 2026-10-08, and the
     read came back $10,817/epoch against DefiLlama's ~$1.9M/week. Errors name the endpoint's host only (a keyed URL
-    is never printed)."""
+    is never printed). `block` pins every call to a past block (hex) — an archive read."""
     from eth_abi import decode, encode                    # noqa: PLC0415
     out = [None] * len(calls)
     code_seen = False
@@ -8333,7 +8333,7 @@ def _batch_eth_calls(chain: str, calls: list, chunk: int = 200) -> list:
                 part = calls[i:i + chunk]
                 data = "0x82ad56cb" + encode(["(address,bool,bytes)[]"],
                                              [[(to, True, bytes.fromhex(d[2:])) for to, d in part]]).hex()
-                j = rpc(url, "eth_call", [{"to": MULTICALL3, "data": data}, "latest"])
+                j = rpc(url, "eth_call", [{"to": MULTICALL3, "data": data}, block])
                 if "result" not in j:
                     raise ValueError(f"aggregate3 error: {j.get('error')}")
                 (res,) = decode(["(bool,bytes)[]"], bytes.fromhex(j["result"][2:]))
@@ -8350,15 +8350,48 @@ def _batch_eth_calls(chain: str, calls: list, chunk: int = 200) -> list:
     return out
 
 
-def aerodrome_voter_epoch(epoch: int | None = None, min_weight_share: float = 0.0, say=print,
-                          price_at_end: bool = False) -> dict:
-    """WHAT veAERO VOTERS WERE PAID IN ONE EPOCH, FROM STATE (the computation behind aerodrome_voter_rewards, and the
-    daily run's weekly store — fetch/aero_voter.py, Jake's run 2026-10-08 11:27). Each gauge's FeesVotingReward and
-    BribeVotingReward tokenRewardsPerEpoch[token][epoch] (contracts @1ba30815 Reward.sol L34/L245) through Multicall3,
-    priced with DefiLlama's coins API — at the current price, or with `price_at_end` at the epoch's END (the weekly
-    store: the price the rewards were worth when the epoch closed, /prices/historical). `epoch` defaults to the last
-    COMPLETE epoch (Thursday 00:00 UTC). Returns {epoch, voter, pools, total_weight, usd, unpriced: [token, ...],
-    unpriced_raw: {token: raw amount}, priced, aero_price, priced_at} or {"error": why}."""
+def rpc_block_at(chain: str, ts: int, say=print) -> int | None:
+    """The FIRST block with timestamp >= ts, from block headers through the chain's RPC endpoints (no explorer: Base's
+    is paid on Etherscan V2). Interpolation from the head, then bisection on eth_getBlockByNumber timestamps. None when
+    no endpoint answers."""
+    for url in _rpcs_for(chain):
+        try:
+            cache: dict = {}
+
+            def t(n):
+                if n not in cache:
+                    cache[n] = int(rpc(url, "eth_getBlockByNumber", [hex(n), False])["result"]["timestamp"], 16)
+                return cache[n]
+
+            head = int(rpc(url, "eth_blockNumber")["result"], 16)
+            if t(head) < ts:
+                return None
+            bt = max((t(head) - t(max(head - 10_000, 1))) / min(10_000, head - 1), 1e-3)
+            lo = max(head - int((t(head) - ts) / bt * 1.02) - 100, 1)
+            step = max(int(86_400 / bt), 100)
+            while lo > 1 and t(lo) >= ts:
+                lo, step = max(lo - step, 1), step * 2
+            hi = head
+            while hi - lo > 1:
+                mid = (lo + hi) // 2
+                lo, hi = (mid, hi) if t(mid) < ts else (lo, mid)
+            return hi
+        except Exception as e:  # noqa: BLE001
+            say(f"    block-at-time via {urlparse(url).hostname or '?'} failed — {type(e).__name__}")
+    return None
+
+
+def aerodrome_voter_epochs(epochs: list[int], say=print, price_at_end: bool = True, archive: bool = False) -> dict:
+    """WHAT veAERO VOTERS WERE PAID IN EACH EPOCH, FEES AND BRIBES APART (Jake's run 2026-10-09 ~14:10, 1a/1b/1c). The
+    pool/reward structure is read once, then each epoch's FeesVotingReward and BribeVotingReward
+    tokenRewardsPerEpoch[token][epoch] (contracts @1ba30815 Reward.sol L34/L245 — per-epoch state, readable now for any
+    past epoch). Each epoch priced with DefiLlama's coins API at the epoch's END (`price_at_end`) or now.
+
+    THE POOL SET: pools with votes now, and with `archive` also every pool with votes at the LAST block of each epoch
+    (Voter.weights at a past block) — a pool voted then and unvoted since is otherwise missed. With `archive`, each
+    epoch's Voter.totalWeight AT ITS START BLOCK (the votes cast going into the epoch: the per-epoch stake, 1c).
+    Returns {epoch: {usd, usd_fees, usd_bribes, unpriced, unpriced_fees, unpriced_bribes, priced, aero_price,
+    total_weight (now), total_weight_start (archive or None), pools, pool_set, priced_at}} or {"error": why}."""
     import time as _t                                      # noqa: PLC0415
     import config                                          # noqa: PLC0415
     c = config.PROJECT_BY_NAME["Aerodrome"]["contracts"]
@@ -8371,63 +8404,109 @@ def aerodrome_voter_epoch(epoch: int | None = None, min_weight_share: float = 0.
     n = int(eth_call(voter, _selx("length()"), chain="base")[0] or "0x0", 16)
     tw = int(eth_call(voter, _selx("totalWeight()"), chain="base")[0] or "0x0", 16) / 1e18
     week = 7 * 86400
-    if epoch is None:
-        epoch = int(_t.time()) // week * week - week             # the last COMPLETE epoch's start
-    say(f"  Voter {voter}: {n} pools, totalWeight {tw:,.0f} veAERO; epoch {_t.strftime('%Y-%m-%d', _t.gmtime(epoch))}")
     sel_pools, sel_g, sel_f, sel_b, sel_w = (_selx("pools(uint256)"), _selx("gauges(address)"),
                                              _selx("gaugeToFees(address)"), _selx("gaugeToBribe(address)"),
                                              _selx("weights(address)"))
     pools = ["0x" + (x or "0x" + "0" * 64)[-40:] for x in _batch_eth_calls("base", [(voter, sel_pools + _word(i))
                                                                                     for i in range(n)])]
-    wts = [int(x or "0x0", 16) / 1e18 for x in _batch_eth_calls("base", [(voter, sel_w + _word(int(p, 16)))
-                                                                         for p in pools])]
-    keep = [(p, wt) for p, wt in zip(pools, wts) if wt > 0 and (not tw or wt / tw >= min_weight_share)]
-    say(f"  pools with votes: {len(keep)} of {n}")
+    wcalls = [(voter, sel_w + _word(int(p, 16))) for p in pools]
+    keep = {p for p, x in zip(pools, _batch_eth_calls("base", wcalls)) if int(x or "0x0", 16) > 0}
+    n_now = len(keep)
+    starts, set_note = {}, f"pools with votes now ({n_now})"
+    if archive:
+        added, refused = 0, []
+        for ep in epochs:
+            b_end = rpc_block_at("base", ep + week, say=say)
+            b_start = rpc_block_at("base", ep, say=say)
+            if b_end is None or b_start is None:
+                refused.append(_t.strftime("%Y-%m-%d", _t.gmtime(ep)))
+                continue
+            got = _batch_eth_calls("base", wcalls, block=hex(b_end - 1))
+            if all(x is None for x in got):
+                refused.append(_t.strftime("%Y-%m-%d", _t.gmtime(ep)))
+                continue
+            new = {p for p, x in zip(pools, got) if int(x or "0x0", 16) > 0} - keep
+            added += len(new)
+            keep |= new
+            r, _e = eth_call(voter, _selx("totalWeight()"), hex(b_start), chain="base")
+            starts[ep] = (int(r, 16) / 1e18, b_start) if r else None
+        set_note = (f"pools with votes now ({n_now}) or at the end of any epoch read (+{added}, Voter.weights at "
+                    f"each epoch's last block)" + (f"; archive refused for {', '.join(refused)}" if refused else ""))
+    keep = sorted(keep)
+    say(f"  Voter {voter}: {n} pools; {set_note}")
     gauges = ["0x" + (x or "0x" + "0" * 64)[-40:] for x in _batch_eth_calls("base", [(voter, sel_g + _word(int(p, 16)))
-                                                                                     for p, _ in keep])]
-    rewards = []
-    for sel in (sel_f, sel_b):
-        rewards += ["0x" + (x or "0x" + "0" * 64)[-40:] for x in _batch_eth_calls("base", [(voter, sel + _word(int(g, 16)))
-                                                                                          for g in gauges])]
-    rewards = [r for r in rewards if int(r, 16)]
-    lens = [int(x or "0x0", 16) for x in _batch_eth_calls("base", [(r, _selx("rewardsListLength()")) for r in rewards])]
-    pairs = [(r, j) for r, L in zip(rewards, lens) for j in range(min(L, 20))]
+                                                                                     for p in keep])]
+    kinds = []
+    for sel, kind in ((sel_f, "fees"), (sel_b, "bribes")):
+        kinds += [("0x" + (x or "0x" + "0" * 64)[-40:], kind)
+                  for x in _batch_eth_calls("base", [(voter, sel + _word(int(g, 16))) for g in gauges])]
+    kinds = [(r, kd) for r, kd in kinds if int(r, 16)]
+    lens = [int(x or "0x0", 16) for x in _batch_eth_calls("base", [(r, _selx("rewardsListLength()")) for r, _ in kinds])]
+    pairs = [(r, kd, j) for (r, kd), L in zip(kinds, lens) for j in range(min(L, 20))]
     toks = ["0x" + (x or "0x" + "0" * 64)[-40:] for x in _batch_eth_calls("base", [(r, _selx("rewards(uint256)") + _word(j))
-                                                                                   for r, j in pairs])]
+                                                                                   for r, _kd, j in pairs])]
     sel_t = _selx("tokenRewardsPerEpoch(address,uint256)")
-    amts = [int(x or "0x0", 16) for x in _batch_eth_calls("base", [(r, sel_t + _word(int(t, 16)) + _word(epoch))
-                                                                   for (r, _), t in zip(pairs, toks)])]
-    by_tok = {}
-    for t, a in zip(toks, amts):
-        if a:
-            by_tok[t.lower()] = by_tok.get(t.lower(), 0) + a
-    say(f"  reward contracts {len(rewards)}, (contract, token) pairs {len(pairs)}, tokens paid {len(by_tok)}")
-    keys = [f"base:{t}" for t in list(by_tok) + [aero.lower()]]
-    prices = {}
-    at = (f"historical/{min(epoch + week, int(_t.time()) - 60)}/" if price_at_end else "current/")
-    for i in range(0, len(keys), 80):
-        try:
-            r = requests.get(f"https://coins.llama.fi/prices/{at}" + ",".join(keys[i:i + 80]), headers=_ua(),
-                             timeout=TIMEOUT)
-            prices.update({k.split(":", 1)[1].lower(): v for k, v in (r.json().get("coins") or {}).items()})
-        except Exception as e:  # noqa: BLE001
-            say(f"  DefiLlama coins unreachable — {type(e).__name__}")
-    usd, unpriced = 0.0, []
-    for t, a in by_tok.items():
-        p = prices.get(t)
-        if not p:
-            unpriced.append(t)
+    out = {}
+    for ep in epochs:
+        amts = [int(x or "0x0", 16) for x in _batch_eth_calls("base", [(r, sel_t + _word(int(t, 16)) + _word(ep))
+                                                                       for (r, _kd, _j), t in zip(pairs, toks)])]
+        by_tok = {"fees": {}, "bribes": {}}
+        for (_r, kd, _j), t, a in zip(pairs, toks, amts):
+            if a:
+                by_tok[kd][t.lower()] = by_tok[kd].get(t.lower(), 0) + a
+        allt = set(by_tok["fees"]) | set(by_tok["bribes"])
+        keys = [f"base:{t}" for t in sorted(allt) + [aero.lower()]]
+        prices = {}
+        at = (f"historical/{min(ep + week, int(_t.time()) - 60)}/" if price_at_end else "current/")
+        for i in range(0, len(keys), 80):
+            try:
+                r = requests.get(f"https://coins.llama.fi/prices/{at}" + ",".join(keys[i:i + 80]), headers=_ua(),
+                                 timeout=TIMEOUT)
+                prices.update({kk.split(":", 1)[1].lower(): v for kk, v in (r.json().get("coins") or {}).items()})
+            except Exception as e:  # noqa: BLE001
+                say(f"  DefiLlama coins unreachable — {type(e).__name__}")
+        usd, unp = {"fees": 0.0, "bribes": 0.0}, {"fees": [], "bribes": []}
+        for kd in ("fees", "bribes"):
+            for t, a in by_tok[kd].items():
+                pr = prices.get(t)
+                if not pr:
+                    unp[kd].append(t)
+                    continue
+                usd[kd] += a / 10 ** int(pr.get("decimals") or 18) * float(pr["price"])
+        ap = float((prices.get(aero.lower()) or {}).get("price") or 0)
+        day = _t.strftime("%Y-%m-%d", _t.gmtime(ep))
+        if not allt:
+            out[ep] = {"error": f"no reward token paid in epoch {day} across {len(kinds)} reward contracts — not stored"}
             continue
-        usd += a / 10 ** int(p.get("decimals") or 18) * float(p["price"])
-    ap = float((prices.get(aero.lower()) or {}).get("price") or 0)
-    if not by_tok:
-        return {"error": f"no reward token paid in epoch {epoch} across {len(rewards)} reward contracts — not stored"}
-    if not ap:
-        return {"error": "DefiLlama returned no AERO price — the epoch is not stored without one"}
-    return {"epoch": epoch, "voter": voter, "pools": len(keep), "total_weight": tw, "usd": usd,
-            "unpriced": unpriced, "unpriced_raw": {t: by_tok[t] for t in unpriced},
-            "priced": len(by_tok) - len(unpriced), "aero_price": ap,
-            "priced_at": "epoch end" if price_at_end else "now"}
+        if not ap:
+            out[ep] = {"error": f"DefiLlama returned no AERO price for epoch {day} — not stored without one"}
+            continue
+        unpriced = sorted(set(unp["fees"]) | set(unp["bribes"]))
+        st = starts.get(ep)
+        out[ep] = {"epoch": ep, "voter": voter, "pools": len(keep), "pool_set": set_note, "total_weight": tw,
+                   "total_weight_start": st[0] if st else None, "start_block": st[1] if st else None,
+                   "usd": usd["fees"] + usd["bribes"], "usd_fees": usd["fees"], "usd_bribes": usd["bribes"],
+                   "unpriced": unpriced, "unpriced_fees": len(unp["fees"]), "unpriced_bribes": len(unp["bribes"]),
+                   "unpriced_raw": {t: by_tok["fees"].get(t, 0) + by_tok["bribes"].get(t, 0) for t in unpriced},
+                   "priced": len(allt) - len(unpriced), "aero_price": ap,
+                   "priced_at": "epoch end" if price_at_end else "now"}
+        say(f"  epoch {day}: fees ${usd['fees']:,.0f} + bribes ${usd['bribes']:,.0f} "
+            f"({len(unpriced)} token(s) unpriced)" + (f"; totalWeight at its start {st[0]:,.0f}" if st else ""))
+    return out
+
+
+def aerodrome_voter_epoch(epoch: int | None = None, min_weight_share: float = 0.0, say=print,
+                          price_at_end: bool = False) -> dict:
+    """WHAT veAERO VOTERS WERE PAID IN ONE EPOCH, FROM STATE — aerodrome_voter_epochs for one epoch (default the last
+    COMPLETE one, Thursday 00:00 UTC), pool set = the pools with votes now. `min_weight_share` is kept for the probe's
+    signature; the pool set is every pool with votes. Returns the epoch's dict (usd, usd_fees, usd_bribes, unpriced,
+    unpriced_raw, priced, aero_price, total_weight, pools, priced_at) or {"error": why}."""
+    import time as _t                                      # noqa: PLC0415
+    week = 7 * 86400
+    if epoch is None:
+        epoch = int(_t.time()) // week * week - week             # the last COMPLETE epoch's start
+    r = aerodrome_voter_epochs([int(epoch)], say=say, price_at_end=price_at_end, archive=False)
+    return r if "error" in r else r[int(epoch)]
 
 
 def aerodrome_voter_rewards(min_weight_share: float = 0.0):
@@ -8440,8 +8519,8 @@ def aerodrome_voter_rewards(min_weight_share: float = 0.0):
         print(f"  {r['error']}")
         return
     usd, tw, ap = r["usd"], r["total_weight"], r["aero_price"]
-    print(f"  paid to voters in the epoch: ${usd:,.0f} ({len(r['unpriced'])} token(s) unpriced, left out; "
-          f"{r['priced']} priced); AERO ${ap:,.4f}")
+    print(f"  paid to voters in the epoch: ${usd:,.0f} = fees ${r['usd_fees']:,.0f} + bribes ${r['usd_bribes']:,.0f} "
+          f"({len(r['unpriced'])} token(s) unpriced, left out; {r['priced']} priced); AERO ${ap:,.4f}")
     if r["unpriced"]:
         # THEIR SHARE (Jake's run 2026-10-08 11:27): a dollar share needs a price, which is exactly what is missing, so
         # the share is reported by count, with each token's raw amount for a by-hand look-up.
@@ -8454,6 +8533,58 @@ def aerodrome_voter_rewards(min_weight_share: float = 0.0):
         print(f"  voter APR = ${usd:,.0f} x 52 / ({tw:,.0f} x ${ap:,.4f}) = {usd * 52 / (tw * ap):.2%}")
     print("  PASTE BACK the totals: the run stores this weekly (voter_rewards_onchain_usd) as the on-chain reference "
           "for a3_protocol_yield and in_revenue.")
+
+def aerodrome_epochs_q0(days: int = 90):
+    """AERODROME 1a/1b/1c (Jake's run 2026-10-09 ~14:10): every epoch from the one before Q0 to the last complete one —
+    fees and bribes notified to the voting-reward contracts (tokenRewardsPerEpoch, priced at each epoch's end),
+    Voter.totalWeight at each epoch's start block (archive), the pool set used — and, from metrics.db when present, the
+    like-for-like DefiLlama figure (the week before's fees + the epoch's own bribes). Reads only; the daily run stores
+    the same figures (fetch/aero_voter.py)."""
+    import time as _t                                      # noqa: PLC0415
+    head("AERODROME — every Q0 epoch on-chain (fees and bribes apart) and its stake at the epoch start")
+    week = 7 * 86400
+    now = int(_t.time())
+    latest = now // week * week - week
+    first = (now - days * 86400) // week * week - week
+    eps = list(range(first, latest + 1, week))
+    res = aerodrome_voter_epochs(eps, archive=True)
+    if res.get("error"):
+        print(f"  {res['error']}")
+        return
+    dl = {}
+    try:
+        import sqlite3                                     # noqa: PLC0415
+        con = sqlite3.connect("metrics.db")
+        dl = {d[:10]: v for d, v in con.execute("SELECT date, value FROM metrics WHERE project = 'Aerodrome' AND "
+                                                "metric = 'revenue_usd'").fetchall()}
+        con.close()
+    except Exception:  # noqa: BLE001
+        pass
+    print(f"  {'epoch':<11}{'fees $':>14}{'bribes $':>14}{'total $':>14}{'unpriced':>9}{'totalWeight@start':>20}"
+          f"{'DefiLlama l-f-l':>17}{'gap':>8}")
+    prev = None
+    for ep in eps:
+        r = res.get(ep) or {}
+        day = _t.strftime("%Y-%m-%d", _t.gmtime(ep))
+        if r.get("error"):
+            print(f"  {day:<11} {r['error']}")
+            prev = None
+            continue
+        lfl, gap = None, None
+        if prev is not None:
+            pdays = [_t.strftime("%Y-%m-%d", _t.gmtime(ep - week + i * 86400)) for i in range(7)]
+            if all(d in dl for d in pdays):
+                lfl = sum(dl[d] for d in pdays) - prev["usd_bribes"] + r["usd_bribes"]
+                gap = lfl / r["usd"] - 1 if r["usd"] else None
+        tws = r.get("total_weight_start")
+        print(f"  {day:<11}{r['usd_fees']:>14,.0f}{r['usd_bribes']:>14,.0f}{r['usd']:>14,.0f}{len(r['unpriced']):>9}"
+              f"{(f'{tws:,.0f}' if tws else 'n/a'):>20}{(f'{lfl:,.0f}' if lfl else '—'):>17}"
+              f"{(f'{gap:+.1%}' if gap is not None else ''):>8}")
+        prev = r
+    print(f"  pool set: {next((r.get('pool_set') for r in res.values() if isinstance(r, dict) and r.get('pool_set')), '?')}")
+    print("  DefiLlama like-for-like = its week BEFORE the epoch (fees are credited at the next epoch's distribute()) "
+          "- that week's bribes + the epoch's own bribes. PASTE BACK the table.")
+
 
 def chainlink_noncirc_transfers(days: int = 90):
     """CHAINLINK in_issuance (Jake's run 2026-10-08 11:27: ours -400,000 LINK over Q0). (a) Every LINK transfer into or
@@ -8658,21 +8789,22 @@ def pendle_epoch_table():
                   f"read 0 first {z}; first NON-ZERO {nz}{lagtxt}")
     # JAKE'S 1c DECISION: the calibrated on-chain rebuild of virtual sPENDLE before the API's history — the same
     # computation the headline and the Credibility rows use
-    src = {}
     try:
         c2 = sqlite3.connect("metrics.db")
-        src = {pd.Timestamp(d): s for d, s in c2.execute("SELECT date, source FROM metrics WHERE project='Pendle' AND "
-                                                          "metric='vependle_voting_supply_tokens'").fetchall()}
+        lg = pd.DataFrame(c2.execute("SELECT date, metric, value, source, fetched_at FROM metrics WHERE project = "
+                                     "'Pendle'").fetchall(), columns=["date", "metric", "value", "source", "fetched_at"])
         c2.close()
+        lg = lg.assign(project="Pendle", date=pd.to_datetime(lg["date"]).dt.normalize())
     except Exception:  # noqa: BLE001
-        pass
-    cal = cred.virtual_rebuild(ser.get("vependle_voting_supply_tokens", empty), src,
-                               ser.get("locked_tokens_virtual", empty))
+        lg = None
+    cal = cred.pendle_calibration("Pendle", lg)
     if cal:
         print(f"  CALIBRATION: {cal['label']}")
         print("    " + ", ".join(f"{d:%m-%d} {r:.4f}" for d, _b, _a, r in cal["days"])
               + (f"; DRIFT beyond 0.5pp: {', '.join(f'{d:%m-%d} {r:.4f}' for d, r in cal['drift'])} — rebuilt epochs "
                  f"read CHECK" if cal["drift"] else "; no drift"))
+        if cal["skipped"]:
+            print(f"    SKIPPED (not rebuilt, never judged): " + "; ".join(f"{d:%m-%d} {w}" for d, w in cal["skipped"][-6:]))
     tab = cred.epoch_apr_table(ser.get("pendle_distributed_tokens", empty), ser.get("pendle_epoch_apr_published", empty),
                                {m: ser.get(m, empty) for m in ("locked_tokens_shares", "locked_tokens_virtual")},
                                q0s, q0e, 14, 7, lag,
@@ -8831,7 +8963,26 @@ def pendle_virtual_rebuild():
     s = {m: g.drop_duplicates("date", keep="last").set_index("date")["value"].astype(float).sort_index()
          for m, g in df.groupby("metric")}
     leg, ve, api = (s.get(m, pd.Series(dtype=float)) for m in want)
-    dec = -ve.diff()
+    # B IS THE ONE GUARDED COMPUTATION (Jake's run 2026-10-09 ~14:10: this probe took the fall between an archive read at
+    # 10-08 00:00 and a live read at 10-09 10:41 as one day's, giving active 94,954,481 > all 63,524,138 locked):
+    # credibility.virtual_rebuild — reads >= 20h apart, the fall scaled to 24h, active <= PENDLE locked; a failing day
+    # is skipped and named.
+    import config                                          # noqa: PLC0415
+    import credibility as cred                             # noqa: PLC0415
+    spec = config.PROTOCOL_YIELD["Pendle"]["token_yield"]["epoch_mean"]["calibrate"]
+    try:
+        con = sqlite3.connect("metrics.db")
+        meta = con.execute("SELECT date, source, fetched_at FROM metrics WHERE project = 'Pendle' AND metric = ?",
+                           (spec["ve"],)).fetchall()
+        con.close()
+    except Exception:  # noqa: BLE001
+        meta = []
+    src = {pd.Timestamp(d).normalize(): sr for d, sr, _f in meta}
+    at = {pd.Timestamp(d).normalize(): f for d, _s, f in meta}
+    cal = cred.virtual_rebuild(ve, src, api, int(spec.get("max_lock_days", 728)), float(spec["drift_pp"]) / 100,
+                               legacy=leg, ve_at=at, min_gap_h=float(spec.get("min_gap_h", 20)))
+    act_s = cal["active"] if cal else pd.Series(dtype=float)
+    skipped = dict(cal["skipped"]) if cal else {}
     worst = {"A": 0.0, "B": 0.0}
     print(f"  {'day':<11}{'legacy':>14}{'veSupply':>14}{'active':>14}{'A':>14}{'B':>14}{'API':>14}{'A gap':>8}{'B gap':>8}")
     for d in api.index:
@@ -8839,20 +8990,24 @@ def pendle_virtual_rebuild():
             print(f"  {d.date()!s:<11} — an on-chain input is missing that day")
             continue
         a = leg[d] + 3 * ve[d]
-        act = dec.get(d) * 728 if d in dec.index and dec.get(d) == dec.get(d) else None
+        act = float(act_s.loc[d]) if d in act_s.index else None
         b = act + 3 * ve[d] if act is not None else None
         ga, gb = a / api[d] - 1, (b / api[d] - 1 if b else None)
         worst["A"] = max(worst["A"], abs(ga))
         if gb is not None:
             worst["B"] = max(worst["B"], abs(gb))
         print(f"  {d.date()!s:<11}{leg[d]:>14,.0f}{ve[d]:>14,.0f}{(act or 0):>14,.0f}{a:>14,.0f}{(b or 0):>14,.0f}"
-              f"{api[d]:>14,.0f}{ga:>+8.2%}" + (f"{gb:>+8.2%}" if gb is not None else "     n/a"))
-    ok = [k for k, v in worst.items() if v <= 0.01]
-    print(f"\n  WORST DAY: A {worst['A']:.2%}, B {worst['B']:.2%} against the 1% rule -> "
-          + (f"rebuild {ok[0]} QUALIFIES: archive-read its inputs at each Q0 epoch" if ok else
-             "NEITHER qualifies: our stake stays the API's, and Q0 epochs before it have no stake of ours"))
-    print("  PASTE BACK the table. A day whose B gap jumps is a time-of-day mismatch between two reads (the decay "
-          "spans more or less than a day).")
+              f"{api[d]:>14,.0f}{ga:>+8.2%}" + (f"{gb:>+8.2%}" if gb is not None else "     n/a")
+              + (f"  SKIPPED: {skipped[d]}" if d in skipped else ""))
+    if skipped:
+        print(f"  SKIPPED (not rebuilt, not calibrated on, never judged): {len(skipped)} day(s): "
+              + "; ".join(f"{d.date()} {w}" for d, w in sorted(skipped.items())[-8:]))
+    if cal:
+        print(f"  CALIBRATION: {cal['label']}" + (f"; DRIFT on {len(cal['drift'])} day(s)" if cal["drift"] else
+                                                   "; no drift"))
+    print(f"\n  WORST DAY: A {worst['A']:.2%}, B {worst['B']:.2%} (B = the calibrated rebuild's input, before the "
+          "calibration)")
+    print("  PASTE BACK the table.")
 
 
 def price_basis_before_after():
@@ -8890,7 +9045,7 @@ def price_basis_before_after():
         w = fl[(fl.index > lo) & (fl.index <= asof)]
         pw = px[(px.index > lo) & (px.index <= asof)]
         stn = st[st.index <= asof]
-        new = cred.payday_yield(fl, px, st, lo, asof, year)
+        new = cred.payday_yield(fl, px, st, lo, asof, year, spec.get("stake_epoch_days"))
         print(f"\n  {name.upper()} — {spec['flow']} over the last {spec['days']} days / {spec['stock']}")
         if w.empty or pw.empty or stn.empty or new is None:
             print(f"    not computable here: flow {len(w)} day(s), price {len(pw)} day(s), stake {len(stn)} reading(s)")
@@ -9048,7 +9203,7 @@ CHECKS = (
     aerodrome_filing_wallets, blockworks_wallet_balances,
     etherfi_vault_archive, etherfi_contract_ids, etherfi_accountant, fluid_vesting_recipients, maple_ssf_partial,
     aerodrome_managed_venfts, pendle_epoch_revenues, maple_ssf_trail, fluid_avocado_owners, hl_pool_release_compare,
-    pendle_spendle_rewards_onchain, maple_buyback_inflows, maple_syrup_mints, etherfi_withdrawal_fees, aerodrome_voter_rewards,
+    pendle_spendle_rewards_onchain, maple_buyback_inflows, maple_syrup_mints, etherfi_withdrawal_fees, aerodrome_voter_rewards, aerodrome_epochs_q0,
     sky_farm_rates, plume_supply_read, chainlink_noncirc_transfers, chainlink_release_steps, aerodrome_price_q0, pendle_epoch_table, pendle_emissions_q0, price_basis_before_after, pendle_virtual_rebuild,
     plume_sources, aethir_dashboard_xhr, maple_ssf_history, blockworks_geodnet,
     morpho_incentives, settlement_sources, hyperevm_etherscan, maple_ssf_inflows, aethir_pages,
