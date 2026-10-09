@@ -306,6 +306,87 @@ def _payday_epochs(p):
             .get("stake_epoch_days"))
 
 
+def _payday_illiquid(p):
+    """The illiquid-token rule's stored metrics for project p's payday yield (config token_yield.payday.illiquid:
+    {"fees": metric, "bribes": metric}), or None."""
+    return ((((config.PROTOCOL_YIELD.get(p) or {}).get("token_yield") or {}).get("payday") or {}).get("illiquid"))
+
+
+def illiquid_flow(flow, fees_x=None, bribes_x=None, epoch_days=7, lo=None, hi=None):
+    """THE ILLIQUID-TOKEN RULE ON A DAILY FLOW (Jake 2026-10-09 17:05, Aerodrome's 2026-09-03 LAPTOP bribe): a
+    non-native reward token counts at its quoted price only up to what a sale could take out of the DEX at payment;
+    the excess per epoch (fetch/aero_voter.py: voter_rewards_illiquid_*_usd, dated the epoch's start) is taken out of
+    the flow ON THE DAYS IT WAS BOOKED — bribes over the epoch's own days (DefiLlama books them on the NotifyReward
+    day, inside the epoch), fees over the week before (fees credited at epoch E were earned in E-1) — an equal share
+    a day, as the day of each deposit is not stored. Returns (flow less the excess, {"fees": $, "bribes": $ taken out
+    of days in [lo, hi]}, the epochs read). Series in, never mutated."""
+    if flow is None or flow.empty:
+        return flow, {"fees": 0.0, "bribes": 0.0}, []
+    out = flow.astype(float).copy()
+    took, read = {"fees": 0.0, "bribes": 0.0}, set()
+    n = int(epoch_days)
+    for kind, x, shift in (("bribes", bribes_x, 0), ("fees", fees_x, -n)):
+        if x is None or x.empty:
+            continue
+        for e, v in x.items():
+            read.add(e)
+            if not v:
+                continue
+            for d in pd.date_range(e + pd.Timedelta(days=shift), periods=n, freq="D"):
+                if d in out.index:
+                    out.loc[d] -= float(v) / n
+                    if (lo is None or d > lo) and (hi is None or d <= hi):
+                        took[kind] += float(v) / n
+    return out, took, sorted(read)
+
+
+def payday_headline(flow, price, stake, lo, hi, year=365.0, epoch_days=None, fees_x=None, bribes_x=None,
+                    illiquid=False) -> dict | None:
+    """payday_yield with the illiquid-token rule applied (`illiquid`: the config names the rule's metrics): the
+    headline on the flow less each epoch's excess (illiquid_flow), with the figure before it, the dollars taken out
+    and a labelled line in `how` — the workbook view and the Credibility rows call this one function."""
+    gross = payday_yield(flow, price, stake, lo, hi, year, epoch_days)
+    if not illiquid or gross is None:
+        return gross
+    adj, took, read = illiquid_flow(flow, fees_x, bribes_x, int(epoch_days or 7), lo, hi)
+    in_q = [e for e in read if lo - pd.Timedelta(days=7) < e <= hi]
+    if not in_q:
+        return {**gross, "gross": gross["value"], "took": None, "how": gross["how"] + (
+            "; ILLIQUID-TOKEN RULE NOT YET READ: no epoch of the window has voter_rewards_illiquid_*_usd stored "
+            "(fetch/aero_voter.py / `python token_metrics.py --seed aero_epochs`), so the figure is at quoted prices")}
+    r = payday_yield(adj, price, stake, lo, hi, year, epoch_days)
+    if r is None:
+        return gross
+    x = took["fees"] + took["bribes"]
+    return {**r, "gross": gross["value"], "took": took, "how": (
+        f"{r['how']}; ILLIQUID-TOKEN RULE (Jake 2026-10-09): illiquid-token rewards excluded: ${x:,.0f} (fees "
+        f"${took['fees']:,.0f}, bribes ${took['bribes']:,.0f}; {len(in_q)} epoch(s) read) — {gross['value']:.2%} "
+        f"before the exclusion")}
+
+
+def _tier_timed_out(source: str):
+    """(ts, message) when the LAST run that logged `source` ended it with a tier timeout (fetch/__init__._abandon:
+    "TIER TIMED OUT after ...", logged with no project), else None. Read-only from metrics.db's run_log (the store the
+    build reads); None when unreadable."""
+    import sqlite3
+    try:
+        import store as sm                                  # noqa: PLC0415
+        con = sqlite3.connect(f"file:{sm.DB_PATH}?mode=ro", uri=True)
+        try:
+            last = con.execute("SELECT run_id FROM run_log WHERE source = ? ORDER BY ts DESC LIMIT 1",
+                               (source,)).fetchone()
+            if not last:
+                return None
+            hit = con.execute("SELECT ts, message FROM run_log WHERE source = ? AND run_id = ? AND status = 'failed' "
+                              "AND message LIKE 'TIER TIMED OUT%' ORDER BY ts DESC LIMIT 1",
+                              (source, last[0])).fetchone()
+            return (hit[0], hit[1]) if hit else None
+        finally:
+            con.close()
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _epoch_start(d, epoch_days=7):
     """The epoch a day falls in: Thursday 00:00 UTC starts (unix weeks) for 7-day epochs."""
     d = pd.Timestamp(d).normalize()
@@ -1528,9 +1609,18 @@ def _aero_epoch_revenue(p, rows, long, asof, flow="revenue_usd", onchain="voter_
                      f"- bribes then ${d['b_prev']:,.0f} + bribes now ${d['b']:,.0f} = ${ours:,.0f} vs on-chain "
                      f"${oc:,.0f} ({gap:+.1%}{n}{fee})")
     s_ours, s_oc = sum(g[2] for g in got), sum(g[1] for g in got)
+    # THE FEE LEG ON ITS OWN (Jake's run 2026-10-09 15:59, 3): DefiLlama's week before less that week's on-chain bribes
+    # against the epoch's on-chain fees — the part of the comparison not built from our own bribes
+    legs = [(d["dl_prev"] - d["b_prev"], d["f"]) for _e, _oc, _o, d in got if d["f"]]
+    fee = ""
+    if legs:
+        lg = [a / b - 1 for a, b in legs]
+        fee = (f" FEE LEG ({len(legs)} epoch(s)): DefiLlama ${sum(a for a, _ in legs):,.0f} vs on-chain fees "
+               f"${sum(b for _, b in legs):,.0f} ({sum(a for a, _ in legs) / sum(b for _, b in legs) - 1:+.1%}); "
+               f"per-epoch spread {min(lg):+.1%}..{max(lg):+.1%}, mean |gap| {sum(abs(x) for x in lg) / len(lg):.1%}.")
     how = (f"QUARTER: {len(got)} epoch(s) {got[0][0].date()}..{got[-1][0].date()}: DefiLlama like-for-like "
            f"${s_ours:,.0f} vs on-chain ${s_oc:,.0f} ({s_ours / s_oc - 1:+.1%}); per-epoch spread {min(gaps):+.1%}.."
-           f"{max(gaps):+.1%}, mean |gap| {sum(abs(x) for x in gaps) / len(gaps):.1%}. Per epoch: " + "; ".join(table)
+           f"{max(gaps):+.1%}, mean |gap| {sum(abs(x) for x in gaps) / len(gaps):.1%}.{fee} Per epoch: " + "; ".join(table)
            + (f". Not judged: {'; '.join(skipped)}" if skipped else "")
            + ". Unpriced reward tokens are left out of the on-chain figure, so it can read LOW by their value.")
     return (s_ours if side == "ours" else s_oc), str(got[-1][0].date()), how
@@ -1566,7 +1656,10 @@ def _aero_epoch_apr(p, rows, long, asof, flow="holders_revenue_usd", onchain_apr
                      f"(totalWeight {st[1]}) = {ours:.2%} vs {theirs:.2%} ({ours / theirs - 1:+.1%})"
                      + (f"; stored on-chain APR {float(apr.loc[e]):.2%}" if e in apr.index else ""))
     lo, hi = _q0(asof)
-    hd = payday_yield(fl, px, _series(long, p, stake), lo, hi, 365.25, _payday_epochs(p))
+    il = _payday_illiquid(p) or {}
+    hd = payday_headline(fl, px, _series(long, p, stake), lo, hi, 365.25, _payday_epochs(p),
+                         _series(long, p, il["fees"]) if il else None, _series(long, p, il["bribes"]) if il else None,
+                         bool(il))
     sn = _stake_near(long, p, stake, hi, 0)
     head = f"HEADLINE: {hd['how']}." if hd else ""
     rb = _series(long, p, rebase)
@@ -1581,6 +1674,55 @@ def _aero_epoch_apr(p, rows, long, asof, flow="holders_revenue_usd", onchain_apr
            f"({m_o / m_t - 1:+.1%}). Per epoch: " + "; ".join(table)
            + (f". Not judged: {'; '.join(skipped)}" if skipped else ""))
     return (m_o if side == "ours" else m_t), str(got[-1][0].date()), how
+
+
+def _aero_bribe_outliers(p, rows, long, asof, value="flag", factor=5.0, flow="holders_revenue_usd",
+                         bribes="voter_rewards_onchain_bribes_usd", illiquid="voter_rewards_illiquid_bribes_usd",
+                         stake="voter_total_weight_tokens", **_):
+    """SINGLE-EPOCH BRIBE OUTLIERS, AFTER THE ILLIQUID-TOKEN RULE (Jake's run 2026-10-09 15:59, 2: epoch 2026-09-03's
+    bribes $7,595,469 against a normal $55K-$260K, 30% of the quarter's on-chain voter revenue). Per Q0 epoch (the epoch
+    before Q0 to the last stored): bribes at the quoted price less the rule's excess = the bribes that count; an
+    outlier is an epoch whose counted bribes exceed `factor` x the quarter's MEDIAN week. A priced bribe a sale could
+    not realise is a pricing matter, settled by the rule; one that survives it is genuine, and a VERIFIED FINDING.
+    value="flag": 1 = an outlier survives the rule, 0 = none, -1 = the epochs' bribes or the rule are not stored.
+    value="yield": the headline EXCLUDING the outlier epochs' counted bribes too (a labelled second figure)."""
+    lo, hi = _q0(asof)
+    br, ib = _series(long, p, bribes), _series(long, p, illiquid)
+    br = br[(br.index > lo - pd.Timedelta(days=7)) & (br.index <= hi)]
+    if len(br) < 4:
+        return (-1.0 if value == "flag" else None), None, (
+            f"{len(br)} Q0 epoch(s) of {bribes} stored — the quarter's median needs them all (`python token_metrics.py "
+            f"--seed aero_epochs`)")
+    no_rule = [e for e in br.index if e not in ib.index]
+    counted = pd.Series({e: float(v) - float(ib.get(e, 0.0)) for e, v in br.items()}).sort_index()
+    med = float(counted.median())
+    out = [e for e, v in counted.items() if med > 0 and v > factor * med]
+    table = "; ".join(f"{e.date()} ${float(br[e]):,.0f}" + (f" - ${float(ib[e]):,.0f} illiquid" if e in ib.index and ib[e]
+                                                             else "") + (" OUTLIER" if e in out else "")
+                      for e in counted.index)
+    how = (f"{len(counted)} epoch(s): median week ${med:,.0f}, outlier above {factor:g}x = ${factor * med:,.0f}. "
+           f"Per epoch (bribes at the quoted price - the rule's excess): {table}"
+           + (f". The illiquid-token rule is NOT stored for {', '.join(str(e.date()) for e in no_rule)}" if no_rule
+              else ""))
+    if value == "flag" and (no_rule or not out):
+        return (-1.0 if no_rule else 0.0), str(counted.index[-1].date()), how
+    il = _payday_illiquid(p) or {}
+    fe = _series(long, p, il["fees"]) if il else None
+    px, st, fl = _series(long, p, "price_usd"), _series(long, p, stake), _series(long, p, flow)
+    hd = payday_headline(fl, px, st, lo, hi, 365.25, _payday_epochs(p), fe, ib, bool(il))
+    if hd is None:
+        return None, None, how + ". No headline (flow, price or stake missing)"
+    if not out:
+        return hd["value"], str(counted.index[-1].date()), how + f". No outlier: the headline stands, {hd['value']:.2%}"
+    extra = pd.Series({e: float(counted[e]) for e in out})
+    base, _took, _r = illiquid_flow(fl, fe, ib, 7)
+    adj, took, _r = illiquid_flow(base, None, extra, 7, lo, hi)
+    r = payday_yield(adj, px, st, lo, hi, 365.25, _payday_epochs(p))
+    if r is None:
+        return (1.0 if value == "flag" else None), str(counted.index[-1].date()), how
+    how += (f". EXCLUDING the outlier epoch(s) {', '.join(str(e.date()) for e in out)} (a further "
+            f"${took['bribes']:,.0f} of bribes): {r['value']:.2%}, against the headline {hd['value']:.2%}")
+    return (1.0 if value == "flag" else r["value"]), str(counted.index[-1].date()), how
 
 
 def _aero_epoch_pending(p, rows, long, asof, flow="revenue_usd", onchain="voter_rewards_onchain_usd",
@@ -1606,14 +1748,20 @@ def _aero_epoch_pending(p, rows, long, asof, flow="revenue_usd", onchain="voter_
     no_split = [x for x in (e - pd.Timedelta(days=7), e) if sp is not None and x not in sp.index]
     if not miss and not no_onchain and not no_split:
         return 0.0, None, ""
-    # STILL MISSING AFTER `until` IS A CHECK (Jake's run 2026-10-09 ~10:15, 4d), not a quarter judged without it
-    pending = a <= pd.Timestamp(until)
+    # STILL MISSING AFTER `until` IS A CHECK (Jake's run 2026-10-09 ~10:15, 4d), not a quarter judged without it —
+    # EXCEPT WHEN THE TIER TIMED OUT (Jake's run 2026-10-09 15:59: "the 10-10 MATURING must not lapse to CHECK just
+    # because the tier timed out"): the on-chain part not stored because fetch/aero_voter.py was abandoned at its
+    # budget stays MATURING, and says so
+    timed = _tier_timed_out("aero_voter") if (no_onchain or no_split) else None
+    pending = a <= pd.Timestamp(until) or (timed is not None and not miss)
+    tag = f" — not stored (tier timeout: the aero_voter tier was abandoned at its budget, {timed[0]})" if timed else ""
     why = []
     if no_onchain:
-        why.append(f"the on-chain figure (fetch/aero_voter.py, {onchain}) for epoch {e.date()} is not stored")
+        why.append(f"the on-chain figure (fetch/aero_voter.py, {onchain}) for epoch {e.date()} is not stored{tag}")
     if no_split and not no_onchain:
         why.append(f"the on-chain fees/bribes split ({split}) for {', '.join(str(x.date()) for x in no_split)} is not "
-                   f"stored (fetch/aero_voter.py backfills every Q0 epoch)")
+                   f"stored (fetch/aero_voter.py backfills every Q0 epoch; `python token_metrics.py --seed "
+                   f"aero_epochs` stores them in one sitting){tag}")
     if miss:
         why.append(f"DefiLlama's {flow} for {', '.join(str(d.date()) for d in miss)} is not stored")
     return (1.0 if pending else -1.0), str(e.date()), (
@@ -1706,7 +1854,7 @@ FORMULAS = {"sum_months": _sum_months, "free_float_now": _free_float_now, "windo
             "eth_issuance_curve": _eth_issuance_formula, "flow_usd_over_price": _flow_usd_over_price,
             "delta_q0": _delta_q0, "delta_diff_q0": _delta_diff_q0, "hl_reward_formula": _hl_reward_formula,
             "share_price_growth": _share_price_growth, "per_day_x_covered": _per_day_x_covered,
-            "value_on": _value_on, "epoch_apr": _epoch_apr, "published_epoch_aprs": _published_epoch_aprs, "epoch_reproduction": _epoch_reproduction, "epoch_mean_check": _epoch_mean_check, "epochs_first_party": _epochs_first_party, "aero_epoch_revenue": _aero_epoch_revenue, "aero_rebase_apr": _aero_rebase_apr, "aero_epoch_pending": _aero_epoch_pending, "price_basis_gap": _price_basis_gap, "price_overlap": _price_overlap,
+            "value_on": _value_on, "epoch_apr": _epoch_apr, "published_epoch_aprs": _published_epoch_aprs, "epoch_reproduction": _epoch_reproduction, "epoch_mean_check": _epoch_mean_check, "epochs_first_party": _epochs_first_party, "aero_epoch_revenue": _aero_epoch_revenue, "aero_rebase_apr": _aero_rebase_apr, "aero_epoch_pending": _aero_epoch_pending, "aero_bribe_outliers": _aero_bribe_outliers, "price_basis_gap": _price_basis_gap, "price_overlap": _price_overlap,
             "aero_epoch_apr": _aero_epoch_apr, "q0_net_flow": _q0_net_flow,
             "negative_release": _negative_release, "sum_month": _sum_month, "last30_annualised": _last30_annualised,
             "common_day_value": _common_day_value, "months_match": _months_match,

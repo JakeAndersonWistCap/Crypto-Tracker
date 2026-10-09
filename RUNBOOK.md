@@ -527,6 +527,83 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11bc. Jake's run 2026-10-09 15:59 + checks 17:05: Aerodrome epochs, the LAPTOP bribe, the illiquid-token rule; Pendle Optimism = 0
+
+**1. Aerodrome epochs never stored (tier timeout).**
+- `python token_metrics.py --seed aero_epochs` (since 593e702) stores every Q0 epoch in one sitting: fees, bribes, the
+  illiquid excess and `Voter.totalWeight` at each epoch's start block. No per-run cap, no tier budget.
+- The daily `aero_voter` tier now reads the newest epoch plus at most ONE missing one (`backfill_per_run: 1`). The pool
+  set at past blocks is read only when a missing epoch is in the read. The newest epoch alone uses the pools with
+  votes now; its start-block `totalWeight` is still read (two block lookups and one call).
+- **A timeout never lapses the 10-10 MATURING to CHECK.** `credibility._tier_timed_out` reads the last `aero_voter` run
+  in `run_log`. If that run ended with "TIER TIMED OUT", `in_revenue` / `in_voter_apr_epoch` stay MATURING and say
+  "not stored (tier timeout: …)". A DefiLlama day still missing after 10-10 is still a CHECK.
+- `dump_fixture.py` now also carries the tier-wide run-log lines (project NULL) of the project's sources, so a dump
+  shows the timeout.
+
+**2. Epoch 2026-09-03: $7,595,469 of bribes.**
+- **What DefiLlama does with it.** DefiLlama/dimension-adapters @af2f691 `dexs/aerodrome/utils.ts` L30-72
+  (`PRE_LAUNCH_TOKEN_PRICING`) lists LAPTOP `0xb095274743941e953c746f9c228da9c18bb6ec29` ("Hunter Biden's Laptop
+  ($LAPTOP), launched on Base on 2026-09-09", L66-71). It is an Aero Ignition token whose bribes were deposited before
+  it traded. `handleBribeToken` (L78-94) values them at a hand-entered `conversionRate: 1.86` until `tradesFrom
+  2026-09-10`. Jake's store holds DefiLlama $7,922,809 for 2026-09-09: 32% of Q0's $24.48M, against $100K-$425K on
+  other days. That is the LAPTOP bribe at $1.86.
+- **Not independently checked yet.** Our like-for-like uses our on-chain bribes on both sides. Dune (@0xkhmerlab)
+  values the same epoch's CL200-USDC/LAPTOP bribes at ~$14.94M: three prices for one deposit.
+- **The token list: `python check_offline_items.py aerodrome_epoch_rewards`.** Default epochs are 2026-09-03 and
+  2026-09-24; `AERO_EPOCHS=YYYY-MM-DD,...` overrides. For every reward token of the epoch it prints:
+  - token, symbol, kind, raw amount and decimals;
+  - the price used (DefiLlama coins at the epoch end) with DefiLlama's `confidence`, and the $ value;
+  - the depth a sale could reach, and what the rule excludes.
+
+  For the 12 largest bribes it also gives each `NotifyReward` (`IReward.sol` L16 @1ba3081) — depositor, tx, time —
+  with DefiLlama's price at the deposit. For the largest bribe token it gives both sides of each pool it was paid on.
+  24h volume is not read: the Swap logs are paid on Base.
+
+**The illiquid-token rule (Jake 2026-10-09 17:05, Jake to confirm the definition).**
+- A non-native reward token (anything but AERO) counts at its quoted price only up to its DEPTH at the epoch's end
+  block: the OTHER token's `balanceOf` in each voted Aerodrome pool that holds it, × that token's price.
+- This is the most a seller could take out. It is stricter than an aggregator's "liquidity", which counts both sides
+  at the quoted price.
+- Pools it was paid on are read first, 50 per token per round, stopping once the depth covers the amount. Pools
+  outside the voted set and other venues are not read, so the depth is a FLOOR.
+- A token held by no voted pool, or whose pools could not be read, is NOT capped. It is listed instead
+  (`liquidity_unread`).
+- **Storage.** The excess per epoch is `voter_rewards_illiquid_fees_usd` / `voter_rewards_illiquid_bribes_usd`. The
+  `usd` / `fees` / `bribes` figures stay at the quoted price, because the like-for-like check needs the same basis as
+  DefiLlama.
+- **The headline.** `credibility.payday_headline` takes each epoch's excess off DefiLlama's flow on the days it was
+  booked: bribes over the epoch's own days, fees over the week before, an equal share a day.
+  - The labelled line is `rewards_illiquid_excluded_usd`. The figure before the exclusion is in the source text.
+  - Until an epoch's rule is stored, the working says "ILLIQUID-TOKEN RULE NOT YET READ".
+- **Other projects.** Only Aerodrome's yield includes non-native rewards. Sky pays USDS, Pendle PENDLE, Ether.fi
+  ETHFI; no other project has a per-token breakdown.
+- **`in_bribe_outliers` (an a3 input).** An outlier is an epoch whose bribes after the rule exceed 5× the quarter's
+  median week.
+  - If one survives the rule, the row is a VERIFIED FINDING, and its value is the headline excluding that epoch: the
+    labelled second figure.
+  - If none survives, N/A (recorded). If the epochs or the rule are not stored, MATURING (until 2026-10-10).
+- **Before / after on the 15:26 dump (illustrative until the probe reads the depth).** The headline is 17.44%. If the
+  rule excludes LAPTOP down to DexPaprika's TODAY total liquidity (~$614K, not the payment-time depth), it is ~12.2%.
+
+**3. Like-for-like gaps.**
+- `aerodrome_epochs_q0` now prints a fee-leg column: DefiLlama's week before less that week's on-chain bribes,
+  against the epoch's on-chain fees. It also prints the fee gap, the excluded $, and the fee leg's quarter sum and
+  spread. `in_revenue`'s working gives the same.
+- DefiLlama's 2026-09-24..09-30 are all stored ($1,889,766, fetched 10-09 09:14).
+- 10-01 at −32% means the $838,660 of 09-24 bribes is far more than DefiLlama booked that week. Its whole week is
+  $1.89M against $1.92M the week before. This points to a 09-24 bribe token DefiLlama priced lower (or not at all) on
+  its deposit day than at the epoch end. The probe's 09-24 table lists it, with both prices.
+- Dune's per-epoch fees match ours (157 / 158 / 161). That is recorded on `in_revenue` as independent evidence on
+  the fee leg.
+
+**4. Pendle.**
+- **Optimism = 0.** Jake's reading on 2026-10-09: the gauge's last token transfer was 743 days earlier. It is stored
+  in `manual_overrides.csv` as `emissions_tokens_gauge_optimism` and `_direct`, both 0, with that evidence.
+  - A hand-entered stream does not bound the daily emissions sum's last day.
+  - On the 15:26 dump with these rows, `in_emissions` names only Arbitrum as missing.
+- **Arbitrum** is unchanged: see 11bb, `pendle_gauge_reconcile`, and the Q0-window reconciliation.
+
 ## 11bb. Jake's `--seed pendle_gauges` 2026-10-09 15:33: Arbitrum short 733K, Optimism HTTP 500
 
 Mainnet reconciled (direct count 92,225.20 from 2026-07-01). Arbitrum did not reconcile: in−out 812,025.6 against

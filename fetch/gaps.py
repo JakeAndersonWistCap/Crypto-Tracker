@@ -503,7 +503,8 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
     # Aerodrome's voter rewards per epoch and Voter.totalWeight (fetch/aero_voter.py, Jake's run 2026-10-08 11:27)
     ve = project.get("voter_epochs") or {}
     if ve and metric in (ve.get("usd_metric"), ve.get("unpriced_metric"), ve.get("apr_metric"), ve.get("weight_metric"),
-                         ve.get("fees_metric"), ve.get("bribes_metric")):
+                         ve.get("fees_metric"), ve.get("bribes_metric"), ve.get("illiquid_fees_metric"),
+                         ve.get("illiquid_bribes_metric")):
         return ("the voting-reward contracts' epoch read (fetch/aero_voter.py: tokenRewardsPerEpoch through Multicall3, "
                 "Voter.totalWeight) is configured but stored nothing this run",
                 f"Read the aero_voter lines in the Run Log for {name}; `python check_offline_items.py "
@@ -1036,7 +1037,8 @@ def served_by(source: str, project: dict) -> set[str] | None:
     elif source == "aero_voter":
         ve = project.get("voter_epochs") or {}
         m = {ve[k] for k in ("usd_metric", "unpriced_metric", "apr_metric", "weight_metric", "fees_metric",
-                             "bribes_metric") if ve.get(k)} if ve else set()
+                             "bribes_metric", "illiquid_fees_metric", "illiquid_bribes_metric")
+             if ve.get(k)} if ve else set()
     elif source == "reward_vault":
         m = ({"reward_emission_rate_annual", "emissions_tokens", "reward_rate_ends_unix"}
              if project.get("reward_vault_rates") else set())

@@ -8391,22 +8391,93 @@ def rpc_block_at(chain: str, ts: int, say=print) -> int | None:
     return None
 
 
-def aerodrome_voter_epochs(epochs: list[int], say=print, price_at_end: bool = True, archive: bool = False) -> dict:
+def _llama_prices(keys: list, at: str, say=print) -> dict:
+    """{address (lower): DefiLlama coins entry — price, decimals, symbol, confidence} for `keys` ("base:0x..."), 80 a
+    call; `at` = "current/" or "historical/<unix>/"."""
+    out = {}
+    for i in range(0, len(keys), 80):
+        try:
+            r = requests.get(f"https://coins.llama.fi/prices/{at}" + ",".join(keys[i:i + 80]), headers=_ua(),
+                             timeout=TIMEOUT)
+            out.update({kk.split(":", 1)[1].lower(): v for kk, v in (r.json().get("coins") or {}).items()})
+        except Exception as e:  # noqa: BLE001
+            say(f"  DefiLlama coins unreachable — {type(e).__name__}")
+    return out
+
+
+def _token_depth(want: dict, paid_on: dict, pool_toks: dict, prices: dict, block: str, say=print,
+                 per_round: int = 50) -> dict:
+    """WHAT A SALE OF EACH REWARD TOKEN COULD TAKE OUT OF AERODROME AT PAYMENT (the illiquid-token rule, Jake
+    2026-10-09 17:05; Jake to confirm the definition). For token t worth `want[t]` dollars at its quoted price: the
+    pools that hold t among the voted pools (Voter.weights > 0), the ones t was paid on first; for each, the OTHER
+    token's balanceOf(pool) at `block` x that token's price — the most a seller of t could receive from that pool,
+    which is stricter than an aggregator's "liquidity" (both sides at the quoted price). Pools are read `per_round`
+    per token per round, stopping once the depth covers the amount. Pools outside the voted set (other venues, unvoted
+    Aerodrome pools) are not read, so the depth is a FLOOR.
+    Returns {t: {"depth": usd, "pools_read": n, "pools_held": n, "unread": n, "unpriced_counter": [token, ...]}}."""
+    held = {}
+    for pl, (a, b) in pool_toks.items():
+        held.setdefault(a, []).append(pl)
+        held.setdefault(b, []).append(pl)
+    queue = {t: ([p for p in sorted(paid_on.get(t, ())) if p in held.get(t, ())]
+                 + [p for p in held.get(t, []) if p not in paid_on.get(t, ())]) for t in want}
+    res = {t: {"depth": 0.0, "pools_read": 0, "pools_held": len(queue[t]), "unread": 0, "unpriced_counter": []}
+           for t in want}
+    sel_b = _selx("balanceOf(address)")
+    while True:
+        todo = [(t, pl) for t, q in queue.items() if q and res[t]["depth"] < want[t] for pl in q[:per_round]]
+        if not todo:
+            return res
+        for t in {t for t, _ in todo}:
+            queue[t] = queue[t][per_round:]
+        calls, meta = [], []
+        for t, pl in todo:
+            a, b = pool_toks[pl]
+            other = b if a == t else a
+            calls.append((other, sel_b + _word(int(pl, 16))))
+            meta.append((t, other))
+        for (t, other), x in zip(meta, _batch_eth_calls("base", calls, block=block)):
+            r = res[t]
+            r["pools_read"] += 1
+            if x is None:
+                r["unread"] += 1
+                continue
+            pr = prices.get(other)
+            if not pr or not pr.get("price"):
+                r["unpriced_counter"].append(other)
+                continue
+            r["depth"] += int(x, 16) / 10 ** int(pr.get("decimals") or 18) * float(pr["price"])
+
+
+def aerodrome_voter_epochs(epochs: list[int], say=print, price_at_end: bool = True, archive: bool = False,
+                           start_weight: bool | None = None, liquidity: bool = True) -> dict:
     """WHAT veAERO VOTERS WERE PAID IN EACH EPOCH, FEES AND BRIBES APART (Jake's run 2026-10-09 ~14:10, 1a/1b/1c). The
     pool/reward structure is read once, then each epoch's FeesVotingReward and BribeVotingReward
     tokenRewardsPerEpoch[token][epoch] (contracts @1ba30815 Reward.sol L34/L245 — per-epoch state, readable now for any
     past epoch). Each epoch priced with DefiLlama's coins API at the epoch's END (`price_at_end`) or now.
 
     THE POOL SET: pools with votes now, and with `archive` also every pool with votes at the LAST block of each epoch
-    (Voter.weights at a past block) — a pool voted then and unvoted since is otherwise missed. With `archive`, each
-    epoch's Voter.totalWeight AT ITS START BLOCK (the votes cast going into the epoch: the per-epoch stake, 1c).
-    Returns {epoch: {usd, usd_fees, usd_bribes, unpriced, unpriced_fees, unpriced_bribes, priced, aero_price,
-    total_weight (now), total_weight_start (archive or None), pools, pool_set, priced_at}} or {"error": why}."""
+    (Voter.weights at a past block) — a pool voted then and unvoted since is otherwise missed. `start_weight` (default:
+    `archive`): each epoch's Voter.totalWeight AT ITS START BLOCK (the votes cast going into the epoch: the per-epoch
+    stake, 1c) — two block lookups and one eth_call an epoch.
+
+    THE ILLIQUID-TOKEN RULE (`liquidity`; Jake 2026-10-09 17:05, the 2026-09-03 LAPTOP bribe): every priced reward
+    token other than AERO counts at its quoted price only up to what a sale could take out of the voted Aerodrome pools
+    holding it at the epoch's end block (_token_depth); the excess is returned apart (usd_illiquid_fees /
+    usd_illiquid_bribes), never dropped silently. A token held by no voted pool, or whose pools could not be read, is
+    NOT capped — it is listed (liquidity_unread). usd / usd_fees / usd_bribes stay at the quoted price (the
+    like-for-like check against DefiLlama needs the same basis on both sides).
+    Returns {epoch: {usd, usd_fees, usd_bribes, usd_illiquid_fees, usd_illiquid_bribes, liquidity_unread, tokens,
+    unpriced, unpriced_fees, unpriced_bribes, priced, aero_price, total_weight (now), total_weight_start, start_block,
+    end_block, pools, pool_set, priced_at}} or {"error": why}. `tokens`: one dict per reward token paid in the epoch —
+    token, symbol, kinds, raw, decimals, price, confidence, usd, paid_on {pool: raw}, rewards {contract: (kind, pool,
+    raw)}, depth, excess."""
     import time as _t                                      # noqa: PLC0415
     import config                                          # noqa: PLC0415
+    start_weight = archive if start_weight is None else start_weight
     c = config.PROJECT_BY_NAME["Aerodrome"]["contracts"]
     ve = c["ve"]["address"] if isinstance(c["ve"], dict) else c["ve"]
-    aero = c["token"]["address"] if isinstance(c["token"], dict) else c["token"]
+    aero = (c["token"]["address"] if isinstance(c["token"], dict) else c["token"]).lower()
     w, _ = eth_call(ve, _selx("voter()"), chain="base")
     voter = ("0x" + w[-40:]) if w and len(w) >= 42 else None
     if not voter:
@@ -8422,8 +8493,8 @@ def aerodrome_voter_epochs(epochs: list[int], say=print, price_at_end: bool = Tr
     wcalls = [(voter, sel_w + _word(int(p, 16))) for p in pools]
     keep = {p for p, x in zip(pools, _batch_eth_calls("base", wcalls)) if int(x or "0x0", 16) > 0}
     n_now = len(keep)
-    starts, set_note = {}, f"pools with votes now ({n_now})"
-    if archive:
+    starts, ends, set_note = {}, {}, f"pools with votes now ({n_now})"
+    if archive or start_weight:
         added, refused = 0, []
         for ep in epochs:
             b_end = rpc_block_at("base", ep + week, say=say)
@@ -8431,59 +8502,73 @@ def aerodrome_voter_epochs(epochs: list[int], say=print, price_at_end: bool = Tr
             if b_end is None or b_start is None:
                 refused.append(_t.strftime("%Y-%m-%d", _t.gmtime(ep)))
                 continue
-            got = _batch_eth_calls("base", wcalls, block=hex(b_end - 1))
-            if all(x is None for x in got):
-                refused.append(_t.strftime("%Y-%m-%d", _t.gmtime(ep)))
-                continue
-            new = {p for p, x in zip(pools, got) if int(x or "0x0", 16) > 0} - keep
-            added += len(new)
-            keep |= new
+            ends[ep] = b_end - 1
+            if archive:
+                got = _batch_eth_calls("base", wcalls, block=hex(b_end - 1))
+                if all(x is None for x in got):
+                    refused.append(_t.strftime("%Y-%m-%d", _t.gmtime(ep)))
+                    continue
+                new = {p for p, x in zip(pools, got) if int(x or "0x0", 16) > 0} - keep
+                added += len(new)
+                keep |= new
             r, _e = eth_call(voter, _selx("totalWeight()"), hex(b_start), chain="base")
             starts[ep] = (int(r, 16) / 1e18, b_start) if r else None
-        set_note = (f"pools with votes now ({n_now}) or at the end of any epoch read (+{added}, Voter.weights at "
-                    f"each epoch's last block)" + (f"; archive refused for {', '.join(refused)}" if refused else ""))
+        if archive:
+            set_note = (f"pools with votes now ({n_now}) or at the end of any epoch read (+{added}, Voter.weights at "
+                        f"each epoch's last block)")
+        if refused:
+            set_note += f"; archive refused for {', '.join(refused)}"
     keep = sorted(keep)
     say(f"  Voter {voter}: {n} pools; {set_note}")
     gauges = ["0x" + (x or "0x" + "0" * 64)[-40:] for x in _batch_eth_calls("base", [(voter, sel_g + _word(int(p, 16)))
                                                                                      for p in keep])]
     kinds = []
     for sel, kind in ((sel_f, "fees"), (sel_b, "bribes")):
-        kinds += [("0x" + (x or "0x" + "0" * 64)[-40:], kind)
-                  for x in _batch_eth_calls("base", [(voter, sel + _word(int(g, 16))) for g in gauges])]
-    kinds = [(r, kd) for r, kd in kinds if int(r, 16)]
-    lens = [int(x or "0x0", 16) for x in _batch_eth_calls("base", [(r, _selx("rewardsListLength()")) for r, _ in kinds])]
-    pairs = [(r, kd, j) for (r, kd), L in zip(kinds, lens) for j in range(min(L, 20))]
+        got = _batch_eth_calls("base", [(voter, sel + _word(int(g, 16))) for g in gauges])
+        kinds += [("0x" + (x or "0x" + "0" * 64)[-40:], kind, pl) for x, pl in zip(got, keep)]
+    kinds = [(r, kd, pl) for r, kd, pl in kinds if int(r, 16)]
+    lens = [int(x or "0x0", 16) for x in _batch_eth_calls("base", [(r, _selx("rewardsListLength()"))
+                                                                    for r, _kd, _pl in kinds])]
+    pairs = [(r, kd, pl, j) for (r, kd, pl), L in zip(kinds, lens) for j in range(min(L, 20))]
     toks = ["0x" + (x or "0x" + "0" * 64)[-40:] for x in _batch_eth_calls("base", [(r, _selx("rewards(uint256)") + _word(j))
-                                                                                   for r, _kd, j in pairs])]
+                                                                                   for r, _kd, _pl, j in pairs])]
+    pool_toks = {}
+    if liquidity:
+        t0s = _batch_eth_calls("base", [(pl, _selx("token0()")) for pl in keep])
+        t1s = _batch_eth_calls("base", [(pl, _selx("token1()")) for pl in keep])
+        pool_toks = {pl: ("0x" + a[-40:].lower(), "0x" + b[-40:].lower()) for pl, a, b in zip(keep, t0s, t1s)
+                     if a and b and len(a) >= 42 and len(b) >= 42}
     sel_t = _selx("tokenRewardsPerEpoch(address,uint256)")
     out = {}
     for ep in epochs:
         amts = [int(x or "0x0", 16) for x in _batch_eth_calls("base", [(r, sel_t + _word(int(t, 16)) + _word(ep))
-                                                                       for (r, _kd, _j), t in zip(pairs, toks)])]
+                                                                       for (r, _kd, _pl, _j), t in zip(pairs, toks)])]
         by_tok = {"fees": {}, "bribes": {}}
-        for (_r, kd, _j), t, a in zip(pairs, toks, amts):
+        info = {}
+        for (r, kd, pl, _j), t, a in zip(pairs, toks, amts):
             if a:
-                by_tok[kd][t.lower()] = by_tok[kd].get(t.lower(), 0) + a
+                t = t.lower()
+                by_tok[kd][t] = by_tok[kd].get(t, 0) + a
+                d = info.setdefault(t, {"token": t, "kinds": set(), "raw": 0, "paid_on": {}, "rewards": {}})
+                d["kinds"].add(kd)
+                d["raw"] += a
+                d["paid_on"][pl] = d["paid_on"].get(pl, 0) + a
+                d["rewards"][r] = (kd, pl, d["rewards"].get(r, (kd, pl, 0))[2] + a)
         allt = set(by_tok["fees"]) | set(by_tok["bribes"])
-        keys = [f"base:{t}" for t in sorted(allt) + [aero.lower()]]
-        prices = {}
         at = (f"historical/{min(ep + week, int(_t.time()) - 60)}/" if price_at_end else "current/")
-        for i in range(0, len(keys), 80):
-            try:
-                r = requests.get(f"https://coins.llama.fi/prices/{at}" + ",".join(keys[i:i + 80]), headers=_ua(),
-                                 timeout=TIMEOUT)
-                prices.update({kk.split(":", 1)[1].lower(): v for kk, v in (r.json().get("coins") or {}).items()})
-            except Exception as e:  # noqa: BLE001
-                say(f"  DefiLlama coins unreachable — {type(e).__name__}")
+        prices = _llama_prices([f"base:{t}" for t in sorted(allt | {aero})], at, say)
         usd, unp = {"fees": 0.0, "bribes": 0.0}, {"fees": [], "bribes": []}
+        val = {}
         for kd in ("fees", "bribes"):
             for t, a in by_tok[kd].items():
                 pr = prices.get(t)
-                if not pr:
+                if not pr or not pr.get("price"):
                     unp[kd].append(t)
                     continue
-                usd[kd] += a / 10 ** int(pr.get("decimals") or 18) * float(pr["price"])
-        ap = float((prices.get(aero.lower()) or {}).get("price") or 0)
+                v = a / 10 ** int(pr.get("decimals") or 18) * float(pr["price"])
+                usd[kd] += v
+                val.setdefault(t, {"fees": 0.0, "bribes": 0.0})[kd] += v
+        ap = float((prices.get(aero) or {}).get("price") or 0)
         day = _t.strftime("%Y-%m-%d", _t.gmtime(ep))
         if not allt:
             out[ep] = {"error": f"no reward token paid in epoch {day} across {len(kinds)} reward contracts — not stored"}
@@ -8491,17 +8576,58 @@ def aerodrome_voter_epochs(epochs: list[int], say=print, price_at_end: bool = Tr
         if not ap:
             out[ep] = {"error": f"DefiLlama returned no AERO price for epoch {day} — not stored without one"}
             continue
+        # THE ILLIQUID-TOKEN RULE: every priced reward token but AERO, against its depth at the epoch's end block
+        ill, unread, depth = {"fees": 0.0, "bribes": 0.0}, [], {}
+        want = {t: v["fees"] + v["bribes"] for t, v in val.items() if t != aero}
+        if liquidity and want:
+            blk = hex(ends[ep]) if ep in ends else None
+            if blk is None and ep + week <= int(_t.time()):
+                b = rpc_block_at("base", ep + week, say=say)
+                blk = hex(b - 1) if b else None
+            counters = {x for pr_ in pool_toks.values() if set(pr_) & set(want) for x in pr_} - set(prices)
+            if counters:
+                prices.update(_llama_prices([f"base:{t}" for t in sorted(counters)], at, say))
+            depth = _token_depth(want, {t: set(info[t]["paid_on"]) for t in want}, pool_toks, prices,
+                                 blk or "latest", say)
+            for t, v in want.items():
+                dp = depth[t]
+                if not dp["pools_held"] or dp["unread"] == dp["pools_read"]:
+                    unread.append(t)
+                    continue
+                ex = max(0.0, v - dp["depth"])
+                if ex > 0:
+                    for kd in ("fees", "bribes"):
+                        ill[kd] += ex * val[t][kd] / v
+        tokens = []
+        for t, d in info.items():
+            pr = prices.get(t) or {}
+            v = sum((val.get(t) or {}).values()) if t in val else None
+            dp = depth.get(t)
+            tokens.append({**d, "kinds": sorted(d["kinds"]), "symbol": pr.get("symbol"),
+                           "decimals": pr.get("decimals"), "price": pr.get("price"),
+                           "confidence": pr.get("confidence"), "usd": v,
+                           "depth": dp["depth"] if dp else None, "depth_detail": dp,
+                           "excess": (max(0.0, v - dp["depth"]) if dp and v is not None and t not in unread
+                                      else None)})
+        tokens.sort(key=lambda d: -(d["usd"] or 0))
         unpriced = sorted(set(unp["fees"]) | set(unp["bribes"]))
         st = starts.get(ep)
         out[ep] = {"epoch": ep, "voter": voter, "pools": len(keep), "pool_set": set_note, "total_weight": tw,
                    "total_weight_start": st[0] if st else None, "start_block": st[1] if st else None,
+                   "end_block": ends.get(ep),
                    "usd": usd["fees"] + usd["bribes"], "usd_fees": usd["fees"], "usd_bribes": usd["bribes"],
+                   "usd_illiquid_fees": ill["fees"] if liquidity else None,
+                   "usd_illiquid_bribes": ill["bribes"] if liquidity else None,
+                   "liquidity_unread": unread, "tokens": tokens, "price_at": at,
                    "unpriced": unpriced, "unpriced_fees": len(unp["fees"]), "unpriced_bribes": len(unp["bribes"]),
                    "unpriced_raw": {t: by_tok["fees"].get(t, 0) + by_tok["bribes"].get(t, 0) for t in unpriced},
                    "priced": len(allt) - len(unpriced), "aero_price": ap,
                    "priced_at": "epoch end" if price_at_end else "now"}
         say(f"  epoch {day}: fees ${usd['fees']:,.0f} + bribes ${usd['bribes']:,.0f} "
-            f"({len(unpriced)} token(s) unpriced)" + (f"; totalWeight at its start {st[0]:,.0f}" if st else ""))
+            f"({len(unpriced)} token(s) unpriced)" + (f"; totalWeight at its start {st[0]:,.0f}" if st else "")
+            + (f"; illiquid-token rewards excluded ${ill['fees'] + ill['bribes']:,.0f}"
+               + (f" ({len(unread)} token(s) with no readable voted pool, not capped)" if unread else "")
+               if liquidity else ""))
     return out
 
 
@@ -8571,8 +8697,8 @@ def aerodrome_epochs_q0(days: int = 90):
     except Exception:  # noqa: BLE001
         pass
     print(f"  {'epoch':<11}{'fees $':>14}{'bribes $':>14}{'total $':>14}{'unpriced':>9}{'totalWeight@start':>20}"
-          f"{'DefiLlama l-f-l':>17}{'gap':>8}")
-    prev = None
+          f"{'DefiLlama l-f-l':>17}{'gap':>8}{'DL fee leg':>14}{'fee gap':>9}{'illiquid $':>12}")
+    prev, fee_gaps, fee_dl, fee_oc = None, [], 0.0, 0.0
     for ep in eps:
         r = res.get(ep) or {}
         day = _t.strftime("%Y-%m-%d", _t.gmtime(ep))
@@ -8580,20 +8706,134 @@ def aerodrome_epochs_q0(days: int = 90):
             print(f"  {day:<11} {r['error']}")
             prev = None
             continue
-        lfl, gap = None, None
+        lfl, gap, leg, lgap = None, None, None, None
         if prev is not None:
             pdays = [_t.strftime("%Y-%m-%d", _t.gmtime(ep - week + i * 86400)) for i in range(7)]
             if all(d in dl for d in pdays):
-                lfl = sum(dl[d] for d in pdays) - prev["usd_bribes"] + r["usd_bribes"]
+                # THE FEE LEG (Jake's run 2026-10-09 15:59, 3): DefiLlama's week before less that week's on-chain
+                # bribes, against the fees credited on-chain this epoch — the part not built from our own bribes
+                leg = sum(dl[d] for d in pdays) - prev["usd_bribes"]
+                lfl = leg + r["usd_bribes"]
                 gap = lfl / r["usd"] - 1 if r["usd"] else None
+                if r["usd_fees"]:
+                    lgap = leg / r["usd_fees"] - 1
+                    fee_gaps.append(lgap)
+                    fee_dl += leg
+                    fee_oc += r["usd_fees"]
         tws = r.get("total_weight_start")
+        ill = (r.get("usd_illiquid_fees") or 0) + (r.get("usd_illiquid_bribes") or 0)
         print(f"  {day:<11}{r['usd_fees']:>14,.0f}{r['usd_bribes']:>14,.0f}{r['usd']:>14,.0f}{len(r['unpriced']):>9}"
               f"{(f'{tws:,.0f}' if tws else 'n/a'):>20}{(f'{lfl:,.0f}' if lfl else '—'):>17}"
-              f"{(f'{gap:+.1%}' if gap is not None else ''):>8}")
+              f"{(f'{gap:+.1%}' if gap is not None else ''):>8}{(f'{leg:,.0f}' if leg is not None else '—'):>14}"
+              f"{(f'{lgap:+.1%}' if lgap is not None else ''):>9}{ill:>12,.0f}")
         prev = r
+    if fee_gaps:
+        print(f"  FEE LEG over {len(fee_gaps)} epoch(s): DefiLlama ${fee_dl:,.0f} vs on-chain fees ${fee_oc:,.0f} "
+              f"({fee_dl / fee_oc - 1:+.1%}); per-epoch spread {min(fee_gaps):+.1%}..{max(fee_gaps):+.1%}, mean |gap| "
+              f"{sum(abs(x) for x in fee_gaps) / len(fee_gaps):.1%}")
     print(f"  pool set: {next((r.get('pool_set') for r in res.values() if isinstance(r, dict) and r.get('pool_set')), '?')}")
     print("  DefiLlama like-for-like = its week BEFORE the epoch (fees are credited at the next epoch's distribute()) "
-          "- that week's bribes + the epoch's own bribes. PASTE BACK the table.")
+          "- that week's bribes + the epoch's own bribes. DL fee leg = that week less its bribes (on-chain split), "
+          "against the epoch's on-chain fees. illiquid $ = what the illiquid-token rule excludes (fees + bribes). "
+          "PASTE BACK the table.")
+
+
+def aerodrome_epoch_rewards(epochs: str | None = None, top: int = 12):
+    """AERODROME 2 / 3 (Jake's run 2026-10-09 15:59 + 17:05): EVERY REWARD TOKEN IN AN EPOCH, with what our figure did
+    with it. Default epochs 2026-09-03 (bribes $7,595,469 against a normal $55K-$260K; Dune @0xkhmerlab epoch 158 puts
+    CL200-USDC/LAPTOP at $14.94M) and 2026-09-24 (its $838,660 of bribes is what 10-01's like-for-like subtracts);
+    AERO_EPOCHS=YYYY-MM-DD,... overrides. Per token: address, symbol, kind, raw amount, decimals, the price used and its
+    source (DefiLlama coins at the epoch's end) with DefiLlama's `confidence`, $ value, the pools it was paid on, and —
+    for the `top` largest bribes — each NotifyReward (depositor, tx, time; IReward.sol L16 @1ba3081: NotifyReward(from
+    indexed, reward indexed, epoch indexed, amount)) with DefiLlama's price AT THE DEPOSIT, then the depth a sale could
+    reach at the epoch's end block (_token_depth) and what the illiquid-token rule excludes. For the largest bribe
+    token, both sides of each pool it was paid on. Reads only."""
+    import time as _t                                      # noqa: PLC0415
+    import calendar                                        # noqa: PLC0415
+    from eth_utils import keccak                           # noqa: PLC0415
+    head("AERODROME — every reward token of an epoch: amount, price used, depositor, DEX depth, the illiquid rule")
+    days = [d.strip() for d in (epochs or os.environ.get("AERO_EPOCHS") or "2026-09-03,2026-09-24").split(",") if d.strip()]
+    eps = [calendar.timegm(_t.strptime(d, "%Y-%m-%d")) for d in days]
+    bad = [d for d, e in zip(days, eps) if (e - 3 * 86400) % (7 * 86400)]
+    if bad:
+        print(f"  not an epoch start (Thursday 00:00 UTC): {', '.join(bad)}")
+        return
+    res = aerodrome_voter_epochs(eps, archive=True)
+    if res.get("error"):
+        print(f"  {res['error']}")
+        return
+    notify = "0x" + keccak(text="NotifyReward(address,address,uint256,uint256)").hex().removeprefix("0x")
+    week = 7 * 86400
+    for ep, day in zip(eps, days):
+        r = res.get(ep) or {}
+        if r.get("error"):
+            print(f"\n  EPOCH {day}: {r['error']}")
+            continue
+        print(f"\n  EPOCH {day}: fees ${r['usd_fees']:,.0f} + bribes ${r['usd_bribes']:,.0f} = ${r['usd']:,.0f} at the "
+              f"quoted price (DefiLlama coins {r['price_at']}); end block {r.get('end_block')}; {r['pool_set']}")
+        print(f"  ILLIQUID-TOKEN RULE: excluded fees ${r['usd_illiquid_fees'] or 0:,.0f} + bribes "
+              f"${r['usd_illiquid_bribes'] or 0:,.0f}; not capped (no readable voted pool): "
+              f"{', '.join(r['liquidity_unread']) or 'none'}")
+        print(f"  {'token':<44}{'symbol':<12}{'kind':<12}{'raw':>28}{'dec':>4}{'price':>14}{'conf':>6}{'$':>14}"
+              f"{'depth $':>14}{'excluded $':>13}")
+        num = lambda x, f: "-" if x is None else format(x, f)                          # noqa: E731
+        for d in r["tokens"]:
+            print(f"  {d['token']:<44}{str(d['symbol'] or '?')[:11]:<12}{'+'.join(d['kinds']):<12}{d['raw']:>28}"
+                  f"{str(d['decimals'] or '?'):>4}{(num(d['price'], ',.6f') if d['price'] else 'UNPRICED'):>14}"
+                  f"{num(d['confidence'], '.2f'):>6}{num(d['usd'], ',.0f'):>14}{num(d['depth'], ',.0f'):>14}"
+                  f"{num(d['excess'], ',.0f'):>13}")
+        bribes = [d for d in r["tokens"] if "bribes" in d["kinds"]][:top]
+        b0 = rpc_block_at("base", ep)
+        b1 = r.get("end_block")
+        for d in bribes:
+            print(f"\n  BRIBE {d['token']} ({d['symbol'] or '?'}), ${d['usd'] or 0:,.0f} at the quoted price:")
+            for rc, (kd, pl, raw) in d["rewards"].items():
+                if kd != "bribes":
+                    continue
+                print(f"    pool {pl}, BribeVotingReward {rc}: raw {raw}")
+                if not (b0 and b1):
+                    print("    NotifyReward not read: no block range for the epoch")
+                    continue
+                logs, why = explorer_logs(8453, rc, [notify, None, _pad(d["token"]), "0x" + _word(ep)], b0, b1)
+                if logs is None:
+                    print(f"    NotifyReward not read: {why}")
+                    continue
+                for e in logs:
+                    ts = int(e.get("timeStamp") or 0)
+                    amt = int(e["data"], 16)
+                    pr = _llama_prices([f"base:{d['token']}"], f"historical/{ts}/").get(d["token"]) if ts else None
+                    print(f"      from {'0x' + e['topics'][1][-40:]} tx {e['transactionHash']} "
+                          f"{_t.strftime('%Y-%m-%d %H:%M', _t.gmtime(ts)) if ts else '?'} raw {amt}"
+                          + (f"; DefiLlama price at the deposit {pr['price']:,.6f} (confidence "
+                             f"{pr.get('confidence', '-')}) -> ${amt / 10 ** int(pr.get('decimals') or 18) * float(pr['price']):,.0f}"
+                             if pr and pr.get("price") else "; DefiLlama has NO price at the deposit"))
+            dd = d.get("depth_detail") or {}
+            print(f"    depth at the epoch end: ${dd.get('depth', 0):,.0f} over {dd.get('pools_read', 0)} of "
+                  f"{dd.get('pools_held', 0)} voted pool(s) holding it ({dd.get('unread', 0)} unread; counter tokens "
+                  f"unpriced: {', '.join(dd.get('unpriced_counter') or []) or 'none'})")
+        if bribes and b1:
+            big = bribes[0]
+            print(f"\n  THE LARGEST BRIBE TOKEN {big['token']}: both sides of each pool it was paid on, at block {b1:,}")
+            sel_b = _selx("balanceOf(address)")
+            for pl in big["paid_on"]:
+                t0, _ = eth_call(pl, _selx("token0()"), chain="base")
+                t1, _ = eth_call(pl, _selx("token1()"), chain="base")
+                if not (t0 and t1):
+                    print(f"    {pl}: token0/token1 unreadable")
+                    continue
+                side = []
+                for t in ("0x" + t0[-40:].lower(), "0x" + t1[-40:].lower()):
+                    bal, _ = eth_call(t, sel_b + _word(int(pl, 16)), hex(b1), chain="base")
+                    pr = _llama_prices([f"base:{t}"], r["price_at"]).get(t) or {}
+                    amt = int(bal, 16) / 10 ** int(pr.get("decimals") or 18) if bal else None
+                    side.append(f"{pr.get('symbol') or t} {amt:,.2f}" + (f" (${amt * float(pr['price']):,.0f})"
+                                                                         if amt is not None and pr.get("price") else "")
+                                if amt is not None else f"{t} unreadable")
+                print(f"    {pl}: " + " + ".join(side))
+            print("    24h volume is not read here (it needs the pools' Swap logs, paid on Base); DexPaprika's page for "
+                  "the pool gives today's figure.")
+    print("\n  PASTE BACK the tables. The rule's depth = the OTHER token's balance in the voted Aerodrome pools holding "
+          "the reward token, at the epoch's end block (a floor: other venues are not read).")
 
 
 def chainlink_noncirc_transfers(days: int = 90):
@@ -9330,7 +9570,7 @@ CHECKS = (
     aerodrome_filing_wallets, blockworks_wallet_balances,
     etherfi_vault_archive, etherfi_contract_ids, etherfi_accountant, fluid_vesting_recipients, maple_ssf_partial,
     aerodrome_managed_venfts, pendle_epoch_revenues, maple_ssf_trail, fluid_avocado_owners, hl_pool_release_compare,
-    pendle_spendle_rewards_onchain, maple_buyback_inflows, maple_syrup_mints, etherfi_withdrawal_fees, aerodrome_voter_rewards, aerodrome_epochs_q0, pendle_gauge_reconcile,
+    pendle_spendle_rewards_onchain, maple_buyback_inflows, maple_syrup_mints, etherfi_withdrawal_fees, aerodrome_voter_rewards, aerodrome_epochs_q0, aerodrome_epoch_rewards, pendle_gauge_reconcile,
     sky_farm_rates, plume_supply_read, chainlink_noncirc_transfers, chainlink_release_steps, aerodrome_price_q0, pendle_epoch_table, pendle_emissions_q0, price_basis_before_after, pendle_virtual_rebuild,
     plume_sources, aethir_dashboard_xhr, maple_ssf_history, blockworks_geodnet,
     morpho_incentives, settlement_sources, hyperevm_etherscan, maple_ssf_inflows, aethir_pages,

@@ -36,9 +36,11 @@ def _evaluate(tmp_path, monkeypatch, project, rows, asof=ASOF, run_log=()):
     st.close()
     if run_log:
         con = sqlite3.connect(db)
+        # (ts, source, project, message[, status[, run_id]]) — a status 'failed' line for a tier timeout
         con.executemany("INSERT INTO run_log (run_id, ts, source, tier, project, rows, status, message) "
-                        "VALUES (?, ?, ?, 3, ?, 1, 'ok', ?)", [(f"r{i}", ts, s, p, m) for i, (ts, s, p, m) in
-                                                                enumerate(run_log)])
+                        "VALUES (?, ?, ?, 3, ?, 1, ?, ?)",
+                        [(r[5] if len(r) > 5 else f"r{i}", r[0], r[1], r[2], r[4] if len(r) > 4 else "ok", r[3])
+                         for i, r in enumerate(run_log)])
         con.commit()
         con.close()
     monkeypatch.setattr(sm, "DB_PATH", str(db))
@@ -476,20 +478,24 @@ WK, TW, PX = 1_918_756.0, 1_021_271_849.0, 0.778            # Jake's read of epo
 BRIBE = 400_000.0                                            # bribes per epoch in the fixture
 
 
-def _aero_rows(off=1.0, weight_from=None, price=None, llama_until=None, fee_week=None, weights=None):
+def _aero_rows(off=1.0, weight_from=None, price=None, llama_until=None, fee_week=None, weights=None, bribe=None,
+               illiquid=None, no_rule=False):
     """price: a function of the day (default flat PX); CoinGecko and Coinbase both store it. llama_until: the last day
     DefiLlama has published (default every day). fee_week: the swap fees EARNED in the week starting at a Thursday
     (default WK - BRIBE). As on-chain (Gauge._claimFees at distribute()): epoch E's fees are those earned in E-1;
     DefiLlama books each day's fees on the swap day and bribes on the deposit day. weights: {epoch start: totalWeight}
-    stored as the epoch-start archive reads instead of a flat daily TW."""
+    stored as the epoch-start archive reads instead of a flat daily TW. bribe: the bribes deposited in the epoch
+    starting at a Thursday (default BRIBE). illiquid: {epoch start: (fees $, bribes $)} the illiquid-token rule
+    excludes (default 0 for every epoch; no_rule: none stored)."""
     price = price or (lambda d: PX)
     fee_week = fee_week or (lambda e: WK - BRIBE)
+    bribe = bribe or (lambda e: BRIBE)
     wk = lambda d: d - pd.Timedelta(days=(d.dayofweek - 3) % 7)                                 # noqa: E731
     rows = []
     for d in _days():
         if llama_until is None or d <= pd.Timestamp(llama_until):
             for m in ("revenue_usd", "holders_revenue_usd"):
-                rows.append((d, "Aerodrome", m, (fee_week(wk(d)) + BRIBE) / 7 * off, "defillama", 1))
+                rows.append((d, "Aerodrome", m, (fee_week(wk(d)) + bribe(wk(d))) / 7 * off, "defillama", 1))
         rows += [(d, "Aerodrome", "price_usd", price(d), "coingecko", 1),
                  (d, "Aerodrome", "price_usd_coinbase", price(d), "xref:coinbase:AERO-USD", 1),
                  (d, "Aerodrome", "ve_locked_supply_tokens", 1.053e9, "chain:base:ve", 2),
@@ -506,11 +512,16 @@ def _aero_rows(off=1.0, weight_from=None, price=None, llama_until=None, fee_week
         rows.append((e, "Aerodrome", "emissions_tokens", 485_000.0, "chain:base:rewards_distributor", 2))
         fees = fee_week(e - pd.Timedelta(days=7))
         tw = (weights or {}).get(e, TW)
-        rows += [(e, "Aerodrome", "voter_rewards_onchain_usd", fees + BRIBE, "aero_voter:tokenRewardsPerEpoch", 2),
+        b = bribe(e)
+        rows += [(e, "Aerodrome", "voter_rewards_onchain_usd", fees + b, "aero_voter:tokenRewardsPerEpoch", 2),
                  (e, "Aerodrome", "voter_rewards_onchain_fees_usd", fees, "aero_voter:tokenRewardsPerEpoch", 2),
-                 (e, "Aerodrome", "voter_rewards_onchain_bribes_usd", BRIBE, "aero_voter:tokenRewardsPerEpoch", 2),
-                 (e, "Aerodrome", "voter_rewards_onchain_apr", (fees + BRIBE) * 52 / (tw * price(e + pd.Timedelta(days=7))),
+                 (e, "Aerodrome", "voter_rewards_onchain_bribes_usd", b, "aero_voter:tokenRewardsPerEpoch", 2),
+                 (e, "Aerodrome", "voter_rewards_onchain_apr", (fees + b) * 52 / (tw * price(e + pd.Timedelta(days=7))),
                   "aero_voter:tokenRewardsPerEpoch", 2)]
+        if not no_rule:
+            xf, xb = (illiquid or {}).get(str(e.date()), (0.0, 0.0))
+            rows += [(e, "Aerodrome", "voter_rewards_illiquid_fees_usd", xf, "aero_voter:tokenRewardsPerEpoch", 2),
+                     (e, "Aerodrome", "voter_rewards_illiquid_bribes_usd", xb, "aero_voter:tokenRewardsPerEpoch", 2)]
     rows.append((pd.Timestamp("2026-10-01"), "Aerodrome", "voter_rewards_unpriced_count", 18.0,
                  "aero_voter:tokenRewardsPerEpoch", 2))
     return rows
@@ -581,6 +592,88 @@ def test_aerodrome_epoch_rows_mature_until_defillama_publishes_the_last_day(tmp_
     later = _evaluate(tmp_path / "later", monkeypatch, "Aerodrome", _aero_rows(llama_until="2026-10-06"),
                       asof="2026-10-11")
     assert later["in_revenue"]["verdict"].startswith("CHECK"), later["in_revenue"]
+
+
+def test_aerodrome_maturing_does_not_lapse_to_check_when_the_tier_timed_out(tmp_path, monkeypatch):
+    """Jake's run 2026-10-09 15:59: "tier aero_voter TIMED OUT after 180s ... Kept the 0 frame(s)". After 2026-10-10 a
+    missing on-chain split is a CHECK — unless the last aero_voter run was abandoned at its budget: then it stays
+    MATURING and says "not stored (tier timeout)"."""
+    rows = [r for r in _aero_rows() if not (r[2] == "voter_rewards_onchain_bribes_usd"
+                                            and r[0] == pd.Timestamp("2026-10-01"))]
+    timeout = [("2026-10-11T08:00:00Z", "aero_voter", None, "TIER TIMED OUT after 180s — abandoned and the run moved "
+                "on. Kept the 0 frame(s) it had produced", "failed", "run-b")]
+    o = _evaluate(tmp_path, monkeypatch, "Aerodrome", rows, asof="2026-10-11", run_log=timeout)
+    for k in ("in_revenue", "in_voter_apr_epoch"):
+        assert o[k]["verdict"] == "MATURING (until 2026-10-10)", o[k]
+        assert "not stored (tier timeout" in o[k]["note"], o[k]["note"][:400]
+    (tmp_path / "ok").mkdir()
+    ran = [("2026-10-11T08:00:00Z", "aero_voter", "Aerodrome", "epoch 2026-10-01 stored already", "skipped", "run-c")]
+    o = _evaluate(tmp_path / "ok", monkeypatch, "Aerodrome", rows, asof="2026-10-11", run_log=ran)
+    assert o["in_revenue"]["verdict"].startswith("CHECK"), o["in_revenue"]
+
+
+SPIKE = pd.Timestamp("2026-09-03")
+
+
+def test_aerodrome_illiquid_bribe_is_capped_and_shown_as_a_labelled_line(tmp_path, monkeypatch):
+    """Jake 2026-10-09 17:05 (LAPTOP, epoch 2026-09-03): a non-native reward counts only up to its DEX depth at
+    payment; the excess is excluded from the headline as a labelled line, never silently. $7.6M of bribes in one epoch
+    against a depth of $0.4M: $7.2M excluded, the headline falls, the before figure is in the working, and with the
+    excess gone the epoch is no outlier (N/A, recorded)."""
+    bribe = lambda e: 7_600_000.0 if e == SPIKE else BRIBE                                  # noqa: E731
+    gross = _evaluate(tmp_path, monkeypatch, "Aerodrome", _aero_rows(bribe=bribe))
+    (tmp_path / "capped").mkdir()
+    capped = _evaluate(tmp_path / "capped", monkeypatch, "Aerodrome",
+                       _aero_rows(bribe=bribe, illiquid={"2026-09-03": (0.0, 7_200_000.0)}))
+    g, c = float(gross["a3_protocol_yield"]["ours"]), float(capped["a3_protocol_yield"]["ours"])
+    assert c < g * 0.85, (g, c)
+    note = capped["in_voter_apr_epoch"]["note"]
+    assert "illiquid-token rewards excluded: $7,200,000" in note and f"{g:.2%} before the exclusion" in note, note[:900]
+    assert capped["in_bribe_outliers"]["verdict"] == "N/A (recorded, not judged)", capped["in_bribe_outliers"]
+    # the revenue check stays at the quoted price on both sides: the same NotifyReward events
+    assert capped["in_revenue"]["verdict"].startswith("PASS"), capped["in_revenue"]
+
+
+def test_aerodrome_bribe_outlier_that_survives_the_rule_is_a_finding_with_a_second_figure(tmp_path, monkeypatch):
+    """Jake's run 2026-10-09 15:59, 2: if the bribe is genuine (liquid at payment), a VERIFIED FINDING and a labelled
+    second figure — the headline excluding the single-epoch outlier (bribes > 5x the quarter's median week)."""
+    bribe = lambda e: 7_600_000.0 if e == SPIKE else BRIBE                                  # noqa: E731
+    o = _evaluate(tmp_path, monkeypatch, "Aerodrome", _aero_rows(bribe=bribe))
+    ob = o["in_bribe_outliers"]
+    assert ob["verdict"] == "VERIFIED FINDING", ob
+    assert "2026-09-03 $7,600,000 OUTLIER" in ob["note"] and "EXCLUDING the outlier epoch(s) 2026-09-03" in ob["note"]
+    head = float(o["a3_protocol_yield"]["ours"])
+    assert float(ob["ours"]) < head * 0.85, (ob["ours"], head)
+    assert o["a3_protocol_yield"]["verdict"] == "VERIFIED FINDING (inputs)" or "FINDING" in o["a3_protocol_yield"]["verdict"]
+
+
+def test_aerodrome_outlier_row_matures_until_the_rule_is_stored(tmp_path, monkeypatch):
+    o = _evaluate(tmp_path, monkeypatch, "Aerodrome", _aero_rows(no_rule=True))
+    assert o["in_bribe_outliers"]["verdict"] == "MATURING (until 2026-10-10)", o["in_bribe_outliers"]
+    assert "NOT stored" in o["in_bribe_outliers"]["note"]
+    assert "ILLIQUID-TOKEN RULE NOT YET READ" in o["in_voter_apr_epoch"]["note"]
+
+
+def test_token_depth_reads_the_counter_side_and_stops_once_covered(monkeypatch):
+    """The rule's depth: the OTHER token's balance in each voted pool holding the reward token, at the given block, x
+    its price; the pools it was paid on first; no further reads once the depth covers the amount."""
+    import check_offline_items as coi
+    LAP, USDC, AAPL, WETH = "0x" + "aa" * 20, "0x" + "bb" * 20, "0x" + "cc" * 20, "0x" + "dd" * 20
+    P1, P2, P3 = "0x" + "01" * 20, "0x" + "02" * 20, "0x" + "03" * 20
+    pool_toks = {P1: (USDC, LAP), P2: (LAP, AAPL), P3: (USDC, WETH)}
+    bal = {(USDC, P1): 400_000 * 10 ** 6, (AAPL, P2): 50 * 10 ** 18, (WETH, P3): 10 ** 18}
+    seen = []
+
+    def batch(chain, calls, chunk=200, block="latest"):
+        seen.append((block, list(calls)))
+        return [hex(bal.get((to, "0x" + d[-40:]), 0)) for to, d in calls]
+    monkeypatch.setattr(coi, "_batch_eth_calls", batch)
+    prices = {USDC: {"price": 1.0, "decimals": 6}, AAPL: {"price": 200.0, "decimals": 18}}
+    r = coi._token_depth({LAP: 7_600_000.0, USDC: 1_000.0}, {LAP: {P1}, USDC: {P3}}, pool_toks, prices, "0x10")
+    assert abs(r[LAP]["depth"] - 410_000.0) < 1e-6 and r[LAP]["pools_read"] == 2 and r[LAP]["pools_held"] == 2
+    assert seen[0][0] == "0x10"
+    # USDC: its paid-on pool P3 holds 1 WETH, unpriced here — named, not counted; then P1's LAP side, unpriced too
+    assert r[USDC]["unpriced_counter"] and r[USDC]["depth"] == 0.0
 
 
 def test_aerodrome_revenue_and_yield_are_judged_epoch_for_epoch_against_state(tmp_path, monkeypatch):
@@ -722,10 +815,11 @@ def test_aero_voter_backfills_every_q0_epoch_with_fees_bribes_and_the_start_weig
     from fetch.base import FetchOutput
     from fetch.logcache import DailyChecks
     monkeypatch.delenv("TOKEN_METRICS_DAILY_CHECKS", raising=False)
-    asked = []
+    asked, archive_seen = [], []
 
-    def epochs_reader(eps):
+    def epochs_reader(eps, archive=True):
         asked.append(list(eps))
+        archive_seen.append(archive)
         return {e: {"epoch": e, "voter": "0xv", "pools": 300, "pool_set": "pools with votes now (300)",
                     "total_weight": TW, "total_weight_start": TW - 1e6, "start_block": 123, "usd": WK,
                     "usd_fees": WK - BRIBE, "usd_bribes": BRIBE, "unpriced": [], "unpriced_raw": {}, "priced": 120,
@@ -746,13 +840,53 @@ def test_aero_voter_backfills_every_q0_epoch_with_fees_bribes_and_the_start_weig
     assert (fe["value"] == WK - BRIBE).all()
     w = f[(f.metric == "voter_total_weight_tokens") & f["source"].str.endswith(":archive")]
     assert len(w) == 14 and (w["value"] == TW - 1e6).all()
-    # A ROUTINE RUN READS AT MOST backfill_per_run (3) EARLIER EPOCHS, newest first (the 180s tier budget; Jake's run
-    # 2026-10-09 ~14:37 stored none when all fourteen were read at once), and names how many are left
+    assert archive_seen[0] is True                            # the seed reads the pool set at past blocks
+    # A ROUTINE RUN READS THE NEWEST EPOCH PLUS AT MOST ONE MISSING (backfill_per_run 1 — Jake's run 2026-10-09 15:59:
+    # three earlier epochs still outran the 180s tier and stored none), newest first, and names how many are left
     out2 = FetchOutput()
     AeroVoter(epochs_reader=epochs_reader, weight_reader=lambda: TW, daily=daily, now=now,
               stored=lambda proj, m, d: d == "2026-10-01").run([p], None, out2)
-    assert len(asked) == 2 and len(asked[1]) == 3 and max(asked[1]) == int(pd.Timestamp("2026-09-24").timestamp())
-    assert any("10 earlier epoch(s) still to backfill" in str(e.message) for e in out2.log)
+    assert len(asked) == 2 and len(asked[1]) == 1 and max(asked[1]) == int(pd.Timestamp("2026-09-24").timestamp())
+    assert archive_seen[1] is True                            # a backfill epoch: the pool set at its last block
+    assert any("12 earlier epoch(s) still to backfill" in str(e.message) for e in out2.log)
+    # the newest alone (everything earlier stored): the pools with votes now, no archive pool set — the daily read
+    # that fits the tier
+    out3 = FetchOutput()
+    AeroVoter(epochs_reader=epochs_reader, weight_reader=lambda: TW, daily=DailyChecks(tmp_path / "fresh"), now=now,
+              stored=lambda proj, m, d: d != "2026-10-01").run([p], None, out3)
+    assert asked[2] == [int(pd.Timestamp("2026-10-01").timestamp())] and archive_seen[2] is False
+
+
+def test_aero_voter_stores_the_illiquid_excess_per_epoch_and_names_the_token(tmp_path):
+    """Jake 2026-10-09 17:05: the excess above a reward token's DEX depth is stored per epoch (fees and bribes apart),
+    the run log names the token, its quoted value and its depth; tokens with no readable voted pool are named, not
+    capped. The $ figures stay at the quoted price."""
+    from fetch.aero_voter import AeroVoter
+    from fetch.base import FetchOutput
+    from fetch.logcache import DailyChecks
+    e0 = int(pd.Timestamp("2026-10-01").timestamp())
+    lap = {"token": "0xb095274743941e953c746f9c228da9c18bb6ec29", "symbol": "LAPTOP", "usd": 7_600_000.0,
+           "depth": 400_000.0, "excess": 7_200_000.0}
+
+    def epochs_reader(eps, archive=True):
+        return {e: {"epoch": e, "voter": "0xv", "pools": 300, "total_weight": TW, "usd": WK + 7_600_000.0,
+                    "usd_fees": WK - BRIBE, "usd_bribes": BRIBE + 7_600_000.0, "usd_illiquid_fees": 0.0,
+                    "usd_illiquid_bribes": 7_200_000.0, "liquidity_unread": ["0x" + "ee" * 20], "tokens": [lap],
+                    "unpriced": [], "unpriced_raw": {}, "priced": 120, "aero_price": PX, "priced_at": "epoch end"}
+                for e in eps}
+    out = FetchOutput()
+    AeroVoter(epochs_reader=epochs_reader, weight_reader=lambda: TW, daily=DailyChecks(tmp_path),
+              now=int(pd.Timestamp("2026-10-09 12:00").timestamp()),
+              stored=lambda proj, m, d: d != "2026-10-01").run([config.PROJECT_BY_NAME["Aerodrome"]], None, out)
+    f = out.frame()
+    ib = f[f.metric == "voter_rewards_illiquid_bribes_usd"]
+    assert len(ib) == 1 and ib["value"].iloc[0] == 7_200_000.0 and str(ib["date"].iloc[0])[:10] == "2026-10-01"
+    assert f[f.metric == "voter_rewards_illiquid_fees_usd"]["value"].iloc[0] == 0.0
+    assert f[f.metric == "voter_rewards_onchain_bribes_usd"]["value"].iloc[0] == BRIBE + 7_600_000.0
+    msg = " ".join(str(x.message) for x in out.log)
+    assert "illiquid-token rewards excluded $7,200,000" in msg and "LAPTOP $7,600,000 quoted vs $400,000 depth" in msg
+    assert "not capped, no readable voted pool: 0x" + "ee" * 20 in msg
+    assert e0
 
 
 def test_aero_voter_stores_nothing_on_an_error(tmp_path):

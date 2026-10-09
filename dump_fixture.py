@@ -72,8 +72,11 @@ def dump(project: str, db: str = "metrics.db", metrics: list[str] | None = None,
         rq = _rows(con, "SELECT * FROM review_queue WHERE project = ? ORDER BY ts", (project,))
         mo = _rows(con, "SELECT * FROM manual_overrides WHERE project = ? ORDER BY date", (project,))
         log_since = (now - timedelta(days=30)).strftime("%Y-%m-%d")
+        # THE TIER-WIDE LINES TOO (Jake's run 2026-10-09 15:59: "tier aero_voter TIMED OUT" is logged with no project)
+        # — those of the sources this project's lines name
         rl = _rows(con, "SELECT run_id, ts, source, tier, project, rows, status, message FROM run_log "
-                        "WHERE project = ? AND ts >= ? ORDER BY ts DESC LIMIT 5000", (project, log_since))
+                        "WHERE (project = ? OR (project IS NULL AND source IN (SELECT DISTINCT source FROM run_log "
+                        "WHERE project = ?))) AND ts >= ? ORDER BY ts DESC LIMIT 5000", (project, project, log_since))
         for r in rl:
             r["message"] = _redact(r["message"])
         last = con.execute("SELECT run_id FROM gap_report WHERE project = ? ORDER BY ts DESC LIMIT 1",

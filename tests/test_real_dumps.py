@@ -150,3 +150,41 @@ def test_real_pendle_rebuild_skips_a_day_whose_reads_are_under_20h_apart_or_exce
                                 legacy=leg, ve_at=at)
     assert d9 not in cal2["rebuilt"].index
     assert any(d == d9 and "impossible" in w for d, w in cal2["skipped"]), cal2["skipped"]
+
+
+def test_real_aerodrome_laptop_day_and_the_illiquid_rule_before_it_is_read(tmp_path, monkeypatch):
+    """Jake's run 2026-10-09 15:59, 2: DefiLlama's 2026-09-09 is the LAPTOP pre-launch bribe ($7,922,809 against a
+    normal ~$100K-$420K day) — DefiLlama prices it by hand at $1.86 (dimension-adapters @af2f691 dexs/aerodrome/utils.ts
+    L66-71). On the 15:26 dump no epoch's illiquid-token rule is stored yet, so the headline is unchanged (17.4%) and
+    says the rule is not yet read; the outlier row matures until the epochs are stored."""
+    o = evaluate_real(tmp_path, monkeypatch, "Aerodrome")
+    long = long_frame(load("Aerodrome"))
+    hr = long[long.metric == "holders_revenue_usd"].set_index("date")["value"]
+    assert float(hr[pd.Timestamp("2026-09-09")]) == 7_922_809.0
+    q0 = hr[(hr.index > pd.Timestamp("2026-07-11")) & (hr.index <= pd.Timestamp("2026-10-09"))]
+    assert float(hr[pd.Timestamp("2026-09-09")]) > 15 * float(q0.drop(pd.Timestamp("2026-09-09")).max())
+    head = o["a3_protocol_yield"]
+    assert abs(float(head["ours"]) - 0.17445) < 0.0005, head
+    ob = o["in_bribe_outliers"]
+    assert ob["verdict"] == "MATURING (until 2026-10-10)", ob
+    assert "--seed aero_epochs" in ob["note"], ob["note"][:400]
+
+
+def test_real_pendle_optimism_zero_counts_with_its_evidence(tmp_path, monkeypatch):
+    """Jake's check 2026-10-09 17:05: the Optimism gauge's last token transfer was 743 days ago — Optimism = 0, stored
+    as manual rows with that evidence (manual_overrides.csv). On the real Pendle dump with those rows, Optimism is no
+    longer named missing on either side of in_emissions; Arbitrum (not reconciled yet) still is — the sum is not formed
+    over a chain that has not been counted."""
+    import csv
+    payload = load("Pendle")
+    with open(Path(__file__).resolve().parents[1] / "manual_overrides.csv", newline="") as fh:
+        rows = [r for r in csv.DictReader(line for line in fh if not line.startswith("#"))
+                if r["project"] == "Pendle" and "optimism" in r["metric"]]
+    assert {r["metric"] for r in rows} == {"emissions_tokens_gauge_optimism", "emissions_tokens_gauge_optimism_direct"}
+    assert all(float(r["value"]) == 0 and "read_by Jake" in r["source_note"] and "pending Jake's review" in
+               r["source_note"] and "optimistic.etherscan.io" in r["source_note"] for r in rows)
+    payload = {**payload, "manual_overrides": list(payload.get("manual_overrides") or []) + rows}
+    o = evaluate_real(tmp_path, monkeypatch, "Pendle", payload=payload)
+    em = o["in_emissions"]
+    assert "Optimism" not in em["note"].split("NONE STORED for")[-1].split(";")[0], em["note"][:500]
+    assert "Arbitrum" in em["note"], em["note"][:500]

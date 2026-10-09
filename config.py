@@ -715,6 +715,24 @@ METRICS = {
                  "at the epoch end, dated the epoch's start — CREDIBILITY reference only",
         "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9,
         "only_projects": ("Aerodrome",)},
+    # THE ILLIQUID-TOKEN RULE (Jake 2026-10-09 17:05, after the 2026-09-03 LAPTOP bribe): a non-native reward token
+    # counts at its quoted price only up to what a sale could take out of the voted Aerodrome pools holding it at the
+    # epoch's end block; the excess is stored here, per epoch, and subtracted from the headline as a labelled line.
+    "voter_rewards_illiquid_fees_usd": {
+        "label": "Swap fees notified for one epoch in tokens a sale could not have realised: the quoted value above the "
+                 "depth of the voted Aerodrome pools holding the token at the epoch end (excluded from the headline)",
+        "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9,
+        "only_projects": ("Aerodrome",)},
+    "voter_rewards_illiquid_bribes_usd": {
+        "label": "Bribes notified for one epoch in tokens a sale could not have realised: the quoted value above the "
+                 "depth of the voted Aerodrome pools holding the token at the epoch end (excluded from the headline)",
+        "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9,
+        "only_projects": ("Aerodrome",)},
+    "rewards_illiquid_excluded_usd": {
+        "label": "Aerodrome illiquid-token rewards excluded from the Q0 voter yield (fees + bribes above the tokens' DEX "
+                 "depth at payment) — the labelled line beside the headline", "kind": "stock", "unit": "usd",
+        "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Aerodrome",),
+        "view_only": True},
     "voter_rewards_unpriced_count": {
         "label": "Reward tokens paid in the epoch that DefiLlama could not price (their value is not in "
                  "voter_rewards_onchain_usd)", "kind": "stock", "unit": "count", "archetypes": [3], "tiers": [2],
@@ -11973,9 +11991,11 @@ PROJECTS = [
                          "apr_metric": "voter_rewards_onchain_apr", "weight_metric": "voter_total_weight_tokens",
                          "fees_metric": "voter_rewards_onchain_fees_usd",
                          "bribes_metric": "voter_rewards_onchain_bribes_usd", "backfill_q0": True, "q0_days": 90,
-                         # at most 3 earlier epochs a run (the tier's 180s budget; Jake's run 2026-10-09 ~14:37 stored
-                         # none when all fourteen were read at once) — `--seed aero_epochs` reads them all
-                         "backfill_per_run": 3},
+                         "illiquid_fees_metric": "voter_rewards_illiquid_fees_usd",
+                         "illiquid_bribes_metric": "voter_rewards_illiquid_bribes_usd",
+                         # THE NEWEST EPOCH PLUS AT MOST ONE MISSING a run (Jake's run 2026-10-09 15:59: three earlier
+                         # epochs still outran the tier's 180s; none stored) — `--seed aero_epochs` reads them all
+                         "backfill_per_run": 1},
         "ve_managed_holdings": {
             "metric": "filing_managed_lock_tokens", "chain": "base",
             "escrow": "0xeBf418Fe2512e7E6bd9b87a8F0f294aCDC67e6B4",
@@ -18348,6 +18368,12 @@ PROTOCOL_YIELD = {
                   # Voter.totalWeight (archive-read at the epoch-start block), not the mean of the days stored.
                   "token_yield": {"payday": {"flow": "holders_revenue_usd", "stock": "voter_total_weight_tokens",
                                              "price": "price_usd", "days": 90, "year": 365.25, "stake_epoch_days": 7,
+                                             # THE ILLIQUID-TOKEN RULE (Jake 2026-10-09 17:05, Jake to confirm): each
+                                             # epoch's rewards above their tokens' DEX depth at payment, taken out as
+                                             # a labelled line (fetch/aero_voter.py stores them per epoch)
+                                             "illiquid": {"fees": "voter_rewards_illiquid_fees_usd",
+                                                          "bribes": "voter_rewards_illiquid_bribes_usd",
+                                                          "metric": "rewards_illiquid_excluded_usd"},
                                              "metric": "token_yield_payday_pct",
                                              "annual_metric": "rewards_tokens_payday_annual"},
                                   "note": "VOTER YIELD AT PAYMENT-DAY PRICES — DefiLlama's Q0 fees + bribes (holders "
@@ -24545,14 +24571,17 @@ CREDIBILITY: dict = {
         # each epoch's fees + bribes notified to the voting-reward contracts (tokenRewardsPerEpoch, Reward.sol @1ba30815)
         # weekly, priced at the epoch end, and its APR over Voter.totalWeight. The headline (a Q0 average) is judged
         # through its inputs, epoch for epoch — never one average against one epoch (as Pendle, 2026-10-08).
-        "a3_protocol_yield": {"inputs": ("in_revenue", "in_voter_apr_epoch", "in_price_confirmed"),
+        "a3_protocol_yield": {"inputs": ("in_revenue", "in_voter_apr_epoch", "in_price_confirmed", "in_bribe_outliers"),
                               "source": "the per-epoch rows below (on-chain fees + bribes of every Q0 epoch and their "
                                         "APR)",
                               "why": "The headline is DefiLlama's Q0 fees + bribes in AERO at each payment day's price "
                                      "(Jake's price convention, 2026-10-09), each day over ITS epoch's Voter.totalWeight "
                                      "(the votes cast, archive-read at the epoch's start block — Jake's run 2026-10-09 "
                                      "~14:10, 1c; an epoch without its own reading borrows the nearest and is named), "
-                                     "x 365.25/days. It inherits the verdicts of the quarter's revenue row (DefiLlama's "
+                                     "x 365.25/days, LESS the rewards a sale could not have realised (the "
+                                     "illiquid-token rule, Jake 2026-10-09: a non-native token counts up to the depth "
+                                     "of the voted Aerodrome pools holding it at payment; the excess is the labelled "
+                                     "line rewards_illiquid_excluded_usd). It inherits the verdicts of the quarter's revenue row (DefiLlama's "
                                      "week-before fees + the epoch's bribes against the on-chain credit) and the "
                                      "per-epoch reproduction of its own arithmetic. The veAERO rebase is a separate "
                                      "stream: in_rebase_apr."},
@@ -24634,8 +24663,40 @@ CREDIBILITY: dict = {
                                         "the epoch (fees are credited at the next epoch's distribute(): Gauge._claimFees, "
                                         "contracts @1ba3081) minus that week's bribes plus the epoch's own bribes (the "
                                         "on-chain split). Unpriced reward tokens are left out of the on-chain figure "
-                                        "and counted in voter_rewards_unpriced_count."}}},
+                                        "and counted in voter_rewards_unpriced_count. THE FEE LEG, INDEPENDENTLY "
+                                        "(Jake 2026-10-09 17:05, read_by Jake): the Dune dashboard by @0xkhmerlab "
+                                        "(Aerodrome, pool level) shows per-epoch fees matching ours epoch by epoch — its "
+                                        "157 ~$1.8M = our 08-27 $1.76M, 158 ~$1.15M = 09-03 $1.16M, 161 ~$1.8M = 09-24 "
+                                        "$1.79M. THE BRIBE LEG IS NOT INDEPENDENT: both sides carry the same "
+                                        "NotifyReward events, and DefiLlama prices LAPTOP (0xb0952747...ec29) by hand "
+                                        "at $1.86 before 2026-09-10 as an Aero Ignition pre-launch token "
+                                        "(DefiLlama/dimension-adapters @af2f691 dexs/aerodrome/utils.ts L30-72, LAPTOP L66-71; L78-94: "
+                                        "PRE_LAUNCH_TOKEN_PRICING, handleBribeToken) — its $7,922,809 on 2026-09-09 "
+                                        "is that bribe; Dune's ~$15M for the same epoch is a third price. The "
+                                        "illiquid-token rule settles what it counts at (in_bribe_outliers)."}}},
                                fmt=_C_USD),
+        # SINGLE-EPOCH BRIBE OUTLIERS (Jake's run 2026-10-09 15:59, 2): after the illiquid-token rule, an epoch whose
+        # bribes exceed 5x the quarter's median week is a VERIFIED FINDING with a labelled second figure — the headline
+        # excluding it. A bribe the rule caps is a pricing matter, not an outlier.
+        "in_bribe_outliers": _c_in_py(
+            "Voter yield EXCLUDING single-epoch bribe outliers (an epoch's bribes, after the illiquid-token rule, above "
+            "5x the quarter's median week) — a labelled second figure",
+            "aero_bribe_outliers", {"value": "yield"},
+            {"verdict_when": {"py": "aero_bribe_outliers", "args": {"value": "flag"},
+                              "positive": _c_find(
+                                  "An epoch's bribes stay above 5x the quarter's median week after the illiquid-token "
+                                  "rule: a real one-off payment, so the headline carries it and this row gives the "
+                                  "figure without it — the working names the epoch and both figures.",
+                                  "the bribe's token is liquid enough at payment to realise it (the rule's depth, "
+                                  "check_offline_items.py aerodrome_epoch_rewards lists every token, depositor and "
+                                  "pool)"),
+                              "negative": _c_mat("The Q0 epochs' bribes or the illiquid-token rule are not all stored "
+                                                 "yet — `python token_metrics.py --seed aero_epochs` stores every Q0 "
+                                                 "epoch; the working names which.", "2026-10-10"),
+                              "otherwise": {"verdict": "N/A (recorded, not judged)",
+                                            "why": "No epoch's bribes exceed 5x the quarter's median week after the "
+                                                   "illiquid-token rule — the headline needs no second figure."}}},
+            fmt=_C_PCT),
         # THE TWO DEFINITIONS, UNTANGLED (sign-off round 2026-10-07): veAERO.supply() is AERO LOCKED (1.053bn, Jake's
         # read); aerodrome.finance's 881,100,168 is VOTING POWER (veAERO.totalSupply(): each lock's balance decays with
         # its remaining time, permanent locks do not) — in_voting_power. Both are one contract on Base.

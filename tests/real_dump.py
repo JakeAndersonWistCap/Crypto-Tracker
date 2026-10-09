@@ -66,9 +66,10 @@ def long_frame(payload: dict) -> pd.DataFrame:
     return df[["date", "project", "metric", "value", "source", "tier", "fetched_at"]]
 
 
-def evaluate_real(tmp_path, monkeypatch, project: str) -> dict:
-    """{row id: {verdict, ours, ref, note}} from credibility_report on the real dump, as of the dump's date."""
-    payload = load(project)
+def evaluate_real(tmp_path, monkeypatch, project: str, payload: dict | None = None) -> dict:
+    """{row id: {verdict, ours, ref, note}} from credibility_report on the real dump, as of the dump's date. `payload`:
+    the dump as loaded, with rows added from a committed source (manual_overrides.csv) — never hand-built values."""
+    payload = payload or load(project)
     import credibility_report as cr
     import store as sm
     db = tmp_path / "metrics.db"

@@ -47,12 +47,14 @@ def _epoch_reader(epoch=None):
     return coi.aerodrome_voter_epoch(epoch=epoch, say=lambda m: log.info("aero_voter:%s", m), price_at_end=True)
 
 
-def _epochs_reader(epochs):
-    """{epoch: result} for several epochs in one pass — the structure read once; the pool set and each epoch's
-    totalWeight at its start block read at past blocks (archive)."""
+def _epochs_reader(epochs, archive=True):
+    """{epoch: result} for several epochs in one pass — the structure read once; each epoch's totalWeight at its start
+    block (archive) always; the pool set at each epoch's last block only with `archive` (a backfill: a pool voted then
+    and unvoted since; the newest epoch alone reads the pools with votes now, which keeps the daily read inside the
+    tier's 180s — Jake's run 2026-10-09 15:59)."""
     import check_offline_items as coi                      # noqa: PLC0415
     return coi.aerodrome_voter_epochs(list(epochs), say=lambda m: log.info("aero_voter:%s", m), price_at_end=True,
-                                      archive=True)
+                                      archive=archive, start_weight=True)
 
 
 def _weight_reader() -> float | None:
@@ -94,7 +96,7 @@ class AeroVoter:
         self.max_backfill = max_backfill
         # ONE READER FOR MANY EPOCHS (Jake's run 2026-10-09 ~14:10, 1b): a single-epoch reader (the tests') is wrapped.
         if epochs_reader is None and epoch_reader is not None:
-            epochs_reader = lambda eps: {e: epoch_reader(e) for e in eps}     # noqa: E731
+            epochs_reader = lambda eps, archive=True: {e: epoch_reader(e) for e in eps}     # noqa: E731
         self.epochs_reader = epochs_reader or _epochs_reader
         self.weight_reader = weight_reader or _weight_reader
         self.stored = stored or _stored
@@ -150,8 +152,8 @@ class AeroVoter:
         want = []
         for e in targets:
             when = day_of(e)
-            done = self.stored(name, spec["usd_metric"], str(when.date())) and (
-                not split or self.stored(name, split, str(when.date())))
+            done = all(self.stored(name, m, str(when.date())) for m in
+                       (spec["usd_metric"], split, spec.get("illiquid_bribes_metric")) if m)
             if e == latest:
                 if self.daily.get(key) == str(when.date()) and done:
                     out.mark_current(SOURCE, name, spec["usd_metric"], f"epoch {when.date()} stored already", TIER)
@@ -164,7 +166,7 @@ class AeroVoter:
             elif not done:
                 want.append(e)
         back = [e for e in want if e != latest]
-        cap = self.max_backfill if self.max_backfill is not None else int(spec.get("backfill_per_run", 3))
+        cap = self.max_backfill if self.max_backfill is not None else int(spec.get("backfill_per_run", 1))
         if cap and len(back) > cap:
             left = len(back) - cap
             back = sorted(back)[-cap:]                     # newest first: the quarter's end fills first
@@ -175,7 +177,8 @@ class AeroVoter:
         if not want:
             return
         try:
-            res = self.epochs_reader(want)
+            # THE POOL SET AT PAST BLOCKS ONLY FOR A BACKFILL (the newest epoch alone: pools with votes now)
+            res = self.epochs_reader(want, archive=bool(back) or self.max_backfill == 0)
         except Exception as e:  # noqa: BLE001
             from .chain import redact_urls
             out.fail(SOURCE, name, f"{spec['usd_metric']}: {redact_urls(e)}", TIER)
@@ -196,6 +199,12 @@ class AeroVoter:
             rows = [(spec["usd_metric"], usd), (spec["unpriced_metric"], float(unp))]
             if split and r.get("usd_fees") is not None:
                 rows += [(split, float(r["usd_fees"])), (spec["bribes_metric"], float(r["usd_bribes"]))]
+            # THE ILLIQUID-TOKEN RULE (Jake 2026-10-09 17:05): what a sale could not have realised, apart — the
+            # headline subtracts it as a labelled line; the dollars above stay at the quoted price
+            ill = None
+            if spec.get("illiquid_bribes_metric") and r.get("usd_illiquid_bribes") is not None:
+                ill = (float(r["usd_illiquid_fees"] or 0), float(r["usd_illiquid_bribes"] or 0))
+                rows += [(spec["illiquid_fees_metric"], ill[0]), (spec["illiquid_bribes_metric"], ill[1])]
             if apr is not None:
                 rows.append((spec["apr_metric"], apr))
             msg = (f"epoch {when.date()}: ${usd:,.0f} paid to voters"
@@ -204,7 +213,13 @@ class AeroVoter:
                    + f" over {r['pools']} pools ({r.get('pool_set', 'pools with votes now')}; {r['priced']} tokens "
                    f"priced at the epoch end, {unp} unpriced and left out); totalWeight {tw:,.0f}"
                    + (" at the epoch's start block" if tws else " now") + f"; AERO ${ap:,.4f}"
-                   + (f"; APR = ${usd:,.0f} x 52 / ({tw:,.0f} x ${ap:,.4f}) = {apr:.2%}" if apr is not None else ""))
+                   + (f"; APR = ${usd:,.0f} x 52 / ({tw:,.0f} x ${ap:,.4f}) = {apr:.2%}" if apr is not None else "")
+                   + (f"; illiquid-token rewards excluded ${ill[0] + ill[1]:,.0f} (fees ${ill[0]:,.0f}, bribes "
+                      f"${ill[1]:,.0f})" + "".join(
+                          f"; {t.get('symbol') or t['token']} ${t['usd']:,.0f} quoted vs ${t['depth']:,.0f} depth"
+                          for t in (r.get("tokens") or [])[:50] if t.get("excess"))
+                      + (f"; not capped, no readable voted pool: {', '.join(r['liquidity_unread'][:10])}"
+                         if r.get("liquidity_unread") else "") if ill else ""))
             for m, v in rows:
                 out.add(tidy([(when, v)], name, m, src, TIER), SOURCE, name, f"{m}: {msg}", TIER)
             # THE PER-EPOCH STAKE (1c): Voter.totalWeight at the epoch's start block, dated the epoch's start — only

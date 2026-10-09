@@ -4114,7 +4114,11 @@ def _emissions_from_metric_views(groups: dict, after_issuance: bool = False) -> 
                     f"`python token_metrics.py --seed pendle_gauges` finishes the seed in one sitting")
                 groups.pop((name, "emissions_tokens"), None)
                 continue
-            end = min(s.index.max() for s in got.values())
+            # A HAND-ENTERED STREAM DOES NOT BOUND THE SUM (Pendle Optimism, Jake 2026-10-09 17:05: "paid nothing in
+            # Q0", one manual 0 with its evidence): its reading covers the days to the build, so only scanned streams
+            # set the last day summed
+            scanned = [m for m in got if not parts[m]["source"].astype(str).eq("manual").all()]
+            end = min(got[m].index.max() for m in (scanned or list(got)))
             idx = sorted(set().union(*(s.index for s in got.values())))
             total = pd.concat([s.reindex(idx).fillna(0.0) for s in got.values()], axis=1).sum(axis=1)
             total = total[total.index <= end]
@@ -4148,10 +4152,20 @@ def _payday_yield_views(groups: dict, asof: pd.Timestamp) -> None:
             date=pd.to_datetime(g["date"]).dt.normalize()).drop_duplicates("date", keep="last")
             .set_index("date")["value"].astype(float).sort_index())(groups.get((name, m)))
         lo = asof - pd.Timedelta(days=int(pd_["days"]))
-        r = cred.payday_yield(s(pd_["flow"]), s(pd_["price"]), s(pd_["stock"]), lo, asof, float(pd_.get("year", 365)),
-                              pd_.get("stake_epoch_days"))
+        # THE ILLIQUID-TOKEN RULE (Jake 2026-10-09 17:05): the flow less what a sale could not have realised, as a
+        # labelled line (rewards_illiquid_excluded_usd) — never dropped silently
+        il = pd_.get("illiquid") or {}
+        r = cred.payday_headline(s(pd_["flow"]), s(pd_["price"]), s(pd_["stock"]), lo, asof,
+                                 float(pd_.get("year", 365)), pd_.get("stake_epoch_days"),
+                                 s(il["fees"]) if il else None, s(il["bribes"]) if il else None, bool(il))
         if r is None:
             continue
+        if il and r.get("took") is not None:
+            groups[(name, il["metric"])] = _as_stored(pd.DataFrame(
+                {"date": [r["last"]], "project": [name], "metric": [il["metric"]],
+                 "value": [r["took"]["fees"] + r["took"]["bribes"]],
+                 "source": [f"derived:{il['fees']} + {il['bribes']} over the {pd_['days']}d window (fees on the week "
+                            f"before each epoch, bribes on its own days)"], "tier": [2]}), groups[(name, pd_["flow"])].columns)
         over = "each epoch's" if pd_.get("stake_epoch_days") else "mean"
         groups[(name, pd_["metric"])] = _as_stored(pd.DataFrame(
             {"date": [r["last"]], "project": [name], "metric": [pd_["metric"]], "value": [r["value"]],
