@@ -2,16 +2,16 @@
  "meta": {
   "project": "Aerodrome",
   "asof": "2026-10-09",
-  "dumped_at": "2026-10-09T14:57:10.198052+00:00",
-  "git_commit": "1f07957",
+  "dumped_at": "2026-10-09T15:26:25.018287+00:00",
+  "git_commit": "c46f88e",
   "db": "metrics.db",
   "days": 400,
   "metrics_filter": [],
   "counts": {
    "metrics": 5300,
-   "review_queue": 131,
+   "review_queue": 132,
    "manual_overrides": 0,
-   "run_log": 3014,
+   "run_log": 3057,
    "gap_report": 5,
    "manual_references": 1
   }
@@ -108,10 +108,10 @@
   {
    "date": "2026-10-09",
    "metric": "avg_lock_duration_days",
-   "value": 902.6181094961415,
+   "value": 902.8379679891299,
    "source": "derived:decay_proxy",
    "tier": 2,
-   "fetched_at": "2026-10-09T14:37:10Z"
+   "fetched_at": "2026-10-09T15:02:44Z"
   },
   {
    "date": "2025-09-12",
@@ -3188,10 +3188,10 @@
   {
    "date": "2026-10-09",
    "metric": "circulating_supply",
-   "value": 1004696677.4873439,
+   "value": 1004696688.3515757,
    "source": "coingecko",
    "tier": 1,
-   "fetched_at": "2026-10-09T14:37:10Z"
+   "fetched_at": "2026-10-09T15:02:44Z"
   },
   {
    "date": "2025-09-12",
@@ -6319,7 +6319,7 @@
    "value": 999971269.1076785,
    "source": "coingecko:mcap/price",
    "tier": 1,
-   "fetched_at": "2026-10-09T14:37:10Z"
+   "fetched_at": "2026-10-09T15:02:44Z"
   },
   {
    "date": "2026-10-08",
@@ -6327,15 +6327,15 @@
    "value": 999805237.026789,
    "source": "coingecko:mcap/price",
    "tier": 1,
-   "fetched_at": "2026-10-09T14:37:10Z"
+   "fetched_at": "2026-10-09T15:02:44Z"
   },
   {
    "date": "2026-10-09",
    "metric": "circulating_supply_implied",
-   "value": 1005040317.0003583,
+   "value": 1005020649.6786811,
    "source": "coingecko:mcap/price",
    "tier": 1,
-   "fetched_at": "2026-10-09T14:37:10Z"
+   "fetched_at": "2026-10-09T15:02:44Z"
   },
   {
    "date": "2025-09-25",
@@ -6767,7 +6767,7 @@
    "value": 489618.33714951907,
    "source": "chain:base:rewards_distributor",
    "tier": 2,
-   "fetched_at": "2026-10-09T14:37:10Z"
+   "fetched_at": "2026-10-09T15:02:44Z"
   },
   {
    "date": "2026-09-11",
@@ -6932,10 +6932,10 @@
   {
    "date": "2026-10-09",
    "metric": "fdv_usd",
-   "value": 1624705771.0,
+   "value": 1629780418.0,
    "source": "coingecko",
    "tier": 1,
-   "fetched_at": "2026-10-09T14:37:10Z"
+   "fetched_at": "2026-10-09T15:02:44Z"
   },
   {
    "date": "2025-09-04",
@@ -10583,7 +10583,7 @@
    "value": 4195055.805918967,
    "source": "chain:base:minter[tail@21bps]",
    "tier": 2,
-   "fetched_at": "2026-10-09T14:37:10Z"
+   "fetched_at": "2026-10-09T15:02:44Z"
   },
   {
    "date": "2025-09-04",
@@ -16788,10 +16788,10 @@
   {
    "date": "2026-10-09",
    "metric": "locked_tokens",
-   "value": 992948995.7374728,
+   "value": 992949342.2848948,
    "source": "chain:base:ve",
    "tier": 2,
-   "fetched_at": "2026-10-09T14:37:10Z"
+   "fetched_at": "2026-10-09T15:02:44Z"
   },
   {
    "date": "2025-09-12",
@@ -19919,7 +19919,7 @@
    "value": 804567980.6071268,
    "source": "coingecko",
    "tier": 1,
-   "fetched_at": "2026-10-09T14:37:10Z"
+   "fetched_at": "2026-10-09T15:02:44Z"
   },
   {
    "date": "2026-10-08",
@@ -19927,15 +19927,15 @@
    "value": 794654405.0852828,
    "source": "coingecko",
    "tier": 1,
-   "fetched_at": "2026-10-09T14:37:10Z"
+   "fetched_at": "2026-10-09T15:02:44Z"
   },
   {
    "date": "2026-10-09",
    "metric": "market_cap_usd",
-   "value": 817877784.1491263,
+   "value": 819413226.8555135,
    "source": "coingecko",
    "tier": 1,
-   "fetched_at": "2026-10-09T14:37:10Z"
+   "fetched_at": "2026-10-09T15:02:44Z"
   },
   {
    "date": "2026-10-06",
@@ -19967,7 +19967,7 @@
    "value": 36559855.13417575,
    "source": "chain:sum(base:noncirc_foundation_multisig+base:noncirc_public_goods_fund+base:noncirc_airdrop_distributor+base:noncirc_flight_school+base:noncirc_buyback_locked_funds+base:noncirc_tge_incentives+base:noncirc_velodrome_foundation_airdrop)",
    "tier": 2,
-   "fetched_at": "2026-10-09T14:37:10Z"
+   "fetched_at": "2026-10-09T15:02:44Z"
   },
   {
    "date": "2025-09-29",
@@ -22972,10 +22972,10 @@
   {
    "date": "2026-10-09",
    "metric": "permanent_locked_tokens",
-   "value": 990338299.6877402,
+   "value": 990311097.6837202,
    "source": "chain:base:ve_permanent",
    "tier": 2,
-   "fetched_at": "2026-10-09T14:37:10Z"
+   "fetched_at": "2026-10-09T15:02:44Z"
   },
   {
    "date": "2025-09-12",
@@ -26103,7 +26103,7 @@
    "value": 0.804591097227304,
    "source": "coingecko",
    "tier": 1,
-   "fetched_at": "2026-10-09T14:37:10Z"
+   "fetched_at": "2026-10-09T15:02:44Z"
   },
   {
    "date": "2026-10-08",
@@ -26111,15 +26111,15 @@
    "value": 0.7948092044890847,
    "source": "coingecko",
    "tier": 1,
-   "fetched_at": "2026-10-09T14:37:10Z"
+   "fetched_at": "2026-10-09T15:02:44Z"
   },
   {
    "date": "2026-10-09",
    "metric": "price_usd",
-   "value": 0.8137760946647026,
+   "value": 0.8153197918047664,
    "source": "coingecko",
    "tier": 1,
-   "fetched_at": "2026-10-09T14:37:10Z"
+   "fetched_at": "2026-10-09T15:02:44Z"
   },
   {
    "date": "2026-09-06",
@@ -33231,7 +33231,7 @@
    "value": 1997645621.866175,
    "source": "coingecko",
    "tier": 1,
-   "fetched_at": "2026-10-09T14:37:10Z"
+   "fetched_at": "2026-10-09T15:02:44Z"
   },
   {
    "date": "2025-09-29",
@@ -36236,10 +36236,10 @@
   {
    "date": "2026-10-09",
    "metric": "ve_locked_supply_tokens",
-   "value": 1053665308.8880396,
+   "value": 1053665377.6093335,
    "source": "chain:base:ve_locked_supply",
    "tier": 2,
-   "fetched_at": "2026-10-09T14:37:10Z"
+   "fetched_at": "2026-10-09T15:02:44Z"
   },
   {
    "date": "2025-09-29",
@@ -39244,10 +39244,10 @@
   {
    "date": "2026-10-09",
    "metric": "ve_voting_power_tokens",
-   "value": 1029489056.75926,
+   "value": 1029488254.773758,
    "source": "chain:base:ve_voting_power",
    "tier": 2,
-   "fetched_at": "2026-10-09T14:37:10Z"
+   "fetched_at": "2026-10-09T15:02:44Z"
   },
   {
    "date": "2025-09-12",
@@ -42375,7 +42375,7 @@
    "value": 49935481.10899769,
    "source": "coingecko",
    "tier": 1,
-   "fetched_at": "2026-10-09T14:37:10Z"
+   "fetched_at": "2026-10-09T15:02:44Z"
   },
   {
    "date": "2026-10-08",
@@ -42383,7 +42383,7 @@
    "value": 46800099.19821442,
    "source": "coingecko",
    "tier": 1,
-   "fetched_at": "2026-10-09T14:37:10Z"
+   "fetched_at": "2026-10-09T15:02:44Z"
   },
   {
    "date": "2026-10-01",
@@ -44383,10 +44383,455 @@
    "tier": 2,
    "prior_date": null,
    "basis": null
+  },
+  {
+   "run_id": "20261009T145921Z-e7661a",
+   "ts": "2026-10-09T15:02:47Z",
+   "project": "Aerodrome",
+   "metric": "total_supply",
+   "date": "2026-10-09",
+   "value": 1997645621.866175,
+   "prior_value": 1997645621.866175,
+   "reason": "tier_collision",
+   "action": "rejected",
+   "source": "dropped chain:base:token (tier 2) in favour of coingecko (tier 1)",
+   "tier": 2,
+   "prior_date": null,
+   "basis": null
   }
  ],
  "manual_overrides": [],
  "run_log": [
+  {
+   "run_id": "20261009T145921Z-e7661a",
+   "ts": "2026-10-09T15:02:47Z",
+   "source": "dune",
+   "tier": 4,
+   "project": "Aerodrome",
+   "rows": 0,
+   "status": "unconfigured",
+   "message": "avg_lock_duration_days: no query_id in config"
+  },
+  {
+   "run_id": "20261009T145921Z-e7661a",
+   "ts": "2026-10-09T15:02:47Z",
+   "source": "dune",
+   "tier": 4,
+   "project": "Aerodrome",
+   "rows": 0,
+   "status": "unconfigured",
+   "message": "actual_buyback_usd: no query_id in config"
+  },
+  {
+   "run_id": "20261009T145921Z-e7661a",
+   "ts": "2026-10-09T15:02:47Z",
+   "source": "dune",
+   "tier": 4,
+   "project": "Aerodrome",
+   "rows": 0,
+   "status": "unconfigured",
+   "message": "actual_buyback_tokens: no query_id in config"
+  },
+  {
+   "run_id": "20261009T145921Z-e7661a",
+   "ts": "2026-10-09T15:02:47Z",
+   "source": "dune",
+   "tier": 4,
+   "project": "Aerodrome",
+   "rows": 0,
+   "status": "unconfigured",
+   "message": "gross_issuance_tokens: no query_id in config"
+  },
+  {
+   "run_id": "20261009T145921Z-e7661a",
+   "ts": "2026-10-09T15:02:47Z",
+   "source": "dune",
+   "tier": 4,
+   "project": "Aerodrome",
+   "rows": 0,
+   "status": "unconfigured",
+   "message": "emissions_tokens: no query_id in config"
+  },
+  {
+   "run_id": "20261009T145921Z-e7661a",
+   "ts": "2026-10-09T15:02:47Z",
+   "source": "derived",
+   "tier": 2,
+   "project": "Aerodrome",
+   "rows": 1,
+   "status": "ok",
+   "message": "avg_lock_duration_days=902.8 \u2014 PROXY, not a measurement: (ve_voting_power_tokens 1,029,488,255 - 990,311,098 permanent) / (ve_locked_supply_tokens 1,053,665,378 - 990,311,098) x 1460 days. Amount-weighted MEAN over the decaying cohort only; no distribution can be read off it."
+  },
+  {
+   "run_id": "20261009T145921Z-e7661a",
+   "ts": "2026-10-09T15:02:46Z",
+   "source": "chain",
+   "tier": 2,
+   "project": "Aerodrome",
+   "rows": 0,
+   "status": "ok",
+   "message": "total_supply component base:token=<redacted>"
+  },
+  {
+   "run_id": "20261009T145921Z-e7661a",
+   "ts": "2026-10-09T15:02:46Z",
+   "source": "chain",
+   "tier": 2,
+   "project": "Aerodrome",
+   "rows": 0,
+   "status": "ok",
+   "message": "locked_tokens component base:ve=992,949,342.2849 (raw 992949342284894776954785939 / 10^18 from 0x940181a94A35A4569E4529A3CDfB74e38FD98631.decimals())"
+  },
+  {
+   "run_id": "20261009T145921Z-e7661a",
+   "ts": "2026-10-09T15:02:46Z",
+   "source": "chain",
+   "tier": 2,
+   "project": "Aerodrome",
+   "rows": 0,
+   "status": "ok",
+   "message": "ve_voting_power_tokens component base:ve_voting_power=1,029,488,254.7738"
+  },
+  {
+   "run_id": "20261009T145921Z-e7661a",
+   "ts": "2026-10-09T15:02:46Z",
+   "source": "chain",
+   "tier": 2,
+   "project": "Aerodrome",
+   "rows": 0,
+   "status": "ok",
+   "message": "ve_locked_supply_tokens component base:ve_locked_supply=1,053,665,377.6093"
+  },
+  {
+   "run_id": "20261009T145921Z-e7661a",
+   "ts": "2026-10-09T15:02:46Z",
+   "source": "chain",
+   "tier": 2,
+   "project": "Aerodrome",
+   "rows": 0,
+   "status": "ok",
+   "message": "permanent_locked_tokens component base:ve_permanent=990,311,097.6837"
+  },
+  {
+   "run_id": "20261009T145921Z-e7661a",
+   "ts": "2026-10-09T15:02:46Z",
+   "source": "chain",
+   "tier": 2,
+   "project": "Aerodrome",
+   "rows": 0,
+   "status": "ok",
+   "message": "gross_issuance_tokens: TAIL MODE \u2014 weekly() 8,969,149.54 is below TAIL_START 8,969,150 and is frozen. Emission computed as totalSupply 1,997,645,621.87 x 21 bps = 4,195,055.81"
+  },
+  {
+   "run_id": "20261009T145921Z-e7661a",
+   "ts": "2026-10-09T15:02:46Z",
+   "source": "chain",
+   "tier": 2,
+   "project": "Aerodrome",
+   "rows": 0,
+   "status": "ok",
+   "message": "gross_issuance_tokens component base:minter=4,195,055.8059"
+  },
+  {
+   "run_id": "20261009T145921Z-e7661a",
+   "ts": "2026-10-09T15:02:46Z",
+   "source": "chain",
+   "tier": 2,
+   "project": "Aerodrome",
+   "rows": 0,
+   "status": "ok",
+   "message": "emissions_tokens component base:rewards_distributor=489,618.3371"
+  },
+  {
+   "run_id": "20261009T145921Z-e7661a",
+   "ts": "2026-10-09T15:02:46Z",
+   "source": "chain",
+   "tier": 2,
+   "project": "Aerodrome",
+   "rows": 0,
+   "status": "ok",
+   "message": "noncirculating_holding_tokens component base:noncirc_foundation_multisig=3,553,489.9749 (raw 3553489974854068028265304 / 10^18 from 0x940181a94A35A4569E4529A3CDfB74e38FD98631.decimals())"
+  },
+  {
+   "run_id": "20261009T145921Z-e7661a",
+   "ts": "2026-10-09T15:02:46Z",
+   "source": "chain",
+   "tier": 2,
+   "project": "Aerodrome",
+   "rows": 0,
+   "status": "ok",
+   "message": "noncirculating_holding_tokens component base:noncirc_public_goods_fund=1,645,684.2901 (raw 1645684290105244550170803 / 10^18 from 0x940181a94A35A4569E4529A3CDfB74e38FD98631.decimals())"
+  },
+  {
+   "run_id": "20261009T145921Z-e7661a",
+   "ts": "2026-10-09T15:02:46Z",
+   "source": "chain",
+   "tier": 2,
+   "project": "Aerodrome",
+   "rows": 0,
+   "status": "ok",
+   "message": "noncirculating_holding_tokens component base:noncirc_airdrop_distributor=0.0000 (raw 995409000000 / 10^18 from 0x940181a94A35A4569E4529A3CDfB74e38FD98631.decimals())"
+  },
+  {
+   "run_id": "20261009T145921Z-e7661a",
+   "ts": "2026-10-09T15:02:46Z",
+   "source": "chain",
+   "tier": 2,
+   "project": "Aerodrome",
+   "rows": 0,
+   "status": "ok",
+   "message": "noncirculating_holding_tokens component base:noncirc_flight_school=2,031,043.4737 (raw 2031043473701150721153864 / 10^18 from 0x940181a94A35A4569E4529A3CDfB74e38FD98631.decimals())"
+  },
+  {
+   "run_id": "20261009T145921Z-e7661a",
+   "ts": "2026-10-09T15:02:46Z",
+   "source": "chain",
+   "tier": 2,
+   "project": "Aerodrome",
+   "rows": 0,
+   "status": "ok",
+   "message": "noncirculating_holding_tokens component base:noncirc_buyback_locked_funds=741.2118 (raw 741211829475078277061 / 10^18 from 0x940181a94A35A4569E4529A3CDfB74e38FD98631.decimals())"
+  },
+  {
+   "run_id": "20261009T145921Z-e7661a",
+   "ts": "2026-10-09T15:02:46Z",
+   "source": "chain",
+   "tier": 2,
+   "project": "Aerodrome",
+   "rows": 0,
+   "status": "ok",
+   "message": "noncirculating_holding_tokens component base:noncirc_tge_incentives=29,262,513.0000 (raw 29262513000000000000000000 / 10^18 from 0x940181a94A35A4569E4529A3CDfB74e38FD98631.decimals())"
+  },
+  {
+   "run_id": "20261009T145921Z-e7661a",
+   "ts": "2026-10-09T15:02:46Z",
+   "source": "chain",
+   "tier": 2,
+   "project": "Aerodrome",
+   "rows": 0,
+   "status": "ok",
+   "message": "noncirculating_holding_tokens component base:noncirc_velodrome_foundation_airdrop=66,383.1837 (raw 66383183684812820750047 / 10^18 from 0x940181a94A35A4569E4529A3CDfB74e38FD98631.decimals())"
+  },
+  {
+   "run_id": "20261009T145921Z-e7661a",
+   "ts": "2026-10-09T15:02:46Z",
+   "source": "chain",
+   "tier": 2,
+   "project": "Aerodrome",
+   "rows": 1,
+   "status": "ok",
+   "message": "total_supply=1,997,645,621.8662"
+  },
+  {
+   "run_id": "20261009T145921Z-e7661a",
+   "ts": "2026-10-09T15:02:46Z",
+   "source": "chain",
+   "tier": 2,
+   "project": "Aerodrome",
+   "rows": 1,
+   "status": "ok",
+   "message": "locked_tokens=992,949,342.2849"
+  },
+  {
+   "run_id": "20261009T145921Z-e7661a",
+   "ts": "2026-10-09T15:02:46Z",
+   "source": "chain",
+   "tier": 2,
+   "project": "Aerodrome",
+   "rows": 1,
+   "status": "ok",
+   "message": "ve_voting_power_tokens=1,029,488,254.7738"
+  },
+  {
+   "run_id": "20261009T145921Z-e7661a",
+   "ts": "2026-10-09T15:02:46Z",
+   "source": "chain",
+   "tier": 2,
+   "project": "Aerodrome",
+   "rows": 1,
+   "status": "ok",
+   "message": "ve_locked_supply_tokens=1,053,665,377.6093"
+  },
+  {
+   "run_id": "20261009T145921Z-e7661a",
+   "ts": "2026-10-09T15:02:46Z",
+   "source": "chain",
+   "tier": 2,
+   "project": "Aerodrome",
+   "rows": 1,
+   "status": "ok",
+   "message": "permanent_locked_tokens=990,311,097.6837"
+  },
+  {
+   "run_id": "20261009T145921Z-e7661a",
+   "ts": "2026-10-09T15:02:46Z",
+   "source": "chain",
+   "tier": 2,
+   "project": "Aerodrome",
+   "rows": 1,
+   "status": "ok",
+   "message": "gross_issuance_tokens=4,195,055.8059"
+  },
+  {
+   "run_id": "20261009T145921Z-e7661a",
+   "ts": "2026-10-09T15:02:46Z",
+   "source": "chain",
+   "tier": 2,
+   "project": "Aerodrome",
+   "rows": 1,
+   "status": "ok",
+   "message": "emissions_tokens=489,618.3371"
+  },
+  {
+   "run_id": "20261009T145921Z-e7661a",
+   "ts": "2026-10-09T15:02:46Z",
+   "source": "chain",
+   "tier": 2,
+   "project": "Aerodrome",
+   "rows": 1,
+   "status": "ok",
+   "message": "noncirculating_holding_tokens=36,559,855.1342 from 7 components: base:noncirc_foundation_multisig 3,553,489.9749 + base:noncirc_public_goods_fund 1,645,684.2901 + base:noncirc_airdrop_distributor 0.0000 + base:noncirc_flight_school 2,031,043.4737 + base:noncirc_buyback_locked_funds 741.2118 + base:noncirc_tge_incentives 29,262,513.0000 + base:noncirc_velodrome_foundation_airdrop 66,383.1837"
+  },
+  {
+   "run_id": "20261009T145921Z-e7661a",
+   "ts": "2026-10-09T15:02:46Z",
+   "source": "xref",
+   "tier": 1,
+   "project": "Aerodrome",
+   "rows": 0,
+   "status": "skipped",
+   "message": "price_usd_coinbase: AERO-USD read today already"
+  },
+  {
+   "run_id": "20261009T145921Z-e7661a",
+   "ts": "2026-10-09T15:02:46Z",
+   "source": "xref",
+   "tier": 1,
+   "project": "Aerodrome",
+   "rows": 0,
+   "status": "skipped",
+   "message": "price_usd_llama: read today already"
+  },
+  {
+   "run_id": "20261009T145921Z-e7661a",
+   "ts": "2026-10-09T15:02:46Z",
+   "source": "ve_managed",
+   "tier": 2,
+   "project": "Aerodrome",
+   "rows": 0,
+   "status": "skipped",
+   "message": "filing_managed_lock_tokens: read today already"
+  },
+  {
+   "run_id": "20261009T145921Z-e7661a",
+   "ts": "2026-10-09T15:02:46Z",
+   "source": "aero_voter",
+   "tier": 2,
+   "project": "Aerodrome",
+   "rows": 0,
+   "status": "skipped",
+   "message": "voter_total_weight_tokens: read today already"
+  },
+  {
+   "run_id": "20261009T145921Z-e7661a",
+   "ts": "2026-10-09T15:02:45Z",
+   "source": "defillama",
+   "tier": 1,
+   "project": "Aerodrome",
+   "rows": 0,
+   "status": "skipped",
+   "message": "fees_usd: DefiLlama read complete through 2026-10-08 earlier today (2026-10-09) \u2014 its endpoints serve full history only, so not re-downloaded until tomorrow"
+  },
+  {
+   "run_id": "20261009T145921Z-e7661a",
+   "ts": "2026-10-09T15:02:45Z",
+   "source": "defillama",
+   "tier": 1,
+   "project": "Aerodrome",
+   "rows": 0,
+   "status": "skipped",
+   "message": "holders_revenue_usd: DefiLlama read complete through 2026-10-08 earlier today (2026-10-09) \u2014 its endpoints serve full history only, so not re-downloaded until tomorrow"
+  },
+  {
+   "run_id": "20261009T145921Z-e7661a",
+   "ts": "2026-10-09T15:02:45Z",
+   "source": "defillama",
+   "tier": 1,
+   "project": "Aerodrome",
+   "rows": 0,
+   "status": "skipped",
+   "message": "protocol_tvl_usd: DefiLlama read complete through 2026-10-08 earlier today (2026-10-09) \u2014 its endpoints serve full history only, so not re-downloaded until tomorrow"
+  },
+  {
+   "run_id": "20261009T145921Z-e7661a",
+   "ts": "2026-10-09T15:02:45Z",
+   "source": "defillama",
+   "tier": 1,
+   "project": "Aerodrome",
+   "rows": 0,
+   "status": "skipped",
+   "message": "revenue_usd: DefiLlama read complete through 2026-10-08 earlier today (2026-10-09) \u2014 its endpoints serve full history only, so not re-downloaded until tomorrow"
+  },
+  {
+   "run_id": "20261009T145921Z-e7661a",
+   "ts": "2026-10-09T15:02:45Z",
+   "source": "coingecko",
+   "tier": 1,
+   "project": "Aerodrome",
+   "rows": 3,
+   "status": "ok",
+   "message": "aerodrome-finance:price"
+  },
+  {
+   "run_id": "20261009T145921Z-e7661a",
+   "ts": "2026-10-09T15:02:45Z",
+   "source": "coingecko",
+   "tier": 1,
+   "project": "Aerodrome",
+   "rows": 3,
+   "status": "ok",
+   "message": "aerodrome-finance:market cap"
+  },
+  {
+   "run_id": "20261009T145921Z-e7661a",
+   "ts": "2026-10-09T15:02:45Z",
+   "source": "coingecko",
+   "tier": 1,
+   "project": "Aerodrome",
+   "rows": 3,
+   "status": "ok",
+   "message": "aerodrome-finance:volume"
+  },
+  {
+   "run_id": "20261009T145921Z-e7661a",
+   "ts": "2026-10-09T15:02:45Z",
+   "source": "coingecko",
+   "tier": 1,
+   "project": "Aerodrome",
+   "rows": 3,
+   "status": "ok",
+   "message": "aerodrome-finance:implied supply"
+  },
+  {
+   "run_id": "20261009T145921Z-e7661a",
+   "ts": "2026-10-09T15:02:45Z",
+   "source": "coingecko",
+   "tier": 1,
+   "project": "Aerodrome",
+   "rows": 3,
+   "status": "ok",
+   "message": "aerodrome-finance:supply/fdv (batched /coins/markets)"
+  },
+  {
+   "run_id": "20261009T145921Z-e7661a",
+   "ts": "2026-10-09T15:02:45Z",
+   "source": "coingecko",
+   "tier": 1,
+   "project": "Aerodrome",
+   "rows": 0,
+   "status": "skipped",
+   "message": "volume_usd: the row dated 2026-10-09 is TODAY and was NOT STORED. A daily flow from this provider is published from the moment the day starts and is near-empty rather than proportional, so it would sit inside every trailing-window figure until the next run. The window is trailing, so tomorrow's run fetches this day complete."
+  },
   {
    "run_id": "20261009T143337Z-34d3a3",
    "ts": "2026-10-09T14:37:12Z",
@@ -74530,8 +74975,8 @@
  ],
  "gap_report": [
   {
-   "run_id": "20261009T143337Z-34d3a3",
-   "ts": "2026-10-09T14:37:12Z",
+   "run_id": "20261009T145921Z-e7661a",
+   "ts": "2026-10-09T15:02:47Z",
    "project": "Aerodrome",
    "metric": "voter_rewards_onchain_apr",
    "tiers_attempted": "2",
@@ -74541,8 +74986,8 @@
    "priority_label": "P6 uncovered"
   },
   {
-   "run_id": "20261009T143337Z-34d3a3",
-   "ts": "2026-10-09T14:37:12Z",
+   "run_id": "20261009T145921Z-e7661a",
+   "ts": "2026-10-09T15:02:47Z",
    "project": "Aerodrome",
    "metric": "voter_rewards_onchain_bribes_usd",
    "tiers_attempted": "2",
@@ -74552,8 +74997,8 @@
    "priority_label": "P6 uncovered"
   },
   {
-   "run_id": "20261009T143337Z-34d3a3",
-   "ts": "2026-10-09T14:37:12Z",
+   "run_id": "20261009T145921Z-e7661a",
+   "ts": "2026-10-09T15:02:47Z",
    "project": "Aerodrome",
    "metric": "voter_rewards_onchain_fees_usd",
    "tiers_attempted": "2",
@@ -74563,8 +75008,8 @@
    "priority_label": "P6 uncovered"
   },
   {
-   "run_id": "20261009T143337Z-34d3a3",
-   "ts": "2026-10-09T14:37:12Z",
+   "run_id": "20261009T145921Z-e7661a",
+   "ts": "2026-10-09T15:02:47Z",
    "project": "Aerodrome",
    "metric": "voter_rewards_onchain_usd",
    "tiers_attempted": "2",
@@ -74574,8 +75019,8 @@
    "priority_label": "P6 uncovered"
   },
   {
-   "run_id": "20261009T143337Z-34d3a3",
-   "ts": "2026-10-09T14:37:12Z",
+   "run_id": "20261009T145921Z-e7661a",
+   "ts": "2026-10-09T15:02:47Z",
    "project": "Aerodrome",
    "metric": "voter_rewards_unpriced_count",
    "tiers_attempted": "2",
