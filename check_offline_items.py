@@ -8656,9 +8656,27 @@ def pendle_epoch_table():
             lagtxt = "" if r["lag_days"] is None else f" ({r['lag_days']:+d} days after the end)"
             print(f"    epoch {r['epoch'].date()} (ended {r['end'].date()}): first read {r['first_read']:%Y-%m-%d %H:%M}; "
                   f"read 0 first {z}; first NON-ZERO {nz}{lagtxt}")
+    # JAKE'S 1c DECISION: the calibrated on-chain rebuild of virtual sPENDLE before the API's history — the same
+    # computation the headline and the Credibility rows use
+    src = {}
+    try:
+        c2 = sqlite3.connect("metrics.db")
+        src = {pd.Timestamp(d): s for d, s in c2.execute("SELECT date, source FROM metrics WHERE project='Pendle' AND "
+                                                          "metric='vependle_voting_supply_tokens'").fetchall()}
+        c2.close()
+    except Exception:  # noqa: BLE001
+        pass
+    cal = cred.virtual_rebuild(ser.get("vependle_voting_supply_tokens", empty), src,
+                               ser.get("locked_tokens_virtual", empty))
+    if cal:
+        print(f"  CALIBRATION: {cal['label']}")
+        print("    " + ", ".join(f"{d:%m-%d} {r:.4f}" for d, _b, _a, r in cal["days"])
+              + (f"; DRIFT beyond 0.5pp: {', '.join(f'{d:%m-%d} {r:.4f}' for d, r in cal['drift'])} — rebuilt epochs "
+                 f"read CHECK" if cal["drift"] else "; no drift"))
     tab = cred.epoch_apr_table(ser.get("pendle_distributed_tokens", empty), ser.get("pendle_epoch_apr_published", empty),
                                {m: ser.get(m, empty) for m in ("locked_tokens_shares", "locked_tokens_virtual")},
-                               q0s, q0e, 14, 7, lag)
+                               q0s, q0e, 14, 7, lag,
+                               fallback={"locked_tokens_virtual": (cal["calibrated"], cal["label"])} if cal else None)
     f = 365.25 / 14
     fmt = lambda x, p=0: "—" if x is None else f"{x:,.{p}f}"                # noqa: E731
     pct = lambda x: "—" if x is None else f"{x:.2%}"                         # noqa: E731
@@ -8682,10 +8700,12 @@ def pendle_epoch_table():
         if hl is None:
             print("\n  HEADLINE: not formed — an epoch has neither our stake nor Pendle's APR")
         else:
-            n_ours = sum(1 for r in tab if r["source"] == "ours")
+            from collections import Counter                # noqa: PLC0415
+            n_by = Counter(r["source"] for r in tab if r["source"] != "unpublished")
             print(f"\n  HEADLINE = mean of the {hl[1]} per-epoch APRs (each over its own stake): "
-                  f"{hl[0]:.2%} — {n_ours} ours, {hl[1] - n_ours} Pendle's published "
-                  f"(DOCUMENTED LIMITATION while any: virtual sPENDLE history starts 2026-09-11)")
+                  f"{hl[0]:.2%} — " + ", ".join(f"{n} {s}" for s, n in n_by.items())
+                  + (" (DOCUMENTED LIMITATION while any calibrated or published epoch is in the window)"
+                     if set(n_by) - {"ours"} else ""))
         mine = [r for r in tab if r["source"] == "ours" and r["published"] is not None]
         if mine:
             print(f"  OVER THE EPOCHS WE COMPUTE: ours {sum(r['apr'] for r in mine) / len(mine):.2%} vs Pendle's "

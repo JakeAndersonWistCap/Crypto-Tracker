@@ -18366,12 +18366,22 @@ PROTOCOL_YIELD = {
                                "epoch_mean": {"metric": "token_yield_epoch_mean_pct",
                                               "published": "pendle_epoch_apr_published",
                                               "stock": "locked_tokens_shares", "plus": ("locked_tokens_virtual",),
-                                              "after_days": 7},
+                                              "after_days": 7,
+                                              # JAKE'S 1c DECISION (2026-10-09): before the API's virtual sPENDLE
+                                              # history, the on-chain rebuild (active locked + 3 x vePENDLE supply,
+                                              # expired locks removed) x the mean API/rebuild ratio; a day more than
+                                              # 0.5 percentage points off that mean puts the rebuilt epochs on CHECK.
+                                              "calibrate": {"ve": "vependle_voting_supply_tokens",
+                                                            "api": "locked_tokens_virtual",
+                                                            "max_lock_days": 728, "drift_pp": 0.5}},
                                "note": "TOKEN YIELD — the MEAN of the Q0 per-epoch APRs, each over its own stake: "
-                                       "OURS (PENDLE distributed x 365.25/14 / (sPENDLE + virtual sPENDLE) at the "
-                                       "epoch) where our stake exists, PENDLE'S PUBLISHED APR for that epoch before "
-                                       "virtual sPENDLE history starts (~2026-09-11). The cell's source names each "
-                                       "epoch's source; pendle_epoch_table prints them. Airdrops (in kind) excluded.",
+                                       "PENDLE distributed x 365.25/14 / (sPENDLE + virtual sPENDLE) at the epoch, over "
+                                       "every Q0 epoch with a published distribution (a 0 inside Pendle's publish lag "
+                                       "is left out). Virtual sPENDLE is Pendle's API where it has a value (from "
+                                       "2026-09-29), before that the CALIBRATED ON-CHAIN REBUILD (active locked + 3 x "
+                                       "vePENDLE supply x the API/rebuild ratio, Jake's 1c decision) — a documented "
+                                       "limitation, calibrated, not first-party. The cell's source names each epoch's "
+                                       "stake; pendle_epoch_table prints them. Airdrops (in kind) excluded.",
                                "published_apr_metric": "staking_apr_published",
                                "was": "actual_buyback_tokens (holders revenue / same-day price)",
                                "cross_check": "~2.68M PENDLE distributed Feb -> late Sep 2026 "
@@ -23787,7 +23797,7 @@ def _c_chk(why: str, resolve: str) -> dict:
 _PENDLE_EPOCH = {"tokens": 82_545, "date": "2026-09-08", "stock": "locked_tokens_shares", "plus": ("locked_tokens_virtual",),
                  # virtual sPENDLE is API-only and its series starts after 2026-09-08: the first reading within 7 days
                  # after the epoch is used, by BOTH sides (the arithmetic is the same, so it cancels in the verdict)
-                 "after_days": 7,
+                 "after_days": 7, "calibrate": True,   # Jake's 1c decision: the calibrated rebuild before the API
                         "mult": 26, "read_by": "Jake", "source": "Pendle staking page 'Last Epoch Distribution', read "
                                                                  "2026-09-29"}
 
@@ -25086,12 +25096,16 @@ CREDIBILITY: dict = {
         # epoch's own stake). Judged by the per-epoch match on every epoch we compute (5%) and the mean over those
         # epochs (5%); the epochs on Pendle's APR make it a DOCUMENTED LIMITATION, which lapses by itself once our
         # stake covers every Q0 epoch (in_epochs_first_party).
-        "a3_protocol_yield": {"inputs": ("in_epoch_reproduction", "in_epoch_mean", "in_epochs_first_party"),
+        # JAKE'S 1c DECISION (2026-10-09): the headline is the mean of the per-epoch APRs over every Q0 epoch with a
+        # published distribution, virtual sPENDLE from the calibrated on-chain rebuild before the API's history.
+        # Judged by Jake's own reading of an epoch (in_epoch_apr) and the calibration (in_epochs_first_party).
+        "a3_protocol_yield": {"inputs": ("in_epoch_apr", "in_epoch_reproduction", "in_epoch_mean",
+                                         "in_epochs_first_party"),
                               "source": "the per-epoch rows below: ours vs Pendle's published APR, epoch by epoch",
-                              "why": "The headline is the mean of the Q0 per-epoch APRs, each over its own stake: ours "
-                                     "where our stake exists, Pendle's published APR before virtual sPENDLE history "
-                                     "starts (~2026-09-11). Judged epoch for epoch, never one average against one "
-                                     "epoch. ON-CHAIN ROUTE NOT IDENTIFIED: merkleDistributor 0x33305665… funding "
+                              "why": "The headline is the mean of the per-epoch APRs over every Q0 epoch with a "
+                                     "published distribution, each over its own stake; before the API's virtual sPENDLE "
+                                     "history the stake is the calibrated on-chain rebuild (Jake's 1c decision, "
+                                     "2026-10-09). Judged by Jake's reading of an epoch and the calibration. ON-CHAIN ROUTE NOT IDENTIFIED: merkleDistributor 0x33305665… funding "
                                      "(249,852 PENDLE over 120 days, from EOAs) matches none of the epochs (144K/199K/"
                                      "94K/140K/83K). Pendle's APR (spendle/data) is the same API as ours, and NO OTHER "
                                      "ENDPOINT exists (Jake's probes15, root M: pendle-finance/documentation "
@@ -25103,45 +25117,55 @@ CREDIBILITY: dict = {
         "in_epoch_reproduction": _c_in_py(
             "Per-epoch APR, our arithmetic (distributed x 365.25/14 / (sPENDLE + virtual)) — the worst Q0 epoch",
             "epoch_reproduction", {"side": "ours"},
-            {"formula": "epoch_reproduction", "args": {"side": "ref"}, "tol": 5.0, "show_how": True,
+            {"verdict_when": {"py": "published_epoch_aprs", "args": {}, "otherwise": _c_lim("Pendle publishes no per-epoch APR: sPendleHistoricalData.aprs reads 0 for every complete epoch, so "
+                   "there is nothing to set our per-epoch APRs against.",
+                   "run log 2026-10-09: 'no complete epoch with an APR above 0'; pendle_epoch_apr_published holds no row",
+                   "Pendle's API serving non-zero aprs — the row then compares by itself"),
+                              "positive": {
+             "formula": "epoch_reproduction", "args": {"side": "ref"}, "tol": 5.0, "show_how": True,
              "source": "Pendle's own APR for the same epoch (spendle/data sPendleHistoricalData.aprs)",
              "note": "The epoch where ours and Pendle's differ most is judged; every comparable Q0 epoch is listed. "
                      "An epoch with no stake of ours (virtual sPENDLE is API-only, its history starts 2026-09) is "
-                     "named and not judged — the headline takes Pendle's APR there (in_epochs_first_party)."},
+                     "named and not judged — the headline takes Pendle's APR there (in_epochs_first_party)."}}},
             fmt=_C_PCT),
         # OVER THE EPOCHS WE COMPUTE OURSELVES (Jake's 5c decision): the mean of our per-epoch APRs vs the mean of
         # Pendle's published APRs for the same epochs, 5%.
         "in_epoch_mean": _c_in_py(
             "Mean of OUR per-epoch APRs (the epochs we compute) vs Pendle's published APRs for the same epochs",
             "epoch_mean_check", {"side": "ours"},
-            {"formula": "epoch_mean_check", "args": {"side": "ref"}, "tol": 5.0, "show_how": True,
-             "source": "Pendle's published APRs for the same epochs (pendle_epoch_table prints them)"}, fmt=_C_PCT),
-        # THE EPOCHS ON PENDLE'S APR, A DOCUMENTED LIMITATION WHILE THERE ARE ANY (ours = how many). verdict_when: the
-        # limitation lapses to N/A by itself once our stake covers every Q0 epoch (~2026-12-10), never by a new date.
+            {"verdict_when": {"py": "published_epoch_aprs", "args": {}, "otherwise": _c_lim("Pendle publishes no per-epoch APR: sPendleHistoricalData.aprs reads 0 for every complete epoch, so "
+                   "there is nothing to set our per-epoch APRs against.",
+                   "run log 2026-10-09: 'no complete epoch with an APR above 0'; pendle_epoch_apr_published holds no row",
+                   "Pendle's API serving non-zero aprs — the row then compares by itself"),
+                              "positive": {
+             "formula": "epoch_mean_check", "args": {"side": "ref"}, "tol": 5.0, "show_how": True,
+             "source": "Pendle's published APRs for the same epochs (pendle_epoch_table prints them)"}}}, fmt=_C_PCT),
+        # THE EPOCHS ON THE CALIBRATED ON-CHAIN REBUILD (Jake's 1c decision, 2026-10-09; ours = how many). A DOCUMENTED
+        # LIMITATION while any is in Q0 (calibrated, not first-party); CHECK when the API/rebuild ratio moves more than 0.5
+        # percentage points from the calibration on any API day, or an epoch has no APR; N/A once every Q0 epoch is on the
+        # API's own virtual sPENDLE (~2026-12-28, 90 days after its first reading).
         "in_epochs_first_party": _c_in_py(
-            "Q0 epochs where the headline uses Pendle's published APR (no virtual sPENDLE history of ours)",
+            "Q0 epochs whose virtual sPENDLE is the calibrated on-chain rebuild (before the API's history)",
             "epochs_first_party", {},
             {"verdict_when": {"py": "epochs_first_party", "args": {},
                               "positive": _c_lim(
-                                  "first-party APR only, virtual sPENDLE history starts 2026-09-11: for the Q0 epochs "
-                                  "before it the headline uses Pendle's published APR for that epoch, which embeds the "
-                                  "epoch's own stake.",
-                                  "virtual sPENDLE (virtualSpendleFromVependle) is served only by Pendle's spendle/data "
-                                  "API, with no history parameter and no on-chain getter, so the reward-bearing stake "
-                                  "at earlier epochs cannot be rebuilt (Jake's 5c decision, 2026-10-09).",
-                                  "our virtual sPENDLE readings covering every Q0 epoch (~2026-12-10) — the row "
-                                  "then lapses to N/A by itself"),
-                              # NO APR AT ALL (Jake's run 2026-10-09 11:41, 1a/1c): Pendle's per-epoch aprs read 0 for
-                              # every complete epoch, and the on-chain rebuild of virtual sPENDLE is outside 1%.
+                                  "calibrated, not first-party: for Q0 epochs before Pendle's API history (stored from "
+                                  "2026-09-29) the stake is not Pendle's own — virtual sPENDLE is our on-chain rebuild — "
+                                  "active locked (vePENDLE supply decay x 104 weeks, expired locks out) + 3 x vePENDLE "
+                                  "supply — multiplied by the mean API/rebuild ratio over every day both exist (Pendle's "
+                                  "published APR only for an epoch with no rebuild). The working gives the ratio, its "
+                                  "range and every day.",
+                                  "Pendle's API serves virtualSpendleFromVependle with no history; its per-epoch aprs "
+                                  "read 0; the uncalibrated rebuild sits +1.4% above the API (pendle_virtual_rebuild).",
+                                  "the API's own readings covering every Q0 epoch (~2026-12-28) — the row then lapses to "
+                                  "N/A by itself"),
                               "negative": _c_chk(
-                                  "Q0 epochs with neither our stake nor Pendle's APR: virtual sPENDLE is stored from "
-                                  "2026-09-29 only; sPendleHistoricalData.aprs reads 0 for every complete epoch (run log "
-                                  "2026-10-09), so the published fallback is empty; the on-chain rebuild (locked + 3 x "
-                                  "vePENDLE supply) is +2.5%, +1.4% without expired locks — outside the 1% rule.",
-                                  "python check_offline_items.py pendle_virtual_rebuild (daily table); Jake's decision "
-                                  "on the rebuild"),
+                                  "The rebuilt epochs cannot be used: the API/rebuild ratio moved more than 0.5 "
+                                  "percentage points from the calibration on an API day, or a Q0 epoch has no APR at all "
+                                  "— the working names which.",
+                                  "python check_offline_items.py pendle_virtual_rebuild (daily table)"),
                               "otherwise": {"verdict": "N/A",
-                                            "why": "every Q0 epoch's APR is ours (our stake exists at each)."}}},
+                                            "why": "every Q0 epoch's virtual sPENDLE is Pendle's own (the API)."}}},
             fmt="0"),
         "in_epoch_apr": _c_in_py("APR of the epoch of 2026-09-08: OUR distribution x 26 / (sPENDLE + virtual) that day",
                                  "epoch_apr", {**_PENDLE_EPOCH, "ours_metric": "pendle_distributed_tokens"},

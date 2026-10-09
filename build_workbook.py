@@ -4174,8 +4174,18 @@ def _epoch_mean_views(groups: dict, asof: pd.Timestamp) -> None:
         stakes = {m: s(m) for m in (em["stock"], *em["plus"])}
         lag, _ = cred.epoch_publish_lag(name, ty["tokens"], int(ty["epoch_days"]))
         lo, hi = cred._q0(asof)
+        # BEFORE THE API'S HISTORY: the calibrated on-chain rebuild of virtual sPENDLE (Jake's 1c decision, 2026-10-09)
+        fb, cs = None, em.get("calibrate")
+        if cs:
+            gv = groups.get((name, cs["ve"]))
+            src = ({} if gv is None or gv.empty else
+                   dict(zip(pd.to_datetime(gv["date"]).dt.normalize(), gv["source"].astype(str))))
+            cal = cred.virtual_rebuild(s(cs["ve"]), src, s(cs["api"]), int(cs.get("max_lock_days", 728)),
+                                       float(cs.get("drift_pp", 0.5)) / 100.0)
+            if cal:
+                fb = {cs["api"]: (cal["calibrated"], cal["label"])}
         tab = cred.epoch_apr_table(s(ty["tokens"]), s(em["published"]), stakes, lo, hi, int(ty["epoch_days"]),
-                                   int(em.get("after_days", 7)), lag)
+                                   int(em.get("after_days", 7)), lag, fallback=fb)
         got = cred.epoch_headline(tab)
         if got is None:
             continue

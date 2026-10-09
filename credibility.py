@@ -690,14 +690,57 @@ def epoch_publish_lag(project: str, metric: str = "pendle_distributed_tokens", e
     return out
 
 
+def virtual_rebuild(ve, ve_src: dict, api, max_lock_days: int = 728, drift: float = 0.005) -> dict | None:
+    """VIRTUAL sPENDLE REBUILT ON-CHAIN, CALIBRATED TO PENDLE'S API (Jake's 1c decision, 2026-10-09). Pendle's method per
+    lock: virtual = locked x (1 + 3 x remaining/2y), vePENDLE balance = locked x remaining/2y; summed over ACTIVE locks,
+    virtual = active locked + 3 x vePENDLE supply. Active locked is the supply's own decay: a day's fall in vePENDLE
+    totalSupply x max_lock_days (104 weeks) — an expired lock no longer decays, so it drops out. A decay is taken only
+    between consecutive days read at the same measuring point (archive with archive, live with live); a day without one
+    carries the last good decay (the slope is constant until locks expire).
+
+    CALIBRATION: the mean of API / rebuild over every day both exist; the rebuild x that ratio is the stake used for
+    epochs before the API's history. DRIFT: any API day whose ratio is more than `drift` (0.005 = 0.5 percentage
+    points) from the mean — the rebuilt epochs then read CHECK. None when there is no overlap to calibrate on."""
+    if ve is None or ve.empty or api is None or api.empty:
+        return None
+    ve = ve.sort_index()
+    mp = lambda d: "archive" if ":archive" in str(ve_src.get(d, "")) else "live"            # noqa: E731
+    rebuilt, active, last = {}, {}, None
+    for prev, d in zip(ve.index[:-1], ve.index[1:]):
+        if (d - prev).days == 1 and mp(d) == mp(prev):
+            dec = float(ve.loc[prev]) - float(ve.loc[d])
+            if dec > 0:
+                last = dec
+        if last is not None:
+            active[d] = last * int(max_lock_days)
+            rebuilt[d] = active[d] + 3 * float(ve.loc[d])
+    rb = pd.Series(rebuilt, dtype=float).sort_index()
+    days = [(d, float(rb.loc[d]), float(api.loc[d]), float(api.loc[d]) / float(rb.loc[d]))
+            for d in api.index if d in rb.index and rb.loc[d]]
+    if not days:
+        return None
+    ratios = [r for *_x, r in days]
+    mean = sum(ratios) / len(ratios)
+    out = {"rebuilt": rb, "active": pd.Series(active, dtype=float).sort_index(), "ratio": mean,
+           "lo": min(ratios), "hi": max(ratios), "days": days,
+           "drift": [(d, r) for d, _b, _a, r in days if abs(r - mean) > drift], "drift_limit": drift,
+           "calibrated": rb * mean}
+    out["label"] = (f"calibrated on-chain rebuild (x {mean:.4f} = API/rebuild mean over {len(days)} day(s) "
+                    f"{days[0][0].date()}..{days[-1][0].date()}, range {out['lo']:.4f}..{out['hi']:.4f})")
+    return out
+
+
 def epoch_apr_table(dist, published, stakes: dict, lo, hi, epoch_days=14, after_days=7, lag_days=None,
-                    zero_rule=True) -> list[dict]:
+                    zero_rule=True, fallback: dict | None = None) -> list[dict]:
     """THE PER-EPOCH APRs BEHIND PENDLE'S HEADLINE (Jake's 5c decision, 2026-10-09). For every epoch in (lo, hi]: OUR APR
     = distributed x 365.25/epoch_days / the summed stakes (each on or before the epoch's start, else within after_days
     after) wherever every stake exists; otherwise PENDLE'S PUBLISHED APR for that epoch (first-party, it embeds the
     epoch's own stake — virtual sPENDLE is API-only and its history starts ~2026-09-11). One function for the headline
     view, the Credibility rows and pendle_epoch_table. Rows: {date, tokens, stake, apr, source, published}; source is
-    "ours", "Pendle published", "unpublished" or None (neither: the epoch has no APR).
+    "ours", "calibrated on-chain rebuild", "Pendle published", "unpublished" or None (neither: the epoch has no APR).
+    `fallback` {metric: (series, label)} supplies a stake part missing from `stakes` (on or before the epoch's day,
+    within 1 day) — Pendle's virtual sPENDLE before the API's history (Jake's 1c decision); it comes before Pendle's
+    published APR.
 
     A 0 IS NOT YET PUBLISHED (Jake's run 2026-10-09, 5b): an epoch read at 0 PENDLE is "unpublished" — no APR, left
     out of the mean — until Pendle's observed publish lag (`lag_days`, epoch_publish_lag) has passed since the epoch
@@ -712,18 +755,25 @@ def epoch_apr_table(dist, published, stakes: dict, lo, hi, epoch_days=14, after_
                                              else f"0 read; within Pendle's observed {int(lag_days)}-day publish lag "
                                                   f"(ended {(day + pd.Timedelta(days=int(epoch_days))).date()})")})
             continue
-        parts = []
-        for sr in stakes.values():
-            if sr is None or sr.empty:
-                parts.append(None)
-                continue
-            b = sr[sr.index <= day]
-            a = sr[(sr.index > day) & (sr.index <= day + pd.Timedelta(days=int(after_days)))]
-            parts.append(float(b.iloc[-1]) if len(b) else (float(a.iloc[0]) if len(a) else None))
+        parts, used_fb = [], None
+        for m, sr in stakes.items():
+            got = None
+            if sr is not None and not sr.empty:
+                b = sr[sr.index <= day]
+                a = sr[(sr.index > day) & (sr.index <= day + pd.Timedelta(days=int(after_days)))]
+                got = float(b.iloc[-1]) if len(b) else (float(a.iloc[0]) if len(a) else None)
+            if got is None and fallback and m in fallback:
+                # BEFORE THE API'S HISTORY (Jake's 1c decision): the calibrated on-chain rebuild on the epoch's day
+                fs, label = fallback[m]
+                fb = fs[fs.index <= day] if fs is not None else None
+                if fb is not None and len(fb) and (day - fb.index[-1]).days <= 1:
+                    got, used_fb = float(fb.iloc[-1]), label
+            parts.append(got)
         pub = float(published.loc[day]) if published is not None and day in published.index else None
         if all(x is not None for x in parts) and sum(parts):
             stake = sum(parts)
-            out.append({"date": day, "tokens": float(tokens), "stake": stake, "published": pub, "source": "ours",
+            out.append({"date": day, "tokens": float(tokens), "stake": stake, "published": pub,
+                        "source": "calibrated on-chain rebuild" if used_fb else "ours", "stake_note": used_fb,
                         "apr": float(tokens) * 365.25 / float(epoch_days) / stake})
         else:
             out.append({"date": day, "tokens": float(tokens), "stake": None, "published": pub,
@@ -744,11 +794,28 @@ def epoch_headline(tab: list[dict]):
     return v, len(use), text
 
 
+def pendle_calibration(p, long):
+    """The calibrated virtual rebuild for project `p` from config (token_yield.epoch_mean.calibrate), or None."""
+    cal = ((((config.PROTOCOL_YIELD.get(p) or {}).get("token_yield") or {}).get("epoch_mean") or {})
+           .get("calibrate"))
+    if not cal or long is None or long.empty:
+        return None
+    g = long[(long.project == p) & (long.metric == cal["ve"])]
+    src = (dict(zip(pd.to_datetime(g["date"]).dt.normalize(), g["source"].astype(str)))
+           if "source" in g.columns else {})
+    return virtual_rebuild(_series(long, p, cal["ve"]), src, _series(long, p, cal["api"]),
+                           int(cal.get("max_lock_days", 728)), float(cal.get("drift_pp", 0.5)) / 100.0)
+
+
 def _pendle_epochs(p, long, asof, dist, published, stock, plus, epoch_days, after_days):
     lo, hi = _q0(asof)
     lag, _ = epoch_publish_lag(p, dist, epoch_days)
+    cal = pendle_calibration(p, long)
+    api = (((config.PROTOCOL_YIELD.get(p) or {}).get("token_yield") or {}).get("epoch_mean") or {}).get("calibrate", {})
+    fb = {api["api"]: (cal["calibrated"], cal["label"])} if cal and api else None
     return epoch_apr_table(_series(long, p, dist), _series(long, p, published),
-                           {m: _series(long, p, m) for m in (stock, *plus)}, lo, hi, epoch_days, after_days, lag)
+                           {m: _series(long, p, m) for m in (stock, *plus)}, lo, hi, epoch_days, after_days, lag,
+                           fallback=fb)
 
 
 def _epoch_mean_check(p, rows, long, asof, dist="pendle_distributed_tokens", published="pendle_epoch_apr_published",
@@ -771,32 +838,61 @@ def _epoch_mean_check(p, rows, long, asof, dist="pendle_distributed_tokens", pub
 def _epochs_first_party(p, rows, long, asof, dist="pendle_distributed_tokens", published="pendle_epoch_apr_published",
                         stock="locked_tokens_shares", plus=("locked_tokens_virtual",), epoch_days=14, after_days=7,
                         **_):
-    """How many Q0 epochs the headline takes from Pendle's published APR (no stake of ours at them), with the table."""
+    """THE Q0 EPOCHS WHOSE STAKE IS THE CALIBRATED ON-CHAIN REBUILD (Jake's 1c decision, 2026-10-09), with the table.
+    > 0: that many epochs, the calibration holding — a DOCUMENTED LIMITATION (calibrated, not first-party).
+    < 0: the rebuilt epochs cannot be used — the ratio drifted more than the limit on an API day, or an epoch has no
+         APR at all — a CHECK. 0: every Q0 epoch is on Pendle's own virtual sPENDLE (the API)."""
     tab = _pendle_epochs(p, long, asof, dist, published, stock, plus, epoch_days, after_days)
     if not tab:
         return None, None, "no Q0 epoch stored"
+    cal = pendle_calibration(p, long)
+    rebuilt = [r for r in tab if r["source"] == "calibrated on-chain rebuild"]
     first = [r for r in tab if r["source"] == "Pendle published"]
     none_ = [r for r in tab if r["source"] is None]
-    how = ("per epoch: " + "; ".join(f"{r['date'].date()} {r['apr']:.3%} ({r['source']})" if r["apr"] is not None
-                                     else f"{r['date'].date()} UNPUBLISHED ({r['why']}), left out of the mean"
-                                     if r["source"] == "unpublished" else f"{r['date'].date()} NO APR" for r in tab))
-    if none_:
-        # NEGATIVE = EPOCHS WITH NO APR AT ALL (Jake's run 2026-10-09 11:41, 1a: Pendle's per-epoch aprs read 0, so the
-        # fallback is empty): the headline is not formed — a CHECK, never "every epoch is ours".
-        how += f". {len(none_)} epoch(s) have neither our stake nor Pendle's APR — the headline is not formed"
-        return -float(len(none_)), str(tab[-1]["date"].date()), how
-    return float(len(first)), str(tab[-1]["date"].date()), how
+    how = ("per epoch: " + "; ".join(
+        f"{r['date'].date()} {r['tokens']:,.0f} PENDLE / {r['stake']:,.0f} = {r['apr']:.3%} ({r['source']})"
+        if r["apr"] is not None and r["stake"] else f"{r['date'].date()} {r['apr']:.3%} ({r['source']})"
+        if r["apr"] is not None else f"{r['date'].date()} UNPUBLISHED ({r['why']}), left out of the mean"
+        if r["source"] == "unpublished" else f"{r['date'].date()} NO APR" for r in tab))
+    if cal:
+        how += (f". CALIBRATION: {cal['label']}; every API day: "
+                + ", ".join(f"{d:%m-%d} {r:.4f}" for d, _b, _a, r in cal["days"]))
+        if cal["drift"]:
+            how += (f". DRIFT beyond {cal['drift_limit']:.1%}: "
+                    + ", ".join(f"{d:%m-%d} {r:.4f}" for d, r in cal["drift"]))
+    if none_ or (rebuilt and cal and cal["drift"]):
+        if none_:
+            how += f". {len(none_)} epoch(s) have no APR — the headline is not formed"
+        return -float(len(none_) or len(rebuilt)), str(tab[-1]["date"].date()), how
+    return float(len(rebuilt) + len(first)), str(tab[-1]["date"].date()), how
+
+
+def _published_epoch_aprs(p, rows, long, asof, metric="pendle_epoch_apr_published", **_):
+    """How many Q0 epochs carry Pendle's own per-epoch APR (stored above 0); 0 when Pendle publishes none."""
+    lo, hi = _q0(asof)
+    s = _series(long, p, metric)
+    s = s[(s.index > lo) & (s.index <= hi) & (s > 0)]
+    return float(len(s)), (str(s.index[-1].date()) if len(s) else None), (
+        f"{len(s)} Q0 epoch(s) with Pendle's published APR" if len(s) else
+        "Pendle's per-epoch aprs: none above 0 in Q0 (sPendleHistoricalData.aprs reads 0)")
 
 
 def _epoch_apr(p, rows, long, asof, tokens=0.0, date="", stock="", plus=(), mult=26.0, read_by="", source="",
-               ours_metric="", after_days=0, **_):
+               ours_metric="", after_days=0, calibrate=False, **_):
     """ONE EPOCH'S APR FROM A READING (Jake's run 2026-10-08, Pendle): `tokens` distributed in the epoch read on
     `date` x `mult` epochs a year / the reward-bearing stake stored on that date (stock + plus). With `ours_metric`
     the epoch's tokens are OUR stored figure on that date instead — the like-for-like twin of the same arithmetic."""
     day = pd.Timestamp(date)
-    staked, late = 0.0, []
+    staked, late, cal_note = 0.0, [], ""
+    cal = pendle_calibration(p, long) if calibrate else None
     for m in (stock, *plus):
         got = _stake_near(long, p, m, day, after_days)
+        if got is None and cal is not None and m in plus:
+            # BEFORE THE API'S HISTORY (Jake's 1c decision): the calibrated on-chain rebuild on that day, both sides
+            fb = cal["calibrated"][cal["calibrated"].index <= day]
+            if len(fb) and (day - fb.index[-1]).days <= 1:
+                got = (float(fb.iloc[-1]), fb.index[-1])
+                cal_note = f"; {m} = {cal['label']}"
         if got is None:
             return None, None, f"no {m} on or before {date}" + (f" or within {after_days} days after" if after_days else "")
         staked += got[0]
@@ -813,7 +909,7 @@ def _epoch_apr(p, rows, long, asof, tokens=0.0, date="", stock="", plus=(), mult
         who = f"{float(tokens):,.0f} ({read_by}: {source})"
     return float(tokens) * float(mult) / staked, date, \
         (f"{who} x {mult:g} / ({' + '.join((stock, *plus))} {staked:,.0f} on {date}"
-         + (f"; {', '.join(late)} — the first reading after the epoch" if late else "") + ")")
+         + (f"; {', '.join(late)} — the first reading after the epoch" if late else "") + cal_note + ")")
 
 
 def _q0_net_flow(p, rows, long, asof, out="", inn="", **_):
@@ -1473,7 +1569,7 @@ FORMULAS = {"sum_months": _sum_months, "free_float_now": _free_float_now, "windo
             "eth_issuance_curve": _eth_issuance_formula, "flow_usd_over_price": _flow_usd_over_price,
             "delta_q0": _delta_q0, "delta_diff_q0": _delta_diff_q0, "hl_reward_formula": _hl_reward_formula,
             "share_price_growth": _share_price_growth, "per_day_x_covered": _per_day_x_covered,
-            "value_on": _value_on, "epoch_apr": _epoch_apr, "epoch_reproduction": _epoch_reproduction, "epoch_mean_check": _epoch_mean_check, "epochs_first_party": _epochs_first_party, "aero_epoch_revenue": _aero_epoch_revenue, "aero_rebase_apr": _aero_rebase_apr, "aero_epoch_pending": _aero_epoch_pending, "price_basis_gap": _price_basis_gap, "price_overlap": _price_overlap,
+            "value_on": _value_on, "epoch_apr": _epoch_apr, "published_epoch_aprs": _published_epoch_aprs, "epoch_reproduction": _epoch_reproduction, "epoch_mean_check": _epoch_mean_check, "epochs_first_party": _epochs_first_party, "aero_epoch_revenue": _aero_epoch_revenue, "aero_rebase_apr": _aero_rebase_apr, "aero_epoch_pending": _aero_epoch_pending, "price_basis_gap": _price_basis_gap, "price_overlap": _price_overlap,
             "aero_epoch_apr": _aero_epoch_apr, "q0_net_flow": _q0_net_flow,
             "negative_release": _negative_release, "sum_month": _sum_month, "last30_annualised": _last30_annualised,
             "common_day_value": _common_day_value, "months_match": _months_match,

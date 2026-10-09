@@ -527,6 +527,32 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11az. Pendle 1c: the calibrated on-chain rebuild (Jake's decision, 2026-10-09)
+
+Pendle's per-epoch `aprs` read 0, and the API's virtual sPENDLE is stored only from 2026-09-29. For Q0 epochs before
+that, the stake's virtual part is **our on-chain rebuild, calibrated to the API**:
+
+- **Rebuild** (`credibility.virtual_rebuild`) = active locked + 3 × vePENDLE supply. Active locked = the vePENDLE
+  supply's daily fall × 728 days (104 weeks). Expired locks no longer decay, so they drop out. A fall is taken only
+  between consecutive days at the same measuring point (archive with archive, live with live); otherwise the last good
+  one is carried.
+- **Calibration** = the mean of API / rebuild over every day both exist. The stake used = rebuild × that ratio. Each
+  such epoch's source reads "calibrated on-chain rebuild (x ratio = API/rebuild mean over N day(s) a..b, range lo..hi)".
+  The rebuild comes before Pendle's published APR. That APR is used only for an epoch with no rebuild.
+- **Daily check.** On every day the API has a value, a ratio more than 0.5 percentage points
+  (`epoch_mean.calibrate.drift_pp`) from the mean is DRIFT: `in_epochs_first_party` reads CHECK, naming the days, and
+  so does the headline.
+- **Headline** = the mean of the per-epoch APRs over every Q0 epoch with a published distribution. A 0 inside the
+  observed 7-day publish lag is left out (2026-09-22, until 2026-10-13).
+- **Verdict.** `in_epochs_first_party` is a DOCUMENTED LIMITATION (calibrated, not first-party) while any rebuilt
+  epoch is in Q0, and lapses to N/A when the API covers every Q0 epoch (~2026-12-28). The headline inherits it.
+  `in_epoch_reproduction`/`in_epoch_mean` are a DOCUMENTED LIMITATION while Pendle publishes no per-epoch APR.
+- On Jake's store (`fixtures/real_pendle.json`): ×0.9864 (= 1/1.0138), range 0.9862..0.9868 over 8 API days
+  (09-29..10-09), no drift. Per epoch: 07-14 1.64%, 07-28 2.30%, 08-11 1.12%, 08-25 1.68%, 09-08 1.01%. Headline 1.55%,
+  DOCUMENTED LIMITATION.
+- `python check_offline_items.py pendle_epoch_table` prints the CALIBRATION line and every API day's ratio.
+  `pendle_virtual_rebuild` prints the uncalibrated daily table.
+
 ## 11ay. Jake's run 2026-10-09 11:41: real dumps committed; Pendle, Aerodrome, Ethereum, Maple
 
 That run (on c303cd3) signed off 13; Aerodrome and Pendle stayed OPEN. `fixtures/real_*.json` are now committed, and

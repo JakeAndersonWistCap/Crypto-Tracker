@@ -67,8 +67,10 @@ def test_real_aerodrome_price_finding_and_one_price_epoch_row(tmp_path, monkeypa
 def test_real_pendle_headline_cell_equals_the_python(tmp_path, monkeypatch):
     """5a: the headline cell equals the Python computation of the same definition on the real rows. 1b: Pendle's
     observed publish lag is 7 days (2026-09-08, the latest complete epoch at our first read); 1d: the 2026-09-22 epoch,
-    read at 0, stays unpublished until 10-13. 1a/1c: with no per-epoch APR from Pendle and no stake of ours before
-    2026-09-29, the headline is not formed — a CHECK naming why, never a number over a subset."""
+    read at 0, stays unpublished until 10-13. 1c (Jake's decision 2026-10-09): Pendle's aprs are 0 for every epoch, so
+    the epochs before the API's history take the CALIBRATED on-chain rebuild (active locked + 3 x vePENDLE, x the mean
+    API/rebuild ratio over the overlap days) — the headline is formed over the five published epochs and is a
+    DOCUMENTED LIMITATION (calibrated, not first-party)."""
     import credibility as cred
     o = evaluate_real(tmp_path, monkeypatch, "Pendle")
     payload = load("Pendle")
@@ -79,16 +81,25 @@ def test_real_pendle_headline_cell_equals_the_python(tmp_path, monkeypatch):
     lo, hi = cred._q0(asof)
     lag, _ = cred.epoch_publish_lag("Pendle", db=tmp_path / "metrics.db")
     assert lag == 7
+    cal = cred.pendle_calibration("Pendle", long.assign(project="Pendle"))
+    assert cal is not None and abs(cal["ratio"] - 1 / 1.0138) < 0.001, cal and cal["label"]
+    assert not cal["drift"] and len(cal["days"]) >= 8, cal["label"]
+    assert "calibrated on-chain rebuild" in cal["label"] and "range" in cal["label"]
     tab = cred.epoch_apr_table(s("pendle_distributed_tokens"), s("pendle_epoch_apr_published"),
-                               {m: s(m) for m in ("locked_tokens_shares", "locked_tokens_virtual")}, lo, hi, 14, 7, lag)
+                               {m: s(m) for m in ("locked_tokens_shares", "locked_tokens_virtual")}, lo, hi, 14, 7, lag,
+                               fallback={"locked_tokens_virtual": (cal["calibrated"], cal["label"])})
     assert [r["source"] for r in tab if r["date"] == pd.Timestamp("2026-09-22")] == ["unpublished"]
+    rebuilt = [r for r in tab if r["source"] == "calibrated on-chain rebuild"]
+    assert len(rebuilt) == 5 and all(r["apr"] for r in rebuilt), tab
     got = cred.epoch_headline(tab)
+    assert got is not None and got[1] == 5
     head = o["a3_protocol_yield"]
-    if got is None:
-        assert not isinstance(head["ours"], (int, float)), head
-        assert o["in_epochs_first_party"]["verdict"].startswith("CHECK"), o["in_epochs_first_party"]
-    else:
-        assert abs(float(head["ours"]) - got[0]) < 1e-9, (head, got)
+    assert abs(float(head["ours"]) - got[0]) < 1e-9, (head, got)
+    assert head["verdict"] == "DOCUMENTED LIMITATION (inputs)", head
+    fp = o["in_epochs_first_party"]
+    assert fp["verdict"] == "DOCUMENTED LIMITATION" and float(fp["ours"]) == 5, fp
+    assert "calibrated, not first-party" in fp["note"] and "CALIBRATION" in fp["note"], fp["note"]
+    assert o["in_epoch_apr"]["verdict"].startswith("PASS"), o["in_epoch_apr"]
 
 
 def test_real_maple_stays_signed_off(tmp_path, monkeypatch):

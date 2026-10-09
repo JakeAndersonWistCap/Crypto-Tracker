@@ -263,12 +263,72 @@ def test_pendle_epochs_before_virtual_history_take_pendles_apr_as_a_documented_l
     o = _evaluate(tmp_path, monkeypatch, "Pendle", rows)
     fp = o["in_epochs_first_party"]
     assert fp["verdict"] == "DOCUMENTED LIMITATION" and float(fp["ours"]) == 4, fp
-    assert "virtual sPENDLE history starts 2026-09-11" in fp["note"] and "(Pendle published)" in fp["note"]
+    # Jake's 1c decision (2026-10-09): no vePENDLE supply in this fixture, so no calibrated rebuild — the epochs before
+    # the API's history take Pendle's published APR, named per epoch, under the same limitation
+    assert "calibrated, not first-party" in fp["note"] and "(Pendle published)" in fp["note"], fp["note"]
     assert "2026-09-22" in o["in_epoch_mean"]["note"] and "2026-07-14" not in o["in_epoch_mean"]["note"]
     assert o["in_epoch_reproduction"]["verdict"].startswith("PASS"), o["in_epoch_reproduction"]
     head = o["a3_protocol_yield"]
     assert abs(float(head["ours"]) - _pendle_expected_headline(rows)) < 1e-9, head
     assert head["verdict"] == "DOCUMENTED LIMITATION (inputs)", head
+
+
+def _pendle_calibrated_rows(late_ratio=0.986):
+    """Jake's store shape for the 1c decision: the API's virtual sPENDLE starts 2026-09-29; vePENDLE totalSupply is read
+    every day and decays 30,000/day (active locked = 30,000 x 728). The API reads 0.986 x the rebuild; from 10-05 on it
+    reads `late_ratio` x the rebuild."""
+    # as on Jake's store, Pendle's per-epoch aprs read 0: none stored
+    rows = [r for r in _pendle_rows(virtual_from="2026-09-29")
+            if r[2] not in ("locked_tokens_virtual", "pendle_epoch_apr_published")]
+    for i, d in enumerate(_days()):
+        ve = 44e6 - 30_000 * i
+        rows.append((d, "Pendle", "vependle_voting_supply_tokens", ve, "chain:ethereum:vependle", 2))
+        if d >= pd.Timestamp("2026-09-29"):
+            ratio = 0.986 if d < pd.Timestamp("2026-10-05") else late_ratio
+            rows.append((d, "Pendle", "locked_tokens_virtual", ratio * (30_000 * 728 + 3 * ve),
+                         "scrape:api-v2.pendle.finance", 3))
+    return rows
+
+
+def test_pendle_epochs_before_the_api_take_the_calibrated_rebuild_as_a_documented_limitation(tmp_path, monkeypatch):
+    """Jake's 1c decision (2026-10-09): every Q0 epoch before the API's history takes the on-chain rebuild (active
+    locked + 3 x vePENDLE) x the mean API/rebuild ratio, labelled per epoch with the ratio and its range; the headline
+    is the mean of the per-epoch APRs and a DOCUMENTED LIMITATION (calibrated, not first-party)."""
+    import credibility as cred
+    rows = _pendle_calibrated_rows()
+    o = _evaluate(tmp_path, monkeypatch, "Pendle", rows)
+    fp = o["in_epochs_first_party"]
+    # 09-22 is ours: the API's 09-29 reading is within the 7 days after its start
+    assert fp["verdict"] == "DOCUMENTED LIMITATION" and float(fp["ours"]) == 5, fp
+    assert "calibrated on-chain rebuild (x 0.9860" in fp["note"] and "range 0.9860..0.9860" in fp["note"], fp["note"]
+    head = o["a3_protocol_yield"]
+    assert head["verdict"] == "DOCUMENTED LIMITATION (inputs)", head
+    df = pd.DataFrame(rows, columns=["date", "project", "metric", "value", "source", "tier"])
+    s = lambda m: df[df.metric == m].set_index("date")["value"]                       # noqa: E731
+    vi = lambda d: (s("locked_tokens_virtual").loc[pd.Timestamp("2026-09-29")] if d == pd.Timestamp("2026-09-22")  # noqa: E731
+                    else 0.986 * (30_000 * 728 + 3 * s("vependle_voting_supply_tokens").loc[d]))
+    aprs = [t * 365.25 / 14 / (s("locked_tokens_shares").loc[d] + vi(d))
+            for d, t in s("pendle_distributed_tokens").items()]
+    assert abs(float(head["ours"]) - sum(aprs) / len(aprs)) < 1e-9, (head, sum(aprs) / len(aprs))
+    assert sum(r["source"] == "calibrated on-chain rebuild" for r in cred.epoch_apr_table(
+        s("pendle_distributed_tokens"), s("pendle_epoch_apr_published"),
+        {"locked_tokens_shares": s("locked_tokens_shares"), "locked_tokens_virtual": s("locked_tokens_virtual")},
+        *cred._q0(pd.Timestamp("2026-10-08")), fallback={"locked_tokens_virtual": (
+            0.986 * (30_000 * 728 + 3 * s("vependle_voting_supply_tokens")), "x")})) == 5
+
+
+def test_pendle_calibration_drift_beyond_half_a_point_turns_the_rebuilt_epochs_to_check(tmp_path, monkeypatch):
+    """Jake's 1c decision: the ratio is checked on every API day; a day more than 0.5 percentage points from the
+    calibration -> the rebuilt epochs read CHECK, and so does the headline. 0.986 then 0.975 from 10-05: mean ~0.9811,
+    the 0.975 days are 0.61 points off."""
+    o = _evaluate(tmp_path, monkeypatch, "Pendle", _pendle_calibrated_rows(late_ratio=0.975))
+    fp = o["in_epochs_first_party"]
+    assert fp["verdict"].startswith("CHECK"), fp
+    assert "DRIFT beyond 0.5%" in fp["note"], fp["note"]
+    assert o["a3_protocol_yield"]["verdict"].startswith("CHECK"), o["a3_protocol_yield"]
+    (tmp_path / "small").mkdir()
+    ok = _evaluate(tmp_path / "small", monkeypatch, "Pendle", _pendle_calibrated_rows(late_ratio=0.982))
+    assert ok["in_epochs_first_party"]["verdict"] == "DOCUMENTED LIMITATION", ok["in_epochs_first_party"]
 
 
 def test_pendle_headline_is_a_check_when_our_epochs_miss_pendles_apr_by_more_than_5_percent(tmp_path, monkeypatch):
