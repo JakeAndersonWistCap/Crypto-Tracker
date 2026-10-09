@@ -8487,10 +8487,11 @@ def chainlink_noncirc_transfers(days: int = 90):
 
 
 def pendle_epoch_table():
-    """PENDLE a3_protocol_yield (Jake's run 2026-10-08 11:27). Per Q0 epoch: start, PENDLE distributed, the stake we
-    use (eligible sPENDLE shares + virtual sPENDLE), OUR APR (distributed x 365.25/14 / stake), Pendle's published APR
-    for that epoch, the no-boost stake (shares + legacy vePENDLE PENDLE — Jake's 93.9M basis) and its APR, and the
-    archive vePENDLE voting supply. Then the HEADLINE arithmetic as the workbook does it. Reads metrics.db only."""
+    """PENDLE a3_protocol_yield (Jake's 5c decision, 2026-10-09). Per Q0 epoch: start, PENDLE distributed, the stake
+    used, the APR and WHICH SOURCE it came from (ours = distributed x 365.25/14 / (sPENDLE + virtual) where our stake
+    exists; Pendle's published APR before virtual sPENDLE history starts), Pendle's APR beside it, the no-boost stake
+    (shares + legacy vePENDLE PENDLE — Jake's 93.9M basis) and its APR, and the archive vePENDLE voting supply. Then the
+    HEADLINE = the mean of those APRs, exactly as the workbook computes it. Reads metrics.db only."""
     import sqlite3                                         # noqa: PLC0415
     import pandas as pd                                    # noqa: PLC0415
     head("PENDLE — per-epoch distribution, stake and APR (Q0), and the headline arithmetic")
@@ -8523,39 +8524,41 @@ def pendle_epoch_table():
         a = s[(s.index > d) & (s.index <= d + pd.Timedelta(days=7))]
         return (float(a.iloc[0]), f" (read {a.index[0].date()})") if len(a) else (None, "")
 
-    dist = ser.get("pendle_distributed_tokens", pd.Series(dtype=float))
-    dist = dist[(dist.index >= q0s) & (dist.index < q0e)]
+    # THE HEADLINE'S OWN TABLE (Jake's 5c decision, 2026-10-09): credibility.epoch_apr_table, the one computation the
+    # workbook and the Credibility rows use — ours where our stake exists, Pendle's published APR before that.
+    import credibility as cred                             # noqa: PLC0415
+    empty = pd.Series(dtype=float)
+    tab = cred.epoch_apr_table(ser.get("pendle_distributed_tokens", empty), ser.get("pendle_epoch_apr_published", empty),
+                               {m: ser.get(m, empty) for m in ("locked_tokens_shares", "locked_tokens_virtual")},
+                               q0s, q0e, 14, 7)
     f = 365.25 / 14
-    ours_aprs, no_stake = [], []
-    print(f"  {'epoch':<11}{'PENDLE':>12}{'shares':>14}{'virtual':>14}{'ours APR':>10}{'Pendle':>9}"
-          f"{'no-boost stk':>15}{'APR':>8}{'veSupply':>14}")
-    for d, v in dist.items():
+    fmt = lambda x, p=0: "—" if x is None else f"{x:,.{p}f}"                # noqa: E731
+    pct = lambda x: "—" if x is None else f"{x:.2%}"                         # noqa: E731
+    print(f"  {'epoch':<11}{'PENDLE':>12}{'stake used':>14}{'APR':>8}  {'APR source':<17}{'Pendle':>8}"
+          f"{'shares':>13}{'virtual':>13}{'no-boost stk':>14}{'APR':>8}{'veSupply':>13}")
+    for r in tab:
+        d = r["date"]
         sh, n1 = near("locked_tokens_shares", d)
         vi, n2 = near("locked_tokens_virtual", d)
         lg, _ = near("locked_tokens_legacy_vependle", d)
         ve, _ = near("vependle_voting_supply_tokens", d)
-        pub = ser.get("pendle_epoch_apr_published", pd.Series(dtype=float)).get(d)
-        ours = v * f / (sh + vi) if sh is not None and vi is not None and sh + vi else None
-        if ours is None:
-            no_stake.append(str(d.date()))
-        else:
-            ours_aprs.append(ours)
         nb = (sh + lg) if sh is not None and lg is not None else None
-        fmt = lambda x, p=0: "—" if x is None else f"{x:,.{p}f}"            # noqa: E731
-        pct = lambda x: "—" if x is None else f"{x:.2%}"                     # noqa: E731
-        print(f"  {d.date()!s:<11}{fmt(v):>12}{fmt(sh):>14}{fmt(vi):>14}{pct(ours):>10}{pct(pub):>9}"
-              f"{fmt(nb):>15}{pct(v * f / nb if nb else None):>8}{fmt(ve):>14}{n1 or n2}")
-    sh, _ = near("locked_tokens_shares", q0e)
-    vi, _ = near("locked_tokens_virtual", q0e)
-    if len(dist) and sh is not None and vi is not None:
-        print(f"\n  HEADLINE: mean distributed {dist.mean():,.0f} PENDLE/epoch x 365.25/14 / (shares {sh:,.0f} + "
-              f"virtual {vi:,.0f}) = {dist.mean() * f / (sh + vi):.2%}")
-        # 5c (Jake's run 2026-10-08 on 3d5dbeb): the headline must EQUAL the mean of the per-epoch APRs
-        if no_stake:
-            print(f"  MEAN OF PER-EPOCH APRs: not formed — no stake at {', '.join(no_stake)} (the headline stays CHECK)")
-        elif ours_aprs:
-            print(f"  MEAN OF PER-EPOCH APRs (each over its own stake): {sum(ours_aprs) / len(ours_aprs):.2%} — "
-                  f"the headline inherits PASS only within 1% of it")
+        print(f"  {d.date()!s:<11}{fmt(r['tokens']):>12}{fmt(r['stake']):>14}{pct(r['apr']):>8}  "
+              f"{r['source'] or 'NO APR':<17}{pct(r['published']):>8}{fmt(sh):>13}{fmt(vi):>13}{fmt(nb):>14}"
+              f"{pct(r['tokens'] * f / nb if nb else None):>8}{fmt(ve):>13}{n1 or n2}")
+    if tab:
+        if any(r["apr"] is None for r in tab):
+            print("\n  HEADLINE: not formed — an epoch has neither our stake nor Pendle's APR")
+        else:
+            n_ours = sum(1 for r in tab if r["source"] == "ours")
+            print(f"\n  HEADLINE = mean of the {len(tab)} per-epoch APRs (each over its own stake): "
+                  f"{sum(r['apr'] for r in tab) / len(tab):.2%} — {n_ours} ours, {len(tab) - n_ours} Pendle's published "
+                  f"(DOCUMENTED LIMITATION while any: virtual sPENDLE history starts 2026-09-11)")
+        mine = [r for r in tab if r["source"] == "ours" and r["published"] is not None]
+        if mine:
+            print(f"  OVER THE EPOCHS WE COMPUTE: ours {sum(r['apr'] for r in mine) / len(mine):.2%} vs Pendle's "
+                  f"{sum(r['published'] for r in mine) / len(mine):.2%} (in_epoch_mean, 5%); worst single epoch "
+                  f"{max(abs(r['apr'] / r['published'] - 1) for r in mine if r['published']):.1%} (in_epoch_reproduction, 5%)")
     print("  Method (pendle-finance spendle-tracker README): APR = distributed / (eligible sPENDLE + virtual sPENDLE) "
           "x 26.09; virtual = locked x (1 + 3 x remaining/2y). A stake without the virtual boost (Jake's 93.9M) "
           "gives the higher APR in the no-boost column.")

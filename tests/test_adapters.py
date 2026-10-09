@@ -17838,7 +17838,9 @@ def test_pendle_a3_shows_the_real_staker_yield_and_the_virtual_share_separately(
         assert "locked_tokens_virtual" in str(share.value) and "locked_tokens_shares" in str(share.value)
         assert "decays by 2028-01-29" in share.number_format and "2028-01-29" in share.comment.text
         y = str(ws.cell(row=pr, column=yc).value)
-        assert "locked_tokens_shares" in y and "locked_tokens_virtual" in y, y
+        # Jake's 5c decision (2026-10-09): the token headline is the mean of the per-epoch APRs (a read-time view over
+        # each epoch's own sPENDLE + virtual), not mean distribution / today's stake
+        assert "token_yield_epoch_mean_pct" in y, y
     # the arithmetic the formula encodes: 177.78 / (30.34 + 177.78) = 85.4%
     assert abs(177_780_000 / (30_340_000 + 177_780_000) - 0.854) < 0.001
 
@@ -18017,8 +18019,9 @@ def test_pendle_token_yield_is_pendle_distributed_over_real_plus_virtual():
 
     label, build = bw._token_yield(R())[:2]
     f = str(build(5, config.PROJECT_BY_NAME["Pendle"]))
-    assert "D[pendle_distributed_tokens:q0]" in f and "D[pendle_distributed_tokens:q0_events]" in f and "365.25/14" in f and "D[locked_tokens_shares:now]" in f
-    assert "D[locked_tokens_virtual:now]" in f and "price_usd" not in f, f
+    # Jake's 5c decision (2026-10-09): the mean of the per-epoch APRs, each over its own stake (_epoch_mean_views)
+    assert "D[token_yield_epoch_mean_pct:now]" in f, f
+    assert "price_usd" not in f, f
     # TOKENS PRIMARY (2026-09-30): every PROTOCOL_YIELD project gets the token yield — where no
     # token series is declared, holders revenue in tokens at the Q0 AVERAGE price
     sky = str(build(5, config.PROJECT_BY_NAME["Sky"]))
@@ -27282,7 +27285,7 @@ def test_same_source_rows_carry_their_signoff_label_and_native_coin_prices_say_w
                          pd.Timestamp("2026-10-07"))
     assert ref["mode"] == "same_source" and ref["fresh_label"] == spec["fresh_label"]
     # Pendle's a3 is independent since Jake's run 2026-10-08 (his epoch reading), so it carries no fresh_label
-    assert config.CREDIBILITY["Pendle"]["a3_protocol_yield"]["inputs"] == ("in_epoch_apr", "in_epoch_reproduction", "in_epoch_mean")
+    assert config.CREDIBILITY["Pendle"]["a3_protocol_yield"]["inputs"] == ("in_epoch_reproduction", "in_epoch_mean", "in_epochs_first_party")
     hl = cred.price_inputs("Hyperliquid")["in_price_llama"]["ref"]
     eth = cred.price_inputs("Ethereum")["in_price_llama"]["ref"]
     assert hl["same_source"] and hl["fresh_label"].startswith("DOCUMENTED LIMITATION")
@@ -27480,7 +27483,7 @@ def test_etherfi_yield_is_a_documented_limitation_and_pendle_reads_jakes_epoch()
     assert "in_yield_q0" in config.CREDIBILITY["Ether.fi"] and "in_apy_published" in config.CREDIBILITY["Ether.fi"]
     pe = config.CREDIBILITY["Pendle"]
     # Jake, 2026-10-08: the headline stays the Q0 epoch average and INHERITS the epoch-for-epoch row's verdict
-    assert pe["a3_protocol_yield"]["inputs"] == ("in_epoch_apr", "in_epoch_reproduction", "in_epoch_mean")
+    assert pe["a3_protocol_yield"]["inputs"] == ("in_epoch_reproduction", "in_epoch_mean", "in_epochs_first_party")
     assert "NOT IDENTIFIED" in pe["a3_protocol_yield"]["why"] and "0x33305665" in pe["a3_protocol_yield"]["why"]
     assert pe["in_epoch_apr"]["ref"]["args"]["tokens"] == 82_545 and pe["in_epoch_apr"]["ref"]["tol"] == 1.0
     assert pe["in_emissions"]["ref"]["metric"] == "emissions_tokens_gauge_mainnet"      # judged, not MATURING
@@ -27499,9 +27502,9 @@ def test_etherfi_yield_is_a_documented_limitation_and_pendle_reads_jakes_epoch()
     out = cred.build_rows(hc, {}, long, asof, projects={"Pendle"})
     head = next(r for r in out if r["id"] == "a3_protocol_yield")
     # ... AND the per-epoch reproduction of its own arithmetic (Jake's run 2026-10-08 11:27): it inherits only if both pass
-    assert head["mode"] == "derived" and head["inputs"] == ("in_epoch_apr", "in_epoch_reproduction", "in_epoch_mean")
+    assert head["mode"] == "derived" and head["inputs"] == ("in_epoch_reproduction", "in_epoch_mean", "in_epochs_first_party")
     assert not head["missing_inputs"]
-    assert [out[i]["id"] for i in head["input_rows"]] == ["in_epoch_apr", "in_epoch_reproduction", "in_epoch_mean"]
+    assert [out[i]["id"] for i in head["input_rows"]] == ["in_epoch_reproduction", "in_epoch_mean", "in_epochs_first_party"]
 
 
 def test_aerodrome_voting_power_is_judged_by_voter_total_weight_and_the_page_reading_waits_beside_it():

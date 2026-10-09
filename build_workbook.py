@@ -2028,6 +2028,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _emissions_from_metric_views(groups)
     _trailing_yield_views(groups)
     _farm_yield_views(groups, asof)
+    _epoch_mean_views(groups, asof)
     _native_fee_usd_views(groups)
     _mev_estimate_views(groups)
     _VIEW_BLOCKS_PENDING.clear()
@@ -3788,6 +3789,9 @@ def _token_yield(R: Refs, data_by_key: dict | None = None):
         if ty and ty.get("farm_rate"):            # the farm row's own arithmetic (Sky, Jake's run 2026-10-08 11:27)
             cell = R.D(r, ty["farm_rate"]["metric"], "now")
             return calc(f"IF(ISNUMBER({cell}),{cell},{NA})")
+        if ty and ty.get("epoch_mean"):           # the mean of the per-epoch APRs (Pendle, Jake's 5c decision 2026-10-09)
+            cell = R.D(r, ty["epoch_mean"]["metric"], "now")
+            return calc(f"IF(ISNUMBER({cell}),{cell},{NA})")
         base = R.D(r, spec["lock"], "now")
         if spec.get("lock_add"):
             add = R.D(r, spec["lock_add"], "now")
@@ -4094,6 +4098,35 @@ def _farm_yield_views(groups: dict, asof: pd.Timestamp) -> None:
              "source": [f"derived:{fr['flow']} {float(fl.sum()):,.0f} over {fr['days']}d x 365/{fr['days']} / "
                         f"({fr['stock']} {float(st.iloc[-1]):,.0f} x {fr['price']} {float(px.iloc[-1]):.4f})"],
              "tier": [2]}), groups[(name, fr["stock"])].columns)
+
+
+def _epoch_mean_views(groups: dict, asof: pd.Timestamp) -> None:
+    """THE PENDLE HEADLINE = THE MEAN OF THE PER-EPOCH APRs, EACH OVER ITS OWN STAKE (Jake's 5c decision, 2026-10-09):
+    ours where our stake exists at the epoch (from ~2026-09-11, when virtual sPENDLE history starts), Pendle's published
+    APR for that epoch before it (first-party; it embeds the epoch's own stake). Not mean distribution / today's stake.
+    credibility.epoch_apr_table is the one computation; the source text names each epoch's source. No row when a Q0
+    epoch has neither — the mean is never formed over a subset."""
+    import credibility as cred                       # noqa: PLC0415
+    for p in scoped_projects():
+        ty = (config.PROTOCOL_YIELD.get(p["name"]) or {}).get("token_yield") or {}
+        em = ty.get("epoch_mean")
+        if not em:
+            continue
+        name = p["name"]
+        s = lambda m: (lambda g: None if g is None or g.empty else g.assign(  # noqa: E731
+            date=pd.to_datetime(g["date"]).dt.normalize()).drop_duplicates("date", keep="last")
+            .set_index("date")["value"].astype(float).sort_index())(groups.get((name, m)))
+        stakes = {m: s(m) for m in (em["stock"], *em["plus"])}
+        tab = cred.epoch_apr_table(s(ty["tokens"]), s(em["published"]), stakes, asof - pd.Timedelta(days=90), asof,
+                                   int(ty["epoch_days"]), int(em.get("after_days", 7)))
+        if not tab or any(r["apr"] is None for r in tab):
+            continue
+        v = sum(r["apr"] for r in tab) / len(tab)
+        src = "; ".join(f"{r['date']:%m-%d} {r['apr']:.2%} ({r['source']})" for r in tab)
+        base = next(k for k in ((name, ty["tokens"]), (name, em["published"])) if k in groups)
+        groups[(name, em["metric"])] = _as_stored(pd.DataFrame(
+            {"date": [asof.normalize()], "project": [name], "metric": [em["metric"]], "value": [v],
+             "source": [f"derived:mean of {len(tab)} Q0 epoch APRs — {src}"], "tier": [2]}), groups[base].columns)
 
 
 def _trailing_yield_views(groups: dict) -> None:

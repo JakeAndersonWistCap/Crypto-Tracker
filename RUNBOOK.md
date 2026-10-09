@@ -571,11 +571,18 @@ the same build and evaluation path as `python credibility_report.py`. `narrow=Tr
    - This is checked on `in_epoch_reproduction`, tolerance 10%. Pendle's per-epoch APRs are stored as
      `pendle_epoch_apr_published`.
    - Epochs before virtual sPENDLE was first read are named, not judged.
-   - **The headline must also EQUAL the mean of the per-epoch APRs** (`in_epoch_mean`, 1%; Jake's run on 3d5dbeb,
-     5c). The 82,545 twin compares our figure with Jake's and passes trivially; it can't see a headline divided by
-     today's stake when the stake moved over Q0. Each epoch's APR uses its own stake. If any Q0 epoch has no stake,
-     there is no reference: virtual sPENDLE is API-only and starts ~2026-09-11, so the July/August epochs leave the
-     headline CHECK until virtual history covers Q0, around 2026-12-10. The mean is never formed over a subset.
+   - **Jake's 5c decision (2026-10-09).** The headline is the MEAN of the Q0 per-epoch APRs, each over its own stake,
+     not mean distribution / today's stake (`build_workbook._epoch_mean_views`, `token_yield_epoch_mean_pct`). Each
+     epoch's APR is OURS where our stake exists, from ~2026-09-11 when virtual sPENDLE history starts. Before that it
+     is PENDLE'S PUBLISHED APR for the epoch, which embeds that epoch's own stake; project-first figures are the rule.
+     `credibility.epoch_apr_table` is the one computation the view, the rows and the probe all use. The headline's
+     inputs:
+     - `in_epoch_reproduction`: every epoch we compute against Pendle's APR, 5%.
+     - `in_epoch_mean`: the mean of our APRs against Pendle's, over the epochs we compute, 5%.
+     - `in_epochs_first_party`: how many epochs use Pendle's APR. While any do, it is a DOCUMENTED LIMITATION
+       ("first-party APR only, virtual sPENDLE history starts 2026-09-11"). It lapses to N/A by itself once our stake
+       covers every Q0 epoch (`verdict_when`).
+     So the headline reads DOCUMENTED LIMITATION (inputs) until ~2026-12-10, then PASS (inputs).
    - `check_offline_items.py pendle_epoch_table` prints the table and the headline arithmetic.
    - The legacy vePENDLE `totalSupplyCurrent()` is read daily, and archive-read by `archive_backfill.py`.
    - The gauge scan runs on its own tier: `explorer_gauge`, 280s scan budget. A timed-out tier now names the series it

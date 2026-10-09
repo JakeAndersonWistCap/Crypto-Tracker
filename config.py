@@ -326,6 +326,7 @@ METRICS = {
     "buyback_fund_balance_eod":  {"label": "NEAR Intents revenue wallets COMBINED, liquid NEAR at each day's close (fefundsadmin + buybacks.multisignature + 1csfundsadmin; NearBlocks stats/balance)", "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [1], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Near",)},
     # TRAILING-WINDOW REALISED TOKEN YIELD (Ether.fi, Jake 2026-10-07) — read-time views, one row on the latest day.
     "staking_yield_usds_farm_28d_pct": {"label": "Sky USDS-farm revenue yield: USDS paid over the last 28 days x 365/28 / (SKY in the USDS farm x spot price)", "kind": "stock", "unit": "fraction", "archetypes": [3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 5.0, "only_projects": ("Sky",), "view_only": True},
+    "token_yield_epoch_mean_pct": {"label": "Pendle staking yield: the mean of the Q0 per-epoch APRs, each over its own stake (ours where our stake exists, Pendle's published APR before ~2026-09-11)", "kind": "stock", "unit": "fraction", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 5.0, "only_projects": ("Pendle",), "view_only": True},
     "token_yield_trailing_pct": {"label": "Realised token yield, trailing 365 days: reward tokens / AVERAGE staked, annualised over the days covered", "kind": "stock", "unit": "fraction", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 5.0, "only_projects": ("Ether.fi",), "view_only": True},
     "token_yield_share_price_trailing_pct": {"label": "Realised yield from the vault's share price, trailing 365 days (annualised)", "kind": "stock", "unit": "fraction", "archetypes": [3], "tiers": [2], "sanity_min": -1.0, "sanity_max": 5.0, "only_projects": ("Ether.fi",), "view_only": True},
     "staking_apr_ai":        {"label": "Average APR of AI Pool — Aethir's first-party protocol staking yield (fraction); the cross-check for any derived yield", "kind": "stock", "unit": "fraction", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 2.0, "only_projects": ("Aethir",)},
@@ -18274,7 +18275,19 @@ PROTOCOL_YIELD = {
                # FROM THE PER-EPOCH DISTRIBUTIONS (Jake, 2026-09-29): PENDLE distributed per
                # epoch (sPendleHistoricalData), averaged over the Q0 epochs and x365.25/14 —
                # not USD buyback spend over price. Pendle's own lastEpochApr sits beside it.
+               # THE HEADLINE IS THE MEAN OF THE PER-EPOCH APRs, EACH OVER ITS OWN STAKE (Jake's 5c decision,
+               # 2026-10-09): ours where our stake exists at the epoch, Pendle's published APR before ~2026-09-11
+               # (first-party; virtual sPENDLE history starts there). build_workbook._epoch_mean_views.
                "token_yield": {"tokens": "pendle_distributed_tokens", "epoch_days": 14,
+                               "epoch_mean": {"metric": "token_yield_epoch_mean_pct",
+                                              "published": "pendle_epoch_apr_published",
+                                              "stock": "locked_tokens_shares", "plus": ("locked_tokens_virtual",),
+                                              "after_days": 7},
+                               "note": "TOKEN YIELD — the MEAN of the Q0 per-epoch APRs, each over its own stake: "
+                                       "OURS (PENDLE distributed x 365.25/14 / (sPENDLE + virtual sPENDLE) at the "
+                                       "epoch) where our stake exists, PENDLE'S PUBLISHED APR for that epoch before "
+                                       "virtual sPENDLE history starts (~2026-09-11). The cell's source names each "
+                                       "epoch's source; pendle_epoch_table prints them. Airdrops (in kind) excluded.",
                                "published_apr_metric": "staking_apr_published",
                                "was": "actual_buyback_tokens (holders revenue / same-day price)",
                                "cross_check": "~2.68M PENDLE distributed Feb -> late Sep 2026 "
@@ -24904,41 +24917,59 @@ CREDIBILITY: dict = {
         # the same arithmetic both sides — rather than setting an average against one epoch. THE ON-CHAIN ROUTE IS NOT
         # IDENTIFIED: the merkleDistributor 0x33305665… was funded 249,852 PENDLE over 120 days from EOAs, which matches
         # none of the epochs (144K/199K/94K/140K/83K), so it is not the per-epoch reward contract — recorded, not wired.
-        "a3_protocol_yield": {"inputs": ("in_epoch_apr", "in_epoch_reproduction", "in_epoch_mean"),
-                              "source": "the epoch-for-epoch row below (ours for 2026-09-08 vs Jake's 82,545 PENDLE)",
-                              "why": "The headline is the Q0 epoch average x 365.25/14 over real + virtual sPENDLE; it "
-                                     "is judged through its inputs, epoch for epoch — one average is never set against "
-                                     "one epoch. ON-CHAIN ROUTE NOT IDENTIFIED: merkleDistributor 0x33305665… funding "
+        # JAKE'S 5c DECISION (2026-10-09): the headline is the MEAN of the per-epoch APRs, each over its own stake —
+        # ours from ~2026-09-11, Pendle's published APR before (project-first figures are our rule; each embeds that
+        # epoch's own stake). Judged by the per-epoch match on every epoch we compute (5%) and the mean over those
+        # epochs (5%); the epochs on Pendle's APR make it a DOCUMENTED LIMITATION, which lapses by itself once our
+        # stake covers every Q0 epoch (in_epochs_first_party).
+        "a3_protocol_yield": {"inputs": ("in_epoch_reproduction", "in_epoch_mean", "in_epochs_first_party"),
+                              "source": "the per-epoch rows below: ours vs Pendle's published APR, epoch by epoch",
+                              "why": "The headline is the mean of the Q0 per-epoch APRs, each over its own stake: ours "
+                                     "where our stake exists, Pendle's published APR before virtual sPENDLE history "
+                                     "starts (~2026-09-11). Judged epoch for epoch, never one average against one "
+                                     "epoch. ON-CHAIN ROUTE NOT IDENTIFIED: merkleDistributor 0x33305665… funding "
                                      "(249,852 PENDLE over 120 days, from EOAs) matches none of the epochs (144K/199K/"
-                                     "94K/140K/83K). Pendle's lastEpochApr (spendle/data) is the same API as ours, and "
-                                     "NO OTHER ENDPOINT exists (Jake's probes15, root M: pendle-finance/documentation "
+                                     "94K/140K/83K). Pendle's APR (spendle/data) is the same API as ours, and NO OTHER "
+                                     "ENDPOINT exists (Jake's probes15, root M: pendle-finance/documentation "
                                      "@3cc3658d, ApiOverview.mdx L240-305, lists only /v1/spendle/data and "
                                      "/v1/spendle/:address)."},
-        # THE HEADLINE'S ARITHMETIC MUST REPRODUCE EACH EPOCH (Jake's run 2026-10-08 11:27): distributed x 365.25/14 /
-        # (sPENDLE + virtual) at each Q0 epoch, against Pendle's own APR for that epoch (pendle_epoch_apr_published).
-        # Judged on the epoch that differs most; the headline inherits only if this passes. The denominator (eligible
-        # sPENDLE + virtual) is spendle-tracker's documented method (README "Plain APR per epoch").
+        # EVERY EPOCH WE COMPUTE MUST REPRODUCE PENDLE'S OWN APR (Jake's 5c decision: 5%): distributed x 365.25/14 /
+        # (sPENDLE + virtual) at each Q0 epoch, against pendle_epoch_apr_published. Judged on the epoch that differs
+        # most. The denominator (eligible sPENDLE + virtual) is spendle-tracker's documented method.
         "in_epoch_reproduction": _c_in_py(
             "Per-epoch APR, our arithmetic (distributed x 365.25/14 / (sPENDLE + virtual)) — the worst Q0 epoch",
             "epoch_reproduction", {"side": "ours"},
-            {"formula": "epoch_reproduction", "args": {"side": "ref"}, "tol": 10.0, "show_how": True,
+            {"formula": "epoch_reproduction", "args": {"side": "ref"}, "tol": 5.0, "show_how": True,
              "source": "Pendle's own APR for the same epoch (spendle/data sPendleHistoricalData.aprs)",
              "note": "The epoch where ours and Pendle's differ most is judged; every comparable Q0 epoch is listed. "
-                     "An epoch with no stake stored at it (virtual sPENDLE is API-only, its history starts 2026-09) "
-                     "is named and not judged."}, fmt=_C_PCT),
-        # THE HEADLINE EQUALS THE MEAN OF THE PER-EPOCH APRs, OR IT STAYS CHECK (Jake's run 2026-10-08 on 3d5dbeb, 5c):
-        # the twin below compares our 82,545 with Jake's 82,545 and passes trivially. Ours = the headline's own
-        # arithmetic (mean distribution / stake now); the reference = the mean over the same Q0 epochs of each epoch's
-        # APR over its own stake. A Q0 epoch with no stake (virtual sPENDLE is API-only, its history starts 2026-09)
-        # leaves no reference — the mean is never formed over a subset. Tolerance 1%: the stake is read daily, not at
-        # the epoch's block.
-        "in_epoch_mean": _c_in_py(
-            "Headline vs the mean of the per-epoch APRs (each epoch over its own sPENDLE + virtual)",
-            "epoch_mean_check", {"side": "ours"},
-            {"formula": "epoch_mean_check", "args": {"side": "ref"}, "tol": 1.0, "show_how": True,
-             "source": "the per-epoch APRs over each epoch's own stake (pendle_epoch_table prints them)",
-             "note": "Equal when the stake was flat across Q0; a headline below every epoch's APR shows up here."},
+                     "An epoch with no stake of ours (virtual sPENDLE is API-only, its history starts 2026-09) is "
+                     "named and not judged — the headline takes Pendle's APR there (in_epochs_first_party)."},
             fmt=_C_PCT),
+        # OVER THE EPOCHS WE COMPUTE OURSELVES (Jake's 5c decision): the mean of our per-epoch APRs vs the mean of
+        # Pendle's published APRs for the same epochs, 5%.
+        "in_epoch_mean": _c_in_py(
+            "Mean of OUR per-epoch APRs (the epochs we compute) vs Pendle's published APRs for the same epochs",
+            "epoch_mean_check", {"side": "ours"},
+            {"formula": "epoch_mean_check", "args": {"side": "ref"}, "tol": 5.0, "show_how": True,
+             "source": "Pendle's published APRs for the same epochs (pendle_epoch_table prints them)"}, fmt=_C_PCT),
+        # THE EPOCHS ON PENDLE'S APR, A DOCUMENTED LIMITATION WHILE THERE ARE ANY (ours = how many). verdict_when: the
+        # limitation lapses to N/A by itself once our stake covers every Q0 epoch (~2026-12-10), never by a new date.
+        "in_epochs_first_party": _c_in_py(
+            "Q0 epochs where the headline uses Pendle's published APR (no virtual sPENDLE history of ours)",
+            "epochs_first_party", {},
+            {"verdict_when": {"py": "epochs_first_party", "args": {},
+                              "positive": _c_lim(
+                                  "first-party APR only, virtual sPENDLE history starts 2026-09-11: for the Q0 epochs "
+                                  "before it the headline uses Pendle's published APR for that epoch, which embeds the "
+                                  "epoch's own stake.",
+                                  "virtual sPENDLE (virtualSpendleFromVependle) is served only by Pendle's spendle/data "
+                                  "API, with no history parameter and no on-chain getter, so the reward-bearing stake "
+                                  "at earlier epochs cannot be rebuilt (Jake's 5c decision, 2026-10-09).",
+                                  "our virtual sPENDLE readings covering every Q0 epoch (~2026-12-10) — the row "
+                                  "then lapses to N/A by itself"),
+                              "otherwise": {"verdict": "N/A",
+                                            "why": "every Q0 epoch's APR is ours (our stake exists at each)."}}},
+            fmt="0"),
         "in_epoch_apr": _c_in_py("APR of the epoch of 2026-09-08: OUR distribution x 26 / (sPENDLE + virtual) that day",
                                  "epoch_apr", {**_PENDLE_EPOCH, "ours_metric": "pendle_distributed_tokens"},
                                  {"formula": "epoch_apr", "args": _PENDLE_EPOCH, "tol": 1.0,

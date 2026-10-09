@@ -180,40 +180,53 @@ def _pendle_rows(off=1.0, virtual_from="2026-07-01", early_stake_x=1.0):
     return rows
 
 
-def test_pendle_headline_passes_when_it_equals_the_mean_of_the_per_epoch_aprs(tmp_path, monkeypatch):
-    """5c (Jake's run on 3d5dbeb): the headline inherits PASS ONLY if it equals the mean of the per-epoch APRs
-    (each epoch over its own stake) — and each epoch reproduces Pendle's own APR. Flat stake: both hold."""
-    o = _evaluate(tmp_path, monkeypatch, "Pendle", _pendle_rows())
+def _pendle_expected_headline(rows):
+    """The mean of the per-epoch APRs, each over its own stake, from the fixture rows themselves."""
+    df = pd.DataFrame(rows, columns=["date", "project", "metric", "value", "source", "tier"])
+    s = lambda m: df[df.metric == m].set_index("date")["value"]                       # noqa: E731
+    dist, sh, vi, pub = (s("pendle_distributed_tokens"), s("locked_tokens_shares"), s("locked_tokens_virtual"),
+                         s("pendle_epoch_apr_published"))
+    aprs = []
+    for d, t in dist.items():
+        v = vi[(vi.index <= d + pd.Timedelta(days=7))]
+        aprs.append(t * 365.25 / 14 / (sh.loc[d] + (v.iloc[0] if v.index[0] > d else v[v.index <= d].iloc[-1]))
+                    if len(v) else pub.loc[d])
+    return sum(aprs) / len(aprs)
+
+
+def test_pendle_headline_is_the_mean_of_the_per_epoch_aprs_and_passes_when_every_epoch_is_ours(tmp_path, monkeypatch):
+    """Jake's 5c decision (2026-10-09): the headline = the MEAN of the per-epoch APRs, each over its own stake — not mean
+    distribution / today's stake. The stake was twice today's before September: the headline follows each epoch's
+    own stake, every epoch reproduces Pendle's APR (5%), and with our stake at every epoch it is a plain PASS."""
+    rows = _pendle_rows(early_stake_x=2.0)
+    o = _evaluate(tmp_path, monkeypatch, "Pendle", rows)
+    head = o["a3_protocol_yield"]
+    assert abs(float(head["ours"]) - _pendle_expected_headline(rows)) < 1e-9, head
+    assert o["in_epoch_reproduction"]["verdict"].startswith("PASS"), o["in_epoch_reproduction"]
     assert o["in_epoch_mean"]["verdict"].startswith("PASS"), o["in_epoch_mean"]
-    assert "MEAN OF PER-EPOCH APRs" in o["in_epoch_mean"]["note"]
+    assert o["in_epochs_first_party"]["verdict"] == "N/A", o["in_epochs_first_party"]
+    assert head["verdict"].startswith("PASS"), head
+
+
+def test_pendle_epochs_before_virtual_history_take_pendles_apr_as_a_documented_limitation(tmp_path, monkeypatch):
+    """Jake's store: virtual sPENDLE starts 2026-09-11. The July/August epochs take Pendle's published APR (labelled
+    per epoch); the 09-08 and 09-22 epochs are ours and must reproduce Pendle's within 5%. The headline is a
+    DOCUMENTED LIMITATION: 'first-party APR only, virtual sPENDLE history starts 2026-09-11'."""
+    rows = _pendle_rows(virtual_from="2026-09-11")
+    o = _evaluate(tmp_path, monkeypatch, "Pendle", rows)
+    fp = o["in_epochs_first_party"]
+    assert fp["verdict"] == "DOCUMENTED LIMITATION" and float(fp["ours"]) == 4, fp
+    assert "virtual sPENDLE history starts 2026-09-11" in fp["note"] and "(Pendle published)" in fp["note"]
+    assert "2026-09-22" in o["in_epoch_mean"]["note"] and "2026-07-14" not in o["in_epoch_mean"]["note"]
     assert o["in_epoch_reproduction"]["verdict"].startswith("PASS"), o["in_epoch_reproduction"]
-    assert o["a3_protocol_yield"]["verdict"].startswith("PASS"), o["a3_protocol_yield"]
+    head = o["a3_protocol_yield"]
+    assert abs(float(head["ours"]) - _pendle_expected_headline(rows)) < 1e-9, head
+    assert head["verdict"] == "DOCUMENTED LIMITATION (inputs)", head
 
 
-def test_pendle_headline_is_a_check_when_the_epochs_do_not_reproduce(tmp_path, monkeypatch):
-    o = _evaluate(tmp_path, monkeypatch, "Pendle", _pendle_rows(off=1.4))
+def test_pendle_headline_is_a_check_when_our_epochs_miss_pendles_apr_by_more_than_5_percent(tmp_path, monkeypatch):
+    o = _evaluate(tmp_path, monkeypatch, "Pendle", _pendle_rows(off=1.06, virtual_from="2026-09-11"))
     assert o["in_epoch_reproduction"]["verdict"].startswith("CHECK"), o["in_epoch_reproduction"]
-    assert o["a3_protocol_yield"]["verdict"].startswith("CHECK"), o["a3_protocol_yield"]
-
-
-def test_pendle_headline_is_a_check_when_the_stake_moved_and_the_twin_cannot_see_it(tmp_path, monkeypatch):
-    """5a/5c: the stake was twice today's before September. Every epoch still reproduces Pendle's APR and the
-    82,545 twin passes trivially — only the headline-vs-mean row catches the headline (mean distribution over TODAY's
-    stake) sitting above the mean of what each epoch actually paid."""
-    o = _evaluate(tmp_path, monkeypatch, "Pendle", _pendle_rows(early_stake_x=2.0))
-    assert o["in_epoch_reproduction"]["verdict"].startswith("PASS"), o["in_epoch_reproduction"]
-    assert o["in_epoch_apr"]["verdict"].startswith("PASS"), o["in_epoch_apr"]
-    assert o["in_epoch_mean"]["verdict"].startswith("CHECK"), o["in_epoch_mean"]
-    assert o["a3_protocol_yield"]["verdict"].startswith("CHECK"), o["a3_protocol_yield"]
-
-
-def test_pendle_headline_stays_check_while_early_epochs_have_no_stake(tmp_path, monkeypatch):
-    """Jake's store today: virtual sPENDLE (API-only) starts ~2026-09-11, so the July/August epochs have no stake and
-    the mean of per-epoch APRs cannot be formed. No reference, the epochs named — never a mean over a subset."""
-    o = _evaluate(tmp_path, monkeypatch, "Pendle", _pendle_rows(virtual_from="2026-09-11"))
-    em = o["in_epoch_mean"]
-    assert em["verdict"].startswith("CHECK"), em
-    assert "2026-07-14" in em["note"] and "missing" in em["note"]
     assert o["a3_protocol_yield"]["verdict"].startswith("CHECK"), o["a3_protocol_yield"]
 
 
