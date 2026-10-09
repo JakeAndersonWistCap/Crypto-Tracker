@@ -280,6 +280,9 @@ class PendleEpochs:
                         f"{done[0][0].date()}..{done[-1][0].date()}, median {med:,.0f} PENDLE — UNITS "
                         f"CONFIRMED against the staking page's {lo:,}..{hi:,} (/10^{k}; last complete epoch "
                         f"{done[-1][1]:,.0f} PENDLE)"
+                        # EVERY STORED EPOCH, EVERY RUN (Jake's run 2026-10-09, 5b): the first run that reads an epoch
+                        # above 0 dates Pendle's publish lag (credibility.epoch_publish_lag).
+                        + "; STORED PER EPOCH: " + " | ".join(f"{d.date()} {v:,.0f}" for d, v in done)
                         + (f"; IN PROGRESS, not stored until it ends: " + ", ".join(
                             f"{d.date()} at {v:,.0f} PENDLE" for d, v in live) if live else "")
                         + note, TIER)

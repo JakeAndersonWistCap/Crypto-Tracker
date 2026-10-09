@@ -678,7 +678,9 @@ class Scrape:
         when = today()
         tier = int(entry.get("tier", TIER) or TIER)   # provenance: a Dune dashboard page is tier 4
         note = ""
-        if entry.get("needs_first_run_check"):
+        # A CONFIRMED ANCHOR STAYS CONFIRMED (Jake's run 2026-10-09 ~10:15, Plume): `first_run_confirmed` records who read
+        # the page and what it showed; it wins over a needs_first_run_check left on, so the flag cannot come back.
+        if entry.get("needs_first_run_check") and not entry.get("first_run_confirmed"):
             note = " | FIRST-RUN CHECK: the anchor/json_path was inferred without sight of the page — "
             note += "eyeball this value against the page before trusting it"
             out.review_item(proj, metric, "anchor_unconfirmed", "stored_flagged", value=value,

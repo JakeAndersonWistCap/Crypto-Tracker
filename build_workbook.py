@@ -2043,6 +2043,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _emissions_model_views(groups)
     _onchain_release_views(groups)    # BEFORE the issuance views that read pool_release_tokens
     _issuance_views(groups, asof)
+    _emissions_from_metric_views(groups, after_issuance=True)   # emissions read from the issuance view (Pendle)
     _reward_end_views(groups, asof)
     _net_common_views(groups)     # AFTER the issuance views it differences
     _circulating_views(groups)
@@ -3986,6 +3987,14 @@ def _buyback_tokens_from_usd_views(groups: dict) -> None:
         groups[(name, "actual_buyback_tokens")] = _as_stored(tok, usd.columns)
 
 
+def _wallet_set(source: str) -> str:
+    """The components a summed balance was read from — "chain:sum(a+b+c)" -> "a+b+c" (sorted) — with PARTIAL kept as a
+    marker; any other source is its own key."""
+    m = re.search(r"sum\(([^)]*)\)", source or "")
+    key = "+".join(sorted(m.group(1).split("+"))) if m else (source or "")
+    return key + ("|PARTIAL" if "PARTIAL" in (source or "") else "")
+
+
 def _onchain_release_views(groups: dict) -> None:
     """pool_release_tokens := −d(the named non-circulating balances), day over consecutive stored days (Chainlink, Jake's
     sign-off round 2026-10-07: the on-chain set is primary, so the release is what its wallets actually let out). The
@@ -3996,19 +4005,27 @@ def _onchain_release_views(groups: dict) -> None:
         if not legs or (name, legs[0]) not in groups:
             continue
         held = groups.get((name, "pool_release_tokens"))
-        series = []
+        series, sets = [], []
         for m in legs:
             g = groups.get((name, m))
             if g is None or g.empty:
                 series = None
                 break
-            series.append(g.assign(date=pd.to_datetime(g["date"]).dt.normalize())
-                          .drop_duplicates("date", keep="last").set_index("date")["value"].astype(float))
+            g = g.assign(date=pd.to_datetime(g["date"]).dt.normalize()).drop_duplicates("date", keep="last")
+            series.append(g.set_index("date")["value"].astype(float))
+            sets.append(g.set_index("date")["source"].astype(str).map(_wallet_set))
         if not series:
             continue
         bal = pd.concat(series, axis=1).dropna().sum(axis=1).sort_index()
+        # THE SAME WALLETS ON BOTH DAYS, OR NO RELEASE THAT DAY (Jake's run 2026-10-09 ~10:15, Chainlink: our release
+        # read −400,000 over Q0 while the 27 wallets held 251,900,000.10 at both ends with no transfer). A summed
+        # balance's source names its components (chain:sum(a+b+...)); a day whose set differs from the day before —
+        # wallets added to config — re-bases the sum and is NOT a release, and a PARTIAL day (a component refused) is
+        # not a whole sum. Those steps are left out, never differenced.
+        key = pd.concat(sets, axis=1).reindex(bal.index).astype(str).agg("|".join, axis=1)
         prev = bal.shift(1)
-        step = (bal.index.to_series().diff().dt.days == 1)
+        step = ((bal.index.to_series().diff().dt.days == 1) & (key == key.shift(1))
+                & ~key.str.contains("PARTIAL", regex=False))
         rel = (prev - bal)[step].dropna()
         if rel.empty:
             continue
@@ -4051,17 +4068,25 @@ def _onchain_release_views(groups: dict) -> None:
              "source": f"derived:d({fp['stock']})+{'+'.join(fp.get('plus') or ())}", "tier": 2}), g.columns)
 
 
-def _emissions_from_metric_views(groups: dict) -> None:
+_ISSUANCE_VIEW_METRICS = ("gross_issuance_tokens",)
+
+
+def _emissions_from_metric_views(groups: dict, after_issuance: bool = False) -> None:
     """emissions_tokens := the MEASURED release named by config `emissions_from_metric` (Sky, Jake's run
     2026-10-07: the declared vest streams read 73.2M over Q0 where SKY actually released to the farm was 189.1M —
     the declared steps missed two earlier streams). The measured rows replace the column; rows the schedule wrote
     into emissions_tokens before 2026-10-07 are not shown (orphan_cleanup.sql section CE lists them). No measured
-    rows yet: the column is empty, never the old partial schedule."""
+    rows yet: the column is empty, never the old partial schedule.
+
+    gross_issuance_tokens (Pendle, Jake's run 2026-10-09 ~10:15, 5c) is built by _issuance_views, so it is copied on
+    the second call (after_issuance=True), from the view, with its block if the view is blocked."""
     for p in scoped_projects():
         src_metric = p.get("emissions_from_metric")
-        if not src_metric:
+        if not src_metric or (src_metric in _ISSUANCE_VIEW_METRICS) != after_issuance:
             continue
         name = p["name"]
+        if after_issuance and (name, src_metric) in _VIEW_BLOCKS:
+            _VIEW_BLOCKS[(name, "emissions_tokens")] = _VIEW_BLOCKS[(name, src_metric)]
         measured = groups.get((name, src_metric))
         held = groups.get((name, "emissions_tokens"))
         if measured is not None and not measured.empty:
@@ -4117,16 +4142,18 @@ def _epoch_mean_views(groups: dict, asof: pd.Timestamp) -> None:
             date=pd.to_datetime(g["date"]).dt.normalize()).drop_duplicates("date", keep="last")
             .set_index("date")["value"].astype(float).sort_index())(groups.get((name, m)))
         stakes = {m: s(m) for m in (em["stock"], *em["plus"])}
-        tab = cred.epoch_apr_table(s(ty["tokens"]), s(em["published"]), stakes, asof - pd.Timedelta(days=90), asof,
-                                   int(ty["epoch_days"]), int(em.get("after_days", 7)))
-        if not tab or any(r["apr"] is None for r in tab):
+        lag, _ = cred.epoch_publish_lag(name, ty["tokens"], int(ty["epoch_days"]))
+        lo, hi = cred._q0(asof)
+        tab = cred.epoch_apr_table(s(ty["tokens"]), s(em["published"]), stakes, lo, hi, int(ty["epoch_days"]),
+                                   int(em.get("after_days", 7)), lag)
+        got = cred.epoch_headline(tab)
+        if got is None:
             continue
-        v = sum(r["apr"] for r in tab) / len(tab)
-        src = "; ".join(f"{r['date']:%m-%d} {r['apr']:.2%} ({r['source']})" for r in tab)
+        v, n, src = got
         base = next(k for k in ((name, ty["tokens"]), (name, em["published"])) if k in groups)
         groups[(name, em["metric"])] = _as_stored(pd.DataFrame(
             {"date": [asof.normalize()], "project": [name], "metric": [em["metric"]], "value": [v],
-             "source": [f"derived:mean of {len(tab)} Q0 epoch APRs — {src}"], "tier": [2]}), groups[base].columns)
+             "source": [f"derived:mean of {n} Q0 epoch APRs — {src}"], "tier": [2]}), groups[base].columns)
 
 
 def _trailing_yield_views(groups: dict) -> None:

@@ -1607,6 +1607,13 @@ def _derive_issuance(out: FetchOutput, projects: list[dict], prior_values: dict,
         if smetric != "total_supply":
             # its own measuring point, so the guard can read this series apart from the old one
             src = f"derived:d_{smetric}{'+burn' if rule == 'add_burn' else ''}"
+        if span_from:
+            # THE DAYS THE ROW COVERS, ON THE ROW (Jake's run 2026-10-09 ~10:15): the delta spans every day since the
+            # supply last moved, as the history leg already tags it — so a day filter downstream can tell a one-day row
+            # from a catch-up (credibility._eth_net_formula reads it).
+            span_days = (pd.Timestamp(str(when)[:10]) - pd.Timestamp(span_from)).days
+            if span_days > 1:
+                src += f"[span={span_days}d]"
         if mech.get("status") == "assumed":
             src += ":MECHANISM_ASSUMED"
             out.review_item(name, "gross_issuance_tokens", "derived_on_assumed_mechanism", "stored_flagged",

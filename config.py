@@ -9402,9 +9402,10 @@ PROJECTS = [
         },
         "issuance_schedule": None,
         # NO BURN; SUPPLY GROWS ONLY BY MINTING (Jake's run 2026-10-08 11:27). Declared so gross_issuance_tokens derives
-        # as d(total_supply): the RecapitalizationModule's treasury mints (44,401,784 SYRUP in 2025-10 and 2026-04) are
-        # gross issuance into non-circulating — FDV moves, free float does not. maple_syrup_mints sets minted − burned
-        # against archive totalSupply to the wei; a burn there refutes this block.
+        # as d(total_supply): the treasury mints (44,401,784 SYRUP in 2025-10 and 2026-04, sent by the recapitalizationClaimer
+        # Safe — the module path is documented, not yet verified) are gross issuance into non-circulating — FDV moves,
+        # free float does not. Jake's run 2026-10-09: totalSupply moved by exactly the mints; the 2.02 SYRUP sent to 0x0
+        # did not reduce it, so they are transfers, not burns, and do not refute this block.
         "burn_mechanism": {
             "model": "no_burn", "status": "confirmed",
             "source_url": "https://github.com/maple-labs/maple-docs/blob/bd3647e9fbb81757e316f1b6acbd0b92502d5a62/"
@@ -9412,8 +9413,10 @@ PROJECTS = [
             "source_date": "2026-10-08",
             "note": "maple-docs @bd3647e9 syrup-tokenomics/README.md L3-15 describes SYRUP supply as minting only (the "
                     "1 MPL : 100 SYRUP conversion and the recapitalization issuance) and no burn; burn_split above "
-                    "records 'No burn — confirmed' (maple.finance). The RecapitalizationModule mints to the treasury "
-                    "(technical-resources/syrup/recapitalization-module.md).",
+                    "records 'No burn — confirmed' (maple.finance). Treasury mints are claims by the recapitalizationClaimer "
+                    "Safe (maple-labs/address-registry @3df2052 L10; technical-resources/syrup/recapitalization-module.md"
+                    "). Jake's run 2026-10-09: totalSupply moved by exactly the two mints; the 2.02 SYRUP sent to 0x0 "
+                    "did not reduce it — transfers to 0x0, not burns.",
         },
         "contracts": {
             "token": _contract(
@@ -15050,6 +15053,11 @@ PROJECTS = [
              "own_tier": "explorer_gauge", "scan_budget_s": 280,
              "wired_on": "2026-10-07"},
         ],
+        # EMISSIONS = GROSS ISSUANCE (Jake's run 2026-10-09 ~10:15, 5c: in_emissions read n/a — emissions_tokens held
+        # no Q0 row). The emissions column, in_emissions and a3_net_absorption read gross_issuance_tokens: the declared
+        # 2%/yr x total supply (ISSUANCE_PRIMARY), whose own guard blocks it if the observed d(total supply) is more
+        # than 10x away. check_offline_items.pendle_emissions_q0 prints what was actually minted and paid out.
+        "emissions_from_metric": "gross_issuance_tokens",
         "name": "Pendle", "symbol": "PENDLE",
         # ===== actual_buyback_tokens — DERIVED FROM THE $ ALLOCATED. 2026-09-28 (Jake). =====
         # FORMERLY actual_buyback_tokens_blocked (2026-09-23, "NO INTERMEDIATE WALLET PUBLISHED"):
@@ -23740,14 +23748,24 @@ def _c_mat(why: str, until: str) -> dict:
 # The project's N/A emissions row is the checked input of buyback − emissions (credibility.resolve_alias).
 EMISSIONS_DECLARED_ZERO = {
     # CORRECTED (Jake's run 2026-10-08 11:27): nothing is EMITTED to holders, but SYRUP IS MINTED — into the treasury.
+    # CORRECTED AGAIN (Jake's run 2026-10-09 ~10:15): both mints were SENT BY a Safe (0x6b1a78c1, execTransaction), and
+    # currentIssuanceRate() read on the transaction's target failed — the target was the Safe, not a module. Maple's
+    # registry names that Safe its recapitalizationClaimer (and securityAdmin), the only caller the RecapitalizationModule's
+    # claim() accepts, so the documented path is Safe -> module.claim() -> SYRUP.mint. UNVERIFIED until
+    # maple_syrup_mints decodes the Safe's inner call. The 2.02 SYRUP sent to 0x0 did not reduce totalSupply: not burns.
     "Maple": "nothing is emitted to holders: staking rewards sunset by MIP-019 and Drips ended after Q4 2025, last "
              "claims 2026-02-18 (maple-docs @07d8ff8e syrup-tokenomics/staking.md; syrupusdc-usdt-for-lenders/"
-             "drips-rewards.md). SYRUP IS still MINTED, into the TREASURY: the RecapitalizationModule issues MIP-009's "
-             "3-year 5%-a-year treasury emission (carried into SYRUP by MIP-010; expected supply 1,267,875,000 by "
-             "September 2026 — maple-docs @bd3647e9 syrup-tokenomics/README.md L7-15, technical-resources/syrup/"
-             "recapitalization-module.md). 44,401,784 SYRUP were minted from 0x0 into Maple's wallets in 2025-10 and "
-             "2026-04 (maple_buyback_inflows, Jake's run 2026-10-08). That is GROSS ISSUANCE INTO NON-CIRCULATING — FDV "
-             "moves, free float does not — counted in gross_issuance_tokens (d total supply), not as emissions",
+             "drips-rewards.md). SYRUP IS MINTED INTO THE TREASURY, in lumps: 15,851,439.45 on 2025-10-15 and "
+             "28,550,344.51 on 2026-04-22, both transactions sent by the Safe 0x6b1A78C1943b03086F7Ee53360f9b0672bD60818 "
+             "(execTransaction). Maple's address registry names that Safe its recapitalizationClaimer and securityAdmin "
+             "(maple-labs/address-registry @3df2052 MapleAddressRegistryETH.md L6, L10), and RecapitalizationModule.claim() "
+             "accepts only that role (maple-docs @bd3647e9 technical-resources/syrup/recapitalization-module.md L7), so the "
+             "documented path is a claim of MIP-009's schedule (x100 into SYRUP by MIP-010; syrup-tokenomics/README.md "
+             "L7-15) through the module 0x5dfe0460f66fa06bFCbB3211e723556be6B3f69D (registry L294). That attribution is "
+             "UNVERIFIED on-chain until maple_syrup_mints decodes the Safe's inner call. totalSupply moved by exactly the "
+             "mints; the 2.02 SYRUP sent to 0x0 did not reduce it, so they are not burns. Q0 gross issuance 0; trailing "
+             "12 months 44,401,784 (~3.7% of supply). GROSS ISSUANCE INTO NON-CIRCULATING — FDV moves, free float does "
+             "not — counted in gross_issuance_tokens (d total supply), not as emissions",
     "Ether.fi": "fixed 1,000,000,000 ETHFI: total and maximum supply 1bn (Binance Research ether.fi profile, "
                 "2024-03; on-chain totalSupply 1,000,000,000 at 0xFe0c30065B384F05761f15d0CC899D4F9F9Cc0eB, "
                 "Routescan) and our own daily total_supply reads flat; no emission programme — sETHFI rewards are "
@@ -23836,11 +23854,12 @@ CREDIBILITY: dict = {
         "a1_nrr_settlement": _c_na("Chainlink is not a chain — no settlement volume"),
         "a1_nrr_throughput": _c_na("Chainlink is not a chain — no DEX throughput"),
         "a1_tvl": _c_na("Chainlink is not a chain — no chain TVL"),
-        "a3_buyback_locked": {"manual": {"value": 6_047_498, "read_on": "2026-09-25", "read_by": "Jake",
-                                         "source": "Chainlink's Reserve announcement on X (2026-09-25): total held"},
-                              "tol": 2.0, "note": "Ours is the Reserve's balance NOW; the announcement is of 2026-09-25 "
-                                                  "(+~12K LINK a day since). The exact-date comparison is the "
-                                                  "in_reserve row."},
+        # N/A (recorded) — JUDGED BY THE EXACT-DATE ROW (Jake's run 2026-10-09 ~10:15, 2c): today's Reserve balance (6.205M)
+        # against the 2026-09-25 announcement (6.047M) compares two dates; in_reserve compares the same date (0.0%).
+        "a3_buyback_locked": {"verdict": "N/A (recorded — judged by the exact-date row)",
+                              "why": "Ours is the Reserve's balance NOW; the announcement (6,047,498 LINK, Chainlink on "
+                                     "X, read by Jake) is of 2026-09-25, and the Reserve has grown since (~12K LINK a "
+                                     "day). The same quantity on the same date is in_reserve, which is judged."},
         "a2_customer_revenue": {"metric": "actual_buyback_usd", "window": "q0", "tol": 30.0,
                                 "source": "the Reserve's LINK inflow ($, Q0) — a DIFFERENT quantity, read on-chain",
                                 "note": "Expected ours ABOVE it by ~18-25%: the Reserve takes ~85% of the aggregator's "
@@ -23894,17 +23913,16 @@ CREDIBILITY: dict = {
                                                "flow (total fixed at 10**27, LinkToken.sol L10)."}),
         # n/a WHEN THE NET RELEASE IS NEGATIVE (Jake's run 2026-10-08 11:27): fees / issuance has no meaning when more
         # LINK came back into the non-circulating wallets than left; both the balances and the scan must say so
-        "a1_fees_issuance": {"inputs": ("@fees", "@issuance"),
-                             "finding_when": {"py": "negative_release", "below": 0, "use_views": True,
-                                              "args": {"release": "pool_release_tokens",
-                                                       "out": "noncirc_outflow_scan_tokens",
-                                                       "inn": "noncirc_inflow_scan_tokens"},
-                                              "why": "n/a — net release negative in Q0: more LINK came back INTO the "
-                                                     "27 non-circulating wallets than left them, so fees / issuance "
-                                                     "has no meaning this quarter (the returned transfers are listed by "
-                                                     "check_offline_items.py chainlink_noncirc_transfers)."},
-                             "source": "its input rows (below)",
-                             "why": "fees / issuance over Q0; judged by its inputs."},
+        # N/A BY DEFINITION (Jake's run 2026-10-09 ~10:15, 2b — the definition is NOT changed): the A1 FEES ÷ ISSUANCE
+        # cell divides by gross_issuance_tokens, LINK MINTED, which is not_applicable for Chainlink (all 1bn minted at
+        # genesis). It is neither the pool release (in_issuance) nor the RewardVault's staking emissions (a2_emissions,
+        # 493,768 over Q0), so the cell reads n/a and nothing is judged. The negative-release finding is withdrawn:
+        # the wallets released 0 in Q0 (chainlink_noncirc_transfers, archive balances equal at both ends).
+        "a1_fees_issuance": {"verdict": "N/A",
+                             "why": "n/a by definition: A1's FEES ÷ ISSUANCE divides by gross_issuance_tokens (LINK "
+                                    "minted), and LINK was fully minted at genesis (not_applicable.gross_issuance_tokens). "
+                                    "Neither the non-circulating wallets' release (in_issuance: 0 in Q0) nor the "
+                                    "RewardVault's staking emissions (a2_emissions) is that figure."},
         # B4 (overnight 2026-10-06): DefiLlama's chainlink fees ARE every token the fee aggregator receives on Ethereum
         # (dimension-adapters fees/chainlink, addTokensReceived to 0xd6e39d42…) — our own log scan of the same
         # receipts, priced by us, is an independent measurement of the same quantity over the same days.
@@ -24300,7 +24318,8 @@ CREDIBILITY: dict = {
             "maple_buyback_inflows (Jake's run 2026-10-08 11:27) scanned 0xd6d4 (DAO), 0x58be0049 (the SSF's partial "
             "match), 0xa9466eab (registry treasury) and every Safe sharing a signer with them over 365 days: no SYRUP "
             "from swap venues that tracks the page's months. The large inflows were MINTS from 0x0 (44,401,784 SYRUP in "
-            "2025-10 and 2026-04 — the RecapitalizationModule's treasury issuance, maple_syrup_mints), not buys. "
+            "2025-10 and 2026-04, sent by the recapitalizationClaimer Safe 0x6b1A78C1 — treasury issuance, "
+            "maple_syrup_mints), not buys. "
             "Maple's Blockworks filing (2026-10-07) says repurchased SYRUP is held in the DAO treasury but names no "
             "executor.",
             "Maple publishing the buyback executor or the SSF's wallets, so purchases can be summed on-chain")),
@@ -24406,11 +24425,31 @@ CREDIBILITY: dict = {
         "in_voter_apr_epoch": _c_in_py(
             "Per-epoch voter APR, the headline's arithmetic (DefiLlama $ / week's mean price x 365.25/7 / totalWeight)",
             "aero_epoch_apr", {"side": "ours"},
-            {"formula": "aero_epoch_apr", "args": {"side": "ref"}, "tol": 10.0, "show_how": True,
-             "source": "the on-chain epoch APR: fees + bribes notified for the epoch x 52 / (Voter.totalWeight x AERO "
-                       "price at the epoch end) — fetch/aero_voter.py",
-             "note": "Judged on the epoch that differs most. The price legs differ by design (the week's mean against the "
-                     "epoch-end price) and unpriced reward tokens leave the on-chain side low; 10% covers both."},
+            {"verdict_when": {"py": "aero_epoch_pending", "args": {"flow": "holders_revenue_usd"},
+                              "positive": _c_mat("DefiLlama's days for the latest on-chain epoch are not all stored yet "
+                                                 "(it publishes a day after the day ends).", "2026-10-10"),
+                              "otherwise": {
+                "formula": "aero_epoch_apr", "args": {"side": "ref"}, "tol": 10.0, "show_how": True,
+                "source": "the on-chain epoch's fees + bribes (tokenRewardsPerEpoch, fetch/aero_voter.py) at the SAME "
+                          "price and stake as ours: the week's mean AERO price, x 365.25/7, over Voter.totalWeight",
+                "note": "Judged on the epoch that differs most. Both sides use the same price (Jake's run 2026-10-09, "
+                        "4b), so the comparison is the dollars; unpriced reward tokens leave the on-chain side low."}}},
+            fmt=_C_PCT),
+        # THE HEADLINE'S PRICE BASIS, A FINDING WHEN AERO MOVED (Jake's run 2026-10-09 ~10:15, 4a/b): the dollars agree
+        # (DefiLlama $1,925,083/week vs on-chain $1,902,409 for 2026-10-01); the headline converts Q0 rewards at the Q0
+        # MEAN AERO price, so a price that rose over Q0 puts it above the APR at today's price. VERIFIED FINDING only
+        # when CoinGecko's and Coinbase's Q0 means agree (confirmed); CHECK otherwise.
+        "in_apr_today_price": _c_in_py(
+            "Voter APR at TODAY's AERO price beside the headline (Q0 rewards converted at the Q0 mean price)",
+            "price_basis_gap", {"value": "apr"}, {"verdict_when": {
+                "py": "price_basis_gap", "args": {},
+                "positive": _c_find("The headline converts Q0 rewards to AERO at the Q0 MEAN price (our token-yield "
+                                    "definition); at today's price the same rewards are a lower APR, because AERO rose "
+                                    "over Q0.", "CoinGecko and Coinbase daily prices over Q0, stored"),
+                "negative": _c_chk("AERO's Q0 mean is not confirmed by a second price source (Coinbase missing or "
+                                   "more than 2% apart).", "python check_offline_items.py aerodrome_price_q0"),
+                "otherwise": {"verdict": "N/A (recorded, price flat)", "why": "AERO moved less than 5% over Q0: the headline's Q0-mean "
+                                                       "conversion and today's price give the same APR."}}},
             fmt=_C_PCT),
         "in_rebase_apr": _c_in_py("veAERO rebase as a rate (RewardsDistributor tokensPerWeek x 52 / totalWeight) — a "
                                   "separate stream, in neither yield figure", "aero_rebase_apr", {},
@@ -24421,11 +24460,16 @@ CREDIBILITY: dict = {
                                           "judged as emissions on in_emissions."}, fmt=_C_PCT),
         "in_revenue": _c_in_py("Voter revenue, one epoch: DefiLlama fees + bribes over the epoch's 7 UTC days",
                                "aero_epoch_revenue", {"side": "ours"},
-                               {"formula": "aero_epoch_revenue", "args": {"side": "ref"}, "tol": 10.0, "show_how": True,
+                               {"verdict_when": {"py": "aero_epoch_pending", "args": {"flow": "revenue_usd"},
+                                                 "positive": _c_mat("DefiLlama's days for the latest on-chain epoch are "
+                                                                    "not all stored yet (it publishes a day after the "
+                                                                    "day ends).", "2026-10-10"),
+                                                 "otherwise": {
+                                "formula": "aero_epoch_revenue", "args": {"side": "ref"}, "tol": 10.0, "show_how": True,
                                 "source": "fees + bribes notified to the voting-reward contracts for the SAME epoch "
                                           "(tokenRewardsPerEpoch, priced at the epoch end) — fetch/aero_voter.py",
                                 "note": "Unpriced reward tokens (DefiLlama has no price) are left out of the on-chain "
-                                        "figure and counted in voter_rewards_unpriced_count."},
+                                        "figure and counted in voter_rewards_unpriced_count."}}},
                                fmt=_C_USD),
         # THE TWO DEFINITIONS, UNTANGLED (sign-off round 2026-10-07): veAERO.supply() is AERO LOCKED (1.053bn, Jake's
         # read); aerodrome.finance's 881,100,168 is VOTING POWER (veAERO.totalSupply(): each lock's balance decays with
@@ -24904,14 +24948,20 @@ CREDIBILITY: dict = {
         # JUDGED WHEN THE SCAN COMPLETES (Jake's run 2026-10-08 11:27: the scan was at 90%; now on its own tier and
         # budget, explorer_gauge). The scan stores nothing until every stream reconciles to balanceOf to the wei, so a
         # figure on this row IS a completed scan: PENDLE out of the mainnet GaugeController to its markets over Q0.
-        "in_emissions": _c_in("Emissions Q0 (tokens)", "emissions_tokens", "q0",
+        # OURS = GROSS ISSUANCE (Jake's run 2026-10-09 ~10:15, 5c): the emissions column is gross_issuance_tokens
+        # (emissions_from_metric). Against the mainnet gauge's payouts it reads the schedule's ~1.42M against ~77K until
+        # pendle_emissions_q0 says where the rest is (L2 gauges, unminted schedule) — CHECK until then, never hidden.
+        "in_emissions": _c_in("Emissions Q0 (tokens) = gross issuance (declared 2%/yr x total supply)", "emissions_tokens",
+                              "q0",
                               {"metric": "emissions_tokens_gauge_mainnet", "window": "q0", "tol": 25.0,
                                "source": "PENDLE out of the mainnet GaugeController to its markets (MarketClaimReward "
                                          "transfers), Q0 — on-chain, reconciled to the wei before it is stored",
                                "note": "Mainnet markets only: ours ABOVE the reference by about the L2 markets' share "
                                        "is that coverage gap, not an error (each L2 gauge controller is its own "
-                                       "contract). The schedule (~1.42M over Q0 at the terminal 2%/yr) is a ceiling: "
-                                       "AIM pays fixed-dollar incentives at or below it."}),
+                                       "contract). Ours is the schedule (~1.42M over Q0 at the terminal 2%/yr), a ceiling: "
+                                       "AIM pays fixed-dollar incentives at or below it. python check_offline_items.py "
+                                       "pendle_emissions_q0 prints the Q0 totalSupply change, the GaugeController's "
+                                       "inflows (mints) and outflows, and each L2 gauge's payouts."}),
         # JUDGED EPOCH FOR EPOCH (Jake, 2026-10-08): the headline stays the Q0 epoch average (every project's trailing
         # window) and inherits the verdict of in_epoch_apr — ours for the 2026-09-08 epoch against Jake's 82,545 PENDLE,
         # the same arithmetic both sides — rather than setting an average against one epoch. THE ON-CHAIN ROUTE IS NOT

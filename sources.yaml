@@ -1013,7 +1013,10 @@
   method: json
   url_contains: /supply
   json_path: result
-  needs_first_run_check: true
+  # CONFIRMED (Jake's run 2026-10-09 ~10:15): Jake read supply.plume.org = 6,606,142,167, the value stored 10-07..10-09.
+  # A confirmed anchor is never flagged anchor_unconfirmed again (fetch/scrape.py _emit), on any later run.
+  needs_first_run_check: false
+  first_run_confirmed: {by: Jake, date: "2026-10-09", value: 6606142167, evidence: "Jake's reading of supply.plume.org/supply (given in chat), equal to the stored 6,606,142,167"}
   sanity_min: 1000000000
   sanity_max: 10000000000
   change_threshold_pct: 10

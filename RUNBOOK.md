@@ -527,6 +527,69 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11aw. Jake's run 2026-10-09 ~10:15: tested on the real store
+
+That run (on 1cb8f6b) signed off 10 projects. Five were OPEN: Ethereum, Chainlink, Plume, Aerodrome and Pendle. The
+fixtures had predicted 14-15; the real store disagreed. **From this round, a fix is tested against Jake's own rows.**
+
+0. **Real dumps.** `python dump_fixture.py --project X` writes `fixtures/real_<x>.json`: the project's rows over 400
+   days, its review queue, overrides, 30 days of run log (URLs redacted) and the latest gap report. Commit the file.
+   `tests/test_real_dumps.py` loads it into a fresh store and runs `credibility_report` as of the dump's date. Each
+   test skips until its dump is committed.
+1. **Ethereum a4_net_change.** An issuance row can cover several days: Etherscan's supply doesn't move daily, and the
+   day it moves stores d(supply) + the burn since it last moved. The row is tagged `[span=Nd]`; the live path now tags
+   it too. Ours sums the rows of the common days and their spans, never the full Q0 sum. The working lists each row
+   with its span ("OUR ISSUANCE ROWS").
+2. **Chainlink.**
+   - The release differences only consecutive days with the SAME wallet set and no PARTIAL component. The +400,000
+     step was the summed balance stepping when wallets were added to the list (24 → 27), not a release.
+     `check_offline_items.py chainlink_release_steps` prints every step and marks those "NOT A RELEASE".
+   - A1 FEES ÷ ISSUANCE divides by `gross_issuance_tokens` (LINK minted). LINK was fully minted at genesis, so A1 is
+     N/A by definition. Neither the release nor the RewardVault's emissions is that figure.
+   - a3_buyback_locked: "N/A (recorded — judged by the exact-date row)".
+3. **Plume.** Jake confirmed supply.plume.org = 6,606,142,167 (2026-10-09). `sources.yaml` records
+   `first_run_confirmed` on the entry. A confirmed anchor stops raising `anchor_unconfirmed`, and the confirmation
+   persists across runs.
+4. **Aerodrome.**
+   - `in_apr_today_price`: the voter APR at TODAY's AERO price, beside the headline (which converts Q0 rewards at the
+     Q0 mean price). It is a VERIFIED FINDING when AERO moved more than 5% over Q0 and Coinbase confirms CoinGecko's
+     Q0 mean within 2%. CHECK when Coinbase is missing or apart; N/A (recorded, price flat) otherwise.
+     `check_offline_items.py aerodrome_price_q0` prints both sources' daily prices.
+   - `in_voter_apr_epoch` uses ONE price on both sides: the week's mean.
+   - in_revenue / in_voter_apr_epoch are MATURING until 2026-10-10 while DefiLlama has not published a day of the
+     latest epoch; the row names the missing day. After that date they are CHECK.
+5. **Pendle.**
+   - **Why the headline read 11.55% against 1.436%.** On 1cb8f6b the cell was (Q0 sum / q0_events) × 365.25/14 /
+     (shares + IF(ISNUMBER(virtual "now"), virtual, 0)). Two things differed from the Python:
+     - q0_events counts only epochs above 0, so the 0 epoch dropped out of the divisor (×1.2: 131,975 vs 109,979);
+     - a blank virtual "now" silently dropped ~170M virtual sPENDLE from the stake (×6.7).
+     1.2 × 6.7 ≈ 8.04 = 11.55 / 1.436. Since 2ed3ed9 the headline is a Python view (`token_yield_epoch_mean_pct`).
+     `test_real_pendle_headline_cell_equals_the_python` holds the cell to `credibility.epoch_headline` on the real dump.
+   - **A 0 is not yet published.** `credibility.epoch_publish_lag` reads the run log for the first run that read each
+     epoch above 0. The longest observed (first non-zero − epoch end) is Pendle's lag. Inside the lag, or with no lag
+     observed, an epoch read at 0 is "unpublished": named and left out of the mean. A 0 still standing after the lag
+     counts as 0. The fetcher now logs every stored epoch each run (`STORED PER EPOCH:`).
+     `pendle_epoch_table` prints each epoch's first non-zero date.
+   - **Emissions = gross issuance.** Pendle declares `emissions_from_metric: gross_issuance_tokens`, so the emissions
+     column, in_emissions and a3_net_absorption read the declared 2%/yr × total supply (~1.42M over Q0, a ceiling).
+     Against the mainnet gauge's ~77K it reads CHECK until `check_offline_items.py pendle_emissions_q0` shows where
+     the difference is. That probe prints the Q0 totalSupply change, the mints, the GaugeController's inflows by
+     sender, and each chain's gauge payouts with the L2 share (gauges from pendle-core-v2-public @87685c8).
+6. **Maple.**
+   - Both mints were sent by the Safe 0x6b1A78C1943b03086F7Ee53360f9b0672bD60818 (execTransaction). Maple's address
+     registry (maple-labs/address-registry @3df2052, MapleAddressRegistryETH.md L6, L10) names that Safe its
+     securityAdmin AND its recapitalizationClaimer. Maple's Blockworks filing calls it a 3-of-6 multisig. The governor
+     is a different contract (governorTimelock 0x2eFFf887, L5).
+   - RecapitalizationModule.claim() accepts only the claimer, so the documented path is
+     Safe → module 0x5dfe0460 (L294) → SYRUP.mint. Each mint is a claim of the accrued MIP-009 schedule (×100 by
+     MIP-010), not a separately authorised mint.
+   - That attribution stays UNVERIFIED until `maple_syrup_mints` decodes the Safe's inner call. The probe now prints
+     it, the Safe's owners and threshold, and `currentIssuanceRate()` read ON THE MODULE. The earlier read hit the
+     Safe.
+   - totalSupply moved by exactly the mints. The 2.02 SYRUP sent to 0x0 did not reduce it: transfers, not burns.
+   - Q0 gross issuance is 0; the trailing 12 months are 44,401,784 (~3.7%).
+
+
 ## 11av. Jake's run 2026-10-08 11:27: closing the five, and the lapsing MATURING rows
 
 That run signed off 10 projects. Five were OPEN: Ethereum, Chainlink, Near, Sky and Pendle (156 PASS / 12 CHECK).

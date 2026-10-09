@@ -26027,7 +26027,7 @@ def test_ethereum_net_change_reference_is_independent_and_uses_our_common_days()
     rows = {"Ethereum|beacon_chain_eth": {"now": 36e6}}
     v, d, how = cred.FORMULAS["eth_net_formula"]("Ethereum", rows, long, asof)
     iss = 166.32 * (36e6 ** 0.5) / 365 * 8
-    assert abs(v - (iss - 8 * 100.0)) < 1e-6 and d == "2026-10-06" and "8 common day(s)" in how
+    assert abs(v - (iss - 8 * 100.0)) < 1e-6 and d == "2026-10-06" and "8 common-day issuance row(s)" in how
     assert config.CREDIBILITY["Ethereum"]["a4_net_change"]["formula"] == "eth_net_formula"
 
 

@@ -24,14 +24,23 @@ import config  # noqa: E402
 ASOF = "2026-10-08"
 
 
-def _evaluate(tmp_path, monkeypatch, project, rows, asof=ASOF):
-    """{row id: {verdict, ours, ref, note}} for `project`, from credibility_report on a store holding `rows`."""
+def _evaluate(tmp_path, monkeypatch, project, rows, asof=ASOF, run_log=()):
+    """{row id: {verdict, ours, ref, note}} for `project`, from credibility_report on a store holding `rows` (and
+    `run_log` lines: (ts, source, project, message))."""
+    import sqlite3
     import credibility_report as cr
     import store as sm
     db = tmp_path / "metrics.db"
     st = sm.Store(db)
     st.upsert(pd.DataFrame(rows, columns=["date", "project", "metric", "value", "source", "tier"]))
     st.close()
+    if run_log:
+        con = sqlite3.connect(db)
+        con.executemany("INSERT INTO run_log (run_id, ts, source, tier, project, rows, status, message) "
+                        "VALUES (?, ?, ?, 3, ?, 1, 'ok', ?)", [(f"r{i}", ts, s, p, m) for i, (ts, s, p, m) in
+                                                                enumerate(run_log)])
+        con.commit()
+        con.close()
     monkeypatch.setattr(sm, "DB_PATH", str(db))
     monkeypatch.setitem(sys.modules, "recalc", None)          # the Python evaluation, as on Jake's machine
     rws, tab = cr.evaluate(project, asof=pd.Timestamp(asof), narrow=True)
@@ -75,31 +84,69 @@ def test_ethereum_net_change_sums_our_issuance_and_burn_over_the_references_own_
     assert pct["verdict"].startswith("PASS") == o["in_circ"]["verdict"].startswith("PASS"), (pct, o["in_circ"])
 
 
+def test_ethereum_issuance_rows_that_span_several_days_are_judged_over_the_days_they_cover(tmp_path, monkeypatch):
+    """Jake's run 2026-10-09 ~10:15 (real store): "OURS, same 7 day(s): issuance 29,812 (4,259/day, +41.4%)" — 29,812 is
+    the full 10-day sum. Etherscan's supply did not move on 3 of the 10 days, so the rows on the day it moved again hold
+    the change since it LAST moved (the 10-04 row covers 10-02..10-04). Both sides now cover the same 10 days."""
+    days = pd.date_range("2026-09-30", "2026-10-09")
+    per_day, staked = 2982.0, (2982.0 * 365 / 166.32) ** 2             # the curve gives 2,982/day at this stake
+    flat = {pd.Timestamp("2026-10-02"), pd.Timestamp("2026-10-03"), pd.Timestamp("2026-10-07")}
+    rows, sup, pending = [], 120.5e6, 0
+    for d in days:
+        pending += 1
+        if d not in flat:                                  # the supply moved: the row covers every day since it last did
+            sup += per_day * pending - 99.0 * pending
+            src = "derived:d_total_supply_protocol+burn" + (f"[span={pending}d]" if pending > 1 else "")
+            if d >= pd.Timestamp("2026-10-05"):            # older rows (10-04) carry no tag: their span comes from the supply
+                rows.append((d, "Ethereum", "gross_issuance_tokens", per_day * pending, src, 1))
+            else:
+                rows.append((d, "Ethereum", "gross_issuance_tokens", per_day * pending,
+                             "derived:d_total_supply_protocol+burn", 1))
+            pending = 0
+        rows += [(d, "Ethereum", "total_supply_protocol", sup, "etherscan:ethsupply2", 1),
+                 (d, "Ethereum", "gross_burn_tokens", 99.0, "etherscan:ethsupply2:burnt_fees:delta", 1),
+                 (d, "Ethereum", "price_usd", 4000.0, "coingecko", 1),
+                 (d, "Ethereum", "revenue_usd", 99.0 * 4000, "llama:fees", 1),
+                 (d, "Ethereum", "beacon_chain_eth", staked, "validatorqueue", 1)]
+    o = _evaluate(tmp_path, monkeypatch, "Ethereum", rows, asof="2026-10-09")
+    net = o["a4_net_change"]
+    assert "OURS, same 10 day(s): issuance 29,820" in net["note"], net["note"][:900]
+    assert "10-04 8,946 (3d)" in net["note"] and "10-08 5,964 (2d)" in net["note"], net["note"][-500:]
+    assert abs(float(net["ours"]) - 10 * (2982 - 99)) < 1e-6, net["ours"]
+    assert net["verdict"].startswith("PASS"), net
+
+
 # --------------------------------------------------------------------------------------------------------- Chainlink
-def _chainlink_rows(returned=400_000.0):
-    rows, bal = [], 300e6
+def _chainlink_rows():
+    """Jake's store: the sum read 24 wallets until three more were added to config (2026-09-15 here); those three hold
+    400,000 LINK, so the stored sum steps up by 400,000 — a re-basing, not LINK returned. No transfer in or out."""
+    rows = []
+    w24 = "+".join(f"cl_nc_{i}" for i in range(24))
+    w27 = "+".join(f"cl_nc_{i}" for i in range(27))
     for d in _days():
-        in_ = returned if d == pd.Timestamp("2026-09-15") else 0.0
-        bal += in_
-        rows += [(d, "Chainlink", "noncirculating_holding_tokens", bal, "chain:ethereum:noncirc_wallets", 2),
+        late = d >= pd.Timestamp("2026-09-15")
+        rows += [(d, "Chainlink", "noncirculating_holding_tokens", 251_900_000.10 if late else 251_500_000.10,
+                  f"chain:sum({w27 if late else w24})", 2),
                  (d, "Chainlink", "noncirc_outflow_scan_tokens", 0.0, "explorer:noncirc_out", 2),
-                 (d, "Chainlink", "noncirc_inflow_scan_tokens", in_, "explorer:noncirc_in", 2),
+                 (d, "Chainlink", "noncirc_inflow_scan_tokens", 0.0, "explorer:noncirc_in", 2),
                  (d, "Chainlink", "circulating_supply", 678e6, "coingecko", 1),
                  (d, "Chainlink", "price_usd", 22.0, "coingecko", 1),
                  (d, "Chainlink", "fees_usd", 50_000.0, "llama:fees", 1)]
     return rows
 
 
-def test_chainlink_issuance_is_judged_stock_vs_flow_and_a_negative_release_is_a_finding(tmp_path, monkeypatch):
-    """2. in_issuance: the balance-derived release (−400,000: LINK RETURNED into the 27 wallets) against the scanned
-    net outflow over Q0 — PASS; CoinGecko's stepwise d(circulating) is recorded N/A; a1_fees_issuance is the VERIFIED
-    FINDING 'n/a — net release negative in Q0'."""
+def test_chainlink_release_is_zero_when_the_only_step_is_wallets_added_to_the_set(tmp_path, monkeypatch):
+    """2a (Jake's run 2026-10-09 ~10:15): chainlink_noncirc_transfers read the 27 wallets at 251,900,000.10 at both Q0
+    ends with no transfer, yet we stored a −400,000 release. The step was the wallet set growing, not LINK coming back:
+    the release view now differences only days with the same wallets, so ours = the stock change = 0 -> PASS.
+    2b: A1 fees / issuance is N/A by definition (LINK minted, not the release). 2c: a3_buyback_locked is recorded."""
     o = _evaluate(tmp_path, monkeypatch, "Chainlink", _chainlink_rows())
-    assert o["in_issuance"]["verdict"].startswith("PASS"), o["in_issuance"]
+    iss = o["in_issuance"]
+    assert abs(float(iss["ours"])) < 1e-6 and iss["verdict"].startswith("PASS"), iss
     assert o["in_issuance_coingecko"]["verdict"] == "N/A (recorded, stepwise)"
     a1 = o["a1_fees_issuance"]
-    assert a1["verdict"] == "VERIFIED FINDING", a1
-    assert "net release negative in Q0" in a1["note"]
+    assert a1["verdict"] == "N/A" and "LINK minted" in a1["note"], a1
+    assert o["a3_buyback_locked"]["verdict"] == "N/A (recorded — judged by the exact-date row)"
 
 
 # -------------------------------------------------------------------------------------------------------------- NEAR
@@ -242,16 +289,104 @@ def test_pendle_emissions_is_judged_against_the_gauge_scan_not_maturing(tmp_path
     assert em["verdict"].startswith(("PASS", "CHECK")), em
 
 
+def _pendle_log(ts, last_epoch, value, per_epoch=None):
+    """One run's pendle_distributed_tokens line, as fetch/pendle_epochs.py writes it."""
+    msg = (f"pendle_distributed_tokens: payload holds 12 epoch(s) 2026-04-21..2026-10-06 (API order oldest-first; "
+           f"sorted by date here); stored 11 COMPLETED 2026-04-21..{last_epoch}, median 140,000 PENDLE — UNITS "
+           f"CONFIRMED against the staking page's 50,000..600,000 (/10^18; last complete epoch {value:,.0f} PENDLE)")
+    if per_epoch:
+        msg += "; STORED PER EPOCH: " + " | ".join(f"{d} {v:,.0f}" for d, v in per_epoch)
+    return (ts, "pendle_api", "Pendle", msg)
+
+
+# Pendle's lag as Jake's log shows it here: epoch 09-08 ended 09-22, read 0 that day and 82,545 two days later.
+_PENDLE_LAG_LOG = [_pendle_log("2026-09-22T08:00:00", "2026-09-08", 0),
+                   _pendle_log("2026-09-24T08:00:00", "2026-09-08", 82_545),
+                   _pendle_log("2026-10-06T08:00:00", "2026-09-22", 0),
+                   _pendle_log("2026-10-08T08:00:00", "2026-09-22", 0)]
+
+
+def _pendle_zero_rows():
+    rows = [r for r in _pendle_rows(virtual_from="2026-09-11")
+            if not (r[2] == "pendle_distributed_tokens" and r[0] == pd.Timestamp("2026-09-22"))]
+    rows = [r for r in rows if not (r[2] == "pendle_epoch_apr_published" and r[0] == pd.Timestamp("2026-09-22"))]
+    return rows + [(pd.Timestamp("2026-09-22"), "Pendle", "pendle_distributed_tokens", 0.0,
+                    "pendle_api:sPendleHistoricalData.buybackAmounts", 3)]
+
+
+def test_pendle_epoch_read_at_zero_inside_the_observed_lag_is_left_out_of_the_mean(tmp_path, monkeypatch):
+    """5b (Jake's run 2026-10-09 ~10:15): epoch 09-22 stored COMPLETED at 0 — not yet published. The run log shows
+    Pendle's lag (09-08 read 0 on 09-22, non-zero on 09-24: 2 days). On 10-08 the 09-22 epoch (ended 10-06) is inside
+    that lag: it is left out of the headline's mean, named, and the mean is over the other five epochs."""
+    import credibility as cred
+    rows = _pendle_zero_rows()
+    o = _evaluate(tmp_path, monkeypatch, "Pendle", rows, run_log=_PENDLE_LAG_LOG)
+    lag, seen = cred.epoch_publish_lag("Pendle", db=tmp_path / "metrics.db")
+    assert lag == 2, seen
+    full = _pendle_expected_headline(_pendle_rows(virtual_from="2026-09-11"))
+    five = [r for r in rows if r[2] == "pendle_distributed_tokens" and r[0] != pd.Timestamp("2026-09-22")]
+    assert len(five) == 5
+    head = o["a3_protocol_yield"]
+    assert float(head["ours"]) > full, (head, full)              # 0 left out, not averaged in
+    assert "UNPUBLISHED" in o["in_epochs_first_party"]["note"], o["in_epochs_first_party"]["note"]
+
+
+def test_pendle_zero_still_standing_after_the_lag_counts_as_zero(tmp_path, monkeypatch):
+    """After the observed lag (10-06 + 2 days), a 0 still stored is a distribution of 0 and is in the mean."""
+    rows = _pendle_zero_rows()
+    log = _PENDLE_LAG_LOG + [_pendle_log("2026-10-10T08:00:00", "2026-09-22", 0)]
+    late = _evaluate(tmp_path, monkeypatch, "Pendle", rows, asof="2026-10-10", run_log=log)
+    (tmp_path / "inlag").mkdir()
+    early = _evaluate(tmp_path / "inlag", monkeypatch, "Pendle", rows, asof="2026-10-08", run_log=_PENDLE_LAG_LOG)
+    assert float(late["a3_protocol_yield"]["ours"]) < float(early["a3_protocol_yield"]["ours"])
+
+
+def test_pendle_headline_cell_equals_the_python_on_the_same_store(tmp_path, monkeypatch):
+    """5a: the headline cell (AR17 on Jake's book) must equal the Python computation of the same definition — the mean
+    of the per-epoch APRs from credibility.epoch_apr_table/epoch_headline over the store the build read."""
+    import credibility as cred
+    rows = _pendle_zero_rows()
+    o = _evaluate(tmp_path, monkeypatch, "Pendle", rows, run_log=_PENDLE_LAG_LOG)
+    df = pd.DataFrame(rows, columns=["date", "project", "metric", "value", "source", "tier"])
+    s = lambda m: df[df.metric == m].set_index("date")["value"].astype(float).sort_index()   # noqa: E731
+    lo, hi = cred._q0(pd.Timestamp(ASOF))
+    lag, _ = cred.epoch_publish_lag("Pendle", db=tmp_path / "metrics.db")
+    tab = cred.epoch_apr_table(s("pendle_distributed_tokens"), s("pendle_epoch_apr_published"),
+                               {m: s(m) for m in ("locked_tokens_shares", "locked_tokens_virtual")}, lo, hi, 14, 7, lag)
+    v, n, _txt = cred.epoch_headline(tab)
+    assert n == 5
+    assert abs(float(o["a3_protocol_yield"]["ours"]) - v) < 1e-12, (o["a3_protocol_yield"], v)
+
+
+def test_pendle_emissions_ours_is_gross_issuance(tmp_path, monkeypatch):
+    """5c: in_emissions' ours is gross_issuance_tokens over Q0 — the declared 2%/yr x total supply — not the empty
+    emissions_tokens column."""
+    rows = _pendle_rows()
+    for d in _days("2026-06-01", "2026-10-07"):
+        rows.append((d, "Pendle", "total_supply", 285e6, "coingecko", 1))
+    for d in _days():
+        rows.append((d, "Pendle", "emissions_tokens_gauge_mainnet", 857.0, "explorer:gauge_pendle_out", 2))
+    o = _evaluate(tmp_path, monkeypatch, "Pendle", rows)
+    em = o["in_emissions"]
+    want = 0.02 * 285e6 / 365 * 90
+    assert em["ours"] is not None and abs(float(em["ours"]) / want - 1) < 0.02, (em, want)
+
+
 # --------------------------------------------------------------------------------------------------------- Aerodrome
 WK, TW, PX = 1_918_756.0, 1_021_271_849.0, 0.778            # Jake's read of epoch 2026-10-01
 
 
-def _aero_rows(off=1.0, weight_from=None):
+def _aero_rows(off=1.0, weight_from=None, price=None, llama_until=None):
+    """price: a function of the day (default flat PX); CoinGecko and Coinbase both store it. llama_until: the last day
+    DefiLlama has published (default every day)."""
+    price = price or (lambda d: PX)
     rows = []
     for d in _days():
-        for m in ("revenue_usd", "holders_revenue_usd"):
-            rows.append((d, "Aerodrome", m, WK / 7 * off, "defillama", 1))
-        rows += [(d, "Aerodrome", "price_usd", PX, "coingecko", 1),
+        if llama_until is None or d <= pd.Timestamp(llama_until):
+            for m in ("revenue_usd", "holders_revenue_usd"):
+                rows.append((d, "Aerodrome", m, WK / 7 * off, "defillama", 1))
+        rows += [(d, "Aerodrome", "price_usd", price(d), "coingecko", 1),
+                 (d, "Aerodrome", "price_usd_coinbase", price(d), "xref:coinbase:AERO-USD", 1),
                  (d, "Aerodrome", "ve_locked_supply_tokens", 1.053e9, "chain:base:ve", 2),
                  (d, "Aerodrome", "ve_voting_power_tokens", 881.1e6, "chain:base:ve", 2)]
         if weight_from is None:
@@ -264,8 +399,38 @@ def _aero_rows(off=1.0, weight_from=None):
     e = pd.Timestamp("2026-10-01")
     rows += [(e, "Aerodrome", "voter_rewards_onchain_usd", WK, "aero_voter:tokenRewardsPerEpoch", 2),
              (e, "Aerodrome", "voter_rewards_unpriced_count", 18.0, "aero_voter:tokenRewardsPerEpoch", 2),
-             (e, "Aerodrome", "voter_rewards_onchain_apr", WK * 52 / (TW * PX), "aero_voter:tokenRewardsPerEpoch", 2)]
+             (e, "Aerodrome", "voter_rewards_onchain_apr", WK * 52 / (TW * price(e + pd.Timedelta(days=7))),
+              "aero_voter:tokenRewardsPerEpoch", 2)]
     return rows
+
+
+def test_aerodrome_price_rise_is_a_finding_and_the_epoch_row_uses_one_price(tmp_path, monkeypatch):
+    """4a/b (Jake's run 2026-10-09 ~10:15): the dollars agree; AERO rose over Q0 ($0.54 mean vs $0.81 now), so the
+    headline (rewards at the Q0 mean price) sits ~1.5x above the APR at today's price. With CoinGecko and Coinbase
+    agreeing on the Q0 mean that is a VERIFIED FINDING beside the headline; the per-epoch row uses the SAME price on
+    both sides, so it passes on the dollars."""
+    lo, hi = pd.Timestamp("2026-07-01"), pd.Timestamp("2026-10-07")
+    price = lambda d: 0.27 + (0.8144 - 0.27) * (min(d, hi) - lo).days / (hi - lo).days          # noqa: E731
+    o = _evaluate(tmp_path, monkeypatch, "Aerodrome", _aero_rows(price=price))
+    tp = o["in_apr_today_price"]
+    assert tp["verdict"] == "VERIFIED FINDING", tp
+    assert "AT TODAY'S PRICE" in tp["note"] and "Coinbase: start" in tp["note"], tp["note"][:600]
+    ep = o["in_voter_apr_epoch"]
+    assert ep["verdict"].startswith("PASS") and "both / $" in ep["note"], ep
+    assert o["in_revenue"]["verdict"].startswith("PASS"), o["in_revenue"]
+
+
+def test_aerodrome_epoch_rows_mature_until_defillama_publishes_the_last_day(tmp_path, monkeypatch):
+    """4d: DefiLlama has not published the epoch's last day yet -> MATURING (until 2026-10-10) naming the day; CHECK if
+    it is still missing after that."""
+    o = _evaluate(tmp_path, monkeypatch, "Aerodrome", _aero_rows(llama_until="2026-10-06"), asof="2026-10-09")
+    for k in ("in_revenue", "in_voter_apr_epoch"):
+        assert o[k]["verdict"] == "MATURING (until 2026-10-10)", o[k]
+        assert "2026-10-07" in o[k]["note"] and "needs DefiLlama" in o[k]["note"], o[k]["note"]
+    (tmp_path / "later").mkdir()
+    later = _evaluate(tmp_path / "later", monkeypatch, "Aerodrome", _aero_rows(llama_until="2026-10-06"),
+                      asof="2026-10-11")
+    assert later["in_revenue"]["verdict"].startswith("CHECK"), later["in_revenue"]
 
 
 def test_aerodrome_revenue_and_yield_are_judged_epoch_for_epoch_against_state(tmp_path, monkeypatch):
@@ -282,6 +447,7 @@ def test_aerodrome_revenue_and_yield_are_judged_epoch_for_epoch_against_state(tm
     assert abs(float(ep["ref"]) - 0.1256) < 0.0005
     rb = o["in_rebase_apr"]
     assert rb["verdict"] == "N/A (recorded, separate stream)" and abs(float(rb["ours"]) - 0.0247) < 0.0005
+    assert o["in_apr_today_price"]["verdict"] == "N/A (recorded, price flat)", o["in_apr_today_price"]     # a flat price: nothing to say
     assert o["a3_protocol_yield"]["verdict"].startswith("PASS"), o["a3_protocol_yield"]
     assert not any(v["verdict"].startswith("MATURING") for v in o.values())
 
