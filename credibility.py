@@ -1626,6 +1626,28 @@ def _aero_epoch_revenue(p, rows, long, asof, flow="revenue_usd", onchain="voter_
     return (s_ours if side == "ours" else s_oc), str(got[-1][0].date()), how
 
 
+def _aero_fee_leg(p, rows, long, asof, flow="revenue_usd", onchain="voter_rewards_onchain_usd", tol=10.0, **_):
+    """THE FEE LEG AS A FINDING (Jake's run 2026-10-09 18:13, 3): DefiLlama's week before less that week's on-chain
+    bribes, against the fees credited on-chain at the epoch (the part of the like-for-like not built from our own
+    bribes). 1 when the quarter's like-for-like is within `tol` AND DefiLlama's fee leg sums BELOW the on-chain fees —
+    DefiLlama under-counts Aerodrome's voter fees, Dune's per-epoch fees agree with on-chain, and on-chain is the
+    reference; 0 otherwise (the comparison is judged on its tolerance). The working: the quarter, the typical (median)
+    week, and every week more than 10% low."""
+    got, _sk = _aero_epochs(long, p, asof, onchain, flow)
+    legs = [(e, d["dl_prev"] - d["b_prev"], d["f"]) for e, _oc, _o, d in got if d["f"]]
+    if not legs:
+        return 0.0, None, "no epoch with the on-chain fees split stored"
+    a, b = sum(x for _e, x, _f in legs), sum(f for _e, _x, f in legs)
+    gaps = sorted((x / f - 1, e) for e, x, f in legs)
+    med = gaps[len(gaps) // 2][0] if len(gaps) % 2 else (gaps[len(gaps) // 2 - 1][0] + gaps[len(gaps) // 2][0]) / 2
+    low = [f"{e.date()} {g:+.1%}" for g, e in gaps if g < -0.10]
+    lfl = sum(g[2] for g in got) / sum(g[1] for g in got) - 1
+    how = (f"FEE LEG over {len(legs)} epoch(s): DefiLlama ${a:,.0f} vs on-chain fees ${b:,.0f} ({a / b - 1:+.1%}); "
+           f"typical (median) week {med:+.1%}; weeks more than 10% low: {', '.join(low) or 'none'}. Like-for-like "
+           f"quarter {lfl:+.1%}.")
+    return (1.0 if a < b and abs(lfl) * 100 <= float(tol) else 0.0), str(legs[-1][0].date()), how
+
+
 def _aero_epoch_apr(p, rows, long, asof, flow="holders_revenue_usd", onchain_apr="voter_rewards_onchain_apr",
                     onchain_usd="voter_rewards_onchain_usd", stake="voter_total_weight_tokens", rebase="emissions_tokens",
                     side="ref", **_):
@@ -1781,6 +1803,12 @@ def _price_basis_gap(p, rows, long, asof, flow="holders_revenue_usd", stake="vot
     if a.empty:
         return 0.0, None, f"no {price} in Q0"
     fl, stk = _series(long, p, flow), _series(long, p, stake)
+    # THE ILLIQUID-TOKEN RULE HERE TOO (Jake's run 2026-10-09 18:13: today's-price figure 12.2% beside a 12.1% headline
+    # was built on the uncapped flow — and called the headline 17.55%): the same flow the headline uses
+    il = _payday_illiquid(p)
+    if il:
+        fl, _took, _r = illiquid_flow(fl, _series(long, p, il["fees"]), _series(long, p, il["bribes"]),
+                                      int(_payday_epochs(p) or 7))
     rq = fl[(fl.index > lo) & (fl.index <= hi)]
     sn = _stake_near(long, p, stake, hi.normalize(), 0)
     spot = float(a.iloc[-1])
@@ -1854,7 +1882,7 @@ FORMULAS = {"sum_months": _sum_months, "free_float_now": _free_float_now, "windo
             "eth_issuance_curve": _eth_issuance_formula, "flow_usd_over_price": _flow_usd_over_price,
             "delta_q0": _delta_q0, "delta_diff_q0": _delta_diff_q0, "hl_reward_formula": _hl_reward_formula,
             "share_price_growth": _share_price_growth, "per_day_x_covered": _per_day_x_covered,
-            "value_on": _value_on, "epoch_apr": _epoch_apr, "published_epoch_aprs": _published_epoch_aprs, "epoch_reproduction": _epoch_reproduction, "epoch_mean_check": _epoch_mean_check, "epochs_first_party": _epochs_first_party, "aero_epoch_revenue": _aero_epoch_revenue, "aero_rebase_apr": _aero_rebase_apr, "aero_epoch_pending": _aero_epoch_pending, "aero_bribe_outliers": _aero_bribe_outliers, "price_basis_gap": _price_basis_gap, "price_overlap": _price_overlap,
+            "value_on": _value_on, "epoch_apr": _epoch_apr, "published_epoch_aprs": _published_epoch_aprs, "epoch_reproduction": _epoch_reproduction, "epoch_mean_check": _epoch_mean_check, "epochs_first_party": _epochs_first_party, "aero_epoch_revenue": _aero_epoch_revenue, "aero_rebase_apr": _aero_rebase_apr, "aero_epoch_pending": _aero_epoch_pending, "aero_bribe_outliers": _aero_bribe_outliers, "aero_fee_leg": _aero_fee_leg, "price_basis_gap": _price_basis_gap, "price_overlap": _price_overlap,
             "aero_epoch_apr": _aero_epoch_apr, "q0_net_flow": _q0_net_flow,
             "negative_release": _negative_release, "sum_month": _sum_month, "last30_annualised": _last30_annualised,
             "common_day_value": _common_day_value, "months_match": _months_match,
@@ -1877,8 +1905,10 @@ def reference(project: str, spec: dict, rows: dict, long, asof) -> dict:
         v, _d, how = FORMULAS[vw["py"]](project, rows, _long_for(vw, long), asof, **(vw.get("args") or {}))
         pick = (vw["positive"] if (v or 0) > 0 else
                 vw["negative"] if (v or 0) < 0 and vw.get("negative") else vw["otherwise"])
-        spec = ({**pick, "why": f"{pick.get('why', '')} {how}".strip()} if pick.get("verdict") else
-                {**pick, "source": pick.get("source") or spec.get("source", "")})
+        spec = ({**pick, "why": f"{pick.get('why', '')} {how}".strip()} if pick.get("verdict") or
+                pick.get("force_verdict") else {**pick, "source": pick.get("source") or spec.get("source", "")})
+        if spec.get("verdict_when"):                      # a branch may itself hold a condition (Aerodrome in_revenue)
+            return reference(project, spec, rows, long, asof)
     src = spec.get("source", "")
     note = spec.get("note", "")
     if spec.get("verdict"):
@@ -1928,10 +1958,12 @@ def reference(project: str, spec: dict, rows: dict, long, asof) -> dict:
     if spec.get("force_verdict"):
         res = spec.get("resolve")
         return {"value": val, "date": None if date is None else str(date)[:10], "source": src, "mode": "static",
-                "verdict": spec["force_verdict"],
+                "verdict": spec["force_verdict"], "tol": spec.get("tol"),
                 "note": (note + " " if note else "") + spec.get("why", "") + (f" RESOLVE: {res}" if res else "")}
+    # THE TOLERANCE OF THE BRANCH TAKEN (Jake's run 2026-10-09 18:13: Aerodrome's epoch rows read CHECK at -5.9% with a
+    # blank tolerance — a `verdict_when` row's tol lives in its `otherwise` branch, and the row took the outer spec's)
     return {"value": val, "date": None if date is None else str(date)[:10], "source": src, "mode": mode,
-            "verdict": None, "note": note,
+            "verdict": None, "note": note, "tol": spec.get("tol"),
             **({"fresh_label": spec["fresh_label"]} if spec.get("fresh_label") else {})}
 
 

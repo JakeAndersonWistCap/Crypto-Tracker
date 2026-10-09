@@ -527,6 +527,26 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11bd. Jake's run 2026-10-09 18:13: tolerances restored, the probe's epoch check, the fee-leg finding
+
+- **Tolerance lost on conditional rows.** A row whose reference is a `verdict_when` keeps its tolerance in the branch
+  it takes (`otherwise`), but the row took the outer spec's: blank, so Aerodrome's epoch rows read CHECK at -5.9% /
+  -5.6%. `credibility.reference` now returns the taken branch's `tol`; both rows are ±10% again.
+  - `tests/test_real_dumps.py::test_real_every_judged_row_has_a_tolerance` checks every judged row on all six dumps.
+- **`aerodrome_epoch_rewards` refused two Thursdays.** Epochs are unix weeks (`ts - ts % 1 weeks`; 1970-01-01 was a
+  Thursday), so the check is `ts % 604800 == 0`. The old check shifted it by three days.
+- **The tokens, from the evening dump's run log** (the excluded-token log line now names the address too):
+  - 09-03: LAPTOP $7,546,432 quoted vs $595,818 depth → $6,950,614 of bribes excluded (+ $145 of fee tokens).
+  - 09-24: XDP $627,592 quoted vs $194,108 depth → $433,484 of bribes excluded (+ $657 of fee tokens).
+  - The probe prints each one's address, depositor, tx and DefiLlama's price at the deposit.
+- **`in_revenue` is a VERIFIED FINDING** while the quarter passes ±10% and DefiLlama's fee leg sums below on-chain
+  (`credibility._aero_fee_leg`). DefiLlama under-counts Aerodrome voter fees by ~4-7% in a typical week; three weeks far
+  lower; Dune agrees with on-chain. The on-chain figure is the reference.
+  - 10-01's -37.4% is mostly 09-24's XDP bribe: subtracting $838,660 of bribes at our epoch-end prices, of which
+    DefiLlama apparently booked far less.
+- **Today's-price APR on the same capped flow.** `in_apr_today_price` used the uncapped flow (12.2%) and named the
+  headline 17.55%. It now applies the illiquid-token rule: 8.52%, beside the 12.10% headline.
+
 ## 11bc. Jake's run 2026-10-09 15:59 + checks 17:05: Aerodrome epochs, the LAPTOP bribe, the illiquid-token rule; Pendle Optimism = 0
 
 **1. Aerodrome epochs never stored (tier timeout).**

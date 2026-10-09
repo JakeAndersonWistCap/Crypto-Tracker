@@ -23942,6 +23942,31 @@ def _c_in_py(what: str, py: str, args: dict, ref: dict, fmt: str = _C_TOK) -> di
     return {"what": what, "ours": {"py": py, "args": args}, "fmt": fmt, "ref": ref}
 
 
+# AERODROME's QUARTER COMPARISON (in_revenue): the like-for-like sum against the on-chain epochs, ±10% — one spec, used
+# as the judged branch and as the VERIFIED FINDING's figure (Jake's run 2026-10-09 18:13: the tolerance was lost when
+# the row became conditional)
+_AERO_REVENUE_CMP = {
+    "formula": "aero_epoch_revenue", "args": {"side": "ref"}, "tol": 10.0, "show_how": True,
+    "source": "THE REFERENCE IS ON-CHAIN: fees + bribes notified to the voting-reward contracts for every stored Q0 "
+              "epoch (tokenRewardsPerEpoch, priced at the epoch end) — fetch/aero_voter.py",
+    "note": "JUDGED OVER THE QUARTER (Jake's run 2026-10-09 ~14:10): the summed epochs, the "
+            "per-epoch spread in the working. Ours is LIKE FOR LIKE: DefiLlama's week before "
+            "the epoch (fees are credited at the next epoch's distribute(): Gauge._claimFees, "
+            "contracts @1ba3081) minus that week's bribes plus the epoch's own bribes (the "
+            "on-chain split). Unpriced reward tokens are left out of the on-chain figure "
+            "and counted in voter_rewards_unpriced_count. THE FEE LEG, INDEPENDENTLY "
+            "(Jake 2026-10-09 17:05, read_by Jake): the Dune dashboard by @0xkhmerlab "
+            "(Aerodrome, pool level) shows per-epoch fees matching ours epoch by epoch — its "
+            "157 ~$1.8M = our 08-27 $1.76M, 158 ~$1.15M = 09-03 $1.16M, 161 ~$1.8M = 09-24 "
+            "$1.79M. THE BRIBE LEG IS NOT INDEPENDENT: both sides carry the same "
+            "NotifyReward events, and DefiLlama prices LAPTOP (0xb0952747...ec29) by hand "
+            "at $1.86 before 2026-09-10 as an Aero Ignition pre-launch token "
+            "(DefiLlama/dimension-adapters @af2f691 dexs/aerodrome/utils.ts L30-72, LAPTOP L66-71; L78-94: "
+            "PRE_LAUNCH_TOKEN_PRICING, handleBribeToken) — its $7,922,809 on 2026-09-09 "
+            "is that bribe; Dune's ~$15M for the same epoch is a third price. The "
+            "illiquid-token rule settles what it counts at (in_bribe_outliers)."}
+
+
 # THE CHAINS' A1 ROWS ARE DOCUMENTED LIMITATIONS (sign-off round 2026-10-07, Jake): each names the evidence that no
 # free second source exists and what would upgrade it.
 _C_SINGLE_DEFILLAMA_TVL = _c_lim(
@@ -24654,26 +24679,22 @@ CREDIBILITY: dict = {
                                                                     "stored after 2026-10-10 — the working names what "
                                                                     "is missing.", "fetch/aero_voter.py (on-chain) / "
                                                                     "DefiLlama (its day)"),
-                                                 "otherwise": {
-                                "formula": "aero_epoch_revenue", "args": {"side": "ref"}, "tol": 10.0, "show_how": True,
-                                "source": "fees + bribes notified to the voting-reward contracts for every stored Q0 "
-                                          "epoch (tokenRewardsPerEpoch, priced at the epoch end) — fetch/aero_voter.py",
-                                "note": "JUDGED OVER THE QUARTER (Jake's run 2026-10-09 ~14:10): the summed epochs, the "
-                                        "per-epoch spread in the working. Ours is LIKE FOR LIKE: DefiLlama's week before "
-                                        "the epoch (fees are credited at the next epoch's distribute(): Gauge._claimFees, "
-                                        "contracts @1ba3081) minus that week's bribes plus the epoch's own bribes (the "
-                                        "on-chain split). Unpriced reward tokens are left out of the on-chain figure "
-                                        "and counted in voter_rewards_unpriced_count. THE FEE LEG, INDEPENDENTLY "
-                                        "(Jake 2026-10-09 17:05, read_by Jake): the Dune dashboard by @0xkhmerlab "
-                                        "(Aerodrome, pool level) shows per-epoch fees matching ours epoch by epoch — its "
-                                        "157 ~$1.8M = our 08-27 $1.76M, 158 ~$1.15M = 09-03 $1.16M, 161 ~$1.8M = 09-24 "
-                                        "$1.79M. THE BRIBE LEG IS NOT INDEPENDENT: both sides carry the same "
-                                        "NotifyReward events, and DefiLlama prices LAPTOP (0xb0952747...ec29) by hand "
-                                        "at $1.86 before 2026-09-10 as an Aero Ignition pre-launch token "
-                                        "(DefiLlama/dimension-adapters @af2f691 dexs/aerodrome/utils.ts L30-72, LAPTOP L66-71; L78-94: "
-                                        "PRE_LAUNCH_TOKEN_PRICING, handleBribeToken) — its $7,922,809 on 2026-09-09 "
-                                        "is that bribe; Dune's ~$15M for the same epoch is a third price. The "
-                                        "illiquid-token rule settles what it counts at (in_bribe_outliers)."}}},
+                                                 # THE COMPARISON, ±10% (restored, Jake's run 2026-10-09 18:13) —
+                                                 # a VERIFIED FINDING when it passes and DefiLlama's fee leg sums
+                                                 # below on-chain: the on-chain figure is the reference
+                                                 "otherwise": {"verdict_when": {
+                                "py": "aero_fee_leg", "args": {"flow": "revenue_usd", "tol": 10.0},
+                                "positive": {**_AERO_REVENUE_CMP, "force_verdict": "VERIFIED FINDING", "why": (
+                                    "DefiLlama under-counts Aerodrome voter fees by ~4-7% in a typical week, and three "
+                                    "weeks far lower (Jake's run 2026-10-09 18:13: 13 epochs, DefiLlama $14,071,226 vs "
+                                    "on-chain $15,574,605, -9.7%; 08-13 -14.7%, 08-20 -21.5%, 10-01 -37.4%). Dune's "
+                                    "per-epoch fees (@0xkhmerlab, read by Jake 2026-10-09 17:05) agree with on-chain. "
+                                    "THE ON-CHAIN FIGURE IS THE REFERENCE: what the FeesVotingReward and "
+                                    "BribeVotingReward contracts were notified (tokenRewardsPerEpoch). 10-01's -37.4% "
+                                    "is mostly the subtraction of 09-24's bribes ($838,660 at our epoch-end prices, of "
+                                    "which XDP $627,592 against $194,108 of depth) — check_offline_items.py "
+                                    "aerodrome_epoch_rewards prints DefiLlama's price at each deposit.")},
+                                "otherwise": _AERO_REVENUE_CMP}}}},
                                fmt=_C_USD),
         # SINGLE-EPOCH BRIBE OUTLIERS (Jake's run 2026-10-09 15:59, 2): after the illiquid-token rule, an epoch whose
         # bribes exceed 5x the quarter's median week is a VERIFIED FINDING with a labelled second figure — the headline

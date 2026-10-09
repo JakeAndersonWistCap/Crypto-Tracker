@@ -8754,7 +8754,9 @@ def aerodrome_epoch_rewards(epochs: str | None = None, top: int = 12):
     head("AERODROME — every reward token of an epoch: amount, price used, depositor, DEX depth, the illiquid rule")
     days = [d.strip() for d in (epochs or os.environ.get("AERO_EPOCHS") or "2026-09-03,2026-09-24").split(",") if d.strip()]
     eps = [calendar.timegm(_t.strptime(d, "%Y-%m-%d")) for d in days]
-    bad = [d for d, e in zip(days, eps) if (e - 3 * 86400) % (7 * 86400)]
+    # EPOCHS START ON UNIX WEEKS (Voter / Reward epochStart = ts - ts % 1 weeks): 1970-01-01 was a Thursday, so a
+    # Thursday 00:00 UTC is a multiple of 604800 (Jake's run 2026-10-09 18:13: a 3-day shift refused 09-03 and 09-24)
+    bad = [d for d, e in zip(days, eps) if e % (7 * 86400)]
     if bad:
         print(f"  not an epoch start (Thursday 00:00 UTC): {', '.join(bad)}")
         return

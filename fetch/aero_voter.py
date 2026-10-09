@@ -216,7 +216,7 @@ class AeroVoter:
                    + (f"; APR = ${usd:,.0f} x 52 / ({tw:,.0f} x ${ap:,.4f}) = {apr:.2%}" if apr is not None else "")
                    + (f"; illiquid-token rewards excluded ${ill[0] + ill[1]:,.0f} (fees ${ill[0]:,.0f}, bribes "
                       f"${ill[1]:,.0f})" + "".join(
-                          f"; {t.get('symbol') or t['token']} ${t['usd']:,.0f} quoted vs ${t['depth']:,.0f} depth"
+                          f"; {t.get('symbol') or '?'} ({t['token']}) ${t['usd']:,.0f} quoted vs ${t['depth']:,.0f} depth"
                           for t in (r.get("tokens") or [])[:50] if t.get("excess"))
                       + (f"; not capped, no readable voted pool: {', '.join(r['liquidity_unread'][:10])}"
                          if r.get("liquidity_unread") else "") if ill else ""))

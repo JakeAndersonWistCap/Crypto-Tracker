@@ -59,7 +59,8 @@ def test_real_aerodrome_price_finding_and_one_price_epoch_row(tmp_path, monkeypa
     assert pc["verdict"].startswith("PASS") and "33 of the" in pc["note"], pc
     # 3c: no on-chain epoch was stored (a lost row) — MATURING naming it, not "CHECK (no reference)"
     for k in ("in_voter_apr_epoch", "in_revenue"):
-        assert o[k]["verdict"].startswith(("PASS", "MATURING")), o[k]
+        # in_revenue: a VERIFIED FINDING once the fee leg is stored (Jake's run 2026-10-09 18:13)
+        assert o[k]["verdict"].startswith(("PASS", "MATURING", "VERIFIED FINDING")), o[k]
         if o[k]["verdict"].startswith("MATURING"):
             assert "2026-10-01" in o[k]["note"] and "on-chain" in o[k]["note"], o[k]["note"]
 
@@ -152,29 +153,55 @@ def test_real_pendle_rebuild_skips_a_day_whose_reads_are_under_20h_apart_or_exce
     assert any(d == d9 and "impossible" in w for d, w in cal2["skipped"]), cal2["skipped"]
 
 
-def test_real_aerodrome_laptop_day_and_the_illiquid_rule_before_it_is_read(tmp_path, monkeypatch):
-    """Jake's run 2026-10-09 15:59, 2: DefiLlama's 2026-09-09 is the LAPTOP pre-launch bribe ($7,922,809 against a
-    normal ~$100K-$420K day) — DefiLlama prices it by hand at $1.86 (dimension-adapters @af2f691 dexs/aerodrome/utils.ts
-    L66-71). On the 15:26 dump no epoch's illiquid-token rule is stored yet, so the headline is unchanged (17.4%) and
-    says the rule is not yet read; the outlier row matures until the epochs are stored."""
+def test_real_aerodrome_illiquid_cap_fee_leg_finding_and_tolerances(tmp_path, monkeypatch):
+    """Jake's run 2026-10-09 18:13 on the evening dump (every Q0 epoch stored by --seed aero_epochs):
+    - the illiquid-token rule excludes $6,950,759 for 09-03 (LAPTOP $7,546,432 quoted vs $595,818 depth) and $434,141
+      for 09-24 (XDP); the headline falls from 17.4% to ~12.1% and the labelled line carries the exclusion;
+    - the like-for-like rows are judged at +/-10% (the tolerance was lost: CHECK at -5.9% / -5.6% with a blank column);
+    - in_revenue is a VERIFIED FINDING: DefiLlama's fee leg sums below on-chain, the on-chain figure is the reference;
+    - after the rule no epoch is an outlier."""
     o = evaluate_real(tmp_path, monkeypatch, "Aerodrome")
     long = long_frame(load("Aerodrome"))
+    ib = long[long.metric == "voter_rewards_illiquid_bribes_usd"].set_index("date")["value"]
+    assert round(float(ib[pd.Timestamp("2026-09-03")])) == 6_950_614 and round(float(ib[pd.Timestamp("2026-09-24")])) == 433_484
     hr = long[long.metric == "holders_revenue_usd"].set_index("date")["value"]
-    assert float(hr[pd.Timestamp("2026-09-09")]) == 7_922_809.0
-    q0 = hr[(hr.index > pd.Timestamp("2026-07-11")) & (hr.index <= pd.Timestamp("2026-10-09"))]
-    assert float(hr[pd.Timestamp("2026-09-09")]) > 15 * float(q0.drop(pd.Timestamp("2026-09-09")).max())
+    assert float(hr[pd.Timestamp("2026-09-09")]) == 7_922_809.0          # DefiLlama's hand-priced LAPTOP day
     head = o["a3_protocol_yield"]
-    assert abs(float(head["ours"]) - 0.17445) < 0.0005, head
-    ob = o["in_bribe_outliers"]
-    assert ob["verdict"] == "MATURING (until 2026-10-10)", ob
-    assert "--seed aero_epochs" in ob["note"], ob["note"][:400]
+    assert 0.115 < float(head["ours"]) < 0.125, head
+    ep = o["in_voter_apr_epoch"]
+    assert ep["verdict"].startswith("PASS"), ep
+    assert "illiquid-token rewards excluded: $" in ep["note"] and "before the exclusion" in ep["note"], ep["note"][:600]
+    rv = o["in_revenue"]
+    assert rv["verdict"] == "VERIFIED FINDING", rv
+    assert "THE ON-CHAIN FIGURE IS THE REFERENCE" in rv["note"] and "FEE LEG over" in rv["note"], rv["note"][:600]
+    assert "2026-10-01 -37.4%" in rv["note"] and "2026-08-20 -21.5%" in rv["note"], rv["note"]
+    assert o["in_bribe_outliers"]["verdict"] == "N/A (recorded, not judged)", o["in_bribe_outliers"]
+    # today's-price APR on the SAME capped flow (was 12.2% beside "the headline 17.55%")
+    tp = o["in_apr_today_price"]
+    assert abs(float(tp["ours"]) - 0.0852) < 0.0005 and f"headline at payment-day prices: {float(head['ours']):.2%}" in \
+        tp["note"], tp
+
+
+def test_real_every_judged_row_has_a_tolerance(tmp_path, monkeypatch):
+    """Jake's run 2026-10-09 18:13: two Aerodrome rows read CHECK at -5.9% / -5.6% with a BLANK tolerance — a row inside a
+    `verdict_when` took the outer spec's tol. On every real dump, every row judged against a reference carries one."""
+    import shutil
+    from build_workbook import CREDIBILITY_ROWS
+    bad = []
+    for p in ("Aerodrome", "Pendle", "Ethereum", "Chainlink", "Maple", "Plume"):
+        d = tmp_path / p
+        d.mkdir()
+        evaluate_real(d, monkeypatch, p)
+        bad += [f"{p}/{r['id']}" for r in CREDIBILITY_ROWS if r["project"] == p and r.get("verdict") is None
+                and r.get("mode") in ("independent", "same_source") and r.get("tol") is None]
+        shutil.rmtree(d)
+    assert not bad, bad
 
 
 def test_real_pendle_optimism_zero_counts_with_its_evidence(tmp_path, monkeypatch):
     """Jake's check 2026-10-09 17:05: the Optimism gauge's last token transfer was 743 days ago — Optimism = 0, stored
     as manual rows with that evidence (manual_overrides.csv). On the real Pendle dump with those rows, Optimism is no
-    longer named missing on either side of in_emissions; Arbitrum (not reconciled yet) still is — the sum is not formed
-    over a chain that has not been counted."""
+    longer named missing on either side of in_emissions; with Arbitrum reconciled (evening dump) the row passes.""" 
     import csv
     payload = load("Pendle")
     with open(Path(__file__).resolve().parents[1] / "manual_overrides.csv", newline="") as fh:
@@ -183,8 +210,11 @@ def test_real_pendle_optimism_zero_counts_with_its_evidence(tmp_path, monkeypatc
     assert {r["metric"] for r in rows} == {"emissions_tokens_gauge_optimism", "emissions_tokens_gauge_optimism_direct"}
     assert all(float(r["value"]) == 0 and "read_by Jake" in r["source_note"] and "pending Jake's review" in
                r["source_note"] and "optimistic.etherscan.io" in r["source_note"] for r in rows)
-    payload = {**payload, "manual_overrides": list(payload.get("manual_overrides") or []) + rows}
+    have = {(r["date"][:10], r["metric"]) for r in payload.get("manual_overrides") or []}
+    payload = {**payload, "manual_overrides": list(payload.get("manual_overrides") or [])
+               + [r for r in rows if (r["date"][:10], r["metric"]) not in have]}
     o = evaluate_real(tmp_path, monkeypatch, "Pendle", payload=payload)
     em = o["in_emissions"]
-    assert "Optimism" not in em["note"].split("NONE STORED for")[-1].split(";")[0], em["note"][:500]
-    assert "Arbitrum" in em["note"], em["note"][:500]
+    # the evening dump (Jake's run 2026-10-09 18:13): Arbitrum reconciled too, and the sum is formed over all three
+    assert "NONE STORED" not in em["note"] and "Optimism 0.00" in em["note"], em["note"][:600]
+    assert em["verdict"].startswith("PASS") and "= 83,731.84 PENDLE" in em["note"], em

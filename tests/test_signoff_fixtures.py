@@ -654,6 +654,35 @@ def test_aerodrome_outlier_row_matures_until_the_rule_is_stored(tmp_path, monkey
     assert "ILLIQUID-TOKEN RULE NOT YET READ" in o["in_voter_apr_epoch"]["note"]
 
 
+def test_epoch_rewards_probe_accepts_thursday_epoch_starts(monkeypatch, capsys):
+    """Jake's run 2026-10-09 18:13: "not an epoch start (Thursday 00:00 UTC): 2026-09-03, 2026-09-24" — both ARE
+    Thursdays; epochs are unix weeks (1970-01-01 was a Thursday). A Wednesday is still refused."""
+    import check_offline_items as coi
+    asked = []
+    monkeypatch.setattr(coi, "aerodrome_voter_epochs", lambda eps, **k: asked.append(eps) or {"error": "stop here"})
+    coi.aerodrome_epoch_rewards("2026-09-03,2026-09-24")
+    assert asked and "not an epoch start" not in capsys.readouterr().out
+    coi.aerodrome_epoch_rewards("2026-09-02")
+    assert "not an epoch start (Thursday 00:00 UTC): 2026-09-02" in capsys.readouterr().out and len(asked) == 1
+
+
+def test_aerodrome_fee_leg_under_defillama_is_a_finding_on_revenue(tmp_path, monkeypatch):
+    """Jake's run 2026-10-09 18:13, 3: DefiLlama's week-before fees run ~5% under the on-chain credit every week; the
+    quarter passes its +/-10%, so in_revenue is a VERIFIED FINDING naming on-chain as the reference, with the
+    tolerance on the row."""
+    rows = []
+    for r in _aero_rows():
+        if r[2] in ("revenue_usd", "holders_revenue_usd"):
+            wk = r[0] - pd.Timedelta(days=(r[0].dayofweek - 3) % 7)
+            r = (r[0], r[1], r[2], ((WK - BRIBE) * 0.95 + BRIBE) / 7, r[4], r[5])
+        rows.append(r)
+    o = _evaluate(tmp_path, monkeypatch, "Aerodrome", rows)
+    rv = o["in_revenue"]
+    assert rv["verdict"] == "VERIFIED FINDING", rv
+    assert "THE ON-CHAIN FIGURE IS THE REFERENCE" in rv["note"] and "typical (median) week -5.0%" in rv["note"]
+    assert o["in_voter_apr_epoch"]["verdict"].startswith("PASS"), o["in_voter_apr_epoch"]
+
+
 def test_token_depth_reads_the_counter_side_and_stops_once_covered(monkeypatch):
     """The rule's depth: the OTHER token's balance in each voted pool holding the reward token, at the given block, x
     its price; the pools it was paid on first; no further reads once the depth covers the amount."""
@@ -884,7 +913,7 @@ def test_aero_voter_stores_the_illiquid_excess_per_epoch_and_names_the_token(tmp
     assert f[f.metric == "voter_rewards_illiquid_fees_usd"]["value"].iloc[0] == 0.0
     assert f[f.metric == "voter_rewards_onchain_bribes_usd"]["value"].iloc[0] == BRIBE + 7_600_000.0
     msg = " ".join(str(x.message) for x in out.log)
-    assert "illiquid-token rewards excluded $7,200,000" in msg and "LAPTOP $7,600,000 quoted vs $400,000 depth" in msg
+    assert "illiquid-token rewards excluded $7,200,000" in msg and "LAPTOP (0xb095274743941e953c746f9c228da9c18bb6ec29) $7,600,000 quoted vs $400,000 depth" in msg
     assert "not capped, no readable voted pool: 0x" + "ee" * 20 in msg
     assert e0
 
