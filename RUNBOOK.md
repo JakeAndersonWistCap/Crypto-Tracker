@@ -554,6 +554,14 @@ balanceOf 78,717.9, so 733,307.6 of outflow is missing. Optimism's Blockscout an
     longer blocks the sum. The direct count falls back to RPC too.
 - **Optimism routes.** Blockscout, then Etherscan V2 chainid 10 (researched as paid on the free key; its own answer
   is logged), then RPC `eth_getLogs` in the window scan.
+- **Aerodrome, from the 14:57 dumps.** The 14:37 run stored no epoch at all: no fees/bribes split and no
+  epoch-start weight, and its run log has no aero_voter epoch line. Reading all fourteen epochs in one call outran
+  the tier's 180s budget, and a timed-out tier stores nothing.
+  - Routine runs now backfill at most 3 earlier epochs a run (`backfill_per_run`), newest first, and name how many
+    are left.
+  - `python token_metrics.py --seed aero_epochs` reads every Q0 epoch in one sitting.
+  - Epoch-start blocks come from the archive backfill's day-block cache (`archive-blocks-base.json`) before any
+    header search.
 
 ## 11ba. Jake's run 2026-10-09 ~14:10: Aerodrome timing, Q0 backfill, per-epoch stake; Pendle L2 emissions; rebuild guard
 

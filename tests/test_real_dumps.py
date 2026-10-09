@@ -133,7 +133,7 @@ def test_real_pendle_rebuild_takes_the_archive_to_live_fall_over_its_real_gap():
 
 
 def test_real_pendle_rebuild_skips_a_day_whose_reads_are_under_20h_apart_or_exceed_all_locked():
-    """3: the same real rows with the 10-08 read moved to a live read at 23:30 (11.2h before 10-09's) — 10-09 is skipped,
+    """3: the same real rows with the 10-08 read moved to a live read at 23:30 (under 20h before 10-09's) — 10-09 is skipped,
     not rebuilt and not judged; and a day whose active locked would exceed all PENDLE locked is skipped too."""
     cred, s, src, at = _pendle_rebuild_inputs()
     d8, d9 = pd.Timestamp("2026-10-08"), pd.Timestamp("2026-10-09")
@@ -142,7 +142,7 @@ def test_real_pendle_rebuild_skips_a_day_whose_reads_are_under_20h_apart_or_exce
     cal = cred.virtual_rebuild(s("vependle_voting_supply_tokens"), src2, s("locked_tokens_virtual"), 728, 0.005,
                                legacy=s("locked_tokens_legacy_vependle"), ve_at=at2)
     assert d9 not in cal["rebuilt"].index and d9 not in [d for d, *_r in cal["days"]]
-    assert any(d == d9 and "11.2h" in w for d, w in cal["skipped"]), cal["skipped"]
+    assert any(d == d9 and "apart" in w and "under 20h" in w for d, w in cal["skipped"]), cal["skipped"]
     assert not any(d == d9 for d, _r in cal["drift"])
     leg = s("locked_tokens_legacy_vependle").copy()
     leg.loc[d9] = 50e6                                     # below that day's active locked (~61.4M)

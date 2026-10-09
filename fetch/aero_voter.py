@@ -87,7 +87,11 @@ class AeroVoter:
     TIER = TIER
 
     def __init__(self, epoch_reader=None, weight_reader=None, daily=None, now=None, stored=None, epochs_reader=None,
-                 **_ignored):
+                 max_backfill=None, **_ignored):
+        # AT MOST max_backfill EARLIER EPOCHS A RUN, newest first (Jake's run 2026-10-09 ~14:37 stored none: fourteen
+        # epochs in one read outran the tier's 180s budget, and a timed-out tier stores nothing). None = the config's
+        # backfill_per_run; `token_metrics.py --seed aero_epochs` passes 0 = no limit.
+        self.max_backfill = max_backfill
         # ONE READER FOR MANY EPOCHS (Jake's run 2026-10-09 ~14:10, 1b): a single-epoch reader (the tests') is wrapped.
         if epochs_reader is None and epoch_reader is not None:
             epochs_reader = lambda eps: {e: epoch_reader(e) for e in eps}     # noqa: E731
@@ -132,8 +136,8 @@ class AeroVoter:
         """THE LAST COMPLETE EPOCH, AND EVERY Q0 EPOCH BEFORE IT (Jake's run 2026-10-09 ~14:10, 1b: tokenRewardsPerEpoch is
         per-epoch state, readable now for past epochs — store all of Q0 and judge revenue over the quarter). Targets: the
         epoch starts from the one before Q0 (its bribes are the previous week's, which the like-for-like reference
-        needs) to the last complete one. The latest is read as before (the store decides, not the marker); the others
-        once a day until their fees/bribes split is stored."""
+        needs) to the last complete one. The latest is read as before (the store decides, not the marker); of the
+        others, at most `backfill_per_run` a run, newest first, until their fees/bribes split is stored."""
         now = int(self.now if self.now is not None else time.time())
         latest = now // WEEK * WEEK - WEEK                   # the last COMPLETE epoch's start
         day_of = lambda e: pd.Timestamp(e, unit="s").normalize()                 # noqa: E731
@@ -160,10 +164,14 @@ class AeroVoter:
             elif not done:
                 want.append(e)
         back = [e for e in want if e != latest]
-        bkey = f"{SOURCE}:{name}:backfill"
-        if back and not self.daily.due(bkey, str(today().date())):
-            log.info("aero_voter: %d earlier epoch(s) still to backfill — tried today already", len(back))
-            want = [e for e in want if e == latest]
+        cap = self.max_backfill if self.max_backfill is not None else int(spec.get("backfill_per_run", 3))
+        if cap and len(back) > cap:
+            left = len(back) - cap
+            back = sorted(back)[-cap:]                     # newest first: the quarter's end fills first
+            out.mark_current(SOURCE, name, spec["usd_metric"],
+                             f"{left} earlier epoch(s) still to backfill after this run (at most {cap} a run; "
+                             f"`python token_metrics.py --seed aero_epochs` reads them all)", TIER)
+            want = [e for e in want if e == latest] + back
         if not want:
             return
         try:
@@ -208,5 +216,3 @@ class AeroVoter:
                         f"epoch {when.date()} start, archive)", TIER)
             if e == latest:
                 self.daily.set(key, str(when.date()))
-        if back:
-            self.daily.done(bkey, str(today().date()))

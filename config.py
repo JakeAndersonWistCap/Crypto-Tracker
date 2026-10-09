@@ -11972,7 +11972,10 @@ PROJECTS = [
         "voter_epochs": {"usd_metric": "voter_rewards_onchain_usd", "unpriced_metric": "voter_rewards_unpriced_count",
                          "apr_metric": "voter_rewards_onchain_apr", "weight_metric": "voter_total_weight_tokens",
                          "fees_metric": "voter_rewards_onchain_fees_usd",
-                         "bribes_metric": "voter_rewards_onchain_bribes_usd", "backfill_q0": True, "q0_days": 90},
+                         "bribes_metric": "voter_rewards_onchain_bribes_usd", "backfill_q0": True, "q0_days": 90,
+                         # at most 3 earlier epochs a run (the tier's 180s budget; Jake's run 2026-10-09 ~14:37 stored
+                         # none when all fourteen were read at once) — `--seed aero_epochs` reads them all
+                         "backfill_per_run": 3},
         "ve_managed_holdings": {
             "metric": "filing_managed_lock_tokens", "chain": "base",
             "escrow": "0xeBf418Fe2512e7E6bd9b87a8F0f294aCDC67e6B4",

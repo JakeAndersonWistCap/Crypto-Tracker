@@ -8353,7 +8353,17 @@ def _batch_eth_calls(chain: str, calls: list, chunk: int = 200, block: str = "la
 def rpc_block_at(chain: str, ts: int, say=print) -> int | None:
     """The FIRST block with timestamp >= ts, from block headers through the chain's RPC endpoints (no explorer: Base's
     is paid on Etherscan V2). Interpolation from the head, then bisection on eth_getBlockByNumber timestamps. None when
-    no endpoint answers."""
+    no endpoint answers. A UTC day start already resolved by the archive backfill (fetch/archive.DayBlocks'
+    archive-blocks-<chain>.json: the first block at or after that day's start) is taken from that cache."""
+    if int(ts) % 86400 == 0:
+        try:
+            from fetch.archive import cache_root          # noqa: PLC0415
+            known = json.loads((cache_root() / f"archive-blocks-{chain}.json").read_text())
+            day = time.strftime("%Y-%m-%d", time.gmtime(int(ts)))
+            if day in known:
+                return int(known[day])
+        except Exception:  # noqa: BLE001 — no cache: read the headers
+            pass
     for url in _rpcs_for(chain):
         try:
             cache: dict = {}

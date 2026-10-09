@@ -717,7 +717,7 @@ def test_aero_voter_stores_the_last_complete_epoch_once_and_the_weight_daily(tmp
 def test_aero_voter_backfills_every_q0_epoch_with_fees_bribes_and_the_start_weight(tmp_path, monkeypatch):
     """1b/1c (Jake's run 2026-10-09 ~14:10): every epoch from the one before Q0 to the last complete one is read in one
     pass — fees and bribes apart, and Voter.totalWeight at each epoch's start block stored on the epoch's start date
-    (archive), never over a live reading; earlier epochs are retried once a day, not every run."""
+    (archive), never over a live reading."""
     from fetch.aero_voter import AeroVoter
     from fetch.base import FetchOutput
     from fetch.logcache import DailyChecks
@@ -736,8 +736,8 @@ def test_aero_voter_backfills_every_q0_epoch_with_fees_bribes_and_the_start_weig
     live = {"2026-10-08"}                                     # a live daily weight already stored that day
     stored = lambda proj, m, d: m == "voter_total_weight_tokens" and d in live                # noqa: E731
     out = FetchOutput()
-    AeroVoter(epochs_reader=epochs_reader, weight_reader=lambda: TW, daily=daily, now=now, stored=stored).run(
-        [p], None, out)
+    AeroVoter(epochs_reader=epochs_reader, weight_reader=lambda: TW, daily=daily, now=now, stored=stored,
+              max_backfill=0).run([p], None, out)
     f = out.frame()
     starts = sorted(str(d)[:10] for d in f[f.metric == "voter_rewards_onchain_bribes_usd"]["date"])
     assert len(asked) == 1 and len(asked[0]) == 14, asked
@@ -746,10 +746,13 @@ def test_aero_voter_backfills_every_q0_epoch_with_fees_bribes_and_the_start_weig
     assert (fe["value"] == WK - BRIBE).all()
     w = f[(f.metric == "voter_total_weight_tokens") & f["source"].str.endswith(":archive")]
     assert len(w) == 14 and (w["value"] == TW - 1e6).all()
+    # A ROUTINE RUN READS AT MOST backfill_per_run (3) EARLIER EPOCHS, newest first (the 180s tier budget; Jake's run
+    # 2026-10-09 ~14:37 stored none when all fourteen were read at once), and names how many are left
     out2 = FetchOutput()
     AeroVoter(epochs_reader=epochs_reader, weight_reader=lambda: TW, daily=daily, now=now,
               stored=lambda proj, m, d: d == "2026-10-01").run([p], None, out2)
-    assert len(asked) == 1, "earlier epochs are retried once a day, not every run"
+    assert len(asked) == 2 and len(asked[1]) == 3 and max(asked[1]) == int(pd.Timestamp("2026-09-24").timestamp())
+    assert any("10 earlier epoch(s) still to backfill" in str(e.message) for e in out2.log)
 
 
 def test_aero_voter_stores_nothing_on_an_error(tmp_path):
