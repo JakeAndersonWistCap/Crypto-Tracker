@@ -109,6 +109,25 @@ def drop_poison(events: list, side: int, known) -> tuple[list, int]:
     return kept, n
 
 
+
+def _hex(v) -> str:
+    """A topic / hash / data value as a 0x-hex string, whether it came as str, bytes or HexBytes."""
+    if isinstance(v, (bytes, bytearray)):
+        return "0x" + bytes(v).hex()
+    s = str(v.hex() if hasattr(v, "hex") and not isinstance(v, str) else v)
+    return s if s.startswith("0x") else "0x" + s
+
+
+def _norm_log(x) -> dict:
+    """An explorer- or RPC-shaped log in the shape the scan reads (ints for block, index and time)."""
+    g = (lambda k: x.get(k)) if hasattr(x, "get") else (lambda k: getattr(x, k, None))       # noqa: E731
+    as_int = lambda v: int(v, 16) if isinstance(v, str) and v.startswith("0x") else int(v or 0)  # noqa: E731
+    return {"address": _hex(g("address") or "").lower(), "topics": [_hex(t).lower() for t in g("topics") or []],
+            "data": _hex(g("data") or "0x"), "blockNumber": as_int(g("blockNumber")),
+            "timeStamp": as_int(g("timeStamp")), "transactionHash": _hex(g("transactionHash")).lower(),
+            "logIndex": as_int(g("logIndex"))}
+
+
 def _merge(cached: list, new: list) -> list:
     """Cached + new, one copy of each log by (transaction, logIndex), in chain order."""
     seen, merged = set(), []
@@ -181,6 +200,107 @@ class LogScan:
                                             f"{redact_urls(e)}. The other scans ran.", TIER)
                 log.exception("%s/%s crashed", p["name"], spec.get("key"))
 
+    def _window_logs(self, chain, chain_id, token, topics, b0, to_block):
+        """(logs, served by): a fresh windowed read — the routed explorers first, then RPC eth_getLogs through the
+        chain reader's chunked traversal. No cache."""
+        clear = getattr(self.explorer, "clear_budget", None)
+        if clear:
+            clear()
+        try:
+            logs, meta = self.explorer.get_logs(chain_id, token, topics, b0, to_block)
+            return [_norm_log(x) for x in logs], (meta or {}).get("explorer", "explorer")
+        except (ExplorerRefused, ExplorerTimeout) as e:
+            why = str(e)[:160]
+        if not hasattr(self.reader, "scan_logs"):
+            raise ExplorerRefused(f"explorers refused ({why}) and no RPC log reader")
+        raw, chunks, _used = self.reader.scan_logs(chain, {"address": self.reader.checksum(token)
+                                                           if hasattr(self.reader, "checksum") else token,
+                                                           "topics": topics}, b0, to_block)
+        return [_norm_log(x) for x in raw], f"RPC eth_getLogs ({chunks} chunk(s); explorers: {why})"
+
+    def _block_at_ts(self, chain, chain_id, ts, head):
+        """The first block at or after unix `ts`: the explorer's getblocknobytime, else bisection on RPC headers."""
+        try:
+            return int(self.explorer.block_at(chain_id, int(ts)))
+        except Exception:  # noqa: BLE001 — Blockscout 500s on Optimism (Jake's seed 2026-10-09 15:33)
+            pass
+        lo, hi = 1, int(head)
+        while hi - lo > 1:
+            mid = (lo + hi) // 2
+            lo, hi = (mid, hi) if self.reader.block_timestamp(chain, mid) < ts else (lo, mid)
+        return hi
+
+    def _window_scan(self, p, spec, chain, chain_id, token, holders, to_block, why, out) -> bool:
+        """THE QUARTER, RECONCILED ON ITS OWN (Jake's seed 2026-10-09 15:33: Arbitrum's full history did not reconcile
+        — 733,307.6 PENDLE of outflow missing — and Optimism's explorer answered HTTP 500). When the full-history scan
+        cannot reconcile or cannot run, read only the last `window_days` days: every Transfer into and out of the
+        holders, fresh (explorer, else RPC eth_getLogs), and require balanceOf(end) - balanceOf(start) = in - out TO
+        THE WEI. Reconciled -> the window's daily series is stored (zeros observed), with the direct count from the same
+        read; not -> nothing, and the numbers are named. Once a day. True when stored."""
+        from .logcache import DailyChecks
+        name, key, metric = p["name"], spec["key"], spec["metric"]
+        days_n = int(spec.get("window_days") or 0)
+        if not days_n:
+            return False
+        daily = DailyChecks(self.cache.root)
+        day = str(today().date())
+        if not daily.due(f"window:{key}", day):
+            return False
+        start = today() - pd.Timedelta(days=days_n)
+        try:
+            b0 = self._block_at_ts(chain, chain_id, int(start.tz_localize("UTC").timestamp()), to_block)
+            ins, outs, via = [], [], set()
+            for h in holders:
+                got, v = self._window_logs(chain, chain_id, token, [TRANSFER_TOPIC, None, pad_address(h)], b0, to_block)
+                ins += got
+                via.add(v)
+                got, v = self._window_logs(chain, chain_id, token, [TRANSFER_TOPIC, pad_address(h), None], b0, to_block)
+                outs += got
+                via.add(v)
+            bal0 = sum(self._balance_at(chain, chain_id, token, h, b0 - 1) for h in holders)
+            bal1 = sum(self._balance_at(chain, chain_id, token, h, to_block) for h in holders)
+        except Exception as e:  # noqa: BLE001
+            from .chain import redact_urls
+            out.fail(SOURCE, name, f"{key}: the Q0-window reconciliation could not be read — {redact_urls(e)}", TIER)
+            return False
+        uniq = lambda evs: list({(e["transactionHash"], e["logIndex"]): e for e in evs}.values())  # noqa: E731
+        ins, outs = uniq(ins), uniq(outs)
+        internal = set(holders)
+        net = sum(_amount(e) for e in ins if topic_address(e["topics"][1]) not in internal) \
+            - sum(_amount(e) for e in outs if topic_address(e["topics"][2]) not in internal)
+        if bal1 - bal0 != net:
+            out.fail(SOURCE, name, f"{key}: the Q0 WINDOW does not reconcile either: blocks {b0:,}..{to_block:,}, "
+                                   f"in-out {net} wei vs balanceOf change {bal1 - bal0} wei (difference "
+                                   f"{bal1 - bal0 - net}). Read by {'; '.join(sorted(via))}. Nothing stored.", TIER)
+            return False
+        excluded = {a.lower() for a in spec.get("exclude_counterparties") or []}
+        counted = [e for e in outs if topic_address(e["topics"][2]) not in internal | excluded]
+        try:
+            dec = int(self.reader.erc20(chain, token).functions.decimals().call())
+        except Exception as e:  # noqa: BLE001
+            out.fail(SOURCE, name, f"{key}: decimals() failed: {e}", TIER)
+            return False
+        scale = 10 ** dec
+        by_day = defaultdict(float)
+        for e in counted:
+            ts = int(e.get("timeStamp") or 0) or int(self.reader.block_timestamp(chain, int(e["blockNumber"])))
+            by_day[pd.Timestamp(ts, unit="s").normalize()] += _amount(e) / scale
+        days = pd.date_range(start + pd.Timedelta(days=1), today() - pd.Timedelta(days=1), freq="D")
+        msg = (f"{key}: the full history could not be used ({why[:200]}); the Q0 WINDOW RECONCILED to the wei instead — "
+               f"blocks {b0:,}..{to_block:,} ({start.date()}..), balanceOf change {(bal1 - bal0) / scale:,.4f} = in "
+               f"{sum(_amount(e) for e in ins) / scale:,.4f} - out {sum(_amount(e) for e in outs) / scale:,.4f}; "
+               f"{len(counted)} payout(s) to markets, {sum(by_day.values()):,.4f} in total; read by "
+               f"{'; '.join(sorted(via))}")
+        out.add(tidy([(d, by_day.get(d, 0.0)) for d in days], name, metric, f"{SOURCE}:{key}", TIER), SOURCE, name,
+                f"{metric}: {msg}", TIER)
+        if spec.get("direct_metric"):
+            out.add(tidy([(d, by_day.get(d, 0.0)) for d in days], name, spec["direct_metric"],
+                         f"{SOURCE}:direct:{key}", TIER), SOURCE, name,
+                    f"{spec['direct_metric']}: the same fresh windowed read, reconciled to the wei — {msg}", TIER)
+        out.log.append(LogEntry(SOURCE, name, 0, "ok", msg, TIER))
+        daily.done(f"window:{key}", day)
+        return True
+
     def _direct_count(self, name, spec, chain_id, token, holders, excluded, to_block, scale, out) -> None:
         from .logcache import DailyChecks
         key, metric = spec["key"], spec["direct_metric"]
@@ -191,31 +311,36 @@ class LogScan:
             return
         start = today() - pd.Timedelta(days=days_n)
         try:
-            b0 = int(self.explorer.block_at(chain_id, int(start.tz_localize("UTC").timestamp())))
-            evs, meta = [], {}
+            b0 = self._block_at_ts(spec["chain"], chain_id, int(start.tz_localize("UTC").timestamp()), to_block)
+            evs, via = [], set()
             for h in holders:
-                got, meta = self.explorer.get_logs(chain_id, token, [TRANSFER_TOPIC, pad_address(h)], b0, to_block)
+                # explorer first, else RPC eth_getLogs (Optimism's Blockscout answered HTTP 500, 2026-10-09 15:33)
+                got, v = self._window_logs(spec["chain"], chain_id, token, [TRANSFER_TOPIC, pad_address(h)], b0,
+                                           to_block)
                 evs += got
-        except (ExplorerRefused, ExplorerTimeout, ValueError) as e:
-            out.fail(SOURCE, name, f"{key}: the direct count ({metric}) could not be read — {e}", TIER)
+                via.add(v)
+        except Exception as e:  # noqa: BLE001
+            from .chain import redact_urls
+            out.fail(SOURCE, name, f"{key}: the direct count ({metric}) could not be read — {redact_urls(e)}", TIER)
             return
         internal = set(holders)
         seen, by_day, n = set(), defaultdict(float), 0
         for e in evs:
             k = (str(e.get("transactionHash")), str(e.get("logIndex")))
             to = topic_address(e["topics"][2])
-            if k in seen or to in internal or to in excluded or int(e.get("timeStamp") or 0) <= 0:
+            if k in seen or to in internal or to in excluded:
                 continue
             seen.add(k)
             n += 1
-            by_day[pd.Timestamp(int(e["timeStamp"]), unit="s").normalize()] += _amount(e) / scale
+            ts = int(e.get("timeStamp") or 0) or int(self.reader.block_timestamp(spec["chain"], int(e["blockNumber"])))
+            by_day[pd.Timestamp(ts, unit="s").normalize()] += _amount(e) / scale
         days = pd.date_range(start + pd.Timedelta(days=1), today() - pd.Timedelta(days=1), freq="D")
         frame = tidy([(d, by_day.get(d, 0.0)) for d in days], name, metric,
                      f"{SOURCE}:direct:{key}", TIER)
         out.add(frame, SOURCE, name,
                 f"{metric} = {key} counted DIRECTLY: one windowed query from block {b0:,} (the first at or after "
-                f"{start.date()}) to {to_block:,}, no cache, {n:,} transfer(s) to markets, {sum(by_day.values()):,.4f} "
-                f"in total; {len(frame)} complete day(s) {days[0].date()}..{days[-1].date()} stored — the reference "
+                f"{start.date()}) to {to_block:,}, no cache, read by {'; '.join(sorted(via))}, {n:,} transfer(s) to "
+                f"markets, {sum(by_day.values()):,.4f} in total; {len(frame)} complete day(s) {days[0].date()}..{days[-1].date()} stored — the reference "
                 f"for the reconciled scan's series", TIER)
         daily.done(f"direct:{key}", day)
 
@@ -475,6 +600,9 @@ class LogScan:
                     refused += meta["refused"]
         except ExplorerTimeout as e:
             seeded = self._save_progress(streams, e, to_block)
+            if self._window_scan(p, spec, chain, chain_id, token, holders, to_block,
+                                 f"seeding: {e}", out):
+                return
             out.fail(SOURCE, name, f"{key}: {e}" + (f" — {seeded}" if seeded else ""), TIER)
             out.gap(name, metric,
                     reason=str(e) + (f". SEEDING, RESUMABLE: {seeded}" if seeded else ""),
@@ -488,6 +616,9 @@ class LogScan:
                                 "an hour."))
             return
         except ExplorerRefused as e:
+            if self._window_scan(p, spec, chain, chain_id, token, holders, to_block,
+                                 f"refused: {e}", out):
+                return
             out.fail(SOURCE, name, f"{key}: no explorer served the scan — {e}", TIER)
             out.gap(name, metric,
                     reason=f"the {key} Transfer-event scan was REFUSED by every explorer routed "
@@ -538,6 +669,13 @@ class LogScan:
                         tiers_attempted="2", suggestion=f"Check the {chain} RPC.")
                 return
             if net != bal:
+                if self._window_scan(p, spec, chain, chain_id, token, holders, to_block,
+                                     f"full history does not reconcile for {h} at block {to_block:,}: in-out "
+                                     f"{net} wei, balanceOf {bal} wei", out):
+                    for sid, _, _, _, _ in streams:
+                        log.info("%s/%s: logcache %s", name, key,
+                                 self.cache.cut_back(sid, lambda e: int(e["blockNumber"])))
+                    return
                 out.fail(SOURCE, name,
                          f"{key}: SCAN DOES NOT RECONCILE for {h} at block {to_block:,}: in-out = "
                          f"{net} wei, balanceOf = {bal} wei, difference {bal - net} wei. NOTHING "

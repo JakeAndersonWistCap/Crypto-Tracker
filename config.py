@@ -2452,7 +2452,9 @@ EXPLORER_LOG_ROUTES = {
     # logs on the free key; its "server too busy" is retried with backoff (fetch/explorer.BUSY_TRIES).
     137: ["etherscan"],
     8453: ["blockscout"],       # Etherscan free: no logs on Base since Nov 2025
-    10: ["blockscout"],         # ... nor on Optimism
+    # OPTIMISM: Blockscout answered HTTP 500 three times on Jake's seed (2026-10-09 15:33); Etherscan V2 chainid 10 is
+    # tried next (researched as paid on the free key — its own answer is logged), then RPC eth_getLogs (window scans).
+    10: ["blockscout", "etherscan"],
     56: [],                     # ... nor on BSC, and no Blockscout host is on file for BSC
 }
 EXPLORER_ROUTES_STATUS = {
@@ -15104,6 +15106,10 @@ PROJECTS = [
              "exclude_counterparties": ["0x0000000000000000000000000000000000000000",
                                         "0xCbcb48e22622a3778b6F14C2f5d258Ba026b05e6"],   # network.treasury
              "own_tier": "explorer_gauge_l2", "scan_budget_s": 140,
+             # THE QUARTER RECONCILED ON ITS OWN (Jake's seed 2026-10-09 15:33: Arbitrum's full history 733,307.6 short,
+             # Optimism's Blockscout HTTP 500): when the full history cannot be used, the last 100 days are read fresh
+             # and stored only if balanceOf's change equals in - out to the wei (fetch/logscan._window_scan).
+             "window_days": 100,
              "wired_on": "2026-10-09"},
             # OPTIMISM (Jake's run 2026-10-09 11:41: pendle_emissions_q0 read this gauge through the explorer).
             {"key": "gauge_pendle_out_optimism", "metric": "emissions_tokens_gauge_optimism", "direct_metric": "emissions_tokens_gauge_optimism_direct",
@@ -15117,6 +15123,10 @@ PROJECTS = [
              "exclude_counterparties": ["0x0000000000000000000000000000000000000000",
                                         "0xE972D450ec5b11b99D97760422e0E054Afbc8042"],   # network.treasury
              "own_tier": "explorer_gauge_l2", "scan_budget_s": 140,
+             # THE QUARTER RECONCILED ON ITS OWN (Jake's seed 2026-10-09 15:33: Arbitrum's full history 733,307.6 short,
+             # Optimism's Blockscout HTTP 500): when the full history cannot be used, the last 100 days are read fresh
+             # and stored only if balanceOf's change equals in - out to the wei (fetch/logscan._window_scan).
+             "window_days": 100,
              "wired_on": "2026-10-09"},
         ],
         # EMISSIONS = WHAT THE GAUGES PAID TO MARKETS, EVERY CHAIN READ (Jake's run 2026-10-09 11:41, item 2:

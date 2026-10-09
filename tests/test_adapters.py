@@ -27640,7 +27640,7 @@ def test_gauge_direct_count_is_a_fresh_windowed_query_by_utc_day(tmp_path, monke
 
     stub = Stub()
     ls = LogScan(explorer=stub, reader=_FakeReader({}), cache=LogCache(tmp_path))
-    spec = {"key": "gauge_x", "metric": "emissions_tokens_gauge_arbitrum",
+    spec = {"key": "gauge_x", "metric": "emissions_tokens_gauge_arbitrum", "chain": "arbitrum",
             "direct_metric": "emissions_tokens_gauge_arbitrum_direct", "direct_days": 10}
     out = FetchOutput()
     ls._direct_count("Pendle", spec, 42161, "0xtoken", [gauge], {treasury}, 9_000, 10 ** 18, out)
@@ -27652,3 +27652,110 @@ def test_gauge_direct_count_is_a_fresh_windowed_query_by_utc_day(tmp_path, monke
     out2 = FetchOutput()
     ls._direct_count("Pendle", spec, 42161, "0xtoken", [gauge], {treasury}, 9_000, 10 ** 18, out2)
     assert out2.frame().empty and len(stub.calls) == 1, "once a day"
+
+
+class _WindowReader:
+    """Per-block balances, block timestamps (2s blocks from t0) and an RPC log reader, for the window reconciliation."""
+
+    def __init__(self, bal_at, logs, t0, head=10_000, dec=18):
+        self.bal_at, self.logs, self.t0, self.head, self.dec = bal_at, logs, t0, head, dec
+        self.rpc_calls = []
+
+    def block_number(self, chain):
+        return self.head
+
+    def erc20_balance_at(self, chain, token, holder, block):
+        return self.bal_at(int(block))
+
+    def block_timestamp(self, chain, block):
+        return self.t0 + 2 * int(block)
+
+    def scan_logs(self, chain, base, frm, to, chunk=10_000):
+        self.rpc_calls.append((frm, to))
+        want = [t for t in base["topics"]]
+        got = [x for x in self.logs if all(w is None or x["topics"][i] == w for i, w in enumerate(want))
+               and frm <= x["blockNumber"] <= to]
+        return got, 1, chunk
+
+    def erc20(self, chain, token):
+        import types
+        return types.SimpleNamespace(functions=types.SimpleNamespace(
+            decimals=lambda: types.SimpleNamespace(call=lambda **k: self.dec)))
+
+    @staticmethod
+    def checksum(a):
+        return a
+
+
+def _window_setup(tmp_path, monkeypatch, bal_at, logs, refuse=True):
+    from fetch.base import FetchOutput, today
+    from fetch.explorer import ExplorerRefused
+    from fetch.logcache import LogCache
+    from fetch.logscan import LogScan
+    monkeypatch.delenv("TOKEN_METRICS_DAILY_CHECKS", raising=False)
+    t0 = int((today() - pd.Timedelta(days=120)).tz_localize("UTC").timestamp())
+
+    class Refusing:
+        def configured(self, cid):
+            return True
+
+        def get_logs(self, *a, **k):
+            raise ExplorerRefused("blockscout: HTTP 500 (x3)")
+
+        def block_at(self, cid, ts):
+            raise ExplorerRefused("blockscout: HTTP 500")
+
+    reader = _WindowReader(bal_at, logs, t0, head=6_000_000)
+    ls = LogScan(explorer=Refusing(), reader=reader, cache=LogCache(tmp_path))
+    spec = {"key": "gauge_x", "metric": "emissions_tokens_gauge_optimism", "chain": "optimism", "token": "0xtoken",
+            "holders": ["0x" + "1" * 40], "direction": "out", "store": True, "window_days": 100,
+            "direct_metric": "emissions_tokens_gauge_optimism_direct",
+            "exclude_counterparties": ["0x" + "3" * 40]}
+    out = FetchOutput()
+    ls._scan({"name": "Pendle"}, spec, None, out)
+    return out, reader, t0
+
+
+def test_a_gauge_that_paid_nothing_in_the_window_is_stored_as_zero_with_evidence(tmp_path, monkeypatch):
+    """Jake's seed 2026-10-09 15:33: Optimism's Blockscout answered HTTP 500 three times; the probe showed 0 paid in Q0.
+    The full-history scan is refused, so the last 100 days are read through RPC eth_getLogs: no Transfer either way and
+    balanceOf unchanged — reconciled to the wei, so the window is STORED AS ZEROS (with the direct count), not left
+    blocking the emissions sum."""
+    out, reader, _t0 = _window_setup(tmp_path, monkeypatch, lambda b: 5 * 10 ** 18, [])
+    f = out.frame()
+    em = f[f.metric == "emissions_tokens_gauge_optimism"]
+    assert len(em) == 99 and (em["value"] == 0).all(), em
+    assert len(f[f.metric == "emissions_tokens_gauge_optimism_direct"]) == 99
+    msg = next(e.message for e in out.log if "WINDOW RECONCILED" in e.message)
+    assert "RPC eth_getLogs" in msg and "0 payout(s)" in msg and "HTTP 500" in msg, msg
+    assert reader.rpc_calls, "the RPC log reader was used"
+
+
+def test_the_window_stores_payouts_by_day_and_refuses_when_it_does_not_reconcile(tmp_path, monkeypatch):
+    """A window that reconciles stores each payout on its UTC day (excluded counterparties out); one whose balanceOf
+    change differs from in - out by a wei stores nothing and says by how much."""
+    from fetch.explorer import TRANSFER_TOPIC, pad_address
+    from fetch.base import today
+    g, mkt, tre = "0x" + "1" * 40, "0x" + "2" * 40, "0x" + "3" * 40
+    E = 10 ** 18
+    t0 = int((today() - pd.Timedelta(days=120)).tz_localize("UTC").timestamp())
+    day = lambda d: int((today() - pd.Timedelta(days=d)).tz_localize("UTC").timestamp() - t0) // 2   # noqa: E731
+
+    def ev(b, frm, to, v, i):
+        return {"topics": [TRANSFER_TOPIC, pad_address(frm), pad_address(to)], "data": hex(v), "blockNumber": b,
+                "transactionHash": f"0x{i:064x}", "logIndex": 0, "address": "0xtoken"}
+    logs = [ev(day(50) + 10, "0x" + "4" * 40, g, 100 * E, 1), ev(day(40) + 10, g, mkt, 30 * E, 2),
+            ev(day(40) + 20, g, mkt, 5 * E, 3), ev(day(10) + 5, g, tre, 7 * E, 4)]
+    w0 = day(100)
+    bal = lambda b: 20 * E if b < day(50) + 10 else 120 * E - (35 * E if b >= day(40) + 20 else 0) \
+        - (7 * E if b >= day(10) + 5 else 0)                                                           # noqa: E731
+    out, _r, _ = _window_setup(tmp_path, monkeypatch, bal, logs)
+    f = out.frame()
+    em = f[f.metric == "emissions_tokens_gauge_optimism"].set_index("date")["value"]
+    assert em.sum() == 35.0 and em.loc[today() - pd.Timedelta(days=40)] == 35.0, em[em > 0]
+    assert w0 > 0
+    (tmp_path / "off").mkdir()
+    out2, _r, _ = _window_setup(tmp_path / "off", monkeypatch, lambda b: bal(b) + (1 if b > day(5) else 0), logs)
+    assert out2.frame().empty
+    assert any("Q0 WINDOW does not reconcile" in str(e.message) and "difference 1)" in str(e.message)
+               for e in out2.log), [e.message for e in out2.log]

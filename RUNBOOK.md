@@ -527,6 +527,34 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11bb. Jake's `--seed pendle_gauges` 2026-10-09 15:33: Arbitrum short 733K, Optimism HTTP 500
+
+Mainnet reconciled (direct count 92,225.20 from 2026-07-01). Arbitrum did not reconcile: in−out 812,025.6 against
+balanceOf 78,717.9, so 733,307.6 of outflow is missing. Optimism's Blockscout answered HTTP 500 three times.
+
+- **The token and the payout route, from source.** pendle-core-v2-public @87685c8: `deployments/42161-core.json` lists
+  one PENDLE (0x0c880f67…) and one gaugeController (0x1e56299e…). `PendleGaugeControllerUpg.sol` holds an immutable
+  `pendle` (L28) and moves it only through `IERC20(pendle).safeTransfer` (`redeemMarketReward` L58, `withdrawPendle`
+  L81), which are plain Transfer events. There is no other token or contract route, and no counterparty filter applies
+  to the reconciliation (it is in − out over every Transfer).
+- **Where the outflows went missing: `python check_offline_items.py pendle_gauge_reconcile`** (chain arbitrum by
+  default). It:
+  - reads `gauge.pendle()` against the configured token;
+  - checks the cached streams for duplicates, events past `scanned_to`, and the largest gaps between payouts;
+  - bisects archive `balanceOf` against the cached in−out to the FIRST block where they part;
+  - reads that block afresh through RPC `eth_getLogs` and the explorer, listing every Transfer the cache lacks, with
+    its counterparty.
+- **The quarter, reconciled on its own (`fetch/logscan._window_scan`, `window_days: 100` on the L2 gauge scans).**
+  When the full history cannot be used (not reconciled, refused, or still seeding):
+  - the last 100 days are read fresh: explorer first, else RPC `eth_getLogs`; the block for the window's start comes
+    from the explorer, else a bisection on RPC headers;
+  - they are stored only if `balanceOf(end) − balanceOf(start)` equals in − out to the wei;
+  - the direct count is the same fresh read (reconciled), and the log line names what served it. Once a day.
+  - Optimism: zero payouts with an unchanged balance reconcile, so the window is stored as 0 with that evidence and no
+    longer blocks the sum. The direct count falls back to RPC too.
+- **Optimism routes.** Blockscout, then Etherscan V2 chainid 10 (researched as paid on the free key; its own answer
+  is logged), then RPC `eth_getLogs` in the window scan.
+
 ## 11ba. Jake's run 2026-10-09 ~14:10: Aerodrome timing, Q0 backfill, per-epoch stake; Pendle L2 emissions; rebuild guard
 
 That run (on 81a07f3) signed off 14; only Aerodrome stayed OPEN.

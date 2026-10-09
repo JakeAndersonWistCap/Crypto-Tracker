@@ -8937,6 +8937,123 @@ def pendle_emissions_q0(days: int = 90):
           "chain of those payouts. A chain the explorer refuses is named, never counted as 0.")
 
 
+def pendle_gauge_reconcile(chain: str = "arbitrum"):
+    """PENDLE gauge scan on an L2 that does not reconcile (Jake's seed 2026-10-09 15:33: Arbitrum in-out 812,025.6 vs
+    balanceOf 78,717.9 — 733,307.6 of outflow missing). Reads only, from the scan's own cache (fetch/logcache.py) and
+    the chain:
+      1. the gauge's own token — PendleGaugeControllerUpg's immutable `pendle()` (pendle-core-v2-public @87685c8
+         L28; payouts are IERC20(pendle).safeTransfer(market) and withdrawPendle, L58/L81 — Transfer events only)
+         against the configured token;
+      2. the cached in/out streams: counts, block span, scanned_to/proven_to, duplicates, events past scanned_to, and
+         the largest gaps between consecutive outflows;
+      3. BISECTION: archive balanceOf(gauge) against the cached cumulative in-out, to the FIRST block where they part;
+      4. that block read afresh — RPC eth_getLogs and the explorer — listing every Transfer the cache lacks, with its
+         counterparty and whether config excludes it.
+    PASTE BACK the whole output: it names the block, the transactions and the source that dropped them."""
+    import config                                          # noqa: PLC0415
+    from fetch.explorer import ExplorerLogs, TRANSFER_TOPIC, pad_address   # noqa: PLC0415
+    from fetch.logcache import LogCache, stream_id         # noqa: PLC0415
+    spec = next((s for s in config.PROJECT_BY_NAME["Pendle"]["log_scans"] if s["chain"] == chain), None)
+    if spec is None:
+        print(f"  no Pendle gauge scan on {chain}")
+        return
+    token, gauge, cid = spec["token"], spec["holders"][0].lower(), config.CHAIN_IDS[chain]
+    excl = {a.lower() for a in spec.get("exclude_counterparties") or []}
+    head(f"PENDLE gauge on {chain} ({gauge}) — why the scan does not reconcile")
+    r, err = eth_call(gauge, _selx("pendle()"), chain=chain)
+    onchain = ("0x" + r[-40:]).lower() if r and len(r) >= 42 else None
+    print(f"  1. gauge.pendle() = {onchain or 'unreadable — ' + str(err)}; configured token {token.lower()} -> "
+          + ("SAME" if onchain == token.lower() else "DIFFERENT — the scan reads the wrong token"))
+    cache = LogCache()
+    st_in = cache.load(stream_id(cid, token, [TRANSFER_TOPIC, None, pad_address(gauge)]))
+    st_out = cache.load(stream_id(cid, token, [TRANSFER_TOPIC, pad_address(gauge), None]))
+    for lab, st in (("IN ", st_in), ("OUT", st_out)):
+        ev = st["events"]
+        keys = [(e["transactionHash"], int(e["logIndex"])) for e in ev]
+        past = [e for e in ev if st["scanned_to"] is not None and int(e["blockNumber"]) > int(st["scanned_to"])]
+        tot = sum(int(e["data"], 16) for e in ev) / 1e18
+        print(f"  2. {lab}: {len(ev):,} cached event(s), {tot:,.4f} PENDLE, blocks "
+              + (f"{int(ev[0]['blockNumber']):,}..{int(ev[-1]['blockNumber']):,}" if ev else "—")
+              + f"; scanned_to {st['scanned_to']}, proven_to {st['proven_to']}; duplicates {len(keys) - len(set(keys))};"
+              f" past scanned_to {len(past)}")
+    outs = st_out["events"]
+    gaps = sorted(((int(b["blockNumber"]) - int(a["blockNumber"]), int(a["blockNumber"]), int(b["blockNumber"]))
+                   for a, b in zip(outs, outs[1:])), reverse=True)[:5]
+    if gaps:
+        print("     largest gaps between consecutive OUT events (blocks): "
+              + "; ".join(f"{g:,} ({a:,}..{b:,})" for g, a, b in gaps))
+    upto = min(x for x in (st_in["scanned_to"], st_out["scanned_to"]) if x is not None) \
+        if st_in["scanned_to"] is not None and st_out["scanned_to"] is not None else None
+    if upto is None or not (st_in["events"] or outs):
+        print("  the cache holds no complete pair of streams — run `python token_metrics.py --seed pendle_gauges`")
+        return
+    evs = sorted([(int(e["blockNumber"]), int(e["data"], 16)) for e in st_in["events"]]
+                 + [(int(e["blockNumber"]), -int(e["data"], 16)) for e in outs])
+
+    def net(b):
+        return sum(v for blk, v in evs if blk <= b)
+
+    def bal(b):
+        x, why = eth_call(token, _selx("balanceOf(address)") + _word(int(gauge, 16)), hex(b), chain=chain)
+        return int(x, 16) if x else None
+    lo, hi = evs[0][0] - 1, int(upto)
+    b_hi = bal(hi)
+    if b_hi is None:
+        print(f"  balanceOf at block {hi:,} unreadable — needs an archive endpoint for {chain} "
+              f"({chain.upper()}_RPC_URL)")
+        return
+    print(f"  3. at block {hi:,}: cached in-out {net(hi) / 1e18:,.4f}, balanceOf {b_hi / 1e18:,.4f}, difference "
+          f"{(b_hi - net(hi)) / 1e18:,.4f}")
+    if b_hi == net(hi):
+        print("     the cache reconciles at its own scanned_to — the failure was in the run's NEW events after it")
+        return
+    steps = 0
+    while hi - lo > 1 and steps < 60:
+        steps += 1
+        mid = (lo + hi) // 2
+        bm = bal(mid)
+        if bm is None:
+            print(f"     balanceOf at {mid:,} unreadable — bisection stopped at ({lo:,}, {hi:,}]")
+            break
+        lo, hi = (mid, hi) if bm == net(mid) else (lo, mid)
+    print(f"     FIRST DIVERGENCE: block {hi:,} (reconciles to the wei at {lo:,}); at {hi:,} balanceOf "
+          f"{bal(hi) / 1e18:,.4f} vs cached in-out {net(hi) / 1e18:,.4f}")
+    have = {(e["transactionHash"], int(e["logIndex"])) for e in st_in["events"] + outs}
+    print(f"  4. block {hi:,} read afresh:")
+    for lab, topics in (("IN ", [TRANSFER_TOPIC, None, pad_address(gauge)]),
+                        ("OUT", [TRANSFER_TOPIC, pad_address(gauge), None])):
+        rpc_logs = None
+        for url in _rpcs_for(chain):
+            try:
+                j = rpc(url, "eth_getLogs", [{"address": token, "topics": topics, "fromBlock": hex(hi),
+                                              "toBlock": hex(hi)}])
+                if "result" in j:
+                    rpc_logs = j["result"]
+                    break
+            except Exception:  # noqa: BLE001
+                continue
+        try:
+            ex_logs, meta = ExplorerLogs().get_logs(cid, token, topics, hi, hi)
+            ex_src = meta["explorer"]
+        except Exception as e:  # noqa: BLE001
+            ex_logs, ex_src = None, f"refused — {str(e)[:120]}"
+        for src_lab, logs in (("RPC", rpc_logs), (f"explorer ({ex_src})", ex_logs)):
+            if logs is None:
+                print(f"     {lab} {src_lab}: unreadable")
+                continue
+            miss = [x for x in logs if (str(x["transactionHash"]).lower(), int(str(x["logIndex"]), 16)
+                                        if str(x["logIndex"]).startswith("0x") else int(x["logIndex"])) not in have]
+            print(f"     {lab} {src_lab}: {len(logs)} log(s), {len(miss)} NOT IN THE CACHE")
+            for x in miss[:10]:
+                tp = x["topics"]
+                frm, to = "0x" + str(tp[1])[-40:], "0x" + str(tp[2])[-40:]
+                party = to if lab == "OUT" else frm
+                print(f"       tx {x['transactionHash']} from {frm} to {to} {int(x['data'], 16) / 1e18:,.4f} PENDLE"
+                      + (" [excluded counterparty]" if party.lower() in excl else ""))
+    print("  A Transfer the cache lacks in a block the explorer serves means the explorer's paging dropped it; one only "
+          "the RPC returns means the explorer does not index it. PASTE BACK the whole output.")
+
+
 def pendle_virtual_rebuild():
     """PENDLE 1c (Jake's run 2026-10-09 11:41): virtual sPENDLE rebuilt on-chain against Pendle's API, every day both
     exist. Pendle's method per lock: virtual = locked x (1 + 3 x remaining/2y) and vePENDLE balance = locked x
@@ -9203,7 +9320,7 @@ CHECKS = (
     aerodrome_filing_wallets, blockworks_wallet_balances,
     etherfi_vault_archive, etherfi_contract_ids, etherfi_accountant, fluid_vesting_recipients, maple_ssf_partial,
     aerodrome_managed_venfts, pendle_epoch_revenues, maple_ssf_trail, fluid_avocado_owners, hl_pool_release_compare,
-    pendle_spendle_rewards_onchain, maple_buyback_inflows, maple_syrup_mints, etherfi_withdrawal_fees, aerodrome_voter_rewards, aerodrome_epochs_q0,
+    pendle_spendle_rewards_onchain, maple_buyback_inflows, maple_syrup_mints, etherfi_withdrawal_fees, aerodrome_voter_rewards, aerodrome_epochs_q0, pendle_gauge_reconcile,
     sky_farm_rates, plume_supply_read, chainlink_noncirc_transfers, chainlink_release_steps, aerodrome_price_q0, pendle_epoch_table, pendle_emissions_q0, price_basis_before_after, pendle_virtual_rebuild,
     plume_sources, aethir_dashboard_xhr, maple_ssf_history, blockworks_geodnet,
     morpho_incentives, settlement_sources, hyperevm_etherscan, maple_ssf_inflows, aethir_pages,
