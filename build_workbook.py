@@ -1864,7 +1864,10 @@ def _net_common_views(groups: dict) -> None:
             continue
         view = pd.DataFrame({"date": both.index, "project": name, "metric": spec["metric"],
                              "value": (both["i"] - both["b"]).values,
-                             "source": f"derived:{spec['issuance']}-{spec['burn']}(common days)", "tier": 2})
+                             # A DIFFERENCE OF TWO DIFFERENCED FLOWS (Jake's run 2026-10-09 11:41, item 4: J5 annualised over 9
+                             # days where I5 covers 10): its first row holds the interval ending that day, so the source is
+                             # marked derived:d_ and coverage counts from the day before (_differenced_first).
+                             "source": f"derived:d_net:{spec['issuance']}-{spec['burn']}(common days)", "tier": 2})
         groups[(name, spec["metric"])] = _as_stored(view, gi.columns)
 
 
@@ -2215,13 +2218,17 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                 # a 30-day sum, so "covers 30 of 30" would be answering a question nobody asked.
                 w_start = asof - pd.Timedelta(days=short)
                 diff_first = _differenced_first(g)
-                row["covered_days"], row["window_days"] = _window_coverage(s, w_start, asof, diff_first)
+                # A SCAN READ FROM THE CHAIN'S START COVERS THE WHOLE WINDOW (Jake's run 2026-10-09 11:41): its days are
+                # the scanned range, not the days with events — so coverage counts from the window's start.
+                s_cov = (pd.concat([pd.Series([0.0], index=[pd.Timestamp("1970-01-01")]), s])
+                         if config.scanned_from_genesis(name, metric) and not s.empty else s)
+                row["covered_days"], row["window_days"] = _window_coverage(s_cov, w_start, asof, diff_first)
                 # THE SAME TWO QUESTIONS FOR THE Q0 WINDOW, which A4's headline annualises
                 # (x days_per_year / period_days). A Q0 sum over a series that began 42 days ago
                 # is a 42-day sum; a Q0 holding ONE discrete burn is an event, not a rate. Both
                 # are what A4's window caveat reads (_a4_window_caveat). Added 2026-09-25.
                 q_start = asof - pd.Timedelta(days=period)
-                row["q0_covered_days"], _ = _window_coverage(s, q_start, asof, diff_first)
+                row["q0_covered_days"], _ = _window_coverage(s_cov, q_start, asof, diff_first)
                 row["q0_events"] = int(((s.index > q_start) & (s.index <= asof) & (s > 0)).sum())
                 # ** A SCHEDULE THAT HAS ENDED STILL FILLS THE WINDOW BEHIND IT. Added 2026-09-25. **
                 # The mirror of a part-filled window: after the declared end the true rate is zero,
@@ -2266,7 +2273,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                             f"ABSENT because the source did not report them, not because the "
                             f"figure was low. {hole.get('do_not', '')}".strip())
                 row["now_covered_days"] = row["covered_days"]
-                row["m1_covered_days"], _ = _window_coverage(s, asof - pd.Timedelta(days=2 * short),
+                row["m1_covered_days"], _ = _window_coverage(s_cov, asof - pd.Timedelta(days=2 * short),
                                                              asof - pd.Timedelta(days=short))
                 for i, q in enumerate(["q1", "q2", "q3"], start=1):
                     row[f"{q}_covered_days"], _ = _window_coverage(
@@ -4088,6 +4095,26 @@ def _emissions_from_metric_views(groups: dict, after_issuance: bool = False) -> 
         name = p["name"]
         if after_issuance and (name, src_metric) in _VIEW_BLOCKS:
             _VIEW_BLOCKS[(name, "emissions_tokens")] = _VIEW_BLOCKS[(name, src_metric)]
+        if isinstance(src_metric, (tuple, list)):
+            # SEVERAL SCANNED STREAMS, SUMMED BY DAY (Pendle, Jake's run 2026-10-09 11:41: the gauge payouts of every
+            # chain read). Each scan zero-fills from its first activity, so a day before a stream's first row is an
+            # observed 0; a day after a stream's LAST row is not yet scanned, so the sum stops at the earliest last row.
+            parts = {m: groups.get((name, m)) for m in src_metric}
+            got = {m: g.drop_duplicates("date", keep="last").set_index("date")["value"].astype(float)
+                   for m, g in parts.items() if g is not None and not g.empty}
+            if not got:
+                continue
+            end = min(s.index.max() for s in got.values())
+            idx = sorted(set().union(*(s.index for s in got.values())))
+            total = pd.concat([s.reindex(idx).fillna(0.0) for s in got.values()], axis=1).sum(axis=1)
+            total = total[total.index <= end]
+            missing = [m for m in src_metric if m not in got]
+            base = next(iter(parts[m] for m in got))
+            groups[(name, "emissions_tokens")] = _as_stored(pd.DataFrame(
+                {"date": total.index, "project": name, "metric": "emissions_tokens", "value": total.values,
+                 "source": f"derived:sum({'+'.join(got)})" + (f"[not yet scanned: {', '.join(missing)}]"
+                                                              if missing else ""), "tier": 2}), base.columns)
+            continue
         measured = groups.get((name, src_metric))
         held = groups.get((name, "emissions_tokens"))
         if measured is not None and not measured.empty:

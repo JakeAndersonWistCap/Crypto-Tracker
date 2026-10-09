@@ -96,6 +96,14 @@ class CrossRefs:
             out.fail(SOURCE, name, f"price_usd_coinbase: robots.txt disallows {url} ({why})", TIER)
             return
         days = int(spec.get("days", 30)) if not self.daily.ever(key) else 7
+        # Q0 ONCE (Jake's run 2026-10-09 11:41, 3a: Coinbase had AERO only from 2026-09-06 — the first read asked 30
+        # days). One request of `history_days` candles (Coinbase serves up to 300 per request); a first candle later than
+        # asked means the product did not trade before it, and the log says so.
+        hist_key = f"{key}:history"
+        hist = int(spec.get("history_days", 100))
+        backfill = not self.daily.ever(hist_key)
+        if backfill:
+            days = max(days, hist)
         end = today().normalize() + pd.Timedelta(days=1)
         start = end - pd.Timedelta(days=days)
         try:
@@ -114,8 +122,16 @@ class CrossRefs:
             out.fail(SOURCE, name, f"price_usd_coinbase: {product}: {rows}", TIER)
             return
         frame = tidy(rows, name, "price_usd_coinbase", f"coinbase_exchange:{product}:open", TIER)
-        out.add(frame, SOURCE, name, f"price_usd_coinbase: {len(rows)} day(s) of {product} daily OPEN", TIER)
+        listed = ""
+        if backfill and rows:
+            first = rows[0][0]
+            listed = (f"; HISTORY: asked from {start.date()}, first candle {first.date()}"
+                      + (f" — {product} did not trade on Coinbase Exchange before {first.date()}"
+                         if first > start + pd.Timedelta(days=1) else " — the whole range is served"))
+        out.add(frame, SOURCE, name, f"price_usd_coinbase: {len(rows)} day(s) of {product} daily OPEN{listed}", TIER)
         self.daily.done(key, day)
+        if backfill:
+            self.daily.done(hist_key, day)
 
     @staticmethod
     def parse_candles(body) -> list[tuple] | str:

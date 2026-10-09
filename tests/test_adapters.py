@@ -25897,7 +25897,8 @@ def test_overnight_records_are_on_file_and_the_maple_factor_is_corrected():
     # supply.plume.org's constant total
     # Jake's run 2026-10-08 11:27: no longer MATURING — judged against the gauge scan (its own tier now)
     pe = config.CREDIBILITY["Pendle"]["in_emissions"]["ref"]
-    assert "verdict" not in pe and pe["metric"] == "emissions_tokens_gauge_mainnet"
+    # item 2 (Jake's run 2026-10-09 11:41): judged against every chain's gauge scan, not mainnet alone
+    assert "verdict" not in pe and pe["formula"] == "scans_q0" and "emissions_tokens_gauge_mainnet" in pe["args"]["metrics"]
     assert config.CREDIBILITY["Plume"]["in_issuance"]["ref"]["manual"]["value"] == 0
     assert "do not wire" in config.SOURCE_REGISTER["api.merkl.xyz"]["licence"]
     why = config.CREDIBILITY["Maple"]["in_revenue"]["ref"]["why"]
@@ -27383,7 +27384,7 @@ def test_signoff_round_rows_cite_their_evidence():
     assert c["Near"]["in_emissions"]["ref"]["verdict"] == "N/A"
     scan = config.PROJECT_BY_NAME["Pendle"]["log_scans"][0]
     assert scan["holders"] == ["0x47D74516B33eD5D70ddE7119A40839f6Fcc24e57"] and scan["store"]
-    assert c["Pendle"]["in_emissions"]["ref"]["metric"] == "emissions_tokens_gauge_mainnet"   # judged, not MATURING
+    assert "emissions_tokens_gauge_arbitrum" in c["Pendle"]["in_emissions"]["ref"]["args"]["metrics"]   # every chain read
     assert config.CREDIBILITY["Ethereum"]["a4_net_change"]["show_how"]
 
 
@@ -27520,7 +27521,7 @@ def test_etherfi_yield_is_a_documented_limitation_and_pendle_reads_jakes_epoch()
     assert pe["a3_protocol_yield"]["inputs"] == ("in_epoch_reproduction", "in_epoch_mean", "in_epochs_first_party")
     assert "NOT IDENTIFIED" in pe["a3_protocol_yield"]["why"] and "0x33305665" in pe["a3_protocol_yield"]["why"]
     assert pe["in_epoch_apr"]["ref"]["args"]["tokens"] == 82_545 and pe["in_epoch_apr"]["ref"]["tol"] == 1.0
-    assert pe["in_emissions"]["ref"]["metric"] == "emissions_tokens_gauge_mainnet"      # judged, not MATURING
+    assert pe["in_emissions"]["ref"]["formula"] == "scans_q0"                           # judged, every chain read
     d = pd.Timestamp("2026-09-08")
     long = pd.DataFrame([(d, "Pendle", "locked_tokens_shares", 30_000_000.0),
                          (d, "Pendle", "locked_tokens_virtual", 170_000_000.0),

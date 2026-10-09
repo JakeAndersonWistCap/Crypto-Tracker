@@ -144,10 +144,20 @@ def _eth_net_formula(p, rows, long, asof, issuance="gross_issuance_tokens", burn
     # reference = the curve and the reference burn on the SAME covered days. A row whose span lacks a burn on any day
     # is left out of both, and named.
     tsp = _series(long, p, "total_supply_protocol")
-    src_of = {}
-    g = long[(long.project == p) & (long.metric == issuance)] if long is not None and not long.empty else None
-    if g is not None and "source" in g.columns:
+    src_of, bsrc_of = {}, {}
+    if long is not None and not long.empty and "source" in long.columns:
+        g = long[(long.project == p) & (long.metric == issuance)]
         src_of = dict(zip(g["date"].dt.normalize(), g["source"].astype(str)))
+        gb = long[(long.project == p) & (long.metric == burn)]
+        bsrc_of = dict(zip(gb["date"].dt.normalize(), gb["source"].astype(str)))
+    # OUR BURN CARRIES SPANS TOO (Jake's run 2026-10-09 11:41, item 4: the 10-05 issuance row spans 10-02..10-05 and so
+    # does the 10-05 burn row, [span=4d]; asking for a burn ROW on 10-02 left the whole span out — 17,022 over 6 days
+    # where the headline covers 10). A day is covered by our burn when a burn row's own span contains it.
+    burn_cover = {}
+    for bd in sb.index:
+        mb = re.search(r"\[span=(\d+)d\]", bsrc_of.get(bd, ""))
+        for x in pd.date_range(bd - pd.Timedelta(days=(int(mb.group(1)) if mb else 1) - 1), bd):
+            burn_cover[x] = bd
 
     def span_of(d):
         m = re.search(r"\[span=(\d+)d\]", src_of.get(d, ""))
@@ -175,10 +185,13 @@ def _eth_net_formula(p, rows, long, asof, issuance="gross_issuance_tokens", burn
     used, covered, dropped = [], [], []
     for d in days:
         span = span_of(d)
-        legs = [(x, ref_burn(x), x in sb.index) for x in span]
-        bad = [x for x, (rb, _k), ours_b in legs if rb is None or not ours_b]
-        if bad:
-            dropped.append(f"{d.date()} (span {len(span)}d; no burn on {bad[0].date()})")
+        legs = [(x, ref_burn(x), x in burn_cover) for x in span]
+        bad_ref = [x for x, (rb, _k), _c in legs if rb is None]
+        bad_ours = [x for x, _r, covered in legs if not covered]
+        if bad_ref or bad_ours:
+            x = (bad_ours or bad_ref)[0]
+            dropped.append(f"{d.date()} (span {len(span)}d; no {'burn of ours' if bad_ours else 'reference burn'} "
+                           f"covering {x.date()})")
             continue
         for x, (rb, kind), _ in legs:
             before = st[st.index <= x]
@@ -187,7 +200,8 @@ def _eth_net_formula(p, rows, long, asof, issuance="gross_issuance_tokens", burn
             brn += rb
             n_llama += kind == "llama"
             n_counter += kind == "counter"
-            o_brn += float(sb.loc[x])
+        # our burn rows dated inside the span (each carries its own span, all inside this one)
+        o_brn += float(sum(float(sb.loc[bd]) for bd in sorted({burn_cover[x] for x in span})))
         o_iss += float(si.loc[d])
         used.append((d, len(span), float(si.loc[d])))
         covered += span
@@ -591,12 +605,18 @@ _EPOCH_LAG_CACHE: dict = {}
 
 
 def epoch_publish_lag(project: str, metric: str = "pendle_distributed_tokens", epoch_days: int = 14, db=None):
-    """HOW LONG PENDLE TAKES TO PUBLISH AN EPOCH'S DISTRIBUTION, OBSERVED (Jake's run 2026-10-09 ~10:15, 5b: epoch
-    2026-09-22 was stored COMPLETED at 0 PENDLE, almost certainly not yet published). From the run log's
-    `<metric>:` lines (fetch/pendle_epochs.py): each run names the last complete epoch and its amount ("... COMPLETED
-    a..b ... last complete epoch V PENDLE"), and from 2026-10-09 every stored epoch ("STORED PER EPOCH: d v | ...").
-    Per epoch: the first run that read it 0 and the first that read it above 0 once complete. The lag is the longest
-    observed (first non-zero read − the epoch's end), in days. (lag or None when never observed, [rows])."""
+    """HOW LONG PENDLE TAKES TO PUBLISH AN EPOCH'S DISTRIBUTION, OBSERVED (Jake's run 2026-10-09 ~10:15, 5b; rule fixed on
+    his run 11:41: "PUBLISH LAG 239 days is wrong: it counts epochs first logged today. Only epochs we read before their
+    amount was published count — so far only 2026-09-08: +7 days").
+
+    ONLY AN EPOCH WE WERE WATCHING WHEN IT WAS PUBLISHED COUNTS:
+      * an epoch read at 0 after it ended and above 0 later: its lag is that first non-zero read minus its end;
+      * an epoch that ended AFTER our first read of the payload: its lag is the first run that read it above 0 once
+        complete, minus its end ("... COMPLETED a..b ... last complete epoch V PENDLE", or "STORED PER EPOCH");
+      * the epoch that was the LATEST COMPLETE one at our first read (ended before it, the next had not ended) and was
+        already above 0 then: published within (first read − its end) — an upper bound, counted;
+      * every older epoch was published before we watched and says nothing about the lag.
+    The lag is the longest counted. (lag or None when none counts, [rows])."""
     import re as _re
     import sqlite3
     import store as _sm
@@ -613,12 +633,20 @@ def epoch_publish_lag(project: str, metric: str = "pendle_distributed_tokens", e
         try:
             got = con.execute("SELECT ts, message FROM run_log WHERE project = ? AND message LIKE ? ORDER BY ts",
                               (project, f"{metric}:%")).fetchall()
+            stored = dict(con.execute("SELECT date, value FROM metrics WHERE project = ? AND metric = ?",
+                                      (project, metric)).fetchall())
         finally:
             con.close()
     except sqlite3.Error:
-        got = []
-    seen: dict = {}
+        got, stored = [], {}
+    if not got:
+        out = (None, [])
+        _EPOCH_LAG_CACHE[key] = out
+        return out
     num = lambda s: float(s.replace(",", ""))                                      # noqa: E731
+    span = pd.Timedelta(days=int(epoch_days))
+    first_read = pd.Timestamp(str(got[0][0])[:19])
+    seen: dict = {}
     for ts, msg in got:
         when = pd.Timestamp(str(ts)[:19])
         reads = []
@@ -629,16 +657,32 @@ def epoch_publish_lag(project: str, metric: str = "pendle_distributed_tokens", e
         if m:
             reads += [(pd.Timestamp(d), num(v)) for d, v in _re.findall(r"(\d{4}-\d{2}-\d{2}) ([\d,.]+)", m.group(1))]
         for e, v in reads:
-            r = seen.setdefault(e, {"epoch": e, "end": e + pd.Timedelta(days=int(epoch_days)), "first_read": when,
-                                    "first_zero": None, "first_nonzero": None})
+            r = seen.setdefault(e, {"epoch": e, "end": e + span, "first_read": when, "first_zero": None,
+                                    "first_nonzero": None})
             if v == 0 and r["first_zero"] is None:
                 r["first_zero"] = when
             if v > 0 and r["first_nonzero"] is None:
                 r["first_nonzero"] = when
+    for d, v in stored.items():                     # epochs stored but never named in a parsable line
+        e = pd.Timestamp(str(d)[:10])
+        seen.setdefault(e, {"epoch": e, "end": e + span, "first_read": None, "first_zero": None,
+                            "first_nonzero": None, "stored": float(v or 0)})["stored"] = float(v or 0)
     rows = sorted(seen.values(), key=lambda r: r["epoch"])
     lags = []
     for r in rows:
-        r["lag_days"] = ((r["first_nonzero"].normalize() - r["end"]).days if r["first_nonzero"] is not None else None)
+        r["lag_days"], r["counts"] = None, "published before our first read"
+        if (r["first_zero"] is not None and r["first_nonzero"] is not None and r["first_zero"] < r["first_nonzero"]
+                and r["first_zero"] >= r["end"]):
+            # read at 0 after it ended, then above 0: watched across its publication
+            r["lag_days"], r["counts"] = (r["first_nonzero"].normalize() - r["end"]).days, "watched (0, then published)"
+        elif r["end"] > first_read:
+            if r["first_nonzero"] is not None:
+                r["lag_days"], r["counts"] = (r["first_nonzero"].normalize() - r["end"]).days, "watched"
+            else:
+                r["counts"] = "not published yet"
+        elif r["end"] + span > first_read and (r.get("stored") or 0) > 0 and r["first_zero"] is None:
+            r["lag_days"] = (first_read.normalize() - r["end"]).days
+            r["counts"] = "latest complete at our first read (an upper bound)"
         if r["lag_days"] is not None:
             lags.append(max(int(r["lag_days"]), 0))
     out = (max(lags) if lags else None, rows)
@@ -737,7 +781,10 @@ def _epochs_first_party(p, rows, long, asof, dist="pendle_distributed_tokens", p
                                      else f"{r['date'].date()} UNPUBLISHED ({r['why']}), left out of the mean"
                                      if r["source"] == "unpublished" else f"{r['date'].date()} NO APR" for r in tab))
     if none_:
+        # NEGATIVE = EPOCHS WITH NO APR AT ALL (Jake's run 2026-10-09 11:41, 1a: Pendle's per-epoch aprs read 0, so the
+        # fallback is empty): the headline is not formed — a CHECK, never "every epoch is ours".
         how += f". {len(none_)} epoch(s) have neither our stake nor Pendle's APR — the headline is not formed"
+        return -float(len(none_)), str(tab[-1]["date"].date()), how
     return float(len(first)), str(tab[-1]["date"].date()), how
 
 
@@ -1051,6 +1098,26 @@ def _hl_reward_active(p, rows, long, asof, **_):
         f"({s_off / s_tot:.1%} of stake inactive, TODAY's snapshot only) / 365 x {cov:.0f} day(s)")
 
 
+def _scans_q0(p, rows, long, asof, metrics=(), labels=(), **_):
+    """THE GAUGE PAYOUTS CHAIN BY CHAIN OVER Q0 (Pendle in_emissions, Jake's run 2026-10-09 11:41): each stored scan's Q0
+    sum, listed per chain; a chain with no stored row is named, never counted as 0."""
+    lo, hi = _q0(asof)
+    parts, missing = [], []
+    for m, lab in zip(metrics, labels or metrics):
+        sr = _series(long, p, m)
+        sr = sr[(sr.index > lo) & (sr.index <= hi)]
+        if sr.empty:
+            missing.append(lab)
+            continue
+        parts.append((lab, float(sr.sum()), sr.index.min(), sr.index.max()))
+    if not parts:
+        return None, None, "no gauge scan stored in Q0: " + ", ".join(missing)
+    tot = sum(v for _l, v, _a, _b in parts)
+    how = ("; ".join(f"{lab} {v:,.2f} ({a.date()}..{b.date()})" for lab, v, a, b in parts)
+           + f" = {tot:,.2f} PENDLE" + (f". NOT YET SCANNED: {', '.join(missing)}" if missing else ""))
+    return tot, str(max(b for _l, _v, _a, b in parts).date()), how
+
+
 def _window_sum(p, rows, long, asof, metric="", end="", days=30, times_price=False, **_):
     """A daily flow summed over the `days` days ending on `end` (a reading's own window — a figure read by hand on one
     date covers the days before it, not the build's), valued at the same-day price_usd when `times_price`. A day
@@ -1299,17 +1366,26 @@ def _aero_epoch_pending(p, rows, long, asof, flow="revenue_usd", onchain="voter_
     still missing then). The working names the epoch and the missing day(s)."""
     oc = _series(long, p, onchain)
     fl = _series(long, p, flow)
-    if oc.empty:
-        return 0.0, None, "no on-chain epoch stored"
-    e = oc.index[-1]
+    # THE LAST COMPLETE EPOCH (Thursday 00:00 UTC starts), whether or not it is stored (Jake's run 2026-10-09 11:41, 3c:
+    # no on-chain epoch was stored at all, so the rows read "CHECK (no reference)" instead of naming what was missing).
+    a = asof.normalize()
+    last_start = a - pd.Timedelta(days=(a.dayofweek - 3) % 7) - pd.Timedelta(days=7)
+    e = oc.index[-1] if not oc.empty and oc.index[-1] >= last_start else last_start
     days = pd.date_range(e, periods=7, freq="D")
-    miss = [d for d in days if d not in fl.index]
-    if not miss or days[-1] >= asof.normalize():
+    if days[-1] >= a:
         return 0.0, None, ""
-    pending = asof.normalize() <= pd.Timestamp(until)
+    miss = [d for d in days if d not in fl.index]
+    no_onchain = e not in oc.index
+    if not miss and not no_onchain:
+        return 0.0, None, ""
+    pending = a <= pd.Timestamp(until)
+    why = []
+    if no_onchain:
+        why.append(f"the on-chain figure (fetch/aero_voter.py, {onchain}) for epoch {e.date()} is not stored")
+    if miss:
+        why.append(f"DefiLlama's {flow} for {', '.join(str(d.date()) for d in miss)} is not stored")
     return (1.0 if pending else 0.0), str(e.date()), (
-        f"epoch {e.date()} (7 UTC days {days[0].date()}..{days[-1].date()}) needs DefiLlama's {flow} for "
-        f"{', '.join(str(d.date()) for d in miss)}, not stored as of {asof.date()}")
+        f"epoch {e.date()} (7 UTC days {days[0].date()}..{days[-1].date()}): " + "; ".join(why) + f", as of {a.date()}")
 
 
 def _price_basis_gap(p, rows, long, asof, flow="holders_revenue_usd", stake="voter_total_weight_tokens",
@@ -1353,6 +1429,31 @@ def _price_basis_gap(p, rows, long, asof, flow="holders_revenue_usd", stake="vot
     return (1.0 if abs(spot / pa["p_eff"] - 1) > moved else 0.0), str(a.index[-1].date()), how
 
 
+def _price_overlap(p, rows, long, asof, flow="holders_revenue_usd", price="price_usd", second="price_usd_coinbase",
+                   min_days=30, side="ours", **_):
+    """IS THE HEADLINE'S PRICE CONFIRMED BY A SECOND SOURCE? (Jake's run 2026-10-09 11:41, 3a: Coinbase has AERO only from
+    2026-09-06, and on all 33 overlapping days it matched CoinGecko to 0.00%.) Over the Q0 days that hold a payment and
+    BOTH prices: the payment-weighted price ($ paid / tokens at each day's price) from each source — ours CoinGecko's,
+    the reference Coinbase's. Fewer than `min_days` overlapping days is no confirmation (None). The working gives the
+    overlap, its first day and the largest single-day difference."""
+    lo, hi = _q0(asof)
+    fl, a, b = _series(long, p, flow), _series(long, p, price), _series(long, p, second)
+    days = [d for d in fl.index if lo < d <= hi and d in a.index and d in b.index and a.loc[d] and b.loc[d]]
+    q0_paid = [d for d in fl.index if lo < d <= hi]
+    if len(days) < int(min_days):
+        return None, None, (f"{second} and {price} overlap on {len(days)} of the {len(q0_paid)} Q0 payment days — "
+                            f"fewer than {min_days}, so the price is not confirmed by a second source")
+    usd = sum(float(fl.loc[d]) for d in days)
+    pa = usd / sum(float(fl.loc[d]) / float(a.loc[d]) for d in days)
+    pb = usd / sum(float(fl.loc[d]) / float(b.loc[d]) for d in days)
+    worst = max(abs(float(b.loc[d]) / float(a.loc[d]) - 1) for d in days)
+    how = (f"{len(days)} of the {len(q0_paid)} Q0 payment days hold both prices ({days[0].date()}..{days[-1].date()}"
+           + (f"; {second} starts {b.index.min().date()}" if b.index.min() > lo else "")
+           + f"); payment-weighted: {price} ${pa:,.4f} vs {second} ${pb:,.4f}; largest single-day difference "
+           f"{worst:.2%}. At least {min_days} overlapping days in full agreement is accepted as confirmation")
+    return (pa if side == "ours" else pb), str(days[-1].date()), how
+
+
 def _aero_rebase_apr(p, rows, long, asof, rebase="emissions_tokens", stake="voter_total_weight_tokens", **_):
     """THE veAERO REBASE AS A RATE, ITS OWN LABELLED ROW (Jake's run 2026-10-08 11:27: ~2.5% at 485K AERO/week): the last
     complete week's RewardsDistributor tokensPerWeek x 52 / the votes cast. Paid in AERO to lockers — a separate stream
@@ -1372,7 +1473,7 @@ FORMULAS = {"sum_months": _sum_months, "free_float_now": _free_float_now, "windo
             "eth_issuance_curve": _eth_issuance_formula, "flow_usd_over_price": _flow_usd_over_price,
             "delta_q0": _delta_q0, "delta_diff_q0": _delta_diff_q0, "hl_reward_formula": _hl_reward_formula,
             "share_price_growth": _share_price_growth, "per_day_x_covered": _per_day_x_covered,
-            "value_on": _value_on, "epoch_apr": _epoch_apr, "epoch_reproduction": _epoch_reproduction, "epoch_mean_check": _epoch_mean_check, "epochs_first_party": _epochs_first_party, "aero_epoch_revenue": _aero_epoch_revenue, "aero_rebase_apr": _aero_rebase_apr, "aero_epoch_pending": _aero_epoch_pending, "price_basis_gap": _price_basis_gap,
+            "value_on": _value_on, "epoch_apr": _epoch_apr, "epoch_reproduction": _epoch_reproduction, "epoch_mean_check": _epoch_mean_check, "epochs_first_party": _epochs_first_party, "aero_epoch_revenue": _aero_epoch_revenue, "aero_rebase_apr": _aero_rebase_apr, "aero_epoch_pending": _aero_epoch_pending, "price_basis_gap": _price_basis_gap, "price_overlap": _price_overlap,
             "aero_epoch_apr": _aero_epoch_apr, "q0_net_flow": _q0_net_flow,
             "negative_release": _negative_release, "sum_month": _sum_month, "last30_annualised": _last30_annualised,
             "common_day_value": _common_day_value, "months_match": _months_match,
@@ -1381,7 +1482,7 @@ FORMULAS = {"sum_months": _sum_months, "free_float_now": _free_float_now, "windo
             "sum_since": _sum_since, "schedule_month": _schedule_month, "rise_vs_flow": _rise_vs_flow,
             "product_on_common_day": _product_on_common_day, "now_sum": _now_sum,
             "log_price_growth": _log_price_growth, "bridge_reconciled": _bridge_reconciled,
-            "daily_delta_plus_flow": _daily_delta_plus_flow, "window_sum": _window_sum, "now_combo": _now_combo}
+            "daily_delta_plus_flow": _daily_delta_plus_flow, "window_sum": _window_sum, "scans_q0": _scans_q0, "now_combo": _now_combo}
 
 
 def reference(project: str, spec: dict, rows: dict, long, asof) -> dict:

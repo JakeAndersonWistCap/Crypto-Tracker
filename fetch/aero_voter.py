@@ -51,13 +51,29 @@ def _weight_reader() -> float | None:
     return int(t, 16) / 1e18 if t else None
 
 
+def _stored(project: str, metric: str, date: str) -> bool:
+    """Whether metrics.db holds `metric` for `project` on `date` (read-only; False when the store is unreadable)."""
+    import sqlite3
+    import store as sm                                      # noqa: PLC0415
+    try:
+        con = sqlite3.connect(f"file:{sm.DB_PATH}?mode=ro", uri=True)
+        try:
+            return con.execute("SELECT 1 FROM metrics WHERE project = ? AND metric = ? AND date LIKE ? LIMIT 1",
+                               (project, metric, f"{date}%")).fetchone() is not None
+        finally:
+            con.close()
+    except sqlite3.Error:
+        return False
+
+
 class AeroVoter:
     SOURCE = SOURCE
     TIER = TIER
 
-    def __init__(self, epoch_reader=None, weight_reader=None, daily=None, now=None, **_ignored):
+    def __init__(self, epoch_reader=None, weight_reader=None, daily=None, now=None, stored=None, **_ignored):
         self.epoch_reader = epoch_reader or _epoch_reader
         self.weight_reader = weight_reader or _weight_reader
+        self.stored = stored or _stored
         if daily is None:
             from .logcache import DailyChecks
             daily = DailyChecks()
@@ -98,8 +114,14 @@ class AeroVoter:
         when = pd.Timestamp(epoch, unit="s").normalize()
         key = f"{SOURCE}:{name}:epoch"
         if self.daily.get(key) == str(when.date()):
-            out.mark_current(SOURCE, name, spec["usd_metric"], f"epoch {when.date()} stored already", TIER)
-            return
+            # THE STORE DECIDES, NOT THE MARKER (Jake's run 2026-10-09 11:41, 3c: "epoch 2026-10-01 stored already" while
+            # metrics.db held no voter_rewards_onchain_usd — a run that set the marker lost its rows, so the epoch was
+            # never read again and in_revenue read "CHECK (no reference)").
+            if self.stored(name, spec["usd_metric"], str(when.date())):
+                out.mark_current(SOURCE, name, spec["usd_metric"], f"epoch {when.date()} stored already", TIER)
+                return
+            log.info("aero_voter: epoch %s is marked read but no %s row is stored — reading it again",
+                     when.date(), spec["usd_metric"])
         try:
             r = self.epoch_reader(epoch)
         except Exception as e:  # noqa: BLE001

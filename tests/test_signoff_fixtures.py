@@ -358,18 +358,24 @@ def test_pendle_headline_cell_equals_the_python_on_the_same_store(tmp_path, monk
     assert abs(float(o["a3_protocol_yield"]["ours"]) - v) < 1e-12, (o["a3_protocol_yield"], v)
 
 
-def test_pendle_emissions_ours_is_gross_issuance(tmp_path, monkeypatch):
-    """5c: in_emissions' ours is gross_issuance_tokens over Q0 — the declared 2%/yr x total supply — not the empty
-    emissions_tokens column."""
+def test_pendle_emissions_are_the_gauge_payouts_of_every_chain_read(tmp_path, monkeypatch):
+    """Item 2 (Jake's run 2026-10-09 11:41): emissions = PENDLE the gauges paid to markets, every chain read (mainnet +
+    Arbitrum + Optimism, summed by day); in_emissions sets that against each chain's scan; the four unrouted chains are a
+    DOCUMENTED LIMITATION; gross issuance is no longer the declared 2%."""
     rows = _pendle_rows()
-    for d in _days("2026-06-01", "2026-10-07"):
-        rows.append((d, "Pendle", "total_supply", 285e6, "coingecko", 1))
     for d in _days():
-        rows.append((d, "Pendle", "emissions_tokens_gauge_mainnet", 857.0, "explorer:gauge_pendle_out", 2))
+        rows += [(d, "Pendle", "emissions_tokens_gauge_mainnet", 860.0, "explorer:gauge_pendle_out", 2),
+                 (d, "Pendle", "emissions_tokens_gauge_arbitrum", 70.0, "explorer:gauge_pendle_out_arbitrum", 2),
+                 (d, "Pendle", "emissions_tokens_gauge_optimism", 0.0, "explorer:gauge_pendle_out_optimism", 2),
+                 (d, "Pendle", "total_supply", 281.5e6, "coingecko", 1)]
     o = _evaluate(tmp_path, monkeypatch, "Pendle", rows)
     em = o["in_emissions"]
-    want = 0.02 * 285e6 / 365 * 90
-    assert em["ours"] is not None and abs(float(em["ours"]) / want - 1) < 0.02, (em, want)
+    q0 = [d for d in _days() if pd.Timestamp(ASOF) - pd.Timedelta(days=90) < d <= pd.Timestamp(ASOF)]
+    assert abs(float(em["ours"]) - 930.0 * len(q0)) < 1e-6, em
+    assert em["verdict"].startswith("PASS") and "Arbitrum" in em["note"], em
+    assert o["in_emissions_unrouted"]["verdict"] == "DOCUMENTED LIMITATION", o["in_emissions_unrouted"]
+    assert "80094" in o["in_emissions_unrouted"]["note"]
+    assert config.ISSUANCE_PRIMARY["Pendle"]["kind"] == "first_party"
 
 
 # --------------------------------------------------------------------------------------------------------- Aerodrome
@@ -413,7 +419,8 @@ def test_aerodrome_price_rise_is_a_finding_and_the_epoch_row_uses_one_price(tmp_
     price = lambda d: 0.27 + (0.8144 - 0.27) * (min(d, hi) - lo).days / (hi - lo).days          # noqa: E731
     o = _evaluate(tmp_path, monkeypatch, "Aerodrome", _aero_rows(price=price))
     tp = o["in_apr_today_price"]
-    assert tp["verdict"] == "VERIFIED FINDING", tp
+    assert tp["verdict"] == "N/A (recorded, not judged)", tp                 # Jake's convention: recorded beside
+    assert o["in_price_confirmed"]["verdict"].startswith("PASS"), o["in_price_confirmed"]
     assert "AT TODAY'S PRICE" in tp["note"] and "Coinbase: start" in tp["note"], tp["note"][:600]
     ep = o["in_voter_apr_epoch"]
     assert ep["verdict"].startswith("PASS") and "at the same days' payment-weighted" in ep["note"], ep
@@ -435,7 +442,7 @@ def test_aerodrome_headline_converts_each_days_rewards_at_that_days_price(tmp_pa
     head = o["a3_protocol_yield"]
     assert abs(float(head["ours"]) - want) < 1e-9, (head, want)
     assert abs(want / simple_mean - 1) > 0.05                    # the convention moves the figure on this path
-    assert "payment-weighted Q0 price" in o["in_apr_today_price"]["note"]
+    assert "Payment-weighted Q0 price" in o["in_apr_today_price"]["note"]
 
 
 def test_sky_farm_yield_is_usds_at_each_days_sky_price_over_the_mean_stake(tmp_path, monkeypatch):
@@ -463,7 +470,7 @@ def test_aerodrome_epoch_rows_mature_until_defillama_publishes_the_last_day(tmp_
     o = _evaluate(tmp_path, monkeypatch, "Aerodrome", _aero_rows(llama_until="2026-10-06"), asof="2026-10-09")
     for k in ("in_revenue", "in_voter_apr_epoch"):
         assert o[k]["verdict"] == "MATURING (until 2026-10-10)", o[k]
-        assert "2026-10-07" in o[k]["note"] and "needs DefiLlama" in o[k]["note"], o[k]["note"]
+        assert "2026-10-07" in o[k]["note"] and "DefiLlama's" in o[k]["note"], o[k]["note"]
     (tmp_path / "later").mkdir()
     later = _evaluate(tmp_path / "later", monkeypatch, "Aerodrome", _aero_rows(llama_until="2026-10-06"),
                       asof="2026-10-11")
@@ -484,7 +491,7 @@ def test_aerodrome_revenue_and_yield_are_judged_epoch_for_epoch_against_state(tm
     assert abs(float(ep["ref"]) - 0.1256) < 0.0005
     rb = o["in_rebase_apr"]
     assert rb["verdict"] == "N/A (recorded, separate stream)" and abs(float(rb["ours"]) - 0.0247) < 0.0005
-    assert o["in_apr_today_price"]["verdict"] == "N/A (recorded, price flat)", o["in_apr_today_price"]     # a flat price: nothing to say
+    assert o["in_apr_today_price"]["verdict"] == "N/A (recorded, not judged)", o["in_apr_today_price"]
     assert o["a3_protocol_yield"]["verdict"].startswith("PASS"), o["a3_protocol_yield"]
     assert not any(v["verdict"].startswith("MATURING") for v in o.values())
 
@@ -545,8 +552,14 @@ def test_aero_voter_stores_the_last_complete_epoch_once_and_the_weight_daily(tmp
     assert f[f.metric == "voter_rewards_unpriced_count"]["value"].iloc[0] == 18
     assert f[f.metric == "voter_total_weight_tokens"]["value"].iloc[0] == TW
     out2 = FetchOutput()
-    AeroVoter(epoch_reader=epoch_reader, weight_reader=lambda: TW, daily=daily, now=now).run([p], None, out2)
+    AeroVoter(epoch_reader=epoch_reader, weight_reader=lambda: TW, daily=daily, now=now,
+              stored=lambda *a: True).run([p], None, out2)
     assert len(calls) == 1, "the same epoch was read twice"
+    # 3c (Jake's run 2026-10-09 11:41): the marker said "stored already" while metrics.db held no row — read it again.
+    out3 = FetchOutput()
+    AeroVoter(epoch_reader=epoch_reader, weight_reader=lambda: TW, daily=daily, now=now,
+              stored=lambda *a: False).run([p], None, out3)
+    assert len(calls) == 2 and not out3.frame()[out3.frame().metric == "voter_rewards_onchain_usd"].empty
 
 
 def test_aero_voter_stores_nothing_on_an_error(tmp_path):
@@ -607,6 +620,11 @@ def test_logscan_runs_only_its_own_tier_and_names_what_it_planned():
     plain._scan = lambda proj, spec, w, out: ran.append(spec["key"])
     plain.run([p], None, FetchOutput())
     assert "gauge_pendle_out" not in ran
+    l2 = LogScan(own_tier="explorer_gauge_l2")
+    ran.clear()
+    l2._scan = lambda proj, spec, w, out: ran.append(spec["key"])
+    l2.run([p], None, FetchOutput())
+    assert ran == ["gauge_pendle_out_arbitrum", "gauge_pendle_out_optimism"]
 
 
 def test_a_timed_out_tier_names_the_series_it_gapped():

@@ -249,6 +249,8 @@ METRICS = {
     "locked_tokens_ai":      {"label": "Staked — AI pool (Aethir dashboard aiStaked)", "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 42e9, "only_projects": ("Aethir",)},
     "emissions_tokens_declared":    {"label": "Emissions per day as DECLARED by the vest streams (reference beside the measured release)", "kind": "flow", "unit": "tokens", "archetypes": [3, 4], "tiers": [1], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Sky",), "view_only": True},
     "emissions_tokens_gauge_mainnet": {"label": "PENDLE paid out of Pendle's MAINNET GaugeController to its markets (log scan) — the on-chain emissions reference", "kind": "flow", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Pendle",)},
+    "emissions_tokens_gauge_arbitrum": {"label": "PENDLE paid out of Pendle's ARBITRUM GaugeController to its markets (log scan)", "kind": "flow", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Pendle",)},
+    "emissions_tokens_gauge_optimism": {"label": "PENDLE paid out of Pendle's OPTIMISM GaugeController to its markets (log scan)", "kind": "flow", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Pendle",)},
     "emissions_tokens_arbitrum":    {"label": "FLUID claimed out of Fluid's ARBITRUM MerkleDistributors (log scan)", "kind": "flow", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Fluid",)},
     "locked_tokens_ai_onchain":     {"label": "Staked — AI pool, ON-CHAIN (veAethir.balanceOf(AI Pool)) — check on aiStaked", "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [2], "sanity_min": 0, "sanity_max": 42e9, "only_projects": ("Aethir",)},
     "locked_tokens_gaming_onchain": {"label": "Staked — Gaming pool, ON-CHAIN (veAethir.balanceOf(Gaming Pool)) — check on gamingStaked", "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [2], "sanity_min": 0, "sanity_max": 42e9, "only_projects": ("Aethir",)},
@@ -493,7 +495,7 @@ METRICS = {
     # LABEL is the one thing that does not fit, so it is overridden per project below.
         # HYPERLIQUID from 2026-09-24: its own tokenDetails.totalSupply, first-party (see its
         # supply_reference_note). Gross of the Assistance Fund, which sits inside the total.
-        "only_projects": ("Uniswap", "GEODNET", "PancakeSwap", "Venice AI", "World Mobile",
+        "only_projects": ("Uniswap", "GEODNET", "PancakeSwap", "Venice AI", "World Mobile", "Pendle",
                           "Hyperliquid")},
     # ===== ONE TOKEN, THREE BURN MECHANISMS, THREE SERIES. Added 2026-09-22. =====
     # Sky.burn(from, value) emits Transfer(from, address(0), value) whoever calls it and for
@@ -2326,6 +2328,21 @@ KIND_METRIC = {
 
 
 BURN_METRICS = ("burn_address_balance", "gross_burn_tokens", "burn_revenue_funded")
+
+
+def scanned_from_genesis(project: str, metric: str) -> bool:
+    """A FLOW STORED BY A LOG SCAN THAT READ FROM THE CHAIN'S START (Jake's run 2026-10-09 11:41: "for an event series,
+    coverage is the scanned range, not days with events"). True for a stored log scan with no from_block, and for
+    emissions_tokens built from such scans (emissions_from_metric); its coverage is the whole window."""
+    p = PROJECT_BY_NAME.get(project) or {}
+    scans = {s.get("metric") for s in p.get("log_scans") or () if s.get("store") and not s.get("from_block")}
+    if metric in scans:
+        return True
+    src = p.get("emissions_from_metric")
+    if metric == "emissions_tokens" and src:
+        parts = src if isinstance(src, (tuple, list)) else (src,)
+        return all(m in scans for m in parts)
+    return False
 
 
 def burn_mechanism(project: dict) -> dict:
@@ -9404,8 +9421,9 @@ PROJECTS = [
         },
         "issuance_schedule": None,
         # NO BURN; SUPPLY GROWS ONLY BY MINTING (Jake's run 2026-10-08 11:27). Declared so gross_issuance_tokens derives
-        # as d(total_supply): the treasury mints (44,401,784 SYRUP in 2025-10 and 2026-04, sent by the recapitalizationClaimer
-        # Safe — the module path is documented, not yet verified) are gross issuance into non-circulating — FDV moves,
+        # as d(total_supply): the treasury mints (44,401,784 SYRUP in 2025-10 and 2026-04, claim() on the RecapitalizationModule
+        # by the recapitalizationClaimer Safe — verified 2026-10-09; the schedule has ended) are gross issuance into
+        # non-circulating — FDV moves,
         # free float does not. Jake's run 2026-10-09: totalSupply moved by exactly the mints; the 2.02 SYRUP sent to 0x0
         # did not reduce it, so they are transfers, not burns, and do not refute this block.
         "burn_mechanism": {
@@ -15054,12 +15072,41 @@ PROJECTS = [
              # tier timed out at 300s, gapping every other scan it serves). fetch/__init__ "explorer_gauge".
              "own_tier": "explorer_gauge", "scan_budget_s": 280,
              "wired_on": "2026-10-07"},
+            # ARBITRUM (Jake's run 2026-10-09 11:41: pendle_emissions_q0 read this gauge through the explorer).
+            {"key": "gauge_pendle_out_arbitrum", "metric": "emissions_tokens_gauge_arbitrum", "chain": "arbitrum",
+             "token": "0x0c880f6761F1af8d9Aa9C466984b80DAb9a8c9e8",
+             "holders": ["0x1e56299ebc8a1010cec26005d12e3e5c5cc2db00"],
+             "direction": "out", "store": True, "attribution": "dedicated_wallet",
+             "attribution_sources": [
+                 "https://github.com/pendle-finance/pendle-core-v2-public/blob/main/deployments/42161-core.json "
+                 "(gaugeController, PENDLE, network.treasury; @87685c8, read 2026-10-09)"],
+             "exclude_counterparties": ["0x0000000000000000000000000000000000000000",
+                                        "0xCbcb48e22622a3778b6F14C2f5d258Ba026b05e6"],   # network.treasury
+             "own_tier": "explorer_gauge_l2", "scan_budget_s": 140,
+             "wired_on": "2026-10-09"},
+            # OPTIMISM (Jake's run 2026-10-09 11:41: pendle_emissions_q0 read this gauge through the explorer).
+            {"key": "gauge_pendle_out_optimism", "metric": "emissions_tokens_gauge_optimism", "chain": "optimism",
+             "token": "0xBC7B1Ff1c6989f006a1185318eD4E7b5796e66E1",
+             "holders": ["0x6875e4A945E498FE1B90BbB13CFbAF0b68658C9C"],
+             "direction": "out", "store": True, "attribution": "dedicated_wallet",
+             "attribution_sources": [
+                 "https://github.com/pendle-finance/pendle-core-v2-public/blob/main/deployments/10-core.json "
+                 "(gaugeController, PENDLE, network.treasury; @87685c8, read 2026-10-09)"],
+             "exclude_counterparties": ["0x0000000000000000000000000000000000000000",
+                                        "0xE972D450ec5b11b99D97760422e0E054Afbc8042"],   # network.treasury
+             "own_tier": "explorer_gauge_l2", "scan_budget_s": 140,
+             "wired_on": "2026-10-09"},
         ],
-        # EMISSIONS = GROSS ISSUANCE (Jake's run 2026-10-09 ~10:15, 5c: in_emissions read n/a — emissions_tokens held
-        # no Q0 row). The emissions column, in_emissions and a3_net_absorption read gross_issuance_tokens: the declared
-        # 2%/yr x total supply (ISSUANCE_PRIMARY), whose own guard blocks it if the observed d(total supply) is more
-        # than 10x away. check_offline_items.pendle_emissions_q0 prints what was actually minted and paid out.
-        "emissions_from_metric": "gross_issuance_tokens",
+        # EMISSIONS = WHAT THE GAUGES PAID TO MARKETS, EVERY CHAIN READ (Jake's run 2026-10-09 11:41, item 2:
+        # pendle_emissions_q0 read mainnet totalSupply unchanged over Q0 — 0 mints — and gauge payouts of 84,622 PENDLE:
+        # mainnet 78,019.63, Arbitrum 6,602.75, Optimism 0). The emissions column, in_emissions and a3_net_absorption read
+        # the per-day sum of the gauge scans below. Chains 56 / 146 / 5000 / 80094 have no free log route here and are
+        # named on in_emissions_unrouted. Gross issuance is the MEASURED change in mainnet totalSupply (token_gross).
+        "emissions_from_metric": ("emissions_tokens_gauge_mainnet", "emissions_tokens_gauge_arbitrum",
+                                  "emissions_tokens_gauge_optimism"),
+        "issuance_from_gross_supply": {
+            "negative_means": "mainnet PENDLE totalSupply FELL — a burn, which Pendle does not document; read the "
+                              "Transfer-to-0x0 logs before trusting either figure"},
         "name": "Pendle", "symbol": "PENDLE",
         # ===== actual_buyback_tokens — DERIVED FROM THE $ ALLOCATED. 2026-09-28 (Jake). =====
         # FORMERLY actual_buyback_tokens_blocked (2026-09-23, "NO INTERMEDIATE WALLET PUBLISHED"):
@@ -15443,6 +15490,14 @@ PROJECTS = [
                      "assets 35,557,548.09, assets/share 1.1731. The boost hypothesis pointed "
                      "the other way and is refuted BY DIRECTION: a boosted share count would "
                      "exceed the assets behind it, and this one is 15% below them."),
+            # GROSS SUPPLY ON-CHAIN (Jake's run 2026-10-09 11:41, item 2: gross issuance is MEASURED — 0 over Q0 — not
+            # the declared 2%). PENDLE's own mainnet totalSupply(), stored as total_supply_gross; issuance is its change
+            # (issuance_from_gross_supply). archive_backfill.py --project Pendle fills Q0.
+            "token_gross": _contract(
+                "0x808507121B80c02388fAd14726482e061B8da827", "ethereum", "erc20_total_supply", "PENDLE",
+                PENDLE_DEPLOYMENTS_1_CORE, verified="2026-09-11", provenance="Pendle's own deployment file (PENDLE)",
+                metric_override="total_supply_gross",
+                purpose="PENDLE totalSupply() on mainnet — the minted amount; its daily change is gross issuance"),
             "spendle": _contract(
                 "0x999999999991E178D52Cd95AFd4b00d066664144", "ethereum", "ve_total_supply", "sPENDLE",
                 PENDLE_DEPLOYMENTS_1_CORE,
@@ -18121,9 +18176,14 @@ ISSUANCE_PRIMARY = {
              # from 2026-09-11 only; the archival block-header total_supply covers the year, so
              # the days before it read that level (at the superseded 5% before 2025-10-30).
              "history_supply_metric": "total_supply_protocol"},
-    "Pendle": {"kind": "declared_rate", "metric": "gross_issuance_tokens",
-               "rate_path": ("issuance_rate_declared", "annual_rate"),
-               "supply_metric": "total_supply", "max_ratio": 10},
+    # MEASURED, NOT DECLARED (Jake's run 2026-10-09 11:41, item 2): the change in mainnet PENDLE totalSupply
+    # (total_supply_gross, token_gross) — 0 over Q0 on pendle_emissions_q0. The declared 2%/yr terminal rate is a
+    # ceiling (issuance_rate_declared), not the figure.
+    "Pendle": {"kind": "first_party", "metric": "gross_issuance_tokens",
+               "source_prefix": "derived:d_supply_gross",
+               "block_reason": "waiting for mainnet PENDLE totalSupply readings (total_supply_gross) across Q0 — run "
+                               "python archive_backfill.py --run --project Pendle. pendle_emissions_q0 (Jake's run "
+                               "2026-10-09) read totalSupply unchanged over Q0 with 0 mints"},
     # A9 (2026-09-28): the first-party figure is d(EthSupply + Eth2Staking) from Etherscan
     # ethsupply2, i.e. d(total_supply_protocol) + d(BurntFees). beaconcha.in keeps the yield.
     "Ethereum": {"kind": "first_party", "metric": "gross_issuance_tokens",
@@ -23767,8 +23827,9 @@ EMISSIONS_DECLARED_ZERO = {
     # CORRECTED AGAIN (Jake's run 2026-10-09 ~10:15): both mints were SENT BY a Safe (0x6b1a78c1, execTransaction), and
     # currentIssuanceRate() read on the transaction's target failed — the target was the Safe, not a module. Maple's
     # registry names that Safe its recapitalizationClaimer (and securityAdmin), the only caller the RecapitalizationModule's
-    # claim() accepts, so the documented path is Safe -> module.claim() -> SYRUP.mint. UNVERIFIED until
-    # maple_syrup_mints decodes the Safe's inner call. The 2.02 SYRUP sent to 0x0 did not reduce totalSupply: not burns.
+    # claim() accepts, so the documented path is Safe -> module.claim() -> SYRUP.mint. VERIFIED on Jake's run 2026-10-09
+    # 11:41: maple_syrup_mints decoded claim() on 0x5dfe0460 for both mints; currentIssuanceRate() reads 0 (ended).
+    # The 2.02 SYRUP sent to 0x0 did not reduce totalSupply: not burns.
     "Maple": "nothing is emitted to holders: staking rewards sunset by MIP-019 and Drips ended after Q4 2025, last "
              "claims 2026-02-18 (maple-docs @07d8ff8e syrup-tokenomics/staking.md; syrupusdc-usdt-for-lenders/"
              "drips-rewards.md). SYRUP IS MINTED INTO THE TREASURY, in lumps: 15,851,439.45 on 2025-10-15 and "
@@ -23777,8 +23838,10 @@ EMISSIONS_DECLARED_ZERO = {
              "(maple-labs/address-registry @3df2052 MapleAddressRegistryETH.md L6, L10), and RecapitalizationModule.claim() "
              "accepts only that role (maple-docs @bd3647e9 technical-resources/syrup/recapitalization-module.md L7), so the "
              "documented path is a claim of MIP-009's schedule (x100 into SYRUP by MIP-010; syrup-tokenomics/README.md "
-             "L7-15) through the module 0x5dfe0460f66fa06bFCbB3211e723556be6B3f69D (registry L294). That attribution is "
-             "UNVERIFIED on-chain until maple_syrup_mints decodes the Safe's inner call. totalSupply moved by exactly the "
+             "L7-15) through the module 0x5dfe0460f66fa06bFCbB3211e723556be6B3f69D (registry L294). VERIFIED on Jake's "
+             "run 2026-10-09 11:41 (maple_syrup_mints): both mints were the Safe executing claim() on that "
+             "RecapitalizationModule, and its currentIssuanceRate() now reads 0 — the schedule has ENDED. totalSupply "
+             "moved by exactly the "
              "mints; the 2.02 SYRUP sent to 0x0 did not reduce it, so they are not burns. Q0 gross issuance 0; trailing "
              "12 months 44,401,784 (~3.7% of supply). GROSS ISSUANCE INTO NON-CIRCULATING — FDV moves, free float does "
              "not — counted in gross_issuance_tokens (d total supply), not as emissions",
@@ -24430,7 +24493,7 @@ CREDIBILITY: dict = {
         # each epoch's fees + bribes notified to the voting-reward contracts (tokenRewardsPerEpoch, Reward.sol @1ba30815)
         # weekly, priced at the epoch end, and its APR over Voter.totalWeight. The headline (a Q0 average) is judged
         # through its inputs, epoch for epoch — never one average against one epoch (as Pendle, 2026-10-08).
-        "a3_protocol_yield": {"inputs": ("in_revenue", "in_voter_apr_epoch"),
+        "a3_protocol_yield": {"inputs": ("in_revenue", "in_voter_apr_epoch", "in_price_confirmed"),
                               "source": "the per-epoch rows below (on-chain fees + bribes and their APR, stored weekly)",
                               "why": "The headline is DefiLlama's Q0 fees + bribes in AERO at each payment day's price "
                                      "(Jake's price convention, 2026-10-09; was the Q0 mean price), x 365.25/days, over "
@@ -24443,8 +24506,10 @@ CREDIBILITY: dict = {
             "Per-epoch voter APR, the headline's arithmetic (DefiLlama $ / each day's price x 365.25/7 / totalWeight)",
             "aero_epoch_apr", {"side": "ours"},
             {"verdict_when": {"py": "aero_epoch_pending", "args": {"flow": "holders_revenue_usd"},
-                              "positive": _c_mat("DefiLlama's days for the latest on-chain epoch are not all stored yet "
-                                                 "(it publishes a day after the day ends).", "2026-10-10"),
+                              "positive": _c_mat("The latest complete epoch is not all stored yet: the on-chain epoch "
+                                                 "(read once a week by fetch/aero_voter.py) or a DefiLlama day (it "
+                                                 "publishes a day after the day ends) — the working names which.",
+                                                 "2026-10-10"),
                               "otherwise": {
                 "formula": "aero_epoch_apr", "args": {"side": "ref"}, "tol": 10.0, "show_how": True,
                 "source": "the on-chain epoch's fees + bribes (tokenRewardsPerEpoch, fetch/aero_voter.py) at the SAME "
@@ -24458,20 +24523,29 @@ CREDIBILITY: dict = {
         # MEAN AERO price, so a price that rose over Q0 puts it above the APR at today's price. VERIFIED FINDING only
         # when CoinGecko's and Coinbase's Q0 means agree (confirmed); CHECK otherwise.
         "in_apr_today_price": _c_in_py(
-            "Voter APR at TODAY's AERO price beside the headline (Q0 rewards converted at payment-day prices)",
+            "Voter APR at TODAY's AERO price — a labelled second figure (the headline converts at payment-day prices)",
             "price_basis_gap", {"value": "apr"}, {"verdict_when": {
                 "py": "price_basis_gap", "args": {},
-                "positive": _c_find("The headline converts Q0 rewards to AERO at each PAYMENT DAY's price (our price "
-                                    "convention, Jake 2026-10-09); at today's price the same rewards are a different "
-                                    "APR, because AERO moved over Q0.", "CoinGecko and Coinbase daily prices over Q0, "
-                                    "stored; their payment-weighted Q0 prices agree within 2%"),
-                "negative": _c_chk("AERO's payment-weighted Q0 price is not confirmed by a second price source "
-                                   "(Coinbase missing or more than 2% apart).",
-                                   "python check_offline_items.py aerodrome_price_q0"),
-                "otherwise": {"verdict": "N/A (recorded, price flat)", "why": "AERO's spot is within 5% of its "
-                                                       "payment-weighted Q0 price: the headline and today's price "
-                                                       "give the same APR."}}},
+                # RECORDED, NOT JUDGED (Jake's price convention, 2026-10-09): every branch is the same recorded verdict;
+                # the working gives the payment-weighted price, today's price and both APRs.
+                "positive": {"verdict": "N/A (recorded, not judged)",
+                             "why": "Today's-price APR, beside the headline at payment-day prices (Jake's convention)."},
+                "negative": {"verdict": "N/A (recorded, not judged)",
+                             "why": "Today's-price APR, beside the headline at payment-day prices (Jake's convention)."},
+                "otherwise": {"verdict": "N/A (recorded, not judged)",
+                              "why": "Today's-price APR, beside the headline at payment-day prices (Jake's convention)."}}},
             fmt=_C_PCT),
+        # THE HEADLINE'S PRICE, CONFIRMED BY A SECOND SOURCE (Jake's run 2026-10-09 11:41, 3a): CoinGecko against Coinbase,
+        # payment-weighted over the Q0 days both hold. Coinbase's AERO history starts 2026-09-06 on Jake's store (its
+        # reader now asks for Q0 once); at least 30 overlapping days in full agreement is accepted as confirmation.
+        "in_price_confirmed": _c_in_py(
+            "AERO payment-weighted Q0 price (CoinGecko) vs Coinbase, over the days both hold",
+            "price_overlap", {"side": "ours"},
+            {"formula": "price_overlap", "args": {"side": "ref"}, "tol": 2.0, "show_how": True,
+             "source": "Coinbase Exchange AERO-USD daily candles (open), payment-weighted over the same days",
+             "note": "Coinbase AERO-USD daily candles from 2026-09-06 on Jake's store. If it did not trade before then, "
+                     "full agreement over >=30 overlapping days is accepted as confirmation (Jake, 2026-10-09)."},
+            fmt="$0.0000"),
         "in_rebase_apr": _c_in_py("veAERO rebase as a rate (RewardsDistributor tokensPerWeek x 52 / totalWeight) — a "
                                   "separate stream, in neither yield figure", "aero_rebase_apr", {},
                                   {"verdict": "N/A (recorded, separate stream)",
@@ -24482,9 +24556,10 @@ CREDIBILITY: dict = {
         "in_revenue": _c_in_py("Voter revenue, one epoch: DefiLlama fees + bribes over the epoch's 7 UTC days",
                                "aero_epoch_revenue", {"side": "ours"},
                                {"verdict_when": {"py": "aero_epoch_pending", "args": {"flow": "revenue_usd"},
-                                                 "positive": _c_mat("DefiLlama's days for the latest on-chain epoch are "
-                                                                    "not all stored yet (it publishes a day after the "
-                                                                    "day ends).", "2026-10-10"),
+                                                 "positive": _c_mat("The latest complete epoch is not all stored "
+                                                                    "yet: the on-chain epoch (fetch/aero_voter.py, "
+                                                                    "weekly) or a DefiLlama day (published a day after "
+                                                                    "it ends) — the working names which.", "2026-10-10"),
                                                  "otherwise": {
                                 "formula": "aero_epoch_revenue", "args": {"side": "ref"}, "tol": 10.0, "show_how": True,
                                 "source": "fees + bribes notified to the voting-reward contracts for the SAME epoch "
@@ -24973,17 +25048,34 @@ CREDIBILITY: dict = {
         # OURS = GROSS ISSUANCE (Jake's run 2026-10-09 ~10:15, 5c): the emissions column is gross_issuance_tokens
         # (emissions_from_metric). Against the mainnet gauge's payouts it reads the schedule's ~1.42M against ~77K until
         # pendle_emissions_q0 says where the rest is (L2 gauges, unminted schedule) — CHECK until then, never hidden.
-        "in_emissions": _c_in("Emissions Q0 (tokens) = gross issuance (declared 2%/yr x total supply)", "emissions_tokens",
-                              "q0",
-                              {"metric": "emissions_tokens_gauge_mainnet", "window": "q0", "tol": 25.0,
-                               "source": "PENDLE out of the mainnet GaugeController to its markets (MarketClaimReward "
-                                         "transfers), Q0 — on-chain, reconciled to the wei before it is stored",
-                               "note": "Mainnet markets only: ours ABOVE the reference by about the L2 markets' share "
-                                       "is that coverage gap, not an error (each L2 gauge controller is its own "
-                                       "contract). Ours is the schedule (~1.42M over Q0 at the terminal 2%/yr), a ceiling: "
-                                       "AIM pays fixed-dollar incentives at or below it. python check_offline_items.py "
-                                       "pendle_emissions_q0 prints the Q0 totalSupply change, the GaugeController's "
-                                       "inflows (mints) and outflows, and each L2 gauge's payouts."}),
+        "in_emissions": _c_in("Emissions Q0 (tokens) = PENDLE the gauges paid to markets, every chain read",
+                              "emissions_tokens", "q0",
+                              {"formula": "scans_q0", "tol": 1.0, "show_how": True,
+                               "args": {"metrics": ("emissions_tokens_gauge_mainnet", "emissions_tokens_gauge_arbitrum",
+                                                    "emissions_tokens_gauge_optimism"),
+                                        "labels": ("mainnet", "Arbitrum", "Optimism")},
+                               "source": "each chain's GaugeController scan over Q0 (MarketClaimReward transfers out, "
+                                         "reconciled to balanceOf before storing): mainnet + Arbitrum + Optimism",
+                               "note": "pendle_emissions_q0 (Jake's run 2026-10-09): mainnet 78,019.63 + Arbitrum "
+                                       "6,602.75 + Optimism 0 = 84,622 over its 90 days; mainnet totalSupply unchanged "
+                                       "(0 mints). Chains 56 / 146 / 5000 / 80094: in_emissions_unrouted."}),
+        # NET ABSORPTION FOLLOWS THE EMISSIONS ROWS (Jake's run 2026-10-09 11:41, item 2): buyback − the gauge payouts of
+        # every chain read; the unrouted chains are its documented limitation too.
+        "a3_net_absorption": {"inputs": ("in_buyback", "in_emissions", "in_emissions_unrouted"),
+                              "source": "the buyback and emissions rows below",
+                              "why": "Actual buyback − emissions, where emissions are the PENDLE every readable "
+                                     "chain's GaugeController paid its markets over Q0; four chains are not read "
+                                     "(in_emissions_unrouted)."},
+        "in_emissions_unrouted": _c_in_py(
+            "Gauge chains with no free log route (BNB 56, Sonic 146, Mantle 5000, Berachain 80094)", "scans_q0",
+            {"metrics": ("emissions_tokens_gauge_mainnet",), "labels": ("mainnet",)},
+            _c_lim("Pendle's GaugeControllers on BNB Chain (56), Sonic (146), Mantle (5000) and Berachain (80094) are not "
+                   "read: no explorer in config.explorer_order serves their logs free, and no RPC getLogs route is "
+                   "configured for them. Their payouts are not in emissions_tokens, which reads LOW by their share.",
+                   "pendle-core-v2-public @87685c8 deployments/{56,146,5000,80094}-core.json list a gaugeController on "
+                   "each; pendle_emissions_q0 (Jake's run 2026-10-09) could not route them",
+                   "a free explorer or RPC eth_getLogs route for those chains (python check_offline_items.py "
+                   "pendle_emissions_q0 names each one it tried)")),
         # JUDGED EPOCH FOR EPOCH (Jake, 2026-10-08): the headline stays the Q0 epoch average (every project's trailing
         # window) and inherits the verdict of in_epoch_apr — ours for the 2026-09-08 epoch against Jake's 82,545 PENDLE,
         # the same arithmetic both sides — rather than setting an average against one epoch. THE ON-CHAIN ROUTE IS NOT
@@ -25039,6 +25131,15 @@ CREDIBILITY: dict = {
                                   "at earlier epochs cannot be rebuilt (Jake's 5c decision, 2026-10-09).",
                                   "our virtual sPENDLE readings covering every Q0 epoch (~2026-12-10) — the row "
                                   "then lapses to N/A by itself"),
+                              # NO APR AT ALL (Jake's run 2026-10-09 11:41, 1a/1c): Pendle's per-epoch aprs read 0 for
+                              # every complete epoch, and the on-chain rebuild of virtual sPENDLE is outside 1%.
+                              "negative": _c_chk(
+                                  "Q0 epochs with neither our stake nor Pendle's APR: virtual sPENDLE is stored from "
+                                  "2026-09-29 only; sPendleHistoricalData.aprs reads 0 for every complete epoch (run log "
+                                  "2026-10-09), so the published fallback is empty; the on-chain rebuild (locked + 3 x "
+                                  "vePENDLE supply) is +2.5%, +1.4% without expired locks — outside the 1% rule.",
+                                  "python check_offline_items.py pendle_virtual_rebuild (daily table); Jake's decision "
+                                  "on the rebuild"),
                               "otherwise": {"verdict": "N/A",
                                             "why": "every Q0 epoch's APR is ours (our stake exists at each)."}}},
             fmt="0"),

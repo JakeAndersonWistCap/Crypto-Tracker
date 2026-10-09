@@ -102,6 +102,9 @@ TIER_ORDER = [
     # Pendle's GaugeController seed (millions of logs from block 0) on its own tier and budget, so it cannot starve
     # the explorer tier (Jake's run 2026-10-08 11:27: explorer timed out at 300s with the gauge scan at 90%).
     ("explorer_gauge", 2, lambda ctx: LogScan(own_tier="explorer_gauge")),
+    # Pendle's L2 gauge controllers (Jake's run 2026-10-09 11:41, item 2), their own tier so a first seed from genesis
+    # cannot starve the mainnet gauge scan.
+    ("explorer_gauge_l2", 2, lambda ctx: LogScan(own_tier="explorer_gauge_l2")),
     # A wallet group's outflow from daily archive balances and its few inflows (GEODNET, B1).
     ("balance_flow", 2, lambda ctx: BalanceFlow()),
     # Chainlink staking v0.2 emission rates from the RewardVault (2026-09-29).
@@ -1817,7 +1820,7 @@ TIER_BUDGET_S = {
     "schedule:config": 15, "defillama": 150, "morpho_api": 60, "growthepie": 60,
     "nearblocks": 60, "coingecko": 240, "hypercore_info": 60, "chainlink_fees": 180, "xref": 90, "validatorqueue": 30, "share_vault": 60,
     "chain": 240, "tron_node": 60, "near_rpc": 90, "explorer": 300, "balance_flow": 150, "maple_page": 60,
-    "explorer_gauge": 300,
+    "explorer_gauge": 300, "explorer_gauge_l2": 300,
     # one epoch a week: ~10 Multicall3 batches + one DefiLlama price call; the daily totalWeight is one eth_call
     "aero_voter": 180,
     "scrape": 240, "dune": 420, "ultrasound": 60, "plume_staking": 180, "blockscout_stats": 90,

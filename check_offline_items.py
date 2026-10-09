@@ -8785,6 +8785,56 @@ def pendle_emissions_q0(days: int = 90):
           "chain of those payouts. A chain the explorer refuses is named, never counted as 0.")
 
 
+def pendle_virtual_rebuild():
+    """PENDLE 1c (Jake's run 2026-10-09 11:41): virtual sPENDLE rebuilt on-chain against Pendle's API, every day both
+    exist. Pendle's method per lock: virtual = locked x (1 + 3 x remaining/2y) and vePENDLE balance = locked x
+    remaining/2y, so summed: virtual = locked + 3 x vePENDLE supply. Two rebuilds, from stored on-chain series:
+      A  legacy locked (PENDLE in vePENDLE) + 3 x vePENDLE totalSupply — every lock, expired ones included
+      B  ACTIVE locked + 3 x vePENDLE supply, ACTIVE = the supply's own daily decay x 728 days (104-week max lock):
+         a lock past expiry no longer decays, so it is not in the slope — expired-but-unwithdrawn locks drop out
+    The rule (Jake): within 1% of the API on every day -> archive-read the inputs at each Q0 epoch and use our own stake;
+    otherwise the comparison is reported and nothing switches. Reads metrics.db only."""
+    import sqlite3                                         # noqa: PLC0415
+    import pandas as pd                                    # noqa: PLC0415
+    head("PENDLE — virtual sPENDLE rebuilt on-chain vs the API, daily")
+    want = ("locked_tokens_legacy_vependle", "vependle_voting_supply_tokens", "locked_tokens_virtual")
+    try:
+        con = sqlite3.connect("metrics.db")
+        df = pd.DataFrame(con.execute("SELECT date, metric, value FROM metrics WHERE project = 'Pendle' AND metric IN "
+                                      "(%s)" % ",".join("?" * len(want)), want).fetchall(),
+                          columns=["date", "metric", "value"])
+        con.close()
+    except Exception as e:  # noqa: BLE001
+        print(f"  metrics.db unreadable here ({e})")
+        return
+    df["date"] = pd.to_datetime(df["date"])
+    s = {m: g.drop_duplicates("date", keep="last").set_index("date")["value"].astype(float).sort_index()
+         for m, g in df.groupby("metric")}
+    leg, ve, api = (s.get(m, pd.Series(dtype=float)) for m in want)
+    dec = -ve.diff()
+    worst = {"A": 0.0, "B": 0.0}
+    print(f"  {'day':<11}{'legacy':>14}{'veSupply':>14}{'active':>14}{'A':>14}{'B':>14}{'API':>14}{'A gap':>8}{'B gap':>8}")
+    for d in api.index:
+        if d not in leg.index or d not in ve.index:
+            print(f"  {d.date()!s:<11} — an on-chain input is missing that day")
+            continue
+        a = leg[d] + 3 * ve[d]
+        act = dec.get(d) * 728 if d in dec.index and dec.get(d) == dec.get(d) else None
+        b = act + 3 * ve[d] if act is not None else None
+        ga, gb = a / api[d] - 1, (b / api[d] - 1 if b else None)
+        worst["A"] = max(worst["A"], abs(ga))
+        if gb is not None:
+            worst["B"] = max(worst["B"], abs(gb))
+        print(f"  {d.date()!s:<11}{leg[d]:>14,.0f}{ve[d]:>14,.0f}{(act or 0):>14,.0f}{a:>14,.0f}{(b or 0):>14,.0f}"
+              f"{api[d]:>14,.0f}{ga:>+8.2%}" + (f"{gb:>+8.2%}" if gb is not None else "     n/a"))
+    ok = [k for k, v in worst.items() if v <= 0.01]
+    print(f"\n  WORST DAY: A {worst['A']:.2%}, B {worst['B']:.2%} against the 1% rule -> "
+          + (f"rebuild {ok[0]} QUALIFIES: archive-read its inputs at each Q0 epoch" if ok else
+             "NEITHER qualifies: our stake stays the API's, and Q0 epochs before it have no stake of ours"))
+    print("  PASTE BACK the table. A day whose B gap jumps is a time-of-day mismatch between two reads (the decay "
+          "spans more or less than a day).")
+
+
 def price_basis_before_after():
     """THE PAYMENT-DAY PRICE CONVENTION, BEFORE AND AFTER (Jake, 2026-10-09: every protocol yield with non-native rewards
     converts them at the payment-day price — sum over days of $paid_d / price_d — over the stake in tokens over the
@@ -8979,7 +9029,7 @@ CHECKS = (
     etherfi_vault_archive, etherfi_contract_ids, etherfi_accountant, fluid_vesting_recipients, maple_ssf_partial,
     aerodrome_managed_venfts, pendle_epoch_revenues, maple_ssf_trail, fluid_avocado_owners, hl_pool_release_compare,
     pendle_spendle_rewards_onchain, maple_buyback_inflows, maple_syrup_mints, etherfi_withdrawal_fees, aerodrome_voter_rewards,
-    sky_farm_rates, plume_supply_read, chainlink_noncirc_transfers, chainlink_release_steps, aerodrome_price_q0, pendle_epoch_table, pendle_emissions_q0, price_basis_before_after,
+    sky_farm_rates, plume_supply_read, chainlink_noncirc_transfers, chainlink_release_steps, aerodrome_price_q0, pendle_epoch_table, pendle_emissions_q0, price_basis_before_after, pendle_virtual_rebuild,
     plume_sources, aethir_dashboard_xhr, maple_ssf_history, blockworks_geodnet,
     morpho_incentives, settlement_sources, hyperevm_etherscan, maple_ssf_inflows, aethir_pages,
     geod_stake_recipient, geod_stake_wallets, maple_ssf_lp_test, maple_drips, plume_archive, settlement_rebuild_coverage,

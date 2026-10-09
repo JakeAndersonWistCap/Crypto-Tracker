@@ -220,6 +220,14 @@ class PendleEpochs:
             out.add(frame, SOURCE, name, f"{metric}: {len(rows)} complete epoch APR(s) "
                     f"{min(rows)[0].date()}..{max(rows)[0].date()}"
                     + (f"; not stored (not a fraction): {', '.join(refused)}" if refused else ""), TIER)
+        else:
+            # SAID, NOT SILENT (Jake's run 2026-10-09 11:41, 1a: the fallback was empty and nothing said why). The field
+            # is present but no complete epoch holds an APR in (0, 1) — Pendle's per-epoch APR cannot be the fallback.
+            msg = (f"{metric}: NOTHING STORED — sPendleHistoricalData.{spec.get('aprs_field', 'aprs')} holds no complete "
+                   f"epoch APR in (0, 1)" + (f"; read: {', '.join(refused[-6:])}" if refused else
+                                             "; the field is empty") + " — the published-APR fallback is unavailable")
+            out.log.append(LogEntry(SOURCE, name, 0, "ok", msg, TIER))
+            log.info("%s / %s: %s", SOURCE, name, msg)
 
     def run(self, projects: list[dict], window_days, out):
         from .scrape import robots_verdict

@@ -24,6 +24,9 @@ def test_real_ethereum_net_change_is_judged_over_the_issuance_rows_of_the_common
     row = o["a4_net_change"]
     assert "OUR ISSUANCE ROWS" in row["note"], row["note"][:800]
     assert row["verdict"].startswith("PASS"), row
+    # item 4 (Jake's run 2026-10-09 11:41): the 10-05 row spans 10-02..10-05 and so does its burn row — the judged figure
+    # is the full covered period, the same as the A4 headline (28,722 over 10 days), not 6 single-day rows (17,022)
+    assert "OURS, same 10 day(s)" in row["note"] and abs(float(row["ours"]) - 28_721.6) < 1, row
 
 
 def test_real_chainlink_release_is_zero_and_a1_is_na(tmp_path, monkeypatch):
@@ -49,14 +52,23 @@ def test_real_aerodrome_price_finding_and_one_price_epoch_row(tmp_path, monkeypa
     uses one price on both sides; the epoch rows are PASS, or MATURING until 2026-10-10 while DefiLlama's last day is
     missing."""
     o = evaluate_real(tmp_path, monkeypatch, "Aerodrome")
-    assert o["in_apr_today_price"]["verdict"] == "VERIFIED FINDING", o["in_apr_today_price"]
+    # Jake's price convention (2026-10-09): today's-price APR is recorded, not judged; the price itself is confirmed by
+    # Coinbase on the 33 overlapping days (3a)
+    assert o["in_apr_today_price"]["verdict"] == "N/A (recorded, not judged)", o["in_apr_today_price"]
+    pc = o["in_price_confirmed"]
+    assert pc["verdict"].startswith("PASS") and "33 of the" in pc["note"], pc
+    # 3c: no on-chain epoch was stored (a lost row) — MATURING naming it, not "CHECK (no reference)"
     for k in ("in_voter_apr_epoch", "in_revenue"):
         assert o[k]["verdict"].startswith(("PASS", "MATURING")), o[k]
+        if o[k]["verdict"].startswith("MATURING"):
+            assert "2026-10-01" in o[k]["note"] and "on-chain" in o[k]["note"], o[k]["note"]
 
 
 def test_real_pendle_headline_cell_equals_the_python(tmp_path, monkeypatch):
-    """5a: the headline cell equals the Python computation of the same definition on the real rows; 5b: an epoch read
-    at 0 inside Pendle's observed publish lag is left out of the mean."""
+    """5a: the headline cell equals the Python computation of the same definition on the real rows. 1b: Pendle's
+    observed publish lag is 7 days (2026-09-08, the latest complete epoch at our first read); 1d: the 2026-09-22 epoch,
+    read at 0, stays unpublished until 10-13. 1a/1c: with no per-epoch APR from Pendle and no stake of ours before
+    2026-09-29, the headline is not formed — a CHECK naming why, never a number over a subset."""
     import credibility as cred
     o = evaluate_real(tmp_path, monkeypatch, "Pendle")
     payload = load("Pendle")
@@ -66,11 +78,17 @@ def test_real_pendle_headline_cell_equals_the_python(tmp_path, monkeypatch):
     asof = pd.Timestamp(payload["meta"]["asof"])
     lo, hi = cred._q0(asof)
     lag, _ = cred.epoch_publish_lag("Pendle", db=tmp_path / "metrics.db")
+    assert lag == 7
     tab = cred.epoch_apr_table(s("pendle_distributed_tokens"), s("pendle_epoch_apr_published"),
                                {m: s(m) for m in ("locked_tokens_shares", "locked_tokens_virtual")}, lo, hi, 14, 7, lag)
+    assert [r["source"] for r in tab if r["date"] == pd.Timestamp("2026-09-22")] == ["unpublished"]
     got = cred.epoch_headline(tab)
-    assert got is not None, tab
-    assert abs(float(o["a3_protocol_yield"]["ours"]) - got[0]) < 1e-9, (o["a3_protocol_yield"], got)
+    head = o["a3_protocol_yield"]
+    if got is None:
+        assert not isinstance(head["ours"], (int, float)), head
+        assert o["in_epochs_first_party"]["verdict"].startswith("CHECK"), o["in_epochs_first_party"]
+    else:
+        assert abs(float(head["ours"]) - got[0]) < 1e-9, (head, got)
 
 
 def test_real_maple_stays_signed_off(tmp_path, monkeypatch):

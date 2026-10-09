@@ -527,6 +527,56 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11ay. Jake's run 2026-10-09 11:41: real dumps committed; Pendle, Aerodrome, Ethereum, Maple
+
+That run (on c303cd3) signed off 13; Aerodrome and Pendle stayed OPEN. `fixtures/real_*.json` are now committed, and
+`tests/test_real_dumps.py` judges every item below on them.
+
+1. **Pendle yield.**
+   - **1a. Pendle's per-epoch APR is empty.** `sPendleHistoricalData.aprs` is present but reads 0 for every completed
+     epoch. Evidence: run log 2026-10-09, "no complete epoch with an APR above 0". The published-APR fallback cannot be
+     used. The fetcher now logs this instead of storing nothing silently.
+   - **1b. Publish lag.** An epoch counts only if we were watching when it was published:
+     - read at 0 after it ended, then above 0 later;
+     - or ended after our first read;
+     - or was the latest complete epoch at our first read (an upper bound).
+     On Jake's store that is 2026-09-08: +7 days. Before the fix, the 239 days counted epochs first logged on 10-09.
+   - **1c. Virtual sPENDLE rebuilt on-chain does not pass the 1% rule.** `check_offline_items.py
+     pendle_virtual_rebuild` prints the daily table.
+     - locked + 3 × vePENDLE supply: +2.51 to +2.56% over the API on all 8 days we have.
+     - Without expired locks: +1.36 to +1.40%. The active lock is taken from vePENDLE's daily decay × 728 days, about
+       2.0M of locks are expired but unwithdrawn, and the formula leaves them out.
+     - Jake's 178.76M paired the 09-29 lock with the 09-22 vePENDLE supply; the same-day figure is 37.80M.
+     - Our stake stays the API's, which is stored from 2026-09-29 only. Q0 epochs before that have no APR, so
+       in_epochs_first_party is CHECK and the headline is not formed.
+   - **1d.** 2026-09-22 (read 0) stays unpublished until 2026-10-13.
+2. **Pendle emissions.**
+   - Gross issuance is MEASURED: the change in mainnet PENDLE `totalSupply()`. It is read as `total_supply_gross`
+     (contract `token_gross`) and derived through `issuance_from_gross_supply`; ISSUANCE_PRIMARY is first_party.
+     `python archive_backfill.py --run --project Pendle` fills Q0.
+   - Emissions are the gauge payouts summed by day: mainnet + Arbitrum + Optimism. The L2 scans run on their own tier,
+     `explorer_gauge_l2`, and seed on the next run. `in_emissions` sets the sum against each chain's scan.
+   - BNB 56, Sonic 146, Mantle 5000 and Berachain 80094 have no free log route. They are named on
+     `in_emissions_unrouted`, a DOCUMENTED LIMITATION, which a3_net_absorption inherits.
+   - Coverage rule: a flow from a log scan that reads from genesis covers the whole window (the scanned range), not
+     only the days with events.
+3. **Aerodrome.**
+   - **3a.** Coinbase's reader now asks for Q0 once. If the first candle is later than asked, the log says the product
+     did not trade before then. `in_price_confirmed` compares the payment-weighted price from CoinGecko and Coinbase
+     over the days both hold, needing at least 30. On Jake's store: 33 days, $0.6450 vs $0.6453, PASS.
+   - **3c.** No on-chain epoch was stored. The epoch marker said "stored already" while the row had been lost, so
+     `fetch/aero_voter.py` never read it again. It now checks the store. `aero_epoch_pending` names a missing on-chain
+     epoch too, so the rows read MATURING (until 2026-10-10) and name it.
+   - Today's-price APR is recorded, not judged (Jake's convention).
+4. **Ethereum.**
+   - The 17,022 covered 6 single-day issuance rows. It left out the 10-05 row, which spans 10-02..10-05, because the
+     burn was looked up day by day, while the 10-05 burn row is span-tagged too.
+   - Our burn now covers a span through the burn rows' own spans: 28,722 over the full 10 days (09-30..10-09), the
+     same as the A4 headline.
+   - The net view is marked differenced, so J5 annualises over 10 days, not 9.
+5. **Maple.** VERIFIED on Jake's run: both mints were the Safe executing `claim()` on the RecapitalizationModule
+   0x5dfe0460; `currentIssuanceRate()` reads 0, so the schedule has ended.
+
 ## 11ax. Price convention: payment-day prices (Jake, 2026-10-09)
 
 Every protocol yield with non-native rewards converts them to the staked token at the PAYMENT-DAY price: tokens = the
