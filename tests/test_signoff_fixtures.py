@@ -1195,9 +1195,11 @@ def test_foundation_buy_and_lock_is_the_lock_stock_change_net_of_rebase_claims()
     assert "NEGATIVE" in neg.loc[neg["value"] < 0, "source"].iloc[0]
     usd = groups[("Aerodrome", "actual_buyback_usd")].set_index("date")["value"]
     assert usd[pd.Timestamp("2026-09-02")] == 156.0
-    # the buyback is HELD until the merged-token launch, then BURNED (Momentum Fund) — retirement either way
+    # the buyback is HELD; after the merged-token launch it stays held until a first-party source says burned
+    # (Aerodrome's docs name buybacks, grants and partnerships for the Momentum Fund — no burn), re-checked then
     assert config.buyback_destination_shares("Aerodrome", "2026-09-02")["hold"] == 1.0
-    assert config.buyback_destination_shares("Aerodrome", "2026-10-23")["burn"] == 1.0
+    after = config.buyback_destination_shares("Aerodrome", "2026-10-23")
+    assert after["hold"] == 1.0 and after["burn"] == 0.0 and not after["verified"]
 
 
 def test_foundation_lock_read_stores_both_series_once_a_day_and_the_seed_marks_archive(monkeypatch):
@@ -1240,3 +1242,117 @@ def test_foundation_lock_read_stores_both_series_once_a_day_and_the_seed_marks_a
     seeded = pd.concat(frames)
     assert set(seeded["source"]) == {config.mark_source("ve_managed:foundation_locks", "archive")}
     assert not any(str(x.date()).endswith("-01") for x in seeded["date"])
+
+
+# ===== FOLLOW-UPS TO 0eda6ce (Jake, 2026-10-10): the probes Jake runs locally =====
+
+def test_aethir_arr_formula_names_the_candidate_that_matches_the_tile(monkeypatch, capsys):
+    """The probe tests run-rates built from the page's own revenue lists against `arr` and marks one within 1%."""
+    import json as _json
+    import check_offline_items as coi
+    weeks = [{"startDate": f"{d:02d}/09", "amount": a} for d, a in ((8, 1_150_000.0), (15, 1_190_000.0),
+                                                                     (22, 1_201_730.77))]
+    obj = {"arr": 1_201_730.77 * 52, "weeklyNetworkRevenue": weeks,
+           "monthlyNetworkRevenue": [{"month": "August, 2026", "earning": 4_900_000.0}]}
+    chunk = _json.dumps(_json.dumps(obj))[1:-1]
+    html = f'<html><script>self.__next_f.push([1,"{chunk}"])</script></html>'
+    monkeypatch.setattr(coi, "_polite", lambda url, **kw: (html, ""))
+    coi.aethir_arr_formula()
+    out = capsys.readouterr().out
+    line = next(ln for ln in out.splitlines() if "last listed week x 52" in ln)
+    assert "MATCH" in line and "matches the candidate" in out
+    assert "MATCH" not in next(ln for ln in out.splitlines() if "last listed month x 12" in ln)
+
+
+def test_near_lockups_splits_unvested_from_vested_and_names_no_account(monkeypatch, capsys, tmp_path):
+    """Per lockup: balance, NEAR's own locked, unvested (via the contract's vesting schedule), owners' balance — summed;
+    a zero-balance lockup is skipped; the buggy code hash is totalled apart; no account id is printed."""
+    import check_offline_items as coi
+    y = 10 ** 24
+    f = tmp_path / "lockups.txt"
+    f.write_text("aaaa.lockup.near\nbbbb.lockup.near\ncccc.lockup.near\nnot-a-lockup.near\n")
+    monkeypatch.setenv("NEAR_LOCKUPS_FILE", str(f))
+    sched = {"start_timestamp": "1", "cliff_timestamp": "2", "end_timestamp": "3"}
+    state = {"aaaa.lockup.near": {"get_balance": str(100 * y), "get_locked_amount": str(60 * y),
+                                  "get_owners_balance": str(40 * y), "get_vesting_information": {"VestingSchedule": sched},
+                                  "get_unvested_amount": str(25 * y)},
+             "bbbb.lockup.near": {"get_balance": str(10 * y), "get_locked_amount": str(10 * y),
+                                  "get_owners_balance": "0", "get_vesting_information": "None"},
+             "cccc.lockup.near": {"get_balance": "0"}}
+    seen = []
+
+    def view(acc, method, args=None, block_id=None, pace=0.12):
+        seen.append((acc, method, args, block_id))
+        return state[acc].get(method), ""
+    monkeypatch.setattr(coi, "_near_view", view)
+
+    def fake_rpc(url, method, params=None):
+        if method == "block":
+            return {"result": {"header": {"height": 123}}}
+        return {"result": {"code_hash": "3kVY9qcVRoW3B5498SMX6R3rtSLiCdmBzKs7zcnzDJ7Q"
+                           if params["account_id"] == "bbbb.lockup.near" else "x"}}
+    monkeypatch.setattr(coi, "rpc", fake_rpc)
+    coi.near_lockups()
+    out = capsys.readouterr().out
+    assert all(b == 123 for *_x, b in seen), "every read at one block"
+    assert ("aaaa.lockup.near", "get_unvested_amount", {"vesting_schedule": sched}, 123) in seen
+    assert "3 lockup account(s)" in out and "read 2; zero balance 1" in out
+    num = lambda label: next(ln for ln in out.splitlines() if label in ln)  # noqa: E731
+    assert "110 NEAR" in num("balance in lockups") and "70 NEAR" in num("LOCKED (NEAR's own")
+    assert "25 NEAR" in num("STILL UNVESTED") and "45 NEAR" in num("VESTED, still lockup-locked")
+    assert "40 NEAR" in num("RELEASED, not withdrawn") and "buggy-code lockups: 1" in out
+    assert ".lockup.near" not in out.replace("*.lockup.near", ""), "aggregates only — no account is named"
+
+
+def test_near_lockups_does_not_spend_bigquery_without_the_switch(monkeypatch, capsys):
+    """Without a file, the list query is DRY-RUN and the bytes printed; it runs only with NEAR_LOCKUPS_RUN_BQ=1."""
+    import sys
+    import types
+    import check_offline_items as coi
+    monkeypatch.delenv("NEAR_LOCKUPS_FILE", raising=False)
+    monkeypatch.delenv("NEAR_LOCKUPS_RUN_BQ", raising=False)
+    ran = []
+
+    class Job:
+        total_bytes_processed = 300 * 1024 ** 3
+
+    class Client:
+        def query(self, sql, job_config=None):
+            ran.append(bool(getattr(job_config, "dry_run", False)))
+            return Job()
+
+    class NB:
+        def _guard_sql(self, sql, spec):
+            assert "crypto_near_mainnet_us.receipt_actions" in sql
+    monkeypatch.setattr(coi, "_near_cause_setup", lambda: (NB(), {}, Client(), "ds", []))
+    bq = types.SimpleNamespace(QueryJobConfig=lambda **kw: types.SimpleNamespace(**kw))
+    monkeypatch.setitem(sys.modules, "google.cloud.bigquery", bq)
+    monkeypatch.setitem(sys.modules, "google.cloud", types.SimpleNamespace(bigquery=bq))
+    coi.near_lockups()
+    out = capsys.readouterr().out
+    assert ran == [True] and "300.0 GB" in out and "NOT RUN" in out
+
+
+def test_fluid_igp137_custody_prints_label_balance_and_transfers_since(monkeypatch, capsys):
+    import check_offline_items as coi
+    a = coi.FLUID_IGP137_CUSTODY
+    monkeypatch.setattr(coi, "_polite", lambda url, **kw: ({"name": None, "is_contract": True, "is_verified": False,
+                                                             "public_tags": [], "implementations": []}, ""))
+    monkeypatch.setattr(coi, "_source", lambda addr, chain_id=1: {"why": "not verified"})
+    monkeypatch.setattr(coi, "_code", lambda addr, chain: "contract (Safe proxy)")
+    monkeypatch.setattr(coi, "_bal", lambda token, holder, chain: 5_000_000 * 10 ** 18)
+    monkeypatch.setattr(coi, "_block_at", lambda ts: 23_100_000)
+    pad = lambda x: "0x" + x.lower()[2:].rjust(64, "0")  # noqa: E731
+    inflow = {"data": hex(5_000_000 * 10 ** 18), "timeStamp": "1786694400", "transactionHash": "0xabc",
+              "topics": [coi.TRANSFER_TOPIC, pad(coi.FLUID_TEAM_MULTISIG), pad(a)]}
+    calls = []
+
+    def logs(chain, token, topics, from_block=0, to_block="latest"):
+        calls.append((topics, from_block))
+        return ([inflow], "1 log(s)") if topics[2] else ([], "0 log(s)")
+    monkeypatch.setattr(coi, "explorer_logs", logs)
+    coi.fluid_igp137_custody()
+    out = capsys.readouterr().out
+    assert all(fb == 23_100_000 for _t, fb in calls) and len(calls) == 2
+    assert "FLUID balance now: 5,000,000.00" in out and "total IN: 5,000,000.00" in out and "total OUT: 0.00" in out
+    assert "Blockscout: name None" in out and "not verified" in out

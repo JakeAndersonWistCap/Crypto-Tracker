@@ -222,7 +222,7 @@ def test_real_pendle_optimism_zero_counts_with_its_evidence(tmp_path, monkeypatc
 
 def test_real_aerodrome_buyback_is_the_foundation_lock_and_implied_stays_zero(tmp_path, monkeypatch):
     """External audit 2026-10-09 item 1 + Jake's retirement rule (2026-10-10), on the real dump: the implied (fee-funded)
-    buyback stays N/A by design (fees buy nothing), while the actual buyback is the Foundation's buy-and-lock — a
+    buyback stays N/A by design (no protocol share of fees), while the actual buyback is the Foundation's buy-and-lock — a
     DOCUMENTED LIMITATION (state read; Base logs are paid), no longer a declared zero — and the retirement rates judge
     it rather than reading a structural 0."""
     o = evaluate_real(tmp_path, monkeypatch, "Aerodrome")

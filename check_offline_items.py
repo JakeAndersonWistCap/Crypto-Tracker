@@ -3818,6 +3818,269 @@ def fluid_igp137_wallet(min_fluid: float = 100_000):
           "  locked to 2030), which completes Fluid's on-chain set.")
 
 
+# ===== FOLLOW-UPS TO 0eda6ce (Jake, 2026-10-10): FLUID CUSTODY, AETHIR ARR FORMULA, NEAR LOCKUPS =====
+FLUID_IGP137_CUSTODY = "0xCaBebC7f76D53582a4be7d9972A2b4F531753fd7"   # config _NONCIRC_WALLETS["Fluid"] igp137_lock
+
+
+def fluid_igp137_custody(since: str = "2026-08-14"):
+    """Fluid's IGP-137 custody 0xCaBe… (wired as igp137_lock, Jake's probes15 2026-10-07): its explorer label (Blockscout
+    v2 `name` / tags, Etherscan's verified contract name), code, FLUID balance now, and every FLUID transfer IN and OUT
+    since `since` (the day the Team Multisig sent it 5,000,000). An outflow means the custody is no longer the full 5M
+    and the wiring's premise ('locked per IGP-137') needs a look. Reads only."""
+    import pandas as pd                                    # noqa: PLC0415
+    a = FLUID_IGP137_CUSTODY
+    head(f"FLUID — the IGP-137 custody {a}: label, balance, transfers since {since}")
+    j, why = _polite(f"https://eth.blockscout.com/api/v2/addresses/{a}")
+    if isinstance(j, dict):
+        tags = [t.get("display_name") or t.get("label") for t in (j.get("public_tags") or [])]
+        tags += [t.get("name") for t in ((j.get("metadata") or {}).get("tags") or [])]
+        impls = [i.get("name") or i.get("address") for i in j.get("implementations") or []]
+        print(f"  Blockscout: name {j.get('name')!r}; contract {j.get('is_contract')}; verified "
+              f"{j.get('is_verified')}; implementations {impls}; tags {[t for t in tags if t] or 'none'}")
+    else:
+        print(f"  Blockscout label not read: {why}")
+    src = _source(a)
+    print(f"  Etherscan verified source: {src.get('name') or '-'}"
+          + (f" (proxy -> {src.get('implementation')})" if src.get("proxy") else "")
+          + (f" — {src['why']}" if src.get("why") else ""))
+    print(f"  code: {_code(a, 'ethereum')}")
+    bal = _bal(FLUID_TOKEN, a, "ethereum")
+    print(f"  FLUID balance now: {bal / 1e18 if bal is not None else float('nan'):,.2f}")
+    b0 = _block_at(int(pd.Timestamp(since, tz="UTC").timestamp()))
+    if b0 is None:
+        print("  no block for the start date — transfers not read")
+        return
+    for label, topics in (("IN", [TRANSFER_TOPIC, None, _pad(a)]), ("OUT", [TRANSFER_TOPIC, _pad(a), None])):
+        logs, d = explorer_logs(1, FLUID_TOKEN, topics, b0)
+        print(f"  FLUID {label} since {since} (block {b0:,}): {d}")
+        tot = 0.0
+        for e in logs or ():
+            amt = int(e["data"], 16) / 1e18
+            tot += amt
+            other = "0x" + e["topics"][1 if label == "IN" else 2][-40:]
+            print(f"    {pd.Timestamp(int(e['timeStamp']), unit='s')}  {amt:>16,.2f} FLUID  "
+                  f"{'from' if label == 'IN' else 'to'} {other}  tx {e['transactionHash']}")
+        if logs is not None:
+            print(f"    total {label}: {tot:,.2f} FLUID in {len(logs)} transfer(s)")
+    print("  PASTE BACK the section. No OUT rows and a 5,000,000 balance = the wiring stands as it is.")
+
+
+def _now_utc() -> str:
+    import pandas as pd                                    # noqa: PLC0415
+    return str(pd.Timestamp.now(tz="UTC").floor("s"))
+
+
+def aethir_arr_formula():
+    """WHAT AETHIR'S ARR TILE IS COMPUTED FROM (follow-up to 0eda6ce): dashboard.aethir.com/protocol/demand-metric
+    serves `"arr"` (tile "Annual Recurring Revenue (ARR) (1d)"); Aethir publishes no formula. This prints the object
+    that holds `arr` (its scalar siblings, its list keys) and tests candidate run-rates built from the SAME payload's
+    revenue lists — last week x 52, last month x 12, any daily-looking sibling x 365 — marking each within 1% of
+    `arr`. A match names the formula; none means the input is not in the page. Reads only."""
+    import json as _json                                   # noqa: PLC0415
+    from fetch import aethir_pages as ap                   # noqa: PLC0415
+    head("AETHIR — the ARR tile's formula, tested against the demand page's own revenue lists")
+    html, why = _polite("https://dashboard.aethir.com/protocol/demand-metric")
+    if not isinstance(html, str):
+        print(f"  page not read: {why}")
+        return
+    arr, w = ap.key_scalar(html, "arr")
+    if arr is None:
+        print(f"  arr not read: {w}")
+        return
+    print(f"  arr = {arr:,.2f}  (read {_now_utc()})  -> per day {arr / 365:,.2f}, per week {arr / 52:,.2f}, "
+          f"per month {arr / 12:,.2f}")
+    text = ap.rsc_text(html)
+    pos = text.find('"arr"')
+    obj = ap._enclosing_object(text, pos) if pos >= 0 else None  # noqa: SLF001
+    cands = {}
+    if isinstance(obj, dict):
+        scal = {k: v for k, v in obj.items() if isinstance(v, (int, float)) and not isinstance(v, bool)}
+        lists = {k: len(v) for k, v in obj.items() if isinstance(v, list)}
+        print(f"  the object holding arr: scalars {_json.dumps(scal)[:600]}; lists {lists}")
+        for k, v in scal.items():
+            if k != "arr" and v:
+                cands.update({f"{k} x 365": v * 365, f"{k} x 52": v * 52, f"{k} x 12": v * 12, f"{k} (as is)": v})
+    else:
+        print("  the object holding arr did not parse — only the page-level lists are tested")
+    weeks = ap.array_objects(html, "weeklyNetworkRevenue")
+    if isinstance(weeks, list) and weeks:
+        amts = [float(o.get("amount") or 0) for o in weeks]
+        print(f"  weeklyNetworkRevenue: {len(amts)} weeks, last three "
+              f"{[(o.get('startDate'), o.get('amount')) for o in weeks[-3:]]}")
+        cands["last listed week x 52"] = amts[-1] * 52
+        if len(amts) > 1:
+            cands["second-to-last week x 52"] = amts[-2] * 52
+            cands["last listed week / 7 x 365"] = amts[-1] / 7 * 365
+            cands["last 4 weeks x 13"] = sum(amts[-4:]) * 13
+            cands["last 13 weeks x 4"] = sum(amts[-13:]) * 4
+    months = ap.array_objects(html, "monthlyNetworkRevenue")
+    if isinstance(months, list) and months:
+        earn = [float(o.get("earning") or 0) for o in months]
+        print(f"  monthlyNetworkRevenue: {len(earn)} months, last three "
+              f"{[(o.get('month'), o.get('earning')) for o in months[-3:]]}")
+        cands["last listed month x 12"] = earn[-1] * 12
+        if len(earn) > 1:
+            cands["second-to-last month x 12"] = earn[-2] * 12
+            cands["last 3 months x 4"] = sum(earn[-3:]) * 4
+    hit = False
+    for k, v in sorted(cands.items(), key=lambda kv: abs(kv[1] / arr - 1)):
+        mark = "MATCH" if abs(v / arr - 1) <= 0.01 else ""
+        hit = hit or bool(mark)
+        print(f"    {k:<36} {v:>18,.2f}  {v / arr - 1:+8.2%}  {mark}")
+    print("  VERDICT: " + ("the tile matches the candidate(s) marked MATCH" if hit else
+                          "no candidate within 1% — the ARR's input is not in this page's payload; it stays "
+                          "'Aethir's own figure, formula unpublished'"))
+
+
+NEAR_LOCKUP_BQ_SQL = (
+    # NEAR's own lockup list (near/near-public-lakehouse@76e0b2cd "Aggregated Circulating Supply Pipeline.py" step 2):
+    # every *.lockup.near that was created or funded and never deleted.
+    "SELECT receipt_receiver_account_id AS account_id\n"
+    "  FROM `bigquery-public-data.crypto_near_mainnet_us.receipt_actions`\n"
+    " WHERE receipt_receiver_account_id LIKE '%.lockup.near'\n"
+    "   AND action_kind IN ('CREATE_ACCOUNT', 'DELETE_ACCOUNT', 'TRANSFER')\n"
+    " GROUP BY 1\n"
+    "HAVING COUNTIF(action_kind = 'DELETE_ACCOUNT') = 0")
+# near-public-lakehouse rust-extract-apis/lockups/src/lockup.rs is_bug_inside_contract: the RPC locked figure is wrong
+NEAR_LOCKUP_BUGGY_CODE = ("3kVY9qcVRoW3B5498SMX6R3rtSLiCdmBzKs7zcnzDJ7Q", "DiC9bKCqUHqoYqUXovAnqugiuntHWnM3cAc7KrgaHTu")
+NEAR_RPC_LIVE = ("https://rpc.mainnet.fastnear.com", "https://rpc.mainnet.near.org")
+
+
+def _near_view(account: str, method: str, args: dict | None = None, block_id: int | None = None, pace: float = 0.12):
+    """call_function on a NEAR contract at `block_id` (or final): (result, why). FastNEAR first, then near.org; a 429
+    waits and tries the next endpoint. The lockup getters return JSON."""
+    import base64                                          # noqa: PLC0415
+    import json as _json                                   # noqa: PLC0415
+    import time as _t                                      # noqa: PLC0415
+    params = {"request_type": "call_function", "account_id": account, "method_name": method,
+              "args_base64": base64.b64encode(_json.dumps(args or {}).encode()).decode()}
+    params.update({"block_id": block_id} if block_id else {"finality": "final"})
+    why = ""
+    for url in NEAR_RPC_LIVE:
+        _t.sleep(pace)
+        try:
+            r = requests.post(url, json={"jsonrpc": "2.0", "id": 1, "method": "query", "params": params},
+                              headers=_ua(), timeout=TIMEOUT)
+        except Exception as e:  # noqa: BLE001
+            why = f"{urlparse(url).netloc}: {type(e).__name__}"
+            continue
+        if r.status_code == 429:
+            why = f"{urlparse(url).netloc}: HTTP 429"
+            _t.sleep(2.0)
+            continue
+        j = r.json() if r.status_code == 200 else {}
+        res = j.get("result") or {}
+        if "result" in res:
+            return _json.loads(bytes(res["result"]).decode() or "null"), ""
+        why = f"{urlparse(url).netloc}: {(j.get('error') or res.get('error') or r.status_code)!s:.160}"
+        if "MethodNotFound" in why or "CodeDoesNotExist" in why or "does not exist" in why:
+            return None, why
+    return None, why
+
+
+def near_lockups(limit: int | None = None):
+    """NEAR LOCKUPS, FROM THE CONTRACTS' OWN VIEW METHODS (follow-up to 0eda6ce). The list is NEAR's own: every
+    *.lockup.near created or funded and never deleted (receipt_actions, NEAR's lakehouse method) — from BigQuery after a
+    DRY RUN that prints the bytes (runs only with NEAR_LOCKUPS_RUN_BQ=1), or from a file NEAR_LOCKUPS_FILE (one account
+    per line). Per lockup, at ONE block (near/core-contracts@1b0436c9 lockup/src/getters.rs):
+      get_balance          everything, incl. NEAR deposited to a staking pool
+      get_locked_amount    locked by lockup OR vesting — NEAR's own 'locked' (what its circulating figure subtracts)
+      get_vesting_information -> get_unvested_amount(schedule)   still UNVESTED (Terminating: its unvested_amount;
+                           None / a private hash: 0, as the contract itself treats it)
+      locked − unvested    VESTED BUT STILL LOCKED by the lockup's release schedule
+      get_owners_balance   vested AND released, not withdrawn (balance − locked; may sit in a staking pool)
+    Lockups on the two buggy code hashes (near-public-lakehouse lockup.rs) are totalled apart: their RPC locked figure
+    is known to be wrong. AGGREGATES ONLY are printed — no account is named. Nothing is stored."""
+    import os                                              # noqa: PLC0415
+    import time as _t                                      # noqa: PLC0415
+    head("NEAR — lockup contracts: unvested vs vested-but-locked vs released-not-withdrawn (contracts' own getters)")
+    path = os.environ.get("NEAR_LOCKUPS_FILE")
+    if path:
+        with open(path, encoding="utf-8") as fh:
+            accounts = sorted({ln.strip() for ln in fh if ln.strip().endswith(".lockup.near")})
+        print(f"  {len(accounts):,} lockup account(s) from the file")
+    else:
+        setup = _near_cause_setup()
+        if setup is None:
+            print(f"  …or save the lockup list to a file and set NEAR_LOCKUPS_FILE. NEAR's list query:\n{NEAR_LOCKUP_BQ_SQL}")
+            return
+        nb, spec, client, _ds, _cols = setup
+        from google.cloud import bigquery                  # noqa: PLC0415
+        nb._guard_sql(NEAR_LOCKUP_BQ_SQL, spec)            # noqa: SLF001
+        dry = client.query(NEAR_LOCKUP_BQ_SQL, job_config=bigquery.QueryJobConfig(dry_run=True, use_query_cache=False))
+        gb = dry.total_bytes_processed / 1024 ** 3
+        print(f"  DRY RUN: the lockup list scans {gb:,.1f} GB of receipt_actions (BigQuery's free tier is 1 TB a month, "
+              f"project near-data-510309)")
+        if os.environ.get("NEAR_LOCKUPS_RUN_BQ") != "1":
+            print("  NOT RUN. Set NEAR_LOCKUPS_RUN_BQ=1 to spend that, or supply NEAR_LOCKUPS_FILE.")
+            return
+        job = client.query(NEAR_LOCKUP_BQ_SQL, job_config=bigquery.QueryJobConfig(
+            maximum_bytes_billed=int(dry.total_bytes_processed * 1.1) + 10 * 1024 ** 2))
+        accounts = sorted(r["account_id"] for r in job.result())
+        print(f"  {len(accounts):,} live lockup account(s) from BigQuery")
+    if limit:
+        accounts = accounts[:int(limit)]
+    height = ((rpc(NEAR_RPC_LIVE[0], "block", {"finality": "final"}).get("result") or {}).get("header") or {}).get("height")
+    print(f"  every read at block {height:,} ({_now_utc()}); {len(accounts):,} account(s), ~4-6 calls each")
+    yocto = 10 ** 24
+    tot = {"balance": 0, "locked": 0, "unvested": 0, "owners": 0}
+    buggy = {"n": 0, "balance": 0, "locked": 0}
+    n_read = n_zero = n_err = 0
+    errs = {}
+    t0 = _t.time()
+    for i, acc in enumerate(accounts, 1):
+        bal, why = _near_view(acc, "get_balance", block_id=height)
+        if bal is None:
+            n_err += 1
+            errs[why[:60]] = errs.get(why[:60], 0) + 1
+            continue
+        if int(bal) == 0:
+            n_zero += 1
+            continue
+        locked, why = _near_view(acc, "get_locked_amount", block_id=height)
+        if locked is None:
+            n_err += 1
+            errs[why[:60]] = errs.get(why[:60], 0) + 1
+            continue
+        owners, _w = _near_view(acc, "get_owners_balance", block_id=height)
+        vest, _w = _near_view(acc, "get_vesting_information", block_id=height)
+        unv = 0
+        if isinstance(vest, dict) and "VestingSchedule" in vest:
+            u, _w = _near_view(acc, "get_unvested_amount", {"vesting_schedule": vest["VestingSchedule"]},
+                               block_id=height)
+            unv = int(u or 0)
+        elif isinstance(vest, dict) and "Terminating" in vest:
+            unv = int((vest["Terminating"] or {}).get("unvested_amount") or 0)
+        n_read += 1
+        bal, locked, owners = int(bal), int(locked), int(owners or 0)
+        tot["balance"] += bal
+        tot["locked"] += locked
+        tot["unvested"] += min(unv, locked)
+        tot["owners"] += owners
+        try:
+            va = rpc(NEAR_RPC_LIVE[0], "query", {"request_type": "view_account", "account_id": acc, "block_id": height})
+            code = (va.get("result") or {}).get("code_hash")
+        except Exception:  # noqa: BLE001
+            code = None
+        if code in NEAR_LOCKUP_BUGGY_CODE:
+            buggy["n"] += 1
+            buggy["balance"] += bal
+            buggy["locked"] += locked
+        if i % 250 == 0:
+            print(f"    … {i:,}/{len(accounts):,} ({_t.time() - t0:,.0f}s)", flush=True)
+    n = lambda x: f"{x / yocto:>18,.0f} NEAR"  # noqa: E731
+    print(f"\n  read {n_read:,}; zero balance {n_zero:,}; unreadable {n_err:,}" + (f" {errs}" if errs else ""))
+    print(f"  balance in lockups (incl. staked)            {n(tot['balance'])}")
+    print(f"  LOCKED (NEAR's own: lockup or vesting)       {n(tot['locked'])}")
+    print(f"    of which STILL UNVESTED                    {n(tot['unvested'])}")
+    print(f"    of which VESTED, still lockup-locked       {n(tot['locked'] - tot['unvested'])}")
+    print(f"  RELEASED, not withdrawn (owners' balance)    {n(tot['owners'])}")
+    print(f"  buggy-code lockups: {buggy['n']:,}, balance {n(buggy['balance'])}, RPC locked {n(buggy['locked'])} "
+          f"(NEAR's lakehouse recomputes these; the RPC figure is known to be off)")
+    print("  UNDER JAKE'S RULE only STILL UNVESTED comes out of circulating; NEAR's own circulating subtracts all of "
+          "LOCKED. PASTE BACK the totals.")
+
+
 # ===== MORPHO — MERKL'S CAMPAIGN AMOUNTS FOR MORPHO OVER A WINDOW (the sweep, 2026-10-07) =====
 def morpho_merkl_campaigns(days: int = 90):
     """Every Merkl campaign paying MORPHO on Ethereum (api.merkl.xyz/v4/campaigns, any status), each campaign's amount
@@ -9681,7 +9944,8 @@ CHECKS = (
     chainlink_reward_rates, pendle_spendle_fees, archive_probe, coinmetrics_community,
     hl_af_fills_depth, etherfi_safe_owners, etherfi_sethfi_topups, etherfi_topup_safe, etherfi_cex_test, near_protocol_v87, aethir_pin_keys,
     robots_and_terms, ultrasound_history, hyperliquid_history_routes, blockworks_filings, maple_dao_vs_ssf, aethir_reward_distributors, etherfi_yield_reconcile, maple_ssf_candidates,
-    aethir_distributor_match, fluid_igp137_wallet, morpho_merkl_campaigns, etherfi_sender_trace,
+    aethir_distributor_match, fluid_igp137_wallet, fluid_igp137_custody, aethir_arr_formula, near_lockups,
+    morpho_merkl_campaigns, etherfi_sender_trace,
     aerodrome_filing_wallets, blockworks_wallet_balances,
     etherfi_vault_archive, etherfi_contract_ids, etherfi_accountant, fluid_vesting_recipients, maple_ssf_partial,
     aerodrome_managed_venfts, pendle_epoch_revenues, maple_ssf_trail, fluid_avocado_owners, hl_pool_release_compare,

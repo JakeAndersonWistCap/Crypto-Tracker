@@ -3388,13 +3388,14 @@ def _retirement_zero(p: dict) -> str | None:
 
 
 def _implied_zero(p: dict) -> str | None:
-    """Why this project's IMPLIED buyback (revenue x share) is a structural 0 — or None. Fees paid to voters in the
-    pairs' own tokens buy nothing (Aerodrome), whatever the Foundation buys with its own funds (external audit
-    2026-10-09, item 1: the buy-and-lock is the ACTUAL buyback, not an implied one)."""
+    """Why this project's IMPLIED buyback (revenue x a protocol share) is a structural 0 — or None. Aerodrome sets no
+    share of fees aside for buybacks: 100% goes to voters. The Foundation is ONE of those voters and buys AERO with its
+    share (foundation_buyback.funding) — that is the ACTUAL buyback, measured, never added to this one."""
     fs = p.get("fee_split") or {}
     if fs.get("destination_model") == "distribute_to_voters":
-        return ("0 — fees buy nothing: 100% of fees are paid to voters in the pairs' own tokens "
-                "(fee_split: distribute_to_voters). Any Foundation buy-and-lock is the ACTUAL buyback.")
+        return ("0 — no protocol share of fees is set aside for buybacks: 100% is paid to voters in the pairs' own "
+                "tokens (fee_split: distribute_to_voters). The Foundation is one of those voters and buys AERO with "
+                "its share; that is the ACTUAL buyback, not this implied one.")
     return None
 
 
@@ -5149,7 +5150,7 @@ def write_a3(ws, R: Refs, data_by_key: dict):
         ("BUYBACK AS % OF SUPPLY (annualised, implied)",
          lambda r, p: no_buy(p) or base_gated(p, threshold_gated(p, gated(st(r), f"{_annualise(R, r, p, config.revenue_base_metric(p['name']), rev(r, p))}*{share(r)}/{price(r)}/({circ(r, p)})", share(r)))),
          FMT_PCT, "calc", True, {"gate": "fee_split", "threshold": True, "base": True,
-                                 "flag_fn": lambda p: ((" · fees buy nothing — paid to voters", _implied_zero(p))
+                                 "flag_fn": lambda p: ((" · no protocol share to buybacks — paid to voters", _implied_zero(p))
                                                        if _implied_zero(p) else None)}),
         ("Actual buyback Q0 ($) — observed", lambda r, p: pull(R.D(r, "actual_buyback_usd", "q0")), FMT_USD, "pull", False,
          {"metric": "actual_buyback_usd", "flag_fn": lambda p: _program_flag(p, data_by_key)}),

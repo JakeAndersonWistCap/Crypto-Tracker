@@ -2010,7 +2010,8 @@ def by_design_na(name: str, hid: str) -> str | None:
         return "no issuance — burn only (issuance_declared_zero)"
     fs = p.get("fee_split") or {}
     if hid == "a3_implied_buyback_pct" and fs.get("destination_model") == "distribute_to_voters":
-        return "0 by design — fees buy nothing; they go to voters in the pairs' own tokens"
+        return "0 by design — no protocol share of fees goes to buybacks; 100% is paid to voters (the Foundation's own buys " \
+               "from its voting share are the ACTUAL buyback)"
     if hid in ("a3_circ_retirement", "a3_fdv_retirement", "a3_actual_buyback_pct"):
         if fs.get("destination_model") == "distribute_to_voters" and \
                 "actual_buyback_tokens" not in config.metrics_for_project(p):

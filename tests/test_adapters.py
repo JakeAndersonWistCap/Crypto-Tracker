@@ -14784,7 +14784,7 @@ def test_offline_checks_ambiguous_prefix_refuses_and_names_every_match(monkeypat
     rc = coi.main()
     out = capsys.readouterr().out
     assert rc == 1
-    assert "'aethir' matches 9 checks" in out        # + aethir_reward_distributors, aethir_distributor_match
+    assert "'aethir' matches 10 checks" in out        # + aethir_reward_distributors, aethir_distributor_match
     for name in ("aethir_staking_probe", "aethir_wrapper_relationship", "aethir_veaethir_probe"):
         assert name in out
     assert "Done." not in out, "a refusal must not claim anything ran"
@@ -20060,7 +20060,7 @@ def test_tokens_primary_retirement_zero_and_burn_only_presentation():
     # only its implied (fee-funded) buyback stays 0.
     aero = config.PROJECT_BY_NAME["Aerodrome"]
     assert a3[0][1](5, aero) != "=0" and "retired_buyback_tokens" in a3[0][1](5, aero)
-    assert bw._retirement_zero(aero) is None and "fees buy nothing" in bw._implied_zero(aero)
+    assert bw._retirement_zero(aero) is None and "no protocol share of fees" in bw._implied_zero(aero)
     # A project whose fees go to voters and that buys nothing still reads the structural 0.
     nobuy = {**aero, "foundation_buyback": None}
     import unittest.mock as um
@@ -24146,7 +24146,7 @@ def test_aerodrome_implied_buyback_is_a_structural_zero(tmp_path):
         col = next(v for k, v in hdr.items() if k and str(k).startswith(head))
         assert ws.cell(r, col).value == "=0", (head, ws.cell(r, col).value)
     col = next(v for k, v in hdr.items() if k and str(k).startswith("BUYBACK AS % OF SUPPLY"))
-    assert "fees buy nothing" in ws.cell(r, col).number_format     # the Foundation buy-and-lock is the ACTUAL buyback
+    assert "no protocol share to buybacks" in ws.cell(r, col).number_format     # the Foundation buy-and-lock is the ACTUAL buyback
 
 
 # ===================================================================================
