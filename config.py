@@ -263,7 +263,10 @@ METRICS = {
     "locked_tokens_wrapper": {"label": "ATH held by the Ethereum staking wrapper 0x3f69… (stAethir/veAethir, 1:1) — reference", "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [2], "sanity_min": 0, "sanity_max": 42e9, "only_projects": ("Aethir",)},
     # ===== AETHIR'S OWN DASHBOARD, BY LABEL (Jake's PDFs, 2026-10-01). fetch/aethir_pages.py. =====
     # Each is matched to its payload key by value against the figure Jake read beside the label.
-    "arr_usd":               {"label": "Annual Recurring Revenue (ARR, 1d) — Aethir's own headline (demand-metric)", "kind": "stock", "unit": "usd", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1e11, "only_projects": ("Aethir",)},
+    # ARR FOR RATIOS (Jake, 2026-10-10): the last 3 complete months of Aethir's monthlyNetworkRevenue x 4, a read-time
+    # view (build_workbook._aethir_arr_view); the dashboard's ARR tile (last complete month x 12) is arr_tile_usd beside it
+    "arr_usd":               {"label": "ARR for ratios = last 3 complete months of Aethir's monthlyNetworkRevenue x 4 (Jake 2026-10-10)", "kind": "stock", "unit": "usd", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1e11, "only_projects": ("Aethir",), "view_only": True},
+    "arr_tile_usd":          {"label": "Aethir's ARR tile (\"ARR (1d)\", demand-metric) = last complete month x 12 (aethir_arr_formula: exact) — labelled second figure, not used in ratios", "kind": "stock", "unit": "usd", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1e11, "only_projects": ("Aethir",)},
     "compute_rewards_cumulative_tokens": {"label": "Aethir compute rewards (Proof of Rendering Work + Proof of Capacity) distributed to compute providers, cumulative ATH — supply-metric totalRewards; a SUPPLIER emission component", "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 42e9, "only_projects": ("Aethir",)},
     "compute_rewards_tokens": {"label": "Aethir compute rewards per week (ATH) — supply-metric weeklyData `reward`", "kind": "flow", "unit": "tokens", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Aethir",)},
     "burn_auction_tokens": {"label": "HYPE burned by deploy-gas AUCTIONS per day (ASXN hyperscreener, browser) — non-AF burn history", "kind": "flow", "unit": "tokens", "archetypes": [1, 3, 4], "tiers": [3], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Hyperliquid",)},
@@ -362,7 +365,8 @@ METRICS = {
         "kind": "flow", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0,
         "sanity_max": 1e9, "only_projects": ("Chainlink",)},
     "noncirculating_igp137_tokens": {
-        "label": "FLUID in the IGP-137 custody 0xcabebc7f… (5M, locked per IGP-137) — subtracted from on-chain "
+        "label": "FLUID in IGP-137's team-controlled Avocado wallet 0xcabebc7f… (5M; not a custodian or time-lock) — "
+                 "subtracted from on-chain "
                  "circulating; its own series because CoinGecko still COUNTS it (like-for-like, Jake 2026-10-08)",
         "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0,
         "sanity_max": 1e8, "view_only": True, "only_projects": ("Fluid",)},
@@ -8579,12 +8583,12 @@ PROJECTS = [
                                         "rewards and the Checker Node bonus are supplier "
                                         "buckets with no declared schedule, so this UNDERSTATES "
                                         "supplier emissions.",
-            # AUDIT 2026-10-09 ITEM 3: the research read of Aethir's docs allocation gives Checker Nodes & Compute
-            # Providers 50% (team 12.5, investors 11.5, ecosystem 7.5, treasury 7.5, airdrop 6 — 95% listed, so one
-            # bucket of ~5% was not captured); this note's 55% is from the token overview. Not settled from here and
-            # not changed (RUNBOOK 11be: Jake to read the docs table).
-            # PHASE 2, DECLARED AS A BOUND NOT A STEP. Aethir's own token overview puts 55% of total
-            # supply (~23.1bn ATH) to Checker Nodes & Compute Providers, with Phase 1 frontloaded
+            # NODE-REWARD SHARE = 50% (Jake decided, 2026-10-10): Checker Nodes & Compute Providers 50% of 42bn = 21bn
+            # (15% checker + 35% compute providers), per Aethir's own vesting docs — see allocation_reference. The 55%
+            # this note carried from 2026-09-14 (token overview) is SUPERSEDED: no source reachable on 2026-10-10 shows
+            # it (RUNBOOK 11bf).
+            # PHASE 2, DECLARED AS A BOUND NOT A STEP. Aethir's docs put 50% of total supply (21bn ATH) to Checker
+            # Nodes & Compute Providers (Jake 2026-10-10; was 55% / ~23.1bn, superseded), with Phase 1 frontloaded
             # and PHASE 2 RUNNING 2028-06-12 to 2032-06-12, monthly and DECAYING. Phases 1+2
             # together are stated as 16.8bn over ~8 years. A decaying monthly curve cannot be
             # expressed as one tokens_per_day and the per-month figures are not on file, so no
@@ -8595,10 +8599,21 @@ PROJECTS = [
                         "note": "NOT DECLARED. The per-month figures are not on file and a decaying curve "
                                 "cannot be guessed from its endpoints."},
             "allocation_reference": {
-                "checker_nodes_and_compute_providers_pct": 0.55,
-                "checker_nodes_and_compute_providers_tokens": 23_100_000_000,
+                "checker_nodes_and_compute_providers_pct": 0.50,
+                "checker_nodes_and_compute_providers_tokens": 21_000_000_000,
+                "split": {"checker_nodes_pct": 0.15, "compute_providers_pct": 0.35},
                 "phases_1_and_2_total": 16_800_000_000, "phases_1_and_2_years": 8,
-                "source_url": "https://docs.aethir.com/aethir-tokenomics/token-overview"},
+                "source_url": "https://docs.aethir.com/aethir-tokenomics/token-vesting",
+                "source_date": "2026-10-09 (search snippet; GitBook shows no version)",
+                "split_source": "https://x.com/AethirEdge/status/1799025845040013369 (Jun 2024: 15% checkers + 12% "
+                                "data centres + 23% edge = 50%; the 35% compute = 12 + 23); altfins' breakdown 15% + "
+                                "35% (read 2026-10-10)",
+                "decided": "Jake, 2026-10-10: 50% (15% checker + 35% compute), per Aethir's vesting docs",
+                "superseded": {"pct": 0.55, "tokens": 23_100_000_000,
+                               "source_url": "https://docs.aethir.com/aethir-tokenomics/token-overview",
+                               "source_date": "2026-09-14",
+                               "why": "not shown by any source reachable on 2026-10-10; Tokenomist and Tokenomics.com "
+                                      "give 50.00%"}},
             # DEFILLAMA'S OWN CAVEAT, recorded because it points the wrong way from the usual one.
             # Its published unlock figure tracks ATH WITHDRAWN AFTER VESTING, and therefore EXCLUDES
             # rewards that have been earned but not yet claimed. So even DefiLlama's number
@@ -8796,6 +8811,11 @@ PROJECTS = [
                              "metric": "utilisation_pct", "cumulative_metric": "utilisation_cumulative_pct",
                              "lower_bound_metric": "utilisation_containers_pct", "window_days": 7, "max_span_days": 14,
                              "old_source": "aethir_page:derived.compute_hours_last_week/nodes_x_168"},
+        # ARR FOR RATIOS (Jake's decision, 2026-10-10): the last `months` complete months of monthlyNetworkRevenue x
+        # `times` ($49.70M on Jul-Sep 2026), a read-time view (build_workbook._aethir_arr_view). The dashboard's tile
+        # (last month x 12) is the labelled second figure `tile_metric`.
+        "arr_view": {"metric": "arr_usd", "monthly": "customer_revenue_monthly_usd", "months": 3, "times": 4,
+                     "tile_metric": "arr_tile_usd", "decided": "Jake, 2026-10-10"},
         "dashboard_pages": {
             "base": "https://dashboard.aethir.com",
             "pages": {
@@ -8930,8 +8950,10 @@ PROJECTS = [
                 # STORED AS SERVED — no formula of ours (follow-up to 0eda6ce, 2026-10-10): GET
                 # https://dashboard.aethir.com/protocol/demand-metric, the RSC payload's "arr" (fetch/aethir_pages.
                 # key_scalar), dated the read day. Aethir labels it "(1d)" and publishes no formula;
-                # check_offline_items.py aethir_arr_formula tests run-rates from the page's own revenue lists.
-                "arr": {"label": "Annual Recurring Revenue (ARR) (1d)", "metric": "arr_usd",
+                # check_offline_items.py aethir_arr_formula tests run-rates from the page's own revenue lists — Jake's
+                # run on 20d0eb4: EXACTLY the last complete month x 12. Stored as arr_tile_usd (a labelled second
+                # figure); arr_usd for ratios is the 3-month view (arr_view below, Jake 2026-10-10).
+                "arr": {"label": "Annual Recurring Revenue (ARR) (1d)", "metric": "arr_tile_usd",
                         "pages": ("protocol/demand-metric",), "key": "arr", "anchor": 62_490_000,
                         "within": 0.30, "read_on": "2026-10-01"},
                 # (revenue_total, purchases_total, apr_*, locked_ratio, sophon_stath, eco_rewards_total and the edge
@@ -17844,14 +17866,22 @@ _NONCIRC_WALLETS_FIRST_PARTY["Fluid"] = [
                           ("deusd_usdc", "0xB48BbE313eDB7fAAa28C03684D48F58dD7dEA239", "deUSD-USDC, Jan 2025"),
                           ("gho_vaults", "0xD833484b198D3d05707832cc1C2D62b520D95B8A", "GHO Vaults, Apr 2025"),
                           ("eth_usdc_lp", "0x252452ccf245a59A6d1Afab11cF16750029b4620", "ETH-USDC LP, Jul 2025"))],
-    # IGP-137 CUSTODY (Jake's probes15, fluid_igp137_wallet, 2026-10-07): the Team Multisig received 5,000,000 FLUID
-    # from the Treasury DSA on 2026-08-07 and sent 5,000,000 here on 2026-08-14; a contract holding exactly 5M —
-    # locked per IGP-137.
+    # IGP-137's 5M (Jake's probes15, fluid_igp137_wallet, 2026-10-07): the Team Multisig received 5,000,000 FLUID from
+    # the Treasury DSA on 2026-08-07 and sent 5,000,000 here on 2026-08-14. RELABELLED (Jake's fluid_igp137_custody run
+    # on 20d0eb4, 2026-10-10): an Avocado (Instadapp) smart wallet holding exactly 5,000,000 with no outflow since
+    # 2026-08-14 — a TEAM-CONTROLLED wallet, not a custodian or a time-lock. Kept non-circulating (team-held); an
+    # outflow raises a Review Queue item (FLUID_IGP137_WATCH, fetch/validate.check_watched_wallet).
     ("igp137_lock", "0xCaBebC7f76D53582a4be7d9972A2b4F531753fd7", "ethereum", "FLUID",
      "https://etherscan.io/address/0xcabebc7f76d53582a4be7d9972a2b4f531753fd7", "2026-10-07",
-     "IGP-137 custody: 5,000,000 FLUID from the Team Multisig (Treasury DSA -> Team Multisig 2026-08-07 -> here "
-     "2026-08-14), locked per IGP-137"),
+     "team-controlled Avocado wallet, not a custodian or time-lock: IGP-137's 5,000,000 FLUID from the Team Multisig "
+     "(Treasury DSA -> Team Multisig 2026-08-07 -> here 2026-08-14)"),
 ]
+# AN ALERT IF ANY FLUID LEAVES IT (Jake, 2026-10-10): the wallet's daily balance read below `expect` raises a Review
+# Queue item every run it stays below (fetch/validate.check_watched_wallet). The wallet stays non-circulating either way
+# until Jake decides; the probe fluid_igp137_custody lists the transfers.
+FLUID_IGP137_WATCH = {"project": "Fluid", "metric": "noncirculating_igp137_tokens", "expect": 5_000_000.0,
+                      "address": "0xCaBebC7f76D53582a4be7d9972A2b4F531753fd7", "since": "2026-08-14",
+                      "why": "team-controlled Avocado wallet holding IGP-137's 5,000,000 FLUID"}
 # Chainlink's own post (blog.chain.link/sustainably-growing-chainlink, 2022; read via the mirror
 # apachecn/chainlink-blog-zh @a6efb6ef): it lists 27 non-circulating wallets. 24 are wired above from Etherscan's labels;
 # these are the other three, now read. Chainlink's CURRENT list (chain.link/circulating-supply) stays unreadable here.
@@ -21428,20 +21458,22 @@ CIRCULATING_ONCHAIN = {
     "Fluid": {"status": "established", "total": "total_supply", "filing_confirms": "2026-10-07", "ratios_use": "onchain",
               "subtract": ("treasury_holding_tokens", "noncirculating_holding_tokens", "noncirculating_igp137_tokens"),
               # LIKE-FOR-LIKE (Jake's run 2026-10-08: 77.964M vs CoinGecko 83.697M, -6.9%): CoinGecko still counts the
-              # IGP-137 custody's 5M (moved 2026-08-14); ours + it vs CoinGecko, the 5M on its own gap row (in_circ_gap)
+              # IGP-137's 5M in the team's Avocado wallet (moved 2026-08-14); ours + it vs CoinGecko, the 5M on its own
+              # gap row (in_circ_gap)
               "coingecko_counts": ("noncirculating_igp137_tokens",),
               "method": "100M − DAO Treasury 0x2884… − Team Multisig 0x4F6F… − (the full sweep, 2026-10-07) the "
                         "governance Timelock, TEAM_MULTISIG_2, FLUID_FOUNDATION (fluid-governance@8891f73d "
                         "constants.sol) − the five mainnet FLUID MerkleDistributors' unclaimed rewards "
                         "(fluid-contracts-public deployments.md)",
               "decision": "ON-CHAIN (Jake's sign-off round, 2026-10-07): total − the DAO Treasury − the two Team "
-                          "Multisigs − the governance Timelock − the Foundation − the IGP-137 custody − the reward "
+                          "Multisigs − the governance Timelock − the Foundation − IGP-137's Avocado wallet − the reward "
                           "distributors' unclaimed FLUID. The five earlier Team Multisig recipients are not vesting: "
                           "the liquidity layer and the Uniswap pool hold market liquidity and the three Avocado "
                           "wallets are not the team's (fluid_avocado_owners) — all circulating. WAS COINGECKO",
               # IGP-137's description (fluid-governance @8891f73d) routes the 5M through the Team Multisig before a
               # dedicated wallet; fluid_igp137_wallet lists what left the multisig after it arrived.
-              # FOUND (Jake's probes15, 2026-10-07): the IGP-137 custody is 0xcabebc7f… (5M, wired as igp137_lock).
+              # FOUND (Jake's probes15, 2026-10-07): IGP-137's 5M sits in 0xcabebc7f… (wired as igp137_lock) — a
+              # team-controlled Avocado wallet, not a custodian or time-lock (Jake, 2026-10-10).
               "counted_as_circulating": {
                   "0x52Aa899454998Be5b000Ad077a46Bbe360F4e497": "FluidLiquidityProxy — FLUID supplied to the liquidity "
                                                                 "layer (2.63M), market liquidity",
@@ -24609,14 +24641,20 @@ CREDIBILITY: dict = {
                            _c_chk("Awaiting a reading.", "manual reading: AI pool APR"), fmt=_C_PCT),
         "in_apr_gaming": _c_in("Gaming pool APR (dashboard, first-party)", "staking_apr_gaming", "now",
                                _c_chk("Awaiting a reading.", "manual reading: Gaming pool APR"), fmt=_C_PCT),
-        "a2_customer_revenue": {"metric": "arr_usd", "window": "now", "scale": 90 / 365, "tol": 25.0,
-                                "same_source": True,
+        # WAS the ARR tile x 90/365 (15.408M against our 11.72M, Jake's run on 20d0eb4): the tile is the last complete
+        # month x 12 (aethir_arr_formula, exact), so the reference was ONE month scaled to a quarter. NOW Aethir's own
+        # monthlyNetworkRevenue over the last three complete months (Jul-Sep $12.42M on 2026-10-10), scaled to our
+        # covered days — the same quantity over the same stretch, from the same dashboard.
+        "a2_customer_revenue": {"formula": "months_scaled", "tol": 25.0, "same_source": True,
+                                "args": {"monthly": "customer_revenue_monthly_usd", "months": 3,
+                                         "cover_metric": "customer_revenue_usd"},
                                 "fresh_label": "MATURING (until 2026-10-17; first-party only)",
-                                "source": "Aethir's own ARR x 90/365 (same dashboard)",
-                                "note": "SAME SOURCE, so FRESH-only at best. ARR is labelled '(1d)' — a ONE-DAY run-rate "
-                                        "x 365 — while ours is 90 days of weekly revenue: a growing or lumpy week moves "
-                                        "them apart without either being wrong. DefiLlama's figure (prepayments net of "
-                                        "withdrawals) is a different quantity and is not used."},
+                                "source": "Aethir's own monthlyNetworkRevenue, last 3 complete months, scaled to our "
+                                          "covered days (same dashboard)",
+                                "note": "SAME SOURCE, so FRESH-only at best: ours sums the weekly list over Q0, the "
+                                        "reference the monthly list over the three complete months — the gap is the "
+                                        "weeks vs months boundary. DefiLlama's figure (prepayments net of withdrawals) "
+                                        "is a different quantity and is not used."},
         "a2_emissions": {"formula": "per_day_x_covered",
                          "args": {"per_day": 2_874_743.0, "cover_metric": "emissions_tokens",
                                   "label": "Checker Node base schedule 2,874,743 ATH/day (docs.aethir.com token overview)"},
@@ -24659,7 +24697,8 @@ CREDIBILITY: dict = {
                                      "note": "The pools' supply() summed 785.39M on 2026-09-24; the dashboard's aiStaked + gamingStaked read "
                                              "785.74M in probes4 (a later day): expect a PASS. The pools lock "
                                              "veAethir 1:1 against ATH (wrapper_three_way_match_2026_09_24)."}),
-        "in_arr": _c_in("ARR (Aethir demand-metric)", "arr_usd", "now", _c_mat(
+        "in_arr": _c_in("ARR for ratios: last 3 complete months of monthlyNetworkRevenue x 4 (Jake 2026-10-10)",
+                        "arr_usd", "now", _c_mat(
             "First-party only; the last reported ARR elsewhere is $166M (Q3-2025 blog) — too old to compare. Re-judged "
             "with in_locked when aethir_distributor_match has 10 daily runs; a 2026 ARR from Aethir's own reporting "
             "(blog / X), recorded by hand, would judge it — otherwise DOCUMENTED LIMITATION (first-party only).",

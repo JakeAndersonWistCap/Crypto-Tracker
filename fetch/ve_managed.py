@@ -92,16 +92,15 @@ class VeManaged:
 
 
 def foundation_rows(name: str, spec: dict, day, got: dict, archive: bool = False) -> tuple[list, str]:
-    """[(frame)] for one day's Foundation lock read (check_offline_items.aerodrome_foundation_locks), and the log line."""
-    import config                                          # noqa: PLC0415
+    """[(frame)] for one day's Foundation lock read (check_offline_items.aerodrome_foundation_locks), and the log line.
+    ONE SOURCE STRING, SEEDED OR DAILY (Jake's run on 20d0eb4: unify them) — an archive read says so in the log line."""
     src = f"{SOURCE}:foundation_locks"
-    src = config.mark_source(src, "archive") if archive else src
     frames = [tidy([(day, got["locked"])], name, spec["stock_metric"], src, TIER),
               tidy([(day, got["claimable"])], name, spec["claimable_metric"], src, TIER)]
     msg = (f"{spec['stock_metric']} = {got['locked']:,.0f} AERO locked by the Foundation's buyback wallets ("
            + "; ".join(f"{spec['owners'][o]} {v:,.0f}" for o, v in got["by_owner"].items())
            + f"; {got['nfts']} veNFT(s), {got['owned_managed']} owned managed veNFT(s) not counted); rebase claimable "
-             f"{got['claimable']:,.0f}")
+             f"{got['claimable']:,.0f}" + (" (archive read)" if archive else ""))
     return frames, msg
 
 

@@ -1155,6 +1155,26 @@ def _sum_months(p, rows, long, asof, metric="", months=(), **_):
     return tot, ", ".join(seen), f"{metric} summed over {', '.join(seen)}"
 
 
+def _months_scaled(p, rows, long, asof, monthly="", months=3, cover_metric="", **_):
+    """THE PROJECT'S OWN MONTHLY FIGURE OVER THE LAST `months` COMPLETE MONTHS, scaled to our row's covered days (Jake's
+    run on 20d0eb4, Aethir: the reference was the ARR tile x 90/365 — one month's revenue x 12 scaled to a quarter).
+    The months must be consecutive and stored; the sum is scaled by our Q0 covered days / the days in those months."""
+    sr = _series(long, p, monthly)
+    if sr.empty:
+        return None, None, f"no {monthly} in the store"
+    last_full = asof.normalize().to_period("M") - 1
+    want = [last_full - i for i in range(int(months))]
+    got = {d.to_period("M"): float(v) for d, v in sr.items()}
+    if any(m not in got for m in want):
+        return None, None, f"{monthly} lacks one of {', '.join(str(m) for m in sorted(want))}"
+    tot = sum(got[m] for m in want)
+    days = sum(m.days_in_month for m in want)
+    cov = _num(((rows or {}).get(f"{p}|{cover_metric}") or {}).get("q0_covered_days")) or 90.0
+    names = ", ".join(str(m) for m in sorted(want))
+    return tot * cov / days, str(last_full), (f"{monthly} {names} = {tot:,.0f} over {days} days, scaled to our "
+                                              f"{cov:.0f} covered day(s)")
+
+
 def _now_sum(p, rows, long, asof, metrics=(), **_):
     """The latest value of each of `metrics`, summed — FROM THE BUILT ROWS first (a read-time view such as
     circulating_supply_onchain is absent from the raw store; Jake's run 2026-10-07 18:11 showed the like-for-like row
@@ -1888,7 +1908,7 @@ FORMULAS = {"sum_months": _sum_months, "free_float_now": _free_float_now, "windo
             "common_day_value": _common_day_value, "months_match": _months_match,
             "hl_reward_active": _hl_reward_active, "base_reward_ceiling": _base_reward_ceiling,
             "rate_on_stake": _rate_on_stake, "reward_rate_apr": _reward_rate_apr, "trailing_token_yield": _trailing_token_yield,
-            "sum_since": _sum_since, "schedule_month": _schedule_month, "rise_vs_flow": _rise_vs_flow,
+            "sum_since": _sum_since, "schedule_month": _schedule_month, "months_scaled": _months_scaled, "rise_vs_flow": _rise_vs_flow,
             "product_on_common_day": _product_on_common_day, "now_sum": _now_sum,
             "log_price_growth": _log_price_growth, "bridge_reconciled": _bridge_reconciled,
             "daily_delta_plus_flow": _daily_delta_plus_flow, "window_sum": _window_sum, "scans_q0": _scans_q0, "now_combo": _now_combo}

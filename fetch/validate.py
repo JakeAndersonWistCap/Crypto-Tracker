@@ -443,6 +443,26 @@ def check_reference_values(df: pd.DataFrame, out, tolerance: float = 0.005) -> N
                                 source=ref.get("source", ""), tier=None)
 
 
+
+REASON_WATCHED_OUTFLOW = "watched_wallet_outflow"
+
+
+def check_watched_wallet(df: pd.DataFrame, out, watch: dict | None = None) -> None:
+    """FLUID LEAVING IGP-137's TEAM-CONTROLLED AVOCADO WALLET (Jake, 2026-10-10): its balance read this run below the
+    5,000,000 it received on 2026-08-14 is a Review Queue item — the wallet is non-circulating only while it holds it."""
+    w = watch or config.FLUID_IGP137_WATCH
+    if df is None or df.empty:
+        return
+    rows = df[(df["project"] == w["project"]) & (df["metric"] == w["metric"])]
+    if rows.empty:
+        return
+    last = rows.sort_values("date").iloc[-1]
+    got = float(last["value"])
+    if got < float(w["expect"]):
+        out.review_item(w["project"], w["metric"], REASON_WATCHED_OUTFLOW, ACTION_FLAGGED, value=got,
+                        prior_value=float(w["expect"]), date=str(last["date"])[:10], source=str(last["source"]),
+                        tier=None)
+
 REASON_IMPOSSIBLE = "impossible_relation"
 
 # Relations between two metrics that CANNOT both be right. Each is an identity, not a heuristic:

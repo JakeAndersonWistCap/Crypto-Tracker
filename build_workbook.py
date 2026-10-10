@@ -1430,12 +1430,49 @@ def _near_buyback_views(groups: dict) -> None:
         groups[(name, "actual_buyback_usd")] = _as_stored(usd, g.columns)
 
 
+def _aethir_arr_view(groups: dict) -> None:
+    """ARR FOR RATIOS (Jake, 2026-10-10): `arr_view.metric` = the last `months` complete months of `monthly` x `times`,
+    one row per month that completes a run of `months` consecutive stored months, dated the day after it ends. The
+    dashboard tile goes to `tile_metric`; rows stored under arr_usd before the decision (the tile, aethir_page) are
+    carried there at read time, so no stored row is rewritten."""
+    for p in scoped_projects():
+        spec = p.get("arr_view")
+        if not spec:
+            continue
+        name, metric, tile = p["name"], spec["metric"], spec["tile_metric"]
+        old = groups.pop((name, metric), None)
+        if old is not None and not old.empty:
+            have = groups.get((name, tile))
+            old = old.assign(metric=tile)
+            if have is not None and not have.empty:
+                old = old[~pd.to_datetime(old["date"]).dt.normalize().isin(
+                    pd.to_datetime(have["date"]).dt.normalize())]
+                old = pd.concat([have, old], ignore_index=True)
+            groups[(name, tile)] = old
+        g = groups.get((name, spec["monthly"]))
+        if g is None or g.empty:
+            continue
+        m = (g.assign(month=pd.to_datetime(g["date"]).dt.to_period("M")).drop_duplicates("month", keep="last")
+             .set_index("month")["value"].astype(float).sort_index())
+        n, rows = int(spec["months"]), []
+        for end in m.index:
+            run = [end - i for i in range(n)]
+            if all(x in m.index for x in run):
+                rows.append({"date": (end + 1).start_time, "project": name, "metric": metric,
+                             "value": float(sum(m[x] for x in run)) * float(spec["times"]), "tier": 3,
+                             "source": f"derived:{spec['monthly']} last {n} complete months x {spec['times']:g}"})
+        if rows:
+            groups[(name, metric)] = _as_stored(pd.DataFrame(rows), g.columns)
+
+
 def _foundation_buyback_views(groups: dict) -> None:
     """AERODROME'S FOUNDATION BUY-AND-LOCK (external audit 2026-10-09, item 1): actual_buyback_tokens = the day's change
     in the AERO the buyback wallets hold locked (foundation_locked_aero_tokens) + min(change in their rebase claimable,
     0) — a rebase claim moves claimable into the lock, so the two cancel; accrual (claimable rising) is not a buy.
-    Consecutive days only; a negative day (a lock leaving the wallets) is kept as measured and named.
-    actual_buyback_usd = tokens x the same-day price."""
+    Consecutive days only; a negative day (a lock leaving the wallets) is kept as measured
+    (check_offline_items.py aerodrome_foundation_q0 names those days). ONE source string for every row, seeded or daily
+    (Jake's run on 20d0eb4: a "[NEGATIVE …]" annotation stripped to a trailing space and read as a second measuring
+    point, blanking the series as BUG). actual_buyback_usd = tokens x the same-day price."""
     for p in scoped_projects():
         fb = p.get("foundation_buyback")
         if not fb:
@@ -1455,9 +1492,7 @@ def _foundation_buyback_views(groups: dict) -> None:
         if d.empty:
             continue
         tok = pd.DataFrame({"date": d.index, "project": name, "metric": fb["flow"], "value": d.values, "tier": 2,
-                            "source": [f"derived:d({fb['stock_metric']}) + min(d({fb['claimable_metric']}), 0)"
-                                       + (" [NEGATIVE: a lock left the buyback wallets]" if v < 0 else "")
-                                       for v in d.values]})
+                            "source": f"derived:d({fb['stock_metric']}) + min(d({fb['claimable_metric']}), 0)"})
         groups[(name, fb["flow"])] = _as_stored(tok, g.columns)
         px = groups.get((name, "price_usd"))
         if px is None or px.empty:
@@ -2067,6 +2102,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _usd_history_views(groups)    # BEFORE the burn total, which sums the leg it extends
     _near_buyback_views(groups)
     _foundation_buyback_views(groups)
+    _aethir_arr_view(groups)
     _burn_total_views(groups)
     _one_off_views(groups)        # BEFORE the relabel, so a burn-route buyback copies the ongoing flow
     _relabel_views(groups)
@@ -2111,6 +2147,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
         except (TypeError, ValueError):
             continue
     rows = []
+    held = {}                          # (project, metric) -> (status, reason) of a withheld row
     for p in scoped_projects():
         name = p["name"]
         for metric, m in METRICS.items():
@@ -2500,8 +2537,21 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                 row["note"] = f"NOT REPORTED — {reason}" + (f" | {row['note']}" if row["note"] else "")
                 for col in ("now", "m1", "q0", "q1", "q2", "q3", "y1"):
                     row[col] = None
+                held[(name, metric)] = withheld
             row["confidence"], row["why_amber"] = confidence_for(name, metric, row, asof)
             rows.append(row)
+    # THE BUYBACK SPLIT INHERITS ITS PARENT'S WITHHOLDING (Jake's run on 20d0eb4: Aerodrome's Q0 buyback read n/a as
+    # BUG while the retirement rate E14 read 0.97% and net absorption AH14 -2.076M — the split views are computed from
+    # the same rows the parent blanks, under a source of their own that passed the check).
+    for row in rows:
+        parent = ("actual_buyback_usd" if row["metric"] == "retired_buyback_usd" else "actual_buyback_tokens")
+        if row["metric"] in config.BUYBACK_SPLIT_METRICS and (row["project"], parent) in held:
+            status, reason = held[(row["project"], parent)]
+            row["status"] = status
+            row["note"] = f"NOT REPORTED — inherits {parent}'s: {reason}"
+            for col in ("now", "m1", "q0", "q1", "q2", "q3", "y1"):
+                row[col] = None
+            row["confidence"], row["why_amber"] = confidence_for(row["project"], row["metric"], row, asof)
     return pd.DataFrame(rows, columns=DATA_COLS)
 
 
@@ -3632,8 +3682,8 @@ def _a2_headline(R: Refs) -> list[tuple]:
     # Jake 2026-10-01); annualised customer revenue otherwise, and where the ARR cell is empty.
     def arr(r, p):
         ann = _annualise(R, r, p, "customer_revenue_usd", R.D(r, "customer_revenue_usd", "q0"))
-        if not any(f.get("metric") == "arr_usd"
-                   for f in ((p.get("dashboard_pages") or {}).get("labelled") or {}).values()):
+        if not p.get("arr_view") and not any(f.get("metric") == "arr_usd"
+                                             for f in ((p.get("dashboard_pages") or {}).get("labelled") or {}).values()):
             return ann
         own = R.D(r, "arr_usd", "now")
         return f"IF(ISNUMBER({own}),{own},{ann})"

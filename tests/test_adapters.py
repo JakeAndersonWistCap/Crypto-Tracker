@@ -20684,8 +20684,9 @@ def test_aethir_dashboard_by_label_supplier_vs_staker_emissions_and_components()
     # 06-08 .. 01-10 weekly = 9 points on 2026-10-01 (Jake's page read 630,412,275 "at 24-09-2026")
     assert len(st) == 9 and st.value.iloc[-2] == 630_412_275 and "emissions_tokens" not in set(f.metric)
     assert "8 point(s) not stored (after today: 2026-10-08 634,412,275.00 .. 2026-11-26)" in msgs
-    # ARR PINNED BY KEY (probes5), the value as read kept as a cross-check
-    assert float(one("arr_usd").value.iloc[0]) == 62_489_999.90221721
+    # ARR PINNED BY KEY (probes5), the value as read kept as a cross-check — stored as the labelled tile (Jake
+    # 2026-10-10: arr_usd for ratios is the 3-month view)
+    assert float(one("arr_tile_usd").value.iloc[0]) == 62_489_999.90221721 and one("arr_usd").empty
     assert "pinned by key; cross-check vs 62,490,000 as read 2026-10-01: -0.0%" in msgs
     # APRs: the `ai` / `gaming` arrays are undated (Jake, 2026-10-06 16:33) — UNAVAILABLE, his reading the reference
     assert one("staking_apr_ai").empty and one("staking_apr_gaming").empty
@@ -23581,7 +23582,7 @@ def test_spot_checks_compare_our_figure_with_a_live_reference_and_never_pass_wit
         "Hyperliquid|market_cap_usd": {"now": 27.7e9, "latest_date": "2026-10-04"},
         "Hyperliquid|price_usd": {"now": 92.75},
         "Hyperliquid|circulating_supply_first_party": {"now": 298.67e6},
-        "Aethir|arr_usd": {"now": 62.49e6}, "Aethir|locked_tokens": {"now": 1.79e9},
+        "Aethir|arr_tile_usd": {"now": 62.49e6}, "Aethir|locked_tokens": {"now": 1.79e9},
         "Aethir|customer_revenue_usd": {"q0": 14.0e6, "q0_covered_days": 84.0},
         "Uniswap|gross_burn_tokens": {"q0": 5.7e6, "q0_covered_days": 90.0},
         "Pendle|locked_tokens_shares": {"now": 60.0e6}, "Pendle|locked_tokens": {"now": 62.0e6},
@@ -23622,7 +23623,7 @@ def test_spot_checks_compare_our_figure_with_a_live_reference_and_never_pass_wit
     assert "[MANUAL] market cap vs ASXN" in out and "hyperscreener.asxn.xyz" in out
     assert "the gap is the circulating basis" in out
     # b) Aethir: stored vs a fresh read of the same dashboard is FRESH, never PASS
-    assert "[FRESH] ARR (stored) vs dashboard arr" in out and "[FRESH] locked_tokens vs dashboard totalStaked" in out
+    assert "[FRESH] ARR tile (stored, arr_tile_usd) vs dashboard arr" in out and "[FRESH] locked_tokens vs dashboard totalStaked" in out
     assert "customer revenue annualised vs dashboard arr" in out
     # c) 5.7M UNI vs $600K / $6 = 100K UNI: far outside ±30% -> CHECK, source named
     assert "[CHECK] UNI burned (90d)" in out and "DefiLlama dailyHoldersRevenue" in out

@@ -63,7 +63,8 @@ from .near_bigquery import NearBigQuery
 from .plume_staking import PlumeStaking
 from .scrape import Scrape, entry_ready, load_registry
 from .validate import (REASON_CHANGE, check_cross_checks, check_impossible_relations,
-                       check_flat_series, check_level_breaks, check_reference_values, validate_frame)
+                       check_flat_series, check_level_breaks, check_reference_values, check_watched_wallet,
+                       validate_frame)
 
 log = logging.getLogger("token_metrics.fetch")
 
@@ -1771,6 +1772,7 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
     from . import circulating
     circulating.check(out, _history(ctx.get("stored_long"), out.frame()), projects)
     check_reference_values(out.frame(), out)
+    check_watched_wallet(out.frame(), out)
     check_cross_checks(out.frame(), out)
     check_impossible_relations(out.frame(), out)
 

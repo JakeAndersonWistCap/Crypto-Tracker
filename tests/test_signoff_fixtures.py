@@ -1174,7 +1174,7 @@ def test_base_logs_are_found_by_bisecting_the_balance_not_by_scanning(monkeypatc
 def test_foundation_buy_and_lock_is_the_lock_stock_change_net_of_rebase_claims():
     """actual_buyback_tokens = d(locked) + min(d(claimable), 0) on consecutive days: a rebase claim (claimable -> lock)
     nets to 0, accrual is not a buy, a gap day is not differenced across, and a lock leaving the wallets is kept
-    negative and named. USD = tokens x the same-day price."""
+    negative, under the same source. USD = tokens x the same-day price."""
     import build_workbook as bw
     import config
     fb = config.PROJECT_BY_NAME["Aerodrome"]["foundation_buyback"]
@@ -1191,8 +1191,8 @@ def test_foundation_buy_and_lock_is_the_lock_stock_change_net_of_rebase_claims()
     tok = groups[("Aerodrome", "actual_buyback_tokens")].set_index("date")["value"]
     assert tok.to_dict() == {pd.Timestamp("2026-09-02"): 312.0, pd.Timestamp("2026-09-03"): 0.0,
                              pd.Timestamp("2026-09-04"): 0.0, pd.Timestamp("2026-09-07"): -50.0}
-    neg = groups[("Aerodrome", "actual_buyback_tokens")]
-    assert "NEGATIVE" in neg.loc[neg["value"] < 0, "source"].iloc[0]
+    # the negative day is kept as measured, under the SAME source as every other row (one measuring point)
+    assert groups[("Aerodrome", "actual_buyback_tokens")]["source"].nunique() == 1
     usd = groups[("Aerodrome", "actual_buyback_usd")].set_index("date")["value"]
     assert usd[pd.Timestamp("2026-09-02")] == 156.0
     # the buyback is HELD; after the merged-token launch it stays held until a first-party source says burned
@@ -1240,7 +1240,8 @@ def test_foundation_lock_read_stores_both_series_once_a_day_and_the_seed_marks_a
     frames = vm.seed_foundation([p], days=5, stored=stored, say=lambda *_: None,
                                 reader=lambda o, block="latest": got)
     seeded = pd.concat(frames)
-    assert set(seeded["source"]) == {config.mark_source("ve_managed:foundation_locks", "archive")}
+    # ONE source string, seeded or daily (Jake's run on 20d0eb4)
+    assert set(seeded["source"]) == {"ve_managed:foundation_locks"} == set(rows["source"])
     assert not any(str(x.date()).endswith("-01") for x in seeded["date"])
 
 
@@ -1356,3 +1357,180 @@ def test_fluid_igp137_custody_prints_label_balance_and_transfers_since(monkeypat
     assert all(fb == 23_100_000 for _t, fb in calls) and len(calls) == 2
     assert "FLUID balance now: 5,000,000.00" in out and "total IN: 5,000,000.00" in out and "total OUT: 0.00" in out
     assert "Blockscout: name None" in out and "not verified" in out
+
+
+# ===== JAKE'S RUN ON 20d0eb4 (2026-10-10) =====
+
+def _aero_long(values, claim=None, start="2026-09-01"):
+    days = pd.date_range(start, periods=len(values), freq="D")
+    rows = [{"date": d, "project": "Aerodrome", "metric": "foundation_locked_aero_tokens", "value": v,
+             "source": "ve_managed:foundation_locks", "tier": 2, "fetched_at": "2026-10-10T00:00:00", "is_manual": 0,
+             "entered_on": None, "source_note": None} for d, v in zip(days, values)]
+    for d, v in zip(days, claim or [0.0] * len(values)):
+        rows.append({**rows[0], "date": d, "metric": "foundation_rebase_claimable_tokens", "value": v})
+    for d in days:
+        rows.append({**rows[0], "date": d, "metric": "price_usd", "value": 0.5, "source": "coingecko:price"})
+    return pd.DataFrame(rows)
+
+
+def test_aerodrome_buyback_is_one_measuring_point_with_a_negative_day_and_the_split_matches_it():
+    """3: a negative day no longer adds a '[NEGATIVE …]' source (which stripped to a trailing space and read as a second
+    measuring point, blanking the series as BUG); the buyback row reports, and the retired split equals it (held)."""
+    import build_workbook as bw
+    long = _aero_long([100.0, 412.0, 462.0, 400.0, 450.0])            # 09-04: -62, a lock left
+    data = bw.aggregate(long, pd.DataFrame(), pd.Timestamp("2026-09-06"))
+    a = data[(data.project == "Aerodrome")].set_index("metric")
+    row = a.loc["actual_buyback_tokens"]
+    assert row["status"] != "measuring_point_changed", row["note"]
+    assert float(row["q0"]) == 312.0 + 50.0 - 62.0 + 50.0
+    assert float(a.loc["retired_buyback_tokens", "q0"]) == float(row["q0"])
+
+
+def test_the_buyback_split_inherits_a_withheld_parent(monkeypatch):
+    """3: E14 0.97% and AH14 -2.076M were computed while the Q0 buyback read n/a — the split rows now inherit the
+    parent's withholding (status, blank windows, the reason)."""
+    import build_workbook as bw
+    real = bw.withheld_for
+    monkeypatch.setattr(bw, "withheld_for", lambda p, m, r: (("measuring_point_changed", "forced for the test")
+                                                            if m == "actual_buyback_tokens" else real(p, m, r)))
+    data = bw.aggregate(_aero_long([100.0, 412.0, 462.0]), pd.DataFrame(), pd.Timestamp("2026-09-04"))
+    a = data[data.project == "Aerodrome"].set_index("metric")
+    for m in ("retired_buyback_tokens", "buyback_held_tokens"):
+        assert a.loc[m, "status"] == "measuring_point_changed" and pd.isna(a.loc[m, "q0"]), m
+        assert "inherits actual_buyback_tokens's: forced for the test" in a.loc[m, "note"]
+
+
+def test_aethir_arr_for_ratios_is_three_months_x4_and_the_tile_is_kept_apart():
+    """7: arr_usd = the last 3 complete months of monthlyNetworkRevenue x 4, dated the day after the third month; rows
+    stored as arr_usd before the decision (the tile) are read as arr_tile_usd."""
+    import build_workbook as bw
+    base = {"project": "Aethir", "tier": 3, "fetched_at": "x", "is_manual": 0, "entered_on": None, "source_note": None}
+    monthly = pd.DataFrame([{**base, "date": pd.Timestamp(d), "metric": "customer_revenue_monthly_usd", "value": v,
+                             "source": "aethir_page:protocol/demand-metric.monthlyNetworkRevenue"}
+                            for d, v in (("2026-06-01", 3.0e6), ("2026-07-01", 4.0e6), ("2026-08-01", 4.1e6),
+                                         ("2026-09-01", 4.32e6))])
+    tile = pd.DataFrame([{**base, "date": pd.Timestamp("2026-10-01"), "metric": "arr_usd", "value": 62_489_999.9,
+                          "source": "aethir_page:protocol/demand-metric.arr"}])
+    groups = {("Aethir", "customer_revenue_monthly_usd"): monthly, ("Aethir", "arr_usd"): tile}
+    bw._aethir_arr_view(groups)
+    arr = groups[("Aethir", "arr_usd")].sort_values("date")
+    assert arr["date"].iloc[-1] == pd.Timestamp("2026-10-01")
+    assert abs(float(arr["value"].iloc[-1]) - (4.0e6 + 4.1e6 + 4.32e6) * 4) < 1e-6          # $49.68M
+    assert list(groups[("Aethir", "arr_tile_usd")]["value"]) == [62_489_999.9]
+    import config
+    assert config.METRICS["arr_usd"]["view_only"] and "arr_tile_usd" in config.METRICS
+
+
+def test_aethir_customer_revenue_reference_is_the_monthly_list_scaled_to_our_days():
+    """6: the reference was the ARR tile x 90/365 (15.408M — one month scaled to a quarter); now the monthly list over
+    the last three complete months, scaled to our covered days."""
+    import credibility as cred
+    import config
+    long = pd.DataFrame([{"date": pd.Timestamp(d), "project": "Aethir", "metric": "customer_revenue_monthly_usd",
+                          "value": v} for d, v in (("2026-07-01", 4.0e6), ("2026-08-01", 4.1e6), ("2026-09-01", 4.32e6))])
+    rows = {"Aethir|customer_revenue_usd": {"q0_covered_days": 91.0}}
+    v, d, how = cred._months_scaled("Aethir", rows, long, pd.Timestamp("2026-10-10"),
+                                    monthly="customer_revenue_monthly_usd", months=3, cover_metric="customer_revenue_usd")
+    assert abs(v - 12.42e6 * 91 / 92) < 1 and d == "2026-09" and "2026-07, 2026-08, 2026-09" in how
+    spec = config.CREDIBILITY["Aethir"]["a2_customer_revenue"]
+    assert spec["formula"] == "months_scaled" and spec["tol"] == 25.0 and "scale" not in spec
+
+
+def test_aethir_node_reward_share_is_50pct_with_its_source():
+    import config
+    ref = config.PROJECT_BY_NAME["Aethir"]
+    ar = next(v["allocation_reference"] for v in ref.values() if isinstance(v, dict) and "allocation_reference" in v)
+    assert ar["checker_nodes_and_compute_providers_pct"] == 0.50 and ar["checker_nodes_and_compute_providers_tokens"] == 21e9
+    assert ar["split"] == {"checker_nodes_pct": 0.15, "compute_providers_pct": 0.35}
+    assert "token-vesting" in ar["source_url"] and ar["superseded"]["pct"] == 0.55
+
+
+def test_fluid_avocado_wallet_alert_fires_only_when_fluid_leaves():
+    """4: relabelled a team-controlled Avocado wallet; a balance read below 5,000,000 is a Review Queue item."""
+    import config
+    from fetch.base import FetchOutput
+    from fetch.validate import check_watched_wallet, REASON_WATCHED_OUTFLOW
+    assert "team-controlled Avocado wallet" in config.METRICS["noncirculating_igp137_tokens"]["label"]
+    row = lambda v: pd.DataFrame([{"date": pd.Timestamp("2026-10-10"), "project": "Fluid",  # noqa: E731
+                                   "metric": "noncirculating_igp137_tokens", "value": v, "source": "chain:x"}])
+    out = FetchOutput()
+    check_watched_wallet(row(5_000_000.0), out)
+    assert not out.review
+    check_watched_wallet(row(4_250_000.0), out)
+    assert len(out.review) == 1 and REASON_WATCHED_OUTFLOW in str(out.review[0])
+
+
+def test_aerodrome_bribe_scan_flags_unpriced_at_deposit_and_reports_what_the_cap_missed(monkeypatch, capsys):
+    """1: per deposit — the depositor's rewards listed; 'unpriced at deposit' is a FLAG (not an exclusion), and a
+    flagged token the cap did not catch is reported."""
+    import check_offline_items as coi
+    import time as _t
+    week = 7 * 86400
+    last = int(_t.time()) // week * week - week
+    lap, xdp, rc1, rc2 = "0x" + "aa" * 20, "0x" + "bb" * 20, "0x" + "11" * 20, "0x" + "22" * 20
+    tok = lambda t, sym, usd, excess, rc: {"token": t, "symbol": sym, "kinds": ["bribes"], "price": 1.0, "usd": usd,  # noqa: E731
+                                          "depth": 1000.0, "excess": excess, "rewards": {rc: ("bribes", "0xpool", 1)}}
+
+    def epochs(eps, archive=True, **kw):
+        return {e: ({"usd_bribes": 9e6, "end_block": 200, "tokens": [tok(lap, "LAPTOP", 7.5e6, 6.9e6, rc1),
+                                                                    tok(xdp, "XDP", 6e5, 0.0, rc2)]}
+                    if e == last else {"usd_bribes": 0.0, "end_block": 200, "tokens": []}) for e in eps}
+    monkeypatch.setattr(coi, "aerodrome_voter_epochs", epochs)
+    monkeypatch.setattr(coi, "rpc_block_at", lambda chain, ts, say=print: 100)
+    pad = lambda a: "0x" + a[2:].rjust(64, "0")  # noqa: E731
+    dep = coi.AERO_BRIBE_DEPOSITOR
+
+    def logs(token, holder, topics, b0, b1, say=print, max_calls=600, **kw):
+        return [{"topics": [topics[0], pad(dep), topics[2], topics[3]], "data": hex(4 * 10 ** 24),
+                 "timeStamp": 1_786_000_000, "transactionHash": "0xt" + token[2:6]}], "1 log(s)"
+    monkeypatch.setattr(coi, "base_logs_where_balance_moves", logs)
+    monkeypatch.setattr(coi, "_llama_prices", lambda keys, at, say=print: {})       # nothing priced at deposit
+    coi.aerodrome_bribe_scan()
+    out = capsys.readouterr().out
+    assert "(a) REWARDS POSTED BY" in out and out.count("0xt") >= 2
+    assert out.count("UNPRICED AT DEPOSIT") >= 2
+    missed = out.split("NOT CAUGHT BY THE CAP:")[1]
+    assert "XDP" in missed and "LAPTOP" not in missed.split("PASTE BACK")[0]
+
+
+def test_near_bq_backfill_status_names_the_reauth_stop(monkeypatch, capsys):
+    import check_offline_items as coi
+    from fetch import near_bigquery as nbq
+    today = str(pd.Timestamp.now().date())
+    st = {"days": {f"2026-0{m}-0{d}": {} for m in (4, 5) for d in (1, 2)}, "reauth": {"count": 2, "dates": [today]},
+          "ledger": {today[:7]: 100 * 10 ** 9}, "topup_bytes": {"bytes": 2e9, "on": today, "source": "t"}}
+    monkeypatch.setattr(nbq.NearBigQuery, "_load", lambda self: st)
+    coi.near_bq_backfill_status()
+    out = capsys.readouterr().out
+    assert "days held 4 of 365" in out and "re-authentication needed on 2 day(s)" in out
+    assert "resumes from this state" in out
+
+
+def test_morpho_listed_vs_all_splits_listed_self_lent_and_other(monkeypatch, capsys):
+    """2: the API summed over ALL markets, split listed / unlisted other / unlisted self-lent (supply == borrow on a
+    market over $1M), interest per day from borrowApy; a historicalState schema error is printed, not guessed."""
+    import check_offline_items as coi
+    import types
+    import store as store_mod
+    monkeypatch.setattr(store_mod, "DB_PATH", "/nonexistent/metrics.db")
+    mk = lambda k, listed, s, b, apy: {"uniqueKey": k * 8, "chain": {"id": 1}, "listed": listed,  # noqa: E731
+                                       "loanAsset": {"symbol": "USDC"}, "collateralAsset": {"symbol": "X"},
+                                       "state": {"supplyAssetsUsd": s, "borrowAssetsUsd": b, "borrowApy": apy}}
+    markets = [mk("a", True, 100e6, 90e6, 0.05), mk("b", False, 20e6, 10e6, 0.08), mk("c", False, 10e9, 10e9, 0.10)]
+
+    def post(url, json=None, **kw):
+        q = json["query"]
+        if "chains" in q:
+            body = {"data": {"chains": [{"id": 1}]}}
+        elif "historicalState" in q:
+            body = {"errors": [{"message": 'Cannot query field "historicalState"'}]}
+        else:
+            body = {"data": {"markets": {"pageInfo": {"countTotal": 3}, "items": markets}}}
+        return types.SimpleNamespace(json=lambda: body)
+    monkeypatch.setattr(coi.requests, "post", post)
+    coi.morpho_interest_listed_vs_all()
+    out = capsys.readouterr().out
+    d = lambda b, a: b * ((1 + a) ** (1 / 365) - 1)  # noqa: E731
+    assert f"listed                    1 markets  borrow $        90,000,000  interest ${d(90e6, 0.05):>14,.0f}" in out
+    assert "unlisted self-lent        1 markets" in out and "unlisted other            1 markets" in out
+    assert "historicalState not read" in out and "tolerance stays 10%" in out

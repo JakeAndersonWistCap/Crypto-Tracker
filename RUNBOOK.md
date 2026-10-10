@@ -527,6 +527,82 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11bg. Jake's run on 20d0eb4 (2026-10-10)
+
+**1. Bribe depositor 0x80f7… and "unpriced at deposit":** `python check_offline_items.py aerodrome_bribe_scan`.
+- **Scope:** every Q0 epoch; every bribe token worth ≥ $1,000 at the quoted price, or unpriced, on every
+  BribeVotingReward it was paid on.
+- **Method:** each NotifyReward is located through the Base balance-bisection route. For each one it records the
+  depositor, the time and DefiLlama's price AT THE DEPOSIT.
+- **Per token:** $ at the quoted price, depth, whether the illiquid cap caught it, and the flag UNPRICED AT DEPOSIT.
+- **Epoch table:** a flag count and its $ beside the cap's exclusions. The flag is NOT a second exclusion rule.
+- **Output:**
+  - (a) every reward 0x80f7… posted;
+  - (b) every flagged token the cap did not catch.
+- **Not covered:** tokens below the floor, and fee tokens.
+
+**2. Morpho in_interest_day (+10.5% vs ±10%):** `python check_offline_items.py morpho_interest_listed_vs_all`.
+- **Yes, the API can sum ALL markets:** drop `listed` from `where`.
+- **The unfiltered population** is mostly fabricated self-lent supply (lending_api.listed_vs_unlisted_2026_09_23). So
+  the probe splits three ways:
+  - LISTED (our reference);
+  - UNLISTED SELF-LENT (supply == borrow within 0.5%, over $1M);
+  - UNLISTED OTHER.
+- **Interest per day** = borrowAssetsUsd × ((1 + borrowApy)^(1/365) − 1).
+- **Comparisons:** each split against DefiLlama's fees for the last 7 complete days from the local store.
+- **The last 7 days per market** come from `historicalState` if the API serves it; a schema error is printed, not
+  guessed around.
+- **The 10% tolerance is unchanged** until Jake decides.
+
+**3. Aerodrome actual_buyback_tokens "BUG: measuring point changed": fixed.**
+- **Cause:** a negative day's derived row carried " [NEGATIVE: a lock left the buyback wallets]". Stripping the
+  bracket left a trailing space, so it read as a second measuring point.
+- **Fix, one source string everywhere:**
+  - the derived buyback has one source;
+  - the seeded and daily lock rows are both `ve_managed:foundation_locks` (the archive read is said in the log line).
+- **Why E14 0.97% / AH14 −2.076M showed while the Q0 buyback read n/a:**
+  - The retirement split views (retired_buyback_tokens etc.) are computed from the same rows the parent row blanks.
+  - Their own source passed the check.
+  - So the rates were built on a series the sheet was withholding.
+- **Now the split rows inherit the parent's withholding**: status, blank windows and the reason.
+- **Q0 change in the Foundation's locked AERO:** `python check_offline_items.py aerodrome_foundation_q0` (local store).
+  - It prints the stock at both ends and the change, the claimable at both ends, and the summed daily buy-and-lock.
+  - It also lists every negative day.
+  - It is set beside Blockworks' 9.17M for Q2 (secondary, for scale only).
+
+**4. Fluid 0xCaBe…:**
+- **Relabelled** "team-controlled Avocado wallet, not a custodian or time-lock". It stays non-circulating.
+- **Alert:** a balance read below 5,000,000 is a Review Queue item every run (`FLUID_IGP137_WATCH`,
+  `fetch/validate.check_watched_wallet`).
+
+**5. NEAR settlement backfill at 193/365 on 10-09 and 10-10.**
+- **Mechanics:** an expired login stops every BigQuery read for the run and stores nothing (`_reauth`). The held days
+  cannot move.
+- **Recovery:** the next run after `gcloud auth application-default login` resumes from the state file — the top-up
+  first, then one ≤31-day backfill chunk a run (`--seed near_bigquery` runs every chunk the budget allows).
+- **The monthly budget can also hold the backfill** ("BACKFILL HELD" in the run log).
+- **Run:** `python check_offline_items.py near_bq_backfill_status`. It reads the state only — the days held, the
+  re-auth dates and the month's ledger vs the budget and reserve — and says which.
+
+**6. Aethir customer revenue reference 15.408M.**
+- **What it is:** the ARR tile $62.49M × 90/365. The tile is the last complete month × 12 (aethir_arr_formula, exact),
+  so the reference was ONE month scaled to a quarter. It was not the right reference.
+- **Now:** Aethir's own monthlyNetworkRevenue over the last three complete months (Jul-Sep $12.42M), scaled to our
+  covered days.
+  - Formula: `months_scaled`.
+  - Same source, so the row is FRESH at best. The tolerance is unchanged at 25%.
+
+**7. Aethir ARR (Jake decided):**
+- `arr_usd` (ratios) = the last 3 complete months of monthlyNetworkRevenue × 4 ($49.70M). It is a read-time view,
+  `_aethir_arr_view`.
+- The tile is stored as `arr_tile_usd`, a labelled second figure. Rows stored as arr_usd before today are read as the
+  tile, so no stored row is rewritten.
+
+**8. Aethir node-reward share (Jake decided):** 50% = 21bn (15% checker + 35% compute).
+- Source: docs.aethir.com/aethir-tokenomics/token-vesting.
+- Split per Aethir Edge's post (15% checkers + 12% data centres + 23% edge).
+- The 55% is kept as `superseded`.
+
 ## 11bf. Follow-ups on 0eda6ce (Jake, 2026-10-10)
 
 **1. Aethir ARR (`arr_usd`, $62.49M): what it is computed from.**

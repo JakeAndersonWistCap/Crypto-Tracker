@@ -4081,6 +4081,287 @@ def near_lockups(limit: int | None = None):
           "LOCKED. PASTE BACK the totals.")
 
 
+# ===== JAKE'S RUN ON 20d0eb4 (2026-10-10): BRIBE DEPOSITS, MORPHO LISTED vs ALL, FOUNDATION Q0, NEAR BACKFILL =====
+AERO_BRIBE_DEPOSITOR = "0x80f7153d9bc853a9bf8bc21f2517c0acee2fdf75"   # Jake's aerodrome_epoch_rewards run on 20d0eb4
+
+
+def aerodrome_bribe_scan(depositor: str = AERO_BRIBE_DEPOSITOR, min_usd: float = 1_000.0, days: int = 90):
+    """EVERY Q0 EPOCH'S BRIBES BY DEPOSIT (Jake's run on 20d0eb4: 0x80f7… posted LAPTOP 4M on 09-09 with NO DefiLlama
+    price, LAPTOP 100K at $1.79, XDP 30M on 09-28 with NO price, LAPTOP 8K at $0.078). For each epoch of the last
+    `days` days: every bribe token worth >= `min_usd` at the quoted (epoch-end) price — or unpriced at the end — on every
+    BribeVotingReward it was paid on, each NotifyReward located through the Base balance-bisection route (Base logs are
+    paid): depositor, time, DefiLlama's price AT THE DEPOSIT. Per token: $ at the quoted price, the depth a sale could
+    reach, whether the illiquid-token cap caught it, and the flag UNPRICED AT DEPOSIT (DefiLlama had no price when it
+    was posted). The flag is a FLAG on the epoch table, not a second exclusion rule. Reports (a) every reward this
+    `depositor` posted and (b) every token the flag catches that the cap missed. Reads only; long (archive reads)."""
+    import time as _t                                      # noqa: PLC0415
+    from eth_utils import keccak                           # noqa: PLC0415
+    head(f"AERODROME — Q0 bribes by deposit: depositor {depositor[:10]}…, 'unpriced at deposit' flag vs the cap")
+    week = 7 * 86400
+    now = int(_t.time())
+    last = now // week * week - week
+    first = (now - days * 86400) // week * week
+    eps = list(range(first, last + 1, week))
+    print(f"  {len(eps)} epoch(s): {_t.strftime('%Y-%m-%d', _t.gmtime(eps[0]))} .. "
+          f"{_t.strftime('%Y-%m-%d', _t.gmtime(eps[-1]))}; tokens >= ${min_usd:,.0f} at the quoted price, or unpriced")
+    res = aerodrome_voter_epochs(eps, archive=True)
+    if res.get("error"):
+        print(f"  {res['error']}")
+        return
+    notify = "0x" + keccak(text="NotifyReward(address,address,uint256,uint256)").hex().removeprefix("0x")
+    dep = depositor.lower()
+    by_dep, flagged_missed, table = [], [], []
+    for ep in eps:
+        r, day = res.get(ep) or {}, _t.strftime("%Y-%m-%d", _t.gmtime(ep))
+        if r.get("error") or not r:
+            print(f"\n  EPOCH {day}: {r.get('error', 'not read')}")
+            continue
+        b0, b1 = rpc_block_at("base", ep), r.get("end_block")
+        toks = [d for d in r["tokens"] if "bribes" in d["kinds"] and (not d["price"] or (d["usd"] or 0) >= min_usd)]
+        print(f"\n  EPOCH {day}: bribes ${r['usd_bribes']:,.0f} quoted; {len(toks)} token(s) scanned; blocks {b0}..{b1}")
+        flag_n = flag_usd = capped_usd = 0.0
+        for d in toks:
+            sym = str(d.get("symbol") or "?")[:12]
+            unp_dep, deps = False, []
+            for rc, (kd, _pl, _raw) in d["rewards"].items():
+                if kd != "bribes" or not (b0 and b1):
+                    continue
+                logs, why = base_logs_where_balance_moves(d["token"], rc, [notify, None, _pad(d["token"]),
+                                                                           "0x" + _word(ep)], b0, b1, say=lambda *_: None,
+                                                          max_calls=300)
+                if not logs and any(w in why for w in ("stopped", "unreadable", "refused")):
+                    print(f"    {sym:<12} {rc}: NotifyReward not read — {why}")
+                for e in logs or ():
+                    ts, amt = int(e.get("timeStamp") or 0), int(e["data"], 16)
+                    frm = "0x" + e["topics"][1][-40:]
+                    pr = _llama_prices([f"base:{d['token']}"], f"historical/{ts}/").get(d["token"].lower()) if ts else None
+                    priced = bool(pr and pr.get("price"))
+                    unp_dep = unp_dep or not priced
+                    deps.append((frm, ts, amt, pr))
+                    if frm.lower() == dep:
+                        by_dep.append((day, sym, d["token"], ts, amt, pr, e["transactionHash"]))
+            capped = bool(d.get("excess"))
+            caught_by_cap = capped
+            if unp_dep:
+                flag_n += 1
+                flag_usd += d["usd"] or 0.0
+                if not caught_by_cap and (d["usd"] or 0) > 0:
+                    flagged_missed.append((day, sym, d["token"], d["usd"], d.get("depth")))
+            if capped:
+                capped_usd += d.get("excess") or 0.0
+            num = lambda x, f: "-" if x is None else format(x, f)                       # noqa: E731
+            print(f"    {sym:<12} {d['token']}  ${num(d['usd'], ',.0f'):>12} quoted  depth ${num(d.get('depth'), ',.0f'):>12}"
+                  f"  cap {'CAUGHT $' + format(d['excess'], ',.0f') if capped else 'no':<18}"
+                  f"  {'UNPRICED AT DEPOSIT' if unp_dep else ''}"
+                  + "".join(f"\n        deposit {'0x80f7…' if f.lower() == dep else f} "
+                            f"{_t.strftime('%m-%d %H:%M', _t.gmtime(ts)) if ts else '?'} raw {a}"
+                            f" — {'$' + format(float(p['price']), ',.6f') if p and p.get('price') else 'NO DefiLlama price'}"
+                            for f, ts, a, p in deps))
+        table.append((day, r["usd_bribes"], len(toks), int(flag_n), flag_usd, capped_usd))
+    print("\n  EPOCH TABLE — bribes quoted, tokens scanned, UNPRICED-AT-DEPOSIT flag (count, $ quoted), cap excluded $")
+    for day, ub, n, fn, fu, cu in table:
+        print(f"    {day}  ${ub:>14,.0f}  {n:>3}  flag {fn:>2} ${fu:>14,.0f}  cap ${cu:>14,.0f}")
+    print(f"\n  (a) REWARDS POSTED BY {depositor}: {len(by_dep)}")
+    for day, sym, tok, ts, amt, pr, tx in by_dep:
+        print(f"    epoch {day}  {sym} {tok}  {_t.strftime('%Y-%m-%d %H:%M', _t.gmtime(ts)) if ts else '?'}  raw {amt}  "
+              f"{'$' + format(float(pr['price']), ',.6f') if pr and pr.get('price') else 'NO price'}  tx {tx}")
+    print(f"  (b) FLAGGED 'UNPRICED AT DEPOSIT' AND NOT CAUGHT BY THE CAP: {len(flagged_missed)}")
+    for day, sym, tok, usd, depth in flagged_missed:
+        print(f"    epoch {day}  {sym} {tok}  ${usd or 0:,.0f} quoted, depth ${depth or 0:,.0f}")
+    print("  PASTE BACK the epoch table and (a)/(b). Tokens below the floor and fee tokens are not scanned.")
+
+
+def morpho_interest_listed_vs_all():
+    """MORPHO in_interest_day (Jake's run on 20d0eb4: +10.5% against +/-10%): can Morpho's API sum ALL markets? It can —
+    `where` without `listed` — and the population splits three ways, measured here at the read: LISTED (our reference),
+    UNLISTED SELF-LENT (supply == borrow within 0.5% on a market over $1M: one position lent to itself, the fabricated
+    tail recorded on lending_api.listed_vs_unlisted_2026_09_23) and UNLISTED OTHER. Interest per day = borrowAssetsUsd x
+    ((1 + borrowApy)^(1/365) - 1). Then the same for each of the last 7 days from historicalState where the API serves
+    it, against DefiLlama's fees for those days from the local store. The tolerance is not touched (Jake decides)."""
+    import os                                              # noqa: PLC0415
+    import pandas as pd                                    # noqa: PLC0415
+    head("MORPHO — borrower interest per day: listed vs ALL markets (API at the read, and the last 7 days)")
+    url = "https://blue-api.morpho.org/graphql"
+    try:
+        ids = [c["id"] for c in ((requests.post(url, json={"query": "{ chains { id } }"}, headers=_ua(),
+                                                timeout=TIMEOUT).json().get("data") or {}).get("chains") or [])]
+    except Exception as e:  # noqa: BLE001
+        print(f"  UNREACHABLE — {e}")
+        return
+    q = ("query($c:[Int!],$skip:Int!,$first:Int!){ markets(first:$first, skip:$skip, where:{chainId_in:$c}){ "
+         "pageInfo{countTotal} items{ uniqueKey chain{id} listed loanAsset{symbol} collateralAsset{symbol} "
+         "state{ supplyAssetsUsd borrowAssetsUsd borrowApy } } } }")
+    items, total = [], None
+    for skip in range(0, 60_000, 1_000):
+        page = requests.post(url, json={"query": q, "variables": {"c": ids, "skip": skip, "first": 1000}},
+                             headers=_ua(), timeout=TIMEOUT).json()
+        if page.get("errors"):
+            print(f"  GraphQL errors: {page['errors']}")
+            return
+        node = (page.get("data") or {}).get("markets") or {}
+        got = node.get("items") or []
+        total = (node.get("pageInfo") or {}).get("countTotal") or total
+        items += got
+        if not got or (total and len(items) >= total):
+            break
+
+    def f(i, k):
+        v = (i.get("state") or {}).get(k)
+        return float(v) if isinstance(v, (int, float)) else 0.0
+
+    def day_int(i):
+        return f(i, "borrowAssetsUsd") * ((1 + f(i, "borrowApy")) ** (1 / 365) - 1)
+
+    def cls(i):
+        if i.get("listed"):
+            return "listed"
+        s, b = f(i, "supplyAssetsUsd"), f(i, "borrowAssetsUsd")
+        return "unlisted self-lent" if b > 1e6 and abs(s - b) <= 0.005 * s else "unlisted other"
+    agg = {}
+    for i in items:
+        c = cls(i)
+        n, b, d = agg.get(c, (0, 0.0, 0.0))
+        agg[c] = (n + 1, b + f(i, "borrowAssetsUsd"), d + day_int(i))
+    print(f"  {len(items)} of {total} markets, {len(ids)} chains, at {pd.Timestamp.now(tz='UTC'):%Y-%m-%d %H:%M} UTC")
+    for c in ("listed", "unlisted other", "unlisted self-lent"):
+        n, b, d = agg.get(c, (0, 0.0, 0.0))
+        print(f"    {c:<20} {n:>6} markets  borrow ${b:>18,.0f}  interest ${d:>14,.0f}/day  x7 ${d * 7:>16,.0f}")
+    lst, oth = agg.get("listed", (0, 0, 0))[2], agg.get("unlisted other", (0, 0, 0))[2]
+    top = sorted((i for i in items if cls(i) == "unlisted other"), key=day_int, reverse=True)[:10]
+    print("  the ten largest UNLISTED OTHER markets by interest/day:")
+    for i in top:
+        print(f"    {i['uniqueKey'][:14]}… chain {i['chain']['id']}  {(i.get('loanAsset') or {}).get('symbol')}/"
+              f"{(i.get('collateralAsset') or {}).get('symbol')}  borrow ${f(i, 'borrowAssetsUsd'):,.0f}  "
+              f"apy {f(i, 'borrowApy'):.2%}  ${day_int(i):,.0f}/day")
+    fees = None
+    try:
+        import store as store_mod                          # noqa: PLC0415
+        if os.path.exists(store_mod.DB_PATH):
+            lg = store_mod.Store(store_mod.DB_PATH).load_long()
+            s = lg[(lg.project == "Morpho") & (lg.metric == "fees_usd")].copy()
+            s["date"] = pd.to_datetime(s["date"]).dt.normalize()
+            y = pd.Timestamp.now(tz="UTC").normalize().tz_localize(None) - pd.Timedelta(days=1)
+            w = s[(s.date > y - pd.Timedelta(days=7)) & (s.date <= y)].drop_duplicates("date", keep="last")
+            fees = (float(w["value"].sum()), len(w), y)
+    except Exception as e:  # noqa: BLE001
+        print(f"  (store not read: {type(e).__name__})")
+    if fees:
+        tot, n, y = fees
+        print(f"\n  DefiLlama fees, the {n} complete day(s) to {y:%Y-%m-%d}: ${tot:,.0f}")
+        for lab, d in (("listed (our reference)", lst), ("listed + unlisted other", lst + oth),
+                       ("ALL markets", sum(x[2] for x in agg.values()))):
+            print(f"    vs {lab:<26} x7 ${d * 7:>16,.0f}: DefiLlama {tot / (d * 7) - 1:+.1%}" if d else f"    {lab}: 0")
+    # THE LAST 7 DAYS PER MARKET, where the API serves a daily history (historicalState): listed and unlisted-other
+    # markets with >= $1M borrowed now; a schema error is printed, not guessed around
+    keys = [i["uniqueKey"] for i in items if cls(i) != "unlisted self-lent" and f(i, "borrowAssetsUsd") >= 1e6]
+    now_ts = int(pd.Timestamp.now(tz="UTC").normalize().timestamp())
+    opts = {"startTimestamp": now_ts - 8 * 86400, "endTimestamp": now_ts, "interval": "DAY"}
+    hq = ("query($k:[String!],$o:TimeseriesOptions){ markets(first:1000, where:{uniqueKey_in:$k}){ items{ uniqueKey "
+          "listed historicalState{ borrowAssetsUsd(options:$o){x y} borrowApy(options:$o){x y} } } } }")
+    per_day = {}
+    for i in range(0, len(keys), 200):
+        j = requests.post(url, json={"query": hq, "variables": {"k": keys[i:i + 200], "o": opts}}, headers=_ua(),
+                          timeout=TIMEOUT).json()
+        if j.get("errors"):
+            print(f"\n  historicalState not read (the 'last 7 days' split needs it): {str(j['errors'])[:400]}")
+            per_day = {}
+            break
+        for m in ((j.get("data") or {}).get("markets") or {}).get("items") or []:
+            hs = m.get("historicalState") or {}
+            apy = {p["x"]: float(p["y"] or 0) for p in hs.get("borrowApy") or []}
+            for p in hs.get("borrowAssetsUsd") or []:
+                d = pd.Timestamp(int(p["x"]), unit="s").normalize()
+                v = float(p["y"] or 0) * ((1 + apy.get(p["x"], 0.0)) ** (1 / 365) - 1)
+                k = "listed" if m.get("listed") else "unlisted other"
+                per_day.setdefault(d, {}).setdefault(k, 0.0)
+                per_day[d][k] += v
+    if per_day:
+        print("\n  LAST 7 DAYS from historicalState (markets with >= $1M borrowed now; self-lent left out):")
+        for d in sorted(per_day)[-7:]:
+            a, b = per_day[d].get("listed", 0.0), per_day[d].get("unlisted other", 0.0)
+            print(f"    {d:%Y-%m-%d}  listed ${a:>12,.0f}  + unlisted other ${b:>12,.0f}  = ${a + b:>12,.0f}")
+    print("  PASTE BACK the split. The tolerance stays 10% until Jake decides.")
+
+
+def aerodrome_foundation_q0(days: int = 90):
+    """THE Q0 CHANGE IN THE FOUNDATION'S LOCKED AERO, FROM THE LOCAL STORE (Jake's run on 20d0eb4): the stock
+    (foundation_locked_aero_tokens) at the first and last stored day of the last `days` days, its change, the claimable
+    rebase at both ends, the sum of the daily buy-and-lock (Δ locked + min(Δ claimable, 0)) and every negative day.
+    Set beside Blockworks' 9.17M AERO for Q2 2026 (secondary, for scale only). Reads metrics.db only."""
+    import os                                              # noqa: PLC0415
+    import pandas as pd                                    # noqa: PLC0415
+    import config                                          # noqa: PLC0415
+    import store as store_mod                              # noqa: PLC0415
+    head(f"AERODROME — the Foundation's locked AERO over the last {days} days (local store)")
+    fb = config.PROJECT_BY_NAME["Aerodrome"]["foundation_buyback"]
+    if not os.path.exists(store_mod.DB_PATH):
+        print(f"  no store at {store_mod.DB_PATH}")
+        return
+    lg = store_mod.Store(store_mod.DB_PATH).load_long()
+
+    def ser(m):
+        s = lg[(lg.project == "Aerodrome") & (lg.metric == m)].copy()
+        s["date"] = pd.to_datetime(s["date"]).dt.normalize()
+        return s.drop_duplicates("date", keep="last").set_index("date")["value"].astype(float).sort_index()
+    st, cl = ser(fb["stock_metric"]), ser(fb["claimable_metric"])
+    end = pd.Timestamp.now().normalize()
+    st, cl = st[st.index > end - pd.Timedelta(days=days)], cl[cl.index > end - pd.Timedelta(days=days)]
+    if st.empty:
+        print("  no foundation_locked_aero_tokens rows in the window — run `python token_metrics.py --seed aero_buyback`")
+        return
+    print(f"  {len(st)} stored day(s), {st.index[0]:%Y-%m-%d} .. {st.index[-1]:%Y-%m-%d}")
+    print(f"  locked AERO   {st.iloc[0]:>18,.0f} -> {st.iloc[-1]:>18,.0f}   change {st.iloc[-1] - st.iloc[0]:>+16,.0f}")
+    if not cl.empty:
+        print(f"  claimable     {cl.iloc[0]:>18,.0f} -> {cl.iloc[-1]:>18,.0f}   change {cl.iloc[-1] - cl.iloc[0]:>+16,.0f}")
+    d = st.diff()
+    d = d[(d.index.to_series().diff() == pd.Timedelta(days=1)).values & d.notna().values]
+    if not cl.empty:
+        d = d + cl.diff().reindex(d.index).clip(upper=0).fillna(0.0)
+    gaps = int(((st.index.to_series().diff() > pd.Timedelta(days=1))).sum())
+    print(f"  daily buy-and-lock summed {d.sum():>+18,.0f} AERO over {len(d)} consecutive-day pair(s); {gaps} gap(s) "
+          f"in the stored days (a change across a gap is not counted)")
+    for day, v in d[d < 0].items():
+        print(f"    NEGATIVE {day:%Y-%m-%d}: {v:,.0f} (a lock left the buyback wallets)")
+    print("  for scale only: Blockworks reported 9.17M AERO bought in Q2 2026 (27.95M YTD) — secondary, per the "
+          "external audit; a different quarter")
+
+
+def near_bq_backfill_status():
+    """WHY NEAR's SETTLEMENT BACKFILL HELD STILL (Jake's run on 20d0eb4: 193/365 days on 10-09 and 10-10). Reads the
+    state file only (fetch/near_bigquery: the days held, the re-authentication dates, the month's BigQuery ledger and
+    the top-up reserve) and says what the next run will do: an expired login stops every read and stores nothing, and
+    the state resumes from where it stopped once `gcloud auth application-default login` is redone; a budget hold says
+    so instead."""
+    import pandas as pd                                    # noqa: PLC0415
+    import config                                          # noqa: PLC0415
+    from fetch.near_bigquery import NearBigQuery           # noqa: PLC0415
+    head("NEAR — the settlement (P2P) backfill: days held, re-auth dates, the month's budget")
+    spec = config.PROJECT_BY_NAME["Near"]["near_bigquery"]
+    nb = NearBigQuery()
+    st = nb._load()                                        # noqa: SLF001
+    days = sorted(st.get("days") or {})
+    print(f"  state {nb._path()}")                         # noqa: SLF001
+    print(f"  days held {len(days)} of {spec['days']}" + (f" ({days[0]} .. {days[-1]})" if days else ""))
+    r = st.get("reauth") or {}
+    print(f"  re-authentication needed on {r.get('count', 0)} day(s): {', '.join(r.get('dates') or []) or 'none'}")
+    month = str(pd.Timestamp.now().date())[:7]
+    used, budget = int((st.get("ledger") or {}).get(month, 0)), int(spec["monthly_budget_bytes"])
+    reserve, how = nb._reserve(spec, st)                   # noqa: SLF001
+    print(f"  {month}: {used / 1e9:,.1f} GB used of {budget / 1e9:,.0f} GB; top-up reserve "
+          + (f"{reserve / 1e9:,.1f} GB ({how}); left for backfill {max(budget - used - reserve, 0) / 1e9:,.1f} GB"
+             if reserve is not None else f"UNKNOWN ({how}) — the backfill is held until a top-up is dry-run"))
+    today = str(pd.Timestamp.now().date())
+    stalled_auth = any(d >= str((pd.Timestamp.now() - pd.Timedelta(days=2)).date()) for d in r.get("dates") or [])
+    print("  VERDICT: " + ("the last two days include a re-authentication stop — every BigQuery read stopped and nothing "
+                          "was stored, so the held days did not move. After `gcloud auth application-default login` the "
+                          "next run resumes from this state: the daily top-up first, then one backfill chunk of <= "
+                          f"{spec['chunk_days']} days a run (or `python token_metrics.py --seed near_bigquery` for "
+                          "every chunk the budget allows)." if stalled_auth else
+                          "no re-authentication stop in the last two days — if the count did not move, the run log "
+                          "line 'BACKFILL HELD' names the budget reason"))
+    print(f"  (today {today})")
+
+
 # ===== MORPHO — MERKL'S CAMPAIGN AMOUNTS FOR MORPHO OVER A WINDOW (the sweep, 2026-10-07) =====
 def morpho_merkl_campaigns(days: int = 90):
     """Every Merkl campaign paying MORPHO on Ethereum (api.merkl.xyz/v4/campaigns, any status), each campaign's amount
@@ -7438,7 +7719,8 @@ def _spot_aethir(spot, rows):
         spot.info(f"dashboard arr not read: {why_d or key_scalar(demand or '', 'arr')[1]}")
     if staked is None:
         spot.info(f"dashboard totalStaked not read: {why_c or key_scalar(chain or '', 'totalStaked')[1]}")
-    spot.compare(item, "ARR (stored) vs dashboard arr", _row(rows, "Aethir|arr_usd"), arr, "aethir_arr_fresh",
+    spot.compare(item, "ARR tile (stored, arr_tile_usd) vs dashboard arr", _row(rows, "Aethir|arr_tile_usd"), arr,
+                 "aethir_arr_fresh",
                  base + "demand-metric `arr`, read now", unit="$", same_source=True)
     spot.compare(item, "locked_tokens vs dashboard totalStaked", _row(rows, "Aethir|locked_tokens"), staked,
                  "aethir_staked_fresh", base + "onchain-metric `totalStaked`, read now", unit="ATH", same_source=True)
@@ -7451,7 +7733,7 @@ def _spot_aethir(spot, rows):
                  "the dashboard's own run-rate (definition not published) — a different derivation from the "
                  "weekly series, both Aethir's own figures", unit="$")
     if arr is None:
-        spot.manual(item, "ARR", _row(rows, "Aethir|arr_usd"),
+        spot.manual(item, "ARR", _row(rows, "Aethir|arr_tile_usd"),
                     "dashboard.aethir.com → Protocol → Demand Metric, the ARR tile", unit="$")
 
 
@@ -9945,6 +10227,7 @@ CHECKS = (
     hl_af_fills_depth, etherfi_safe_owners, etherfi_sethfi_topups, etherfi_topup_safe, etherfi_cex_test, near_protocol_v87, aethir_pin_keys,
     robots_and_terms, ultrasound_history, hyperliquid_history_routes, blockworks_filings, maple_dao_vs_ssf, aethir_reward_distributors, etherfi_yield_reconcile, maple_ssf_candidates,
     aethir_distributor_match, fluid_igp137_wallet, fluid_igp137_custody, aethir_arr_formula, near_lockups,
+    aerodrome_bribe_scan, morpho_interest_listed_vs_all, aerodrome_foundation_q0, near_bq_backfill_status,
     morpho_merkl_campaigns, etherfi_sender_trace,
     aerodrome_filing_wallets, blockworks_wallet_balances,
     etherfi_vault_archive, etherfi_contract_ids, etherfi_accountant, fluid_vesting_recipients, maple_ssf_partial,
