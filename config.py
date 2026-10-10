@@ -699,6 +699,34 @@ METRICS = {
         "only_projects": ("Pendle",)},
     # Aerodrome's on-chain voter rewards per epoch (fetch/aero_voter.py, Jake's run 2026-10-08 11:27) — CREDIBILITY
     # references for in_revenue and a3_protocol_yield, dated the epoch's start (Thursday 00:00 UTC).
+    # AERODROME'S FOUNDATION BUY-AND-LOCK, FROM STATE (external audit 2026-10-09, item 1; fetch/ve_managed.py)
+    "foundation_locked_aero_tokens": {
+        "label": "AERO locked in veAERO by the Aerodrome Foundation's buyback wallets (Public Goods Fund + 'Buyback / "
+                 "Locked Funds'): normal locks + deposits into managed veNFTs — its daily change, net of rebase claims, "
+                 "is the buy-and-lock", "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [2],
+        "sanity_min": 0, "sanity_max": 2e9, "only_projects": ("Aerodrome",)},
+    "foundation_rebase_claimable_tokens": {
+        "label": "Rebase claimable (RewardsDistributor.claimable) on the Foundation buyback wallets' normal veNFTs — a "
+                 "claim moves it into the lock, so the buyback nets it out", "kind": "stock", "unit": "tokens",
+        "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Aerodrome",)},
+    # THE BUYBACK BY DESTINATION (Jake's retirement decision 2026-10-10): views of actual_buyback_* x the dated shares in
+    # BUYBACK_DESTINATION_SHARES. Retirement = burned + held; distributed is staking yield.
+    "buyback_burned_tokens": {"label": "Actual buyback BURNED (tokens): the buyback x its burned share on each day",
+                              "kind": "flow", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0,
+                              "sanity_max": 1e15, "view_only": True},
+    "buyback_held_tokens": {"label": "Actual buyback HELD (tokens: treasury, reserve, foundation-locked): the buyback x "
+                                     "its held share on each day", "kind": "flow", "unit": "tokens", "archetypes": [3],
+                            "tiers": [2], "sanity_min": -1e15, "sanity_max": 1e15, "view_only": True},
+    "buyback_distributed_tokens": {"label": "Actual buyback DISTRIBUTED to stakers (tokens) — staking yield, not "
+                                            "retirement", "kind": "flow", "unit": "tokens", "archetypes": [3],
+                                   "tiers": [2], "sanity_min": -1e15, "sanity_max": 1e15, "view_only": True},
+    "retired_buyback_tokens": {"label": "RETIRED buyback (tokens) = burned + held — what the retirement rates, buyback % "
+                                        "of supply and net absorption use (Jake 2026-10-10)", "kind": "flow",
+                               "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": -1e15,
+                               "sanity_max": 1e15, "view_only": True},
+    "retired_buyback_usd": {"label": "RETIRED buyback ($) = burned + held share of actual_buyback_usd", "kind": "flow",
+                            "unit": "usd", "archetypes": [3], "tiers": [2], "sanity_min": -1e13, "sanity_max": 1e13,
+                            "view_only": True},
     "voter_rewards_onchain_usd": {
         "label": "Fees + bribes notified to the veAERO voting-reward contracts for one epoch (tokenRewardsPerEpoch, priced "
                  "at the epoch end; unpriced tokens left out), dated the epoch's start — CREDIBILITY reference only",
@@ -2469,7 +2497,12 @@ EXPLORER_LOG_ROUTES = {
     # requires Builder/Business/Pro" on the PRO API — a paid plan, like Base. Etherscan V2 serves Polygon
     # logs on the free key; its "server too busy" is retried with backoff (fetch/explorer.BUSY_TRIES).
     137: ["etherscan"],
-    8453: ["blockscout"],       # Etherscan free: no logs on Base since Nov 2025
+    # BASE: NO FREE LOG ROUTE (external audit 2026-10-09, item 9: api.blockscout.com/8453 answered HTTP 402 — Base needs
+    # a paid Blockscout plan — and Etherscan's free key has served no Base logs since Nov 2025; Alchemy's free tier caps
+    # eth_getLogs at 10 blocks). Long Base scans (chainlink_fees' Base streams, the CreateManaged probe) therefore stop
+    # at once with this reason instead of collecting 402s. Short, located reads use the archive-balance bisection
+    # (check_offline_items.base_logs_where_balance_moves: NotifyReward deposits).
+    8453: [],
     # OPTIMISM: Blockscout answered HTTP 500 three times on Jake's seed (2026-10-09 15:33); Etherscan V2 chainid 10 is
     # tried next (researched as paid on the free key — its own answer is logged), then RPC eth_getLogs (window scans).
     10: ["blockscout", "etherscan"],
@@ -3855,7 +3888,21 @@ PROJECTS = [
                                                      "2026-10-06)",
                               "share_after_source": "nearcore 87.yaml burnt_gas_reward 3/10 -> 0/1; CHANGELOG 2.14.0; "
                                                     "HSP-027 (approved 2026-07-06)",
-                              "switch_on_source": "the first stored near_protocol_version >= 87 (RPC status, every run)"},
+                              "switch_on_source": "the first stored near_protocol_version >= 87 (RPC status, every run)",
+                              # EXTERNAL AUDIT 2026-10-09, ITEM 5 (read 2026-10-10): HSP-027 PASSED 2026-07-06
+                              # (gov.near.org/t/42213) and is implemented in nearcore 17b93d9a (87.yaml), but only
+                              # 2.14.0-rc.1/2/3 are tagged (protocol 87) — no stable 2.14.0, so NOT live on mainnet and
+                              # there is no activation block yet. switch_on stays None; the version reading dates it.
+                              "watch": [
+                                  {"what": "HSP-027 100% fee burn (protocol 87)", "status": "passed, not live",
+                                   "evidence": "github.com/near/nearcore tags: 2.14.0-rc.1..rc.3 only (2026-10-10)",
+                                   "next": "the first run reading near_protocol_version >= 87 sets switch_on"},
+                                  {"what": "issuance cut 2.5% -> 1.6% a year (HSP draft)",
+                                   "status": "draft, vote date unconfirmed (expected ~mid-October 2026)",
+                                   "evidence": "https://gov.near.org/t/42644 (draft created 2026-10-07)",
+                                   "next": "on passing: date the step in NEAR's issuance declaration; the observed "
+                                           "issuance (BigQuery header supply) is primary either way"},
+                              ]},
         },
         "coingecko_id": "near",
         "defillama_fees_slug": "near", "defillama_protocol": None, "defillama_chain": "Near",
@@ -6696,7 +6743,8 @@ PROJECTS = [
         # DECIDED BY JAKE 2026-09-24: left as a gap, and the reason is the mechanism, not the
         # search. SuperHex staking exists to fill COVERAGE GAPS: the Foundation designates a gap
         # region, community members lock GEOD to incentivise a miner into it, and get the stake
-        # back plus a 10-20% bonus once a station there is producing (GIP5's success benchmark:
+        # back plus a bonus once a station there is producing — 20% after a 1-year producing period in Phase II,
+        # 10% in Phase I (docs.geodnet.com staking-faqs, audit 2026-10-09 item 6) (GIP5's success benchmark:
         # 90% RRR over 7 days). As the network matured (21,000+ stations, 170 countries) fewer
         # gaps need the incentive, so less capital sits locked: ~11.9M -> ~3.9M -> ~3M (Jake's
         # reported figures). A maturation signal, not a confidence problem — and a mechanism that
@@ -7437,6 +7485,23 @@ PROJECTS = [
                         "locked_tokens and avg_lock_duration_days stay genuine gaps for GEODNET, not "
                         "forced onto this mechanism without a read behind it.",
             "source": "GEODNET's own tokenomics material", "source_date": "2026-09-18",
+            # EXTERNAL AUDIT 2026-10-09, ITEM 6 — the terms from GEODNET's Staking FAQ (read 2026-10-10 via search;
+            # not fetched from here). Entered by Claude Code, pending Jake's review.
+            "terms_2026_10_10": {
+                "bonus_pct": 0.20, "phase": "Phase II (Phase I paid 10%)",
+                "term": "a 1-year producing period of the SuperHex's station; the bonus is distributed automatically",
+                "no_show": "a stake whose SuperHex gets no producing station within 180 days is refunded WITHOUT the "
+                           "bonus",
+                "per_superhex_geod": 20_000,
+                "staked_geod": 2_993_000, "staked_date": "2026-10-04",
+                "staked_source": "Blockworks query 1243 geod_total_stake (the cross-check that identified the "
+                                 "staking wallet 0x682ba846…, locked_tokens_resolved above)",
+                "implied_bonus_geod_per_year": "<= 598,600 (20% of 2,993,000), an UPPER bound: the bonus is paid "
+                                               "only on stakes whose station produces for the full year",
+                "source": "https://docs.geodnet.com/geod-console-advanced/staking-faqs",
+                "source_date": "2026-10-10",
+                "entered_by": "Claude Code, pending Jake's review",
+            },
         },
         # ===== THE FALSE ZERO, SUPPRESSED =====
         # gross_issuance_tokens was reading 0 from derived:d_supply:MECHANISM_ASSUMED — the supply
@@ -8514,6 +8579,10 @@ PROJECTS = [
                                         "rewards and the Checker Node bonus are supplier "
                                         "buckets with no declared schedule, so this UNDERSTATES "
                                         "supplier emissions.",
+            # AUDIT 2026-10-09 ITEM 3: the research read of Aethir's docs allocation gives Checker Nodes & Compute
+            # Providers 50% (team 12.5, investors 11.5, ecosystem 7.5, treasury 7.5, airdrop 6 — 95% listed, so one
+            # bucket of ~5% was not captured); this note's 55% is from the token overview. Not settled from here and
+            # not changed (RUNBOOK 11be: Jake to read the docs table).
             # PHASE 2, DECLARED AS A BOUND NOT A STEP. Aethir's own token overview puts 55% of total
             # supply (~23.1bn ATH) to Checker Nodes & Compute Providers, with Phase 1 frontloaded
             # and PHASE 2 RUNNING 2028-06-12 to 2032-06-12, monthly and DECAYING. Phases 1+2
@@ -11996,6 +12065,27 @@ PROJECTS = [
                          # THE NEWEST EPOCH PLUS AT MOST ONE MISSING a run (Jake's run 2026-10-09 15:59: three earlier
                          # epochs still outran the tier's 180s; none stored) — `--seed aero_epochs` reads them all
                          "backfill_per_run": 1},
+        # THE FOUNDATION'S BUY-AND-LOCK (external audit 2026-10-09, item 1; Blockworks: 9.17M AERO in Q2, 27.95M YTD;
+        # a 312,000 AERO buy announced 2026-07-30). The buyer: the Public Goods Fund — named the buyer in Aerodrome's own
+        # posts ("The Aerodrome Public Goods Fund has acquired and max-locked 801K", x.com/AerodromeFi/status/
+        # 1996261069078348016, Dec 2025), its address from aerodrome-finance/docs@99680a79 content/security.mdx L34-37
+        # ("Public Goods Fund", 2026-07-28) — plus the filing's "Buyback / Locked Funds" wallet (Aerodrome's Blockworks
+        # Token Transparency filing, read 2026-10-07). Base logs are paid, so the buy is read from STATE: the AERO these
+        # wallets hold locked (normal locks + deposits into managed veNFTs), whose daily change, net of rebase claims,
+        # is the buyback. Stops at the Aero launch (2026-10-22): the migration plan (RUNBOOK 11be).
+        "foundation_buyback": {
+            "stock_metric": "foundation_locked_aero_tokens", "claimable_metric": "foundation_rebase_claimable_tokens",
+            "flow": "actual_buyback_tokens",
+            "owners": {"0x834C0DA026d5F933C2c18Fa9F8Ba7f1f792fDa52": "Public Goods Fund",
+                       "0x623CF63A1fA7068EBBDBa9F2EB262613EaB557a1": "Buyback / Locked Funds"},
+            "sources": ["https://github.com/aerodrome-finance/docs/blob/99680a79/content/security.mdx (L34-37, "
+                        "2026-07-28: 0x834C… = Public Goods Fund)",
+                        "https://x.com/AerodromeFi/status/1996261069078348016 (PGF 'acquired and max-locked', Dec 2025)",
+                        "Aerodrome's Blockworks Token Transparency filing (0x623C… 'Buyback / Locked Funds', read "
+                        "2026-10-07)"],
+            "caveat": "A veNFT transferred in from another wallet, or a rebase claimed into a lock on the day its "
+                      "rebase accrues, would also read as a buy; the PGF's buyer role is from Aerodrome's posts, its "
+                      "address from Aerodrome's docs (no source names a buyer address outright)."},
         "ve_managed_holdings": {
             "metric": "filing_managed_lock_tokens", "chain": "base",
             "escrow": "0xeBf418Fe2512e7E6bd9b87a8F0f294aCDC67e6B4",
@@ -17937,11 +18027,13 @@ def implied_check_is_circular(project_name: str) -> str | None:
 #              Handled by its own stage_split_legs, not here.
 #   n/a        no buyback mechanism exists. Not a gap at all.
 #
-# ** AERODROME IS "n/a", NOT "distribute", AND THE DIFFERENCE MATTERS. ** Its fee_split already
-# records it: 100% of trading fees go to veAERO voters PAID IN THE PAIR'S OWN TOKENS and never
-# converted to AERO. No AERO is ever bought, so actual_buyback_tokens is not an unmeasured flow —
-# it is a flow that does not exist, and reporting it as missing invites someone to go and find it.
+# AERODROME'S FEES BUY NOTHING: 100% of trading fees go to veAERO voters PAID IN THE PAIR'S OWN TOKENS. Its
+# actual_buyback_tokens is the FOUNDATION'S buy-and-lock (external audit 2026-10-09, item 1; foundation_buyback on
+# its entry), routed ahead of buyback_destination — which describes the fees.
 BUYBACK_METRICS = ("actual_buyback_tokens", "actual_buyback_usd")
+# THE BUYBACK BY DESTINATION (Jake 2026-10-10): read-time views of the buyback x BUYBACK_DESTINATION_SHARES
+BUYBACK_SPLIT_METRICS = ("buyback_burned_tokens", "buyback_held_tokens", "buyback_distributed_tokens",
+                         "retired_buyback_tokens", "retired_buyback_usd")
 
 # Projects whose destination label needs correcting against their own recorded mechanism. Kept
 # as an explicit override rather than edited into buyback_destination, because that field also
@@ -17959,12 +18051,105 @@ BUYBACK_ROUTE_OVERRIDE = {
                  "NOTHING IS BOUGHT. EIP-1559 destroys the base fee users pay, by protocol rule — a "
                  "burn with no purchase behind it, so it is not a buyback. The burn is on A4 "
                  "(gross_burn_tokens); actual_buyback_* are n/a."),
-    "Aerodrome": ("none",
-                  "NO AERO IS BOUGHT AT ALL. 100% of trading fees go to the veAERO voters who "
-                  "voted for each pool, paid in the PAIR'S OWN TOKENS and never converted to "
-                  "AERO — there is no buy-then-distribute step. From Aerodrome's own contracts "
-                  "and SPECIFICATION.md; see fee_split.destination_model."),
+    # AERODROME IS NO LONGER "none" (external audit 2026-10-09, item 1): no AERO is bought WITH FEES — 100% of trading
+    # fees go to veAERO voters in the pairs' own tokens — but the Foundation's Public Goods Fund buys AERO with
+    # Foundation USDC and max-locks it ("The Aerodrome PGF has acquired and max-locked 312K $AERO", x.com/AerodromeFi).
+    # Measured from state: foundation_buyback on the project, build_workbook._foundation_buyback_views.
 }
+
+
+# ===== WHERE THE BOUGHT TOKENS GO: BURN / HOLD / DISTRIBUTE (Jake's decision 2026-10-10, external audit item 12). =====
+# "Retirement" = buybacks that are BURNED or HELD (treasury, reserve, foundation-locked). Buybacks PAID OUT TO STAKERS
+# are staking yield, not retirement. The circulating / FDV retirement rates, "actual buyback as % of supply" and net
+# absorption use burned + held only (build_workbook._buyback_split_views -> retired_buyback_tokens / _usd); the full
+# buyback stays on its own row, split into burned / held / distributed.
+# Each project's shares, from a date, with the PRIMARY source; a project not listed takes its route's single
+# destination (burn route -> burn, hold -> hold, distribute -> distribute; "split" must be listed). `verified` = the
+# share was confirmed against a primary source in the 2026-10-10 round (research notes in RUNBOOK 11be).
+BUYBACK_DESTINATION_SHARES = {
+    "Uniswap": [{"from": None, "burn": 1.0, "verified": True,
+                 "source": "Uniswap/protocol-fees@0c071d19 src/releasers/Firepit.sol L7-10 (ExchangeReleaser, recipient "
+                           "address(0xdead)); UNIfication vote.uniswapfoundation.org/proposals/93 — fees are released "
+                           "only against UNI burned (burn-to-claim), live 2025-12-28"}],
+    "GEODNET": [{"from": None, "burn": 1.0, "verified": True,
+                 "source": "GEODNET's own post x.com/GEODNET/status/2072713418818068898 (2026-07-02): 80% of data "
+                           "revenue buys GEOD and burns it (Polygon dead address, Solana burn account)"}],
+    "Hyperliquid": [{"from": None, "burn": 1.0, "verified": True,
+                     "source": "Assistance Fund docs (hyperliquid.gitbook.io, assistance-fund); validator vote "
+                               "2025-12-17..24 treats all Fund HYPE as burned. CAVEAT: the HYPE stays at the keyless "
+                               "system address 0xfefe…fefe and in tokenDetails.totalSupply — burned by consensus, not "
+                               "destroyed (still retirement either way: burned or held)"}],
+    # SKY: before Stage 2 the Smart Burn Engine sent its purchases to the MCD Pause Proxy (a governance treasury) —
+    # HOLD. From 2026-08-17 (Splitter File, burn = 0.55) 50% of Net Protocol Surplus is split: 27.5% buys SKY, of which
+    # 5% (of NPS) is burned and 22.5% is vested to lsSKY stakers; the other 22.5% is USDS to stakers (not a buyback).
+    "Sky": [{"from": None, "hold": 1.0, "verified": True,
+             "source": "Smart Burn Engine receiver = MCD Pause Proxy (launch poll 2023-06-26; config Sky block 'ARCHETYPE "
+                       "4 REMOVED 2026-09-14'): purchases held in the governance treasury"},
+            {"from": "2026-08-17", "burn": 5 / 27.5, "distribute": 22.5 / 27.5, "verified": True,
+             "source": "sky-ecosystem/dss-flappers@5d8215ce src/Splitter.sol kick(); Splitter.burn() = 0.55 at block "
+                       "26,039,143 (File 2026-08-17); spells-mainnet@3982314 (2026-09-10 spell, updateFarmVest: the SKY "
+                       "leg vested to lsSKY stakers); Sky's post x.com/SkyEcosystem/status/2099488996099227965 "
+                       "(2026-09-14: first Stage 2 burn, 2.86M SKY). Of SKY bought: 5/27.5 burned, 22.5/27.5 to stakers"}],
+    "Chainlink": [{"from": None, "hold": 1.0, "verified": True,
+                   "source": "blog.chain.link/chainlink-reserve-strategic-link-reserve (Aug 2025): LINK accumulates in "
+                             "the Chainlink Reserve, multi-day withdrawal timelock, no withdrawals expected for years"}],
+    "Near": [{"from": None, "hold": 1.0, "verified": True,
+              "source": "on chain (Jake's run 2026-10-07, NearBlocks): the three revenue wallets' only outflows are "
+                        "between themselves; DefiLlama near-intents 'NOT BURNED'. NEAR's revenue.near.org says "
+                        "'permanently remove NEAR from circulation' — conflicting wording, on-chain evidence wins"}],
+    "Fluid": [{"from": None, "hold": 1.0, "verified": True,
+               "source": "Instadapp/fluid-contracts-public@9496626f contracts/periphery/buyback/SPEC.md ('does not burn "
+                         "FLUID': 100% to TREASURY 0x2884…4d09); halted 2026-05-11 (Fluid forum post-mortem)"}],
+    "Maple": [{"from": None, "hold": 1.0, "verified": True,
+               "source": "MIP-019 (community.maple.finance/t/mip-019-activate-the-ssf-and-sunset-staking/1042, vote "
+                         "Oct 27-31 2025): staking sunset; 25% of revenue to the SYRUP Strategic Fund, bought SYRUP 'is "
+                         "held, not sold' (MIP-021 tiers it from 2026-08-01). The SSF mandate includes token liquidity, "
+                         "so held SYRUP can return to float"}],
+    "Aerodrome": [{"from": None, "hold": 1.0, "verified": True,
+                   "source": "the Public Goods Fund 'acquired and max-locked' AERO (x.com/AerodromeFi/status/"
+                             "1996261069078348016, Dec 2025; the 312K post); aerodrome-finance/docs@99680a79 "
+                             "content/about.mdx L192 'The veAERO in these wallets are max-locked', L206-208 'Over 184M "
+                             "AERO has been acquired and locked to date' (2026-07-28)"},
+                  {"from": "2026-10-22", "burn": 1.0, "verified": False,
+                   "source": "aero.xyz/economics (as of 2026-09-28): with Aero (launch 2026-10-22 00:00 UTC) the PGF "
+                             "becomes the Momentum Fund, which 'uses protocol revenue to buy back and burn AERO' "
+                             "(about.mdx L212). NOT MEASURED by the lock read — see the migration plan (RUNBOOK 11be)"}],
+    "Pendle": [{"from": None, "distribute": 1.0, "verified": True,
+                "source": "docs.pendle.finance Mechanisms/sPENDLE; medium.com/pendle/introducing-spendle (live "
+                          "2026-01-20): 80% of yield + swap fees buy PENDLE every two weeks, 'up to 100%' to active "
+                          "sPENDLE holders"}],
+    "Ether.fi": [{"from": None, "distribute": 1.0, "verified": True,
+                  "source": "etherfi.gitbook.io/gov/ethfi-buyback-program (Proposals #8/#11: 100% to sETHFI). The "
+                            "programme from 2026-09-03 reportedly splits 50% hold (Foundation) / 50% distribute (Alea "
+                            "Research, The Defiant — SECONDARY, the Snapshot text not reached); our measured flow is "
+                            "DEX buys into the sETHFI top-up Safe, which funds sETHFI — distribute"}],
+}
+
+
+def buyback_destination_shares(project_name: str, date=None) -> dict | None:
+    """{"burn", "hold", "distribute", "source", "verified", "from"} for this project's buyback on `date` (None = the
+    latest entry); a project not in BUYBACK_DESTINATION_SHARES takes its route's single destination; None where nothing
+    is bought (route none) or a split is not declared."""
+    rows = BUYBACK_DESTINATION_SHARES.get(project_name)
+    if rows:
+        d = None if date is None else str(date)[:10]
+        pick = None
+        for r in rows:
+            if r["from"] is None or d is None or r["from"] <= d:
+                pick = r
+        if pick is None:
+            return None
+        return {"burn": float(pick.get("burn", 0.0)), "hold": float(pick.get("hold", 0.0)),
+                "distribute": float(pick.get("distribute", 0.0)), "source": pick["source"],
+                "verified": bool(pick.get("verified")), "from": pick["from"]}
+    route = buyback_route(project_name)["route"]
+    one = {"burn": "burn", "treasury_inflow": "hold", "distribute": "distribute"}.get(route)
+    if one is None:
+        return None
+    p = PROJECT_BY_NAME.get(project_name) or {}
+    return {"burn": float(one == "burn"), "hold": float(one == "hold"), "distribute": float(one == "distribute"),
+            "source": f"buyback_destination '{p.get('buyback_destination')}' (route {route}) — not re-verified in the "
+                      f"2026-10-10 round", "verified": False, "from": None}
 
 
 def buyback_route(project_name: str) -> dict:
@@ -17975,6 +18160,13 @@ def buyback_route(project_name: str) -> dict:
     cannot. Every branch answers; nothing falls through to silence.
     """
     p = PROJECT_BY_NAME.get(project_name) or {}
+    fb = p.get("foundation_buyback")
+    if fb:
+        return {"route": "treasury_inflow", "metric": fb["stock_metric"],
+                "reason": (f"the bought tokens are LOCKED by the Foundation's buyback wallets "
+                           f"({', '.join(fb['owners'].values())}): the flow is the daily change of the AERO they have "
+                           f"locked in veAERO, net of rebases (fetch/ve_managed.py; build_workbook."
+                           f"_foundation_buyback_views). {fb.get('caveat', '')}")}
     if project_name in BUYBACK_ROUTE_OVERRIDE:
         route, reason = BUYBACK_ROUTE_OVERRIDE[project_name]
         return {"route": route, "metric": None, "reason": reason}
@@ -18802,7 +18994,7 @@ def metrics_for_project(project: dict) -> list[str]:
         if key in CHAIN_ONLY_METRICS and not chain:
             continue
         # A protocol that buys nothing has no buyback flow to be missing. See buyback_route.
-        if key in BUYBACK_METRICS and buyback_route(project["name"])["route"] == "none":
+        if key in BUYBACK_METRICS + BUYBACK_SPLIT_METRICS and buyback_route(project["name"])["route"] == "none":
             continue
         # A SELF-REPORTED metric applies only where the protocol reports it. Without this,
         # net_mint_monthly gapped on every archetype-4 project that simply does not publish a
@@ -19052,6 +19244,16 @@ ARTEMIS_SETTLEMENT = {
         "Ethereum":    {"artemis_name": "Ethereum", "exported_on": "2026-09-30", "exported_by": "Jake"},
     },
     "check": {"project": "Ethereum", "to": "2026-08-25", "sum_365d_usd": 6.945e12, "mcap_usd": 3.294e11},
+    # EXTERNAL AUDIT 2026-10-09, ITEM 11 (read 2026-10-10): the export ends 2026-08-25. No retirement or rename of
+    # SETTLEMENT_VOLUME was found in Artemis's docs or changelog (searched 2026-10-10) — not established either way, so
+    # it is NOT recorded as retired. It goes STALE (AMBER) by the 45-day rule above from 2026-10-10 (46 days). The
+    # proposal, not built: rebuild Ethereum's leg the way SETTLEMENT_REBUILD does NEAR's — P2P transfers from BigQuery
+    # crypto_ethereum + DefiLlama DEX and NFT volume — validated against Artemis's own history to 2026-08-25 before it
+    # replaces anything. Coin Metrics' equivalent is not free (CC BY-NC community tier).
+    "series_status": {"last_day": "2026-08-25", "status": "stale — export ends; retirement not established",
+                      "checked_on": "2026-10-10", "next": "Jake: re-export from classic.artemis.ai, or approve the "
+                                                           "BigQuery + DefiLlama rebuild (BigQuery quota to be stated "
+                                                           "before any query)"},
 }
 ARTEMIS_DERIVED = ("settlement_volume_365d_usd", "network_reserve_ratio")
 
@@ -24611,8 +24813,8 @@ CREDIBILITY: dict = {
                                      "per-epoch reproduction of its own arithmetic. The veAERO rebase is a separate "
                                      "stream: in_rebase_apr."},
         "in_voter_apr_epoch": _c_in_py(
-            "Per-epoch voter APR over the quarter, the headline's arithmetic ($ at the epoch's price x 365.25/7 / its "
-            "totalWeight)",
+            "CHECK ROW, NOT THE HEADLINE: per-epoch voter APR, UNCAPPED (before the illiquid-token rule) — DefiLlama's "
+            "like-for-like $ vs on-chain, each epoch at its price x 365.25/7 / its totalWeight, mean of the epochs",
             "aero_epoch_apr", {"side": "ours"},
             {"verdict_when": {"py": "aero_epoch_pending", "args": {"flow": "holders_revenue_usd"},
                               "positive": _c_mat("The latest complete epoch is not all stored yet: the on-chain epoch "
@@ -24729,8 +24931,18 @@ CREDIBILITY: dict = {
             "main, projects/aerodrome-CL/index.js, read 2026-10-07); Base logs are paid, so the Deposit / Withdraw sum "
             "cannot be rebuilt for free.",
             "a paid Base log route (Blockscout PRO) to rebuild locked AERO from Deposit / Withdraw events")),
-        "in_buyback": _c_in("Buyback", "actual_buyback_tokens", "q0", _c_na(
-            "no buyback by design — 100% of fees go to veAERO voters in the pairs' own tokens")),
+        # THE FOUNDATION'S BUY-AND-LOCK (external audit 2026-10-09, item 1): fees buy nothing (100% to voters), but the
+        # Public Goods Fund buys AERO with Foundation USDC and max-locks it — measured from state (foundation_buyback).
+        "in_buyback": _c_in("Buyback Q0 (tokens) — the Foundation's buy-and-lock (locked AERO's daily change, net of "
+                            "rebases)", "actual_buyback_tokens", "q0", _c_lim(
+            "The buy-and-lock is read from STATE (the AERO the Public Goods Fund and the 'Buyback / Locked Funds' "
+            "wallet hold locked), not from the purchases themselves.",
+            "Base logs are paid (Blockscout 402; Alchemy free 10 blocks per getLogs), so the USDC->AERO swaps cannot be "
+            "scanned; Aerodrome publishes single buys (312K, 216K, 801K posts on x.com/AerodromeFi) and Blockworks a "
+            "quarterly total (9.17M in Q2 2026, 27.95M YTD — per the external audit, page not reached from here), not "
+            "a daily series.",
+            "Blockworks' Q3 2026 holder report (the quarter's buy-and-lock total) as a manual reference, or a paid Base "
+            "log route to sum the swaps")),
         # B3 (overnight 2026-10-06): the rebase recomputed from the MINTER's own formula — no free log route serves
         # Base (Etherscan's free tier excludes it; Blockscout's PRO API is paid there), so the Minter -> distributor
         # transfers cannot be scanned; calculateGrowth over our emission / veAERO / supply reads is the check.

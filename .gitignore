@@ -1,6 +1,7 @@
 # local artefacts — the store is durable but machine-local; the workbook is disposable output
 metrics.db
 metrics.db-journal
+metrics.db.credibility.pkl
 token_metrics.xlsx
 .env
 __pycache__/

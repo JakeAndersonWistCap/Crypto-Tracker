@@ -285,6 +285,14 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                 f"Resolve {src}; this row fills from it with no source of its own. Check the Run "
                 f"Log for the {src} fetch{via}.")
 
+    # ===== AERODROME'S FOUNDATION LOCK READ (external audit 2026-10-09, item 1). =====
+    fb = project.get("foundation_buyback") or {}
+    if metric in (fb.get("stock_metric"), fb.get("claimable_metric")):
+        return (f"the Foundation lock read (fetch/ve_managed.py: veAERO locks + rebase claimable of "
+                f"{', '.join(fb['owners'].values())}) stored nothing this run",
+                "Check the Run Log for ve_managed; the history comes from `python token_metrics.py --seed "
+                "aero_buyback` (archive reads at each day's first block).")
+
     # ===== A DEDICATED ADAPTER DECLARED FOR THIS METRIC (second pass, 2026-09-30). =====
     # Plume's staking diamond, ultrasound.money's daily history, Hyperliquid's tokenDetails: the
     # route exists, so the row names it and the probe that checks it.

@@ -72,23 +72,111 @@ def read_tab(path: Path, evaluate: bool = True) -> tuple[list, list]:
     return summary, rows
 
 
-def evaluate(project: str | None = None, libreoffice: bool = False, asof=None, narrow: bool = False):
-    """(credibility rows, evaluated tab rows) from metrics.db — or (None, None) when there is no store.
-    `narrow` builds only `project` (fast; the fixture tests drive the real path this way), `asof` pins the date."""
+# ONE EVALUATION PER STORE STATE (external audit 2026-10-09, item 8: credibility_report showed Morpho SIGNED OFF —
+# in_interest_day PASS, 5.341M vs 4.888M — while completeness_report, run straight after, showed it "CHECK (no figure)"
+# and Morpho OPEN 5). Each report built and evaluated the workbook ON ITS OWN, at its own `now`: in_interest_day sums
+# DefiLlama's fees over the 7 complete days ending yesterday (UTC), so a second evaluation that starts after 00:00 UTC
+# takes in a day DefiLlama has not published (6 of 7 days -> no figure). Now the first evaluation is kept beside the
+# store (metrics.db.credibility.pkl) with the asof it used, keyed by the store's CONTENT (not its mtime), the
+# narrowing, the evaluator and the code; any report run on the same store within EVAL_TTL_H reads that one result.
+# TOKEN_METRICS_FRESH_EVAL=1 forces a new evaluation.
+EVAL_TTL_H = 12
+_CODE_FILES = ("credibility.py", "config.py", "build_workbook.py", "credibility_report.py", "manual_refs.py",
+               "xlcalc.py")
+
+
+def _today():
+    import pandas as pd
+    return pd.Timestamp.now("UTC").tz_localize(None).normalize()
+
+
+def _store_fingerprint(db: str) -> str:
+    """The store's content, cheaply: row counts and the newest fetch per table, and the manual rows themselves."""
+    import hashlib
+    import sqlite3
+    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    try:
+        h = hashlib.sha256()
+        for q in ("SELECT COUNT(*), MAX(fetched_at), SUM(value) FROM metrics",
+                  "SELECT date, project, metric, value, source_note FROM manual_overrides ORDER BY 1, 2, 3",
+                  "SELECT COUNT(*), MAX(ts) FROM run_log", "SELECT COUNT(*) FROM review_queue",
+                  "SELECT COUNT(*) FROM gap_report"):
+            try:
+                h.update(repr(con.execute(q).fetchall()).encode())
+            except sqlite3.Error:
+                h.update(b"-")
+        return h.hexdigest()
+    finally:
+        con.close()
+
+
+def _code_fingerprint() -> str:
+    import hashlib
+    h = hashlib.sha256()
+    root = Path(__file__).resolve().parent
+    for f in _CODE_FILES:
+        fp = root / f
+        h.update(fp.read_bytes() if fp.exists() else b"-")
+    return h.hexdigest()
+
+
+def evaluated(project: str | None = None, libreoffice: bool = False, asof=None, narrow: bool = False):
+    """(credibility rows, summary rows, evaluated tab rows, asof used) — ONE evaluation per store state, shared by
+    credibility_report and completeness_report (see above); (None, None, None, None) when there is no store."""
+    import os
+    import pickle
+    import time as _time
+    import pandas as pd
     import store as store_mod
     from build_workbook import CREDIBILITY_ROWS, build_workbook
-    if not Path(store_mod.DB_PATH).exists():
-        print(f"no {store_mod.DB_PATH} — run token_metrics.py first")
-        return None, None
+    db = str(store_mod.DB_PATH)
+    if not Path(db).exists():
+        print(f"no {db} — run token_metrics.py first")
+        return None, None, None, None
+    key = "|".join(str(x) for x in (Path(db).resolve(), _store_fingerprint(db), project if narrow else "*", narrow,
+                                     libreoffice, "" if asof is None else pd.Timestamp(asof).date(),
+                                     _code_fingerprint()))
+    cache = Path(db + ".credibility.pkl")
+    fresh = os.environ.get("TOKEN_METRICS_FRESH_EVAL") == "1"
+    if not fresh and cache.exists():
+        try:
+            got = pickle.loads(cache.read_bytes())
+            if got.get("key") == key and _time.time() - got["at"] < EVAL_TTL_H * 3600:
+                CREDIBILITY_ROWS[:] = got["rows"]
+                return got["rows"], got["summary"], got["tab"], got["asof"]
+        except Exception:  # noqa: BLE001 — an unreadable cache is a cache miss
+            pass
+    used = pd.Timestamp(asof) if asof is not None else _today()
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "credibility.xlsx"
-        st = store_mod.Store(store_mod.DB_PATH)
+        st = store_mod.Store(db)
         try:
-            build_workbook(st, path, asof=asof, only=[project] if (narrow and project) else None)
+            build_workbook(st, path, asof=used, only=[project] if (narrow and project) else None)
         finally:
             st.close()
-        _summary, tab = read_tab(path, evaluate=not libreoffice)
+        if libreoffice:
+            from recalc import recalc
+            res = recalc(str(path), timeout=180)
+            if isinstance(res, dict) and res.get("error"):
+                raise SystemExit(f"recalculation failed: {a(res['error'])} - run without --libreoffice to evaluate "
+                                 f"in Python")
+        summary, tab = read_tab(path, evaluate=not libreoffice)
     rows = list(CREDIBILITY_ROWS)
+    try:
+        cache.write_bytes(pickle.dumps({"key": key, "at": _time.time(), "rows": rows, "summary": summary, "tab": tab,
+                                        "asof": used}))
+    except Exception:  # noqa: BLE001 — a read-only directory: no cache, same answer
+        pass
+    return rows, summary, tab, used
+
+
+def evaluate(project: str | None = None, libreoffice: bool = False, asof=None, narrow: bool = False):
+    """(credibility rows, evaluated tab rows) from metrics.db — or (None, None) when there is no store.
+    `narrow` builds only `project` (fast; the fixture tests drive the real path this way), `asof` pins the date.
+    The evaluation is shared per store state (evaluated())."""
+    rows, _summary, tab, _asof = evaluated(project, libreoffice, asof, narrow)
+    if rows is None:
+        return None, None
     if len(rows) != len(tab):
         print(f"the build kept {len(rows)} rows, the tab has {len(tab)} — cannot pair them")
         return None, None
@@ -96,6 +184,28 @@ def evaluate(project: str | None = None, libreoffice: bool = False, asof=None, n
         keep = [i for i, r in enumerate(rows) if r["project"].lower() == project.lower()]
         tab = [t if i in keep else t[:10] + [""] + t[11:] for i, t in enumerate(tab)]
     return rows, tab
+
+
+def signoff_block(only: str | None = None) -> list[str]:
+    """THE SIGN-OFF BLOCK, ONE FUNCTION FOR BOTH REPORTS (audit item 8): each project SIGNED OFF or OPEN from the
+    Credibility verdicts — signed = PASS / N/A / DOCUMENTED LIMITATION / MATURING / VERIFIED FINDING — with every open
+    row and its reason, from the shared evaluation, headed by the asof it was evaluated at."""
+    import pandas as pd
+    import credibility
+    rows, _summary, tab, used = evaluated(only)
+    if rows is None or len(rows) != len(tab):
+        return ["\nSIGN-OFF: unavailable (no store, or the tab could not be paired)"]
+    so = credibility.signoff(rows, [t[10] for t in tab])
+    out = [f"\nSIGN-OFF (Credibility, evaluated as of {pd.Timestamp(used).date()}) — " + ", ".join(
+        f"{k} {v}" for k, v in sorted(pd.Series([d["status"] for d in so.values()]).value_counts().items()))]
+    for name, d in so.items():
+        if only and name != only:
+            continue
+        cnt = ", ".join(f"{k} {v}" for k, v in sorted(d["counts"].items()))
+        out.append(f"  {d['status']:<10} {name:<12} {cnt}")
+        for rid, v, note in d["open"]:
+            out.append(f"      OPEN {rid}: {v} — {note[:200]}")
+    return out
 
 
 def print_roots(roots: list[dict]) -> None:
@@ -129,25 +239,10 @@ def main(argv=None) -> int:
     ap.add_argument("--libreoffice", action="store_true",
                     help="recalculate with LibreOffice instead of evaluating the formulas in Python")
     args = ap.parse_args(argv)
-    import store as store_mod
-    from build_workbook import CREDIBILITY_ROWS, build_workbook
-    if not Path(store_mod.DB_PATH).exists():
-        print(f"no {store_mod.DB_PATH} — run token_metrics.py first")
+    from build_workbook import CREDIBILITY_ROWS
+    _r, summary, rows, _used = evaluated(None, args.libreoffice)
+    if summary is None:
         return 1
-    with tempfile.TemporaryDirectory() as tmp:
-        path = Path(tmp) / "credibility.xlsx"
-        st = store_mod.Store(store_mod.DB_PATH)
-        try:
-            build_workbook(st, path)
-        finally:
-            st.close()
-        if args.libreoffice:
-            from recalc import recalc
-            res = recalc(str(path), timeout=180)
-            if isinstance(res, dict) and res.get("error"):
-                print(f"recalculation failed: {a(res['error'])} - run without --libreoffice to evaluate in Python")
-                return 1
-        summary, rows = read_tab(path, evaluate=not args.libreoffice)
     import credibility
     if len(CREDIBILITY_ROWS) != len(rows):
         print(f"root-cause map unavailable: the build kept {len(CREDIBILITY_ROWS)} rows, the tab has {len(rows)}")
@@ -165,6 +260,8 @@ def main(argv=None) -> int:
         s = list(s) + [None] * (12 - len(s))
         print(f"  {a(s[0]):<13}" + "".join(f"{int(x or 0):>{w}}" for x, w in
                                             zip(s[1:11], (6, 7, 7, 7, 6, 6, 7, 7, 6, 6))) + f"  {a(s[11])}")
+    for line in signoff_block(args.project):             # the same block completeness_report prints
+        print(a(line))
     if roots is not None:
         print_roots(roots)
     if args.roots:

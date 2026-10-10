@@ -218,3 +218,17 @@ def test_real_pendle_optimism_zero_counts_with_its_evidence(tmp_path, monkeypatc
     # the evening dump (Jake's run 2026-10-09 18:13): Arbitrum reconciled too, and the sum is formed over all three
     assert "NONE STORED" not in em["note"] and "Optimism 0.00" in em["note"], em["note"][:600]
     assert em["verdict"].startswith("PASS") and "= 83,731.84 PENDLE" in em["note"], em
+
+
+def test_real_aerodrome_buyback_is_the_foundation_lock_and_implied_stays_zero(tmp_path, monkeypatch):
+    """External audit 2026-10-09 item 1 + Jake's retirement rule (2026-10-10), on the real dump: the implied (fee-funded)
+    buyback stays N/A by design (fees buy nothing), while the actual buyback is the Foundation's buy-and-lock — a
+    DOCUMENTED LIMITATION (state read; Base logs are paid), no longer a declared zero — and the retirement rates judge
+    it rather than reading a structural 0."""
+    o = evaluate_real(tmp_path, monkeypatch, "Aerodrome")
+    assert o["a3_implied_buyback_pct"]["verdict"] == "N/A", o["a3_implied_buyback_pct"]
+    assert o["in_buyback"]["verdict"].startswith("DOCUMENTED LIMITATION"), o["in_buyback"]
+    for hid in ("a3_circ_retirement", "a3_actual_buyback_pct", "a3_net_absorption"):
+        assert not o[hid]["verdict"].startswith("N/A"), (hid, o[hid])
+        assert "in_buyback" in o[hid]["note"], (hid, o[hid])
+    assert "foundation_locked_aero_tokens" in o["a3_buyback_locked"]["note"], o["a3_buyback_locked"]

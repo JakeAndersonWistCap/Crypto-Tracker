@@ -406,25 +406,10 @@ def report(data: pd.DataFrame, long: pd.DataFrame, asof: pd.Timestamp, only: str
 
 
 def signoff_lines(only: str | None = None) -> list[str]:
-    """THE FINISH LINE (overnight sign-off round 2026-10-07): each project SIGNED OFF or OPEN from the Credibility tab's
-    evaluated verdicts — signed = PASS / N/A / DOCUMENTED LIMITATION / MATURING / VERIFIED FINDING — with every open
-    row and its reason."""
-    import credibility
+    """THE FINISH LINE (overnight sign-off round 2026-10-07): credibility_report.signoff_block — the SAME evaluation and
+    the same block credibility_report prints (external audit 2026-10-09, item 8: the two disagreed on Morpho)."""
     import credibility_report as cr
-    rows, tab = cr.evaluate(only)
-    if rows is None:
-        return ["\nSIGN-OFF: unavailable (no store, or the tab could not be paired)"]
-    so = credibility.signoff(rows, [t[10] for t in tab])
-    out = ["\nSIGN-OFF (Credibility) — " + ", ".join(
-        f"{k} {v}" for k, v in sorted(pd.Series([d["status"] for d in so.values()]).value_counts().items()))]
-    for name, d in so.items():
-        if only and name != only:
-            continue
-        cnt = ", ".join(f"{k} {v}" for k, v in sorted(d["counts"].items()))
-        out.append(f"  {d['status']:<10} {name:<12} {cnt}")
-        for rid, v, note in d["open"]:
-            out.append(f"      OPEN {rid}: {v} — {note[:200]}")
-    return out
+    return cr.signoff_block(only)
 
 
 def main(argv=None) -> int:

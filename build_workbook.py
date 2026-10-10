@@ -1430,6 +1430,49 @@ def _near_buyback_views(groups: dict) -> None:
         groups[(name, "actual_buyback_usd")] = _as_stored(usd, g.columns)
 
 
+def _foundation_buyback_views(groups: dict) -> None:
+    """AERODROME'S FOUNDATION BUY-AND-LOCK (external audit 2026-10-09, item 1): actual_buyback_tokens = the day's change
+    in the AERO the buyback wallets hold locked (foundation_locked_aero_tokens) + min(change in their rebase claimable,
+    0) — a rebase claim moves claimable into the lock, so the two cancel; accrual (claimable rising) is not a buy.
+    Consecutive days only; a negative day (a lock leaving the wallets) is kept as measured and named.
+    actual_buyback_usd = tokens x the same-day price."""
+    for p in scoped_projects():
+        fb = p.get("foundation_buyback")
+        if not fb:
+            continue
+        name, g = p["name"], groups.get((p["name"], fb["stock_metric"]))
+        if g is None or g.empty:
+            continue
+        ser = lambda m: (lambda x: None if x is None or x.empty else (  # noqa: E731
+            x.assign(date=pd.to_datetime(x["date"]).dt.normalize()).drop_duplicates("date", keep="last")
+            .set_index("date")["value"].astype(float).sort_index()))(groups.get((name, m)))
+        st, cl = ser(fb["stock_metric"]), ser(fb["claimable_metric"])
+        d = st.diff()
+        d = d[(d.index.to_series().diff() == pd.Timedelta(days=1)).values & d.notna().values]
+        if cl is not None:
+            dc = cl.diff().reindex(d.index)
+            d = d + dc.clip(upper=0).fillna(0.0)
+        if d.empty:
+            continue
+        tok = pd.DataFrame({"date": d.index, "project": name, "metric": fb["flow"], "value": d.values, "tier": 2,
+                            "source": [f"derived:d({fb['stock_metric']}) + min(d({fb['claimable_metric']}), 0)"
+                                       + (" [NEGATIVE: a lock left the buyback wallets]" if v < 0 else "")
+                                       for v in d.values]})
+        groups[(name, fb["flow"])] = _as_stored(tok, g.columns)
+        px = groups.get((name, "price_usd"))
+        if px is None or px.empty:
+            continue
+        pmap = (px.assign(date=pd.to_datetime(px["date"]).dt.normalize()).drop_duplicates("date", keep="last")
+                .set_index("date")["value"].astype(float))
+        both = d[d.index.isin(pmap.index)]
+        if both.empty:
+            continue
+        usd = pd.DataFrame({"date": both.index, "project": name, "metric": "actual_buyback_usd",
+                            "value": (both * pmap.reindex(both.index)).values, "tier": 2,
+                            "source": "derived:tokens*price"})
+        groups[(name, "actual_buyback_usd")] = _as_stored(usd, g.columns)
+
+
 # ===== EVERY VIEW EMITS A STORED ROW'S COLUMNS. Fixed 2026-09-28 after a build crash. =====
 # Run 20260928T142424Z: aggregate() died on latest["is_manual"] — the declared-issuance view built
 # NEAR's series from scratch and copied the stored columns from the derived series it replaced,
@@ -2023,11 +2066,13 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _measured_emissions_views(groups)
     _usd_history_views(groups)    # BEFORE the burn total, which sums the leg it extends
     _near_buyback_views(groups)
+    _foundation_buyback_views(groups)
     _burn_total_views(groups)
     _one_off_views(groups)        # BEFORE the relabel, so a burn-route buyback copies the ongoing flow
     _relabel_views(groups)
     _restatement_views(groups)
     _buyback_tokens_from_usd_views(groups)
+    _buyback_split_views(groups)  # AFTER every view that builds actual_buyback_* (retirement = burned + held)
     _emissions_from_metric_views(groups)
     _trailing_yield_views(groups)
     _payday_yield_views(groups, asof)
@@ -2425,7 +2470,8 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
             # Ethereum, 2026-09-28: 1,389.76 ETH of stored :as-buyback rows (the EIP-1559 burn
             # re-labelled) kept rendering after the route became "none", because the store never
             # deletes. orphan_cleanup.sql section AO lists them for review.
-            if metric in config.BUYBACK_METRICS and config.buyback_route(name)["route"] == "none":
+            if metric in config.BUYBACK_METRICS + config.BUYBACK_SPLIT_METRICS and \
+                    config.buyback_route(name)["route"] == "none":
                 row["status"] = "n/a"
                 row["note"] = (f"{config.buyback_route(name)['reason']} {len(g)} stored row(s) "
                                f"predate this and are not shown — orphan_cleanup.sql section AO.")
@@ -3341,6 +3387,17 @@ def _retirement_zero(p: dict) -> str | None:
     return None
 
 
+def _implied_zero(p: dict) -> str | None:
+    """Why this project's IMPLIED buyback (revenue x share) is a structural 0 — or None. Fees paid to voters in the
+    pairs' own tokens buy nothing (Aerodrome), whatever the Foundation buys with its own funds (external audit
+    2026-10-09, item 1: the buy-and-lock is the ACTUAL buyback, not an implied one)."""
+    fs = p.get("fee_split") or {}
+    if fs.get("destination_model") == "distribute_to_voters":
+        return ("0 — fees buy nothing: 100% of fees are paid to voters in the pairs' own tokens "
+                "(fee_split: distribute_to_voters). Any Foundation buy-and-lock is the ACTUAL buyback.")
+    return None
+
+
 def _a3_headline(R: Refs, data_by_key: dict | None = None) -> list[tuple]:
     """BOTH RETIREMENT RATES, OR NEITHER. The gap between them is the dilution warning; the
     circulating rate alone is the flattering half. One gate serves both cells, so a missing
@@ -3350,8 +3407,11 @@ def _a3_headline(R: Refs, data_by_key: dict | None = None) -> list[tuple]:
     and over the FDV supply (FDV ÷ spot price) — price-independent, so a rising token does not
     shrink it the way dollars spent at buy-time over today's market cap do (Hyperliquid read 3.9%
     in tokens against 3.1% in dollars). The dollar pair stays alongside."""
-    bt = lambda r: R.D(r, "actual_buyback_tokens", "q0")  # noqa: E731
-    bb = lambda r: R.D(r, "actual_buyback_usd", "q0")  # noqa: E731
+    # RETIREMENT = BURNED + HELD (Jake's decision 2026-10-10): the rates read retired_buyback_* (the buyback x its
+    # burned + held share, _buyback_split_views); distributed buybacks are staking yield. Annualised over the
+    # BUYBACK's coverage (same days — the retired series is a share of it).
+    bt = lambda r: R.D(r, "retired_buyback_tokens", "q0")  # noqa: E731
+    bb = lambda r: R.D(r, "retired_buyback_usd", "q0")  # noqa: E731
     mc = lambda r: R.D(r, "market_cap_usd", "now")  # noqa: E731
     fdv = lambda r: R.D(r, "fdv_usd", "now")  # noqa: E731
     px = lambda r: R.D(r, "price_usd", "now")  # noqa: E731
@@ -3370,16 +3430,16 @@ def _a3_headline(R: Refs, data_by_key: dict | None = None) -> list[tuple]:
             return "=0" if _retirement_zero(p) else calc(expr_fn(r, p))
         return build
     return [
-        ("CIRCULATING RETIREMENT RATE (tokens) = actual buyback tokens (annualised) ÷ circulating — primary",
+        ("CIRCULATING RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) ÷ circulating — primary",
          zero_or(lambda r, p: f"IF({gate_t(r, p)},{_annualise(R, r, p, 'actual_buyback_tokens', bt(r))}/({circ(r, p)}),{NA})"),
          FMT_PCT, "calc", True, {"metric": "actual_buyback_tokens", "flag_fn": flag}),
-        ("FDV RETIREMENT RATE (tokens) = actual buyback tokens (annualised) ÷ FDV supply (FDV ÷ price) — always read with the rate to its left",
+        ("FDV RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) ÷ FDV supply (FDV ÷ price) — always read with the rate to its left",
          zero_or(lambda r, p: f"IF({gate_t(r, p)},{_annualise(R, r, p, 'actual_buyback_tokens', bt(r))}/{fdv_supply(r)},{NA})"),
          FMT_PCT, "calc", True, {"metric": "actual_buyback_tokens", "flag_fn": flag}),
-        ("Circulating retirement rate ($) = actual buyback $ (annualised) ÷ market cap — alongside",
+        ("Circulating retirement rate ($) = RETIRED buyback $ (burned + held, annualised) ÷ market cap — alongside",
          zero_or(lambda r, p: f"IF({gate(r)},{_annualise(R, r, p, 'actual_buyback_usd', bb(r))}/{mc(r)},{NA})"),
          FMT_PCT, "calc", False, {"metric": "actual_buyback_usd", "flag_fn": flag}),
-        ("FDV retirement rate ($) = actual buyback $ (annualised) ÷ FDV — alongside",
+        ("FDV retirement rate ($) = RETIRED buyback $ (burned + held, annualised) ÷ FDV — alongside",
          zero_or(lambda r, p: f"IF({gate(r)},{_annualise(R, r, p, 'actual_buyback_usd', bb(r))}/{fdv(r)},{NA})"),
          FMT_PCT, "calc", False, {"metric": "actual_buyback_usd", "flag_fn": flag}),
     ]
@@ -3993,6 +4053,47 @@ def _buyback_tokens_from_usd_views(groups: dict) -> None:
         tok["value"] = tok["value"].astype(float) / tok["date"].map(price_on)
         tok["metric"], tok["source"] = "actual_buyback_tokens", DERIVED_USD_OVER_PRICE
         groups[(name, "actual_buyback_tokens")] = _as_stored(tok, usd.columns)
+
+
+def _buyback_split_views(groups: dict) -> None:
+    """THE BUYBACK BY DESTINATION (Jake's decision 2026-10-10): each day's actual_buyback_tokens x that day's shares
+    (config.buyback_destination_shares — dated, sourced) -> buyback_burned_tokens / _held_ / _distributed_, and
+    retired_buyback_tokens / _usd = burned + held. Retirement = burned or held; paid out to stakers is staking yield.
+    The full buyback stays on its own row. A day with no declared share is left out of the split and named."""
+    for p in scoped_projects():
+        name = p["name"]
+        tok = groups.get((name, "actual_buyback_tokens"))
+        if tok is None or tok.empty or config.buyback_route(name)["route"] == "none":
+            continue
+        cols = tok.columns
+        dates = pd.to_datetime(tok["date"]).dt.normalize()
+        shares = [config.buyback_destination_shares(name, d.date()) for d in dates]
+        keep = [sh is not None for sh in shares]
+        if not any(keep):
+            continue
+        base = tok[keep].copy()
+        sh = [x for x in shares if x is not None]
+        v = base["value"].astype(float).values
+        tags = sorted({(x["from"] or "start", round(x["burn"], 4), round(x["hold"], 4), round(x["distribute"], 4))
+                       for x in sh})
+        how = "; ".join(f"from {f}: burn {b:.0%} / hold {h:.0%} / distribute {d:.0%}" for f, b, h, d in tags)
+        for metric, parts in (("buyback_burned_tokens", ("burn",)), ("buyback_held_tokens", ("hold",)),
+                              ("buyback_distributed_tokens", ("distribute",)),
+                              ("retired_buyback_tokens", ("burn", "hold"))):
+            f = base.copy()
+            f["value"] = v * [sum(x[k] for k in parts) for x in sh]
+            f["metric"], f["source"] = metric, f"derived:actual_buyback_tokens x {'+'.join(parts)} share ({how})"
+            groups[(name, metric)] = _as_stored(f, cols)
+        usd = groups.get((name, "actual_buyback_usd"))
+        if usd is not None and not usd.empty:
+            ud = pd.to_datetime(usd["date"]).dt.normalize()
+            ush = [config.buyback_destination_shares(name, d.date()) for d in ud]
+            uk = [x is not None for x in ush]
+            if any(uk):
+                f = usd[uk].copy()
+                f["value"] = f["value"].astype(float).values * [x["burn"] + x["hold"] for x in ush if x is not None]
+                f["metric"], f["source"] = "retired_buyback_usd", f"derived:actual_buyback_usd x burn+hold share ({how})"
+                groups[(name, "retired_buyback_usd")] = _as_stored(f, usd.columns)
 
 
 def _wallet_set(source: str) -> str:
@@ -5017,7 +5118,7 @@ def write_a3(ws, R: Refs, data_by_key: dict):
     # NO TOKEN IS BOUGHT WHERE FEES GO TO VOTERS IN THE PAIRS' OWN TOKENS (Aerodrome; Credibility pass
     # 2026-10-05: the implied cell read 18.25% because share_to_buyback 1.0 is the share DISTRIBUTED, not
     # bought). The implied figures are a structural 0, as the retirement rates already are.
-    no_buy = lambda p: "=0" if _retirement_zero(p) else None  # noqa: E731
+    no_buy = lambda p: "=0" if _implied_zero(p) else None  # noqa: E731
     specs = [
         ("Project", lambda r, p: p["name"], FMT_TEXT, "text"),
         ("Symbol", lambda r, p: p["symbol"], FMT_TEXT, "text"),
@@ -5048,22 +5149,31 @@ def write_a3(ws, R: Refs, data_by_key: dict):
         ("BUYBACK AS % OF SUPPLY (annualised, implied)",
          lambda r, p: no_buy(p) or base_gated(p, threshold_gated(p, gated(st(r), f"{_annualise(R, r, p, config.revenue_base_metric(p['name']), rev(r, p))}*{share(r)}/{price(r)}/({circ(r, p)})", share(r)))),
          FMT_PCT, "calc", True, {"gate": "fee_split", "threshold": True, "base": True,
-                                 "flag_fn": lambda p: ((" · no buyback — fees to voters", _retirement_zero(p))
-                                                       if _retirement_zero(p) else None)}),
+                                 "flag_fn": lambda p: ((" · fees buy nothing — paid to voters", _implied_zero(p))
+                                                       if _implied_zero(p) else None)}),
         ("Actual buyback Q0 ($) — observed", lambda r, p: pull(R.D(r, "actual_buyback_usd", "q0")), FMT_USD, "pull", False,
          {"metric": "actual_buyback_usd", "flag_fn": lambda p: _program_flag(p, data_by_key)}),
         ("Actual buyback Q0 (tokens) — observed", lambda r, p: pull(R.D(r, "actual_buyback_tokens", "q0")), FMT_NUM, "pull", False,
          {"metric": "actual_buyback_tokens", "flag_fn": lambda p: _program_flag(p, data_by_key)}),
-        ("Actual buyback as % of supply (annualised)", lambda r, p: calc(f"{_annualise(R, r, p, 'actual_buyback_tokens', R.D(r, 'actual_buyback_tokens', 'q0'))}/({circ(r, p)})"), FMT_PCT, "calc", True),
+        # THE BUYBACK BY DESTINATION (Jake 2026-10-10): the full buyback above, split; retirement = burned + held
+        ("Actual buyback Q0 BURNED (tokens)", lambda r, p: pull(R.D(r, "buyback_burned_tokens", "q0")), FMT_NUM, "pull", False,
+         {"metric": "buyback_burned_tokens"}),
+        ("Actual buyback Q0 HELD (tokens) — treasury, reserve, foundation-locked", lambda r, p: pull(R.D(r, "buyback_held_tokens", "q0")),
+         FMT_NUM, "pull", False, {"metric": "buyback_held_tokens"}),
+        ("Actual buyback Q0 DISTRIBUTED to stakers (tokens) — staking yield, not retirement",
+         lambda r, p: pull(R.D(r, "buyback_distributed_tokens", "q0")), FMT_NUM, "pull", False,
+         {"metric": "buyback_distributed_tokens"}),
+        ("Actual buyback as % of supply (annualised) — RETIRED (burned + held) only",
+         lambda r, p: calc(f"{_annualise(R, r, p, 'actual_buyback_tokens', R.D(r, 'retired_buyback_tokens', 'q0'))}/({circ(r, p)})"), FMT_PCT, "calc", True),
         ("Implied − actual ($)",
          lambda r, p: circular_gated(p, base_gated(p, threshold_gated(p, gated(st(r), _coverage_guard(
              R, r, [("revenue", config.revenue_base_metric(p["name"]), "q0"), ("buyback", "actual_buyback_usd", "q0")],
              f"{rev(r, p)}*{share(r)}-{R.D(r, 'actual_buyback_usd', 'q0')}", same_span=True, bare=True), share(r))))),
          FMT_USD, "calc", False, {"gate": "fee_split", "threshold": True, "base": True}),
         ("Emissions Q0 (tokens) — same period", lambda r, p: pull(R.D(r, "emissions_tokens", "q0")), FMT_NUM, "pull", False, {"metric": "emissions_tokens"}),
-        ("Net absorption Q0 (tokens) = actual buyback − emissions",
+        ("Net absorption Q0 (tokens) = RETIRED buyback (burned + held) − emissions",
          lambda r, p: _coverage_guard(R, r, [("buyback", "actual_buyback_tokens", "q0"), ("emissions", "emissions_tokens", "q0")],
-                                      net_absorption(p, R.D(r, "actual_buyback_tokens", "q0"),
+                                      net_absorption(p, R.D(r, "retired_buyback_tokens", "q0"),
                                                      R.D(r, "emissions_tokens", "q0")), same_span=True),
          FMT_NUM, "calc", True, {"supply_additive": True}),
         ("Net absorption, implied basis (tokens)",
@@ -5173,8 +5283,10 @@ def write_a3(ws, R: Refs, data_by_key: dict):
                             f"{R.C(r, 'Buyback destination')}=\"hold\"),"
                             f"{R.D(r, 'buyback_fund_balance', 'now')},{NA})")), FMT_NUM, "calc", True),
         ("Buyback to YIELD PAYOUT (destination = distribute) — re-enters float, never netted against burn",
+         # the DISTRIBUTED part of the buyback (Jake 2026-10-10): Aerodrome's fees go to voters but its Foundation
+         # buy-and-lock is HELD, so the whole actual buyback is no longer a payout wherever the fees are
          lambda r, p: (calc(f"IF({R.C(r, 'Destination effect on float')}=\"yield_payout\","
-                            f"{R.D(r, 'actual_buyback_tokens', 'q0')},{NA})")), FMT_NUM, "calc"),
+                            f"{R.D(r, 'buyback_distributed_tokens', 'q0')},{NA})")), FMT_NUM, "calc"),
         ("Reserve balance — cross-check (protocol dashboard)", lambda r, p: pull(R.D(r, "buyback_fund_balance_dashboard", "now")),
          FMT_NUM, "pull", False, {"metric": "buyback_fund_balance_dashboard"}),
         ("Contract vs dashboard divergence (flagged when beyond tolerance)",

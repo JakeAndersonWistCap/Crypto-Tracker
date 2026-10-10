@@ -97,7 +97,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     scope.add_argument("--all", action="store_true",
                        help="fetch every project, whatever portfolio.txt says")
     ap.add_argument("--seed", choices=["nearblocks", "geodnet", "plume_staking", "hl_candles", "plume_settlement", "mev_relays",
-                             "near_bigquery", "chainlink_fees", "pendle_gauges", "aero_epochs"],
+                             "near_bigquery", "chainlink_fees", "pendle_gauges", "aero_epochs",
+                             "aero_buyback"],
                     help="one-off: run only this source with NO time budget, to finish a first "
                          "read that routine runs (60s) take many runs to complete. Stores what it "
                          "reads; records no gaps and does not rebuild the workbook. plume_settlement: a "
@@ -110,7 +111,8 @@ def parse_args(argv=None) -> argparse.Namespace:
                          "fee-line event logs (CCIP 1.2/1.5 and 2.0 OnRamps, VRF v2.5, Automation v2.3) on "
                          "Ethereum, Arbitrum, Polygon, Base and OP; routine runs skip it until it is complete. pendle_gauges: "
                          "Pendle's gauge-payout log scans on mainnet, Arbitrum and Optimism, to the head. aero_epochs: every Q0 "
-                         "Aerodrome voter epoch (fees, bribes, totalWeight at each epoch start).")
+                         "Aerodrome voter epoch (fees, bribes, totalWeight at each epoch start). aero_buyback: the "
+                         "Aerodrome Foundation's locked AERO at each day start over 100 days (archive) — its buy-and-lock.")
     ap.add_argument("--seed-days", type=int, default=None,
                     help="--seed mev_relays only: seed this many days back instead of the configured year "
                          "(e.g. 90 first; a later full seed resumes from the days already held)")
@@ -337,6 +339,23 @@ def seed_aero_epochs(st, log) -> int:
     return 0
 
 
+def seed_aero_buyback(st, log) -> int:
+    """The Aerodrome Foundation's buy-and-lock (external audit 2026-10-09, item 1): the AERO locked by its buyback
+    wallets at each UTC day start over the last 100 days, read at past blocks (archive), only where no row is stored —
+    the daily change is the buyback (build_workbook._foundation_buyback_views). Records no gaps."""
+    from fetch.aero_voter import _stored
+    from fetch.ve_managed import seed_foundation
+    from fetch.validate import validate_frame
+    pl = [p for p in config.PROJECTS if p.get("foundation_buyback")]
+    out = fetch.FetchOutput()
+    t0 = time.monotonic()
+    frames = seed_foundation(pl, stored=_stored, say=lambda m: log.info("--seed aero_buyback:%s", m))
+    prior = st.latest_values()
+    written = sum(st.upsert(f) for f in (validate_frame(f, prior, out) for f in frames) if f is not None and not f.empty)
+    log.info("--seed aero_buyback: AFTER (%.0fs) — %d row(s) stored", time.monotonic() - t0, written)
+    return 0
+
+
 def seed_pendle_gauges(st, log) -> int:
     """Pendle's gauge-payout scans, every chain, in one sitting (Jake's run 2026-10-09 ~14:10: the Arbitrum and
     Optimism scans seed from block 0 at 140s a run, store nothing until their whole history reconciles, and the
@@ -502,6 +521,7 @@ def main(argv=None) -> int:
               "plume_settlement": seed_plume_settlement, "near_bigquery": seed_near_bigquery,
               "chainlink_fees": seed_chainlink_fees, "pendle_gauges": seed_pendle_gauges,
               "aero_epochs": seed_aero_epochs,
+              "aero_buyback": seed_aero_buyback,
               "mev_relays": lambda st_, log_: seed_mev_relays(st_, log_, args.seed_days)}[args.seed](st, log)
         st.close()
         return rc

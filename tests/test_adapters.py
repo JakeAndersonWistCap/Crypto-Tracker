@@ -11256,7 +11256,7 @@ def test_the_buyback_route_is_derived_from_the_destination_already_on_file():
         "Hyperliquid": "burn", "GEODNET": "burn", "Uniswap": "burn",
         "Chainlink": "treasury_inflow", "Maple": "treasury_inflow", "Fluid": "treasury_inflow",
         "Ether.fi": "distribute", "Pendle": "distribute", "World Mobile": "distribute",
-        "Sky": "split", "Aerodrome": "none", "Morpho": "none",
+        "Sky": "split", "Aerodrome": "treasury_inflow", "Morpho": "none",
     }
     for name, route in expected.items():
         assert config.buyback_route(name)["route"] == route, name
@@ -11267,15 +11267,13 @@ def test_the_buyback_route_is_derived_from_the_destination_already_on_file():
     assert config.buyback_route("Maple")["metric"] is None
     assert "HELD" in config.buyback_route("Maple")["reason"]
 
-    # ** AERODROME IS "none", NOT "distribute", AND THE DIFFERENCE MATTERS. ** No AERO is ever
-    # bought: 100% of fees go to voters in the PAIR'S tokens. A "distribute" gap would invite
-    # someone to go and find a flow that does not exist.
+    # ** AERODROME'S FEES BUY NOTHING, BUT ITS FOUNDATION BUYS AND LOCKS AERO ** (external audit 2026-10-09, item 1).
+    # The route was "none" until then; the buy-and-lock is measured from the lock stock of the two buyback wallets.
     aero = config.buyback_route("Aerodrome")
-    assert "NO AERO IS BOUGHT AT ALL" in aero["reason"]
+    assert aero["route"] == "treasury_inflow" and aero["metric"] == "foundation_locked_aero_tokens"
     applicable = set(config.metrics_for_project(config.PROJECT_BY_NAME["Aerodrome"]))
-    assert not (applicable & set(config.BUYBACK_METRICS)), \
-        "a flow that does not exist must not be reported as missing"
-    # AND THE CLAIM IS THE PROJECT'S OWN, not this function's opinion.
+    assert "actual_buyback_tokens" in applicable
+    # AND THE FEES STILL GO TO VOTERS — the implied (fee-funded) buyback stays a structural 0.
     assert config.PROJECT_BY_NAME["Aerodrome"]["fee_split"]["destination_model"] == "distribute_to_voters"
 
     print("buyback routes ok: 12 projects routed from the destination already declared")
@@ -13990,7 +13988,8 @@ def test_the_four_scans_are_declared_as_the_round_asked(monkeypatch):
     assert "Mining allocation ONLY" in config.metric_label("GEODNET", "pool_release_tokens")
     for n in ("Ether.fi", "Maple"):
         assert "actual_buyback_tokens_blocked" not in config.PROJECT_BY_NAME[n], n
-    assert config.explorer_order(8453) == ["blockscout"] and config.explorer_order(56) == []
+    # Base: no free explorer log route (Blockscout PRO answers 402 — external audit 2026-10-09, item 9)
+    assert config.explorer_order(8453) == [] and config.explorer_order(56) == []
     print("scan declarations ok")
 
 
@@ -20055,12 +20054,20 @@ def test_tokens_primary_retirement_zero_and_burn_only_presentation():
     R = bw.Refs(100, 10, ["2026-09"])
     a3 = bw._a3_headline(R, {})
     assert [h for h, *_ in a3][:2] == [
-        "CIRCULATING RETIREMENT RATE (tokens) = actual buyback tokens (annualised) ÷ circulating — primary",
-        "FDV RETIREMENT RATE (tokens) = actual buyback tokens (annualised) ÷ FDV supply (FDV ÷ price) — always read with the rate to its left"]
+        "CIRCULATING RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) ÷ circulating — primary",
+        "FDV RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) ÷ FDV supply (FDV ÷ price) — always read with the rate to its left"]
+    # Aerodrome's rate is now MEASURED (the Foundation buy-and-lock, audit 2026-10-09 item 1), not a structural 0;
+    # only its implied (fee-funded) buyback stays 0.
     aero = config.PROJECT_BY_NAME["Aerodrome"]
-    assert a3[0][1](5, aero) == "=0" and a3[2][1](5, aero) == "=0"
-    suffix, why = a3[0][5]["flag_fn"](aero)
-    assert "fees to voters" in suffix and "distribute_to_voters" in why
+    assert a3[0][1](5, aero) != "=0" and "retired_buyback_tokens" in a3[0][1](5, aero)
+    assert bw._retirement_zero(aero) is None and "fees buy nothing" in bw._implied_zero(aero)
+    # A project whose fees go to voters and that buys nothing still reads the structural 0.
+    nobuy = {**aero, "foundation_buyback": None}
+    import unittest.mock as um
+    with um.patch.object(config, "metrics_for_project", lambda p: []):
+        assert a3[0][1](5, nobuy) == "=0"
+        suffix, why = a3[0][5]["flag_fn"](nobuy)
+        assert "fees to voters" in suffix and "distribute_to_voters" in why
     burn = lambda r, p, w="q0": R.D(r, config.a4_burn_metric(p["name"]), w)  # noqa: E731
     a4 = {h: fn for h, fn, *_ in bw._a4_headline(R, burn, {})}
     uni = config.PROJECT_BY_NAME["Uniswap"]
@@ -23535,8 +23542,9 @@ def test_explorer_calls_share_one_pacer_per_host_across_instances(monkeypatch):
         waits.append(sec)
     a = ExplorerLogs(http=_ExplorerHttp({}), pace_sleep=nap)
     b = ExplorerLogs(http=_ExplorerHttp({}), pace_sleep=nap)
-    a.get_logs(8453, "0x" + "11" * 20, ["0x" + "22" * 32], 0, "latest")
-    b.get_logs(8453, "0x" + "33" * 20, ["0x" + "22" * 32], 0, "latest")
+    # Optimism (10) still routes Blockscout first; Base no longer has an explorer route (audit 2026-10-09, item 9)
+    a.get_logs(10, "0x" + "11" * 20, ["0x" + "22" * 32], 0, "latest")
+    b.get_logs(10, "0x" + "33" * 20, ["0x" + "22" * 32], 0, "latest")
     assert waits and waits[-1] > 0.2, "the second adapter waits on the first one's call to the same host"
     assert config.EXPLORERS["blockscout"]["rate_per_s"] <= 5 and config.EXPLORERS["etherscan"]["rate_per_s"] <= 5
 
@@ -24138,7 +24146,7 @@ def test_aerodrome_implied_buyback_is_a_structural_zero(tmp_path):
         col = next(v for k, v in hdr.items() if k and str(k).startswith(head))
         assert ws.cell(r, col).value == "=0", (head, ws.cell(r, col).value)
     col = next(v for k, v in hdr.items() if k and str(k).startswith("BUYBACK AS % OF SUPPLY"))
-    assert "no buyback" in ws.cell(r, col).number_format
+    assert "fees buy nothing" in ws.cell(r, col).number_format     # the Foundation buy-and-lock is the ACTUAL buyback
 
 
 # ===================================================================================
@@ -24252,7 +24260,7 @@ def test_explorer_retries_too_busy_with_backoff_and_polygon_is_etherscan_only(mo
     with _pytest.raises(fx.ExplorerRefused):
         ex2._call("etherscan", 137, {"module": "logs"})
     assert naps == [2.0, 4.0, 8.0, 16.0]
-    assert config.explorer_order(137) == ["etherscan"] and config.explorer_order(8453) == ["blockscout"]
+    assert config.explorer_order(137) == ["etherscan"] and config.explorer_order(8453) == []   # Base: 402 (audit item 9)
 
 
 def test_defillama_report_since_says_what_the_child_books_and_where():
@@ -25815,16 +25823,15 @@ def test_sky_circulating_is_compared_like_for_like_with_coingeckos_total():
     assert "policy: CoinGecko" in text
 
 
-def test_aerodrome_buyback_input_is_a_declared_na_so_net_absorption_is_checkable():
-    """No AERO is ever bought (BUYBACK_ROUTE_OVERRIDE 'none'): the buyback input is an N/A row that stands for the
-    declared zero, so a3_net_absorption no longer reads 'input buyback has no row'."""
+def test_aerodrome_buyback_input_is_the_foundation_buy_and_lock_not_a_declared_na():
+    """Until 2026-10-09 the buyback input was a declared N/A (no AERO bought from fees). The external audit (item 1)
+    found the Foundation's buy-and-lock: the input is now a DOCUMENTED LIMITATION (state read; Base logs are paid),
+    and an N/A row still stands for a declared zero elsewhere only where nothing is bought by design."""
     import credibility as cred
-    row = config.CREDIBILITY["Aerodrome"]["in_buyback"]                 # declared in config, N/A by design
-    assert row["ref"]["verdict"] == "N/A"
-    built = {"in_buyback": {"verdict": "N/A"}}                          # a built row carries its verdict on top
-    assert cred.resolve_alias("Aerodrome", "@buyback", built) == "in_buyback", \
-        "an N/A buyback row stands for the declared zero when nothing is bought by design"
-    assert cred.resolve_alias("Pendle", "@buyback", built) is None, "elsewhere an N/A row is skipped"
+    row = config.CREDIBILITY["Aerodrome"]["in_buyback"]
+    assert row["ref"]["verdict"] != "N/A"
+    assert cred.resolve_alias("Pendle", "@buyback", {"in_buyback": {"verdict": "N/A"}}) is None, \
+        "elsewhere an N/A row is skipped"
     eth = cred.generic_inputs("Ethereum")             # Ethereum: no config row, so the generic N/A is added
     assert "in_buyback" not in eth or eth["in_buyback"]["ref"]["verdict"] == "N/A"
 

@@ -527,6 +527,143 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11be. External blind audit 2026-10-09 + Jake's retirement rule 2026-10-10
+
+**1. Aerodrome's Foundation buy-and-lock is now its buyback.**
+- No buyer address is published. Aerodrome's X posts name the Public Goods Fund as the buyer ("The Aerodrome PGF has
+  acquired and max-locked 312K $AERO", x.com/AerodromeFi/status/1996261069078348016).
+- Its address 0x834C0DA0…2fDa52 is in Aerodrome's docs (security.mdx L34-37 @99680a79, read 2026-07-28).
+- 0x623CF63A…57a1 "Buyback / Locked Funds" is from Aerodrome's Blockworks filing (read 2026-10-07).
+- The docs say "over 184M AERO acquired and locked". Blockworks' 9.17M (Q2) / 27.95M (YTD) were not found in a
+  primary source.
+- **It is read from state.** Base logs are paid (Blockscout 402; Alchemy free = 10 blocks per getLogs), so the purchases
+  themselves cannot be scanned.
+  - Once a day `ve_managed` reads, for the two wallets' veNFTs:
+    - NORMAL locks: the locked amount;
+    - locks deposited into managed veNFTs: their `weights`;
+    - managed veNFTs they own: skipped;
+    - the rebase still claimable (RewardsDistributor 0x227f6513…).
+  - `actual_buyback_tokens = Δ locked + min(Δ claimable, 0)` on consecutive days (`build_workbook._foundation_buyback_views`).
+    A rebase claim nets to 0. A lock leaving the wallets is kept negative and named.
+  - `actual_buyback_usd` = tokens × that day's price.
+- **Destination:** held (locked) until the merged-token launch on 2026-10-22, then burned by the Momentum Fund
+  (aero.xyz/economics; the burn is not yet verified).
+- **Fees still buy nothing.** The implied (fee-funded) buyback stays a structural 0. Only the retirement rates now judge
+  the measured buyback.
+- `in_buyback` is a DOCUMENTED LIMITATION. Upgrade path: Aerodrome's next Blockworks report, or a paid Base log route.
+- **Run:** `python token_metrics.py --seed aero_buyback` (100 days of archive reads at each day's first block, only days
+  with no row). Until then the Aerodrome A3 rates read n/a, not 0.
+
+**2. Aerodrome migration: plan only, nothing built.**
+- **Launch:** 2026-10-22 00:00 UTC on 7 chains (aero.xyz/articles/aero-launch-update-all-systems-go, 2026-09-25).
+- **The new AERO address is not published yet.** Legacy Base AERO is 0x940181a9…8631.
+  - Conversion: AERO 1:1, VELO ~0.044, through upgrade portals.
+  - Coinbase converts AERO Nov 2-4.
+  - veAERO/veVELO become sAERO (permanent locks → max).
+- **History chaining:** keep the legacy series up to the day before launch. Price and supply then come from the new
+  token, scaled 1:1 for AERO, so no restatement is needed. VELO-derived supply arrives as a step on the launch day and is
+  marked as a measuring-point change, not issuance.
+- **Replaced reads:**
+  - `Voter.totalWeight` → total sAERO staked/allocated.
+  - Voter rewards → continuous pool revenue to sAERO, with no epochs: weekly windows become daily flows.
+  - The Foundation lock read stops. The Momentum Fund buy-and-burn is read as a burn (burn route) once its address is
+    published.
+  - Emissions are set by revenue (AER Engine caps rewards per pool by projected revenue; ~11% a year).
+- **MATURING from 10-22 until the new reads have a full window:** in_revenue, in_voter_apr_epoch, a3_protocol_yield,
+  in_voting_power, in_locked, in_emissions / rebase, in_buyback, and the buyback split.
+- **Before building:** the new token and sAERO addresses from Aerodrome's docs or repo, each with a URL and a date.
+
+**3. Aethir.**
+- **Dashboard circulating 24.05bn, decomposed:** vesting buckets ~12.97bn + node-reward residual ~11.1bn (the dashboard
+  shows 9.99bn of rewards distributed).
+- **Tokenomist's 20,128,764,593** equals our own schedule table's 2026-05 value. It is ~5 months stale; it does not
+  exclude a bucket.
+- **Tokenomics.com (~33%)** excludes the checker/compute pool ("Undisclosed").
+- **ARR $62.49M** is Aethir's dashboard key `arr` ("Annual Recurring Revenue (ARR) (1d)"), read as published
+  (`arr_usd`, `_a2_headline.arr()`).
+  - The ~$156M was not found in a primary source. Aethir's own figures are $126M (Apr 2025), $147M+ (FAQ) and $166M
+    (Q3 2025).
+- **Open for Jake:** the docs allocation reads checker/compute 50% but our config note says 55% (token overview). The
+  listed buckets sum to 95%. Not changed.
+
+**4. NEAR circulating.** NearBlocks' 1,249,836,992 should not be primary.
+- NearBlocks' current code (98e773b2) sets circulating = total supply (since a16191e9, 2025-11-20).
+- The lockup-excluding formula was removed in fa04a93f. The live figure cannot be reproduced from their code.
+- The lockup balance (~58.7M per the audit) cannot be read from here (NearBlocks and NEAR RPC are unreachable).
+- The first-party figure is BigQuery `circulating_supply` (unchanged).
+
+**5. NEAR watch** (config `protocol_burn.watch`).
+- **HSP-027** passed 2026-07-06 (gov.near.org/t/42213) and is implemented in nearcore 17b93d9a. Only 2.14.0-rc.1..3 are
+  tagged, so it is **not live** and has no activation block.
+  - `switch_on` stays None. The first `near_protocol_version >= 87` reading dates it.
+- **Issuance 2.5% → 1.6%:** a draft (gov.near.org/t/42644, 2026-10-07). The vote date is unconfirmed.
+
+**6. GEODNET staking** (config `superhex_staking.terms_2026_10_10`).
+- Terms: 20% bonus after a 1-year producing period (Phase II; Phase I paid 10%); 180-day no-show refund without the
+  bonus; 20,000 GEOD per SuperHex (docs.geodnet.com/geod-console-advanced/staking-faqs).
+- On 2,993,000 staked (Blockworks, 2026-10-04): ≤ 598,600 GEOD a year (an upper bound).
+- Pending Jake's review.
+
+**7. Fluid AGI3.**
+- Passed and executed as IGP-137 (Tally "Executed"; fluid-governance@8891f73).
+- It moved 5,000,000 FLUID from Treasury 0x28849D2b… to Team Multisig 0x4F6F977a…. Both are already non-circulating
+  (IGP-137 is the source).
+- On 2026-08-14 our trace saw the multisig send onward to 0xCaBebC7f…3fd7. Fluid has not published that address, so it is
+  **not wired** (address rule). Kinetic's buys are unconfirmed.
+- If Jake confirms 0xCaBe… from a Fluid source, it joins `_NONCIRC_WALLETS["Fluid"]`.
+
+**8. Sign-off disagreed between the two reports.**
+- Morpho `in_interest_day` sums DefiLlama fees over the 7 complete days to yesterday UTC. A report evaluated after 00:00
+  UTC lacked the not-yet-published day and read "CHECK (no figure)".
+- Both reports now read ONE cached evaluation (`credibility_report.evaluated`: store fingerprint + code hash +
+  narrowing + as-of; `metrics.db.credibility.pkl`, 12 h) and print the same `signoff_block`.
+- `TOKEN_METRICS_FRESH_EVAL=1` forces a fresh evaluation.
+- Test: `test_credibility_and_completeness_print_the_same_signoff_across_midnight`.
+
+**9. Base logs.**
+- `EXPLORER_LOG_ROUTES[8453] = []`: Blockscout answers 402 on Base.
+- `base_logs_where_balance_moves` bisects archive `balanceOf` to ≤10-block windows, then calls eth_getLogs only there
+  (Alchemy's free cap).
+- `aerodrome_epoch_rewards` uses it for NotifyReward. `explorer_logs` names the missing route instead of "no key".
+- **Run:** `python check_offline_items.py aerodrome_epoch_rewards` (LAPTOP 0xb0952747…, XDP 0x07b3d902…) to print each
+  depositor, tx, block time and DefiLlama price at the deposit.
+
+**10. Label.** The 17.37% row is the per-epoch voter APR UNCAPPED (before the illiquid-token rule), DefiLlama's
+like-for-like dollars vs on-chain. It is relabelled "CHECK ROW, NOT THE HEADLINE". The headline 12.10% is capped.
+
+**11. Artemis.**
+- Ethereum `settlement_volume_usd` ends 2026-08-25. No retirement or rename was found in Artemis's docs or changelog.
+- It is stale (AMBER) by the 45-day rule from today (`ARTEMIS_SETTLEMENT.series_status`).
+- **Proposal (not built):** BigQuery P2P + DefiLlama DEX/NFT, validated against Artemis to 08-25.
+
+**12. Retirement = buybacks BURNED or HELD (Jake, 2026-10-10).**
+- **Rule:** `BUYBACK_DESTINATION_SHARES` holds dated, sourced shares per project (`buyback_destination_shares`). The split
+  rows are buyback_burned / held / distributed_tokens.
+  - The retirement rates, "actual buyback %" and net absorption read `retired_buyback_*` (burned + held).
+  - The full buyback stays as its own row.
+  - The yield-payout column reads the distributed part.
+- **Classified from primary sources:**
+  - Burn: Uniswap, GEODNET, Hyperliquid (burned by consensus).
+  - Hold: Chainlink, NEAR, Fluid, Maple (MIP-019); Aerodrome (locked, then burned from 10-22).
+  - Distribute: Pendle (sPENDLE), Ether.fi (sETHFI).
+  - Sky: held until 2026-08-17, then 5/27.5 burned and 22.5/27.5 distributed.
+- **Corrections to Jake's read:**
+  - Sky burns 5% of NPS; the 0.55 in config is buyback vs farm.
+  - Ether.fi's new programme is reportedly 50/50 (secondary source only; kept as distribute).
+  - Aave is unverified.
+- **Staking yield (12c):** Pendle's per-epoch APR and sETHFI's share-price growth already measure the distributed
+  buybacks, so nothing is added.
+  - Sky's yield is the USDS farm only; adding its SKY leg needs the SKY farm's stake (proposed, not added).
+- **Before → after on the six real dumps (12d):**
+  - Pendle:
+    - circulating retirement 1.387% → 0
+    - FDV retirement 1.174% → 0
+    - actual buyback % 1.387% → 0
+    - net absorption +729,811 → −83,732
+  - Aerodrome: retirement 0 (N/A) → n/a until `--seed aero_buyback`, then measured.
+  - Chainlink, Maple, Ethereum, Plume: no move.
+  - Expected elsewhere: Ether.fi → 0; Sky → only post-08-17 buys, 18.2% retired; burn/hold routes unchanged.
+
 ## 11bd. Jake's run 2026-10-09 18:13: tolerances restored, the probe's epoch check, the fee-leg finding
 
 - **Tolerance lost on conditional rows.** A row whose reference is a `verdict_when` keeps its tolerance in the branch

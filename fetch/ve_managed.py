@@ -61,6 +61,8 @@ class VeManaged:
 
     def run(self, projects: list[dict], window_days, out):
         for p in projects:
+            if p.get("foundation_buyback"):
+                self._foundation(p, p["foundation_buyback"], out)
             spec = p.get("ve_managed_holdings")
             if not spec:
                 continue
@@ -87,3 +89,82 @@ class VeManaged:
             out.add(tidy([(today(), total / scale)], name, metric, f"{SOURCE}:{spec['escrow'][:10]}.weights", TIER),
                     SOURCE, name, f"{metric} = {total / scale:,.0f} at block {head:,}: " + "; ".join(parts), TIER)
             self.daily.done(key, day)
+
+
+def foundation_rows(name: str, spec: dict, day, got: dict, archive: bool = False) -> tuple[list, str]:
+    """[(frame)] for one day's Foundation lock read (check_offline_items.aerodrome_foundation_locks), and the log line."""
+    import config                                          # noqa: PLC0415
+    src = f"{SOURCE}:foundation_locks"
+    src = config.mark_source(src, "archive") if archive else src
+    frames = [tidy([(day, got["locked"])], name, spec["stock_metric"], src, TIER),
+              tidy([(day, got["claimable"])], name, spec["claimable_metric"], src, TIER)]
+    msg = (f"{spec['stock_metric']} = {got['locked']:,.0f} AERO locked by the Foundation's buyback wallets ("
+           + "; ".join(f"{spec['owners'][o]} {v:,.0f}" for o, v in got["by_owner"].items())
+           + f"; {got['nfts']} veNFT(s), {got['owned_managed']} owned managed veNFT(s) not counted); rebase claimable "
+             f"{got['claimable']:,.0f}")
+    return frames, msg
+
+
+def _foundation_reader(owners, block="latest"):
+    import check_offline_items as coi                      # noqa: PLC0415 — one read, shared with the probe and seed
+    return coi.aerodrome_foundation_locks(list(owners), block=block)
+
+
+def _foundation(self, p, spec, out):
+    """THE FOUNDATION'S BUY-AND-LOCK, FROM STATE (external audit 2026-10-09, item 1): once a day, the AERO locked by
+    the buyback wallets and their rebase claimable; the buyback is their daily change (build_workbook.
+    _foundation_buyback_views)."""
+    name, metric = p["name"], spec["stock_metric"]
+    day = str(today().date())
+    key = f"ve_managed:{name}:{metric}"
+    if not self.daily.due(key, day):
+        out.mark_current(SOURCE, name, metric, f"{metric}: read today already", TIER)
+        return
+    try:
+        got = (getattr(self, "foundation_reader", None) or _foundation_reader)(spec["owners"])
+    except Exception as e:  # noqa: BLE001
+        from .chain import redact_urls
+        out.fail(SOURCE, name, f"{metric}: {redact_urls(e)}", TIER)
+        return
+    if got.get("error"):
+        out.fail(SOURCE, name, f"{metric}: {got['error']}", TIER)
+        return
+    frames, msg = foundation_rows(name, spec, today(), got)
+    for f in frames:
+        out.add(f, SOURCE, name, msg, TIER)
+    self.daily.done(key, day)
+
+
+VeManaged._foundation = _foundation
+
+
+def seed_foundation(projects: list[dict], days: int = 100, stored=None, say=print, reader=None) -> list:
+    """`token_metrics.py --seed aero_buyback`: the Foundation lock stock at each UTC day start over the last `days`
+    days, at that day's first block (archive eth_call through Multicall3), only for days with no row. Frames out."""
+    import check_offline_items as coi                      # noqa: PLC0415
+    import pandas as pd                                    # noqa: PLC0415
+    reader = reader or _foundation_reader
+    frames = []
+    for p in projects:
+        spec = p.get("foundation_buyback")
+        if not spec:
+            continue
+        name = p["name"]
+        end = today()
+        for k in range(days, 0, -1):
+            d = (end - pd.Timedelta(days=k)).normalize()
+            if stored and stored(name, spec["stock_metric"], str(d.date())):
+                continue
+            b = coi.rpc_block_at("base", int(d.tz_localize("UTC").timestamp()) if d.tzinfo is None
+                                 else int(d.timestamp()), say=say)
+            if b is None:
+                say(f"  {d.date()}: no block for the day start — skipped")
+                continue
+            got = reader(spec["owners"], block=hex(b))
+            if got.get("error"):
+                say(f"  {d.date()}: {got['error']} — skipped")
+                continue
+            fs, msg = foundation_rows(name, spec, d, got, archive=True)
+            frames += fs
+            say(f"  {d.date()} (block {b:,}): {msg}")
+    return frames

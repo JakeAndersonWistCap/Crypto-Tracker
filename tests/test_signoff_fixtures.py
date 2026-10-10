@@ -1097,3 +1097,146 @@ def test_dump_fixture_round_trips_a_store_and_the_verdicts_are_unchanged(tmp_pat
     rws, tab = cr.evaluate("Pendle", asof=pd.Timestamp(ASOF), narrow=True)
     again = {r["id"]: t[10] for r, t in zip(rws, tab) if r["project"] == "Pendle"}
     assert again == {k: v["verdict"] for k, v in direct.items()}
+
+
+def test_credibility_and_completeness_print_the_same_signoff_across_midnight(tmp_path, monkeypatch, capsys):
+    """External audit 2026-10-09, item 8: credibility_report showed Morpho SIGNED OFF (in_interest_day PASS) while
+    completeness_report, run straight after, showed it "CHECK (no figure)". Each evaluated on its own at its own `now`;
+    a second evaluation after 00:00 UTC takes in a DefiLlama day not yet published (6 of 7 days). Now ONE evaluation
+    per store state is shared: the two sign-off blocks are identical even when the clock crosses midnight between
+    them, and a changed store is evaluated afresh."""
+    import credibility_report as cr
+    import completeness_report as comp
+    import store as sm
+    db = tmp_path / "metrics.db"
+    day = pd.Timestamp("2026-10-09")
+    rows = []
+    for d in pd.date_range(day - pd.Timedelta(days=20), day - pd.Timedelta(days=1)):      # fees to 10-08 only
+        rows += [(d, "Morpho", "fees_usd", 700_000.0, "defillama", 1),
+                 (d, "Morpho", "borrow_interest_usd_day_morpho_api", 690_000.0, "morpho_api", 1)]
+    st = sm.Store(db)
+    st.upsert(pd.DataFrame(rows, columns=["date", "project", "metric", "value", "source", "tier"]))
+    st.close()
+    monkeypatch.setattr(sm, "DB_PATH", str(db))
+    monkeypatch.setitem(sys.modules, "recalc", None)
+    monkeypatch.delenv("TOKEN_METRICS_FRESH_EVAL", raising=False)
+    clock = {"today": day}
+    monkeypatch.setattr(cr, "_today", lambda: clock["today"])
+    first = cr.signoff_block("Morpho")
+    clock["today"] = day + pd.Timedelta(days=1)          # past midnight UTC: 10-09 not published by DefiLlama
+    second = comp.signoff_lines("Morpho")
+    assert first == second, (first, second)
+    assert "evaluated as of 2026-10-09" in first[0] and not any("in_interest_day" in x for x in first)
+    # the bug, shown: a fresh evaluation at the new date has no figure for the 7-day window
+    monkeypatch.setenv("TOKEN_METRICS_FRESH_EVAL", "1")
+    fresh = cr.signoff_block("Morpho")
+    assert any("OPEN in_interest_day: CHECK (no figure)" in x for x in fresh), fresh
+    # credibility_report's own printout carries the same block
+    monkeypatch.delenv("TOKEN_METRICS_FRESH_EVAL")
+    cr.main(["--project", "Morpho", "--roots"])
+    out = capsys.readouterr().out
+    assert all(cr.a(x) in out for x in fresh if x.strip()), out[:2000]
+
+
+def test_base_logs_are_found_by_bisecting_the_balance_not_by_scanning(monkeypatch):
+    """External audit 2026-10-09, item 9: Blockscout answers 402 on Base and Alchemy's free tier serves eth_getLogs 10
+    blocks at a time. The NotifyReward deposits are located by bisecting the reward contract's archive balance of the
+    token, and eth_getLogs is asked only for the <=10-block windows where it moved — tens of calls, not 30,000."""
+    import check_offline_items as coi
+    deposits = {1_000_123: 5, 1_150_000: 7}                      # block -> amount
+    calls = {"bal": 0, "logs": []}
+
+    def eth_call(to, data, block="latest", chain="ethereum"):
+        calls["bal"] += 1
+        b = int(block, 16)
+        return hex(sum(v for k, v in deposits.items() if k <= b)), None
+
+    def eth_get_logs(address, topics, a, b, chunk=50_000, chain="ethereum", min_chunk=1_000):
+        assert chain == "base" and b - a < 10, (a, b)
+        calls["logs"].append((a, b))
+        return [{"blockNumber": hex(k), "transactionHash": f"0xt{k}", "topics": topics, "data": hex(v)}
+                for k, v in deposits.items() if a <= k <= b], "ok"
+    monkeypatch.setattr(coi, "eth_call", eth_call)
+    monkeypatch.setattr(coi, "eth_get_logs", eth_get_logs)
+    monkeypatch.setattr(coi, "_rpcs_for", lambda chain: ["https://base.example"])
+    monkeypatch.setattr(coi, "rpc", lambda url, m, params=None: {"result": {"timestamp": hex(1_757_000_000)}})
+    logs, how = coi.base_logs_where_balance_moves("0x" + "aa" * 20, "0x" + "bb" * 20, ["0xtopic"], 1_000_000, 1_302_400)
+    assert sorted(int(e["blockNumber"]) for e in logs) == [1_000_123, 1_150_000], logs
+    assert all(e["timeStamp"] == 1_757_000_000 for e in logs)
+    assert len(calls["logs"]) == 2 and calls["bal"] < 80, calls
+    assert "2 balance move(s)" in how
+    import config
+    assert config.explorer_order(8453) == []                   # no paid Base route is tried
+
+
+# ===== EXTERNAL AUDIT 2026-10-09, ITEM 1: AERODROME'S FOUNDATION BUY-AND-LOCK =====
+
+def test_foundation_buy_and_lock_is_the_lock_stock_change_net_of_rebase_claims():
+    """actual_buyback_tokens = d(locked) + min(d(claimable), 0) on consecutive days: a rebase claim (claimable -> lock)
+    nets to 0, accrual is not a buy, a gap day is not differenced across, and a lock leaving the wallets is kept
+    negative and named. USD = tokens x the same-day price."""
+    import build_workbook as bw
+    import config
+    fb = config.PROJECT_BY_NAME["Aerodrome"]["foundation_buyback"]
+    d = pd.to_datetime(["2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04", "2026-09-06", "2026-09-07"])
+    mk = lambda metric, vals: pd.DataFrame({"date": d, "project": "Aerodrome", "metric": metric,  # noqa: E731
+                                            "value": vals, "source": "ve_managed:foundation_locks", "tier": 2})
+    groups = {
+        ("Aerodrome", fb["stock_metric"]): mk(fb["stock_metric"], [100.0, 412.0, 462.0, 462.0, 500.0, 450.0]),
+        #                    09-02: +312 bought;  09-03: +50 claimed in;  09-04: flat, +7 accrued;  09-07: -50 left
+        ("Aerodrome", fb["claimable_metric"]): mk(fb["claimable_metric"], [50.0, 50.0, 0.0, 7.0, 7.0, 7.0]),
+        ("Aerodrome", "price_usd"): mk("price_usd", [1.0, 0.5, 0.5, 0.5, 0.5, 0.5]),
+    }
+    bw._foundation_buyback_views(groups)
+    tok = groups[("Aerodrome", "actual_buyback_tokens")].set_index("date")["value"]
+    assert tok.to_dict() == {pd.Timestamp("2026-09-02"): 312.0, pd.Timestamp("2026-09-03"): 0.0,
+                             pd.Timestamp("2026-09-04"): 0.0, pd.Timestamp("2026-09-07"): -50.0}
+    neg = groups[("Aerodrome", "actual_buyback_tokens")]
+    assert "NEGATIVE" in neg.loc[neg["value"] < 0, "source"].iloc[0]
+    usd = groups[("Aerodrome", "actual_buyback_usd")].set_index("date")["value"]
+    assert usd[pd.Timestamp("2026-09-02")] == 156.0
+    # the buyback is HELD until the merged-token launch, then BURNED (Momentum Fund) — retirement either way
+    assert config.buyback_destination_shares("Aerodrome", "2026-09-02")["hold"] == 1.0
+    assert config.buyback_destination_shares("Aerodrome", "2026-10-23")["burn"] == 1.0
+
+
+def test_foundation_lock_read_stores_both_series_once_a_day_and_the_seed_marks_archive(monkeypatch):
+    """VeManaged reads the lock stock and the rebase claimable once a day; the seed reads each missing day start at
+    its first block with the ':archive' marker (config.mark_source), skipping stored days."""
+    import config
+    import check_offline_items as coi
+    from fetch import ve_managed as vm
+    from fetch.base import FetchOutput
+    fb = config.PROJECT_BY_NAME["Aerodrome"]["foundation_buyback"]
+    owners = list(fb["owners"])
+    got = {"locked": 1000.0, "claimable": 5.0, "nfts": 3, "owned_managed": 1,
+           "by_owner": {owners[0]: 600.0, owners[1]: 400.0}}
+
+    class Daily:
+        def __init__(self):
+            self.seen = set()
+        def due(self, k, d):  # noqa: E301
+            return (k, d) not in self.seen
+        def done(self, k, d):  # noqa: E301
+            self.seen.add((k, d))
+
+    v = vm.VeManaged(reader=object(), daily=Daily())
+    calls = []
+    v.foundation_reader = lambda o, block="latest": (calls.append(block), got)[1]
+    p = {"name": "Aerodrome", "foundation_buyback": fb}
+    out = FetchOutput()
+    v.run([p], 30, out)
+    v.run([p], 30, out)
+    assert len(calls) == 1, "read once a day"
+    rows = pd.concat(out.frames)
+    assert set(rows["metric"]) == {fb["stock_metric"], fb["claimable_metric"]}
+    assert rows.set_index("metric")["value"].to_dict() == {fb["stock_metric"]: 1000.0, fb["claimable_metric"]: 5.0}
+    assert "Public Goods Fund 600" in out.log[0].message and "1 owned managed" in out.log[0].message
+
+    monkeypatch.setattr(coi, "rpc_block_at", lambda chain, ts, say=print: 1_000 + ts // 86400)
+    stored = lambda name, metric, day: day.endswith("-01")  # noqa: E731
+    frames = vm.seed_foundation([p], days=5, stored=stored, say=lambda *_: None,
+                                reader=lambda o, block="latest": got)
+    seeded = pd.concat(frames)
+    assert set(seeded["source"]) == {config.mark_source("ve_managed:foundation_locks", "archive")}
+    assert not any(str(x.date()).endswith("-01") for x in seeded["date"])

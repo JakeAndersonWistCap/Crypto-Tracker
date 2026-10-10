@@ -1994,6 +1994,9 @@ def by_design_na(name: str, hid: str) -> str | None:
     p = config.PROJECT_BY_NAME[name]
     dest = (p.get("buyback_destination") or (p.get("actual_buyback") or {}).get("destination"))
     basis = config.issuance_basis(name)
+    if hid == "a3_buyback_locked" and p.get("foundation_buyback"):
+        return (f"this column reads a buyback fund's balance; the Foundation's locked AERO is read as "
+                f"{p['foundation_buyback']['stock_metric']}, whose daily change is the buyback (in_buyback)")
     if hid == "a3_buyback_locked" and dest != "hold":
         return f"the buyback destination is '{dest}', not a hold — this column is for held buybacks only"
     if hid == "a3_protocol_yield" and name not in config.PROTOCOL_YIELD:
@@ -2005,8 +2008,10 @@ def by_design_na(name: str, hid: str) -> str | None:
         return "supply is minted, not pre-minted — issuance is on the Gross issuance row"
     if hid in ("a4_crossover", "a4_gross_issuance") and p.get("issuance_declared_zero"):
         return "no issuance — burn only (issuance_declared_zero)"
-    if hid in ("a3_circ_retirement", "a3_fdv_retirement", "a3_actual_buyback_pct", "a3_implied_buyback_pct"):
-        fs = p.get("fee_split") or {}
+    fs = p.get("fee_split") or {}
+    if hid == "a3_implied_buyback_pct" and fs.get("destination_model") == "distribute_to_voters":
+        return "0 by design — fees buy nothing; they go to voters in the pairs' own tokens"
+    if hid in ("a3_circ_retirement", "a3_fdv_retirement", "a3_actual_buyback_pct"):
         if fs.get("destination_model") == "distribute_to_voters" and \
                 "actual_buyback_tokens" not in config.metrics_for_project(p):
             return "0 by design — no token is bought; fees go to voters in the pairs' own tokens"

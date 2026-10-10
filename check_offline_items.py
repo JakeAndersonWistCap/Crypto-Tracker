@@ -415,6 +415,9 @@ def explorer_logs(chain_id: int, address: str, topics: list, from_block: int = 0
         return None, f"fetch.explorer not importable: {e}"
     ex = ExplorerLogs()
     if not ex.configured(chain_id):
+        import config                                      # noqa: PLC0415
+        if not config.explorer_order(chain_id):            # Base (8453): Blockscout PRO 402s, no free route (2026-10-09)
+            return None, f"no free explorer log route for chain {chain_id} (config.EXPLORER_LOG_ROUTES)"
         return None, "no explorer key in .env for this chain"
     try:
         logs, meta = ex.get_logs(chain_id, address, topics, from_block, to_block)
@@ -4090,6 +4093,55 @@ AERO_FILING_WALLETS = {
     "0x5b1892b546002Ff3dd508500575bD6Bf7a101431": "Velodrome Foundation airdrop",
 }
 SEL_OWNER_TOKEN, SEL_LOCKED, SEL_SUPPLY = "0x8bf9d84c", "0xb45a3c0e", "0x047fc9aa"
+
+
+AERO_REWARDS_DISTRIBUTOR = "0x227f65131A261548b057215bB1D5Ab2997964C7d"   # config Aerodrome contracts.rewards_distributor
+
+
+def aerodrome_foundation_locks(owners: list, block: str = "latest") -> dict:
+    """THE AERO THE FOUNDATION'S BUYBACK WALLETS HAVE LOCKED, AT `block` (external audit 2026-10-09, item 1: the PGF
+    "acquired and max-locked" AERO; Base logs are paid, so the buy-and-lock is read from STATE). For every veNFT the
+    owners hold (VotingEscrow balanceOf -> ownerToNFTokenIdList, contracts@1ba30815): escrowType NORMAL -> locked(id)
+    .amount, plus RewardsDistributor.claimable(id) apart (a rebase claim moves claimable into locked); LOCKED (deposited
+    into a managed veNFT) -> weights(id, idToManaged(id)) — the principal, which rebases do not change; MANAGED veNFTs
+    the owners themselves hold are NOT counted (their locked amount compounds rebases, and their principal is the
+    depositors' weights). Returns {"locked": AERO, "claimable": AERO, "nfts": n, "by_owner": {...}, "owned_managed": n}
+    or {"error": why}."""
+    sel_bal, sel_type, sel_mgd, sel_w = (_selx("balanceOf(address)"), _selx("escrowType(uint256)"),
+                                         _selx("idToManaged(uint256)"), _selx("weights(uint256,uint256)"))
+    sel_claim = _selx("claimable(uint256)")
+    ns = _batch_eth_calls("base", [(AERO_VE, sel_bal + _word(int(o, 16))) for o in owners], block=block)
+    if any(x is None for x in ns):
+        return {"error": f"VotingEscrow.balanceOf unreadable at block {block}"}
+    pairs = [(o, i) for o, x in zip(owners, ns) for i in range(int(x, 16))]
+    tids = _batch_eth_calls("base", [(AERO_VE, SEL_OWNER_TOKEN + _word(int(o, 16)) + _word(i)) for o, i in pairs],
+                            block=block)
+    if any(x is None for x in tids):
+        return {"error": f"ownerToNFTokenIdList unreadable at block {block}"}
+    ids = [int(x, 16) for x in tids]
+    types = _batch_eth_calls("base", [(AERO_VE, sel_type + _word(t)) for t in ids], block=block)
+    locks = _batch_eth_calls("base", [(AERO_VE, SEL_LOCKED + _word(t)) for t in ids], block=block)
+    mgds = _batch_eth_calls("base", [(AERO_VE, sel_mgd + _word(t)) for t in ids], block=block)
+    claims = _batch_eth_calls("base", [(AERO_REWARDS_DISTRIBUTOR, sel_claim + _word(t)) for t in ids], block=block)
+    w_calls = [(AERO_VE, sel_w + _word(t) + _word(int(m or "0x0", 16))) for t, m in zip(ids, mgds)]
+    weights = _batch_eth_calls("base", w_calls, block=block)
+    out = {"locked": 0.0, "claimable": 0.0, "nfts": len(ids), "owned_managed": 0, "by_owner": {o: 0.0 for o in owners}}
+    for (o, _i), t, ty, lk, w, cl in zip(pairs, ids, types, locks, weights, claims):
+        kind = int(ty or "0x0", 16)
+        if kind == 2:                                     # MANAGED: compounds rebases; principal = depositors' weights
+            out["owned_managed"] += 1
+            continue
+        if kind == 1:                                     # LOCKED into a managed veNFT: the deposited principal
+            amt = int(w or "0x0", 16) / 1e18
+        else:                                             # NORMAL: the lock's amount (int128, first word)
+            if not lk or len(lk) < 66:
+                return {"error": f"locked({t}) unreadable at block {block}"}
+            raw = int(lk[2:66], 16)
+            amt = (raw - (1 << 256) if raw >= 1 << 255 else raw) / 1e18
+            out["claimable"] += int(cl or "0x0", 16) / 1e18
+        out["locked"] += amt
+        out["by_owner"][o] += amt
+    return out
 
 
 def _ve_locks(owner: str) -> tuple:
@@ -8738,6 +8790,63 @@ def aerodrome_epochs_q0(days: int = 90):
           "PASTE BACK the table.")
 
 
+def base_logs_where_balance_moves(token: str, holder: str, topics: list, b0: int, b1: int, say=print,
+                                  max_calls: int = 600, max_moves: int = 40, span: int = 10) -> tuple[list, str]:
+    """(logs, how): every log matching `topics` on `holder` in the blocks where `token`.balanceOf(`holder`) CHANGES
+    between b0 and b1, on Base, through the keyed RPC only (external audit 2026-10-09, item 9: Blockscout answers 402 on
+    Base and Alchemy's free tier serves eth_getLogs 10 blocks at a time — a week is ~30,000 calls). The archive balance
+    is bisected down to `span`-block windows wherever it differs between two ends (~19 eth_calls per move), and only
+    those windows are asked for logs. A deposit and an equal withdrawal inside one interval cancel and are missed (said
+    in `how`); RPC logs carry no timestamp, so each block's time is read and set as `timeStamp`."""
+    sel = _selx("balanceOf(address)") + _word(int(holder, 16))
+    calls = {"n": 0}
+    seen: dict = {}
+
+    def bal(b):
+        if b not in seen:
+            calls["n"] += 1
+            r, err = eth_call(token, sel, hex(b), chain="base")
+            if r is None:
+                raise RuntimeError(f"archive balanceOf at block {b:,} unreadable — {err}")
+            seen[b] = int(r, 16)
+        return seen[b]
+    moves, stack = [], [(b0 - 1, b1)]
+    try:
+        while stack:
+            a, b = stack.pop()
+            if bal(a) == bal(b):
+                continue
+            if b - a <= span:
+                moves.append((a + 1, b))
+                if len(moves) >= max_moves:
+                    break
+                continue
+            if calls["n"] >= max_calls:
+                return [], f"stopped after {calls['n']} archive reads with {len(moves)} move(s) located"
+            m = (a + b) // 2
+            stack += [(m, b), (a, m)]
+    except RuntimeError as e:
+        return [], str(e)
+    out, times = [], {}
+    for a, b in sorted(moves):
+        got, why = eth_get_logs(holder, topics, a, b, chunk=span, chain="base")
+        if got is None:
+            return out, f"eth_getLogs refused for blocks {a:,}-{b:,}: {why}"
+        for e in got:
+            bn = int(e["blockNumber"], 16) if isinstance(e["blockNumber"], str) else int(e["blockNumber"])
+            if bn not in times:
+                for url in _rpcs_for("base"):
+                    try:
+                        times[bn] = int(rpc(url, "eth_getBlockByNumber", [hex(bn), False])["result"]["timestamp"], 16)
+                        break
+                    except Exception:  # noqa: BLE001
+                        continue
+            out.append({**e, "blockNumber": bn, "timeStamp": times.get(bn, 0)})
+    return out, (f"{len(out)} log(s) in {len(moves)} balance move(s) between blocks {b0:,} and {b1:,} "
+                 f"({calls['n']} archive balanceOf reads; RPC eth_getLogs over <= {span}-block windows; a deposit "
+                 f"and an equal withdrawal inside one interval would cancel and be missed)")
+
+
 def aerodrome_epoch_rewards(epochs: str | None = None, top: int = 12):
     """AERODROME 2 / 3 (Jake's run 2026-10-09 15:59 + 17:05): EVERY REWARD TOKEN IN AN EPOCH, with what our figure did
     with it. Default epochs 2026-09-03 (bribes $7,595,469 against a normal $55K-$260K; Dune @0xkhmerlab epoch 158 puts
@@ -8796,7 +8905,11 @@ def aerodrome_epoch_rewards(epochs: str | None = None, top: int = 12):
                 if not (b0 and b1):
                     print("    NotifyReward not read: no block range for the epoch")
                     continue
-                logs, why = explorer_logs(8453, rc, [notify, None, _pad(d["token"]), "0x" + _word(ep)], b0, b1)
+                # BASE LOGS THROUGH THE KEYED RPC (audit item 9: Blockscout answers 402 on Base): the blocks where the
+                # reward contract's balance of this token moves, then eth_getLogs over those few blocks only
+                logs, why = base_logs_where_balance_moves(d["token"], rc,
+                                                          [notify, None, _pad(d["token"]), "0x" + _word(ep)], b0, b1)
+                print(f"      ({why})")
                 if logs is None:
                     print(f"    NotifyReward not read: {why}")
                     continue
