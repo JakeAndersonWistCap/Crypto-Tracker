@@ -822,6 +822,12 @@
   url_contains: /v1/spendle/data
   json_path: totalStakedInSpendle
   decimals: 18            # wei — see units_source (2026-09-28)
+  # READ LIVE ON EVERY RUN, NEVER FROM THE DAY CACHE (Jake's run on 97b29ae, 2026-10-11, in_shares -1.5%): this
+  # figure is checked against sPENDLE.totalSupply() read live in the same run, so both must be of the same moment.
+  # The day cache served the morning's 29,768,008 all day while the chain fell to 29,308,686 at 11:56-12:00 UTC
+  # (three cooldown() calls, CooldownInitiated, 459,322 shares). The API itself was current: at 15:41 UTC it read
+  # 29,307,487.972 = totalSupply() to the wei (Cloudflare s-maxage=10).
+  live_every_run: true
   units_source: "Pendle's API docs (ApiOverview.mdx @ 9b9509e) do not state units; the amounts are raw wei (18 = PENDLE/sPENDLE decimals): open-source consumers divide by 1e18 (HarukiShirato/real-time-monitoring-for-perpetual-contracts scripts/staking-collector.js), Shaurya477/spendle-tracker matches totalStakedInSpendle to sPENDLE.totalSupply() exactly, and the live 3.034133782977e25 / 1e18 = 30,341,337.8 matches totalSupply 30,340,254.46 to 0.004%"
   needs_first_run_check: true
   sanity_min: 1000

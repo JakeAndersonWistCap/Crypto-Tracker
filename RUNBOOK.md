@@ -527,6 +527,52 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11bi. Jake's notes on 97b29ae (2026-10-11)
+
+**1. Bribe scan: the missed deposits, with $ and depth.** The cap caught LAPTOP 09-03 ($6,950,614) and XDP 09-24
+($433,484). The missed list now prints each deposit at the epoch's quoted (end) price beside the pool depth, and the Q0
+total against Q0 voter revenue (`holders_revenue_usd` over the same days, from the local store). Live 2026-10-11:
+
+| epoch | token | tokens | $ at quoted price | pool depth |
+|---|---|---|---|---|
+| 09-10 | LAPTOP | 300,000 | 50,820 | 68,242 |
+| 09-17 | LAPTOP | 250,000 | 17,314 | 530,623 |
+| 09-24 | LAPTOP | 200,000 | 15,764 | 660,306 |
+| 10-01 | XDP | 3,000,000 | 58,834 | 1,092,328 |
+| 10-01 | LAPTOP | 150,000 | 13,471 | 646,170 |
+
+Total $156,203 = 0.68% of Q0 voter revenue $22.88M (Jake's figure). Every one is below its pool depth: the cap removes
+only value beyond what a sale could take out, so it had nothing to remove.
+
+**2. Morpho: listed / unlisted / self-lent beside DefiLlama** (`morpho_interest_listed_vs_all`, live 2026-10-11 15:46
+UTC; 7 days = 10-04 .. 10-10, markets with >= $1M borrowed now):
+
+| class | markets | supply $ | borrow $ | interest $/day now | interest $, 7 days |
+|---|---|---|---|---|---|
+| listed | 680 | 6,276,772,472 | 5,533,592,688 | 715,287 | 4,941,620 |
+| unlisted other | 7,362 | 91,231,963 | 52,354,557 | 70,457 | 37,271 |
+| unlisted self-lent | 52 | 47,911,097,301 | 47,911,096,825 | 1,048,102,773 | 6,713,365,452 |
+| DefiLlama Morpho fees | | | | | 5,395,951 |
+
+- **DefiLlama does not include self-lent interest.** Its adapter (DefiLlama/dimension-adapters@5e783196
+  fees/morpho/index.ts) sums AccrueInterest only for markets the Morpho API returns with `listed: true`; an unlisted
+  market's event has no token and is skipped. It also drops Morpho's exclusion feed and insolvent/stuck markets.
+- **So our customer revenue ($54.6M Q0 = fees_usd = DefiLlama) carries $0 of self-lent interest.**
+- DefiLlama is +9.2% over our listed-market interest. Its stated Fees also include liquidation bonuses; how much of
+  the +9.2% that is, is not measured. The 10% tolerance is unchanged.
+
+**3. Pendle in_shares −1.5%: OUR day cache, not API lag.**
+- The chain: sPENDLE totalSupply 29,768,008.02 until block 26,169,050 (11:56 UTC), then three `cooldown(uint256)`
+  calls (CooldownInitiated, 459,322 shares burned) by 12:00 UTC → 29,308,686.36. 459K really was unstaked.
+- The API was current: at 15:41 UTC it read 29,307,487.972 = totalSupply() to the wei (Cloudflare s-maxage=10).
+- The stale figure was ours: the scrape tier serves a JSON read from a per-UTC-day cache, so the morning's 29,768,008
+  was re-emitted (source `scrape:cache`) against the afternoon's live chain read.
+- **Fix, like-for-like in time:** the totalStakedInSpendle entry is `live_every_run: true` — read live in the same run
+  as the chain. The tolerance is unchanged.
+
+**4. Aerodrome buyback basis: HELD** until Jake's `aerodrome_foundation_lock_split` output and decision. The proposal
+and what it needs are in the reply to Jake (2026-10-11); nothing is built.
+
 ## 11bh. Jake's run on ab3c7fe (2026-10-11)
 
 **1. A failed read of a "now" figure no longer opens sign-off (Plume, rpc.plume.org SSL EOF).**

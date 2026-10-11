@@ -1472,6 +1472,8 @@ def test_aerodrome_bribe_scan_reads_only_the_depositor_and_each_tokens_first_dep
     the cap read only for epochs holding a flagged token; one line per epoch; flagged tokens the cap missed listed."""
     import check_offline_items as coi
     from eth_utils import keccak
+    import store as store_mod
+    monkeypatch.setattr(store_mod, "DB_PATH", "/nonexistent/metrics.db")
     dep = coi.AERO_BRIBE_DEPOSITOR
     notify = "0x" + keccak(text="NotifyReward(address,address,uint256,uint256)").hex().removeprefix("0x")
     lap, xdp, usdc = "0x" + "aa" * 20, "0x" + "bb" * 20, "0x" + "cc" * 20
@@ -1509,8 +1511,8 @@ def test_aerodrome_bribe_scan_reads_only_the_depositor_and_each_tokens_first_dep
 
     def epochs(eps, archive=True, **kw):
         cap_asked.extend(eps)
-        return {e: {"tokens": [{"token": lap, "excess": 6.95e6}] if e == e1 else [{"token": xdp, "excess": 0.0}]}
-                for e in eps}
+        return {e: {"tokens": [{"token": lap, "excess": 6.95e6, "price": 1.0, "depth": 5e5}] if e == e1 else
+                    [{"token": xdp, "excess": 0.0, "price": 0.0001, "depth": 250.0}]} for e in eps}
     monkeypatch.setattr(coi, "aerodrome_voter_epochs", epochs)
     coi.aerodrome_bribe_scan()
     out = capsys.readouterr().out
@@ -1520,7 +1522,10 @@ def test_aerodrome_bribe_scan_reads_only_the_depositor_and_each_tokens_first_dep
     assert "2026-09-03  2 deposit(s): LAPTOP 8,000,000 UNPRICED AT DEPOSIT cap $6,950,000" in out, out
     assert "2026-09-17  2 deposit(s): XDP 4,000,000 UNPRICED AT DEPOSIT cap -; USDC 4,000,000 @$1" in out, out
     missed = out.split("MISSED BY THE CAP: ")[1]
-    assert missed.startswith("1") and "XDP" in missed and "LAPTOP" not in missed
+    assert missed.startswith("1") and "XDP" in missed and "LAPTOP" not in missed.split("MISSED BY THE CAP, Q0")[0]
+    # the $ at the epoch's quoted price (4,000,000 x $0.0001) and the pool depth, and the Q0 total
+    assert "$400 at the epoch's quoted (end) price  pool depth $250" in out, out
+    assert "MISSED BY THE CAP, Q0 total at the quoted price: $400" in out
 
 
 def test_near_bq_backfill_status_names_the_reauth_stop(monkeypatch, capsys):
@@ -1560,12 +1565,19 @@ def test_morpho_listed_vs_all_splits_listed_self_lent_and_other(monkeypatch, cap
             body = {"data": {"markets": {"pageInfo": {"countTotal": 3}, "items": markets}}}
         return types.SimpleNamespace(json=lambda: body)
     monkeypatch.setattr(coi.requests, "post", post)
+    day0 = pd.Timestamp.now(tz="UTC").normalize().tz_localize(None)
+    chart = [[int((day0 - pd.Timedelta(days=k)).timestamp()), 10_000.0] for k in range(9, 0, -1)]
+    monkeypatch.setattr(coi.requests, "get", lambda url, params=None, **kw: types.SimpleNamespace(
+        json=lambda: {"totalDataChart": chart}))
     coi.morpho_interest_listed_vs_all()
     out = capsys.readouterr().out
     d = lambda b, a: b * ((1 + a) ** (1 / 365) - 1)  # noqa: E731
-    assert f"listed                    1 markets  borrow $        90,000,000  interest ${d(90e6, 0.05):>14,.0f}" in out
-    assert "unlisted self-lent        1 markets" in out and "unlisted other            1 markets" in out
-    assert "historicalState not read" in out and "tolerance stays 10%" in out
+    row = lambda c: next(ln for ln in out.splitlines() if ln.strip().startswith(c))  # noqa: E731
+    assert row("listed").split()[1:5] == ["1", "100,000,000", "90,000,000", f"{d(90e6, 0.05):,.0f}"], row("listed")
+    assert row("unlisted self-lent").split()[2] == "1" and row("unlisted other").split()[2] == "1"
+    assert "historicalState NOT READ" in out and "tolerance stays 10%" in out
+    assert "70,000  (api.llama.fi/summary/fees/morpho (live))" in out          # DefiLlama, the same 7 days
+    assert "none of their interest is in DefiLlama's fees" in out
 
 
 def test_a_failed_now_read_falls_back_to_the_last_stored_value_within_its_age():
@@ -1744,3 +1756,28 @@ def test_foundation_lock_split_classifies_each_change_and_splits_managed_rewards
     assert f"AERO received in the same tx: 50.00 from {pool}" in out
     # #7: owners hold 100 of 200 at the end -> half of rebase 8 and compounded 4
     assert "OWNERS' SHARE IN THE WINDOW (by their weights at its end): rebase (emissions, not buyback) 4.00; compounded voting rewards 2.00" in out, out
+
+
+def test_pendle_shares_cross_check_is_read_live_every_run_not_from_the_day_cache(monkeypatch):
+    """Jake's run on 97b29ae (2026-10-11), in_shares -1.5%: the day cache served the morning's totalStakedInSpendle
+    (29,768,008) to an afternoon run whose chain read had moved to 29,308,686 (cooldowns at 11:56-12:00 UTC). The entry
+    (sources.yaml, the real registry) is read live on every run; an entry without `live_every_run` keeps the cache."""
+    import fetch.scrape as scrape
+    from fetch.base import FetchOutput
+    reg = [e for e in scrape.load_registry(scrape.REGISTRY) if e.get("project") == "Pendle" and e.get("method") == "json"]
+    shares = next(e for e in reg if e["json_path"] == "totalStakedInSpendle")
+    virt = next(e for e in reg if e["json_path"] == "virtualSpendleFromVependle")
+    assert shares.get("live_every_run") is True and not virt.get("live_every_run")
+    monkeypatch.setattr(scrape, "load_registry", lambda path: [dict(shares, enabled=True), dict(virt, enabled=True)])
+    monkeypatch.setattr(scrape, "cache_read", lambda e: {"value": 29_768_008.02})          # the morning's figures
+    monkeypatch.setattr(scrape, "cache_write", lambda e, p: None)
+    monkeypatch.setattr(scrape, "robots_verdict", lambda url: (True, "allowed"))
+    got = []
+    monkeypatch.setattr(scrape, "fetch_json", lambda e: (got.append(e["json_path"]) or 29_307_487.97, "live GET"))
+    out = FetchOutput()
+    scrape.Scrape().run([config.PROJECT_BY_NAME["Pendle"]], 30, out)
+    f = out.frame()
+    row = f[f.metric == shares["metric"]]
+    assert got == ["totalStakedInSpendle"], got                      # only the flagged entry went live
+    assert list(row["value"]) == [29_307_487.97] and not row["source"].str.contains("cache").any(), row
+    assert f[f.metric == virt["metric"]]["source"].str.contains("cache").all()

@@ -541,7 +541,9 @@ class Scrape:
 
         cached, live = [], []
         for e in todo:
-            (cached if cache_read(e) is not None else live).append(e)
+            # live_every_run: a cross-check of a figure read live this run is never served from the day cache
+            # (Pendle totalStakedInSpendle, 2026-10-11 — the morning's value, cached, met the afternoon's chain read)
+            (cached if not e.get("live_every_run") and cache_read(e) is not None else live).append(e)
         for e in cached:
             self._emit(e, cache_read(e)["value"], f"{SOURCE}:cache", out, cached=True)
 

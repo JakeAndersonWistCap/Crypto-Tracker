@@ -4281,21 +4281,44 @@ def aerodrome_bribe_scan(depositor: str = AERO_BRIBE_DEPOSITOR, days: int = 90):
         mine = [d for d in deps if d[0] == ep]
         r = cap.get(ep) or {}
         excess = {str(x["token"]).lower(): x.get("excess") or 0.0 for x in r.get("tokens") or ()}
-        quoted = {str(x["token"]).lower(): x.get("usd") for x in r.get("tokens") or ()}
+        px = {str(x["token"]).lower(): x.get("price") for x in r.get("tokens") or ()}
+        depth = {str(x["token"]).lower(): x.get("depth") for x in r.get("tokens") or ()}
         parts = []
         for tok in sorted({d[2] for d in mine}):
             amt = sum(d[4] for d in mine if d[2] == tok) / 10 ** dec[tok]
             flag = tok in flagged
             if flag and ep in cap_eps and r and not excess.get(tok):
-                missed.append((day, tok, amt, quoted.get(tok)))
+                missed.append((day, tok, amt, amt * px[tok] if px.get(tok) else None, depth.get(tok)))
             parts.append(f"{sym[tok]} {amt:,.0f}" + (" UNPRICED AT DEPOSIT" if flag else f" @${at_dep[tok]:,.4g}")
                          + (f" cap ${excess[tok]:,.0f}" if excess.get(tok) else " cap -" if flag and r else ""))
         print(f"    {day}  {len(mine)} deposit(s): " + "; ".join(parts))
     print(f"\n  FLAGGED (unpriced at first deposit) AND MISSED BY THE CAP: {len(missed)}")
-    for day, tok, amt, usd in missed:
-        print(f"    epoch {day}  {sym[tok]} {tok}  {amt:,.0f} tokens"
-              + (f", ${usd:,.0f} at the epoch-end quote (all bribes of the token that epoch)" if usd is not None
-                 else ", no epoch-end quote"))
+    for day, tok, amt, usd, dep in missed:
+        print(f"    epoch {day}  {sym[tok]} {tok}  {amt:,.0f} tokens  "
+              + (f"${usd:,.0f} at the epoch's quoted (end) price" if usd is not None else "no quoted price")
+              + (f"  pool depth ${dep:,.0f}" if dep is not None else "  depth not read"))
+    # MATERIALITY (Jake's run on 97b29ae): the missed deposits' $ over Q0 against Q0 voter revenue (holders_revenue_usd:
+    # fees + bribes paid to veAERO voters, from the local store, the same days)
+    miss_usd = sum(m[3] or 0.0 for m in missed)
+    rev = None
+    try:
+        import os                                          # noqa: PLC0415
+        import pandas as pd                                # noqa: PLC0415
+        import store as store_mod                          # noqa: PLC0415
+        if os.path.exists(store_mod.DB_PATH):
+            lg = store_mod.Store(store_mod.DB_PATH).load_long()
+            hr = lg[(lg.project == "Aerodrome") & (lg.metric == "holders_revenue_usd")].copy()
+            hr["date"] = pd.to_datetime(hr["date"]).dt.normalize()
+            hr = hr.drop_duplicates("date", keep="last")
+            end = pd.Timestamp.now().normalize()
+            q = hr[(hr.date > end - pd.Timedelta(days=days)) & (hr.date <= end)]
+            if len(q):
+                rev = (float(q["value"].sum()), len(q))
+    except Exception as e:  # noqa: BLE001
+        print(f"  (store not read: {type(e).__name__})")
+    print(f"  MISSED BY THE CAP, Q0 total at the quoted price: ${miss_usd:,.0f}"
+          + (f" = {miss_usd / rev[0]:.3%} of Q0 voter revenue ${rev[0]:,.0f} (holders_revenue_usd, {rev[1]} stored "
+             f"day(s))" if rev and rev[0] else " — Q0 voter revenue not in a local store here"))
     print(f"  {_t.time() - t0:,.0f}s. PASTE BACK the epoch lines and the missed list.")
 
 
@@ -4381,49 +4404,22 @@ def morpho_interest_listed_vs_all():
             return "listed"
         s, b = f(i, "supplyAssetsUsd"), f(i, "borrowAssetsUsd")
         return "unlisted self-lent" if b > 1e6 and abs(s - b) <= 0.005 * s else "unlisted other"
-    agg = {}
+    classes = ("listed", "unlisted other", "unlisted self-lent")
+    agg = {c: [0, 0.0, 0.0, 0.0] for c in classes}                 # markets, supply, borrow, interest/day
     for i in items:
-        c = cls(i)
-        n, b, d = agg.get(c, (0, 0.0, 0.0))
-        agg[c] = (n + 1, b + f(i, "borrowAssetsUsd"), d + day_int(i))
-    print(f"  {len(items)} of {total} markets, {len(ids)} chains, at {pd.Timestamp.now(tz='UTC'):%Y-%m-%d %H:%M} UTC")
-    for c in ("listed", "unlisted other", "unlisted self-lent"):
-        n, b, d = agg.get(c, (0, 0.0, 0.0))
-        print(f"    {c:<20} {n:>6} markets  borrow ${b:>18,.0f}  interest ${d:>14,.0f}/day  x7 ${d * 7:>16,.0f}")
-    lst, oth = agg.get("listed", (0, 0, 0))[2], agg.get("unlisted other", (0, 0, 0))[2]
-    top = sorted((i for i in items if cls(i) == "unlisted other"), key=day_int, reverse=True)[:10]
-    print("  the ten largest UNLISTED OTHER markets by interest/day:")
-    for i in top:
-        print(f"    {i['marketId'][:14]}… chain {i['chain']['id']}  {(i.get('loanAsset') or {}).get('symbol')}/"
-              f"{(i.get('collateralAsset') or {}).get('symbol')}  borrow ${f(i, 'borrowAssetsUsd'):,.0f}  "
-              f"apy {f(i, 'borrowApy'):.2%}  ${day_int(i):,.0f}/day")
-    fees = None
-    try:
-        import store as store_mod                          # noqa: PLC0415
-        if os.path.exists(store_mod.DB_PATH):
-            lg = store_mod.Store(store_mod.DB_PATH).load_long()
-            s = lg[(lg.project == "Morpho") & (lg.metric == "fees_usd")].copy()
-            s["date"] = pd.to_datetime(s["date"]).dt.normalize()
-            y = pd.Timestamp.now(tz="UTC").normalize().tz_localize(None) - pd.Timedelta(days=1)
-            w = s[(s.date > y - pd.Timedelta(days=7)) & (s.date <= y)].drop_duplicates("date", keep="last")
-            fees = (float(w["value"].sum()), len(w), y)
-    except Exception as e:  # noqa: BLE001
-        print(f"  (store not read: {type(e).__name__})")
-    if fees and not fees[1]:
-        print(f"\n  DefiLlama fees: no stored day in the 7 to {fees[2]:%Y-%m-%d} (run after a fetch) — not compared")
-    elif fees:
-        tot, n, y = fees
-        print(f"\n  DefiLlama fees, the {n} complete day(s) to {y:%Y-%m-%d}: ${tot:,.0f}")
-        for lab, d in (("listed (our reference)", lst), ("listed + unlisted other", lst + oth),
-                       ("ALL markets", sum(x[2] for x in agg.values()))):
-            print(f"    vs {lab:<26} x7 ${d * 7:>16,.0f}: DefiLlama {tot / (d * 7) - 1:+.1%}" if d else f"    {lab}: 0")
-    # THE LAST 7 DAYS PER MARKET, where the API serves a daily history (historicalState): listed and unlisted-other
-    # markets with >= $1M borrowed now; a schema error is printed, not guessed around
-    # the filter takes marketIds, and one marketId can sit on several chains: (marketId, chain) is the market
-    want = {(i["marketId"], (i.get("chain") or {}).get("id")) for i in items
-            if cls(i) != "unlisted self-lent" and f(i, "borrowAssetsUsd") >= 1e6}
-    keys = sorted({k for k, _c in want})
-    now_ts = int(pd.Timestamp.now(tz="UTC").normalize().timestamp())
+        a_ = agg[cls(i)]
+        a_[0] += 1
+        a_[1] += f(i, "supplyAssetsUsd")
+        a_[2] += f(i, "borrowAssetsUsd")
+        a_[3] += day_int(i)
+    # THE LAST 7 COMPLETE DAYS PER CLASS, from historicalState: every market with >= $1M borrowed now, self-lent
+    # included (Jake's run on 97b29ae: the table puts all three classes beside DefiLlama's same days). The filter takes
+    # marketIds, and one marketId can sit on several chains: (marketId, chain) is the market.
+    klass = {(i["marketId"], (i.get("chain") or {}).get("id")): cls(i) for i in items if f(i, "borrowAssetsUsd") >= 1e6}
+    keys = sorted({k for k, _c in klass})
+    today_ = pd.Timestamp.now(tz="UTC").normalize().tz_localize(None)
+    days7 = [today_ - pd.Timedelta(days=k) for k in range(7, 0, -1)]
+    now_ts = int(today_.tz_localize("UTC").timestamp())
     opts = {"startTimestamp": now_ts - 8 * 86400, "endTimestamp": now_ts, "interval": "DAY"}
     # COMPLEXITY IS CHARGED PER `first`, ~20,105 a market for two 8-day series (measured 2026-10-11 against the cap
     # of 1,000,000: first:1000 read 20,105,000 and was refused). uniqueKey_in matches a marketId on every chain it sits
@@ -4431,34 +4427,79 @@ def morpho_interest_listed_vs_all():
     hq = ("query($k:[String!],$o:TimeseriesOptions){ markets(first:49, where:{uniqueKey_in:$k}){ pageInfo{countTotal} "
           "items{ marketId chain{id} listed historicalState{ borrowAssetsUsd(options:$o){x y} "
           "borrowApy(options:$o){x y} } } } }")
-    per_day, short = {}, 0
+    per_day, short, hist_err = {}, 0, ""
     for i in range(0, len(keys), 20):
         j = requests.post(url, json={"query": hq, "variables": {"k": keys[i:i + 20], "o": opts}}, headers=_ua(),
                           timeout=TIMEOUT).json()
         if j.get("errors"):
-            print(f"\n  historicalState not read (the 'last 7 days' split needs it): {str(j['errors'])[:400]}")
-            per_day = {}
+            hist_err, per_day = str(j["errors"])[:400], {}
             break
         node = (j.get("data") or {}).get("markets") or {}
         short += max(0, int((node.get("pageInfo") or {}).get("countTotal") or 0) - len(node.get("items") or []))
         for m in node.get("items") or []:
-            if (m.get("marketId"), (m.get("chain") or {}).get("id")) not in want:
+            k = klass.get((m.get("marketId"), (m.get("chain") or {}).get("id")))
+            if k is None:
                 continue
             hs = m.get("historicalState") or {}
             apy = {p["x"]: float(p["y"] or 0) for p in hs.get("borrowApy") or []}
             for p in hs.get("borrowAssetsUsd") or []:
                 d = pd.Timestamp(int(p["x"]), unit="s").normalize()
                 v = float(p["y"] or 0) * ((1 + apy.get(p["x"], 0.0)) ** (1 / 365) - 1)
-                k = "listed" if m.get("listed") else "unlisted other"
                 per_day.setdefault(d, {}).setdefault(k, 0.0)
                 per_day[d][k] += v
+    week = {c: sum((per_day.get(d) or {}).get(c, 0.0) for d in days7) for c in classes}
+    have_days = sum(1 for d in days7 if d in per_day)
+    # DEFILLAMA'S MORPHO FEES FOR THE SAME 7 DAYS: the local store, else DefiLlama's free fees API
+    llama, how = None, ""
+    try:
+        import store as store_mod                          # noqa: PLC0415
+        if os.path.exists(store_mod.DB_PATH):
+            lg = store_mod.Store(store_mod.DB_PATH).load_long()
+            sr = lg[(lg.project == "Morpho") & (lg.metric == "fees_usd")].copy()
+            sr["date"] = pd.to_datetime(sr["date"]).dt.normalize()
+            sr = sr.drop_duplicates("date", keep="last").set_index("date")["value"]
+            if all(d in sr.index for d in days7):
+                llama, how = float(sum(sr[d] for d in days7)), "local store fees_usd"
+    except Exception as e:  # noqa: BLE001
+        print(f"  (store not read: {type(e).__name__})")
+    if llama is None:
+        try:
+            import config                                  # noqa: PLC0415
+            slug = config.PROJECT_BY_NAME["Morpho"]["defillama_fees_slug"]
+            ch = requests.get(f"https://api.llama.fi/summary/fees/{slug}", params={"dataType": "dailyFees"},
+                              headers=_ua(), timeout=TIMEOUT).json().get("totalDataChart") or []
+            got = {pd.Timestamp(int(t), unit="s").normalize(): float(v) for t, v in ch}
+            if all(d in got for d in days7):
+                llama, how = float(sum(got[d] for d in days7)), f"api.llama.fi/summary/fees/{slug} (live)"
+        except Exception as e:  # noqa: BLE001
+            how = f"DefiLlama not read: {type(e).__name__}"
+    print(f"  {len(items)} of {total} markets, {len(ids)} chains, at {pd.Timestamp.now(tz='UTC'):%Y-%m-%d %H:%M} UTC; "
+          f"interest/day = borrow x ((1 + borrowApy)^(1/365) - 1)")
+    print(f"  last 7 complete days: {days7[0]:%Y-%m-%d} .. {days7[-1]:%Y-%m-%d} "
+          f"({have_days} of 7 in historicalState; markets with >= $1M borrowed now)"
+          + (f"; historicalState NOT READ: {hist_err}" if hist_err else ""))
+    print(f"\n    {'class':<20} {'markets':>7} {'supply $':>18} {'borrow $':>18} {'interest $/day now':>20} "
+          f"{'interest $, 7 days':>20}")
+    for c in classes:
+        n, sup_, bor, d = agg[c]
+        print(f"    {c:<20} {n:>7,} {sup_:>18,.0f} {bor:>18,.0f} {d:>20,.0f} {week[c]:>20,.0f}")
+    print(f"    {'DefiLlama Morpho fees, the same 7 days':<89} "
+          + (f"{llama:>20,.0f}  ({how})" if llama is not None else f"{'not read':>20}  ({how})"))
+    if llama is not None and week["listed"]:
+        print(f"    DefiLlama vs listed {llama / week['listed'] - 1:+.1%}; vs listed + unlisted other "
+              f"{llama / (week['listed'] + week['unlisted other']) - 1:+.1%}")
     if short:
-        print(f"\n  NOTE: {short} market cop(ies) on other chains were past first:49 and not read (the split is short)")
-    if per_day:
-        print("\n  LAST 7 DAYS from historicalState (markets with >= $1M borrowed now; self-lent left out):")
-        for d in sorted(per_day)[-7:]:
-            a, b = per_day[d].get("listed", 0.0), per_day[d].get("unlisted other", 0.0)
-            print(f"    {d:%Y-%m-%d}  listed ${a:>12,.0f}  + unlisted other ${b:>12,.0f}  = ${a + b:>12,.0f}")
+        print(f"  NOTE: {short} market cop(ies) on other chains were past first:49 and not read (the 7 days are short)")
+    print("  DEFILLAMA COUNTS LISTED MARKETS ONLY (DefiLlama/dimension-adapters@5e783196 fees/morpho/index.ts, read "
+          "2026-10-11): AccrueInterest is summed only for markets the Morpho API returns with listed: true (an unlisted "
+          "market's event has no token and is skipped), minus Morpho's exclusion feed and insolvent/stuck markets. "
+          "Self-lent markets are all unlisted, so none of their interest is in DefiLlama's fees.")
+    top = sorted((i for i in items if cls(i) == "unlisted other"), key=day_int, reverse=True)[:10]
+    print("  the ten largest UNLISTED OTHER markets by interest/day:")
+    for i in top:
+        print(f"    {i['marketId'][:14]}… chain {i['chain']['id']}  {(i.get('loanAsset') or {}).get('symbol')}/"
+              f"{(i.get('collateralAsset') or {}).get('symbol')}  borrow ${f(i, 'borrowAssetsUsd'):,.0f}  "
+              f"apy {f(i, 'borrowApy'):.2%}  ${day_int(i):,.0f}/day")
     print("  PASTE BACK the split. The tolerance stays 10% until Jake decides.")
 
 
