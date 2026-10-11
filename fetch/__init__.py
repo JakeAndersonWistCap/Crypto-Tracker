@@ -25,7 +25,7 @@ import pandas as pd
 
 import config
 
-from .base import (FetchOutput, LogEntry, derive_flow_from_cumulative, inflight, new_run_id,
+from .base import (FetchOutput, LogEntry, run_class, derive_flow_from_cumulative, inflight, new_run_id,
                    point, today)  # noqa: F401
 from .chain import Chain
 from .coingecko import CoinGecko
@@ -64,6 +64,7 @@ from .plume_staking import PlumeStaking
 from .scrape import Scrape, entry_ready, load_registry
 from .validate import (REASON_CHANGE, check_cross_checks, check_impossible_relations,
                        check_flat_series, check_level_breaks, check_reference_values, check_watched_wallet,
+                       check_migration_watch,
                        validate_frame)
 
 log = logging.getLogger("token_metrics.fetch")
@@ -177,11 +178,24 @@ def _resolve_tier_collisions(out: FetchOutput) -> None:
     if not clashing:
         return
 
+    # ON-CHAIN FIRST WHERE DECIDED (config.TOTAL_SUPPLY_ONCHAIN_FIRST, Jake 2026-10-11): the chain read is moved ahead
+    # of the earlier tier for those (project, total_supply) keys, so it is the one kept — here and in the dedupe below
+    first = config.TOTAL_SUPPLY_ONCHAIN_FIRST
+    if first:
+        pri = ((frame["metric"] == "total_supply") & frame["project"].isin(list(first))
+               & frame["source"].astype(str).str.startswith("chain:"))
+        frame = pd.concat([frame[pri], frame[~pri]]).reset_index(drop=True)
+        dupes = frame[frame.duplicated(subset=key, keep=False)]
     for (date, project, metric), group in dupes.groupby(key):
         if (date, project, metric) not in clashing:
             continue
         ordered = group.sort_index()
         kept, dropped = ordered.iloc[0], ordered.iloc[1:]
+        if metric == "total_supply" and project in first and str(kept["source"]).startswith("chain:"):
+            for _, row in dropped.iterrows():
+                log.info("total supply on-chain first on %s (config.TOTAL_SUPPLY_ONCHAIN_FIRST): keeping %s, not "
+                         "storing tier %s (%s) %s", project, kept["source"], row["tier"], row["source"], row["value"])
+            continue
         for _, row in dropped.iterrows():
             log.warning("tier collision on %s/%s: keeping tier %s (%s), dropping tier %s (%s)",
                         project, metric, kept["tier"], kept["source"], row["tier"], row["source"])
@@ -1732,8 +1746,9 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
         out.timings.append({"source": name, "tier": tier, "seconds": seconds,
                             "frames": len(sub.frames), "timed_out": timed_out,
                             "rows": sum(len(f) for f in out.frames[before:] if f is not None),
-                            "failed": sum(e.status == "failed" for e in sub.log),
-                            "skipped": sum(e.status == "skipped" for e in sub.log)})
+                            "failed": sum(run_class(e) == "FAILED" for e in sub.log),
+                            "warned": sum(run_class(e) == "WARN" for e in sub.log),
+                            "skipped": sum(run_class(e) == "SKIPPED" for e in sub.log)})
         out.frames = [f for f in out.frames if f is not None and not f.empty]
 
     _resolve_tier_collisions(out)
@@ -1773,6 +1788,7 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
     circulating.check(out, _history(ctx.get("stored_long"), out.frame()), projects)
     check_reference_values(out.frame(), out)
     check_watched_wallet(out.frame(), out)
+    check_migration_watch(out.frame(), out, ctx["prior_delta"], ctx["prior_dates"])
     check_cross_checks(out.frame(), out)
     check_impossible_relations(out.frame(), out)
 
@@ -1911,6 +1927,8 @@ def _dispatch(todo, projects, window_days, ctx) -> list[tuple]:
             secs = time.monotonic() - st["t0"]
             log.info("tier %s done in %.0fs — %s", name, secs, _http_summary(st))
             st["result"] = (name, st["tier"], st["sub"], secs, False)
+            import progress                               # noqa: PLC0415 — the run's heartbeat (token_metrics)
+            progress.tick("fetch tiers settled", sum(1 for v in state.values() if v.get("result")), len(todo))
             return st["result"]
         return None
 

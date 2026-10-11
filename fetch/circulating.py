@@ -212,4 +212,6 @@ def report_lines() -> list[str]:
 
 
 if __name__ == "__main__":
+    import progress                                    # stdout line-buffered when piped (2026-10-11)
+    progress.line_buffered()
     print("\n".join(report_lines()))

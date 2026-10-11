@@ -148,6 +148,9 @@ CFG_COLS = [
     ("Governance-settable parameters (never hardcoded)", 44),
     ("Self-reported figure preferred", 16),
     ("Notes", 60), ("Status changes", 40),
+    # THE SPLIT'S OWN STATUS (config burn_split.status), for the implied-burn gate — "Burn status" is derived from the
+    # data since 2026-10-11 (derived_statuses) and no longer reads "unconfirmed" verbatim
+    ("Burn split status", 11),
 ]
 CC = {name: get_column_letter(i + 1) for i, (name, _) in enumerate(CFG_COLS)}
 CFG_GLOBAL_ROWS = {"period_days": 3, "short_days": 4, "days_per_year": 5, "stale_after_days": 6}
@@ -1890,6 +1893,23 @@ def _market_cap_views(groups: dict) -> None:
         # forward up to 45 days, the AMBER threshold of a monthly manual series.
         if chosen != "circulating_supply" and not own.empty and config.series_granularity(name, chosen) == "monthly":
             own = own.reindex(own.index.union(price.index)).ffill(limit=45).dropna()
+        # ONE BASIS FOR MARKET CAP AND EVERY RATIO (Jake's review of 97b29ae, item 8: Aerodrome's market cap read
+        # CoinGecko's 1.005bn on the latest day — our on-chain figure had no row that day — while A3's ratios used
+        # the on-chain 1.554bn). A daily figure of our own is carried forward within its age limit
+        # (credibility.now_max_age: 3 days), so the latest day keeps our basis; past it, the fallback below.
+        elif chosen != "circulating_supply" and not own.empty:
+            import credibility as _cred                   # noqa: PLC0415
+            own = own.reindex(own.index.union(price.index)).ffill(limit=_cred.now_max_age(name, chosen)).dropna()
+        # THE FALLBACK _circ USES: CoinGecko's figure, plus the locked tokens inside our convention where CoinGecko's
+        # is free float (config.coingecko_is_free_float — Pendle), less any lock declared out of circulating
+        if chosen != "circulating_supply" and config.coingecko_is_free_float(name) and not fallback.empty:
+            legs = [daily(m) for m in config.free_float_lock_metrics(name)]
+            if legs and all(not g.empty for g in legs):
+                lock = sum(g.reindex(fallback.index, method="ffill") for g in legs)
+                x = config.locked_excluded_from_circulating(name)
+                if x and config.circulating_excludes_declared(name):
+                    lock = (lock - x).clip(lower=0)
+                fallback = (fallback + lock).dropna()
         circ = own.combine_first(fallback) if chosen != "circulating_supply" else fallback
         if config.supply_unnetted_burn(name):
             tot, gross, burned = daily("total_supply"), daily("total_supply_gross"), daily("burn_address_balance")
@@ -1916,6 +1936,43 @@ def _market_cap_views(groups: dict) -> None:
         if cg is not None and not cg.empty:
             groups[(name, "market_cap_usd_coingecko")] = _as_stored(cg.assign(metric="market_cap_usd_coingecko"), cols)
         groups[(name, "market_cap_usd")] = _as_stored(view, cols)
+        # THE CIRCULATING SUPPLY USED — the same per-day series market cap multiplies (item 9: Master showed
+        # CoinGecko's 222.4M for Hyperliquid while market cap used our 302.2M). _circ reads it first, so the ratios,
+        # Master and every A-tab show and divide by one figure; CoinGecko's stays beside it as the cross-check.
+        cd = circ.dropna()
+        used = pd.DataFrame({"date": cd.index, "project": name, "metric": "circulating_supply_used",
+                             "value": cd.values, "tier": 1,
+                             "source": [f"derived:circulating_used[{chosen if (chosen != 'circulating_supply' and d in own.index) else 'circulating_supply' + ('+locked' if config.coingecko_is_free_float(name) and chosen != 'circulating_supply' else '')}]"
+                                        for d in cd.index]})
+        groups[(name, "circulating_supply_used")] = _as_stored(used, cols)
+
+
+def _fdv_views(groups: dict) -> None:
+    """FDV = PRICE x THE TOTAL SUPPLY WE USE, where total supply is on-chain first (config.TOTAL_SUPPLY_ONCHAIN_FIRST;
+    Ether.fi, Jake's review of 97b29ae item 6: CoinGecko's FDV $700.3M rested on its 965.35M total — below the
+    circulating basis — while ETHFI.totalSupply() read 998,535,999). Per day, price x total_supply (the stored series,
+    whose latest leg is the chain read). CoinGecko's own FDV stays beside it as fdv_usd_coingecko."""
+    for name in config.TOTAL_SUPPLY_ONCHAIN_FIRST:
+        if name not in {p["name"] for p in scoped_projects()}:
+            continue
+        px, tot, cg = (groups.get((name, m)) for m in ("price_usd", "total_supply", "fdv_usd"))
+        if px is None or px.empty or tot is None or tot.empty:
+            continue
+        s = lambda g: (g.assign(date=pd.to_datetime(g["date"]).dt.normalize())  # noqa: E731
+                       .drop_duplicates("date", keep="last").set_index("date")["value"].astype(float))
+        price, total = s(px), s(tot)
+        both = price.index.intersection(total.index)
+        if both.empty:
+            continue
+        src = {d: str(v) for d, v in (tot.assign(date=pd.to_datetime(tot["date"]).dt.normalize())
+                                      .drop_duplicates("date", keep="last").set_index("date")["source"]).items()}
+        view = pd.DataFrame({"date": both, "project": name, "metric": "fdv_usd",
+                             "value": (price[both] * total[both]).values, "tier": 1,
+                             "source": [f"derived:price_x_total_supply[{src.get(d, '?')}]" for d in both]})
+        cols = cg.columns if cg is not None and not cg.empty else px.columns
+        if cg is not None and not cg.empty:
+            groups[(name, "fdv_usd_coingecko")] = _as_stored(cg.assign(metric="fdv_usd_coingecko"), cols)
+        groups[(name, "fdv_usd")] = _as_stored(view, cols)
 
 
 def _net_common_views(groups: dict) -> None:
@@ -2133,6 +2190,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _circulating_views(groups)
     _cg_plus_staked_views(groups)
     _market_cap_views(groups)     # AFTER the on-chain circulating it may use; BEFORE NRR reads it
+    _fdv_views(groups)            # price x the total supply used, where total supply is on-chain first
     _settlement_views(groups)
     _LAST_GROUPS.clear()
     _LAST_GROUPS.update(groups)       # the views, for Credibility rows that read them (credibility.VIEWS_LONG)
@@ -2404,16 +2462,19 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                 # (staleness, reported elsewhere) is never mistaken for a quiet program.
                 cad = config.program_cadence(name, metric)
                 if cad and last_nz is not None:
-                    limit = 2 * max(d for _, d in cad["cadences"])
+                    # CADENCE + SOURCE LAG + SLACK (config.PROGRAM_SILENCE_DEFAULTS; Jake's review of 97b29ae item 15)
+                    longest = max(d for _, d in cad["cadences"])
+                    lag = int(cad.get("source_lag_days", config.PROGRAM_SILENCE_DEFAULTS["source_lag_days"]))
+                    slack = int(cad.get("slack_days", config.PROGRAM_SILENCE_DEFAULTS["slack_days"]))
+                    limit = longest + lag + slack
                     observed_quiet = (g["date"].max() - last_nz).days
                     silent = (asof - last_nz).days
                     row["silent_days"] = silent
-                    # A declared day count (GEODNET: 2 days with no burn) replaces the generic
-                    # "more than 2x the cadence".
+                    # A declared day count (GEODNET: 2 days with no burn) replaces the generic rule.
                     after = cad.get("silent_after_days")
                     if after:
                         limit = after
-                    if (observed_quiet >= after) if after else (observed_quiet > limit):
+                    if (observed_quiet >= after) if after else (silent > limit and observed_quiet > longest + slack):
                         labels = "/".join(l for l, _ in cad["cadences"])
                         row["silence_flag"] = (f"silent since {last_nz.date()} — {silent} days "
                                                f"against a documented {labels} cadence (last "
@@ -2552,7 +2613,19 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
             for col in ("now", "m1", "q0", "q1", "q2", "q3", "y1"):
                 row[col] = None
             row["confidence"], row["why_amber"] = confidence_for(row["project"], row["metric"], row, asof)
+    # MIGRATION WATCH (Jake, 2026-10-11): from label_from until the RUNBOOK plan is built, the watched rows say so
+    mw = config.AERODROME_MIGRATION_WATCH
+    if migration_watch_on(asof):
+        for row in rows:
+            if row["project"] == mw["project"] and row["metric"] in mw["label_metrics"]:
+                row["note"] = mw["label"] + (f" | {row['note']}" if row.get("note") else "")
     return pd.DataFrame(rows, columns=DATA_COLS)
+
+
+def migration_watch_on(asof) -> bool:
+    """config.AERODROME_MIGRATION_WATCH applies from label_from until `built` is set."""
+    mw = config.AERODROME_MIGRATION_WATCH
+    return not mw.get("built") and pd.Timestamp(asof).normalize() >= pd.Timestamp(mw["label_from"])
 
 
 def monthly_table(long: pd.DataFrame, asof: pd.Timestamp) -> tuple[list[str], pd.DataFrame]:
@@ -2870,14 +2943,67 @@ def buyback_silence(data: pd.DataFrame | None) -> dict:
         return out
     for r in data.to_dict("records"):
         cad = config.program_cadence(r["project"], r["metric"])
-        if (cad and str(r["metric"]).startswith("actual_buyback") and r.get("silence_flag")
+        # A STRING FLAG ONLY: an unflagged row holds NaN, which is truthy — every project with a declared cadence read
+        # "SILENT since <last non-zero>" (Pendle after one day; Jake's review of 97b29ae, item 15)
+        flag = r.get("silence_flag")
+        if (cad and str(r["metric"]).startswith("actual_buyback") and isinstance(flag, str) and flag
                 and isinstance(r.get("last_nonzero_date"), str) and r["last_nonzero_date"]):
             out[r["project"]] = r["last_nonzero_date"]
     return out
 
 
-def write_config(ws, asof: pd.Timestamp, silence: dict | None = None):
+def _q0(data: pd.DataFrame | None, project: str, metric: str):
+    if data is None or data.empty:
+        return None
+    hit = data[(data["project"] == project) & (data["metric"] == metric)]
+    if hit.empty:
+        return None
+    v = hit.iloc[0].get("q0")
+    return float(v) if isinstance(v, (int, float)) and not pd.isna(v) else None
+
+
+def derived_statuses(data: pd.DataFrame | None, silence: dict | None = None) -> dict:
+    """{project: {"buyback": label, "burn": label}} FROM THE DATA (Jake's review of 97b29ae, 2026-10-11, item 13: Fluid
+    buyback 'active' though halted 2026-05-11, Maple burn 'active' with no burn, Uniswap burn 'unconfirmed' with 5.886M
+    measured, Chainlink buyback 'unconfirmed' with $14.37M into the Reserve, Hyperliquid burn 'n/a' with 2.21M
+    measured). Order: a halt on file (UNAVAILABLE renders_as_zero_since) -> 'halted since'; the cadence silence flag
+    on a declared-active programme -> 'SILENT since'; a measured Q0 flow > 0 -> 'active (measured)'; a measured Q0
+    of 0 -> 'none measured in Q0'; no measured series -> the config status, marked '(declared; no … series measured)'."""
     silence = silence or {}
+    out = {}
+    for p in scoped_projects():
+        name = p["name"]
+        fs, bs = p.get("fee_split") or {}, p.get("burn_split") or {}
+        fs_st, bs_st = fs.get("status") or "n/a", (bs.get("status") if bs else None) or "n/a"
+        closed = (config.unavailable_for(name, "actual_buyback_tokens") or
+                  config.unavailable_for(name, "actual_buyback_usd") or {})
+        vals = [v for v in (_q0(data, name, "actual_buyback_usd"), _q0(data, name, "actual_buyback_tokens"))
+                if v is not None]
+        if closed.get("renders_as_zero_since"):
+            bb = f"halted since {closed['renders_as_zero_since']}"
+        elif name in silence and fs_st == "active":
+            bb = f"SILENT since {silence[name]} (declared active; program cadence broken)"
+        elif any(v > 0 for v in vals):
+            bb = "active (measured Q0)"
+        elif vals:
+            bb = "none measured in Q0" + (f" (declared {fs_st})" if fs_st != "n/a" else "")
+        else:
+            bb = fs_st if fs_st == "n/a" else f"{fs_st} (declared; no buyback series measured)"
+        bvals = [v for v in (_q0(data, name, config.a4_burn_metric(name)), _q0(data, name, "gross_burn_tokens"))
+                 if v is not None]
+        if any(v > 0 for v in bvals):
+            bn = "active (measured Q0)"
+        elif bvals:
+            bn = "none measured in Q0" + (f" (declared {bs_st})" if bs_st != "n/a" else "")
+        else:
+            bn = bs_st if bs_st == "n/a" else f"{bs_st} (declared; no burn series measured)"
+        out[name] = {"buyback": bb, "burn": bn}
+    return out
+
+
+def write_config(ws, asof: pd.Timestamp, silence: dict | None = None, statuses: dict | None = None):
+    silence = silence or {}
+    statuses = statuses or {}
     _title(ws, "Config & Sources", "Every fee-split / burn-split / issuance parameter with its source URL and date. Blue cells are levers: change them here and every formula follows. "
                                     "status = active | paused | unconfirmed | n/a. Unconfirmed splits are greyed on the archetype tabs and their derived figures suppressed.")
     ws["A2"].alignment = Alignment(wrap_text=False)
@@ -2953,15 +3079,17 @@ def write_config(ws, asof: pd.Timestamp, silence: dict | None = None):
             p.get("coingecko_id") or "", p.get("defillama_fees_slug") or "", p.get("defillama_protocol") or "", p.get("defillama_chain") or "",
             share_cell, fs.get("source_url") or "", fs.get("source_date") or "",
             _programmed_label(fs.get("programmed")),
+            (statuses.get(p["name"]) or {}).get("buyback") or
             (f"SILENT since {silence[p['name']]} (declared {fs.get('status')}; program cadence broken)"
              if p["name"] in silence and fs.get("status") == "active" else fs.get("status", "n/a")),
             p.get("buyback_destination", ""), p.get("destination_effect", ""),
             p.get("destination_split"), p.get("burn_execution", ""),
             bs.get("share_of_fees_burned") if bs else None, (bs.get("source_url") or "") if bs else "", (bs.get("source_date") or "") if bs else "",
-            bs.get("status", "n/a") if bs else "n/a",
+            (statuses.get(p["name"]) or {}).get("burn") or (bs.get("status", "n/a") if bs else "n/a"),
             cur_step, sched.get("source_url") or "", sched.get("source_date") or "", sched.get("status", "n/a") if sched else "n/a",
             per_product, *window_cells, accruing, gov, self_reported,
             "; ".join(x for x in [p.get("notes", ""), fs.get("note", ""), (bs or {}).get("note", "")] if x), changes,
+            bs.get("status", "n/a") if bs else "n/a",
         ]
         for j, v in enumerate(values, start=1):
             c = ws.cell(row=r, column=j, value=v)
@@ -2978,10 +3106,10 @@ def write_config(ws, asof: pd.Timestamp, silence: dict | None = None):
                 _style(c, "input", FMT_TEXT)
             else:
                 _style(c, "text", FMT_TEXT)
-            if (head in ("Buyback status", "Burn status") or head.startswith("Status Q")) and v == "unconfirmed":
+            if (head in ("Buyback status", "Burn status") or head.startswith("Status Q")) and str(v).startswith("unconfirmed"):
                 c.fill = FILL_UNCONFIRMED
             if (head in ("Buyback status", "Burn status") or head.startswith("Status Q")) and (
-                    v in ("paused",) or str(v).startswith("SILENT")):
+                    str(v).startswith(("paused", "SILENT", "halted", "none measured"))):
                 c.fill = FILL_PAUSED
             if head == "Programmed (contract-enforced)" and v == "sources conflict":
                 c.fill = FILL_UNCONFIRMED
@@ -3300,12 +3428,22 @@ def _fee_per_tx(R: Refs, r: int, p: dict, avg_price: str) -> str:
 
 
 def _coverage_guard(R: Refs, r: int, legs: list[tuple[str, str, str]], expr: str,
-                    same_span: bool = False, bare: bool = False) -> str:
+                    same_span: bool = False, bare: bool = False, p: dict | None = None) -> str:
     """=IF(a side covers < RATE_MIN_DAYS, "BLOCKED — ... each side's coverage", expr).
 
     legs: (label, metric, window). same_span: also block where the two sides' covered days differ
     by more than a tenth of the window — for a DIFFERENCE of two window totals, which cannot be
-    put on a per-day basis without changing what the column states."""
+    put on a per-day basis without changing what the column states.
+    A DECLARED ZERO IS FULL COVERAGE (Jake's review of 97b29ae, item 2: Sky's net supply read "issuance covers 5
+    days" on Master while A4 passed): with `p` given, the issuance leg of a project declaring zero issuance
+    (config.issuance_declared_zero) covers the whole window — the declaration's own check (_zero_issuance) still
+    blocks a positive measured issuance."""
+    z = config.issuance_declared_zero(p["name"]) if p else None
+    if z:
+        legs = [(lab, m, w) for lab, m, w in legs if m != z.get("check_metric", "gross_issuance_tokens")] \
+            if len(legs) > 1 else legs
+        if len(legs) < 2:
+            same_span = False
     conds, parts = [], []
     for lab, m, w in legs:
         c, n = R.D(r, m, _COV[w]), _nominal(w)
@@ -3325,7 +3463,7 @@ def _guarded_net(R: Refs, r: int, p: dict, iss_m: str, burn_m: str, w: str = "q0
                  total: str | None = None) -> str:
     """issuance − burn over window w, BLOCKED where the two series' coverage differs (same_span)."""
     expr = total or f"{R.D(r, iss_m, w)}-{R.D(r, burn_m, w)}"
-    return _coverage_guard(R, r, [("issuance", iss_m, w), ("burn", burn_m, w)], expr, same_span=True)
+    return _coverage_guard(R, r, [("issuance", iss_m, w), ("burn", burn_m, w)], expr, same_span=True, p=p)
 
 
 def _annualise(R: Refs, r: int, p: dict, metric: str, total: str) -> str:
@@ -3579,6 +3717,12 @@ def _circ(R: Refs, r, p: dict) -> str:
     it starts netting both. Negative means CoinGecko nets MORE than we can see burned: the
     denominator becomes an error and the cell reads n/a rather than guessing.
     """
+    used = R.D(r, "circulating_supply_used", "now")
+    return f"IF(ISNUMBER({used}),{used},{_circ_formula(R, r, p)})"
+
+
+def _circ_formula(R: Refs, r, p: dict) -> str:
+    """The pre-2026-10-11 formula, kept as the fallback where no circulating_supply_used row exists."""
     c = R.D(r, "circulating_supply", "now")
     # ON-CHAIN / FIRST-PARTY FIRST where the set is established (M, Jake 2026-09-30): Ethereum's
     # total supply, Hyperliquid's own tokenDetails.circulatingSupply. CoinGecko is the fallback
@@ -4758,6 +4902,7 @@ def _confidence_tally(ws, row: int, projects: list[dict], specs: list[tuple], da
 # CREDIBILITY (Jake, 2026-10-05): every headline cell on A1-A4 beside an independent reference.
 # ---------------------------------------------------------------------------------------
 _HEADLINE_CELLS: list = []          # filled by _write_table while A1-A4 are written
+_TAB_CELLS: dict = {}               # (sheet prefix "A1".."A4", project, header) -> (sheet title, coordinate)
 CREDIBILITY_ROWS: list = []         # the Credibility tab's rows, in tab order (credibility_report.py --roots)
 
 # (tab prefix, header prefix, stable id) — the id is what config.CREDIBILITY keys on, so a header can
@@ -4811,6 +4956,8 @@ def _write_table(ws, R: Refs, projects: list[dict], specs: list[tuple], data_by_
             bold = len(spec) > 4 and spec[4]
             v = builder(r, p)
             c = ws.cell(row=r, column=j, value=v)
+            if ws.title[:2] in ("A1", "A2", "A3", "A4"):
+                _TAB_CELLS[(ws.title[:2], p["name"], head)] = (ws.title, c.coordinate)
             _style(c, kind, fmt, bold)
             if kind in ("calc", "pull") and bold:
                 c.fill = FILL_KEY
@@ -5018,7 +5165,9 @@ def write_master(ws, R: Refs, data_by_key: dict):
         ("Price — spot ($)", lambda r, p: pull(R.D(r, "price_usd", "now")), FMT_USD4, "pull", False, {"metric": "price_usd"}),
         ("Price — 90d average ($)", lambda r, p: pull(R.D(r, "price_usd", "q0")), FMT_USD4, "pull", False, {"metric": "price_usd"}),
         ("Market cap ($)", lambda r, p: pull(R.D(r, "market_cap_usd", "now")), FMT_USD, "pull", False, {"metric": "market_cap_usd"}),
-        ("Circulating supply (reported)", lambda r, p: pull(R.D(r, "circulating_supply", "now")), FMT_NUM, "pull", False, {"metric": "circulating_supply"}),
+        # THE SUPPLY ACTUALLY USED (item 9, 2026-10-11): the figure market cap multiplies; CoinGecko's beside it
+        ("Circulating supply (used)", lambda r, p: pull(_circ(R, r, p)), FMT_NUM, "pull", False, {"metric": "circulating_supply_used"}),
+        ("Circulating supply — CoinGecko (cross-check)", lambda r, p: pull(R.D(r, "circulating_supply", "now")), FMT_NUM, "pull", False, {"metric": "circulating_supply"}),
         ("Market cap — CoinGecko ($, cross-check: price x CoinGecko's circulating)",
          lambda r, p: pull(R.D(r, "market_cap_usd_coingecko", "now")), FMT_USD, "pull", False,
          {"metric": "market_cap_usd_coingecko"}),
@@ -5031,13 +5180,13 @@ def write_master(ws, R: Refs, data_by_key: dict):
          lambda r, p: gated(R.C(r, WINDOW_STATUS_COL["q0"]), f"{R.D(r, 'revenue_usd', 'q0')}*{R.C(r, WINDOW_SHARE_COL['q0'])}", R.C(r, WINDOW_SHARE_COL["q0"])),
          FMT_USD, "calc", False, {"gate_window": "q0"}),
         ("Actual buyback Q0 ($) — observed", lambda r, p: pull(R.D(r, "actual_buyback_usd", "q0")), FMT_USD, "pull", False, {"metric": "actual_buyback_usd"}),
-        ("Gross burn Q0 (tokens)", lambda r, p: pull(R.D(r, "gross_burn_tokens", "q0")), FMT_NUM, "pull", False, {"metric": "gross_burn_tokens"}),
+        ("Gross burn Q0 (tokens)", lambda r, p: pull(R.D(r, config.a4_burn_metric(p["name"]), "q0")), FMT_NUM, "pull", False, {"metric_fn": config.a4_burn_metric}),
         ("Gross issuance Q0 (tokens)", lambda r, p: pull(R.D(r, "gross_issuance_tokens", "q0")), FMT_NUM, "pull", False, {"metric": "gross_issuance_tokens"}),
         ("NET SUPPLY CHANGE Q0 (tokens) = issuance − burn",
-         lambda r, p: _guarded_net(R, r, p, "gross_issuance_tokens", "gross_burn_tokens"), FMT_NUM, "calc", True),
+         lambda r, p: _guarded_net(R, r, p, "gross_issuance_tokens", config.a4_burn_metric(p["name"])), FMT_NUM, "calc", True),
         ("Net supply change, annualised % of circulating",
-         lambda r, p: _coverage_guard(R, r, [("issuance", "gross_issuance_tokens", "q0"), ("burn", "gross_burn_tokens", "q0")],
-                                      f"({_annualise(R, r, p, 'gross_issuance_tokens', R.D(r, 'gross_issuance_tokens', 'q0'))}-{_annualise(R, r, p, 'gross_burn_tokens', R.D(r, 'gross_burn_tokens', 'q0'))})/{R.D(r, 'circulating_supply', 'now')}"), FMT_PCT, "calc", True),
+         lambda r, p: _coverage_guard(R, r, [("issuance", "gross_issuance_tokens", "q0"), ("burn", config.a4_burn_metric(p["name"]), "q0")],
+                                      f"({_annualise(R, r, p, 'gross_issuance_tokens', R.D(r, 'gross_issuance_tokens', 'q0'))}-{_annualise(R, r, p, config.a4_burn_metric(p['name']), R.D(r, config.a4_burn_metric(p['name']), 'q0'))})/{_circ(R, r, p)}", p=p), FMT_PCT, "calc", True),
         ("Fees ÷ issuance ($, Q0; issuance at 90d avg price)",
          lambda r, p: _coverage_guard(R, r, [("fees", "fees_usd", "q0"), ("issuance", "gross_issuance_tokens", "q0")],
                                       f"{_flow_rate(R, r, 'fees_usd')}/({_flow_rate(R, r, 'gross_issuance_tokens')}*{R.D(r, 'price_usd', 'q0')})"), FMT_X, "calc"),
@@ -5049,10 +5198,62 @@ def write_master(ws, R: Refs, data_by_key: dict):
         ("Latest data date (core series)", lambda r, p: max([data_by_key.get(f"{p['name']}|{m}", {}).get("latest_date", "") or "" for m in ("price_usd", "fees_usd", "revenue_usd", "tvl_usd")] or [""]), FMT_TEXT, "text"),
         ("Notes", lambda r, p: p.get("notes", ""), FMT_TEXT, "text"),
     ]
+    specs = [_master_ref(s) for s in specs]
     _write_table(ws, R, scoped_projects(), specs, data_by_key,
                  ["price_usd", "fees_usd", "revenue_usd", "circulating_supply", "gross_burn_tokens", "gross_issuance_tokens", "actual_buyback_usd"],
-                 key_cols={20, 21})
+                 key_cols={21, 22})
+    _assert_master_refs(ws)
     _set_widths(ws, {"A": 16, "B": 8, "C": 10, "D": 6, "E": 9, "F": 10, "G": 10, **{get_column_letter(i): 14 for i in range(8, 32)}, "AF": 12, "AG": 60, "AH": 60})
+
+
+class CrossTabMismatch(RuntimeError):
+    """A Master column that summarises an A-tab figure is not a reference to that A-tab cell."""
+
+
+def _master_ref_for(head: str, p: dict) -> str | None:
+    """'=\'<A-tab>\'!<cell>' for a Master column that summarises an A-tab figure the project has (cross_tab
+    .MASTER_SOURCES, the project's own archetype tabs first), else None."""
+    import cross_tab                                      # noqa: PLC0415
+    sources = cross_tab.sources_for(head, p["name"])
+    if not sources:
+        return None
+    hit = cross_tab.resolve(sources, p.get("archetypes") or [], _TAB_CELLS, p["name"])
+    return f"='{hit[0]}'!{hit[1]}" if hit else None
+
+
+def _master_ref(spec: tuple) -> tuple:
+    """The spec with its builder replaced by the A-tab reference where one resolves; its own formula otherwise (a
+    project with no A-tab row for that figure). The confidence tag (meta metric) stays."""
+    head, builder = spec[0], spec[1]
+
+    def build(r, p, _b=builder, _h=head):
+        return _master_ref_for(_h, p) or _b(r, p)
+    return (head, build, *spec[2:])
+
+
+def _assert_master_refs(ws) -> None:
+    """THE BUILD REFUSES A MASTER THAT DISAGREES WITH ITS A-TAB BY CONSTRUCTION (Jake, 2026-10-11, item 16): every
+    mapped Master cell whose project has the A-tab figure must be exactly that reference. The value-level check
+    (cross_tab.check_workbook) runs in the tests on every real dump and on demand on today's store."""
+    import cross_tab                                      # noqa: PLC0415
+    hr = next((r for r in range(1, 12) if ws.cell(r, 1).value == "Project"), None)
+    heads = {c: ws.cell(hr, c).value for c in range(1, ws.max_column + 1)}
+    bad = []
+    for r in range(hr + 1, ws.max_row + 1):
+        name = ws.cell(r, 1).value
+        if not name:
+            break
+        p = config.PROJECT_BY_NAME.get(name) or {"name": name}
+        for c, h in heads.items():
+            if h in cross_tab.MASTER_SOURCES:
+                want = _master_ref_for(h, p)
+                got = ws.cell(r, c).value
+                # a closed / halted figure is written by _write_table over the formula — the A-tab cell carries
+                # the same treatment, so only a FORMULA that is not the reference is a mismatch
+                if want and isinstance(got, str) and got.startswith("=") and got != want:
+                    bad.append(f"{name} | {h}: Master reads {got[:120]} — the A-tab cell is {want}")
+    if bad:
+        raise CrossTabMismatch("Master disagrees with the A-tabs by construction:\n  " + "\n  ".join(bad))
 
 
 def write_a4(ws, R: Refs, data_by_key: dict):
@@ -5120,8 +5321,8 @@ def write_a4(ws, R: Refs, data_by_key: dict):
          FMT_PCT, "calc"),
         ("Issuance as % of supply (annualised)", lambda r, p: calc(f"{_annualise(R, r, p, 'gross_issuance_tokens', iss(r))}/{R.D(r, 'circulating_supply', 'now')}"), FMT_PCT, "calc"),
         ("Implied burn Q0 (tokens) = fees × documented share ÷ avg price",
-         lambda r, p: gated(R.C(r, "Burn status"), f"{R.D(r, 'fees_usd', 'q0')}*{R.C(r, 'Share of fees burned')}/{price(r)}", R.C(r, 'Share of fees burned')), FMT_NUM, "calc", False, {"gate": "burn_split"}),
-        ("Actual − implied burn (tokens)", lambda r, p: circular_gated(p, gated(R.C(r, "Burn status"), _coverage_guard(
+         lambda r, p: gated(R.C(r, "Burn split status"), f"{R.D(r, 'fees_usd', 'q0')}*{R.C(r, 'Share of fees burned')}/{price(r)}", R.C(r, 'Share of fees burned')), FMT_NUM, "calc", False, {"gate": "burn_split"}),
+        ("Actual − implied burn (tokens)", lambda r, p: circular_gated(p, gated(R.C(r, "Burn split status"), _coverage_guard(
             R, r, [("burn", config.a4_burn_metric(p["name"]), "q0"), ("fees", "fees_usd", "q0")],
             f"{burn(r, p)}-{R.D(r, 'fees_usd', 'q0')}*{R.C(r, 'Share of fees burned')}/{price(r)}", same_span=True, bare=True),
             R.C(r, 'Share of fees burned'))), FMT_NUM, "calc", False, {"gate": "burn_split"}),
@@ -5176,7 +5377,10 @@ def write_a3(ws, R: Refs, data_by_key: dict):
         *_valuation_head(R),
         *_a3_headline(R, data_by_key),
         ("Materiality", lambda r, p: pull(R.C(r, "Materiality")), FMT_TEXT, "pull"),
-        ("Buyback status", lambda r, p: pull(st(r)), FMT_TEXT, "pull", False, {"status_fill": "fee_split"}),
+        # THE PROGRAMME'S STATUS, as on Master and Config (Jake's review of 97b29ae, 2026-10-11: this read the Q0 window
+        # split's status — Pendle 'active' here, 'SILENT since …' on Master). The window's split status has its own
+        # column below ("Status of that window's split").
+        ("Buyback status", lambda r, p: pull(R.C(r, "Buyback status")), FMT_TEXT, "pull", False, {"status_fill": "fee_split"}),
         ("Programmed? (contract-enforced vs revisable by governance)", lambda r, p: pull(R.C(r, "Programmed (contract-enforced)")), FMT_TEXT, "pull"),
         ("Buyback destination", lambda r, p: pull(R.C(r, "Buyback destination")), FMT_TEXT, "pull"),
         ("Destination split (share burned)", lambda r, p: pull(R.C(r, "Destination split (share burned, where destination = split)")), FMT_PCT, "pull"),
@@ -5194,7 +5398,8 @@ def write_a3(ws, R: Refs, data_by_key: dict):
         ("Implied buyback Q0 ($) = revenue × share", lambda r, p: no_buy(p) or base_gated(p, gated(st(r), f"{rev(r, p)}*{share(r)}", share(r))), FMT_USD, "calc", False, {"gate": "fee_split", "base": True}),
         ("Price — 90d average ($)", lambda r, p: pull(price(r)), FMT_USD4, "pull", False, {"metric": "price_usd"}),
         ("Implied buyback Q0 (tokens) = $ ÷ avg price", lambda r, p: no_buy(p) or base_gated(p, gated(st(r), f"{rev(r, p)}*{share(r)}/{price(r)}", share(r))), FMT_NUM, "calc", False, {"gate": "fee_split", "base": True}),
-        ("Circulating supply", lambda r, p: pull(R.D(r, "circulating_supply", "now")), FMT_NUM, "pull", False, {"metric": "circulating_supply"}),
+        # THE FIGURE THE RATIOS DIVIDE BY (item 9, 2026-10-11): was CoinGecko's while the ratios used ours
+        ("Circulating supply", lambda r, p: pull(_circ(R, r, p)), FMT_NUM, "pull", False, {"metric": "circulating_supply_used"}),
         ("Supply figure complete?", lambda r, p: ("PARTIAL — " + (p.get("supply_partial_reason", "")[:90]))
          if p.get("supply_is_partial") else "", FMT_TEXT, "text"),
         ("BUYBACK AS % OF SUPPLY (annualised, implied)",
@@ -5394,10 +5599,12 @@ def write_a1(ws, R: Refs, data_by_key: dict, months: list[str]):
         ("Staked tokens (locked_tokens)", lambda r, p: pull(R.D(r, "locked_tokens", "now")), FMT_NUM, "pull", False, {"metric": "locked_tokens"}),
         ("Staking rate = staked ÷ circulating", lambda r, p: calc(f"{R.D(r, 'locked_tokens', 'now')}/{circ(r)}"), FMT_PCT, "calc"),
         ("Resulting float = circulating − staked", lambda r, p: calc(f"{circ(r)}-{R.D(r, 'locked_tokens', 'now')}"), FMT_NUM, "calc"),
-        ("Gross burn Q0 (tokens, A4 names)", lambda r, p: pull(R.D(r, "gross_burn_tokens", "q0")), FMT_NUM, "pull", False, {"metric": "gross_burn_tokens"}),
+        # THE HEADLINE BURN, as A4 reads it (Jake's review of 97b29ae, item 5: NEAR's Master 61,580 vs A1 69,238 were two
+        # series; the headline is config.a4_burn_metric — for NEAR the chain's record, Jake's run 2026-10-08)
+        ("Gross burn Q0 (tokens, A4 names)", lambda r, p: pull(R.D(r, config.a4_burn_metric(p["name"]), "q0")), FMT_NUM, "pull", False, {"metric_fn": config.a4_burn_metric}),
         ("Net issuance after burn (tokens) — burn subtracted only where a burn series exists",
-         lambda r, p: _guarded_net(R, r, p, "gross_issuance_tokens", "gross_burn_tokens",
-                                   total=f"IF(ISNUMBER({R.D(r, 'gross_burn_tokens', 'q0')}),{iss(r)}-{R.D(r, 'gross_burn_tokens', 'q0')},{iss(r)})"), FMT_NUM, "calc"),
+         lambda r, p: _guarded_net(R, r, p, "gross_issuance_tokens", config.a4_burn_metric(p["name"]),
+                                   total=f"IF(ISNUMBER({R.D(r, config.a4_burn_metric(p['name']), 'q0')}),{iss(r)}-{R.D(r, config.a4_burn_metric(p['name']), 'q0')},{iss(r)})"), FMT_NUM, "calc"),
         ("FEES ÷ ISSUANCE (x) — key ratio", lambda r, p: _coverage_guard(R, r, [("fees", "fees_usd", "q0"), ("issuance", "gross_issuance_tokens", "q0")],
                                       f"{_flow_rate(R, r, 'fees_usd', 'q0')}/({_flow_rate(R, r, 'gross_issuance_tokens', 'q0')}*{price(r, 'q0')})"), FMT_X, "calc", True),
         ("Fees ÷ issuance at Q1 (−3m window)", lambda r, p: _coverage_guard(R, r, [("fees", "fees_usd", "q1"), ("issuance", "gross_issuance_tokens", "q1")],
@@ -5609,6 +5816,10 @@ CRED_HEAD = ["Project", "Tab", "Cell", "What is checked", "Our value", "Independ
              "Note — why, and what would resolve it"]
 
 
+# A JUDGED ROW AT OR PAST THIS SHARE OF ITS TOLERANCE READS "(NEAR LIMIT)" — still a pass (Jake, 2026-10-11)
+NEAR_LIMIT_SHARE = 0.8
+
+
 def _now_staleness(ours: dict, row: dict, asof) -> tuple[str, str] | None:
     """("STALE" | "FRESH", label) for an input row judged on 'now' figures, or None when both are at most a day old
     (Jake's run on ab3c7fe: one failed read must not open sign-off). FRESH = the last stored value, older than today
@@ -5730,12 +5941,21 @@ def write_credibility(ws, R: Refs, data_by_key: dict, long: pd.DataFrame, asof) 
                 v = f"CHECK (STALE: {stale[1]})"
             else:
                 tag = f" [{stale[1]}]" if stale else ""
+                # NEAR LIMIT (Jake, 2026-10-11): a judged row whose |gap| is at least 80% of its tolerance still
+                # passes, and says so — it starts with the same word, so sign-off counts are unchanged. A zero
+                # tolerance (an exact match required) is never "near": its only pass is a gap of 0
                 v = (f'=IF(NOT(ISNUMBER(G{r})),"CHECK (no reference)",IF(NOT(ISNUMBER(E{r})),"CHECK (no figure)",'
-                     f'IF(ABS(I{r})<=J{r},"{ok}{tag}","CHECK{tag}")))')
+                     f'IF(ABS(I{r})<=J{r},IF(AND(J{r}>0,ABS(I{r})>={NEAR_LIMIT_SHARE}*J{r}),"{ok} (NEAR LIMIT){tag}","{ok}{tag}"),'
+                     f'"CHECK{tag}")))')
         ws.cell(row=r, column=11, value=v).font = F_BOLD
-        ws.cell(row=r, column=12, value=text(row.get("note") or ""))
+        note = row.get("note") or ""
+        mw = config.AERODROME_MIGRATION_WATCH
+        if row["project"] == mw["project"] and row.get("id") in mw["label_rows"] and migration_watch_on(asof):
+            note = mw["label"] + (f" | {note}" if note else "")
+        ws.cell(row=r, column=12, value=text(note))
     rng = f"K{d0}:K{d1}"
-    for test, fill in (('LEFT({c},4)="PASS"', FILL_GREEN), ('LEFT({c},5)="CHECK"', FILL_RED),
+    for test, fill in (('ISNUMBER(SEARCH("NEAR LIMIT",{c}))', FILL_AMBER),
+                       ('LEFT({c},4)="PASS"', FILL_GREEN), ('LEFT({c},5)="CHECK"', FILL_RED),
                        ('LEFT({c},10)="DOCUMENTED"', FILL_GREEN), ('LEFT({c},8)="MATURING"', FILL_AMBER),
                        ('LEFT({c},8)="VERIFIED"', FILL_GREEN),
                        ('LEFT({c},5)="FRESH"', FILL_AMBER), ('LEFT({c},5)="UNVER"', FILL_UNCONFIRMED),
@@ -6147,15 +6367,18 @@ def build_workbook(store, path: Path | str, run_id: str | None = None,
     ws_data = wb.create_sheet("Data")
     ws_mon = wb.create_sheet("Monthly")
 
-    write_config(ws_cfg, asof, silence=buyback_silence(data))
+    write_config(ws_cfg, asof, silence=buyback_silence(data), statuses=derived_statuses(data, buyback_silence(data)))
     write_data(ws_data, data, asof)
     write_monthly(ws_mon, months, monthly)
-    write_master(ws_master, R, data_by_key)
     _HEADLINE_CELLS.clear()
+    _TAB_CELLS.clear()
     a4 = write_a4(ws_a4, R, data_by_key)
     a3 = write_a3(ws_a3, R, data_by_key)
     a1 = write_a1(ws_a1, R, data_by_key, months)
     a2 = write_a2(ws_a2, R, data_by_key, months)
+    # MASTER AFTER THE A-TABS (Jake's review of 97b29ae, 2026-10-11): every Master column that summarises an A-tab
+    # figure is a REFERENCE to that A-tab cell, so the headline and the A-tabs cannot disagree (cross_tab.py)
+    write_master(ws_master, R, data_by_key)
     CREDIBILITY_ROWS[:] = write_credibility(ws_cred, R, data_by_key, long, asof)
     write_charts(ws_ch, {"a3": a3, "a4": a4, "a1": a1, "a2": a2, "ws_a3": ws_a3, "ws_a4": ws_a4, "ws_a1": ws_a1, "ws_a2": ws_a2})
     gap_end = write_gap_report(ws_gap, gaps, run_id) or (len(gaps) + 8 if gaps is not None else 8)
@@ -6189,5 +6412,32 @@ def build_workbook(store, path: Path | str, run_id: str | None = None,
         if fill:
             c.fill = fill
 
+    # SANITY RULES ON THE BUILT NUMBERS (Jake's review of 97b29ae, item 17 — permanent): evaluated in Python (xlcalc)
+    # and written under the Review Queue; credibility_report prints them (SANITY_HITS)
+    SANITY_HITS.clear()
+    try:
+        import sanity                                      # noqa: PLC0415
+        SANITY_HITS.extend(sanity.check_workbook(wb))
+    except Exception as e:  # noqa: BLE001 — a rule that cannot run is said, never a silent pass
+        SANITY_HITS.append(("(all)", "sanity_not_run", f"{type(e).__name__}: {str(e)[:200]}"))
+    _write_sanity(ws_rev, SANITY_HITS)
     wb.save(path)
     return path
+
+
+SANITY_HITS: list = []          # (project, rule, detail) from the last build (sanity.py)
+
+
+def _write_sanity(ws, found: list) -> None:
+    """The sanity-rule hits, under the Review Queue's own rows."""
+    r = ws.max_row + 3
+    ws.cell(row=r, column=1, value=f"SANITY RULES — {len(found)} hit(s) on this build's numbers (sanity.py): FDV < "
+                                   f"market cap; circulating > total; market cap != price x circulating shown; "
+                                   f"buyback > revenue unfunded; a status label against the data; a ratio beside a "
+                                   f"BLOCKED total; the same figure on two tabs").font = F_SUB
+    for i, (proj, rule, detail) in enumerate(found, start=1):
+        ws.cell(row=r + i, column=1, value=proj).font = F_BASE
+        ws.cell(row=r + i, column=2, value=rule).font = F_BASE
+        c = ws.cell(row=r + i, column=3, value=detail)
+        c.font = F_BASE
+        c.fill = FILL_REVIEW

@@ -60,6 +60,13 @@ def coverage(store, projects: list[dict], metrics_by_project: dict) -> dict:
 
 
 def main(argv=None) -> int:
+    # A HEARTBEAT LINE AT LEAST ONCE A MINUTE (2026-10-11): step, n/N, elapsed, ETA (progress.tick in the loops)
+    import progress
+    with progress.Heartbeat("archive_backfill"):
+        return _main(argv)
+
+
+def _main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     ap.add_argument("--db", default="metrics.db")
     ap.add_argument("--project", action="append", default=[])
@@ -142,7 +149,9 @@ def main(argv=None) -> int:
                 "SELECT date FROM metrics WHERE project='Near' AND metric='total_supply_protocol'")}
             na = ar.NearArchive(deadline=t0 + a.budget_min * 60)
             n, why = 0, "every day of the year is stored"
+            import progress                               # noqa: PLC0415
             for i in range(1, ar.ARCHIVE_DAYS + 1):
+                progress.tick("NEAR archive days", i, ar.ARCHIVE_DAYS)
                 d = today() - pd.Timedelta(days=i)
                 if str(d.date()) in have:
                     continue
@@ -180,4 +189,6 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
+    import progress                                    # stdout line-buffered when piped (2026-10-11)
+    progress.line_buffered()
     sys.exit(main())

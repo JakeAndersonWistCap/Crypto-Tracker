@@ -17112,7 +17112,10 @@ def test_geodnet_supply_denominators_net_out_the_burn_coingecko_does_not():
     class R:
         def D(self, r, m, w):
             return f"D[{m}]"
-    expr = bw._circ(R(), 5, config.PROJECT_BY_NAME["GEODNET"])
+    # _circ reads circulating_supply_used first (one basis with market cap, 2026-10-11); the formula below is its fallback
+    assert bw._circ(R(), 5, config.PROJECT_BY_NAME["GEODNET"]).startswith(
+        "IF(ISNUMBER(D[circulating_supply_used]),D[circulating_supply_used],")
+    expr = bw._circ_formula(R(), 5, config.PROJECT_BY_NAME["GEODNET"])
     # 2026-10-07 evening: GEODNET's ON-CHAIN set is primary — it already nets every burn it counts; only the
     # CoinGecko fallback is netted for the burn CoinGecko misses
     assert expr == ("IF(ISNUMBER(D[circulating_supply_onchain]),D[circulating_supply_onchain],"
@@ -17121,7 +17124,7 @@ def test_geodnet_supply_denominators_net_out_the_burn_coingecko_does_not():
                     "D[burn_address_balance]),2),NA()))"), expr
     # Uniswap (the full sweep, 2026-10-07): the on-chain count from its documented wallets is primary, CoinGecko the
     # fallback on a day it is not read — and no burn adjustment (nothing un-netted)
-    assert bw._circ(R(), 5, config.PROJECT_BY_NAME["Uniswap"]) == \
+    assert bw._circ_formula(R(), 5, config.PROJECT_BY_NAME["Uniswap"]) == \
         "IF(ISNUMBER(D[circulating_supply_onchain]),D[circulating_supply_onchain],D[circulating_supply])"
     # the arithmetic on Jake's figures: CoinGecko nets Polygon only -> the Solana balance comes out
     tot, gross, burned = 1e9 - 38_586_932.38, 1e9, 38_586_932.38 + 29_407_004.0
@@ -17298,7 +17301,8 @@ def test_morpho_free_float_is_circulating_and_fluid_a3_reads_zero_since_the_halt
             return f"D[{m}]"
     rows = {spec[0]: spec for spec in bw._a2_headline(R())}
     ff = rows["FREE FLOAT = circulating − locked (tokens)"][1](5, morpho)
-    assert "D[circulating_supply]-0" in ff and "locked_tokens" not in ff, ff
+    # circulating = the series used (2026-10-11), CoinGecko's where none: free float = that − 0, no lock
+    assert "D[circulating_supply])-0" in ff and "circulating_supply_used" in ff and "locked_tokens" not in ff, ff
 
 
 def test_pendle_hub_amounts_are_scaled_from_wei_and_the_yield_base_is_real_plus_virtual_spendle(monkeypatch):
@@ -25541,7 +25545,7 @@ def test_free_float_never_subtracts_the_lock_twice_from_coingeckos_free_float_ba
     pend = config.PROJECT_BY_NAME["Pendle"]
     assert bw._ff_lock(R(), 5, pend) == "(D[locked_tokens]+D[locked_tokens_legacy_vependle])"
     # a day with no on-chain figure: circulating = CoinGecko + the lock, so free float = CoinGecko exactly
-    assert bw._circ(R(), 5, pend) == ("IF(ISNUMBER(D[circulating_supply_onchain]),D[circulating_supply_onchain],"
+    assert bw._circ_formula(R(), 5, pend) == ("IF(ISNUMBER(D[circulating_supply_onchain]),D[circulating_supply_onchain],"
                                       "D[circulating_supply]+(D[locked_tokens]+D[locked_tokens_legacy_vependle]))")
     assert config.CIRCULATING_CONVENTION["status"].startswith("CONFIRMED by Jake")
 

@@ -463,6 +463,109 @@ def check_watched_wallet(df: pd.DataFrame, out, watch: dict | None = None) -> No
                         prior_value=float(w["expect"]), date=str(last["date"])[:10], source=str(last["source"]),
                         tier=None)
 
+REASON_MIGRATION_DROP = "migration_watch_drop"
+REASON_MIGRATION_OUTFLOW = "migration_watch_outflow"
+
+
+def _project_addresses(p) -> set:
+    """Every 0x address anywhere in a project's config block (contracts, owners, scans, wallets), lower-cased."""
+    import re                                             # noqa: PLC0415
+    found: set = set()
+
+    def walk(x):
+        if isinstance(x, dict):
+            for k, v in x.items():
+                walk(k)
+                walk(v)
+        elif isinstance(x, (list, tuple, set)):
+            for v in x:
+                walk(v)
+        elif isinstance(x, str):
+            found.update(a.lower() for a in re.findall(r"0x[0-9a-fA-F]{40}(?![0-9a-fA-F])", x))
+    walk(p)
+    return found
+
+
+def _trace_outflows(w: dict, day_before: str, day: str):
+    """[(destination, tokens, is_contract, known)] for Transfers OUT of the watched holder between the first blocks of
+    `day_before` and `day`, or the reason none could be read. Balance bisection (check_offline_items
+    .base_logs_where_balance_moves) through the keyed Base RPC; a destination contract whose ve() is the escrow is one
+    of Aerodrome's own reward contracts (Reward.sol L25)."""
+    import check_offline_items as coi                     # noqa: PLC0415
+    o, ve = w["outflow"], w["outflow"]["holder"].lower()
+    known = _project_addresses(config.PROJECT_BY_NAME[w["project"]])
+    known |= {a.lower() for a in getattr(coi, "AERO_FILING_WALLETS", {})}
+    try:
+        b0 = coi.rpc_block_at("base", int(pd.Timestamp(day_before).tz_localize("UTC").timestamp()), say=lambda *_: None)
+        b1 = coi.rpc_block_at("base", int(pd.Timestamp(day).tz_localize("UTC").timestamp()), say=lambda *_: None)
+        if not (b0 and b1):
+            return "the day's blocks could not be resolved"
+        from eth_utils import keccak                      # noqa: PLC0415
+        transfer = "0x" + keccak(text="Transfer(address,address,uint256)").hex().removeprefix("0x")
+        logs, how = coi.base_logs_where_balance_moves(o["token"], ve, [transfer, "0x" + ve[2:].rjust(64, "0")], b0, b1,
+                                                      say=lambda *_: None, max_calls=1500, max_moves=80)
+        if not logs and any(k in how for k in ("refused", "stopped", "unreadable")):
+            return how[:300]
+        by_to: dict = {}
+        for lg in logs:
+            to = "0x" + lg["topics"][2][-40:].lower()
+            by_to[to] = by_to.get(to, 0.0) + int(lg["data"], 16) / 1e18
+        out = []
+        for to, amt in by_to.items():
+            code = coi.rpc(coi._rpcs_for("base")[0], "eth_getCode", [to, "latest"]).get("result") or "0x"
+            is_c = code not in ("0x", "0x0")
+            k = to in known
+            if is_c and not k:
+                r, _ = coi.eth_call(to, coi._selx("ve()"), chain="base")
+                k = bool(r and len(r) >= 42 and ("0x" + r[-40:]).lower() == ve)
+            out.append((to, amt, is_c, k))
+        return out
+    except Exception as e:  # noqa: BLE001
+        from .chain import redact_urls
+        return f"{type(e).__name__}: {redact_urls(e)}"[:300]
+
+
+def check_migration_watch(df: pd.DataFrame, out, prior: dict, prior_dates: dict, watch: dict | None = None,
+                          trace=None) -> None:
+    """THE AERODROME MIGRATION GUARD (config.AERODROME_MIGRATION_WATCH, Jake 2026-10-11): a >drop_pct day-on-day fall
+    in veAERO.supply() or Voter.totalWeight, and AERO leaving the escrow for a contract not on the known list, are
+    Review Queue items. `prior` / `prior_dates`: the last EARLIER-dated value per (project, metric)."""
+    w = watch or config.AERODROME_MIGRATION_WATCH
+    if df is None or df.empty:
+        return
+    rows = df[df["project"] == w["project"]]
+
+    def latest(m):
+        r = rows[rows["metric"] == m].sort_values("date")
+        return (float(r.iloc[-1]["value"]), str(r.iloc[-1]["date"])[:10], str(r.iloc[-1]["source"])) if len(r) else None
+    for m in w["drop_metrics"]:
+        now, was = latest(m), prior.get((w["project"], m))
+        if now and was and was > 0 and (was - now[0]) / was * 100 > w["drop_pct"]:
+            out.review_item(w["project"], m, REASON_MIGRATION_DROP, ACTION_FLAGGED, value=now[0], prior_value=was,
+                            date=now[1], prior_date=prior_dates.get((w["project"], m)), source=now[2],
+                            basis=f"day-on-day fall {(was - now[0]) / was:.1%} > {w['drop_pct']}% — the migration "
+                                  f"guard (config.AERODROME_MIGRATION_WATCH)")
+    o = w["outflow"]
+    now, was = latest(o["metric"]), prior.get((w["project"], o["metric"]))
+    if not (now and was is not None) or was - now[0] < o["threshold_tokens"]:
+        return
+    since = prior_dates.get((w["project"], o["metric"])) or str(pd.Timestamp(now[1]) - pd.Timedelta(days=1))[:10]
+    got = (trace or _trace_outflows)(w, since, now[1])
+    if isinstance(got, str):
+        out.review_item(w["project"], o["metric"], REASON_MIGRATION_OUTFLOW, ACTION_FLAGGED, value=now[0],
+                        prior_value=was, date=now[1], prior_date=since, source=now[2],
+                        basis=f"{was - now[0]:,.0f} AERO left the escrow; the destinations were NOT read ({got}) — run "
+                              f"check_offline_items.py aerodrome_foundation_lock_split or read the escrow's Transfers")
+        return
+    for to, amt, is_c, known in sorted(got, key=lambda x: -x[1]):
+        if is_c and not known and amt >= o["threshold_tokens"]:
+            out.review_item(w["project"], o["metric"], REASON_MIGRATION_OUTFLOW, ACTION_FLAGGED, value=amt,
+                            prior_value=was, date=now[1], prior_date=since, source=to,
+                            basis=f"{amt:,.0f} AERO went from the escrow to contract {to}, which is not on the known "
+                                  f"list (config addresses, filing wallets, Foundation owners, Aerodrome reward "
+                                  f"contracts) — the migration guard")
+
+
 REASON_IMPOSSIBLE = "impossible_relation"
 
 # Relations between two metrics that CANNOT both be right. Each is an identity, not a heuristic:

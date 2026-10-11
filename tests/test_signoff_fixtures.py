@@ -1577,7 +1577,7 @@ def test_morpho_listed_vs_all_splits_listed_self_lent_and_other(monkeypatch, cap
     assert row("unlisted self-lent").split()[2] == "1" and row("unlisted other").split()[2] == "1"
     assert "historicalState NOT READ" in out and "tolerance stays 10%" in out
     assert "70,000  (api.llama.fi/summary/fees/morpho (live))" in out          # DefiLlama, the same 7 days
-    assert "none of their interest is in DefiLlama's fees" in out
+    assert "unlisted markets INCLUDED" in out and "are NOT in its fees" in out
 
 
 def test_a_failed_now_read_falls_back_to_the_last_stored_value_within_its_age():
@@ -1781,3 +1781,118 @@ def test_pendle_shares_cross_check_is_read_live_every_run_not_from_the_day_cache
     assert got == ["totalStakedInSpendle"], got                      # only the flagged entry went live
     assert list(row["value"]) == [29_307_487.97] and not row["source"].str.contains("cache").any(), row
     assert f[f.metric == virt["metric"]]["source"].str.contains("cache").all()
+
+
+def test_aerodrome_migration_guard_alerts_on_drops_and_unknown_contract_outflows():
+    """Jake, 2026-10-11 (item 8): a >5% day-on-day fall in veAERO.supply() or Voter.totalWeight is a Review Queue item;
+    AERO leaving the escrow above the threshold is traced, and only a CONTRACT not on the known list (nor one of
+    Aerodrome's own reward contracts) is flagged; an unread trace is flagged too."""
+    from fetch.base import FetchOutput
+    from fetch.validate import REASON_MIGRATION_DROP, REASON_MIGRATION_OUTFLOW, check_migration_watch
+    w = config.AERODROME_MIGRATION_WATCH
+    d = "2026-10-22"
+    df = pd.DataFrame([{"date": d, "project": "Aerodrome", "metric": m, "value": v, "source": "chain:x", "tier": 2}
+                       for m, v in (("ve_locked_supply_tokens", 900e6), ("voter_total_weight_tokens", 990e6),
+                                    ("locked_tokens", 800e6))])
+    prior = {("Aerodrome", "ve_locked_supply_tokens"): 1_000e6, ("Aerodrome", "voter_total_weight_tokens"): 1_000e6,
+             ("Aerodrome", "locked_tokens"): 900e6}
+    dates = {k: "2026-10-21" for k in prior}
+    seen = []
+
+    def trace(w_, since, day):
+        seen.append((since, day))
+        return [("0x" + "aa" * 20, 60e6, True, False),        # an unknown contract: flagged
+                ("0x" + "bb" * 20, 30e6, False, False),       # an EOA (an ordinary withdraw): not flagged
+                ("0x" + "cc" * 20, 9e6, True, True),          # a known / reward contract: not flagged
+                ("0x" + "dd" * 20, 1e6, True, False)]         # unknown but under the threshold: not flagged
+    out = FetchOutput()
+    check_migration_watch(df, out, prior, dates, trace=trace)
+    drops = [r for r in out.review if r["reason"] == REASON_MIGRATION_DROP]
+    assert [r["metric"] for r in drops] == ["ve_locked_supply_tokens"], drops        # -10% flagged, -1% not
+    outs = [r for r in out.review if r["reason"] == REASON_MIGRATION_OUTFLOW]
+    assert seen == [("2026-10-21", d)] and [r["source"] for r in outs] == ["0x" + "aa" * 20], outs
+    out2 = FetchOutput()
+    check_migration_watch(df, out2, prior, dates, trace=lambda *a: "eth_getLogs refused")
+    assert any("NOT read (eth_getLogs refused)" in r["basis"] for r in out2.review)
+    assert w["outflow"]["threshold_tokens"] == 5_000_000.0 and w["drop_pct"] == 5.0
+
+
+def test_migration_watch_label_runs_from_10_21_until_built(monkeypatch):
+    import build_workbook as bw
+    assert not bw.migration_watch_on(pd.Timestamp("2026-10-20"))
+    assert bw.migration_watch_on(pd.Timestamp("2026-10-21"))
+    monkeypatch.setitem(config.AERODROME_MIGRATION_WATCH, "built", "2026-11-01")
+    assert not bw.migration_watch_on(pd.Timestamp("2026-10-25"))
+    ids = set(config.CREDIBILITY["Aerodrome"])
+    assert set(config.AERODROME_MIGRATION_WATCH["label_rows"]) <= ids
+
+
+def test_total_supply_on_chain_first_for_ether_fi_and_its_fdv():
+    """Jake's review of 97b29ae (2026-10-11), item 6: Ether.fi's total supply is on-chain first — the chain read wins
+    the tier collision (logged, not raised) — and FDV = price x that total; CoinGecko's FDV stays as the cross-check.
+    Another project's collision is unchanged (CoinGecko kept, tier_collision raised) until Jake approves."""
+    import fetch as fetch_mod
+    import build_workbook as bw
+    from fetch.base import FetchOutput
+    d = "2026-10-11"
+    row = lambda p, v, src, t: {"date": pd.Timestamp(d), "project": p, "metric": "total_supply", "value": v,  # noqa: E731
+                                "source": src, "tier": t}
+    out = FetchOutput()
+    out.frames = [pd.DataFrame([row("Ether.fi", 965.35e6, "coingecko", 1), row("Pendle", 281.5e6, "coingecko", 1)]),
+                  pd.DataFrame([row("Ether.fi", 998_535_999.0, "chain:ethereum:token", 2),
+                                row("Pendle", 281.6e6, "chain:ethereum:token", 2)])]
+    fetch_mod._resolve_tier_collisions(out)
+    f = out.frame().set_index("project")
+    assert f.loc["Ether.fi", "value"] == 998_535_999.0 and f.loc["Ether.fi", "source"] == "chain:ethereum:token"
+    assert f.loc["Pendle", "source"] == "coingecko"
+    assert [r["project"] for r in out.review if r["reason"] == "tier_collision"] == ["Pendle"]
+    cols = ["date", "project", "metric", "value", "source", "tier"]
+    g = lambda m, v, src: pd.DataFrame([{"date": d, "project": "Ether.fi", "metric": m, "value": v, "source": src,  # noqa: E731
+                                         "tier": 1}], columns=cols)
+    groups = {("Ether.fi", "price_usd"): g("price_usd", 0.70, "coingecko"),
+              ("Ether.fi", "total_supply"): g("total_supply", 998_535_999.0, "chain:ethereum:token"),
+              ("Ether.fi", "fdv_usd"): g("fdv_usd", 700.3e6, "coingecko")}
+    bw._fdv_views(groups)
+    assert abs(float(groups[("Ether.fi", "fdv_usd")]["value"].iloc[0]) - 0.70 * 998_535_999.0) < 1
+    assert "chain:ethereum:token" in groups[("Ether.fi", "fdv_usd")]["source"].iloc[0]
+    assert float(groups[("Ether.fi", "fdv_usd_coingecko")]["value"].iloc[0]) == 700.3e6
+
+
+def test_buyback_silence_needs_a_real_flag_and_the_rule_is_cadence_plus_lag_plus_slack():
+    """Jake's review of 97b29ae (2026-10-11), item 15: Pendle read 'SILENT since 2026-10-10' after one day — an
+    unflagged row's NaN silence_flag is truthy. And the rule is the programme's cadence + the source's lag + slack:
+    Pendle 14 + 2 + 7 = 23 days, Ether.fi 30 + 1 + 7 = 38 days (39 days since its last purchase on 2026-10-11)."""
+    import build_workbook as bw
+    data = pd.DataFrame([{"project": "Pendle", "metric": "actual_buyback_tokens", "silence_flag": float("nan"),
+                          "last_nonzero_date": "2026-10-10"},
+                         {"project": "Ether.fi", "metric": "actual_buyback_tokens",
+                          "silence_flag": "silent since 2026-09-02 — 39 days", "last_nonzero_date": "2026-09-02"}])
+    assert bw.buyback_silence(data) == {"Ether.fi": "2026-09-02"}
+    d = config.PROGRAM_SILENCE_DEFAULTS
+    pend, ethfi = config.PROGRAM_CADENCE["Pendle"], config.PROGRAM_CADENCE["Ether.fi"]
+    lim = lambda c: max(x for _, x in c["cadences"]) + c.get("source_lag_days", d["source_lag_days"]) + \
+        c.get("slack_days", d["slack_days"])  # noqa: E731
+    assert (lim(pend), lim(ethfi)) == (23, 38)
+
+
+def test_real_pendle_buyback_status_is_not_silent(tmp_path, monkeypatch):
+    sys_path = str(Path(__file__).resolve().parent)
+    import sys
+    if sys_path not in sys.path:
+        sys.path.insert(0, sys_path)
+    from real_dump import FIXTURES, load, to_store
+    import store as sm
+    import build_workbook as bw
+    import openpyxl
+    if not (FIXTURES / "real_pendle.json").exists():
+        return
+    payload = load("Pendle")
+    to_store(payload, tmp_path / "metrics.db")
+    monkeypatch.setattr(sm, "DB_PATH", str(tmp_path / "metrics.db"))
+    monkeypatch.setitem(sys.modules, "recalc", None)
+    bw.build_workbook(sm.Store(str(tmp_path / "metrics.db")), tmp_path / "wb.xlsx",
+                      asof=pd.Timestamp(payload["meta"]["asof"]), only=["Pendle"])
+    ws = openpyxl.load_workbook(tmp_path / "wb.xlsx")["Config & Sources"]
+    col = next(c for c in range(1, ws.max_column + 1) if ws.cell(9, c).value == "Buyback status")
+    row = next(r for r in range(10, ws.max_row + 1) if ws.cell(r, 1).value == "Pendle")
+    assert not str(ws.cell(row, col).value).startswith("SILENT"), ws.cell(row, col).value

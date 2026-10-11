@@ -46,7 +46,13 @@ def summarise(now: dict, prev: dict | None, prev_date: str | None, log_text: str
     """The summary lines. `now` / `prev`: {"Project|row": verdict}; `what`: {"Project|row": label}."""
     what = what or {}
     c_now = counts(now)
-    lines = ["=" * 78, f"DAILY SUMMARY {date.today().isoformat()}", "",
+    # THE RUN'S OWN COUNTS (Jake, 2026-10-11): FAILED / WARN / SKIPPED-by-design, from token_metrics' summary line
+    # (fetch.base.run_class) — the last run summary in the log when the run was repeated
+    import re
+    runs = re.findall(r"run summary: .*?(\d+) FAILED \| (\d+) WARN \| (\d+) SKIPPED-by-design", log_text)
+    run_line = (f"RUN: {runs[-1][0]} FAILED | {runs[-1][1]} WARN | {runs[-1][2]} SKIPPED-by-design"
+                if runs else "RUN: no run summary line in the log")
+    lines = ["=" * 78, f"DAILY SUMMARY {date.today().isoformat()}", run_line, "",
              "1. CREDIBILITY COUNTS" + (f" (change vs {prev_date})" if prev is not None else " (no previous run on file)")]
     c_prev = counts(prev) if prev is not None else None
     for k in VERDICTS:
@@ -113,4 +119,6 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
+    import progress                                    # stdout line-buffered when piped (2026-10-11)
+    progress.line_buffered()
     sys.exit(main())

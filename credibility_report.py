@@ -120,6 +120,9 @@ def _code_fingerprint() -> str:
     return h.hexdigest()
 
 
+SANITY: list = []               # (project, rule, detail) from the evaluated build (sanity.py, 2026-10-11)
+
+
 def evaluated(project: str | None = None, libreoffice: bool = False, asof=None, narrow: bool = False):
     """(credibility rows, summary rows, evaluated tab rows, asof used) — ONE evaluation per store state, shared by
     credibility_report and completeness_report (see above); (None, None, None, None) when there is no store."""
@@ -143,6 +146,7 @@ def evaluated(project: str | None = None, libreoffice: bool = False, asof=None, 
             got = pickle.loads(cache.read_bytes())
             if got.get("key") == key and _time.time() - got["at"] < EVAL_TTL_H * 3600:
                 CREDIBILITY_ROWS[:] = got["rows"]
+                SANITY[:] = got.get("sanity") or []
                 return got["rows"], got["summary"], got["tab"], got["asof"]
         except Exception:  # noqa: BLE001 — an unreadable cache is a cache miss
             pass
@@ -162,9 +166,11 @@ def evaluated(project: str | None = None, libreoffice: bool = False, asof=None, 
                                  f"in Python")
         summary, tab = read_tab(path, evaluate=not libreoffice)
     rows = list(CREDIBILITY_ROWS)
+    import build_workbook as _bw
+    SANITY[:] = list(_bw.SANITY_HITS)
     try:
         cache.write_bytes(pickle.dumps({"key": key, "at": _time.time(), "rows": rows, "summary": summary, "tab": tab,
-                                        "asof": used}))
+                                        "asof": used, "sanity": list(SANITY)}))
     except Exception:  # noqa: BLE001 — a read-only directory: no cache, same answer
         pass
     return rows, summary, tab, used
@@ -273,6 +279,20 @@ def main(argv=None) -> int:
             tol = f"+/-{r[9] * 100:g}%" if isinstance(r[9], (int, float)) else ""
             print(f"  {a(r[0]):<12}| {a(r[2])[:28]:<28}| {a(r[3])[:58]:<58}| {fmt(r[4]):>14} | "
                   f"{fmt(r[6]):>14} {a(r[7] or '')[:10]:<10}| {gap:>8} | {tol:>7} | {a(r[10])}")
+    # SANITY RULES (Jake's review of 97b29ae, item 17): every hit on the built numbers, by project
+    hits = [h for h in SANITY if not args.project or str(h[0]).lower() == args.project.lower()]
+    print(f"\nSANITY RULES - {len(hits)} hit(s) on the built numbers (sanity.py)")
+    for proj, rule, detail in hits:
+        print(f"  {a(proj):<12} [{rule}] {a(detail)[:220]}")
+    # NEAR LIMIT (Jake, 2026-10-11): judged rows whose |gap| is at least 80% of their tolerance — still passing
+    near = [r for r in rows if "NEAR LIMIT" in str(r[10] or "")]
+    print(f"\nCREDIBILITY - NEAR LIMIT: {len(near)} judged row(s) with |gap| >= 80% of the tolerance (still PASS)")
+    for r in near:
+        gap = f"{r[8] * 100:+.1f}%" if isinstance(r[8], (int, float)) else "?"
+        tol = f"{r[9] * 100:g}%" if isinstance(r[9], (int, float)) else "?"
+        share = (f" = {abs(r[8]) / r[9]:.0%} of it" if isinstance(r[8], (int, float)) and isinstance(r[9], (int, float))
+                 and r[9] else "")
+        print(f"  {a(r[0]):<12} {a(r[3])[:70]:<70} gap {gap} vs tol +/-{tol}{share}")
     print("\nCREDIBILITY - every OPEN row (not PASS / N/A / LIMITATION / MATURING / FINDING), with what would resolve it")
     for r in rows:
         v = a(r[10])
@@ -282,4 +302,6 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
+    import progress                                    # stdout line-buffered when piped (2026-10-11)
+    progress.line_buffered()
     sys.exit(main())

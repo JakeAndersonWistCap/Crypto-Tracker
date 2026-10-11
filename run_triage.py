@@ -87,13 +87,16 @@ def show_run(st: Store, run_id: str):
             print(f"          ... and {len(rows) - 8} more")
 
     section("RUN LOG")
-    for status in ("failed", "skipped"):
-        rows = st.conn.execute(
-            "SELECT source, project, message FROM run_log WHERE run_id=? AND status=? ORDER BY source",
-            (run_id, status)).fetchall()
-        print(f"  {status.upper()}: {len(rows)}")
-        for source, project, message in rows:
-            print(f"    {source:<16} {project or '-':<14} {message[:96]}")
+    # FAILED / WARN / SKIPPED-by-design — the run summary's own classes (fetch.base.run_class, 2026-10-11)
+    from types import SimpleNamespace
+    from fetch.base import run_class
+    logged = [SimpleNamespace(source=a, project=b, status=c, message=d or "") for a, b, c, d in st.conn.execute(
+        "SELECT source, project, status, message FROM run_log WHERE run_id=? ORDER BY source", (run_id,)).fetchall()]
+    for cls, label in (("FAILED", "FAILED"), ("WARN", "WARN"), ("SKIPPED", "SKIPPED-by-design")):
+        rows = [e for e in logged if run_class(e) == cls]
+        print(f"  {label}: {len(rows)}")
+        for e in rows:
+            print(f"    {e.source:<16} {e.project or '-':<14} {e.message[:96]}")
 
     section("GAP REPORT by priority")
     for label, n in st.conn.execute(
@@ -202,4 +205,6 @@ def main():
 
 
 if __name__ == "__main__":
+    import progress                                    # stdout line-buffered when piped (2026-10-11)
+    progress.line_buffered()
     main()

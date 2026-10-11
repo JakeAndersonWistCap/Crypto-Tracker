@@ -508,6 +508,15 @@ def main(argv=None) -> int:
     args = parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     log = logging.getLogger("token_metrics")
+    # A HEARTBEAT LINE AT LEAST ONCE A MINUTE for the whole run, seeds and --no-fetch included (Jake's run
+    # 2026-10-11: piped output showed nothing for 40+ minutes): the step, n/N, elapsed, ETA (progress.tick)
+    import progress
+    what = f"--seed {args.seed}" if args.seed else "--no-fetch build" if args.no_fetch else "run"
+    with progress.Heartbeat(f"token_metrics {what}", say=log.info):
+        return _main(args, log)
+
+
+def _main(args, log) -> int:
     load_dotenv(ROOT / ".env")
     # NO KEY IN ANY LOG LINE OR PRINT (2026-09-29): after .env, so its values are known secrets.
     from fetch.base import install_redaction
@@ -634,27 +643,35 @@ def main(argv=None) -> int:
     # ===== ACTION FIRST (Jake's run 2026-10-06 11:01): what needs a human goes at the TOP of the summary.
     for line in run_banner(out.log):
         log.warning(line)
-    rows_by_source, fails_by_source, skips_by_source = {}, {}, {}
+    # FAILED / WARN / SKIPPED-BY-DESIGN (Jake, 2026-10-11): one classifier (fetch.base.run_class) for every count,
+    # so "FAILED … LAG GREW … stored" is a WARN and a robots.txt rule obeyed is a skip, not a failure
+    from fetch.base import run_class
+    rows_by_source, cls_by_source = {}, {}
     for e in out.log:
         rows_by_source[e.source] = rows_by_source.get(e.source, 0) + int(e.rows or 0)
-        fails_by_source[e.source] = fails_by_source.get(e.source, 0) + int(e.status == "failed")
-        skips_by_source[e.source] = skips_by_source.get(e.source, 0) + int(e.status == "skipped")
+        c = cls_by_source.setdefault(e.source, {"FAILED": 0, "WARN": 0, "SKIPPED": 0, "OK": 0, "UNCONFIGURED": 0})
+        c[run_class(e)] += 1
     log.info("fetch took %.1fs across %d project(s):", elapsed, len(projects))
     for t in sorted(out.timings, key=lambda x: -x["seconds"]):
         src = t["source"]
-        log.info("    tier %-3s %-16s %7.1fs  %6d rows  %d failed  %d skipped",
+        c = cls_by_source.get(src) or {}
+        log.info("    tier %-3s %-16s %7.1fs  %6d rows  %d FAILED  %d WARN  %d SKIPPED-by-design",
                  t["tier"], src, t["seconds"], t.get("rows", rows_by_source.get(src, 0)),
-                 t.get("failed", fails_by_source.get(src, 0)), t.get("skipped", skips_by_source.get(src, 0)))
+                 t.get("failed", c.get("FAILED", 0)), t.get("warned", c.get("WARN", 0)),
+                 t.get("skipped", c.get("SKIPPED", 0)))
     # SLOWEST FIRST, and the slowest line is the answer. A source taking minutes and returning
     # nothing is the most useful row in a slow run's log, and a rows-only summary cannot show it.
 
-    failures = [e for e in out.log if e.status == "failed"]
-    skips = [e for e in out.log if e.status == "skipped"]
-    log.info("run summary: %d rows | %d fetch failures | %d SKIPPED (ran nothing) | %d review items "
+    failures = [e for e in out.log if run_class(e) == "FAILED"]
+    warns = [e for e in out.log if run_class(e) == "WARN"]
+    skips = [e for e in out.log if run_class(e) == "SKIPPED"]
+    log.info("run summary: %d rows | %d FAILED | %d WARN | %d SKIPPED-by-design | %d review items "
              "| %d gaps | %d manual overrides | %d staged (captured, used by nothing)",
-             written, len(failures), len(skips), n_review, n_gaps, n_manual, n_staged)
+             written, len(failures), len(warns), len(skips), n_review, n_gaps, n_manual, n_staged)
     if failures:
-        log.warning("%d fetch failures — see the Run Log tab", len(failures))
+        log.warning("%d FAILED — real fetch failures; see the Run Log tab", len(failures))
+    for e in warns:
+        log.warning("    WARN  tier %s  %s / %s — %s", e.tier, e.source, e.project, e.message[:300])
     # ACTION NEEDED (probes6 4, Jake 2026-10-02): an expired Google login stops every NEAR BigQuery read;
     # say what to run at the end of the run, not only in the Run Log.
     for e in out.log:
@@ -665,7 +682,7 @@ def main(argv=None) -> int:
     # reads exactly like a source that ran and had nothing to add — which is how a backfill that
     # never executed gets reported as one that worked.
     if skips:
-        log.warning("%d source/metric pair(s) were SKIPPED and fetched nothing:", len(skips))
+        log.warning("%d source/metric pair(s) were SKIPPED (by design) and fetched nothing:", len(skips))
         for e in skips:
             log.warning("    SKIPPED  tier %s  %s / %s — %s", e.tier, e.source, e.project, e.message)
     if n_gaps:
@@ -726,4 +743,6 @@ def run_banner(log_entries) -> list[str]:
 
 
 if __name__ == "__main__":
+    import progress                                    # stdout line-buffered when piped (2026-10-11)
+    progress.line_buffered()
     sys.exit(main())

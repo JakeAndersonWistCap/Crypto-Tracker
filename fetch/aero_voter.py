@@ -187,7 +187,9 @@ class AeroVoter:
             out.fail(SOURCE, name, f"{spec['usd_metric']}: {res['error']}", TIER)
             return
         src = f"{SOURCE}:tokenRewardsPerEpoch"
-        for e in want:
+        import progress                                   # noqa: PLC0415
+        for k_, e in enumerate(want, 1):
+            progress.tick("Aerodrome epochs stored", k_, len(want))
             r, when = res.get(e) or {"error": "not read"}, day_of(e)
             if r.get("error"):
                 out.fail(SOURCE, name, f"{spec['usd_metric']}: epoch {when.date()}: {r['error']}", TIER)

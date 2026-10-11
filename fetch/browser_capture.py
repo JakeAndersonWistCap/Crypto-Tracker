@@ -521,7 +521,7 @@ class BrowserCapture:
         if pin.get("expected_lag_days") and rows:        # a late publisher: say so if it gets later
             lag = (today().normalize() - rows[-1][0]).days
             if lag > int(pin["expected_lag_days"]) + int(pin.get("lag_slack_days", 5)):
-                out.fail(SOURCE, name, f"{pin['metric']}: LAG GREW — the latest point is {rows[-1][0].date()}, {lag} "
+                out.warn(SOURCE, name, f"{pin['metric']}: LAG GREW — the latest point is {rows[-1][0].date()}, {lag} "
                                        f"days behind (expected ~{pin['expected_lag_days']}); stored, but check the "
                                        f"source", TIER)
         held[pin["metric"]] = dict(rows)

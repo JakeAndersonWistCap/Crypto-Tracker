@@ -150,7 +150,9 @@ def seed_foundation(projects: list[dict], days: int = 100, stored=None, say=prin
             continue
         name = p["name"]
         end = today()
+        import progress                                   # noqa: PLC0415
         for k in range(days, 0, -1):
+            progress.tick(f"{name} Foundation locks, days", days - k + 1, days)
             d = (end - pd.Timedelta(days=k)).normalize()
             if stored and stored(name, spec["stock_metric"], str(d.date())):
                 continue

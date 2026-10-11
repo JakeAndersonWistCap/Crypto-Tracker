@@ -2,7 +2,7 @@
 #
 #   1. adc_check.py      - NEAR's Google login; a desktop notification if Jake must re-login
 #   2. token_metrics.py  - the run; RERUN ONCE, after a pause, if its summary shows NETWORK-WIDE TROUBLE
-#   3. credibility_report.py --roots, then the full report
+#   3. credibility_report.py --roots, then the full report; credibility_history.py --record (verdicts kept per run)
 #   4. daily_summary.py  - the PLAIN SUMMARY the log ends with: counts vs the previous day, NETWORK-WIDE TROUBLE,
 #                          ACTION NEEDED, new CHECKs (overnight 2026-10-06, E2)
 #
@@ -106,6 +106,10 @@ if ($run[0] -ne 0) {
 # 3. Credibility: the root-cause map, then the full report.
 [void](Invoke-Step "credibility roots" @("credibility_report.py", "--roots"))
 [void](Invoke-Step "credibility report" @("credibility_report.py"))
+
+# 3b. Credibility history (2026-10-11): record this run's verdicts, then per row the flips in 7 / 14 / 28 days,
+#     mean and max |gap|, and the rows whose verdict changed since the previous run.
+[void](Invoke-Step "credibility history" @("credibility_history.py", "--record"))
 
 # 4. The plain summary, LAST, so the log ends with it.
 Write-Log "daily run end"

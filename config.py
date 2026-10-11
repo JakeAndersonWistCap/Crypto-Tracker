@@ -381,6 +381,13 @@ METRICS = {
                                    "sanity_min": 0, "sanity_max": 1e15, "view_only": True},
     # READ-TIME (build_workbook._cg_plus_staked_views, POLICY 2026-10-07): CoinGecko's circulating where it EXCLUDES
     # staked tokens, plus the staked amount added back once (Aerodrome: veAERO principal less the team's 95M).
+    # THE CIRCULATING SUPPLY USED (Jake's review of 97b29ae, 2026-10-11, items 8-9): the per-day series market cap
+    # multiplies and every ratio divides by — our own figure within its age limit, else the fallback _circ uses.
+    # Built by build_workbook._market_cap_views; never fetched.
+    "circulating_supply_used": {"label": "Circulating supply USED — the figure market cap and every ratio use (ours "
+                                         "first, CoinGecko's fallback; the basis in the source)",
+                                "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [1],
+                                "sanity_min": 0, "sanity_max": 1e15, "view_only": True},
     "circulating_supply_cg_plus_staked": {"label": "Circulating supply — CoinGecko's figure (which excludes staked tokens) + the staked amount, added back once",
                                           "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [1],
                                           "sanity_min": 0, "sanity_max": 1e15, "view_only": True,
@@ -419,6 +426,10 @@ METRICS = {
     "capacity_monthly_total":     {"label": "Total Monthly Capacity of Players (dashboard `totalMonthlyCapacity`) — a gaming-players measure, NOT GPU-hours; never a utilisation denominator", "kind": "stock", "unit": "capacity", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1e13, "only_projects": ("Aethir",)},
     "future_emissions_tokens":    {"label": "Staking-reward reserve remaining (tokenDetails.futureEmissions)", "kind": "stock", "unit": "tokens", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Hyperliquid",)},
     "fdv_usd":                    {"label": "FDV",                             "kind": "stock", "unit": "usd",    "archetypes": [3],          "tiers": [1],    "sanity_min": 0,    "sanity_max": 1e13},
+    # CoinGecko's FDV kept beside ours where total supply is on-chain first (TOTAL_SUPPLY_ONCHAIN_FIRST, 2026-10-11)
+    "fdv_usd_coingecko":          {"label": "FDV — CoinGecko's (cross-check: price x CoinGecko's total)", "kind": "stock",
+                                   "unit": "usd", "archetypes": [1, 2, 3, 4], "tiers": [1], "sanity_min": 0,
+                                   "sanity_max": 1e13, "view_only": True},
     # --- free API: DefiLlama
     "fees_usd":                   {"label": "Total fees paid",                 "kind": "flow",  "unit": "usd",    "archetypes": [1, 3, 4],    "tiers": [1, 3], "sanity_min": 0,    "sanity_max": 1e11},
     "revenue_usd":                {"label": "Protocol revenue",                "kind": "flow",  "unit": "usd",    "archetypes": [3],          "tiers": [1, 3], "sanity_min": 0,    "sanity_max": 1e11},
@@ -2184,8 +2195,16 @@ PROGRAM_CADENCE = {
     "Pendle": {"metric": "actual_buyback_tokens",
                "cadences": (("biweekly", 14),),
                "declared_by": "on file 2026-09-23",
-               "source": "LUMPY_FLOWS[('Pendle', 'actual_buyback_tokens')]: sPENDLE docs, fee_split.cadence"},
+               "source": "LUMPY_FLOWS[('Pendle', 'actual_buyback_tokens')]: sPENDLE docs, fee_split.cadence",
+               # DefiLlama's holders revenue (the series' source) reads through yesterday or the day before
+               "source_lag_days": 2},
 }
+# THE SILENCE RULE (Jake's review of 97b29ae, 2026-10-11, item 15; was "more than 2x the longest cadence"): a declared
+# programme is SILENT when the days since its last non-zero exceed the longest cadence + the source's lag
+# (source_lag_days, default 1) + slack (slack_days, default 7) — AND the quiet observed in our own stored series
+# exceeds cadence + slack, so a gap in our runs is never read as a quiet programme. A declared silent_after_days
+# (GEODNET) replaces it. Pendle: 14 + 2 + 7 = 23 days. Ether.fi: 30 + 1 + 7 = 38 days.
+PROGRAM_SILENCE_DEFAULTS = {"source_lag_days": 1, "slack_days": 7}
 
 
 def events_per_year(project_name: str, metric: str) -> float | None:
@@ -16659,7 +16678,9 @@ PROJECTS = [
             "note": "Sanity bounds for the archetype 3 figures, not stored metrics.",
         },
         "materiality": "medium",
-        "notes": "BUYBACK IS ACTIVE — corrected from threshold-gated-and-unconfirmed. The $10m revenue "
+        "notes": "BUYBACK HALTED 2026-05-11 (governance post-mortem; UNAVAILABLE renders 0 from that date — Jake's "
+                 "review of 97b29ae, 2026-10-11: 'BUYBACK IS ACTIVE' here was stale). History: active from October "
+                 "2025, corrected then from threshold-gated-and-unconfirmed. The $10m revenue "
                  "threshold was CROSSED in October 2025, launching The Fluid Reserve: ~$1.7m in month one "
                  "(100% of Ethereum mainnet revenue, a launch condition rather than a standing share) and "
                  "~$3.2m through December 2025. "
@@ -16951,6 +16972,18 @@ PROJECTS = [
                          "rather than the eETH and EIGEN this address is described as receiving.",
         },
         "name": "Ether.fi", "symbol": "ETHFI",
+        # TOTAL SUPPLY ON-CHAIN FIRST FROM 2026-10-11 (config.TOTAL_SUPPLY_ONCHAIN_FIRST, Jake's review of 97b29ae item 6):
+        # CoinGecko's figure before, the token's totalSupply() after — one series, declared, so the switch is not read
+        # as a change of measuring point.
+        "series_handover": {
+            "total_supply": {
+                "ordered_points": ("coingecko", "chain:ethereum:token"),
+                "why": "CoinGecko's total supply, then from 2026-10-11 ETHFI.totalSupply() on Ethereum (on-chain first)",
+                "composition_change": "THE TOTAL STEPS UP AT THE SWITCH: CoinGecko 965.35M vs on-chain 998,535,999 "
+                                      "(2026-10-11). Do not difference across the boundary.",
+                "declared": "2026-10-11",
+            },
+        },
         # ===== THE BUYBACK PROGRAMME AS ETHER.FI DOCUMENTS IT (Jake, 2026-10-07). =====
         "buyback_programme": {
             "source": "https://etherfi.gitbook.io/gov/ethfi-buyback-program (read by Jake, 2026-10-07)",
@@ -17908,6 +17941,43 @@ _NONCIRC_WALLETS_FIRST_PARTY["Fluid"] = [
 FLUID_IGP137_WATCH = {"project": "Fluid", "metric": "noncirculating_igp137_tokens", "expect": 5_000_000.0,
                       "address": "0xCaBebC7f76D53582a4be7d9972A2b4F531753fd7", "since": "2026-08-14",
                       "why": "team-controlled Avocado wallet holding IGP-137's 5,000,000 FLUID"}
+# ===== TOTAL SUPPLY: ON-CHAIN FIRST, PER PROJECT (Jake's review of 97b29ae, 2026-10-11, item 6). =====
+# Every run logged "tier collision on <project>/total_supply: keeping tier 1 (coingecko), dropping tier 2 (chain:…)".
+# Jake's standing rule is on-chain / project first. For the projects listed here the chain read WINS the collision
+# (fetch._resolve_tier_collisions; the dropped CoinGecko row is logged, not raised as a collision), and FDV becomes
+# price x that total supply (build_workbook._fdv_views; CoinGecko's FDV stays as fdv_usd_coingecko). Ether.fi only,
+# by Jake's item 6 (FDV $700.3M on CoinGecko's 965.35M total, below its own circulating basis; on-chain 998,535,999).
+# The other projects (Aerodrome, Aethir, Chainlink, Fluid, Maple, Morpho, Pendle, Sky) wait for Jake's approval of the
+# proposal (RUNBOOK 11bj) — Aethir's Arbitrum read is PARTIAL and stays CoinGecko-first.
+TOTAL_SUPPLY_ONCHAIN_FIRST = {
+    "Ether.fi": {"decided_by": "Jake", "decided_on": "2026-10-11",
+                 "why": "FDV on CoinGecko's 965.35M total read below the circulating basis; on-chain totalSupply "
+                        "998,535,999 (Review Queue tier_collision)"},
+}
+
+
+# ===== AERODROME MIGRATION GUARD (Jake, 2026-10-11; launch 2026-10-21/22 — RUNBOOK 11bh "Aerodrome migration: plan
+# only"). fetch/validate.check_migration_watch, every run:
+#   * a day-on-day FALL of more than drop_pct in veAERO.supply() (ve_locked_supply_tokens) or Voter.totalWeight
+#     (voter_total_weight_tokens) is a Review Queue item;
+#   * a day-on-day fall of at least outflow.threshold_tokens in the AERO the escrow holds (locked_tokens =
+#     AERO.balanceOf(escrow)) traces that day's Transfers OUT of the escrow (balance bisection, the keyed Base RPC):
+#     every destination CONTRACT not on the known list — the project's configured addresses, the Blockworks filing
+#     wallets, the Foundation owners, and Aerodrome's own reward contracts (Reward.sol L25 `ve` == the escrow,
+#     contracts@1ba30815) — receiving >= threshold_tokens is a Review Queue item, as is a trace that could not be read.
+# From label_from, the rows below read "MIGRATION WATCH" until the RUNBOOK plan is built (set `built` then).
+AERODROME_MIGRATION_WATCH = {
+    "project": "Aerodrome", "label_from": "2026-10-21", "built": None,
+    "label": "MIGRATION WATCH (Aerodrome's migration launches 2026-10-21/22; this row's reads are replaced per the "
+             "RUNBOOK plan, not yet built)",
+    "drop_pct": 5.0, "drop_metrics": ("ve_locked_supply_tokens", "voter_total_weight_tokens"),
+    "outflow": {"metric": "locked_tokens", "holder": "0xeBf418Fe2512e7E6bd9b87a8F0f294aCDC67e6B4",
+                "token": "0x940181a94A35A4569E4529A3CDfB74e38FD98631", "threshold_tokens": 5_000_000.0},
+    # the Credibility rows and Data metrics that carry the label (voter APR and emissions)
+    "label_rows": ("in_voter_apr_epoch", "in_apr_today_price", "a3_protocol_yield", "in_rebase_apr", "in_emissions"),
+    "label_metrics": ("voter_rewards_onchain_apr", "voter_rewards_onchain_usd", "emissions_tokens", "rebase_tokens",
+                      "gross_issuance_tokens"),
+}
 # Chainlink's own post (blog.chain.link/sustainably-growing-chainlink, 2022; read via the mirror
 # apachecn/chainlink-blog-zh @a6efb6ef): it lists 27 non-circulating wallets. 24 are wired above from Etherscan's labels;
 # these are the other three, now read. Chainlink's CURRENT list (chain.link/circulating-supply) stays unreadable here.

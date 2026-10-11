@@ -527,6 +527,137 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11bj. Fine-tuning and the workbook review of 97b29ae (2026-10-11)
+
+**Progress output.** Every entry point calls `progress.line_buffered()` (stdout flushes at each line when piped, e.g.
+Tee-Object). A `progress.Heartbeat` wraps each `check_offline_items` check, each `token_metrics` run / seed /
+`--no-fetch` build, and `archive_backfill`. It prints at least once a minute: `[heartbeat] <name> — <step> n/N (p%),
+elapsed, ETA`. Long loops report through `progress.tick()`; `fetch.base.Progress` feeds it too.
+
+**Credibility history.** `credibility_history.py --record` (daily_run.ps1, before the summary) stores each run's
+verdict per row in `logs/credibility_history.sqlite`: run id, timestamp, project, row, ours, reference, gap,
+tolerance, verdict. `credibility_history.py` reports, per row, flips over 7 / 14 / 28 days, mean and max |gap|, and the
+rows whose verdict changed since the previous run. A flip is a change of verdict CATEGORY ("PASS" to "PASS (NEAR
+LIMIT)" is not one).
+
+**NEAR LIMIT.** A judged row with |gap| >= 80% of a non-zero tolerance reads `PASS (NEAR LIMIT)` (amber). It still signs
+off. `credibility_report.py` lists them.
+
+**Run summary.** `fetch.base.run_class` gives every log entry one class:
+- FAILED — a read that should have worked, including a robots.txt that could not be read;
+- WARN — stored, with something worth reading (`out.warn`; e.g. browser_capture LAG GREW);
+- SKIPPED-by-design — skipped, or refused by a robots.txt rule that was read and obeyed;
+- UNCONFIGURED — nothing to run, outside the counts.
+
+The summary line, the per-tier table, `run_triage.py` and the daily summary's first line (`RUN: n FAILED | n WARN | n
+SKIPPED-by-design`) all use it.
+
+**Aerodrome migration guard** (`config.AERODROME_MIGRATION_WATCH`, `fetch/validate.check_migration_watch`):
+- a fall of more than 5% day on day in veAERO.supply() or Voter.totalWeight is a Review Queue item;
+- a fall of at least 5M AERO in the escrow's own balance traces that day's outflows. A destination CONTRACT that is not
+  on the known list (config addresses, filing wallets, Foundation owners, or a reward contract whose `ve()` is the
+  escrow) is a Review Queue item, and so is a trace that could not be read;
+- from 2026-10-21 until `built` is set, the voter APR / emissions Credibility rows and Data metrics read MIGRATION
+  WATCH.
+
+**Master agrees with the A-tabs (`cross_tab.py`, permanent).**
+- A-tabs are written first. Each Master column that summarises an A-tab figure is a REFERENCE to that A-tab cell
+  (`cross_tab.MASTER_SOURCES`, the project's own archetype tabs first), so it agrees by construction.
+- `build_workbook._assert_master_refs` refuses any other formula (CrossTabMismatch).
+- `cross_tab.py` evaluates both cells and also compares same-named columns across A-tabs. It reported 0 mismatches on
+  all six real dumps after the change (7 before: Aerodrome 2, Ethereum 2, Pendle 2, Maple 1).
+- `python cross_tab.py` runs it on today's store.
+- This fixes items 1 (Aerodrome implied 0), 2 (Sky: A4's burn-only net), 3 (GEODNET: issuance on the pool-release
+  basis), 4 (Ethereum: A4's span rule) and 5 (NEAR: one headline burn).
+- **A declared zero is full coverage** in `_coverage_guard`, for a project with `issuance_declared_zero`.
+- **NEAR's headline burn** is `config.a4_burn_metric` — `gross_burn_tokens_bigquery`, the chain's record (Jake
+  2026-10-08). A1, A4 and Master all read it; fees x 0.70 stays the gas-only cross-check.
+
+**One circulating basis (items 8, 9).**
+- `circulating_supply_used` is the per-day series market cap multiplies: our own figure, carried within its age limit
+  (3 days daily, 45 monthly), else CoinGecko's (plus the locks inside it where CoinGecko's is free float).
+- `_circ` reads it first, so ratios, A3's "Circulating supply" and Master's "Circulating supply (used)" show one
+  figure. CoinGecko's is the cross-check column.
+- Aerodrome's market cap fell back to CoinGecko on the latest day because the on-chain figure had no row that day.
+
+**Status labels from the data (item 13)** — `derived_statuses`:
+- halted since (a halt on file);
+- SILENT since (the cadence rule);
+- active (measured Q0);
+- none measured in Q0;
+- else the config status marked "(declared; no … series measured)".
+
+The implied-burn gate reads the new Config column "Burn split status" (the config split status), unchanged. Fluid's
+stale "BUYBACK IS ACTIVE" note is corrected.
+
+**Program silence (item 15).**
+- `buyback_silence` took an unflagged row's NaN as a flag, which put "SILENT since <last non-zero>" on every project
+  with a declared cadence (Pendle after one day). Fixed.
+- The rule is now days since the last non-zero > longest cadence + source lag + slack, and the observed quiet >
+  cadence + slack (`PROGRAM_SILENCE_DEFAULTS`: lag 1, slack 7). Pendle 23 days (lag 2), Ether.fi 38.
+- Ether.fi stays SILENT, genuinely. On chain, the last purchases were four v4 PoolManager fills on 2026-09-02 (1.05M
+  ETHFI). sETHFI top-ups came from the balance on 09-14 and 09-26, none since; 300,000 left to the deployer EOA on
+  10-11.
+
+**Sanity rules (`sanity.py`, permanent).**
+- The rules: FDV < market cap; circulating > total; market cap != price x circulating shown (>0.5%); buyback > revenue
+  +5% unfunded; a status label against the data; a ratio beside a BLOCKED total; and cross-tab disagreements.
+- They run on every build: hits go under the Review Queue tab, and `credibility_report` prints them.
+- Six real dumps: 2 hits, both genuine — Aerodrome's buyback declared active with no series in that dump, and Maple's
+  burn declared active with none measured.
+
+**Total supply, on-chain first (items 4/6).**
+- `config.TOTAL_SUPPLY_ONCHAIN_FIRST` = Ether.fi only, by Jake's item 6. The chain read wins the collision, logged and
+  not raised. FDV = price x that total (`_fdv_views`); CoinGecko's stays as `fdv_usd_coingecko`.
+- A declared handover keeps the series one measuring point.
+- **Today's chain vs CoinGecko totals:** Aerodrome, Chainlink, Fluid, Maple, Morpho, Pendle and Sky are identical to
+  the token; Ether.fi 998,535,999 vs 965,350,000 (+3.44%).
+- **Flipping the rest** would move no figure, only each series' source, with one handover declaration each.
+- **Aethir:** its Arbitrum read is PARTIAL (not the full supply), so it stays CoinGecko-first. It would be used only
+  for the part it measures (the same rule as a PARTIAL circulating set).
+- **Not flipped until Jake approves.**
+
+**Reports (no build until Jake decides).**
+- **Hyperliquid circulating:**
+  - tokenDetails 302,167,698 = total 998,868,230 − future emissions 410,842,123 − team wallet 0x43e9 237,901,677 −
+    Assistance Fund 47,955,056 − burn addresses. Read 2026-10-11.
+  - It counts the Hyper Foundation (0xd57e…, 60,551,989) and Community Grants (0xa20f…, 2,973,732) as circulating. Both
+    are identified by their exact genesis amounts, 60M and 3M.
+  - **Jake's rule gives 238,641,978.**
+  - CoinGecko and Tokenomist (222,445,714) are a fixed snapshot unchanged since 2026-05-27.
+  - CMC (254.2M) subtracts the Assistance Fund twice.
+  - Hyperliquid's docs have no tokenomics page now; the allocation shares come from secondary sources, corroborated by
+    the genesis ledger.
+- **Morpho circulating:**
+  - We subtract 8 Ethereum wallets of the NEW token (874.1M).
+  - Not read: the DAO's 290.4M LEGACY MORPHO and 13.0M on Base (docs.morpho.org/learn/governance/organization/), plus
+    Association (11.6M) and Labs (11.4M) legacy. With these, 547M.
+  - CoinGecko's 700.4M matches subtracting the DAO only (696.0M). The difference is definition; the one plain miss on
+    our side is the DAO's legacy and Base MORPHO.
+  - The config's `_MORPHO_ORG` URL now 404s (the page moved).
+- **Morpho fees gap:** liquidation bonuses (DefiLlama's formula, 2026-10-04..10) were $443,550 = 97.6% of the $454,331
+  gap, $437K of it on Base on 10-07/08.
+- **Pendle market cap (item 7):** not a double count. Ours = total 281.53M − non-circulating wallets 43.64M = 237.89M.
+  It counts the 63.52M in legacy vePENDLE as circulating (staked is included). CoinGecko excludes it: 237.89 − 63.52 =
+  174.37M.
+- **Aerodrome AH14 (item 12):** it subtracts `emissions_tokens` — the RewardsDistributor rebase, 5,699,610 in Q0. Gross
+  issuance (Minter, including tail) is 53,752,722. Consistent with Pendle (gauge emissions) it would subtract the
+  Minter's emissions to gauges, about 48.05M (or the whole 53.75M); AH14 would then sit near −50M.
+- **Uniswap buyback > revenue (item 14):** the same burns, counted at different times and prices.
+  - DefiLlama counts Firepit `Released` on 12 chains on the L2 day, at its price ($30.22M, 5.60M UNI).
+  - We count UNI arriving at mainnet 0xdead after the bridge delay (5.876M UNI, $32.63M), as UNI roughly doubled over
+    Q0.
+  - Over the life of the program DefiLlama is ahead (13.05M vs 12.63M), because some burns are still in transit.
+  - The 100M one-off (2025-12-27) is not in Q0.
+- **Chainlink unlocks (item 11):**
+  - 18,750,000 LINK left the 27 wallets on 2026-10-09; about 88.75M over the trailing year.
+  - Today the supply trajectory and net absorption count only `emissions_tokens`. `EMISSIONS_ALIAS_DECLINED` (Jake
+    2026-09-24) keeps releases out of it on purpose, so a separate "unlock dilution" row is the cleaner way.
+  - Before → after with the 10-09 unlock: A2 H 0.29% → ~11% (one quarterly unlock annualised; ~13% on a trailing year);
+    A3 AH +903,413 → −17,846,587.
+  - Pendle (1.57M to EOAs in Q0): AH −83,732 → −1,653,732.
+  - Plume: CoinGecko circulating +636M over Q0 with zero issuance, visible in no row.
+
 ## 11bi. Jake's notes on 97b29ae (2026-10-11)
 
 **1. Bribe scan: the missed deposits, with $ and depth.** The cap caught LAPTOP 09-03 ($6,950,614) and XDP 09-24
@@ -554,12 +685,14 @@ UTC; 7 days = 10-04 .. 10-10, markets with >= $1M borrowed now):
 | unlisted self-lent | 52 | 47,911,097,301 | 47,911,096,825 | 1,048,102,773 | 6,713,365,452 |
 | DefiLlama Morpho fees | | | | | 5,395,951 |
 
-- **DefiLlama does not include self-lent interest.** Its adapter (DefiLlama/dimension-adapters@5e783196
-  fees/morpho/index.ts) sums AccrueInterest only for markets the Morpho API returns with `listed: true`; an unlisted
-  market's event has no token and is skipped. It also drops Morpho's exclusion feed and insolvent/stuck markets.
+- **DefiLlama does not include self-lent interest — CORRECTED 2026-10-11 (11bj):** its adapter
+  (DefiLlama/dimension-adapters@5e783196 fees/morpho/index.ts) takes markets from the Morpho API with `listed: true` on
+  9 chains only (Ethereum, Base, Polygon, Unichain, Katana, Arbitrum and three more); on the other 21 it scans
+  CreateMarket logs, unlisted markets included. Two self-lent markets sit on log-path chains (World Chain ~$1.09M/day,
+  HyperEVM ~$0.21M/day at API rates), and DefiLlama's per-chain Morpho fees there read ~$0 and ~$7-9K a day: they are
+  excluded (Morpho's exclusion feed / insolvent caches) or unpriced. Measured, not assumed.
 - **So our customer revenue ($54.6M Q0 = fees_usd = DefiLlama) carries $0 of self-lent interest.**
-- DefiLlama is +9.2% over our listed-market interest. Its stated Fees also include liquidation bonuses; how much of
-  the +9.2% that is, is not measured. The 10% tolerance is unchanged.
+- DefiLlama is +9.2% over our listed-market interest: **liquidation bonuses explain 97.6% of it** (11bj).
 
 **3. Pendle in_shares −1.5%: OUR day cache, not API lag.**
 - The chain: sPENDLE totalSupply 29,768,008.02 until block 26,169,050 (11:56 UTC), then three `cooldown(uint256)`

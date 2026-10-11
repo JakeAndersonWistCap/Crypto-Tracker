@@ -230,12 +230,37 @@ class AdaptivePacer:
             return out
 
 
+# A ROBOTS.TXT REFUSAL WHOSE RULE WAS READ is obeyed by design; one where robots.txt itself could not be read is a
+# failure to read (fetch/scrape.robots_verdict words both as "robots.txt disallows …")
+_ROBOTS_UNREAD = ("UNREACHABLE", "ITSELF answered", "no rule was read")
+
+
+def run_class(entry) -> str:
+    """FAILED / WARN / SKIPPED / OK for a run-log entry — the run summary's three counts (Jake, 2026-10-11):
+    FAILED   a read that should have worked and did not;
+    WARN     stored, with something worth reading (out.warn);
+    SKIPPED  not fetched BY DESIGN: skipped, or refused by a robots.txt rule that was read;
+    UNCONFIGURED  nothing configured to run (outside the three counts)."""
+    st, msg = str(getattr(entry, "status", "")), str(getattr(entry, "message", ""))
+    if st == "warn":
+        return "WARN"
+    if st == "unconfigured":                              # nothing to run (~5 a project a run): not a skip
+        return "UNCONFIGURED"
+    if st == "skipped":
+        return "SKIPPED"
+    if st == "failed":
+        if "robots.txt disallows" in msg and not any(k in msg for k in _ROBOTS_UNREAD):
+            return "SKIPPED"
+        return "FAILED"
+    return "OK"
+
+
 @dataclass
 class LogEntry:
     source: str
     project: str | None
     rows: int
-    status: str            # ok | failed | skipped | unconfigured
+    status: str            # ok | failed | warn | skipped | unconfigured  (run_class: FAILED / WARN / SKIPPED / OK)
     message: str = ""
     tier: int | None = None
 
@@ -278,8 +303,21 @@ class FetchOutput:
 
     def fail(self, source: str, project: str | None, err, tier: int | None = None):
         msg = redact(err)
-        log.warning("FAILED %s / %s: %s", source, project, msg)
-        self.log.append(LogEntry(source, project, 0, "failed", msg, tier))
+        e = LogEntry(source, project, 0, "failed", msg, tier)
+        # THE CONSOLE WORD IS THE RUN SUMMARY'S CLASS (Jake, 2026-10-11): a robots.txt rule read and obeyed is not
+        # a failure
+        if run_class(e) == "SKIPPED":
+            log.info("SKIPPED (by design) %s / %s: %s", source, project, msg)
+        else:
+            log.warning("FAILED %s / %s: %s", source, project, msg)
+        self.log.append(e)
+
+    def warn(self, source: str, project: str | None, message, tier: int | None = None, rows: int = 0):
+        """WORTH READING, AND THE DATA WAS STORED (Jake, 2026-10-11: "FAILED browser_capture … LAG GREW … stored"
+        counted as a failure). Not a failure: the run summary counts it as WARN."""
+        msg = redact(message)
+        log.warning("WARN %s / %s: %s", source, project, msg)
+        self.log.append(LogEntry(source, project, rows, "warn", msg, tier))
 
     def unconfigured(self, source: str, project: str | None, message: str, tier: int | None = None):
         self.log.append(LogEntry(source, project, 0, "unconfigured", message, tier))
@@ -714,6 +752,11 @@ class Progress:
 
     def tick(self, n: int = 1) -> None:
         self.done += n
+        try:                                              # the run's heartbeat (progress.py) carries n/N too
+            import progress                               # noqa: PLC0415
+            progress.tick(f"{self.label} ({self.unit})", self.done, self.total)
+        except ImportError:
+            pass
         if self.done - self._last_n >= self.every_units or self.clock() - self._last_t >= self.every_s:
             self.flush()
 

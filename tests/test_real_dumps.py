@@ -259,3 +259,108 @@ def test_real_aerodrome_buyback_is_the_foundation_lock_and_implied_stays_zero(tm
         assert not o[hid]["verdict"].startswith("N/A"), (hid, o[hid])
         assert "in_buyback" in o[hid]["note"], (hid, o[hid])
     assert "foundation_locked_aero_tokens" in o["a3_buyback_locked"]["note"], o["a3_buyback_locked"]
+
+
+def test_real_near_limit_marks_exactly_the_passes_at_80pct_of_tolerance(tmp_path, monkeypatch):
+    """Jake, 2026-10-11 (item 3): a judged row whose |gap| >= 80% of its tolerance reads '(NEAR LIMIT)' and still
+    starts PASS (or FRESH-only for a same-source row), so it still signs off; nothing below 80% is marked. On every
+    real dump."""
+    import credibility
+    import credibility_report as cr
+    import store as sm
+    from real_dump import FIXTURES, to_store
+    marked = 0
+    for f in sorted(FIXTURES.glob("real_*.json")):
+        payload = load(f.stem.removeprefix("real_").replace("etherfi", "ether.fi"))
+        project = payload["meta"]["project"]
+        d = tmp_path / project.replace(".", "")
+        d.mkdir()
+        to_store(payload, d / "metrics.db")
+        monkeypatch.setattr(sm, "DB_PATH", str(d / "metrics.db"))
+        monkeypatch.setitem(sys.modules, "recalc", None)
+        _rows, tab = cr.evaluate(project, asof=pd.Timestamp(payload["meta"]["asof"]), narrow=True)
+        for t in tab:
+            gap, tol, v = t[8], t[9], str(t[10] or "")
+            judged = isinstance(gap, (int, float)) and isinstance(tol, (int, float)) and tol and abs(gap) <= tol
+            near = judged and tol > 0 and abs(gap) >= 0.8 * tol
+            assert ("NEAR LIMIT" in v) == bool(near and not v.startswith("CHECK")), (project, t[2], gap, tol, v)
+            if near:
+                marked += 1
+                assert credibility.signed(v) or v.startswith("FRESH"), v
+    assert marked >= 1, "no real dump has a row near its limit — the test proves nothing"
+
+
+def test_real_aerodrome_migration_watch_labels_the_voter_apr_and_emissions_rows(tmp_path, monkeypatch):
+    """Item 8 (Jake, 2026-10-11): from label_from the watched Credibility rows carry MIGRATION WATCH; others do not.
+    label_from moved to the dump's date to see it on the real rows."""
+    monkeypatch.setitem(config.AERODROME_MIGRATION_WATCH, "label_from", "2026-10-09")
+    o = evaluate_real(tmp_path, monkeypatch, "Aerodrome")
+    for rid in config.AERODROME_MIGRATION_WATCH["label_rows"]:
+        assert str(o[rid]["note"]).lstrip().startswith("MIGRATION WATCH"), (rid, str(o[rid]["note"])[:120])
+    assert not str(o["in_locked"]["note"]).lstrip().startswith("MIGRATION WATCH")
+
+
+def test_real_master_agrees_with_the_a_tabs_on_every_dump(tmp_path, monkeypatch):
+    """Jake's review of 97b29ae (2026-10-11), item 16 — PERMANENT: every Master column that summarises an A-tab figure
+    equals that A-tab cell (same series, window, supply basis, coverage rule), and the same header never differs
+    between two A-tabs. Each mismatch names the project, column, both values and both formulas."""
+    import cross_tab
+    import store as sm
+    import build_workbook as bw
+    from real_dump import FIXTURES, to_store
+    monkeypatch.setitem(sys.modules, "recalc", None)
+    found = []
+    for f in sorted(FIXTURES.glob("real_*.json")):
+        payload = load(f.stem.removeprefix("real_"))
+        project = payload["meta"]["project"]
+        d = tmp_path / project.replace(".", "")
+        d.mkdir()
+        to_store(payload, d / "metrics.db")
+        monkeypatch.setattr(sm, "DB_PATH", str(d / "metrics.db"))
+        out = d / "wb.xlsx"
+        bw.build_workbook(sm.Store(str(d / "metrics.db")), out, asof=pd.Timestamp(payload["meta"]["asof"]),
+                          only=[project])
+        found += cross_tab.check_workbook(out)
+    assert not found, "\n".join(cross_tab.describe(m) for m in found)
+
+
+def test_master_refuses_a_column_that_is_not_its_a_tab_reference(monkeypatch):
+    """The build-time guard: a mapped Master cell holding any other formula raises CrossTabMismatch."""
+    import openpyxl
+    import build_workbook as bw
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.cell(4, 1, "Project")
+    ws.cell(4, 2, "Fees Q0 ($)")
+    ws.cell(5, 1, "Pendle")
+    ws.cell(5, 2, '=INDEX(Data!$L$2:$L$9,MATCH($A5&"|fees_usd",Data!$A$2:$A$9,0))')
+    monkeypatch.setattr(bw, "_TAB_CELLS", {("A3", "Pendle", "Fees Q0 ($)"): ("A3 Revenue Buyback", "S5")})
+    import pytest
+    with pytest.raises(bw.CrossTabMismatch, match="Pendle \\| Fees Q0"):
+        bw._assert_master_refs(ws)
+    ws.cell(5, 2, "='A3 Revenue Buyback'!S5")
+    bw._assert_master_refs(ws)
+
+
+def test_real_sanity_rules_on_every_dump(tmp_path, monkeypatch):
+    """Item 17 on the six real dumps (10-09): the only hits are the two genuine label contradictions — Aerodrome's
+    buyback declared active with no buyback series in this dump, and Maple's burn declared active with none measured
+    (Jake's item 13)."""
+    import sanity
+    import store as sm
+    import build_workbook as bw
+    from real_dump import FIXTURES, to_store
+    monkeypatch.setitem(sys.modules, "recalc", None)
+    found = []
+    for f in sorted(FIXTURES.glob("real_*.json")):
+        payload = load(f.stem.removeprefix("real_"))
+        project = payload["meta"]["project"]
+        d = tmp_path / project.replace(".", "")
+        d.mkdir()
+        to_store(payload, d / "metrics.db")
+        monkeypatch.setattr(sm, "DB_PATH", str(d / "metrics.db"))
+        bw.build_workbook(sm.Store(str(d / "metrics.db")), d / "wb.xlsx", asof=pd.Timestamp(payload["meta"]["asof"]),
+                          only=[project])
+        assert bw.SANITY_HITS == sanity.check_workbook(d / "wb.xlsx")      # the build ran the same rules
+        found += bw.SANITY_HITS
+    assert sorted((p, r) for p, r, _d in found) == [("Aerodrome", "status_contradicts"), ("Maple", "status_contradicts")], found

@@ -3984,6 +3984,7 @@ def near_lockup_accounts(say=print, pace: float = 1.0) -> tuple[list, str]:
     never committed) and reused for a day; a paging run that stops resumes from its cursor next time."""
     import os                                              # noqa: PLC0415
     import time as _t                                      # noqa: PLC0415
+    import progress                                       # noqa: PLC0415
     from fetch.logcache import LogCache                    # noqa: PLC0415
     root = LogCache().root
     root.mkdir(parents=True, exist_ok=True)
@@ -4025,6 +4026,7 @@ def near_lockup_accounts(say=print, pace: float = 1.0) -> tuple[list, str]:
             elif str(a.get("account_id", "")).endswith(".lockup.near"):
                 st["live"].append(a["account_id"])
         st["pages"] += 1
+        progress.tick("NearBlocks lockup list, pages", st["pages"], None)
         st["next"] = (j.get("meta") or {}).get("next_page")
         if st["pages"] % 50 == 0:
             part.write_text(json.dumps(st))
@@ -4084,7 +4086,9 @@ def near_lockups(limit: int | None = None):
     n_read = n_zero = n_err = 0
     errs = {}
     t0 = _t.time()
+    import progress                                       # noqa: PLC0415
     for i, acc in enumerate(accounts, 1):
+        progress.tick("lockups read", i, len(accounts))
         bal, why = _near_view(acc, "get_balance", block_id=height)
         if bal is None:
             n_err += 1
@@ -4153,9 +4157,12 @@ def _safe_nonce_blocks(safe: str, b0: int, b1: int, chain: str = "base") -> tupl
             raise ValueError(f"nonce() unreadable at block {b}")
         return int(r, 16)
 
+    import progress                                       # noqa: PLC0415
+
     def nonce(b):
         if b not in cache:
             cache[b] = _retry(lambda: read(b))             # a rate-limited read is retried, never taken as a value
+            progress.tick("Safe nonce bisection, archive reads", len(cache), None)
         return cache[b]
     out: list = []
 
@@ -4236,8 +4243,10 @@ def aerodrome_bribe_scan(depositor: str = AERO_BRIBE_DEPOSITOR, days: int = 90):
         return
     blocks, why = _safe_nonce_blocks(depositor, b0, b1)
     print(f"  blocks {b0:,}..{b1:,}: {why}; {len(blocks)} block(s) to read")
+    import progress                                       # noqa: PLC0415
     deps = []                                              # (epoch, ts, token, reward contract, raw, tx)
-    for blk in blocks:
+    for k_, blk in enumerate(blocks, 1):
+        progress.tick("depositor blocks read", k_, len(blocks))
         try:
             rcpts = _block_receipts("base", blk)
         except Exception as e:  # noqa: BLE001
@@ -4490,10 +4499,13 @@ def morpho_interest_listed_vs_all():
               f"{llama / (week['listed'] + week['unlisted other']) - 1:+.1%}")
     if short:
         print(f"  NOTE: {short} market cop(ies) on other chains were past first:49 and not read (the 7 days are short)")
-    print("  DEFILLAMA COUNTS LISTED MARKETS ONLY (DefiLlama/dimension-adapters@5e783196 fees/morpho/index.ts, read "
-          "2026-10-11): AccrueInterest is summed only for markets the Morpho API returns with listed: true (an unlisted "
-          "market's event has no token and is skipped), minus Morpho's exclusion feed and insolvent/stuck markets. "
-          "Self-lent markets are all unlisted, so none of their interest is in DefiLlama's fees.")
+    print("  WHAT DEFILLAMA COUNTS (DefiLlama/dimension-adapters@5e783196 fees/morpho/index.ts, read 2026-10-11; CORRECTED "
+          "the same day): on the 9 chains with a chainId (Ethereum, Base, Polygon, Unichain, Katana, Arbitrum and three "
+          "more) its markets come from the Morpho API with listed: true; on the other 21 chains from CreateMarket logs, "
+          "unlisted markets INCLUDED. Both drop Morpho's exclusion feed and insolvent/stuck markets, and Fees add "
+          "liquidation bonuses. Self-lent markets on a log-path chain (2026-10-11: World Chain ~$1.09M/day, HyperEVM "
+          "~$0.21M/day at API rates) are NOT in its fees: DefiLlama's per-chain Morpho fees there read ~$0 and ~$7-9K a "
+          "day — excluded or unpriced.")
     top = sorted((i for i in items if cls(i) == "unlisted other"), key=day_int, reverse=True)[:10]
     print("  the ten largest UNLISTED OTHER markets by interest/day:")
     for i in top:
@@ -4642,7 +4654,9 @@ def aerodrome_foundation_lock_split(days: int = 90):
         mid = (lo + hi) // 2
         find(t, lo, mid)
         find(t, mid, hi)
-    for t in changed:
+    import progress                                       # noqa: PLC0415
+    for k_, t in enumerate(changed, 1):
+        progress.tick("changed NFTs bisected", k_, len(changed))
         cache[(t, b0)], cache[(t, b1)] = s0[t], s1[t]
         find(t, b0, b1)
     top = lambda x: "0x" + keccak(text=x).hex().removeprefix("0x")  # noqa: E731
@@ -4660,7 +4674,8 @@ def aerodrome_foundation_lock_split(days: int = 90):
     touched: set = set()
     from_balance: list = []
     print("\n  EACH CHANGE (block, date, NFT, counted AERO before -> after, what the receipts show):")
-    for blk, t in sorted(steps):
+    for k_, (blk, t) in enumerate(sorted(steps), 1):
+        progress.tick("change blocks classified", k_, len(steps))
         before, after = sig(t, blk - 1), sig(t, blk)
         delta = after[3] - before[3]
         try:
@@ -4769,7 +4784,8 @@ def aerodrome_foundation_lock_split(days: int = 90):
     mids = sorted({v[2] for st_ in (s0, s1) for v in st_.values() if v[0] and v[1] == 1} | touched)
     notify = top("NotifyReward(address,address,uint256,uint256)")
     tot_rb = tot_cp = 0.0
-    for m in mids:
+    for k_, m in enumerate(mids, 1):
+        progress.tick("managed NFTs' reward logs", k_, len(mids))
         try:
             lmr = _retry(lambda: _rpc_retry("base", "eth_call", [{"to": AERO_VE, "data": _selx("managedToLocked(uint256)")
                                                                    + _word(m)}, hex(b1)]))
@@ -9567,7 +9583,9 @@ def aerodrome_voter_epochs(epochs: list[int], say=print, price_at_end: bool = Tr
     starts, ends, set_note = {}, {}, f"pools with votes now ({n_now})"
     if archive or start_weight:
         added, refused = 0, []
-        for ep in epochs:
+        import progress                                   # noqa: PLC0415
+        for k_, ep in enumerate(epochs, 1):
+            progress.tick("voter epochs: pool sets at each epoch", k_, len(epochs))
             b_end = rpc_block_at("base", ep + week, say=say)
             b_start = rpc_block_at("base", ep, say=say)
             if b_end is None or b_start is None:
@@ -9611,7 +9629,9 @@ def aerodrome_voter_epochs(epochs: list[int], say=print, price_at_end: bool = Tr
                      if a and b and len(a) >= 42 and len(b) >= 42}
     sel_t = _selx("tokenRewardsPerEpoch(address,uint256)")
     out = {}
-    for ep in epochs:
+    import progress                                       # noqa: PLC0415
+    for k_, ep in enumerate(epochs, 1):
+        progress.tick("voter epochs: rewards read and priced", k_, len(epochs))
         amts = [int(x or "0x0", 16) for x in _batch_eth_calls("base", [(r, sel_t + _word(int(t, 16)) + _word(ep))
                                                                        for (r, _kd, _pl, _j), t in zip(pairs, toks)])]
         by_tok = {"fees": {}, "bribes": {}}
@@ -9821,9 +9841,12 @@ def base_logs_where_balance_moves(token: str, holder: str, topics: list, b0: int
     calls = {"n": 0}
     seen: dict = {}
 
+    import progress                                       # noqa: PLC0415
+
     def bal(b):
         if b not in seen:
             calls["n"] += 1
+            progress.tick(f"balance bisection on {holder[:10]}…, archive reads (cap)", calls["n"], max_calls)
             r, err = eth_call(token, sel, hex(b), chain="base")
             if r is None:
                 raise RuntimeError(f"archive balanceOf at block {b:,} unreadable — {err}")
@@ -10815,10 +10838,14 @@ def main():
         print(f"check_offline_items.py — running only {selected[0].__name__}.")
     print("Paste the whole output back.")
     ran = []
+    import progress                                       # noqa: PLC0415
     for fn in selected:
         ran.append(fn.__name__)
         try:
-            _bind(fn, args)()
+            # A HEARTBEAT LINE AT LEAST ONCE A MINUTE (Jake's run 2026-10-11: two probes piped through Tee-Object
+            # printed nothing for 40+ minutes): the step, n/N, elapsed, ETA — the loops below report via tick()
+            with progress.Heartbeat(fn.__name__):
+                _bind(fn, args)()
         except Exception as e:  # noqa: BLE001 — one failure must not stop the rest
             print(f"\n  {fn.__name__} FAILED: {e}")
     # ** THE ROLL CALL IS THE POINT. ** A check that silently never ran is invisible; naming
@@ -10831,4 +10858,6 @@ def main():
 
 
 if __name__ == "__main__":
+    import progress                                    # stdout line-buffered when piped (2026-10-11)
+    progress.line_buffered()
     sys.exit(main())
