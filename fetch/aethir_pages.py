@@ -391,6 +391,16 @@ def group_value(html: str, key: str, group: tuple):
     return vals.pop(), ""
 
 
+def current_value(html: str, key: str, group: tuple = ()):
+    """The CURRENT figure of `key` — from the tile object when the key is in its page's `current_group`, else the one
+    undated value. Jake's run on ab3c7fe (2026-10-11): the tile object now also holds the stakeHistory array, so the
+    flat reader sees only the dated history entries; _store already read the group, but the components sum, the
+    derived "aiStaked + gamingStaked" and the cross-checks did not, and read nothing."""
+    if key in group:
+        return group_value(html, key, group)[0]
+    return current_and_series(html, key)[0]
+
+
 def yearless_days(labels: list, granularity: str, asof: pd.Timestamp | None = None):
     """[day] for labels served as DD/MM with NO YEAR (weeklyNetworkRevenue "08/06"), or why not.
     The year is INFERRED FROM THE SEQUENCE, which ends at the current week (Jake's probes5): the last
@@ -422,6 +432,19 @@ def yearless_days(labels: list, granularity: str, asof: pd.Timestamp | None = No
             continue
         if all((b - a).days == step for a, b in zip(days, days[1:])) and (asof - days[-1]).days < 14:
             return days[::order]
+    # SERVED OUT OF ORDER (Jake's run on ab3c7fe 2026-10-11: supply-metric weeklyData came as 12/07, 16/08, 09/08, ...
+    # 02/08). Each label takes the latest year that does not put it after today; accepted only if, sorted, the days
+    # are one unbroken run at the cadence ending within two weeks of today — a series reaching back past a year
+    # folds onto itself and fails that, so nothing is guessed. Returned in the labels' own order.
+    try:
+        days = [pd.Timestamp(asof.year, m, d) if pd.Timestamp(asof.year, m, d) <= asof
+                else pd.Timestamp(asof.year - 1, m, d) for d, m in dm]
+    except ValueError:
+        days = None
+    if days:
+        srt = sorted(days)
+        if all((b - a).days == step for a, b in zip(srt, srt[1:])) and (asof - srt[-1]).days < 14:
+            return days
     return (f"no year assignment makes {len(dm)} DD/MM labels {step} days apart and ending within two "
             f"weeks of {asof.date()} (first {labels[0]}, last {labels[-1]})")
 
@@ -647,7 +670,7 @@ class AethirPages:
                     + " — REPORTED, not stored", TIER)
             comp = m.get("components")
             if comp:
-                self._components(name, page, comp, html, out)
+                self._components(name, page, comp, html, out, group=tuple(m.get("current_group") or ()))
         resolved = self._labelled(name, spec, pages, out)
         self._derived(name, spec, pages, resolved, out)
         self._cross_checks(name, spec, pages, out)
@@ -723,6 +746,12 @@ class AethirPages:
             days = yearless_days([o.get(dk) for o in rows], gran)
             if isinstance(days, str):
                 return days
+        elif dk and a.get("date_format"):
+            # A FORMAT DECLARED FOR THIS ARRAY ONLY (miningRewardData "03/26" = MM/YY, 2026-10-11): whole-string, strict
+            days = [pd.to_datetime(str(o.get(dk)).strip(), format=a["date_format"], errors="coerce") for o in rows]
+            if any(pd.isna(d) for d in days):
+                return f"`{dk}` does not parse as {a['date_format']} on every object ({[o.get(dk) for o in rows][:3]})"
+            days = [pd.Timestamp(d).normalize() for d in days]
         elif dk:
             days = [_as_day(o.get(dk)) for o in rows]
             if any(d is None for d in days):
@@ -845,12 +874,12 @@ class AethirPages:
                                           f"({w / m - 1:+.2%}); widest {worst[0]} {worst[1]:,.0f} vs "
                                           f"{worst[2]:,.0f} ({worst[1] / worst[2] - 1:+.2%}) — LOGGED", TIER)
 
-    def _components(self, name: str, page: str, comp: dict, html: str, out) -> None:
+    def _components(self, name: str, page: str, comp: dict, html: str, out, group: tuple = ()) -> None:
         """The tile total beside the sum of its parts' CURRENT figures. LOGGED, never gating; a part
         that was not read is named — never counted as zero (Jake's probes4: the probe's sum
         dropped idcStaked and reported -47.69%)."""
-        tv, _, _ = current_and_series(html, comp["total"])
-        parts = {k: current_and_series(html, k)[0] for k in comp["parts"]}
+        tv = current_value(html, comp["total"], group)
+        parts = {k: current_value(html, k, group) for k in comp["parts"]}
         missing = [k for k, v in parts.items() if v is None] + ([comp["total"]] if tv is None else [])
         if missing:
             out.skipped(SOURCE, name, f"{comp['total']} vs its parts on {page}: no current figure for "
@@ -910,6 +939,9 @@ class AethirPages:
             page, key = ref.split("#")
             if page not in pages:
                 return None
+            group = tuple((spec.get("pages", {}).get(page) or {}).get("current_group") or ())
+            if key in group:
+                return current_value(pages[page], key, group)
             cur, pts, _ = current_and_series(pages[page], key)
             if cur is None and not pts:
                 cur, _ = key_scalar(pages[page], key)      # beside an array: read by key name anywhere
@@ -940,7 +972,8 @@ class AethirPages:
         """Declared same-quantity comparisons across pages (idcStaked on two pages), and the page's
         cumulative base reward against the declared Checker Node schedule. Logged only."""
         for chk in spec.get("cross_checks") or ():
-            vals = [current_and_series(pages[pg], key)[0] if pg in pages else None for pg, key in chk["pair"]]
+            vals = [current_value(pages[pg], key, tuple((spec.get("pages", {}).get(pg) or {}).get("current_group") or ()))
+                    if pg in pages else None for pg, key in chk["pair"]]
             if None not in vals and vals[1]:
                 out.skipped(SOURCE, name, f"{chk['what']}: " + " vs ".join(
                     f"{p} `{k}` {v:,.2f}" for (p, k), v in zip(chk["pair"], vals))

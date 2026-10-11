@@ -527,6 +527,96 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11bh. Jake's run on ab3c7fe (2026-10-11)
+
+**1. A failed read of a "now" figure no longer opens sign-off (Plume, rpc.plume.org SSL EOF).**
+- **Input rows judged on `now`:** when the Data cell has no figure, ours falls back to the LAST STORED value
+  (`=IF(ISNUMBER(cell),cell,last)`). A row older than a day is labelled with its age, e.g.
+  `PASS [ours last stored 2026-10-09, 2 d old <= 3 d]`.
+- **Past the age the row is `CHECK (STALE: …)`.** The reference side is judged the same way; the worse side decides.
+- **Ages (`credibility.now_max_age`):**
+  - prices, market cap, FDV: 2 days;
+  - other daily stocks: 3 days;
+  - weekly series: 14 days; monthly: 45 days (the existing cadence rule, `config.stale_after_days`).
+- A withheld row (orphaned, disputed, …) never falls back.
+
+**2. Aerodrome Foundation: does the managed veNFT's rebase compound into the lock?** `python check_offline_items.py
+aerodrome_foundation_lock_split`.
+- **Not continuously.** The stock counts a LOCKED veNFT at `weights(id, managed)`, the principal deposited. The
+  managed NFT's rebase (the RewardsDistributor's `depositFor`) and its compounding (`increaseAmount`) are both
+  notified into its LockedManagedReward. They reach a weight only when realised by `withdrawManaged`.
+- **The probe:** every NFT whose counted AERO differs between the window's ends is bisected to the blocks where it
+  changed, and each block's receipts classify the change:
+  - REBASE (Deposit by the RewardsDistributor);
+  - NEW AERO LOCKED (createLock / increaseAmount, with the AERO received in the same tx and from whom);
+  - veNFT TRANSFER IN (labelled when from a filing wallet);
+  - MANAGED WITHDRAW (locked rewards realised) / DEPOSIT, SPLIT, MERGE.
+- **Then each managed NFT's locked rewards in the window, by NotifyReward `from`:** RewardsDistributor = rebase
+  (emissions), anyone else = compounded voting rewards. Apportioned by the owners' share of the LockedManagedReward.
+- **A failed archive read is retried, never read as 0** (a rate-limited multicall had planted a false change).
+- **Live read 2026-10-11** (blocks 48,579,699..52,467,645): 171,145,889 -> 174,772,260, +3,626,370.50, reconciled to the
+  wei:
+  - NEW AERO LOCKED +2,746,705.44: #130786 createLock by the PGF on 2026-08-24, paid from its liquid balance (the probe
+    now lists that wallet's AERO inflows in the 30 days before, to show whether it was bought), then depositManaged
+    into #10297;
+  - MANAGED WITHDRAW +871,279.64: on 2026-08-03 #17213 / #20598 / #63748, then held by 0x623C (Buyback / Locked
+    Funds), were withdrawn from #10296, realising their accrued locked rewards (rebase + compounded); #20598 and
+    #63748 moved to the PGF, and all three were re-deposited into #84236;
+  - REBASE +8,385.42: the RewardsDistributor's depositFor into #123065 while it was NORMAL.
+- **Not in the stock:** the owners' LOCKED NFTs carry 19,704,390.67 AERO of unrealised managed rewards (`earned`),
+  +226,676.01 net over the window — ~1.10M accrued with the 871K realised. That matches Jake's ~1.06M (2.51%).
+- **The rebase/compounded split of the managed rewards needs `eth_getLogs` on Base archive.** It did not run from
+  here (publicnode 403, mainnet.base.org 429); it runs on the keyed RPC.
+- **Only purchases are buyback.** The series is unchanged until Jake decides.
+
+**3. Morpho probe:** the live schema has `Market.marketId`, not `uniqueKey`; the filter is still `uniqueKey_in`
+(it takes marketIds).
+- Every field the probe names (`MORPHO_PROBE_FIELDS`) is checked by introspection first. A missing one prints the
+  type's real fields and stops before any market query.
+- `historicalState` is charged ~20,105 complexity per market against a 1,000,000 cap: 20 marketIds a query,
+  `first: 49`.
+
+**4. Aerodrome bribe scan, rewritten:** `python check_offline_items.py aerodrome_bribe_scan`.
+- **(a) Only 0x80f7…'s deposits.** It is a Gnosis Safe; its own `nonce()` rises once per executed transaction. Bisection
+  finds its blocks (9 transactions over Q0, 152 archive reads), and their receipts give its NotifyRewards.
+- **(b) Each token's FIRST deposit only** is priced at DefiLlama's historical price.
+- **The cap** (`aerodrome_voter_epochs`, ~2 min an epoch) is read only for epochs holding a flagged token.
+- **Output:** one line per epoch, then the flagged tokens the cap missed. Live run here: 8 min 21 s.
+- **Live result 2026-10-11:** 17 deposits, 2 tokens (LAPTOP, XDP), both unpriced at their first deposit. The cap caught
+  LAPTOP 09-03 ($6,950,614) and XDP 09-24 ($433,484). It missed LAPTOP 09-10 / 09-17 / 09-24 / 10-01 (300K / 250K /
+  200K / 150K tokens) and XDP 10-01 (3M tokens).
+
+**5. NEAR lockups: no BigQuery.** The list is `lockup.near`'s sub-accounts from NearBlocks' free API
+(`/v3/accounts/lockup.near/subaccounts`, 100 a page, cursor), deleted lockups dropped.
+- **Cost, measured 2026-10-11:** 54 calls, keyless, 527 s, no throttling. 5,363 lockups ever created
+  (2020-09-28 .. 2026-10-01), 1,960 live. Then 2-6 free NEAR RPC view calls per live lockup.
+- `NEARBLOCKS_API_KEY` is sent as a Bearer header when set.
+- The list is cached locally for a day (LogCache root `near-lockups.txt`), and a stopped paging run resumes at its
+  cursor.
+
+**6. Pendle Optimism: not fetched; a declared 0.**
+- The scan carries `declared_zero` (since 2024-09-27; Jake's reading 2026-10-09, last transfer 743 days earlier).
+- `fetch/logscan` writes 0 for each day of the window to the metric and its direct metric, with no network call. The
+  source is the scan's own plus `:declared-zero`, a registered marker, so it is the same measuring point.
+- The explorer_gauge_l2 tier now plans Arbitrum only.
+
+**7. Aethir dashboard: the shape changed; readers fixed.**
+- **supply-metric `weeklyData`:** the labels are now served OUT OF ORDER (12/07, 16/08, 09/08, … 02/08).
+  `yearless_days` takes each label's latest year not after today. Sorted, they must be one unbroken weekly run ending
+  within two weeks.
+- **on-chain `aiStaked` / `gamingStaked`:** the tile object now also holds the `stakeHistory` array. The flat reader saw
+  only history entries. The components sum, the derived native veATH sum and the cross-checks now read the tile
+  (`current_value`, as `_store` already did).
+- **Edge monthly earnings:** `miningRewardData` on protocol/ecosystem, dated MM/YY ("03/26"). It is pinned by key with
+  a declared `date_format` for that array only (MM/YY globally would read "12/07" as a month). The source is unchanged.
+- Payload excerpts, as served: `fixtures/aethir_pages_2026-10-11.json`.
+
+**8. Hyperliquid ASXN lag 19 days: the source is behind, not our capture.**
+- Every run loads the page in a fresh headless browser (no profile, no cache).
+- A load here on 2026-10-11 got the same 582 points, 2025-02-18 .. 2026-09-22, that probes9 read on 10-02. ASXN's
+  HyperEVM API has not advanced since 09-22.
+- The LAG GREW flag is doing its job. Nothing changed.
+
 ## 11bg. Jake's run on 20d0eb4 (2026-10-10)
 
 **1. Bribe depositor 0x80f7… and "unpriced at deposit":** `python check_offline_items.py aerodrome_bribe_scan`.

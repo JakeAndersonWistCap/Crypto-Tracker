@@ -186,6 +186,11 @@ class LogScan:
     def run(self, projects: list[dict], window_days, out):
         own = getattr(self, "own_tier", None)
         todo = [(p, spec) for p in projects for spec in p.get("log_scans") or [] if spec.get("own_tier") == own]
+        # A DECLARED 0 IS WRITTEN, NOT READ (Pendle Optimism, Jake's run on ab3c7fe 2026-10-11): first, so a timed-out
+        # tier cannot gap it, and never planned as a read
+        for p, spec in [t for t in todo if t[1].get("declared_zero")]:
+            self._declared_zero(p, spec, out)
+        todo = [t for t in todo if not t[1].get("declared_zero")]
         self.planned = [(p["name"], spec.get("metric")) for p, spec in todo]
         for p, spec in todo:
             # ONE SCAN'S FAILURE NEVER STOPS THE TIER (Jake's run 2026-10-06 18:21: one bad log crashed the
@@ -199,6 +204,20 @@ class LogScan:
                 out.fail(SOURCE, p["name"], f"{spec.get('key')}: scan crashed — {type(e).__name__}: "
                                             f"{redact_urls(e)}. The other scans ran.", TIER)
                 log.exception("%s/%s crashed", p["name"], spec.get("key"))
+
+    def _declared_zero(self, p, spec, out) -> None:
+        """0 for each day of the scan's window (from `declared_zero.since`), to `metric` and `direct_metric`, under the
+        scan's own source plus the declared-zero marker — the same measuring point, labelled. No network call."""
+        name, key, decl = p["name"], spec["key"], spec["declared_zero"]
+        start = max(pd.Timestamp(decl["since"]), today() - pd.Timedelta(days=int(spec.get("window_days") or 100)))
+        days = pd.date_range(start + pd.Timedelta(days=1), today() - pd.Timedelta(days=1), freq="D")
+        msg = (f"{key}: NOT FETCHED — declared 0 since {decl['since']} (read_by {decl['read_by']} {decl['read_on']}: "
+               f"{decl['evidence']}; {decl['source_url']}). {len(days)} day(s) written as 0.")
+        for metric, src in ((spec["metric"], f"{SOURCE}:{key}"), (spec.get("direct_metric"), f"{SOURCE}:direct:{key}")):
+            if metric:
+                out.add(tidy([(d, 0.0) for d in days], name, metric, config.mark_source(src, "declared-zero"), TIER),
+                        SOURCE, name, f"{metric}: {msg}", TIER)
+        out.log.append(LogEntry(SOURCE, name, 0, "ok", msg, TIER))
 
     def _window_logs(self, chain, chain_id, token, topics, b0, to_block):
         """(logs, served by): a fresh windowed read — the routed explorers first, then RPC eth_getLogs through the

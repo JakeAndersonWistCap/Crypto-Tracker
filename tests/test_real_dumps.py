@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from real_dump import evaluate_real, load, long_frame  # noqa: E402
+import config  # noqa: E402
 
 
 def test_real_ethereum_net_change_is_judged_over_the_issuance_rows_of_the_common_days(tmp_path, monkeypatch):
@@ -218,6 +219,32 @@ def test_real_pendle_optimism_zero_counts_with_its_evidence(tmp_path, monkeypatc
     # the evening dump (Jake's run 2026-10-09 18:13): Arbitrum reconciled too, and the sum is formed over all three
     assert "NONE STORED" not in em["note"] and "Optimism 0.00" in em["note"], em["note"][:600]
     assert em["verdict"].startswith("PASS") and "= 83,731.84 PENDLE" in em["note"], em
+
+
+def test_real_pendle_optimism_declared_zero_replaces_the_scan(tmp_path, monkeypatch):
+    """Jake's run on ab3c7fe (2026-10-11), item 6: the Optimism gauge is not fetched any more — fetch/logscan writes its
+    declared 0 (metric and direct_metric) under the scan's own source + ':declared-zero'. Written by the real code over the
+    real Pendle dump (as Jake's store will hold it), the series keeps ONE measuring point and in_emissions still passes."""
+    import fetch.logscan as ls
+    from fetch.base import FetchOutput, _measuring_point
+    payload = load("Pendle")
+    asof = pd.Timestamp(payload["meta"]["asof"])
+    monkeypatch.setattr(ls, "today", lambda: asof)
+    o = FetchOutput()
+    ls.LogScan(own_tier="explorer_gauge_l2")._declared_zero(
+        config.PROJECT_BY_NAME["Pendle"], next(s for s in config.PROJECT_BY_NAME["Pendle"]["log_scans"]
+                                                if s["key"] == "gauge_pendle_out_optimism"), o)
+    f = o.frame()
+    assert len(f) and (f["value"] == 0).all()
+    new = [{"date": str(r.date.date()), "metric": r.metric, "value": 0.0, "source": r.source, "tier": int(r.tier),
+            "fetched_at": "2026-10-11T06:00:00Z"} for r in f.itertuples()]
+    # the dump already holds Jake's two manual 0 rows (manual_overrides.csv lines 42-43)
+    payload = {**payload, "metrics": list(payload["metrics"]) + new}
+    for m in ("emissions_tokens_gauge_optimism", "emissions_tokens_gauge_optimism_direct"):
+        pts = {_measuring_point(r["source"]) for r in payload["metrics"] if r["metric"] == m}
+        assert len(pts) == 1, (m, pts)
+    em = evaluate_real(tmp_path, monkeypatch, "Pendle", payload=payload)["in_emissions"]
+    assert "Optimism 0.00" in em["note"] and em["verdict"].startswith("PASS"), em
 
 
 def test_real_aerodrome_buyback_is_the_foundation_lock_and_implied_stays_zero(tmp_path, monkeypatch):

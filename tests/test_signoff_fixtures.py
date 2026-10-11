@@ -979,8 +979,13 @@ def test_logscan_runs_only_its_own_tier_and_names_what_it_planned():
     l2 = LogScan(own_tier="explorer_gauge_l2")
     ran.clear()
     l2._scan = lambda proj, spec, w, out: ran.append(spec["key"])
-    l2.run([p], None, FetchOutput())
-    assert ran == ["gauge_pendle_out_arbitrum", "gauge_pendle_out_optimism"]
+    o = FetchOutput()
+    l2.run([p], None, o)
+    # Optimism is a DECLARED 0 (Jake's run on ab3c7fe, 2026-10-11): written, never read, never planned
+    assert ran == ["gauge_pendle_out_arbitrum"] and l2.planned == [("Pendle", "emissions_tokens_gauge_arbitrum")]
+    f = o.frame()
+    assert set(f["metric"]) == {"emissions_tokens_gauge_optimism", "emissions_tokens_gauge_optimism_direct"}
+    assert (f["value"] == 0).all() and f["source"].str.endswith(":declared-zero").all()
 
 
 def test_a_timed_out_tier_names_the_series_it_gapped():
@@ -1305,33 +1310,34 @@ def test_near_lockups_splits_unvested_from_vested_and_names_no_account(monkeypat
     assert ".lockup.near" not in out.replace("*.lockup.near", ""), "aggregates only — no account is named"
 
 
-def test_near_lockups_does_not_spend_bigquery_without_the_switch(monkeypatch, capsys):
-    """Without a file, the list query is DRY-RUN and the bytes printed; it runs only with NEAR_LOCKUPS_RUN_BQ=1."""
-    import sys
+def test_near_lockup_list_pages_nearblocks_drops_deleted_and_never_uses_bigquery(monkeypatch, tmp_path):
+    """Jake's run on ab3c7fe (2026-10-11), item 5: no BigQuery. The list is lockup.near's sub-accounts from NearBlocks'
+    free API, paged by cursor; deleted lockups dropped; the key (when set) only in the Authorization header; the list
+    cached locally and reused; a run stopped by errors resumes at its cursor."""
     import types
     import check_offline_items as coi
-    monkeypatch.delenv("NEAR_LOCKUPS_FILE", raising=False)
-    monkeypatch.delenv("NEAR_LOCKUPS_RUN_BQ", raising=False)
-    ran = []
+    monkeypatch.setenv("TOKEN_METRICS_LOGCACHE", str(tmp_path))
+    monkeypatch.setattr(coi, "_near_cause_setup", lambda: (_ for _ in ()).throw(AssertionError("BigQuery touched")))
+    monkeypatch.setenv("NEARBLOCKS_API_KEY", "k-secret")
+    dead = {"transaction_hash": "0xd"}
+    pages = {None: ([{"account_id": "a.lockup.near", "deleted": {"transaction_hash": None}},
+                     {"account_id": "b.lockup.near", "deleted": dead}], "c1"),
+             "c1": ([{"account_id": "c.lockup.near", "deleted": {"transaction_hash": None}}], None)}
+    calls = []
 
-    class Job:
-        total_bytes_processed = 300 * 1024 ** 3
-
-    class Client:
-        def query(self, sql, job_config=None):
-            ran.append(bool(getattr(job_config, "dry_run", False)))
-            return Job()
-
-    class NB:
-        def _guard_sql(self, sql, spec):
-            assert "crypto_near_mainnet_us.receipt_actions" in sql
-    monkeypatch.setattr(coi, "_near_cause_setup", lambda: (NB(), {}, Client(), "ds", []))
-    bq = types.SimpleNamespace(QueryJobConfig=lambda **kw: types.SimpleNamespace(**kw))
-    monkeypatch.setitem(sys.modules, "google.cloud.bigquery", bq)
-    monkeypatch.setitem(sys.modules, "google.cloud", types.SimpleNamespace(bigquery=bq))
-    coi.near_lockups()
-    out = capsys.readouterr().out
-    assert ran == [True] and "300.0 GB" in out and "NOT RUN" in out
+    def get(url, params=None, headers=None, timeout=None):
+        calls.append((url, dict(params), dict(headers)))
+        rows, nxt = pages[params.get("next")]
+        return types.SimpleNamespace(status_code=200, json=lambda: {"data": rows, "meta": {"next_page": nxt}})
+    monkeypatch.setattr(coi.requests, "get", get)
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    accts, how = coi.near_lockup_accounts(say=lambda *_: None)
+    assert accts == ["a.lockup.near", "c.lockup.near"] and "1 deleted" in how and "2 page(s)" in how
+    assert all(u.endswith("/v3/accounts/lockup.near/subaccounts") and h["Authorization"] == "Bearer k-secret"
+               and p["limit"] == 100 for u, p, h in calls)
+    assert "k-secret" not in how
+    calls.clear()
+    assert coi.near_lockup_accounts(say=lambda *_: None)[0] == accts and not calls          # cached for the day
 
 
 def test_fluid_igp137_custody_prints_label_balance_and_transfers_since(monkeypatch, capsys):
@@ -1460,37 +1466,61 @@ def test_fluid_avocado_wallet_alert_fires_only_when_fluid_leaves():
     assert len(out.review) == 1 and REASON_WATCHED_OUTFLOW in str(out.review[0])
 
 
-def test_aerodrome_bribe_scan_flags_unpriced_at_deposit_and_reports_what_the_cap_missed(monkeypatch, capsys):
-    """1: per deposit — the depositor's rewards listed; 'unpriced at deposit' is a FLAG (not an exclusion), and a
-    flagged token the cap did not catch is reported."""
+def test_aerodrome_bribe_scan_reads_only_the_depositor_and_each_tokens_first_deposit(monkeypatch, capsys):
+    """Jake's run on ab3c7fe (2026-10-11), item 4: (a) only the depositor's deposits — its Safe nonce() bisected to the
+    blocks it acted in, their receipts' NotifyReward(from=depositor); (b) each token priced at its FIRST deposit only;
+    the cap read only for epochs holding a flagged token; one line per epoch; flagged tokens the cap missed listed."""
     import check_offline_items as coi
-    import time as _t
-    week = 7 * 86400
-    last = int(_t.time()) // week * week - week
-    lap, xdp, rc1, rc2 = "0x" + "aa" * 20, "0x" + "bb" * 20, "0x" + "11" * 20, "0x" + "22" * 20
-    tok = lambda t, sym, usd, excess, rc: {"token": t, "symbol": sym, "kinds": ["bribes"], "price": 1.0, "usd": usd,  # noqa: E731
-                                          "depth": 1000.0, "excess": excess, "rewards": {rc: ("bribes", "0xpool", 1)}}
+    from eth_utils import keccak
+    dep = coi.AERO_BRIBE_DEPOSITOR
+    notify = "0x" + keccak(text="NotifyReward(address,address,uint256,uint256)").hex().removeprefix("0x")
+    lap, xdp, usdc = "0x" + "aa" * 20, "0x" + "bb" * 20, "0x" + "cc" * 20
+    e1, e2 = 1788393600, 1789603200                         # 2026-09-03, 2026-09-17
+    acts = {150: (lap, e1), 160: (lap, e1), 300: (xdp, e2), 310: (usdc, e2)}   # block -> (token, epoch)
+    monkeypatch.setattr(coi, "_rpcs_for", lambda chain="ethereum": ["https://rpc.test"])
+    monkeypatch.setattr(coi, "rpc_block_at", lambda chain, ts, say=print: 100)
+    reads = []
+
+    def eth_call(to, data, block="latest", chain="ethereum"):
+        reads.append(int(block, 16))
+        return hex(sum(1 for b in acts if b <= int(block, 16))), "x"
+    monkeypatch.setattr(coi, "eth_call", eth_call)
+    monkeypatch.setattr(coi, "rpc", lambda url, m, p=None: {"result": "0x3e8"} if m == "eth_blockNumber"
+                        else {"result": {"timestamp": hex(1_790_000_000)}})
+    pad = lambda a: "0x" + a[2:].rjust(64, "0")  # noqa: E731
+
+    def receipts(chain, blk):
+        tok, ep = acts[blk]
+        other = {"topics": [notify, pad("0x" + "99" * 20), pad(tok), hex(ep)], "data": hex(1), "address": "0xr"}
+        mine = {"topics": [notify, pad(dep), pad(tok), "0x" + hex(ep)[2:].rjust(64, "0")], "data": hex(4 * 10 ** 24),
+                "address": "0x" + "11" * 20}
+        return [{"transactionHash": f"0xt{blk}", "logs": [other, mine]}]
+    monkeypatch.setattr(coi, "_block_receipts", receipts)
+    priced = []
+
+    def prices(keys, at, say=print):
+        if at == "current/":
+            return {k.split(":")[1]: {"symbol": {lap: "LAPTOP", xdp: "XDP", usdc: "USDC"}[k.split(":")[1]], "decimals": 18}
+                    for k in keys}
+        priced.append((keys[0], at))
+        return {usdc: {"price": 1.0}} if keys[0].endswith(usdc) else {}
+    monkeypatch.setattr(coi, "_llama_prices", prices)
+    cap_asked = []
 
     def epochs(eps, archive=True, **kw):
-        return {e: ({"usd_bribes": 9e6, "end_block": 200, "tokens": [tok(lap, "LAPTOP", 7.5e6, 6.9e6, rc1),
-                                                                    tok(xdp, "XDP", 6e5, 0.0, rc2)]}
-                    if e == last else {"usd_bribes": 0.0, "end_block": 200, "tokens": []}) for e in eps}
+        cap_asked.extend(eps)
+        return {e: {"tokens": [{"token": lap, "excess": 6.95e6}] if e == e1 else [{"token": xdp, "excess": 0.0}]}
+                for e in eps}
     monkeypatch.setattr(coi, "aerodrome_voter_epochs", epochs)
-    monkeypatch.setattr(coi, "rpc_block_at", lambda chain, ts, say=print: 100)
-    pad = lambda a: "0x" + a[2:].rjust(64, "0")  # noqa: E731
-    dep = coi.AERO_BRIBE_DEPOSITOR
-
-    def logs(token, holder, topics, b0, b1, say=print, max_calls=600, **kw):
-        return [{"topics": [topics[0], pad(dep), topics[2], topics[3]], "data": hex(4 * 10 ** 24),
-                 "timeStamp": 1_786_000_000, "transactionHash": "0xt" + token[2:6]}], "1 log(s)"
-    monkeypatch.setattr(coi, "base_logs_where_balance_moves", logs)
-    monkeypatch.setattr(coi, "_llama_prices", lambda keys, at, say=print: {})       # nothing priced at deposit
     coi.aerodrome_bribe_scan()
     out = capsys.readouterr().out
-    assert "(a) REWARDS POSTED BY" in out and out.count("0xt") >= 2
-    assert out.count("UNPRICED AT DEPOSIT") >= 2
-    missed = out.split("NOT CAUGHT BY THE CAP:")[1]
-    assert "XDP" in missed and "LAPTOP" not in missed.split("PASTE BACK")[0]
+    assert "4 Safe transaction(s)" in out and len(reads) < 60, (len(reads), out[:500])
+    assert len(priced) == 3 and sum(1 for k, _ in priced if k.endswith(lap)) == 1      # LAPTOP priced once, at its first
+    assert sorted(cap_asked) == [e1, e2]
+    assert "2026-09-03  2 deposit(s): LAPTOP 8,000,000 UNPRICED AT DEPOSIT cap $6,950,000" in out, out
+    assert "2026-09-17  2 deposit(s): XDP 4,000,000 UNPRICED AT DEPOSIT cap -; USDC 4,000,000 @$1" in out, out
+    missed = out.split("MISSED BY THE CAP: ")[1]
+    assert missed.startswith("1") and "XDP" in missed and "LAPTOP" not in missed
 
 
 def test_near_bq_backfill_status_names_the_reauth_stop(monkeypatch, capsys):
@@ -1513,7 +1543,7 @@ def test_morpho_listed_vs_all_splits_listed_self_lent_and_other(monkeypatch, cap
     import types
     import store as store_mod
     monkeypatch.setattr(store_mod, "DB_PATH", "/nonexistent/metrics.db")
-    mk = lambda k, listed, s, b, apy: {"uniqueKey": k * 8, "chain": {"id": 1}, "listed": listed,  # noqa: E731
+    mk = lambda k, listed, s, b, apy: {"marketId": k * 8, "chain": {"id": 1}, "listed": listed,  # noqa: E731
                                        "loanAsset": {"symbol": "USDC"}, "collateralAsset": {"symbol": "X"},
                                        "state": {"supplyAssetsUsd": s, "borrowAssetsUsd": b, "borrowApy": apy}}
     markets = [mk("a", True, 100e6, 90e6, 0.05), mk("b", False, 20e6, 10e6, 0.08), mk("c", False, 10e9, 10e9, 0.10)]
@@ -1522,6 +1552,8 @@ def test_morpho_listed_vs_all_splits_listed_self_lent_and_other(monkeypatch, cap
         q = json["query"]
         if "chains" in q:
             body = {"data": {"chains": [{"id": 1}]}}
+        elif "__type" in q:                                     # the live schema serves every field the probe names
+            body = {"data": {t: {"fields": [{"name": n} for n in want]} for t, want in coi.MORPHO_PROBE_FIELDS.items()}}
         elif "historicalState" in q:
             body = {"errors": [{"message": 'Cannot query field "historicalState"'}]}
         else:
@@ -1534,3 +1566,181 @@ def test_morpho_listed_vs_all_splits_listed_self_lent_and_other(monkeypatch, cap
     assert f"listed                    1 markets  borrow $        90,000,000  interest ${d(90e6, 0.05):>14,.0f}" in out
     assert "unlisted self-lent        1 markets" in out and "unlisted other            1 markets" in out
     assert "historicalState not read" in out and "tolerance stays 10%" in out
+
+
+def test_a_failed_now_read_falls_back_to_the_last_stored_value_within_its_age():
+    """Jake's run on ab3c7fe (2026-10-11), item 1: one failed read of a 'now' figure (rpc.plume.org SSL EOF) must not
+    open sign-off. The row falls back to the last stored value, labelled with its age, and is CHECK (STALE) only past
+    credibility.now_max_age: prices / market cap / FDV 2 d, other daily stocks 3 d, weekly 14 d, monthly 45 d."""
+    import build_workbook as bw
+    import credibility as cred
+    assert cred.now_max_age("Plume", "price_usd") == 2 and cred.now_max_age("Plume", "market_cap_usd") == 2
+    assert cred.now_max_age("Plume", "circulating_supply_first_party") == 3
+    asof = pd.Timestamp("2026-10-11")
+    ours = {"metric": "circulating_supply_first_party", "latest_date": "2026-10-10", "max_age": 3}
+    assert bw._now_staleness(ours, {}, asof) is None                      # yesterday's: unlabelled
+    fresh = bw._now_staleness({**ours, "latest_date": "2026-10-08"}, {}, asof)
+    assert fresh[0] == "FRESH" and "ours last stored 2026-10-08, 3 d old <= 3 d" in fresh[1], fresh
+    stale = bw._now_staleness({**ours, "latest_date": "2026-10-07"}, {}, asof)
+    assert stale[0] == "STALE" and "4 d old > 3 d" in stale[1], stale
+    # the reference side is judged the same way, and the worse side decides
+    both = bw._now_staleness({**ours, "latest_date": "2026-10-09"}, {"date": "2026-10-01", "ref_max_age": 2}, asof)
+    assert both[0] == "STALE" and "ref last stored 2026-10-01" in both[1], both
+
+
+def test_morpho_probe_checks_the_live_schema_before_it_queries(monkeypatch, capsys):
+    """Jake's run on ab3c7fe (2026-10-11), item 3: 'Cannot query field "uniqueKey" on type "Market"'. The probe asks for
+    marketId (read live 2026-10-11) and introspects every field it names first; a renamed field stops it with the
+    type's real field list, before any market query."""
+    import check_offline_items as coi
+    assert "marketId" in coi.MORPHO_PROBE_FIELDS["Market"] and "uniqueKey" not in coi.MORPHO_PROBE_FIELDS["Market"]
+    sent = []
+
+    class R:
+        def __init__(self, j):
+            self._j = j
+
+        def json(self):
+            return self._j
+
+    def post(url, json=None, **_k):
+        sent.append(json["query"])
+        if "chains" in json["query"]:
+            return R({"data": {"chains": [{"id": 1}]}})
+        types = {t: {"fields": [{"name": n} for n in want]} for t, want in coi.MORPHO_PROBE_FIELDS.items()}
+        types["Market"] = {"fields": [{"name": n} for n in coi.MORPHO_PROBE_FIELDS["Market"] - {"marketId"}]
+                           + [{"name": "uniqueKey"}]}
+        return R({"data": types})
+    monkeypatch.setattr(coi.requests, "post", post)
+    coi.morpho_interest_listed_vs_all()
+    out = capsys.readouterr().out
+    assert "SCHEMA CHANGED" in out and "missing ['marketId']" in out and "uniqueKey" in out, out
+    assert len(sent) == 2 and "__type" in sent[1], sent             # no market query was sent
+
+
+def test_aethir_readers_take_the_dashboard_shape_served_2026_10_11(monkeypatch):
+    """Jake's run on ab3c7fe (2026-10-11), item 7, on the payload as served that day (fixtures/aethir_pages_2026-10-11.json,
+    objects from each page, verbatim): weeklyData labels come OUT OF ORDER (12/07, 16/08, 09/08, .. 02/08); the stake tile
+    object now also holds stakeHistory; Edge monthly earnings are miningRewardData dated MM/YY ("03/26")."""
+    import json
+    import fetch.aethir_pages as ap
+    import fetch.scrape as sc
+    from fetch.base import FetchOutput
+    fx = json.loads((Path(__file__).resolve().parents[1] / "fixtures" / "aethir_pages_2026-10-11.json").read_text())
+    monkeypatch.setattr(ap, "today", lambda: pd.Timestamp("2026-10-11"))
+    monkeypatch.setattr(sc, "robots_verdict", lambda url: (True, "test"))
+
+    def get(url):
+        page = url.split("dashboard.aethir.com/")[1]
+        if page not in fx:
+            raise RuntimeError("not in the fixture")
+        return f"<html><body>{fx[page]}</body></html>"
+
+    class Daily:
+        def due(self, *_a):
+            return True
+
+        def done(self, *_a):
+            return None
+    o = FetchOutput()
+    ap.AethirPages(get=get, daily=Daily()).run([config.PROJECT_BY_NAME["Aethir"]], None, o)
+    f = o.frame()
+    s = lambda m: f[f.metric == m].set_index("date")["value"].sort_index()   # noqa: E731
+    wk = s("compute_rewards_tokens")
+    assert len(wk) == 15 and wk.index.min() == pd.Timestamp("2026-06-28") and wk.index.max() == pd.Timestamp("2026-10-04")
+    assert (pd.Series(wk.index).diff().dropna() == pd.Timedelta(days=7)).all()
+    assert abs(s("locked_tokens_ai").loc[pd.Timestamp("2026-10-11")] - 416626182.69) < 0.01
+    edge = s("edge_earnings_monthly_tokens")
+    assert list(edge.index) == list(pd.date_range("2026-03-01", "2026-09-01", freq="MS")), edge
+    assert abs(edge.iloc[0] - 40196919.5146218) < 1e-6
+    assert set(f[f.metric == "edge_earnings_monthly_tokens"]["source"]) == {"aethir_page:protocol/ecosystem.rewards"}
+    msgs = " | ".join(e.message for e in o.log)
+    assert "totalStaked 1,791,595,938.37 vs the sum of its parts 1,791,595,938.37 (+0.00%)" in msgs, msgs[:2000]
+    assert "aiStaked + gamingStaked" not in " ".join(e.message for e in o.log if e.status != "ok" and "NOTHING" in e.message)
+    assert not any("Edge monthly" in e.message for e in o.log if e.status != "ok")
+
+
+def test_yearless_week_labels_served_out_of_order():
+    """The year for each DD/MM label is the latest that is not after today; sorted, they must be one unbroken weekly run
+    ending within two weeks — a run reaching back past a year folds onto itself and is refused."""
+    from fetch.aethir_pages import yearless_days
+    asof = pd.Timestamp("2026-10-11")
+    labels = ["12/07", "16/08", "09/08", "23/08", "06/09", "13/09", "05/07", "19/07", "30/08", "20/09", "27/09", "04/10",
+              "28/06", "26/07", "02/08"]
+    got = yearless_days(labels, "weekly", asof)
+    assert got[0] == pd.Timestamp("2026-07-12") and got[11] == pd.Timestamp("2026-10-04") and len(got) == 15
+    assert isinstance(yearless_days(["12/07", "26/07", "19/07", "09/08"], "weekly", asof), str)      # a week missing
+
+
+def test_foundation_lock_split_classifies_each_change_and_splits_managed_rewards(monkeypatch, capsys):
+    """Jake's run on ab3c7fe (2026-10-11), item 2: every NFT whose counted AERO changed is bisected to its blocks and the
+    receipts say what happened — a withdrawManaged realising locked rewards (rebase + compounded) is NOT a purchase; a
+    createLock is NEW AERO LOCKED, with the AERO received in the same tx and from whom. The managed NFT's locked rewards
+    in the window split by NotifyReward's `from`: the RewardsDistributor = rebase, anyone else = compounded."""
+    import check_offline_items as coi
+    import config
+    from eth_utils import keccak
+    owners = list(config.PROJECT_BY_NAME["Aerodrome"]["foundation_buyback"]["owners"])
+    o = owners[0].lower()
+    aero = config.PROJECT_BY_NAME["Aerodrome"]["contracts"]["token"]
+    aero = (aero["address"] if isinstance(aero, dict) else aero).lower()
+    top = lambda x: "0x" + keccak(text=x).hex().removeprefix("0x")  # noqa: E731
+    pad = lambda a: "0x" + a[2:].lower().rjust(64, "0")  # noqa: E731
+    w = lambda n: "0x" + hex(int(n))[2:].rjust(64, "0")  # noqa: E731
+    ends = iter((100, 1000))                                                  # the window's start, then its end
+    monkeypatch.setattr(coi, "rpc_block_at", lambda chain, ts, say=print: next(ends))
+
+    def sig(own, ids, block):
+        b = int(block, 16)
+        tl = {1: (o, 1, 7, 100.0) if b < 500 else (o, 0, 0, 110.0),           # withdrawn from #7 at 500: +10 realised
+              2: (None, 0, 0, 0.0) if b < 800 else (o, 0, 0, 50.0),           # created at 800
+              3: (o, 1, 7, 100.0)}                                            # unchanged, LOCKED in #7
+        return {t: tl[t] for t in ids}
+    monkeypatch.setattr(coi, "_foundation_nft_sig", sig)
+
+    def batch(chain, calls, chunk=200, block="latest"):
+        b = int(block, 16) if block != "latest" else 1000
+        out = []
+        for _to, d in calls:
+            if d.startswith(coi._selx("balanceOf(address)")):
+                out.append(hex((3 if b >= 800 else 2) if int(d[-40:], 16) == int(o, 16) else 0))
+            elif d.startswith(coi.SEL_OWNER_TOKEN):
+                out.append(hex(int(d[-64:], 16) + 1))
+            elif d.startswith(coi._selx("managedToLocked(uint256)")):
+                out.append(w(0xABC))
+            else:                                                             # earned
+                out.append(w(5 * 10 ** 18))
+        return out
+    monkeypatch.setattr(coi, "_batch_eth_calls", batch)
+    T_X, T_DEP = top("Transfer(address,address,uint256)"), top("Deposit(address,uint256,uint8,uint256,uint256,uint256)")
+    T_WM = top("WithdrawManaged(address,uint256,uint256,uint256,uint256)")
+    ve = coi.AERO_VE.lower()
+    pool = "0x" + "77" * 20
+    rc = {500: [{"transactionHash": "0xw", "logs": [{"address": ve, "topics": [T_WM, pad(o), w(1), w(7)],
+                                                       "data": w(110 * 10 ** 18) + w(1)[2:]}]}],
+          800: [{"transactionHash": "0xc", "logs": [
+              {"address": aero, "topics": [T_X, pad(pool), pad(o)], "data": w(50 * 10 ** 18)},
+              {"address": ve, "topics": [T_X, w(0), pad(o), w(2)], "data": "0x"},
+              {"address": ve, "topics": [T_DEP, pad(o), w(2), w(1)], "data": w(50 * 10 ** 18) + w(9)[2:] + w(9)[2:]}]}]}
+    monkeypatch.setattr(coi, "_block_receipts", lambda chain, blk: rc.get(blk, []))
+
+    def rpc_retry(chain, method, params, tries=5):
+        if method == "eth_getBlockByNumber":
+            return {"timestamp": hex(1_786_000_000)}
+        return w(200 * 10 ** 18) if params[0]["data"] == coi._selx("totalSupply()") else w(0xABC)
+    monkeypatch.setattr(coi, "_rpc_retry", rpc_retry)
+    notify = top("NotifyReward(address,address,uint256,uint256)")
+
+    def lmr_logs(token, holder, topics, b0, b1, say=print, **kw):
+        return [{"topics": [notify, pad(coi.AERO_REWARDS_DISTRIBUTOR), pad(aero), w(1)], "data": w(8 * 10 ** 18)},
+                {"topics": [notify, pad("0x" + "c0" * 20), pad(aero), w(1)], "data": w(4 * 10 ** 18)}], "2 log(s)"
+    monkeypatch.setattr(coi, "base_logs_where_balance_moves", lmr_logs)
+    coi.aerodrome_foundation_lock_split()
+    out = capsys.readouterr().out
+    assert "counted 200 -> 260 (+60 AERO)" in out and "2 NFT(s) changed" in out, out[:800]
+    cls = out.split("THE CHANGE BY CLASS")[1]
+    assert "MANAGED WITHDRAW (locked rewards realised: rebase + compounded)" in cls and "+10.00" in cls
+    assert "NEW AERO LOCKED" in cls and "+50.00" in cls and "UNCLASSIFIED" not in cls
+    assert f"AERO received in the same tx: 50.00 from {pool}" in out
+    # #7: owners hold 100 of 200 at the end -> half of rebase 8 and compounded 4
+    assert "OWNERS' SHARE IN THE WINDOW (by their weights at its end): rebase (emissions, not buyback) 4.00; compounded voting rewards 2.00" in out, out

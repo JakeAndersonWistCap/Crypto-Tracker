@@ -5609,6 +5609,24 @@ CRED_HEAD = ["Project", "Tab", "Cell", "What is checked", "Our value", "Independ
              "Note — why, and what would resolve it"]
 
 
+def _now_staleness(ours: dict, row: dict, asof) -> tuple[str, str] | None:
+    """("STALE" | "FRESH", label) for an input row judged on 'now' figures, or None when both are at most a day old
+    (Jake's run on ab3c7fe: one failed read must not open sign-off). FRESH = the last stored value, older than today
+    but within credibility.now_max_age; STALE = older than that, and the row is CHECK."""
+    parts, worst = [], None
+    for side, day, lim in (("ours", ours.get("latest_date"), ours.get("max_age")),
+                           ("ref", row.get("date"), row.get("ref_max_age"))):
+        if not day or not lim:
+            continue
+        age = (pd.Timestamp(asof).normalize() - pd.Timestamp(str(day)[:10])).days
+        if age <= 1:                                     # today's or yesterday's: the ordinary state, unlabelled
+            continue
+        over = age > int(lim)
+        worst = "STALE" if over or worst == "STALE" else "FRESH"
+        parts.append(f"{side} last stored {str(day)[:10]}, {age} d old {'>' if over else '<='} {lim} d")
+    return (worst, "; ".join(parts)) if parts else None
+
+
 def write_credibility(ws, R: Refs, data_by_key: dict, long: pd.DataFrame, asof) -> list[dict]:
     """THE CREDIBILITY TAB (Jake, 2026-10-05): every headline cell on A1-A4 for the projects in
     config.CREDIBILITY_PROJECTS, plus each project's input rows, beside an independent reference.
@@ -5662,6 +5680,10 @@ def write_credibility(ws, R: Refs, data_by_key: dict, long: pd.DataFrame, asof) 
         ours = row["ours"]
         f = (f"={ours['cell']}" if "cell" in ours else ours.get("value") if "py" in ours else
              f'=IFERROR({R.D(r, ours["metric"], ours.get("window", "now"))},{NA})')
+        if "fallback" in ours:                          # the last stored value, dated (credibility.now_max_age)
+            d = R.D(r, ours["metric"], ours.get("window", "now"))
+            f = f'=IF(ISNUMBER({d}),{d},{ours["fallback"]!r})'
+        stale = _now_staleness(ours, row, asof)
         c = ws.cell(row=r, column=5, value=f)
         _style(c, "pull", row.get("fmt") or FMT_NUM2)
         ws.cell(row=r, column=6, value=text(row["source"]))
@@ -5704,8 +5726,12 @@ def write_credibility(ws, R: Refs, data_by_key: dict, long: pd.DataFrame, asof) 
         else:
             # a first-party-only row documented as such (sign-off round): its FRESH-only reads as the limitation
             ok = ((row.get("fresh_label") or "FRESH-only") if row["mode"] == "same_source" else "PASS")
-            v = (f'=IF(NOT(ISNUMBER(G{r})),"CHECK (no reference)",IF(NOT(ISNUMBER(E{r})),"CHECK (no figure)",'
-                 f'IF(ABS(I{r})<=J{r},"{ok}","CHECK")))')
+            if stale and stale[0] == "STALE":
+                v = f"CHECK (STALE: {stale[1]})"
+            else:
+                tag = f" [{stale[1]}]" if stale else ""
+                v = (f'=IF(NOT(ISNUMBER(G{r})),"CHECK (no reference)",IF(NOT(ISNUMBER(E{r})),"CHECK (no figure)",'
+                     f'IF(ABS(I{r})<=J{r},"{ok}{tag}","CHECK{tag}")))')
         ws.cell(row=r, column=11, value=v).font = F_BOLD
         ws.cell(row=r, column=12, value=text(row.get("note") or ""))
     rng = f"K{d0}:K{d1}"

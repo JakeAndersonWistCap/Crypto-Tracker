@@ -3932,15 +3932,9 @@ def aethir_arr_formula():
                           "'Aethir's own figure, formula unpublished'"))
 
 
-NEAR_LOCKUP_BQ_SQL = (
-    # NEAR's own lockup list (near/near-public-lakehouse@76e0b2cd "Aggregated Circulating Supply Pipeline.py" step 2):
-    # every *.lockup.near that was created or funded and never deleted.
-    "SELECT receipt_receiver_account_id AS account_id\n"
-    "  FROM `bigquery-public-data.crypto_near_mainnet_us.receipt_actions`\n"
-    " WHERE receipt_receiver_account_id LIKE '%.lockup.near'\n"
-    "   AND action_kind IN ('CREATE_ACCOUNT', 'DELETE_ACCOUNT', 'TRANSFER')\n"
-    " GROUP BY 1\n"
-    "HAVING COUNTIF(action_kind = 'DELETE_ACCOUNT') = 0")
+# THE LOCKUP LIST IS NOT READ FROM BIGQUERY (Jake's run on ab3c7fe 2026-10-11: NEAR's lakehouse query over
+# receipt_actions dry-ran at 700.3 GB with 194 GB of October's budget left — "Do not use BigQuery for this"). It is the
+# lockup factory's sub-accounts from NearBlocks' free API: near_lockup_accounts.
 # near-public-lakehouse rust-extract-apis/lockups/src/lockup.rs is_bug_inside_contract: the RPC locked figure is wrong
 NEAR_LOCKUP_BUGGY_CODE = ("3kVY9qcVRoW3B5498SMX6R3rtSLiCdmBzKs7zcnzDJ7Q", "DiC9bKCqUHqoYqUXovAnqugiuntHWnM3cAc7KrgaHTu")
 NEAR_RPC_LIVE = ("https://rpc.mainnet.fastnear.com", "https://rpc.mainnet.near.org")
@@ -3978,11 +3972,82 @@ def _near_view(account: str, method: str, args: dict | None = None, block_id: in
     return None, why
 
 
+NEAR_LOCKUP_LIST_URL = "https://api.nearblocks.io/v3/accounts/lockup.near/subaccounts"
+
+
+def near_lockup_accounts(say=print, pace: float = 1.0) -> tuple[list, str]:
+    """([live *.lockup.near], how) — the lockup factory's sub-accounts from NearBlocks' free API (Jake's run on ab3c7fe
+    2026-10-11: "Do not use BigQuery for this" — the receipt_actions list dry-ran at 700.3 GB). Every *.lockup.near is a
+    sub-account of lockup.near; /v3/accounts/lockup.near/subaccounts pages them 100 at a time (cursor `next`), each with
+    its `deleted` record — a deleted lockup is dropped. NEARBLOCKS_API_KEY is sent as a Bearer header when set (never
+    printed). The finished list is cached locally (LogCache root near-lockups.txt, one account a line — never printed,
+    never committed) and reused for a day; a paging run that stops resumes from its cursor next time."""
+    import os                                              # noqa: PLC0415
+    import time as _t                                      # noqa: PLC0415
+    from fetch.logcache import LogCache                    # noqa: PLC0415
+    root = LogCache().root
+    root.mkdir(parents=True, exist_ok=True)
+    done, part = root / "near-lockups.txt", root / "near-lockups.partial.json"
+    if done.exists() and _t.time() - done.stat().st_mtime < 86400:
+        accts = [ln.strip() for ln in done.read_text(encoding="utf-8").splitlines() if ln.strip()]
+        return accts, f"the list cached {_t.strftime('%Y-%m-%d %H:%M', _t.gmtime(done.stat().st_mtime))} UTC"
+    st = json.loads(part.read_text()) if part.exists() else {"next": None, "live": [], "deleted": 0, "pages": 0,
+                                                              "created": [None, None]}
+    key = os.environ.get("NEARBLOCKS_API_KEY")
+    hdr = {**_ua(), **({"Authorization": f"Bearer {key}"} if key else {})}
+    t0, retries = _t.time(), 0
+    while True:
+        params = {"limit": 100, **({"next": st["next"]} if st["next"] else {})}
+        try:
+            r = requests.get(NEAR_LOCKUP_LIST_URL, params=params, headers=hdr, timeout=60)
+        except requests.RequestException as e:
+            r, why = None, type(e).__name__
+        if r is None or r.status_code == 429 or r.status_code >= 500:
+            retries += 1
+            if retries > 6:
+                part.write_text(json.dumps(st))
+                return [], (f"STOPPED after {st['pages']} page(s) ({r.status_code if r is not None else why}); "
+                            f"the next run resumes at the cursor")
+            _t.sleep(min(60, 2 ** retries))
+            continue
+        if r.status_code != 200:
+            part.write_text(json.dumps(st))
+            return [], f"NearBlocks answered HTTP {r.status_code} on page {st['pages'] + 1} (host api.nearblocks.io)"
+        retries = 0
+        j = r.json()
+        for a in j.get("data") or []:
+            ct = int(((a.get("created") or {}).get("block") or {}).get("block_timestamp") or 0) // 10 ** 9
+            if ct:
+                lo, hi = st.setdefault("created", [None, None])
+                st["created"] = [min(lo or ct, ct), max(hi or ct, ct)]
+            if (a.get("deleted") or {}).get("transaction_hash"):
+                st["deleted"] += 1
+            elif str(a.get("account_id", "")).endswith(".lockup.near"):
+                st["live"].append(a["account_id"])
+        st["pages"] += 1
+        st["next"] = (j.get("meta") or {}).get("next_page")
+        if st["pages"] % 50 == 0:
+            part.write_text(json.dumps(st))
+            say(f"    … {st['pages']} page(s): {len(st['live']):,} live, {st['deleted']:,} deleted "
+                f"({_t.time() - t0:,.0f}s)")
+        if not st["next"] or not j.get("data"):
+            break
+        _t.sleep(pace)
+    accts = sorted(set(st["live"]))
+    done.write_text("\n".join(accts) + "\n", encoding="utf-8")
+    part.unlink(missing_ok=True)
+    lo, hi = st.get("created") or [None, None]
+    span = (f", created {_t.strftime('%Y-%m-%d', _t.gmtime(lo))} .. {_t.strftime('%Y-%m-%d', _t.gmtime(hi))}"
+            if lo and hi else "")
+    return accts, (f"NearBlocks: {st['pages']} page(s), {len(accts):,} live and {st['deleted']:,} deleted lockup(s)"
+                   f"{span}, {_t.time() - t0:,.0f}s this run")
+
+
 def near_lockups(limit: int | None = None):
-    """NEAR LOCKUPS, FROM THE CONTRACTS' OWN VIEW METHODS (follow-up to 0eda6ce). The list is NEAR's own: every
-    *.lockup.near created or funded and never deleted (receipt_actions, NEAR's lakehouse method) — from BigQuery after a
-    DRY RUN that prints the bytes (runs only with NEAR_LOCKUPS_RUN_BQ=1), or from a file NEAR_LOCKUPS_FILE (one account
-    per line). Per lockup, at ONE block (near/core-contracts@1b0436c9 lockup/src/getters.rs):
+    """NEAR LOCKUPS, FROM THE CONTRACTS' OWN VIEW METHODS (follow-up to 0eda6ce). The list: every live *.lockup.near —
+    the lockup factory's sub-accounts from NearBlocks' free API (near_lockup_accounts; Jake's run on ab3c7fe 2026-10-11:
+    no BigQuery), or a file NEAR_LOCKUPS_FILE (one account per line). Per lockup, at ONE block (near/core-contracts
+    @1b0436c9 lockup/src/getters.rs):
       get_balance          everything, incl. NEAR deposited to a staking pool
       get_locked_amount    locked by lockup OR vesting — NEAR's own 'locked' (what its circulating figure subtracts)
       get_vesting_information -> get_unvested_amount(schedule)   still UNVESTED (Terminating: its unvested_amount;
@@ -3990,7 +4055,9 @@ def near_lockups(limit: int | None = None):
       locked − unvested    VESTED BUT STILL LOCKED by the lockup's release schedule
       get_owners_balance   vested AND released, not withdrawn (balance − locked; may sit in a staking pool)
     Lockups on the two buggy code hashes (near-public-lakehouse lockup.rs) are totalled apart: their RPC locked figure
-    is known to be wrong. AGGREGATES ONLY are printed — no account is named. Nothing is stored."""
+    is known to be wrong. AGGREGATES ONLY are printed — no account is named. Nothing is stored. THE COST, said first:
+    the list is ~1 NearBlocks call per 100 lockup accounts ever created (free; no BigQuery), then 2-6 NEAR RPC view
+    calls per live lockup (free public RPC)."""
     import os                                              # noqa: PLC0415
     import time as _t                                      # noqa: PLC0415
     head("NEAR — lockup contracts: unvested vs vested-but-locked vs released-not-withdrawn (contracts' own getters)")
@@ -4000,24 +4067,13 @@ def near_lockups(limit: int | None = None):
             accounts = sorted({ln.strip() for ln in fh if ln.strip().endswith(".lockup.near")})
         print(f"  {len(accounts):,} lockup account(s) from the file")
     else:
-        setup = _near_cause_setup()
-        if setup is None:
-            print(f"  …or save the lockup list to a file and set NEAR_LOCKUPS_FILE. NEAR's list query:\n{NEAR_LOCKUP_BQ_SQL}")
+        print("  COST: the list pages NearBlocks' free API (1 call per 100 lockup accounts ever created; no BigQuery), "
+              "then 2-6 free NEAR RPC view calls per live lockup")
+        accounts, how = near_lockup_accounts()
+        print(f"  {how}")
+        if not accounts:
+            print("  no list — nothing read")
             return
-        nb, spec, client, _ds, _cols = setup
-        from google.cloud import bigquery                  # noqa: PLC0415
-        nb._guard_sql(NEAR_LOCKUP_BQ_SQL, spec)            # noqa: SLF001
-        dry = client.query(NEAR_LOCKUP_BQ_SQL, job_config=bigquery.QueryJobConfig(dry_run=True, use_query_cache=False))
-        gb = dry.total_bytes_processed / 1024 ** 3
-        print(f"  DRY RUN: the lockup list scans {gb:,.1f} GB of receipt_actions (BigQuery's free tier is 1 TB a month, "
-              f"project near-data-510309)")
-        if os.environ.get("NEAR_LOCKUPS_RUN_BQ") != "1":
-            print("  NOT RUN. Set NEAR_LOCKUPS_RUN_BQ=1 to spend that, or supply NEAR_LOCKUPS_FILE.")
-            return
-        job = client.query(NEAR_LOCKUP_BQ_SQL, job_config=bigquery.QueryJobConfig(
-            maximum_bytes_billed=int(dry.total_bytes_processed * 1.1) + 10 * 1024 ** 2))
-        accounts = sorted(r["account_id"] for r in job.result())
-        print(f"  {len(accounts):,} live lockup account(s) from BigQuery")
     if limit:
         accounts = accounts[:int(limit)]
     height = ((rpc(NEAR_RPC_LIVE[0], "block", {"finality": "final"}).get("result") or {}).get("header") or {}).get("height")
@@ -4085,90 +4141,188 @@ def near_lockups(limit: int | None = None):
 AERO_BRIBE_DEPOSITOR = "0x80f7153d9bc853a9bf8bc21f2517c0acee2fdf75"   # Jake's aerodrome_epoch_rewards run on 20d0eb4
 
 
-def aerodrome_bribe_scan(depositor: str = AERO_BRIBE_DEPOSITOR, min_usd: float = 1_000.0, days: int = 90):
-    """EVERY Q0 EPOCH'S BRIBES BY DEPOSIT (Jake's run on 20d0eb4: 0x80f7… posted LAPTOP 4M on 09-09 with NO DefiLlama
-    price, LAPTOP 100K at $1.79, XDP 30M on 09-28 with NO price, LAPTOP 8K at $0.078). For each epoch of the last
-    `days` days: every bribe token worth >= `min_usd` at the quoted (epoch-end) price — or unpriced at the end — on every
-    BribeVotingReward it was paid on, each NotifyReward located through the Base balance-bisection route (Base logs are
-    paid): depositor, time, DefiLlama's price AT THE DEPOSIT. Per token: $ at the quoted price, the depth a sale could
-    reach, whether the illiquid-token cap caught it, and the flag UNPRICED AT DEPOSIT (DefiLlama had no price when it
-    was posted). The flag is a FLAG on the epoch table, not a second exclusion rule. Reports (a) every reward this
-    `depositor` posted and (b) every token the flag catches that the cap missed. Reads only; long (archive reads)."""
+def _safe_nonce_blocks(safe: str, b0: int, b1: int, chain: str = "base") -> tuple[list[int], str]:
+    """([block], why): every block in (b0, b1] where a Gnosis Safe's nonce() rose — each holds an executed Safe
+    transaction. Bisection on archive eth_call (calls ~ transactions x log2(range)). A Safe's account nonce stays 1;
+    its own nonce counts what it executed."""
+    cache: dict = {}
+
+    def read(b):
+        r, _ = eth_call(safe, _selx("nonce()"), block=hex(b), chain=chain)
+        if not r or r == "0x":
+            raise ValueError(f"nonce() unreadable at block {b}")
+        return int(r, 16)
+
+    def nonce(b):
+        if b not in cache:
+            cache[b] = _retry(lambda: read(b))             # a rate-limited read is retried, never taken as a value
+        return cache[b]
+    out: list = []
+
+    def find(lo, hi):
+        if nonce(lo) == nonce(hi):
+            return
+        if hi - lo == 1:
+            out.append(hi)
+            return
+        mid = (lo + hi) // 2
+        find(lo, mid)
+        find(mid, hi)
+    try:
+        find(b0, b1)
+    except Exception as e:  # noqa: BLE001
+        return sorted(out), f"stopped: {type(e).__name__}: {str(e)[:160]}"
+    return sorted(out), f"{nonce(b1) - nonce(b0)} Safe transaction(s), {len(cache)} archive read(s)"
+
+
+def _rpc_retry(chain: str, method: str, params: list, tries: int = 5):
+    """`result` of a JSON-RPC call from the first endpoint that answers, retried with backoff over every endpoint
+    (public Base endpoints rate-limit: 'request limit reached', archive 403s). Raises when none ever answers."""
+    import time as _t                                      # noqa: PLC0415
+    why = ""
+    for k in range(tries):
+        for url in _rpcs_for(chain):
+            try:
+                j = rpc(url, method, params)
+                if j.get("result") is not None:
+                    return j["result"]
+                why = f"{_rpc_host(url)}: {str(j.get('error'))[:80]}"
+            except Exception as e:  # noqa: BLE001 — next endpoint
+                why = f"{_rpc_host(url)}: {type(e).__name__}"
+        _t.sleep(2 ** k)
+    raise ValueError(f"{method} unanswered after {tries} round(s) ({why})")
+
+
+def _retry(fn, tries: int = 5):
+    import time as _t                                      # noqa: PLC0415
+    for k in range(tries):
+        try:
+            return fn()
+        except ValueError:
+            if k == tries - 1:
+                raise
+            _t.sleep(2 ** k)
+
+
+def _block_receipts(chain: str, block: int) -> list:
+    return _rpc_retry(chain, "eth_getBlockReceipts", [hex(block)])
+
+
+def aerodrome_bribe_scan(depositor: str = AERO_BRIBE_DEPOSITOR, days: int = 90):
+    """THE DEPOSITOR'S BRIBES, AND 'UNPRICED AT DEPOSIT' vs THE CAP (Jake's run on ab3c7fe 2026-10-11: the scan of every
+    epoch's every bribe token through balance bisection was far too slow; the per-epoch totals showed the cap bit only
+    on 09-03 ($6.95M) and 09-24 ($434K), every other Q0 epoch <= $391). Now:
+      (a) ONLY THIS DEPOSITOR'S DEPOSITS. It is a Gnosis Safe, so its own nonce() rises once per executed transaction:
+          bisection on that finds every block it acted in (9 transactions over Q0 at the 2026-10-11 read, ~200 archive
+          calls); each block's receipts give its NotifyReward(from=depositor, reward token, epoch) logs.
+      (b) EACH TOKEN'S FIRST DEPOSIT ONLY is priced at DefiLlama's historical price at that moment: no price = the flag
+          UNPRICED AT DEPOSIT (a flag on the epoch line, not a second exclusion rule).
+    The cap's answer is read (aerodrome_voter_epochs, archive) only for the epochs holding a flagged token. One line per
+    epoch, then the flagged tokens the cap missed. Reads only."""
     import time as _t                                      # noqa: PLC0415
     from eth_utils import keccak                           # noqa: PLC0415
-    head(f"AERODROME — Q0 bribes by deposit: depositor {depositor[:10]}…, 'unpriced at deposit' flag vs the cap")
-    week = 7 * 86400
-    now = int(_t.time())
-    last = now // week * week - week
-    first = (now - days * 86400) // week * week
-    eps = list(range(first, last + 1, week))
-    print(f"  {len(eps)} epoch(s): {_t.strftime('%Y-%m-%d', _t.gmtime(eps[0]))} .. "
-          f"{_t.strftime('%Y-%m-%d', _t.gmtime(eps[-1]))}; tokens >= ${min_usd:,.0f} at the quoted price, or unpriced")
-    res = aerodrome_voter_epochs(eps, archive=True)
-    if res.get("error"):
-        print(f"  {res['error']}")
-        return
+    head(f"AERODROME — bribes posted by {depositor[:10]}… over {days} days: 'unpriced at deposit' vs the cap")
+    t0 = _t.time()
     notify = "0x" + keccak(text="NotifyReward(address,address,uint256,uint256)").hex().removeprefix("0x")
-    dep = depositor.lower()
-    by_dep, flagged_missed, table = [], [], []
-    for ep in eps:
-        r, day = res.get(ep) or {}, _t.strftime("%Y-%m-%d", _t.gmtime(ep))
-        if r.get("error") or not r:
-            print(f"\n  EPOCH {day}: {r.get('error', 'not read')}")
+    b0, b1 = rpc_block_at("base", int(_t.time()) - days * 86400), None
+    for url in _rpcs_for("base"):
+        try:
+            b1 = int(rpc(url, "eth_blockNumber")["result"], 16)
+            break
+        except Exception:  # noqa: BLE001
             continue
-        b0, b1 = rpc_block_at("base", ep), r.get("end_block")
-        toks = [d for d in r["tokens"] if "bribes" in d["kinds"] and (not d["price"] or (d["usd"] or 0) >= min_usd)]
-        print(f"\n  EPOCH {day}: bribes ${r['usd_bribes']:,.0f} quoted; {len(toks)} token(s) scanned; blocks {b0}..{b1}")
-        flag_n = flag_usd = capped_usd = 0.0
-        for d in toks:
-            sym = str(d.get("symbol") or "?")[:12]
-            unp_dep, deps = False, []
-            for rc, (kd, _pl, _raw) in d["rewards"].items():
-                if kd != "bribes" or not (b0 and b1):
-                    continue
-                logs, why = base_logs_where_balance_moves(d["token"], rc, [notify, None, _pad(d["token"]),
-                                                                           "0x" + _word(ep)], b0, b1, say=lambda *_: None,
-                                                          max_calls=300)
-                if not logs and any(w in why for w in ("stopped", "unreadable", "refused")):
-                    print(f"    {sym:<12} {rc}: NotifyReward not read — {why}")
-                for e in logs or ():
-                    ts, amt = int(e.get("timeStamp") or 0), int(e["data"], 16)
-                    frm = "0x" + e["topics"][1][-40:]
-                    pr = _llama_prices([f"base:{d['token']}"], f"historical/{ts}/").get(d["token"].lower()) if ts else None
-                    priced = bool(pr and pr.get("price"))
-                    unp_dep = unp_dep or not priced
-                    deps.append((frm, ts, amt, pr))
-                    if frm.lower() == dep:
-                        by_dep.append((day, sym, d["token"], ts, amt, pr, e["transactionHash"]))
-            capped = bool(d.get("excess"))
-            caught_by_cap = capped
-            if unp_dep:
-                flag_n += 1
-                flag_usd += d["usd"] or 0.0
-                if not caught_by_cap and (d["usd"] or 0) > 0:
-                    flagged_missed.append((day, sym, d["token"], d["usd"], d.get("depth")))
-            if capped:
-                capped_usd += d.get("excess") or 0.0
-            num = lambda x, f: "-" if x is None else format(x, f)                       # noqa: E731
-            print(f"    {sym:<12} {d['token']}  ${num(d['usd'], ',.0f'):>12} quoted  depth ${num(d.get('depth'), ',.0f'):>12}"
-                  f"  cap {'CAUGHT $' + format(d['excess'], ',.0f') if capped else 'no':<18}"
-                  f"  {'UNPRICED AT DEPOSIT' if unp_dep else ''}"
-                  + "".join(f"\n        deposit {'0x80f7…' if f.lower() == dep else f} "
-                            f"{_t.strftime('%m-%d %H:%M', _t.gmtime(ts)) if ts else '?'} raw {a}"
-                            f" — {'$' + format(float(p['price']), ',.6f') if p and p.get('price') else 'NO DefiLlama price'}"
-                            for f, ts, a, p in deps))
-        table.append((day, r["usd_bribes"], len(toks), int(flag_n), flag_usd, capped_usd))
-    print("\n  EPOCH TABLE — bribes quoted, tokens scanned, UNPRICED-AT-DEPOSIT flag (count, $ quoted), cap excluded $")
-    for day, ub, n, fn, fu, cu in table:
-        print(f"    {day}  ${ub:>14,.0f}  {n:>3}  flag {fn:>2} ${fu:>14,.0f}  cap ${cu:>14,.0f}")
-    print(f"\n  (a) REWARDS POSTED BY {depositor}: {len(by_dep)}")
-    for day, sym, tok, ts, amt, pr, tx in by_dep:
-        print(f"    epoch {day}  {sym} {tok}  {_t.strftime('%Y-%m-%d %H:%M', _t.gmtime(ts)) if ts else '?'}  raw {amt}  "
-              f"{'$' + format(float(pr['price']), ',.6f') if pr and pr.get('price') else 'NO price'}  tx {tx}")
-    print(f"  (b) FLAGGED 'UNPRICED AT DEPOSIT' AND NOT CAUGHT BY THE CAP: {len(flagged_missed)}")
-    for day, sym, tok, usd, depth in flagged_missed:
-        print(f"    epoch {day}  {sym} {tok}  ${usd or 0:,.0f} quoted, depth ${depth or 0:,.0f}")
-    print("  PASTE BACK the epoch table and (a)/(b). Tokens below the floor and fee tokens are not scanned.")
+    if not (b0 and b1):
+        print("  Base block range unreadable — nothing scanned")
+        return
+    blocks, why = _safe_nonce_blocks(depositor, b0, b1)
+    print(f"  blocks {b0:,}..{b1:,}: {why}; {len(blocks)} block(s) to read")
+    deps = []                                              # (epoch, ts, token, reward contract, raw, tx)
+    for blk in blocks:
+        try:
+            rcpts = _block_receipts("base", blk)
+        except Exception as e:  # noqa: BLE001
+            print(f"    block {blk:,}: receipts unreadable — {e}")
+            continue
+        ts = None
+        for rc in rcpts:
+            for lg in rc.get("logs") or ():
+                tp = lg.get("topics") or []
+                if len(tp) == 4 and tp[0].lower() == notify and tp[1][-40:].lower() == depositor.lower()[2:]:
+                    if ts is None:
+                        ts = int(_rpc_retry("base", "eth_getBlockByNumber", [hex(blk), False])["timestamp"], 16)
+                    deps.append((int(tp[3], 16), ts, "0x" + tp[2][-40:], lg["address"].lower(), int(lg["data"], 16),
+                                 rc.get("transactionHash")))
+    if not deps:
+        print("  no NotifyReward by this depositor in the window")
+        return
+    # (b) each token's FIRST deposit, priced at that moment
+    first: dict = {}
+    for ep, ts, tok, _rc, _raw, _tx in sorted(deps, key=lambda d: d[1]):
+        first.setdefault(tok, ts)
+    info = _llama_prices([f"base:{t}" for t in first], "current/")
+    at_dep = {}
+    for tok, ts in first.items():
+        pr = _llama_prices([f"base:{tok}"], f"historical/{ts}/").get(tok)
+        at_dep[tok] = float(pr["price"]) if pr and pr.get("price") else None
+    sym = {t: str((info.get(t) or {}).get("symbol") or t[:10])[:12] for t in first}
+    dec = {t: int((info.get(t) or {}).get("decimals") or 18) for t in first}
+    flagged = {t for t, p in at_dep.items() if p is None}
+    eps = sorted({d[0] for d in deps})
+    cap_eps = sorted({d[0] for d in deps if d[2] in flagged})
+    cap = aerodrome_voter_epochs(cap_eps, archive=True, say=lambda *_: None) if cap_eps else {}
+    if cap.get("error"):
+        print(f"  the cap's epochs unreadable — {cap['error']}")
+        cap = {}
+    print(f"\n  ONE LINE PER EPOCH ({len(deps)} deposit(s), {len(first)} token(s); the cap read for "
+          f"{len(cap_eps)} epoch(s) holding a flagged token):")
+    missed = []
+    for ep in eps:
+        day = _t.strftime("%Y-%m-%d", _t.gmtime(ep))
+        mine = [d for d in deps if d[0] == ep]
+        r = cap.get(ep) or {}
+        excess = {str(x["token"]).lower(): x.get("excess") or 0.0 for x in r.get("tokens") or ()}
+        quoted = {str(x["token"]).lower(): x.get("usd") for x in r.get("tokens") or ()}
+        parts = []
+        for tok in sorted({d[2] for d in mine}):
+            amt = sum(d[4] for d in mine if d[2] == tok) / 10 ** dec[tok]
+            flag = tok in flagged
+            if flag and ep in cap_eps and r and not excess.get(tok):
+                missed.append((day, tok, amt, quoted.get(tok)))
+            parts.append(f"{sym[tok]} {amt:,.0f}" + (" UNPRICED AT DEPOSIT" if flag else f" @${at_dep[tok]:,.4g}")
+                         + (f" cap ${excess[tok]:,.0f}" if excess.get(tok) else " cap -" if flag and r else ""))
+        print(f"    {day}  {len(mine)} deposit(s): " + "; ".join(parts))
+    print(f"\n  FLAGGED (unpriced at first deposit) AND MISSED BY THE CAP: {len(missed)}")
+    for day, tok, amt, usd in missed:
+        print(f"    epoch {day}  {sym[tok]} {tok}  {amt:,.0f} tokens"
+              + (f", ${usd:,.0f} at the epoch-end quote (all bribes of the token that epoch)" if usd is not None
+                 else ", no epoch-end quote"))
+    print(f"  {_t.time() - t0:,.0f}s. PASTE BACK the epoch lines and the missed list.")
+
+
+# THE FIELDS morpho_interest_listed_vs_all's QUERIES NAME, per GraphQL type — checked against the live schema by
+# introspection before any query (Jake's run on ab3c7fe 2026-10-11). Read live 2026-10-11: Market has marketId (not
+# uniqueKey); MarketFilters keeps uniqueKey_in, which takes marketIds.
+MORPHO_PROBE_FIELDS = {
+    "Market": {"marketId", "chain", "listed", "loanAsset", "collateralAsset", "state", "historicalState"},
+    "MarketFilters": {"chainId_in", "uniqueKey_in"},
+    "MarketState": {"supplyAssetsUsd", "borrowAssetsUsd", "borrowApy"},
+    "MarketHistory": {"borrowAssetsUsd", "borrowApy"},
+    "TimeseriesOptions": {"startTimestamp", "endTimestamp", "interval"},
+}
+
+
+def _morpho_schema_missing(url: str, need: dict) -> dict:
+    """{type: (missing fields, fields it has)} for every type in `need` the live schema does not fully serve — one
+    introspection query (fields for object types, inputFields for input types)."""
+    q = "{ " + " ".join(f'{t}: __type(name:"{t}"){{ fields {{ name }} inputFields {{ name }} }}' for t in need) + " }"
+    data = (requests.post(url, json={"query": q}, headers=_ua(), timeout=TIMEOUT).json().get("data") or {})
+    out = {}
+    for t, want in need.items():
+        node = data.get(t) or {}
+        have = {x["name"] for x in (node.get("fields") or []) + (node.get("inputFields") or [])}
+        if want - have:
+            out[t] = (want - have, have)
+    return out
 
 
 def morpho_interest_listed_vs_all():
@@ -4185,11 +4339,21 @@ def morpho_interest_listed_vs_all():
     try:
         ids = [c["id"] for c in ((requests.post(url, json={"query": "{ chains { id } }"}, headers=_ua(),
                                                 timeout=TIMEOUT).json().get("data") or {}).get("chains") or [])]
+        # THE LIVE SCHEMA FIRST (Jake's run on ab3c7fe 2026-10-11: 'Cannot query field "uniqueKey" on type "Market"' —
+        # the field is marketId; the filter is still uniqueKey_in). Every field the queries below name is checked by
+        # introspection; a missing one is printed with what the type does have, and nothing is guessed around it.
+        missing = _morpho_schema_missing(url, MORPHO_PROBE_FIELDS)
     except Exception as e:  # noqa: BLE001
         print(f"  UNREACHABLE — {e}")
         return
+    if missing:
+        print("  SCHEMA CHANGED — the probe's queries name fields the live API does not serve:")
+        for typ, (want, have) in missing.items():
+            print(f"    {typ}: missing {sorted(want)}; it has {sorted(have)}")
+        print("  Nothing queried. Update MORPHO_PROBE_FIELDS and the queries together.")
+        return
     q = ("query($c:[Int!],$skip:Int!,$first:Int!){ markets(first:$first, skip:$skip, where:{chainId_in:$c}){ "
-         "pageInfo{countTotal} items{ uniqueKey chain{id} listed loanAsset{symbol} collateralAsset{symbol} "
+         "pageInfo{countTotal} items{ marketId chain{id} listed loanAsset{symbol} collateralAsset{symbol} "
          "state{ supplyAssetsUsd borrowAssetsUsd borrowApy } } } }")
     items, total = [], None
     for skip in range(0, 60_000, 1_000):
@@ -4230,7 +4394,7 @@ def morpho_interest_listed_vs_all():
     top = sorted((i for i in items if cls(i) == "unlisted other"), key=day_int, reverse=True)[:10]
     print("  the ten largest UNLISTED OTHER markets by interest/day:")
     for i in top:
-        print(f"    {i['uniqueKey'][:14]}… chain {i['chain']['id']}  {(i.get('loanAsset') or {}).get('symbol')}/"
+        print(f"    {i['marketId'][:14]}… chain {i['chain']['id']}  {(i.get('loanAsset') or {}).get('symbol')}/"
               f"{(i.get('collateralAsset') or {}).get('symbol')}  borrow ${f(i, 'borrowAssetsUsd'):,.0f}  "
               f"apy {f(i, 'borrowApy'):.2%}  ${day_int(i):,.0f}/day")
     fees = None
@@ -4245,7 +4409,9 @@ def morpho_interest_listed_vs_all():
             fees = (float(w["value"].sum()), len(w), y)
     except Exception as e:  # noqa: BLE001
         print(f"  (store not read: {type(e).__name__})")
-    if fees:
+    if fees and not fees[1]:
+        print(f"\n  DefiLlama fees: no stored day in the 7 to {fees[2]:%Y-%m-%d} (run after a fetch) — not compared")
+    elif fees:
         tot, n, y = fees
         print(f"\n  DefiLlama fees, the {n} complete day(s) to {y:%Y-%m-%d}: ${tot:,.0f}")
         for lab, d in (("listed (our reference)", lst), ("listed + unlisted other", lst + oth),
@@ -4253,20 +4419,31 @@ def morpho_interest_listed_vs_all():
             print(f"    vs {lab:<26} x7 ${d * 7:>16,.0f}: DefiLlama {tot / (d * 7) - 1:+.1%}" if d else f"    {lab}: 0")
     # THE LAST 7 DAYS PER MARKET, where the API serves a daily history (historicalState): listed and unlisted-other
     # markets with >= $1M borrowed now; a schema error is printed, not guessed around
-    keys = [i["uniqueKey"] for i in items if cls(i) != "unlisted self-lent" and f(i, "borrowAssetsUsd") >= 1e6]
+    # the filter takes marketIds, and one marketId can sit on several chains: (marketId, chain) is the market
+    want = {(i["marketId"], (i.get("chain") or {}).get("id")) for i in items
+            if cls(i) != "unlisted self-lent" and f(i, "borrowAssetsUsd") >= 1e6}
+    keys = sorted({k for k, _c in want})
     now_ts = int(pd.Timestamp.now(tz="UTC").normalize().timestamp())
     opts = {"startTimestamp": now_ts - 8 * 86400, "endTimestamp": now_ts, "interval": "DAY"}
-    hq = ("query($k:[String!],$o:TimeseriesOptions){ markets(first:1000, where:{uniqueKey_in:$k}){ items{ uniqueKey "
-          "listed historicalState{ borrowAssetsUsd(options:$o){x y} borrowApy(options:$o){x y} } } } }")
-    per_day = {}
-    for i in range(0, len(keys), 200):
-        j = requests.post(url, json={"query": hq, "variables": {"k": keys[i:i + 200], "o": opts}}, headers=_ua(),
+    # COMPLEXITY IS CHARGED PER `first`, ~20,105 a market for two 8-day series (measured 2026-10-11 against the cap
+    # of 1,000,000: first:1000 read 20,105,000 and was refused). uniqueKey_in matches a marketId on every chain it sits
+    # on, so 20 marketIds a query with first:49 (985,145) leaves room for the copies; a batch with more is said.
+    hq = ("query($k:[String!],$o:TimeseriesOptions){ markets(first:49, where:{uniqueKey_in:$k}){ pageInfo{countTotal} "
+          "items{ marketId chain{id} listed historicalState{ borrowAssetsUsd(options:$o){x y} "
+          "borrowApy(options:$o){x y} } } } }")
+    per_day, short = {}, 0
+    for i in range(0, len(keys), 20):
+        j = requests.post(url, json={"query": hq, "variables": {"k": keys[i:i + 20], "o": opts}}, headers=_ua(),
                           timeout=TIMEOUT).json()
         if j.get("errors"):
             print(f"\n  historicalState not read (the 'last 7 days' split needs it): {str(j['errors'])[:400]}")
             per_day = {}
             break
-        for m in ((j.get("data") or {}).get("markets") or {}).get("items") or []:
+        node = (j.get("data") or {}).get("markets") or {}
+        short += max(0, int((node.get("pageInfo") or {}).get("countTotal") or 0) - len(node.get("items") or []))
+        for m in node.get("items") or []:
+            if (m.get("marketId"), (m.get("chain") or {}).get("id")) not in want:
+                continue
             hs = m.get("historicalState") or {}
             apy = {p["x"]: float(p["y"] or 0) for p in hs.get("borrowApy") or []}
             for p in hs.get("borrowAssetsUsd") or []:
@@ -4275,6 +4452,8 @@ def morpho_interest_listed_vs_all():
                 k = "listed" if m.get("listed") else "unlisted other"
                 per_day.setdefault(d, {}).setdefault(k, 0.0)
                 per_day[d][k] += v
+    if short:
+        print(f"\n  NOTE: {short} market cop(ies) on other chains were past first:49 and not read (the split is short)")
     if per_day:
         print("\n  LAST 7 DAYS from historicalState (markets with >= $1M borrowed now; self-lent left out):")
         for d in sorted(per_day)[-7:]:
@@ -4324,6 +4503,260 @@ def aerodrome_foundation_q0(days: int = 90):
         print(f"    NEGATIVE {day:%Y-%m-%d}: {v:,.0f} (a lock left the buyback wallets)")
     print("  for scale only: Blockworks reported 9.17M AERO bought in Q2 2026 (27.95M YTD) — secondary, per the "
           "external audit; a different quarter")
+
+
+def _foundation_nft_sig(owners: list, ids: list, block: str) -> dict:
+    """{tokenId: (owner or None, escrowType, managed id, AERO counted)} at `block` — what aerodrome_foundation_locks
+    counts for each NFT: NORMAL locked(id).amount, LOCKED weights(id, idToManaged(id)), MANAGED 0; an NFT no listed owner
+    holds counts 0."""
+    calls = []
+    for t in ids:
+        calls += [(AERO_VE, _selx("ownerOf(uint256)") + _word(t)), (AERO_VE, _selx("escrowType(uint256)") + _word(t)),
+                  (AERO_VE, _selx("idToManaged(uint256)") + _word(t)), (AERO_VE, SEL_LOCKED + _word(t))]
+    got = _batch_eth_calls("base", calls, block=block)
+    # A FAILED READ IS NOT A ZERO (Jake's run on ab3c7fe, live 2026-10-11: rate-limited endpoints returned nothing and
+    # the bisection took "amount 0" for a change). escrowType / idToManaged / locked answer for ANY id (0 when unknown);
+    # only ownerOf reverts — so a missing answer from the other three is a failed read, and raises.
+    if any(got[4 * k + j] is None for k in range(len(ids)) for j in (1, 2, 3)):
+        raise ValueError(f"VotingEscrow state unread at block {block}")
+    mg = {t: int(got[4 * k + 2] or "0x0", 16) for k, t in enumerate(ids)}
+    ws = _batch_eth_calls("base", [(AERO_VE, _selx("weights(uint256,uint256)") + _word(t) + _word(mg[t])) for t in ids],
+                          block=block)
+    if any(w is None for w in ws):
+        raise ValueError(f"VotingEscrow.weights unread at block {block}")
+    own = {o.lower() for o in owners}
+    out = {}
+    for k, t in enumerate(ids):
+        ow = got[4 * k]
+        ow = ("0x" + ow[-40:]).lower() if ow else None
+        ty = int(got[4 * k + 1] or "0x0", 16)
+        lk = got[4 * k + 3]
+        raw = int(lk[2:66], 16) if lk and len(lk) >= 66 else 0
+        raw = raw - (1 << 256) if raw >= 1 << 255 else raw
+        amt = 0.0 if ow not in own else (int(ws[k] or "0x0", 16) / 1e18 if ty == 1 else 0.0 if ty == 2 else raw / 1e18)
+        out[t] = (ow if ow in own else None, ty, mg[t], round(amt, 6))
+    return out
+
+
+def aerodrome_foundation_lock_split(days: int = 90):
+    """WHERE THE FOUNDATION'S LOCKED-AERO INCREASE CAME FROM, BY TRANSACTION (Jake's run on ab3c7fe 2026-10-11: the
+    stock rose 171,145,889 -> 174,772,260 over his stored Q0 days — does the managed veNFT's rebase compound into it?
+    At 2.51% that would be ~1.06M of emissions, not buyback). The stock counts a LOCKED veNFT at weights(id, managed):
+    the principal deposited, which the managed NFT's rebase and compounding never change — those accrue in its
+    LockedManagedReward (earned(AERO, id), read here at both ends) and reach a weight only through withdrawManaged and
+    a fresh depositManaged. So: every NFT whose counted amount differs between the window's two ends is bisected to the
+    blocks where it changed (state reads, Base logs being paid), and each block's receipts classify the change —
+    REBASE (Deposit by the RewardsDistributor), NEW AERO LOCKED (createLock / increaseAmount by the owner, with any AERO
+    the owner received in the same transaction and from whom), veNFT TRANSFERRED IN (from whom, labelled when it is a
+    filing wallet), SPLIT / MERGE / MANAGED DEPOSIT-WITHDRAW (moves). Only purchases are buyback; this prints the
+    split and leaves the series to Jake's decision. Reads only."""
+    import time as _t                                      # noqa: PLC0415
+    from eth_utils import keccak                           # noqa: PLC0415
+    import config                                          # noqa: PLC0415
+    fb = config.PROJECT_BY_NAME["Aerodrome"]["foundation_buyback"]
+    owners = list(fb["owners"])
+    head(f"AERODROME — the Foundation's locked-AERO change over {days} days, split by transaction")
+    t0 = _t.time()
+    aero = config.PROJECT_BY_NAME["Aerodrome"]["contracts"]["token"]
+    aero = (aero["address"] if isinstance(aero, dict) else aero).lower()
+    b0 = rpc_block_at("base", int(_t.time()) - days * 86400, say=lambda *_: None)
+    b1 = rpc_block_at("base", int(_t.time()) - 120, say=lambda *_: None)
+    if not (b0 and b1):
+        print("  Base block range unreadable — nothing read")
+        return
+
+    def held(block):
+        ns = _batch_eth_calls("base", [(AERO_VE, _selx("balanceOf(address)") + _word(int(o, 16))) for o in owners],
+                              block=block)
+        if any(x is None for x in ns):
+            raise ValueError(f"VotingEscrow.balanceOf unread at block {block}")
+        pairs = [(o, i) for o, x in zip(owners, ns) for i in range(int(x, 16))]
+        got = _batch_eth_calls("base", [(AERO_VE, SEL_OWNER_TOKEN + _word(int(o, 16)) + _word(i)) for o, i in pairs],
+                               block=block)
+        if any(x is None for x in got):
+            raise ValueError(f"ownerToNFTokenIdList unread at block {block}")
+        return {int(x, 16) for x in got}
+    ids = sorted(_retry(lambda: held(hex(b0))) | _retry(lambda: held(hex(b1))))
+    s0, s1 = (_retry(lambda: _foundation_nft_sig(owners, ids, hex(b0))),
+              _retry(lambda: _foundation_nft_sig(owners, ids, hex(b1))))
+    tot0, tot1 = sum(v[3] for v in s0.values()), sum(v[3] for v in s1.values())
+    print(f"  blocks {b0:,}..{b1:,}: {len(ids)} NFT(s) held at either end; counted {tot0:,.0f} -> {tot1:,.0f} "
+          f"({tot1 - tot0:+,.0f} AERO)")
+    changed = [t for t in ids if s0[t] != s1[t]]
+    print(f"  {len(changed)} NFT(s) changed; the rest are unchanged to the wei (no rebase reached their weights)")
+    cache: dict = {}
+
+    def sig(t, b):
+        if (t, b) not in cache:
+            cache[(t, b)] = _retry(lambda: _foundation_nft_sig(owners, [t], hex(b))[t])
+        return cache[(t, b)]
+    steps: list = []
+
+    def find(t, lo, hi):
+        if sig(t, lo) == sig(t, hi):
+            return
+        if hi - lo == 1:
+            steps.append((hi, t))
+            return
+        mid = (lo + hi) // 2
+        find(t, lo, mid)
+        find(t, mid, hi)
+    for t in changed:
+        cache[(t, b0)], cache[(t, b1)] = s0[t], s1[t]
+        find(t, b0, b1)
+    top = lambda x: "0x" + keccak(text=x).hex().removeprefix("0x")  # noqa: E731
+    T_XFER, T_DEP = top("Transfer(address,address,uint256)"), top("Deposit(address,uint256,uint8,uint256,uint256,uint256)")
+    T_SPLIT = top("Split(uint256,uint256,uint256,address,uint256,uint256,uint256,uint256)")
+    T_MERGE = top("Merge(address,uint256,uint256,uint256,uint256,uint256,uint256,uint256)")
+    T_DM, T_WM = top("DepositManaged(address,uint256,uint256,uint256,uint256)"), \
+        top("WithdrawManaged(address,uint256,uint256,uint256,uint256)")
+    own = {o.lower() for o in owners}
+    labels = {a.lower(): lab for a, lab in AERO_FILING_WALLETS.items()}
+    dist = AERO_REWARDS_DISTRIBUTOR.lower()
+    num = lambda h: int(h, 16)  # noqa: E731
+    adr = lambda h: "0x" + h[-40:].lower()  # noqa: E731
+    by_class: dict = {}
+    touched: set = set()
+    from_balance: list = []
+    print("\n  EACH CHANGE (block, date, NFT, counted AERO before -> after, what the receipts show):")
+    for blk, t in sorted(steps):
+        before, after = sig(t, blk - 1), sig(t, blk)
+        delta = after[3] - before[3]
+        try:
+            rcpts = _block_receipts("base", blk)
+            ts = num(_rpc_retry("base", "eth_getBlockByNumber", [hex(blk), False])["timestamp"])
+        except Exception as e:  # noqa: BLE001
+            print(f"    {blk:,} #{t}: receipts unreadable — {e}")
+            by_class.setdefault("UNREAD", 0.0)
+            by_class["UNREAD"] += delta
+            continue
+        what, cls = [], None
+        for rc in rcpts:
+            logs = rc.get("logs") or []
+            mine = [lg for lg in logs if lg["address"].lower() == AERO_VE.lower() and len(lg.get("topics") or []) > 1
+                    and any(num(x) == t for x in lg["topics"][1:] if len(x) == 66)]
+            if not mine:
+                continue
+            aero_in = [(adr(lg["topics"][1]), num(lg["data"]) / 1e18) for lg in logs
+                       if lg["address"].lower() == aero and len(lg["topics"]) == 3 and lg["topics"][0] == T_XFER
+                       and adr(lg["topics"][2]) in own]
+            for lg in mine:
+                tp = lg["topics"]
+                if tp[0] == T_XFER and len(tp) == 4 and adr(tp[2]) in own:
+                    frm = adr(tp[1])
+                    if num(tp[1]) == 0:
+                        what.append("minted to the owner")
+                    else:
+                        what.append(f"veNFT TRANSFERRED IN from {frm} ({labels.get(frm, 'not a filing wallet')})")
+                        cls = cls or ("TRANSFER IN (filing wallet: internal)" if frm in labels else
+                                      "TRANSFER IN (from outside the filing wallets)")
+                elif tp[0] == T_XFER and len(tp) == 4:
+                    what.append(f"veNFT transferred OUT to {adr(tp[2])}")
+                    cls = cls or "TRANSFER OUT"
+                elif tp[0] == T_DEP:
+                    prov, kind = adr(tp[1]), num(tp[3])
+                    val = _words(lg["data"])[0] / 1e18
+                    if prov == dist:
+                        what.append(f"Deposit {val:,.2f} by the RewardsDistributor (rebase)")
+                        cls = cls or "REBASE"
+                    else:
+                        kn = ("depositFor", "createLock", "increaseAmount", "increaseUnlockTime")[kind] \
+                            if kind < 4 else str(kind)
+                        what.append(f"Deposit {val:,.2f} ({kn}) by {prov}"
+                                    + ("; AERO received in the same tx: "
+                                       + ", ".join(f"{a:,.2f} from {f}" for f, a in aero_in) if aero_in else
+                                       "; no AERO received in the same tx (paid from the wallet's balance)"))
+                        if kind in (1, 2) or (kind == 0 and prov in own):
+                            cls = cls or "NEW AERO LOCKED"
+                            if not aero_in and prov in own:
+                                from_balance.append((blk, t, prov, val))
+                elif tp[0] == T_SPLIT:
+                    what.append(f"Split of #{num(tp[1])} into #{num(tp[2])} / #{num(tp[3])}")
+                    cls = cls or "SPLIT"
+                elif tp[0] == T_MERGE:
+                    what.append(f"Merge #{num(tp[2])} into #{num(tp[3])}")
+                    cls = cls or "MERGE"
+                elif tp[0] in (T_DM, T_WM):
+                    touched.add(num(tp[3]))
+                    w = _words(lg["data"])[0] / 1e18
+                    what.append(f"{'depositManaged' if tp[0] == T_DM else 'withdrawManaged'} into/from #{num(tp[3])} "
+                                f"weight {w:,.2f}")
+                    cls = cls or ("MANAGED DEPOSIT" if tp[0] == T_DM else
+                                  "MANAGED WITHDRAW (locked rewards realised: rebase + compounded)")
+            what.append(f"tx {rc.get('transactionHash')}")
+        cls = cls or "UNCLASSIFIED"
+        by_class[cls] = by_class.get(cls, 0.0) + delta
+        print(f"    {blk:,} {_t.strftime('%Y-%m-%d', _t.gmtime(ts))} #{t}: {before[3]:,.2f} -> {after[3]:,.2f} "
+              f"({delta:+,.2f}) {cls}\n        " + "\n        ".join(what))
+    print("\n  THE CHANGE BY CLASS (AERO counted):")
+    for k, v in sorted(by_class.items(), key=lambda kv: -abs(kv[1])):
+        print(f"    {k:<46} {v:>+18,.2f}")
+    print(f"    {'TOTAL':<46} {sum(by_class.values()):>+18,.2f} (counted change {tot1 - tot0:+,.2f})")
+    # THE MANAGED NFTs' LOCKED REWARDS (rebase + compounding) accrued to the owners' LOCKED NFTs: not in the stock
+    sel_earned = _selx("earned(address,uint256)")
+    acc = []
+    for blk, s in ((b0, s0), (b1, s1)):
+        locked = [(t, v[2]) for t, v in s.items() if v[0] and v[1] == 1]
+        lmr = _batch_eth_calls("base", [(AERO_VE, _selx("managedToLocked(uint256)") + _word(m)) for _t2, m in locked],
+                               block=hex(blk))
+        er = _batch_eth_calls("base", [("0x" + r[-40:], sel_earned + _word(int(aero, 16)) + _word(t2))
+                                       for (t2, _m), r in zip(locked, lmr) if r], block=hex(blk))
+        acc.append(sum(int(x or "0x0", 16) for x in er) / 1e18)
+    print(f"\n  NOT IN THE STOCK — the managed NFTs' locked rewards (rebase + compounded voting rewards) earned by the "
+          f"owners' LOCKED NFTs: {acc[0]:,.2f} -> {acc[1]:,.2f} AERO ({acc[1] - acc[0]:+,.2f}); realised only by "
+          f"withdrawManaged")
+    # WHERE THE WALLET'S AERO CAME FROM, for each lock paid from the wallet's balance: its AERO inflows in the 30 days
+    # before (balance bisection; a swap shows as AERO from a pool or router, a reward claim as AERO from a reward
+    # contract) — so "bought" is read from the transfers, not assumed
+    for blk, t, prov, val in from_balance:
+        logs, how = base_logs_where_balance_moves(aero, prov, [T_XFER, None, "0x" + prov[2:].rjust(64, "0")],
+                                                  max(blk - 30 * 43_200, b0), blk, say=lambda *_: None,
+                                                  max_calls=2000, max_moves=60)
+        by_from: dict = {}
+        for lg in logs:
+            f = adr(lg["topics"][1])
+            by_from[f] = by_from.get(f, 0.0) + int(lg["data"], 16) / 1e18
+        print(f"\n  #{t}'s {val:,.2f} AERO came from {prov}'s balance; its AERO INFLOWS in the 30 days before block "
+              f"{blk:,} ({how}):")
+        for f, a in sorted(by_from.items(), key=lambda kv: -kv[1])[:15]:
+            print(f"    {a:>18,.2f} from {f} ({labels.get(f, 'not a filing wallet')})")
+    # REBASE vs COMPOUNDED, from each managed NFT's LockedManagedReward NotifyReward(from, AERO, epoch, amount) in the
+    # window (VotingEscrow._increaseAmountFor notifies it for the distributor's rebase depositFor AND for a compounder's
+    # increaseAmount): from = the RewardsDistributor -> rebase (emissions); anyone else -> compounded voting rewards
+    print("\n  THE MANAGED NFTs' LOCKED REWARDS IN THE WINDOW, BY SOURCE (each LockedManagedReward's NotifyReward, found by "
+          "bisecting its AERO balance):")
+    mids = sorted({v[2] for st_ in (s0, s1) for v in st_.values() if v[0] and v[1] == 1} | touched)
+    notify = top("NotifyReward(address,address,uint256,uint256)")
+    tot_rb = tot_cp = 0.0
+    for m in mids:
+        try:
+            lmr = _retry(lambda: _rpc_retry("base", "eth_call", [{"to": AERO_VE, "data": _selx("managedToLocked(uint256)")
+                                                                   + _word(m)}, hex(b1)]))
+            lmr = "0x" + lmr[-40:]
+            sup = int(_rpc_retry("base", "eth_call", [{"to": lmr, "data": _selx("totalSupply()")}, hex(b1)]), 16) / 1e18
+        except ValueError as e:
+            print(f"    #{m}: LockedManagedReward unread — {e}")
+            continue
+        mine = sum(v[3] for v in s1.values() if v[0] and v[1] == 1 and v[2] == m)
+        logs, how = base_logs_where_balance_moves(aero, lmr, [notify, None, "0x" + aero[2:].rjust(64, "0")], b0, b1,
+                                                  say=lambda *_: None, max_calls=3000, max_moves=120)
+        if not logs and any(w_ in how for w_ in ("refused", "stopped", "unreadable")):
+            print(f"    #{m} (LockedManagedReward {lmr}): NOT READ — {how[:300]}")
+            continue
+        rb = sum(int(lg["data"], 16) for lg in logs if adr(lg["topics"][1]) == dist) / 1e18
+        cp = sum(int(lg["data"], 16) for lg in logs if adr(lg["topics"][1]) != dist) / 1e18
+        who = sorted({adr(lg["topics"][1]) for lg in logs if adr(lg["topics"][1]) != dist})
+        share = mine / sup if sup else 0.0
+        tot_rb, tot_cp = tot_rb + rb * share, tot_cp + cp * share
+        print(f"    #{m} (LockedManagedReward {lmr}): rebase {rb:,.2f} + compounded {cp:,.2f} AERO notified"
+              f"{' by ' + ', '.join(who) if who else ''}; the owners' weights {mine:,.2f} of {sup:,.2f} "
+              f"({share:.2%}) at the window's end -> that share: rebase {rb * share:,.2f}, compounded "
+              f"{cp * share:,.2f}. {how}")
+    print(f"    OWNERS' SHARE IN THE WINDOW (by their weights at its end): rebase (emissions, not buyback) {tot_rb:,.2f}; "
+          f"compounded voting rewards {tot_cp:,.2f} — both accrue in the managed NFT and enter the counted stock only "
+          f"when realised (withdrawManaged)")
+    print(f"  {_t.time() - t0:,.0f}s. PASTE BACK the changes and the class totals. Only purchases count as buyback — "
+          f"Jake decides the series.")
 
 
 def near_bq_backfill_status():
@@ -10227,7 +10660,8 @@ CHECKS = (
     hl_af_fills_depth, etherfi_safe_owners, etherfi_sethfi_topups, etherfi_topup_safe, etherfi_cex_test, near_protocol_v87, aethir_pin_keys,
     robots_and_terms, ultrasound_history, hyperliquid_history_routes, blockworks_filings, maple_dao_vs_ssf, aethir_reward_distributors, etherfi_yield_reconcile, maple_ssf_candidates,
     aethir_distributor_match, fluid_igp137_wallet, fluid_igp137_custody, aethir_arr_formula, near_lockups,
-    aerodrome_bribe_scan, morpho_interest_listed_vs_all, aerodrome_foundation_q0, near_bq_backfill_status,
+    aerodrome_bribe_scan, morpho_interest_listed_vs_all, aerodrome_foundation_q0, aerodrome_foundation_lock_split,
+    near_bq_backfill_status,
     morpho_merkl_campaigns, etherfi_sender_trace,
     aerodrome_filing_wallets, blockworks_wallet_balances,
     etherfi_vault_archive, etherfi_contract_ids, etherfi_accountant, fluid_vesting_recipients, maple_ssf_partial,

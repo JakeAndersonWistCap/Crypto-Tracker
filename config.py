@@ -1686,7 +1686,10 @@ METHOD_AGREEMENT_TOLERANCE = 0.005
 # _mev_estimate_views). Same measuring point as the per-block read it stands in for; caveated as an estimate.
 
 SOURCE_MARKERS = ("PARTIAL", "delta", "recurring-only", "rederived", "as-buyback", "archive", "one-off-removed",
-                  "estimate")
+                  "estimate",
+                  # a log scan's DECLARED 0, written without a read (log_scans `declared_zero`, Pendle Optimism,
+                  # Jake's run on ab3c7fe 2026-10-11): the same measuring point as the scan it stands in for
+                  "declared-zero")
 
 # A bracketed ANNOTATION appended to a contract key: "minter[tail@21bps]". Unlike the markers
 # above it is not its own colon-delimited piece — it is glued to the key — so every parser that
@@ -8938,7 +8941,18 @@ PROJECTS = [
                                                   "checkerRewards": "eco_checker_rewards_cumulative_tokens",
                                                   "cloudHostRewards": "cloud_host_rewards_cumulative_tokens",
                                                   "edgeRewards": "edge_rewards_cumulative_tokens",
-                                                  "stakingRewards": "staker_rewards_cumulative_tokens"}},
+                                                  "stakingRewards": "staker_rewards_cumulative_tokens"},
+                                       # EDGE MONTHLY EARNINGS, PINNED BY KEY (Jake's run on ab3c7fe 2026-10-11: the
+                                       # value matcher found "no monthly series" — the chart is miningRewardData
+                                       # [{"date":"03/26","rewards":40196919.51}, .. {"date":"09/26",..}], MM/YY, a
+                                       # format the strict date reader does not take: read 2026-10-11). The format
+                                       # is declared for this array only — MM/YY globally would read the weekly
+                                       # DD/MM labels ("12/07") as months. Finished months only.
+                                       "arrays": {"miningRewardData": {
+                                           "value_key": "rewards", "metric": "edge_earnings_monthly_tokens",
+                                           "granularity": "monthly", "date_key": "date", "date_format": "%m/%y",
+                                           "complete_only": True, "source": "field",
+                                           "label": "Edge monthly earnings (miningRewardData)"}}},
             },
             # ===== LABELLED FIGURES — Jake's PDFs of the rendered pages, 2026-10-01. =====
             # anchor = the value as Jake read it beside its label; within = how far today's figure may
@@ -8974,9 +8988,8 @@ PROJECTS = [
                 # CHARTS. Weekly revenue, weekly compute hours and the two stake-duration charts are no
                 # longer matched by value: revenue is pinned by key (demand-metric `arrays`), and hours and
                 # durations are NOT in the server payload — client-loaded (Jake's probes5): UNAVAILABLE.
-                "edge_monthly": {"label": "Edge monthly earnings (03/26-09/26)", "metric": "edge_earnings_monthly_tokens",
-                                 "pages": ("protocol/onchain-metric", "protocol/ecosystem"), "granularity": "monthly",
-                                 "value_range": (1e6, 2e8), "first_on_or_after": "2026-03-01"},
+                # "edge_monthly" (Edge monthly earnings 03/26-09/26) is pinned by key since 2026-10-11:
+                # protocol/ecosystem `arrays` miningRewardData.
             },
             # ===== SAME-RUN SUMS AND RATIOS. =====
             "derived": (
@@ -15273,6 +15286,19 @@ PROJECTS = [
                  "(gaugeController, PENDLE, network.treasury; @87685c8, read 2026-10-09)"],
              "exclude_counterparties": ["0x0000000000000000000000000000000000000000",
                                         "0xE972D450ec5b11b99D97760422e0E054Afbc8042"],   # network.treasury
+             # NOT FETCHED — A DECLARED 0 (Jake's run on ab3c7fe, 2026-10-11: Jake set this gauge to 0 on 2026-10-09,
+             # its last token transfer 743 days earlier, yet explorer_gauge_l2 still queried it and timed out after
+             # 300s). fetch/logscan writes 0 for each day of the window (metric and direct_metric, source
+             # "...:declared-zero") with no network call; the Arbitrum scan keeps the tier to itself.
+             "declared_zero": {
+                 "since": "2024-09-27",
+                 "read_by": "Jake", "read_on": "2026-10-09",
+                 "source_url": "https://optimistic.etherscan.io/address/0x6875e4A945E498FE1B90BbB13CFbAF0b68658C9C"
+                               "#tokentxns",
+                 "evidence": "the gauge's last token transfer was 743 days before 2026-10-09 (~2024-09-26); "
+                             "pendle_emissions_q0 read Optimism 0 over 90 days (Jake's runs 2026-10-09)",
+                 "reopen_if": "Pendle votes emissions to an Optimism market again (a PENDLE transfer into "
+                              "0x6875e4A9...); then drop declared_zero and the scan resumes"},
              "own_tier": "explorer_gauge_l2", "scan_budget_s": 140,
              # THE QUARTER RECONCILED ON ITS OWN (Jake's seed 2026-10-09 15:33: Arbitrum's full history 733,307.6 short,
              # Optimism's Blockscout HTTP 500): when the full history cannot be used, the last 100 days are read fresh

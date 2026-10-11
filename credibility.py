@@ -2000,6 +2000,23 @@ def _long_for(spec: dict, long):
     return VIEWS_LONG if on and VIEWS_LONG is not None else long
 
 
+_WITHHELD = ("orphaned", "withdrawn", "suppressed", "disputed", "blocked", "measuring_point_changed",
+             "implausible_delta", "unreconciled_flow", "refuted", "out_of_bounds")
+
+
+def now_max_age(project: str, metric: str) -> int:
+    """HOW OLD A 'now' FIGURE MAY BE AND STILL BE JUDGED (Jake's run on ab3c7fe: one failed read of rpc.plume.org opened
+    Plume's sign-off). Past this the row is CHECK (STALE); within it the last stored value stands, labelled with its date.
+    Prices / market caps / FDV move daily: 2 days. Other daily stocks (supply, circulating, locked, balances, rates):
+    3 days. Weekly and monthly series: their cadence's own staleness (config.stale_after_days: 14 / 45 days)."""
+    gran = config.series_granularity(project, metric)
+    if gran in ("weekly", "monthly"):
+        return int(config.stale_after_days(project, metric, 7))
+    if metric.startswith("price_") or metric in ("market_cap_usd", "fdv_usd"):
+        return 2
+    return 3
+
+
 def ours_value(project: str, ours: dict, rows: dict, long, asof):
     """A Python-computed OUR value (an input compared on one date, or a month), or None when ours is
     a cell / Data reference written as a formula."""
@@ -2435,6 +2452,21 @@ def build_rows(headline_cells: list[dict], rows: dict, long, asof, projects=None
                 cell = ours["cell"]
             else:
                 cell = f"Data {ours['metric']} ({ours.get('window', 'now')})"
+                if ours.get("window", "now") == "now":
+                    # ONE FAILED READ DOES NOT OPEN SIGN-OFF (Jake's run on ab3c7fe): the figure's date travels with it,
+                    # and where the Data row has no value (and is not withheld) the last stored value within
+                    # now_max_age stands in, labelled; past that age the row is CHECK (STALE)
+                    drow = rows.get(f"{name}|{ours['metric']}") or {}
+                    ours["latest_date"] = drow.get("latest_date")
+                    ours["max_age"] = now_max_age(name, ours["metric"])
+                    if _num(drow.get("now")) is None and drow.get("status") not in _WITHHELD:
+                        sr = _series(VIEWS_LONG if VIEWS_LONG is not None else long, name, ours["metric"])
+                        if len(sr):
+                            ours["fallback"] = float(sr.iloc[-1])
+                            ours["latest_date"] = str(sr.index[-1].date())
+            ref_metric = spec["ref"].get("metric")
+            if ref_metric and spec["ref"].get("window", "now") == "now" and ref.get("mode") not in ("static",):
+                ref = {**ref, "ref_max_age": now_max_age(name, ref_metric)}
             out.append({"project": name, "tab": "input", "cell": cell, "id": iid, "what": spec["what"],
                         "ours": ours, "fmt": spec.get("fmt"), "tol": spec["ref"].get("tol"), **ref})
         # resolve each derived row's inputs to row positions; an input with no row is UNCHECKED
