@@ -293,6 +293,25 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                 "Check the Run Log for ve_managed; the history comes from `python token_metrics.py --seed "
                 "aero_buyback` (archive reads at each day's first block).")
 
+    if metric in (fb.get("window_metrics") or {}).values():
+        return (f"the Foundation buyback window (check_offline_items.aerodrome_buyback_window via fetch/ve_managed.py: "
+                f"locks, purchases and compounded rewards of {', '.join(fb['owners'].values())} over the previous UTC "
+                f"day; Jake's basis 2026-10-11) stored nothing this run",
+                "Check the Run Log for 'Foundation buyback window' (it needs the keyed Base RPC, BASE_RPC_URL); the Q0 "
+                "days come from `python token_metrics.py --seed aero_buyback`.")
+    # ===== HYPERLIQUID'S EXCLUDED WALLETS (Jake 2026-10-11, A1) and NEAR's weekly lockups / NearBlocks cross-check (C)
+    if metric in ("circulating_supply_tokendetails", "excluded_wallets_tokens"):
+        return ("the tokenDetails read and the Foundation / Community Grants wallet reads (fetch/hypercore.py "
+                "_circ_less_wallets) stored nothing this run — an unread wallet stores no circulating figure",
+                "Check the Run Log for hypercore_info: 'NOT STORED' names the wallet that did not answer.")
+    if metric in ("near_lockup_unvested_tokens", "near_lockup_locked_tokens"):
+        return ("the weekly lockup read (near_lockups_weekly.py, ~2.5h) has not stored a total yet, or its last one "
+                "is older than the week — it stores nothing when any lockup is unreadable",
+                "Run `python near_lockups_weekly.py --force` (windows/daily_run.ps1 runs it weekly).")
+    if metric == "noncirculating_nearblocks_tokens":
+        return ("NearBlocks /v1/stats (fetch/nearblocks.py _supply_stats) stored nothing this run",
+                "Check the Run Log for nearblocks; it needs NEARBLOCKS_API_KEY.")
+
     # ===== A DEDICATED ADAPTER DECLARED FOR THIS METRIC (second pass, 2026-09-30). =====
     # Plume's staking diamond, ultrasound.money's daily history, Hyperliquid's tokenDetails: the
     # route exists, so the row names it and the probe that checks it.

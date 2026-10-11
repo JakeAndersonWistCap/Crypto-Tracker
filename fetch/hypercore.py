@@ -349,9 +349,13 @@ class HyperCoreInfo:
         # set it excludes ([[address, balance], ...] — field names from nktkas/hyperliquid
         # tokenDetails.ts and Hyperliquid's docs, info-endpoint/spot.md). The set is LOGGED each
         # run so the exclusions are on the Run Log beside the figure; CoinGecko is the check.
-        out.add(point(name, "circulating_supply_first_party", circ, f"{SOURCE}:tokenDetails.circulatingSupply",
-                      TIER, when), SOURCE, name,
-                f"circulating_supply_first_party={circ:,.4f} (tokenDetails.circulatingSupply)", TIER)
+        excl = read.get("exclude_wallets") or []
+        if not excl:
+            out.add(point(name, "circulating_supply_first_party", circ, f"{SOURCE}:tokenDetails.circulatingSupply",
+                          TIER, when), SOURCE, name,
+                    f"circulating_supply_first_party={circ:,.4f} (tokenDetails.circulatingSupply)", TIER)
+        else:
+            self._circ_less_wallets(name, api, read, circ, excl, out, when)
         nc = payload.get("nonCirculatingUserBalances") if isinstance(payload, dict) else None
         if isinstance(nc, list):
             pairs = [(str(a[0]), parse_number(a[1])) for a in nc
@@ -415,6 +419,48 @@ class HyperCoreInfo:
                                     f"tokenDetails.totalSupply - CoinGecko total_supply = "
                                     f"{total - provider:,.4f} (unexplained; not reconciled — see "
                                     f"config supply_reference_note)", TIER))
+
+    def wallet_hype(self, endpoint: str, address: str) -> tuple[float, str]:
+        """(HYPE held, detail) for one address: spot (spotClearinghouseState 'HYPE' total) + staked
+        (delegatorSummary delegated + undelegated + totalPendingWithdrawal), all in HUMAN units. Raises on an
+        unreadable answer — a missing figure is never taken as zero."""
+        spot = self.http.post(endpoint, json_body={"type": "spotClearinghouseState", "user": address})
+        bals = spot.get("balances") if isinstance(spot, dict) else None
+        if not isinstance(bals, list):
+            raise ValueError(f"spotClearinghouseState for {address[:10]}… carried no balances list")
+        sp = sum(parse_number(b.get("total")) or 0.0 for b in bals if isinstance(b, dict) and b.get("coin") == "HYPE")
+        ds = self.http.post(endpoint, json_body={"type": "delegatorSummary", "user": address})
+        if not isinstance(ds, dict) or parse_number(ds.get("delegated")) is None:
+            raise ValueError(f"delegatorSummary for {address[:10]}… carried no delegated figure")
+        st = sum(parse_number(ds.get(k)) or 0.0 for k in ("delegated", "undelegated", "totalPendingWithdrawal"))
+        return sp + st, f"spot {sp:,.2f} + staked {st:,.2f}"
+
+    def _circ_less_wallets(self, name: str, api: dict, read: dict, circ: float, excl: list, out, when) -> None:
+        """JAKE 2026-10-11 (decision A1): circulating_supply_first_party = tokenDetails.circulatingSupply less the
+        declared foundation / grants wallets (config exclude_wallets), each read live. The raw figure is kept as
+        circulating_supply_tokendetails (the cross-check) and the wallets' sum as excluded_wallets_tokens. One
+        wallet unread -> no circulating figure is stored (never a partial subtraction)."""
+        endpoint = read.get("endpoint") or api.get("endpoint")
+        out.add(point(name, "circulating_supply_tokendetails", circ, f"{SOURCE}:tokenDetails.circulatingSupply",
+                      TIER, when), SOURCE, name,
+                f"circulating_supply_tokendetails={circ:,.4f} (tokenDetails.circulatingSupply, before the "
+                f"declared exclusions)", TIER)
+        held, parts = 0.0, []
+        for w in excl:
+            try:
+                v, how = self.wallet_hype(endpoint, w["address"])
+            except Exception as e:  # noqa: BLE001
+                out.fail(SOURCE, name, f"circulating_supply_first_party NOT STORED: {w['label']} "
+                                       f"({w['address'][:10]}…) unread — {e}", TIER)
+                return
+            held += v
+            parts.append(f"{w['label']} {v:,.2f} ({how})")
+        out.add(point(name, "excluded_wallets_tokens", held, f"{SOURCE}:exclude_wallets", TIER, when),
+                SOURCE, name, f"excluded_wallets_tokens={held:,.2f}: " + "; ".join(parts), TIER)
+        out.add(point(name, "circulating_supply_first_party", circ - held,
+                      f"{SOURCE}:tokenDetails.circulatingSupply-exclude_wallets", TIER, when), SOURCE, name,
+                f"circulating_supply_first_party={circ - held:,.4f} = tokenDetails.circulatingSupply {circ:,.4f} - "
+                f"the declared wallets {held:,.4f} ({read.get('exclude_wallets_decided', '')})", TIER)
 
     def _extra_read(self, project: dict, api: dict, read: dict, out, when) -> None:
         """One additional request against the same info endpoint, with its own shape."""

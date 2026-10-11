@@ -363,4 +363,5 @@ def test_real_sanity_rules_on_every_dump(tmp_path, monkeypatch):
                           only=[project])
         assert bw.SANITY_HITS == sanity.check_workbook(d / "wb.xlsx")      # the build ran the same rules
         found += bw.SANITY_HITS
-    assert sorted((p, r) for p, r, _d in found) == [("Aerodrome", "status_contradicts"), ("Maple", "status_contradicts")], found
+    # Maple's burn reads 'none (declared: 0% of fees burned)' since Jake's sanity run (2026-10-11, decision A6)
+    assert sorted((p, r) for p, r, _d in found) == [("Aerodrome", "status_contradicts")], found

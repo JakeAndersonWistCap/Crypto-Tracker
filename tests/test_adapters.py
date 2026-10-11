@@ -8501,7 +8501,9 @@ def test_the_refused_component_partial_rule_dry_run_is_exactly_one_metric():
     ref_only = [(p["name"], k) for p in config.PROJECTS
                 for k, c in (p.get("contracts") or {}).items()
                 if c["kind"] in REFERENCE_ONLY_KINDS]
-    assert len(ref_only) == 14, ref_only    # +Aethir staking_gaming_pool/staking_ai_pool, 2026-09-24; +veaethir_token 2026-10-06
+    # +Aethir staking_gaming_pool/staking_ai_pool, 2026-09-24; +veaethir_token 2026-10-06; +Morpho token_legacy and
+    # token_base (2026-10-11, decision A5: the tokens the DAO's legacy / Base holdings are read against)
+    assert len(ref_only) == 16, ref_only
     for name, key in ref_only:
         for (pn, _), d in change.items():
             assert not (pn == name and key in d["refused"]), f"{name}/{key} must never trigger it"
@@ -11269,8 +11271,9 @@ def test_the_buyback_route_is_derived_from_the_destination_already_on_file():
 
     # ** AERODROME'S FEES BUY NOTHING, BUT ITS FOUNDATION BUYS AND LOCKS AERO ** (external audit 2026-10-09, item 1).
     # The route was "none" until then; the buy-and-lock is measured from the lock stock of the two buyback wallets.
+    # THE AGREED BASIS (Jake 2026-10-11, B): bought + compounded from the daily window, not the stock change
     aero = config.buyback_route("Aerodrome")
-    assert aero["route"] == "treasury_inflow" and aero["metric"] == "foundation_locked_aero_tokens"
+    assert aero["route"] == "treasury_inflow" and aero["metric"] == "foundation_compounded_owner_tokens"
     applicable = set(config.metrics_for_project(config.PROJECT_BY_NAME["Aerodrome"]))
     assert "actual_buyback_tokens" in applicable
     # AND THE FEES STILL GO TO VOTERS — the implied (fee-funded) buyback stays a structural 0.
@@ -12724,7 +12727,8 @@ def test_supply_units_declares_the_tier_that_actually_serves_it():
     hits = [f for f in pathlib.Path(".").rglob("*.py")
             if not f.name.startswith("test_") and "tests" not in f.parts
             and '.get("tiers"' in f.read_text(encoding="utf-8", errors="ignore")]
-    assert [f.name for f in hits] == ["gaps.py"], \
+    # generate_metrics_doc.py (2026-10-11) only PRINTS the declared tiers in METRICS.md — documentation, no gate
+    assert sorted(f.name for f in hits) == ["gaps.py", "generate_metrics_doc.py"], \
         f"a second consumer of `tiers` appeared — changing it is no longer cosmetic: {hits}"
 
     # THE REASON TEXT IS STILL WRONG, and that is recorded here rather than left to be
@@ -15610,8 +15614,9 @@ def test_nearblocks_stats_run_first_and_calls_are_paced_to_the_free_plan(monkeyp
     kinds = ["flow" if "/v1/account/" in u else "v3" for _, u in stamps]
     # ORDER REVERSED 2026-09-28: the once-a-day stats first (1 credit each), then the buyback
     # read, which resumes across runs — see NearBlocks.run. The third v3 call is /v3/validators/info's total_stake,
-    # once a day (Jake's run 2026-10-08 11:27).
-    assert kinds == ["v3", "v3", "v3", "flow", "flow"], kinds
+    # once a day (Jake's run 2026-10-08 11:27); the fourth is /v1/stats, NEAR's non-circulating cross-check (Jake
+    # 2026-10-11, C), once a day too.
+    assert kinds == ["v3", "v3", "v3", "v3", "flow", "flow"], kinds
     # BILLED AS NEARBLOCKS BILLS: ceil(per_page/25), per_page defaulting to 25. The v3 calls send
     # `limit`, so they cost 1 (they were charged 4 until 2026-09-28).
     cost = {"flow": nearblocks.credits_for(nearblocks.FLOW_PER_PAGE), "v3": 1}
@@ -16155,13 +16160,15 @@ def test_nearblocks_buyback_is_incremental_newest_first_and_daily_stats_run_once
     nearblocks.NearBlocks(http=h2, last_dates={("Near", "tx_count"): yesterday,
                                                 ("Near", "active_addresses"): yesterday,
                                                 ("Near", "fees_native_tokens"): yesterday,
-                                                ("Near", "locked_tokens_nearblocks"): today()}).run([near], 35, out2)
+                                                ("Near", "locked_tokens_nearblocks"): today(),
+                                                ("Near", "noncirculating_nearblocks_tokens"): today()}).run([near], 35,
+                                                                                                           out2)
     assert len(h2.calls) == 1, f"a routine run makes ONE call: {h2.calls}"
     got2 = out2.frame().query("metric == 'actual_buyback_tokens'")
     import pytest
     assert sorted(got2.value) == pytest.approx([1.0, 2.0, 3.0, 7.0]), "the window is re-emitted from kept totals"
     assert out2.current == {("Near", "tx_count"), ("Near", "active_addresses"), ("Near", "fees_native_tokens"),
-                            ("Near", "locked_tokens_nearblocks")}
+                            ("Near", "locked_tokens_nearblocks"), ("Near", "noncirculating_nearblocks_tokens")}
     from fetch.gaps import detect
     gaps = detect([near], out2.frame(), out2.current, {}, [])
     assert not [g for g in gaps if g["metric"] in ("tx_count", "active_addresses")], \
@@ -25402,8 +25409,10 @@ def test_circulating_decisions_are_applied_consistently_and_coingecko_free_float
     # THE FULL SWEEP (Jake, 2026-10-07): an on-chain count from wallets the project documents is primary
     for n in ("GEODNET", "Sky", "Uniswap", "Ether.fi"):
         assert chosen[n] == "circulating_supply_onchain", n
-    for n in ("Hyperliquid", "Near", "Aethir", "Plume"):
+    for n in ("Hyperliquid", "Aethir", "Plume"):
         assert chosen[n] == "circulating_supply_first_party", n
+    # NEAR (Jake 2026-10-11, C): its own figure + (lockups locked − still unvested) — only unvested is out
+    assert chosen["Near"] == "circulating_supply_lockup_rule"
     # sign-off round: Chainlink (all 27 wallets) and Fluid (Avocado wallets not the team's) are on-chain primary
     for n in ("Chainlink", "Fluid"):
         assert chosen[n] == "circulating_supply_onchain", n
@@ -25889,7 +25898,10 @@ def test_daily_summary_reports_counts_against_yesterday_trouble_actions_and_new_
     assert ds.previous(state, "2026-10-07") == ("2026-10-05", prev), "a second run the same day still compares with yesterday"
     ps1 = (Path(__file__).resolve().parent.parent / "windows" / "daily_run.ps1").read_text(encoding="utf-8")
     assert "daily_summary.py" in ps1 and "&&" not in ps1 and "OutputEncoding" in ps1
-    assert ps1.rstrip().splitlines()[-1].startswith('[void](Invoke-Step "daily summary"'), "the summary is LAST"
+    # the summary closes the run; the theory snapshot (Jake 2026-10-11, D2) is the one step after it
+    steps = [ln for ln in ps1.splitlines() if ln.startswith("[void](Invoke-Step")]
+    assert steps[-2].startswith('[void](Invoke-Step "daily summary"') and steps[-1].startswith(
+        '[void](Invoke-Step "export snapshot"'), "the summary, then the snapshot LAST"
 
 
 def test_manual_form_pages_cover_the_new_readings_and_never_override_a_formula_reference():

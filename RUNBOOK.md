@@ -527,6 +527,151 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11bk. The final data round before the theory phase (2026-10-11)
+
+Jake agreed decisions A1-A7 on 5b87610, the Aerodrome buyback basis (B), the NEAR lockup rule (C) and the theory-ready
+outputs (D), and attached `sanity.txt` (15 hits) and `cross_tab.txt` (0 mismatches) from his store (E).
+
+**E. Jake's sanity hits, each one:**
+- **Bitcoin, Zcash, Maple — burn "active (declared; no burn series)":** the split is active at 0%. A declared 0% split
+  now reads `none (declared: 0% of fees burned)` (decision A6 for Maple).
+- **Bitcoin, Canton, Ethereum — FDV < market cap (by 0.003-0.03%):** CoinGecko's FDV is its own price × total at its own
+  time. FDV is now our price × the total we use, the same day, for every project (carried forward within its age limit);
+  CoinGecko's stays as `fdv_usd_coingecko`.
+- **Hyperliquid, Venice AI — mixed_windows:** the annualised net % now takes the net total's equal-coverage guard, so
+  both read BLOCKED together.
+- **Near — buyback 1,989% of revenue:** Revenue Q0 is the chain's gas revenue; the buyback is paid from NEAR Intents fees
+  (revenue.near.org). Documented as `buyback_funding`.
+- **Uniswap — 111% of revenue:** the same burns at different times and prices (11bj item 14). Documented as
+  `buyback_funding`.
+- **PancakeSwap — 2,233% of revenue: a real error.** The burn route copied CAKE into 0x…dEaD into the buyback, and
+  ~99% of it is MasterChef emission minted and burned unused (BSC reads 2026-10-11: MasterChef v2
+  `cakeRateToBurn` 99.717% of 40 CAKE/block plus v1's dev share, both into `burnAdmin()` 0xceba6028…, which sends the
+  week's total to dEaD). The fee-funded product burn is the other inflows to burnAdmin: 452,405 and 504,936 CAKE in the
+  full weeks to 09-28 and 10-05, reconciling to burnAdmin's weekly burn to the token. The buyback now reads n/a
+  (`BUYBACK_ROUTE_OVERRIDE`) and the A4 gross burn is closed (`UNAVAILABLE`) until a product-burn series exists: free BSC
+  endpoints keep ~22 days of logs (forward-only); history needs a paid BSC explorer plan or keyed RPC. Stored copies:
+  orphan_cleanup.sql CH.
+- **Aave — buyback declared active, no series:** a config error. No AAVE into the Aave Finance Committee Safe
+  0x22740deB… (what DefiLlama's fees/aave-v3.ts counts as the buyback) or the Collector since 2026-06-24; DefiLlama's
+  aave holders revenue is $0 on all 91 days; the forum still calls buybacks halted. Status corrected to `paused`
+  (the 2026-09-17 "Aavenomics 3.0 live since 06-27" rested on the founder's statements).
+- **OriginTrail — buyback declared active:** a misclassification. Publishers pay TRAC they hold into the staker reward
+  pool (EpochStorageV8 TokensAddedToEpochRange, ~297 TRAC in 90 days); nothing is bought. Split status `n/a`.
+- **Injective, Render — burn declared active, no series: genuine coverage gaps, still hits.** Sources found (not
+  wired: each needs a reader this pipeline does not have):
+  - Injective: the indexer `sentry.exchange.grpc-web.injective.network/api/exchange/auction/v2/auctions`
+    (per 28-day round: winningBidAmount = INJ burned; LCD last_auction_result matches it). 90 days: 81,845.55 INJ
+    (rounds 232-234). The config's "weekly auction + monthly BuyBack" is one 28-day mechanism now;
+    injective.com/burn/ answers 404.
+  - Render: Solana SPL burns by rbrnm7nP… from token account GqE7wcwR… (the Foundation dashboard's "Burn Address");
+    2,540.13 RENDER on 10-10, 6,667.58 on 10-01. DefiLlama `render-network-bme` holders revenue ($555,371 over 90 days)
+    is the daily USD cross-check; the Foundation's dailyBurnStats API undercounts the chain. The config's
+    know.rendernetwork.com URL moved to /basics/burn-mint-equilibrium.
+
+**A. Decisions.**
+- **A1 Hyperliquid:** `circulating_supply_first_party` = tokenDetails.circulatingSupply − the Hyper Foundation
+  (0xd57e…, 60,551,988.64 = 50,000 spot + 60,501,988.64 staked) − Community Grants (0xa20f…, 2,973,731.99), read every
+  run; identified by their exact genesis allocations (60M, 3M) in tokenDetails' own genesis ledger. 302,167,698 →
+  238,641,977 on 2026-10-11. Handover declared; the raw figure stays as `circulating_supply_tokendetails`; an unread
+  wallet stores no circulating figure.
+- **A2 Unlock dilution:** `unlock_release_tokens` = per day, the fall in the summed non-circulating stock
+  (`config.unlock_stock_metrics`), only between two reads of the SAME wallet set (a wallet added is a change of
+  measuring point, never an unlock); a rise releases 0, so purchases into held wallets (Aerodrome's Foundation,
+  Ether.fi's buyback Safe) are never a negative unlock. Columns on A2/A3/A4: UNLOCK DILUTION Q0, unlock % of free float,
+  TOTAL DILUTION = emissions + unlocks (% of free float), and on A3 net absorption incl. unlocks. Out of emissions_tokens
+  (Jake 2026-09-24 stands). Not bold yet (no independent reference except Chainlink's reconciled outflow scan).
+  Chainlink test case: 18,750,000 → 10.87% of free float, total 11.16%, net absorption incl. unlocks −17,841,039.
+- **A3 Aerodrome AH14:** subtracts the Minter's gauge emissions AND the rebase: 53,752,722 + 5,699,610 = 59,452,332 on
+  the 10-09 dump. CORRECTION to 11bj: `gross_issuance_tokens` IS the gauge emission (the Minter's weekly emission to the
+  Voter); the rebase is minted on top of it, not inside it (the 48.05M there was wrong).
+- **A4 Total supply:** on-chain first for Aerodrome, Chainlink, Fluid, Maple, Morpho, Pendle, Sky (handovers declared).
+  Aethir stays CoinGecko-first while its Arbitrum read is partial.
+- **A5 Morpho:** the DAO's legacy 290,419,981.96 and Base 13,000,000.00 MORPHO wired (docs moved to
+  docs.morpho.org/learn/governance/organization/). The legacy token's unmigrated supply and Base's bridged supply are
+  inside the new token's total, so subtracting a holder's balance double-counts nothing. On-chain set 570.66M vs
+  CoinGecko 700.45M: does not reconcile, ratios stay on CoinGecko. What separates them: CoinGecko ≈ total − the DAO's
+  holdings (696.00M, +4.45M unexplained) — it counts the Association / Labs / Grants / Rewards wallets as circulating.
+  Under our rule the Association's legacy 11.64M and Labs' legacy 11.41M (morpho-seatbelt@ee2dda29) and the Rewards
+  Multisig's 0.36M are still to wire (547.25M with them) — awaiting Jake.
+- **A6 Maple burn:** `none (declared: 0% of fees burned)`.
+- **A7 Morpho in_interest_day:** the API side adds listed-market liquidation bonuses (`liquidation_bonus_usd_day_morpho_api`,
+  last 7 complete days re-read every run, DefiLlama's formula seized × (1 − 1/LIF)). Live 10-04..10: $436,711; API side
+  $5,378,331 vs DefiLlama $5,395,951 (−0.33%, was −8.4%). Tolerance stays 10%.
+
+**B. Aerodrome buyback (the agreed basis).** `check_offline_items.aerodrome_buyback_window(b0, b1)`, daily for the
+previous UTC day (fetch/ve_managed.py) and in `--seed aero_buyback`:
+- (a) locks by the owners classified from receipts (bought in the lock's own transaction / from balance), and purchases
+  into the owners' wallets (AERO received where the wallet paid out another token), from balance moves AND Safe-nonce
+  blocks (a pass-through buyer never shows a balance change at a checkpoint).
+- (b) each managed NFT's LockedManagedReward notifications, classed by the same transaction's VotingEscrow Deposit:
+  provider = RewardsDistributor → rebase (excluded, shown apart); otherwise → compounded (owners' share).
+- build: actual_buyback_tokens = bought in the lock's tx + balance-funded locks matched oldest-first to purchases +
+  compounded.
+- **Q0 on the agreed basis, read live 2026-10-11 (blocks 48,555,727-52,443,727, public Base RPC):** locks 1 —
+  #130786, 2,746,705.44 from balance, nothing paid in the transaction; purchases by the two owners 0; compounded
+  (owners' share) 0; rebase (owners' share, excluded) 1,052,092.03. **Q0 buyback = 0** as agreed. The PGF's AERO came
+  from Safe 0x10b42e92… (2,684,420 in Q0) and from voting-reward claims through a Reward contract 0x6a941fe8…
+  (1,687,777 AERO, plus USDC) — no compounding reached the managed NFTs in Q0. With 0x10b42e92… declared a buyer, the
+  lock matches its 1,906,696 bought before 08-24: Q0 ≈ 1.91M (the other 777,724 bought after 08-24 is not locked yet).
+- **0xebf418fe… is the VotingEscrow, not the compounder** (contracts@1ba30815 DeployCore-Base.json). Every NotifyReward
+  carries it as `from` because only `ve` may notify (LockedManagedReward.sol L25-31; Reward.sol L240-247) — for the rebase
+  and for compounding alike. So the 1,052,092.03 "compounded" measured before WAS the rebase, all of it (every
+  notification's Deposit was the RewardsDistributor's). The compounder is each
+  managed NFT's AutoCompounder (relay@1bd3adef AutoCompounder.sol L164-173), the `provider` of the Deposit.
+- **Lock #130786 (2,746,705.44, 2026-08-24, from the PGF's balance):** the lock split's 0 logs was the read asking the
+  WALLET for Transfer logs the TOKEN emits (fixed; the migration guard had the same fault — fixed). 120-day trace of the
+  PGF's AERO: only two senders, and every lock empties the balance. Since the previous lock (07-22, 3,478,216):
+  1,906,696 from Safe 0x10b42e92… and 752,355 from a Reward contract (0x6a941fe8…, voting rewards claimed in AERO +
+  USDC). 0x10b42e92… (4-of-7; all five of the PGF's and 0x623C's signers among its owners) BOUGHT exactly that
+  1,906,696 AERO in six transactions paying 829,828 USDC, each forwarded to the PGF within minutes. Under the rule as
+  agreed (the WALLET paid out another token) none of #130786 qualifies; with 0x10b42e92… declared a buyer
+  (`foundation_buyback.buyer_wallets`, empty — no primary source names it) 1,906,696 would.
+
+**C. NEAR lockups.** `near_lockups_weekly.py` (daily_run.ps1 calls it; it reads when the last read is 7+ days old, ~2.5h)
+stores `near_lockup_unvested_tokens` and `near_lockup_locked_tokens`; nothing when any lockup is unreadable. NEAR's
+ratios read `circulating_supply_lockup_rule` = NEAR's own figure + (locked − unvested), from a read at most 10 days old,
+its date in the source; until the first read it equals NEAR's figure. NearBlocks' total − circulating is stored daily as
+`noncirculating_nearblocks_tokens` (58.87M on 2026-10-11) as the cross-check. Jake's 21:15 totals can be entered as a
+manual row (date, source = his run) the same way.
+
+**D. Theory outputs.** `METRICS.md` (generated: `python generate_metrics_doc.py`; the test fails when it is stale or a
+headline has no entry in `metrics_dictionary.py`), `python export_snapshot.py` → `snapshots/snapshot_<date>.csv` (the
+LAST step of daily_run.ps1), and the open issues below.
+
+### Open issues (2026-10-11)
+
+**Awaiting Jake**
+1. Aerodrome: Q0 buyback is 0 on the basis as agreed. Declare Safe 0x10b42e92… a Foundation buyer (evidence above; no
+   primary source) → ≈1.91M? And do voting rewards CLAIMED (FreeManaged-style, 1,687,777 AERO in Q0) and then locked by
+   the PGF count (752,355 of #130786)? Neither counts as agreed.
+2. NEAR: the totals from the 21:15 near_lockups run (or let the weekly step read them).
+3. Morpho: wire the Association / Labs / Rewards legacy holdings (23.4M) under our rule?
+4. PancakeSwap: a product-burn source — paid BSC log access, or the monthly Burn Report as a self-reported series.
+5. Injective / Render burn series (sources above; a Cosmos indexer and a Solana burn reader are new readers). Aave
+   paused and OriginTrail n/a are corrections from primary sources — confirm.
+6. Hyperliquid: the team wallet 0x43e9 (237.9M, unvested) is excluded inside tokenDetails, so its releases are not in
+   unlock dilution yet — store it per wallet?
+7. Unlock rows as Credibility headlines: references (Chainlink's outflow scan is one).
+
+**MATURING**
+- Unlock dilution: coverage builds from each set's last composition change — Aerodrome and Maple 2026-10-07, Morpho
+  2026-10-12 (the DAO wallets), Hyperliquid 2026-10-11, NEAR from the first weekly read; full Q0 ~90 days after each.
+- Aerodrome buyback: daily from the next run; Q0 needs `python token_metrics.py --seed aero_buyback` on the keyed RPC.
+- Morpho liquidation bonuses: the 7-day window fills on the first run.
+- Hyperliquid circulating: first-party history before 2026-10-11 is the published figure (handover).
+- Total supply handovers (8 projects) and NearBlocks' cross-check: from the next run.
+- Aethir in_locked / in_arr (until 2026-10-17).
+
+**DOCUMENTED LIMITATIONS (new)**
+- Aerodrome purchases paid in native ETH leave no Transfer log and are not seen; moves netting to zero inside one
+  2-hour seed interval are missed.
+- Morpho bonuses are priced at the collateral's price at the read (≤7 days old).
+- PancakeSwap gross burn closed (mint-and-burn).
+- The existing ones, each on the Credibility tab: chain TVL and NRR (Ethereum, Hyperliquid, NEAR, Plume), Hyperliquid
+  in_circ, Maple buyback, Ether.fi revenue / protocol yield, Fluid emissions / revenue, Pendle revenue / unrouted gauges /
+  per-epoch APR, Aerodrome in_locked.
+
 ## 11bj. Fine-tuning and the workbook review of 97b29ae (2026-10-11)
 
 **Progress output.** Every entry point calls `progress.line_buffered()` (stdout flushes at each line when piped, e.g.

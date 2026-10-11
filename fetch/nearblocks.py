@@ -229,6 +229,8 @@ class NearBlocks:
                     self._balance_history(p["name"], spec, spec["balance_history"], out)
                 if spec.get("validators_info"):
                     self._validators_info(p["name"], spec, spec["validators_info"], out)
+                if spec.get("supply_stats"):
+                    self._supply_stats(p["name"], spec, spec["supply_stats"], out)
         for p in projects:
             for flow in p.get("near_account_flows") or []:
                 self._account_flow(p["name"], flow, window_days, out)
@@ -313,6 +315,36 @@ class NearBlocks:
             return
         out.add(tidy([(today(), value)], name, metric, f"{SOURCE}:validators/info", TIER), SOURCE, name,
                 f"{metric}={value:,.0f} NEAR (total_stake {raw} yocto)", TIER)
+
+    def _supply_stats(self, name: str, spec: dict, ss: dict, out):
+        """NEARBLOCKS' NON-CIRCULATING NEAR (Jake 2026-10-11, C: the cross-check for the still-unvested lockup leg) —
+        /v1/stats, one call a day: total_supply − circulating_supply, both yoctoNEAR. Today only; a second run the same
+        day does not call again."""
+        metric, key = ss["metric"], self._key(spec)
+        if not key:
+            out.unconfigured(SOURCE, name, f"{metric}: no {spec['key_env']} in .env", TIER)
+            return
+        last = self.last_dates.get((name, metric))
+        if last is not None and pd.Timestamp(last).normalize() >= today().normalize():
+            out.mark_current(SOURCE, name, metric, f"{metric}: NOT re-fetched — today's figure is stored", TIER)
+            return
+        from .scrape import robots_verdict
+        url = spec["base_url"].rstrip("/") + ss["path"]
+        allowed, why = robots_verdict(url)
+        if not allowed:
+            out.fail(SOURCE, name, f"{metric}: robots.txt disallows {url} — {why}", TIER)
+            return
+        try:
+            body = self._get(url, {}, key)
+            st = (body.get("stats") or [{}])[0]
+            scale = 10 ** int(ss.get("yocto_exponent", 24))
+            total, circ = int(str(st["total_supply"])) / scale, int(str(st["circulating_supply"])) / scale
+        except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
+            out.fail(SOURCE, name, f"{metric}: {ss['path']}: {self._scrub(spec, e)} — NOTHING STORED", TIER)
+            return
+        out.add(tidy([(today(), total - circ)], name, metric, f"{SOURCE}:stats", TIER), SOURCE, name,
+                f"{metric}={total - circ:,.0f} NEAR (NearBlocks total_supply {total:,.0f} − circulating_supply "
+                f"{circ:,.0f})", TIER)
 
     def _balance_history(self, name: str, spec: dict, bh: dict, out):
         """THE THREE WALLETS' COMBINED DAILY CLOSE (Jake, 2026-10-07 14:17) — one stats/balance call per account.

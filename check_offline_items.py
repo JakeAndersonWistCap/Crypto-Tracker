@@ -4075,7 +4075,7 @@ def near_lockups(limit: int | None = None):
         print(f"  {how}")
         if not accounts:
             print("  no list — nothing read")
-            return
+            return None
     if limit:
         accounts = accounts[:int(limit)]
     height = ((rpc(NEAR_RPC_LIVE[0], "block", {"finality": "final"}).get("result") or {}).get("header") or {}).get("height")
@@ -4139,6 +4139,9 @@ def near_lockups(limit: int | None = None):
           f"(NEAR's lakehouse recomputes these; the RPC figure is known to be off)")
     print("  UNDER JAKE'S RULE only STILL UNVESTED comes out of circulating; NEAR's own circulating subtracts all of "
           "LOCKED. PASTE BACK the totals.")
+    return {"height": height, "accounts": len(accounts), "read": n_read, "zero": n_zero, "unreadable": n_err,
+            "balance": tot["balance"] / yocto, "locked": tot["locked"] / yocto, "unvested": tot["unvested"] / yocto,
+            "owners": tot["owners"] / yocto, "buggy": buggy["n"]}
 
 
 # ===== JAKE'S RUN ON 20d0eb4 (2026-10-10): BRIBE DEPOSITS, MORPHO LISTED vs ALL, FOUNDATION Q0, NEAR BACKFILL =====
@@ -4767,7 +4770,7 @@ def aerodrome_foundation_lock_split(days: int = 90):
     for blk, t, prov, val in from_balance:
         logs, how = base_logs_where_balance_moves(aero, prov, [T_XFER, None, "0x" + prov[2:].rjust(64, "0")],
                                                   max(blk - 30 * 43_200, b0), blk, say=lambda *_: None,
-                                                  max_calls=2000, max_moves=60)
+                                                  max_calls=2000, max_moves=60, emitter=aero)
         by_from: dict = {}
         for lg in logs:
             f = adr(lg["topics"][1])
@@ -5130,6 +5133,218 @@ SEL_OWNER_TOKEN, SEL_LOCKED, SEL_SUPPLY = "0x8bf9d84c", "0xb45a3c0e", "0x047fc9a
 
 
 AERO_REWARDS_DISTRIBUTOR = "0x227f65131A261548b057215bB1D5Ab2997964C7d"   # config Aerodrome contracts.rewards_distributor
+
+
+def _base_move_blocks(token: str, holder: str, b0: int, b1: int, max_calls: int = 1500,
+                      seed_span: int = 3600) -> list[int]:
+    """Every block in (b0, b1] where token.balanceOf(holder) changes — archive bisection to the exact block (~log2 of
+    the span reads per move). Raises on an unread state (a failed read is never a zero) or past `max_calls`.
+    SEEDED EVERY `seed_span` BLOCKS (2 hours on Base): a balance equal at both ends of an interval hides every move
+    inside it — a pass-through wallet that buys and forwards reads 'no change' over 120 days (the buyer Safe
+    0x10b42e92…, 2026-10-11). Moves that net to zero within one seed interval are still missed."""
+    sel = _selx("balanceOf(address)") + _word(int(holder, 16))
+    seen: dict = {}
+
+    def bal(b):
+        if b not in seen:
+            if len(seen) >= max_calls:
+                raise ValueError(f"balance bisection on {holder[:10]}… stopped after {max_calls} archive reads")
+            r = _retry(lambda: _rpc_retry("base", "eth_call", [{"to": token, "data": sel}, hex(b)]))
+            seen[b] = int(r, 16)
+        return seen[b]
+    edges = list(range(b0, b1, max(int(seed_span), 1))) + [b1]
+    out, stack = [], list(zip(edges[:-1], edges[1:]))[::-1]
+    while stack:
+        a, b = stack.pop()
+        if bal(a) == bal(b):
+            continue
+        if b - a <= 1:
+            out.append(b)
+            continue
+        m = (a + b) // 2
+        stack += [(m, b), (a, m)]
+    return sorted(set(out))
+
+
+def _is_safe(addr: str) -> bool:
+    """A Gnosis Safe answers nonce() and getThreshold()."""
+    r, _ = eth_call(addr, _selx("getThreshold()"), chain="base")
+    return bool(r) and r != "0x" and int(r, 16) > 0
+
+
+def aerodrome_buyback_window(b0: int, b1: int, owners: list | None = None, say=print) -> dict:
+    """THE FOUNDATION'S BUYBACK OVER BLOCKS (b0, b1] ON THE BASIS JAKE AGREED (2026-10-11, B):
+      (a) AERO BOUGHT and locked by the Foundation wallets (config foundation_buyback.owners). "Bought" = AERO received
+          in a transaction in which the wallet paid out a DIFFERENT token (the Ether.fi rule). Returned in parts: locks
+          whose AERO was bought in the lock's own transaction (bought_same_tx), locks paid from the wallet's balance
+          (lock_from_balance — matched to purchases oldest-first at build time), and purchases into the wallets
+          (purchased, with every other inflow classed by sender in `inflows`).
+      (b) COMPOUNDED VOTING REWARDS ON ACCRUAL, OWNERS' SHARE: each managed veNFT the owners' LOCKED NFTs sit in notifies
+          its LockedManagedReward (NotifyReward); the transaction's VotingEscrow Deposit for that managed id says what it
+          was — provider = the RewardsDistributor (DEPOSIT_FOR_TYPE) is the REBASE (excluded, returned apart), anyone
+          else (INCREASE_LOCK_AMOUNT by the managed NFT's owner, the AutoCompounder) is COMPOUNDING. NotifyReward's own
+          `from` is always the VotingEscrow (LockedManagedReward.sol L25-31: only `ve` may notify; Reward.sol L240-247
+          emits msg.sender), so it cannot tell the two apart. Owners' share = their weights in the managed NFT ÷ the
+          LockedManagedReward's totalSupply at b1.
+      Excluded in every form: the rebase; withdrawManaged realisations (no NotifyReward); veNFT transfers; splits/merges.
+    Reads: state bisection + block receipts on Base (the keyed RPC: BASE_RPC_URL). Returns the parts, or "error"."""
+    import config                                          # noqa: PLC0415
+    from eth_utils import keccak                           # noqa: PLC0415
+    fb = config.PROJECT_BY_NAME["Aerodrome"]["foundation_buyback"]
+    owners = [o.lower() for o in (owners or list(fb["owners"]))]
+    own = set(owners)
+    # UPSTREAM BUYERS (config foundation_buyback.buyer_wallets — EMPTY until a primary source names one): a wallet that
+    # buys AERO and passes it to the owners. Its purchases join the pool the owners' balance-funded locks are matched
+    # to, and its transfers to the owners are internal moves, neither bought nor lost.
+    buyers = [b.lower() for b in (fb.get("buyer_wallets") or {})]
+    fam = own | set(buyers)
+    aero = config.PROJECT_BY_NAME["Aerodrome"]["contracts"]["token"]
+    aero = (aero["address"] if isinstance(aero, dict) else aero).lower()
+    ve, dist = AERO_VE.lower(), AERO_REWARDS_DISTRIBUTOR.lower()
+    top = lambda x: "0x" + keccak(text=x).hex().removeprefix("0x")  # noqa: E731
+    T_XFER, T_DEP = top("Transfer(address,address,uint256)"), top("Deposit(address,uint256,uint8,uint256,uint256,uint256)")
+    T_NOTIFY = top("NotifyReward(address,address,uint256,uint256)")
+    adr = lambda h: "0x" + h[-40:].lower()  # noqa: E731
+    out = {"bought_same_tx": 0.0, "lock_from_balance": 0.0, "purchased": 0.0, "compounded_owner": 0.0,
+           "rebase_owner": 0.0, "locks": [], "purchases": [], "inflows": {}, "compounders": {}, "error": None}
+    receipts: dict = {}
+
+    def rc_of(blk):
+        if blk not in receipts:
+            receipts[blk] = _retry(lambda: _block_receipts("base", blk))
+        return receipts[blk]
+
+    def paid_out(logs, who):
+        """{token: amount} of non-AERO ERC-20 the wallet sent in these logs."""
+        got: dict = {}
+        for lg in logs:
+            tp = lg.get("topics") or []
+            if (len(tp) == 3 and tp[0] == T_XFER and lg["address"].lower() != aero and adr(tp[1]) == who):
+                got[lg["address"].lower()] = got.get(lg["address"].lower(), 0) + int(lg["data"], 16)
+        return got
+    try:
+        # (a1) LOCKS: every owners' NFT whose counted amount changed, bisected to its blocks (as the lock split probe)
+        def held(block):
+            ns = _batch_eth_calls("base", [(AERO_VE, _selx("balanceOf(address)") + _word(int(o, 16))) for o in owners],
+                                  block=block)
+            if any(x is None for x in ns):
+                raise ValueError(f"VotingEscrow.balanceOf unread at block {block}")
+            pairs = [(o, i) for o, x in zip(owners, ns) for i in range(int(x, 16))]
+            got = _batch_eth_calls("base", [(AERO_VE, SEL_OWNER_TOKEN + _word(int(o, 16)) + _word(i)) for o, i in pairs],
+                                   block=block)
+            if any(x is None for x in got):
+                raise ValueError(f"ownerToNFTokenIdList unread at block {block}")
+            return {int(x, 16) for x in got}
+        ids = sorted(_retry(lambda: held(hex(b0))) | _retry(lambda: held(hex(b1))))
+        sig = {}
+
+        def sg(t, b):
+            if (t, b) not in sig:
+                sig[(t, b)] = _retry(lambda: _foundation_nft_sig(owners, [t], hex(b))[t])
+            return sig[(t, b)]
+        s0 = _retry(lambda: _foundation_nft_sig(owners, ids, hex(b0))) if ids else {}
+        s1 = _retry(lambda: _foundation_nft_sig(owners, ids, hex(b1))) if ids else {}
+        steps = []
+
+        def find(t, lo, hi):
+            if sg(t, lo) == sg(t, hi):
+                return
+            if hi - lo == 1:
+                steps.append((hi, t))
+                return
+            mid = (lo + hi) // 2
+            find(t, lo, mid)
+            find(t, mid, hi)
+        for t in ids:
+            sig[(t, b0)], sig[(t, b1)] = s0[t], s1[t]
+            if s0[t] != s1[t]:
+                find(t, b0, b1)
+        seen_tx = set()
+        for blk, t in sorted(steps):
+            for rc in rc_of(blk):
+                logs = rc.get("logs") or []
+                for lg in logs:
+                    tp = lg.get("topics") or []
+                    if not (lg["address"].lower() == ve and tp and tp[0] == T_DEP and len(tp) == 4
+                            and int(tp[2], 16) == t):
+                        continue
+                    prov, kind = adr(tp[1]), int(tp[3], 16)
+                    val = _words(lg["data"])[0] / 1e18
+                    key = (rc.get("transactionHash"), t)
+                    if prov not in own or kind not in (0, 1, 2) or val <= 0 or key in seen_tx:
+                        continue                      # rebase (distributor), someone else's deposit, a time extension
+                    seen_tx.add(key)
+                    aero_in = sum(int(x["data"], 16) for x in logs
+                                  if x["address"].lower() == aero and len(x.get("topics") or []) == 3
+                                  and x["topics"][0] == T_XFER and adr(x["topics"][2]) == prov) / 1e18
+                    paid = paid_out(logs, prov)
+                    bought = min(val, aero_in) if paid else 0.0
+                    out["bought_same_tx"] += bought
+                    out["lock_from_balance"] += max(val - aero_in, 0.0) if not paid else max(val - bought, 0.0)
+                    out["locks"].append({"block": blk, "tx": rc.get("transactionHash"), "nft": t, "owner": prov,
+                                         "amount": val, "aero_in_same_tx": aero_in, "paid_out": paid,
+                                         "bought_same_tx": bought})
+        # (a2) PURCHASES INTO THE WALLETS: each block the wallet's AERO balance rises; bought iff it paid another token
+        for o in owners + buyers:
+            # A PURCHASE IS THE WALLET'S OWN TRANSACTION (it pays): for a Safe, every block its nonce() rose, as well
+            # as every block its AERO balance moved — a pass-through buyer that forwards at once never shows a balance
+            # change at any checkpoint (the Safe 0x10b42e92…, 2026-10-11)
+            blocks = set(_base_move_blocks(aero, o, b0, b1))
+            safe_blocks, how = _safe_nonce_blocks(o, b0, b1) if _is_safe(o) else ([], "")
+            if how.startswith("stopped"):
+                raise ValueError(f"Safe nonce bisection on {o[:10]}…: {how}")
+            for blk in sorted(blocks | set(safe_blocks)):
+                for rc in rc_of(blk):
+                    logs = rc.get("logs") or []
+                    ins = [(adr(x["topics"][1]), int(x["data"], 16) / 1e18) for x in logs
+                           if x["address"].lower() == aero and len(x.get("topics") or []) == 3
+                           and x["topics"][0] == T_XFER and adr(x["topics"][2]) == o and adr(x["topics"][1]) not in fam]
+                    if not ins:
+                        continue
+                    if rc.get("transactionHash") in {lk["tx"] for lk in out["locks"]}:
+                        continue                  # bought-and-locked in one transaction: counted under (a1)
+                    paid = paid_out(logs, o)
+                    amt = sum(a for _f, a in ins)
+                    if paid:
+                        out["purchased"] += amt
+                        out["purchases"].append({"block": blk, "tx": rc.get("transactionHash"), "owner": o,
+                                                 "aero": amt, "paid_out": paid})
+                    else:
+                        for f, a in ins:
+                            out["inflows"][f] = out["inflows"].get(f, 0.0) + a
+        # (b) COMPOUNDED, OWNERS' SHARE: the managed NFTs the owners' LOCKED NFTs sit in at b1
+        mids = sorted({v[2] for v in s1.values() if v[0] and v[1] == 1})
+        for m in mids:
+            lmr = "0x" + _retry(lambda: _rpc_retry("base", "eth_call", [{"to": AERO_VE, "data": _selx(
+                "managedToLocked(uint256)") + _word(m)}, hex(b1)]))[-40:]
+            sup = int(_retry(lambda: _rpc_retry("base", "eth_call", [{"to": lmr, "data": _selx("totalSupply()")},
+                                                                      hex(b1)])), 16) / 1e18
+            mine = sum(v[3] for v in s1.values() if v[0] and v[1] == 1 and v[2] == m)
+            share = mine / sup if sup else 0.0
+            for blk in _base_move_blocks(aero, lmr, b0, b1):
+                for rc in rc_of(blk):
+                    logs = rc.get("logs") or []
+                    notes = [int(x["data"][:66], 16) / 1e18 for x in logs
+                             if x["address"].lower() == lmr and (x.get("topics") or [None])[0] == T_NOTIFY
+                             and adr(x["topics"][2]) == aero]
+                    if not notes:
+                        continue                  # a getReward / withdrawManaged: a realisation, not an accrual
+                    deps = [(adr(x["topics"][1]), int(x["topics"][3], 16)) for x in logs
+                            if x["address"].lower() == ve and (x.get("topics") or [None])[0] == T_DEP
+                            and len(x["topics"]) == 4 and int(x["topics"][2], 16) == m]
+                    if not deps:
+                        raise ValueError(f"NotifyReward on {lmr[:10]}… in block {blk:,} with no VotingEscrow Deposit "
+                                         f"for #{m} in the same transaction — unclassifiable")
+                    prov, kind = deps[0]
+                    amt = sum(notes)
+                    if prov == dist:
+                        out["rebase_owner"] += amt * share
+                    else:
+                        out["compounded_owner"] += amt * share
+                        out["compounders"][prov] = out["compounders"].get(prov, 0.0) + amt * share
+    except Exception as e:  # noqa: BLE001
+        out["error"] = f"{type(e).__name__}: {str(e)[:300]}"
+    return out
 
 
 def aerodrome_foundation_locks(owners: list, block: str = "latest") -> dict:
@@ -9830,13 +10045,17 @@ def aerodrome_epochs_q0(days: int = 90):
 
 
 def base_logs_where_balance_moves(token: str, holder: str, topics: list, b0: int, b1: int, say=print,
-                                  max_calls: int = 600, max_moves: int = 40, span: int = 10) -> tuple[list, str]:
+                                  max_calls: int = 600, max_moves: int = 40, span: int = 10,
+                                  emitter: str | None = None) -> tuple[list, str]:
     """(logs, how): every log matching `topics` on `holder` in the blocks where `token`.balanceOf(`holder`) CHANGES
     between b0 and b1, on Base, through the keyed RPC only (external audit 2026-10-09, item 9: Blockscout answers 402 on
     Base and Alchemy's free tier serves eth_getLogs 10 blocks at a time — a week is ~30,000 calls). The archive balance
     is bisected down to `span`-block windows wherever it differs between two ends (~19 eth_calls per move), and only
     those windows are asked for logs. A deposit and an equal withdrawal inside one interval cancel and are missed (said
-    in `how`); RPC logs carry no timestamp, so each block's time is read and set as `timeStamp`."""
+    in `how`); RPC logs carry no timestamp, so each block's time is read and set as `timeStamp`.
+    THE LOGS ARE ASKED OF `emitter` (default: the holder). A Transfer INTO a wallet is emitted by the TOKEN, not the
+    wallet (Jake's run on 97b29ae, 2026-10-11: aerodrome_foundation_lock_split found 10 balance moves and read 0 logs —
+    it asked the wallet for them); a NotifyReward is emitted by the reward contract, which is the holder."""
     sel = _selx("balanceOf(address)") + _word(int(holder, 16))
     calls = {"n": 0}
     seen: dict = {}
@@ -9871,7 +10090,7 @@ def base_logs_where_balance_moves(token: str, holder: str, topics: list, b0: int
         return [], str(e)
     out, times = [], {}
     for a, b in sorted(moves):
-        got, why = eth_get_logs(holder, topics, a, b, chunk=span, chain="base")
+        got, why = eth_get_logs(emitter or holder, topics, a, b, chunk=span, chain="base")
         if got is None:
             return out, f"eth_getLogs refused for blocks {a:,}-{b:,}: {why}"
         for e in got:

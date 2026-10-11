@@ -1486,6 +1486,9 @@ def _foundation_buyback_views(groups: dict) -> None:
         ser = lambda m: (lambda x: None if x is None or x.empty else (  # noqa: E731
             x.assign(date=pd.to_datetime(x["date"]).dt.normalize()).drop_duplicates("date", keep="last")
             .set_index("date")["value"].astype(float).sort_index()))(groups.get((name, m)))
+        if fb.get("basis") == "bought_plus_compounded":
+            _foundation_agreed_basis(groups, p, fb, ser, g.columns)
+            continue
         st, cl = ser(fb["stock_metric"]), ser(fb["claimable_metric"])
         d = st.diff()
         d = d[(d.index.to_series().diff() == pd.Timedelta(days=1)).values & d.notna().values]
@@ -1509,6 +1512,48 @@ def _foundation_buyback_views(groups: dict) -> None:
                             "value": (both * pmap.reindex(both.index)).values, "tier": 2,
                             "source": "derived:tokens*price"})
         groups[(name, "actual_buyback_usd")] = _as_stored(usd, g.columns)
+
+
+def _foundation_agreed_basis(groups: dict, p: dict, fb: dict, ser, cols) -> None:
+    """THE BASIS JAKE AGREED (2026-10-11, B): per day, actual_buyback_tokens = AERO bought and locked in one
+    transaction + locks paid from the balance MATCHED OLDEST-FIRST to the wallets' purchases (a running pool: every
+    stored purchase day up to and including the lock's day, less what earlier locks used) + compounded voting rewards
+    on accrual (owners' share). The rebase (foundation_rebase_owner_tokens) and withdrawManaged realisations are not in
+    it. Only days the window read stored; none stored -> no series (the old stock-change basis is retired, not a
+    fallback). actual_buyback_usd = tokens x the same-day price."""
+    name, wm = p["name"], fb["window_metrics"]
+    parts = {k: ser(m) for k, m in wm.items()}
+    if any(v is None for k, v in parts.items() if k != "rebase_owner"):
+        return
+    days = parts["compounded_owner"].index
+    for k in ("bought_same_tx", "lock_from_balance", "purchased"):
+        days = days.intersection(parts[k].index)
+    if days.empty:
+        return
+    pool, tok = 0.0, []
+    purchased = parts["purchased"].sort_index()
+    for d in days.sort_values():
+        pool += float(purchased[(purchased.index <= d) & (purchased.index > (tok[-1][0] if tok else pd.Timestamp.min))]
+                      .sum())
+        matched = min(float(parts["lock_from_balance"].get(d, 0.0)), pool)
+        pool -= matched
+        tok.append((d, float(parts["bought_same_tx"].get(d, 0.0)) + matched + float(parts["compounded_owner"].get(d, 0.0))))
+    idx = pd.DatetimeIndex([d for d, _v in tok])
+    vals = pd.Series([v for _d, v in tok], index=idx)
+    groups[(name, fb["flow"])] = _as_stored(pd.DataFrame(
+        {"date": idx, "project": name, "metric": fb["flow"], "value": vals.values, "tier": 2,
+         "source": "derived:foundation_buyback[bought+matched+compounded]"}), cols)
+    px = groups.get((name, "price_usd"))
+    if px is None or px.empty:
+        return
+    pmap = (px.assign(date=pd.to_datetime(px["date"]).dt.normalize()).drop_duplicates("date", keep="last")
+            .set_index("date")["value"].astype(float))
+    both = vals[vals.index.isin(pmap.index)]
+    if both.empty:
+        return
+    groups[(name, "actual_buyback_usd")] = _as_stored(pd.DataFrame(
+        {"date": both.index, "project": name, "metric": "actual_buyback_usd",
+         "value": (both * pmap.reindex(both.index)).values, "tier": 2, "source": "derived:tokens*price"}), cols)
 
 
 # ===== EVERY VIEW EMITS A STORED ROW'S COLUMNS. Fixed 2026-09-28 after a build crash. =====
@@ -1952,27 +1997,122 @@ def _fdv_views(groups: dict) -> None:
     Ether.fi, Jake's review of 97b29ae item 6: CoinGecko's FDV $700.3M rested on its 965.35M total — below the
     circulating basis — while ETHFI.totalSupply() read 998,535,999). Per day, price x total_supply (the stored series,
     whose latest leg is the chain read). CoinGecko's own FDV stays beside it as fdv_usd_coingecko."""
-    for name in config.TOTAL_SUPPLY_ONCHAIN_FIRST:
-        if name not in {p["name"] for p in scoped_projects()}:
-            continue
+    # EVERY PROJECT, NOT ONLY THE ON-CHAIN-FIRST ONES (Jake's sanity run 2026-10-11: Bitcoin, Ethereum and Canton read
+    # FDV < market cap by 0.003-0.03% — CoinGecko's FDV is ITS price x total at ITS timestamp, the market cap ours x the
+    # circulating used). One price, one day: FDV = price_usd x total_supply, CoinGecko's FDV beside it as a cross-check.
+    for name in [p["name"] for p in scoped_projects()]:
         px, tot, cg = (groups.get((name, m)) for m in ("price_usd", "total_supply", "fdv_usd"))
         if px is None or px.empty or tot is None or tot.empty:
             continue
         s = lambda g: (g.assign(date=pd.to_datetime(g["date"]).dt.normalize())  # noqa: E731
                        .drop_duplicates("date", keep="last").set_index("date")["value"].astype(float))
         price, total = s(px), s(tot)
+        src = {d: str(v) for d, v in (tot.assign(date=pd.to_datetime(tot["date"]).dt.normalize())
+                                      .drop_duplicates("date", keep="last").set_index("date")["source"]).items()}
+        # carried forward within its age limit, as market cap carries the circulating used — the latest price day
+        # keeps the same basis (credibility.now_max_age)
+        import credibility as _cred                       # noqa: PLC0415
+        total = total.reindex(total.index.union(price.index)).ffill(limit=_cred.now_max_age(name, "total_supply")).dropna()
         both = price.index.intersection(total.index)
         if both.empty:
             continue
-        src = {d: str(v) for d, v in (tot.assign(date=pd.to_datetime(tot["date"]).dt.normalize())
-                                      .drop_duplicates("date", keep="last").set_index("date")["source"]).items()}
+        last = pd.Series(src, dtype=object).reindex(total.index).ffill().fillna("?").to_dict()
         view = pd.DataFrame({"date": both, "project": name, "metric": "fdv_usd",
                              "value": (price[both] * total[both]).values, "tier": 1,
-                             "source": [f"derived:price_x_total_supply[{src.get(d, '?')}]" for d in both]})
+                             "source": [f"derived:price_x_total_supply[{last.get(d, '?')}]" for d in both]})
         cols = cg.columns if cg is not None and not cg.empty else px.columns
         if cg is not None and not cg.empty:
             groups[(name, "fdv_usd_coingecko")] = _as_stored(cg.assign(metric="fdv_usd_coingecko"), cols)
+            # a day with no total of ours keeps CoinGecko's FDV (the series never loses a day it had)
+            cgd = cg.assign(date=pd.to_datetime(cg["date"]).dt.normalize())
+            rest = cgd[~cgd["date"].isin(both)]
+            if not rest.empty:
+                view = pd.concat([view, rest.assign(metric="fdv_usd")[view.columns.intersection(rest.columns)]],
+                                 ignore_index=True).sort_values("date")
         groups[(name, "fdv_usd")] = _as_stored(view, cols)
+
+
+NEAR_LOCKUP_MAX_AGE_DAYS = 10      # a weekly read, plus slack
+
+
+def _near_lockup_views(groups: dict) -> None:
+    """NEAR UNDER JAKE'S RULE (2026-10-11, C): circulating_supply_lockup_rule = NEAR's own circulating (which subtracts
+    every lockup's LOCKED amount) + (locked − still unvested), from the latest weekly lockup read on or before the day
+    and at most NEAR_LOCKUP_MAX_AGE_DAYS old. A day without such a read carries NEAR's figure unchanged, and its source
+    says so; a day with one names the read's date."""
+    for p in scoped_projects():
+        if config.circulating_primary_metric(p["name"]) != "circulating_supply_lockup_rule":
+            continue
+        name = p["name"]
+        fp = groups.get((name, "circulating_supply_first_party"))
+        if fp is None or fp.empty:
+            continue
+        s = lambda g: (None if g is None or g.empty else  # noqa: E731
+                       g.assign(date=pd.to_datetime(g["date"]).dt.normalize()).sort_values("date")
+                       .drop_duplicates("date", keep="last").set_index("date")["value"].astype(float))
+        base, unv, lk = s(fp), s(groups.get((name, "near_lockup_unvested_tokens"))), \
+            s(groups.get((name, "near_lockup_locked_tokens")))
+        vals, srcs = [], []
+        for d, v in base.items():
+            adj, src = 0.0, "derived:circulating_lockup_rule[first_party; no lockup read in force]"
+            if unv is not None and lk is not None:
+                both = pd.concat([unv.rename("u"), lk.rename("l")], axis=1).dropna()
+                both = both[(both.index <= d) & (both.index >= d - pd.Timedelta(days=NEAR_LOCKUP_MAX_AGE_DAYS))]
+                if not both.empty:
+                    rd = both.index[-1]
+                    adj = float(both["l"].iloc[-1] - both["u"].iloc[-1])
+                    src = f"derived:circulating_lockup_rule[first_party + locked − unvested, lockups read {rd.date()}]"
+            vals.append(v + adj)
+            srcs.append(src)
+        groups[(name, "circulating_supply_lockup_rule")] = _as_stored(pd.DataFrame(
+            {"date": base.index, "project": name, "metric": "circulating_supply_lockup_rule", "value": vals,
+             "tier": 1, "source": srcs}), fp.columns)
+
+
+def _unlock_views(groups: dict) -> None:
+    """UNLOCK DILUTION (Jake 2026-10-11, decision A2 on 5b87610): tokens RELEASED from the project's non-circulating
+    wallets, per day = the fall in their summed stock (config.unlock_stock_metrics) since the previous stored day; a
+    day the stock rises releases 0 (an inflow is not a negative unlock). KEPT OUT OF emissions_tokens (Jake 2026-09-24,
+    EMISSIONS_ALIAS_DECLINED stands). A day counts only when EVERY leg holds a row that day and on its previous stored
+    day (at most 3 days before), measured by the SAME wallet set (the source names the composition): a wallet added to
+    the set is a change of measuring point, never an unlock (Aerodrome's filing wallets 2026-10-07: 4.9M -> 36.2M)."""
+    from fetch.base import _measuring_point          # noqa: PLC0415
+    for p in scoped_projects():
+        name = p["name"]
+        legs = config.unlock_stock_metrics(name)
+        if not legs:
+            continue
+        diffs = []
+        for m in legs:
+            g = groups.get((name, m))
+            if g is None or g.empty:
+                diffs = []
+                break
+            g = (g.assign(date=pd.to_datetime(g["date"]).dt.normalize()).sort_values("date")
+                 .drop_duplicates("date", keep="last").set_index("date"))
+            v, mp = g["value"].astype(float), g["source"].astype(str).map(_measuring_point)
+            gap = v.index.to_series().diff().dt.days
+            ok = (mp == mp.shift(1)) & (gap <= config.unlock_max_gap_days(m))
+            # a fall over k days is spread evenly over those k days (a weekly read's release is 7 days' worth), so the
+            # covered-day count the annualisation divides by stays a count of days
+            per_day = {}
+            for d, fall, k in zip(v.index[ok], (v.shift(1) - v)[ok], gap[ok]):
+                for j in range(int(k)):
+                    per_day[d - pd.Timedelta(days=j)] = fall / int(k)
+            diffs.append(pd.Series(per_day, dtype=float).sort_index().rename(m))
+        if not diffs:
+            continue
+        rel = pd.concat(diffs, axis=1).dropna()
+        if rel.empty:
+            continue
+        # RELEASES ONLY: a day the set's stock RISES is not a negative unlock — the Foundation's AERO purchases
+        # (Aerodrome's 0x834C/0x623C are in the set) and Ether.fi's buyback Safe would otherwise be counted twice in
+        # net absorption incl. unlocks (once as buyback, once as a negative release)
+        total = rel.sum(axis=1).clip(lower=0.0)
+        cols = next(g.columns for m in legs if (g := groups.get((name, m))) is not None)
+        groups[(name, "unlock_release_tokens")] = _as_stored(pd.DataFrame(
+            {"date": total.index, "project": name, "metric": "unlock_release_tokens", "value": total.values,
+             "tier": 1, "source": f"derived:unlock_release[{'+'.join(legs)}]"}), cols)
 
 
 def _net_common_views(groups: dict) -> None:
@@ -2189,8 +2329,10 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _net_common_views(groups)     # AFTER the issuance views it differences
     _circulating_views(groups)
     _cg_plus_staked_views(groups)
+    _near_lockup_views(groups)    # BEFORE market cap: NEAR's circulating under Jake's lockup rule
     _market_cap_views(groups)     # AFTER the on-chain circulating it may use; BEFORE NRR reads it
     _fdv_views(groups)            # price x the total supply used, where total supply is on-chain first
+    _unlock_views(groups)         # releases from the non-circulating wallets (Jake 2026-10-11, A2)
     _settlement_views(groups)
     _LAST_GROUPS.clear()
     _LAST_GROUPS.update(groups)       # the views, for Credibility rows that read them (credibility.VIEWS_LONG)
@@ -2869,6 +3011,30 @@ def supply_additive(project: dict) -> bool:
     return bool(project.get("buyback_is_supply_additive"))
 
 
+def _absorption_emissions(R, r: int, p: dict, w: str = "q0") -> str:
+    """The emissions net absorption subtracts: config.absorption_emission_metrics (Aerodrome, Jake 2026-10-11 decision
+    A3: the Minter's gauge emissions AND the RewardsDistributor rebase, consistent with Pendle's gauge emissions),
+    else emissions_tokens."""
+    ms = config.absorption_emission_metrics(p["name"])
+    return "(" + "+".join(R.D(r, m, w) for m in ms) + ")" if len(ms) > 1 else R.D(r, ms[0], w)
+
+
+def _absorption_emissions_cell(R, r: int, p: dict) -> str:
+    ms = config.absorption_emission_metrics(p["name"])
+    if len(ms) == 1:
+        return pull(R.D(r, ms[0], "q0"))
+    return _coverage_guard(R, r, [(m.replace("_tokens", "").replace("_", " "), m, "q0") for m in ms],
+                           "+".join(R.D(r, m, "q0") for m in ms), same_span=True)
+
+
+def _absorption_guard(R, r: int, p: dict, legs: list, expr: str, same_span: bool = False, bare: bool = False) -> str:
+    """_coverage_guard over `legs` plus one leg per absorption emissions metric. same_span compares the first two legs
+    (the buyback / revenue side against the first emissions series), as before; every leg must still cover a week."""
+    ems = [("emissions" if len(config.absorption_emission_metrics(p["name"])) == 1 else
+            m.replace("_tokens", "").replace("_", " "), m, "q0") for m in config.absorption_emission_metrics(p["name"])]
+    return _coverage_guard(R, r, list(legs) + ems, expr, same_span=same_span, bare=bare)
+
+
 def net_absorption(project: dict, buyback_expr: str, emissions_expr: str) -> str:
     """Buyback minus emissions — with the sign of the buyback term decided by config.
 
@@ -2987,6 +3153,8 @@ def derived_statuses(data: pd.DataFrame | None, silence: dict | None = None) -> 
             bb = "active (measured Q0)"
         elif vals:
             bb = "none measured in Q0" + (f" (declared {fs_st})" if fs_st != "n/a" else "")
+        elif fs.get("share_to_buyback") == 0 and fs_st != "n/a":
+            bb = "none (declared: 0% of revenue to buyback)"
         else:
             bb = fs_st if fs_st == "n/a" else f"{fs_st} (declared; no buyback series measured)"
         bvals = [v for v in (_q0(data, name, config.a4_burn_metric(name)), _q0(data, name, "gross_burn_tokens"))
@@ -2995,6 +3163,10 @@ def derived_statuses(data: pd.DataFrame | None, silence: dict | None = None) -> 
             bn = "active (measured Q0)"
         elif bvals:
             bn = "none measured in Q0" + (f" (declared {bs_st})" if bs_st != "n/a" else "")
+        # A DECLARED 0% SPLIT IS NO BURN (Jake's sanity run 2026-10-11 / decision A6: Maple, Bitcoin and Zcash read
+        # 'active (declared; no burn series measured)' — the split IS active, at 0%: there is no burn to measure)
+        elif bs.get("share_of_fees_burned") == 0 and bs_st != "n/a":
+            bn = "none (declared: 0% of fees burned)"
         else:
             bn = bs_st if bs_st == "n/a" else f"{bs_st} (declared; no burn series measured)"
         out[name] = {"buyback": bb, "burn": bn}
@@ -3335,7 +3507,10 @@ def _net_annual_pct(R, r: int, p: dict, circ: str) -> str:
     im, bm = config.issuance_basis(name), config.a4_burn_metric(name)
     derived = (f"({_annualise(R, r, p, im, R.D(r, im, 'q0'))}-"
                f"{_annualise(R, r, p, bm, R.D(r, bm, 'q0'))})/({circ})")
-    guarded = _coverage_guard(R, r, [("issuance", im, "q0"), ("burn", bm, "q0")], derived)
+    # THE SAME EQUAL-COVERAGE GUARD AS THE NET TOTAL BESIDE IT (Jake's sanity run 2026-10-11, mixed_windows:
+    # Hyperliquid's net read BLOCKED — issuance 10 days, burn 90 — while this % read 43.656%, and Venice AI's 4.704%
+    # beside a BLOCKED net). Two rates over different spans are not one net rate; same_span blocks both cells alike.
+    guarded = _coverage_guard(R, r, [("issuance", im, "q0"), ("burn", bm, "q0")], derived, same_span=True, p=p)
     if not p.get("self_reported_net_mint"):
         return guarded
     sr = R.D(r, "net_mint_monthly", "q0")
@@ -3449,10 +3624,13 @@ def _coverage_guard(R: Refs, r: int, legs: list[tuple[str, str, str]], expr: str
         c, n = R.D(r, m, _COV[w]), _nominal(w)
         conds.append(f"IFERROR(AND(ISNUMBER({c}),{c}<{RATE_MIN_DAYS}),FALSE)")
         parts.append(f'"{lab} covers "&IFERROR(IF(ISNUMBER({c}),{c},{n}),"?")&" days of a "&{n}&"-day window"')
-    if same_span and len(legs) == 2:
-        (_, ma, wa), (_, mb, wb) = legs
-        ca, cb, na, nb = R.D(r, ma, _COV[wa]), R.D(r, mb, _COV[wb]), _nominal(wa), _nominal(wb)
-        conds.append(f"IFERROR(ABS(IF(ISNUMBER({ca}),{ca},{na})-IF(ISNUMBER({cb}),{cb},{nb}))>{na}/10,FALSE)")
+    # every further leg against the first (two legs: exactly as before; Aerodrome's net absorption has three since
+    # 2026-10-11 — buyback, gauge emissions, rebase)
+    if same_span and len(legs) >= 2:
+        (_, ma, wa) = legs[0]
+        for (_, mb, wb) in legs[1:]:
+            ca, cb, na, nb = R.D(r, ma, _COV[wa]), R.D(r, mb, _COV[wb]), _nominal(wa), _nominal(wb)
+            conds.append(f"IFERROR(ABS(IF(ISNUMBER({ca}),{ca},{na})-IF(ISNUMBER({cb}),{cb},{nb}))>{na}/10,FALSE)")
     msg = '"BLOCKED — unequal coverage: "&' + '&"; "&'.join(parts)
     if bare:            # nested inside gated()/circular_gated(), which supply the IFERROR and "="
         return f"IF(OR({','.join(conds)}),{msg},{expr})"
@@ -3856,6 +4034,70 @@ def _a2_headline(R: Refs) -> list[tuple]:
          {"metric": "emissions_tokens", **partial, "partial_fmt": '0.0%" PARTIAL↓";(0.0%)" PARTIAL↓"'}),
         _published_unlock_column(),
     ]
+
+
+UNLOCK_HEAD = "UNLOCK DILUTION Q0 (tokens) — released from the non-circulating wallets, NOT emissions"
+UNLOCK_PCT_HEAD = "Unlock dilution, annualised % of free float"
+TOTAL_DILUTION_HEAD = "TOTAL DILUTION = emissions + unlocks, annualised % of free float"
+NET_ABS_UNLOCK_HEAD = "Net absorption incl. unlocks Q0 (tokens) = RETIRED buyback − emissions − unlocks"
+
+
+def _ff_expr(R, r: int, p: dict) -> str:
+    """Free float = circulating − the lock inside it (as A2's FREE FLOAT column)."""
+    c, lk = _circ(R, r, p), _ff_lock(R, r, p)
+    return f"IF(AND(ISNUMBER({c}),ISNUMBER({lk})),{c}-{lk},{NA})"
+
+
+def _unlock_cols(R: Refs, absorption: bool = False) -> list[tuple]:
+    """UNLOCK DILUTION (Jake 2026-10-11, decision A2 on 5b87610) — one block, the same cells on A2, A3 and A4 (the
+    cross-tab test holds them equal): the Q0 releases from the non-circulating wallets (unlock_release_tokens,
+    _unlock_views), annualised over the days covered, as % of free float; TOTAL DILUTION = emissions (the tab's
+    absorption basis, config.absorption_emission_metrics) + unlocks; on A3 net absorption on that basis. Blank where the
+    project has no non-circulating wallet set (config.unlock_stock_metrics). Unlocks stay OUT of emissions_tokens
+    (Jake 2026-09-24)."""
+    def has(p):
+        return bool(config.unlock_stock_metrics(p["name"]))
+
+    def unl(r):
+        return R.D(r, "unlock_release_tokens", "q0")
+
+    def ann_unl(r, p):
+        return _annualise(R, r, p, "unlock_release_tokens", unl(r))
+
+    def ann_em(r, p):
+        return "+".join(_annualise(R, r, p, m, R.D(r, m, "q0")) for m in config.absorption_emission_metrics(p["name"]))
+
+    def ff_cell(fn):
+        def build(r, p):
+            if not has(p):
+                return ""
+            why = _free_float_reason(p)
+            return why if why else calc(fn(r, p))
+        return build
+    cols = [
+        # NOT BOLD (not Credibility headlines yet): no independent reference exists for most projects' releases
+        # (Chainlink's reconciled outflow scan is the one candidate) — RUNBOOK open issues; export_snapshot carries
+        # them by header (EXTRA_SNAPSHOT_HEADERS)
+        (UNLOCK_HEAD, lambda r, p: pull(unl(r)) if has(p) else "", FMT_NUM, "pull", False,
+         {"metric": "unlock_release_tokens"}),
+        (UNLOCK_PCT_HEAD, ff_cell(lambda r, p: _coverage_guard(
+            R, r, [("unlocks", "unlock_release_tokens", "q0")],
+            f"({ann_unl(r, p)})/({_ff_expr(R, r, p)})")[1:]), FMT_PCT, "calc", False,
+         {"metric": "unlock_release_tokens"}),
+        (TOTAL_DILUTION_HEAD, ff_cell(lambda r, p: _absorption_guard(
+            R, r, p, [("unlocks", "unlock_release_tokens", "q0")],
+            f"(({ann_em(r, p)})+({ann_unl(r, p)}))/({_ff_expr(R, r, p)})")[1:]), FMT_PCT, "calc", False,
+         {"metric": "unlock_release_tokens"}),
+    ]
+    if absorption:
+        cols.append((NET_ABS_UNLOCK_HEAD, lambda r, p: "" if not has(p) else _absorption_guard(
+            R, r, p, [("buyback", "actual_buyback_tokens", "q0"), ("unlocks", "unlock_release_tokens", "q0")],
+            net_absorption(p, R.D(r, "retired_buyback_tokens", "q0"), _absorption_emissions(R, r, p)) + f"-{unl(r)}",
+            same_span=True), FMT_NUM, "calc", False, {"supply_additive": True}))
+    return cols
+
+
+EXTRA_SNAPSHOT_HEADERS = (UNLOCK_HEAD, UNLOCK_PCT_HEAD, TOTAL_DILUTION_HEAD, NET_ABS_UNLOCK_HEAD)
 
 
 def _published_unlock_column() -> tuple:
@@ -5278,6 +5520,7 @@ def write_a4(ws, R: Refs, data_by_key: dict):
         # release for pre-minted supply (GEODNET, Hyperliquid), gross issuance for everyone else.
         *_valuation_head(R),
         *_a4_headline(R, burn, data_by_key),
+        *_unlock_cols(R),
         ("Burn execution", lambda r, p: pull(R.C(r, "Burn execution")), FMT_TEXT, "pull"),
         ("Burn status", lambda r, p: pull(R.C(r, "Burn status")), FMT_TEXT, "pull", False, {"status_fill": "burn_split"}),
         ("Documented share of fees burned (config)", lambda r, p: pull(R.C(r, "Share of fees burned")), FMT_PCT, "pull", False, {"gate": "burn_split"}),
@@ -5426,18 +5669,20 @@ def write_a3(ws, R: Refs, data_by_key: dict):
              R, r, [("revenue", config.revenue_base_metric(p["name"]), "q0"), ("buyback", "actual_buyback_usd", "q0")],
              f"{rev(r, p)}*{share(r)}-{R.D(r, 'actual_buyback_usd', 'q0')}", same_span=True, bare=True), share(r))))),
          FMT_USD, "calc", False, {"gate": "fee_split", "threshold": True, "base": True}),
-        ("Emissions Q0 (tokens) — same period", lambda r, p: pull(R.D(r, "emissions_tokens", "q0")), FMT_NUM, "pull", False, {"metric": "emissions_tokens"}),
+        ("Emissions Q0 (tokens) — same period", lambda r, p: _absorption_emissions_cell(R, r, p), FMT_NUM, "pull", False,
+         {"metric": "emissions_tokens"}),
         ("Net absorption Q0 (tokens) = RETIRED buyback (burned + held) − emissions",
-         lambda r, p: _coverage_guard(R, r, [("buyback", "actual_buyback_tokens", "q0"), ("emissions", "emissions_tokens", "q0")],
-                                      net_absorption(p, R.D(r, "retired_buyback_tokens", "q0"),
-                                                     R.D(r, "emissions_tokens", "q0")), same_span=True),
+         lambda r, p: _absorption_guard(R, r, p, [("buyback", "actual_buyback_tokens", "q0")],
+                                        net_absorption(p, R.D(r, "retired_buyback_tokens", "q0"),
+                                                       _absorption_emissions(R, r, p)), same_span=True),
          FMT_NUM, "calc", True, {"supply_additive": True}),
         ("Net absorption, implied basis (tokens)",
-         lambda r, p: base_gated(p, threshold_gated(p, gated(st(r), _coverage_guard(
-             R, r, [("revenue", config.revenue_base_metric(p["name"]), "q0"), ("emissions", "emissions_tokens", "q0")],
-             net_absorption(p, f"{rev(r, p)}*{share(r)}/{price(r)}", R.D(r, "emissions_tokens", "q0")),
+         lambda r, p: base_gated(p, threshold_gated(p, gated(st(r), _absorption_guard(
+             R, r, p, [("revenue", config.revenue_base_metric(p["name"]), "q0")],
+             net_absorption(p, f"{rev(r, p)}*{share(r)}/{price(r)}", _absorption_emissions(R, r, p)),
              same_span=True, bare=True), share(r)))),
          FMT_NUM, "calc", False, {"gate": "fee_split", "threshold": True, "base": True}),
+        *_unlock_cols(R, absorption=True),
         # ===== DOCUMENTED ALLOCATION LEGS, ONE ROW EACH, NEVER COLLAPSED. =====
         # Blank for every project that declares none, which is all of them but Sky. The legs
         # carry their own effect on supply, because a single "implied buyback" figure is right
@@ -5640,6 +5885,7 @@ def write_a2(ws, R: Refs, data_by_key: dict, months: list[str]):
         ("Symbol", lambda r, p: p["symbol"], FMT_TEXT, "text"),
         *_valuation_head(R),
         *_a2_headline(R),
+        *_unlock_cols(R),
         ("Materiality", lambda r, p: pull(R.C(r, "Materiality")), FMT_TEXT, "pull"),
         ("Supply units (nodes / hotspots / GPUs), latest", lambda r, p: pull(R.D(r, "supply_units", "now")), FMT_NUM, "pull", False, {"metric": "supply_units"}),
         ("Capacity utilisation (latest)", lambda r, p: pull(R.D(r, "utilisation_pct", "now")), FMT_PCT, "pull", False, {"metric": "utilisation_pct"}),

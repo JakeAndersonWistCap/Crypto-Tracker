@@ -502,8 +502,11 @@ def _trace_outflows(w: dict, day_before: str, day: str):
             return "the day's blocks could not be resolved"
         from eth_utils import keccak                      # noqa: PLC0415
         transfer = "0x" + keccak(text="Transfer(address,address,uint256)").hex().removeprefix("0x")
+        # THE TOKEN EMITS THE TRANSFER (the same fault as the Foundation split's inflow read, 2026-10-11): logs asked
+        # of the escrow would never hold an AERO Transfer out of it
         logs, how = coi.base_logs_where_balance_moves(o["token"], ve, [transfer, "0x" + ve[2:].rjust(64, "0")], b0, b1,
-                                                      say=lambda *_: None, max_calls=1500, max_moves=80)
+                                                      say=lambda *_: None, max_calls=1500, max_moves=80,
+                                                      emitter=o["token"])
         if not logs and any(k in how for k in ("refused", "stopped", "unreadable")):
             return how[:300]
         by_to: dict = {}

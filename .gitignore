@@ -21,3 +21,5 @@ data/near/
 near-data-510309-*.json
 # the daily task's dated logs (windows/daily_run.ps1)
 logs/
+# the daily theory snapshot (export_snapshot.py) — machine-local output, like the workbook
+snapshots/

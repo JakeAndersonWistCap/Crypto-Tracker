@@ -1458,7 +1458,7 @@ def _last30_annualised(p, rows, long, asof, metric="revenue_usd", **_):
     return float(sr.sum()) * 365.0 / 30.0, str(sr.index[-1].date()), f"{metric}, last 30 days x 365/30"
 
 
-def _window_vs_rate(p, rows, long, asof, flow="fees_usd", rate="", days=7, side="ours", **_):
+def _window_vs_rate(p, rows, long, asof, flow="fees_usd", rate="", days=7, side="ours", plus_flow=None, **_):
     """A FLOW SUMMED OVER THE LAST `days` COMPLETE DAYS vs A PER-DAY RATE x `days` (overnight 2026-10-06, A4): Morpho's
     one-day comparison read nothing — a rate read at one instant against one day's fees. ours = the flow summed over
     the window (every day present, or nothing); ref = the mean of the rate's daily readings inside the window (the
@@ -1480,8 +1480,18 @@ def _window_vs_rate(p, rows, long, asof, flow="fees_usd", rate="", days=7, side=
             return None, None, f"no {rate} reading in the last 14 days"
         return float(recent.iloc[-1]) * int(days), str(recent.index[-1].date()), \
             f"{rate} latest reading ({recent.index[-1].date()}) x {days} days"
-    return float(inside.mean()) * int(days), str(inside.index[-1].date()), \
-        f"{rate}: mean of {len(inside)} reading(s) in {label} x {days} days"
+    val, how = float(inside.mean()) * int(days), f"{rate}: mean of {len(inside)} reading(s) in {label} x {days} days"
+    # PLUS A FLOW OVER THE SAME DAYS (Morpho's liquidation bonuses, Jake 2026-10-11 A7) — added only when every day of
+    # the window is stored; otherwise the rate alone, and the working says so
+    if plus_flow:
+        pf = _series(long, p, plus_flow)
+        pf = pf[(pf.index >= start) & (pf.index <= end)]
+        if len(pf) >= int(days):
+            val += float(pf.sum())
+            how += f" + {plus_flow} summed over {label} (${float(pf.sum()):,.0f})"
+        else:
+            how += f"; {plus_flow}: {len(pf)} of {days} days stored — NOT added"
+    return val, str(inside.index[-1].date()), how
 
 
 def _rise_vs_flow(p, rows, long, asof, flow="", stock="", days=30, side="ours", **_):

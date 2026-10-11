@@ -103,6 +103,10 @@ if ($run[0] -ne 0) {
     Show-Toast "Crypto-Tracker: run exited $($run[0])" "token_metrics.py did not finish cleanly. Log: $Log"
 }
 
+# 2b. NEAR's still-unvested lockups (Jake 2026-10-11, C): ~2.5 hours, so WEEKLY — the script reads only when the last
+#     stored read is 7+ days old, and stores nothing when any lockup is unreadable.
+[void](Invoke-Step "NEAR lockups (weekly)" @("near_lockups_weekly.py"))
+
 # 3. Credibility: the root-cause map, then the full report.
 [void](Invoke-Step "credibility roots" @("credibility_report.py", "--roots"))
 [void](Invoke-Step "credibility report" @("credibility_report.py"))
@@ -111,6 +115,10 @@ if ($run[0] -ne 0) {
 #     mean and max |gap|, and the rows whose verdict changed since the previous run.
 [void](Invoke-Step "credibility history" @("credibility_history.py", "--record"))
 
-# 4. The plain summary, LAST, so the log ends with it.
+# 4. The plain summary, so the log ends with it.
 Write-Log "daily run end"
 [void](Invoke-Step "daily summary" @("daily_summary.py", "--log", $Log))
+
+# 5. The theory snapshot (Jake 2026-10-11, D2), the LAST step: one row per project, every headline metric with its
+#    credibility verdict, NEAR LIMIT flag and coverage days -> snapshots\snapshot_<date>.csv (METRICS.md defines it).
+[void](Invoke-Step "export snapshot" @("export_snapshot.py"))

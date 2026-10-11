@@ -1176,13 +1176,15 @@ def test_base_logs_are_found_by_bisecting_the_balance_not_by_scanning(monkeypatc
 
 # ===== EXTERNAL AUDIT 2026-10-09, ITEM 1: AERODROME'S FOUNDATION BUY-AND-LOCK =====
 
-def test_foundation_buy_and_lock_is_the_lock_stock_change_net_of_rebase_claims():
-    """actual_buyback_tokens = d(locked) + min(d(claimable), 0) on consecutive days: a rebase claim (claimable -> lock)
-    nets to 0, accrual is not a buy, a gap day is not differenced across, and a lock leaving the wallets is kept
-    negative, under the same source. USD = tokens x the same-day price."""
+def test_foundation_buy_and_lock_is_the_lock_stock_change_net_of_rebase_claims(monkeypatch):
+    """THE RETIRED STOCK-CHANGE BASIS (the agreed basis replaced it on 2026-10-11, B; it still runs for a foundation
+    buyback declaring no basis): actual_buyback_tokens = d(locked) + min(d(claimable), 0) on consecutive days: a rebase
+    claim (claimable -> lock) nets to 0, accrual is not a buy, a gap day is not differenced across, and a lock leaving
+    the wallets is kept negative, under the same source. USD = tokens x the same-day price."""
     import build_workbook as bw
     import config
     fb = config.PROJECT_BY_NAME["Aerodrome"]["foundation_buyback"]
+    monkeypatch.setitem(fb, "basis", None)
     d = pd.to_datetime(["2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04", "2026-09-06", "2026-09-07"])
     mk = lambda metric, vals: pd.DataFrame({"date": d, "project": "Aerodrome", "metric": metric,  # noqa: E731
                                             "value": vals, "source": "ve_managed:foundation_locks", "tier": 2})
@@ -1230,21 +1232,35 @@ def test_foundation_lock_read_stores_both_series_once_a_day_and_the_seed_marks_a
     v = vm.VeManaged(reader=object(), daily=Daily())
     calls = []
     v.foundation_reader = lambda o, block="latest": (calls.append(block), got)[1]
+    # THE AGREED BASIS'S DAILY WINDOW (Jake 2026-10-11, B): the previous UTC day's parts, read once a day too
+    win = {"bought_same_tx": 0.0, "lock_from_balance": 0.0, "purchased": 0.0, "compounded_owner": 1234.5,
+           "rebase_owner": 99.0, "locks": [], "purchases": [], "inflows": {}, "compounders": {"0xauto": 1234.5},
+           "error": None}
+    wcalls = []
+    v.day_blocks = lambda day: (100, 200)
+    v.window_reader = lambda b0, b1: (wcalls.append((b0, b1)), win)[1]
     p = {"name": "Aerodrome", "foundation_buyback": fb}
     out = FetchOutput()
     v.run([p], 30, out)
     v.run([p], 30, out)
-    assert len(calls) == 1, "read once a day"
+    assert len(calls) == 1 and wcalls == [(100, 200)], "read once a day"
     rows = pd.concat(out.frames)
-    assert set(rows["metric"]) == {fb["stock_metric"], fb["claimable_metric"]}
-    assert rows.set_index("metric")["value"].to_dict() == {fb["stock_metric"]: 1000.0, fb["claimable_metric"]: 5.0}
+    wm = fb["window_metrics"]
+    assert set(rows["metric"]) == {fb["stock_metric"], fb["claimable_metric"], *wm.values()}
+    vals = rows.set_index("metric")["value"].to_dict()
+    assert {k: vals[k] for k in (fb["stock_metric"], fb["claimable_metric"])} == {fb["stock_metric"]: 1000.0,
+                                                                                  fb["claimable_metric"]: 5.0}
+    assert vals[wm["compounded_owner"]] == 1234.5 and vals[wm["rebase_owner"]] == 99.0
+    rows = rows[rows["metric"].isin([fb["stock_metric"], fb["claimable_metric"]])]
     assert "Public Goods Fund 600" in out.log[0].message and "1 owned managed" in out.log[0].message
 
     monkeypatch.setattr(coi, "rpc_block_at", lambda chain, ts, say=print: 1_000 + ts // 86400)
     stored = lambda name, metric, day: day.endswith("-01")  # noqa: E731
     frames = vm.seed_foundation([p], days=5, stored=stored, say=lambda *_: None,
-                                reader=lambda o, block="latest": got)
+                                reader=lambda o, block="latest": got, window_reader=lambda b0, b1: win)
     seeded = pd.concat(frames)
+    assert set(seeded[seeded["metric"] == wm["compounded_owner"]]["source"]) == {"ve_managed:buyback_window"}
+    seeded = seeded[seeded["metric"].isin([fb["stock_metric"], fb["claimable_metric"]])]
     # ONE source string, seeded or daily (Jake's run on 20d0eb4)
     assert set(seeded["source"]) == {"ve_managed:foundation_locks"} == set(rows["source"])
     assert not any(str(x.date()).endswith("-01") for x in seeded["date"])
@@ -1379,10 +1395,13 @@ def _aero_long(values, claim=None, start="2026-09-01"):
     return pd.DataFrame(rows)
 
 
-def test_aerodrome_buyback_is_one_measuring_point_with_a_negative_day_and_the_split_matches_it():
+def test_aerodrome_buyback_is_one_measuring_point_with_a_negative_day_and_the_split_matches_it(monkeypatch):
     """3: a negative day no longer adds a '[NEGATIVE …]' source (which stripped to a trailing space and read as a second
-    measuring point, blanking the series as BUG); the buyback row reports, and the retired split equals it (held)."""
+    measuring point, blanking the series as BUG); the buyback row reports, and the retired split equals it (held).
+    On the retired stock-change basis (2026-10-11, B replaced it)."""
     import build_workbook as bw
+    import config
+    monkeypatch.setitem(config.PROJECT_BY_NAME["Aerodrome"]["foundation_buyback"], "basis", None)
     long = _aero_long([100.0, 412.0, 462.0, 400.0, 450.0])            # 09-04: -62, a lock left
     data = bw.aggregate(long, pd.DataFrame(), pd.Timestamp("2026-09-06"))
     a = data[(data.project == "Aerodrome")].set_index("metric")
@@ -1396,6 +1415,8 @@ def test_the_buyback_split_inherits_a_withheld_parent(monkeypatch):
     """3: E14 0.97% and AH14 -2.076M were computed while the Q0 buyback read n/a — the split rows now inherit the
     parent's withholding (status, blank windows, the reason)."""
     import build_workbook as bw
+    import config
+    monkeypatch.setitem(config.PROJECT_BY_NAME["Aerodrome"]["foundation_buyback"], "basis", None)   # the stock basis
     real = bw.withheld_for
     monkeypatch.setattr(bw, "withheld_for", lambda p, m, r: (("measuring_point_changed", "forced for the test")
                                                             if m == "actual_buyback_tokens" else real(p, m, r)))
@@ -1830,7 +1851,8 @@ def test_migration_watch_label_runs_from_10_21_until_built(monkeypatch):
 def test_total_supply_on_chain_first_for_ether_fi_and_its_fdv():
     """Jake's review of 97b29ae (2026-10-11), item 6: Ether.fi's total supply is on-chain first — the chain read wins
     the tier collision (logged, not raised) — and FDV = price x that total; CoinGecko's FDV stays as the cross-check.
-    Another project's collision is unchanged (CoinGecko kept, tier_collision raised) until Jake approves."""
+    A project NOT on-chain first keeps CoinGecko and raises tier_collision (Aethir: its Arbitrum read is partial; the
+    other seven were flipped by Jake's decision A4, 2026-10-11)."""
     import fetch as fetch_mod
     import build_workbook as bw
     from fetch.base import FetchOutput
@@ -1838,14 +1860,14 @@ def test_total_supply_on_chain_first_for_ether_fi_and_its_fdv():
     row = lambda p, v, src, t: {"date": pd.Timestamp(d), "project": p, "metric": "total_supply", "value": v,  # noqa: E731
                                 "source": src, "tier": t}
     out = FetchOutput()
-    out.frames = [pd.DataFrame([row("Ether.fi", 965.35e6, "coingecko", 1), row("Pendle", 281.5e6, "coingecko", 1)]),
+    out.frames = [pd.DataFrame([row("Ether.fi", 965.35e6, "coingecko", 1), row("Aethir", 9.5e9, "coingecko", 1)]),
                   pd.DataFrame([row("Ether.fi", 998_535_999.0, "chain:ethereum:token", 2),
-                                row("Pendle", 281.6e6, "chain:ethereum:token", 2)])]
+                                row("Aethir", 9.6e9, "chain:arbitrum:token", 2)])]
     fetch_mod._resolve_tier_collisions(out)
     f = out.frame().set_index("project")
     assert f.loc["Ether.fi", "value"] == 998_535_999.0 and f.loc["Ether.fi", "source"] == "chain:ethereum:token"
-    assert f.loc["Pendle", "source"] == "coingecko"
-    assert [r["project"] for r in out.review if r["reason"] == "tier_collision"] == ["Pendle"]
+    assert f.loc["Aethir", "source"] == "coingecko"
+    assert [r["project"] for r in out.review if r["reason"] == "tier_collision"] == ["Aethir"]
     cols = ["date", "project", "metric", "value", "source", "tier"]
     g = lambda m, v, src: pd.DataFrame([{"date": d, "project": "Ether.fi", "metric": m, "value": v, "source": src,  # noqa: E731
                                          "tier": 1}], columns=cols)

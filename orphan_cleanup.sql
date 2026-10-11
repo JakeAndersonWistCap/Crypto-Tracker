@@ -4429,3 +4429,24 @@ SELECT COUNT(*) AS rows, MIN(date) AS first, MAX(date) AS last, ROUND(SUM(value)
 -- CG2. THE DELETE.
 -- DELETE FROM metrics
 --  WHERE project = 'Near' AND metric = 'actual_buyback_usd' AND source = 'derived:tokens*price';
+
+-- ========================================================================================
+-- CH. PANCAKESWAP: THE DEAD-ADDRESS INFLOW STORED AS BUYBACK  2026-10-11
+--     Jake's sanity run 2026-10-11 (buyback_above_revenue: $286.4M = 2,233% of revenue). The burn route copied
+--     gross_burn_tokens into actual_buyback_tokens (source marked ':as-buyback') and priced it; ~99% of that CAKE is
+--     MasterChef emission minted and burned unused (config BUYBACK_ROUTE_OVERRIDE["PancakeSwap"]). The route is now
+--     "none": the build shows n/a whatever is stored. CH1 lists the stored copies; CH2 removes ONLY PancakeSwap's
+--     actual_buyback_tokens rows marked as-buyback and its actual_buyback_usd rows. gross_burn_tokens is untouched.
+--     Run: python run_sql.py CH, then python run_sql.py --delete CH.
+-- ========================================================================================
+-- CH1. WHAT GOES.
+SELECT metric, COUNT(*) AS rows, MIN(date) AS first, MAX(date) AS last, ROUND(SUM(value), 2) AS total
+  FROM metrics
+ WHERE project = 'PancakeSwap'
+   AND ((metric = 'actual_buyback_tokens' AND source LIKE '%as-buyback%') OR metric = 'actual_buyback_usd')
+ GROUP BY metric ORDER BY metric;
+
+-- CH2. THE DELETE.
+-- DELETE FROM metrics
+--  WHERE project = 'PancakeSwap'
+--    AND ((metric = 'actual_buyback_tokens' AND source LIKE '%as-buyback%') OR metric = 'actual_buyback_usd');

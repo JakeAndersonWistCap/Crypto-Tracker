@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import logging
 
+import pandas as pd
+
 from .base import tidy, today
 
 log = logging.getLogger("token_metrics.fetch.ve_managed")
@@ -132,12 +134,78 @@ def _foundation(self, p, spec, out):
     for f in frames:
         out.add(f, SOURCE, name, msg, TIER)
     self.daily.done(key, day)
+    if spec.get("basis") == "bought_plus_compounded":
+        _buyback_window(self, p, spec, out)
+
+
+def window_rows(name: str, spec: dict, day, got: dict, archive: bool = False) -> tuple[list, str]:
+    """[(frame)] for one UTC day's buyback parts (check_offline_items.aerodrome_buyback_window) and the log line. One
+    source string, seeded or daily."""
+    src = f"{SOURCE}:buyback_window"
+    wm = spec["window_metrics"]
+    frames = [tidy([(day, float(got[k]))], name, m, src, TIER) for k, m in wm.items()]
+    who = "; ".join(f"{a[:10]}… {v:,.0f}" for a, v in sorted(got.get("compounders", {}).items(), key=lambda kv: -kv[1]))
+    ins = "; ".join(f"{a[:10]}… {v:,.0f}" for a, v in sorted(got.get("inflows", {}).items(), key=lambda kv: -kv[1])[:5])
+    msg = (f"Foundation buyback {pd.Timestamp(day).date()}: bought+locked in one tx {got['bought_same_tx']:,.2f}; "
+           f"locked from balance {got['lock_from_balance']:,.2f} ({len(got['locks'])} lock(s)); purchased "
+           f"{got['purchased']:,.2f} ({len(got['purchases'])} purchase(s)); compounded (owners' share) "
+           f"{got['compounded_owner']:,.2f}" + (f" by {who}" if who else "") + f"; rebase (excluded) "
+           f"{got['rebase_owner']:,.2f}" + (f"; other AERO inflows (not purchases): {ins}" if ins else "")
+           + (" (archive read)" if archive else ""))
+    return frames, msg
+
+
+def _day_blocks(day) -> tuple:
+    """(first block of `day`, first block of the next day), UTC, on Base."""
+    import check_offline_items as coi                      # noqa: PLC0415
+    d = pd.Timestamp(day).normalize()
+    d = d.tz_localize("UTC") if d.tzinfo is None else d
+    a = coi.rpc_block_at("base", int(d.timestamp()), say=lambda *_: None)
+    b = coi.rpc_block_at("base", int((d + pd.Timedelta(days=1)).timestamp()), say=lambda *_: None)
+    return a, b
+
+
+def _window_reader(b0, b1):
+    import check_offline_items as coi                      # noqa: PLC0415
+    return coi.aerodrome_buyback_window(b0, b1)
+
+
+def _buyback_window(self, p, spec, out):
+    """THE AGREED BASIS (Jake 2026-10-11, B): once a day, the previous complete UTC day's parts — bought and locked,
+    locked from balance, purchased, compounded (owners' share), rebase (apart). build_workbook._foundation_buyback_views
+    sums them into actual_buyback_tokens."""
+    name = p["name"]
+    yday = (today() - pd.Timedelta(days=1)).normalize()
+    key = f"ve_managed:{name}:buyback_window"
+    if not self.daily.due(key, str(yday.date())):
+        out.mark_current(SOURCE, name, spec["window_metrics"]["compounded_owner"], "buyback window: read today already",
+                         TIER)
+        return
+    try:
+        b0, b1 = (getattr(self, "day_blocks", None) or _day_blocks)(yday)
+        if not (b0 and b1):
+            raise ValueError("the day's Base blocks could not be resolved")
+        got = (getattr(self, "window_reader", None) or _window_reader)(b0, b1)
+    except Exception as e:  # noqa: BLE001
+        from .chain import redact_urls
+        out.fail(SOURCE, name, f"Foundation buyback window {yday.date()}: {redact_urls(e)}", TIER)
+        return
+    if got.get("error"):
+        from .chain import redact_urls
+        out.fail(SOURCE, name, f"Foundation buyback window {yday.date()}: {redact_urls(got['error'])} — nothing stored",
+                 TIER)
+        return
+    frames, msg = window_rows(name, spec, yday, got)
+    for f in frames:
+        out.add(f, SOURCE, name, msg, TIER)
+    self.daily.done(key, str(yday.date()))
 
 
 VeManaged._foundation = _foundation
 
 
-def seed_foundation(projects: list[dict], days: int = 100, stored=None, say=print, reader=None) -> list:
+def seed_foundation(projects: list[dict], days: int = 100, stored=None, say=print, reader=None,
+                    window_reader=None) -> list:
     """`token_metrics.py --seed aero_buyback`: the Foundation lock stock at each UTC day start over the last `days`
     days, at that day's first block (archive eth_call through Multicall3), only for days with no row. Frames out."""
     import check_offline_items as coi                      # noqa: PLC0415
@@ -168,4 +236,21 @@ def seed_foundation(projects: list[dict], days: int = 100, stored=None, say=prin
             fs, msg = foundation_rows(name, spec, d, got, archive=True)
             frames += fs
             say(f"  {d.date()} (block {b:,}): {msg}")
+            # THE AGREED BASIS (Jake 2026-10-11, B): the day BEFORE d, between its first block and d's (b)
+            if spec.get("basis") == "bought_plus_compounded":
+                prev = d - pd.Timedelta(days=1)
+                if stored and stored(name, spec["window_metrics"]["compounded_owner"], str(prev.date())):
+                    continue
+                b_prev = coi.rpc_block_at("base", int((prev.tz_localize("UTC") if prev.tzinfo is None else prev)
+                                                      .timestamp()), say=lambda *_: None)
+                if not b_prev:
+                    say(f"  {prev.date()}: no block for the day start — buyback window skipped")
+                    continue
+                w = (window_reader or _window_reader)(b_prev, b)
+                if w.get("error"):
+                    say(f"  {prev.date()}: buyback window {w['error']} — skipped")
+                    continue
+                fs, msg = window_rows(name, spec, prev, w, archive=True)
+                frames += fs
+                say(f"  {msg}")
     return frames

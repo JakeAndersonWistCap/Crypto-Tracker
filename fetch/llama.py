@@ -1275,6 +1275,61 @@ class MorphoBlueApi:
                         f"denominator, unlike the DefiLlama route this replaces.", self.TIER)
             if api.get("interest"):
                 self._interest(api, ids, name, when, out)
+            if api.get("liquidations"):
+                self._liquidations(api, ids, name, when, out)
+
+    def _liquidations(self, api: dict, ids: list, name: str, when, out) -> None:
+        """LIQUIDATION BONUSES PER DAY, LISTED MARKETS (Jake 2026-10-11, decision A7 on 5b87610: bonuses explained 97.6%
+        of the in_interest_day gap, $443,550 of $454,331 over 2026-10-04..10). DefiLlama's fees count them (dimension-
+        adapters fees/morpho: bonus = seized - seized / LIF, LIF = min(1.15, 1 / (0.3 x LLTV + 0.7))), our API reference
+        did not. Each of the last `days` complete UTC days is read (marketTransactions, type Liquidation) and stored at
+        its date — re-read every run, so a missed day fills itself. Priced at the collateral's priceUsd as Morpho's API
+        gives it at the read (a day or a week stale: noted); a listed liquidation with no price is counted and said."""
+        spec = api["liquidations"]
+        metric, days = spec["metric"], int(spec.get("days", 7))
+        end = pd.Timestamp(when).normalize()
+        for k in range(days, 0, -1):
+            d0 = end - pd.Timedelta(days=k)
+            t0, t1 = int(d0.timestamp()), int(d0.timestamp()) + 86399
+            bonus, n, unpriced, skip = 0.0, 0, 0, 0
+            try:
+                while True:
+                    page = self._query(api["endpoint"], spec["query"],
+                                       {"skip": skip, "w": {"type_in": ["Liquidation"], "chainId_in": ids,
+                                                            "timestamp_gte": t0, "timestamp_lte": t1}})
+                    if (page or {}).get("errors"):
+                        raise ValueError("GraphQL: " + "; ".join(str(e.get("message", e))[:160]
+                                                                 for e in page["errors"][:3]))
+                    node = (((page or {}).get("data") or {}).get("marketTransactions") or {})
+                    items = node.get("items") or []
+                    for it in items:
+                        m = it.get("market") or {}
+                        if m.get("listed") is not True:
+                            continue                  # the interest reference is listed markets: the same population
+                        seized = (it.get("data") or {}).get("seizedAssets")
+                        ca = m.get("collateralAsset") or {}
+                        if seized is None or m.get("lltv") is None:
+                            raise ValueError(f"liquidation in {str(m.get('marketId'))[:18]} carries no seizedAssets/lltv")
+                        n += 1
+                        if ca.get("priceUsd") is None:
+                            unpriced += 1
+                            continue
+                        lltv = int(m["lltv"]) / 1e18
+                        lif = min(1.15, 1.0 / (0.3 * lltv + 0.7))
+                        tok = int(seized) / 10 ** int(ca.get("decimals") or 18)
+                        bonus += tok * (1.0 - 1.0 / lif) * float(ca["priceUsd"])
+                    total = (node.get("pageInfo") or {}).get("countTotal")
+                    skip += len(items)
+                    if not items or (total is not None and skip >= int(total)):
+                        break
+            except Exception as e:  # noqa: BLE001 — a failed reference must not kill the run
+                out.fail(self.SOURCE, name, f"{metric} {d0.date()}: liquidation query failed: {e}", self.TIER)
+                return
+            out.add(point(name, metric, bonus, f"{self.SOURCE}:marketTransactions.Liquidation", self.TIER, d0),
+                    self.SOURCE, name,
+                    f"{metric} {d0.date()} = ${bonus:,.0f} from {n} listed-market liquidation(s) (seized x (1 - 1/LIF) "
+                    f"x the collateral's priceUsd now)" + (f"; {unpriced} with no collateral price left out"
+                                                         if unpriced else ""), self.TIER)
 
     def _interest(self, api: dict, ids: list, name: str, when, out) -> None:
         """Borrower interest per day at the read: sum over LISTED markets of borrowAssetsUsd x the daily

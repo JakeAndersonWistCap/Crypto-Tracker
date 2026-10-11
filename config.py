@@ -238,6 +238,14 @@ METRICS = {
     "circulating_supply_first_party": {"label": "Circulating supply — the protocol's OWN figure (Hyperliquid tokenDetails.circulatingSupply; Aethir dashboard athCirculatingSupply; NEAR's circulating_supply table in BigQuery)",
                                        "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [1, 3],
                                        "sanity_min": 0, "sanity_max": 1e15, "only_projects": ("Hyperliquid", "Aethir", "Near", "Plume")},
+    # HYPERLIQUID (Jake 2026-10-11, decision A1): circulating_supply_first_party is stored net of the Foundation and
+    # Community Grants wallets from 2026-10-11; the raw tokenDetails figure and the wallets' holding are kept beside it.
+    "circulating_supply_tokendetails": {"label": "Circulating supply — Hyperliquid tokenDetails.circulatingSupply as published (before the declared Foundation / Grants exclusions)",
+                                        "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [1],
+                                        "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Hyperliquid",)},
+    "excluded_wallets_tokens": {"label": "HYPE held by the declared non-circulating wallets tokenDetails counts as circulating (Hyper Foundation, Community Grants): spot + staked",
+                                "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [1],
+                                "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Hyperliquid",)},
     # GEODNET (2026-10-07 afternoon): a third party's figure (Blockworks 462M), used only while the project publishes
     # none and our on-chain set is unresolved (CIRCULATING_ONCHAIN ratios_use "third_party_reference").
     "circulating_supply_third_party": {"label": "Circulating supply — a THIRD PARTY's published figure (GEODNET: Blockworks 462M, static), used where the project publishes none and our set is unresolved",
@@ -702,6 +710,11 @@ METRICS = {
                  "daily rate from borrowApy) — CREDIBILITY reference only",
         "kind": "stock", "unit": "usd", "archetypes": [2], "tiers": [1],
         "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Morpho",), "view_only": True},
+    "liquidation_bonus_usd_day_morpho_api": {
+        "label": "Liquidation bonuses per complete UTC day — Morpho's own API, listed markets: seized x (1 - 1/LIF) x "
+                 "the collateral's price — CREDIBILITY reference only (added to the interest side of in_interest_day)",
+        "kind": "flow", "unit": "usd", "archetypes": [2], "tiers": [1],
+        "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Morpho",), "view_only": True},
     "circulating_supply_tokenops": {"label": "Morpho circulating supply per TokenOps (api.tokenops.xyz) — CREDIBILITY reference only",
                                     "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [3],
                                     "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Morpho",), "view_only": True},
@@ -1081,6 +1094,36 @@ METRICS = {
     # pool into CIRCULATION, leaving total flat. Both raise circulating supply, and for the DePIN
     # names the second is the whole supply-side story — which is why these were not closed as
     # not_applicable. See POOL_RELEASE_ROUTES for which route is live per project.
+    # AERODROME'S FOUNDATION BUYBACK, THE AGREED BASIS (Jake 2026-10-11, B): one day each, from
+    # check_offline_items.aerodrome_buyback_window (fetch/ve_managed.py daily; `--seed aero_buyback`)
+    "foundation_bought_locked_same_tx_tokens": {"label": "AERO bought and locked by the Foundation wallets in ONE transaction (the wallet paid out another token)",
+                                                "kind": "flow", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Aerodrome",)},
+    "foundation_lock_from_balance_tokens": {"label": "AERO the Foundation wallets locked from their balance (counts as bought only when matched to purchases, oldest first)",
+                                            "kind": "flow", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Aerodrome",)},
+    "foundation_aero_purchased_tokens": {"label": "AERO PURCHASED into the Foundation wallets (received in a transaction where the wallet paid out another token)",
+                                         "kind": "flow", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Aerodrome",)},
+    "foundation_compounded_owner_tokens": {"label": "Compounded voting rewards accrued to the Foundation's LOCKED veNFTs (owners' share; AutoCompounder increaseAmount)",
+                                           "kind": "flow", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Aerodrome",)},
+    "foundation_rebase_owner_tokens": {"label": "Rebase accrued to the Foundation's LOCKED veNFTs (owners' share) — EXCLUDED from the buyback, shown apart",
+                                       "kind": "flow", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Aerodrome",)},
+    # UNLOCK DILUTION (Jake 2026-10-11, decision A2): releases from the non-circulating wallets, a build-time view
+    # (build_workbook._unlock_views). KEPT OUT OF emissions_tokens (Jake 2026-09-24).
+    "unlock_release_tokens":      {"label": "Unlock dilution — tokens RELEASED from the non-circulating wallets (the fall in their stock; a rise releases 0). Not emissions.",
+                                   "kind": "flow", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [1],
+                                   "sanity_min": 0, "sanity_max": 1e12, "view_only": True},
+    # NEAR's still-unvested lockups (Jake 2026-10-11, C): near_lockups, refreshed weekly, out of circulating
+    "near_lockup_unvested_tokens": {"label": "NEAR still UNVESTED in lockup contracts (lockup.near subaccounts) — out of circulating; refreshed weekly",
+                                    "kind": "stock", "unit": "tokens", "archetypes": [1, 3, 4], "tiers": [2, 3],
+                                    "sanity_min": 0, "sanity_max": 2e9, "only_projects": ("Near",)},
+    "near_lockup_locked_tokens":  {"label": "NEAR LOCKED in lockup contracts (lockup or vesting; what NEAR's own circulating subtracts) — same weekly read",
+                                   "kind": "stock", "unit": "tokens", "archetypes": [1, 3, 4], "tiers": [2, 3],
+                                   "sanity_min": 0, "sanity_max": 2e9, "only_projects": ("Near",)},
+    "circulating_supply_lockup_rule": {"label": "Circulating supply — NEAR's own figure + (lockups LOCKED − STILL UNVESTED): Jake's rule, only unvested is out (2026-10-11)",
+                                       "kind": "stock", "unit": "tokens", "archetypes": [1, 3, 4], "tiers": [1],
+                                       "sanity_min": 0, "sanity_max": 2e9, "view_only": True, "only_projects": ("Near",)},
+    "noncirculating_nearblocks_tokens": {"label": "NEAR not circulating per NearBlocks (total_supply − circulating_supply, api.nearblocks.io/v1/stats) — cross-check",
+                                         "kind": "stock", "unit": "tokens", "archetypes": [1, 3, 4], "tiers": [3],
+                                         "sanity_min": 0, "sanity_max": 2e9, "only_projects": ("Near",)},
     "pool_release_tokens":        {"label": "Released from a pre-minted pool (supply already existed — NOT newly minted)",
                                    "kind": "flow", "unit": "tokens", "archetypes": [1, 2, 3, 4],
                                    "tiers": [1, 2], "sanity_min": None, "sanity_max": None,
@@ -3396,6 +3439,12 @@ PROJECTS = [
             "note": "NEAR mints validator rewards on a declared inflation curve.",
         },
         "name": "Near", "symbol": "NEAR",
+        # THE BUYBACK'S FUNDING IS NOT THE CHAIN'S REVENUE (Jake's sanity run 2026-10-11: actual buyback Q0 $3.57M =
+        # 1,989% of revenue Q0 $179K). Revenue Q0 is the chain's gas revenue; the buyback is paid from NEAR Intents
+        # front-end and 1Click fees collected in the three revenue wallets (the buyback series above reads them).
+        "buyback_funding": {"what": "NEAR Intents front-end (fefundsadmin) and 1Click (1csfundsadmin) fees, swapped to "
+                                    "NEAR in buybacks.multisignature.near — not the chain's gas revenue",
+                            "source_url": "https://revenue.near.org/", "source_date": "2026-10-07"},
         # THE CHAIN'S RECORD IS THE BURN (Jake's run 2026-10-08): block-header total_supply falls are ALL supply
         # destroyed (gas + failed-receipt burns + other); fees x 0.70 (DefiLlama-derived gross_burn_tokens) is the gas
         # share only and stays as the labelled cross-check (Credibility a4_gross_burn). Burn yield and crossover read it.
@@ -3487,6 +3536,9 @@ PROJECTS = [
             # L664-670; apps/api/src/sql/queries/validators/info.sql). The reference for our validators-RPC stake.
             "validators_info": {"path": "/v3/validators/info", "field": "total_stake",
                                 "metric": "locked_tokens_nearblocks", "yocto_exponent": 24},
+            # Jake 2026-10-11 (C): NearBlocks' total − circulating, the cross-check for the still-unvested lockup leg
+            # (58.87M on 2026-10-11; NearBlocks subtracts all LOCKED, Jake's rule only the unvested — expect ours lower)
+            "supply_stats": {"path": "/v1/stats", "metric": "noncirculating_nearblocks_tokens", "yocto_exponent": 24},
             "metrics": {
                 "tx_count": {"path": "/v3/txn-stats", "field": "txns"},
                 "active_addresses": {"path": "/v3/address-stats", "field": "active_accounts"},
@@ -8062,8 +8114,14 @@ PROJECTS = [
         "coingecko_id": "origintrail",
         "defillama_fees_slug": None, "defillama_protocol": None, "defillama_chain": None,
         "archetypes": [2, 3], "archetypes_held": [],
-        "fee_split": {"share_to_buyback": 1.0, "source_url": "https://docs.origintrail.io/", "source_date": BRIEF_DATE, "programmed": True, "status": "active",
-                      "note": "Publishing fees in TRAC distributed to nodes from usage, not inflation. Revenue is small and not publicly tracked."},
+        # NOTHING IS BOUGHT (Jake's sanity run 2026-10-11: buyback 'active (declared; no buyback series measured)').
+        # docs.origintrail.io (Conviction & Economics; Contract addresses, read 2026-10-11): publishers pay TRAC they
+        # already hold into the staker reward pool (EpochStorageV8 0xdE319588… TokensAddedToEpochRange, Base and Gnosis
+        # — ~297 TRAC over the 90 days to 2026-10-11, OriginTrail/dkg@60dbf0d0 deployments); no market purchase. A
+        # payout of fees to stakers, not a buyback: status n/a (was "active", share 1.0, since BRIEF_DATE).
+        "fee_split": {"share_to_buyback": None, "source_url": "https://docs.origintrail.io/", "source_date": "2026-10-11", "programmed": True, "status": "n/a",
+                      "was": {"share_to_buyback": 1.0, "status": "active"},
+                      "note": "Publishing fees in TRAC are paid to stakers (the reward pool), not used to buy TRAC. Revenue is small and not publicly tracked."},
         "burn_split": None,
         "issuance_schedule": {"steps": [{"from": "2018-01-01", "tokens_per_day": 0.0}],
                               "source_url": "https://docs.origintrail.io/", "source_date": BRIEF_DATE, "status": "active",
@@ -10289,6 +10347,20 @@ PROJECTS = [
                 "spec_url": "https://docs.morpho.org/api/morpho",
                 "spec_date": "2026-10-06",
             },
+            # ===== LIQUIDATION BONUSES (Jake 2026-10-11, decision A7 on 5b87610) — the API side of in_interest_day
+            # adds them, as DefiLlama's fees do (dimension-adapters fees/morpho: seized - seized / LIF). Listed markets,
+            # the last 7 complete UTC days re-read every run (fetch/llama.py _liquidations). Measured 2026-10-04..10:
+            # $443,550 = 97.6% of the $454,331 gap.
+            "liquidations": {
+                "metric": "liquidation_bonus_usd_day_morpho_api",
+                "days": 7,
+                "query": ("query($skip:Int!,$w:MarketTransactionFilters){ "
+                          "marketTransactions(first:500, skip:$skip, where:$w){ pageInfo{countTotal} "
+                          "items{ timestamp market{ marketId listed lltv collateralAsset{ decimals priceUsd } } "
+                          "data{ ... on MarketTransactionLiquidationData { seizedAssets } } } } }"),
+                "lif_source": "https://docs.morpho.org/learn/concepts/liquidation/ (LIF = min(1.15, 1/(0.3 LLTV + 0.7)))",
+                "spec_date": "2026-10-11",
+            },
             # ** A TRIPWIRE ON THE MEANING, NOT A FILTER ON THE VALUE. ** Nothing is rescaled,
             # clipped or dropped by this band; it only decides whether the unconfirmed-run
             # message invites a human to confirm or tells them not to. The first live run came
@@ -11164,6 +11236,16 @@ PROJECTS = [
             "why": "the Assistance Fund's buyback is the burn: tokens bought = tokens burned",
             "declared_by": "Jake, 2026-09-30"},
         "series_handover": {
+            # JAKE 2026-10-11 (decision A1): from the first run after the decision, the first-party circulating figure
+            # is tokenDetails.circulatingSupply LESS the Hyper Foundation and Community Grants wallets (63.53M on
+            # 2026-10-11: 302.17M -> 238.64M). Days before keep the published figure; the raw series continues as
+            # circulating_supply_tokendetails.
+            "circulating_supply_first_party": {
+                "ordered_points": ("hypercore_info:tokenDetails.circulatingSupply",
+                                   "hypercore_info:tokenDetails.circulatingSupply-exclude_wallets"),
+                "why": "Jake 2026-10-11 (A1): the Foundation (genesis 60M) and Community Grants (genesis 3M) wallets "
+                       "are non-circulating under the convention; tokenDetails counts them",
+                "declared_on": "2026-10-11"},
             "emissions_tokens": {
                 "ordered_points": ("model:inverse_sqrt(locked_tokens)", "hypercore_info:tokenDetails.futureEmissions"),
                 "why": "the published reward formula applied to stake history before the first "
@@ -11601,6 +11683,23 @@ PROJECTS = [
                 # Assistance Fund's (whose HYPE stays inside the total) — stored separately,
                 # never summed into gross_burn_tokens without a decision (burn_partial).
                 "supply_fall_metric": "core_burn_tokens",
+                # ===== JAKE 2026-10-11 (decision A1 on 5b87610): THE FOUNDATION AND GRANTS WALLETS ARE NOT
+                # CIRCULATING. tokenDetails.circulatingSupply counts them; under the convention (protocol-held and
+                # foundation-held count as non-circulating) they come out. Each is identified in tokenDetails' own
+                # genesis.userBalances by its exact genesis allocation (60,000,000 and 3,000,000 HYPE), read
+                # 2026-10-11; its balance is spot HYPE (spotClearinghouseState) + staked (delegatorSummary: delegated +
+                # undelegated + pending withdrawal), read every run. circulating_supply_first_party is stored NET of
+                # them from 2026-10-11 (series_handover below); the raw figure stays as circulating_supply_tokendetails.
+                # An unread wallet stores no circulating figure at all — never a partial subtraction.
+                "exclude_wallets": [
+                    {"address": "0xd57ecca444a9acb7208d286be439de12dd09de5d", "label": "Hyper Foundation (genesis 60,000,000)",
+                     "source_url": "https://api.hyperliquid.xyz/info {type: tokenDetails} genesis.userBalances",
+                     "source_date": "2026-10-11", "read_2026_10_11": 60_551_988.64},
+                    {"address": "0xa20fcfa0507fe762011962cc581b95bbbc3bbdba", "label": "Community Grants (genesis 3,000,000)",
+                     "source_url": "https://api.hyperliquid.xyz/info {type: tokenDetails} genesis.userBalances",
+                     "source_date": "2026-10-11", "read_2026_10_11": 2_973_731.99},
+                ],
+                "exclude_wallets_decided": "Jake 2026-10-11 (decision A1 on 5b87610)",
                 "token_id_from_meta": True,
                 "token_id_key": "tokenId",
                 # api.hyperliquid.xyz returns 000 from the build environment (2026-09-23), so the
@@ -11710,6 +11809,13 @@ PROJECTS = [
     },
     {
         "name": "Uniswap", "symbol": "UNI",
+        # THE BURN IS FUNDED BY THE FEES IT RELEASES, BOOKED ON A DIFFERENT DAY AND PRICE (Jake's sanity run
+        # 2026-10-11: buyback Q0 $33.0M = 111% of revenue Q0 $29.7M; RUNBOOK 11bj item 14). Claiming TokenJar fees
+        # requires burning UNI through the Firepit; DefiLlama books the fees on the L2 Released day at that day's price,
+        # we book the UNI at mainnet 0xdead after the bridge delay while UNI roughly doubled over Q0.
+        "buyback_funding": {"what": "protocol fees released from the TokenJar against UNI burned through the Firepit; "
+                                    "timing (L2 release vs L1 arrival) and price differ from DefiLlama's revenue",
+                            "source_url": UNISWAP_FEE_DEPLOYMENTS, "source_date": "2026-09-11"},
         # ===== NO ISSUANCE — BURN ONLY. Jake, 2026-09-30. =====
         # Burn ÷ issuance is undefined with nothing issued, so A4 says "no issuance — burn only"
         # and net supply change is minus the burn (annualised against circulating). The measured
@@ -12134,6 +12240,32 @@ PROJECTS = [
         "foundation_buyback": {
             "stock_metric": "foundation_locked_aero_tokens", "claimable_metric": "foundation_rebase_claimable_tokens",
             "flow": "actual_buyback_tokens",
+            # ===== THE BASIS JAKE AGREED, 2026-10-11 (B on 5b87610). =====
+            # buyback = (a) AERO BOUGHT and locked by the owners (bought = received in a transaction where the wallet
+            # paid out a different token — the Ether.fi rule; locks paid from the balance matched to purchases
+            # oldest-first) + (b) compounded voting rewards ON ACCRUAL, owners' share. Excluded: the rebase in every
+            # form and withdrawManaged realisations. Read daily (fetch/ve_managed.py -> check_offline_items.
+            # aerodrome_buyback_window) for the previous UTC day; `--seed aero_buyback` fills the Q0 days. The stock
+            # change (stock_metric) stays as the cross-check, no longer the buyback.
+            "basis": "bought_plus_compounded",
+            # Wallets that BUY AERO and pass it to the owners — none wired: the Safe 0x10b42e92… seen paying USDC for
+            # AERO and sending it to the Public Goods Fund (2026-10-11 trace, RUNBOOK 11bk) is in no Aerodrome source
+            # on file. Add it here with its source and date only once one names it (Jake's decision).
+            "buyer_wallets": {},
+            "basis_decided": "Jake 2026-10-11 (B on 5b87610)",
+            "window_metrics": {"bought_same_tx": "foundation_bought_locked_same_tx_tokens",
+                               "lock_from_balance": "foundation_lock_from_balance_tokens",
+                               "purchased": "foundation_aero_purchased_tokens",
+                               "compounded_owner": "foundation_compounded_owner_tokens",
+                               "rebase_owner": "foundation_rebase_owner_tokens"},
+            # The compounder is NOT 0xebf418fe… — that is the VotingEscrow (aerodrome-finance/contracts@1ba30815
+            # script/constants/output/DeployCore-Base.json "VotingEscrow"); every NotifyReward carries it as `from`
+            # because LockedManagedReward.notifyRewardAmount reverts unless msg.sender == ve (LockedManagedReward.sol
+            # L25-31; Reward.sol L240-247). The compounder is each managed NFT's AutoCompounder (aerodrome-finance/
+            # relay@1bd3adef src/autoCompounder/AutoCompounder.sol L164-173: compound() -> ve.increaseAmount(mTokenId)),
+            # seen as the `provider` of the VotingEscrow Deposit (INCREASE_LOCK_AMOUNT) in the same transaction.
+            "compounder_source": "aerodrome-finance/relay@1bd3adef AutoCompounder.sol L164-173; contracts@1ba30815 "
+                                 "VotingEscrow.sol L807-869, LockedManagedReward.sol L25-31",
             "owners": {"0x834C0DA026d5F933C2c18Fa9F8Ba7f1f792fDa52": "Public Goods Fund",
                        "0x623CF63A1fA7068EBBDBa9F2EB262613EaB557a1": "Buyback / Locked Funds"},
             "sources": ["https://github.com/aerodrome-finance/docs/blob/99680a79/content/security.mdx (L34-37, "
@@ -16709,7 +16841,7 @@ PROJECTS = [
             "source_date": BRIEF_DATE,
             # SOURCES GENUINELY CONFLICT — do not resolve this to True or False.
             "programmed": True,
-                      "status": "active",
+                      "status": "paused",   # corrected 2026-10-11 (see buyback_status_evidence_2026_10_11 below)
                       # ===== RESOLVED 2026-09-17. IT WAS NEVER A CONFLICT — IT WAS TWO SYSTEMS. =====
                       # This sat as programmed="unconfirmed_conflict" / status="paused" because
                       # sources disagreed on whether Aave's buyback is immutable or
@@ -16772,6 +16904,15 @@ PROJECTS = [
                     "VERIFY against governance.aave.com directly before treating the mechanism as hard-coded.",
         },
         "paused_since": "2026-04-19",
+        # ===== STATUS CORRECTED TO PAUSED, 2026-10-11 (Jake's sanity run: buyback 'active (declared; no buyback series
+        # measured)'). The 2026-09-17 resolution above took Aavenomics 3.0 as live from 2026-06-27 on the founder's
+        # statements; the chain and the forum say otherwise: no AAVE into the Aave Finance Committee Safe 0x22740deB… (the
+        # buyback treasury DefiLlama's fees/aave-v3.ts counts) or the Collector since 2026-06-24 (AAVE Transfer logs,
+        # read 2026-10-11); DefiLlama's aave holders revenue is $0 on every day of the 90 to 2026-10-11; the forum still
+        # describes buybacks as halted (governance.aave.com/t/24055 2026-09-14 "ARFC will be shared soon"; posts of
+        # 2026-09-20, 09-29). The 3.0 contract will be a new address — wire it when it ships.
+        "buyback_status_evidence_2026_10_11": "no AAVE into 0x22740deBa78d5a0c24C58C740e3715ec29de1bFa since 2026-06-24; "
+                                              "DefiLlama aave dailyHoldersRevenue $0 for 91 days; forum: halted",
         # AAVE IS NOT A CLEAN REVENUE-FUNDED NAME — it has a supply leg. stkAAVE rewards are funded
         # by AAVE allowance top-ups at 150 AAVE per day, which is EMISSIONS running alongside the
         # buyback rather than being funded by it. Counting the buyback without this would overstate
@@ -17880,7 +18021,8 @@ _NONCIRC_WALLETS_FIRST_PARTY = {
          "etherfi_sender_trace, 2026-10-07) — treasury reserve"),
     ],
 }
-_MORPHO_ORG = "https://docs.morpho.org/governance/organization/"
+# MOVED (the old /governance/organization/ answers 404; docs.morpho.org/sitemap.xml lists the new path, read 2026-10-11)
+_MORPHO_ORG = "https://docs.morpho.org/learn/governance/organization/"
 _NONCIRC_WALLETS_FIRST_PARTY["Morpho"] = [
     # docs.morpho.org governance / organization, as Jake gave them on 2026-10-07.
     ("dao_treasury", "0xcBa28b38103307Ec8dA98377ffF9816C164f9AFa", "ethereum", "MORPHO", _MORPHO_ORG, "2026-10-07",
@@ -17954,6 +18096,20 @@ TOTAL_SUPPLY_ONCHAIN_FIRST = {
                  "why": "FDV on CoinGecko's 965.35M total read below the circulating basis; on-chain totalSupply "
                         "998,535,999 (Review Queue tier_collision)"},
 }
+# JAKE 2026-10-11 (decision A4 on 5b87610): the other seven whose token read is the WHOLE supply. Chain vs CoinGecko read
+# 2026-10-11 identical to the token for all seven, so no figure moves — each series changes measuring point once, declared
+# below. Aethir stays CoinGecko-first while its Arbitrum read is PARTIAL (not the full supply).
+for _n, _chain in (("Aerodrome", "base"), ("Chainlink", "ethereum"), ("Fluid", "ethereum"), ("Maple", "ethereum"),
+                   ("Morpho", "ethereum"), ("Pendle", "ethereum"), ("Sky", "ethereum")):
+    TOTAL_SUPPLY_ONCHAIN_FIRST[_n] = {"decided_by": "Jake", "decided_on": "2026-10-11",
+                                      "why": "decision A4 on 5b87610: on-chain first; chain and CoinGecko agreed to the "
+                                             "token on 2026-10-11"}
+    PROJECT_BY_NAME[_n].setdefault("series_handover", {}).setdefault("total_supply", {
+        "ordered_points": ("coingecko", f"chain:{_chain}:token"),
+        "why": f"CoinGecko's total supply, then from 2026-10-11 the token's totalSupply() on {_chain} (on-chain first, "
+               f"Jake decision A4)",
+        "composition_change": "none: the two agreed to the token on 2026-10-11",
+        "declared": "2026-10-11"})
 
 
 # ===== AERODROME MIGRATION GUARD (Jake, 2026-10-11; launch 2026-10-21/22 — RUNBOOK 11bh "Aerodrome migration: plan
@@ -18035,6 +18191,33 @@ for _name, _rows in _NONCIRC_WALLETS_FIRST_PARTY.items():
             _addr, _chain, "treasury_holding", _sym, _url, verified=_date, purpose=_why,
             provenance=f"first-party wallet list (full sweep, Jake 2026-10-07): {_url}", holder_has_code=False,
             metric_override=_NC)
+# ===== MORPHO: THE DAO'S LEGACY MORPHO AND ITS MORPHO ON BASE (Jake 2026-10-11, decision A5 on 5b87610). =====
+# The new token's 1B totalSupply already holds every unmigrated legacy MORPHO (the Wrapper's new-token balance) and
+# every MORPHO bridged to Base (Base's MORPHO: remoteToken() = the new token, bridge() = the OP standard bridge, so
+# it is backed by new MORPHO in Base's L1StandardBridge). So a non-circulating holder's LEGACY or BASE balance sits
+# inside our total uncounted by the eight new-token reads — subtracting it double-counts nothing. Token addresses:
+# docs.morpho.org/developers/contracts/addresses (read 2026-10-11); the DAO address (Ethereum AND Base) from the
+# organization page. Read 2026-10-11: legacy 290,419,981.96, Base 13,000,000.00. Both token entries are
+# REFERENCE-ONLY (bridged_representation): never summed into supply, used only as the token a holder is read against.
+_MORPHO_ADDRS = "https://docs.morpho.org/developers/contracts/addresses/"
+PROJECT_BY_NAME["Morpho"]["contracts"]["token_legacy"] = _contract(
+    "0x9994E35Db50125E0DF82e4c2dde62496CE330999", "ethereum", "bridged_representation", "MORPHO", _MORPHO_ADDRS,
+    verified="2026-10-11", purpose="LEGACY MORPHO — its unmigrated supply is inside the new token's totalSupply "
+                                   "(the Wrapper's balance); reference only, read as a holder's token")
+PROJECT_BY_NAME["Morpho"]["contracts"]["token_base"] = _contract(
+    "0xBAa5CC21fd487B8Fcc2F632f3F4E8D37262a0842", "base", "bridged_representation", "MORPHO", _MORPHO_ADDRS,
+    verified="2026-10-11", purpose="MORPHO on Base — OP-standard-bridged from the new token (remoteToken(), bridge() "
+                                   "read 2026-10-11); reference only, read as a holder's token")
+for _key, _addr, _chain, _under, _why in (
+        ("dao_treasury_legacy", "0xcBa28b38103307Ec8dA98377ffF9816C164f9AFa", "ethereum", "token_legacy",
+         "Morpho DAO (morpho.eth) — its LEGACY MORPHO (290,419,981.96 on 2026-10-11)"),
+        ("dao_treasury_base", "0xcBa28b38103307Ec8dA98377ffF9816C164f9AFa", "base", "token_base",
+         "Morpho DAO governance on Base (the organization page lists the same address) — its MORPHO on Base "
+         "(13,000,000.00 on 2026-10-11)")):
+    PROJECT_BY_NAME["Morpho"]["contracts"][f"noncirc_{_key}"] = _contract(
+        _addr, _chain, "treasury_holding", "MORPHO", _MORPHO_ORG, verified="2026-10-11", purpose=_why,
+        provenance="Jake 2026-10-11 (decision A5): the DAO's legacy and Base MORPHO are non-circulating",
+        holder_has_code=False, metric_override=_NC, underlying=_under)
 # CHAINLINK'S RELEASE, STOCK vs FLOW (Jake's run 2026-10-08 11:27: ours -400,000 LINK over Q0 against CoinGecko's d=0,
 # which is stepwise and no evidence). Transfer events OUT of and INTO the 27 non-circulating wallets, each scan
 # RECONCILED per wallet to balanceOf at a pinned block TO THE WEI before anything is stored (fetch/logscan.py); hops
@@ -18193,6 +18376,24 @@ BUYBACK_ROUTE_OVERRIDE = {
                  "NOTHING IS BOUGHT. EIP-1559 destroys the base fee users pay, by protocol rule — a "
                  "burn with no purchase behind it, so it is not a buyback. The burn is on A4 "
                  "(gross_burn_tokens); actual_buyback_* are n/a."),
+    # ===== PANCAKESWAP: THE DEAD-ADDRESS INFLOW IS NOT THE BUYBACK. Jake's sanity run 2026-10-11. =====
+    # actual buyback Q0 $286.4M = 2,233% of revenue $12.8M: the burn route copied gross_burn_tokens (CAKE into 0x…dEaD)
+    # into the buyback. Read on chain 2026-10-11 (BSC, public RPC): ~99% of it is MasterChef emission minted and burned
+    # unused — MasterChef v2 0xa5f8C5Db… (docs.pancakeswap.finance/readme/v3-v2-migration/migration/masterchef-v2)
+    # cakeRateToBurn 99.717% of 40 CAKE/block, plus MasterChef v1's dev share minted straight to devaddr(), both into
+    # burnAdmin() 0xceba6028… (the contracts' own getters), which sends the week's total to 0x…dEaD. The product burns
+    # (fee / prediction / lottery CAKE) are the OTHER inflows to burnAdmin: 452,405 / 504,936 CAKE in the full weeks to
+    # 09-28 / 10-05, reconciling to burnAdmin's weekly burn to the token — 0.8% of the dead-address inflow. PancakeSwap's
+    # monthly Burn Report counts those alone ("Mints that directly contribute to burning are excluded",
+    # blog.pancakeswap.finance/articles/cake-burn-june-2026, 2026-07-09). A product-burn series needs BSC logs: the free
+    # endpoints keep ~22 days (forward-only); a backfill needs a paid BSC explorer plan or keyed RPC. Until then the
+    # buyback reads n/a with this reason; stored :as-buyback rows are listed in orphan_cleanup.sql section CH.
+    "PancakeSwap": ("none",
+                    "NOT MEASURED — the CAKE sent to 0x…dEaD is ~99% MasterChef emission minted and burned unused "
+                    "(cakeRateToBurn 99.717% of 40 CAKE/block + MasterChef v1's dev share, via burnAdmin 0xceba6028…; "
+                    "read on chain 2026-10-11), not CAKE bought. The fee-funded product burn (~0.45-0.50M CAKE a week, "
+                    "the other inflows to burnAdmin) needs BSC logs this pipeline cannot read for free; until it is "
+                    "wired the buyback is n/a. The burn report's monthly figures remain the reference."),
     # AERODROME IS NO LONGER "none" (external audit 2026-10-09, item 1): no AERO is bought WITH FEES — 100% of trading
     # fees go to veAERO voters in the pairs' own tokens — but the Foundation's Public Goods Fund buys AERO with
     # Foundation USDC and max-locks it ("The Aerodrome PGF has acquired and max-locked 312K $AERO", x.com/AerodromeFi).
@@ -18310,6 +18511,14 @@ def buyback_route(project_name: str) -> dict:
     p = PROJECT_BY_NAME.get(project_name) or {}
     fb = p.get("foundation_buyback")
     if fb:
+        if fb.get("basis") == "bought_plus_compounded":
+            return {"route": "treasury_inflow", "metric": fb["window_metrics"]["compounded_owner"],
+                    "reason": (f"Jake's basis ({fb['basis_decided']}): AERO BOUGHT and locked by the Foundation's "
+                               f"wallets ({', '.join(fb['owners'].values())}; bought = received where the wallet paid "
+                               f"out another token, balance-funded locks matched oldest-first) + compounded voting "
+                               f"rewards on accrual, owners' share; the rebase and withdrawManaged excluded "
+                               f"(check_offline_items.aerodrome_buyback_window, daily; build_workbook."
+                               f"_foundation_agreed_basis)")}
         return {"route": "treasury_inflow", "metric": fb["stock_metric"],
                 "reason": (f"the bought tokens are LOCKED by the Foundation's buyback wallets "
                            f"({', '.join(fb['owners'].values())}): the flow is the daily change of the AERO they have "
@@ -20773,6 +20982,22 @@ def per_product_shares(project_name: str) -> list[tuple[str, str, float | None]]
 # load-bearing field: it is what stops the next person repeating the work.
 # =======================================================================================
 UNAVAILABLE = [
+    # ---------------------------------------------------------------- PancakeSwap (Jake's sanity run, 2026-10-11)
+    # THE DEAD-ADDRESS INFLOW IS ~99% MINT-AND-BURN (BUYBACK_ROUTE_OVERRIDE["PancakeSwap"] has the reads): as a GROSS
+    # BURN it gives a burn yield of several hundred % a year for a token PancakeSwap reports as ~2M CAKE/month net
+    # deflationary. The figure is closed until the product-burn series exists; NET supply change stays the self-reported
+    # monthly net mint, which both the mint and the burn of the wash cancel out of.
+    {"project": "PancakeSwap", "metric": "gross_burn_tokens", "closed_on": "2026-10-11",
+     "summary": "CAKE into 0x…dEaD is ~99% MasterChef emission minted and burned unused (cakeRateToBurn 99.717% of 40 "
+                "CAKE/block + MasterChef v1's dev share, via burnAdmin 0xceba6028…; read on chain 2026-10-11). As a gross "
+                "burn it is a wash, not a burn of circulating CAKE.",
+     "what_was_tried": "BSC reads 2026-10-11 (public RPC): burnAdmin's inflows by sender for 09-19..10-11 — MasterChef "
+                       "v2 159.9M, v1 dev mint 17.0M, product burners 2.05M CAKE; June by state (dEaD +297.0M, supply "
+                       "+294.9M). Product-burn history needs BSC logs older than the free endpoints keep (~22 days).",
+     "impact": "No gross burn / burn yield for PancakeSwap on A4 and Master until the product burn (the other inflows "
+               "to burnAdmin, ~0.45-0.50M CAKE a week) is a series. Net supply change (self-reported) is unaffected.",
+     "reopen_if": "a BSC log source (paid explorer plan or keyed RPC) for burnAdmin's inflows, or PancakeSwap's Burn "
+                  "Report as a monthly series"},
     # ---------------------------------------------------------------- Aethir (Jake's probes9, 2026-10-02)
     # AVERAGE STAKE DURATION: chased through every route and NOT AVAILABLE (as agreed in probes8).
     *({"project": "Aethir", "metric": m, "closed_on": "2026-10-02",
@@ -21746,6 +21971,18 @@ CIRCULATING_ONCHAIN = {
                            "against TokenOps / CoinGecko; on-chain becomes primary once it agrees",
                "missing": "the Operative SAFEs' balances on chains other than Ethereum (no MORPHO token address on file "
                           "for them); the initial-distribution vesting contracts, if not among the filing's Safes",
+               # DECISION A5 (Jake 2026-10-11): the DAO's legacy (290.42M) and Base (13.0M) MORPHO wired. On-chain set
+               # 2026-10-11: 1,000.00M - 125.92M (new-token wallets) - 303.42M (DAO legacy + Base) = 570.66M against
+               # CoinGecko 700.45M: it DOES NOT RECONCILE, so the ratios stay on CoinGecko. What separates them:
+               "vs_coingecko_2026_10_11": "CoinGecko 700.45M ~= total - the DAO's holdings on all three tokens "
+                                          "(696.00M, +4.45M unexplained, no documented wallet closes it): CoinGecko "
+                                          "counts the Association / Labs / Contributor-Grants / Rewards wallets as "
+                                          "circulating (a definition, 125.3M new-token), which our convention "
+                                          "(foundation and operating reserves out) does not. Still NOT wired under our "
+                                          "rule: the Association's legacy 11,635,954.89 (0x6ABfd613…) and Labs' legacy "
+                                          "11,408,640.44 (0x1590e7F4…) — named in morpho-org/morpho-seatbelt@ee2dda29 "
+                                          "config/networks/ethereum-mainnet.json — and the Rewards Multisig's legacy "
+                                          "360,000; with them 547.25M. Awaiting Jake.",
                "was": "not_established",
                "why": "no Morpho DAO treasury, vesting or foundation address was documented in config before 2026-10-07",
                "bridged_and_legacy": "OFTAdapter lockbox 0x50d3d6fD7518682155E3C1B65FDD50e1b35649D9 and legacy "
@@ -21813,9 +22050,14 @@ CIRCULATING_ONCHAIN = {
     # Pipeline.py:330-375). PRIMARY with its full history; CoinGecko the cross-check. One caveat in
     # NEAR's code: a lockup whose amount read returned 'error' is left out of the locked sum that
     # day, so such a day reads HIGH.
-    "Near": {"status": "first_party", "metric": "circulating_supply_first_party",
+    # JAKE 2026-10-11 (C on 5b87610): only STILL UNVESTED leaves circulating. NEAR's figure subtracts everything LOCKED
+    # in lockups, so the ratios read circulating_supply_lockup_rule = NEAR's figure + (locked − unvested), both from
+    # the latest weekly near_lockups_weekly.py read (build_workbook._near_lockup_views, the read date in its source).
+    # Until a read is stored, and on days more than 10 days past one, it IS NEAR's figure.
+    "Near": {"status": "first_party", "metric": "circulating_supply_lockup_rule",
              "why": "NEAR's own circulating_supply table (bigquery-public-data.crypto_near_mainnet_us), "
-                    "read by fetch/near_bigquery.py: total − lockups − lockup.near − contributors.near",
+                    "read by fetch/near_bigquery.py: total − lockups − lockup.near − contributors.near; "
+                    "+ (lockups locked − still unvested), Jake's rule (2026-10-11)",
              "was": "not_established — no documented non-circulating list in config"},
 }
 # ===== THE CIRCULATING POLICY, PER PROJECT (Jake, 2026-10-07). =====
@@ -22199,6 +22441,46 @@ def locked_excluded_from_circulating(project_name: str) -> float:
 # ratios_use values whose figure is a named series stored as spec["metric"] (an endpoint or a dated manual row): the
 # project's own figure, or — where the project publishes none and our set is unresolved — a labelled third party's.
 MANUAL_PRIMARY_USES = ("first_party", "third_party_reference")
+
+
+# THE EMISSIONS NET ABSORPTION SUBTRACTS (A3). emissions_tokens everywhere, except where declared: AERODROME (Jake
+# 2026-10-11, decision A3 on 5b87610) — the Minter's weekly emission to the gauges (gross_issuance_tokens, tail-aware:
+# 53.75M over Q0 on the 10-09 dump) AND the RewardsDistributor rebase (emissions_tokens, 5.70M), consistent with
+# Pendle, whose emissions_tokens are its gauge emissions. Anything else the Minter mints is in neither series.
+ABSORPTION_EMISSIONS = {
+    "Aerodrome": ("gross_issuance_tokens", "emissions_tokens"),
+}
+
+
+# UNLOCK DILUTION (Jake 2026-10-11, decision A2 on 5b87610): the non-circulating STOCK whose fall is a release. By
+# default the project's on-chain set (CIRCULATING_ONCHAIN subtract) less the legs that are not unvested / reserve
+# holdings: burns, and the buyback fund (Chainlink's Reserve — tokens bought, not tokens vesting). First-party projects
+# with a wallet set of their own declare it here. KEPT OUT OF emissions (Jake 2026-09-24 stands).
+UNLOCK_NOT_A_RELEASE = ("burn_address_balance", "buyback_fund_balance")
+UNLOCK_STOCKS = {
+    "Hyperliquid": ("excluded_wallets_tokens",),          # the Foundation + Grants wallets (A1, from 2026-10-11)
+    "Near": ("near_lockup_unvested_tokens",),               # still-unvested lockups (C; weekly near_lockups_weekly.py)
+}
+
+
+UNLOCK_MAX_GAP_DAYS = {"near_lockup_unvested_tokens": 10}     # weekly read (+ slack); daily stocks: 3
+
+
+def unlock_max_gap_days(metric: str) -> int:
+    return UNLOCK_MAX_GAP_DAYS.get(metric, 3)
+
+
+def unlock_stock_metrics(project_name: str) -> tuple:
+    if project_name in UNLOCK_STOCKS:
+        return UNLOCK_STOCKS[project_name]
+    spec = CIRCULATING_ONCHAIN.get(project_name) or {}
+    if spec.get("status") not in ("established", "partial"):
+        return ()
+    return tuple(m for m in (spec.get("subtract") or ()) if m not in UNLOCK_NOT_A_RELEASE)
+
+
+def absorption_emission_metrics(project_name: str) -> tuple:
+    return ABSORPTION_EMISSIONS.get(project_name) or ("emissions_tokens",)
 
 
 def circulating_primary_metric(project_name: str) -> str:
@@ -24881,9 +25163,12 @@ CREDIBILITY: dict = {
             "window_vs_rate", {"flow": "fees_usd", "rate": "borrow_interest_usd_day_morpho_api", "days": 7,
                                "side": "ours"},
             {"formula": "window_vs_rate", "tol": 10.0,
-             "args": {"flow": "fees_usd", "rate": "borrow_interest_usd_day_morpho_api", "days": 7, "side": "ref"},
+             "args": {"flow": "fees_usd", "rate": "borrow_interest_usd_day_morpho_api", "days": 7, "side": "ref",
+                      "plus_flow": "liquidation_bonus_usd_day_morpho_api"},
              "source": "Morpho's own API (blue-api markets, listed only): sum over markets of "
-                       "borrowAssetsUsd x ((1 + borrowApy)^(1/365) - 1), read once a day",
+                       "borrowAssetsUsd x ((1 + borrowApy)^(1/365) - 1), read once a day, PLUS the window's "
+                       "liquidation bonuses on listed markets (marketTransactions; Jake 2026-10-11, decision A7 — "
+                       "DefiLlama's fees count them; 97.6% of the 2026-10-04..10 gap)",
              "note": "Tolerance 10%, ACCEPTED by Jake 2026-10-06: the API figure is the rate at the moment of the "
                      "read and covers LISTED markets only; DefiLlama sums every market. A CHECK beyond 10% is a real "
                      "question about one of the two."},
@@ -25091,10 +25376,11 @@ CREDIBILITY: dict = {
         # THE FOUNDATION'S BUY-AND-LOCK (external audit 2026-10-09, item 1): the protocol sets no fee share aside for
         # buybacks (100% to voters); the Public Goods Fund buys AERO with the Foundation's OWN share of that voter revenue
         # and max-locks it (foundation_buyback.funding) — measured from state.
-        "in_buyback": _c_in("Buyback Q0 (tokens) — the Foundation's buy-and-lock (locked AERO's daily change, net of "
-                            "rebases)", "actual_buyback_tokens", "q0", _c_lim(
-            "The buy-and-lock is read from STATE (the AERO the Public Goods Fund and the 'Buyback / Locked Funds' "
-            "wallet hold locked), not from the purchases themselves.",
+        # THE AGREED BASIS (Jake 2026-10-11, B): bought + compounded, read from receipts (aerodrome_buyback_window).
+        "in_buyback": _c_in("Buyback Q0 (tokens) — the Foundation's AERO bought and locked + compounded voting rewards "
+                            "(owners' share); rebase excluded", "actual_buyback_tokens", "q0", _c_lim(
+            "Read from the owners' own transactions (receipts at the blocks their locks, balances or Safe nonces "
+            "change) and the managed NFTs' reward notifications — no independent total to set it against.",
             "Base logs are paid (Blockscout 402; Alchemy free 10 blocks per getLogs), so the USDC->AERO swaps cannot be "
             "scanned; Aerodrome publishes single buys (312K, 216K, 801K posts on x.com/AerodromeFi) and Blockworks a "
             "quarterly total (9.17M in Q2 2026, 27.95M YTD — per the external audit, page not reached from here), not "
