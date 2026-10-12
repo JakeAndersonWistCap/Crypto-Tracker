@@ -66,7 +66,7 @@ def long_frame(payload: dict) -> pd.DataFrame:
     return df[["date", "project", "metric", "value", "source", "tier", "fetched_at"]]
 
 
-def evaluate_real(tmp_path, monkeypatch, project: str, payload: dict | None = None) -> dict:
+def evaluate_real(tmp_path, monkeypatch, project: str, payload: dict | None = None, asof: str | None = None) -> dict:
     """{row id: {verdict, ours, ref, note}} from credibility_report on the real dump, as of the dump's date. `payload`:
     the dump as loaded, with rows added from a committed source (manual_overrides.csv) — never hand-built values."""
     payload = payload or load(project)
@@ -76,7 +76,7 @@ def evaluate_real(tmp_path, monkeypatch, project: str, payload: dict | None = No
     to_store(payload, db)
     monkeypatch.setattr(sm, "DB_PATH", str(db))
     monkeypatch.setitem(sys.modules, "recalc", None)
-    rws, tab = cr.evaluate(project, asof=pd.Timestamp(payload["meta"]["asof"]), narrow=True)
+    rws, tab = cr.evaluate(project, asof=pd.Timestamp(asof or payload["meta"]["asof"]), narrow=True)
     assert rws is not None, "credibility_report built nothing from the dump"
     return {r["id"]: {"verdict": t[10], "ours": t[4], "ref": t[6], "note": t[11]}
             for r, t in zip(rws, tab) if r["project"] == project}

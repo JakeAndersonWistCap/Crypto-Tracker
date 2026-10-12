@@ -39,9 +39,10 @@ CONVENTIONS = [
                           "(config series_handover)."),
     ("Circulating convention", "circulating = total − treasury − team/investor unvested − foundation − operating "
                                "reserves − burned; STAKED TOKENS ARE CIRCULATING (out only for free float); protocol-held "
-                               "counts as non-circulating. The project's OWN published figure is primary wherever it "
-                               "exists, our on-chain set the cross-check, CoinGecko only where the project publishes "
-                               "nothing (Jake 2026-10-07)."),
+                               "counts as non-circulating. The figure in use is the project's own figure, adjusted to "
+                               "Jake's convention (e.g. Hyperliquid Foundation + Grants out; NEAR total − lockups "
+                               "LOCKED), wherever one exists; our on-chain set is the cross-check, CoinGecko only where "
+                               "the project publishes nothing (Jake 2026-10-07; wording 2026-10-12)."),
     ("Price", "Market cap, FDV and the supply ratios use the spot price (price_usd 'now'); fee ÷ issuance and implied "
               "buyback tokens use the Q0 average price; protocol staking yield converts each payment at its payment "
               "day's price (Jake 2026-10-09)."),
@@ -83,14 +84,17 @@ ENTRIES = {
                  (J, "2026-10-11", "one basis on every day (review of 97b29ae, item 8)")]),
     "Circulating supply (used)": dict(
         what="The circulating supply every ratio divides by.",
-        formula="per project: config.circulating_primary_metric — the project's own figure, our on-chain set "
+        formula="per project: config.circulating_primary_metric — the project's own figure, adjusted to Jake's "
+                "convention (e.g. Hyperliquid Foundation + Grants out), our on-chain set "
                 "(total − the documented non-circulating wallets), CoinGecko + staked, or CoinGecko (see the per-project "
                 "table)", window="now", unit="tokens", inputs=["circulating_supply_used"],
         counts="staked tokens (circulating)", excludes="treasury, team/investor unvested, foundation, operating "
                                                        "reserves, burned",
         decided=[(J, "2026-10-07", "the circulating policy and convention"),
-                 (J, "2026-10-11", "Hyperliquid: Foundation + Community Grants wallets out (A1); NEAR: only still-"
-                                   "unvested lockups out (C)")]),
+                 (J, "2026-10-11", "Hyperliquid: Foundation + Community Grants wallets out (A1)"),
+                 (J, "2026-10-12", "NEAR: everything not yet transferable out — total − lockups LOCKED (unvested + "
+                                   "lockup-locked; buggy lockups recomputed as NEAR's lakehouse does); released-not-"
+                                   "withdrawn stays in")]),
     "Circulating supply — CoinGecko (cross-check)": dict(
         what="CoinGecko's circulating figure, shown beside ours.", formula="circulating_supply now", window="now",
         unit="tokens", inputs=["circulating_supply"]),

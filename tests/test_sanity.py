@@ -2,8 +2,16 @@
 from __future__ import annotations
 
 import openpyxl
+import pytest
 
 import sanity
+
+
+@pytest.fixture(autouse=True)
+def _no_portfolio(monkeypatch, tmp_path):
+    """The rules on every row: no portfolio.txt in force unless a test writes one."""
+    import config
+    monkeypatch.setattr(config, "PORTFOLIO_FILE", str(tmp_path / "no_portfolio.txt"))
 
 HEADS = ["Project", "Price — spot ($)", "Market cap ($)", "Circulating supply (used)", "FDV ($)", "Revenue Q0 ($)",
          "Actual buyback Q0 ($) — observed", "Buyback status", "Burn status", "Gross burn Q0 (tokens)",
@@ -57,3 +65,19 @@ def test_an_active_label_with_no_flow_and_a_documented_funding_source(monkeypatc
     # Aerodrome's buyback is funded from the Foundation's voting share (config foundation_buyback.funding): no flag
     assert (config.PROJECT_BY_NAME["Aerodrome"].get("foundation_buyback") or {}).get("funding")
     assert [h[1] for h in got] == ["status_contradicts"] and "no burn measured" in got[0][2], got
+
+
+def test_parked_projects_are_not_checked(monkeypatch, tmp_path):
+    """Jake's run on e4e50b0 (2026-10-12 item 5): Injective, PancakeSwap and Render — not in portfolio.txt — were noise.
+    Only the portfolio's projects are checked; with no portfolio.txt, every project."""
+    import config
+    row = {"Project": "PancakeSwap", "Price — spot ($)": 1.0, "Market cap ($)": 10.0,
+           "Circulating supply (used)": 10.0, "FDV ($)": 5.0}
+    wb = _wb([row, {**row, "Project": "Aerodrome"}], {"PancakeSwap": 100.0, "Aerodrome": 100.0})
+    value = lambda s, r, c: wb[s].cell(r, c).value          # noqa: E731
+    assert {h[0] for h in sanity.hits(wb, value)} == {"PancakeSwap", "Aerodrome"}
+    pf = tmp_path / "portfolio.txt"
+    pf.write_text("# held\naerodrome\nSky\n", encoding="utf-8")
+    monkeypatch.setattr(config, "PORTFOLIO_FILE", str(pf))
+    got = sanity.hits(wb, value)
+    assert {h[0] for h in got} == {"Aerodrome"} and [h[1] for h in got] == ["fdv_below_mcap"], got

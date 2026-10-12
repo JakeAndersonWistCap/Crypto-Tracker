@@ -545,7 +545,12 @@ class Scrape:
             # (Pendle totalStakedInSpendle, 2026-10-11 — the morning's value, cached, met the afternoon's chain read)
             (cached if not e.get("live_every_run") and cache_read(e) is not None else live).append(e)
         for e in cached:
-            self._emit(e, cache_read(e)["value"], f"{SOURCE}:cache", out, cached=True)
+            # THE SAME MEASURING POINT AS THE LIVE READ (Jake's run on e4e50b0, 2026-10-12 item 4): the cache re-serves
+            # that page's own read, so it carries the page's host plus the "cache" marker — a bare "scrape:cache" was a
+            # second point beside "scrape:<host>" and blanked the series on the first live day after a cached one
+            hit = cache_read(e)
+            host = urllib.parse.urlparse(hit.get("url") or e["url"]).netloc
+            self._emit(e, hit["value"], config.mark_source(f"{SOURCE}:{host}", "cache"), out, cached=True)
 
         # ===== ROBOTS AND BACK-OFF BEFORE THE BROWSER. Added 2026-09-28. =====
         # Chromium was launched before robots.txt was read, so a run whose every live entry was

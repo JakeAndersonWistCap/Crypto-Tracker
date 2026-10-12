@@ -1292,7 +1292,7 @@ def test_near_lockups_splits_unvested_from_vested_and_names_no_account(monkeypat
     import check_offline_items as coi
     y = 10 ** 24
     f = tmp_path / "lockups.txt"
-    f.write_text("aaaa.lockup.near\nbbbb.lockup.near\ncccc.lockup.near\nnot-a-lockup.near\n")
+    f.write_text("aaaa.lockup.near\nbbbb.lockup.near\ncccc.lockup.near\ndddd.lockup.near\nnot-a-lockup.near\n")
     monkeypatch.setenv("NEAR_LOCKUPS_FILE", str(f))
     sched = {"start_timestamp": "1", "cliff_timestamp": "2", "end_timestamp": "3"}
     state = {"aaaa.lockup.near": {"get_balance": str(100 * y), "get_locked_amount": str(60 * y),
@@ -1300,8 +1300,15 @@ def test_near_lockups_splits_unvested_from_vested_and_names_no_account(monkeypat
                                   "get_unvested_amount": str(25 * y)},
              "bbbb.lockup.near": {"get_balance": str(10 * y), "get_locked_amount": str(10 * y),
                                   "get_owners_balance": "0", "get_vesting_information": "None"},
-             "cccc.lockup.near": {"get_balance": "0"}}
+             "cccc.lockup.near": {"get_balance": "0"},
+             "dddd.lockup.near": {"get_balance": str(5 * y), "get_locked_amount": str(5 * y),
+                                  "get_owners_balance": "0", "get_vesting_information": "None"}}
     seen = []
+    # the buggy lockup's locked is RECOMPUTED from its own schedule (Jake 2026-10-12, decision 8): 7, not the RPC's 10
+    monkeypatch.setattr(coi, "_near_view_state", lambda acc, block_id, urls=None: (b"state", ""))
+    monkeypatch.setattr(coi, "near_lockup_state", lambda raw: {"schedule": "bbbb's"})
+    monkeypatch.setattr(coi, "near_locked_recomputed", lambda st, ts, has_bug: 7 * y)
+    monkeypatch.setattr(coi, "near_unvested", lambda st, ts: 0)
 
     def view(acc, method, args=None, block_id=None, pace=0.12):
         seen.append((acc, method, args, block_id))
@@ -1311,6 +1318,8 @@ def test_near_lockups_splits_unvested_from_vested_and_names_no_account(monkeypat
     def fake_rpc(url, method, params=None):
         if method == "block":
             return {"result": {"header": {"height": 123}}}
+        if params["account_id"] == "dddd.lockup.near":       # an error reply is an UNREAD lockup, never a non-buggy one
+            return {"error": {"name": "HANDLER_ERROR", "cause": {"name": "GARBAGE_COLLECTED_BLOCK"}}}
         return {"result": {"code_hash": "3kVY9qcVRoW3B5498SMX6R3rtSLiCdmBzKs7zcnzDJ7Q"
                            if params["account_id"] == "bbbb.lockup.near" else "x"}}
     monkeypatch.setattr(coi, "rpc", fake_rpc)
@@ -1318,11 +1327,13 @@ def test_near_lockups_splits_unvested_from_vested_and_names_no_account(monkeypat
     out = capsys.readouterr().out
     assert all(b == 123 for *_x, b in seen), "every read at one block"
     assert ("aaaa.lockup.near", "get_unvested_amount", {"vesting_schedule": sched}, 123) in seen
-    assert "3 lockup account(s)" in out and "read 2; zero balance 1" in out
+    assert "4 lockup account(s)" in out and "read 2; zero balance 1; unreadable 1" in out
+    assert "GARBAGE_COLLECTED_BLOCK" in out
     num = lambda label: next(ln for ln in out.splitlines() if label in ln)  # noqa: E731
-    assert "110 NEAR" in num("balance in lockups") and "70 NEAR" in num("LOCKED (NEAR's own")
-    assert "25 NEAR" in num("STILL UNVESTED") and "45 NEAR" in num("VESTED, still lockup-locked")
-    assert "40 NEAR" in num("RELEASED, not withdrawn") and "buggy-code lockups: 1" in out
+    assert "110 NEAR" in num("balance in lockups") and "67 NEAR" in num("LOCKED (NEAR's own")
+    assert "25 NEAR" in num("STILL UNVESTED") and "42 NEAR" in num("VESTED, still lockup-locked")
+    assert "43 NEAR" in num("RELEASED, not withdrawn") and "buggy-code lockups: 1" in out
+    assert "RPC locked" in out and "10 NEAR" in num("buggy-code lockups") and "7 NEAR" in num("buggy-code lockups")
     assert ".lockup.near" not in out.replace("*.lockup.near", ""), "aggregates only — no account is named"
 
 
@@ -1802,6 +1813,8 @@ def test_pendle_shares_cross_check_is_read_live_every_run_not_from_the_day_cache
     assert got == ["totalStakedInSpendle"], got                      # only the flagged entry went live
     assert list(row["value"]) == [29_307_487.97] and not row["source"].str.contains("cache").any(), row
     assert f[f.metric == virt["metric"]]["source"].str.contains("cache").all()
+    # the cached row carries the page's host (Jake's run on e4e50b0 item 4): the live read's measuring point
+    assert list(f[f.metric == virt["metric"]]["source"]) == ["scrape:api-v2.pendle.finance:cache"]
 
 
 def test_aerodrome_migration_guard_alerts_on_drops_and_unknown_contract_outflows():

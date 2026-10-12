@@ -26,6 +26,7 @@ from datetime import datetime, timezone
 import pandas as pd
 
 from .base import LONG_COLUMNS, Http, tidy, today
+import config
 
 SOURCE = "coingecko"
 TIER = 1
@@ -166,6 +167,11 @@ class CoinGecko:
                     v = md.get(key)
                     if v is not None:
                         rows.append({"date": when, "project": name, "metric": metric,
+                                     "value": float(v), "source": SOURCE, "tier": TIER})
+                    # where the chain read wins the total (config.TOTAL_SUPPLY_ONCHAIN_FIRST) CoinGecko's own total is
+                    # kept under its own name: the like-for-like circulating row is built on it (2026-10-12 item 2)
+                    if v is not None and metric == "total_supply" and name in config.TOTAL_SUPPLY_ONCHAIN_FIRST:
+                        rows.append({"date": when, "project": name, "metric": "total_supply_coingecko",
                                      "value": float(v), "source": SOURCE, "tier": TIER})
                 fdv = (md.get("fully_diluted_valuation") or {}).get("usd")
                 if fdv is not None:

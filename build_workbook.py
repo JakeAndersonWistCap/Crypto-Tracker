@@ -2036,37 +2036,47 @@ NEAR_LOCKUP_MAX_AGE_DAYS = 10      # a weekly read, plus slack
 
 
 def _near_lockup_views(groups: dict) -> None:
-    """NEAR UNDER JAKE'S RULE (2026-10-11, C): circulating_supply_lockup_rule = NEAR's own circulating (which subtracts
-    every lockup's LOCKED amount) + (locked − still unvested), from the latest weekly lockup read on or before the day
-    and at most NEAR_LOCKUP_MAX_AGE_DAYS old. A day without such a read carries NEAR's figure unchanged, and its source
-    says so; a day with one names the read's date."""
+    """NEAR UNDER JAKE'S RULE (2026-10-11 C, clarified 2026-10-12 decision 8 on e4e50b0): everything NOT YET
+    TRANSFERABLE leaves circulating — the lockups' LOCKED amount (still unvested + vested-but-lockup-locked; NEAR's own
+    'locked', with the buggy-code lockups recomputed as NEAR's lakehouse does), the same as unreleased vesting elsewhere;
+    released-but-not-withdrawn stays circulating. circulating_supply_lockup_rule = total_supply − LOCKED, from the latest
+    weekly lockup read on or before the day and at most NEAR_LOCKUP_MAX_AGE_DAYS old. A day without such a read carries
+    NEAR's own figure, and its source says so; a day with one names the read's date."""
     for p in scoped_projects():
         if config.circulating_primary_metric(p["name"]) != "circulating_supply_lockup_rule":
             continue
         name = p["name"]
         fp = groups.get((name, "circulating_supply_first_party"))
-        if fp is None or fp.empty:
-            continue
+        tot_g = groups.get((name, "total_supply"))
         s = lambda g: (None if g is None or g.empty else  # noqa: E731
                        g.assign(date=pd.to_datetime(g["date"]).dt.normalize()).sort_values("date")
                        .drop_duplicates("date", keep="last").set_index("date")["value"].astype(float))
-        base, unv, lk = s(fp), s(groups.get((name, "near_lockup_unvested_tokens"))), \
-            s(groups.get((name, "near_lockup_locked_tokens")))
-        vals, srcs = [], []
-        for d, v in base.items():
-            adj, src = 0.0, "derived:circulating_lockup_rule[first_party; no lockup read in force]"
-            if unv is not None and lk is not None:
-                both = pd.concat([unv.rename("u"), lk.rename("l")], axis=1).dropna()
-                both = both[(both.index <= d) & (both.index >= d - pd.Timedelta(days=NEAR_LOCKUP_MAX_AGE_DAYS))]
-                if not both.empty:
-                    rd = both.index[-1]
-                    adj = float(both["l"].iloc[-1] - both["u"].iloc[-1])
-                    src = f"derived:circulating_lockup_rule[first_party + locked − unvested, lockups read {rd.date()}]"
-            vals.append(v + adj)
-            srcs.append(src)
+        base, total, lk = s(fp), s(tot_g), s(groups.get((name, "near_lockup_locked_tokens")))
+        days = (base.index if base is not None else pd.DatetimeIndex([]))
+        if total is not None:
+            days = days.union(total.index)
+        if days.empty:
+            continue
+        idx, vals, srcs = [], [], []
+        for d in days:
+            read = None
+            if lk is not None and total is not None and d in total.index:
+                w = lk[(lk.index <= d) & (lk.index >= d - pd.Timedelta(days=NEAR_LOCKUP_MAX_AGE_DAYS))]
+                read = (w.index[-1], float(w.iloc[-1])) if not w.empty else None
+            if read is not None:
+                idx.append(d)
+                vals.append(float(total[d]) - read[1])
+                srcs.append(f"derived:circulating_lockup_rule[total_supply − LOCKED, lockups read {read[0].date()}]")
+            elif base is not None and d in base.index:
+                idx.append(d)
+                vals.append(float(base[d]))
+                srcs.append("derived:circulating_lockup_rule[first_party; no lockup read in force]")
+        if not vals:
+            continue
+        cols = (fp if fp is not None else tot_g).columns
         groups[(name, "circulating_supply_lockup_rule")] = _as_stored(pd.DataFrame(
-            {"date": base.index, "project": name, "metric": "circulating_supply_lockup_rule", "value": vals,
-             "tier": 1, "source": srcs}), fp.columns)
+            {"date": idx, "project": name, "metric": "circulating_supply_lockup_rule", "value": vals,
+             "tier": 1, "source": srcs}), cols)
 
 
 def _unlock_views(groups: dict) -> None:
@@ -5627,9 +5637,9 @@ def write_a3(ws, R: Refs, data_by_key: dict):
         ("Programmed? (contract-enforced vs revisable by governance)", lambda r, p: pull(R.C(r, "Programmed (contract-enforced)")), FMT_TEXT, "pull"),
         ("Buyback destination", lambda r, p: pull(R.C(r, "Buyback destination")), FMT_TEXT, "pull"),
         ("Destination split (share burned)", lambda r, p: pull(R.C(r, "Destination split (share burned, where destination = split)")), FMT_PCT, "pull"),
-        ("Share applied to this window (not necessarily today's)", lambda r, p: pull(share(r)), FMT_PCT, "pull", False, {"gate_window": "q0"}),
+        ("Share applied to this window (not necessarily today's)", lambda r, p: no_buy(p) or pull(share(r)), FMT_PCT, "pull", False, {"gate_window": "q0"}),
         ("Status of that window's split", lambda r, p: pull(st(r)), FMT_TEXT, "pull", False, {"gate_window": "q0"}),
-        ("Current documented share (may differ from the window above)", lambda r, p: pull(R.C(r, "Share of revenue to buyback")), FMT_PCT, "pull"),
+        ("Current documented share (may differ from the window above)", lambda r, p: no_buy(p) or pull(R.C(r, "Share of revenue to buyback")), FMT_PCT, "pull"),
         ("Per-product split (never collapsed into one number)", lambda r, p: pull(R.C(r, "Per-product split (never collapsed)")), FMT_TEXT, "pull"),
         # THE ROW IS NAMED FOR WHAT IT HOLDS, per project. For Sky it is Net Protocol Surplus,
         # and calling it "Revenue" would put the exact confusion this whole thread is about back
@@ -5664,8 +5674,12 @@ def write_a3(ws, R: Refs, data_by_key: dict):
          {"metric": "buyback_distributed_tokens"}),
         ("Actual buyback as % of supply (annualised) — RETIRED (burned + held) only",
          lambda r, p: calc(f"{_annualise(R, r, p, 'actual_buyback_tokens', R.D(r, 'retired_buyback_tokens', 'q0'))}/({circ(r, p)})"), FMT_PCT, "calc", True),
+        # A STRUCTURAL-ZERO IMPLIED BUYBACK IS 0 HERE TOO (Jake 2026-10-12, on e4e50b0: Aerodrome's implied net absorption
+        # read -14.41M, i.e. ~45M tokens of implied buyback = Q0 revenue x the 100% VOTER share / price — no protocol
+        # share of fees goes to buybacks). Implied − actual = −actual; implied net absorption = −emissions.
         ("Implied − actual ($)",
-         lambda r, p: circular_gated(p, base_gated(p, threshold_gated(p, gated(st(r), _coverage_guard(
+         lambda r, p: calc(f"-{R.D(r, 'actual_buyback_usd', 'q0')}") if _implied_zero(p) else
+         circular_gated(p, base_gated(p, threshold_gated(p, gated(st(r), _coverage_guard(
              R, r, [("revenue", config.revenue_base_metric(p["name"]), "q0"), ("buyback", "actual_buyback_usd", "q0")],
              f"{rev(r, p)}*{share(r)}-{R.D(r, 'actual_buyback_usd', 'q0')}", same_span=True, bare=True), share(r))))),
          FMT_USD, "calc", False, {"gate": "fee_split", "threshold": True, "base": True}),
@@ -5677,7 +5691,8 @@ def write_a3(ws, R: Refs, data_by_key: dict):
                                                        _absorption_emissions(R, r, p)), same_span=True),
          FMT_NUM, "calc", True, {"supply_additive": True}),
         ("Net absorption, implied basis (tokens)",
-         lambda r, p: base_gated(p, threshold_gated(p, gated(st(r), _absorption_guard(
+         lambda r, p: _absorption_guard(R, r, p, [], net_absorption(p, "0", _absorption_emissions(R, r, p)))
+         if _implied_zero(p) else base_gated(p, threshold_gated(p, gated(st(r), _absorption_guard(
              R, r, p, [("revenue", config.revenue_base_metric(p["name"]), "q0")],
              net_absorption(p, f"{rev(r, p)}*{share(r)}/{price(r)}", _absorption_emissions(R, r, p)),
              same_span=True, bare=True), share(r)))),
@@ -5796,9 +5811,9 @@ def write_a3(ws, R: Refs, data_by_key: dict):
         ("Umbrella staked $ (Aave only) — protocol risk cover, NOT AAVE supply, excluded from every float figure",
          lambda r, p: pull(R.D(r, "umbrella_staked_usd", "now")), FMT_USD, "pull", False, {"metric": "umbrella_staked_usd"}),
         *_trajectory(R, "revenue_usd", "Revenue"),
-        ("Buyback % supply at Q1 (−3m window, split as at Q1)", lambda r, p: base_gated(p, gated(st(r, 'q1'), f"{rev(r, p, 'q1')}*{share(r, 'q1')}/{price(r, 'q1')}*{ann}/({circ(r, p)})", share(r, 'q1')), window='q1'), FMT_PCT, "calc", False, {"gate_window": "q1"}),
-        ("Buyback % supply at Q2 (−6m, split as at Q2)", lambda r, p: base_gated(p, gated(st(r, 'q2'), f"{rev(r, p, 'q2')}*{share(r, 'q2')}/{price(r, 'q2')}*{ann}/({circ(r, p)})", share(r, 'q2')), window='q2'), FMT_PCT, "calc", False, {"gate_window": "q2"}),
-        ("Buyback % supply at Q3 (−9m, split as at Q3)", lambda r, p: base_gated(p, gated(st(r, 'q3'), f"{rev(r, p, 'q3')}*{share(r, 'q3')}/{price(r, 'q3')}*{ann}/({circ(r, p)})", share(r, 'q3')), window='q3'), FMT_PCT, "calc", False, {"gate_window": "q3"}),
+        ("Buyback % supply at Q1 (−3m window, split as at Q1)", lambda r, p: no_buy(p) or base_gated(p, gated(st(r, 'q1'), f"{rev(r, p, 'q1')}*{share(r, 'q1')}/{price(r, 'q1')}*{ann}/({circ(r, p)})", share(r, 'q1')), window='q1'), FMT_PCT, "calc", False, {"gate_window": "q1"}),
+        ("Buyback % supply at Q2 (−6m, split as at Q2)", lambda r, p: no_buy(p) or base_gated(p, gated(st(r, 'q2'), f"{rev(r, p, 'q2')}*{share(r, 'q2')}/{price(r, 'q2')}*{ann}/({circ(r, p)})", share(r, 'q2')), window='q2'), FMT_PCT, "calc", False, {"gate_window": "q2"}),
+        ("Buyback % supply at Q3 (−9m, split as at Q3)", lambda r, p: no_buy(p) or base_gated(p, gated(st(r, 'q3'), f"{rev(r, p, 'q3')}*{share(r, 'q3')}/{price(r, 'q3')}*{ann}/({circ(r, p)})", share(r, 'q3')), window='q3'), FMT_PCT, "calc", False, {"gate_window": "q3"}),
         ("Notes", lambda r, p: "; ".join(x for x in [p.get("notes", ""), (p.get("fee_split") or {}).get("note", "")] if x), FMT_TEXT, "text"),
     ]
     end = _write_table(ws, R, projects, specs, data_by_key, ["revenue_usd", "fees_usd", "price_usd", "circulating_supply", "actual_buyback_usd", "actual_buyback_tokens", "emissions_tokens", "locked_tokens"],

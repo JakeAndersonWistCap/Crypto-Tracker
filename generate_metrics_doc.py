@@ -49,9 +49,13 @@ def captured_columns() -> list[tuple[str, str, bool, str | None]]:
             sm.Store(str(db)).close()
             saved = sm.DB_PATH
             sm.DB_PATH = str(db)
+            # CLOSED BEFORE THE TEMPORARY DIRECTORY GOES (Jake's run on e4e50b0, 2026-10-12 item 1): Windows refuses to
+            # delete a database file a connection still holds open (PermissionError, WinError 32)
+            st = sm.Store(str(db))
             try:
-                bw.build_workbook(sm.Store(str(db)), Path(tmp) / "wb.xlsx", asof=pd.Timestamp("2026-10-11"))
+                bw.build_workbook(st, Path(tmp) / "wb.xlsx", asof=pd.Timestamp("2026-10-11"))
             finally:
+                st.close()
                 sm.DB_PATH = saved
     finally:
         bw._write_table = orig

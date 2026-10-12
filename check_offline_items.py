@@ -3940,7 +3940,8 @@ NEAR_LOCKUP_BUGGY_CODE = ("3kVY9qcVRoW3B5498SMX6R3rtSLiCdmBzKs7zcnzDJ7Q", "DiC9b
 NEAR_RPC_LIVE = ("https://rpc.mainnet.fastnear.com", "https://rpc.mainnet.near.org")
 
 
-def _near_view(account: str, method: str, args: dict | None = None, block_id: int | None = None, pace: float = 0.12):
+def _near_view(account: str, method: str, args: dict | None = None, block_id: int | None = None, pace: float = 0.12,
+               urls: tuple | None = None):
     """call_function on a NEAR contract at `block_id` (or final): (result, why). FastNEAR first, then near.org; a 429
     waits and tries the next endpoint. The lockup getters return JSON."""
     import base64                                          # noqa: PLC0415
@@ -3950,7 +3951,7 @@ def _near_view(account: str, method: str, args: dict | None = None, block_id: in
               "args_base64": base64.b64encode(_json.dumps(args or {}).encode()).decode()}
     params.update({"block_id": block_id} if block_id else {"finality": "final"})
     why = ""
-    for url in NEAR_RPC_LIVE:
+    for url in urls or NEAR_RPC_LIVE:
         _t.sleep(pace)
         try:
             r = requests.post(url, json={"jsonrpc": "2.0", "id": 1, "method": "query", "params": params},
@@ -4045,6 +4046,223 @@ def near_lockup_accounts(say=print, pace: float = 1.0) -> tuple[list, str]:
                    f"{span}, {_t.time() - t0:,.0f}s this run")
 
 
+# THE LAKEHOUSE'S RECOMPUTATION FOR THE BUGGY LOCKUPS (Jake 2026-10-12, decision 8 on e4e50b0). near-public-lakehouse
+# @76e0b2cd rust-extract-apis/lockups/src/lockup.rs: the contract's raw state (view_state, Borsh LockupContract,
+# lockup_types.rs) with transfers_information forced to TransfersEnabled at the phase-2 timestamp, then
+# get_locked_amount(timestamp, has_bug) — for the two buggy code hashes the release starts at the transfers timestamp
+# (core-contracts PR #136), not at the lockup timestamp. Reproduced here line for line.
+NEAR_TRANSFERS_ENABLED_NS = 1602614338293769340          # 2020-10-13 18:38:58.293 UTC (lockup.rs TRANSFERS_ENABLED)
+
+
+class _Borsh:
+    def __init__(self, b: bytes):
+        self.b, self.i = b, 0
+
+    def take(self, n):
+        v = self.b[self.i:self.i + n]
+        if len(v) != n:
+            raise ValueError("lockup state shorter than its layout")
+        self.i += n
+        return v
+
+    def u8(self):
+        return self.take(1)[0]
+
+    def u32(self):
+        return int.from_bytes(self.take(4), "little")
+
+    def u64(self):
+        return int.from_bytes(self.take(8), "little")
+
+    def u128(self):
+        return int.from_bytes(self.take(16), "little")
+
+    def string(self):
+        return self.take(self.u32()).decode()
+
+    def option(self, fn):
+        return fn() if self.u8() else None
+
+
+def near_lockup_state(raw: bytes) -> dict:
+    """LockupContract (lockup_types.rs) from its Borsh bytes: owner, lockup_information, vesting_information."""
+    r = _Borsh(raw)
+    owner = r.string()
+    li = {"lockup_amount": r.u128(), "termination_withdrawn_tokens": r.u128(), "lockup_duration": r.u64(),
+          "release_duration": r.option(r.u64), "lockup_timestamp": r.option(r.u64)}
+    t = r.u8()
+    li["transfers"] = ("enabled", r.u64()) if t == 0 else ("disabled", r.string())
+    v = r.u8()
+    if v == 0:
+        vest = ("none",)
+    elif v == 1:
+        vest = ("hash", r.take(r.u32()))
+    elif v == 2:
+        vest = ("schedule", r.u64(), r.u64(), r.u64())          # start, cliff, end
+    elif v == 3:
+        vest = ("terminating", r.u128(), r.u8())                 # unvested_amount, status
+    else:
+        raise ValueError(f"unknown VestingInformation tag {v}")
+    return {"owner": owner, "lockup": li, "vesting": vest}
+
+
+def near_unvested(state: dict, ts: int) -> int:
+    """lockup.rs get_unvested_amount (a private vesting hash counts 0, as the lakehouse assumes)."""
+    li, v = state["lockup"], state["vesting"]
+    if v[0] == "terminating":
+        return v[1]
+    if v[0] != "schedule":
+        return 0
+    start, cliff, end = v[1], v[2], v[3]
+    if ts < cliff:
+        return li["lockup_amount"]
+    if ts >= end:
+        return 0
+    return li["lockup_amount"] * (end - ts) // (end - start)
+
+
+def near_locked_recomputed(state: dict, ts: int, has_bug: bool) -> int:
+    """lockup.rs get_locked_amount, transfers forced enabled at NEAR_TRANSFERS_ENABLED_NS."""
+    li = state["lockup"]
+    tr = NEAR_TRANSFERS_ENABLED_NS
+    amount, withdrawn = li["lockup_amount"], li["termination_withdrawn_tokens"]
+    lockup_ts = max(tr + li["lockup_duration"], li["lockup_timestamp"] or 0)
+    if lockup_ts > ts:
+        return amount - withdrawn
+    rd = li["release_duration"]
+    unreleased = 0
+    if rd:
+        start = tr if has_bug else lockup_ts
+        end = start + rd
+        unreleased = 0 if ts >= end else amount * (end - ts) // rd
+    unvested = near_unvested(state, ts)
+    return max(max(unreleased - withdrawn, 0), unvested)
+
+
+def _near_code_hash(account: str, block_id: int, urls: tuple | None = None) -> tuple[str | None, str]:
+    """(code_hash, why) at `block_id` — None with the reason when no endpoint answers (an error reply is NOT a
+    non-buggy lockup: 2026-10-12, a garbage-collected block read 1,960 lockups as 0 buggy)."""
+    why = ""
+    for url in urls or NEAR_RPC_LIVE:
+        try:
+            va = rpc(url, "query", {"request_type": "view_account", "account_id": account, "block_id": block_id})
+        except Exception as e:  # noqa: BLE001
+            why = f"{urlparse(url).netloc}: view_account {type(e).__name__}"
+            continue
+        code = (va.get("result") or {}).get("code_hash")
+        if code:
+            return code, ""
+        err = va.get("error") or {}
+        why = f"{urlparse(url).netloc}: view_account {(err.get('cause') or {}).get('name') or err.get('name') or 'no result'}"
+    return None, why
+
+
+def _near_view_state(account: str, block_id: int, urls: tuple | None = None) -> tuple[bytes | None, str]:
+    """The contract's raw state value (the lockup keeps one key, the serialised LockupContract)."""
+    import base64                                          # noqa: PLC0415
+    import time as _t                                      # noqa: PLC0415
+    why = ""
+    for url in urls or NEAR_RPC_LIVE:
+        try:
+            r = requests.post(url, json={"jsonrpc": "2.0", "id": 1, "method": "query",
+                                         "params": {"request_type": "view_state", "account_id": account,
+                                                    "prefix_base64": "", "block_id": block_id}},
+                              headers=_ua(), timeout=TIMEOUT)
+        except Exception as e:  # noqa: BLE001
+            why = f"{urlparse(url).netloc}: {type(e).__name__}"
+            continue
+        if r.status_code == 429:
+            why = f"{urlparse(url).netloc}: HTTP 429"
+            _t.sleep(2.0)
+            continue
+        vals = ((r.json() if r.status_code == 200 else {}).get("result") or {}).get("values") or []
+        if vals:
+            return base64.b64decode(vals[0]["value"]), ""
+        why = f"{urlparse(url).netloc}: no state"
+    return None, why
+
+
+def near_lockups_buggy_recompute(block_id: int | None = 219_544_718, workers: int = 4):
+    """THE BUGGY-CODE LOCKUPS (1,729 with a balance at Jake's block; his probe flagged 1,685): RPC get_locked_amount
+    vs the lakehouse's recomputation from each lockup's own schedule (Jake 2026-10-12, decision 8). Default block = Jake's 2026-10-11 15:50 UTC probe (219,544,718). Per live
+    lockup: view_account (code hash); for the two buggy hashes: view_state (the schedule) and get_locked_amount (the RPC
+    figure), at that block. AGGREGATES ONLY — no account is named. ~2 calls a lockup + 2 more for each buggy one."""
+    import time as _t                                      # noqa: PLC0415
+    from concurrent.futures import ThreadPoolExecutor      # noqa: PLC0415
+    import progress                                       # noqa: PLC0415
+    head("NEAR — buggy-code lockups: RPC locked vs the lakehouse's recomputation (lockup.rs, has_bug)")
+    accounts, how = near_lockup_accounts()
+    print(f"  {how}")
+    if not accounts:
+        return None
+    blk = (rpc(NEAR_RPC_LIVE[0], "block", {"block_id": block_id}) if block_id else
+           rpc(NEAR_RPC_LIVE[0], "block", {"finality": "final"})).get("result") or {}
+    height, ts = blk["header"]["height"], int(blk["header"]["timestamp"])
+    print(f"  block {height:,} (timestamp {ts}), {len(accounts):,} live lockup(s), {workers} worker(s)")
+
+    # A PAST BLOCK IS READ FROM THE ARCHIVAL NODES (2026-10-12: the public node had garbage-collected Jake's block)
+    from fetch.archive import near_archival_endpoints     # noqa: PLC0415
+    urls = (*near_archival_endpoints(), *NEAR_RPC_LIVE) if block_id else tuple(NEAR_RPC_LIVE)
+
+    def one(acc):
+        code, why0 = _near_code_hash(acc, height, urls)
+        if code is None:
+            return ("unread", why0)
+        if code not in NEAR_LOCKUP_BUGGY_CODE:
+            return ("ok", None)
+        # THE SAME SET AS near_lockups: a zero-balance lockup is skipped before its locked is read (1,729 at block 219,544,718)
+        bal, whyb = _near_view(acc, "get_balance", block_id=height, urls=urls)
+        if bal is None:
+            return ("unread", whyb)
+        if int(bal) == 0:
+            return ("zero", None)
+        raw, why = _near_view_state(acc, height, urls)
+        rpc_locked, why2 = _near_view(acc, "get_locked_amount", block_id=height, urls=urls)
+        if raw is None or rpc_locked is None:
+            return ("unread", why or why2)
+        try:
+            st = near_lockup_state(raw)
+        except ValueError as e:
+            return ("unread", f"state: {e}")
+        return ("buggy", (int(rpc_locked), near_locked_recomputed(st, ts, True), near_unvested(st, ts)))
+    out = {"buggy": 0, "zero": 0, "rpc": 0, "recomputed": 0, "unvested": 0, "unread": 0, "errors": {},
+           "height": height, "retried": 0}
+    t0 = _t.time()
+    got = []
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        for k, r in enumerate(ex.map(one, accounts), 1):
+            got.append(r)
+            progress.tick("lockups", k, len(accounts))
+            if k % 250 == 0:
+                print(f"    … {k:,}/{len(accounts):,} ({_t.time() - t0:,.0f}s)", flush=True)
+    # ONE SLOW RETRY of the unread (a 429 or a node's hiccup is not a fact about the lockup)
+    again = [i for i, (kind, _v) in enumerate(got) if kind == "unread"]
+    for i in again:
+        _t.sleep(1.0)
+        got[i] = one(accounts[i])
+    out["retried"] = len(again)
+    for kind, v in got:
+        if kind == "zero":
+            out["zero"] += 1
+        if kind == "buggy":
+            out["buggy"] += 1
+            out["rpc"] += v[0]
+            out["recomputed"] += v[1]
+            out["unvested"] += min(v[2], v[1])
+        elif kind == "unread":
+            out["unread"] += 1
+            out["errors"][str(v)[:60]] = out["errors"].get(str(v)[:60], 0) + 1
+    y = 10 ** 24
+    print(f"\n  buggy-code lockups read (balance > 0): {out['buggy']:,}; zero balance {out['zero']:,}; unreadable "
+          f"{out['unread']:,} after one retry of {out['retried']:,} {out['errors'] or ''}")
+    print(f"  RPC get_locked_amount (the contracts' own, known off)  {out['rpc'] / y:>18,.0f} NEAR")
+    print(f"  RECOMPUTED (lakehouse lockup.rs, has_bug)              {out['recomputed'] / y:>18,.0f} NEAR")
+    print(f"    difference recomputed − RPC                          {(out['recomputed'] - out['rpc']) / y:>+18,.0f} NEAR")
+    print(f"    of the recomputed, still unvested                    {out['unvested'] / y:>18,.0f} NEAR")
+    print("  PASTE BACK the totals.")
+    return out
+
+
 def near_lockups(limit: int | None = None):
     """NEAR LOCKUPS, FROM THE CONTRACTS' OWN VIEW METHODS (follow-up to 0eda6ce). The list: every live *.lockup.near —
     the lockup factory's sub-accounts from NearBlocks' free API (near_lockup_accounts; Jake's run on ab3c7fe 2026-10-11:
@@ -4082,7 +4300,9 @@ def near_lockups(limit: int | None = None):
     print(f"  every read at block {height:,} ({_now_utc()}); {len(accounts):,} account(s), ~4-6 calls each")
     yocto = 10 ** 24
     tot = {"balance": 0, "locked": 0, "unvested": 0, "owners": 0}
-    buggy = {"n": 0, "balance": 0, "locked": 0}
+    buggy = {"n": 0, "balance": 0, "locked": 0, "recomputed": 0}
+    block_ts = int((((rpc(NEAR_RPC_LIVE[0], "block", {"block_id": height}).get("result") or {}).get("header") or {})
+                    .get("timestamp")) or 0)
     n_read = n_zero = n_err = 0
     errs = {}
     t0 = _t.time()
@@ -4113,19 +4333,36 @@ def near_lockups(limit: int | None = None):
             unv = int((vest["Terminating"] or {}).get("unvested_amount") or 0)
         n_read += 1
         bal, locked, owners = int(bal), int(locked), int(owners or 0)
-        tot["balance"] += bal
-        tot["locked"] += locked
-        tot["unvested"] += min(unv, locked)
-        tot["owners"] += owners
-        try:
-            va = rpc(NEAR_RPC_LIVE[0], "query", {"request_type": "view_account", "account_id": acc, "block_id": height})
-            code = (va.get("result") or {}).get("code_hash")
-        except Exception:  # noqa: BLE001
-            code = None
+        # an unread code hash is an unread lockup — never taken for a non-buggy one (2026-10-12)
+        code, why = _near_code_hash(acc, height)
+        if code is None:
+            n_read -= 1
+            n_err += 1
+            errs[why[:60]] = errs.get(why[:60], 0) + 1
+            continue
         if code in NEAR_LOCKUP_BUGGY_CODE:
             buggy["n"] += 1
             buggy["balance"] += bal
             buggy["locked"] += locked
+            # THE LAKEHOUSE'S FIGURE, NOT THE RPC'S (Jake 2026-10-12, decision 8): recomputed from the lockup's own
+            # schedule; a state that cannot be read is an unread lockup (never the known-wrong RPC figure)
+            raw, why = _near_view_state(acc, height)
+            try:
+                st_ = near_lockup_state(raw) if raw is not None else None
+            except ValueError as e:
+                st_, why = None, f"state: {e}"
+            if st_ is None:
+                n_err += 1
+                errs[f"buggy lockup state: {why}"[:60]] = errs.get(f"buggy lockup state: {why}"[:60], 0) + 1
+                continue
+            locked = near_locked_recomputed(st_, block_ts, True)
+            owners = max(bal - locked, 0)
+            unv = near_unvested(st_, block_ts)
+            buggy["recomputed"] += locked
+        tot["balance"] += bal
+        tot["locked"] += locked
+        tot["unvested"] += min(unv, locked)
+        tot["owners"] += owners
         if i % 250 == 0:
             print(f"    … {i:,}/{len(accounts):,} ({_t.time() - t0:,.0f}s)", flush=True)
     n = lambda x: f"{x / yocto:>18,.0f} NEAR"  # noqa: E731
@@ -4136,10 +4373,12 @@ def near_lockups(limit: int | None = None):
     print(f"    of which VESTED, still lockup-locked       {n(tot['locked'] - tot['unvested'])}")
     print(f"  RELEASED, not withdrawn (owners' balance)    {n(tot['owners'])}")
     print(f"  buggy-code lockups: {buggy['n']:,}, balance {n(buggy['balance'])}, RPC locked {n(buggy['locked'])} "
-          f"(NEAR's lakehouse recomputes these; the RPC figure is known to be off)")
-    print("  UNDER JAKE'S RULE only STILL UNVESTED comes out of circulating; NEAR's own circulating subtracts all of "
-          "LOCKED. PASTE BACK the totals.")
+          f"(known to be off) -> RECOMPUTED {n(buggy['recomputed'])} (lakehouse lockup.rs; the totals above use it)")
+    print("  UNDER JAKE'S RULE (clarified 2026-10-12) everything NOT YET TRANSFERABLE — LOCKED, i.e. unvested + "
+          "lockup-locked — comes out of circulating; released-not-withdrawn stays in. PASTE BACK the totals.")
     return {"height": height, "accounts": len(accounts), "read": n_read, "zero": n_zero, "unreadable": n_err,
+            "errors": dict(errs),
+            "buggy_rpc_locked": buggy["locked"] / yocto, "buggy_recomputed": buggy["recomputed"] / yocto,
             "balance": tot["balance"] / yocto, "locked": tot["locked"] / yocto, "unvested": tot["unvested"] / yocto,
             "owners": tot["owners"] / yocto, "buggy": buggy["n"]}
 
@@ -5193,7 +5432,7 @@ def aerodrome_buyback_window(b0: int, b1: int, owners: list | None = None, say=p
     fb = config.PROJECT_BY_NAME["Aerodrome"]["foundation_buyback"]
     owners = [o.lower() for o in (owners or list(fb["owners"]))]
     own = set(owners)
-    # UPSTREAM BUYERS (config foundation_buyback.buyer_wallets — EMPTY until a primary source names one): a wallet that
+    # UPSTREAM BUYERS (config foundation_buyback.buyer_wallets — the Safe 0x10b42e92…, Jake 2026-10-12): a wallet that
     # buys AERO and passes it to the owners. Its purchases join the pool the owners' balance-funded locks are matched
     # to, and its transfers to the owners are internal moves, neither bought nor lost.
     buyers = [b.lower() for b in (fb.get("buyer_wallets") or {})]
@@ -10942,7 +11181,7 @@ CHECKS = (
     chainlink_reward_rates, pendle_spendle_fees, archive_probe, coinmetrics_community,
     hl_af_fills_depth, etherfi_safe_owners, etherfi_sethfi_topups, etherfi_topup_safe, etherfi_cex_test, near_protocol_v87, aethir_pin_keys,
     robots_and_terms, ultrasound_history, hyperliquid_history_routes, blockworks_filings, maple_dao_vs_ssf, aethir_reward_distributors, etherfi_yield_reconcile, maple_ssf_candidates,
-    aethir_distributor_match, fluid_igp137_wallet, fluid_igp137_custody, aethir_arr_formula, near_lockups,
+    aethir_distributor_match, fluid_igp137_wallet, fluid_igp137_custody, aethir_arr_formula, near_lockups, near_lockups_buggy_recompute,
     aerodrome_bribe_scan, morpho_interest_listed_vs_all, aerodrome_foundation_q0, aerodrome_foundation_lock_split,
     near_bq_backfill_status,
     morpho_merkl_campaigns, etherfi_sender_trace,

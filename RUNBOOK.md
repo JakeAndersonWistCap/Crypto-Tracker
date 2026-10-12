@@ -527,6 +527,97 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11bl. Jake's decisions on e4e50b0 and his run of 2026-10-12 (07:00 UTC, sign-off 12/15)
+
+**Decisions on e4e50b0.**
+1. **Aerodrome buyer:** Safe 0x10b42e92… is a Foundation buyer (`foundation_buyback.buyer_wallets`, decided by Jake
+   2026-10-12). Claimed voting rewards later locked (752,355 of #130786) do NOT count. Q0 (blocks
+   48,555,727-52,443,727): lock #130786 (2,746,705.44, 2026-08-24) matches oldest-first the
+   1,906,696 AERO the Safe bought before 08-24 (six USDC→AERO purchases, 829,828 USDC) → **Q0 buyback ≈ 1,906,696 AERO**
+   (was 0); the 777,724 bought after 08-24 is not locked yet. Daily from the next run (fetch/ve_managed.py); the Q0
+   history needs `python token_metrics.py --seed aero_buyback` on the keyed BASE_RPC_URL.
+2. **Aerodrome implied = 0** (fees buy nothing: paid to voters in the pairs' own tokens). Every implied cell reads 0
+   (implied $, tokens, BUYBACK AS %, Q1-Q3 %, share applied / documented); implied net absorption = 0 − the Minter's
+   emissions and rebase = −59,452,332 on the 10-09 dump (was −14.41M). No other cell applies a revenue split to
+   Aerodrome (the remaining share uses are Sky's legs).
+3. **Hyperliquid team wallet** 0x43e9abea… (237,915,860.47 HYPE delegated on 2026-10-12, matching tokenDetails
+   nonCirculatingUserBalances) is stored per run as `team_wallet_tokens`; the unlock stock is now
+   `excluded_wallets_tokens` + `team_wallet_tokens`. It is NOT subtracted again from circulating (tokenDetails already
+   excludes it): circulating stays 238,641,977 (302,167,698 published − Foundation − Grants, A1). Adding the wallet is
+   a change of measuring point, so its releases count from the second read of the new set.
+4. **Morpho stays on CoinGecko.** Wallet by wallet (live 2026-10-12):
+
+   | Step | MORPHO | Circulating after it |
+   |---|---:|---:|
+   | Total supply (on-chain) | 999,999,999.80 | — |
+   | 8 new-token non-circulating wallets (sum) | 125,918,446.19 | 874,081,553.61 |
+   | DAO legacy 290,419,981.96 + DAO on Base 13,000,000.00 | 303,419,981.96 | 570,661,571.65 (our on-chain set today) |
+   | Association legacy + Labs legacy (morpho-seatbelt@ee2dda29) | 23,044,595.33 | 547,616,976.32 |
+   | Rewards Multisig legacy + Operative 2 legacy | 364,599.38 | ≈547,252,376.94 |
+   | Vesting contracts (0x60167C23…, 0xe206A800…) | 0 | (hold nothing) |
+
+   The wrapper's 386,998,679.25 is not subtracted (the legacy tokens it holds back new ones already counted).
+   CoinGecko 700,449,598.64 excludes 299,550,401 ≈ the DAO's three holdings (303,998,853.06; total − DAO =
+   696,001,146.74, CoinGecko +4.45M above it): it counts the Association / Labs / Grants / Rewards wallets as
+   circulating. Not wired; ratios stay on CoinGecko.
+5. **Aave paused, OriginTrail n/a:** confirmed in config.
+6. **Unlock rows:** Chainlink's `in_unlocks` is judged against its reconciled outflow scan (`q0_net_flow`, PASS on the
+   dump, 0 vs 0); every other project's unlock row is recorded, not judged.
+7. **PancakeSwap / Injective / Render:** parked (and now skipped by sanity.py, item 5 below).
+8. **NEAR (clarified rule):** everything NOT YET TRANSFERABLE leaves circulating = the lockups' LOCKED (unvested +
+   lockup-locked, NEAR's own), as unreleased vesting elsewhere; released-not-withdrawn stays circulating.
+   `circulating_supply_lockup_rule` = total − `near_lockup_locked_tokens` (a read at most 10 days old; otherwise NEAR's
+   own figure, said in the source). First weekly read = Jake's probe at block 219,544,718 (2026-10-11 15:50 UTC),
+   manual_overrides.csv. The 1,685 buggy-code lockups are recomputed from their own state (lakehouse lockup.rs,
+   has_bug): at block 219,544,718 (archival RPC), 1,729 buggy-code lockups
+   with a balance, none unread — RPC `get_locked_amount` 19,742,787 NEAR vs **recomputed 232,587** (−19,510,200; all of
+   it still unvested). Jake's probe flagged 1,685 (its code-hash read took an error reply for a non-buggy lockup; the
+   44 more carry 524,378 of the RPC figure). Stored LOCKED = 21,568,722 − 19,742,787 + 232,587 = **2,058,522 NEAR**
+   (manual_overrides.csv, pending Jake's review). NEAR circulating: before (NEAR's own figure) ≈ 1,306M; after = total
+   1,308,678,642 (block header) − 2,058,522 = **1,306,620,120** — not the ~1.284bn expected, which rested on the RPC's
+   known-wrong 19.2M: recomputed, the buggy lockups are almost all released, and the rule lands within ~0.05% of NEAR's
+   own circulating (whose lakehouse recomputes the same way). The unvested row (1,999,721) is recorded only.
+
+**Jake's run (items 1-6).**
+1. **generate_metrics_doc.py --check, WinError 32:** the Store handed to build_workbook was never closed, so Windows
+   could not delete the temporary metrics.db. Closed in a `finally` before the directory goes; a test imitates
+   Windows (the temporary directory refuses to go while a connection to a file in it is open) and fails without the
+   fix. export_snapshot.py's database is not in its temporary directory and both workbook loads close their files.
+2. **Ether.fi in_circ (3.44%):** ours + the wallets CoinGecko counts was on our chain total (998,535,999) against
+   CoinGecko's circulating on its own total (965,350,000). CoinGecko's total is now kept as `total_supply_coingecko`
+   (written by the CoinGecko read for every TOTAL_SUPPLY_ONCHAIN_FIRST project — it was dropped in the collision) and
+   the like-for-like row is ours + those wallets − our total + CoinGecko's total. Jake's figures: 965,350,000 vs
+   965,350,000. It fills from the next run (no CoinGecko total was stored on 10-11/10-12); the a3 rows follow it.
+   Fluid (also on-chain first, same row shape) takes the same basis; its two totals agree, so it moves by 0.
+3. **Pendle in_buyback (+14.8% → +46.70%):** nothing was re-read, re-dated or deleted. The trailing 90 days lost the
+   epoch of 07-14 (144,388 PENDLE) WHOLE on 10-12 while the daily side lost one day. The real dump reproduces it
+   (+13.9% on 10-11, +44.9% on 10-12). An epoch dated d pays out days d..d+13 (the stored epochs match the daily
+   series forward: 07-28 199,338 vs 199,147). The row is now judged over the whole published epochs inside Q0 —
+   ours summed over exactly those days (`epoch_span_sum`; trailing epochs still read 0 are unpublished and left
+   out). Real dump: +4.00% (10-09), +4.00% (10-11), +3.90% (10-12). Tolerance unchanged (25%).
+4. **Plume in_circ "CHECK (no figure)":** the day's first run reads supply.plume.org live (source
+   `scrape:supply.plume.org`); a same-day re-run re-served the cache as `scrape:cache`. Two measuring points with no
+   handover → the series was withheld (measuring_point_changed), and the stale-now fallback never stands in for a
+   withheld figure. A cached read is now stored as `scrape:<host>:cache` (`cache` is a registered source marker,
+   stripped from the measuring point); the stored bare-cache rows are relabelled by orphan_cleanup.sql **CI**. Test:
+   the real Plume dump + Jake's store shape (10-10/10-11 cached, 10-12 live) reads "CHECK (no figure)" before CI and
+   PASS after.
+5. **sanity.py:** projects not in portfolio.txt are skipped (no file: every project).
+6. **METRICS.md:** the circulating convention reads "the project's own figure, adjusted to Jake's convention (e.g.
+   Hyperliquid Foundation + Grants out; NEAR total − lockups LOCKED)"; regenerated after the NEAR rule.
+
+**Also fixed:** the NEAR lockup probes took an RPC error reply (a garbage-collected block on the public node) for a
+non-buggy lockup — an unread code hash is now an unread lockup, and a past block is read from the archival nodes.
+
+### Open issues (2026-10-12)
+- **Jake to run:** `python run_sql.py CI` then `--delete CI` (the scraper's bare-cache rows; Plume in_circ stays
+  "CHECK (no figure)" until it runs). Ether.fi in_circ fills on the next run (CoinGecko's total is stored from then).
+- **Awaiting Jake:** NEAR's stored LOCKED (2,058,522, recomputed) and the two manual rows' notes; Morpho's Association /
+  Labs / Rewards legacy holdings (23.4M) are in the table above, not wired.
+- **MATURING:** Hyperliquid unlock dilution with the team wallet (from the second read of the new set); Aerodrome's
+  Q0 buyback history (`--seed aero_buyback` on the keyed RPC).
+- **Parked:** PancakeSwap product burn, Injective / Render burn series (decision 7).
+
 ## 11bk. The final data round before the theory phase (2026-10-11)
 
 Jake agreed decisions A1-A7 on 5b87610, the Aerodrome buyback basis (B), the NEAR lockup rule (C) and the theory-ready

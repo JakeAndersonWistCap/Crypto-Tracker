@@ -318,10 +318,12 @@ def test_aerodrome_buyer_purchase_counts_only_for_a_declared_buyer(monkeypatch):
     import config
     pgf, buyer = "0x834c0da026d5f933c2c18fa9f8ba7f1f792fda52", "0x10b42e926c2b8ff0200f35ec466d50576c1efa30"
     _fake_base(monkeypatch, _receipts(), move_blocks={pgf: [48669271], buyer: [48669228, 48669271]})
+    fb = config.PROJECT_BY_NAME["Aerodrome"]["foundation_buyback"]
+    assert buyer in fb["buyer_wallets"]                                  # Jake 2026-10-12, decision 1 on e4e50b0
+    monkeypatch.setitem(fb, "buyer_wallets", {})
     got = coi.aerodrome_buyback_window(48669200, 48669300, owners=[pgf])
     assert got["error"] is None and got["purchased"] == 0
     assert got["inflows"][buyer] == pytest.approx(214_508.93, abs=0.01)
-    fb = config.PROJECT_BY_NAME["Aerodrome"]["foundation_buyback"]
     monkeypatch.setitem(fb, "buyer_wallets", {buyer: "test: declared buyer"})
     got = coi.aerodrome_buyback_window(48669200, 48669300, owners=[pgf])
     assert got["purchased"] == pytest.approx(214_508.93, abs=0.01) and buyer not in got["inflows"]
@@ -363,7 +365,9 @@ def test_aerodrome_route_names_the_agreed_basis():
     import config
     r = config.buyback_route("Aerodrome")
     assert r["metric"] == "foundation_compounded_owner_tokens" and "bought" in r["reason"]
-    assert config.PROJECT_BY_NAME["Aerodrome"]["foundation_buyback"]["buyer_wallets"] == {}
+    bw_ = config.PROJECT_BY_NAME["Aerodrome"]["foundation_buyback"]["buyer_wallets"]
+    assert list(bw_) == ["0x10b42e926c2b8ff0200f35ec466d50576c1efa30"] and "Jake 2026-10-12" in \
+        bw_["0x10b42e926c2b8ff0200f35ec466d50576c1efa30"]["decided"]
 
 
 def test_logs_are_asked_of_the_token_not_the_wallet(monkeypatch):
@@ -391,26 +395,29 @@ def test_seeded_bisection_finds_a_pass_through_wallet(monkeypatch):
 
 # ----------------------------------------------------------------------------------------------- C NEAR lockups
 def test_near_circulating_under_the_lockup_rule(monkeypatch):
-    """Only still-unvested leaves circulating: NEAR's figure + (locked - unvested) from the latest weekly read <= 10 days
-    old; without one, NEAR's figure unchanged and said so."""
+    """Jake 2026-10-12 (decision 8): everything NOT YET TRANSFERABLE is out — circulating = total − LOCKED from the latest
+    weekly read <= 10 days old; without one, NEAR's own figure unchanged and said so. Jake's probe: LOCKED 21,568,722."""
     import build_workbook as bw
     import config
     monkeypatch.setattr(bw, "_SCOPE", list(config.PROJECTS))
     assert config.circulating_primary_metric("Near") == "circulating_supply_lockup_rule"
+    assert config.unlock_stock_metrics("Near") == ("near_lockup_locked_tokens",)
     d = pd.date_range("2026-10-01", "2026-10-25")
     fp = pd.DataFrame({"date": d, "project": "Near", "metric": "circulating_supply_first_party",
                        "value": 1_250_000_000.0, "source": "near_bigquery:circulating_supply", "tier": 1})
-    rd = pd.Timestamp("2026-10-12")
-    mk = lambda m, v: pd.DataFrame({"date": [rd], "project": "Near", "metric": m, "value": [v],  # noqa: E731
-                                    "source": "near_rpc:lockups@1", "tier": 2})
-    groups = {("Near", "circulating_supply_first_party"): fp,
-              ("Near", "near_lockup_unvested_tokens"): mk("near_lockup_unvested_tokens", 20_000_000.0),
-              ("Near", "near_lockup_locked_tokens"): mk("near_lockup_locked_tokens", 50_000_000.0)}
+    tot = pd.DataFrame({"date": d, "project": "Near", "metric": "total_supply",
+                        "value": 1_306_900_000.0, "source": "coingecko", "tier": 1})
+    rd = pd.Timestamp("2026-10-11")
+    lk = pd.DataFrame({"date": [rd], "project": "Near", "metric": "near_lockup_locked_tokens", "value": [21_568_722.0],
+                       "source": "manual", "tier": 3})
+    groups = {("Near", "circulating_supply_first_party"): fp, ("Near", "total_supply"): tot,
+              ("Near", "near_lockup_locked_tokens"): lk}
     bw._near_lockup_views(groups)
     s = groups[("Near", "circulating_supply_lockup_rule")].set_index("date")
-    assert s.loc["2026-10-11", "value"] == 1_250_000_000 and "no lockup read" in s.loc["2026-10-11", "source"]
-    assert s.loc["2026-10-12", "value"] == 1_280_000_000 and "lockups read 2026-10-12" in s.loc["2026-10-12", "source"]
-    assert s.loc["2026-10-23", "value"] == 1_250_000_000                         # 11 days past the read
+    assert s.loc["2026-10-10", "value"] == 1_250_000_000 and "no lockup read" in s.loc["2026-10-10", "source"]
+    assert s.loc["2026-10-11", "value"] == 1_306_900_000 - 21_568_722
+    assert "lockups read 2026-10-11" in s.loc["2026-10-11", "source"]
+    assert s.loc["2026-10-22", "value"] == 1_250_000_000                         # 11 days past the read
 
 
 def test_near_lockups_weekly_never_stores_a_partial_read(monkeypatch, tmp_path, capsys):
@@ -475,3 +482,232 @@ def test_daily_run_ends_with_the_snapshot_and_runs_the_weekly_lockups():
     ps = (ROOT / "windows" / "daily_run.ps1").read_text(encoding="utf-8")
     assert ps.rstrip().endswith('[void](Invoke-Step "export snapshot" @("export_snapshot.py"))')
     assert '"near_lockups_weekly.py"' in ps
+
+
+# ----------------------------------------------------------------------------------------------- Jake on e4e50b0
+def test_aerodrome_implied_buyback_is_zero_in_every_cell_on_the_real_dump(tmp_path, monkeypatch):
+    """Decision 2: no protocol share of fees goes to buybacks — implied net absorption = -emissions (-59,452,332), and no
+    cell applies the 100% VOTER share as a buyback split."""
+    wb, value = _build(tmp_path, monkeypatch, "Aerodrome")
+    assert _cell(wb, value, "A3", "Aerodrome", "Net absorption, implied basis") == pytest.approx(-59_452_331.99, abs=1)
+    for h in ("Implied buyback Q0 ($)", "Implied buyback Q0 (tokens)", "BUYBACK AS % OF SUPPLY", "Buyback % supply at Q1",
+              "Buyback % supply at Q2", "Buyback % supply at Q3", "Share applied to this window",
+              "Current documented share"):
+        assert _cell(wb, value, "A3", "Aerodrome", h) == 0, h
+    for h in ("Implied buyback Q0 ($)", "Buyback % of supply"):
+        assert _cell(wb, value, "Master", "Aerodrome", h) == 0, h
+
+
+def test_hyperliquid_team_wallet_is_an_unlock_stock_not_subtracted_again():
+    """Decision 3: the team wallet (tokenDetails.nonCirculatingUserBalances, 237,915,860.47 on 2026-10-11) is stored as
+    team_wallet_tokens and is an unlock leg; circulatingSupply already excludes it."""
+    import config
+    from fetch.base import FetchOutput
+    from fetch.hypercore import HyperCoreInfo
+    api, read = _hype_read()
+    a = HyperCoreInfo()
+    a.http = _HypeHttp()
+    payload = {"totalSupply": "998868230.0", "circulatingSupply": "302167698.0", "maxSupply": "1000000000.0",
+               "nonCirculatingUserBalances": [["0x43e9abea1910387c4292bca4b94de81462f8a251", "237915860.4669794142"],
+                                              ["0xfefefefefefefefefefefefefefefefefefefefe", "47955056.0"]]}
+    out = FetchOutput()
+    a._token_details(config.PROJECT_BY_NAME["Hyperliquid"], api, read, payload, out, pd.Timestamp("2026-10-11"))
+    f = out.frame().set_index("metric")["value"]
+    assert f["team_wallet_tokens"] == pytest.approx(237_915_860.47, abs=0.01)
+    assert f["circulating_supply_first_party"] == pytest.approx(302_167_698.0 - 63_525_720.63, abs=0.01)
+    assert config.unlock_stock_metrics("Hyperliquid") == ("excluded_wallets_tokens", "team_wallet_tokens")
+
+
+def test_chainlink_unlock_row_is_judged_against_the_scan_on_the_real_dump(tmp_path, monkeypatch):
+    """Decision 6: Chainlink's unlock row is judged (the reconciled outflow scan); no other project has one."""
+    import config
+    from real_dump import evaluate_real
+    o = evaluate_real(tmp_path, monkeypatch, "Chainlink")
+    assert str(o["in_unlocks"]["verdict"]).startswith("PASS")
+    assert [n for n, rows in config.CREDIBILITY.items() if "in_unlocks" in rows] == ["Chainlink"]
+
+
+def test_near_first_weekly_read_is_jakes_probe_and_counts_as_the_last_read():
+    """Decision 8: Jake's 2026-10-11 15:50 totals (block 219,544,718) are the first read — manual_overrides.csv — so the
+    weekly step does not re-read for a week; a lockup whose own getter fails is not a read failure."""
+    import near_lockups_weekly as nl
+    df = pd.read_csv(ROOT / "manual_overrides.csv", dtype=str, comment="#").fillna("")
+    near = df[(df.project == "Near") & df.metric.isin(nl.METRICS)].set_index("metric")
+    assert near.loc["near_lockup_unvested_tokens", "value"] == "1999721"
+    # LOCKED with the buggy-code lockups recomputed: 21,568,722 − their RPC 19,742,787 + recomputed 232,587
+    assert near.loc["near_lockup_locked_tokens", "value"] == str(21_568_722 - 19_742_787 + 232_587) == "2058522"
+    assert "RECOMPUTED" in near.loc["near_lockup_locked_tokens", "source_note"]
+    assert near["source_note"].str.contains("pending Jake's review").all()
+    assert (near["date"] == "2026-10-11").all() and near["source_note"].str.contains("219,544,718").all()
+    assert nl.last_read("/nonexistent.db", str(ROOT / "manual_overrides.csv")) == pd.Timestamp("2026-10-11")
+    got = {"unreadable": 1, "errors": {"rpc.mainnet.fastnear.com: wasm execution failed with error: ": 1}}
+    assert nl.read_failures(got) == 0
+    assert nl.read_failures({"unreadable": 2, "errors": {"HTTP 429": 2}}) == 2
+
+
+def test_etherfi_like_for_like_circulating_is_on_coingeckos_own_total():
+    """Jake's run on e4e50b0 (2026-10-12 item 2): in_circ CHECK at 3.44% — exactly the chain total 998,535,999 against
+    CoinGecko's 965,350,000, since Ether.fi's total is on-chain first. The like-for-like row now takes ours − our total
+    + CoinGecko's own total (kept as total_supply_coingecko), so it compares like-for-like again."""
+    import config
+    import credibility as cred
+    assert "total_supply_coingecko" in config.metrics_for_project(config.PROJECT_BY_NAME["Ether.fi"])
+    day = "2026-10-12"
+    # the figures of Jake's run: CoinGecko counts the filing wallets, so ours + those wallets = our chain total
+    rows = {"Ether.fi|circulating_supply_onchain": {"now": 830_395_999.0, "latest_date": day},
+            "Ether.fi|noncirculating_holding_tokens": {"now": 168_140_000.0, "latest_date": day},
+            "Ether.fi|total_supply": {"now": 998_535_999.0, "latest_date": day},
+            "Ether.fi|circulating_supply": {"now": 965_350_000.0, "latest_date": day}}
+    long = pd.DataFrame({"date": pd.to_datetime([day] * 2), "project": "Ether.fi",
+                         "metric": ["total_supply_coingecko", "circulating_supply"],
+                         "value": [965_350_000.0, 965_350_000.0]})
+    built = cred.build_rows([], rows, long, pd.Timestamp(day), projects=["Ether.fi"])
+    row = next(r for r in built if r["id"] == "in_circ")
+    assert row["ours"]["value"] == pytest.approx(965_350_000.0)
+    assert row["value"] == pytest.approx(965_350_000.0) and row["mode"] == "independent"
+    assert abs(row["ours"]["value"] / row["value"] - 1) * 100 <= row["tol"] == 2.0     # judged in the sheet: PASS
+    # before the fix: our chain total against CoinGecko's circulating — the 3.44% of Jake's run
+    assert (830_395_999.0 + 168_140_000.0) / 965_350_000.0 - 1 == pytest.approx(0.0344, abs=5e-5)
+
+
+def test_pendle_buyback_is_judged_over_whole_epochs_so_the_window_edge_does_not_move_it(tmp_path, monkeypatch):
+    """Jake's run on e4e50b0 (2026-10-12 item 3): in_buyback +14.8% on 10-11, +46.70% on 10-12. Nothing was re-read or
+    re-dated: the trailing 90 days lost the epoch of 07-14 (144,388 PENDLE) whole on 10-12 while the daily side lost one
+    day (the real dump reproduces it: +13.9% -> +44.9%). Both sides now cover the whole published epochs inside Q0, so
+    the same data reads the same gap on each day; the 25% tolerance is unchanged."""
+    import config
+    from real_dump import evaluate_real
+    spec = config.CREDIBILITY["Pendle"]["in_buyback"]
+    assert spec["ref"]["tol"] == 25.0 and spec["ref"]["formula"] == "epoch_span_sum"
+    got = {}
+    for day in ("2026-10-09", "2026-10-11", "2026-10-12"):
+        (tmp_path / day).mkdir()
+        o = evaluate_real(tmp_path / day, monkeypatch, "Pendle", asof=day)["in_buyback"]
+        got[day] = o
+        assert str(o["verdict"]).startswith("PASS"), (day, o)
+    # 10-11: the epochs 07-14..09-08 (09-22 still read 0 in the dump); 10-12: 07-28..09-08 — each gap a few %
+    assert got["2026-10-11"]["ref"] == pytest.approx(659_876, abs=1)
+    assert got["2026-10-12"]["ref"] == pytest.approx(515_488, abs=1)
+    for o in got.values():
+        assert abs(o["ours"] / o["ref"] - 1) < 0.06, o
+
+
+def test_plume_circulating_live_and_cached_reads_are_one_measuring_point(tmp_path, monkeypatch):
+    """Jake's run on e4e50b0 (2026-10-12 item 4): Plume in_circ "CHECK (no figure)" although the last good figure was a
+    day old. The day's first run reads supply.plume.org LIVE ('scrape:supply.plume.org'); same-day re-runs re-serve the
+    cache and stored 'scrape:cache'. Two measuring points, no handover -> the series was withheld
+    (measuring_point_changed), and the stale-now fallback never stands in for a withheld figure. The real Plume dump
+    (every day cached) plus Jake's store shape — 10-10/10-11 cached, 10-12 live, the value supply.plume.org returns —
+    reproduces it; orphan_cleanup.sql CI relabels the cached rows, and a cached read is now stored with the page's host
+    plus the 'cache' marker, so it is the live read's measuring point."""
+    import builtins
+    import sqlite3
+    import config
+    import run_sql
+    from fetch.base import _measuring_point
+    from real_dump import evaluate_real, load
+    assert _measuring_point(config.mark_source("scrape:supply.plume.org", "cache")) == \
+        _measuring_point("scrape:supply.plume.org")
+    payload = load("Plume")
+    v = 6_606_142_167.0
+    payload["metrics"] = list(payload["metrics"]) + [
+        {"date": d, "metric": "circulating_supply_first_party", "value": v, "source": src, "tier": 3,
+         "fetched_at": f"{d}T{t}Z"}
+        for d, src, t in (("2026-10-10", "scrape:cache", "18:00:00"), ("2026-10-11", "scrape:cache", "18:00:00"),
+                          ("2026-10-12", "scrape:supply.plume.org", "07:00:00"))]
+    (tmp_path / "before").mkdir()
+    before = evaluate_real(tmp_path / "before", monkeypatch, "Plume", payload=payload, asof="2026-10-12")["in_circ"]
+    assert before["verdict"] == "CHECK (no figure)", before            # Jake's run, reproduced
+    # orphan_cleanup.sql CI, run as Jake runs it (python run_sql.py --delete CI)
+    (tmp_path / "after").mkdir()
+    db = tmp_path / "after" / "metrics.db"
+    from real_dump import to_store
+    to_store(payload, db)
+    sec = run_sql.parse_sections(run_sql.SQL_FILE.read_text(encoding="utf-8"))["CI"]
+    monkeypatch.setattr(builtins, "input", lambda *_: "DELETE CI")
+    con = sqlite3.connect(db)
+    try:
+        assert run_sql.run_delete(con, sec["text"], "CI", db) == 0
+        left = con.execute("SELECT COUNT(*) FROM metrics WHERE project = 'Plume' AND source LIKE 'scrape:cache%'").fetchone()
+        assert left == (0,)
+        stored = [r[0] for r in con.execute("SELECT DISTINCT source FROM metrics WHERE project = 'Plume' AND "
+                                            "metric = 'circulating_supply_first_party' ORDER BY source")]
+    finally:
+        con.close()
+    assert stored == ["scrape:supply.plume.org", "scrape:supply.plume.org:cache"]
+    payload["metrics"] = [{**r, "source": ("scrape:supply.plume.org:cache" if r["source"] == "scrape:cache" else
+                                           r["source"])} for r in payload["metrics"]]
+    (tmp_path / "relabelled").mkdir()
+    after = evaluate_real(tmp_path / "relabelled", monkeypatch, "Plume", payload=payload, asof="2026-10-12")["in_circ"]
+    assert str(after["verdict"]).startswith("PASS") and after["ours"] == v, after
+
+
+def test_metrics_doc_build_closes_every_connection_before_its_temp_dir_goes(monkeypatch):
+    """Jake's run on e4e50b0 (2026-10-12 item 1): `generate_metrics_doc.py --check` died on Windows — PermissionError
+    [WinError 32] deleting %TEMP%\\tmp...\\metrics.db in TemporaryDirectory cleanup, the Store handed to build_workbook
+    still open. Windows' rule, imitated: the temporary directory refuses to go while any sqlite connection to a file
+    inside it is open."""
+    import sqlite3
+    import tempfile
+    import generate_metrics_doc as g
+    opened = []
+    real_connect = sqlite3.connect
+
+    def tracking(*a, **k):
+        c = real_connect(*a, **k)
+        opened.append((c, str(a[0] if a else k.get("database", ""))))
+        return c
+
+    class WindowsTemporaryDirectory(tempfile.TemporaryDirectory):
+        def __exit__(self, *exc):
+            for c, path in opened:
+                try:
+                    c.total_changes                              # raises once the connection is closed
+                except sqlite3.ProgrammingError:
+                    continue
+                if path.startswith(self.name):
+                    raise PermissionError(32, "The process cannot access the file because it is being used by "
+                                              "another process", path)
+            return super().__exit__(*exc)
+
+    monkeypatch.setattr(sqlite3, "connect", tracking)
+    monkeypatch.setattr(g.tempfile, "TemporaryDirectory", WindowsTemporaryDirectory)
+    cap = g.captured_columns()
+    assert cap and opened
+
+
+def test_near_buggy_recompute_counts_jakes_set_and_never_takes_an_error_for_a_lockup(monkeypatch, capsys):
+    """Decision 8: the buggy-code lockups' locked is recomputed from their own state. 2026-10-12: the public node had
+    garbage-collected Jake's block and every error reply read as a NON-buggy lockup (0 of 1,960). An unread code hash
+    is an unread lockup (retried once), a past block is read from the archival nodes first, and a zero-balance lockup
+    is skipped as near_lockups skips it (Jake's 1,685). Aggregates only."""
+    import check_offline_items as coi
+    from fetch.archive import near_archival_endpoints
+    y = 10 ** 24
+    monkeypatch.setattr(coi, "near_lockup_accounts", lambda: (["a", "b", "c", "d", "e"], "list"))
+    monkeypatch.setattr(coi, "rpc", lambda url, m, p=None: {"result": {"header": {"height": 9, "timestamp": 5}}})
+    tries = {}
+    urls_seen = []
+
+    def code(acc, h, urls=None):
+        urls_seen.append(urls)
+        tries[acc] = tries.get(acc, 0) + 1
+        if acc == "e" and tries[acc] == 1:
+            return None, "x: view_account GARBAGE_COLLECTED_BLOCK"      # read on the retry
+        if acc == "d":
+            return None, "x: view_account GARBAGE_COLLECTED_BLOCK"
+        return ("3kVY9qcVRoW3B5498SMX6R3rtSLiCdmBzKs7zcnzDJ7Q" if acc != "a" else "other"), ""
+    monkeypatch.setattr(coi, "_near_code_hash", code)
+    bal = {"b": 10 * y, "c": 0, "e": 4 * y}
+    monkeypatch.setattr(coi, "_near_view", lambda acc, m, args=None, block_id=None, pace=0.12, urls=None:
+                        ((str(bal[acc]) if m == "get_balance" else str(3 * y)), ""))
+    monkeypatch.setattr(coi, "_near_view_state", lambda acc, h, urls=None: (b"s", ""))
+    monkeypatch.setattr(coi, "near_lockup_state", lambda raw: {})
+    monkeypatch.setattr(coi, "near_locked_recomputed", lambda st, ts, has_bug: 1 * y)
+    monkeypatch.setattr(coi, "near_unvested", lambda st, ts: 0)
+    out = coi.near_lockups_buggy_recompute(block_id=9, workers=1)
+    assert out["buggy"] == 2 and out["zero"] == 1 and out["unread"] == 1 and out["retried"] == 2
+    assert out["rpc"] == 6 * y and out["recomputed"] == 2 * y
+    assert urls_seen[0][:len(near_archival_endpoints())] == tuple(near_archival_endpoints())
+    printed = capsys.readouterr().out
+    assert "unreadable 1 after one retry of 2" in printed and " b " not in printed

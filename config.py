@@ -243,6 +243,9 @@ METRICS = {
     "circulating_supply_tokendetails": {"label": "Circulating supply — Hyperliquid tokenDetails.circulatingSupply as published (before the declared Foundation / Grants exclusions)",
                                         "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [1],
                                         "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Hyperliquid",)},
+    "team_wallet_tokens": {"label": "HYPE in the team wallet (tokenDetails.nonCirculatingUserBalances; already out of circulating) — its fall is an unlock",
+                           "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [1],
+                           "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Hyperliquid",)},
     "excluded_wallets_tokens": {"label": "HYPE held by the declared non-circulating wallets tokenDetails counts as circulating (Hyper Foundation, Community Grants): spot + staked",
                                 "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [1],
                                 "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Hyperliquid",)},
@@ -438,6 +441,12 @@ METRICS = {
     "fdv_usd_coingecko":          {"label": "FDV — CoinGecko's (cross-check: price x CoinGecko's total)", "kind": "stock",
                                    "unit": "usd", "archetypes": [1, 2, 3, 4], "tiers": [1], "sanity_min": 0,
                                    "sanity_max": 1e13, "view_only": True},
+    # CoinGecko's OWN total where the chain read wins the total (Jake's run on e4e50b0, 2026-10-12 item 2): the
+    # like-for-like circulating row puts our figure on CoinGecko's total (Ether.fi: chain 998,535,999 vs 965,350,000).
+    # only_projects is set to TOTAL_SUPPLY_ONCHAIN_FIRST below.
+    "total_supply_coingecko":     {"label": "Total supply — CoinGecko's (kept beside the on-chain total we use)",
+                                   "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [1],
+                                   "sanity_min": 0, "sanity_max": 1e15, "only_projects": ()},
     # --- free API: DefiLlama
     "fees_usd":                   {"label": "Total fees paid",                 "kind": "flow",  "unit": "usd",    "archetypes": [1, 3, 4],    "tiers": [1, 3], "sanity_min": 0,    "sanity_max": 1e11},
     "revenue_usd":                {"label": "Protocol revenue",                "kind": "flow",  "unit": "usd",    "archetypes": [3],          "tiers": [1, 3], "sanity_min": 0,    "sanity_max": 1e11},
@@ -1118,7 +1127,7 @@ METRICS = {
     "near_lockup_locked_tokens":  {"label": "NEAR LOCKED in lockup contracts (lockup or vesting; what NEAR's own circulating subtracts) — same weekly read",
                                    "kind": "stock", "unit": "tokens", "archetypes": [1, 3, 4], "tiers": [2, 3],
                                    "sanity_min": 0, "sanity_max": 2e9, "only_projects": ("Near",)},
-    "circulating_supply_lockup_rule": {"label": "Circulating supply — NEAR's own figure + (lockups LOCKED − STILL UNVESTED): Jake's rule, only unvested is out (2026-10-11)",
+    "circulating_supply_lockup_rule": {"label": "Circulating supply — NEAR total supply − lockups LOCKED (not yet transferable: unvested + lockup-locked; buggy lockups recomputed as NEAR's lakehouse does): Jake's rule, 2026-10-12",
                                        "kind": "stock", "unit": "tokens", "archetypes": [1, 3, 4], "tiers": [1],
                                        "sanity_min": 0, "sanity_max": 2e9, "view_only": True, "only_projects": ("Near",)},
     "noncirculating_nearblocks_tokens": {"label": "NEAR not circulating per NearBlocks (total_supply − circulating_supply, api.nearblocks.io/v1/stats) — cross-check",
@@ -1743,7 +1752,11 @@ SOURCE_MARKERS = ("PARTIAL", "delta", "recurring-only", "rederived", "as-buyback
                   "estimate",
                   # a log scan's DECLARED 0, written without a read (log_scans `declared_zero`, Pendle Optimism,
                   # Jake's run on ab3c7fe 2026-10-11): the same measuring point as the scan it stands in for
-                  "declared-zero")
+                  "declared-zero",
+                  # the scraper's same-day CACHE re-serving that day's read of the same page (Jake's run on e4e50b0,
+                  # 2026-10-12 item 4: a bare "scrape:cache" read as a second measuring point beside the live
+                  # "scrape:<host>", blanked Plume's circulating and kept the stale-now fallback out)
+                  "cache")
 
 # A bracketed ANNOTATION appended to a contract key: "minter[tail@21bps]". Unlike the markers
 # above it is not its own colon-delimited piece — it is glued to the key — so every parser that
@@ -8118,7 +8131,8 @@ PROJECTS = [
         # docs.origintrail.io (Conviction & Economics; Contract addresses, read 2026-10-11): publishers pay TRAC they
         # already hold into the staker reward pool (EpochStorageV8 0xdE319588… TokensAddedToEpochRange, Base and Gnosis
         # — ~297 TRAC over the 90 days to 2026-10-11, OriginTrail/dkg@60dbf0d0 deployments); no market purchase. A
-        # payout of fees to stakers, not a buyback: status n/a (was "active", share 1.0, since BRIEF_DATE).
+        # payout of fees to stakers, not a buyback: status n/a (was "active", share 1.0, since BRIEF_DATE). CONFIRMED by
+        # Jake 2026-10-12 (decision 5 on e4e50b0).
         "fee_split": {"share_to_buyback": None, "source_url": "https://docs.origintrail.io/", "source_date": "2026-10-11", "programmed": True, "status": "n/a",
                       "was": {"share_to_buyback": 1.0, "status": "active"},
                       "note": "Publishing fees in TRAC are paid to stakers (the reward pool), not used to buy TRAC. Revenue is small and not publicly tracked."},
@@ -11700,6 +11714,16 @@ PROJECTS = [
                      "source_date": "2026-10-11", "read_2026_10_11": 2_973_731.99},
                 ],
                 "exclude_wallets_decided": "Jake 2026-10-11 (decision A1 on 5b87610)",
+                # JAKE 2026-10-12 (decision 3 on e4e50b0): the TEAM wallet's releases count in unlock dilution.
+                # tokenDetails.nonCirculatingUserBalances already lists it (genesis 238,000,000; 237,915,860.47 HYPE,
+                # staked, on 2026-10-11) and circulatingSupply already excludes it, so it is stored as a STOCK only
+                # (team_wallet_tokens) — never subtracted again; its fall is a release (config.UNLOCK_STOCKS).
+                "unlock_wallets": [
+                    {"address": "0x43e9abea1910387c4292bca4b94de81462f8a251", "metric": "team_wallet_tokens",
+                     "label": "Team (genesis 238,000,000)",
+                     "source_url": "https://api.hyperliquid.xyz/info {type: tokenDetails} nonCirculatingUserBalances",
+                     "source_date": "2026-10-11"},
+                ],
                 "token_id_from_meta": True,
                 "token_id_key": "tokenId",
                 # api.hyperliquid.xyz returns 000 from the build environment (2026-09-23), so the
@@ -12248,10 +12272,19 @@ PROJECTS = [
             # aerodrome_buyback_window) for the previous UTC day; `--seed aero_buyback` fills the Q0 days. The stock
             # change (stock_metric) stays as the cross-check, no longer the buyback.
             "basis": "bought_plus_compounded",
-            # Wallets that BUY AERO and pass it to the owners — none wired: the Safe 0x10b42e92… seen paying USDC for
-            # AERO and sending it to the Public Goods Fund (2026-10-11 trace, RUNBOOK 11bk) is in no Aerodrome source
-            # on file. Add it here with its source and date only once one names it (Jake's decision).
-            "buyer_wallets": {},
+            # Wallets that BUY AERO and pass it to the owners. JAKE 2026-10-12 (decision 1 on e4e50b0): the Safe
+            # 0x10b42e92… is a Foundation buyer. EVIDENCE (read on Base 2026-10-11, RUNBOOK 11bk): a 4-of-7 Safe whose
+            # owners include all five signers of the Public Goods Fund (0x834C…) and of 0x623C…; between the 07-22 and
+            # 08-24 locks it bought exactly 1,906,696 AERO with 829,828 USDC in six transactions (e.g. block 48,669,228:
+            # 111,247 USDC -> 214,509 AERO) and forwarded each to the PGF within minutes. No Aerodrome document names
+            # it; the decision rests on that evidence. Claimed voting rewards later locked do NOT count (same decision).
+            "buyer_wallets": {
+                "0x10b42e926c2b8ff0200f35ec466d50576c1efa30": {
+                    "label": "Foundation buyer Safe (4-of-7; the PGF's five signers among its owners)",
+                    "source": "on-chain: Safe getOwners()/getThreshold() and the six USDC->AERO purchases, Base, read "
+                              "2026-10-11 (RUNBOOK 11bk)",
+                    "decided": "Jake 2026-10-12 (decision 1 on e4e50b0)"},
+            },
             "basis_decided": "Jake 2026-10-11 (B on 5b87610)",
             "window_metrics": {"bought_same_tx": "foundation_bought_locked_same_tx_tokens",
                                "lock_from_balance": "foundation_lock_from_balance_tokens",
@@ -16911,6 +16944,7 @@ PROJECTS = [
         # read 2026-10-11); DefiLlama's aave holders revenue is $0 on every day of the 90 to 2026-10-11; the forum still
         # describes buybacks as halted (governance.aave.com/t/24055 2026-09-14 "ARFC will be shared soon"; posts of
         # 2026-09-20, 09-29). The 3.0 contract will be a new address — wire it when it ships.
+        # CONFIRMED by Jake 2026-10-12 (decision 5 on e4e50b0).
         "buyback_status_evidence_2026_10_11": "no AAVE into 0x22740deBa78d5a0c24C58C740e3715ec29de1bFa since 2026-06-24; "
                                               "DefiLlama aave dailyHoldersRevenue $0 for 91 days; forum: halted",
         # AAVE IS NOT A CLEAN REVENUE-FUNDED NAME — it has a supply leg. stkAAVE rewards are funded
@@ -18110,6 +18144,7 @@ for _n, _chain in (("Aerodrome", "base"), ("Chainlink", "ethereum"), ("Fluid", "
                f"Jake decision A4)",
         "composition_change": "none: the two agreed to the token on 2026-10-11",
         "declared": "2026-10-11"})
+METRICS["total_supply_coingecko"]["only_projects"] = tuple(TOTAL_SUPPLY_ONCHAIN_FIRST)
 
 
 # ===== AERODROME MIGRATION GUARD (Jake, 2026-10-11; launch 2026-10-21/22 — RUNBOOK 11bh "Aerodrome migration: plan
@@ -22050,14 +22085,15 @@ CIRCULATING_ONCHAIN = {
     # Pipeline.py:330-375). PRIMARY with its full history; CoinGecko the cross-check. One caveat in
     # NEAR's code: a lockup whose amount read returned 'error' is left out of the locked sum that
     # day, so such a day reads HIGH.
-    # JAKE 2026-10-11 (C on 5b87610): only STILL UNVESTED leaves circulating. NEAR's figure subtracts everything LOCKED
-    # in lockups, so the ratios read circulating_supply_lockup_rule = NEAR's figure + (locked − unvested), both from
-    # the latest weekly near_lockups_weekly.py read (build_workbook._near_lockup_views, the read date in its source).
-    # Until a read is stored, and on days more than 10 days past one, it IS NEAR's figure.
+    # JAKE 2026-10-12 (decision 8 on e4e50b0, clarifying C): everything NOT YET TRANSFERABLE leaves circulating — the
+    # lockups' LOCKED amount (unvested + vested-but-lockup-locked; the buggy-code lockups (1,729) recomputed from their own
+    # schedules as NEAR's lakehouse does) — released-not-withdrawn stays in. The ratios read
+    # circulating_supply_lockup_rule = total_supply − LOCKED from the latest weekly read (build_workbook.
+    # _near_lockup_views, the read date in its source); until a read is in force it IS NEAR's own figure.
     "Near": {"status": "first_party", "metric": "circulating_supply_lockup_rule",
              "why": "NEAR's own circulating_supply table (bigquery-public-data.crypto_near_mainnet_us), "
                     "read by fetch/near_bigquery.py: total − lockups − lockup.near − contributors.near; "
-                    "+ (lockups locked − still unvested), Jake's rule (2026-10-11)",
+                    "the ratios use total − lockups LOCKED (not yet transferable), Jake's rule (2026-10-12)",
              "was": "not_established — no documented non-circulating list in config"},
 }
 # ===== THE CIRCULATING POLICY, PER PROJECT (Jake, 2026-10-07). =====
@@ -22458,12 +22494,14 @@ ABSORPTION_EMISSIONS = {
 # with a wallet set of their own declare it here. KEPT OUT OF emissions (Jake 2026-09-24 stands).
 UNLOCK_NOT_A_RELEASE = ("burn_address_balance", "buyback_fund_balance")
 UNLOCK_STOCKS = {
-    "Hyperliquid": ("excluded_wallets_tokens",),          # the Foundation + Grants wallets (A1, from 2026-10-11)
-    "Near": ("near_lockup_unvested_tokens",),               # still-unvested lockups (C; weekly near_lockups_weekly.py)
+    # the Foundation + Grants wallets (A1, from 2026-10-11) and the team wallet (Jake 2026-10-12, decision 3 on e4e50b0)
+    "Hyperliquid": ("excluded_wallets_tokens", "team_wallet_tokens"),
+    # NOT YET TRANSFERABLE lockups (Jake 2026-10-12, decision 8: LOCKED = unvested + lockup-locked); weekly read
+    "Near": ("near_lockup_locked_tokens",),
 }
 
 
-UNLOCK_MAX_GAP_DAYS = {"near_lockup_unvested_tokens": 10}     # weekly read (+ slack); daily stocks: 3
+UNLOCK_MAX_GAP_DAYS = {"near_lockup_locked_tokens": 10, "near_lockup_unvested_tokens": 10}     # weekly read (+ slack); daily stocks: 3
 
 
 def unlock_max_gap_days(metric: str) -> int:
@@ -24719,6 +24757,19 @@ CREDIBILITY: dict = {
                               "note": "Tolerance 1%: our balances are read once a day while the scan buckets transfers "
                                       "by UTC day, so a transfer between midnight and the read moves across a window "
                                       "edge. The to-the-wei identity is enforced inside each scan."}),
+        # UNLOCK DILUTION, JUDGED (Jake 2026-10-12, decision 6 on e4e50b0): Chainlink's unlock row against the same
+        # reconciled scan — the one project whose releases have an independent record. Every other project's unlock row
+        # is recorded, not judged (no Credibility row).
+        "in_unlocks": _c_in("Unlock dilution Q0 (unlock_release_tokens: falls in the 27 wallets' summed stock)",
+                            "unlock_release_tokens", "q0",
+                            {"formula": "q0_net_flow",
+                             "args": {"out": "noncirc_outflow_scan_tokens", "inn": "noncirc_inflow_scan_tokens"},
+                             "tol": 1.0,
+                             "source": "scanned net outflow of the same 27 wallets over Q0 (Transfer events out − in, "
+                                       "reconciled to balanceOf to the wei per wallet)",
+                             "note": "Tolerance 1%, as in_issuance: the daily balance read vs the scan's UTC-day "
+                                     "buckets. Ours counts only days the stock fell under one wallet set (a change "
+                                     "of set is never an unlock)."}),
         # CoinGecko's LINK circulating is stepwise (completeness: "does not update"), so its d=0 is not evidence
         "in_issuance_coingecko": _c_in("Issuance Q0 — CoinGecko d(circulating) (recorded, stepwise)",
                                        "pool_release_tokens", "q0",
@@ -25976,11 +26027,21 @@ CREDIBILITY: dict = {
                                  {"formula": "epoch_apr", "args": _PENDLE_EPOCH, "tol": 1.0,
                                   "source": "Jake's reading (82,545 PENDLE, Pendle staking page) over the same stake"},
                                  fmt=_C_PCT),
-        "in_buyback": _c_in("PENDLE bought Q0 (DefiLlama holders revenue / same-day price)", "actual_buyback_tokens",
-                            "q0", {"metric": "pendle_distributed_tokens", "window": "q0", "tol": 25.0,
-                                   "source": "Pendle's own per-epoch distribution (spendle/data buybackAmounts), Q0",
-                                   "note": "Fortnightly epochs vs daily revenue: an epoch straddling the window edge "
-                                           "moves the gap."}),
+        # OVER THE SAME DAYS (Jake's run on e4e50b0, 2026-10-12 item 3): a trailing-90-day sum against fortnightly epochs
+        # swung +14.8% -> +46.70% in a day as the epoch of 07-14 (144,388) left the window whole. Both sides now cover
+        # the whole published epochs inside Q0; the tolerance is unchanged.
+        "in_buyback": _c_in_py("PENDLE bought over Q0's whole published epochs (DefiLlama holders revenue / same-day "
+                               "price, summed over the epochs' own days)", "epoch_span_sum",
+                               {"epochs": "pendle_distributed_tokens", "daily": "actual_buyback_tokens",
+                                "epoch_days": 14, "side": "ours", "use_views": True},
+                               {"formula": "epoch_span_sum", "tol": 25.0,
+                                "args": {"epochs": "pendle_distributed_tokens", "daily": "actual_buyback_tokens",
+                                         "epoch_days": 14, "side": "ref"},
+                                "source": "Pendle's own per-epoch distribution (spendle/data buybackAmounts): every "
+                                          "published epoch lying wholly inside Q0",
+                                "note": "An epoch dated d pays out days d..d+13; ours is summed over exactly those "
+                                        "days, so an epoch crossing the window edge no longer moves the gap.",
+                                "show_how": True}),
         "in_shares": _c_in("sPENDLE shares (totalSupply, on-chain)", "locked_tokens_shares", "now",
                            {"metric": "locked_tokens_dashboard", "window": "now", "tol": 1.0,
                             "source": "Pendle API totalStakedInSpendle (shares)"}),

@@ -26889,9 +26889,14 @@ def test_onchain_circulating_is_compared_with_coingecko_like_for_like_and_the_ga
     for n in ("Ether.fi", "Uniswap"):
         assert config.coingecko_counts_holdings(n) == ("noncirculating_holding_tokens",)
         spec = cred.circulating_input(n)
-        assert spec["ours"] == {"py": "now_sum", "args": {
-            "metrics": ("circulating_supply_onchain", "noncirculating_holding_tokens")}}
         assert spec["ref"]["metric"] == "circulating_supply" and spec["ref"]["tol"] == 2.0
+    # Ether.fi's total is on-chain first since 2026-10-11: the row is put on CoinGecko's own total (2026-10-12 item 2;
+    # tests/test_final_round.py has the real-figure case)
+    assert cred.circulating_input("Ether.fi")["ours"] == {"py": "now_combo", "args": {
+        "metrics": ("circulating_supply_onchain", "noncirculating_holding_tokens", "total_supply_coingecko"),
+        "minus": ("total_supply",)}}
+    assert cred.circulating_input("Uniswap")["ours"] == {"py": "now_sum", "args": {
+        "metrics": ("circulating_supply_onchain", "noncirculating_holding_tokens")}}
     rows = {"Ether.fi|circulating_supply_onchain": {"now": 797_210_000.0, "latest_date": "2026-10-07"},
             "Ether.fi|noncirculating_holding_tokens": {"now": 168_140_000.0, "latest_date": "2026-10-07"}}
     v, d, how = cred.FORMULAS["now_sum"]("Ether.fi", rows, pd.DataFrame(), pd.Timestamp("2026-10-08"),
@@ -27488,10 +27493,16 @@ def test_fluid_igp137_custody_is_its_own_series_and_coingecko_is_compared_like_f
     assert "noncirculating_igp137_tokens" in spec["subtract"]
     assert config.coingecko_counts_holdings("Fluid") == ("noncirculating_igp137_tokens",)
     row = cred.circulating_input("Fluid")
-    assert tuple(row["ours"]["args"]["metrics"]) == ("circulating_supply_onchain", "noncirculating_igp137_tokens")
+    # on CoinGecko's own total since Fluid's total is on-chain first (2026-10-12 item 2): the two totals agree, so the
+    # adjustment is 0
+    assert tuple(row["ours"]["args"]["metrics"]) == ("circulating_supply_onchain", "noncirculating_igp137_tokens",
+                                                     "total_supply_coingecko")
+    assert tuple(row["ours"]["args"]["minus"]) == ("total_supply",)
     asof = pd.Timestamp("2026-10-08")
     long = pd.DataFrame([(asof, "Fluid", "circulating_supply_onchain", 77_964_000.0),
-                         (asof, "Fluid", "noncirculating_igp137_tokens", 5_000_000.0)],
+                         (asof, "Fluid", "noncirculating_igp137_tokens", 5_000_000.0),
+                         (asof, "Fluid", "total_supply", 100_000_000.0),
+                         (asof, "Fluid", "total_supply_coingecko", 100_000_000.0)],
                         columns=["date", "project", "metric", "value"])
     v = cred.ours_value("Fluid", row["ours"], {}, long, asof)
     assert v == 82_964_000.0 and abs(v / 83_697_000 - 1) < 0.02, "like-for-like within 2% (was -6.9%)"

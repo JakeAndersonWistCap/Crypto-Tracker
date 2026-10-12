@@ -4450,3 +4450,38 @@ SELECT metric, COUNT(*) AS rows, MIN(date) AS first, MAX(date) AS last, ROUND(SU
 -- DELETE FROM metrics
 --  WHERE project = 'PancakeSwap'
 --    AND ((metric = 'actual_buyback_tokens' AND source LIKE '%as-buyback%') OR metric = 'actual_buyback_usd');
+
+-- ========================================================================================
+-- CI. THE SCRAPER'S CACHED ROWS CARRY THEIR PAGE'S HOST (ONE MEASURING POINT WITH THE LIVE READ)  2026-10-12
+--     Jake's run on e4e50b0 (item 4): Plume in_circ read "CHECK (no figure)" with a good figure one day old. The
+--     day's first run reads supply.plume.org live and stores source 'scrape:supply.plume.org'; a later run the same
+--     day re-serves the day cache and stored 'scrape:cache'. Those were TWO measuring points with no declared
+--     handover, so the whole series was withheld (measuring_point_changed) and the stale-now fallback, which never
+--     stands in for a withheld figure, did not apply. From this commit a cached row is stored as
+--     'scrape:<host>:cache' ('cache' is a registered marker, stripped from the measuring point). CI1 lists the old
+--     bare-cache rows by project; CI2 relabels them with the host of the project's scrape entry (sources.yaml — each
+--     project's entries share one host), keeping any suffix (':delta', '[span=..]'). Values are untouched.
+--     Run: python run_sql.py CI, then python run_sql.py --delete CI.
+-- ========================================================================================
+-- CI1. WHAT CHANGES (every bare-cache row; a project not relabelled by CI2 has no active scrape entry — left as is).
+SELECT project, metric, source, COUNT(*) AS rows, MIN(date) AS first, MAX(date) AS last
+  FROM metrics
+ WHERE source LIKE 'scrape:cache%'
+ GROUP BY project, metric, source ORDER BY project, metric, source;
+
+-- CI2. THE RELABEL (one statement per project; 'scrape:cache' is 12 characters, the rest of the source is kept).
+-- UPDATE metrics
+--    SET source = 'scrape:supply.plume.org:cache' || substr(source, 13)
+--  WHERE project = 'Plume' AND source LIKE 'scrape:cache%';
+-- UPDATE metrics
+--    SET source = 'scrape:api-v2.pendle.finance:cache' || substr(source, 13)
+--  WHERE project = 'Pendle' AND source LIKE 'scrape:cache%';
+-- UPDATE metrics
+--    SET source = 'scrape:app.aave.com:cache' || substr(source, 13)
+--  WHERE project = 'Aave' AND source LIKE 'scrape:cache%';
+-- UPDATE metrics
+--    SET source = 'scrape:venice.ai:cache' || substr(source, 13)
+--  WHERE project = 'Venice AI' AND source LIKE 'scrape:cache%';
+-- UPDATE metrics
+--    SET source = 'scrape:api.tokenops.xyz:cache' || substr(source, 13)
+--  WHERE project = 'Morpho' AND source LIKE 'scrape:cache%';

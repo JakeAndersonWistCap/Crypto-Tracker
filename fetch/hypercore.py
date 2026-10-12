@@ -364,6 +364,17 @@ class HyperCoreInfo:
             out.log.append(LogEntry(SOURCE, name, 0, "ok",
                                     f"tokenDetails.nonCirculatingUserBalances — the first-party "
                                     f"non-circulating set, {len(pairs)} address(es): {listed}", TIER))
+            # UNLOCK STOCKS (Jake 2026-10-12, decision 3 on e4e50b0): a listed wallet's balance, stored as a stock whose
+            # FALL is a release (unlock dilution) — never subtracted from circulating again (tokenDetails already did)
+            by_addr = {a.lower(): b for a, b in pairs}
+            for w in read.get("unlock_wallets") or []:
+                v = by_addr.get(w["address"].lower())
+                if v is None:
+                    out.fail(SOURCE, name, f"{w['metric']}: {w['label']} ({w['address'][:10]}…) is not in "
+                                           f"nonCirculatingUserBalances this run — NOT STORED", TIER)
+                    continue
+                out.add(point(name, w["metric"], v, f"{SOURCE}:tokenDetails.nonCirculatingUserBalances", TIER, when),
+                        SOURCE, name, f"{w['metric']}={v:,.2f} ({w['label']}, nonCirculatingUserBalances)", TIER)
         else:
             out.log.append(LogEntry(SOURCE, name, 0, "ok",
                                     "tokenDetails carried no nonCirculatingUserBalances list: the "

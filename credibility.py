@@ -557,6 +557,41 @@ def _q0(asof):
     return asof - pd.Timedelta(days=90), asof
 
 
+def _epoch_span_sum(p, rows, long, asof, epochs="", daily="", epoch_days=14, side="ref", **_):
+    """WHOLE EPOCHS INSIDE Q0, BOTH SIDES OVER THE SAME DAYS (Jake's run on e4e50b0, 2026-10-12 item 3: Pendle's
+    in_buyback went +14.8% -> +46.70% overnight because the epoch of 07-14, 144,388 PENDLE, left the trailing 90 days
+    whole while the daily side lost one day). An epoch dated d pays out the buyback of days d..d+epoch_days-1 (the
+    stored epochs match the daily series forward, not backward: 07-28 199,338 vs 199,147). Counted: every epoch
+    lying wholly inside Q0 and complete by asof, except the trailing epochs still read 0 (not published yet —
+    credibility.epoch_publish_lag); a 0 followed by a published epoch is a real 0 and counts.
+    side="ref": the epochs' sum. side="ours": `daily` summed over exactly those epochs' days."""
+    lo, hi = _q0(asof)
+    ep = _series(long, p, epochs)
+    span = pd.Timedelta(days=int(epoch_days))
+    ep = ep[(ep.index > lo) & (ep.index + span - pd.Timedelta(days=1) <= hi)]
+    unpublished = []
+    while len(ep) and float(ep.iloc[-1]) == 0.0:
+        unpublished.append(str(ep.index[-1].date()))
+        ep = ep.iloc[:-1]
+    if ep.empty:
+        return None, None, f"no published {epochs} epoch lies wholly inside Q0 ({(lo + pd.Timedelta(days=1)).date()}.." \
+                           f"{hi.date()})"
+    first, last = ep.index[0], ep.index[-1] + span - pd.Timedelta(days=1)
+    tail = f"; not yet published (read 0): {', '.join(unpublished)}" if unpublished else ""
+    if side == "ref":
+        return float(ep.sum()), str(last.date()), (f"{len(ep)} whole epoch(s) {first.date()}..{last.date()}: "
+                                                   f"{epochs} summed{tail}")
+    sr = _series(long, p, daily)
+    days = [d for e in ep.index for d in pd.date_range(e, e + span - pd.Timedelta(days=1))]
+    have = sr.reindex(days).dropna()
+    if have.empty:
+        return None, None, f"no {daily} on the epochs' days {first.date()}..{last.date()}"
+    miss = len(days) - len(have)
+    return float(have.sum()), str(last.date()), (f"{daily} summed over the {len(ep)} epoch(s)' {len(days)} day(s) "
+                                                 f"{first.date()}..{last.date()}" + (f" ({miss} without a figure)" if miss else "")
+                                                 + tail)
+
+
 def _flow_usd_over_price(p, rows, long, asof, metrics=("revenue_usd",), share=1.0, **_):
     """Sum over the Q0 days of (sum of `metrics`, $) x share / that day's price — tokens. Only days
     with a price count, and the line says how many."""
@@ -1921,7 +1956,8 @@ FORMULAS = {"sum_months": _sum_months, "free_float_now": _free_float_now, "windo
             "sum_since": _sum_since, "schedule_month": _schedule_month, "months_scaled": _months_scaled, "rise_vs_flow": _rise_vs_flow,
             "product_on_common_day": _product_on_common_day, "now_sum": _now_sum,
             "log_price_growth": _log_price_growth, "bridge_reconciled": _bridge_reconciled,
-            "daily_delta_plus_flow": _daily_delta_plus_flow, "window_sum": _window_sum, "scans_q0": _scans_q0, "now_combo": _now_combo}
+            "daily_delta_plus_flow": _daily_delta_plus_flow, "window_sum": _window_sum, "scans_q0": _scans_q0, "now_combo": _now_combo,
+            "epoch_span_sum": _epoch_span_sum}
 
 
 def reference(project: str, spec: dict, rows: dict, long, asof) -> dict:
@@ -2321,9 +2357,15 @@ def circulating_input(name: str) -> dict:
         # LIKE-FOR-LIKE (Jake's run 2026-10-07 17:08): our stricter on-chain figure PLUS the documented wallets
         # CoinGecko still counts, against CoinGecko on the same day; the wallets' sum is the in_circ_gap row
         a = ("circulating_supply_onchain", *counts)
+        # ON COINGECKO'S OWN TOTAL where ours is the chain read (Jake's run on e4e50b0, 2026-10-12 item 2: Ether.fi's
+        # gap of 3.44% was exactly chain 998,535,999 vs CoinGecko 965,350,000): ours − our total + CoinGecko's total
+        cg_total = name in config.TOTAL_SUPPLY_ONCHAIN_FIRST
         return {"what": f"Circulating as CoinGecko counts it = OURS ({ours_m}) + {' + '.join(counts)} (documented "
-                        f"wallets our convention excludes and CoinGecko counts)",
-                "ours": {"py": "now_sum", "args": {"metrics": a}},
+                        f"wallets our convention excludes and CoinGecko counts)"
+                        + (", on CoinGecko's own total (− total_supply + total_supply_coingecko)" if cg_total else ""),
+                "ours": ({"py": "now_combo", "args": {"metrics": (*a, "total_supply_coingecko"),
+                                                      "minus": ("total_supply",)}} if cg_total else
+                         {"py": "now_sum", "args": {"metrics": a}}),
                 "fmt": '#,##0;(#,##0);-',
                 "ref": {"metric": "circulating_supply", "window": "now",
                         "tol": 2.0, "source": "CoinGecko circulating_supply, the same day — compared with ours plus the "

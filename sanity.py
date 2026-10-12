@@ -12,6 +12,8 @@ Each rule reads the EVALUATED workbook (the numbers a reader sees) and returns (
   mixed_windows         a ratio printed beside a total BLOCKED for unequal coverage (the same two series, one row)
   cross_tab             the same figure differs between Master and an A-tab, or between two A-tabs (cross_tab.py)
 
+Only the projects in portfolio.txt are checked (parked ones are skipped; with no portfolio.txt, every project).
+
 build_workbook runs it on every build and writes the hits under the Review Queue tab; credibility_report prints
 them; `python sanity.py` builds today's workbook from metrics.db and lists them by project.
 """
@@ -98,7 +100,10 @@ def hits(wb, value) -> list[tuple[str, str, str]]:
             found.append((p, "mixed_windows", f"net supply change is {net[:90]}, yet its annualised % reads {ann:.3%}"))
     for m in cross_tab.mismatches(wb, value):
         found.append((m["project"], "cross_tab", cross_tab.describe(m).splitlines()[0][len(m["project"]) + 3:]))
-    return found
+    # PARKED PROJECTS ARE NOT CHECKED (Jake's run on e4e50b0, 2026-10-12 item 5: Injective, PancakeSwap and Render hits
+    # were noise): only the names in portfolio.txt, as completeness_report scopes; no file, every project
+    held, _unknown = config.read_portfolio(config.PORTFOLIO_FILE)
+    return [h for h in found if h[0] in held] if held else found
 
 
 def check_workbook(path_or_wb) -> list[tuple[str, str, str]]:

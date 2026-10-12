@@ -300,10 +300,14 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                 "Check the Run Log for 'Foundation buyback window' (it needs the keyed Base RPC, BASE_RPC_URL); the Q0 "
                 "days come from `python token_metrics.py --seed aero_buyback`.")
     # ===== HYPERLIQUID'S EXCLUDED WALLETS (Jake 2026-10-11, A1) and NEAR's weekly lockups / NearBlocks cross-check (C)
-    if metric in ("circulating_supply_tokendetails", "excluded_wallets_tokens"):
+    if metric in ("circulating_supply_tokendetails", "excluded_wallets_tokens", "team_wallet_tokens"):
         return ("the tokenDetails read and the Foundation / Community Grants wallet reads (fetch/hypercore.py "
                 "_circ_less_wallets) stored nothing this run — an unread wallet stores no circulating figure",
                 "Check the Run Log for hypercore_info: 'NOT STORED' names the wallet that did not answer.")
+    if metric == "total_supply_coingecko":
+        return ("CoinGecko's supply read (fetch/coingecko.py /coins/markets) stored no total this run — it is kept "
+                "beside the on-chain total (config.TOTAL_SUPPLY_ONCHAIN_FIRST) for the like-for-like circulating row",
+                "Check the Run Log for coingecko: the supply/fdv read for this project.")
     if metric in ("near_lockup_unvested_tokens", "near_lockup_locked_tokens"):
         return ("the weekly lockup read (near_lockups_weekly.py, ~2.5h) has not stored a total yet, or its last one "
                 "is older than the week — it stores nothing when any lockup is unreadable",
