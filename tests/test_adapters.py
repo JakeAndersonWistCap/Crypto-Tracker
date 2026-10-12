@@ -17793,10 +17793,12 @@ def test_hyperliquid_total_burn_is_fund_plus_core_and_a4_and_a3_read_it():
     """Jake, 2026-09-29: burns outside the Assistance Fund reduce totalSupply; the Fund's HYPE stays
     inside it — disjoint, so the sum double-counts nothing. total_burn_tokens = gross_burn_tokens +
     core_burn_tokens per day (a day missing a leg is left out, never read as a smaller burn);
-    A4's burn and A3's buyback view read the total; both components stay visible."""
+    A4's burn and A3's buyback view read the total; both components stay visible.
+    PHASE 2 AMENDMENT 1 (Jake 2026-10-12): the total is A1's burn (every burn); A4 keeps the Assistance Fund only."""
     import build_workbook as bw
 
-    assert config.a4_burn_metric("Hyperliquid") == "total_burn_tokens"
+    assert config.a1_burn_metric("Hyperliquid") == "total_burn_tokens"
+    assert config.a4_burn_metric("Hyperliquid") == "gross_burn_tokens"
     assert config.buyback_route("Hyperliquid")["metric"] == "total_burn_tokens"
     assert config.buyback_route("GEODNET")["metric"] == "gross_burn_tokens", "others unchanged"
     days = pd.date_range("2026-09-24", "2026-09-28")
@@ -18353,15 +18355,20 @@ def test_near_archive_reads_header_supply_and_stake_at_the_first_block_of_the_da
                 if h == 150_000_001:
                     return {"error": {"cause": {"name": "UNKNOWN_BLOCK"}}}
                 ts = t_day + (h - 150_000_000) * 10**9 if h != GEN else 0
-                return {"result": {"header": {"height": h, "timestamp": ts,
+                return {"result": {"header": {"height": h, "timestamp": ts, "epoch_id": "EPOCHabcdef123",
                                               "total_supply": str(1_250_000_000 * 10**24)}}}
-            return {"result": {"current_validators": [{"stake": str(600_000_000 * 10**24)}]}}
+            assert m == "validators" and prm == {"epoch_id": "EPOCHabcdef123"}
+            return {"result": {"epoch_start_height": 149_990_000,
+                               "current_validators": [{"stake": str(600_000_000 * 10**24)}]}}
     na = NearArchive(http=Http(), endpoints=["https://archival.example"], root=tmp_path, sleep=lambda s: None)
     rows = na.rows(config.PROJECT_BY_NAME["Near"], pd.Timestamp("2026-06-01"))
     got = {r["metric"]: r for r in rows}
     assert got["total_supply_protocol"]["value"] == 1_250_000_000
-    assert "locked_tokens" not in got, "validators is refused for past blocks: forward-only"
-    assert "locked_tokens" in config.HISTORY_FORWARD_ONLY["Near"]["metrics"]
+    # validators by BLOCK is refused for past blocks, by EPOCH_ID it is served (Jake's Phase 1 follow-up 2026-10-12,
+    # item 3): staked NEAR is no longer forward-only
+    assert got["locked_tokens"]["value"] == 600_000_000
+    assert _measuring_point(got["locked_tokens"]["source"]).startswith("near_rpc:validators")
+    assert "locked_tokens" not in config.HISTORY_FORWARD_ONLY["Near"]["metrics"]
     assert _measuring_point(got["total_supply_protocol"]["source"]) == "near_rpc:block.header.total_supply"
     assert na.known["2026-06-01"] == 150_000_000
 
@@ -19418,7 +19425,8 @@ def test_completeness_counts_mechanism_starts_complete_and_names_every_forward_o
     v, d = cr.classify(sky, "sky_stage2_burn_tokens", ok, "2026-09-14", asof)
     assert v == "COMPLETE" and "2026-09-13" in d
     v, d = cr.classify(config.PROJECT_BY_NAME["Near"], "locked_tokens", {"status": "ok"}, "2026-09-11", asof)
-    assert v == "MATURING" and "FORWARD-ONLY: NEAR's archival RPC refuses" in d
+    # staked NEAR is backfilled by epoch since Jake's Phase 1 follow-up (2026-10-12, item 3): no longer forward-only
+    assert v == "MATURING" and "NOT FORWARD-ONLY" in d
     v, d = cr.classify(config.PROJECT_BY_NAME["Fluid"], "emissions_tokens", {"status": "ok"}, "2026-09-22", asof)
     assert v == "MATURING" and "FORWARD-ONLY" in d
     v, d = cr.classify(config.PROJECT_BY_NAME["Morpho"], "fees_usd", ok, "2026-09-11", asof)
@@ -23893,8 +23901,9 @@ def test_a_route_only_closure_never_blanks_a_live_headline(tmp_path):
     """Found by the Credibility pass (2026-10-05): Ethereum's A4 GROSS ISSUANCE Q0 rendered "none
     available" because ultrasound.money's issuance ROUTE was closed — the figure itself is computed."""
     bw, wb = _cred_build(tmp_path)
-    ws = wb["A4 Permanent Burn"]
-    col = next(c.column for c in ws[4] if c.value and str(c.value).startswith("GROSS ISSUANCE"))
+    # on A1 since Phase 2 amendment 1 (the fee-burn chains left A4, Jake 2026-10-12)
+    ws = wb["A1 Infrastructure"]
+    col = next(c.column for c in ws[4] if c.value and str(c.value).startswith("Gross issuance Q0 (tokens)"))
     row = next(r for r in range(5, ws.max_row + 1) if ws.cell(r, 1).value == "Ethereum")
     assert ws.cell(row, col).value != bw.CLOSED_TEXT and "gross_issuance_tokens" in str(ws.cell(row, col).value)
     assert config.unavailable_for("Ethereum", "gross_issuance_tokens")["route_only"] is True
@@ -25633,9 +25642,10 @@ def test_near_burn_and_issuance_from_block_header_total_supply(tmp_path, monkeyp
     # Jake's run 2026-10-08: the BigQuery header burn is PRIMARY (the headline's metric); fees x 0.70 is the labelled
     # cross-check, and its ~11% non-gas share a VERIFIED FINDING
     assert config.a4_burn_metric("Near") == "gross_burn_tokens_bigquery"
-    assert ref["a4_gross_burn"]["metric"] == "gross_burn_tokens"
-    assert ref["a4_gross_burn"]["force_verdict"] == "VERIFIED FINDING"
-    assert ref["a4_gross_issuance"]["metric"] == "gross_issuance_tokens_bigquery"
+    # on A1 since Phase 2 amendment 1 (Jake 2026-10-12): NEAR's burn and issuance are judged there
+    assert ref["a1_gross_burn"]["metric"] == "gross_burn_tokens"
+    assert ref["a1_gross_burn"]["force_verdict"] == "VERIFIED FINDING"
+    assert ref["a1_gross_issuance"]["metric"] == "gross_issuance_tokens_bigquery"
 
 
 # ===================================================================== overnight round 2026-10-06
@@ -26081,7 +26091,7 @@ def test_ethereum_net_change_reference_is_independent_and_uses_our_common_days()
     v, d, how = cred.FORMULAS["eth_net_formula"]("Ethereum", rows, long, asof)
     iss = 166.32 * (36e6 ** 0.5) / 365 * 8
     assert abs(v - (iss - 8 * 100.0)) < 1e-6 and d == "2026-10-06" and "8 common-day issuance row(s)" in how
-    assert config.CREDIBILITY["Ethereum"]["a4_net_change"]["formula"] == "eth_net_formula"
+    assert config.CREDIBILITY["Ethereum"]["a1_net_issuance"]["formula"] == "eth_net_formula"
 
 
 def test_new_probes_for_the_sky_releases_and_the_geodnet_residual_are_registered():
@@ -27441,7 +27451,7 @@ def test_signoff_round_rows_cite_their_evidence():
     scan = config.PROJECT_BY_NAME["Pendle"]["log_scans"][0]
     assert scan["holders"] == ["0x47D74516B33eD5D70ddE7119A40839f6Fcc24e57"] and scan["store"]
     assert "emissions_tokens_gauge_arbitrum_direct" in c["Pendle"]["in_emissions"]["ref"]["args"]["metrics"]  # every chain
-    assert config.CREDIBILITY["Ethereum"]["a4_net_change"]["show_how"]
+    assert config.CREDIBILITY["Ethereum"]["a1_net_issuance"]["show_how"]
 
 
 def test_ethereum_net_change_shows_both_sides_leg_by_leg(monkeypatch):
@@ -27456,7 +27466,7 @@ def test_ethereum_net_change_shows_both_sides_leg_by_leg(monkeypatch):
                                    ("revenue_usd", 240_000.0))], ignore_index=True)
     v, d, how = cred.FORMULAS["eth_net_formula"]("Ethereum", {}, long, pd.Timestamp("2026-10-06"))
     assert v is not None and "OURS, same 6 day(s): issuance 16,200" in how and "burn 360" in how
-    ref = cred.reference("Ethereum", config.CREDIBILITY["Ethereum"]["a4_net_change"], {}, long,
+    ref = cred.reference("Ethereum", config.CREDIBILITY["Ethereum"]["a1_net_issuance"], {}, long,
                          pd.Timestamp("2026-10-06"))
     assert "OURS, same 6 day(s)" in ref["note"]
 

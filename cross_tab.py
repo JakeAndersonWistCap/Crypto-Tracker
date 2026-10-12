@@ -33,18 +33,23 @@ MASTER_SOURCES = {
     "Fees Q0 ($)": [("A*", "Fees Q0 ($)")],
     "Implied buyback Q0 ($) = revenue × the split that applied to this window": [("A3", "Implied buyback Q0 ($) = revenue × share")],
     "Actual buyback Q0 ($) — observed": [("A3", "Actual buyback Q0 ($) — observed")],
-    "Gross burn Q0 (tokens)": [("A4", "GROSS BURN Q0 (tokens)"), ("A1", "Gross burn Q0 (tokens, A4 names)")],
+    # EVERY BURN (config.a1_burn_metric, Phase 2 amendment 1): A1's total first; A4 where the project has no A1 row
+    "Gross burn Q0 (tokens)": [("A1", "Gross burn Q0 (tokens) — every burn, fee-market included"),
+                               ("A4", "GROSS BURN Q0 (tokens)")],
     "Gross issuance Q0 (tokens)": [("A4", "GROSS ISSUANCE Q0 (tokens)"), ("A1", "Gross issuance Q0 (tokens)")],
+    # the fee-burn chains' net change is on A1 since Phase 2 amendment 1 (Jake 2026-10-12)
     "NET SUPPLY CHANGE Q0 (tokens) = issuance − burn": [
-        ("A4", "NET SUPPLY CHANGE Q0 (tokens) — self-reported where published, else issuance − burn, on the basis to the left")],
+        ("A4", "NET SUPPLY CHANGE Q0 (tokens) — self-reported where published, else issuance − burn, on the basis to the left"),
+        ("A1", "NET ISSUANCE AFTER BURN Q0 (tokens) — issuance − every burn, on the basis A4 uses")],
     "Net supply change, annualised % of circulating": [
-        ("A4", "NET SUPPLY CHANGE, annualised % of circulating (signed; + is net inflation)")],
+        ("A4", "NET SUPPLY CHANGE, annualised % of circulating (signed; + is net inflation)"),
+        ("A1", "NET ISSUANCE AFTER BURN, annualised % of circulating (+ is net inflation; fee-market burns included)")],
     "Fees ÷ issuance ($, Q0; issuance at 90d avg price)": [("A1", "FEES ÷ ISSUANCE (x) — key ratio")],
     "Fees ÷ FDV (annualised)": [("A3", "Fees ÷ FDV (annualised)")],
     "Buyback % of supply (annualised, implied, split as at this window)": [
         ("A3", "BUYBACK AS % OF SUPPLY (annualised, implied)")],
 }
-A_TABS = ("A1", "A2", "A3", "A4")
+A_TABS = ("A1", "A2", "A3", "A4", "CP")       # CP: the Phase 2 comparability tab (2026-10-12)
 EPS = 1e-9
 
 

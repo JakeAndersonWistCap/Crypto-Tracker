@@ -527,6 +527,63 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11br. Theory layer — Phase 2: the comparability layer (2026-10-12)
+
+**Run after pulling.** `python archive_backfill.py --run --near` — staked NEAR history (validators by epoch_id on the
+archival RPC; ~361 days back, older epochs answer UNKNOWN_EPOCH and get the supply row only). No BigQuery. Then the
+daily run as usual: the new **CP Comparability** tab and the A4 additions need no new fetch.
+
+**Amendment 1.** Fee-market burns left A4: Ethereum, Tron, Solana and Canton are archetype 1; NEAR is 1 and 3; Hyperliquid's A4
+reads the Assistance Fund only (`gross_burn_tokens`), A1 every burn (`total_burn_tokens`). A1 now carries bold
+headlines: gross issuance, gross burn (every burn), NET ISSUANCE AFTER BURN Q0 and annualised (Master's net columns are
+the same expression). The credibility rows moved with them (a1_gross_burn, a1_gross_issuance, a1_net_issuance).
+
+**CP tab (items 1, 3-5; amendments 2-5; LITMUS A-E).** Raw metrics only — no scores, bands or leaderboards.
+- Supply layers: max, total, circulating (our convention), staked / locked, TRADEABLE FLOAT. Protocol and treasury
+  holdings are already outside circulating under the convention, so the float is A2's free float. Ethereum's stake is
+  `beacon_chain_eth` (`config.CP_STAKE_METRIC`).
+- Every retirement and dilution rate is shown twice, on circulating and on float: retirement, every burn, and the outflow
+  categories (a) security, (b) supply-side, (c) demand-side and (e) unlocks, plus total dilution. Each is BLOCKED where
+  a leg covers under a week.
+- Outflows (a)-(e) in $ a year (`config.OUTFLOW_CATEGORIES`, views `outflow_<c>_tokens/_usd`).
+- SUBSIDY COVER = revenue ÷ $ (b), and ÷ (b + c). Revenue is customer revenue where the project has it, else fees.
+- HOLDER VALUE YIELD credits revenue-funded value only (`config.HOLDER_VALUE` funding periods, view
+  `holder_value_revenue_usd`); treasury- or emissions-funded value is recorded beside it, never credited.
+- NET HOLDER YIELD = holder value yield − outflows a+b+c+e $ ÷ market cap.
+- Staker yield vs whole-token yield (staker × staked share), plus the payout ratio on gross and on the net basis.
+- Insider share of the lock, lock rate and holding caps (demand side), flow demand, discretionary supply
+  (`config.DISCRETIONARY_SUPPLY`), supplier payout per $ of fees, and the retention tests (`config.RETENTION_TESTS`).
+- Attributes come from `phase2_attributes.json` (research of 2026-10-12, entered by Claude Code, pending Jake's review;
+  every fact carries its URL; `unverified` lists what is not established; NEAR account ids are not stored).
+
+**A4 additions (item 4).** Cumulative burn ÷ max supply; revenue required for crossover; the governance lever (the burn
+share of fees that reaches crossover with no growth); the burn split by source; the treasury governance could redeploy
+(tokens and $). Burn in tokens and $ beside issuance was already the GROSS BURN / ISSUANCE block.
+
+**METRICS.md** now has the CP page and a TOKEN FLOW / VALUE FLOW STATEMENT per project (amendment 4), with every flow
+that has no series flagged **NO SERIES**. **Sanity:** `float_outside_circ`, `discretionary_above_total`.
+
+**ETH validator yield — MODELLED.** The spec-formula consensus leg (`derived:consensus_formula[MODELLED — excluded from
+scoring: ...]`) is never inside Q0. It is labelled on the Data note, on the Trajectory row (its own column "MODELLED
+quarters (excluded from any scoring)" and the trend prefix) and on the Credibility note of the headline above it.
+
+**Findings for Jake (reported, nothing switched):**
+- Maple Safe 0x58BE (48.6M SYRUP) is Maple-controlled. It is a 3-of-5 Safe, and three of its five owners sign Maple's
+  DAO multisig 0xd6d4, which is enough to meet the threshold. That makes it issuer-side and out of circulating under
+  the rule: 1,221,418,278.27 − 48,624,987.59 = **1,172,793,290.68**, against CoinGecko's 1,167,271,959.18 (+0.47%).
+  Not switched; waiting for Jake.
+- Ether.fi: the 2026-09-02 inflow of 1,047,757 ETHFI is an Arrakis LP withdrawal (LogWithdraw), not a purchase. Q0's
+  identified purchases are about zero. It is recorded and not credited; the buyback series itself waits for Jake.
+- Ether.fi: the ~$8.8M/yr is the treasury programme (Nov 2025–Apr 2026), not revenue. 1,464,000 ETHFI was burned from
+  0x2f53 between 2025-08-08 and 2025-09-19, although config says no burn was executed.
+- Dates: Hyperliquid's AF vote closed 2025-12-24, not 12-27. Sky Stage 2 went on-chain 2026-08-17 and first burned on
+  2026-09-13; 09-14 is the announcement.
+- Aerodrome: the team's 8–9% vs ~18% is one holding on two denominators (supply vs veAERO). The Momentum Fund is 22.9%
+  of the locked AERO and issuer-side.
+- Hyperliquid stake history: the only free route is test.hypurrscan.io/staking/stake-history (unofficial test host,
+  from 2025-09-27). Not wired.
+- GEODNET: held until Jake's CL output.
+
 ## 11bq. Phase 1 review (Jake's run 2026-10-12 14:44) — fixes before Phase 2
 
 **Run after pulling (in this order; 11bp's steps first if not yet run).**

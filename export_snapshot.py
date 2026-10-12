@@ -128,7 +128,8 @@ def snapshot_rows(wb, value, cred_rows: list, cred_tab: list, headline_cells: li
 
 TRAJ_FIELDS = ("Q0", "Q-1", "Q-2", "Q-3", "Q-4", "T12M", "QoQ", "4Q growth (annual, log-linear)",
                "Quarters improved (direction-aware)", "Trough of the last 4", "Years to benchmark",
-               "Series break (basis change)", "Credibility (Q0 = headline cell)")
+               "Series break (basis change)", "MODELLED quarters (excluded from any scoring)",
+               "Credibility (Q0 = headline cell)")
 
 
 def _trajectory(wb, value) -> dict:

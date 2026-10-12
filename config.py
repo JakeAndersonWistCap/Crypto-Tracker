@@ -172,7 +172,7 @@ METRICS = {
     "circulating_supply":         {"label": "Circulating supply (reported)",   "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [1, 2], "sanity_min": 0,    "sanity_max": 1e15},
     "circulating_supply_implied": {"label": "Circulating supply (mcap/price)", "kind": "stock", "unit": "tokens", "archetypes": [1, 4],       "tiers": [1],    "sanity_min": 0,    "sanity_max": 1e15},
     "total_supply":               {"label": "Total supply",                    "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [1, 2], "sanity_min": 0,    "sanity_max": 1e15},
-    "max_supply":                 {"label": "Max supply",                      "kind": "stock", "unit": "tokens", "archetypes": [4],          "tiers": [1],    "sanity_min": 0,    "sanity_max": 1e15},
+    "max_supply":                 {"label": "Max supply",                      "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4],          "tiers": [1],    "sanity_min": 0,    "sanity_max": 1e15},
     # ===== ARCHETYPE 1 VALUATION INPUTS. Added 2026-09-24 (Jake, from "What Do I Own?"). =====
     # A VALIDATOR yield — what staking the chain's own token earns for securing it. NEVER a
     # protocol's revenue share to its stakers: that is a different quantity (the A3 "Protocol
@@ -2351,6 +2351,15 @@ def a4_burn_metric(project_name: str) -> str:
     return (PROJECT_BY_NAME.get(project_name) or {}).get("a4_burn_metric") or "gross_burn_tokens"
 
 
+def a1_burn_metric(project_name: str) -> str:
+    """EVERY burn the supply sees — the series A1's net issuance, Total Yield, Master's gross burn / net supply change and
+    every NET SUPPLY CHANGE row read (Jake 2026-10-12, Phase 2 amendment 1: fee-market burns feed net issuance on A1).
+    The A4 burn (a4_burn_metric) differs only where A4 is narrower: Hyperliquid keeps A4 for the Assistance Fund only,
+    while its supply also falls by HyperEVM gas and the other Core burns (total_burn_tokens)."""
+    p = PROJECT_BY_NAME.get(project_name) or {}
+    return p.get("a1_burn_metric") or a4_burn_metric(project_name)
+
+
 def burn_senders_accounted(project_name: str) -> tuple[int | None, set[str]]:
     """What the burn footnotes already account for (C1, 2026-09-28): (closure block, senders).
 
@@ -3188,7 +3197,8 @@ PROJECTS = [
             },
         },
         "defillama_fees_slug": "ethereum", "defillama_protocol": None, "defillama_chain": "Ethereum",
-        "archetypes": [1, 4], "archetypes_held": [],
+        "archetypes": [1],  # Jake 2026-10-12, Phase 2 amendment 1: fee-market burns come off A4 entirely and feed net issuance on A1
+        "archetypes_held": [],
         # ===== B4: EIP-1559 DESTROYS, IT DOES NOT SEND. =====
         "not_applicable": {
             # ===== THERE IS NO MAXIMUM. Declared 2026-09-22. =====
@@ -3401,7 +3411,8 @@ PROJECTS = [
         "name": "Solana", "symbol": "SOL",
         "coingecko_id": "solana",
         "defillama_fees_slug": "solana", "defillama_protocol": None, "defillama_chain": "Solana",
-        "archetypes": [1, 4], "archetypes_held": [],
+        "archetypes": [1],  # Jake 2026-10-12, Phase 2 amendment 1: fee-market burns come off A4 entirely and feed net issuance on A1
+        "archetypes_held": [],
         "fee_split": dict(_NO_SPLIT),
         "burn_split": {"share_of_fees_burned": None, "source_url": "https://solana.com/docs/economics", "source_date": BRIEF_DATE, "status": "unconfirmed",
                        "note": "Partial fee burn (historically 50% of the base fee). SIMD-96 changed priority-fee handling. "
@@ -3434,7 +3445,8 @@ PROJECTS = [
         "name": "Tron", "symbol": "TRX",
         "coingecko_id": "tron",
         "defillama_fees_slug": "tron", "defillama_protocol": None, "defillama_chain": "Tron",
-        "archetypes": [1, 4], "archetypes_held": [],
+        "archetypes": [1],  # Jake 2026-10-12, Phase 2 amendment 1: fee-market burns come off A4 entirely and feed net issuance on A1
+        "archetypes_held": [],
         "fee_split": dict(_NO_SPLIT),
         "burn_split": {"share_of_fees_burned": None, "source_url": "https://developers.tron.network/docs/resource-model", "source_date": BRIEF_DATE, "status": "unconfirmed",
                        "note": "TRX paid for bandwidth/energy is burned. Document the share before enabling the tier 1 rule."},
@@ -4049,7 +4061,8 @@ PROJECTS = [
         },
         "coingecko_id": "near",
         "defillama_fees_slug": "near", "defillama_protocol": None, "defillama_chain": "Near",
-        "archetypes": [1, 3, 4], "archetypes_held": [],
+        "archetypes": [1, 3],  # Jake 2026-10-12, Phase 2 amendment 1: NEAR 1,3 — its gas burn feeds A1 net issuance
+        "archetypes_held": [],
         # TWO REVENUE STREAMS THAT MUST NOT BE CONFLATED.
         #   (4) GAS BURN — protocol-level, unrelated to Intents. 70% of every transaction fee is
         #       destroyed with no transfer; 30% goes to the contract developer.
@@ -4372,7 +4385,8 @@ PROJECTS = [
         "name": "Canton", "symbol": "CC",
         "coingecko_id": "canton-network",
         "defillama_fees_slug": None, "defillama_protocol": None, "defillama_chain": None,
-        "archetypes": [1, 4], "archetypes_held": [],
+        "archetypes": [1],  # Jake 2026-10-12, Phase 2 amendment 1: fee-market burns come off A4 entirely and feed net issuance on A1
+        "archetypes_held": [],
         "fee_split": dict(_NO_SPLIT),
         "burn_split": {"share_of_fees_burned": None, "source_url": "https://www.canton.network/", "source_date": BRIEF_DATE, "status": "unconfirmed",
                        "note": "Traffic fees are burned. Has both its own dashboard and a Dune page. Document the share."},
@@ -11856,7 +11870,10 @@ PROJECTS = [
             "history_extra": ({"tokens": "burn_auction_tokens", "usd": "burn_auction_usd"},
                               {"tokens": "burn_hyperevm_tokens", "usd": "burn_hyperevm_usd"}),
         },
-        "a4_burn_metric": "total_burn_tokens",
+        # A4 IS THE ASSISTANCE FUND ONLY (Jake 2026-10-12, Phase 2 amendment 1: "Hyperliquid keeps 4 for the Assistance
+        # Fund only"); every burn — the Fund plus HyperEVM gas and the other Core burns — feeds A1's net issuance
+        "a4_burn_metric": "gross_burn_tokens",
+        "a1_burn_metric": "total_burn_tokens",
         "destination_effect": "removed_from_supply",
         "destination_confirmed_date": "2025-12-27",
         "destination_split": None, "burn_execution": "protocol",
@@ -18237,6 +18254,21 @@ for _n, _chain in (("Aerodrome", "base"), ("Chainlink", "ethereum"), ("Fluid", "
         "declared": "2026-10-11"})
 METRICS["total_supply_coingecko"]["only_projects"] = tuple(TOTAL_SUPPLY_ONCHAIN_FIRST)
 
+# MODELLED LEGS (Jake 2026-10-12, Phase 1 follow-up item 2): a series leg computed from a model rather than read is
+# labelled MODELLED wherever it appears (Data note, Trajectory, Credibility) and EXCLUDED FROM ANY SCORING — the
+# snapshot carries each trajectory row's modelled quarters so a future score can drop them.
+MODELLED_POINTS = {
+    "derived:consensus_formula": "Ethereum consensus rewards before Etherscan's first Eth2Staking read: the consensus "
+                                 "spec's 166.32 x sqrt(staked ETH) a year, scaled to the measured series",
+}
+
+
+def is_modelled(source) -> bool:
+    """Is this stored row a MODELLED leg (MODELLED_POINTS)?"""
+    from fetch.base import _measuring_point
+    return _measuring_point(str(source or "")) in MODELLED_POINTS
+
+
 # ETH CONSENSUS REWARDS HISTORY (Jake's Phase 1 review 2026-10-12, item 8c): the spec's issuance formula on staked ETH,
 # scaled to the measured Eth2Staking series over their overlap (build_workbook._consensus_history_views) — one series
 PROJECT_BY_NAME["Ethereum"].setdefault("series_handover", {}).setdefault("consensus_rewards_tokens", {
@@ -19349,7 +19381,11 @@ HISTORY_FORWARD_ONLY = {
     # total_supply is backfilled by archive_backfill.py --near) but refuses `validators` for a
     # past block with VALIDATOR_INFO_UNAVAILABLE. Staked NEAR accumulates from its first read.
     "Near": {
-        "metrics": ("locked_tokens",),
+        # LIFTED 2026-10-12 (Jake's Phase 1 follow-up, item 3): the archival RPC refuses `validators` by BLOCK but
+        # answers it by EPOCH_ID (archival-rpc.mainnet.fastnear.com, 400+ epochs back) — staked NEAR at each past day's
+        # epoch is read by archive_backfill.py --run --near (fetch/archive.NearArchive.rows). Nothing forward-only left.
+        "metrics": (),
+        "lifted": "validators by epoch_id on the archival RPC (2026-10-12)",
         "why": "NEAR's archival RPC refuses `validators` for past blocks "
                "(VALIDATOR_INFO_UNAVAILABLE) — no stake history to read",
         # THE ONLY RECORDED REASON, AND A ROUTE CONSIDERED AND DECLINED: the archival RPC DOES
@@ -24748,7 +24784,7 @@ _PENDLE_EPOCH = {"tokens": 82_545, "date": "2026-09-08", "stock": "locked_tokens
 # THE EMISSION IS THE GROSS ISSUANCE (Jake's run 2026-10-08 11:27): a3_net_absorption read "emissions — no row checks
 # them" for NEAR, whose emission is the protocol's mint to validators — the gross-issuance row (R8, PASS). That row is
 # the emissions input of buyback − emissions (credibility.resolve_alias).
-EMISSIONS_ARE_ISSUANCE = {"Near": "a4_gross_issuance"}
+EMISSIONS_ARE_ISSUANCE = {"Near": "a1_gross_issuance"}       # on A1 since Phase 2 amendment 1 (2026-10-12)
 
 
 def _c_lim(why: str, evidence: str, upgrade: str) -> dict:
@@ -26277,6 +26313,22 @@ CREDIBILITY: dict = {
 }
 
 
+# PHASE 2 AMENDMENT 1 (Jake 2026-10-12): the fee-market burns come off A4 — Ethereum's and NEAR's burn, issuance and net
+# change are judged on A1 now (its burn, issuance and net issuance are headlines there), with the same references.
+for _n in ("Ethereum", "Near"):
+    for _old, _new in (("a4_gross_burn", "a1_gross_burn"), ("a4_gross_issuance", "a1_gross_issuance"),
+                       ("a4_net_change", "a1_net_issuance")):
+        if _old in CREDIBILITY.get(_n, {}):
+            CREDIBILITY[_n][_new] = CREDIBILITY[_n].pop(_old)
+# Hyperliquid: A1's burn is EVERY burn (the Fund + Core: the reference that summed both moves with it); A4's is the
+# Assistance Fund alone, against ASXN's HyperCore buyback
+CREDIBILITY["Hyperliquid"]["a1_gross_burn"] = CREDIBILITY["Hyperliquid"].pop("a4_gross_burn")
+CREDIBILITY["Hyperliquid"]["a4_gross_burn"] = {
+    "formula": "flow_usd_over_price", "args": {"metrics": ("buyback_hypercore_asxn_usd",)}, "tol": 15.0,
+    "source": "ASXN HyperCore buyback ($) / same-day price — ours is Hyperliquid's own Assistance Fund series "
+              "(A4 reads the Fund alone, Phase 2 amendment 1)"}
+
+
 # ===== THE TRAJECTORY ENGINE (theory layer, Phase 1 — Jake 2026-10-12). =====
 # Every headline on Master and A1-A4 re-computed over FIVE CONSECUTIVE TRAILING 90-DAY BLOCKS (Q0 newest .. Q-4) by its
 # OWN formula (build_workbook shifts each Data reference by k quarters while the builder re-runs; trajectory.py), plus
@@ -26298,7 +26350,8 @@ TRAJECTORY = {
         # A1
         "a1_fees_issuance": ("Fundamentals", 1), "a1_tvl": ("Fundamentals", 1),
         "a1_settlement_volume": ("Fundamentals", 1), "a1_throughput_volume": ("Fundamentals", 1),
-        "gross_burn_q0_tokens_a4_names": ("Fundamentals", 1), "gross_issuance_q0_tokens": ("Fundamentals", -1),
+        "a1_gross_burn": ("Fundamentals", 1), "a1_gross_issuance": ("Fundamentals", -1),
+        "a1_net_issuance": ("Supply", -1), "a1_net_issuance_pct": ("Supply", -1),
         "a1_validator_yield": ("Supply", 0), "a1_total_yield_stakers": ("Supply", 1),
         "a1_total_yield_holders": ("Supply", 1),
         "a1_nrr_settlement": ("Valuation", -1), "a1_nrr_throughput": ("Valuation", -1),
@@ -26320,6 +26373,9 @@ TRAJECTORY = {
         "a4_gross_burn": ("Fundamentals", 1), "a4_gross_issuance": ("Fundamentals", -1),
         "a4_burn_yield": ("Supply", 1), "a4_crossover": ("Supply", 1), "a4_net_change": ("Supply", -1),
         "a4_net_change_pct": ("Supply", -1), "a4_pool_release": ("Supply", -1),
+        # CP (Phase 2, 2026-10-12): holder value and net holder yield are ratios on market cap (Valuation)
+        "cp_float": ("Supply", 0), "cp_subsidy_cover": ("Fundamentals", 1),
+        "cp_hvy": ("Valuation", 1), "cp_nhy": ("Valuation", 1),
         # Master's own rows
         "master_revenue_q0": ("Fundamentals", 1), "master_actual_buyback_q0_observed": ("Fundamentals", 1),
         "master_implied_buyback_q0_revenue_the_split_that_applied_to_this_wi": ("Fundamentals", 1),
@@ -26338,8 +26394,7 @@ TRAJECTORY = {
     # against price's. The first row listed that the project has is used for each.
     "divergence": {
         "revenue": ("master_revenue_q0", "a2_customer_revenue", "fees_q0"),
-        "retired": ("a3_retired_tokens", "a4_gross_burn", "master_gross_burn_q0_tokens",
-                    "gross_burn_q0_tokens_a4_names"),
+        "retired": ("a3_retired_tokens", "a4_gross_burn", "master_gross_burn_q0_tokens", "a1_gross_burn"),
         "price": ("master_price_spot",),
     },
     # GROWTH RULES (item 4): a growth figure needs >= min_quarters quarters, all > 0, in one regime; a series whose
@@ -26381,3 +26436,280 @@ TRAJECTORY = {
                      "source": "US Treasury daily bill rates / FRED DTB3 (Phase 3)"},
     },
 }
+
+
+# =====================================================================================================================
+# THEORY LAYER — PHASE 2, THE COMPARABILITY LAYER (Jake 2026-10-12; the CP Comparability tab, build_workbook.write_cp).
+# Raw metrics only — no scores, bands or leaderboards. Destination and lock terms are ATTRIBUTES, never penalties
+# (amendment 5); the lock rate sits on the demand side.
+# =====================================================================================================================
+
+# FIVE OUTFLOW CATEGORIES (amendment 3), each its own series (build_workbook._outflow_views: outflow_<c>_tokens and
+# outflow_<c>_usd = tokens x that day's price): (a) security emissions — validator / staker inflation; (b) supply-side
+# incentives — paid to whoever supplies liquidity or capital (LPs, lenders, compute / node suppliers); (c) demand-side
+# incentives — paid to users of the product (borrowers, holders of the product token); (d) ecosystem / grant spend;
+# (e) unlocks. A metric sits in ONE category per project; "basis" says why; "pending" marks an assignment still being
+# confirmed against the programme's own docs (research of 2026-10-12). GEODNET is held (Jake: wait for the CL output).
+OUTFLOW_CATEGORY_NAMES = {"a": "security emissions", "b": "supply-side incentives", "c": "demand-side incentives",
+                          "d": "ecosystem / grant spend", "e": "unlocks"}
+OUTFLOW_CATEGORIES = {
+    "Ethereum": {"a": ("gross_issuance_tokens",),
+                 "basis": "issuance is consensus rewards to validators (security)"},
+    "Near": {"a": ("gross_issuance_tokens",), "e": ("unlock_release_tokens",),
+             "basis": "minted rewards to validators (90%) and the protocol treasury (10%, inside the mint); lockup "
+                      "releases are unlocks"},
+    "Plume": {"basis": "staking rewards to validators / delegators are (a) security — paid out of PRE-MINTED supply "
+                       "(the 10bn total does not move: gross_issuance_tokens is 0 on every stored day), so no series "
+                       "measures them yet; reward rate x stake would be MODELLED and is not used. Nest Points Season One (ended "
+                       "2026-03-13) and Plume Points Season 2 (ended 2026-03-31) were paid as PLUME airdrops (1% of "
+                       "supply, claimed April 2026; 150M, May 2026) — (c), one-offs with no series; Merkl pays 1-3.9M "
+                       "WPLUME a month to Morpho-on-Plume lenders — (b), no series",
+              "pending": "a paid staking-rewards series for (a); the Merkl WPLUME series for (b) (merkl "
+                         "/v4/creators/plume/distributed/over-time)"},
+    "Chainlink": {"a": ("emissions_tokens",), "e": ("unlock_release_tokens",),
+                  "basis": "staking rewards (v0.2 pools, paid for securing feeds) are security; non-circulating wallet "
+                           "releases are unlocks"},
+    "Hyperliquid": {"a": ("emissions_tokens",), "e": ("unlock_release_tokens",),
+                    "basis": "staking rewards from the Future Emissions pool are security; Foundation / Grants / team "
+                             "releases are unlocks"},
+    "Aethir": {"b": ("emissions_tokens",),
+               "basis": "checker and edge node rewards pay the compute / infrastructure SUPPLY side"},
+    "Aerodrome": {"b": ("gross_issuance_tokens",), "a": ("emissions_tokens",), "e": ("unlock_release_tokens",),
+                  "basis": "the Minter's gauge emissions pay LPs (supply side); the rebase pays veAERO lockers (staker "
+                           "inflation); filing-wallet releases are unlocks"},
+    "Pendle": {"b": ("emissions_tokens",), "e": ("unlock_release_tokens",),
+               "basis": "gauge emissions pay LPs (supply side)"},
+    "Morpho": {"b": ("emissions_tokens",), "e": ("unlock_release_tokens",),
+               "basis": "MORPHO rewards (Merkl campaigns): 2025-07-14..2026-10-12 budgets ~12.96M to suppliers (b) vs "
+                        "~0.27M to borrowers (c) — the claims series is not split, so it sits in (b), the ~98% leg; "
+                        "MORPHO now runs on the borrow side only (merkl.xyz /v4/campaigns?tokenSymbol=MORPHO, read "
+                        "2026-10-12)",
+               "pending": "the claims series is Ethereum only (Base ≈38% of the budget is missing) and unsplit"},
+    "Maple": {"a": ("emissions_tokens",), "e": ("unlock_release_tokens",),
+              "basis": "MIP-009 staker inflation (stSYRUP) is (a) — ended by MIP-019 (Nov 2025); Drips (b) paid SYRUP "
+                       "out of syrupDrip 0x509712F3… and stopped accruing 2025-12-31 (final claims to 2026-02-18, "
+                       "maple-docs drips-rewards.md) — no series of its own yet; Merkl incentives are partner-funded "
+                       "(Maple funded 8,398 syrupUSDC, no SYRUP campaigns)",
+              "pending": "Drips outflow series (SYRUP transfers out of syrupDrip)"},
+    "Fluid": {"b": ("emissions_tokens",), "e": ("unlock_release_tokens",),
+              "basis": "FLUID rewards to lenders / LPs, read from the Merkle claims already scanned; no FLUID rewards "
+                       "are live now (2026-10-12)"},
+    "Sky": {"c": ("emissions_tokens",),
+            "basis": "SKY paid through VestedRewardsDistribution (vest 17 in force): rewards to holders of the "
+                     "product token are demand side (c) — a judgement: if USDS holders are read as capital suppliers it "
+                     "is (b). The USDS -> SKY farm 0x0650CAF1… stopped paying 2026-01-26 (Blockscout transfers)",
+            "pending": "which farm vest 17 funds"},
+    "Uniswap": {"e": ("unlock_release_tokens",),
+                "basis": "no emissions; the UNIfication growth budget (d) is 20M UNI a year from the Timelock through "
+                         "UNIVesting 0xCa046A83… to 0xaba63748… — all four 5M tranches released, ~17M moved on "
+                         "2026-10-06 (spent or re-walleted: not established); no series of its own yet",
+                "pending": "growth budget series (UNI transfers from the recipient)"},
+    "Ether.fi": {"e": ("unlock_release_tokens",),
+                 "basis": "user programmes exist (Season 5 >= 10M ETHFI, Triple Dip 400k, membership / cashback, (c)) "
+                          "but no published ETHFI distributor to read — no series; issuer-wallet releases are unlocks",
+                 "pending": "no free route"},
+}
+
+
+def outflow_metrics(project_name: str, cat: str) -> tuple:
+    return tuple((OUTFLOW_CATEGORIES.get(project_name) or {}).get(cat) or ())
+
+
+# HOLDER VALUE (Phase 2 item 3; LITMUS A): revenue-funded $ retired + $ distributed. Each programme's FUNDING per dated
+# period — revenue / treasury / emissions; only revenue-funded value is CREDITED to holder value yield, the rest is
+# recorded beside it. `distributed_extra`: payouts to holders that are not bought tokens (Aerodrome's voter fees, Sky's
+# USDS to SKY stakers). Default for a buyback programme not listed: revenue (its fee_split names revenue as the base).
+HOLDER_VALUE = {
+    "Aerodrome": {"distributed_extra": ("revenue_usd",),
+                  "extra_why": "the trading fees paid to veAERO voters (revenue_usd: staked-LP fees, routed to voters; "
+                               "unstaked LPs keep theirs) — voting incentives (bribes) are third parties' money, not "
+                               "revenue, and are not credited",
+                  # The Foundation's buy-and-lock is paid from its OWN veAERO voting rewards plus the Public Goods Fund's
+                  # USDC reserves (github aerodrome-finance/docs about.mdx; paragraph.com/@aerodrome-foundation/the-
+                  # future-of-flight-school; Blockworks filing; read 2026-10-12): revenue earned by an issuer-side
+                  # entity. Its voting rewards are already credited inside revenue_usd above, so crediting the buy too
+                  # would count the same fees twice — recorded, not credited.
+                  "funding": [("2000-01-01", None, "treasury",
+                               "the Foundation buys AERO with its own voting rewards (already credited as distributed "
+                               "fees) and the Public Goods Fund's USDC reserves — recorded, never credited twice")]},
+    # ETHER.FI (research 2026-10-12, on-chain: both 2025 programmes bought through 0x2f5301a3D59388c509C65f8698f521377D41Fd0F
+    # on CoW; the token paid per fill separates them and the groups sum to the stored 17,984,520 ETHFI): the April 2025
+    # withdrawal-fee buyback (Snapshot 2025-04-25..29) paid in WETH from the withdrawal fees — REVENUE, 2025-05-09..
+    # 2025-11-03 (5,549,356 ETHFI for 1,846 WETH); the October 2025 "Treasury Deployment for ETHFI Buy-Back" ($50M cap
+    # below $3; snapshot.org/#/etherfi-dao.eth/proposal/0xe5b64c773d23c92e62092a713b14cc72a98a46c923e36cf885455118854337b0)
+    # paid in USDT / USDC — TREASURY, 2025-11-04..2026-04-01 (12,435,164 ETHFI; 7,610,100 held by the Foundation Safe).
+    # 2026-09-02: the 1,047,757 ETHFI inflow came out of Arrakis LP positions (LogWithdraw, tx 0x3b52e19b…), NOT a
+    # purchase — recorded, not credited, pending Jake's review of the buyback series itself.
+    # Entered by Claude Code, pending Jake's review.
+    "Ether.fi": {"funding": [("2025-05-09", "2025-11-03", "revenue", "April 2025 withdrawal-fee buyback (paid in WETH)"),
+                             ("2025-11-04", "2026-04-01", "treasury",
+                              "October 2025 Treasury Deployment for ETHFI Buy-Back (paid in USDT / USDC)"),
+                             ("2026-09-02", "2026-09-02", "not a purchase",
+                              "Arrakis LP withdrawal (LogWithdraw), not a buyback — pending Jake's review")]},
+    # UNISWAP: the retroactive 100M UNI burn of 2025-12-27 (proposal 93) came from the TREASURY; the Firepit fee-switch
+    # burn from 2025-12-28 is revenue (vote.uniswapfoundation.org/proposals/93, read 2026-10-12)
+    "Uniswap": {"funding": [("2025-12-27", "2025-12-27", "treasury", "proposal 93's retroactive 100M UNI burn")]},
+    "Sky": {"distributed_extra": ("staking_rewards_usds_usd",),
+            "extra_why": "USDS paid to SKY stakers (staking_rewards_usds_usd)"},
+}
+
+
+def holder_funding(project_name: str, day) -> tuple[str, str]:
+    """(funding, why) of a buyback on `day`: the dated HOLDER_VALUE period it falls in, else revenue."""
+    import pandas as _pd
+    for start, end, funding, why in (HOLDER_VALUE.get(project_name) or {}).get("funding") or ():
+        if _pd.Timestamp(start) <= _pd.Timestamp(day) and (end is None or _pd.Timestamp(day) <= _pd.Timestamp(end)):
+            return funding, why
+    return "revenue", "default: the buyback programme's documented base is revenue"
+
+
+# HOLDING DEMAND CAPS (LITMUS B): a fixed ceiling on a holding-demand component, sourced. Cap utilisation = the measured
+# component ÷ the cap.
+HOLDING_CAPS = {
+    "Chainlink": {"component": "community staking pool", "cap_tokens": 40_875_000, "metric": None,
+                  "reading": ("2026-10-12", 40_875_000,
+                              "getMaxPoolSize() and the pool's principal on 0xBc10f2E862ED4502144c7d632a3459F49DFCDB5e "
+                              "(etherscan.io), read by Claude Code, pending Jake's review"),
+                  "source": "Chainlink staking v0.2 (chain.link/blog/chainlink-staking-v0-2-overview); "
+                            "getMaxPoolSize() on 0xBc10f2E862ED4502144c7d632a3459F49DFCDB5e, read 2026-10-12",
+                  "why_no_metric": "locked_tokens is both pools (community + node operator); the community pool "
+                                   "alone has no series yet"},
+}
+
+# DISCRETIONARY SUPPLY (LITMUS C): tokens that can enter circulation with NO published schedule — the issuer-side
+# wallets of the issuer-wallet audit (54a9437) whose release is at the holder's discretion, as stored series. A vesting
+# wallet with a published schedule is not discretionary. n/a where no such wallet is on file (Ethereum, Plume, Aethir:
+# no issuer wallets on file, decision 5 report).
+DISCRETIONARY_SUPPLY = {
+    "Chainlink": (("noncirculating_holding_tokens",), "the 27 non-circulating wallets (Chainlink publishes no release "
+                                                      "schedule)"),
+    "Hyperliquid": (("excluded_wallets_tokens",), "Foundation + Grants wallets (no published schedule)"),
+    "Sky": (("treasury_holding_tokens",), "the Pause Proxy treasury"),
+    "Fluid": (("treasury_holding_tokens",), "the treasury"),
+    "Uniswap": (("treasury_holding_tokens",), "the governance treasury"),
+    "Morpho": (("noncirculating_holding_tokens", "noncirculating_entities_tokens"),
+               "the DAO's holdings and the issuer-held entities (decision 1 on 6f8c86c)"),
+    "Maple": (("treasury_holding_tokens_chain", "noncirculating_holding_tokens"), "the DAO multisig and the registry "
+                                                                                 "treasury / reserves"),
+    "Aerodrome": (("noncirculating_holding_tokens",), "the filing wallets' liquid AERO (their managed veNFT AERO is "
+                                                      "locked)"),
+    "Pendle": (("treasury_holding_tokens",), "the treasury"),
+    "Ether.fi": (("treasury_holding_tokens",), "the treasury"),
+    "Near": (("near_foundation_accounts_tokens",), "lockup.near + contributors.near"),
+}
+
+# STAKED SUPPLY WHERE IT IS NOT locked_tokens (CP tradeable float and whole-token yield): Ethereum has no lock contract
+# (locked_tokens is not applicable) but its staked supply is measured — beacon-chain ETH, the validator yield's own stake.
+CP_STAKE_METRIC = {"Ethereum": "beacon_chain_eth"}
+
+# INSIDER SHARE OF STAKED / LOCKED SUPPLY (Phase 2 item 3), where the insiders' locked balance is a series of its own
+INSIDER_LOCK = {
+    "Aerodrome": ("filing_managed_lock_tokens", "ve_locked_supply_tokens",
+                  "the Blockworks filing wallets' managed veNFT deposits ÷ veAERO.supply()"),
+    "Hyperliquid": ("team_wallet_tokens", "locked_tokens", "the team wallet (delegated in full) ÷ total staked HYPE"),
+}
+
+# PER-PROJECT ATTRIBUTES (Phase 2 item 3, amendment 2): lock terms, payout currency, destination durability, mechanism
+# certainty with its dated log, capture status with switch power and the switch-signals log. Filled from the research
+# of 2026-10-12 (primary sources, each with its URL and read date); a project not yet filled reads "not sourced yet".
+def _load_phase2_attributes() -> dict:
+    import json as _json
+    import os as _os
+    f = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "phase2_attributes.json")
+    try:
+        with open(f, encoding="utf-8") as fh:
+            d = _json.load(fh)
+    except FileNotFoundError:
+        return {}
+    return {k: v for k, v in d.items() if not k.startswith("_")}
+
+
+# phase2_attributes.json — the research of 2026-10-12, entered by Claude Code, pending Jake's review (its _meta block)
+PHASE2_ATTRIBUTES: dict = _load_phase2_attributes()
+
+
+def phase2_attribute_text(project_name: str, what: str) -> str:
+    """One CP attribute as cell text: "not sourced yet" where the project has no record (GEODNET: held)."""
+    a = PHASE2_ATTRIBUTES.get(project_name)
+    if not a:
+        return "not sourced yet"
+    if what == "lock_terms":
+        ys = a.get("yields") or []
+        return "; ".join(f"{y['name']}: lock {y['lock_length']}, unstake {y['unstake_days']}, liquid wrapper "
+                         f"{y['liquid_wrapper']}" for y in ys) or "no holder yield"
+    if what == "payout_currency":
+        ys = a.get("yields") or []
+        return "; ".join(f"{y['name']}: {y['payout_currency']}" for y in ys) or "no holder yield"
+    if what == "destination":
+        d = a.get("destination") or {}
+        return f"{d.get('value', '')} — {d.get('detail', '')}".strip(" —")
+    if what == "certainty":
+        log = "; ".join(f"{e['date']} {e['event']}" for e in sorted(a.get("mechanism_log") or [], key=lambda e: e["date"]))
+        return (a.get("certainty") or {}).get("value", "") + (f" | LOG: {log}" if log else "")
+    if what == "capture":
+        c = a.get("capture_status") or {}
+        sig = "; ".join(f"{e['date']} {e['signal']}" for e in sorted(a.get("switch_signals") or [], key=lambda e: e["date"]))
+        return f"{c.get('value', '')} — switch power: {c.get('switch_power', '')}" + (f" | SIGNALS: {sig}" if sig else "")
+    if what == "holding_demand":
+        return "; ".join(f"{h['component']}: cap {h['cap']}" for h in a.get("holding_demand") or [])
+    if what == "unverified":
+        return "; ".join(a.get("unverified") or [])
+    raise KeyError(what)
+
+
+# POST-INCENTIVE RETENTION (LITMUS E): usage after an incentive programme ended ÷ before it. Read 2026-10-12 by Claude Code
+# from DefiLlama's free history (endpoints below) — mean of the 30 days after the end ÷ the 30 days before; latest ÷ the
+# 30 days before. Entered by Claude Code, pending Jake's review. Plume: the vault growth is mostly new chains and the
+# Merkl lending incentives ran throughout; DefiLlama's chain TVL excludes RWA vaults and has methodology spikes.
+RETENTION_TESTS = (
+    {"project": "Maple", "programme": "Drips", "ended": "2025-12-31", "series": "Maple protocol TVL",
+     "after_30d": 0.977, "latest": 1.056, "endpoint": "api.llama.fi/protocol/maple"},
+    {"project": "Maple", "programme": "Drips", "ended": "2025-12-31", "series": "syrupUSDC TVL",
+     "after_30d": 0.924, "latest": 0.952, "endpoint": "yields.llama.fi/chart/43641cf5…"},
+    {"project": "Maple", "programme": "Drips", "ended": "2025-12-31", "series": "syrupUSDT TVL",
+     "after_30d": 1.108, "latest": 0.482, "endpoint": "yields.llama.fi/chart/8edfdf02…"},
+    {"project": "Plume", "programme": "Nest Points Season One", "ended": "2026-03-13", "series": "Plume Vaults (Nest), on Plume",
+     "after_30d": 2.02, "latest": 3.10, "endpoint": "api.llama.fi/protocol/plume-vaults"},
+    {"project": "Plume", "programme": "Nest Points Season One", "ended": "2026-03-13", "series": "Plume chain TVL",
+     "after_30d": 0.64, "latest": 0.12, "endpoint": "api.llama.fi/v2/historicalChainTvl/Plume%20Mainnet"},
+    {"project": "Plume", "programme": "Plume Points Season 2", "ended": "2026-03-31", "series": "Plume chain TVL",
+     "after_30d": 0.50, "latest": 0.12, "endpoint": "api.llama.fi/v2/historicalChainTvl/Plume%20Mainnet"},
+)
+
+# SUBSIDY TARGETING (LITMUS E): revenue per emitted token by pool — ROUTES PROBED 2026-10-12, not yet wired (probe first,
+# report before building): Aerodrome RewardsSugar 0x1b121EfDaF4ABb8785a315C51D29BCE0552A7678 (Base)
+# epochsByAddress(limit, offset, pool) — per pool, per epoch emissions, fees, bribes, votes from 2025-06-12 (e.g. WETH/USDC:
+# $0.785 of voter fees per $1 of AERO emitted over 69 epochs); Pendle api-v2.pendle.finance core/v2/{chain}/markets/{mkt}/
+# historical-data (pendleApy, tvl, swapFeeApy, tradingVolume; daily from 2025-07-01). GEODNET SuperHex: held.
+SUBSIDY_TARGETING_ROUTES = {
+    "Aerodrome": "RewardsSugar 0x1b121EfDaF4ABb8785a315C51D29BCE0552A7678 epochsByAddress — per pool emissions / fees / bribes",
+    "Pendle": "api-v2.pendle.finance core/v2/{chain}/markets/{market}/historical-data — per market incentive APY vs fee APY",
+}
+
+# THE PHASE 2 SERIES (read-time views, build_workbook._outflow_views / _holder_value_views)
+for _c, _nm in OUTFLOW_CATEGORY_NAMES.items():
+    if not any(c.get(_c) for c in OUTFLOW_CATEGORIES.values()):
+        continue                  # no project holds a series in this category (d today): no metric, no gap row
+    METRICS[f"outflow_{_c}_tokens"] = {
+        "label": f"Outflow ({_c}) {_nm} — tokens per day, the project's series in that category (OUTFLOW_CATEGORIES)",
+        "kind": "flow", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0,
+        "sanity_max": 1e12, "view_only": True,
+        # only where the category holds a series — never a gap row for a category a project does not have
+        "only_projects": tuple(n for n, c in OUTFLOW_CATEGORIES.items() if c.get(_c))}
+    METRICS[f"outflow_{_c}_usd"] = {
+        "label": f"Outflow ({_c}) {_nm} — $ per day (tokens x that day's price)",
+        "kind": "flow", "unit": "usd", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0,
+        "sanity_max": 1e12, "view_only": True,
+        "only_projects": tuple(n for n, c in OUTFLOW_CATEGORIES.items() if c.get(_c))}
+METRICS["holder_value_revenue_usd"] = {
+    "label": "Holder value CREDITED — revenue-funded $ retired (burned + held) + $ distributed, per day (HOLDER_VALUE)",
+    "kind": "flow", "unit": "usd", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e11,
+    "view_only": True,
+    "only_projects": tuple(p["name"] for p in PROJECTS
+                           if buyback_route(p["name"])["route"] != "none" or p["name"] in HOLDER_VALUE)}
+METRICS["holder_value_other_usd"] = {
+    "label": "Holder value RECORDED, NOT CREDITED — treasury- or emissions-funded $ retired + distributed, per day",
+    "kind": "flow", "unit": "usd", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e11,
+    "view_only": True,
+    "only_projects": tuple(n for n, h in HOLDER_VALUE.items()
+                           if any(f[2] != "revenue" for f in h.get("funding") or ()))}

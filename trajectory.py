@@ -33,6 +33,7 @@ HEAD = ["Project", "Key (tab|project|headline id)", "Tab", "Headline id", "Headl
         "Quarters improved (direction-aware)",
         "Trough of the last 4", "Trend", "Direction basis",
         "Benchmark", "Target", "Years to benchmark", "Why n/a", "Series break (basis change)",
+        "MODELLED quarters (excluded from any scoring)",
         "Source tier (headline series)",
         "Q0 coverage days (headline series)", "Credibility (Q0 = headline cell)", "Headline cell"]
 COL = {h: i + 1 for i, h in enumerate(HEAD)}
@@ -359,6 +360,30 @@ def basis_breaks(project: str, metrics, groups: dict, since) -> list[tuple]:
         out += _own_breaks(project, m, groups, since)
         todo += [x for x in _inputs(project, m, groups) if x not in seen]
     return sorted(out, key=lambda t: t[0])
+
+
+def modelled_quarters(project: str, metrics, groups: dict, asof, period_days: int, n: int) -> list[str]:
+    """The quarters (labels) in which a series the row reads — its inputs included — holds a MODELLED leg
+    (config.is_modelled; Jake 2026-10-12, Phase 1 follow-up item 2). Shown on the row; excluded from any scoring."""
+    import pandas as pd
+    seen, todo, days = set(), list(metrics), []
+    while todo:
+        m = todo.pop()
+        if m in seen:
+            continue
+        seen.add(m)
+        g = groups.get((project, m))
+        if g is not None and not g.empty:
+            mod = g[g["source"].astype(str).map(config.is_modelled)]
+            days += list(pd.to_datetime(mod["date"]))
+        todo += [x for x in _inputs(project, m, groups) if x not in seen]
+    out = []
+    for k in range(n):
+        hi = pd.Timestamp(asof) - pd.Timedelta(days=period_days * k)
+        lo = hi - pd.Timedelta(days=period_days - 1)
+        if any(lo <= d <= hi for d in days):
+            out.append(LABELS[k])
+    return out
 
 
 def clean_quarters(asof, break_day, period_days: int, n: int) -> int:

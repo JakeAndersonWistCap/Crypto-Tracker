@@ -72,17 +72,17 @@ def test_ethereum_net_change_sums_our_issuance_and_burn_over_the_references_own_
     for d in days[3:]:
         rows.append((d, "Ethereum", "beacon_chain_eth", 36.0e6, "validatorqueue", 1))
     o = _evaluate(tmp_path, monkeypatch, "Ethereum", rows)
-    net = o["a4_net_change"]
+    net = o["a1_net_issuance"]      # on A1 since Phase 2 amendment 1
     assert net["verdict"].startswith("PASS"), net
     # Jake's run 2026-10-08 11:27 printed "OURS, same days: issuance 26,838 ... burn 891" — our FULL 9-day Q0 figure
     # (9 x 2,982). Ours must be the 6 days staked ETH, issuance and burn all exist: 6 x 2,982 and 6 x 99.
     assert "OURS, same 6 day(s): issuance 17,892" in net["note"] and "burn 594" in net["note"], net["note"][:600]
     assert "26,838" not in net["note"] and "891" not in net["note"]
     assert abs(float(net["ours"]) - 6 * (2982 - 99)) < 1e-6, net["ours"]
-    # a4_net_change_pct follows: it is judged by a4_net_change and in_circ (the circulating row, not stored here), so it
-    # is PASS exactly when in_circ is
-    pct = o["a4_net_change_pct"]
-    assert "a4_net_change" in pct["note"]
+    # a1_net_issuance_pct follows (A4's net change pct until Phase 2 amendment 1): judged by a1_net_issuance and in_circ
+    # (the circulating row, not stored here), so it is PASS exactly when in_circ is
+    pct = o["a1_net_issuance_pct"]
+    assert "a1_net_issuance" in pct["note"]
     assert pct["verdict"].startswith("PASS") == o["in_circ"]["verdict"].startswith("PASS"), (pct, o["in_circ"])
 
 
@@ -111,7 +111,7 @@ def test_ethereum_issuance_rows_that_span_several_days_are_judged_over_the_days_
                  (d, "Ethereum", "revenue_usd", 99.0 * 4000, "llama:fees", 1),
                  (d, "Ethereum", "beacon_chain_eth", staked, "validatorqueue", 1)]
     o = _evaluate(tmp_path, monkeypatch, "Ethereum", rows, asof="2026-10-09")
-    net = o["a4_net_change"]
+    net = o["a1_net_issuance"]      # on A1 since Phase 2 amendment 1
     assert "OURS, same 10 day(s): issuance 29,820" in net["note"], net["note"][:900]
     assert "10-04 8,946 (3d)" in net["note"] and "10-08 5,964 (2d)" in net["note"], net["note"][-500:]
     assert abs(float(net["ours"]) - 10 * (2982 - 99)) < 1e-6, net["ours"]
@@ -172,7 +172,7 @@ def test_near_buyback_emissions_and_locked_close_on_the_real_store_shape(tmp_pat
     assert bb["verdict"].startswith("PASS"), bb
     # "30 days to 2026-10-07" (the page's "last 30 days"): 30 daily changes x 30,000 NEAR x $2.30 = $2.07M
     assert abs(float(bb["ours"]) - 30 * 30_000 * 2.3) < 1.0
-    assert "a4_gross_issuance" in o["a3_net_absorption"]["note"] and "in_buyback" in o["a3_net_absorption"]["note"]
+    assert "a1_gross_issuance" in o["a3_net_absorption"]["note"] and "in_buyback" in o["a3_net_absorption"]["note"]
     assert o["in_locked"]["verdict"].startswith("PASS"), o["in_locked"]
     assert not o["in_locked"]["verdict"].startswith("MATURING")
 

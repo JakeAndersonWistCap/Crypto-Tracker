@@ -2133,12 +2133,28 @@ def by_design_na(name: str, hid: str) -> str | None:
     if hid == "a3_protocol_yield" and name not in config.PROTOCOL_YIELD:
         why = config.PROTOCOL_YIELD_NOT_APPLICABLE.get(name)
         return f"no protocol staking yield: {why}" if why else "no protocol staking yield is declared for this project"
+    # A1's burn / issuance / net issuance (Phase 2 amendment 1): n/a where the project has no burn series, or mints
+    # nothing (pre-minted supply, or issuance declared zero)
+    if hid == "a1_gross_burn" and config.a1_burn_metric(name) not in config.metrics_for_project(p):
+        return "no burn mechanism is measured for this project (no burn series)"
+    if hid in ("a1_gross_issuance", "a1_net_issuance") and basis == "pool_release_tokens":
+        return "supply is pre-minted — issuance is measured as pool release (A4 / A2), not minted on A1"
+    if hid in ("a1_gross_issuance", "a1_net_issuance") and p.get("issuance_declared_zero"):
+        return "no issuance — issuance_declared_zero"
     if hid == "a4_gross_issuance" and basis == "pool_release_tokens":
         return "issuance is measured as pool release (pre-minted supply) — see the Pool release row"
     if hid == "a4_pool_release" and basis != "pool_release_tokens":
         return "supply is minted, not pre-minted — issuance is on the Gross issuance row"
     if hid in ("a4_crossover", "a4_gross_issuance") and p.get("issuance_declared_zero"):
         return "no issuance — burn only (issuance_declared_zero)"
+    # CP (Phase 2): n/a where the figure has nothing to read by design
+    if hid == "cp_float" and "locked_tokens" not in config.metrics_for_project(p) and not p.get("free_float_lock_zero") \
+            and name not in config.CP_STAKE_METRIC:
+        return "no lock metric applies — tradeable float would be circulating passed off as float"
+    if hid in ("cp_hvy", "cp_nhy") and "holder_value_revenue_usd" not in config.metrics_for_project(p):
+        return "no buyback programme and no declared payout to holders"
+    if hid == "cp_subsidy_cover" and not config.outflow_metrics(name, "b"):
+        return "no supply-side incentives (outflow b) are paid or on file for this project"
     fs = p.get("fee_split") or {}
     if hid == "a3_implied_buyback_pct" and fs.get("destination_model") == "distribute_to_voters":
         return "0 by design — no protocol share of fees goes to buybacks; 100% is paid to voters (the Foundation's own buys " \
@@ -2158,6 +2174,9 @@ DERIVED_INPUTS = {
     "a4_crossover": ("a4_gross_burn", "@issuance"),
     "a4_net_change": ("a4_gross_burn", "@issuance"),
     "a4_net_change_pct": ("a4_net_change", "in_circ"),
+    # A1 (Phase 2 amendment 1): where no reference is wired, as their A4 counterparts
+    "a1_net_issuance": ("a1_gross_burn", "@issuance"),
+    "a1_net_issuance_pct": ("a1_net_issuance", "in_circ"),
     "a3_circ_retirement": ("@buyback", "in_circ"),
     "a3_fdv_retirement": ("@buyback", "@price"),
     "a3_implied_buyback_pct": ("@revenue", "@price", "in_circ"),
@@ -2171,9 +2190,16 @@ DERIVED_INPUTS = {
     "a2_trajectory": ("a2_emissions", "a2_free_float"),
     "a2_rev_per_token": ("a2_customer_revenue", "a2_emissions"),
     "a2_rev_vs_emissions_value": ("a2_customer_revenue", "a2_emissions", "@price"),
+    # CP (Phase 2, 2026-10-12): the outflow series are the emissions / unlock rows already checked; holder value is the
+    # buyback (and the declared payouts, which have no row of their own yet — an unchecked input reads UNVERIFIABLE)
+    "cp_float": ("in_circ", "@locked"),
+    "cp_hvy": ("@buyback", "@price", "in_circ"),
+    "cp_nhy": ("cp_hvy", "@emissions", "@price"),
+    "cp_subsidy_cover": ("@fees", "@emissions", "@price"),
 }
 ALIASES = {
-    "@issuance": ("a4_gross_issuance", "a4_pool_release", "in_issuance"),
+    # a1_gross_issuance: the fee-burn chains' issuance headline left A4 for A1 (Phase 2 amendment 1, 2026-10-12)
+    "@issuance": ("a4_gross_issuance", "a1_gross_issuance", "a4_pool_release", "in_issuance"),
     "@price": ("in_price", "in_price_llama"),
     "@buyback": ("in_reserve_month", "in_buyback_july", "@burn_route", "in_buyback"),
     "@revenue": ("in_revenue",),

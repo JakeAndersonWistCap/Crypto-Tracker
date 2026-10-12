@@ -146,7 +146,8 @@ ENTRIES = {
     "Gross issuance Q0 (tokens)": dict(
         what="New tokens minted over Q0 (pool release where the supply is pre-minted).",
         formula="gross_issuance_tokens q0, or pool_release_tokens (config.issuance_basis)", window="Q0",
-        unit="tokens", inputs=["gross_issuance_tokens", "pool_release_tokens"]),
+        unit="tokens", inputs=["gross_issuance_tokens", "pool_release_tokens"],
+        decided=[(J, "2026-10-12", "Phase 2 amendment 1: also a headline on A1, judged there")]),
     "NET SUPPLY CHANGE Q0 (tokens)": dict(
         what="Issuance minus burn over Q0 (A4's figure).",
         formula="self-reported net mint where published, else issuance − burn on the A4 basis; BLOCKED on unequal "
@@ -178,6 +179,51 @@ ENTRIES = {
         what="What securing the chain pays a staker per year — NOT a protocol revenue share.",
         formula="per chain (config.VALIDATOR_YIELD): rewards paid ÷ stake over the window, net of commission where the "
                 "chain publishes it", window="Q0 or the chain's own rate", unit="%"),
+    "Gross burn Q0 (tokens) — every burn": dict(
+        what="Every token the supply lost to burns over Q0 — fee-market burns included (they feed net issuance here).",
+        formula="config.a1_burn_metric: the A4 burn, or where A4 is narrower (Hyperliquid: the Assistance Fund) every burn "
+                "(total_burn_tokens)", window="Q0", unit="tokens",
+        decided=[(J, "2026-10-12", "Phase 2 amendment 1: fee-market burns (ETH, NEAR gas, Tron, Solana, Canton, HyperEVM "
+                                   "gas) come off A4 entirely and feed net issuance on A1")]),
+    # ===== CP — the comparability layer (Jake 2026-10-12, Phase 2) =====
+    "TRADEABLE FLOAT": dict(
+        what="The tokens that can trade: circulating (our convention) less staked / locked tokens. Protocol- and "
+             "treasury-held tokens are already outside circulating under the convention, so they are subtracted there.",
+        formula="circulating_supply_used − the lock inside it (A2's free-float lock; Ethereum: beacon_chain_eth, "
+                "config.CP_STAKE_METRIC)", window="now", unit="tokens",
+        inputs=["circulating_supply_used", "locked_tokens"], decided=[(J, "2026-10-12", "Phase 2 item 1")]),
+    "HOLDER VALUE YIELD": dict(
+        what="Value delivered to holders out of REVENUE, per year, as a share of market cap.",
+        formula="holder_value_revenue_usd (each day's buyback $ where its programme was revenue-funded that day, plus "
+                "the declared payouts to holders) annualised over its covered days ÷ market cap",
+        window="Q0 → year", unit="%",
+        counts="revenue-funded buybacks (retired and distributed) and declared payouts (Aerodrome voter fees, Sky USDS)",
+        excludes="treasury- or emissions-funded buybacks (recorded beside it, never credited — LITMUS A); fee-market "
+                 "burns (on A1 net issuance, amendment 1)",
+        inputs=["holder_value_revenue_usd", "market_cap_usd"],
+        decided=[(J, "2026-10-12", "Phase 2 item 3 and LITMUS A")]),
+    "NET HOLDER YIELD": dict(
+        what="Holder value yield less dilution: what holders gain net of new tokens entering circulation.",
+        formula="holder value yield − (outflow_a/b/c/e_usd, each annualised over its covered days) ÷ market cap; "
+                "BLOCKED where any leg covers under a week", window="Q0 → year", unit="%",
+        inputs=["holder_value_revenue_usd", "outflow_a_usd", "outflow_b_usd", "outflow_c_usd", "outflow_e_usd",
+                "market_cap_usd"],
+        decided=[(J, "2026-10-12", "Phase 2 item 3 (the sell-rate-weighted version follows Phase 5)")]),
+    "SUBSIDY COVER": dict(
+        what="How many dollars of revenue each dollar of supply-side incentives buys.",
+        formula="revenue (customer_revenue_usd where the project has it, else fees_usd) per covered day ÷ "
+                "outflow_b_usd per covered day; beside it ÷ (b + c)", window="Q0", unit="x",
+        inputs=["fees_usd", "customer_revenue_usd", "outflow_b_usd", "outflow_c_usd"],
+        decided=[(J, "2026-10-12", "Phase 2 item 5, amendment 3")]),
+    "NET ISSUANCE AFTER BURN Q0 (tokens)": dict(
+        what="Issuance less every burn over Q0 — the supply's net change (+ inflation).",
+        formula="the A4 net-change expression on every burn: common days where declared, self-reported net mint where "
+                "published, else issuance − burn under the equal-coverage guard", window="Q0", unit="tokens",
+        decided=[(J, "2026-10-12", "Phase 2 amendment 1")]),
+    "NET ISSUANCE AFTER BURN, annualised": dict(
+        what="Net issuance per year as a fraction of circulating (+ inflation) — the net inflation Total Yield subtracts.",
+        formula="(issuance − every burn), each annualised over its covered days, ÷ circulating", window="Q0", unit="%",
+        decided=[(J, "2026-10-12", "Phase 2 amendment 1")]),
     "TOTAL YIELD — stakers": dict(
         what="What a staker earns in real terms: the validator staking yield less the dilution of net inflation.",
         formula="validator staking yield − net inflation, where net inflation is A4's 'NET SUPPLY CHANGE, annualised % "

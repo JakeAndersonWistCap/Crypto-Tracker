@@ -329,7 +329,9 @@ def test_eth_validator_yield_has_history_from_the_spec_formula_on_the_real_dump(
     _wb, rows = _built(tmp_path, monkeypatch, "Ethereum")
     g = bw._LAST_GROUPS[("Ethereum", "consensus_rewards_tokens")]
     leg = g[g["source"].astype(str).str.startswith("derived:consensus_formula[")]
-    assert len(leg) > 300 and "k=" in leg["source"].iloc[0]
+    assert len(leg) > 250 and "k=" in leg["source"].iloc[0]
+    # never inside Q0 (follow-up item 2): the headline window stays as read
+    assert pd.to_datetime(leg["date"]).max() <= pd.Timestamp("2026-10-09") - pd.Timedelta(days=90)
     k = float(leg["source"].iloc[0].split("k=")[1].split(";")[0])
     assert 0.9 < k < 1.05                                  # participation and penalties: a little under the maximum
     vy = next(r for r in rows if r["hid"] == "a1_validator_yield")
@@ -415,3 +417,61 @@ def test_aerodrome_circulating_restated_on_the_onchain_basis_has_no_jump_on_the_
     circ = rows["circulating_supply"]
     assert not circ["series_break"], circ["series_break"]
     assert all(isinstance(circ[q], float) and circ[q] > 1.2e9 for q in ("Q0", "Q-1", "Q-2", "Q-3"))
+
+
+# ----------------------------------------------------------------------------------------------- follow-up 2 MODELLED
+def test_the_spec_formula_leg_is_labelled_modelled_everywhere_on_the_real_dump(tmp_path, monkeypatch):
+    """Jake 2026-10-12 (Phase 1 follow-up, item 2): the ETH consensus-rewards leg from the spec formula is MODELLED on the
+    Data row's note, the Trajectory row (its quarters listed, excluded from any scoring; the snapshot carries them) and
+    the Credibility note of the headline it sits under."""
+    import config
+    import build_workbook as bw
+    import export_snapshot as es
+    from test_trajectory import _built
+    wb, rows = _built(tmp_path, monkeypatch, "Ethereum")
+    assert config.is_modelled("derived:consensus_formula[MODELLED — x]") and not config.is_modelled(
+        "etherscan:ethsupply2.Eth2Staking:delta")
+    g = bw._LAST_GROUPS[("Ethereum", "consensus_rewards_tokens")]
+    assert g[g["source"].str.startswith("derived:consensus_formula")]["source"].str.contains("MODELLED").all()
+    ws = wb["Data"]
+    r = next(r for r in range(2, ws.max_row + 1) if ws.cell(r, 1).value == "Ethereum|consensus_rewards_tokens")
+    assert "MODELLED leg" in str(ws.cell(r, bw.DATA_COLS.index("note") + 1).value)
+    vy = next(x for x in rows if x["hid"] == "a1_validator_yield")
+    assert vy["modelled_quarters"][:1] == ["Q-1"] and "Q0" not in vy["modelled_quarters"]
+    assert "MODELLED" in vy["trend"]
+    assert not next(x for x in rows if x["hid"] == "master_price_spot")["modelled_quarters"]
+    cw = wb["Credibility"]
+    notes = [str(cw.cell(i, 12).value or "") for i in range(1, cw.max_row + 1)
+             if cw.cell(i, 1).value == "Ethereum" and "VALIDATOR STAKING YIELD" in str(cw.cell(i, 4).value or "")]
+    assert notes and notes[0].startswith("MODELLED history under this headline")
+    assert "MODELLED quarters (excluded from any scoring)" in es.TRAJ_FIELDS
+
+
+def test_near_stake_history_is_read_by_epoch_and_tolerates_the_epoch_age_limit():
+    """Follow-up item 3: the archival RPC answers `validators` by epoch_id; a day whose epoch is past the node's
+    retention (UNKNOWN_EPOCH) still gets its supply row, never a stake row."""
+    import config
+    from fetch import archive as ar
+    assert config.HISTORY_FORWARD_ONLY["Near"]["metrics"] == ()
+
+    class Fake(ar.NearArchive):
+        def __init__(self, unknown):
+            self.unknown = unknown
+
+        def at(self, day):
+            return {"total_supply": str(1_300_000_000 * 10**24), "epoch_id": "EPOCHabcdef123"}
+
+        def rpc(self, method, params):
+            assert method == "validators" and params == {"epoch_id": "EPOCHabcdef123"}
+            if self.unknown:
+                raise RuntimeError("archival-rpc.mainnet.fastnear.com: {'cause': {'name': 'UNKNOWN_EPOCH'}}")
+            return {"epoch_start_height": 1, "current_validators": [{"stake": str(400 * 10**30)},
+                                                                   {"stake": str(158 * 10**30)}]}
+    p = config.PROJECT_BY_NAME["Near"]
+    rows = Fake(False).rows(p, pd.Timestamp("2026-01-14"))
+    st = next(r for r in rows if r["metric"] == "locked_tokens")
+    assert st["value"] == 558_000_000 and st["source"].startswith("near_rpc:validators[epoch EPOCHabc")
+    from fetch.base import _measuring_point
+    assert _measuring_point(st["source"]) == "near_rpc:validators"
+    rows = Fake(True).rows(p, pd.Timestamp("2025-07-14"))
+    assert [r["metric"] for r in rows] == ["total_supply_protocol"]

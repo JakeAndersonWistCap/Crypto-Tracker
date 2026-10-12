@@ -917,13 +917,36 @@ class NearArchive:
         self.save()
         return self.header(hi_h)
 
-    def rows(self, p: dict, day: pd.Timestamp) -> list[dict]:
-        """total_supply_protocol from the header. NOT validator stake: the archival RPC refuses
-        `validators` for past blocks (VALIDATOR_INFO_UNAVAILABLE, Jake's archive_probe
-        2026-09-30), so staked NEAR is forward-only (config.HISTORY_FORWARD_ONLY)."""
-        api = p.get("near_validators") or {}
+    def rows(self, p: dict, day: pd.Timestamp, want: tuple = ("total_supply_protocol", "locked_tokens")) -> list[dict]:
+        """total_supply_protocol from the header, and STAKED NEAR from `validators` at the day's EPOCH. The archival
+        RPC refuses `validators` by block (VALIDATOR_INFO_UNAVAILABLE / UNKNOWN_EPOCH) but answers it by epoch_id
+        (Jake's Phase 1 follow-up 2026-10-12, item 3: archival-rpc.mainnet.fastnear.com served 400+ epochs back) —
+        current_validators[].stake summed, the same field and scaling as the live read (fetch/near.py), so the source
+        is the live read's plus the epoch and the archive marker. A stake outside (0, total supply] is not written."""
+        api = p.get("node_api") or p.get("near_validators") or {}
         exp = int(api.get("yocto_exponent", 24))
         hdr = self.at(day)
-        return [{"date": day, "project": p["name"], "metric": "total_supply_protocol",
-                 "value": int(hdr["total_supply"]) / 10**exp,
-                 "source": config.mark_source("near_rpc:block.header.total_supply", "archive"), "tier": 2}]
+        supply = int(hdr["total_supply"]) / 10**exp
+        out = []
+        if "total_supply_protocol" in want:
+            out.append({"date": day, "project": p["name"], "metric": "total_supply_protocol", "value": supply,
+                        "source": config.mark_source("near_rpc:block.header.total_supply", "archive"), "tier": 2})
+        if "locked_tokens" in want:
+            try:
+                v = self.rpc("validators", {"epoch_id": hdr["epoch_id"]})
+            except RuntimeError as e:
+                # the archival node keeps epoch info ~a year (UNKNOWN_EPOCH beyond: 2025-10-16 served, 2025-07-14 not,
+                # read 2026-10-12): the day's supply is still written, its stake is not
+                if "UNKNOWN_EPOCH" not in str(e):
+                    raise
+                v = None
+            cur = (v or {}).get("current_validators") if isinstance(v, dict) else None
+            if cur:
+                stake = sum(int(x["stake"]) for x in cur) / 10**exp
+                if 0 < stake <= supply:
+                    out.append({"date": day, "project": p["name"], "metric": "locked_tokens", "value": stake,
+                                "source": config.mark_source(
+                                    f"near_rpc:validators[epoch {hdr['epoch_id'][:8]}…, start "
+                                    f"{v.get('epoch_start_height')}, {len(cur)} validators]", "archive"),
+                                "tier": 2})
+        return out

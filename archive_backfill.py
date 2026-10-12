@@ -8,8 +8,8 @@ reason. --run reads, within a time budget, newest days first, and re-running con
     python archive_backfill.py                     the plan
     python archive_backfill.py --run               read (20 min budget), then report coverage
     python archive_backfill.py --run --budget-min 60 --project Uniswap
-    python archive_backfill.py --run --near        NEAR's header supply too (stake is forward-only:
-                                                   past `validators` is VALIDATOR_INFO_UNAVAILABLE)
+    python archive_backfill.py --run --near        NEAR's header supply and staked NEAR too (stake from
+                                                   `validators` by epoch_id at each day's epoch, 2026-10-12)
     python archive_backfill.py --run --no-solana   skip GEODNET's Solana burn-account history
 
 WHAT IT WRITES: only (date, project, metric) keys that hold nothing — never an overwrite — with
@@ -72,7 +72,7 @@ def _main(argv=None) -> int:
     ap.add_argument("--project", action="append", default=[])
     ap.add_argument("--run", action="store_true")
     ap.add_argument("--budget-min", type=float, default=ar.DEFAULT_BUDGET_S / 60)
-    ap.add_argument("--near", action="store_true", help="also NEAR's archival header supply (stake is forward-only)")
+    ap.add_argument("--near", action="store_true", help="also NEAR's archival header supply and staked NEAR (validators by epoch_id)")
     ap.add_argument("--no-solana", action="store_true")
     a = ap.parse_args(argv)
     import logging
@@ -145,18 +145,20 @@ def _main(argv=None) -> int:
             # RESUMABLE AND PACED (2026-09-29): days already stored are skipped, each day's row is
             # written as it lands, and the reader paces itself to the archival RPC's limit.
             since = today() - pd.Timedelta(days=ar.ARCHIVE_DAYS)
-            have = {d for (d,) in st.conn.execute(
-                "SELECT date FROM metrics WHERE project='Near' AND metric='total_supply_protocol'")}
+            have = {m: {d[:10] for (d,) in st.conn.execute(
+                "SELECT date FROM metrics WHERE project='Near' AND metric=?", (m,))}
+                for m in ("total_supply_protocol", "locked_tokens")}
             na = ar.NearArchive(deadline=t0 + a.budget_min * 60)
             n, why = 0, "every day of the year is stored"
             import progress                               # noqa: PLC0415
             for i in range(1, ar.ARCHIVE_DAYS + 1):
                 progress.tick("NEAR archive days", i, ar.ARCHIVE_DAYS)
                 d = today() - pd.Timedelta(days=i)
-                if str(d.date()) in have:
+                want = tuple(m for m, days in have.items() if str(d.date()) not in days)
+                if not want:
                     continue
                 try:
-                    n += ar._write_new(st, pd.DataFrame(na.rows(near, d)))
+                    n += ar._write_new(st, pd.DataFrame(na.rows(near, d, want)))
                 except ar.NearBudgetSpent as e:
                     why = f"{e}; re-run to continue"
                     break

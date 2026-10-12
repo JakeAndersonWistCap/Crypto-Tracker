@@ -12,6 +12,8 @@ Each rule reads the EVALUATED workbook (the numbers a reader sees) and returns (
   mixed_windows         a ratio printed beside a total BLOCKED for unequal coverage (the same two series, one row)
   cross_tab             the same figure differs between Master and an A-tab, or between two A-tabs (cross_tab.py)
   trajectory_q0_mismatch a Trajectory row's Q0 is not its headline cell (the shifted formula changed what Q0 reads)
+  float_outside_circ    CP's tradeable float < 0 or > the circulating supply it is taken from (Phase 2, 2026-10-12)
+  discretionary_above_total CP's discretionary supply > total supply
 
 Only the projects in portfolio.txt are checked (parked ones are skipped; with no portfolio.txt, every project).
 
@@ -99,6 +101,20 @@ def hits(wb, value) -> list[tuple[str, str, str]]:
         ann = _num(mv(p, "Net supply change, annualised % of circulating"))
         if isinstance(net, str) and net.startswith("BLOCKED") and ann is not None:
             found.append((p, "mixed_windows", f"net supply change is {net[:90]}, yet its annualised % reads {ann:.3%}"))
+    # CP (Phase 2, 2026-10-12): float is a part of circulating; discretionary supply a part of total supply
+    if "CP Comparability" in wb.sheetnames:
+        cp = _rows(wb, "CP Comparability")
+        for p, cols in cp.items():
+            def cv(prefix):
+                loc = next((v for h, v in cols.items() if h.startswith(prefix)), None)
+                return _num(value("CP Comparability", *loc)) if loc else None
+            flt, circ, tot = cv("TRADEABLE FLOAT"), cv("Circulating supply (tokens)"), cv("Total supply (tokens)")
+            disc = cv("Discretionary supply (tokens)")
+            if flt is not None and circ is not None and (flt < 0 or flt > circ):
+                found.append((p, "float_outside_circ", f"tradeable float {flt:,.0f} outside 0..circulating {circ:,.0f}"))
+            if disc is not None and tot is not None and disc > tot:
+                found.append((p, "discretionary_above_total", f"discretionary supply {disc:,.0f} > total supply "
+                                                              f"{tot:,.0f}"))
     # TRAJECTORY (theory layer, Phase 1): every row's Q0 is its headline cell's own formula — a row that disagrees means
     # the shift changed what Q0 reads (build_workbook.write_trajectory writes the verdict)
     if "Trajectory" in wb.sheetnames:

@@ -914,7 +914,7 @@ def _reward_end_views(groups: dict, asof: pd.Timestamp) -> None:
 CONSENSUS_HISTORY_POINT = "derived:consensus_formula"
 
 
-def _consensus_history_views(groups: dict) -> None:
+def _consensus_history_views(groups: dict, asof=None) -> None:
     """ETHEREUM'S CONSENSUS REWARDS BEFORE ETHERSCAN'S FIRST READ (Jake's Phase 1 review 2026-10-12, item 8c: a history
     route for validator yields). Eth2Staking (etherscan ethsupply2) is current-state only, so consensus_rewards_tokens
     starts 2026-09-30 and the validator yield had one quarter. The consensus spec fixes issuance by stake: a year's
@@ -951,9 +951,14 @@ def _consensus_history_views(groups: dict) -> None:
     k = num / den
     both = pd.DatetimeIndex(used)
     older = formula[formula.index < m.index.min()]
+    # NEVER INSIDE Q0 (Jake 2026-10-12, Phase 1 follow-up item 2): the headline stays as read — the MODELLED leg fills
+    # the quarters before it only (Q-1..Q-4 of the trajectory), never the window the headline cell sums
+    if asof is not None:
+        older = older[older.index <= pd.Timestamp(asof) - pd.Timedelta(days=int(GLOBALS["period_days"]))]
     if older.empty:
         return
-    src = (f"{CONSENSUS_HISTORY_POINT}[{f['coefficient']} x sqrt(staked ETH) / 365 x k={k:.4f}; k = measured "
+    src = (f"{CONSENSUS_HISTORY_POINT}[MODELLED — excluded from scoring: {f['coefficient']} x sqrt(staked ETH) / 365 "
+           f"x k={k:.4f}; k = measured "
            f"Eth2Staking ÷ formula over {len(both)} reading(s) {both.min().date()}..{both.max().date()}, each over "
            f"its own span]")
     view = pd.DataFrame({"date": older.index, "project": "Ethereum", "metric": cm, "value": (older * k).values,
@@ -2254,6 +2259,75 @@ def _near_lockup_views(groups: dict) -> None:
              "tier": 1, "source": srcs}), cols)
 
 
+def _daily(g) -> pd.Series:
+    """A stored or view frame as one value per day (the last row of a day), float."""
+    if g is None or g.empty:
+        return pd.Series(dtype=float, index=pd.DatetimeIndex([]))
+    g = g.assign(date=pd.to_datetime(g["date"]).dt.normalize()).sort_values("date")
+    return g.drop_duplicates("date", keep="last").set_index("date")["value"].astype(float)
+
+
+def _outflow_views(groups: dict) -> None:
+    """THE FIVE OUTFLOW CATEGORIES (Jake 2026-10-12, Phase 2 amendment 3): per project and category (config
+    OUTFLOW_CATEGORIES), outflow_<c>_tokens = the category's series summed per day — a day only where EVERY series in
+    the category has a row (a missing leg is a gap, never a smaller outflow) — and outflow_<c>_usd = that x the day's
+    price. Read-time views; the source names the series and the category's basis is on Config & Sources / METRICS.md."""
+    for p in scoped_projects():
+        name = p["name"]
+        price = _daily(groups.get((name, "price_usd")))
+        for cat in config.OUTFLOW_CATEGORY_NAMES:
+            ms = config.outflow_metrics(name, cat)
+            if not ms:
+                continue
+            legs = [_daily(groups.get((name, m))) for m in ms]
+            if any(leg.empty for leg in legs):
+                continue
+            tot = pd.concat(legs, axis=1).dropna().sum(axis=1)
+            if tot.empty:
+                continue
+            cols = next(g for g in (groups.get((name, m)) for m in ms) if g is not None).columns
+            src = f"derived:outflow_{cat}[{'+'.join(ms)}]"
+            groups[(name, f"outflow_{cat}_tokens")] = _as_stored(pd.DataFrame(
+                {"date": tot.index, "project": name, "metric": f"outflow_{cat}_tokens", "value": tot.values, "tier": 2,
+                 "source": src}), cols)
+            usd = (tot * price.reindex(tot.index)).dropna()
+            if not usd.empty:
+                groups[(name, f"outflow_{cat}_usd")] = _as_stored(pd.DataFrame(
+                    {"date": usd.index, "project": name, "metric": f"outflow_{cat}_usd", "value": usd.values,
+                     "tier": 2, "source": src + "*price"}), cols)
+
+
+def _holder_value_views(groups: dict) -> None:
+    """HOLDER VALUE, FUNDING-AWARE (Jake 2026-10-12, Phase 2 item 3 and LITMUS A): per day, $ retired (retired_buyback_usd,
+    burned + held) + $ distributed (actual_buyback_usd − retired_buyback_usd, the bought tokens paid out) + the declared
+    non-buyback payouts to holders (config HOLDER_VALUE distributed_extra). Each day's BUYBACK value is credited only
+    where its programme was revenue-funded on that day (config.holder_funding) — holder_value_revenue_usd; treasury- or
+    emissions-funded value is recorded as holder_value_other_usd and never credited. A declared payout to holders out of
+    revenue (Aerodrome's voter fees, Sky's USDS to stakers) is credited."""
+    for p in scoped_projects():
+        name = p["name"]
+        act = _daily(groups.get((name, "actual_buyback_usd")))
+        extra = [_daily(groups.get((name, m))) for m in (config.HOLDER_VALUE.get(name) or {}).get("distributed_extra", ())]
+        if act.empty and not any(not e.empty for e in extra):
+            continue
+        # the whole buyback $ = retired (burned + held) + distributed: the funding decides whether it is credited
+        credit, other = {}, {}
+        for d, v in act.items():
+            (credit if config.holder_funding(name, d)[0] == "revenue" else other)[d] = float(v)
+        for e in extra:
+            for d, v in e.items():
+                credit[d] = credit.get(d, 0.0) + float(v)
+        cols = next(g for g in (groups.get((name, m)) for m in ("actual_buyback_usd", "fees_usd", "price_usd"))
+                    if g is not None and not g.empty).columns
+        for metric, vals, src in (("holder_value_revenue_usd", credit, "derived:holder_value[revenue-funded]"),
+                                  ("holder_value_other_usd", other, "derived:holder_value[treasury/emissions-funded]")):
+            if vals:
+                s = pd.Series(vals).sort_index()
+                groups[(name, metric)] = _as_stored(pd.DataFrame(
+                    {"date": s.index, "project": name, "metric": metric, "value": s.values, "tier": 2,
+                     "source": src}), cols)
+
+
 def _unlock_views(groups: dict) -> None:
     """UNLOCK DILUTION (Jake 2026-10-11, decision A2 on 5b87610): tokens RELEASED from the project's non-circulating
     wallets, per day = the fall in their summed stock (config.unlock_stock_metrics) since the previous stored day; a
@@ -2480,7 +2554,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     groups = {k: g for k, g in long.groupby(["project", "metric"])} if not long.empty else {}
     _partial_sum_views(groups)    # FIRST: nothing downstream may read a partial sum
     _price_history_views(groups)  # Q-4 prices: DefiLlama coins before CoinGecko's free 365 days (review item 8b)
-    _consensus_history_views(groups)  # ETH consensus rewards before Etherscan's first read (review item 8c)
+    _consensus_history_views(groups, asof)  # ETH consensus rewards before Etherscan's first read (review 8c)
     _monthly_leg_views(groups)
     _measured_emissions_views(groups)
     _usd_history_views(groups)    # BEFORE the burn total, which sums the leg it extends
@@ -2520,6 +2594,8 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _market_cap_views(groups)     # AFTER the on-chain circulating it may use; BEFORE NRR reads it
     _fdv_views(groups)            # price x the total supply used, where total supply is on-chain first
     _unlock_views(groups)         # releases from the non-circulating wallets (Jake 2026-10-11, A2)
+    _outflow_views(groups)        # Phase 2: the five outflow categories, tokens and $ (after unlocks and emissions)
+    _holder_value_views(groups)   # Phase 2: revenue-funded holder value, credited vs recorded (LITMUS A)
     _settlement_views(groups)
     _LAST_GROUPS.clear()
     _LAST_GROUPS.update(groups)       # the views, for Credibility rows that read them (credibility.VIEWS_LONG)
@@ -2856,6 +2932,15 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
             if (name, metric) in review_keys:
                 row["status"] = "review" if row["status"] == "ok" else row["status"]
                 row["note"] = (row["note"] + " | " if row["note"] else "") + "flagged in the Review Queue"
+            # A MODELLED LEG, SAID ON THE ROW (Jake 2026-10-12, Phase 1 follow-up item 2)
+            if g is not None and not g.empty:
+                mod = g[g["source"].astype(str).map(config.is_modelled)]
+                if not mod.empty:
+                    md = pd.to_datetime(mod["date"])
+                    row["note"] = ((row["note"] + " | " if row["note"] else "")
+                                   + f"MODELLED leg {md.min().date()}..{md.max().date()} ({len(mod)} day(s)) — "
+                                   f"{config.MODELLED_POINTS[_measuring_point(str(mod['source'].iloc[0]))]}; "
+                                   f"excluded from any scoring")
             # ================ ALL SEVEN WITHHELD CASES, HANDLED IN ONE PLACE ================
             # A config change guards the WRITE path and cannot touch what is already stored, and
             # aggregate() consults the Gap Report only when the store has NO rows for a key
@@ -3726,8 +3811,10 @@ def _net_guarded(R, r: int, p: dict, iss, burn) -> str:
     nc = p.get("net_change_common_days")
     if nc:                                     # on the days BOTH sides are measured (A5, 2026-10-06)
         return f"=IFERROR({R.D(r, nc['metric'], 'q0')},{NA})"
-    guarded = _guarded_net(R, r, p, config.issuance_basis(name), config.a4_burn_metric(name),
-                           total=f"{iss(r)}-{burn(r, p)}")
+    # EVERY BURN THE SUPPLY SEES (Phase 2 amendment 1, config.a1_burn_metric): Hyperliquid's A4 burn is the Assistance
+    # Fund alone, its net supply change counts the Core burns too
+    bm = config.a1_burn_metric(name)
+    guarded = _guarded_net(R, r, p, config.issuance_basis(name), bm, total=f"{iss(r)}-{R.D(r, bm, 'q0')}")
     if not p.get("self_reported_net_mint"):
         return guarded
     sr = R.D(r, "net_mint_monthly", "q0")
@@ -3748,7 +3835,7 @@ def _net_annual_pct(R, r: int, p: dict, circ: str) -> str:
     if nc:                                     # annualised over the days both sides are measured (A5)
         m = nc["metric"]
         return f"=IFERROR({_annualise(R, r, p, m, R.D(r, m, 'q0'))}/({circ}),{NA})"
-    im, bm = config.issuance_basis(name), config.a4_burn_metric(name)
+    im, bm = config.issuance_basis(name), config.a1_burn_metric(name)
     derived = (f"({_annualise(R, r, p, im, R.D(r, im, 'q0'))}-"
                f"{_annualise(R, r, p, bm, R.D(r, bm, 'q0'))})/({circ})")
     # THE SAME EQUAL-COVERAGE GUARD AS THE NET TOTAL BESIDE IT (Jake's sanity run 2026-10-11, mixed_windows:
@@ -4202,11 +4289,12 @@ def _a4_headline(R: Refs, burn, data_by_key: dict | None = None) -> list[tuple]:
         ("Q0 WINDOW CAVEAT — read before the yield and crossover",
          lambda r, p: _a4_window_caveat(p, data_by_key or {}), FMT_TEXT, "text", True),
         ("NET SUPPLY CHANGE Q0 (tokens) — self-reported where published, else issuance − burn, on the basis to the left",
-         lambda r, p: _zero_issuance(R, r, p, f"-{burn(r, p)}") or _net_guarded(R, r, p, _basis_iss(R, p), burn),
+         lambda r, p: _zero_issuance(R, r, p, f"-{R.D(r, config.a1_burn_metric(p['name']), 'q0')}")
+         or _net_guarded(R, r, p, _basis_iss(R, p), burn),
          FMT_NUM, "calc", True),
         ("NET SUPPLY CHANGE, annualised % of circulating (signed; + is net inflation)",
          lambda r, p: _zero_issuance(
-             R, r, p, f"-{_annualise(R, r, p, config.a4_burn_metric(p['name']), burn(r, p))}/({circ(r, p)})")
+             R, r, p, f"-{_annualise(R, r, p, config.a1_burn_metric(p['name']), R.D(r, config.a1_burn_metric(p['name']), 'q0'))}/({circ(r, p)})")
          or _net_annual_pct(R, r, p, circ(r, p)), FMT_PCT, "calc", True),
     ]
 
@@ -4493,7 +4581,7 @@ def _net_inflation(R: Refs, r: int, p: dict) -> str:
     """Net supply change, annualised, as a fraction of circulating — A4's headline, which Master's 'Net supply change,
     annualised % of circulating' shows (cross-tab linked): the same expression for Total Yield (decision 9)."""
     circ = _circ(R, r, p)
-    bm = config.a4_burn_metric(p["name"])
+    bm = config.a1_burn_metric(p["name"])
     return (_zero_issuance(R, r, p, f"-{_annualise(R, r, p, bm, R.D(r, bm, 'q0'))}/({circ})")
             or _net_annual_pct(R, r, p, circ))
 
@@ -5506,6 +5594,9 @@ def _confidence_tally(ws, row: int, projects: list[dict], specs: list[tuple], da
 # ---------------------------------------------------------------------------------------
 # CREDIBILITY (Jake, 2026-10-05): every headline cell on A1-A4 beside an independent reference.
 # ---------------------------------------------------------------------------------------
+# THE TABS WHOSE BOLD FIGURES ARE HEADLINES (Credibility, Trajectory, the snapshot, cross-tab): A1-A4 and, from Phase 2
+# (Jake 2026-10-12), CP — the comparability layer across every project
+HEADLINE_TABS = ("A1", "A2", "A3", "A4", "CP")
 _HEADLINE_CELLS: list = []          # filled by _write_table while A1-A4 are written
 _TAB_CELLS: dict = {}               # (sheet prefix "A1".."A4", project, header) -> (sheet title, coordinate)
 CREDIBILITY_ROWS: list = []         # the Credibility tab's rows, in tab order (credibility_report.py --roots)
@@ -5516,6 +5607,10 @@ CREDIBILITY_ROWS: list = []         # the Credibility tab's rows, in tab order (
 HEADLINE_IDS = (
     ("A1", "VALIDATOR STAKING YIELD", "a1_validator_yield"),
     ("A1", "TOTAL YIELD — stakers", "a1_total_yield_stakers"),
+    ("A1", "NET ISSUANCE AFTER BURN, annualised", "a1_net_issuance_pct"),
+    ("A1", "NET ISSUANCE AFTER BURN Q0", "a1_net_issuance"),
+    ("A1", "Gross burn Q0 (tokens) — every burn", "a1_gross_burn"),
+    ("A1", "Gross issuance Q0 (tokens)", "a1_gross_issuance"),
     ("A1", "NRR ON SETTLEMENT VOLUME", "a1_nrr_settlement"),
     ("A1", "NRR ON TRADING THROUGHPUT", "a1_nrr_throughput"),
     ("A1", "TVL", "a1_tvl"),
@@ -5541,6 +5636,10 @@ HEADLINE_IDS = (
     ("A4", "GROSS BURN Q0", "a4_gross_burn"),
     ("A4", "GROSS ISSUANCE Q0", "a4_gross_issuance"),
     ("A4", "Pool release Q0", "a4_pool_release"),
+    ("CP", "TRADEABLE FLOAT", "cp_float"),
+    ("CP", "HOLDER VALUE YIELD", "cp_hvy"),
+    ("CP", "NET HOLDER YIELD", "cp_nhy"),
+    ("CP", "SUBSIDY COVER", "cp_subsidy_cover"),
 )
 
 
@@ -5558,7 +5657,7 @@ def _traj_hid(title: str, spec: tuple) -> str | None:
     meta = spec[5] if len(spec) > 5 else {}
     if title == "Master":
         return trajectory.master_id(head) if head in config.TRAJECTORY["master_headers"] else None
-    if title[:2] not in ("A1", "A2", "A3", "A4") or kind not in ("calc", "pull"):
+    if title[:2] not in HEADLINE_TABS or kind not in ("calc", "pull"):
         return None
     if meta.get("trajectory_id"):
         return meta["trajectory_id"]
@@ -5612,7 +5711,7 @@ def _write_table(ws, R: Refs, projects: list[dict], specs: list[tuple], data_by_
             bold = len(spec) > 4 and spec[4]
             v = builder(r, p)
             c = ws.cell(row=r, column=j, value=v)
-            if ws.title[:2] in ("A1", "A2", "A3", "A4"):
+            if ws.title[:2] in HEADLINE_TABS:
                 _TAB_CELLS[(ws.title[:2], p["name"], head)] = (ws.title, c.coordinate)
             _style(c, kind, fmt, bold)
             if kind in ("calc", "pull") and bold:
@@ -5632,7 +5731,7 @@ def _write_table(ws, R: Refs, projects: list[dict], specs: list[tuple], data_by_
                 closed = None               # one ROUTE was closed; the figure itself is live
             # THE CREDIBILITY TAB READS THIS CELL (Jake, 2026-10-05): every headline figure on A1-A4,
             # by address, so its row there shows exactly what this tab shows.
-            if bold and kind in ("calc", "pull") and ws.title[:2] in ("A1", "A2", "A3", "A4"):
+            if bold and kind in ("calc", "pull") and ws.title[:2] in HEADLINE_TABS:
                 _HEADLINE_CELLS.append({"sheet": ws.title, "project": p["name"], "header": head,
                                         "cell": c.coordinate, "kind": kind, "fmt": fmt,
                                         "id": headline_id(ws.title, head), "metric": meta.get("metric"),
@@ -5659,7 +5758,7 @@ def _write_table(ws, R: Refs, projects: list[dict], specs: list[tuple], data_by_
             # THE TRAJECTORY ROW (theory layer, Phase 1): this cell's own builder, re-run k quarters back (trajectory.py)
             hid = _traj_hid(ws.title, spec)
             orig = getattr(builder, "_orig", builder)
-            if ws.title[:2] in ("A1", "A2", "A3", "A4") and kind in ("calc", "pull") and not meta.get("trend_of"):
+            if ws.title[:2] in HEADLINE_TABS and kind in ("calc", "pull") and not meta.get("trend_of"):
                 trajectory.CELL_SPEC[(ws.title, c.coordinate)] = {
                     "header": head, "hid": hid or headline_id(ws.title, head) or trajectory.slug(head),
                     "builder": orig, "fmt": fmt, "metric": meta.get("metric")}
@@ -5846,13 +5945,16 @@ def write_master(ws, R: Refs, data_by_key: dict):
          lambda r, p: gated(R.C(r, WINDOW_STATUS_COL["q0"]), f"{R.D(r, 'revenue_usd', 'q0')}*{R.C(r, WINDOW_SHARE_COL['q0'])}", R.C(r, WINDOW_SHARE_COL["q0"])),
          FMT_USD, "calc", False, {"gate_window": "q0"}),
         ("Actual buyback Q0 ($) — observed", lambda r, p: pull(R.D(r, "actual_buyback_usd", "q0")), FMT_USD, "pull", False, {"metric": "actual_buyback_usd"}),
-        ("Gross burn Q0 (tokens)", lambda r, p: pull(R.D(r, config.a4_burn_metric(p["name"]), "q0")), FMT_NUM, "pull", False, {"metric_fn": config.a4_burn_metric}),
+        ("Gross burn Q0 (tokens)", lambda r, p: pull(R.D(r, config.a1_burn_metric(p["name"]), "q0")), FMT_NUM, "pull", False, {"metric_fn": config.a1_burn_metric}),
         ("Gross issuance Q0 (tokens)", lambda r, p: pull(R.D(r, "gross_issuance_tokens", "q0")), FMT_NUM, "pull", False, {"metric": "gross_issuance_tokens"}),
         ("NET SUPPLY CHANGE Q0 (tokens) = issuance − burn",
-         lambda r, p: _guarded_net(R, r, p, "gross_issuance_tokens", config.a4_burn_metric(p["name"])), FMT_NUM, "calc", True),
+         lambda r, p: _zero_issuance(R, r, p, f"-{R.D(r, config.a1_burn_metric(p['name']), 'q0')}")
+         or _net_guarded(R, r, p, _basis_iss(R, p), lambda r_, p_, w="q0": R.D(r_, config.a1_burn_metric(p_["name"]), w)),
+         FMT_NUM, "calc", True),
+        # ONE EXPRESSION (_net_inflation, A4's headline and A1's net issuance %): Master shows the same figure whether or
+        # not the project has an A4 row (Phase 2 amendment 1 took the fee-burn chains off A4)
         ("Net supply change, annualised % of circulating",
-         lambda r, p: _coverage_guard(R, r, [("issuance", "gross_issuance_tokens", "q0"), ("burn", config.a4_burn_metric(p["name"]), "q0")],
-                                      f"({_annualise(R, r, p, 'gross_issuance_tokens', R.D(r, 'gross_issuance_tokens', 'q0'))}-{_annualise(R, r, p, config.a4_burn_metric(p['name']), R.D(r, config.a4_burn_metric(p['name']), 'q0'))})/{_circ(R, r, p)}", p=p), FMT_PCT, "calc", True),
+         lambda r, p: _net_inflation(R, r, p), FMT_PCT, "calc", True),
         ("Fees ÷ issuance ($, Q0; issuance at 90d avg price)",
          lambda r, p: _coverage_guard(R, r, [("fees", "fees_usd", "q0"), ("issuance", "gross_issuance_tokens", "q0")],
                                       f"{_flow_rate(R, r, 'fees_usd')}/({_flow_rate(R, r, 'gross_issuance_tokens')}*{R.D(r, 'price_usd', 'q0')})"), FMT_X, "calc"),
@@ -5923,6 +6025,410 @@ def _assert_master_refs(ws) -> None:
         raise CrossTabMismatch("Master disagrees with the A-tabs by construction:\n  " + "\n  ".join(bad))
 
 
+# ===== CP — THE COMPARABILITY LAYER (Jake 2026-10-12, Phase 2: A3/A4 items 1, 3-5, amendments 1-5, LITMUS A-E) =====
+# Raw metrics only: no score, band or leaderboard. One supply definition everywhere — total / max, circulating (our
+# convention: treasury, team / investor unvested, foundation and operating reserves and burned are out; staked is in),
+# TRADEABLE FLOAT = circulating − staked / locked − protocol / treasury-held (zero inside circulating by the convention,
+# so float is A2's free float). Every retirement and dilution rate on BOTH bases; the five outflow categories (config
+# OUTFLOW_CATEGORIES); holder value funding-aware (config HOLDER_VALUE); attributes from phase2_attributes.json.
+CP_FLOAT_HEAD = ("TRADEABLE FLOAT = circulating − staked/locked − protocol/treasury-held (tokens) — protocol/treasury-"
+                 "held is already out of circulating by the convention, so this is A2's free float")
+CP_HVY_HEAD = ("HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed (annualised) ÷ market cap — treasury- or "
+               "emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance")
+CP_NHY_HEAD = ("NET HOLDER YIELD = holder value yield − dilution (outflows a+b+c+e at each day's price, annualised) ÷ "
+               "market cap")
+CP_SUBSIDY_HEAD = "SUBSIDY COVER = revenue ÷ $ supply-side incentives (b), per covered day"
+CP_SUBSIDY_BC_HEAD = "Subsidy cover incl. demand-side = revenue ÷ $ (b + c), per covered day"
+CP_DILUTION_CATS = ("a", "b", "c", "e")
+
+
+def _cp_revenue_metric(p: dict) -> str:
+    """Subsidy cover's numerator: customer revenue where the project has the series (archetype 2's demand), else fees."""
+    return "customer_revenue_usd" if "customer_revenue_usd" in config.metrics_for_project(p) else "fees_usd"
+
+
+def _cp_cats(p: dict, cats=CP_DILUTION_CATS) -> list[str]:
+    return [c for c in cats if config.outflow_metrics(p["name"], c)]
+
+
+def _cp_lock(R: Refs, r, p: dict) -> str:
+    """Staked / locked inside circulating for CP: the declared stake series (config.CP_STAKE_METRIC), else A2's lock."""
+    m = config.CP_STAKE_METRIC.get(p["name"])
+    return R.D(r, m, "now") if m else _ff_lock(R, r, p)
+
+
+def _cp_float_reason(p: dict) -> str | None:
+    return None if p["name"] in config.CP_STAKE_METRIC else _free_float_reason(p)
+
+
+def _cp_float(R: Refs, r, p: dict) -> str:
+    c, lk = _circ(R, r, p), _cp_lock(R, r, p)
+    return f"IF(AND(ISNUMBER({c}),ISNUMBER({lk})),{c}-{lk},{NA})"
+
+
+def _cp_inner(f):
+    return f[1:] if isinstance(f, str) and f.startswith("=") else None
+
+
+def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
+    circ = lambda r, p: _circ(R, r, p)  # noqa: E731
+    flt = lambda r, p: _cp_float(R, r, p)  # noqa: E731
+    mc = lambda r: R.D(r, "market_cap_usd", "now")  # noqa: E731
+
+    def ann(r, p, m):
+        return _annualise(R, r, p, m, R.D(r, m, "q0"))
+
+    def both(label, legs_fn, num_fn, zero_fn=None, blank_fn=None, tid=None):
+        """One rate as two columns: ÷ circulating and ÷ tradeable float."""
+        def mk(den_fn, basis):
+            def build(r, p):
+                if blank_fn and blank_fn(p):
+                    return ""
+                if zero_fn and zero_fn(p):
+                    return "=0"
+                if basis == "float" and _cp_float_reason(p):
+                    return _cp_float_reason(p)
+                d = den_fn(r, p)
+                return _coverage_guard(R, r, legs_fn(p), f"IF(ISNUMBER({d}),({num_fn(r, p)})/({d}),{NA})")
+            return build
+        return [(f"{label} ÷ circulating", mk(circ, "circ"), FMT_PCT, "calc"),
+                (f"{label} ÷ tradeable float", mk(flt, "float"), FMT_PCT, "calc")]
+
+    def has_bb(p):
+        return "retired_buyback_tokens" in config.metrics_for_project(p) or "actual_buyback_tokens" in \
+            config.metrics_for_project(p)
+
+    def burn_m(p):
+        return config.a1_burn_metric(p["name"])
+
+    rates = []
+    rates += both("Retirement rate (RETIRED buyback tokens, burned + held, annualised)",
+                  lambda p: [("buyback", "actual_buyback_tokens", "q0")],
+                  lambda r, p: ann(r, p, "retired_buyback_tokens"),
+                  zero_fn=_retirement_zero, blank_fn=lambda p: not has_bb(p) and not _retirement_zero(p))
+    rates += both("Burn rate (every burn, fee-market included — A1's basis, annualised)",
+                  lambda p: [("burn", burn_m(p), "q0")],
+                  lambda r, p: ann(r, p, burn_m(p)),
+                  blank_fn=lambda p: burn_m(p) not in config.metrics_for_project(p))
+    for c in CP_DILUTION_CATS:
+        nm = config.OUTFLOW_CATEGORY_NAMES[c]
+        rates += both(f"Dilution ({c}) {nm} (annualised)",
+                      lambda p, c=c: [(f"outflow {c}", f"outflow_{c}_tokens", "q0")],
+                      lambda r, p, c=c: ann(r, p, f"outflow_{c}_tokens"),
+                      blank_fn=lambda p, c=c: not config.outflow_metrics(p["name"], c))
+    rates += both("TOTAL DILUTION = outflows a+b+c+e (annualised)",
+                  lambda p: [(f"outflow {c}", f"outflow_{c}_tokens", "q0") for c in _cp_cats(p)],
+                  lambda r, p: "+".join(ann(r, p, f"outflow_{c}_tokens") for c in _cp_cats(p)),
+                  blank_fn=lambda p: not _cp_cats(p))
+
+    outflow_usd = []
+    for c in ("a", "b", "c", "d", "e"):
+        nm = config.OUTFLOW_CATEGORY_NAMES[c]
+        outflow_usd.append((f"Outflow ({c}) {nm} — $ a year (each day's tokens x that day's price, annualised)",
+                            lambda r, p, c=c: "" if not config.outflow_metrics(p["name"], c) else _coverage_guard(
+                                R, r, [(f"outflow {c}", f"outflow_{c}_usd", "q0")], ann(r, p, f"outflow_{c}_usd")),
+                            FMT_USD, "calc"))
+    outflow_usd.append(("Outflow categories — basis and what has no series yet (config OUTFLOW_CATEGORIES)",
+                        lambda r, p: "; ".join(x for x in [
+                            ", ".join(f"({c}) {'+'.join(config.outflow_metrics(p['name'], c))}"
+                                      for c in config.OUTFLOW_CATEGORY_NAMES if config.outflow_metrics(p["name"], c)),
+                            (config.OUTFLOW_CATEGORIES.get(p["name"]) or {}).get("basis", ""),
+                            ("PENDING — " + (config.OUTFLOW_CATEGORIES.get(p["name"]) or {})["pending"])
+                            if (config.OUTFLOW_CATEGORIES.get(p["name"]) or {}).get("pending") else ""] if x)
+                        or ("held — GEODNET waits on Jake's CL output" if p["name"] == "GEODNET"
+                            else "no outflow category assigned"), FMT_TEXT, "text"))
+
+    def subsidy(cats):
+        def build(r, p):
+            got = [c for c in cats if config.outflow_metrics(p["name"], c)]
+            if "b" not in got:
+                return "" if not got else "n/a — no supply-side incentives (b) on file"
+            rv = _cp_revenue_metric(p)
+            legs = [("revenue", rv, "q0")] + [(f"outflow {c}", f"outflow_{c}_usd", "q0") for c in got]
+            den = "+".join(_flow_rate(R, r, f"outflow_{c}_usd") for c in got)
+            return _coverage_guard(R, r, legs, f"{_flow_rate(R, r, rv)}/({den})")
+        return build
+
+    def hv_has(p):
+        return "holder_value_revenue_usd" in config.metrics_for_project(p)
+
+    def hvy_expr(r, p):
+        v = R.D(r, "holder_value_revenue_usd", "q0")
+        return f"IF(AND(ISNUMBER({v}),ISNUMBER({mc(r)})),{_annualise(R, r, p, 'holder_value_revenue_usd', v)}/{mc(r)},{NA})"
+
+    def hvy(r, p):
+        if not hv_has(p):
+            return "n/a — no buyback programme and no declared payout to holders"
+        return _coverage_guard(R, r, [("holder value", "holder_value_revenue_usd", "q0")], hvy_expr(r, p))
+
+    def hv_other(r, p):
+        if "holder_value_other_usd" not in config.metrics_for_project(p):
+            return ""
+        v = R.D(r, "holder_value_other_usd", "q0")
+        return calc(f"IF(ISNUMBER({v}),{_annualise(R, r, p, 'holder_value_other_usd', v)}/{mc(r)},0)")
+
+    def nhy(r, p):
+        if not hv_has(p):
+            return "n/a — no holder value yield"
+        cats = _cp_cats(p)
+        dil = "+".join(ann(r, p, f"outflow_{c}_usd") for c in cats) or "0"
+        legs = [("holder value", "holder_value_revenue_usd", "q0")] + \
+            [(f"outflow {c}", f"outflow_{c}_usd", "q0") for c in cats]
+        return _coverage_guard(R, r, legs, f"({hvy_expr(r, p)})-({dil})/{mc(r)}")
+
+    def funding_text(p):
+        h = config.HOLDER_VALUE.get(p["name"]) or {}
+        parts = [f"{a}..{b or 'now'}: {f} — {w}" for a, b, f, w in h.get("funding") or ()]
+        if h.get("distributed_extra"):
+            parts.append(f"credited payout to holders: {'+'.join(h['distributed_extra'])} ({h.get('extra_why', '')})")
+        if not parts and hv_has(p):
+            parts.append("revenue (default: the programme's documented base)")
+        return "; ".join(parts)
+
+    vyield = next(s for s in _a1_headline(R) if s[0].startswith("VALIDATOR STAKING YIELD"))[1]
+    tyield = _token_yield(R, data_by_key)[1]
+
+    def whole(yfn, lock_fn):
+        def build(r, p):
+            y = _cp_inner(yfn(r, p))
+            lk = lock_fn(r, p)
+            if y is None or lk is None:
+                return ""
+            return calc(f"({y})*({lk})/({circ(r, p)})")
+        return build
+
+    def v_lock(r, p):
+        if not config.VALIDATOR_YIELD.get(p["name"]):
+            return None
+        return R.D(r, config.VALIDATOR_YIELD[p["name"]].get("stake_metric") or "locked_tokens", "now")
+
+    def t_lock(r, p):
+        spec = config.PROTOCOL_YIELD.get(p["name"])
+        if not spec:
+            return None
+        base = R.D(r, spec["lock"], "now")
+        if spec.get("lock_add"):
+            add = R.D(r, spec["lock_add"], "now")
+            base = f"({base}+IF(ISNUMBER({add}),{add},0))"
+        return base
+
+    def payout(base_fn, why_same=None):
+        def build(r, p):
+            if not hv_has(p):
+                return ""
+            rv = base_fn(p)
+            if why_same and rv == "fees_usd":
+                return why_same
+            return _coverage_guard(R, r, [("holder value", "holder_value_revenue_usd", "q0"), ("revenue", rv, "q0")],
+                                   f"{_flow_rate(R, r, 'holder_value_revenue_usd')}/{_flow_rate(R, r, rv)}")
+        return build
+
+    def insider(r, p):
+        spec = config.INSIDER_LOCK.get(p["name"])
+        if not spec:
+            return ""
+        n, d = R.D(r, spec[0], "now"), R.D(r, spec[1], "now")
+        return calc(f"IF(AND(ISNUMBER({n}),ISNUMBER({d}),{d}>0),{n}/{d},{NA})")
+
+    def disc_tokens(r, p):
+        spec = config.DISCRETIONARY_SUPPLY.get(p["name"])
+        if not spec:
+            return ""
+        return calc("+".join(R.D(r, m, "now") for m in spec[0]))
+
+    def disc_pct(r, p):
+        spec = config.DISCRETIONARY_SUPPLY.get(p["name"])
+        if not spec:
+            return ""
+        return calc(f"({'+'.join(R.D(r, m, 'now') for m in spec[0])})/({circ(r, p)})")
+
+    def caps_text(p):
+        cap = config.HOLDING_CAPS.get(p["name"])
+        if not cap:
+            return ""
+        rd = cap.get("reading")
+        util = f"; {rd[1] / cap['cap_tokens']:.1%} of the cap on {rd[0]} ({rd[2]})" if rd else ""
+        return f"{cap['component']}: cap {cap['cap_tokens']:,.0f}{util}. Source: {cap['source']}"
+
+    def supplier(r, p):
+        rb = config.revenue_base_metric(p["name"])
+        if rb == "fees_usd":
+            return "n/a — the project's revenue basis is gross fees (nothing is paid to suppliers out of them on our basis)"
+        return _coverage_guard(R, r, [("fees", "fees_usd", "q0"), ("revenue", rb, "q0")],
+                               f"1-{_flow_rate(R, r, rb)}/{_flow_rate(R, r, 'fees_usd')}")
+
+    def retention(p):
+        rows = [t for t in config.RETENTION_TESTS if t["project"] == p["name"]]
+        return "; ".join(f"{t['programme']} (ended {t['ended']}) — {t['series']}: 30d after ÷ 30d before "
+                         f"{t['after_30d']:.2f}, latest ÷ before {t['latest']:.2f} ({t['endpoint']})" for t in rows)
+
+    attr = lambda what: (lambda r, p: config.phase2_attribute_text(p["name"], what))  # noqa: E731
+    return [
+        ("Project", lambda r, p: p["name"], FMT_TEXT, "text"),
+        ("Symbol", lambda r, p: p["symbol"], FMT_TEXT, "text"),
+        ("Market cap ($)", lambda r, p: pull(mc(r)), FMT_USD, "pull", False, {"metric": "market_cap_usd"}),
+        # ---- SUPPLY LAYERS (item 1) ----
+        ("Max supply (tokens)", lambda r, p: pull(R.D(r, "max_supply", "now")), FMT_NUM, "pull", False, {"metric": "max_supply"}),
+        ("Total supply (tokens)", lambda r, p: pull(R.D(r, "total_supply", "now")), FMT_NUM, "pull", False, {"metric": "total_supply"}),
+        ("Circulating supply (tokens) — our convention, the figure in use", lambda r, p: pull(circ(r, p)), FMT_NUM,
+         "pull", False, {"metric": "circulating_supply_used"}),
+        ("Staked / locked inside circulating (tokens)",
+         lambda r, p: _cp_float_reason(p) or calc(_cp_lock(R, r, p)), FMT_NUM, "calc", False,
+         {"metric_fn": lambda n: config.CP_STAKE_METRIC.get(n, "locked_tokens")}),
+        (CP_FLOAT_HEAD, lambda r, p: _cp_float_reason(p) or calc(flt(r, p)), FMT_NUM, "calc", True,
+         {"metric_fn": lambda n: config.CP_STAKE_METRIC.get(n, "locked_tokens"),
+          "partial_fn": lambda p: config.lock_partial_reason(p["name"]),
+          "partial_direction": "the lock figure is incomplete, so TRADEABLE FLOAT READS HIGH.",
+          "partial_fmt": '#,##0" PARTIAL↑";(#,##0)" PARTIAL↑"'}),
+        ("Tradeable float ÷ circulating", lambda r, p: _cp_float_reason(p) or calc(f"({flt(r, p)})/({circ(r, p)})"),
+         FMT_PCT, "calc"),
+        # ---- EVERY RETIREMENT AND DILUTION RATE ON BOTH BASES (item 1) ----
+        *rates,
+        # ---- THE FIVE OUTFLOW CATEGORIES IN $ (amendment 3) ----
+        *outflow_usd,
+        # ---- SUBSIDY COVER (item 5, amendment 3) ----
+        ("Subsidy cover — revenue basis", lambda r, p: _cp_revenue_metric(p) if _cp_cats(p, ("b", "c")) else "",
+         FMT_TEXT, "text"),
+        (CP_SUBSIDY_HEAD, subsidy(("b",)), FMT_X, "calc", True, {"metric": "outflow_b_usd"}),
+        (CP_SUBSIDY_BC_HEAD, subsidy(("b", "c")), FMT_X, "calc"),
+        # ---- HOLDER VALUE (item 3, LITMUS A) ----
+        (CP_HVY_HEAD, hvy, FMT_PCT, "calc", True, {"metric": "holder_value_revenue_usd"}),
+        ("Holder value RECORDED, NOT CREDITED (treasury / emissions-funded) ÷ market cap", hv_other, FMT_PCT, "calc"),
+        ("Holder value funding by period (config HOLDER_VALUE)", lambda r, p: funding_text(p), FMT_TEXT, "text"),
+        (CP_NHY_HEAD, nhy, FMT_PCT, "calc", True, {"metric": "holder_value_revenue_usd"}),
+        # ---- STAKER YIELD vs WHOLE-TOKEN YIELD (item 3) ----
+        ("Staker yield — validator (A1)", lambda r, p: vyield(r, p), FMT_PCT, "calc"),
+        ("Whole-token yield — validator = staker yield × staked share (locked ÷ circulating, now)",
+         whole(vyield, v_lock), FMT_PCT, "calc"),
+        ("Staker yield — protocol, tokens (A3)", lambda r, p: tyield(r, p), FMT_PCT, "calc"),
+        ("Whole-token yield — protocol = staker yield × reward-bearing stake ÷ circulating (now)",
+         whole(tyield, t_lock), FMT_PCT, "calc"),
+        ("Lock terms per yield — lock / unstake / liquid wrapper", attr("lock_terms"), FMT_TEXT, "text"),
+        ("Payout currency per yield", attr("payout_currency"), FMT_TEXT, "text"),
+        # ---- PAYOUT RATIO (item 3) ----
+        ("Payout ratio — gross = credited holder value ÷ fees", payout(lambda p: "fees_usd"), FMT_PCT, "calc"),
+        ("Payout ratio — the project's own net basis = credited holder value ÷ revenue (config revenue basis)",
+         payout(lambda p: config.revenue_base_metric(p["name"]), "n/a — the project's net basis is gross fees (as left)"),
+         FMT_PCT, "calc"),
+        # ---- ATTRIBUTES (amendments 2 and 5: never penalties) ----
+        ("Destination durability (burn / held-timelocked / held-discretionary)", attr("destination"), FMT_TEXT, "text"),
+        ("Mechanism certainty + dated log of changes", attr("certainty"), FMT_TEXT, "text"),
+        ("CAPTURE STATUS + switch power + dated switch signals", attr("capture"), FMT_TEXT, "text"),
+        ("Insider share of staked / locked supply", insider, FMT_PCT, "calc"),
+        ("Insider share — what is divided", lambda r, p: (config.INSIDER_LOCK.get(p["name"]) or ("", "", ""))[2],
+         FMT_TEXT, "text"),
+        # ---- DEMAND (LITMUS B; lock rate on the demand side, amendment 5) ----
+        ("Holding demand — lock rate = locked ÷ circulating",
+         lambda r, p: calc(f"{R.D(r, config.lock_display_metric(p['name']), 'now')}/({circ(r, p)})"), FMT_PCT, "calc"),
+        ("Holding demand — components and caps (cap utilisation where read)",
+         lambda r, p: "; ".join(x for x in [caps_text(p), config.phase2_attribute_text(p["name"], "holding_demand")
+                                            if p["name"] in config.PHASE2_ATTRIBUTES else ""] if x), FMT_TEXT, "text"),
+        ("Flow demand — buyback $ (every funding source, annualised) ÷ market cap",
+         lambda r, p: "" if "actual_buyback_usd" not in config.metrics_for_project(p) else _coverage_guard(
+             R, r, [("buyback", "actual_buyback_usd", "q0")], f"{ann(r, p, 'actual_buyback_usd')}/{mc(r)}"),
+         FMT_PCT, "calc"),
+        # ---- DISCRETIONARY SUPPLY (LITMUS C) ----
+        ("Discretionary supply (tokens) — issuer-side wallets with no published release schedule", disc_tokens,
+         FMT_NUM, "calc"),
+        ("Discretionary supply ÷ circulating", disc_pct, FMT_PCT, "calc"),
+        ("Discretionary supply — which wallets", lambda r, p: (config.DISCRETIONARY_SUPPLY.get(p["name"]) or ((), ""))[1],
+         FMT_TEXT, "text"),
+        # ---- SUPPLIER PAYOUT (LITMUS D) and RETENTION (LITMUS E) ----
+        ("Supplier payout per $ of fees = (fees − revenue) ÷ fees, per covered day", supplier, FMT_PCT, "calc"),
+        ("Post-incentive retention (LITMUS E) — usage after ÷ before the programme ended",
+         lambda r, p: retention(p), FMT_TEXT, "text"),
+        ("Subsidy targeting by pool — route (probed, not yet wired)",
+         lambda r, p: config.SUBSIDY_TARGETING_ROUTES.get(p["name"], ""), FMT_TEXT, "text"),
+        ("Attributes NOT established (research of 2026-10-12)", attr("unverified"), FMT_TEXT, "text"),
+    ]
+
+
+def write_cp(ws, R: Refs, data_by_key: dict):
+    projects = scoped_projects()
+    _title(ws, "CP — Comparability", "One supply definition for every project: circulating (our convention) and "
+                                     "TRADEABLE FLOAT = circulating − staked/locked − protocol/treasury-held. Every "
+                                     "retirement and dilution rate on both. The five outflow categories (a security "
+                                     "emissions, b supply-side, c demand-side, d ecosystem / grants, e unlocks), "
+                                     "subsidy cover, holder value yield (revenue-funded only) and net holder yield, "
+                                     "staker vs whole-token yield, and the attributes (lock terms, payout currency, "
+                                     "destination, mechanism certainty, capture status) — attributes, never "
+                                     "penalties. RAW METRICS ONLY: no scores, bands or leaderboards.")
+    specs = _cp_cols(R, data_by_key)
+    end = _write_table(ws, R, projects, specs, data_by_key,
+                       ["market_cap_usd", "circulating_supply", "locked_tokens", "fees_usd"],
+                       key_cols=_key_cols(specs, "TRADEABLE FLOAT", "HOLDER VALUE YIELD", "NET HOLDER YIELD",
+                                          "SUBSIDY COVER"))
+    _confidence_tally(ws, end + 2, projects, specs, data_by_key)
+    _set_widths(ws, _widths(specs))
+    return projects, end
+
+
+def _a4_phase2_cols(R: Refs) -> list[tuple]:
+    """A4 ADDITIONS (Jake 2026-10-12, Phase 2 item 4): cumulative burn as % of max supply; the fees at which burn meets
+    issuance at the measured burn share (revenue required for crossover); the governance lever — the burn share of fees
+    that reaches crossover on today's fees and issuance, with no growth; the burn split by source (every burn on A1 vs
+    the A4 burn: the difference is the fee-market / other burn); the treasury governance could redeploy (config
+    DISCRETIONARY_SUPPLY). Burn in tokens and $ beside issuance in tokens is the GROSS BURN / ISSUANCE block above."""
+    def a4b(p):
+        return config.a4_burn_metric(p["name"])
+
+    def iss_m(p):
+        return config.issuance_basis(p["name"])
+
+    def cum(r, p):
+        if "burn_address_balance" not in config.metrics_for_project(p):
+            return "n/a — no cumulative burn stock (burn_address_balance) on file"
+        b, mx = R.D(r, "burn_address_balance", "now"), R.D(r, "max_supply", "now")
+        return calc(f"IF(AND(ISNUMBER({mx}),{mx}>0),{b}/{mx},{NA})")
+
+    def legs(p):
+        return [("burn", a4b(p), "q0"), ("issuance", iss_m(p), "q0"), ("fees", "fees_usd", "q0")]
+
+    def required(r, p):
+        if p.get("issuance_declared_zero"):
+            return "n/a — no issuance: burn needs no revenue to exceed it"
+        return _coverage_guard(R, r, legs(p),
+                               f"{_flow_rate(R, r, 'fees_usd')}*{_flow_rate(R, r, iss_m(p))}"
+                               f"/{_flow_rate(R, r, a4b(p), p=p)}*{G('days_per_year')}")
+
+    def lever(r, p):
+        if p.get("issuance_declared_zero"):
+            return "n/a — no issuance"
+        px = R.D(r, "price_usd", "q0")
+        return _coverage_guard(R, r, [("issuance", iss_m(p), "q0"), ("fees", "fees_usd", "q0")],
+                               f"{_flow_rate(R, r, iss_m(p))}*{px}/{_flow_rate(R, r, 'fees_usd')}")
+
+    def split(r, p):
+        a1, a4 = config.a1_burn_metric(p["name"]), a4b(p)
+        if a1 == a4:
+            return ""
+        return _coverage_guard(R, r, [("every burn", a1, "q0"), ("A4 burn", a4, "q0")],
+                               f"{R.D(r, a1, 'q0')}-{R.D(r, a4, 'q0')}", same_span=True)
+
+    def split_text(p):
+        a1, a4 = config.a1_burn_metric(p["name"]), a4b(p)
+        return (f"A4 burn = {a4}; every burn (A1) = {a1}" + ("" if a1 == a4 else
+                "; the difference is the burn outside the A4 mechanism (fee-market / other)"))
+
+    def disc(r, p, usd=False):
+        spec = config.DISCRETIONARY_SUPPLY.get(p["name"])
+        if not spec:
+            return ""
+        t = "+".join(R.D(r, m, "now") for m in spec[0])
+        return calc(f"({t})*{R.D(r, 'price_usd', 'now')}" if usd else t)
+    return [
+        ("Cumulative burn ÷ max supply", cum, FMT_PCT, "calc"),
+        ("Revenue required for crossover ($ fees a year) = fees × issuance ÷ burn, per covered day — at the measured "
+         "burn share", required, FMT_USD, "calc"),
+        ("Governance lever = burn share of fees that reaches crossover with no growth (issuance $ ÷ fees)", lever,
+         FMT_PCT, "calc"),
+        ("Burn split Q0 (tokens): every burn − the A4 burn", split, FMT_NUM, "calc"),
+        ("Burn split — by source", lambda r, p: split_text(p), FMT_TEXT, "text"),
+        ("Treasury governance could redeploy (tokens) — discretionary issuer-side wallets", disc, FMT_NUM, "calc"),
+        ("Treasury governance could redeploy ($, spot)", lambda r, p: disc(r, p, usd=True), FMT_USD, "calc"),
+    ]
+
+
 def write_a4(ws, R: Refs, data_by_key: dict):
     projects = [p for p in scoped_projects() if 4 in p["archetypes"]]
     _title(ws, "A4 — Permanent Burn", "Gross burn, gross issuance and NET supply change side by side. Where the protocol publishes net mint itself "
@@ -5977,9 +6483,9 @@ def write_a4(ws, R: Refs, data_by_key: dict):
             x for x in ["net mint" if p.get("self_reported_net_mint") else "",
                         "burn" if p.get("self_reported_burn") else ""] if x), FMT_TEXT, "text"),
         ("Derived net supply change (issuance − burn), for comparison",
-         lambda r, p: _guarded_net(R, r, p, "gross_issuance_tokens", config.a4_burn_metric(p["name"])), FMT_NUM, "calc"),
+         lambda r, p: _guarded_net(R, r, p, "gross_issuance_tokens", config.a1_burn_metric(p["name"])), FMT_NUM, "calc"),
         ("Self-reported − derived (a gap here means one of the two is wrong)",
-         lambda r, p: _guarded_net(R, r, p, "gross_issuance_tokens", config.a4_burn_metric(p["name"]),
+         lambda r, p: _guarded_net(R, r, p, "gross_issuance_tokens", config.a1_burn_metric(p["name"]),
                                    total=f"{R.D(r, 'net_mint_monthly', 'q0')}-({iss(r)}-{burn(r, p)})"), FMT_NUM, "calc"),
         ("Net supply change ($ at avg price)",
          lambda r, p: _price_net(_net_guarded(R, r, p, _basis_iss(R, p), burn), price(r)), FMT_USD, "calc"),
@@ -5988,6 +6494,7 @@ def write_a4(ws, R: Refs, data_by_key: dict):
                                       f"{_flow_rate(R, r, config.a4_burn_metric(p['name']), p=p)}*{price(r)}/{_flow_rate(R, r, 'fees_usd')}"),
          FMT_PCT, "calc"),
         ("Issuance as % of supply (annualised)", lambda r, p: calc(f"{_annualise(R, r, p, 'gross_issuance_tokens', iss(r))}/{R.D(r, 'circulating_supply', 'now')}"), FMT_PCT, "calc"),
+        *_a4_phase2_cols(R),
         ("Implied burn Q0 (tokens) = fees × documented share ÷ avg price",
          lambda r, p: gated(R.C(r, "Burn split status"), f"{R.D(r, 'fees_usd', 'q0')}*{R.C(r, 'Share of fees burned')}/{price(r)}", R.C(r, 'Share of fees burned')), FMT_NUM, "calc", False, {"gate": "burn_split"}),
         ("Actual − implied burn (tokens)", lambda r, p: circular_gated(p, gated(R.C(r, "Burn split status"), _coverage_guard(
@@ -5998,9 +6505,9 @@ def write_a4(ws, R: Refs, data_by_key: dict):
          if p.get("supply_is_partial") else "", FMT_TEXT, "text"),
         ("Cross-check: Δ implied circulating supply Q0 vs Q1 (CoinGecko mcap ÷ price)",
          lambda r, p: calc(f"{R.D(r, 'circulating_supply_implied', 'q0')}-{R.D(r, 'circulating_supply_implied', 'q1')}"), FMT_NUM, "calc"),
-        ("Net supply change Q1 (tokens, −3m window)", lambda r, p: _guarded_net(R, r, p, "gross_issuance_tokens", config.a4_burn_metric(p["name"]), "q1"), FMT_NUM, "calc"),
-        ("Net supply change Q2 (−6m window)", lambda r, p: _guarded_net(R, r, p, "gross_issuance_tokens", config.a4_burn_metric(p["name"]), "q2"), FMT_NUM, "calc"),
-        ("Net supply change Q3 (−9m window)", lambda r, p: _guarded_net(R, r, p, "gross_issuance_tokens", config.a4_burn_metric(p["name"]), "q3"), FMT_NUM, "calc"),
+        ("Net supply change Q1 (tokens, −3m window)", lambda r, p: _guarded_net(R, r, p, "gross_issuance_tokens", config.a1_burn_metric(p["name"]), "q1"), FMT_NUM, "calc"),
+        ("Net supply change Q2 (−6m window)", lambda r, p: _guarded_net(R, r, p, "gross_issuance_tokens", config.a1_burn_metric(p["name"]), "q2"), FMT_NUM, "calc"),
+        ("Net supply change Q3 (−9m window)", lambda r, p: _guarded_net(R, r, p, "gross_issuance_tokens", config.a1_burn_metric(p["name"]), "q3"), FMT_NUM, "calc"),
         *_trajectory(R, config.a4_burn_metric, "Burn"),
         *_trajectory(R, "gross_issuance_tokens", "Issuance"),
         # FOOTNOTES FIRST: burned SKY that is deliberately NOT in any burn column above
@@ -6271,7 +6778,7 @@ def write_a1(ws, R: Refs, data_by_key: dict, months: list[str]):
         ("RWA on chain — DefiLlama RWA category ($)", lambda r, p: pull(R.D(r, "rwa_defillama_usd", "now")), FMT_USD, "pull", False, {"metric": "rwa_defillama_usd"}),
         # RWA.xyz columns REMOVED 2026-09-28: rwa_xyz_usd was retired as covered by
         # rwa_defillama_usd and is not in METRICS, so these lookups were #N/A on every row.
-        ("Gross issuance Q0 (tokens)", lambda r, p: pull(iss(r)), FMT_NUM, "pull", False, {"metric": "gross_issuance_tokens"}),
+        ("Gross issuance Q0 (tokens)", lambda r, p: pull(iss(r)), FMT_NUM, "pull", True, {"metric": "gross_issuance_tokens"}),
         ("Price — 90d average ($)", lambda r, p: pull(price(r)), FMT_USD4, "pull", False, {"metric": "price_usd"}),
         ("Gross issuance Q0 ($ at avg price)", lambda r, p: calc(f"{iss(r)}*{price(r)}"), FMT_USD, "calc"),
         ("Issuance as % of supply (annualised)", lambda r, p: calc(f"{_annualise(R, r, p, 'gross_issuance_tokens', iss(r))}/{circ(r)}"), FMT_PCT, "calc"),
@@ -6282,10 +6789,16 @@ def write_a1(ws, R: Refs, data_by_key: dict, months: list[str]):
         ("Resulting float = circulating − staked", lambda r, p: calc(f"{circ(r)}-{R.D(r, 'locked_tokens', 'now')}"), FMT_NUM, "calc"),
         # THE HEADLINE BURN, as A4 reads it (Jake's review of 97b29ae, item 5: NEAR's Master 61,580 vs A1 69,238 were two
         # series; the headline is config.a4_burn_metric — for NEAR the chain's record, Jake's run 2026-10-08)
-        ("Gross burn Q0 (tokens, A4 names)", lambda r, p: pull(R.D(r, config.a4_burn_metric(p["name"]), "q0")), FMT_NUM, "pull", False, {"metric_fn": config.a4_burn_metric}),
-        ("Net issuance after burn (tokens) — burn subtracted only where a burn series exists",
-         lambda r, p: _guarded_net(R, r, p, "gross_issuance_tokens", config.a4_burn_metric(p["name"]),
-                                   total=f"IF(ISNUMBER({R.D(r, config.a4_burn_metric(p['name']), 'q0')}),{iss(r)}-{R.D(r, config.a4_burn_metric(p['name']), 'q0')},{iss(r)})"), FMT_NUM, "calc"),
+        # EVERY BURN, fee-market burns included (Phase 2 amendment 1: they come off A4 and feed net issuance here)
+        ("Gross burn Q0 (tokens) — every burn, fee-market included", lambda r, p: pull(R.D(r, config.a1_burn_metric(p["name"]), "q0")), FMT_NUM, "pull", True, {"metric_fn": config.a1_burn_metric}),
+        # THE SAME NET AS A4'S HEADLINE (Phase 2 amendment 1: the fee-burn chains' net change lives here now): common days
+        # where declared, self-reported where published, the equal-coverage guard otherwise
+        ("NET ISSUANCE AFTER BURN Q0 (tokens) — issuance − every burn, on the basis A4 uses",
+         lambda r, p: _zero_issuance(R, r, p, f"-{R.D(r, config.a1_burn_metric(p['name']), 'q0')}")
+         or _net_guarded(R, r, p, _basis_iss(R, p), lambda r_, p_, w="q0": R.D(r_, config.a1_burn_metric(p_["name"]), w)),
+         FMT_NUM, "calc", True),
+        ("NET ISSUANCE AFTER BURN, annualised % of circulating (+ is net inflation; fee-market burns included)",
+         lambda r, p: _net_inflation(R, r, p), FMT_PCT, "calc", True),
         ("FEES ÷ ISSUANCE (x) — key ratio", lambda r, p: _coverage_guard(R, r, [("fees", "fees_usd", "q0"), ("issuance", "gross_issuance_tokens", "q0")],
                                       f"{_flow_rate(R, r, 'fees_usd', 'q0')}/({_flow_rate(R, r, 'gross_issuance_tokens', 'q0')}*{price(r, 'q0')})"), FMT_X, "calc", True),
         ("Fees ÷ issuance at Q1 (−3m window)", lambda r, p: _coverage_guard(R, r, [("fees", "fees_usd", "q1"), ("issuance", "gross_issuance_tokens", "q1")],
@@ -6636,6 +7149,16 @@ def write_credibility(ws, R: Refs, data_by_key: dict, long: pd.DataFrame, asof) 
                      f'"CHECK{tag}")))')
         ws.cell(row=r, column=11, value=v).font = F_BOLD
         note = row.get("note") or ""
+        # A MODELLED LEG UNDER THE HEADLINE (Jake 2026-10-12, Phase 1 follow-up item 2): said on its row
+        if row.get("tab") and row.get("cell") and row["tab"] in ws.parent.sheetnames:
+            hf = ws.parent[row["tab"]][row["cell"]].value
+            mods = sorted(m for m in trajectory.referenced_metrics(hf)
+                          if (g := _LAST_GROUPS.get((row["project"], m))) is not None and not g.empty
+                          and g["source"].astype(str).map(config.is_modelled).any())
+            if mods:
+                note = (f"MODELLED history under this headline ({', '.join(mods)}: config.MODELLED_POINTS) — the "
+                        f"trajectory quarters it covers are excluded from any scoring; Q0 is judged as read"
+                        + (f" | {note}" if note else ""))
         mw = config.AERODROME_MIGRATION_WATCH
         if row["project"] == mw["project"] and row.get("id") in mw["label_rows"] and migration_watch_on(asof):
             note = mw["label"] + (f" | {note}" if note else "")
@@ -7070,6 +7593,12 @@ def write_trajectory(wb, data_by_key: dict, asof=None) -> list[dict]:
                                f"history on the current basis to lift it (RUNBOOK 11bp)")
                     qs = list(qs[:n_clean]) + [None] * (len(qs) - n_clean)
                     step_at = n_clean            # the quarter that holds the break
+        # MODELLED QUARTERS (Jake 2026-10-12, Phase 1 follow-up item 2): shown, and excluded from any scoring
+        modelled = ([] if asof is None or w["independent"] else
+                    trajectory.modelled_quarters(spec["project"]["name"], trajectory.referenced_metrics(w["q0_formula"]),
+                                                 _LAST_GROUPS, asof, int(config.TRAJECTORY["period_days"]), len(qs)))
+        if modelled:
+            why.append(f"MODELLED in {', '.join(modelled)} (config.MODELLED_POINTS) — shown, excluded from any scoring")
         q = trajectory.qoq(qs[0], qs[1])
         # THE GROWTH RULES (item 4): >= 3 quarters, all > 0, one regime — else NEW since / STEP CHANGE at, never a rate
         g, n_g, g_label, why_g = trajectory.growth_rule(qs, step_at)
@@ -7119,7 +7648,9 @@ def write_trajectory(wb, data_by_key: dict, asof=None) -> list[dict]:
                    f"CHECK — Q0 {q0_cell!r} vs the headline cell {headline!r}")
         rec.update({"T12M": t, "T12M basis": t_basis, "QoQ": q, "growth_4q": g, "growth_quarters": n_g,
                     "improved": imp, "comparisons": n_imp, "trough": tr,
+                    "modelled_quarters": modelled,
                     "trend": (f"SERIES BREAK {brk[0].date()} · " if brk_text else "")
+                             + (f"MODELLED {', '.join(modelled)} · " if modelled else "")
                              + (trajectory.lumpy_trend_text(t, t_prev, chg, g, d, g_label) if lumpy else
                                 trajectory.trend_text(q, g, imp, n_imp, d, g_label)),
                     "T12M_prev": t_prev, "direction_basis": dir_basis, "growth_label": g_label,
@@ -7136,6 +7667,7 @@ def write_trajectory(wb, data_by_key: dict, asof=None) -> list[dict]:
                "Trend": rec["trend"], "Benchmark": rec["benchmark"], "Target": target,
                "Years to benchmark": (yrs if yrs is not None else ("n/a" if b else "")), "Why n/a": rec["why"],
                "Series break (basis change)": brk_text,
+               "MODELLED quarters (excluded from any scoring)": ", ".join(modelled),
                "Source tier (headline series)": rec["tier"], "Q0 coverage days (headline series)": rec["q0_coverage"],
                "Credibility (Q0 = headline cell)": verdict, "Headline cell": rec["cell"]}
         for h, v in put.items():
@@ -7276,6 +7808,7 @@ def build_workbook(store, path: Path | str, run_id: str | None = None,
     ws_a2 = wb.create_sheet("A2 Coordination")
     ws_a3 = wb.create_sheet("A3 Revenue Buyback")
     ws_a4 = wb.create_sheet("A4 Permanent Burn")
+    ws_cp = wb.create_sheet("CP Comparability")
     ws_cred = wb.create_sheet("Credibility")
     ws_ch = wb.create_sheet("Charts")
     ws_cfg = wb.create_sheet("Config & Sources")
@@ -7296,6 +7829,7 @@ def build_workbook(store, path: Path | str, run_id: str | None = None,
     a3 = write_a3(ws_a3, R, data_by_key)
     a1 = write_a1(ws_a1, R, data_by_key, months)
     a2 = write_a2(ws_a2, R, data_by_key, months)
+    write_cp(ws_cp, R, data_by_key)            # Phase 2 comparability (2026-10-12): reads no other tab
     # MASTER AFTER THE A-TABS (Jake's review of 97b29ae, 2026-10-11): every Master column that summarises an A-tab
     # figure is a REFERENCE to that A-tab cell, so the headline and the A-tabs cannot disagree (cross_tab.py)
     write_master(ws_master, R, data_by_key)

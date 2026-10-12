@@ -1,0 +1,1111 @@
+{
+ "_meta": {
+  "entered_by": "Claude Code, pending Jake's review",
+  "read_on": "2026-10-12",
+  "what": "Phase 2 per-project ATTRIBUTES (amendments 2 and 5): lock terms and payout currency per yield, destination durability, mechanism certainty with its dated log, capture status with switch power and the dated switch-signals log, holding-demand components and caps. Primary sources, each with its URL; `unverified` lists what is NOT established. Attributes, never penalties. NEAR account ids are not stored. GEODNET held (Jake: wait for the CL output)."
+ },
+ "Ethereum": {
+  "yields": [
+   {
+    "name": "Validator staking (consensus rewards + priority fees/MEV)",
+    "lock_length": "none",
+    "unstake_days": "variable: exit queue 15d 9h + sweep 7.3d (+~27h withdrawability delay) on 2026-10-12",
+    "liquid_wrapper": "y: stETH, rETH, eETH/weETH (many LSTs)",
+    "payout_currency": "hard asset: ETH",
+    "source": "https://www.validatorqueue.com/ ; https://github.com/ethereum/EIPs/blob/fa3915674078b4e79252df34ac9599d4195f11b1/EIPS/eip-7251.md",
+    "read_on": "2026-10-12"
+   }
+  ],
+  "destination": {
+   "value": "burn",
+   "detail": "EIP-1559 base fee destroyed at protocol level; EIP-4844 blob fee also burned. No buyback.",
+   "source": "https://github.com/ethereum/EIPs/blob/fa3915674078b4e79252df34ac9599d4195f11b1/EIPS/eip-1559.md ; https://github.com/ethereum/EIPs/blob/fa3915674078b4e79252df34ac9599d4195f11b1/EIPS/eip-4844.md"
+  },
+  "certainty": {
+   "value": "programmatic-immutable",
+   "source": "https://github.com/ethereum/EIPs/blob/fa3915674078b4e79252df34ac9599d4195f11b1/EIPS/eip-1559.md (changes need a hard fork)"
+  },
+  "mechanism_log": [
+   {
+    "date": "2021-08-05",
+    "event": "London: EIP-1559 base-fee burn live",
+    "source": "https://ethereum.org/en/history/"
+   },
+   {
+    "date": "2022-09-15",
+    "event": "The Merge: issuance moves to PoS validator rewards",
+    "source": "https://ethereum.org/en/history/"
+   },
+   {
+    "date": "2023-04-12",
+    "event": "Shanghai/Capella: staking withdrawals enabled",
+    "source": "https://ethereum.org/en/history/"
+   },
+   {
+    "date": "2024-03-13",
+    "event": "Dencun: EIP-4844 blobs; blob base fee burned",
+    "source": "https://ethereum.org/en/history/ ; https://github.com/ethereum/EIPs/blob/fa3915674078b4e79252df34ac9599d4195f11b1/EIPS/eip-4844.md"
+   },
+   {
+    "date": "2025-05-07",
+    "event": "Pectra: EIP-7251 max effective balance 2048 ETH (min stays 32)",
+    "source": "https://ethereum.org/en/history/ ; https://github.com/ethereum/EIPs/blob/fa3915674078b4e79252df34ac9599d4195f11b1/EIPS/eip-7251.md"
+   },
+   {
+    "date": "2025-12-03",
+    "event": "Fusaka (Osaka) activated",
+    "source": "https://ethereum.org/en/history/"
+   }
+  ],
+  "holding_demand": [
+   {
+    "component": "Validator stake",
+    "cap": "min 32 ETH per validator to activate; max effective balance 2048 ETH; no global cap; churn 256 ETH/epoch",
+    "source": "https://github.com/ethereum/EIPs/blob/fa3915674078b4e79252df34ac9599d4195f11b1/EIPS/eip-7251.md ; https://www.validatorqueue.com/"
+   },
+   {
+    "component": "Gas/fee payment (burned base + blob fee)",
+    "cap": "none",
+    "source": "https://github.com/ethereum/EIPs/blob/fa3915674078b4e79252df34ac9599d4195f11b1/EIPS/eip-1559.md"
+   }
+  ],
+  "capture_status": {
+   "value": "Live",
+   "switch_power": "protocol rules; change only via hard fork (client devs + node operators adopting)",
+   "source": "https://github.com/ethereum/EIPs/blob/fa3915674078b4e79252df34ac9599d4195f11b1/EIPS/eip-1559.md"
+  },
+  "switch_signals": [],
+  "unverified": [
+   "Fusaka-specific fee changes (e.g. blob reserve price) not read from the EIP text",
+   "Glamsterdam (H2 2026) staking-reward changes: ethereum.org lists it as TBD; not live"
+  ]
+ },
+ "Chainlink": {
+  "yields": [
+   {
+    "name": "Staking v0.2 community pool",
+    "lock_length": "none (cooldown model)",
+    "unstake_days": "28 (cooldown) then 7-day claim window; unclaimed re-enters",
+    "liquid_wrapper": "y: stLINK (stake.link, third party)",
+    "payout_currency": "native: LINK (base floor 4.5%/yr, community effective 4.32% at launch)",
+    "source": "https://chain.link/blog/chainlink-staking-v0-2-overview ; https://etherscan.io/address/0xBc10f2E862ED4502144c7d632a3459F49DFCDB5e getUnbondingParams()=(2419200,604800) ; https://www.stakingrewards.com/provider/stakelink",
+    "read_on": "2026-10-12"
+   },
+   {
+    "name": "Staking v0.2 node operator pool",
+    "lock_length": "none (cooldown model)",
+    "unstake_days": "28 + 7-day claim window",
+    "liquid_wrapper": "n",
+    "payout_currency": "native: LINK",
+    "source": "https://chain.link/blog/chainlink-staking-v0-2-overview ; https://etherscan.io/address/0xA1d76A7cA72128541E9FCAcafBdA3a92EF94fDc5",
+    "read_on": "2026-10-12"
+   },
+   {
+    "name": "Chainlink Rewards (Build project tokens to eligible LINK stakers)",
+    "lock_length": "none (eligibility from staking); claims unlock linearly 90d from 2025-12-16 (Season 1)",
+    "unstake_days": "n/a",
+    "liquid_wrapper": "n",
+    "payout_currency": "other tokens: Build-project tokens (e.g. SXT in Season Genesis)",
+    "source": "https://chain.link/blog/chainlink-rewards-season-1",
+    "read_on": "2026-10-12"
+   }
+  ],
+  "destination": {
+   "value": "held-timelocked",
+   "detail": "Chainlink Reserve 0x9A709B7B...eC6 is an RBACTimelock: getMinDelay()=172,800 s (2 days); proposer and bypasser are ManyChainMultiSig contracts; BYPASSER role (0x177a2884) can execute without the delay via bypasserExecuteBatch; 0 blocked selectors; held 6,204,681.79 LINK on 2026-10-12. Chainlink: 'We do not expect any withdrawals from the Reserve for multiple years.' Staking-reward vault is a separate DISTRIBUTE route.",
+   "source": "https://eth.blockscout.com/address/0x9A709B7B69EA42D5eeb1ceBC48674C69E1569eC6 (getMinDelay, getRoleMember) ; https://chain.link/blog/chainlink-reserve-strategic-link-reserve"
+  },
+  "certainty": {
+   "value": "discretionary",
+   "source": "https://chain.link/blog/chainlink-reserve-strategic-link-reserve (funded via Payment Abstraction / 50% of SVR fees; no on-chain rule fixes the share)"
+  },
+  "mechanism_log": [
+   {
+    "date": "2023-11-28",
+    "event": "Staking v0.2 live on mainnet (45M LINK cap; 28d unbonding)",
+    "source": "https://blog.chain.link/chainlink-staking-v0-2-now-live"
+   },
+   {
+    "date": "2023-12-07",
+    "event": "v0.2 Early Access opens (community up to 15,000 LINK)",
+    "source": "https://blog.chain.link/chainlink-staking-v0-2-now-live"
+   },
+   {
+    "date": "2025-05-08",
+    "event": "Chainlink Rewards Season Genesis: 100M SXT claimable by LINK stakers",
+    "source": "https://chain.link/blog/chainlink-rewards-season-1"
+   },
+   {
+    "date": "2025-08-07",
+    "event": "Chainlink Reserve announced/launched; funded by Payment Abstraction + 50% of SVR fees",
+    "source": "https://chain.link/blog/chainlink-reserve-strategic-link-reserve"
+   },
+   {
+    "date": "2025-11-11",
+    "event": "Chainlink Rewards Season 1 starts (9 Build projects)",
+    "source": "https://chain.link/blog/chainlink-rewards-season-1"
+   }
+  ],
+  "holding_demand": [
+   {
+    "component": "Community staking pool",
+    "cap": "40,875,000 LINK max pool (FULL: principal 40,875,000 on 2026-10-12); 1-15,000 LINK per address",
+    "source": "https://chain.link/blog/chainlink-staking-v0-2-overview ; https://etherscan.io/address/0xBc10f2E862ED4502144c7d632a3459F49DFCDB5e getMaxPoolSize()"
+   },
+   {
+    "component": "Node operator staking pool",
+    "cap": "4,125,000 LINK max (principal 1,644,947 on 2026-10-12); 1,000-75,000 per operator; slashable 700 LINK",
+    "source": "https://chain.link/blog/chainlink-staking-v0-2-overview ; https://etherscan.io/address/0xA1d76A7cA72128541E9FCAcafBdA3a92EF94fDc5"
+   },
+   {
+    "component": "Chainlink Reserve accumulation",
+    "cap": "no cap",
+    "source": "https://chain.link/blog/chainlink-reserve-strategic-link-reserve"
+   }
+  ],
+  "capture_status": {
+   "value": "Live",
+   "switch_power": "Chainlink Labs/foundation multisigs (Reserve proposer/bypasser = ManyChainMultiSig); off-chain revenue conversion",
+   "source": "https://chain.link/blog/chainlink-reserve-strategic-link-reserve ; https://eth.blockscout.com/address/0x9A709B7B69EA42D5eeb1ceBC48674C69E1569eC6"
+  },
+  "switch_signals": [
+   {
+    "date": "2023-08-25",
+    "signal": "v0.2 post: pool 'size cap is expected to increase' over time (no date)",
+    "source": "https://chain.link/blog/chainlink-staking-v0-2-overview"
+   }
+  ],
+  "unverified": [
+   "Signers/thresholds of the Reserve's ManyChainMultiSig proposer and bypasser not read",
+   "Current staking reward rate and its funding source (treasury emissions vs revenue) not re-read",
+   "stLINK sourced from a staking aggregator listing, not stake.link docs"
+  ]
+ },
+ "Hyperliquid": {
+  "yields": [
+   {
+    "name": "HYPE validator delegation (staking)",
+    "lock_length": "1-day delegation lockup; validator self-delegation 10k HYPE locked 1 year",
+    "unstake_days": "7 (staking->spot unstaking queue)",
+    "liquid_wrapper": "y: beHYPE (Hyperbeat x ether.fi); others (kHYPE, stHYPE) not verified here",
+    "payout_currency": "native: HYPE from future emissions reserve (~2.37%/yr at 400M staked, inverse-sqrt)",
+    "source": "https://hyperliquid.gitbook.io/hyperliquid-docs/hypercore/staking.md ; https://etherfi.gitbook.io/etherfi/products/staking/behype.md",
+    "read_on": "2026-10-12"
+   }
+  ],
+  "destination": {
+   "value": "burn",
+   "detail": "Assistance Fund (system address 0xfefe...fe, no private key) converts fees to HYPE automatically; docs: 'HYPE in the assistance fund is burned'. Validator stake-weighted vote recognised all past AND future AF HYPE as burned: 85% for / 7% against / 8% not voting, vote closed 2025-12-24 04:00 UTC, result posted 2025-12-24 (~37.1-37.5M HYPE). NOT 27 Dec. Slashed HIP-3 deployer stake is also burned.",
+   "source": "https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees.md ; https://x.com/hyperfnd/status/2001127850754367525 ; https://x.com/HyperFND/status/2003684257949188396 ; https://cointelegraph.com/news/hyperliquid-validators-vote-assistance-fund-supply ; https://radarblock.beehiiv.com/p/raas-567-hyperliquid-burns-900m"
+  },
+  "certainty": {
+   "value": "programmatic-governance-set",
+   "source": "https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees.md (automatic L1 conversion; parameters change by network upgrade/validator vote)"
+  },
+  "mechanism_log": [
+   {
+    "date": "2025-10-13",
+    "event": "HIP-3 builder-deployed perps live on mainnet (500k HYPE deployer stake; protocol fee share to AF)",
+    "source": "https://cointelegraph.com/news/hyperliquid-now-allows-builders-to-deploy-perpetual-futures-contracts ; https://hyperliquid.gitbook.io/hyperliquid-docs/hyperliquid-improvement-proposals-hips/hip-3-builder-deployed-perpetuals.md"
+   },
+   {
+    "date": "2025-12-17",
+    "event": "Hyper Foundation proposes validator vote to treat AF HYPE as burned",
+    "source": "https://x.com/hyperfnd/status/2001127850754367525 ; https://cointelegraph.com/news/hyperliquid-validators-vote-assistance-fund-supply"
+   },
+   {
+    "date": "2025-12-24",
+    "event": "Vote passes (85% stake-weighted); AF HYPE (past and future) recognised as burned",
+    "source": "https://x.com/HyperFND/status/2003684257949188396 ; https://radarblock.beehiiv.com/p/raas-567-hyperliquid-burns-900m"
+   },
+   {
+    "date": "2026-08-26",
+    "event": "AQAv2: ~90% of cost-adjusted reserve yield on aligned stablecoins sent to AF (date from config, not re-verified)",
+    "source": "https://hyperliquid.gitbook.io/hyperliquid-docs/llms-full.txt"
+   }
+  ],
+  "holding_demand": [
+   {
+    "component": "Validator self-delegation",
+    "cap": "10,000 HYPE, locked 1 year",
+    "source": "https://hyperliquid.gitbook.io/hyperliquid-docs/hypercore/staking.md"
+   },
+   {
+    "component": "HIP-3 perp DEX deployer stake",
+    "cap": "500,000 HYPE, maintained >=183 days after deploy; slashable incl. during 7-day queue",
+    "source": "https://hyperliquid.gitbook.io/hyperliquid-docs/hyperliquid-improvement-proposals-hips/hip-3-builder-deployed-perpetuals.md"
+   },
+   {
+    "component": "Permissionless quote-asset deployer stake",
+    "cap": "200,000 HYPE committed 3 years (USDC/USDT exempt)",
+    "source": "https://hyperliquid.gitbook.io/hyperliquid-docs/llms-full.txt"
+   },
+   {
+    "component": "AQAv2 aligned-stablecoin deployers",
+    "cap": "500,000 HYPE treasury deployer + 500,000 HYPE technical deployer; 6-month notice",
+    "source": "https://hyperliquid.gitbook.io/hyperliquid-docs/llms-full.txt"
+   },
+   {
+    "component": "Fee-discount staking tiers",
+    "cap": "Wood >10 (5%) ... Diamond >500,000 HYPE (40%); no cap",
+    "source": "https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees.md"
+   }
+  ],
+  "capture_status": {
+   "value": "Live",
+   "switch_power": "protocol code (L1) + validator stake-weighted votes; Hyper Foundation proposes",
+   "source": "https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees.md ; https://x.com/HyperFND/status/2003684257949188396"
+  },
+  "switch_signals": [
+   {
+    "date": "2025-12-24",
+    "signal": "Foundation: AF HYPE officially counted as burned from circulating and total supply",
+    "source": "https://radarblock.beehiiv.com/p/raas-567-hyperliquid-burns-900m"
+   }
+  ],
+  "unverified": [
+   "Brief/config date '27 Dec 2025' for the AF vote: primary-adjacent sources give 2025-12-24 (vote close 04:00 UTC); X posts themselves not fetched",
+   "Current AF share of fees (config 99%; historical 97-99%) not on current docs page (old assistance-fund page now 404)",
+   "AQAv2 activation date 2026-08-26 taken from config"
+  ]
+ },
+ "Near": {
+  "yields": [
+   {
+    "name": "Validator delegation (staking)",
+    "lock_length": "none",
+    "unstake_days": "~2 (4 epochs x ~12h; docs text says '~24 hours')",
+    "liquid_wrapper": "y: stNEAR (Meta Pool), LiNEAR",
+    "payout_currency": "native: NEAR (inflation; max 2.5%/yr since 2025-10-30)",
+    "source": "https://docs.near.org/protocol/network/staking ; https://rpc.mainnet.near.org (EXPERIMENTAL_protocol_config; view venear.dao get_config) ; https://github.com/houseofstake/proposals/blob/0a0c9ccfc1b693dbd58038a72b337b0fa3042d3d/HSPs/hsp-003.md",
+    "read_on": "2026-10-12"
+   },
+   {
+    "name": "veNEAR (House of Stake) holder rewards",
+    "lock_length": "none fixed; locked in lockup contract (can still be staked to whitelisted pools)",
+    "unstake_days": "45 (unlock_duration_ns = 3.888e15)",
+    "liquid_wrapper": "n",
+    "payout_currency": "native: NEAR (HSP-003 3-month program, 280,682 NEAR budget)",
+    "source": "https://rpc.mainnet.near.org (EXPERIMENTAL_protocol_config; view venear.dao get_config) ; https://github.com/houseofstake/proposals/blob/0a0c9ccfc1b693dbd58038a72b337b0fa3042d3d/HSPs/hsp-003.md",
+    "read_on": "2026-10-12"
+   }
+  ],
+  "destination": {
+   "value": "held-discretionary",
+   "detail": "Intents fees swapped to NEAR into DAO/multisig wallets (account ids not stored); DefiLlama: bought 'on the open market (not burned)'. NEAR's page says 'permanently remove NEAR from circulation' but no burn tx/contract found. Separate 70% gas-fee burn is protocol-level.",
+   "source": "https://api.llama.fi/summary/fees/near-intents?dataType=dailyHoldersRevenue ; https://revenue.near.org/"
+  },
+  "certainty": {
+   "value": "discretionary",
+   "source": "https://revenue.near.org/ ; https://api.llama.fi/summary/fees/near-intents?dataType=dailyHoldersRevenue"
+  },
+  "mechanism_log": [
+   {
+    "date": "2025-08-01",
+    "event": "Community vote on halving closes; fails 66.67% threshold (45.06%)",
+    "source": "https://crypto.news/near-protocol-halves-inflation-rate-despite-failing-approval-threshold/"
+   },
+   {
+    "date": "2025-10-21",
+    "event": "nearcore 2.9.0 (protocol v81) released: max inflation 5% -> 2.5%, activates at 80% stake",
+    "source": "https://blog.nearone.org/announcement/2025/10/21/enhancing-near-tokenomics.html"
+   },
+   {
+    "date": "2025-10-30",
+    "event": "Inflation halving live (5% -> 2.5%); on-chain max_inflation_rate now [1,40]",
+    "source": "https://crypto.news/near-protocol-halves-inflation-rate-despite-failing-approval-threshold/ ; https://rpc.mainnet.near.org (EXPERIMENTAL_protocol_config; view venear.dao get_config)"
+   },
+   {
+    "date": "2025-10-10",
+    "event": "HSP-003 veNEAR holder rewards program created (Final)",
+    "source": "https://github.com/houseofstake/proposals/blob/0a0c9ccfc1b693dbd58038a72b337b0fa3042d3d/HSPs/hsp-003.md"
+   },
+   {
+    "date": "2026-02-23",
+    "event": "Intents revenue starts funding open-market NEAR buybacks (held, not burned)",
+    "source": "https://api.llama.fi/summary/fees/near-intents?dataType=dailyHoldersRevenue"
+   }
+  ],
+  "holding_demand": [
+   {
+    "component": "Validator stake / seat",
+    "cap": "no fixed cap (seat price set by protocol)",
+    "source": "https://docs.near.org/protocol/network/staking"
+   },
+   {
+    "component": "veNEAR governance lock",
+    "cap": "min lockup deposit 2 NEAR; 45-day unlock; no cap",
+    "source": "https://rpc.mainnet.near.org (EXPERIMENTAL_protocol_config; view venear.dao get_config)"
+   },
+   {
+    "component": "Gas (70% burned)",
+    "cap": "none",
+    "source": "https://docs.near.org/protocol/gas"
+   }
+  ],
+  "capture_status": {
+   "value": "Partial",
+   "switch_power": "NEAR Intents operator/1Click fee settings + Sputnik DAO / multisig wallet signers (off-protocol)",
+   "source": "https://revenue.near.org/ ; https://api.llama.fi/summary/fees/near-intents?dataType=dailyHoldersRevenue"
+  },
+  "switch_signals": [
+   {
+    "date": "2026-10-12",
+    "signal": "revenue.near.org claims buybacks 'permanently remove NEAR from circulation' (no burn mechanism published)",
+    "source": "https://revenue.near.org/"
+   }
+  ],
+  "unverified": [
+   "NEAR Protocol X announcement of 2025-10-30 completion not fetched (date from crypto.news/The Defiant)",
+   "Signers of <account not stored> not read",
+   "Whether veNEAR rewards continued past HSP-003's 90 days"
+  ]
+ },
+ "Plume": {
+  "yields": [
+   {
+    "name": "Validator delegation (Plume Staking)",
+    "lock_length": "none",
+    "unstake_days": "21",
+    "liquid_wrapper": "y: myPLUME (Mystic, 1:1 mint)",
+    "payout_currency": "native: PLUME (emissions-funded; gross ~4.997% APR, 10% commission, as of 2026-10-01 per config)",
+    "source": "https://docs.plume.org/plume/plume-portal/stake.md ; https://github.com/plumenetwork/mystic-liquid-staking-contracts/blob/b5b4fa5/script/deployMinter.s.sol",
+    "read_on": "2026-10-12"
+   }
+  ],
+  "destination": {
+   "value": "n/a",
+   "detail": "no buyback or burn; fees collected at 0x6CBb55... (config core.json)",
+   "source": "https://docs.plume.org/plume/plume-portal/stake.md"
+  },
+  "certainty": {
+   "value": "n/a (no mechanism)",
+   "source": "https://docs.plume.org/plume/plume-portal/stake.md"
+  },
+  "mechanism_log": [],
+  "holding_demand": [
+   {
+    "component": "Validator delegation",
+    "cap": "no cap found",
+    "source": "https://docs.plume.org/plume/plume-portal/stake.md"
+   }
+  ],
+  "capture_status": {
+   "value": "None",
+   "switch_power": "Plume team/foundation (docs: 'share of ecosystem revenue' being explored)",
+   "source": "https://docs.plume.org/plume/plume-portal/stake.md"
+  },
+  "switch_signals": [
+   {
+    "date": "2026-10-12",
+    "signal": "Docs list 'Earn a share of ecosystem revenue' as a possible staker benefit 'being explored'",
+    "source": "https://docs.plume.org/plume/plume-portal/stake.md"
+   }
+  ],
+  "unverified": [
+   "Validator self-stake minimum not found in docs read"
+  ]
+ },
+ "Aethir": {
+  "yields": [
+   {
+    "name": "Gaming Pool / AI Pool staking (veATH)",
+    "lock_length": "fixed: 1 week to 4 years, no early withdrawal",
+    "unstake_days": "30 (withdrawal vesting after lock end)",
+    "liquid_wrapper": "n",
+    "payout_currency": "native ATH (1M ATH/week/pool standard) + partner tokens (e.g. CARV)",
+    "source": "https://docs.aethir.com/aethir-staking/staking-key-information.md ; https://docs.aethir.com/aethir-staking.md ; https://docs.aethir.com/aethir-staking/staking-pools-emission-schedule-for-ath.md",
+    "read_on": "2026-10-12"
+   },
+   {
+    "name": "EigenLayer ATH vault (eATH)",
+    "lock_length": "fixed until redemption opened 2026-06-13",
+    "unstake_days": "30-day vest per docs pool table (redemption page also cites a 15-day unbonding)",
+    "liquid_wrapper": "y: eATH (1:1 receipt)",
+    "payout_currency": "native: ATH",
+    "source": "https://docs.aethir.com/aethir-staking.md ; https://docs.aethir.com/aethir-staking/eath-vault-redemption-process.md",
+    "read_on": "2026-10-12"
+   }
+  ],
+  "destination": {
+   "value": "n/a",
+   "detail": "No token buyback. Checker Node NFT buyback (from 2025-05-27) pays sellers in eATH (1-year lock) and adds ATH to circulation.",
+   "source": "https://docs.aethir.com/checker-guide/checker-node-nft-buyback-program/checker-node-nft-buyback-program.md"
+  },
+  "certainty": {
+   "value": "n/a (no mechanism)",
+   "source": "https://docs.aethir.com/aethir-tokenomics/ath-tokens-utility-and-purpose.md"
+  },
+  "mechanism_log": [
+   {
+    "date": "2025-05-07",
+    "event": "Staking Season 2: pool emissions tripled to 3M ATH/week/pool for 10 weeks",
+    "source": "https://docs.aethir.com/aethir-staking/staking-pools-emission-schedule-for-ath.md"
+   },
+   {
+    "date": "2025-05-21",
+    "event": "EigenLayer ATH pre-deposit vault opens (eATH)",
+    "source": "https://docs.aethir.com/aethir-staking.md"
+   },
+   {
+    "date": "2025-05-27",
+    "event": "Checker Node NFT buyback program (paid in eATH)",
+    "source": "https://docs.aethir.com/checker-guide/checker-node-nft-buyback-program/checker-node-nft-buyback-program.md"
+   },
+   {
+    "date": "2026-06-13",
+    "event": "eATH redemption opens (30-day vest)",
+    "source": "https://docs.aethir.com/aethir-staking.md"
+   }
+  ],
+  "holding_demand": [
+   {
+    "component": "Cloud Host (GPU) collateral",
+    "cap": "per GPU = K-Value x Staking Coefficient (coef 267.2587 as of 2025-12-22; e.g. A100 80G 15,785 ATH); 180-day unlock on unstake; slashable",
+    "source": "https://docs.aethir.com/aethir-cloud/aethir-cloud-host/operational-requirements-for-cloud-hosts/staking-as-cloud-host.md ; https://docs.aethir.com/aethir-cloud/aethir-cloud-host/operational-requirements-for-cloud-hosts/staking-as-cloud-host/staking-parameters.md"
+   },
+   {
+    "component": "Edge / IDC operator stake",
+    "cap": "required, amount per spec (no global cap)",
+    "source": "https://docs.aethir.com/aethir-tokenomics/ath-tokens-utility-and-purpose.md"
+   },
+   {
+    "component": "eATH vault",
+    "cap": "per-pool deposit cap (value not stated); withdrawals off above 85% utilisation",
+    "source": "https://docs.aethir.com/aethir-staking.md"
+   }
+  ],
+  "capture_status": {
+   "value": "None",
+   "switch_power": "Aethir Foundation / Aethir Labs (off-chain policy)",
+   "source": "https://docs.aethir.com/aethir-tokenomics/ath-tokens-utility-and-purpose.md"
+  },
+  "switch_signals": [
+   {
+    "date": "2026-08-24",
+    "signal": "ACCELERATE launch; updated IDC tokenomics policy 'will include' a burn mechanism and variable/floating platform fee (secondary only)",
+    "source": "https://techflowpost.com/en-US/newsletter/133260 ; https://buttondown.com/ownyourmind/archive/aethir-hired-its-own-biggest-holder/"
+   }
+  ],
+  "unverified": [
+   "Primary Aethir announcement of the 2026-08-24 burn/fee policy not found",
+   "eATH vault deposit cap value",
+   "Conflict: eATH vest 30 days (pool table) vs 15-day un-bonding (redemption page)"
+  ]
+ },
+ "Maple": {
+  "yields": [
+   {
+    "name": "stSYRUP staking",
+    "lock_length": "none",
+    "unstake_days": "0 (instant unstake)",
+    "liquid_wrapper": "y: stSYRUP itself (ERC-4626, transferable)",
+    "payout_currency": "none since Nov 2025 (MIP-019); was native SYRUP (bought back + 20% of inflation)",
+    "source": "https://github.com/maple-labs/maple-docs/blob/bd3647e9fbb81757e316f1b6acbd0b92502d5a62/maple-for-token-holders/syrup-tokenomics/staking.md ; https://github.com/maple-labs/maple-docs/blob/bd3647e9fbb81757e316f1b6acbd0b92502d5a62/maple-for-token-holders/syrup-tokenomics/staking-smart-contract-details.md ; https://snapshot.box/#/s:mapledao.eth/proposal/0x8151eb49b56770b882e8d9b6affd4a698572fc6eec31001c74bd977f61c84374",
+    "read_on": "2026-10-12"
+   }
+  ],
+  "destination": {
+   "value": "held-discretionary",
+   "detail": "MIP-021: 'SYRUP purchased through these buybacks will live within the SSF' (Syrup Strategic Fund: strategic opportunities, token liquidity, capital reserves). MIP-013/016/018 buybacks were DISTRIBUTED to stSYRUP until MIP-019.",
+   "source": "https://snapshot.box/#/s:mapledao.eth/proposal/0xce5c0b3e759cd071a5412d7935b2408db9def2ecc4f754764f5c2f08055ff3a5 ; https://snapshot.box/#/s:mapledao.eth/proposal/0x8151eb49b56770b882e8d9b6affd4a698572fc6eec31001c74bd977f61c84374 ; https://maple.finance/transparency"
+  },
+  "certainty": {
+   "value": "programmatic-governance-set (rule) with discretionary execution and use",
+   "source": "https://snapshot.box/#/s:mapledao.eth/proposal/0xce5c0b3e759cd071a5412d7935b2408db9def2ecc4f754764f5c2f08055ff3a5"
+  },
+  "mechanism_log": [
+   {
+    "date": "2025-01-27",
+    "event": "MIP-013 passes: 20% of Q1 fee revenue buys SYRUP monthly -> streamed to stSYRUP",
+    "source": "https://snapshot.box/#/s:mapledao.eth/proposal/0xba17754580db5a504bbd821a259a93063cfbf79504784e67d4acea1e9246056c"
+   },
+   {
+    "date": "2025-05-05",
+    "event": "MIP-016: 20% continued for Q2 -> stSYRUP",
+    "source": "https://snapshot.box/#/s:mapledao.eth/proposal/0x4fafeb3fa1a74451da00e2b894b8d4a3844e572fc231d9aeb5d8f8dea4e3e045"
+   },
+   {
+    "date": "2025-07-29",
+    "event": "MIP-018: 25% of Q3 fee revenue -> stSYRUP",
+    "source": "https://snapshot.box/#/s:mapledao.eth/proposal/0x972ba9729fb8089d80e874595eb8f905affe744d8e80e3687bc5f4e82bc9cd61"
+   },
+   {
+    "date": "2025-10-31",
+    "event": "MIP-019 passes: 25% of revenue to SSF (buybacks + cash + balance sheet); staking rewards end Nov 2025",
+    "source": "https://snapshot.box/#/s:mapledao.eth/proposal/0x8151eb49b56770b882e8d9b6affd4a698572fc6eec31001c74bd977f61c84374"
+   },
+   {
+    "date": "2026-01-26",
+    "event": "MIP-020: SSF 25% allocation extended through H1 2026",
+    "source": "https://snapshot.box/#/s:mapledao.eth/proposal/0x4f64d40ee5a2de205969b630f5ceb6e88d8b7bffc9444d58e612c9af67eaf814"
+   },
+   {
+    "date": "2026-07-17",
+    "event": "MIP-021 passes: tiered 10/20/30% of monthly revenue (<$1.5M / $1.5-2M / >$2M), bought SYRUP held in SSF; live Aug 2026",
+    "source": "https://snapshot.box/#/s:mapledao.eth/proposal/0xce5c0b3e759cd071a5412d7935b2408db9def2ecc4f754764f5c2f08055ff3a5"
+   }
+  ],
+  "holding_demand": [
+   {
+    "component": "Governance (SYRUP or stSYRUP on Snapshot)",
+    "cap": "none",
+    "source": "https://snapshot.box/#/s:mapledao.eth/proposal/0x8151eb49b56770b882e8d9b6affd4a698572fc6eec31001c74bd977f61c84374"
+   }
+  ],
+  "capture_status": {
+   "value": "Live",
+   "switch_power": "Maple DAO Snapshot (mapledao.eth) votes; Maple team executes",
+   "source": "https://snapshot.box/#/s:mapledao.eth/proposal/0xce5c0b3e759cd071a5412d7935b2408db9def2ecc4f754764f5c2f08055ff3a5 ; https://github.com/maple-labs/maple-docs/blob/bd3647e9fbb81757e316f1b6acbd0b92502d5a62/maple-for-token-holders/governance-and-voting.md"
+  },
+  "switch_signals": [],
+  "unverified": [
+   "SSF wallet address (config: unresolved)",
+   "Whether any SSF SYRUP has been sold/redeployed (config shows ~0.95M fall Sep 2026, cause unpublished)"
+  ]
+ },
+ "Morpho": {
+  "yields": [],
+  "destination": {
+   "value": "n/a",
+   "detail": "No buyback; fee switch off",
+   "source": "https://docs.morpho.org/learn/governance/organization.md"
+  },
+  "certainty": {
+   "value": "n/a (latent switch, governance-set when on)",
+   "source": "https://docs.morpho.org/learn/governance/organization.md"
+  },
+  "mechanism_log": [
+   {
+    "date": "2024-01 (approx)",
+    "event": "Morpho Blue deployed with per-market fee switch capped at 25% of borrower interest (owner-set)",
+    "source": "https://docs.morpho.org/learn/governance/organization.md"
+   }
+  ],
+  "holding_demand": [
+   {
+    "component": "Governance proposal threshold",
+    "cap": "500k MORPHO to submit a proposal (no lock)",
+    "source": "https://docs.morpho.org/learn/governance/organization.md"
+   }
+  ],
+  "capture_status": {
+   "value": "Latent",
+   "switch_power": "Morpho DAO vote (Snapshot morpho.eth) executed by 5/9 governance multisig = Morpho Blue owner 0xcba28b38...; on 2026-10-12 feeRecipient() = 0x0",
+   "source": "https://docs.morpho.org/learn/governance/organization.md ; https://etherscan.io/address/0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb#readContract"
+  },
+  "switch_signals": [
+   {
+    "date": "2026-05-07",
+    "signal": "DefiLlama token-rights page: fee switch off, DAO can turn it on (secondary, page 403 to us)",
+    "source": "https://defillama.com/protocol/token-rights/morpho"
+   },
+   {
+    "date": "2026-09-18",
+    "signal": "Latest Snapshot (MIP 134) - no fee-switch proposal among 140 proposals",
+    "source": "https://snapshot.org/#/s:morpho.eth"
+   },
+   {
+    "date": "2026-10-12",
+    "signal": "Midnight protocol designs a settlement fee and a continuous fee (<=1%/yr) - fee routing to holders not stated",
+    "source": "https://docs.morpho.org/developers/midnight/concepts/fees.md"
+   }
+  ],
+  "unverified": [
+   "Config claim that the switch is 'blocked on legal/tax structuring' - no primary statement found",
+   "Morpho Blue deployment month (approx.)"
+  ]
+ },
+ "Aerodrome": {
+  "yields": [
+   {
+    "name": "veAERO voting rewards (fees + voting incentives)",
+    "lock_length": "fixed: up to 4 years (max 1460d), or Auto-Max/permanent",
+    "unstake_days": "no unstake; withdraw at lock expiry",
+    "liquid_wrapper": "y: veNFT is transferable ERC-721 (not in an epoch it voted); official Relay managed veNFTs",
+    "payout_currency": "pair tokens (swap fees in each pool's tokens) + arbitrary incentive tokens",
+    "source": "https://github.com/aerodrome-finance/docs/blob/99680a79/content/tokenomics.mdx ; https://github.com/aerodrome-finance/docs/blob/99680a79/content/about.mdx",
+    "read_on": "2026-10-12"
+   },
+   {
+    "name": "veAERO rebase (anti-dilution)",
+    "lock_length": "same lock",
+    "unstake_days": "n/a",
+    "liquid_wrapper": "same",
+    "payout_currency": "native: AERO (manual claim)",
+    "source": "https://github.com/aerodrome-finance/docs/blob/99680a79/content/about.mdx",
+    "read_on": "2026-10-12"
+   }
+  ],
+  "destination": {
+   "value": "distributed (fees) + held-timelocked (Foundation buys)",
+   "detail": "100% of exchange revenue paid to voters in pair/incentive tokens (no AERO buy). Foundation (PGF/Buyback-Locked Funds) buys AERO with its voter revenue and max-locks it as veNFT (e.g. 6 USDC->AERO buys 2026-07-15..08-19 locked into veNFT #130786); 'Over 184M AERO acquired and locked'; 'None of the underlying AERO has ever been sold'.",
+   "source": "https://github.com/aerodrome-finance/docs/blob/99680a79/content/about.mdx ; https://x.com/AerodromeFi/status/1996261069078348016 ; config.py PROJECT_BY_NAME['Aerodrome']['foundation_buyback']['trace'] (Base txs, read 2026-10-11)"
+  },
+  "certainty": {
+   "value": "programmatic-immutable (fee distribution) / discretionary (Foundation buybacks)",
+   "source": "https://github.com/aerodrome-finance/docs/blob/99680a79/content/tokenomics.mdx ; https://github.com/aerodrome-finance/docs/blob/99680a79/content/about.mdx"
+  },
+  "mechanism_log": [
+   {
+    "date": "2023-08-28",
+    "event": "Aerodrome launches (veAERO, 100% fees to voters)",
+    "source": "https://github.com/aerodrome-finance/docs/blob/99680a79/content/about.mdx"
+   },
+   {
+    "date": "2025-12 (exact day not read)",
+    "event": "PGF 'acquired and max-locked' AERO (X post)",
+    "source": "https://x.com/AerodromeFi/status/1996261069078348016"
+   },
+   {
+    "date": "2026-04",
+    "event": "Flight School concluded; its voting power folded into PGF; emissions held ~10.92%/yr by Foundation",
+    "source": "https://github.com/aerodrome-finance/docs/blob/99680a79/content/about.mdx"
+   },
+   {
+    "date": "2026-10-21 (scheduled)",
+    "event": "Aero launch (Aerodrome+Velodrome merge, MetaDEX03); PGF to become Momentum Fund",
+    "source": "https://www.crowdfundinsider.com/?p=313187 ; https://github.com/aerodrome-finance/docs/blob/99680a79/content/about.mdx ; https://paragraph.com/@aerodrome-foundation/the-future-of-flight-school"
+   }
+  ],
+  "holding_demand": [
+   {
+    "component": "veAERO lock (voting, fee share)",
+    "cap": "no cap; ~958M AERO (~51%) locked, avg ~3.7y (Apr 2026)",
+    "source": "https://github.com/aerodrome-finance/docs/blob/99680a79/content/about.mdx"
+   }
+  ],
+  "capture_status": {
+   "value": "Live",
+   "switch_power": "core contracts (Voter/RewardsDistributor); emissions policy and buybacks by Aerodrome Foundation; Aero migration by Dromos Labs/Foundation",
+   "source": "https://github.com/aerodrome-finance/docs/blob/99680a79/content/about.mdx"
+  },
+  "switch_signals": [
+   {
+    "date": "2025-11",
+    "signal": "Dromos Labs announces Aerodrome+Velodrome merge into Aero (single AERO token)",
+    "source": "https://thedefiant.io/news/defi/dromos-labs-merges-aerodrome-and-velodrome-into-new-dex-aero"
+   },
+   {
+    "date": "2025-09-25 / 2026-10-21",
+    "signal": "Aero launch date confirmed for 2026-10-21 (single secondary source); docs: 'AERO Fed' details 'still to come'",
+    "source": "https://www.crowdfundinsider.com/?p=313187 ; https://github.com/aerodrome-finance/docs/blob/99680a79/content/about.mdx"
+   }
+  ],
+  "unverified": [
+   "Aero launch date 2026-10-21 (one secondary source)",
+   "Momentum Fund terms (paragraph post not fetched)",
+   "Fungible liquid veAERO lockers (third-party) not checked"
+  ]
+ },
+ "Ether.fi": {
+  "yields": [
+   {
+    "name": "sETHFI staking (BoringVault)",
+    "lock_length": "none",
+    "unstake_days": "docs: queued, 'typically up to 10 days'; DelayedWithdraw on-chain: 3-day delay + 7-day completion window",
+    "liquid_wrapper": "y: sETHFI itself (ERC-20 vault share)",
+    "payout_currency": "native: ETHFI (bought back) + points",
+    "source": "https://etherfi.gitbook.io/gov/ethfi/ethfi-staking.md ; https://etherscan.io/address/0x1509b1fdD01cAF9697aff514b9574B4A27173Dd2#readContract ; https://etherfi.gitbook.io/gov/ethfi-buyback-program.md",
+    "read_on": "2026-10-12"
+   }
+  ],
+  "destination": {
+   "value": "distributed (old) -> split held/distributed (new)",
+   "detail": "Gitbook: weekly (100% eETH withdrawal fees) and monthly (share of Stake/Liquid/Cash revenue) buybacks remitted to sETHFI holders; DAO/Foundation may divert a portion to liquidity. 2026-09-03 programmatic program: Labs revenue -> Foundation TWAPs on CoW; e.g. swap fee 40% Labs / 30% buy ETHFI HELD in Foundation treasury / 30% buy ETHFI as user cashback (users, not sETHFI); up to 20M existing Foundation ETHFI buffer. sETHFI top-ups continue via Safe 0x3fb6784e (config).",
+   "source": "https://etherfi.gitbook.io/gov/ethfi-buyback-program.md ; https://snapshot.box/#/s:etherfi-dao.eth/proposal/0xed61adff5103b4e50be49b28fca8ecbbea9d685141d2d5a34d1d24232ac91891 ; config.py PROJECT_BY_NAME['Ether.fi']['buyback_programmes'] (top-up Safe 0x3fb6784e..., first top-up 2026-08-13)"
+  },
+  "certainty": {
+   "value": "discretionary",
+   "source": "https://snapshot.box/#/s:etherfi-dao.eth/proposal/0xed61adff5103b4e50be49b28fca8ecbbea9d685141d2d5a34d1d24232ac91891 (Foundation sets rates/splits) ; https://etherfi.gitbook.io/gov/ethfi-buyback-program.md"
+  },
+  "mechanism_log": [
+   {
+    "date": "2024-06-24",
+    "event": "DAO approves ETHFI Buyback and LP Seeding",
+    "source": "https://snapshot.box/#/s:etherfi-dao.eth/proposal/0x287dffb9a390857c846c4b98c70b825ad740d5b3566ae786f23041b1ce72c428"
+   },
+   {
+    "date": "2024-07-07",
+    "event": "DAO approves ETHFI staking contract (sETHFI)",
+    "source": "https://snapshot.box/#/s:etherfi-dao.eth/proposal/0x64ceb5ef6be64a52ec58bedb495c02f660ea7ac8e3a00ddaf3cf28757de7783b"
+   },
+   {
+    "date": "2024-12-20",
+    "event": "Proposal #8: protocol revenue rebates -> monthly buybacks to sETHFI",
+    "source": "https://snapshot.box/#/s:etherfi-dao.eth/proposal/0x1f268f3b8db87a75e8c9422d093377aea17357eb790cee04f9cbf3da2c9f9501"
+   },
+   {
+    "date": "2025-04-29",
+    "event": "Proposal #11: 100% eETH withdrawal-fee revenue -> weekly ETHFI buybacks to sETHFI",
+    "source": "https://snapshot.box/#/s:etherfi-dao.eth/proposal/0x6a9bdf1bb43b3e38f7313247464360ab3c637dd54f45c99dfaa085539c0dc693"
+   },
+   {
+    "date": "2025-11-03",
+    "event": "Treasury buyback authorised: up to $50M while ETHFI < $3",
+    "source": "https://snapshot.box/#/s:etherfi-dao.eth/proposal/0xe5b64c773d23c92e62092a713b14cc72a98a46c923e36cf885455118854337b0"
+   },
+   {
+    "date": "2026-04-01",
+    "event": "Last purchase into old buyback wallet 0x2f5301a3 (config log scan)",
+    "source": "config.py PROJECT_BY_NAME['Ether.fi']['buyback_programmes'] (top-up Safe 0x3fb6784e..., first top-up 2026-08-13)"
+   },
+   {
+    "date": "2026-08-13",
+    "event": "First sETHFI top-up from new Safe 0x3fb6784e (config probe)",
+    "source": "config.py PROJECT_BY_NAME['Ether.fi']['buyback_programmes'] (top-up Safe 0x3fb6784e..., first top-up 2026-08-13)"
+   },
+   {
+    "date": "2026-09-03",
+    "event": "Programmatic ETHFI Buybacks & Ecosystem Growth passes (1,141,999 for / 0)",
+    "source": "https://snapshot.box/#/s:etherfi-dao.eth/proposal/0xed61adff5103b4e50be49b28fca8ecbbea9d685141d2d5a34d1d24232ac91891"
+   }
+  ],
+  "holding_demand": [
+   {
+    "component": "Membership tiers (ETHFI staked in account vaults)",
+    "cap": "Luxe 15,000 ETHFI; Pinnacle 100,000 ETHFI (secondary); vault staking 21M -> 28M ETHFI in 15 days (proposal)",
+    "source": "https://www.spendnode.io/crypto-cards/ether-fi/ ; https://snapshot.box/#/s:etherfi-dao.eth/proposal/0xed61adff5103b4e50be49b28fca8ecbbea9d685141d2d5a34d1d24232ac91891"
+   },
+   {
+    "component": "Governance (staked ETHFI votes)",
+    "cap": "none",
+    "source": "https://etherfi.gitbook.io/gov/ethfi/ethfi-staking.md"
+   }
+  ],
+  "capture_status": {
+   "value": "Live",
+   "switch_power": "ether.fi Foundation executes and sets splits; ETHFI DAO Snapshot (etherfi-dao.eth) approves programs",
+   "source": "https://snapshot.box/#/s:etherfi-dao.eth/proposal/0xed61adff5103b4e50be49b28fca8ecbbea9d685141d2d5a34d1d24232ac91891"
+  },
+  "switch_signals": [
+   {
+    "date": "2026-09-03",
+    "signal": "Programme says 'All discretionary decisions are removed: ETHFI purchase mandate...' and addresses/dashboard to be published at launch",
+    "source": "https://snapshot.box/#/s:etherfi-dao.eth/proposal/0xed61adff5103b4e50be49b28fca8ecbbea9d685141d2d5a34d1d24232ac91891"
+   }
+  ],
+  "unverified": [
+   "Whether DelayedWithdraw 0x1509b1fd is still the active sETHFI exit queue (outstandingShares = 0)",
+   "Membership tier thresholds (secondary sources only)",
+   "Launch date / addresses of the programmatic TWAP route"
+  ]
+ },
+ "Fluid": {
+  "yields": [],
+  "destination": {
+   "value": "held-discretionary (halted)",
+   "detail": "Bought FLUID went to the treasury ('Fluid Reserve'); buyback contract has no burn; buybacks executed by Team Multisig per IGPs. All halted 2026-05-11.",
+   "source": "https://blog.instadapp.io/fluid-reserve-buybacks-growth-strategy ; https://gov.fluid.io/t/post-mortem-treasury-actions-and-forward-strategy-following-resolv-incident/1774"
+  },
+  "certainty": {
+   "value": "halted",
+   "source": "https://gov.fluid.io/t/post-mortem-treasury-actions-and-forward-strategy-following-resolv-incident/1774"
+  },
+  "mechanism_log": [
+   {
+    "date": "2025-08-19",
+    "event": "Community buyback discussion (buybacks subject to DAO vote after $10M revenue)",
+    "source": "https://gov.fluid.io/t/fluid-growth-vision-community-buyback-discussion/1691"
+   },
+   {
+    "date": "2025-10 (first week)",
+    "event": "Fluid Reserve / buybacks start: 100% of Ethereum mainnet revenue in month one (~$1.7M)",
+    "source": "https://blog.instadapp.io/fluid-reserve-buybacks-growth-strategy"
+   },
+   {
+    "date": "2026-02-23",
+    "event": "Proposal to establish Fluid Foundation (Cayman) + $250k/month grant",
+    "source": "https://gov.fluid.io/t/proposal-establish-fluid-foundation/1768"
+   },
+   {
+    "date": "2026-05-11",
+    "event": "Post-mortem (Resolv incident): 'Immediate halt to all token buybacks' (~1.3% of supply bought); emissions cut; grant suspended",
+    "source": "https://gov.fluid.io/t/post-mortem-treasury-actions-and-forward-strategy-following-resolv-incident/1774"
+   },
+   {
+    "date": "2026-08-02",
+    "event": "Foundation grant increase to $350k/month proposed",
+    "source": "https://gov.fluid.io/t/increase-foundation-monthly-grant-from-250-000-to-350-000/1787"
+   }
+  ],
+  "holding_demand": [
+   {
+    "component": "Governance only (no FLUID staking contract)",
+    "cap": "n/a",
+    "source": "https://github.com/Instadapp/fluid-contracts-public (periphery/resolvers/stakingRewards/SPEC.md)"
+   }
+  ],
+  "capture_status": {
+   "value": "Halted",
+   "switch_power": "FLUID governance (IGP payloads) + Team Multisig execution; Fluid Foundation (Cayman) since 2026",
+   "source": "https://gov.fluid.io/t/post-mortem-treasury-actions-and-forward-strategy-following-resolv-incident/1774 ; https://github.com/Instadapp/fluid-governance/tree/main/contracts/payloads"
+  },
+  "switch_signals": [
+   {
+    "date": "2026-05-11",
+    "signal": "Halt: prior buybacks 'showed limited effectiveness'; 'Treasury must be preserved and rebuilt'",
+    "source": "https://gov.fluid.io/t/post-mortem-treasury-actions-and-forward-strategy-following-resolv-incident/1774"
+   },
+   {
+    "date": "2026-10-12",
+    "signal": "No forum topic proposing resumption found (gov.fluid.io latest/search)",
+    "source": "https://gov.fluid.io/latest"
+   }
+  ],
+  "unverified": [
+   "Exact first buyback date (blog says first week of Oct 2025; IGP108 date not re-read)",
+   "DEX/DEX Lite 'to holders' route (DefiLlama definition) - no holder distribution contract found"
+  ]
+ },
+ "Sky": {
+  "yields": [
+   {
+    "name": "lsSKY staked in USDS-rewards farm (Staking Engine)",
+    "lock_length": "none",
+    "unstake_days": "0 (exit fee() = 0 on 2026-10-12)",
+    "liquid_wrapper": "n (position in engine urn; lsSKY not freely transferable)",
+    "payout_currency": "hard asset: USDS (farm funded by Splitter's non-burn share; ~1.0026 USDS/s)",
+    "source": "https://github.com/sky-ecosystem/lockstake/blob/e389dc18fa21b5ae460714522a9f484d0b1b9f30/README.md ; https://etherscan.io/address/0xce01c90de7fd1bcfa39e237fe6d8d9f569e8a6a3#readContract ; https://etherscan.io/address/0x38e4254bd82ed5ee97cd1c4278faae748d998865 ; https://etherscan.io/address/0xb44c2fb4181d7cb06bdff34a46fdfe4a259b40fc",
+    "read_on": "2026-10-12"
+   },
+   {
+    "name": "lsSKY staked in SKY-rewards farm",
+    "lock_length": "none",
+    "unstake_days": "0",
+    "liquid_wrapper": "n",
+    "payout_currency": "native: SKY (~18.42 SKY/s; funded by the 22.5% SKY-buyback leg)",
+    "source": "https://etherscan.io/address/0x38e4254bd82ed5ee97cd1c4278faae748d998865 ; https://etherscan.io/address/0xb44c2fb4181d7cb06bdff34a46fdfe4a259b40fc ; https://x.com/SkyEcosystem/status/2099488996099227965",
+    "read_on": "2026-10-12"
+   }
+  ],
+  "destination": {
+   "value": "held then split: distributed (22.5/27.5) + burn (5/27.5)",
+   "detail": "Flapper (FlapperUniV2SwapOnly) receiver hard-checked = MCD_PAUSE_PROXY; Pause Proxy then funds SKY staking rewards and burns by executive spell: first stage-2 burn 2,860,943.76 SKY on 2026-09-13 12:42 UTC, second 7,372,288 SKY on 2026-10-12. Not the SBE itself burning.",
+   "source": "https://eth.blockscout.com/address/0x374d9c3d5134052bc558f432afa1df6575f07407 (FlapperUniV2SwapOnly; receiver()) ; https://github.com/sky-ecosystem/dss-flappers/blob/master/deploy/FlapperInit.sol#L164 ; https://etherscan.io/tx/0xcd57535f7a9e60e61d34b31f793501fa6178b4ae37fe0b2900f76efd54e192c3 ; https://etherscan.io/tx/0x93389082b75a9e278b6b2a2d7dde53618c38214b5d71699fd60461dbe1e10275 ; https://x.com/SkyEcosystem/status/2099488996099227965"
+  },
+  "certainty": {
+   "value": "programmatic-governance-set (Splitter/Kicker params) + discretionary burn per spell",
+   "source": "https://eth.blockscout.com/api?module=logs&action=getLogs&address=0xbf7111f13386d23cb2fba5a538107a73f6872bcf (File events) ; https://vote.sky.money/executive"
+  },
+  "mechanism_log": [
+   {
+    "date": "2024-09-17",
+    "event": "Splitter live: burn=100% to flapper, hop 10249s",
+    "source": "https://eth.blockscout.com/api?module=logs&action=getLogs&address=0xbf7111f13386d23cb2fba5a538107a73f6872bcf (File events)"
+   },
+   {
+    "date": "2025-02-24",
+    "event": "burn=100%, hop 876s",
+    "source": "https://eth.blockscout.com/api?module=logs&action=getLogs&address=0xbf7111f13386d23cb2fba5a538107a73f6872bcf (File events)"
+   },
+   {
+    "date": "2025-06-02",
+    "event": "burn cut to 50%",
+    "source": "https://eth.blockscout.com/api?module=logs&action=getLogs&address=0xbf7111f13386d23cb2fba5a538107a73f6872bcf (File events)"
+   },
+   {
+    "date": "2025-08-25",
+    "event": "burn cut to 25%",
+    "source": "https://eth.blockscout.com/api?module=logs&action=getLogs&address=0xbf7111f13386d23cb2fba5a538107a73f6872bcf (File events)"
+   },
+   {
+    "date": "2025-11-03",
+    "event": "burn=100%, hop 2880s; Kicker kbump 10,000 USDS, khump -200M (~$109.5M/yr)",
+    "source": "https://eth.blockscout.com/api?module=logs&action=getLogs&address=0xbf7111f13386d23cb2fba5a538107a73f6872bcf (File events) ; https://eth.blockscout.com/address/0xd889477102e8c4a857b78fcc2f134535176ec1fc (File events; kbump/khump)"
+   },
+   {
+    "date": "2026-03-14",
+    "event": "BURN CUT: hop 2880->13787s and kbump 10,000->6,000 (implied rate -87.5%, ~$13.7M/yr)",
+    "source": "https://eth.blockscout.com/api?module=logs&action=getLogs&address=0xbf7111f13386d23cb2fba5a538107a73f6872bcf (File events) ; https://eth.blockscout.com/address/0xd889477102e8c4a857b78fcc2f134535176ec1fc (File events; kbump/khump)"
+   },
+   {
+    "date": "2026-08-17",
+    "event": "Stage 2 on-chain: burn=55% (SKY buy) / 45% USDS farm; hop 3748s",
+    "source": "https://eth.blockscout.com/api?module=logs&action=getLogs&address=0xbf7111f13386d23cb2fba5a538107a73f6872bcf (File events)"
+   },
+   {
+    "date": "2026-09-13",
+    "event": "First stage-2 SKY burn from Pause Proxy (2,860,943.76 SKY)",
+    "source": "https://etherscan.io/tx/0xcd57535f7a9e60e61d34b31f793501fa6178b4ae37fe0b2900f76efd54e192c3"
+   },
+   {
+    "date": "2026-09-13",
+    "event": "hop 3748->2504s",
+    "source": "https://eth.blockscout.com/api?module=logs&action=getLogs&address=0xbf7111f13386d23cb2fba5a538107a73f6872bcf (File events)"
+   },
+   {
+    "date": "2026-09-14",
+    "event": "Sky's X post announcing Stage 2 allocation (50% NPS: 22.5% SKY buyback for rewards / 22.5% USDS rewards / 5% buy-and-burn)",
+    "source": "https://x.com/SkyEcosystem/status/2099488996099227965"
+   },
+   {
+    "date": "2026-10-12",
+    "event": "hop 2504->2693s; second burn 7,372,288 SKY",
+    "source": "https://eth.blockscout.com/api?module=logs&action=getLogs&address=0xbf7111f13386d23cb2fba5a538107a73f6872bcf (File events) ; https://etherscan.io/tx/0x93389082b75a9e278b6b2a2d7dde53618c38214b5d71699fd60461dbe1e10275"
+   }
+  ],
+  "holding_demand": [
+   {
+    "component": "Staking Engine (staking + governance delegation + USDS borrowing collateral)",
+    "cap": "no cap; 17.50B lsSKY of 23.45B SKY supply (2026-10-12)",
+    "source": "https://github.com/sky-ecosystem/lockstake/blob/e389dc18fa21b5ae460714522a9f484d0b1b9f30/README.md ; https://etherscan.io/address/0xce01c90de7fd1bcfa39e237fe6d8d9f569e8a6a3#readContract"
+   }
+  ],
+  "capture_status": {
+   "value": "Live",
+   "switch_power": "Sky governance executive votes (SKY holders) setting Splitter/Kicker/Vow params and spell burns",
+   "source": "https://vote.sky.money/executive ; https://eth.blockscout.com/api?module=logs&action=getLogs&address=0xbf7111f13386d23cb2fba5a538107a73f6872bcf (File events)"
+  },
+  "switch_signals": [
+   {
+    "date": "2026-04-29",
+    "signal": "Interim cut; allocations 'to be restored to 25% each once the Solvency Reserve reaches $125 million' (per config citing Sky Frontier Foundation release)",
+    "source": "https://www.prnewswire.com/ (Sky Frontier Foundation Q1 2026 release, via config)"
+   }
+  ],
+  "unverified": [
+   "Brief's 'stage 2 on 2026-09-14': on-chain split 2026-08-17, first burn 2026-09-13 UTC; 2026-09-14 is the X announcement (per config, X not fetched)",
+   "Stage 2 vote date 2026-08-13 (config; executive not re-read)",
+   "stSKY: no such token found",
+   "Who executes the 22.5%-leg SKY transfer to the SKY farm (REWARDS_DIST_LSSKY_SKY vest) not traced"
+  ]
+ },
+ "Uniswap": {
+  "yields": [],
+  "destination": {
+   "value": "burn",
+   "detail": "Fees accrue in TokenJar; release requires burning UNI via Firepit -> 0xdead (holder-elected). Retroactive 100,000,000 UNI from treasury to 0xdead in the #93 execution tx. 0xdead holds 112,815,581 UNI on 2026-10-12.",
+   "source": "https://vote.uniswapfoundation.org/proposals/93 ; https://etherscan.io/tx/0x091f0083242a777d55821c1189e568d6d033d9da501b75087dc736fa143d2c1e ; https://docs.uniswap.org/contracts/protocol-fee/deployments"
+  },
+  "certainty": {
+   "value": "programmatic-governance-set",
+   "source": "https://vote.uniswapfoundation.org/proposals/93 (fee levels adjustable by governance; v2 feeToSetter = Timelock)"
+  },
+  "mechanism_log": [
+   {
+    "date": "2025-12-27",
+    "event": "#93 UNIfication executed 20:33 UTC: fee switch on (v2/v3 mainnet), TokenJar/Firepit, 100M UNI burned, Labs interface fees to zero (page shows 'Executed December 29, 2025')",
+    "source": "https://eth.blockscout.com/address/0x408ED6354d4973f66138C91495F2f2FCbd8724C3 (ProposalCreated/Queued/Executed logs) ; https://etherscan.io/tx/0x091f0083242a777d55821c1189e568d6d033d9da501b75087dc736fa143d2c1e ; https://vote.uniswapfoundation.org/proposals/93"
+   },
+   {
+    "date": "2026-03-06",
+    "event": "#94 Protocol Fee Expansion Vote 1 executed",
+    "source": "https://eth.blockscout.com/address/0x408ED6354d4973f66138C91495F2f2FCbd8724C3 (ProposalCreated/Queued/Executed logs)"
+   },
+   {
+    "date": "2026-03-07",
+    "event": "#95 Protocol Fee Expansion Vote 2 executed",
+    "source": "https://eth.blockscout.com/address/0x408ED6354d4973f66138C91495F2f2FCbd8724C3 (ProposalCreated/Queued/Executed logs)"
+   },
+   {
+    "date": "2026-06-01",
+    "event": "#96 Protocol Fee Expansion Vote 3 executed",
+    "source": "https://eth.blockscout.com/address/0x408ED6354d4973f66138C91495F2f2FCbd8724C3 (ProposalCreated/Queued/Executed logs)"
+   },
+   {
+    "date": "2026-07-27",
+    "event": "#99 Fee Expansion Robinhood Chain + #100 Activate v4 Protocol Fees (Part 1/2) executed",
+    "source": "https://eth.blockscout.com/address/0x408ED6354d4973f66138C91495F2f2FCbd8724C3 (ProposalCreated/Queued/Executed logs)"
+   },
+   {
+    "date": "2026-10-05",
+    "event": "#102 Protocol Fee Expansion: Arc executed",
+    "source": "https://eth.blockscout.com/address/0x408ED6354d4973f66138C91495F2f2FCbd8724C3 (ProposalCreated/Queued/Executed logs)"
+   }
+  ],
+  "holding_demand": [
+   {
+    "component": "UNI burned to release TokenJar fees (Firepit threshold, governance storage)",
+    "cap": "threshold per releaser (set by governance)",
+    "source": "https://vote.uniswapfoundation.org/proposals/93 ; https://docs.uniswap.org/contracts/protocol-fee/deployments"
+   }
+  ],
+  "capture_status": {
+   "value": "Live",
+   "switch_power": "UNI governance (GovernorBravo + Timelock; DUNI Wyoming DUNA as legal wrapper)",
+   "source": "https://vote.uniswapfoundation.org/proposals/93"
+  },
+  "switch_signals": [
+   {
+    "date": "2026-07",
+    "signal": "Snapshot temp check 'Four for V4'",
+    "source": "https://snapshot.org/#/s:uniswapgovernance.eth"
+   },
+   {
+    "date": "2026-09",
+    "signal": "Activate v4 fees Part 2/2 pending (Part 1 executed)",
+    "source": "https://eth.blockscout.com/address/0x408ED6354d4973f66138C91495F2f2FCbd8724C3 (ProposalCreated/Queued/Executed logs)"
+   }
+  ],
+  "unverified": [
+   "Per-chain fee activation dates in config (e.g. Ethereum 2025-12-28) vs on-chain execution 2025-12-27 / page 2025-12-29",
+   "Exact chains covered by #94-#96 not decoded"
+  ]
+ },
+ "Pendle": {
+  "yields": [
+   {
+    "name": "sPENDLE staking",
+    "lock_length": "none",
+    "unstake_days": "14 (cooldown; or instant with 5% fee)",
+    "liquid_wrapper": "y: sPENDLE itself is a transferable ERC-20 (Penpie/Equilibria legacy wrappers not checked)",
+    "payout_currency": "native: PENDLE (distributed as sPENDLE) + airdrops in kind (other tokens)",
+    "source": "https://docs.pendle.finance/pendle-v2/ProtocolMechanics/Mechanisms/sPENDLE ; https://docs.pendle.finance/pendle-v2-dev/Contracts/sPENDLE ; https://etherscan.io/address/0x999999999991E178D52Cd95AFd4b00d066664144#readContract",
+    "read_on": "2026-10-12"
+   },
+   {
+    "name": "vePENDLE (legacy) -> virtual sPENDLE",
+    "lock_length": "fixed (old locks; new locks paused 2026-01-29)",
+    "unstake_days": "until lock expiry",
+    "liquid_wrapper": "n",
+    "payout_currency": "native: PENDLE (4x->1x decaying virtual balance)",
+    "source": "https://docs.pendle.finance/pendle-v2/ProtocolMechanics/Mechanisms/sPENDLE",
+    "read_on": "2026-10-12"
+   }
+  ],
+  "destination": {
+   "value": "distributed",
+   "detail": "80% of V2 yield+swap fees buy PENDLE (contract 0x9e08C549...) via 1-hourly TWAP; 'up to 100%' distributed to ACTIVE sPENDLE holders as sPENDLE every 2 weeks.",
+   "source": "https://docs.pendle.finance/pendle-v2/ProtocolMechanics/Mechanisms/sPENDLE"
+  },
+  "certainty": {
+   "value": "programmatic-governance-set",
+   "source": "https://docs.pendle.finance/pendle-v2/ProtocolMechanics/Mechanisms/sPENDLE"
+  },
+  "mechanism_log": [
+   {
+    "date": "2026-01-20",
+    "event": "sPENDLE staking live",
+    "source": "https://docs.pendle.finance/pendle-v2/ProtocolMechanics/Mechanisms/sPENDLE"
+   },
+   {
+    "date": "2026-01-29",
+    "event": "vePENDLE locks paused; snapshot for virtual sPENDLE; new incentive module",
+    "source": "https://docs.pendle.finance/pendle-v2/ProtocolMechanics/Mechanisms/sPENDLE"
+   },
+   {
+    "date": "2026-04",
+    "event": "Weekly emission decay ends; terminal 2%/yr inflation",
+    "source": "https://docs.pendle.finance/pendle-v2/ProtocolMechanics/Mechanisms/Tokenomics"
+   }
+  ],
+  "holding_demand": [
+   {
+    "component": "sPENDLE (voting + reward eligibility; must vote on PPPs to be 'active')",
+    "cap": "no cap; 29.30M sPENDLE supply (2026-10-12)",
+    "source": "https://docs.pendle.finance/pendle-v2/ProtocolMechanics/Mechanisms/sPENDLE ; https://etherscan.io/address/0x999999999991E178D52Cd95AFd4b00d066664144#readContract"
+   }
+  ],
+  "capture_status": {
+   "value": "Live",
+   "switch_power": "Pendle team/governance (PPP votes by sPENDLE); fee share stated in docs",
+   "source": "https://docs.pendle.finance/pendle-v2/ProtocolMechanics/Mechanisms/sPENDLE"
+  },
+  "switch_signals": [],
+  "unverified": [
+   "Who can change the 80% share (docs do not say)",
+   "Boros fees excluded from base per docs wording"
+  ]
+ }
+}

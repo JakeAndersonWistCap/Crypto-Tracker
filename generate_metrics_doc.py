@@ -24,7 +24,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 OUT = ROOT / "METRICS.md"
 TABS = (("Master", "Master"), ("A1", "A1 — Infrastructure"), ("A2", "A2 — Coordination"),
-        ("A3", "A3 — Revenue buyback"), ("A4", "A4 — Permanent burn"))
+        ("A3", "A3 — Revenue buyback"), ("A4", "A4 — Permanent burn"), ("CP", "CP — Comparability (Phase 2)"))
 SKIP = {"Project", "Symbol"}
 TIER_NAMES = {1: "free API", 2: "contract / chain read", 3: "rendered page / manual"}
 
@@ -148,6 +148,7 @@ def render(heads: dict) -> str:
           "earliest date, Q0..Q-3 coverage (Q-4 a bonus column), blocking reason, cheapest fix; series n/a by structure "
           "(no mechanism, issuance declared zero) are left out; `--run-fixes` runs the ones that need no new paid access.",
           ""]
+    L += flow_statements()
     L += ["---", "", "## Per-project bases (from config)", "",
           "| Project | Archetypes | Circulating used | Total supply | Buyback route | A4 burn series | Issuance basis | "
           "Absorption emissions | Unlock stock |",
@@ -162,6 +163,55 @@ def render(heads: dict) -> str:
                  f"{' + '.join(f'`{m}`' for m in config.absorption_emission_metrics(n))} | "
                  f"{' + '.join(f'`{m}`' for m in config.unlock_stock_metrics(n)) or '—'} |")
     return "\n".join(L) + "\n"
+
+
+def flow_statements() -> list[str]:
+    """TOKEN FLOW and VALUE FLOW STATEMENTS per project (Jake 2026-10-12, Phase 2 amendment 4): every flow in and out of
+    circulating and every $ from customers to holders, each with the series that measures it — or NO SERIES, flagged."""
+    import config
+    ms_of = {p["name"]: set(config.metrics_for_project(p)) for p in config.PROJECTS}
+
+    def ser(name, ms):
+        ms = [m for m in ms if m]
+        if not ms:
+            return "**NO SERIES**"
+        miss = [m for m in ms if m not in ms_of[name] and not m.startswith(("outflow_", "holder_value_"))]
+        return " + ".join(f"`{m}`" for m in ms) + (f" (**not applicable here:** {', '.join(miss)})" if miss else "")
+    L = ["---", "", "## Token flow and value flow statements (Phase 2, amendment 4)", "",
+         "Per project: every flow INTO circulating (the five outflow categories, config OUTFLOW_CATEGORIES) and OUT of "
+         "it (retirement, burn), then the value chain from customers to holders (fees -> the project's revenue basis -> "
+         "holder value, funding-aware, config HOLDER_VALUE). A flow with no series is flagged **NO SERIES**. Attributes "
+         "(destination, certainty, capture status) are on the CP tab, from phase2_attributes.json. GEODNET is held "
+         "(Jake: wait for the CL output).", ""]
+    for p in config.PROJECTS:
+        n = p["name"]
+        oc = config.OUTFLOW_CATEGORIES.get(n)
+        hv = config.HOLDER_VALUE.get(n) or {}
+        if not oc and n not in config.PHASE2_ATTRIBUTES:
+            continue
+        L += [f"### {n}", "", "**Token flow statement**", "", "| Flow | Category | Series |", "|---|---|---|"]
+        for c, nm in config.OUTFLOW_CATEGORY_NAMES.items():
+            L.append(f"| into circulating | ({c}) {nm} | {ser(n, config.outflow_metrics(n, c))} |")
+        bb = "retired_buyback_tokens" if "actual_buyback_tokens" in ms_of[n] else None
+        L.append(f"| out of circulating | retirement (bought, burned + held) | {ser(n, [bb])} |")
+        bm = config.a1_burn_metric(n)
+        L.append(f"| out of circulating | burn (every burn) | {ser(n, [bm] if bm in ms_of[n] else [])} |")
+        if (oc or {}).get("basis"):
+            L += ["", f"Basis: {oc['basis']}"]
+        if (oc or {}).get("pending"):
+            L += ["", f"PENDING: {oc['pending']}"]
+        L += ["", "**Value flow statement**", "", "| Step | Series |", "|---|---|"]
+        rb = config.revenue_base_metric(n)
+        L.append(f"| customers pay (gross fees) | {ser(n, ['fees_usd'] if 'fees_usd' in ms_of[n] else [])} |")
+        L.append(f"| the project's revenue basis | {ser(n, [rb] if rb in ms_of[n] else [])} |")
+        L.append(f"| bought back ($, every funding source) | "
+                 f"{ser(n, ['actual_buyback_usd'] if 'actual_buyback_usd' in ms_of[n] else [])} |")
+        L.append(f"| paid to holders, not bought | {ser(n, list(hv.get('distributed_extra') or ()))} |")
+        L.append(f"| holder value CREDITED (revenue-funded) | "
+                 f"{ser(n, ['holder_value_revenue_usd'] if 'holder_value_revenue_usd' in ms_of[n] else [])} |")
+        fund = "; ".join(f"{a}..{b or 'now'} {f}: {w}" for a, b, f, w in hv.get("funding") or ())
+        L += ["", f"Funding: {fund or 'revenue (the default: the programme documented base)'}", ""]
+    return L
 
 
 def main(argv=None) -> int:

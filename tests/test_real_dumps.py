@@ -22,7 +22,7 @@ def test_real_ethereum_net_change_is_judged_over_the_issuance_rows_of_the_common
     """1. a4_net_change: ours = our issuance rows of the common days (each row spans the days since the supply last
     moved), never the full Q0 sum."""
     o = evaluate_real(tmp_path, monkeypatch, "Ethereum")
-    row = o["a4_net_change"]
+    row = o["a1_net_issuance"]   # on A1 since Phase 2 amendment 1 (the fee-burn chains left A4)
     assert "OUR ISSUANCE ROWS" in row["note"], row["note"][:800]
     assert row["verdict"].startswith("PASS"), row
     # item 4 (Jake's run 2026-10-09 11:41): the 10-05 row spans 10-02..10-05 and so does its burn row — the judged figure
