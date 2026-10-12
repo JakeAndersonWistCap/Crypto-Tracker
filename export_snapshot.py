@@ -14,6 +14,8 @@ THE COLUMNS, per project row: project, asof; then for every headline figure, fou
     <tab> | <header> | coverage_days      the Q0 days its series covered (Data: q0_covered_days), blank for a stock
 The headlines are Master's columns (each mapped to its A-tab cell by cross_tab.MASTER_SOURCES, whose verdict it
 carries) and every BOLD headline cell of A1-A4 (the cells the Credibility tab judges, build_workbook._HEADLINE_CELLS).
+Then, per Trajectory-tab row (theory layer, Phase 1): traj | <tab> | <headline id> | Q0..Q-4, T12M, QoQ, 4Q growth,
+quarters improved, trough, years to benchmark and the row's credibility.
 Nothing is computed here that the workbook does not show: the snapshot is the workbook, flattened. windows/
 daily_run.ps1 runs it as the LAST step. METRICS.md (generate_metrics_doc.py) defines every column.
 """
@@ -116,7 +118,35 @@ def snapshot_rows(wb, value, cred_rows: list, cred_tab: list, headline_cells: li
                     put(f"{tab} | {h}", value(hit[0], cell.row, cell.column), None, None,
                         "unlock_release_tokens")
                     break
+        # TRAJECTORIES (theory layer, Phase 1): every Trajectory-tab row of the project — Q0..Q-4, T12M, QoQ, 4Q growth,
+        # quarters improved, trough, years to benchmark — keyed by tab and headline id
+        for col, val in _trajectory(wb, value).get(p, {}).items():
+            row[col] = val
         out.append(row)
+    return out
+
+
+TRAJ_FIELDS = ("Q0", "Q-1", "Q-2", "Q-3", "Q-4", "T12M", "QoQ", "4Q growth (annual, log-linear)",
+               "Quarters improved (direction-aware)", "Trough of the last 4", "Years to benchmark",
+               "Credibility (Q0 = headline cell)")
+
+
+def _trajectory(wb, value) -> dict:
+    """{project: {"traj | <tab> | <headline id> | <field>": value}} from the Trajectory tab (evaluated)."""
+    if "Trajectory" not in wb.sheetnames:
+        return {}
+    import trajectory                                     # noqa: PLC0415
+    ws = wb["Trajectory"]
+    hr = next((r for r in range(1, 12) if ws.cell(r, 1).value == "Project"), None)
+    out: dict = {}
+    for r in range(hr + 1, ws.max_row + 1) if hr else ():
+        p = ws.cell(r, 1).value
+        if not p:
+            continue
+        tab, hid = ws.cell(r, trajectory.COL["Tab"]).value, ws.cell(r, trajectory.COL["Headline id"]).value
+        for f in TRAJ_FIELDS:
+            v = value("Trajectory", r, trajectory.COL[f])
+            out.setdefault(str(p), {})[f"traj | {tab} | {hid} | {f}"] = "" if v is None else v
     return out
 
 

@@ -18624,7 +18624,8 @@ def test_the_archive_resolver_tries_every_endpoint_at_a_year_old_block_never_blo
     assert [h for h, _ in tried] == ["pruned.example", "archive.example"]
     assert "REFUSED" in tried[0][1] and "SERVED" in tried[1][1]
     assert all(b and b > 1 for b in asked), "never block 0"
-    assert abs(asked[0] - (20_000_000 - 365 * 86_400 // 2)) < 10, "a block ~365 days back"
+    # ar.ARCHIVE_DAYS back — five quarters for the trajectory since 2026-10-12 (config.TRAJECTORY, was 365)
+    assert abs(asked[0] - (20_000_000 - ar.ARCHIVE_DAYS * 86_400 // 2)) < 10, "a block ARCHIVE_DAYS back"
     assert "SECRETKEY" not in (tmp_path / "archive-endpoints.json").read_text()
     # next run: the remembered host is tried first
     monkeypatch.setattr(ar, "_RESOLVED", {})
@@ -25898,10 +25899,12 @@ def test_daily_summary_reports_counts_against_yesterday_trouble_actions_and_new_
     assert ds.previous(state, "2026-10-07") == ("2026-10-05", prev), "a second run the same day still compares with yesterday"
     ps1 = (Path(__file__).resolve().parent.parent / "windows" / "daily_run.ps1").read_text(encoding="utf-8")
     assert "daily_summary.py" in ps1 and "&&" not in ps1 and "OutputEncoding" in ps1
-    # the summary closes the run; the theory snapshot (Jake 2026-10-11, D2) is the one step after it
+    # the summary closes the run; then the history-gap report (theory layer Phase 1, 2026-10-12) and the theory snapshot
+    # (Jake 2026-10-11, D2), LAST
     steps = [ln for ln in ps1.splitlines() if ln.startswith("[void](Invoke-Step")]
-    assert steps[-2].startswith('[void](Invoke-Step "daily summary"') and steps[-1].startswith(
-        '[void](Invoke-Step "export snapshot"'), "the summary, then the snapshot LAST"
+    assert steps[-3].startswith('[void](Invoke-Step "daily summary"') and steps[-2].startswith(
+        '[void](Invoke-Step "history gaps"') and steps[-1].startswith(
+        '[void](Invoke-Step "export snapshot"'), "the summary, the history gaps, then the snapshot LAST"
 
 
 def test_manual_form_pages_cover_the_new_readings_and_never_override_a_formula_reference():

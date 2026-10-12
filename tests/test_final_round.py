@@ -468,7 +468,9 @@ def test_snapshot_on_the_real_pendle_dump(tmp_path, monkeypatch):
     assert r["project"] == "Pendle" and r["Master | FDV ($)"] > 0
     assert r["A3 | " + bw.UNLOCK_HEAD] == pytest.approx(1_675_300.33, abs=0.5)
     assert any(k.endswith("| verdict") and v for k, v in r.items())
-    assert {k.rsplit(" | ", 1)[1] for k in r if k.count(" | ") >= 2} == {"verdict", "near_limit", "coverage_days"}
+    assert {k.rsplit(" | ", 1)[1] for k in r if k.count(" | ") >= 2 and not k.startswith("traj | ")} == \
+        {"verdict", "near_limit", "coverage_days"}
+    assert any(k.startswith("traj | A3 | ") for k in r)          # the trajectory columns (Phase 1, 2026-10-12)
     p = es.write_csv(rows, tmp_path / "snapshot_2026-10-09.csv")
     assert p.read_text(encoding="utf-8").startswith("project,asof,")
 

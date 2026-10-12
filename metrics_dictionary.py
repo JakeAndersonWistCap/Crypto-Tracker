@@ -20,6 +20,11 @@ J = "Jake"
 
 # THE CONVENTIONS EVERY COLUMN SHARES — printed once at the top of METRICS.md
 CONVENTIONS = [
+    ("Trajectory", "Every headline on Master and A1-A4 is re-computed over FIVE consecutive trailing 90-day blocks "
+                   "(Q0, Q-1 .. Q-4) by its own formula, each Data reference moved k quarters back (trajectory.py; "
+                   "Trajectory tab). A trend cell beside each headline shows arrow · QoQ · 4-quarter log-linear growth "
+                   "(annual) · quarters improved (direction-aware). T12M sums the four quarters of a window total and "
+                   "averages a rate. Years to benchmark at the trailing growth, n/a with the reason (Jake 2026-10-12)."),
     ("Windows", "Q0 = the trailing 90 days ending yesterday (UTC); Q1/Q2/Q3 the 90 days before each; a monthly series' "
                 "Q0 is its three latest complete months. A flow's window figure is its SUM; a stock's 'now' is its latest "
                 "stored value within its age limit (credibility.now_max_age: prices 2 days, daily stocks 3, weekly / "
@@ -289,6 +294,15 @@ ENTRIES = {
         formula="net absorption − unlock_release_tokens; BLOCKED on unequal coverage", window="Q0", unit="tokens",
         inputs=["retired_buyback_tokens", "emissions_tokens", "unlock_release_tokens"],
         decided=[(J, "2026-10-11", "decision A2")]),
+    "RETIREMENT ÷ DILUTION (x)": dict(
+        what="Retired buyback against dilution as a ratio: 1.0 is the crossover where buybacks absorb what emissions "
+             "and unlocks add.",
+        formula="retired_buyback_tokens per covered day ÷ (the tab's absorption emissions + unlock_release_tokens, "
+                "each per its own covered day); unlocks only where the project has a non-circulating wallet set; a "
+                "structural 0 retirement reads 0; BLOCKED where a side covers under a week",
+        window="Q0", unit="x",
+        inputs=["retired_buyback_tokens", "emissions_tokens", "unlock_release_tokens"],
+        decided=[(J, "2026-10-12", "theory layer Phase 1: the retirement-vs-dilution benchmark's series")]),
 }
 
 

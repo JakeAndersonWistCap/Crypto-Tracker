@@ -106,6 +106,13 @@ def _grid(wb):
     return out
 
 
+def _trend_beside(wb, loc) -> bool:
+    """Is the column right of this cell a trajectory trend column (build_workbook._trend_spec)?"""
+    ws = wb[loc[0]]
+    hr = next((r for r in range(1, 12) if ws.cell(r, 1).value == "Project"), None)
+    return bool(hr) and str(ws.cell(hr, loc[2] + 1).value or "").startswith("Trend — ")
+
+
 def mismatches(wb, value) -> list[dict]:
     """Every Master-vs-A-tab and A-tab-vs-A-tab disagreement. `wb`: an openpyxl workbook (formulas); `value(sheet, row,
     col)`: the evaluated value."""
@@ -136,6 +143,16 @@ def mismatches(wb, value) -> list[dict]:
                 found.append({"project": p, "column": mh, "master": mv, "atab": av, "atab_cell": f"{hit[0]}!{hit[3]}",
                               "master_formula": str(wb[m[0]].cell(m[1], m[2]).value)[:300],
                               "atab_formula": str(wb[hit[0]].cell(hit[1], hit[2]).value)[:300]})
+            # THE TREND BESIDE IT (theory layer, Phase 1): a Master trend cell beside a column that references an A-tab
+            # headline reads that headline's trajectory, so it must equal the A-tab's own trend cell
+            mt, at = _trend_beside(wb, m), _trend_beside(wb, hit)
+            if mt and at:
+                tv, ta = value(m[0], m[1], m[2] + 1), value(hit[0], hit[1], hit[2] + 1)
+                if not _same(tv, ta):
+                    found.append({"project": p, "column": f"{mh} (trend)", "master": tv, "atab": ta,
+                                  "atab_cell": f"{hit[0]}!{hit[3]} (trend)",
+                                  "master_formula": str(wb[m[0]].cell(m[1], m[2] + 1).value)[:300],
+                                  "atab_formula": str(wb[hit[0]].cell(hit[1], hit[2] + 1).value)[:300]})
         # THE SAME HEADER ON TWO A-TABS must read the same for the project
         by_head: dict = {}
         for (pre, proj, h), loc in grid.items():

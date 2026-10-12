@@ -75,6 +75,10 @@ def derived_inputs(project: dict, metric: str) -> set[str]:
 def plan(projects: list[dict], first_dates: dict) -> tuple[set, list[str]]:
     """(pairs to backfill, one log line per pair saying why)."""
     cutoff = today() - pd.Timedelta(days=BACKFILL_DAYS - SLACK_DAYS)
+    # PRICES are CoinGecko's free market_chart: 365 days is all it serves (fetch.coingecko.FREE_MAX_DAYS), so a price
+    # series is full at 365 — re-asking every run for the five-quarter window would fetch the same year again
+    from .coingecko import FREE_MAX_DAYS
+    price_cutoff = today() - pd.Timedelta(days=min(BACKFILL_DAYS, FREE_MAX_DAYS) - SLACK_DAYS)
     memo, now = _read(), today()
 
     def limited(name: str, metric: str) -> bool:
@@ -92,7 +96,7 @@ def plan(projects: list[dict], first_dates: dict) -> tuple[set, list[str]]:
             if ((config.METRICS.get(metric) or {}).get("kind") != "flow" and metric not in PRICE_SERIES):
                 continue
             first = first_dates.get((name, metric))
-            if first is not None and pd.Timestamp(first) <= cutoff:
+            if first is not None and pd.Timestamp(first) <= (price_cutoff if metric in PRICE_SERIES else cutoff):
                 continue
             if limited(name, metric):
                 # A DERIVED SERIES' OWN MEMO DOES NOT SPEAK FOR ITS INPUTS (Jake's run 2026-10-06 15:33: NEAR's
@@ -102,7 +106,8 @@ def plan(projects: list[dict], first_dates: dict) -> tuple[set, list[str]]:
                 # and not limited themselves are re-asked; the derived series is not.
                 short = {m for m in derived_inputs(p, metric) if not limited(name, m)
                          and not (first_dates.get((name, m)) is not None
-                                  and pd.Timestamp(first_dates[(name, m)]) <= cutoff)}
+                                  and pd.Timestamp(first_dates[(name, m)])
+                                  <= (price_cutoff if m in PRICE_SERIES else cutoff))}
                 if short:
                     pairs |= {(name, m) for m in short}
                     why.append(f"{name}/{metric}: limited itself (oldest {first}), but input(s) "

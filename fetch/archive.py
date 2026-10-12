@@ -44,7 +44,7 @@ from .logcache import atomic_write_text
 
 log = logging.getLogger("token_metrics.fetch.archive")
 
-ARCHIVE_DAYS = 365
+ARCHIVE_DAYS = int(config.TRAJECTORY["history_days"])     # five quarters for the trajectory (2026-10-12; was 365)
 DEFAULT_BUDGET_S = 20 * 60
 NOT_ARCHIVABLE_KINDS = {"burn_transfer_logs"}
 

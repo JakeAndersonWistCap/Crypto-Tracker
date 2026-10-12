@@ -818,7 +818,9 @@ def point(project: str, metric: str, value: float, source: str, tier: int, when=
 # (project, metric) pairs whose first stored date is inside the last BACKFILL_DAYS; window()
 # keeps BACKFILL_DAYS of those instead of the routine window. Every adapter that trims with
 # window() backfills without knowing it. Reset per run by fetch_all.
-BACKFILL_DAYS = 365
+# FIVE QUARTERS (theory layer, Phase 1, 2026-10-12: the trajectory needs Q-4, 360-450 days back) — from config.TRAJECTORY.
+# Free APIs that serve full history (DefiLlama) return it; CoinGecko's free market_chart stops at 365 days.
+BACKFILL_DAYS = int(__import__("config").TRAJECTORY["history_days"])
 BACKFILL: set = set()
 
 

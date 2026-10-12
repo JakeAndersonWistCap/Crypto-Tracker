@@ -26122,3 +26122,58 @@ CREDIBILITY: dict = {
                                        "source": "Pendle hub 'Total PENDLE Staked'"}, "tol": 1.0}),
     },
 }
+
+
+# ===== THE TRAJECTORY ENGINE (theory layer, Phase 1 — Jake 2026-10-12). =====
+# Every headline on Master and A1-A4 re-computed over FIVE CONSECUTIVE TRAILING 90-DAY BLOCKS (Q0 newest .. Q-4) by its
+# OWN formula (build_workbook shifts each Data reference by k quarters while the builder re-runs; trajectory.py), plus
+# T12M, QoQ, the 4-quarter log-linear growth, consistency (quarters improved, direction-aware) and the trough quarter.
+# No score, band or leaderboard is built here — raw trajectories and benchmarks only.
+TRAJECTORY = {
+    "period_days": 90,
+    "quarters": 5,                     # Q0 .. Q-4: four comparisons for "consistency"
+    # history the free backfills ask for: five quarters plus a week (fetch.base.BACKFILL_DAYS, fetch.archive.ARCHIVE_DAYS)
+    "history_days": 455,
+    # DIRECTION: +1 = higher is better for a holder, -1 = lower is better, 0 = no "better" (a level, e.g. free float).
+    # Anything not listed is +1. Consistency and the trough are n/a for 0.
+    "direction": {
+        "a4_net_change": -1, "a4_net_change_pct": -1, "a4_gross_issuance": -1, "a4_pool_release": -1,
+        "a1_nrr_settlement": -1, "a1_nrr_throughput": -1,
+        "a2_free_float": 0, "a2_ff_arr": -1, "a2_trajectory": -1, "a2_emissions": -1,
+        "master_circulating_supply_used": 0, "master_circulating_supply_coingecko_cross_check": 0,
+        "master_gross_issuance_q0_tokens": -1, "master_net_supply_change_q0_tokens_issuance_burn": -1,
+        "master_net_supply_change_annualised_of_circulating": -1,
+    },
+    # Master columns with their own trajectory row. A Master column that is a REFERENCE to an A-tab cell
+    # (cross_tab.MASTER_SOURCES) shows that cell's trajectory instead — the same figure, one row.
+    "master_headers": (
+        "Price — spot ($)", "Market cap ($)", "Circulating supply (used)", "FDV ($)", "Fees Q0 ($)", "Revenue Q0 ($)",
+        "TVL ($) — chain for A1 names, protocol otherwise",
+        "Implied buyback Q0 ($) = revenue × the split that applied to this window",
+        "Actual buyback Q0 ($) — observed", "Gross burn Q0 (tokens)", "Gross issuance Q0 (tokens)",
+        "NET SUPPLY CHANGE Q0 (tokens) = issuance − burn", "Net supply change, annualised % of circulating",
+        "Fees ÷ issuance ($, Q0; issuance at 90d avg price)", "Fees ÷ FDV (annualised)",
+        "Buyback % of supply (annualised, implied, split as at this window)",
+    ),
+    # YEARS TO BENCHMARK at the trailing 4-quarter growth of the row's own series: ln(target / now) / ln(1 + g).
+    # 0 where already met; n/a with the reason where the growth points away (or is 0) or there is no history.
+    "benchmarks": (
+        {"id": "retire_vs_dilution", "on": ("a3_retire_vs_dilution",), "target": 1.0,
+         "label": "retirement-vs-dilution crossover: retired buyback ÷ (emissions + unlocks) = 1 (A3)"},
+        {"id": "burn_vs_issuance", "on": ("a4_crossover",), "target": 1.0,
+         "label": "burn ÷ issuance = 1 (A4 crossover)"},
+        {"id": "subsidy_cover", "on": ("a2_rev_vs_emissions_value",), "target": 1.0,
+         "label": "subsidy cover = 1: customer revenue ÷ USD value of emissions (A2)"},
+        {"id": "yield_vs_tbill", "on": ("a1_validator_yield",), "target_param": "tbill_3m",
+         "label": "staking yield ≥ the 3-month T-bill (A1)"},
+        {"id": "nrr_vs_m2_gdp", "on": ("a1_nrr_settlement", "a1_nrr_throughput"), "target_param": "nrr_m2_gdp",
+         "label": "NRR down to M2/GDP (A1)"},
+    ),
+    "params": {
+        # Jake's May note: M2 / GDP as the NRR yardstick. A parameter, never hard-coded in a formula.
+        "nrr_m2_gdp": {"value": 0.71, "source": "Jake's May note (M2/GDP)", "set_by": "Jake", "set_on": "2026-10-12"},
+        # filled from the stored daily 3m T-bill (Phase 3); until a value is stored the benchmark reads n/a
+        "tbill_3m": {"metric": "tbill_3m_yield", "project": "Macro", "value": None,
+                     "source": "US Treasury daily bill rates / FRED DTB3 (Phase 3)"},
+    },
+}

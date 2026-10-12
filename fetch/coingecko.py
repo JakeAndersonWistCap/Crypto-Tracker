@@ -28,6 +28,8 @@ import pandas as pd
 from .base import LONG_COLUMNS, Http, tidy, today
 import config
 
+FREE_MAX_DAYS = 365          # CoinGecko's free (demo) API: market_chart history limit
+
 SOURCE = "coingecko"
 TIER = 1
 log = logging.getLogger("token_metrics.fetch.coingecko")
@@ -108,8 +110,10 @@ class CoinGecko:
             # A project whose price/market history is short asks for the full year (2026-09-28).
             short = any((name, m) in BACKFILL for m in ("price_usd", "market_cap_usd", "volume_usd",
                                                         "circulating_supply_implied"))
+            # CoinGecko's free market_chart serves 365 days at most; the five-quarter backfill (BACKFILL_DAYS, 455) is
+            # capped here — older prices are a history gap (logs/history_gaps.csv names the free route)
             days = ("365" if window_days is None
-                    else str(BACKFILL_DAYS if short else window_days))
+                    else str(min(BACKFILL_DAYS, FREE_MAX_DAYS) if short else window_days))
             # SINCE THE LAST STORED DAY (A, 2026-10-05): a routine run asks only for the days after
             # the newest stored price, plus OVERLAP_DAYS for the change checks (a Monday compares
             # with Friday) — never more than the window.

@@ -527,6 +527,59 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11bo. Theory layer — Phase 1: the trajectory engine and the history-gap report (2026-10-12)
+
+No scores, bands or leaderboards — raw trajectories and gap reports only.
+
+**What was added.**
+- **The Trajectory tab** (trajectory.py; build_workbook.write_trajectory): one row per headline on Master and A1-A4
+  (every bold A-tab headline, the Master columns in config.TRAJECTORY["master_headers"], A3's new RETIREMENT ÷
+  DILUTION). Q0 .. Q-4 are LIVE formulas: the headline's own builder re-run with every Data reference shifted k
+  quarters (build_workbook.shifted / _shift_col: q0 -> qk, coverage and events follow, the window's split share and
+  status follow, a STOCK's "now" -> its quarter mean; a flow's 30-day "now", m1, y1 and anything past Q-4 -> NA()).
+  So a quarter is never a re-implementation that can drift from the cell; Q0 IS the cell (the row's credibility
+  verdict: PASS on all six real dumps; sanity rule `trajectory_q0_mismatch` otherwise).
+- **Derived columns** (computed at build with xlcalc, written as values): T12M (the four quarters summed for a window
+  total, averaged for a rate), QoQ, 4-quarter log-linear growth (annual; n/a with the reason when fewer than two
+  quarters or a quarter ≤ 0), quarters improved of the last four comparisons (direction-aware, config
+  TRAJECTORY["direction"]; 0-direction rows such as free float have none), the trough of the last four, the source
+  tier and Q0 coverage of the headline's series.
+- **Years to benchmark** at the trailing growth, all in config.TRAJECTORY: retirement ÷ dilution = 1 (A3, on the new
+  ratio), burn ÷ issuance = 1 (A4), subsidy cover = 1 (A2), staking yield ≥ 3m T-bill (A1), NRR down to M2/GDP 0.71
+  (A1, a parameter — Jake's May note). 0 when met; n/a with the reason when the growth points away or there is none.
+- **A trend cell beside every headline** (arrow · QoQ · 4Q growth/yr · quarters improved), read from the Trajectory
+  tab. A Master column that references an A-tab cell shows that cell's trajectory; cross_tab now also checks the
+  Master trend against the A-tab trend.
+- **Data**: q4 (90 days ending −360d), q4 coverage and q1..q4 events — appended, every existing letter unchanged.
+- **export_snapshot**: `traj | <tab> | <headline id> | Q0..Q-4, T12M, QoQ, 4Q growth, quarters improved, trough,
+  years to benchmark, credibility` per row.
+- **history_gaps.py -> logs/history_gaps.csv** (daily_run step 4b): every series a trajectory row reads (the metric
+  names in its Q0 formula) — earliest date, Q-1..Q-4 full / partial / none, blocking reason, cheapest fix and its
+  cost. `--run-fixes` runs the ones needing no new paid access: the daily run (DefiLlama re-reads, log scans), then
+  `archive_backfill.py --run` (historical eth_call), then each source's own seed.
+- **History fixes made**: the free backfill windows are now five quarters (fetch.base.BACKFILL_DAYS and
+  fetch.archive.ARCHIVE_DAYS = config.TRAJECTORY["history_days"] = 455, were 365), so the next daily run and
+  archive backfill reach Q-4 wherever the source keeps it. CoinGecko's free market_chart stays capped at 365 days.
+
+**Sources and tiers**: no new source — every value is the store's, by the tier it was stored at; the Trajectory row
+shows the headline series' tier.
+
+**n/a, with the reason.**
+- Staking yield vs the T-bill: n/a until Phase 3 stores the 3-month T-bill. "Total Yield" is not defined in the
+  tracker yet — the benchmark runs on A1's VALIDATOR STAKING YIELD; say if Total Yield should be something else.
+- FDV and every FDV-gated cell (both A3 retirement rates gate on FDV) have no quarter before Q0: total supply is
+  stored "now" only (CoinGecko's snapshot, then the chain read from 2026-10-11). The cheapest fix is the token's
+  totalSupply() at past blocks (free archive RPC) — but it puts chain rows BEFORE the declared CoinGecko -> chain
+  handover, so it needs Jake's OK. Not run.
+- Price before 365 days (Q-4 of every USD figure priced by us): CoinGecko's free cap; DefiLlama's coins chart is free
+  and serves it, but it is not wired as a price source — listed, not built.
+- Event-log metrics with no archive route (Chainlink's RewardVault reads, maple_page, scrape pages): "probe first".
+
+**Contradictions with current figures** (on the dumps): Aerodrome's circulating steps from ~0.94bn (Q-1) to 1.52bn
+(Q0) at the 2026-10-07 change of measuring point (the on-chain set) — trajectories of circulating-based ratios read
+across that step and say so only through the source; Chainlink's RETIREMENT ÷ DILUTION swings 0.08 -> 2.81 because
+the 18.75M unlocks land in single quarters (lumpy, not a trend).
+
 ## 11bn. Issuer-wallet audit — one rule, the 15 portfolio projects (2026-10-12; report only, NOTHING SWITCHED)
 
 `python check_offline_items.py issuer_wallet_audit` (live reads: public RPCs, CoinGecko /coins/markets, Hyperliquid

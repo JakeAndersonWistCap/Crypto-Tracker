@@ -121,6 +121,22 @@ def render(heads: dict) -> str:
             for who, when, what in e.get("decided") or []:
                 L.append(f"- **Decision:** {who}, {when} — {what}")
             L.append("")
+    import trajectory
+    T = config.TRAJECTORY
+    L += ["---", "", "## Trajectory tab (theory layer, Phase 1)", "",
+          f"Windows: {T['quarters']} consecutive trailing {T['period_days']}-day blocks (Q0 .. Q-{T['quarters'] - 1}); "
+          f"the free backfills ask for {T['history_days']} days. Columns: " + " · ".join(trajectory.HEAD) + ".", "",
+          "Direction (+1 higher is better, -1 lower is better, 0 none; unlisted = +1): " +
+          ", ".join(f"`{k}` {v:+d}" for k, v in sorted(T["direction"].items())) + ".", "",
+          "| Benchmark | Rows | Target |", "|---|---|---|"]
+    for b in T["benchmarks"]:
+        prm = T["params"].get(b.get("target_param", ""), {})
+        tgt = (b["target"] if "target" in b else
+               f"{prm.get('value')} ({prm.get('source', '')})" if prm.get("value") is not None else
+               f"stored `{prm.get('metric')}` ({prm.get('source', '')})")
+        L.append(f"| {b['label']} | {', '.join(f'`{x}`' for x in b['on'])} | {tgt} |")
+    L += ["", "History gaps: `python history_gaps.py` writes logs/history_gaps.csv (earliest date, Q-1..Q-4 coverage, "
+          "blocking reason, cheapest fix); `--run-fixes` runs the ones that need no new paid access.", ""]
     L += ["---", "", "## Per-project bases (from config)", "",
           "| Project | Archetypes | Circulating used | Total supply | Buyback route | A4 burn series | Issuance basis | "
           "Absorption emissions | Unlock stock |",

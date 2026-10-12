@@ -28,6 +28,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 import config
+import trajectory
 from config import GLOBALS, METRICS, PROJECTS
 from fetch.base import _measuring_point
 
@@ -97,13 +98,18 @@ NA = '"n/a"'
 # looked, there is no route, and the cell is empty on purpose.
 CLOSED_TEXT = "none available"
 
+# THE FIVE CONSECUTIVE TRAILING 90-DAY BLOCKS: Q0 (newest) .. Q4 (theory layer, Phase 1, 2026-10-12)
+QUARTERS = ("q0", "q1", "q2", "q3", "q4")
 # Data sheet layout (column letters)
 DATA_COLS = ["key", "project", "metric", "label", "kind", "unit", "source", "tier", "latest_date",
              "now", "m1", "q0", "q1", "q2", "q3", "y1", "n_points", "status", "confidence", "why_amber",
              "last_success", "entered_on", "note", "q0_covered_days", "q0_events",
              "schedule_end", "q0_pre_end_days", "last_nonzero_date", "silent_days", "silence_flag",
              "q0_basis", "now_covered_days", "m1_covered_days", "q1_covered_days", "q2_covered_days",
-             "q3_covered_days", "first_date"]
+             "q3_covered_days", "first_date",
+             # TRAJECTORY (theory layer, Phase 1, 2026-10-12): a fifth quarter and each quarter's events, so every
+             # headline can be re-computed over Q-1..Q-4 by the same formula (build_workbook.ShiftRefs)
+             "q4", "q4_covered_days", "q1_events", "q2_events", "q3_events", "q4_events"]
 DATA_HEAD = ["Key (project|metric)", "Project", "Metric", "Label", "Kind", "Unit", "Source (of latest point)", "Tier", "Latest date",
              "Now (flow: trailing 30d sum · stock: latest)", "Prior 30d (flow: 30d ending -30d · stock: value at -30d)",
              "Q0 (flow: trailing 90d sum, or 3 complete months for a monthly series — see Q0 basis · stock: 90d avg)", "Q1 (90d ending -90d)", "Q2 (90d ending -180d)", "Q3 (90d ending -270d)",
@@ -123,12 +129,14 @@ DATA_HEAD = ["Key (project|metric)", "Project", "Metric", "Label", "Kind", "Unit
              "Q1: days of the 90 covered", "Q2: days covered", "Q3: days covered",
              # 2026-09-29: the series' first date AS READ (after the read-time views — a stitched
              # history counts), which is what the completeness report measures history from.
-             "First date held"]
+             "First date held",
+             "Q4 (90d ending -360d; flow: sum · stock: avg)", "Q4: days covered",
+             "Q1: days with a non-zero value (events)", "Q2: events", "Q3: events", "Q4: events"]
 DC = {name: get_column_letter(i + 1) for i, name in enumerate(DATA_COLS)}
 # Appended day-count columns that formulas READ as numbers (see write_data).
 NUMERIC_APPENDED = ("q0_covered_days", "q0_events", "q0_pre_end_days", "silent_days",
                     "now_covered_days", "m1_covered_days", "q1_covered_days", "q2_covered_days",
-                    "q3_covered_days")
+                    "q3_covered_days", "q4_covered_days", "q1_events", "q2_events", "q3_events", "q4_events")
 
 # Config table layout
 CFG_COLS = [
@@ -187,6 +195,8 @@ MONTHLY_METRICS = ["fees_usd", "revenue_usd", "price_usd", "gross_issuance_token
 WINDOW_SHARE_COL = {"q0": "Share Q0 (trailing window)", "q1": "Share Q1 (-3m window)",
                     "q2": "Share Q2 (-6m window)", "q3": "Share Q3 (-9m window)"}
 WINDOW_STATUS_COL = {"q0": "Status Q0", "q1": "Status Q1", "q2": "Status Q2", "q3": "Status Q3"}
+_WINDOW_COLS_BY_NAME = {**{v: ("share", q) for q, v in WINDOW_SHARE_COL.items()},
+                        **{v: ("status", q) for q, v in WINDOW_STATUS_COL.items()}}
 
 
 def _programmed_label(value) -> str:
@@ -267,7 +277,7 @@ def _month_block(s: pd.Series, asof: pd.Timestamp, first_back: int, n: int) -> t
     return (float(w.sum()) if len(w) else None), label
 
 
-def _month_coverage(row: dict, s: pd.Series, asof: pd.Timestamp, windows=("now", "m1", "q0", "q1", "q2", "q3")) -> None:
+def _month_coverage(row: dict, s: pd.Series, asof: pd.Timestamp, windows=("now", "m1", "q0", "q1", "q2", "q3", "q4")) -> None:
     """Covered days of a COMPLETE-MONTHS window: the days of the months in it that hold a row.
 
     Sky's net_protocol_surplus_usd holds July and August only, so its Q0 block (Jun-Aug) covers
@@ -276,7 +286,7 @@ def _month_coverage(row: dict, s: pd.Series, asof: pd.Timestamp, windows=("now",
     last = asof.to_period("M") - 1
     have = set(s.index.to_period("M"))
     blocks = {"now": [last], "m1": [last - 1]}
-    for i, q in enumerate(["q0", "q1", "q2", "q3"]):
+    for i, q in enumerate(QUARTERS):
         blocks[q] = [last - 3 * i - k for k in range(3)]
     for w in windows:
         row[f"{w}_covered_days"] = sum(m.days_in_month for m in blocks[w] if m in have)
@@ -303,8 +313,7 @@ def _months_until_live(row: dict, name: str, metric: str, g: pd.DataFrame, s: pd
     why = (f"the full live read ({legs[1]}) covers {live_days} day(s), so this window is complete "
            f"calendar months from {legs[0]} (both chains) until it covers the window")
 
-    switched = [w for w, n in (("now", short), ("m1", short), ("q0", period), ("q1", period),
-                               ("q2", period), ("q3", period)) if live_days < n]
+    switched = [w for w, n in (("now", short), ("m1", short), *((q, period) for q in QUARTERS)) if live_days < n]
     _month_coverage(row, s, asof, switched)
     if live_days < short:
         row["now"], month = _latest_complete_month(s, asof)
@@ -315,12 +324,13 @@ def _months_until_live(row: dict, name: str, metric: str, g: pd.DataFrame, s: pd
             row["period_label"] = month
             row["covered_days"] = row["window_days"] = pd.Period(month).days_in_month
     if live_days < period:
-        for i, q in enumerate(["q0", "q1", "q2", "q3"]):
+        for i, q in enumerate(QUARTERS):
             row[q], label = _month_block(s, asof, 3 * i, 3)
             if q == "q0":
                 row["q0_basis"] = f"{label} — {why}"
         last = asof.to_period("M") - 1
-        row["q0_events"] = int((s.index.to_period("M").isin({last - k for k in range(3)}) & (s > 0)).sum())
+        for i, q in enumerate(QUARTERS):
+            row[f"{q}_events"] = int((s.index.to_period("M").isin({last - 3 * i - k for k in range(3)}) & (s > 0)).sum())
     if live_days < 365:
         row["y1"], _ = _month_block(s, asof, 0, 12)
 
@@ -2434,7 +2444,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
             row = {"key": f"{name}|{metric}", "project": name, "metric": metric,
                    "label": config.metric_label(name, metric),
                    "kind": m["kind"], "unit": config.metric_unit(name, metric), "source": "", "tier": "", "latest_date": "", "now": None, "m1": None,
-                   "q0": None, "q1": None, "q2": None, "q3": None, "y1": None, "n_points": 0,
+                   "q0": None, "q1": None, "q2": None, "q3": None, "q4": None, "y1": None, "n_points": 0,
                    "status": "missing", "last_success": "", "entered_on": "", "note": "",
                    "measuring_points": (), "max_single_delta": None, "cumulative_ref": None,
                    "flow_stock_move": None, "flow_accounted": None, "flow_residual": None,
@@ -2443,7 +2453,8 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                    "granularity": "daily", "period_label": "",
                    "covered_days": None, "window_days": None, "hole_note": "", "q0_basis": "",
                    "now_covered_days": None, "m1_covered_days": None, "q1_covered_days": None,
-                   "q2_covered_days": None, "q3_covered_days": None}
+                   "q2_covered_days": None, "q3_covered_days": None, "q4_covered_days": None,
+                   "q1_events": None, "q2_events": None, "q3_events": None, "q4_events": None}
             # A DECLARED n/a, OR A DECIDED SPLIT, READS n/a WHATEVER IS STORED. 2026-09-28.
             # The store never deletes, so a metric declared not_applicable after rows were written
             # (Hyperliquid's gross_issuance_tokens: derived zeros from d(total_supply_gross)) kept
@@ -2490,7 +2501,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                 if zero_from and not na_note and m["kind"] == "flow":
                     z = pd.Timestamp(zero_from)
                     spans = {"now": (short, 0), "m1": (2 * short, short), "y1": (365, 0),
-                             **{q: (period * (i + 1), period * i) for i, q in enumerate(["q0", "q1", "q2", "q3"])}}
+                             **{q: (period * (i + 1), period * i) for i, q in enumerate(QUARTERS)}}
                     for w, (back, fwd) in spans.items():
                         row[w] = 0.0 if asof - pd.Timedelta(days=back) >= z else None
                     row["status"], row["q0_events"] = "ok", 0
@@ -2556,8 +2567,8 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                     p_rows = s[s.index.to_period("M") == prior]
                     row["m1"] = float(p_rows.sum()) if len(p_rows) else None
                     row["period_label"] = this_month
-                # Q0..Q3 AND Y1 IN COMPLETE CALENDAR MONTHS (2026-09-28) — see _month_block.
-                for i, q in enumerate(["q0", "q1", "q2", "q3"]):
+                # Q0..Q4 AND Y1 IN COMPLETE CALENDAR MONTHS (2026-09-28) — see _month_block.
+                for i, q in enumerate(QUARTERS):
                     row[q], label = _month_block(s, asof, 3 * i, 3)
                     if q == "q0":
                         row["q0_basis"] = label
@@ -2565,14 +2576,17 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                 _month_coverage(row, s, asof)
                 # EVENTS in the Q0 block: months with a non-zero total (events x cadence, 2026-09-29)
                 last_m = asof.to_period("M") - 1
-                q0_months = s[s.index.to_period("M").isin({last_m - k for k in range(3)})]
-                row["q0_events"] = int((q0_months.groupby(q0_months.index.to_period("M")).sum() > 0).sum())
+                for i, q in enumerate(QUARTERS):
+                    qm = s[s.index.to_period("M").isin({last_m - 3 * i - k for k in range(3)})]
+                    row[f"{q}_events"] = int((qm.groupby(qm.index.to_period("M")).sum() > 0).sum())
             elif m["kind"] == "flow":
                 row["q0_basis"] = f"trailing {period} days to {asof.date()}"
                 row["now"] = _window_sum(s, asof - pd.Timedelta(days=short), asof)
                 row["m1"] = _window_sum(s, asof - pd.Timedelta(days=2 * short), asof - pd.Timedelta(days=short))
-                for i, q in enumerate(["q0", "q1", "q2", "q3"]):
-                    row[q] = _window_sum(s, asof - pd.Timedelta(days=period * (i + 1)), asof - pd.Timedelta(days=period * i))
+                for i, q in enumerate(QUARTERS):
+                    lo_q, hi_q = asof - pd.Timedelta(days=period * (i + 1)), asof - pd.Timedelta(days=period * i)
+                    row[q] = _window_sum(s, lo_q, hi_q)
+                    row[f"{q}_events"] = int(((s.index > lo_q) & (s.index <= hi_q) & (s > 0)).sum())
                 row["y1"] = _window_sum(s, asof - pd.Timedelta(days=365), asof)
                 # HOW MUCH OF THE WINDOW THE SERIES WAS ACTUALLY ALIVE FOR. Only on non-monthly
                 # flows: a monthly series reports a named month above and is not pretending to be
@@ -2636,7 +2650,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                 row["now_covered_days"] = row["covered_days"]
                 row["m1_covered_days"], _ = _window_coverage(s_cov, asof - pd.Timedelta(days=2 * short),
                                                              asof - pd.Timedelta(days=short))
-                for i, q in enumerate(["q1", "q2", "q3"], start=1):
+                for i, q in enumerate(QUARTERS[1:], start=1):
                     row[f"{q}_covered_days"], _ = _window_coverage(
                         s, asof - pd.Timedelta(days=period * (i + 1)), asof - pd.Timedelta(days=period * i))
                 # The USD twin of a relabelled buyback carries "derived:tokens*price"; its legs
@@ -2651,7 +2665,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                 # withheld_for needs the stored value itself, on both of its calls.
                 row["latest_value"] = row["now"]
                 row["m1"] = _at_or_before(s, asof - pd.Timedelta(days=short))
-                for i, q in enumerate(["q0", "q1", "q2", "q3"]):
+                for i, q in enumerate(QUARTERS):
                     row[q] = _window_mean(s, asof - pd.Timedelta(days=period * (i + 1)), asof - pd.Timedelta(days=period * i))
                 row["y1"] = _window_mean(s, asof - pd.Timedelta(days=365), asof)
             # ===== LAST NON-ZERO, AND IS THE PROGRAM SILENT? Added 2026-09-28. =====
@@ -2794,7 +2808,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                 row["status"] = "n/a"
                 row["note"] = (f"{config.buyback_route(name)['reason']} {len(g)} stored row(s) "
                                f"predate this and are not shown — orphan_cleanup.sql section AO.")
-                for col in ("now", "m1", "q0", "q1", "q2", "q3", "y1"):
+                for col in ("now", "m1", *QUARTERS, "y1"):
                     row[col] = None
                 row["confidence"], row["why_amber"] = confidence_for(name, metric, row, asof)
                 rows.append(row)
@@ -2803,7 +2817,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
             if supp.get("renders_as") == "n/a":
                 row["status"] = "n/a"
                 row["note"] = supp.get("na_reason") or supp.get("why", "")
-                for col in ("now", "m1", "q0", "q1", "q2", "q3", "y1"):
+                for col in ("now", "m1", *QUARTERS, "y1"):
                     row[col] = None
                 row["confidence"], row["why_amber"] = confidence_for(name, metric, row, asof)
                 rows.append(row)
@@ -2812,12 +2826,12 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
             if na_note and (not withheld or withheld[0] == "blocked"):
                 row["status"] = "n/a"
                 row["note"] = f"{na_note} {len(g)} stored row(s) are not shown (orphan_cleanup.sql lists them for review)."
-                for col in ("now", "m1", "q0", "q1", "q2", "q3", "y1"):
+                for col in ("now", "m1", *QUARTERS, "y1"):
                     row[col] = None
             elif withheld:
                 row["status"], reason = withheld
                 row["note"] = f"NOT REPORTED — {reason}" + (f" | {row['note']}" if row["note"] else "")
-                for col in ("now", "m1", "q0", "q1", "q2", "q3", "y1"):
+                for col in ("now", "m1", *QUARTERS, "y1"):
                     row[col] = None
                 held[(name, metric)] = withheld
             row["confidence"], row["why_amber"] = confidence_for(name, metric, row, asof)
@@ -2831,7 +2845,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
             status, reason = held[(row["project"], parent)]
             row["status"] = status
             row["note"] = f"NOT REPORTED — inherits {parent}'s: {reason}"
-            for col in ("now", "m1", "q0", "q1", "q2", "q3", "y1"):
+            for col in ("now", "m1", *QUARTERS, "y1"):
                 row[col] = None
             row["confidence"], row["why_amber"] = confidence_for(row["project"], row["metric"], row, asof)
     # MIGRATION WATCH (Jake, 2026-10-11): from label_from until the RUNBOOK plan is built, the watched rows say so
@@ -2874,6 +2888,40 @@ def monthly_table(long: pd.DataFrame, asof: pd.Timestamp) -> tuple[list[str], pd
 # ---------------------------------------------------------------------------------------
 # Formula helpers
 # ---------------------------------------------------------------------------------------
+# THE TRAJECTORY SHIFT (theory layer, Phase 1, 2026-10-12; trajectory.py): while k > 0 every Data reference a builder
+# writes is moved k quarters back, so re-running a headline's own builder gives that headline k quarters ago.
+_SHIFT = {"k": 0}
+_SHIFT_NA = {"m1", "m1_covered_days", "y1", "now_covered_days", "q0_pre_end_days", "silent_days"}
+
+
+def _shift_col(metric: str, col: str, k: int) -> str | None:
+    """The Data column `col` k quarters back, or None (the reference becomes NA()) where the window has no counterpart:
+    a flow's trailing-30-day 'now', the prior 30 days, Y1, a quarter past Q4."""
+    m = re.fullmatch(r"q(\d)(_covered_days|_events)?", col)
+    if m:
+        j = int(m.group(1)) + k
+        return f"q{j}{m.group(2) or ''}" if f"q{j}" in QUARTERS else None
+    if col == "now":
+        return f"q{k}" if (METRICS.get(metric) or {}).get("kind") == "stock" and f"q{k}" in QUARTERS else None
+    if col in _SHIFT_NA:
+        return None
+    return col
+
+
+class shifted:
+    """with shifted(k): builders write their formulas k quarters back."""
+    def __init__(self, k: int):
+        self.k = k
+
+    def __enter__(self):
+        self.prev, _SHIFT["k"] = _SHIFT["k"], self.k
+        return self
+
+    def __exit__(self, *exc):
+        _SHIFT["k"] = self.prev
+        return False
+
+
 class Refs:
     def __init__(self, data_rows: int, monthly_rows: int, months: list[str]):
         self.d0, self.d1 = 2, data_rows + 1
@@ -2883,15 +2931,28 @@ class Refs:
         self.mc1 = get_column_letter(4 + len(months))
 
     def D(self, r: int, metric: str, col: str = "q0") -> str:
+        if _SHIFT["k"]:
+            col = _shift_col(metric, col, _SHIFT["k"])
+            if col is None:
+                return "NA()"
         c = DC[col]
         return f'INDEX(Data!${c}${self.d0}:${c}${self.d1},MATCH($A{r}&"|{metric}",Data!$A${self.d0}:$A${self.d1},0))'
 
     def C(self, r: int, colname: str) -> str:
+        if _SHIFT["k"] and colname in _WINDOW_COLS_BY_NAME:
+            kind, q = _WINDOW_COLS_BY_NAME[colname]
+            j = int(q[1:]) + _SHIFT["k"]
+            table = WINDOW_SHARE_COL if kind == "share" else WINDOW_STATUS_COL
+            if f"q{j}" not in table:
+                return "NA()"
+            colname = table[f"q{j}"]
         c = CC[colname]
         r1 = _cfg_r1()
         return f"INDEX({CFG}!${c}${CFG_R0}:${c}${r1},MATCH($A{r},{CFG}!$A${CFG_R0}:$A${r1},0))"
 
     def M(self, r: int, metric: str, month_cell: str) -> str:
+        if _SHIFT["k"]:
+            return "NA()"                                # a month column is not a trailing window
         return (f'INDEX(Monthly!${self.mc0}${self.m0}:${self.mc1}${self.m1},'
                 f'MATCH($A{r}&"|{metric}",Monthly!$A${self.m0}:$A${self.m1},0),'
                 f'MATCH({month_cell},Monthly!${self.mc0}$1:${self.mc1}$1,0))')
@@ -3427,7 +3488,7 @@ def write_data(ws, data: pd.DataFrame, asof: pd.Timestamp):
     _header(ws, 1, DATA_HEAD)
     ws["A1"].comment = Comment(f"Raw window aggregates of the store as of {asof.date()} (UTC). Literals — source data. "
                                "Missing = 'n/a'. Yellow = manual override. Orange = stale.", "token_metrics")
-    num_cols = ["now", "m1", "q0", "q1", "q2", "q3", "y1"]
+    num_cols = ["now", "m1", *QUARTERS, "y1"]
     for i, row in enumerate(data.itertuples(index=False), start=2):
         fmt = UNIT_FMT.get(row.unit, FMT_NUM)
         if row.metric == "price_usd":
@@ -3642,7 +3703,7 @@ def _lumpy(project_name: str) -> bool:
 # fewer than RATE_MIN_DAYS: under a week is not a rate (Ethereum's one reading spanned hours).
 RATE_MIN_DAYS = 7
 _COV = {"now": "now_covered_days", "m1": "m1_covered_days", "q0": "q0_covered_days",
-        "q1": "q1_covered_days", "q2": "q2_covered_days", "q3": "q3_covered_days"}
+        "q1": "q1_covered_days", "q2": "q2_covered_days", "q3": "q3_covered_days", "q4": "q4_covered_days"}
 
 
 def _nominal(w: str) -> str:
@@ -4176,7 +4237,29 @@ def _unlock_cols(R: Refs, absorption: bool = False) -> list[tuple]:
     return cols
 
 
-EXTRA_SNAPSHOT_HEADERS = (UNLOCK_HEAD, UNLOCK_PCT_HEAD, TOTAL_DILUTION_HEAD, NET_ABS_UNLOCK_HEAD)
+RETIRE_VS_DILUTION_HEAD = ("RETIREMENT ÷ DILUTION (x) = RETIRED buyback ÷ (emissions + unlocks), per covered day — "
+                           "1.0 is the crossover")
+
+
+def _retire_vs_dilution_col(R: Refs) -> tuple:
+    """THE A3 CROSSOVER AS A RATIO (theory layer, Phase 1, 2026-10-12): retired buyback tokens (burned + held) per
+    covered day ÷ (the tab's absorption emissions + unlock releases, each per its own covered day). Denominator-free,
+    so it is the series the retirement-vs-dilution benchmark runs on (config.TRAJECTORY). Unlocks join only where the
+    project has a non-circulating wallet set (config.unlock_stock_metrics); a structural 0 retirement reads 0."""
+    def build(r, p):
+        if _retirement_zero(p):
+            return "=0"
+        name = p["name"]
+        ems = list(config.absorption_emission_metrics(name))
+        unl = ["unlock_release_tokens"] if config.unlock_stock_metrics(name) else []
+        den = "+".join(_flow_rate(R, r, m, p=p) for m in ems + unl)
+        legs = [("buyback", "retired_buyback_tokens", "q0")] + [("unlocks", m, "q0") for m in unl]
+        return _absorption_guard(R, r, p, legs, f"{_flow_rate(R, r, 'retired_buyback_tokens', p=p)}/({den})")
+    return (RETIRE_VS_DILUTION_HEAD, build, FMT_X, "calc", False,
+            {"metric": "retired_buyback_tokens", "trajectory_id": "a3_retire_vs_dilution"})
+
+
+EXTRA_SNAPSHOT_HEADERS = (UNLOCK_HEAD, UNLOCK_PCT_HEAD, TOTAL_DILUTION_HEAD, NET_ABS_UNLOCK_HEAD, RETIRE_VS_DILUTION_HEAD)
 
 
 def _published_unlock_column() -> tuple:
@@ -5266,8 +5349,58 @@ def headline_id(sheet: str, header: str) -> str | None:
     return None
 
 
+def _traj_hid(title: str, spec: tuple) -> str | None:
+    """The trajectory id of a table column, or None when the column has no trajectory row (trajectory.py): an A-tab
+    headline (bold, a figure) or a column declared `trajectory`; a Master column listed in config.TRAJECTORY."""
+    head, kind = spec[0], spec[3]
+    meta = spec[5] if len(spec) > 5 else {}
+    if title == "Master":
+        return trajectory.master_id(head) if head in config.TRAJECTORY["master_headers"] else None
+    if title[:2] not in ("A1", "A2", "A3", "A4") or kind not in ("calc", "pull"):
+        return None
+    if meta.get("trajectory_id"):
+        return meta["trajectory_id"]
+    return headline_id(title, head) if (len(spec) > 4 and spec[4]) else None
+
+
+def _trend_spec(title: str, spec: tuple, hid: str) -> tuple:
+    """The trend cell beside a headline: arrow · QoQ · 4-quarter growth · quarters improved, read from the
+    Trajectory tab. A Master column that REFERENCES an A-tab cell shows that cell's trajectory (one figure, one row)."""
+    head = spec[0]
+
+    def build(r, p):
+        if title == "Master":
+            ref = _master_ref_for(head, p)
+            if ref:
+                m = re.match(r"^='(.+)'!([A-Z]+\d+)$", ref)
+                k = trajectory.CELL_KEY.get((m.group(1), m.group(2))) if m else None
+                if k is None and m and (m.group(1), m.group(2)) in trajectory.CELL_SPEC:
+                    sp = trajectory.CELL_SPEC[(m.group(1), m.group(2))]
+                    k = trajectory.register(m.group(1), p, sp["header"], sp["hid"], sp["builder"], sp["fmt"],
+                                            sp["metric"], m.group(2))
+                if k is None:
+                    return "n/a — the A-tab cell it reads has no trajectory"
+                return trajectory.trend_formula(k)
+            return trajectory.trend_formula(trajectory.key("Master", p["name"], hid))
+        return trajectory.trend_formula(trajectory.key(title[:2], p["name"], hid))
+    return (f"Trend — {hid} (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)", build, FMT_TEXT, "calc",
+            False, {"trend_of": hid})
+
+
+def _with_trend_columns(title: str, specs: list[tuple], key_cols: set[int] | None) -> tuple[list[tuple], set[int] | None]:
+    out, pos = [], {}
+    for i, spec in enumerate(specs, start=1):
+        out.append(spec)
+        pos[i] = len(out)
+        hid = _traj_hid(title, spec)
+        if hid:
+            out.append(_trend_spec(title, spec, hid))
+    return out, ({pos[i] for i in key_cols} if key_cols else key_cols)
+
+
 def _write_table(ws, R: Refs, projects: list[dict], specs: list[tuple], data_by_key: dict, flag_metrics: list[str],
                  start_row: int = 4, key_cols: set[int] | None = None) -> int:
+    specs, key_cols = _with_trend_columns(ws.title, specs, key_cols)
     headers = [s[0] for s in specs] + ["Data flags (stale / manual / missing)"]
     _header(ws, start_row, headers, key_cols)
     r = start_row + 1
@@ -5321,6 +5454,16 @@ def _write_table(ws, R: Refs, projects: list[dict], specs: list[tuple], data_by_
                     f"Reopen if: {closed['reopen_if']}\n\n"
                     f"Closed on {closed['closed_on']}. Recorded in config.py UNAVAILABLE.", "token_metrics")
                 continue
+            # THE TRAJECTORY ROW (theory layer, Phase 1): this cell's own builder, re-run k quarters back (trajectory.py)
+            hid = _traj_hid(ws.title, spec)
+            orig = getattr(builder, "_orig", builder)
+            if ws.title[:2] in ("A1", "A2", "A3", "A4") and kind in ("calc", "pull") and not meta.get("trend_of"):
+                trajectory.CELL_SPEC[(ws.title, c.coordinate)] = {
+                    "header": head, "hid": hid or headline_id(ws.title, head) or trajectory.slug(head),
+                    "builder": orig, "fmt": fmt, "metric": meta.get("metric")}
+            # a Master cell that IS a reference to an A-tab cell has no row of its own: its trend reads that cell's
+            if hid and v != "" and not (ws.title == "Master" and isinstance(v, str) and v.startswith("='")):
+                trajectory.register(ws.title, p, head, hid, orig, fmt, meta.get("metric"), c.coordinate)
             metric = meta.get("metric")
             if metric:
                 st = data_by_key.get(f"{p['name']}|{metric}")
@@ -5549,6 +5692,7 @@ def _master_ref(spec: tuple) -> tuple:
 
     def build(r, p, _b=builder, _h=head):
         return _master_ref_for(_h, p) or _b(r, p)
+    build._orig = builder                       # the trajectory re-runs Master's own formula (trajectory.py)
     return (head, build, *spec[2:])
 
 
@@ -5767,6 +5911,7 @@ def write_a3(ws, R: Refs, data_by_key: dict):
              same_span=True, bare=True), share(r)))),
          FMT_NUM, "calc", False, {"gate": "fee_split", "threshold": True, "base": True}),
         *_unlock_cols(R, absorption=True),
+        _retire_vs_dilution_col(R),
         # ===== DOCUMENTED ALLOCATION LEGS, ONE ROW EACH, NEVER COLLAPSED. =====
         # Blank for every project that declares none, which is all of them but Sky. The legs
         # carry their own effect on supply, because a single "implied buyback" figure is right
@@ -6616,6 +6761,117 @@ def write_runlog(ws, runlog: pd.DataFrame, fetch_status: pd.DataFrame, run_id: s
 
 
 # ---------------------------------------------------------------------------------------
+def write_trajectory(wb, data_by_key: dict) -> list[dict]:
+    """THE TRAJECTORY TAB (theory layer, Phase 1, 2026-10-12; trajectory.py). One row per registered headline: Q0..Q-4
+    as live formulas (the cell's own builder under shifted(k)), then the derived columns, computed here with xlcalc and
+    written as values. Returns the rows as dicts (export_snapshot, history_gaps, the tests)."""
+    import xlcalc                                          # noqa: PLC0415
+    ws = wb.create_sheet(trajectory.SHEET, index=wb.sheetnames.index("Credibility") + 1)
+    _title(ws, "Trajectory — every headline over five consecutive trailing 90-day blocks",
+           "Q0..Q-4 re-run each headline's own formula k quarters back (Data q0..q4). T12M sums a window total and "
+           "averages a rate. QoQ, 4Q growth (log-linear, annual), quarters improved (direction-aware) and the trough "
+           "are computed at build. Years to benchmark at the trailing growth; n/a with the reason. No scores.")
+    hr = 4
+    _header(ws, hr, trajectory.HEAD)
+    rows = list(trajectory.ROWS.items())
+    first = hr + 1
+    written = []
+    for i, (k, spec) in enumerate(rows):
+        r = first + i
+        p = spec["project"]
+        ws.cell(row=r, column=1, value=p["name"])
+        ws.cell(row=r, column=2, value=k)
+        ws.cell(row=r, column=3, value=k.split("|")[0])
+        ws.cell(row=r, column=4, value=spec["hid"])
+        ws.cell(row=r, column=5, value=spec["header"])
+        ws.cell(row=r, column=6, value=trajectory.direction(spec["hid"]))
+        forms = []
+        for q in range(len(trajectory.LABELS)):
+            with shifted(q):
+                try:
+                    f = spec["builder"](r, p)
+                except Exception as e:  # noqa: BLE001 — a builder that cannot shift is said, never guessed
+                    f = f"n/a — {type(e).__name__}"
+            forms.append(f)
+        # a formula reading no Data window (Config or text only) has no trajectory; a CONSTANT (a structural "=0") is
+        # the same figure in every quarter and keeps its values
+        independent = (isinstance(forms[0], str) and forms[0].startswith("=") and "Data!" not in forms[0]
+                       and not re.fullmatch(r"=-?[\d.]+", forms[0]) and all(f == forms[0] for f in forms))
+        for q, f in enumerate(forms):
+            c = ws.cell(row=r, column=trajectory.COL[trajectory.LABELS[q]], value=f)
+            _style(c, "calc", spec["fmt"])
+        written.append({"row": r, "key": k, "spec": spec, "independent": independent})
+    _set_widths(ws, {"A": 14, "B": 34, "E": 48, **{get_column_letter(trajectory.COL[h]): 14 for h in trajectory.LABELS}})
+    ws.freeze_panes = ws.cell(row=first, column=3)
+
+    # THE DERIVED COLUMNS — evaluated here (xlcalc, the evaluator the sanity rules use), written as values
+    X = xlcalc.Workbook(wb)
+
+    def val(sheet, rr, cc):
+        try:
+            v = X.value(sheet, rr, cc)
+        except Exception:  # noqa: BLE001
+            return None
+        return None if isinstance(v, xlcalc.XLError) else v
+    out = []
+    for w in written:
+        r, k, spec = w["row"], w["key"], w["spec"]
+        d = trajectory.direction(spec["hid"])
+        qs = [val(trajectory.SHEET, r, trajectory.COL[lab]) for lab in trajectory.LABELS]
+        from openpyxl.utils.cell import coordinate_from_string, column_index_from_string  # noqa: PLC0415
+        hs, hc = spec["cell"]
+        col_l, row_n = coordinate_from_string(hc)
+        headline = val(hs, row_n, column_index_from_string(col_l))
+        rec = {"key": k, "project": spec["project"]["name"], "tab": k.split("|")[0], "hid": spec["hid"],
+               "header": spec["header"], "direction": d, **{lab: trajectory._num(v) for lab, v in zip(trajectory.LABELS, qs)}}
+        why = []
+        if w["independent"]:
+            why.append("the headline does not read a trailing window (Config / text only)")
+            qs = [None] * len(qs)
+        q = trajectory.qoq(qs[0], qs[1])
+        g, n_g, why_g = trajectory.loglinear_growth(qs)
+        imp, n_imp = trajectory.improved(qs, d)
+        tr = trajectory.trough(qs, d)
+        t, t_basis = trajectory.t12m(qs, trajectory.t12m_basis(spec["header"], spec["fmt"]))
+        b = trajectory.benchmark_for(spec["hid"])
+        target, why_t = trajectory.benchmark_target(b, data_by_key) if b else (None, "")
+        yrs, why_y = trajectory.years_to(target, qs[0], g, d if d else 1, why_t) if b else (None, "")
+        if why_g:
+            why.append(f"growth: {why_g}")
+        if b and yrs is None:
+            why.append(f"benchmark: {why_y}")
+        src = data_by_key.get(f"{spec['project']['name']}|{spec['metric']}") or {} if spec["metric"] else {}
+        same = (trajectory._num(qs[0]) is not None and trajectory._num(headline) is not None
+                and abs(qs[0] - headline) <= 1e-9 * max(1.0, abs(headline))) or \
+               (trajectory._num(qs[0]) is None and trajectory._num(headline) is None)
+        verdict = (("PASS — Q0 is the headline cell" + ("" if trajectory._num(headline) is not None else " (both n/a)"))
+                   if same else
+                   f"CHECK — Q0 {qs[0]!r} vs the headline cell {headline!r}")
+        rec.update({"T12M": t, "T12M basis": t_basis, "QoQ": q, "growth_4q": g, "growth_quarters": n_g,
+                    "improved": imp, "comparisons": n_imp, "trough": tr,
+                    "trend": trajectory.trend_text(q, g, imp, n_imp, d),
+                    "benchmark": b["label"] if b else "", "target": target, "years": yrs,
+                    "why": "; ".join(why), "tier": src.get("tier", ""), "q0_coverage": src.get("q0_covered_days"),
+                    "verdict": verdict, "cell": f"'{hs}'!{hc}"})
+        put = {"T12M": t, "T12M basis": t_basis, "QoQ": q, "4Q growth (annual, log-linear)": g,
+               "Quarters in the growth": n_g, "Quarters improved (direction-aware)":
+               (f"{imp}/{n_imp}" if imp is not None else "n/a"), "Trough of the last 4": tr or "n/a",
+               "Trend": rec["trend"], "Benchmark": rec["benchmark"], "Target": target,
+               "Years to benchmark": (yrs if yrs is not None else ("n/a" if b else "")), "Why n/a": rec["why"],
+               "Source tier (headline series)": rec["tier"], "Q0 coverage days (headline series)": rec["q0_coverage"],
+               "Credibility (Q0 = headline cell)": verdict, "Headline cell": rec["cell"]}
+        for h, v in put.items():
+            c = ws.cell(row=r, column=trajectory.COL[h], value=v)
+            fmt = (FMT_PCT if h in ("QoQ", "4Q growth (annual, log-linear)") else
+                   spec["fmt"] if h in ("T12M", "Target") else "0.0" if h == "Years to benchmark" else FMT_TEXT)
+            _style(c, "calc", fmt)
+        out.append(rec)
+    return out
+
+
+TRAJECTORY_ROWS: list = []      # the last build's trajectory rows (write_trajectory)
+
+
 def build_workbook(store, path: Path | str, run_id: str | None = None,
                    asof: pd.Timestamp | None = None, only: list[str] | None = None) -> Path:
     """Render the workbook. `only` narrows it to those project names; None renders every project.
@@ -6702,6 +6958,7 @@ def build_workbook(store, path: Path | str, run_id: str | None = None,
     write_monthly(ws_mon, months, monthly)
     _HEADLINE_CELLS.clear()
     _TAB_CELLS.clear()
+    trajectory.reset()
     a4 = write_a4(ws_a4, R, data_by_key)
     a3 = write_a3(ws_a3, R, data_by_key)
     a1 = write_a1(ws_a1, R, data_by_key, months)
@@ -6741,6 +6998,9 @@ def build_workbook(store, path: Path | str, run_id: str | None = None,
         c.font = font
         if fill:
             c.fill = fill
+
+    # THE TRAJECTORY TAB (theory layer, Phase 1): after every tab it reads is written
+    TRAJECTORY_ROWS[:] = write_trajectory(wb, data_by_key)
 
     # SANITY RULES ON THE BUILT NUMBERS (Jake's review of 97b29ae, item 17 — permanent): evaluated in Python (xlcalc)
     # and written under the Review Queue; credibility_report prints them (SANITY_HITS)

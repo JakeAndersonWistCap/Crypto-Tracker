@@ -11,6 +11,7 @@ Each rule reads the EVALUATED workbook (the numbers a reader sees) and returns (
                         unconfirmed / none; or an 'active' label with no flow measured in the window)
   mixed_windows         a ratio printed beside a total BLOCKED for unequal coverage (the same two series, one row)
   cross_tab             the same figure differs between Master and an A-tab, or between two A-tabs (cross_tab.py)
+  trajectory_q0_mismatch a Trajectory row's Q0 is not its headline cell (the shifted formula changed what Q0 reads)
 
 Only the projects in portfolio.txt are checked (parked ones are skipped; with no portfolio.txt, every project).
 
@@ -98,6 +99,17 @@ def hits(wb, value) -> list[tuple[str, str, str]]:
         ann = _num(mv(p, "Net supply change, annualised % of circulating"))
         if isinstance(net, str) and net.startswith("BLOCKED") and ann is not None:
             found.append((p, "mixed_windows", f"net supply change is {net[:90]}, yet its annualised % reads {ann:.3%}"))
+    # TRAJECTORY (theory layer, Phase 1): every row's Q0 is its headline cell's own formula — a row that disagrees means
+    # the shift changed what Q0 reads (build_workbook.write_trajectory writes the verdict)
+    if "Trajectory" in wb.sheetnames:
+        import trajectory                                  # noqa: PLC0415
+        tw = wb["Trajectory"]
+        hr = next((r for r in range(1, 12) if tw.cell(r, 1).value == "Project"), None)
+        vc, kc = trajectory.COL["Credibility (Q0 = headline cell)"], trajectory.COL["Key (tab|project|headline id)"]
+        for r in range(hr + 1, tw.max_row + 1) if hr else ():
+            v = str(tw.cell(r, vc).value or "")
+            if v.startswith("CHECK"):
+                found.append((str(tw.cell(r, 1).value), "trajectory_q0_mismatch", f"{tw.cell(r, kc).value}: {v}"))
     for m in cross_tab.mismatches(wb, value):
         found.append((m["project"], "cross_tab", cross_tab.describe(m).splitlines()[0][len(m["project"]) + 3:]))
     # PARKED PROJECTS ARE NOT CHECKED (Jake's run on e4e50b0, 2026-10-12 item 5: Injective, PancakeSwap and Render hits

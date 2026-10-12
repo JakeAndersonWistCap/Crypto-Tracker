@@ -119,6 +119,10 @@ if ($run[0] -ne 0) {
 Write-Log "daily run end"
 [void](Invoke-Step "daily summary" @("daily_summary.py", "--log", $Log))
 
+# 4b. History gaps (theory layer, Phase 1, 2026-10-12): logs\history_gaps.csv — which series the trajectory engine is
+# missing and the cheapest fix. Reads nothing from the network; `python history_gaps.py --run-fixes` runs the free ones.
+[void](Invoke-Step "history gaps" @("history_gaps.py"))
+
 # 5. The theory snapshot (Jake 2026-10-11, D2), the LAST step: one row per project, every headline metric with its
 #    credibility verdict, NEAR LIMIT flag and coverage days -> snapshots\snapshot_<date>.csv (METRICS.md defines it).
 [void](Invoke-Step "export snapshot" @("export_snapshot.py"))
