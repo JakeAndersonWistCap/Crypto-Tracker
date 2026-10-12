@@ -63,6 +63,7 @@ log = logging.getLogger("token_metrics.fetch.near_bigquery")
 SOURCE = "near_bigquery"
 TIER = 1
 REAUTH_ACTION = "run `gcloud auth application-default login`"
+SKIP_ENV = "TOKEN_METRICS_SKIP_NEAR_BQ"      # set to 1 by windows/daily_run.ps1 when its BigQuery check failed
 QUOTA_REMINDER = "ADC has no quota project — run `gcloud auth application-default set-quota-project {project}`"
 
 
@@ -302,6 +303,13 @@ class NearBigQuery:
                 self._project(p["name"], spec, out, unbounded)
 
     def _project(self, name: str, spec: dict, out, unbounded: bool) -> None:
+        # SKIPPED BY THE DAILY RUN (Jake 2026-10-12 evening, item 16): its BigQuery check failed on a scheduled run, so
+        # no query is attempted; every series resumes from its own last stored day on the next good run
+        if os.environ.get(SKIP_ENV) == "1":
+            out.skipped(SOURCE, name, "NEAR BigQuery skipped — log in: gcloud auth application-default login "
+                                      "(the daily run's BigQuery check failed; each series resumes from its last "
+                                      "stored day on the next good run)", TIER)
+            return
         self._run_bytes = self._backfill_bytes = 0
         st = self._load()
         st.setdefault("ledger", {})

@@ -356,7 +356,11 @@ class SolanaAccountHistory:
                                                   self._bal(tx, "postTokenBalances")]
             done += 1
         self.save()
-        return True, f"{len(sigs)} signature(s) listed, {done} transaction(s) read this run"
+        # "0 READ" IS NOT "NOTHING READ" (Jake's review of the ef6dc86 run, item 13c): every signature inside the window
+        # is cached from earlier runs; the listing reaches back past the window, so most of it is older than the window
+        inwin = sum(1 for s in sigs if int(s.get("blockTime") or 0) >= since_ts - 86_400)
+        return True, (f"{len(sigs)} signature(s) listed, {inwin} inside the window — {done} read this run, "
+                      f"{inwin - done} already cached (complete)")
 
     def daily(self, days: list[pd.Timestamp]) -> dict[pd.Timestamp, float]:
         """Balance at each day's START: after the last transaction before it. A day before the
@@ -629,11 +633,7 @@ class ArchiveBackfill:
                         checkpoint=lambda: [c.save() for c in clocks.values()],
                         status=lambda: (f"{sum(written.values())} row(s) written over {len(written)} series; "
                                         f"{len(refused)} series refused"))
-        for d in days:
-            prog.tick()
-            if time.monotonic() >= deadline:
-                self.report.append(f"budget spent at {d.date()}; re-run to continue")
-                break
+        def wanted(d):
             want = {}
             for name, ms in targets.items():
                 p = config.PROJECT_BY_NAME[name]
@@ -643,8 +643,30 @@ class ArchiveBackfill:
                               if s["kind"] in ("spl_token_account", "spl_mint"))}
                 if ms:
                     want[name] = ms
+            return want
+        read_days, read_s = 0, 0.0
+        for i, d in enumerate(days):
+            prog.tick()
+            if time.monotonic() >= deadline:
+                # HOW MUCH IS LEFT, AND HOW MANY RUNS IT TAKES (Jake's review of the ef6dc86 run, item 13c). A re-run
+                # continues here by itself: every stored (day, series) is skipped without a read.
+                left = sum(1 for dd in days[i:] if wanted(dd))
+                per = (read_s / read_days) if read_days else None
+                if per:
+                    need_min = left * per / 60
+                    runs = max(1, -(-int(need_min * 60) // int(self.budget_s)))
+                    self.report.append(
+                        f"budget spent at {d.date()}; {left} day(s) still have something to read, at {per:.1f}s a day "
+                        f"(this run) ~{need_min:.0f} min: about {runs} more run(s) at this budget "
+                        f"({self.budget_s / 60:.0f} min), or one with --budget-min {int(need_min * 1.2) + 5}. "
+                        f"Re-run to continue — stored days are skipped")
+                else:
+                    self.report.append(f"budget spent at {d.date()}; {left} day(s) still to read; re-run to continue")
+                break
+            want = wanted(d)
             if not want:
                 continue
+            t_day = time.monotonic()
             for c in chains:
                 self.reader.at_block[c] = clocks[c].at(d, heads[c])
             ch = Chain(backfill={"day": d, "metrics": want,
@@ -707,6 +729,7 @@ class ArchiveBackfill:
                     stored[(r.project, r.metric)] = (row if g is None else
                                                      pd.concat([g, row]).sort_values("date"))
                 log.info("archive %s: %d row(s)", d.date(), n)
+            read_days, read_s = read_days + 1, read_s + (time.monotonic() - t_day)
         self.reader.at_block.clear()
         for c in clocks.values():
             c.save()

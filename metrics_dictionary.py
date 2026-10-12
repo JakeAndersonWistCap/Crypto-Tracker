@@ -197,11 +197,14 @@ ENTRIES = {
         formula="holder_value_revenue_usd (each day's buyback $ where its programme was revenue-funded that day, plus "
                 "the declared payouts to holders) annualised over its covered days ÷ market cap",
         window="Q0 → year", unit="%",
-        counts="revenue-funded buybacks (retired and distributed) and declared payouts (Aerodrome voter fees, Sky USDS)",
+        counts="revenue-funded buybacks (retired and distributed), declared payouts (Aerodrome voter fees, Sky USDS) "
+               "and Aerodrome's LIQUID bribes to voters (decision 4 of 2026-10-12 evening: emissions count as dilution, so "
+               "the bribes paid to direct them count as holder income; the illiquid-token rule applies; fees-only beside)",
         excludes="treasury- or emissions-funded buybacks (recorded beside it, never credited — LITMUS A); fee-market "
                  "burns (on A1 net issuance, amendment 1)",
         inputs=["holder_value_revenue_usd", "market_cap_usd"],
-        decided=[(J, "2026-10-12", "Phase 2 item 3 and LITMUS A")]),
+        decided=[(J, "2026-10-12", "Phase 2 item 3 and LITMUS A"),
+                 (J, "2026-10-12", "liquid bribes credited (Aerodrome), one-off treasury burns never (Uniswap)")]),
     "NET HOLDER YIELD": dict(
         what="Holder value yield less dilution: what holders gain net of new tokens entering circulation.",
         formula="holder value yield − (outflow_a/b/c/e_usd, each annualised over its covered days) ÷ market cap; "

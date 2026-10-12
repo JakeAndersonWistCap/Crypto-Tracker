@@ -4581,3 +4581,89 @@ SELECT m.metric, COUNT(*) AS rows, MIN(m.date) AS first, MAX(m.date) AS last,
 --    AND source LIKE 'chain:sum(%' AND source LIKE '%archive%'
 --    AND date < (SELECT MAX(p.date) FROM metrics p WHERE p.project = 'GEODNET' AND p.metric = metrics.metric
 --                   AND p.source LIKE 'chain:polygon:burn_polygon%');
+
+-- ========================================================================================
+-- CM. THE COINGECKO TOTALS LEFT AFTER CJ: EVERY DATE, THE ON-CHAIN-FIRST TOKENS  2026-10-12
+--     Jake's review of the ef6dc86 run (item 13a). archive_backfill refused total_supply for Aerodrome, Chainlink,
+--     Fluid, Maple, Morpho, Pendle and Sky: "the stored row after 2026-10-10 (2026-10-11) was read from coingecko".
+--     CJ moved only the rows dated BEFORE the 2026-10-11 handover; the run of 2026-10-11 itself still stored CoinGecko's
+--     total that day, and that one row blocks the whole restatement (the archive refuses a day whose stored neighbour
+--     was read from another point). CM moves EVERY CoinGecko total_supply row of the eight on-chain-first projects,
+--     whatever its date, to total_supply_coingecko (the cross-check), exactly as CJ did; a row whose day already holds
+--     a total_supply_coingecko row is removed instead (UPDATE OR IGNORE leaves it; the EXISTS clause names it).
+--     Values are untouched. Then: python archive_backfill.py --run (fills total_supply from the chain).
+--     Run: python run_sql.py CM, then python run_sql.py --delete CM.
+-- ========================================================================================
+-- CM1. WHAT MOVES.
+SELECT project, source, COUNT(*) AS rows, MIN(date) AS first, MAX(date) AS last
+  FROM metrics
+ WHERE metric = 'total_supply' AND source LIKE 'coingecko%'
+   AND project IN ('Ether.fi', 'Aerodrome', 'Chainlink', 'Fluid', 'Maple', 'Morpho', 'Pendle', 'Sky')
+ GROUP BY project, source ORDER BY project, source;
+
+-- CM2. THE MOVE (rename; then remove what the rename left because the day already holds CoinGecko's total).
+-- UPDATE OR IGNORE metrics
+--    SET metric = 'total_supply_coingecko'
+--  WHERE metric = 'total_supply' AND source LIKE 'coingecko%'
+--    AND project IN ('Ether.fi', 'Aerodrome', 'Chainlink', 'Fluid', 'Maple', 'Morpho', 'Pendle', 'Sky');
+-- DELETE FROM metrics
+--  WHERE metric = 'total_supply' AND source LIKE 'coingecko%'
+--    AND project IN ('Ether.fi', 'Aerodrome', 'Chainlink', 'Fluid', 'Maple', 'Morpho', 'Pendle', 'Sky')
+--    AND EXISTS (SELECT 1 FROM metrics c WHERE c.project = metrics.project AND c.date = metrics.date
+--                AND c.metric = 'total_supply_coingecko');
+
+-- ========================================================================================
+-- CN. RESTATE ON THE CURRENT BASIS: FLUID'S AND MAPLE'S OLD-COMPOSITION NON-CIRCULATING ROWS  2026-10-12
+--     Jake's review of the ef6dc86 run (item 13b) — CK, for the two sets it did not cover. The archive refused
+--     noncirculating_holding_tokens for Fluid and Maple: their wallet sets changed on 2026-10-06/07 (Fluid: the team
+--     multisig alone -> the Timelock, team multisig 2, the Foundation and five MerkleDistributors; Maple: + the
+--     filing's Operational and Security Admins), and Maple's grows again today with the Maple-controlled Safe 0x58BE
+--     (decision 1 of 2026-10-12 evening). A row read from another set is another measuring point, so the old-set rows
+--     go and the archive reads the CURRENT set at each past day's first block. The current set is recognised by its
+--     newest wallet: Fluid's noncirc_merkle_distributor_eth_usdc_lp, Maple's noncirc_ssf_safe — so CN removes EVERY
+--     Maple row stored so far (none carries the Safe) and Fluid's rows from before its current set.
+--     Until the archive refills them the Trajectory marks the rows that read these series SERIES BREAK.
+--     Run: python run_sql.py CN, then python run_sql.py --delete CN, then python archive_backfill.py --run.
+-- ========================================================================================
+-- CN1. WHAT GOES (per project, the old set's rows).
+SELECT project, COUNT(*) AS rows, MIN(date) AS first, MAX(date) AS last, ROUND(MIN(value), 0) AS min_value,
+       ROUND(MAX(value), 0) AS max_value
+  FROM metrics
+ WHERE metric = 'noncirculating_holding_tokens'
+   AND ((project = 'Fluid' AND source NOT LIKE '%noncirc_merkle_distributor_eth_usdc_lp%')
+     OR (project = 'Maple' AND source NOT LIKE '%noncirc_ssf_safe%'))
+ GROUP BY project ORDER BY project;
+
+-- CN2. THE DELETE.
+-- DELETE FROM metrics
+--  WHERE metric = 'noncirculating_holding_tokens'
+--    AND ((project = 'Fluid' AND source NOT LIKE '%noncirc_merkle_distributor_eth_usdc_lp%')
+--      OR (project = 'Maple' AND source NOT LIKE '%noncirc_ssf_safe%'));
+
+-- ========================================================================================
+-- CO. ETHER.FI: THE 2026-09-02 LP WITHDRAWAL LEAVES THE BUYBACK SERIES  2026-10-12
+--     Jake 2026-10-12 evening (decision 2). The 1,047,757 ETHFI counted as bought on 2026-09-02 came out of Arrakis LP
+--     positions (LogWithdraw in tx 0x3b52e19b49fca8a4cd417b3e2549a761e64cb9f03fd22d6848df8c635261112b; ETH received,
+--     nothing paid) through the Uniswap v4 PoolManager — an LP withdrawal, not a purchase. The scan now excludes that
+--     transaction (config log_scans buyback_wallet_inflow exclude_txs); the stored day was written before. CO1 shows
+--     the day's buyback rows. CO2 sets them to 0 — the day's purchases once the withdrawal is out — ONLY where the
+--     tokens row is that withdrawal alone (1,047,756..1,047,758 ETHFI); a day holding anything else lists in CO1 and
+--     is left for Jake. The $ row is set first (its guard reads the tokens row). The source records why.
+--     Run: python run_sql.py CO, then python run_sql.py --delete CO.
+-- ========================================================================================
+-- CO1. THE DAY'S ROWS.
+SELECT project, metric, date, value, source
+  FROM metrics
+ WHERE project = 'Ether.fi' AND metric IN ('actual_buyback_tokens', 'actual_buyback_usd') AND date = '2026-09-02'
+ ORDER BY metric;
+
+-- CO2. THE UPDATE.
+-- UPDATE metrics
+--    SET value = 0, source = source || ':lp-withdrawal-removed[Jake 2026-10-12]'
+--  WHERE project = 'Ether.fi' AND metric = 'actual_buyback_usd' AND date = '2026-09-02'
+--    AND EXISTS (SELECT 1 FROM metrics t WHERE t.project = 'Ether.fi' AND t.metric = 'actual_buyback_tokens'
+--                AND t.date = '2026-09-02' AND t.value BETWEEN 1047756 AND 1047758);
+-- UPDATE metrics
+--    SET value = 0, source = source || ':lp-withdrawal-removed[Jake 2026-10-12]'
+--  WHERE project = 'Ether.fi' AND metric = 'actual_buyback_tokens' AND date = '2026-09-02'
+--    AND value BETWEEN 1047756 AND 1047758;

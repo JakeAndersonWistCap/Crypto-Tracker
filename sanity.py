@@ -12,6 +12,9 @@ Each rule reads the EVALUATED workbook (the numbers a reader sees) and returns (
   mixed_windows         a ratio printed beside a total BLOCKED for unequal coverage (the same two series, one row)
   cross_tab             the same figure differs between Master and an A-tab, or between two A-tabs (cross_tab.py)
   trajectory_q0_mismatch a Trajectory row's Q0 is not its headline cell (the shifted formula changed what Q0 reads)
+  headline_starved      a headline reads n/a while the series it reads is stored across the whole Q0 window (the
+                        input row is withheld or its window blanked) — the continuity guard misses it when the
+                        previous run was n/a too (Jake's review of the ef6dc86 run, item 7: GEODNET's A4 gross burn)
   float_outside_circ    CP's tradeable float < 0 or > the circulating supply it is taken from (Phase 2, 2026-10-12)
   discretionary_above_total CP's discretionary supply > total supply
 
@@ -156,6 +159,46 @@ def lost_headlines(wb, previous: dict, headline_cells: list, prev_date: str = ""
     return out
 
 
+def starved_headlines(wb, headline_cells: list, data_by_key: dict, asof, period_days: int = 90,
+                      fresh_days: int = 3) -> list[tuple[str, str, str]]:
+    """headline_starved: a headline cell that evaluates to n/a while its input series (the cell's metric) holds stored
+    rows from before the Q0 window to within `fresh_days` of asof. One hit per cell, naming the input row's status and
+    note — the reason the figure is not shown (a withheld series, a blanked window)."""
+    import pandas as pd                                    # noqa: PLC0415
+    import xlcalc                                          # noqa: PLC0415
+    X = xlcalc.Workbook(wb)
+    asof = pd.Timestamp(asof).normalize()
+    q0_start = asof - pd.Timedelta(days=period_days)
+    out = []
+    for hc in headline_cells:
+        m = hc.get("input_metric")
+        row = (data_by_key or {}).get(f"{hc['project']}|{m}") if m else None
+        if not row:
+            continue
+        first, last = row.get("first_date"), row.get("latest_date")
+        try:
+            full = (first and last and pd.Timestamp(first) <= q0_start
+                    and pd.Timestamp(last) >= asof - pd.Timedelta(days=fresh_days))
+        except (TypeError, ValueError):
+            full = False
+        if not full:
+            continue
+        cell = wb[hc["sheet"]][hc["cell"]]
+        try:
+            v = X.value(hc["sheet"], cell.row, cell.column)
+        except Exception as e:  # noqa: BLE001
+            v = f"unevaluable ({type(e).__name__})"
+        shown = v if isinstance(v, str) else xlcalc.display(v)
+        # a bare n/a (the formula's own fallback) or an error — never a cell that states its reason ("n/a — …")
+        txt = str(shown).strip().lower()
+        if _num(v) is None and (txt == "n/a" or txt.startswith(("#", "unevaluable"))):
+            out.append((hc["project"], "headline_starved",
+                        f"{hc['sheet'][:2]} {hc['header'][:60]} reads {str(shown)[:20]} while {m} is stored "
+                        f"{str(first)[:10]}..{str(last)[:10]} (Data status '{row.get('status')}': "
+                        f"{str(row.get('note') or '')[:160]})"))
+    return out
+
+
 def check_workbook(path_or_wb) -> list[tuple[str, str, str]]:
     import openpyxl
     import xlcalc
@@ -176,7 +219,12 @@ def main(argv=None) -> int:
         from build_workbook import build_workbook
         path = str(Path(tempfile.mkdtemp()) / "sanity.xlsx")
         build_workbook(store_mod.Store(store_mod.DB_PATH), path)
-    found = check_workbook(path)
+        # the build's own hits: every rule, including those that need the build's state (headline_starved, the
+        # continuity guard) — the workbook alone cannot answer them
+        import build_workbook as bw                        # noqa: PLC0415
+        found = list(bw.SANITY_HITS)
+    else:
+        found = check_workbook(path)
     print(f"SANITY RULES — {len(found)} hit(s)")
     for p in sorted({h[0] for h in found}):
         print(f"  {p}")

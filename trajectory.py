@@ -130,7 +130,26 @@ def loglinear_growth(values: list) -> tuple[float | None, int, str]:
     return math.exp(4 * slope) - 1, len(pts), ""
 
 
-def growth_rule(values: list, step_at: int | None = None) -> tuple[float | None, int, str, str]:
+def partial_start_quarter(first_date, asof, period_days: int, n: int, slack_days: int = 1) -> int | None:
+    """The quarter index (0 = Q0) that the series' FIRST stored day falls strictly inside — the quarter it covers only
+    part of — or None (it starts on or before a quarter's first day, or outside the window)."""
+    import pandas as pd
+    if first_date is None or asof is None:
+        return None
+    try:
+        f, a = pd.Timestamp(first_date).normalize(), pd.Timestamp(asof).normalize()
+    except (TypeError, ValueError):
+        return None
+    for k in range(n):
+        end = a - pd.Timedelta(days=period_days * k)
+        start = end - pd.Timedelta(days=period_days)
+        if start + pd.Timedelta(days=slack_days) < f <= end:
+            return k
+    return None
+
+
+def growth_rule(values: list, step_at: int | None = None,
+                starts_in: int | None = None) -> tuple[float | None, int, str, str]:
     """THE GROWTH RULES (Jake's Phase 1 review 2026-10-12, item 4) over the newest four quarters (values[0] = Q0):
     (annual growth, quarters used, label, why). A growth figure needs >= min_quarters quarters, all > 0, in ONE regime:
       * a break of basis or mechanism inside the window (`step_at` = the quarter holding it) -> "STEP CHANGE at Q-x";
@@ -143,6 +162,13 @@ def growth_rule(values: list, step_at: int | None = None) -> tuple[float | None,
     if step_at is not None and step_at < 4:
         return None, 0, f"STEP CHANGE at {LABELS[step_at]}", "a break of basis inside the window"
     alive = [i for i, v in enumerate(q) if v is not None and v > 0]
+    # A PARTIAL FIRST QUARTER (Jake's review of the ef6dc86 run, item 10: NEAR's retired tokens read +971%/yr — the
+    # Intents buyback began 2026-03-19, inside Q-2): where the series begins INSIDE its oldest quarter with a value
+    # (`starts_in`, the youngest input's first stored day), that quarter is a part-quarter, not a growth base
+    if (starts_in is not None and alive and starts_in == max(alive) and starts_in < 4
+            and len(alive) >= rule["min_quarters"]):
+        return (None, len(alive), f"NEW since {LABELS[starts_in]}",
+                f"the series begins inside {LABELS[starts_in]} — a part-quarter is not a growth base")
     if alive and q[0] is not None and q[0] > 0:
         oldest = max(alive)
         # A MECHANISM THAT STARTS: the older quarters READ 0 (or less) — not empty. An empty quarter is history we do

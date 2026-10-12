@@ -111,8 +111,8 @@
    }
   ],
   "destination": {
-   "value": "held-timelocked",
-   "detail": "Chainlink Reserve 0x9A709B7B...eC6 is an RBACTimelock: getMinDelay()=172,800 s (2 days); proposer and bypasser are ManyChainMultiSig contracts; BYPASSER role (0x177a2884) can execute without the delay via bypasserExecuteBatch; 0 blocked selectors; held 6,204,681.79 LINK on 2026-10-12. Chainlink: 'We do not expect any withdrawals from the Reserve for multiple years.' Staking-reward vault is a separate DISTRIBUTE route.",
+   "value": "held-discretionary",
+   "detail": "Chainlink Reserve: LINK bought with service revenue is HELD; its 2-day timelock can be bypassed by a multisig, so the lock is not durable — held at discretion (Jake 2026-10-12 evening, decision 6; was 'held-timelocked'). Chainlink Reserve 0x9A709B7B...eC6 is an RBACTimelock: getMinDelay()=172,800 s (2 days); proposer and bypasser are ManyChainMultiSig contracts; BYPASSER role (0x177a2884) can execute without the delay via bypasserExecuteBatch; 0 blocked selectors; held 6,204,681.79 LINK on 2026-10-12. Chainlink: 'We do not expect any withdrawals from the Reserve for multiple years.' Staking-reward vault is a separate DISTRIBUTE route.",
    "source": "https://eth.blockscout.com/address/0x9A709B7B69EA42D5eeb1ceBC48674C69E1569eC6 (getMinDelay, getRoleMember) ; https://chain.link/blog/chainlink-reserve-strategic-link-reserve"
   },
   "certainty": {

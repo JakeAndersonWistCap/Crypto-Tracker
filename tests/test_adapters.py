@@ -18330,7 +18330,8 @@ def test_solana_account_history_gives_the_balance_at_each_day_start(tmp_path):
                     "meta": {"preTokenBalances": bal(pre), "postTokenBalances": bal(post)}}
     h = SolanaAccountHistory(rpc=RPC(), account=acct, decimals=9, root=tmp_path, pace_s=0)
     done, note = h.fill(d0 - 86_400, deadline=__import__("time").monotonic() + 30)
-    assert done and "3 transaction(s) read" in note
+    # the note tells "read" from "already cached" (Jake's review of the ef6dc86 run, item 13c)
+    assert done and "3 inside the window — 3 read this run, 0 already cached" in note
     days = [pd.Timestamp(f"2026-09-0{i}") for i in (1, 2, 3, 4)]
     got = h.daily(days)
     assert [got[d] for d in days] == [0.0, 100.0, 150.0, 200.0]
@@ -20050,8 +20051,11 @@ def test_onchain_circulating_excludes_only_documented_sourced_addresses_and_revi
     # Morpho ESTABLISHED on the issuer rule (Jake 2026-10-12, decision 1 on 6f8c86c)
     assert config.circulating_onchain("Morpho")["status"] == "established"
     lines = "\n".join(C.report_lines())
-    # Uniswap's set is complete since 2026-10-06 (CoinGecko's own method); Maple stays PARTIAL
-    assert "Uniswap: ESTABLISHED" in lines and "Maple: PARTIAL" in lines and "MISSING:" in lines \
+    # Uniswap's set is complete since 2026-10-06 (CoinGecko's own method); Maple ESTABLISHED on the issuer rule with the
+    # Safe 0x58BE out (Jake 2026-10-12 evening, decision 1)
+    # (Maple was the last PARTIAL set; a PARTIAL set, where one remains, still names what is MISSING)
+    assert not [ln for ln in lines.splitlines() if ": PARTIAL" in ln] or "MISSING:" in lines
+    assert "Uniswap: ESTABLISHED" in lines and "Maple: ESTABLISHED" in lines \
         and "Morpho: ESTABLISHED" in lines
     d0, d1 = pd.Timestamp("2026-09-01"), pd.Timestamp("2026-09-02")
     h = pd.DataFrame([
@@ -20074,7 +20078,12 @@ def test_onchain_circulating_excludes_only_documented_sourced_addresses_and_revi
     R = bw.Refs(100, 10, ["2026-09"])
     assert "circulating_supply_first_party" in bw._circ(R, 5, config.PROJECT_BY_NAME["Hyperliquid"])
     assert "circulating_supply_onchain" in bw._circ(R, 5, config.PROJECT_BY_NAME["Pendle"])
-    assert "circulating_supply_onchain" not in bw._circ(R, 5, config.PROJECT_BY_NAME["Maple"])
+    # Maple's set is ESTABLISHED since 2026-10-12 evening (decision 1): on-chain; a PARTIAL set still never is
+    assert "circulating_supply_onchain" in bw._circ(R, 5, config.PROJECT_BY_NAME["Maple"])
+    partial = [n for n, sp in config.CIRCULATING_ONCHAIN.items() if sp.get("status") == "partial"
+               and not sp.get("ratios_use")]
+    for n in partial:
+        assert "circulating_supply_onchain" not in bw._circ(R, 5, config.PROJECT_BY_NAME[n]), n
 
 
 def test_tokens_primary_retirement_zero_and_burn_only_presentation():
@@ -25443,9 +25452,9 @@ def test_circulating_decisions_are_applied_consistently_and_coingecko_free_float
     # sign-off round: Chainlink (all 27 wallets) and Fluid (Avocado wallets not the team's) are on-chain primary
     for n in ("Chainlink", "Fluid"):
         assert chosen[n] == "circulating_supply_onchain", n
-    for n in ("Maple",):
-        assert chosen[n] == "circulating_supply", n
-        assert not config.circulating_onchain_primary(n), n
+    # Maple on the issuer rule with the Safe 0x58BE out (Jake 2026-10-12 evening, decision 1)
+    assert chosen["Maple"] == "circulating_supply_onchain"
+    assert config.circulating_onchain_primary("Maple")
     # Morpho on the issuer rule (Jake 2026-10-12, decision 1 on 6f8c86c)
     assert chosen["Morpho"] == "circulating_supply_onchain" and config.circulating_onchain_primary("Morpho")
     for n in ("Chainlink", "Maple", "Fluid", "Ether.fi", "GEODNET"):
@@ -25471,7 +25480,8 @@ def test_circulating_decisions_are_applied_consistently_and_coingecko_free_float
                                # + the IGP-137 custody (probes15), sourced to its address page and Jake's trace
                                "Fluid": (9, "FLUID", ("https://github.com/Instadapp/", "https://etherscan.io/address/")),
                                "Chainlink": (3, "LINK", "https://blog.chain.link/"),
-                               "Maple": (2, "SYRUP", "https://blockworks.com/")}.items():
+                               # + the Maple-controlled Safe 0x58BE (Jake 2026-10-12 evening, decision 1)
+                               "Maple": (3, "SYRUP", ("https://blockworks.com/", "https://etherscan.io/address/"))}.items():
         rows = config._NONCIRC_WALLETS_FIRST_PARTY[n]
         assert len(rows) == cnt, n
         cs = {f"noncirc_{r[0]}": config.PROJECT_BY_NAME[n]["contracts"][f"noncirc_{r[0]}"] for r in rows}
@@ -25479,7 +25489,8 @@ def test_circulating_decisions_are_applied_consistently_and_coingecko_free_float
         # Morpho's issuer-held entities are their own series since Jake's decision 1 on 6f8c86c (CoinGecko counts them)
         assert all(c["metric_override"] == ("noncirculating_igp137_tokens" if k == "noncirc_igp137_lock"
                                              else "noncirculating_entities_tokens" if k in config.MORPHO_ENTITY_KEYS
-                                             else "noncirculating_holding_tokens") and c["verified"] == "2026-10-07"
+                                             else "noncirculating_holding_tokens")
+                   and c["verified"] == ("2026-10-12" if k == "noncirc_ssf_safe" else "2026-10-07")
                    and c["source_url"].startswith(src) and c["expected_symbol"] == sym
                    and c["holder_has_code"] is False for k, c in cs.items()), n
         assert "noncirculating_holding_tokens" in config.circulating_onchain(n)["subtract"], n
@@ -26840,7 +26851,8 @@ def test_new_first_party_sources_of_2026_10_07_are_recorded():
     assert {mp["noncirc_operational_admin"]["address"], mp["noncirc_security_admin"]["address"]} == {
         "0xCe1cE7c7F436DCc4E28Bc8bf86115514d3DC34E8", "0x6b1A78C1943b03086F7Ee53360f9b0672bD60818"}
     assert "maple_dao_vs_ssf" in config.CREDIBILITY["Maple"]["a3_buyback_locked"]["why"]
-    assert config.circulating_onchain("Maple")["status"] == "partial", "on-chain primary only after a MATCH"
+    # ESTABLISHED (Jake 2026-10-12 evening, decision 1): the Maple-controlled Safe 0x58BE closed the set
+    assert config.circulating_onchain("Maple")["status"] == "established"
     bp = config.PROJECT_BY_NAME["Ether.fi"]["buyback_programme"]
     assert set(bp["streams"]) == {"weekly", "monthly"} and "sETHFI" in bp["destination"]
     assert bp["declared_wallet"].startswith("0x2f5301a3D59388c509C65f8698f521377D41Fd0F")
@@ -26960,7 +26972,8 @@ def test_balance_history_is_rebuilt_from_a_wallets_own_transfers(monkeypatch):
     assert bal.loc[pd.Timestamp("2026-06-26")] == 30e6 and bal.loc[pd.Timestamp("2026-06-29")] == 28e6
     assert bal.index[-1] == pd.Timestamp.now().normalize() and bal.iloc[-1] == 28e6 and how == "1 in / 1 out"
     assert "Maple: 0xd6d4" not in config.circulating_onchain("Maple")["missing"]
-    assert "0xd6d4 is NOT it" in config.circulating_onchain("Maple")["missing"]
+    # the SSF trail resolved (decision 1): what stays open is the EOA that received 27.5M, counted as circulating
+    assert "0x99f03ca0" in config.circulating_onchain("Maple")["missing"]
 
 
 def test_etherfi_trailing_year_is_judged_against_the_years_own_assets_per_share_like_for_like():

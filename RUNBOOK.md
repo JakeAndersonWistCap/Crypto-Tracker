@@ -527,6 +527,104 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11bs. Review of the ef6dc86 run + Phase 2 decisions (Jake, 2026-10-12 evening)
+
+**Run after pulling, in this order (PowerShell, repo root):**
+```
+git pull
+powershell -ExecutionPolicy Bypass -File windows\register_task.ps1   # re-register: the task now passes -Scheduled
+python adc_check.py                       # BIGQUERY CHECK: OK - user ADC ...; else run the FIX line it prints
+python run_sql.py CM
+python run_sql.py --delete CM             # type: DELETE CM
+python run_sql.py CN
+python run_sql.py --delete CN             # type: DELETE CN
+python run_sql.py CO
+python run_sql.py --delete CO             # type: DELETE CO  (only if CO1 shows the 1,047,757 row alone)
+python token_metrics.py                   # today's reads on the new sets (Maple's Safe, Fluid's wallets)
+python archive_backfill.py --run --budget-min 120          # the whole restatement, one pass
+python archive_backfill.py --run --near --budget-min 60    # NEAR stake history (EVM days are stored: skipped)
+python sanity.py
+python dump_fixture.py --project GEODNET  # and send fixtures/real_geodnet.json
+```
+If the archive's last line still reads "budget spent at …", it says how many days are left, the measured pace and
+the `--budget-min` that finishes them; re-run with it (stored days are skipped). Run 2 of ef6dc86 read ~9 s a day,
+so the 455 days of every restated series should fit in one 120-minute pass.
+
+**Decisions.**
+1. Maple is on the issuer rule: total − the DAO multisig − the registry wallets − the two admin multisigs − Safe
+   0x58BE (Maple-controlled; config `noncirc_ssf_safe`). The figure is 1,172,793,290.68 on 2026-10-12.
+   CoinGecko's figure is now the cross-check. Until CN and the archive restate it, the rows that read Maple's
+   circulating show SERIES BREAK.
+2. Ether.fi: the 2026-09-02 LP withdrawal is out of the buyback series. The scan excludes its transaction
+   (`exclude_txs`), and SQL CO sets the stored day to 0 with the reason in its source (marker `lp-withdrawal-removed`).
+3. Ether.fi: the 1,464,000 ETHFI burned between 2025-08-08 and 2025-09-19 is recorded as a one-off historical burn
+   (`config.ONE_OFF_BURN_EVENTS`; funded from revenue by the April 2025 withdrawal-fee buyback). The burn note is
+   corrected.
+4. Aerodrome holder value yield credits liquid bribes. The illiquid-token rule applies to fees and bribes alike, and
+   the fees-only yield sits beside it. The bribe series starts 2026-07-02, so the credited series is a declared
+   handover (SERIES BREAK) until RewardsSugar's per-epoch history restates it. The payout ratio reads the fees-only
+   figure.
+5. Uniswap's 2025-12-27 100M treasury burn was already moved out of the burn series (`one_off_flows`), so it is out
+   of every rate, trend and holder value. It is now dated by the data and shown as its own event row (A4 and CP),
+   with its funding.
+6. Chainlink Reserve: destination = held at discretion (the 2-day timelock can be bypassed).
+
+**Issues.**
+- 7/12 GEODNET: NOT FOUND YET. The handover-overlap explanation is ruled out twice:
+  - CL listed 0 rows.
+  - A test shows that `_monthly_leg_views` moves every Dune month dated on or after the daily leg's start to the
+    cross-check, so the legs cannot overlap.
+  The `headline_starved` guard below names the cause on the next build, from the Data row's status and note.
+  `fixtures/real_geodnet.json` then pins it. The dump named in the review was not attached.
+- 7 guard: a new sanity rule, `headline_starved`. It fires when a headline reads a bare n/a (or an error) while its
+  input series is stored from before Q0 to within 3 days of today. Its first real hit fixed a bug: on Chainlink,
+  which burns nothing, net issuance read a burn series that cannot exist. Net issuance (and Total Yield after it)
+  read n/a; they now read issuance alone (0 in Q0) and 4.77%.
+- 13a: SQL CM moves every CoinGecko `total_supply` row of the eight on-chain-first tokens, whatever its date. The
+  2026-10-11 row CJ left blocked the whole restatement.
+- 13b: SQL CN restates Fluid's and Maple's non-circulating sets. All of Maple's rows go, because none carries the
+  Safe yet.
+- 13c: when the budget runs out, the archive names the days left, the pace and the runs needed. The Solana note now
+  says "N inside the window — X read, Y already cached (complete)": the "0 of 457" was every in-window transaction
+  already cached.
+- 9 Sky: `_circulating_views` never passed the `add` leg (the MKR-backed SKY) to the series, so every day dropped
+  and circulating fell back to CoinGecko. Fixed: back on the decided basis (Jake: ~23,291.6M).
+- 10 Growth: a series that begins INSIDE its oldest quarter with a value reads "NEW since Q-x" (NEAR's retired
+  tokens: Q-2), not a rate.
+- 11 Divergence: the headline gap is revenue's 4Q growth − price's. Tokens retired / burned are a separate capture
+  column. NEAR's revenue is flagged gas-only.
+- 14 Aerodrome: CJ took the rebase reference's total supply T away, and the refill was refused. `in_emissions`
+  read "no reference" and `a3_net_absorption` followed it. CoinGecko's total now stands in where the chain total is
+  missing; on the dump with CJ applied, in_emissions is PASS again and a3_net_absorption is DOCUMENTED LIMITATION.
+- 15: the closing line names the fix for a failed BigQuery check (adc_check.py's `FIX:` line). 16: see below.
+
+**16. BigQuery on user ADC (replaced 2026-10-12 evening; service-account keys are blocked by org policy).**
+`windows/daily_run.ps1` runs `adc_check.py` before any other step. The check is a real one-row query (yesterday's
+partition of the public NEAR blocks table, billed bytes capped at 100 MB) on Jake's user ADC.
+
+On failure:
+- **Run by hand (interactive):** the script runs `gcloud auth application-default login` itself (a browser window
+  opens), then `gcloud auth application-default set-quota-project near-data-510309`, re-tests and continues.
+- **Scheduled:** the task passes `-Scheduled` (`register_task.ps1`; re-register once). A run started by the Task
+  Scheduler service counts as scheduled even without the switch. The script never waits for a browser. It sets
+  `TOKEN_METRICS_SKIP_NEAR_BQ=1`, so the adapter attempts no query. "NEAR BigQuery skipped — log in: gcloud auth
+  application-default login" opens both the closing console line and the daily summary.
+
+**Roles.** The logged-in user needs nothing beyond `roles/bigquery.jobUser` on near-data-510309. The code only
+creates query jobs and reads their results, and the public dataset is readable by any authenticated account.
+
+**Catch-up after a lapse.** Every series resumes from its own last stored day:
+
+| Series | How it catches up |
+|---|---|
+| supply flows (`gross_burn_tokens_bigquery`, `gross_issuance_tokens_bigquery`) | one query from the day after `supply_flows_through` to yesterday |
+| `circulating_supply_first_party` | reads from `circulating_through` |
+| `tx_count_ex_kaiching` / `tx_count_kaiching` | the top-up covers every missing newer day in one query |
+| p2p settlement days | the top-up covers up to 31 missing newer days; a longer lapse fills one 31-day backfill chunk per run, held behind the month's top-up reserve |
+
+None is left with a hole. Only a quota-exhausted month can delay a p2p backfill chunk to the next month, and the
+QUOTA line says so.
+
 ## 11br. Theory layer — Phase 2: the comparability layer (2026-10-12)
 
 **Run after pulling.** `python archive_backfill.py --run --near` — staked NEAR history (validators by epoch_id on the

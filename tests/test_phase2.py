@@ -64,7 +64,8 @@ def test_cp_on_the_real_aerodrome_dump(tmp_path, monkeypatch):
     assert r_c * circ == pytest.approx(r_f * flt)
     # LITMUS A: credited = the voter fees; the Foundation's buys are recorded beside it, equal to the flow demand
     assert config.holder_funding("Aerodrome", "2026-09-01")[0] == "treasury"
-    assert _get(o, "Payout ratio — the project's own net basis") == pytest.approx(1.0)
+    # fees only (liquid bribes are holder income, not revenue — decision 4), less the illiquid fee leg: ~1
+    assert _get(o, "Payout ratio — the project's own net basis") == pytest.approx(1.0, rel=1e-3)
     assert _get(o, "Holder value RECORDED, NOT CREDITED") == pytest.approx(_get(o, "Flow demand")) and \
         _get(o, "Holder value RECORDED, NOT CREDITED") > 0
     assert _get(o, "SUBSIDY COVER") == pytest.approx(_rate(wb, X, "Aerodrome|fees_usd")
@@ -140,8 +141,10 @@ def test_holder_funding_periods_are_dated_and_sourced():
     assert f("Ether.fi", "2025-06-01")[0] == "revenue"
     assert f("Ether.fi", "2025-12-01")[0] == "treasury"
     assert f("Ether.fi", "2026-09-02")[0] == "not a purchase"
-    assert f("Uniswap", "2025-12-27")[0] == "treasury" and f("Uniswap", "2025-12-28")[0] == "revenue"
-    assert set(config.METRICS["holder_value_other_usd"]["only_projects"]) == {"Aerodrome", "Ether.fi", "Uniswap"}
+    # Uniswap's 100M treasury burn is moved out of the burn series (one_off_flows) before any holder value reads it
+    # (decision 5 of 2026-10-12 evening), so no funding period is needed for it
+    assert f("Uniswap", "2025-12-28")[0] == "revenue"
+    assert set(config.METRICS["holder_value_other_usd"]["only_projects"]) == {"Aerodrome", "Ether.fi"}
     # no outflow metric for a category nobody holds, and no gap row on a project without the category
     assert "outflow_d_tokens" not in config.METRICS
     assert "Uniswap" not in config.METRICS["outflow_a_tokens"]["only_projects"]

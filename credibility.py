@@ -1625,6 +1625,13 @@ def _aero_rebase_formula(p, rows, long, asof, epochs=4, side="ref", **_):
     e = _series(long, p, "gross_issuance_tokens")
     r = _series(long, p, "emissions_tokens")
     v, t = _series(long, p, "ve_voting_power_tokens"), _series(long, p, "total_supply")
+    # T ON THE DAYS THE CHAIN TOTAL IS NOT YET RESTATED (Jake's review of the ef6dc86 run, item 14): CJ moved CoinGecko's
+    # pre-handover totals to total_supply_coingecko and the archive refill was refused, so the reference lost T for every
+    # epoch before 2026-10-11 and the row read "no reference". CoinGecko's total agreed with the token's totalSupply()
+    # on 2026-10-11 (decision A4), and T enters only as ((T - V) / T)^2 inside a 10% band — it stands in, day by day,
+    # only where the chain total is missing.
+    t = t.combine_first(_series(long, p, "total_supply_coingecko")) if not _series(
+        long, p, "total_supply_coingecko").empty else t
     if side == "ours":
         r = r[r.index < asof.normalize()]
         if len(r) < int(epochs):

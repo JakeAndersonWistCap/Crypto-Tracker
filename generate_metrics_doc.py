@@ -131,8 +131,10 @@ def render(heads: dict) -> str:
           "quarters improved; QoQ is secondary text. Growth needs ≥ "
           f"{T['growth']['min_quarters']} quarters, all > 0, in one regime; an earliest quarter below "
           f"{T['growth']['new_share']:.0%} of the latest, or a mechanism that starts (older quarters reading 0) or a "
-          "basis break inside the window, shows NEW since Q-x / STEP CHANGE at Q-x instead (item 4). A DIVERGENCE table "
-          "per project sets the fundamentals' 4Q growth (revenue; tokens retired / burned) against price's (item 6).",
+          "basis break inside the window, shows NEW since Q-x / STEP CHANGE at Q-x instead (item 4); so does a series whose "
+          "oldest quarter with a value is PARTIAL because the series begins inside it (review of the ef6dc86 run, item "
+          "10). A DIVERGENCE table per project: the headline gap is REVENUE's 4Q growth (the business, USD) less "
+          "price's; tokens retired / burned are a separate capture column, never averaged in (item 11).",
           "", "| Group | Row | Direction |", "|---|---|---|"]
     order = {g: i for i, g in enumerate(T["groups"])}
     for hid, (grp, d) in sorted(T["rows"].items(), key=lambda kv: (order.get(kv[1][0], 9), kv[0])):

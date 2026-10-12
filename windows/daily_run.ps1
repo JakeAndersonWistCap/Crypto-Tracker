@@ -1,6 +1,7 @@
 # windows/daily_run.ps1 - the daily run, for Windows Task Scheduler (register_task.ps1 sets it up).
 #
-#   1. adc_check.py      - NEAR's Google login; a desktop notification if Jake must re-login
+#   1. adc_check.py      - NEAR BigQuery, before any step: a real one-row query on Jake's user ADC; run by hand it
+#                          logs in itself on failure, scheduled it skips the BigQuery reads and says so first
 #   2. token_metrics.py  - the run; RERUN ONCE, after a pause, if its summary shows NETWORK-WIDE TROUBLE
 #   3. credibility_report.py --roots, then the full report; credibility_history.py --record (verdicts kept per run)
 #   4. daily_summary.py  - the PLAIN SUMMARY the log ends with: counts vs the previous day, NETWORK-WIDE TROUBLE,
@@ -15,7 +16,8 @@
 
 param(
     [string]$Python = "",                 # default: .venv\Scripts\python.exe if present, else python on PATH
-    [int]$RerunPauseMinutes = 15
+    [int]$RerunPauseMinutes = 15,
+    [switch]$Scheduled                    # set by register_task.ps1: never stop for a login prompt
 )
 
 $ErrorActionPreference = "Continue"
@@ -84,12 +86,45 @@ $Steps = @()                              # (label, exit code) of every step, fo
 
 Write-Log "daily run start (repo $Repo, python $Python)"
 
-# 1. NEAR's Google login, first: fixed before the run, not found after it.
-$adc = Invoke-Step "ADC check" @("adc_check.py")
+# 1. NEAR BigQuery, FIRST, before any other step (Jake 2026-10-12 evening, item 16): his user ADC keeps expiring and
+#    service-account keys are blocked by org policy. adc_check.py runs a REAL one-row query. On failure:
+#      * run by hand (interactive): log in here — gcloud auth application-default login, then set the quota project —
+#        re-test, and continue;
+#      * scheduled (-Scheduled, or started by the Task Scheduler service): never wait for a browser; the BigQuery reads
+#        are skipped (TOKEN_METRICS_SKIP_NEAR_BQ) and the summary's FIRST line says how to log in.
+#    Either way every BigQuery series resumes from its last stored day on the next good run (RUNBOOK 11bs).
+function Test-Interactive {
+    if ($Scheduled) { return $false }
+    if (-not [Environment]::UserInteractive) { return $false }
+    try {
+        $me = Get-CimInstance Win32_Process -Filter "ProcessId=$PID" -ErrorAction Stop
+        $parent = Get-CimInstance Win32_Process -Filter "ProcessId=$($me.ParentProcessId)" -ErrorAction Stop
+        if ($parent.Name -in @("svchost.exe", "taskeng.exe", "taskhostw.exe")) { return $false }
+    } catch { }
+    try { if ([Console]::IsInputRedirected) { return $false } } catch { }
+    return $true
+}
+$BqSkipped = ""
+$adc = Invoke-Step "BigQuery check" @("adc_check.py")
 if ($adc[0] -ne 0) {
-    Show-Toast "Crypto-Tracker: NEAR login needs you" ("Run: gcloud auth application-default login, then " +
-        "gcloud auth application-default set-quota-project near-data-510309. The run continues; NEAR BigQuery " +
-        "reads are skipped until then. Log: $Log")
+    $gcloud = Get-Command gcloud -ErrorAction SilentlyContinue
+    if ((Test-Interactive) -and $gcloud) {
+        Write-Log "BigQuery check failed - interactive: logging in (a browser window opens)"
+        Write-Host "NEAR BigQuery: the Google login has expired - a browser window opens to log in."
+        & gcloud auth application-default login 2>&1 | ForEach-Object { Add-Content -Path $Log -Value "$_" -Encoding UTF8 }
+        & gcloud auth application-default set-quota-project near-data-510309 2>&1 |
+            ForEach-Object { Add-Content -Path $Log -Value "$_" -Encoding UTF8 }
+        $adc = Invoke-Step "BigQuery check (after login)" @("adc_check.py")
+    }
+    if ($adc[0] -ne 0) {
+        # the em dash from its code point: Windows PowerShell 5.1 reads this BOM-less file as ANSI
+        $BqSkipped = "NEAR BigQuery skipped " + [char]0x2014 + " log in: gcloud auth application-default login"
+        $env:TOKEN_METRICS_SKIP_NEAR_BQ = "1"
+        Write-Log $BqSkipped
+        Show-Toast "Crypto-Tracker: NEAR BigQuery skipped" ("Log in: gcloud auth application-default login, then " +
+            "gcloud auth application-default set-quota-project near-data-510309. Each BigQuery series resumes from its " +
+            "last stored day on the next good run. Log: $Log")
+    }
 }
 
 # 2. The run, rerun ONCE if the summary shows network-wide trouble.
@@ -132,10 +167,30 @@ Write-Log "daily run end"
 
 # 6. ONE LINE ON THE CONSOLE (Jake's Phase 1 review 2026-10-12, item 9: the script printed nothing): what ran, the run's
 #    exit code, any step that failed, and where the log is. The task's exit code is the run's.
-$failed = @($Steps | Where-Object { $_[1] -ne 0 } | ForEach-Object { "$($_[0])=$($_[1])" })
+# A FAILED BIGQUERY CHECK NAMES ITS FIX (Jake's review of the ef6dc86 run, item 15): adc_check.py's last line on
+# failure is "FIX: <exact command>"; this table is the fallback. A check that failed and then passed after the login
+# above is not a failed step.
+$AdcFix = @{
+    2 = "login expired - run: gcloud auth application-default login; gcloud auth application-default set-quota-project near-data-510309";
+    3 = "no credentials or library - run: gcloud auth application-default login (pip install google-cloud-bigquery if missing)";
+    4 = "wrong quota project - run: gcloud auth application-default set-quota-project near-data-510309";
+    7 = "permission denied - the logged-in user needs roles/bigquery.jobUser on near-data-510309";
+    8 = "the one-row query failed - check the network, then: python adc_check.py"
+}
+$AdcFixLine = (($adc[1] -split "`n") | Where-Object { $_ -like "FIX: *" } | Select-Object -Last 1)
+$bqOk = ($adc[0] -eq 0)
+$failed = @($Steps | Where-Object { $_[1] -ne 0 -and -not ($bqOk -and $_[0] -eq "BigQuery check") } | ForEach-Object {
+    $t = "$($_[0])=$($_[1])"
+    if ($_[0] -like "BigQuery check*") {
+        if ($AdcFixLine) { $t += " ($($AdcFixLine.Substring(5).Trim()))" }
+        elseif ($AdcFix.ContainsKey([int]$_[1])) { $t += " ($($AdcFix[[int]$_[1]]))" }
+    }
+    $t
+})
 $failText = "no step failed"
 if ($failed.Count -gt 0) { $failText = "failed: " + ($failed -join ", ") }
 $summary = "daily_run: ran $($Steps.Count) step(s); token_metrics exit $($run[0]); $failText; log $Log"
+if ($BqSkipped) { $summary = "$BqSkipped | $summary" }      # the skip notice FIRST (item 16)
 Write-Log $summary
 Write-Host $summary
 exit $run[0]

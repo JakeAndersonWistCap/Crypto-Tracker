@@ -751,11 +751,17 @@ class LogScan:
                         tiers_attempted="2", suggestion="Re-run; the stream is cached like any other.")
                 return
         per_holder = defaultdict(lambda: [0, 0])                 # counted wei, last timestamp
+        # TRANSACTIONS DECLARED NOT TO BE PURCHASES (config log_scans exclude_txs, each with its reason — Ether.fi's
+        # 2026-09-02 Arrakis LP withdrawal, Jake 2026-10-12): never counted, listed under uncounted with the reason
+        not_bought = {str(k).lower(): v for k, v in (spec.get("exclude_txs") or {}).items()}
         if direction == "in":
             for h in holders:
                 for e in ins[h]:
                     frm = topic_address(e["topics"][1])
                     if frm in internal:
+                        continue
+                    if str(e.get("transactionHash") or "").lower() in not_bought:
+                        uncounted[f"(excluded tx: {not_bought[str(e['transactionHash']).lower()][:60]})"] += _amount(e)
                         continue
                     bought = (not swap) or frm in venues or str(e["transactionHash"]).lower() in paid_txs.get(h, ())
                     if (frm in excluded or (frm in MINT_SENDERS and not spec.get("count_mints")) or not bought

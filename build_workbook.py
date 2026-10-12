@@ -1974,7 +1974,10 @@ def _circulating_views(groups: dict) -> None:
         spec = config.circulating_onchain(name) or {}
         if spec.get("status") not in ("established", "partial"):
             continue
-        need = [spec["total"], *spec.get("subtract", ())]
+        # THE ADDED-BACK LEGS TOO (Jake's review of the ef6dc86 run, item 9): fetch/circulating.series adds spec["add"]
+        # from the frame it is given; without them in it, Sky's MKR-backed SKY (decision 2a) was an empty series, every
+        # day dropped, and circulating_used fell back to CoinGecko (23,433.6M against the decided ~23,291.6M)
+        need = [spec["total"], *spec.get("subtract", ()), *spec.get("add", ())]
         parts = [groups.get((name, m)) for m in need]
         if any(g is None or g.empty for g in parts):
             continue
@@ -2303,11 +2306,16 @@ def _holder_value_views(groups: dict) -> None:
     non-buyback payouts to holders (config HOLDER_VALUE distributed_extra). Each day's BUYBACK value is credited only
     where its programme was revenue-funded on that day (config.holder_funding) — holder_value_revenue_usd; treasury- or
     emissions-funded value is recorded as holder_value_other_usd and never credited. A declared payout to holders out of
-    revenue (Aerodrome's voter fees, Sky's USDS to stakers) is credited."""
+    revenue (Aerodrome's voter fees, Sky's USDS to stakers) is credited.
+    LIQUID BRIBES (Jake 2026-10-12 evening, decision 4; HOLDER_VALUE `bribes`): from the bribe series' first day, each
+    epoch's bribes less its illiquid part join the credited figure (source derived:holder_value_with_liquid_bribes — a
+    declared handover); `illiquid_less` takes the illiquid fee leg out (the illiquid-token rule). The same figure
+    without the bribes is holder_value_fees_only_usd."""
     for p in scoped_projects():
         name = p["name"]
+        spec = config.HOLDER_VALUE.get(name) or {}
         act = _daily(groups.get((name, "actual_buyback_usd")))
-        extra = [_daily(groups.get((name, m))) for m in (config.HOLDER_VALUE.get(name) or {}).get("distributed_extra", ())]
+        extra = [_daily(groups.get((name, m))) for m in spec.get("distributed_extra", ())]
         if act.empty and not any(not e.empty for e in extra):
             continue
         # the whole buyback $ = retired (burned + held) + distributed: the funding decides whether it is credited
@@ -2317,15 +2325,35 @@ def _holder_value_views(groups: dict) -> None:
         for e in extra:
             for d, v in e.items():
                 credit[d] = credit.get(d, 0.0) + float(v)
+        for m in spec.get("illiquid_less", ()):
+            for d, v in _daily(groups.get((name, m))).items():
+                if d in credit:
+                    credit[d] = max(0.0, credit[d] - float(v))
+        fees_only = dict(credit)
+        br, bribe_from = spec.get("bribes"), None
+        if br:
+            bribe_from = pd.Timestamp(br["from"])
+            gross, ill = _daily(groups.get((name, br["gross"]))), _daily(groups.get((name, br["illiquid"])))
+            for d, v in gross.items():
+                if d >= bribe_from:
+                    credit[d] = credit.get(d, 0.0) + max(0.0, float(v) - float(ill.get(d, 0.0)))
         cols = next(g for g in (groups.get((name, m)) for m in ("actual_buyback_usd", "fees_usd", "price_usd"))
                     if g is not None and not g.empty).columns
-        for metric, vals, src in (("holder_value_revenue_usd", credit, "derived:holder_value[revenue-funded]"),
-                                  ("holder_value_other_usd", other, "derived:holder_value[treasury/emissions-funded]")):
+
+        def src_for(d, base):
+            if bribe_from is not None and d >= bribe_from and base == "derived:holder_value[revenue-funded]":
+                return "derived:holder_value_with_liquid_bribes[revenue-funded + liquid bribes]"
+            return base
+        series = [("holder_value_revenue_usd", credit, "derived:holder_value[revenue-funded]"),
+                  ("holder_value_other_usd", other, "derived:holder_value[treasury/emissions-funded]")]
+        if br:
+            series.append(("holder_value_fees_only_usd", fees_only, "derived:holder_value_fees_only[revenue-funded]"))
+        for metric, vals, src in series:
             if vals:
-                s = pd.Series(vals).sort_index()
+                s_ = pd.Series(vals).sort_index()
                 groups[(name, metric)] = _as_stored(pd.DataFrame(
-                    {"date": s.index, "project": name, "metric": metric, "value": s.values, "tier": 2,
-                     "source": src}), cols)
+                    {"date": s_.index, "project": name, "metric": metric, "value": s_.values, "tier": 2,
+                     "source": [src_for(d, src) for d in s_.index]}), cols)
 
 
 def _unlock_views(groups: dict) -> None:
@@ -3804,6 +3832,11 @@ def _net_change(R, r: int, p: dict, iss, burn) -> str:
     return f"IF(ISNUMBER({sr}),{sr},{derived})"
 
 
+def _burns_nothing(p: dict) -> bool:
+    """No burn series applies to this project (config.metrics_for_project): its burn is zero by design, not missing."""
+    return config.a1_burn_metric(p["name"]) not in config.metrics_for_project(p) and not p.get("self_reported_burn")
+
+
 def _net_guarded(R, r: int, p: dict, iss, burn) -> str:
     """_net_change as a cell: a SELF-REPORTED figure as published; a derived one BLOCKED where
     issuance and burn cover materially different days of the window."""
@@ -3814,7 +3847,13 @@ def _net_guarded(R, r: int, p: dict, iss, burn) -> str:
     # EVERY BURN THE SUPPLY SEES (Phase 2 amendment 1, config.a1_burn_metric): Hyperliquid's A4 burn is the Assistance
     # Fund alone, its net supply change counts the Core burns too
     bm = config.a1_burn_metric(name)
-    guarded = _guarded_net(R, r, p, config.issuance_basis(name), bm, total=f"{iss(r)}-{R.D(r, bm, 'q0')}")
+    if _burns_nothing(p):
+        # NO BURN MECHANISM, NO BURN LEG (the headline_starved rule's first real hit, Chainlink 2026-10-12): net
+        # issuance is the issuance; reading a burn series that cannot exist made every net figure n/a
+        im = config.issuance_basis(name)
+        guarded = _coverage_guard(R, r, [("issuance", im, "q0")], iss(r), p=p)
+    else:
+        guarded = _guarded_net(R, r, p, config.issuance_basis(name), bm, total=f"{iss(r)}-{R.D(r, bm, 'q0')}")
     if not p.get("self_reported_net_mint"):
         return guarded
     sr = R.D(r, "net_mint_monthly", "q0")
@@ -3836,6 +3875,9 @@ def _net_annual_pct(R, r: int, p: dict, circ: str) -> str:
         m = nc["metric"]
         return f"=IFERROR({_annualise(R, r, p, m, R.D(r, m, 'q0'))}/({circ}),{NA})"
     im, bm = config.issuance_basis(name), config.a1_burn_metric(name)
+    if _burns_nothing(p):                      # no burn mechanism: the net rate is the issuance rate
+        return _coverage_guard(R, r, [("issuance", im, "q0")],
+                               f"{_annualise(R, r, p, im, R.D(r, im, 'q0'))}/({circ})", p=p)
     derived = (f"({_annualise(R, r, p, im, R.D(r, im, 'q0'))}-"
                f"{_annualise(R, r, p, bm, R.D(r, bm, 'q0'))})/({circ})")
     # THE SAME EQUAL-COVERAGE GUARD AS THE NET TOTAL BESIDE IT (Jake's sanity run 2026-10-11, mixed_windows:
@@ -5735,6 +5777,9 @@ def _write_table(ws, R: Refs, projects: list[dict], specs: list[tuple], data_by_
                 _HEADLINE_CELLS.append({"sheet": ws.title, "project": p["name"], "header": head,
                                         "cell": c.coordinate, "kind": kind, "fmt": fmt,
                                         "id": headline_id(ws.title, head), "metric": meta.get("metric"),
+                                        # the input series, metric_fn resolved (sanity.starved_headlines)
+                                        "input_metric": meta.get("metric") or (meta["metric_fn"](p["name"])
+                                                                               if meta.get("metric_fn") else None),
                                         "closed": closed})
             # A HALTED PROGRAMME IS A MEASURED ZERO (Fluid, 2026-09-28): 0 with the halt date,
             # like the "silent since" flag, not "none available".
@@ -6033,8 +6078,9 @@ def _assert_master_refs(ws) -> None:
 # OUTFLOW_CATEGORIES); holder value funding-aware (config HOLDER_VALUE); attributes from phase2_attributes.json.
 CP_FLOAT_HEAD = ("TRADEABLE FLOAT = circulating − staked/locked − protocol/treasury-held (tokens) — protocol/treasury-"
                  "held is already out of circulating by the convention, so this is A2's free float")
-CP_HVY_HEAD = ("HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed (annualised) ÷ market cap — treasury- or "
-               "emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance")
+CP_HVY_HEAD = ("HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) ÷ "
+               "market cap — treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on "
+               "A1 net issuance")
 CP_NHY_HEAD = ("NET HOLDER YIELD = holder value yield − dilution (outflows a+b+c+e at each day's price, annualised) ÷ "
                "market cap")
 CP_SUBSIDY_HEAD = "SUBSIDY COVER = revenue ÷ $ supply-side incentives (b), per covered day"
@@ -6161,6 +6207,14 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
             return "n/a — no buyback programme and no declared payout to holders"
         return _coverage_guard(R, r, [("holder value", "holder_value_revenue_usd", "q0")], hvy_expr(r, p))
 
+    def hv_fees_only(r, p):
+        if "holder_value_fees_only_usd" not in config.metrics_for_project(p):
+            return ""
+        v = R.D(r, "holder_value_fees_only_usd", "q0")
+        return _coverage_guard(R, r, [("holder value, fees only", "holder_value_fees_only_usd", "q0")],
+                               f"IF(AND(ISNUMBER({v}),ISNUMBER({mc(r)})),"
+                               f"{_annualise(R, r, p, 'holder_value_fees_only_usd', v)}/{mc(r)},{NA})")
+
     def hv_other(r, p):
         if "holder_value_other_usd" not in config.metrics_for_project(p):
             return ""
@@ -6213,14 +6267,18 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         return base
 
     def payout(base_fn, why_same=None):
+        # THE REVENUE-FUNDED PART: where liquid bribes are credited (Aerodrome, decision 4) the payout ratio reads the
+        # fees-only figure — bribes are holder income, not an allocation of the project's revenue
         def build(r, p):
             if not hv_has(p):
                 return ""
             rv = base_fn(p)
             if why_same and rv == "fees_usd":
                 return why_same
-            return _coverage_guard(R, r, [("holder value", "holder_value_revenue_usd", "q0"), ("revenue", rv, "q0")],
-                                   f"{_flow_rate(R, r, 'holder_value_revenue_usd')}/{_flow_rate(R, r, rv)}")
+            hv = ("holder_value_fees_only_usd" if "holder_value_fees_only_usd" in config.metrics_for_project(p)
+                  else "holder_value_revenue_usd")
+            return _coverage_guard(R, r, [("holder value", hv, "q0"), ("revenue", rv, "q0")],
+                                   f"{_flow_rate(R, r, hv)}/{_flow_rate(R, r, rv)}")
         return build
 
     def insider(r, p):
@@ -6293,6 +6351,8 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         (CP_SUBSIDY_BC_HEAD, subsidy(("b", "c")), FMT_X, "calc"),
         # ---- HOLDER VALUE (item 3, LITMUS A) ----
         (CP_HVY_HEAD, hvy, FMT_PCT, "calc", True, {"metric": "holder_value_revenue_usd"}),
+        ("Holder value yield — fees only (where liquid bribes are credited: Aerodrome, decision 4)", hv_fees_only,
+         FMT_PCT, "calc"),
         ("Holder value RECORDED, NOT CREDITED (treasury / emissions-funded) ÷ market cap", hv_other, FMT_PCT, "calc"),
         ("Holder value funding by period (config HOLDER_VALUE)", lambda r, p: funding_text(p), FMT_TEXT, "text"),
         (CP_NHY_HEAD, nhy, FMT_PCT, "calc", True, {"metric": "holder_value_revenue_usd"}),
@@ -6339,6 +6399,8 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
          lambda r, p: retention(p), FMT_TEXT, "text"),
         ("Subsidy targeting by pool — route (probed, not yet wired)",
          lambda r, p: config.SUBSIDY_TARGETING_ROUTES.get(p["name"], ""), FMT_TEXT, "text"),
+        ("ONE-OFF BURN EVENTS — dated, each with its funding; never in a rate, trend or holder value",
+         lambda r, p: config.one_off_events_text(p["name"]), FMT_TEXT, "text"),
         ("Attributes NOT established (research of 2026-10-12)", attr("unverified"), FMT_TEXT, "text"),
     ]
 
@@ -6424,6 +6486,10 @@ def _a4_phase2_cols(R: Refs) -> list[tuple]:
          FMT_PCT, "calc"),
         ("Burn split Q0 (tokens): every burn − the A4 burn", split, FMT_NUM, "calc"),
         ("Burn split — by source", lambda r, p: split_text(p), FMT_TEXT, "text"),
+        ("One-off burn Q0..Y1 (tokens) — the event row, out of every rate and trend (one_off_burn_tokens, trailing 365d)",
+         lambda r, p: pull(R.D(r, "one_off_burn_tokens", "y1")) if "one_off_burn_tokens" in config.metrics_for_project(p)
+         else "", FMT_NUM, "pull", False, {"metric": "one_off_burn_tokens"}),
+        ("One-off burn events", lambda r, p: config.one_off_events_text(p["name"]), FMT_TEXT, "text"),
         ("Treasury governance could redeploy (tokens) — discretionary issuer-side wallets", disc, FMT_NUM, "calc"),
         ("Treasury governance could redeploy ($, spot)", lambda r, p: disc(r, p, usd=True), FMT_USD, "calc"),
     ]
@@ -7601,7 +7667,16 @@ def write_trajectory(wb, data_by_key: dict, asof=None) -> list[dict]:
             why.append(f"MODELLED in {', '.join(modelled)} (config.MODELLED_POINTS) — shown, excluded from any scoring")
         q = trajectory.qoq(qs[0], qs[1])
         # THE GROWTH RULES (item 4): >= 3 quarters, all > 0, one regime — else NEW since / STEP CHANGE at, never a rate
-        g, n_g, g_label, why_g = trajectory.growth_rule(qs, step_at)
+        # THE YOUNGEST INPUT'S FIRST DAY (review of the ef6dc86 run, item 10): a part-quarter at the start is no base
+        starts_in = None
+        if asof is not None and not w["independent"]:
+            firsts = [(data_by_key.get(f"{spec['project']['name']}|{m}") or {}).get("first_date")
+                      for m in trajectory.referenced_metrics(w["q0_formula"])]
+            firsts = [f for f in firsts if isinstance(f, str) and f]
+            if firsts:
+                starts_in = trajectory.partial_start_quarter(max(firsts), asof, int(config.TRAJECTORY["period_days"]),
+                                                             len(qs))
+        g, n_g, g_label, why_g = trajectory.growth_rule(qs, step_at, starts_in)
         imp, n_imp = trajectory.improved(qs, d)
         tr = trajectory.trough(qs, d)
         t, t_basis = trajectory.t12m(qs, trajectory.t12m_basis(spec["header"], spec["fmt"]))
@@ -7680,16 +7755,21 @@ def write_trajectory(wb, data_by_key: dict, asof=None) -> list[dict]:
     return out
 
 
-DIVERGENCE_HEAD = ["Project", "DIVERGENCE — fundamentals vs price (4Q growth, annual)", "Revenue 4Q growth",
-                   "Revenue row", "Tokens retired / burned 4Q growth", "Retired / burned row", "Price 4Q growth",
-                   "Fundamentals − price (pp)", "Reading"]
+DIVERGENCE_HEAD = ["Project", "DIVERGENCE — business vs price (4Q growth, annual)", "Revenue 4Q growth (business, USD)",
+                   "Revenue row", "Price 4Q growth", "REVENUE − PRICE (pp) — the headline gap",
+                   "Capture: tokens retired / burned 4Q growth (separate — falls mechanically as price rises)",
+                   "Retired / burned row", "Reading", "Revenue basis note"]
 
 
 def _write_divergence(ws, r0: int, recs: list) -> list[dict]:
-    """THE DIVERGENCE ROW (Jake's Phase 1 review 2026-10-12, item 6), per project: the fundamentals' 4Q growth (revenue;
-    tokens retired / burned) against price's. Each growth obeys the growth rules (a NEW / STEP CHANGE label stands in
-    for it). Fundamentals − price = the mean of the fundamentals' growths that exist, less price's growth."""
+    """THE DIVERGENCE ROW, per project (Jake's Phase 1 review 2026-10-12, item 6; reshaped on the review of the ef6dc86
+    run, item 11): the HEADLINE GAP is revenue's 4Q growth (the business, in USD) less price's. Tokens retired / burned
+    are a separate CAPTURE column, never averaged in: at a fixed USD spend, retirement in tokens falls mechanically as
+    the price rises, so averaging it with revenue would count price twice. Each growth obeys the growth rules (a NEW /
+    STEP CHANGE label stands in for it). A revenue basis with a declared caveat (config.TRAJECTORY divergence
+    revenue_notes — NEAR: gas only until NEAR Intents fees are a revenue line) says so beside it."""
     spec = config.TRAJECTORY["divergence"]
+    notes = spec.get("revenue_notes") or {}
     by = {(x["project"], x["hid"]): x for x in recs}
     _header(ws, r0, DIVERGENCE_HEAD)
     out = []
@@ -7705,18 +7785,18 @@ def _write_divergence(ws, r0: int, recs: list) -> list[dict]:
         rev, rev_id, rev_l = pick(spec["revenue"])
         ret, ret_id, ret_l = pick(spec["retired"])
         px, _px_id, px_l = pick(spec["price"])
-        fund = [x for x in (rev, ret) if x is not None]
-        gap = (sum(fund) / len(fund) - px) if fund and px is not None else None
-        reading = ("n/a — " + "; ".join(x for x in (rev_l and f"revenue {rev_l}", ret_l and f"retired {ret_l}",
-                                                      px_l and f"price {px_l}") if x)
+        gap = (rev - px) if rev is not None and px is not None else None
+        reading = ("n/a — " + "; ".join(x for x in (rev_l and f"revenue {rev_l}", px_l and f"price {px_l}") if x)
                    if gap is None else
-                   "fundamentals ahead of price" if gap > 0 else "price ahead of fundamentals" if gap < 0 else "level")
-        vals = [name, "fundamentals vs price", rev if rev is not None else (rev_l or "n/a"), rev_id,
-                ret if ret is not None else (ret_l or "n/a"), ret_id, px if px is not None else (px_l or "n/a"),
-                gap, reading if gap is not None or reading != "n/a — " else "n/a — a growth missing"]
+                   "business ahead of price" if gap > 0 else "price ahead of the business" if gap < 0 else "level")
+        if reading == "n/a — ":
+            reading = "n/a — a growth missing"
+        vals = [name, "revenue vs price", rev if rev is not None else (rev_l or "n/a"), rev_id,
+                px if px is not None else (px_l or "n/a"), gap,
+                ret if ret is not None else (ret_l or "n/a"), ret_id, reading, notes.get(name, "")]
         for j, v in enumerate(vals, start=1):
             c = ws.cell(row=r0 + 1 + i, column=j, value=v)
-            _style(c, "calc", FMT_PCT if j in (3, 5, 7, 8) and isinstance(v, float) else FMT_TEXT)
+            _style(c, "calc", FMT_PCT if j in (3, 5, 6, 7) and isinstance(v, float) else FMT_TEXT)
         out.append(dict(zip(DIVERGENCE_HEAD, vals)))
     DIVERGENCE_ROWS[:] = out
     return out
@@ -7878,6 +7958,9 @@ def build_workbook(store, path: Path | str, run_id: str | None = None,
         if PREVIOUS_SNAPSHOT.get("values"):
             SANITY_HITS.extend(sanity.lost_headlines(wb, PREVIOUS_SNAPSHOT["values"], _HEADLINE_CELLS,
                                                      PREVIOUS_SNAPSHOT.get("date", "")))
+        # n/a WHILE ITS INPUT IS FULL (Jake's review of the ef6dc86 run, item 7): the continuity guard compares with the
+        # previous snapshot, so a headline already n/a there (GEODNET's A4 gross burn) passed it
+        SANITY_HITS.extend(sanity.starved_headlines(wb, _HEADLINE_CELLS, data_by_key, asof))
     except Exception as e:  # noqa: BLE001 — a rule that cannot run is said, never a silent pass
         SANITY_HITS.append(("(all)", "sanity_not_run", f"{type(e).__name__}: {str(e)[:200]}"))
     _write_sanity(ws_rev, SANITY_HITS)

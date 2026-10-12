@@ -1797,7 +1797,10 @@ SOURCE_MARKERS = ("PARTIAL", "delta", "recurring-only", "rederived", "as-buyback
                   # the scraper's same-day CACHE re-serving that day's read of the same page (Jake's run on e4e50b0,
                   # 2026-10-12 item 4: a bare "scrape:cache" read as a second measuring point beside the live
                   # "scrape:<host>", blanked Plume's circulating and kept the stale-now fallback out)
-                  "cache")
+                  "cache",
+                  # a stored buyback day set to 0 because its only inflow was not a purchase (orphan_cleanup.sql CO,
+                  # Ether.fi's 2026-09-02 Arrakis LP withdrawal, Jake 2026-10-12 evening decision 2): same point
+                  "lp-withdrawal-removed")
 
 # A bracketed ANNOTATION appended to a contract key: "minter[tail@21bps]". Unlike the markers
 # above it is not its own colon-delimited piece — it is glued to the key — so every parser that
@@ -12151,7 +12154,10 @@ PROJECTS = [
         "one_off_flows": [
             {"metric": "gross_burn_tokens", "tokens": 100_000_000, "window": ("2025-12-01", "2026-01-31"),
              "what": "UNIfication retroactive treasury burn (100,000,000 UNI)",
-             "source_url": "https://vote.uniswapfoundation.org/proposals/93", "source_date": "2026-09-14"},
+             "source_url": "https://vote.uniswapfoundation.org/proposals/93", "source_date": "2026-09-14",
+             # the day the data puts it (stored 2025-12-28 above the 100M floor), executed 2025-12-27 20:33 UTC per the
+             # research of 2026-10-12; paid from the treasury (Jake 2026-10-12 evening, decision 5)
+             "landed": "2025-12-27", "funding": "treasury"},
         ],
         "burn_read_method": "transfer",
         # The UNI-burn threshold required to call release() is a GOVERNANCE-SETTABLE parameter, not a
@@ -17388,6 +17394,12 @@ PROJECTS = [
                 "bought_share": {"holder": "0x3fb6784e263643656f386a0371644931133d7b78",
                                  "metric": "buyback_bought_share_alltime"},
                 "attribution": "swap",
+                # NOT A PURCHASE (Jake 2026-10-12 evening, decision 2): the 2026-09-02 inflow of 1,047,757 ETHFI came out
+                # of Arrakis LP positions (LogWithdraw in the transaction; ETH received, nothing paid) through the
+                # Uniswap v4 PoolManager, a declared swap venue — an LP withdrawal, not a buy. Research 2026-10-12
+                # (scratch notes p2_funding), entered by Claude Code; stored rows: orphan_cleanup.sql CO.
+                "exclude_txs": {"0x3b52e19b49fca8a4cd417b3e2549a761e64cb9f03fd22d6848df8c635261112b":
+                                "Arrakis LP withdrawal (LogWithdraw), 2026-09-02 — not a purchase (Jake 2026-10-12)"},
                 "swap_venues": ["0x9008d19f58aabd9ed0d60971565aa8510560ab41",
                                 "0x000000000004444c5dc75cb358380d2e3de08a90"],
                 "swap_venues_source": "GPv2Settlement: cowprotocol/contracts networks.json (HEAD c07a93e, 2026-09-01), "
@@ -17620,9 +17632,13 @@ PROJECTS = [
         },
         "burn_split": {"share_of_fees_burned": 0.0, "source_url": "https://etherfi.gitbook.io/etherfi",
                        "source_date": "2026-09-14", "status": "n/a",
-                       "note": "ERC20Burnable IS in ETHFI's inheritance (EtherFiGovernanceToken is ERC20, "
-                               "Burnable, Permit, Votes), but NO EXECUTED BURN is evidenced anywhere. An "
-                               "available function is not a mechanism — destination stays DISTRIBUTE."},
+                       # CORRECTED 2026-10-12 evening (Jake, decision 3): a burn WAS executed — once.
+                       "note": "ERC20Burnable is in ETHFI's inheritance (EtherFiGovernanceToken is ERC20, Burnable, "
+                               "Permit, Votes). ONE BURN WAS EXECUTED: 1,464,000 ETHFI burned from the buyback wallet "
+                               "0x2f5301a3… between 2025-08-08 and 2025-09-19 (on-chain; totalSupply() 998,535,999 = "
+                               "1,000,000,000 − 1,464,001), out of ETHFI bought by the April 2025 withdrawal-fee "
+                               "buyback — REVENUE-funded. A ONE-OFF (config.ONE_OFF_BURN_EVENTS), not a mechanism: no "
+                               "share of fees is burned and the programme's destination stays DISTRIBUTE."},
         "issuance_schedule": None,
         "contracts": {
             # ===== THE PROTOCOL TREASURY, WIRED 2026-09-23 ON JAKE'S INSTRUCTION. =====
@@ -18357,6 +18373,17 @@ _NONCIRC_WALLETS_FIRST_PARTY["Maple"] = [
     ("security_admin", "0x6b1A78C1943b03086F7Ee53360f9b0672bD60818", "ethereum", "SYRUP", _MAPLE_FILING,
      "2026-10-07", "Security Admin, 3-of-6 multisig (Maple's Blockworks filing)"),
 ]
+# MAPLE'S SAFE 0x58BE (Jake 2026-10-12 evening, decision 1): a Safe 3-of-5 that matched the Syrup Strategic Fund
+# 2025-08-13..2025-10-28 (maple_ssf_partial, Jake 2026-10-07 20:57). Owners read 2026-10-12 (Safe getOwners /
+# getThreshold on Etherscan): three of the five (0x0f4430f1…, 0x588c6eb6…, 0x96481cb0…) also sign Maple's DAO multisig
+# 0xd6d4 ("Maple: DAO", 4-of-7), which alone meets the 3-of-5 threshold — Maple-controlled, so issuer-side under the
+# rule: out of circulating. 48,624,987.59 SYRUP on 2026-10-12; the rule's figure 1,172,793,290.68.
+_MAPLE_SSF_SAFE = ("https://etherscan.io/address/0x58BE00490D6a5D298d61f24226d2397983Ee39A1 (Safe getOwners / "
+                   "getThreshold, read 2026-10-12: 3-of-5; three owners also sign Maple's DAO multisig 0xd6d4)")
+_NONCIRC_WALLETS_FIRST_PARTY["Maple"].append(
+    ("ssf_safe", "0x58BE00490D6a5D298d61f24226d2397983Ee39A1", "ethereum", "SYRUP", _MAPLE_SSF_SAFE, "2026-10-12",
+     "Maple-controlled Safe 3-of-5 (matched the Syrup Strategic Fund 2025-08-13..10-28) — issuer-side (Jake 2026-10-12, "
+     "decision 1)"))
 # THE BLOCKWORKS FILINGS' WALLET SECTIONS (Jake's probes14 + run 2026-10-07 18:11: "Labelled Unissued & Operational
 # Token Wallets", each project's own filing). Liquid balances here; AERO held as veAERO locks is read by
 # aerodrome_filing_wallets until a per-owner lock read is wired.
@@ -22090,7 +22117,11 @@ CIRCULATING_ONCHAIN = {
                                                  "never added",
                                     "source": "etherfi_contract_ids, Jake 2026-10-07 20:57"},
                  "decided_by": "Claude Code 2026-10-06, pending Jake's review"},
-    "Maple": {"status": "partial", "total": "total_supply",
+    # JAKE 2026-10-12 evening (decision 1): THE ISSUER RULE, with the Maple-controlled Safe 0x58BE out — on-chain primary.
+    "Maple": {"status": "established", "ratios_use": "onchain", "total": "total_supply",
+              "decided_by": "Jake 2026-10-12 evening, decision 1: switch to the issuer rule with Safe 0x58BE out "
+                            "(1,172,793,290.68 on 2026-10-12; CoinGecko 1,167,271,959.18, +0.47%)",
+              "was": "partial (CoinGecko in use)",
               "subtract": ("treasury_holding_tokens_chain", "noncirculating_holding_tokens"),
               "method": "total − DAO multisig (the filing's Primary DAO address) − treasury − Migrator − syrupDrip "
                         "− RecapitalizationModule − governor timelock (maple-labs/address-registry, main, "
@@ -22115,11 +22146,13 @@ CIRCULATING_ONCHAIN = {
                             "diverged": "2025-10-29: 27,500,000 SYRUP to 0x99f03ca02b232dc124b62b8cf40b2bfd21eae9ca (EOA)",
                             "owners": "0x43f0a714…, 0x0f4430f1…, 0x96481cb0…, 0xc4c93340…, 0x588c6eb6… (3-of-5)",
                             "source": "maple_ssf_partial, Jake 2026-10-07 20:57"},
-              "missing": "the SSF's wallets (0xd6d4 is NOT it, Jake's run 2026-10-07 17:08) since 2025-10-29: 0x58be0049 "
-                         "(Safe 3-of-5) matched to 2025-10-28, then 27.5M "
-                         "went to the EOA 0x99f03ca0… — maple_ssf_trail follows it; why DefiLlama's treasury (294.93M) "
-                         "and CoinGecko's implied non-circulating (~77.4M) differ",
-              "decided_by": "Claude Code 2026-10-06, pending Jake's review"},
+              # RESOLVED 2026-10-12 (decision 1): the Safe 0x58BE is Maple-controlled and subtracted. Still open, and
+              # counted as circulating (nothing unverified is subtracted): the EOA 0x99f03ca0… (27.5M received
+              # 2025-10-29; controller unknown) and the Safe's two owners not on 0xd6d4.
+              "missing": "the EOA 0x99f03ca0… that received 27.5M from the Safe on 2025-10-29 (controller unknown — "
+                         "counted as circulating); why DefiLlama's treasury (294.93M) and CoinGecko's implied "
+                         "non-circulating differ",
+              "set_entered_by": "Claude Code 2026-10-06, pending Jake's review (the wallet set; the switch is Jake's)"},
     # ON-CHAIN PRIMARY (Jake's sign-off round, 2026-10-07): all 27 wallets of Chainlink's published list are wired, so
     # the set is primary and the RELEASE is their net outflow (release_from, build_workbook._onchain_release_views);
     # CoinGecko's stepwise circulating is the cross-check only. headline_diff.py chainlink_onchain_preview shows the
@@ -22425,9 +22458,12 @@ CIRCULATING_POLICY = {
                "definition": "total − issuer-side holdings (issuer rule); non-issuer legacy in the Wrapper counts",
                "staked": "n/a", "add_back": None,
                "previous": "CoinGecko's own count (to 2026-10-12)"},
-    "Maple": {"source": "CoinGecko — Maple publishes no figure (its FAQ treats stSYRUP as circulating)",
-              "kind": "coingecko", "definition": "CoinGecko's own count", "staked": "included (Maple FAQ)",
-              "add_back": None, "previous": "the same — unchanged"},
+    "Maple": {"now": "ON-CHAIN under the issuer rule (Jake 2026-10-12 evening, decision 1)",
+              "source": "our on-chain set: total − the DAO multisig − the registry treasury / Migrator / syrupDrip / "
+                        "RecapitalizationModule / governor timelock − the filing's two admin multisigs − the "
+                        "Maple-controlled Safe 0x58BE; CoinGecko the cross-check",
+              "kind": "onchain", "definition": "total − issuer-side holdings (issuer rule)", "staked": "included (Maple FAQ)",
+              "add_back": None, "previous": "CoinGecko's own count (to 2026-10-12)"},
     "Ether.fi": {"now": "ON-CHAIN (full sweep, Jake 2026-10-07): total - the treasury 0x0c83… - the wallets ether.fi's "
                         "Blockworks filing labels (two custodian origins, three treasuries, the operating top-up Safe) - "
                         "the old buyback Safe; CoinGecko the cross-check",
@@ -26396,6 +26432,10 @@ TRAJECTORY = {
         "revenue": ("master_revenue_q0", "a2_customer_revenue", "fees_q0"),
         "retired": ("a3_retired_tokens", "a4_gross_burn", "master_gross_burn_q0_tokens", "a1_gross_burn"),
         "price": ("master_price_spot",),
+        # REVENUE BASES WITH A CAVEAT (Jake's review of the ef6dc86 run, item 11)
+        "revenue_notes": {"Near": "GAS-ONLY: NEAR's revenue line is the protocol's gas fees; NEAR Intents fees (which "
+                                  "fund the buyback since 2026-02/03) are not a revenue line yet, so the business "
+                                  "growth shown here leaves them out"},
     },
     # GROWTH RULES (item 4): a growth figure needs >= min_quarters quarters, all > 0, in one regime; a series whose
     # earliest quarter is below new_share of the latest — or that starts, or breaks, inside the window — shows
@@ -26520,10 +26560,18 @@ def outflow_metrics(project_name: str, cat: str) -> tuple:
 # recorded beside it. `distributed_extra`: payouts to holders that are not bought tokens (Aerodrome's voter fees, Sky's
 # USDS to SKY stakers). Default for a buyback programme not listed: revenue (its fee_split names revenue as the base).
 HOLDER_VALUE = {
+    # LIQUID BRIBES ARE HOLDER INCOME (Jake 2026-10-12 evening, decision 4): emissions are counted as dilution, so the
+    # bribes paid to direct them are counted as holder income — the LIQUID ones: the illiquid-token rule (Jake
+    # 2026-10-09 17:05) still takes out what a sale could not realise, fees and bribes alike. Fees-only beside it
+    # (holder_value_fees_only_usd). The bribe series is on-chain per epoch from 2026-07-02 (aero_voter); before it the
+    # credited figure is fees only — a declared handover, SERIES BREAK on the Trajectory until RewardsSugar's per-epoch
+    # history (from 2025-06-12, SUBSIDY_TARGETING_ROUTES) restates it.
     "Aerodrome": {"distributed_extra": ("revenue_usd",),
                   "extra_why": "the trading fees paid to veAERO voters (revenue_usd: staked-LP fees, routed to voters; "
-                               "unstaked LPs keep theirs) — voting incentives (bribes) are third parties' money, not "
-                               "revenue, and are not credited",
+                               "unstaked LPs keep theirs) plus the LIQUID voting incentives (bribes) paid to voters",
+                  "illiquid_less": ("voter_rewards_illiquid_fees_usd",),
+                  "bribes": {"gross": "voter_rewards_onchain_bribes_usd", "illiquid": "voter_rewards_illiquid_bribes_usd",
+                             "from": "2026-07-02"},
                   # The Foundation's buy-and-lock is paid from its OWN veAERO voting rewards plus the Public Goods Fund's
                   # USDC reserves (github aerodrome-finance/docs about.mdx; paragraph.com/@aerodrome-foundation/the-
                   # future-of-flight-school; Blockworks filing; read 2026-10-12): revenue earned by an issuer-side
@@ -26546,12 +26594,23 @@ HOLDER_VALUE = {
                               "October 2025 Treasury Deployment for ETHFI Buy-Back (paid in USDT / USDC)"),
                              ("2026-09-02", "2026-09-02", "not a purchase",
                               "Arrakis LP withdrawal (LogWithdraw), not a buyback — pending Jake's review")]},
-    # UNISWAP: the retroactive 100M UNI burn of 2025-12-27 (proposal 93) came from the TREASURY; the Firepit fee-switch
-    # burn from 2025-12-28 is revenue (vote.uniswapfoundation.org/proposals/93, read 2026-10-12)
-    "Uniswap": {"funding": [("2025-12-27", "2025-12-27", "treasury", "proposal 93's retroactive 100M UNI burn")]},
+    # UNISWAP: the retroactive 100M UNI burn of 2025-12-27 (proposal 93) came from the TREASURY. It is a declared one-off
+    # (one_off_flows), moved out of gross_burn_tokens — and so out of the buyback that copies it — before any rate,
+    # trend or holder value reads it (Jake 2026-10-12 evening, decision 5); the Firepit burn from 2025-12-28 is revenue.
     "Sky": {"distributed_extra": ("staking_rewards_usds_usd",),
             "extra_why": "USDS paid to SKY stakers (staking_rewards_usds_usd)"},
 }
+
+
+for _n, _h in HOLDER_VALUE.items():
+    if _h.get("bribes"):
+        PROJECT_BY_NAME[_n].setdefault("series_handover", {})["holder_value_revenue_usd"] = {
+            "ordered_points": ("derived:holder_value", "derived:holder_value_with_liquid_bribes"),
+            "why": f"credited holder value: fees only until the on-chain bribe series begins ({_h['bribes']['from']}), "
+                   f"then fees + liquid bribes (Jake 2026-10-12 evening, decision 4)",
+            "composition_change": "WIDENS: the liquid bribes join; the trajectory shows SERIES BREAK until the bribe "
+                                  "history is restated",
+            "declared": _h["bribes"]["from"]}
 
 
 def holder_funding(project_name: str, day) -> tuple[str, str]:
@@ -26608,6 +26667,39 @@ INSIDER_LOCK = {
                   "the Blockworks filing wallets' managed veNFT deposits ÷ veAERO.supply()"),
     "Hyperliquid": ("team_wallet_tokens", "locked_tokens", "the team wallet (delegated in full) ÷ total staked HYPE"),
 }
+
+# ONE-OFF BURN EVENTS (Jake 2026-10-12 evening, decisions 3 and 5): dated burns that are not a mechanism — shown as their
+# own event row (CP and A4), never in a rate, trend or holder value. A one-off inside a stored burn series is moved out
+# of it at read time by the project's `one_off_flows` (Uniswap's 100M); one with no burn series is a record only
+# (Ether.fi: archetype 3, no burn series). Each with its funding source.
+ONE_OFF_BURN_EVENTS = {
+    "Ether.fi": [{"from": "2025-08-08", "to": "2025-09-19", "tokens": 1_464_000, "funding": "revenue",
+                  "what": "ETHFI bought by the April 2025 withdrawal-fee buyback, burned from the buyback wallet "
+                          "0x2f5301a3D59388c509C65f8698f521377D41Fd0F",
+                  "source": "on-chain Transfers to 0x0 from 0x2f5301a3… 2025-08-08..2025-09-19; ETHFI.totalSupply() "
+                            "998,535,999 (= 1,000,000,000 − 1,464,001); research of 2026-10-12",
+                  "decided": "Jake 2026-10-12 evening, decision 3"}],
+}
+
+
+def one_off_events(project_name: str) -> list[dict]:
+    """Every dated one-off burn for a project: ONE_OFF_BURN_EVENTS plus the declared one_off_flows (moved out of the
+    burn series at read time). [{from, to, tokens, funding, what, source}]"""
+    out = list(ONE_OFF_BURN_EVENTS.get(project_name) or [])
+    for f in (PROJECT_BY_NAME.get(project_name) or {}).get("one_off_flows") or ():
+        out.append({"from": f.get("landed") or f["window"][0], "to": f.get("landed") or f["window"][1],
+                    "tokens": f["tokens"],
+                    "funding": f.get("funding", "treasury" if "treasury" in f["what"].lower() else "not stated"),
+                    "what": f["what"], "source": f["source_url"], "in_series": f["metric"]})
+    return out
+
+
+def one_off_events_text(project_name: str) -> str:
+    ev = one_off_events(project_name)
+    return "; ".join(f"{e['from']}..{e['to']}: {e['tokens']:,.0f} tokens — {e['what']} (funding: {e['funding']}; "
+                     + (f"moved out of {e['in_series']} at read time" if e.get("in_series") else "a record, no series")
+                     + ")" for e in ev)
+
 
 # PER-PROJECT ATTRIBUTES (Phase 2 item 3, amendment 2): lock terms, payout currency, destination durability, mechanism
 # certainty with its dated log, capture status with switch power and the switch-signals log. Filled from the research
@@ -26707,6 +26799,10 @@ METRICS["holder_value_revenue_usd"] = {
     "view_only": True,
     "only_projects": tuple(p["name"] for p in PROJECTS
                            if buyback_route(p["name"])["route"] != "none" or p["name"] in HOLDER_VALUE)}
+METRICS["holder_value_fees_only_usd"] = {
+    "label": "Holder value CREDITED, fees only — as holder_value_revenue_usd without the liquid bribes (Aerodrome)",
+    "kind": "flow", "unit": "usd", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e11,
+    "view_only": True, "only_projects": tuple(n for n, h in HOLDER_VALUE.items() if h.get("bribes"))}
 METRICS["holder_value_other_usd"] = {
     "label": "Holder value RECORDED, NOT CREDITED — treasury- or emissions-funded $ retired + distributed, per day",
     "kind": "flow", "unit": "usd", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e11,

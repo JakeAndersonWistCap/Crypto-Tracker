@@ -52,7 +52,11 @@ def summarise(now: dict, prev: dict | None, prev_date: str | None, log_text: str
     runs = re.findall(r"run summary: .*?(\d+) FAILED \| (\d+) WARN \| (\d+) SKIPPED-by-design", log_text)
     run_line = (f"RUN: {runs[-1][0]} FAILED | {runs[-1][1]} WARN | {runs[-1][2]} SKIPPED-by-design"
                 if runs else "RUN: no run summary line in the log")
-    lines = ["=" * 78, f"DAILY SUMMARY {date.today().isoformat()}", run_line, "",
+    # NEAR BIGQUERY SKIPPED GOES FIRST (Jake 2026-10-12 evening, item 16): windows/daily_run.ps1 logs it when its
+    # BigQuery check failed on a scheduled run and the reads were skipped
+    skipped = re.findall(r"(NEAR BigQuery skipped \u2014 log in: [^\r\n]*)", log_text)
+    lines = ["=" * 78, *([skipped[-1].strip()] if skipped else []), f"DAILY SUMMARY {date.today().isoformat()}",
+             run_line, "",
              "1. CREDIBILITY COUNTS" + (f" (change vs {prev_date})" if prev is not None else " (no previous run on file)")]
     c_prev = counts(prev) if prev is not None else None
     for k in VERDICTS:

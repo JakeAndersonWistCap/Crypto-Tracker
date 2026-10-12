@@ -105,10 +105,20 @@ def test_real_pendle_headline_cell_equals_the_python(tmp_path, monkeypatch):
 
 
 def test_real_maple_stays_signed_off(tmp_path, monkeypatch):
-    """6: the wording changed, the verdicts must not: no CHECK on Maple."""
+    """6: the wording changed, the verdicts must not: no CHECK on Maple — except, on THIS dump, the circulating row and
+    the rows it judges. Decision 1 (Jake 2026-10-12 evening) put Maple on the issuer rule with the Maple-controlled Safe
+    0x58BE out, and the dump (asof 2026-10-09) predates that wallet's reads: ours is the old set's 1,221,418,278.27
+    against CoinGecko's 1,167,271,959.18, which excludes the Safe. With the Safe's 48,624,987.59 (read 2026-10-12)
+    subtracted the gap is 0.47%, inside in_circ's 2% — the PASS the store gives once orphan_cleanup.sql CN and the
+    archive restate the set."""
     o = evaluate_real(tmp_path, monkeypatch, "Maple")
     bad = {k: v["verdict"] for k, v in o.items() if str(v["verdict"]).startswith("CHECK")}
-    assert not bad, bad
+    assert set(bad) <= {"in_circ"} | {k for k, v in bad.items() if v == "CHECK (inputs)"}, bad
+    if "in_circ" in bad:
+        ours, ref = float(o["in_circ"]["ours"]), float(o["in_circ"]["ref"])
+        assert abs((ours - 48_624_987.59) / ref - 1) < 0.02 and abs(ours / ref - 1) > 0.02
+        # each derived CHECK is judged by in_circ, directly or through another row that is (cp_nhy via cp_hvy)
+        assert all(any(x in o[k]["note"] for x in bad if x != k) for k, v in bad.items() if v == "CHECK (inputs)")
 
 
 def _pendle_rebuild_inputs():
@@ -269,6 +279,11 @@ def test_real_near_limit_marks_exactly_the_passes_at_80pct_of_tolerance(tmp_path
     import credibility_report as cr
     import store as sm
     from real_dump import FIXTURES, to_store
+    # THE ONE REAL ROW NEAR ITS LIMIT was Maple's circulating on CoinGecko's basis (-4.4% of a 5% band); decision 1 of
+    # 2026-10-12 evening moved Maple to the issuer rule. The marking is still proven on that real row: Maple's dump is
+    # judged here on the basis it was signed off on.
+    monkeypatch.setitem(config.CIRCULATING_ONCHAIN, "Maple", {**config.CIRCULATING_ONCHAIN["Maple"],
+                                                              "status": "partial", "ratios_use": "coingecko"})
     marked = 0
     for f in sorted(FIXTURES.glob("real_*.json")):
         payload = load(f.stem.removeprefix("real_").replace("etherfi", "ether.fi"))
