@@ -14227,6 +14227,17 @@ PROJECTS = [
                 verified="2026-09-11", provenance="protocol docs (the token entry above)",
                 metric_override="total_supply_protocol", token_standard="erc20",
                 purpose="SKY totalSupply() as a daily series with archive history — d(supply) across a window."),
+            # ===== USDS SUPPLY — SKY'S CORE BUSINESS (Phase 4, Jake's overnight review of ab5f2a9, 2026-10-12). =====
+            # USDS.totalSupply() on Ethereum (L2 USDS is bridged against L1 escrow, so L1 totalSupply is the total).
+            # The address is what Sky's on-chain chainlog 0xdA0Ab1e0017DEbCd72Be8599041a2aa3bA7e740F returns for
+            # getAddress("USDS"); symbol() reads "USDS"; totalSupply() 7,141,875,679 on 2026-10-12. archive_backfill.py
+            # reads it at past blocks (455 days).
+            "usds_supply": _contract(
+                "0xdC035D45d973E3EC169d2276DDab16f1e407384F", "ethereum", "erc20_total_supply", "USDS",
+                "https://etherscan.io/address/0xdC035D45d973E3EC169d2276DDab16f1e407384F",
+                verified="2026-10-12", provenance="Sky chainlog getAddress('USDS'), on-chain, read 2026-10-12",
+                metric_override="usds_supply_tokens", token_standard="erc20",
+                purpose="USDS in existence — the stablecoin the Sky business is judged on."),
             # ===== THE ARCHETYPE 4 READ. ADDED 2026-09-22, NOT YET RUN LIVE. =====
             # Sky's burn is protocol-level, so there is no balance to read — but SKY.burn() runs
             # through OpenZeppelin's _burn, which emits Transfer(holder, address(0), amount). The
@@ -17637,7 +17648,7 @@ PROJECTS = [
                                "Permit, Votes). ONE BURN WAS EXECUTED: 1,464,000 ETHFI burned from the buyback wallet "
                                "0x2f5301a3… between 2025-08-08 and 2025-09-19 (on-chain; totalSupply() 998,535,999 = "
                                "1,000,000,000 − 1,464,001), out of ETHFI bought by the April 2025 withdrawal-fee "
-                               "buyback — REVENUE-funded. A ONE-OFF (config.ONE_OFF_BURN_EVENTS), not a mechanism: no "
+                               "buyback — funding NOT established as revenue (~39-42% traces to withdrawal fees; recorded as TREASURY-funded, item 18 of 2026-10-12 night). A ONE-OFF (config.ONE_OFF_BURN_EVENTS), not a mechanism: no "
                                "share of fees is burned and the programme's destination stays DISTRIBUTE."},
         "issuance_schedule": None,
         "contracts": {
@@ -26412,6 +26423,10 @@ TRAJECTORY = {
         # CP (Phase 2, 2026-10-12): holder value and net holder yield are ratios on market cap (Valuation)
         "cp_float": ("Supply", 0), "cp_subsidy_cover": ("Fundamentals", 1),
         "cp_hvy": ("Valuation", 1), "cp_nhy": ("Valuation", 1),
+        # Phase 4 / Phase 3 (overnight 2026-10-12): more usage and a larger share are better
+        "cp_business_1": ("Fundamentals", 1), "cp_business_2": ("Fundamentals", 1),
+        "cp_business_3": ("Fundamentals", 1), "cp_business_4": ("Fundamentals", 1),
+        "cp_market_share": ("Market", 1),
         # Master's own rows
         "master_revenue_q0": ("Fundamentals", 1), "master_actual_buyback_q0_observed": ("Fundamentals", 1),
         "master_implied_buyback_q0_revenue_the_split_that_applied_to_this_wi": ("Fundamentals", 1),
@@ -26582,14 +26597,26 @@ HOLDER_VALUE = {
                                "fees) and the Public Goods Fund's USDC reserves — recorded, never credited twice")]},
     # ETHER.FI (research 2026-10-12, on-chain: both 2025 programmes bought through 0x2f5301a3D59388c509C65f8698f521377D41Fd0F
     # on CoW; the token paid per fill separates them and the groups sum to the stored 17,984,520 ETHFI): the April 2025
-    # withdrawal-fee buyback (Snapshot 2025-04-25..29) paid in WETH from the withdrawal fees — REVENUE, 2025-05-09..
+    # withdrawal-fee buyback (Snapshot 2025-04-25..29) paid in WETH, presented as withdrawal fees — NOT ESTABLISHED as revenue (item 18 below), 2025-05-09..
     # 2025-11-03 (5,549,356 ETHFI for 1,846 WETH); the October 2025 "Treasury Deployment for ETHFI Buy-Back" ($50M cap
     # below $3; snapshot.org/#/etherfi-dao.eth/proposal/0xe5b64c773d23c92e62092a713b14cc72a98a46c923e36cf885455118854337b0)
     # paid in USDT / USDC — TREASURY, 2025-11-04..2026-04-01 (12,435,164 ETHFI; 7,610,100 held by the Foundation Safe).
     # 2026-09-02: the 1,047,757 ETHFI inflow came out of Arrakis LP positions (LogWithdraw, tx 0x3b52e19b…), NOT a
     # purchase — recorded, not credited, pending Jake's review of the buyback series itself.
     # Entered by Claude Code, pending Jake's review.
-    "Ether.fi": {"funding": [("2025-05-09", "2025-11-03", "revenue", "April 2025 withdrawal-fee buyback (paid in WETH)"),
+    # ITEM 18 (Jake's overnight review of ab5f2a9, 2026-10-12 night): the WETH the 2025-05-09..2025-11-03 buyback
+    # spent was NOT established as fee revenue. Tracing every ETH/WETH inflow to the buyback wallet 0x2f5301a3…
+    # 2025-05-06..2025-09-19 (63 balance changes, reconciled to Blockscout's coin-balance history, 0 mismatches): ~627
+    # of 1,626.11 WETH spent matches WithdrawRequestNFT 0x7d57 fee payouts by amount and time (via 0x9eaC, 0x3FB6, the
+    # LiquidityPool and Treasury 2 0x0c83); the rest came in lump sums from ether.fi Safes / EOAs (0x3FB6 632.55, 0xF6C6
+    # 161.62, 0x46Cb 87, 0x86fB 70.13 ETH) with no fee eETH behind them. Proposal #11 (snapshot.box/#/s:etherfi-dao.eth/
+    # proposal/0x6a9bdf1bb43b3e38f7313247464360ab3c637dd54f45c99dfaa085539c0dc693) names the withdrawal-queue revenue
+    # as the source, but the wallet's own inflows show the majority was not. Not established as revenue -> TREASURY
+    # (recorded, not credited), the conservative reading; ASSUMED pending Jake's review. Research of 2026-10-12.
+    "Ether.fi": {"funding": [("2025-05-09", "2025-11-03", "treasury",
+                              "April 2025 withdrawal-fee buyback (paid in WETH) — NOT ESTABLISHED as revenue: only "
+                              "~39-42% of the WETH spent traces to withdrawal-fee payouts, the rest to ether.fi Safes "
+                              "/ EOAs (item 18, 2026-10-12 night; ASSUMED treasury pending Jake's review)"),
                              ("2025-11-04", "2026-04-01", "treasury",
                               "October 2025 Treasury Deployment for ETHFI Buy-Back (paid in USDT / USDC)"),
                              ("2026-09-02", "2026-09-02", "not a purchase",
@@ -26673,12 +26700,19 @@ INSIDER_LOCK = {
 # of it at read time by the project's `one_off_flows` (Uniswap's 100M); one with no burn series is a record only
 # (Ether.fi: archetype 3, no burn series). Each with its funding source.
 ONE_OFF_BURN_EVENTS = {
-    "Ether.fi": [{"from": "2025-08-08", "to": "2025-09-19", "tokens": 1_464_000, "funding": "revenue",
+    "Ether.fi": [{"from": "2025-08-08", "to": "2025-09-19", "tokens": 1_464_000, "funding": "treasury",
                   "what": "ETHFI bought by the April 2025 withdrawal-fee buyback, burned from the buyback wallet "
-                          "0x2f5301a3D59388c509C65f8698f521377D41Fd0F",
+                          "0x2f5301a3D59388c509C65f8698f521377D41Fd0F in 7 Safe calls to ETHFI.burn(uint256) — "
+                          "funding NOT established as revenue: 42.4% of the burned tokens trace to withdrawal-fee WETH "
+                          "first-in-first-out (38.6% pro-rata), the rest to ether.fi Safes / EOAs; no Snapshot "
+                          "proposal authorises a burn",
                   "source": "on-chain Transfers to 0x0 from 0x2f5301a3… 2025-08-08..2025-09-19; ETHFI.totalSupply() "
-                            "998,535,999 (= 1,000,000,000 − 1,464,001); research of 2026-10-12",
-                  "decided": "Jake 2026-10-12 evening, decision 3"}],
+                            "998,535,999 (= 1,000,000,000 − 1,464,001); funding: the wallet's ETH/WETH inflows "
+                            "2025-05-06..09-19 reconciled to Blockscout coin-balance history, matched against "
+                            "WithdrawRequestNFT 0x7d57 payouts; proposal #11 snapshot.box/#/s:etherfi-dao.eth/proposal/"
+                            "0x6a9bdf1bb43b3e38f7313247464360ab3c637dd54f45c99dfaa085539c0dc693; research of 2026-10-12",
+                  "decided": "Jake 2026-10-12 evening, decision 3 (recorded); funding treasury — item 18 overnight "
+                             "2026-10-12: not establishable as revenue, ASSUMED treasury pending Jake's review"}],
 }
 
 
@@ -26809,3 +26843,302 @@ METRICS["holder_value_other_usd"] = {
     "view_only": True,
     "only_projects": tuple(n for n, h in HOLDER_VALUE.items()
                            if any(f[2] != "revenue" for f in h.get("funding") or ()))}
+
+
+# =====================================================================================================================
+# TOTAL YIELD SUBTRACTS ISSUER RELEASES, NOT ONLY MINTED ISSUANCE (Jake's overnight review of ab5f2a9, item 17).
+# A fixed supply does not mean no dilution: staking rewards and foundation / labs releases come out of issuer-held
+# reserves, and under the issuer-wallet rule a release is an unlock. Total Yield's dilution = net issuance (as before:
+# Master's "Net supply change, annualised", on the project's issuance basis) + the issuer releases NOT already inside
+# that net figure, each annualised over its own covered days, ÷ circulating. Per project, why each leg is added and why
+# nothing is counted twice:
+TOTAL_YIELD_RELEASES = {
+    "Chainlink": {"add": ("emissions_tokens",),
+                  "why": "staking rewards are paid out of the Reward Vault 0x996913c8… (issuer-funded, OUTSIDE the 27 "
+                         "non-circulating wallets, so its payouts are not in pool_release_tokens); the 27 wallets' own "
+                         "releases are already the net figure's basis (pool_release_tokens = −d(the 27 wallets))"},
+    "Hyperliquid": {"add": ("unlock_release_counted_tokens",),
+                    "why": "the net figure's basis (pool_release_tokens = d(tokenDetails circulating) + the Assistance "
+                           "Fund's buys) already holds the staking rewards paid from the Future Emissions pool and the "
+                           "team wallet's releases (both outside tokenDetails' circulating); the Hyper Foundation / "
+                           "Community Grants wallets are counted AS circulating by tokenDetails, so their releases are "
+                           "added here (unlock_release_counted_tokens: their falls only)"},
+    # ASSUMED (overnight 2026-10-12, Jake offline): NEAR mints, so it is outside "fixed-supply" — but its lockup releases
+    # (circulating under the lockup rule grows as lockups vest) are issuer releases on the same logic; counted.
+    "Near": {"add": ("unlock_release_tokens",),
+             "why": "ASSUMED (overnight 2026-10-12): NEAR's lockup releases (near_lockup_locked_tokens falling as "
+                    "lockups vest) grow circulating under the lockup rule — an issuer release on the item-17 logic, "
+                    "beside the minted issuance already in the net figure"},
+    "Plume": {"unmeasured": "staking rewards are paid out of the PRE-MINTED supply (gross issuance is 0 on every stored "
+                            "day) and no series measures what is paid; reward rate x stake would be modelled — Total "
+                            "Yield is n/a until a paid-rewards series exists"},
+}
+# Release series of a SUBSET of a project's non-circulating wallets (build_workbook._unlock_views)
+UNLOCK_RELEASE_SUBSETS = {"Hyperliquid": {"unlock_release_counted_tokens": ("excluded_wallets_tokens",)}}
+METRICS["unlock_release_counted_tokens"] = {
+    "label": "Released from the issuer wallets the circulating figure in use COUNTS (Hyperliquid: Hyper Foundation / "
+             "Community Grants) — the fall in their stock; Total Yield's issuer-release leg",
+    "kind": "flow", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [1], "sanity_min": 0, "sanity_max": 1e12,
+    "view_only": True, "only_projects": tuple(UNLOCK_RELEASE_SUBSETS)}
+
+
+# =====================================================================================================================
+# PHASE 3 — MARKET / BENCHMARK DATASETS (Jake's overnight review of ab5f2a9, 2026-10-12 night)
+# Global series (no project) live under the pseudo-project MACRO_PROJECT: stored like any series, one Data row each
+# ("Macro|<metric>", build_workbook._macro_rows), never a row on a project tab. They are not in PROJECTS.
+MACRO_PROJECT = "Macro"
+MACRO_METRICS = ("tbill_3m_yield", "tbill_3m_dtb3", "sky_savings_rate")
+METRICS["tbill_3m_yield"] = {
+    "label": "3-month US T-bill — the 13-week COUPON-EQUIVALENT yield (US Treasury Daily Treasury Bill Rates), the "
+             "risk-free benchmark beside every yield",
+    "kind": "stock", "unit": "fraction", "archetypes": [], "tiers": [1], "sanity_min": 0.0, "sanity_max": 0.25,
+    "only_projects": (MACRO_PROJECT,)}
+METRICS["tbill_3m_dtb3"] = {
+    "label": "3-month T-bill, FRED DTB3 (secondary market, DISCOUNT basis) — the cross-check of Treasury's 13-week bank "
+             "discount rate",
+    "kind": "stock", "unit": "fraction", "archetypes": [], "tiers": [1], "sanity_min": 0.0, "sanity_max": 0.25,
+    "only_projects": (MACRO_PROJECT,)}
+TRAJECTORY["params"]["tbill_3m"]["source"] = ("US Treasury Daily Treasury Bill Rates, 13-week coupon equivalent "
+                                              "(fetch/treasury.py); FRED DTB3 the cross-check")
+
+# THE SKY SAVINGS RATE, ON-CHAIN (Phase 3; fetch/sky_ssr.py). The address is the one Sky's own on-chain chainlog
+# (0xdA0Ab1e0017DEbCd72Be8599041a2aa3bA7e740F, getAddress("SUSDS")) returns, and symbol() reads "sUSDS" — both read
+# 2026-10-12 via ethereum-rpc.publicnode.com. ssr() then read 1000000001182641576793209935 (3.80%), equal to the data
+# of the latest File("ssr") event (2026-10-07, block 26,141,856).
+SKY_SSR = {"address": "0xa3931d71877C0E7a3148CB7Eb4463524FEc27fbD", "chain_id": 1, "expected_symbol": "sUSDS",
+           "verified": "2026-10-12",
+           "source": "Sky chainlog 0xdA0Ab1e0017DEbCd72Be8599041a2aa3bA7e740F getAddress('SUSDS') (on-chain, read "
+                     "2026-10-12); https://etherscan.io/address/0xa3931d71877C0E7a3148CB7Eb4463524FEc27fbD"}
+METRICS["sky_savings_rate"] = {
+    "label": "Sky Savings Rate — sUSDS ssr() on-chain, as an annual rate ((ssr/1e27)^31,536,000 − 1); history from "
+             "the contract's File('ssr') events, the rate in force at each day's end",
+    "kind": "stock", "unit": "fraction", "archetypes": [], "tiers": [2], "sanity_min": 0.0, "sanity_max": 0.5,
+    "only_projects": (MACRO_PROJECT,)}
+
+
+# =====================================================================================================================
+# PHASE 4 — PER-PROJECT BUSINESS SERIES (Jake's overnight review of ab5f2a9, 2026-10-12 night; research of 2026-10-12,
+# every route called live). fetch/business.py stores them; build_workbook shows each project's BUSINESS_SLOTS on the CP
+# tab as headline columns, so each has a trajectory row (group Fundamentals, direction +1: more usage is better), a
+# Credibility verdict, a METRICS.md entry and the sanity rules. source_kind "dashboard" = an aggregator's or the
+# project's own dashboard reconstruction, with what an on-chain replacement would need.
+# Routes: overview:<type> = api.llama.fi/overview/<type> breakdown, summed over the protocol DISPLAY NAMES listed
+# (each name checked against the response's protocols[]); protocol:<field> = api.llama.fi/protocol/<slug>.
+# =====================================================================================================================
+_DL_DASH = "dashboard (DefiLlama's adapter reconstruction)"
+BUSINESS_SERIES = {
+    "Uniswap": [
+        {"metric": "protocol_dex_volume_usd", "route": "overview", "type": "dexs",
+         "names": ("Uniswap V1", "Uniswap V2", "Uniswap V3", "Uniswap V4"), "source_kind": _DL_DASH,
+         "onchain_replacement": "Swap events of every v2 pair / v3 pool / the v4 PoolManager on each chain, priced"},
+        {"metric": "dex_volume_v2_usd", "route": "overview", "type": "dexs", "names": ("Uniswap V2",),
+         "source_kind": _DL_DASH, "onchain_replacement": "v2 pair Swap events, priced"},
+        {"metric": "dex_volume_v3_usd", "route": "overview", "type": "dexs", "names": ("Uniswap V3",),
+         "source_kind": _DL_DASH, "onchain_replacement": "v3 pool Swap events, priced"},
+        {"metric": "dex_volume_v4_usd", "route": "overview", "type": "dexs", "names": ("Uniswap V4",),
+         "source_kind": _DL_DASH, "onchain_replacement": "v4 PoolManager Swap events, priced"}],
+    "Aerodrome": [
+        {"metric": "protocol_dex_volume_usd", "route": "overview", "type": "dexs",
+         "names": ("Aerodrome V1", "Aerodrome Slipstream", "Aero Lite"), "source_kind": _DL_DASH,
+         "onchain_replacement": "Swap events of every Aerodrome V1 / Slipstream / Aero Lite pool on Base, priced"}],
+    "Fluid": [
+        {"metric": "protocol_dex_volume_usd", "route": "overview", "type": "dexs",
+         "names": ("Fluid DEX", "Fluid DEX Lite"), "source_kind": _DL_DASH,
+         "onchain_replacement": "Fluid DEX pool Swap events, priced"}],
+    "Hyperliquid": [
+        {"metric": "open_interest_usd", "route": "overview", "type": "open-interest", "names": ("Hyperliquid Perps",),
+         "source_kind": _DL_DASH + "; ONE-SIDED and includes HIP-3 markets (the info API's two-sided figure reads "
+                                   "~1.5x)",
+         "onchain_replacement": "HyperCore info API metaAndAssetCtxs openInterest x markPx per asset, daily snapshot "
+                                "(no history: forward only)"}],
+    "Near": [
+        {"metric": "near_intents_volume_usd", "route": "overview", "type": "dexs", "names": ("NEAR Intents",),
+         "source_kind": "dashboard (DefiLlama passes through NEAR's own Dune dataset dataset_near_intents_metrics)",
+         "onchain_replacement": "intents.near execute_intents token_diff events (NEAR BigQuery), priced"}],
+    "Ether.fi": [
+        {"metric": "stake_tvl_usd", "route": "protocol", "field": "tvl", "slugs": (("ether.fi-stake", "ether.fi Stake"),),
+         "source_kind": _DL_DASH, "onchain_replacement": "eETH LiquidityPool getTotalPooledEther() x ETH price"},
+        {"metric": "cash_volume_usd", "route": "overview", "type": "dexs", "names": ("EtherFi Cash Liquid",),
+         "source_kind": _DL_DASH + " (category Crypto Card Issuer)",
+         "onchain_replacement": "Cash settlement-contract spend events on Scroll / OP, priced"}],
+    "Maple": [
+        {"metric": "loans_outstanding_usd", "route": "protocol", "field": "borrowed",
+         "slugs": (("maple-finance", "Maple Finance"),), "source_kind": _DL_DASH,
+         "onchain_replacement": "sum of poolV2 principalOut across Maple pools (Maple's GraphQL gives today only: "
+                                "$1,869.1M vs DefiLlama $1,868.5M on 2026-10-12)"}],
+    "Ethereum": [
+        {"metric": "l2_tx_count", "route": "growthepie", "export": "txcount", "exclude": ("ethereum",),
+         "source_kind": "dashboard (growthepie's per-chain export; the L2 set grows as chains are added)",
+         "onchain_replacement": "each L2's own RPC block tx counts"}],
+    "GEODNET": [
+        {"metric": "stations_total", "route": "geodnet", "kind": "stock",
+         "source_kind": "dashboard (GEODNET's website API getMinerStatistics data.total_miner; NO HISTORY — a daily "
+                        "snapshot from the first read)",
+         "onchain_replacement": "distinct reward recipients of the Polygon mining wallets per day (under-counts: "
+                                "one owner, many stations)"}],
+    "Chainlink": [
+        {"metric": "ccip_messages", "route": "ccip",
+         "source_kind": "first-party API (api.ccip.chain.link/v2/messages, documented, no key; no date filter: "
+                        "a cursor walk, complete days only)",
+         "onchain_replacement": "CCIPSendRequested / CCIPMessageSent on every OnRamp (v1.2-v2.0), every chain"}],
+}
+# Which series each project is judged on, in slot order (existing series included). A project with fewer slots than
+# BUSINESS_SLOT_COUNT leaves the rest blank. Stocks read 'now' (a shifted quarter: that quarter's mean); flows the Q0
+# total annualised over its covered days.
+BUSINESS_SLOT_COUNT = 4
+BUSINESS_SLOTS = {
+    "Ethereum": ("tx_count", "l2_tx_count", "fees_usd"),
+    "Near": ("near_intents_volume_usd", "tx_count", "fees_usd"),
+    "Plume": ("rwa_defillama_usd", "tx_count"),
+    "Chainlink": ("ccip_messages", "actual_buyback_tokens", "customer_revenue_usd"),
+    "GEODNET": ("stations_total", "customer_revenue_usd"),
+    "Aethir": ("customer_revenue_usd", "compute_hours_weekly"),
+    "Maple": ("loans_outstanding_usd", "protocol_tvl_usd"),
+    "Morpho": ("borrowed_usd_llama", "supply_units"),
+    "Hyperliquid": ("perps_volume_usd", "open_interest_usd"),
+    "Uniswap": ("protocol_dex_volume_usd", "dex_volume_v2_usd", "dex_volume_v3_usd", "dex_volume_v4_usd"),
+    "Aerodrome": ("protocol_dex_volume_usd",),
+    "Sky": ("usds_supply_tokens",),
+    "Pendle": ("protocol_tvl_usd",),
+    "Ether.fi": ("stake_tvl_usd", "cash_volume_usd"),
+    "Fluid": ("protocol_tvl_usd", "protocol_dex_volume_usd"),
+}
+BUSINESS_NOT_WIRED = {
+    "Pendle": "TVL BY MATURITY not wired overnight: Pendle's API (api-v2.pendle.finance core/v2/markets/all, 819 "
+              "markets, 100 a page; then core/v2/{chainId}/markets/{addr}/historical-data?time_frame=day&fields="
+              "totalTvl per market — totalTvl, not tvl, which is pool liquidity only) holds it with history",
+    "Chainlink": "CCIP TOKEN VALUE not wired: the CCIP API gives each message's sourceTokenAmount, which needs the "
+                 "token's decimals (/v2/tokens/{selector}/{addr}) and a price per token per day",
+    "GEODNET": "CUSTOMERS / SUBSCRIPTIONS: no public source (the console needs a wallet login)",
+    "Ether.fi": "Cash card SPEND is DefiLlama's 'EtherFi Cash Liquid' volume; card count has no public source",
+}
+for _n, _specs in BUSINESS_SERIES.items():
+    for _s in _specs:
+        _m = _s["metric"]
+        if _m in METRICS:
+            METRICS[_m]["only_projects"] = tuple(sorted(set(METRICS[_m].get("only_projects") or ()) | {_n}))
+            continue
+        _stock = _s.get("route") == "geodnet" or _s.get("type") == "open-interest" or _s.get("field") in (
+            "tvl", "borrowed")
+        METRICS[_m] = {
+            "label": {"protocol_dex_volume_usd": "Protocol DEX volume ($/day) — every version the protocol runs",
+                      "dex_volume_v2_usd": "Uniswap V2 volume ($/day)", "dex_volume_v3_usd": "Uniswap V3 volume ($/day)",
+                      "dex_volume_v4_usd": "Uniswap V4 volume ($/day)",
+                      "open_interest_usd": "Perp open interest ($, one-sided, DefiLlama)",
+                      "near_intents_volume_usd": "NEAR Intents volume ($/day)",
+                      "stake_tvl_usd": "ether.fi Stake TVL ($)", "cash_volume_usd": "ether.fi Cash spend volume ($/day)",
+                      "loans_outstanding_usd": "Loans outstanding ($) — DefiLlama 'borrowed'",
+                      "l2_tx_count": "Ethereum L2 transactions per day (every L2 growthepie tracks)",
+                      "stations_total": "GEODNET stations (total miners on GEODNET's dashboard)",
+                      "ccip_messages": "CCIP messages sent per day (mainnet)"}[_m]
+                     + f" — {_s['source_kind']}",
+            "kind": "stock" if _stock else "flow", "unit": "count" if _m in ("l2_tx_count", "stations_total",
+                                                                            "ccip_messages") else "usd",
+            "archetypes": [], "tiers": [1], "only_projects": (_n,), "sanity_min": 0.0,
+            "business": True, "source_kind": _s["source_kind"], "onchain_replacement": _s["onchain_replacement"]}
+METRICS["usds_supply_tokens"] = {
+    "label": "USDS supply (tokens = $) — USDS.totalSupply() on Ethereum (chain read; archive history)",
+    "kind": "stock", "unit": "tokens", "archetypes": [], "tiers": [2], "only_projects": ("Sky",), "sanity_min": 0.0,
+    "business": True, "source_kind": "on-chain (contract read)", "onchain_replacement": ""}
+
+# =====================================================================================================================
+# PHASE 3 — MARKET SHARE PER PROJECT vs ITS CATEGORY, the peer set written down (research of 2026-10-12, r7; every
+# route called live; /overview/derivatives, /oracles and /categories are PAID (402) and not used).
+#   overview   one call: the protocol's own names (parent) ÷ every protocol DefiLlama files under `category`
+#   peers      own slug(s) ÷ (own + every listed peer), per day, only on a day EVERY peer reported (a peer that had not
+#              launched counts 0 before its first day; a later gap drops the day — never read as 0)
+#   chain_tvl  the chain's TVL ÷ all chains (api.llama.fi/v2/historicalChainTvl)
+#   stablecoins  USDS + DAI ÷ every USD stablecoin (stablecoins.llama.fi/stablecoincharts/all, peggedUSD)
+# =====================================================================================================================
+_LENDERS = (("aave", "Aave"), ("morpho", "Morpho"), ("sparklend", "SparkLend"), ("maple-finance", "Maple Finance"),
+            ("fluid-lending", "Fluid Lending"), ("compound-finance", "Compound Finance"), ("kamino-lend", "Kamino Lend"),
+            ("jupiter-lend", "Jupiter Lend"), ("euler", "Euler"), ("venus", "Venus"), ("justlend", "JustLend"))
+
+
+def _lending_share(own_slug: str) -> dict:
+    return {"how": "peers", "route": "protocol", "field": "borrowed", "category": "lending — active loans (borrowed)",
+            "own": tuple(x for x in _LENDERS if x[0] == own_slug),
+            "peers": tuple(x for x in _LENDERS if x[0] != own_slug),
+            "basis": "BORROWED (active loans) vs the 11 largest lenders: aave, morpho, sparklend, maple-finance, "
+                     "fluid-lending, compound-finance, kamino-lend, jupiter-lend, euler, venus, justlend (child slugs "
+                     "where the parent carries unrelated products)"}
+
+
+MARKET_SHARE = {
+    "Uniswap": {"how": "overview", "type": "dexs", "category": "Dexs", "own_parent": "parent#uniswap",
+                "basis": "DEX volume (V1-V4) ÷ every protocol DefiLlama files under Dexs (Uniswap Auctions, a "
+                         "Launchpad, and the aggregator are out)"},
+    "Aerodrome": {"how": "overview", "type": "dexs", "category": "Dexs", "own_parent": "parent#aerodrome",
+                  "basis": "DEX volume (V1 + Slipstream + Aero Lite) ÷ every protocol under Dexs"},
+    "Hyperliquid": {"how": "overview", "type": "open-interest", "category": "Derivatives",
+                    "own_names": ("Hyperliquid Perps",),
+                    "basis": "perp OPEN INTEREST ÷ the Derivatives category (perp volume is paid at DefiLlama); "
+                             "HIP-3 venues (e.g. tradeXYZ) are filed elsewhere and are NOT in Hyperliquid's figure"},
+    "Maple": _lending_share("maple-finance"),
+    "Morpho": _lending_share("morpho"),
+    "Fluid": _lending_share("fluid-lending"),
+    "Ether.fi": {"how": "peers", "route": "protocol", "field": "chain:Ethereum",
+                 "category": "ETH liquid (re)staking — Ethereum TVL",
+                 "own": (("ether.fi-stake", "ether.fi Stake"),),
+                 "peers": (("lido", "Lido"), ("binance-staked-eth", "Binance staked ETH"), ("rocket-pool", "Rocket Pool"),
+                           ("kelp", "Kelp"), ("stakewise-v3", "StakeWise V3"), ("liquid-collective", "Liquid Collective"),
+                           ("meth-protocol", "mETH Protocol"),
+                           ("coinbase-wrapped-staked-eth", "Coinbase Wrapped Staked ETH"), ("renzo", "Renzo")),
+                 "basis": "ether.fi Stake's Ethereum TVL ÷ it + 9 ETH liquid (re)staking peers (Liquid vaults "
+                          "re-deposit eETH, so only Stake counts; the Liquid Staking category mixes SOL/BNB/TON)"},
+    "Pendle": {"how": "peers", "route": "protocol", "field": "tvl", "category": "yield tokenization — TVL",
+               "own": (("pendle-v2", "Pendle V2"),),
+               "peers": (("spectra-v2", "Spectra V2"), ("exponent-yield-exchange", "Exponent Yield Exchange"),
+                         ("ratex-dex", "RateX DEX"), ("napier", "Napier")),
+               "basis": "Pendle V2 TVL ÷ it + 4 yield-tokenization peers (Boros, Equilibria and Penpie excluded: "
+                        "the last two wrap Pendle LPs and would double count)"},
+    "Sky": {"how": "stablecoins", "own_ids": (209, 5), "category": "USD stablecoins — supply",
+            "basis": "USDS (id 209) + DAI (id 5) supply ÷ every USD stablecoin (DefiLlama stablecoins, peggedUSD)"},
+    "Ethereum": {"how": "chain_tvl", "chain": "Ethereum", "category": "all chains — TVL",
+                 "basis": "Ethereum chain TVL ÷ all chains (ASSUMED basis: TVL, one call; the chain-fees share vs 12 "
+                          "peer chains is the alternative)"},
+    "Near": {"how": "chain_tvl", "chain": "Near", "category": "all chains — TVL",
+             "basis": "NEAR chain TVL ÷ all chains (ASSUMED basis, as Ethereum)"},
+    "Chainlink": {"na": "oracle TVS share needs DefiLlama's /oracles (PAID, 402); a rebuild from /protocols "
+                        "oraclesBreakdown x 95 protocol TVL histories (scope and dates honoured) read 76.1% on "
+                        "2026-10-12 but cannot be checked against DefiLlama's own TVS — not wired"},
+    "Plume": {"na": "share of DefiLlama RWA-category TVL by chain needs the RWA rebuild without the chain filter (178 "
+                    "calls, fetch/llama._build_rwa_by_chain) — not wired overnight; Plume's chain TVL excludes RWA and "
+                    "would read 0.003%"},
+    "Aethir": {"na": "no comparable DePIN-compute category at DefiLlama (Aethir is filed under Developer Tools)"},
+    "GEODNET": {"na": "DefiLlama files GEODNET under Oracle and its 'fees' are its own burn restated — no comparable "
+                      "peer basis"},
+}
+METRICS["market_share_pct"] = {
+    "label": "Market share vs the project's category, the peer set written down (config.MARKET_SHARE)",
+    "kind": "stock", "unit": "fraction", "archetypes": [], "tiers": [1], "sanity_min": 0.0, "sanity_max": 1.0,
+    "only_projects": tuple(n for n, v in MARKET_SHARE.items() if "na" not in v)}
+METRICS["market_share_category_usd"] = {
+    "label": "The peer set's total on the market-share basis (the denominator)", "kind": "stock", "unit": "usd",
+    "archetypes": [], "tiers": [1], "sanity_min": 0.0,
+    "only_projects": tuple(n for n, v in MARKET_SHARE.items() if "na" not in v)}
+
+# ETF / ETP AND DIGITAL-ASSET-TREASURY HOLDINGS (Phase 3; etf_dat_holdings.json — the latest dated reading per product
+# from the issuer's own filing or file, read 2026-10-12, entered by Claude Code pending Jake's review). Manual, dated
+# readings: no daily series exists for most products (SEC 10-Qs are quarterly), so they are shown on CP as dated
+# literals, never trended.
+ETF_DAT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "etf_dat_holdings.json")
+try:
+    import json as _json_etf
+    with open(ETF_DAT_FILE, encoding="utf-8") as _fh:
+        ETF_DAT = _json_etf.load(_fh)["projects"]
+except (OSError, ValueError, KeyError):
+    ETF_DAT = {}
+
+
+def etf_dat(project_name: str, kind: str) -> tuple[float | None, str]:
+    """(tokens, why-or-holders) for kind 'etf_etp' or 'dat'. None with the reason where nothing was found."""
+    rec = ETF_DAT.get(project_name)
+    if rec is None:
+        return None, "not researched"
+    rows = rec.get(kind) or []
+    if not rows:
+        return None, rec.get("na") or ("none found in issuer sources (2026-10-12)" if kind == "dat" else
+                                       "no ETF / ETP found in issuer sources (2026-10-12)")
+    return (float(sum(e["tokens"] for e in rows)),
+            "; ".join(f"{e['holder']} {e['tokens']:,.0f} ({e['as_of']})" for e in rows))

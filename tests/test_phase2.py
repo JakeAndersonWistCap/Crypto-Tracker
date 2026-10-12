@@ -135,10 +135,11 @@ def test_cp_plume_has_no_measured_outflow_and_says_why(tmp_path, monkeypatch):
 
 
 def test_holder_funding_periods_are_dated_and_sourced():
-    """LITMUS A (research 2026-10-12): Ether.fi's April 2025 withdrawal-fee buyback is revenue, the October 2025
+    """LITMUS A (research 2026-10-12): Ether.fi's April 2025 withdrawal-fee buyback is not established as revenue, the October 2025
     treasury programme is not, and the 2026-09-02 inflow is an LP withdrawal; Uniswap's 100M burn was the treasury's."""
     f = config.holder_funding
-    assert f("Ether.fi", "2025-06-01")[0] == "revenue"
+    # item 18 (2026-10-12 night): the 2025 WETH buyback is not established as revenue-funded -> treasury
+    assert f("Ether.fi", "2025-06-01")[0] == "treasury"
     assert f("Ether.fi", "2025-12-01")[0] == "treasury"
     assert f("Ether.fi", "2026-09-02")[0] == "not a purchase"
     # Uniswap's 100M treasury burn is moved out of the burn series (one_off_flows) before any holder value reads it

@@ -1,0 +1,594 @@
+{
+ "_meta": {
+  "what": "ETF / ETP and digital-asset-treasury (DAT) company holdings per project — the LATEST dated reading per product from the issuer's own filing, file or site (SEC EDGAR 10-Q / 8-K / 6-K, iShares / Bitwise / 21Shares / VanEck / company dashboards). Superseded older filings of the same product are dropped. 'n/a' lists where nothing was found or the issuer could not be read.",
+  "read_on": "2026-10-12",
+  "entered_by": "Claude Code, pending Jake's review",
+  "research": "Phase 3 research of 2026-10-12 (every URL fetched; no key)",
+  "caveats": [
+   "dates differ between products: a sum is a sum of each product's latest reading, not a same-day total",
+   "21Shares EU/CH products: units outstanding x the per-unit entitlement its API reports (derived from the issuer's own figures); its US products report the total",
+   "Valour: DeFi Technologies' 10-Q balance sheet (all Valour ETPs of that asset combined)",
+   "not read: Grayscale's site (bot checkpoint; its 10-Q figures are used), CoinShares (browser-built pages), WisdomTree, Bitwise Europe, Virtune, DDA"
+  ]
+ },
+ "projects": {
+  "Ethereum": {
+   "token": "ETH",
+   "etf_etp": [
+    {
+     "holder": "iShares Ethereum Trust ETF (ETHA)",
+     "type": "US spot ETF",
+     "tokens": 3483747.1702,
+     "as_of": "2026-10-09",
+     "source_url": "https://www.ishares.com/us/products/337614/ishares-ethereum-trust-etf/latest-holdings.csv",
+     "read_on": "2026-10-12"
+    },
+    {
+     "holder": "Grayscale Ethereum Staking Mini ETF (ETH)",
+     "type": "US spot ETF",
+     "tokens": 854642.67477818,
+     "as_of": "2026-06-30",
+     "source_url": "https://www.sec.gov/Archives/edgar/data/2020455/000202045526000016/eth-20260630.htm",
+     "read_on": "2026-10-12"
+    },
+    {
+     "holder": "Grayscale Ethereum Staking ETF (ETHE)",
+     "type": "US spot ETF",
+     "tokens": 774998.51127584,
+     "as_of": "2026-06-30",
+     "source_url": "https://www.sec.gov/Archives/edgar/data/1725210/000172521026000016/ethe-20260630.htm",
+     "read_on": "2026-10-12",
+     "note": "etfs.grayscale.com returns HTTP 429 'Vercel Security Checkpoint' to scripts; WebFetch 403"
+    },
+    {
+     "holder": "Fidelity Ethereum Fund (FETH)",
+     "type": "US spot ETF",
+     "tokens": 476311,
+     "as_of": "2026-06-30",
+     "source_url": "https://www.sec.gov/Archives/edgar/data/2000046/000119312526337675/ck0002000046-20260630.htm",
+     "read_on": "2026-10-12",
+     "note": "daily issuer file not tested"
+    },
+    {
+     "holder": "iShares Staked Ethereum Trust ETF (ETHB)",
+     "type": "US spot ETF (staked)",
+     "tokens": 288417,
+     "as_of": "2026-06-30",
+     "source_url": "https://www.sec.gov/Archives/edgar/data/2099103/000143774926027003/iset20260630c_10q.htm",
+     "read_on": "2026-10-12",
+     "note": "250,585 ETH (86.9%) staked; daily CSV likely at its iShares product page (product id not resolved, not tested)"
+    },
+    {
+     "holder": "21Shares Ethereum Staking ETP (AETH, CH)",
+     "type": "EU/CH ETP",
+     "tokens": 121814.2063,
+     "as_of": "2026-10-12",
+     "source_url": "https://api.primary.21shares.com/api/product_details/AETH",
+     "read_on": "2026-10-12",
+     "note": "for EU/CH products the API 'quantity' field is PER UNIT, unlike US products where it is the total"
+    },
+    {
+     "holder": "Bitwise Ethereum ETF (ETHW)",
+     "type": "US spot ETF",
+     "tokens": 108961.39,
+     "as_of": "2026-10-08",
+     "source_url": "https://ethwetf.com/",
+     "read_on": "2026-10-12"
+    },
+    {
+     "holder": "VanEck Ethereum ETN (VETH)",
+     "type": "EU ETN",
+     "tokens": 72133.90508172,
+     "as_of": "2026-10-12",
+     "source_url": "https://www.vaneck.com/de/en/etf/digital-assets/investments/ethereum-etp/downloads/coin-entitlement-history/",
+     "read_on": "2026-10-12"
+    },
+    {
+     "holder": "VanEck Ethereum ETF (ETHV)",
+     "type": "US spot ETF",
+     "tokens": 48971.93,
+     "as_of": "2026-06-30",
+     "source_url": "https://www.sec.gov/Archives/edgar/data/1860788/000093041326002504/c117300_10q-ixbrl.htm",
+     "read_on": "2026-10-12",
+     "note": "vaneck.com US holdings page needs a cookie jar; only NAV/TNA in static HTML"
+    },
+    {
+     "holder": "21Shares Ethereum Core Staking ETP (ETHC, CH)",
+     "type": "EU/CH ETP",
+     "tokens": 45496.0956,
+     "as_of": "2026-10-12",
+     "source_url": "https://api.primary.21shares.com/api/product_details/ETHC",
+     "read_on": "2026-10-12"
+    },
+    {
+     "holder": "Valour (DeFi Technologies) - all Valour ETPs combined",
+     "type": "EU ETP issuer balance sheet",
+     "tokens": 24111.7434,
+     "as_of": "2026-06-30",
+     "source_url": "https://www.sec.gov/Archives/edgar/data/1888274/000121390026089211/ea030127001ex99-1.htm",
+     "read_on": "2026-10-12",
+     "note": "company-level quarterly table, not per-ETP; daily per-ETP not tested"
+    },
+    {
+     "holder": "Franklin Ethereum ETF (EZET)",
+     "type": "US spot ETF",
+     "tokens": 20464.3242,
+     "as_of": "2026-06-30",
+     "source_url": "https://www.sec.gov/Archives/edgar/data/2011535/000114036126033204/ef20077169_10q.htm",
+     "read_on": "2026-10-12",
+     "note": "combined trust figure"
+    },
+    {
+     "holder": "21Shares Ethereum Staking ETF (TETH)",
+     "type": "US spot ETF",
+     "tokens": 11130.2583,
+     "as_of": "2026-10-09",
+     "source_url": "https://api.primary.21shares.com/api/product_details/TETH",
+     "read_on": "2026-10-12"
+    },
+    {
+     "holder": "Invesco Galaxy Ethereum ETF (QETH)",
+     "type": "US spot ETF",
+     "tokens": 9782,
+     "as_of": "2026-06-30",
+     "source_url": "https://www.sec.gov/Archives/edgar/data/1995569/000119312526338689/qeth-20260630.htm",
+     "read_on": "2026-10-12"
+    }
+   ],
+   "dat": [
+    {
+     "holder": "Bitmine Immersion Technologies (BMNR)",
+     "type": "DAT",
+     "tokens": 6016414,
+     "as_of": "2026-10-04",
+     "source_url": "https://www.sec.gov/Archives/edgar/data/1829311/000149315226045699/ex99-1.htm",
+     "read_on": "2026-10-12",
+     "note": "8-K filed 2026-10-05; 5,067,309 ETH staked; weekly 8-K cadence"
+    },
+    {
+     "holder": "Sharplink (SBET)",
+     "type": "DAT",
+     "tokens": 888938,
+     "as_of": "2026-08-03",
+     "source_url": "https://www.sec.gov/Archives/edgar/data/1981535/000149315226036741/ex99-1.htm",
+     "read_on": "2026-10-12",
+     "note": "886,881 at 2026-06-30; weekly dashboard https://www.sharplink.com/eth-dashboard is JS-rendered (no static number/file found)"
+    },
+    {
+     "holder": "Bit Digital (BTBT)",
+     "type": "DAT",
+     "tokens": 164842.2,
+     "as_of": "2026-07-31",
+     "source_url": "https://www.sec.gov/Archives/edgar/data/1710350/000121390026098132/ea030473001ex99-1.htm",
+     "read_on": "2026-10-12",
+     "note": "investor deck attached to 8-K 2026-09-09"
+    },
+    {
+     "holder": "BTCS Inc.",
+     "type": "DAT",
+     "tokens": 51226,
+     "as_of": "2026-06-30",
+     "source_url": "https://www.sec.gov/Archives/edgar/data/1436229/000149315226039249/form10-q.htm",
+     "read_on": "2026-10-12"
+    },
+    {
+     "holder": "GameSquare Holdings (GAME)",
+     "type": "DAT",
+     "tokens": 15080.51,
+     "as_of": "2026-06-30",
+     "source_url": "https://www.sec.gov/Archives/edgar/data/1714562/000149315226037336/ex99-1.htm",
+     "read_on": "2026-10-12"
+    },
+    {
+     "holder": "Forum Markets (formerly ETHZilla, FRMM)",
+     "type": "DAT (exited)",
+     "tokens": 12441,
+     "as_of": "2026-06-30",
+     "source_url": "https://www.sec.gov/Archives/edgar/data/1690080/000121390026090100/ea0301343-10q_forum.htm",
+     "read_on": "2026-10-12",
+     "note": "sold ~57,726 ETH in H1-2026"
+    },
+    {
+     "holder": "FG Nexus / FG Communities Holdings (FGNX)",
+     "type": "DAT (exited)",
+     "tokens": 0,
+     "as_of": "2026-06-30",
+     "source_url": "https://www.sec.gov/Archives/edgar/data/1591890/000149315226037445/form10-q.htm",
+     "read_on": "2026-10-12",
+     "note": "'the Company sold all of its digital assets prior to June 30, 2026'"
+    }
+   ],
+   "not_read": [
+    "CoinShares Physical Ethereum / Staked ETH (EU): https://coinshares.com/uk/etp/",
+    "WisdomTree / Bitwise Europe / Virtune / DDA ETH ETPs: not checked",
+    "The Ether Machine (via Dynamix Corp SPAC): https://www.sec.gov/Archives/edgar/data/2028699/000121390026089131/ea0301304-10q_dynamix.htm",
+    "aggregators (strategicethreserve.xyz, CoinGecko treasuries, DefiLlama DAT, The Block treasuries): named only; not used for figures"
+   ]
+  },
+  "Chainlink": {
+   "token": "LINK",
+   "etf_etp": [
+    {
+     "holder": "Grayscale Chainlink Trust ETF (GLNK)",
+     "type": "US spot ETF",
+     "tokens": 10030901.1147485,
+     "as_of": "2026-06-30",
+     "source_url": "https://www.sec.gov/Archives/edgar/data/1852025/000185202526000007/glnk-20260630.htm",
+     "read_on": "2026-10-12",
+     "note": "Grayscale site blocked to scripts"
+    },
+    {
+     "holder": "Bitwise Chainlink ETF (CLNK)",
+     "type": "US spot ETF",
+     "tokens": 4763294.87,
+     "as_of": "2026-10-08",
+     "source_url": "https://clnketf.com/",
+     "read_on": "2026-10-12"
+    },
+    {
+     "holder": "21Shares Chainlink ETP (LINK, CH)",
+     "type": "EU/CH ETP",
+     "tokens": 2326840.0574,
+     "as_of": "2026-10-12",
+     "source_url": "https://api.primary.21shares.com/api/product_details/LINK",
+     "read_on": "2026-10-12"
+    },
+    {
+     "holder": "VanEck Chainlink ETN (VLNK)",
+     "type": "EU ETN",
+     "tokens": 597292.86272009,
+     "as_of": "2026-10-12",
+     "source_url": "https://www.vaneck.com/de/en/investments/chainlink-etp/downloads/coin-entitlement-history/",
+     "read_on": "2026-10-12"
+    },
+    {
+     "holder": "Valour Chainlink (DeFi Technologies)",
+     "type": "EU ETP issuer balance sheet",
+     "tokens": 336034.979,
+     "as_of": "2026-06-30",
+     "source_url": "https://www.sec.gov/Archives/edgar/data/1888274/000121390026089211/ea030127001ex99-1.htm",
+     "read_on": "2026-10-12"
+    }
+   ],
+   "dat": [
+    {
+     "holder": "CaliberCos (CWD)",
+     "type": "DAT",
+     "tokens": 229203,
+     "as_of": "2026-06-30",
+     "source_url": "https://www.sec.gov/Archives/edgar/data/1627282/000162728226000058/cwd-20260630.htm",
+     "read_on": "2026-10-12",
+     "note": "562,535 at 2025-12-31; sold 278,357 in Q2-2026"
+    },
+    {
+     "holder": "Fabric.AI (formerly StableX Technologies, SBLX)",
+     "type": "DAT (exited)",
+     "tokens": 0,
+     "as_of": "2026-06-30",
+     "source_url": "https://www.sec.gov/Archives/edgar/data/1086745/000149315226038445/form10-q.htm",
+     "read_on": "2026-10-12",
+     "note": "held 58,916 LINK at 2025-12-31 (10-K); 'disposed of all its digital asset holdings' in Q2-2026"
+    }
+   ],
+   "not_read": [
+    "CoinShares Physical Chainlink (CCHA): https://coinshares.com/uk/etp/physical-chainlink/"
+   ]
+  },
+  "Hyperliquid": {
+   "token": "HYPE",
+   "etf_etp": [
+    {
+     "holder": "Bitwise Hyperliquid ETF (BHYP)",
+     "type": "US spot ETF",
+     "tokens": 2188448.71,
+     "as_of": "2026-10-08",
+     "source_url": "https://bhypetf.com/",
+     "read_on": "2026-10-12"
+    },
+    {
+     "holder": "Grayscale Hyperliquid Staking ETF (HYPG)",
+     "type": "US spot ETF",
+     "tokens": 1941395.06111666,
+     "as_of": "2026-06-30",
+     "source_url": "https://www.sec.gov/Archives/edgar/data/2107730/000210773026000007/ck0002107730-20260630.htm",
+     "read_on": "2026-10-12"
+    },
+    {
+     "holder": "21Shares Hyperliquid Staking ETF (THYP)",
+     "type": "US spot ETF",
+     "tokens": 879224.8703,
+     "as_of": "2026-10-09",
+     "source_url": "https://api.primary.21shares.com/api/product_details/THYP",
+     "read_on": "2026-10-12"
+    },
+    {
+     "holder": "21Shares Hyperliquid Staking ETP (HYPE, CH)",
+     "type": "EU/CH ETP",
+     "tokens": 428805.7318,
+     "as_of": "2026-10-12",
+     "source_url": "https://api.primary.21shares.com/api/product_details/HYPE",
+     "read_on": "2026-10-12"
+    },
+    {
+     "holder": "Valour Hyperliquid (DeFi Technologies)",
+     "type": "EU ETP issuer balance sheet",
+     "tokens": 70152.6514,
+     "as_of": "2026-06-30",
+     "source_url": "https://www.sec.gov/Archives/edgar/data/1888274/000121390026089211/ea030127001ex99-1.htm",
+     "read_on": "2026-10-12"
+    },
+    {
+     "holder": "VanEck Hyperliquid ETN (VHRL)",
+     "type": "EU ETN",
+     "tokens": 19267.6263593,
+     "as_of": "2026-10-12",
+     "source_url": "https://www.vaneck.com/de/en/etf/digital-assets/investments/hype-etp/downloads/coin-entitlement-history/",
+     "read_on": "2026-10-12"
+    }
+   ],
+   "dat": [
+    {
+     "holder": "Hyperliquid Strategies Inc (PURR)",
+     "type": "DAT",
+     "tokens": 38520000,
+     "as_of": "2026-10-08",
+     "source_url": "https://hypestrat.xyz/api/dashboard-inputs",
+     "read_on": "2026-10-12",
+     "note": "the company's own dashboard feed (named by its 8-K): effectiveDate 2026-10-08; weekly items lag one week (~2026-10-01)."
+    },
+    {
+     "holder": "Hyperion DeFi (HYPD)",
+     "type": "DAT",
+     "tokens": 2040000,
+     "as_of": "2026-06-30",
+     "source_url": "https://www.sec.gov/Archives/edgar/data/1682639/000110465926094849/tm2622908d1_ex99-1.htm",
+     "read_on": "2026-10-12"
+    },
+    {
+     "holder": "Lion Group Holding (LGHL)",
+     "type": "DAT",
+     "tokens": 232900,
+     "as_of": "2026-09-29",
+     "source_url": "https://www.sec.gov/Archives/edgar/data/1806524/000121390026104925/ea0307175-6k_lion.htm",
+     "read_on": "2026-10-12"
+    }
+   ],
+   "not_read": [
+    "CoinShares Physical Hyperliquid (LIQ): coinshares.com"
+   ]
+  },
+  "Near": {
+   "token": "NEAR",
+   "etf_etp": [
+    {
+     "holder": "Bitwise NEAR ETF (NRR)",
+     "type": "US spot ETF",
+     "tokens": 14256803.46,
+     "as_of": "2026-10-08",
+     "source_url": "https://nrretf.com/",
+     "read_on": "2026-10-12"
+    },
+    {
+     "holder": "21Shares NEAR Protocol Staking ETP (NEAR, CH)",
+     "type": "EU/CH ETP",
+     "tokens": 2461686.1412,
+     "as_of": "2026-10-12",
+     "source_url": "https://api.primary.21shares.com/api/product_details/NEAR",
+     "read_on": "2026-10-12"
+    },
+    {
+     "holder": "Valour NEAR (DeFi Technologies)",
+     "type": "EU ETP issuer balance sheet",
+     "tokens": 1709206.3575,
+     "as_of": "2026-06-30",
+     "source_url": "https://www.sec.gov/Archives/edgar/data/1888274/000121390026089211/ea030127001ex99-1.htm",
+     "read_on": "2026-10-12"
+    }
+   ],
+   "dat": [
+    {
+     "holder": "SVRN, Inc. (formerly OceanPal, SVRN)",
+     "type": "DAT",
+     "tokens": 55399357,
+     "as_of": "2026-09-29",
+     "source_url": "https://d1tuihq79bdcd9.cloudfront.net/v1/data/dashboard.json",
+     "read_on": "2026-10-12",
+     "note": "6-K 2026-08-27: 'holding more than 55.5 million tokens' https://www.sec.gov/Archives/edgar/data/1869467/000091957426005810/p15060228_ex99-1.htm"
+    }
+   ],
+   "not_read": [
+    "Grayscale Near Trust (GSNR): https://www.sec.gov/Archives/edgar/data/2025000/000119312526269337/gsnr_s-1_amendment_1.htm"
+   ]
+  },
+  "Uniswap": {
+   "token": "UNI",
+   "etf_etp": [
+    {
+     "holder": "21Shares Uniswap ETP (AUNI, CH)",
+     "type": "EU/CH ETP",
+     "tokens": 1559774.1662,
+     "as_of": "2026-10-12",
+     "source_url": "https://api.primary.21shares.com/api/product_details/AUNI",
+     "read_on": "2026-10-12"
+    },
+    {
+     "holder": "Valour Uniswap (DeFi Technologies)",
+     "type": "EU ETP issuer balance sheet",
+     "tokens": 417198.0351,
+     "as_of": "2026-06-30",
+     "source_url": "https://www.sec.gov/Archives/edgar/data/1888274/000121390026089211/ea030127001ex99-1.htm",
+     "read_on": "2026-10-12"
+    }
+   ],
+   "dat": [],
+   "not_read": [
+    "CoinShares Physical Uniswap (CIWP): coinshares.com",
+    "US spot UNI ETF: EDGAR full-text search ('Uniswap ETF', 'UNI held by the Trust') returned 0",
+    "none found: EDGAR FTS '\"UNI tokens\"' 2026: 0 hits"
+   ]
+  },
+  "Sky": {
+   "token": "SKY",
+   "etf_etp": [
+    {
+     "holder": "Valour Sky (DeFi Technologies)",
+     "type": "EU ETP issuer balance sheet",
+     "tokens": 682323,
+     "as_of": "2026-06-30",
+     "source_url": "https://www.sec.gov/Archives/edgar/data/1888274/000121390026089211/ea030127001ex99-1.htm",
+     "read_on": "2026-10-12",
+     "note": "'Valour Sky SEK' listed among Valour ETPs"
+    }
+   ],
+   "dat": [
+    {
+     "holder": "Stablecoin Development Corp (SDEV, formerly NovaBay NBY)",
+     "type": "DAT",
+     "tokens": 2321910691,
+     "as_of": "2026-10-02",
+     "source_url": "https://www.sec.gov/Archives/edgar/data/1389545/000143774926031972/ex_1016832.htm",
+     "read_on": "2026-10-12",
+     "note": "2,286,511,374 SKY at 2026-06-30; ~10% of supply"
+    }
+   ],
+   "not_read": [
+    "21Shares / VanEck / US: 21Shares API 'SKY'/'AMKR' -> DATA_UNAVAILABLE; no US SKY ETF in EDGAR"
+   ]
+  },
+  "Pendle": {
+   "token": "PENDLE",
+   "etf_etp": [
+    {
+     "holder": "21Shares Pendle ETP (APEN, CH)",
+     "type": "EU/CH ETP",
+     "tokens": 189068.8733,
+     "as_of": "2026-10-12",
+     "source_url": "https://api.primary.21shares.com/api/product_details/APEN",
+     "read_on": "2026-10-12"
+    },
+    {
+     "holder": "Valour Pendle (DeFi Technologies)",
+     "type": "EU ETP issuer balance sheet",
+     "tokens": 155298.9333,
+     "as_of": "2026-06-30",
+     "source_url": "https://www.sec.gov/Archives/edgar/data/1888274/000121390026089211/ea030127001ex99-1.htm",
+     "read_on": "2026-10-12"
+    }
+   ],
+   "dat": [],
+   "not_read": [
+    "none found: EDGAR FTS 'PENDLE' 2026: only DeFi Technologies and Galaxy 10-K mentions"
+   ]
+  },
+  "Aerodrome": {
+   "token": "AERO",
+   "etf_etp": [],
+   "dat": [],
+   "not_read": [
+    "none found: 21Shares API 'AERO' DATA_UNAVAILABLE; not in Valour holdings table; no VanEck EU product",
+    "none found: EDGAR FTS 'AERO tokens' hits are Forum Markets' 'Eurus Aero Token' (aircraft RWA token, NOT Aerodrome) - false positive"
+   ],
+   "na": "no ETF / ETP or treasury-company holding found in issuer sources (2026-10-12)"
+  },
+  "Morpho": {
+   "token": "MORPHO",
+   "etf_etp": [
+    {
+     "holder": "21Shares Morpho ETP (MORPH, CH)",
+     "type": "EU/CH ETP",
+     "tokens": 535149.7018,
+     "as_of": "2026-10-12",
+     "source_url": "https://api.primary.21shares.com/api/product_details/MORPH",
+     "read_on": "2026-10-12"
+    }
+   ],
+   "dat": [],
+   "not_read": [
+    "none found: EDGAR FTS 'MORPHO tokens' 0; 'Morpho' hits are vault/lending mentions"
+   ]
+  },
+  "Ether.fi": {
+   "token": "ETHFI",
+   "etf_etp": [],
+   "dat": [],
+   "not_read": [
+    "none found: 21Shares API 'AETHFI' DATA_UNAVAILABLE; not in Valour table",
+    "none found as a treasury asset: https://www.sec.gov/Archives/edgar/data/1690080/000121390026090100/ea0301343-10q_forum.htm"
+   ],
+   "na": "no ETF / ETP or treasury-company holding found in issuer sources (2026-10-12)"
+  },
+  "Fluid": {
+   "token": "FLUID",
+   "etf_etp": [],
+   "dat": [
+    {
+     "holder": "Fabric.AI (formerly StableX, SBLX)",
+     "type": "DAT (exited)",
+     "tokens": 0,
+     "as_of": "2026-06-30",
+     "source_url": "https://www.sec.gov/Archives/edgar/data/1086745/000149315226038445/form10-q.htm",
+     "read_on": "2026-10-12",
+     "note": "held 195,969 FLUID at 2025-12-31 per 10-K https://www.sec.gov/Archives/edgar/data/1086745/000149315226013650/form10-k.htm ; disposed of all digital assets in Q2-2026"
+    }
+   ],
+   "not_read": [
+    "none found: 21Shares/VanEck/Valour checked"
+   ]
+  },
+  "Maple": {
+   "token": "SYRUP",
+   "etf_etp": [
+    {
+     "holder": "21Shares Maple Finance ETP (SYRUP, CH)",
+     "type": "EU/CH ETP",
+     "tokens": 4702516.5857,
+     "as_of": "2026-10-12",
+     "source_url": "https://api.primary.21shares.com/api/product_details/SYRUP",
+     "read_on": "2026-10-12"
+    }
+   ],
+   "dat": [],
+   "not_read": [
+    "none found: EDGAR FTS 'SYRUP tokens' 0; 'Maple Finance' hits only in Robinhood filings"
+   ]
+  },
+  "Plume": {
+   "token": "PLUME",
+   "etf_etp": [],
+   "dat": [],
+   "not_read": [
+    "none found: 21Shares API DATA_UNAVAILABLE",
+    "none found: EDGAR FTS 'PLUME tokens' 0"
+   ],
+   "na": "no ETF / ETP or treasury-company holding found in issuer sources (2026-10-12)"
+  },
+  "Aethir": {
+   "token": "ATH",
+   "etf_etp": [],
+   "dat": [
+    {
+     "holder": "Axe Compute (AGPU, formerly Predictive Oncology POAI)",
+     "type": "DAT",
+     "tokens": 2700000000,
+     "as_of": "2026-06-30",
+     "source_url": "https://www.sec.gov/Archives/edgar/data/1446159/000117184326005556/agpu20260630_10q.htm",
+     "read_on": "2026-10-12",
+     "note": "Boost Run (BRUN) only holds ATH as operational network deposits - not a treasury"
+    }
+   ],
+   "not_read": [
+    "none found: 21Shares API DATA_UNAVAILABLE"
+   ]
+  },
+  "GEODNET": {
+   "token": "GEOD",
+   "etf_etp": [],
+   "dat": [],
+   "not_read": [
+    "none found: 21Shares API DATA_UNAVAILABLE",
+    "none found: EDGAR FTS 'GEODNET' 0, 'GEOD' 0"
+   ],
+   "na": "no ETF / ETP or treasury-company holding found in issuer sources (2026-10-12)"
+  }
+ }
+}

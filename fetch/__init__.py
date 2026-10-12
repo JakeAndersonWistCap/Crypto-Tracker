@@ -55,6 +55,9 @@ from .browser_capture import BrowserCapture
 from .chainlink_fees import ChainlinkFees
 from .xref import CrossRefs
 from .staked_eth import StakedEth
+from .treasury import TreasuryBills
+from .sky_ssr import SkySSR
+from .business import Business
 from .sky_accounting import SkyAccounting
 from .sky_mkr import SkyMkr
 from .share_price import SharePrice
@@ -123,6 +126,11 @@ TIER_ORDER = [
     ("xref", 1, lambda ctx: CrossRefs()),
     # ETH staked (beaconcha.in votedether via validatorqueue.com's GitHub history), 2026-10-05.
     ("validatorqueue", 1, lambda ctx: StakedEth()),
+    # The 3-month US T-bill, the risk-free benchmark (Phase 3, 2026-10-12 night): Treasury's own daily bill rates, FRED
+    # DTB3 the cross-check; stored under the pseudo-project Macro.
+    ("treasury_bills", 1, lambda ctx: TreasuryBills()),
+    ("sky_ssr", 2, lambda ctx: SkySSR()),
+    ("business", 1, lambda ctx: Business()),
     # A share vault's own share price, now and ~Q0 back via archive (Ether.fi sETHFI, 2026-10-06).
     ("share_vault", 2, lambda ctx: SharePrice()),
     # AERO the filing wallets deposited into managed veNFTs (Aerodrome, Jake's probes16 2026-10-07).
@@ -1839,7 +1847,7 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
 # means more runs to finish a first read — or one `token_metrics.py --seed nearblocks`.
 TIER_BUDGET_S = {
     "schedule:config": 15, "defillama": 150, "morpho_api": 60, "growthepie": 60,
-    "nearblocks": 60, "coingecko": 240, "hypercore_info": 60, "chainlink_fees": 180, "xref": 90, "validatorqueue": 30, "share_vault": 60,
+    "nearblocks": 60, "coingecko": 240, "hypercore_info": 60, "chainlink_fees": 180, "xref": 90, "validatorqueue": 30, "treasury_bills": 60, "sky_ssr": 120, "business": 900, "share_vault": 60,
     "chain": 240, "tron_node": 60, "near_rpc": 90, "explorer": 300, "balance_flow": 150, "maple_page": 60,
     "explorer_gauge": 300, "explorer_gauge_l2": 300,
     # one epoch a week: ~10 Multicall3 batches + one DefiLlama price call; the daily totalWeight is one eth_call

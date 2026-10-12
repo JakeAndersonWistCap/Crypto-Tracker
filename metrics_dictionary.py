@@ -218,6 +218,38 @@ ENTRIES = {
                 "outflow_b_usd per covered day; beside it ÷ (b + c)", window="Q0", unit="x",
         inputs=["fees_usd", "customer_revenue_usd", "outflow_b_usd", "outflow_c_usd"],
         decided=[(J, "2026-10-12", "Phase 2 item 5, amendment 3")]),
+    "BUSINESS 1 — core usage": dict(
+        what="The first usage / customer series the project's business is judged on (config.BUSINESS_SLOTS): DEX "
+             "volume, loans outstanding, USDS supply, CCIP messages, stations, intents volume, L2 activity, TVL …",
+        formula="a STOCK reads its latest value (a shifted quarter: that quarter's mean); a FLOW its Q0 total ÷ covered "
+                "days × 365, BLOCKED below the minimum coverage. The column to its left names the series, its unit, its "
+                "source kind (DASHBOARD where it is an aggregator's reconstruction) and what an on-chain replacement "
+                "would need", window="now / Q0", unit="per series ($, count, tokens)",
+        counts="one series per slot, per project", excludes="nothing is summed across series or projects",
+        inputs=["protocol_dex_volume_usd", "dex_volume_v2_usd", "dex_volume_v3_usd", "dex_volume_v4_usd",
+                "open_interest_usd", "near_intents_volume_usd", "stake_tvl_usd", "cash_volume_usd",
+                "loans_outstanding_usd", "l2_tx_count", "stations_total", "ccip_messages", "usds_supply_tokens"],
+        decided=[(J, "2026-10-12", "overnight review of ab5f2a9, Phase 4")]),
+    "BUSINESS 2 — core usage": dict(
+        what="The second usage series (config.BUSINESS_SLOTS), as BUSINESS 1.", formula="as BUSINESS 1",
+        window="now / Q0", unit="per series", decided=[(J, "2026-10-12", "overnight review of ab5f2a9, Phase 4")]),
+    "BUSINESS 3 — core usage": dict(
+        what="The third usage series (config.BUSINESS_SLOTS), as BUSINESS 1.", formula="as BUSINESS 1",
+        window="now / Q0", unit="per series", decided=[(J, "2026-10-12", "overnight review of ab5f2a9, Phase 4")]),
+    "BUSINESS 4 — core usage": dict(
+        what="The fourth usage series (config.BUSINESS_SLOTS), as BUSINESS 1.", formula="as BUSINESS 1",
+        window="now / Q0", unit="per series", decided=[(J, "2026-10-12", "overnight review of ab5f2a9, Phase 4")]),
+    "MARKET SHARE vs its category": dict(
+        what="The project's share of its category on one measure, against a peer set written down per project "
+             "(config.MARKET_SHARE; the basis column beside it).",
+        formula="own ÷ category per day (fetch/business.py): DEX volume ÷ DefiLlama's Dexs category (Uniswap, "
+                "Aerodrome); perp open interest ÷ Derivatives (Hyperliquid); borrowed ÷ 11 lenders (Maple, Morpho, "
+                "Fluid); Ethereum TVL ÷ 9 ETH LST/LRT peers (Ether.fi); TVL ÷ 4 yield-tokenization peers (Pendle); "
+                "USDS + DAI ÷ USD stablecoins (Sky); chain TVL ÷ all chains (Ethereum, NEAR). A day a launched peer "
+                "did not report is dropped, never read as 0", window="now", unit="%",
+        excludes="Chainlink, Plume, Aethir, GEODNET: n/a with the reason (no free comparable basis)",
+        inputs=["market_share_pct", "market_share_category_usd"],
+        decided=[(J, "2026-10-12", "overnight review of ab5f2a9, Phase 3")]),
     "NET ISSUANCE AFTER BURN Q0 (tokens)": dict(
         what="Issuance less every burn over Q0 — the supply's net change (+ inflation).",
         formula="the A4 net-change expression on every burn: common days where declared, self-reported net mint where "
@@ -233,13 +265,20 @@ ENTRIES = {
                 "of circulating' (the figure Master shows): issuance (or pool release) − burn, each annualised over its "
                 "covered days, ÷ circulating; burn only where issuance is declared zero",
         window="Q0 / the chain's own rate", unit="%",
-        inputs=["gross_issuance_tokens", "gross_burn_tokens", "circulating_supply_used"],
+        excludes="nothing paid from issuer reserves: staking rewards and foundation releases paid out of issuer-held "
+                 "wallets are dilution too (config.TOTAL_YIELD_RELEASES, per project with why nothing counts twice)",
+        inputs=["gross_issuance_tokens", "gross_burn_tokens", "circulating_supply_used", "emissions_tokens",
+                "unlock_release_tokens", "unlock_release_counted_tokens"],
         decided=[(J, "2026-10-12", "decision 9 on 6f8c86c: stakers = validator yield − net inflation; non-stakers = "
-                                   "− net inflation; benchmark the 3-month T-bill (Phase 3)")]),
+                                   "− net inflation; benchmark the 3-month T-bill (Phase 3)"),
+                 (J, "2026-10-12", "overnight item 17: issuer releases (rewards and unlocks from issuer reserves) are "
+                                   "subtracted beside net inflation")]),
     "Total yield — non-stakers": dict(
-        what="What a holder who does not stake earns: minus net inflation (a net burn is a positive yield).",
-        formula="− (net supply change annualised ÷ circulating)", window="Q0", unit="%",
-        decided=[(J, "2026-10-12", "decision 9 on 6f8c86c")]),
+        what="What a holder who does not stake earns: minus net inflation and issuer releases (a net burn is a "
+             "positive yield).",
+        formula="− (net supply change annualised ÷ circulating + issuer releases annualised ÷ circulating)",
+        window="Q0", unit="%",
+        decided=[(J, "2026-10-12", "decision 9 on 6f8c86c; overnight item 17")]),
     "NRR ON SETTLEMENT VOLUME": dict(
         what="Market cap ÷ trailing-365d settlement volume (Artemis definition: DEX + NFT + P2P).",
         formula="market_cap_usd ÷ settlement_volume (365d sum)", window="365d", unit="x",

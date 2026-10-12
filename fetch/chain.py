@@ -56,6 +56,8 @@ ERC20_ABI = [
     # of staked principal, which is the figure balanceOf can only bound from above. Adding the
     # fragment here is harmless for every other contract: it is only encoded when it is called.
     {"constant": True, "inputs": [], "name": "getTotalPrincipal", "outputs": [{"name": "", "type": "uint256"}], "type": "function"},
+    # sUSDS's Sky Savings Rate: a per-second RAY factor (fetch/sky_ssr.py, Phase 3 2026-10-12). Read raw, never scaled.
+    {"constant": True, "inputs": [], "name": "ssr", "outputs": [{"name": "", "type": "uint256"}], "type": "function"},
     # Aerodrome-family (ve(3,3)) Minter/RewardsDistributor. Also harmless elsewhere: only encoded
     # when actually called. weekly() is a public state var (Minter's current planned epoch
     # emission); tokensPerWeek(week) is a public mapping (RewardsDistributor's per-week rebase).

@@ -782,6 +782,16 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
         return ("the browser route (fetch/browser_capture.py) stored nothing for it this run — one rendered page "
                 "load a day; the Run Log's browser_capture line says why (units not established, a pin not found)",
                 "Run `python check_offline_items.py browser_captures` and paste back the lines for this page.")
+    # PHASE 3 / 4 (overnight 2026-10-12): the business series and market share, fetch/business.py
+    if any(metric == s["metric"] for s in config.BUSINESS_SERIES.get(name) or ()):
+        spec = next(s for s in config.BUSINESS_SERIES[name] if s["metric"] == metric)
+        return (f"fetch/business.py ({spec['route']} route) stored nothing for it this run — source: "
+                f"{spec['source_kind']}",
+                "Check the Run Log's business line for this project: it names the route and what came back.")
+    if metric in ("market_share_pct", "market_share_category_usd") and name in config.MARKET_SHARE:
+        return ("fetch/business.py stored no market share this run — a declared peer may not have answered "
+                f"({config.MARKET_SHARE[name].get('basis', '')[:120]})",
+                "Check the Run Log's business market_share_pct line for this project: it names the peer that failed.")
     pay = (project.get("plume_staking") or {}).get("payouts") or {}
     if metric == pay.get("metric"):
         return ("the staking treasury's RewardDistributed scan (fetch/plume_staking.py) stored nothing this run",

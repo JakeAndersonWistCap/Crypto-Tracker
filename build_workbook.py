@@ -2363,43 +2363,47 @@ def _unlock_views(groups: dict) -> None:
     EMISSIONS_ALIAS_DECLINED stands). A day counts only when EVERY leg holds a row that day and on its previous stored
     day (at most 3 days before), measured by the SAME wallet set (the source names the composition): a wallet added to
     the set is a change of measuring point, never an unlock (Aerodrome's filing wallets 2026-10-07: 4.9M -> 36.2M)."""
-    from fetch.base import _measuring_point          # noqa: PLC0415
     for p in scoped_projects():
         name = p["name"]
-        legs = config.unlock_stock_metrics(name)
-        if not legs:
-            continue
-        diffs = []
-        for m in legs:
-            g = groups.get((name, m))
-            if g is None or g.empty:
-                diffs = []
-                break
-            g = (g.assign(date=pd.to_datetime(g["date"]).dt.normalize()).sort_values("date")
-                 .drop_duplicates("date", keep="last").set_index("date"))
-            v, mp = g["value"].astype(float), g["source"].astype(str).map(_measuring_point)
-            gap = v.index.to_series().diff().dt.days
-            ok = (mp == mp.shift(1)) & (gap <= config.unlock_max_gap_days(m))
-            # a fall over k days is spread evenly over those k days (a weekly read's release is 7 days' worth), so the
-            # covered-day count the annualisation divides by stays a count of days
-            per_day = {}
-            for d, fall, k in zip(v.index[ok], (v.shift(1) - v)[ok], gap[ok]):
-                for j in range(int(k)):
-                    per_day[d - pd.Timedelta(days=j)] = fall / int(k)
-            diffs.append(pd.Series(per_day, dtype=float).sort_index().rename(m))
-        if not diffs:
-            continue
-        rel = pd.concat(diffs, axis=1).dropna()
-        if rel.empty:
-            continue
-        # RELEASES ONLY: a day the set's stock RISES is not a negative unlock — the Foundation's AERO purchases
-        # (Aerodrome's 0x834C/0x623C are in the set) and Ether.fi's buyback Safe would otherwise be counted twice in
-        # net absorption incl. unlocks (once as buyback, once as a negative release)
-        total = rel.sum(axis=1).clip(lower=0.0)
-        cols = next(g.columns for m in legs if (g := groups.get((name, m))) is not None)
-        groups[(name, "unlock_release_tokens")] = _as_stored(pd.DataFrame(
-            {"date": total.index, "project": name, "metric": "unlock_release_tokens", "value": total.values,
-             "tier": 1, "source": f"derived:unlock_release[{'+'.join(legs)}]"}), cols)
+        # the whole set, and any declared SUBSET (config.UNLOCK_RELEASE_SUBSETS: Hyperliquid's Foundation / Grants
+        # wallets, which the circulating figure in use counts — Total Yield's issuer-release leg, item 17 overnight)
+        for metric, legs in (("unlock_release_tokens", config.unlock_stock_metrics(name)),
+                             *((m, tuple(ls)) for m, ls in (config.UNLOCK_RELEASE_SUBSETS.get(name) or {}).items())):
+            if legs:
+                _unlock_release_view(groups, name, metric, legs)
+
+
+def _unlock_release_view(groups: dict, name: str, metric: str, legs: tuple) -> None:
+    """The release series `metric` from the falls of `legs`' summed stock (see _unlock_views)."""
+    from fetch.base import _measuring_point          # noqa: PLC0415
+    diffs = []
+    for m in legs:
+        g = groups.get((name, m))
+        if g is None or g.empty:
+            return
+        g = (g.assign(date=pd.to_datetime(g["date"]).dt.normalize()).sort_values("date")
+             .drop_duplicates("date", keep="last").set_index("date"))
+        v, mp = g["value"].astype(float), g["source"].astype(str).map(_measuring_point)
+        gap = v.index.to_series().diff().dt.days
+        ok = (mp == mp.shift(1)) & (gap <= config.unlock_max_gap_days(m))
+        # a fall over k days is spread evenly over those k days (a weekly read's release is 7 days' worth), so the
+        # covered-day count the annualisation divides by stays a count of days
+        per_day = {}
+        for d, fall, k in zip(v.index[ok], (v.shift(1) - v)[ok], gap[ok]):
+            for j in range(int(k)):
+                per_day[d - pd.Timedelta(days=j)] = fall / int(k)
+        diffs.append(pd.Series(per_day, dtype=float).sort_index().rename(m))
+    rel = pd.concat(diffs, axis=1).dropna()
+    if rel.empty:
+        return
+    # RELEASES ONLY: a day the set's stock RISES is not a negative unlock — the Foundation's AERO purchases
+    # (Aerodrome's 0x834C/0x623C are in the set) and Ether.fi's buyback Safe would otherwise be counted twice in
+    # net absorption incl. unlocks (once as buyback, once as a negative release)
+    total = rel.sum(axis=1).clip(lower=0.0)
+    cols = next(g.columns for m in legs if (g := groups.get((name, m))) is not None)
+    groups[(name, metric)] = _as_stored(pd.DataFrame(
+        {"date": total.index, "project": name, "metric": metric, "value": total.values,
+         "tier": 1, "source": f"derived:unlock_release[{'+'.join(legs)}]"}), cols)
 
 
 def _net_common_views(groups: dict) -> None:
@@ -3047,6 +3051,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                 held[(name, metric)] = withheld
             row["confidence"], row["why_amber"] = confidence_for(name, metric, row, asof)
             rows.append(row)
+    rows += _macro_rows(groups, asof)          # Phase 3: the global series (the T-bill), one Data row each
     # THE BUYBACK SPLIT INHERITS ITS PARENT'S WITHHOLDING (Jake's run on 20d0eb4: Aerodrome's Q0 buyback read n/a as
     # BUG while the retirement rate E14 read 0.97% and net absorption AH14 -2.076M — the split views are computed from
     # the same rows the parent blanks, under a source of their own that passed the check).
@@ -3066,6 +3071,38 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
             if row["project"] == mw["project"] and row["metric"] in mw["label_metrics"]:
                 row["note"] = mw["label"] + (f" | {row['note']}" if row.get("note") else "")
     return pd.DataFrame(rows, columns=DATA_COLS)
+
+
+def _macro_rows(groups: dict, asof: pd.Timestamp) -> list[dict]:
+    """ONE DATA ROW PER GLOBAL SERIES (Phase 3, 2026-10-12 night; config.MACRO_METRICS under config.MACRO_PROJECT): a
+    stock's 'now' is its latest value within 7 days (a T-bill is not quoted on weekends and holidays), each quarter the
+    mean of its days, as for any stock. Missing, the row says so; the T-bill benchmark then reads n/a."""
+    out = []
+    period = GLOBALS["period_days"]
+    for metric in config.MACRO_METRICS:
+        m = METRICS[metric]
+        row = {c: None for c in DATA_COLS}
+        row.update({"key": f"{config.MACRO_PROJECT}|{metric}", "project": config.MACRO_PROJECT, "metric": metric,
+                    "label": m["label"], "kind": m["kind"], "unit": m["unit"], "source": "", "tier": "",
+                    "latest_date": "", "n_points": 0, "status": "missing", "note": "", "confidence": "",
+                    "why_amber": "", "last_success": "", "entered_on": ""})
+        g = groups.get((config.MACRO_PROJECT, metric))
+        if g is not None and not g.empty:
+            s = (g.assign(date=pd.to_datetime(g["date"]).dt.normalize()).sort_values("date")
+                 .drop_duplicates("date", keep="last").set_index("date")["value"].astype(float))
+            last = s.index[-1]
+            row.update({"source": str(g.sort_values("date")["source"].iloc[-1]), "tier": 1,
+                        "latest_date": last.strftime("%Y-%m-%d"), "first_date": s.index[0].strftime("%Y-%m-%d"),
+                        "n_points": int(len(s))})
+            fresh = (asof - last).days <= 7
+            row["now"] = float(s.iloc[-1]) if fresh else None
+            row["status"] = "ok" if fresh else "stale"
+            if not fresh:
+                row["note"] = f"latest {last.date()} is more than 7 days before {asof.date()}"
+            for i, q in enumerate(QUARTERS):
+                row[q] = _window_mean(s, asof - pd.Timedelta(days=period * (i + 1)), asof - pd.Timedelta(days=period * i))
+        out.append(row)
+    return out
 
 
 def migration_watch_on(asof) -> bool:
@@ -3148,6 +3185,17 @@ class Refs:
                 return "NA()"
         c = DC[col]
         return f'INDEX(Data!${c}${self.d0}:${c}${self.d1},MATCH($A{r}&"|{metric}",Data!$A${self.d0}:$A${self.d1},0))'
+
+    def X(self, metric: str, col: str = "now") -> str:
+        """A GLOBAL series' Data cell (config.MACRO_PROJECT, e.g. the 3-month T-bill): the same on every row; a shifted
+        quarter (the trajectory engine) takes that quarter's mean."""
+        if _SHIFT["k"]:
+            col = _shift_col(metric, col, _SHIFT["k"])
+            if col is None:
+                return "NA()"
+        c = DC[col]
+        return (f'INDEX(Data!${c}${self.d0}:${c}${self.d1},MATCH("{config.MACRO_PROJECT}|{metric}",'
+                f'Data!$A${self.d0}:$A${self.d1},0))')
 
     def C(self, r: int, colname: str) -> str:
         if _SHIFT["k"] and colname in _WINDOW_COLS_BY_NAME:
@@ -4628,31 +4676,90 @@ def _net_inflation(R: Refs, r: int, p: dict) -> str:
             or _net_annual_pct(R, r, p, circ))
 
 
-TOTAL_YIELD_STAKERS_HEAD = "TOTAL YIELD — stakers = validator staking yield − net inflation (annual)"
-TOTAL_YIELD_HOLDERS_HEAD = "Total yield — non-stakers = − net inflation (annual)"
+TOTAL_YIELD_STAKERS_HEAD = ("TOTAL YIELD — stakers = validator staking yield − net inflation − issuer releases (annual; "
+                            "rewards and foundation releases paid from issuer reserves count)")
+TOTAL_YIELD_HOLDERS_HEAD = "Total yield — non-stakers = − (net inflation + issuer releases) (annual)"
+
+
+def _total_yield_dilution(R: Refs, r: int, p: dict) -> str | None:
+    """Total Yield's dilution as an expression (no "="): net inflation (Master's figure, _net_inflation) + the issuer
+    releases not already inside it (config.TOTAL_YIELD_RELEASES — Jake's overnight review of ab5f2a9, item 17), each
+    annualised over its own covered days, ÷ circulating; BLOCKED text where a release leg covers under a week. None where
+    no net-inflation figure exists. A project whose releases cannot be measured returns its reason (text, not a formula)."""
+    spec = config.TOTAL_YIELD_RELEASES.get(p["name"]) or {}
+    if spec.get("unmeasured"):
+        return "n/a — " + spec["unmeasured"]
+    ni = _net_inflation(R, r, p)
+    ni = ni[1:] if isinstance(ni, str) and ni.startswith("=") else None
+    if ni is None:
+        return None
+    adds = list(spec.get("add") or ())
+    if not adds:
+        return ni
+    circ = _circ(R, r, p)
+    rel = "+".join(_annualise(R, r, p, m, R.D(r, m, "q0")) for m in adds)
+    return _coverage_guard(R, r, [(m.replace("_tokens", "").replace("_", " "), m, "q0") for m in adds],
+                           f"({ni})+({rel})/({circ})", bare=True, p=p)
 
 
 def _total_yield_cols(R: Refs, vyield) -> list[tuple]:
     """TOTAL YIELD (Jake 2026-10-12, decision 9 on 6f8c86c; A1): a staker earns the validator yield and is diluted by net
     inflation; a non-staker is only diluted. Net inflation = Master's 'Net supply change, annualised % of circulating'
-    (_net_inflation). The 3-month T-bill benchmark (Phase 3) sits on the stakers' figure."""
+    (_net_inflation) PLUS the issuer releases not inside it (staking rewards and foundation releases paid from issuer
+    reserves — item 17 overnight, config.TOTAL_YIELD_RELEASES). The 3-month T-bill benchmark (Phase 3) sits on the
+    stakers' figure."""
     def inner(f):
         return f[1:] if isinstance(f, str) and f.startswith("=") else None
 
     def stakers(r, p):
-        vy, ni = inner(vyield(r, p)), inner(_net_inflation(R, r, p))
+        vy = inner(vyield(r, p))
         if vy is None:
             return ""                                     # no validator yield on file: no staker figure
-        return calc(f"({vy})-({ni})") if ni is not None else "n/a — no net inflation figure"
+        dil = _total_yield_dilution(R, r, p)
+        if dil is None:
+            return "n/a — no net inflation figure"
+        if dil.startswith("n/a"):
+            return dil
+        return calc(f"({vy})-({dil})")
 
     def holders(r, p):
-        ni = inner(_net_inflation(R, r, p))
-        return calc(f"-({ni})") if ni is not None else "n/a — no net inflation figure"
+        dil = _total_yield_dilution(R, r, p)
+        if dil is None:
+            return "n/a — no net inflation figure"
+        if dil.startswith("n/a"):
+            return dil
+        return calc(f"-({dil})")
     return [(TOTAL_YIELD_STAKERS_HEAD, stakers, FMT_PCT, "calc", True,
              {"metric_fn": lambda n: {"Ethereum": "beacon_chain_eth", "Near": "total_supply",
                                       "Chainlink": "reward_emission_rate_annual"}.get(n)}),
             (TOTAL_YIELD_HOLDERS_HEAD, holders, FMT_PCT, "calc", False,
-             {"trajectory_id": "a1_total_yield_holders"})]
+             {"trajectory_id": "a1_total_yield_holders"}),
+            *_tbill_cols(R, [("Total yield — stakers", stakers), ("Total yield — non-stakers", holders)])]
+
+
+TBILL_HEAD = ("3-MONTH T-BILL — risk-free benchmark (US Treasury 13-week coupon equivalent; the quarter's mean on a "
+              "shifted quarter)")
+
+
+def _tbill_cols(R: Refs, yields: list[tuple]) -> list[tuple]:
+    """THE RISK-FREE BENCHMARK BESIDE A YIELD (Phase 3, overnight 2026-10-12): the 3-month T-bill (Data 'Macro|
+    tbill_3m_yield', fetch/treasury.py) and, per yield, yield − T-bill. A yield that is text (n/a with its reason) or
+    blank leaves its spread blank; no T-bill stored reads n/a, never 0."""
+    tb = lambda: R.X("tbill_3m_yield", "now")  # noqa: E731 — built per cell, so a builder can be listed without Refs
+
+    def spread(fn):
+        def build(r, p):
+            f = fn(r, p)
+            if not (isinstance(f, str) and f.startswith("=")):
+                return ""
+            return calc(f"({f[1:]})-({tb()})")
+        return build
+    return [(TBILL_HEAD, lambda r, p: pull(tb()), FMT_PCT, "pull"),
+            *[(f"Spread over the 3-month T-bill: {label}", spread(fn), FMT_PCT, "calc") for label, fn in yields],
+            (SSR_HEAD, lambda r, p: pull(R.X("sky_savings_rate", "now")), FMT_PCT, "pull")]
+
+
+SSR_HEAD = ("Sky Savings Rate — the on-chain dollar savings rate (sUSDS ssr(), fetch/sky_ssr.py), beside the T-bill")
 
 
 def _nrr_headroom_col(R: Refs, metric: str, what: str, tid: str) -> tuple:
@@ -5682,6 +5789,11 @@ HEADLINE_IDS = (
     ("CP", "HOLDER VALUE YIELD", "cp_hvy"),
     ("CP", "NET HOLDER YIELD", "cp_nhy"),
     ("CP", "SUBSIDY COVER", "cp_subsidy_cover"),
+    ("CP", "BUSINESS 1 — core usage", "cp_business_1"),
+    ("CP", "BUSINESS 2 — core usage", "cp_business_2"),
+    ("CP", "BUSINESS 3 — core usage", "cp_business_3"),
+    ("CP", "BUSINESS 4 — core usage", "cp_business_4"),
+    ("CP", "MARKET SHARE vs its category", "cp_market_share"),
 )
 
 
@@ -6356,6 +6468,9 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         ("Holder value RECORDED, NOT CREDITED (treasury / emissions-funded) ÷ market cap", hv_other, FMT_PCT, "calc"),
         ("Holder value funding by period (config HOLDER_VALUE)", lambda r, p: funding_text(p), FMT_TEXT, "text"),
         (CP_NHY_HEAD, nhy, FMT_PCT, "calc", True, {"metric": "holder_value_revenue_usd"}),
+        *_tbill_cols(R, [("Holder value yield", hvy), ("Net holder yield", nhy),
+                         ("Staker yield — validator", lambda r, p: vyield(r, p)),
+                         ("Staker yield — protocol, tokens", lambda r, p: tyield(r, p))]),
         # ---- STAKER YIELD vs WHOLE-TOKEN YIELD (item 3) ----
         ("Staker yield — validator (A1)", lambda r, p: vyield(r, p), FMT_PCT, "calc"),
         ("Whole-token yield — validator = staker yield × staked share (locked ÷ circulating, now)",
@@ -6402,7 +6517,88 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         ("ONE-OFF BURN EVENTS — dated, each with its funding; never in a rate, trend or holder value",
          lambda r, p: config.one_off_events_text(p["name"]), FMT_TEXT, "text"),
         ("Attributes NOT established (research of 2026-10-12)", attr("unverified"), FMT_TEXT, "text"),
+        # ---- PHASE 4: THE BUSINESS EACH PROJECT IS JUDGED ON; PHASE 3: ITS MARKET SHARE (overnight 2026-10-12) ----
+        *_business_cols(R),
+        ("Market share — basis and peer set (config.MARKET_SHARE)", lambda r, p: _market_share_basis(p), FMT_TEXT,
+         "text"),
+        (MARKET_SHARE_HEAD, lambda r, p: "" if p["name"] not in config.MARKET_SHARE else (
+            "n/a — " + config.MARKET_SHARE[p["name"]]["na"] if "na" in config.MARKET_SHARE[p["name"]]
+            else calc(R.D(r, "market_share_pct", "now"))), FMT_PCT, "calc", True,   # a share WE derive
+         {"metric_fn": lambda n: "market_share_pct" if "na" not in (config.MARKET_SHARE.get(n) or {"na": 1}) else None}),
+        # ---- PHASE 3: ETF / ETP AND TREASURY-COMPANY HOLDINGS — dated issuer readings, never trended ----
+        *[c for kind, lab in (("etf_etp", "ETF / ETP holdings"), ("dat", "Treasury-company (DAT) holdings"))
+          for c in ((f"{lab} (tokens) — each product's latest dated issuer reading, summed (dates differ)",
+                     (lambda kind: lambda r, p: _holding_cell(p, kind))(kind), FMT_NUM, "calc"),
+                    (f"{lab} ÷ circulating",
+                     (lambda kind: lambda r, p: (calc(f"{config.etf_dat(p['name'], kind)[0]!r}/({circ(r, p)})")
+                                                 if config.etf_dat(p["name"], kind)[0] is not None else ""))(kind),
+                     FMT_PCT, "calc"))],
+        ("ETF / ETP and DAT holders — product, tokens, as-of date (etf_dat_holdings.json)",
+         lambda r, p: "; ".join(x for x in (config.etf_dat(p["name"], "etf_etp")[1],
+                                            config.etf_dat(p["name"], "dat")[1]) if x), FMT_TEXT, "text"),
     ]
+
+
+def _holding_cell(p: dict, kind: str):
+    v, why = config.etf_dat(p["name"], kind)
+    return f"={v!r}" if v is not None else f"n/a — {why}"
+
+
+MARKET_SHARE_HEAD = "MARKET SHARE vs its category (now; a shifted quarter: that quarter's mean) — peer set beside"
+BUSINESS_HEAD = "BUSINESS {i} — core usage (a stock: now; a flow: Q0 annualised over its covered days)"
+
+
+def _market_share_basis(p: dict) -> str:
+    v = config.MARKET_SHARE.get(p["name"])
+    if not v:
+        return ""
+    return v.get("na") and f"n/a — {v['na']}" or v["basis"]
+
+
+def _business_metric(name: str, i: int) -> str | None:
+    ms = config.BUSINESS_SLOTS.get(name) or ()
+    return ms[i] if i < len(ms) else None
+
+
+def _business_cols(R: Refs) -> list[tuple]:
+    """PHASE 4 (Jake's overnight review of ab5f2a9, 2026-10-12): up to config.BUSINESS_SLOT_COUNT usage series per
+    project (config.BUSINESS_SLOTS), each a CP headline so it carries a trajectory row (Fundamentals, +1), a
+    Credibility verdict and the sanity rules. Beside each: what the series is, its unit and its source kind (a
+    DASHBOARD source says so, with what an on-chain replacement would need)."""
+    def what(i):
+        def build(r, p):
+            m = _business_metric(p["name"], i)
+            if not m:
+                return (config.BUSINESS_NOT_WIRED.get(p["name"], "") if i == 0 and p["name"] not in
+                        config.BUSINESS_SLOTS else "")
+            md = METRICS[m]
+            unit = {"usd": "$", "count": "count", "tokens": "tokens"}.get(md["unit"], md["unit"])
+            per = " a year" if md["kind"] == "flow" else ""
+            sk = md.get("source_kind") or ""
+            rep = md.get("onchain_replacement") or ""
+            gap = config.BUSINESS_NOT_WIRED.get(p["name"], "") if i == len(config.BUSINESS_SLOTS[p["name"]]) - 1 else ""
+            return "; ".join(x for x in (f"{m} ({unit}{per})", sk and f"source: {sk}",
+                                         rep and f"on-chain replacement: {rep}", gap and f"NOT WIRED: {gap}") if x)
+        return build
+
+    def value(i):
+        def build(r, p):
+            m = _business_metric(p["name"], i)
+            if not m:
+                return ""
+            if m not in config.metrics_for_project(p):
+                return f"n/a — {m} is not a series of {p['name']}"
+            if METRICS[m]["kind"] == "stock":
+                return pull(R.D(r, m, "now"))
+            q0 = R.D(r, m, "q0")
+            return _coverage_guard(R, r, [(m, m, "q0")], _annualise(R, r, p, m, q0))
+        return build
+    out = []
+    for i in range(config.BUSINESS_SLOT_COUNT):
+        out += [(f"Business {i + 1} — series, unit, source", what(i), FMT_TEXT, "text"),
+                (BUSINESS_HEAD.format(i=i + 1), value(i), FMT_NUM, "calc", True,
+                 {"metric_fn": (lambda n, i=i: _business_metric(n, i))})]
+    return out
 
 
 def write_cp(ws, R: Refs, data_by_key: dict):
@@ -6748,6 +6944,7 @@ def write_a3(ws, R: Refs, data_by_key: dict):
          FMT_PCT, "calc", False, {"closed_with": "locked_tokens_dashboard"}),
         ("Average lock duration (days)", lambda r, p: pull(R.D(r, "avg_lock_duration_days", "now")), FMT_NUM, "pull", False, {"metric": "avg_lock_duration_days"}),
         _token_yield(R, data_by_key),
+        *_tbill_cols(R, [("Protocol staking yield (tokens)", _token_yield(R, data_by_key)[1])]),
         _topup_split(R),
         _topup_split_alltime(R),
         _protocol_yield(R, data_by_key),
@@ -7851,7 +8048,7 @@ def build_workbook(store, path: Path | str, run_id: str | None = None,
     # run never fetched is a to-do list item for work that is out of scope, and it is the tab
     # most likely to be read as the work queue.
     if only:
-        keep = {p["name"] for p in scoped_projects()}
+        keep = {p["name"] for p in scoped_projects()} | {config.MACRO_PROJECT}   # the global series stay in scope
         long = long[long["project"].isin(keep)] if not long.empty else long
         gaps = gaps[gaps["project"].isin(keep)] if gaps is not None and not gaps.empty else gaps
         review = review[review["project"].isin(keep)] if review is not None and not review.empty else review

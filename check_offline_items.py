@@ -11273,6 +11273,83 @@ def _near_account(acc: str) -> float | None:
         return None
 
 
+def diagnose_geodnet_burn():
+    """GEODNET'S A4 GROSS BURN n/a — WHICH CASE, AND THE FIX (Jake's overnight review of ab5f2a9, item 19). Reads
+    metrics.db only (no network), runs the build's own aggregation for GEODNET and prints, for gross_burn_tokens and
+    burn_address_balance: the Data status and note (the withholding reason, verbatim), the stored rows by measuring
+    point (count, first, last), the largest single flow rows against the cumulative, the flow-vs-stock telescoping, and
+    then the ONE next command for the case found. Changes nothing."""
+    import pandas as pd                                    # noqa: PLC0415
+    import build_workbook as bw                            # noqa: PLC0415
+    import config                                          # noqa: PLC0415
+    import store as store_mod                              # noqa: PLC0415
+    from fetch.base import _measuring_point                # noqa: PLC0415
+    head("GEODNET BURN DIAGNOSIS — why A4's gross burn is n/a while A3 reads the same burn (store only)")
+    st = store_mod.Store(store_mod.DB_PATH)
+    try:
+        long = st.load_long()
+    finally:
+        st.close()
+    long = long[long["project"] == "GEODNET"]
+    if long.empty:
+        print("  no GEODNET rows in metrics.db")
+        return
+    bw._SCOPE = [config.PROJECT_BY_NAME["GEODNET"]]
+    asof = pd.Timestamp.now("UTC").tz_localize(None).normalize()
+    data = bw.aggregate(long, pd.DataFrame(), asof)
+    for m in ("gross_burn_tokens", "burn_address_balance", "actual_buyback_tokens"):
+        row = data[data.metric == m]
+        if row.empty:
+            print(f"\n  {m}: no Data row")
+            continue
+        r = row.iloc[0]
+        print(f"\n  {m}: status {r['status']} · q0 {r['q0']} · first {r['first_date']} · latest {r['latest_date']} · "
+              f"{r['n_points']} point(s)")
+        print(f"    note: {str(r['note'])[:900]}")
+        g = bw._LAST_GROUPS.get(("GEODNET", m))
+        if g is None or g.empty:
+            continue
+        mp = g["source"].astype(str).map(_measuring_point)
+        for point, gg in g.groupby(mp):
+            print(f"    point {point[:90]}: {len(gg)} row(s) {gg['date'].min():%Y-%m-%d}..{gg['date'].max():%Y-%m-%d}")
+    flows = bw._LAST_GROUPS.get(("GEODNET", "gross_burn_tokens"))
+    stock = bw._LAST_GROUPS.get(("GEODNET", "burn_address_balance"))
+    if flows is not None and stock is not None and not flows.empty and not stock.empty:
+        d = flows[flows["source"].astype(str).str.contains(":delta", na=False)].sort_values("value", ascending=False)
+        cum = float(stock.sort_values("date")["value"].iloc[-1])
+        print(f"\n  LARGEST DIFFERENCED FLOW ROWS against the latest cumulative {cum:,.0f} "
+              f"(case 6 fires above {bw.IMPLAUSIBLE_DELTA_SHARE:.0%}):")
+        for _, x in d.head(5).iterrows():
+            print(f"    {x['date']:%Y-%m-%d} {float(x['value']):>16,.2f} ({float(x['value']) / cum:.2%})  {str(x['source'])[:90]}")
+        s = stock.sort_values("date").drop_duplicates("date", keep="last").set_index("date")["value"].astype(float)
+        falls = s[s.diff() < 0]
+        gaps = s.index.to_series().diff().dt.days
+        print(f"  STOCK: {len(s)} reading(s) {s.index.min():%Y-%m-%d}..{s.index.max():%Y-%m-%d}; falls {len(falls)}"
+              + (f" (first {falls.index[0]:%Y-%m-%d})" if len(falls) else "") + f"; gaps > 1 day {(gaps > 1).sum()}")
+        if len(d):
+            lo, hi = d["date"].min(), d["date"].max()
+            moved = float(s[s.index <= hi].iloc[-1] - s[s.index < lo].iloc[-1]) if (s.index < lo).any() else None
+            print(f"  TELESCOPING {lo:%Y-%m-%d}..{hi:%Y-%m-%d}: flows {float(d['value'].sum()):,.2f} vs stock move "
+                  + (f"{moved:,.2f} (residual {moved - float(d['value'].sum()):,.2f})" if moved is not None
+                     else "n/a (no stock reading before the first flow)"))
+    st_ = str(data[data.metric == "gross_burn_tokens"].iloc[0]["status"]) if not data[
+        data.metric == "gross_burn_tokens"].empty else ""
+    fix = {
+        "measuring_point_changed": "the stored legs are not the declared handover (see the points above): send this "
+                                   "output — the fix is an orphan_cleanup.sql section removing the leg outside the "
+                                   "declaration, or a declaration for it",
+        "implausible_delta": "one flow row is most of the cumulative (above): it is a step between two measuring "
+                             "points differenced as a burn — python rederive.py GEODNET gross_burn_tokens (preview), then "
+                             "--apply rebuilds the flows from the stock and refuses that step",
+        "unreconciled_flow": "the flows do not telescope to the stock: python rederive.py GEODNET gross_burn_tokens "
+                             "(preview), then python rederive.py GEODNET gross_burn_tokens --apply",
+        "out_of_bounds": "the stored stock is outside its declared bound (config GEODNET sanity): send this output",
+        "blocked": "a read-time view blocked it (the note says which): send this output",
+    }.get(st_, "status not withheld — the n/a comes from the A4 formula's own inputs: send this output and "
+               "`python sanity.py`")
+    print(f"\n  NEXT: {fix}")
+
+
 def issuer_wallet_audit():
     """THE ISSUER-WALLET AUDIT (Jake 2026-10-12). Per project: every wallet on file, its live balance, label, category
     and label source; the total; the figure the ratios use; circulating UNDER THE RULE (total − burned − issuer-side −
@@ -11460,6 +11537,7 @@ CHECKS = (
     near_activity_break,
     plume_settlement_routes,
     near_activity_cause, near_activity_signers, issuer_wallet_audit,
+    diagnose_geodnet_burn,
     browser_captures,
     mev_relays,
     spot_checks,

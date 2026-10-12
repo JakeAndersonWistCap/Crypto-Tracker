@@ -9305,7 +9305,10 @@ def test_the_contract_supply_read_lands_on_the_gross_metric():
     sky = config.PROJECT_BY_NAME["Sky"]
     overrides = [c["metric_override"] for c in sky["contracts"].values() if c["kind"] == "erc20_total_supply"]
     assert None in overrides, "Sky does not declare net_of_burn — its chain read stays on total_supply"
-    assert set(overrides) <= {None, "total_supply_protocol"}, overrides
+    # usds_supply_tokens (Phase 4, 2026-10-12) reads a DIFFERENT token (USDS), never SKY's supply
+    assert set(overrides) <= {None, "total_supply_protocol", "usds_supply_tokens"}, overrides
+    assert all(c["expected_symbol"] == "USDS" for c in sky["contracts"].values()
+               if c.get("metric_override") == "usds_supply_tokens")
     print("gross metric ok: six contracts re-pointed, scoped to the four net_of_burn projects")
 
 

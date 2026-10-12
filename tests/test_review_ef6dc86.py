@@ -186,7 +186,7 @@ def test_etherfi_lp_withdrawal_is_excluded_and_the_2025_burn_recorded():
     assert "0x3b52e19b49fca8a4cd417b3e2549a761e64cb9f03fd22d6848df8c635261112b" in scan["exclude_txs"]
     assert "lp-withdrawal-removed" in config.SOURCE_MARKERS
     ev = config.ONE_OFF_BURN_EVENTS["Ether.fi"][0]
-    assert ev["tokens"] == 1_464_000 and ev["funding"] == "revenue" and ev["from"] == "2025-08-08"
+    assert ev["tokens"] == 1_464_000 and ev["funding"] == "treasury" and ev["from"] == "2025-08-08"
     note = config.PROJECT_BY_NAME["Ether.fi"]["burn_split"]["note"]
     assert "ONE BURN WAS EXECUTED" in note and "NO EXECUTED BURN" not in note
 

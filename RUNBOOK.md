@@ -527,6 +527,94 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11bt. Overnight review of ab5f2a9 + Phases 3 and 4 (2026-10-12 night)
+
+**Run after pulling, in this order (PowerShell, repo root). No SQL this round.**
+```
+git pull
+python token_metrics.py
+python archive_backfill.py --run --project Sky --budget-min 60
+python sanity.py
+python check_offline_items.py diagnose_geodnet_burn
+python dump_fixture.py --project GEODNET
+```
+`token_metrics.py` reads the new series once a day. The first read of each stores 455 days of history; the slowest
+is the CCIP message walk, at about 10-15 minutes. `archive_backfill.py --project Sky` reads USDS.totalSupply() at the
+first block of each of the 455 days. Send the last two outputs (and `fixtures/real_geodnet.json`) for item 19.
+
+**Corrections.**
+17. **TOTAL YIELD SUBTRACTS ISSUER RELEASES.** A supply can be fixed while rewards and releases still come out of
+    issuer-held wallets. Total Yield now subtracts net inflation PLUS the issuer releases that net inflation does not
+    already hold (`config.TOTAL_YIELD_RELEASES`):
+    - Chainlink: the Reward Vault payouts (`emissions_tokens`).
+    - Hyperliquid: releases from the wallets outside tokenDetails' circulating (`unlock_release_counted_tokens`).
+    - NEAR: lockup releases (`unlock_release_tokens`) — ASSUMED.
+    - Plume: n/a. Its staking rewards are paid out of the pre-minted supply and nothing measures what is paid.
+18. **ETHER.FI'S 2025 BURN IS RECORDED AS TREASURY-FUNDED.** Tracing the buyback wallet's ETH/WETH inflows
+    (2025-05-06..09-19, reconciled to Blockscout's balance history) shows that only ~39-42% of the WETH spent matches
+    withdrawal-fee payouts. The rest came from ether.fi Safes and EOAs, and no Snapshot proposal authorises a burn.
+    So the burn (`ONE_OFF_BURN_EVENTS`) and the 2025-05-09..11-03 buyback period (`HOLDER_VALUE`) are both recorded
+    as treasury-funded and no longer credited as holder value. This is ASSUMED, pending Jake.
+19. **GEODNET A4.** `check_offline_items.py diagnose_geodnet_burn` prints the status of every burn leg, the largest
+    daily deltas, the falls and gaps of the stock, and the telescoping check. It then prints NEXT: the fix for that
+    status: `python rederive.py GEODNET gross_burn_tokens` for implausible_delta / unreconciled_flow, otherwise send
+    the output.
+
+**Phase 3 — benchmarks.**
+- **3-month T-bill** (`fetch/treasury.py`): from US Treasury's daily bill rates, the 13-week COUPON EQUIVALENT (the
+  investment yield, comparable with a token yield). FRED DTB3, on a discount basis, is the cross-check; it equals
+  Treasury's 13-week bank-discount column on every shared day. The T-bill is stored under the pseudo-project
+  `Macro` (Data rows `Macro|...`). On A1, A3 and CP it sits beside every yield, with a "Spread over the 3-month
+  T-bill" column next to each yield, and it is now the Trajectory benchmark for stakers' Total Yield.
+- **Sky Savings Rate, on-chain** (`fetch/sky_ssr.py`): `sUSDS.ssr()`; the address comes from Sky's own on-chain
+  chainlog. History is rebuilt from the contract's own File('ssr') events (20 since 2024-09-17) and must equal
+  ssr() now, to the unit, before it is stored. It needs an explorer key (Etherscan or Blockscout); without one,
+  only today's read is stored and the history stays owed.
+- **ETF / ETP and treasury-company holdings** (`etf_dat_holdings.json`): the latest dated reading of each product,
+  from the issuer's own filing or file. CP shows each sum, each ÷ circulating, and the holders with dates. Aerodrome,
+  Ether.fi, Plume and GEODNET read n/a (none found). They are dated literals and are never trended.
+- **Exchange balances: NOT WIRED (gap).** No free primary dataset labels the major exchanges' wallets: Coinbase,
+  Kraken and Upbit publish none. The options:
+  - DefiLlama's CEX pages (`api.llama.fi/protocol/<x>-cex`): free and daily since 2022-11, built from the
+    exchanges' own published wallet lists. But it is secondary, has no licence file, and has no HYPE, FLUID or GEOD.
+  - Binance's own proof-of-reserve address list (565 addresses, no key) plus RPC balance reads: Binance only.
+  - Nansen (free tier; Pro $49/mo), CoinGlass ($29-699/mo), Arkham (by application).
+  Nothing is approximated.
+- **Market share** (`config.MARKET_SHARE`, `fetch/business.py`): each project's share of its category, with the
+  peer set written down per project:
+  - DEX volume ÷ the Dexs category: Uniswap, Aerodrome.
+  - Perp open interest ÷ Derivatives: Hyperliquid.
+  - Borrowed ÷ 11 lenders: Maple, Morpho, Fluid.
+  - Ethereum TVL ÷ 9 ETH LST/LRT peers: Ether.fi.
+  - TVL ÷ 4 yield-tokenization peers: Pendle.
+  - USDS + DAI ÷ USD stablecoins: Sky.
+  - Chain TVL ÷ all chains: Ethereum and NEAR (ASSUMED basis).
+  - n/a with the reason: Chainlink (oracle TVS is paid), Plume (RWA-by-chain rebuild not wired), Aethir, GEODNET.
+  A day on which a launched peer did not report is dropped, never read as 0. The share is a CP headline with a
+  trajectory row.
+
+**Phase 4 — business series** (`config.BUSINESS_SERIES`, `BUSINESS_SLOTS`). Each is a CP headline "BUSINESS n", with
+a Fundamentals trajectory row (+1), a Credibility verdict, sanity checks and a METRICS.md entry. Beside each: the
+series, its unit, its source kind (DASHBOARD where it is an aggregator's reconstruction) and what an on-chain
+replacement would need. New this round:
+- Uniswap: volume by version (V2 / V3 / V4) and in total.
+- Aerodrome: volume (V1 + Slipstream + Aero Lite).
+- Fluid: DEX volume.
+- Hyperliquid: open interest.
+- NEAR: Intents volume.
+- Ether.fi: Stake TVL and Cash spend.
+- Maple: loans outstanding.
+- Ethereum: L2 transactions (growthepie, 26 L2s).
+- GEODNET: stations (dashboard snapshot, no history).
+- Chainlink: CCIP messages per day (CCIP's own API).
+- Sky: USDS supply (on-chain, archive history).
+
+Already tracked and now slotted: Hyperliquid perps volume, Morpho borrowed, Aethir customer revenue and compute hours,
+Plume RWA value, the Chainlink Payment Abstraction inflow, Pendle and Fluid TVL.
+
+NOT WIRED, with the route: Pendle TVL by maturity (Pendle API, 819 markets), CCIP token value (needs per-token
+decimals and prices), GEODNET customers (no public source).
+
 ## 11bs. Review of the ef6dc86 run + Phase 2 decisions (Jake, 2026-10-12 evening)
 
 **Run after pulling, in this order (PowerShell, repo root):**
