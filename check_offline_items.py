@@ -11168,6 +11168,238 @@ def sky_farm_rates():
           "readings are set against.")
 
 
+# ===== ISSUER-WALLET AUDIT (Jake 2026-10-12, before any switch): ONE RULE, ALL 15 PORTFOLIO PROJECTS. =====
+# Tokens held by issuer-side entities (foundation, DAO / protocol treasury, company / labs, association, undistributed
+# ecosystem / rewards reserves) are not circulating; transfers out of them count as unlock dilution. REPORT ONLY —
+# nothing is switched until Jake signs off.
+_ISSUER_UNVESTED_WHO = ("team", "investor", "core-contributor", "contributor")
+_ISSUER_UNVESTED_HOW = ("unlocking", "unvested", "vesting", "custodian origin")
+_ISSUER_LEGACY = ("converter", "migrator", "unconverted")
+_ISSUER_OTHER = ("public sale",)
+
+
+def issuer_category(key: str, spec: dict, metric: str) -> str:
+    """burned / pre-minted for an unconverted legacy token / team-investor unvested (out by our convention) /
+    issuer-side / other (Jake's call) — from the wallet's own config label."""
+    text = f"{spec.get('purpose') or key}".lower()
+    if metric == "burn_address_balance" or "burn" in spec.get("kind", ""):
+        return "burned"
+    if any(w in text for w in _ISSUER_LEGACY):
+        return "pre-minted for unconverted legacy"
+    if any(w in text for w in _ISSUER_OTHER):
+        return "other — Jake's call"
+    # UNVESTED TEAM / INVESTOR only where the label says both WHO and HOW ("Team (multi-year unlocking)"); a treasury
+    # vesting contract or an ecosystem wallet is issuer-side
+    if any(w in text for w in _ISSUER_UNVESTED_WHO) and any(w in text for w in _ISSUER_UNVESTED_HOW):
+        return "team/investor unvested (convention)"
+    return "issuer-side"
+
+
+def _issuer_wallets(p: dict) -> list[dict]:
+    """Every wallet the project's on-chain circulating set subtracts (or that is a non-circulating holding), with its
+    label, category and source."""
+    import config                                          # noqa: PLC0415
+    from fetch.chain import KIND_METRIC                    # noqa: PLC0415
+    spec = config.circulating_onchain(p["name"]) or {}
+    sub = set(spec.get("subtract") or ())
+    # THE PROJECT'S TOKEN on each chain: the contract keyed "token" / "token_<chain>" (never a share token such as
+    # sETHFI that is also an erc20_total_supply read)
+    toks = {}
+    for k, c in (p.get("contracts") or {}).items():
+        if (k == "token" or k == f"token_{c['chain']}") and c["chain"] not in toks:
+            toks[c["chain"]] = c["address"]
+    legacy = (p.get("contracts") or {}).get("token_legacy")
+    out = []
+    for k, c in (p.get("contracts") or {}).items():
+        m = c.get("metric_override") or KIND_METRIC.get(c["kind"])
+        if not (m in sub or str(m or "").startswith(("noncirc", "treasury_holding"))):
+            continue
+        tok = legacy["address"] if (k.endswith("_legacy") and legacy) else (
+            toks.get(c["chain"]) or ((p.get("contracts") or {}).get(f"token_{c['chain']}") or {}).get("address"))
+        out.append({"key": k, "chain": c["chain"], "address": c.get("address", ""), "metric": m,
+                    "label": (c.get("purpose") or c.get("note") or k)[:110],
+                    "source": c.get("source_url") or c.get("provenance") or "config", "token": tok,
+                    "category": issuer_category(k, c, m), "subtracted_now": m in sub})
+    return out
+
+
+def _hl_wallet(addr: str) -> float | None:
+    url = "https://api.hyperliquid.xyz/info"
+    try:
+        spot = requests.post(url, json={"type": "spotClearinghouseState", "user": addr}, timeout=TIMEOUT).json()
+        held = sum(float(b.get("total") or 0) for b in spot.get("balances") or [] if b.get("coin") == "HYPE")
+        dele = requests.post(url, json={"type": "delegatorSummary", "user": addr}, timeout=TIMEOUT).json()
+        return held + float(dele.get("delegated") or 0) + float(dele.get("totalPendingWithdrawal") or 0)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _near_account(acc: str) -> float | None:
+    try:
+        j = rpc(NEAR_RPC_LIVE[0], "query", {"request_type": "view_account", "account_id": acc, "finality": "final"})
+        r = j.get("result") or {}
+        return (int(r["amount"]) + int(r.get("locked") or 0)) / 1e24 if r else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def issuer_wallet_audit():
+    """THE ISSUER-WALLET AUDIT (Jake 2026-10-12). Per project: every wallet on file, its live balance, label, category
+    and label source; the total; the figure the ratios use; circulating UNDER THE RULE (total − burned − issuer-side −
+    team/investor unvested − pre-minted legacy backing; 'other' listed for Jake); the % change; and whether the
+    project's own published figure already excludes issuer holdings. Live reads (public RPCs, CoinGecko /coins/markets,
+    Hyperliquid info, NEAR RPC). Changes nothing."""
+    import config                                          # noqa: PLC0415
+    head("ISSUER-WALLET AUDIT — one rule, the 15 portfolio projects (report only; nothing switched)")
+    ids = ",".join(config.PROJECT_BY_NAME[n]["coingecko_id"] for n in config.CREDIBILITY_PROJECTS)
+    import time as _t                                      # noqa: PLC0415
+    cg = {}
+    for attempt in range(4):
+        try:
+            got = requests.get("https://api.coingecko.com/api/v3/coins/markets",
+                               params={"vs_currency": "usd", "ids": ids}, headers=_ua(), timeout=TIMEOUT).json()
+            if isinstance(got, list):
+                cg = {m["id"]: m for m in got}
+                break
+            print(f"  CoinGecko markets: {str(got)[:120]} — retrying in {20 * (attempt + 1)}s")
+        except Exception as e:  # noqa: BLE001
+            print(f"  CoinGecko markets unread ({type(e).__name__}) — retrying")
+        _t.sleep(20 * (attempt + 1))
+    if not cg:
+        print("  CoinGecko markets unread — CoinGecko totals / figures n/a")
+    rows = []
+    for n in config.CREDIBILITY_PROJECTS:
+        p = config.PROJECT_BY_NAME[n]
+        m = cg.get(p["coingecko_id"]) or {}
+        ws = _issuer_wallets(p)
+        for w in ws:
+            w["balance"] = (_bal(w["token"], w["address"], w["chain"]) / 1e18
+                            if w["token"] and w["chain"] in ("ethereum", "base", "polygon", "arbitrum") else None)
+        extra = []
+        if n == "Hyperliquid":
+            for rd in (p.get("node_api") or {}).get("extra_reads") or ():
+                for x in rd.get("exclude_wallets") or ():
+                    extra.append({"key": x.get("label", ""), "chain": "hypercore", "address": x["address"],
+                                  "label": x.get("label", ""), "source": x.get("source", ""),
+                                  "category": "issuer-side", "subtracted_now": True, "balance": _hl_wallet(x["address"])})
+                for x in rd.get("unlock_wallets") or ():
+                    extra.append({"key": x.get("label", ""), "chain": "hypercore", "address": x["address"],
+                                  "label": x.get("label", ""), "source": x.get("source", ""),
+                                  "category": "team/investor unvested (convention)", "subtracted_now": True,
+                                  "balance": _hl_wallet(x["address"])})
+        # ISSUER-SIDE LOCKS: the filing wallets' veNFT principal (managed deposits included) — Aerodrome's on-chain set
+        # subtracts it as filing_managed_lock_tokens (config ve_managed_holdings)
+        vmh = p.get("ve_managed_holdings")
+        if vmh:
+            got = aerodrome_foundation_locks(list(vmh["owners"]))
+            for o, lab in vmh["owners"].items():
+                b = None if got.get("error") else float((got.get("by_owner") or {}).get(o, 0.0))
+                extra.append({"key": f"ve_locks_{lab}", "chain": "base", "address": o,
+                              "label": f"{lab} — AERO locked in veNFTs (managed deposits included)",
+                              "source": vmh.get("source", ""), "category": "issuer-side", "subtracted_now": True,
+                              "balance": b})
+        # LEGACY TOKEN BALANCES of every issuer-side wallet (Morpho: the legacy MORPHO not yet wrapped is backed by the
+        # Wrapper's new MORPHO inside totalSupply, so an issuer's legacy balance is issuer-held supply)
+        leg = (p.get("contracts") or {}).get("token_legacy")
+        if leg:
+            have = {w["address"].lower() for w in ws if w["key"].endswith("_legacy")}
+            for w in list(ws):
+                if w["chain"] == leg["chain"] and w["category"] == "issuer-side" and w["address"].lower() not in have:
+                    have.add(w["address"].lower())
+                    b = _bal(leg["address"], w["address"], leg["chain"])
+                    if b:
+                        extra.append({"key": w["key"] + "_legacy_balance", "chain": leg["chain"], "address": w["address"],
+                                      "label": f"{w['label'][:70]} — its LEGACY token", "source": w["source"],
+                                      "category": "issuer-side", "subtracted_now": False, "balance": b / 1e18})
+        if n == "Near":
+            for acc, why in (("lockup.near", "the lockup factory (NEAR's own circulating subtracts it)"),
+                             ("contributors.near", "NEAR contributors' account (NEAR's own circulating subtracts it)")):
+                extra.append({"key": acc, "chain": "near", "address": acc, "label": why,
+                              "source": "near-public-lakehouse@76e0b2cd Aggregated Circulating Supply Pipeline.py "
+                                        "L330-375", "category": "issuer-side", "subtracted_now": False,
+                              "balance": _near_account(acc)})
+        ws += extra
+        # THE TOTAL: the token's own totalSupply() where it lives on one main chain (GROSS — burned tokens still in it,
+        # so the burn wallets come off); else CoinGecko's, which NETS burns (the burn wallets are then not subtracted)
+        main = next((c for k, c in (p.get("contracts") or {}).items() if k == "token"), None)
+        total, basis = None, "CoinGecko (net of burns)"
+        if main and main["chain"] in ("ethereum", "base", "polygon", "arbitrum"):
+            ts = _uint(main["address"], "0x18160ddd", main["chain"])
+            if ts is not None:
+                total, basis = ts / 1e18, f"{main['chain']} totalSupply() (gross)"
+        if total is None:
+            total = m.get("total_supply")
+        sums = {}
+        for w in ws:
+            if w.get("balance") is not None and not (w["category"] == "burned" and basis.startswith("CoinGecko")):
+                sums[w["category"]] = sums.get(w["category"], 0.0) + w["balance"]
+        out_rule = sum(v for k, v in sums.items() if not k.startswith("other"))
+        unread = [w["key"] for w in ws if w.get("balance") is None
+                  and not (w["category"] == "burned" and basis.startswith("CoinGecko"))]
+        rule = (total - out_rule) if total and ws and not unread else None
+        # THE FIGURE IN USE, and the rule's figure where the project's own figure is the base
+        import build_workbook as bw                       # noqa: PLC0415
+        chosen = bw.chosen_circulating_metric(p)
+        current, cur_src = None, chosen
+        if chosen == "circulating_supply_onchain" and total:
+            sub_now = sum(w["balance"] for w in ws if w["subtracted_now"] and w.get("balance") is not None
+                          and not (w["category"] == "burned" and basis.startswith("CoinGecko")))
+            current, cur_src = total - sub_now, "our on-chain set (total − every wallet it subtracts), read live"
+        elif chosen == "circulating_supply":
+            current, cur_src = m.get("circulating_supply"), "CoinGecko circulating (live)"
+        if n == "Hyperliquid":
+            try:
+                td = requests.post("https://api.hyperliquid.xyz/info", json={
+                    "type": "tokenDetails", "tokenId": "0x0d01dc56dcaaca66ad901c959b4011ec"}, timeout=TIMEOUT).json()
+                pub = float(td["circulatingSupply"])
+                fg = sum(w["balance"] for w in ws if w["category"] == "issuer-side" and w.get("balance") is not None)
+                current = rule = pub - fg
+                cur_src = (f"tokenDetails.circulatingSupply {pub:,.0f} (already net of the team wallet, the burned "
+                           f"Assistance Fund and zero addresses) − Foundation − Grants")
+            except Exception as e:  # noqa: BLE001
+                cur_src = f"tokenDetails unread ({type(e).__name__})"
+        if n == "Near":
+            blk = (rpc(NEAR_RPC_LIVE[0], "block", {"finality": "final"}).get("result") or {}).get("header") or {}
+            tot = int(blk.get("total_supply") or 0) / 1e24
+            locked = 2_058_522.0       # the stored first weekly read (manual_overrides.csv, 2026-10-11)
+            if tot:
+                total, basis = tot, "block header total_supply"
+                current = tot - locked
+                cur_src = "total − lockups LOCKED (2,058,522, the stored weekly read) — Jake's rule"
+                rule = current - sum(w["balance"] for w in ws if w.get("balance") is not None)
+        if n == "Plume":
+            try:
+                current = float(requests.get("https://supply.plume.org/supply", headers=_ua(), timeout=TIMEOUT)
+                                .json()["result"])
+                cur_src = "supply.plume.org result (Plume's own; method not published)"
+            except Exception as e:  # noqa: BLE001
+                cur_src = f"supply.plume.org unread ({type(e).__name__})"
+        if n == "Aethir":
+            current, cur_src = m.get("circulating_supply"), ("Aethir's dashboard figure is not read by this probe; "
+                                                            "CoinGecko's shown (it relays Aethir's schedule)")
+        chg = (rule / current - 1) if rule and current else None
+        own = config.CIRCULATING_POLICY.get(n, {}).get("definition", "")
+        print(f"    FIGURE IN USE {current or 0:,.0f} — {cur_src}")
+        print(f"    UNDER THE RULE {rule:,.0f} ({chg:+.2%})" if rule and chg is not None else
+              "    UNDER THE RULE n/a — " + ("no issuer-side wallet on file" if not ws else "see above"))
+        print(f"    project's own definition: {own[:160]}")
+        rows.append({"project": n, "wallets": ws, "total": total, "total_basis": basis, "current": current,
+                     "current_source": cur_src, "change": chg, "coingecko_circ": m.get("circulating_supply"),
+                     "rule": rule, "sums": sums, "unread": unread, "own_definition": own})
+        print(f"\n  {n}: {len(ws)} wallet(s) on file; total {total or 0:,.0f} ({basis}); CoinGecko circulating "
+              f"{m.get('circulating_supply') or 0:,.0f}")
+        for w in ws:
+            b = w.get("balance")
+            print(f"    {w['chain']:9} {w['address'][:14]:14} {('%18s' % f'{b:,.0f}') if b is not None else 'UNREAD':>18}  "
+                  f"{w['category'][:34]:34} {'(subtracted now)' if w['subtracted_now'] else '(NOT subtracted)':17} "
+                  f"{w['label'][:60]}  [{str(w['source'])[:70]}]")
+        print("    " + "; ".join(f"{k} {v:,.0f}" for k, v in sums.items())
+              + (f"  ->  UNDER THE RULE {rule:,.0f}" if rule is not None else
+                 f"  ->  rule n/a ({'unread: ' + ', '.join(unread) if unread else 'no wallet / no total'})"))
+    print("\n  PASTE BACK the per-project lines. Nothing was changed.")
+    return rows
+
+
 CHECKS = (
     sky_chainlog, sky, morpho_blue_api,
     sky_splitter, sky_splitter_params, sky_splitter_history,
@@ -11197,7 +11429,7 @@ CHECKS = (
     aethir_mint_path,
     near_activity_break,
     plume_settlement_routes,
-    near_activity_cause, near_activity_signers,
+    near_activity_cause, near_activity_signers, issuer_wallet_audit,
     browser_captures,
     mev_relays,
     spot_checks,

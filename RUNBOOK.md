@@ -527,6 +527,65 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11bn. Issuer-wallet audit — one rule, the 15 portfolio projects (2026-10-12; report only, NOTHING SWITCHED)
+
+`python check_offline_items.py issuer_wallet_audit` (live reads: public RPCs, CoinGecko /coins/markets, Hyperliquid
+info, NEAR RPC; every wallet's label and label source printed). THE RULE: tokens held by issuer-side entities
+(foundation, DAO / protocol treasury, company / labs, association, undistributed ecosystem / rewards reserves) are not
+circulating; transfers out of them count as unlock dilution. Team / investor unvested and burned stay out as now.
+
+**1. Morpho — the 8 new-token wallets (125,918,446.19, live 2026-10-12):**
+
+| Wallet | Owner / purpose (label source) | New MORPHO | Legacy MORPHO |
+|---|---|---:|---:|
+| 0xcBa28b38… | Morpho DAO treasury, morpho.eth 5/9 (docs.morpho.org governance/organization) | 578,871 | 290,419,982 |
+| 0xF057afeE… | Rewards Multisig — undistributed rewards (docs.morpho.org) | 3,643,979 | 360,000 |
+| 0x6ABfd613… | Association Master Safe (Morpho's Blockworks filing; seatbelt: Association) | 79,721,416 | 11,635,955 |
+| 0x4d200893… | Association Ops Safe (filing) | 270,975 | 0 |
+| 0x53051Ef9… | Contributor Grants SAFE (filing) | 41,703,204 | 0 |
+| 0x1590e7F4… | Contributor Grants SAFE 2 (filing) — seatbelt@ee2dda29 names it Morpho Labs | 0 | 11,408,640 |
+| 0xD81E0983… | Operative SAFE 1 (filing) | 0 | 0 |
+| 0xd2C7eF9f… | Operative SAFE 2 (filing) | 0 | 4,599 |
+
+The legacy Wrapper (0x9D03bb20…) holds 386,998,679 new MORPHO backing legacy MORPHO not yet wrapped. By holder:
+issuer-side 313,829,177 (DAO 290.42M, Association 11.64M, Grants SAFE 2 / Labs 11.41M, Rewards 0.36M, Operative 2
+0.005M) and everyone else ~73.17M (circulating: they can unwrap). Plus the DAO's 13,000,000 on Base. **Under the
+rule Morpho is 547,252,377** (total 1,000,000,000 − 125,918,446 − 313,829,177 − 13,000,000) — 570,661,572 today's
+on-chain set, −21.87% against CoinGecko's 700,471,015 in use.
+
+**2. All 15, one rule (live 2026-10-12):**
+
+| Project | Figure in use | Under the rule | Change | Issuer-side held | Own published figure already does it? |
+|---|---:|---:|---:|---:|---|
+| Ethereum | 122,127,761 (total) | n/a | — | no wallet on file (Ethereum Foundation) | no issuer exclusion (all ETH) |
+| Chainlink | 760,645,318 | 760,645,318 | 0.00% | 239,354,682 (Reserve + 27 non-circulating) | YES — its API list |
+| Hyperliquid | 238,627,395 | 238,627,395 | 0.00% | 63,529,485 (Foundation + Grants; team 237.9M unvested) | PARTLY — team + AF out, Foundation / Grants not |
+| NEAR | 1,306,698,528 | 1,306,527,469 | −0.01% | 171,059 (lockup.near 171,054 + contributors.near 5) | YES — NEAR's method subtracts both; ours does not yet |
+| Plume | 6,606,142,167 | n/a | — | no wallet on file | unknown — method not published |
+| Aethir | 20,128,764,593 (CoinGecko shown) | n/a | — | no wallet on file | YES by construction (unlock schedule) — released-but-held treasury unknown |
+| Maple | 1,167,271,959 (CoinGecko) | 1,221,418,278 | +4.64% | 46,456,722 | no figure published |
+| Morpho | 700,471,015 (CoinGecko) | 547,252,377 | −21.87% | 452,747,623 (incl. legacy + Base) | no (CoinGecko counts Association / Labs / Grants / Rewards) |
+| Aerodrome | 1,516,806,966 | 1,516,806,966 | 0.00% | 480,838,656 (liquid 36.6M + veNFT locks 444.3M) | no figure published |
+| Ether.fi | 810,696,040 | 810,696,040 | 0.00% | 187,839,959 | no figure published |
+| Fluid | 77,970,999 | 77,970,999 | 0.00% | 22,029,001 | no figure published |
+| Sky | 21,388,580,571 | 21,388,580,571 * | 0.00% * | 27,871,366 (Pause Proxy) | no |
+| Uniswap | 612,438,857 | 612,438,857 | 0.00% | 274,745,562 (Timelock + unclaimed airdrop; 112.8M burned) | no (CoinGecko: Timelock + dEaD only) |
+| GEODNET | 516,385,423 | 536,385,423 | +3.87% | 148,002,350 (mining 95.5M, ecosystem 50.5M, marketing 2.0M) | static third-party figure |
+| Pendle | 237,887,006 | 237,887,006 | 0.00% | 43,640,443 | YES — Pendle's documented method |
+
+**For Jake:**
+- GEODNET's +3.87% is the "Public sale" wallet (20,000,000): not issuer-side by the rule's list, subtracted today.
+  Out or in?
+- * SKY: the MKR->SKY converter's 2,043,352,267 pre-minted SKY is subtracted today. By Morpho's logic (a backing
+  balance splits by who holds the legacy token), 83,516 MKR is unconverted and the issuer (Pause Proxy) holds 49.56,
+  so ~2,003M SKY backs MKR held by everyone else — under ONE rule that is circulating (+9.37%, ≈ CoinGecko). A
+  contradiction with today's convention; not changed.
+- NEAR: lockup.near / contributors.near are issuer-side (NEAR's own method subtracts them) — 171,059, −0.01%.
+- Ethereum (the Ethereum Foundation), Plume and Aethir: no issuer wallet on file — sourcing needed before the rule
+  can be applied.
+- Maple: +4.64% because our rule keeps staked (stSYRUP) circulating and CoinGecko's count differs by more than the
+  issuer wallets.
+
 ## 11bm. Aerodrome Q0 buyback from the traced purchases (2026-10-12)
 
 On Jake's machine `--seed aero_buyback` stored 0 rows in 2 s (no keyed BASE_RPC_URL), so the Q0 buyback, retirement

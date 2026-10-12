@@ -790,3 +790,22 @@ def test_aerodrome_seed_says_why_it_stored_nothing(monkeypatch):
 def config_aero():
     import config
     return config.PROJECT_BY_NAME["Aerodrome"]
+
+
+def test_issuer_audit_labels_each_wallet_from_its_own_label():
+    """Issuer-wallet audit (Jake 2026-10-12): issuer-side vs team/investor unvested vs burned vs legacy backing vs
+    'other' (Jake's call) — from each wallet's config label. A treasury vesting contract or an ecosystem wallet is
+    issuer-side; only a label naming team / investor AND vesting / unlocking is unvested."""
+    import config
+    import check_offline_items as coi
+    cat = {(w["key"]): w["category"] for n in ("GEODNET", "Uniswap", "Sky", "Ether.fi", "Morpho")
+           for w in coi._issuer_wallets(config.PROJECT_BY_NAME[n])}
+    assert cat["noncirc_candidate_1"] == "team/investor unvested (convention)"         # GEODNET Team (unlocking)
+    assert cat["ecosystem_polygon"] == "issuer-side"
+    assert cat["noncirc_candidate_4"].startswith("other")                               # GEODNET public sale
+    assert cat["noncirc_treasury_vesting_1"] == "issuer-side"                           # Uniswap treasury vesting
+    assert cat["burn_dead"] == "burned"
+    assert cat["noncirc_mkr_sky_converter"] == "pre-minted for unconverted legacy"
+    assert cat["noncirc_custodian_origin_1"] == "team/investor unvested (convention)"
+    assert cat["noncirc_association_master_safe"] == "issuer-side"
+    assert coi.issuer_wallet_audit in coi.CHECKS
