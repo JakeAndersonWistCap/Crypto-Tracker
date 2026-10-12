@@ -27420,10 +27420,11 @@ def test_signoff_round_rows_cite_their_evidence():
     assert config.CREDIBILITY["Ethereum"]["a4_net_change"]["show_how"]
 
 
-def test_ethereum_net_change_shows_both_sides_leg_by_leg():
+def test_ethereum_net_change_shows_both_sides_leg_by_leg(monkeypatch):
     """Sign-off round: the reference's working names our issuance and burn on the same days beside the curve and the
     reference burn, so a miss names its leg."""
     import credibility as cred
+    monkeypatch.setattr(cred, "VIEWS_LONG", None)      # not the last build's views (a module global between tests)
     days = pd.date_range("2026-09-30", "2026-10-05")
     long = pd.concat([pd.DataFrame({"date": days, "project": "Ethereum", "metric": m, "value": v})
                       for m, v in (("gross_issuance_tokens", 2_700.0), ("gross_burn_tokens", 60.0),

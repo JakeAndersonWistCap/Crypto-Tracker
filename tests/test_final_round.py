@@ -711,3 +711,82 @@ def test_near_buggy_recompute_counts_jakes_set_and_never_takes_an_error_for_a_lo
     assert urls_seen[0][:len(near_archival_endpoints())] == tuple(near_archival_endpoints())
     printed = capsys.readouterr().out
     assert "unreadable 1 after one retry of 2" in printed and " b " not in printed
+
+
+# ----------------------------------------------------------------------------------------------- Aerodrome round
+def _aero_rows(day, values: dict, source="ve_managed:window"):
+    return [{"date": day, "metric": m, "value": v, "source": source, "tier": 2, "fetched_at": f"{day}T12:00:00Z"}
+            for m, v in values.items()]
+
+
+def test_aerodrome_traced_purchases_fill_q0_on_the_real_dump(tmp_path, monkeypatch):
+    """Jake 2026-10-12 (Aerodrome round, item 1): `--seed aero_buyback` stored 0 rows (no keyed BASE_RPC_URL), so the
+    Q0 buyback, retirement and net absorption were empty. The six traced Safe purchases (config foundation_buyback.
+    trace) are tier-3 rows on their purchase days, tx hashes in the source: 1,906,696 AERO retired (held, locked veNFT)
+    for 829,828 USDC; net absorption against the 59.45M of emissions ≈ −57.5M."""
+    import config
+    tr = config.PROJECT_BY_NAME["Aerodrome"]["foundation_buyback"]["trace"]
+    assert sum(r["aero"] for r in tr["rows"]) == pytest.approx(1_906_696.26, abs=0.01)
+    assert sum(r["usdc"] for r in tr["rows"]) == 829_828
+    assert all(len(r["buy_tx"]) == 66 and len(r["forward_tx"]) == 66 for r in tr["rows"])
+    wb, value = _build(tmp_path, monkeypatch, "Aerodrome", asof="2026-10-12")
+    assert _cell(wb, value, "A3", "Aerodrome", "Actual buyback Q0 ($)") == pytest.approx(829_828)
+    assert _cell(wb, value, "A3", "Aerodrome", "Net absorption Q0 (tokens)") == pytest.approx(-57_545_636, abs=1)
+    assert _cell(wb, value, "A3", "Aerodrome", "CIRCULATING RETIREMENT RATE") == pytest.approx(0.005155, abs=1e-6)
+    ws = wb["Data"]
+    import build_workbook as bw
+    row = next(r for r in range(2, ws.max_row + 1) if ws.cell(r, 1).value == "Aerodrome|retired_buyback_tokens")
+    assert ws.cell(row, bw.DATA_COLS.index("q0") + 1).value == pytest.approx(1_906_696.26, abs=0.01)
+    src = next(ws.cell(r, bw.DATA_COLS.index("source") + 1).value for r in range(2, ws.max_row + 1)
+               if ws.cell(r, 1).value == "Aerodrome|actual_buyback_tokens")
+    assert "trace — matched to lock #130786" in src and "0x" in src
+
+
+def test_aerodrome_chain_scan_replaces_the_trace_and_a_gap_is_flagged(tmp_path, monkeypatch):
+    """Item 2: once the chain scan holds the lock day (2026-08-24) it replaces the trace — the agreed basis counts the
+    matched AERO on that day, so the two are never added — and credibility in_buyback_trace judges them over the
+    trace span at 2%. The scan rows below are the trace's own figures in the agreed basis's shape (purchases on their
+    days, the lock from balance on 08-24): equal -> PASS; 3% short -> CHECK."""
+    import config
+    from real_dump import evaluate_real, load
+    tr = config.PROJECT_BY_NAME["Aerodrome"]["foundation_buyback"]["trace"]
+    wm = config.PROJECT_BY_NAME["Aerodrome"]["foundation_buyback"]["window_metrics"]
+
+    def scan(scale):
+        rows = []
+        for d in pd.date_range("2026-07-14", "2026-10-08").strftime("%Y-%m-%d"):
+            bought = sum(r["aero"] for r in tr["rows"] if r["date"] == d) * scale
+            lock = tr["lock"]["aero"] if d == tr["lock"]["date"] else 0.0
+            rows += _aero_rows(d, {wm["bought_same_tx"]: 0.0, wm["lock_from_balance"]: lock, wm["purchased"]: bought,
+                                   wm["compounded_owner"]: 0.0, wm["rebase_owner"]: 0.0})
+        return rows
+    for scale, verdict in ((1.0, "PASS"), (0.97, "CHECK")):
+        payload = load("Aerodrome")
+        payload["metrics"] = list(payload["metrics"]) + scan(scale)
+        d = tmp_path / f"s{scale}"
+        d.mkdir()
+        o = evaluate_real(d, monkeypatch, "Aerodrome", payload=payload, asof="2026-10-12")
+        assert str(o["in_buyback_trace"]["verdict"]).startswith(verdict), (scale, o["in_buyback_trace"])
+        assert o["in_buyback_trace"]["ours"] == pytest.approx(1_906_696.26 * scale, rel=1e-6)
+        assert o["in_buyback"]["ours"] == pytest.approx(1_906_696.26 * scale, rel=1e-6), "replaced, never added"
+
+
+def test_aerodrome_seed_says_why_it_stored_nothing(monkeypatch):
+    """Item 3: `--seed aero_buyback` prints WHY 0 rows were stored — no key, no events in range, already stored."""
+    from fetch import ve_managed as vm
+    monkeypatch.delenv("BASE_RPC_URL", raising=False)
+    import check_offline_items as coi
+    monkeypatch.setattr(coi, "rpc_block_at", lambda *a, **k: 123)
+    frames = vm.seed_foundation([config_aero()], days=3, stored=lambda *a: False,
+                                reader=lambda owners, block: {"error": "HTTP 403 historical state not available"},
+                                say=lambda m: None)
+    assert frames == []
+    why = vm.why_nothing_stored(vm.LAST_SEED, 0)
+    assert "3 lock-stock read(s) failed (first: HTTP 403" in why and "NO KEYED BASE_RPC_URL" in why
+    vm.seed_foundation([config_aero()], days=2, stored=lambda *a: True, say=lambda m: None)
+    assert vm.why_nothing_stored(vm.LAST_SEED, 0).startswith("all 2 days already stored")
+
+
+def config_aero():
+    import config
+    return config.PROJECT_BY_NAME["Aerodrome"]

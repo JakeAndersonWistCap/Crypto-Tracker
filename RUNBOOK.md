@@ -527,6 +527,39 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11bm. Aerodrome Q0 buyback from the traced purchases (2026-10-12)
+
+On Jake's machine `--seed aero_buyback` stored 0 rows in 2 s (no keyed BASE_RPC_URL), so the Q0 buyback, retirement
+and net absorption were empty and sanity flagged status_contradicts.
+
+1. **The trace is stored** (config `foundation_buyback.trace`, built as tier-3 rows each run): the six purchases by the
+   buyer Safe 0x10b42e92…, matched oldest-first to lock #130786 (2026-08-24, 2,746,705.44 AERO; the other 752,355 is
+   claimed voting rewards, not a buyback). One row per purchase day, both transactions in the source, label
+   "trace — matched to lock #130786", destination HELD (locked veNFT):
+
+   | Day | Block | AERO bought | USDC paid |
+   |---|---:|---:|---:|
+   | 2026-07-15 | 48,669,228 | 214,508.93 | 111,247 |
+   | 2026-07-22 | 48,971,701 | 336,195.19 | 147,741 |
+   | 2026-07-29 | 49,274,105 | 312,820.96 | 130,891 |
+   | 2026-08-06 | 49,617,052 | 373,687.12 | 158,963 |
+   | 2026-08-12 | 49,878,907 | 343,699.45 | 143,615 |
+   | 2026-08-19 | 50,181,893 | 325,784.61 | 137,371 |
+   | **total** | | **1,906,696.26** | **829,828** |
+
+   actual_buyback_usd on those days is the USDC actually paid (not tokens x price).
+2. **The chain scan replaces it, never adds to it**: the agreed basis counts the matched AERO on the LOCK day, so once
+   the scan holds 2026-08-24 the trace stands down (build_workbook.trace_in_use). Credibility `in_buyback_trace` then
+   judges the scan against the trace over 07-15..08-24 at 2% (a gap is flagged); until then it reads N/A (recorded).
+3. **`--seed aero_buyback` says why it stored 0**: days already stored, no block for a day start, failed lock-stock /
+   window reads (first error), NO KEYED BASE_RPC_URL, or windows read with no events in range.
+4. **Q0 as of 2026-10-12** (real dump, asof shifted): retired AERO **1,906,696** (held); circulating retirement rate
+   **0.515%** (FDV 0.391%); actual buyback **$829,828**; net absorption **−57,545,636** against 59,452,332 of gauge
+   emissions + rebase (was −59.45M). Note: the 07-15 purchase leaves the trailing 90 days on 2026-10-14.
+
+**Before 10-20:** the post-migration AERO / sAERO addresses go in as a declared series handover once Aerodrome
+publishes them — none published as of 2026-10-12 (launch 10-21 20:00 ET / 10-22 00:00 UTC; 1:1 AERO conversion).
+
 ## 11bl. Jake's decisions on e4e50b0 and his run of 2026-10-12 (07:00 UTC, sign-off 12/15)
 
 **Decisions on e4e50b0.**

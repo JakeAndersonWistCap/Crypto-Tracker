@@ -592,6 +592,53 @@ def _epoch_span_sum(p, rows, long, asof, epochs="", daily="", epoch_days=14, sid
                                                  + tail)
 
 
+def _trace_parts(p):
+    tr = ((config.PROJECT_BY_NAME[p].get("foundation_buyback") or {}).get("trace")) or {}
+    rows = tr.get("rows") or ()
+    if not rows:
+        return None, None, None
+    return tr, pd.Timestamp(min(r["date"] for r in rows)), pd.Timestamp(tr["lock"]["date"])
+
+
+def _trace_scanned(p, rows, long, asof, **_):
+    """1 once the chain scan holds the traced lock's day (the trace is then replaced), else 0 (Aerodrome round, item 2)."""
+    tr, _first, lock = _trace_parts(p)
+    if tr is None:
+        return 0.0, None, "no trace declared"
+    sr = long[(long["project"] == p) & (long["metric"] == "actual_buyback_tokens")] if long is not None else None
+    hit = sr is not None and len(sr) and bool(((pd.to_datetime(sr["date"]) == lock)
+                                               & ~sr["source"].astype(str).str.contains("trace")).any())
+    return (1.0 if hit else 0.0), str(lock.date()), (
+        f"the chain scan holds the lock day {lock.date()}" if hit else
+        f"the chain scan has not read the lock day {lock.date()} — the trace is in use")
+
+
+def _trace_total(p, rows, long, asof, **_):
+    """The traced purchases' AERO, summed (config foundation_buyback.trace)."""
+    tr, first, lock = _trace_parts(p)
+    if tr is None:
+        return None, None, "no trace declared"
+    return (float(sum(r["aero"] for r in tr["rows"])), str(lock.date()),
+            f"trace: {len(tr['rows'])} purchases {first.date()}..{max(r['date'] for r in tr['rows'])}, "
+            f"{tr['label']}")
+
+
+def _scan_over_trace_span(p, rows, long, asof, **_):
+    """The chain scan's actual_buyback_tokens from the first traced purchase through the lock day (the agreed basis
+    counts the matched AERO on the lock day)."""
+    tr, first, lock = _trace_parts(p)
+    if tr is None:
+        return None, None, "no trace declared"
+    sr = long[(long["project"] == p) & (long["metric"] == "actual_buyback_tokens")] if long is not None else None
+    if sr is None or not len(sr):
+        return None, None, "no actual_buyback_tokens"
+    d = pd.to_datetime(sr["date"])
+    sel = sr[(d >= first) & (d <= lock) & ~sr["source"].astype(str).str.contains("trace")]
+    if not len(sel):
+        return None, None, f"the scan holds nothing in {first.date()}..{lock.date()}"
+    return float(sel["value"].sum()), str(lock.date()), f"chain scan {first.date()}..{lock.date()}: {len(sel)} day(s)"
+
+
 def _flow_usd_over_price(p, rows, long, asof, metrics=("revenue_usd",), share=1.0, **_):
     """Sum over the Q0 days of (sum of `metrics`, $) x share / that day's price — tokens. Only days
     with a price count, and the line says how many."""
@@ -1957,7 +2004,8 @@ FORMULAS = {"sum_months": _sum_months, "free_float_now": _free_float_now, "windo
             "product_on_common_day": _product_on_common_day, "now_sum": _now_sum,
             "log_price_growth": _log_price_growth, "bridge_reconciled": _bridge_reconciled,
             "daily_delta_plus_flow": _daily_delta_plus_flow, "window_sum": _window_sum, "scans_q0": _scans_q0, "now_combo": _now_combo,
-            "epoch_span_sum": _epoch_span_sum}
+            "epoch_span_sum": _epoch_span_sum, "trace_scanned": _trace_scanned, "trace_total": _trace_total,
+            "scan_over_trace_span": _scan_over_trace_span}
 
 
 def reference(project: str, spec: dict, rows: dict, long, asof) -> dict:

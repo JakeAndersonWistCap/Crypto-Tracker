@@ -1481,7 +1481,11 @@ def _foundation_buyback_views(groups: dict) -> None:
         if not fb:
             continue
         name, g = p["name"], groups.get((p["name"], fb["stock_metric"]))
+        if fb.get("trace"):
+            _foundation_trace_rows(groups, p, fb)
         if g is None or g.empty:
+            if fb.get("trace") and fb.get("basis") == "bought_plus_compounded":
+                _foundation_agreed_basis(groups, p, fb, lambda m: _ser_of(groups, name, m), _view_cols(groups, name))
             continue
         ser = lambda m: (lambda x: None if x is None or x.empty else (  # noqa: E731
             x.assign(date=pd.to_datetime(x["date"]).dt.normalize()).drop_duplicates("date", keep="last")
@@ -1514,6 +1518,46 @@ def _foundation_buyback_views(groups: dict) -> None:
         groups[(name, "actual_buyback_usd")] = _as_stored(usd, g.columns)
 
 
+def _ser_of(groups: dict, name: str, metric: str):
+    x = groups.get((name, metric))
+    if x is None or x.empty:
+        return None
+    return (x.assign(date=pd.to_datetime(x["date"]).dt.normalize()).drop_duplicates("date", keep="last")
+            .set_index("date")["value"].astype(float).sort_index())
+
+
+def _view_cols(groups: dict, name: str):
+    g = next((g for (n, _m), g in groups.items() if n == name and g is not None and not g.empty), None)
+    return g.columns if g is not None else ["date", "project", "metric", "value", "source", "tier"]
+
+
+TRACE_SOURCE = "derived:foundation_buyback[{label}; buy {buy}; forward {fwd}]"
+
+
+def _foundation_trace_rows(groups: dict, p: dict, fb: dict) -> None:
+    """THE TRACED PURCHASES (Jake 2026-10-12, Aerodrome round item 1; config foundation_buyback.trace): tier-3 rows,
+    one per purchase day — AERO bought (foundation_buyback_trace_tokens) and USDC paid (_usd), both transactions in the
+    source."""
+    tr, name = fb["trace"], p["name"]
+    cols = _view_cols(groups, name)
+    rows = tr["rows"]
+    src = [f"trace:base:foundation_buyer_safe[{tr['label']}; buy {r['buy_tx']}; forward {r['forward_tx']}; block "
+           f"{r['block']}]" for r in rows]
+    for metric, key in (("foundation_buyback_trace_tokens", "aero"), ("foundation_buyback_trace_usd", "usdc")):
+        groups[(name, metric)] = _as_stored(pd.DataFrame(
+            {"date": pd.to_datetime([r["date"] for r in rows]), "project": name, "metric": metric,
+             "value": [float(r[key]) for r in rows], "tier": 3, "source": src}), cols)
+
+
+def trace_in_use(p: dict, scan: pd.Series | None) -> bool:
+    """The trace stands for its lock until the chain scan holds the lock's day (the agreed basis counts the same AERO
+    on that day): then the scan replaces it, never both."""
+    tr = (p.get("foundation_buyback") or {}).get("trace")
+    if not tr:
+        return False
+    return scan is None or pd.Timestamp(tr["lock"]["date"]) not in scan.index
+
+
 def _foundation_agreed_basis(groups: dict, p: dict, fb: dict, ser, cols) -> None:
     """THE BASIS JAKE AGREED (2026-10-11, B): per day, actual_buyback_tokens = AERO bought and locked in one
     transaction + locks paid from the balance MATCHED OLDEST-FIRST to the wallets' purchases (a running pool: every
@@ -1523,12 +1567,13 @@ def _foundation_agreed_basis(groups: dict, p: dict, fb: dict, ser, cols) -> None
     fallback). actual_buyback_usd = tokens x the same-day price."""
     name, wm = p["name"], fb["window_metrics"]
     parts = {k: ser(m) for k, m in wm.items()}
-    if any(v is None for k, v in parts.items() if k != "rebase_owner"):
-        return
-    days = parts["compounded_owner"].index
-    for k in ("bought_same_tx", "lock_from_balance", "purchased"):
-        days = days.intersection(parts[k].index)
+    days = pd.DatetimeIndex([])
+    if not any(v is None for k, v in parts.items() if k != "rebase_owner"):
+        days = parts["compounded_owner"].index
+        for k in ("bought_same_tx", "lock_from_balance", "purchased"):
+            days = days.intersection(parts[k].index)
     if days.empty:
+        _foundation_with_trace(groups, p, fb, None, cols)
         return
     pool, tok = 0.0, []
     purchased = parts["purchased"].sort_index()
@@ -1540,20 +1585,44 @@ def _foundation_agreed_basis(groups: dict, p: dict, fb: dict, ser, cols) -> None
         tok.append((d, float(parts["bought_same_tx"].get(d, 0.0)) + matched + float(parts["compounded_owner"].get(d, 0.0))))
     idx = pd.DatetimeIndex([d for d, _v in tok])
     vals = pd.Series([v for _d, v in tok], index=idx)
-    groups[(name, fb["flow"])] = _as_stored(pd.DataFrame(
-        {"date": idx, "project": name, "metric": fb["flow"], "value": vals.values, "tier": 2,
-         "source": "derived:foundation_buyback[bought+matched+compounded]"}), cols)
-    px = groups.get((name, "price_usd"))
-    if px is None or px.empty:
+    _foundation_with_trace(groups, p, fb, vals, cols)
+
+
+def _foundation_with_trace(groups: dict, p: dict, fb: dict, scan: pd.Series | None, cols) -> None:
+    """actual_buyback_tokens / _usd from the chain scan, with the trace standing in for its lock until the scan holds
+    the lock's day (trace_in_use). Trace days carry the USDC actually paid; scan days tokens x the same-day price. One
+    measuring point: every source is derived:foundation_buyback[...] (the bracket is an annotation)."""
+    name = p["name"]
+    tok, usd, src = {}, {}, {}
+    if scan is not None:
+        for d, v in scan.items():
+            tok[d], src[d] = float(v), "derived:foundation_buyback[bought+matched+compounded]"
+    tr = fb.get("trace")
+    if tr and trace_in_use(p, scan):
+        for r in tr["rows"]:
+            d = pd.Timestamp(r["date"])
+            tok[d] = tok.get(d, 0.0) + float(r["aero"])
+            usd[d] = usd.get(d, 0.0) + float(r["usdc"])
+            src[d] = TRACE_SOURCE.format(label=tr["label"], buy=r["buy_tx"], fwd=r["forward_tx"])
+    if not tok:
         return
+    idx = pd.DatetimeIndex(sorted(tok))
+    tier = [3 if "trace" in src[d] else 2 for d in idx]
+    groups[(name, fb["flow"])] = _as_stored(pd.DataFrame(
+        {"date": idx, "project": name, "metric": fb["flow"], "value": [tok[d] for d in idx], "tier": tier,
+         "source": [src[d] for d in idx]}), cols)
+    px = groups.get((name, "price_usd"))
     pmap = (px.assign(date=pd.to_datetime(px["date"]).dt.normalize()).drop_duplicates("date", keep="last")
-            .set_index("date")["value"].astype(float))
-    both = vals[vals.index.isin(pmap.index)]
-    if both.empty:
+            .set_index("date")["value"].astype(float)) if px is not None and not px.empty else pd.Series(dtype=float)
+    days = [d for d in idx if d in usd or d in pmap.index]
+    if not days:
         return
     groups[(name, "actual_buyback_usd")] = _as_stored(pd.DataFrame(
-        {"date": both.index, "project": name, "metric": "actual_buyback_usd",
-         "value": (both * pmap.reindex(both.index)).values, "tier": 2, "source": "derived:tokens*price"}), cols)
+        {"date": days, "project": name, "metric": "actual_buyback_usd",
+         "value": [usd[d] if d in usd else tok[d] * float(pmap[d]) for d in days],
+         "tier": [3 if d in usd else 2 for d in days],
+         "source": ["derived:tokens*price[trace: USDC actually paid]" if d in usd else "derived:tokens*price"
+                    for d in days]}), cols)
 
 
 # ===== EVERY VIEW EMITS A STORED ROW'S COLUMNS. Fixed 2026-09-28 after a build crash. =====

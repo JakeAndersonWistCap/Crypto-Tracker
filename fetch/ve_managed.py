@@ -204,14 +204,50 @@ def _buyback_window(self, p, spec, out):
 VeManaged._foundation = _foundation
 
 
+LAST_SEED: dict = {}             # the last seed_foundation's outcome counts (why_nothing_stored)
+
+
+def why_nothing_stored(tally: dict, frames_rows: int) -> str:
+    """One line: why a seed stored nothing (no key / nothing read / already stored / no events in range)."""
+    if not tally.get("days"):
+        return "no Foundation buyback project in scope"
+    parts = []
+    if tally["already_stored"] == tally["days"]:
+        parts.append(f"all {tally['days']} days already stored")
+    elif tally["already_stored"]:
+        parts.append(f"{tally['already_stored']} of {tally['days']} days already stored")
+    if tally["no_block"]:
+        parts.append(f"{tally['no_block']} day(s) found no block for the day start (Base RPC unreachable?)")
+    if tally["read_error"]:
+        parts.append(f"{tally['read_error']} lock-stock read(s) failed (first: {tally['first_error']})")
+    if tally["window_error"]:
+        parts.append(f"{tally['window_error']} buyback-window read(s) failed (first: {tally['first_window_error']})")
+    if not tally.get("keyed"):
+        parts.append("NO KEYED BASE_RPC_URL: the public Base RPCs serve archive eth_call but not archive "
+                     "eth_getLogs / receipts at volume, so the buyback window (purchases, locks, compounding) cannot "
+                     "be read — set BASE_RPC_URL to a keyed archive endpoint")
+    if tally["window_read"] and not frames_rows:
+        parts.append(f"{tally['window_read']} window(s) read with no events in range")
+    elif frames_rows:
+        parts.append(f"{frames_rows} row(s) read but none written (already stored, or refused by validation)")
+    return "; ".join(parts) or "nothing to read"
+
+
 def seed_foundation(projects: list[dict], days: int = 100, stored=None, say=print, reader=None,
                     window_reader=None) -> list:
     """`token_metrics.py --seed aero_buyback`: the Foundation lock stock at each UTC day start over the last `days`
     days, at that day's first block (archive eth_call through Multicall3), only for days with no row. Frames out."""
     import check_offline_items as coi                      # noqa: PLC0415
+    import os                                              # noqa: PLC0415
     import pandas as pd                                    # noqa: PLC0415
     reader = reader or _foundation_reader
     frames = []
+    # WHY NOTHING WAS STORED, said (Jake's run 2026-10-12: "stored 0 rows in 2 s" with no reason): every day's outcome
+    # is counted here and token_metrics.seed_aero_buyback prints it
+    LAST_SEED.clear()
+    LAST_SEED.update({"days": 0, "already_stored": 0, "no_block": 0, "read_error": 0, "window_error": 0,
+                      "window_stored": 0, "window_read": 0, "first_error": "", "first_window_error": "",
+                      "keyed": bool(os.environ.get("BASE_RPC_URL", "").strip())})
     for p in projects:
         spec = p.get("foundation_buyback")
         if not spec:
@@ -222,15 +258,20 @@ def seed_foundation(projects: list[dict], days: int = 100, stored=None, say=prin
         for k in range(days, 0, -1):
             progress.tick(f"{name} Foundation locks, days", days - k + 1, days)
             d = (end - pd.Timedelta(days=k)).normalize()
+            LAST_SEED["days"] += 1
             if stored and stored(name, spec["stock_metric"], str(d.date())):
+                LAST_SEED["already_stored"] += 1
                 continue
             b = coi.rpc_block_at("base", int(d.tz_localize("UTC").timestamp()) if d.tzinfo is None
                                  else int(d.timestamp()), say=say)
             if b is None:
+                LAST_SEED["no_block"] += 1
                 say(f"  {d.date()}: no block for the day start — skipped")
                 continue
             got = reader(spec["owners"], block=hex(b))
             if got.get("error"):
+                LAST_SEED["read_error"] += 1
+                LAST_SEED["first_error"] = LAST_SEED["first_error"] or str(got["error"])[:200]
                 say(f"  {d.date()}: {got['error']} — skipped")
                 continue
             fs, msg = foundation_rows(name, spec, d, got, archive=True)
@@ -240,6 +281,7 @@ def seed_foundation(projects: list[dict], days: int = 100, stored=None, say=prin
             if spec.get("basis") == "bought_plus_compounded":
                 prev = d - pd.Timedelta(days=1)
                 if stored and stored(name, spec["window_metrics"]["compounded_owner"], str(prev.date())):
+                    LAST_SEED["window_stored"] += 1
                     continue
                 b_prev = coi.rpc_block_at("base", int((prev.tz_localize("UTC") if prev.tzinfo is None else prev)
                                                       .timestamp()), say=lambda *_: None)
@@ -248,8 +290,11 @@ def seed_foundation(projects: list[dict], days: int = 100, stored=None, say=prin
                     continue
                 w = (window_reader or _window_reader)(b_prev, b)
                 if w.get("error"):
+                    LAST_SEED["window_error"] += 1
+                    LAST_SEED["first_window_error"] = LAST_SEED["first_window_error"] or str(w["error"])[:200]
                     say(f"  {prev.date()}: buyback window {w['error']} — skipped")
                     continue
+                LAST_SEED["window_read"] += 1
                 fs, msg = window_rows(name, spec, prev, w, archive=True)
                 frames += fs
                 say(f"  {msg}")

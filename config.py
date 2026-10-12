@@ -441,6 +441,17 @@ METRICS = {
     "fdv_usd_coingecko":          {"label": "FDV — CoinGecko's (cross-check: price x CoinGecko's total)", "kind": "stock",
                                    "unit": "usd", "archetypes": [1, 2, 3, 4], "tiers": [1], "sanity_min": 0,
                                    "sanity_max": 1e13, "view_only": True},
+    # AERODROME'S TRACED FOUNDATION PURCHASES (Jake 2026-10-12, Aerodrome round): config foundation_buyback.trace, rows
+    # built at read time (build_workbook._foundation_buyback_views) — tier 3, one per purchase day, tx hashes in the source
+    "foundation_buyback_trace_tokens": {"label": "Aerodrome Foundation buyer Safe purchases — AERO bought (trace matched to "
+                                                 "lock #130786; replaced by the chain scan once it reads the lock day)",
+                                        "kind": "flow", "unit": "tokens", "archetypes": [3], "tiers": [3],
+                                        "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Aerodrome",),
+                                        "view_only": True},
+    "foundation_buyback_trace_usd": {"label": "Aerodrome Foundation buyer Safe purchases — USDC paid (same trace)",
+                                     "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [3],
+                                     "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Aerodrome",),
+                                     "view_only": True},
     # CoinGecko's OWN total where the chain read wins the total (Jake's run on e4e50b0, 2026-10-12 item 2): the
     # like-for-like circulating row puts our figure on CoinGecko's total (Ether.fi: chain 998,535,999 vs 965,350,000).
     # only_projects is set to TOTAL_SUPPLY_ONCHAIN_FIRST below.
@@ -12286,6 +12297,45 @@ PROJECTS = [
                     "decided": "Jake 2026-10-12 (decision 1 on e4e50b0)"},
             },
             "basis_decided": "Jake 2026-10-11 (B on 5b87610)",
+            # THE TRACE, STORED UNTIL A KEYED SCAN READS IT (Jake 2026-10-12, Aerodrome round item 1): `--seed
+            # aero_buyback` stored 0 rows on Jake's machine (no keyed BASE_RPC_URL), so the Q0 buyback was empty. The six
+            # purchases the trace of 2026-10-11 found (RUNBOOK 11bk; scratch trace read from block receipts on the public
+            # Base RPC), matched oldest-first to lock #130786, are tier-3 rows dated on each purchase day: AERO received by
+            # the Safe from the swap, USDC it paid, both transactions in the source. Destination: HELD (locked in the
+            # PGF's veNFT). REPLACED, NOT ADDED, once the chain scan holds the lock's day (2026-08-24): the agreed basis
+            # counts the same AERO on the lock day; credibility in_buyback_trace compares the two over the trace span and
+            # flags a gap above 2% (build_workbook._foundation_buyback_views).
+            "trace": {
+                "label": "trace — matched to lock #130786",
+                "lock": {"token_id": 130786, "date": "2026-08-24", "aero": 2_746_705.44,
+                         "matched_aero": 1_906_696.26, "unmatched": "752,355 AERO of claimed voting rewards — not a "
+                                                                   "buyback (decision 1 on e4e50b0)"},
+                "destination": "held (locked veNFT)",
+                "read_on": "2026-10-11", "read_by": "Claude Code (RUNBOOK 11bk)",
+                "decided": "Jake 2026-10-12 (Aerodrome round, item 1)",
+                "buyer": "0x10b42e926c2b8ff0200f35ec466d50576c1efa30",
+                "rows": (
+                    {"date": "2026-07-15", "block": 48_669_228, "aero": 214_508.92895297895, "usdc": 111_247.0,
+                     "buy_tx": "0xeb89946c98da7201cc848aa47152a1005bc25d7e2097e176b95a7a7b9549ad76",
+                     "forward_tx": "0x062ce9796d451276e1326d2ff526f3fb2b87a9d56a93e367e9513088cecec051"},
+                    {"date": "2026-07-22", "block": 48_971_701, "aero": 336_195.1896508074, "usdc": 147_741.0,
+                     "buy_tx": "0xe11f90a2363ae6d2c9b7b1fca301e7950993a6655c7e5945acaef4085474ffed",
+                     "forward_tx": "0x54ea0ffab3ec30d4c086d5129b19951afb732a7bfe562450ae717a1c080366ba"},
+                    {"date": "2026-07-29", "block": 49_274_105, "aero": 312_820.9616933275, "usdc": 130_891.0,
+                     "buy_tx": "0x434c97ece638243b8d2040a10f25e0edacf4f93cb3e855c4b3199289f68318ab",
+                     "forward_tx": "0x7716e59ddd3bee782b6e4aba740a54efce2e1ee11681df5912acb84c6ef23c40"},
+                    {"date": "2026-08-06", "block": 49_617_052, "aero": 373_687.11585826165, "usdc": 158_963.0,
+                     "buy_tx": "0xe7ed79629cb1b84c77384c70a08421be4db1bd96c601a0aea32516427ff82963",
+                     "forward_tx": "0x13f093c1f41383cd0676da42ddb444d4cc9279914c301ac1d517b6b0848dc0d9"},
+                    {"date": "2026-08-12", "block": 49_878_907, "aero": 343_699.4480632203, "usdc": 143_615.0,
+                     "buy_tx": "0x4e7c22ef2e8f019dbe2bd6718b7eb681dc3011b7dbe849f06084571bc4789f52",
+                     "forward_tx": "0x5a7107dc7c0ebd11e69af3d9b55b0125a8c5b478688add8fa3c692a2ad51ecaf"},
+                    {"date": "2026-08-19", "block": 50_181_893, "aero": 325_784.6120440721, "usdc": 137_371.0,
+                     "buy_tx": "0x17008c395c01096a893012e513d0932ffcb458e19e2922aa7549079ce3a87d84",
+                     "forward_tx": "0x5033206d7236126dba8bb94e3153a03a4575a221def0f57430f8fb87ce2dffdd"},
+                ),
+                "replace_tolerance_pct": 2.0,
+            },
             "window_metrics": {"bought_same_tx": "foundation_bought_locked_same_tx_tokens",
                                "lock_from_balance": "foundation_lock_from_balance_tokens",
                                "purchased": "foundation_aero_purchased_tokens",
@@ -25438,6 +25488,21 @@ CREDIBILITY: dict = {
             "a daily series.",
             "Blockworks' Q3 2026 holder report (the quarter's buy-and-lock total) as a manual reference, or a paid Base "
             "log route to sum the swaps")),
+        # THE TRACE AGAINST THE CHAIN SCAN (Jake 2026-10-12, Aerodrome round item 2): while the scan has not read the
+        # lock's day the trace is the figure in use — recorded, not judged; once it has, the scan replaces the trace and
+        # the two are set against each other over the trace span, 2% (a gap is flagged, never silently overwritten)
+        "in_buyback_trace": _c_in_py(
+            "Foundation buy-and-lock over the trace span (first traced purchase .. lock #130786's day): chain scan vs "
+            "the traced purchases", "scan_over_trace_span", {"use_views": True},
+            {"verdict_when": {"py": "trace_scanned", "args": {"use_views": True},
+                              "positive": {"formula": "trace_total", "tol": 2.0,
+                                           "source": "the traced Safe purchases (config foundation_buyback.trace, "
+                                                     "tx hashes in each row's source)"},
+                              "otherwise": {"verdict": "N/A (recorded)",
+                                            "why": "the trace is the figure in use (tier 3, 1,906,696 AERO for 829,828 "
+                                                   "USDC in six purchases 2026-07-15..08-19); the keyed chain scan "
+                                                   "(BASE_RPC_URL, --seed aero_buyback) replaces it once it reads the "
+                                                   "lock day, and this row then judges the two at 2%."}}}),
         # B3 (overnight 2026-10-06): the rebase recomputed from the MINTER's own formula — no free log route serves
         # Base (Etherscan's free tier excludes it; Blockscout's PRO API is paid there), so the Minter -> distributor
         # transfers cannot be scanned; calculateGrowth over our emission / veAERO / supply reads is the check.

@@ -353,6 +353,10 @@ def seed_aero_buyback(st, log) -> int:
     prior = st.latest_values()
     written = sum(st.upsert(f) for f in (validate_frame(f, prior, out) for f in frames) if f is not None and not f.empty)
     log.info("--seed aero_buyback: AFTER (%.0fs) — %d row(s) stored", time.monotonic() - t0, written)
+    if not written:
+        from fetch.ve_managed import LAST_SEED, why_nothing_stored
+        n = sum(len(f) for f in frames if f is not None)
+        log.warning("--seed aero_buyback: WHY 0 STORED — %s", why_nothing_stored(LAST_SEED, n))
     return 0
 
 

@@ -343,9 +343,8 @@ def test_master_refuses_a_column_that_is_not_its_a_tab_reference(monkeypatch):
 
 
 def test_real_sanity_rules_on_every_dump(tmp_path, monkeypatch):
-    """Item 17 on the six real dumps (10-09): the only hits are the two genuine label contradictions — Aerodrome's
-    buyback declared active with no buyback series in this dump, and Maple's burn declared active with none measured
-    (Jake's item 13)."""
+    """Item 17 on the six real dumps (10-09): no hits. The two genuine label contradictions are resolved — Maple's burn
+    by decision A6, Aerodrome's buyback (declared active, no series in this dump) by the traced purchases (2026-10-12)."""
     import sanity
     import store as sm
     import build_workbook as bw
@@ -363,5 +362,6 @@ def test_real_sanity_rules_on_every_dump(tmp_path, monkeypatch):
                           only=[project])
         assert bw.SANITY_HITS == sanity.check_workbook(d / "wb.xlsx")      # the build ran the same rules
         found += bw.SANITY_HITS
-    # Maple's burn reads 'none (declared: 0% of fees burned)' since Jake's sanity run (2026-10-11, decision A6)
-    assert sorted((p, r) for p, r, _d in found) == [("Aerodrome", "status_contradicts")], found
+    # Maple's burn reads 'none (declared: 0% of fees burned)' since Jake's sanity run (2026-10-11, decision A6);
+    # Aerodrome's buyback has a series since the traced purchases (Jake 2026-10-12, Aerodrome round item 1)
+    assert sorted((p, r) for p, r, _d in found) == [], found
