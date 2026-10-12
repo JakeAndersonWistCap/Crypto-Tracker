@@ -118,6 +118,28 @@ def hits(wb, value) -> list[tuple[str, str, str]]:
     return [h for h in found if h[0] in held] if held else found
 
 
+def lost_headlines(wb, previous: dict, headline_cells: list, prev_date: str = "") -> list[tuple[str, str, str]]:
+    """headline_lost (Jake's Phase 1 review 2026-10-12, item 1): a headline cell that read a VALUE in the previous run's
+    snapshot and reads n/a / BLOCKED / text now. One hit per cell, with both values."""
+    import xlcalc                                          # noqa: PLC0415
+    X = xlcalc.Workbook(wb)
+    out = []
+    for hc in headline_cells:
+        was = ((previous or {}).get(hc["project"]) or {}).get(f"{hc['sheet'][:2]} | {hc['header']}")
+        if not isinstance(was, float):
+            continue
+        cell = wb[hc["sheet"]][hc["cell"]]
+        try:
+            now = X.value(hc["sheet"], cell.row, cell.column)
+        except Exception as e:  # noqa: BLE001
+            now = f"unevaluable ({type(e).__name__})"
+        if _num(now) is None:
+            out.append((hc["project"], "headline_lost",
+                        f"{hc['sheet'][:2]} {hc['header'][:70]}: {was:,.6g} in the previous run ({prev_date}), now "
+                        f"{str(xlcalc.display(now) if not isinstance(now, str) else now)[:80]}"))
+    return out
+
+
 def check_workbook(path_or_wb) -> list[tuple[str, str, str]]:
     import openpyxl
     import xlcalc

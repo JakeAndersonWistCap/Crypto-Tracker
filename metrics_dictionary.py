@@ -24,7 +24,14 @@ CONVENTIONS = [
                    "(Q0, Q-1 .. Q-4) by its own formula, each Data reference moved k quarters back (trajectory.py; "
                    "Trajectory tab). A trend cell beside each headline shows arrow · QoQ · 4-quarter log-linear growth "
                    "(annual) · quarters improved (direction-aware). T12M sums the four quarters of a window total and "
-                   "averages a rate. Years to benchmark at the trailing growth, n/a with the reason (Jake 2026-10-12)."),
+                   "averages a rate. Years to benchmark at the trailing growth, n/a with the reason (Jake 2026-10-12). "
+                   "THE BASIS RULE (decision 7 on 6f8c86c): a change of basis never reads as a trend — history is "
+                   "restated on the current basis where it can be (archive reads at past blocks); where not, the row "
+                   "says SERIES BREAK <date> and no QoQ, growth or direction is computed across it. LUMPY FLOWS "
+                   "(decision 8): a row including a discrete flow (unlocks, a declared lumpy or event-annualised "
+                   "series, a monthly series) takes direction and growth from the ROLLING T12M (Q0..Q-3 vs Q-1..Q-4); "
+                   "single quarters are shown, never used for direction. Forward-looking rows use the emission rate "
+                   "IN FORCE where one is declared (decision 2)."),
     ("Windows", "Q0 = the trailing 90 days ending yesterday (UTC); Q1/Q2/Q3 the 90 days before each; a monthly series' "
                 "Q0 is its three latest complete months. A flow's window figure is its SUM; a stock's 'now' is its latest "
                 "stored value within its age limit (credibility.now_max_age: prices 2 days, daily stocks 3, weekly / "
@@ -171,6 +178,19 @@ ENTRIES = {
         what="What securing the chain pays a staker per year — NOT a protocol revenue share.",
         formula="per chain (config.VALIDATOR_YIELD): rewards paid ÷ stake over the window, net of commission where the "
                 "chain publishes it", window="Q0 or the chain's own rate", unit="%"),
+    "TOTAL YIELD — stakers": dict(
+        what="What a staker earns in real terms: the validator staking yield less the dilution of net inflation.",
+        formula="validator staking yield − net inflation, where net inflation is A4's 'NET SUPPLY CHANGE, annualised % "
+                "of circulating' (the figure Master shows): issuance (or pool release) − burn, each annualised over its "
+                "covered days, ÷ circulating; burn only where issuance is declared zero",
+        window="Q0 / the chain's own rate", unit="%",
+        inputs=["gross_issuance_tokens", "gross_burn_tokens", "circulating_supply_used"],
+        decided=[(J, "2026-10-12", "decision 9 on 6f8c86c: stakers = validator yield − net inflation; non-stakers = "
+                                   "− net inflation; benchmark the 3-month T-bill (Phase 3)")]),
+    "Total yield — non-stakers": dict(
+        what="What a holder who does not stake earns: minus net inflation (a net burn is a positive yield).",
+        formula="− (net supply change annualised ÷ circulating)", window="Q0", unit="%",
+        decided=[(J, "2026-10-12", "decision 9 on 6f8c86c")]),
     "NRR ON SETTLEMENT VOLUME": dict(
         what="Market cap ÷ trailing-365d settlement volume (Artemis definition: DEX + NFT + P2P).",
         formula="market_cap_usd ÷ settlement_volume (365d sum)", window="365d", unit="x",
@@ -219,7 +239,7 @@ ENTRIES = {
         excludes="buybacks paid out to stakers (staking yield)",
         decided=[(J, "2026-10-10", "retirement = burned + held; distributed excluded")]),
     "FDV RETIREMENT RATE (tokens)": dict(
-        what="The same retired tokens per year, % of the FDV supply.", formula="retired annualised ÷ (FDV ÷ price)",
+        what="The same retired tokens per year, % of the FDV supply.", formula="retired annualised ÷ the total supply FDV uses (FDV = price x total_supply); each quarter on its own total",
         window="Q0 → year", unit="%", inputs=["retired_buyback_tokens", "fdv_usd"],
         decided=[(J, "2026-10-10", "retirement = burned + held")]),
     "BUYBACK AS % OF SUPPLY (annualised, implied)": dict(
@@ -294,6 +314,17 @@ ENTRIES = {
         formula="net absorption − unlock_release_tokens; BLOCKED on unequal coverage", window="Q0", unit="tokens",
         inputs=["retired_buyback_tokens", "emissions_tokens", "unlock_release_tokens"],
         decided=[(J, "2026-10-11", "decision A2")]),
+    "Emissions — the rate IN FORCE, annual (tokens)": dict(
+        what="The emission rate the current schedule pays, annualised — beside the Q0 measured blend.",
+        formula="Sky: DssVest.awards(VestedRewardsDistribution.vestId()).tot ÷ (fin − bgn) x 365 days (fetch/sky_mkr.py)",
+        window="now", unit="tokens / year", inputs=["emissions_rate_current_annual_tokens"],
+        decided=[(J, "2026-10-12", "decision 2 on 6f8c86c: emissions shown as the Q0 blend AND the rate in force")]),
+    "RETIREMENT ÷ DILUTION at the emission rate IN FORCE (x)": dict(
+        what="The crossover ratio with emissions at the rate in force; forward-looking rows (years to crossover) use it.",
+        formula="retired_buyback_tokens per covered day ÷ (the rate in force ÷ 365 + other emission legs + unlocks, per "
+                "covered day)", window="Q0 / now", unit="x",
+        inputs=["retired_buyback_tokens", "emissions_rate_current_annual_tokens", "unlock_release_tokens"],
+        decided=[(J, "2026-10-12", "decision 2 on 6f8c86c")]),
     "RETIREMENT ÷ DILUTION (x)": dict(
         what="Retired buyback against dilution as a ratio: 1.0 is the crossover where buybacks absorb what emissions "
              "and unlocks add.",

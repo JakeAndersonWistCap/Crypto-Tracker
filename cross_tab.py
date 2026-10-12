@@ -85,6 +85,16 @@ def _same(a, b) -> bool:
     return str(a).strip() == str(b).strip()
 
 
+def _trend_na(v) -> bool:
+    """A trend cell that says nothing: empty, an error, 'n/a — …', or an arrowless text with no figure in it."""
+    if v is None or v == "":
+        return True
+    if not isinstance(v, str):
+        return not isinstance(v, (int, float))            # an evaluator error value (#N/A)
+    t = v.strip()
+    return t.lower().startswith(("n/a", "#n/a")) or (t.startswith("–") and "%" not in t)
+
+
 def _grid(wb):
     """{(sheet prefix, project, header): (sheet title, row, col)} for Master and the A-tabs (header row = the row whose
     first cell is 'Project')."""
@@ -148,7 +158,9 @@ def mismatches(wb, value) -> list[dict]:
             mt, at = _trend_beside(wb, m), _trend_beside(wb, hit)
             if mt and at:
                 tv, ta = value(m[0], m[1], m[2] + 1), value(hit[0], hit[1], hit[2] + 1)
-                if not _same(tv, ta):
+                # TWO EMPTY TRENDS AGREE however each says it (Jake's Phase 1 review 2026-10-12, item 9: PancakeSwap,
+                # parked, read as a mismatch with n/a on both sides)
+                if not _same(tv, ta) and not (_trend_na(tv) and _trend_na(ta)):
                     found.append({"project": p, "column": f"{mh} (trend)", "master": tv, "atab": ta,
                                   "atab_cell": f"{hit[0]}!{hit[3]} (trend)",
                                   "master_formula": str(wb[m[0]].cell(m[1], m[2] + 1).value)[:300],

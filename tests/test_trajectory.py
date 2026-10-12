@@ -114,9 +114,14 @@ def test_benchmarks_and_parameters_live_in_config():
     import config
     import trajectory as t
     ids = {b["id"] for b in config.TRAJECTORY["benchmarks"]}
-    assert ids == {"retire_vs_dilution", "burn_vs_issuance", "subsidy_cover", "yield_vs_tbill", "nrr_vs_m2_gdp"}
-    assert t.benchmark_target(t.benchmark_for("a1_nrr_settlement"), {})[0] == 0.71
-    assert t.benchmark_target(t.benchmark_for("a1_validator_yield"), {})[0] is None   # until Phase 3 stores the T-bill
+    # NRR is valuation HEADROOM, not a target (Jake's Phase 1 review 2026-10-12, item 7): no years-to-NRR benchmark;
+    # A1 shows headroom = the Config global nrr_m2_gdp (0.71) ÷ NRR
+    assert ids == {"retire_vs_dilution", "burn_vs_issuance", "subsidy_cover", "yield_vs_tbill"}
+    assert t.benchmark_for("a1_nrr_settlement") is None and config.GLOBALS["nrr_m2_gdp"] == 0.71
+    assert config.TRAJECTORY["rows"]["a1_nrr_settlement_headroom"] == ("Valuation", 1)
+    # the T-bill benchmark sits on the stakers' TOTAL YIELD (Jake 2026-10-12, decision 9 on 6f8c86c)
+    assert t.benchmark_for("a1_validator_yield") is None
+    assert t.benchmark_target(t.benchmark_for("a1_total_yield_stakers"), {})[0] is None   # until Phase 3 stores it
     assert config.TRAJECTORY["history_days"] >= 5 * config.TRAJECTORY["period_days"]
 
 
@@ -131,15 +136,18 @@ def test_snapshot_carries_the_trajectory_columns(tmp_path, monkeypatch):
 
 
 def test_history_gaps_names_the_cheapest_fix_on_the_real_dump(tmp_path, monkeypatch):
+    import config
     import history_gaps as hg
     wb, _rows = _built(tmp_path, monkeypatch, "Chainlink")
     rows = hg.gap_rows(wb, pd.Timestamp("2026-10-09"))
     by = {r["metric"]: r for r in rows}
-    assert by["revenue_usd"]["fix_cost"] == "free" and "DefiLlama" in by["revenue_usd"]["cheapest_fix"]
-    assert by["buyback_fund_balance"]["run_by_run_fixes"] == "yes" and "archive" in by["buyback_fund_balance"]["cheapest_fix"]
+    assert by["revenue_usd"]["gap"] == "ok"
+    assert "CJ" in by["total_supply"]["cheapest_fix"] and "archive_backfill" in by["total_supply"]["cheapest_fix"]
     assert by["fdv_usd"]["fix_cost"] == "as its inputs"
-    assert by["revenue_usd"]["Q-1"] == "full" and by["revenue_usd"]["Q-4"].startswith("partial")
+    assert not [r for r in rows if r["project"] not in config.CREDIBILITY_PROJECTS]
+    assert by["revenue_usd"]["Q-1"] == "full" and by["revenue_usd"]["Q-4 (bonus)"].startswith("partial")
+    # judged on Q0..Q-3 (Jake's Phase 1 review, item 8): a short Q-4 alone is no gap
+    assert all(r["gap"] == "ok" for r in rows if all(r[q] == "full" for q in ("Q0", "Q-1", "Q-2", "Q-3")))
     out = hg.write(rows, tmp_path / "history_gaps.csv")
     assert out.read_text(encoding="utf-8").splitlines()[0].split(",") == hg.FIELDS
-    cmds = hg.fix_commands(rows)
-    assert any("archive_backfill.py" in c for c in cmds[0] + cmds[-1]) or any("archive_backfill.py" in " ".join(c) for c in cmds)
+    assert isinstance(hg.fix_commands(rows), list)

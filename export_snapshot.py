@@ -128,7 +128,7 @@ def snapshot_rows(wb, value, cred_rows: list, cred_tab: list, headline_cells: li
 
 TRAJ_FIELDS = ("Q0", "Q-1", "Q-2", "Q-3", "Q-4", "T12M", "QoQ", "4Q growth (annual, log-linear)",
                "Quarters improved (direction-aware)", "Trough of the last 4", "Years to benchmark",
-               "Credibility (Q0 = headline cell)")
+               "Series break (basis change)", "Credibility (Q0 = headline cell)")
 
 
 def _trajectory(wb, value) -> dict:
@@ -150,6 +150,35 @@ def _trajectory(wb, value) -> dict:
     return out
 
 
+SNAPSHOT_DIR = ROOT / "snapshots"
+
+
+def load_previous(asof, out_dir: Path | str | None = None) -> tuple[str, dict]:
+    """(its date, {project: {"<tab> | <header>": float or None}}) from the latest snapshot dated on or before `asof` —
+    the previous run's, since the daily run writes the snapshot LAST (a same-day re-run compares with the day's earlier
+    run). ('', {}) when there is none. Text cells ("n/a", "BLOCKED — ...") read None. Used by the continuity guard
+    (Jake's Phase 1 review 2026-10-12, item 1: a headline that goes from a value to n/a / BLOCKED between two runs)."""
+    import pandas as pd                                    # noqa: PLC0415
+    d = Path(out_dir) if out_dir else SNAPSHOT_DIR
+    cut = str(pd.Timestamp(asof).date())
+    files = sorted(f for f in d.glob("snapshot_*.csv") if f.stem[len("snapshot_"):] <= cut) if d.is_dir() else []
+    if not files:
+        return "", {}
+    out: dict = {}
+    with open(files[-1], newline="", encoding="utf-8") as fh:
+        for row in csv.DictReader(fh):
+            vals = {}
+            for k, v in row.items():
+                if k in ("project", "asof") or k.startswith("traj |") or " | " not in str(k) or str(k).count(" | ") != 1:
+                    continue
+                try:
+                    vals[k] = float(v) if v not in ("", None) else None
+                except ValueError:
+                    vals[k] = None
+            out[row.get("project") or ""] = vals
+    return files[-1].stem[len("snapshot_"):], out
+
+
 def write_csv(rows: list[dict], path: Path) -> Path:
     cols: list = []
     for r in rows:
@@ -168,7 +197,7 @@ def write_csv(rows: list[dict], path: Path) -> Path:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--workbook")
-    ap.add_argument("--out", default=str(ROOT / "snapshots"))
+    ap.add_argument("--out", default=str(SNAPSHOT_DIR))
     ap.add_argument("--asof")
     a = ap.parse_args(argv)
     import openpyxl

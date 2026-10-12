@@ -299,3 +299,54 @@ def seed_foundation(projects: list[dict], days: int = 100, stored=None, say=prin
                 frames += fs
                 say(f"  {msg}")
     return frames
+
+
+
+def seed_managed_locks(projects: list[dict], days: int | None = None, stored=None, say=print,
+                       reader=None) -> tuple[list, str]:
+    """`token_metrics.py --seed aero_managed_locks` (Jake 2026-10-12, decision 7 and Phase 1 review item 2 — Aerodrome's
+    circulating restated on the on-chain basis): the filing wallets' managed-veNFT deposits at the first block of each
+    past UTC day — the daily read's arithmetic, batched through Multicall3 (check_offline_items.
+    aerodrome_managed_deposits: four eth_calls a day) — so the on-chain circulating, which subtracts them, has a history
+    on its own basis. Only days with no row; newest first; source marked archive (one measuring point with the daily
+    read). Public Base RPCs serve archive eth_call; a keyed BASE_RPC_URL is faster. Frames out, and one line saying what
+    was read and what was not."""
+    import config                                          # noqa: PLC0415
+    import check_offline_items as coi                      # noqa: PLC0415
+    from .archive import ARCHIVE_DAYS                      # noqa: PLC0415
+    days = days or ARCHIVE_DAYS
+    reader = reader or (lambda owners, block, escrow: coi.aerodrome_managed_deposits(owners, block=block, escrow=escrow))
+    frames, n_read, n_stored, errs = [], 0, 0, []
+    for p in projects:
+        spec = p.get("ve_managed_holdings")
+        if not spec:
+            continue
+        name, metric, chain = p["name"], spec["metric"], spec.get("chain", "base")
+        src = config.mark_source(f"{SOURCE}:{spec['escrow'][:10]}.weights", "archive")
+        end = today()
+        import progress                                   # noqa: PLC0415
+        for k in range(1, days + 1):
+            progress.tick(f"{name} managed veNFT deposits, days", k, days)
+            d = (end - pd.Timedelta(days=k)).normalize()
+            if stored and stored(name, metric, str(d.date())):
+                n_stored += 1
+                continue
+            b = coi.rpc_block_at(chain, int(d.tz_localize("UTC").timestamp()), say=lambda *_: None)
+            if b is None:
+                errs.append(f"{d.date()}: no block for the day start")
+                continue
+            got = reader(list(spec["owners"]), hex(b), spec["escrow"])
+            if got.get("error"):
+                from .chain import redact_urls
+                errs.append(f"{d.date()}: {redact_urls(got['error'])}"[:200])
+                say(f"  {d.date()}: {errs[-1]} — skipped")
+                if len(errs) >= 5 and not n_read:
+                    break                                  # the endpoint serves no state this far back: stop, said
+                continue
+            n_read += 1
+            frames.append(tidy([(d, float(got["total"]))], name, metric, src, TIER))
+            say(f"  {d.date()} (block {b:,}): {metric} = {got['total']:,.0f} ({got['in_managed']} of {got['nfts']} "
+                f"veNFT(s) in a managed NFT)")
+    line = (f"{n_read} day(s) read, {n_stored} already stored, {len(errs)} not read"
+            + (f" (first: {errs[0]})" if errs else ""))
+    return frames, line

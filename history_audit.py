@@ -54,8 +54,8 @@ PRICE_DAYS = 365          # prices: every row of every USD valuation is priced o
 def why_short(p: dict, m: str, first: str | None) -> str:
     """For a short series: what fills it, or the specific reason nothing can (2026-09-29)."""
     from fetch import archive as ar
-    if m in config.ARCHIVE_NOT_BY_DESIGN:
-        return config.ARCHIVE_NOT_BY_DESIGN[m]
+    if config.archive_not_by_design(p["name"], m):
+        return config.archive_not_by_design(p["name"], m)
     fwd = config.HISTORY_FORWARD_ONLY.get(p["name"]) or {}
     if m in fwd.get("metrics", ()):
         if not first:
@@ -163,7 +163,7 @@ def rows(db: str, short_only: bool, classify: bool = True) -> list[tuple]:
             if (verdict not in ("FULL", "COMPLETE") and as_read and as_read < first
                     and (today() - pd.Timestamp(as_read)).days >= need - bf.SLACK_DAYS):
                 verdict = "FULL AS READ"
-            elif verdict not in ("FULL", "COMPLETE") and m in config.ARCHIVE_NOT_BY_DESIGN:
+            elif verdict not in ("FULL", "COMPLETE") and config.archive_not_by_design(p["name"], m):
                 verdict = "BY DESIGN"          # total_supply: CoinGecko's, read "now" only (Jake, 2026-10-01)
             elif verdict not in ("FULL", "COMPLETE") and decided:
                 verdict = "DECIDED"
@@ -172,7 +172,7 @@ def rows(db: str, short_only: bool, classify: bool = True) -> list[tuple]:
             why = ("" if verdict == "FULL" else
                    f"series starts {start['from']}: {start['why']}" if verdict == "COMPLETE" else
                    f"{decided[0]}: {decided[1][:200]}" if verdict == "DECIDED" else
-                   config.ARCHIVE_NOT_BY_DESIGN.get(m, "") if verdict == "BY DESIGN" else
+                   config.archive_not_by_design(p["name"], m) if verdict == "BY DESIGN" else
                    f"stored from {first}; the workbook reads it from {as_read} (a read-time view: "
                    f"{config.read_time_history(p['name'], m) or 'see build_workbook'})" if verdict == "FULL AS READ" else
                    why_short(p, m, first))

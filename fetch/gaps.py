@@ -304,6 +304,15 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
         return ("the tokenDetails read and the Foundation / Community Grants wallet reads (fetch/hypercore.py "
                 "_circ_less_wallets) stored nothing this run — an unread wallet stores no circulating figure",
                 "Check the Run Log for hypercore_info: 'NOT STORED' names the wallet that did not answer.")
+    if metric in ("mkr_outstanding_tokens", "mkr_issuer_tokens", "mkr_sky_fee", "sky_mkr_nonissuer_backing_tokens",
+                  "emissions_rate_current_annual_tokens"):
+        return ("the MKR backing / vest read (fetch/sky_mkr.py: MKR totalSupply, the Pause Proxy's MKR, the converter's "
+                "rate and fee, the DssVest award in force) stored nothing this run",
+                "Check the Run Log for sky_mkr (a public Ethereum RPC eth_call).")
+    if metric == "near_foundation_accounts_tokens":
+        return ("the NEAR view_account read of lockup.near + contributors.near (fetch/near.py extra read) stored nothing "
+                "this run — until it does, NEAR's lockup-rule circulating falls back to NEAR's own figure",
+                "Check the Run Log for near_rpc (all-or-nothing: both accounts must answer).")
     if metric == "total_supply_coingecko":
         return ("CoinGecko's supply read (fetch/coingecko.py /coins/markets) stored no total this run — it is kept "
                 "beside the on-chain total (config.TOTAL_SUPPLY_ONCHAIN_FIRST) for the like-for-like circulating row",

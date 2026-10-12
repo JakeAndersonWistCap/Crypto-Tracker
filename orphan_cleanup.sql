@@ -4485,3 +4485,99 @@ SELECT project, metric, source, COUNT(*) AS rows, MIN(date) AS first, MAX(date) 
 -- UPDATE metrics
 --    SET source = 'scrape:api.tokenops.xyz:cache' || substr(source, 13)
 --  WHERE project = 'Morpho' AND source LIKE 'scrape:cache%';
+
+-- ========================================================================================
+-- CJ. FDV HISTORY ON ONE BASIS: COINGECKO'S PRE-HANDOVER TOTALS MOVE TO total_supply_coingecko  2026-10-12
+--     Jake 2026-10-12 (decision 6 on 6f8c86c). For the eight on-chain-first projects (config.TOTAL_SUPPLY_ONCHAIN_FIRST)
+--     total_supply was CoinGecko's figure before the handover of 2026-10-11 and the token's totalSupply() after. The
+--     chain total is now read at past blocks (archive_backfill.py; source labelled '[chain backfill (pre-handover)]'),
+--     so the whole history is on one basis. The backfill writes only days with no total_supply row and refuses a day
+--     whose neighbours were read elsewhere, so CoinGecko's pre-handover rows move first: CJ2 renames them to
+--     total_supply_coingecko (the cross-check, as CoinGecko's total has been since 10-11) and removes the few whose day
+--     already holds a total_supply_coingecko row (UPDATE OR IGNORE left them; the EXISTS clause names exactly those).
+--     Values are untouched. Then: python archive_backfill.py --run (fills total_supply from the chain).
+--     Run: python run_sql.py CJ, then python run_sql.py --delete CJ.
+-- ========================================================================================
+-- CJ1. WHAT MOVES.
+SELECT project, source, COUNT(*) AS rows, MIN(date) AS first, MAX(date) AS last
+  FROM metrics
+ WHERE metric = 'total_supply' AND source LIKE 'coingecko%' AND date < '2026-10-11'
+   AND project IN ('Ether.fi', 'Aerodrome', 'Chainlink', 'Fluid', 'Maple', 'Morpho', 'Pendle', 'Sky')
+ GROUP BY project, source ORDER BY project, source;
+
+-- CJ2. THE MOVE (rename; then remove what the rename left because the day already holds CoinGecko's total).
+-- UPDATE OR IGNORE metrics
+--    SET metric = 'total_supply_coingecko'
+--  WHERE metric = 'total_supply' AND source LIKE 'coingecko%' AND date < '2026-10-11'
+--    AND project IN ('Ether.fi', 'Aerodrome', 'Chainlink', 'Fluid', 'Maple', 'Morpho', 'Pendle', 'Sky');
+-- DELETE FROM metrics
+--  WHERE metric = 'total_supply' AND source LIKE 'coingecko%' AND date < '2026-10-11'
+--    AND project IN ('Ether.fi', 'Aerodrome', 'Chainlink', 'Fluid', 'Maple', 'Morpho', 'Pendle', 'Sky')
+--    AND EXISTS (SELECT 1 FROM metrics c WHERE c.project = metrics.project AND c.date = metrics.date
+--                AND c.metric = 'total_supply_coingecko');
+
+-- ========================================================================================
+-- CK. RESTATE ON THE CURRENT BASIS: THE OLD-COMPOSITION NON-CIRCULATING ROWS GO, THE ARCHIVE REFILLS THEM  2026-10-12
+--     Jake 2026-10-12 (decision 7 on 6f8c86c): a change of basis must never read as a trend; restate history on the
+--     current basis wherever possible. noncirculating_holding_tokens is a sum of named wallets and the wallet set is
+--     part of its measuring point: Aerodrome's grew 3 -> 7 on 2026-10-07 (+ Buyback / Locked Funds, Flight School, TGE
+--     Incentives, Velodrome Foundation airdrop), Chainlink's 24 -> 27 on 2026-10-07 (+ the three blog.chain.link
+--     2022 wallets), and Morpho's loses the Association / Labs / Grants / Rewards / Operative wallets to their own
+--     series (noncirculating_entities_tokens) from this commit (decision 1). The archive writes only days with no
+--     row and refuses a day whose neighbours were read from another set, so the old-set rows go first; then
+--     `python archive_backfill.py --run` reads the CURRENT set at each past day's first block (and Morpho's entities series
+--     with it), and for Aerodrome `python token_metrics.py --seed aero_managed_locks` reads the managed-veNFT
+--     deposits (filing_managed_lock_tokens) at past blocks on the keyed BASE_RPC_URL. Until both are done the
+--     Trajectory tab marks the rows that read these series SERIES BREAK 2026-10-07 (Morpho: the day this runs).
+--     CK1 lists what goes; CK2 removes exactly the rows whose source does not carry the current set.
+--     Run: python run_sql.py CK, then python run_sql.py --delete CK, then the two refills above.
+-- ========================================================================================
+-- CK1. WHAT GOES (per project, the old set's rows).
+SELECT project, COUNT(*) AS rows, MIN(date) AS first, MAX(date) AS last, ROUND(MIN(value), 0) AS min_value,
+       ROUND(MAX(value), 0) AS max_value
+  FROM metrics
+ WHERE metric = 'noncirculating_holding_tokens'
+   AND ((project = 'Aerodrome' AND source NOT LIKE '%noncirc_flight_school%')
+     OR (project = 'Chainlink' AND source NOT LIKE '%noncirc_blog_2022_400k%')
+     OR (project = 'Morpho' AND (source LIKE '%noncirc_rewards_multisig%' OR source LIKE '%noncirc_association%'
+                                 OR source LIKE '%noncirc_contributor_grants%' OR source LIKE '%noncirc_operative%')))
+ GROUP BY project ORDER BY project;
+
+-- CK2. THE DELETE.
+-- DELETE FROM metrics
+--  WHERE metric = 'noncirculating_holding_tokens'
+--    AND ((project = 'Aerodrome' AND source NOT LIKE '%noncirc_flight_school%')
+--      OR (project = 'Chainlink' AND source NOT LIKE '%noncirc_blog_2022_400k%')
+--      OR (project = 'Morpho' AND (source LIKE '%noncirc_rewards_multisig%' OR source LIKE '%noncirc_association%'
+--                                  OR source LIKE '%noncirc_contributor_grants%' OR source LIKE '%noncirc_operative%')));
+
+-- ========================================================================================
+-- CL. GEODNET BURN: ARCHIVE READINGS THAT INTERLEAVED THE DECLARED HANDOVER  2026-10-12
+--     Jake's Phase 1 review (2026-10-12 14:44, item 1): after `history_gaps.py --run-fixes`, GEODNET's gross burn, burn
+--     yield, crossover and net supply change all read n/a. burn_address_balance and gross_burn_tokens are declared
+--     handovers — the Polygon dead address (chain:polygon:burn_polygon), then from 2026-09-28 Polygon + the Solana burn
+--     account (chain:sum(...)). The archive reads the CURRENT point, and a current-point row dated BEFORE a stored
+--     Polygon-only row interleaves the legs; the build sees them OVERLAP and withholds the whole series. The archive now
+--     refuses such a row (fetch/archive.breaks_handover_order). CL1 shows, per metric, the Polygon-only leg's last date
+--     and the archive-written summed rows dated before it — if CL1 lists none, this was not the cause: send
+--     `python dump_fixture.py --project GEODNET`. CL2 removes exactly those archive rows (they can be re-read once the
+--     Polygon-only leg is gone, never beside it).
+--     Run: python run_sql.py CL, then python run_sql.py --delete CL, then rebuild (no re-read needed).
+-- ========================================================================================
+-- CL1. WHAT GOES.
+SELECT m.metric, COUNT(*) AS rows, MIN(m.date) AS first, MAX(m.date) AS last,
+       (SELECT MAX(p.date) FROM metrics p WHERE p.project = 'GEODNET' AND p.metric = m.metric
+           AND p.source LIKE 'chain:polygon:burn_polygon%') AS polygon_only_leg_ends
+  FROM metrics m
+ WHERE m.project = 'GEODNET' AND m.metric IN ('burn_address_balance', 'gross_burn_tokens')
+   AND m.source LIKE 'chain:sum(%' AND m.source LIKE '%archive%'
+   AND m.date < (SELECT MAX(p.date) FROM metrics p WHERE p.project = 'GEODNET' AND p.metric = m.metric
+                    AND p.source LIKE 'chain:polygon:burn_polygon%')
+ GROUP BY m.metric ORDER BY m.metric;
+
+-- CL2. THE DELETE.
+-- DELETE FROM metrics
+--  WHERE project = 'GEODNET' AND metric IN ('burn_address_balance', 'gross_burn_tokens')
+--    AND source LIKE 'chain:sum(%' AND source LIKE '%archive%'
+--    AND date < (SELECT MAX(p.date) FROM metrics p WHERE p.project = 'GEODNET' AND p.metric = metrics.metric
+--                   AND p.source LIKE 'chain:polygon:burn_polygon%');

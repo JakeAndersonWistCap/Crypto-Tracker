@@ -255,7 +255,9 @@ class NearNode:
                              f"{metric}: no yocto_exponent on the node_api block, so the scaling "
                              f"has no source. Nothing was called.", TIER)
             return
-        field = read.get("field", "amount")
+        # amount + locked where the read names both (lockup.near / contributors.near, as NEAR's lakehouse sums them)
+        fields = tuple(read.get("fields") or (read.get("field", "amount"),))
+        field = "+".join(fields)
         raw, parts = 0.0, []
         for acct in accounts:
             body = {"jsonrpc": "2.0", "id": "token-metrics", "method": "query",
@@ -272,7 +274,8 @@ class NearNode:
                         suggestion=("Check the endpoints in this project's node_api block. Every "
                                     "listed account must answer for the sum to be stored."))
                 return
-            v = parse_number(json_path_get(payload, f"result.{field}"))
+            got = [parse_number(json_path_get(payload, f"result.{f}")) for f in fields]
+            v = None if any(x is None for x in got) else sum(got)
             if v is None:
                 keys = (", ".join(sorted((payload.get("result") or {}) if isinstance(payload, dict) else []))
                         or type(payload).__name__)

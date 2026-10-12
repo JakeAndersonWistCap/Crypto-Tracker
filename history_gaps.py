@@ -11,9 +11,11 @@ Phase 1; Jake 2026-10-12: "Jake does not want to wait months for history").
     python history_gaps.py --workbook X       from an already built workbook
 
 THE ROWS: every (project, metric) a trajectory row reads — the metric names in each Trajectory-tab Q0 formula (so the
-list is exactly what the headlines use) — with: kind, latest source and tier, the earliest date held, Q-1..Q-4 each
+list is exactly what the headlines use) — with: kind, latest source and tier, the earliest date held, Q0..Q-3 each
 "full" / "partial (n days)" / "none", the blocking reason, the cheapest fix, what that fix costs, and whether
---run-fixes runs it. A series full for all five quarters is listed as "ok".
+--run-fixes runs it. A series full for the four quarters Q0..Q-3 is listed as "ok" (Q-4 is a bonus column). Scope: the
+15 portfolio projects (config.CREDIBILITY_PROJECTS); a series n/a by structure (no such mechanism, issuance declared
+zero) is not listed (Jake's Phase 1 review 2026-10-12, item 8).
 
 THE CHEAPEST FIX, in cost order: a free API that serves full history (DefiLlama — the routine run re-reads 455 days
 for a short pair, fetch.backfill); a historical eth_call at past blocks (archive_backfill.py — free archive RPCs);
@@ -39,10 +41,13 @@ import config
 ROOT = Path(__file__).resolve().parent
 OUT = ROOT / "logs" / "history_gaps.csv"
 FULL_SHARE = 0.9               # a quarter "full" at >= 90% of its days held (81 of 90)
-FIELDS = ["project", "metric", "kind", "source", "tier", "earliest", "Q-1", "Q-2", "Q-3", "Q-4", "gap",
+FIELDS = ["project", "metric", "kind", "source", "tier", "earliest", "Q0", "Q-1", "Q-2", "Q-3", "Q-4 (bonus)", "gap",
           "blocking_reason", "cheapest_fix", "fix_cost", "run_by_run_fixes"]
-QCOLS = {"Q-1": ("q1_covered_days", 1), "Q-2": ("q2_covered_days", 2), "Q-3": ("q3_covered_days", 3),
-         "Q-4": ("q4_covered_days", 4)}
+# JUDGED ON FOUR QUARTERS, Q0..Q-3 (Jake's Phase 1 review 2026-10-12, item 8); Q-4 is a bonus column (the rolling T12M
+# a quarter earlier needs it) and never makes a gap on its own
+QCOLS = {"Q0": ("q0_covered_days", 0), "Q-1": ("q1_covered_days", 1), "Q-2": ("q2_covered_days", 2),
+         "Q-3": ("q3_covered_days", 3)}
+BONUS = {"Q-4 (bonus)": ("q4_covered_days", 4)}
 
 # A SOURCE'S OWN SEED (token_metrics.py --seed …): reads its full range with no time budget
 SEEDS = {"chainlink_fees": "chainlink_fees", "plume_staking": "plume_staking", "plume_settlement": "plume_settlement",
@@ -112,10 +117,15 @@ def fix_for(p: dict, metric: str, row: dict) -> tuple[str, str, str, str]:
             return ("CoinGecko's free market_chart serves 365 days",
                     "Q-1..Q-3: CoinGecko 365 days (free, the daily run); Q-4: DefiLlama coins chart history "
                     "(free) — NOT WIRED as a price source yet", "free", "token_metrics.py")
+        if metric == "total_supply" and p["name"] in config.TOTAL_SUPPLY_ONCHAIN_FIRST:
+            # APPROVED (Jake 2026-10-12, decision 6 on 6f8c86c): the chain total at past blocks, labelled
+            # "[chain backfill (pre-handover)]" — after orphan_cleanup.sql CJ moves CoinGecko's rows aside
+            return ("CoinGecko serves this as a current snapshot only (no history)",
+                    "orphan_cleanup.sql CJ, then archive_backfill.py --run: totalSupply() at past blocks (decision 6)",
+                    "free (archive RPC) — after SQL CJ", "")
         return ("CoinGecko serves this as a current snapshot only (no history)",
-                "historical eth_call totalSupply() at past blocks for the on-chain-first tokens "
-                "(config.TOTAL_SUPPLY_ONCHAIN_FIRST) — NEEDS JAKE: it puts chain rows BEFORE the declared "
-                "CoinGecko -> chain handover; else rebuild from mint / burn Transfer events", "free (decision)", "")
+                "historical totalSupply() at past blocks — wired only for the on-chain-first tokens "
+                "(config.TOTAL_SUPPLY_ONCHAIN_FIRST); else rebuild from mint / burn Transfer events", "probe first", "")
     if base == "chain" or src.startswith("chain"):
         why = ha.why_short(p, metric, str(first)[:10] if first else None)
         if why.startswith("archive_backfill.py --run"):
@@ -148,6 +158,16 @@ def fix_for(p: dict, metric: str, row: dict) -> tuple[str, str, str, str]:
     return (f"{base}: no history route recorded", "probe the source for history", "probe first", "")
 
 
+def structural_na(p: dict, metric: str, row: dict) -> str:
+    """Why a series is n/a BY STRUCTURE — no history can fill it, so it is no gap (item 8): the Data row's status is
+    'n/a' (no such mechanism for this project), or the issuance is declared zero (config.issuance_declared_zero)."""
+    if str(row.get("status") or "").lower().startswith("n/a"):
+        return "no such mechanism (Data status n/a)"
+    if metric in ("gross_issuance_tokens", "emissions_tokens") and config.issuance_declared_zero(p["name"]):
+        return "issuance declared zero"
+    return ""
+
+
 def gap_rows(wb, asof: pd.Timestamp) -> list[dict]:
     import trajectory
     period = int(config.TRAJECTORY["period_days"])
@@ -163,18 +183,23 @@ def gap_rows(wb, asof: pd.Timestamp) -> list[dict]:
     out = []
     for name in sorted(wanted):
         p = config.PROJECT_BY_NAME.get(name)
-        if not p:
+        # THE 15 PORTFOLIO PROJECTS ONLY (item 8): parked names are not on the to-do list
+        if not p or name not in config.CREDIBILITY_PROJECTS:
             continue
         for m in sorted(wanted[name]):
             row = data.get(f"{name}|{m}") or {}
+            if structural_na(p, m, row):
+                continue
             states = {q: quarter_state(row, k, asof, period) for q, (_c, k) in QCOLS.items()}
+            bonus = {q: quarter_state(row, k, asof, period) for q, (_c, k) in BONUS.items()}
             gap = not all(full for _s, full in states.values())
             reason, fix, cost, cmd = fix_for(p, m, row) if gap else ("", "", "", "")
             out.append({"project": name, "metric": m, "kind": row.get("kind") or "", "source": row.get("source") or "",
                         "tier": row.get("tier") or "",
                         "earliest": "" if pd.isna(pd.to_datetime(str(row.get("first_date") or "")[:10], errors="coerce"))
                         else str(row.get("first_date"))[:10],
-                        **{q: s for q, (s, _f) in states.items()}, "gap": "GAP" if gap else "ok",
+                        **{q: s for q, (s, _f) in states.items()}, **{q: s for q, (s, _f) in bonus.items()},
+                        "gap": "GAP" if gap else "ok",
                         "blocking_reason": reason, "cheapest_fix": fix, "fix_cost": cost,
                         "run_by_run_fixes": "yes" if cmd else "no"})
     return out
@@ -237,7 +262,7 @@ def summary(rows: list[dict]) -> list[str]:
     for r in gaps:
         by_cost[r["fix_cost"]] = by_cost.get(r["fix_cost"], 0) + 1
     out = [f"HISTORY GAPS — {len(gaps)} of {len(rows)} (project, metric) series the trajectory reads are short of "
-           f"five quarters", "  by cheapest fix: " + ", ".join(f"{k}: {v}" for k, v in sorted(by_cost.items()))]
+           f"four quarters (Q0..Q-3)", "  by cheapest fix: " + ", ".join(f"{k}: {v}" for k, v in sorted(by_cost.items()))]
     for p in sorted({r["project"] for r in gaps}):
         mine = [r for r in gaps if r["project"] == p]
         out.append(f"  {p}: " + "; ".join(f"{r['metric']} (from {r['earliest'] or '—'}; {r['fix_cost']})"

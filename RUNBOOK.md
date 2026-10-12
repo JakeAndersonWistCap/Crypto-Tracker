@@ -527,6 +527,131 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11bq. Phase 1 review (Jake's run 2026-10-12 14:44) — fixes before Phase 2
+
+**Run after pulling (in this order; 11bp's steps first if not yet run).**
+1. `python run_sql.py CL` — GEODNET: does the store hold archive-written summed burn rows dated before the last
+   Polygon-only row? If it lists rows, `python run_sql.py --delete CL` and rebuild. If it lists none, that was not the
+   cause: send `python dump_fixture.py --project GEODNET`.
+2. `python run_sql.py CJ` / `--delete CJ`, `python run_sql.py CK` / `--delete CK` (11bp), then
+   `python archive_backfill.py --run` and `python token_metrics.py --seed aero_managed_locks` — Aerodrome's circulating
+   history on the on-chain basis (the seed now batches through Multicall3: four eth_calls a day; the public Base RPCs
+   serve it).
+3. The next daily run asks DefiLlama's coins chart for 455 days once (Q-4 prices) and re-asks the short DefiLlama
+   series over 455 days (8a).
+
+**1. GEODNET burn n/a after `history_gaps.py --run-fixes`.** Not reproducible here (no GEODNET dump). The likely cause,
+from the code: the burn stock and flow are declared handovers (Polygon only, then Polygon + Solana from 2026-09-28);
+the archive reads the CURRENT point, and `neighbours_agree` checks only the nearest stored rows, so summed readings
+could land before Polygon-only rows; the build then sees the legs OVERLAP and withholds the series (gross burn, burn
+yield, crossover, net change all n/a). Now: `fetch/archive.breaks_handover_order` refuses any reading (stock or derived
+flow) that would interleave a declared handover's legs; SQL **CL** lists and removes such rows. Also fixed: a Solana
+history listing cut by the time budget was reported complete (days before the oldest listed transaction would take its
+pre-balance). **The guard Jake asked for:** each project's Credibility tab opens with a CONTINUITY row — of the
+headlines that read a value in the previous run's snapshot (snapshots/snapshot_<date>.csv, the daily run's last step),
+how many still do; fewer is a CHECK (zero tolerance), the note lists every cell with its previous value — and sanity
+rule `headline_lost` names each cell (previous value, current n/a / BLOCKED). Read for the real store only.
+
+**2. Aerodrome on the on-chain basis.** The on-chain set (1,516.8M) was already the figure in use from 2026-10-07; the
+days before fell back to CoinGecko's 1,004.5M, which excludes every veAERO lock — another basis (a fake +51% step at
+10-07). `CIRCULATING_ONCHAIN["Aerodrome"]["no_coingecko_fallback"]`: CoinGecko never stands in (market cap, every
+ratio, the A-tab fallback formula); a day without the on-chain set reads n/a until the history is restated (step 2).
+The restated history, read at past blocks 2026-10-12 (fixtures/aero_onchain_weekly_2026-10-12.json):
+   | Quarter (dump 10-09, asof 10-12) | Circulating BEFORE (CoinGecko stand-in) | AFTER (on-chain, restated) | Market cap before | after |
+   |---|---:|---:|---:|---:|
+   | Q0 | 1,516.9M (on-chain already) | 1,516.9M | $1.226bn | $1.226bn |
+   | Q-1 | 943.9M | 1,450.4M | $0.422bn | $0.649bn |
+   | Q-2 | 920.7M | 1,401.2M | $0.373bn | $0.560bn |
+   | Q-3 | 905.8M | 1,356.2M | $0.641bn | $0.960bn |
+   | Q-4 | 899.8M | 1,308.7M | $0.983bn | $1.459bn |
+
+   The trend on circulating read "▲ +88%/yr (4Q), 4/4 improved" — the basis change read as growth; restated it reads
+   "↑ +16%/yr" (neutral: supply rising is never "improved"). Single reads at day starts: 1,262.0M (2025-07-17),
+   1,330.9M (2025-10-15), 1,375.4M (2026-01-13), 1,432.4M (2026-04-13), 1,475.4M (2026-07-12) against 1,512.4M on
+   10-07 — smooth into the switch. Retirement rate Q0 0.5155% and net absorption Q0 −57,545,636 do not change (Q0 was
+   already on-chain; net absorption is in tokens); their earlier quarters stay n/a until the Foundation buyback history
+   is read (`--seed aero_buyback`, keyed BASE_RPC_URL).
+
+**3. A3 retirement history.** The pair was gated on FDV and price at "now", and FDV has history only where total supply
+does, so a3_circ_retirement / a3_fdv_retirement read one quarter while a3_actual_buyback_pct (same numerator, same
+circulating) read four. Each rate is now gated on its own inputs, and the FDV supply is the total supply FDV multiplies,
+read for the quarter (FDV ÷ price at "now" before). Chainlink on the real dump: circulating retirement Q0..Q-4 all held.
+
+**4-7. The Trajectory tab.** Growth needs ≥ 3 quarters, all > 0, one regime; else "NEW since Q-x" (a mechanism that
+starts — older quarters READ 0 — or an earliest quarter below 10% of Q0) or "STEP CHANGE at Q-x" (a basis break inside
+the window), never a rate; an empty quarter is history not held, said as such. The arrow follows the 4-quarter growth
+with quarters improved; QoQ is secondary text. Every row's group and direction are declared in config.TRAJECTORY["rows"]
+(an undeclared row reads "direction not declared"; supply levels are 0). Four sections: Fundamentals, Supply,
+Valuation, Market; a DIVERGENCE table per project (revenue and tokens retired / burned 4Q growth vs price's). NRR is
+headroom: A1's NRR HEADROOM = M2/GDP (Config E3, 0.71) ÷ NRR (Valuation), the volumes beside it are Fundamentals rows;
+no years-to-NRR.
+
+**8. Gap report** (logs/history_gaps.csv): the 15 portfolio projects; structurally n/a series left out; judged on
+Q0..Q-3, Q-4 a bonus column. (a) Aethir / GEODNET / Plume fees and revenue stayed at 2025-09-29 — exactly 365 days
+before the year's backfill: the memo of that ask read as "the source starts there" when the window grew to 455 days. A
+memo now records the window it asked; a shorter one is re-asked. (b) Q-4 prices: DefiLlama's coins chart (asked over
+455 days once) is price_usd's older leg before CoinGecko's 365 days — a declared handover, source
+`defillama_coins:history[<key>]`. (c) Validator yields: ETHEREUM — consensus rewards before Etherscan's first
+Eth2Staking read = the spec's 166.32 x sqrt(staked ETH) / 365 on that day's staked ETH, scaled by k = measured ÷
+formula over the measured readings (each over its own span; k≈0.99 on the dump), labelled with k; the yield now reads
+every quarter. NEAR and HYPERLIQUID: no free history route — their stake (NEAR validators, HyperCore delegations) is
+forward-only (archival RPC refuses `validators`; HyperCore keeps no history); NEAR's could come from BigQuery
+(quota — Jake's call). Recorded, not built.
+
+**9.** `windows/daily_run.ps1` ends with one console line: steps run, token_metrics' exit code, failed steps, the log
+path (and exits with the run's code). Cross-tab: two empty trends (n/a either way) are no mismatch. Maple: see the
+round's report (what CoinGecko excludes that the rule does not) — nothing switched.
+
+## 11bp. Jake's decisions on 6f8c86c / 54a9437 (2026-10-12)
+
+**Run after pulling (in this order).**
+1. `python run_sql.py CJ`, then `python run_sql.py --delete CJ` — CoinGecko's pre-handover `total_supply` rows of the
+   eight on-chain-first projects become `total_supply_coingecko` (values untouched).
+2. `python run_sql.py CK`, then `python run_sql.py --delete CK` — the old-wallet-set `noncirculating_holding_tokens`
+   rows (Aerodrome before 10-07, Chainlink before 10-07, Morpho before this commit).
+3. `python token_metrics.py` (the day's run: Sky's MKR backing, NEAR's two accounts, Morpho's entity series).
+4. `python archive_backfill.py --run` — refills total_supply from the chain at past blocks (source
+   `[chain backfill (pre-handover)]`) and the non-circulating sets on their CURRENT composition.
+5. `python token_metrics.py --seed aero_managed_locks` (keyed BASE_RPC_URL) — the filing wallets' managed-veNFT deposits
+   at past blocks. Until 4 and 5 finish, the Trajectory tab says SERIES BREAK on the rows that read these series.
+
+**1. Morpho on the issuer rule.** Circulating = on-chain total − the DAO's holdings (`noncirculating_holding_tokens`) −
+the issuer-held entities (`noncirculating_entities_tokens`: Association, Labs/Contributor Grants, Rewards and Operative
+wallets, new and legacy MORPHO). The ~73.2M legacy MORPHO non-issuers hold in the Wrapper is circulating. Releases from
+those wallets are unlock dilution (between reads of the same set). The like-for-like credibility row adds the entities
+back against CoinGecko (≈696.0M vs 700.47M).
+
+**2. Sky.** (a) `sky_mkr_nonissuer_backing_tokens` = (MKR.totalSupply − the Pause Proxy's MKR) × rate 24,000 × (1 − fee
+5%) is added back to the on-chain circulating (fetch/sky_mkr.py; 1,903,042,129 SKY on 2026-10-12). (b) The unlock stock
+is empty: the converter's outflows are conversions and the Pause Proxy's are staking rewards (already emissions) and a
+burn. Emissions: the Q0 measured blend stays; `emissions_rate_current_annual_tokens` = the DssVest award in force
+(vest 17, 580,789,594/yr) and A3 shows RETIREMENT ÷ DILUTION at that rate; the crossover's years-to-benchmark use it.
+
+**3. NEAR.** lockup.near + contributors.near (amount + locked; 171,059.13 NEAR at block 219,544,718 and today) come out of
+`circulating_supply_lockup_rule`; read daily (`near_foundation_accounts_tokens`), the probe-block read in
+manual_overrides.csv for 10-11. A day without that read keeps NEAR's own figure.
+
+**6. FDV history on one basis.** The on-chain-first totals are archived at past blocks (config
+`archive_not_by_design`); a read dated before the handover carries `[chain backfill (pre-handover)]`. CoinGecko's total
+stays as `total_supply_coingecko`, the cross-check.
+
+**7. The basis rule.** trajectory.basis_breaks: a day's basis is its measuring point (a summed holding's wallet set is
+part of it), or for circulating_supply_used / the NEAR lockup rule the bracket naming the series used; a declared
+handover is one basis unless its composition_change says otherwise; derived circulating inherits its inputs' breaks.
+The Trajectory tab's statistics use only the quarters wholly after the latest break; the row says `SERIES BREAK <date>`
+(new column) and the trend cell leads with it. Real dumps: Aerodrome and Chainlink 2026-10-07 (wallet sets), Pendle
+and Chainlink 2026-09-11 / Ethereum 09-29 (on-chain circulating starts), Plume 10-07 (first-party figure, no history).
+
+**8. Lumpy flows.** A row reading unlock_release_tokens, a config.LUMPY_FLOWS series, an event-annualised series or a
+monthly series takes direction and growth from the rolling T12M: Q0..Q-3 against Q-1..Q-4 (new column), growth =
+(T12M / T12M a quarter earlier)^4 − 1. QoQ is shown; no quarters-improved count.
+
+**9. Total Yield (A1).** Stakers = validator staking yield − net inflation (A4's annualised net supply change, which
+Master shows); non-stakers = − net inflation. The 3-month T-bill benchmark moved onto the stakers' figure.
+
+**4/5. Report only** — see the round's report: GEODNET's 20M Public sale Safe is unsold (never moved since 2023-06-19);
+EF ≈165.7K ETH across Etherscan-labelled wallets; Plume and Aethir publish no treasury wallets. Nothing wired.
+
 ## 11bo. Theory layer — Phase 1: the trajectory engine and the history-gap report (2026-10-12)
 
 No scores, bands or leaderboards — raw trajectories and gap reports only.

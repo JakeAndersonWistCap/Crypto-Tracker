@@ -1,0 +1,925 @@
+{
+ "meta": {
+  "what": "Capture Aerodrome's on-chain circulating legs at the first block of every 7th UTC day, 2025-07-07 .. 2026-10-05,\nfrom public Base archive eth_call (Multicall3). Output: JSON with each read's block and raw figures.",
+  "read_on": "2026-10-12",
+  "read_by": "Claude Code",
+  "endpoints": "public Base RPCs (check_offline_items._rpcs_for('base'))"
+ },
+ "reads": [
+  {
+   "date": "2025-07-07",
+   "block": 32528527,
+   "total_supply": 1677741256.190493,
+   "noncirc": {
+    "noncirc_foundation_multisig": 1072072.2870846984,
+    "noncirc_public_goods_fund": 578141.7823504875,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 1131016.0050637424,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 32718982.0,
+    "noncirc_velodrome_foundation_airdrop": 67969.17354395195
+   },
+   "managed": 387581724.79105055
+  },
+  {
+   "date": "2025-07-14",
+   "block": 32830927,
+   "total_supply": 1684996778.776277,
+   "noncirc": {
+    "noncirc_foundation_multisig": 1589658.221819812,
+    "noncirc_public_goods_fund": 885865.8470499779,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 281680.0,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 32701182.0,
+    "noncirc_velodrome_foundation_airdrop": 70840.30853584368
+   },
+   "managed": 387581724.79105055
+  },
+  {
+   "date": "2025-07-28",
+   "block": 33435727,
+   "total_supply": 1699039323.1773105,
+   "noncirc": {
+    "noncirc_foundation_multisig": 2627510.8159078597,
+    "noncirc_public_goods_fund": 1112840.6190422445,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 972606.1235483902,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 32527682.0,
+    "noncirc_velodrome_foundation_airdrop": 4473086.404087952
+   },
+   "managed": 387891966.7549539
+  },
+  {
+   "date": "2025-08-04",
+   "block": 33738127,
+   "total_supply": 1705819702.7669992,
+   "noncirc": {
+    "noncirc_foundation_multisig": 3137336.445938053,
+    "noncirc_public_goods_fund": 1249850.69869381,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 1406091.7765724645,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 32417632.0,
+    "noncirc_velodrome_foundation_airdrop": 4273086.404087952
+   },
+   "managed": 387891966.7549539
+  },
+  {
+   "date": "2025-08-11",
+   "block": 34040527,
+   "total_supply": 1712434979.247157,
+   "noncirc": {
+    "noncirc_foundation_multisig": 3645187.0510804295,
+    "noncirc_public_goods_fund": 1361028.2610122093,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 379855.30095952656,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 32337532.0,
+    "noncirc_velodrome_foundation_airdrop": 4274332.338144522
+   },
+   "managed": 387891966.7549539
+  },
+  {
+   "date": "2025-08-18",
+   "block": 34342927,
+   "total_supply": 1718878790.7602537,
+   "noncirc": {
+    "noncirc_foundation_multisig": 540718.0517610165,
+    "noncirc_public_goods_fund": 1464984.590438134,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 658330.2221274326,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 32174032.0,
+    "noncirc_velodrome_foundation_airdrop": 4279430.835929929
+   },
+   "managed": 391537153.8060343
+  },
+  {
+   "date": "2025-08-25",
+   "block": 34645327,
+   "total_supply": 1725155412.872782,
+   "noncirc": {
+    "noncirc_foundation_multisig": 1059539.54065829,
+    "noncirc_public_goods_fund": 1624716.7761144699,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 956104.8090554364,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 32158232.0,
+    "noncirc_velodrome_foundation_airdrop": 4281475.474547797
+   },
+   "managed": 391537153.8060343
+  },
+  {
+   "date": "2025-09-01",
+   "block": 34947727,
+   "total_supply": 1731260911.116624,
+   "noncirc": {
+    "noncirc_foundation_multisig": 1573550.6626767493,
+    "noncirc_public_goods_fund": 1763946.7813605447,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 1253622.150445491,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 32107832.0,
+    "noncirc_velodrome_foundation_airdrop": 4282951.917265065
+   },
+   "managed": 391537153.8060343
+  },
+  {
+   "date": "2025-09-08",
+   "block": 35250127,
+   "total_supply": 1737192710.6313317,
+   "noncirc": {
+    "noncirc_foundation_multisig": 2082130.1958009386,
+    "noncirc_public_goods_fund": 1906680.1816212693,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 300834.87885454786,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 32098132.0,
+    "noncirc_velodrome_foundation_airdrop": 4282951.917265065
+   },
+   "managed": 391537153.8060343
+  },
+  {
+   "date": "2025-09-15",
+   "block": 35552527,
+   "total_supply": 1742950503.2137117,
+   "noncirc": {
+    "noncirc_foundation_multisig": 2593573.7448150893,
+    "noncirc_public_goods_fund": 1995230.421923949,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 536468.1920956674,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 32071732.000000004,
+    "noncirc_velodrome_foundation_airdrop": 4285370.036142945
+   },
+   "managed": 391537153.8060343
+  },
+  {
+   "date": "2025-09-22",
+   "block": 35854927,
+   "total_supply": 1748524991.0700152,
+   "noncirc": {
+    "noncirc_foundation_multisig": 516665.7016331411,
+    "noncirc_public_goods_fund": 89288.69043948386,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 785167.3137183192,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 31991332.0,
+    "noncirc_velodrome_foundation_airdrop": 4288121.035648937
+   },
+   "managed": 396125957.9727734
+  },
+  {
+   "date": "2025-09-29",
+   "block": 36157327,
+   "total_supply": 1753919426.6409392,
+   "noncirc": {
+    "noncirc_foundation_multisig": 1039377.435925475,
+    "noncirc_public_goods_fund": 218493.6308291978,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 1118183.2212030643,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 31927032.000000004,
+    "noncirc_velodrome_foundation_airdrop": 4288121.035648937
+   },
+   "managed": 396125957.9727734
+  },
+  {
+   "date": "2025-10-13",
+   "block": 36762127,
+   "total_supply": 1763662806.1303074,
+   "noncirc": {
+    "noncirc_foundation_multisig": 1554352.515743303,
+    "noncirc_public_goods_fund": 788497.2498957126,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 603302.0604293122,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 31861832.0,
+    "noncirc_velodrome_foundation_airdrop": 4290895.388131047
+   },
+   "managed": 393625957.9727734
+  },
+  {
+   "date": "2025-10-20",
+   "block": 37064527,
+   "total_supply": 1768007798.4997518,
+   "noncirc": {
+    "noncirc_foundation_multisig": 1568932.30406873,
+    "noncirc_public_goods_fund": 62665.766923527575,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 964524.8366153109,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 31795332.0,
+    "noncirc_velodrome_foundation_airdrop": 4295121.053671114
+   },
+   "managed": 394890595.51857334
+  },
+  {
+   "date": "2025-10-27",
+   "block": 37366927,
+   "total_supply": 1772166177.843603,
+   "noncirc": {
+    "noncirc_foundation_multisig": 1575310.2946069925,
+    "noncirc_public_goods_fund": 830032.8714378818,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 1422042.7649322902,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 31795332.0,
+    "noncirc_velodrome_foundation_airdrop": 4295121.053671114
+   },
+   "managed": 394890595.51857334
+  },
+  {
+   "date": "2025-11-03",
+   "block": 37669327,
+   "total_supply": 1776330407.327852,
+   "noncirc": {
+    "noncirc_foundation_multisig": 1601618.0039431883,
+    "noncirc_public_goods_fund": 948601.108094147,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 348330.8526996459,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 31726132.0,
+    "noncirc_velodrome_foundation_airdrop": 4299060.3424755065
+   },
+   "managed": 394890595.51857334
+  },
+  {
+   "date": "2025-11-10",
+   "block": 37971727,
+   "total_supply": 1780501856.5008664,
+   "noncirc": {
+    "noncirc_foundation_multisig": 1601618.0039431883,
+    "noncirc_public_goods_fund": 82347.66382232093,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 612757.6515105065,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 31694632.0,
+    "noncirc_velodrome_foundation_airdrop": 4299060.3424755065
+   },
+   "managed": 396730715.0643733
+  },
+  {
+   "date": "2025-11-17",
+   "block": 38274127,
+   "total_supply": 1784684233.4343562,
+   "noncirc": {
+    "noncirc_foundation_multisig": 1601618.0039431883,
+    "noncirc_public_goods_fund": 82347.66382232093,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 616814.7477793379,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 31684932.0,
+    "noncirc_velodrome_foundation_airdrop": 4299060.3424755065
+   },
+   "managed": 396730715.0643733
+  },
+  {
+   "date": "2025-11-24",
+   "block": 38576527,
+   "total_supply": 1788875569.0390642,
+   "noncirc": {
+    "noncirc_foundation_multisig": 1614954.8736116092,
+    "noncirc_public_goods_fund": 733372.8522834424,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 1210991.2584451933,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 31580932.0,
+    "noncirc_velodrome_foundation_airdrop": 4299060.3424755065
+   },
+   "managed": 396730715.0643733
+  },
+  {
+   "date": "2025-12-01",
+   "block": 38878927,
+   "total_supply": 1793069738.9306254,
+   "noncirc": {
+    "noncirc_foundation_multisig": 1614954.8736116092,
+    "noncirc_public_goods_fund": 0.03206975283982658,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 0.0,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 31564532.0,
+    "noncirc_velodrome_foundation_airdrop": 4299060.3424755065
+   },
+   "managed": 396730715.0643733
+  },
+  {
+   "date": "2025-12-08",
+   "block": 39181327,
+   "total_supply": 1797273444.6066175,
+   "noncirc": {
+    "noncirc_foundation_multisig": 1618075.8947505567,
+    "noncirc_public_goods_fund": 0.10544657235073272,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 321666.0809142457,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 31562032.0,
+    "noncirc_velodrome_foundation_airdrop": 4299060.3424755065
+   },
+   "managed": 398604995.15597326
+  },
+  {
+   "date": "2025-12-15",
+   "block": 39483727,
+   "total_supply": 1801488278.5612621,
+   "noncirc": {
+    "noncirc_foundation_multisig": 1618075.8947505567,
+    "noncirc_public_goods_fund": 842624.7787184182,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 823497.8040904622,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 31562032.0,
+    "noncirc_velodrome_foundation_airdrop": 4299060.3424755065
+   },
+   "managed": 399358075.8160711
+  },
+  {
+   "date": "2025-12-22",
+   "block": 39786127,
+   "total_supply": 1805710752.2075129,
+   "noncirc": {
+    "noncirc_foundation_multisig": 1618075.8947505567,
+    "noncirc_public_goods_fund": 1810547.6099111342,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 1091105.5917957313,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 31555032.0,
+    "noncirc_velodrome_foundation_airdrop": 4299060.3424755065
+   },
+   "managed": 399358075.8160711
+  },
+  {
+   "date": "2025-12-29",
+   "block": 40088527,
+   "total_supply": 1809934742.6432004,
+   "noncirc": {
+    "noncirc_foundation_multisig": 1618075.8947505567,
+    "noncirc_public_goods_fund": 2808140.0146243726,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 0.0,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 31550032.0,
+    "noncirc_velodrome_foundation_airdrop": 0.0
+   },
+   "managed": 403657136.1585466
+  },
+  {
+   "date": "2026-01-05",
+   "block": 40390927,
+   "total_supply": 1814169285.4461882,
+   "noncirc": {
+    "noncirc_foundation_multisig": 1618075.8947505567,
+    "noncirc_public_goods_fund": 2890500.4801074006,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 248963.06385413618,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 31550032.0,
+    "noncirc_velodrome_foundation_airdrop": 0.0
+   },
+   "managed": 403657136.1585466
+  },
+  {
+   "date": "2026-01-12",
+   "block": 40693327,
+   "total_supply": 1818410458.5268495,
+   "noncirc": {
+    "noncirc_foundation_multisig": 1618075.8947505567,
+    "noncirc_public_goods_fund": 719725.2935341643,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 776259.78713194,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 31545032.0,
+    "noncirc_velodrome_foundation_airdrop": 0.0
+   },
+   "managed": 408389657.72674173
+  },
+  {
+   "date": "2026-01-19",
+   "block": 40995727,
+   "total_supply": 1822662816.964439,
+   "noncirc": {
+    "noncirc_foundation_multisig": 1618075.8947505567,
+    "noncirc_public_goods_fund": 822166.5004323879,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 1017203.4326584354,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 31541032.0,
+    "noncirc_velodrome_foundation_airdrop": 0.0
+   },
+   "managed": 408389657.72674173
+  },
+  {
+   "date": "2026-01-26",
+   "block": 41298127,
+   "total_supply": 1826921953.287169,
+   "noncirc": {
+    "noncirc_foundation_multisig": 1618075.8947505567,
+    "noncirc_public_goods_fund": 1361818.5299796152,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 431157.36297426844,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 31533032.0,
+    "noncirc_velodrome_foundation_airdrop": 0.0
+   },
+   "managed": 408389657.72674173
+  },
+  {
+   "date": "2026-02-02",
+   "block": 41600527,
+   "total_supply": 1831191598.7185912,
+   "noncirc": {
+    "noncirc_foundation_multisig": 1618075.8947505567,
+    "noncirc_public_goods_fund": 1361818.5299796152,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 431157.36297426844,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 31418532.0,
+    "noncirc_velodrome_foundation_airdrop": 0.0
+   },
+   "managed": 408389657.72674173
+  },
+  {
+   "date": "2026-02-09",
+   "block": 41902927,
+   "total_supply": 1835471885.041677,
+   "noncirc": {
+    "noncirc_foundation_multisig": 1625960.0192564167,
+    "noncirc_public_goods_fund": 2849453.1535344007,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 996027.6381583376,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 31391532.0,
+    "noncirc_velodrome_foundation_airdrop": 0.0
+   },
+   "managed": 408620834.2803734
+  },
+  {
+   "date": "2026-02-16",
+   "block": 42205327,
+   "total_supply": 1839761674.3910394,
+   "noncirc": {
+    "noncirc_foundation_multisig": 1625960.0192564167,
+    "noncirc_public_goods_fund": 4171656.7377305846,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 996027.6381583376,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 31384732.0,
+    "noncirc_velodrome_foundation_airdrop": 0.0
+   },
+   "managed": 408714136.2406152
+  },
+  {
+   "date": "2026-02-23",
+   "block": 42507727,
+   "total_supply": 1844060794.1702778,
+   "noncirc": {
+    "noncirc_foundation_multisig": 1637224.5700426137,
+    "noncirc_public_goods_fund": 5427174.365188233,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 0.0,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 31319732.000000004,
+    "noncirc_velodrome_foundation_airdrop": 0.0
+   },
+   "managed": 408714136.2406152
+  },
+  {
+   "date": "2026-03-02",
+   "block": 42810127,
+   "total_supply": 1848368937.8433344,
+   "noncirc": {
+    "noncirc_foundation_multisig": 1637224.5700426137,
+    "noncirc_public_goods_fund": 5427174.365188233,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 0.0,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 31319732.000000004,
+    "noncirc_velodrome_foundation_airdrop": 0.0
+   },
+   "managed": 408714136.2406152
+  },
+  {
+   "date": "2026-03-16",
+   "block": 43414927,
+   "total_supply": 1857446325.2761517,
+   "noncirc": {
+    "noncirc_foundation_multisig": 219441.9578331525,
+    "noncirc_public_goods_fund": 8065700.626189838,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 753534.3886381554,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 31087232.0,
+    "noncirc_velodrome_foundation_airdrop": 6663.154289019718
+   },
+   "managed": 408864307.7100651
+  },
+  {
+   "date": "2026-03-23",
+   "block": 43717327,
+   "total_supply": 1861999285.318622,
+   "noncirc": {
+    "noncirc_foundation_multisig": 451145.21812400885,
+    "noncirc_public_goods_fund": 9003996.73367799,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 256229.5658300069,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 31087232.0,
+    "noncirc_velodrome_foundation_airdrop": 6663.154289019718
+   },
+   "managed": 408864307.7100651
+  },
+  {
+   "date": "2026-03-30",
+   "block": 44019727,
+   "total_supply": 1866564118.1776104,
+   "noncirc": {
+    "noncirc_foundation_multisig": 670657.7248102194,
+    "noncirc_public_goods_fund": 9003996.73367799,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 256229.5658300069,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 31087232.0,
+    "noncirc_velodrome_foundation_airdrop": 6663.154289019718
+   },
+   "managed": 408864307.7100651
+  },
+  {
+   "date": "2026-04-06",
+   "block": 44322127,
+   "total_supply": 1871138012.284187,
+   "noncirc": {
+    "noncirc_foundation_multisig": 890158.8822011122,
+    "noncirc_public_goods_fund": 9196794.44313879,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 852566.1886079495,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 31087232.0,
+    "noncirc_velodrome_foundation_airdrop": 6663.154289019718
+   },
+   "managed": 408864307.7100651
+  },
+  {
+   "date": "2026-04-13",
+   "block": 44624527,
+   "total_supply": 1875712454.2844393,
+   "noncirc": {
+    "noncirc_foundation_multisig": 1109465.6877517875,
+    "noncirc_public_goods_fund": 1431352.1167264136,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 852566.1886079495,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 31087232.0,
+    "noncirc_velodrome_foundation_airdrop": 6663.154289019718
+   },
+   "managed": 408864307.7100651
+  },
+  {
+   "date": "2026-04-20",
+   "block": 44926927,
+   "total_supply": 1880295354.1785865,
+   "noncirc": {
+    "noncirc_foundation_multisig": 1328779.4164362731,
+    "noncirc_public_goods_fund": 127435.76191022406,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 8987.604590603345,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 30992257.0,
+    "noncirc_velodrome_foundation_airdrop": 14282.657017550646
+   },
+   "managed": 419492454.19900393
+  },
+  {
+   "date": "2026-04-27",
+   "block": 45229327,
+   "total_supply": 1884864776.2545443,
+   "noncirc": {
+    "noncirc_foundation_multisig": 1558145.025406688,
+    "noncirc_public_goods_fund": 1500475.1228126797,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 8987.604590603345,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 30726932.0,
+    "noncirc_velodrome_foundation_airdrop": 14282.657017550646
+   },
+   "managed": 419492454.19900393
+  },
+  {
+   "date": "2026-05-04",
+   "block": 45531727,
+   "total_supply": 1889433857.5714161,
+   "noncirc": {
+    "noncirc_foundation_multisig": 1777587.5410071926,
+    "noncirc_public_goods_fund": 1616089.3243423565,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 8987.604590603345,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 30534631.999999996,
+    "noncirc_velodrome_foundation_airdrop": 14282.657017550646
+   },
+   "managed": 419492454.19900393
+  },
+  {
+   "date": "2026-05-11",
+   "block": 45834127,
+   "total_supply": 1894008163.7002769,
+   "noncirc": {
+    "noncirc_foundation_multisig": 2011588.2204079118,
+    "noncirc_public_goods_fund": 1890169.877964871,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 39853.47993108808,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 30227332.0,
+    "noncirc_velodrome_foundation_airdrop": 14282.657017550646
+   },
+   "managed": 419492454.19900393
+  },
+  {
+   "date": "2026-05-18",
+   "block": 46136527,
+   "total_supply": 1898582416.7192442,
+   "noncirc": {
+    "noncirc_foundation_multisig": 2231159.7709186915,
+    "noncirc_public_goods_fund": 1890169.877964871,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 39853.47993108808,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 29939132.0,
+    "noncirc_velodrome_foundation_airdrop": 14282.657017550646
+   },
+   "managed": 419492454.19900393
+  },
+  {
+   "date": "2026-05-25",
+   "block": 46438927,
+   "total_supply": 1903187204.5348566,
+   "noncirc": {
+    "noncirc_foundation_multisig": 2450781.6834439267,
+    "noncirc_public_goods_fund": 2277730.1182861975,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 195417.2618062114,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 29737329.0,
+    "noncirc_velodrome_foundation_airdrop": 14282.657017550646
+   },
+   "managed": 419492454.19900393
+  },
+  {
+   "date": "2026-06-01",
+   "block": 46741327,
+   "total_supply": 1907791309.260528,
+   "noncirc": {
+    "noncirc_foundation_multisig": 2670438.374491388,
+    "noncirc_public_goods_fund": 1340421.5690916297,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 195417.2618062114,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 29645618.0,
+    "noncirc_velodrome_foundation_airdrop": 14282.657017550646
+   },
+   "managed": 420692454.19900393
+  },
+  {
+   "date": "2026-06-08",
+   "block": 47043727,
+   "total_supply": 1912421790.1970837,
+   "noncirc": {
+    "noncirc_foundation_multisig": 2890152.419787796,
+    "noncirc_public_goods_fund": 1681356.061429726,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 195417.2618062114,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 29600620.0,
+    "noncirc_velodrome_foundation_airdrop": 14282.657017550646
+   },
+   "managed": 420692454.19900393
+  },
+  {
+   "date": "2026-06-15",
+   "block": 47346127,
+   "total_supply": 1917063820.272804,
+   "noncirc": {
+    "noncirc_foundation_multisig": 3145456.055679383,
+    "noncirc_public_goods_fund": 2619243.9316139547,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 872571.3403725772,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 29548931.000000004,
+    "noncirc_velodrome_foundation_airdrop": 14282.657017550646
+   },
+   "managed": 420692454.19900393
+  },
+  {
+   "date": "2026-06-22",
+   "block": 47648527,
+   "total_supply": 1921720191.056158,
+   "noncirc": {
+    "noncirc_foundation_multisig": 3377513.859386323,
+    "noncirc_public_goods_fund": 2929585.130433486,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 1061674.501516481,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 29446244.0,
+    "noncirc_velodrome_foundation_airdrop": 14282.657017550646
+   },
+   "managed": 420692454.19900393
+  },
+  {
+   "date": "2026-06-29",
+   "block": 47950927,
+   "total_supply": 1926377369.5941968,
+   "noncirc": {
+    "noncirc_foundation_multisig": 414174.7244552349,
+    "noncirc_public_goods_fund": 3128813.8407387184,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 1206390.918121371,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 29446244.0,
+    "noncirc_velodrome_foundation_airdrop": 27947.580848196296
+   },
+   "managed": 428548415.73663026
+  },
+  {
+   "date": "2026-07-06",
+   "block": 48253327,
+   "total_supply": 1931056712.573534,
+   "noncirc": {
+    "noncirc_foundation_multisig": 634053.8960214346,
+    "noncirc_public_goods_fund": 3345506.6706487597,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 1206390.918121371,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 29415723.0,
+    "noncirc_velodrome_foundation_airdrop": 27947.580848196296
+   },
+   "managed": 428548415.73663026
+  },
+  {
+   "date": "2026-07-13",
+   "block": 48555727,
+   "total_supply": 1935742341.6566415,
+   "noncirc": {
+    "noncirc_foundation_multisig": 879894.5173704112,
+    "noncirc_public_goods_fund": 87653.98880325543,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 1373532.9379611432,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 29415723.0,
+    "noncirc_velodrome_foundation_airdrop": 27947.580848196296
+   },
+   "managed": 428548415.73663026
+  },
+  {
+   "date": "2026-07-20",
+   "block": 48858127,
+   "total_supply": 1940444000.4276428,
+   "noncirc": {
+    "noncirc_foundation_multisig": 730104.9106312064,
+    "noncirc_public_goods_fund": 532490.5398832196,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 1711176.1069626485,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 29399913.0,
+    "noncirc_velodrome_foundation_airdrop": 32113.58396260518
+   },
+   "managed": 428548415.73663026
+  },
+  {
+   "date": "2026-07-27",
+   "block": 49160527,
+   "total_supply": 1945164683.6269114,
+   "noncirc": {
+    "noncirc_foundation_multisig": 950116.552227813,
+    "noncirc_public_goods_fund": 868685.7295340272,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 1711176.1069626485,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 29399913.0,
+    "noncirc_velodrome_foundation_airdrop": 32113.58396260518
+   },
+   "managed": 432026632.17976904
+  },
+  {
+   "date": "2026-08-03",
+   "block": 49462927,
+   "total_supply": 1949897341.6920466,
+   "noncirc": {
+    "noncirc_foundation_multisig": 1205717.235726766,
+    "noncirc_public_goods_fund": 1406557.9995522548,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 2030828.743093096,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 29399913.0,
+    "noncirc_velodrome_foundation_airdrop": 40492.0923953651
+   },
+   "managed": 432026632.17976904
+  },
+  {
+   "date": "2026-08-10",
+   "block": 49765327,
+   "total_supply": 1954641365.6841474,
+   "noncirc": {
+    "noncirc_foundation_multisig": 1447158.1470471867,
+    "noncirc_public_goods_fund": 1928370.2909644432,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 2030828.743093096,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 29399913.0,
+    "noncirc_velodrome_foundation_airdrop": 42667.00006758857
+   },
+   "managed": 441530289.5246317
+  },
+  {
+   "date": "2026-08-31",
+   "block": 50672527,
+   "total_supply": 1968917232.8745236,
+   "noncirc": {
+    "noncirc_foundation_multisig": 2124206.577210162,
+    "noncirc_public_goods_fund": 155056.86414056394,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 2031043.4737011506,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 29399913.0,
+    "noncirc_velodrome_foundation_airdrop": 43085.824474192625
+   },
+   "managed": 444276994.96777046
+  },
+  {
+   "date": "2026-09-07",
+   "block": 50974927,
+   "total_supply": 1973685089.4858537,
+   "noncirc": {
+    "noncirc_foundation_multisig": 2352330.6114219963,
+    "noncirc_public_goods_fund": 495774.358711543,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 2031043.4737011506,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 29378313.0,
+    "noncirc_velodrome_foundation_airdrop": 43085.94202265494
+   },
+   "managed": 444276994.96777046
+  },
+  {
+   "date": "2026-09-14",
+   "block": 51277327,
+   "total_supply": 1978450301.483025,
+   "noncirc": {
+    "noncirc_foundation_multisig": 2592542.5707784523,
+    "noncirc_public_goods_fund": 878630.0851229297,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 2031043.4737011506,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 29294313.0,
+    "noncirc_velodrome_foundation_airdrop": 49187.25931372946
+   },
+   "managed": 444276994.96777046
+  },
+  {
+   "date": "2026-09-21",
+   "block": 51579727,
+   "total_supply": 1983240735.5767915,
+   "noncirc": {
+    "noncirc_foundation_multisig": 2846847.5585983996,
+    "noncirc_public_goods_fund": 1292655.2930068974,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 2031043.4737011506,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 29279313.000000004,
+    "noncirc_velodrome_foundation_airdrop": 58657.0967597435
+   },
+   "managed": 444276994.96777046
+  },
+  {
+   "date": "2026-09-28",
+   "block": 51882127,
+   "total_supply": 1988034890.229642,
+   "noncirc": {
+    "noncirc_foundation_multisig": 3067403.2445016745,
+    "noncirc_public_goods_fund": 1326746.3675693527,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 2031043.4737011506,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 29279313.000000004,
+    "noncirc_velodrome_foundation_airdrop": 58657.0967597435
+   },
+   "managed": 444276994.96777046
+  },
+  {
+   "date": "2026-10-05",
+   "block": 52184527,
+   "total_supply": 1992844978.4587035,
+   "noncirc": {
+    "noncirc_foundation_multisig": 3317309.1265519443,
+    "noncirc_public_goods_fund": 1561248.1908230502,
+    "noncirc_airdrop_distributor": 9.95409e-07,
+    "noncirc_flight_school": 2031043.4737011506,
+    "noncirc_buyback_locked_funds": 741.2118294750783,
+    "noncirc_tge_incentives": 29279313.000000004,
+    "noncirc_velodrome_foundation_airdrop": 63306.01480621885
+   },
+   "managed": 444276994.96777046
+  }
+ ]
+}

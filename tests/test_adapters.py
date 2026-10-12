@@ -13541,8 +13541,14 @@ def test_near_buyback_fund_balance_is_the_three_wallets_summed_as_a_stock():
 
     p = dict(config.PROJECT_BY_NAME["Near"])
     reads = [r for r in p["node_api"]["extra_reads"] if r.get("kind") not in ("near_block_supply", "near_protocol_version")]
-    assert [r["metric"] for r in reads] == ["buyback_fund_balance"]
+    # + lockup.near / contributors.near (Jake 2026-10-12, decision 3 on 6f8c86c), amount + locked
+    assert [r["metric"] for r in reads] == ["buyback_fund_balance", "near_foundation_accounts_tokens"]
+    assert reads[1]["fields"] == ("amount", "locked") and reads[1]["accounts"] == ["lockup.near", "contributors.near"]
+    reads = reads[:1]
     read = reads[0]
+    # this test is the buyback wallets' read: the run below carries that read alone
+    p["node_api"] = dict(p["node_api"], extra_reads=[r for r in p["node_api"]["extra_reads"]
+                                                     if r.get("metric") != "near_foundation_accounts_tokens"])
     assert read["kind"] == "near_view_account" and read["field"] == "amount"
     assert set(read["accounts"]) == set(p["intents_revenue_wallets"]["wallets"])
     assert "AGGREGATOR-SOURCED" in read["address_source"] and "wrap.near" in read["partial"]
@@ -17308,8 +17314,10 @@ def test_morpho_free_float_is_circulating_and_fluid_a3_reads_zero_since_the_halt
             return f"D[{m}]"
     rows = {spec[0]: spec for spec in bw._a2_headline(R())}
     ff = rows["FREE FLOAT = circulating − locked (tokens)"][1](5, morpho)
-    # circulating = the series used (2026-10-11), CoinGecko's where none: free float = that − 0, no lock
-    assert "D[circulating_supply])-0" in ff and "circulating_supply_used" in ff and "locked_tokens" not in ff, ff
+    # circulating = the series used (2026-10-11) — Morpho's on-chain set since decision 1 on 6f8c86c, CoinGecko's
+    # where none: free float = that − 0, no lock
+    assert "D[circulating_supply]))-0" in ff and "circulating_supply_onchain" in ff and "circulating_supply_used" in ff \
+        and "locked_tokens" not in ff, ff
 
 
 def test_pendle_hub_amounts_are_scaled_from_wei_and_the_yield_base_is_real_plus_virtual_spendle(monkeypatch):
@@ -18810,8 +18818,10 @@ def test_archive_records_pre_deployment_starts_paces_429s_and_explains_every_unw
     # Uniswap's declared start was REMOVED 2026-09-29: the floor is dated instead, and the year
     # before the 100M burn is backfilled (the burn itself is a dated one-off, kept out of rates)
     assert ("Uniswap", "burn_address_balance") not in ar.series_starts()
-    _, no = ar.ArchiveBackfill(None, [config.PROJECT_BY_NAME["Chainlink"]]).targets({"ethereum"})
-    assert any(m == "total_supply" and w.startswith("BY DESIGN") for _, m, w in no)
+    # an on-chain-first total IS archived since Jake's decision 6 on 6f8c86c (FDV history on one chain basis)
+    ok, no = ar.ArchiveBackfill(None, [config.PROJECT_BY_NAME["Chainlink"]]).targets({"ethereum"})
+    assert "total_supply" in ok.get("Chainlink", set())
+    assert not any(m == "total_supply" for _, m, _w in no)
 
 
 def test_history_audit_reads_a_series_that_starts_late_as_complete(tmp_path, monkeypatch):
@@ -20029,11 +20039,12 @@ def test_onchain_circulating_excludes_only_documented_sourced_addresses_and_revi
     ex = C.exclusions("GEODNET")
     assert {e["key"] for e in ex} >= {"mining_polygon", "ecosystem_polygon", "burn_polygon"}
     assert all(e["address"] and e["source_url"] and e["verified"] for e in ex)
-    assert config.circulating_onchain("Morpho")["status"] == "partial"     # docs wallets wired, vesting missing
+    # Morpho ESTABLISHED on the issuer rule (Jake 2026-10-12, decision 1 on 6f8c86c)
+    assert config.circulating_onchain("Morpho")["status"] == "established"
     lines = "\n".join(C.report_lines())
     # Uniswap's set is complete since 2026-10-06 (CoinGecko's own method); Maple stays PARTIAL
     assert "Uniswap: ESTABLISHED" in lines and "Maple: PARTIAL" in lines and "MISSING:" in lines \
-        and "Morpho: PARTIAL" in lines
+        and "Morpho: ESTABLISHED" in lines
     d0, d1 = pd.Timestamp("2026-09-01"), pd.Timestamp("2026-09-02")
     h = pd.DataFrame([
         dict(date=d0, project="Uniswap", metric="total_supply_gross", value=1_000.0, source="x"),
@@ -20067,7 +20078,7 @@ def test_tokens_primary_retirement_zero_and_burn_only_presentation():
     a3 = bw._a3_headline(R, {})
     assert [h for h, *_ in a3][:2] == [
         "CIRCULATING RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) ÷ circulating — primary",
-        "FDV RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) ÷ FDV supply (FDV ÷ price) — always read with the rate to its left"]
+        "FDV RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) ÷ FDV supply (the total supply FDV uses) — always read with the rate to its left"]
     # Aerodrome's rate is now MEASURED (the Foundation buy-and-lock, audit 2026-10-09 item 1), not a structural 0;
     # only its implied (fee-funded) buyback stays 0.
     aero = config.PROJECT_BY_NAME["Aerodrome"]
@@ -20404,7 +20415,7 @@ def test_circulating_convention_is_printed_on_every_exclusion_list_with_document
         # PLUME is FIRST_PARTY since 2026-10-07: supply.plume.org/supply (Jake)
         # Aerodrome ESTABLISHED since Jake's probes16 (the filing wallets' liquid + managed-lock AERO)
         assert config.circulating_onchain(name)["status"] == {"Aerodrome": "established", "Aethir": "first_party",
-                                                               "Near": "first_party", "Morpho": "partial",
+                                                               "Near": "first_party", "Morpho": "established",
                                                                "Plume": "first_party"}.get(name, "not_established")
         cand = config.NONCIRCULATING_CANDIDATES[name]
         assert cand["addresses"] and all(a["source"] and a["address"] for a in cand["addresses"])
@@ -22032,15 +22043,20 @@ def test_history_audit_reads_coingecko_total_supply_as_by_design(tmp_path, monke
     db = str(tmp_path / "m.db")
     store_mod.Store(db)
     conn = sqlite3.connect(db)
+    # Aethir's total is not on-chain first: still BY DESIGN. Chainlink's is, and since Jake's decision 6 on 6f8c86c its
+    # history is read at past blocks — no longer by design
     for k in range(21):
-        conn.execute("INSERT INTO metrics VALUES (?,?,?,?,?,?,?)",
-                     (str((today() - pd.Timedelta(days=k + 1)).date()), "Chainlink", "total_supply", 1e9, "coingecko", 1, "x"))
+        for name in ("Chainlink", "Aethir"):
+            conn.execute("INSERT INTO metrics VALUES (?,?,?,?,?,?,?)",
+                         (str((today() - pd.Timedelta(days=k + 1)).date()), name, "total_supply", 1e9, "coingecko", 1,
+                          "x"))
     conn.commit()
     got = {(r[0], r[1]): (r[7], r[8]) for r in ha.rows(db, short_only=False, classify=False)}
-    v, why = got[("Chainlink", "total_supply")]
+    v, why = got[("Aethir", "total_supply")]
     assert v == "BY DESIGN" and why.startswith("BY DESIGN") and "total_supply_gross" in why
-    assert ("Chainlink", "total_supply") not in {(r[0], r[1]) for r in ha.rows(db, short_only=True, classify=False)}
-    assert "archive_backfill" not in ha.why_short(config.PROJECT_BY_NAME["Chainlink"], "total_supply", None)
+    assert ("Aethir", "total_supply") not in {(r[0], r[1]) for r in ha.rows(db, short_only=True, classify=False)}
+    assert got[("Chainlink", "total_supply")][0] != "BY DESIGN"
+    assert not config.archive_not_by_design("Chainlink", "total_supply")
 
 
 def test_plume_logs_route_gives_the_v2_answer_halving_on_the_cap_and_resuming(tmp_path, monkeypatch):
@@ -23095,7 +23111,8 @@ def test_market_cap_is_price_times_the_circulating_the_ratios_use():
     assert bw.chosen_circulating_metric({"name": "Aethir"}) == "circulating_supply_first_party"
     # Plume publishes its own figure since 2026-10-07 (supply.plume.org); Morpho does not
     assert bw.chosen_circulating_metric({"name": "Plume"}) == "circulating_supply_first_party"
-    assert bw.chosen_circulating_metric({"name": "Morpho"}) == "circulating_supply"
+    # Morpho: the on-chain set on the issuer rule (Jake 2026-10-12, decision 1 on 6f8c86c)
+    assert bw.chosen_circulating_metric({"name": "Morpho"}) == "circulating_supply_onchain"
     g = _grp([("2026-10-03", "Aethir", "price_usd", 0.0075, "coingecko"),
               ("2026-10-04", "Aethir", "price_usd", 0.0075, "coingecko"),
               ("2026-10-03", "Aethir", "circulating_supply", 20.1e9, "coingecko"),
@@ -25417,9 +25434,11 @@ def test_circulating_decisions_are_applied_consistently_and_coingecko_free_float
     # sign-off round: Chainlink (all 27 wallets) and Fluid (Avocado wallets not the team's) are on-chain primary
     for n in ("Chainlink", "Fluid"):
         assert chosen[n] == "circulating_supply_onchain", n
-    for n in ("Maple", "Morpho"):
+    for n in ("Maple",):
         assert chosen[n] == "circulating_supply", n
         assert not config.circulating_onchain_primary(n), n
+    # Morpho on the issuer rule (Jake 2026-10-12, decision 1 on 6f8c86c)
+    assert chosen["Morpho"] == "circulating_supply_onchain" and config.circulating_onchain_primary("Morpho")
     for n in ("Chainlink", "Maple", "Fluid", "Ether.fi", "GEODNET"):
         assert config.circulating_onchain(n).get("decision"), "every decision says why"
     # every project's entry records the source, its definition, staked tokens and what it replaced
@@ -25448,7 +25467,9 @@ def test_circulating_decisions_are_applied_consistently_and_coingecko_free_float
         assert len(rows) == cnt, n
         cs = {f"noncirc_{r[0]}": config.PROJECT_BY_NAME[n]["contracts"][f"noncirc_{r[0]}"] for r in rows}
         # Fluid's IGP-137 custody is its own series since Jake's run 2026-10-08 (CoinGecko still counts it)
+        # Morpho's issuer-held entities are their own series since Jake's decision 1 on 6f8c86c (CoinGecko counts them)
         assert all(c["metric_override"] == ("noncirculating_igp137_tokens" if k == "noncirc_igp137_lock"
+                                             else "noncirculating_entities_tokens" if k in config.MORPHO_ENTITY_KEYS
                                              else "noncirculating_holding_tokens") and c["verified"] == "2026-10-07"
                    and c["source_url"].startswith(src) and c["expected_symbol"] == sym
                    and c["holder_has_code"] is False for k, c in cs.items()), n

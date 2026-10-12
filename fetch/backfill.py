@@ -84,7 +84,13 @@ def plan(projects: list[dict], first_dates: dict) -> tuple[set, list[str]]:
     def limited(name: str, metric: str) -> bool:
         """A backfill found nothing older than what is stored, within RECHECK_DAYS."""
         first, seen = first_dates.get((name, metric)), memo.get(f"{name}|{metric}") or {}
+        # "NOTHING OLDER" HOLDS ONLY FOR THE WINDOW THAT WAS ASKED (Jake's Phase 1 review 2026-10-12, item 8a: Aethir,
+        # GEODNET and Plume fees / revenue stayed at 2025-09-29 — exactly 365 days before the year's backfill — after
+        # the window grew to 455 days, because the memo of the 365-day ask read as "the source starts there"). A memo
+        # without the window it asked is from the 365-day era.
+        asked = int(seen.get("asked_days") or 365)
         return bool(first is not None and seen.get("first") == first and seen.get("checked_on")
+                    and asked >= BACKFILL_DAYS
                     and (now - pd.Timestamp(seen["checked_on"])).days < RECHECK_DAYS)
 
     pairs, why = set(), []
@@ -141,7 +147,7 @@ def record(pairs: set, first_dates_after: dict, answered: set | None = None) -> 
             continue
         first = first_dates_after.get((name, metric))
         if first:
-            memo[f"{name}|{metric}"] = {"first": first, "checked_on": str(today().date())}
+            memo[f"{name}|{metric}"] = {"first": first, "checked_on": str(today().date()), "asked_days": BACKFILL_DAYS}
     f = _depth_file()
     f.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(f, json.dumps(memo, sort_keys=True, indent=1))

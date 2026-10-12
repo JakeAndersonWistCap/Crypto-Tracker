@@ -5632,6 +5632,36 @@ def aerodrome_foundation_locks(owners: list, block: str = "latest") -> dict:
     return out
 
 
+def aerodrome_managed_deposits(owners: list, block: str = "latest", escrow: str = AERO_VE) -> dict:
+    """The AERO `owners` deposited into MANAGED veNFTs at `block` — fetch/ve_managed.deposits() batched through
+    Multicall3 (balanceOf -> ownerToNFTokenIdList -> idToManaged -> weights(id, managed id) for every id in a managed
+    veNFT). One read per round, so a past day costs four eth_calls: the history of filing_managed_lock_tokens (Jake
+    2026-10-12, Phase 1 review item 2 — Aerodrome's circulating restated on the on-chain basis). {"total": AERO,
+    "by_owner": {...}, "nfts": n, "in_managed": n} or {"error": why}."""
+    sel_bal, sel_mgd, sel_w = _selx("balanceOf(address)"), _selx("idToManaged(uint256)"), _selx("weights(uint256,uint256)")
+    ns = _batch_eth_calls("base", [(escrow, sel_bal + _word(int(o, 16))) for o in owners], block=block)
+    if any(x is None for x in ns):
+        return {"error": f"VotingEscrow.balanceOf unreadable at block {block}"}
+    pairs = [(o, i) for o, x in zip(owners, ns) for i in range(int(x, 16))]
+    tids = _batch_eth_calls("base", [(escrow, SEL_OWNER_TOKEN + _word(int(o, 16)) + _word(i)) for o, i in pairs],
+                            block=block)
+    if any(x is None for x in tids):
+        return {"error": f"ownerToNFTokenIdList unreadable at block {block}"}
+    ids = [int(x, 16) for x in tids]
+    mgds = _batch_eth_calls("base", [(escrow, sel_mgd + _word(t)) for t in ids], block=block)
+    if any(x is None for x in mgds):
+        return {"error": f"idToManaged unreadable at block {block}"}
+    held = [(o, t, int(m, 16)) for (o, _i), t, m in zip(pairs, ids, mgds) if int(m, 16)]
+    ws = _batch_eth_calls("base", [(escrow, sel_w + _word(t) + _word(m)) for _o, t, m in held], block=block)
+    if any(x is None for x in ws):
+        return {"error": f"weights unreadable at block {block}"}
+    out = {"total": 0.0, "by_owner": {o: 0.0 for o in owners}, "nfts": len(ids), "in_managed": len(held)}
+    for (o, _t, _m), w in zip(held, ws):
+        out["total"] += int(w, 16) / 1e18
+        out["by_owner"][o] += int(w, 16) / 1e18
+    return out
+
+
 def _ve_locks(owner: str) -> tuple:
     """(n locks, AERO locked, of which permanent) owned by `owner` in veAERO: balanceOf -> ownerToNFTokenIdList ->
     locked(id) = (int128 amount, uint256 end, bool isPermanent) (IVotingEscrow.sol L10-14, L268, L344)."""

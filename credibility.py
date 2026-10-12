@@ -2440,13 +2440,38 @@ def circulating_input(name: str) -> dict:
                                        "by hand and record it in config.CREDIBILITY as a manual reference."}}
 
 
-def build_rows(headline_cells: list[dict], rows: dict, long, asof, projects=None) -> list[dict]:
-    """Every Credibility row, in project order: the headline cells (tab order), then the inputs."""
+def continuity_row(name: str, headline_cells: list[dict], previous: dict | None, prev_date: str = "") -> dict | None:
+    """THE CONTINUITY GUARD (Jake's Phase 1 review 2026-10-12, item 1: GEODNET's burn, yield, crossover and net change
+    all went from a value to n/a after history_gaps --run-fixes, and the Credibility tab changed 0 verdicts). One row
+    per project: of the headline cells that read a VALUE in the previous run's snapshot, how many still read one. Any
+    fewer is a CHECK naming the count; the note lists every cell with its previous value. Zero tolerance."""
+    prev = (previous or {}).get(name) or {}
+    held = [(hc, prev.get(f"{hc['sheet'][:2]} | {hc['header']}")) for hc in headline_cells if hc["project"] == name]
+    held = [(hc, v) for hc, v in held if isinstance(v, float)]
+    if not held:
+        return None
+    ours = "+".join(f"IF(ISNUMBER('{hc['sheet']}'!{hc['cell']}),1,0)" for hc, _v in held)
+    note = "; ".join(f"{hc['sheet'][:2]} {hc['header'][:60]} was {v:,.6g}" for hc, v in held)
+    return {"project": name, "tab": "", "cell": "", "id": "continuity",
+            "what": f"CONTINUITY — headlines that read a value in the previous run ({prev_date or 'snapshot'}) and still "
+                    f"do (a value -> n/a / BLOCKED is a CHECK)",
+            "ours": {"cell": ours}, "fmt": "0", "tol": 0.0, "value": float(len(held)), "date": prev_date or None,
+            "source": f"the previous run's snapshot (snapshots/snapshot_{prev_date}.csv)", "mode": "continuity",
+            "verdict": None, "note": f"Previous values: {note}"[:2000]}
+
+
+def build_rows(headline_cells: list[dict], rows: dict, long, asof, projects=None, previous: dict | None = None,
+               prev_date: str = "") -> list[dict]:
+    """Every Credibility row, in project order: the headline cells (tab order), then the inputs; with a previous run's
+    snapshot, each project's continuity row first."""
     import manual_refs
     names = [n for n in config.CREDIBILITY_PROJECTS if projects is None or n in projects]
     manual = manual_refs.by_row()
     out = []
     for name in names:
+        cont = continuity_row(name, headline_cells, previous, prev_date)
+        if cont:
+            out.append(cont)
         spec_p = config.CREDIBILITY.get(name) or {}
         beside: dict = {}                            # manual readings recorded beside a headline (manual_refs)
         for hc in [h for h in headline_cells if h["project"] == name]:

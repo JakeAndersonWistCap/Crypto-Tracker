@@ -1918,6 +1918,11 @@ class Chain:
             if self.backfill:
                 if refused.get(metric):
                     continue
+                # FDV HISTORY ON ONE BASIS (Jake 2026-10-12, decision 6 on 6f8c86c): an on-chain-first total read at a
+                # block before the declared handover is labelled so; CoinGecko's stays as total_supply_coingecko
+                pre = config.total_supply_chain_backfill_label(name, metric, when)
+                if pre:
+                    src += f"[{pre}]"
                 out.add(point(name, metric, total, config.mark_source(src, "archive"), TIER, when),
                         SOURCE, name, f"{detail} [archive, {when.date()}]", TIER)
                 continue

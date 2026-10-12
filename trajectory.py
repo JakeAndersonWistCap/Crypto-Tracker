@@ -11,7 +11,7 @@ number from the wrong window. Q0 is the unshifted formula, so it IS the headline
 
 THE TRAJECTORY TAB holds, per (tab, project, headline): Q0 .. Q-4 as live formulas; T12M (the four latest quarters
 summed for a window total, averaged for a rate, ratio or level); QoQ; the 4-quarter log-linear growth (annual); the
-quarters improved (direction-aware, config.TRAJECTORY["direction"]); the trough of the last four; the years to the
+quarters improved (direction-aware, config.TRAJECTORY["rows"]); the trough of the last four; the years to the
 row's benchmark (config.TRAJECTORY["benchmarks"]) at that growth; the source tier and Q0 coverage of the headline's
 series; and the credibility verdict (Q0 equals the headline cell). The derived columns are computed when the workbook
 is built (xlcalc, the evaluator the sanity rules and the Credibility report use) and written as values; Q0..Q-4 stay
@@ -27,9 +27,13 @@ import config
 LABELS = ("Q0", "Q-1", "Q-2", "Q-3", "Q-4")
 SHEET = "Trajectory"
 HEAD = ["Project", "Key (tab|project|headline id)", "Tab", "Headline id", "Headline", "Direction (+1 higher is better)",
-        "Q0", "Q-1", "Q-2", "Q-3", "Q-4", "T12M", "T12M basis", "QoQ", "4Q growth (annual, log-linear)",
-        "Quarters in the growth", "Quarters improved (direction-aware)", "Trough of the last 4", "Trend",
-        "Benchmark", "Target", "Years to benchmark", "Why n/a", "Source tier (headline series)",
+        "Group",
+        "Q0", "Q-1", "Q-2", "Q-3", "Q-4", "T12M", "T12M basis", "T12M a quarter earlier (Q-1..Q-4)", "QoQ",
+        "4Q growth (annual, log-linear)", "Growth label (NEW / STEP CHANGE)", "Quarters in the growth",
+        "Quarters improved (direction-aware)",
+        "Trough of the last 4", "Trend", "Direction basis",
+        "Benchmark", "Target", "Years to benchmark", "Why n/a", "Series break (basis change)",
+        "Source tier (headline series)",
         "Q0 coverage days (headline series)", "Credibility (Q0 = headline cell)", "Headline cell"]
 COL = {h: i + 1 for i, h in enumerate(HEAD)}
 MAX_ROWS = 6000                       # the trend cells' lookup range on this tab
@@ -53,8 +57,17 @@ def master_id(header: str) -> str:
     return "master_" + slug(header)
 
 
-def direction(hid: str) -> int:
-    return int(config.TRAJECTORY["direction"].get(hid, 1))
+def direction(hid: str) -> int | None:
+    """The row's declared direction (config.TRAJECTORY["rows"]) — None when not declared: nothing defaults to +1
+    (Jake's Phase 1 review 2026-10-12, item 5)."""
+    row = config.TRAJECTORY["rows"].get(hid)
+    return int(row[1]) if row else None
+
+
+def group(hid: str) -> str:
+    """Fundamentals / Supply / Valuation / Market (item 6); '' when not declared."""
+    row = config.TRAJECTORY["rows"].get(hid)
+    return row[0] if row else ""
 
 
 def key(tab: str, project: str, hid: str) -> str:
@@ -116,9 +129,42 @@ def loglinear_growth(values: list) -> tuple[float | None, int, str]:
     return math.exp(4 * slope) - 1, len(pts), ""
 
 
-def improved(values: list, d: int) -> tuple[int | None, int]:
+def growth_rule(values: list, step_at: int | None = None) -> tuple[float | None, int, str, str]:
+    """THE GROWTH RULES (Jake's Phase 1 review 2026-10-12, item 4) over the newest four quarters (values[0] = Q0):
+    (annual growth, quarters used, label, why). A growth figure needs >= min_quarters quarters, all > 0, in ONE regime:
+      * a break of basis or mechanism inside the window (`step_at` = the quarter holding it) -> "STEP CHANGE at Q-x";
+      * a mechanism that starts inside the window (the oldest quarters READ 0 or less; an empty quarter is history
+        not held, said as such) -> "NEW since Q-x";
+      * an earliest quarter below new_share (10%) of the latest -> "NEW since Q-x", the first quarter at >= 10%.
+    Otherwise the log-linear growth (loglinear_growth). The label replaces the rate; it is never both."""
+    rule = config.TRAJECTORY["growth"]
+    q = [_num(v) for v in values[:4]]
+    if step_at is not None and step_at < 4:
+        return None, 0, f"STEP CHANGE at {LABELS[step_at]}", "a break of basis inside the window"
+    alive = [i for i, v in enumerate(q) if v is not None and v > 0]
+    if alive and q[0] is not None and q[0] > 0:
+        oldest = max(alive)
+        # A MECHANISM THAT STARTS: the older quarters READ 0 (or less) — not empty. An empty quarter is history we do
+        # not hold (the gap report's business), never evidence that the series is new.
+        older = q[oldest + 1:4]
+        if oldest < 3 and older and all(v is not None and v <= 0 for v in older):
+            return None, len(alive), f"NEW since {LABELS[oldest]}", "the mechanism starts inside the window (0 before)"
+        first_big = max(i for i in alive if q[i] >= rule["new_share"] * q[0])
+        if q[oldest] < rule["new_share"] * q[0]:
+            return (None, len(alive), f"NEW since {LABELS[first_big]}",
+                    f"{LABELS[oldest]} is below {rule['new_share']:.0%} of Q0 — a new regime, not a growth rate")
+    pts = [v for v in q if v is not None]
+    if len(pts) < rule["min_quarters"]:
+        return None, len(pts), "", f"{len(pts)} quarter(s) with a value — growth needs {rule['min_quarters']}"
+    if any(v <= 0 for v in pts):
+        return None, len(pts), "", "a quarter at or below 0 — log growth is undefined"
+    g, n, why = loglinear_growth(values)
+    return g, n, "", why
+
+
+def improved(values: list, d: int | None) -> tuple[int | None, int]:
     """(quarters improved, comparisons made) over Q0 vs Q-1 .. Q-3 vs Q-4, direction-aware; strictly better counts."""
-    if d == 0:
+    if not d:
         return None, 0
     n = k = 0
     for newer, older in zip(values[:4], values[1:5]):
@@ -130,9 +176,9 @@ def improved(values: list, d: int) -> tuple[int | None, int]:
     return (k if n else None), n
 
 
-def trough(values: list, d: int) -> str | None:
+def trough(values: list, d: int | None) -> str | None:
     pts = [(LABELS[i], _num(v)) for i, v in enumerate(values[:4]) if _num(v) is not None]
-    if d == 0 or not pts:
+    if not d or not pts:
         return None
     lab, _v = (min if d > 0 else max)(pts, key=lambda t: t[1])
     return lab
@@ -165,8 +211,8 @@ def years_to(target: float | None, now, growth, d: int, why_target: str = "") ->
     return math.log(target / x) / math.log(1 + g), ""
 
 
-def arrow(q, d: int) -> str:
-    if q is None:
+def arrow(q, d: int | None) -> str:
+    if q is None or d is None:
         return "–"
     if d == 0:
         return "↑" if q > 0 else "↓" if q < 0 else "→"
@@ -174,13 +220,155 @@ def arrow(q, d: int) -> str:
     return "▲" if good > 0 else "▼" if good < 0 else "→"
 
 
-def trend_text(q, g, imp, n, d: int) -> str:
-    parts = [arrow(q, d)]
-    parts.append(f"{q:+.1%} QoQ" if q is not None else "QoQ n/a")
-    parts.append(f"{g:+.0%}/yr (4Q)" if g is not None else "4Q n/a")
+def trend_text(q, g, imp, n, d: int | None, label: str = "") -> str:
+    """THE ARROW FOLLOWS THE 4-QUARTER DIRECTION (Jake's Phase 1 review 2026-10-12, item 5), with quarters improved;
+    QoQ is secondary text. A growth label (NEW / STEP CHANGE) stands in for the rate and carries no arrow."""
+    if d is None:
+        return "direction not declared · " + (f"QoQ {q:+.1%}" if q is not None else "QoQ n/a")
+    parts = [arrow(None if label else g, d)]
+    parts.append(label or (f"{g:+.0%}/yr (4Q)" if g is not None else "4Q n/a"))
     if imp is not None:
         parts.append(f"{imp}/{n} improved")
+    parts.append(f"QoQ {q:+.1%}" if q is not None else "QoQ n/a")
     return " · ".join(parts)
+
+
+# ----------------------------------------------------------------------------------------------- lumpy flows
+# LUMPY FLOWS (Jake 2026-10-12, decision 8 on 6f8c86c): a row that includes a DISCRETE flow — unlocks
+# (unlock_release_tokens), a declared lumpy series (config.LUMPY_FLOWS), a series annualised by events
+# (config.events_per_year) or a monthly series (three complete months, Data q0_basis) — takes its direction and growth
+# from the ROLLING T12M: T12M now (Q0..Q-3) against T12M a quarter earlier (Q-1..Q-4). Single quarters are shown, never
+# used for direction (no QoQ arrow, no quarters-improved count).
+DISCRETE_METRICS = ("unlock_release_tokens",)
+
+
+def lumpy_reason(project: str, metrics, data_by_key: dict) -> str:
+    for m in sorted(metrics):
+        if m in DISCRETE_METRICS:
+            return f"{m} (unlocks: discrete releases)"
+        if config.LUMPY_FLOWS.get((project, m)):
+            return f"{m} (config.LUMPY_FLOWS)"
+        if config.events_per_year(project, m):
+            return f"{m} (annualised by events)"
+        basis = str((data_by_key.get(f"{project}|{m}") or {}).get("q0_basis") or "")
+        if "month" in basis.lower() and "trailing" not in basis.lower():
+            return f"{m} (a monthly series)"
+    return ""
+
+
+def rolling_t12m(values: list, basis: str) -> tuple:
+    """(T12M now, T12M a quarter earlier, change over the quarter, annualised growth, why None)."""
+    t0, w0 = t12m(values[0:4], basis)
+    t1, w1 = t12m(values[1:5], basis)
+    if t0 is None or t1 is None:
+        return t0, t1, None, None, f"the rolling T12M needs Q0..Q-4 ({w0 or w1})"
+    if t1 <= 0 or t0 <= 0:
+        return t0, t1, None, None, "a T12M at or below 0 — growth is undefined (direction still read)"
+    return t0, t1, t0 / t1 - 1, (t0 / t1) ** 4 - 1, ""
+
+
+def lumpy_trend_text(t0, t1, chg, annual, d: int | None, label: str = "") -> str:
+    if label:
+        return f"– · {label} (rolling T12M)"
+    diff = None if t0 is None or t1 is None else t0 - t1
+    parts = [arrow(diff, d)]
+    parts.append(f"T12M {chg:+.1%} vs a quarter earlier" if chg is not None else
+                 ("T12M direction only" if diff is not None else "T12M n/a"))
+    parts.append(f"{annual:+.0%}/yr (rolling T12M)" if annual is not None else "growth n/a")
+    return " · ".join(parts)
+
+
+# ----------------------------------------------------------------------------------------------- the basis rule
+# A CHANGE OF BASIS MUST NEVER READ AS A TREND (Jake 2026-10-12, decision 7 on 6f8c86c). History is restated on the
+# current basis wherever it can be (archive reads at past blocks, orphan_cleanup.sql CK); where it is not (yet), the
+# row says SERIES BREAK <date> and no QoQ, growth or direction is computed across it — only between quarters that lie
+# wholly on the current basis.
+#   the basis of a day's row = its measuring point (fetch.base._measuring_point: the composition of a summed holding is
+#   part of it), except for the read-time views whose bracket NAMES the basis (BRACKET_BASIS: which circulating series
+#   was used, whether NEAR's lockup rule was in force), dates stripped. A declared handover whose composition_change
+#   starts "none" (or that declares none) is one basis. A derived circulating series inherits the breaks of its inputs (its total, the
+#   subtracted and added stocks), and circulating_supply_used those of the series it used.
+BRACKET_BASIS = ("circulating_supply_used", "circulating_supply_lockup_rule")
+_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+_REF = re.compile(r'"\|([a-z0-9_]+)",Data!')
+
+
+def referenced_metrics(formula) -> set[str]:
+    """The Data metrics a headline formula reads (Refs.D: MATCH($A{r}&"|metric",Data!...))."""
+    return set(_REF.findall(str(formula or "")))
+
+
+def basis_of(metric: str, source: str) -> str:
+    from fetch.base import _measuring_point
+    src = str(source or "")
+    if metric in BRACKET_BASIS:
+        m = re.search(r"\[([^\]]*)\]", src)
+        return _DATE.sub("", m.group(1)).strip() if m else src
+    return _measuring_point(src)
+
+
+def _inputs(project: str, metric: str, groups: dict) -> tuple:
+    if metric == "circulating_supply_used":
+        g = groups.get((project, metric))
+        used = set()
+        if g is not None and not g.empty:
+            for s in g["source"].astype(str).unique():
+                m = re.search(r"\[([a-z0-9_]+)", s)
+                if m:
+                    used.add(m.group(1))
+        return tuple(sorted(used))
+    spec = config.circulating_onchain(project) or {}
+    if metric == "circulating_supply_onchain" or (spec.get("metric") == metric and metric.startswith("circulating")):
+        return tuple(x for x in ((spec.get("total") or "total_supply"), *(spec.get("subtract") or ()),
+                                 *(spec.get("add") or ())) if x)
+    if metric == "circulating_supply_lockup_rule":
+        return ("total_supply", "near_lockup_locked_tokens", "near_foundation_accounts_tokens")
+    return ()
+
+
+def _own_breaks(project: str, metric: str, groups: dict, since) -> list[tuple]:
+    import pandas as pd
+    g = groups.get((project, metric))
+    if g is None or g.empty:
+        return []
+    g = g.assign(date=pd.to_datetime(g["date"])).sort_values("date")
+    decl = config.declared_handover(project, metric) or {}
+    # a declared handover is one series unless its composition_change says the quantity steps (Ether.fi's total)
+    cc = str(decl.get("composition_change", "none")).strip().lower()
+    benign = bool(decl) and cc.startswith("none")
+    pts = set(decl.get("ordered_points") or ())
+    out, prev = [], None
+    for d, src in zip(g["date"], g["source"].astype(str)):
+        b = basis_of(metric, src)
+        if prev is not None and b != prev and d >= since:
+            if not (benign and prev in pts and b in pts):
+                out.append((d, metric, prev, b))
+        prev = b
+    return out
+
+
+def basis_breaks(project: str, metrics, groups: dict, since) -> list[tuple]:
+    """[(date, metric, old basis, new basis)] — every change of basis on or after `since` in the series the metrics
+    read, their inputs included, oldest first."""
+    seen, todo, out = set(), list(metrics), []
+    while todo:
+        m = todo.pop()
+        if m in seen:
+            continue
+        seen.add(m)
+        out += _own_breaks(project, m, groups, since)
+        todo += [x for x in _inputs(project, m, groups) if x not in seen]
+    return sorted(out, key=lambda t: t[0])
+
+
+def clean_quarters(asof, break_day, period_days: int, n: int) -> int:
+    """How many quarters, Q0 first, lie wholly on or after the break (quarter k = the period_days ending
+    asof − k x period_days)."""
+    import pandas as pd
+    k = 0
+    while k < n and (pd.Timestamp(asof) - pd.Timedelta(days=period_days * (k + 1) - 1)) >= pd.Timestamp(break_day):
+        k += 1
+    return k
 
 
 # ----------------------------------------------------------------------------------------------- benchmarks

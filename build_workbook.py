@@ -208,7 +208,14 @@ def _programmed_label(value) -> str:
     return "yes" if value else "no"
 
 
+# globals beside the window settings (label, value cell): the NRR yardstick (Jake's Phase 1 review 2026-10-12, item 7)
+CFG_GLOBAL_EXTRA = {"nrr_m2_gdp": ("D3", "E3", "M2 / GDP — the NRR yardstick (Jake's May note): NRR headroom = it ÷ NRR")}
+
+
 def G(name: str) -> str:
+    if name in CFG_GLOBAL_EXTRA:
+        cell = CFG_GLOBAL_EXTRA[name][1]
+        return f"{CFG}!${cell[0]}${cell[1:]}"
     return f"{CFG}!$B${CFG_GLOBAL_ROWS[name]}"
 
 
@@ -902,6 +909,85 @@ def _reward_end_views(groups: dict, asof: pd.Timestamp) -> None:
                 f"{last.date()}, before the end. It is not carried past its end date. A read after "
                 f"the end shows the rate as it stands — 0, or a top-up, which is flagged "
                 f"(reward_vault_topup).")
+
+
+CONSENSUS_HISTORY_POINT = "derived:consensus_formula"
+
+
+def _consensus_history_views(groups: dict) -> None:
+    """ETHEREUM'S CONSENSUS REWARDS BEFORE ETHERSCAN'S FIRST READ (Jake's Phase 1 review 2026-10-12, item 8c: a history
+    route for validator yields). Eth2Staking (etherscan ethsupply2) is current-state only, so consensus_rewards_tokens
+    starts 2026-09-30 and the validator yield had one quarter. The consensus spec fixes issuance by stake: a year's
+    rewards at full participation = 166.32 x sqrt(staked ETH) (config VALIDATOR_YIELD issuance_formula,
+    consensus-specs@e321975f). Per day before the first measured day: that ÷ 365 on the day's staked ETH
+    (beacon_chain_eth, a year of history), x k = the measured rewards ÷ the formula over the days both exist — so the
+    older leg is on the measured basis (participation and penalties folded into k). Labelled with k and its days;
+    declared as a handover. No measured overlap: nothing derived."""
+    spec = config.VALIDATOR_YIELD.get("Ethereum") or {}
+    f = spec.get("issuance_formula")
+    cm = spec.get("consensus_metric")
+    if not f or not cm or "Ethereum" not in {p["name"] for p in scoped_projects()}:
+        return
+    meas, stake = groups.get(("Ethereum", cm)), groups.get(("Ethereum", spec["stake_metric"]))
+    if meas is None or meas.empty or stake is None or stake.empty:
+        return
+    s = lambda g: (g.assign(date=pd.to_datetime(g["date"]).dt.normalize())  # noqa: E731
+                   .drop_duplicates("date", keep="last").set_index("date")["value"].astype(float))
+    from fetch.validate import _span_days                  # noqa: PLC0415
+    m, st = s(meas), s(stake)
+    formula = (float(f["coefficient"]) * st.clip(lower=0) ** 0.5) / float(GLOBALS["days_per_year"])
+    # EACH MEASURED ROW AGAINST THE FORMULA OVER ITS OWN SPAN (a delta dated d with [span=4d] holds four days' rewards)
+    spans = (meas.assign(date=pd.to_datetime(meas["date"]).dt.normalize()).drop_duplicates("date", keep="last")
+             .set_index("date")["source"].astype(str).map(_span_days))
+    num = den = 0.0
+    used = []
+    for d, v in m.items():
+        days = pd.date_range(end=d, periods=int(spans.get(d, 1)), freq="D")
+        if all(x in formula.index for x in days):
+            num, den = num + float(v), den + float(formula[days].sum())
+            used.append(d)
+    if len(used) < 3 or den <= 0:
+        return
+    k = num / den
+    both = pd.DatetimeIndex(used)
+    older = formula[formula.index < m.index.min()]
+    if older.empty:
+        return
+    src = (f"{CONSENSUS_HISTORY_POINT}[{f['coefficient']} x sqrt(staked ETH) / 365 x k={k:.4f}; k = measured "
+           f"Eth2Staking ÷ formula over {len(both)} reading(s) {both.min().date()}..{both.max().date()}, each over "
+           f"its own span]")
+    view = pd.DataFrame({"date": older.index, "project": "Ethereum", "metric": cm, "value": (older * k).values,
+                         "tier": 2, "source": src})
+    groups[("Ethereum", cm)] = pd.concat([_as_stored(view, meas.columns), meas], ignore_index=True).sort_values("date")
+
+
+PRICE_HISTORY_POINT = "defillama_coins:history"
+
+
+def _price_history_views(groups: dict) -> None:
+    """Q-4 PRICES (Jake's Phase 1 review 2026-10-12, item 8b). CoinGecko's free market_chart serves 365 days; the fifth
+    quarter needs 455. DefiLlama's coins chart (price_usd_llama, fetch/xref — asked over the whole window once) is the
+    same market price: its days BEFORE CoinGecko's first stored price become price_usd's older leg, source
+    `defillama_coins:history[<its key>]` — a declared handover (config: price_usd defillama_coins:history -> coingecko,
+    composition none), so the series is one. Never a day CoinGecko has; only where price_usd is CoinGecko's."""
+    for p in scoped_projects():
+        name = p["name"]
+        px, ll = groups.get((name, "price_usd")), groups.get((name, "price_usd_llama"))
+        if px is None or px.empty or ll is None or ll.empty:
+            continue
+        decl = config.declared_handover(name, "price_usd") or {}
+        if tuple(decl.get("ordered_points") or ()) != (PRICE_HISTORY_POINT, "coingecko"):
+            continue
+        if set(px["source"].astype(str).map(_measuring_point)) != {"coingecko"}:
+            continue
+        first = pd.to_datetime(px["date"]).min()
+        older = ll[pd.to_datetime(ll["date"]) < first]
+        if older.empty:
+            continue
+        older = older.assign(metric="price_usd",
+                             source=[f"{PRICE_HISTORY_POINT}[{str(sv).split(':', 1)[-1]}]" for sv in older["source"]])
+        groups[(name, "price_usd")] = pd.concat([older[px.columns.intersection(older.columns)], px],
+                                                ignore_index=True).sort_values("date")
 
 
 def _monthly_leg_views(groups: dict) -> None:
@@ -2013,6 +2099,8 @@ def _market_cap_views(groups: dict) -> None:
         price = daily("price_usd")
         chosen = chosen_circulating_metric(p)
         own, fallback = daily(chosen), daily("circulating_supply")
+        if config.no_coingecko_fallback(name) and chosen != "circulating_supply":
+            fallback = fallback.iloc[0:0]            # another basis, never a stand-in (Phase 1 review, item 2)
         # A HAND-ENTERED MONTHLY FIGURE HOLDS UNTIL IT IS STALE (GEODNET's own circulating, 2026-10-07): carried
         # forward up to 45 days, the AMBER threshold of a monthly manual series.
         if chosen != "circulating_supply" and not own.empty and config.series_granularity(name, chosen) == "monthly":
@@ -2118,7 +2206,8 @@ def _near_lockup_views(groups: dict) -> None:
     """NEAR UNDER JAKE'S RULE (2026-10-11 C, clarified 2026-10-12 decision 8 on e4e50b0): everything NOT YET
     TRANSFERABLE leaves circulating — the lockups' LOCKED amount (still unvested + vested-but-lockup-locked; NEAR's own
     'locked', with the buggy-code lockups recomputed as NEAR's lakehouse does), the same as unreleased vesting elsewhere;
-    released-but-not-withdrawn stays circulating. circulating_supply_lockup_rule = total_supply − LOCKED, from the latest
+    released-but-not-withdrawn stays circulating. lockup.near and contributors.near leave too (decision 3 on 6f8c86c).
+    circulating_supply_lockup_rule = total_supply − LOCKED − those two accounts, from the latest
     weekly lockup read on or before the day and at most NEAR_LOCKUP_MAX_AGE_DAYS old. A day without such a read carries
     NEAR's own figure, and its source says so; a day with one names the read's date."""
     for p in scoped_projects():
@@ -2131,6 +2220,10 @@ def _near_lockup_views(groups: dict) -> None:
                        g.assign(date=pd.to_datetime(g["date"]).dt.normalize()).sort_values("date")
                        .drop_duplicates("date", keep="last").set_index("date")["value"].astype(float))
         base, total, lk = s(fp), s(tot_g), s(groups.get((name, "near_lockup_locked_tokens")))
+        # lockup.near + contributors.near out too (Jake 2026-10-12, decision 3 on 6f8c86c): a read at most
+        # NEAR_LOCKUP_MAX_AGE_DAYS old; without one the day keeps NEAR's own figure (never a rule figure on a basis
+        # missing a leg)
+        fa = s(groups.get((name, "near_foundation_accounts_tokens")))
         days = (base.index if base is not None else pd.DatetimeIndex([]))
         if total is not None:
             days = days.union(total.index)
@@ -2138,14 +2231,17 @@ def _near_lockup_views(groups: dict) -> None:
             continue
         idx, vals, srcs = [], [], []
         for d in days:
-            read = None
-            if lk is not None and total is not None and d in total.index:
+            read = acc = None
+            if lk is not None and fa is not None and total is not None and d in total.index:
                 w = lk[(lk.index <= d) & (lk.index >= d - pd.Timedelta(days=NEAR_LOCKUP_MAX_AGE_DAYS))]
                 read = (w.index[-1], float(w.iloc[-1])) if not w.empty else None
-            if read is not None:
+                w = fa[(fa.index <= d) & (fa.index >= d - pd.Timedelta(days=NEAR_LOCKUP_MAX_AGE_DAYS))]
+                acc = float(w.iloc[-1]) if not w.empty else None
+            if read is not None and acc is not None:
                 idx.append(d)
-                vals.append(float(total[d]) - read[1])
-                srcs.append(f"derived:circulating_lockup_rule[total_supply − LOCKED, lockups read {read[0].date()}]")
+                vals.append(float(total[d]) - read[1] - acc)
+                srcs.append(f"derived:circulating_lockup_rule[total_supply − LOCKED − lockup.near − contributors.near, "
+                            f"lockups read {read[0].date()}]")
             elif base is not None and d in base.index:
                 idx.append(d)
                 vals.append(float(base[d]))
@@ -2383,6 +2479,8 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
             last_success[(r.source, r.project)] = r.last_success_at
     groups = {k: g for k, g in long.groupby(["project", "metric"])} if not long.empty else {}
     _partial_sum_views(groups)    # FIRST: nothing downstream may read a partial sum
+    _price_history_views(groups)  # Q-4 prices: DefiLlama coins before CoinGecko's free 365 days (review item 8b)
+    _consensus_history_views(groups)  # ETH consensus rewards before Etherscan's first read (review item 8c)
     _monthly_leg_views(groups)
     _measured_emissions_views(groups)
     _usd_history_views(groups)    # BEFORE the burn total, which sums the leg it extends
@@ -3328,6 +3426,12 @@ def write_config(ws, asof: pd.Timestamp, silence: dict | None = None, statuses: 
         c = ws.cell(row=r, column=2, value=GLOBALS[key])
         _style(c, "input", FMT_NUM)
         c.fill = FILL_KEY
+    for key, (lab, cell, text) in CFG_GLOBAL_EXTRA.items():
+        ws[lab] = text
+        ws[lab].font = F_BASE
+        ws[cell] = GLOBALS[key]
+        _style(ws[cell], "input", FMT_NUM2)
+        ws[cell].fill = FILL_KEY
     ws.cell(row=7, column=1, value="Annualisation factor = days per year ÷ comparison window").font = F_SUB
     c = ws.cell(row=7, column=2, value=f"={G('days_per_year')}/{G('period_days')}")
     _style(c, "calc", FMT_NUM2)
@@ -3906,9 +4010,9 @@ def _implied_zero(p: dict) -> str | None:
 
 
 def _a3_headline(R: Refs, data_by_key: dict | None = None) -> list[tuple]:
-    """BOTH RETIREMENT RATES, OR NEITHER. The gap between them is the dilution warning; the
-    circulating rate alone is the flattering half. One gate serves both cells, so a missing
-    supply, FDV or buyback blanks the pair together.
+    """BOTH RETIREMENT RATES, READ TOGETHER. The gap between them is the dilution warning; the circulating rate alone is
+    the flattering half. Each is gated on its own inputs (Phase 1 review 2026-10-12, item 3): a quarter with no total
+    supply blanks the FDV rate, never the circulating one.
 
     TOKENS PRIMARY (Jake, 2026-09-30): the pair is buyback TOKENS (annualised) over circulating
     and over the FDV supply (FDV ÷ spot price) — price-independent, so a rising token does not
@@ -3921,12 +4025,17 @@ def _a3_headline(R: Refs, data_by_key: dict | None = None) -> list[tuple]:
     bb = lambda r: R.D(r, "retired_buyback_usd", "q0")  # noqa: E731
     mc = lambda r: R.D(r, "market_cap_usd", "now")  # noqa: E731
     fdv = lambda r: R.D(r, "fdv_usd", "now")  # noqa: E731
-    px = lambda r: R.D(r, "price_usd", "now")  # noqa: E731
     circ = lambda r, p: _circ(R, r, p)  # noqa: E731
-    fdv_supply = lambda r: f"({fdv(r)}/{px(r)})"  # noqa: E731
-    gate_t = lambda r, p: (f"AND(ISNUMBER({bt(r)}),ISNUMBER({circ(r, p)}),ISNUMBER({fdv(r)}),"  # noqa: E731
-                           f"ISNUMBER({px(r)}))")
-    gate = lambda r: f"AND(ISNUMBER({bb(r)}),ISNUMBER({mc(r)}),ISNUMBER({fdv(r)}))"  # noqa: E731
+    # EACH QUARTER ON ITS OWN SUPPLY (Jake's Phase 1 review, 2026-10-12 item 3): the FDV supply is the total supply FDV
+    # multiplies (_fdv_views: FDV = price x total_supply, so FDV ÷ price IS it) read directly, so a shifted quarter takes
+    # that quarter's total — FDV ÷ price at "now" had history only where FDV did. And each rate is gated on ITS OWN
+    # inputs: the circulating rate never waits on an FDV (a3_circ_retirement read 1 quarter where a3_actual_buyback_pct,
+    # the same numerator over the same circulating, read 4).
+    fdv_supply = lambda r: R.D(r, "total_supply", "now")  # noqa: E731
+    gate_t = lambda r, p: f"AND(ISNUMBER({bt(r)}),ISNUMBER({circ(r, p)}))"  # noqa: E731
+    gate_f = lambda r: f"AND(ISNUMBER({bt(r)}),ISNUMBER({fdv_supply(r)}))"  # noqa: E731
+    gate = lambda r: f"AND(ISNUMBER({bb(r)}),ISNUMBER({mc(r)}))"  # noqa: E731
+    gate_fd = lambda r: f"AND(ISNUMBER({bb(r)}),ISNUMBER({fdv(r)}))"  # noqa: E731
     # THE RATES READ 0 FOR THE SAME REASON THE BUYBACK DOES, and would keep reading 0 if the
     # program restarted at another address — so the program flag rides on them too.
     flag = lambda p: (_program_flag(p, data_by_key or {})  # noqa: E731
@@ -3940,14 +4049,14 @@ def _a3_headline(R: Refs, data_by_key: dict | None = None) -> list[tuple]:
         ("CIRCULATING RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) ÷ circulating — primary",
          zero_or(lambda r, p: f"IF({gate_t(r, p)},{_annualise(R, r, p, 'actual_buyback_tokens', bt(r))}/({circ(r, p)}),{NA})"),
          FMT_PCT, "calc", True, {"metric": "actual_buyback_tokens", "flag_fn": flag}),
-        ("FDV RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) ÷ FDV supply (FDV ÷ price) — always read with the rate to its left",
-         zero_or(lambda r, p: f"IF({gate_t(r, p)},{_annualise(R, r, p, 'actual_buyback_tokens', bt(r))}/{fdv_supply(r)},{NA})"),
+        ("FDV RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) ÷ FDV supply (the total supply FDV uses) — always read with the rate to its left",
+         zero_or(lambda r, p: f"IF({gate_f(r)},{_annualise(R, r, p, 'actual_buyback_tokens', bt(r))}/{fdv_supply(r)},{NA})"),
          FMT_PCT, "calc", True, {"metric": "actual_buyback_tokens", "flag_fn": flag}),
         ("Circulating retirement rate ($) = RETIRED buyback $ (burned + held, annualised) ÷ market cap — alongside",
          zero_or(lambda r, p: f"IF({gate(r)},{_annualise(R, r, p, 'actual_buyback_usd', bb(r))}/{mc(r)},{NA})"),
          FMT_PCT, "calc", False, {"metric": "actual_buyback_usd", "flag_fn": flag}),
         ("FDV retirement rate ($) = RETIRED buyback $ (burned + held, annualised) ÷ FDV — alongside",
-         zero_or(lambda r, p: f"IF({gate(r)},{_annualise(R, r, p, 'actual_buyback_usd', bb(r))}/{fdv(r)},{NA})"),
+         zero_or(lambda r, p: f"IF({gate_fd(r)},{_annualise(R, r, p, 'actual_buyback_usd', bb(r))}/{fdv(r)},{NA})"),
          FMT_PCT, "calc", False, {"metric": "actual_buyback_usd", "flag_fn": flag}),
     ]
 
@@ -4053,6 +4162,8 @@ def _circ_formula(R: Refs, r, p: dict) -> str:
         # on-chain figure, circulating falls back to CoinGecko + the locked tokens inside it — so free float
         # (circulating − locked) is CoinGecko's own figure, never CoinGecko − locked a SECOND time.
         fb = f"{c}+{_ff_lock(R, r, p)}" if config.coingecko_is_free_float(p["name"]) else c
+        if config.no_coingecko_fallback(p["name"]):
+            fb = "NA()"                              # another basis, never a stand-in (Phase 1 review, item 2)
         if config.supply_unnetted_burn(p["name"]):
             # The un-netted burn is CoinGecko's: the project's own figure is used as published (GEODNET, 2026-10-07);
             # only the CoinGecko fallback is netted.
@@ -4259,7 +4370,43 @@ def _retire_vs_dilution_col(R: Refs) -> tuple:
             {"metric": "retired_buyback_tokens", "trajectory_id": "a3_retire_vs_dilution"})
 
 
-EXTRA_SNAPSHOT_HEADERS = (UNLOCK_HEAD, UNLOCK_PCT_HEAD, TOTAL_DILUTION_HEAD, NET_ABS_UNLOCK_HEAD, RETIRE_VS_DILUTION_HEAD)
+CURRENT_RATE_HEAD = "Emissions — the rate IN FORCE, annual (tokens) — the Q0 figure is the measured blend"
+RETIRE_VS_DILUTION_NOW_HEAD = ("RETIREMENT ÷ DILUTION at the emission rate IN FORCE (x) — forward-looking rows "
+                               "(years to crossover) use it")
+
+
+def _current_rate_cols(R: Refs) -> list[tuple]:
+    """THE EMISSION RATE IN FORCE (Jake 2026-10-12, decision 2 on 6f8c86c): where a project's emissions are re-set by
+    schedule (Sky's DssVest awards), Q0 measures the blend and these show the rate in force, and the crossover ratio at
+    it — the series the benchmark's years use (config.CURRENT_EMISSION_RATE). Blank elsewhere."""
+    def has(p):
+        return p["name"] in config.CURRENT_EMISSION_RATE
+
+    def rate(r, p):
+        return R.D(r, config.CURRENT_EMISSION_RATE[p["name"]]["metric"], "now")
+
+    def ratio(r, p):
+        if not has(p):
+            return ""
+        if _retirement_zero(p):
+            return "=0"
+        cr = config.CURRENT_EMISSION_RATE[p["name"]]
+        name = p["name"]
+        others = [m for m in config.absorption_emission_metrics(name) if m != cr["replaces"]]
+        unl = ["unlock_release_tokens"] if config.unlock_stock_metrics(name) else []
+        den = "+".join([f"({rate(r, p)}/{G('days_per_year')})"] + [_flow_rate(R, r, m, p=p) for m in others + unl])
+        legs = [("buyback", "retired_buyback_tokens", "q0")] + [("unlocks", m, "q0") for m in unl]
+        return _coverage_guard(R, r, legs, f"{_flow_rate(R, r, 'retired_buyback_tokens', p=p)}/({den})")
+    return [
+        (CURRENT_RATE_HEAD, lambda r, p: pull(rate(r, p)) if has(p) else "", FMT_NUM, "pull", False,
+         {"metric": "emissions_rate_current_annual_tokens"}),
+        (RETIRE_VS_DILUTION_NOW_HEAD, ratio, FMT_X, "calc", False,
+         {"metric": "retired_buyback_tokens", "trajectory_id": "a3_retire_vs_dilution_now"}),
+    ]
+
+
+EXTRA_SNAPSHOT_HEADERS = (UNLOCK_HEAD, UNLOCK_PCT_HEAD, TOTAL_DILUTION_HEAD, NET_ABS_UNLOCK_HEAD, RETIRE_VS_DILUTION_HEAD,
+                          CURRENT_RATE_HEAD, RETIRE_VS_DILUTION_NOW_HEAD)
 
 
 def _published_unlock_column() -> tuple:
@@ -4342,10 +4489,59 @@ def _eth_yield_columns(R: Refs) -> list[tuple]:
     ]
 
 
+def _net_inflation(R: Refs, r: int, p: dict) -> str:
+    """Net supply change, annualised, as a fraction of circulating — A4's headline, which Master's 'Net supply change,
+    annualised % of circulating' shows (cross-tab linked): the same expression for Total Yield (decision 9)."""
+    circ = _circ(R, r, p)
+    bm = config.a4_burn_metric(p["name"])
+    return (_zero_issuance(R, r, p, f"-{_annualise(R, r, p, bm, R.D(r, bm, 'q0'))}/({circ})")
+            or _net_annual_pct(R, r, p, circ))
+
+
+TOTAL_YIELD_STAKERS_HEAD = "TOTAL YIELD — stakers = validator staking yield − net inflation (annual)"
+TOTAL_YIELD_HOLDERS_HEAD = "Total yield — non-stakers = − net inflation (annual)"
+
+
+def _total_yield_cols(R: Refs, vyield) -> list[tuple]:
+    """TOTAL YIELD (Jake 2026-10-12, decision 9 on 6f8c86c; A1): a staker earns the validator yield and is diluted by net
+    inflation; a non-staker is only diluted. Net inflation = Master's 'Net supply change, annualised % of circulating'
+    (_net_inflation). The 3-month T-bill benchmark (Phase 3) sits on the stakers' figure."""
+    def inner(f):
+        return f[1:] if isinstance(f, str) and f.startswith("=") else None
+
+    def stakers(r, p):
+        vy, ni = inner(vyield(r, p)), inner(_net_inflation(R, r, p))
+        if vy is None:
+            return ""                                     # no validator yield on file: no staker figure
+        return calc(f"({vy})-({ni})") if ni is not None else "n/a — no net inflation figure"
+
+    def holders(r, p):
+        ni = inner(_net_inflation(R, r, p))
+        return calc(f"-({ni})") if ni is not None else "n/a — no net inflation figure"
+    return [(TOTAL_YIELD_STAKERS_HEAD, stakers, FMT_PCT, "calc", True,
+             {"metric_fn": lambda n: {"Ethereum": "beacon_chain_eth", "Near": "total_supply",
+                                      "Chainlink": "reward_emission_rate_annual"}.get(n)}),
+            (TOTAL_YIELD_HOLDERS_HEAD, holders, FMT_PCT, "calc", False,
+             {"trajectory_id": "a1_total_yield_holders"})]
+
+
+def _nrr_headroom_col(R: Refs, metric: str, what: str, tid: str) -> tuple:
+    """NRR HEADROOM (Jake's Phase 1 review 2026-10-12, item 7): NRR is valuation headroom, not a target — M2/GDP
+    (Config: nrr_m2_gdp, 0.71) ÷ NRR. Above 1, the market cap is below what the volume would carry at the money-supply
+    ratio; the volume itself is the Fundamentals trajectory beside it."""
+    def build(r, p):
+        if metric not in config.metrics_for_project(p):
+            return ""
+        n = R.D(r, metric, "now")
+        return calc(f"IF(AND(ISNUMBER({n}),{n}>0),{G('nrr_m2_gdp')}/{n},{NA})")
+    return (f"NRR HEADROOM ({what}) = M2/GDP ÷ NRR — valuation headroom, not a target", build, FMT_X, "calc", False,
+            {"metric": metric, "trajectory_id": tid})
+
+
 def _a1_headline(R: Refs) -> list[tuple]:
-    """The VALIDATOR yield (securing the chain) — never a protocol revenue share — and the Network
-    Reserve Ratio with its settlement-volume input (Artemis, 2026-09-30). Total Yield is not on
-    the sheet: its formula is the note's and is not yet in config."""
+    """The VALIDATOR yield (securing the chain) — never a protocol revenue share — Total Yield beside it (stakers and
+    non-stakers, decision 9 on 6f8c86c), and the Network Reserve Ratio with its settlement-volume input (Artemis,
+    2026-09-30)."""
     def vyield(r, p):
         spec = config.VALIDATOR_YIELD.get(p["name"])
         if not spec:
@@ -4396,6 +4592,7 @@ def _a1_headline(R: Refs) -> list[tuple]:
          vyield, FMT_PCT, "calc", True,
          {"metric_fn": lambda n: {"Ethereum": "beacon_chain_eth", "Near": "total_supply",
                                   "Chainlink": "reward_emission_rate_annual"}.get(n)}),
+        *_total_yield_cols(R, vyield),
         ("Validator yield — caveat (a maturing rate)",
          lambda r, p: (config.VALIDATOR_YIELD.get(p["name"]) or {}).get("maturing", ""), FMT_TEXT, "text"),
         # WHERE THE HEADLINE IS NET OF COMMISSION (Plume, Jake 2026-10-05), the gross rate beside it.
@@ -4410,7 +4607,8 @@ def _a1_headline(R: Refs) -> list[tuple]:
         # after 45 days (config.ARTEMIS_SETTLEMENT).
         ("Settlement volume, trailing 365d ($) — Artemis: DEX + NFT + P2P transfers",
          lambda r, p: pull(R.D(r, "settlement_volume_365d_usd", "now")) if "settlement_volume_365d_usd"
-         in config.metrics_for_project(p) else "", FMT_USD, "pull", False, {"metric": "settlement_volume_365d_usd"}),
+         in config.metrics_for_project(p) else "", FMT_USD, "pull", False,
+         {"metric": "settlement_volume_365d_usd", "trajectory_id": "a1_settlement_volume"}),
         ("Settlement volume: last date of the Artemis export (both NRR inputs end here)",
          lambda r, p: pull(R.D(r, "network_reserve_ratio", "latest_date")) if "network_reserve_ratio"
          in config.metrics_for_project(p) else "", FMT_TEXT, "pull", False, {"metric": "network_reserve_ratio"}),
@@ -4418,6 +4616,7 @@ def _a1_headline(R: Refs) -> list[tuple]:
          "DEX + NFT + P2P), same end date",
          lambda r, p: pull(R.D(r, "network_reserve_ratio", "now")) if "network_reserve_ratio"
          in config.metrics_for_project(p) else "", FMT_PCT, "pull", True, {"metric": "network_reserve_ratio"}),
+        _nrr_headroom_col(R, "network_reserve_ratio", "settlement", "a1_nrr_settlement_headroom"),
         # AN INCENTIVE PERIOD (Plume, Jake 2026-10-02): the column above reads the ORGANIC window; the
         # full-year figure, incentive period included, sits here — blank for every other project.
         ("NRR ON SETTLEMENT VOLUME — FULL YEAR, incentive-inflated (includes the incentive period; Plume: "
@@ -4428,10 +4627,12 @@ def _a1_headline(R: Refs) -> list[tuple]:
         # four chains. A DIFFERENT DEFINITION, so its own columns — never mixed with the above.
         ("Trading throughput, trailing 365d ($) — DefiLlama DEX + perps; NOT settlement volume",
          lambda r, p: pull(R.D(r, "trading_throughput_365d_usd", "now")) if "trading_throughput_365d_usd"
-         in config.metrics_for_project(p) else "", FMT_USD, "pull", False, {"metric": "trading_throughput_365d_usd"}),
+         in config.metrics_for_project(p) else "", FMT_USD, "pull", False,
+         {"metric": "trading_throughput_365d_usd", "trajectory_id": "a1_throughput_volume"}),
         ("NRR ON TRADING THROUGHPUT — market cap ÷ trailing-365d DEX + perps volume (DefiLlama)",
          lambda r, p: pull(R.D(r, "network_reserve_ratio_throughput", "now")) if "network_reserve_ratio_throughput"
          in config.metrics_for_project(p) else "", FMT_PCT, "pull", True, {"metric": "network_reserve_ratio_throughput"}),
+        _nrr_headroom_col(R, "network_reserve_ratio_throughput", "trading throughput", "a1_nrr_throughput_headroom"),
         ("Which NRR is meaningful here",
          lambda r, p: config.TRADING_THROUGHPUT["meaningful"].get(p["name"], "")
          if p["name"] in config.TRADING_THROUGHPUT["chains"] else "", FMT_TEXT, "text"),
@@ -5314,6 +5515,7 @@ CREDIBILITY_ROWS: list = []         # the Credibility tab's rows, in tab order (
 # requires every headline cell to have an id.
 HEADLINE_IDS = (
     ("A1", "VALIDATOR STAKING YIELD", "a1_validator_yield"),
+    ("A1", "TOTAL YIELD — stakers", "a1_total_yield_stakers"),
     ("A1", "NRR ON SETTLEMENT VOLUME", "a1_nrr_settlement"),
     ("A1", "NRR ON TRADING THROUGHPUT", "a1_nrr_throughput"),
     ("A1", "TVL", "a1_tvl"),
@@ -5885,6 +6087,10 @@ def write_a3(ws, R: Refs, data_by_key: dict):
         ("Actual buyback Q0 DISTRIBUTED to stakers (tokens) — staking yield, not retirement",
          lambda r, p: pull(R.D(r, "buyback_distributed_tokens", "q0")), FMT_NUM, "pull", False,
          {"metric": "buyback_distributed_tokens"}),
+        # THE TOKENS RETIRED, A FUNDAMENTALS TRAJECTORY (Jake's Phase 1 review 2026-10-12, item 6: the divergence row
+        # sets retired / burned tokens' growth against price's)
+        ("Actual buyback Q0 RETIRED (tokens) = burned + held", lambda r, p: pull(R.D(r, "retired_buyback_tokens", "q0")),
+         FMT_NUM, "pull", False, {"metric": "retired_buyback_tokens", "trajectory_id": "a3_retired_tokens"}),
         ("Actual buyback as % of supply (annualised) — RETIRED (burned + held) only",
          lambda r, p: calc(f"{_annualise(R, r, p, 'actual_buyback_tokens', R.D(r, 'retired_buyback_tokens', 'q0'))}/({circ(r, p)})"), FMT_PCT, "calc", True),
         # A STRUCTURAL-ZERO IMPLIED BUYBACK IS 0 HERE TOO (Jake 2026-10-12, on e4e50b0: Aerodrome's implied net absorption
@@ -5912,6 +6118,7 @@ def write_a3(ws, R: Refs, data_by_key: dict):
          FMT_NUM, "calc", False, {"gate": "fee_split", "threshold": True, "base": True}),
         *_unlock_cols(R, absorption=True),
         _retire_vs_dilution_col(R),
+        *_current_rate_cols(R),
         # ===== DOCUMENTED ALLOCATION LEGS, ONE ROW EACH, NEVER COLLAPSED. =====
         # Blank for every project that declares none, which is all of them but Sky. The legs
         # carry their own effect on supply, because a single "implied buyback" figure is right
@@ -6325,7 +6532,8 @@ def write_credibility(ws, R: Refs, data_by_key: dict, long: pd.DataFrame, asof) 
     frames = [g for g in _LAST_GROUPS.values() if g is not None and not g.empty]
     cred.VIEWS_LONG = (pd.concat(frames, ignore_index=True).assign(date=lambda d: pd.to_datetime(d["date"]))
                        if frames else None)
-    rows = cred.build_rows(_HEADLINE_CELLS, data_by_key, long, asof, projects=in_scope)
+    rows = cred.build_rows(_HEADLINE_CELLS, data_by_key, long, asof, projects=in_scope,
+                           previous=PREVIOUS_SNAPSHOT.get("values"), prev_date=PREVIOUS_SNAPSHOT.get("date", ""))
     projects = [n for n in config.CREDIBILITY_PROJECTS if n in in_scope]
     parked = "; ".join(f"{k}: {v}" for k, v in config.CREDIBILITY_PARKED.items())
     _title(ws, "Credibility — every headline beside an independent reference",
@@ -6388,6 +6596,10 @@ def write_credibility(ws, R: Refs, data_by_key: dict, long: pd.DataFrame, asof) 
             v = f'=IF(AND(ISNUMBER(E{r}),E{r}<>0),"CHECK (figure where none is expected)","N/A")'
         elif row["mode"] == "static":
             v = row["verdict"]
+        elif row["mode"] == "continuity":
+            # zero tolerance: every headline that read a value last run reads one now, or it is a CHECK
+            v = (f'=IF(E{r}=G{r},"PASS","CHECK (HEADLINE LOST: of the G headlines that read a value in the previous '
+                 f'run, only E still do — the note lists them; Review Queue: sanity headline_lost names each)")')
         elif row["mode"] == "derived":
             cells = [f"K{d0 + i}" for i in row.get("input_rows") or ()]
             anycheck = "OR(" + ",".join(f'LEFT({x},5)="CHECK"' for x in cells) + ")" if cells else "FALSE"
@@ -6761,7 +6973,7 @@ def write_runlog(ws, runlog: pd.DataFrame, fetch_status: pd.DataFrame, run_id: s
 
 
 # ---------------------------------------------------------------------------------------
-def write_trajectory(wb, data_by_key: dict) -> list[dict]:
+def write_trajectory(wb, data_by_key: dict, asof=None) -> list[dict]:
     """THE TRAJECTORY TAB (theory layer, Phase 1, 2026-10-12; trajectory.py). One row per registered headline: Q0..Q-4
     as live formulas (the cell's own builder under shifted(k)), then the derived columns, computed here with xlcalc and
     written as values. Returns the rows as dicts (export_snapshot, history_gaps, the tests)."""
@@ -6773,12 +6985,23 @@ def write_trajectory(wb, data_by_key: dict) -> list[dict]:
            "are computed at build. Years to benchmark at the trailing growth; n/a with the reason. No scores.")
     hr = 4
     _header(ws, hr, trajectory.HEAD)
-    rows = list(trajectory.ROWS.items())
+    # FOUR GROUPS (Jake's Phase 1 review 2026-10-12, item 6): Fundamentals, Supply, Valuation, Market — a section each,
+    # projects in tab order inside it; a row whose id has no declared group goes last, said
+    order = {g: i for i, g in enumerate(config.TRAJECTORY["groups"])}
+    rows = sorted(trajectory.ROWS.items(), key=lambda kv: order.get(trajectory.group(kv[1]["hid"]), len(order)))
     first = hr + 1
     written = []
-    for i, (k, spec) in enumerate(rows):
-        r = first + i
+    r, current = first - 1, None
+    for k, spec in rows:
+        grp = trajectory.group(spec["hid"]) or "UNGROUPED — no group declared (config.TRAJECTORY['rows'])"
+        if grp != current:
+            r += 1
+            c = ws.cell(row=r, column=trajectory.COL["Headline"], value=f"{grp.upper()}")
+            c.font = F_BOLD
+            current = grp
+        r += 1
         p = spec["project"]
+        ws.cell(row=r, column=trajectory.COL["Group"], value=trajectory.group(spec["hid"]) or "not declared")
         ws.cell(row=r, column=1, value=p["name"])
         ws.cell(row=r, column=2, value=k)
         ws.cell(row=r, column=3, value=k.split("|")[0])
@@ -6800,7 +7023,7 @@ def write_trajectory(wb, data_by_key: dict) -> list[dict]:
         for q, f in enumerate(forms):
             c = ws.cell(row=r, column=trajectory.COL[trajectory.LABELS[q]], value=f)
             _style(c, "calc", spec["fmt"])
-        written.append({"row": r, "key": k, "spec": spec, "independent": independent})
+        written.append({"row": r, "key": k, "spec": spec, "independent": independent, "q0_formula": forms[0]})
     _set_widths(ws, {"A": 14, "B": 34, "E": 48, **{get_column_letter(trajectory.COL[h]): 14 for h in trajectory.LABELS}})
     ws.freeze_panes = ws.cell(row=first, column=3)
 
@@ -6814,6 +7037,7 @@ def write_trajectory(wb, data_by_key: dict) -> list[dict]:
             return None
         return None if isinstance(v, xlcalc.XLError) else v
     out = []
+    q0_by_key = {w["key"]: val(trajectory.SHEET, w["row"], trajectory.COL["Q0"]) for w in written}
     for w in written:
         r, k, spec = w["row"], w["key"], w["spec"]
         d = trajectory.direction(spec["hid"])
@@ -6828,52 +7052,150 @@ def write_trajectory(wb, data_by_key: dict) -> list[dict]:
         if w["independent"]:
             why.append("the headline does not read a trailing window (Config / text only)")
             qs = [None] * len(qs)
+        # THE BASIS RULE (Jake 2026-10-12, decision 7 on 6f8c86c): no QoQ, growth or direction across a change of
+        # basis — the statistics use only the quarters wholly on the current basis; the Q cells stay as they read
+        brk, brk_text, step_at = None, "", None
+        q0_cell = qs[0]                     # the Q0 the credibility check compares, whatever the basis rule leaves
+        if asof is not None and not w["independent"]:
+            since = pd.Timestamp(asof) - pd.Timedelta(days=int(config.TRAJECTORY["history_days"]))
+            found = trajectory.basis_breaks(spec["project"]["name"], trajectory.referenced_metrics(w["q0_formula"]),
+                                            _LAST_GROUPS, since)
+            if found:
+                brk = found[-1]
+                n_clean = trajectory.clean_quarters(asof, brk[0], int(config.TRAJECTORY["period_days"]), len(qs))
+                if n_clean < len(qs):
+                    brk_text = (f"SERIES BREAK {brk[0].date()} — {brk[1]}: {brk[2][:60]} -> {brk[3][:60]}"
+                                + (f" (+{len(found) - 1} earlier)" if len(found) > 1 else ""))
+                    why.append(f"{brk_text}; statistics over the {n_clean} quarter(s) wholly after it — restate the "
+                               f"history on the current basis to lift it (RUNBOOK 11bp)")
+                    qs = list(qs[:n_clean]) + [None] * (len(qs) - n_clean)
+                    step_at = n_clean            # the quarter that holds the break
         q = trajectory.qoq(qs[0], qs[1])
-        g, n_g, why_g = trajectory.loglinear_growth(qs)
+        # THE GROWTH RULES (item 4): >= 3 quarters, all > 0, one regime — else NEW since / STEP CHANGE at, never a rate
+        g, n_g, g_label, why_g = trajectory.growth_rule(qs, step_at)
         imp, n_imp = trajectory.improved(qs, d)
         tr = trajectory.trough(qs, d)
         t, t_basis = trajectory.t12m(qs, trajectory.t12m_basis(spec["header"], spec["fmt"]))
+        # LUMPY FLOWS (decision 8): direction and growth from the rolling T12M, never a single quarter
+        lumpy = ("" if w["independent"] else
+                 trajectory.lumpy_reason(spec["project"]["name"], trajectory.referenced_metrics(w["q0_formula"]),
+                                         data_by_key))
+        t_prev, chg, dir_basis = None, None, "4 quarters (log-linear growth, quarters improved); QoQ secondary"
+        if lumpy:
+            t, t_prev, chg, g, why_l = trajectory.rolling_t12m(qs, trajectory.t12m_basis(spec["header"], spec["fmt"]))
+            n_g, why_g = (5 if t_prev is not None else 0), why_l
+            imp, n_imp = None, 0
+            dir_basis = f"rolling T12M — a discrete flow: {lumpy}"
+            if step_at is not None and step_at <= 4 and not g_label:
+                g_label = f"STEP CHANGE at {trajectory.LABELS[step_at]}"
+            if g_label:
+                g, chg = None, None
         b = trajectory.benchmark_for(spec["hid"])
         target, why_t = trajectory.benchmark_target(b, data_by_key) if b else (None, "")
-        yrs, why_y = trajectory.years_to(target, qs[0], g, d if d else 1, why_t) if b else (None, "")
-        if why_g:
+        # FORWARD-LOOKING ROWS USE THE RATE IN FORCE (Jake 2026-10-12, decision 2): the benchmark's "now" is the same
+        # ratio at the emission rate in force where one is declared (config.CURRENT_EMISSION_RATE); growth stays trailing
+        now_for_years, now_note = qs[0], ""
+        if b and spec["project"]["name"] in config.CURRENT_EMISSION_RATE:
+            alt = trajectory._num(q0_by_key.get(k + "_now"))
+            if alt is not None:
+                now_for_years, now_note = alt, "now = the ratio at the emission rate in force"
+        yrs, why_y = trajectory.years_to(target, now_for_years, g, d if d else 1, why_t) if b else (None, "")
+        if now_note and yrs is not None:
+            why_y = now_note
+        if d is None:
+            why.append("direction not declared (config.TRAJECTORY['rows'])")
+        if g_label:
+            why.append(f"growth: {g_label} — {why_g}")
+        elif why_g:
             why.append(f"growth: {why_g}")
-        if b and yrs is None:
+        if b and (yrs is None or now_note):
             why.append(f"benchmark: {why_y}")
         src = data_by_key.get(f"{spec['project']['name']}|{spec['metric']}") or {} if spec["metric"] else {}
-        same = (trajectory._num(qs[0]) is not None and trajectory._num(headline) is not None
-                and abs(qs[0] - headline) <= 1e-9 * max(1.0, abs(headline))) or \
-               (trajectory._num(qs[0]) is None and trajectory._num(headline) is None)
+        same = (trajectory._num(q0_cell) is not None and trajectory._num(headline) is not None
+                and abs(q0_cell - headline) <= 1e-9 * max(1.0, abs(headline))) or \
+               (trajectory._num(q0_cell) is None and trajectory._num(headline) is None)
         verdict = (("PASS — Q0 is the headline cell" + ("" if trajectory._num(headline) is not None else " (both n/a)"))
                    if same else
-                   f"CHECK — Q0 {qs[0]!r} vs the headline cell {headline!r}")
+                   f"CHECK — Q0 {q0_cell!r} vs the headline cell {headline!r}")
         rec.update({"T12M": t, "T12M basis": t_basis, "QoQ": q, "growth_4q": g, "growth_quarters": n_g,
                     "improved": imp, "comparisons": n_imp, "trough": tr,
-                    "trend": trajectory.trend_text(q, g, imp, n_imp, d),
+                    "trend": (f"SERIES BREAK {brk[0].date()} · " if brk_text else "")
+                             + (trajectory.lumpy_trend_text(t, t_prev, chg, g, d, g_label) if lumpy else
+                                trajectory.trend_text(q, g, imp, n_imp, d, g_label)),
+                    "T12M_prev": t_prev, "direction_basis": dir_basis, "growth_label": g_label,
+                    "group": trajectory.group(spec["hid"]),
+                    "series_break": brk_text,
                     "benchmark": b["label"] if b else "", "target": target, "years": yrs,
                     "why": "; ".join(why), "tier": src.get("tier", ""), "q0_coverage": src.get("q0_covered_days"),
                     "verdict": verdict, "cell": f"'{hs}'!{hc}"})
-        put = {"T12M": t, "T12M basis": t_basis, "QoQ": q, "4Q growth (annual, log-linear)": g,
+        put = {"T12M": t, "T12M basis": t_basis, "T12M a quarter earlier (Q-1..Q-4)": t_prev,
+               "Direction basis": dir_basis, "QoQ": q, "4Q growth (annual, log-linear)": g,
+               "Growth label (NEW / STEP CHANGE)": g_label,
                "Quarters in the growth": n_g, "Quarters improved (direction-aware)":
                (f"{imp}/{n_imp}" if imp is not None else "n/a"), "Trough of the last 4": tr or "n/a",
                "Trend": rec["trend"], "Benchmark": rec["benchmark"], "Target": target,
                "Years to benchmark": (yrs if yrs is not None else ("n/a" if b else "")), "Why n/a": rec["why"],
+               "Series break (basis change)": brk_text,
                "Source tier (headline series)": rec["tier"], "Q0 coverage days (headline series)": rec["q0_coverage"],
                "Credibility (Q0 = headline cell)": verdict, "Headline cell": rec["cell"]}
         for h, v in put.items():
             c = ws.cell(row=r, column=trajectory.COL[h], value=v)
             fmt = (FMT_PCT if h in ("QoQ", "4Q growth (annual, log-linear)") else
-                   spec["fmt"] if h in ("T12M", "Target") else "0.0" if h == "Years to benchmark" else FMT_TEXT)
+                   spec["fmt"] if h in ("T12M", "Target", "T12M a quarter earlier (Q-1..Q-4)") else "0.0" if h == "Years to benchmark" else FMT_TEXT)
             _style(c, "calc", fmt)
         out.append(rec)
+    _write_divergence(ws, r + 3, out)
     return out
 
 
+DIVERGENCE_HEAD = ["Project", "DIVERGENCE — fundamentals vs price (4Q growth, annual)", "Revenue 4Q growth",
+                   "Revenue row", "Tokens retired / burned 4Q growth", "Retired / burned row", "Price 4Q growth",
+                   "Fundamentals − price (pp)", "Reading"]
+
+
+def _write_divergence(ws, r0: int, recs: list) -> list[dict]:
+    """THE DIVERGENCE ROW (Jake's Phase 1 review 2026-10-12, item 6), per project: the fundamentals' 4Q growth (revenue;
+    tokens retired / burned) against price's. Each growth obeys the growth rules (a NEW / STEP CHANGE label stands in
+    for it). Fundamentals − price = the mean of the fundamentals' growths that exist, less price's growth."""
+    spec = config.TRAJECTORY["divergence"]
+    by = {(x["project"], x["hid"]): x for x in recs}
+    _header(ws, r0, DIVERGENCE_HEAD)
+    out = []
+    for i, name in enumerate(dict.fromkeys(x["project"] for x in recs)):
+        def pick(ids):
+            """The first row with a growth; else the first with a NEW / STEP label; else the first present."""
+            have = [by[(name, h)] for h in ids if (name, h) in by]
+            hit = (next((x for x in have if x["growth_4q"] is not None), None)
+                   or next((x for x in have if x.get("growth_label")), None) or (have[0] if have else None))
+            if hit is None:
+                return None, "", "no row"
+            return hit["growth_4q"], hit["hid"], hit.get("growth_label") or ""
+        rev, rev_id, rev_l = pick(spec["revenue"])
+        ret, ret_id, ret_l = pick(spec["retired"])
+        px, _px_id, px_l = pick(spec["price"])
+        fund = [x for x in (rev, ret) if x is not None]
+        gap = (sum(fund) / len(fund) - px) if fund and px is not None else None
+        reading = ("n/a — " + "; ".join(x for x in (rev_l and f"revenue {rev_l}", ret_l and f"retired {ret_l}",
+                                                      px_l and f"price {px_l}") if x)
+                   if gap is None else
+                   "fundamentals ahead of price" if gap > 0 else "price ahead of fundamentals" if gap < 0 else "level")
+        vals = [name, "fundamentals vs price", rev if rev is not None else (rev_l or "n/a"), rev_id,
+                ret if ret is not None else (ret_l or "n/a"), ret_id, px if px is not None else (px_l or "n/a"),
+                gap, reading if gap is not None or reading != "n/a — " else "n/a — a growth missing"]
+        for j, v in enumerate(vals, start=1):
+            c = ws.cell(row=r0 + 1 + i, column=j, value=v)
+            _style(c, "calc", FMT_PCT if j in (3, 5, 7, 8) and isinstance(v, float) else FMT_TEXT)
+        out.append(dict(zip(DIVERGENCE_HEAD, vals)))
+    DIVERGENCE_ROWS[:] = out
+    return out
+
+
+DIVERGENCE_ROWS: list = []      # the last build's divergence rows
 TRAJECTORY_ROWS: list = []      # the last build's trajectory rows (write_trajectory)
 
 
 def build_workbook(store, path: Path | str, run_id: str | None = None,
-                   asof: pd.Timestamp | None = None, only: list[str] | None = None) -> Path:
+                   asof: pd.Timestamp | None = None, only: list[str] | None = None, previous="auto") -> Path:
     """Render the workbook. `only` narrows it to those project names; None renders every project.
 
     ** PORTFOLIO SCOPE APPLIED TO THE FETCH AND NOT TO THE BUILD. Fixed 2026-09-23. ** A run that
@@ -6926,6 +7248,17 @@ def build_workbook(store, path: Path | str, run_id: str | None = None,
             fetch_status = fetch_status[fetch_status["project"].isin(keep)]
     overrides_n = int(long["is_manual"].sum()) if not long.empty else 0
     asof = asof or pd.Timestamp.now('UTC').tz_localize(None).normalize()
+    # THE CONTINUITY GUARD (Phase 1 review 2026-10-12, item 1): the previous run's snapshot — read automatically only for
+    # the real store (ROOT/metrics.db), so a build of a fixture never compares with the machine's snapshots; a caller
+    # may pass (date, values) itself
+    PREVIOUS_SNAPSHOT.clear()
+    if previous == "auto":
+        if Path(getattr(store, "path", "")).resolve() == (Path(__file__).resolve().parent / "metrics.db"):
+            import export_snapshot as _es                  # noqa: PLC0415
+            d, v = _es.load_previous(asof)
+            PREVIOUS_SNAPSHOT.update({"date": d, "values": v})
+    elif previous:
+        PREVIOUS_SNAPSHOT.update({"date": previous[0], "values": previous[1]})
 
     _WINDOWS.clear()
     for label, start, end in _period_windows(asof):
@@ -7000,7 +7333,7 @@ def build_workbook(store, path: Path | str, run_id: str | None = None,
             c.fill = fill
 
     # THE TRAJECTORY TAB (theory layer, Phase 1): after every tab it reads is written
-    TRAJECTORY_ROWS[:] = write_trajectory(wb, data_by_key)
+    TRAJECTORY_ROWS[:] = write_trajectory(wb, data_by_key, asof=asof)
 
     # SANITY RULES ON THE BUILT NUMBERS (Jake's review of 97b29ae, item 17 — permanent): evaluated in Python (xlcalc)
     # and written under the Review Queue; credibility_report prints them (SANITY_HITS)
@@ -7008,6 +7341,9 @@ def build_workbook(store, path: Path | str, run_id: str | None = None,
     try:
         import sanity                                      # noqa: PLC0415
         SANITY_HITS.extend(sanity.check_workbook(wb))
+        if PREVIOUS_SNAPSHOT.get("values"):
+            SANITY_HITS.extend(sanity.lost_headlines(wb, PREVIOUS_SNAPSHOT["values"], _HEADLINE_CELLS,
+                                                     PREVIOUS_SNAPSHOT.get("date", "")))
     except Exception as e:  # noqa: BLE001 — a rule that cannot run is said, never a silent pass
         SANITY_HITS.append(("(all)", "sanity_not_run", f"{type(e).__name__}: {str(e)[:200]}"))
     _write_sanity(ws_rev, SANITY_HITS)
@@ -7016,6 +7352,7 @@ def build_workbook(store, path: Path | str, run_id: str | None = None,
 
 
 SANITY_HITS: list = []          # (project, rule, detail) from the last build (sanity.py)
+PREVIOUS_SNAPSHOT: dict = {}    # {"date", "values"} — the previous run's snapshot, for the continuity guard
 
 
 def _write_sanity(ws, found: list) -> None:

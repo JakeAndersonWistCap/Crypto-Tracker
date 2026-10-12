@@ -56,6 +56,7 @@ from .chainlink_fees import ChainlinkFees
 from .xref import CrossRefs
 from .staked_eth import StakedEth
 from .sky_accounting import SkyAccounting
+from .sky_mkr import SkyMkr
 from .share_price import SharePrice
 from .ve_managed import VeManaged
 from .aero_voter import AeroVoter
@@ -138,6 +139,8 @@ TIER_ORDER = [
     ("maple_page", 3, lambda ctx: MapleTransparency()),
     # Sky's accounting (Block Analitica's documented API): monthly NPS, buyback spending, staking rewards (2026-10-07).
     ("sky_accounting", 3, lambda ctx: SkyAccounting()),
+    # Sky's MKR backing (non-issuer MKR is circulating) and the reward vest in force (Jake 2026-10-12, decision 2).
+    ("sky_mkr", 2, lambda ctx: SkyMkr()),
     # Aethir's own dashboard, from the Next.js server-rendered payload (Jake's probes2, 2026-09-30).
     ("aethir_page", 3, lambda ctx: AethirPages()),
     # Pendle's per-epoch sPENDLE distributions and its own APR (spendle/data, 2026-09-29).

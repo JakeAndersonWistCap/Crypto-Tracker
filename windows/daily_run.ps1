@@ -76,8 +76,11 @@ function Invoke-Step([string]$label, [string[]]$arguments) {
     }
     Add-Content -Path $Log -Value $out -Encoding UTF8
     Write-Log "=== $label exited $code"
+    $script:Steps += ,@($label, $code)
     return @($code, ($out -join "`n"))
 }
+
+$Steps = @()                              # (label, exit code) of every step, for the closing console line
 
 Write-Log "daily run start (repo $Repo, python $Python)"
 
@@ -126,3 +129,13 @@ Write-Log "daily run end"
 # 5. The theory snapshot (Jake 2026-10-11, D2), the LAST step: one row per project, every headline metric with its
 #    credibility verdict, NEAR LIMIT flag and coverage days -> snapshots\snapshot_<date>.csv (METRICS.md defines it).
 [void](Invoke-Step "export snapshot" @("export_snapshot.py"))
+
+# 6. ONE LINE ON THE CONSOLE (Jake's Phase 1 review 2026-10-12, item 9: the script printed nothing): what ran, the run's
+#    exit code, any step that failed, and where the log is. The task's exit code is the run's.
+$failed = @($Steps | Where-Object { $_[1] -ne 0 } | ForEach-Object { "$($_[0])=$($_[1])" })
+$failText = "no step failed"
+if ($failed.Count -gt 0) { $failText = "failed: " + ($failed -join ", ") }
+$summary = "daily_run: ran $($Steps.Count) step(s); token_metrics exit $($run[0]); $failText; log $Log"
+Write-Log $summary
+Write-Host $summary
+exit $run[0]

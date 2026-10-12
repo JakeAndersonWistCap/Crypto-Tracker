@@ -187,7 +187,7 @@ def test_total_supply_collision_keeps_the_chain_read_on_the_real_pendle_dump():
     assert not [r for r in out.review if r["reason"] == "tier_collision"]
 
 
-def test_morpho_dao_legacy_and_base_wired_ratios_stay_coingecko():
+def test_morpho_dao_legacy_and_base_wired_ratios_on_the_issuer_rule():
     import config
     c = config.PROJECT_BY_NAME["Morpho"]["contracts"]
     leg, base = c["noncirc_dao_treasury_legacy"], c["noncirc_dao_treasury_base"]
@@ -195,7 +195,11 @@ def test_morpho_dao_legacy_and_base_wired_ratios_stay_coingecko():
     assert (base["chain"], c[base["underlying"]]["chain"]) == ("base", "base")
     assert c["token_legacy"]["kind"] == c["token_base"]["kind"] == "bridged_representation"
     assert config._MORPHO_ORG.endswith("/learn/governance/organization/")
-    assert config.circulating_primary_metric("Morpho") == "circulating_supply"      # 570.66M vs 700.45M: no switch
+    # Jake 2026-10-12 (decision 1 on 6f8c86c): the issuer rule — the on-chain set, issuer-held entities out
+    assert config.circulating_primary_metric("Morpho") == "circulating_supply_onchain"
+    spec = config.circulating_onchain("Morpho")
+    assert spec["subtract"] == ("noncirculating_holding_tokens", "noncirculating_entities_tokens")
+    assert config.coingecko_counts_holdings("Morpho") == ("noncirculating_entities_tokens",)
 
 
 class _MorphoHttp:
@@ -414,9 +418,18 @@ def test_near_circulating_under_the_lockup_rule(monkeypatch):
               ("Near", "near_lockup_locked_tokens"): lk}
     bw._near_lockup_views(groups)
     s = groups[("Near", "circulating_supply_lockup_rule")].set_index("date")
+    # decision 3 on 6f8c86c: no lockup.near / contributors.near read -> never a rule figure missing that leg
+    assert s.loc["2026-10-11", "value"] == 1_250_000_000 and "no lockup read" in s.loc["2026-10-11", "source"]
+    # lockup.near + contributors.near at the same block (manual_overrides.csv, 2026-10-11: 171,059.131)
+    fa = pd.DataFrame({"date": [rd], "project": "Near", "metric": "near_foundation_accounts_tokens",
+                       "value": [171_059.131], "source": "manual", "tier": 3})
+    groups[("Near", "near_foundation_accounts_tokens")] = fa
+    bw._near_lockup_views(groups)
+    s = groups[("Near", "circulating_supply_lockup_rule")].set_index("date")
     assert s.loc["2026-10-10", "value"] == 1_250_000_000 and "no lockup read" in s.loc["2026-10-10", "source"]
-    assert s.loc["2026-10-11", "value"] == 1_306_900_000 - 21_568_722
+    assert s.loc["2026-10-11", "value"] == pytest.approx(1_306_900_000 - 21_568_722 - 171_059.131)
     assert "lockups read 2026-10-11" in s.loc["2026-10-11", "source"]
+    assert "lockup.near − contributors.near" in s.loc["2026-10-11", "source"]
     assert s.loc["2026-10-22", "value"] == 1_250_000_000                         # 11 days past the read
 
 
@@ -482,7 +495,12 @@ def test_metrics_doc_covers_every_headline_and_is_current():
 
 def test_daily_run_ends_with_the_snapshot_and_runs_the_weekly_lockups():
     ps = (ROOT / "windows" / "daily_run.ps1").read_text(encoding="utf-8")
-    assert ps.rstrip().endswith('[void](Invoke-Step "export snapshot" @("export_snapshot.py"))')
+    steps = [ln for ln in ps.splitlines() if ln.startswith("[void](Invoke-Step")]
+    assert steps[-1] == '[void](Invoke-Step "export snapshot" @("export_snapshot.py"))'
+    # Jake's Phase 1 review 2026-10-12, item 9: the script closes with ONE console line (ran / exit code / log path)
+    tail = ps.rstrip().splitlines()[-4:]
+    assert tail[-2] == "Write-Host $summary" and tail[-1] == "exit $run[0]"
+    assert "token_metrics exit $($run[0])" in ps and "log $Log" in ps and "$script:Steps += ,@($label, $code)" in ps
     assert '"near_lockups_weekly.py"' in ps
 
 

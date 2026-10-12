@@ -320,7 +320,7 @@ class SolanaAccountHistory:
 
     def fill(self, since_ts: int, deadline: float) -> tuple[bool, str]:
         """List and read transactions back to since_ts. (complete, note)."""
-        sigs, before = [], None
+        sigs, before, reached = [], None, False
         while time.monotonic() < deadline:
             opts = {"limit": 1000, "commitment": "finalized"}
             if before:
@@ -328,11 +328,18 @@ class SolanaAccountHistory:
             page = self.rpc.call("getSignaturesForAddress", [self.account, opts]) or []
             time.sleep(self.pace)
             if not page:
+                reached = True                    # the account's whole history is listed
                 break
             sigs += [s for s in page if not s.get("err")]
             before = page[-1]["signature"]
             if int(page[-1].get("blockTime") or 0) < since_ts:
+                reached = True
                 break
+        if not reached:
+            # A LISTING CUT BY THE BUDGET IS NOT COMPLETE (Phase 1 review 2026-10-12, item 1): daily() would give every
+            # day before the oldest listed transaction that transaction's pre-balance — a flat, wrong history
+            self.save()
+            return False, f"budget spent while listing ({len(sigs)} signature(s) listed, the window start not reached)"
         todo = [s for s in sigs if s["signature"] not in self.state["sigs"]
                 and int(s.get("blockTime") or 0) >= since_ts - 86_400]
         done = 0
@@ -403,6 +410,33 @@ def neighbours_agree(stored: pd.DataFrame, day: pd.Timestamp, source: str) -> tu
     return True, ""
 
 
+def breaks_handover_order(project: str, metric: str, stored: pd.DataFrame | None, day, source: str) -> str:
+    """Why writing `source` on `day` would put a DECLARED handover's legs out of order, else ''. (Jake's Phase 1 review
+    2026-10-12, item 1: GEODNET's gross burn, burn yield, crossover and net change all read n/a after
+    `history_gaps.py --run-fixes`.) The archive reads the CURRENT measuring point; on a series with a declared
+    handover (GEODNET: the Polygon dead address, then Polygon + the Solana burn account) a current-point reading dated
+    BEFORE a stored row of an earlier leg interleaves the legs, the build's handover check (handover_refusal) sees them
+    OVERLAP and withholds the whole series. neighbours_agree looks at the nearest rows only and misses a leg that
+    is further away. A monthly lead leg (Dune) is resolved by month at read time (_monthly_leg_views) and is not checked
+    here."""
+    decl = config.declared_handover(project, metric) or {}
+    pts = tuple(decl.get("ordered_points") or ())
+    mp = _measuring_point(source)
+    if stored is None or stored.empty or mp not in pts:
+        return ""
+    lead = config.handover_monthly_leg(project, metric)
+    i, day = pts.index(mp), pd.Timestamp(day)
+    for d, src in zip(pd.to_datetime(stored["date"]), stored["source"].astype(str)):
+        q = _measuring_point(src)
+        if q == mp or q not in pts or (lead and q == lead[0]):
+            continue
+        j = pts.index(q)
+        if (j < i and d >= day) or (j > i and d <= day):
+            return (f"{metric} on {day.date()} from {mp} would interleave the declared handover: a stored row of the "
+                    f"{'earlier' if j < i else 'later'} leg {q} is dated {d.date()}")
+    return ""
+
+
 def derive_flows(store, project: str, stock: str, straddled: list | None = None) -> int:
     """A cumulative stock's flow for every consecutive pair of stored readings whose later date
     has no flow row yet — the live path's guard, so a change of point or a fall is refused.
@@ -424,8 +458,13 @@ def derive_flows(store, project: str, stock: str, straddled: list | None = None)
     have = {d for d, _ in held}
     spans = [(pd.Timestamp(d) - pd.Timedelta(days=_span_days(s)), pd.Timestamp(d)) for d, s in held]
     out, frames = FetchOutput(), []
+    held_df = pd.DataFrame(held, columns=["date", "source"])
     for (d0, v0, s0), (d1, v1, s1) in zip(rows, rows[1:]):
         if d1 in have:
+            continue
+        # the flow's own declared handover, in order (Phase 1 review item 1): never a current-leg delta dated inside an
+        # earlier leg's stored span
+        if breaks_handover_order(project, flow, held_df, d1, config.mark_source(s1, "delta")):
             continue
         a, b = pd.Timestamp(d0), pd.Timestamp(d1)
         hit = next((f"{e.date()} (spans {s.date()}..{e.date()})" for s, e in spans if s < b and a < e), None)
@@ -526,8 +565,9 @@ class ArchiveBackfill:
         ok, no = {}, []
         for p in self.projects:
             for m in sorted(state_metrics(p)):
-                if m in config.ARCHIVE_NOT_BY_DESIGN:
-                    no.append((p["name"], m, config.ARCHIVE_NOT_BY_DESIGN[m]))
+                why_not = config.archive_not_by_design(p["name"], m)
+                if why_not:
+                    no.append((p["name"], m, why_not))
                     continue
                 good, why = archivable(p, m, archive_chains, set(self.solana))
                 if good:
@@ -650,6 +690,9 @@ class ArchiveBackfill:
                 g = stored.get((r.project, r.metric))
                 rd = pd.Timestamp(r.date)
                 ok, why = (True, "") if g is None else neighbours_agree(g, rd, r.source)
+                if ok and g is not None:
+                    order = breaks_handover_order(r.project, r.metric, g, rd, r.source)
+                    ok, why = (False, order) if order else (True, "")
                 if not ok:
                     refused[(r.project, r.metric)] = why
                     continue

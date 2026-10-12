@@ -58,6 +58,10 @@ def series(h: pd.DataFrame, name: str) -> pd.Series:
     for m in spec.get("subtract") or ():
         bal = _daily(h, name, m)
         out = (out - bal).dropna()
+    # ADDED BACK (Sky, Jake 2026-10-12 decision 2a): a subtracted reserve's part that backs a legacy token held by
+    # non-issuers — circulating in the legacy form; only days it was read
+    for m in spec.get("add") or ():
+        out = (out + _daily(h, name, m)).dropna()
     # DECLARED EXCLUSIONS (Aerodrome, Jake 2026-09-30): a fixed, documented amount — permanently
     # locked team tokens — that stays in total supply and in the locked total, but not circulating.
     for ex in spec.get("declared_exclusions") or ():

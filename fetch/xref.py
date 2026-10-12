@@ -160,6 +160,21 @@ class CrossRefs:
                 return f"{c.get('chain', 'ethereum')}:{c['address'].lower()}", True
         return f"coingecko:{p['coingecko_id']}", False
 
+    @staticmethod
+    def parse_chart(pts: list) -> list[tuple]:
+        """[(day, price)] from a coins.llama.fi chart's points: only those within 10 minutes of 00:00 UTC (never
+        compared with CoinGecko's 00:00 otherwise)."""
+        rows = []
+        for pt in pts:
+            t = int(pt.get("timestamp") or 0)
+            d = pd.Timestamp(t, unit="s")
+            mid = d.normalize()
+            off = min(abs((d - mid).total_seconds()), abs((mid + pd.Timedelta(days=1) - d).total_seconds()))
+            if off > 600 or pt.get("price") is None:
+                continue
+            rows.append((mid if (d - mid).total_seconds() <= 600 else mid + pd.Timedelta(days=1), float(pt["price"])))
+        return rows
+
     def _llama(self, projects: list[dict], spec: dict, day: str, out) -> None:
         key = "xref:llama_prices"
         if not self.daily.due(key, day):
@@ -173,6 +188,12 @@ class CrossRefs:
             return
         keys = {self.llama_key(p)[0]: p for p in projects}
         days = int(spec.get("days", 30)) if not self.daily.ever(key) else 7
+        # THE FIVE-QUARTER WINDOW ONCE (Jake's Phase 1 review 2026-10-12, item 8b): Q-4 prices come from here
+        # (build_workbook._price_history_views); asked again only when the window grows
+        hist_key = f"xref:llama_prices_history_{int(config.TRAJECTORY['history_days'])}d"
+        history = not self.daily.ever(hist_key)
+        if history:
+            days = int(config.TRAJECTORY["history_days"])
         start = int((today().normalize() - pd.Timedelta(days=days)).timestamp())
         try:
             body = self.http.get(LLAMA_CHART.format(keys=",".join(keys)),
@@ -187,16 +208,7 @@ class CrossRefs:
                 out.fail(SOURCE, p["name"], f"price_usd_llama: no `coins` in the answer", TIER)
             return
         for k, p in keys.items():
-            pts = (coins.get(k) or {}).get("prices") or []
-            rows = []
-            for pt in pts:
-                t = int(pt.get("timestamp") or 0)
-                d = pd.Timestamp(t, unit="s")
-                mid = d.normalize()
-                off = min(abs((d - mid).total_seconds()), abs((mid + pd.Timedelta(days=1) - d).total_seconds()))
-                if off > 600 or pt.get("price") is None:
-                    continue                    # not a 00:00 point: never compared with CoinGecko's 00:00
-                rows.append((mid if (d - mid).total_seconds() <= 600 else mid + pd.Timedelta(days=1), float(pt["price"])))
+            rows = self.parse_chart((coins.get(k) or {}).get("prices") or [])
             if not rows:
                 out.fail(SOURCE, p["name"], f"price_usd_llama: no 00:00 point for {k}", TIER)
                 continue
@@ -205,6 +217,8 @@ class CrossRefs:
             out.add(frame, SOURCE, p["name"], f"price_usd_llama: {len(rows)} day(s) for {k}"
                                               + ("" if indep else " (coingecko key: CoinGecko's own price, relayed)"), TIER)
         self.daily.done(key, day)
+        if history:
+            self.daily.done(hist_key, day)
 
     # ------------------------------------------------------------------ Lido APR
     def _lido(self, p: dict, day: str, out) -> None:

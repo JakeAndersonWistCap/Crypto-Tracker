@@ -142,6 +142,8 @@ GLOBALS = {
     "days_per_year": 365,
     "stale_after_days": 7,
     "months_in_monthly_sheet": 12,
+    # M2 / GDP, the NRR yardstick (Jake's May note; set 2026-10-12): NRR HEADROOM = this ÷ NRR (A1, Valuation)
+    "nrr_m2_gdp": 0.71,
     "default_change_threshold_pct": 50,   # period-on-period move that sends a value to the Review Queue
 }
 
@@ -452,6 +454,30 @@ METRICS = {
                                      "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [3],
                                      "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Aerodrome",),
                                      "view_only": True},
+    # SKY'S MKR BACKING AND CURRENT VEST RATE (Jake 2026-10-12, decision 2 on 6f8c86c; fetch/sky_mkr.py)
+    "mkr_outstanding_tokens": {"label": "MKR outstanding (MKR.totalSupply)", "kind": "stock", "unit": "tokens",
+                               "archetypes": [3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e7,
+                               "only_projects": ("Sky",)},
+    "mkr_issuer_tokens": {"label": "MKR held by the issuer (the Pause Proxy)", "kind": "stock", "unit": "tokens",
+                          "archetypes": [3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e7,
+                          "only_projects": ("Sky",)},
+    "mkr_sky_fee": {"label": "MKR -> SKY conversion fee (converter fee(), fraction)", "kind": "stock", "unit": "fraction",
+                    "archetypes": [3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1.0, "only_projects": ("Sky",)},
+    "sky_mkr_nonissuer_backing_tokens": {"label": "SKY backing MKR held by non-issuers = (MKR outstanding − the Pause "
+                                                  "Proxy's MKR) x rate x (1 − fee) — circulating (decision 2a)",
+                                         "kind": "stock", "unit": "tokens", "archetypes": [3, 4], "tiers": [2],
+                                         "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Sky",)},
+    "emissions_rate_current_annual_tokens": {"label": "Emission rate IN FORCE, annual (Sky: the DssVest award paying the "
+                                                      "SKY staking rewards) — forward-looking rows use it",
+                                             "kind": "stock", "unit": "tokens", "archetypes": [3, 4], "tiers": [2],
+                                             "sanity_min": 0, "sanity_max": 1e11, "only_projects": ("Sky",)},
+    # MORPHO'S ISSUER-SIDE ENTITIES (Jake 2026-10-12, decision 1 on 6f8c86c): the Association / Labs / Contributor-Grants /
+    # Rewards / Operative wallets apart from the DAO's — CoinGecko counts them, the issuer rule does not
+    "noncirculating_entities_tokens": {"label": "Morpho issuer-side entities' MORPHO (Association, Labs, Contributor "
+                                                "Grants, Rewards, Operative; new + legacy) — out of circulating by the "
+                                                "issuer rule, counted by CoinGecko",
+                                       "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [2],
+                                       "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Morpho",)},
     # CoinGecko's OWN total where the chain read wins the total (Jake's run on e4e50b0, 2026-10-12 item 2): the
     # like-for-like circulating row puts our figure on CoinGecko's total (Ether.fi: chain 998,535,999 vs 965,350,000).
     # only_projects is set to TOTAL_SUPPLY_ONCHAIN_FIRST below.
@@ -1138,6 +1164,10 @@ METRICS = {
     "near_lockup_locked_tokens":  {"label": "NEAR LOCKED in lockup contracts (lockup or vesting; what NEAR's own circulating subtracts) — same weekly read",
                                    "kind": "stock", "unit": "tokens", "archetypes": [1, 3, 4], "tiers": [2, 3],
                                    "sanity_min": 0, "sanity_max": 2e9, "only_projects": ("Near",)},
+    "near_foundation_accounts_tokens": {"label": "NEAR held by lockup.near + contributors.near (amount + locked) — out "
+                                                "of circulating under Jake's rule (decision 3 on 6f8c86c, 2026-10-12)",
+                                        "kind": "stock", "unit": "tokens", "archetypes": [1, 3, 4], "tiers": [2, 3],
+                                        "sanity_min": 0, "sanity_max": 2e9, "only_projects": ("Near",)},
     "circulating_supply_lockup_rule": {"label": "Circulating supply — NEAR total supply − lockups LOCKED (not yet transferable: unvested + lockup-locked; buggy lockups recomputed as NEAR's lakehouse does): Jake's rule, 2026-10-12",
                                        "kind": "stock", "unit": "tokens", "archetypes": [1, 3, 4], "tiers": [1],
                                        "sanity_min": 0, "sanity_max": 2e9, "view_only": True, "only_projects": ("Near",)},
@@ -3933,6 +3963,17 @@ PROJECTS = [
                     "no_flow": "a STOCK, deliberately not differenced — see "
                                "actual_buyback_tokens_blocked.",
                 },
+                # ===== lockup.near + contributors.near OUT OF CIRCULATING (Jake 2026-10-12, decision 3 on 6f8c86c). =====
+                # NEAR's own method subtracts both (near/near-indexer-for-explorer@a06bcec5 circulating-supply/src/
+                # main.rs:208-212; near/near-public-lakehouse@76e0b2cd Aggregated Circulating Supply Pipeline.py:309-310,
+                # 366, which reads amount + locked). Read daily, amount + locked, and subtracted in
+                # build_workbook._near_lockup_views (171K NEAR at the audit, 2026-10-12).
+                {"kind": "near_view_account", "metric": "near_foundation_accounts_tokens",
+                 "accounts": ["lockup.near", "contributors.near"], "fields": ("amount", "locked"),
+                 "spec_url": "https://raw.githubusercontent.com/near/docs/master/api/rpc/contracts.mdx",
+                 "spec_date": "2026-10-12",
+                 "address_source": "near/near-indexer-for-explorer@a06bcec5 circulating-supply/src/main.rs:208-212 "
+                                   "(read 2026-10-12)"},
             ],
         },
         # ===== THE BURN IS ALREADY IN THE STORE, UNDER ANOTHER NAME. Added 2026-09-22. =====
@@ -18196,6 +18237,49 @@ for _n, _chain in (("Aerodrome", "base"), ("Chainlink", "ethereum"), ("Fluid", "
         "declared": "2026-10-11"})
 METRICS["total_supply_coingecko"]["only_projects"] = tuple(TOTAL_SUPPLY_ONCHAIN_FIRST)
 
+# ETH CONSENSUS REWARDS HISTORY (Jake's Phase 1 review 2026-10-12, item 8c): the spec's issuance formula on staked ETH,
+# scaled to the measured Eth2Staking series over their overlap (build_workbook._consensus_history_views) — one series
+PROJECT_BY_NAME["Ethereum"].setdefault("series_handover", {}).setdefault("consensus_rewards_tokens", {
+    "ordered_points": ("derived:consensus_formula", "etherscan:ethsupply2.Eth2Staking"),
+    "why": "the consensus spec's issuance (166.32 x sqrt(staked ETH) a year at full participation) on beacon_chain_eth, "
+           "scaled by k = measured ÷ formula over the measured days; then Etherscan's measured Eth2Staking deltas",
+    "composition_change": "none: the formula leg is scaled to the measured leg over their overlap (k on every row)",
+    "declared": "2026-10-12"})
+
+# Q-4 PRICES (Jake's Phase 1 review 2026-10-12, item 8b): DefiLlama's coins chart before CoinGecko's free 365 days, one
+# series with CoinGecko's (build_workbook._price_history_views). Declared for every project whose price is CoinGecko's.
+for _p in PROJECTS:
+    _p.setdefault("series_handover", {}).setdefault("price_usd", {
+        "ordered_points": ("defillama_coins:history", "coingecko"),
+        "why": "DefiLlama coins chart history (coins.llama.fi, free) for the days before CoinGecko's free 365-day "
+               "market_chart, then CoinGecko",
+        "composition_change": "none: the same market price, read by another aggregator for the older days",
+        "declared": "2026-10-12"})
+
+# FDV HISTORY ON ONE BASIS (Jake 2026-10-12, decision 6 on 6f8c86c): for the on-chain-first projects the token's
+# totalSupply() is read at past blocks (fetch/archive.py), so the whole total_supply history is the chain's. Rows dated
+# before the handover carry this label; CoinGecko's pre-handover rows move to total_supply_coingecko (orphan_cleanup.sql
+# CJ) and stay the cross-check.
+TOTAL_SUPPLY_CHAIN_BACKFILL_LABEL = "chain backfill (pre-handover)"
+
+
+def total_supply_chain_backfill_label(project_name: str, metric: str, day) -> str:
+    """The label for an archive read of an on-chain-first total dated before its declared handover, else ''."""
+    if metric != "total_supply" or project_name not in TOTAL_SUPPLY_ONCHAIN_FIRST:
+        return ""
+    decl = ((PROJECT_BY_NAME.get(project_name) or {}).get("series_handover") or {}).get("total_supply") or {}
+    since = decl.get("declared") or TOTAL_SUPPLY_ONCHAIN_FIRST[project_name].get("decided_on")
+    import pandas as _pd
+    return TOTAL_SUPPLY_CHAIN_BACKFILL_LABEL if since and _pd.Timestamp(day) < _pd.Timestamp(since) else ""
+
+
+def archive_not_by_design(project_name: str, metric: str) -> str:
+    """Why a state metric is not backfilled at past blocks BY DESIGN, else '' — the on-chain-first totals are
+    (decision 6 on 6f8c86c)."""
+    if metric == "total_supply" and project_name in TOTAL_SUPPLY_ONCHAIN_FIRST:
+        return ""
+    return ARCHIVE_NOT_BY_DESIGN.get(metric, "")
+
 
 # ===== AERODROME MIGRATION GUARD (Jake, 2026-10-11; launch 2026-10-21/22 — RUNBOOK 11bh "Aerodrome migration: plan
 # only"). fetch/validate.check_migration_watch, every run:
@@ -18303,6 +18387,51 @@ for _key, _addr, _chain, _under, _why in (
         _addr, _chain, "treasury_holding", "MORPHO", _MORPHO_ORG, verified="2026-10-11", purpose=_why,
         provenance="Jake 2026-10-11 (decision A5): the DAO's legacy and Base MORPHO are non-circulating",
         holder_has_code=False, metric_override=_NC, underlying=_under)
+# ===== SKY: THE MKR BACKING AND THE VEST IN FORCE (Jake 2026-10-12, decision 2 on 6f8c86c; fetch/sky_mkr.py). =====
+# Read on chain 2026-10-12: converter rate() 24,000, fee() 0.05, take() 38,960,616 SKY; MKR outstanding 83,516.32, the
+# Pause Proxy's 49.56; VestedRewardsDistribution 0x675671A8… vestId() 17 on DssVest 0x67eadb32… (2026-09-13..12-12,
+# 143,208,393 SKY = 580.8M/yr). Addresses from sky-ecosystem/spells-mainnet's chainlog (MKR_SKY, MCD_PAUSE_PROXY) and
+# the contracts' own getters.
+PROJECT_BY_NAME["Sky"]["mkr_backing"] = {
+    "mkr": "0x9f8F72aA9304c8B593d555F12eF6589cC3A579A2",
+    "issuer": "0xBE8E3e3618f7474F8cB1d074A26afFef007E98FB",
+    "converter": "0xA1Ea1bA18E88C381C724a75F23a130420C403f9a",
+    "vest_distribution": "0x675671A8756dDb69F7254AFB030865388Ef699Ee",
+    "source": "sky-ecosystem/spells-mainnet chainlog (MKR_SKY L508, MCD_PAUSE_PROXY); VestedRewardsDistribution "
+              "vestId()/dssVest() and DssVest.awards() read 2026-10-12",
+    "decided": "Jake 2026-10-12 (decision 2 on 6f8c86c)"}
+# FORWARD-LOOKING ROWS USE THE RATE IN FORCE (decision 2): the emissions metric each one replaces
+CURRENT_EMISSION_RATE = {"Sky": {"replaces": "emissions_tokens", "metric": "emissions_rate_current_annual_tokens"}}
+
+# ===== MORPHO UNDER THE ISSUER RULE (Jake 2026-10-12, decision 1 on 6f8c86c; issuer-wallet audit RUNBOOK 11bn). =====
+# Issuer-side LEGACY balances are issuer-held supply too: the Wrapper's new MORPHO backs every unwrapped legacy token, so
+# an issuer's legacy balance sits inside totalSupply uncounted by the new-token reads. The ~73.2M of legacy held by
+# everyone else stays circulating (they can unwrap). Read 2026-10-12: Association 11,635,954.89, Labs 11,408,640.44,
+# Rewards 360,000.00, Operative 2 4,599.38.
+_MORPHO_SEATBELT = ("https://github.com/morpho-org/morpho-seatbelt/blob/ee2dda29/config/networks/ethereum-mainnet.json "
+                    "(names 0x6ABfd613… the Association and 0x1590e7F4… Morpho Labs)")
+for _key, _addr, _src, _why in (
+        ("association_master_legacy", "0x6ABfd6139c7C3CC270ee2Ce132E309F59cAaF6a2", _MORPHO_SEATBELT,
+         "Morpho Association Master Safe — its LEGACY MORPHO (11,635,954.89 on 2026-10-12)"),
+        ("contributor_grants_2_legacy", "0x1590e7F4c3E1B4493Abb462e34593aef3A9397Dd", _MORPHO_SEATBELT,
+         "Contributor Grants SAFE 2 (seatbelt: Morpho Labs) — its LEGACY MORPHO (11,408,640.44 on 2026-10-12)"),
+        ("rewards_multisig_legacy", "0xF057afeEc22E220f47AD4220871364e9E828b2e9", _MORPHO_ORG,
+         "MORPHO Rewards Multisig — its LEGACY MORPHO (360,000.00 on 2026-10-12)"),
+        ("operative_safe_2_legacy", "0xd2C7eF9f4d30C476C135449949f124A4D3f14526", _MORPHO_FILING,
+         "Operative SAFE 2 (Morpho's filing) — its LEGACY MORPHO (4,599.38 on 2026-10-12)")):
+    PROJECT_BY_NAME["Morpho"]["contracts"][f"noncirc_{_key}"] = _contract(
+        _addr, "ethereum", "treasury_holding", "MORPHO", _src, verified="2026-10-12", purpose=_why,
+        provenance="Jake 2026-10-12 (decision 1 on 6f8c86c): issuer-side legacy MORPHO is not circulating",
+        holder_has_code=False, metric_override=_NC, underlying="token_legacy")
+# THE ENTITIES COINGECKO COUNTS, APART (the like-for-like in_circ): CoinGecko excludes the DAO's holdings only; the
+# Association / Labs / Contributor-Grants / Rewards / Operative wallets are its circulating and our issuer-held.
+MORPHO_ENTITY_KEYS = ("noncirc_rewards_multisig", "noncirc_association_master_safe", "noncirc_association_ops_safe",
+                      "noncirc_contributor_grants_safe", "noncirc_contributor_grants_safe_2", "noncirc_operative_safe_1",
+                      "noncirc_operative_safe_2", "noncirc_association_master_legacy",
+                      "noncirc_contributor_grants_2_legacy", "noncirc_rewards_multisig_legacy",
+                      "noncirc_operative_safe_2_legacy")
+for _k in MORPHO_ENTITY_KEYS:
+    PROJECT_BY_NAME["Morpho"]["contracts"][_k]["metric_override"] = "noncirculating_entities_tokens"
 # CHAINLINK'S RELEASE, STOCK vs FLOW (Jake's run 2026-10-08 11:27: ours -400,000 LINK over Q0 against CoinGecko's d=0,
 # which is stepwise and no evidence). Transfer events OUT of and INTO the 27 non-circulating wallets, each scan
 # RECONCILED per wallet to balanceOf at a pinned block TO THE WEI before anything is stored (fetch/logscan.py); hops
@@ -21812,6 +21941,10 @@ CIRCULATING_ONCHAIN = {
                 "decided_by": "Claude Code 2026-10-06, pending Jake's review"},
     "Sky": {"status": "established", "total": "total_supply",
             "subtract": ("treasury_holding_tokens", "noncirculating_holding_tokens"),
+            # JAKE 2026-10-12 (decision 2a on 6f8c86c): the converter's SKY that backs MKR held by NON-ISSUERS is
+            # circulating (Morpho's Wrapper logic) — (MKR outstanding − the Pause Proxy's MKR) x rate x (1 − fee),
+            # read daily (fetch/sky_mkr.py), added back. The issuer's MKR backing, the fees taken and the rest stay out.
+            "add": ("sky_mkr_nonissuer_backing_tokens",),
             # THE FULL SWEEP (Jake, 2026-10-07): on-chain from Sky's own addresses (spells-mainnet chainlog: the Pause
             # Proxy treasury, the MKR_SKY converters' reserve; burns are out of totalSupply) is PRIMARY. Sky's OWN
             # definition ("the entire supply is now circulating") INCLUDES the treasury, which our convention
@@ -22049,11 +22182,16 @@ CIRCULATING_ONCHAIN = {
     # (_NONCIRC_WALLETS_FIRST_PARTY). The set is PARTIAL — the initial-distribution VESTING contracts and the Morpho
     # Association allocation are not yet identified — so it is the cross-check; CoinGecko stays in use until the set
     # is complete (TokenOps remains the reference: Morpho was not found to designate it).
-    "Morpho": {"status": "partial", "total": "total_supply", "subtract": ("noncirculating_holding_tokens",),
-               "decision": "COINGECKO until the like-for-like holds: the on-chain set is now Morpho's own filing list "
-                           "(DAO Treasury, Rewards Safe, Association Master and Ops Safes, two Contributor Grants "
-                           "SAFEs, two Operative SAFEs — Blockworks filing, Jake 2026-10-07) and is the cross-check "
-                           "against TokenOps / CoinGecko; on-chain becomes primary once it agrees",
+    # JAKE 2026-10-12 (decision 1 on 6f8c86c): THE ISSUER RULE — circulating = total − every issuer-side holding (the DAO,
+    # Association, Labs, Contributor Grants, Rewards and Operative wallets, on the new, legacy and Base tokens). Read
+    # 2026-10-12: 547,252,377 (CoinGecko 700.47M counts the entities). Releases from these wallets are unlock dilution.
+    "Morpho": {"status": "established", "ratios_use": "onchain", "total": "total_supply",
+               "subtract": ("noncirculating_holding_tokens", "noncirculating_entities_tokens"),
+               "coingecko_counts": ("noncirculating_entities_tokens",),
+               "decision": "ON-CHAIN, THE ISSUER RULE (Jake 2026-10-12, decision 1 on 6f8c86c): total − the DAO's "
+                           "holdings (new, legacy, Base) − the Association / Labs / Contributor-Grants / Rewards / "
+                           "Operative wallets (new and legacy). The legacy held by everyone else (~73.2M in the Wrapper) "
+                           "is circulating. CoinGecko is compared like-for-like: ours + the entities it counts",
                "missing": "the Operative SAFEs' balances on chains other than Ethereum (no MORPHO token address on file "
                           "for them); the initial-distribution vesting contracts, if not among the filing's Safes",
                # DECISION A5 (Jake 2026-10-11): the DAO's legacy (290.42M) and Base (13.0M) MORPHO wired. On-chain set
@@ -22092,6 +22230,12 @@ CIRCULATING_ONCHAIN = {
     "Aerodrome": {"status": "established", "total": "total_supply",
                   "subtract": ("noncirculating_holding_tokens", "filing_managed_lock_tokens"),
                   "ratios_use": "onchain", "coingecko_basis": "permanent_locks",
+                  # NO COINGECKO STAND-IN (Jake's Phase 1 review 2026-10-12, item 2): CoinGecko's figure excludes every
+                  # veAERO lock (1,004.5M vs the on-chain set's 1,516.8M) — under the convention locked tokens are
+                  # circulating, so it is another basis, and standing in for a missing day made a fake +51% step at
+                  # 2026-10-07. A day without the on-chain set reads n/a until the history is restated on it
+                  # (orphan_cleanup.sql CJ + CK, archive_backfill.py --run, --seed aero_managed_locks; RUNBOOK 11bq).
+                  "no_coingecko_fallback": "CoinGecko excludes every veAERO lock — another basis, never a stand-in",
                   # inside the veAERO locked total AND out of circulating: subtracted from the lock once for free float
                   "locked_excluded_metrics": ("filing_managed_lock_tokens",),
                   "coingecko_like_for_like": {"plus": ("permanent_locked_tokens",),
@@ -22238,13 +22382,13 @@ CIRCULATING_POLICY = {
                   "staked": "included (staked LINK is not in the non-circulating list as far as seen)",
                   "add_back": None, "previous": "the same — unchanged",
                   "todo": "a dated reading of chain.link/circulating-supply makes it a first-party manual row"},
-    "Morpho": {"now": "CoinGecko still (full sweep, 2026-10-07): the DAO treasury and Rewards Multisig from Morpho's docs "
-                      "are wired as a PARTIAL set (the cross-check); the vesting contracts are still missing",
-               "source": "CoinGecko; TokenOps' figure (a vendor Morpho commissioned, per the vendor) stays the "
-                         "reference — Morpho itself was not found to designate it", "kind": "coingecko",
-               "definition": "CoinGecko's own count", "staked": "n/a", "add_back": None,
-               "previous": "the same — unchanged",
-               "todo": "if Morpho's docs or forum designate TokenOps as its figure, TokenOps becomes primary"},
+    "Morpho": {"now": "ON-CHAIN under the issuer rule (Jake 2026-10-12, decision 1 on 6f8c86c)",
+               "source": "our on-chain set: total − the DAO / Association / Labs / Grants / Rewards / Operative holdings "
+                         "on the new, legacy and Base tokens; CoinGecko and TokenOps are cross-checks",
+               "kind": "onchain",
+               "definition": "total − issuer-side holdings (issuer rule); non-issuer legacy in the Wrapper counts",
+               "staked": "n/a", "add_back": None,
+               "previous": "CoinGecko's own count (to 2026-10-12)"},
     "Maple": {"source": "CoinGecko — Maple publishes no figure (its FAQ treats stSYRUP as circulating)",
               "kind": "coingecko", "definition": "CoinGecko's own count", "staked": "included (Maple FAQ)",
               "add_back": None, "previous": "the same — unchanged"},
@@ -22544,6 +22688,10 @@ ABSORPTION_EMISSIONS = {
 # with a wallet set of their own declare it here. KEPT OUT OF emissions (Jake 2026-09-24 stands).
 UNLOCK_NOT_A_RELEASE = ("burn_address_balance", "buyback_fund_balance")
 UNLOCK_STOCKS = {
+    # JAKE 2026-10-12 (decision 2b on 6f8c86c): NONE. The converter's outflows are MKR -> SKY conversions of supply that
+    # already existed (149.6M in Q0) and the Pause Proxy's are staking rewards to VestedRewardsDistribution (181.6M,
+    # already counted as emissions) and a burn (2.9M) — none is an unlock (RUNBOOK 11bo/11bp).
+    "Sky": (),
     # the Foundation + Grants wallets (A1, from 2026-10-11) and the team wallet (Jake 2026-10-12, decision 3 on e4e50b0)
     "Hyperliquid": ("excluded_wallets_tokens", "team_wallet_tokens"),
     # NOT YET TRANSFERABLE lockups (Jake 2026-10-12, decision 8: LOCKED = unvested + lockup-locked); weekly read
@@ -22594,6 +22742,11 @@ def circulating_primary_metric(project_name: str) -> str:
     if use == "onchain" or spec.get("status") == "established":
         return "circulating_supply_onchain"
     return "circulating_supply"
+
+
+def no_coingecko_fallback(project_name: str) -> str:
+    """Why CoinGecko's circulating may NOT stand in for a day without the project's own figure, else '' (Aerodrome)."""
+    return str((CIRCULATING_ONCHAIN.get(project_name) or {}).get("no_coingecko_fallback") or "")
 
 
 def circulating_onchain_primary(project_name: str) -> bool:
@@ -26134,16 +26287,65 @@ TRAJECTORY = {
     "quarters": 5,                     # Q0 .. Q-4: four comparisons for "consistency"
     # history the free backfills ask for: five quarters plus a week (fetch.base.BACKFILL_DAYS, fetch.archive.ARCHIVE_DAYS)
     "history_days": 455,
-    # DIRECTION: +1 = higher is better for a holder, -1 = lower is better, 0 = no "better" (a level, e.g. free float).
-    # Anything not listed is +1. Consistency and the trough are n/a for 0.
-    "direction": {
-        "a4_net_change": -1, "a4_net_change_pct": -1, "a4_gross_issuance": -1, "a4_pool_release": -1,
-        "a1_nrr_settlement": -1, "a1_nrr_throughput": -1,
-        "a2_free_float": 0, "a2_ff_arr": -1, "a2_trajectory": -1, "a2_emissions": -1,
-        "master_circulating_supply_used": 0, "master_circulating_supply_coingecko_cross_check": 0,
-        "master_gross_issuance_q0_tokens": -1, "master_net_supply_change_q0_tokens_issuance_burn": -1,
-        "master_net_supply_change_annualised_of_circulating": -1,
+    # EVERY ROW'S GROUP AND DIRECTION, EXPLICIT (Jake's Phase 1 review 2026-10-12, items 5 and 6 — nothing defaults to
+    # +1; a row missing here reads "direction not declared" with no arrow, and a test fails).
+    #   group      Fundamentals (fees, revenue, customer revenue, tokens burned / retired / emitted, subsidy cover,
+    #              usage) · Supply (circulating, float, dilution, unlocks, retirement and burn as % of supply, yields in
+    #              tokens) · Valuation (any ratio with price or market cap) · Market (price, market cap, FDV)
+    #   direction  +1 higher is better for a holder · -1 lower is better · 0 neutral (a level: supply rising is never
+    #              "improved"; no quarters-improved count, no trough)
+    "rows": {
+        # A1
+        "a1_fees_issuance": ("Fundamentals", 1), "a1_tvl": ("Fundamentals", 1),
+        "a1_settlement_volume": ("Fundamentals", 1), "a1_throughput_volume": ("Fundamentals", 1),
+        "gross_burn_q0_tokens_a4_names": ("Fundamentals", 1), "gross_issuance_q0_tokens": ("Fundamentals", -1),
+        "a1_validator_yield": ("Supply", 0), "a1_total_yield_stakers": ("Supply", 1),
+        "a1_total_yield_holders": ("Supply", 1),
+        "a1_nrr_settlement": ("Valuation", -1), "a1_nrr_throughput": ("Valuation", -1),
+        "a1_nrr_settlement_headroom": ("Valuation", 1), "a1_nrr_throughput_headroom": ("Valuation", 1),
+        # A2
+        "a2_customer_revenue": ("Fundamentals", 1), "a2_emissions": ("Fundamentals", -1),
+        "a2_rev_per_token": ("Fundamentals", 1), "a2_rev_vs_emissions_value": ("Fundamentals", 1),
+        "a2_free_float": ("Supply", 0), "a2_trajectory": ("Supply", -1), "a2_ff_arr": ("Valuation", -1),
+        # A3
+        "fees_q0": ("Fundamentals", 1), "actual_buyback_q0_observed": ("Fundamentals", 1),
+        "a3_retired_tokens": ("Fundamentals", 1),
+        "implied_buyback_q0_revenue_share": ("Fundamentals", 1), "a3_protocol_yield": ("Fundamentals", 1),
+        "circulating_supply": ("Supply", 0), "a3_circ_retirement": ("Supply", 1), "a3_fdv_retirement": ("Supply", 1),
+        "a3_actual_buyback_pct": ("Supply", 1), "a3_buyback_locked": ("Supply", 1), "a3_net_absorption": ("Supply", 1),
+        "a3_retire_vs_dilution": ("Supply", 1), "a3_retire_vs_dilution_now": ("Supply", 1),
+        "a3_implied_buyback_pct": ("Valuation", 1), "fees_fdv_annualised": ("Valuation", 1),
+        "market_cap": ("Market", 1),
+        # A4
+        "a4_gross_burn": ("Fundamentals", 1), "a4_gross_issuance": ("Fundamentals", -1),
+        "a4_burn_yield": ("Supply", 1), "a4_crossover": ("Supply", 1), "a4_net_change": ("Supply", -1),
+        "a4_net_change_pct": ("Supply", -1), "a4_pool_release": ("Supply", -1),
+        # Master's own rows
+        "master_revenue_q0": ("Fundamentals", 1), "master_actual_buyback_q0_observed": ("Fundamentals", 1),
+        "master_implied_buyback_q0_revenue_the_split_that_applied_to_this_wi": ("Fundamentals", 1),
+        "master_gross_burn_q0_tokens": ("Fundamentals", 1), "master_gross_issuance_q0_tokens": ("Fundamentals", -1),
+        "master_fees_issuance_q0_issuance_at_90d_avg_price": ("Fundamentals", 1),
+        "master_tvl_chain_for_a1_names_protocol_otherwise": ("Fundamentals", 1),
+        "master_circulating_supply_used": ("Supply", 0), "master_circulating_supply_coingecko_cross_check": ("Supply", 0),
+        "master_net_supply_change_q0_tokens_issuance_burn": ("Supply", -1),
+        "master_net_supply_change_annualised_of_circulating": ("Supply", -1),
+        "master_fees_fdv_annualised": ("Valuation", 1),
+        "master_buyback_of_supply_annualised_implied_split_as_at_this_window": ("Valuation", 1),
+        "master_price_spot": ("Market", 1), "master_market_cap": ("Market", 1), "master_fdv": ("Market", 1),
     },
+    "groups": ("Fundamentals", "Supply", "Valuation", "Market"),
+    # THE DIVERGENCE ROW (item 6): per project, the fundamentals' 4Q growth — revenue, and tokens retired / burned —
+    # against price's. The first row listed that the project has is used for each.
+    "divergence": {
+        "revenue": ("master_revenue_q0", "a2_customer_revenue", "fees_q0"),
+        "retired": ("a3_retired_tokens", "a4_gross_burn", "master_gross_burn_q0_tokens",
+                    "gross_burn_q0_tokens_a4_names"),
+        "price": ("master_price_spot",),
+    },
+    # GROWTH RULES (item 4): a growth figure needs >= min_quarters quarters, all > 0, in one regime; a series whose
+    # earliest quarter is below new_share of the latest — or that starts, or breaks, inside the window — shows
+    # "NEW since Q-x" / "STEP CHANGE at Q-x" instead of a rate.
+    "growth": {"min_quarters": 3, "new_share": 0.10},
     # Master columns with their own trajectory row. A Master column that is a REFERENCE to an A-tab cell
     # (cross_tab.MASTER_SOURCES) shows that cell's trajectory instead — the same figure, one row.
     "master_headers": (
@@ -26164,14 +26366,16 @@ TRAJECTORY = {
          "label": "burn ÷ issuance = 1 (A4 crossover)"},
         {"id": "subsidy_cover", "on": ("a2_rev_vs_emissions_value",), "target": 1.0,
          "label": "subsidy cover = 1: customer revenue ÷ USD value of emissions (A2)"},
-        {"id": "yield_vs_tbill", "on": ("a1_validator_yield",), "target_param": "tbill_3m",
-         "label": "staking yield ≥ the 3-month T-bill (A1)"},
-        {"id": "nrr_vs_m2_gdp", "on": ("a1_nrr_settlement", "a1_nrr_throughput"), "target_param": "nrr_m2_gdp",
-         "label": "NRR down to M2/GDP (A1)"},
+        # on the STAKERS' TOTAL YIELD (Jake 2026-10-12, decision 9 on 6f8c86c: validator yield − net inflation), no
+        # longer on the raw validator yield
+        {"id": "yield_vs_tbill", "on": ("a1_total_yield_stakers",), "target_param": "tbill_3m",
+         "label": "stakers' total yield (validator yield − net inflation) ≥ the 3-month T-bill (A1)"},
+        # NRR is valuation HEADROOM, not a target (item 7): no years-to; A1 shows headroom = M2/GDP ÷ NRR
     ),
     "params": {
         # Jake's May note: M2 / GDP as the NRR yardstick. A parameter, never hard-coded in a formula.
-        "nrr_m2_gdp": {"value": 0.71, "source": "Jake's May note (M2/GDP)", "set_by": "Jake", "set_on": "2026-10-12"},
+        "nrr_m2_gdp": {"value": 0.71, "source": "Jake's May note (M2/GDP)", "set_by": "Jake", "set_on": "2026-10-12",
+                       "note": "the Config & Sources global nrr_m2_gdp (headroom = it ÷ NRR, A1)"},
         # filled from the stored daily 3m T-bill (Phase 3); until a value is stored the benchmark reads n/a
         "tbill_3m": {"metric": "tbill_3m_yield", "project": "Macro", "value": None,
                      "source": "US Treasury daily bill rates / FRED DTB3 (Phase 3)"},
