@@ -90,7 +90,6 @@ def fix_for(p: dict, metric: str, row: dict) -> tuple[str, str, str, str]:
     src = str(row.get("source") or "")
     base = src.split(":")[0].split("[")[0]
     first = row.get("first_date")
-    kind = (config.METRICS.get(metric) or {}).get("kind", "")
     fwd = (config.HISTORY_FORWARD_ONLY.get(p["name"]) or {})
     if metric in (fwd.get("metrics") or ()):
         return (f"FORWARD-ONLY source: {fwd.get('why', '')}"[:300], "none — the source keeps no history",
