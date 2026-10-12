@@ -1565,7 +1565,7 @@ def _foundation_agreed_basis(groups: dict, p: dict, fb: dict, ser, cols) -> None
     on accrual (owners' share). The rebase (foundation_rebase_owner_tokens) and withdrawManaged realisations are not in
     it. Only days the window read stored; none stored -> no series (the old stock-change basis is retired, not a
     fallback). actual_buyback_usd = tokens x the same-day price."""
-    name, wm = p["name"], fb["window_metrics"]
+    wm = fb["window_metrics"]
     parts = {k: ser(m) for k, m in wm.items()}
     days = pd.DatetimeIndex([])
     if not any(v is None for k, v in parts.items() if k != "rebase_owner"):
