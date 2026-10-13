@@ -71,64 +71,64 @@ manual). `inputs` are the config.METRICS series the concept may read (the Covera
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | price | Price | latest market price | price_usd now (Q-k: quarter mean) | $ | CONTEXT | 0 | stock-now | Master,A1,A2,A3,A4,CP | 1 | BUILT | price_usd |
 | market_cap | Market cap | price × the circulating used | price_usd × circulating_supply_used | $ | CONTEXT | 0 | stock-now | Master,A1,A2,A3,A4,CP | 1 | BUILT | market_cap_usd,price_usd,circulating_supply_used |
-| fdv | FDV | price × the total supply used (on-chain first; CoinGecko's FDV before our first total, a declared handover) | price_usd × total_supply | $ | CONTEXT | 0 | stock-now | Master,A3 | 1 | FIX B6 | fdv_usd,price_usd,total_supply |
-| circulating | Circulating supply (used) | total − treasury − team/investor unvested − foundation − operating reserves − burned; staked included; per-project basis section 5 | config.circulating_primary_metric | tokens | CONTEXT | 0 | stock-now | Master,A1,A2,A3,A4,CP | 2 | FIX C7 | circulating_supply_used,circulating_supply |
-| stake_inside | Stake / locks inside circulating | the stake (or lock) LESS the stake held by wallets already outside circulating | locked_tokens (+ declared extra legs) − locked_excluded_metrics | tokens | CONTEXT | 0 | stock-now | A1,A2,A3,CP | 2 | FIX B1 | locked_tokens,staked_noncirculating_tokens,beacon_chain_eth,ve_locked_supply_tokens |
-| float | Tradeable float | circulating − stake inside circulating | circulating_supply_used − stake_inside | tokens | CONTEXT | 0 | stock-now | A1,A2,A3,CP | 2 | FIX B1 | circulating_supply_used,locked_tokens,staked_noncirculating_tokens |
-| lock_rate | Lock rate | stake inside circulating ÷ circulating (PROPOSED axis CONTEXT) | stake_inside ÷ circulating | % | CONTEXT | 1 | stock-now | A1,A3,CP | 2 | FIX B1 | locked_tokens,staked_noncirculating_tokens,circulating_supply_used |
+| fdv | FDV | price × the total supply used (on-chain first; CoinGecko's FDV before our first total, a declared handover) | price_usd × total_supply | $ | CONTEXT | 0 | stock-now | Master,A3 | 1 | BUILT B6 (SERIES BREAK until archive) | fdv_usd,price_usd,total_supply |
+| circulating | Circulating supply (used) | total − treasury − team/investor unvested − foundation − operating reserves − burned; staked included; per-project basis section 5 | config.circulating_primary_metric | tokens | CONTEXT | 0 | stock-now | Master,A1,A2,A3,A4,CP | 2 | BUILT (restatement: section 7) | circulating_supply_used,circulating_supply,total_supply,max_supply |
+| stake_inside | Stake / locks inside circulating | the stake (or lock) LESS the stake held by wallets already outside circulating | locked_tokens (+ declared extra legs) − locked_excluded_metrics | tokens | CONTEXT | 0 | stock-now | A1,A2,A3,CP | 2 | BUILT B1 | locked_tokens,staked_noncirculating_tokens,beacon_chain_eth,ve_locked_supply_tokens |
+| float | Tradeable float | circulating − stake inside circulating | circulating_supply_used − stake_inside | tokens | CONTEXT | 0 | stock-now | A1,A2,A3,CP | 2 | BUILT B1 | circulating_supply_used,locked_tokens,staked_noncirculating_tokens |
+| lock_rate | Lock rate | stake inside circulating ÷ circulating (PROPOSED axis CONTEXT) | stake_inside ÷ circulating | % | CONTEXT | 1 | stock-now | A1,A3,CP | 2 | BUILT B1 | locked_tokens,staked_noncirculating_tokens,circulating_supply_used |
 | tbill | 3-month T-bill | US Treasury 13-week coupon equivalent | tbill_3m_yield | % | CONTEXT | 0 | stock-now | A1,A3,CP | 1 | BUILT | tbill_3m_yield |
 | ssr | Sky Savings Rate | sUSDS ssr() on-chain, annual | sky_savings_rate | % | CONTEXT | 0 | stock-now | A1,A3,CP | 2 | BUILT | sky_savings_rate |
 | etf_holdings | ETF / ETP holdings | latest dated issuer reading per product, summed; ÷ circulating beside | etf_dat_holdings.json | tokens | CONTEXT | 0 | stock-now | CP | 3 | BUILT | |
 | dat_holdings | Treasury-company holdings | latest dated filing per company, summed; ÷ circulating beside | etf_dat_holdings.json | tokens | CONTEXT | 0 | stock-now | CP | 3 | BUILT | |
-| nrr | NRR on settlement / throughput volume | market cap ÷ trailing-365d volume (PROPOSED axis CONTEXT) | market_cap_usd ÷ settlement_volume_365d_usd | x | CONTEXT | -1 | 4Q log-linear | A1 | 1 | BUILT | market_cap_usd,settlement_volume_365d_usd,trading_throughput_365d_usd |
+| nrr | NRR on settlement / throughput volume | market cap ÷ trailing-365d volume (PROPOSED axis CONTEXT) | market_cap_usd ÷ settlement_volume_365d_usd | x | CONTEXT | -1 | 4Q log-linear | A1 | 1 | BUILT | market_cap_usd,settlement_volume_365d_usd,trading_throughput_365d_usd,network_reserve_ratio |
 | ff_arr | Free float ÷ ARR | free-float market value ÷ annualised customer revenue (PROPOSED axis CONTEXT) | (float × price) ÷ customer_revenue_usd annualised | x | CONTEXT | -1 | 4Q log-linear | A2 | 1 | BUILT | customer_revenue_usd,price_usd,circulating_supply_used,locked_tokens |
 | fees_fdv | Fees ÷ FDV | annualised fees ÷ FDV (PROPOSED axis CONTEXT) | fees_usd annualised ÷ fdv_usd | % | CONTEXT | 1 | 4Q log-linear | Master,A3 | 1 | BUILT | fees_usd,fdv_usd |
 | fees | Fees Q0 | fees paid by users in Q0 | Σ fees_usd over Q0 | $ | BUSINESS | 1 | 4Q log-linear | Master,A1,A3 | 1 | BUILT | fees_usd |
-| revenue | Revenue Q0 | protocol revenue on the project's documented base; NEAR = gas + Intents fee switch (C10) | Σ revenue_usd (config.revenue_base_metric) | $ | BUSINESS | 1 | 4Q log-linear | Master,A3 | 1 | FIX C10 | revenue_usd,revenue_usd_reported,near_intents_revenue_usd |
-| customer_revenue | Customer revenue Q0 | what customers paid (A2) | Σ customer_revenue_usd | $ | BUSINESS | 1 | 4Q log-linear | A2 | 1 | BUILT | customer_revenue_usd |
-| tvl | TVL | chain TVL (A1) or protocol TVL; Plume's DefiLlama reclassifications are breaks | tvl_usd / protocol_tvl_usd now | $ | BUSINESS | 1 | stock-now | Master,A1 | 1 | FIX B7 | tvl_usd,protocol_tvl_usd |
-| tvl_native | TVL in native units | the TVL's underlying units (ETH staked for Ether.fi; USDS for Sky) so business trends are not price | per project section 5 | native | BUSINESS | 1 | stock-now | CP | 1 | NEW C15 | eth_staked_etherfi_tokens,usds_supply_tokens |
-| settlement_volume | Settlement / throughput volume | value settled on the chain | settlement_volume_usd | $ | BUSINESS | 1 | 4Q log-linear | A1 | 1 | BUILT | settlement_volume_usd,trading_throughput_usd |
+| revenue | Revenue Q0 | protocol revenue on the project's documented base; NEAR = gas + Intents fee switch (C10) | Σ revenue_usd (config.revenue_base_metric) | $ | BUSINESS | 1 | 4Q log-linear | Master,A3 | 1 | BUILT C10 | revenue_usd,revenue_usd_reported,near_intents_revenue_usd,revenue_total_usd,intents_revenue_usd,net_protocol_surplus_usd |
+| customer_revenue | Customer revenue Q0 | what customers paid (A2) | Σ customer_revenue_usd | $ | BUSINESS | 1 | 4Q log-linear | A2 | 1 | BUILT | customer_revenue_usd,fees_usd |
+| tvl | TVL | chain TVL (A1) or protocol TVL; Plume's DefiLlama reclassifications are breaks | tvl_usd / protocol_tvl_usd now | $ | BUSINESS | 1 | stock-now | Master,A1 | 1 | BUILT B7 | tvl_usd,protocol_tvl_usd |
+| tvl_native | TVL in native units | the TVL's underlying units (ETH staked for Ether.fi; USDS for Sky) so business trends are not price | per project section 5 | native | BUSINESS | 1 | stock-now | CP | 1 | NOT WIRED C15 (section 10) | eth_staked_etherfi_tokens,usds_supply_tokens |
+| settlement_volume | Settlement / throughput volume | value settled on the chain | settlement_volume_usd | $ | BUSINESS | 1 | 4Q log-linear | A1 | 1 | BUILT | settlement_volume_usd,trading_throughput_usd,network_reserve_ratio |
 | business_n | Business 1–4 | the usage / customer series each business is judged on (config.BUSINESS_SLOTS); a stock reads now, a flow Q0 annualised | per slot | per series | BUSINESS | 1 | 4Q log-linear | CP | 1 | BUILT | |
 | market_share | Market share | own ÷ category on one measure, peer set written down (config.MARKET_SHARE); second basis chain fees for ETH / NEAR | market_share_pct, market_share_2_pct | % | BUSINESS | 1 | stock-now | CP | 1 | BUILT | market_share_pct,market_share_2_pct |
-| boros | Pendle Boros fees / volume | Boros on its own lines; Pendle's revenue base stays per docs | boros_fees_usd, boros_volume_usd | $ | BUSINESS | 1 | 4Q log-linear | CP | 1 | NEW C16 | boros_fees_usd,boros_volume_usd |
+| boros | Pendle Boros fees / volume | Boros on its own lines; Pendle's revenue base stays per docs | boros_fees_usd, boros_volume_usd | $ | BUSINESS | 1 | 4Q log-linear | CP | 1 | BUILT C16 (fees); volume NOT WIRED | boros_fees_usd,boros_volume_usd |
 | fees_issuance | Fees ÷ issuance | fees per $ of issuance at the Q0 price (PROPOSED axis BUSINESS) | fees_usd rate ÷ (gross_issuance_tokens rate × price) | x | BUSINESS | 1 | 4Q log-linear | Master,A1 | 1 | BUILT | fees_usd,gross_issuance_tokens,price_usd |
-| validator_yield | Validator staking yield | consensus + execution (ETH: d Eth2Staking + MEV-incl. execution ÷ beacon stake; others per config.VALIDATOR_YIELD) (PROPOSED axis CAPTURE) | config.VALIDATOR_YIELD | % | CAPTURE | 0 | 4Q log-linear | A1,CP | 2 | FIX B3 | consensus_rewards_tokens,execution_rewards_eth,beacon_chain_eth,emissions_tokens,locked_tokens,reward_emission_rate_annual |
-| total_yield | Total Yield — stakers / non-stakers | validator yield − (net inflation + issuer releases); non-stakers − (net inflation + releases) (PROPOSED axis CAPTURE) | vyield − (net_issuance_pct + releases ÷ circulating) | % | CAPTURE | 1 | 4Q log-linear | A1 | 2 | FIX C8 | gross_issuance_tokens,gross_burn_tokens,pool_release_tokens,emissions_tokens,unlock_release_tokens,unlock_release_counted_tokens,circulating_supply_used |
+| validator_yield | Validator staking yield | consensus + execution (ETH: d Eth2Staking + MEV-incl. execution ÷ beacon stake; others per config.VALIDATOR_YIELD) (PROPOSED axis CAPTURE) | config.VALIDATOR_YIELD | % | CAPTURE | 0 | 4Q log-linear | A1,CP | 2 | BUILT B3 | consensus_rewards_tokens,execution_rewards_eth,beacon_chain_eth,emissions_tokens,locked_tokens,reward_emission_rate_annual,staking_yield_net_pct,staking_yield_pct |
+| total_yield | Total Yield — stakers / non-stakers | validator yield − (net inflation + issuer releases); non-stakers − (net inflation + releases) (PROPOSED axis CAPTURE) | vyield − (net_issuance_pct + releases ÷ circulating) | % | CAPTURE | 1 | 4Q log-linear | A1 | 2 | BUILT C8 (HL / NEAR: on Jake's next run) | gross_issuance_tokens,gross_burn_tokens,pool_release_tokens,emissions_tokens,unlock_release_tokens,unlock_release_counted_tokens,circulating_supply_used |
 | protocol_yield | Protocol staking yield | tokens paid to stakers per year ÷ reward-bearing stake | config.PROTOCOL_YIELD | % | CAPTURE | 1 | 4Q log-linear | A3,CP | 2 | BUILT | |
-| whole_token_yield | Whole-token yield | staker yield × stake inside circulating ÷ circulating (≤ staker yield) | yield × stake_inside ÷ circulating | % | CAPTURE | 1 | 4Q log-linear | CP | 2 | FIX B1 | locked_tokens,staked_noncirculating_tokens,circulating_supply_used |
-| gross_burn | Gross burn Q0 | every burn the supply sees (fee-market burns included) | Σ config.a1_burn_metric | tokens | CAPTURE | 1 | 4Q log-linear | Master,A1,A4 | 2 | BUILT | gross_burn_tokens,core_burn_tokens |
-| actual_buyback | Actual buyback Q0 | tokens / $ bought by the programme | Σ actual_buyback_tokens / _usd | $ | CAPTURE | 1 | rolling T12M | Master,A3 | 2 | FIX B11 | actual_buyback_tokens,actual_buyback_usd |
-| implied_buyback | Implied buyback Q0 | revenue × the split that applied to the window | revenue × share | $ | CAPTURE | 1 | 4Q log-linear | Master,A3 | 1 | BUILT | revenue_usd |
-| retirement | Retirement rates | retired (burned + held) buyback tokens annualised ÷ circulating / ÷ FDV supply | retired_buyback_tokens ÷ supply | % | CAPTURE | 1 | rolling T12M | A3 | 2 | BUILT | retired_buyback_tokens,circulating_supply_used,total_supply |
-| burn_yield | Permanent burn yield | burn annualised ÷ circulating | a4 burn ÷ circulating | % | CAPTURE | 1 | 4Q log-linear | A4 | 2 | BUILT | gross_burn_tokens |
-| crossover | Burn ÷ issuance | burn ÷ issuance (releases for a pre-minted supply) | burn rate ÷ issuance-basis rate | x | CAPTURE | 1 | 4Q log-linear | A4 | 2 | FIX B2 | gross_burn_tokens,gross_issuance_tokens,pool_release_tokens |
+| whole_token_yield | Whole-token yield | staker yield × stake inside circulating ÷ circulating (≤ staker yield) | yield × stake_inside ÷ circulating | % | CAPTURE | 1 | 4Q log-linear | CP | 2 | BUILT B1 | locked_tokens,staked_noncirculating_tokens,circulating_supply_used |
+| gross_burn | Gross burn Q0 | every burn the supply sees (fee-market burns included) | Σ config.a1_burn_metric | tokens | CAPTURE | 1 | 4Q log-linear | Master,A1,A4 | 2 | BUILT | gross_burn_tokens,core_burn_tokens,total_burn_tokens,sky_stage2_burn_tokens,burn_address_balance,max_supply,one_off_burn_tokens |
+| actual_buyback | Actual buyback Q0 | tokens / $ bought by the programme | Σ actual_buyback_tokens / _usd | $ | CAPTURE | 1 | rolling T12M | Master,A3 | 2 | BUILT B11 (Aerodrome: seed command) | actual_buyback_tokens,actual_buyback_usd,buyback_burned_tokens,buyback_held_tokens,buyback_distributed_tokens,retired_buyback_tokens,buyback_bought_share_alltime |
+| implied_buyback | Implied buyback Q0 | revenue × the split that applied to the window | revenue × share | $ | CAPTURE | 1 | 4Q log-linear | Master,A3 | 1 | BUILT | revenue_usd,actual_buyback_usd,fees_usd,price_usd,net_protocol_surplus_usd |
+| retirement | Retirement rates | retired (burned + held) buyback tokens annualised ÷ circulating / ÷ FDV supply | retired_buyback_tokens ÷ supply | % | CAPTURE | 1 | rolling T12M | A3 | 2 | BUILT | retired_buyback_tokens,circulating_supply_used,total_supply,buyback_fund_balance,actual_buyback_usd,retired_buyback_usd,market_cap_usd,fdv_usd |
+| burn_yield | Permanent burn yield | burn annualised ÷ circulating | a4 burn ÷ circulating | % | CAPTURE | 1 | 4Q log-linear | A4 | 2 | BUILT | gross_burn_tokens,total_burn_tokens,sky_stage2_burn_tokens |
+| crossover | Burn ÷ issuance | burn ÷ issuance (releases for a pre-minted supply) | burn rate ÷ issuance-basis rate | x | CAPTURE | 1 | 4Q log-linear | A4 | 2 | BUILT B2 | gross_burn_tokens,gross_issuance_tokens,pool_release_tokens |
 | net_absorption | Net absorption | retired buyback − emissions − rebase (A3) | retired − dilution legs | tokens | CAPTURE | 1 | rolling T12M | A3 | 2 | BUILT | |
-| hvy | Holder value yield | revenue-funded $ retired + $ distributed + declared payouts (liquid bribes) annualised ÷ market cap | holder_value_revenue_usd ÷ market_cap_usd | % | CAPTURE | 1 | 4Q log-linear | CP | 2 | FIX B9 | holder_value_revenue_usd,market_cap_usd |
-| nhy | Net holder yield | HVY − dilution (outflows a+b+c+d+e at each day's price) ÷ market cap; names a starved leg (PROPOSED axis CAPTURE) | hvy − Σ outflow_c_usd ÷ market_cap | % | CAPTURE | 1 | 4Q log-linear | CP | 2 | FIX C1 | holder_value_revenue_usd,outflow_a_usd,outflow_b_usd,outflow_c_usd,outflow_d_usd,outflow_e_usd,market_cap_usd |
-| payout_ratio | Payout ratios | credited holder value ÷ fees (gross) and ÷ revenue (net basis); NEAR per stream (C10) | holder_value_revenue_usd ÷ fees_usd / revenue base | % | CAPTURE | 1 | 4Q log-linear | CP | 2 | FIX C10 | holder_value_revenue_usd,fees_usd,revenue_usd |
-| capture_status | Capture status, switch power, destination, certainty | attributes (phase2_attributes.json), never penalties | text | text | CAPTURE | 0 | — | CP | 3 | FIX C17 | |
-| gross_issuance | Gross issuance Q0 | tokens minted (0 — fixed / pre-minted supply; Sky 0 verified on-chain, B4) | Σ gross_issuance_tokens | tokens | ALIGNMENT | -1 | 4Q log-linear | Master,A1,A4 | 2 | BUILT | gross_issuance_tokens |
-| issuer_releases | Issuer releases Q0 | pre-minted supply released into circulation; NOT issuance | Σ pool_release_tokens (≥ 0) | tokens | ALIGNMENT | -1 | rolling T12M | Master,A1,A4 | 2 | FIX B2/B8 | pool_release_tokens |
-| net_issuance | Net issuance after burn | mint − burn (Q0 and annualised ÷ circulating); BLOCKED on unequal coverage | gross_issuance − gross_burn | tokens | ALIGNMENT | -1 | 4Q log-linear | Master,A1,A4 | 2 | FIX B5/B8 | gross_issuance_tokens,gross_burn_tokens,net_supply_change_tokens,net_mint_monthly |
+| hvy | Holder value yield | revenue-funded $ retired + $ distributed + declared payouts (liquid bribes) annualised ÷ market cap | holder_value_revenue_usd ÷ market_cap_usd | % | CAPTURE | 1 | 4Q log-linear | CP | 2 | BUILT B9 | holder_value_revenue_usd,market_cap_usd |
+| nhy | Net holder yield | HVY − dilution (outflows a+b+c+d+e at each day's price) ÷ market cap; names a starved leg (PROPOSED axis CAPTURE) | hvy − Σ outflow_c_usd ÷ market_cap | % | CAPTURE | 1 | 4Q log-linear | CP | 2 | BUILT C1 | holder_value_revenue_usd,outflow_a_usd,outflow_b_usd,outflow_c_usd,outflow_d_usd,outflow_e_usd,market_cap_usd |
+| payout_ratio | Payout ratios | credited holder value ÷ fees (gross) and ÷ revenue (net basis); NEAR per stream (C10) | holder_value_revenue_usd ÷ fees_usd / revenue base | % | CAPTURE | 1 | 4Q log-linear | CP | 2 | BUILT C10 | holder_value_revenue_usd,fees_usd,revenue_usd,net_protocol_surplus_usd,actual_buyback_usd |
+| capture_status | Capture status, switch power, destination, certainty | attributes (phase2_attributes.json), never penalties | text | text | CAPTURE | 0 | — | CP | 3 | BUILT C17 | |
+| gross_issuance | Gross issuance Q0 | tokens minted (0 — fixed / pre-minted supply; Sky 0 verified on-chain, B4) | Σ gross_issuance_tokens | tokens | ALIGNMENT | -1 | 4Q log-linear | Master,A1,A4 | 2 | BUILT | gross_issuance_tokens,pool_release_tokens |
+| issuer_releases | Issuer releases Q0 | pre-minted supply released into circulation; NOT issuance | Σ pool_release_tokens (≥ 0) | tokens | ALIGNMENT | -1 | rolling T12M | Master,A1,A4 | 2 | BUILT B2/B8 | pool_release_tokens |
+| net_issuance | Net issuance after burn | mint − burn (Q0 and annualised ÷ circulating); BLOCKED on unequal coverage | gross_issuance − gross_burn | tokens | ALIGNMENT | -1 | 4Q log-linear | Master,A1,A4 | 2 | BUILT B5/B8 | gross_issuance_tokens,gross_burn_tokens,net_supply_change_tokens,net_mint_monthly,total_burn_tokens,sky_stage2_burn_tokens |
 | emissions | Emissions Q0 | tokens paid out as incentives (supplier / security) | Σ emissions_tokens | tokens | ALIGNMENT | -1 | 4Q log-linear | A2,A3,CP | 2 | BUILT | emissions_tokens |
 | unlocks | Unlocks Q0 | releases from non-circulating wallets (falls of their stock, ≥ 0) | Σ unlock_release_tokens | tokens | ALIGNMENT | -1 | rolling T12M | A2,A3,A4,CP | 2 | BUILT | unlock_release_tokens |
-| outflow_a | Outflow (a) security emissions | rewards for securing the chain / service, to CIRCULATING stake | per project section 6 | $ | ALIGNMENT | -1 | 4Q log-linear | CP,Flows | 2 | FIX C1 | outflow_a_tokens,outflow_a_usd |
-| outflow_b | Outflow (b) supply-side incentives | rewards to suppliers (LPs, miners, lenders) | per project section 6 | $ | ALIGNMENT | -1 | 4Q log-linear | CP,Flows | 2 | FIX C1 | outflow_b_tokens,outflow_b_usd |
-| outflow_c | Outflow (c) demand-side incentives | rewards to users / holders for using or locking (rebase to lockers, user programmes) | per project section 6 | $ | ALIGNMENT | -1 | 4Q log-linear | CP,Flows | 2 | FIX C1 | outflow_c_tokens,outflow_c_usd |
-| outflow_d | Outflow (d) ecosystem / grants | treasury growth budgets and grants | per project section 6 | $ | ALIGNMENT | -1 | rolling T12M | CP,Flows | 2 | NEW C1 | outflow_d_tokens,outflow_d_usd |
-| outflow_e | Outflow (e) unlocks | team / investor / foundation releases not in a–d | per project section 6 | $ | ALIGNMENT | -1 | rolling T12M | CP,Flows | 2 | FIX C1 | outflow_e_tokens,outflow_e_usd |
+| outflow_a | Outflow (a) security emissions | rewards for securing the chain / service, to CIRCULATING stake | per project section 6 | $ | ALIGNMENT | -1 | 4Q log-linear | CP,Flows | 2 | BUILT C1 | outflow_a_tokens,outflow_a_usd,emissions_circulating_stake_tokens |
+| outflow_b | Outflow (b) supply-side incentives | rewards to suppliers (LPs, miners, lenders) | per project section 6 | $ | ALIGNMENT | -1 | 4Q log-linear | CP,Flows | 2 | BUILT C1 | outflow_b_tokens,outflow_b_usd |
+| outflow_c | Outflow (c) demand-side incentives | rewards to users / holders for using or locking (rebase to lockers, user programmes) | per project section 6 | $ | ALIGNMENT | -1 | 4Q log-linear | CP,Flows | 2 | BUILT C1 | outflow_c_tokens,outflow_c_usd |
+| outflow_d | Outflow (d) ecosystem / grants | treasury growth budgets and grants | per project section 6 | $ | ALIGNMENT | -1 | rolling T12M | CP,Flows | 2 | BUILT C1 | outflow_d_tokens,outflow_d_usd,growth_budget_release_tokens |
+| outflow_e | Outflow (e) unlocks | team / investor / foundation releases not in a–d | per project section 6 | $ | ALIGNMENT | -1 | rolling T12M | CP,Flows | 2 | BUILT C1 | outflow_e_tokens,outflow_e_usd,unlock_release_vesting_tokens |
 | total_dilution | Total dilution | outflows a+b+c+d+e annualised ÷ circulating (and ÷ float) | Σ outflows ÷ supply | % | ALIGNMENT | -1 | 4Q log-linear | A2,A3,A4,CP | 2 | BUILT | |
 | supply_trajectory | Supply trajectory (A2) | annualised growth of circulating from emissions + unlocks | (emissions + unlocks) ÷ float | % | ALIGNMENT | -1 | 4Q log-linear | A2 | 2 | BUILT | emissions_tokens,unlock_release_tokens |
-| subsidy_cover | Subsidy cover | revenue ÷ $ of incentives, ÷(b) and ÷(b+c), per covered day | revenue rate ÷ outflow rate | x | ALIGNMENT | 1 | 4Q log-linear | A2,CP | 2 | FIX C3 | outflow_b_usd,outflow_c_usd,customer_revenue_usd,fees_usd,revenue_usd |
-| supplier_payout | Supplier payout per $ of fees | (fees to suppliers + incentive $ to suppliers) ÷ fees; the fee-only ratio beside it | ((fees − revenue) + outflow_b_usd) ÷ fees | x | ALIGNMENT | 0 | 4Q log-linear | CP | 1 | FIX C4 | fees_usd,revenue_usd,outflow_b_usd |
-| insider_share | Insider share | of staked / locked supply and of circulating, from the issuer-wallet lists | insider stake ÷ stake; insider holdings ÷ circulating | % | ALIGNMENT | -1 | stock-now | CP | 2 | NEW C5 | team_wallet_tokens,staked_noncirculating_tokens,locked_tokens |
-| discretionary | Discretionary supply | issuer-side wallets with no published release schedule (0 with reason where none) | Σ config.DISCRETIONARY_SUPPLY legs | tokens | ALIGNMENT | -1 | stock-now | CP | 2 | FIX C6 | |
-| leakage | Leakage (PROPOSED) | (i) insider share of distributed holder value; (ii) max(0, 1 − subsidy cover); (iii) buyback execution: $ spent ÷ (tokens × market price) − 1 | section 9 | % | ALIGNMENT | -1 | 4Q log-linear | CP | 2 | NEW C12 | |
-| uniformity | Uniformity (PROPOSED) | whole-token yield ÷ staker yield; do non-stakers receive value (yes/no) | whole ÷ staker | x | ALIGNMENT | 1 | 4Q log-linear | CP | 2 | NEW C12 | |
+| subsidy_cover | Subsidy cover | revenue ÷ $ of incentives, ÷(b) and ÷(b+c), per covered day | revenue rate ÷ outflow rate | x | ALIGNMENT | 1 | 4Q log-linear | A2,CP | 2 | BUILT C3 | outflow_b_usd,outflow_c_usd,customer_revenue_usd,fees_usd,revenue_usd,emissions_tokens |
+| supplier_payout | Supplier payout per $ of fees | (fees to suppliers + incentive $ to suppliers) ÷ fees; the fee-only ratio beside it | ((fees − revenue) + outflow_b_usd) ÷ fees | x | ALIGNMENT | 0 | 4Q log-linear | CP | 1 | BUILT C4 | fees_usd,revenue_usd,outflow_b_usd |
+| insider_share | Insider share | of staked / locked supply and of circulating, from the issuer-wallet lists | insider stake ÷ stake; insider holdings ÷ circulating | % | ALIGNMENT | -1 | stock-now | CP | 2 | BUILT C5 | team_wallet_tokens,staked_noncirculating_tokens,locked_tokens,filing_managed_lock_tokens,ve_locked_supply_tokens |
+| discretionary | Discretionary supply | issuer-side wallets with no published release schedule (0 with reason where none) | Σ config.DISCRETIONARY_SUPPLY legs | tokens | ALIGNMENT | -1 | stock-now | CP | 2 | BUILT C6 | |
+| leakage | Leakage (PROPOSED) | (i) insider share of distributed holder value; (ii) max(0, 1 − subsidy cover); (iii) buyback execution: $ spent ÷ (tokens × market price) − 1 | section 9 | % | ALIGNMENT | -1 | 4Q log-linear | CP | 2 | BUILT C12 (ii); (i) (iii) NOT WIRED | |
+| uniformity | Uniformity (PROPOSED) | whole-token yield ÷ staker yield; do non-stakers receive value (yes/no) | whole ÷ staker | x | ALIGNMENT | 1 | 4Q log-linear | CP | 2 | BUILT C12 | |
 | lock_terms | Lock terms, payout currency, destination durability | attributes | text | text | ALIGNMENT | 0 | — | CP | 3 | BUILT | |
-| token_flow | Token-flow statement | opening circulating + mint + releases − burns − net new locks = closing circulating; residual | section 8 | tokens | ALIGNMENT | 0 | — | Flows | 2 | NEW C11 | |
-| value_flow | Value-flow statement | fees → suppliers / revenue → retired / distributed / treasury / insiders; incentives beside; residual | section 8 | $ | CAPTURE | 0 | — | Flows | 2 | NEW C11 | |
+| token_flow | Token-flow statement | opening circulating + mint + releases − burns − net new locks = closing circulating; residual | section 8 | tokens | ALIGNMENT | 0 | — | Flows | 2 | BUILT C11 | |
+| value_flow | Value-flow statement | fees → suppliers / revenue → retired / distributed / treasury / insiders; incentives beside; residual | section 8 | $ | CAPTURE | 0 | — | Flows | 2 | BUILT C11 | |
 | sell_rate | Sell rate by recipient cohort | Phase 5 | — | % | ALIGNMENT | -1 | — | — | — | LATER C18 | |
 | exchange_balances | Exchange balances | paid labelled-wallet source — Jake's decision | — | tokens | CONTEXT | 0 | — | — | — | NOT WIRED C18 | |
 | quadrant | Proven / Building / Fading / Failing | axis level × trajectory per row | — | text | — | 0 | — | — | — | LATER C19 | |
@@ -172,10 +172,10 @@ series in exactly one category; a project's assignment and its basis are in `con
 | Maple | stSYRUP inflation (0 after MIP-019) | Drips (ended 2025-12-31; NOT WIRED history) | — | — | wallet releases |
 | Morpho | — | MORPHO rewards | — | — | wallet releases |
 | Hyperliquid | staking rewards × (stake inside circulating ÷ total stake) — rewards to issuer-side stake are not circulating until they move | — | — | — | Foundation / Grants / team releases |
-| Uniswap | — | — | — | UNIfication growth budget (Timelock → UNIVesting) | what remains of the wallet releases after (d) |
+| Uniswap | — | — | — | every Timelock fall: the UNIfication growth budget (20M UNI/yr, 5M a quarter via UNIVesting to Labs' recipient 0xaBA63748…, proposal 93) and any other grant; the 100M treasury burn is taken out on its day | the treasury vesting contracts (ended Sep 2024) + unclaimed-airdrop claims — ~0 a quarter after the move |
 | Aerodrome | — (no security budget) | gauge emissions | rebase to veAERO lockers (own line) | — | wallet releases |
 | Sky | — | — | SKY farm rewards (treasury-funded transfers via MCD_VEST_SKY_TREASURY since June 2025; ~2.04M SKY/day in Q0) | — | MKR→SKY conversion releases (the converter's pre-minted balance into circulating; 149.6M SKY to users in Q0) — on the Flows tab; not dilution of SKY holders' share of MKR-era claims (PROPOSED) |
-| Pendle | — | gauge emissions (~0.2%/yr after the ~92% cut) | — | — | per wallet identification (C1) |
+| Pendle | — | gauge emissions (~0.2%/yr after the ~92% cut) | — | — | four wallets identified: Governance multisig 0x8119… (incentives reserve; sole GaugeController funder), Team 0x918c… (vested), Ecosystem Fund 0x399B…, fee wallet 0x8270…. Q0 1,675,753: ~0.9M → Merkle / Merkl campaigns (really b), 600k + 70k → Binance, 105,753 recycled fees; no vesting unlock (PROPOSED 9) |
 | Ether.fi | — | — | user programmes (Season 5, Triple Dip, Cash cashback): distributor wallets or NOT WIRED | — | wallet releases |
 | Fluid | — | rewards | — | — | wallet releases |
 
@@ -189,10 +189,25 @@ party history) or, where none exists, the date the trajectory becomes valid, is 
 11bv. FDV is restored by a declared handover (CoinGecko's FDV → price × our total) and is a SERIES BREAK until the
 archive restates total supply.
 
+| Break | Restatement route (research of 2026-10-13) | Valid without restatement: Q0 / QoQ / 4Q growth / no flag |
+|---|---|---|
+| Ethereum 2026-09-29 | CoinMetrics community SplyCur (daily, free; matches Etherscan within 0.0003%; licence non-commercial — Jake's call) as total_supply_protocol 2025-07-14..2026-09-28 + a "none" handover | 2026-12-27 / 2027-03-27 / 2027-09-23 / 2027-12-22 |
+| Hyperliquid 2026-09-30 and 2026-10-11 | 10-11 now declared a composition change (it was read as a trend); per-wallet ledger replay from genesis (userNonFundingLedgerUpdates + delegatorHistory + fills) is exact for the team / Foundation / Grants wallets; futureEmissions history only modelled (~1%) | 2026-12-28 / 2027-03-28 / 2027-09-24 / 2027-12-23 (10-11: 2027-01-08 …) |
+| NEAR 2026-10-11 | the lockup rule and NEAR's own figure agree within 0.05% (RUNBOOK) — declare one basis; exact route: weekly lockup reads at past blocks (archival RPC, >160 h) | 2027-01-08 / 2027-04-08 / 2027-10-05 / 2028-01-03 |
+| Sky 2026-10-12 | archive reads of the same contracts (archive_backfill.py --project Sky) + sky_mkr.read at past blocks (needs the vest read split out: the vest contract has no code ~400 days back) | 2027-01-09 / 2027-04-09 / 2027-10-06 / 2028-01-04 |
+| Aethir 2026-09-30 | the dashboard figure IS Aethir's published monthly table (CIRCULATING_SCHEDULE) — write 2025-07-15..2026-09-29 from it + a "none" handover | 2026-12-28 / 2027-03-28 / 2027-09-24 / 2027-12-23 |
+| Plume 2026-10-07 | CoinGecko's figure equals Plume's from 2026-01-01 (exact monthly +212,116,114.6 steps) — copy as first party with a "none" handover; before 2026 not verifiable | 2027-01-04 / 2027-04-04 / 2027-10-01 / 2027-12-30 |
+| FDV (8 on-chain-first projects) 2026-10-11 | archive the token totalSupply at past blocks: run_sql.py CJ / CM, then archive_backfill.py --run | 2027-01-08 / 2027-04-08 / 2027-10-05 / 2028-01-03 |
+
+None of the restatements is run in this round: each needs a new reader or Jake's run (no secrets here).
+
 ## 8. Flow statements (C11) — tab "Flows", Q0..Q-4 per project
 
-* **Token flow:** opening circulating + mint (gross issuance) + releases (unlocks + pool releases) − burns − net new
-  locks inside circulating = closing circulating. Residual = closing − that sum; |residual| > 0.5% of opening → CHECK.
+* **Token flow (as built):** opening circulating + mint (the issuance basis; 0 on a pre-minted token) + releases
+  (pool_release_tokens on a pre-minted token, else the non-circulating wallets' falls) − burns (A1's burn basis) =
+  expected closing, against the closing circulating stored. Net new locks drop out: staked supply is inside circulating
+  under the convention. Residual = closing − expected; |residual| > 0.5% of opening, a leg covering fewer than 90 days,
+  or a change of circulating basis inside the quarter → CHECK with the reason.
 * **Value flow:** fees → supplier share (fees − revenue) + protocol revenue; revenue → retired (burned + held
   buybacks) + distributed (to holders) + treasury (the rest); incentives $ (outflows a–e) beside. Residual = revenue −
   retired − distributed − treasury (0 by construction for treasury as the remainder; shown so a negative treasury —
@@ -217,6 +232,10 @@ archive restates total supply.
 | GEODNET customers | no public source (console needs a wallet login) |
 | Aethir business series beyond revenue / compute hours | dashboard.aethir.com demand metrics (current only) |
 | Hyperliquid ASXN series | browser capture (ASXN hyperscreener) — dashboard |
+| TVL in native units (C15) | Ether.fi: LiquidityPool 0x308861A4… getTotalPooledEther() at past blocks (eth.drpc.org, keyless; 2.791M → 2.284M ETH Q-4 → Q0, −18.2% vs −54.5% in USD); protocols: DefiLlama /protocol/<slug> daily `tokens` valued at one date's prices (matched basket, research of 2026-10-13); chains: USD ÷ native price only (the token breakdown is paid) |
+| Pendle Boros volume (C16) | api-boros.pendle.finance markets/ohlcv per market × DefiLlama daily price (Q0 $3.04B, Q-4 $2.39B) |
+| Ether.fi (c) cashback | ETHFI Transfer out of CashbackDistributor 0x38F2fBb2… on OP (explorer.optimism.io Blockscout, keyless); Q0 1,060,439 ETHFI |
+| Hyperliquid history (C9) | wallet ledgers replayed from genesis (userNonFundingLedgerUpdates + delegatorHistory + userFillsByTime: exact); futureEmissions history modelled from the Grants wallet's daily reward (~1%, store as a separately named modelled series); Q0 valid from the tracker's own reads: emissions 2026-12-29, wallet stocks 2027-01-09 |
 | Market share LINK / PLUME / ATH / GEOD | oracle TVS (paid) / RWA-by-chain rebuild / no comparable category |
 
 ## 11. LATER (C19) — Proven / Building / Fading / Failing grid
@@ -237,3 +256,20 @@ trajectory (growth, direction, quarters improved). Nothing built.
    conversions out of the converter's pre-minted balance. PROPOSED: shown on the Flows tab as a release, and NOT
    counted as dilution in (e). Each conversion retires the equivalent MKR (24,000 SKY per MKR), so holders' claims are
    unchanged.
+8. Supplier payout counts the supply-side incentive $ (b) with the fees paid to suppliers; the fee-only ratio is beside
+   it (Aerodrome 1.14 / 0.24 on the 2026-10-09 dump).
+9. Pendle: the Governance multisig's falls (the incentives reserve) belong in (b), with the days it funds the
+   GaugeController taken out (else counted twice with emissions) — needs a per-transfer series; kept in (e) until then.
+10. Ether.fi: the Q0 sETHFI top-ups (1,137,473 ETHFI) are TREASURY-funded (FIFO trace: 28% earlier treasury buyback
+    stock, 25% Treasury, 24% investor / core-contributor custodian, 23% Binance withdrawal; 0% revenue) — recorded, not
+    credited; HVY 0 stands (ASSUMED pending Jake).
+11. NEAR revenue = gas revenue + NEAR Intents fee-switch revenue (DefiLlama near-intents dailyRevenue); the payout and
+    coverage ratios divide by both.
+12. GEODNET discretionary supply = the treasury wallets only, until the other non-circulating wallets' schedule is
+    established.
+13. Hyperliquid insider share of stake = the stake of every wallet outside circulating (team + Foundation + Grants) ÷
+    total staked, not the team alone.
+14. Divergence: a revenue-vs-price growth gap within ±10pp reads "in line" (B14). Growth: a quarter outside 10%–10x of
+    Q0 ends the regime in either direction (B13).
+15. Uniswap (d) = every fall of the governance Timelock (the growth budget and any other grant), the treasury-funded
+    100M burn excepted.
