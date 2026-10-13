@@ -139,11 +139,14 @@ def test_history_gaps_names_the_cheapest_fix_on_the_real_dump(tmp_path, monkeypa
     import config
     import history_gaps as hg
     wb, _rows = _built(tmp_path, monkeypatch, "Chainlink")
-    rows = hg.gap_rows(wb, pd.Timestamp("2026-10-09"))
+    rows = hg.gap_rows(wb, pd.Timestamp("2026-10-13"))
     by = {r["metric"]: r for r in rows}
     assert by["revenue_usd"]["gap"] == "ok"
-    assert "CJ" in by["total_supply"]["cheapest_fix"] and "archive_backfill" in by["total_supply"]["cheapest_fix"]
-    assert by["fdv_usd"]["fix_cost"] == "as its inputs"
+    # Jake's 10-13 dump: the archive backfill the 10-09 dump's gap named (CJ + archive_backfill) has landed — total
+    # supply is full over Q0..Q-3; the remaining gap names its own cheapest fix
+    assert by["total_supply"]["gap"] == "ok"
+    assert by["ccip_messages"]["gap"] == "GAP" and "probe the source for history" in by["ccip_messages"]["cheapest_fix"]
+    assert by["fdv_usd"]["gap"] == "ok"            # a read-time view: full once its inputs are (it was "as its inputs")
     assert not [r for r in rows if r["project"] not in config.CREDIBILITY_PROJECTS]
     assert by["revenue_usd"]["Q-1"] == "full" and by["revenue_usd"]["Q-4 (bonus)"].startswith("partial")
     # judged on Q0..Q-3 (Jake's Phase 1 review, item 8): a short Q-4 alone is no gap

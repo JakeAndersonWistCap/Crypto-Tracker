@@ -28,13 +28,7 @@ DUMPS = ("Aerodrome", "Chainlink", "Ethereum", "Maple", "Pendle", "Plume",
 # each with its cause on the Coverage row. The set must match exactly: a new BROKEN fails the build, and so does a fixed
 # one still listed here. (project, Coverage tab, column prefix)
 KNOWN_REFERENCE_BROKEN = {
-    ("Chainlink", "References", "staking_community_rate"),   # ours blends every pool; the reference is the community rate
-    ("Chainlink", "CP Comparability", "Staker yield — validator (A1)"),   # the same reference, on its headline
-    ("Chainlink", "References", "reserve_holdings_end_q1_2026"),   # the reference is the 04-09..04-15 balance (C21)
-    ("Maple", "References", "total_supply"),   # the 10-09 dump predates on-chain-first total supply (2026-10-11)
-    ("Morpho", "References", "merkl_rewards_rate"),   # our (b) reads Ethereum only; campaigns moved to Base / Arc
-    ("Sky", "References", "net_revenue_sep_2026"),   # ours is after the USDS staker distribution; TMF's before
-    ("Uniswap", "References", "franchiser_recall_inflow"),   # the reference rounds the recall's 12,500,001.19
+    ("Maple", "References", "dao_safe_balance"),   # V3: read before the 10-13 18:10 UTC treasury move (cause named)
 }
 TABS = ("Master", "A1 Infrastructure", "A2 Coordination", "A3 Revenue Buyback", "A4 Permanent Burn", "CP Comparability")
 

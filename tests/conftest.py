@@ -40,3 +40,12 @@ def _no_solana_network(monkeypatch):
         def post(self, url, body):
             raise RuntimeError("no Solana RPC in tests")
     monkeypatch.setattr(solana, "Http", _NoNetwork)
+
+
+@pytest.fixture
+def dumps_20261009(monkeypatch):
+    """Read the 2026-10-09 vintage of the real dumps (tests/real_dump.py VINTAGE) for this test."""
+    import real_dump
+    monkeypatch.setattr(real_dump, "VINTAGE", "20261009")
+    return "20261009"
+

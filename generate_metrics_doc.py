@@ -203,7 +203,7 @@ def flow_statements() -> list[str]:
         if (oc or {}).get("pending"):
             L += ["", f"PENDING: {oc['pending']}"]
         L += ["", "**Value flow statement**", "", "| Step | Series |", "|---|---|"]
-        rb = config.revenue_base_metric(n)
+        rb = config.revenue_ratio_base_metric(n)
         L.append(f"| customers pay (gross fees) | {ser(n, ['fees_usd'] if 'fees_usd' in ms_of[n] else [])} |")
         L.append(f"| the project's revenue basis | {ser(n, [rb] if rb in ms_of[n] else [])} |")
         L.append(f"| bought back ($, every funding source) | "

@@ -42,6 +42,34 @@ PRO_ONLY = {
 }
 
 
+
+def constant_price_tvl(j: dict) -> tuple[list, str]:
+    """C15 (round 3 W1): the protocol's daily token amounts (`tokens`) x each token's price ON THE LATEST DAY
+    (`tokensInUsd` ÷ `tokens` that day) — the TVL in native units, valued at one date's prices. A token absent on the
+    latest day has no price and is left out; the note gives the share of the first day's TVL so covered."""
+    amts, usds = j.get("tokens") or [], j.get("tokensInUsd") or []
+    if not amts or not usds:
+        return [], "no tokens / tokensInUsd in the response"
+    last_a, last_u = amts[-1].get("tokens") or {}, (usds[-1].get("tokens") or {}) if usds[-1].get("date") == \
+        amts[-1].get("date") else {}
+    if not last_u:
+        return [], "the latest tokens and tokensInUsd rows are not the same day"
+    price = {t: last_u[t] / a for t, a in last_a.items() if a and t in last_u and last_u[t] is not None}
+    by_usd = {u["date"]: u.get("tokens") or {} for u in usds}
+    rows, cover = [], None
+    year_ago = amts[-1]["date"] - 365 * 86_400
+    for row in amts:
+        tk = row.get("tokens") or {}
+        val = sum(a * price[t] for t, a in tk.items() if t in price and a is not None)
+        rows.append((datetime.fromtimestamp(row["date"], tz=timezone.utc), val))
+        if cover is None and row["date"] >= year_ago and (u := by_usd.get(row["date"])):
+            tot = sum(v for v in u.values() if v)
+            cover = (sum(v for t, v in u.items() if v and t in price) / tot, row["date"]) if tot else None
+    return rows, (f"{len(price)} token(s) priced at {datetime.fromtimestamp(amts[-1]['date'], tz=timezone.utc).date()}"
+                  + (f"; {cover[0]:.1%} of the TVL a year earlier "
+                     f"({datetime.fromtimestamp(cover[1], tz=timezone.utc).date()}) is in tokens so priced"
+                     if cover else ""))
+
 class DefiLlama:
     def __init__(self, known_absent: set | None = None, stored_long=None):
         self.http = Http(min_interval=0.25)
@@ -836,6 +864,18 @@ class DefiLlama:
             out.add(window(tidy(rows, name, "protocol_tvl_usd", SOURCE, TIER), window_days), SOURCE, name, f"{slug}:tvl", TIER)
         except Exception as e:  # noqa: BLE001
             out.fail(SOURCE, name, f"{slug}:protocol tvl: {e}", TIER)
+            return
+        import config                                      # noqa: PLC0415
+        if "protocol_tvl_constant_price_usd" in config.metrics_for_project(project):
+            try:
+                rows, note = constant_price_tvl(j)
+            except Exception as e:  # noqa: BLE001
+                out.fail(SOURCE, name, f"{slug}:protocol_tvl_constant_price_usd: {e}", TIER)
+                return
+            if rows:
+                out.add(window(tidy(rows, name, "protocol_tvl_constant_price_usd", f"{SOURCE}:tokens_at_latest_prices",
+                                    TIER), window_days), SOURCE, name,
+                        f"{slug}:protocol_tvl_constant_price_usd — {note}", TIER)
 
     # ===== A LENDING PROTOCOL'S SUPPLY SIDE, AND THE CAVEAT THAT TRAVELS WITH IT. =====
     #

@@ -979,6 +979,13 @@ METRICS = {
     # manual_quarterly/manual_overrides.csv with the one known quarterly datapoint (Q2 2026) pending
     # a recurring source (Sky's own quarterly reporting, or insights.skyeco.com if it starts
     # publishing on a rolling basis).
+    "merkl_campaigns_non_ethereum_tokens": {"label": "MORPHO paid per day by the DAO multisig 0xF057afee…'s Merkl campaigns PAID OFF Ethereum (Base, Katana, Arbitrum — distributionChainId; Arc / Tempo / Unichain campaigns are paid on Ethereum and sit in the claims): each campaign's amount spread evenly over its own [start, end), by UTC day (Merkl API v4, per chain)", "kind": "flow", "unit": "tokens", "archetypes": [3], "tiers": [1], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Morpho",)},
+    "staker_yield_community_pool": {"label": "Community staking pool reward rate = the RewardVault's communityBase emission (LINK/yr) ÷ CommunityStakingPool.getTotalPrincipal() — the community staker's rate, apart from the blend of every pool", "kind": "stock", "unit": "ratio", "archetypes": [1], "tiers": [2], "sanity_min": 0, "sanity_max": 1, "only_projects": ("Chainlink",)},
+    "staking_path_in_tokens": {"label": "LINK sent by the 27 non-circulating wallets to 0xD50f074E… (the staking/payments path's first hop), per day", "kind": "flow", "unit": "tokens", "archetypes": [1], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Chainlink",)},
+    "staking_path_out_tokens": {"label": "LINK forwarded by 0xD50f074E… (all of it to 0x7A28b8cF…), per day", "kind": "flow", "unit": "tokens", "archetypes": [1], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Chainlink",)},
+    "staking_funding_tokens": {"label": "LINK forwarded by 0x7A28b8cF… to the staking hops 0x1661f928… / 0x8716f86f… (paid on to the RewardVault funder 0x7e10a625…), per day", "kind": "flow", "unit": "tokens", "archetypes": [1], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Chainlink",)},
+    "staking_funding_release_tokens": {"label": "The part of the 27 wallets' releases that went on to fund staking rewards (FIFO through 0xD50f074E…, dated on the release day) — taken out of (e), counted once in (a)", "kind": "flow", "unit": "tokens", "archetypes": [1], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Chainlink",), "view_only": True},
+    "net_revenue_pre_distribution_usd": {"label": "Net revenue BEFORE distributions (Sky: Block Analitica's P&L revenue − expense; the revenue distribution — SKY buyback, USDS to stakers, Security and Maintenance — not deducted), monthly. The base of payout ratios (config.revenue_ratio_base_metric)", "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [3], "sanity_min": -1e10, "sanity_max": 1e11, "only_projects": ("Sky",)},
     "net_protocol_surplus_usd": {"label": "Net Protocol Surplus (Sky's own accounting — Block Analitica's P&L: net less Security and Maintenance), monthly", "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [3], "sanity_min": -1e10, "sanity_max": 1e11, "only_projects": ("Sky",)},
     # Sky's NPS as it REPORTED the months by hand (insights / financial.skyeco.com), kept as the reference beside the API.
     "revenue_usd_reported": {"label": "Sky revenue as Sky reported the month (its own financials table, 'Revenue' — gross; manual) — reference for Block Analitica's P&L revenue", "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [5], "sanity_min": 0, "sanity_max": 1e11, "only_projects": ("Sky",), "view_only": True},
@@ -1168,6 +1175,15 @@ METRICS = {
     "emissions_mint_funded_tokens":     {"label": "Rewards paid from NEWLY MINTED tokens (config.REWARD_FUNDING) — dilution (c)", "kind": "flow", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e12, "view_only": True},
     "emissions_treasury_funded_tokens": {"label": "Rewards paid from TREASURY RESERVES (config.REWARD_FUNDING) — a treasury release (e)", "kind": "flow", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e12, "view_only": True},
     "emissions_revenue_funded_tokens":  {"label": "Rewards paid from tokens BOUGHT BACK out of revenue (config.REWARD_FUNDING) — a distribution of a buyback already credited; not dilution", "kind": "flow", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e12, "view_only": True},
+    # FIX ROUND 3, B1 (H2): Hyperliquid's three issuer-side wallets replayed from their own ledgers (fetch/hl_ledger.py)
+    "team_wallet_tokens_replay":            {"label": "Team wallet 0x43e9abea… HYPE (spot + staked), end of UTC day, REPLAYED from its own ledgers — team_wallet_tokens' history (config.HISTORY_PREPEND)", "kind": "stock", "unit": "tokens", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Hyperliquid",), "view_only": True},
+    "excluded_wallets_tokens_replay":       {"label": "Hyper Foundation + Community Grants HYPE (spot + staked), end of UTC day, REPLAYED — excluded_wallets_tokens' history", "kind": "stock", "unit": "tokens", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Hyperliquid",), "view_only": True},
+    "staked_noncirculating_tokens_replay":  {"label": "Staked HYPE of the team + Foundation + Grants wallets, end of UTC day, REPLAYED — staked_noncirculating_tokens' history", "kind": "stock", "unit": "tokens", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Hyperliquid",), "view_only": True},
+    "issuer_side_rewards_tokens_replay":    {"label": "Staking rewards credited to the team + Foundation + Grants wallets per day (new supply into non-circulating wallets: config.ISSUER_MINTS)", "kind": "flow", "unit": "tokens", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e7, "only_projects": ("Hyperliquid",), "view_only": True},
+    "issuer_release_replay_tokens":         {"label": "GROSS HYPE leaving the team + Foundation + Grants wallets to any address outside the three (transfers out + HYPE sold), per day — the exact release, the cross-check of (e)", "kind": "flow", "unit": "tokens", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Hyperliquid",), "view_only": True},
+    "hl_reference_yield_gross":             {"label": "Community Grants wallet's gross staking rate that day (reward ÷ previous close staked ÷ 0.97 × 365) — the reference yield of the MODELLED rewards history", "kind": "stock", "unit": "pct", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1.0, "only_projects": ("Hyperliquid",), "view_only": True},
+    "future_emissions_modelled_tokens":     {"label": "futureEmissions (the reward reserve) MODELLED backward from the first stored read with the modelled daily rewards — separately named, excluded from any scoring", "kind": "stock", "unit": "tokens", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Hyperliquid",), "view_only": True},
+    "locked_tokens_modelled":               {"label": "Total staked HYPE MODELLED from the reference yield (rate = k ÷ sqrt(stake), k calibrated on the stored validatorSummaries reads) — locked_tokens' history, labelled MODELLED", "kind": "stock", "unit": "tokens", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Hyperliquid",), "view_only": True},
     "near_intents_volume_usd_nearblocks": {"label": "NEAR Intents volume ($/day) as NearBlocks v3 indexes the intents.near events (/v3/intents/volume-stats) — a SECOND definition kept beside DefiLlama's (NEAR's Dune dataset); Business 1 reads DefiLlama's (fix round 2, N3)", "kind": "flow", "unit": "usd", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e11, "only_projects": ("Near",)},
     "programmatic_buyback_tokens": {"label": "ETHFI bought by the Programmatic Buybacks Safe 0x43F4cA92… on CoW (Snapshot 0xed61adff…, from 2026-09-03) — paid on as OP cashback, none held: not retired, not credited to holder value; its own series (fix round 2, S2)", "kind": "flow", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Ether.fi",)},
     "issuer_mint_tokens":         {"label": "Tokens MINTED STRAIGHT TO ISSUER-SIDE WALLETS (config.ISSUER_MINTS: Aerodrome's team emission, Maple's recapitalization mints) — an insider emission, not circulating until released; its own line, never (b)/(c)",
@@ -1677,6 +1693,17 @@ def stage_split_legs(project_name: str) -> list[dict]:
 def revenue_base_metric(project_name: str) -> str:
     """The base metric name, defaulting to revenue_usd — which is right for every other project."""
     return (revenue_base(project_name) or {}).get("metric") or "revenue_usd"
+
+
+def revenue_ratio_base_metric(project_name: str) -> str:
+    """THE DENOMINATOR OF A PAYOUT-TYPE RATIO (round 3, Q2, Jake 2026-10-13). A documented share's base and a ratio's
+    base differ where the share base is already AFTER the distributions the ratio puts in its numerator: Sky's NPS is
+    revenue − expense − revenue distribution, and the distribution (the SKY buyback, the USDS to stakers) IS holder
+    value. Dividing holder value by a base that has had holder value taken out of it overstates the ratio and makes
+    fees − base read the distribution as a supplier payment. So payout ratios, supplier payout, the coverage ratio and
+    the Flows value statement read revenue_base.ratio_metric (BEFORE distributions); the implied buyback stays on the
+    share's own base (Stage 2's shares are % of NPS). Every other project: the same metric as revenue_base_metric."""
+    return (revenue_base(project_name) or {}).get("ratio_metric") or revenue_base_metric(project_name)
 
 
 # ===== WHICH FIGURE "TOKENS LOCKED (ve)" SHOWS. Switched 2026-09-23. =====
@@ -5628,6 +5655,12 @@ PROJECTS = [
             "chain": "ethereum", "address": "0x996913c8c08472f584ab8834e925b06D0eb1D813",
             "source": "https://github.com/code-423n4/2023-08-chainlink/blob/main/src/rewards/RewardVault.sol",
             "read_on": "2026-09-29",
+            # THE COMMUNITY POOL'S OWN RATE (round 3 B2): communityBase emission ÷ the community pool's principal.
+            # The pool is the vault's own getStakingPools()[1] (eth_call 2026-10-13: [0xa1d76a7c… OperatorStakingPool
+            # 1.0.0, 0xbc10f2e8… CommunityStakingPool 1.0.0]); read live 2026-10-13: 1,767,011.41 LINK/yr ÷
+            # 40,875,000 = 4.323% (Chainlink's page: 4.32%).
+            "community_pool": "0xBc10f2E862ED4502144c7d632a3459F49DFCDB5e",
+            "community_pool_source": "RewardVault.getStakingPools() at 0x996913c8…, eth_call 2026-10-13",
         },
         "log_scans": [
             {
@@ -10268,6 +10301,21 @@ PROJECTS = [
                                           "read": "Jake's probe morpho_incentives, api.merkl.xyz/v4/campaigns",
                                           "reading": "MORPHO is still paid; Jake's 'no longer pays' is "
                                                      "superseded by the measured claims"},
+        },
+        # ===== THE DAO MULTISIG'S MERKL CAMPAIGNS OFF ETHEREUM (round 3 B3, Jake 2026-10-13). =====
+        # 0xF057afee… is the creator of Morpho's MORPHO campaigns (Merkl API creatorAddress; tagged 'morpho'). Read per
+        # chain (fetch/merkl_campaigns.py); the token is matched by ADDRESS per chain (the Merkl API's rewardToken,
+        # read 2026-10-13): Base 0xBAa5CC21…, Katana 0x1e5eFCA3…, Arbitrum 0x40BD670A…. Only campaigns PAID on that chain
+        # (distributionChainId) count: the creator's Arc, Tempo and Unichain MORPHO campaigns are paid on Ethereum
+        # (distributionChainId 1) and are already in the Ethereum claims (emissions_tokens).
+        "merkl_campaigns": {
+            "url": "https://api.merkl.xyz/v4/campaigns", "creator": "0xF057afeEc22E220f47AD4220871364e9E828b2e9",
+            "metric": "merkl_campaigns_non_ethereum_tokens",
+            "chains": {8453: {"name": "Base", "token": "0xBAa5CC21fd487B8Fcc2F632f3F4E8D37262a0842"},
+                       747474: {"name": "Katana", "token": "0x1e5eFCA3D0dB2c6d5C67a4491845c43253eB9e4e"},
+                       42161: {"name": "Arbitrum", "token": "0x40BD670A58238e6E230c430BBb5cE6ec0d40df48"}},
+            "source": "https://api.merkl.xyz/v4/campaigns?creatorAddress=0xF057afeEc22E220f47AD4220871364e9E828b2e9"
+                      "&chainId=<id> (read 2026-10-13)",
         },
         "log_scans": [
             {"key": "merkl_morpho_out", "metric": "emissions_tokens", "chain": "ethereum",
@@ -15294,7 +15342,8 @@ PROJECTS = [
                            "metrics": {"nps": "net_protocol_surplus_usd", "buyback": "buyback_spending_usd_ba",
                                        "staking": "staking_rewards_usd_ba",
                                        "revenue_allocation": "revenue_allocation_usd_ba",
-                                       "revenue": "revenue_usd_ba"},
+                                       "revenue": "revenue_usd_ba",
+                                       "net_revenue": "net_revenue_pre_distribution_usd"},
                            "docs": "Block Analitica's Balance Sheet / Cash Flow / Profit and Loss API pages, given by "
                                    "Jake 2026-10-07",
                            # info-sky (Jake, 2026-10-07 12:06): cumulative SKY bought, and each farm's daily history.
@@ -15451,6 +15500,9 @@ PROJECTS = [
         ],
         "revenue_base": {
             "metric": "net_protocol_surplus_usd",
+            # THE RATIO BASE IS BEFORE DISTRIBUTIONS (Jake 2026-10-13, round 3 Q2): Block Analitica's revenue − expense,
+            # restated from 2025-01 on every run. NPS stays the base of the Stage 2 shares (implied buyback).
+            "ratio_metric": "net_revenue_pre_distribution_usd",
             # 2026-08-17 since 2026-09-24: Stage 2's shares apply from the on-chain File event,
             # not the first burn (2026-09-14). See fee_split.history.
             "effective_from": "2026-08-17",
@@ -18652,6 +18704,101 @@ for _key, _metric, _way in (("noncirc_out", "noncirc_outflow_scan_tokens", "out"
         "attribution_sources": ["the 27 wallets themselves: 24 Etherscan 'Chainlink: Noncirculating Supply' labels + "
                                 "3 from blog.chain.link/sustainably-growing-chainlink (config._NONCIRC_WALLETS_FIRST_PARTY)"],
         "wired_on": "2026-10-08"})
+
+
+# ===== NEAR'S REVENUE WALLETS: EVERY NATIVE OUTFLOW OUTSIDE THE THREE (round 3 B5, research 2026-10-13). =====
+# NearBlocks v3 /accounts/{a}/receipts + /ft-txns, all-time, read 2026-10-13 (check_offline_items
+# near_revenue_wallet_flows re-reads them). Native NEAR, all time:
+#   buybacks.multisignature.near  IN 1,978,729 (intents.near 1,460,368; 1csfundsadmin 510,068; tips/donations the rest)
+#                                 OUT 12,025 (the 12,000 below; 25 to nf-payments.near 2026-03-20) — holds 1,960,118
+#                                 (NearBlocks stats/balance 2026-10-12), not ~396K: it has never sold or moved its NEAR
+#                                 beyond the one bridge transfer
+#   fefundsadmin.sputnik-dao.near IN 1,887,412 (auroraliqsupport.near 1,270,357 — the NEAR bought for its USDC: 2,050,900
+#                                 USDC sent to auroraliqsupport 2025-11-07..2026-03-27; intents.near 617,047) OUT 1.6
+#                                 (+ 200,000 USDC to aurorafinance.sputnik-dao.near — USDC, not NEAR)
+#   1csfundsadmin.sputnik-dao.near IN 555,349 (intents.near) OUT 555,079: 510,068 to buybacks.multisignature (internal)
+#                                 and the 45,010 below
+# Each outflow below went to a one-time implicit account that passed it to bridge-mng.near in the same minute: bridged
+# off NEAR — NOT retired (only NEAR still held in the three counts, rule of 2026-10-10). The buyback view already nets
+# each one on its day (the combined balance falls); this names them on those days.
+NEAR_REVENUE_OUTFLOWS = (
+    {"date": "2026-04-22", "wallet": "1csfundsadmin.sputnik-dao.near", "tokens": 45_010.0,
+     "to": "fdd59b04d49c7f535a441fa7ea24f6e5292e54f68f75ebbe2e41738301bcf9e4 -> bridge-mng.near",
+     "class": "bridged out — not retired", "tx": "8Bit5x7bvC… (45,000) + 8Pf196B9eF… (10)",
+     "source": "https://api.nearblocks.io/v3/accounts/1csfundsadmin.sputnik-dao.near/receipts (read 2026-10-13)"},
+    {"date": "2026-07-10", "wallet": "buybacks.multisignature.near", "tokens": 12_000.0,
+     "to": "508aa18569e5a59d63b0f4c445e02e7b5fc53b86337328e756b32745ebac50e7 -> bridge-mng.near",
+     "class": "bridged out — not retired", "tx": "ABTtANZpzN…",
+     "source": "https://api.nearblocks.io/v3/accounts/buybacks.multisignature.near/receipts (read 2026-10-13)"},
+)
+
+
+# ===== W1 / C15: TVL IN NATIVE UNITS (round 3 B6, Jake 2026-10-13). =====
+# ETHER.FI: ETH staked through the protocol = eETH.totalSupply(), which IS LiquidityPool.getTotalPooledEther() (eth_call
+# 2026-10-13: both 2,279,097.1002 ETH; LiquidityPool 0x308861A4…'s eETH() returns this token; symbol() "eETH", 18
+# decimals). An erc20_total_supply read, so archive_backfill.py reads its history like every other supply.
+PROJECT_BY_NAME["Ether.fi"]["contracts"]["eeth_supply"] = _contract(
+    "0x35fA164735182de50811E8e2E824cFb9B6118ac2", "ethereum", "erc20_total_supply", "eETH",
+    "https://etherscan.io/address/0x35fA164735182de50811E8e2E824cFb9B6118ac2",
+    verified="2026-10-13", provenance="LiquidityPool 0x308861A430be4cce5502d0A12724771Fc6DaF216 eETH(), on-chain, read "
+                                      "2026-10-13; totalSupply() == getTotalPooledEther() checked the same block",
+    metric_override="eth_staked_etherfi_tokens", token_standard="erc20",
+    purpose="ETH staked through ether.fi (the TVL in its native unit, C15)")
+METRICS["eth_staked_etherfi_tokens"] = {
+    "label": "ETH staked through ether.fi (eETH.totalSupply() = LiquidityPool.getTotalPooledEther(); chain read, archive "
+             "history) — the TVL in its native unit (C15)",
+    "kind": "stock", "unit": "tokens", "archetypes": [], "tiers": [2], "only_projects": ("Ether.fi",), "sanity_min": 0.0,
+    "business": True, "source_kind": "on-chain (contract read)", "onchain_replacement": ""}
+# PROTOCOLS: DefiLlama /protocol/<slug>'s daily `tokens` (amount per token) valued at ONE date's prices — each token's
+# price on the latest day (its tokensInUsd ÷ tokens). The basket's moves are the deposits' own; the price moves are
+# taken out (fetch/llama.py protocol_tvl). Tokens not held on the latest day carry no price and are left out (the
+# share of each day's TVL so covered is logged). Each sits in its project's BUSINESS_SLOTS.
+METRICS["protocol_tvl_constant_price_usd"] = {
+    "label": "Protocol TVL at the latest day's token prices ($) — DefiLlama's daily token amounts x each token's latest "
+             "price: the TVL in native units, price moves taken out (C15)",
+    "kind": "stock", "unit": "usd", "archetypes": [], "tiers": [1],
+    "only_projects": ("Maple", "Morpho", "Aerodrome", "Pendle", "Fluid"), "sanity_min": 0.0,
+    "business": True, "source_kind": "aggregator (DefiLlama /protocol, free)", "onchain_replacement": ""}
+
+
+# ===== CHAINLINK'S STAKING FUNDING, OUT OF (e) PER TRANSFER (round 3 B2, Jake 2026-10-13; was C20, NOT WIRED). =====
+# The path, every hop traced on eth.blockscout.com /api/v2/addresses/{a}/token-transfers (LINK, full history, read
+# 2026-10-13): the 27 wallets send LUMPS to 0xD50f074E… (31.63M in all, ONLY from the 27 — dust from three look-alike
+# poisoning addresses aside); 0xD50f074E… sends everything to 0x7A28b8cF…, which forwards it THE SAME DAY to one of:
+# 0x1661f928… (6,682,500 LINK, 2023-11..2026-10) or 0x8716f86f… (1,445,000, 2022-12..2023-09) — both pay it on to
+# 0x7e10a625…, the RewardVault's funder (607,500 a tranche) — or 0x9d6A86Fa… (23,500,000, NOT staking: stays in (e)).
+# The lump left the 27 wallets on ITS day and (e) counted it then; the part of it that went on to fund staking is
+# counted again as (a) when the vault pays it. So each forward from 0xD50f074E… is matched to the lumps FIFO, and the
+# staking part — the share of the day's forward that reached 0x1661f928… / 0x8716f86f… — is taken out of (e) on the
+# lump's day (build_workbook._unlock_release_view). History restates as the LINK is routed: a lump still sitting at
+# 0xD50f074E… stays in (e) until a forward says where it went.
+CL_STAKING_PATH = {
+    "lump_wallet": "0xD50f074Ec5c7997cE1DaacB513Ec194C480878Af",
+    "forwarder": "0x7A28b8cFeb73b45626f521dE928d0DD2D25C14a3",
+    "staking_hops": ["0x1661f9284137769E0B78cE131c80DEBA8F037CFf", "0x8716F86F9880AD39C276fC892FE35b7c197EeDd8"],
+    "funder": "0x7e10A625710ce59D9039B25d3D7D4a7DD5891c68",
+    "not_staking": ["0x9d6a86facdcf24859a38e6b9a2ef87610a4fc157"],
+    "source": "https://eth.blockscout.com/api/v2/addresses/0xD50f074Ec5c7997cE1DaacB513Ec194C480878Af/token-transfers "
+              "(and the forwarder's, the funder's), read 2026-10-13",
+}
+STAKING_FUNDING_SPLIT = {
+    "Chainlink": {"lumps": "staking_path_in_tokens", "forwarded": "staking_path_out_tokens",
+                  "funding": "staking_funding_tokens", "out": "staking_funding_release_tokens",
+                  "source": CL_STAKING_PATH["source"]},
+}
+for _key, _metric, _holders, _way, _from in (
+        ("staking_path_in", "staking_path_in_tokens", [CL_STAKING_PATH["lump_wallet"]], "in", list(_CL_NC)),
+        ("staking_path_out", "staking_path_out_tokens", [CL_STAKING_PATH["lump_wallet"]], "out", None),
+        ("staking_funding", "staking_funding_tokens", list(CL_STAKING_PATH["staking_hops"]), "in",
+         [CL_STAKING_PATH["forwarder"]])):
+    _scan = {"key": _key, "metric": _metric, "chain": "ethereum", "token": "0x514910771AF9Ca656af840dff83E8264EcF986CA",
+             "holders": _holders, "direction": _way, "store": True,
+             "attribution": "count_from" if _from else "dedicated_wallet",
+             "attribution_sources": [CL_STAKING_PATH["source"]], "wired_on": "2026-10-13"}
+    if _from:
+        _scan["count_from"] = _from
+        _scan["count_from_source"] = CL_STAKING_PATH["source"]
+    PROJECT_BY_NAME["Chainlink"]["log_scans"].append(_scan)
 
 
 # FLUID'S IGP-137 CUSTODY GETS ITS OWN SERIES (Jake's run 2026-10-08: on-chain 77.964M vs CoinGecko 83.697M, -6.9%):
@@ -22722,6 +22869,19 @@ REGRESSION_ALLOWLIST = [
     {"project": "Near", "match": ("fees_total_usd",), "until": "2026-10-20",
      "reason": "R1: gross payout now divides by gas + Intents fees; the Intents fees series is backfilled (455 days) on "
                "the next run (the old 12.98x divided gas-only fees)"},
+    # ROUND 3 (Jake 2026-10-13): a leg added to a category or a ratio base, first read on the next run. Until its first
+    # read the category / ratio reads BLOCKED with the leg named ("a missing leg is a gap, never a smaller outflow").
+    {"project": "Morpho", "match": ("merkl_campaigns_non_ethereum_tokens",), "until": "2026-10-27",
+     "reason": "R3 B3: (b) adds the Merkl campaigns paid off Ethereum (fetch/merkl_campaigns.py, first read next run)"},
+    {"project": "Maple", "match": ("drips_rewards_tokens",), "until": "2026-10-27",
+     "reason": "R3 W4: (b) is Drips (SYRUP out of syrupDrip; log scan drips_out, full history on the next run)"},
+    {"project": "Ether.fi", "match": ("cashback_paid_tokens", "cashback_unfunded_tokens", "programmatic_buyback_tokens"),
+     "until": "2026-10-27",
+     "reason": "R3 W3: (c) is the cashback the programme's purchases did not cover (log scan cashback_out_optimism on "
+               "OP + programmatic_buyback_inflow, both read on the next run)"},
+    {"project": "Sky", "match": ("net_revenue_pre_distribution_usd",), "until": "2026-10-27",
+     "reason": "R3 Q2: the payout-type ratios divide by revenue − expense BEFORE distributions (sky_accounting, stored "
+               "from 2025-01 on the next run)"},
 ]
 
 
@@ -22766,7 +22926,29 @@ def reward_funding(project_name: str, day) -> tuple[str, str] | None:
 # INSIDER EMISSION — its own line (alignment), not (b) / (c); it is not circulating until it leaves the wallet, and then
 # it is a release (e) like any other. The unlock view nets these mints out of the stock's rises, so a mint is never
 # read as a "return to the issuer" and never as a release.
+# ===== A WEEKLY ROW IS DATED BY THE FLIP THAT PAID IT (round 3 B4, Jake 2026-10-13: "fix the one-epoch date offset on
+# the weekly rows — restate them, don't just shift the team rate"). =====
+# fetch/chain.py files each Aerodrome epoch read under the epoch it was READ in (_epoch_start): Minter.weekly() / the
+# tail emission read during the epoch that started at flip F is the mint PAID at F+7, and RewardsDistributor.
+# tokensPerWeek(F−7) — the last complete week — is the rebase PAID at F. Research 2026-10-13 (per-epoch archive reads of
+# the transfers): the rebase row dated 2025-10-02 (489,367) is the RewardsDistributor transfer of the 2025-10-09 flip,
+# the gauge row dated 2026-10-01 (4,184,974) the Voter transfer of 2026-10-08. So every row of these series — the stored
+# history and every new read — is restated at read time to date + 7 days (build_workbook._epoch_paid_views), and a row
+# whose paying flip is still ahead of the as-of (the epoch in progress) is not a paid flow yet and is left out.
+EPOCH_PAID_AT = {
+    "Aerodrome": {"metrics": ("gross_issuance_tokens", "emissions_tokens"), "days": 7,
+                  "source": "research 2026-10-13: per-epoch archive reads of the Minter -> Voter and -> "
+                            "RewardsDistributor transfers (aerodrome-finance/contracts@1ba30815 Minter.updatePeriod)"},
+}
+
+
 ISSUER_MINTS = {
+    # HYPERLIQUID (fix round 3, B1): the staking rewards credited to the team / Foundation / Grants wallets come out of
+    # the futureEmissions reserve into non-circulating wallets — new supply to insiders, not a "return"; dated exactly
+    # by the ledger replay, so netted in full on their day
+    "Hyperliquid": {"kind": "series", "metric": "issuer_side_rewards_tokens_replay", "exact_dates": True,
+                    "wallet": "team 0x43e9abea… / Foundation 0xd57ecca4… / Grants 0xa20fcfa0…",
+                    "source": "hypercore_info:ledger_replay[delegatorRewards]"},
     # AERODROME TEAM EMISSION — Minter.sol L191-192 (aerodrome-finance/contracts@1ba30815):
     #   _teamEmissions = (_rate * (_growth + _weekly)) / (MAX_BPS - _rate)
     # in tail mode _weekly is the FROZEN stored weekly (8,969,149.540108 AERO, read live 2026-10-13), _growth the rebase
@@ -22781,12 +22963,8 @@ ISSUER_MINTS = {
                   "minter": "0xeB018363F0a9Af8f91F06FEe6613a751b2A33FE5",
                   "frozen_weekly": 8_969_149.540108, "growth_metric": "emissions_tokens",
                   "rate_by_flip": (("2023-09-01", 500), ("2025-10-09", 0), ("2026-03-05", 228)),
-                  # THE STORED WEEKLY ROWS ARE DATED ONE FLIP BEFORE THE TRANSFER (research 2026-10-13, per-epoch archive
-                  # reads): the rebase row dated 2025-10-02 (489,367) is the RewardsDistributor transfer of the
-                  # 2025-10-09 flip to the token, and the gauge row dated 2026-10-01 (4,184,974) the Voter transfer of
-                  # 2026-10-08. The team amount sits on the same date as the rebase it is computed from, with the rate
-                  # in force at the flip that paid it (date + 7 days).
-                  "flip_offset_days": 7,
+                  # round 3 B4: the weekly rows are RE-DATED to the flip that paid them (EPOCH_PAID_AT), so the team
+                  # amount takes the rate in force on its own date — the 7-day offset that stood here is retired.
                   "source": "derived:minter_team_formula[teamRate x (rebase + frozen weekly) / (10000 - teamRate)]"},
     # MAPLE RECAPITALIZATION MINTS (fix round 2, S3; research r15 2026-10-13, mint logs of RecapitalizationModule
     # 0x5dfe0460f66fa06bFCbB3211e723556be6B3f69D to mapleTreasury 0xa9466EaBd096449d650D5AEB0dD3dA6F52FD0B19, a wallet
@@ -22847,6 +23025,80 @@ for _n, _h in SUPPLY_HISTORY.items():
         "composition_change": "none (PROPOSED): Etherscan reads 4,118–4,298 ETH (0.0035%) above ultrasound on the "
                               "8-day overlap, a constant level from in-flight deposits",
         "declared": "2026-10-13"})
+
+
+# HYPERLIQUID LEDGER REPLAY (fix round 3, B1 / H2 — Jake 2026-10-13): the three issuer-side wallets' own ledgers,
+# replayed once a day (fetch/hl_ledger.py). Addresses: the team wallet is tokenDetails.nonCirculatingUserBalances'
+# (unlock_wallets above); the Foundation and Grants wallets are identified by their genesis allocations (exclude_wallets
+# above). The Grants wallet is the reference yield: all of its stake has been on Hyper Foundation 1–5 at commission 0.03
+# for its whole life (research r11, 2026-10-13).
+PROJECT_BY_NAME["Hyperliquid"]["hl_ledger_replay"] = {
+    "url": "https://api.hyperliquid.xyz/info",
+    "wallets": {"team": "0x43e9abea1910387c4292bca4b94de81462f8a251",
+                "foundation": "0xd57ecca444a9acb7208d286be439de12dd09de5d",
+                "grants": "0xa20fcfa0507fe762011962cc581b95bbbc3bbdba"},
+    "team": "team", "excluded": ("foundation", "grants"),
+    "reference_wallet": "grants", "reference_commission": 0.03,
+    "metrics": {"team": "team_wallet_tokens_replay", "excluded": "excluded_wallets_tokens_replay",
+                "staked": "staked_noncirculating_tokens_replay", "rewards": "issuer_side_rewards_tokens_replay",
+                "release": "issuer_release_replay_tokens", "ref_yield": "hl_reference_yield_gross"},
+    "keep_days": 460, "check_slack_tokens": 50_000,
+}
+
+# A STORED SERIES' HISTORY FROM ANOTHER ROUTE ON THE SAME BASIS (fix round 3): the days before the series' first stored
+# row are read from `from`, a declared handover. Proof per entry.
+HISTORY_PREPEND = {
+    ("Hyperliquid", "team_wallet_tokens"): {
+        "from": "team_wallet_tokens_replay", "live_point": "hypercore_info:tokenDetails.nonCirculatingUserBalances",
+        "proof": "replayed 2026-10-12 close 237,915,860.467 = the live read of 2026-10-12 to the unit; replayed end "
+                 "level = live spot + staked to 1e-8 (2026-10-13)"},
+    ("Hyperliquid", "excluded_wallets_tokens"): {
+        "from": "excluded_wallets_tokens_replay", "live_point": "hypercore_info:exclude_wallets",
+        "proof": "replayed 2026-10-12 close 63,529,485.370 = the live read of 2026-10-12 to the unit"},
+    ("Hyperliquid", "staked_noncirculating_tokens"): {
+        "from": "staked_noncirculating_tokens_replay", "live_point": "hypercore_info:delegatorSummary",
+        "proof": "the same delegatorSummary amounts the live read sums; replayed staked = live delegated to 1e-8"},
+}
+for (_n, _m), _h in HISTORY_PREPEND.items():
+    PROJECT_BY_NAME[_n].setdefault("series_handover", {}).setdefault(_m, {
+        "ordered_points": ("hypercore_info:ledger_replay", _h["live_point"]),
+        "why": f"the wallets' replayed ledgers before the first live read ({_h['proof']})",
+        "composition_change": "none: the same wallets, the same balances, end of day vs a read during the day",
+        "declared": "2026-10-13"})
+
+# THE TOKEN-FLOW LEGS WHERE A PROJECT'S SUPPLY ENTERS CIRCULATING BY NAMED, FULLY MEASURED LEGS (fix round 3): replace the
+# pool-release leg of a pre-minted token on the Flows tab. (label, metric)
+FLOW_RELEASE_LEGS = {
+    "Hyperliquid": (("+ staking rewards to stake inside circulating (a)", "emissions_circulating_stake_tokens"),
+                    ("+ released from the team / Foundation / Grants wallets (e)", "unlock_release_tokens")),
+}
+
+
+# THE MODELLED REWARDS HISTORY (fix round 3, B1 — Jake: "model futureEmissions (~1%) as a separately named MODELLED
+# series, excluded from scoring"). Hyperliquid's rule: reward rate = k ÷ sqrt(active stake). With the Grants wallet's
+# gross rate a(D) from the replay, the network's rewards that day = k² ÷ (365 · a(D)) and the stake = (k ÷ a(D))²; k is
+# calibrated on the days the tracker READ validatorSummaries (median of a·sqrt(S)). Research r11 (2026-10-13): within
+# 0.02% of the measured per-minute fall today; +0.8% over the reserve's whole life. Prepended to emissions_tokens and
+# locked_tokens before their first stored rows under MODELLED sources; futureEmissions modelled backward as its own
+# series.
+HL_REWARD_MODEL = {
+    "Hyperliquid": {"ref_yield": "hl_reference_yield_gross", "stake": "locked_tokens", "emissions": "emissions_tokens",
+                    "future": "future_emissions_tokens", "future_modelled": "future_emissions_modelled_tokens",
+                    "stake_modelled": "locked_tokens_modelled", "source": "modelled:hl_reference_yield"},
+}
+# (replaces the 2026-09-30 handover from the published-formula leg, which was never prepended: it read ~2x the observed
+# fall; the formula stays shown on its own row, emissions_modelled_tokens)
+for _m, _live in (("emissions_tokens", "hypercore_info:tokenDetails.futureEmissions"),
+                  ("locked_tokens", "hypercore_info:validatorSummaries")):
+    PROJECT_BY_NAME["Hyperliquid"].setdefault("series_handover", {})[_m] = ({
+        "ordered_points": ("modelled:hl_reference_yield", _live),
+        "why": "the MODELLED leg (reference yield, k calibrated on the stored reads) before the first stored read — "
+               "labelled MODELLED on every row that reads it, excluded from any scoring (fix round 3, B1)",
+        "composition_change": "none: the same quantity, modelled before it was read (within ~1%: research r11)",
+        "declared": "2026-10-13"})
+MODELLED_POINTS["modelled:hl_reference_yield"] = (
+    "Hyperliquid staking rewards and total stake before the tracker's own reads: the Community Grants wallet's gross "
+    "rate with rate = k ÷ sqrt(stake), k calibrated on the stored validatorSummaries reads (about 1%)")
 
 
 # FIRST-PARTY CIRCULATING HISTORY (fix round 2, H1 — Jake 2026-10-13): the first-party figure has no history of its own
@@ -23098,6 +23350,128 @@ PROJECT_BY_NAME["Ether.fi"]["log_scans"].append({
                             "2026-09-03)", "research r15 2026-10-13: Safe 0x43F4cA92… CoW fills, owners shared with "
                                            "0x2f5301a3… and 0x3fb6784e…"],
     "wired_on": "2026-10-13"})
+
+
+# ===== W7: PENDLE'S ISSUER-WALLET OUTFLOWS BY CLASS (round 3 B6; FR2 S4, research r15 2026-10-13). =====
+# Every transfer out of the Governance 0x8119EC16…, Team 0x918cF6b1… and Ecosystem 0x399Be606… multisigs since
+# 2025-07-01, by destination (Blockscout v2 token-transfers; labels: pendle-core-v2-public deployments/1-core.json and
+# Blockscout/OLI tags): Governance 7,377,000 = 150,000 straight to the GaugeController 0x47D74516… / the
+# externalRewardsDistributor 0x33305665… (2025-12-23 100,000; 2026-02-06 50,000) + 3,400,000 to Binance deposit addresses
+# + 302,000 bridged / LI.FI (not traced) + 3,525,000 to two ops EOAs; Team 1,129,000 all to a Binance deposit address;
+# Ecosystem 2,377,500 (487,500 Binance; 840,000 and 1,050,000 to two Safes). The stock-derived release (e) counts every
+# one when it leaves. The gauge / distributor transfers are paid on as (b) emissions — counted twice — so they are read
+# as their own series (log scan issuer_to_gauges, count_from the three wallets) and taken out of (e) on their day
+# (RELEASE_LESS). Binance, bridged and unlabelled transfers stay (e) (by rule where not traced).
+PENDLE_ISSUER_WALLETS = ["0x8119EC16F0573B7dAc7C0CB94EB504FB32456ee1", "0x918cF6b16D1426B5aA0Edf0492ced1Aa89f9659A",
+                         "0x399Be606db281a054E359Eb709df9F21E922eC9a"]
+PROJECT_BY_NAME["Pendle"]["log_scans"].append({
+    "key": "issuer_to_gauges", "metric": "issuer_to_gauges_tokens", "chain": "ethereum",
+    "token": "0x808507121B80c02388fAd14726482e061B8da827",
+    "holders": ["0x47D74516B33eD5D70ddE7119A40839f6Fcc24e57", "0x33305665f69B4642D1275f4Ce81c23651674D21C"],
+    "direction": "in", "store": True, "attribution": "count_from", "count_from": list(PENDLE_ISSUER_WALLETS),
+    "count_from_source": "research r15 2026-10-13 (the three issuer multisigs, config noncirc_*)",
+    "attribution_sources": ["https://raw.githubusercontent.com/pendle-finance/pendle-core-v2-public/main/deployments/"
+                            "1-core.json (gaugeController, externalRewardsDistributor; read 2026-10-13)"],
+    "wired_on": "2026-10-13"})
+METRICS["issuer_to_gauges_tokens"] = {
+    "label": "PENDLE sent by the Governance / Team / Ecosystem multisigs straight to the GaugeController or the "
+             "externalRewardsDistributor — paid on as (b), so taken out of (e)",
+    "kind": "flow", "unit": "tokens", "archetypes": [1, 3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9,
+    "only_projects": ("Pendle",)}
+# A release leg that is counted elsewhere, taken out of (e) on its day (or the next stored day) — never below 0
+RELEASE_LESS = {"Pendle": ("issuer_to_gauges_tokens",)}
+PENDLE_OUTFLOW_CLASSES = (
+    "since 2025-07-01 (research r15 2026-10-13): Governance 7,377,000 — 150,000 to GaugeController / ERD (b, taken out "
+    "of e), 3,400,000 Binance (e), 302,000 bridged / LI.FI not traced (e by rule), 3,525,000 to two ops EOAs (e by "
+    "rule); Team 1,129,000 Binance (e); Ecosystem 2,377,500 — 487,500 Binance (e), 840,000 Safe 0xf9d1a53c… (294,000 on "
+    "to Binance / Bybit, 201,000 to EOAs, 420,000 held), 1,050,000 Safe 0x12398f08… held")
+
+
+# ===== W6: INSIDER SHARE OF THE STAKE (round 3 B6; SPEC.md section 10 route "the staking contract's depositors
+# crossed with the issuer-wallet list"). =====
+# Where the stake is a share token, each issuer-side wallet's share balance is read directly: share-token
+# .balanceOf(wallet) for every wallet of the project's non-circulating set (its noncirc_* contracts on Ethereum),
+# summed, ÷ the share token's totalSupply — shares over shares. Read 2026-10-13 (eth_call, latest): every wallet holds 0
+# sETHFI (8 wallets; 88,016,177 shares), 0 stSYRUP (8; 145,017,383) and 0 sPENDLE (3; 29,340,599) — the measured share
+# is 0, and a stake any of them takes from here shows on the next read. Symbols read on-chain: sETHFI, stSYRUP, sPENDLE.
+_INSIDER_STAKE = {"Ether.fi": ("sethfi_shares", "sETHFI", "locked_tokens"),
+                  "Maple": ("stsyrup", "stSYRUP", "stsyrup_legacy_tokens"),
+                  "Pendle": ("spendle", "sPENDLE", "locked_tokens_shares")}
+for _n, (_share_key, _sym, _den) in _INSIDER_STAKE.items():
+    _cs = PROJECT_BY_NAME[_n]["contracts"]
+    for _k, _c in list(_cs.items()):
+        if _c.get("metric_override") == "noncirculating_holding_tokens" and _c.get("chain") == "ethereum":
+            _cs[f"insider_stake_{_k}"] = _contract(
+                _c["address"], "ethereum", "treasury_holding", _sym, _cs[_share_key]["source_url"],
+                verified="2026-10-13", provenance=f"the {_k} wallet (config) x the {_sym} share token (config "
+                                                  f"{_share_key}); balanceOf read 2026-10-13",
+                metric_override="insider_stake_shares", underlying=_share_key,
+                holder_has_code=_c.get("holder_has_code"),
+                purpose=f"{_sym} shares held by an issuer-side wallet (W6: insider share of the stake)")
+METRICS["insider_stake_shares"] = {
+    "label": "Stake shares (sETHFI / stSYRUP / sPENDLE) held by the project's issuer-side (non-circulating) wallets — "
+             "the numerator of the insider share of the stake (W6)",
+    "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e12,
+    "only_projects": ("Ether.fi", "Maple", "Pendle")}
+
+
+# MAPLE DRIPS, PAID (round 3 B6 / W4; was NOT WIRED): SYRUP Transfer OUT of syrupDrip 0x509712F3…
+# (maple-labs/address-registry@3df2052 MapleAddressRegistryETH.md:273; a merkle distributor — Claimed / Staked pay SYRUP
+# out, to the claimant or into Staked Syrup 0xc7e8b36e… for them). Research r15 2026-10-13 (Blockscout, every transfer
+# since 2024-12-16): 4,097,369.65 SYRUP out 2025-07-01..2026-02-18 on 97 days, the last outflow ever on 2026-02-18; NO
+# Reclaimed event was ever emitted (eth.blockscout.com getLogs, read 2026-10-13), so every transfer out is a payout
+# (Safe 0xb7848eea… is a claimant: its receipts are execTransaction claims). Supply-side incentives: (b).
+PROJECT_BY_NAME["Maple"]["log_scans"].append({
+    "key": "drips_out", "metric": "drips_rewards_tokens", "chain": "ethereum",
+    "token": "0x643C4E15d7d62Ad0aBeC4a9BD4b001aA3Ef52d66",
+    "holders": ["0x509712F368255E92410893Ba2E488f40f7E986EA"], "direction": "out", "store": True,
+    "attribution": "dedicated_wallet",
+    "attribution_sources": ["maple-labs/address-registry@3df2052 MapleAddressRegistryETH.md:273 (syrupDrip)",
+                            "maple-labs/syrup-utils@87debb1 contracts/interfaces/ISyrupDrip.sol:16-40",
+                            "research r15 2026-10-13: every transfer out of syrupDrip, no Reclaimed event ever"],
+    "exclude_counterparties": ["0x0000000000000000000000000000000000000000"],
+    "wired_on": "2026-10-13"})
+METRICS["drips_rewards_tokens"] = {
+    "label": "SYRUP paid out by Maple Drips per day (Transfer out of syrupDrip 0x509712F3… — claims and stakes on the "
+             "claimant's behalf; the programme stopped accruing 2025-12-31, last payout 2026-02-18)",
+    "kind": "flow", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9,
+    "only_projects": ("Maple",)}
+
+
+# ETHER.FI CASH CASHBACK, PAID (round 3 B6 / W3; was NOT WIRED): ETHFI Transfer OUT of the CashbackDistributor
+# 0x38F2fBb259F042DE3A601E0f7135f768DE08F5A2 on OP (etherfi-protocol/cash-v3 deployments, alignment round C1); the token
+# is ETHFI on OP 0xe0080d2F853ecDdbd81A643dC10DA075Df26fD3f (explorer.optimism.io /api/v2/addresses/0x38F2…/token-
+# transfers: every transfer out is this token, read 2026-10-13). Every payout counts (dedicated_wallet).
+PROJECT_BY_NAME["Ether.fi"]["log_scans"].append({
+    "key": "cashback_out_optimism", "metric": "cashback_paid_tokens", "chain": "optimism",
+    "token": "0xe0080d2F853ecDdbd81A643dC10DA075Df26fD3f",
+    "holders": ["0x38F2fBb259F042DE3A601E0f7135f768DE08F5A2"], "direction": "out", "store": True,
+    "attribution": "dedicated_wallet",
+    "attribution_sources": ["etherfi-protocol/cash-v3 deployments (CashbackDistributor, OP; alignment round C1)",
+                            "https://explorer.optimism.io/api/v2/addresses/0x38F2fBb259F042DE3A601E0f7135f768DE08F5A2/"
+                            "token-transfers (ETHFI 0xe0080d2F…, read 2026-10-13)"],
+    "exclude_counterparties": ["0x0000000000000000000000000000000000000000"],
+    "window_days": 100, "wired_on": "2026-10-13"})
+# WHICH PART OF THE CASHBACK IS DILUTION (FR2 S2, accepted: cashback from market-bought ETHFI recirculates supply — (c),
+# not dilution). The programme buys ETHFI on CoW (programmatic_buyback_tokens) and pays it on; a payout NOT yet covered
+# by the cumulative purchases came out of existing ETHFI (the 20M buffer Safe 0xe4439b1d…, or stock already on OP) and
+# IS dilution: (c) = the rise in max(0, cumulative paid − cumulative bought), a running maximum — a payout once made
+# from stock stays made; before 2026-09-03 nothing was bought, so a payout then is dilution in full
+# (build_workbook._cashback_funding_views).
+CASHBACK_FUNDING = {
+    "Ether.fi": {"paid": "cashback_paid_tokens", "bought": "programmatic_buyback_tokens",
+                 "out": "cashback_unfunded_tokens", "since": "2026-09-03",
+                 "source": "Snapshot 0xed61adff… (Programmatic Buybacks, closed 2026-09-03); research r15 2026-10-13"},
+}
+METRICS["cashback_paid_tokens"] = {
+    "label": "ETHFI paid as Cash cashback per day (Transfer out of the CashbackDistributor 0x38F2fBb2… on OP)",
+    "kind": "flow", "unit": "tokens", "archetypes": [2, 3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9,
+    "only_projects": ("Ether.fi",)}
+METRICS["cashback_unfunded_tokens"] = {
+    "label": "Cash cashback NOT covered by the programme's market purchases (the rise in max(0, Σ paid − Σ bought) since "
+             "2026-09-03) — the dilutive part, outflow (c)",
+    "kind": "flow", "unit": "tokens", "archetypes": [2, 3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9,
+    "only_projects": ("Ether.fi",), "view_only": True}
 
 
 # GEODNET'S UNLOCK LEG HOLDS NO MINING WALLET (fix round 2 addendum G1/G2, Jake 2026-10-13, from the issuer filing of
@@ -26956,9 +27330,9 @@ OUTFLOW_CATEGORIES = {
                   # (607,500 LINK x 10 to the v0.2 vault, latest 2026-06-24; 607,500 more held since 2026-10-07), whose
                   # LINK comes 0x1661f928 <- 0x7A28b8cF <- 0xD50f074E <- the 27 non-circulating wallets. The same LINK
                   # is therefore counted once as an (e) release and again as (a) emissions — a known double count.
-                  "pending": "C20: LINK leaving the 27 wallets toward 0xD50f074E -> … -> 0x7e10a625… (the staking "
-                             "reward funder) is counted in (e) AND, when emitted, in (a); route: classify releases per "
-                             "transfer (destination chain to 0x7e10a625…) and take that path out of (e)"},
+                  # round 3 B2: WIRED — the staking part of each release is taken out of (e) per transfer
+                  # (STAKING_FUNDING_SPLIT; staking_funding_release_tokens), so it is counted once, in (a)
+                  },
     # HYPERLIQUID (alignment round 2026-10-13, C1): (a) counts only the rewards paid to stake INSIDE circulating — the
     # team / Foundation / Grants stake (staked_noncirculating_tokens, 301.3M of 440.1M on 2026-10-13) earns rewards
     # that stay outside circulating, so they dilute no holder. PROPOSED pro-rata (SPEC.md section 12, item 3).
@@ -26993,18 +27367,20 @@ OUTFLOW_CATEGORIES = {
                         "to Binance, 105,753 recycled fees; no vesting unlock",
                "pending": "PROPOSED: move the Governance multisig's falls to (b) and take out days it funds the "
                           "GaugeController (else counted twice with emissions) — needs a per-transfer series"},
-    "Morpho": {"b": ("emissions_tokens",), "e": ("unlock_release_tokens",),
+    # round 3 B3: + the DAO multisig's Merkl campaigns OFF Ethereum (Base, Arc, …), as paid per day; Ethereum stays on
+    # its claims series (reading its campaigns too would count the same MORPHO twice)
+    "Morpho": {"b": ("emissions_tokens", "merkl_campaigns_non_ethereum_tokens"), "e": ("unlock_release_tokens",),
                "basis": "MORPHO rewards (Merkl campaigns): 2025-07-14..2026-10-12 budgets ~12.96M to suppliers (b) vs "
                         "~0.27M to borrowers (c) — the claims series is not split, so it sits in (b), the ~98% leg; "
                         "MORPHO now runs on the borrow side only (merkl.xyz /v4/campaigns?tokenSymbol=MORPHO, read "
                         "2026-10-12)",
-               "pending": "the claims series is Ethereum only (Base ≈38% of the budget is missing) and unsplit"},
-    "Maple": {"a": ("emissions_tokens",), "e": ("unlock_release_tokens",),
+               "pending": "unsplit between (b) and (c): the claims and the campaigns sit in (b), the historical ~98% "
+                          "leg; Ethereum is claims (lagged), the other chains the campaign schedule"},
+    "Maple": {"a": ("emissions_tokens",), "b": ("drips_rewards_tokens",), "e": ("unlock_release_tokens",),
               "basis": "MIP-009 staker inflation (stSYRUP) is (a) — ended by MIP-019 (Nov 2025); Drips (b) paid SYRUP "
                        "out of syrupDrip 0x509712F3… and stopped accruing 2025-12-31 (final claims to 2026-02-18, "
-                       "maple-docs drips-rewards.md) — no series of its own yet; Merkl incentives are partner-funded "
-                       "(Maple funded 8,398 syrupUSDC, no SYRUP campaigns)",
-              "pending": "Drips outflow series (SYRUP transfers out of syrupDrip)"},
+                       "maple-docs drips-rewards.md) — drips_rewards_tokens (round 3 W4); Merkl incentives are "
+                       "partner-funded (Maple funded 8,398 syrupUSDC, no SYRUP campaigns)"},
     "Fluid": {"b": ("emissions_tokens",), "e": ("unlock_release_tokens",),
               "basis": "FLUID rewards to lenders / LPs, read from the Merkle claims already scanned; no FLUID rewards "
                        "are live now (2026-10-12)"},
@@ -27043,18 +27419,38 @@ OUTFLOW_CATEGORIES = {
                          "the merkle distributor — after the move (e) holds only those (~0 a quarter)",
                 "pending": "where the budget goes after Labs' recipient (all 20M moved on, 17M on 2026-10-06, to "
                            "unlabelled wallets) — the (d) series counts the release from the Timelock, not the spend"},
-    "Ether.fi": {"e": ("unlock_release_tokens",),
+    "Ether.fi": {"c": ("cashback_unfunded_tokens",), "e": ("unlock_release_tokens",),
                  # ALIGNMENT ROUND C1 (research of 2026-10-13): the Cash ETHFI cashback CashbackDistributor
                  # 0x38F2fBb259F042DE3A601E0f7135f768DE08F5A2 on OP (etherfi-protocol/cash-v3 deployments) paid
                  # 1,060,439 ETHFI in 2026-07-11..10-09 (payouts from 2026-09-03, ~55-75k a day) — (c), not yet a series
                  "basis": "user programmes are demand-side (c): the Cash ETHFI cashback (CashbackDistributor "
-                          "0x38F2fBb2… on OP) paid 1,060,439 ETHFI in Q0 (from 2026-09-03; research of 2026-10-13) — "
-                          "NOT WIRED as a series yet; Season 5 was paid in KING (not ETHFI); Triple Dip has no "
-                          "identified distributor; the Sep-2025 membership drops are finished. Issuer-wallet releases "
-                          "are unlocks (e)",
-                 "pending": "NOT WIRED (c): daily ETHFI Transfer out of 0x38F2fBb2… on OP (Blockscout "
-                            "explorer.optimism.io, keyless) — a new log scan on OP"},
+                          "0x38F2fBb2… on OP, cashback_paid_tokens, round 3 W3) — only the part NOT covered by the "
+                          "programme's market purchases is dilution (CASHBACK_FUNDING, FR2 S2); Season 5 was paid in KING "
+                          "(not ETHFI); Triple Dip has no identified distributor; the Sep-2025 membership drops are "
+                          "finished. Issuer-wallet releases are unlocks (e)"},
 }
+
+
+# ===== A DENOMINATOR KNOWN TO BE INCOMPLETE BLOCKS THE RATIO (V1, Jake's round-2 run 2026-10-13). =====
+# Subsidy cover = revenue ÷ $ incentives: where the incentive series is known to miss part of what is paid, the ratio
+# reads high by exactly the missing part (Morpho read 344.8x while Merkl was read on Ethereum only). The unequal-coverage
+# rule: such a ratio is BLOCKED, naming the missing part — never a number. (project, category) -> what is missing.
+OUTFLOW_INCOMPLETE = {
+    ("Fluid", "b"): "FLUID rewards are read from the Ethereum Merkle distributors + Arbitrum's only — the Base and Plasma "
+                    "distributors (bridged FLUID) are not scanned",
+    ("Aethir", "b"): "emissions_tokens is the declared Checker Node BASE schedule (2,874,743 ATH/day, PARTIAL) until the "
+                     "supplier-rewards cumulatives are measured — compute-provider rewards and the checker bonus are "
+                     "missing",
+    ("Pendle", "b"): "PENDLE gauge emissions are read on Ethereum, Arbitrum and Optimism only — the gaugeControllers on "
+                     "BNB Chain 0x704478Dd…, Base 0x17F100fB…, Mantle 0x428f2f93…, Sonic 0xeE708FC7…, Berachain "
+                     "0x704478Dd… and HyperEVM 0x7e500c6e… are not scanned (pendle-core-v2-public deployments/"
+                     "<chainId>-core.json, read 2026-10-13)",
+}
+
+
+def outflow_incomplete(project_name: str, cats) -> list[str]:
+    """The declared gaps of a project's outflow categories, '(c) why' each."""
+    return [f"({c}) {OUTFLOW_INCOMPLETE[(project_name, c)]}" for c in cats if (project_name, c) in OUTFLOW_INCOMPLETE]
 
 
 def outflow_metrics(project_name: str, cat: str) -> tuple:
@@ -27210,6 +27606,19 @@ INSIDER_LOCK = {
                     "the stake of the wallets outside circulating (team + Hyper Foundation + Community Grants) ÷ "
                     "total staked HYPE"),
 }
+# LEAKAGE (iii) — BUYBACK EXECUTION (round 3 W5): where the $ SPENT on the buyback is measured apart from the tokens
+# bought. Sky: Block Analitica's cash-flow "Buyback Spending" (monthly) against the flapper's SKY x the day's price
+# (actual_buyback_usd). Every other project's buyback $ is tokens x price by construction — no execution gap to read.
+LEAKAGE_III = {
+    "Sky": {"spend": "buyback_spending_usd_ba",
+            "why": "Block Analitica cash flow 'Buyback Spending' (USDS paid) vs the flapper's SKY bought x the day's "
+                   "price"},
+}
+# W6 (round 3): the share-token projects, read wallet by wallet (_INSIDER_STAKE above)
+for _n, (_share_key, _sym, _den) in _INSIDER_STAKE.items():
+    INSIDER_LOCK[_n] = ("insider_stake_shares", _den,
+                        f"{_sym} shares held by the project's non-circulating wallets ÷ {_sym} totalSupply (shares over "
+                        f"shares; 0 on 2026-10-13)")
 
 # ONE-OFF BURN EVENTS (Jake 2026-10-12 evening, decisions 3 and 5): dated burns that are not a mechanism — shown as their
 # own event row (CP and A4), never in a rate, trend or holder value. A one-off inside a stored burn series is moved out
@@ -27373,12 +27782,14 @@ TOTAL_YIELD_RELEASES = {
                   "why": "staking rewards are paid out of the Reward Vault 0x996913c8… (issuer-funded, OUTSIDE the 27 "
                          "non-circulating wallets, so its payouts are not in pool_release_tokens); the 27 wallets' own "
                          "releases are already the net figure's basis (pool_release_tokens = −d(the 27 wallets))"},
-    "Hyperliquid": {"add": ("unlock_release_counted_tokens",),
-                    "why": "the net figure's basis (pool_release_tokens = d(tokenDetails circulating) + the Assistance "
-                           "Fund's buys) already holds the staking rewards paid from the Future Emissions pool and the "
-                           "team wallet's releases (both outside tokenDetails' circulating); the Hyper Foundation / "
-                           "Community Grants wallets are counted AS circulating by tokenDetails, so their releases are "
-                           "added here (unlock_release_counted_tokens: their falls only)"},
+    # FIX ROUND 3 (B1): the ledger replay gives both legs exactly (the issuer wallets) or MODELLED-labelled (rewards
+    # before the tracker's reads), daily over the whole window — they REPLACE pool_release_tokens (d(tokenDetails
+    # circulating) + the Assistance Fund's buys, stored from 2026-10-01 only: 12 days annualised read a 3.75M team
+    # release as 49% a year). Was: add unlock_release_counted_tokens to the pool release.
+    "Hyperliquid": {"add": ("emissions_circulating_stake_tokens", "unlock_release_tokens"), "replaces_premint": True,
+                    "why": "staking rewards paid to stake INSIDE circulating (the (a) leg: emissions x the circulating "
+                           "share of stake) + the releases of the team / Foundation / Grants wallets (the (e) leg, "
+                           "replayed from their ledgers) — the two ways supply enters circulating on Hyperliquid"},
     # ASSUMED (overnight 2026-10-12, Jake offline): NEAR mints, so it is outside "fixed-supply" — but its lockup releases
     # (circulating under the lockup rule grows as lockups vest) are issuer releases on the same logic; counted.
     "Near": {"add": ("unlock_release_tokens",),
@@ -27529,15 +27940,15 @@ BUSINESS_SLOTS = {
     "Chainlink": ("ccip_messages", "actual_buyback_tokens", "customer_revenue_usd"),
     "GEODNET": ("stations_total", "customer_revenue_usd"),
     "Aethir": ("customer_revenue_usd", "compute_hours_weekly"),
-    "Maple": ("loans_outstanding_usd", "protocol_tvl_usd"),
-    "Morpho": ("borrowed_usd_llama", "supply_units"),
+    "Maple": ("loans_outstanding_usd", "protocol_tvl_usd", "protocol_tvl_constant_price_usd"),
+    "Morpho": ("borrowed_usd_llama", "supply_units", "protocol_tvl_constant_price_usd"),
     "Hyperliquid": ("perps_volume_usd", "open_interest_usd"),
     "Uniswap": ("protocol_dex_volume_usd", "dex_volume_v2_usd", "dex_volume_v3_usd", "dex_volume_v4_usd"),
-    "Aerodrome": ("protocol_dex_volume_usd",),
+    "Aerodrome": ("protocol_dex_volume_usd", "protocol_tvl_constant_price_usd"),
     "Sky": ("usds_supply_tokens",),
-    "Pendle": ("protocol_tvl_usd",),
-    "Ether.fi": ("stake_tvl_usd", "cash_volume_usd"),
-    "Fluid": ("protocol_tvl_usd", "protocol_dex_volume_usd"),
+    "Pendle": ("protocol_tvl_usd", "protocol_tvl_constant_price_usd"),
+    "Ether.fi": ("stake_tvl_usd", "cash_volume_usd", "eth_staked_etherfi_tokens"),
+    "Fluid": ("protocol_tvl_usd", "protocol_dex_volume_usd", "protocol_tvl_constant_price_usd"),
 }
 BUSINESS_NOT_WIRED = {
     "Pendle": "TVL BY MATURITY not wired overnight: Pendle's API (api-v2.pendle.finance core/v2/markets/all, 819 "
@@ -27801,6 +28212,19 @@ def fees_headline_metric(project_name: str) -> str:
 def revenue_headline_metric(project_name: str) -> str:
     """The headline revenue series: the all-streams total where a project has more than one, else revenue_usd."""
     return "revenue_total_usd" if project_name in REVENUE_TOTAL else "revenue_usd"
+# PENDLE BOROS VOLUME (round 3 B6 / W2): fetch/boros.py — every market's daily traded units x its collateral's price
+# (Boros's own daily price where the collateral is the underlying; $1 for USD₮0). Read 2026-10-13: Q0 $3.043B, Q-4
+# $2.36B (research of 2026-10-13: $3.04B / $2.39B); 232 markets, none left out.
+PROJECT_BY_NAME["Pendle"]["boros_volume"] = {
+    "metric": "boros_volume_usd", "keep_days": 460,
+    "source": "https://api-boros.pendle.finance/apis/docs-json (OpenAPI, read 2026-10-13): /v1/markets + "
+              "/v1/indicators/export?timeFrame=1d&select=ap"}
+METRICS["boros_volume_usd"] = {
+    "label": "Pendle Boros traded volume per day ($) — every market's traded size (yield units = units of its "
+             "COLLATERAL) x Boros's own daily asset price where the collateral is the underlying, x $1 where it is a "
+             "USD stablecoin (api-boros.pendle.finance indicators export + /v1/assets)",
+    "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [1], "sanity_min": 0, "sanity_max": 1e11,
+    "only_projects": ("Pendle",)}
 METRICS["boros_fees_usd"] = {
     "label": "Pendle Boros fees per day ($, DefiLlama boros dailyFees) — its own line, outside the sPENDLE base",
     "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [1], "sanity_min": 0, "sanity_max": 1e9,

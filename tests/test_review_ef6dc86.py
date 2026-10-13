@@ -92,8 +92,9 @@ def test_cm_moves_every_coingecko_total_and_cn_restates_fluid_and_maple_on_the_r
     db = tmp_path / "metrics.db"
     to_store(pen, db)
     con = sqlite3.connect(db)
-    # the 2026-10-11 row CJ left (dated ON the handover day): CM moves it too
-    con.execute("INSERT INTO metrics (date, project, metric, value, source, tier, fetched_at) VALUES "
+    # the 2026-10-11 row CJ left (dated ON the handover day): CM moves it too. (Jake's 10-13 dump already holds the
+    # chain read on that day — CJ ran — so the coingecko row is put back in its place for the test)
+    con.execute("INSERT OR REPLACE INTO metrics (date, project, metric, value, source, tier, fetched_at) VALUES "
                 "('2026-10-11', 'Pendle', 'total_supply', 281527448.0, 'coingecko', 1, 'x')")
     con.commit()
     con.close()
@@ -108,11 +109,19 @@ def test_cm_moves_every_coingecko_total_and_cn_restates_fluid_and_maple_on_the_r
     db2 = tmp_path / "maple.db"
     to_store(mp, db2)
     held = [r for r in mp["metrics"] if r["metric"] == "noncirculating_holding_tokens"]
-    assert held and not any("noncirc_ssf_safe" in r["source"] for r in held)
-    _run_section(db2, "CN")
+    # Jake's 10-13 dump: CN ran and the archive refilled every day on the CURRENT set (the Safe 0x58BE in every row),
+    # so CN now finds nothing to remove — it only ever takes the old set's rows
+    assert held and all("noncirc_ssf_safe" in r["source"] for r in held)
+    import run_sql
+    real = builtins.input
+    builtins.input = lambda *a: "DELETE CN"
+    try:
+        assert run_sql.main(["--delete", "CN", "--db", str(db2)]) == 1      # "Nothing matches": already run
+    finally:
+        builtins.input = real
     con = sqlite3.connect(db2)
     assert con.execute("SELECT COUNT(*) FROM metrics WHERE project='Maple' "
-                       "AND metric='noncirculating_holding_tokens'").fetchone()[0] == 0
+                       "AND metric='noncirculating_holding_tokens'").fetchone()[0] == len(held)
     con.close()
 
 

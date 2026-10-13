@@ -1873,8 +1873,9 @@ def test_etherfis_two_addresses_have_two_roles_and_neither_is_read_as_a_balance(
     # and reading it would be the error this test exists to refuse.
     # (the full sweep, 2026-10-07: the old buyback Safe IS read as a HOLDING — bought ETHFI out of circulation —
     # never as the buyback flow)
+    # (round 3 W6: its sETHFI SHARES are read for the insider share of the stake — another token, not its ETHFI)
     assert not any(c.get("address", "").lower() == bw["address"].lower()
-                   and c.get("metric_override") != "noncirculating_holding_tokens"
+                   and c.get("metric_override") not in ("noncirculating_holding_tokens", "insider_stake_shares")
                    for c in p["contracts"].values()), \
         "the buyback wallet must never be read as a buyback balance"
     # THE TREASURY WAS WIRED 2026-09-23 ON INSTRUCTION (as treasury_holding, a HOLDING — the
@@ -20412,7 +20413,10 @@ def test_hyperliquid_burn_history_is_the_buyback_and_the_two_modelled_legs_need_
         last = 0.0237 * (4e8 * 4.4e8) ** 0.5 / 365               # the live stake on the last day
         assert abs(m["value"].iloc[-1] - last) < 1e-6 and "observed/model=" in m["source"].iloc[-1]
         e = gr[("Hyperliquid", "emissions_tokens")]
-        assert (e["date"].min() == days[0]) is joins, (observed, joins)
+        # fix round 3 (B1): Hyperliquid's history before the first stored read is the reference-yield model
+        # (config.HL_REWARD_MODEL, build_workbook._hl_model_views) — the formula stays a cross-check and never joins
+        assert "Hyperliquid" in config.HL_REWARD_MODEL
+        assert e["date"].min() == days[-8], (observed, joins)
     s3 = [x for x in config.HISTORY_FORWARD_ONLY["Hyperliquid"]["native_checked"] if "S3" in x["source"]]
     assert s3 and "CONSIDERED AND NOT NEEDED" in s3[0]["finding"]
     assert "gross_burn_tokens" not in config.HISTORY_FORWARD_ONLY["Hyperliquid"]["metrics"]

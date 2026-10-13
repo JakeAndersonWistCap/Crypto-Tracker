@@ -81,6 +81,7 @@ def within(ours: float, ref: float, kind: str, tol: float) -> bool:
 #   ("cover", num, den, price, start, end) sum(num) ÷ sum(den × price) over [start, end]
 #   ("headline", tab, header prefix)     the workbook cell, evaluated
 #   ("wallets", check)                   a config check (addresses), see _wallet_check
+#   ("flows", line prefix, label)        the Flows tab's own Token-flow line in that quarter (same series and window)
 #   ("not_wired", route)                 no series measures it yet — the route that would
 ROUTES: dict[tuple[str, str], tuple] = {
     ("Ethereum", "active_stake_effective_balance"): ("last", "beacon_chain_eth"),
@@ -94,10 +95,9 @@ ROUTES: dict[tuple[str, str], tuple] = {
     ("Hyperliquid", "api_total_supply"): ("last", "total_supply_gross"),
     ("Hyperliquid", "api_circulating_supply"): ("last", "circulating_supply_tokendetails"),
     ("Hyperliquid", "future_emissions_remaining"): ("last", "future_emissions_tokens"),
-    ("Hyperliquid", "team_unlock_2026-10-07"): ("not_wired", "H2: the HyperCore ledger replay (userNonFundingLedgerUpdates "
-                                                             "of the team wallets) dates each unlock; not built yet"),
-    ("Hyperliquid", "team_unlock_2026-01-06"): ("not_wired", "H2: HyperCore ledger replay of the team wallets"),
-    ("Hyperliquid", "team_unlock_2025-11-29"): ("not_wired", "H2: HyperCore ledger replay of the team wallets"),
+    ("Hyperliquid", "team_unlock_2026-10-07"): ("on_day", "issuer_release_replay_tokens"),
+    ("Hyperliquid", "team_unlock_2026-01-06"): ("on_day", "issuer_release_replay_tokens"),
+    ("Hyperliquid", "team_unlock_2025-11-29"): ("on_day", "issuer_release_replay_tokens"),
     ("Uniswap", "total_supply"): ("last", "total_supply_gross"),
     ("Uniswap", "dead_address_balance"): ("last", "burn_address_balance"),
     ("Uniswap", "timelock_balance"): ("last", "treasury_holding_tokens"),
@@ -132,7 +132,7 @@ ROUTES: dict[tuple[str, str], tuple] = {
     ("Sky", "sky_total_supply"): ("last", "total_supply_protocol"),
     ("Sky", "spell_burn_2026-09-13"): ("on_day", "gross_burn_tokens"),
     ("Sky", "spell_burn_2026-10-12"): ("on_day", "gross_burn_tokens"),
-    ("Sky", "net_revenue_sep_2026"): ("on_day", "net_protocol_surplus_usd"),
+    ("Sky", "net_revenue_sep_2026"): ("on_day", "net_revenue_pre_distribution_usd"),
     ("Ether.fi", "total_supply"): ("last", "total_supply"),
     ("Ether.fi", "sethfi_vault_assets"): ("last", "locked_tokens_underlying"),
     ("Maple", "total_supply"): ("last", "total_supply"),
@@ -142,14 +142,17 @@ ROUTES: dict[tuple[str, str], tuple] = {
     ("Maple", "buyback_top_tier"): ("not_wired", "S3: MIP-021 tiers (10% < $1.5M, 20% $1.5–2.0M, 30% > $2.0M of "
                                                  "monthly revenue) are not a config value yet"),
     ("Morpho", "fee_recipient"): ("zero_sum", "revenue_usd", 90),
-    ("Morpho", "merkl_rewards_rate"): ("mean", "emissions_tokens", 30),
+    ("Morpho", "merkl_rewards_rate"): ("mean", "outflow_b_tokens", 30),
     ("Fluid", "treasury_to_team_rewards"): ("event", "treasury_holding_tokens", 21, -1),
     ("Fluid", "treasury_to_team_agi3_locked"): ("event", "treasury_holding_tokens", 21, -1),
     ("Aethir", "dat_holding_axe_compute"): ("dat_file", "Axe Compute"),
     ("Aethir", "circulating_schedule_oct_2026"): ("last", "circulating_supply_first_party"),
+    ("Chainlink", "reserve_holdings_2026-04-15"): ("last", "buyback_fund_balance"),
     ("Chainlink", "reserve_holdings_end_q1_2026"): ("last", "buyback_fund_balance"),
-    ("Chainlink", "staking_community_rate"): ("headline", "CP Comparability", "Staker yield — validator (A1)"),
-    ("Chainlink", "quarterly_release"): ("sum_period", "pool_release_tokens", "2026-07-01", "2026-09-30"),
+    ("Chainlink", "staking_community_rate"): ("last", "staker_yield_community_pool"),
+    # V5 (Jake's round-2 run): the Flows tab's own release line and Q0 window — read 0 on calendar Q3 while Flows
+    # showed the 18.75M tranche in Q0
+    ("Chainlink", "quarterly_release"): ("flows", "+ released from issuer wallets", "Q0"),
     ("Near", "fefundsadmin_alltime_inflow"): ("not_wired", "N5: all-time inflow of fefundsadmin.near — the v3 "
                                                            "account txns read of that wallet is not wired"),
     ("Near", "buybacks_multisig_alltime_inflow"): ("not_wired", "N5/N6: all-time inflow of buybacks.multisignature.near"
@@ -181,6 +184,20 @@ def _fmt(x) -> str:
     if ax and ax < 1:
         return f"{x:.4f}"
     return f"{x:,.2f}" if ax < 1e4 else f"{x:,.0f}"
+
+
+def _flows_value(route: tuple, flows: list[dict] | None, project: str) -> tuple[float | None, str, str]:
+    """("flows", line prefix, quarter label): the Flows tab's own Token-flow line — the same series and window."""
+    _k, prefix, label = route
+    how = f"Flows: Token flow '{prefix}…' {label}"
+    row = next((r for r in flows or () if r.get("Project") == project and r.get("Statement") == "Token flow"
+                and str(r.get("Line", "")).startswith(prefix)), None)
+    if row is None:
+        return None, how, "the Flows tab has no such line for this project (built without Flows?)"
+    v = row.get(label)
+    if not isinstance(v, (int, float)) or isinstance(v, bool):
+        return None, how, f"the Flows line reads {v!r} in {label}"
+    return float(v), how + f" ({row.get('Series')})", ""
 
 
 def _our_value(route: tuple, groups: dict, project: str, at: pd.Timestamp, ref: float,
@@ -345,7 +362,7 @@ def _wallet_check(project: str, which: str, ref_text: str) -> tuple[bool | None,
 
 
 def check(groups: dict, headline=None, projects: set[str] | None = None, rows: list[dict] | None = None,
-          causes: dict | None = None) -> list[dict]:
+          causes: dict | None = None, flows: list[dict] | None = None) -> list[dict]:
     """One result per reference row for the projects in `groups` (or `projects`): {project, metric, ref, ours,
     status, detail, route, source}. `headline(project, tab, header_prefix)` returns the evaluated workbook cell."""
     built = projects if projects is not None else {k[0] for k in groups}
@@ -379,7 +396,8 @@ def check(groups: dict, headline=None, projects: set[str] | None = None, rows: l
             out.append(base | {"ours": None, "status": "NOT WIRED", "route": "",
                                "detail": f"NOT WIRED — reference check: non-numeric reference {ref_txt[:60]!r}"})
             continue
-        ours, how, why = _our_value(route, groups, project, at, ref, headline)
+        ours, how, why = (_flows_value(route, flows, project) if route[0] == "flows"
+                          else _our_value(route, groups, project, at, ref, headline))
         if route[0] == "zero_sum":
             ref = 0.0                                      # the zero address: no fee recipient = no protocol fee
         if ours is None:
@@ -425,26 +443,16 @@ def _aero_dilution_cause(groups, project, at, ours, ref) -> str:
                   f"weekly), its own insider line since fix round 2 (S5), not in (b) / (c)")
 
 
-def _morpho_merkl_cause(groups, project, at, ours, ref) -> str:
-    return ("ours reads Ethereum only (MORPHO leaving the Merkl distributor + the legacy URD: claims); the DAO rewards "
-            "multisig 0xF057…'s Ethereum campaigns ended 2026-04-30 and since May 100% of its MORPHO runs on Base, Arc, "
-            "Katana (to 2026-08-31) and Tempo — unscanned (research 2026-10-13: Base 199,378 + Arc 20,602 MORPHO over "
-            "21 Sep–21 Oct ≈ 2.68M/yr). The (b) series understates; route: the Merkl campaigns API per chain")
-
-
-def _chainlink_reserve_cause(groups, project, at, ours, ref) -> str:
-    return ("the review's 3.06M is the Reserve's balance of 2026-04-09..04-15 (3,064,152 on-chain), not end-Q1 "
-            "(2,795,491 — ours, which matches the chain); the Q1 inflow 1,473,379.36 LINK agrees to the unit (research "
-            "2026-10-13, C21) — a dating difference in the reference")
-
-
 def _sky_revenue_cause(groups, project, at, ours, ref) -> str:
-    s = _series(groups, project, "net_protocol_surplus_usd")
-    jul = s[s.date == pd.Timestamp("2026-07-31")] if s is not None else None
-    j = f"{float(jul.value.iloc[0]):,.0f}" if jul is not None and len(jul) else "?"
-    return (f"different concept: our net_protocol_surplus_usd is revenue − expense − revenue distribution (the 45% USDS "
-            f"staker leg, from 2026-08-17); TMF's 'net revenue' is before the distribution. July, before any "
-            f"distribution, agrees: ours {j} vs TMF 10,517,426 (+1.6%)")
+    def month(metric, d):
+        s = _series(groups, project, metric)
+        hit = s[s.date == pd.Timestamp(d)] if s is not None else None
+        return f"{float(hit.value.iloc[0]):,.0f}" if hit is not None and len(hit) else "?"
+    return (f"the TMF series does not sit on one Block Analitica basis: its July 10,517,426 is AFTER the distribution "
+            f"(ours, NPS: {month('net_protocol_surplus_usd', '2026-07-31')}), its August 15,745,296 and September "
+            f"14,640,000 are BEFORE it (ours, revenue − expense: Aug {month('net_revenue_pre_distribution_usd', '2026-08-31')}, "
+            f"Sep {month('net_revenue_pre_distribution_usd', '2026-09-30')}) — the facilitator's own figures, read at a "
+            f"different vintage of the P&L. Ours is Block Analitica's P&L, the primary account")
 
 
 def _maple_supply_cause(groups, project, at, ours, ref) -> str:
@@ -455,12 +463,6 @@ def _maple_supply_cause(groups, project, at, ours, ref) -> str:
             f"the aggregator had not taken in the MIP-010 inflation claim (23.20M, 2026-10-09). From 2026-10-11 the "
             f"token's own totalSupply() wins (TOTAL_SUPPLY_ONCHAIN_FIRST, decision A4): a store read after that date "
             f"carries the chain figure")
-
-
-def _chainlink_rate_cause(groups, project, at, ours, ref) -> str:
-    return ("ours is the emission of every reward bucket ÷ every staked LINK (community + operator pools, operator "
-            "rewards and delegation included); the reference is what a community staker earns (4.5% floor less the "
-            "4% delegation to operators)")
 
 
 def _eth_supply_cause(groups, project, at, ours, ref) -> str:
@@ -484,34 +486,43 @@ def _near_intents_cause(groups, project, at, ours, ref) -> str:
             f"(not a measured difference until those days are stored)")
 
 
-def _uni_recall_cause(groups, project, at, ours, ref) -> str:
-    return (f"the recall's own transfers sum to 12,500,001.19 UNI (proposal #97 recallMany: 8 Franchiser transfers, tx "
-            f"0x2eceb744…, block 25,220,881 — research 2026-10-13); ours ({ours:,.2f}) equals them, the reference "
-            f"value is rounded to 12,500,000 — a correction to the reference row, not to our figure")
-
-
-def _chainlink_release_cause(groups, project, at, ours, ref) -> str:
-    s = _series(groups, project, "noncirculating_holding_tokens")
+def _maple_dao_cause(groups, project, at, ours, ref) -> str:
+    s = _series(groups, project, "treasury_holding_tokens_chain")
     if s is None:
         return ""
-    x = s.set_index("date").value.diff()
-    steps = [(d, -v) for d, v in x.items() if v < -1e6]
-    txt = ", ".join(f"{d:%Y-%m-%d} {v / 1e6:,.2f}M" for d, v in steps[-6:])
-    return (f"no fall of the 27 non-circulating wallets in 2026-Q3; the stored falls are {txt} — the press figure "
-            f"(secondary) names a release our wallet set does not show in that quarter")
+    prev = s[s.date < at]
+    p = float(prev.value.iloc[-1]) if len(prev) else None
+    return (f"an intraday move, not a misread (V3, 2026-10-13): the stored close of {at:%Y-%m-%d} reads {ours:,.0f}, the "
+            f"day before {p:,.0f}" + (" — " if p is not None else "") +
+            "tx 0xd628a262… at 18:10 UTC moved 23,197,508 SYRUP (the 10-09 MIP-010 mint) from mapleTreasury 0xa9466EaB… "
+            "into the DAO Safe and, in the same tx, 4,000,000 from the Safe to the unlabelled EOA 0x9e786E5E…; the "
+            "reference (23.09M) was read before it. Both Safes are issuer-side (subtracted from circulating), so only "
+            "the 4,000,000 is a release (e)")
+
+
+def _eth_burn_cause(groups, project, at, ours, ref) -> str:
+    s = _series(groups, project, "gross_burn_tokens")
+    if s is None:
+        return ""
+    w = s[(s.date > at - pd.Timedelta(days=30)) & (s.date <= at)]
+    legs = {}
+    for src, part in w.groupby(w.source.astype(str).str.split(":").str[0]):
+        legs[src] = (float(part.value.sum()), len(part))
+    txt = "; ".join(f"{k} {v:,.1f} ETH on {n} row(s) ({v / max(n, 1):,.1f}/row)" for k, (v, n) in legs.items())
+    return (f"a basis difference, not a burn difference (V4): our 30 rows join two sources — {txt}. The DefiLlama leg "
+            f"is USD burned ÷ the day's price (not ETH measured), the Etherscan leg is read-to-read deltas of BurntFees "
+            f"at run time (not 00:00 UTC; one row spans 4 days), and the seam double-counts the hours of 2026-09-29 after "
+            f"the first Etherscan read (~4h). ultrasound's d30 is 30 x 24h of measured burn to its read instant")
 
 
 CAUSES = {
+    ("Ethereum", "burn_30d"): _eth_burn_cause,
+    ("Maple", "dao_safe_balance"): _maple_dao_cause,
     ("Aerodrome", "annualised_dilution_incl_rebase_team"): _aero_dilution_cause,
-    ("Morpho", "merkl_rewards_rate"): _morpho_merkl_cause,
     ("Maple", "total_supply"): _maple_supply_cause,
-    ("Chainlink", "staking_community_rate"): _chainlink_rate_cause,
-    ("Chainlink", "reserve_holdings_end_q1_2026"): _chainlink_reserve_cause,
     ("Sky", "net_revenue_sep_2026"): _sky_revenue_cause,
     ("Ethereum", "supply"): _eth_supply_cause,
     ("Near", "intents_cumulative_volume"): _near_intents_cause,
-    ("Uniswap", "franchiser_recall_inflow"): _uni_recall_cause,
-    ("Chainlink", "quarterly_release"): _chainlink_release_cause,
 }
 
 

@@ -616,9 +616,14 @@ class Http:
             deadline: float | None = None):
         return self._request("GET", url, params=params, headers=headers, deadline=deadline)
 
+    def get_text(self, url: str, params: dict | None = None, headers: dict | None = None,
+                 deadline: float | None = None) -> str:
+        """get() for a non-JSON body (a CSV export): the same retry / backoff / spacing, the body as text."""
+        return self._request("GET", url, params=params, headers=headers, deadline=deadline, as_text=True)
+
     def _request(self, verb: str, url: str, params: dict | None = None,
                  json_body: dict | None = None, headers: dict | None = None,
-                 deadline: float | None = None):
+                 deadline: float | None = None, as_text: bool = False):
         # deadline (time.monotonic()): a caller's TOTAL budget. Each attempt's timeout is clipped
         # to what remains and a backoff sleep that would overrun it is not taken — the call fails
         # with BudgetExhausted instead. None keeps the old behaviour exactly.
@@ -696,7 +701,7 @@ class Http:
                 # THE LAST RESPONSE'S HEADERS (2026-09-30): a caller budgeting against the
                 # server's own rate-limit counters (beaconcha.in's x-ratelimit-*) reads them here.
                 self.last_headers = dict(r.headers)
-                return r.json()
+                return r.text if as_text else r.json()
             except HttpError:
                 raise          # a 4xx is a definite answer from the server, not worth retrying
             except requests.RequestException as e:

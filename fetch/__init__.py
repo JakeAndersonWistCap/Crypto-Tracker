@@ -32,6 +32,9 @@ from .coingecko import CoinGecko
 from .dune import Dune
 from .gaps import detect as detect_gaps, note_timeouts
 from .hl_candles import HLCandles
+from .hl_ledger import HLLedgerReplay
+from .merkl_campaigns import MerklCampaigns
+from .boros import BorosVolume
 from .hypercore import HyperCoreInfo
 from .growthepie import GrowThePie
 from .blockscout_stats import BlockscoutStats
@@ -95,6 +98,10 @@ TIER_ORDER = [
     ("coingecko", 1, lambda ctx: CoinGecko(known_absent=ctx["known_absent"], last_dates=ctx["last_dates"])),
     # Hyperliquid's perps volume per day from its own daily candles (DefiLlama's is paid). 2026-10-01.
     ("hl_candles", 1, lambda ctx: HLCandles()),
+    # Hyperliquid's issuer-side wallets replayed from their own ledgers, once a day (fix round 3, B1).
+    ("hl_ledger", 1, lambda ctx: HLLedgerReplay()),
+    ("merkl_campaigns", 1, lambda ctx: MerklCampaigns()),
+    ("boros", 1, lambda ctx: BorosVolume()),
     ("hypercore_info", 1, lambda ctx: HyperCoreInfo(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"],
                                                     prior_delta=ctx["prior_delta"])),
     ("chain", 2, lambda ctx: Chain(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"],

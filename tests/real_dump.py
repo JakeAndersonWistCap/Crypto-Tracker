@@ -22,12 +22,23 @@ ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "fixtures"
 
 
-def dump_path(project: str) -> Path:
-    return FIXTURES / f"real_{project.lower().replace('.', '').replace(' ', '_')}.json"
+# A DATED VINTAGE (fix round 3, 2026-10-13): Jake's 10-13 dumps replaced six of 2026-10-09 (Aerodrome, Chainlink,
+# Ethereum, Maple, Pendle, Plume). Tests built around a 10-09 case (a release appended as "the next day", a pinned
+# Q0 figure, a dated gap) read that vintage through the `dumps_20261009` fixture (tests/conftest.py); every other test
+# reads the latest dump. A project with no file in the vintage reads the latest (its dump did not change).
+VINTAGE: str | None = None
 
 
-def load(project: str) -> dict:
-    p = dump_path(project)
+def dump_path(project: str, vintage: str | None = None) -> Path:
+    name = f"real_{project.lower().replace('.', '').replace(' ', '_')}.json"
+    v = vintage or VINTAGE
+    if v and (FIXTURES / f"vintage_{v}" / name).exists():
+        return FIXTURES / f"vintage_{v}" / name
+    return FIXTURES / name
+
+
+def load(project: str, vintage: str | None = None) -> dict:
+    p = dump_path(project, vintage)
     if not p.exists():
         pytest.skip(f"{p.name} not on file yet — run `python dump_fixture.py --project {project}` and commit it")
     return json.loads(p.read_text(encoding="utf-8"))

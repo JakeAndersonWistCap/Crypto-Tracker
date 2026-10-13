@@ -25,6 +25,9 @@ Stored:
                                   rate, than the last stored reading is a TOP-UP: flagged to the
                                   Review Queue (reward_vault_topup) and logged.
     emissions_tokens             (flow, dated the run day) = that annual rate / 365.25
+    staker_yield_community_pool  (stock, round 3 B2) = communityBase emissionRate x 31,557,600 ÷ the community pool's
+                                  getTotalPrincipal() (the pool is the vault's getStakingPools()[1]; its
+                                  typeAndVersion() must read CommunityStakingPool) — 4.323% on 2026-10-13
 The claim outflow stays a separate series, emissions_claimed_tokens (log_scans).
 """
 from __future__ import annotations
@@ -47,6 +50,7 @@ def _selector(signature: str) -> str:
 
 SEL_GET_REWARD_BUCKETS = _selector("getRewardBuckets()")
 SEL_TYPE_AND_VERSION = _selector("typeAndVersion()")
+SEL_TOTAL_PRINCIPAL = _selector("getTotalPrincipal()")
 BUCKETS = ("operatorBase", "communityBase", "operatorDelegated")
 SECONDS_PER_YEAR = 31_557_600             # 365.25 days
 JUELS = 10 ** 18
@@ -121,6 +125,24 @@ class RewardVaultRates:
                     SOURCE, name, f"emissions_tokens={annual / 365.25:,.2f} LINK for the day "
                                   f"(annual rate / 365.25) — accrual, not claims", TIER)
             out.log.append(LogEntry(SOURCE, name, 0, "ok", f"RewardVault buckets: {detail}", TIER))
+            # THE COMMUNITY POOL'S OWN RATE (round 3 B2): communityBase ÷ the community pool's principal, same block
+            if spec.get("community_pool"):
+                try:
+                    cp = self.reader.checksum(spec["community_pool"])
+                    ctv = decode_string(w3.eth.call({"to": cp, "data": SEL_TYPE_AND_VERSION}, block["number"]).hex())
+                    if not ctv.startswith("CommunityStakingPool"):
+                        raise ValueError(f"typeAndVersion() is {ctv!r}, not a CommunityStakingPool")
+                    principal = int(w3.eth.call({"to": cp, "data": SEL_TOTAL_PRINCIPAL}, block["number"]).hex(), 16)
+                    rate = community_rate(buckets, principal, now_ts)
+                except Exception as e:  # noqa: BLE001
+                    out.fail(SOURCE, name, f"staker_yield_community_pool: {e}", TIER)
+                    rate = None
+                if rate is not None:
+                    out.add(point(name, "staker_yield_community_pool", rate, f"{SOURCE}:communityBase/principal", TIER,
+                                  when), SOURCE, name,
+                            f"staker_yield_community_pool={rate:.4%} (communityBase "
+                            f"{buckets['communityBase'][0] * SECONDS_PER_YEAR / JUELS:,.0f} LINK/yr ÷ principal "
+                            f"{principal / JUELS:,.0f} LINK, block {block['number']:,})", TIER)
             ends = min(v[1] for v in active.values()) if active else max(v[1] for v in buckets.values())
             out.add(point(name, "reward_rate_ends_unix", float(ends), src, TIER, when), SOURCE, name,
                     f"reward_rate_ends_unix={ends} ({_utc(ends)})"
@@ -139,6 +161,14 @@ class RewardVaultRates:
                 out.log.append(LogEntry(SOURCE, name, 0, "ok",
                                         f"TOP-UP OBSERVED: {', '.join(grew)} grew — end {_utc(p_end) if p_end else '?'} "
                                         f"-> {_utc(ends)}, rate {p_rate or 0:,.0f} -> {annual:,.0f} LINK/yr", TIER))
+
+
+def community_rate(buckets: dict, principal_juels: int, now_ts: int) -> float | None:
+    """communityBase emission a year ÷ the community pool's principal; 0 once the bucket has ended; None with no stake."""
+    if principal_juels <= 0:
+        return None
+    rate, ends, _ = buckets["communityBase"]
+    return (rate * SECONDS_PER_YEAR / principal_juels) if ends > now_ts else 0.0
 
 
 def read_at(w3, address: str, block: int) -> tuple[dict, int]:

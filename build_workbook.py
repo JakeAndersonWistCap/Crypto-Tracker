@@ -1516,10 +1516,11 @@ def _relabel_views(groups: dict) -> None:
 
 def _near_buyback_views(groups: dict) -> None:
     """NEAR'S BUYBACK = THE DAY'S CHANGE IN THE THREE REVENUE WALLETS' COMBINED CLOSE (Jake, 2026-10-07 14:17).
-    The wallets have no outflow except between themselves, so internal moves cancel in the sum and its change is
-    what was bought and held. Stored transaction-scan rows of actual_buyback_tokens are superseded (the view replaces
-    the group); actual_buyback_usd = tokens x the same-day price. A negative day (gas, or a move out of the three)
-    is kept as measured and named in its source."""
+    Internal moves cancel in the sum and its change is what was bought and held. All-time, two native outflows left the
+    three — both bridged off NEAR, not retired (config.NEAR_REVENUE_OUTFLOWS, round 3 B5): the day's fall nets them, and
+    the source names them. Stored transaction-scan rows of actual_buyback_tokens are superseded (the view replaces the
+    group); actual_buyback_usd = tokens x the same-day price. A negative day (gas, or a move out of the three) is kept
+    as measured and named in its source."""
     for p in scoped_projects():
         bh = (p.get("nearblocks") or {}).get("balance_history")
         if not bh:
@@ -1533,9 +1534,17 @@ def _near_buyback_views(groups: dict) -> None:
         d = d[(d.index.to_series().diff() == pd.Timedelta(days=1)).values & d.notna().values]
         if d.empty:
             continue
+        named = {pd.Timestamp(o["date"]): o for o in config.NEAR_REVENUE_OUTFLOWS}
+        # a balance read once a day sees a move on its day or the next read
+        named.update({k + pd.Timedelta(days=1): o for k, o in list(named.items()) if k + pd.Timedelta(days=1) not in named})
+
+        def src(day, v):
+            o = named.get(day) if v < 0 else None
+            tag = (f"[nets {o['tokens']:,.0f} NEAR {o['class']} ({o['wallet']} -> {o['to'][:12]}…)]" if o else
+                   "[NEGATIVE: a move out of the three]" if v < 0 else "")
+            return f"derived:d({bh['metric']})" + tag
         tok = pd.DataFrame({"date": d.index, "project": name, "metric": bh["flow"], "value": d.values, "tier": 1,
-                            "source": [f"derived:d({bh['metric']})" + ("[NEGATIVE: a move out of the three]" if v < 0
-                                                                       else "") for v in d.values]})
+                            "source": [src(day, v) for day, v in zip(d.index, d.values)]})
         groups[(name, bh["flow"])] = _as_stored(tok, g.columns)
         px = groups.get((name, "price_usd"))
         if px is None or px.empty:
@@ -1584,6 +1593,98 @@ def _aethir_arr_view(groups: dict) -> None:
                              "source": f"derived:{spec['monthly']} last {n} complete months x {spec['times']:g}"})
         if rows:
             groups[(name, metric)] = _as_stored(pd.DataFrame(rows), g.columns)
+
+
+def _epoch_paid_views(groups: dict, asof: pd.Timestamp) -> None:
+    """config.EPOCH_PAID_AT (round 3 B4): every row of the declared weekly series re-dated by `days` — from the epoch
+    it was read in to the flip that paid it — and a row whose paying flip is after the as-of left out (not paid yet).
+    Read-time: the stored rows are untouched, so the restatement covers the whole history and every later read alike."""
+    for name, spec in config.EPOCH_PAID_AT.items():
+        for m in spec["metrics"]:
+            g = groups.get((name, m))
+            if g is None or g.empty:
+                continue
+            d = pd.to_datetime(g["date"]) + pd.Timedelta(days=int(spec["days"]))
+            keep = d.dt.normalize() <= pd.Timestamp(asof).normalize()
+            # the source is left as stored: it names WHAT was read (its measuring point), and the re-dating is declared
+            # in config.EPOCH_PAID_AT and on METRICS.md
+            groups[(name, m)] = g.assign(date=d.values)[keep.values]
+
+
+def _history_prepend_views(groups: dict) -> None:
+    """config.HISTORY_PREPEND (fix round 3): the days before a series' first stored row, read from another stored series
+    on the same basis (a declared handover). Read-time only; a stored row always stands."""
+    for (name, metric), h in config.HISTORY_PREPEND.items():
+        if name not in {p["name"] for p in scoped_projects()}:
+            continue
+        live, src = groups.get((name, metric)), groups.get((name, h["from"]))
+        if src is None or src.empty:
+            continue
+        cols = (live if live is not None and not live.empty else src).columns
+        first = pd.to_datetime(live["date"]).min().normalize() if live is not None and not live.empty else None
+        lead = src.assign(date=pd.to_datetime(src["date"]).dt.normalize())
+        if first is not None:
+            lead = lead[lead["date"] < first]
+        if lead.empty:
+            continue
+        lead = lead.assign(metric=metric)
+        groups[(name, metric)] = (pd.concat([_as_stored(lead, cols), live], ignore_index=True)
+                                  if live is not None and not live.empty else _as_stored(lead, cols))
+
+
+def _hl_model_views(groups: dict) -> None:
+    """THE MODELLED REWARDS HISTORY (config.HL_REWARD_MODEL; fix round 3, B1). rate = k ÷ sqrt(stake); with the
+    reference wallet's gross rate a(D): rewards(D) = k² ÷ (365 · a(D)), stake(D) = (k ÷ a(D))². k = the median of
+    a · sqrt(S) over the days a stored validatorSummaries read S and a both exist. Prepended to the rewards and stake
+    series before their first stored rows (MODELLED source: excluded from any scoring), and the reserve modelled
+    backward from its first stored read as its own series."""
+    for p in scoped_projects():
+        name = p["name"]
+        spec = config.HL_REWARD_MODEL.get(name)
+        if not spec:
+            continue
+        a = _daily(groups.get((name, spec["ref_yield"])))
+        stake = _daily(groups.get((name, spec["stake"])))
+        if a.empty or stake.empty:
+            continue
+        a = a[a > 0]
+        both = a.index.intersection(stake.index)
+        if both.empty:
+            _VIEW_BLOCKS[(name, f"{spec['emissions']}:modelled_history")] = (
+                "not modelled: no day holds both the reference yield and a stored stake read to calibrate k")
+            continue
+        k = float((a[both] * stake[both] ** 0.5).median())
+        rew, stk = k * k / (365.0 * a), (k / a) ** 2
+        cols = next(g.columns for (n_, _m), g in groups.items() if n_ == name and g is not None and not g.empty)
+        tag = f"{spec['source']}[k={k:.3f} on {len(both)} day(s)]"
+        for metric, model in ((spec["emissions"], rew), (spec["stake"], stk)):
+            g = groups.get((name, metric))
+            first = pd.to_datetime(g["date"]).min().normalize() if g is not None and not g.empty else None
+            lead = model[model.index < first] if first is not None else model
+            if lead.empty:
+                continue
+            view = _as_stored(pd.DataFrame({"date": lead.index, "project": name, "metric": metric,
+                                            "value": lead.values, "tier": 1, "source": tag}), cols)
+            groups[(name, metric)] = pd.concat([view, g], ignore_index=True) if first is not None else view
+        groups[(name, spec["stake_modelled"])] = _as_stored(pd.DataFrame(
+            {"date": stk.index, "project": name, "metric": spec["stake_modelled"], "value": stk.values, "tier": 1,
+             "source": tag}), cols)
+        fe = _daily(groups.get((name, spec["future"])))
+        if fe.empty:
+            continue
+        first_fe, fe0 = fe.index.min(), float(fe.iloc[0])
+        em = _daily(groups.get((name, spec["emissions"])))
+        days = em[em.index <= first_fe].sort_index(ascending=False)
+        # FE at the close of D = FE(first read) + the rewards paid after D up to the first read
+        vals, run = {}, 0.0
+        for d, v in days.items():
+            vals[d - pd.Timedelta(days=1)] = fe0 + run + float(v)
+            run += float(v)
+        if vals:
+            s_ = pd.Series(vals).sort_index()
+            groups[(name, spec["future_modelled"])] = _as_stored(pd.DataFrame(
+                {"date": s_.index, "project": name, "metric": spec["future_modelled"], "value": s_.values, "tier": 1,
+                 "source": tag}), cols)
 
 
 def _same_basis_views(groups: dict) -> None:
@@ -2006,6 +2107,8 @@ def _emissions_model_views(groups: dict) -> None:
         view = pd.DataFrame({"date": model.index, "project": name, "metric": spec["metric"],
                              "value": model.values, "source": tag, "tier": 1})
         groups[(name, spec["metric"])] = _as_stored(view, stake.columns)
+        if name in config.HL_REWARD_MODEL:
+            continue                                     # fix round 3: the reference-yield model is the history leg
         if not agrees:
             _VIEW_BLOCKS[(name, f"{spec['observed_metric']}:history_leg")] = (
                 f"modelled rewards not used as history: observed/model = "
@@ -2439,6 +2542,30 @@ def _stake_prorata_views(groups: dict) -> None:
                        f"{spec['staked']}]"}), cols)
 
 
+def _cashback_funding_views(groups: dict) -> None:
+    """config.CASHBACK_FUNDING (round 3 W3; FR2 S2): the payouts a programme's market purchases had not yet covered —
+    the rise in the running maximum of max(0, Σ paid − Σ bought) — written as `out`, the dilutive part. Before `since`
+    nothing was bought (a payout then is all from stock); from it a day needs a row of both series (a gap, not a 0)."""
+    for name, spec in config.CASHBACK_FUNDING.items():
+        paid, bought = _daily(groups.get((name, spec["paid"]))), _daily(groups.get((name, spec["bought"])))
+        if paid.empty or bought.empty:
+            continue
+        since = pd.Timestamp(spec["since"])
+        # before the programme nothing was bought: a payout then came out of stock in full
+        b = bought.reindex(paid.index.union(bought.index))
+        b[(b.index < since) & b.isna()] = 0.0
+        both = pd.concat([paid.rename("p"), b.rename("b")], axis=1).dropna()
+        if both.empty:
+            continue
+        gap = (both["p"].cumsum() - both["b"].cumsum()).clip(lower=0.0).cummax()
+        out = gap.diff().fillna(gap.iloc[0])
+        cols = groups[(name, spec["paid"])].columns
+        groups[(name, spec["out"])] = _as_stored(pd.DataFrame(
+            {"date": out.index, "project": name, "metric": spec["out"], "value": out.values, "tier": 2,
+             "source": f"derived:cashback_funding[max(0,Σ{spec['paid']}−Σ{spec['bought']}) since {spec['since']}]"}),
+            cols)
+
+
 def _outflow_views(groups: dict) -> None:
     """THE FIVE OUTFLOW CATEGORIES (Jake 2026-10-12, Phase 2 amendment 3): per project and category (config
     OUTFLOW_CATEGORIES), outflow_<c>_tokens = the category's series summed per day — a day only where EVERY series in
@@ -2573,10 +2700,16 @@ def _issuer_mint_views(groups: dict) -> None:
                 continue
             g = g.assign(date=pd.to_datetime(g["date"]).dt.normalize()).drop_duplicates("date", keep="last")
             for d, growth in zip(g["date"], g["value"].astype(float)):
-                rate = config.issuer_mint_rate(name, d + pd.Timedelta(days=int(spec.get("flip_offset_days", 0))))
+                rate = config.issuer_mint_rate(name, d)
                 if rate is None:
                     continue
                 rows.append((d, rate * (growth + spec["frozen_weekly"]) / (10_000 - rate), spec["source"]))
+        if spec["kind"] == "series":
+            g = groups.get((name, spec["metric"]))
+            if g is None or g.empty:
+                continue
+            g = g.assign(date=pd.to_datetime(g["date"]).dt.normalize()).drop_duplicates("date", keep="last")
+            rows += [(d, float(v), spec["source"]) for d, v in zip(g["date"], g["value"])]
         for ev in spec.get("events") or ():
             rows.append((pd.Timestamp(ev["date"]), float(ev["tokens"]), spec["source"]))
         if not rows:
@@ -2638,7 +2771,12 @@ def _unlock_release_view(groups: dict, name: str, metric: str, legs: tuple) -> N
     if metric == "unlock_release_tokens" and (g_m := groups.get((name, "issuer_mint_tokens"))) is not None:
         mints = (g_m.assign(date=pd.to_datetime(g_m["date"]).dt.normalize()).groupby("date")["value"].sum()
                  .astype(float))
+        exact = bool((config.ISSUER_MINTS.get(name) or {}).get("exact_dates"))
         for d, m in mints.items():
+            if exact:                                   # dated by the same ledger as the stock: net in full that day
+                if d in total.index:
+                    total.loc[d] += float(m)
+                continue
             left = float(m)
             for day in (d, d + pd.Timedelta(days=1)):
                 if left <= 0 or day not in total.index:
@@ -2655,15 +2793,85 @@ def _unlock_release_view(groups: dict, name: str, metric: str, legs: tuple) -> N
     returned = (-total).clip(lower=0.0)
     total = total.clip(lower=0.0)
     cols = next(g.columns for m in legs if (g := groups.get((name, m))) is not None)
+    split_src = ""
+    if metric == "unlock_release_tokens" and (sp := config.STAKING_FUNDING_SPLIT.get(name)):
+        total, split_src = _staking_funding_split(groups, name, sp, total, cols)
+    # A LEG COUNTED ELSEWHERE (config.RELEASE_LESS, round 3 W7): taken out on its day or the next stored day, never < 0
+    for m in (config.RELEASE_LESS.get(name) or ()) if metric == "unlock_release_tokens" else ():
+        less = _daily(groups.get((name, m)))
+        if less.empty:
+            continue
+        total = total.copy()
+        for d, v in less[less > 0].items():
+            left = float(v)
+            for day in (d, d + pd.Timedelta(days=1)):
+                if left > 1e-9 and day in total.index:
+                    t = min(left, float(total.loc[day]))
+                    total.loc[day] -= t
+                    left -= t
+        split_src += f"-{m}"
     groups[(name, metric)] = _as_stored(pd.DataFrame(
         {"date": total.index, "project": name, "metric": metric, "value": total.values,
-         "tier": 1, "source": f"derived:unlock_release[{'+'.join(legs)}]"}), cols)
+         "tier": 1, "source": f"derived:unlock_release[{'+'.join(legs)}]{split_src}"}), cols)
     # F1 (fix round 2): the rises of the same stock, on the same gated days — tokens RETURNED to the issuer side (the
     # token-flow statement's "− returned to issuer-side wallets"); never netted into the release
     if metric == "unlock_release_tokens":
         groups[(name, "issuer_return_tokens")] = _as_stored(pd.DataFrame(
             {"date": returned.index, "project": name, "metric": "issuer_return_tokens", "value": returned.values,
              "tier": 1, "source": f"derived:issuer_return[{'+'.join(legs)}]"}), cols)
+
+
+def _staking_funding_split(groups: dict, name: str, sp: dict, total: pd.Series, cols) -> tuple[pd.Series, str]:
+    """THE STAKING PART OF EACH RELEASE, OUT OF (e) (round 3 B2; config.STAKING_FUNDING_SPLIT, CL_STAKING_PATH). The lumps
+    the 27 wallets sent to the path's first wallet queue up FIFO; each day's forward from it draws the queue down, and
+    the share of that day's forward that reached the staking hops (funding ÷ forwarded, at most 1) is attributed back to
+    the lumps it drew on. That attributed LINK is taken out of the release on the lump's day (or the next stored day —
+    a balance read once a day sees a transfer on its next read), never below 0, and written as its own series. A lump
+    not yet forwarded stays in (e); a forward the queue cannot cover (no lump stored before it) is not attributed."""
+    def daily(m):
+        g = groups.get((name, m))
+        if g is None or g.empty:
+            return None
+        return (g.assign(date=pd.to_datetime(g["date"]).dt.normalize()).groupby("date")["value"].sum().astype(float)
+                .sort_index())
+    lumps, fwd, fund = daily(sp["lumps"]), daily(sp["forwarded"]), daily(sp["funding"])
+    if lumps is None or fwd is None or fund is None:
+        return total, ""
+    queue = [[d, float(v)] for d, v in lumps.items() if v > 0]
+    attrib: dict = {}
+    for d, out_ in fwd.items():
+        if out_ <= 0:
+            continue
+        share = min(1.0, float(fund.get(d, 0.0)) / out_)
+        left = out_
+        for q in queue:
+            if left <= 0:
+                break
+            if q[0] > d or q[1] <= 0:
+                continue
+            take = min(q[1], left)
+            q[1] -= take
+            left -= take
+            if share > 0:
+                attrib[q[0]] = attrib.get(q[0], 0.0) + take * share
+    if not attrib:
+        return total, ""
+    total = total.copy()
+    taken = {}
+    for d, v in sorted(attrib.items()):
+        left = v
+        for day in (d, d + pd.Timedelta(days=1)):
+            if left <= 1e-9 or day not in total.index:
+                continue
+            t = min(left, float(total.loc[day]))
+            total.loc[day] -= t
+            taken[day] = taken.get(day, 0.0) + t
+            left -= t
+    ser = pd.Series(taken, dtype=float).sort_index()
+    groups[(name, sp["out"])] = _as_stored(pd.DataFrame(
+        {"date": ser.index, "project": name, "metric": sp["out"], "value": ser.values, "tier": 2,
+         "source": f"derived:fifo[{sp['lumps']}|{sp['forwarded']}|{sp['funding']}]"}), cols)
+    return total, f"-{sp['out']}"
 
 
 def _net_common_views(groups: dict) -> None:
@@ -2893,6 +3101,8 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     groups = {k: g for k, g in long.groupby(["project", "metric"])} if not long.empty else {}
     _partial_sum_views(groups)    # FIRST: nothing downstream may read a partial sum
     _same_basis_views(groups)     # one basis read by several routes is one measuring point (config.SAME_BASIS)
+    _epoch_paid_views(groups, asof)  # round 3 B4: a weekly row dated by the flip that paid it (config.EPOCH_PAID_AT)
+    _history_prepend_views(groups)  # fix round 3: a series' history from another route on the same basis
     _declared_zero_views(groups, asof)   # an ENDED programme reads 0 after its end (config.DECLARED_ZERO)
     _price_history_views(groups)  # Q-4 prices: DefiLlama coins before CoinGecko's free 365 days (review item 8b)
     _consensus_history_views(groups, asof)  # ETH consensus rewards before Etherscan's first read (review 8c)
@@ -2924,6 +3134,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     # declared ETH.Store leg (history_prefix) only if the leg is already in the group.
     _history_leg_views(groups)
     _emissions_model_views(groups)
+    _hl_model_views(groups)           # fix round 3 B1: Hyperliquid's MODELLED rewards / stake / reserve history
     _onchain_release_views(groups)    # BEFORE the issuance views that read pool_release_tokens
     _release_floor_views(groups)      # a release is never negative, whatever stored it (alignment D2)
     _supply_history_views(groups)     # fix round 2 H1/H3: ETH supply + issuance before Etherscan's first read
@@ -2942,6 +3153,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _unlock_views(groups)         # releases from the non-circulating wallets (Jake 2026-10-11, A2)
     _revenue_total_views(groups)  # alignment C10: NEAR's revenue = gas + Intents fee switch
     _stake_prorata_views(groups)  # alignment C1: Hyperliquid's (a) = rewards to circulating stake only
+    _cashback_funding_views(groups)  # round 3 W3: the cashback its market purchases did not cover — (c)
     _outflow_views(groups)        # Phase 2: the five outflow categories, tokens and $ (after unlocks and emissions)
     _holder_value_views(groups)   # Phase 2: revenue-funded holder value, credited vs recorded (LITMUS A)
     _settlement_views(groups)
@@ -5121,7 +5333,7 @@ def _total_yield_dilution(R: Refs, r: int, p: dict) -> str | None:
     adds = list(spec.get("add") or ())
     # a PRE-MINTED supply's releases are no longer inside net issuance (item 9): Total Yield subtracts them explicitly,
     # so its figure is unchanged — net inflation (mint − burn) + releases
-    if _premint(p) and "pool_release_tokens" not in adds:
+    if _premint(p) and "pool_release_tokens" not in adds and not spec.get("replaces_premint"):
         adds = ["pool_release_tokens"] + adds
     if not adds:
         return ni
@@ -6821,6 +7033,11 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
                         + (", ".join(f"({c}) {config.OUTFLOW_CATEGORY_NAMES[c]}" for c in held) or "none")
                         + " — see the outflow basis column")
             rv = _cp_revenue_metric(p)
+            # V1: a denominator known to miss part of what is paid blocks the ratio (unequal coverage), named
+            gaps = config.outflow_incomplete(p["name"], got)
+            if gaps:
+                return ("BLOCKED — unequal coverage: the incentive denominator is incomplete — " + "; ".join(gaps)
+                        + f" (numerator {rv}, whole)")
             legs = [("revenue", rv, "q0")] + [(f"outflow {c}", f"outflow_{c}_usd", "q0") for c in got]
             den = "+".join(_flow_rate(R, r, f"outflow_{c}_usd") for c in got)
             return _coverage_guard(R, r, legs, f"{_flow_rate(R, r, rv)}/({den})")
@@ -6962,6 +7179,36 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
             return f
         return f"=IF(ISNUMBER({inner}),MAX(0,1-({inner})),{inner})"
 
+    def leakage_i(r, p):
+        """LEAKAGE (i), PROPOSED (SPEC.md section 9; round 3 W5): the share of DISTRIBUTED holder value the issuer-side
+        wallets receive = their share of the reward-bearing stake (config.INSIDER_LOCK, now) x distributed ÷ credited
+        holder value over Q0 (distributed = credited − retired: what was paid out rather than burned or held)."""
+        if not hv_has(p):
+            return ""
+        spec = config.INSIDER_LOCK.get(p["name"])
+        if not spec:
+            return ("NOT WIRED — no issuer / insider wallet is identified among the stakers (route: the stake's holders "
+                    "crossed with the issuer-wallet list)")
+        n, d = R.D(r, spec[0], "now"), R.D(r, spec[1], "now")
+        cr, rt = R.D(r, "holder_value_revenue_usd", "q0"), R.D(r, "retired_buyback_usd", "q0")
+        num = lambda x: f"IF(ISNUMBER({x}),{x},0)"  # noqa: E731
+        return (f'=IF(AND(ISNUMBER({n}),ISNUMBER({d}),{d}>0,ISNUMBER({cr})),IF({cr}>0,({n}/{d})*MAX(0,{cr}-{num(rt)})/'
+                f'{cr},"n/a — no credited holder value in Q0"),{NA})')
+
+    def leakage_iii(r, p):
+        """LEAKAGE (iii), PROPOSED (SPEC.md section 9; round 3 W5): buyback execution = $ spent ÷ (tokens bought x the
+        day's price) − 1, per covered day — only where the $ SPENT is measured on its own (config.LEAKAGE_III); where
+        the buyback $ is tokens x price by construction the gap is 0 by definition and the cell says so."""
+        if "actual_buyback_usd" not in config.metrics_for_project(p):
+            return ""
+        spec = config.LEAKAGE_III.get(p["name"])
+        if not spec:
+            return ("n/a — no measured $ spend: the buyback $ is tokens x the day's price by construction (route: each "
+                    "fill's paid amount from the swap logs)")
+        sp = spec["spend"]
+        return _coverage_guard(R, r, [("spend", sp, "q0"), ("bought at market", "actual_buyback_usd", "q0")],
+                               f"({_flow_rate(R, r, sp)})/({_flow_rate(R, r, 'actual_buyback_usd')})-1")
+
     def uniformity(r, p):
         """UNIFORMITY, PROPOSED (SPEC.md section 9): whole-token yield ÷ staker yield (1 = every holder alike)."""
         for yfn, lk in ((vyield, v_lock), (tyield, t_lock)):
@@ -6983,7 +7230,7 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
                 f'"no — Q0 holder value was paid out, not retired")')
 
     def supplier_fee_only(r, p):
-        rb = config.revenue_base_metric(p["name"])
+        rb = config.revenue_ratio_base_metric(p["name"])
         if rb == "fees_usd":
             return "n/a — the project's revenue basis is gross fees (nothing is paid to suppliers out of them on our basis)"
         fm = config.fees_headline_metric(p["name"])
@@ -6993,7 +7240,7 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
     def supplier(r, p):
         """SUPPLIER PAYOUT (alignment round C4, PROPOSED in SPEC.md): what suppliers receive per $ of fees = (the fees
         paid to them + the incentive $ paid to them, outflow (b)) ÷ fees. Without a (b) series the incentive leg is 0."""
-        rb = config.revenue_base_metric(p["name"])
+        rb = config.revenue_ratio_base_metric(p["name"])
         if rb == "fees_usd":
             return "n/a — the project's revenue basis is gross fees (nothing is paid to suppliers out of them on our basis)"
         if not config.outflow_metrics(p["name"], "b"):
@@ -7060,7 +7307,7 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         ("Payout ratio — gross = credited holder value ÷ fees", payout(lambda p: config.fees_headline_metric(p["name"])),
          FMT_PCT, "calc"),
         ("Payout ratio — the project's own net basis = credited holder value ÷ revenue (config revenue basis)",
-         payout(lambda p: config.revenue_base_metric(p["name"]), "n/a — the project's net basis is gross fees (as left)"),
+         payout(lambda p: config.revenue_ratio_base_metric(p["name"]), "n/a — the project's net basis is gross fees (as left)"),
          FMT_PCT, "calc"),
         # ---- ATTRIBUTES (amendments 2 and 5: never penalties) ----
         ("Destination durability (burn / held-timelocked / held-discretionary)", attr("destination"), FMT_TEXT, "text"),
@@ -7072,12 +7319,10 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         # ---- LEAKAGE AND UNIFORMITY (alignment round C12 — PROPOSED definitions, SPEC.md section 9) ----
         ("LEAKAGE (ii) — incentive spend not returned as revenue = max(0, 1 − subsidy cover) (PROPOSED)", leakage_ii,
          FMT_PCT, "calc"),
-        ("Leakage (i) — insider share of distributed holder value (PROPOSED)",
-         lambda r, p: ("NOT WIRED — route: the reward-bearing stake by holder (staking contract events) crossed with "
-                       "the issuer-wallet list, x the distributed holder value") if hv_has(p) else "", FMT_TEXT, "text"),
-        ("Leakage (iii) — buyback execution: $ spent ÷ (tokens bought x the day's price) − 1 (PROPOSED)",
-         lambda r, p: ("NOT WIRED — route: each buyback fill's price (CoW / DEX swap logs) against that day's market "
-                       "price") if "actual_buyback_usd" in config.metrics_for_project(p) else "", FMT_TEXT, "text"),
+        ("Leakage (i) — insider share of distributed holder value = insider share of the stake x distributed ÷ "
+         "credited holder value, Q0 (PROPOSED)", leakage_i, FMT_PCT, "calc"),
+        ("Leakage (iii) — buyback execution: $ spent ÷ (tokens bought x the day's price) − 1, per covered day "
+         "(PROPOSED)", leakage_iii, FMT_PCT, "calc"),
         ("UNIFORMITY = whole-token yield ÷ staker yield (1 = every holder alike) (PROPOSED)", uniformity, FMT_X, "calc"),
         ("Non-stakers receive value (yes / no) (PROPOSED)", non_stakers, FMT_TEXT, "calc"),
         # C5: insider holdings INSIDE circulating — by the convention every identified issuer / insider wallet is
@@ -7114,10 +7359,9 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         ("Boros fees Q0 ($) — Pendle Boros, its own line (NOT in the sPENDLE buyback base)",
          lambda r, p: pull(R.D(r, "boros_fees_usd", "q0")) if p["name"] == "Pendle" else "", FMT_USD, "pull", False,
          {"metric_fn": lambda n: "boros_fees_usd" if n == "Pendle" else None}),
-        ("Boros volume Q0 ($)",
-         lambda r, p: ("NOT WIRED — DefiLlama's dexs/boros answers 400 and derivatives/boros is paid; route: "
-                       "api-boros.pendle.finance markets/ohlcv per market x daily price (research of 2026-10-13: "
-                       "$3.04B in Q0 vs $2.39B in Q-4)") if p["name"] == "Pendle" else "", FMT_TEXT, "text"),
+        ("Boros volume Q0 ($) — every market's traded units x its collateral's daily price (round 3 W2)",
+         lambda r, p: pull(R.D(r, "boros_volume_usd", "q0")) if p["name"] == "Pendle" else "", FMT_USD, "pull", False,
+         {"metric_fn": lambda n: "boros_volume_usd" if n == "Pendle" else None}),
         ("Subsidy targeting by pool — route (probed, not yet wired)",
          lambda r, p: config.SUBSIDY_TARGETING_ROUTES.get(p["name"], ""), FMT_TEXT, "text"),
         ("ONE-OFF BURN EVENTS — dated, each with its funding; never in a rate, trend or holder value",
@@ -7548,8 +7792,8 @@ def write_a3(ws, R: Refs, data_by_key: dict):
                       share(r)))), FMT_NUM, "calc", False,
          {"gate": "fee_split", "base": True, "metric": "gross_burn_tokens"}),
         ("Coverage ratio = actual buyback ÷ revenue (>1 ⇒ treasury-funded)",
-         lambda r, p: _coverage_guard(R, r, [("buyback", "actual_buyback_usd", "q0"), ("revenue", config.revenue_base_metric(p["name"]), "q0")],
-                                      f"{_flow_rate(R, r, 'actual_buyback_usd', p=p)}/{_flow_rate(R, r, config.revenue_base_metric(p['name']), total=rev(r, p))}"),
+         lambda r, p: _coverage_guard(R, r, [("buyback", "actual_buyback_usd", "q0"), ("revenue", config.revenue_ratio_base_metric(p["name"]), "q0")],
+                                      f"{_flow_rate(R, r, 'actual_buyback_usd', p=p)}/{_flow_rate(R, r, config.revenue_ratio_base_metric(p['name']))}"),
          FMT_X, "calc"),
         ("Fees ÷ FDV (annualised)", lambda r, p: calc(f"{_annualise(R, r, p, 'fees_usd', R.D(r, 'fees_usd', 'q0'))}/{R.D(r, 'fdv_usd', 'now')}"), FMT_PCT, "calc"),
         # PER PROJECT, not fixed: Aerodrome shows veAERO.supply() and everyone else shows the
@@ -8468,6 +8712,13 @@ def flow_statements(groups: dict, asof) -> list[dict]:
         legs = [("+ minted", mint_m, 1), (rel_lab, rel_m, 1),
                 *([("+ released from the other issuer wallets (e)", disc_m, 1)] if disc_m else []),
                 ("− returned to issuer-side wallets", ret_m, -1), ("− burned", burn_m, -1)]
+        # a project whose supply enters circulating by named legs measured over the whole window (config
+        # FLOW_RELEASE_LEGS; Hyperliquid since the ledger replay, fix round 3 B1) reads them instead of the pool release
+        if config.FLOW_RELEASE_LEGS.get(name):
+            fl = config.FLOW_RELEASE_LEGS[name]
+            ret_m = "issuer_return_tokens" if (name, "issuer_return_tokens") in groups else None
+            legs = [("+ minted", mint_m, 1), *[(lab, m, 1) for lab, m in fl],
+                    ("− returned to issuer-side wallets", ret_m, -1), ("− burned", burn_m, -1)]
         note_tok = {"Sky": "MKR -> SKY conversions (converter 0xA1Ea1bA1…) enter circulating with NO series — NOT WIRED "
                            "(149.6M SKY in the 90 days to 2026-10-12, research of 2026-10-13); they are not dilution "
                            "(SPEC.md section 12, item 7) and show here as residual",
@@ -8523,6 +8774,11 @@ def flow_statements(groups: dict, asof) -> list[dict]:
                 # T1 (fix round 2): a residual beyond ±0.5% with NO named cause (a leg short of the quarter, a basis
                 # change, a declared unwired flow) is BROKEN; with one it is CHECK and the cause is on the line
                 lead = f"residual {pct:+.2%} of opening is unexplained by the series"
+                if any(" covers " in w for w in why):
+                    # V6 (Jake's round-2 run, GEODNET Q-4 +2.71%): a leg short of the quarter is a COVERAGE gap — the
+                    # expected closing lacks the uncovered days' flow — not a measured difference
+                    lead = (f"residual {pct:+.2%} of opening is a COVERAGE gap (a leg is short of the quarter — the "
+                            f"expected closing lacks its uncovered days), not a measured difference")
                 tok["status"].append(("CHECK — " + "; ".join([lead] + why)) if why else f"BROKEN — {lead}; no named cause")
             else:
                 tok["status"].append(("CHECK — " + "; ".join(why)) if why else "OK — balances within ±0.5%")
@@ -8548,7 +8804,7 @@ def flow_statements(groups: dict, asof) -> list[dict]:
                         "Note": note})
         # ---- VALUE FLOW ----
         rev_m = config.revenue_headline_metric(name)
-        rb = config.revenue_base_metric(name)
+        rb = config.revenue_ratio_base_metric(name)
         hv = config.HOLDER_VALUE.get(name) or {}
         vrows = {}
         series = {"fees": config.fees_headline_metric(name), "revenue": rev_m, "retired": "retired_buyback_usd",

@@ -40,7 +40,8 @@ def _groups(project: str, extra_rows: list | None = None) -> dict:
     import build_workbook as bw
     import store as sm
     from real_dump import load, to_store
-    key = (project, repr(extra_rows))
+    import real_dump
+    key = (project, repr(extra_rows), real_dump.VINTAGE)
     if key in _CACHE:
         return _CACHE[key]
     payload = load(project)
@@ -69,7 +70,8 @@ def _groups(project: str, extra_rows: list | None = None) -> dict:
 def test_the_reference_table_loads_and_grades():
     import references as rf
     rows = rf.load()
-    assert len(rows) == 63 and {"project", "metric", "value", "tolerance", "source_type"} <= set(rows[0])
+    assert len(rows) == 64 and {   # round 3 B7: + the end-Q1 on-chain Chainlink Reserve row
+        "project", "metric", "value", "tolerance", "source_type"} <= set(rows[0])
     assert rf.tolerance("0.5%", "1") == ("rel", 0.005)
     assert rf.tolerance("1pp", "0.5") == ("abs", 0.01)
     assert rf.tolerance("exact", "2860943.76") == ("exact", pytest.approx(0.005))
@@ -107,7 +109,7 @@ def test_references_on_the_real_dumps():
         assert hl[m]["status"] == "VERIFIED", hl[m]
     uni = {r["metric"]: r for r in rf.check(_groups("Uniswap"))}
     assert uni["growth_budget_paid_2026"]["status"] == "VERIFIED"
-    assert "12,500,001.19" in uni["franchiser_recall_inflow"]["detail"]
+    assert uni["franchiser_recall_inflow"]["status"] == "VERIFIED"      # round 3 B7: the reference is 12,500,001.19
     geod = {r["metric"]: r for r in rf.check(_groups("GEODNET"))}
     assert geod["mining_pool_wallets"]["status"] == geod["team_investor_ecosystem_vendor_publicsale_wallets"]["status"] \
         == "VERIFIED"
@@ -188,8 +190,9 @@ def test_sky_rewards_split_by_funding_period():
 def test_aerodrome_team_emission_from_the_minter_formula():
     g = _groups("Aerodrome")
     tm = g[("Aerodrome", "issuer_mint_tokens")]
-    # the rebase row dated 2026-10-01 is the 2026-10-08 flip: 228 x (489,618.34 + 8,969,149.54) / 9,772
-    row = tm[pd.to_datetime(tm["date"]) == pd.Timestamp("2026-10-01")]
+    # the 2026-10-08 flip's rebase (stored dated 2026-10-01, re-dated to its flip in round 3 B4): 228 x (489,618.34 +
+    # 8,969,149.54) / 9,772
+    row = tm[pd.to_datetime(tm["date"]) == pd.Timestamp("2026-10-08")]
     assert float(row["value"].iloc[0]) == pytest.approx(220_690, rel=1e-4)     # the on-chain transfer: 220,689.5
     zero = tm[pd.to_datetime(tm["date"]) == pd.Timestamp("2025-12-04")]
     assert float(zero["value"].iloc[0]) == 0.0                                  # teamRate 0 (2025-10-09..2026-02-26)

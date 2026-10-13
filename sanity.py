@@ -38,6 +38,22 @@ def _num(v):
     return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
 
 
+def stated_number(v):
+    """A cell's value as a number, counting a STATED number too (fix round 3, V2: the fixed-supply convention writes
+    "0 — fixed supply: <why>" — a value of 0 with its reason, not an n/a). A text whose first token is a number
+    followed by " — " is that number; any other text is None."""
+    n = _num(v)
+    if n is not None or not isinstance(v, str):
+        return n
+    head = v.strip().split(" — ", 1)
+    if len(head) < 2:
+        return None
+    try:
+        return float(head[0].replace(",", ""))
+    except ValueError:
+        return None
+
+
 def _rows(wb, sheet: str) -> dict:
     """{project: {header: (row, col)}} for the first table of a Master / A-tab sheet."""
     ws = wb[sheet]
@@ -154,7 +170,7 @@ def lost_headlines(wb, previous: dict, headline_cells: list, prev_date: str = ""
             now = X.value(hc["sheet"], cell.row, cell.column)
         except Exception as e:  # noqa: BLE001
             now = f"unevaluable ({type(e).__name__})"
-        if _num(now) is None:
+        if stated_number(now) is None:
             out.append((hc["project"], "headline_lost",
                         f"{hc['sheet'][:2]} {hc['header'][:70]}: {was:,.6g} in the previous run ({prev_date}), now "
                         f"{str(xlcalc.display(now) if not isinstance(now, str) else now)[:80]}"))

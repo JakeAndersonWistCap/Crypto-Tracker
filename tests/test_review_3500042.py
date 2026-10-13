@@ -93,8 +93,9 @@ def test_net_holder_yield_names_the_starved_outflow_leg_on_the_real_maple_dump(t
     nhy = _get(o, "NET HOLDER YIELD")
     # alignment round 2026-10-13 (B10): Maple's staker inflation ended (MIP-019; Drips to 2025-12-31) — outflow (a) now
     # reads a DECLARED 0 over Q0, and the starved leg is the young unlock series (e), named with its coverage
-    assert nhy.startswith("BLOCKED — unequal coverage") and "outflow a covers 90 days" in nhy \
-        and "outflow e covers 1 days" in nhy, nhy
+    # round 3 W4: (b) is now Maple Drips (drips_rewards_tokens), read by a log scan the dump predates — the cell names
+    # that leg and why, rather than a smaller dilution (a missing leg is a gap, never a smaller outflow)
+    assert "outflow (b) = drips_rewards_tokens" in nhy and "no rows stored" in nhy, nhy
 
 
 def test_a_blocked_or_empty_outflow_leg_blocks_the_category_with_its_reason(monkeypatch):

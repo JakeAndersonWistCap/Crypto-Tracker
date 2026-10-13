@@ -17,7 +17,7 @@ Uniswap,total_supply,1000000000,UNI,2026-10-13,primary (eth_call totalSupply),,e
 Uniswap,dead_address_balance,112860000,UNI,2026-10-13,primary (eth_call balanceOf 0xdead),,0.5%,includes 100M treasury burn 2025-12-27 20:33 UTC (tx 0x091f0083...)
 Uniswap,timelock_balance,262250000,UNI,2026-10-13,primary (eth_call),Timelock 0x1a9C8182...35BC,0.5%,
 Uniswap,growth_budget_paid_2026,20000000,UNI,2026-10-01,primary (UNIVesting 0xca046a83 withdrawals),5M on 2026-01-05 / 04-10 / 07-14 / 10-01 to 0xaBA63748...926F,exact,category (d)
-Uniswap,franchiser_recall_inflow,12500000,UNI,2026-06-01,primary (Timelock transfers; proposal #97),,exact,return to issuer wallet (token flow)
+Uniswap,franchiser_recall_inflow,12500001.19,UNI,2026-06-01,primary (Timelock transfers; proposal #97),,exact,return to issuer wallet (token flow); corrected 2026-10-13 from 12500000 (Jake round 3 B7)
 Aerodrome,tail_emission_rate,21,bps/week,2026-10-13,primary (Minter 0xeB018363 tailEmissionRate),,exact,21 since 2025-10-23
 Aerodrome,team_rate,228,bps,2026-10-13,primary (Minter teamRate),team wallet 0xbde0c70b...ea5a,exact,applied to frozen weekly 8969150 -> ~220.7K AERO/week
 Aerodrome,weekly_lp_emissions,4180000,AERO,2026-10-08,primary (aero.xyz/economics/metrics),https://aero.xyz/economics/metrics/,2%,week of 8 Oct 2026
@@ -52,7 +52,8 @@ Fluid,treasury_to_team_rewards,750000,FLUID,2026-05-23,primary (Tally #131),http
 Fluid,treasury_to_team_agi3_locked,5000000,FLUID,2026-08-07,primary (Tally #137),https://www.tally.xyz/gov/instadapp/proposal/137,exact,legally locked until 2030
 Aethir,dat_holding_axe_compute,2655414499,ATH,2026-06-30,primary (SEC 10-Q AGPU),https://www.sec.gov/Archives/edgar/data/1446159/000117184326005556/agpu20260630_10q.htm,exact,was 2837163868 at 2025-12-31
 Aethir,circulating_schedule_oct_2026,24050000000,ATH,2026-10-01,primary (docs ath-circulating-supply),https://docs.aethir.com/aethir-tokenomics/ath-circulating-supply.md,0.5%,Dec 2026 25.54B
-Chainlink,reserve_holdings_end_q1_2026,3060000,LINK,2026-03-31,primary (Chainlink Q1 2026 review),https://chain.link/blog/quarterly-review-q1-2026,1%,+1473379 LINK in Q1 2026
+Chainlink,reserve_holdings_2026-04-15,3060000,LINK,2026-04-15,primary (Chainlink Q1 2026 review),https://chain.link/blog/quarterly-review-q1-2026,1%,Chainlink's figure; re-dated 2026-10-13 from 2026-03-31 (Jake round 3 B7); +1473379 LINK in Q1 2026
+Chainlink,reserve_holdings_end_q1_2026,2795491,LINK,2026-03-31,primary (on-chain LINK.balanceOf(Reserve) at end-Q1),,exact,added 2026-10-13 (Jake round 3 B7): the end-of-Q1 on-chain balance
 Chainlink,staking_community_rate,0.0432,ratio,2026-10-13,primary (chain.link/economics/staking),https://chain.link/economics/staking,0.3pp,4.5% floor less 4% delegation; caps 45M / 40.875M
 Chainlink,quarterly_release,18750000,LINK,2026-Q3,secondary (press) + tracker,https://ambcrypto.com/will-chainlink-face-sell-pressure-after-massive-token-unlock/,exact,
 NEAR,fefundsadmin_alltime_inflow,1883709,NEAR,2026-10-13,primary-ish (revenue.near.org; footer says illustrative),https://revenue.near.org/,2%,

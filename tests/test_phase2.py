@@ -45,7 +45,7 @@ def _rate(wb, X, key):
     return _data(wb, X, key, "q0") / (cov if isinstance(cov, (int, float)) else 90)
 
 
-def test_cp_on_the_real_aerodrome_dump(tmp_path, monkeypatch):
+def test_cp_on_the_real_aerodrome_dump(tmp_path, monkeypatch, dumps_20261009):
     """Float = circulating − locked; voter fees are credited holder value and the Foundation's buys are recorded but
     never credited (its voting rewards are already inside the credited fees); subsidy cover = revenue ÷ $ (b) per day."""
     import xlcalc
@@ -87,7 +87,7 @@ def test_cp_on_the_real_aerodrome_dump(tmp_path, monkeypatch):
     assert "veAERO" in _get(o, "Lock terms per yield")
 
 
-def test_cp_net_holder_yield_and_whole_token_yield_on_the_real_pendle_dump(tmp_path, monkeypatch):
+def test_cp_net_holder_yield_and_whole_token_yield_on_the_real_pendle_dump(tmp_path, monkeypatch, dumps_20261009):
     import xlcalc
     wb, rows = _built(tmp_path, monkeypatch, "Pendle")
     X = xlcalc.Workbook(wb)
@@ -96,7 +96,9 @@ def test_cp_net_holder_yield_and_whole_token_yield_on_the_real_pendle_dump(tmp_p
     dil = sum(_get(o, f"Outflow ({c})") for c in ("b", "e"))
     assert _get(o, "NET HOLDER YIELD") == pytest.approx(hvy - dil / mc)
     assert _get(o, "Whole-token yield — protocol") < _get(o, "Staker yield — protocol")
-    assert _get(o, "SUBSIDY COVER") > 0
+    # V1 (Jake's round-2 run): Pendle's gauge emissions are read on 3 of its 9 chains — the denominator is known to be
+    # incomplete, so the ratio is BLOCKED (unequal coverage), never a number
+    assert str(_get(o, "SUBSIDY COVER")).startswith("BLOCKED — unequal coverage")
     # the four CP headlines are Credibility rows and Trajectory rows with declared directions
     hids = {r["hid"] for r in rows if r["key"].startswith("CP")}
     assert {"cp_float", "cp_hvy", "cp_nhy", "cp_subsidy_cover"} <= hids

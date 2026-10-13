@@ -19,7 +19,7 @@ sys.path.insert(0, str(ROOT / "tests"))
 
 
 # ----------------------------------------------------------------------------------------------- 6 FDV history
-def test_fdv_history_section_cj_moves_coingeckos_pre_handover_totals_on_the_real_dump(tmp_path):
+def test_fdv_history_section_cj_moves_coingeckos_pre_handover_totals_on_the_real_dump(tmp_path, dumps_20261009):
     """Decision 6: CoinGecko's pre-handover total_supply rows move to total_supply_coingecko (values untouched), so the
     archive can fill total_supply from the chain at past blocks. The real Pendle dump holds 21 CoinGecko totals."""
     import builtins
@@ -72,7 +72,7 @@ def test_fdv_history_archive_reads_on_chain_first_totals_labelled_pre_handover()
 
 
 # ----------------------------------------------------------------------------------------------- 7 the basis rule
-def test_a_change_of_basis_is_a_series_break_never_a_trend_on_the_real_dump(tmp_path, monkeypatch):
+def test_a_change_of_basis_is_a_series_break_never_a_trend_on_the_real_dump(tmp_path, monkeypatch, dumps_20261009):
     """Decision 7: Aerodrome's circulating moved to the on-chain set on 2026-10-07 (circulating_supply_used, and the
     non-circulating wallet set 3 -> 7 that day). Every row reading it says SERIES BREAK 2026-10-07 and carries no QoQ,
     growth or direction; Q0 still equals the headline cell. A row reading no changed series has no break."""
@@ -325,7 +325,7 @@ def test_q4_prices_come_from_defillama_before_coingeckos_year_on_the_real_dump(t
 
 
 # ----------------------------------------------------------------------------------------------- Phase 1 review, item 8c
-def test_eth_validator_yield_has_history_from_the_spec_formula_on_the_real_dump(tmp_path, monkeypatch):
+def test_eth_validator_yield_has_history_from_the_spec_formula_on_the_real_dump(tmp_path, monkeypatch, dumps_20261009):
     """Item 8c: consensus rewards before Etherscan's first Eth2Staking read = the spec's 166.32 x sqrt(staked ETH) / 365
     on that day's staked ETH, scaled to the measured series over their overlap (k on every row). The validator yield
     then reads every quarter; Q0 is unchanged in kind (the measured days stay measured)."""
@@ -389,7 +389,7 @@ def aerodrome_restated(payload: dict) -> dict:
     return {**payload, "metrics": rows}
 
 
-def test_aerodrome_circulating_restated_on_the_onchain_basis_has_no_jump_on_the_real_dump(tmp_path, monkeypatch):
+def test_aerodrome_circulating_restated_on_the_onchain_basis_has_no_jump_on_the_real_dump(tmp_path, monkeypatch, dumps_20261009):
     """Item 2 of Jake's Phase 1 review: the workbook read CoinGecko's 1,004.5M (it excludes every veAERO lock) before
     2026-10-07 and the on-chain set's 1,516.8M after — a fake +51% at 10-07. CoinGecko never stands in now, and with
     the history restated on the on-chain basis (real archive reads) every quarter is on that basis: no SERIES BREAK,

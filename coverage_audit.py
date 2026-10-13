@@ -196,7 +196,7 @@ def audit(wb, trajectory_rows: list[dict] | None = None, flows_rows: list[dict] 
                      "SPEC formula": con.get("formula", spec.SUPPORT.get(key, "")),
                      "MATCHES-SPEC": "yes — re-runs the column's own builder k quarters back"})
     if groups is not None:
-        rows.extend(reference_rows(wb, X, groups, rows))
+        rows.extend(reference_rows(wb, X, groups, rows, flows_rows))
     rows.extend(regression_rows(sanity_hits or ()))
     for item, route in not_wired():
         rows.append({"Tab": "(not on a tab)", "Column": item, "Key": "", "Project": "(all)", "Value now": "",
@@ -325,11 +325,11 @@ def _headline_reader(wb, X):
     return headline
 
 
-def reference_rows(wb, X, groups: dict, audited: list[dict]) -> list[dict]:
+def reference_rows(wb, X, groups: dict, audited: list[dict], flows_rows: list[dict] | None = None) -> list[dict]:
     """The independent reference checks (references.py) as Coverage rows; a reference on a headline also grades the
     headline's own row in `audited` (VERIFIED / BROKEN / CHECK, both values in the reason)."""
     import references                                      # noqa: PLC0415
-    results = references.check(groups, headline=_headline_reader(wb, X))
+    results = references.check(groups, headline=_headline_reader(wb, X), flows=flows_rows)
     for x in results:
         route = references.ROUTES.get((x["project"], x["metric"])) or ()
         if not route or route[0] != "headline" or x["status"] not in ("VERIFIED", "BROKEN", "CHECK"):

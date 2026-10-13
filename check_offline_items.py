@@ -2423,6 +2423,97 @@ def aero_team_rate():
               "tx) to config.ISSUER_MINTS['Aerodrome']['rate_by_flip'], or the new wallet, before the next build.")
 
 
+def near_revenue_wallet_flows():
+    """NEAR'S THREE REVENUE WALLETS — ALL-TIME INFLOWS AND OUTFLOWS, EACH OUTFLOW TRACED ONE HOP (round 3 B5, Jake
+    2026-10-13). NearBlocks v3 /accounts/{a}/receipts (native NEAR, receipt level: a DAO's payout is a receipt inside
+    its act_proposal transaction, which /txns does not show) and /accounts/{a}/ft-txns (wNEAR, USDC), paged to the end.
+    Every outflow to an account outside the three is followed one hop (that account's receipts): forwarded to a bridge
+    -> BRIDGED OUT, NOT RETIRED; anything else -> LEFT THE THREE, NOT RETIRED. Under the rule of 2026-10-10 only NEAR
+    still HELD in the three counts as retired. Compare with config.NEAR_REVENUE_OUTFLOWS (research 2026-10-13)."""
+    import datetime                                        # noqa: PLC0415
+
+    import config                                          # noqa: PLC0415
+    head("NEAR — the three revenue wallets: all-time in / out, every outflow traced (NearBlocks v3)")
+    try:
+        from dotenv import load_dotenv                    # noqa: PLC0415
+        load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
+    except ImportError:
+        pass
+    key = os.environ.get("NEARBLOCKS_API_KEY", "").strip()
+    hdr = {"Authorization": f"Bearer {key}"} if key else {}
+    base = "https://api.nearblocks.io"
+    wallets = tuple(config.PROJECT_BY_NAME["Near"]["nearblocks"]["balance_history"]["accounts"])
+
+    def page_all(path, cap=400):
+        rows, cursor = [], None
+        for _ in range(cap):
+            try:
+                r = requests.get(base + path, params={"limit": 100, **({"next": cursor} if cursor else {})},
+                                 headers=hdr, timeout=TIMEOUT)
+            except Exception as e:  # noqa: BLE001
+                return rows, f"UNREACHABLE ({type(e).__name__})"
+            if r.status_code != 200:
+                return rows, f"HTTP {r.status_code}"
+            body = r.json()
+            rows += body.get("data") or []
+            cursor = (body.get("meta") or {}).get("next_page")
+            time.sleep(1.1 if not key else 0.3)
+            if not cursor or not body.get("data"):
+                return rows, "complete"
+        return rows, f"stopped at {cap} pages"
+
+    def when(r):
+        ts = r.get("included_in_block_timestamp") or (r.get("block") or {}).get("block_timestamp") or r.get(
+            "block_timestamp")
+        return datetime.datetime.utcfromtimestamp(int(ts) / 1e9).strftime("%Y-%m-%d")
+
+    outs = []
+    for a in wallets:
+        rows, how = page_all(f"/v3/accounts/{a}/receipts")
+        inn, out = {}, {}
+        for r in rows:
+            if (r.get("outcome") or {}).get("status") is False:
+                continue
+            dep = float((r.get("actions_agg") or {}).get("deposit") or 0) / 1e24
+            frm, to = r.get("predecessor_account_id"), r.get("receiver_account_id")
+            if to == a and frm != a:
+                inn[frm] = inn.get(frm, 0.0) + dep
+            elif frm == a and to != a and dep > 0:
+                out[to] = out.get(to, 0.0) + dep
+                if to not in wallets and dep >= 1:
+                    outs.append((when(r), a, to, dep, r.get("transaction_hash")))
+        print(f"\n  {a}: {len(rows)} receipt(s), {how}")
+        print(f"    native IN  {sum(inn.values()):>16,.2f} NEAR — top: "
+              + ", ".join(f"{k[:28]} {v:,.0f}" for k, v in sorted(inn.items(), key=lambda x: -x[1])[:4]))
+        print(f"    native OUT {sum(out.values()):>16,.2f} NEAR — "
+              + (", ".join(f"{k[:28]} {v:,.2f}" for k, v in sorted(out.items(), key=lambda x: -x[1])[:6]) or "none"))
+        ft, how2 = page_all(f"/v3/accounts/{a}/ft-txns")
+        agg = {}
+        for r in ft:
+            dec = int((r.get("meta") or {}).get("decimals") or 0)
+            v = float(r.get("delta_amount") or 0) / 10 ** dec
+            k = ((r.get("meta") or {}).get("symbol") or r.get("contract_account_id", "")[:16], r.get("involved_account_id"))
+            agg[k] = agg.get(k, 0.0) + v
+        print(f"    FT: {len(ft)} row(s), {how2}" + ("" if not agg else " — " + "; ".join(
+            f"{s_} {'from' if v > 0 else 'to'} {w[:28]} {abs(v):,.2f}" for (s_, w), v in
+            sorted(agg.items(), key=lambda x: -abs(x[1]))[:6])))
+    print("\n  EVERY NATIVE OUTFLOW OUTSIDE THE THREE, ONE HOP ON:")
+    for d, a, to, dep, tx in sorted(outs):
+        nxt, _how = page_all(f"/v3/accounts/{to}/receipts", cap=2)
+        fwd = [(r.get("receiver_account_id"), float((r.get("actions_agg") or {}).get("deposit") or 0) / 1e24)
+               for r in nxt if r.get("predecessor_account_id") == to]
+        bridged = any("bridge" in str(t) for t, _v in fwd)
+        verdict = "BRIDGED OUT — not retired" if bridged else "LEFT THE THREE — not retired (destination unclassified)"
+        print(f"    {d}  {a[:26]:<26} -> {to[:20]}…  {dep:>12,.2f} NEAR  tx {str(tx)[:12]}…  onward: "
+              + (", ".join(f"{t} {v:,.2f}" for t, v in fwd[:3]) or "none seen") + f"  => {verdict}")
+    known = {(o["date"], round(o["tokens"])) for o in config.NEAR_REVENUE_OUTFLOWS}
+    new = [o for o in outs if (o[0], round(o[3])) not in known and o[3] >= 1000]
+    print("\n  VERDICT: " + ("every outflow of 1,000 NEAR or more is on config.NEAR_REVENUE_OUTFLOWS" if not new else
+                            f"{len(new)} outflow(s) of 1,000+ NEAR NOT on config.NEAR_REVENUE_OUTFLOWS — add them "
+                            f"(dated, traced, classified) before reading the buyback: "
+                            + "; ".join(f"{o[0]} {o[1]} {o[3]:,.0f}" for o in new)))
+
+
 def near_buyback_inflow_probe():
     """NEAR actual_buyback_tokens — WHAT DID THE NEARBLOCKS CALL RETURN? 2026-09-24.
 
@@ -11780,7 +11871,7 @@ CHECKS = (
     sky_splitter, sky_splitter_params, sky_splitter_history,
     solana, injective, near, etherfi_sethfi,
     maple_dao_multisig, pendle_spendle_virtual, pendle_compounding_ledger, aerodrome_lock_inputs,
-    uniswap_firepit_threshold, near_buyback_inflow_probe, aero_team_rate,
+    uniswap_firepit_threshold, near_buyback_inflow_probe, aero_team_rate, near_revenue_wallet_flows,
     fluid_buyback_destination, aethir_staking_probe, aethir_wrapper_relationship,
     aethir_veaethir_probe, geodnet_staking_candidates, geod_candidate_wallets, sky_lssky_releases, geod_residual, alchemy_base_logs, near_buyback_wallets, sky_ba_endpoints, chainlink_revenue_coverage,
     maple_transparency, sky_burn_breakdown, geod_solana_burn_account, near_block_supply,

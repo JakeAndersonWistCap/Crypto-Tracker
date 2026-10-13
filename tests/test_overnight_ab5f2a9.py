@@ -37,7 +37,7 @@ def _data(wb, X, key, col):
 
 
 # ------------------------------------------------------------------------------------------- 17 Total Yield
-def test_chainlink_total_yield_subtracts_the_reward_vault_payouts_on_the_real_dump(tmp_path, monkeypatch):
+def test_chainlink_total_yield_subtracts_the_reward_vault_payouts_on_the_real_dump(tmp_path, monkeypatch, dumps_20261009):
     """Item 17: supply is fixed, but staking rewards come out of the issuer-funded Reward Vault (outside the 27
     non-circulating wallets, whose own releases are the net figure's basis). Total Yield subtracts them."""
     import xlcalc
@@ -320,7 +320,7 @@ def _with_business(monkeypatch):
     return rows
 
 
-def test_business_and_market_share_headlines_on_the_real_aerodrome_dump(tmp_path, monkeypatch):
+def test_business_and_market_share_headlines_on_the_real_aerodrome_dump(tmp_path, monkeypatch, dumps_20261009):
     import xlcalc
     rows = _with_business(monkeypatch)
     wb, traj = _built(tmp_path, monkeypatch, "Aerodrome")

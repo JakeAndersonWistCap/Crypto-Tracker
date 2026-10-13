@@ -888,6 +888,25 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                 f"Add a dune_queries entry for {name}/{metric} in config.py, or a sources.yaml entry if the "
                 f"protocol publishes the figure itself.")
 
+    # ROUND 3 READERS (2026-10-13): each new series names its own reader rather than "no source configured"
+    r3 = {"protocol_tvl_constant_price_usd": (
+              "DefiLlama /protocol/{slug} returned no `tokens` / `tokensInUsd` for this protocol this run (the TVL at "
+              "the latest day's prices is computed from them — fetch/llama.py constant_price_tvl)",
+              "Check the Run Log's defillama line for {name}; the protocol's own TVL row (protocol_tvl_usd) uses the "
+              "same response."),
+          "staker_yield_community_pool": (
+              "the RewardVault read (fetch/reward_vault.py) stored no community-pool rate this run — it needs "
+              "getRewardBuckets() and CommunityStakingPool.getTotalPrincipal() at the same block",
+              "Check the Run Log's rewardvault line for {name} (an RPC failure, or a pool whose typeAndVersion is not "
+              "CommunityStakingPool)."),
+          "boros_volume_usd": (
+              "the Boros reader (fetch/boros.py, api-boros.pendle.finance) stored nothing this run — it reads once a "
+              "day, at the API's own pace (one export every 6.5 s; the first run ~22 min)",
+              "Check the Run Log's boros_api line for {name}: a 429 waits the minute out; a failure stores nothing "
+              "(a market missing would understate the day).")}
+    if metric in r3:
+        why, fix = r3[metric]
+        return why, fix.format(name=name)
     return ("no source configured for this metric", f"Add a source for {name}/{metric}.")
 
 

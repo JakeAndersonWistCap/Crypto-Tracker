@@ -230,6 +230,15 @@ class SkyAccounting:
                                         tier=TIER, basis=f"{mo}: Block Analitica {formula} {v:,.0f} vs the reported "
                                                          f"{reported[mo]:,.0f} ({v / reported[mo] - 1:+.1%}) — re-check "
                                                          f"the reported month at source")
+                # NET REVENUE BEFORE DISTRIBUTIONS (round 3 Q2, Jake 2026-10-13): revenue − expense, every month from
+                # 2025-01 — the base of the payout ratios (config.revenue_ratio_base_metric). The distribution is holder
+                # value and stays out of the subtraction.
+                pre_m = spec["metrics"].get("net_revenue")
+                if pre_m:
+                    self._store(out, name, pre_m, cands["revenue-expense"], last_complete,
+                                f"{SOURCE}:pnl.revenue-expense",
+                                "net revenue before distributions = revenue − expense (the revenue distribution is "
+                                "not deducted: it is holder value)")
                 # REVENUE ALLOCATION (SKY buyback + USDS distribution) = revenue_distribution less Security and
                 # Maintenance — set beside our flapper buyback $ + the USDS minted to the lsSKY farm, month by month.
                 alloc_m = spec["metrics"].get("revenue_allocation")

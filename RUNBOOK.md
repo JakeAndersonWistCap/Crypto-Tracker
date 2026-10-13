@@ -527,6 +527,59 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11by. Fix round 3 — HL ledgers, Sky's ratio base, Chainlink / Pendle double counts, Aerodrome dating, W1–W7 (2026-10-13)
+
+**Run after pulling (PowerShell, repo root):**
+```
+git pull
+python token_metrics.py
+python archive_backfill.py --run --project Ether.fi
+python check_offline_items.py near_revenue_wallet_flows
+```
+- `token_metrics.py` runs the new readers once a day each: `hl_ledger` (Hyperliquid's team / Foundation / Grants ledgers
+  replayed from genesis; refuses to store unless the replayed end level matches the live state), `merkl_campaigns`
+  (Morpho's campaigns paid off Ethereum), `boros` (every Boros market's daily volume — the FIRST run reads ~200 markets
+  at the API's own pace, one call every 6.5 s ≈ 22 min; matured markets are cached in `.cache/boros/`, later runs read
+  the live ones only). New log scans read their full history once: Chainlink's staking path (3 scans), Maple Drips
+  (`drips_out`), Ether.fi's cashback on OP (`cashback_out_optimism`), Pendle's issuer → gauge transfers. Sky's
+  `sky_accounting` now also stores revenue − expense (every month from 2025-01). The reward vault read adds the
+  community pool's own rate.
+- `archive_backfill.py --project Ether.fi` fills `eth_staked_etherfi_tokens` (eETH supply = ETH staked through ether.fi)
+  for the past year and the issuer wallets' sETHFI share reads.
+- `near_revenue_wallet_flows` pages the three NEAR revenue wallets' whole history on NearBlocks v3 and traces every
+  outflow one hop; the expected verdict is "every outflow of 1,000 NEAR or more is on config.NEAR_REVENUE_OUTFLOWS".
+
+**What changed (SPEC.md section 14 lists every amendment old → new):**
+- **Sky's payout-type ratios** (payout ratio on the net basis, supplier payout, the coverage ratio, the Flows value
+  statement) divide by revenue − expense BEFORE distributions (`net_revenue_pre_distribution_usd`); the implied buyback
+  stays on NPS (Stage 2's shares are % of NPS). `config.revenue_ratio_base_metric`.
+- **Hyperliquid (e), NHY, dilution and Total Yield** read the replayed ledgers (`*_replay` series, prepended to the
+  live reads as their history). The rewards history before the first stored read is MODELLED (k/√S calibrated on the
+  Grants wallet's daily rate) and labelled so everywhere.
+- **Chainlink**: the LINK that funds the staking reward vault is taken out of (e) per transfer (FIFO through
+  0xD50f074E…), so it counts once, in (a). The community pool's own rate is stored apart (4.32%).
+- **Aerodrome**: every weekly row (gross issuance, rebase) is dated by the flip that PAID it (read-time, the whole
+  history); the epoch in progress is left out until its flip. The team emission takes the rate of its own flip.
+- **Morpho (b)** adds the DAO multisig's Merkl campaigns paid on Base / Katana / Arbitrum; campaigns that pay on
+  Ethereum (Arc, Tempo, Unichain) stay in the Ethereum claims, never twice.
+- **W1–W7**: TVL at one date's prices (protocols) and ETH staked (Ether.fi) as Business series; Boros $ volume; Ether.fi's
+  cashback (only what its purchases did not cover is (c)); Maple Drips (b); leakage (i) and (iii); insider share of the
+  stake for sETHFI / stSYRUP / sPENDLE; Pendle's issuer → gauge transfers out of (e).
+- Until each new leg's first read, its category reads BLOCKED with the leg named; the regression guard allow-lists them
+  to 2026-10-27 (`config.REGRESSION_ALLOWLIST`).
+
+**From Jake's round-2 run (3761553), V1–V6:**
+- **Subsidy cover** reads BLOCKED — unequal coverage where the incentive denominator is known to be incomplete
+  (`config.OUTFLOW_INCOMPLETE`: Fluid, Aethir, Pendle), naming what is missing. Morpho reads a number again once the
+  Merkl campaigns are stored.
+- **Regression guard**: a stated number ("0 — fixed supply: …") is a value, never a lost headline.
+- **Chainlink's quarterly-release reference** reads the Flows tab's own release line and Q0 window.
+- **Flows**: a residual from a leg short of the quarter is named a COVERAGE gap.
+- The DefiLlama price cross-check (price_usd_llama) was fixed in round 2 (R7, batched under the 500-point cap); this
+  run read 453–456 days for all 15 projects. A test now pins every call at or under 500 points.
+- **Fixtures**: Jake's 10-13 dumps are `fixtures/real_*.json`; the six 10-09 dumps they replaced stay as
+  `fixtures/vintage_20261009/` for the tests built around a 10-09 case (opted in by the `dumps_20261009` fixture).
+
 ## 11bx. Fix round 2 — references, flows, restatements, research corrections (2026-10-13)
 
 **Run after pulling (PowerShell, repo root):**

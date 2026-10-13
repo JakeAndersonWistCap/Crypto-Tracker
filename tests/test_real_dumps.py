@@ -18,7 +18,7 @@ from real_dump import evaluate_real, load, long_frame  # noqa: E402
 import config  # noqa: E402
 
 
-def test_real_ethereum_net_change_is_judged_over_the_issuance_rows_of_the_common_days(tmp_path, monkeypatch):
+def test_real_ethereum_net_change_is_judged_over_the_issuance_rows_of_the_common_days(tmp_path, monkeypatch, dumps_20261009):
     """1. a4_net_change: ours = our issuance rows of the common days (each row spans the days since the supply last
     moved), never the full Q0 sum."""
     o = evaluate_real(tmp_path, monkeypatch, "Ethereum")
@@ -30,7 +30,7 @@ def test_real_ethereum_net_change_is_judged_over_the_issuance_rows_of_the_common
     assert "OURS, same 10 day(s)" in row["note"] and abs(float(row["ours"]) - 28_721.6) < 1, row
 
 
-def test_real_chainlink_release_is_zero_and_a1_is_na(tmp_path, monkeypatch):
+def test_real_chainlink_release_is_zero_and_a1_is_na(tmp_path, monkeypatch, dumps_20261009):
     """2a/b/c: the 27 wallets hold the same at both Q0 ends with no transfers — the release is 0 and PASSes; A1 is
     n/a by definition; a3_buyback_locked is recorded N/A."""
     o = evaluate_real(tmp_path, monkeypatch, "Chainlink")
@@ -48,7 +48,7 @@ def test_real_plume_circulating_has_a_figure(tmp_path, monkeypatch):
     assert o["in_circ"]["verdict"] != "CHECK (no figure)", o["in_circ"]
 
 
-def test_real_aerodrome_price_finding_and_one_price_epoch_row(tmp_path, monkeypatch):
+def test_real_aerodrome_price_finding_and_one_price_epoch_row(tmp_path, monkeypatch, dumps_20261009):
     """4a/b/d: AERO rose over Q0 -> the today's-price APR is a VERIFIED FINDING beside the headline; the per-epoch row
     uses one price on both sides; the epoch rows are PASS, or MATURING until 2026-10-10 while DefiLlama's last day is
     missing."""
@@ -66,7 +66,7 @@ def test_real_aerodrome_price_finding_and_one_price_epoch_row(tmp_path, monkeypa
             assert "2026-10-01" in o[k]["note"] and "on-chain" in o[k]["note"], o[k]["note"]
 
 
-def test_real_pendle_headline_cell_equals_the_python(tmp_path, monkeypatch):
+def test_real_pendle_headline_cell_equals_the_python(tmp_path, monkeypatch, dumps_20261009):
     """5a: the headline cell equals the Python computation of the same definition on the real rows. 1b: Pendle's
     observed publish lag is 7 days (2026-09-08, the latest complete epoch at our first read); 1d: the 2026-09-22 epoch,
     read at 0, stays unpublished until 10-13. 1c (Jake's decision 2026-10-09): Pendle's aprs are 0 for every epoch, so
@@ -132,7 +132,7 @@ def _pendle_rebuild_inputs():
     return cred, s, dict(zip(g["date"], g["source"])), dict(zip(g["date"], g["fetched_at"]))
 
 
-def test_real_pendle_rebuild_takes_the_archive_to_live_fall_over_its_real_gap():
+def test_real_pendle_rebuild_takes_the_archive_to_live_fall_over_its_real_gap(dumps_20261009):
     """3 (Jake's run 2026-10-09 ~14:10): on the real rows the 10-08 read is archive (00:00) and the 10-09 read live
     (10:41) — 34.7h apart. The fall is scaled to 24h, active stays under all PENDLE locked, and no day drifts."""
     cred, s, src, at = _pendle_rebuild_inputs()
@@ -164,7 +164,7 @@ def test_real_pendle_rebuild_skips_a_day_whose_reads_are_under_20h_apart_or_exce
     assert any(d == d9 and "impossible" in w for d, w in cal2["skipped"]), cal2["skipped"]
 
 
-def test_real_aerodrome_illiquid_cap_fee_leg_finding_and_tolerances(tmp_path, monkeypatch):
+def test_real_aerodrome_illiquid_cap_fee_leg_finding_and_tolerances(tmp_path, monkeypatch, dumps_20261009):
     """Jake's run 2026-10-09 18:13 on the evening dump (every Q0 epoch stored by --seed aero_epochs):
     - the illiquid-token rule excludes $6,950,759 for 09-03 (LAPTOP $7,546,432 quoted vs $595,818 depth) and $434,141
       for 09-24 (XDP); the headline falls from 17.4% to ~12.1% and the labelled line carries the exclusion;
@@ -209,7 +209,7 @@ def test_real_every_judged_row_has_a_tolerance(tmp_path, monkeypatch):
     assert not bad, bad
 
 
-def test_real_pendle_optimism_zero_counts_with_its_evidence(tmp_path, monkeypatch):
+def test_real_pendle_optimism_zero_counts_with_its_evidence(tmp_path, monkeypatch, dumps_20261009):
     """Jake's check 2026-10-09 17:05: the Optimism gauge's last token transfer was 743 days ago — Optimism = 0, stored
     as manual rows with that evidence (manual_overrides.csv). On the real Pendle dump with those rows, Optimism is no
     longer named missing on either side of in_emissions; with Arbitrum reconciled (evening dump) the row passes.""" 

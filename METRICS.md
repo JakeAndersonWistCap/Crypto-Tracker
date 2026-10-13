@@ -1042,8 +1042,6 @@ Funding: revenue (the default: the programme documented base)
 
 Basis: staking rewards (v0.2 pools, paid for securing feeds) are security; non-circulating wallet releases are unlocks (the 18.75M tranches stay in (e), Jake C23)
 
-PENDING: C20: LINK leaving the 27 wallets toward 0xD50f074E -> … -> 0x7e10a625… (the staking reward funder) is counted in (e) AND, when emitted, in (a); route: classify releases per transfer (destination chain to 0x7e10a625…) and take that path out of (e)
-
 **Value flow statement**
 
 | Step | Series |
@@ -1119,16 +1117,14 @@ Funding: revenue (the default: the programme documented base)
 | Flow | Category | Series |
 |---|---|---|
 | into circulating | (a) security emissions | `emissions_tokens` |
-| into circulating | (b) supply-side incentives | **NO SERIES** |
+| into circulating | (b) supply-side incentives | `drips_rewards_tokens` |
 | into circulating | (c) demand-side incentives | **NO SERIES** |
 | into circulating | (d) ecosystem / grant spend | **NO SERIES** |
 | into circulating | (e) unlocks | `unlock_release_tokens` |
 | out of circulating | retirement (bought, burned + held) | `retired_buyback_tokens` |
 | out of circulating | burn (every burn) | **NO SERIES** |
 
-Basis: MIP-009 staker inflation (stSYRUP) is (a) — ended by MIP-019 (Nov 2025); Drips (b) paid SYRUP out of syrupDrip 0x509712F3… and stopped accruing 2025-12-31 (final claims to 2026-02-18, maple-docs drips-rewards.md) — no series of its own yet; Merkl incentives are partner-funded (Maple funded 8,398 syrupUSDC, no SYRUP campaigns)
-
-PENDING: Drips outflow series (SYRUP transfers out of syrupDrip)
+Basis: MIP-009 staker inflation (stSYRUP) is (a) — ended by MIP-019 (Nov 2025); Drips (b) paid SYRUP out of syrupDrip 0x509712F3… and stopped accruing 2025-12-31 (final claims to 2026-02-18, maple-docs drips-rewards.md) — drips_rewards_tokens (round 3 W4); Merkl incentives are partner-funded (Maple funded 8,398 syrupUSDC, no SYRUP campaigns)
 
 **Value flow statement**
 
@@ -1149,7 +1145,7 @@ Funding: revenue (the default: the programme documented base)
 | Flow | Category | Series |
 |---|---|---|
 | into circulating | (a) security emissions | **NO SERIES** |
-| into circulating | (b) supply-side incentives | `emissions_tokens` |
+| into circulating | (b) supply-side incentives | `emissions_tokens` + `merkl_campaigns_non_ethereum_tokens` (**not applicable here:** merkl_campaigns_non_ethereum_tokens) |
 | into circulating | (c) demand-side incentives | **NO SERIES** |
 | into circulating | (d) ecosystem / grant spend | **NO SERIES** |
 | into circulating | (e) unlocks | `unlock_release_tokens` |
@@ -1158,7 +1154,7 @@ Funding: revenue (the default: the programme documented base)
 
 Basis: MORPHO rewards (Merkl campaigns): 2025-07-14..2026-10-12 budgets ~12.96M to suppliers (b) vs ~0.27M to borrowers (c) — the claims series is not split, so it sits in (b), the ~98% leg; MORPHO now runs on the borrow side only (merkl.xyz /v4/campaigns?tokenSymbol=MORPHO, read 2026-10-12)
 
-PENDING: the claims series is Ethereum only (Base ≈38% of the budget is missing) and unsplit
+PENDING: unsplit between (b) and (c): the claims and the campaigns sit in (b), the historical ~98% leg; Ethereum is claims (lagged), the other chains the campaign schedule
 
 **Value flow statement**
 
@@ -1279,7 +1275,7 @@ Basis: SKY rewards split by funding period (config.REWARD_FUNDING): minted (to 2
 | Step | Series |
 |---|---|
 | customers pay (gross fees) | `fees_usd` |
-| the project's revenue basis | `net_protocol_surplus_usd` |
+| the project's revenue basis | `net_revenue_pre_distribution_usd` |
 | bought back ($, every funding source) | `actual_buyback_usd` |
 | paid to holders, not bought | `staking_rewards_usds_usd` |
 | holder value CREDITED (revenue-funded) | `holder_value_revenue_usd` |
@@ -1352,15 +1348,13 @@ Funding: revenue (the default: the programme documented base)
 |---|---|---|
 | into circulating | (a) security emissions | **NO SERIES** |
 | into circulating | (b) supply-side incentives | **NO SERIES** |
-| into circulating | (c) demand-side incentives | **NO SERIES** |
+| into circulating | (c) demand-side incentives | `cashback_unfunded_tokens` |
 | into circulating | (d) ecosystem / grant spend | **NO SERIES** |
 | into circulating | (e) unlocks | `unlock_release_tokens` |
 | out of circulating | retirement (bought, burned + held) | `retired_buyback_tokens` |
 | out of circulating | burn (every burn) | **NO SERIES** |
 
-Basis: user programmes are demand-side (c): the Cash ETHFI cashback (CashbackDistributor 0x38F2fBb2… on OP) paid 1,060,439 ETHFI in Q0 (from 2026-09-03; research of 2026-10-13) — NOT WIRED as a series yet; Season 5 was paid in KING (not ETHFI); Triple Dip has no identified distributor; the Sep-2025 membership drops are finished. Issuer-wallet releases are unlocks (e)
-
-PENDING: NOT WIRED (c): daily ETHFI Transfer out of 0x38F2fBb2… on OP (Blockscout explorer.optimism.io, keyless) — a new log scan on OP
+Basis: user programmes are demand-side (c): the Cash ETHFI cashback (CashbackDistributor 0x38F2fBb2… on OP, cashback_paid_tokens, round 3 W3) — only the part NOT covered by the programme's market purchases is dilution (CASHBACK_FUNDING, FR2 S2); Season 5 was paid in KING (not ETHFI); Triple Dip has no identified distributor; the Sep-2025 membership drops are finished. Issuer-wallet releases are unlocks (e)
 
 **Value flow statement**
 

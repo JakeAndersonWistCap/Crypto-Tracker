@@ -259,13 +259,15 @@ def test_window_vs_rate_adds_the_bonuses_only_on_a_full_window():
 
 
 # ----------------------------------------------------------------------------------------------- A3 / A2 on real dumps
-def test_aerodrome_absorption_subtracts_gauge_emissions_and_rebase_on_the_real_dump(tmp_path, monkeypatch):
-    """Decision A3: 53,752,722 (Minter, to gauges) + 5,699,610 (rebase) = 59,452,332 over Q0 on the 10-09 dump."""
+def test_aerodrome_absorption_subtracts_gauge_emissions_and_rebase_on_the_real_dump(tmp_path, monkeypatch, dumps_20261009):
+    """Decision A3 on the 10-09 dump: gauges + rebase over Q0. Round 3 B4 dates each weekly row by the flip that PAID
+    it: 53,622,724.80 to gauges over 13 paid flips (the epoch in progress, read 10-08, pays 10-15 — not yet) +
+    6,157,059.65 rebase over 13 flips (12 before re-dating) = 59,779,784.45 (was 53,752,722 + 5,699,610 = 59,452,332)."""
     wb, value = _build(tmp_path, monkeypatch, "Aerodrome")
-    assert _cell(wb, value, "A3", "Aerodrome", "Emissions Q0 (tokens)") == pytest.approx(59_452_331.99, abs=1)
+    assert _cell(wb, value, "A3", "Aerodrome", "Emissions Q0 (tokens)") == pytest.approx(59_779_784.46, abs=1)
 
 
-def test_chainlink_unlock_is_the_2026_10_09_release(tmp_path, monkeypatch):
+def test_chainlink_unlock_is_the_2026_10_09_release(tmp_path, monkeypatch, dumps_20261009):
     """Decision A2's test case: the 27 wallets' 18,750,000 LINK release of 2026-10-09 (read after the dump's 10:41 run;
     appended as the next day's stock under the same wallet set)."""
     from real_dump import load
@@ -279,7 +281,7 @@ def test_chainlink_unlock_is_the_2026_10_09_release(tmp_path, monkeypatch):
     assert 0.10 < _cell(wb, value, "A2", "Chainlink", "TOTAL DILUTION") < 0.13
 
 
-def test_pendle_unlocks_and_a_composition_change_is_never_an_unlock(tmp_path, monkeypatch):
+def test_pendle_unlocks_and_a_composition_change_is_never_an_unlock(tmp_path, monkeypatch, dumps_20261009):
     (tmp_path / "p").mkdir()
     (tmp_path / "a").mkdir()
     wb, value = _build(tmp_path / "p", monkeypatch, "Pendle")
@@ -524,11 +526,11 @@ def test_daily_run_ends_with_the_snapshot_and_runs_the_weekly_lockups():
 
 
 # ----------------------------------------------------------------------------------------------- Jake on e4e50b0
-def test_aerodrome_implied_buyback_is_zero_in_every_cell_on_the_real_dump(tmp_path, monkeypatch):
+def test_aerodrome_implied_buyback_is_zero_in_every_cell_on_the_real_dump(tmp_path, monkeypatch, dumps_20261009):
     """Decision 2: no protocol share of fees goes to buybacks — implied net absorption = -emissions (-59,452,332), and no
     cell applies the 100% VOTER share as a buyback split."""
     wb, value = _build(tmp_path, monkeypatch, "Aerodrome")
-    assert _cell(wb, value, "A3", "Aerodrome", "Net absorption, implied basis") == pytest.approx(-59_452_331.99, abs=1)
+    assert _cell(wb, value, "A3", "Aerodrome", "Net absorption, implied basis") == pytest.approx(-59_779_784.46, abs=1)
     for h in ("Implied buyback Q0 ($)", "Implied buyback Q0 (tokens)", "BUYBACK AS % OF SUPPLY", "Buyback % supply at Q1",
               "Buyback % supply at Q2", "Buyback % supply at Q3", "Share applied to this window",
               "Current documented share"):
@@ -760,7 +762,7 @@ def _aero_rows(day, values: dict, source="ve_managed:window"):
             for m, v in values.items()]
 
 
-def test_aerodrome_traced_purchases_fill_q0_on_the_real_dump(tmp_path, monkeypatch):
+def test_aerodrome_traced_purchases_fill_q0_on_the_real_dump(tmp_path, monkeypatch, dumps_20261009):
     """Jake 2026-10-12 (Aerodrome round, item 1): `--seed aero_buyback` stored 0 rows (no keyed BASE_RPC_URL), so the
     Q0 buyback, retirement and net absorption were empty. The six traced Safe purchases (config foundation_buyback.
     trace) are tier-3 rows on their purchase days, tx hashes in the source: 1,906,696 AERO retired (held, locked veNFT)
@@ -772,7 +774,7 @@ def test_aerodrome_traced_purchases_fill_q0_on_the_real_dump(tmp_path, monkeypat
     assert all(len(r["buy_tx"]) == 66 and len(r["forward_tx"]) == 66 for r in tr["rows"])
     wb, value = _build(tmp_path, monkeypatch, "Aerodrome", asof="2026-10-12")
     assert _cell(wb, value, "A3", "Aerodrome", "Actual buyback Q0 ($)") == pytest.approx(829_828)
-    assert _cell(wb, value, "A3", "Aerodrome", "Net absorption Q0 (tokens)") == pytest.approx(-57_545_636, abs=1)
+    assert _cell(wb, value, "A3", "Aerodrome", "Net absorption Q0 (tokens)") == pytest.approx(-57_873_088.20, abs=1)
     assert _cell(wb, value, "A3", "Aerodrome", "CIRCULATING RETIREMENT RATE") == pytest.approx(0.005155, abs=1e-6)
     ws = wb["Data"]
     import build_workbook as bw

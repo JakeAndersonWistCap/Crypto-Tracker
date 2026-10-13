@@ -57,11 +57,10 @@ POOL_RELEASE = "Pool release Q0 (tokens) — measured, premint distribution (whe
 
 
 def sources_for(head: str, project: str) -> list:
-    """MASTER_SOURCES for one project. A premint project's issuance IS its pool release (config.issuance_basis; GEODNET,
-    Jake's review of 97b29ae item 3: Master read n/a where A4 passed on the pool-release basis)."""
-    import config
-    if head == "Gross issuance Q0 (tokens)" and config.issuance_basis(project) == "pool_release_tokens":
-        return [("A4", POOL_RELEASE)]
+    """MASTER_SOURCES for one project. FIX ROUND 3 (R9, Jake 2026-10-13: "Master Gross issuance shows releases for
+    GEODNET (11.79M) and Hyperliquid (3.84M) — pre-minted supply = 0, releases on their own line"): a premint project's
+    Master gross issuance reads A4's "0 — fixed supply" like every other tab; its pool release is Master's own "Issuer
+    releases Q0" column. (Was: A4's pool-release column, Jake's review of 97b29ae item 3.)"""
     return MASTER_SOURCES.get(head) or []
 
 
