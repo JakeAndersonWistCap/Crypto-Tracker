@@ -2401,6 +2401,28 @@ def uniswap_firepit_threshold():
           "reading is an ASSUMPTION about units, not something this read establishes.")
 
 
+def aero_team_rate():
+    """AERODROME teamRate() LIVE against config.ISSUER_MINTS (fix round 2, S5). setTeamRate emits no event, so a change
+    is seen only by reading the rate: a value other than the last rate_by_flip entry means the team-emission line is
+    computed on the wrong rate from the change's flip on — add the entry (with the Safe tx) before the next build."""
+    import config                                          # noqa: PLC0415
+    head("AERODROME — Minter.teamRate() / team() live vs config.ISSUER_MINTS")
+    spec = config.ISSUER_MINTS["Aerodrome"]
+    rate = _uint(spec["minter"], "0x" + _sel("teamRate()"), "base")
+    team = as_address(_call_word(spec["minter"], "0x" + _sel("team()"), "base"))
+    want_rate, want_team = spec["rate_by_flip"][-1][1], spec["wallet"]
+    print(f"  Minter {spec['minter']} (base)")
+    print(f"  teamRate() {rate}   config: {want_rate} (from the {spec['rate_by_flip'][-1][0]} flip)")
+    print(f"  team()     {team}   config: {want_team}")
+    if rate is None or team is None:
+        print("\n  VERDICT: UNREACHABLE — no Base RPC answered; nothing established.")
+    elif rate == want_rate and team.lower() == want_team.lower():
+        print("\n  VERDICT: UNCHANGED — the team-emission line's rate and wallet stand.")
+    else:
+        print("\n  VERDICT: CHANGED — add the new rate (dated at the first flip that paid it, with the setTeamRate "
+              "tx) to config.ISSUER_MINTS['Aerodrome']['rate_by_flip'], or the new wallet, before the next build.")
+
+
 def near_buyback_inflow_probe():
     """NEAR actual_buyback_tokens — WHAT DID THE NEARBLOCKS CALL RETURN? 2026-09-24.
 
@@ -2538,16 +2560,14 @@ def near_buyback_inflow_probe():
     print("\n  PASTE BACK. Nothing in fetch/nearblocks.py changes until this has been read.")
 
 
-NEARBLOCKS_V1_PARITY_PATH = "/v1/stats"      # E2 parity only; allowed by tests/test_nearblocks_v3.py until 2026-10-31
 
 
 def nearblocks_v3_parity():
-    """NEARBLOCKS v1 -> v3 PARITY (Jake 2026-10-13, Part E2; v1 retires 2026-10-31). Nothing is stored; the key is sent
-    as a Bearer header and never printed. Paced by fetch/nearblocks.py's own credit pacer.
+    """NEARBLOCKS v3 PARITY (Jake 2026-10-13, Part E2; v1 retires 2026-10-31). Nothing is stored; the key is sent as a
+    Bearer header and never printed. Paced by fetch/nearblocks.py's own credit pacer.
 
-    1. SUPPLY STATS (noncirculating_nearblocks_tokens): /v1/stats and /v3/stats read now, side by side, field by field
-       (NearBlocks' source says both read the same single row of its `stats` table), and against the series' last 30
-       stored days. v3 /stats is current-only, as v1 was, so history is not re-readable on either.
+    1. SUPPLY STATS: /v3/stats read now. The v1 side was removed after N1 (v3's circulating == total, never used) and
+       N2 (the lockup history adopted) — fix round 2, N4: no v1 call is left anywhere.
     2. ACCOUNT INFLOWS (the retired near_account_flows reads — actual_buyback_tokens and the two other revenue wallets,
        stored from v1 until 2026-10-07): each series' last 30 stored days re-read on v3 (/v3/accounts/{a}/txns,
        receiver = the wallet, TRANSFER-only transactions, the other two wallets excluded as senders) and compared day
@@ -2584,38 +2604,18 @@ def nearblocks_v3_parity():
         except Exception as e:  # noqa: BLE001
             return None, str(e).replace(key, "***")[:200]
 
-    # ---- 1. supply stats ----
-    print("\n  1. SUPPLY STATS — /v1/stats vs /v3/stats, read now")
-    # THE ONE v1 CALL LEFT (E2 parity, read beside v3 until v1's sunset): direct, outside fetch/nearblocks.py's guard;
-    # tests/test_nearblocks_v3.py allows exactly this path in exactly this function, and only until 2026-10-31
-    try:
-        r1 = requests.get(base + NEARBLOCKS_V1_PARITY_PATH, headers={**_ua(), "Authorization": f"Bearer {key}"},
-                          timeout=TIMEOUT)
-        v1, e1 = (r1.json(), None) if r1.status_code == 200 else (None, f"HTTP {r1.status_code} — {r1.text[:160]}")
-    except Exception as e:  # noqa: BLE001
-        v1, e1 = None, str(e).replace(key, "***")[:200]
+    # ---- 1. supply stats (v3 only: the v1 call was removed after N1/N2, fix round 2 N4) ----
+    print("\n  1. SUPPLY STATS — /v3/stats, read now (v1 retired; its parity call removed, fix round 2 N4)")
     v3, e3 = get("/v3/stats")
-    row1 = ((v1 or {}).get("stats") or [{}])[0] if isinstance(v1, dict) else {}
     row3 = (v3 or {}).get("data") if isinstance(v3, dict) else None
-    if e1:
-        print(f"    v1: {e1}")
     if e3 or not isinstance(row3, dict):
-        print(f"    v3: {e3 or 'no `data` object'} — PARITY NOT PROVEN; the adapter stores nothing until v3 answers")
+        print(f"    v3: {e3 or 'no `data` object'}")
     else:
         scale = 10 ** 24
-        for f in ("total_supply", "circulating_supply"):
-            a, b = row1.get(f), row3.get(f)
-            same = a is not None and str(a) == str(b)
-            print(f"    {f:<20} v1 {int(str(a)) / scale if a else float('nan'):>20,.4f}  "
-                  f"v3 {int(str(b)) / scale if b else float('nan'):>20,.4f}  {'IDENTICAL' if same else 'DIFFERENT'}")
-        nc3 = (int(str(row3["total_supply"])) - int(str(row3["circulating_supply"]))) / scale
-        s = near[(near["metric"] == "noncirculating_nearblocks_tokens")].sort_values("date").tail(30)
-        print(f"    v3 non-circulating now {nc3:,.0f} NEAR; stored (source, last 30 days): "
-              f"{len(s)} row(s), latest {s['value'].iloc[-1]:,.0f} on {str(s['date'].iloc[-1])[:10]}" if len(s) else
-              f"    v3 non-circulating now {nc3:,.0f} NEAR; nothing stored yet")
-        if len(s):
-            print(f"    sources stored: {sorted(set(s['source'].astype(str)))} — v3 keeps 'nearblocks:stats' (same row, "
-                  f"same basis): no series break")
+        tot, circ = (int(str(row3.get(f) or 0)) / scale for f in ("total_supply", "circulating_supply"))
+        print(f"    total_supply {tot:,.4f}  circulating_supply {circ:,.4f}  non-circulating {tot - circ:,.0f}")
+        print("    N1: v3 reports circulating == total (0 non-circulating) — it is NEVER used; NEAR circulating stays on "
+              "our basis (fetch/nearblocks._supply_stats refuses it, tests/test_nearblocks_v3.py asserts it)")
 
     # ---- 2. account inflows ----
     flows = _config.PROJECT_BY_NAME["Near"].get("near_account_flows_retired") or []
@@ -11780,7 +11780,7 @@ CHECKS = (
     sky_splitter, sky_splitter_params, sky_splitter_history,
     solana, injective, near, etherfi_sethfi,
     maple_dao_multisig, pendle_spendle_virtual, pendle_compounding_ledger, aerodrome_lock_inputs,
-    uniswap_firepit_threshold, near_buyback_inflow_probe,
+    uniswap_firepit_threshold, near_buyback_inflow_probe, aero_team_rate,
     fluid_buyback_destination, aethir_staking_probe, aethir_wrapper_relationship,
     aethir_veaethir_probe, geodnet_staking_candidates, geod_candidate_wallets, sky_lssky_releases, geod_residual, alchemy_base_logs, near_buyback_wallets, sky_ba_endpoints, chainlink_revenue_coverage,
     maple_transparency, sky_burn_breakdown, geod_solana_burn_account, near_block_supply,

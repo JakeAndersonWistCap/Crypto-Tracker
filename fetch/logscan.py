@@ -140,6 +140,9 @@ def _merge(cached: list, new: list) -> list:
     return merged
 
 
+
+WINDOW_BUDGET_S = 120.0     # the reconciled-window fallback's own budget (fix round 2, R8)
+
 class LogScan:
     """Runs every project's `log_scans`, each against one token and one or more holders."""
 
@@ -266,6 +269,13 @@ class LogScan:
         if not daily.due(f"window:{key}", day):
             return False
         start = today() - pd.Timedelta(days=days_n)
+        # ITS OWN BUDGET (fix round 2, R8: Pendle's Arbitrum gauge read "etherscan time budget exhausted before the first
+        # attempt" — the fallback ran on the full-history scan's spent budget): a fresh window_budget_s for the window
+        clear, budget = getattr(self.explorer, "clear_budget", None), getattr(self.explorer, "start_budget", None)
+        if clear:
+            clear()
+        if budget and not self.unbounded:
+            budget(float(spec.get("window_budget_s") or WINDOW_BUDGET_S))
         try:
             b0 = self._block_at_ts(chain, chain_id, int(start.tz_localize("UTC").timestamp()), to_block)
             ins, outs, via = [], [], set()

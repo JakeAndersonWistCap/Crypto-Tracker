@@ -35,7 +35,8 @@ HEAD = ["Project", "Key (tab|project|headline id)", "Tab", "Headline id", "Headl
         "Benchmark", "Target", "Years to benchmark", "Why n/a", "Series break (basis change)",
         "MODELLED quarters (excluded from any scoring)",
         "Source tier (headline series)",
-        "Q0 coverage days (headline series)", "Credibility (Q0 = headline cell)", "Headline cell"]
+        "Q0 coverage days (headline series)", "Credibility (Q0 = headline cell)", "Headline cell",
+        "4Q growth — standard error (annual; SPEC §12 item 14)"]
 COL = {h: i + 1 for i, h in enumerate(HEAD)}
 MAX_ROWS = 6000                       # the trend cells' lookup range on this tab
 
@@ -138,6 +139,26 @@ def loglinear_growth(values: list) -> tuple[float | None, int, str]:
     sxx = sum((x - mx) ** 2 for x in xs)
     slope = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sxx
     return math.exp(4 * slope) - 1, len(pts), ""
+
+
+def loglinear_growth_se(values: list) -> tuple[float | None, str]:
+    """THE STANDARD ERROR OF THE 4Q SLOPE (Jake 2026-10-13, decision 14 on SPEC §12: the ±10pp divergence band is a
+    convention; show each row's slope s.e. so the band can be calibrated later). OLS on ln(v) over the same quarters
+    as loglinear_growth: s.e.(slope) = sqrt(Σresid² / (n − 2) / Sxx), carried to the annual growth by the delta method,
+    4 · exp(4 · slope) · s.e.(slope). Needs three quarters (two points leave no residual)."""
+    pts = [(3 - i, _num(v)) for i, v in enumerate(values[:4])]
+    pts = [(x, v) for x, v in pts if v is not None]
+    if len(pts) < 3:
+        return None, f"{len(pts)} quarter(s) — a standard error needs three"
+    if any(v <= 0 for _x, v in pts):
+        return None, "a quarter at or below 0"
+    xs, ys = [x for x, _ in pts], [math.log(v) for _, v in pts]
+    mx, my = sum(xs) / len(xs), sum(ys) / len(ys)
+    sxx = sum((x - mx) ** 2 for x in xs)
+    slope = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sxx
+    resid = sum((y - (my + slope * (x - mx))) ** 2 for x, y in zip(xs, ys))
+    se = math.sqrt(resid / (len(pts) - 2) / sxx)
+    return 4 * math.exp(4 * slope) * se, ""
 
 
 def partial_start_quarter(first_date, asof, period_days: int, n: int, slack_days: int = 1) -> int | None:
@@ -338,7 +359,7 @@ def lumpy_trend_text(t0, t1, chg, annual, d: int | None, label: str = "") -> str
 #   was used, whether NEAR's lockup rule was in force), dates stripped. A declared handover whose composition_change
 #   starts "none" (or that declares none) is one basis. A derived circulating series inherits the breaks of its inputs (its total, the
 #   subtracted and added stocks), and circulating_supply_used those of the series it used.
-BRACKET_BASIS = ("circulating_supply_used", "circulating_supply_lockup_rule")
+BRACKET_BASIS = ("circulating_supply_used", "circulating_supply_lockup_rule", "fdv_usd")
 _DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 _REF = re.compile(r'"\|([a-z0-9_]+)",Data!')
 

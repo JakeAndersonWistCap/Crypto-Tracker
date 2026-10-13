@@ -69,6 +69,50 @@ class UltrasoundHistory:
                 out.skipped(SOURCE, p["name"], f"ultrasound_history DISABLED: {spec['disabled']}", TIER)
             elif spec:
                 self._project(p["name"], spec, out)
+            if p.get("ultrasound_supply"):
+                self._supply_over_time(p["name"], p["ultrasound_supply"], out)
+
+    def _supply_over_time(self, name: str, spec: dict, out) -> None:
+        """THE SUPPLY HISTORY ROUTE (fix round 2, H1 / S12): GET /api/v2/fees/supply-over-time, key `since_merge` — daily
+        00:00Z points {supply, timestamp} since the Merge, live (research 2026-10-13: 1,488 points, the last minutes
+        old). ultrasound's definition (its frontend): executionBalancesSum + beaconBalancesSum − beaconDepositsSum.
+        Stored as `spec["metric"]`, the days of the last keep_days, today's point never; one call a day."""
+        url, day, metric = spec["url"], str(today().date()), spec["metric"]
+        if not self.daily.due(f"ultrasound:{url}", day):
+            out.mark_current(SOURCE, name, metric, f"{metric}: {url} already read today ({day})", TIER)
+            return
+        from .scrape import robots_verdict
+        allowed, why = robots_verdict(url)
+        if not allowed:
+            out.fail(SOURCE, name, f"{metric}: robots.txt disallows {url} — {why}", TIER)
+            return
+        try:
+            body = self.http.get(url)
+        except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
+            out.fail(SOURCE, name, f"{metric}: {url}: {e}", TIER)
+            return
+        rows = body.get(spec["list"]) if isinstance(body, dict) else None
+        pts = []
+        for r in rows if isinstance(rows, list) else ():
+            v, t = (r.get(spec["value"]), r.get(spec["time"])) if isinstance(r, dict) else (None, None)
+            if not isinstance(v, (int, float)) or isinstance(v, bool) or not isinstance(t, str):
+                pts = None
+                break
+            pts.append((pd.Timestamp(t).tz_localize(None) if pd.Timestamp(t).tzinfo else pd.Timestamp(t), float(v)))
+        if not pts:
+            keys = sorted(body)[:20] if isinstance(body, dict) else type(body).__name__
+            out.fail(SOURCE, name, f"{metric}: {spec['list']} is not a list of {{{spec['value']}, {spec['time']}}} — "
+                                   f"the response carries {keys}. NOTHING STORED.", TIER)
+            return
+        self.daily.done(f"ultrasound:{url}", day)
+        horizon = today() - pd.Timedelta(days=int(spec.get("keep_days", 460)))
+        pts = [(d.normalize(), v) for d, v in pts if horizon <= d.normalize() < today() and d == d.normalize()]
+        if not pts:
+            out.fail(SOURCE, name, f"{metric}: no complete 00:00Z day in the last {spec.get('keep_days', 460)} days", TIER)
+            return
+        frame = tidy(pts, name, metric, f"{SOURCE}:supply-over-time", TIER)
+        out.add(frame, SOURCE, name, f"{metric} = ultrasound.money supply-over-time: {len(frame)} day(s) "
+                                     f"{frame['date'].min().date()}..{frame['date'].max().date()} (00:00Z points)", TIER)
 
     def _project(self, name: str, spec: dict, out) -> None:
         url, day = spec["url"], str(today().date())

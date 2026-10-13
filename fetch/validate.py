@@ -569,6 +569,35 @@ def check_migration_watch(df: pd.DataFrame, out, prior: dict, prior_dates: dict,
                                   f"contracts) — the migration guard")
 
 
+def check_migration_cutover(out, today=None, state: dict | None = None) -> None:
+    """THE AERO CUTOVER (config.AERODROME_MIGRATION, fix round 2 S5): from 2026-10-22 00:00 UTC the legacy Minter, escrow
+    and Voter no longer measure Aerodrome. Until Jake's aero_migration.json says launched, every legacy row dated on
+    or after the cutover is REFUSED (removed from this run's frames) and the run FAILS with the step to take — loudly,
+    never a silent 0 from a stopped contract."""
+    m = config.AERODROME_MIGRATION
+    day = pd.Timestamp(today or pd.Timestamp.utcnow().tz_localize(None)).normalize()
+    cut = pd.Timestamp(m["cutover_utc"])
+    if day < cut:
+        return
+    st = config.aerodrome_migration_state() if state is None else state
+    if st.get("launched") is True:
+        return
+    refused = 0
+    for i, f in enumerate(out.frames):
+        if f is None or f.empty or "project" not in f:
+            continue
+        bad = ((f["project"] == m["project"]) & f["metric"].isin(m["legacy_metrics"])
+               & (pd.to_datetime(f["date"]).dt.normalize() >= cut))
+        if bad.any():
+            refused += int(bad.sum())
+            out.frames[i] = f[~bad]
+    why = ("unreadable " + st["unreadable"]) if st.get("unreadable") else f"{m['switch_file']} not set to launched"
+    out.fail("migration", m["project"],
+             f"AERODROME MIGRATION CUTOVER PASSED ({m['cutover_utc']} 00:00 UTC) and {why}: {refused} legacy row(s) "
+             f"dated on/after the cutover REFUSED (legacy Minter / escrow / Voter no longer measure Aerodrome). "
+             f"ACTION: RUNBOOK 11bx — enter the new addresses from {m['source']} in {m['switch_file']}", 1)
+
+
 REASON_IMPOSSIBLE = "impossible_relation"
 
 # Relations between two metrics that CANNOT both be right. Each is an identity, not a heuristic:

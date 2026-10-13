@@ -44,6 +44,7 @@ SOURCE = "xref"
 TIER = 1
 COINBASE = "https://api.exchange.coinbase.com/products/{product}/candles"
 LLAMA_CHART = "https://coins.llama.fi/chart/{keys}"
+LLAMA_MAX_POINTS = 500          # coins.llama.fi refuses a chart request over 500 points (coins x days), HTTP 400
 LIDO_SMA = "https://eth-api.lido.fi/v1/protocol/steth/apr/sma"
 
 
@@ -196,19 +197,33 @@ class CrossRefs:
         if history:
             days = int(config.TRAJECTORY["history_days"])
         start = int((today().normalize() - pd.Timedelta(days=days)).timestamp())
-        try:
-            body = self.http.get(LLAMA_CHART.format(keys=",".join(keys)),
-                                 params={"start": start, "span": days + 1, "period": "1d", "searchWidth": 600})
-        except Exception as e:  # noqa: BLE001
-            for p in projects:
-                out.fail(SOURCE, p["name"], f"price_usd_llama: {e}", TIER)
-            return
-        coins = (body or {}).get("coins") if isinstance(body, dict) else None
-        if not isinstance(coins, dict):
-            for p in projects:
-                out.fail(SOURCE, p["name"], f"price_usd_llama: no `coins` in the answer", TIER)
+        # BATCHED UNDER THE 500-POINT CAP (fix round 2, R7: every coin in one URL for the 456-day history answered HTTP
+        # 400 "Requested 6840 data points exceeds the maximum of 500" for all 15 projects — the cross-check was blind):
+        # coins.llama.fi counts coins x days, so each call asks for at most LLAMA_MAX_POINTS // (days + 1) coins
+        per_call = max(1, LLAMA_MAX_POINTS // (days + 1))
+        ks = list(keys)
+        coins: dict = {}
+        failed: dict = {}
+        for i in range(0, len(ks), per_call):
+            batch = ks[i:i + per_call]
+            try:
+                body = self.http.get(LLAMA_CHART.format(keys=",".join(batch)),
+                                     params={"start": start, "span": days + 1, "period": "1d", "searchWidth": 600})
+            except Exception as e:  # noqa: BLE001
+                failed.update({k: str(e) for k in batch})
+                continue
+            got = (body or {}).get("coins") if isinstance(body, dict) else None
+            if not isinstance(got, dict):
+                failed.update({k: "no `coins` in the answer" for k in batch})
+                continue
+            coins.update(got)
+        for k, err in failed.items():
+            out.fail(SOURCE, keys[k]["name"], f"price_usd_llama: {err}", TIER)
+        if failed and not coins:
             return
         for k, p in keys.items():
+            if k in failed:
+                continue
             rows = self.parse_chart((coins.get(k) or {}).get("prices") or [])
             if not rows:
                 out.fail(SOURCE, p["name"], f"price_usd_llama: no 00:00 point for {k}", TIER)
@@ -217,9 +232,10 @@ class CrossRefs:
             frame = tidy(rows, p["name"], "price_usd_llama", f"defillama_coins:{k}", TIER)
             out.add(frame, SOURCE, p["name"], f"price_usd_llama: {len(rows)} day(s) for {k}"
                                               + ("" if indep else " (coingecko key: CoinGecko's own price, relayed)"), TIER)
-        self.daily.done(key, day)
-        if history:
-            self.daily.done(hist_key, day)
+        if not failed:                 # a batch that failed is asked again on the next run
+            self.daily.done(key, day)
+            if history:
+                self.daily.done(hist_key, day)
 
     # ------------------------------------------------------------------ Lido APR
     def _lido(self, p: dict, day: str, out) -> None:

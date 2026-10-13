@@ -5659,7 +5659,12 @@ def test_geodnet_sql_addresses_match_config_exactly():
     #   noncirc_candidate_1..4             2026-10-07, Team / Investor / Vendor-Marketing / Public sale, confirmed by
     #                                      Jake from docs.geodnet.com 'Tokenomics' (confirm_candidates on)
     added_2026_10_07 = {f"noncirc_candidate_{n}" for n in range(1, 5)}
-    assert set(contracts) == set(from_sql) | {"token_iotex"} | added_2026_09_15 | added_2026_10_05 | added_2026_10_07, \
+    #   ecosystem_stock_polygon            2026-10-13 (fix round 2, G1/G2): the Ecosystem wallet 0x3A6906E4… read a
+    #                                      second time on its own (ecosystem_holding_tokens) for the unlock leg (e)
+    added_2026_10_13 = {"ecosystem_stock_polygon"}
+    assert contracts["ecosystem_stock_polygon"]["address"].lower() == contracts["ecosystem_polygon"]["address"].lower()
+    assert set(contracts) == set(from_sql) | {"token_iotex"} | added_2026_09_15 | added_2026_10_05 | added_2026_10_07 \
+        | added_2026_10_13, \
         f"unexpected contract keys on GEODNET: {sorted(contracts)}"
     for key in added_2026_09_15:
         c = contracts[key]
@@ -14390,7 +14395,10 @@ def _near_buyback_flow_only() -> dict:
     code still serves any project declaring near_account_flows, and these tests exercise it."""
     p = dict(config.PROJECT_BY_NAME["Near"])
     p["near_account_flows"] = [f for f in p["near_account_flows_retired"] if f["metric"] == "actual_buyback_tokens"]
-    p["nearblocks"] = {k: v for k, v in p["nearblocks"].items() if k != "balance_history"}
+    # nor the Foundation-accounts history (fix round 2, R10/N2) and NearBlocks' intents volume (N3): their own tests
+    p["nearblocks"] = {k: v for k, v in p["nearblocks"].items() if k not in ("balance_history", "foundation_history")}
+    p["nearblocks"]["metrics"] = {k: v for k, v in p["nearblocks"]["metrics"].items()
+                                  if k != "near_intents_volume_usd_nearblocks"}
     return p
 
 
@@ -14401,6 +14409,9 @@ def _near_with_retired_flow(monkeypatch) -> dict:
     monkeypatch.setitem(near, "near_account_flows",
                         [f for f in near["near_account_flows_retired"] if f["metric"] == "actual_buyback_tokens"])
     monkeypatch.delitem(near["nearblocks"], "balance_history")
+    monkeypatch.delitem(near["nearblocks"], "foundation_history", raising=False)
+    monkeypatch.setitem(near["nearblocks"], "metrics", {k: v for k, v in near["nearblocks"]["metrics"].items()
+                                                        if k != "near_intents_volume_usd_nearblocks"})
     return near
 
 
@@ -15645,8 +15656,8 @@ def test_nearblocks_stats_run_first_and_calls_are_paced_to_the_free_plan(monkeyp
     # ORDER REVERSED 2026-09-28: the once-a-day stats first (1 credit each), then the buyback
     # read, which resumes across runs — see NearBlocks.run. The third v3 call is /v3/validators/info's total_stake,
     # once a day (Jake's run 2026-10-08 11:27); the fourth is /v3/stats, NEAR's non-circulating cross-check (Jake
-    # 2026-10-11, C), once a day too.
-    assert kinds == ["v3", "v3", "v3", "v3", "flow", "flow"], kinds
+    # 2026-10-11, C), once a day too — RETIRED in fix round 2 (N1: v3 reports circulating == total), so three.
+    assert kinds == ["v3", "v3", "v3", "flow", "flow"], kinds
     # BILLED AS NEARBLOCKS BILLS: ceil(per_page/25), per_page defaulting to 25 (rateLimiter.ts L132). Every call is v3
     # since 2026-10-13 and sends `limit`, never per_page — so each costs 1, the flow pages included.
     cost = {"flow": 1, "v3": 1}
@@ -16196,8 +16207,10 @@ def test_nearblocks_buyback_is_incremental_newest_first_and_daily_stats_run_once
     got2 = out2.frame().query("metric == 'actual_buyback_tokens'")
     import pytest
     assert sorted(got2.value) == pytest.approx([1.0, 2.0, 3.0, 7.0]), "the window is re-emitted from kept totals"
+    # /v3/stats (noncirculating_nearblocks_tokens) is retired (fix round 2, N1: v3 circulating == total), so it is no
+    # longer marked current
     assert out2.current == {("Near", "tx_count"), ("Near", "active_addresses"), ("Near", "fees_native_tokens"),
-                            ("Near", "locked_tokens_nearblocks"), ("Near", "noncirculating_nearblocks_tokens")}
+                            ("Near", "locked_tokens_nearblocks")}
     from fetch.gaps import detect
     gaps = detect([near], out2.frame(), out2.current, {}, [])
     assert not [g for g in gaps if g["metric"] in ("tx_count", "active_addresses")], \
@@ -19625,6 +19638,38 @@ class _Daily:
         self.done_keys.add((key, today))
 
 
+def test_ultrasound_supply_over_time_is_the_eth_supply_history_route(monkeypatch):
+    """Fix round 2, H1 / S12: GET /api/v2/fees/supply-over-time, `since_merge` = [{supply, timestamp}] at 00:00Z; the
+    complete days are stored as total_supply_ultrasound (today never), one call a day; a changed shape stores nothing."""
+    import fetch.scrape as scrape
+    from fetch.base import today
+    from fetch.ultrasound import UltrasoundHistory
+    spec = config.PROJECT_BY_NAME["Ethereum"]["ultrasound_supply"]
+    assert spec["url"] == "https://ultrasound.money/api/v2/fees/supply-over-time"
+    t = today()
+    body = {"since_merge": [{"supply": 122_000_000.0 + n, "timestamp": (t - pd.Timedelta(days=n)).strftime(
+        "%Y-%m-%dT00:00:00Z")} for n in range(5, -1, -1)], "d1": []}
+    seen = []
+
+    class H:
+        def get(self, url, **k):
+            seen.append(url)
+            return body
+    monkeypatch.setattr(scrape, "robots_verdict", lambda url: (True, "allowed"))
+    eth = {"name": "Ethereum", "ultrasound_supply": spec}
+    out = FetchOutput()
+    UltrasoundHistory(http=H(), daily=_Daily()).run([eth], None, out)
+    f = out.frame()
+    assert seen == [spec["url"]] and set(f.metric) == {"total_supply_ultrasound"}
+    assert len(f) == 5 and f["date"].max() < t
+    assert float(f.loc[f["date"] == f["date"].max(), "value"].iloc[0]) == 122_000_001.0   # yesterday's 00:00Z point
+    assert set(f.source) == {"ultrasound:supply-over-time"}
+    out2 = FetchOutput()
+    UltrasoundHistory(http=type("H2", (), {"get": lambda self, url, **k: {"since_merge": [{"x": 1}]}})(),
+                      daily=_Daily()).run([eth], None, out2)
+    assert out2.frame().empty and any("NOTHING STORED" in e.message for e in out2.log)
+
+
 def test_ultrasound_history_stores_both_series_and_refuses_a_changed_shape(monkeypatch):
     """A1/A3: one call gives supplyByDay and inBeaconValidatorsByDay ({t, v}, ETH), read from
     ultrasound.money's backend source; robots are checked against the API PATH; today is never
@@ -19635,7 +19680,8 @@ def test_ultrasound_history_stores_both_series_and_refuses_a_changed_shape(monke
     # DISABLED 2026-10-05 (G1): the configured block is skipped and says why ...
     out0, calls0 = FetchOutput(), []
     UltrasoundHistory(http=type("H0", (), {"get": lambda self, url, **k: calls0.append(url)})(),
-                      daily=_Daily()).run([config.PROJECT_BY_NAME["Ethereum"]], None, out0)
+                      daily=_Daily()).run([{k: v for k, v in config.PROJECT_BY_NAME["Ethereum"].items()
+                                           if k != "ultrasound_supply"}], None, out0)
     assert not calls0 and any("DISABLED" in e.message for e in out0.log)
     # ... and the adapter itself still reads a block that is not disabled
     eth = dict(config.PROJECT_BY_NAME["Ethereum"])
@@ -19657,6 +19703,7 @@ def test_ultrasound_history_stores_both_series_and_refuses_a_changed_shape(monke
             return body
     monkeypatch.setattr(scrape, "robots_verdict", lambda url: (True, "allowed"))
     out = FetchOutput()
+    eth = {k: v for k, v in eth.items() if k != "ultrasound_supply"}   # fix round 2's route: its own test
     UltrasoundHistory(http=H(), daily=_Daily()).run([eth], None, out)
     f = out.frame()
     sup = f[f.metric == "total_supply_ultrasound"]
@@ -26359,7 +26406,8 @@ def test_near_three_revenue_wallets_are_measured_and_compared_with_the_page(monk
     out = FetchOutput()
     nb = nearblocks.NearBlocks(http=H(), last_dates={("Near", m): "2026-10-06" for m in near["nearblocks"]["metrics"]})
     nb.run([near], 35, out)
-    assert sum("/stats/balance" in u for u in calls) == 3
+    # one balance-history read per revenue wallet (the Foundation accounts' history, fix round 2 R10/N2, reads its own)
+    assert sum("/stats/balance" in u and any(a in u for a in bh["accounts"]) for u in calls) == 3
     f = out.frame()
     eod = f[f.metric == "buyback_fund_balance_eod"].set_index("date")["value"]
     # from 10-02 (the last wallet's first day) to 10-06 (today, 10-07, is still moving)
@@ -26781,7 +26829,8 @@ def test_near_balance_history_never_asks_nearblocks_for_more_than_365_rows(monke
     out = FetchOutput()
     nearblocks.NearBlocks(http=H(), last_dates={("Near", m): "2026-10-06" for m in near["nearblocks"]["metrics"]}
                           ).run([near], 35, out)
-    assert limits == [365, 365, 365]
+    # the three revenue wallets + the Foundation accounts' history (fix round 2, R10/N2): every one capped at 365
+    assert limits == [365] * (3 + len(near["nearblocks"]["foundation_history"]["accounts"]))
     eod = out.frame().query("metric == 'buyback_fund_balance_eod'")
     assert list(eod["value"]) == [3.0, 3.0], "all three wallets read; 10-05 and 10-06 stored"
 

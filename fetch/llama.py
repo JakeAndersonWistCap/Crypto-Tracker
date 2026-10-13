@@ -58,6 +58,18 @@ class DefiLlama:
         # is no hand-maintained register to disagree with the run log.
         self.known_absent = known_absent or set()
 
+    def _stored(self, name: str, metric: str) -> bool:
+        """Any row of (name, metric) in the store as of the run's start."""
+        st = self.stored_long
+        if st is None or getattr(st, "empty", True):
+            return False
+        return bool(((st["project"] == name) & (st["metric"] == metric)).any())
+
+    @staticmethod
+    def _history_days() -> int:
+        import config                                      # noqa: PLC0415
+        return int(config.TRAJECTORY["history_days"])
+
     def _absent(self, name: str, what: str, out) -> bool:
         """True when this pair is a known-absent resource, and the skip is logged as one."""
         if (SOURCE, name) not in self.known_absent:
@@ -369,7 +381,11 @@ class DefiLlama:
         for c in project.get("defillama_component_slugs") or ():
             try:
                 rows = self._summary_chart(c["slug"], c.get("data_type", "dailyFees"))
-                out.add(window(tidy(rows, name, c["metric"], f"{SOURCE}:{c['slug']}", TIER), window_days),
+                # A FIRST READ STORES THE HISTORY (Jake's fix round 2, R1: NEAR Intents revenue had to be backfilled
+                # 455 days): a component series with no stored row takes config.TRAJECTORY history_days, not the
+                # routine window
+                wd = self._history_days() if not self._stored(name, c["metric"]) else window_days
+                out.add(window(tidy(rows, name, c["metric"], f"{SOURCE}:{c['slug']}", TIER), wd),
                         SOURCE, name, f"{c['metric']} = {c['slug']}:{c.get('data_type', 'dailyFees')}", TIER)
             except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
                 out.fail(SOURCE, name, f"{c['metric']}: {c['slug']}: {e}", TIER)
@@ -1032,7 +1048,12 @@ class DefiLlama:
         yday = today().normalize() - pd.Timedelta(days=1)
         for p in projects:
             name, key = p["name"], f"defillama:project:{p['name']}"
-            if not self.daily.due(key, self._today):
+            # A SERIES NEVER STORED IS READ TODAY, WHATEVER RAN EARLIER (Jake's fix round 2, R1 / R6: NEAR's Intents
+            # revenue and Pendle's Boros fees were added mid-day and skipped as "read complete earlier today")
+            unread = [c["metric"] for c in p.get("defillama_component_slugs") or () if not self._stored(name, c["metric"])]
+            if unread and not self.daily.due(key, self._today):
+                log.info("defillama %s: read again today — never stored: %s", name, ", ".join(unread))
+            elif not self.daily.due(key, self._today):
                 done = (self.daily.get(key + ":metrics") or "").split(",")
                 for m in (m for m in done if m):
                     out.mark_current(SOURCE, name, m, f"{m}: DefiLlama read complete through {yday.date()} "

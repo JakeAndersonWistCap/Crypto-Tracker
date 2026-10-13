@@ -68,7 +68,7 @@ from .plume_staking import PlumeStaking
 from .scrape import Scrape, entry_ready, load_registry
 from .validate import (REASON_CHANGE, check_cross_checks, check_impossible_relations,
                        check_flat_series, check_level_breaks, check_reference_values, check_watched_wallet,
-                       check_migration_watch,
+                       check_migration_watch, check_migration_cutover,
                        validate_frame)
 
 log = logging.getLogger("token_metrics.fetch")
@@ -1800,6 +1800,7 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
     check_reference_values(out.frame(), out)
     check_watched_wallet(out.frame(), out)
     check_migration_watch(out.frame(), out, ctx["prior_delta"], ctx["prior_dates"])
+    check_migration_cutover(out)          # fix round 2 S5: refuse legacy Aerodrome rows after 2026-10-22, loudly
     check_cross_checks(out.frame(), out)
     check_impossible_relations(out.frame(), out)
 

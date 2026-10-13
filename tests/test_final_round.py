@@ -408,7 +408,10 @@ def test_near_circulating_under_the_lockup_rule(monkeypatch):
     import config
     monkeypatch.setattr(bw, "_SCOPE", list(config.PROJECTS))
     assert config.circulating_primary_metric("Near") == "circulating_supply_lockup_rule"
-    assert config.unlock_stock_metrics("Near") == ("near_lockup_locked_tokens",)
+    # fix round 2, R10: (e) reads lockup.near + contributors.near daily (the v3 history, N2); the lockup contracts'
+    # LOCKED amount is a declared subset (one weekly reading so far) — config.UNLOCK_RELEASE_SUBSETS
+    assert config.unlock_stock_metrics("Near") == ("near_foundation_accounts_tokens",)
+    assert config.UNLOCK_RELEASE_SUBSETS["Near"] == {"near_lockup_release_tokens": ("near_lockup_locked_tokens",)}
     d = pd.date_range("2026-10-01", "2026-10-25")
     fp = pd.DataFrame({"date": d, "project": "Near", "metric": "circulating_supply_first_party",
                        "value": 1_250_000_000.0, "source": "near_bigquery:circulating_supply", "tier": 1})
@@ -469,7 +472,7 @@ def test_nearblocks_supply_stats_cross_check():
     try:
         out = FetchOutput()
         spec = config.PROJECT_BY_NAME["Near"]["nearblocks"]
-        nb._supply_stats("Near", spec, spec["supply_stats"], out)
+        nb._supply_stats("Near", spec, spec["supply_stats_retired"], out)
     finally:
         sc.robots_verdict = sc_orig
     assert out.frame()["value"].iloc[0] == pytest.approx(58_867_606.1, abs=1)
@@ -479,7 +482,7 @@ def test_nearblocks_supply_stats_cross_check():
     out2 = FetchOutput()
     sc.robots_verdict = lambda url: (True, "ok")
     try:
-        nb._supply_stats("Near", spec, spec["supply_stats"], out2)
+        nb._supply_stats("Near", spec, spec["supply_stats_retired"], out2)
     finally:
         sc.robots_verdict = sc_orig
     assert out2.frame().empty and any("NOTHING STORED" in e.message for e in out2.log)
@@ -653,7 +656,9 @@ def test_plume_circulating_live_and_cached_reads_are_one_measuring_point(tmp_pat
                           ("2026-10-12", "scrape:supply.plume.org", "07:00:00"))]
     (tmp_path / "before").mkdir()
     before = evaluate_real(tmp_path / "before", monkeypatch, "Plume", payload=payload, asof="2026-10-12")["in_circ"]
-    assert before["verdict"] == "CHECK (no figure)", before            # Jake's run, reproduced
+    # Jake's run reproduced CHECK (no figure) here until fix round 2: config.SAME_BASIS now reads a bare 'scrape:cache'
+    # row as the page's own measuring point, so the figure stands even before CI relabels the store
+    assert before["verdict"].startswith("PASS"), before
     # orphan_cleanup.sql CI, run as Jake runs it (python run_sql.py --delete CI)
     (tmp_path / "after").mkdir()
     db = tmp_path / "after" / "metrics.db"

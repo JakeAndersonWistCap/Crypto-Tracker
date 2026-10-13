@@ -272,6 +272,8 @@ class NearBlocks:
                 self._project(p["name"], spec, window_days, out)
                 if spec.get("balance_history"):
                     self._balance_history(p["name"], spec, spec["balance_history"], out)
+                if spec.get("foundation_history"):
+                    self._balance_history(p["name"], spec, spec["foundation_history"], out)
                 if spec.get("validators_info"):
                     self._validators_info(p["name"], spec, spec["validators_info"], out)
                 if spec.get("supply_stats"):
@@ -396,6 +398,11 @@ class NearBlocks:
         except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
             out.fail(SOURCE, name, f"{metric}: {ss['path']}: {self._scrub(spec, e)} — NOTHING STORED", TIER)
             return
+        # v3 REPORTS CIRCULATING == TOTAL (fix round 2, N1): no non-circulating figure — never stored as a 0
+        if abs(total - circ) < 1.0:
+            out.fail(SOURCE, name, f"{metric}: {ss['path']} answered circulating_supply == total_supply "
+                                   f"({total:,.0f}) — NearBlocks v3 does not net anything out; NOTHING STORED", TIER)
+            return
         out.add(tidy([(today(), total - circ)], name, metric, f"{SOURCE}:stats", TIER), SOURCE, name,
                 f"{metric}={total - circ:,.0f} NEAR (NearBlocks total_supply {total:,.0f} − circulating_supply "
                 f"{circ:,.0f})", TIER)
@@ -432,14 +439,20 @@ class NearBlocks:
                                        f"NOTHING STORED", TIER)
                 return
             sr = {}
+            fields = tuple(bh.get("fields") or ("amount",))
             for r in rows:
                 try:
-                    sr[pd.Timestamp(r["date"]).normalize()] = int(r["amount"]) / scale
+                    sr[pd.Timestamp(r["date"]).normalize()] = sum(int(r.get(f) or 0) for f in fields) / scale
                 except (KeyError, TypeError, ValueError):
                     continue
             per[acct] = pd.Series(sr, dtype=float).sort_index()
         start = max(s_.index.min() for s_ in per.values())
         end = today().normalize() - pd.Timedelta(days=1)
+        # A HISTORY BACKFILL STOPS BEFORE THE LIVE READ (fix round 2, N2: lockup.near + contributors.near are read
+        # live by near_rpc view_account from `store_before`; the store keeps one row a day, so the history never
+        # overwrites a live reading)
+        if bh.get("store_before"):
+            end = min(end, pd.Timestamp(bh["store_before"]) - pd.Timedelta(days=1))
         if start > end:
             out.fail(SOURCE, name, f"{metric}: no complete day on which all {len(per)} wallets have a balance", TIER)
             return
@@ -450,7 +463,7 @@ class NearBlocks:
                 f"{metric}: {len(pairs)} day(s) {pairs[0][0]:%Y-%m-%d}..{pairs[-1][0]:%Y-%m-%d}, latest "
                 f"{pairs[-1][1]:,.1f} NEAR = " + " + ".join(f"{a.split('.')[0]} {s_.iloc[-1]:,.1f}"
                                                             for a, s_ in per.items())
-                + f"; {bh['flow']} is its daily change (read time). {bh.get('partial', '')}", TIER)
+                + f"; {bh.get('flow', 'the release')} is its daily change (read time). {bh.get('partial', '')}", TIER)
 
     def _store(self, name: str, metric: str, m: dict, body, window_days, out):
         field = m["field"]

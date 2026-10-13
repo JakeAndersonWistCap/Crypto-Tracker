@@ -3,8 +3,8 @@ tests/test_nearblocks_v3.py — NearBlocks API v1 -> v3 (Jake 2026-10-13, Part E
 
 E4: any NearBlocks call to a v1 / v2 path fails the build — written in the code, declared in config, or attempted at
 run time — and a deprecation / sunset answer is named on the Run Log, in the daily summary and on daily_run's console
-line. The one allowed v1 call is check_offline_items.nearblocks_v3_parity's /v1/stats, beside its v3 twin, and only
-until the sunset.
+line. No v1 call is left anywhere: the parity probe's /v1/stats went after N1 and N2 (fix round 2, N4). N1: v3's
+/stats reports circulating == total, so it is never used as NEAR's circulating.
 """
 from __future__ import annotations
 
@@ -45,18 +45,41 @@ def test_no_code_calls_a_nearblocks_v1_or_v2_url():
     assert not bad, "NearBlocks v1/v2 URL(s) — v1 retires 2026-10-31; use the /v3 equivalent:\n" + "\n".join(bad)
 
 
-def test_the_nearblocks_modules_hold_no_bare_v1_path_but_the_one_parity_call():
-    """fetch/nearblocks.py holds none; check_offline_items.py only NEARBLOCKS_V1_PARITY_PATH, and only until the
-    sunset (after it, the parity call has nothing to compare with and must go)."""
+def test_the_nearblocks_modules_hold_no_bare_v1_path():
+    """fetch/nearblocks.py and check_offline_items.py hold no v1 / v2 NearBlocks path at all — the parity probe's one
+    v1 call was removed after N1 and N2 (fix round 2, N4)."""
     nb = (ROOT / "fetch" / "nearblocks.py").read_text(encoding="utf-8")
     assert not [ln for ln in nb.splitlines() if _BARE.search(ln) and not ln.lstrip().startswith("#")]
     coi = (ROOT / "check_offline_items.py").read_text(encoding="utf-8")
-    hits = [ln.strip() for ln in coi.splitlines() if "nearblocks" in ln.lower() or "NEARBLOCKS" in ln
-            if _BARE.search(ln) and not ln.lstrip().startswith("#")]
-    allowed = 'NEARBLOCKS_V1_PARITY_PATH = "/v1/stats"'
-    assert all(h.startswith(allowed) for h in hits), hits
-    if date.today() > SUNSET:
-        assert not hits, "NearBlocks v1 is retired: remove the parity call (check_offline_items.nearblocks_v3_parity)"
+    hits = [ln.strip() for ln in coi.splitlines() if ("nearblocks" in ln.lower() or "NEARBLOCKS" in ln)
+            and _BARE.search(ln) and not ln.lstrip().startswith("#")]
+    assert not hits, hits
+    assert "NEARBLOCKS_V1_PARITY_PATH" not in coi
+
+
+def test_v3_circulating_is_never_used_for_near():
+    """N1 (fix round 2): v3 /stats answers circulating == total (0 non-circulating, against v1's 1,249.8M). The supply
+    stats read is retired from the config, the adapter refuses such an answer, and NEAR's circulating is our basis."""
+    from fetch import nearblocks as nb
+    from fetch.base import FetchOutput
+    spec = config.PROJECT_BY_NAME["Near"]["nearblocks"]
+    assert "supply_stats" not in spec and "supply_stats_retired" in spec
+    assert config.circulating_primary_metric("Near") != "circulating_supply_nearblocks"
+
+    client = nb.NearBlocks()
+    client._get = lambda url, params, key: {"data": {"total_supply": str(1_300_000_000 * 10 ** 24),
+                                                     "circulating_supply": str(1_300_000_000 * 10 ** 24)}}
+    client._key = lambda spec_: "k"
+    import fetch.scrape as sc
+    orig = sc.robots_verdict
+    sc.robots_verdict = lambda url: (True, "ok")
+    try:
+        out = FetchOutput()
+        client._supply_stats("Near", spec, spec["supply_stats_retired"], out)
+    finally:
+        sc.robots_verdict = orig
+    assert out.frame().empty
+    assert any("NOTHING STORED" in e.message for e in out.log), [e.message for e in out.log]
 
 
 def test_every_declared_nearblocks_path_is_v3():

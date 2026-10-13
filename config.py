@@ -383,6 +383,12 @@ METRICS = {
                  "circulating; its own series because CoinGecko still COUNTS it (like-for-like, Jake 2026-10-08)",
         "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0,
         "sanity_max": 1e8, "view_only": True, "only_projects": ("Fluid",)},
+    "ecosystem_holding_tokens": {
+        "label": "GEOD in GEODNET's Ecosystem wallet 0x3A6906E4… alone (Polygon) — the same wallet treasury_holding_tokens "
+                 "sums with the two MINING wallets, read on its own so the unlock leg (e) holds no mining wallet "
+                 "(fix round 2 addendum G1/G2: the mining wallets pay (b) only)",
+        "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0,
+        "sanity_max": 1e10, "view_only": True, "only_projects": ("GEODNET",)},
     "noncirculating_holding_tokens": {
         "label": "Tokens in the project's own NON-CIRCULATING wallets (docs / registry / explorer-labelled; team, "
                  "foundation, ecosystem, converter reserves) — subtracted from on-chain circulating",
@@ -406,7 +412,7 @@ METRICS = {
                                           "sanity_min": 0, "sanity_max": 1e15, "view_only": True,
                                           "only_projects": ("Aerodrome",)},
     # ===== ETHEREUM DAILY HISTORY FROM ULTRASOUND.MONEY (A1/A3, 2026-09-30). See fetch/ultrasound.py.
-    "total_supply_ultrasound":    {"label": "ETH total supply, daily (ultrasound.money supplyByDay: execution + beacon balances − pending deposits)",
+    "total_supply_ultrasound":    {"label": "ETH total supply, daily 00:00Z (ultrasound.money supply-over-time since_merge — execution + beacon balances − beacon deposits; the history leg of total_supply_protocol, config.SUPPLY_HISTORY)",
                                    "kind": "stock", "unit": "tokens", "archetypes": [1, 4], "tiers": [3],
                                    "sanity_min": 1e8, "sanity_max": 1.5e8, "only_projects": ("Ethereum",)},
     "beacon_validators_eth":      {"label": "ETH held by beacon-chain validators, daily (ultrasound.money inBeaconValidatorsByDay)",
@@ -418,7 +424,7 @@ METRICS = {
     # Plume (Jake's probe, 2026-09-30): the validators' stake-weighted commission and the APR net
     # of it (fetch/plume_staking.py). staking_yield_pct stays the GROSS rate, labelled so.
     "staking_commission_pct":     {"label": "Validator commission, stake-weighted (fraction of rewards)", "kind": "stock", "unit": "pct", "archetypes": [1], "tiers": [2], "sanity_min": 0, "sanity_max": 1.0, "only_projects": ("Plume",)},
-    "staking_yield_net_pct":      {"label": "Staking yield NET of validator commission (annual, fraction)", "kind": "stock", "unit": "pct", "archetypes": [1], "tiers": [2], "sanity_min": 0, "sanity_max": 0.5, "only_projects": ("Plume",)},
+    "staking_yield_net_pct":      {"label": "Staking yield NET of validator commission (annual, fraction) — SOURCE: on-chain PlumeStaking getRewardRate x (1 − commission); the ~4.5% APY Plume's staking app shows is computed in the browser from the same two reads and is published nowhere else (fix round 2, S11, 2026-10-13)", "kind": "stock", "unit": "pct", "archetypes": [1], "tiers": [2], "sanity_min": 0, "sanity_max": 0.5, "only_projects": ("Plume",)},
     # Plume (Jake's probe 4c, 2026-09-30): the explorer stats service's own series, and
     # growthepie's kept as cross-checks under their own names (never mixed into the primaries).
     "fees_native_tokens":         {"label": "Fees paid per day in the native coin (explorer txnsFee; NearBlocks txn_fee)", "kind": "flow", "unit": "tokens", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Plume", "Ethereum", "Near")},
@@ -1155,6 +1161,22 @@ METRICS = {
     # UNLOCK DILUTION (Jake 2026-10-11, decision A2): releases from the non-circulating wallets, a build-time view
     # (build_workbook._unlock_views). KEPT OUT OF emissions_tokens (Jake 2026-09-24).
     "unlock_release_tokens":      {"label": "Unlock dilution — tokens RELEASED from the non-circulating wallets (the fall in their stock; a rise releases 0). Not emissions.",
+                                   "kind": "flow", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [1],
+                                   "sanity_min": 0, "sanity_max": 1e12, "view_only": True},
+    # FIX ROUND 2, F1: the other side of the same stock — tokens RETURNED to the issuer-side wallets (a rise of their
+    # summed stock: a recall, a purchase into a Safe, a top-up) leave circulating; the token-flow statement subtracts them
+    "emissions_mint_funded_tokens":     {"label": "Rewards paid from NEWLY MINTED tokens (config.REWARD_FUNDING) — dilution (c)", "kind": "flow", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e12, "view_only": True},
+    "emissions_treasury_funded_tokens": {"label": "Rewards paid from TREASURY RESERVES (config.REWARD_FUNDING) — a treasury release (e)", "kind": "flow", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e12, "view_only": True},
+    "emissions_revenue_funded_tokens":  {"label": "Rewards paid from tokens BOUGHT BACK out of revenue (config.REWARD_FUNDING) — a distribution of a buyback already credited; not dilution", "kind": "flow", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e12, "view_only": True},
+    "near_intents_volume_usd_nearblocks": {"label": "NEAR Intents volume ($/day) as NearBlocks v3 indexes the intents.near events (/v3/intents/volume-stats) — a SECOND definition kept beside DefiLlama's (NEAR's Dune dataset); Business 1 reads DefiLlama's (fix round 2, N3)", "kind": "flow", "unit": "usd", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e11, "only_projects": ("Near",)},
+    "programmatic_buyback_tokens": {"label": "ETHFI bought by the Programmatic Buybacks Safe 0x43F4cA92… on CoW (Snapshot 0xed61adff…, from 2026-09-03) — paid on as OP cashback, none held: not retired, not credited to holder value; its own series (fix round 2, S2)", "kind": "flow", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Ether.fi",)},
+    "issuer_mint_tokens":         {"label": "Tokens MINTED STRAIGHT TO ISSUER-SIDE WALLETS (config.ISSUER_MINTS: Aerodrome's team emission, Maple's recapitalization mints) — an insider emission, not circulating until released; its own line, never (b)/(c)",
+                                   "kind": "flow", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [2],
+                                   "sanity_min": 0, "sanity_max": 1e10, "view_only": True},
+    "scheduled_release_tokens":   {"label": "Tokens RELEASED by the project's PUBLISHED circulating schedule (config.CIRCULATING_SCHEDULE: the month's step, on the month's first day) — the Flows tab's '+ scheduled releases' where circulating is that schedule",
+                                   "kind": "flow", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [3],
+                                   "sanity_min": 0, "sanity_max": 1e12, "view_only": True},
+    "issuer_return_tokens":       {"label": "Tokens RETURNED to the non-circulating wallets (the rise in their stock, same days and gating as the release) — leave circulating; the Flows tab's '− returned to issuer-side wallets'",
                                    "kind": "flow", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [1],
                                    "sanity_min": 0, "sanity_max": 1e12, "view_only": True},
     # NEAR's still-unvested lockups (Jake 2026-10-11, C): near_lockups, refreshed weekly, out of circulating
@@ -2973,6 +2995,15 @@ PROJECTS = [
         # src/eth_supply/store.rs:61), not market cap / price — route (a)'s noise does not apply.
         # Its early segment is Glassnode's daily figure (over_time.rs:358-391; licensing
         # register). live_confirmed flips on the first run that stores it.
+        # THE SUPPLY HISTORY ROUTE (fix round 2, H1 / S12, research 2026-10-13): ultrasound.money's live
+        # /api/v2/fees/supply-over-time (found in the site's JS; no robots.txt — the path answers 404 HTML), key
+        # since_merge = daily 00:00Z {supply, timestamp} points, all present. Definition (its frontend):
+        # executionBalancesSum + beaconBalancesSum − beaconDepositsSum. Stored as total_supply_ultrasound; the build
+        # reads it as total_supply_protocol's history before Etherscan's first row (config.SUPPLY_HISTORY).
+        # CoinMetrics' community SplyCur is NOT used: CC BY-NC 4.0 (non-commercial).
+        "ultrasound_supply": {"url": "https://ultrasound.money/api/v2/fees/supply-over-time", "list": "since_merge",
+                              "value": "supply", "time": "timestamp", "metric": "total_supply_ultrasound",
+                              "keep_days": 460},
         "ultrasound_history": {
             "url": "https://ultrasound.money/api/v2/fees/supply-projection-inputs",
             "series": {"supplyByDay": "total_supply_ultrasound",
@@ -3607,10 +3638,20 @@ PROJECTS = [
                                 "metric": "locked_tokens_nearblocks", "yocto_exponent": 24},
             # Jake 2026-10-11 (C): NearBlocks' total − circulating, the cross-check for the still-unvested lockup leg
             # (58.87M on 2026-10-11; NearBlocks subtracts all LOCKED, Jake's rule only the unvested — expect ours lower)
-            # v3 since 2026-10-13 (NearBlocks retires v1 on 2026-10-31): the same `stats` row, a new envelope
-            "supply_stats": {"path": "/v3/stats", "metric": "noncirculating_nearblocks_tokens", "yocto_exponent": 24},
+            # RETIRED (fix round 2, N1): NearBlocks v3 /stats answers circulating_supply == total_supply — 0 NEAR not
+            # circulating, against v1's 58.9M (Jake's nearblocks_v3_parity, 2026-10-13). The v1 figure goes with v1 on
+            # 2026-10-31, so the cross-check is closed: v3's circulating is never read (tests/test_nearblocks_v3.py)
+            # and NEAR circulating stays on our own basis (the lockup rule). The adapter refuses a v3 answer whose
+            # circulating equals its total, should the entry ever be restored.
+            "supply_stats_retired": {"path": "/v3/stats", "metric": "noncirculating_nearblocks_tokens",
+                                     "yocto_exponent": 24, "retired_on": "2026-10-13",
+                                     "why": "v3 reports circulating == total (0 non-circulating)"},
             "metrics": {
                 "tx_count": {"path": "/v3/txn-stats", "field": "txns"},
+                # N3 (fix round 2): NearBlocks' own index of the intents.near events — stored BESIDE DefiLlama's
+                # near_intents_volume_usd (NEAR's Dune dataset), never instead of it. v3 read 50–84% of DefiLlama's
+                # daily figure in Jake's parity run (2026-10-13). BUSINESS 1 reads DefiLlama's (NEAR's own measure).
+                "near_intents_volume_usd_nearblocks": {"path": "/v3/intents/volume-stats", "field": "daily"},
                 "active_addresses": {"path": "/v3/address-stats", "field": "active_accounts"},
                 # B (overnight 2026-10-06): fees paid per day IN NEAR — txn.sql (main, read 2026-10-06):
                 # (transaction_stats.tokens_burnt + outcome_stats.tokens_burnt) / 1e24 AS txn_fee, i.e. gas_burnt x
@@ -3646,6 +3687,18 @@ PROJECTS = [
                 "field_source": "live: Jake's run 2026-10-07 14:17 (check_offline_items near_buyback_wallets "
                                 "printed date/amount rows for all three wallets)",
                 "partial": "LIQUID NATIVE NEAR ONLY — wNEAR and staked NEAR in these wallets are not in `amount`",
+            },
+            # N2 (Jake's fix round 2, 2026-10-13): lockup.near + contributors.near's DAILY history from NearBlocks v3
+            # stats/balance (amount + amount_staked — the same two quantities near_rpc's view_account reads as amount +
+            # locked), for the days before the live RPC read began (2026-10-12). Jake's nearblocks_v3_parity run
+            # (2026-10-13) found the two agree to 0.000% on the overlap: one basis (config.SAME_BASIS). It is the
+            # history the (e) releases and the discretionary supply need.
+            "foundation_history": {
+                "path": "/v3/accounts/{account}/stats/balance", "limit": 365,
+                "accounts": ["lockup.near", "contributors.near"], "fields": ("amount", "amount_staked"),
+                "metric": "near_foundation_accounts_tokens", "flow": "unlock_release_tokens", "yocto_exponent": 24,
+                "store_before": "2026-10-12",
+                "parity": "Jake's check_offline_items.py nearblocks_v3_parity, 2026-10-13: 0.000% on the overlap",
             },
         },
         # ===== RESOLVED 2026-09-24 — SEE near_account_flows BELOW. FORMERLY =====
@@ -12890,12 +12943,15 @@ PROJECTS = [
                     "annualised_share_bounds": [0.05, 0.15],
                     # THE NUDGE-DOWN YEAR (Jake's run on 3500042, item 25). tailEmissionRate() read at each epoch's
                     # block on Base, 2026-10-13: 36 bps (18.7% a year) on 2025-07-11, falling exactly 1 bps an epoch
-                    # to 21 bps on 2025-10-24 and flat at 21 since. The [5%, 15%] band is the documented April-2026
-                    # level; it refused the eight epochs 2025-07-11..2025-08-29 (15.1-18.7%) as if they were bad
-                    # reads. Before 2025-10-24 the band spans the nudge path from activation (67 bps = 34.8%) down;
-                    # from it the documented band stands, so an un-nudged 67 bps today still reads as a finding.
-                    "annualised_share_bounds_history": [("2024-12-04", "2025-10-23", [0.10, 0.35]),
-                                                        ("2025-10-24", None, [0.05, 0.15])],
+                    # to 21 bps from the 2025-10-23 flip and flat at 21 since (CORRECTED 2026-10-13 from "2025-10-24":
+                    # the Nudge 22 -> 21 landed at block 37,192,832, 2025-10-22T23:16:51Z, tx 0xec5f2fd4…a4cd; the
+                    # first emission at 21 bps was the 2025-10-23 00:00:07Z flip, block 37,194,130 — fix round 2,
+                    # S5). The [5%, 15%] band is the documented April-2026 level; it refused the eight epochs
+                    # 2025-07-11..2025-08-29 (15.1-18.7%) as if they were bad reads. Before 2025-10-23 the band spans
+                    # the nudge path from activation (67 bps = 34.8%) down; from it the documented band stands, so an
+                    # un-nudged 67 bps today still reads as a finding.
+                    "annualised_share_bounds_history": [("2024-12-04", "2025-10-22", [0.10, 0.35]),
+                                                        ("2025-10-23", None, [0.05, 0.15])],
                     "annualised_share_source": {
                         "claim": "approximately 10.9% annualized, as of April 2026",
                         "source_url": "https://aerodrome.finance/docs",
@@ -18399,6 +18455,36 @@ def archive_not_by_design(project_name: str, metric: str) -> str:
 #     wallets, the Foundation owners, and Aerodrome's own reward contracts (Reward.sol L25 `ve` == the escrow,
 #     contracts@1ba30815) — receiving >= threshold_tokens is a Review Queue item, as is a trace that could not be read.
 # From label_from, the rows below read "MIGRATION WATCH" until the RUNBOOK plan is built (set `built` then).
+# THE AERO MIGRATION CUTOVER (fix round 2, S5; aero.xyz/aero-upgrade, read 2026-10-13): "Aero launches
+# 2026-10-22T00:00:00Z" — "Current AERO and VELO emissions end"; new AERO 1:1, VELO ~0.044 (5.5% of the new supply);
+# veAERO -> sAERO NFTs; a new accounting-based minter (mints on claim). The new addresses are published on launch day
+# only, so the switch is Jake's input: aero_migration.json beside config.py (RUNBOOK 11bx), e.g.
+#   {"launched": true, "verified": "2026-10-22", "source_url": "https://aero.xyz/…",
+#    "addresses": {"minter": "0x…", "voting_escrow": "0x…", "token": "0x…"}, "velo_conversion": 0.044}
+# Until it says launched, every Aerodrome legacy read dated on or after the cutover is REFUSED and the run FAILS loudly
+# (fetch/validate.check_migration_cutover) — never a silent 0 from a stopped contract. The old veAERO's rebase is NOT
+# assumed to stop: aero.xyz/aero-economic-case (2026-03-30) says old veAERO/veVELO "will continue to receive rebases";
+# only sAERO has none (research 2026-10-13 — Jake's note "the rebase stops" is contradicted, recorded in SPEC §12).
+AERODROME_MIGRATION = {
+    "project": "Aerodrome", "cutover_utc": "2026-10-22", "switch_file": "aero_migration.json",
+    "legacy_metrics": ("gross_issuance_tokens", "emissions_tokens", "issuer_mint_tokens", "ve_locked_supply_tokens",
+                       "ve_voting_power_tokens", "voter_total_weight_tokens", "locked_tokens",
+                       "permanent_locked_tokens", "voter_rewards_onchain_usd", "voter_rewards_onchain_apr"),
+    "source": "https://aero.xyz/aero-upgrade (read 2026-10-13)",
+}
+
+
+def aerodrome_migration_state() -> dict:
+    """Jake's launch-day input (AERODROME_MIGRATION switch_file), {} while absent or unreadable."""
+    import json as _json
+    from pathlib import Path as _Path
+    path = _Path(__file__).resolve().parent / AERODROME_MIGRATION["switch_file"]
+    try:
+        return _json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    except (OSError, ValueError):
+        return {"unreadable": str(path)}
+
+
 AERODROME_MIGRATION_WATCH = {
     "project": "Aerodrome", "label_from": "2026-10-21", "built": None,
     "label": "MIGRATION WATCH (Aerodrome's migration launches 2026-10-21/22; this row's reads are replaced per the "
@@ -22594,6 +22680,205 @@ CIRCULATING_SCHEDULE = {
     },
 }
 
+# LATENT SUPPLY (fix round 2, S4): tokens accrued under a contract's own rules but NOT YET MINTED — an overhang no
+# totalSupply read shows. Discretionary (only the named minter can mint them, at a time of its choosing). A dated reading,
+# entered by Claude Code, pending Jake's review; route to a live read in `route`.
+LATENT_SUPPLY = {
+    "Pendle": {"tokens": 9_837_598.56, "as_of": "2026-10-13",
+               "how": "the verified PENDLE token contract's own emission logic and state: 6,865,217.49 from the "
+                      "decaying-emission weeks + 2,972,381.08 from the 2% terminal inflation, weeks 205-286, mintable "
+                      "only by the liquidity-incentives contract 0xe8d28e2c… (research r15, 2026-10-13); totalSupply "
+                      "flat at 281,527,448.4585 since the 2025-03-24 claim (weeks 121-204, 23.08M)",
+               "entered_by": "Claude Code, pending Jake's review",
+               "route": "a daily contract read of the same state (NOT WIRED): the token's lastEpochEmissions / "
+                        "lastEpochMinted and the epoch clock"},
+}
+
+
+# REVENUE THAT IS NOT INDEPENDENT OF THE BUYBACK / BURN IT IS COMPARED WITH (fix round 2, addendum G3 / C22, research
+# r16 2026-10-13). Labelled wherever the revenue is read, and EXCLUDED FROM THE DIVERGENCE ROW (a revenue implied from
+# the burn cannot diverge from it).
+REVENUE_IMPLIED = {
+    "GEODNET": "revenue IMPLIED FROM THE BURN (not independent): DefiLlama fees/geodnet.ts sets dailyFees = burn ÷ 0.8 "
+               "and dailyRevenue = dailyFees. POLICY CONFLICT recorded: the issuer filing (2025-08-19) says '50% of the "
+               "subscription revenue is shared with the GEODNET Foundation. 80% of this revenue is used for buy-back "
+               "and burning' (40% of gross); GEODNET's X post of 2026-07-02 says '80% of GEODNET data revenue going "
+               "toward buying and burning'. On the filing's reading the fees are understated 2x. No first-party "
+               "revenue figure is published (geodnet.com/geod, /foundation 404) — an independent source is NOT FOUND",
+    "Chainlink": "holder value ÷ revenue is ~1 BY CONSTRUCTION: DefiLlama fees/chainlink revenue = LINK sent from "
+                 "Payment Abstraction 0x5680681E to the Reserve, holdersRevenue = revenue.clone(1), and our buyback is "
+                 "the Reserve's inflow (C22). Revenue itself (customer fees) stays independent and in the divergence",
+}
+DIVERGENCE_EXCLUDED = ("GEODNET",)
+
+
+# THE REGRESSION GUARD'S ALLOW-LIST (fix round 2, T3): a headline that had a value last run and reads n/a / BLOCKED now
+# is BROKEN on the Coverage tab unless it is named here with the reason — a change made on purpose this round, with the
+# date it should clear by. `header` is matched inside the hit's text ("<tab> <header>: …").
+REGRESSION_ALLOWLIST = [
+    {"project": "GEODNET", "match": ("unlock_release_tokens", "outflow_e", "outflow (e)"), "until": "2026-10-31",
+     "reason": "G1/G2: the unlock leg (e) now reads the five non-mining wallets only; the Ecosystem wallet's own series "
+               "(ecosystem_holding_tokens) starts with the next run — run archive_backfill.py --run --project GEODNET"},
+    {"project": "Near", "match": ("fees_total_usd",), "until": "2026-10-20",
+     "reason": "R1: gross payout now divides by gas + Intents fees; the Intents fees series is backfilled (455 days) on "
+               "the next run (the old 12.98x divided gas-only fees)"},
+]
+
+
+# REWARD FUNDING PERIODS (fix round 2, S1 — research r14, 2026-10-13, every row on-chain or in an executive): which
+# source pays each day's reward. (start, end inclusive or None, funding, why). Day granularity: a cast mid-day counts
+# from its day. Funding: "mint" = new issuance; "treasury" = Pause Proxy reserves; "revenue" = SKY bought back out of
+# revenue under a rule that sizes the stream to the buyback.
+REWARD_FUNDING = {
+    "Sky": {"metric": "emissions_tokens",
+            "to": {"mint": "emissions_mint_funded_tokens", "treasury": "emissions_treasury_funded_tokens",
+                   "revenue": "emissions_revenue_funded_tokens"},
+            "periods": (
+                ("2024-09-17", "2025-06-01", "mint",
+                 "F0: MCD_VEST_SKY ids 1-2, DssVestMintable — yanked by the 2025-05-29 executive (cast 2025-06-02)"),
+                ("2025-06-02", "2026-03-01", "treasury",
+                 "F1-F3: USDS->SKY treasury vests 4-7, 9 ('switched from minting new tokens to transferring tokens "
+                 "from the PauseProxy', exec 2025-05-29) and LSSKY->SKY vest 8 (Sky Frontier Foundation's 500M grant, "
+                 "exec 2025-10-30; not re-sized to buybacks until 2026-02-26)"),
+                ("2026-03-02", "2026-03-13", "treasury",
+                 "F4: vest 10 was SIZED from the prior 90 days' buybacks (forum t/27721) — research reads it revenue; "
+                 "kept treasury here, the conservative reading of Jake's 'before 2026-08-17 = treasury' (PROPOSED)"),
+                ("2026-03-14", "2026-08-16", "treasury",
+                 "F5: buybacks cut -87.5% (exec 2026-03-12, cast 03-14) while vests 10-15 paid from reserves; Atlas: "
+                 "'funded from SKY token reserves held by the Protocol Treasury'"),
+                ("2026-08-17", None, "revenue",
+                 "F6-F7: TMF target state (exec 2026-08-13, cast 08-17; Atlas A.2.3.1.2.4): the vest is 45% of Step 3 "
+                 "revenue (at the prior-month TWAP for vests 16-17; on SKY actually bought for vest 18, from 10-12)"),
+            )},
+}
+
+
+def reward_funding(project_name: str, day) -> tuple[str, str] | None:
+    import pandas as _pd
+    spec = REWARD_FUNDING.get(project_name) or {}
+    for start, end, funding, why in spec.get("periods") or ():
+        if _pd.Timestamp(start) <= _pd.Timestamp(day) and (end is None or _pd.Timestamp(day) <= _pd.Timestamp(end)):
+            return funding, why
+    return None
+
+
+# MINTED STRAIGHT TO ISSUER-SIDE WALLETS (fix round 2, S5 / S3): new supply that lands in a non-circulating wallet is an
+# INSIDER EMISSION — its own line (alignment), not (b) / (c); it is not circulating until it leaves the wallet, and then
+# it is a release (e) like any other. The unlock view nets these mints out of the stock's rises, so a mint is never
+# read as a "return to the issuer" and never as a release.
+ISSUER_MINTS = {
+    # AERODROME TEAM EMISSION — Minter.sol L191-192 (aerodrome-finance/contracts@1ba30815):
+    #   _teamEmissions = (_rate * (_growth + _weekly)) / (MAX_BPS - _rate)
+    # in tail mode _weekly is the FROZEN stored weekly (8,969,149.540108 AERO, read live 2026-10-13), _growth the rebase
+    # (emissions_tokens, the RewardsDistributor's share of the same flip). Paid at each Thursday 00:00 UTC flip to
+    # Minter.team() = 0xBDE0c70BdC242577c52dFAD53389F82fd149EA5a (a filing wallet: non-circulating). teamRate history
+    # (setTeamRate emits no event; bisected by archive reads, research 2026-10-13): 500 bps to the 2025-10-02 flip;
+    # 0 from the 2025-10-09 flip (tx 0x1acfc7f7…63d0a, block 36,574,907); 228 from the 2026-03-05 flip (tx
+    # 0x124ce848…7069, block 42,938,334). Check: 2026-10-08 flip 228 x (489,525.2 + 8,969,149.54) / 9,772 =
+    # 220,688.6 against the on-chain transfer 220,689.5. A new setTeamRate is caught by check_offline_items
+    # aero_team_rate (reads teamRate() live against the last entry here).
+    "Aerodrome": {"kind": "minter_team_formula", "wallet": "0xBDE0c70BdC242577c52dFAD53389F82fd149EA5a",
+                  "minter": "0xeB018363F0a9Af8f91F06FEe6613a751b2A33FE5",
+                  "frozen_weekly": 8_969_149.540108, "growth_metric": "emissions_tokens",
+                  "rate_by_flip": (("2023-09-01", 500), ("2025-10-09", 0), ("2026-03-05", 228)),
+                  # THE STORED WEEKLY ROWS ARE DATED ONE FLIP BEFORE THE TRANSFER (research 2026-10-13, per-epoch archive
+                  # reads): the rebase row dated 2025-10-02 (489,367) is the RewardsDistributor transfer of the
+                  # 2025-10-09 flip to the token, and the gauge row dated 2026-10-01 (4,184,974) the Voter transfer of
+                  # 2026-10-08. The team amount sits on the same date as the rebase it is computed from, with the rate
+                  # in force at the flip that paid it (date + 7 days).
+                  "flip_offset_days": 7,
+                  "source": "derived:minter_team_formula[teamRate x (rebase + frozen weekly) / (10000 - teamRate)]"},
+    # MAPLE RECAPITALIZATION MINTS (fix round 2, S3; research r15 2026-10-13, mint logs of RecapitalizationModule
+    # 0x5dfe0460f66fa06bFCbB3211e723556be6B3f69D to mapleTreasury 0xa9466EaBd096449d650D5AEB0dD3dA6F52FD0B19, a wallet
+    # of Maple's non-circulating set). MIP-009 / MIP-010; the issuance rate is 0 from 2026-10-01 04:00 UTC with nothing
+    # left to claim. The 2025-07-03 mint (76,124,987.59) was burned from the Migrator in the same tx: net 0, not listed.
+    # totalSupply 1,267,875,000.00 (2026-10-13). Config's earlier "44.4M" (Oct 2025 + Apr 2026) missed 2025-07-10 and
+    # 2026-10-09: the five claims since 2025-07-01 net to 78,241,999.94.
+    "Maple": {"kind": "events", "wallet": "0xa9466EaBd096449d650D5AEB0dD3dA6F52FD0B19",
+              "source": "chain:ethereum:recapitalization_module_mints",
+              "events": ({"date": "2025-07-10", "tokens": 10_642_708.49},
+                         {"date": "2025-10-15", "tokens": 15_851_439.45},
+                         {"date": "2026-04-22", "tokens": 28_550_344.51},
+                         {"date": "2026-10-09", "tokens": 23_197_507.49})},
+}
+
+
+def issuer_mint_rate(project_name: str, day) -> int | None:
+    """The teamRate (bps) in force at a flip dated `day` (ISSUER_MINTS rate_by_flip), None before the first entry."""
+    import pandas as _pd
+    spec = ISSUER_MINTS.get(project_name) or {}
+    rate = None
+    for d, r in spec.get("rate_by_flip") or ():
+        if _pd.Timestamp(day) >= _pd.Timestamp(d):
+            rate = r
+    return rate
+
+
+# FDV ON A TOTAL NET OF A BURNED BALANCE (fix round 2, S6 — Jake 2026-10-13): Hyperliquid's docs (gitbook, trading/fees)
+# say "HYPE in the assistance fund is burned, removing the tokens permanently from the circulating and total supply",
+# yet the info API's tokenDetails totalSupply (998.86M) still includes the Fund's 48.0M (live circulatingSupply =
+# totalSupply − the non-circulating list − futureEmissions only with the Fund inside; research 2026-10-13). FDV uses
+# the API total LESS the Fund's balance (0xfefe…fefe, spotClearinghouseState), labelled; the API total stays stored.
+FDV_TOTAL_NET = {
+    "Hyperliquid": {"total": "total_supply_gross", "less": "burn_address_balance",
+                    "label": "tokenDetails totalSupply − Assistance Fund (burned per the docs)"},
+}
+
+
+# SUPPLY HISTORY BEFORE THE FIRST-PARTY READ (fix round 2, H1 / H3 / S12): Ethereum's total_supply_protocol (Etherscan
+# ethsupply2, current-only) starts 2026-09-29; the stored circulating before it was CoinGecko's mcap ÷ price, flat at
+# ~120.7M for a year (wrong — supply rose ~1.1M). The days before read ultrasound.money's supply-over-time point at
+# 00:00Z of the NEXT day (the end of day D, as Etherscan's read is taken during D), and the gross issuance of those days
+# is d(that supply) + the stored burn. On the 8-day overlap (2026-09-29..10-09) Etherscan read 4,118–4,298 ETH
+# (0.0035%) above ultrasound's next-day point, every day: the definitions differ by in-flight deposits —
+# PROPOSED same basis (SPEC §12): the level offset is below the precision of every figure that reads it, and the
+# daily change (issuance) is unaffected by a constant level.
+SUPPLY_HISTORY = {
+    "Ethereum": {"metric": "total_supply_protocol", "from_metric": "total_supply_ultrasound", "shift_days": 1,
+                 "source": "ultrasound:supply-over-time[next-day 00:00Z]",
+                 "issuance": {"metric": "gross_issuance_tokens", "burn": "gross_burn_tokens",
+                              "source": "derived:d_total_supply_protocol+burn[ultrasound supply-over-time leg]"},
+                 "overlap_offset_eth": (4117.7, 4297.7)},
+}
+for _n, _h in SUPPLY_HISTORY.items():
+    PROJECT_BY_NAME[_n].setdefault("series_handover", {}).setdefault(_h["metric"], {
+        "ordered_points": (_h["source"], "etherscan:ethsupply2.supply"),
+        "why": "ultrasound.money's daily supply before Etherscan's first ethsupply2 read (fix round 2, H1)",
+        "composition_change": "none (PROPOSED): Etherscan reads 4,118–4,298 ETH (0.0035%) above ultrasound on the "
+                              "8-day overlap, a constant level from in-flight deposits",
+        "declared": "2026-10-13"})
+
+
+# FIRST-PARTY CIRCULATING HISTORY (fix round 2, H1 — Jake 2026-10-13): the first-party figure has no history of its own
+# (Aethir's page and supply.plume.org answer "now" only), so the basis switch from CoinGecko sat inside Q0..Q-3 as a
+# SERIES BREAK. Read-time history legs on the SAME basis, never stored:
+#   "schedule": the project's own published monthly table (CIRCULATING_SCHEDULE) for every day before the first
+#               stored first-party row — Aethir's page reads the table (re-read 2026-10-13: 85 rows, zero
+#               differences; Oct 2026 24,053,550,151 on both).
+#   "mirror":   a third party's stored figure that EQUALS the first-party figure on the overlap, from `from` — Plume:
+#               CoinGecko's circulating equals supply.plume.org exactly (6,606,142,167, 2026-09-21..2026-10-09) and
+#               moves in the published schedule's exact flats from 2026-01-01 (+212,116,114.6 a month about the 21st);
+#               before 2026-01-01 the mcap/price leg is noisy (±0.2–1%) and is NOT adopted (research r12, 2026-10-13).
+FIRST_PARTY_HISTORY = {
+    "Aethir": {"metric": "circulating_supply_first_party", "route": "schedule",
+               "source": "first_party_schedule:ath-circulating-supply",
+               "live_point": "aethir_page:protocol/onchain-metric.athCirculatingSupply"},
+    "Plume": {"metric": "circulating_supply_first_party", "route": "mirror", "mirror": "circulating_supply",
+              "from": "2026-01-01", "source": "coingecko:mirror_of_supply.plume.org",
+              "live_point": "scrape:supply.plume.org"},
+}
+for _n, _h in FIRST_PARTY_HISTORY.items():
+    PROJECT_BY_NAME[_n].setdefault("series_handover", {}).setdefault(_h["metric"], {
+        "ordered_points": (_h["source"], _h["live_point"]),
+        "why": ("the published monthly table before the page's first stored read (fix round 2, H1)" if _h["route"] ==
+                "schedule" else f"CoinGecko's {_h['mirror']} from {_h['from']}, which mirrors the first-party figure "
+                                f"exactly, before the endpoint's first stored read (fix round 2, H1)"),
+        "composition_change": ("none: the page reads the table (zero differences, 2026-10-13)" if _h["route"] ==
+                               "schedule" else "none: CoinGecko mirrors supply.plume.org (exact on the overlap; the "
+                                               "monthly step is the published schedule)"),
+        "declared": "2026-10-13"})
+
+
 def circulating_schedule_change(project_name: str, asof) -> dict | None:
     """{"base", "last": (from, to, pct), "next": (...)} from the published table: asof's month, 12 months before it and
     12 months after (the final figure once past the table's end). None where nothing is published."""
@@ -22791,6 +23076,68 @@ def _apply_confirmed_candidates() -> None:
 
 
 _apply_confirmed_candidates()
+
+
+# ETHER.FI PROGRAMMATIC BUYBACKS (fix round 2, S2 — Snapshot 0xed61adff… passed 1,141,998.96 / 0 / 0, closed 2026-09-03;
+# research r15 2026-10-13). The buyer is Safe 0x43F4cA92F7F378bCdcF1508b866b5B6c47D6408C (its two owners shared with the
+# old buyback Safe and the top-up Safe; not in the Blockworks filing, which is why r9 read "not executed"): weekly USDC
+# from Safe 0xf40bcc08… (1,255,229 in total), 335 CoW fills 2026-09-08..10-13 = 1,467,688.39 ETHFI for 1,022,633.79
+# USDC. Every bought ETHFI went on to the OP CashbackDistributor 0x38F2… — NONE is held in the Foundation treasury yet,
+# so nothing is retired and nothing credits holder value; cashback from bought ETHFI is (c) but NOT dilution (it
+# recirculates market-bought supply); the 20M buffer Safe 0xe4439b1d… (which would be dilution) has paid 0. Its own
+# series, never summed into actual_buyback_tokens (the old programme's, whose funding is dated in HOLDER_VALUE).
+PROJECT_BY_NAME["Ether.fi"]["log_scans"].append({
+    "key": "programmatic_buyback_inflow", "metric": "programmatic_buyback_tokens", "chain": "ethereum",
+    "token": "0xFe0c30065B384F05761f15d0CC899D4F9F9Cc0eB",
+    "holders": ["0x43F4cA92F7F378bCdcF1508b866b5B6c47D6408C"], "direction": "in", "store": True,
+    "attribution": "swap",
+    "swap_venues": ["0x9008d19f58aabd9ed0d60971565aa8510560ab41"],
+    "swap_venues_source": "GPv2Settlement: cowprotocol/contracts networks.json (HEAD c07a93e, 2026-09-01), chain 1",
+    "count_from_since": "2026-09-03",
+    "attribution_sources": ["https://snapshot.box/#/s:ether.fi/proposal/0xed61adff (Programmatic Buybacks, closed "
+                            "2026-09-03)", "research r15 2026-10-13: Safe 0x43F4cA92… CoW fills, owners shared with "
+                                           "0x2f5301a3… and 0x3fb6784e…"],
+    "wired_on": "2026-10-13"})
+
+
+# GEODNET'S UNLOCK LEG HOLDS NO MINING WALLET (fix round 2 addendum G1/G2, Jake 2026-10-13, from the issuer filing of
+# 2025-08-19): Mining 0xfa5fEd5c… and Mining distribution 0x8FB9dd00… pay station rewards — category (b) only, read as
+# their release (balance_flows mining_wallets_release -> pool_release_tokens -> emissions_tokens). Every OTHER issuer
+# wallet (Team, Investor, Ecosystem, Vendor/Marketing, Public sale) has no published schedule, so its release is
+# discretionary (e). Until now (e) was the fall of treasury_holding_tokens + noncirculating_holding_tokens, and
+# treasury_holding_tokens sums the two mining wallets WITH the Ecosystem wallet: every mining payout was counted in
+# (b) AND (e) (F2). The Ecosystem wallet is now ALSO read on its own (the same balanceOf, a second metric) and (e)
+# reads it with the four candidate wallets; the treasury sum (circulating) is unchanged.
+PROJECT_BY_NAME["GEODNET"]["contracts"]["ecosystem_stock_polygon"] = _contract(
+    "0x3A6906E4239F9860C81035c54198Df58D892653b", "polygon", "treasury_holding", "GEOD",
+    "https://docs.geodnet.com/geod-token/tokenomics", verified="2026-09-17",
+    provenance="docs.geodnet.com/geod-token/tokenomics — verified 2026-09-17, confirmed by Jake 2026-10-07; the "
+               "issuer filing of 2025-08-19 (fix round 2 addendum G2)",
+    purpose="GEODNET Ecosystem wallet (Polygon), read on its own for the unlock leg (e) — see ecosystem_polygon",
+    holder_has_code=False, metric_override="ecosystem_holding_tokens")
+
+
+def mining_wallets(project_name: str) -> tuple[str, ...]:
+    """The wallets whose release IS the supply-side reward (b): the holders of a balance_flows read stored as
+    pool_release_tokens. Never part of the unlock leg (e) (fix round 2 addendum G1)."""
+    p = PROJECT_BY_NAME.get(project_name) or {}
+    return tuple(h for bf in p.get("balance_flows") or () if bf.get("metric") == "pool_release_tokens"
+                 for h in bf.get("holders") or ())
+
+
+def discretionary_wallets(project_name: str) -> tuple[str, ...]:
+    """The wallets the unlock leg (e) reads: every contract whose stored metric is one of unlock_stock_metrics."""
+    stocks = set(unlock_stock_metrics(project_name))
+    p = PROJECT_BY_NAME.get(project_name) or {}
+    out = []
+    for c in (p.get("contracts") or {}).values():
+        m = c.get("metric_override") or _KIND_METRIC_FOR_WALLETS.get(c.get("kind"))
+        if m in stocks and c.get("address"):
+            out.append(c["address"])
+    return tuple(out)
+
+
+_KIND_METRIC_FOR_WALLETS = {"treasury_holding": "treasury_holding_tokens"}
 # Every project with a wired non-circulating wallet reads the metric (the full sweep adds projects as their
 # first-party wallet lists arrive — Ether.fi, Morpho, 2026-10-07).
 METRICS["noncirculating_holding_tokens"]["only_projects"] = tuple(sorted(
@@ -22839,8 +23186,14 @@ UNLOCK_STOCKS = {
     "Sky": (),
     # the Foundation + Grants wallets (A1, from 2026-10-11) and the team wallet (Jake 2026-10-12, decision 3 on e4e50b0)
     "Hyperliquid": ("excluded_wallets_tokens", "team_wallet_tokens"),
-    # NOT YET TRANSFERABLE lockups (Jake 2026-10-12, decision 8: LOCKED = unvested + lockup-locked); weekly read
-    "Near": ("near_lockup_locked_tokens",),
+    # NEAR (fix round 2, R10): the releases of lockup.near + contributors.near (NEAR's own circulating method subtracts
+    # both), daily from the N2 history. The lockup CONTRACTS' locked amounts (near_lockup_locked_tokens, Jake's
+    # decision 8) are read weekly and have ONE reading (2026-10-11, manual) — their releases are not measurable yet and
+    # sit outside (e) until a second weekly reading lands (near_lockup_release_tokens, UNLOCK_RELEASE_SUBSETS)
+    "Near": ("near_foundation_accounts_tokens",),
+    # GEODNET (fix round 2 addendum G1/G2): the four filed candidate wallets + the Ecosystem wallet on its own — never
+    # the two mining wallets, whose release is (b) (see ecosystem_stock_polygon above)
+    "GEODNET": ("noncirculating_holding_tokens", "ecosystem_holding_tokens"),
 }
 
 
@@ -26582,8 +26935,12 @@ OUTFLOW_CATEGORIES = {
     "Ethereum": {"a": ("gross_issuance_tokens",),
                  "basis": "issuance is consensus rewards to validators (security)"},
     "Near": {"a": ("gross_issuance_tokens",), "e": ("unlock_release_tokens",),
-             "basis": "minted rewards to validators (90%) and the protocol treasury (10%, inside the mint); lockup "
-                      "releases are unlocks"},
+             "basis": "minted rewards to validators (90%) and the protocol treasury (10%, inside the mint) are (a); "
+                      "(e) = releases from lockup.near + contributors.near (the accounts NEAR's own circulating method "
+                      "subtracts; daily, NearBlocks v3 history before 2026-10-12, the RPC read after — fix round 2, "
+                      "R10 / N2)",
+             "pending": "PARTIAL (e): the lockup CONTRACTS' releases (near_lockup_release_tokens) join (e) once the "
+                        "weekly lockup read has two readings — one so far (2026-10-11)"},
     "Plume": {"basis": "staking rewards to validators / delegators are (a) security — paid out of PRE-MINTED supply "
                        "(the 10bn total does not move: gross_issuance_tokens is 0 on every stored day), so no series "
                        "measures them yet; reward rate x stake would be MODELLED and is not used. Nest Points Season One (ended "
@@ -26594,7 +26951,14 @@ OUTFLOW_CATEGORIES = {
                          "/v4/creators/plume/distributed/over-time)"},
     "Chainlink": {"a": ("emissions_tokens",), "e": ("unlock_release_tokens",),
                   "basis": "staking rewards (v0.2 pools, paid for securing feeds) are security; non-circulating wallet "
-                           "releases are unlocks"},
+                           "releases are unlocks (the 18.75M tranches stay in (e), Jake C23)",
+                  # C20 (fix round 2 addendum, research r16 2026-10-13): the RewardVault is funded by Safe 0x7e10a625…
+                  # (607,500 LINK x 10 to the v0.2 vault, latest 2026-06-24; 607,500 more held since 2026-10-07), whose
+                  # LINK comes 0x1661f928 <- 0x7A28b8cF <- 0xD50f074E <- the 27 non-circulating wallets. The same LINK
+                  # is therefore counted once as an (e) release and again as (a) emissions — a known double count.
+                  "pending": "C20: LINK leaving the 27 wallets toward 0xD50f074E -> … -> 0x7e10a625… (the staking "
+                             "reward funder) is counted in (e) AND, when emitted, in (a); route: classify releases per "
+                             "transfer (destination chain to 0x7e10a625…) and take that path out of (e)"},
     # HYPERLIQUID (alignment round 2026-10-13, C1): (a) counts only the rewards paid to stake INSIDE circulating — the
     # team / Foundation / Grants stake (staked_noncirculating_tokens, 301.3M of 440.1M on 2026-10-13) earns rewards
     # that stay outside circulating, so they dilute no holder. PROPOSED pro-rata (SPEC.md section 12, item 3).
@@ -26644,11 +27008,17 @@ OUTFLOW_CATEGORIES = {
     "Fluid": {"b": ("emissions_tokens",), "e": ("unlock_release_tokens",),
               "basis": "FLUID rewards to lenders / LPs, read from the Merkle claims already scanned; no FLUID rewards "
                        "are live now (2026-10-12)"},
-    "Sky": {"c": ("emissions_tokens",),
-            "basis": "SKY paid through VestedRewardsDistribution (vest 17 in force): rewards to holders of the "
-                     "product token are demand side (c) — a judgement: if USDS holders are read as capital suppliers it "
-                     "is (b). The USDS -> SKY farm 0x0650CAF1… stopped paying 2026-01-26 (Blockscout transfers)",
-            "pending": "which farm vest 17 funds"},
+    # SKY (fix round 2, S1 — Jake 2026-10-13, verified on-chain and in the executives, research r14): the SKY rewards
+    # are TRANSFERS from the Pause Proxy (MCD_VEST_SKY_TREASURY 0x67eaDb32…, czar = Pause Proxy), split by what funds
+    # them (REWARD_FUNDING["Sky"]): bought-back SKY (revenue) is a DISTRIBUTION of a buyback already credited to holder
+    # value — neither (c) nor dilution; Pause Proxy reserves (treasury) are a treasury release (e); minted SKY (before
+    # 2025-06-02) was new issuance (c).
+    "Sky": {"c": ("emissions_mint_funded_tokens",), "e": ("emissions_treasury_funded_tokens",),
+            "basis": "SKY rewards split by funding period (config.REWARD_FUNDING): minted (to 2025-06-02) = (c); paid "
+                     "from Pause Proxy reserves = a treasury release (e); paid from SKY bought back out of revenue "
+                     "(from 2026-08-17) = a distribution of the buyback, credited once as the buyback — not dilution. "
+                     "The USDS -> SKY farm 0x0650CAF1… stopped paying 2026-01-26; LSSKY -> SKY vests 17/18 since",
+            "pending": ""},
     # UNISWAP (alignment round 2026-10-13, C1): the UNIfication growth budget is (d) — it used to land in (e) because
     # the Timelock is one of the two unlock legs. The Timelock's falls are now their own series (d); (e) keeps the
     # rest of the set: the four treasury vesting contracts (vesting ended Sep 2024, so ~0) and the unclaimed-airdrop
@@ -26658,9 +27028,17 @@ OUTFLOW_CATEGORIES = {
     # read 2026-10-13). The Timelock's 100M UNIfication burn (one_off_flows, treasury-funded) is NOT spend: the release
     # view takes it out on its landed day.
     "Uniswap": {"d": ("growth_budget_release_tokens",), "e": ("unlock_release_vesting_tokens",),
-                "basis": "no emissions; (d) = every fall of the governance Timelock 0x1a9C8182…: the UNIfication "
-                         "growth budget (20M UNI a year, 5M a quarter, claimed through UNIVesting 0xCa046A83… to "
-                         "Uniswap Labs' recipient 0xaBA63748…, proposal 93) and any other governance grant; (e) = "
+                # (d) LABEL (fix round 2, S7 — research r14, every Timelock outflow since 2025-01-01 matched to the
+                # proposal executed in its tx): 2025 outflows include treasury OPERATING spend, not grants — #90 DUNI
+                # 1,583,493 UNI (legal defense / tax) + 7,198 to Cowrie, the UF operations share of #83 (≈4.23M of
+                # 20,320,405 by its $25.1M / $120.5M), UAC / delegate compensation (#80, #86, #87, #92). In 2026 the
+                # only outflows are the four 5M UNIVesting claims. Inflows (#97 Franchiser recall 12,500,001.19 on
+                # 2026-06-01; 113,137.83 from Safe 0x2016EF… on 2026-07-30) are returns to the issuer (Flows F1).
+                "basis": "no emissions; (d) = ecosystem / grants / treasury operating spend = every fall of the "
+                         "governance Timelock 0x1a9C8182…: the UNIfication growth budget (20M UNI a year, 5M a quarter, "
+                         "claimed through UNIVesting 0xCa046A83… to Uniswap Labs' recipient 0xaBA63748…, proposal 93), "
+                         "governance grants, and in 2025 operating spend (#90 DUNI legal/tax 1.58M, UF operations in "
+                         "#83, UAC / delegate pay); (e) = "
                          "the treasury vesting contracts (vesting ended Sep 2024) and unclaimed-airdrop claims from "
                          "the merkle distributor — after the move (e) holds only those (~0 a quarter)",
                 "pending": "where the budget goes after Labs' recipient (all 20M moved on, 17M on 2026-10-06, to "
@@ -27015,12 +27393,19 @@ TOTAL_YIELD_RELEASES = {
 UNLOCK_RELEASE_SUBSETS = {"Hyperliquid": {"unlock_release_counted_tokens": ("excluded_wallets_tokens",)},
                           # Uniswap: the Timelock's falls are the growth budget (d); the rest of the set is (e)
                           "Uniswap": {"growth_budget_release_tokens": ("treasury_holding_tokens",),
-                                      "unlock_release_vesting_tokens": ("noncirculating_holding_tokens",)}}
+                                      "unlock_release_vesting_tokens": ("noncirculating_holding_tokens",)},
+                          # NEAR (fix round 2, R10): the lockup contracts' releases, weekly, once two readings exist
+                          "Near": {"near_lockup_release_tokens": ("near_lockup_locked_tokens",)}}
 METRICS["unlock_release_counted_tokens"] = {
     "label": "Released from the issuer wallets the circulating figure in use COUNTS (Hyperliquid: Hyper Foundation / "
              "Community Grants) — the fall in their stock; Total Yield's issuer-release leg",
     "kind": "flow", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [1], "sanity_min": 0, "sanity_max": 1e12,
     "view_only": True, "only_projects": ("Hyperliquid",)}
+METRICS["near_lockup_release_tokens"] = {
+    "label": "NEAR released from the lockup CONTRACTS (the fall in near_lockup_locked_tokens, weekly read) — outside (e) "
+             "until two weekly readings exist (fix round 2, R10)",
+    "kind": "flow", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [1], "sanity_min": 0, "sanity_max": 1e12,
+    "view_only": True, "only_projects": ("Near",)}
 METRICS["growth_budget_release_tokens"] = {
     "label": "Released from the governance Timelock (Uniswap) — the UNIfication growth budget and any other grant: "
              "outflow (d); the 100M treasury burn is taken out on its landed day",
@@ -27382,6 +27767,11 @@ DECLARED_ZERO = {
 # REVENUE FROM MORE THAN ONE STREAM (alignment round 2026-10-13, C10): the headline revenue is the sum of the streams,
 # each kept as its own line (build_workbook._revenue_total_views: a day only where every stream holds a row).
 REVENUE_TOTAL = {"Near": ("revenue_usd", "intents_revenue_usd")}
+# FEES FROM EVERY STREAM (fix round 2, R1: NEAR's gross payout read 12.98x — credited holder value over GAS fees only,
+# while the buyback is paid from Intents fees). The gross payout ratio, supplier payout and the value-flow statement
+# sum the streams (fees and revenue on one basis); the "Fees Q0" columns and the chain-security ratios on A1 (fees ÷
+# issuance, fee per transaction) stay on the chain's own gas fees (fees_usd) — what the chain itself earns
+FEES_TOTAL = {"Near": ("fees_usd", "intents_fees_usd")}
 METRICS["intents_revenue_usd"] = {
     "label": "NEAR Intents revenue per day ($, DefiLlama near-intents dailyRevenue) — the fee-switch share captured "
              "for NEAR holders (from 2026-02-23)",
@@ -27392,11 +27782,20 @@ METRICS["intents_fees_usd"] = {
              "1Click fees including NEAR's own share",
     "kind": "flow", "unit": "usd", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e9,
     "only_projects": ("Near",)}
+METRICS["fees_total_usd"] = {
+    "label": "Fees, every stream ($/day) = the sum of the project's fee lines (FEES_TOTAL; NEAR: gas + Intents)",
+    "kind": "flow", "unit": "usd", "archetypes": [1, 2, 3, 4], "tiers": [1], "sanity_min": 0, "sanity_max": 1e11,
+    "view_only": True, "only_projects": tuple(FEES_TOTAL)}
 METRICS["revenue_total_usd"] = {
     "label": "Revenue, every stream ($/day) = the sum of the project's revenue lines (REVENUE_TOTAL; NEAR: gas + "
              "Intents fee switch)",
     "kind": "flow", "unit": "usd", "archetypes": [1, 2, 3, 4], "tiers": [1], "sanity_min": 0, "sanity_max": 1e11,
     "view_only": True, "only_projects": tuple(REVENUE_TOTAL)}
+
+
+def fees_headline_metric(project_name: str) -> str:
+    """The headline fees series: the all-streams total where a project has more than one, else fees_usd."""
+    return "fees_total_usd" if project_name in FEES_TOTAL else "fees_usd"
 
 
 def revenue_headline_metric(project_name: str) -> str:
@@ -27406,3 +27805,57 @@ METRICS["boros_fees_usd"] = {
     "label": "Pendle Boros fees per day ($, DefiLlama boros dailyFees) — its own line, outside the sPENDLE base",
     "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [1], "sanity_min": 0, "sanity_max": 1e9,
     "only_projects": ("Pendle",)}
+
+
+# =====================================================================================================================
+# ONE CONVENTION FOR A FIXED SUPPLY (Jake's fix round 2, R9; SPEC.md rule 7): a project that mints nothing reads
+# "0 — fixed supply" in every gross-issuance cell — never a release figure (GEODNET read 11.79M and Hyperliquid 3.84M)
+# and never "n/a not applicable" (Morpho, Pendle, Ether.fi, Maple). What enters circulation from the pre-mint is an
+# issuer RELEASE, on its own line. The pre-minted models (emissions_model distributed_from_premint) are fixed; the
+# others below are fixed by their own record.
+FIXED_SUPPLY_EXTRA = {
+    "Plume": "10,000,000,000 PLUME minted at genesis; gross_issuance_tokens is 0 on every stored day",
+    "Uniswap": "1,000,000,000 UNI; the 2%/yr inflation the token allows has never been activated (no mint since the "
+               "cap)",
+    "Pendle": "totalSupply flat at 281,527,448 PENDLE since ~Mar 2025 (fix round 2, S4): the ~0.2%/yr incentives are "
+              "paid from the treasury, not minted",
+}
+FIXED_SUPPLY_NOT = {
+    # fix round 2, S3: Maple minted 78.24M SYRUP to its treasury since 2025-07-01 (RecapitalizationModule, MIP-009/010;
+    # config.ISSUER_MINTS) — not a fixed supply until those claims; the rate is 0 from 2026-10-01
+    "Maple": "MIP-009/010 recapitalization mints to the treasury (78.24M since 2025-07-01; rate 0 from 2026-10-01)",
+}       # a project whose pre-mint model is contradicted by a recorded mint (filled from research)
+
+
+def fixed_supply_reason(project_name: str) -> str | None:
+    """Why the project's supply is fixed (no gross issuance), or None where it mints."""
+    if project_name in FIXED_SUPPLY_NOT:
+        return None
+    if project_name in FIXED_SUPPLY_EXTRA:
+        return FIXED_SUPPLY_EXTRA[project_name]
+    p = PROJECT_BY_NAME.get(project_name) or {}
+    if (p.get("emissions_model") or {}).get("model") == "distributed_from_premint":
+        return "the whole supply was minted at genesis (pre-minted); distribution from it is an issuer release"
+    return None
+
+
+# ONE BASIS, SEVERAL SOURCE NAMES (fix round 2, R10 / N2): a series read the same way by more than one route counts as
+# ONE measuring point — build_workbook._same_basis_views relabels the member routes to the canonical one (the original
+# kept in brackets), so the guard against a change of measuring point never blanks it. Each entry names its proof.
+SAME_BASIS = {
+    # Plume's page read re-served from the day's cache was stored as a bare "scrape:cache" until 2026-10-12 (Jake's run
+    # on e4e50b0, item 4; orphan_cleanup.sql CI relabels those rows in the store): the same supply.plume.org read
+    ("Plume", "circulating_supply_first_party"): {
+        "canonical": "scrape:supply.plume.org",
+        "members": ("scrape",),
+        "why": "a bare 'scrape:cache' row is supply.plume.org's own figure re-served from the same day's cache "
+               "(orphan_cleanup.sql CI, Jake's run 2026-10-12 item 4)",
+    },
+    ("Near", "near_foundation_accounts_tokens"): {
+        "canonical": "near_rpc:view_account",
+        "members": ("manual", "nearblocks:stats/balance"),
+        "why": "lockup.near + contributors.near, amount + locked/staked: the manual row of 2026-10-11 is the same "
+               "view_account read (171,059.131 NEAR either way); NearBlocks v3 stats/balance agreed to 0.000% on the "
+               "overlap (Jake's nearblocks_v3_parity, 2026-10-13)",
+    },
+}

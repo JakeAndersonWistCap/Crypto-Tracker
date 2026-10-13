@@ -14,6 +14,12 @@ STATUS, from the cell itself:
   NOT WIRED           "NOT WIRED — route"
   BROKEN              an Excel error (#REF!, #VALUE!, #DIV/0!, #NAME?, #N/A) — the error is shown
   BLANK-UNEXPLAINED   a formula that evaluates to nothing, or a bare "n/a" with no reason
+
+INDEPENDENT REFERENCES (fix round 2, T2 / T4 — references.py, independent_references.csv): one row per reference
+(Tab "References"); a primary reference within tolerance -> VERIFIED, outside -> BROKEN with both values; a cross-check
+(secondary / primary-ish / derived) outside -> CHECK, inside -> LIVE-UNVERIFIED (never VERIFIED on its own). A
+reference on a workbook headline grades that headline's own row too. VERIFIED share per project = VERIFIED ÷ the rows
+that hold a value (VERIFIED + LIVE-UNVERIFIED + CHECK + BROKEN).
 """
 from __future__ import annotations
 
@@ -27,7 +33,7 @@ SHEET = "Coverage"
 TABS = ("Master", "A1 Infrastructure", "A2 Coordination", "A3 Revenue Buyback", "A4 Permanent Burn", "CP Comparability")
 HEAD = ["Tab", "Column", "Key", "Project", "Value now", "Status", "Reason / route / error", "Axis", "Direction", "Tier",
         "History depth (quarters with a value)", "Formula as built", "SPEC formula", "MATCHES-SPEC"]
-STATUSES = ("VERIFIED", "LIVE-UNVERIFIED", "N/A BY DESIGN", "NOT WIRED", "BROKEN", "BLANK-UNEXPLAINED")
+STATUSES = ("VERIFIED", "LIVE-UNVERIFIED", "CHECK", "N/A BY DESIGN", "NOT WIRED", "BROKEN", "BLANK-UNEXPLAINED")
 _SHEET_REF = re.compile(r"'([^']+)'!\$?([A-Z]{1,3})\$?(\d+)")
 _ERRORS = ("#REF!", "#VALUE!", "#DIV/0!", "#NAME?", "#N/A", "#NUM!", "#NULL!")
 _GREEN = "D6E9CE"         # build_workbook.FILL_GREEN
@@ -90,7 +96,8 @@ def classify(raw, value, fill: str) -> tuple[str, str]:
 
 
 def audit(wb, trajectory_rows: list[dict] | None = None, flows_rows: list[dict] | None = None,
-          X=None) -> list[dict]:
+          X=None, groups: dict | None = None, sanity_hits: list | None = None,
+          windows: dict | None = None) -> list[dict]:
     """The coverage rows for a built workbook (openpyxl, formulas kept). `X` is an xlcalc.Workbook over it."""
     import xlcalc                                           # noqa: PLC0415
     X = X or xlcalc.Workbook(wb)
@@ -124,7 +131,10 @@ def audit(wb, trajectory_rows: list[dict] | None = None, flows_rows: list[dict] 
                 val = xlcalc.display(val) if hasattr(xlcalc, "display") else val
                 status, why = classify(raw, val, _fill(cell))
                 con = cs.get(key) or {}
-                if key in spec.SUPPORT or not con:
+                out_match = output_matches(tab, str(h), proj, val, groups, windows)
+                if out_match:
+                    match = out_match
+                elif key in spec.SUPPORT or not con:
                     match = "yes — support column" if key in spec.SUPPORT else "no — no SPEC concept"
                 elif not (isinstance(raw, str) and raw.startswith("=")):
                     match = "yes — no formula (text / attribute / value)"
@@ -152,6 +162,11 @@ def audit(wb, trajectory_rows: list[dict] | None = None, flows_rows: list[dict] 
         if fr["Line"] == "Status":
             status = ("N/A BY DESIGN" if isinstance(v, str) and v.startswith("n/a") else "LIVE-UNVERIFIED")
             why = v if isinstance(v, str) else ""
+            # T1 (fix round 2): a token-flow residual beyond ±0.5% with no named cause, in ANY of Q0..Q-4, is BROKEN
+            broken = [(q, fr.get(q)) for q in ("Q0", "Q-1", "Q-2", "Q-3", "Q-4")
+                      if isinstance(fr.get(q), str) and fr.get(q).startswith("BROKEN")]
+            if broken:
+                status, why = "BROKEN", "; ".join(f"{q}: {t}" for q, t in broken)
         else:
             status, why = ("LIVE-UNVERIFIED", "") if v is not None else (
                 "N/A BY DESIGN", "no series in Q0 for this line (see the Status line)")
@@ -180,12 +195,189 @@ def audit(wb, trajectory_rows: list[dict] | None = None, flows_rows: list[dict] 
                      "History depth (quarters with a value)": n, "Formula as built": f"{t.get('tab')} → {t.get('hid')}",
                      "SPEC formula": con.get("formula", spec.SUPPORT.get(key, "")),
                      "MATCHES-SPEC": "yes — re-runs the column's own builder k quarters back"})
+    if groups is not None:
+        rows.extend(reference_rows(wb, X, groups, rows))
+    rows.extend(regression_rows(sanity_hits or ()))
     for item, route in not_wired():
         rows.append({"Tab": "(not on a tab)", "Column": item, "Key": "", "Project": "(all)", "Value now": "",
                      "Status": "NOT WIRED", "Reason / route / error": route, "Axis": "", "Direction": "", "Tier": "",
                      "History depth (quarters with a value)": "", "Formula as built": "", "SPEC formula": "",
                      "MATCHES-SPEC": "yes — SPEC.md section 10"})
     return rows
+
+
+# T5 (fix round 2): MATCHES-SPEC on OUTPUTS. For these columns the SPEC formula is recomputed in Python from the series
+# the build read (its read-time views, build_workbook._LAST_GROUPS) and compared with the evaluated cell: a column whose
+# output differs from its SPEC formula is "no — output …", whatever inputs it names. (tab, header prefix) -> fn(groups,
+# project, windows) -> (expected, how) or None where the recomputation has no input.
+def _series_of(groups, project, metric):
+    import pandas as pd                                    # noqa: PLC0415
+    g = groups.get((project, metric))
+    if g is None or g.empty:
+        return None
+    s = (g.assign(date=pd.to_datetime(g["date"]).dt.normalize()).drop_duplicates("date", keep="last")
+         .set_index("date")["value"])
+    s = pd.to_numeric(s, errors="coerce").dropna().sort_index()
+    return s if not s.empty else None
+
+
+def _config():
+    import config                                          # noqa: PLC0415
+    return config
+
+
+def _window_sum(metric):
+    def fn(groups, project, windows):
+        import pandas as pd                                # noqa: PLC0415
+        s = _series_of(groups, project, metric)
+        if s is None or "q0" not in windows:
+            return None
+        a, b = (pd.Timestamp(x) for x in windows["q0"])
+        x = s[(s.index > a) & (s.index <= b)]          # the Data q0 window: (start, end] (build_workbook._window_sum)
+        return (float(x.sum()), f"Σ {metric} ({a.date()}, {b.date()}] ({len(x)} day(s))") if len(x) else None
+    return fn
+
+
+def _product_now(a_metric, b_metric):
+    def fn(groups, project, windows):
+        a, b = _series_of(groups, project, a_metric), _series_of(groups, project, b_metric)
+        if a is None or b is None:
+            return None
+        d = a.index.intersection(b.index)
+        if d.empty:
+            return None
+        d = d.max()
+        return float(a[d] * b[d]), f"{a_metric} × {b_metric} on {d.date()}"
+    return fn
+
+
+def _latest(metric):
+    def fn(groups, project, windows):
+        s = _series_of(groups, project, metric)
+        return (float(s.iloc[-1]), f"{metric} {s.index[-1].date()} (latest)") if s is not None else None
+    return fn
+
+
+OUTPUT_CHECKS = {
+    ("Master", "Fees Q0 ($)"): lambda G, p, w: _window_sum("fees_usd")(G, p, w),
+    ("Master", "Revenue Q0 ($)"): lambda G, p, w: _window_sum(_config().revenue_headline_metric(p))(G, p, w),
+    ("Master", "Market cap ($)"): lambda G, p, w: _latest("market_cap_usd")(G, p, w),
+    ("Master", "Price — spot ($)"): lambda G, p, w: _latest("price_usd")(G, p, w),
+    ("Master", "Circulating supply (used)"): lambda G, p, w: _latest("circulating_supply_used")(G, p, w),
+    ("Master", "FDV ($)"): lambda G, p, w: _latest("fdv_usd")(G, p, w),
+}
+# the SPEC identity each view must satisfy on its own latest day (market cap = price × circulating used; FDV = price ×
+# the total used) — checked beside the cell
+IDENTITIES = {
+    "Market cap ($)": ("market_cap_usd", _product_now("price_usd", "circulating_supply_used")),
+}
+
+
+def output_matches(tab: str, header: str, project: str, value, groups: dict | None, windows: dict | None):
+    """("yes — …" | "no — …") for a column in OUTPUT_CHECKS, else None."""
+    if groups is None:
+        return None
+    fn = next((f for (t, h), f in OUTPUT_CHECKS.items() if t == tab and header.startswith(h)), None)
+    if fn is None or not isinstance(value, (int, float)) or isinstance(value, bool):
+        return None
+    got = fn(groups, project, windows or {})
+    if got is None:
+        return None
+    exp, how = got
+    tol = 1e-6 * max(1.0, abs(exp))
+    if abs(float(value) - exp) > tol:
+        return f"no — output {float(value):,.6g} ≠ SPEC {exp:,.6g} ({how})"
+    ident = next((v for h, v in IDENTITIES.items() if header.startswith(h)), None)
+    if ident:
+        m, f2 = ident
+        g2 = f2(groups, project, windows or {})
+        if g2 is not None and abs(g2[0] - exp) > 1e-6 * max(1.0, abs(exp)):
+            # a market cap row for a day the price or the circulating used moved after: the identity is checked on the
+            # latest common day, so only flag when that day is the latest market cap day
+            mc = _series_of(groups, project, m)
+            if mc is not None and g2[1].endswith(f"{mc.index[-1].date()}"):
+                return f"no — {m} {exp:,.6g} ≠ SPEC identity {g2[0]:,.6g} ({g2[1]})"
+    return f"yes — output = SPEC ({how})"
+
+
+def _headline_reader(wb, X):
+    """headline(project, tab, header_prefix) -> the evaluated cell (None when the tab / row / column is absent)."""
+    import xlcalc                                           # noqa: PLC0415
+    cache = {}
+
+    def headline(project, tab, prefix):
+        if tab not in wb.sheetnames:
+            return None
+        if tab not in cache:
+            ws = wb[tab]
+            hr = _header_row(ws)
+            cache[tab] = (ws, hr, [ws.cell(hr, c).value for c in range(1, ws.max_column + 1)] if hr else [])
+        ws, hr, heads = cache[tab]
+        if not hr:
+            return None
+        c = next((i for i, h in enumerate(heads, start=1) if h and str(h).startswith(prefix)), None)
+        r = next((r for r in range(hr + 1, ws.max_row + 1) if ws.cell(r, 1).value == project), None)
+        if c is None or r is None:
+            return None
+        raw = ws.cell(r, c).value
+        v = X.value(tab, r, c) if isinstance(raw, str) and raw.startswith("=") else raw
+        return xlcalc.display(v) if not isinstance(v, (int, float, str, type(None))) else v
+    return headline
+
+
+def reference_rows(wb, X, groups: dict, audited: list[dict]) -> list[dict]:
+    """The independent reference checks (references.py) as Coverage rows; a reference on a headline also grades the
+    headline's own row in `audited` (VERIFIED / BROKEN / CHECK, both values in the reason)."""
+    import references                                      # noqa: PLC0415
+    results = references.check(groups, headline=_headline_reader(wb, X))
+    for x in results:
+        route = references.ROUTES.get((x["project"], x["metric"])) or ()
+        if not route or route[0] != "headline" or x["status"] not in ("VERIFIED", "BROKEN", "CHECK"):
+            continue
+        for r in audited:
+            if r["Tab"] == route[1] and r["Project"] == x["project"] and r["Column"].startswith(route[2]):
+                if x["status"] == "VERIFIED" and r["Status"] != "LIVE-UNVERIFIED":
+                    continue
+                r["Status"] = x["status"] if x["status"] != "CHECK" or r["Status"] != "VERIFIED" else r["Status"]
+                r["Reason / route / error"] = (f"independent reference ({x['metric']}): {x['detail']}")[:400]
+    return references.coverage_rows(results)
+
+
+def regression_rows(sanity_hits) -> list[dict]:
+    """T3 (fix round 2): a headline that read a value in the previous run and reads n/a / BLOCKED / text now
+    (sanity.lost_headlines, "headline_lost") is BROKEN — unless config.REGRESSION_ALLOWLIST names it (its project and
+    a `match` substring of the hit: the header or the reason it is now n/a), with its reason and clear-by date; then
+    N/A BY DESIGN with that reason."""
+    import config                                          # noqa: PLC0415
+    import pandas as pd                                    # noqa: PLC0415
+    out = []
+    for proj, rule, detail in sanity_hits:
+        if rule != "headline_lost":
+            continue
+        allow = next((a for a in config.REGRESSION_ALLOWLIST if a["project"] == proj
+                      and any(x in detail for x in a.get("match") or (a.get("header", ""),))
+                      and (not a.get("until") or pd.Timestamp.today().normalize() <= pd.Timestamp(a["until"]))), None)
+        status = "N/A BY DESIGN" if allow else "BROKEN"
+        why = (f"allow-listed ({allow['reason']}): {detail}" if allow else
+               f"REGRESSION — {detail}; not on config.REGRESSION_ALLOWLIST")
+        out.append({"Tab": "Regression guard", "Column": detail.split(":")[0][:120], "Key": "regression",
+                    "Project": proj, "Value now": "", "Status": status, "Reason / route / error": why[:400],
+                    "Axis": "", "Direction": "", "Tier": "", "History depth (quarters with a value)": "",
+                    "Formula as built": "", "SPEC formula": "a value last run is a value this run (T3)",
+                    "MATCHES-SPEC": "yes — sanity.lost_headlines against the previous snapshot"})
+    return out
+
+
+def verified_share(rows: list[dict]) -> dict:
+    """T4: per project, VERIFIED ÷ rows holding a value (VERIFIED + LIVE-UNVERIFIED + CHECK + BROKEN)."""
+    out = {}
+    for r in rows:
+        p = r["Project"]
+        if p in ("(all)", "") or r["Status"] not in ("VERIFIED", "LIVE-UNVERIFIED", "CHECK", "BROKEN"):
+            continue
+        v, n = out.get(p, (0, 0))
+        out[p] = (v + (r["Status"] == "VERIFIED"), n + 1)
+    return {p: (v, n, v / n if n else 0.0) for p, (v, n) in sorted(out.items())}
 
 
 def not_wired() -> list[tuple[str, str]]:
@@ -220,6 +412,10 @@ def write(wb, rows: list[dict], csv_path: Path | None = None) -> None:
     for i, (k, v) in enumerate(c.items()):
         ws.cell(3, 1 + 2 * i, value=k).font = F_BOLD
         ws.cell(3, 2 + 2 * i, value=v)
+    share = verified_share(rows)
+    ws.cell(4, 1, value="VERIFIED share (T4)").font = F_BOLD
+    for i, (p, (v, n, x)) in enumerate(share.items()):
+        ws.cell(4, 2 + i, value=f"{p}: {v}/{n} = {x:.0%}")
     hr = 5
     for j, h in enumerate(HEAD, start=1):
         cell = ws.cell(hr, j, value=h)
@@ -230,7 +426,7 @@ def write(wb, rows: list[dict], csv_path: Path | None = None) -> None:
             cell = ws.cell(i, j, value=v if not isinstance(v, str) or not v.startswith("=") else "'" + v)
             if h == "Status" and v in ("BROKEN", "BLANK-UNEXPLAINED"):
                 cell.fill = FILL_RED
-            elif h == "MATCHES-SPEC" and str(v).startswith("no"):
+            elif h == "MATCHES-SPEC" and str(v).startswith("no") or h == "Status" and v == "CHECK":
                 cell.fill = FILL_AMBER
     ws.freeze_panes = ws.cell(hr + 1, 5)
     if csv_path is not None:

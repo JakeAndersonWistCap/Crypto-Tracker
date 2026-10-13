@@ -527,6 +527,55 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11bx. Fix round 2 — references, flows, restatements, research corrections (2026-10-13)
+
+**Run after pulling (PowerShell, repo root):**
+```
+git pull
+python archive_backfill.py --run --project GEODNET
+python token_metrics.py
+python check_offline_items.py aero_team_rate
+```
+- `archive_backfill.py --project GEODNET` fills `ecosystem_holding_tokens` (the Ecosystem wallet read on its own) for
+  the past year, so GEODNET's unlock leg (e) — now the five non-mining wallets only — covers Q0..Q-4. Until it lands,
+  (e), total dilution and NHY read BLOCKED for GEODNET (allow-listed on the regression guard until 2026-10-31).
+- `token_metrics.py` stores ultrasound.money's supply-over-time (`total_supply_ultrasound`, one call a day): Ethereum's
+  circulating history before 2026-09-29 and its gross issuance before 2026-09-30 come from it (read-time), so ETH's
+  Total Yield and net issuance stop being BLOCKED. It also stores NearBlocks v3 intents volume beside DefiLlama's.
+- `aero_team_rate` reads Minter.teamRate() and team() live; UNCHANGED is the expected answer (228 bps, 0xBDE0…).
+
+**THE AERO MIGRATION — 22 Oct 2026 (21 Oct 20:00 EDT = 22 Oct 00:00 UTC).** From the first run on or after
+2026-10-22, every Aerodrome legacy read (Minter, escrow, Voter: gross issuance, rebase, team emission, ve supply, voter
+weights, voter rewards) dated on/after the cutover is REFUSED and the run log shows `AERODROME MIGRATION CUTOVER
+PASSED` as FAILED — loudly, never a silent 0. On launch day:
+1. Read the new addresses from aero.xyz (the upgrade hub / docs) — Minter, sAERO / voting escrow, token per chain.
+2. Write `aero_migration.json` beside config.py:
+   `{"launched": true, "verified": "2026-10-22", "source_url": "<the aero.xyz page>", "addresses": {"minter": "0x…",
+   "voting_escrow": "0x…", "token": "0x…"}, "velo_conversion": 0.044}`
+3. Send it back with the run log; the readers for the new contracts are wired from it (nothing is guessed before).
+The old veAERO keeps receiving rebases per aero.xyz/aero-economic-case — the (c) line keeps reading the
+RewardsDistributor while it pays.
+
+**What changed (SPEC.md section 13 lists every amendment old → new):**
+- **Independent references (T2/T4).** `independent_references.csv` (Jake's 63 rows) is loaded by `references.py` and
+  graded on the Coverage tab (Tab "References"): primary within tolerance VERIFIED, outside BROKEN with both values;
+  cross-checks ("secondary", "primary-ish", "primary-derived", "derived") outside → CHECK, never VERIFIED. Reconcile
+  rows carry their cause. VERIFIED share per project at the top of the Coverage tab.
+- **Flows (F1/T1).** Two new legs: "− returned to issuer-side wallets" and "+ scheduled releases" (Aethir); GEODNET's
+  non-mining release; a memo of mints straight into issuer wallets (Aerodrome team emission, Maple's recapitalization
+  mints). A residual beyond 0.5% with no named cause is BROKEN on Coverage.
+- **Regression guard (T3).** A headline that had a value in the previous snapshot and reads n/a / BLOCKED now is BROKEN
+  on Coverage unless `config.REGRESSION_ALLOWLIST` names it with a reason and a clear-by date.
+- **Outputs (T5).** MATCHES-SPEC recomputes Master price, market cap, circulating, FDV, fees Q0 and revenue Q0 from
+  the series and compares the evaluated cell.
+- **Restatements (H1).** Aethir's circulating history = its published monthly table; Plume's = CoinGecko's mirror of
+  supply.plume.org from 2026-01-01; Ethereum's = ultrasound (above). All read-time.
+- **Research corrections.** Sky rewards split by funding period; GEODNET (e) without the mining wallets; Aerodrome team
+  emission line and tail date 2025-10-23; Maple mints; Hyperliquid FDV less the Assistance Fund; Uniswap (d) label;
+  Ether.fi programmatic buybacks (`programmatic_buyback_tokens`, Safe 0x43F4cA92…); Plume yield source; Aethir DAT
+  2,655,414,499; GEODNET revenue labelled implied-from-burn and out of the divergence row; Chainlink C20/C22 recorded.
+- **NEAR.** v3 circulating never used (test); the v1 parity call removed.
+
 ## 11bw. NearBlocks API v1 -> v3 (Part E, 2026-10-13; v1 retires 2026-10-31)
 
 **Run after pulling, BEFORE 2026-10-31 (PowerShell, repo root):**

@@ -569,11 +569,12 @@
     {
      "holder": "Axe Compute (AGPU, formerly Predictive Oncology POAI)",
      "type": "DAT",
-     "tokens": 2700000000,
+     "tokens": 2655414499,
      "as_of": "2026-06-30",
      "source_url": "https://www.sec.gov/Archives/edgar/data/1446159/000117184326005556/agpu20260630_10q.htm",
-     "read_on": "2026-10-12",
-     "note": "Boost Run (BRUN) only holds ATH as operational network deposits - not a treasury"
+     "read_on": "2026-10-13",
+     "note": "10-Q (accession 0001171843-26-005556, filed 2026-08-14): 'June 30, 2026 2,655,414,499 $ 94,739,253'; 2,837,163,868 ATH at 2025-12-31. Was entered as a rounded 2,700,000,000 on 2026-10-12 — replaced by the filing's exact figure (fix round 2, S10). Boost Run (BRUN) only holds ATH as operational network deposits - not a treasury",
+     "entered_by": "Claude Code, pending Jake's review"
     }
    ],
    "not_read": [
