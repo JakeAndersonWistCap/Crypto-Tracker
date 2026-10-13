@@ -26,7 +26,7 @@ cell note says PROPOSED.
    prints "direction not declared".
 5. **AXIS ON EVERY ROW.** BUSINESS · CAPTURE · ALIGNMENT · CONTEXT (section 2). Shown as a column on CP and Trajectory.
 6. **RANGES THAT FAIL THE BUILD.** Lock rate and float ÷ circulating in 0..1; float ≥ 0; whole-token yield ≤ staker
-   yield; releases ≥ 0; issuance ≥ 0. A flow statement whose residual exceeds 0.5% carries a CHECK note.
+   yield; releases ≥ 0; issuance ≥ 0. A flow statement whose residual exceeds 0.5% carries a CHECK note with its named cause, or is BROKEN (FR2 T1).
 7. **NET ISSUANCE = MINT − BURN.** A pre-minted supply mints nothing: its issuer RELEASES are shown on their own line
    and are never inside net issuance (Total Yield subtracts them explicitly).
 8. **STAKE INSIDE CIRCULATING.** Every float, lock rate and whole-token yield reads the stake LESS the stake held by
@@ -166,15 +166,15 @@ series in exactly one category; a project's assignment and its basis are in `con
 | Ethereum | issuance (consensus) | — | — | — | — |
 | NEAR | issuance (90% validators) | — | — | — | lockup releases |
 | Plume | NOT WIRED (staking paid from pre-mint; reward rate × stake would be modelled) | NOT WIRED (Merkl WPLUME) | one-off airdrops (no series) | — | — |
-| Chainlink | Reward Vault payouts (confirmed not inside e: the vault is outside the 27 wallets; its one inflow in the last 5,000 transfers came from 0x7e10a625…, not one of them) | — | — | — | 27-wallet releases |
-| GEODNET | — | miner rewards | — | — | treasury / non-circulating releases (same legs as A2) |
+| Chainlink | Reward Vault payouts — FR2 C20 CORRECTS "not inside e": the vault's funder 0x7e10a625… is fed 0x1661f928 ← 0x7A28b8cF ← 0xD50f074E ← the 27 wallets, so that LINK is in (e) AND in (a): a known double count, NOT WIRED (per-transfer route) | — | — | — | 27-wallet releases (the 18.75M tranches stay, C23) |
+| GEODNET | — | miner rewards (the two MINING wallets' release) | — | — | releases of the five other filed wallets (Team, Investor, Ecosystem, Vendor/Marketing, Public sale) — never a mining wallet (FR2 G1/G2/F2) |
 | Aethir | — | pool emissions | — | — | — |
-| Maple | stSYRUP inflation (0 after MIP-019) | Drips (ended 2025-12-31; NOT WIRED history) | — | — | wallet releases |
+| Maple | stSYRUP inflation (0 after MIP-019) | Drips (ended 2025-12-31; NOT WIRED history) | — | — | wallet releases; recapitalization mints to the treasury are their own line (issuer_mint_tokens), a release when they leave (FR2 S3) |
 | Morpho | — | MORPHO rewards | — | — | wallet releases |
 | Hyperliquid | staking rewards × (stake inside circulating ÷ total stake) — rewards to issuer-side stake are not circulating until they move | — | — | — | Foundation / Grants / team releases |
-| Uniswap | — | — | — | every Timelock fall: the UNIfication growth budget (20M UNI/yr, 5M a quarter via UNIVesting to Labs' recipient 0xaBA63748…, proposal 93) and any other grant; the 100M treasury burn is taken out on its day | the treasury vesting contracts (ended Sep 2024) + unclaimed-airdrop claims — ~0 a quarter after the move |
-| Aerodrome | — (no security budget) | gauge emissions | rebase to veAERO lockers (own line) | — | wallet releases |
-| Sky | — | — | SKY farm rewards (treasury-funded transfers via MCD_VEST_SKY_TREASURY since June 2025; ~2.04M SKY/day in Q0) | — | MKR→SKY conversion releases (the converter's pre-minted balance into circulating; 149.6M SKY to users in Q0) — on the Flows tab; not dilution of SKY holders' share of MKR-era claims (PROPOSED) |
+| Uniswap | — | — | — | ecosystem / grants / treasury operating spend (FR2 S7) = every Timelock fall: the UNIfication growth budget (20M UNI/yr, 5M a quarter via UNIVesting to Labs' recipient 0xaBA63748…, proposal 93) and any other grant; the 100M treasury burn is taken out on its day | the treasury vesting contracts (ended Sep 2024) + unclaimed-airdrop claims — ~0 a quarter after the move |
+| Aerodrome | — (no security budget) | gauge emissions | rebase to veAERO lockers (own line) | — | wallet releases; the team emission (Minter teamRate, 228 bps of the frozen weekly) is its own insider line, minted into a filing wallet (FR2 S5) |
+| Sky | — | — | rewards paid from MINTED SKY only (to 2025-06-02) | — | rewards paid from Pause Proxy RESERVES (2025-06-02..2026-08-16: a treasury release); rewards paid from SKY BOUGHT BACK out of revenue (from 2026-08-17) are a distribution of a buyback already credited — not dilution (FR2 S1, config.REWARD_FUNDING); and MKR→SKY conversion releases (the converter's pre-minted balance into circulating; 149.6M SKY to users in Q0) — on the Flows tab; not dilution of SKY holders' share of MKR-era claims (PROPOSED) |
 | Pendle | — | gauge emissions (~0.2%/yr after the ~92% cut) | — | — | four wallets identified: Governance multisig 0x8119… (incentives reserve; sole GaugeController funder), Team 0x918c… (vested), Ecosystem Fund 0x399B…, fee wallet 0x8270…. Q0 1,675,753: ~0.9M → Merkle / Merkl campaigns (really b), 600k + 70k → Binance, 105,753 recycled fees; no vesting unlock (PROPOSED 9) |
 | Ether.fi | — | — | user programmes (Season 5, Triple Dip, Cash cashback): distributor wallets or NOT WIRED | — | wallet releases |
 | Fluid | — | rewards | — | — | wallet releases |
@@ -191,23 +191,27 @@ archive restates total supply.
 
 | Break | Restatement route (research of 2026-10-13) | Valid without restatement: Q0 / QoQ / 4Q growth / no flag |
 |---|---|---|
-| Ethereum 2026-09-29 | CoinMetrics community SplyCur (daily, free; matches Etherscan within 0.0003%; licence non-commercial — Jake's call) as total_supply_protocol 2025-07-14..2026-09-28 + a "none" handover | 2026-12-27 / 2027-03-27 / 2027-09-23 / 2027-12-22 |
+| Ethereum 2026-09-29 | BUILT (FR2 H1/H3): ultrasound.money supply-over-time (daily 00:00Z, free, no licence found; CoinMetrics NOT used: CC BY-NC) as total_supply_protocol before Etherscan's first read + issuance = d(supply) + burn; PROPOSED same basis (Etherscan 4,118–4,298 ETH / 0.0035% above on the overlap) | 2026-12-27 / 2027-03-27 / 2027-09-23 / 2027-12-22 |
 | Hyperliquid 2026-09-30 and 2026-10-11 | 10-11 now declared a composition change (it was read as a trend); per-wallet ledger replay from genesis (userNonFundingLedgerUpdates + delegatorHistory + fills) is exact for the team / Foundation / Grants wallets; futureEmissions history only modelled (~1%) | 2026-12-28 / 2027-03-28 / 2027-09-24 / 2027-12-23 (10-11: 2027-01-08 …) |
 | NEAR 2026-10-11 | the lockup rule and NEAR's own figure agree within 0.05% (RUNBOOK) — declare one basis; exact route: weekly lockup reads at past blocks (archival RPC, >160 h) | 2027-01-08 / 2027-04-08 / 2027-10-05 / 2028-01-03 |
 | Sky 2026-10-12 | archive reads of the same contracts (archive_backfill.py --project Sky) + sky_mkr.read at past blocks (needs the vest read split out: the vest contract has no code ~400 days back) | 2027-01-09 / 2027-04-09 / 2027-10-06 / 2028-01-04 |
-| Aethir 2026-09-30 | the dashboard figure IS Aethir's published monthly table (CIRCULATING_SCHEDULE) — write 2025-07-15..2026-09-29 from it + a "none" handover | 2026-12-28 / 2027-03-28 / 2027-09-24 / 2027-12-23 |
-| Plume 2026-10-07 | CoinGecko's figure equals Plume's from 2026-01-01 (exact monthly +212,116,114.6 steps) — copy as first party with a "none" handover; before 2026 not verifiable | 2027-01-04 / 2027-04-04 / 2027-10-01 / 2027-12-30 |
+| Aethir 2026-09-30 | BUILT (FR2 H1): read-time history from the published monthly table (re-read 2026-10-13, zero differences) + a "none" handover — no break left | 2026-12-28 / 2027-03-28 / 2027-09-24 / 2027-12-23 |
+| Plume 2026-10-07 | BUILT (FR2 H1): CoinGecko's figure as first party from 2026-01-01 (read-time, a "none" handover); the break moves to 2026-01-01; before 2026 not verifiable | 2027-01-04 / 2027-04-04 / 2027-10-01 / 2027-12-30 |
 | FDV (8 on-chain-first projects) 2026-10-11 | archive the token totalSupply at past blocks: run_sql.py CJ / CM, then archive_backfill.py --run | 2027-01-08 / 2027-04-08 / 2027-10-05 / 2028-01-03 |
 
-None of the restatements is run in this round: each needs a new reader or Jake's run (no secrets here).
+Fix round 2 builds the Ethereum, Aethir and Plume restatements as read-time views (no stored row changes); NEAR, Sky,
+FDV and Hyperliquid still need Jake's run (archive / ledger replay — commands in RUNBOOK 11bx).
 
 ## 8. Flow statements (C11) — tab "Flows", Q0..Q-4 per project
 
-* **Token flow (as built):** opening circulating + mint (the issuance basis; 0 on a pre-minted token) + releases
-  (pool_release_tokens on a pre-minted token, else the non-circulating wallets' falls) − burns (A1's burn basis) =
-  expected closing, against the closing circulating stored. Net new locks drop out: staked supply is inside circulating
-  under the convention. Residual = closing − expected; |residual| > 0.5% of opening, a leg covering fewer than 90 days,
-  or a change of circulating basis inside the quarter → CHECK with the reason.
+* **Token flow (as built, FR2 F1/T1):** opening circulating + mint (the issuance basis; 0 on a pre-minted token) +
+  releases (pool_release_tokens on a pre-minted token, else the non-circulating wallets' falls; GEODNET: the mining
+  release AND the other wallets' release, disjoint; where circulating IS a published schedule — Aethir — the schedule's
+  own monthly step, "+ scheduled releases") − returned to issuer-side wallets (the rises of the same stock: recalls,
+  purchases into a Safe; a mint into the set is NOT a return) − burns = expected closing. A memo line shows mints
+  straight into issuer-side wallets (not circulating until released). Residual = closing − expected; |residual| > 0.5%
+  of opening with a NAMED cause (a leg short of the quarter, a basis change, a third party's circulating figure, a
+  declared unwired flow) → CHECK; with NO named cause → BROKEN on the Coverage tab.
 * **Value flow:** fees → supplier share (fees − revenue) + protocol revenue; revenue → retired (burned + held
   buybacks) + distributed (to holders) + treasury (the rest); incentives $ (outflows a–e) beside. Residual = revenue −
   retired − distributed − treasury (0 by construction for treasury as the remainder; shown so a negative treasury —
@@ -234,16 +238,22 @@ None of the restatements is run in this round: each needs a new reader or Jake's
 | Hyperliquid ASXN series | browser capture (ASXN hyperscreener) — dashboard |
 | TVL in native units (C15) | Ether.fi: LiquidityPool 0x308861A4… getTotalPooledEther() at past blocks (eth.drpc.org, keyless; 2.791M → 2.284M ETH Q-4 → Q0, −18.2% vs −54.5% in USD); protocols: DefiLlama /protocol/<slug> daily `tokens` valued at one date's prices (matched basket, research of 2026-10-13); chains: USD ÷ native price only (the token breakdown is paid) |
 | Pendle Boros volume (C16) | api-boros.pendle.finance markets/ohlcv per market × DefiLlama daily price (Q0 $3.04B, Q-4 $2.39B) |
-| Ether.fi (c) cashback | ETHFI Transfer out of CashbackDistributor 0x38F2fBb2… on OP (explorer.optimism.io Blockscout, keyless); Q0 1,060,439 ETHFI |
-| Hyperliquid history (C9) | wallet ledgers replayed from genesis (userNonFundingLedgerUpdates + delegatorHistory + userFillsByTime: exact); futureEmissions history modelled from the Grants wallet's daily reward (~1%, store as a separately named modelled series); Q0 valid from the tracker's own reads: emissions 2026-12-29, wallet stocks 2027-01-09 |
+| Ether.fi (c) cashback | ETHFI Transfer out of CashbackDistributor 0x38F2fBb2… on OP (explorer.optimism.io Blockscout, keyless); Q0 1,060,439 ETHFI; 1,378,243.74 ETHFI paid since 2026-09-03, ~93% of it market-bought by the programme (FR2 S2: not dilution) — the buyback leg is wired (programmatic_buyback_tokens), the payout leg is not |
+| Hyperliquid history (C9 / H2) | (research 2026-10-13 replayed the three wallets daily 2025-07-12..2026-10-13 to 1e-8 of live; the reader is not in the repo) wallet ledgers replayed from genesis (userNonFundingLedgerUpdates + delegatorHistory + userFillsByTime: exact); futureEmissions history modelled from the Grants wallet's daily reward (~1%, store as a separately named modelled series); Q0 valid from the tracker's own reads: emissions 2026-12-29, wallet stocks 2027-01-09 |
 | Market share LINK / PLUME / ATH / GEOD | oracle TVS (paid) / RWA-by-chain rebuild / no comparable category |
+| Pendle per-transfer classification (W7 / S4) | Blockscout v2 token-transfers of 0x8119EC16…, 0x918c…, 0x399B… with destination classes (GaugeController / externalRewardsDistributor = (b) already; Binance deposit (0x3529… is one) = (e); unlabelled = (e)). Research 2026-10-13: Governance 7.377M out since 2025-07-01 (150K direct to gauges, 3.40M Binance, 302K bridged, 3.525M to two ops pools); Team 1,129,000 all to Binance; Ecosystem 2.3775M |
+| Pendle latent supply (S4) | live read of the token's emission state (accrued, unminted: 9,837,598.56 PENDLE on 2026-10-13, config.LATENT_SUPPLY, pending Jake's review) |
+| Morpho (b) on Base / Arc / Katana / Tempo (S8) | Merkl campaigns API per chain for the DAO rewards multisig 0xF057… (Ethereum campaigns ended 2026-04-30; ~2.68M MORPHO/yr now runs off-Ethereum) |
+| Chainlink staking-funding path (C20) | per-transfer classification of the 27 wallets' outflows toward 0xD50f074E → … → 0x7e10a625…, taken out of (e) |
+| Chainlink community staker rate | the RewardVault's communityBase bucket ÷ the community pool's principal (ours blends every bucket ÷ every staked LINK: 4.77% vs 4.32%) |
+| NEAR revenue wallets' all-time inflow (N5) | NearBlocks v3 /accounts/{a}/txns receiver = fefundsadmin / buybacks.multisignature / 1csfundsadmin (research: balances 1,887,176 / 1,965,920 / 271 NEAR; buybacks never sold, one 12,000 NEAR outflow 2026-07-10) |
 
 ## 11. LATER (C19) — Proven / Building / Fading / Failing grid
 
 Inputs it will need, all already on the workbook after this round: per row its axis (section 2), level (Q0 value) and
 trajectory (growth, direction, quarters improved). Nothing built.
 
-## 12. PROPOSED — for Jake
+## 12. PROPOSED — for Jake (Jake's decisions of 2026-10-13 recorded under each; FR2 = fix round 2)
 
 1. Axis of lock rate, valuation multiples (NRR, free float ÷ ARR, fees ÷ FDV) → CONTEXT; NHY, validator yield and Total
    Yield → CAPTURE; fees ÷ issuance → BUSINESS.
@@ -265,11 +275,42 @@ trajectory (growth, direction, quarters improved). Nothing built.
     credited; HVY 0 stands (ASSUMED pending Jake).
 11. NEAR revenue = gas revenue + NEAR Intents fee-switch revenue (DefiLlama near-intents dailyRevenue); the payout and
     coverage ratios divide by both.
-12. GEODNET discretionary supply = the treasury wallets only, until the other non-circulating wallets' schedule is
-    established.
+12. ~~GEODNET discretionary supply = the treasury wallets only~~ — REJECTED by Jake (addendum G2): every non-mining
+    issuer wallet (Team, Investor, Ecosystem, Vendor/Marketing, Public sale — 20M unsold public-sale Safe included) is
+    discretionary; the mining wallets are (b) only. No dated release schedule exists (filing §8/§15 give durations
+    without start dates — research 2026-10-13).
 13. Hyperliquid insider share of stake = the stake of every wallet outside circulating (team + Foundation + Grants) ÷
     total staked, not the team alone.
-14. Divergence: a revenue-vs-price growth gap within ±10pp reads "in line" (B14). Growth: a quarter outside 10%–10x of
+14. Divergence: a revenue-vs-price growth gap within ±10pp reads "in line" (B14) — ACCEPTED as a convention; each
+    Trajectory row now shows the standard error of its 4Q slope (annual, delta method) so the band can be calibrated. Growth: a quarter outside 10%–10x of
     Q0 ends the regime in either direction (B13).
 15. Uniswap (d) = every fall of the governance Timelock (the growth budget and any other grant), the treasury-funded
     100M burn excepted.
+
+## 13. FIX ROUND 2 (2026-10-13) — amendments, old → new
+
+Built against the 15 real dumps (fixtures/real_*.json). PROPOSED where Jake's call is open.
+
+| # | Item | Old | New |
+|---|---|---|---|
+| 1 | §6 Sky outflows (S1) | all SKY rewards = (c) | split by funding period (config.REWARD_FUNDING, every boundary on-chain / an executive): minted (to 2025-06-02) = (c); Pause Proxy reserves (2025-06-02..2026-08-16) = (e) treasury release; bought back out of revenue (from 2026-08-17) = a distribution of the buyback, credited once (as the buyback), not dilution. 2026-03-02..13 (vest 10, sized from prior buybacks) kept treasury — the conservative reading, PROPOSED |
+| 2 | §6 GEODNET (e) (G1/G2/F2) | the falls of treasury_holding_tokens (Mining + Mining distribution + Ecosystem) + the four candidate wallets — the mining payout counted in (b) AND (e) | the five non-mining filed wallets only (the Ecosystem wallet read on its own, ecosystem_holding_tokens); mining wallets (b) only; disjoint by test |
+| 3 | §6 Aerodrome (S5) | team emission not shown | its own insider line: teamRate × (rebase + frozen weekly 8,969,149.54) ÷ (10,000 − teamRate), rate history 500 / 0 (2025-10-09) / 228 (2026-03-05) bps with Safe txs; minted into a filing wallet, so not circulating until released (e) |
+| 4 | Aerodrome tail rate (S5) | 21 bps "from 2025-10-24" | from the 2025-10-23 flip (Nudge 22→21 at block 37,192,832) |
+| 5 | Aerodrome rebase after the migration (decision 2) | "ends at the 21 Oct migration" | CONTRADICTED by aero.xyz/aero-economic-case (2026-03-30): old veAERO "will continue to receive rebases"; only sAERO has none. The (c) line keeps reading the RewardsDistributor while it pays; every legacy read dated on/after 2026-10-22 is refused LOUDLY until aero_migration.json says launched (RUNBOOK 11bx) |
+| 6 | Maple supply (S3) | "pre-minted, issuance 0"; 44.4M of claims recorded | five RecapitalizationModule claims since 2025-07-01 (net 78,241,999.94; 2025-07-03 netted by a same-tx burn) minted to mapleTreasury — their own line (issuer_mint_tokens); gross issuance reads "n/a — minted only into the issuer's treasury: <Q0> …"; released (e) when they leave; MIP-021 tiers are FLAT bands (10/20/30%) |
+| 7 | Hyperliquid FDV (S6) | price × CoinGecko total | price × (tokenDetails totalSupply − the Assistance Fund's balance), labelled: the docs say the Fund is burned, the API total still holds it |
+| 8 | Uniswap (d) label (S7) | ecosystem / grants | ecosystem / grants / treasury operating spend (#90 DUNI legal/tax 1.58M, UF operations in #83, UAC / delegate pay); the #97 recall (12,500,001.19) and the 113,137.83 Safe inflow are returns (F1) |
+| 9 | Plume staker yield source (S11) | unlabelled ~4.5% | on-chain getRewardRate × (1 − commission); the app's APY is computed in the browser from the same reads |
+| 10 | Aethir DAT (S10) | Axe Compute 2,700,000,000 (rounded) | 2,655,414,499 (10-Q, 2026-06-30) |
+| 11 | Ether.fi programmatic buybacks (S2) | "not executed" (r9) | the buyer is Safe 0x43F4cA92… (CoW: 1,467,688.39 ETHFI for $1,022,633.79 to 10-13), its own series; all of it paid on as OP cashback — none held, so nothing retired or credited; cashback from bought ETHFI is (c), not dilution; the 20M buffer has paid 0 |
+| 12 | Pendle (S4) | PROPOSED 9 (Governance falls → (b) minus the gauge days) | REPLACED: per-transfer classes (gauges = (b) already; CEX = (e); unlabelled = (e)) — NOT WIRED, route in §10; latent overhang 9,837,598.56 accrued-unminted recorded (config.LATENT_SUPPLY) |
+| 13 | GEODNET revenue (G3) | revenue as stored | labelled "implied from the burn (not independent)" (DefiLlama fees = burn ÷ 0.8) and EXCLUDED from the divergence row; burn-policy conflict recorded (filing 40% of gross vs X post 80%); no independent first-party figure exists |
+| 14 | Chainlink (C20/C22) | Reward Vault "confirmed not inside e" | a known double count (§6); holders ÷ revenue ≈ 1 by construction (DefiLlama revenue = LINK to the Reserve) — labelled |
+| 15 | §8 Token flow (F1/T1) | opening + mint + releases − burns; residual > 0.5% = CHECK | + "returned to issuer-side wallets", + "scheduled releases" where circulating is a schedule, memo of issuer mints; a residual > 0.5% without a named cause = BROKEN |
+| 16 | NEAR (N1–N4) | v3 /stats circulating could be read; one v1 parity call | v3 circulating (== total) never used (test); the lockup history adopted (R10/N2); NearBlocks v3 intents volume stored beside DefiLlama's (near_intents_volume_usd_nearblocks; Business 1 reads DefiLlama's, NEAR's own Dune-based figure: revenue.near.org $31.40B through 2026-09-21); the v1 call removed |
+| 17 | Coverage (T2–T5) | presence and declared inputs only | + independent references (independent_references.csv: VERIFIED / BROKEN for primary, CHECK for cross-checks — "secondary", "primary-ish", "primary-derived", "derived" — never VERIFIED; PROPOSED reading); + regression guard (a headline lost since the previous run = BROKEN unless on config.REGRESSION_ALLOWLIST); + VERIFIED share per project; + MATCHES-SPEC on OUTPUTS for Master price, market cap, circulating, FDV, fees Q0, revenue Q0 |
+| 18 | Trajectory (decision 14) | growth only | + the 4Q slope's standard error (annual) |
+| 19 | ETH supply history (S12/H1/H3) | CoinGecko mcap ÷ price, flat ~120.7M for a year | ultrasound supply-over-time before Etherscan's first read; issuance = d(supply) + burn (unblocks Total Yield and net issuance once stored) |
+| 20 | Fixed supply text (R9) | mixed 0 / "n/a not applicable" | "0 — fixed supply: <why>" everywhere a project mints nothing (Maple no longer: item 6) |
+

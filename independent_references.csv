@@ -1,0 +1,64 @@
+project,metric,value,unit,as_of,source_type,source,tolerance,note
+Ethereum,active_stake_effective_balance,43750684,ETH,2026-10-13,primary (beacon API),POST /eth/v1/beacon/states/head/validators (839580 active validators; includes 18339 active_exiting),0.5%,check beacon_chain_eth / stake_inside
+Ethereum,issuance_per_day,2980,ETH/day,2026-10-13,primary-derived (consensus spec) + ultrasound,https://ultrasound.money/api/v2/fees/issuance-estimate ; spec max ~3002/day at this stake,3%,check gross_issuance_tokens daily
+Ethereum,burn_30d,2471,ETH,2026-10-13,secondary (ultrasound),https://ultrasound.money/api/v2/fees/burn-sums,5%,check gross_burn_tokens 30d
+Ethereum,supply,122120000,ETH,2026-10-13,secondary (ultrasound),https://ultrasound.money/api/v2/fees/supply-over-time,0.1%,stored history flat ~120.7M for a year = wrong
+Ethereum,validator_apr_gross,0.0249,ratio,2026-10-13,primary (Lido 7d SMA 2.24% net / 0.9),https://eth-api.lido.fi/v1/protocol/steth/apr/sma,0.3pp,workbook 2.60%
+Hyperliquid,total_staked,440080000,HYPE,2026-10-13,primary (HL info API),api.hyperliquid.xyz/info validators,0.5%,
+Hyperliquid,issuer_side_stake,301307794,HYPE,2026-10-13,primary (HL info API delegatorSummary),0x43e9abea 237930044 + 0xd57ecca4 60509178 + 0xa20fcfa0 2868572,0.5%,labels inferred from genesis sizes (team/Foundation/Grants)
+Hyperliquid,assistance_fund_balance,48010000,HYPE,2026-10-13,primary (HL info API),0xfefe...fefe,1%,docs: burned; API totalSupply still includes it
+Hyperliquid,api_total_supply,998860000,HYPE,2026-10-13,primary (HL info API tokenDetails),,0.1%,includes AF
+Hyperliquid,api_circulating_supply,302130000,HYPE,2026-10-13,primary (HL info API tokenDetails),,0.5%,our basis = this less Foundation + Grants
+Hyperliquid,future_emissions_remaining,410790000,HYPE,2026-10-13,primary (HL info API tokenDetails futureEmissions),,0.5%,
+Hyperliquid,team_unlock_2026-10-07,3750000,HYPE,2026-10-07,secondary,https://cryptobriefing.com/hyperliquid-labs-hype-otc-distribution/,exact,unstaked 2026-09-30; OTC to five buyers
+Hyperliquid,team_unlock_2026-01-06,1200000,HYPE,2026-01-06,secondary,https://www.tokenomist.ai/research/hype-tokenomics-330k-or-9-9m-hype-unlocks,exact,
+Hyperliquid,team_unlock_2025-11-29,1750000,HYPE,2025-11-29,secondary,https://www.theblock.co/post/383880/hype-tokens-unstaked-for-hyperliquid-labs-first-allocation,exact,
+Uniswap,total_supply,1000000000,UNI,2026-10-13,primary (eth_call totalSupply),,exact,2% mint never used
+Uniswap,dead_address_balance,112860000,UNI,2026-10-13,primary (eth_call balanceOf 0xdead),,0.5%,includes 100M treasury burn 2025-12-27 20:33 UTC (tx 0x091f0083...)
+Uniswap,timelock_balance,262250000,UNI,2026-10-13,primary (eth_call),Timelock 0x1a9C8182...35BC,0.5%,
+Uniswap,growth_budget_paid_2026,20000000,UNI,2026-10-01,primary (UNIVesting 0xca046a83 withdrawals),5M on 2026-01-05 / 04-10 / 07-14 / 10-01 to 0xaBA63748...926F,exact,category (d)
+Uniswap,franchiser_recall_inflow,12500000,UNI,2026-06-01,primary (Timelock transfers; proposal #97),,exact,return to issuer wallet (token flow)
+Aerodrome,tail_emission_rate,21,bps/week,2026-10-13,primary (Minter 0xeB018363 tailEmissionRate),,exact,21 since 2025-10-23
+Aerodrome,team_rate,228,bps,2026-10-13,primary (Minter teamRate),team wallet 0xbde0c70b...ea5a,exact,applied to frozen weekly 8969150 -> ~220.7K AERO/week
+Aerodrome,weekly_lp_emissions,4180000,AERO,2026-10-08,primary (aero.xyz/economics/metrics),https://aero.xyz/economics/metrics/,2%,week of 8 Oct 2026
+Aerodrome,weekly_rebase,489500,AERO,2026-10-08,primary (aero.xyz/economics/metrics),https://aero.xyz/economics/metrics/,2%,
+Aerodrome,annualised_dilution_incl_rebase_team,0.1274,ratio,2026-10-08,primary (aero.xyz dashboard),https://aero.xyz/economics/metrics/,1pp,workbook total dilution 15.9% of circulating (different denominator?) - reconcile
+Aerodrome,veaero_share_of_supply,0.517,ratio,2026-10-13,primary (on-chain voting power / supply),,1pp,
+Aerodrome,momentum_fund_cumulative,109990000,AERO,2026-10-13,primary (aero.xyz/economics/metrics),https://aero.xyz/economics/metrics/,2%,issuer-side
+Aerodrome,revenue_per_emissions_usd,1.10,x,2026-03-31,primary (self-reported),https://aero.xyz/articles/aero-economic-case/,0.1,Q1 2026 (Q4 2025 1.08); compare subsidy cover 1.11
+Pendle,total_supply,281527448,PENDLE,2026-10-13,primary (eth_call),0x808507121B80c02388fAd14726482e061B8da827,exact,flat since ~Mar 2025
+Pendle,governance_multisig_balance,19750000,PENDLE,2026-10-13,primary (eth_call),0x8119ec16f0573b7dac7c0cb94eb504fb32456ee1,1%,
+Pendle,team_multisig_balance,7770000,PENDLE,2026-10-13,primary (eth_call),0x918cf6b1...,1%,
+Pendle,ecosystem_fund_balance,16120000,PENDLE,2026-10-13,primary (eth_call),0x399be606...,1%,
+Pendle,unclaimed_accrued_emissions,9800000,PENDLE,2026-10-13,derived from contract parameters (not published),token contract emission params; recipient 0xe8d28e2c...2606 last claimed week 204,10%,latent supply overhang - read on-chain
+Sky,vest18_rate,403600000,SKY/yr,2026-10-12,primary (executive vote 2026-10-08),sky-ecosystem/executive-votes 2026-10-08,1%,LSSKY->SKY staking; transfer-based vest
+Sky,vest17_rate,580800000,SKY/yr,2026-09-13,primary (executive vote 2026-09-10),sky-ecosystem/executive-votes 2026-09-10,1%,ended early 2026-10-12
+Sky,pause_proxy_sky_balance,20140000,SKY,2026-10-13,primary (eth_call),Pause Proxy 0xBE8E...98FB,1%,
+Sky,mkr_supply_unconverted,83465.89,MKR,2026-10-13,primary (eth_call),,0.1%,converter pre-funded: 2042.2M SKY held
+Sky,sky_total_supply,23452400000,SKY,2026-10-13,primary (eth_call),,0.1%,
+Sky,spell_burn_2026-09-13,2860943.76,SKY,2026-09-13,primary (executive + chain),,exact,
+Sky,spell_burn_2026-10-12,7372288,SKY,2026-10-12,primary (executive + chain),,exact,
+Sky,net_revenue_sep_2026,14640000,USDS,2026-09-30,primary (forum TMF thread 28153),https://forum.skyeco.com/t/treasury-management-function-tmf-configurations/28153,2%,Jul 10.52M; Aug 15.75M
+Ether.fi,total_supply,998535999,ETHFI,2026-10-13,primary (eth_call),,exact,1464000 burned Aug-Sep 2025 from 0x2f5301...Fd0F
+Ether.fi,sethfi_vault_assets,109950000,ETHFI,2026-10-13,primary (eth_call),sETHFI vault 0x86B5...0161 (88.05M shares),1%,
+Maple,total_supply,1267875000,SYRUP,2026-10-13,primary (eth_call),,exact,reconcile with RecapitalizationModule mints below
+Maple,inflation_claim_2026-04-22,28550000,SYRUP,2026-04-22,primary (mint logs RecapitalizationModule 0x5dfe...f69d),to mapleTreasury 0xa946...0b19,1%,
+Maple,inflation_claim_2026-10-09,23200000,SYRUP,2026-10-09,primary (mint logs),to mapleTreasury,1%,final; rate zero from 2026-10-01
+Maple,dao_safe_balance,23090000,SYRUP,2026-10-13,primary (eth_call),0xd6d4...a196,1%,
+Maple,buyback_top_tier,0.30,ratio,2026-07-17,primary (MIP-021 Snapshot),https://snapshot.box/#/s:mapledao.eth/proposal/0xce5c0b3e759cd071a5412d7935b2408db9def2ecc4f754764f5c2f08055ff3a5,exact,10% <1.5M; 20% 1.5-2.0M; 30% >2.0M; held in SSF
+Morpho,fee_recipient,0x0,address,2026-10-13,primary (eth_call feeRecipient),Morpho Blue 0xBBBB...FFCb,exact,fee switch off
+Morpho,merkl_rewards_rate,7500,MORPHO/day,2026-10-13,primary (Merkl API live campaigns by 0xF057...),api.merkl.xyz/v4/campaigns,25%,workbook (b) ~790/day - reconcile
+Fluid,treasury_to_team_rewards,750000,FLUID,2026-05-23,primary (Tally #131),https://www.tally.xyz/gov/instadapp/proposal/131,exact,
+Fluid,treasury_to_team_agi3_locked,5000000,FLUID,2026-08-07,primary (Tally #137),https://www.tally.xyz/gov/instadapp/proposal/137,exact,legally locked until 2030
+Aethir,dat_holding_axe_compute,2655414499,ATH,2026-06-30,primary (SEC 10-Q AGPU),https://www.sec.gov/Archives/edgar/data/1446159/000117184326005556/agpu20260630_10q.htm,exact,was 2837163868 at 2025-12-31
+Aethir,circulating_schedule_oct_2026,24050000000,ATH,2026-10-01,primary (docs ath-circulating-supply),https://docs.aethir.com/aethir-tokenomics/ath-circulating-supply.md,0.5%,Dec 2026 25.54B
+Chainlink,reserve_holdings_end_q1_2026,3060000,LINK,2026-03-31,primary (Chainlink Q1 2026 review),https://chain.link/blog/quarterly-review-q1-2026,1%,+1473379 LINK in Q1 2026
+Chainlink,staking_community_rate,0.0432,ratio,2026-10-13,primary (chain.link/economics/staking),https://chain.link/economics/staking,0.3pp,4.5% floor less 4% delegation; caps 45M / 40.875M
+Chainlink,quarterly_release,18750000,LINK,2026-Q3,secondary (press) + tracker,https://ambcrypto.com/will-chainlink-face-sell-pressure-after-massive-token-unlock/,exact,
+NEAR,fefundsadmin_alltime_inflow,1883709,NEAR,2026-10-13,primary-ish (revenue.near.org; footer says illustrative),https://revenue.near.org/,2%,
+NEAR,buybacks_multisig_alltime_inflow,1462075.7,NEAR,2026-10-13,primary-ish (revenue.near.org),https://revenue.near.org/,2%,holds ~396K per secondary - trace outflows
+NEAR,1csfundsadmin_alltime_inflow,555348.3,NEAR,2026-10-13,primary-ish (revenue.near.org),https://revenue.near.org/,2%,
+NEAR,intents_cumulative_volume,31400000000,USD,2026-09-22,secondary quoting Dune,https://cryptobriefing.com/near-protocol-intents-30-billion-volume-record/,3%,check DefiLlama/Dune series cumulative
+GEODNET,mining_pool_wallets,0xfa5fEd5cc2b6DD8F370651D17242C52Ed711B14F; 0x8FB9dd00B9a3D893dA96d444817d0b77330d5478,address,2025-08-19,primary (issuer filing),https://blockworks.com/token-transparency/filing/geodnet,exact,(b) only; must be excluded from (e)
+GEODNET,team_investor_ecosystem_vendor_publicsale_wallets,0xca3E874Bc4e830796d822F529C29Df30302324b2; 0x486559899e96981DFE55C4E6EBF5101A76BfAdfa; 0x3A6906E4239F9860C81035c54198Df58D892653b; 0x82146cf0f350c241757660fd803c73313b06d75c; 0xcEcccB3ee2C208Fb58A5a02499E97D4BF041Ff6f,address,2025-08-19,primary (issuer filing),https://blockworks.com/token-transparency/filing/geodnet,exact,no published schedule -> discretionary
+GEODNET,burned_to_date,58383936,GEOD,2026-06-30,primary (GEODNET X),https://x.com/GEODNET/status/2072713418818068898,1%,check cumulative burn series at end-June 2026
