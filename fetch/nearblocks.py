@@ -1,7 +1,7 @@
 """
 fetch/nearblocks.py — NEAR daily transactions and active accounts, from NearBlocks' API v3.
-Also: an account's inflow history via v1 (near_account_flows) — a differently-shaped read, same
-module, same key.
+Also: an account's inflow history (near_account_flows) — a differently-shaped read, same module,
+same key. Every path is v3 since 2026-10-13 (NearBlocks retires v1 on 2026-10-31).
 
     GET https://api.nearblocks.io/v3/txn-stats?limit=N       Authorization: Bearer <key>
     GET https://api.nearblocks.io/v3/address-stats?limit=N
@@ -32,7 +32,8 @@ TODAY IS NOT STORED: the current UTC day is still accumulating.
 from this module is scrubbed of it anyway.
 
 ===============================================================================================
-near_account_flows — GET /v1/account/{account}/txns, ACTUAL INFLOW, NOT A BALANCE. Added 2026-09-24.
+near_account_flows — GET /v3/accounts/{account}/txns (v1 /v1/account/{account}/txns until 2026-10-13),
+ACTUAL INFLOW, NOT A BALANCE. Added 2026-09-24.
 ===============================================================================================
 Wired for NEAR's buyback wallet, buybacks.multisignature.near — actual_buyback_tokens was
 gapped "WALLET KNOWN, INFLOW NOT READABLE HERE" because NEAR is not EVM and log_scans
@@ -78,7 +79,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
+from urllib.parse import urlparse
 from collections import deque
 
 import pandas as pd
@@ -90,6 +93,23 @@ from .logcache import atomic_write_text
 log = logging.getLogger("token_metrics.fetch.nearblocks")
 
 SOURCE = "nearblocks"
+# NEARBLOCKS API v1 RETIRES 2026-10-31 (Jake 2026-10-13, Part E): every call is a /v3 path. tests/test_nearblocks_v3.py
+# fails the build on any /v1/ or /v2/ NearBlocks path in the code.
+V3_ACCOUNT_TXNS = "/v3/accounts/{account}/txns"
+FLOW_SOURCE_V3 = f"{SOURCE}:v3-account-txns"
+# THE v1 GUARD (Part E4): a /v1/ or /v2/ NearBlocks path is refused before any call is made — tests/test_nearblocks_v3.py
+# also fails the build on one written anywhere in the code
+_RETIRED_PATH = re.compile(r"^/v[12]/")
+# A DEPRECATION / SUNSET ANSWER (Part E4): the RFC 8594 / 9745 headers, HTTP 410 Gone, or a message saying so. Logged as
+# "ACTION NEEDED: NEARBLOCKS API SUNSET …" (daily_summary.py's section 3 lists it) and a FAILED line on the Run Log;
+# windows/daily_run.ps1's closing console line names NearBlocks
+SUNSET_MARKER = "NEARBLOCKS API SUNSET"
+_SUNSET_HEADERS = ("deprecation", "sunset")
+_SUNSET_WORDS = re.compile(r"deprecat|sunset|retired|no longer (?:available|supported)", re.I)
+
+
+class RetiredPath(ValueError):
+    """A NearBlocks v1 / v2 path — retired 2026-10-31; never called."""
 TIER = 1
 FLOW_PAGE_CAP = 20   # hard stop on pagination — polite, and this wallet's volume is nowhere near it
 
@@ -106,7 +126,9 @@ CREDITS_PER_MINUTE = 6
 CREDITS_PER_DAY = 333
 ROWS_PER_CREDIT = 25
 RATE_LIMIT_WAIT = 60.0
-FLOW_PER_PAGE = 50
+# v3 pages are `limit` 1..100; NearBlocks bills ceil(per_page / 25) on `per_page` only (rateLimiter.ts L132 @08a8c850),
+# so a v3 page of 100 costs ONE credit — the largest page, the fewest calls
+FLOW_PER_PAGE = 100
 # stats/balance answers at most 365 rows: `limit` above that is refused with HTTP 422 ("Expected <=365", Jake's run
 # 2026-10-07 15:51), and the refusal of one wallet skipped all three. Capped here whatever config asks; history
 # older than a year would need paging by year (none of NEAR's three wallets has any: activity starts 2025-11).
@@ -190,21 +212,44 @@ class NearBlocks:
         self.pacer = _Pacer()
         # (project, metric) -> newest stored date, for the once-a-day skip of the v3 stats.
         self.last_dates = last_dates or {}
+        self.sunsets: dict = {}       # path -> what the deprecation / sunset answer said (Part E4)
 
     def _get(self, url: str, params: dict, key: str):
         # BILLED AS NEARBLOCKS BILLS IT: ceil(per_page / 25), per_page defaulting to 25
         # (apps/api/src/middlewares/rateLimiter.ts @ d8cebb2: `req.query.per_page || 25`). The v3
         # stats calls send `limit`, not per_page, so they cost ONE credit — this charged them 4
         # (limit=100), which is where the 1s, 2s and last ~59s waits of 2026-09-28 came from.
+        path = urlparse(url).path
+        if _RETIRED_PATH.match(path):
+            raise RetiredPath(f"NearBlocks {path.split('/')[1]} path {path} is retired (v1 sunset 2026-10-31) — "
+                              f"use its /v3 equivalent (NearBlocks apps/api/docs/v3-migration.md); not called")
         credits = credits_for(int(params.get("per_page") or ROWS_PER_CREDIT))
         waited = self.pacer.wait(credits)
         if waited:
             log.info("nearblocks: paced %.0fs before a %d-credit call to %s (free plan: %d "
                      "credits/min)", waited, credits, url.split("?")[0], CREDITS_PER_MINUTE)
         try:
-            return self.http.get(url, params=params, headers={"Authorization": f"Bearer {key}"})
+            body = self.http.get(url, params=params, headers={"Authorization": f"Bearer {key}"})
+        except Exception as e:  # noqa: BLE001 — re-raised; a 410 or a sunset message is noted first
+            status = getattr(e, "status", None)
+            if status == 410 or _SUNSET_WORDS.search(str(e)):
+                self._sunset(path, f"HTTP {status or '?'}: {str(e).replace(key, '***')[:160]}")
+            raise
         finally:
             self.pacer.charge(credits)
+        hdrs = {k.lower(): v for k, v in (getattr(self.http, "last_headers", None) or {}).items()}
+        seen = {h: hdrs[h] for h in _SUNSET_HEADERS if h in hdrs}
+        msg = body.get("message") if isinstance(body, dict) and isinstance(body.get("message"), str) else ""
+        if seen or (msg and _SUNSET_WORDS.search(msg)):
+            self._sunset(path, f"headers {seen}" if seen else f"message {msg[:160]!r}")
+        return body
+
+    def _sunset(self, path: str, what: str) -> None:
+        """Record a deprecation / sunset answer once per path (Part E4)."""
+        if path not in self.sunsets:
+            self.sunsets[path] = what
+            log.warning("ACTION NEEDED: %s — %s answered %s. Every NearBlocks path is /v3 since 2026-10-13; read "
+                        "NearBlocks' v3-migration.md for this path's replacement.", SUNSET_MARKER, path, what)
 
     @staticmethod
     def _key(spec: dict) -> str:
@@ -234,6 +279,11 @@ class NearBlocks:
         for p in projects:
             for flow in p.get("near_account_flows") or []:
                 self._account_flow(p["name"], flow, window_days, out)
+        # A DEPRECATION / SUNSET ANSWER IS A FAILED LINE ON THE RUN LOG (Part E4), named, once per path
+        who = next((p["name"] for p in projects if "nearblocks" in p or p.get("near_account_flows")), None)
+        for path, what in self.sunsets.items():
+            if who:
+                out.fail(SOURCE, who, f"{SUNSET_MARKER}: {path} answered {what} — move it to its v3 replacement", TIER)
 
     def _project(self, name: str, spec: dict, window_days, out):
         key = self._key(spec)
@@ -318,8 +368,10 @@ class NearBlocks:
 
     def _supply_stats(self, name: str, spec: dict, ss: dict, out):
         """NEARBLOCKS' NON-CIRCULATING NEAR (Jake 2026-10-11, C: the cross-check for the still-unvested lockup leg) —
-        /v1/stats, one call a day: total_supply − circulating_supply, both yoctoNEAR. Today only; a second run the same
-        day does not call again."""
+        /v3/stats, one call a day: total_supply − circulating_supply, both yoctoNEAR. Today only; a second run the same
+        day does not call again. v1 /v1/stats until 2026-10-13: v3 reads the SAME single row of NearBlocks' `stats`
+        table (apps/api/src/services/stats.ts `SELECT * FROM stats LIMIT 1` vs sql/queries/stats/stats.sql, @08a8c850)
+        — one basis, only the envelope changes ({"stats": [{…}]} -> {"data": {…}})."""
         metric, key = ss["metric"], self._key(spec)
         if not key:
             out.unconfigured(SOURCE, name, f"{metric}: no {spec['key_env']} in .env", TIER)
@@ -336,7 +388,9 @@ class NearBlocks:
             return
         try:
             body = self._get(url, {}, key)
-            st = (body.get("stats") or [{}])[0]
+            st = body.get("data") if isinstance(body, dict) else None
+            if not isinstance(st, dict):
+                raise ValueError(f"no `data` object in the v3 answer (top level {sorted(body)[:8] if isinstance(body, dict) else type(body).__name__})")
             scale = 10 ** int(ss.get("yocto_exponent", 24))
             total, circ = int(str(st["total_supply"])) / scale, int(str(st["circulating_supply"])) / scale
         except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
@@ -446,7 +500,7 @@ class NearBlocks:
                 f"{min(pairs)[0].date()}..{max(pairs)[0].date()}; live row shape {sample}", TIER)
 
     def _account_flow(self, name: str, spec: dict, window_days, out):
-        """near_account_flows — v1 account txns, ACTUAL INFLOW (see the module docstring)."""
+        """near_account_flows — v3 account txns, ACTUAL INFLOW (see the module docstring)."""
         key = self._key(spec)
         metric = spec["metric"]
         if not key:
@@ -458,7 +512,7 @@ class NearBlocks:
         from .scrape import robots_verdict
 
         account = spec["account"]
-        url = spec["base_url"].rstrip("/") + f"/v1/account/{account}/txns"
+        url = spec["base_url"].rstrip("/") + V3_ACCOUNT_TXNS.format(account=account)
         allowed, why = robots_verdict(url)
         if not allowed:
             out.fail(SOURCE, name, f"{metric}: robots.txt disallows {url} — {why}", TIER)
@@ -471,6 +525,9 @@ class NearBlocks:
         scale = 10 ** int(spec.get("yocto_exponent", 24))
         after = (today() - pd.Timedelta(days=int(window_days or 35))).strftime("%Y-%m-%d")
         before = (today() - pd.Timedelta(days=1)).strftime("%Y-%m-%d")   # today is not complete
+        # v3 has no after-date filter and its `before_ts` is in nanoseconds: rows strictly before today's 00:00 UTC
+        # (today is not complete); the read stops at the first row older than `after` (newest-first, the default)
+        after_ns = int(pd.Timestamp(after).value)
 
         # ===== INCREMENTAL, NEWEST FIRST. 2026-09-28. =====
         # Run of 2026-09-28: this paged the wallet's whole window oldest-first every run — 7 calls
@@ -498,6 +555,7 @@ class NearBlocks:
         new_by_day: dict = {}
         top_ts, top_ids = newest_ts, set(seen_ids)
         cursor, total_rows, excluded_hits, sample, calls = None, 0, 0, None, 0
+        mixed_skipped = 0
         complete, prev_ids = False, None
         # ===== A READ THAT OUTLASTS ONE RUN RESUMES. 2026-09-28. =====
         # Run 20260928T142424Z: the first newest-first read of the window ran past the 240s budget
@@ -513,6 +571,10 @@ class NearBlocks:
         # resuming took precedence over the wider window it asked for — finished the 30 days, and
         # stored them as the whole history. A pending read that starts later than this read asks
         # is discarded, and the whole requested window is read from the newest transaction.
+        # A v1 PARTIAL READ IS NOT RESUMED ON v3 (2026-10-13): its cursor was a raw v1 value, meaningless to v3
+        if pend and pend.get("api") != "v3":
+            log.info("%s/%s: DISCARDING a partial read saved under NearBlocks v1 — re-reading on v3", name, metric)
+            state["pending"], pend = None, None
         if pend and str(pend.get("after") or "") > after:
             log.info("%s/%s: DISCARDING a partial read from %s — this read asks from %s; re-reading "
                      "the whole window from the newest transaction", name, metric, pend.get("after"), after)
@@ -533,10 +595,12 @@ class NearBlocks:
                                        f"cursor saved after each page")
         for _page in range(self.page_cap):
             prog.tick()
-            params = {"action": action, "after_date": after, "before_date": before,
-                     "per_page": FLOW_PER_PAGE, "order": "desc"}
+            # v3 (NearBlocks v3-migration.md): `limit` + opaque `next` cursors, `receiver` replaces `to`, no
+            # server-side action filter (kept client-side below), newest first
+            params = {"receiver": account, "limit": FLOW_PER_PAGE,
+                      "before_ts": str(int((pd.Timestamp(before) + pd.Timedelta(days=1)).value))}
             if cursor:
-                params["cursor"] = cursor
+                params["next"] = cursor
             try:
                 calls += 1
                 body = self._get(url, params, key)
@@ -546,19 +610,19 @@ class NearBlocks:
                 out.gap(name, metric, reason=f"NearBlocks {url} did not answer: {msg}",
                         tiers_attempted="1", suggestion="Read the status above; a 401 is the key.")
                 return
-            rows = body.get("txns") if isinstance(body, dict) else None
-            if rows is None:
+            rows = body.get("data") if isinstance(body, dict) else None
+            if not isinstance(rows, list):
                 shape = sorted(body)[:12] if isinstance(body, dict) else type(body).__name__
-                out.fail(SOURCE, name, f"{metric}: {url} carried no `txns` key — top level "
+                out.fail(SOURCE, name, f"{metric}: {url} carried no `data` list — top level "
                                        f"{shape}. NOTHING STORED.", TIER)
-                out.gap(name, metric, reason=f"NearBlocks {url} answered without a `txns` list "
+                out.gap(name, metric, reason=f"NearBlocks {url} answered without a `data` list "
                                              f"(top level: {shape}); the source-read shape does "
                                              f"not hold live", tiers_attempted="1",
                         suggestion="Read the keys above and correct `near_account_flows` in config.py.")
                 return
             if rows and sample is None:
                 first = rows[0]
-                required = {"predecessor_account_id", "block_timestamp", "actions"}
+                required = {"signer_account_id", "block_timestamp", "actions", "actions_agg"}
                 if not isinstance(first, dict) or not required.issubset(first):
                     keys = sorted(first) if isinstance(first, dict) else type(first).__name__
                     out.fail(SOURCE, name, f"{metric}: {url} rows carry {keys}, not "
@@ -575,7 +639,7 @@ class NearBlocks:
             page_ids = {json.dumps(r, sort_keys=True, default=str) for r in rows}
             if rows and page_ids == prev_ids:
                 out.fail(SOURCE, name, f"{metric}: page {calls} repeated the previous page at "
-                                       f"cursor {params.get('cursor')} — the cursor is not "
+                                       f"cursor {params.get('next')} — the cursor is not "
                                        f"advancing. Partial read kept; NOT stored.", TIER)
                 return
             prev_ids = page_ids
@@ -584,7 +648,7 @@ class NearBlocks:
             span = (f"{pd.Timestamp(max(stamps), unit='ns').date()}..."
                     f"{pd.Timestamp(min(stamps), unit='ns').date()}" if stamps else "empty")
             log.info("%s/%s: page %d at cursor %s — %d row(s) %s; %d txn(s) read so far",
-                     name, metric, calls, params.get("cursor") or "(start)", len(rows), span,
+                     name, metric, calls, (params.get("next") or "(start)")[:16], len(rows), span,
                      total_rows + len(rows))
             reached_seen = False
             for r in rows:
@@ -596,30 +660,41 @@ class NearBlocks:
                 if newest_ts is not None and (ts < newest_ts or (ts == newest_ts and tid in seen_ids)):
                     reached_seen = True
                     break
+                if ts < after_ns:                  # older than the window: the newest-first read is done
+                    reached_seen = True
+                    break
                 if top_ts is None or ts > top_ts:
                     top_ts, top_ids = ts, {tid}
                 elif ts == top_ts:
                     top_ids.add(tid)
                 total_rows += 1
-                sender = str(r.get("predecessor_account_id") or "").lower()
+                sender = str(r.get("signer_account_id") or r.get("predecessor_account_id") or "").lower()
                 if sender in exclude:
                     excluded_hits += 1
                     continue
+                if str(r.get("receiver_account_id") or account).lower() != account.lower():
+                    continue
                 day = pd.Timestamp(ts, unit="ns").normalize()
-                deposit = 0.0
-                for a in r.get("actions") or []:
-                    if isinstance(a, dict) and a.get("action") == action:
-                        try:
-                            deposit += float(a.get("deposit") or 0) / scale
-                        except (TypeError, ValueError):
-                            continue
+                # v3 LIST ROWS CARRY ONE AGGREGATED DEPOSIT (actions_agg.deposit), NOT ONE PER ACTION: a transaction is
+                # counted only when EVERY action is the configured kind (a native TRANSFER), so a FUNCTION_CALL's
+                # attached deposit is never read as a transfer. A mixed transaction is left out and counted in the log
+                # line — under v1 its TRANSFER action's own deposit was summed (the basis note for the v3 switch).
+                kinds = [a.get("action") for a in r.get("actions") or [] if isinstance(a, dict)]
+                if not kinds or any(k != action for k in kinds):
+                    if action in kinds:
+                        mixed_skipped += 1
+                    continue
+                try:
+                    deposit = float((r.get("actions_agg") or {}).get("deposit") or 0) / scale
+                except (TypeError, ValueError):
+                    deposit = 0.0
                 if deposit:
                     new_by_day[day] = new_by_day.get(day, 0.0) + deposit
-            cursor = body.get("cursor")
+            cursor = (body.get("meta") or {}).get("next_page") if isinstance(body, dict) else None
             if reached_seen or not cursor or not rows:
                 complete = True
                 break
-            state["pending"] = {"cursor": cursor, "after": after, "before": before,
+            state["pending"] = {"api": "v3", "cursor": cursor, "after": after, "before": before,
                                 "top_ts": top_ts, "top_ids": sorted(top_ids),
                                 "by_day": {str(d.date()): v for d, v in new_by_day.items()},
                                 "rows": total_rows, "excluded": excluded_hits}
@@ -646,13 +721,17 @@ class NearBlocks:
                                       f"{excluded_hits} excluded as internal hops, none left "
                                       f"after exclusion — 0 stored for {after}..{before}.", TIER)
             return
-        frame = window(tidy(sorted(by_day.items()), name, metric, SOURCE, TIER), window_days)
+        # A DISTINCT SOURCE FOR THE v3 BASIS (Part E2, 2026-10-13): v3 list rows give one aggregated deposit, so a mixed-
+        # action transaction is left out where v1 summed its TRANSFER action — a stored series that mixes v1 rows
+        # ("nearblocks") with these reads as a change of measuring point (SERIES BREAK), never silently
+        frame = window(tidy(sorted(by_day.items()), name, metric, FLOW_SOURCE_V3, TIER), window_days)
         # the stored window can be older than today's window start after a long gap between runs
         frame = frame[frame["date"] >= pd.Timestamp(after)] if not frame.empty else frame
         out.add(frame, SOURCE, name,
-                f"{metric} = NearBlocks {url} `actions[].deposit` for action={action!r} into "
+                f"{metric} = NearBlocks {url} `actions_agg.deposit` of {action}-only txns into "
                 f"{account}, excluding {sorted(exclude) or 'nothing'} as senders; "
                 f"{len(by_day)} day(s) {min(by_day).date()}..{max(by_day).date()}, "
-                f"{total_rows} txn(s) seen, {excluded_hits} excluded as internal hops; live row "
+                f"{total_rows} txn(s) seen, {excluded_hits} excluded as internal hops, {mixed_skipped} mixed-action "
+                f"txn(s) left out; live row "
                 f"shape {sample}. NATIVE NEAR ONLY — wrap.near ft_transfer inflow not counted, "
                 f"not wei-reconciled against a balance (see the module docstring).", TIER)

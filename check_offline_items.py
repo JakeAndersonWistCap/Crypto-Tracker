@@ -2416,7 +2416,7 @@ def near_buyback_inflow_probe():
     (>= start of the NEXT day) and before_date is exclusive (< start of that day). Nothing is
     stored. The key is sent as a Bearer header and never printed.
     """
-    head("NEAR — buyback inflow: what NearBlocks' v1 account-txns call actually returns")
+    head("NEAR — buyback inflow: what NearBlocks' v3 account-txns call actually returns")
     try:
         from dotenv import load_dotenv                    # noqa: PLC0415
         load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
@@ -2438,17 +2438,20 @@ def near_buyback_inflow_probe():
     today = _pd.Timestamp.now("UTC").tz_localize(None).normalize()
     after = (today - _pd.Timedelta(days=35)).strftime("%Y-%m-%d")
     before = (today - _pd.Timedelta(days=1)).strftime("%Y-%m-%d")
-    url = flow["base_url"].rstrip("/") + f"/v1/account/{account}/txns"
+    # NearBlocks v3 since 2026-10-13 (v1 retires 2026-10-31): /v3/accounts/{a}/txns, `limit` + opaque `next` cursors
+    # (meta.next_page), rows under `data`, no server-side action or after-date filter — both applied here
+    from fetch import nearblocks as _nb                    # noqa: PLC0415
+    url = flow["base_url"].rstrip("/") + _nb.V3_ACCOUNT_TXNS.format(account=account)
     hdr = {"Authorization": f"Bearer {key}"}
+    after_ns = int(_pd.Timestamp(after).value)
+    before_ts = str(int(today.value))
     print(f"  GET {url}")
-    print(f"  the adapter's window: after_date={after} before_date={before} (both exclusive — "
-          f"effectively {(_pd.Timestamp(after) + _pd.Timedelta(days=1)).date()}.."
-          f"{(_pd.Timestamp(before) - _pd.Timedelta(days=1)).date()})")
+    print(f"  the adapter's window: {after}..{before} (rows before today's 00:00 UTC, before_ts={before_ts})")
 
     def fetch(params, pages):
         rows, cursor = [], None
         for i in range(pages):
-            p = dict(params, **({"cursor": cursor} if cursor else {}))
+            p = dict(params, **({"next": cursor} if cursor else {}))
             try:
                 r = requests.get(url, params=p, headers=hdr, timeout=TIMEOUT)
             except Exception as e:  # noqa: BLE001
@@ -2463,20 +2466,21 @@ def near_buyback_inflow_probe():
             except ValueError:
                 print(f" — NON-JSON: {r.text[:200]}")
                 return rows, "non-json"
-            if not isinstance(body, dict) or "txns" not in body:
-                print(f" — no `txns` key; top level {sorted(body) if isinstance(body, dict) else type(body).__name__}")
+            if not isinstance(body, dict) or not isinstance(body.get("data"), list):
+                print(f" — no `data` list; top level {sorted(body) if isinstance(body, dict) else type(body).__name__}")
                 return rows, "shape"
-            page = body.get("txns") or []
-            cursor = body.get("cursor")
-            print(f" — {len(page)} row(s), next cursor {cursor!r}")
-            rows += page
-            if not cursor or not page:
+            page = body.get("data") or []
+            cursor = (body.get("meta") or {}).get("next_page")
+            print(f" — {len(page)} row(s), next cursor {'set' if cursor else 'none'}")
+            inside = [r for r in page if isinstance(r, dict) and str(r.get("block_timestamp") or "").isdigit()
+                      and int(r["block_timestamp"]) >= after_ns]
+            rows += inside
+            if not cursor or not page or len(inside) < len(page):
                 return rows, "complete"
         return rows, f"stopped at {pages} pages with the cursor still set"
 
-    print(f"\n  A. THE ADAPTER'S CALL — action={action}, per_page=50, order=asc:")
-    rows, how = fetch({"action": action, "after_date": after, "before_date": before,
-                       "per_page": 50, "order": "asc"}, 20)
+    print(f"\n  A. THE ADAPTER'S CALL — receiver={account}, limit=100, newest first; {action}-only kept:")
+    rows, how = fetch({"receiver": account, "limit": 100, "before_ts": before_ts}, 20)
     print(f"    -> {len(rows)} row(s), {how}")
     if rows:
         print(f"    first row keys: {sorted(rows[0]) if isinstance(rows[0], dict) else type(rows[0]).__name__}")
@@ -2484,13 +2488,14 @@ def near_buyback_inflow_probe():
     for r in rows:
         if not isinstance(r, dict):
             continue
-        snd = str(r.get("predecessor_account_id") or "").lower()
+        snd = str(r.get("signer_account_id") or "").lower()
         rcv = str(r.get("receiver_account_id") or "").lower()
         direction = ("self" if snd == rcv == account else "IN" if rcv == account
                      else "OUT" if snd == account else "neither")
         who = "excluded wallet" if snd in exclude else "other sender"
-        dep = sum(float(a.get("deposit") or 0) for a in (r.get("actions") or [])
-                  if isinstance(a, dict) and a.get("action") == action) / scale
+        kinds_r = [a.get("action") for a in (r.get("actions") or []) if isinstance(a, dict)]
+        dep = (float((r.get("actions_agg") or {}).get("deposit") or 0) / scale
+               if kinds_r and all(k == action for k in kinds_r) else 0.0)
         k = (direction, who)
         n, s = buckets.get(k, (0, 0.0))
         buckets[k] = (n + 1, s + dep)
@@ -2502,9 +2507,8 @@ def near_buyback_inflow_probe():
     out_rows = sum(n for (d, _), (n, _s) in buckets.items() if d == "OUT")
     adapter_sum = sum(s for (_d, w), (_n, s) in buckets.items() if w == "other sender")
 
-    print(f"\n  B. SAME WINDOW, NO action FILTER — first page only, action kinds seen:")
-    raw, how_b = fetch({"after_date": after, "before_date": before, "per_page": 50,
-                        "order": "desc"}, 1)
+    print(f"\n  B. SAME WINDOW, NO receiver FILTER — first page only, action kinds seen:")
+    raw, how_b = fetch({"limit": 100, "before_ts": before_ts}, 1)
     kinds = {}
     for r in raw:
         for a in (r.get("actions") or []) if isinstance(r, dict) else []:
@@ -2528,11 +2532,192 @@ def near_buyback_inflow_probe():
         print(f"    {counted_in[0]} inbound TRANSFER(s) from outside the three wallets, "
               f"{counted_in[1]:,.4f} NEAR — the adapter SHOULD have stored rows.")
     if out_rows:
-        print(f"    ** {out_rows} OUTBOUND row(s) present. The adapter does not filter on "
-              f"receiver, so it would count them as inflow: its sum for this window would be "
-              f"{adapter_sum:,.4f} NEAR against {counted_in[1]:,.4f} truly inbound. NOT FIXED — "
-              f"held until this output is read.")
+        print(f"    ** {out_rows} OUTBOUND row(s) present despite receiver={account} — the adapter drops them "
+              f"client-side (receiver check, v3 since 2026-10-13): {adapter_sum:,.4f} NEAR before that check, "
+              f"{counted_in[1]:,.4f} truly inbound.")
     print("\n  PASTE BACK. Nothing in fetch/nearblocks.py changes until this has been read.")
+
+
+NEARBLOCKS_V1_PARITY_PATH = "/v1/stats"      # E2 parity only; allowed by tests/test_nearblocks_v3.py until 2026-10-31
+
+
+def nearblocks_v3_parity():
+    """NEARBLOCKS v1 -> v3 PARITY (Jake 2026-10-13, Part E2; v1 retires 2026-10-31). Nothing is stored; the key is sent
+    as a Bearer header and never printed. Paced by fetch/nearblocks.py's own credit pacer.
+
+    1. SUPPLY STATS (noncirculating_nearblocks_tokens): /v1/stats and /v3/stats read now, side by side, field by field
+       (NearBlocks' source says both read the same single row of its `stats` table), and against the series' last 30
+       stored days. v3 /stats is current-only, as v1 was, so history is not re-readable on either.
+    2. ACCOUNT INFLOWS (the retired near_account_flows reads — actual_buyback_tokens and the two other revenue wallets,
+       stored from v1 until 2026-10-07): each series' last 30 stored days re-read on v3 (/v3/accounts/{a}/txns,
+       receiver = the wallet, TRANSFER-only transactions, the other two wallets excluded as senders) and compared day
+       by day. A difference is named: a mixed-action transaction (v3 list rows carry one aggregated deposit, so v3 leaves
+       it out where v1 summed its TRANSFER action) or a transaction v1 counted whose receiver is not the wallet.
+    """
+    head("NEARBLOCKS v1 -> v3 PARITY — the last 30 stored days, re-read on v3")
+    try:
+        from dotenv import load_dotenv                    # noqa: PLC0415
+        load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
+    except ImportError:
+        pass
+    import pandas as _pd                                  # noqa: PLC0415
+    import config as _config                              # noqa: PLC0415
+    import store as store_mod                             # noqa: PLC0415
+    from fetch import nearblocks as _nb                   # noqa: PLC0415
+    key = os.environ.get("NEARBLOCKS_API_KEY", "").strip()
+    print(f"  NEARBLOCKS_API_KEY: {'set' if key else 'NOT SET — nothing read'}")
+    if not key:
+        return
+    nb = _nb.NearBlocks()
+    spec = _config.PROJECT_BY_NAME["Near"]["nearblocks"]
+    base = spec["base_url"].rstrip("/")
+    st = store_mod.Store(store_mod.DB_PATH)
+    try:
+        long = st.load_long()
+    finally:
+        st.close()
+    near = long[long["project"] == "Near"] if not long.empty else long
+
+    def get(path, params=None):
+        try:
+            return nb._get(base + path, params or {}, key), None
+        except Exception as e:  # noqa: BLE001
+            return None, str(e).replace(key, "***")[:200]
+
+    # ---- 1. supply stats ----
+    print("\n  1. SUPPLY STATS — /v1/stats vs /v3/stats, read now")
+    # THE ONE v1 CALL LEFT (E2 parity, read beside v3 until v1's sunset): direct, outside fetch/nearblocks.py's guard;
+    # tests/test_nearblocks_v3.py allows exactly this path in exactly this function, and only until 2026-10-31
+    try:
+        r1 = requests.get(base + NEARBLOCKS_V1_PARITY_PATH, headers={**_ua(), "Authorization": f"Bearer {key}"},
+                          timeout=TIMEOUT)
+        v1, e1 = (r1.json(), None) if r1.status_code == 200 else (None, f"HTTP {r1.status_code} — {r1.text[:160]}")
+    except Exception as e:  # noqa: BLE001
+        v1, e1 = None, str(e).replace(key, "***")[:200]
+    v3, e3 = get("/v3/stats")
+    row1 = ((v1 or {}).get("stats") or [{}])[0] if isinstance(v1, dict) else {}
+    row3 = (v3 or {}).get("data") if isinstance(v3, dict) else None
+    if e1:
+        print(f"    v1: {e1}")
+    if e3 or not isinstance(row3, dict):
+        print(f"    v3: {e3 or 'no `data` object'} — PARITY NOT PROVEN; the adapter stores nothing until v3 answers")
+    else:
+        scale = 10 ** 24
+        for f in ("total_supply", "circulating_supply"):
+            a, b = row1.get(f), row3.get(f)
+            same = a is not None and str(a) == str(b)
+            print(f"    {f:<20} v1 {int(str(a)) / scale if a else float('nan'):>20,.4f}  "
+                  f"v3 {int(str(b)) / scale if b else float('nan'):>20,.4f}  {'IDENTICAL' if same else 'DIFFERENT'}")
+        nc3 = (int(str(row3["total_supply"])) - int(str(row3["circulating_supply"]))) / scale
+        s = near[(near["metric"] == "noncirculating_nearblocks_tokens")].sort_values("date").tail(30)
+        print(f"    v3 non-circulating now {nc3:,.0f} NEAR; stored (source, last 30 days): "
+              f"{len(s)} row(s), latest {s['value'].iloc[-1]:,.0f} on {str(s['date'].iloc[-1])[:10]}" if len(s) else
+              f"    v3 non-circulating now {nc3:,.0f} NEAR; nothing stored yet")
+        if len(s):
+            print(f"    sources stored: {sorted(set(s['source'].astype(str)))} — v3 keeps 'nearblocks:stats' (same row, "
+                  f"same basis): no series break")
+
+    # ---- 2. account inflows ----
+    flows = _config.PROJECT_BY_NAME["Near"].get("near_account_flows_retired") or []
+    print("\n  2. ACCOUNT INFLOWS — each stored series' last 30 stored days, re-read on v3")
+    for fl in flows:
+        m, acct = fl["metric"], fl["account"]
+        s = near[(near["metric"] == m) & near["source"].astype(str).str.startswith("nearblocks")]
+        s = s.assign(d=_pd.to_datetime(s["date"]).dt.normalize()).sort_values("d").tail(30)
+        if s.empty:
+            print(f"    {m} ({acct}): nothing stored from NearBlocks — no parity to prove")
+            continue
+        lo, hi = s["d"].min(), s["d"].max()
+        exclude = {x.lower() for x in fl.get("exclude_senders") or []}
+        scale = 10 ** int(fl.get("yocto_exponent", 24))
+        by_day, mixed, foreign, cursor, pages = {}, {}, {}, None, 0
+        before_ts = str(int((hi + _pd.Timedelta(days=1)).value))
+        while pages < 200:
+            params = {"receiver": acct, "limit": 100, "before_ts": before_ts, **({"next": cursor} if cursor else {})}
+            body, err = get(_nb.V3_ACCOUNT_TXNS.format(account=acct), params)
+            pages += 1
+            if err or not isinstance(body, dict) or not isinstance(body.get("data"), list):
+                print(f"    {m}: v3 page {pages} failed — {err or 'no data list'}; PARITY NOT PROVEN")
+                break
+            rows = body["data"]
+            stop = False
+            for r in rows:
+                ts = int(r.get("block_timestamp") or 0)
+                d = _pd.Timestamp(ts, unit="ns").normalize()
+                if d < lo:
+                    stop = True
+                    break
+                if str(r.get("signer_account_id") or "").lower() in exclude:
+                    continue
+                if str(r.get("receiver_account_id") or "").lower() != acct.lower():
+                    foreign[d] = foreign.get(d, 0) + 1
+                    continue
+                kinds = [a.get("action") for a in r.get("actions") or [] if isinstance(a, dict)]
+                if kinds and all(k == fl.get("action", "TRANSFER") for k in kinds):
+                    by_day[d] = by_day.get(d, 0.0) + float((r.get("actions_agg") or {}).get("deposit") or 0) / scale
+                elif fl.get("action", "TRANSFER") in kinds:
+                    mixed[d] = mixed.get(d, 0) + 1
+            cursor = (body.get("meta") or {}).get("next_page")
+            if stop or not cursor or not rows:
+                break
+        diffs = []
+        for d, v in zip(s["d"], s["value"].astype(float)):
+            v3v = by_day.get(d, 0.0)
+            if abs(v3v - v) > 1e-6 * max(1.0, abs(v)):
+                why = ("; ".join(x for x in [f"{mixed[d]} mixed-action txn(s) v3 cannot split" if d in mixed else "",
+                                             f"{foreign[d]} row(s) not to the wallet" if d in foreign else ""] if x)
+                       or "no cause found in the v3 rows — read by hand")
+                diffs.append((d, v, v3v, why))
+        print(f"    {m} ({acct}): {len(s)} stored day(s) {lo.date()}..{hi.date()}, {pages} v3 page(s); "
+              f"{len(diffs)} day(s) differ")
+        for d, v, v3v, why in diffs:
+            print(f"      {d.date()}  v1 stored {v:>16,.4f}  v3 {v3v:>16,.4f}  — {why}")
+        if diffs:
+            print(f"      -> a DIFFERENT BASIS on {len(diffs)} day(s): the v3 rows carry source "
+                  f"'{_nb.FLOW_SOURCE_V3}', so a series mixing them with the stored v1 rows reads as a SERIES BREAK")
+    # ---- 3. E3: the issuer-side wallets on v3's daily balance history (candidate backfill of C6 / unlocks) ----
+    print("\n  3. E3 — lockup.near + contributors.near: v3 stats/balance (amount + amount_staked) vs the stored RPC read")
+    accts = ("lockup.near", "contributors.near")
+    per = {}
+    for a in accts:
+        body, err = get(f"/v3/accounts/{a}/stats/balance", {"limit": 60})
+        rows = (body or {}).get("data") if isinstance(body, dict) else None
+        if err or not isinstance(rows, list):
+            print(f"    {a}: {err or 'no data list'} — not compared")
+            per = {}
+            break
+        per[a] = {_pd.Timestamp(r["date"]): (int(str(r.get("amount") or 0)) + int(str(r.get("amount_staked") or 0)))
+                  / 10 ** 24 for r in rows if isinstance(r, dict) and r.get("date")}
+        print(f"    {a}: {len(rows)} daily row(s), {min(per[a]).date() if per[a] else '-'}..{max(per[a]).date() if per[a] else '-'}")
+    s3 = near[near["metric"] == "near_foundation_accounts_tokens"]
+    s3 = s3.assign(d=_pd.to_datetime(s3["date"]).dt.normalize()).sort_values("d").tail(30)
+    if per and not s3.empty:
+        worst = 0.0
+        for d, v in zip(s3["d"], s3["value"].astype(float)):
+            if all(d in per[a] for a in accts):
+                v3v = sum(per[a][d] for a in accts)
+                worst = max(worst, abs(v3v - v) / max(1.0, abs(v)))
+                if abs(v3v - v) > 1.0:
+                    print(f"      {d.date()}  stored (RPC) {v:>18,.2f}  v3 {v3v:>18,.2f}  diff {v3v - v:+,.2f}")
+        print(f"    largest relative difference over the overlap: {worst:.6%} — ADOPT the v3 history as the backfill only "
+              f"if this is ~0 (the RPC reads mid-day, v3 is the day's close: a small difference is timing, not basis)")
+    # ---- 4. E3: NEAR Intents volume on v3 vs the stored DefiLlama series (BUSINESS 1) ----
+    print("\n  4. E3 — NEAR Intents volume: v3 /intents/volume-stats vs the stored DefiLlama near_intents_volume_usd")
+    body, err = get("/v3/intents/volume-stats", {"limit": 60})
+    rows = (body or {}).get("data") if isinstance(body, dict) else None
+    if err or not isinstance(rows, list):
+        print(f"    {err or 'no data list'} — not compared")
+    else:
+        vv = {_pd.Timestamp(r["date"]): float(r.get("daily") or 0) for r in rows if isinstance(r, dict) and r.get("date")}
+        s4 = near[near["metric"] == "near_intents_volume_usd"]
+        s4 = s4.assign(d=_pd.to_datetime(s4["date"]).dt.normalize()).sort_values("d").tail(30)
+        both = [(d, float(v), vv[d]) for d, v in zip(s4["d"], s4["value"]) if d in vv]
+        print(f"    v3 {len(vv)} day(s); overlap with the stored series {len(both)} day(s)")
+        for d, a, b in both[-10:]:
+            print(f"      {d.date()}  DefiLlama {a:>16,.0f}  NearBlocks v3 {b:>16,.0f}  ratio {b / a if a else float('nan'):.3f}")
+        print("    NearBlocks indexes the intents.near events itself; DefiLlama passes NEAR's own Dune dataset through. "
+              "Neither carries FEES — C10's Intents revenue stays on DefiLlama near-intents.")
+    print("\n  PASTE BACK. No series switches source on this output alone.")
 
 
 def aerodrome_lock_inputs():
@@ -6546,15 +6731,16 @@ def settlement_rebuild_coverage():
     key = os.environ.get("NEARBLOCKS_API_KEY", "").strip()
     hdr = {**_ua(), **({"Authorization": f"Bearer {key}"} if key else {})}
     try:
-        j = requests.get("https://api.nearblocks.io/v1/fts/txns", params={"per_page": 25}, headers=hdr,
+        # v3 since 2026-10-13: /v3/fts/txns answers {"data": [...]}; the lifetime count (v1 /fts/txns/count) is
+        # internal-only on v3 and is no longer read
+        j = requests.get("https://api.nearblocks.io/v3/fts/txns", params={"limit": 25}, headers=hdr,
                          timeout=TIMEOUT).json()
-        txs = j.get("txns") or []
+        txs = j.get("data") or []
         ts = sorted(int(t.get("block_timestamp") or 0) / 1e9 for t in txs if t.get("block_timestamp"))
         span = ts[-1] - ts[0] if len(ts) > 1 else 0
         n_day = len(ts) / span * 86_400 if span else None
-        c = requests.get("https://api.nearblocks.io/v1/fts/txns/count", headers=hdr, timeout=TIMEOUT).json()
-        print(f"\n  NEAR: {len(ts)} newest FT transfers span {span / 60:.1f} min -> ~{n_day or 0:,.0f} a day; "
-              f"lifetime count {c}")
+        print(f"\n  NEAR: {len(ts)} newest FT transfers span {span / 60:.1f} min -> ~{n_day or 0:,.0f} a day "
+              f"(lifetime count: internal-only on NearBlocks v3)")
         if n_day:
             print(f"    a year on /v3/fts/txns (100 a page): ~{365 * n_day / 100:,.0f} calls, ~{365 * n_day / 25:,.0f} "
                   f"credits — the keyed default plan allows 3,666 calls a day / 110,000 a month "
@@ -11624,6 +11810,7 @@ CHECKS = (
     browser_captures,
     mev_relays,
     spot_checks,
+    nearblocks_v3_parity,
 )
 
 # The three that need a value off the command line. Kept beside the registry rather than folded

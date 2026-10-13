@@ -527,6 +527,58 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11bw. NearBlocks API v1 -> v3 (Part E, 2026-10-13; v1 retires 2026-10-31)
+
+**Run after pulling, BEFORE 2026-10-31 (PowerShell, repo root):**
+```
+git pull
+python check_offline_items.py nearblocks_v3_parity
+python token_metrics.py
+```
+- **`nearblocks_v3_parity`** (E2) — needs `NEARBLOCKS_API_KEY` (same key on v3), stores nothing, paced at the free
+  plan's 6 credits a minute. It prints: (1) `/v1/stats` and `/v3/stats` side by side, field by field, and the stored
+  `noncirculating_nearblocks_tokens`; (2) each stored NearBlocks inflow series' last 30 stored days re-read on v3, day
+  by day, with the cause of any difference; (3) lockup.near + contributors.near on v3's daily balance history against
+  the stored RPC read; (4) NEAR Intents volume on v3 against the stored DefiLlama series. Paste it back.
+
+**E1 — what moved.** Every NearBlocks call is a `/v3` path:
+- `noncirculating_nearblocks_tokens`: `/v1/stats` -> `/v3/stats`. Same basis — both read the one row of NearBlocks'
+  `stats` table (apps/api/src/services/stats.ts vs sql/queries/stats/stats.sql @08a8c850); only the envelope changes
+  (`{"stats": [{…}]}` -> `{"data": {…}}`). The source stays `nearblocks:stats`: no series break.
+- The account-inflow read (`near_account_flows`, retired for NEAR since 2026-10-07; the code still serves any project
+  declaring one): `/v1/account/{a}/txns` -> `/v3/accounts/{a}/txns` — `receiver` + `limit` (100, one credit) +
+  `before_ts` (ns) + opaque `next` cursors; rows under `data`; sender = `signer_account_id`. v3 has no server-side
+  action or after-date filter (both applied client-side) and its list rows carry ONE aggregated deposit, so a
+  transaction mixing a TRANSFER with other actions is left out where v1 summed its TRANSFER action. That is a basis
+  difference, so its rows carry a new source, `nearblocks:v3-account-txns`: a stored v1 series continued on v3 reads as
+  a change of measuring point (SERIES BREAK), never silently. A partial read saved under v1 is discarded, not resumed.
+- `check_offline_items.py`: the buyback-inflow probe and the NEAR FT-transfer probe are on v3 (`/v3/accounts/{a}/txns`,
+  `/v3/fts/txns`); v1's `/fts/txns/count` is internal-only on v3 and is no longer read.
+- Already on v3, unchanged: `/v3/txn-stats`, `/v3/address-stats`, `/v3/validators/info`, `/v3/accounts/{a}/stats/balance`
+  (the buyback wallets), `/v3/accounts/lockup.near/subaccounts` (the lockup list), `/v3/accounts/{a}/balance`.
+
+**E3 — what v3 can supply for NEAR.**
+- **Intents fees (C10):** NO. v3's intents endpoints (`/v3/intents/txns`, `/volume-stats`, `/swap-stats`,
+  `/account-stats`, `/token-stats`, `/blockchain-stats`, `/stats`) carry transfers, volume and counts — no fee or
+  revenue field. Intents revenue stays on DefiLlama near-intents (dailyRevenue / dailyFees). Intents VOLUME is on v3
+  (`/v3/intents/volume-stats`, daily from NearBlocks' own index of the intents.near events) — section 4 of the parity
+  probe compares it with the stored DefiLlama series (which passes NEAR's own Dune dataset through); not switched.
+- **Staking / validators (C8):** current only — `/v3/validators` and `/v3/validators/info` (today's total stake, already
+  the cross-check `locked_tokens_nearblocks`), `/v3/staking-txns` (events, paginated). No network stake history:
+  the fastnear archival read stays.
+- **Issuer-side wallet balances (C6, unlock releases):** `/v3/accounts/{a}/stats/balance` gives each account's daily
+  `amount` and `amount_staked` for up to 365 days — the same two quantities the RPC `view_account` read stores today
+  (amount + locked), but with history. A candidate backfill for `near_foundation_accounts_tokens` (discretionary
+  supply), ADOPTED ONLY if section 3 of the probe shows the two agree on the overlap. The lockup contracts' LOCKED
+  amounts (unlock releases) are contract state, not balances — v3 cannot supply them; the weekly lockup read stays.
+
+**E4 — the guard.** `fetch/nearblocks.py` refuses any `/v1/` or `/v2/` path before calling (RetiredPath), and
+tests/test_nearblocks_v3.py fails the build on a v1 / v2 NearBlocks URL anywhere in the code or config. The one
+exception is the parity probe's `/v1/stats` comparison call, allowed only until 2026-10-31. A NearBlocks answer with a
+`Deprecation` / `Sunset` header, HTTP 410 or a sunset message is logged as `ACTION NEEDED: NEARBLOCKS API SUNSET …`
+(the daily summary's section 3), written as a FAILED line on the Run Log, and named first on daily_run's console line.
+
+
 ## 11bv. Full alignment round — SPEC.md, fixes, Flows, Coverage (2026-10-13)
 
 **Run after pulling, in this order (PowerShell, repo root):**

@@ -14315,17 +14315,34 @@ def _nearblocks_run(monkeypatch, rows_by_path, key="nb-secret-123"):
     return out, http
 
 
+def _nb_v3(body):
+    """A v1-shaped fake page ({"cursor", "txns"} with per-action deposits) as NearBlocks v3 answers it ({"data", "meta":
+    {"next_page"}}, signer_account_id, actions [{action, method}] + actions_agg.deposit) — the fakes below were written
+    for v1; v3 is what fetch/nearblocks.py reads since 2026-10-13 (v1 retires 2026-10-31)."""
+    rows = []
+    for r in body.get("txns") or []:
+        r = dict(r)
+        if "predecessor_account_id" in r:
+            r.setdefault("signer_account_id", r.pop("predecessor_account_id"))
+        acts = r.get("actions")
+        if isinstance(acts, list) and "actions_agg" not in r:
+            r["actions_agg"] = {"deposit": str(sum(int(str(a.get("deposit") or 0)) for a in acts if isinstance(a, dict)))}
+            r["actions"] = [{"action": a.get("action"), "method": a.get("method")} for a in acts if isinstance(a, dict)]
+        rows.append(r)
+    return {"data": rows, "meta": {"next_page": body.get("cursor")}}
+
+
 class _NearFlowHttp:
-    """Answers GET /v1/account/{account}/txns with one page per call, keyed by the `cursor`
-    param (None for the first page) — pagination-aware, unlike _NearBlocksHttp's fixed body."""
+    """Answers GET /v3/accounts/{account}/txns with one page per call, keyed by the `next`
+    cursor (None for the first page) — pagination-aware, unlike _NearBlocksHttp's fixed body."""
 
     def __init__(self, pages, v3=None):
         self.pages, self.v3, self.calls = pages, v3 or {}, []
 
     def get(self, url, params=None, headers=None):
         self.calls.append((url, params, headers))
-        if "/v1/account/" in url:
-            return self.pages[params.get("cursor")]
+        if "/v3/accounts/" in url and url.endswith("/txns"):
+            return _nb_v3(self.pages[params.get("next")])
         path = url.split("api.nearblocks.io")[1]
         return self.v3[path]
 
@@ -14356,12 +14373,14 @@ def test_near_account_flow_sums_inflow_excluding_internal_hops(monkeypatch):
     out = FetchOutput()
     nearblocks.NearBlocks(http=http).run([_near_buyback_flow_only()], 35, out)
     df = out.frame()
-    flow = df[(df.metric == "actual_buyback_tokens") & (df.source == "nearblocks")]
+    flow = df[(df.metric == "actual_buyback_tokens") & (df.source == nearblocks.FLOW_SOURCE_V3)]
     assert abs(flow["value"].iloc[0] - 7.5) < 1e-9, \
         f"expected 5 + 2.5 = 7.5 NEAR, excluding the two hops: {flow}"
     assert flow["date"].iloc[0] == pd.Timestamp("2026-09-10")
-    url, params, headers = next(c for c in http.calls if "/v1/account/" in c[0])
-    assert params["action"] == "TRANSFER" and headers == {"Authorization": "Bearer nb-secret-123"}
+    url, params, headers = next(c for c in http.calls if "/v3/accounts/" in c[0])
+    # v3: no server-side action filter (TRANSFER is kept client-side); `receiver` replaces v1's `to`
+    assert params["receiver"] == "buybacks.multisignature.near" and "action" not in params \
+        and headers == {"Authorization": "Bearer nb-secret-123"}
     assert "nb-secret-123" not in " ".join(e.message for e in out.log)
     print("near account flow ok: 7.5 NEAR summed, two internal hops excluded")
 
@@ -14399,9 +14418,9 @@ def test_near_account_flow_paginates_via_cursor(monkeypatch):
     out = FetchOutput()
     nearblocks.NearBlocks(http=http).run([_near_buyback_flow_only()], 35, out)
     df = out.frame()
-    flow = df[(df.metric == "actual_buyback_tokens") & (df.source == "nearblocks")]
+    flow = df[(df.metric == "actual_buyback_tokens") & (df.source == nearblocks.FLOW_SOURCE_V3)]
     assert list(flow["value"]) == [4.0], f"expected 1 + 3 = 4 NEAR across two pages: {flow}"
-    flow_calls = [c for c in http.calls if "/v1/account/" in c[0]]
+    flow_calls = [c for c in http.calls if "/v3/accounts/" in c[0]]
     assert len(flow_calls) == 2, "must have followed the cursor to the second page"
     print("near account flow pagination ok: 4.0 NEAR across two pages")
 
@@ -14416,9 +14435,9 @@ def test_near_account_flow_stores_nothing_when_the_live_shape_differs(monkeypatc
     out = FetchOutput()
     nearblocks.NearBlocks(http=http).run([_near_buyback_flow_only()], 35, out)
     df = out.frame()
-    assert df[(df.metric == "actual_buyback_tokens") & (df.source == "nearblocks")].empty
+    assert df[(df.metric == "actual_buyback_tokens") & (df.source == nearblocks.FLOW_SOURCE_V3)].empty
     gaps = {g["metric"]: g["reason"] for g in out.gaps}
-    assert "actual_buyback_tokens" in gaps and "predecessor_account_id" in gaps["actual_buyback_tokens"]
+    assert "actual_buyback_tokens" in gaps and "signer_account_id" in gaps["actual_buyback_tokens"]
 
 
 def test_near_account_flow_ignores_non_transfer_actions(monkeypatch):
@@ -14435,7 +14454,7 @@ def test_near_account_flow_ignores_non_transfer_actions(monkeypatch):
     out = FetchOutput()
     nearblocks.NearBlocks(http=http).run([config.PROJECT_BY_NAME["Near"]], 35, out)
     df = out.frame()
-    assert df[(df.metric == "actual_buyback_tokens") & (df.source == "nearblocks")].empty, \
+    assert df[(df.metric == "actual_buyback_tokens") & (df.source == nearblocks.FLOW_SOURCE_V3)].empty, \
         "a FUNCTION_CALL deposit must not be counted as a native TRANSFER"
 
 
@@ -14449,8 +14468,10 @@ def test_near_buyback_probe_separates_direction_and_excluded_senders(monkeypatch
     acct = "buybacks.multisignature.near"
     one = str(10 ** 24)
 
+    recent = str(int((pd.Timestamp.now("UTC").tz_localize(None).normalize() - pd.Timedelta(days=2)).value))
+
     def row(snd, rcv, action="TRANSFER"):
-        return {"predecessor_account_id": snd, "receiver_account_id": rcv, "block_timestamp": "0",
+        return {"predecessor_account_id": snd, "receiver_account_id": rcv, "block_timestamp": recent,
                 "actions": [{"action": action, "method": None, "deposit": one}]}
 
     class _Resp:
@@ -14463,14 +14484,14 @@ def test_near_buyback_probe_separates_direction_and_excluded_senders(monkeypatch
             return self._b
 
     def fake_get(url, params=None, headers=None, timeout=None):
-        return _Resp({"cursor": None, "txns": [row("fefundsadmin.sputnik-dao.near", acct),
-                                               row(acct, "someone.near")]})
+        return _Resp(_nb_v3({"cursor": None, "txns": [row("fefundsadmin.sputnik-dao.near", acct),
+                                                      row(acct, "someone.near")]}))
 
     monkeypatch.setattr(coi.requests, "get", fake_get)
     coi.near_buyback_inflow_probe()
     out = capsys.readouterr().out
     assert "NONE IS AN INBOUND TRANSFER FROM OUTSIDE THE THREE WALLETS" in out, out
-    assert "1 OUTBOUND row(s) present" in out and "1.0000 NEAR against 0.0000" in out, out
+    assert "1 OUTBOUND row(s) present" in out and "drops them client-side" in out and "0.0000 truly inbound" in out, out
     assert "nb-secret-123" not in out
 
 
@@ -15620,20 +15641,19 @@ def test_nearblocks_stats_run_first_and_calls_are_paced_to_the_free_plan(monkeyp
     http = H({None: {"cursor": "p2", "txns": rows}, "p2": {"cursor": None, "txns": rows}},
              v3={"/v3/txn-stats": {"data": []}, "/v3/address-stats": {"data": []}})
     nearblocks.NearBlocks(http=http).run([_near_buyback_flow_only()], 35, FetchOutput())
-    kinds = ["flow" if "/v1/account/" in u else "v3" for _, u in stamps]
+    kinds = ["flow" if "/v3/accounts/" in u else "v3" for _, u in stamps]
     # ORDER REVERSED 2026-09-28: the once-a-day stats first (1 credit each), then the buyback
     # read, which resumes across runs — see NearBlocks.run. The third v3 call is /v3/validators/info's total_stake,
-    # once a day (Jake's run 2026-10-08 11:27); the fourth is /v1/stats, NEAR's non-circulating cross-check (Jake
+    # once a day (Jake's run 2026-10-08 11:27); the fourth is /v3/stats, NEAR's non-circulating cross-check (Jake
     # 2026-10-11, C), once a day too.
     assert kinds == ["v3", "v3", "v3", "v3", "flow", "flow"], kinds
-    # BILLED AS NEARBLOCKS BILLS: ceil(per_page/25), per_page defaulting to 25. The v3 calls send
-    # `limit`, so they cost 1 (they were charged 4 until 2026-09-28).
-    cost = {"flow": nearblocks.credits_for(nearblocks.FLOW_PER_PAGE), "v3": 1}
-    assert cost == {"flow": 2, "v3": 1}
+    # BILLED AS NEARBLOCKS BILLS: ceil(per_page/25), per_page defaulting to 25 (rateLimiter.ts L132). Every call is v3
+    # since 2026-10-13 and sends `limit`, never per_page — so each costs 1, the flow pages included.
+    cost = {"flow": 1, "v3": 1}
     for t0, _ in stamps:
         in_window = sum(cost[k] for (t, _), k in zip(stamps, kinds) if t0 <= t < t0 + 60)
         assert in_window <= nearblocks.CREDITS_PER_MINUTE, (t0, in_window, stamps)
-    # 1+1+1+2+2 = 7 credits against 6 a minute: the pacer waits once, before the last page
+    # 6 calls, 6 credits against 6 a minute: no wait
     assert len(_nearblocks_fake_clock) <= 1, _nearblocks_fake_clock
 
 
@@ -16110,7 +16130,7 @@ def test_nearblocks_three_two_credit_calls_do_not_wait_and_the_v3_stats_cost_one
 
     nb = nearblocks.NearBlocks(http=H())
     for _ in range(3):
-        nb._get("https://api.nearblocks.io/v1/account/x/txns", {"per_page": 50}, "k")
+        nb._get("https://api.nearblocks.io/v3/accounts/x/txns", {"per_page": 50}, "k")
     assert _nearblocks_fake_clock == [], f"three 2-credit calls must not wait: {_nearblocks_fake_clock}"
     nb2 = nearblocks.NearBlocks(http=H())
     for _ in range(6):
@@ -16146,19 +16166,19 @@ def test_nearblocks_buyback_is_incremental_newest_first_and_daily_stats_run_once
 
         def get(self, url, params=None, headers=None):
             self.calls.append(dict(params or {}))
-            if "/v1/account/" not in url:
+            if "/v3/accounts/" not in url:
                 return {"data": []}
-            assert params["order"] == "desc"
-            start = int(params.get("cursor") or 0)
+            assert "order" not in params and params["limit"] == nearblocks.FLOW_PER_PAGE   # v3: newest first by default
+            start = int(params.get("next") or 0)
             page = self.txns[start:start + 2]
             nxt = start + 2 if start + 2 < len(self.txns) else None
-            return {"cursor": nxt and str(nxt), "txns": page}
+            return _nb_v3({"cursor": nxt and str(nxt), "txns": page})
 
     near = _near_buyback_flow_only()
     h1 = H(history)
     out1 = FetchOutput()
     nearblocks.NearBlocks(http=h1).run([near], 35, out1)
-    flows1 = [c for c in h1.calls if "action" in c]
+    flows1 = [c for c in h1.calls if "receiver" in c]
     assert len(flows1) == 2, "first read: the whole window, newest first"
     got1 = out1.frame().query("metric == 'actual_buyback_tokens'")
     assert sorted(got1.value) == pytest.approx([1.0, 2.0, 3.0])
@@ -16544,14 +16564,14 @@ def test_nearblocks_first_read_resumes_across_runs_instead_of_restarting(monkeyp
             self.calls, self.die_after = [], die_after
 
         def get(self, url, params=None, headers=None):
-            if "/v1/account/" not in url:
+            if "/v3/accounts/" not in url:
                 return {"data": []}
             if self.die_after is not None and len(self.calls) >= self.die_after:
                 raise RuntimeError("tier budget ran out")          # the run is abandoned here
-            self.calls.append(params.get("cursor"))
-            start = int(params.get("cursor") or 0)
+            self.calls.append(params.get("next"))
+            start = int(params.get("next") or 0)
             nxt = start + 2 if start + 2 < len(history) else None
-            return {"cursor": nxt and str(nxt), "txns": history[start:start + 2]}
+            return _nb_v3({"cursor": nxt and str(nxt), "txns": history[start:start + 2]})
 
     near = _near_buyback_flow_only()
     h1 = H(die_after=2)
@@ -16686,12 +16706,12 @@ def test_seed_nearblocks_finishes_the_first_read_in_one_run_and_records_no_gaps(
             pass
 
         def get(self, url, params=None, headers=None):
-            if "/v1/account/" not in url:
+            if "/v3/accounts/" not in url:
                 return {"data": [{"date": str((today() - pd.Timedelta(days=1)).date()),
                                   "txns": 5, "active_accounts": 3}]}
-            start = int(params.get("cursor") or 0)
+            start = int(params.get("next") or 0)
             nxt = start + 2 if start + 2 < len(history) else None
-            return {"cursor": nxt and str(nxt), "txns": history[start:start + 2]}
+            return _nb_v3({"cursor": nxt and str(nxt), "txns": history[start:start + 2]})
 
     monkeypatch.setattr(nearblocks, "Http", FakeHttp)
     caplog.set_level(logging.INFO)
@@ -17251,7 +17271,7 @@ def test_a_nearblocks_read_that_asks_further_back_than_the_kept_history_re_reads
 
     class H:
         def get(self, url, params=None, headers=None):
-            raise Stop(params.get("after_date"))
+            raise Stop(params.get("before_ts"))
 
     from fetch import scrape
     monkeypatch.setenv("NEARBLOCKS_API_KEY", "nb-test")
@@ -19283,12 +19303,12 @@ def test_a_narrow_partial_nearblocks_read_never_caps_the_seeds_wider_window(monk
 
     class H:
         def get(self, url, params=None, headers=None):
-            asked.append((params.get("after_date"), params.get("cursor")))
+            asked.append(params.get("next"))
             old = today() - pd.Timedelta(days=200)
-            return {"cursor": None, "txns": [{
+            return _nb_v3({"cursor": None, "txns": [{
                 "predecessor_account_id": "some-user.near", "receiver_account_id": flow["account"],
                 "transaction_hash": "t1", "block_timestamp": str(int(old.value)),
-                "actions": [{"action": "TRANSFER", "deposit": str(3 * 10**24)}]}]}
+                "actions": [{"action": "TRANSFER", "deposit": str(3 * 10**24)}]}]})
 
     monkeypatch.setenv("NEARBLOCKS_API_KEY", "nb-test")
     monkeypatch.setattr(scrape, "robots_verdict", lambda url: (True, "test"))
@@ -19296,7 +19316,7 @@ def test_a_narrow_partial_nearblocks_read_never_caps_the_seeds_wider_window(monk
     with caplog.at_level(logging.INFO, logger="token_metrics.fetch.nearblocks"):
         nearblocks.NearBlocks(http=H(), page_cap=10_000)._account_flow("Near", flow, 365, out)
     assert "DISCARDING a partial read" in caplog.text
-    assert asked[0] == (str((today() - pd.Timedelta(days=365)).date()), None), "the whole year, from the newest"
+    assert asked[0] is None, "the whole year, from the newest (no saved cursor resumed)"
     got = out.frame()
     assert len(got) == 1 and got["date"].iloc[0] == (today() - pd.Timedelta(days=200)).normalize()
     assert json.loads(f.read_text())["after"] == str((today() - pd.Timedelta(days=365)).date())

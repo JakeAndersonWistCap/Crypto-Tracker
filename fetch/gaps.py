@@ -323,7 +323,7 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                 "is older than the week — it stores nothing when any lockup is unreadable",
                 "Run `python near_lockups_weekly.py --force` (windows/daily_run.ps1 runs it weekly).")
     if metric == "noncirculating_nearblocks_tokens":
-        return ("NearBlocks /v1/stats (fetch/nearblocks.py _supply_stats) stored nothing this run",
+        return ("NearBlocks /v3/stats (fetch/nearblocks.py _supply_stats) stored nothing this run",
                 "Check the Run Log for nearblocks; it needs NEARBLOCKS_API_KEY.")
 
     # ===== A DEDICATED ADAPTER DECLARED FOR THIS METRIC (second pass, 2026-09-30). =====

@@ -1171,7 +1171,7 @@ METRICS = {
     "circulating_supply_lockup_rule": {"label": "Circulating supply — NEAR total supply − lockups LOCKED (not yet transferable: unvested + lockup-locked; buggy lockups recomputed as NEAR's lakehouse does): Jake's rule, 2026-10-12",
                                        "kind": "stock", "unit": "tokens", "archetypes": [1, 3, 4], "tiers": [1],
                                        "sanity_min": 0, "sanity_max": 2e9, "view_only": True, "only_projects": ("Near",)},
-    "noncirculating_nearblocks_tokens": {"label": "NEAR not circulating per NearBlocks (total_supply − circulating_supply, api.nearblocks.io/v1/stats) — cross-check",
+    "noncirculating_nearblocks_tokens": {"label": "NEAR not circulating per NearBlocks (total_supply − circulating_supply, api.nearblocks.io/v3/stats) — cross-check",
                                          "kind": "stock", "unit": "tokens", "archetypes": [1, 3, 4], "tiers": [3],
                                          "sanity_min": 0, "sanity_max": 2e9, "only_projects": ("Near",)},
     "pool_release_tokens":        {"label": "Released from a pre-minted pool (supply already existed — NOT newly minted)",
@@ -3607,7 +3607,8 @@ PROJECTS = [
                                 "metric": "locked_tokens_nearblocks", "yocto_exponent": 24},
             # Jake 2026-10-11 (C): NearBlocks' total − circulating, the cross-check for the still-unvested lockup leg
             # (58.87M on 2026-10-11; NearBlocks subtracts all LOCKED, Jake's rule only the unvested — expect ours lower)
-            "supply_stats": {"path": "/v1/stats", "metric": "noncirculating_nearblocks_tokens", "yocto_exponent": 24},
+            # v3 since 2026-10-13 (NearBlocks retires v1 on 2026-10-31): the same `stats` row, a new envelope
+            "supply_stats": {"path": "/v3/stats", "metric": "noncirculating_nearblocks_tokens", "yocto_exponent": 24},
             "metrics": {
                 "tx_count": {"path": "/v3/txn-stats", "field": "txns"},
                 "active_addresses": {"path": "/v3/address-stats", "field": "active_accounts"},

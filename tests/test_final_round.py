@@ -457,8 +457,11 @@ def test_nearblocks_supply_stats_cross_check():
     from fetch.base import FetchOutput
     from fetch.nearblocks import NearBlocks
     nb = NearBlocks()
-    nb._get = lambda url, params, key: {"stats": [{"total_supply": "1308704598260070585499781848169781",
-                                                   "circulating_supply": "1249836992159308065117756741322730"}]}
+    # NearBlocks v3 (Part E, 2026-10-13): /v3/stats answers {"data": {...}} — the same row v1 wrapped as {"stats": [...]}
+    asked = []
+    nb._get = lambda url, params, key: asked.append(url) or {"data": {
+        "total_supply": "1308704598260070585499781848169781",
+        "circulating_supply": "1249836992159308065117756741322730"}}
     nb._key = lambda spec: "k"
     import fetch.scrape as sc
     sc_orig = sc.robots_verdict
@@ -470,6 +473,16 @@ def test_nearblocks_supply_stats_cross_check():
     finally:
         sc.robots_verdict = sc_orig
     assert out.frame()["value"].iloc[0] == pytest.approx(58_867_606.1, abs=1)
+    assert asked == ["https://api.nearblocks.io/v3/stats"]
+    # a v1-shaped answer stores nothing (the envelope is checked, never guessed)
+    nb._get = lambda url, params, key: {"stats": [{"total_supply": "1", "circulating_supply": "1"}]}
+    out2 = FetchOutput()
+    sc.robots_verdict = lambda url: (True, "ok")
+    try:
+        nb._supply_stats("Near", spec, spec["supply_stats"], out2)
+    finally:
+        sc.robots_verdict = sc_orig
+    assert out2.frame().empty and any("NOTHING STORED" in e.message for e in out2.log)
 
 
 # ----------------------------------------------------------------------------------------------- D outputs
