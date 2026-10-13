@@ -167,7 +167,8 @@ def test_divergence_headline_is_revenue_minus_price_with_capture_apart_on_the_re
     if isinstance(rev, float) and isinstance(px, float):
         assert gap == pytest.approx(rev - px)
     assert any(h.startswith("Capture: tokens retired") for h in row)
-    assert "GAS-ONLY" in config.TRAJECTORY["divergence"]["revenue_notes"]["Near"]
+    # alignment round C10: NEAR's revenue line is gas + Intents now, and the note says so
+    assert "TOTAL = gas revenue + NEAR Intents" in config.TRAJECTORY["divergence"]["revenue_notes"]["Near"]
 
 
 # ------------------------------------------------------------------------------------------- decisions 1-6

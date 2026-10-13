@@ -88,7 +88,8 @@ class CrossRefs:
                                       f"(HTTP 404 on {absent}; re-tried weekly)", TIER)
             return
         if not self.daily.due(key, day):
-            out.skipped(SOURCE, name, f"price_usd_coinbase: {product} read today already", TIER)
+            out.mark_current(SOURCE, name, "price_usd_coinbase", f"price_usd_coinbase: {product} read today already",
+                             TIER)
             return
         url = COINBASE.format(product=product)
         ok, why = self.robots(url)
@@ -179,7 +180,7 @@ class CrossRefs:
         key = "xref:llama_prices"
         if not self.daily.due(key, day):
             for p in projects:
-                out.skipped(SOURCE, p["name"], "price_usd_llama: read today already", TIER)
+                out.mark_current(SOURCE, p["name"], "price_usd_llama", "price_usd_llama: read today already", TIER)
             return
         ok, why = self.robots(LLAMA_CHART.format(keys="x"))
         if not ok:
@@ -224,7 +225,7 @@ class CrossRefs:
     def _lido(self, p: dict, day: str, out) -> None:
         name, key = p["name"], "xref:lido_apr"
         if not self.daily.due(key, day):
-            out.skipped(SOURCE, name, "staking_apr_lido: read today already", TIER)
+            out.mark_current(SOURCE, name, "staking_apr_lido", "staking_apr_lido: read today already", TIER)
             return
         ok, why = self.robots(LIDO_SMA)
         if not ok:

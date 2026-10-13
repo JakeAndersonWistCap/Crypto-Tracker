@@ -91,7 +91,10 @@ def test_net_holder_yield_names_the_starved_outflow_leg_on_the_real_maple_dump(t
     wb, _ = _built(tmp_path, monkeypatch, "Maple")
     o = _row(wb, xlcalc.Workbook(wb), "CP Comparability", "Maple")
     nhy = _get(o, "NET HOLDER YIELD")
-    assert nhy == "n/a — outflow (a) = emissions_tokens has no value in this window: no rows stored", nhy
+    # alignment round 2026-10-13 (B10): Maple's staker inflation ended (MIP-019; Drips to 2025-12-31) — outflow (a) now
+    # reads a DECLARED 0 over Q0, and the starved leg is the young unlock series (e), named with its coverage
+    assert nhy.startswith("BLOCKED — unequal coverage") and "outflow a covers 90 days" in nhy \
+        and "outflow e covers 1 days" in nhy, nhy
 
 
 def test_a_blocked_or_empty_outflow_leg_blocks_the_category_with_its_reason(monkeypatch):

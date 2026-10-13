@@ -193,7 +193,9 @@ def starved_headlines(wb, headline_cells: list, data_by_key: dict, asof, period_
         shown = v if isinstance(v, str) else xlcalc.display(v)
         # a bare n/a (the formula's own fallback) or an error — never a cell that states its reason ("n/a — …")
         txt = str(shown).strip().lower()
-        if _num(v) is None and (txt == "n/a" or txt.startswith(("#", "unevaluable"))):
+        # a pull of a missing Data value carries the Data row's own reason ("n/a — data: …", alignment round) — still a
+        # starved headline when the input is stored
+        if _num(v) is None and (txt == "n/a" or txt.startswith(("#", "unevaluable", "n/a — data:"))):
             out.append((hc["project"], "headline_starved",
                         f"{hc['sheet'][:2]} {hc['header'][:60]} reads {str(shown)[:20]} while {m} is stored "
                         f"{str(first)[:10]}..{str(last)[:10]} (Data status '{row.get('status')}': "

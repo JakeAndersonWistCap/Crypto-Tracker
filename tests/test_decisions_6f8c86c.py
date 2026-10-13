@@ -184,8 +184,13 @@ def test_total_yield_is_validator_yield_less_net_inflation_on_the_real_dump(tmp_
     ni = _cell(wb, value, "Master", "Ethereum", "Net supply change, annualised % of circulating")
     st = _cell(wb, value, "A1", "Ethereum", "TOTAL YIELD — stakers")
     nh = _cell(wb, value, "A1", "Ethereum", "Total yield — non-stakers")
-    assert isinstance(vy, float) and isinstance(ni, float)
-    assert st == pytest.approx(vy - ni) and nh == pytest.approx(-ni)
+    assert isinstance(vy, float)
+    if isinstance(ni, float):
+        assert st == pytest.approx(vy - ni) and nh == pytest.approx(-ni)
+    else:
+        # alignment round B5: on the 2026-10-09 dump the issuance leg covers 10 of 90 days, so the net is BLOCKED —
+        # and Total Yield carries the same BLOCKED text, never a figure on half a window
+        assert str(ni).startswith("BLOCKED") and str(st).startswith("BLOCKED") and str(nh).startswith("BLOCKED")
     b = next(b for b in config.TRAJECTORY["benchmarks"] if b["id"] == "yield_vs_tbill")
     assert b["on"] == ("a1_total_yield_stakers",)
 

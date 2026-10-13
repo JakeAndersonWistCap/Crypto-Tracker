@@ -27,7 +27,7 @@ import config
 LABELS = ("Q0", "Q-1", "Q-2", "Q-3", "Q-4")
 SHEET = "Trajectory"
 HEAD = ["Project", "Key (tab|project|headline id)", "Tab", "Headline id", "Headline", "Direction (+1 higher is better)",
-        "Group",
+        "Group", "Axis (SPEC.md)",
         "Q0", "Q-1", "Q-2", "Q-3", "Q-4", "T12M", "T12M basis", "T12M a quarter earlier (Q-1..Q-4)", "QoQ",
         "4Q growth (annual, log-linear)", "Growth label (NEW / STEP CHANGE)", "Quarters in the growth",
         "Quarters improved (direction-aware)",
@@ -58,17 +58,27 @@ def master_id(header: str) -> str:
     return "master_" + slug(header)
 
 
-def direction(hid: str) -> int | None:
-    """The row's declared direction (config.TRAJECTORY["rows"]) — None when not declared: nothing defaults to +1
-    (Jake's Phase 1 review 2026-10-12, item 5)."""
+def direction(hid: str, tab: str = "", header: str = "") -> int | None:
+    """The row's declared direction (config.TRAJECTORY["rows"]); else the direction of the SPEC.md concept the column
+    shows (spec.concept_for — Jake's alignment round C14: no row reads "direction not declared"). None only when the
+    column maps to no concept, which tests/test_alignment.py fails."""
     row = config.TRAJECTORY["rows"].get(hid)
-    return int(row[1]) if row else None
+    if row:
+        return int(row[1])
+    import spec                                            # noqa: PLC0415
+    return spec.direction_of(spec.concept_for(tab, header)) if header else None
 
 
 def group(hid: str) -> str:
     """Fundamentals / Supply / Valuation / Market (item 6); '' when not declared."""
     row = config.TRAJECTORY["rows"].get(hid)
     return row[0] if row else ""
+
+
+def axis(tab: str, header: str) -> str:
+    """BUSINESS / CAPTURE / ALIGNMENT / CONTEXT — the SPEC.md axis of the concept the column shows (alignment round C13)."""
+    import spec                                            # noqa: PLC0415
+    return spec.axis_of(spec.concept_for(tab, header))
 
 
 def key(tab: str, project: str, hid: str) -> str:
@@ -176,10 +186,23 @@ def growth_rule(values: list, step_at: int | None = None,
         older = q[oldest + 1:4]
         if oldest < 3 and older and all(v is not None and v <= 0 for v in older):
             return None, len(alive), f"NEW since {LABELS[oldest]}", "the mechanism starts inside the window (0 before)"
-        first_big = max(i for i in alive if q[i] >= rule["new_share"] * q[0])
-        if q[oldest] < rule["new_share"] * q[0]:
-            return (None, len(alive), f"NEW since {LABELS[first_big]}",
-                    f"{LABELS[oldest]} is below {rule['new_share']:.0%} of Q0 — a new regime, not a growth rate")
+        # ONE REGIME, BOTH WAYS (alignment round 2026-10-13, B13: Chainlink CCIP read −84%/yr where the legacy
+        # product was being replaced — a fall of more than 10x is a regime change as much as a rise is): walking back
+        # from Q0, the regime ends at the first quarter outside [new_share x Q0, Q0 ÷ new_share]
+        lo, hi = rule["new_share"] * q[0], q[0] / rule["new_share"]
+        k = 0
+        for i in sorted(alive):
+            if i == 0:
+                continue
+            if not lo <= q[i] <= hi:
+                break
+            k = i
+        if k < oldest:
+            out = next(i for i in sorted(alive) if i > k)
+            side = "below" if q[out] < lo else "above"
+            bound = f"{rule['new_share']:.0%} of Q0" if side == "below" else f"{1 / rule['new_share']:.0f}x Q0"
+            return (None, len(alive), f"NEW since {LABELS[k]}",
+                    f"{LABELS[out]} is {side} {bound} — a new regime, not a growth rate")
     pts = [v for v in q if v is not None]
     if len(pts) < rule["min_quarters"]:
         return None, len(pts), "", f"{len(pts)} quarter(s) with a value — growth needs {rule['min_quarters']}"
@@ -371,6 +394,11 @@ def _own_breaks(project: str, metric: str, groups: dict, since) -> list[tuple]:
             if not (benign and prev in pts and b in pts):
                 out.append((d, metric, prev, b))
         prev = b
+    # a PROVIDER's reclassification steps the series with no change of source (config.SOURCE_RECLASSIFICATIONS)
+    for day, why in config.SOURCE_RECLASSIFICATIONS.get((project, metric), ()):
+        d = pd.Timestamp(day)
+        if d >= since and g["date"].min() < d <= g["date"].max():
+            out.append((d, metric, f"before the {day} reclassification", why))
     return out
 
 

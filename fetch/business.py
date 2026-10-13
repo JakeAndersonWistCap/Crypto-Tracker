@@ -184,7 +184,7 @@ class Business:
                 for spec in specs:
                     key = f"business:{name}:{spec['metric']}"
                     if not self.daily.due(key, day):
-                        out.skipped(SOURCE, name, f"{spec['metric']}: read today already", TIER)
+                        out.mark_current(SOURCE, name, spec["metric"], f"{spec['metric']}: read today already", TIER)
                         continue
                     try:
                         rows, src, detail = self._series(name, spec, key)
@@ -283,7 +283,8 @@ class Business:
                denominator: str = "market_share_category_usd") -> None:
         key = f"business:{name}:{metric.replace('_pct', '')}"
         if not self.daily.due(key, day):
-            out.skipped(SOURCE, name, f"{metric}: read today already", TIER)
+            out.mark_current(SOURCE, name, metric, f"{metric}: read today already", TIER)
+            out.mark_current(SOURCE, name, denominator, f"{denominator}: read today already", TIER)
             return
         try:
             own, total, n_peers = self._share_parts(spec)

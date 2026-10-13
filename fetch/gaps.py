@@ -772,7 +772,14 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                 ".cache/logscan/chainlink-fees.json if interrupted). After it, routine runs read a day or two of "
                 "logs; the Run Log's chainlink_fees lines name any chain or line still open.")
     comp = (project.get("customer_revenue_components") or {})
-    if metric == comp.get("metric") or metric in [c.get("metric") for c in project.get("defillama_component_slugs") or ()]:
+    # A LINE OF ITS OWN FROM ONE DEFILLAMA SLUG (alignment round 2026-10-13: NEAR Intents revenue / fees, Pendle Boros
+    # fees) — not a leg of a customer-revenue sum
+    own = next((c for c in project.get("defillama_component_slugs") or () if c.get("metric") == metric), None)
+    if own and not comp:
+        return (f"DefiLlama summary/fees/{own['slug']} ({own.get('data_type', 'dailyFees')}) stored nothing for it "
+                f"this run",
+                f"Read the Run Log's DefiLlama line for '{metric}'; the endpoint is free and needs no key.")
+    if metric == comp.get("metric") or own:
         return ("customer revenue is summed only on days the aggregator core and every line that bypasses it hold "
                 "a row; at least one leg has none stored yet",
                 "See the legs' own Gap Report rows (fees_usd, customer_revenue_requests_usd and the fee-line scan).")

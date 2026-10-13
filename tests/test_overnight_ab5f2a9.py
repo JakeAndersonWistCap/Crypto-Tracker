@@ -141,6 +141,10 @@ class _Out:
     def skipped(self, source, project, msg, tier=None):
         self.notes.append(msg)
 
+    def mark_current(self, source, project, metric, msg, tier=None):
+        self.notes.append(msg)
+        self.current = getattr(self, "current", set()) | {(project, metric)}
+
 
 class _Daily:
     def __init__(self):
@@ -229,8 +233,9 @@ def test_no_tbill_stored_reads_na_never_zero(tmp_path, monkeypatch):
     wb, _ = _built(tmp_path, monkeypatch, "Chainlink")
     X = xlcalc.Workbook(wb)
     a1 = _row(wb, X, "A1 Infrastructure", "Chainlink")
-    assert _get(a1, "3-MONTH T-BILL") == "n/a"
-    assert _get(a1, "Spread over the 3-month T-bill: Total yield — stakers") == "n/a"
+    # never a zero, and never a bare n/a (alignment round, SPEC rule 2): the reason names the missing series
+    assert str(_get(a1, "3-MONTH T-BILL")).startswith("n/a — Data: no rows stored")
+    assert _get(a1, "Spread over the 3-month T-bill: Total yield — stakers") == "n/a — tbill_3m_yield (now): no rows stored"
 
 
 # ------------------------------------------------------------------------------------------- Phase 3: the SSR

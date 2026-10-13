@@ -183,8 +183,8 @@ def flow_statements() -> list[str]:
          "Per project: every flow INTO circulating (the five outflow categories, config OUTFLOW_CATEGORIES) and OUT of "
          "it (retirement, burn), then the value chain from customers to holders (fees -> the project's revenue basis -> "
          "holder value, funding-aware, config HOLDER_VALUE). A flow with no series is flagged **NO SERIES**. Attributes "
-         "(destination, certainty, capture status) are on the CP tab, from phase2_attributes.json. GEODNET is held "
-         "(Jake: wait for the CL output).", ""]
+         "(destination, certainty, capture status) are on the CP tab, from phase2_attributes.json. The quarterly "
+         "statements with their residuals are on the Flows tab.", ""]
     for p in config.PROJECTS:
         n = p["name"]
         oc = config.OUTFLOW_CATEGORIES.get(n)

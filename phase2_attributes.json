@@ -1107,5 +1107,118 @@
    "Who can change the 80% share (docs do not say)",
    "Boros fees excluded from base per docs wording"
   ]
+ },
+ "GEODNET": {
+  "yields": [
+   {
+    "name": "SuperHex Phase II staking (GEOD staked into a Foundation-proposed SuperHex)",
+    "lock_length": "fixed: until the SuperHex's 1-year producing period ends (stake window 30d per Stake page / 90d per FAQ; station must appear within 180d, else refunded without bonus); no early withdrawal stated",
+    "unstake_days": "n/a: principal withdrawn manually on Console after the 1-year producing period, or returned on failure (not fully staked in time; no station in 180d)",
+    "liquid_wrapper": "n",
+    "payout_currency": "native: GEOD, one-off 20% of stake after the 1-year producing period, auto-distributed (Phase I paid 10%); funding wallet not stated",
+    "source": "https://docs.geodnet.com/geod-console-advanced/superhex.md ; https://docs.geodnet.com/geod-console-advanced/stake-geods.md ; https://docs.geodnet.com/geod-console-advanced/staking-faqs.md ; https://polygonscan.com/address/0x682BA846eed9934CC89ed89a350EA98781256B6F (staking proxy; GEOD.balanceOf = 2,908,000 on 2026-10-13)",
+    "read_on": "2026-10-13"
+   }
+  ],
+  "destination": {
+   "value": "burn",
+   "detail": "GEODNET: '80% of data revenue is used to repurchase $GEOD from the open market and burn it' (X, 2025-01-01 and 2025-02-01; restated 2026-07-02: '80% of GEODNET data revenue going toward buying and burning GEOD'); website: 'Revenue buys back and burns $GEOD' (no share given). Burn sinks: Polygon 0x...dEaD held 39,286,932.38 GEOD on 2026-10-13 (GEOD totalSupply still exactly 1,000,000,000, so a transfer-burn, not a supply burn; +700,000 since 2026-09-28); Solana token account 5SBfxBdq...GnED (owner 1nc1nerator1111..., mint 7JA5eZ...mKHu, no close authority) held 30,222,004 GEOD on 2026-10-13 (+815,000 since 2026-09-28, ~54K/day). Observed on Solana 2026-10-13: wallet SNgwGDo6...gZr buys GEOD with USDC on Jupiter in 150-USDC lots every ~16 min, delivering to Dp3vwCtB...iXehG, which sends 50,000-GEOD lots to the incinerator account (latest 2026-10-12 16:15 UTC). Neither wallet is named by GEODNET. Issuer's own Blockworks filing (2025-08-19) words the base differently: '50% of the subscription revenue is shared with the GEODNET Foundation. 80% of this revenue is used for buy-back and burning'.",
+   "source": "https://x.com/GEODNET_/status/1874304545121243618 ; https://x.com/GEODNET/status/1885596447284093052 ; https://x.com/GEODNET/status/2072713418818068898 ; https://geodnet.com/geod ; https://polygonscan.com/token/0xac0f66379a6d7801d7726d5a943356a172549adb?a=0x000000000000000000000000000000000000dEaD ; https://solscan.io/account/5SBfxBdqsCM1SJZGQkf9Y74EFmUfzs8LGDjBZUjZGnED ; https://blockworks.com/token-transparency/filing/geodnet (Q2, issuer-filed)"
+  },
+  "certainty": {
+   "value": "discretionary",
+   "source": "https://x.com/GEODNET/status/2072713418818068898 (stated policy only) ; https://github.com/geodnet/GIP/blob/a353cf84 (GIP-1..GIP-13: none sets or mentions the burn or the revenue share) ; https://1198063627-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F17b3S6vQzTmJA9I9ddAG%2Fuploads%2FlNtK1yPFYnAHgiQil3gk%2FGEOD_MiCAR_Whitepaper.pdf?alt=media&token=b92eb663-d3ed-44c9-8369-c1f32a6c8c62 (GEOD MiCAR white paper, published 2025-10-17: G.14 'Token Value Protection Schemes: false', no buyback/burn described) ; https://docs.geodnet.com/geod-token/tokenomics.md (silent on burn) ; https://solscan.io/account/5SBfxBdqsCM1SJZGQkf9Y74EFmUfzs8LGDjBZUjZGnED (buys/burns signed by unnamed wallets, not a contract)"
+  },
+  "mechanism_log": [
+   {
+    "date": "2024-08-20",
+    "event": "GIP-3 passed: GEOD bridged to Solana via Wormhole NTT (later the main burn chain); repo commit date, vote dates not read",
+    "source": "https://github.com/geodnet/GIP/blob/a353cf84/GIP885291719988428966.md ; https://docs.geodnet.com/geod-token/geod-token-introduction.md"
+   },
+   {
+    "date": "2025-01-01",
+    "event": "Earliest first-party statement found of the rule: 80% of data revenue buys GEOD on the open market and burns it; accumulated burn 9,760,432 GEOD",
+    "source": "https://x.com/GEODNET_/status/1874304545121243618"
+   },
+   {
+    "date": "2025-08-19",
+    "event": "Issuer-filed Blockworks transparency filing: '50% of the subscription revenue is shared with the GEODNET Foundation. 80% of this revenue is used for buy-back and burning'",
+    "source": "https://blockworks.com/token-transparency/filing/geodnet"
+   },
+   {
+    "date": "2025-08-30",
+    "event": "GIP-7 passed (repo commit date): Solana to be primary chain, up to 4M GEOD migration incentive, Polygon support to end March 2027",
+    "source": "https://github.com/geodnet/GIP/blob/a353cf84/GIP137951754696113256.md"
+   },
+   {
+    "date": "2025-10-17",
+    "event": "GEOD MiCAR white paper published: no buyback/burn disclosed; Token Value Protection Schemes 'false'",
+    "source": "https://1198063627-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F17b3S6vQzTmJA9I9ddAG%2Fuploads%2FlNtK1yPFYnAHgiQil3gk%2FGEOD_MiCAR_Whitepaper.pdf?alt=media&token=b92eb663-d3ed-44c9-8369-c1f32a6c8c62"
+   },
+   {
+    "date": "2026-07-02",
+    "event": "80% buy-and-burn restated; 58,383,936 GEOD burned to date (June 2026 stats)",
+    "source": "https://x.com/GEODNET/status/2072713418818068898"
+   },
+   {
+    "date": "2026-10-13 (observed)",
+    "event": "Burn running on both chains: Solana incinerator account 30,222,004 GEOD (50,000-GEOD lots, USDC->GEOD Jupiter buys); Polygon 0xdEaD 39,286,932.38 GEOD",
+    "source": "https://solscan.io/account/5SBfxBdqsCM1SJZGQkf9Y74EFmUfzs8LGDjBZUjZGnED ; https://polygonscan.com/token/0xac0f66379a6d7801d7726d5a943356a172549adb?a=0x000000000000000000000000000000000000dEaD"
+   }
+  ],
+  "holding_demand": [
+   {
+    "component": "SuperHex Phase II staking (Polygon staking proxy 0x682BA846...)",
+    "cap": "20,000 GEOD per SuperHex, up to 500 SuperHexes (10M GEOD max implied); min 1,000 in 1,000 steps; 2,908,000 GEOD staked on 2026-10-13",
+    "source": "https://docs.geodnet.com/geod-console-advanced/superhex.md ; https://docs.geodnet.com/geod-console-advanced/staking-faqs.md ; https://polygonscan.com/address/0x682BA846eed9934CC89ed89a350EA98781256B6F"
+   },
+   {
+    "component": "Governance voting power (veNFT) from staked GEOD",
+    "cap": "no separate lock: staked GEOD is one of three veNFT sources (one third of total votes); 'locked GEOD' votes are team/investor only",
+    "source": "https://docs.geodnet.com/geod-governance/introduction.md ; https://docs.geodnet.com/geod-governance/about-venft.md"
+   },
+   {
+    "component": "Miner (node-operator) stake",
+    "cap": "none live: no GEOD stake required to mine; MiCAR white paper lists node-operator staking with slashing as a 'Future Phase'",
+    "source": "https://docs.geodnet.com/geod-mining/the-geod-mining-basics.md ; https://1198063627-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F17b3S6vQzTmJA9I9ddAG%2Fuploads%2FlNtK1yPFYnAHgiQil3gk%2FGEOD_MiCAR_Whitepaper.pdf?alt=media&token=b92eb663-d3ed-44c9-8369-c1f32a6c8c62 (D.8)"
+   },
+   {
+    "component": "Paying for RTK data in GEOD",
+    "cap": "not established: docs call GEOD a utility token 'to pay for GEODNET RTK data service', but GEODNET's own posts describe revenue as data revenue converted by open-market purchase",
+    "source": "https://docs.geodnet.com/geod-token/geod-token-introduction.md ; https://x.com/GEODNET/status/1885596447284093052"
+   }
+  ],
+  "capture_status": {
+   "value": "Live",
+   "switch_power": "GEODNET Foundation (MiCAR issuer 'GEODAO Foundation LTE PTD', Singapore): off-chain policy; buys and burns signed by unnamed single wallets, no on-chain switch. The GEOD token has no owner ('All control in the token smart contract is renounced'). The staking contract is an upgradeable proxy whose admin (0x3fba4917...) and owner (0x4353328f...) are both EOAs (no code), not multisigs",
+   "source": "https://1198063627-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F17b3S6vQzTmJA9I9ddAG%2Fuploads%2FlNtK1yPFYnAHgiQil3gk%2FGEOD_MiCAR_Whitepaper.pdf?alt=media&token=b92eb663-d3ed-44c9-8369-c1f32a6c8c62 (A.1) ; https://blockworks.com/token-transparency/filing/geodnet (Q12) ; https://solscan.io/account/5SBfxBdqsCM1SJZGQkf9Y74EFmUfzs8LGDjBZUjZGnED ; https://polygonscan.com/address/0x682BA846eed9934CC89ed89a350EA98781256B6F (EIP-1967 admin slot = 0x3fba4917d969cefd3b621c1e914de6db5578bac8, owner() = 0x4353328f79058124f1a244a22a41193ff998f717, both eth_getCode empty, read 2026-10-13)"
+  },
+  "switch_signals": [
+   {
+    "date": "2025-08-30",
+    "signal": "GIP-7 passed: Polygon support to end March 2027; the Polygon 0xdEaD leg should become legacy and the burn Solana-only",
+    "source": "https://github.com/geodnet/GIP/blob/a353cf84/GIP137951754696113256.md"
+   },
+   {
+    "date": "2025-10-17",
+    "signal": "MiCAR white paper: node-operator staking with slashing planned ('Future Phase'), no date given",
+    "source": "https://1198063627-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F17b3S6vQzTmJA9I9ddAG%2Fuploads%2FlNtK1yPFYnAHgiQil3gk%2FGEOD_MiCAR_Whitepaper.pdf?alt=media&token=b92eb663-d3ed-44c9-8369-c1f32a6c8c62"
+   },
+   {
+    "date": "2026-04-15",
+    "signal": "GIP-13 StableHex passed: Foundation-designated coverage bonuses (6x/4x/2x) with no community stake; it may replace SuperHex staking, the only GEOD yield (staked GEOD 2,908,000 on 2026-10-13)",
+    "source": "https://github.com/geodnet/GIP/blob/a353cf84/GIP159291773166301139.md ; https://docs.geodnet.com/geod-console-advanced/stablehex.md ; https://polygonscan.com/address/0x682BA846eed9934CC89ed89a350EA98781256B6F"
+   }
+  ],
+  "unverified": [
+   "Start date of the burn program: the earliest first-party statement found is 2025-01-01 (X). A secondary source (Coindar) has 6,400,377 accumulated by 2024-07-23. The tracker's Dune series implies earlier burns. None of these read from GEODNET",
+   "Base of the 80%: X posts say '80% of data revenue', but the issuer's Blockworks filing says 50% of subscription revenue goes to the Foundation and '80% of this revenue' is burned. If 'this' means the Foundation's half, the burn is 40% of gross subscription revenue. This bears on burn/0.8 revenue and the open 0.8706 reconciliation",
+   "Use of the remaining 20%: 'to the Foundation treasury' is not in any first-party source read (the posts state only the 80%)",
+   "Who controls Solana buyer SNgwGDo6E84QsPWaRpV8dLw3t1hmgq5XYT5MKAQ9gZr and burner Dp3vwCtBzEXM3HkwNSEiEoHrEjbcohX2Nur5qqyiXehG, and the Polygon 0xdEaD senders (Polygon logs need an archive token; polygonscan and blockscout blocked)",
+   "Staking implementation 0xd12b8ee71c4b8d05c45d0122b2f2651caa83bd4b has no verified source (Sourcify no match; polygonscan 403), so whether the owner or admin can move staked GEOD is unknown. The wallet that funds the 20% bonus is not stated",
+   "Stake window conflict: 30 days (Stake GEODs page) vs 90 days (FAQ and SuperHex page)",
+   "Whether SuperHex Phase II still accepts new stakes after GIP-13",
+   "GIP-7 and GIP-3 vote dates: only GIP repo commit dates were read (vote.geodnet.com not read)"
+  ]
  }
 }

@@ -207,11 +207,20 @@ ENTRIES = {
                  (J, "2026-10-12", "liquid bribes credited (Aerodrome), one-off treasury burns never (Uniswap)")]),
     "NET HOLDER YIELD": dict(
         what="Holder value yield less dilution: what holders gain net of new tokens entering circulation.",
-        formula="holder value yield − (outflow_a/b/c/e_usd, each annualised over its covered days) ÷ market cap; "
+        formula="holder value yield − (outflow_a/b/c/d/e_usd, each annualised over its covered days) ÷ market cap; "
                 "BLOCKED where any leg covers under a week", window="Q0 → year", unit="%",
-        inputs=["holder_value_revenue_usd", "outflow_a_usd", "outflow_b_usd", "outflow_c_usd", "outflow_e_usd",
-                "market_cap_usd"],
+        inputs=["holder_value_revenue_usd", "outflow_a_usd", "outflow_b_usd", "outflow_c_usd", "outflow_d_usd",
+                "outflow_e_usd", "market_cap_usd"],
         decided=[(J, "2026-10-12", "Phase 2 item 3 (the sell-rate-weighted version follows Phase 5)")]),
+    "Issuer releases Q0 (tokens)": dict(
+        what="Pre-minted supply released into circulation by the issuer in Q0 — a RELEASE, not issuance (nothing is "
+             "minted on a pre-minted token).",
+        formula="Σ pool_release_tokens over Q0 (−d(the named non-circulating wallets) per consecutive day on the same "
+                "wallet set, or the project's first-party release); a day the wallets RECEIVED reads 0, never negative",
+        window="Q0", unit="tokens", counts="Chainlink, GEODNET, Aethir, Maple, Hyperliquid (config.issuance_basis)",
+        excludes="minted issuance (net issuance on a pre-minted token is mint − burn = −burn)",
+        inputs=["pool_release_tokens"],
+        decided=[(J, "2026-10-13", "accuracy pass on 1e702bb, item 9; alignment round B8")]),
     "SUBSIDY COVER": dict(
         what="How many dollars of revenue each dollar of supply-side incentives buys.",
         formula="revenue (customer_revenue_usd where the project has it, else fees_usd) per covered day ÷ "

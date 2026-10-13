@@ -57,8 +57,10 @@ def test_cp_on_the_real_aerodrome_dump(tmp_path, monkeypatch):
     assert flt == pytest.approx(circ - lock) and 0 < flt < circ
     assert _get(o, "Tradeable float ÷ circulating") == pytest.approx(flt / circ)
     # every retirement and dilution rate on both bases: same numerator, two denominators
-    a_c, a_f = _get(o, "Dilution (a) security emissions (annualised) ÷ circ"), _get(o, "Dilution (a) security emissions (annualised) ÷ trad")
-    assert a_c * circ == pytest.approx(a_f * flt)
+    # alignment round C1: the veAERO rebase is its own line in (c) (PROPOSED), the gauge emissions (b); no (a)
+    assert _get(o, "Dilution (a) security emissions (annualised) ÷ circ") in (None, "")
+    a_c, a_f = _get(o, "Dilution (c) demand-side incentives (annualised) ÷ circ"), _get(o, "Dilution (c) demand-side incentives (annualised) ÷ trad")
+    assert a_c * circ == pytest.approx(a_f * flt) and a_c > 0
     r_c, r_f = _get(o, "Retirement rate (RETIRED buyback tokens, burned + held, annualised) ÷ circ"), \
         _get(o, "Retirement rate (RETIRED buyback tokens, burned + held, annualised) ÷ trad")
     assert r_c * circ == pytest.approx(r_f * flt)
@@ -70,10 +72,15 @@ def test_cp_on_the_real_aerodrome_dump(tmp_path, monkeypatch):
         _get(o, "Holder value RECORDED, NOT CREDITED") > 0
     assert _get(o, "SUBSIDY COVER") == pytest.approx(_rate(wb, X, "Aerodrome|fees_usd")
                                                      / _rate(wb, X, "Aerodrome|outflow_b_usd"))
-    # no demand-side incentives on file: (b + c) is (b)
-    assert _get(o, "Subsidy cover incl. demand-side") == pytest.approx(_get(o, "SUBSIDY COVER"))
+    # the rebase (c) joins the denominator of (b + c)
+    assert _get(o, "Subsidy cover incl. demand-side") == pytest.approx(
+        _rate(wb, X, "Aerodrome|fees_usd") / (_rate(wb, X, "Aerodrome|outflow_b_usd") + _rate(wb, X, "Aerodrome|outflow_c_usd")))
+    # supplier payout (C4): (fees − revenue + incentive $ (b)) ÷ fees ≈ 1.1-1.2; the fee-only ratio beside it
+    sp, sp_fee = _get(o, "Supplier payout per $ of fees"), _get(o, "Supplier payout, fees only")
+    assert sp == pytest.approx(sp_fee + _rate(wb, X, "Aerodrome|outflow_b_usd") / _rate(wb, X, "Aerodrome|fees_usd"))
+    assert 1.0 < sp < 1.4 and 0 < sp_fee < 0.5
     # a young unlock series BLOCKS total dilution (and so net holder yield) rather than reading as a smaller dilution
-    assert str(_get(o, "TOTAL DILUTION = outflows a+b+c+e (annualised) ÷ circ")).startswith("BLOCKED")
+    assert str(_get(o, "TOTAL DILUTION = outflows a+b+c+d+e (annualised) ÷ circ")).startswith("BLOCKED")
     assert str(_get(o, "NET HOLDER YIELD")).startswith("BLOCKED")
     # attributes, never penalties: text from phase2_attributes.json
     assert _get(o, "CAPTURE STATUS").startswith("Live")
@@ -130,7 +137,7 @@ def test_cp_plume_has_no_measured_outflow_and_says_why(tmp_path, monkeypatch):
     wb, _rows = _built(tmp_path, monkeypatch, "Plume")
     X = xlcalc.Workbook(wb)
     o = _row(wb, X, CP, "Plume")
-    assert _get(o, "TOTAL DILUTION = outflows a+b+c+e (annualised) ÷ circ") in (None, "")
+    assert _get(o, "TOTAL DILUTION = outflows a+b+c+d+e (annualised) ÷ circ") in (None, "")
     assert "pre-minted" in _get(o, "Outflow categories").lower()
 
 
@@ -147,7 +154,8 @@ def test_holder_funding_periods_are_dated_and_sourced():
     assert f("Uniswap", "2025-12-28")[0] == "revenue"
     assert set(config.METRICS["holder_value_other_usd"]["only_projects"]) == {"Aerodrome", "Ether.fi"}
     # no outflow metric for a category nobody holds, and no gap row on a project without the category
-    assert "outflow_d_tokens" not in config.METRICS
+    # alignment round C1: Uniswap's growth budget is (d) — the only project holding a (d) series
+    assert config.METRICS["outflow_d_tokens"]["only_projects"] == ("Uniswap",)
     assert "Uniswap" not in config.METRICS["outflow_a_tokens"]["only_projects"]
 
 
@@ -155,7 +163,7 @@ def test_attributes_are_sourced_and_store_no_near_account():
     raw = json.loads(Path(__file__).resolve().parents[1].joinpath("phase2_attributes.json").read_text())
     assert raw["_meta"]["entered_by"] == "Claude Code, pending Jake's review" and raw["_meta"]["read_on"] == "2026-10-12"
     port, _ = config.read_portfolio(config.PORTFOLIO_FILE)
-    want = set(port or config.PROJECT_BY_NAME) - {"GEODNET"}
+    want = set(port or config.PROJECT_BY_NAME)
     missing = [n for n in want if n in config.PROJECT_BY_NAME and n not in config.PHASE2_ATTRIBUTES]
     assert not missing or not port, missing
     for n, a in config.PHASE2_ATTRIBUTES.items():
@@ -163,9 +171,11 @@ def test_attributes_are_sourced_and_store_no_near_account():
             assert a[k].get("source"), (n, k)
         for e in a.get("mechanism_log") or []:
             # a future date only where the log says it is scheduled (Aerodrome's Aero launch, 2026-10-21)
-            assert (e["date"][:10] <= "2026-10-12" or "scheduled" in e["date"]) and e.get("source"), (n, e)
+            # GEODNET's log was read 2026-10-13 (alignment round C2), the day of the read
+            assert (e["date"][:10] <= "2026-10-13" or "scheduled" in e["date"]) and e.get("source"), (n, e)
     assert "sputnik-dao.near" not in json.dumps(raw) and "multisignature.near" not in json.dumps(raw)
-    assert config.phase2_attribute_text("GEODNET", "capture") == "not sourced yet"
+    # GEODNET filled 2026-10-13 (alignment round C2): Live, switch with the Foundation, off-chain policy
+    assert config.phase2_attribute_text("GEODNET", "capture").startswith("Live")
     assert config.phase2_attribute_text("Fluid", "capture").startswith("Halted")
 
 
@@ -173,5 +183,5 @@ def test_metrics_doc_has_the_flow_statements_and_flags_flows_with_no_series():
     text = Path(__file__).resolve().parents[1].joinpath("METRICS.md").read_text(encoding="utf-8")
     assert "## Token flow and value flow statements" in text and "## CP — Comparability" in text
     uni = text.split("### Uniswap")[-1].split("### ")[0]
-    assert "(d) ecosystem / grant spend | **NO SERIES**" in uni
+    assert "(d) ecosystem / grant spend | `growth_budget_release_tokens`" in uni
     assert "TRADEABLE FLOAT" in text and "SUBSIDY COVER" in text

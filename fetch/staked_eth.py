@@ -55,7 +55,7 @@ class StakedEth:
             day = str(today().date())
             key = "staked_eth:validatorqueue"
             if not self.daily.due(key, day):
-                out.skipped(SOURCE, name, f"{metric}: read today already", TIER)
+                out.mark_current(SOURCE, name, metric, f"{metric}: read today already", TIER)
                 continue
             try:
                 body = self.http.get(URL)

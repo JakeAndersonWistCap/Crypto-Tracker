@@ -93,7 +93,7 @@ class SkySSR:
         day = str(today().date())
         key = "macro:sky_ssr"
         if not self.daily.due(key, day):
-            out.skipped(SOURCE, name, f"{metric}: read today already", TIER)
+            out.mark_current(SOURCE, name, metric, f"{metric}: read today already", TIER)
             return
         try:
             now_raw = self._ssr_now()

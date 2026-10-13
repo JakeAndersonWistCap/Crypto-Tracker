@@ -109,7 +109,8 @@ class TreasuryBills:
         day = str(today().date())
         key = "macro:tbill_3m"
         if not self.daily.due(key, day):
-            out.skipped(SOURCE, name, "tbill_3m_yield: read today already", TIER)
+            for m in ("tbill_3m_yield", "tbill_3m_dtb3"):
+                out.mark_current(SOURCE, name, m, f"{m}: read today already", TIER)
             return
         first = not self.daily.ever(key)
         span = int(config.TRAJECTORY["history_days"]) if first else 14

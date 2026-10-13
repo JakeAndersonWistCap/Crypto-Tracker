@@ -95,8 +95,11 @@ def test_annualised_net_is_blocked_with_the_total():
         def D(r, m, w):
             return f"D[{m},{w}]"
     import config
-    p = config.PROJECT_BY_NAME["Hyperliquid"]
-    f = bw._net_annual_pct(R, 5, p, "CIRC")
+    # alignment round B8: Hyperliquid is pre-minted — its net issuance is mint − burn = −burn, one leg, so the guard is
+    # the burn's own coverage (no second leg to be unequal with); a minting project keeps the two-leg guard
+    f = bw._net_annual_pct(R, 5, config.PROJECT_BY_NAME["Hyperliquid"], "CIRC")
+    assert "BLOCKED" in f and "pool_release_tokens" not in f and "total_burn_tokens" in f
+    f = bw._net_annual_pct(R, 5, config.PROJECT_BY_NAME["Venice AI"], "CIRC")
     assert "ABS(" in f and "BLOCKED" in f
 
 

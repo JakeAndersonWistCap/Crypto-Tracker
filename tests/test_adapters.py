@@ -17129,8 +17129,9 @@ def test_geodnet_supply_denominators_net_out_the_burn_coingecko_does_not():
         def D(self, r, m, w):
             return f"D[{m}]"
     # _circ reads circulating_supply_used first (one basis with market cap, 2026-10-11); the formula below is its fallback
+    # (alignment round 2026-10-13: wrapped in IFERROR so the fallback's error reads as the cell's reasoned n/a)
     assert bw._circ(R(), 5, config.PROJECT_BY_NAME["GEODNET"]).startswith(
-        "IF(ISNUMBER(D[circulating_supply_used]),D[circulating_supply_used],")
+        "IFERROR(IF(ISNUMBER(D[circulating_supply_used]),D[circulating_supply_used],")
     expr = bw._circ_formula(R(), 5, config.PROJECT_BY_NAME["GEODNET"])
     # 2026-10-07 evening: GEODNET's ON-CHAIN set is primary — it already nets every burn it counts; only the
     # CoinGecko fallback is netted for the burn CoinGecko misses
@@ -17319,7 +17320,8 @@ def test_morpho_free_float_is_circulating_and_fluid_a3_reads_zero_since_the_halt
     ff = rows["FREE FLOAT = circulating − locked (tokens)"][1](5, morpho)
     # circulating = the series used (2026-10-11) — Morpho's on-chain set since decision 1 on 6f8c86c, CoinGecko's
     # where none: free float = that − 0, no lock
-    assert "D[circulating_supply]))-0" in ff and "circulating_supply_onchain" in ff and "circulating_supply_used" in ff \
+    # (_circ is IFERROR-wrapped since the alignment round: its error reads as the cell's reasoned n/a)
+    assert 'D[circulating_supply])),"n/a")-0' in ff and "circulating_supply_onchain" in ff and "circulating_supply_used" in ff \
         and "locked_tokens" not in ff, ff
 
 

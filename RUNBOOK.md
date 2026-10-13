@@ -527,6 +527,36 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11bv. Full alignment round — SPEC.md, fixes, Flows, Coverage (2026-10-13)
+
+**Run after pulling, in this order (PowerShell, repo root):**
+```
+git pull
+python token_metrics.py
+python token_metrics.py --seed aero_buyback
+python token_metrics.py --no-fetch
+python sanity.py
+```
+- **`token_metrics.py`:** the first read of NEAR Intents revenue and fees (DefiLlama near-intents, free) and, where
+  1e702bb's reader has not stored it yet, Hyperliquid's stake outside circulating — Hyperliquid's (a) outflow, insider
+  share and stake inside circulating read n/a with the reason until it is stored.
+- **`--seed aero_buyback`:** Aerodrome's Foundation buyback trace ends 2026-08-19 on the stored history; the window
+  scan never stored. The seed reads it with no time budget. Then `--no-fetch` rebuilds.
+- **Outputs:** the workbook has two new tabs — **Flows** (token-flow and value-flow statements, Q0..Q-4, CHECK beyond
+  ±0.5%) and **Coverage** (every column against SPEC.md, counts at the top) — and `coverage_audit.csv` is written
+  beside it (not committed).
+
+**What changed.** SPEC.md is the single definition of correct (its own commit); spec.py maps every column to a SPEC
+concept, and the Trajectory and the axis row read axis and direction from it. Fixes B1–B14 and C1–C17 are listed in
+SPEC.md section 4 (status column) and section 12 (PROPOSED). Restatement routes for the circulating and FDV series
+breaks, with the dates each trajectory becomes valid without one, are in SPEC.md section 7.
+
+**Tests that fail the build** (tests/test_alignment.py, on the six real dumps): a column with no SPEC concept; one
+figure differing across tabs; a lock / staking rate or float ÷ circulating outside 0..1, a negative float, release,
+issuance or dilution, a whole-token yield above its staker yield; a flow residual beyond 0.5% not marked CHECK; a bare
+n/a; any BROKEN, BLANK-UNEXPLAINED or MATCHES-SPEC = no row on the Coverage audit.
+
+
 ## 11bu. Review of the overnight run (ab5f2a9) + the ASSUMED decisions of 3500042 (2026-10-13)
 
 **Run after pulling, in this order (PowerShell, repo root):**
