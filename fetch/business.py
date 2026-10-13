@@ -201,6 +201,12 @@ class Business:
         for name, spec in config.MARKET_SHARE.items():
             if name in names and "na" not in spec:
                 self._share(name, spec, day, out)
+        # a SECOND basis beside the first (Jake's decision 5 on 3500042: chain fees vs 12 peer chains for Ethereum
+        # and NEAR, beside the chain-TVL share)
+        for name, spec in config.MARKET_SHARE_2.items():
+            if name in names:
+                self._share(name, spec, day, out, metric="market_share_2_pct",
+                            denominator="market_share_2_category_usd")
 
     def _series(self, name: str, spec: dict, key: str) -> tuple[list, str, str]:
         route = spec["route"]
@@ -273,28 +279,40 @@ class Business:
             f"CCIP API, {n} page(s), oldest message {oldest.date()} ({why}); first-party API")
 
     # ------------------------------------------------------------------ market share
-    def _share(self, name: str, spec: dict, day: str, out) -> None:
-        key = f"business:{name}:market_share"
+    def _share(self, name: str, spec: dict, day: str, out, metric: str = "market_share_pct",
+               denominator: str = "market_share_category_usd") -> None:
+        key = f"business:{name}:{metric.replace('_pct', '')}"
         if not self.daily.due(key, day):
-            out.skipped(SOURCE, name, "market_share_pct: read today already", TIER)
+            out.skipped(SOURCE, name, f"{metric}: read today already", TIER)
             return
         try:
             own, total, n_peers = self._share_parts(spec)
         except Exception as e:  # noqa: BLE001
-            out.fail(SOURCE, name, f"market_share_pct: NOTHING STORED — {e}", TIER)
+            out.fail(SOURCE, name, f"{metric}: NOTHING STORED — {e}", TIER)
             return
         lo, hi = self._span_start(key), last_complete()
         rows = [(d, own[d] / total[d]) for d in sorted(set(own) & set(total)) if lo <= d <= hi and total[d] > 0]
         if not rows:
-            out.fail(SOURCE, name, "market_share_pct: no day where the project and every peer reported", TIER)
+            out.fail(SOURCE, name, f"{metric}: no day where the project and every peer reported", TIER)
             return
         tag = f"defillama:{spec['how']}:{spec['category']}[{n_peers}]"
-        out.add(tidy(rows, name, "market_share_pct", tag, TIER), SOURCE, name,
-                f"market_share_pct: latest {rows[-1][1]:.2%} ({rows[-1][0].date()}) of {spec['category']} — "
+        out.add(tidy(rows, name, metric, tag, TIER), SOURCE, name,
+                f"{metric}: latest {rows[-1][1]:.2%} ({rows[-1][0].date()}) of {spec['category']} — "
                 f"{n_peers}; {len(rows)} day(s)", TIER)
-        out.add(tidy([(d, total[d]) for d, _ in rows], name, "market_share_category_usd", tag, TIER), SOURCE, name,
-                "market_share_category_usd: the denominator", TIER)
+        out.add(tidy([(d, total[d]) for d, _ in rows], name, denominator, tag, TIER), SOURCE, name,
+                f"{denominator}: the denominator", TIER)
         self.daily.done(key, day)
+
+    def _chain_fees(self, slug: str, expect: str) -> dict:
+        """{day: fees} for one chain from api.llama.fi/summary/fees/<chain>?dataType=dailyFees."""
+        j = self._json(f"{API}/summary/fees/{slug}", {"dataType": "dailyFees", "excludeTotalDataChartBreakdown": "true"})
+        got = str((j or {}).get("name") or "")
+        if got.lower() != expect.lower():
+            raise RuntimeError(f"/summary/fees/{slug} answered as {got!r}, not {expect!r}")
+        s = {_day(t): float(v) for t, v in (j.get("totalDataChart") or []) if v is not None}
+        if not s:
+            raise RuntimeError(f"/summary/fees/{slug}: no daily fees")
+        return s
 
     def _share_parts(self, spec: dict) -> tuple[dict, dict, str]:
         how = spec["how"]
@@ -316,8 +334,10 @@ class Business:
             own_s = strict_sum({n: by.get(n, {}) for n in own_names})
             return own_s, dict(total), f"{len(cat)} protocols filed under {spec['category']}"
         if how == "peers":
-            own = {s: self._protocol(s, e, spec["field"]) for s, e in spec["own"]}
-            peers = {s: self._protocol(s, e, spec["field"]) for s, e in spec["peers"]}
+            read = (self._chain_fees if spec.get("route") == "chain_fees"
+                    else (lambda s, e: self._protocol(s, e, spec["field"])))
+            own = {s: read(s, e) for s, e in spec["own"]}
+            peers = {s: read(s, e) for s, e in spec["peers"]}
             return strict_sum(own), strict_sum({**own, **peers}), f"{len(own) + len(peers)} protocols (own + peers)"
         if how == "chain_tvl":
             mine = {_day(p["date"]): float(p["tvl"]) for p in self._json(f"{API}/v2/historicalChainTvl/{spec['chain']}")}

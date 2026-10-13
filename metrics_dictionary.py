@@ -230,6 +230,14 @@ ENTRIES = {
                 "open_interest_usd", "near_intents_volume_usd", "stake_tvl_usd", "cash_volume_usd",
                 "loans_outstanding_usd", "l2_tx_count", "stations_total", "ccip_messages", "usds_supply_tokens"],
         decided=[(J, "2026-10-12", "overnight review of ab5f2a9, Phase 4")]),
+    "MARKET SHARE, SECOND BASIS": dict(
+        what="A second market-share basis beside the first (config.MARKET_SHARE_2): Ethereum's and NEAR's chain FEES ÷ "
+             "the 13-chain set — fees are what a chain sells; the chain-TVL share stays beside it.",
+        formula="own chain's daily fees ÷ the sum over ethereum, solana, tron, bsc, bitcoin, base, arbitrum, polygon, "
+                "avalanche, sui, aptos, near, hyperliquid-l1 (DefiLlama dailyFees per chain); a day only where every "
+                "chain reported (0 before a chain's first day)", window="now", unit="%",
+        inputs=["market_share_2_pct", "market_share_2_category_usd"],
+        decided=[(J, "2026-10-13", "decision 5 on 3500042")]),
     "BUSINESS 2 — core usage": dict(
         what="The second usage series (config.BUSINESS_SLOTS), as BUSINESS 1.", formula="as BUSINESS 1",
         window="now / Q0", unit="per series", decided=[(J, "2026-10-12", "overnight review of ab5f2a9, Phase 4")]),

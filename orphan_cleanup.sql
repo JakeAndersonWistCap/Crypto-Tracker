@@ -4667,3 +4667,22 @@ SELECT project, metric, date, value, source
 --    SET value = 0, source = source || ':lp-withdrawal-removed[Jake 2026-10-12]'
 --  WHERE project = 'Ether.fi' AND metric = 'actual_buyback_tokens' AND date = '2026-09-02'
 --    AND value BETWEEN 1047756 AND 1047758;
+
+-- ========================================================================================
+-- CP. FLUID: THE SIX NON-CIRCULATING ROWS THAT STILL CARRY THE IGP-137 LOCK  2026-10-13
+--     Jake's run on 3500042 (item 21): the archive REFUSED noncirculating_holding_tokens for Fluid because the stored
+--     2026-10-07..2026-10-12 rows include noncirc_igp137_lock, which the current composition reads under its own
+--     metric (noncirculating_igp137_tokens, config metric_override). CN recognised the current set by its newest
+--     wallet (noncirc_merkle_distributor_eth_usdc_lp), which these rows also carry, so it kept them. A row whose source
+--     names the IGP-137 lock is the old composition; it goes, and the archive reads the current set for those days.
+--     Run: python run_sql.py CP, then python run_sql.py --delete CP, then python archive_backfill.py --run --project Fluid.
+-- ========================================================================================
+-- CP1. WHAT GOES (expect 6 rows, 2026-10-07..2026-10-12).
+SELECT project, metric, date, value, source
+  FROM metrics
+ WHERE project = 'Fluid' AND metric = 'noncirculating_holding_tokens' AND source LIKE '%noncirc_igp137_lock%'
+ ORDER BY date;
+
+-- CP2. THE DELETE.
+-- DELETE FROM metrics
+--  WHERE project = 'Fluid' AND metric = 'noncirculating_holding_tokens' AND source LIKE '%noncirc_igp137_lock%';

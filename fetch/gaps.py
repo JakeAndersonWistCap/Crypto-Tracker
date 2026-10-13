@@ -300,7 +300,8 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                 "Check the Run Log for 'Foundation buyback window' (it needs the keyed Base RPC, BASE_RPC_URL); the Q0 "
                 "days come from `python token_metrics.py --seed aero_buyback`.")
     # ===== HYPERLIQUID'S EXCLUDED WALLETS (Jake 2026-10-11, A1) and NEAR's weekly lockups / NearBlocks cross-check (C)
-    if metric in ("circulating_supply_tokendetails", "excluded_wallets_tokens", "team_wallet_tokens"):
+    if metric in ("circulating_supply_tokendetails", "excluded_wallets_tokens", "team_wallet_tokens",
+                  "staked_noncirculating_tokens"):
         return ("the tokenDetails read and the Foundation / Community Grants wallet reads (fetch/hypercore.py "
                 "_circ_less_wallets) stored nothing this run — an unread wallet stores no circulating figure",
                 "Check the Run Log for hypercore_info: 'NOT STORED' names the wallet that did not answer.")
@@ -788,6 +789,9 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
         return (f"fetch/business.py ({spec['route']} route) stored nothing for it this run — source: "
                 f"{spec['source_kind']}",
                 "Check the Run Log's business line for this project: it names the route and what came back.")
+    if metric in ("market_share_2_pct", "market_share_2_category_usd") and name in config.MARKET_SHARE_2:
+        return ("fetch/business.py stored no second-basis market share this run — a chain in the 13-chain fee set "
+                "may not have answered", "Check the Run Log's business market_share_2_pct line for this project.")
     if metric in ("market_share_pct", "market_share_category_usd") and name in config.MARKET_SHARE:
         return ("fetch/business.py stored no market share this run — a declared peer may not have answered "
                 f"({config.MARKET_SHARE[name].get('basis', '')[:120]})",

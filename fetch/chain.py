@@ -1538,6 +1538,14 @@ class Chain:
         # check would notice. See config's annualised_share_source for the band's derivation and
         # for the ambiguity in the documented figure that makes it deliberately loose.
         lo, hi = (tail.get("annualised_share_bounds") or (None, None))
+        # A DATED BAND WHERE THE CONTRACT'S OWN HISTORY SAYS SO (Jake's run on 3500042, item 25): the documented ~10.9%
+        # is the rate since 2025-10-24; before it the rate was being nudged down 1 bps an epoch. The epoch read
+        # (archive mode: the pinned day) takes the band of its own date.
+        epoch_day = str(self._epoch_start({}, self._now_ts()).date())
+        for frm, to, band in tail.get("annualised_share_bounds_history") or ():
+            if frm <= epoch_day <= (to or "9999-12-31"):
+                lo, hi = band
+                break
         if lo is not None and supply:
             annualised = emission * 52.0 / supply
             if not (lo <= annualised <= hi):

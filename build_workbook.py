@@ -2283,7 +2283,15 @@ def _outflow_views(groups: dict) -> None:
             if not ms:
                 continue
             legs = [_daily(groups.get((name, m))) for m in ms]
-            if any(leg.empty for leg in legs):
+            # A LEG THAT IS BLOCKED OR EMPTY BLOCKS THE CATEGORY, WITH ITS REASON (Jake's run on 3500042, item 24: CP
+            # NET HOLDER YIELD read a bare n/a for Hyperliquid and NEAR while holder value was ok — a missing outflow
+            # leg left no outflow row, so the formula errored silently). The outflow rows now say which leg and why.
+            why = [f"{m}: {_VIEW_BLOCKS[(name, m)]}" if (name, m) in _VIEW_BLOCKS else f"{m}: no rows stored"
+                   for m, leg in zip(ms, legs) if (name, m) in _VIEW_BLOCKS or leg.empty]
+            if why:
+                for unit in ("tokens", "usd"):
+                    _VIEW_BLOCKS[(name, f"outflow_{cat}_{unit}")] = (
+                        f"BLOCKED — outflow ({cat}) is not formed: " + "; ".join(why))
                 continue
             tot = pd.concat(legs, axis=1).dropna().sum(axis=1)
             if tot.empty:
@@ -5794,6 +5802,7 @@ HEADLINE_IDS = (
     ("CP", "BUSINESS 3 — core usage", "cp_business_3"),
     ("CP", "BUSINESS 4 — core usage", "cp_business_4"),
     ("CP", "MARKET SHARE vs its category", "cp_market_share"),
+    ("CP", "MARKET SHARE, SECOND BASIS", "cp_market_share_2"),
 )
 
 
@@ -6340,7 +6349,16 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         dil = "+".join(ann(r, p, f"outflow_{c}_usd") for c in cats) or "0"
         legs = [("holder value", "holder_value_revenue_usd", "q0")] + \
             [(f"outflow {c}", f"outflow_{c}_usd", "q0") for c in cats]
-        return _coverage_guard(R, r, legs, f"({hvy_expr(r, p)})-({dil})/{mc(r)}")
+        out = _coverage_guard(R, r, legs, f"({hvy_expr(r, p)})-({dil})/{mc(r)}")[1:]
+        # NAME THE STARVED LEG (item 24, Jake's run on 3500042): an outflow with no value in the window says which
+        # and why (its Data note), never a bare n/a
+        for c in reversed(cats):
+            q = R.D(r, f"outflow_{c}_usd", "q0")
+            note = R.D(r, f"outflow_{c}_usd", "note")
+            out = (f'IF(NOT(ISNUMBER({q})),"n/a — outflow ({c}) = {"+".join(config.outflow_metrics(p["name"], c))} '
+                   f'has no value in this window: "&'
+                   f'IFERROR(IF({note}="","no rows stored",{note}),"no Data row"),{out})')
+        return "=" + out
 
     def funding_text(p):
         h = config.HOLDER_VALUE.get(p["name"]) or {}
@@ -6525,6 +6543,11 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
             "n/a — " + config.MARKET_SHARE[p["name"]]["na"] if "na" in config.MARKET_SHARE[p["name"]]
             else calc(R.D(r, "market_share_pct", "now"))), FMT_PCT, "calc", True,   # a share WE derive
          {"metric_fn": lambda n: "market_share_pct" if "na" not in (config.MARKET_SHARE.get(n) or {"na": 1}) else None}),
+        ("Market share, second basis — basis and peer set (config.MARKET_SHARE_2)",
+         lambda r, p: (config.MARKET_SHARE_2.get(p["name"]) or {}).get("basis", ""), FMT_TEXT, "text"),
+        (MARKET_SHARE_2_HEAD, lambda r, p: calc(R.D(r, "market_share_2_pct", "now"))
+         if p["name"] in config.MARKET_SHARE_2 else "", FMT_PCT, "calc", True,
+         {"metric_fn": lambda n: "market_share_2_pct" if n in config.MARKET_SHARE_2 else None}),
         # ---- PHASE 3: ETF / ETP AND TREASURY-COMPANY HOLDINGS — dated issuer readings, never trended ----
         *[c for kind, lab in (("etf_etp", "ETF / ETP holdings"), ("dat", "Treasury-company (DAT) holdings"))
           for c in ((f"{lab} (tokens) — each product's latest dated issuer reading, summed (dates differ)",
@@ -6545,6 +6568,8 @@ def _holding_cell(p: dict, kind: str):
 
 
 MARKET_SHARE_HEAD = "MARKET SHARE vs its category (now; a shifted quarter: that quarter's mean) — peer set beside"
+MARKET_SHARE_2_HEAD = ("MARKET SHARE, SECOND BASIS — chain fees vs 13 chains (now; a shifted quarter: that quarter's "
+                       "mean)")
 BUSINESS_HEAD = "BUSINESS {i} — core usage (a stock: now; a flow: Q0 annualised over its covered days)"
 
 

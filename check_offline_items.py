@@ -11273,6 +11273,52 @@ def _near_account(acc: str) -> float | None:
         return None
 
 
+def diagnose_net_holder_yield():
+    """CP NET HOLDER YIELD n/a WHILE HOLDER VALUE IS OK — WHICH OUTFLOW LEG STARVES IT (Jake's run on 3500042, item 24).
+    Reads metrics.db only, runs the build's own aggregation for every project with a holder value yield and prints,
+    per outflow category: the category's legs (config.OUTFLOW_CATEGORIES), each leg's stored rows (count, first, last,
+    rows inside Q0) and any read-time block on it, then the outflow row's Data status, Q0 and note. Changes nothing."""
+    import pandas as pd                                    # noqa: PLC0415
+    import build_workbook as bw                            # noqa: PLC0415
+    import config                                          # noqa: PLC0415
+    import store as store_mod                              # noqa: PLC0415
+    head("NET HOLDER YIELD INPUTS — every outflow leg per project (store only)")
+    st = store_mod.Store(store_mod.DB_PATH)
+    try:
+        long = st.load_long()
+    finally:
+        st.close()
+    asof = pd.Timestamp.now("UTC").tz_localize(None).normalize()
+    q0_lo = asof - pd.Timedelta(days=int(bw.GLOBALS["period_days"]))
+    names = [n for n in config.OUTFLOW_CATEGORIES if n in config.PROJECT_BY_NAME]
+    prev_scope = bw._SCOPE
+    bw._SCOPE = [config.PROJECT_BY_NAME[n] for n in names]
+    try:
+        data = bw.aggregate(long[long["project"].isin(names)], pd.DataFrame(), asof)
+    finally:
+        bw._SCOPE = prev_scope              # never leave the build narrowed (a later build in the same process)
+    for n in names:
+        print(f"\n  {n}")
+        for c in config.OUTFLOW_CATEGORY_NAMES:
+            legs = config.outflow_metrics(n, c)
+            if not legs:
+                continue
+            row = data[(data.project == n) & (data.metric == f"outflow_{c}_usd")]
+            r = row.iloc[0] if len(row) else None
+            print(f"    outflow ({c}) = {'+'.join(legs)}: "
+                  + (f"status {r['status']} · q0 {r['q0']} · covered {r['q0_covered_days']} · note {str(r['note'])[:300]}"
+                     if r is not None else "no Data row"))
+            for m in legs:
+                g = bw._LAST_GROUPS.get((n, m))
+                blk = bw._VIEW_BLOCKS.get((n, m))
+                if g is None or g.empty:
+                    print(f"      {m}: NO ROWS after the read-time views" + (f" — {blk}" if blk else ""))
+                    continue
+                dts = pd.to_datetime(g["date"])
+                print(f"      {m}: {len(g)} row(s) {dts.min():%Y-%m-%d}..{dts.max():%Y-%m-%d}, "
+                      f"{int(((dts > q0_lo) & (dts <= asof)).sum())} in Q0" + (f" — {blk}" if blk else ""))
+
+
 def diagnose_geodnet_burn():
     """GEODNET'S A4 GROSS BURN n/a — WHICH CASE, AND THE FIX (Jake's overnight review of ab5f2a9, item 19). Reads
     metrics.db only (no network), runs the build's own aggregation for GEODNET and prints, for gross_burn_tokens and
@@ -11294,9 +11340,13 @@ def diagnose_geodnet_burn():
     if long.empty:
         print("  no GEODNET rows in metrics.db")
         return
+    prev_scope = bw._SCOPE
     bw._SCOPE = [config.PROJECT_BY_NAME["GEODNET"]]
     asof = pd.Timestamp.now("UTC").tz_localize(None).normalize()
-    data = bw.aggregate(long, pd.DataFrame(), asof)
+    try:
+        data = bw.aggregate(long, pd.DataFrame(), asof)
+    finally:
+        bw._SCOPE = prev_scope              # never leave the build narrowed (a later build in the same process)
     for m in ("gross_burn_tokens", "burn_address_balance", "actual_buyback_tokens"):
         row = data[data.metric == m]
         if row.empty:
@@ -11332,6 +11382,38 @@ def diagnose_geodnet_burn():
             print(f"  TELESCOPING {lo:%Y-%m-%d}..{hi:%Y-%m-%d}: flows {float(d['value'].sum()):,.2f} vs stock move "
                   + (f"{moved:,.2f} (residual {moved - float(d['value'].sum()):,.2f})" if moved is not None
                      else "n/a (no stock reading before the first flow)"))
+            # WHERE THE RESIDUAL SITS (Jake's run on 3500042, item 20: 52,018,504.0020 recorded vs 52,118,504.0020 of
+            # stock movement — exactly 100,000 short). Every pair of consecutive stock readings whose move the
+            # differenced flows dated inside it do not match, with both readings' measuring points and any other flow
+            # row dated there: the span, and so the day, of the missing burn.
+            g = stock.sort_values("date").drop_duplicates("date", keep="last").set_index("date")
+            pts = g["source"].astype(str).map(_measuring_point)
+            other = flows[~flows["source"].astype(str).str.contains(":delta", na=False)]
+            shown = 0
+            print("  SPANS WHERE THE FLOWS DO NOT TELESCOPE (stock pair, move, flows dated in it):")
+            for (d0, v0), (d1, v1) in zip(g["value"].astype(float).items(), list(g["value"].astype(float).items())[1:]):
+                if d1 < lo or d0 > hi:
+                    continue
+                fl = float(d[(d["date"] > d0) & (d["date"] <= d1)]["value"].sum())
+                if abs((v1 - v0) - fl) <= 1e-6:
+                    continue
+                shown += 1
+                if shown > 10:
+                    print("    … more spans; the first ten are above")
+                    break
+                o = other[(other["date"] > d0) & (other["date"] <= d1)]
+                why = ("the measuring point CHANGED across it — rederive.py refuses this pair; the reading on "
+                       f"{d1:%Y-%m-%d} is from {pts[d1][:60]!r}, the one before from {pts[d0][:60]!r}"
+                       if pts[d0] != pts[d1] else
+                       "the stock FELL across it" if v1 < v0 else
+                       "no differenced flow covers it — rederive.py fills it" if fl == 0 else
+                       "a differenced flow covers only part of it — rederive.py rebuilds it")
+                print(f"    {d0:%Y-%m-%d}..{d1:%Y-%m-%d}: stock {v1 - v0:,.4f} vs flows {fl:,.4f} "
+                      f"(missing {v1 - v0 - fl:,.4f}) — {why}"
+                      + (f"; other flow rows here: {', '.join(f'{x.date:%Y-%m-%d} {x.value:,.2f} {str(x.source)[:50]}' for x in o.itertuples())}"
+                         if len(o) else ""))
+            if not shown:
+                print("    none — every span telescopes; the residual is at the window's edge")
     st_ = str(data[data.metric == "gross_burn_tokens"].iloc[0]["status"]) if not data[
         data.metric == "gross_burn_tokens"].empty else ""
     fix = {
@@ -11538,6 +11620,7 @@ CHECKS = (
     plume_settlement_routes,
     near_activity_cause, near_activity_signers, issuer_wallet_audit,
     diagnose_geodnet_burn,
+    diagnose_net_holder_yield,
     browser_captures,
     mev_relays,
     spot_checks,

@@ -10036,7 +10036,13 @@ PROJECTS = [
         },
         "sanity": {
             # THE CHAIN READ'S FLOOR, now on its own name (demoted 2026-09-24).
-            "treasury_holding_tokens_chain": {"min": 1_000_000, "max": 1_000_000_000},
+            # FLOOR LOWERED TO 10,000 (Jake's run on 3500042, item 22): the archive's 2025-07-14 read (first block of
+            # the day, 22,913,694) is a REAL 16,897.46 SYRUP — the multisig held only that until 2025-07-14 13:28 UTC,
+            # when the treasury registry wallet 0xa9466EaB… sent it 10,642,708.49 SYRUP (tx 0xf0165838e2d9bbb77c5192bb
+            # e96535276f3171f02bda17b0b5f0df6c8e5c7a96, block 22,917,715; 968,786.08 left in the same tx). Both wallets
+            # are in the non-circulating set, so the move nets out. Balances read at past blocks (eth.drpc.org) and the
+            # transfer from eth.blockscout.com, 2026-10-13. The floor still refuses a wrong-address zero.
+            "treasury_holding_tokens_chain": {"min": 10_000, "max": 1_000_000_000},
             # treasury_holding_tokens is Maple's page from 2026-09-24 (79.21M); the band is
             # unchanged. Previously: BACK TO THE CHAIN READ'S FLOOR, 2026-09-21 — treasury_holding_tokens is the
             # daoMultisig read again (robots.txt disallows the page that briefly took it over).
@@ -11783,6 +11789,9 @@ PROJECTS = [
                      "source_date": "2026-10-11", "read_2026_10_11": 2_973_731.99},
                 ],
                 "exclude_wallets_decided": "Jake 2026-10-11 (decision A1 on 5b87610)",
+                # item 23 (Jake's run on 3500042): the stake held by exclude_wallets + unlock_wallets, stored as
+                # staked_noncirculating_tokens and taken out of the lock leg (CIRCULATING_ONCHAIN locked_excluded_metrics)
+                "staked_noncirculating": True,
                 # JAKE 2026-10-12 (decision 3 on e4e50b0): the TEAM wallet's releases count in unlock dilution.
                 # tokenDetails.nonCirculatingUserBalances already lists it (genesis 238,000,000; 237,915,860.47 HYPE,
                 # staked, on 2026-10-11) and circulatingSupply already excludes it, so it is stored as a STOCK only
@@ -12852,6 +12861,14 @@ PROJECTS = [
                     # emission.
                     #
                     "annualised_share_bounds": [0.05, 0.15],
+                    # THE NUDGE-DOWN YEAR (Jake's run on 3500042, item 25). tailEmissionRate() read at each epoch's
+                    # block on Base, 2026-10-13: 36 bps (18.7% a year) on 2025-07-11, falling exactly 1 bps an epoch
+                    # to 21 bps on 2025-10-24 and flat at 21 since. The [5%, 15%] band is the documented April-2026
+                    # level; it refused the eight epochs 2025-07-11..2025-08-29 (15.1-18.7%) as if they were bad
+                    # reads. Before 2025-10-24 the band spans the nudge path from activation (67 bps = 34.8%) down;
+                    # from it the documented band stands, so an un-nudged 67 bps today still reads as a finding.
+                    "annualised_share_bounds_history": [("2024-12-04", "2025-10-23", [0.10, 0.35]),
+                                                        ("2025-10-24", None, [0.05, 0.15])],
                     "annualised_share_source": {
                         "claim": "approximately 10.9% annualized, as of April 2026",
                         "source_url": "https://aerodrome.finance/docs",
@@ -27142,3 +27159,44 @@ def etf_dat(project_name: str, kind: str) -> tuple[float | None, str]:
                                        "no ETF / ETP found in issuer sources (2026-10-12)")
     return (float(sum(e["tokens"] for e in rows)),
             "; ".join(f"{e['holder']} {e['tokens']:,.0f} ({e['as_of']})" for e in rows))
+
+# ITEM 23 (Jake's run on 3500042, 2026-10-13): Hyperliquid's tradeable float read −201,487,397 against circulating
+# 238,625,718. The lock leg was ALL staked HYPE (validatorSummaries 440,065,811 on 2026-10-13), of which 301,307,794 is
+# staked by wallets OUTSIDE circulating — the team wallet (nonCirculatingUserBalances, 237,930,044 delegated), the Hyper
+# Foundation (60,509,178) and Community Grants (2,868,572), each read from Hyperliquid's own delegatorSummary. Free float
+# and CP now subtract the lock LESS that stake: 238.6M − (440.1M − 301.3M) = 99.9M.
+METRICS["staked_noncirculating_tokens"] = {
+    "label": "HYPE staked by the wallets outside circulating (team + Hyper Foundation + Community Grants; "
+             "delegatorSummary delegated + undelegated + pending withdrawal)",
+    "kind": "stock", "unit": "tokens", "archetypes": [], "tiers": [1], "sanity_min": 0, "sanity_max": 1e9,
+    "only_projects": ("Hyperliquid",)}
+CIRCULATING_ONCHAIN["Hyperliquid"]["locked_excluded_metrics"] = ("staked_noncirculating_tokens",)
+
+
+# DECISION 5 ON 3500042 (Jake, 2026-10-13): keep the chain-TVL share for Ethereum and NEAR, and add the CHAIN-FEE share
+# beside it — fees are what a chain sells; NEAR's business is Intents, so TVL share alone is not its business measure
+# (NEAR Intents volume is its BUSINESS 1). The 13 chains of the research of 2026-10-12, each api.llama.fi/summary/fees/
+# <chain>?dataType=dailyFees, names checked against the response (read 2026-10-13); a day is stored only when every
+# chain reported (a chain counts 0 before its first day — Hyperliquid L1 from 2025-02-22, Sui from 2024-07-01).
+_FEE_CHAINS = (("ethereum", "Ethereum"), ("solana", "Solana"), ("tron", "Tron"), ("bsc", "BSC"), ("bitcoin", "Bitcoin"),
+               ("base", "Base"), ("arbitrum", "Arbitrum"), ("polygon", "Polygon"), ("avalanche", "Avalanche"),
+               ("sui", "Sui"), ("aptos", "Aptos"), ("near", "Near"), ("hyperliquid-l1", "Hyperliquid L1"))
+
+
+def _chain_fee_share(own_slug: str) -> dict:
+    return {"how": "peers", "route": "chain_fees", "category": "chain fees — 13 chains",
+            "own": tuple(x for x in _FEE_CHAINS if x[0] == own_slug),
+            "peers": tuple(x for x in _FEE_CHAINS if x[0] != own_slug),
+            "basis": "chain FEES ÷ the 13-chain set: ethereum, solana, tron, bsc, bitcoin, base, arbitrum, polygon, "
+                     "avalanche, sui, aptos, near, hyperliquid-l1 (DefiLlama dailyFees per chain)"}
+
+
+MARKET_SHARE_2 = {"Ethereum": _chain_fee_share("ethereum"), "Near": _chain_fee_share("near")}
+METRICS["market_share_2_pct"] = {
+    "label": "Market share on a second basis (config.MARKET_SHARE_2): chain fees ÷ the 13-chain peer set",
+    "kind": "stock", "unit": "fraction", "archetypes": [], "tiers": [1], "sanity_min": 0.0, "sanity_max": 1.0,
+    "only_projects": tuple(MARKET_SHARE_2)}
+METRICS["market_share_2_category_usd"] = {
+    "label": "The second basis' peer-set total (the denominator of market_share_2_pct)", "kind": "stock",
+    "unit": "usd", "archetypes": [], "tiers": [1], "sanity_min": 0.0, "only_projects": tuple(MARKET_SHARE_2)}
+TRAJECTORY["rows"]["cp_market_share_2"] = ("Market", 1)

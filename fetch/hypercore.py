@@ -356,6 +356,8 @@ class HyperCoreInfo:
                     f"circulating_supply_first_party={circ:,.4f} (tokenDetails.circulatingSupply)", TIER)
         else:
             self._circ_less_wallets(name, api, read, circ, excl, out, when)
+        if read.get("staked_noncirculating"):
+            self._staked_outside_circulating(name, read.get("endpoint") or api.get("endpoint"), read, out, when)
         nc = payload.get("nonCirculatingUserBalances") if isinstance(payload, dict) else None
         if isinstance(nc, list):
             pairs = [(str(a[0]), parse_number(a[1])) for a in nc
@@ -444,7 +446,33 @@ class HyperCoreInfo:
         if not isinstance(ds, dict) or parse_number(ds.get("delegated")) is None:
             raise ValueError(f"delegatorSummary for {address[:10]}… carried no delegated figure")
         st = sum(parse_number(ds.get(k)) or 0.0 for k in ("delegated", "undelegated", "totalPendingWithdrawal"))
+        self.last_staked = st
         return sp + st, f"spot {sp:,.2f} + staked {st:,.2f}"
+
+    def _staked_outside_circulating(self, name: str, endpoint: str, read: dict, out, when) -> None:
+        """STAKE HELD BY THE WALLETS OUTSIDE CIRCULATING (Jake's run on 3500042, item 23: CP tradeable float read
+        -201,487,397 against circulating 238,625,718 — the lock leg was ALL staked HYPE, 440M on 2026-10-13, of which
+        301.3M is staked by the team wallet (nonCirculatingUserBalances) and the declared Foundation / Grants wallets,
+        none of it inside circulating). staked_noncirculating_tokens = their delegatorSummary delegated + undelegated +
+        pending withdrawal, summed; free float and CP subtract the lock LESS it (config locked_excluded_metrics).
+        One wallet unread -> nothing stored (never a partial subtraction)."""
+        wallets = list(read.get("exclude_wallets") or []) + list(read.get("unlock_wallets") or [])
+        total, parts = 0.0, []
+        for w in wallets:
+            try:
+                ds = self.http.post(endpoint, json_body={"type": "delegatorSummary", "user": w["address"]})
+                if not isinstance(ds, dict) or parse_number(ds.get("delegated")) is None:
+                    raise ValueError("no delegated figure")
+            except Exception as e:  # noqa: BLE001
+                out.fail(SOURCE, name, f"staked_noncirculating_tokens NOT STORED: {w['label']} "
+                                       f"({w['address'][:10]}…) delegatorSummary unread — {e}", TIER)
+                return
+            st = sum(parse_number(ds.get(k)) or 0.0 for k in ("delegated", "undelegated", "totalPendingWithdrawal"))
+            total += st
+            parts.append(f"{w['label']} {st:,.2f}")
+        out.add(point(name, "staked_noncirculating_tokens", total, f"{SOURCE}:delegatorSummary[non-circulating wallets]",
+                      TIER, when), SOURCE, name,
+                f"staked_noncirculating_tokens={total:,.2f}: " + "; ".join(parts), TIER)
 
     def _circ_less_wallets(self, name: str, api: dict, read: dict, circ: float, excl: list, out, when) -> None:
         """JAKE 2026-10-11 (decision A1): circulating_supply_first_party = tokenDetails.circulatingSupply less the

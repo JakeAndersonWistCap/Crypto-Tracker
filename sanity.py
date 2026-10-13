@@ -28,6 +28,8 @@ from __future__ import annotations
 import argparse
 import sys
 
+import config
+
 TOL_MCAP = 0.005
 TOL_BUYBACK = 0.05
 
@@ -225,12 +227,29 @@ def main(argv=None) -> int:
         found = list(bw.SANITY_HITS)
     else:
         found = check_workbook(path)
-    print(f"SANITY RULES — {len(found)} hit(s)")
+    # PARKED PROJECTS ARE SHOWN APART AND DO NOT SET THE EXIT STATUS (Jake's run on 3500042, item 26: World Mobile,
+    # parked 2026-10-05 — config.CREDIBILITY_PARKED — kept the run red): live hits first, parked ones listed below
+    live, parked = split_parked(found)
+    print(f"SANITY RULES — {len(live)} hit(s) on live projects")
+    _print_hits(live)
+    if parked:
+        print(f"\nPARKED PROJECTS — {len(parked)} hit(s), shown for the record, not counted "
+              f"({', '.join(f'{n}: {config.CREDIBILITY_PARKED[n]}' for n in sorted({h[0] for h in parked}))})")
+        _print_hits(parked)
+    return 1 if live else 0
+
+
+def split_parked(found: list) -> tuple[list, list]:
+    """(live hits, hits on parked projects — config.CREDIBILITY_PARKED)."""
+    return ([h for h in found if h[0] not in config.CREDIBILITY_PARKED],
+            [h for h in found if h[0] in config.CREDIBILITY_PARKED])
+
+
+def _print_hits(found: list) -> None:
     for p in sorted({h[0] for h in found}):
         print(f"  {p}")
         for _p, rule, detail in (h for h in found if h[0] == p):
             print(f"    [{rule}] {detail}".encode("ascii", "replace").decode("ascii"))
-    return 1 if found else 0
 
 
 if __name__ == "__main__":

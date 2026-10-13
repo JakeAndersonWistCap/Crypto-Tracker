@@ -527,6 +527,69 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11bu. Review of the overnight run (ab5f2a9) + the ASSUMED decisions of 3500042 (2026-10-13)
+
+**Run after pulling, in this order (PowerShell, repo root):**
+```
+git pull
+python run_sql.py CP
+python run_sql.py --delete CP
+python check_offline_items.py diagnose_geodnet_burn
+python rederive.py GEODNET gross_burn_tokens
+python rederive.py GEODNET gross_burn_tokens --apply
+python token_metrics.py
+python archive_backfill.py --run --project Fluid --project Maple --project Aerodrome --budget-min 30
+python archive_backfill.py --run --near --budget-min 90
+python check_offline_items.py diagnose_net_holder_yield
+python sanity.py
+```
+- **SQL CP:** CP1 should list 6 rows.
+- **GEODNET:** the diagnosis's SPANS block names the day the 100,000 is missing from. `rederive.py` (preview,
+  then `--apply`) is the fix only if that line says "rederive.py fills it". If it says "measuring point CHANGED",
+  send the output instead.
+- **`token_metrics.py`:** the first read of the second market share and of Hyperliquid's stake outside circulating.
+- **`archive_backfill.py`:** the first run re-reads the days item 21, item 22 and the Aerodrome epochs refused
+  earlier. The `--near` run finishes the remaining ~132 days of the NEAR archive (item 27; it stopped at 323/455 on
+  its budget).
+
+**Decisions.** ASSUMED 1-4 of 3500042 are accepted. 5: the chain-TVL share stays for Ethereum and NEAR, and the
+chain-FEE share is added beside it (config.MARKET_SHARE_2: 13 chains, DefiLlama dailyFees; CP "MARKET SHARE,
+SECOND BASIS", a Market trajectory row). NEAR's business measure is its Intents volume (BUSINESS 1).
+
+**Issues.**
+- **20. GEODNET: 100,000 short.** Every exactly-100,000 GEOD transfer into 0xdEaD since 2025-07-25 came from
+  GEODNET's burner 0x0d0707…b492fe. There are 14 such days: 08-24..08-31, 10-24..10-27 and 11-06..07, all 2025
+  (Polygon logs, read 2026-10-13). A transfer to 0xdEaD cannot be withdrawn, so the 100,000 is a BURN THAT WAS NOT
+  RECORDED, not a non-burn deposit. The stock holds it; one day's differenced flow is missing. Which of the 14 days
+  is only in your store: `diagnose_geodnet_burn` now prints the stock pair and why.
+  - Same measuring point (no flow over the pair): `rederive.py` rebuilds that day from the stock and is the right
+    command.
+  - Measuring point changed: rederive refuses that pair; send the output.
+- **21. Fluid.** SQL CP removes the six 2026-10-07..12 rows whose source names noncirc_igp137_lock (now its own
+  metric). CN missed them because they also carry the newest wallet. The archive refills the six days.
+- **22. Maple.** The 16,897.46 SYRUP on 2025-07-14 is real. The multisig held only that until 13:28 UTC that day,
+  when the treasury-registry wallet 0xa9466EaB… sent it 10,642,708.49 (tx 0xf0165838…). Both wallets are
+  non-circulating. The floor is now 10,000, which still refuses a wrong-address zero; the archive reads the day.
+- **23. Hyperliquid float.** The lock leg was ALL staked HYPE (440,065,811). 301,307,794 of that is staked by
+  wallets outside circulating: team 237,930,044, Hyper Foundation 60,509,178, Grants 2,868,572 (each from
+  delegatorSummary, 2026-10-13). The adapter now stores `staked_noncirculating_tokens`. Free float and CP subtract
+  the lock LESS it: about 238.6M − (440.1M − 301.3M) ≈ 99.8M. The circulating basis was right.
+- **24. NET HOLDER YIELD n/a.** A missing or blocked outflow leg left no outflow row, so the formula erred into a
+  bare n/a. Item 17's release legs were not involved: their refactor is output-identical, and Chainlink's outflow
+  (e) reads as before. Now:
+  - an outflow category whose leg is blocked or empty carries the leg's reason;
+  - NHY says which leg is missing and why ("n/a — outflow (a) = gross_issuance_tokens has no value in this
+    window: …").
+  - `diagnose_net_holder_yield` prints every leg's stored rows from your store.
+- **25. Aerodrome.** On-chain tailEmissionRate() went 36 bps (18.7% a year) on 2025-07-11 down 1 bps an epoch to
+  21 bps on 2025-10-24. The [5%, 15%] band (the documented April-2026 level) refused the 2025-07-18..08-29 epochs
+  as bad reads. The band is now dated (`annualised_share_bounds_history`): [10%, 35%] before 2025-10-24, the
+  documented band from then on. The archive's NOT WRITTEN line also now carries a refusal's reason (refusals are
+  gaps, not failed log lines).
+- **26. sanity.py.** Parked projects (config.CREDIBILITY_PARKED: World Mobile) are listed apart and do not set the
+  exit status.
+- **27. NEAR archive.** Re-run with `--near --budget-min 90`; stored days are skipped.
+
 ## 11bt. Overnight review of ab5f2a9 + Phases 3 and 4 (2026-10-12 night)
 
 **Run after pulling, in this order (PowerShell, repo root). No SQL this round.**

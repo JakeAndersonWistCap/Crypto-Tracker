@@ -690,6 +690,9 @@ class ArchiveBackfill:
                         continue
                     msgs = [e.message for e in out.log if e.status == "failed" and e.project == name
                             and any(e.message.startswith(k) for k, _ in serving_contracts(p, m))]
+                    # A REFUSAL IS A GAP, NOT A FAILED LOG LINE (Jake's run on 3500042, item 25: Aerodrome's tail
+                    # emission was refused on 7 epochs and the line read "no row and no error from the read")
+                    msgs += [g["reason"] for g in out.gaps if g.get("project") == name and g.get("metric") == m]
                     undeployed = self._undeployed(p, m)
                     if undeployed:
                         begin = d + pd.Timedelta(days=1)
