@@ -527,6 +527,30 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11bz. Run review on aac77cd — D1–D8 and E1–E9 (2026-10-14)
+
+**Run after pulling (PowerShell, repo root), IN THIS ORDER — CQ must run before the next fetch:**
+```
+git pull
+python run_sql.py CQ
+python run_sql.py --delete CQ
+python run_sql.py CR
+python run_sql.py --delete CR
+python archive_backfill.py --run --project Ether.fi
+python token_metrics.py
+```
+- CQ (E5): Etherscan's ethsupply2 BurntFees is the previous UTC day's closing snapshot. The code now dates the burn stock
+  and its delta to the day they measure; CQ moves the stored rows back a day (~23) and removes the doubled 2026-09-29
+  DefiLlama-derived row. Run it before the next `token_metrics.py`, or that run's reading lands on the date of a stored
+  unshifted row. The burn_30d reference is now the execution-layer burn measured per block (2,458.9064 ETH, UTC
+  2026-09-13..10-12); until CQ runs the References row reads BROKEN with "THE STORE PREDATES orphan_cleanup.sql CQ".
+- CR + archive (E1): two ether.fi Treasury wallets from its own allocations page join the non-circulating set
+  (−747,021 ETHFI); CR removes the old-set rows, the archive re-reads the current set for the past year.
+- D1: the Pendle Arbitrum gauge repairs its full history from chain RPC across runs (HISTORY REPAIR IN PROGRESS in the
+  log until it reconciles to the wei — about five runs at the measured speed).
+- E8: `aero_migration.json` is accepted only COMPLETE (three 0x addresses, source_url, a verified date) — see 11bx.
+- SPEC.md sections 16 and 17 list every amendment old → new.
+
 ## 11by. Fix round 3 — HL ledgers, Sky's ratio base, Chainlink / Pendle double counts, Aerodrome dating, W1–W7 (2026-10-13)
 
 **Run after pulling (PowerShell, repo root):**
@@ -557,7 +581,8 @@ python check_offline_items.py near_revenue_wallet_flows
   live reads as their history). The rewards history before the first stored read is MODELLED (k/√S calibrated on the
   Grants wallet's daily rate) and labelled so everywhere.
 - **Chainlink**: the LINK that funds the staking reward vault is taken out of (e) per transfer (FIFO through
-  0xD50f074E…), so it counts once, in (a). The community pool's own rate is stored apart (4.32%).
+  0xD50f074E…), so it counts once, in (a). The community pool's own rate is stored apart (4.32%, COMMUNITY-POOL basis);
+  the A1 validator yield is the BLENDED basis (4.77%: all buckets ÷ both pools' principal).
 - **Aerodrome**: every weekly row (gross issuance, rebase) is dated by the flip that PAID it (read-time, the whole
   history); the epoch in progress is left out until its flip. The team emission takes the rate of its own flip.
 - **Morpho (b)** adds the DAO multisig's Merkl campaigns paid on Base / Katana / Arbitrum; campaigns that pay on
@@ -601,13 +626,23 @@ python check_offline_items.py aero_team_rate
 2026-10-22, every Aerodrome legacy read (Minter, escrow, Voter: gross issuance, rebase, team emission, ve supply, voter
 weights, voter rewards) dated on/after the cutover is REFUSED and the run log shows `AERODROME MIGRATION CUTOVER
 PASSED` as FAILED — loudly, never a silent 0. On launch day:
-1. Read the new addresses from aero.xyz (the upgrade hub / docs) — Minter, sAERO / voting escrow, token per chain.
+1. Read the new addresses where Aero publishes them: aero.xyz/aero-upgrade says "All contract addresses will be
+   published in Aero's public GitHub repositories, followed by a security page in the Aero docs. The AERO token address
+   will also be shared through official Aero channels on launch day" (read 2026-10-14; the site names
+   github.com/Dromos-Labs). Minter, sAERO / voting escrow, token per chain.
 2. Write `aero_migration.json` beside config.py:
-   `{"launched": true, "verified": "2026-10-22", "source_url": "<the aero.xyz page>", "addresses": {"minter": "0x…",
-   "voting_escrow": "0x…", "token": "0x…"}, "velo_conversion": 0.044}`
-3. Send it back with the run log; the readers for the new contracts are wired from it (nothing is guessed before).
-The old veAERO keeps receiving rebases per aero.xyz/aero-economic-case — the (c) line keeps reading the
-RewardsDistributor while it pays.
+   `{"launched": true, "verified": "2026-10-22", "source_url": "<the page or repo file the addresses came from>",
+   "addresses": {"minter": "0x…", "voting_escrow": "0x…", "token": "0x…"}, "velo_conversion": 0.044}`
+   Since E8 (2026-10-14) the guard accepts the file only COMPLETE: three real 0x addresses, a source_url and a
+   `verified` date not in the future. `"launched": true` alone, or the template's `0x…` placeholders, keeps the refusal
+   and the run log names what is missing.
+3. Send it back with the run log. The readers for the new contracts are NOT BUILT (plan only, see "Aerodrome
+   migration" below): they are wired from this file afterwards — nothing is guessed before.
+READINESS (E8, 2026-10-14): the cutover guard is built and tested; steps 1–2 can only happen on launch day; step 3 is
+not built. The old veAERO keeps receiving rebases — settled from the contracts (E8): Minter.updatePeriod() is
+permissionless, Minter.rewardsDistributor / RewardsDistributor.ve are immutable, and the tail rate's floor is 1 bp
+(live read at Base block 52,597,339: rewardsDistributor 0x227f6513…, ve 0xeBf418Fe… on both, tailEmissionRate 21,
+MINIMUM_TAIL_RATE 1, tokensPerWeek for the week of 2026-10-01 489,618.34 AERO). Once the file is complete, the legacy reads (the (c) rebase line included) continue as before.
 
 **What changed (SPEC.md section 13 lists every amendment old → new):**
 - **Independent references (T2/T4).** `independent_references.csv` (Jake's 63 rows) is loaded by `references.py` and
@@ -914,7 +949,7 @@ so the 455 days of every restated series should fit in one 120-minute pass.
 - 7 guard: a new sanity rule, `headline_starved`. It fires when a headline reads a bare n/a (or an error) while its
   input series is stored from before Q0 to within 3 days of today. Its first real hit fixed a bug: on Chainlink,
   which burns nothing, net issuance read a burn series that cannot exist. Net issuance (and Total Yield after it)
-  read n/a; they now read issuance alone (0 in Q0) and 4.77%.
+  read n/a; they now read issuance alone (0 in Q0) and 4.77% (the BLENDED staking basis).
 - 13a: SQL CM moves every CoinGecko `total_supply` row of the eight on-chain-first tokens, whatever its date. The
   2026-10-11 row CJ left blocked the whole restatement.
 - 13b: SQL CN restates Fluid's and Maple's non-circulating sets. All of Maple's rows go, because none carries the

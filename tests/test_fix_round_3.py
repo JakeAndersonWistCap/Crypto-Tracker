@@ -406,7 +406,7 @@ def test_subsidy_cover_on_an_incomplete_denominator_is_blocked(tmp_path, monkeyp
     assert config.OUTFLOW_INCOMPLETE[(project, "b")][:20] in str(cover)
 
 
-@pytest.mark.parametrize("project,sym,n", [("Ether.fi", "sETHFI", 8), ("Maple", "stSYRUP", 8), ("Pendle", "sPENDLE", 3)])
+@pytest.mark.parametrize("project,sym,n", [("Ether.fi", "sETHFI", 10), ("Maple", "stSYRUP", 8), ("Pendle", "sPENDLE", 3)])
 def test_w6_insider_share_is_not_wired_when_no_checked_wallet_holds_shares(tmp_path, monkeypatch, project, sym, n):
     """Round 3 review W6 (Jake 2026-10-14): 'If none are identified, the cell is NOT WIRED with the route, not 0.'"""
     import xlcalc
@@ -418,7 +418,7 @@ def test_w6_insider_share_is_not_wired_when_no_checked_wallet_holds_shares(tmp_p
     assert cell.startswith(f"NOT WIRED — no insider wallet identified among {sym} holders"), cell
     assert len(cell) <= 255                                                   # an Excel string constant
     what = str(_get(o, "Insider share — what is divided"))
-    assert f"Wallets checked ({n}, 0 {sym} each on 2026-10-13)" in what
+    assert f"Wallets checked ({n}, 0 {sym} each on 2026-10-14)" in what     # E6: re-read 2026-10-14 (E1 added two)
     leak = _get(o, "Leakage (i)")
     assert leak in ("", None) or str(leak).startswith("NOT WIRED"), leak
 
@@ -455,10 +455,43 @@ def test_v3_maple_dao_safe_move_is_named_and_only_the_eoa_leg_is_a_release():
     assert float(rel[pd.to_datetime(rel.date) == pd.Timestamp("2026-10-13")].value.iloc[0]) == pytest.approx(4e6, abs=1)
 
 
-def test_v4_eth_burn_gap_is_a_named_basis_difference():
+def test_e5_eth_burn_on_one_measured_basis_after_cq(monkeypatch, tmp_path):
+    """E5 (i), was V4: Etherscan's BurntFees is the previous day's closing snapshot, so each stored delta measured the
+    day BEFORE its date and 2026-09-29 was counted twice at the seam. Section CQ, run on Jake's real dump, moves the
+    rows and removes the doubled derived day; the 30 days to 2026-10-12 then compare with the execution-layer burn
+    measured block by block (2,458.9064 ETH) — the Etherscan leg equal to it, the DefiLlama-derived leg ~22 ETH low."""
+    import builtins
+    import contextlib
+    import io
+    import sqlite3
+
+    import real_dump
     import references as rf
-    r = {x["metric"]: x for x in rf.check(_groups("Ethereum"))}["burn_30d"]
-    assert r["status"] == "CHECK" and "basis difference" in r["detail"] and "etherscan" in r["detail"]
+    import run_sql
+    payload = real_dump.load("Ethereum")
+    db = tmp_path / "metrics.db"
+    real_dump.to_store(payload, db)
+    sec = run_sql.parse_sections(run_sql.SQL_FILE.read_text(encoding="utf-8"))["CQ"]
+    conn = sqlite3.connect(db)
+    monkeypatch.setattr(builtins, "input", lambda *a: "DELETE CQ")
+    with contextlib.redirect_stdout(io.StringIO()):
+        assert run_sql.run_delete(conn, sec["text"], "CQ", db, sec["authored"]) == 0
+        assert run_sql.run_delete(conn, sec["text"], "CQ", db, sec["authored"]) == 1      # a second run: nothing
+    q = lambda sql: conn.execute(sql).fetchall()  # noqa: E731
+    es = "project = 'Ethereum' AND source LIKE 'etherscan:ethsupply2.BurntFees%'"
+    assert q(f"SELECT MIN(date), MAX(date), COUNT(*) FROM metrics WHERE {es} AND metric = 'gross_burn_tokens'") \
+        == [("2026-09-29", "2026-10-12", 11)]
+    assert q(f"SELECT COUNT(*) FROM metrics WHERE {es} AND substr(fetched_at, 1, 10) = date") == [(0,)]
+    day = dict(q("SELECT source, value FROM metrics WHERE project = 'Ethereum' AND metric = 'gross_burn_tokens' "
+                 "AND date = '2026-09-29'"))
+    assert list(day) == ["etherscan:ethsupply2.BurntFees:delta"] and day[list(day)[0]] == pytest.approx(230.751861, abs=1e-6)
+    cols = ("date", "metric", "value", "source", "tier", "fetched_at")
+    rows = [dict(zip(cols, r)) for r in q(f"SELECT {', '.join(cols)} FROM metrics WHERE project = 'Ethereum'")]
+    conn.close()
+    monkeypatch.setattr(real_dump, "load", lambda project, vintage=None: {**payload, "metrics": rows})
+    r = {x["metric"]: x for x in rf.check(_groups("Ethereum", []))}["burn_30d"]
+    assert r["status"] == "VERIFIED", r
+    assert r["ours"] == pytest.approx(2_437.0675, abs=0.001) and "-0.89%" in r["detail"]
 
 
 def test_v6_a_short_leg_is_named_a_coverage_gap(monkeypatch):
@@ -1013,3 +1046,104 @@ def test_d7_near_status_falls_through_when_the_primary_drops_tls():
     obj.http = _Http()
     payload, detail = obj._call(api, {"jsonrpc": "2.0", "id": "t", "method": "status", "params": []})
     assert payload["result"]["protocol_version"] == 86 and detail == eps[1] and obj.http.calls[:2] == eps[:2]
+
+
+# =================================================================================================== run review E1–E9
+def test_e1_etherfi_docs_treasury_wallets_are_subtracted_and_the_policy_says_what_the_ratios_use():
+    """E1 (2026-10-14): ether.fi's own allocations page lists four Treasury wallets; two were missing from the set. The
+    policy text of Ether.fi, Fluid and GEODNET still read CoinGecko / the 462M plan while the ratios used the on-chain
+    set — corrected to what is used."""
+    cs = config.PROJECT_BY_NAME["Ether.fi"]["contracts"]
+    for k, a in (("noncirc_treasury_docs_3", "0x5f0E7A424d306e9E310be4f5Bb347216e473Ae55"),
+                 ("noncirc_treasury_docs_4", "0xD022d6bb8B6C1C357ec77D930Dc6A0aD40FFC90b")):
+        c = cs[k]
+        assert c["address"] == a and c["metric_override"] == "noncirculating_holding_tokens"
+        assert c["source_url"] == "https://etherfi.gitbook.io/gov/ethfi-allocations" and c["verified"] == "2026-10-14"
+    for n in ("Ether.fi", "Fluid", "GEODNET"):
+        assert config.circulating_primary_metric(n) == "circulating_supply_onchain"
+        assert config.CIRCULATING_POLICY[n]["kind"] == "onchain", n
+        assert "CoinGecko —" not in config.CIRCULATING_POLICY[n]["source"], n
+
+
+def test_e2_aethir_supply_is_read_on_ethereum_and_flagged_for_solana():
+    """E2: Arbitrum's ATH (3.18bn) sits in the Ethereum escrow, so the supply read is Ethereum's canonical 42bn, PARTIAL
+    while Solana's 18.44bn is not reconciled; Arbitrum is never summed."""
+    cs = config.PROJECT_BY_NAME["Aethir"]["contracts"]
+    sup = [k for k, c in cs.items() if c.get("kind") == "erc20_total_supply"]
+    assert sup == ["token_supply_ethereum"]
+    s = cs["token_supply_ethereum"]
+    assert s["chain"] == "ethereum" and s["address"] == "0xbe0Ed4138121EcFC5c0E56B40517da27E6c5226B"
+    assert s["supply_is_partial"] and "SOLANA NOT RECONCILED" in s["partial_reason"]
+    assert cs["token_arbitrum"]["kind"] == "bridged_representation"
+    assert "Aethir" not in config.TOTAL_SUPPLY_ONCHAIN_FIRST          # decision A4's condition still holds
+
+
+def test_e3_world_mobile_band_is_not_moved_and_the_partial_names_what_is_missing():
+    """E3: the post-deprecation sum (269,379,304.50) is not the aggregate; the 1.42bn floor refuses it, correctly."""
+    wm = config.PROJECT_BY_NAME["World Mobile"]
+    band = next(v for k, v in wm.items() if isinstance(v, dict) and "total_supply_gross" in v
+                and isinstance(v["total_supply_gross"], dict) and "min" in v["total_supply_gross"])
+    assert band["total_supply_gross"] == {"min": 1_420_000_000, "max": 2_000_000_000}
+    assert "650,787,233.25" in config.WMTX_CARDANO_PARTIAL and "269,379,304.50" in config.WMTX_CARDANO_PARTIAL
+
+
+def test_e5_hyperliquid_team_unlock_references_are_the_ledgers_and_verify():
+    """E5 (ii): the team wallet's own ledger (HL info API, read 2026-10-14): 1,125,766 + 1 sold on 2026-01-06 and
+    1,745,745 + 1 sold on 2025-11-29. The secondary 1.2M was the unstake; 1.75M the net unstake rounded."""
+    import references as rf
+    r = {x["metric"]: x for x in rf.check(_groups("Hyperliquid", _hl_rows()))}   # the replay, from the ledgers fixture
+    for m, v in (("team_unlock_2026-01-06", 1_125_767), ("team_unlock_2025-11-29", 1_745_746)):
+        assert r[m]["status"] == "VERIFIED", r[m]
+        assert r[m]["ours"] == pytest.approx(v, abs=1)
+
+
+def test_e5_near_intents_is_labelled_since_its_first_day():
+    import references as rf
+    r = {x["metric"]: x for x in rf.check(_groups("Near"))}["intents_cumulative_volume"]
+    assert "since" in (r.get("detail") or "").lower() or "SINCE" in (r.get("detail") or ""), r
+    row = next(x for x in csv.DictReader(open(ROOT / "independent_references.csv", encoding="utf-8"))
+               if x["metric"] == "intents_cumulative_volume")
+    assert "SINCE 2025-07-15" in row["note"] and "30685539216" in row["note"]
+
+
+def test_e9_chainlink_staking_rate_on_both_bases():
+    """E9: the vault read (2026-10-14) gives 4.323% on the community pool and 4.766% blended; the reference row the A1
+    validator yield is compared with is on the blended basis, the community rate is stored and labelled apart."""
+    import references as rf
+    r = {x["metric"]: x for x in rf.check(_groups("Chainlink"))}
+    assert r["staking_blended_rate"]["status"] == "VERIFIED", r["staking_blended_rate"]
+    assert r["staking_blended_rate"]["ours"] == pytest.approx(0.04766, abs=0.0002)
+    rows = {x["metric"]: x for x in csv.DictReader(open(ROOT / "independent_references.csv", encoding="utf-8"))
+            if x["project"] == "Chainlink"}
+    assert rows["staking_community_rate"]["note"].startswith("BASIS: COMMUNITY POOL ONLY")
+    assert rows["staking_blended_rate"]["note"].startswith("BASIS: BLENDED")
+    man = config.CREDIBILITY["Chainlink"]["a1_validator_yield"]
+    assert man["manual"]["value"] == 0.04766 and man["note"].startswith("BASIS: BLENDED")
+    assert config.VALIDATOR_YIELD["Chainlink"]["note"].startswith("BASIS: BLENDED")
+
+
+def test_e1_cr_restates_etherfi_noncirculating_on_the_current_set(monkeypatch, tmp_path):
+    """E1: section CR, run on Jake's real Ether.fi dump, removes exactly the old-set noncirculating_holding_tokens rows
+    (none carries the newest wallet) and nothing else; a second run matches nothing."""
+    import builtins
+    import contextlib
+    import io
+    import sqlite3
+
+    import real_dump
+    import run_sql
+    payload = real_dump.load("Ether.fi")
+    db = tmp_path / "metrics.db"
+    real_dump.to_store(payload, db)
+    conn = sqlite3.connect(db)
+    before = conn.execute("SELECT COUNT(*) FROM metrics").fetchone()[0]
+    old = conn.execute("SELECT COUNT(*) FROM metrics WHERE project = 'Ether.fi' AND "
+                       "metric = 'noncirculating_holding_tokens'").fetchone()[0]
+    assert old > 300
+    sec = run_sql.parse_sections(run_sql.SQL_FILE.read_text(encoding="utf-8"))["CR"]
+    monkeypatch.setattr(builtins, "input", lambda *a: "DELETE CR")
+    with contextlib.redirect_stdout(io.StringIO()):
+        assert run_sql.run_delete(conn, sec["text"], "CR", db, sec["authored"]) == 0
+        assert run_sql.run_delete(conn, sec["text"], "CR", db, sec["authored"]) == 1
+    assert conn.execute("SELECT COUNT(*) FROM metrics").fetchone()[0] == before - old
+    assert "noncirc_treasury_docs_4" in str(config.PROJECT_BY_NAME["Ether.fi"]["contracts"])

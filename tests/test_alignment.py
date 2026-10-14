@@ -27,7 +27,11 @@ DUMPS = ("Aerodrome", "Chainlink", "Ethereum", "Maple", "Pendle", "Plume",
 # FIX ROUND 2 (T2): the independent references (independent_references.csv) that are OUTSIDE tolerance on these dumps,
 # each with its cause on the Coverage row. The set must match exactly: a new BROKEN fails the build, and so does a fixed
 # one still listed here. (project, Coverage tab, column prefix)
-KNOWN_REFERENCE_BROKEN: set = set()   # D5 (2026-10-14): Maple dao_safe_balance re-read after the 10-13 18:10 UTC move
+# D5 (2026-10-14): Maple dao_safe_balance re-read after the 10-13 18:10 UTC move. E5 (2026-10-14): the Ethereum dump
+# predates orphan_cleanup.sql CQ (Etherscan BurntFees rows a day late, 2026-09-29 counted twice) — BROKEN against the
+# measured burn until CQ runs on the store and the dump is refreshed; the cause names CQ (test_fix_round_3 runs CQ on
+# this dump and the row verifies).
+KNOWN_REFERENCE_BROKEN: set = {("Ethereum", "References", "burn_30d")}
 TABS = ("Master", "A1 Infrastructure", "A2 Coordination", "A3 Revenue Buyback", "A4 Permanent Burn", "CP Comparability")
 
 

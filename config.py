@@ -87,10 +87,18 @@ WMTX_CARDANO_PARTIAL = (
     "Foundation token registry, read 2026-09-28), not an ERC-20; its Koios read is the "
     "check_offline_items wm_cardano_supply probe, not yet wired. SIZE THE EXCLUSION BY "
     "SUBTRACTION, not by estimate: aggregate supply from the whitepaper's Section XI curve "
-    "(decay_curve_confirmed) minus this sum is the Cardano-native residual. Ethereum alone reads "
-    "1,493,853,279 against an aggregate around 1.5bn, so the residual is expected to be small — "
-    "and 'expected' is why the subtraction is the answer and this sentence is not.")
+    "(decay_curve_confirmed) minus this sum is the Cardano-native residual. "
+    "SINCE 2026-09-25 (E3, run review 2026-10-14) THE SUM IS NOT THE AGGREGATE AT ALL: Ethereum is "
+    "deprecated (World Mobile's recovery update; its 1,493,853,278.83 still on chain is not read), "
+    "and the remaining four — Arbitrum 93,778.56 + BSC 52,265,404.31 + Base 214,533,866.43 + "
+    "Solana 2,486,255.19 = 269,379,304.50 (2026-10-14) — miss (1) Cardano-native WMTx, "
+    "650,787,233.25 on Koios policy_asset_info 2026-10-14 (13,541 mints, 1,254 burns), not summed "
+    "because the Cardano<->EVM bridge model is not established; and (2) the Ethereum holders' "
+    "re-issue on Base, not complete. Even with Cardano the figure is 920,166,537.75, below the "
+    "1.42bn floor of the whitepaper curve: the bound's refusal is right and nothing is stored.")
 TODAY_VERIFIED = "2026-09-11"
+_SETHFI_L2_E4 = (
+    "E4 (run review 2026-10-14): THE L2 ADDRESSES ARE NOW ON FILE — ether.fi's deployed-contracts page (etherfi.gitbook.io/etherfi/developers/contracts-and-integrations/deployed-contracts, 'ETHFI Staking') lists sETHFI at this same address on Arbitrum, Base, Optimism and Scroll. Read 2026-10-14 (shares / ETHFI held): Arbitrum 3,075,341.85 / 3,194,331.20; Base 367,749.42 / 404,805.12; Optimism 22,421,094.10 / 19,164,964.19; Scroll 5,756.15 / 0.00 — against mainnet 88,013,705.31 / 109,900,519.85. NOT SUMMED: assets per share differ by chain (1.249 mainnet, 1.039 / 1.101 / 0.855 on Arbitrum / Base / Optimism) and Scroll's shares hold no ETHFI, so at least some L2 shares are bridged representations of mainnet shares; how each L2 vault is backed is not documented, and a sum could count a stake twice. Mainnet stays the figure, flagged partial.")
 UNISWAP_FEE_DEPLOYMENTS = "https://docs.uniswap.org/contracts/protocol-fee/deployments"
 # Pendle's own deployment file — the primary source for every Pendle mainnet address.
 PENDLE_DEPLOYMENTS_1_CORE = "https://raw.githubusercontent.com/pendle-finance/pendle-core-v2-public/main/deployments/1-core.json"   # date the parameters below were set from the working brief
@@ -6749,6 +6757,10 @@ PROJECTS = [
                 metric_override="total_supply_gross", required_component=True),
         },
         # ===== THE BAND ON THE FOUR-CHAIN SUM, AND WHAT EACH END OF IT MEANS. =====
+        # E3 (run review 2026-10-14): the band in force is 1.42bn-2.0bn (sanity below), the text under this line
+        # predates the 2026-09-23 widening. Since Ethereum's deprecation (2026-09-25) the sum reads ~269M and is
+        # REFUSED every run, correctly: it is not the aggregate (WMTX_CARDANO_PARTIAL says what is missing). The band
+        # is not moved — no source gives a post-deprecation aggregate to set it on.
         # Set on the whitepaper's own curve (aggregate rises ~1.42bn to 2bn over twenty years)
         # and on Ethereum alone already reading 1,493,853,279.
         #   BELOW 1.4bn  a component failed and the sum is short by a whole chain. The adapter
@@ -8941,25 +8953,48 @@ PROJECTS = [
         # NFT-repurchase-for-eATH programme runs there; Ethereum is airdrop/staking/CEX only. Any
         # read of the Checker Node mechanism must point at Arbitrum.
         #
-        # ONLY ARBITRUM IS GIVEN THE SUPPLY READ, and the 42,000,000,000 total supply is confirmed
-        # directly on the Arbitrum contract (Arbiscan). Ethereum and Solana are recorded WITHOUT
-        # read slots for the same reason as WMTx and GEOD: the adapter sums contracts serving one
-        # metric, and summing three deployments is correct only under burn-and-mint bridging, which
-        # is not established here either.
+        # E2 (run review 2026-10-14) — THE SUPPLY READ IS ETHEREUM'S, NOT ARBITRUM'S. The note that stood here ("the
+        # 42,000,000,000 total supply is confirmed directly on the Arbitrum contract") was wrong: Arbitrum's
+        # totalSupply() is 3,184,794,761.59 (block 514,752,055), and every run stored that Arbitrum-only figure as
+        # total_supply [PARTIAL] under the same key as CoinGecko's 42bn, which overwrote it — so the store held
+        # CoinGecko's figure and a day CoinGecko failed would have put FDV on 3.2bn. Live reads, 2026-10-14:
+        #   Ethereum 0xbe0E…226B totalSupply 42,000,000,000.000000 (block 26,191,006) — Aethir's canonical token
+        #     (docs.aethir.com token-overview: "ETH Mainnet (Canonical Token Contract)", "Total Supply 42,000,000,000")
+        #   Arbitrum 0xc87B…056c totalSupply 3,184,794,761.5889 — the Axelar ITS deployment; the Ethereum escrow
+        #     TokenManager 0x148F…1948 (docs.aethir.com official-ath-bridges, "Last updated: April 2026") holds
+        #     3,184,805,149.2528 ETH-side ATH, 10,387.66 MORE than Arbitrum's supply: lock/unlock, Arbitrum's ATH is
+        #     inside the Ethereum 42bn. RECONCILED — not summed.
+        #   Solana Dm5B…acVk7 supply 18,438,580,143.760215 (slot 456,853,261; mint authority 2dCh45…, a wallet).
+        #     NOT RECONCILED: Aethir does not say how Solana ATH is backed, and no single Ethereum holder matches it
+        #     (the two largest, 0xf9d9f4ae… 11.80bn and 0xa02ba54a… 5.07bn, are unidentified contracts). If it is
+        #     backed on Ethereum the total is 42bn; that is not shown, so the read is stored PARTIAL naming Solana.
         "contracts": {
             "token_arbitrum": _contract(
-                "0xc87B37a581ec3257B734886d9d3a581F5A9d056c", "arbitrum", "erc20_total_supply", "ATH",
+                "0xc87B37a581ec3257B734886d9d3a581F5A9d056c", "arbitrum", "bridged_representation", "ATH",
                 "https://docs.aethir.com/aethir-tokenomics/token-overview",
-                verified="2026-09-14", provenance="Aethir's own token overview; total supply confirmed "
-                                                  "directly on the Arbitrum contract via Arbiscan",
+                verified="2026-10-14", provenance="Aethir's own token overview (Interchain Token contract, "
+                                                  "Arbitrum); totalSupply 3,184,794,761.59 read 2026-10-14",
+                token_standard="erc20",
+                purpose="ATH on ARBITRUM — the Axelar INTERCHAIN deployment carrying Checker Node rewards and "
+                        "compute rewards. NOT a supply read (E2, 2026-10-14): its supply is locked in the "
+                        "Ethereum escrow 0x148F…1948 and sits inside Ethereum's 42bn. Read this one, not "
+                        "Ethereum, for anything touching the Checker Node mechanism."),
+            # E2 (run review 2026-10-14): THE supply read — Aethir's canonical Ethereum token. PARTIAL until Solana's
+            # 18.44bn is reconciled to an Ethereum escrow (see the note above the contracts).
+            "token_supply_ethereum": _contract(
+                "0xbe0Ed4138121EcFC5c0E56B40517da27E6c5226B", "ethereum", "erc20_total_supply", "ATH",
+                "https://docs.aethir.com/aethir-tokenomics/token-overview",
+                verified="2026-10-14", provenance="Aethir's token overview: 'ETH Mainnet (Canonical Token "
+                                                  "Contract)', 'Total Supply 42,000,000,000'; totalSupply() "
+                                                  "42,000,000,000 at block 26,191,006",
                 token_standard="erc20", supply_is_partial=True,
-                partial_reason="ARBITRUM ONLY. ATH is also deployed on Ethereum "
-                               "(0xbe0Ed4138121EcFC5c0E56B40517da27E6c5226B, canonical: airdrop/staking/CEX) "
-                               "and Solana (Dm5BxyMetG3Aq5PaG1BrG7rBYqEMtnkjvPNMExfacVk7). The bridge model "
-                               "is not established, so they are not summed.",
-                purpose="ATH on ARBITRUM — the INTERCHAIN deployment carrying Checker Node rewards and "
-                        "compute rewards. THE supply read: 42,000,000,000 total supply confirmed here. "
-                        "Read this one, not Ethereum, for anything touching the Checker Node mechanism."),
+                partial_reason="SOLANA NOT RECONCILED. Ethereum's canonical 42,000,000,000 includes the Axelar "
+                               "escrow (0x148F…1948, 3,184,805,149.25) that backs Arbitrum's 3,184,794,761.59 — "
+                               "reconciled. Solana's mint Dm5BxyMetG3Aq5PaG1BrG7rBYqEMtnkjvPNMExfacVk7 reads "
+                               "18,438,580,143.76 and Aethir does not say how it is backed; until an Ethereum "
+                               "escrow holding it is identified, 42bn is the Ethereum figure, not a proven "
+                               "all-chain total.",
+                purpose="ATH total supply — Ethereum canonical totalSupply (E2, 2026-10-14)"),
             # RECORDED WITHOUT READ SLOTS, to avoid a cross-chain sum under an unestablished bridge:
             #   Ethereum (CANONICAL — airdrop, staking, default CEX chain)
             #     0xbe0Ed4138121EcFC5c0E56B40517da27E6c5226B
@@ -8976,9 +9011,8 @@ PROJECTS = [
             # undercounts veAethir minted but not yet deposited into either pool). See
             # aethir_staking.wrapper_three_way_match_2026_09_24 for the evidence and its limits (a
             # SNAPSHOT proof, not a historical one).
-            # ETHEREUM ATH is declared here as the underlying ONLY. bridged_representation keeps it
-            # out of every supply sum — the bridge model is still unestablished (see above), and
-            # the Arbitrum deployment stays the one supply read.
+            # ETHEREUM ATH is declared here as the wrapper's underlying. The supply read on the same
+            # address is token_supply_ethereum above (E2, 2026-10-14).
             "token_ethereum": _contract(
                 "0xbe0Ed4138121EcFC5c0E56B40517da27E6c5226B", "ethereum", "bridged_representation", "ATH",
                 "https://docs.aethir.com/aethir-tokenomics/token-overview",
@@ -8986,8 +9020,8 @@ PROJECTS = [
                                                   "2026-09-14); corroborated by the Arbitrum token "
                                                   "bridge list (l1Address)",
                 token_standard="erc20",
-                purpose="ATH on ETHEREUM — the balanceOf target for the staking wrapper. "
-                        "REFERENCE ONLY for supply: never summed."),
+                purpose="ATH on ETHEREUM — the balanceOf target for the staking wrapper (the supply read on "
+                        "this address is token_supply_ethereum)."),
             # ===== NO LONGER locked_tokens (Jake's probes3, 2026-09-30). The dashboard's totalStaked
             # (1,789,329,560.63) includes the compute providers' IDC stake this wrapper never sees;
             # it is locked_tokens now, and this read lands as locked_tokens_wrapper beside it
@@ -9987,7 +10021,14 @@ PROJECTS = [
                                "maple.finance/transparency (read 2026-09-14). This address is at "
                                "most part of what Maple counts as the treasury. The published "
                                "figure is treasury_holding_tokens (the page, scraped live); "
-                               "the ~3x gap is unexplained and open — see OPEN_QUESTIONS.",
+                               "the ~3x gap is unexplained and open — see OPEN_QUESTIONS. "
+                               "E4 (run review 2026-10-14), current: this address 42,290,111.33 "
+                               "(block 26,191,088, after tx 0xd628a262) vs the page 77,660,000 "
+                               "(2026-10-13). Not reproduced by any set we hold: with the "
+                               "issuer-rule Safe 0x58BE (48,624,987.59) it is 90,915,098.92, and "
+                               "the page did NOT step up on 2026-10-13 when this address gained "
+                               "a net 19.2M — so the page is not this balance. Maple does not "
+                               "publish which wallets its figure counts; stays partial.",
                 destination_status="verified_by_label",
                 destination_note="Etherscan's OWN label identifies this address as 'Maple Finance: DAO', "
                                  "matching Maple's transparency page description of 'the Maple Treasury' "
@@ -11826,7 +11867,11 @@ PROJECTS = [
                          "destination, so those need a figure Hyperliquid publishes rather than "
                          "a read. Do NOT sum the zero-address balance into this series without "
                          "deciding first whether an EVM-side figure and a Core-side figure are "
-                         "the same quantity.",
+                         "the same quantity. E4 (run review 2026-10-14): read, not summed — the zero "
+                         "address's HyperEVM balance is 308,626.43 HYPE (rpc.hyperliquid.xyz/evm "
+                         "eth_getBalance, block 48,523,815), the cumulative EVM priority-fee burn; the "
+                         "EVM base-fee burn has no address and no published figure. Summing is Jake's "
+                         "call (the EVM/Core basis question above).",
                 "source_urls": [
                     "https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/hyperevm",
                     "https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/priority-fees",
@@ -17937,11 +17982,7 @@ PROJECTS = [
                            "sETHFI.totalSupply() rather than ETHFI.balanceOf(sETHFI)",
                 metric_override="locked_tokens", token_standard="erc20", holder_has_code=True,
                 supply_is_partial=True,
-                partial_reason="MAINNET ONLY, exactly as contracts.sethfi — sETHFI also exists on "
-                               "Scroll, Arbitrum and Base and those addresses are not on file, so "
-                               "this understates total staked ETHFI. The understatement is small "
-                               "(~$2.2m against ~$300m) and does NOT account for the Dune series' "
-                               "1.58x overstatement.",
+                partial_reason="MAINNET ONLY, exactly as contracts.sethfi. " + _SETHFI_L2_E4,
                 purpose="sETHFI.totalSupply() — the SHARE-denominated lock figure, feeding "
                         "locked_tokens. Pairs with contracts.sethfi (the ASSET-denominated one) "
                         "to give lock_assets_per_share, which needs both in the same run.",
@@ -17958,9 +17999,7 @@ PROJECTS = [
                 read_method="escrow_balance_of", token_standard="erc20", underlying="token",
                 holder_has_code=True,
                 supply_is_partial=True,
-                partial_reason="MAINNET ONLY. sETHFI also exists on Scroll (~$1.35m), Arbitrum (~$717k) and "
-                               "Base (~$128k); those addresses are not on file, so this understates total "
-                               "staked ETHFI.",
+                partial_reason="MAINNET ONLY. " + _SETHFI_L2_E4,
                 purpose="sETHFI — the buyback DESTINATION, and the ASSET-denominated lock figure. Read as "
                         "ETHFI.balanceOf(sETHFI). Feeds locked_tokens_underlying; the share-denominated "
                         "series (locked_tokens) comes from Dune 8683038 and is left untouched.",
@@ -18383,6 +18422,15 @@ _NONCIRC_WALLETS_FIRST_PARTY = {
          "https://etherscan.io/address/0xe4439b1d150ab2febd72d699954c7b4dde2b66e2", "2026-10-07",
          "Safe 3-of-7 sharing 5 owners with the buyback Safe; 20,000,000 ETHFI from Treasury 0x7a6a41f3 (Jake's "
          "etherfi_sender_trace, 2026-10-07) — treasury reserve"),
+        # E1 (run review 2026-10-14): ether.fi's OWN allocations page lists FOUR Treasury wallets ("*updated as of
+        # August 2, 2025"); two of them (0x7D4bBE47…, 0x7A6A41F3…) were already here from the filing, these two were
+        # not. 684,761.46 and 62,259.81 ETHFI at Ethereum block 26,190,992 (Claude Code, 2026-10-14).
+        ("treasury_docs_3", "0x5f0E7A424d306e9E310be4f5Bb347216e473Ae55", "ethereum", "ETHFI",
+         "https://etherfi.gitbook.io/gov/ethfi-allocations", "2026-10-14",
+         "Treasury (ether.fi's allocations page, Treasury 21.62% — 'Wallets:' list)"),
+        ("treasury_docs_4", "0xD022d6bb8B6C1C357ec77D930Dc6A0aD40FFC90b", "ethereum", "ETHFI",
+         "https://etherfi.gitbook.io/gov/ethfi-allocations", "2026-10-14",
+         "Treasury (ether.fi's allocations page, Treasury 21.62% — 'Wallets:' list)"),
     ],
 }
 # MOVED (the old /governance/organization/ answers 404; docs.morpho.org/sitemap.xml lists the new path, read 2026-10-11)
@@ -18463,6 +18511,9 @@ TOTAL_SUPPLY_ONCHAIN_FIRST = {
 # JAKE 2026-10-11 (decision A4 on 5b87610): the other seven whose token read is the WHOLE supply. Chain vs CoinGecko read
 # 2026-10-11 identical to the token for all seven, so no figure moves — each series changes measuring point once, declared
 # below. Aethir stays CoinGecko-first while its Arbitrum read is PARTIAL (not the full supply).
+# E2 (run review 2026-10-14): Aethir's read is now Ethereum's canonical totalSupply (42,000,000,000 — the same figure as
+# CoinGecko's), still PARTIAL because Solana's 18.44bn is not reconciled to an Ethereum escrow. PROPOSED, Jake's call:
+# keep CoinGecko-first (decision A4's condition, PARTIAL, still holds) — the tier collision logs the dropped chain row.
 for _n, _chain in (("Aerodrome", "base"), ("Chainlink", "ethereum"), ("Fluid", "ethereum"), ("Maple", "ethereum"),
                    ("Morpho", "ethereum"), ("Pendle", "ethereum"), ("Sky", "ethereum")):
     TOTAL_SUPPLY_ONCHAIN_FIRST[_n] = {"decided_by": "Jake", "decided_on": "2026-10-11",
@@ -19327,8 +19378,9 @@ VALIDATOR_YIELD = {
     # 2026-09-29: from the vault's EMISSION RATE (accrual), not the lumpy claim outflow.
     "Chainlink": {"method": "rate_share", "rate_metric": "reward_emission_rate_annual",
                   "stake_metric": "locked_tokens_principal", "share": 1.0,
-                  "note": "RewardVault active emission rate (LINK/yr) / staked principal — "
-                          "secures the oracle network, not a chain",
+                  "note": "BASIS: BLENDED — RewardVault active emission rate, all three buckets (LINK/yr) / "
+                          "both pools' staked principal (4.77% on 2026-10-14); the community pool alone is 4.32% "
+                          "(staker_yield_community_pool) — secures the oracle network, not a chain",
                   # THE CROSS-CHECK, from Chainlink's own material (blog.chain.link/
                   # chainlink-staking-v0-2-overview, Nov 2023; chain.link/economics/staking):
                   # community base floor 4.5%/yr, 4% of it redirected to operators as delegation
@@ -22747,18 +22799,21 @@ CIRCULATING_POLICY = {
     "GEODNET": {"now": "ON-CHAIN (Jake, 2026-10-07 evening): total - burns - the wallets GEODNET's docs name; the bridge "
                        "reconciles (custody 274,775,755 vs Solana supply 274,763,344) and no Solana holder is GEODNET's "
                        "— 516,361,733. The 462M below is the labelled STATIC cross-check.",
-                "source": "Blockworks' figure, 462M (app.blockworks.com/projects/geodnet; Jake, 2026-10-07) — a THIRD "
-                          "PARTY, equal to CoinGecko's fixed 462,360,759 and static while mining releases ~122K "
-                          "GEOD/day. GEODNET publishes NO circulating figure of its own (docs, token page, GitHub "
-                          "searched 2026-10-07). A dated manual row (circulating_supply_third_party)",
-                "kind": "third_party_reference",
-                "definition": "not published with a method; static",
-                "plan": "once the Solana side is resolved (bridge custody 0x2006B446… and Solana supply, geod_residual), "
-                        "our on-chain set — built only from wallets GEODNET's docs name — becomes primary, and the "
-                        "462M a labelled static cross-check (Jake, 2026-10-07)",
-                "staked": "not stated", "add_back": None,
-                "previous": "CoinGecko 462,360,759 less the un-netted Solana burn (~430M as the ratios used it); "
-                            "the on-chain set reads ~516M (+11.7% on 462M) and is the cross-check",
+                # E1 (run review 2026-10-14): source/kind still described the 462M third-party plan after it was
+                # carried out (ratios_use "onchain" since 2026-10-07 evening); corrected to what the workbook uses
+                "source": "our on-chain set: total − the Polygon dead address and the Solana incinerator − the seven "
+                          "wallets docs.geodnet.com/geod-token/tokenomics names (mining, mining distribution, ecosystem, "
+                          "team, investor, vendor/marketing, public sale). GEODNET publishes NO circulating figure "
+                          "(docs, token page, GitHub, 2026-10-07; whitepaper and Dune console, 2026-10-14)",
+                "kind": "onchain",
+                "definition": "total − burns − the wallets GEODNET's own docs name",
+                "coingecko_refresh": "CoinGecko's figure moves only when CoinGecko refreshes it: 462,370,402.62 on every "
+                                     "read 2026-08-30..10-11 (35 days), then 460,548,399.54 from 2026-10-12, the day its "
+                                     "total moved to 930,571,063.54 = 1,000,000,000 − our burn read of 2026-10-11 "
+                                     "(69,428,936.38). Each read is fresh (fetched daily); the figure between refreshes "
+                                     "is CoinGecko's own static value (E1, 2026-10-14)",
+                "staked": "included (the staking wallet 0x682B… is not subtracted)", "add_back": None,
+                "previous": "Blockworks' / CoinGecko's static 462M (third_party_reference, to 2026-10-07)",
                 "note": "the un-netted-burn adjustment (supply_unnetted_burn) applies to CoinGecko's figure only, "
                         "never to the manual figure in use"},
     "Pendle": {"source": "Pendle's DOCUMENTED method (documentation@3cc3658 Tokenomics.md L24-33), computed on chain",
@@ -22821,15 +22876,23 @@ CIRCULATING_POLICY = {
     "Ether.fi": {"now": "ON-CHAIN (full sweep, Jake 2026-10-07): total - the treasury 0x0c83… - the wallets ether.fi's "
                         "Blockworks filing labels (two custodian origins, three treasuries, the operating top-up Safe) - "
                         "the old buyback Safe; CoinGecko the cross-check",
-                 "source": "CoinGecko — ether.fi publishes no figure", "kind": "coingecko",
-                 "definition": "CoinGecko's own count", "staked": "included (sETHFI is a holder-owned vault)",
-                 "add_back": None, "previous": "the same — unchanged"},
-    "Fluid": {"now": "CoinGecko still (full sweep, 2026-10-07): Fluid's own constants (Timelock, team multisig 2, "
-                     "Foundation) and its MerkleDistributors are wired as the cross-check; the IGP-137 dedicated "
-                     "wallet is unpublished",
-              "source": "CoinGecko — Fluid publishes no figure", "kind": "coingecko",
-              "definition": "CoinGecko's own count", "staked": "n/a", "add_back": None,
-              "previous": "the same — unchanged"},
+                 # E1 (run review 2026-10-14): source/kind/definition still read CoinGecko after the sweep switched the
+                 # ratios to the on-chain set (ratios_use "onchain"); corrected to what the workbook uses
+                 "source": "our on-chain set: total − the treasury 0x0c83… − the filing's wallets − the old buyback "
+                           "Safe − the treasury reserve Safe − the two further Treasury wallets on ether.fi's own "
+                           "allocations page (E1, 2026-10-14); ether.fi publishes no figure; CoinGecko the cross-check",
+                 "kind": "onchain", "definition": "total − issuer-side holdings named by ether.fi (docs + filing)",
+                 "staked": "included (sETHFI is a holder-owned vault)",
+                 "add_back": None, "previous": "CoinGecko's own count (to 2026-10-07)"},
+    # E1 (run review 2026-10-14): this entry still read "CoinGecko still" after Jake's sign-off round put the ratios on
+    # the on-chain set (CIRCULATING_ONCHAIN ratios_use "onchain", IGP-137's lock wired); corrected to what is used
+    "Fluid": {"now": "ON-CHAIN (Jake's sign-off round, 2026-10-07): total − the DAO Treasury − the two Team Multisigs − "
+                     "the governance Timelock − the Foundation − IGP-137's lock − the reward distributors' unclaimed "
+                     "FLUID; CoinGecko (= total − the DAO Treasury only, exactly) the cross-check",
+              "source": "our on-chain set (Fluid publishes no figure); CoinGecko the cross-check", "kind": "onchain",
+              "definition": "total − issuer-side holdings (treasury, team, timelock, foundation, IGP-137 lock, "
+                            "undistributed rewards)", "staked": "n/a", "add_back": None,
+              "previous": "CoinGecko's own count (to 2026-10-07)"},
 }
 # ===== NON-CIRCULATING ADDRESSES NAMED IN EACH PROJECT'S OWN SOURCES (Jake, 2026-09-30). =====
 # Morpho, Aerodrome, Aethir, Plume, NEAR. A LIST, NOT WIRING: nothing here is subtracted until a
@@ -25831,12 +25894,16 @@ CREDIBILITY: dict = {
     },
     # ---------------------------------------------------------------- Chainlink
     "Chainlink": {
-        "a1_validator_yield": {"manual": {"value": 0.0432, "read_on": "2026-09-28", "read_by": "Claude Code",
-                                          "source": "blog.chain.link/chainlink-staking-v0-2-overview — community pool "
-                                                    "effective rate"}, "tol": 15.0,
-                               "note": "Ours blends both pools over the principal actually staked; the operator pool is "
-                                       "under its cap (1.64M of 4.125M on 2026-09-29), so its realised rate is above the "
-                                       "published 4.5% and the blend sits above 4.32%."},
+        # E9 (run review 2026-10-14): the reference was the COMMUNITY-POOL rate (4.32%) against our BLENDED rate (4.77%),
+        # two bases 10.3% apart passing inside a 15% tolerance. Now one basis: the blended rate read from the vault.
+        "a1_validator_yield": {"manual": {"value": 0.04766, "read_on": "2026-10-14", "read_by": "Claude Code",
+                                          "source": "RewardVault 0x996913c8… getRewardBuckets (2,026,389 LINK/yr) ÷ "
+                                                    "both pools' getTotalPrincipal (42,519,947 LINK) — BLENDED basis "
+                                                    "(check_offline_items chainlink_reward_rates)"}, "tol": 15.0,
+                               "note": "BASIS: BLENDED (all three buckets ÷ all principal), as ours. The COMMUNITY-POOL "
+                                       "basis is 4.32% (chain.link/economics/staking; 4.323% on the vault read) and is "
+                                       "stored apart as staker_yield_community_pool; the operator pool is under its cap "
+                                       "(1.64M of 4.125M), so the blend sits above it."},
         "a1_nrr_settlement": _c_na("Chainlink is not a chain — no settlement volume"),
         "a1_nrr_throughput": _c_na("Chainlink is not a chain — no DEX throughput"),
         "a1_tvl": _c_na("Chainlink is not a chain — no chain TVL"),
@@ -27494,14 +27561,26 @@ OUTFLOW_CATEGORIES = {
 # rule: such a ratio is BLOCKED, naming the missing part — never a number. (project, category) -> what is missing.
 OUTFLOW_INCOMPLETE = {
     ("Fluid", "b"): "FLUID rewards are read from the Ethereum Merkle distributors + Arbitrum's only — the Base and Plasma "
-                    "distributors (bridged FLUID) are not scanned",
+                    "distributors (bridged FLUID) are not scanned. E7 (2026-10-14), measured once and reconciled to the "
+                    "wei (in − out = balanceOf at the pinned block; Instadapp/fluid-contracts-public@9496626f "
+                    "deployments.md): Base 0x94312a60… Q0 4,816.04 and 0xF3602935… 417.39, Plasma 0x3413D185… 311.36 "
+                    "FLUID (FLUID 0x61E030A5… on both) — +5,531.23 FLUID ($7,269) on the stored (b), which would move "
+                    "the cover 58.76x -> 56.46x. Still BLOCKED: the run cannot store them (Base has no free explorer "
+                    "log route, Plasma is not in CHAIN_IDS)",
     ("Aethir", "b"): "emissions_tokens is the declared Checker Node BASE schedule (2,874,743 ATH/day, PARTIAL) until the "
                      "supplier-rewards cumulatives are measured — compute-provider rewards and the checker bonus are "
-                     "missing",
+                     "missing. E7 (2026-10-14), Aethir's own dashboard as stored: compute rewards weekly from "
+                     "2026-06-28 (2,623,562/day; Q0 228,249,863 over 12 weeks); edge earnings monthly 2026-03..09 "
+                     "(edge cumulative 1,194,577/day since 2026-10-06); checker base+bonus+airdrop cumulative only "
+                     "since 2026-10-05 (2,868,766/day). Q0 cannot be completed until the checker cumulative spans "
+                     "Q0 (from 2027-01-03) — the block holds",
     ("Pendle", "b"): "PENDLE gauge emissions are read on Ethereum, Arbitrum and Optimism only — the gaugeControllers on "
                      "BNB Chain 0x704478Dd…, Base 0x17F100fB…, Mantle 0x428f2f93…, Sonic 0xeE708FC7…, Berachain "
                      "0x704478Dd… and HyperEVM 0x7e500c6e… are not scanned (pendle-core-v2-public deployments/"
-                     "<chainId>-core.json, read 2026-10-13)",
+                     "<chainId>-core.json, read 2026-10-13). E7 (2026-10-14), scanned once and reconciled to the wei: "
+                     "Base Q0 949.10 and HyperEVM 2,087.85 PENDLE; Sonic, Mantle and Berachain paid nothing in Q0 (last "
+                     "outflows 2026-02-26 / 2025-09-18 / 2026-01-26); BNB NOT reconciled (no free route serves its logs "
+                     "fast enough; Q0 not covered). Still BLOCKED: BNB is open and the run cannot store the others",
 }
 
 
@@ -27681,8 +27760,10 @@ for _n, (_share_key, _sym, _den) in _INSIDER_STAKE.items():
                       if k.startswith("insider_stake_"))
     INSIDER_SHARE_MONITOR[_n] = {
         "numerator": "insider_stake_shares", "denominator": _den, "symbol": _sym,
+        # E6 (run review 2026-10-14): every wallet re-read 0 at Ethereum block 26,191,099, the two ether.fi Treasury
+        # wallets added in E1 included
         "what": (f"{_sym} shares held by the project's non-circulating wallets ÷ {_sym} totalSupply (shares over "
-                 f"shares). Wallets checked ({len(_checked)}, 0 {_sym} each on 2026-10-13): {', '.join(_checked)}"),
+                 f"shares). Wallets checked ({len(_checked)}, 0 {_sym} each on 2026-10-14): {', '.join(_checked)}"),
         # an Excel string constant is at most 255 characters — the wallet list is in "what is divided"
         "not_wired": (f"NOT WIRED — no insider wallet identified among {_sym} holders: the {len(_checked)} issuer-side "
                       f"wallets checked hold 0 (route: {_sym} holders crossed with the issuer-wallet list; the ratio "

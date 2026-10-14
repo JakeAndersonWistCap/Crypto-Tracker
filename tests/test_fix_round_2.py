@@ -70,7 +70,7 @@ def _groups(project: str, extra_rows: list | None = None) -> dict:
 def test_the_reference_table_loads_and_grades():
     import references as rf
     rows = rf.load()
-    assert len(rows) == 64 and {   # round 3 B7: + the end-Q1 on-chain Chainlink Reserve row
+    assert len(rows) == 65 and {   # round 3 B7: + the end-Q1 on-chain Chainlink Reserve row; E9: + the blended rate
         "project", "metric", "value", "tolerance", "source_type"} <= set(rows[0])
     assert rf.tolerance("0.5%", "1") == ("rel", 0.005)
     assert rf.tolerance("1pp", "0.5") == ("abs", 0.01)
@@ -221,7 +221,18 @@ def test_the_aero_cutover_refuses_legacy_rows_loudly():
     out2.frames.append(f.copy())
     check_migration_cutover(out2, today="2026-10-20", state={})
     assert not out2.log
-    check_migration_cutover(out2, today="2026-10-23", state={"launched": True})
+    # E8 (run review 2026-10-14): "launched" alone, or the RUNBOOK template's placeholders, do NOT lift the refusal
+    template = {"launched": True, "verified": "2026-10-22", "source_url": "<the aero.xyz page>",
+                "addresses": {"minter": "0x…", "voting_escrow": "0x…", "token": "0x…"}, "velo_conversion": 0.044}
+    for st in ({"launched": True}, template, dict(template, verified="2026-10-30",
+                                                   source_url="https://github.com/Dromos-Labs",
+                                                   addresses={k: "0x" + "1" * 40 for k in template["addresses"]})):
+        o = FetchOutput()
+        check_migration_cutover(o, today="2026-10-23", state=st)
+        assert any(e.status == "failed" and "incomplete" in e.message for e in o.log), st
+    done = dict(template, source_url="https://github.com/Dromos-Labs",
+                addresses={k: "0x" + "1" * 40 for k in template["addresses"]})
+    check_migration_cutover(out2, today="2026-10-23", state=done)
     assert not out2.log
 
 

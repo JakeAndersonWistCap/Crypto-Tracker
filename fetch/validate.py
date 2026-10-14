@@ -569,6 +569,26 @@ def check_migration_watch(df: pd.DataFrame, out, prior: dict, prior_dates: dict,
                                   f"contracts) — the migration guard")
 
 
+def _migration_switch_missing(st: dict, day) -> list:
+    """What the launch-day switch file still lacks before its addresses may be wired (empty = complete)."""
+    import re as _re  # noqa: PLC0415
+    missing = []
+    addrs = st.get("addresses") or {}
+    for k in ("minter", "voting_escrow", "token"):
+        if not _re.fullmatch(r"0x[0-9a-fA-F]{40}", str(addrs.get(k) or "")):
+            missing.append(f"addresses.{k} is not a 0x address")
+    src = str(st.get("source_url") or "")
+    if not src.startswith("http") or "…" in src:
+        missing.append("source_url is not a URL")
+    try:
+        ver = pd.Timestamp(str(st.get("verified")))
+        if pd.isna(ver) or ver.normalize() > day:
+            missing.append("verified is not a date on or before today")
+    except (ValueError, TypeError):
+        missing.append("verified is not a date")
+    return missing
+
+
 def check_migration_cutover(out, today=None, state: dict | None = None) -> None:
     """THE AERO CUTOVER (config.AERODROME_MIGRATION, fix round 2 S5): from 2026-10-22 00:00 UTC the legacy Minter, escrow
     and Voter no longer measure Aerodrome. Until Jake's aero_migration.json says launched, every legacy row dated on
@@ -580,7 +600,11 @@ def check_migration_cutover(out, today=None, state: dict | None = None) -> None:
     if day < cut:
         return
     st = config.aerodrome_migration_state() if state is None else state
-    if st.get("launched") is True:
+    # E8 (run review 2026-10-14): "launched": true ALONE lifted the refusal, so a file still carrying the RUNBOOK
+    # template's "0x…" placeholders would have switched the run over. An address is wired only with its source and
+    # date: launched counts only when all three addresses are real 0x addresses and source_url / verified are set.
+    missing = _migration_switch_missing(st, day) if st.get("launched") is True else []
+    if st.get("launched") is True and not missing:
         return
     refused = 0
     for i, f in enumerate(out.frames):
@@ -591,7 +615,9 @@ def check_migration_cutover(out, today=None, state: dict | None = None) -> None:
         if bad.any():
             refused += int(bad.sum())
             out.frames[i] = f[~bad]
-    why = ("unreadable " + st["unreadable"]) if st.get("unreadable") else f"{m['switch_file']} not set to launched"
+    why = (("unreadable " + st["unreadable"]) if st.get("unreadable")
+           else f"{m['switch_file']} says launched but is incomplete ({'; '.join(missing)})" if missing
+           else f"{m['switch_file']} not set to launched")
     out.fail("migration", m["project"],
              f"AERODROME MIGRATION CUTOVER PASSED ({m['cutover_utc']} 00:00 UTC) and {why}: {refused} legacy row(s) "
              f"dated on/after the cutover REFUSED (legacy Minter / escrow / Voter no longer measure Aerodrome). "

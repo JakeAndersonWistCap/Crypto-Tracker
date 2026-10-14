@@ -35,6 +35,8 @@ from __future__ import annotations
 import logging
 import os
 
+import pandas as pd
+
 import config
 
 from .base import Http, derive_flow_from_cumulative, point, today
@@ -119,7 +121,13 @@ class EtherscanSupply:
                 continue
             burn, supply = burnt / WEI, (eth + stake - burnt) / WEI
             src = f"{SOURCE}:ethsupply2"
-            out.add(point(name, spec["burn_metric"], burn, f"{src}.BurntFees", TIER, when), SOURCE,
+            # BurntFees IS YESTERDAY'S CLOSING SNAPSHOT (E5, run review 2026-10-14). Every stored d(BurntFees) dated D
+            # equalled the execution-layer burn of UTC day D-1 to ~1e-9 ETH (sum of baseFeePerGas x gasUsed over the
+            # day's blocks; 2026-10-12 = 31.2787782593 ETH over blocks 26,172,658..26,179,841 = the row dated 10-13),
+            # whatever the time of the read. The burn stock and its delta are dated to the day the snapshot closes, so
+            # a 30-day sum is 30 burn days. (Its other fields are not re-dated: their snapshot time is not verified.)
+            burn_day = (pd.Timestamp(when) - pd.Timedelta(days=1)).normalize()
+            out.add(point(name, spec["burn_metric"], burn, f"{src}.BurntFees", TIER, burn_day), SOURCE,
                     name, f"{spec['burn_metric']}={burn:,.4f} ETH (BurntFees, cumulative)", TIER)
             out.add(point(name, spec["supply_metric"], supply, f"{src}.supply", TIER, when), SOURCE,
                     name, f"{spec['supply_metric']}={supply:,.4f} ETH = EthSupply {eth / WEI:,.0f} "
@@ -152,7 +160,7 @@ class EtherscanSupply:
                                                  f"the staking yield", TIER)
             flow = derive_flow_from_cumulative(
                 burn, self.prior_delta.get((name, spec["burn_metric"])), name, "gross_burn_tokens",
-                config.mark_source(f"{src}.BurntFees", "delta"), TIER, when,
+                config.mark_source(f"{src}.BurntFees", "delta"), TIER, burn_day,
                 prior_date=self.prior_dates.get((name, spec["burn_metric"])),
                 stock_metric=spec["burn_metric"], out=out)
             if not flow.empty:

@@ -8509,8 +8509,9 @@ def test_the_refused_component_partial_rule_dry_run_is_exactly_one_metric():
                 for k, c in (p.get("contracts") or {}).items()
                 if c["kind"] in REFERENCE_ONLY_KINDS]
     # +Aethir staking_gaming_pool/staking_ai_pool, 2026-09-24; +veaethir_token 2026-10-06; +Morpho token_legacy and
-    # token_base (2026-10-11, decision A5: the tokens the DAO's legacy / Base holdings are read against)
-    assert len(ref_only) == 16, ref_only
+    # token_base (2026-10-11, decision A5: the tokens the DAO's legacy / Base holdings are read against); +Aethir
+    # token_arbitrum (E2 2026-10-14: locked in the Ethereum escrow — reconciled, never summed)
+    assert len(ref_only) == 17, ref_only
     for name, key in ref_only:
         for (pn, _), d in change.items():
             assert not (pn == name and key in d["refused"]), f"{name}/{key} must never trigger it"
@@ -13699,7 +13700,9 @@ def test_the_round_of_2026_09_23_closures_and_blocked_rows_land():
                                     "staking_ai_pool", "staking_wrapper",
                                     # B6 (2026-10-06): the two pools read as their OWN metrics (a check on the
                                     # dashboard's split), never locked_tokens; veAethir as their balanceOf target
-                                    "veaethir_token", "staking_ai_pool_balance", "staking_gaming_pool_balance"}
+                                    "veaethir_token", "staking_ai_pool_balance", "staking_gaming_pool_balance",
+                                    # E2 (2026-10-14): the supply read moved to Ethereum's canonical token
+                                    "token_supply_ethereum"}
     assert a["defillama_fees_slug"] == a["customer_revenue_route"]["candidate_slug"] == "aethir"
     g = config.PROJECT_BY_NAME["GEODNET"]["locked_tokens_resolved"]["docs_pages_2026_09_23"]
     assert any(u.endswith("stake-geods.md") for u in g["pages"])
@@ -17497,6 +17500,9 @@ def test_ethereum_burn_and_issuance_come_from_etherscan_ethsupply2(monkeypatch):
     prior = {("Ethereum", "burn_cumulative_tokens"): 4_599_000.0,
              ("Ethereum", "total_supply_protocol"): 121_398_000.0}
     dates = {k: prior_day for k in prior}
+    # E5 (run review 2026-10-14): BurntFees is the PREVIOUS day's closing snapshot, so yesterday's read is dated the
+    # day before yesterday and today's read is dated yesterday
+    dates[("Ethereum", "burn_cumulative_tokens")] = str((today() - pd.Timedelta(days=2)).date())
     a = EtherscanSupply(prior_dates=dates, prior_delta=prior)
     a.http = _Http(body)
     out = FetchOutput()
@@ -17509,6 +17515,8 @@ def test_ethereum_burn_and_issuance_come_from_etherscan_ethsupply2(monkeypatch):
     assert df.loc["total_supply_protocol", "value"] == 121_400_000.0, "EthSupply + Eth2Staking - BurntFees"
     assert df.loc["gross_burn_tokens", "value"] == 1_000.0
     assert str(df.loc["gross_burn_tokens", "source"]).startswith("etherscan:ethsupply2.BurntFees")
+    for m in ("gross_burn_tokens", "burn_cumulative_tokens"):
+        assert str(pd.Timestamp(df.loc[m, "date"]).date()) == prior_day, m
     assert key not in " ".join(e.message for e in out.log)
 
     # issuance = d(total_supply_protocol) + burn = 2,000 + 1,000 = d(EthSupply + Eth2Staking)
@@ -25551,7 +25559,8 @@ def test_circulating_decisions_are_applied_consistently_and_coingecko_free_float
                    and c["holder_has_code"] is False for c in cs.values()), n
         assert "noncirculating_holding_tokens" in config.circulating_onchain(n)["subtract"], n
     # THE FULL SWEEP (2026-10-07): wallets the projects themselves document, each with its first-party source and date
-    for n, (cnt, sym, src) in {"Ether.fi": (8, "ETHFI", "https://"), "Morpho": (8, "MORPHO", "https://"),
+    # E1 (2026-10-14): + ether.fi's two further Treasury wallets from its own allocations page
+    for n, (cnt, sym, src) in {"Ether.fi": (10, "ETHFI", "https://"), "Morpho": (8, "MORPHO", "https://"),
                                "Aerodrome": (4, "AERO", "https://blockworks.com/"),
                                "Uniswap": (5, "UNI", "https://github.com/Uniswap/docs/blob/1c7597d7"),
                                # + the IGP-137 custody (probes15), sourced to its address page and Jake's trace
@@ -25567,7 +25576,9 @@ def test_circulating_decisions_are_applied_consistently_and_coingecko_free_float
         assert all(c["metric_override"] == ("noncirculating_igp137_tokens" if k == "noncirc_igp137_lock"
                                              else "noncirculating_entities_tokens" if k in config.MORPHO_ENTITY_KEYS
                                              else "noncirculating_holding_tokens")
-                   and c["verified"] == ("2026-10-12" if k == "noncirc_ssf_safe" else "2026-10-07")
+                   and c["verified"] == ("2026-10-12" if k == "noncirc_ssf_safe"
+                                         else "2026-10-14" if k in ("noncirc_treasury_docs_3", "noncirc_treasury_docs_4")
+                                         else "2026-10-07")
                    and c["source_url"].startswith(src) and c["expected_symbol"] == sym
                    and c["holder_has_code"] is False for k, c in cs.items()), n
         assert "noncirculating_holding_tokens" in config.circulating_onchain(n)["subtract"], n
@@ -26940,10 +26951,11 @@ def test_new_first_party_sources_of_2026_10_07_are_recorded():
     br = config.PROJECT_BY_NAME["Aethir"]["bridges"]
     assert br["axelar_eth_arbitrum"]["address"] == "0x148F010746c2999Abc3fD5533746632AD9771948"
     assert "partner-only" in br["rewards_api"] and "never" not in br["arbitrum_interchain"]["use"]
-    # the Arbitrum read stays the ONE supply read: no other ATH deployment serves total_supply
+    # ONE supply read, and since E2 (2026-10-14) it is Ethereum's canonical 42bn — Arbitrum's 3.18bn sits in the Ethereum
+    # escrow (reconciled, never summed); no other ATH deployment serves total_supply
     sup = [c for c in config.PROJECT_BY_NAME["Aethir"]["contracts"].values()
            if c.get("kind") == "erc20_total_supply" and not c.get("metric_override")]
-    assert [c["chain"] for c in sup] == ["arbitrum"]
+    assert [c["chain"] for c in sup] == ["ethereum"]
     assert coi.BLOCKWORKS_SLUGS["Aerodrome"] == "aerodrome-finance"
     assert {coi.maple_dao_vs_ssf, coi.aethir_reward_distributors} <= set(coi.CHECKS)
 

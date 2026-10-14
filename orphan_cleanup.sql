@@ -4686,3 +4686,65 @@ SELECT project, metric, date, value, source
 -- CP2. THE DELETE.
 -- DELETE FROM metrics
 --  WHERE project = 'Fluid' AND metric = 'noncirculating_holding_tokens' AND source LIKE '%noncirc_igp137_lock%';
+
+-- ========================================================================================
+-- CQ. ETHEREUM BURN: ETHERSCAN'S BurntFees ROWS MOVE TO THE DAY THEY MEASURE  2026-10-14T14:00Z
+--     Run review E5 (2026-10-14): Etherscan's ethsupply2 BurntFees is the PREVIOUS UTC day's closing snapshot. Every
+--     stored d(BurntFees) row dated D equals the execution-layer burn of day D-1 (sum of baseFeePerGas x gasUsed over
+--     that day's blocks; e.g. the row dated 2026-10-13, 31.2787782593 ETH = the burn of 2026-10-12, blocks
+--     26,172,658..26,179,841), so 2026-09-29 was counted twice (DefiLlama-derived 229.74 + Etherscan 230.75) and the
+--     newest day was missing. fetch/etherscan_supply.py now dates the stock and its delta to D-1. CQ moves the stored
+--     Etherscan rows back one day (a row still unshifted is one dated its own fetch day) and removes the derived row of
+--     the one day the two legs then share (the declared handover blanks the series on an overlap; the measured leg
+--     wins). Run BEFORE the next token_metrics.py: python run_sql.py CQ, then python run_sql.py --delete CQ.
+-- ========================================================================================
+-- CQ1. WHAT MOVES (expect ~12 burn_cumulative_tokens + ~11 gross_burn_tokens rows, 2026-09-29..2026-10-13) AND THE
+--      DERIVED ROW THAT GOES (expect 1: gross_burn_tokens 2026-09-29, ~229.74).
+SELECT project, metric, date, date(date, '-1 day') AS new_date, value, source, fetched_at
+  FROM metrics
+ WHERE project = 'Ethereum' AND metric IN ('gross_burn_tokens', 'burn_cumulative_tokens')
+   AND source LIKE 'etherscan:ethsupply2.BurntFees%' AND substr(fetched_at, 1, 10) = date
+ ORDER BY metric, date;
+SELECT project, metric, date, value, source
+  FROM metrics
+ WHERE project = 'Ethereum' AND metric = 'gross_burn_tokens' AND source LIKE 'derived:defillama_burned_fee_revenue%'
+   AND date = (SELECT date(MIN(date), '-1 day') FROM metrics
+                WHERE project = 'Ethereum' AND metric = 'gross_burn_tokens'
+                  AND source LIKE 'etherscan:ethsupply2.BurntFees%' AND substr(fetched_at, 1, 10) = date);
+
+-- CQ2. THE DELETE AND THE MOVE (the move goes through a temporary metric name so no row lands on a date another row
+--      still holds; the source is kept as it is, so the measuring point does not change).
+-- DELETE FROM metrics
+--  WHERE project = 'Ethereum' AND metric = 'gross_burn_tokens' AND source LIKE 'derived:defillama_burned_fee_revenue%'
+--    AND date = (SELECT date(MIN(date), '-1 day') FROM metrics
+--                 WHERE project = 'Ethereum' AND metric = 'gross_burn_tokens'
+--                   AND source LIKE 'etherscan:ethsupply2.BurntFees%' AND substr(fetched_at, 1, 10) = date);
+-- UPDATE metrics
+--    SET metric = metric || '#cq', date = date(date, '-1 day')
+--  WHERE project = 'Ethereum' AND metric IN ('gross_burn_tokens', 'burn_cumulative_tokens')
+--    AND source LIKE 'etherscan:ethsupply2.BurntFees%' AND substr(fetched_at, 1, 10) = date;
+-- UPDATE metrics
+--    SET metric = substr(metric, 1, length(metric) - 3)
+--  WHERE project = 'Ethereum' AND metric IN ('gross_burn_tokens#cq', 'burn_cumulative_tokens#cq');
+
+-- ========================================================================================
+-- CR. RESTATE ON THE CURRENT BASIS: ETHER.FI'S OLD-COMPOSITION NON-CIRCULATING ROWS  2026-10-14T16:20Z
+--     Run review E1 (2026-10-14): ether.fi's own allocations page (etherfi.gitbook.io/gov/ethfi-allocations) lists four
+--     Treasury wallets; two (0x5f0E7A42…, 0xD022d6bb…) were not in the set and are wired now (747,021.27 ETHFI on
+--     2026-10-14). A row read from the old set is another measuring point, so — as CN did for Fluid and Maple — the
+--     old-set rows go and the archive reads the CURRENT set at each past day's first block. The current set is
+--     recognised by its newest wallet, noncirc_treasury_docs_4.
+--     Run: python run_sql.py CR, then python run_sql.py --delete CR, then python archive_backfill.py --run --project Ether.fi.
+-- ========================================================================================
+-- CR1. WHAT GOES (expect every Ether.fi noncirculating_holding_tokens row stored so far).
+SELECT project, COUNT(*) AS rows, MIN(date) AS first, MAX(date) AS last, ROUND(MIN(value), 0) AS min_value,
+       ROUND(MAX(value), 0) AS max_value
+  FROM metrics
+ WHERE metric = 'noncirculating_holding_tokens' AND project = 'Ether.fi'
+   AND source NOT LIKE '%noncirc_treasury_docs_4%'
+ GROUP BY project;
+
+-- CR2. THE DELETE.
+-- DELETE FROM metrics
+--  WHERE metric = 'noncirculating_holding_tokens' AND project = 'Ether.fi'
+--    AND source NOT LIKE '%noncirc_treasury_docs_4%';

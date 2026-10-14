@@ -151,6 +151,7 @@ ROUTES: dict[tuple[str, str], tuple] = {
     ("Chainlink", "reserve_holdings_2026-04-15"): ("last", "buyback_fund_balance"),
     ("Chainlink", "reserve_holdings_end_q1_2026"): ("last", "buyback_fund_balance"),
     ("Chainlink", "staking_community_rate"): ("last", "staker_yield_community_pool"),
+    ("Chainlink", "staking_blended_rate"): ("ratio", "reward_emission_rate_annual", "locked_tokens_principal"),
     # V5 (Jake's round-2 run): the Flows tab's own release line and Q0 window — read 0 on calendar Q3 while Flows
     # showed the 18.75M tranche in Q0
     ("Chainlink", "quarterly_release"): ("flows", "+ released from issuer wallets", "Q0"),
@@ -482,9 +483,13 @@ def _eth_supply_cause(groups, project, at, ours, ref) -> str:
 def _near_intents_cause(groups, project, at, ours, ref) -> str:
     s = _series(groups, project, "near_intents_volume_usd")
     first = f"{s.date.iloc[0]:%Y-%m-%d}" if s is not None else "?"
-    return (f"our stored series starts {first} (DefiLlama's NEAR Intents dex volume, first read 455 days back); the "
-            f"reference counts from launch (Nov 2024) — the {ref - ours:+,.0f} gap is the days before {first} "
-            f"(not a measured difference until those days are stored)")
+    # E5 (run review 2026-10-14): DefiLlama serves NEAR Intents from 2024-12-10 (nothing in Nov 2024, though the
+    # adapter declares 2024-11-05); the days before 2025-07-15 add only 442,243,767, so the full history to 2026-09-22
+    # is 30,685,539,216 — -2.28% on the reference (read 2026-10-14). Ours is labelled what it is: Σ since its first day.
+    return (f"OURS IS Σ SINCE {first} (our stored series' first day), not since launch: DefiLlama's NEAR Intents history "
+            f"begins 2024-12-10 and the days before {first} add $442,243,767 (read 2026-10-14) — the full history to "
+            f"2026-09-22 is $30,685,539,216, {30_685_539_216 / ref - 1:+.2%} on the reference; the rest of the "
+            f"{ref - ours:+,.0f} gap is not explained by days (the reference is secondary)")
 
 
 def _maple_dao_cause(groups, project, at, ours, ref) -> str:
@@ -520,10 +525,22 @@ def _eth_burn_cause(groups, project, at, ours, ref) -> str:
     for src, part in w.groupby(w.source.astype(str).str.split(":").str[0]):
         legs[src] = (float(part.value.sum()), len(part))
     txt = "; ".join(f"{k} {v:,.1f} ETH on {n} row(s) ({v / max(n, 1):,.1f}/row)" for k, (v, n) in legs.items())
-    return (f"a basis difference, not a burn difference (V4): our 30 rows join two sources — {txt}. The DefiLlama leg "
-            f"is USD burned ÷ the day's price (not ETH measured), the Etherscan leg is read-to-read deltas of BurntFees "
-            f"at run time (not 00:00 UTC; one row spans 4 days), and the seam double-counts the hours of 2026-09-29 after "
-            f"the first Etherscan read (~4h). ultrasound's d30 is 30 x 24h of measured burn to its read instant")
+    # E5 (run review 2026-10-14): the reference is the execution-layer burn measured block by block (Σ baseFeePerGas x
+    # gasUsed over the window's UTC days); Etherscan's BurntFees is the previous day's closing snapshot, so its deltas
+    # are now dated to the day they measure (orphan_cleanup.sql CQ moves the stored ones) and match it to ~1e-9 ETH.
+    g = groups.get((project, "gross_burn_tokens"))
+    late = 0
+    if g is not None and "fetched_at" in g:
+        es = g[g.source.astype(str).str.startswith("etherscan:ethsupply2.BurntFees")]
+        late = int((es.fetched_at.astype(str).str[:10] == pd.to_datetime(es.date).dt.strftime("%Y-%m-%d")).sum())
+    if late:
+        return (f"THE STORE PREDATES orphan_cleanup.sql CQ: {late} Etherscan BurntFees row(s) still sit on the day AFTER "
+                f"the one they measure, so the day the two legs meet (2026-09-29) is counted twice — run "
+                f"`python run_sql.py --delete CQ`. Our rows: {txt}")
+    return (f"one measured-ETH basis (E5): the reference is the execution-layer burn per block (Σ baseFee x gasUsed, "
+            f"blobs excluded) over the same 30 UTC days; our rows — {txt}. The Etherscan leg is d(BurntFees) dated to "
+            f"the day it closes (equal to the per-block burn to ~1e-9 ETH); the DefiLlama leg is USD burned ÷ the "
+            f"day's price, an estimate, and carries what difference remains")
 
 
 CAUSES = {
