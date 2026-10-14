@@ -1307,6 +1307,11 @@ DEFAULT_RPC = {
     "arbitrum": [
         "https://arbitrum-one-rpc.publicnode.com",
         "https://arb1.arbitrum.io/rpc",
+        # RUN REVIEW D1 (2026-10-14): publicnode refuses past-block reads, arb1 serves no archive state and dates no
+        # log (blockTimestamp 0x0). Read 2026-10-14: tenderly served eth_getLogs over 722,141 blocks (dated) and
+        # balanceOf at block 400,000,000; nodies served balanceOf at that block (eth_getLogs capped at 50 blocks).
+        "https://arbitrum.gateway.tenderly.co",
+        "https://arb-pokt.nodies.app",
     ],
     "optimism": [
         "https://optimism-rpc.publicnode.com",
@@ -4003,10 +4008,16 @@ PROJECTS = [
         "node_api": {
             "kind": "near_validators",
             "metric": "locked_tokens",
+            # RUN REVIEW D7 (2026-10-14): near.lava.build answers HTTP 410 "This endpoint has been discontinued" and
+            # 1rpc.io/near a usage-limit error; removed. Read 2026-10-14, each serving `status` (protocol_version 86,
+            # chain mainnet) and `validators` (411 validators, 595,153,930 NEAR staked — the same figure on all four):
+            # rpc.fastnear.com and free.rpc.fastnear.com (the provider NEAR's deprecated rpc.mainnet.pagoda.co points
+            # to; docs.near.org/api/rpc/providers) and near.drpc.org.
             "endpoints": [
                 "https://rpc.mainnet.near.org",
-                "https://near.lava.build",
-                "https://1rpc.io/near",
+                "https://rpc.fastnear.com",
+                "https://free.rpc.fastnear.com",
+                "https://near.drpc.org",
             ],
             "method": "validators",
             "params": [None],
@@ -22900,6 +22911,15 @@ DIVERGENCE_EXCLUDED = ("GEODNET",)
 # is BROKEN on the Coverage tab unless it is named here with the reason — a change made on purpose this round, with the
 # date it should clear by. `header` is matched inside the hit's text ("<tab> <header>: …").
 REGRESSION_ALLOWLIST = [
+    # RUN REVIEW D2 (Jake 2026-10-14): the subsidy covers BLOCKED on an incomplete incentive denominator (V1,
+    # OUTFLOW_INCOMPLETE) are correct blocks, not regressions. Each holds ONLY WHILE the denominator is still declared
+    # incomplete (while_outflow_incomplete — wiring the missing scans ends it by itself) and no later than `until`.
+    *[{"project": _p, "match": ("SUBSIDY COVER",), "until": "2026-11-14", "while_outflow_incomplete": "b",
+       "reason": f"subsidy cover BLOCKED on an incomplete incentive denominator — {_why}; re-check on wiring the "
+                 f"missing scans (config.OUTFLOW_INCOMPLETE) or by 2026-11-14"}
+      for _p, _why in (("Pendle", "six chains' gaugeControllers unscanned"),
+                       ("Aethir", "Checker Node base schedule only"),
+                       ("Fluid", "Base / Plasma distributors unscanned"))],
     {"project": "GEODNET", "match": ("unlock_release_tokens", "outflow_e", "outflow (e)"), "until": "2026-10-31",
      "reason": "G1/G2: the unlock leg (e) now reads the five non-mining wallets only; the Ecosystem wallet's own series "
                "(ecosystem_holding_tokens) starts with the next run — run archive_backfill.py --run --project GEODNET"},

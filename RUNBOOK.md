@@ -787,7 +787,7 @@ python dump_fixture.py --project GEODNET
 ```
 `token_metrics.py` reads the new series once a day. The first read of each stores 455 days of history; the slowest
 is the CCIP message walk, at about 10-15 minutes. `archive_backfill.py --project Sky` reads USDS.totalSupply() at the
-first block of each of the 455 days. Send the last two outputs (and `fixtures/real_geodnet.json`) for item 19.
+first block of each of the 455 days. Send the last two outputs (and `dumps/real_geodnet.json`) for item 19.
 
 **Corrections.**
 17. **TOTAL YIELD SUBTRACTS ISSUER RELEASES.** A supply can be fixed while rewards and releases still come out of
@@ -879,7 +879,7 @@ python token_metrics.py                   # today's reads on the new sets (Maple
 python archive_backfill.py --run --budget-min 120          # the whole restatement, one pass
 python archive_backfill.py --run --near --budget-min 60    # NEAR stake history (EVM days are stored: skipped)
 python sanity.py
-python dump_fixture.py --project GEODNET  # and send fixtures/real_geodnet.json
+python dump_fixture.py --project GEODNET  # and send dumps/real_geodnet.json
 ```
 If the archive's last line still reads "budget spent at …", it says how many days are left, the measured pace and
 the `--budget-min` that finishes them; re-run with it (stored days are skipped). Run 2 of ef6dc86 read ~9 s a day,
@@ -2380,7 +2380,7 @@ and by the Credibility rows that reproduce it.
 That run (on 1cb8f6b) signed off 10 projects. Five were OPEN: Ethereum, Chainlink, Plume, Aerodrome and Pendle. The
 fixtures had predicted 14-15; the real store disagreed. **From this round, a fix is tested against Jake's own rows.**
 
-0. **Real dumps.** `python dump_fixture.py --project X` writes `fixtures/real_<x>.json`: the project's rows over 400
+0. **Real dumps.** `python dump_fixture.py --project X` writes `dumps/real_<x>.json` (git-ignored since 2026-10-14, run review D8 — `fixtures/` is tracked, and a dump written there made `git pull` abort; a dump is copied into `fixtures/` only when it becomes a test fixture): the project's rows over 400
    days, its review queue, overrides, 30 days of run log (URLs redacted) and the latest gap report. Commit the file.
    `tests/test_real_dumps.py` loads it into a fresh store and runs `credibility_report` as of the dump's date. Each
    test skips until its dump is committed.

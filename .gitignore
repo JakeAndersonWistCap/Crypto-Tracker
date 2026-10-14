@@ -24,3 +24,5 @@ near-data-510309-*.json
 logs/
 # the daily theory snapshot (export_snapshot.py) — machine-local output, like the workbook
 snapshots/
+# dump_fixture.py output (run review D8): machine-local; copied into fixtures/ when it becomes a test fixture
+dumps/

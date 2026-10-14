@@ -445,7 +445,12 @@ def test_v3_maple_dao_safe_move_is_named_and_only_the_eoa_leg_is_a_release():
     import references as rf
     g = _groups("Maple")
     r = {x["metric"]: x for x in rf.check(g)}["dao_safe_balance"]
-    assert r["status"] == "BROKEN" and "0xd628a262" in r["detail"] and "4,000,000" in r["detail"]
+    # D5 (run review 2026-10-14): the reference is now read AFTER the move (block 26,185,275) — VERIFIED, the move kept
+    # in the row's note
+    assert r["status"] == "VERIFIED" and r["ours"] == pytest.approx(42_290_111.3257, abs=0.001)
+    row = next(x for x in csv.DictReader(open(ROOT / "independent_references.csv", encoding="utf-8"))
+               if x["project"] == "Maple" and x["metric"] == "dao_safe_balance")
+    assert "0xd628a262" in row["note"] and "4,000,000" in row["note"]
     rel = g[("Maple", "unlock_release_tokens")]
     assert float(rel[pd.to_datetime(rel.date) == pd.Timestamp("2026-10-13")].value.iloc[0]) == pytest.approx(4e6, abs=1)
 
@@ -858,3 +863,153 @@ def test_y1_the_failure_line_names_the_hole_search(tmp_path, monkeypatch):
     assert "bisected on balanceOf" in msg and f"to block {fx['explorer_missing_block']:,}" in msg
     assert "EXPLORER-HOLE SEARCH" in msg and "Archive requests require a personal token" in msg
     assert "does not reconcile either" not in msg
+
+
+# ------------------------------------------------------------------------------------------- run review D (2026-10-14)
+def test_d2_subsidy_cover_blocks_are_allowlisted_only_while_the_gap_is_declared(monkeypatch):
+    """D2: the three subsidy covers BLOCKED on an incomplete denominator are correct blocks; they are allow-listed with a
+    reason, a re-check date AND a condition — the allowance lapses the moment OUTFLOW_INCOMPLETE stops declaring the gap."""
+    import coverage_audit as ca
+    detail = ("CP SUBSIDY COVER = revenue ÷ $ supply-side incentives (b), per covered da: 12.578 in the previous run "
+              "(2026-10-13), now BLOCKED — unequal coverage: the incentive denominator is incomplete")
+    rows = {r["Project"]: r for r in ca.regression_rows([(p, "headline_lost", detail)
+                                                         for p in ("Pendle", "Aethir", "Fluid", "Morpho")])}
+    assert all(rows[p]["Status"] == "N/A BY DESIGN" for p in ("Pendle", "Aethir", "Fluid"))
+    assert "re-check" in rows["Pendle"]["Reason / route / error"] and rows["Morpho"]["Status"] == "BROKEN"
+    gaps = {k: v for k, v in config.OUTFLOW_INCOMPLETE.items() if k != ("Pendle", "b")}
+    monkeypatch.setattr(config, "OUTFLOW_INCOMPLETE", gaps)               # the Pendle scans wired: the allowance lapses
+    assert ca.regression_rows([("Pendle", "headline_lost", detail)])[0]["Status"] == "BROKEN"
+
+
+def _arb_gauge_world(drop_every: int):
+    """Real dated Transfer logs of Pendle's Arbitrum gauge (fixtures/api_pendle_arb_gauge_slice.json, tenderly, with the
+    real balanceOf at both ends — they close to the wei); the 'explorer' lacks every `drop_every`-th outflow block."""
+    import fetch.logscan as ls
+    fx = _fx("api_pendle_arb_gauge_slice.json")
+    true_in = [dict(ls._norm_log(x), timeStamp=int(x["blockTimestamp"], 16)) for x in fx["ins"]]
+    true_out = [dict(ls._norm_log(x), timeStamp=int(x["blockTimestamp"], 16)) for x in fx["outs"]]
+    blocks = sorted({e["blockNumber"] for e in true_out})
+    dropped = set(blocks[::drop_every])
+    b0 = int(fx["balance_before"])
+    raw = {(int(x["blockNumber"], 16), x["topics"][1][-40:], x["topics"][2][-40:]): x for x in fx["ins"] + fx["outs"]}
+
+    class _Reader:
+        balance_reads = 0
+
+        def erc20_balance_at(self, chain, token, holder, block):
+            _Reader.balance_reads += 1
+            if block < fx["from_block"]:
+                return b0
+            return b0 + sum(ls._amount(e) for e in true_in if e["blockNumber"] <= block) - \
+                sum(ls._amount(e) for e in true_out if e["blockNumber"] <= block)
+
+        def logs_in_block(self, chain, address, topics, block):
+            return [x for x in fx["ins"] + fx["outs"] if int(x["blockNumber"], 16) == block], \
+                [f"tenderly eth_getLogs block {block:,} -> logs"]
+
+        def dated_logs(self, chain, address, topics, lo, hi, chunk, trace):
+            upper = min(hi, lo + chunk - 1)
+            src = fx["outs"] if topics[1] is not None else fx["ins"]
+            trace.append(f"tenderly eth_getLogs {lo:,}..{upper:,}")
+            return [x for x in src if lo <= int(x["blockNumber"], 16) <= upper], upper
+
+        def block_timestamp(self, chain, b):
+            return next(int(x["blockTimestamp"], 16) for k, x in raw.items() if k[0] == b)
+
+        def checksum(self, a):
+            return a
+
+    explorer_out = [e for e in true_out if e["blockNumber"] not in dropped]
+    return fx, true_in, true_out, explorer_out, dropped, _Reader()
+
+
+@pytest.mark.parametrize("drop_every,expect_span", [(9, False), (2, True)])
+def test_d1_full_history_repair_reconciles_to_the_wei(tmp_path, drop_every, expect_span):
+    """D1: Pendle's Arbitrum gauge scan never reconciled (Etherscan's completed seeds: in − out 812,025.60 PENDLE vs a
+    balance near 78,400; the chain's 936,270 logs close to the wei). The repair: bisect balanceOf to the first block
+    where it parts from the scan, read it from the chain; past EXPLORER_HOLE_MAX holes, re-read the span from the first
+    divergence from the chain, dated, resumable — and the result reconciles TO THE WEI. Real dated logs."""
+    import fetch.logscan as ls
+    from fetch.logcache import LogCache
+    fx, true_in, true_out, explorer_out, dropped, reader = _arb_gauge_world(drop_every)
+    scan = ls.LogScan(explorer=object(), reader=reader, cache=LogCache(tmp_path))
+    spec = {"key": "gauge_pendle_out_arbitrum", "repair_chunk_blocks": 100_000}
+    base = (fx["from_block"] - 1, int(fx["balance_before"]))     # the slice starts from the real balance before it
+    ins, outs, status, trace = scan._repair_history(spec, "arbitrum", 42161, fx["token"], fx["holder"], list(true_in),
+                                                    explorer_out, fx["to_block"], base)
+    assert status == "repaired", trace
+    assert sum(ls._amount(e) for e in outs) == sum(ls._amount(e) for e in true_out)            # to the wei
+    assert ("re-reading blocks" in " ".join(trace)) is expect_span, trace
+    assert all(int(e["timeStamp"]) > 0 for e in outs)                                          # every outflow dated
+    assert any("bisected on balanceOf" in t for t in trace)
+
+
+def test_d1_span_repair_resumes_across_runs(tmp_path):
+    """The span re-read stops at its budget, keeps its state in the log cache and resumes next run."""
+    import fetch.logscan as ls
+    from fetch.logcache import LogCache
+    fx, true_in, true_out, explorer_out, dropped, reader = _arb_gauge_world(2)
+    spec = {"key": "gauge_pendle_out_arbitrum", "repair_chunk_blocks": 50_000, "repair_budget_s": 1e-9}
+    scan = ls.LogScan(explorer=object(), reader=reader, cache=LogCache(tmp_path))
+    statuses = []
+    for _ in range(40):
+        ins, outs, status, trace = scan._repair_history(spec, "arbitrum", 42161, fx["token"], fx["holder"],
+                                                        list(true_in), explorer_out, fx["to_block"],
+                                                        (fx["from_block"] - 1, int(fx["balance_before"])))
+        statuses.append(status)
+        if status != "in progress":
+            break
+    assert statuses[0] == "in progress" and statuses[-1] == "repaired" and len(statuses) > 2
+    assert not list(tmp_path.glob("repair-*"))                                        # state removed once complete
+
+
+def test_d1_dated_logs_passes_over_an_undated_endpoint(monkeypatch):
+    """arb1.arbitrum.io answers eth_getLogs with blockTimestamp 0x0 on every log; an undated outflow cannot be put on a
+    day, so that answer is passed over for the next endpoint (tenderly dates them). Every answer is named."""
+    from fetch.chain import ChainReader
+    fx = _fx("api_pendle_arb_gauge_slice.json")
+    monkeypatch.setenv("RPC_ARBITRUM", "https://arb1.example,https://tenderly.example")
+    monkeypatch.delenv("ARBITRUM_RPC_URL", raising=False)
+
+    class _Eth:
+        def __init__(self, url):
+            self.url = url
+
+        def get_logs(self, flt):
+            got = [dict(x) for x in fx["outs"] if flt["fromBlock"] <= int(x["blockNumber"], 16) <= flt["toBlock"]]
+            if "arb1" in self.url:
+                for x in got:
+                    x["blockTimestamp"] = "0x0"
+            return got
+
+    monkeypatch.setattr(ChainReader, "make_web3", staticmethod(lambda chain, url, t=30: type("W", (), {"eth": _Eth(url)})()))
+    trace = []
+    got, upper = ChainReader().dated_logs("arbitrum", fx["token"], [], fx["from_block"], fx["to_block"],
+                                          fx["to_block"] - fx["from_block"] + 1, trace)
+    assert len(got) == len(fx["outs"]) and upper == fx["to_block"]
+    assert any("tenderly.example" in t and "dated" in t for t in trace)
+
+
+def test_d7_near_status_falls_through_when_the_primary_drops_tls():
+    """D7: on Jake's 10-14 run rpc.mainnet.near.org dropped TLS (SSLEOFError — so did rpc.plume.org and Alchemy in the
+    same minute), near.lava.build answers 410 (discontinued) and 1rpc.io a usage limit. The list now carries endpoints
+    that serve `status` (read 2026-10-14), and a dropped primary falls through to them."""
+    import fetch.near as fn
+    api = config.PROJECT_BY_NAME["Near"]["node_api"]
+    eps = api["endpoints"]
+    assert "https://near.lava.build" not in eps and "https://1rpc.io/near" not in eps
+    assert len([u for u in eps if u != "https://rpc.mainnet.near.org"]) >= 2
+
+    class _Http:
+        calls = []
+
+        def post(self, url, json_body=None):
+            self.calls.append(url)
+            if url == eps[0]:
+                raise ConnectionError("SSLError(SSLEOFError(8, '[SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred'))")
+            return {"result": {"protocol_version": 86, "sync_info": {"latest_block_height": 219_936_884}}}
+
+    obj = fn.NearNode.__new__(fn.NearNode)
+    obj.http = _Http()
+    payload, detail = obj._call(api, {"jsonrpc": "2.0", "id": "t", "method": "status", "params": []})
+    assert payload["result"]["protocol_version"] == 86 and detail == eps[1] and obj.http.calls[:2] == eps[:2]

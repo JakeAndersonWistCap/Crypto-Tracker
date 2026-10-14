@@ -142,7 +142,8 @@ ROUTES: dict[tuple[str, str], tuple] = {
     ("Maple", "buyback_top_tier"): ("not_wired", "S3: MIP-021 tiers (10% < $1.5M, 20% $1.5–2.0M, 30% > $2.0M of "
                                                  "monthly revenue) are not a config value yet"),
     ("Morpho", "fee_recipient"): ("zero_sum", "revenue_usd", 90),
-    ("Morpho", "merkl_rewards_rate"): ("mean", "outflow_b_tokens", 30),
+    # D3 (2026-10-14): like for like — the off-Ethereum campaign SCHEDULE; (b) also holds Ethereum claims (paid basis)
+    ("Morpho", "merkl_rewards_rate"): ("mean", "merkl_campaigns_non_ethereum_tokens", 30),
     ("Fluid", "treasury_to_team_rewards"): ("event", "treasury_holding_tokens", 21, -1),
     ("Fluid", "treasury_to_team_agi3_locked"): ("event", "treasury_holding_tokens", 21, -1),
     ("Aethir", "dat_holding_axe_compute"): ("dat_file", "Axe Compute"),
@@ -500,6 +501,16 @@ def _maple_dao_cause(groups, project, at, ours, ref) -> str:
             "the 4,000,000 is a release (e)")
 
 
+def _sky_pause_proxy_cause(groups, project, at, ours, ref) -> str:
+    """D4 (run review 2026-10-14): the Pause Proxy's SKY rises through the day — read on-chain, not inferred."""
+    return ("an intraday move, not a misread (run review D4, balanceOf read 2026-10-14 at each block): the Pause Proxy "
+            "0xBE8E3e36… receives ~42–44K SKY from 0x2621cc0b… every ~234 blocks (~47 min) and paid nothing out — 46 "
+            "inflows from 2026-10-13 00:00 to 10-14 12:00 UTC; balance 19,242,669.50 at block 26,179,842 (10-13 "
+            "00:00), 20,228,168.12 at 26,185,223 (10-13 18:00), 21,169,614.90 at 26,190,301 (10-14 11:00 — the stored "
+            "read), 21,212,990.66 at 26,190,598 (10-14 12:00). The 20.14M reference is an afternoon read of 10-13; a "
+            "point read compares only at the same block")
+
+
 def _eth_burn_cause(groups, project, at, ours, ref) -> str:
     s = _series(groups, project, "gross_burn_tokens")
     if s is None:
@@ -518,6 +529,7 @@ def _eth_burn_cause(groups, project, at, ours, ref) -> str:
 CAUSES = {
     ("Ethereum", "burn_30d"): _eth_burn_cause,
     ("Maple", "dao_safe_balance"): _maple_dao_cause,
+    ("Sky", "pause_proxy_sky_balance"): _sky_pause_proxy_cause,
     ("Aerodrome", "annualised_dilution_incl_rebase_team"): _aero_dilution_cause,
     ("Maple", "total_supply"): _maple_supply_cause,
     ("Sky", "net_revenue_sep_2026"): _sky_revenue_cause,

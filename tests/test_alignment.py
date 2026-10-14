@@ -27,9 +27,7 @@ DUMPS = ("Aerodrome", "Chainlink", "Ethereum", "Maple", "Pendle", "Plume",
 # FIX ROUND 2 (T2): the independent references (independent_references.csv) that are OUTSIDE tolerance on these dumps,
 # each with its cause on the Coverage row. The set must match exactly: a new BROKEN fails the build, and so does a fixed
 # one still listed here. (project, Coverage tab, column prefix)
-KNOWN_REFERENCE_BROKEN = {
-    ("Maple", "References", "dao_safe_balance"),   # V3: read before the 10-13 18:10 UTC treasury move (cause named)
-}
+KNOWN_REFERENCE_BROKEN: set = set()   # D5 (2026-10-14): Maple dao_safe_balance re-read after the 10-13 18:10 UTC move
 TABS = ("Master", "A1 Infrastructure", "A2 Coordination", "A3 Revenue Buyback", "A4 Permanent Burn", "CP Comparability")
 
 

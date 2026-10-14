@@ -120,6 +120,9 @@ def _hex(v) -> str:
 
 # the most explorer holes one window's reconciliation will look for (each costs ~log2(window blocks) balance reads)
 EXPLORER_HOLE_MAX = 5
+# the full-history span repair (run review D1): seconds of chain reads per run, and the first range asked per call
+REPAIR_BUDGET_S = 120.0
+REPAIR_CHUNK = 2_000_000
 
 
 def _norm_log(x) -> dict:
@@ -286,6 +289,9 @@ class LogScan:
                     lo, hi = (mid, hi) if mis(mid) == 0 else (lo, mid)
                 trace.append(f"bisected on balanceOf ({reads[0]} read(s)) to block {hi:,}: the first where the "
                              f"balance parts from the explorer's transfers")
+                self._last_divergence = hi
+                if getattr(self, "_first_divergence", None) is None:
+                    self._first_divergence = hi           # the span repair starts here: everything after is re-read
                 have = {(e["transactionHash"], int(e["logIndex"])) for e in ins + outs}
                 added = 0
                 # ONE READ OF THE BLOCK: every Transfer of the token in it, split into in / out here (run Y1 live: read
@@ -296,6 +302,9 @@ class LogScan:
                     if len(e["topics"]) < 3 or (e["transactionHash"], int(e["logIndex"])) in have:
                         continue
                     frm, to = topic_address(e["topics"][1]), topic_address(e["topics"][2])
+                    if (to in internal or frm in internal) and not int(e.get("timeStamp") or 0) \
+                            and hasattr(self.reader, "block_timestamp"):
+                        e["timeStamp"] = int(self.reader.block_timestamp(chain, hi))   # a counted event needs its day
                     if to in internal or frm in internal:
                         (ins if to in internal else outs).append(e)
                         have.add((e["transactionHash"], int(e["logIndex"])))
@@ -310,6 +319,93 @@ class LogScan:
         for t in trace:
             log.info("explorer-hole search %s: %s", chain, t)
         return ins, outs, holes, trace
+
+    def _repair_history(self, spec, chain, chain_id, token, h, ins_h, outs_h, to_block, base=(0, 0)):
+        """THE FULL HISTORY, REPAIRED FROM THE CHAIN (run review D1, Jake 2026-10-14: Pendle's Arbitrum gauge scan has
+        never reconciled — every completed Etherscan seed, 10-09 to 10-14, read in − out = 812,025.60 PENDLE against a
+        balance near 78,400; the chain's own record, read 2026-10-14 over all 936,270 Transfer logs, closes to the wei).
+          1. the explorer-hole repair: bisect balanceOf to the first block where it parts from the scan, read that block
+             from the chain (never the explorer), up to EXPLORER_HOLE_MAX holes;
+          2. if a gap remains, the SPAN from the first divergent block to the pinned block is re-read from the chain —
+             RPC only, every log dated (ChainReader.dated_logs) — resumable: state in the log cache, REPAIR_BUDGET_S a
+             run, the explorer's streams kept meanwhile;
+          3. explorer events before the span + the chain's inside it + the explorer's after it must reconcile TO THE WEI.
+        `base` = (block, balance) the history starts from: (0, 0) for a full history — nothing is held before any
+        Transfer, so the baseline is NOT the explorer's first event (a dropped first event would fall outside it).
+        Returns (ins, outs, status, trace): status "repaired" | "in progress" | "failed"."""
+        import gzip
+        import json
+        import time
+        trace: list = []
+        path = self.cache.root / f"repair-{spec['key']}-{h[2:12]}.json.gz"
+        net = lambda I, O: sum(_amount(e) for e in I) - sum(_amount(e) for e in O)    # noqa: E731
+        try:
+            state = json.loads(gzip.decompress(path.read_bytes()))
+        except (OSError, ValueError):
+            state = None
+        first, bal0 = int(base[0]) + 1, int(base[1])
+        if state is None:
+            self._last_divergence = self._first_divergence = None
+            ins_h, outs_h, holes, t1 = self._patch_explorer_holes(chain, chain_id, token, [h], first, to_block,
+                                                                  ins_h, outs_h, bal0)
+            trace += t1
+            if self._balance_at(chain, chain_id, token, h, to_block) - bal0 == net(ins_h, outs_h):
+                return ins_h, outs_h, "repaired", trace
+            b = self._first_divergence              # the FIRST divergent block: the span re-reads every patch too
+            if b is None:
+                return ins_h, outs_h, "failed", trace + ["no divergent block found — nothing to re-read"]
+            state = {"from": int(b), "to": int(to_block), "next": int(b), "in": [], "out": [],
+                     "chunk": int(spec.get("repair_chunk_blocks") or REPAIR_CHUNK)}
+            trace.append(f"a gap remains after {len(holes)} single-block repair(s): re-reading blocks {b:,}..{to_block:,} "
+                         f"from the chain (resumable)")
+        t0 = time.monotonic()
+        budget = float(spec.get("repair_budget_s") or REPAIR_BUDGET_S)
+        first_pass = True                          # at least one range a run, whatever the budget, so it always advances
+        while state["next"] <= state["to"] and (first_pass or self.unbounded or time.monotonic() - t0 < budget):
+            first_pass = False
+            lo = state["next"]
+            got_out, upper = self.reader.dated_logs(chain, token, [TRANSFER_TOPIC, pad_address(h), None], lo,
+                                                    min(lo + state["chunk"] - 1, state["to"]), state["chunk"], trace)
+            got_in, cur = [], lo
+            while cur <= upper:
+                part, up2 = self.reader.dated_logs(chain, token, [TRANSFER_TOPIC, None, pad_address(h)], cur, upper,
+                                                   upper - cur + 1, trace)
+                got_in += part
+                cur = up2 + 1
+            for x in got_out:
+                e = _norm_log(x)
+                e["timeStamp"] = int(str(x["blockTimestamp"]), 16) if str(x["blockTimestamp"]).startswith("0x") \
+                    else int(x["blockTimestamp"])
+                state["out"].append(e)
+            for x in got_in:
+                e = _norm_log(x)
+                e["timeStamp"] = int(str(x["blockTimestamp"]), 16) if str(x["blockTimestamp"]).startswith("0x") \
+                    else int(x["blockTimestamp"])
+                state["in"].append(e)
+            state["next"] = upper + 1
+            self.cache.root.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(gzip.compress(json.dumps(state).encode()))
+        if state["next"] <= state["to"]:
+            done = (state["next"] - state["from"]) / max(1, state["to"] - state["from"] + 1)
+            trace.append(f"span re-read IN PROGRESS: blocks {state['from']:,}..{state['next'] - 1:,} of "
+                         f"..{state['to']:,} ({done:.0%}), {len(state['out']):,} out / {len(state['in']):,} in so far — "
+                         f"resumes next run")
+            return ins_h, outs_h, "in progress", trace
+        b, t = state["from"], state["to"]
+        ins2 = [e for e in ins_h if int(e["blockNumber"]) < b] + state["in"] + \
+            [e for e in ins_h if int(e["blockNumber"]) > t]
+        outs2 = [e for e in outs_h if int(e["blockNumber"]) < b] + state["out"] + \
+            [e for e in outs_h if int(e["blockNumber"]) > t]
+        bal = self._balance_at(chain, chain_id, token, h, to_block)
+        path.unlink(missing_ok=True)
+        replaced = (sum(1 for e in outs_h if b <= int(e["blockNumber"]) <= t),
+                    sum(1 for e in ins_h if b <= int(e["blockNumber"]) <= t))
+        trace.append(f"span {b:,}..{t:,} re-read from the chain: {len(state['out']):,} out / {len(state['in']):,} in "
+                     f"(the explorer had {replaced[0]:,} / {replaced[1]:,})")
+        if bal - bal0 == net(ins2, outs2):
+            return ins2, outs2, "repaired", trace
+        trace.append(f"still does not reconcile after the span: difference {bal - bal0 - net(ins2, outs2)} wei")
+        return ins_h, outs_h, "failed", trace
 
     def _block_at_ts(self, chain, chain_id, ts, head):
         """The first block at or after unix `ts`: the explorer's getblocknobytime, else bisection on RPC headers."""
@@ -806,6 +902,7 @@ class LogScan:
             poisoned += n_in + n_out
 
         # 3. RECONCILE, PER HOLDER, TO THE WEI.
+        repairing = False
         for h in holders:
             net = sum(_amount(e) for e in ins[h]) - sum(_amount(e) for e in outs[h])
             try:
@@ -818,18 +915,42 @@ class LogScan:
                                f"not stored.",
                         tiers_attempted="2", suggestion=f"Check the {chain} RPC.")
                 return
+            rtrace, rstatus = [], None
+            if net != bal and hasattr(self.reader, "dated_logs"):
+                # THE FULL HISTORY, REPAIRED FROM THE CHAIN (run review D1) — before falling back to the window
+                try:
+                    ins[h], outs[h], rstatus, rtrace = self._repair_history(spec, chain, chain_id, token, h, ins[h],
+                                                                          outs[h], to_block)
+                except Exception as e:  # noqa: BLE001 — the repair failing leaves the refusal, with what was tried
+                    from .chain import redact_urls
+                    rstatus, rtrace = "failed", rtrace + [f"stopped: {redact_urls(e)}"[:300]]
+                for t in rtrace:
+                    log.info("%s/%s: history repair: %s", name, key, t)
+                net = sum(_amount(e) for e in ins[h]) - sum(_amount(e) for e in outs[h])
+                repairing = repairing or rstatus == "in progress"
             if net != bal:
-                if self._window_scan(p, spec, chain, chain_id, token, holders, to_block,
-                                     f"full history does not reconcile for {h} at block {to_block:,}: in-out "
-                                     f"{net} wei, balanceOf {bal} wei", out):
-                    for sid, _, _, _, _ in streams:
-                        log.info("%s/%s: logcache %s", name, key,
-                                 self.cache.cut_back(sid, lambda e: int(e["blockNumber"])))
+                why_full = (f"full history does not reconcile for {h} at block {to_block:,}: in-out {net} wei, balanceOf "
+                            f"{bal} wei" + (f"; HISTORY REPAIR {rstatus.upper()}: {' | '.join(rtrace[-3:])}"
+                                            if rstatus else ""))
+                def keep_unproven():
+                    # a repair in progress keeps the explorer's streams (unproven) to merge into next run
+                    for sid, st, _new, h2, way in streams:
+                        evs = (ins if way == "in" else outs)[h2]
+                        if all(int(e.get("timeStamp") or 0) > 0 for e in evs):
+                            self.cache.save(sid, evs, to_block, st.get("proven_to"))
+                if self._window_scan(p, spec, chain, chain_id, token, holders, to_block, why_full, out):
+                    if repairing:
+                        keep_unproven()
+                    else:
+                        for sid, _, _, _, _ in streams:
+                            log.info("%s/%s: logcache %s", name, key,
+                                     self.cache.cut_back(sid, lambda e: int(e["blockNumber"])))
                     return
                 out.fail(SOURCE, name,
                          f"{key}: SCAN DOES NOT RECONCILE for {h} at block {to_block:,}: in-out = "
                          f"{net} wei, balanceOf = {bal} wei, difference {bal - net} wei. NOTHING "
-                         f"STORED. Served by {via} in {requests} request(s).", TIER)
+                         f"STORED. Served by {via} in {requests} request(s)."
+                         + (f" HISTORY REPAIR {rstatus.upper()}: {' | '.join(rtrace)}" if rstatus else ""), TIER)
                 out.gap(name, metric,
                         reason=(f"the {key} scan is INCOMPLETE OR WRONG and was not stored: for "
                                 f"{h}, sum(in) - sum(out) = {net} wei but balanceOf at the same "
@@ -841,7 +962,11 @@ class LogScan:
                                     "without Transfer events. Re-run once; a second difference is "
                                     "real and is NOT to be absorbed by a tolerance."))
                 # THE CACHE IS NOT ADVANCED, and anything in it no reconciliation has vouched for
-                # is dropped, so an unproven segment cannot keep this scan failing.
+                # is dropped, so an unproven segment cannot keep this scan failing — UNLESS a history repair is in
+                # progress, which needs the explorer's streams to merge into (run review D1)
+                if repairing:
+                    keep_unproven()
+                    return
                 for sid, _, _, _, _ in streams:
                     log.info("%s/%s: logcache %s", name, key,
                              self.cache.cut_back(sid, lambda e: int(e["blockNumber"])))

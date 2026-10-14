@@ -4,9 +4,10 @@ real store instead of a hand-built fixture (Jake's run 2026-10-09 ~10:15: "fixtu
 
     python dump_fixture.py --project Pendle
     python dump_fixture.py --project Ethereum --metrics gross_issuance_tokens,gross_burn_tokens,beacon_chain_eth
-    python dump_fixture.py --project Chainlink --days 120 --out fixtures/real_chainlink.json
+    python dump_fixture.py --project Chainlink --days 120 --out dumps/real_chainlink.json
 
-Writes fixtures/real_<project>.json:
+Writes dumps/real_<project>.json (run review D8, 2026-10-14: dumps/ is git-ignored — writing into the tracked fixtures/
+folder made `git pull` abort on the next update; fixtures/ is where a dump is copied once it becomes a test fixture):
     meta               project, the as-of date (today, UTC), when it was dumped, the git commit, the filters used
     metrics            every stored row of the project (date, metric, value, source, tier, fetched_at) — or only
                        --metrics — over the last --days days (default 400: Q0 plus the trailing year)
@@ -100,7 +101,8 @@ def dump(project: str, db: str = "metrics.db", metrics: list[str] | None = None,
                                    "run_log": len(rl), "gap_report": len(gaps), "manual_references": len(refs)}},
                "metrics": met, "review_queue": rq, "manual_overrides": mo, "run_log": rl, "gap_report": gaps,
                "manual_references": refs}
-    path = Path(out) if out else ROOT / "fixtures" / f"real_{project.lower().replace('.', '').replace(' ', '_')}.json"
+    path = Path(out) if out else ROOT / "dumps" / f"real_{project.lower().replace('.', '').replace(' ', '_')}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=1, default=str), encoding="utf-8")
     return path

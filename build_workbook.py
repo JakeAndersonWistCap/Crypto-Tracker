@@ -7390,7 +7390,9 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         ("Boros fees Q0 ($) — Pendle Boros, its own line (NOT in the sPENDLE buyback base)",
          lambda r, p: pull(R.D(r, "boros_fees_usd", "q0")) if p["name"] == "Pendle" else "", FMT_USD, "pull", False,
          {"metric_fn": lambda n: "boros_fees_usd" if n == "Pendle" else None}),
-        ("Boros volume Q0 ($) — every market's traded units x its collateral's daily price (round 3 W2)",
+        ("Boros volume Q0 ($) — every market's traded units x its collateral's daily price (round 3 W2); BASIS: "
+         "trailing 90 days to the as-of date (workbook basis). The research figures of 2026-10-13 (Q0 $3.043B, Q-4 "
+         "$2.36B) are 91-day quarters ending the day before — the same series reads $2.922B / $2.506B on this basis",
          lambda r, p: pull(R.D(r, "boros_volume_usd", "q0")) if p["name"] == "Pendle" else "", FMT_USD, "pull", False,
          {"metric_fn": lambda n: "boros_volume_usd" if n == "Pendle" else None}),
         ("Subsidy targeting by pool — route (probed, not yet wired)",

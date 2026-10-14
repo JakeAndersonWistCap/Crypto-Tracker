@@ -560,6 +560,47 @@ class ChainReader:
             return [], attempts
         raise RuntimeError("block " + f"{block:,} could not be read from the chain: " + "; ".join(attempts))
 
+    def dated_logs(self, chain: str, address: str, topics: list, lo: int, hi: int, chunk: int,
+                   trace: list) -> tuple[list, int]:
+        """(logs, last block covered): Transfer logs of `address` in [lo, hi] FROM THE CHAIN, each DATED (run review
+        D1, Jake 2026-10-14). An endpoint whose logs carry no blockTimestamp (arb1.arbitrum.io answers 0x0 on every
+        log) is passed over — an undated outflow cannot be put on a day. A range an endpoint refuses as too wide is
+        halved; one call per endpoint per range, each answer named in `trace`. Raises when no endpoint serves the
+        range dated."""
+        urls, seen = [], set()
+        for u in [self._w3_url.get(chain)] + rpc_endpoints(chain):
+            if u and u not in seen:
+                seen.add(u)
+                urls.append(u)
+        span = max(1, int(chunk))
+        while True:
+            upper = min(lo + span - 1, hi)
+            flt = {"address": self.checksum(address), "topics": topics, "fromBlock": int(lo), "toBlock": int(upper)}
+            narrowed, said = False, []
+            for u in urls:
+                try:
+                    got = list(self.__dict__.setdefault("_w3_by_url", {}).get(u) or self.make_web3(chain, u, 60)
+                               .eth.get_logs(flt))
+                except Exception as e:  # noqa: BLE001
+                    msg = redact_urls(self.error_detail(e))[:160]
+                    said.append(f"{rpc_host(u)}: {msg}")
+                    if any(x in msg.lower() for x in self.LOGS_RANGE_TOO_WIDE) and span > 1:
+                        narrowed = True
+                        break
+                    continue
+                ts = [x.get("blockTimestamp") if hasattr(x, "get") else getattr(x, "blockTimestamp", None)
+                      for x in got]
+                if got and not all(t not in (None, 0, "0x0") and int(str(t), 16 if str(t).startswith("0x") else 10)
+                                   for t in ts):
+                    said.append(f"{rpc_host(u)}: {len(got)} log(s) UNDATED (blockTimestamp 0) — passed over")
+                    continue
+                trace.append(f"{rpc_host(u)} eth_getLogs {lo:,}..{upper:,} -> {len(got)} dated log(s)")
+                return got, upper
+            if narrowed:
+                span = max(1, span // 2)
+                continue
+            raise RuntimeError(f"blocks {lo:,}..{upper:,}: no endpoint served dated logs — " + "; ".join(said))
+
     def erc20_supply_at(self, chain: str, token: str, block) -> int:
         """totalSupply() at `block`, through the same endpoint list as erc20_balance_at (X1 follow-up: the supply
         side of a burn scan's reconciliation)."""
@@ -742,7 +783,11 @@ class ChainReader:
     # And the substrings that mean "this RANGE is too wide for me" — the server naming its own
     # limit. Halving answers what it said; it is not a blind retry of the same request.
     LOGS_RANGE_TOO_WIDE = ("query returned more than", "block range", "too many results",
-                           "response size", "limit exceeded", "range is too large", "query timeout")
+                           "response size", "limit exceeded", "range is too large", "query timeout",
+                           # arb1.arbitrum.io's own words (run review D1, read 2026-10-14): "logs matched by query
+                           # exceeds limit of 10000", "log query timed out", "... only 10000000 are allowed for this
+                           # request; narrow the block range"
+                           "exceeds limit", "log query timed out", "narrow the block range")
     # ===== ** THE FLOOR IS NOT A TUNING KNOB. Confirmed the hard way 2026-09-23. ** =====
     # Alchemy's free tier caps eth_getLogs at TEN blocks, from its own error body: "Under the
     # Free tier plan, you can make eth_getLogs requests with up to a 10 block range." The

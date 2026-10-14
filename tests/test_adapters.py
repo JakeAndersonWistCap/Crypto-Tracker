@@ -2496,7 +2496,8 @@ def test_near_staked_is_summed_from_the_validators_call_and_scaled_from_nears_ow
     out5, stub5 = _run_near({"jsonrpc": "2.0", "error": {"name": "HANDLER_ERROR"}, "id": "x"})
     assert out5.frame().empty
     stake_calls = [c for c in stub5.calls if c[1].get("method") == "validators"]
-    assert len(stake_calls) == 3, "every configured endpoint is tried before giving up"
+    n_endpoints = len(config.PROJECT_BY_NAME["Near"]["node_api"]["endpoints"])
+    assert n_endpoints >= 3 and len(stake_calls) == n_endpoints, "every configured endpoint is tried before giving up"
     assert [e for e in out5.log if e.status == "failed" and "JSON-RPC error" in e.message]
     print("near stake ok: current validators summed, 10^24 from NEAR's own SDK, a small exponent "
           "refused by the bound and a large one flagged where nothing else would see it")

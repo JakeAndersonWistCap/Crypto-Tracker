@@ -1861,7 +1861,10 @@ TIER_BUDGET_S = {
     "schedule:config": 15, "defillama": 150, "morpho_api": 60, "growthepie": 60,
     "nearblocks": 180, "coingecko": 240, "hypercore_info": 60, "chainlink_fees": 180, "xref": 90, "validatorqueue": 30, "treasury_bills": 60, "sky_ssr": 120, "business": 900, "share_vault": 60,
     "chain": 240, "tron_node": 60, "near_rpc": 90, "explorer": 300, "balance_flow": 150, "maple_page": 60,
-    "explorer_gauge": 300, "explorer_gauge_l2": 300,
+    "explorer_gauge": 300,
+    # run review D1 (2026-10-14): the L2 gauge scans' 140 s explorer budget + the full-history repair's 120 s of chain
+    # reads (fetch.logscan.REPAIR_BUDGET_S) and their balance reads
+    "explorer_gauge_l2": 420,
     # one epoch a week: ~10 Multicall3 batches + one DefiLlama price call; the daily totalWeight is one eth_call
     "aero_voter": 180,
     "scrape": 240, "dune": 420, "ultrasound": 60, "plume_staking": 180, "blockscout_stats": 90,

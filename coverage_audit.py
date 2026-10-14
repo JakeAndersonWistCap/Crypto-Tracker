@@ -356,7 +356,10 @@ def regression_rows(sanity_hits) -> list[dict]:
             continue
         allow = next((a for a in config.REGRESSION_ALLOWLIST if a["project"] == proj
                       and any(x in detail for x in a.get("match") or (a.get("header", ""),))
-                      and (not a.get("until") or pd.Timestamp.today().normalize() <= pd.Timestamp(a["until"]))), None)
+                      and (not a.get("until") or pd.Timestamp.today().normalize() <= pd.Timestamp(a["until"]))
+                      # D2: an allowance tied to a declared gap lapses the moment the gap is closed
+                      and (not a.get("while_outflow_incomplete")
+                           or config.outflow_incomplete(proj, [a["while_outflow_incomplete"]]))), None)
         status = "N/A BY DESIGN" if allow else "BROKEN"
         why = (f"allow-listed ({allow['reason']}): {detail}" if allow else
                f"REGRESSION — {detail}; not on config.REGRESSION_ALLOWLIST")
