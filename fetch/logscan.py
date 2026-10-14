@@ -250,43 +250,66 @@ class LogScan:
         has NO logs for OP block 158,047,200, while the chain has the distributor's Transfer of exactly that amount
         (tx 0xb09bfbe3…). Not a tolerance: the block is found and read from the chain. balanceOf is bisected against the
         running in − out to the first block where they part; that block's Transfers in and out of the holders are read
-        by RPC eth_getLogs and the ones the explorer lacked are added. Repeated for at most EXPLORER_HOLE_MAX holes; a
-        block that yields nothing new stops it (the gap is not a missing log — it stays a refusal).
-        Returns (ins, outs, [(block, transfers added)])."""
-        internal = set(holders)
-        ins, outs, holes = list(ins), list(outs), []
+        FROM THE CHAIN (ChainReader.logs_in_block: eth_getLogs over that one block on every endpoint, else the block's
+        receipts — never the explorer that lacks it) and the ones the explorer lacked are added. Repeated for at most
+        EXPLORER_HOLE_MAX holes; a block that yields nothing new stops it (the gap is not a missing log).
+        Returns (ins, outs, [(block, transfers added)], trace) — `trace` says what was tried, in order, for the log and
+        for the failure line (run Y1, Jake 2026-10-14: on his machine the repair left no trace at all)."""
+        internal = {h.lower() for h in holders}
+        ins, outs, holes, trace = list(ins), list(outs), [], []
+        reads = [0]
 
         def mis(b):
+            reads[0] += len(holders)
             net = sum(_amount(e) for e in ins if int(e["blockNumber"]) <= b and topic_address(e["topics"][1])
                       not in internal) - sum(_amount(e) for e in outs if int(e["blockNumber"]) <= b and
                                              topic_address(e["topics"][2]) not in internal)
             return sum(self._balance_at(chain, chain_id, token, h, b) for h in holders) - bal0 - net
 
-        addr = self.reader.checksum(token) if hasattr(self.reader, "checksum") else token
-        for _ in range(EXPLORER_HOLE_MAX):
-            if mis(to_block) == 0:
-                break
-            lo, hi = b0 - 1, to_block
-            while hi - lo > 1:
-                mid = (lo + hi) // 2
-                lo, hi = (mid, hi) if mis(mid) == 0 else (lo, mid)
-            have = {(e["transactionHash"], int(e["logIndex"])) for e in ins + outs}
-            added = 0
-            for h in holders:
-                for topics, bucket in (([TRANSFER_TOPIC, None, pad_address(h)], ins),
-                                       ([TRANSFER_TOPIC, pad_address(h), None], outs)):
-                    raw, _c, _u = self.reader.scan_logs(chain, {"address": addr, "topics": topics}, hi, hi,
-                                                         rpc_only=True)
-                    for x in raw:
-                        e = _norm_log(x)
-                        if (e["transactionHash"], int(e["logIndex"])) not in have:
-                            bucket.append(e)
-                            have.add((e["transactionHash"], int(e["logIndex"])))
-                            added += 1
-            if not added:
-                break
-            holes.append((hi, added))
-        return ins, outs, holes
+        def block_logs(topics, blk):
+            if hasattr(self.reader, "logs_in_block"):
+                got, tried = self.reader.logs_in_block(chain, token, topics, blk)
+                trace.extend(tried)
+                return got
+            addr = self.reader.checksum(token) if hasattr(self.reader, "checksum") else token
+            raw, _c, _u = self.reader.scan_logs(chain, {"address": addr, "topics": topics}, blk, blk, rpc_only=True)
+            trace.append(f"RPC eth_getLogs block {blk:,} -> {len(raw)} log(s)")
+            return raw
+
+        try:
+            for _ in range(EXPLORER_HOLE_MAX):
+                if mis(to_block) == 0:
+                    break
+                lo, hi = b0 - 1, to_block
+                while hi - lo > 1:
+                    mid = (lo + hi) // 2
+                    lo, hi = (mid, hi) if mis(mid) == 0 else (lo, mid)
+                trace.append(f"bisected on balanceOf ({reads[0]} read(s)) to block {hi:,}: the first where the "
+                             f"balance parts from the explorer's transfers")
+                have = {(e["transactionHash"], int(e["logIndex"])) for e in ins + outs}
+                added = 0
+                # ONE READ OF THE BLOCK: every Transfer of the token in it, split into in / out here (run Y1 live: read
+                # side by side, the inflow side was legitimately empty and an empty answer sent it through every
+                # endpoint and 70 receipts before the outflow side was asked)
+                for x in block_logs([TRANSFER_TOPIC], hi):
+                    e = _norm_log(x)
+                    if len(e["topics"]) < 3 or (e["transactionHash"], int(e["logIndex"])) in have:
+                        continue
+                    frm, to = topic_address(e["topics"][1]), topic_address(e["topics"][2])
+                    if to in internal or frm in internal:
+                        (ins if to in internal else outs).append(e)
+                        have.add((e["transactionHash"], int(e["logIndex"])))
+                        added += 1
+                if not added:
+                    trace.append(f"block {hi:,}: the chain has no Transfer the explorer lacked — not a missing log")
+                    break
+                holes.append((hi, added))
+        except Exception as e:  # noqa: BLE001 — the repair failing leaves the refusal, with what was tried
+            from .chain import redact_urls
+            trace.append(f"stopped: {redact_urls(e)}"[:400])
+        for t in trace:
+            log.info("explorer-hole search %s: %s", chain, t)
+        return ins, outs, holes, trace
 
     def _block_at_ts(self, chain, chain_id, ts, head):
         """The first block at or after unix `ts`: the explorer's getblocknobytime, else bisection on RPC headers."""
@@ -294,7 +317,15 @@ class LogScan:
             return int(self.explorer.block_at(chain_id, int(ts)))
         except Exception:  # noqa: BLE001 — Blockscout 500s on Optimism (Jake's seed 2026-10-09 15:33)
             pass
-        lo, hi = 1, int(head)
+        # GALLOP BACK FROM THE HEAD, THEN BISECT (run Y1, 2026-10-14): bisecting from block 1 asked OP's public node
+        # for block 79,093,726, before Bedrock, which it does not serve ("Block with id 0x4b6dfde not found")
+        hi, step, lo = int(head), 1_000, None
+        while lo is None:
+            cand = max(1, int(head) - step)
+            if self.reader.block_timestamp(chain, cand) < ts or cand == 1:
+                lo = cand
+            else:
+                hi, step = cand, step * 2
         while hi - lo > 1:
             mid = (lo + hi) // 2
             lo, hi = (mid, hi) if self.reader.block_timestamp(chain, mid) < ts else (lo, mid)
@@ -345,22 +376,22 @@ class LogScan:
         internal = set(holders)
         net = sum(_amount(e) for e in ins if topic_address(e["topics"][1]) not in internal) \
             - sum(_amount(e) for e in outs if topic_address(e["topics"][2]) not in internal)
-        holes = []
+        holes, trace = [], []
         if bal1 - bal0 != net and not all(str(v).startswith("RPC") for v in via):
-            try:
-                ins, outs, holes = self._patch_explorer_holes(chain, chain_id, token, holders, b0, to_block, ins,
-                                                                outs, bal0)
-            except Exception as e:  # noqa: BLE001 — the hole search is a repair; failing it leaves the refusal below
-                log.warning("%s/%s: explorer-hole search failed — %s", name, key, e)
+            ins, outs, holes, trace = self._patch_explorer_holes(chain, chain_id, token, holders, b0, to_block, ins,
+                                                                 outs, bal0)
             if holes:
                 net = sum(_amount(e) for e in ins if topic_address(e["topics"][1]) not in internal) \
                     - sum(_amount(e) for e in outs if topic_address(e["topics"][2]) not in internal)
                 via.add("EXPLORER HOLE(S) read from the chain: " + ", ".join(
                     f"block {b:,} ({n} Transfer(s) the explorer does not index)" for b, n in holes))
         if bal1 - bal0 != net:
-            out.fail(SOURCE, name, f"{key}: the Q0 WINDOW does not reconcile either: blocks {b0:,}..{to_block:,}, "
+            out.fail(SOURCE, name, f"{key}: the Q0 WINDOW does not reconcile: blocks {b0:,}..{to_block:,}, "
                                    f"in-out {net} wei vs balanceOf change {bal1 - bal0} wei (difference "
-                                   f"{bal1 - bal0 - net}). Read by {'; '.join(sorted(via))}. Nothing stored.", TIER)
+                                   f"{bal1 - bal0 - net}). Read by {'; '.join(sorted(via))}. "
+                                   + (f"EXPLORER-HOLE SEARCH: {' | '.join(trace)}. " if trace else
+                                      "No explorer-hole search (the read was RPC only). ")
+                                   + "Nothing stored.", TIER)
             return False
         excluded = {a.lower() for a in spec.get("exclude_counterparties") or []}
         counted = [e for e in outs if topic_address(e["topics"][2]) not in internal | excluded]
@@ -428,17 +459,16 @@ class LogScan:
         def _net():
             return sum(_amount(e) for e in ins if topic_address(e["topics"][1]) not in internal) \
                 - sum(_amount(e) for e in evs if topic_address(e["topics"][2]) not in internal)
-        holes = []
+        holes, trace = [], []
         if bal1 - bal0 != _net() and not all(str(v).startswith("RPC") for v in via):
-            try:
-                ins, evs, holes = self._patch_explorer_holes(spec["chain"], chain_id, token, holders, b0, to_block,
-                                                             ins, evs, bal0)
-            except Exception as e:  # noqa: BLE001
-                log.warning("%s/%s: explorer-hole search (direct count) failed — %s", name, key, e)
+            ins, evs, holes, trace = self._patch_explorer_holes(spec["chain"], chain_id, token, holders, b0, to_block,
+                                                                ins, evs, bal0)
         if bal1 - bal0 != _net():
             out.fail(SOURCE, name, f"{key}: the direct count ({metric}) does NOT RECONCILE: blocks {b0:,}..{to_block:,}, "
                                    f"in-out {_net()} wei vs balanceOf change {bal1 - bal0} wei (difference "
-                                   f"{bal1 - bal0 - _net()}). Read by {'; '.join(sorted(via))}. Nothing stored.", TIER)
+                                   f"{bal1 - bal0 - _net()}). Read by {'; '.join(sorted(via))}. "
+                                   + (f"EXPLORER-HOLE SEARCH: {' | '.join(trace)}. " if trace else "")
+                                   + "Nothing stored.", TIER)
             return
         if holes:
             via.add("EXPLORER HOLE(S) read from the chain: " + ", ".join(

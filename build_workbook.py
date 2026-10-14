@@ -1542,7 +1542,10 @@ def _near_buyback_views(groups: dict) -> None:
         d = d[(d.index.to_series().diff() == pd.Timedelta(days=1)).values & d.notna().values]
         if d.empty:
             continue
-        named = {pd.Timestamp(o["date"]): o for o in config.NEAR_REVENUE_OUTFLOWS}
+        named: dict = {}
+        for o in config.NEAR_REVENUE_OUTFLOWS:          # one entry per transfer: a day's transfers summed (run Y2)
+            k = pd.Timestamp(o["date"])
+            named[k] = {**o, "tokens": named[k]["tokens"] + o["tokens"]} if k in named else dict(o)
         # a balance read once a day sees a move on its day or the next read
         named.update({k + pd.Timedelta(days=1): o for k, o in list(named.items()) if k + pd.Timedelta(days=1) not in named})
 

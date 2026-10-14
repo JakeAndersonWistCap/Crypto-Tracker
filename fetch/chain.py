@@ -483,18 +483,82 @@ class ChainReader:
         state). <CHAIN>_RPC_URL is first when set (rpc_endpoints); every endpoint refusing raises with each error."""
         errors = []
         tried = set()
-        for url in [self._w3_url.get(chain)] + rpc_endpoints(chain):
+        # THE ENDPOINT THAT LAST SERVED PAST STATE GOES FIRST (run Y1, 2026-10-14: a hole search's 23 archive reads each
+        # paid publicnode's 403 before mainnet.optimism.io answered — 84 s inside a 300 s tier)
+        archive = self.__dict__.setdefault("_archive_ok", {})
+        for url in [archive.get(chain), self._w3_url.get(chain)] + rpc_endpoints(chain):
             if not url or url in tried:
                 continue
             tried.add(url)
             try:
                 w3 = self._w3[chain] if url == self._w3_url.get(chain) and chain in self._w3 \
-                    else self.make_web3(chain, url, 30)
+                    else self.__dict__.setdefault("_w3_by_url", {}).get(url) or self.make_web3(chain, url, 30)
+                self._w3_by_url[url] = w3
                 c = w3.eth.contract(address=self.checksum(token), abi=ERC20_ABI)
-                return int(c.functions.balanceOf(self.checksum(holder)).call(block_identifier=block))
+                got = int(c.functions.balanceOf(self.checksum(holder)).call(block_identifier=block))
+                archive[chain] = url
+                return got
             except Exception as e:  # noqa: BLE001
                 errors.append(f"{rpc_host(url)}: {redact_urls(e)}")
         raise RuntimeError(f"balanceOf at block {block} refused by every {chain} endpoint: {'; '.join(errors)}")
+
+    def logs_in_block(self, chain: str, address: str, topics: list, block: int) -> tuple[list, list]:
+        """(logs, attempts): every log of `address` matching `topics` in ONE block, read from the chain itself, never
+        an explorer (round 3 run Y1, Jake 2026-10-14: the X1 hole repair asked Blockscout again for the block it
+        lacks, and on Jake's machine optimism-rpc.publicnode.com refuses eth_getLogs).
+
+          1. eth_getLogs over that single block (fromBlock = toBlock — no range a provider can refuse), on every
+             configured endpoint in turn (<CHAIN>_RPC_URL first);
+          2. if every endpoint refuses getLogs: the block's own transactions (eth_getBlockByNumber) and each one's
+             receipt (eth_getTransactionReceipt), the logs filtered here by address and topics.
+        `attempts` names each try — "host eth_getLogs -> 1 log" / "host eth_getLogs -> HTTP 403" — keys redacted, so
+        the caller can say exactly what was tried. Raises with the attempts when nothing could be read."""
+        def norm(x):
+            g = (lambda k: x.get(k)) if hasattr(x, "get") else (lambda k: getattr(x, k, None))  # noqa: E731
+            hx = lambda v: v.hex() if hasattr(v, "hex") else str(v)                            # noqa: E731
+            h0x = lambda v: hx(v) if hx(v).startswith("0x") else "0x" + hx(v)                  # noqa: E731
+            num = lambda v: int(v, 16) if isinstance(v, str) and v.startswith("0x") else int(v)  # noqa: E731
+            return {"address": str(g("address")).lower(), "topics": [h0x(t).lower() for t in g("topics") or []],
+                    "data": h0x(g("data") or "0x"), "blockNumber": num(g("blockNumber")),
+                    "transactionHash": h0x(g("transactionHash")).lower(), "logIndex": num(g("logIndex"))}
+
+        def match(lg):
+            return lg["address"] == address.lower() and all(
+                t is None or (i < len(lg["topics"]) and lg["topics"][i] == str(t).lower()) for i, t in enumerate(topics))
+
+        attempts, urls, seen = [], [], set()
+        for u in [self._w3_url.get(chain)] + rpc_endpoints(chain):
+            if u and u not in seen:
+                seen.add(u)
+                urls.append(u)
+        flt = {"address": self.checksum(address), "topics": topics, "fromBlock": int(block), "toBlock": int(block)}
+        # AN EMPTY ANSWER DOES NOT END THE SEARCH: a node whose log index is pruned answers [] rather than an error,
+        # and the block is only being read because the balance says something moved in it
+        answered = False
+        for u in urls:
+            try:
+                got = [g for g in (norm(x) for x in self.make_web3(chain, u, 30).eth.get_logs(flt)) if match(g)]
+                attempts.append(f"{rpc_host(u)} eth_getLogs block {block:,} -> {len(got)} log(s)")
+                answered = True
+                if got:
+                    return got, attempts
+            except Exception as e:  # noqa: BLE001
+                attempts.append(f"{rpc_host(u)} eth_getLogs block {block:,} -> {redact_urls(self.error_detail(e))[:120]}")
+        for u in urls:
+            try:
+                w3 = self.make_web3(chain, u, 30)
+                txs = w3.eth.get_block(int(block), full_transactions=False)["transactions"]
+                got = []
+                for t in txs:
+                    got += [norm(x) for x in w3.eth.get_transaction_receipt(t)["logs"]]
+                got = [g for g in got if match(g)]
+                attempts.append(f"{rpc_host(u)} receipts of block {block:,} ({len(txs)} tx) -> {len(got)} log(s)")
+                return got, attempts
+            except Exception as e:  # noqa: BLE001
+                attempts.append(f"{rpc_host(u)} receipts of block {block:,} -> {redact_urls(self.error_detail(e))[:120]}")
+        if answered:
+            return [], attempts
+        raise RuntimeError("block " + f"{block:,} could not be read from the chain: " + "; ".join(attempts))
 
     def erc20_supply_at(self, chain: str, token: str, block) -> int:
         """totalSupply() at `block`, through the same endpoint list as erc20_balance_at (X1 follow-up: the supply
@@ -1880,7 +1944,7 @@ class Chain:
         s1 = self.reader.erc20_supply_at(chain, token, head)
         net = lambda b: (sum(e["value"] for e in mints if e["block"] <= b)      # noqa: E731
                          - sum(e["value"] for e in burns if e["block"] <= b))
-        holes = []
+        holes, trace = [], []
         topic = Web3.keccak(text="Transfer(address,address,uint256)").hex()
         topic = topic if topic.startswith("0x") else "0x" + topic
         zero = "0x" + self.reader.checksum(burn_to)[2:].lower().rjust(64, "0")
@@ -1894,15 +1958,29 @@ class Chain:
                 lo, hi = (mid, hi) if ok else (lo, mid)
             # THE BLOCK FROM THE CHAIN, both sides, replacing whatever the explorer gave for it
             got = {}
+            trace.append(f"bisected on totalSupply to block {hi:,}")
             for side, topics in (("from", [topic, zero, None]), ("to", [topic, None, zero])):
-                raw, _c2, _u = self.reader.scan_logs(chain, {"address": self.reader.checksum(token), "topics": topics},
-                                                     hi, hi, rpc_only=True)
+                if hasattr(self.reader, "logs_in_block"):
+                    try:
+                        raw, tried = self.reader.logs_in_block(chain, token, topics, hi)
+                    except Exception as e:  # noqa: BLE001 — the refusal below carries what was tried
+                        trace.append(redact_urls(e)[:300])
+                        raw = None
+                    else:
+                        trace.extend(tried)
+                    if raw is None:
+                        break
+                else:
+                    raw, _c2, _u = self.reader.scan_logs(chain, {"address": self.reader.checksum(token),
+                                                                 "topics": topics}, hi, hi, rpc_only=True)
                 got[side] = [{"from": "0x" + str(x["topics"][1].hex() if hasattr(x["topics"][1], "hex")
                                                  else x["topics"][1])[-40:],
                               "to": "0x" + str(x["topics"][2].hex() if hasattr(x["topics"][2], "hex")
                                                else x["topics"][2])[-40:],
                               "value": int(x["data"].hex() if hasattr(x["data"], "hex") else str(x["data"]), 16),
                               "block": hi} for x in raw]
+            if len(got) < 2:
+                break                                   # the block could not be read: the refusal names the tries
             before = (sum(1 for e in mints if e["block"] == hi), sum(1 for e in burns if e["block"] == hi))
             if before == (len(got["from"]), len(got["to"])):
                 break                                   # the chain says the same: not a missing log
@@ -1913,7 +1991,8 @@ class Chain:
         if s1 - s0 != net(head):
             return burns, (f"DOES NOT RECONCILE: totalSupply {s0 / dec:,.4f} -> {s1 / dec:,.4f} over blocks "
                            f"{from_block:,}..{head:,}, mints - burns = {net(head) / dec:,.4f} (difference "
-                           f"{(s1 - s0 - net(head))} wei = {(s1 - s0 - net(head)) / dec:,.4f} tokens)")
+                           f"{(s1 - s0 - net(head))} wei = {(s1 - s0 - net(head)) / dec:,.4f} tokens)"
+                           + (f"; HOLE SEARCH: {' | '.join(trace)}" if trace else ""))
         return burns, (f"RECONCILED to the wei against totalSupply: {s0 / dec:,.4f} -> {s1 / dec:,.4f} = "
                        f"{len(mints):,} mint(s) - {len(burns):,} burn(s) over blocks {from_block:,}..{head:,}"
                        + ("; EXPLORER HOLE(S) read from the chain: " + ", ".join(

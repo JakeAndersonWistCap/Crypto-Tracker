@@ -252,9 +252,11 @@ def test_aerodrome_weekly_rows_sit_on_the_flip_that_paid_them():
 
 # ------------------------------------------------------------------------------------------------------------ B5 NEAR
 def test_near_bridged_outflows_are_recorded_and_named():
-    out = {o["date"]: o for o in config.NEAR_REVENUE_OUTFLOWS}
-    assert out["2026-04-22"]["tokens"] == 45_010 and out["2026-07-10"]["tokens"] == 12_000
-    assert all("not retired" in o["class"] for o in out.values())
+    by_day = {}
+    for o in config.NEAR_REVENUE_OUTFLOWS:
+        by_day[o["date"]] = by_day.get(o["date"], 0) + o["tokens"]
+    assert by_day["2026-04-22"] == 45_010 and by_day["2026-07-10"] == 12_000      # 45,000 + 10 on 04-22 (run Y2)
+    assert all("not retired" in o["class"] for o in config.NEAR_REVENUE_OUTFLOWS)
     g = _groups("Near")
     b = g[("Near", "actual_buyback_tokens")]
     named = b[b.source.astype(str).str.contains("bridged out")]
@@ -744,3 +746,115 @@ def test_x1_followup_sky_burn_scan_reconciles_against_total_supply(monkeypatch):
     _b, verdict = c._supply_reconcile("ethereum", fx["token"], "0x" + "0" * 40, fx["from_block"], fx["to_block"],
                                       [e for e in true_b if e["block"] != hole], {}, 10 ** 18)
     assert verdict.startswith("DOES NOT RECONCILE") and "-7,372,288.0000 tokens" in verdict
+
+
+def test_y2_near_probe_passes_offline_on_the_saved_responses(monkeypatch, capsys):
+    """Y2: the probe flagged 2026-04-22 1csfundsadmin -> fdd59b04… 45,000 NEAR (then bridge-mng.near) as not on the
+    list — the list held one 45,010 entry (45,000 + 10 summed). One entry per transfer now. The probe's own logic, run
+    offline on the saved NearBlocks responses (fixtures/api_near_revenue_wallets.json: every page of the three wallets
+    read 2026-10-13, the one-time accounts' receipts 2026-10-14): the verdict passes; with the old summed entry it
+    flags exactly the 45,000."""
+    import check_offline_items as coi
+    from fetch import nearblocks as nb
+    saved = _fx("api_near_revenue_wallets.json")["responses"]
+    clock = [0.0]
+    monkeypatch.setattr(nb, "_clock", lambda: clock[0])
+    monkeypatch.setattr(nb, "_sleep", lambda s: clock.__setitem__(0, clock[0] + s))
+
+    class _R:
+        status_code = 200
+
+        def __init__(self, rows):
+            self.rows = rows
+
+        def json(self):
+            return {"data": self.rows, "meta": {"next_page": None}}
+
+    monkeypatch.setattr(coi.requests, "get", lambda url, **k: _R(saved[url.replace("https://api.nearblocks.io", "")]))
+    coi.near_revenue_wallet_flows()
+    out = capsys.readouterr().out
+    assert "VERDICT: every outflow of 1,000 NEAR or more is on config.NEAR_REVENUE_OUTFLOWS" in out, out[-600:]
+    assert "45,000.00 NEAR" in out and "12,000.00 NEAR" in out and out.count("BRIDGED OUT — not retired") >= 2
+    import re
+    assert re.search(r"native IN\s+1,978,728\.95", out) and re.search(r"native OUT\s+12,025\.00", out)  # buybacks wallet
+
+    summed = [dict(config.NEAR_REVENUE_OUTFLOWS[0], tokens=45_010.0)] + list(config.NEAR_REVENUE_OUTFLOWS[2:])
+    monkeypatch.setattr(config, "NEAR_REVENUE_OUTFLOWS", tuple(summed))
+    coi.near_revenue_wallet_flows()
+    out = capsys.readouterr().out
+    assert "1 outflow(s) of 1,000+ NEAR NOT on config.NEAR_REVENUE_OUTFLOWS" in out and \
+        "2026-04-22 1csfundsadmin.sputnik-dao.near 45,000" in out
+
+
+def test_y1_logs_in_block_falls_through_endpoints_and_receipts_and_names_every_try(monkeypatch):
+    """Y1: on Jake's machine optimism-rpc.publicnode.com refuses every past-block read ("Archive requests require a
+    personal token") and mainnet.optimism.io rate-limits. The hole's block is read over that ONE block on every
+    endpoint, an empty answer does not end the search, then from the block's receipts; every try is named. Real log
+    and receipt shapes: the X1 hole (fixtures/api_etherfi_cashback_hole.json, tx 0xb09bfbe3…)."""
+    from fetch.chain import ChainReader
+    fx = _fx("api_etherfi_cashback_hole.json")
+    hole = fx["explorer_missing_block"]
+    real = [x for x in fx["logs"] if int(x["blockNumber"], 16) == hole]
+    assert len(real) == 1
+    monkeypatch.setenv("RPC_OPTIMISM", "https://refuses.example,https://empty.example,https://receipts.example")
+    monkeypatch.delenv("OPTIMISM_RPC_URL", raising=False)
+
+    class _Eth:
+        def __init__(self, url):
+            self.url = url
+
+        def get_logs(self, flt):
+            assert flt["fromBlock"] == flt["toBlock"] == hole                      # ONE block, nothing to refuse
+            if "refuses" in self.url:
+                raise RuntimeError("403 Client Error: Forbidden — Archive requests require a personal token")
+            if "empty" in self.url:
+                return []                                                          # a pruned log index answers []
+            raise RuntimeError("429 Too Many Requests")
+
+        def get_block(self, n, full_transactions=False):
+            if "receipts" not in self.url:
+                raise RuntimeError("403")
+            return {"transactions": [real[0]["transactionHash"], "0x" + "ab" * 32]}
+
+        def get_transaction_receipt(self, h):
+            return {"logs": real if h == real[0]["transactionHash"] else []}
+
+    class _W3:
+        def __init__(self, url):
+            self.eth = _Eth(url)
+
+    r = ChainReader()
+    monkeypatch.setattr(ChainReader, "make_web3", staticmethod(lambda chain, url, t=30: _W3(url)))
+    topics = [real[0]["topics"][0], real[0]["topics"][1], None]
+    got, tried = r.logs_in_block("optimism", fx["token"], topics, hole)
+    assert len(got) == 1 and int(got[0]["data"], 16) == 19_808_964_390_546_887_139
+    assert any("refuses.example eth_getLogs" in t and "Archive requests" in t for t in tried)
+    assert any("empty.example eth_getLogs" in t and "0 log(s)" in t for t in tried)
+    assert any("receipts.example receipts of block" in t and "1 log(s)" in t for t in tried)
+
+    monkeypatch.setenv("RPC_OPTIMISM", "https://refuses.example")
+    with pytest.raises(RuntimeError) as e:
+        r.logs_in_block("optimism", fx["token"], topics, hole)
+    assert "could not be read from the chain" in str(e.value) and "refuses.example" in str(e.value)
+
+
+def test_y1_the_failure_line_names_the_hole_search(tmp_path, monkeypatch):
+    """Y1: when the block cannot be read, the failure line says what was tried — not the old message."""
+    import fetch.logscan as ls
+    from fetch.base import FetchOutput
+    from fetch.logcache import LogCache
+    fx, logs, explorer, reader = _hole_fakes(monkeypatch)
+
+    def refuse(chain, address, topics, block):
+        raise RuntimeError(f"block {block:,} could not be read from the chain: optimism-rpc.publicnode.com "
+                           f"eth_getLogs -> 403 Archive requests require a personal token")
+    reader.logs_in_block = refuse
+    scan = ls.LogScan(explorer=explorer, reader=reader, cache=LogCache(tmp_path))
+    out = FetchOutput()
+    spec = {"key": "cashback_out_optimism", "metric": "cashback_paid_tokens", "window_days": 100}
+    assert not scan._window_scan({"name": "Ether.fi"}, spec, "optimism", 10, fx["token"], [fx["holder"].lower()],
+                                 fx["to_block"], "test", out)
+    msg = " ".join(e.message for e in out.log)
+    assert "bisected on balanceOf" in msg and f"to block {fx['explorer_missing_block']:,}" in msg
+    assert "EXPLORER-HOLE SEARCH" in msg and "Archive requests require a personal token" in msg
+    assert "does not reconcile either" not in msg

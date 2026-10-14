@@ -1311,6 +1311,14 @@ DEFAULT_RPC = {
     "optimism": [
         "https://optimism-rpc.publicnode.com",
         "https://mainnet.optimism.io",
+        # ROUND 3 RUN Y1 (2026-10-14): publicnode refuses every PAST-block read on OP (eth_getLogs, receipts and
+        # archive eth_call: "Archive requests require a personal token"), and mainnet.optimism.io answers 429 under
+        # a hole search's ~25 balance reads — so Ether.fi's cashback hole could not be read on Jake's machine. Each
+        # of these served, for OP block 158,047,200 on 2026-10-14: eth_getLogs (1 log), eth_getBlockByNumber (70 tx),
+        # the receipt of tx 0xb09bfbe3… (2 logs) and balanceOf at that block.
+        "https://optimism.drpc.org",
+        "https://op-pokt.nodies.app",
+        "https://optimism.gateway.tenderly.co",
     ],
     "polygon": [
         "https://polygon-bor-rpc.publicnode.com",
@@ -18741,10 +18749,20 @@ for _key, _metric, _way in (("noncirc_out", "noncirc_outflow_scan_tokens", "out"
 # off NEAR — NOT retired (only NEAR still held in the three counts, rule of 2026-10-10). The buyback view already nets
 # each one on its day (the combined balance falls); this names them on those days.
 NEAR_REVENUE_OUTFLOWS = (
-    {"date": "2026-04-22", "wallet": "1csfundsadmin.sputnik-dao.near", "tokens": 45_010.0,
+    # ONE ENTRY PER TRANSFER (round 3 run Y2, Jake 2026-10-14: the probe matches transfer by transfer, and the
+    # 45,000 NEAR transfer was filed as one 45,010 entry with the 10 NEAR before it). Both went to the same one-time
+    # account and on to bridge-mng.near in full, less ~0.00005 NEAR gas each (its receipts: 6yEaakkAkt… 44,999.99995
+    # and 5DcuBnK7yP… 9.99995; api.nearblocks.io/v3/accounts/fdd59b04…/receipts, read 2026-10-14).
+    {"date": "2026-04-22", "wallet": "1csfundsadmin.sputnik-dao.near", "tokens": 45_000.0,
      "to": "fdd59b04d49c7f535a441fa7ea24f6e5292e54f68f75ebbe2e41738301bcf9e4 -> bridge-mng.near",
-     "class": "bridged out — not retired", "tx": "8Bit5x7bvC… (45,000) + 8Pf196B9eF… (10)",
-     "source": "https://api.nearblocks.io/v3/accounts/1csfundsadmin.sputnik-dao.near/receipts (read 2026-10-13)"},
+     "class": "bridged out — not retired", "tx": "8Bit5x7bvChY… (onward 6yEaakkAkt… to bridge-mng.near)",
+     "source": "https://api.nearblocks.io/v3/accounts/1csfundsadmin.sputnik-dao.near/receipts (read 2026-10-13; "
+               "onward hop read 2026-10-14)"},
+    {"date": "2026-04-22", "wallet": "1csfundsadmin.sputnik-dao.near", "tokens": 10.0,
+     "to": "fdd59b04d49c7f535a441fa7ea24f6e5292e54f68f75ebbe2e41738301bcf9e4 -> bridge-mng.near",
+     "class": "bridged out — not retired", "tx": "8Pf196B9eF9q… (onward 5DcuBnK7yP… to bridge-mng.near)",
+     "source": "https://api.nearblocks.io/v3/accounts/1csfundsadmin.sputnik-dao.near/receipts (read 2026-10-13; "
+               "onward hop read 2026-10-14)"},
     {"date": "2026-07-10", "wallet": "buybacks.multisignature.near", "tokens": 12_000.0,
      "to": "508aa18569e5a59d63b0f4c445e02e7b5fc53b86337328e756b32745ebac50e7 -> bridge-mng.near",
      "class": "bridged out — not retired", "tx": "ABTtANZpzN…",
