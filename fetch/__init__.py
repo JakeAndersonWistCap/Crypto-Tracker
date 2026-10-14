@@ -1851,11 +1851,15 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
 # chain 27s, scrape 18s, near_rpc 13s, nearblocks 13s) with room for a first run of the day and
 # for a cache seed; override one with TOKEN_METRICS_BUDGET_<SOURCE> (e.g. ..._BUDGET_EXPLORER).
 # coingecko is 240 because WITHOUT a key it paces 6s a call: 31 calls = ~186s.
-# nearblocks is 60 (2026-09-28): its buyback read resumes across runs, so a short budget only
+# nearblocks was 60 (2026-09-28): its buyback read resumes across runs, so a short budget only
 # means more runs to finish a first read — or one `token_metrics.py --seed nearblocks`.
+# NEARBLOCKS 60 -> 180 (round 3 run X4, Jake 2026-10-14): the v3 day is now 9 one-credit calls (validators, three stat
+# paths, three revenue-wallet balances, two Foundation balances) on a free plan of 6 credits a minute — the 7th waits
+# ~54s for the window, so 60s cut it with 5 of 9 read and Near's series gapped. 180s = two pacing windows + requests,
+# with a third window of slack (nearblocks_daily_calls(), tested).
 TIER_BUDGET_S = {
     "schedule:config": 15, "defillama": 150, "morpho_api": 60, "growthepie": 60,
-    "nearblocks": 60, "coingecko": 240, "hypercore_info": 60, "chainlink_fees": 180, "xref": 90, "validatorqueue": 30, "treasury_bills": 60, "sky_ssr": 120, "business": 900, "share_vault": 60,
+    "nearblocks": 180, "coingecko": 240, "hypercore_info": 60, "chainlink_fees": 180, "xref": 90, "validatorqueue": 30, "treasury_bills": 60, "sky_ssr": 120, "business": 900, "share_vault": 60,
     "chain": 240, "tron_node": 60, "near_rpc": 90, "explorer": 300, "balance_flow": 150, "maple_page": 60,
     "explorer_gauge": 300, "explorer_gauge_l2": 300,
     # one epoch a week: ~10 Multicall3 batches + one DefiLlama price call; the daily totalWeight is one eth_call
@@ -1870,8 +1874,26 @@ TIER_BUDGET_S = {
     # ~45 relay pages + ~700 non-relay blocks' receipts a day; the adapter stops itself at 240s
     "mev_relays": 300,
     "browser_capture": 180,
+    # round 3 run X2: the adapter stops itself at 420s (fetch.boros.MAX_SECONDS, ~60 exports at 6.5s) and resumes
+    # next run from .cache/boros/state.json — the first read of 232 markets takes 4 runs, a day's top-up ~40 exports
+    "boros": 480,
 }
 DEFAULT_BUDGET_S = 120
+
+
+def nearblocks_daily_calls() -> int:
+    """The NearBlocks calls one run makes on a normal day (one credit each): the validators read, one per distinct
+    v3 stats path, and one balance read per declared revenue / Foundation account."""
+    import config                                                 # noqa: PLC0415
+    n = 0
+    for p in config.PROJECTS:
+        nb = p.get("nearblocks") or {}
+        if not nb:
+            continue
+        n += bool(nb.get("validators_info")) + len({m["path"] for m in (nb.get("metrics") or {}).values()})
+        for k in ("balance_history", "foundation_history"):
+            n += len((nb.get(k) or {}).get("accounts") or ())
+    return n
 HEARTBEAT_AFTER_S = 30.0
 
 

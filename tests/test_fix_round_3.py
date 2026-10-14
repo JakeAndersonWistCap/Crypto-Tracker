@@ -468,3 +468,172 @@ def test_v6_a_short_leg_is_named_a_coverage_gap(monkeypatch):
     g[("GEODNET", "circulating_supply_used")] = pd.concat([first, c], ignore_index=True)
     st = next(x for x in bw.flow_statements(g, asof) if x["Project"] == "GEODNET" and x["Line"] == "Status")
     assert "COVERAGE gap" in st["Q-4"] and "pool_release_tokens covers 20/90 days" in st["Q-4"], st["Q-4"]
+
+
+# --------------------------------------------------------------------------- round 3 run results (Jake 2026-10-14)
+def test_x3_near_probe_is_inconclusive_on_429_and_on_empty_reads(monkeypatch, capsys):
+    """X3: 'A 429 or empty read must give INCONCLUSIVE, never a pass.' Two of three wallets answered HTTP 429 and the
+    verdict said every outflow was on the list. The probe now waits a 429 out (paced by fetch.nearblocks' own pacer)
+    and gives no verdict on a partial or empty read."""
+    import check_offline_items as coi
+    from fetch import nearblocks as nb
+    clock = [0.0]
+    monkeypatch.setattr(nb, "_clock", lambda: clock[0])
+    monkeypatch.setattr(nb, "_sleep", lambda s: clock.__setitem__(0, clock[0] + s))
+    calls = []
+
+    class _Limited:
+        status_code = 429
+
+        def json(self):
+            return {"message": "rate limited"}
+
+    monkeypatch.setattr(coi.requests, "get", lambda url, **k: calls.append(url) or _Limited())
+    coi.near_revenue_wallet_flows()
+    out = capsys.readouterr().out
+    assert "VERDICT: INCONCLUSIVE" in out and "every outflow of 1,000 NEAR or more is on" not in out
+    assert len(calls) == 6 * 4                         # each of the 6 reads: the call + 3 retries after the minute
+    assert clock[0] >= 3 * 6 * nb.RATE_LIMIT_WAIT      # it waited the limit out, it did not hammer
+
+    ok = [("a receipts", "complete", 12), ("a ft-txns", "complete", None)]
+    assert coi.near_flows_verdict(ok, [], []).startswith("every outflow")
+    empty = ok + [("b receipts", "complete", 0)]
+    assert coi.near_flows_verdict(empty, [], []).startswith("INCONCLUSIVE") and "b receipts: 0 rows" in \
+        coi.near_flows_verdict(empty, [], [])
+    assert coi.near_flows_verdict(ok + [("c receipts", "HTTP 429", 1000)], [], []).startswith("INCONCLUSIVE")
+
+
+def test_x4_nearblocks_budget_covers_a_day_of_free_plan_pacing():
+    """X4: the tier timed out at 60s on free-plan pacing (6 credits a minute) with 5 of its calls read. The budget now
+    covers every pacing window the day's calls need, plus one window of slack."""
+    import math
+
+    import fetch
+    from fetch import nearblocks as nb
+    calls = fetch.nearblocks_daily_calls()
+    assert calls >= 9
+    windows = math.ceil(calls / nb.CREDITS_PER_MINUTE)
+    assert fetch.TIER_BUDGET_S["nearblocks"] >= 60 * windows + 60       # the windows + one of slack
+
+
+def test_x2_boros_first_read_resumes_across_runs_and_stores_only_when_complete(tmp_path, monkeypatch):
+    """X2: the tier timed out at 120s with 0 rows. The adapter now keeps each market's days in .cache/boros/state.json,
+    stops itself at its own budget, reads the stalest markets first and stores nothing until every market is read
+    through a day. Real export rows (fixtures/api_boros_market2.csv) for every market."""
+    import fetch.boros as fb
+    from fetch.base import FetchOutput
+    monkeypatch.setattr(fb, "today", lambda: pd.Timestamp("2026-10-13"))
+    rows = list(csv.DictReader((FX / "api_boros_market2.csv").open(newline="", encoding="utf-8")))
+    meta = _fx("api_boros_meta.json")
+    real = [m for m in meta["markets"] if fb.collateral_pricing(m, {int(a["tokenId"]): a for a in meta["assets"]})]
+    assert real
+    mk = [dict(real[i % len(real)], marketId=100 + i) for i in range(5)]   # the real records, five market ids
+    clock, calls = [0.0], []
+
+    class _Http:
+        def get(self, url, params=None, **k):
+            if url.endswith("/v1/markets"):
+                return {"results": mk}
+            return {"results": meta["assets"]}
+
+        def get_text(self, url, params=None, **k):
+            calls.append(params["marketId"])
+            clock[0] += 100.0                                # each export "takes" 100s of the budget
+            return "\n".join([",".join(rows[0].keys())] + [",".join(str(r[c]) for c in rows[0]) for r in rows])
+
+    class _Daily:
+        def __init__(self):
+            self.done_keys = set()
+
+        def due(self, k, day):
+            return k not in self.done_keys
+
+        def done(self, k, day):
+            self.done_keys.add(k)
+
+    daily = _Daily()
+    spec = config.PROJECT_BY_NAME["Pendle"]["boros_volume"]
+    outs = []
+    for _run in range(4):
+        b = fb.BorosVolume(http=_Http(), daily_checks=daily, cache_dir=tmp_path, max_seconds=150.0,
+                           clock=lambda: clock[0])
+        out = FetchOutput()
+        b._project("Pendle", spec, out)
+        outs.append(out)
+    # run 1 and 2: two markets each (cut by the budget), nothing stored; run 3: the fifth, then everything stored
+    stored = [sum(len(f) for f in o.frames) if getattr(o, "frames", None) else 0 for o in outs]
+    assert stored[0] == stored[1] == 0 and stored[2] > 0, stored
+    assert len(calls) == 5 and len(set(calls)) == 5                         # each market read once, none twice
+    assert ("boros_volume:Pendle" in daily.done_keys)                       # complete for yesterday: done for today
+    assert stored[3] == 0                                                   # run 4: skipped as current
+    st = json.loads((tmp_path / "state.json").read_text())
+    assert all(v["through"] == "2026-10-12" for v in st["markets"].values())
+
+
+def test_x1_an_explorer_hole_is_read_from_the_chain_not_tolerated(tmp_path, monkeypatch):
+    """X1: Ether.fi's OP cashback window was 19.808964 ETHFI short of balanceOf. Cause: Blockscout has NO logs for OP
+    block 158,047,200 (both hosts, every API), while the chain has the distributor's Transfer of exactly that amount.
+    Real data: the RPC's Transfer logs in and out of the distributor around the hole and the real balanceOf at both
+    ends (fixtures/api_etherfi_cashback_hole.json). The explorer fake serves them WITHOUT the hole block, as Blockscout
+    does; the scan must find the block, read it from the chain and reconcile to the wei — no tolerance."""
+    import fetch.logscan as ls
+    from fetch.base import FetchOutput
+    from fetch.logcache import LogCache
+    fx = _fx("api_etherfi_cashback_hole.json")
+    logs = [ls._norm_log(x) for x in fx["logs"]]
+    hole, h = fx["explorer_missing_block"], fx["holder"].lower()
+    bal0 = int(fx["balance_before"])
+    monkeypatch.setattr(ls, "today", lambda: pd.Timestamp("2026-10-13"))
+
+    def match(e, topics, lo, hi):
+        return lo <= e["blockNumber"] <= hi and all(t is None or e["topics"][i] == t.lower()
+                                                    for i, t in enumerate(topics))
+
+    class _Explorer:
+        def get_logs(self, chain_id, token, topics, lo, hi):
+            return [e for e in logs if match(e, topics, lo, hi) and e["blockNumber"] != hole], {"explorer": "blockscout"}
+
+        def block_at(self, chain_id, ts):
+            return fx["from_block"]
+
+    class _Reader:
+        balance_reads = 0
+
+        def erc20_balance_at(self, chain, token, holder, block):
+            _Reader.balance_reads += 1
+            sign = lambda e: (1 if ls.topic_address(e["topics"][2]) == h else -1)  # noqa: E731
+            return bal0 + sum(sign(e) * ls._amount(e) for e in logs if e["blockNumber"] <= block)
+
+        def scan_logs(self, chain, base, lo, hi):
+            return [e for e in logs if match(e, base["topics"], lo, hi)], 1, 1
+
+        def checksum(self, a):
+            return a
+
+        def block_timestamp(self, chain, b):
+            # OP: 2 s blocks; block 158,047,200 is 2026-10-11 04:32:57 UTC (eth_getBlockByNumber, read 2026-10-14)
+            return int(pd.Timestamp("2026-10-11 04:32:57", tz="UTC").timestamp()) + (b - hole) * 2
+
+        def erc20(self, chain, token):
+            class _F:
+                class functions:
+                    @staticmethod
+                    def decimals():
+                        class _C:
+                            @staticmethod
+                            def call():
+                                return 18
+                        return _C
+            return _F
+
+    scan = ls.LogScan(explorer=_Explorer(), reader=_Reader(), cache=LogCache(tmp_path))
+    spec = {"key": "cashback_out_optimism", "metric": "cashback_paid_tokens", "window_days": 100}
+    out = FetchOutput()
+    assert scan._window_scan({"name": "Ether.fi"}, spec, "optimism", 10, fx["token"], [h], fx["to_block"], "test", out)
+    msg = " ".join(e.message for e in out.log)
+    assert f"block {hole:,} (1 Transfer(s) the explorer does not index)" in msg, msg[:400]
+    assert "RECONCILED to the wei" in msg
+    paid = sum(f["value"].sum() for f in out.frames)
+    true_out = sum(ls._amount(e) for e in logs if ls.topic_address(e["topics"][1]) == h) / 1e18
+    assert paid == pytest.approx(true_out, abs=1e-9)                     # the hole's 19.808964 ETHFI is in
+    assert _Reader.balance_reads < 60                                    # one bisection, not a block-by-block walk

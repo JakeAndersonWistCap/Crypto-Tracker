@@ -16,20 +16,27 @@ asset_price_usd on the same row where the collateral IS the underlying (WBTC/BTC
 collateral is a USD stablecoin (USD₮0 — its par; Boros quoted 0.9987 on 2026-10-13). A market whose collateral is
 neither is NOT priced from anywhere else: it is left out and named in the log.
 
-DailyChecks: once a day. A matured market's history no longer moves, so its CSV is cached (.cache/boros/<id>.csv).
-Complete UTC days only. Budget: 200 compute units a window, an export costs 20 — one call every 6.5 s (the first run
-reads every market alive in the window, ~200 calls ≈ 22 min; later runs only the live ones).
+RESUMABLE ACROSS RUNS (round 3 run X2, Jake 2026-10-14: the tier timed out at 120s with 0 rows). Budget: 200 compute
+units a window, an export costs 20 — one call every 6.5 s, and the first read is every market alive in the window (232
+on 2026-10-13, ≈ 25 min). So each market's daily $ is kept in .cache/boros/state.json with the day it is read THROUGH;
+a run reads the stalest markets first and stops itself at MAX_SECONDS, saving after every market. Nothing is stored
+until EVERY market is read through a day, and then only the days up to the stalest market's — a partial sum would
+understate the day. A matured market's history no longer moves: its CSV is cached (.cache/boros/<id>.csv) and read
+once. About 60 exports a run: the first read takes 4 runs; after it, a day's top-up is the ~40 live markets (~4.5 min).
+Once complete for yesterday, DailyChecks skips the source for the rest of the day. Complete UTC days only.
 """
 from __future__ import annotations
 
 import csv
 import datetime as _dt
 import io
+import json
 import logging
-from collections import defaultdict
+import time
 from pathlib import Path
 
-from .base import Http, tidy, today
+from .base import Http, Progress, tidy, today
+from .logcache import atomic_write_text
 
 log = logging.getLogger("token_metrics.fetch.boros")
 
@@ -37,6 +44,8 @@ SOURCE = "boros_api"
 TIER = 1
 BASE = "https://api-boros.pendle.finance/apis"
 CACHE = Path(__file__).resolve().parent.parent / ".cache" / "boros"
+# the adapter stops itself here and resumes next run; the tier budget (fetch.TIER_BUDGET_S["boros"]) is above it
+MAX_SECONDS = 420.0
 
 
 USD_STABLES = {"USD₮0", "USDT", "USDC", "USDT0"}
@@ -58,7 +67,8 @@ def collateral_pricing(market: dict, assets: dict) -> str | None:
 def daily_usd(rows: list[dict], first: _dt.date, last: _dt.date, pricing: str = "row") -> tuple[dict, float]:
     """({date: $ volume}, units traded on days with no price) for one market's export rows, days in [first, last].
     pricing "row": x the row's asset_price_usd; "par": x 1 (a USD stablecoin collateral)."""
-    out, unpriced = defaultdict(float), 0.0
+    out: dict = {}
+    unpriced = 0.0
     for r in rows:
         try:
             ts = int(float(r["timestamp"]))
@@ -71,14 +81,14 @@ def daily_usd(rows: list[dict], first: _dt.date, last: _dt.date, pricing: str = 
         if v <= 0:
             continue
         if pricing == "par":
-            out[d] += v
+            out[d] = out.get(d, 0.0) + v
             continue
         p = r.get("asset_price_usd")
         if p in (None, ""):
             unpriced += v
             continue
-        out[d] += v * float(p)
-    return dict(out), unpriced
+        out[d] = out.get(d, 0.0) + v * float(p)
+    return out, unpriced
 
 
 class BorosVolume:
@@ -87,7 +97,8 @@ class BorosVolume:
     SOURCE = SOURCE
     TIER = TIER
 
-    def __init__(self, http: Http | None = None, daily_checks=None, cache_dir: Path | None = None, **_ignored):
+    def __init__(self, http: Http | None = None, daily_checks=None, cache_dir: Path | None = None,
+                 max_seconds: float | None = MAX_SECONDS, clock=time.monotonic, **_ignored):
         # THE API'S OWN BUDGET: 200 compute units a window (x-ratelimit-limit), the export costs 20 (x-computing-unit,
         # OpenAPI) — 10 exports a minute, so one every 6.5 s; a 429 waits the minute out
         self.http = http or Http(min_interval=6.5, retries=3, rate_limit_wait=61.0)
@@ -96,6 +107,21 @@ class BorosVolume:
             daily_checks = DailyChecks()
         self.daily = daily_checks
         self.cache = cache_dir or CACHE
+        self.max_seconds, self.clock = max_seconds, clock
+
+    def _state_path(self) -> Path:
+        return self.cache / "state.json"
+
+    def _load(self) -> dict:
+        try:
+            st = json.loads(self._state_path().read_text(encoding="utf-8"))
+            return st if st.get("version") == 1 else {"version": 1, "markets": {}}
+        except (OSError, ValueError):
+            return {"version": 1, "markets": {}}
+
+    def _save(self, state: dict) -> None:
+        self.cache.mkdir(parents=True, exist_ok=True)
+        atomic_write_text(self._state_path(), json.dumps(state))
 
     def markets(self) -> list[dict]:
         rows, token = [], None
@@ -135,41 +161,92 @@ class BorosVolume:
     def _project(self, name: str, spec: dict, out) -> None:
         m, day = spec["metric"], str(today().date())
         if not self.daily.due(f"boros_volume:{name}", day):
-            out.mark_current(SOURCE, name, m, f"{m}: Boros was read today ({day})", TIER)
+            out.mark_current(SOURCE, name, m, f"{m}: Boros was read through yesterday today ({day})", TIER)
             return
+        t0 = self.clock()
         last = today().date() - _dt.timedelta(days=1)
         first = last - _dt.timedelta(days=int(spec.get("keep_days", 460)) - 1)
         now_ts = int(_dt.datetime.now(_dt.timezone.utc).timestamp())
-        total: dict = defaultdict(float)
-        unpriced: dict = defaultdict(float)
-        n = 0
         try:
             assets = self.assets()
-            for mk in self.markets():
-                maturity = int((mk.get("imData") or {}).get("maturity") or 0)
-                if maturity and _dt.datetime.fromtimestamp(maturity, _dt.timezone.utc).date() < first:
-                    continue                                   # ended before the window: nothing to add
-                pricing = collateral_pricing(mk, assets)
-                label = f"{(mk.get('imData') or {}).get('symbol') or mk.get('marketId')}"
-                if pricing is None:
-                    unpriced[label + " (collateral is neither the underlying nor a USD stablecoin)"] += 1
-                    continue
-                rows = self.export(mk, matured=bool(maturity) and maturity < now_ts - 2 * 86_400)
-                per, yu = daily_usd(rows, first, last, pricing)
-                for d, v in per.items():
-                    total[d] += v
-                if yu:
-                    unpriced[label + " units with no price on the row"] += yu
-                n += 1
-        except Exception as e:  # noqa: BLE001 — a failed source must not kill the run; a partial sum is not stored
-            out.fail(SOURCE, name, f"{m}: {e} — NOTHING STORED (a market missing would understate the day)", TIER)
+            universe = self.markets()
+        except Exception as e:  # noqa: BLE001 — a failed source must not kill the run; nothing partial is stored
+            out.fail(SOURCE, name, f"{m}: the market list could not be read — {e}; resumes next run", TIER)
             return
-        self.daily.done(f"boros_volume:{name}", day)
+        state = self._load()
+        mk = state.setdefault("markets", {})
+        todo, left_out = [], {}
+        for mkt in universe:
+            maturity = int((mkt.get("imData") or {}).get("maturity") or 0)
+            if maturity and _dt.datetime.fromtimestamp(maturity, _dt.timezone.utc).date() < first:
+                continue                                   # ended before the window: nothing to add
+            label = f"{(mkt.get('imData') or {}).get('symbol') or mkt.get('marketId')}"
+            pricing = collateral_pricing(mkt, assets)
+            if pricing is None:
+                left_out[label + " (collateral is neither the underlying nor a USD stablecoin)"] = 1.0
+                continue
+            todo.append((mkt, maturity, label, pricing))
+        # THE STALEST FIRST, so a cut run never starves the same markets twice
+        todo.sort(key=lambda t: (mk.get(str(t[0]["marketId"])) or {}).get("through") or "")
+        read = cut = failed = 0
+        prog = Progress(f"boros {name}", total=len(todo), unit="markets", every_units=20,
+                        checkpoint=lambda: self._save(state),
+                        status=lambda: f"{read} read this run, {cut} left for the next (budget)")
+        for mkt, maturity, label, pricing in todo:
+            prog.tick()
+            mid = str(mkt["marketId"])
+            st = mk.get(mid) or {}
+            if st.get("through") and st["through"] >= str(last):
+                continue
+            if self.max_seconds is not None and self.clock() - t0 > self.max_seconds:
+                cut += 1
+                continue
+            try:
+                rows = self.export(mkt, matured=bool(maturity) and maturity < now_ts - 2 * 86_400)
+            except Exception as e:  # noqa: BLE001 — this market resumes next run
+                failed += 1
+                log.warning("boros %s: market %s (%s) not read — %s; resumes next run", name, mid, label, e)
+                continue
+            per, yu = daily_usd(rows, first, last, pricing)
+            mk[mid] = {"label": label, "through": str(last), "unpriced_units": yu,
+                       "days": {str(d): v for d, v in sorted(per.items())}}
+            read += 1
+        prog.flush(final=not cut and not failed)
+        keep = str(first)
+        for v in mk.values():
+            v["days"] = {d: x for d, x in v.get("days", {}).items() if d >= keep}
+        self._save(state)
+        ids = [str(t[0]["marketId"]) for t in todo]
+        throughs = [(mk.get(i) or {}).get("through") for i in ids]
+        if not ids:
+            out.fail(SOURCE, name, f"{m}: no Boros market in the window — NOTHING STORED", TIER)
+            return
+        if any(t is None for t in throughs):
+            done = sum(t is not None for t in throughs)
+            out.skipped(SOURCE, name, f"{m}: FIRST READ IN PROGRESS — {done} of {len(ids)} market(s) read ({read} "
+                                      f"this run, {cut} left for the next run by the {self.max_seconds:.0f}s budget, "
+                                      f"{failed} failed); nothing stored until every market is read through a day",
+                        TIER)
+            return
+        complete = min(throughs)
+        total: dict = {}
+        unpriced = dict(left_out)
+        for i in ids:
+            for d, v in mk[i]["days"].items():
+                if d <= complete:
+                    total[d] = total.get(d, 0.0) + v
+            if mk[i].get("unpriced_units"):
+                key = mk[i].get("label", i) + " units with no price on the row"
+                unpriced[key] = unpriced.get(key, 0.0) + mk[i]["unpriced_units"]
+        if complete >= str(last):
+            self.daily.done(f"boros_volume:{name}", day)
         pts, d = [], first
-        while d <= last:
-            pts.append((_dt.datetime(d.year, d.month, d.day), total.get(d, 0.0)))
+        while str(d) <= complete:
+            pts.append((_dt.datetime(d.year, d.month, d.day), total.get(str(d), 0.0)))
             d += _dt.timedelta(days=1)
-        note = (f"{n} market(s) read; $ = traded units (the market's COLLATERAL token) x Boros's own daily "
+        note = (f"{len(ids)} market(s), every one read through {complete} ({read} this run, {cut} left for the next, "
+                f"{failed} failed); $ = traded units (the market's COLLATERAL token) x Boros's own daily "
                 f"asset_price_usd where the collateral is the underlying, x $1 where it is a USD stablecoin"
                 + ("; LEFT OUT: " + ", ".join(f"{k} {v:,.2f}" for k, v in sorted(unpriced.items())) if unpriced else ""))
-        out.add(tidy(pts, name, m, SOURCE, TIER), SOURCE, name, f"{m}: {len(pts)} day(s) {first}..{last} — {note}", TIER)
+        out.add(tidy(pts, name, m, SOURCE, TIER), SOURCE, name, f"{m}: {len(pts)} day(s) {first}..{complete} — {note}",
+                TIER)

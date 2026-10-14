@@ -2444,20 +2444,35 @@ def near_revenue_wallet_flows():
     base = "https://api.nearblocks.io"
     wallets = tuple(config.PROJECT_BY_NAME["Near"]["nearblocks"]["balance_history"]["accounts"])
 
+    # PACED AS THE FETCHER IS (round 3 run X3, Jake 2026-10-14: two of three wallets answered HTTP 429 and the verdict
+    # passed on empty data). NearBlocks' free plan: 6 credits a minute, a page of up to 100 rows is one credit, and a
+    # 429 carries no Retry-After — so the probe spends through fetch.nearblocks' own pacer and, on a 429, waits the
+    # minute out and asks again (3 times) before it gives up on that read.
+    from fetch import nearblocks as nb                     # noqa: PLC0415
+    pacer = nb._Pacer()
+
     def page_all(path, cap=400):
-        rows, cursor = [], None
+        rows, cursor, limited = [], None, 0
         for _ in range(cap):
+            pacer.wait(1)
             try:
                 r = requests.get(base + path, params={"limit": 100, **({"next": cursor} if cursor else {})},
                                  headers=hdr, timeout=TIMEOUT)
             except Exception as e:  # noqa: BLE001
                 return rows, f"UNREACHABLE ({type(e).__name__})"
+            finally:
+                pacer.charge(1)
+            if r.status_code == 429 and limited < 3:
+                limited += 1
+                print(f"    (HTTP 429 on {path.split('/')[3] if path.count('/') > 3 else path} — waiting "
+                      f"{nb.RATE_LIMIT_WAIT:.0f}s, retry {limited} of 3)")
+                nb._sleep(nb.RATE_LIMIT_WAIT + 1)
+                continue
             if r.status_code != 200:
                 return rows, f"HTTP {r.status_code}"
             body = r.json()
             rows += body.get("data") or []
             cursor = (body.get("meta") or {}).get("next_page")
-            time.sleep(1.1 if not key else 0.3)
             if not cursor or not body.get("data"):
                 return rows, "complete"
         return rows, f"stopped at {cap} pages"
@@ -2467,9 +2482,10 @@ def near_revenue_wallet_flows():
             "block_timestamp")
         return datetime.datetime.utcfromtimestamp(int(ts) / 1e9).strftime("%Y-%m-%d")
 
-    outs = []
+    outs, reads = [], []                                     # reads: (what, how, rows) — the verdict's inputs
     for a in wallets:
         rows, how = page_all(f"/v3/accounts/{a}/receipts")
+        reads.append((f"{a} receipts", how, len(rows)))
         inn, out = {}, {}
         for r in rows:
             if (r.get("outcome") or {}).get("status") is False:
@@ -2488,6 +2504,7 @@ def near_revenue_wallet_flows():
         print(f"    native OUT {sum(out.values()):>16,.2f} NEAR — "
               + (", ".join(f"{k[:28]} {v:,.2f}" for k, v in sorted(out.items(), key=lambda x: -x[1])[:6]) or "none"))
         ft, how2 = page_all(f"/v3/accounts/{a}/ft-txns")
+        reads.append((f"{a} ft-txns", how2, None))
         agg = {}
         for r in ft:
             dec = int((r.get("meta") or {}).get("decimals") or 0)
@@ -2500,18 +2517,30 @@ def near_revenue_wallet_flows():
     print("\n  EVERY NATIVE OUTFLOW OUTSIDE THE THREE, ONE HOP ON:")
     for d, a, to, dep, tx in sorted(outs):
         nxt, _how = page_all(f"/v3/accounts/{to}/receipts", cap=2)
+        reads.append((f"{to} receipts (one hop)", "complete" if _how == "stopped at 2 pages" else _how, len(nxt)))
         fwd = [(r.get("receiver_account_id"), float((r.get("actions_agg") or {}).get("deposit") or 0) / 1e24)
                for r in nxt if r.get("predecessor_account_id") == to]
         bridged = any("bridge" in str(t) for t, _v in fwd)
         verdict = "BRIDGED OUT — not retired" if bridged else "LEFT THE THREE — not retired (destination unclassified)"
         print(f"    {d}  {a[:26]:<26} -> {to[:20]}…  {dep:>12,.2f} NEAR  tx {str(tx)[:12]}…  onward: "
               + (", ".join(f"{t} {v:,.2f}" for t, v in fwd[:3]) or "none seen") + f"  => {verdict}")
-    known = {(o["date"], round(o["tokens"])) for o in config.NEAR_REVENUE_OUTFLOWS}
+    print("\n  VERDICT: " + near_flows_verdict(reads, outs, config.NEAR_REVENUE_OUTFLOWS))
+
+
+def near_flows_verdict(reads, outs, known_outflows) -> str:
+    """The near_revenue_wallet_flows verdict. INCONCLUSIVE whenever a read did not complete (a 429, an error, a page cap)
+    or a revenue wallet's receipts came back EMPTY — every one of the three has receipts, so empty is a failed read,
+    not a quiet wallet (round 3 run X3). Only on complete data: every 1,000+ NEAR outflow on the config list, or not."""
+    bad = [f"{w}: {how}" for w, how, n in reads if how != "complete"] + \
+          [f"{w}: 0 rows" for w, how, n in reads if how == "complete" and n == 0 and "one hop" not in w]
+    if bad:
+        return ("INCONCLUSIVE — no verdict on partial or empty data (" + "; ".join(bad) + "). Re-run the probe; "
+                "it waits out a 429 three times per read.")
+    known = {(o["date"], round(o["tokens"])) for o in known_outflows}
     new = [o for o in outs if (o[0], round(o[3])) not in known and o[3] >= 1000]
-    print("\n  VERDICT: " + ("every outflow of 1,000 NEAR or more is on config.NEAR_REVENUE_OUTFLOWS" if not new else
-                            f"{len(new)} outflow(s) of 1,000+ NEAR NOT on config.NEAR_REVENUE_OUTFLOWS — add them "
-                            f"(dated, traced, classified) before reading the buyback: "
-                            + "; ".join(f"{o[0]} {o[1]} {o[3]:,.0f}" for o in new)))
+    return ("every outflow of 1,000 NEAR or more is on config.NEAR_REVENUE_OUTFLOWS" if not new else
+            f"{len(new)} outflow(s) of 1,000+ NEAR NOT on config.NEAR_REVENUE_OUTFLOWS — add them (dated, traced, "
+            f"classified) before reading the buyback: " + "; ".join(f"{o[0]} {o[1]} {o[3]:,.0f}" for o in new))
 
 
 def near_buyback_inflow_probe():
