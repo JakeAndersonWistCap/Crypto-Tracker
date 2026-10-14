@@ -27794,25 +27794,34 @@ def test_gauge_direct_count_is_a_fresh_windowed_query_by_utc_day(tmp_path, monke
 
         def get_logs(self, chain_id, address, topics, from_block, to_block):
             self.calls.append((chain_id, address, from_block, to_block))
-            return [ev(market, 5 * 10 ** 18, d1 + pd.Timedelta(hours=1), 1),
-                    ev(market, 2 * 10 ** 18, d1 + pd.Timedelta(hours=23), 2),
-                    ev(treasury, 9 * 10 ** 18, d1 + pd.Timedelta(hours=2), 3),        # excluded counterparty
-                    ev(market, 1 * 10 ** 18, today() + pd.Timedelta(hours=1), 4)], {}  # today: incomplete
+            if len(topics) < 2 or topics[1] is None:
+                return [], {}                                                   # the inflow query: none came in
+            return outs, {}
+
+    outs = [ev(market, 5 * 10 ** 18, d1 + pd.Timedelta(hours=1), 1),
+            ev(market, 2 * 10 ** 18, d1 + pd.Timedelta(hours=23), 2),
+            ev(treasury, 9 * 10 ** 18, d1 + pd.Timedelta(hours=2), 3),        # excluded counterparty
+            ev(market, 1 * 10 ** 18, today() + pd.Timedelta(hours=1), 4)]      # today: incomplete
+
+    class Reader(_FakeReader):
+        # X1 follow-up: the direct count reconciles — the gauge held 17 PENDLE before the window and paid them all out
+        def erc20_balance_at(self, chain, token, holder, block):
+            return 17 * 10 ** 18 - sum(int(e["data"], 16) for e in outs if int(e["blockNumber"]) <= block)
 
     stub = Stub()
-    ls = LogScan(explorer=stub, reader=_FakeReader({}), cache=LogCache(tmp_path))
+    ls = LogScan(explorer=stub, reader=Reader({}), cache=LogCache(tmp_path))
     spec = {"key": "gauge_x", "metric": "emissions_tokens_gauge_arbitrum", "chain": "arbitrum",
             "direct_metric": "emissions_tokens_gauge_arbitrum_direct", "direct_days": 10}
     out = FetchOutput()
     ls._direct_count("Pendle", spec, 42161, "0xtoken", [gauge], {treasury}, 9_000, 10 ** 18, out)
     f = out.frame()
     f = f[f.metric == "emissions_tokens_gauge_arbitrum_direct"].set_index("date")["value"]
-    assert stub.calls == [(42161, "0xtoken", 4_000, 9_000)]
+    assert stub.calls == [(42161, "0xtoken", 4_000, 9_000)] * 2            # out, then in (the reconciliation)
     assert f.loc[d1] == 7.0 and f.sum() == 7.0 and f.index.max() == today() - pd.Timedelta(days=1)
     assert len(f) == 9
     out2 = FetchOutput()
     ls._direct_count("Pendle", spec, 42161, "0xtoken", [gauge], {treasury}, 9_000, 10 ** 18, out2)
-    assert out2.frame().empty and len(stub.calls) == 1, "once a day"
+    assert out2.frame().empty and len(stub.calls) == 2, "once a day"
 
 
 class _WindowReader:

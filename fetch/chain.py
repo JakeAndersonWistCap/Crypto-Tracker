@@ -496,6 +496,24 @@ class ChainReader:
                 errors.append(f"{rpc_host(url)}: {redact_urls(e)}")
         raise RuntimeError(f"balanceOf at block {block} refused by every {chain} endpoint: {'; '.join(errors)}")
 
+    def erc20_supply_at(self, chain: str, token: str, block) -> int:
+        """totalSupply() at `block`, through the same endpoint list as erc20_balance_at (X1 follow-up: the supply
+        side of a burn scan's reconciliation)."""
+        errors = []
+        tried = set()
+        for url in [self._w3_url.get(chain)] + rpc_endpoints(chain):
+            if not url or url in tried:
+                continue
+            tried.add(url)
+            try:
+                w3 = self._w3[chain] if url == self._w3_url.get(chain) and chain in self._w3 \
+                    else self.make_web3(chain, url, 30)
+                c = w3.eth.contract(address=self.checksum(token), abi=ERC20_ABI)
+                return int(c.functions.totalSupply().call(block_identifier=block))
+            except Exception as e:  # noqa: BLE001
+                errors.append(f"{rpc_host(url)}: {redact_urls(e)}")
+        raise RuntimeError(f"totalSupply at block {block} refused by every {chain} endpoint: {'; '.join(errors)}")
+
     # ===== ONE READ PER (chain, contract, call) PER RUN. Added 2026-09-28. =====
     # symbol(), decimals() and eth_getCode were re-read for every holder of the same token: 105
     # calls a run against 21 distinct contracts. Memoised on this reader, which lives for one
@@ -802,8 +820,8 @@ class ChainReader:
                 self._w3[chain] = w3
 
     def burn_transfer_events(self, chain: str, token: str, burn_to: str, from_block: int,
-                             chunk: int = 10_000, max_blocks: int | None = None
-                             ) -> tuple[list[dict], int, int, int]:
+                             chunk: int = 10_000, max_blocks: int | None = None, side: str = "to",
+                             head: int | None = None) -> tuple[list[dict], int, int, int]:
         """Every Transfer(*, burn_to, value) on `token` from `from_block` to the head, UNAGGREGATED.
 
         THE READ A PROTOCOL BURN NEEDS, AND THE ONE A BALANCE READ CANNOT GIVE. OpenZeppelin-style
@@ -827,15 +845,18 @@ class ChainReader:
         """
         from web3 import Web3
 
+        # side "from" (X1 follow-up, 2026-10-14): the MINTS — Transfer(burn_to, *) — the other half of the supply
+        # reconciliation; head pins both halves to the block the totalSupply is read at
         w3 = self.web3(chain)
-        head = int(w3.eth.block_number)
+        head = int(w3.eth.block_number) if head is None else int(head)
         # max_blocks_per_run: REFUSE, DO NOT TRUNCATE — checked below against the blocks this run
         # actually scans. A silently shortened window returns a smaller number that looks
         # exactly like a quieter period.
 
         topic = Web3.keccak(text="Transfer(address,address,uint256)").hex()
         to_topic = "0x" + self.checksum(burn_to)[2:].lower().rjust(64, "0")
-        base = {"address": self.checksum(token), "topics": [topic, None, to_topic]}
+        base = {"address": self.checksum(token),
+                "topics": [topic, None, to_topic] if side == "to" else [topic, to_topic, None]}
 
         # ** INCREMENTAL (2026-09-28). ** Events at or below a block BURN_CONFIRMATIONS behind
         # the head are final; they are cached (fetch/logcache.py) and the next run scans only
@@ -844,7 +865,7 @@ class ChainReader:
         from .logcache import LogCache, stream_id
         if self.log_cache is None:
             self.log_cache = LogCache()
-        sid = stream_id(chain, token, [topic, None, to_topic], int(from_block))
+        sid = stream_id(chain, token, base["topics"], int(from_block))
         cached = self.log_cache.load(sid)
         start = int(from_block) if cached["scanned_to"] is None else max(
             int(from_block), int(cached["scanned_to"]) + 1)
@@ -863,11 +884,13 @@ class ChainReader:
                 # value unindexed. Reading a topic here would return an address as an amount.
                 data = entry["data"]
                 word = int(data.hex() if hasattr(data, "hex") else str(data), 16)
-                sender = entry["topics"][1]
+                sender, recipient = entry["topics"][1], entry["topics"][2]
                 sender = sender.hex() if hasattr(sender, "hex") else str(sender)
-                events.append({"from": "0x" + sender[-40:],
+                recipient = recipient.hex() if hasattr(recipient, "hex") else str(recipient)
+                events.append({"from": "0x" + sender[-40:], "to": "0x" + recipient[-40:],
                                "value": word,
-                               "block": int(entry["blockNumber"])})
+                               "block": int(entry["blockNumber"]),
+                               })
         self.log_chunk_used[chain] = used
         safe = head - BURN_CONFIRMATIONS
         self.__dict__.setdefault("log_safe_block", {})[chain] = safe
@@ -882,7 +905,7 @@ class ChainReader:
         return cached["events"] + events, from_block, head, chunks
 
     def scan_logs(self, chain: str, base: dict, from_block: int, to_block: int,
-                  chunk: int = 10_000) -> tuple[list, int, int]:
+                  chunk: int = 10_000, rpc_only: bool = False) -> tuple[list, int, int]:
         """THE one chunked eth_getLogs. Every event read in this codebase goes through it.
 
         Returns (raw log entries, chunks used, the chunk size that worked). Decoding is the
@@ -906,8 +929,10 @@ class ChainReader:
         # Its logs come back in this method's shape (ints for blockNumber), so no caller changes.
         # WHICH SOURCE SERVED is recorded exactly where the RPC path records it, so the existing
         # "SERVED BY" log line reports the explorer — or, after a refusal, why it fell back.
+        # rpc_only (round 3 run X1 follow-up): a block the explorer does NOT index is read from the chain itself —
+        # asking the explorer again would return the same empty answer that made the hole.
         from .explorer import ExplorerLogs, ExplorerRefused
-        chain_id = config.CHAIN_IDS.get(chain)
+        chain_id = None if rpc_only else config.CHAIN_IDS.get(chain)
         if chain_id is not None:
             if not hasattr(self, "explorer"):
                 self.explorer = ExplorerLogs()
@@ -1663,6 +1688,24 @@ class Chain:
                                 + (f" after {len(refused_by)} refusal(s): {'; '.join(refused_by)}"
                                    if refused_by else " (no endpoint refused it)"), TIER))
 
+        # ===== RECONCILED AGAINST totalSupply, TO THE WEI (X1 follow-up, Jake 2026-10-14). =====
+        # Burns to address(0) leave no balance to check, but they leave the SUPPLY: SKY changes totalSupply only
+        # through mint (Transfer from 0) and burn (Transfer to 0), so over the scanned span
+        #     totalSupply(head) - totalSupply(from_block - 1) = sum(mints) - sum(burns)
+        # exactly. An explorer that drops a block (Blockscout lacked OP block 158,047,200) fails it; that block is
+        # found by bisection on totalSupply and read from the chain, and a span that still does not close stores
+        # nothing.
+        if hasattr(self.reader, "erc20_supply_at") and cfg.get("reconcile_supply", True):
+            events, rec = self._supply_reconcile(chain, token, burn_to, int(from_block), int(last_blk), events, cfg,
+                                                 10 ** int(dec))
+            if rec.startswith("DOES NOT RECONCILE"):
+                out.fail(SOURCE, project["name"], f"{key}: the burn scan {rec}. Nothing stored.", TIER)
+                out.gap(project["name"], metric, reason=f"the {key} burn scan {rec}", tiers_attempted="2",
+                        suggestion="Re-run once; a second difference is real — name the block, do not absorb it.")
+                refused[metric].append(f"{key} ({chain}): supply does not reconcile")
+                return None
+            out.log.append(LogEntry(SOURCE, project["name"], 0, "ok", f"{key}: {rec}", TIER))
+
         by_sender: dict[str, float] = {}
         last_block: dict[str, int] = {}
         for e in events:
@@ -1817,6 +1860,65 @@ class Chain:
                                        f"vs reference {expect:,.2f}")
                 return None
         return value
+
+    def _supply_reconcile(self, chain: str, token: str, burn_to: str, from_block: int, head: int, burns: list,
+                          cfg: dict, scale: int) -> tuple[list, str]:
+        """(burn events, verdict) — see the call site. The mints are read through the same cached reader (side
+        "from"), pinned to the burns' head; the supply before from_block is 0 when from_block is the token's
+        deployment block (no code before it), else read."""
+        from web3 import Web3
+        mints, _f, _l, _c = self.reader.burn_transfer_events(chain, token, burn_to, from_block,
+                                                             chunk=int(cfg.get("chunk_blocks", 10_000)),
+                                                             side="from", head=head)
+        try:
+            s0 = self.reader.erc20_supply_at(chain, token, from_block - 1)
+        except Exception:  # noqa: BLE001 — before deployment there is no contract to answer
+            code = self.reader.web3(chain).eth.get_code(self.reader.checksum(token), block_identifier=from_block - 1)
+            if code:
+                raise
+            s0 = 0
+        s1 = self.reader.erc20_supply_at(chain, token, head)
+        net = lambda b: (sum(e["value"] for e in mints if e["block"] <= b)      # noqa: E731
+                         - sum(e["value"] for e in burns if e["block"] <= b))
+        holes = []
+        topic = Web3.keccak(text="Transfer(address,address,uint256)").hex()
+        topic = topic if topic.startswith("0x") else "0x" + topic
+        zero = "0x" + self.reader.checksum(burn_to)[2:].lower().rjust(64, "0")
+        for _ in range(5):
+            if s1 - s0 == net(head):
+                break
+            lo, hi = from_block - 1, head
+            while hi - lo > 1:
+                mid = (lo + hi) // 2
+                ok = self.reader.erc20_supply_at(chain, token, mid) - s0 == net(mid)
+                lo, hi = (mid, hi) if ok else (lo, mid)
+            # THE BLOCK FROM THE CHAIN, both sides, replacing whatever the explorer gave for it
+            got = {}
+            for side, topics in (("from", [topic, zero, None]), ("to", [topic, None, zero])):
+                raw, _c2, _u = self.reader.scan_logs(chain, {"address": self.reader.checksum(token), "topics": topics},
+                                                     hi, hi, rpc_only=True)
+                got[side] = [{"from": "0x" + str(x["topics"][1].hex() if hasattr(x["topics"][1], "hex")
+                                                 else x["topics"][1])[-40:],
+                              "to": "0x" + str(x["topics"][2].hex() if hasattr(x["topics"][2], "hex")
+                                               else x["topics"][2])[-40:],
+                              "value": int(x["data"].hex() if hasattr(x["data"], "hex") else str(x["data"]), 16),
+                              "block": hi} for x in raw]
+            before = (sum(1 for e in mints if e["block"] == hi), sum(1 for e in burns if e["block"] == hi))
+            if before == (len(got["from"]), len(got["to"])):
+                break                                   # the chain says the same: not a missing log
+            mints = [e for e in mints if e["block"] != hi] + got["from"]
+            burns = [e for e in burns if e["block"] != hi] + got["to"]
+            holes.append((hi, len(got["from"]) + len(got["to"]) - sum(before)))
+        dec = scale                                     # the token's own decimals(), read by the caller
+        if s1 - s0 != net(head):
+            return burns, (f"DOES NOT RECONCILE: totalSupply {s0 / dec:,.4f} -> {s1 / dec:,.4f} over blocks "
+                           f"{from_block:,}..{head:,}, mints - burns = {net(head) / dec:,.4f} (difference "
+                           f"{(s1 - s0 - net(head))} wei = {(s1 - s0 - net(head)) / dec:,.4f} tokens)")
+        return burns, (f"RECONCILED to the wei against totalSupply: {s0 / dec:,.4f} -> {s1 / dec:,.4f} = "
+                       f"{len(mints):,} mint(s) - {len(burns):,} burn(s) over blocks {from_block:,}..{head:,}"
+                       + ("; EXPLORER HOLE(S) read from the chain: " + ", ".join(
+                           f"block {b:,} ({n} log(s) the explorer did not return)" for b, n in holes)
+                          if holes else ""))
 
     def _stage2_split(self, project, chain, key, split, burner, events, dec, last_blk,
                       parts, source_suffix, suffix, out) -> None:

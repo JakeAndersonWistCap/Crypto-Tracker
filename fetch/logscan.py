@@ -275,7 +275,8 @@ class LogScan:
             for h in holders:
                 for topics, bucket in (([TRANSFER_TOPIC, None, pad_address(h)], ins),
                                        ([TRANSFER_TOPIC, pad_address(h), None], outs)):
-                    raw, _c, _u = self.reader.scan_logs(chain, {"address": addr, "topics": topics}, hi, hi)
+                    raw, _c, _u = self.reader.scan_logs(chain, {"address": addr, "topics": topics}, hi, hi,
+                                                         rpc_only=True)
                     for x in raw:
                         e = _norm_log(x)
                         if (e["transactionHash"], int(e["logIndex"])) not in have:
@@ -400,18 +401,48 @@ class LogScan:
         start = today() - pd.Timedelta(days=days_n)
         try:
             b0 = self._block_at_ts(spec["chain"], chain_id, int(start.tz_localize("UTC").timestamp()), to_block)
-            evs, via = [], set()
+            evs, ins, via = [], [], set()
             for h in holders:
                 # explorer first, else RPC eth_getLogs (Optimism's Blockscout answered HTTP 500, 2026-10-09 15:33)
                 got, v = self._window_logs(spec["chain"], chain_id, token, [TRANSFER_TOPIC, pad_address(h)], b0,
                                            to_block)
                 evs += got
                 via.add(v)
+                # THE DIRECT COUNT RECONCILES TOO (X1 follow-up, Jake 2026-10-14: it read the outflows only, so an
+                # explorer hole would have lowered it silently): the inflows over the same window, and balanceOf at
+                # both ends — in − out must equal the change TO THE WEI, or nothing is stored
+                got, v = self._window_logs(spec["chain"], chain_id, token, [TRANSFER_TOPIC, None, pad_address(h)],
+                                           b0, to_block)
+                ins += got
+                via.add(v)
+            bal0 = sum(self._balance_at(spec["chain"], chain_id, token, h, b0 - 1) for h in holders)
+            bal1 = sum(self._balance_at(spec["chain"], chain_id, token, h, to_block) for h in holders)
         except Exception as e:  # noqa: BLE001
             from .chain import redact_urls
             out.fail(SOURCE, name, f"{key}: the direct count ({metric}) could not be read — {redact_urls(e)}", TIER)
             return
         internal = set(holders)
+        uniq = lambda xs: list({(x["transactionHash"], int(x["logIndex"])): x for x in xs}.values())  # noqa: E731
+        evs, ins = uniq(evs), uniq(ins)
+
+        def _net():
+            return sum(_amount(e) for e in ins if topic_address(e["topics"][1]) not in internal) \
+                - sum(_amount(e) for e in evs if topic_address(e["topics"][2]) not in internal)
+        holes = []
+        if bal1 - bal0 != _net() and not all(str(v).startswith("RPC") for v in via):
+            try:
+                ins, evs, holes = self._patch_explorer_holes(spec["chain"], chain_id, token, holders, b0, to_block,
+                                                             ins, evs, bal0)
+            except Exception as e:  # noqa: BLE001
+                log.warning("%s/%s: explorer-hole search (direct count) failed — %s", name, key, e)
+        if bal1 - bal0 != _net():
+            out.fail(SOURCE, name, f"{key}: the direct count ({metric}) does NOT RECONCILE: blocks {b0:,}..{to_block:,}, "
+                                   f"in-out {_net()} wei vs balanceOf change {bal1 - bal0} wei (difference "
+                                   f"{bal1 - bal0 - _net()}). Read by {'; '.join(sorted(via))}. Nothing stored.", TIER)
+            return
+        if holes:
+            via.add("EXPLORER HOLE(S) read from the chain: " + ", ".join(
+                f"block {b:,} ({n} Transfer(s) the explorer does not index)" for b, n in holes))
         seen, by_day, n = set(), defaultdict(float), 0
         for e in evs:
             k = (str(e.get("transactionHash")), str(e.get("logIndex")))
@@ -427,7 +458,8 @@ class LogScan:
                      f"{SOURCE}:direct:{key}", TIER)
         out.add(frame, SOURCE, name,
                 f"{metric} = {key} counted DIRECTLY: one windowed query from block {b0:,} (the first at or after "
-                f"{start.date()}) to {to_block:,}, no cache, read by {'; '.join(sorted(via))}, {n:,} transfer(s) to "
+                f"{start.date()}) to {to_block:,}, no cache, RECONCILED to the wei against balanceOf at both ends, "
+                f"read by {'; '.join(sorted(via))}, {n:,} transfer(s) to "
                 f"markets, {sum(by_day.values()):,.4f} in total; {len(frame)} complete day(s) {days[0].date()}..{days[-1].date()} stored — the reference "
                 f"for the reconciled scan's series", TIER)
         daily.done(f"direct:{key}", day)
@@ -1046,7 +1078,8 @@ class LogScan:
 
         # THE DIRECT COUNT BESIDE IT (Pendle in_emissions, Jake's run 2026-10-09 ~14:10: the row compared the mainnet scan
         # with itself). Once a day: the same transfers queried afresh over the last direct_days days — one windowed
-        # getLogs from the block at the window's start, no cache, no reconciliation — bucketed by UTC day with the same
+        # getLogs from the block at the window's start, no cache, reconciled against balanceOf at both ends (X1
+        # follow-up, 2026-10-14) — bucketed by UTC day with the same
         # exclusions, stored as spec["direct_metric"]. pendle_emissions_q0's computation, as a stored reference.
         if spec.get("direct_metric") and direction == "out":
             self._direct_count(name, spec, chain_id, token, holders, excluded, to_block, scale, out)

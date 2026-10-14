@@ -570,15 +570,9 @@ def test_x2_boros_first_read_resumes_across_runs_and_stores_only_when_complete(t
     assert all(v["through"] == "2026-10-12" for v in st["markets"].values())
 
 
-def test_x1_an_explorer_hole_is_read_from_the_chain_not_tolerated(tmp_path, monkeypatch):
-    """X1: Ether.fi's OP cashback window was 19.808964 ETHFI short of balanceOf. Cause: Blockscout has NO logs for OP
-    block 158,047,200 (both hosts, every API), while the chain has the distributor's Transfer of exactly that amount.
-    Real data: the RPC's Transfer logs in and out of the distributor around the hole and the real balanceOf at both
-    ends (fixtures/api_etherfi_cashback_hole.json). The explorer fake serves them WITHOUT the hole block, as Blockscout
-    does; the scan must find the block, read it from the chain and reconcile to the wei — no tolerance."""
+def _hole_fakes(monkeypatch):
+    """The X1 explorer hole, as fakes over real data: (fixture, logs, explorer missing the hole block, reader)."""
     import fetch.logscan as ls
-    from fetch.base import FetchOutput
-    from fetch.logcache import LogCache
     fx = _fx("api_etherfi_cashback_hole.json")
     logs = [ls._norm_log(x) for x in fx["logs"]]
     hole, h = fx["explorer_missing_block"], fx["holder"].lower()
@@ -604,7 +598,8 @@ def test_x1_an_explorer_hole_is_read_from_the_chain_not_tolerated(tmp_path, monk
             sign = lambda e: (1 if ls.topic_address(e["topics"][2]) == h else -1)  # noqa: E731
             return bal0 + sum(sign(e) * ls._amount(e) for e in logs if e["blockNumber"] <= block)
 
-        def scan_logs(self, chain, base, lo, hi):
+        def scan_logs(self, chain, base, lo, hi, rpc_only=False):
+            assert rpc_only, "the hole must be read from the chain, not the explorer that lacks it"
             return [e for e in logs if match(e, base["topics"], lo, hi)], 1, 1
 
         def checksum(self, a):
@@ -626,7 +621,21 @@ def test_x1_an_explorer_hole_is_read_from_the_chain_not_tolerated(tmp_path, monk
                         return _C
             return _F
 
-    scan = ls.LogScan(explorer=_Explorer(), reader=_Reader(), cache=LogCache(tmp_path))
+    return fx, logs, _Explorer(), _Reader()
+
+
+def test_x1_an_explorer_hole_is_read_from_the_chain_not_tolerated(tmp_path, monkeypatch):
+    """X1: Ether.fi's OP cashback window was 19.808964 ETHFI short of balanceOf. Cause: Blockscout has NO logs for OP
+    block 158,047,200 (both hosts, every API), while the chain has the distributor's Transfer of exactly that amount.
+    Real data: the RPC's Transfer logs in and out of the distributor around the hole and the real balanceOf at both
+    ends (fixtures/api_etherfi_cashback_hole.json). The explorer fake serves them WITHOUT the hole block, as Blockscout
+    does; the scan must find the block, read it from the chain and reconcile to the wei — no tolerance."""
+    import fetch.logscan as ls
+    from fetch.base import FetchOutput
+    from fetch.logcache import LogCache
+    fx, logs, explorer, reader = _hole_fakes(monkeypatch)
+    hole, h = fx["explorer_missing_block"], fx["holder"].lower()
+    scan = ls.LogScan(explorer=explorer, reader=reader, cache=LogCache(tmp_path))
     spec = {"key": "cashback_out_optimism", "metric": "cashback_paid_tokens", "window_days": 100}
     out = FetchOutput()
     assert scan._window_scan({"name": "Ether.fi"}, spec, "optimism", 10, fx["token"], [h], fx["to_block"], "test", out)
@@ -636,4 +645,102 @@ def test_x1_an_explorer_hole_is_read_from_the_chain_not_tolerated(tmp_path, monk
     paid = sum(f["value"].sum() for f in out.frames)
     true_out = sum(ls._amount(e) for e in logs if ls.topic_address(e["topics"][1]) == h) / 1e18
     assert paid == pytest.approx(true_out, abs=1e-9)                     # the hole's 19.808964 ETHFI is in
-    assert _Reader.balance_reads < 60                                    # one bisection, not a block-by-block walk
+    assert type(reader).balance_reads < 60                                    # one bisection, not a block-by-block walk
+
+
+def test_x1_scan_logs_rpc_only_never_asks_the_explorer(monkeypatch):
+    """The hole read must bypass the explorer: ChainReader.scan_logs(..., rpc_only=True) goes straight to eth_getLogs."""
+    from fetch.chain import ChainReader
+    r = ChainReader()
+
+    class _NoExplorer:
+        def configured(self, cid):
+            return True
+
+        def get_logs(self, *a, **k):
+            raise AssertionError("the explorer was asked for a block it does not index")
+
+        def start_budget(self, s):
+            pass
+
+    r.explorer = _NoExplorer()
+    monkeypatch.setattr(r, "_get_logs_resilient", lambda chain, base, lo, hi, used: (["log"], hi, used))
+    assert r.scan_logs("optimism", {"address": "0x0", "topics": []}, 5, 5, rpc_only=True)[0] == ["log"]
+
+
+def test_x1_followup_the_direct_count_reconciles_and_patches_the_hole(tmp_path, monkeypatch):
+    """X1 follow-up: Pendle's direct counts read the outflows only, with no balance check — the same hole would have
+    lowered them silently. They now read the inflows too and reconcile against balanceOf at both ends, patching an
+    explorer hole from the chain; a count that cannot reconcile stores nothing."""
+    import fetch.logscan as ls
+    from fetch.base import FetchOutput
+    from fetch.logcache import LogCache
+    fx, logs, explorer, reader = _hole_fakes(monkeypatch)
+    h = fx["holder"].lower()
+    scan = ls.LogScan(explorer=explorer, reader=reader, cache=LogCache(tmp_path))
+    spec = {"key": "cashback_out_optimism", "metric": "cashback_paid_tokens", "chain": "optimism",
+            "direct_metric": "cashback_paid_direct", "direct_days": 100}
+    out = FetchOutput()
+    scan._direct_count("Ether.fi", spec, 10, fx["token"], [h], set(), fx["to_block"], 10 ** 18, out)
+    msg = " ".join(e.message for e in out.log)
+    assert "RECONCILED to the wei" in msg and f"block {fx['explorer_missing_block']:,}" in msg, msg[:300]
+    true_out = sum(ls._amount(e) for e in logs if ls.topic_address(e["topics"][1]) == h) / 1e18
+    assert sum(f["value"].sum() for f in out.frames) == pytest.approx(true_out, abs=1e-9)
+
+    # without the RPC (the hole cannot be read): nothing stored, and the failure names the difference
+    class _NoRpc(type(reader)):
+        def scan_logs(self, *a, **k):
+            return [], 1, 1
+    scan2 = ls.LogScan(explorer=explorer, reader=_NoRpc(), cache=LogCache(tmp_path / "b"))
+    out2 = FetchOutput()
+    scan2._direct_count("Ether.fi", spec, 10, fx["token"], [h], set(), fx["to_block"], 10 ** 18, out2)
+    assert not out2.frames and "does NOT RECONCILE" in " ".join(e.message for e in out2.log)
+
+
+def test_x1_followup_sky_burn_scan_reconciles_against_total_supply(monkeypatch):
+    """X1 follow-up: Sky's burns go to address(0), so no balance can check them — but SKY's totalSupply moves only by
+    mint and burn, so totalSupply(end) − totalSupply(start) = Σ mints − Σ burns, to the wei. Real chain slice
+    (fixtures/api_sky_supply_slice.json: the 7,372,288 SKY Stage 2 burn at block 26,176,859 and totalSupply at both
+    ends). The explorer side drops that block, as Blockscout dropped OP 158,047,200: the reconciliation finds it,
+    reads it from the chain and closes; a block it cannot recover leaves the scan refused."""
+    from fetch.chain import Chain
+    fx = _fx("api_sky_supply_slice.json")
+    ev = lambda x: {"from": "0x" + x["topics"][1][-40:], "to": "0x" + x["topics"][2][-40:],  # noqa: E731
+                    "value": int(x["data"], 16), "block": int(x["blockNumber"], 16)}
+    true_m, true_b = [ev(x) for x in fx["mints"]], [ev(x) for x in fx["burns"]]
+    hole = true_b[0]["block"]
+    s0 = int(fx["supply_before"])
+
+    class _Reader:
+        def __init__(self, rpc=True):
+            self.rpc = rpc
+
+        def burn_transfer_events(self, chain, token, burn_to, from_block, chunk=10_000, max_blocks=None, side="to",
+                                 head=None):
+            evs = true_m if side == "from" else [e for e in true_b if e["block"] != hole]   # the explorer's view
+            return list(evs), from_block, head, 1
+
+        def erc20_supply_at(self, chain, token, block):
+            return s0 + sum(e["value"] for e in true_m if e["block"] <= block) - \
+                sum(e["value"] for e in true_b if e["block"] <= block)
+
+        def scan_logs(self, chain, base, lo, hi, rpc_only=False):
+            assert rpc_only
+            if not self.rpc:
+                return [], 1, 1
+            src = fx["mints"] if base["topics"][1] is not None else fx["burns"]
+            return [x for x in src if lo <= int(x["blockNumber"], 16) <= hi], 1, 1
+
+        def checksum(self, a):
+            return a
+
+    c = Chain.__new__(Chain)
+    c.reader = _Reader()
+    burns, verdict = c._supply_reconcile("ethereum", fx["token"], "0x" + "0" * 40, fx["from_block"], fx["to_block"],
+                                         [e for e in true_b if e["block"] != hole], {}, 10 ** 18)
+    assert verdict.startswith("RECONCILED to the wei against totalSupply"), verdict
+    assert f"block {hole:,}" in verdict and sum(e["value"] for e in burns) == 7_372_288 * 10 ** 18
+    c.reader = _Reader(rpc=False)
+    _b, verdict = c._supply_reconcile("ethereum", fx["token"], "0x" + "0" * 40, fx["from_block"], fx["to_block"],
+                                      [e for e in true_b if e["block"] != hole], {}, 10 ** 18)
+    assert verdict.startswith("DOES NOT RECONCILE") and "-7,372,288.0000 tokens" in verdict
