@@ -95,6 +95,26 @@ def test_hl_build_unblocks_unlocks_and_labels_the_model():
     assert ("Hyperliquid", "future_emissions_modelled_tokens") in g
 
 
+def test_hl_burn_total_keeps_the_funds_own_reads_and_covers_q0():
+    """Round 3 review H1 (Jake 2026-10-14): the total's history leg kept only the DefiLlama rows (to 2026-09-11), so the
+    Fund's own reads 2026-09-12..09-28 fell out — Q0 2,146,959 HYPE over 18 'covered' days read -18.25% net supply and
+    put non-stakers' Total Yield at +9.0% against NHY -6.40%. The leg is now continuous and covers all 90 days."""
+    import build_workbook as bw
+    g = _groups("Hyperliquid", _hl_rows())
+    tb = g[("Hyperliquid", "total_burn_tokens")].drop_duplicates("date", keep="last")
+    s = tb.set_index(pd.to_datetime(tb.date))["value"].astype(float)
+    asof = pd.Timestamp("2026-10-13")
+    hole = s[(s.index >= "2026-09-12") & (s.index <= "2026-09-28")]
+    assert len(hole) >= 10 and hole.sum() > 300_000         # the Fund's spotClearinghouseState reads, kept
+    q0 = s[(s.index > asof - pd.Timedelta(days=90)) & (s.index <= asof)].sum()
+    assert q0 == pytest.approx(2_467_817.2, abs=1)
+    s_cov = bw._after_leg_gap(tb, s)
+    assert bw._window_coverage(s_cov, asof - pd.Timedelta(days=90), asof)[0] == 90
+    # the retirement above DefiLlama's revenue_usd it exposes (114%) is the Fund's documented intake, not a gap
+    f = config.PROJECT_BY_NAME["Hyperliquid"]["buyback_funding"]
+    assert "hyperliquid-docs/trading/fees" in f["source_url"] and f["source_date"] == "2026-10-14"
+
+
 # ------------------------------------------------------------------------------------------------------------ Q2 Sky
 def _sky_rows():
     from fetch.sky_accounting import nps_candidates
@@ -167,6 +187,10 @@ def test_chainlink_staking_part_of_each_release_comes_out_of_e_fifo():
     b, a = (x[("Chainlink", "unlock_release_tokens")].value.sum() for x in (base, g))
     assert b - a == pytest.approx(327_500, abs=1)
     assert "staking_funding_release_tokens" in str(g[("Chainlink", "unlock_release_tokens")].source.iloc[-1])
+    # P1 (round 3 review): FIFO is labelled an attribution convention, ACCEPTED, on both series
+    for m in ("unlock_release_tokens", "staking_funding_release_tokens"):
+        assert "ATTRIBUTION CONVENTION: FIFO" in str(g[("Chainlink", m)].source.iloc[-1]) and "ACCEPTED" in str(
+            g[("Chainlink", m)].source.iloc[-1])
 
 
 def test_chainlink_community_pool_rate_from_the_vault():
@@ -291,7 +315,8 @@ def test_w4_to_w7_are_wired():
     assert any(s["key"] == "drips_out" for s in config.PROJECT_BY_NAME["Maple"]["log_scans"])
     assert config.LEAKAGE_III["Sky"]["spend"] == "buyback_spending_usd_ba"
     for n in ("Ether.fi", "Maple", "Pendle"):
-        assert config.INSIDER_LOCK[n][0] == "insider_stake_shares"
+        assert n not in config.INSIDER_LOCK                      # review W6: no insider identified -> NOT WIRED
+        assert config.INSIDER_SHARE_MONITOR[n]["numerator"] == "insider_stake_shares"
         assert any(k.startswith("insider_stake_") for k in config.PROJECT_BY_NAME[n]["contracts"])
     assert config.RELEASE_LESS["Pendle"] == ("issuer_to_gauges_tokens",)
 
@@ -377,6 +402,23 @@ def test_subsidy_cover_on_an_incomplete_denominator_is_blocked(tmp_path, monkeyp
     cover = _get(o, "SUBSIDY COVER")
     assert str(cover).startswith("BLOCKED — unequal coverage: the incentive denominator is incomplete"), cover
     assert config.OUTFLOW_INCOMPLETE[(project, "b")][:20] in str(cover)
+
+
+@pytest.mark.parametrize("project,sym,n", [("Ether.fi", "sETHFI", 8), ("Maple", "stSYRUP", 8), ("Pendle", "sPENDLE", 3)])
+def test_w6_insider_share_is_not_wired_when_no_checked_wallet_holds_shares(tmp_path, monkeypatch, project, sym, n):
+    """Round 3 review W6 (Jake 2026-10-14): 'If none are identified, the cell is NOT WIRED with the route, not 0.'"""
+    import xlcalc
+    from test_overnight_ab5f2a9 import _get, _row
+    from test_trajectory import _built
+    wb, _ = _built(tmp_path, monkeypatch, project)
+    o = _row(wb, xlcalc.Workbook(wb), "CP Comparability", project)
+    cell = str(_get(o, "Insider share of staked / locked supply"))
+    assert cell.startswith(f"NOT WIRED — no insider wallet identified among {sym} holders"), cell
+    assert len(cell) <= 255                                                   # an Excel string constant
+    what = str(_get(o, "Insider share — what is divided"))
+    assert f"Wallets checked ({n}, 0 {sym} each on 2026-10-13)" in what
+    leak = _get(o, "Leakage (i)")
+    assert leak in ("", None) or str(leak).startswith("NOT WIRED"), leak
 
 
 def test_only_declared_gaps_block():

@@ -984,8 +984,8 @@ METRICS = {
     "staking_path_in_tokens": {"label": "LINK sent by the 27 non-circulating wallets to 0xD50f074E… (the staking/payments path's first hop), per day", "kind": "flow", "unit": "tokens", "archetypes": [1], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Chainlink",)},
     "staking_path_out_tokens": {"label": "LINK forwarded by 0xD50f074E… (all of it to 0x7A28b8cF…), per day", "kind": "flow", "unit": "tokens", "archetypes": [1], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Chainlink",)},
     "staking_funding_tokens": {"label": "LINK forwarded by 0x7A28b8cF… to the staking hops 0x1661f928… / 0x8716f86f… (paid on to the RewardVault funder 0x7e10a625…), per day", "kind": "flow", "unit": "tokens", "archetypes": [1], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Chainlink",)},
-    "staking_funding_release_tokens": {"label": "The part of the 27 wallets' releases that went on to fund staking rewards (FIFO through 0xD50f074E…, dated on the release day) — taken out of (e), counted once in (a)", "kind": "flow", "unit": "tokens", "archetypes": [1], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Chainlink",), "view_only": True},
-    "net_revenue_pre_distribution_usd": {"label": "Net revenue BEFORE distributions (Sky: Block Analitica's P&L revenue − expense; the revenue distribution — SKY buyback, USDS to stakers, Security and Maintenance — not deducted), monthly. The base of payout ratios (config.revenue_ratio_base_metric)", "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [3], "sanity_min": -1e10, "sanity_max": 1e11, "only_projects": ("Sky",)},
+    "staking_funding_release_tokens": {"label": "The part of the 27 wallets' releases that went on to fund staking rewards (FIFO through 0xD50f074E…, dated on the release day; FIFO is an ATTRIBUTION CONVENTION, ACCEPTED by Jake 2026-10-14) — taken out of (e), counted once in (a)", "kind": "flow", "unit": "tokens", "archetypes": [1], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Chainlink",), "view_only": True},
+    "net_revenue_pre_distribution_usd": {"label": "Net revenue BEFORE distributions (Sky: Block Analitica's P&L revenue − expense; the revenue distribution — SKY buyback, USDS to stakers, Security and Maintenance — not deducted: S&M is TMF Step 1, an allocation OF Net Revenue, Sky Atlas A.2.3.1.2.2), monthly. The base of payout ratios (config.revenue_ratio_base_metric)", "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [3], "sanity_min": -1e10, "sanity_max": 1e11, "only_projects": ("Sky",)},
     "net_protocol_surplus_usd": {"label": "Net Protocol Surplus (Sky's own accounting — Block Analitica's P&L: net less Security and Maintenance), monthly", "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [3], "sanity_min": -1e10, "sanity_max": 1e11, "only_projects": ("Sky",)},
     # Sky's NPS as it REPORTED the months by hand (insights / financial.skyeco.com), kept as the reference beside the API.
     "revenue_usd_reported": {"label": "Sky revenue as Sky reported the month (its own financials table, 'Revenue' — gross; manual) — reference for Block Analitica's P&L revenue", "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [5], "sanity_min": 0, "sanity_max": 1e11, "only_projects": ("Sky",), "view_only": True},
@@ -1702,7 +1702,15 @@ def revenue_ratio_base_metric(project_name: str) -> str:
     value. Dividing holder value by a base that has had holder value taken out of it overstates the ratio and makes
     fees − base read the distribution as a supplier payment. So payout ratios, supplier payout, the coverage ratio and
     the Flows value statement read revenue_base.ratio_metric (BEFORE distributions); the implied buyback stays on the
-    share's own base (Stage 2's shares are % of NPS). Every other project: the same metric as revenue_base_metric."""
+    share's own base (Stage 2's shares are % of NPS). Every other project: the same metric as revenue_base_metric.
+
+    SECURITY AND MAINTENANCE STAYS IN SKY'S BASE (round 3 review P2, Jake 2026-10-14: "follow the Sky Atlas TMF text").
+    Sky Atlas A.2.3.1.2.2 "Step 1: Security And Maintenance" (sky-ecosystem/next-gen-atlas@7df3d63, content/A.2 - The-
+    Support-Scope.md, read 2026-10-14): "All of the Net Revenue from Step 0 ... becomes Step 1 Capital. Twenty percent
+    (20%) of Step 1 Capital is allocated for security and maintenance of the Sky Ecosystem". Step 0 (A.2.3.1.2.1)
+    "performs no allocations"; its Expenses (A.2.3.1.2.1.3) are the savings rate, the Integration Boost and the
+    Distribution / Reimbursement / Pioneer rewards — S&M is not among them. S&M is a step in distributing Net Revenue,
+    not an expense deducted before it, so the base is revenue − expense with S&M in it (unchanged from round 3)."""
     return (revenue_base(project_name) or {}).get("ratio_metric") or revenue_base_metric(project_name)
 
 
@@ -11995,6 +12003,17 @@ PROJECTS = [
         # 2026-09-29), the Core leg is the fall in the stored total_supply_gross (tokenDetails.
         # totalSupply, stored since 2026-09-24) between consecutive readings — the same quantity,
         # rebuilt from the stock it is differenced from. A day the stock ROSE is left out.
+        # BUYBACK ABOVE REVENUE IS FUNDED (round 3 review H1, 2026-10-14): with the burn total's 2026-09-12..28 hole
+        # closed, Q0 retirement reads $189.3M against DefiLlama's revenue_usd $166.7M (114%). The Fund is not funded
+        # from that figure: per Hyperliquid's docs (Fees, read 2026-10-14) the Assistance Fund "converts trading fees
+        # to HYPE", receives fees in every non-USDC quote token and the aligned-quote-asset reserve yield, and the
+        # deployment / priority auction fees and HyperEVM base + priority fees are burned — DefiLlama's own holders
+        # revenue (Q0 $178.7M) already exceeds its revenue, and its fees are $213.7M.
+        "buyback_funding": {"what": "trading fees converted to HYPE by the Assistance Fund (every quote token; aligned "
+                                    "quote asset reserve yield) + auction and HyperEVM fees burned — DefiLlama's "
+                                    "revenue_usd is not the Fund's intake (its holders revenue exceeds it)",
+                            "source_url": "https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees",
+                            "source_date": "2026-10-14"},
         "burn_total": {
             "metric": "total_burn_tokens",
             "components": ["gross_burn_tokens", "core_burn_tokens"],
@@ -27614,11 +27633,22 @@ LEAKAGE_III = {
             "why": "Block Analitica cash flow 'Buyback Spending' (USDS paid) vs the flapper's SKY bought x the day's "
                    "price"},
 }
-# W6 (round 3): the share-token projects, read wallet by wallet (_INSIDER_STAKE above)
+# W6 (round 3): the share-token projects, read wallet by wallet (_INSIDER_STAKE above). ROUND 3 REVIEW W6 (Jake
+# 2026-10-14): "If none are identified, the cell is NOT WIRED with the route, not 0." Every issuer-side wallet checked
+# holds 0 shares, so NO insider is identified among the stakers: the cell is NOT WIRED (naming the wallets checked) and
+# becomes the ratio only once one of them holds shares — the reads stay on as the monitor.
+INSIDER_SHARE_MONITOR = {}
 for _n, (_share_key, _sym, _den) in _INSIDER_STAKE.items():
-    INSIDER_LOCK[_n] = ("insider_stake_shares", _den,
-                        f"{_sym} shares held by the project's non-circulating wallets ÷ {_sym} totalSupply (shares over "
-                        f"shares; 0 on 2026-10-13)")
+    _checked = sorted(k[len("insider_stake_"):] for k in PROJECT_BY_NAME[_n]["contracts"]
+                      if k.startswith("insider_stake_"))
+    INSIDER_SHARE_MONITOR[_n] = {
+        "numerator": "insider_stake_shares", "denominator": _den, "symbol": _sym,
+        "what": (f"{_sym} shares held by the project's non-circulating wallets ÷ {_sym} totalSupply (shares over "
+                 f"shares). Wallets checked ({len(_checked)}, 0 {_sym} each on 2026-10-13): {', '.join(_checked)}"),
+        # an Excel string constant is at most 255 characters — the wallet list is in "what is divided"
+        "not_wired": (f"NOT WIRED — no insider wallet identified among {_sym} holders: the {len(_checked)} issuer-side "
+                      f"wallets checked hold 0 (route: {_sym} holders crossed with the issuer-wallet list; the ratio "
+                      f"shows once one holds shares)")}
 
 # ONE-OFF BURN EVENTS (Jake 2026-10-12 evening, decisions 3 and 5): dated burns that are not a mechanism — shown as their
 # own event row (CP and A4), never in a rate, trend or holder value. A one-off inside a stored burn series is moved out

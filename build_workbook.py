@@ -1343,6 +1343,14 @@ def _burn_total_views(groups: dict) -> None:
         g0 = groups.get((name, hl.get("component")))
         if hl and g0 is not None and not g0.empty:
             h = g0[(g0["source"].astype(str) == hl["source"]) & (g0["date"] < min(days))]
+            # THE FUND'S OWN READS BETWEEN ITS DECLARED HISTORY AND THE TOTAL'S FIRST DAY STAY IN THE LEG (round 3
+            # review H1, Jake 2026-10-14): Hyperliquid's leg kept only the DefiLlama rows (to 2026-09-11), so the
+            # Fund's spotClearinghouseState reads 2026-09-12..09-28 fell out of the total — a 17-day hole, and the
+            # coverage then counted from the Core leg's first day (18 of 90) while Q0 still summed the history:
+            # 2,146,959 HYPE annualised over 18 days read -18.25% net supply. Same component, same leg, after the
+            # declared rows only.
+            if not h.empty:
+                h = pd.concat([h, g0[(g0["date"] > h["date"].max()) & (g0["date"] < min(days))]])
             if not h.empty:
                 h = h.drop_duplicates("date", keep="last")[["date", "value"]].assign(
                     project=name, metric=spec["metric"], tier=2,
@@ -2821,6 +2829,11 @@ def _unlock_release_view(groups: dict, name: str, metric: str, legs: tuple) -> N
              "tier": 1, "source": f"derived:issuer_return[{'+'.join(legs)}]"}), cols)
 
 
+# P1 (round 3 review, Jake 2026-10-14: "FIFO matching of staking-vault funding — ACCEPTED, labelled as an attribution
+# convention in the cell note and SPEC"). LINK is fungible: which release funded the vault is a convention, not a fact.
+FIFO_CONVENTION = "ATTRIBUTION CONVENTION: FIFO matching of the forwards to the releases (ACCEPTED, Jake 2026-10-14)"
+
+
 def _staking_funding_split(groups: dict, name: str, sp: dict, total: pd.Series, cols) -> tuple[pd.Series, str]:
     """THE STAKING PART OF EACH RELEASE, OUT OF (e) (round 3 B2; config.STAKING_FUNDING_SPLIT, CL_STAKING_PATH). The lumps
     the 27 wallets sent to the path's first wallet queue up FIFO; each day's forward from it draws the queue down, and
@@ -2870,8 +2883,8 @@ def _staking_funding_split(groups: dict, name: str, sp: dict, total: pd.Series, 
     ser = pd.Series(taken, dtype=float).sort_index()
     groups[(name, sp["out"])] = _as_stored(pd.DataFrame(
         {"date": ser.index, "project": name, "metric": sp["out"], "value": ser.values, "tier": 2,
-         "source": f"derived:fifo[{sp['lumps']}|{sp['forwarded']}|{sp['funding']}]"}), cols)
-    return total, f"-{sp['out']}"
+         "source": f"derived:fifo[{sp['lumps']}|{sp['forwarded']}|{sp['funding']}] — {FIFO_CONVENTION}"}), cols)
+    return total, f"-{sp['out']} ({FIFO_CONVENTION})"
 
 
 def _net_common_views(groups: dict) -> None:
@@ -7142,8 +7155,17 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         return bool(config.CP_STAKE_METRIC.get(p["name"])) or \
             config.lock_display_metric(p["name"]) in config.metrics_for_project(p)
 
+    def monitor(r, p, ratio):
+        """W6 (round 3 review): the share-token projects — NOT WIRED until a checked issuer-side wallet holds shares."""
+        mon = config.INSIDER_SHARE_MONITOR[p["name"]]
+        n = R.D(r, mon["numerator"], "now")
+        txt = mon["not_wired"].replace('"', '""')
+        return f'=IF(AND(ISNUMBER({n}),{n}>0),{ratio(n, R.D(r, mon["denominator"], "now"))},"{txt}")'
+
     def insider(r, p):
         spec = config.INSIDER_LOCK.get(p["name"])
+        if not spec and p["name"] in config.INSIDER_SHARE_MONITOR:
+            return monitor(r, p, lambda n, d: f"IF(AND(ISNUMBER({d}),{d}>0),{n}/{d},{NA})")
         if not spec:
             # NEVER A BLANK WHERE THE QUESTION APPLIES (alignment round C5)
             return ("NOT WIRED — no issuer / insider wallet is identified among the stakers or lockers (route: the "
@@ -7186,6 +7208,11 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         if not hv_has(p):
             return ""
         spec = config.INSIDER_LOCK.get(p["name"])
+        if not spec and p["name"] in config.INSIDER_SHARE_MONITOR:
+            cr, rt = R.D(r, "holder_value_revenue_usd", "q0"), R.D(r, "retired_buyback_usd", "q0")
+            return monitor(r, p, lambda n, d: (
+                f'IF(AND(ISNUMBER({d}),{d}>0,ISNUMBER({cr})),IF({cr}>0,({n}/{d})*MAX(0,{cr}-IF(ISNUMBER({rt}),{rt},0))/'
+                f'{cr},"n/a — no credited holder value in Q0"),{NA})'))
         if not spec:
             return ("NOT WIRED — no issuer / insider wallet is identified among the stakers (route: the stake's holders "
                     "crossed with the issuer-wallet list)")
@@ -7314,7 +7341,8 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         ("Mechanism certainty + dated log of changes", attr("certainty"), FMT_TEXT, "text"),
         ("CAPTURE STATUS + switch power + dated switch signals", attr("capture"), FMT_TEXT, "text"),
         ("Insider share of staked / locked supply", insider, FMT_PCT, "calc"),
-        ("Insider share — what is divided", lambda r, p: (config.INSIDER_LOCK.get(p["name"]) or ("", "", ""))[2],
+        ("Insider share — what is divided", lambda r, p: (config.INSIDER_LOCK.get(p["name"]) or (
+            "", "", (config.INSIDER_SHARE_MONITOR.get(p["name"]) or {}).get("what", "")))[2],
          FMT_TEXT, "text"),
         # ---- LEAKAGE AND UNIFORMITY (alignment round C12 — PROPOSED definitions, SPEC.md section 9) ----
         ("LEAKAGE (ii) — incentive spend not returned as revenue = max(0, 1 − subsidy cover) (PROPOSED)", leakage_ii,
