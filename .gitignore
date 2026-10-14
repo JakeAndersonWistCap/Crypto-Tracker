@@ -26,3 +26,4 @@ logs/
 snapshots/
 # dump_fixture.py output (run review D8): machine-local; copied into fixtures/ when it becomes a test fixture
 dumps/
+explorer_routes.json

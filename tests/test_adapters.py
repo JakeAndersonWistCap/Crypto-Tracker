@@ -11607,21 +11607,25 @@ def test_a_row_that_loses_a_tier_collision_is_not_also_flagged_as_a_change():
     against the stored series and flagged. That reads as "this series collapsed" when what
     happened is "two sources disagree and we kept the other one" — a flag about a value nobody
     will ever see, filed under the wrong reason, sitting beside the row that is the real finding.
+
+    (Aethir itself is on-chain first since Jake's decision of 2026-10-14 (round F, F3), so its chain read now WINS that
+    collision; the same pair is replayed on a project still CoinGecko-first, which is what this mechanism is about.)
     """
     import fetch
     from fetch.base import FetchOutput, point
     from fetch.validate import REASON_CHANGE
 
     out = FetchOutput()
-    out.add(point("Aethir", "total_supply", 42_000_000_000.0, "coingecko", 1,
-                  pd.Timestamp("2026-09-21")), "coingecko", "Aethir", "provider", 1)
-    out.add(point("Aethir", "total_supply", 3_450_000_000.0, "chain:arbitrum:token", 2,
-                  pd.Timestamp("2026-09-21")), "chain", "Aethir", "contract", 2)
+    out.add(point("Plume", "total_supply", 42_000_000_000.0, "coingecko", 1,
+                  pd.Timestamp("2026-09-21")), "coingecko", "Plume", "provider", 1)
+    out.add(point("Plume", "total_supply", 3_450_000_000.0, "chain:arbitrum:token", 2,
+                  pd.Timestamp("2026-09-21")), "chain", "Plume", "contract", 2)
     # The flag validate would have raised on the tier-2 row before the collision was known.
-    out.review_item("Aethir", "total_supply", REASON_CHANGE, "stored_flagged",
+    out.review_item("Plume", "total_supply", REASON_CHANGE, "stored_flagged",
                     value=3_450_000_000.0, prior_value=42_000_000_000.0,
                     date=pd.Timestamp("2026-09-21"), source="chain:arbitrum:token", tier=2)
 
+    assert "Plume" not in config.TOTAL_SUPPLY_ONCHAIN_FIRST and "Aethir" in config.TOTAL_SUPPLY_ONCHAIN_FIRST
     fetch._resolve_tier_collisions(out)
     reasons = [r["reason"] for r in out.review]
     assert REASON_CHANGE not in reasons, f"the loser's change flag must go: {out.review}"
@@ -11630,9 +11634,9 @@ def test_a_row_that_loses_a_tier_collision_is_not_also_flagged_as_a_change():
     # THE WINNER'S OWN FLAGS ARE UNTOUCHED — this removes flags on rows that were dropped, not
     # flags on the series.
     out2 = FetchOutput()
-    out2.add(point("Aethir", "total_supply", 42_000_000_000.0, "coingecko", 1,
-                   pd.Timestamp("2026-09-21")), "coingecko", "Aethir", "provider", 1)
-    out2.review_item("Aethir", "total_supply", REASON_CHANGE, "stored_flagged",
+    out2.add(point("Plume", "total_supply", 42_000_000_000.0, "coingecko", 1,
+                   pd.Timestamp("2026-09-21")), "coingecko", "Plume", "provider", 1)
+    out2.review_item("Plume", "total_supply", REASON_CHANGE, "stored_flagged",
                      value=42_000_000_000.0, prior_value=1.0,
                      date=pd.Timestamp("2026-09-21"), source="coingecko", tier=1)
     fetch._resolve_tier_collisions(out2)
@@ -22145,18 +22149,19 @@ def test_history_audit_reads_coingecko_total_supply_as_by_design(tmp_path, monke
     db = str(tmp_path / "m.db")
     store_mod.Store(db)
     conn = sqlite3.connect(db)
-    # Aethir's total is not on-chain first: still BY DESIGN. Chainlink's is, and since Jake's decision 6 on 6f8c86c its
-    # history is read at past blocks — no longer by design
+    # Aave's total is not on-chain first (it has a chain total read, so the audit reaches the branch): still BY DESIGN. Chainlink's is, and since Jake's decision 6 on 6f8c86c its
+    # history is read at past blocks — no longer by design; Aethir joined the on-chain-first set on 2026-10-14 (F3)
     for k in range(21):
-        for name in ("Chainlink", "Aethir"):
+        for name in ("Chainlink", "Aave"):
             conn.execute("INSERT INTO metrics VALUES (?,?,?,?,?,?,?)",
                          (str((today() - pd.Timedelta(days=k + 1)).date()), name, "total_supply", 1e9, "coingecko", 1,
                           "x"))
     conn.commit()
     got = {(r[0], r[1]): (r[7], r[8]) for r in ha.rows(db, short_only=False, classify=False)}
-    v, why = got[("Aethir", "total_supply")]
+    v, why = got[("Aave", "total_supply")]
     assert v == "BY DESIGN" and why.startswith("BY DESIGN") and "total_supply_gross" in why
-    assert ("Aethir", "total_supply") not in {(r[0], r[1]) for r in ha.rows(db, short_only=True, classify=False)}
+    assert ("Aave", "total_supply") not in {(r[0], r[1]) for r in ha.rows(db, short_only=True, classify=False)}
+    assert not config.archive_not_by_design("Aethir", "total_supply")
     assert got[("Chainlink", "total_supply")][0] != "BY DESIGN"
     assert not config.archive_not_by_design("Chainlink", "total_supply")
 
@@ -25937,14 +25942,18 @@ def test_ethereum_net_supply_change_is_computed_over_the_days_both_series_hold()
 
 def test_fluid_buyback_input_is_wired_to_the_halt_and_l2_distributors_are_scanned_where_free():
     """A6 + B8: the halted programme's 0 is a reference met only by a measured 0; Arbitrum's three distributors are
-    scanned (L2 FLUID 0x61E030A5…); Base (no free logs) and Plasma (no primary RPC on file) are not."""
+    scanned (L2 FLUID 0x61E030A5…); Base (no free logs) and Plasma are not — since F2 (2026-10-14) both are pre-wired in
+    config.EXPLORER_PROBED_SCANS and open only for a chain Jake's Etherscan probe lists as served."""
     ref = config.CREDIBILITY["Fluid"]["in_buyback"]["ref"]
     assert ref["manual"]["value"] == 0.0 and ref["tol"] == 0.0
     scans = {s["key"]: s for s in config.PROJECT_BY_NAME["Fluid"]["log_scans"]}
     arb = scans["merkle_rewards_out_arbitrum"]
     assert arb["chain"] == "arbitrum" and arb["token"] == "0x61E030A56D33e8260FdD81f03B162A79Fe3449Cd"
     assert len(arb["holders"]) == 3 and arb["metric"] == "emissions_tokens_arbitrum"
-    assert "merkle_rewards_out_plasma" not in scans and "plasma" not in config.CHAIN_IDS
+    probed = {k[3]: k for k in config.EXPLORER_PROBED_SCANS if k[1] == "Fluid"}
+    assert {k[2] for k in probed.values()} == {"base", "plasma"} and config.CHAIN_IDS["plasma"] == 9745
+    served = {int(c) for c in config.explorer_probe_state().get("served") or ()}
+    assert all((key in scans) == (k[0] in served) for key, k in probed.items())
     assert scans["merkle_rewards_out"]["metric"] == "emissions_tokens", "the mainnet series is unchanged"
 
 

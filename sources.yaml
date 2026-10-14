@@ -830,6 +830,8 @@
   live_every_run: true
   units_source: "Pendle's API docs (ApiOverview.mdx @ 9b9509e) do not state units; the amounts are raw wei (18 = PENDLE/sPENDLE decimals): open-source consumers divide by 1e18 (HarukiShirato/real-time-monitoring-for-perpetual-contracts scripts/staking-collector.js), Shaurya477/spendle-tracker matches totalStakedInSpendle to sPENDLE.totalSupply() exactly, and the live 3.034133782977e25 / 1e18 = 30,341,337.8 matches totalSupply 30,340,254.46 to 0.004%"
   needs_first_run_check: true
+  # F6 (round F): the anchor is confirmed against the chain, the primary source
+  first_run_confirmed: {by: "Claude Code", date: "2026-10-14", value: 29388031.05, evidence: "totalStakedInSpendle 29,388,031.0547 (api-v2.pendle.finance/core/v1/spendle/data) = sPENDLE.totalSupply() 29,388,031.0547 (eth_call, publicnode, same minute)"}
   sanity_min: 1000
   sanity_max: 300000000
   change_threshold_pct: 25
@@ -854,7 +856,7 @@
   sanity_max: 1000000000
   change_threshold_pct: 25
   added: 2026-09-28
-  note: "In wei (decimals 18). Expect ~1.78e26 raw = ~177.8M virtual sPENDLE: spendle-tracker read 177,778,397.73 on-chain vs 177,778,738.43 from this API on 2026-09-11. Used only as a denominator input to Pendle's protocol yield (added 1:1 to sPENDLE shares); never summed into locked_tokens."
+  note: "In wei (decimals 18). Expect ~1.78e26 raw = ~177.8M virtual sPENDLE: spendle-tracker read 177,778,397.73 on-chain vs 177,778,738.43 from this API on 2026-09-11. Used only as a denominator input to Pendle's protocol yield (added 1:1 to sPENDLE shares); never summed into locked_tokens. F6 (2026-10-14): NOT CONFIRMED, the flag stays — the API reads 168,657,502.01 and the on-chain vePENDLE.totalSupplyStored() reads 36,469,728.58; Pendle does not document how vePENDLE converts to virtual sPENDLE, so no on-chain figure reproduces it here."
 
 - project: Sky
   metric: locked_tokens_dashboard
@@ -1040,6 +1042,9 @@
   url_contains: /supplies/circulating/morpho
   json_path: $
   needs_first_run_check: true
+  # F6 (round F): the extraction is confirmed — the endpoint answers a bare number, so $ IS the published figure; the
+  # figure itself stays a third party's (a reference for in_circ, not ours)
+  first_run_confirmed: {by: "Claude Code", date: "2026-10-14", value: 700580364.72, evidence: "GET api.tokenops.xyz/v1/supplies/circulating/morpho answered the bare JSON number 700580364.7170064 (HTTP 200)"}
   sanity_min: 100000000
   sanity_max: 1000000000
   change_threshold_pct: 10

@@ -1,0 +1,137 @@
+{
+ "repo": "dromos-labs/metadex-public@0058bd9b1d49b0fb0a6d130dd51886b2c64e3d99",
+ "transcribed_on": "2026-10-14",
+ "note": "ABI fragments transcribed from the declarations at the pinned commit (no compiled ABI is published before launch); text is each declaration line verbatim",
+ "functions": {
+  "emissionsMinted": {
+   "signature": "emissionsMinted()",
+   "returns": [
+    "uint256"
+   ],
+   "file": "V3/src/minter/Minter.sol",
+   "line": 82,
+   "text": "uint256 public emissionsMinted;"
+  },
+  "emissionRate": {
+   "signature": "emissionRate()",
+   "returns": [
+    "uint256"
+   ],
+   "file": "V3/src/minter/Minter.sol",
+   "line": 291,
+   "text": "function emissionRate() external view returns (uint256 _rate) {"
+  },
+  "teamRate": {
+   "signature": "teamRate()",
+   "returns": [
+    "uint24"
+   ],
+   "file": "V3/src/interfaces/minter/IMinter.sol",
+   "line": 429,
+   "text": "function teamRate() external view returns (uint24 _teamRate);"
+  },
+  "supply": {
+   "signature": "supply()",
+   "returns": [
+    "uint128"
+   ],
+   "file": "V3/src/core/VotingEscrow.sol",
+   "line": 97,
+   "text": "uint128 public supply;"
+  },
+  "totalVotingPower": {
+   "signature": "totalVotingPower()",
+   "returns": [
+    "uint256"
+   ],
+   "file": "V3/src/core/VotingEscrow.sol",
+   "line": 537,
+   "text": "function totalVotingPower() external view returns (uint256) {"
+  },
+  "permanentStakeBalance": {
+   "signature": "permanentStakeBalance()",
+   "returns": [
+    "uint128"
+   ],
+   "file": "V3/src/core/VotingEscrow.sol",
+   "line": 100,
+   "text": "uint128 public permanentStakeBalance;"
+  },
+  "VOTER": {
+   "signature": "VOTER()",
+   "returns": [
+    "address"
+   ],
+   "file": "V3/src/interfaces/core/IVotingEscrow.sol",
+   "line": 411,
+   "text": "function VOTER() external view returns (IVoter _voter);"
+  },
+  "totalPoint": {
+   "signature": "totalPoint()",
+   "returns": [
+    "int128",
+    "int128",
+    "uint48",
+    "uint128"
+   ],
+   "file": "V3/src/voter/VoterStorageBase.sol",
+   "line": 95,
+   "text": "function totalPoint()"
+  },
+  "totalSlopeChanges": {
+   "signature": "totalSlopeChanges(uint48)",
+   "returns": [
+    "int128"
+   ],
+   "file": "V3/src/voter/VoterStorageBase.sol",
+   "line": 108,
+   "text": "function totalSlopeChanges(uint48 _expiry) external view returns (int128 _slopeChange) {"
+  },
+  "balanceOf": {
+   "signature": "balanceOf(address)",
+   "returns": [
+    "uint256"
+   ],
+   "file": "V3/src/token/Token.sol",
+   "line": 9,
+   "text": "contract Token is BaseToken, ITokenExtensions {"
+  },
+  "incentiveCount": {
+   "signature": "incentiveCount()",
+   "returns": [
+    "uint256"
+   ],
+   "file": "V3/src/rewards/IncentiveStreaming.sol",
+   "line": 24,
+   "text": "uint256 public incentiveCount;"
+  },
+  "incentive": {
+   "signature": "incentive(uint256)",
+   "returns": [
+    "address",
+    "uint256",
+    "uint256",
+    "uint48",
+    "uint48",
+    "address"
+   ],
+   "file": "V3/src/rewards/IncentiveStreaming.sol",
+   "line": 94,
+   "text": "function incentive(uint256 _programId) external view returns (IncentiveProgram memory) {"
+  }
+ },
+ "events": {
+  "NotifyFeesAmount": {
+   "signature": "NotifyFeesAmount(address,address,uint256)",
+   "file": "V3/src/interfaces/rewards/IFeeDistribution.sol",
+   "line": 29,
+   "text": "event NotifyFeesAmount(address indexed _gauge, address indexed _token, uint256 _amount);"
+  },
+  "VotingRewardsCreated": {
+   "signature": "VotingRewardsCreated(address,address)",
+   "file": "V3/src/interfaces/rewards/IVotingRewardsFactory.sol",
+   "line": 13,
+   "text": "event VotingRewardsCreated(address indexed _gauge, address indexed _votingRewardsManager);"
+  }
+ }
+}

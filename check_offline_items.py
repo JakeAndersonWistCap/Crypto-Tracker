@@ -1148,6 +1148,67 @@ def etherscan_ethsupply2():
           "and BurntFees in the millions.")
 
 
+# F2 (round F, 2026-10-14): the L2 Pendle GaugeControllers and Fluid MerkleDistributors measured in the sandbox
+# (E7) need a log route on Jake's machine to be STORED. One getLogs per chain through the Etherscan V2 API with the key
+# in .env: the first PENDLE / FLUID Transfer out of the holder. Addresses: pendle-core-v2-public@87685c8
+# deployments/<chainId>-core.json; Instadapp/fluid-contracts-public@9496626f deployments.md.
+EXPLORER_PROBE = (
+    (56, "BNB Chain", "0xb3Ed0A426155B79B898849803E3B36552f7ED507", "0x704478Dd72FD7F9B83d1F1e0fc18C14B54F034d0"),
+    (8453, "Base", "0xA99F6e6785Da0F5d6fB42495Fe424BCE029Eeb3E", "0x17F100fB4bE2707675c6439468d38249DD993d58"),
+    (5000, "Mantle", "0xd27B18915e7acc8FD6Ac75DB6766a80f8D2f5729", "0x428f2f93afAc3F96B0DE59854038c585e06165C8"),
+    (146, "Sonic", "0xf1eF7d2D4C0c881cd634481e0586ed5d2871A74B", "0xeE708FC793a02F1eDd5BB9DBD7fD13010D1F7136"),
+    (80094, "Berachain", "0xFf9c599D51C407A45D631c6e89cB047Efb88AeF6", "0x704478Dd72FD7F9B83d1F1e0fc18C14B54F034d0"),
+    (999, "HyperEVM", "0xD6Eb81136884713E843936843E286FD2a85A205A", "0x7e500c6efbb00fd3227888256e477171a1304721"),
+    (9745, "Plasma", "0x61E030A56D33e8260FdD81f03B162A79Fe3449Cd", "0x3413D18500D5140095513d57a9Fcd9D882CbD064"))
+
+
+def etherscan_v2_routes():
+    """F2 (2026-10-14): does the ETHERSCAN_API_KEY in .env serve logs on each L2 the Pendle gauges / Fluid distributors
+    live on? One getLogs per chain (the holder's first Transfer out). SERVED = status 1 with a log; anything else is
+    printed verbatim, key scrubbed. Writes explorer_routes.json beside config.py — config opens an Etherscan log route
+    (and the pre-wired scans) only for the chains listed there as served. The key is never printed; only the host."""
+    import datetime as _dt                                # noqa: PLC0415
+    head("EXPLORER ROUTES — Etherscan V2 getLogs on the L2 gauge / distributor chains")
+    try:
+        from dotenv import load_dotenv                    # noqa: PLC0415
+        load_dotenv()
+    except Exception:  # noqa: BLE001
+        pass
+    key = os.environ.get("ETHERSCAN_API_KEY", "").strip()
+    if not key:
+        print("  NO ETHERSCAN_API_KEY in .env — nothing to test.")
+        return
+    topic0 = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+    served, refused = [], {}
+    for cid, label, token, holder in EXPLORER_PROBE:
+        params = {"chainid": cid, "module": "logs", "action": "getLogs", "address": token, "fromBlock": 0,
+                  "toBlock": "latest", "topic0": topic0, "topic0_1_opr": "and",
+                  "topic1": "0x" + holder.lower()[2:].rjust(64, "0"), "page": 1, "offset": 1, "apikey": key}
+        try:
+            body = requests.get("https://api.etherscan.io/v2/api", params=params, timeout=TIMEOUT).json()
+        except Exception as e:  # noqa: BLE001
+            refused[str(cid)] = f"unreachable: {str(e).replace(key, '***')[:160]}"
+            print(f"  {cid:>6} {label:<10} UNREACHABLE — {refused[str(cid)]}")
+            continue
+        res = body.get("result")
+        if str(body.get("status")) == "1" and isinstance(res, list) and res:
+            served.append(cid)
+            print(f"  {cid:>6} {label:<10} SERVED — first log block {int(res[0]['blockNumber'], 16):,} "
+                  f"tx {res[0]['transactionHash'][:12]}…")
+        else:
+            refused[str(cid)] = (f"status {body.get('status')!r} message {body.get('message')!r} "
+                                 f"result {str(res).replace(key, '***')[:160]!r}")
+            print(f"  {cid:>6} {label:<10} NOT SERVED — {refused[str(cid)]}")
+    out = {"probed_on": _dt.date.today().isoformat(), "host": "api.etherscan.io/v2", "served": served,
+           "refused": refused}
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "explorer_routes.json")
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(out, fh, indent=1)
+    print(f"  wrote {os.path.basename(path)}: served {served or 'none'}. The next token_metrics.py run scans the "
+          f"served chains (config EXPLORER_PROBED_SCANS).")
+    print("  PASTE BACK: the seven lines above.")
+
+
 AETHIR_PIN_HINTS = {
     "revenue_total": r"(?i)revenue|earning", "purchases_total": r"(?i)purchas|compute.*(ath|token)|spent",
     "apr_ai": r"(?i)apr|apy|yield", "apr_gaming": r"(?i)apr|apy|yield", "locked_ratio": r"(?i)ratio|locked|percent",
@@ -11904,7 +11965,7 @@ CHECKS = (
     fluid_buyback_destination, aethir_staking_probe, aethir_wrapper_relationship,
     aethir_veaethir_probe, geodnet_staking_candidates, geod_candidate_wallets, sky_lssky_releases, geod_residual, alchemy_base_logs, near_buyback_wallets, sky_ba_endpoints, chainlink_revenue_coverage,
     maple_transparency, sky_burn_breakdown, geod_solana_burn_account, near_block_supply,
-    wm_cardano_supply, etherscan_ethsupply2, geod_archive_probe, plume_growthepie,
+    wm_cardano_supply, etherscan_ethsupply2, etherscan_v2_routes, geod_archive_probe, plume_growthepie,
     chainlink_reward_rates, pendle_spendle_fees, archive_probe, coinmetrics_community,
     hl_af_fills_depth, etherfi_safe_owners, etherfi_sethfi_topups, etherfi_topup_safe, etherfi_cex_test, near_protocol_v87, aethir_pin_keys,
     robots_and_terms, ultrasound_history, hyperliquid_history_routes, blockworks_filings, maple_dao_vs_ssf, aethir_reward_distributors, etherfi_yield_reconcile, maple_ssf_candidates,

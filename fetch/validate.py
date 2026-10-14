@@ -605,6 +605,23 @@ def check_migration_cutover(out, today=None, state: dict | None = None) -> None:
     # date: launched counts only when all three addresses are real 0x addresses and source_url / verified are set.
     missing = _migration_switch_missing(st, day) if st.get("launched") is True else []
     if st.get("launched") is True and not missing:
+        # F1: the v3 reader (fetch/aero_v3.py) now writes the replaced metrics — a LEGACY row of one of them dated
+        # on/after the cutover is dropped (logged), so the two readers never meet on one (date, metric)
+        dropped = 0
+        for i, f in enumerate(out.frames):
+            if f is None or f.empty or "project" not in f:
+                continue
+            bad = ((f["project"] == m["project"]) & f["metric"].isin(m.get("v3_replaces") or ())
+                   & (pd.to_datetime(f["date"]).dt.normalize() >= cut)
+                   & ~f["source"].astype(str).str.startswith(m.get("v3_source", "aero_v3")))
+            if bad.any():
+                dropped += int(bad.sum())
+                out.frames[i] = f[~bad]
+        if dropped:
+            from .base import LogEntry  # noqa: PLC0415
+            out.log.append(LogEntry("migration", m["project"], 0, "ok",
+                                    f"AERO CUTOVER: {dropped} legacy row(s) of metrics the v3 contracts now measure "
+                                    f"were dropped (aero_v3 writes them); the legacy rebase is kept", 1))
         return
     refused = 0
     for i, f in enumerate(out.frames):

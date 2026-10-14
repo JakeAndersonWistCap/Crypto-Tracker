@@ -65,6 +65,7 @@ from .sky_accounting import SkyAccounting
 from .sky_mkr import SkyMkr
 from .share_price import SharePrice
 from .ve_managed import VeManaged
+from .aero_v3 import AeroV3
 from .aero_voter import AeroVoter
 from .near_bigquery import NearBigQuery
 from .plume_staking import PlumeStaking
@@ -145,6 +146,8 @@ TIER_ORDER = [
     # What veAERO voters were paid per epoch, from the reward contracts' state — Aerodrome's on-chain reference for
     # in_revenue and a3_protocol_yield, stored once a week; Voter.totalWeight daily (Jake's run 2026-10-08 11:27).
     ("aero_voter", 2, lambda ctx: AeroVoter()),
+    # Aero after the migration (round F, F1): the new contracts, addresses from aero_migration.json only.
+    ("aero_v3", 2, lambda ctx: AeroV3(prior_values=ctx["prior_delta"], prior_dates=ctx["prior_dates"])),
     # Figures a dashboard draws in the browser, once permitted and pinned (2026-10-02).
     ("browser_capture", 3, lambda ctx: BrowserCapture(stored_long=ctx.get("stored_long"))),
     # NEAR from Google's public BigQuery dataset: its own circulating supply, and the P2P leg of the
@@ -1867,6 +1870,7 @@ TIER_BUDGET_S = {
     "explorer_gauge_l2": 420,
     # one epoch a week: ~10 Multicall3 batches + one DefiLlama price call; the daily totalWeight is one eth_call
     "aero_voter": 180,
+    "aero_v3": 240,
     "scrape": 240, "dune": 420, "ultrasound": 60, "plume_staking": 180, "blockscout_stats": 90,
     # one candle call per perp market a day, paced to Hyperliquid's 1200 weight/min (~50 calls/min);
     # the adapter stops itself at 540s and resumes next run, storing only fully-read days

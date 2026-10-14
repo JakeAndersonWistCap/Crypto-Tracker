@@ -18512,8 +18512,8 @@ TOTAL_SUPPLY_ONCHAIN_FIRST = {
 # 2026-10-11 identical to the token for all seven, so no figure moves — each series changes measuring point once, declared
 # below. Aethir stays CoinGecko-first while its Arbitrum read is PARTIAL (not the full supply).
 # E2 (run review 2026-10-14): Aethir's read is now Ethereum's canonical totalSupply (42,000,000,000 — the same figure as
-# CoinGecko's), still PARTIAL because Solana's 18.44bn is not reconciled to an Ethereum escrow. PROPOSED, Jake's call:
-# keep CoinGecko-first (decision A4's condition, PARTIAL, still holds) — the tier collision logs the dropped chain row.
+# CoinGecko's), still PARTIAL because Solana's 18.44bn is not reconciled to an Ethereum escrow. F3 (Jake 2026-10-14):
+# on-chain first anyway, PARTIAL kept — see TOTAL_SUPPLY_ONCHAIN_FIRST["Aethir"] below.
 for _n, _chain in (("Aerodrome", "base"), ("Chainlink", "ethereum"), ("Fluid", "ethereum"), ("Maple", "ethereum"),
                    ("Morpho", "ethereum"), ("Pendle", "ethereum"), ("Sky", "ethereum")):
     TOTAL_SUPPLY_ONCHAIN_FIRST[_n] = {"decided_by": "Jake", "decided_on": "2026-10-11",
@@ -18525,7 +18525,43 @@ for _n, _chain in (("Aerodrome", "base"), ("Chainlink", "ethereum"), ("Fluid", "
                f"Jake decision A4)",
         "composition_change": "none: the two agreed to the token on 2026-10-11",
         "declared": "2026-10-11"})
+# F3 (Jake 2026-10-14): Aethir on-chain first — Ethereum's canonical totalSupply (42,000,000,000), the read still PARTIAL
+# for Solana's unreconciled 18,438,580,143.76 (token_supply_ethereum's partial_reason); CoinGecko stays the cross-check
+# (total_supply_coingecko). orphan_cleanup.sql CS moves the stored CoinGecko rows; archive_backfill refills from chain.
+TOTAL_SUPPLY_ONCHAIN_FIRST["Aethir"] = {"decided_by": "Jake", "decided_on": "2026-10-14",
+                                         "why": "F3: Ethereum canonical totalSupply 42bn, PARTIAL for Solana; "
+                                                "CoinGecko the cross-check"}
+PROJECT_BY_NAME["Aethir"].setdefault("series_handover", {})["total_supply"] = {
+    "ordered_points": ("coingecko", "chain:ethereum:token_supply_ethereum"),
+    "why": "CoinGecko's total supply, then from 2026-10-14 Ethereum's canonical totalSupply() (on-chain first, Jake F3)",
+    "composition_change": "none: both read 42,000,000,000 on 2026-10-14",
+    "declared": "2026-10-14"}
 METRICS["total_supply_coingecko"]["only_projects"] = tuple(TOTAL_SUPPLY_ONCHAIN_FIRST)
+
+# F4 (round F, 2026-10-14): HYPEREVM PRIORITY-FEE BURN, ITS OWN LINE. Hyperliquid's docs (for-developers/hyperevm, read
+# 2026-10-14): base fees "are removed from the total EVM supply" and priority fees are "sent to the zero address's EVM
+# balance"; HyperCore moves HYPE only on a Transfer to the system address 0x2222… (…/hypercore-less-than-greater-than-
+# hyperevm-transfers), so neither reaches tokenDetails.totalSupply — the zero address held 308,626.43 HYPE (block
+# 48,523,815) that core_burn_tokens never saw. Measured 2026-09-24 19:39 -> 2026-10-13 16:22 UTC: tokenDetails.totalSupply
+# −48,721.65 (the Core burns) while the zero address rose +3,817.56 (purroofgroup archive eth_getBalance, blocks
+# 46,789,358 / 48,446,083) — consistent with, not proof of, the docs. The base-fee burn has no address (ASXN's
+# hyperevm_base_fees_tokens_asxn is its cross-check). NOT in total_burn_tokens: a leg with no Q0 history would cut
+# the total back to its own first day; summing it once it covers Q0 is PROPOSED, Jake's call.
+METRICS["hyperevm_zero_address_balance"] = {
+    "label": "HYPE at the HyperEVM zero address (eth_getBalance) — cumulative HyperEVM priority-fee burn",
+    "kind": "stock", "unit": "tokens", "archetypes": [1, 3, 4], "tiers": [1], "sanity_min": 0, "sanity_max": 1e9,
+    "only_projects": ("Hyperliquid",)}
+METRICS["hyperevm_priority_burn_tokens"] = {
+    "label": "HyperEVM priority-fee burn per day = d(HYPE at the HyperEVM zero address) — NOT in tokenDetails' supply",
+    "kind": "flow", "unit": "tokens", "archetypes": [1, 3, 4], "tiers": [1], "sanity_min": 0, "sanity_max": 1e8,
+    "only_projects": ("Hyperliquid",)}
+PROJECT_BY_NAME["Hyperliquid"]["node_api"]["extra_reads"].append({
+    "shape": "evm_native_balance", "metric": "hyperevm_zero_address_balance",
+    "derive_flow_metric": "hyperevm_priority_burn_tokens",
+    "address": "0x0000000000000000000000000000000000000000",
+    # rpc.hyperliquid.xyz/evm ignores the block tag (latest only) — fine for a 'latest' read; purroofgroup as fallback
+    "endpoints": ("https://rpc.hyperliquid.xyz/evm", "https://rpc.purroofgroup.com"),
+    "source_url": "https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/hyperevm", "read_on": "2026-10-14"})
 
 # MODELLED LEGS (Jake 2026-10-12, Phase 1 follow-up item 2): a series leg computed from a model rather than read is
 # labelled MODELLED wherever it appears (Data note, Trajectory, Credibility) and EXCLUDED FROM ANY SCORING — the
@@ -18612,7 +18648,39 @@ AERODROME_MIGRATION = {
                        "ve_voting_power_tokens", "voter_total_weight_tokens", "locked_tokens",
                        "permanent_locked_tokens", "voter_rewards_onchain_usd", "voter_rewards_onchain_apr"),
     "source": "https://aero.xyz/aero-upgrade (read 2026-10-13)",
+    # F1 (round F, 2026-10-14): what fetch/aero_v3.py writes from the NEW contracts once the switch file is complete.
+    # From the cutover those metrics' LEGACY rows are refused (two readers on one metric and date would leave the last
+    # writer); emissions_tokens (the legacy veAERO rebase) is NOT replaced — sAERO has no rebase, the old ve keeps one.
+    "v3_replaces": ("gross_issuance_tokens", "issuer_mint_tokens", "emission_rate_current", "ve_locked_supply_tokens",
+                    "ve_voting_power_tokens", "permanent_locked_tokens", "locked_tokens", "voter_total_weight_tokens",
+                    "voter_rewards_onchain_usd", "voter_rewards_onchain_fees_usd", "voter_rewards_onchain_bribes_usd",
+                    "voter_rewards_unpriced_count", "voter_rewards_onchain_apr"),
+    "v3_source": "aero_v3",
 }
+
+
+# F1: THE DECLARED HANDOVER of every replaced metric at the cutover — legacy measuring point, then the v3 one. Each says
+# what changes, from the code (dromos-labs/metadex-public@0058bd9b), so the Trajectory reads a declared change of
+# basis, never an unexplained break.
+for _m, _old, _new, _what in (
+        ("gross_issuance_tokens", "chain:base:minter", "aero_v3:minter.emissionsMinted",
+         "legacy: weekly Minter mint (emissions + rebase + team) per flip; v3: AERO minted to emission recipients on "
+         "claim, team share excluded (Minter.sol L151-169)"),
+        ("ve_locked_supply_tokens", "chain:base:ve_locked_supply", "aero_v3:sAERO.supply",
+         "legacy veAERO.supply() -> sAERO.supply() (uint128, AERO held in escrow)"),
+        ("ve_voting_power_tokens", "chain:base:ve_voting_power", "aero_v3:sAERO.totalVotingPower",
+         "legacy veAERO.totalSupply() (voting power) -> sAERO.totalVotingPower(); sAERO.totalSupply() is the NFT count"),
+        ("permanent_locked_tokens", "chain:base:ve_permanent", "aero_v3:sAERO.permanentStakeBalance",
+         "permanentLockBalance() -> permanentStakeBalance()"),
+        ("locked_tokens", "chain:base:ve", "aero_v3:token.balanceOf(sAERO)",
+         "AERO held by the legacy escrow -> new AERO held by sAERO"),
+        ("voter_total_weight_tokens", "aero_voter:Voter.totalWeight", "aero_v3:voter.totalPoint[resolved]",
+         "Voter.totalWeight() -> root Voter.totalPoint() resolved to the read time (includes idle CHAIN0)"),
+        ("voter_rewards_onchain_usd", "aero_voter:tokenRewardsPerEpoch", "aero_v3:epoch",
+         "per-epoch buckets (tokenRewardsPerEpoch) -> NotifyFeesAmount events + incentive streams x their overlap")):
+    PROJECT_BY_NAME["Aerodrome"].setdefault("series_handover", {})[_m] = {
+        "ordered_points": (_old, _new), "why": "the Aero migration (2026-10-22 00:00 UTC; round F, F1)",
+        "composition_change": _what, "declared": AERODROME_MIGRATION["cutover_utc"]}
 
 
 def aerodrome_migration_state() -> dict:
@@ -18627,9 +18695,11 @@ def aerodrome_migration_state() -> dict:
 
 
 AERODROME_MIGRATION_WATCH = {
+    # F1 (round F, 2026-10-14): the post-migration readers are BUILT (fetch/aero_v3.py), but they read nothing until
+    # aero_migration.json holds launch day's addresses — so the watch stays on ("built" = the day v3 rows first arrive)
     "project": "Aerodrome", "label_from": "2026-10-21", "built": None,
-    "label": "MIGRATION WATCH (Aerodrome's migration launches 2026-10-21/22; this row's reads are replaced per the "
-             "RUNBOOK plan, not yet built)",
+    "label": "MIGRATION WATCH (Aerodrome's migration launches 2026-10-21/22; this row's reads are replaced by "
+             "fetch/aero_v3.py once aero_migration.json holds the new addresses — RUNBOOK 11bx)",
     "drop_pct": 5.0, "drop_metrics": ("ve_locked_supply_tokens", "voter_total_weight_tokens"),
     "outflow": {"metric": "locked_tokens", "holder": "0xeBf418Fe2512e7E6bd9b87a8F0f294aCDC67e6B4",
                 "token": "0x940181a94A35A4569E4529A3CDfB74e38FD98631", "threshold_tokens": 5_000_000.0},
@@ -21003,6 +21073,43 @@ def level_break_windows(project_name: str, metric: str) -> tuple[int, int]:
     if lumpy_flow(project_name, metric):
         return LEVEL_BREAK_LUMPY_RECENT_DAYS, LEVEL_BREAK_LUMPY_BASELINE_DAYS
     return LEVEL_BREAK_RECENT_DAYS, LEVEL_BREAK_BASELINE_DAYS
+
+
+# F6 (round F, 2026-10-14): JAKE'S 14 OCT REVIEW QUEUE — 23 change_threshold items, most of them a claims / top-up /
+# liquidation / read-delta series whose single days swing by the mechanism. Each goes week-against-week (two 7-day
+# windows, fetch/validate) instead of day-against-day: still checked, not exempted. Evidence: the 30 days to
+# 2026-10-13 in Jake's dumps (max / median), and the flagged pair from his 14 Oct queue.
+for (_p, _m), _why, _ev in (
+        (("Chainlink", "emissions_claimed_tokens"),
+         "LINK claimed out of the staking RewardVault — paid when a staker claims, not accrued",
+         "max/median 6.8 over 30 days (18,152.93 / 2,655.07); queue: 47,086.77 vs 1,138.18 a week earlier"),
+        (("Chainlink", "customer_revenue_vrf_usd"),
+         "VRF fees are billed per randomness request (subscription debits), not a steady daily stream",
+         "max/median 6.5 (8,643.11 / 1,332.79); queue: 535.07 vs 2,020.34"),
+        (("Ether.fi", "programmatic_buyback_tokens"),
+         "ETHFI bought in discrete fills into the buyback wallet",
+         "queue: 68,716.30 vs 28,089.78 a week earlier"),
+        (("Ether.fi", "sethfi_reward_tokens_reconciled"),
+         "sETHFI reward top-ups land as discrete Safe transfers into the vault",
+         "max/median 351 (165,252.01 / 470.42); queue: 927.99 vs 394.48"),
+        (("Fluid", "emissions_tokens"), "FLUID Merkle rewards counted when CLAIMED",
+         "max/median 15.8 (6,196.16 / 392.21); queue: 86.89 vs 1,661.31"),
+        (("Fluid", "emissions_tokens_arbitrum"), "FLUID Merkle rewards on Arbitrum counted when CLAIMED",
+         "max/median 22.9 (393.16 / 17.19), one zero day; queue: 6.28 vs 45.51"),
+        (("Hyperliquid", "core_burn_tokens"),
+         "the fall in tokenDetails.totalSupply BETWEEN READS — it carries whatever span separates two runs (the "
+         "GEODNET burn's case)", "max/median 3.6 over 12 reads; queue: 1,206.19 vs 611.78 (runs 08:39 and 12:10 UTC)"),
+        (("Morpho", "emissions_tokens"),
+         "MORPHO claimed out of the Merkl distributor and the URD — claims, not accrual (F5)",
+         "max/median 7.8 (3,146.18 / 401.76); queue: 226,502.92 on 2026-10-13 (ten URD claims) vs 624.09"),
+        (("Morpho", "liquidation_bonus_usd_day_morpho_api"),
+         "liquidation bonus is event-driven: a day with a large liquidation dwarfs the rest",
+         "max/median 2,322 (387,701.51 / 166.94); queue: 388,090.42 on 2026-10-08 against 0.0038 on 10-11"),
+        (("Plume", "emissions_claimed_tokens"),
+         "PLUME staking rewards counted when paid (RewardDistributed)", "queue: 41.19 vs 1,057.89 (2025-08)")):
+    LUMPY_FLOWS.setdefault((_p, _m), {"underlying_cadence": "irregular", "observed_cadence": "daily", "why": _why,
+                                      "source": "Jake's dumps of 2026-10-13 and his 14 Oct Review Queue (F6)",
+                                      "evidence": _ev, "recorded_on": "2026-10-14"})
 
 
 def lumpy_flow(project_name: str, metric: str) -> dict | None:
@@ -27582,6 +27689,105 @@ OUTFLOW_INCOMPLETE = {
                      "outflows 2026-02-26 / 2025-09-18 / 2026-01-26); BNB NOT reconciled (no free route serves its logs "
                      "fast enough; Q0 not covered). Still BLOCKED: BNB is open and the run cannot store the others",
 }
+
+
+# ===== F2 (round F, 2026-10-14): THE L2 GAUGE / DISTRIBUTOR SCANS, OPENED BY JAKE'S PROBE. =====
+# E7 measured these holders in the sandbox, each reconciled to the wei, but the run could not STORE them: no free log
+# route here. check_offline_items.py etherscan_v2_routes tests Jake's Etherscan key per chain and writes
+# explorer_routes.json beside this file ({"probed_on", "served": [chain ids], "refused": {...}}). For every SERVED chain
+# the Etherscan route opens and the scan below is wired (own tier explorer_gauge_l2: reconciled per holder to the wei,
+# the D1 history repair on the chain's RPC); a chain not served stays unscanned and its gap stays declared. A Pendle
+# chain joins emissions_tokens (the gauge-payout sum) only when served — the sum refuses a listed stream that stored
+# nothing. Addresses: pendle-core-v2-public@87685c8 deployments/<chainId>-core.json (gaugeController, PENDLE,
+# treasury); Instadapp/fluid-contracts-public@9496626f deployments/deployments.md (MerkleDistributors; FLUID on Base and
+# Plasma 0x61E030A5…). Endpoints: the ones that served E7's scans and archive balanceOf (2026-10-14).
+EXPLORER_PROBE_FILE = "explorer_routes.json"
+
+
+def explorer_probe_state() -> dict:
+    """Jake's etherscan_v2_routes result, {} while absent or unreadable."""
+    import json as _json
+    from pathlib import Path as _Path
+    path = _Path(__file__).resolve().parent / EXPLORER_PROBE_FILE
+    try:
+        return _json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    except (OSError, ValueError):
+        return {}
+
+
+CHAIN_IDS.update({"mantle": 5000, "sonic": 146, "berachain": 80094, "hyperevm": 999, "plasma": 9745})
+for _chain, _urls in (("mantle", ["https://rpc.mantle.xyz", "https://mantle-rpc.publicnode.com"]),
+                      ("sonic", ["https://rpc.soniclabs.com", "https://sonic-rpc.publicnode.com"]),
+                      ("berachain", ["https://rpc.berachain.com", "https://berachain-rpc.publicnode.com"]),
+                      # rpc.hyperliquid.xyz/evm IGNORES the block tag on eth_call (latest state for any block, E7):
+                      # purroofgroup serves archive state, so it goes first for the pinned-block balanceOf
+                      ("hyperevm", ["https://rpc.purroofgroup.com", "https://rpc.hyperliquid.xyz/evm"]),
+                      ("plasma", ["https://rpc.plasma.to"])):
+    DEFAULT_RPC.setdefault(_chain, _urls)
+_PENDLE_EXCLUDE = {56: "0xd77E9062c6DF3F2d1CB5Bf45855fa1E7712A059e", 5000: "0x5C30d3578A4D07a340650a76B9Ae5dF20D5bdF55"}
+EXPLORER_PROBED_SCANS = (
+    # (chain id, project, chain, key, metric, token, holders)
+    (56, "Pendle", "bsc", "gauge_pendle_out_bsc", "emissions_tokens_gauge_bsc",
+     "0xb3Ed0A426155B79B898849803E3B36552f7ED507", ["0x704478Dd72FD7F9B83d1F1e0fc18C14B54F034d0"]),
+    (8453, "Pendle", "base", "gauge_pendle_out_base", "emissions_tokens_gauge_base",
+     "0xA99F6e6785Da0F5d6fB42495Fe424BCE029Eeb3E", ["0x17F100fB4bE2707675c6439468d38249DD993d58"]),
+    (5000, "Pendle", "mantle", "gauge_pendle_out_mantle", "emissions_tokens_gauge_mantle",
+     "0xd27B18915e7acc8FD6Ac75DB6766a80f8D2f5729", ["0x428f2f93afAc3F96B0DE59854038c585e06165C8"]),
+    (146, "Pendle", "sonic", "gauge_pendle_out_sonic", "emissions_tokens_gauge_sonic",
+     "0xf1eF7d2D4C0c881cd634481e0586ed5d2871A74B", ["0xeE708FC793a02F1eDd5BB9DBD7fD13010D1F7136"]),
+    (80094, "Pendle", "berachain", "gauge_pendle_out_berachain", "emissions_tokens_gauge_berachain",
+     "0xFf9c599D51C407A45D631c6e89cB047Efb88AeF6", ["0x704478Dd72FD7F9B83d1F1e0fc18C14B54F034d0"]),
+    (999, "Pendle", "hyperevm", "gauge_pendle_out_hyperevm", "emissions_tokens_gauge_hyperevm",
+     "0xD6Eb81136884713E843936843E286FD2a85A205A", ["0x7e500c6efbb00fd3227888256e477171a1304721"]),
+    (8453, "Fluid", "base", "merkle_rewards_out_base", "emissions_tokens_base",
+     "0x61E030A56D33e8260FdD81f03B162A79Fe3449Cd",
+     ["0x94312a608246Cecfce6811Db84B3Ef4B2619054E", "0xF36029358A684CdDD5103A4b84dC8a832c6e5b40"]),
+    (9745, "Fluid", "plasma", "merkle_rewards_out_plasma", "emissions_tokens_plasma",
+     "0x61E030A56D33e8260FdD81f03B162A79Fe3449Cd", ["0x3413D18500D5140095513d57a9Fcd9D882CbD064"]),
+)
+for _cid, _proj, _chain, _key, _metric, _tok, _holders in EXPLORER_PROBED_SCANS:
+    _what = ("PENDLE paid out of Pendle's " if _proj == "Pendle" else "FLUID claimed out of Fluid's ") + _chain.upper() + \
+        (" GaugeController to its markets" if _proj == "Pendle" else " MerkleDistributors")
+    METRICS.setdefault(_metric, {"label": f"{_what} (log scan; F2 — stored once explorer_routes.json lists chain "
+                                          f"{_cid})", "kind": "flow", "unit": "tokens", "archetypes": [3],
+                                 "tiers": [2], "sanity_min": 0, "sanity_max": 1e8, "only_projects": (_proj,)})
+
+
+def wire_probed_scans(state: dict | None = None) -> list:
+    """Open the Etherscan route and wire the scan for every chain Jake's probe lists as served; returns the keys wired.
+    Idempotent (a key already wired is left alone)."""
+    st = explorer_probe_state() if state is None else state
+    served = {int(c) for c in (st.get("served") or ())}
+    wired = []
+    for cid, proj, chain, key, metric, tok, holders in EXPLORER_PROBED_SCANS:
+        if cid not in served:
+            continue
+        routes = EXPLORER_LOG_ROUTES.setdefault(cid, [])
+        if "etherscan" not in routes:
+            routes.insert(0, "etherscan")
+        scans = PROJECT_BY_NAME[proj].setdefault("log_scans", [])
+        if any(sp.get("key") == key for sp in scans):
+            continue
+        excl = ["0x0000000000000000000000000000000000000000"]
+        excl += ([_PENDLE_EXCLUDE.get(cid, "0xCbcb48e22622a3778b6F14C2f5d258Ba026b05e6")] if proj == "Pendle" else
+                 ["0x4F6F977aCDD1177DCD81aB83074855EcB9C2D49e", "0x9800020b610194dBa52CF606E8Aa142F9F256166"])
+        scans.append({"key": key, "metric": metric, "chain": chain, "token": tok, "holders": list(holders),
+                      "direction": "out", "store": True, "attribution": "dedicated_wallet",
+                      "attribution_sources": ["pendle-core-v2-public@87685c8 deployments/%d-core.json" % cid
+                                              if proj == "Pendle" else
+                                              "Instadapp/fluid-contracts-public@9496626f deployments/deployments.md"],
+                      "exclude_counterparties": excl, "own_tier": "explorer_gauge_l2", "scan_budget_s": 140,
+                      "window_days": 100, "wired_on": st.get("probed_on") or "2026-10-14",
+                      "route": f"Etherscan V2 chain {cid}, served per explorer_routes.json ({st.get('probed_on')})"})
+        if proj == "Pendle":
+            em = PROJECT_BY_NAME["Pendle"].get("emissions_from_metric") or ()
+            if metric not in em:
+                PROJECT_BY_NAME["Pendle"]["emissions_from_metric"] = tuple(em) + (metric,)
+        wired.append(key)
+    return wired
+
+
+EXPLORER_PROBED_WIRED = wire_probed_scans()
 
 
 def outflow_incomplete(project_name: str, cats) -> list[str]:

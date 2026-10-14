@@ -1390,7 +1390,7 @@ Funding: 2025-05-09..2025-11-03 treasury: April 2025 withdrawal-fee buyback (pai
 | Render | 2, 3, 4 | `circulating_supply` | CoinGecko first | burn | `gross_burn_tokens` | `gross_issuance_tokens` | `emissions_tokens` | — |
 | Bittensor | 2 | `circulating_supply` | CoinGecko first | none | `gross_burn_tokens` | `gross_issuance_tokens` | `emissions_tokens` | — |
 | OriginTrail | 2, 3 | `circulating_supply` | CoinGecko first | distribute | `gross_burn_tokens` | `gross_issuance_tokens` | `emissions_tokens` | — |
-| Aethir | 2 | `circulating_supply_first_party` | CoinGecko first | none | `gross_burn_tokens` | `pool_release_tokens` | `emissions_tokens` | — |
+| Aethir | 2 | `circulating_supply_first_party` | on-chain first | none | `gross_burn_tokens` | `pool_release_tokens` | `emissions_tokens` | — |
 | Venice AI | 2, 3, 4 | `circulating_supply` | CoinGecko first | burn | `gross_burn_tokens` | `gross_issuance_tokens` | `emissions_tokens` | — |
 | Virtuals | 2 | `circulating_supply` | CoinGecko first | none | `gross_burn_tokens` | `gross_issuance_tokens` | `emissions_tokens` | — |
 | Maple | 3 | `circulating_supply_onchain` | on-chain first | treasury_inflow | `gross_burn_tokens` | `pool_release_tokens` | `emissions_tokens` | `treasury_holding_tokens_chain` + `noncirculating_holding_tokens` |

@@ -230,6 +230,10 @@ def _protocol_burn(out, h, p, decl) -> int:
             rows.append((d, v, src))
     n = _emit(out, name, "gross_burn_tokens", rows,
               "protocol rule x DefiLlama fees — fees_usd x the burned share in force that day / price_usd")
+    # EVERY DERIVABLE DAY ALREADY HELD IS CURRENT, NOT A GAP (F6, Jake's 14 Oct workbook): 0 written, 397 held, and the
+    # Gap Report raised P3 "node API read (near_validators) … returned nothing" — a read that never sources this metric.
+    if new and not rows:
+        out.current.add((name, "gross_burn_tokens"))
 
     # BEFORE / AFTER, Q0 (the 90 days to the newest derived day), and the cross-check against DefiLlama's revenue.
     msg = ""

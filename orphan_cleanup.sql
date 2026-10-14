@@ -4748,3 +4748,28 @@ SELECT project, COUNT(*) AS rows, MIN(date) AS first, MAX(date) AS last, ROUND(M
 -- DELETE FROM metrics
 --  WHERE metric = 'noncirculating_holding_tokens' AND project = 'Ether.fi'
 --    AND source NOT LIKE '%noncirc_treasury_docs_4%';
+
+-- ========================================================================================
+-- CS. AETHIR TOTAL SUPPLY ON-CHAIN FIRST: THE COINGECKO TOTALS BECOME THE CROSS-CHECK  2026-10-14T17:00Z
+--     Jake's decision of 2026-10-14 (round F, F3): Aethir's total_supply is Ethereum's canonical totalSupply
+--     (42,000,000,000, still PARTIAL for Solana's unreconciled 18,438,580,143.76), CoinGecko the cross-check. As CM did
+--     for the eight on-chain-first tokens, every CoinGecko total_supply row of Aethir moves to total_supply_coingecko
+--     (values untouched); a row whose day already holds total_supply_coingecko is removed. Then the archive fills
+--     total_supply from the chain. Run: python run_sql.py CS, then python run_sql.py --delete CS, then
+--     python archive_backfill.py --run --project Aethir.
+-- ========================================================================================
+-- CS1. WHAT MOVES.
+SELECT project, source, COUNT(*) AS rows, MIN(date) AS first, MAX(date) AS last, MIN(value) AS min_value,
+       MAX(value) AS max_value
+  FROM metrics
+ WHERE metric = 'total_supply' AND source LIKE 'coingecko%' AND project = 'Aethir'
+ GROUP BY project, source;
+
+-- CS2. THE MOVE.
+-- UPDATE OR IGNORE metrics
+--    SET metric = 'total_supply_coingecko'
+--  WHERE metric = 'total_supply' AND source LIKE 'coingecko%' AND project = 'Aethir';
+-- DELETE FROM metrics
+--  WHERE metric = 'total_supply' AND source LIKE 'coingecko%' AND project = 'Aethir'
+--    AND EXISTS (SELECT 1 FROM metrics c WHERE c.project = metrics.project AND c.date = metrics.date
+--                AND c.metric = 'total_supply_coingecko');

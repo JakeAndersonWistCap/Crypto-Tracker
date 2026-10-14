@@ -501,9 +501,42 @@ class HyperCoreInfo:
                 f"circulating_supply_first_party={circ - held:,.4f} = tokenDetails.circulatingSupply {circ:,.4f} - "
                 f"the declared wallets {held:,.4f} ({read.get('exclude_wallets_decided', '')})", TIER)
 
+    def _evm_native_balance(self, project: dict, read: dict, out, when) -> None:
+        """F4 (2026-10-14): a native HYPE balance on HyperEVM (eth_getBalance, 18 decimals) and its day-on-day change.
+        The zero address's balance is where HyperEVM's burned PRIORITY fees go (docs: for-developers/hyperevm). HyperCore
+        credits or debits HYPE only on a Transfer to the system address 0x2222…, so an EVM-side burn never reaches
+        tokenDetails.totalSupply: this is its own burn line, not a part of core_burn_tokens."""
+        name, metric, flow_metric = project["name"], read["metric"], read.get("derive_flow_metric")
+        errs = []
+        for url in read["endpoints"]:
+            try:
+                r = self.http.post(url, json_body={"jsonrpc": "2.0", "id": 1, "method": "eth_getBalance",
+                                                   "params": [read["address"], "latest"]})
+                value = int(r["result"], 16) / 10 ** 18
+                break
+            except Exception as e:  # noqa: BLE001 — try the next endpoint
+                errs.append(f"{url.split('/')[2]}: {str(e)[:120]}")
+        else:
+            out.fail(SOURCE, name, f"{metric}: every HyperEVM endpoint failed — {'; '.join(errs)}", TIER)
+            out.gap(name, metric, reason=f"HyperEVM eth_getBalance failed on every endpoint: {'; '.join(errs)}",
+                    tiers_attempted="1", suggestion="Transient; the next run reads it.")
+            return
+        src = f"hyperevm:eth_getBalance({read['address'][:6]}…)"
+        out.add(point(name, metric, value, src, TIER, when), SOURCE, name, f"{metric}={value:,.6f} HYPE", TIER)
+        if flow_metric:
+            flow = derive_flow_from_cumulative(value, self.prior_delta.get((name, metric)), name, flow_metric,
+                                               config.mark_source(src, "delta"), TIER, when,
+                                               prior_date=self.prior_dates.get((name, metric)),
+                                               stock_metric=metric, out=out)
+            if not flow.empty:
+                out.add(flow, SOURCE, name, f"{flow_metric} = d({metric}) — HyperEVM priority-fee burn", TIER)
+
     def _extra_read(self, project: dict, api: dict, read: dict, out, when) -> None:
         """One additional request against the same info endpoint, with its own shape."""
         name, metric = project["name"], read.get("metric")
+        if read.get("shape") == "evm_native_balance":
+            self._evm_native_balance(project, read, out, when)
+            return
         endpoint = read.get("endpoint") or api.get("endpoint")
         request = dict(read.get("request") or {})
         if not metric or not endpoint or not request:

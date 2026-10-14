@@ -285,6 +285,20 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                 f"Resolve {src}; this row fills from it with no source of its own. Check the Run "
                 f"Log for the {src} fetch{via}.")
 
+    # ===== A PROBE-GATED L2 SCAN NOT YET OPENED (F2, 2026-10-14). =====
+    # The scan exists in config but is wired only for a chain Jake's Etherscan key is shown to serve.
+    probed = next((s for s in getattr(config, "EXPLORER_PROBED_SCANS", ()) if s[1] == name and s[4] == metric), None)
+    if probed and not any(sp.get("key") == probed[3] for sp in project.get("log_scans") or ()):
+        cid, _p, chain, key = probed[:4]
+        st = config.explorer_probe_state()
+        seen = (f"the probe of {st.get('probed_on')} did not list chain {cid} as served: "
+                f"{(st.get('refused') or {}).get(str(cid), 'no message')}" if st else
+                "explorer_routes.json is not on file (the probe has not been run)")
+        return (f"the {key} scan ({chain}, chain {cid}) is wired only once Etherscan V2 is shown to serve logs on "
+                f"{chain} for this key; {seen}",
+                "Run `python check_offline_items.py etherscan_v2_routes`; a SERVED chain is scanned from the next "
+                "run, reconciled to the wei against balanceOf.")
+
     # ===== AERODROME'S FOUNDATION LOCK READ (external audit 2026-10-09, item 1). =====
     fb = project.get("foundation_buyback") or {}
     if metric in (fb.get("stock_metric"), fb.get("claimable_metric")):
@@ -597,6 +611,14 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                 f"(futureEmissions) but stored nothing this run",
                 "Read the hypercore_info lines in the Run Log — tokenDetails needs the token id "
                 "from spotMeta, and a missing futureEmissions field is logged by name.")
+    evm = next((r for r in (node_api.get("extra_reads") or []) if r.get("shape") == "evm_native_balance"
+                and metric in (r.get("metric"), r.get("derive_flow_metric"))), None)
+    if evm:
+        return (f"HyperEVM eth_getBalance of {evm['address']} ({evm['metric']}) stored nothing this run"
+                + ("; the flow is its day-on-day rise and needs an earlier-dated reading as well"
+                   if metric == evm.get("derive_flow_metric") else ""),
+                f"Read the hypercore_info lines in the Run Log; endpoints {', '.join(evm['endpoints'])}. "
+                f"Spec on file: {evm.get('source_url')}")
     # extra_reads share the node and carry their own kind (NEAR's view_account balance).
     extra = {r.get("metric"): r.get("kind") for r in (node_api.get("extra_reads") or [])}
     if node_api and metric in extra:

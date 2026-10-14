@@ -1861,26 +1861,27 @@ def test_migration_watch_label_runs_from_10_21_until_built(monkeypatch):
     assert set(config.AERODROME_MIGRATION_WATCH["label_rows"]) <= ids
 
 
-def test_total_supply_on_chain_first_for_ether_fi_and_its_fdv():
+def test_total_supply_on_chain_first_for_ether_fi_and_its_fdv(monkeypatch):
     """Jake's review of 97b29ae (2026-10-11), item 6: Ether.fi's total supply is on-chain first — the chain read wins
     the tier collision (logged, not raised) — and FDV = price x that total; CoinGecko's FDV stays as the cross-check.
-    A project NOT on-chain first keeps CoinGecko and raises tier_collision (Aethir: its Arbitrum read is partial; the
-    other seven were flipped by Jake's decision A4, 2026-10-11)."""
+    A project NOT on-chain first keeps CoinGecko and raises tier_collision (Aave here; Aethir, the example until
+    2026-10-14, joined the on-chain-first set on Jake's decision of that day — round F, F3)."""
     import fetch as fetch_mod
     import build_workbook as bw
     from fetch.base import FetchOutput
+    monkeypatch.setattr(bw, "_SCOPE", list(config.PROJECTS))      # every project, whatever an earlier build narrowed
     d = "2026-10-11"
     row = lambda p, v, src, t: {"date": pd.Timestamp(d), "project": p, "metric": "total_supply", "value": v,  # noqa: E731
                                 "source": src, "tier": t}
     out = FetchOutput()
-    out.frames = [pd.DataFrame([row("Ether.fi", 965.35e6, "coingecko", 1), row("Aethir", 9.5e9, "coingecko", 1)]),
+    out.frames = [pd.DataFrame([row("Ether.fi", 965.35e6, "coingecko", 1), row("Aave", 16e6, "coingecko", 1)]),
                   pd.DataFrame([row("Ether.fi", 998_535_999.0, "chain:ethereum:token", 2),
-                                row("Aethir", 9.6e9, "chain:arbitrum:token", 2)])]
+                                row("Aave", 16.1e6, "chain:ethereum:token", 2)])]
     fetch_mod._resolve_tier_collisions(out)
     f = out.frame().set_index("project")
     assert f.loc["Ether.fi", "value"] == 998_535_999.0 and f.loc["Ether.fi", "source"] == "chain:ethereum:token"
-    assert f.loc["Aethir", "source"] == "coingecko"
-    assert [r["project"] for r in out.review if r["reason"] == "tier_collision"] == ["Aethir"]
+    assert "Aave" not in config.TOTAL_SUPPLY_ONCHAIN_FIRST and f.loc["Aave", "source"] == "coingecko"
+    assert [r["project"] for r in out.review if r["reason"] == "tier_collision"] == ["Aave"]
     cols = ["date", "project", "metric", "value", "source", "tier"]
     g = lambda m, v, src: pd.DataFrame([{"date": d, "project": "Ether.fi", "metric": m, "value": v, "source": src,  # noqa: E731
                                          "tier": 1}], columns=cols)

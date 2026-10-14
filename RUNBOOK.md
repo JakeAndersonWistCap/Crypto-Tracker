@@ -527,6 +527,33 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11ca. Round F — Aero v3 readers, L2 explorer probe, Aethir on-chain supply, HyperEVM burn (2026-10-14)
+
+**Run after pulling (PowerShell, repo root), IN THIS ORDER (CQ / CR from 11bz first, if not yet run):**
+```
+git pull
+python run_sql.py CS
+python run_sql.py --delete CS
+python archive_backfill.py --run --project Aethir
+python check_offline_items.py etherscan_v2_routes
+python token_metrics.py --seed pendle_gauges
+python token_metrics.py
+```
+- CS (F3, Jake's decision 2026-10-14): Aethir's total supply is Ethereum's canonical totalSupply (42bn, PARTIAL naming
+  Solana's unreconciled 18,438,580,143.76). CS moves the stored CoinGecko rows to total_supply_coingecko (values
+  untouched); the archive refills total_supply from the chain.
+- `etherscan_v2_routes` (F2): one getLogs per chain (BSC, Base, Mantle, Sonic, Berachain, HyperEVM, Plasma) on your
+  ETHERSCAN_API_KEY; prints SERVED / NOT SERVED with Etherscan's own message (the key is never printed) and writes
+  explorer_routes.json (git-ignored). The next run wires the Pendle gauge and Fluid distributor scans for the served
+  chains only, each reconciled to the wei against balanceOf. `--seed pendle_gauges` reads their full history in one
+  sitting; skip it if the probe served no chain. PASTE BACK the seven lines.
+- F4: the run stores hyperevm_zero_address_balance (the HyperEVM zero address, priority-fee burns) and its daily rise
+  hyperevm_priority_burn_tokens — its own burn line, NOT yet in total_burn_tokens (PROPOSED, SPEC §18).
+- F1: fetch/aero_v3.py is BUILT. On launch day (2026-10-22) fill `aero_migration.json` (11bx): the three addresses plus
+  `voting_rewards_factory` and `deploy_block` from Aero's published deployment, `source_url`, `verified`, `launched`.
+  Until it is complete the run refuses the legacy rows and FAILS loudly, as before.
+- SPEC.md section 18 lists every amendment old → new.
+
 ## 11bz. Run review on aac77cd — D1–D8 and E1–E9 (2026-10-14)
 
 **Run after pulling (PowerShell, repo root), IN THIS ORDER — CQ must run before the next fetch:**
@@ -632,14 +659,22 @@ PASSED` as FAILED — loudly, never a silent 0. On launch day:
    github.com/Dromos-Labs). Minter, sAERO / voting escrow, token per chain.
 2. Write `aero_migration.json` beside config.py:
    `{"launched": true, "verified": "2026-10-22", "source_url": "<the page or repo file the addresses came from>",
-   "addresses": {"minter": "0x…", "voting_escrow": "0x…", "token": "0x…"}, "velo_conversion": 0.044}`
+   "addresses": {"minter": "0x…", "voting_escrow": "0x…", "token": "0x…"}, "velo_conversion": 0.044,
+   "voting_rewards_factory": "0x…", "deploy_block": 0}` — the last two (Base) let the voter fees / incentives read
+   find the VotingRewardsManagers (one per gauge, from VotingRewardsCreated logs since that block); without them the
+   rest still runs and that read is a named gap.
    Since E8 (2026-10-14) the guard accepts the file only COMPLETE: three real 0x addresses, a source_url and a
    `verified` date not in the future. `"launched": true` alone, or the template's `0x…` placeholders, keeps the refusal
    and the run log names what is missing.
-3. Send it back with the run log. The readers for the new contracts are NOT BUILT (plan only, see "Aerodrome
-   migration" below): they are wired from this file afterwards — nothing is guessed before.
-READINESS (E8, 2026-10-14): the cutover guard is built and tested; steps 1–2 can only happen on launch day; step 3 is
-not built. The old veAERO keeps receiving rebases — settled from the contracts (E8): Minter.updatePeriod() is
+3. Run `python token_metrics.py` and send back the run log. The readers for the new contracts ARE BUILT (F1,
+   2026-10-14: fetch/aero_v3.py, from dromos-labs/metadex-public@0058bd9b — emissions minted on claim, the team share,
+   the emission rate, sAERO supply / voting power / permanent stake, the escrow's AERO, the Voter's resolved total
+   weight, and per complete epoch the voter fees + incentives in $ and the APR); they start the moment the file is
+   complete, and the legacy rows of the metrics they replace are dropped from the cutover (the legacy rebase stays).
+READINESS (F1, 2026-10-14): guard and readers built and tested against the source's ABI fragments
+(fixtures/aero_v3_abi.json); only the addresses (steps 1–2) wait for launch day. Emissions and transfers begin at
+ACTIVATION_TIMESTAMP = migration open + 1 week (Minter.sol L133), so expect emissions 0 and no complete v3 epoch
+until then. The old veAERO keeps receiving rebases — settled from the contracts (E8): Minter.updatePeriod() is
 permissionless, Minter.rewardsDistributor / RewardsDistributor.ve are immutable, and the tail rate's floor is 1 bp
 (live read at Base block 52,597,339: rewardsDistributor 0x227f6513…, ve 0xeBf418Fe… on both, tailEmissionRate 21,
 MINIMUM_TAIL_RATE 1, tokensPerWeek for the week of 2026-10-01 489,618.34 AERO). Once the file is complete, the legacy reads (the (c) rebase line included) continue as before.

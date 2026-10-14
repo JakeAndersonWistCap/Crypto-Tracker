@@ -233,7 +233,9 @@ def test_morpho_b_against_the_merkl_reference():
     import references as rf
     g = _groups("Morpho", _morpho_rows())
     r = {x["metric"]: x for x in rf.check(g)}["merkl_rewards_rate"]
-    assert r["status"] == "VERIFIED" and 6_500 < r["ours"] < 8_500
+    # F5 (2026-10-14): the reference reads the same Merkl API our series does — same-source, so a match is
+    # LIVE-UNVERIFIED (it checks the arithmetic, not the figure), never VERIFIED
+    assert r["status"] == "LIVE-UNVERIFIED" and 6_500 < r["ours"] < 8_500 and "same-source" in r["detail"]
 
 
 # --------------------------------------------------------------------------------------------------- B4 Aerodrome
@@ -1075,7 +1077,11 @@ def test_e2_aethir_supply_is_read_on_ethereum_and_flagged_for_solana():
     assert s["chain"] == "ethereum" and s["address"] == "0xbe0Ed4138121EcFC5c0E56B40517da27E6c5226B"
     assert s["supply_is_partial"] and "SOLANA NOT RECONCILED" in s["partial_reason"]
     assert cs["token_arbitrum"]["kind"] == "bridged_representation"
-    assert "Aethir" not in config.TOTAL_SUPPLY_ONCHAIN_FIRST          # decision A4's condition still holds
+    # F3 (Jake 2026-10-14): on-chain first anyway, the PARTIAL flag kept; CoinGecko the cross-check
+    assert config.TOTAL_SUPPLY_ONCHAIN_FIRST["Aethir"]["decided_on"] == "2026-10-14"
+    assert "Aethir" in config.METRICS["total_supply_coingecko"]["only_projects"]
+    assert config.PROJECT_BY_NAME["Aethir"]["series_handover"]["total_supply"]["ordered_points"] == (
+        "coingecko", "chain:ethereum:token_supply_ethereum")
 
 
 def test_e3_world_mobile_band_is_not_moved_and_the_partial_names_what_is_missing():

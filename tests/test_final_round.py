@@ -163,10 +163,12 @@ def test_hyperliquid_unread_wallet_stores_no_circulating():
 
 
 # ----------------------------------------------------------------------------------------------- A4 / A5 / A7
-def test_total_supply_on_chain_first_for_the_seven_and_not_aethir():
+def test_total_supply_on_chain_first_for_the_eight_and_aethir_since_14_oct():
+    """Aethir joined on Jake's decision of 2026-10-14 (round F, F3): Ethereum's canonical totalSupply, PARTIAL for Solana."""
     import config
     assert set(config.TOTAL_SUPPLY_ONCHAIN_FIRST) == {"Ether.fi", "Aerodrome", "Chainlink", "Fluid", "Maple", "Morpho",
-                                                      "Pendle", "Sky"}
+                                                      "Pendle", "Sky", "Aethir"}
+    assert config.TOTAL_SUPPLY_ONCHAIN_FIRST["Aethir"]["decided_on"] == "2026-10-14"
     for n in config.TOTAL_SUPPLY_ONCHAIN_FIRST:
         assert config.declared_handover(n, "total_supply")["ordered_points"][0] == "coingecko"
 
