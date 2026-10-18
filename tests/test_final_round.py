@@ -150,7 +150,7 @@ def test_hyperliquid_circulating_excludes_foundation_and_grants():
     assert f.loc["circulating_supply_tokendetails", "value"] == 302_167_698.0
     h = config.declared_handover("Hyperliquid", "circulating_supply_first_party")
     from fetch.base import _measuring_point
-    assert _measuring_point(f.loc["circulating_supply_first_party", "source"]) == h["ordered_points"][2]
+    assert _measuring_point(f.loc["circulating_supply_first_party", "source"]) == h["ordered_points"][-1]
 
 
 def test_hyperliquid_unread_wallet_stores_no_circulating():

@@ -40,7 +40,7 @@ def _sections():
     return run_sql, run_sql.parse_sections(sql)
 
 
-@pytest.mark.parametrize("label", ["CT", "CU", "CV"])
+@pytest.mark.parametrize("label", ["CT", "CU", "CV", "CW"])
 def test_g2_run_sql_sections_are_dated_and_ship_commented(label):
     """Both sections exist, are stamped no later than now, carry SELECT dry runs, and ship every write commented."""
     run_sql, secs = _sections()
@@ -472,7 +472,10 @@ MIG = "0x7d3e9b1f5a2c48e06b9d31f7a5c2e8b4d0f6a1c9"
 VELO = "0x2b8f4d6a1e9c37b05f2a8d6e3c1b9f7a4e0d5c28"
 
 
-def _supply_rpc(a, v2_token=None, basis=0, converted=0):
+HEAD = 37_000_000                                   # the Base block the supply is read at
+
+
+def _supply_rpc(a, v2_token=None, basis=0, converted=0, remaining=80e6, tags=None):
     tok = _aero_state()["addresses"]["token"]
     W, w = a.WAD, (lambda v: "0x" + f"{int(v):064x}")
     noncirc = {c["address"].lower() for k, c in config.PROJECT_BY_NAME["Aerodrome"]["contracts"].items()
@@ -480,8 +483,12 @@ def _supply_rpc(a, v2_token=None, basis=0, converted=0):
     legacy = a.LEGACY_TOKEN
 
     def rpc(method, params):
+        if method == "eth_blockNumber":
+            return hex(HEAD)
         if method == "eth_getCode":
             return "0x6080"
+        if tags is not None:
+            tags.append(params[1])
         to, data = params[0]["to"].lower(), params[0]["data"]
         sel, arg = data[:10], data[10:]
         addr = "0x" + arg[-40:] if arg else ""
@@ -493,11 +500,12 @@ def _supply_rpc(a, v2_token=None, basis=0, converted=0):
             if sel == a.selector("totalSupply"):
                 return w(1_300e6 * W)
             if sel == a.selector("balanceOf"):
-                return w(50e6 * W if addr == VELO else 1e6 * W if addr in noncirc else 0)
+                # new AERO held by the migration contract = the reserve (G2-D5e)
+                return w(50e6 * W if addr == VELO else 80e6 * W if addr == MIG else 1e6 * W if addr in noncirc else 0)
         if to == MIG:
             return {a.selector("V2_TOKEN"): w(int(v2_token or legacy, 16)), a.selector("V2_ESCROW"):
                     w(int(a.LEGACY_ESCROW, 16)), a.selector("V3_TOKEN"): w(int(tok, 16)),
-                    a.selector("MIGRATION_TOKEN_ID"): w(77), a.selector("remaining"): w(80e6 * W),
+                    a.selector("MIGRATION_TOKEN_ID"): w(77), a.selector("remaining"): w(remaining * W),
                     a.selector("previewConversion"): w(basis * W) + w(converted * W)[2:] + w(0)[2:] + w(1)[2:]}[sel]
         if to == legacy:
             if sel == a.selector("totalSupply"):
@@ -756,3 +764,55 @@ def test_g2_d1_the_blocked_emissions_reason_reaches_the_data_row(monkeypatch):
     assert r["status"] == "blocked" and "emissions_tokens_claims_katana" in r["note"]
     legs = out[(out.project == "Morpho") & out.metric.str.startswith("emissions_tokens_claims_")]
     assert set(legs["status"]) == {"missing"}, "each leg applies to Morpho (archetype 2)"
+
+
+def test_g2_d5e_the_reserve_is_the_migration_contracts_balance_at_one_block(monkeypatch):
+    """Jake 2026-10-18 (D5 confirmed): the reserve is new AERO's balanceOf(MIGRATION()) read on-chain at the block, every
+    term is read at that same block, and the Run Log line says so. remaining() must agree at that block."""
+    from fetch import aero_v3 as a
+    monkeypatch.setattr(a, "today", lambda: pd.Timestamp("2026-10-23"))
+    tags = []
+    rdr = a.AeroV3(rpc=_supply_rpc(a, basis=1_820e6, converted=1_820e6, tags=tags), state=_aero_state())
+    out = FetchOutput()
+    rdr._supply("Aerodrome", {k: v.lower() for k, v in _aero_state()["addresses"].items()}, out)
+    assert tags and set(tags) == {hex(HEAD)}, "every eth_call at the one pinned block"
+    line = next(e.message for e in out.log if e.message.startswith("total_supply:"))
+    assert f"at Base block {HEAD:,}: reserve = new AERO balanceOf(migration {MIG}) = 80,000,000.0000" in line
+    assert "read on-chain at that block" in line
+    # remaining() disagreeing with the balance at the same block: not the published contract, nothing written
+    rdr = a.AeroV3(rpc=_supply_rpc(a, basis=1_820e6, converted=1_820e6, remaining=79e6), state=_aero_state())
+    with pytest.raises(RuntimeError, match="reserve check failed"):
+        rdr._supply("Aerodrome", {k: v.lower() for k, v in _aero_state()["addresses"].items()}, FetchOutput())
+
+
+def test_g2_d2f_cw_restates_the_rows_before_10_11_and_the_series_reads_as_one_handover():
+    """Jake's follow-up 2026-10-18: the circulating rows before 2026-10-11 (tokenDetails' own figure) are restated net
+    of the same day's HyperEVM burn (run_sql CW), so after CU and CW the burn is out of every day; the series is the
+    declared handover with no overlap, and a day with no balance row is left on the raw leg."""
+    import build_workbook as bw
+    from fetch.base import _measuring_point
+    raw = "hypercore_info:tokenDetails.circulatingSupply"
+    rows = [("2026-10-09", "circulating_supply_first_party", 302_100_000.0, raw),
+            ("2026-10-10", "circulating_supply_first_party", 302_150_000.0, raw),
+            ("2026-10-11", "circulating_supply_first_party", 302_167_698.0, raw),
+            ("2026-10-12", "circulating_supply_first_party", 238_620_000.0, raw + "-exclude_wallets"),
+            ("2026-10-13", "circulating_supply_first_party", 238_601_453.86, raw + "-exclude_wallets")]
+    rows += [(d, "hyperevm_zero_address_balance", v, "hyperevm:eth_getBalance(0x0000…):archive")
+             for d, v in (("2026-10-10", 307_900.0), ("2026-10-11", 308_100.0), ("2026-10-12", 308_300.0),
+                          ("2026-10-13", 308_538.17))]
+    con = _store([(d, "Hyperliquid", m, v, src) for d, m, v, src in rows])
+    _run_writes(con, "CU")
+    _run_writes(con, "CW")
+    got = {d: (v, src) for d, v, src in con.execute(
+        "SELECT date, value, source FROM metrics WHERE metric = 'circulating_supply_first_party' ORDER BY date")}
+    assert got["2026-10-09"] == (302_100_000.0, raw), "no balance that day: left, listed by CW3"
+    assert got["2026-10-10"] == (pytest.approx(302_150_000.0 - 307_900.0), raw + "-hyperevm_burn")
+    assert got["2026-10-11"] == (pytest.approx(302_167_698.0 - 308_100.0), raw + "-hyperevm_burn")
+    assert got["2026-10-13"] == (pytest.approx(238_292_915.69), raw + "-exclude_wallets-hyperevm_burn")
+    pts = {_measuring_point(src) for _v, src in got.values()}
+    spans = {}
+    for d, (_v, src) in got.items():
+        mp = _measuring_point(src)
+        lo, hi = spans.get(mp, (pd.Timestamp(d), pd.Timestamp(d)))
+        spans[mp] = (min(lo, pd.Timestamp(d)), max(hi, pd.Timestamp(d)))
+    assert bw.handover_refusal("Hyperliquid", "circulating_supply_first_party", pts, spans) is None

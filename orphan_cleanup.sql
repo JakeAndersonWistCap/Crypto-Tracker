@@ -4883,3 +4883,53 @@ SELECT t.project,
 --  WHERE metric = 'price_usd' AND source LIKE 'price_history:%'
 --    AND date >= (SELECT MIN(c.date) FROM metrics c WHERE c.project = metrics.project AND c.metric = 'price_usd'
 --                 AND c.source LIKE 'coingecko%');
+
+-- ========================================================================================
+-- CW. HYPERLIQUID CIRCULATING BEFORE 2026-10-11, NET OF THE HYPEREVM BURN  2026-10-18T16:00Z
+--     Jake's follow-up of 2026-10-18 (G2-D2f): CU restated the rows from 2026-10-11 on (net of the declared wallets);
+--     the rows before (source 'hypercore_info:tokenDetails.circulatingSupply', tokenDetails' own figure) still counted
+--     the HyperEVM burn, so the series stepped by it where CU's rows begin. Each is restated by the same day's
+--     hyperevm_zero_address_balance (the dated series) and its source suffixed '-hyperevm_burn' (a declared leg of the
+--     handover). The 2026-10-11 step left is the wallets' (decision A1, declared). A day with no balance row is NOT
+--     restated (CW3 lists it). Run `python token_metrics.py --seed hyperevm_burn` FIRST, then: python run_sql.py CW,
+--     then python run_sql.py --delete CW.
+-- ========================================================================================
+-- CW1. WHAT IS RESTATED: BEFORE, THE SAME DAY'S HYPEREVM BURN, AFTER.
+SELECT c.date, c.value AS circulating_before, z.value AS hyperevm_burned, c.value - z.value AS circulating_after,
+       c.source
+  FROM metrics c
+  JOIN metrics z ON z.project = c.project AND z.date = c.date AND z.metric = 'hyperevm_zero_address_balance'
+ WHERE c.project = 'Hyperliquid' AND c.metric = 'circulating_supply_first_party'
+   AND c.source = 'hypercore_info:tokenDetails.circulatingSupply'
+ ORDER BY c.date;
+
+-- CW2. THE SERIES ACROSS THE JOIN, AS IT WILL READ (every circulating row from 2026-10-04 to 2026-10-18, its source and
+--      the burn already out of it or to come out).
+SELECT c.date, c.source, c.value,
+       CASE WHEN c.source = 'hypercore_info:tokenDetails.circulatingSupply' THEN c.value - z.value ELSE c.value END
+         AS value_after_cw
+  FROM metrics c
+  LEFT JOIN metrics z ON z.project = c.project AND z.date = c.date AND z.metric = 'hyperevm_zero_address_balance'
+ WHERE c.project = 'Hyperliquid' AND c.metric = 'circulating_supply_first_party'
+   AND c.date BETWEEN '2026-10-04' AND '2026-10-18'
+ ORDER BY c.date;
+
+-- CW3. DAYS THAT CANNOT BE RESTATED YET (no HyperEVM balance row that day) — empty after --seed hyperevm_burn.
+SELECT c.date, c.value, c.source
+  FROM metrics c
+ WHERE c.project = 'Hyperliquid' AND c.metric = 'circulating_supply_first_party'
+   AND c.source = 'hypercore_info:tokenDetails.circulatingSupply'
+   AND NOT EXISTS (SELECT 1 FROM metrics z WHERE z.project = c.project AND z.date = c.date
+                   AND z.metric = 'hyperevm_zero_address_balance')
+ ORDER BY c.date;
+
+-- CW4. THE RESTATEMENT.
+-- UPDATE metrics
+--    SET value = value - (SELECT z.value FROM metrics z
+--                          WHERE z.project = 'Hyperliquid' AND z.metric = 'hyperevm_zero_address_balance'
+--                            AND z.date = metrics.date),
+--        source = 'hypercore_info:tokenDetails.circulatingSupply-hyperevm_burn'
+--  WHERE project = 'Hyperliquid' AND metric = 'circulating_supply_first_party'
+--    AND source = 'hypercore_info:tokenDetails.circulatingSupply'
+--    AND EXISTS (SELECT 1 FROM metrics z WHERE z.project = 'Hyperliquid' AND z.date = metrics.date
+--                AND z.metric = 'hyperevm_zero_address_balance');

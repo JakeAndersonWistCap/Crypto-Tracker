@@ -11597,7 +11597,10 @@ PROJECTS = [
             "circulating_supply_first_party": {
                 # G2-D2 (Jake 2026-10-18): a third leg, net of the HyperEVM burn as well; run_sql CU restates the stored
                 # middle leg onto it day by day (the same day's zero-address balance), so the middle leg empties
+                # G2-D2f: the rows before 2026-10-11 too (run_sql CW), so the burn is out of every day; the raw leg
+                # keeps only a day no balance row could restate
                 "ordered_points": ("hypercore_info:tokenDetails.circulatingSupply",
+                                   "hypercore_info:tokenDetails.circulatingSupply-hyperevm_burn",
                                    "hypercore_info:tokenDetails.circulatingSupply-exclude_wallets",
                                    "hypercore_info:tokenDetails.circulatingSupply-exclude_wallets-hyperevm_burn"),
                 "why": "Jake 2026-10-11 (A1): the Foundation (genesis 60M) and Community Grants (genesis 3M) wallets "
@@ -11605,8 +11608,9 @@ PROJECTS = [
                        "HyperEVM burn (the zero address's HYPE, ~308.5K on 10-13) leaves it too",
                 # alignment round 2026-10-13 (C7): without this the −21% step read as a trend once 09-30 left Q0
                 "composition_change": "THE STOCK NARROWS at the switch: the Hyper Foundation + Community Grants "
-                                      "wallets (63.53M) leave circulating, 302.17M -> 238.64M on 2026-10-11; then the "
-                                      "HyperEVM burn (308,538.17 on 2026-10-13, -0.129%) from the restated rows on",
+                                      "wallets (63.53M) leave circulating, 302.17M -> 238.64M on 2026-10-11. The "
+                                      "HyperEVM burn (308,538.17 on 2026-10-13, -0.129%) is out of every restated day, "
+                                      "before 10-11 (run_sql CW) and after (CU), so it is not a step",
                 "declared_on": "2026-10-11"},
             "emissions_tokens": {
                 "ordered_points": ("model:inverse_sqrt(locked_tokens)", "hypercore_info:tokenDetails.futureEmissions"),

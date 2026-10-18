@@ -540,6 +540,8 @@ python run_sql.py CT
 python run_sql.py --delete CT
 python run_sql.py CU
 python run_sql.py --delete CU
+python run_sql.py CW
+python run_sql.py --delete CW
 python run_sql.py CV
 python run_sql.py --delete CV
 python archive_backfill.py --run --project Pendle
@@ -558,6 +560,9 @@ python check_offline_items.py near_settlement_routes
   the Ethereum, Arbitrum, Base and Katana claims, and stays BLOCKED, naming the chain, until all four are stored.
 - CU (D2, L3): CoinGecko's totals for Hyperliquid and GEODNET move to `total_supply_coingecko`. Our total is the net
   view (gross − the burns); Hyperliquid's circulating is restated net of the HyperEVM burn.
+- CW (G2-D2f): Hyperliquid's circulating rows BEFORE 2026-10-11 (tokenDetails' own figure) restated net of the same
+  day's HyperEVM burn, so the burn is out of every day. CW2 shows the series across the join as it will read; CW3 lists
+  any day with no balance row (empty after the seed). The step left at 10-11 is the declared wallets' (A1).
 - CV (A1): the price_history tier's stored rows. Rows before CoinGecko's first day are relabelled to the declared
   older leg; rows inside CoinGecko's range go. The build already reads them this way, so the 11 cells are back on the
   next build whether or not CV has run.
@@ -569,8 +574,10 @@ python check_offline_items.py near_settlement_routes
   should print MATCH.
 - `near_settlement_routes` (A6): stage 1 of the NEAR wallet inflow (narrow columns) is dry-run, and run only if under
   60 GB. Stage 2 is dry-run on the days it returns. PASTE BACK both byte figures.
-- On launch day (2026-10-22), aero_migration.json (11bx) also drives the supply (D5). `addresses.migration` is
-  optional; if given it must equal the token's MIGRATION().
+- On launch day (2026-10-22), aero_migration.json (11bx) also drives the supply (D5, confirmed 2026-10-18). Every term
+  is read at one Base block; the reserve is new AERO's balanceOf(MIGRATION()) at that block. The Run Log line reads
+  "total_supply: at Base block N: reserve = new AERO balanceOf(migration 0x…) = X, read on-chain at that block
+  (remaining() agrees); …". `addresses.migration` is optional; if given it must equal the token's MIGRATION().
 
 
 ## 11cb. Round G — run reliability, data correctness, verification references (2026-10-18)
