@@ -34,6 +34,7 @@ import importlib
 import json
 import logging
 import os
+import threading
 import time
 import urllib.parse
 import urllib.robotparser
@@ -200,6 +201,7 @@ def robots_from_response(url: str, status: int, text: str) -> tuple[urllib.robot
 # called by fetch.run after every tier, which re-runs the sources it refused).
 ROBOTS_BACKOFF_S = (2.0, 4.0)
 _robots_sleep = time.sleep
+_ROBOTS_CACHE_LOCK = threading.Lock()
 UNREACHABLE_MARK = "robots.txt UNREACHABLE"
 
 
@@ -224,6 +226,18 @@ def _robots_for(root: str) -> tuple[urllib.robotparser.RobotFileParser | None, s
                             len(ROBOTS_BACKOFF_S) + 1)
                 _robots_sleep(ROBOTS_BACKOFF_S[attempt])
     else:
+        # THE LAST GOOD COPY (Round G 1.1, Jake's runs 2026-10-15/18: robots.txt for Coinbase, NearBlocks,
+        # Ultrasound and Maple failed on SSL errors in the run's first minute and each source was refused).
+        # RFC 9309 s2.4: a cached robots.txt may be used beyond 24 hours WHEN THE FILE IS UNREACHABLE. The
+        # copy is the answer the host last gave (a 2xx file with its rules, or a 4xx = no rules) — so a
+        # real Disallow in it still blocks, and a 404 still allows. Only with no copy (or one older than
+        # ROBOTS_CACHE_MAX_DAYS) is the host refused, as before.
+        cached = _robots_cache_get(root)
+        if cached is not None:
+            rp, how = robots_from_response(url, cached["status"], cached.get("text") or "")
+            _ROBOTS[root] = (rp, f"robots.txt unreachable now ({', '.join(errors)} on {len(errors)} attempt(s)) — "
+                                 f"using the copy read on {cached['read_on']}: {how} (RFC 9309 s2.4)")
+            return _ROBOTS[root]
         # ** A NETWORK ERROR IS "UNREACHABLE", NOT "NO FILE". Corrected 2026-09-28. ** RFC 9309
         # s2.3.1.4: robots.txt unreachable "due to server or network errors" -> the crawler MUST
         # assume complete disallow. This used to be read as permissive.
@@ -234,8 +248,44 @@ def _robots_for(root: str) -> tuple[urllib.robotparser.RobotFileParser | None, s
                              f"disallow until it answers (RFC 9309 s2.3.1.4); re-checked once later in the run")
         return _ROBOTS[root]
     rp, how = robots_from_response(url, r.status_code, r.text)
+    if r.status_code < 500 and r.status_code != 429:
+        _robots_cache_put(root, r.status_code, r.text if r.status_code < 300 else "")
     _ROBOTS[root] = (rp, how)
     return _ROBOTS[root]
+
+
+ROBOTS_CACHE_MAX_DAYS = 30
+
+
+def _robots_cache_file():
+    from .logcache import LogCache
+    return LogCache().root / "robots-cache.json"
+
+
+def _robots_cache_get(root: str) -> dict | None:
+    """The last definite answer robots.txt gave for `root`, if read within ROBOTS_CACHE_MAX_DAYS."""
+    try:
+        rec = json.loads(_robots_cache_file().read_text()).get(root)
+        if rec and (today() - pd.Timestamp(rec["read_on"])).days <= ROBOTS_CACHE_MAX_DAYS:
+            return rec
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return None
+
+
+def _robots_cache_put(root: str, status: int, text: str) -> None:
+    try:
+        f = _robots_cache_file()
+        with _ROBOTS_CACHE_LOCK:
+            try:
+                state = json.loads(f.read_text())
+            except (OSError, ValueError):
+                state = {}
+            state[root] = {"status": int(status), "text": text[:200_000], "read_on": str(today().date())}
+            f.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_text(f, json.dumps(state, sort_keys=True, indent=1))
+    except OSError as e:  # a cache that cannot be written never fails the read it describes
+        log.warning("robots.txt cache not written for %s: %s", root, e)
 
 
 def recheck_unreachable() -> dict:

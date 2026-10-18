@@ -126,6 +126,10 @@ def validate_frame(df: pd.DataFrame, prior_values: dict[tuple[str, str], float],
         lumpy = config.lumpy_flow(project, metric)
 
         g = g.sort_values("date")
+        # (a2) A BACKFILL OF PAST DAYS (Round G 2.1: price_history fills the days before the first stored price) is not
+        # comparable with the latest stored value, which is a later date's
+        if str(g["source"].iloc[-1] or "").startswith("price_history:"):
+            continue
         # (b) THE CURRENT DAY IS NOT A DAY YET. DefiLlama and CoinGecko publish it from the moment
         # it starts, so the newest point is a few hours against yesterday's twenty-four. Dropping
         # it and comparing the last two COMPLETE days is the whole fix — widening the threshold
@@ -569,21 +573,64 @@ def check_migration_watch(df: pd.DataFrame, out, prior: dict, prior_dates: dict,
                                   f"contracts) — the migration guard")
 
 
+def _placeholder_address(v) -> str | None:
+    """Why `v` cannot be a real address, or None. ROUND G 2.10 (Jake 2026-10-18: "Refuse placeholders. Don't fill any
+    address"): beyond the 0x shape, the zero address and any repeated pattern ("0x1111…", "0x0101…", "0xdead…dead" —
+    fewer than 6 distinct hex digits, which a real 160-bit address has with probability below 1e-20) are refused, and a
+    mixed-case address must carry a valid EIP-55 checksum (a typo in one character fails it)."""
+    import re as _re  # noqa: PLC0415
+    t = str(v or "")
+    if not _re.fullmatch(r"0x[0-9a-fA-F]{40}", t):
+        return "is not a 0x address"
+    body = t[2:]
+    if len(set(body.lower())) < 6:
+        return "is a placeholder (the zero address or a repeated pattern)"
+    if body != body.lower() and body != body.upper():
+        from eth_utils import is_checksum_address  # noqa: PLC0415
+        if not is_checksum_address(t):
+            return "fails its EIP-55 checksum (a mistyped character?)"
+    return None
+
+
 def _migration_switch_missing(st: dict, day) -> list:
     """What the launch-day switch file still lacks before its addresses may be wired (empty = complete)."""
-    import re as _re  # noqa: PLC0415
     missing = []
     addrs = st.get("addresses") or {}
+    seen = {}
     for k in ("minter", "voting_escrow", "token"):
-        if not _re.fullmatch(r"0x[0-9a-fA-F]{40}", str(addrs.get(k) or "")):
-            missing.append(f"addresses.{k} is not a 0x address")
+        why = _placeholder_address(addrs.get(k))
+        if why:
+            missing.append(f"addresses.{k} {why}")
+        elif str(addrs[k]).lower() in seen:
+            missing.append(f"addresses.{k} repeats addresses.{seen[str(addrs[k]).lower()]}")
+        else:
+            seen[str(addrs[k]).lower()] = k
+    # THE EPOCH READ'S TWO FIELDS (Round G 2.10): optional — without them the voter fees / incentives are a named gap —
+    # but a placeholder in either is refused like an address (the RUNBOOK template's "0x…" and deploy_block 0)
+    fac, dep = st.get("voting_rewards_factory"), st.get("deploy_block")
+    if fac not in (None, "") or dep not in (None, ""):
+        why = _placeholder_address(fac)
+        if why:
+            missing.append(f"voting_rewards_factory {why}")
+        elif str(fac).lower() in seen:
+            missing.append(f"voting_rewards_factory repeats addresses.{seen[str(fac).lower()]}")
+        try:
+            if isinstance(dep, bool) or int(dep) <= 0 or str(int(dep)) != str(dep).strip():
+                raise ValueError
+        except (TypeError, ValueError):
+            missing.append("deploy_block is not a positive block number")
     src = str(st.get("source_url") or "")
-    if not src.startswith("http") or "…" in src:
+    if not src.startswith("http") or any(x in src for x in ("…", "<", ">", "example")):
         missing.append("source_url is not a URL")
     try:
         ver = pd.Timestamp(str(st.get("verified")))
+        cut = pd.Timestamp(config.AERODROME_MIGRATION["cutover_utc"])
         if pd.isna(ver) or ver.normalize() > day:
             missing.append("verified is not a date on or before today")
+        elif ver.normalize() < cut:
+            # the addresses are published on launch day only (aero.xyz/aero-upgrade): one verified before it was not
+            # read from the publication
+            missing.append(f"verified {ver.date()} is before the launch ({cut.date()}), when the addresses are published")
     except (ValueError, TypeError):
         missing.append("verified is not a date")
     return missing

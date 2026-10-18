@@ -7,11 +7,18 @@ refuses the method outright. That is a limit on the RPC product, not on the data
 explorer indexes logs server-side and pages by NUMBER OF RECORDS, so a five-million-block history
 with a few hundred matching events is a single request instead of half a million.
 
-TWO EXPLORERS, ROUTED PER CHAIN FROM config.EXPLORER_LOG_ROUTES:
+THREE BACKENDS, ROUTED PER CHAIN FROM config.EXPLORER_LOG_ROUTES:
   etherscan   Etherscan V2 — one key, a chainid parameter, ~60 chains. Free tier serves logs on
               some chains and not others; the table in config says which, with its date.
   blockscout  Etherscan-compatible request shape, one host per chain. Covers what Etherscan's
               free tier excludes.
+  alchemy     (Round G 2.7, 2026-10-18) Alchemy's Transfers API, alchemy_getAssetTransfers, on the keyed
+              Alchemy URL of the chain (fetch.chain.alchemy_endpoint: <CHAIN>_RPC_URL, or the key of any
+              other Alchemy *_RPC_URL). It indexes ERC-20 TRANSFERS server-side and pages by record count
+              (pageKey), so it serves exactly one query shape: Transfer(from, to, value) of one token, from
+              and/or to one address. Anything else is refused with that reason — never approximated.
+              Each transfer is returned as the log it came from (topics [Transfer, from, to], data =
+              rawContract.value, logIndex from uniqueId "<tx>:log:<n>").
 The first explorer in a chain's order is tried; the other is the fallback. WHICH ONE SERVED IS
 RETURNED WITH EVERY SCAN, so a run log always says where a figure came from.
 
@@ -28,6 +35,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 
 import config
@@ -87,6 +95,43 @@ def normalise(entry: dict) -> dict:
 # Tries for a "server too busy" answer (2+4+8+16 s of backoff) before the fallback explorer is asked.
 BUSY_TRIES = 5
 
+_ALCHEMY_LOG_INDEX = re.compile(r":log:(0x[0-9a-fA-F]+|\d+)$")
+
+
+_ZERO_WORD = "0x" + "0" * 64
+
+
+def transfer_shaped(address, topics) -> bool:
+    """A Transfer query the Transfers API answers exactly: one token, from and/or to one NON-ZERO address. The zero
+    address is refused — it is the API's own default for an unset fromAddress / toAddress, so a mint or burn filter
+    would be read as no filter at all."""
+    t = [str(x).lower() if x else None for x in (list(topics or []) + [None] * 3)]
+    sides = [x for x in t[1:3] if x]
+    return (bool(address) and t[0] == TRANSFER_TOPIC and bool(sides) and not any(t[3:])
+            and all(x != _ZERO_WORD and int(x, 16) != 0 for x in sides))
+
+
+def alchemy_transfer_log(t: dict, token: str) -> dict:
+    """One alchemy_getAssetTransfers ERC-20 transfer as the Transfer log it was indexed from. Raises ExplorerRefused on a
+    record without the raw value or the log index — a transfer that cannot be placed is not guessed at."""
+    raw = (t.get("rawContract") or {}).get("value")
+    m = _ALCHEMY_LOG_INDEX.search(str(t.get("uniqueId") or ""))
+    if raw is None or not m or not t.get("blockNum") or not t.get("hash"):
+        raise ExplorerRefused(f"alchemy: a transfer without rawContract.value / uniqueId log index / block / hash: "
+                              f"{str({k: t.get(k) for k in ('uniqueId', 'blockNum', 'hash')})[:160]}")
+    ts = (t.get("metadata") or {}).get("blockTimestamp")
+    when = 0
+    if ts:
+        import pandas as _pd
+        try:
+            when = int(_pd.Timestamp(ts).timestamp())
+        except (TypeError, ValueError):
+            when = 0
+    return {"address": str((t.get("rawContract") or {}).get("address") or token).lower(),
+            "topics": [TRANSFER_TOPIC, pad_address(str(t.get("from") or "0x0")), pad_address(str(t.get("to") or "0x0"))],
+            "data": str(raw), "blockNumber": _int(t["blockNum"]), "timeStamp": when,
+            "transactionHash": str(t["hash"]).lower(), "logIndex": _int(m.group(1))}
+
 
 class ExplorerLogs:
     """getLogs against the explorers configured for a chain, paging by record count."""
@@ -124,20 +169,34 @@ class ExplorerLogs:
 
     # ------------------------------------------------------------------ plumbing
     @staticmethod
-    def key(name: str) -> str:
+    def key(name: str, chain_id: int | None = None) -> str:
+        """The explorer's key; for alchemy, the chain's keyed Alchemy URL (never logged)."""
+        if config.EXPLORERS[name].get("kind") == "alchemy_transfers":
+            if chain_id is None:
+                return ""
+            from .chain import alchemy_endpoint
+            chain = next((c for c, i in config.CHAIN_IDS.items() if int(i) == int(chain_id)), None)
+            return alchemy_endpoint(chain) if chain else ""
         return os.environ.get(config.EXPLORERS[name]["key_env"], "").strip()
 
-    def configured(self, chain_id: int) -> list[str]:
-        """The explorers that would be tried for this chain, in order: routed AND keyed."""
-        return [n for n in config.explorer_order(chain_id) if self.key(n)]
+    def configured(self, chain_id: int, transfer: bool = False) -> list[str]:
+        """The explorers that would be tried for this chain, in order: routed AND keyed. `transfer`: the caller's
+        queries are all transfer-shaped, so the chain's opened TRANSFER routes count too."""
+        order = config.explorer_order(chain_id) + (config.transfer_route(chain_id) if transfer else [])
+        return [n for n in order if self.key(n, chain_id)]
 
     def _scrub(self, text) -> str:
         s = str(text)
         for name in config.EXPLORERS:
+            if config.EXPLORERS[name].get("kind") == "alchemy_transfers":
+                continue
             k = self.key(name)
             if k:
                 s = s.replace(k, "***")
-        return s
+        from .chain import alchemy_keys, redact_urls
+        for k in alchemy_keys():
+            s = s.replace(k, "***")
+        return redact_urls(s)
 
     def _endpoint(self, name: str, chain_id: int) -> tuple[str, dict]:
         spec = config.EXPLORERS[name]
@@ -204,9 +263,77 @@ class ExplorerLogs:
             raise ExplorerRefused(f"{name}: {self._scrub(msg)} — {self._scrub(text)[:200]}")
         raise ExplorerRefused(f"{name}: still rate limited / too busy after {BUSY_TRIES} tries")
 
+    # ------------------------------------------------------------------ alchemy (Transfers API)
+    def _alchemy_paged(self, name: str, chain_id: int, address: str, topics: list, from_block: int,
+                       to_block) -> tuple[list[dict], int]:
+        """Transfer logs of one token from/to one address through alchemy_getAssetTransfers, paged by pageKey."""
+        if not transfer_shaped(address, topics):
+            raise ExplorerRefused(f"{name}: serves ERC-20 Transfer queries of one token from / to an address only "
+                                  f"(alchemy_getAssetTransfers) — not topics {[x for x in topics if x]} on "
+                                  f"{address or 'every contract'}")
+        t = list(topics or []) + [None] * 3
+        url = self.key(name, chain_id)
+        if not url:
+            raise ExplorerRefused(f"{name}: no Alchemy key for chain {chain_id} (an Alchemy URL in "
+                                  f"<CHAIN>_RPC_URL; {config.EXPLORERS[name]['key_env']})")
+        spec = config.EXPLORERS[name]
+        max_n, cap = int(spec["max_records"]), int(config.EXPLORER_MAX_REQUESTS_PER_SCAN)
+        params = {"fromBlock": hex(int(from_block)),
+                  "toBlock": to_block if isinstance(to_block, str) else hex(int(to_block)),
+                  "contractAddresses": [address], "category": ["erc20"], "excludeZeroValue": False,
+                  "order": "asc", "maxCount": hex(max_n)}
+        if t[1]:
+            params["fromAddress"] = topic_address(t[1])
+        if t[2]:
+            params["toAddress"] = topic_address(t[2])
+        if int(chain_id) in set(spec.get("metadata_chains") or ()):
+            params["withMetadata"] = True
+        pace = host_pace(url, float(spec.get("rate_per_s") or 2.0), sleep=self._pace_sleep)
+        out, seen, n, page_key = [], set(), 0, None
+        while True:
+            if n >= cap:
+                raise ExplorerRefused(f"{name}: stopped at {cap} requests without exhausting the range — a "
+                                      f"truncated history is not returned as a complete one")
+            self._check_budget()
+            pace.wait()
+            body = {"jsonrpc": "2.0", "id": n + 1, "method": "alchemy_getAssetTransfers",
+                    "params": [{**params, **({"pageKey": page_key} if page_key else {})}]}
+            try:
+                res = self.http.post(url, json_body=body, deadline=self._deadline)
+            except BudgetExhausted as e:
+                self._errors.append(f"{name}: {self._scrub(e)}")
+                raise self._timed_out() from None
+            except Exception as e:  # noqa: BLE001 — reported as a refusal, never swallowed
+                self._errors.append(f"{name}: {self._scrub(e)[:160]}")
+                raise ExplorerRefused(f"{name}: {self._scrub(e)}") from None
+            n += 1
+            self.requests[name] = self.requests.get(name, 0) + 1
+            if not isinstance(res, dict):
+                raise ExplorerRefused(f"{name}: non-JSON-object answer ({type(res).__name__})")
+            if res.get("error"):
+                err = res["error"]
+                msg = err.get("message") if isinstance(err, dict) else err
+                raise ExplorerRefused(f"{name}: {self._scrub(msg)[:240]}")
+            result = res.get("result") or {}
+            if not isinstance(result, dict) or not isinstance(result.get("transfers"), list):
+                raise ExplorerRefused(f"{name}: result carries no transfers list: {self._scrub(str(result))[:160]}")
+            for tr in result["transfers"]:
+                e = alchemy_transfer_log(tr, address)
+                k = (e["transactionHash"], e["logIndex"])
+                if k not in seen:
+                    seen.add(k)
+                    out.append(e)
+            page_key = result.get("pageKey") or None
+            if not page_key:
+                break
+        out.sort(key=lambda e: (e["blockNumber"], e["logIndex"]))
+        return out, n
+
     # ------------------------------------------------------------------ the scan
     def _paged(self, name: str, chain_id: int, address: str, topics: list, from_block: int,
                to_block) -> tuple[list[dict], int]:
+        if config.EXPLORERS[name].get("kind") == "alchemy_transfers":
+            return self._alchemy_paged(name, chain_id, address, topics, from_block, to_block)
         max_n = int(config.EXPLORERS[name]["max_records"])
         cap = int(config.EXPLORER_MAX_REQUESTS_PER_SCAN)
         params = {"module": "logs", "action": "getLogs", "toBlock": to_block, "offset": max_n}
@@ -261,6 +388,9 @@ class ExplorerLogs:
         Etherscan answers the number as a string; Blockscout as {"blockNumber": ...}."""
         refused = []
         for name in config.explorer_order(chain_id):
+            if config.EXPLORERS[name].get("kind") == "alchemy_transfers":
+                refused.append(f"{name}: serves transfers only, not block-by-time")
+                continue
             try:
                 res = self._call(name, chain_id, {"module": "block", "action": "getblocknobytime",
                                                   "timestamp": int(timestamp), "closest": "after"})
@@ -283,6 +413,10 @@ class ExplorerLogs:
         when no explorer serves it, naming what each said — never an empty list in its place.
         """
         order = config.explorer_order(chain_id)
+        # A TRANSFER-SHAPED QUERY also goes to the chain's opened transfer route (Round G 2.7: Alchemy's Transfers API,
+        # opened per chain by Jake's probe — config.EXPLORER_TRANSFER_ROUTES), after the log explorers.
+        if transfer_shaped(address, topics):
+            order = order + [n for n in config.transfer_route(chain_id) if n not in order]
         if not order:
             raise ExplorerRefused(f"no explorer is routed for chain {chain_id} in "
                                   f"config.EXPLORER_LOG_ROUTES")

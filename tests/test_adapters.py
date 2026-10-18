@@ -13706,7 +13706,9 @@ def test_the_round_of_2026_09_23_closures_and_blocked_rows_land():
                                     # dashboard's split), never locked_tokens; veAethir as their balanceOf target
                                     "veaethir_token", "staking_ai_pool_balance", "staking_gaming_pool_balance",
                                     # E2 (2026-10-14): the supply read moved to Ethereum's canonical token
-                                    "token_supply_ethereum"}
+                                    "token_supply_ethereum",
+                                    # Round G 2.9 (2026-10-18): veAethir.totalSupply() read for the peg check
+                                    "veaethir_supply"}
     assert a["defillama_fees_slug"] == a["customer_revenue_route"]["candidate_slug"] == "aethir"
     g = config.PROJECT_BY_NAME["GEODNET"]["locked_tokens_resolved"]["docs_pages_2026_09_23"]
     assert any(u.endswith("stake-geods.md") for u in g["pages"])
@@ -14361,17 +14363,19 @@ class _NearFlowHttp:
         return self.v3[path]
 
 
+_NEAR_FLOW_DAY = pd.Timestamp.now("UTC").tz_localize(None).normalize() - pd.Timedelta(days=7)
+
+
 def _near_flow_action(sender, deposit_yocto, action="TRANSFER"):
     return {"predecessor_account_id": sender, "receiver_account_id": "buybacks.multisignature.near",
-            "block_timestamp": str(int(pd.Timestamp("2026-09-10").value)),
+            # A WEEK BEFORE TODAY, not a fixed date (Round G: dated 2026-09-10, it left the 35-day window on 2026-10-16)
+            "block_timestamp": str(int(_NEAR_FLOW_DAY.value)),
             "actions": [{"action": action, "method": None, "deposit": str(deposit_yocto), "fee": 0, "args": None}]}
 
 
 def test_near_account_flow_sums_inflow_excluding_internal_hops(monkeypatch):
     """The two other near-intents wallets are internal hops, not fresh buyback inflow — dropped
     client-side since NearBlocks' `from` filter is an exact match, not a NOT-IN."""
-    import pandas as pd
-
     from fetch import nearblocks, scrape
     from fetch.base import FetchOutput
 
@@ -14390,7 +14394,7 @@ def test_near_account_flow_sums_inflow_excluding_internal_hops(monkeypatch):
     flow = df[(df.metric == "actual_buyback_tokens") & (df.source == nearblocks.FLOW_SOURCE_V3)]
     assert abs(flow["value"].iloc[0] - 7.5) < 1e-9, \
         f"expected 5 + 2.5 = 7.5 NEAR, excluding the two hops: {flow}"
-    assert flow["date"].iloc[0] == pd.Timestamp("2026-09-10")
+    assert flow["date"].iloc[0] == _NEAR_FLOW_DAY
     url, params, headers = next(c for c in http.calls if "/v3/accounts/" in c[0])
     # v3: no server-side action filter (TRANSFER is kept client-side); `receiver` replaces v1's `to`
     assert params["receiver"] == "buybacks.multisignature.near" and "action" not in params \
@@ -14630,7 +14634,8 @@ def test_aethir_veaethir_probe_verdict_follows_owner_and_getter_mechanically(mon
     coi.aethir_veaethir_probe()
     out = capsys.readouterr().out
     assert "wrapper is the sole minter" in out
-    assert "MATCHES within rounding" in out
+    # Round G 2.9: no longer compared with the pools' supply() of 2026-09-24 (another day) — reconciled holder by holder
+    assert "reconciled holder by holder at one block in aethir_veaethir_reconcile" in out
 
     # 2. Owner is neither the wrapper nor either pool: the unidentified-third-party refusal.
     monkeypatch.setattr(coi, "eth_call", make_eth_call(
@@ -14838,7 +14843,8 @@ def test_offline_checks_ambiguous_prefix_refuses_and_names_every_match(monkeypat
     rc = coi.main()
     out = capsys.readouterr().out
     assert rc == 1
-    assert "'aethir' matches 10 checks" in out        # + aethir_reward_distributors, aethir_distributor_match
+    assert "'aethir' matches 11 checks" in out        # + aethir_reward_distributors, aethir_distributor_match,
+    # aethir_veaethir_reconcile (Round G 2.9)
     for name in ("aethir_staking_probe", "aethir_wrapper_relationship", "aethir_veaethir_probe"):
         assert name in out
     assert "Done." not in out, "a refusal must not claim anything ran"

@@ -168,6 +168,10 @@ class Business:
         return s
 
     def _span_start(self, key: str) -> pd.Timestamp:
+        # a series checked against a since-launch reference keeps everything served (Round G 2.4)
+        _src, name, metric = key.split(":", 2)
+        if (name, metric) in config.FULL_HISTORY_SERIES:
+            return pd.Timestamp("2000-01-01")
         n = int(config.TRAJECTORY["history_days"]) if not self.daily.ever(key) else 30
         return today().normalize() - pd.Timedelta(days=n)
 

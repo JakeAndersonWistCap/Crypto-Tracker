@@ -33,7 +33,7 @@ import pandas as pd
 
 import config
 
-from .base import tidy, today
+from .base import check_abandoned, tidy, today
 
 log = logging.getLogger("token_metrics.fetch.aero_voter")
 
@@ -150,18 +150,35 @@ class AeroVoter:
         split = spec.get("fees_metric")
         key = f"{SOURCE}:{name}:epoch"
         want = []
+        # THE MARKER RECORDS WHAT A COMPLETE READ PRODUCED (Round G 1.3). "<epoch date>|<metric>,<metric>,..." — set by
+        # the read that emitted the rows. Jake's runs 2026-10-15: the tier timed out at 07:50 and 08:24, the abandoned
+        # thread ran on and set the marker after its frames had been dropped, and every later run said "marked read
+        # but its rows are not all stored — reading it again" (~100 s, past the 180 s budget) until 10:47. Now an
+        # abandoned tier stops (fetch.base.TierAbandoned); rows produced and NOT stored are read again (the store
+        # decides); and a metric a complete read did NOT produce (no fees/bribes split, no illiquid figure for that
+        # epoch) is that epoch's genuine partiality — it is named, and the epoch is not re-read for it every run.
+        mark = (self.daily.get(key) or "").split("|", 1)
+        mark_day, produced = mark[0], (set(filter(None, mark[1].split(","))) if len(mark) > 1 else None)
         for e in targets:
             when = day_of(e)
-            done = all(self.stored(name, m, str(when.date())) for m in
-                       (spec["usd_metric"], split, spec.get("illiquid_bribes_metric")) if m)
+            need = [m for m in (spec["usd_metric"], split, spec.get("illiquid_bribes_metric")) if m]
+            if e == latest and mark_day == str(when.date()) and produced is not None:
+                partial = [m for m in need if m not in produced]
+                need = [m for m in need if m in produced]
+            else:
+                partial = []
+            done = all(self.stored(name, m, str(when.date())) for m in need)
             if e == latest:
-                if self.daily.get(key) == str(when.date()) and done:
-                    out.mark_current(SOURCE, name, spec["usd_metric"], f"epoch {when.date()} stored already", TIER)
+                if mark_day == str(when.date()) and done:
+                    out.mark_current(SOURCE, name, spec["usd_metric"], f"epoch {when.date()} stored already"
+                                     + (f" (a complete read did not produce {', '.join(partial)} for this epoch — "
+                                        f"not re-read for it)" if partial else ""), TIER)
                     continue
-                if self.daily.get(key) == str(when.date()):
+                if mark_day == str(when.date()):
                     # THE STORE DECIDES, NOT THE MARKER (Jake's run 2026-10-09 11:41, 3c)
-                    log.info("aero_voter: epoch %s is marked read but its rows are not all stored — reading it again",
-                             when.date())
+                    missing = [m for m in need if not self.stored(name, m, str(when.date()))]
+                    log.info("aero_voter: epoch %s is marked read but %s not stored — reading it again",
+                             when.date(), ", ".join(missing) or "its rows are")
                 want.append(e)
             elif not done:
                 want.append(e)
@@ -224,6 +241,7 @@ class AeroVoter:
                          if r.get("liquidity_unread") else "") if ill else ""))
             for m, v in rows:
                 out.add(tidy([(when, v)], name, m, src, TIER), SOURCE, name, f"{m}: {msg}", TIER)
+            produced_now = sorted(m for m, _ in rows)
             # THE PER-EPOCH STAKE (1c): Voter.totalWeight at the epoch's start block, dated the epoch's start — only
             # where that day holds no reading (a live daily read is never overwritten)
             if tws and not self.stored(name, spec["weight_metric"], str(when.date())):
@@ -232,4 +250,5 @@ class AeroVoter:
                         f"{spec['weight_metric']} = {float(tws):,.0f} veAERO at block {r.get('start_block')} (the "
                         f"epoch {when.date()} start, archive)", TIER)
             if e == latest:
-                self.daily.set(key, str(when.date()))
+                check_abandoned()                          # a tier abandoned at its budget never marks its epoch read
+                self.daily.set(key, f"{when.date()}|{','.join(produced_now)}")

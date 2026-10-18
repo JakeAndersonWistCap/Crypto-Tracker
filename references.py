@@ -83,6 +83,12 @@ def within(ours: float, ref: float, kind: str, tol: float) -> bool:
 #   ("wallets", check)                   a config check (addresses), see _wallet_check
 #   ("flows", line prefix, label)        the Flows tab's own Token-flow line in that quarter (same series and window)
 #   ("not_wired", route)                 no series measures it yet — the route that would
+_NEAR_INFLOW_ROUTE = ("N5: all-time inflow of {} — fee inflows arrive as receipts, which NearBlocks' account txns do not "
+                      "list; route: BigQuery receipt_actions TRANSFER + wNEAR ft_events (sql/near/"
+                      "bigquery_wallet_inflows.sql), dry-run by `check_offline_items.py near_settlement_routes` — run "
+                      "once Jake approves the bytes")
+
+
 ROUTES: dict[tuple[str, str], tuple] = {
     ("Ethereum", "active_stake_effective_balance"): ("last", "beacon_chain_eth"),
     ("Ethereum", "issuance_per_day"): ("mean", "gross_issuance_tokens", 7),
@@ -103,9 +109,30 @@ ROUTES: dict[tuple[str, str], tuple] = {
     ("Uniswap", "timelock_balance"): ("last", "treasury_holding_tokens"),
     ("Uniswap", "growth_budget_paid_2026"): ("sum_since", "growth_budget_release_tokens", "2026-01-01"),
     ("Uniswap", "franchiser_recall_inflow"): ("event", "treasury_holding_tokens", 7, 1),
+    # ROUND G PHASE 3 (2026-10-18): dated primary reads of the headline stocks (independent_references.csv)
+    ("Aerodrome", "total_supply"): ("last", "total_supply"),
+    ("Aerodrome", "ve_locked_supply"): ("last", "ve_locked_supply_tokens"),
+    ("Chainlink", "total_supply"): ("last", "total_supply"),
+    ("Chainlink", "staked_in_pools"): ("last", "locked_tokens"),
+    ("Morpho", "total_supply"): ("last", "total_supply"),
+    ("Fluid", "total_supply"): ("last", "total_supply"),
+    ("Aethir", "total_supply"): ("last", "total_supply"),
+    ("Aethir", "wrapper_locked"): ("last", "locked_tokens_wrapper"),
+    ("Sky", "lssky_total_supply"): ("last", "locked_tokens"),
+    ("Pendle", "spendle_underlying"): ("last", "locked_tokens"),
+    ("GEODNET", "total_supply"): ("last", "total_supply_gross"),
+    ("GEODNET", "staking_wallet_balance"): ("last", "locked_tokens"),
+    ("Near", "total_supply"): ("last", "total_supply_protocol"),
+    ("Near", "total_staked"): ("last", "locked_tokens"),
+    ("Near", "revenue_wallets_balance"): ("last", "buyback_fund_balance"),
+    ("Plume", "total_supply"): ("last", "total_supply"),
     ("Aerodrome", "tail_emission_rate"): ("source_tag", "gross_issuance_tokens", r"tail@(\d+)bps"),
-    ("Aerodrome", "team_rate"): ("not_wired", "S5: Minter.teamRate() read + the team emission as its own insider "
-                                              "line (228 bps of the weekly emission); not read yet"),
+    # ROUND G 2.8 (2026-10-18): the rate the team-emission line applies on the reference day (config.ISSUER_MINTS
+    # rate_by_flip, from archive reads of Minter.teamRate(); check_offline_items aero_team_rate re-reads it live)
+    ("Aerodrome", "team_rate"): ("issuer_rate",),
+    # Aerodrome's own weekly split (aero.xyz/economics/metrics emissionsWeekly "team", Aerodrome + converted Velodrome)
+    # against the derived team line on its flip day
+    ("Aerodrome", "team_emission_2026-10-08"): ("on_day", "issuer_mint_tokens"),
     ("Aerodrome", "weekly_lp_emissions"): ("last", "gross_issuance_tokens"),
     ("Aerodrome", "weekly_rebase"): ("last", "emissions_tokens"),
     # like for like: our weekly (b) + (c) on the dashboard's basis (x 52 ÷ total supply); the team emission is not
@@ -113,17 +140,21 @@ ROUTES: dict[tuple[str, str], tuple] = {
     ("Aerodrome", "annualised_dilution_incl_rebase_team"): ("weekly_sum_over", ("gross_issuance_tokens",
                                                                                "emissions_tokens"), "total_supply", 52),
     ("Aerodrome", "veaero_share_of_supply"): ("ratio", "ve_voting_power_tokens", "total_supply"),
-    ("Aerodrome", "momentum_fund_cumulative"): ("not_wired", "aero.xyz/economics/metrics momentum fund series (rendered "
-                                                             "page) — not read; the filing managed lock is another figure"),
+    # ROUND G 2.8: aero.xyz/economics/metrics serves the Momentum Fund's purchases BY DAY (buybacks.days[].momentumFund,
+    # server-rendered JSON). The lifetime total (since 2023-08-31) is compared only once our purchases series reaches
+    # back that far; the windows below compare day for day.
+    ("Aerodrome", "momentum_fund_cumulative"): ("sum_since", "foundation_aero_purchased_tokens", "2023-08-31"),
+    ("Aerodrome", "momentum_fund_purchases_trace_span"): ("sum_period", "foundation_buyback_trace_tokens", "2026-07-15",
+                                                          "2026-08-24"),
+    ("Aerodrome", "momentum_fund_purchases_2026-07-15_2026-10-13"): ("sum_period", "foundation_aero_purchased_tokens",
+                                                                     "2026-07-15", "2026-10-13"),
     ("Aerodrome", "revenue_per_emissions_usd"): ("cover", "fees_usd", "gross_issuance_tokens", "price_usd",
                                                  "2026-01-01", "2026-03-31"),
     ("Pendle", "total_supply"): ("last", "total_supply_gross"),
-    ("Pendle", "governance_multisig_balance"): ("not_wired", "per-wallet balance of the governance multisig — the store "
-                                                             "keeps the sum of the non-circulating wallets only"),
-    ("Pendle", "team_multisig_balance"): ("not_wired", "per-wallet balance of the team multisig 0x918c… (S4) — the "
-                                                       "store keeps the sum only"),
-    ("Pendle", "ecosystem_fund_balance"): ("not_wired", "per-wallet balance of the ecosystem fund 0x399b… (S4) — the "
-                                                        "store keeps the sum only"),
+    # ROUND G 2.8: each wallet's own row (config component_metric — the balanceOf that feeds the sum)
+    ("Pendle", "governance_multisig_balance"): ("last", "noncirc_governance_multisig_tokens"),
+    ("Pendle", "team_multisig_balance"): ("last", "noncirc_team_multisig_tokens"),
+    ("Pendle", "ecosystem_fund_balance"): ("last", "noncirc_ecosystem_fund_tokens"),
     ("Pendle", "unclaimed_accrued_emissions"): ("latent", "Pendle"),
     ("Sky", "vest18_rate"): ("last", "emissions_rate_current_annual_tokens"),
     ("Sky", "vest17_rate"): ("last", "emissions_rate_current_annual_tokens"),
@@ -139,8 +170,9 @@ ROUTES: dict[tuple[str, str], tuple] = {
     ("Maple", "inflation_claim_2026-04-22"): ("on_day", "issuer_mint_tokens"),
     ("Maple", "inflation_claim_2026-10-09"): ("on_day", "issuer_mint_tokens"),
     ("Maple", "dao_safe_balance"): ("last", "treasury_holding_tokens_chain"),
-    ("Maple", "buyback_top_tier"): ("not_wired", "S3: MIP-021 tiers (10% < $1.5M, 20% $1.5–2.0M, 30% > $2.0M of "
-                                                 "monthly revenue) are not a config value yet"),
+    # ROUND G 2.8: the top tier of the schedule on file (config Maple fee_tiers, from Maple's insights page) against
+    # MIP-021's own Snapshot text
+    ("Maple", "buyback_top_tier"): ("fee_tier_top",),
     ("Morpho", "fee_recipient"): ("zero_sum", "revenue_usd", 90),
     # D3 (2026-10-14): like for like — the off-Ethereum campaign SCHEDULE; (b) also holds Ethereum claims (paid basis)
     ("Morpho", "merkl_rewards_rate"): ("mean", "merkl_campaigns_non_ethereum_tokens", 30),
@@ -155,11 +187,13 @@ ROUTES: dict[tuple[str, str], tuple] = {
     # V5 (Jake's round-2 run): the Flows tab's own release line and Q0 window — read 0 on calendar Q3 while Flows
     # showed the 18.75M tranche in Q0
     ("Chainlink", "quarterly_release"): ("flows", "+ released from issuer wallets", "Q0"),
-    ("Near", "fefundsadmin_alltime_inflow"): ("not_wired", "N5: all-time inflow of fefundsadmin.near — the v3 "
-                                                           "account txns read of that wallet is not wired"),
-    ("Near", "buybacks_multisig_alltime_inflow"): ("not_wired", "N5/N6: all-time inflow of buybacks.multisignature.near"
-                                                                " — not stored (we keep its balance)"),
-    ("Near", "1csfundsadmin_alltime_inflow"): ("not_wired", "N5: all-time inflow of 1csfundsadmin.near — not wired"),
+    # Round G 2.6: fee inflows arrive as RECEIPTS (intents.near withdrawals), which NearBlocks' account txns do not list
+    # (fefundsadmin's newest "transaction" there is 2026-03-27) — the route is BigQuery receipt_actions + wNEAR ft_events
+    # (sql/near/bigquery_wallet_inflows.sql), dry-run in check_offline_items near_settlement_routes; Jake decides the bytes
+    ("Near", "fefundsadmin_alltime_inflow"): ("not_wired", _NEAR_INFLOW_ROUTE.format("fefundsadmin.sputnik-dao.near")),
+    ("Near", "buybacks_multisig_alltime_inflow"): ("not_wired",
+                                                   _NEAR_INFLOW_ROUTE.format("buybacks.multisignature.near")),
+    ("Near", "1csfundsadmin_alltime_inflow"): ("not_wired", _NEAR_INFLOW_ROUTE.format("1csfundsadmin.sputnik-dao.near")),
     ("Near", "intents_cumulative_volume"): ("cumulative", "near_intents_volume_usd"),
     ("GEODNET", "mining_pool_wallets"): ("wallets", "mining"),
     ("GEODNET", "team_investor_ecosystem_vendor_publicsale_wallets"): ("wallets", "discretionary"),
@@ -273,6 +307,24 @@ def _our_value(route: tuple, groups: dict, project: str, at: pd.Timestamp, ref: 
         return None, "etf_dat_holdings.json", f"no DAT entry naming {route[1]!r}"
     if kind == "wallets":
         return None, "config wallets", ""
+    if kind == "issuer_rate":
+        import config                                       # noqa: PLC0415
+        v = config.issuer_mint_rate(project, at)
+        if v is None:
+            return None, "config.ISSUER_MINTS rate_by_flip", "no rate in force on the reference date"
+        return (float(v), f"config.ISSUER_MINTS rate_by_flip in force {at:%Y-%m-%d} (the rate the team-emission line "
+                          f"applies; check_offline_items aero_team_rate re-reads Minter.teamRate() live)", "")
+    if kind == "fee_tier_top":
+        import config                                       # noqa: PLC0415
+        ft = (config.PROJECT_BY_NAME.get(project) or {}).get("fee_tiers") or {}
+        bands = list(ft["tiers"]) if "tiers" in ft else []
+        top = [b for b in bands if b.get("to_usd") is None]
+        if not top or top[0].get("share_to_buyback") is None:
+            return None, "config fee_tiers", "no open-ended top tier with a share on file"
+        t = top[0]
+        return (float(t["share_to_buyback"]), f"config {project} fee_tiers top tier (> ${t['from_usd']:,.0f} "
+                                              f"{ft.get('basis', '')}; {ft.get('source_url', '')[:60]}, "
+                                              f"{ft.get('source_date', '')})", "")
     if kind == "not_wired":
         return None, "", route[1]
     metric = route[1]
@@ -287,7 +339,12 @@ def _our_value(route: tuple, groups: dict, project: str, at: pd.Timestamp, ref: 
             return None, f"{metric} source tag", "no tagged row on or before the reference date"
         return float(m.group(1)), f"{metric} source {x.source.iloc[-1]} ({x.date.iloc[-1]:%Y-%m-%d})", ""
     if kind == "last":
-        x = s[s.date <= at + pd.Timedelta(days=SAMPLE_LAG_DAYS)]
+        # THE ROW OF THE REFERENCE'S OWN DAY FIRST (Round G 2.3): the one-day sample lag is for a reference with no row of
+        # its own day. Jake's 18 Oct workbook compared the Pause Proxy's 2026-10-13 reference (20.14M, read ~16:08 UTC)
+        # with the 10-14 row (21.53M — the SKY it received in the 25 hours between) although the 10-13 row (20,142,230,
+        # read 16:22) was stored; MKR the same (83,465.89 on 10-13 = the reference, 83,170 on 10-14)
+        same_day = s[s.date == at]
+        x = same_day if not same_day.empty else s[s.date <= at + pd.Timedelta(days=SAMPLE_LAG_DAYS)]
         if x.empty:
             return None, metric, f"{metric} starts {first:%Y-%m-%d}, after the reference date"
         d = x.date.iloc[-1]
@@ -368,6 +425,14 @@ def check(groups: dict, headline=None, projects: set[str] | None = None, rows: l
     """One result per reference row for the projects in `groups` (or `projects`): {project, metric, ref, ours,
     status, detail, route, source}. `headline(project, tab, header_prefix)` returns the evaluated workbook cell."""
     built = projects if projects is not None else {k[0] for k in groups}
+    # THE DATA'S OWN LAST DAY per project (Round G phase 3): a reference dated after it cannot be judged by this build —
+    # Jake's 10-13 dumps against a 2026-10-18 read compared five-day-old stocks with today's (AERO supply grows ~0.04% a
+    # day). Such a row is N/A BY DESIGN until a build holds its day; config-only routes have no data date.
+    data_end: dict = {}
+    for (proj, _m), g in groups.items():
+        if g is not None and not getattr(g, "empty", True) and "date" in g:
+            d = pd.to_datetime(g["date"]).max()
+            data_end[proj] = d if proj not in data_end or d > data_end[proj] else data_end[proj]
     out = []
     for r in rows if rows is not None else load():
         project = project_of(r)
@@ -392,6 +457,12 @@ def check(groups: dict, headline=None, projects: set[str] | None = None, rows: l
                                "detail": (f"NOT WIRED — reference check: {detail}" if ok is None else detail)})
             continue
         at = _ref_date(r["as_of"])
+        end = data_end.get(project)
+        if end is not None and route[0] not in CONFIG_ROUTES and at > end.normalize() + pd.Timedelta(days=SAMPLE_LAG_DAYS):
+            out.append(base | {"ours": None, "status": "N/A BY DESIGN", "route": "",
+                               "detail": f"N/A BY DESIGN — the reference is dated {at:%Y-%m-%d}, after this build's data "
+                                         f"(latest row {end:%Y-%m-%d}): judged by a build that holds its day"})
+            continue
         try:
             ref = 0.0 if route[0] == "zero_sum" else float(ref_txt)
         except ValueError:
@@ -419,6 +490,10 @@ def check(groups: dict, headline=None, projects: set[str] | None = None, rows: l
             detail += f". Cause: {cause(groups, project, at, ours, ref) if callable(cause) else cause}"
         out.append(base | {"ours": ours, "status": status, "route": how, "detail": detail})
     return out
+
+
+# route kinds that read config, not stored rows: no data date applies
+CONFIG_ROUTES = ("latent", "dat_file", "issuer_rate", "fee_tier_top", "not_wired")
 
 
 def _ref_date(as_of: str) -> pd.Timestamp:
@@ -454,7 +529,12 @@ def _sky_revenue_cause(groups, project, at, ours, ref) -> str:
             f"(ours, NPS: {month('net_protocol_surplus_usd', '2026-07-31')}), its August 15,745,296 and September "
             f"14,640,000 are BEFORE it (ours, revenue − expense: Aug {month('net_revenue_pre_distribution_usd', '2026-08-31')}, "
             f"Sep {month('net_revenue_pre_distribution_usd', '2026-09-30')}) — the facilitator's own figures, read at a "
-            f"different vintage of the P&L. Ours is Block Analitica's P&L, the primary account")
+            f"different vintage of the P&L. Ours is Block Analitica's P&L, the primary account. Round G 2.3, read "
+            f"2026-10-18 (profit-and-loss/history + items/history, group_by=month): September revenue 30,795,767 − "
+            f"expense 15,416,783 = 15,378,984 (ours, to the dollar); revenue_distribution 8,225,945 is not netted in it. "
+            f"TMF's 14,640,000 is 738,984 lower and no single September line is that size (nearest: LSE-SKY revenue "
+            f"789,385; stUSDS staking 839,073; Spark distribution rewards 839,680) — the basis is not reconciled, so the "
+            f"row stays BROKEN at its 2% tolerance until the facilitator's line items are published")
 
 
 def _maple_supply_cause(groups, project, at, ours, ref) -> str:
@@ -486,10 +566,18 @@ def _near_intents_cause(groups, project, at, ours, ref) -> str:
     # E5 (run review 2026-10-14): DefiLlama serves NEAR Intents from 2024-12-10 (nothing in Nov 2024, though the
     # adapter declares 2024-11-05); the days before 2025-07-15 add only 442,243,767, so the full history to 2026-09-22
     # is 30,685,539,216 — -2.28% on the reference (read 2026-10-14). Ours is labelled what it is: Σ since its first day.
-    return (f"OURS IS Σ SINCE {first} (our stored series' first day), not since launch: DefiLlama's NEAR Intents history "
-            f"begins 2024-12-10 and the days before {first} add $442,243,767 (read 2026-10-14) — the full history to "
-            f"2026-09-22 is $30,685,539,216, {30_685_539_216 / ref - 1:+.2%} on the reference; the rest of the "
-            f"{ref - ours:+,.0f} gap is not explained by days (the reference is secondary)")
+    if first > "2024-12-10":
+        return (f"OURS IS Σ SINCE {first} (our stored series' first day), not since launch: DefiLlama's NEAR Intents "
+                f"history begins 2024-12-10 and the days before {first} add $442,243,767 (read 2026-10-14) — the full "
+                f"history to 2026-09-22 is $30,685,539,216, {30_685_539_216 / ref - 1:+.2%} on the reference. The next "
+                f"run keeps the whole history (config.FULL_HISTORY_SERIES, Round G 2.4)")
+    # WINDOW ALIGNED (both since launch) — what remains is the providers' basis (Round G 2.4, read 2026-10-18):
+    # NearBlocks' own intents volume-stats cumulative at 2026-09-22 is 29,867,500,840 (−4.88%), DefiLlama's (ours) as
+    # stated, the reference quotes Dune — three providers, three coverages of the same protocol; no primary aggregate
+    # (NEAR Intents' own explorer publishes transactions, not a total) was found
+    return (f"BASIS MISMATCH, window aligned (ours is Σ since {first}, the protocol's first day on DefiLlama): DefiLlama "
+            f"(ours) {ours:,.0f}, NearBlocks' own cumulative 29,867,500,840 (read 2026-10-18), the reference quotes Dune "
+            f"31.4B — the providers count different sets of intents; no primary aggregate exists to settle it")
 
 
 def _maple_dao_cause(groups, project, at, ours, ref) -> str:
@@ -508,7 +596,8 @@ def _maple_dao_cause(groups, project, at, ours, ref) -> str:
 
 def _sky_pause_proxy_cause(groups, project, at, ours, ref) -> str:
     """D4 (run review 2026-10-14): the Pause Proxy's SKY rises through the day — read on-chain, not inferred."""
-    return ("an intraday move, not a misread (run review D4, balanceOf read 2026-10-14 at each block): the Pause Proxy "
+    return ("a stock read at a different instant, not a misread (Round G 2.3: the check now reads the reference's own day; "
+            "run review D4, balanceOf read 2026-10-14 at each block): the Pause Proxy "
             "0xBE8E3e36… receives ~42–44K SKY from 0x2621cc0b… every ~234 blocks (~47 min) and paid nothing out — 46 "
             "inflows from 2026-10-13 00:00 to 10-14 12:00 UTC; balance 19,242,669.50 at block 26,179,842 (10-13 "
             "00:00), 20,228,168.12 at 26,185,223 (10-13 18:00), 21,169,614.90 at 26,190,301 (10-14 11:00 — the stored "

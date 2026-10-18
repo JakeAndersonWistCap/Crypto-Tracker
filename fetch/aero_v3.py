@@ -151,7 +151,10 @@ class AeroV3:
         if self._rpc is not None:
             return self._rpc(method, params)
         errs = []
-        for url in config.DEFAULT_RPC.get("base", []):
+        # THE KEYED ENDPOINT FIRST (Round G 2.10): BASE_RPC_URL, then the public list — fetch.chain.rpc_endpoints, as
+        # every other Base read (only the host is ever logged)
+        from .chain import rpc_endpoints  # noqa: PLC0415
+        for url in rpc_endpoints("base"):
             try:
                 r = self.http.post(url, json_body={"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
                 if "result" in r:
@@ -190,6 +193,19 @@ class AeroV3:
             out.unconfigured(SOURCE, m["project"], f"aero_migration.json incomplete: {'; '.join(missing)}", TIER)
             return
         name, a = m["project"], {k: v.lower() for k, v in st["addresses"].items()}
+        # EVERY ADDRESS MUST HOLD CODE ON BASE before anything is read from it (Round G 2.10): a well-formed address
+        # that is not the deployed contract would answer eth_call with nothing or with another contract's figures
+        fac = st.get("voting_rewards_factory")
+        try:
+            empty = [k for k, v in [*a.items(), *((("voting_rewards_factory", fac),) if fac else ())]
+                     if str(self.rpc("eth_getCode", [v, "latest"]) or "0x") in ("0x", "0x0")]
+        except Exception as e:  # noqa: BLE001
+            out.fail(SOURCE, name, f"aero_migration.json addresses: eth_getCode could not be read — {e}", TIER)
+            return
+        if empty:
+            out.fail(SOURCE, name, f"aero_migration.json: no contract code on Base at {', '.join(empty)} — nothing "
+                                   f"read; check the addresses against Aero's publication", TIER)
+            return
         try:
             self._state_reads(name, a, out)
         except Exception as e:  # noqa: BLE001 — a failed source must not kill the run

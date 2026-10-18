@@ -98,7 +98,7 @@ def parse_args(argv=None) -> argparse.Namespace:
                        help="fetch every project, whatever portfolio.txt says")
     ap.add_argument("--seed", choices=["nearblocks", "geodnet", "plume_staking", "hl_candles", "plume_settlement", "mev_relays",
                              "near_bigquery", "chainlink_fees", "pendle_gauges", "aero_epochs",
-                             "aero_buyback", "aero_managed_locks"],
+                             "aero_buyback", "aero_managed_locks", "burn_history"],
                     help="one-off: run only this source with NO time budget, to finish a first "
                          "read that routine runs (60s) take many runs to complete. Stores what it "
                          "reads; records no gaps and does not rebuild the workbook. plume_settlement: a "
@@ -156,7 +156,22 @@ def seed_nearblocks(st, log) -> int:
                         f"read so far" if pend else
                         f"complete — {len(stt.get('by_day') or {})} day(s) kept, newest txn "
                         f"{stt.get('newest_ts')}") + f" ({f})")
-        return "; ".join(lines) or "no NEAR account flows configured"
+        # WHAT THE SEED ACTUALLY READS (Round G 2.6: it said "no NEAR account flows configured" while storing 2,416
+        # rows — the account-txns flows are retired; the seed reads the NearBlocks series and the wallets' balance
+        # history), each with the newest stored date
+        for p in near:
+            nb = p.get("nearblocks") or {}
+            names = list((nb.get("metrics") or {}).keys())
+            bh = nb.get("balance_history") or {}
+            if bh.get("metric"):
+                names.append(f"{bh['metric']} ({len(bh.get('accounts') or [])} account(s), stats/balance)")
+            last = st.last_dates()
+            lines.append(f"{p['name']} NearBlocks series: " + ", ".join(
+                f"{m} (newest {str(last.get((p['name'], m.split(' ')[0])) or 'none')[:10]})" for m in names))
+            if p.get("near_account_flows_retired") and not p.get("near_account_flows"):
+                lines.append(f"{p['name']}: account-txns inflow reads RETIRED "
+                             f"({len(p['near_account_flows_retired'])} on file, config near_account_flows_retired)")
+        return "; ".join(lines) or "no NearBlocks series configured"
 
     run_id = fetch.new_run_id()
     log.info("--seed nearblocks: BEFORE — %s", state_line())
@@ -172,6 +187,55 @@ def seed_nearblocks(st, log) -> int:
         st.record_fetch(run_id, e.source, e.project, e.rows, e.status, e.message, e.tier)
     log.info("--seed nearblocks: AFTER (%.0fs, %d row(s) stored) — %s",
              time.monotonic() - t0, written, state_line())
+    return 0
+
+
+def seed_burn_history(st, log) -> int:
+    """Round G 2.3: a burn-log project's daily gross burn BEFORE its first stored row, from the held burn events grouped
+    by UTC day (fetch/burn_history.py). Only days with no row, never the day before the first stored delta."""
+    from fetch import burn_history as bh
+    from fetch.chain import ChainReader
+    from fetch.explorer import ExplorerLogs
+    from fetch.logcache import LogCache, atomic_write_text
+    from fetch.validate import validate_frame
+    import pandas as pd
+    run_id = fetch.new_run_id()
+    out = fetch.FetchOutput()
+    reader, explorer = ChainReader(), ExplorerLogs()
+    root = LogCache().root
+    long = st.load_long()
+    for p in config.PROJECTS:
+        for key, spec in (p.get("contracts") or {}).items():
+            if spec.get("kind") != "burn_transfer_logs" or not (spec.get("burn_logs") or {}).get("from_block"):
+                continue
+            cfg, chain, name = spec["burn_logs"], spec["chain"], p["name"]
+            have = long[(long.project == name) & (long.metric == "gross_burn_tokens")] if not long.empty else long
+            if have.empty:
+                log.info("--seed burn_history: %s/%s — no stored gross_burn_tokens yet; nothing to extend", name, key)
+                continue
+            first = pd.to_datetime(have["date"]).min()
+            events, _f, _l, _c = reader.burn_transfer_events(chain, spec["address"], config.BURN_ADDRESSES[
+                cfg.get("burn_to", "zero")], int(cfg["from_block"]))
+            dec = (reader.decimals(chain, spec["address"]) if hasattr(reader, "decimals")
+                   else int(reader.erc20(chain, spec["address"]).functions.decimals().call()))
+            cache, path = bh.load_cache(root, chain)
+            cid = config.CHAIN_IDS[chain]
+            try:
+                frame, line = bh.history_rows(p, events, first, lambda ts: explorer.block_at(cid, ts), 10 ** int(dec),
+                                              cache, chain)
+            finally:
+                atomic_write_text(path, json.dumps(cache, sort_keys=True))
+            log.info("--seed burn_history: %s/%s — %s", name, key, line)
+            if frame is not None:
+                stored = set(pd.to_datetime(have["date"]).dt.normalize())
+                frame = frame[~pd.to_datetime(frame["date"]).dt.normalize().isin(stored)]
+                out.add(frame, "chain", name, line, 2)
+    prior = st.latest_values()
+    frames = [validate_frame(f, prior, out) for f in out.frames]
+    written = sum(st.upsert(f) for f in frames if f is not None and not f.empty)
+    for e in out.log:
+        st.record_fetch(run_id, e.source, e.project, e.rows, e.status, e.message, e.tier)
+    log.info("--seed burn_history: %d row(s) stored", written)
     return 0
 
 
@@ -481,6 +545,19 @@ def seed_plume_staking(st, log) -> int:
     return 0
 
 
+def render_scope(args, log) -> list[dict]:
+    """Which projects the workbook draws: the run's default scope (portfolio.txt, or --all) even when --project
+    narrowed the FETCH (Round G 1.9). A --project name outside that scope is drawn too."""
+    if not getattr(args, "project", None):
+        return resolve_scope(args, log)
+    import copy
+    a2 = copy.copy(args)
+    a2.project = None
+    base = resolve_scope(a2, logging.getLogger("token_metrics.render_scope"))
+    names = {p["name"] for p in base}
+    return base + [config.PROJECT_BY_NAME[n] for n in args.project if n not in names]
+
+
 def resolve_scope(args, log) -> list[dict]:
     """Which projects this run fetches. REFUSES on a name it does not recognise.
 
@@ -530,14 +607,22 @@ def resolve_scope(args, log) -> list[dict]:
 
 def main(argv=None) -> int:
     args = parse_args(argv)
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    # ON STDOUT (Round G 1.11): PowerShell 5.1 turns every stderr line under 2>&1 into a NativeCommandError
+    logging.basicConfig(level=logging.INFO, stream=sys.stdout, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     log = logging.getLogger("token_metrics")
     # A HEARTBEAT LINE AT LEAST ONCE A MINUTE for the whole run, seeds and --no-fetch included (Jake's run
     # 2026-10-11: piped output showed nothing for 40+ minutes): the step, n/N, elapsed, ETA (progress.tick)
     import progress
     what = f"--seed {args.seed}" if args.seed else "--no-fetch build" if args.no_fetch else "run"
-    with progress.Heartbeat(f"token_metrics {what}", say=log.info):
-        return _main(args, log)
+    # ONE WRITER ON metrics.db (Round G 1.8): a second run waits for the first, then exits 75 with a plain message
+    from runlock import RunLock, RunLocked
+    try:
+        with RunLock(store_mod.DB_PATH, f"token_metrics {what}", say=log.warning):
+            with progress.Heartbeat(f"token_metrics {what}", say=log.info):
+                return _main(args, log)
+    except RunLocked as e:
+        log.error("%s", e.code)
+        return 75
 
 
 def _main(args, log) -> int:
@@ -553,7 +638,7 @@ def _main(args, log) -> int:
               "plume_staking": seed_plume_staking, "hl_candles": seed_hl_candles,
               "plume_settlement": seed_plume_settlement, "near_bigquery": seed_near_bigquery,
               "chainlink_fees": seed_chainlink_fees, "pendle_gauges": seed_pendle_gauges,
-              "aero_epochs": seed_aero_epochs,
+              "aero_epochs": seed_aero_epochs, "burn_history": seed_burn_history,
               "aero_buyback": seed_aero_buyback, "aero_managed_locks": seed_aero_managed_locks,
               "mev_relays": lambda st_, log_: seed_mev_relays(st_, log_, args.seed_days)}[args.seed](st, log)
         st.close()
@@ -568,7 +653,7 @@ def _main(args, log) -> int:
         # THE SAME SCOPE AS A FETCHING RUN. --no-fetch is how every read-time change is checked,
         # so a build that quietly widened to 30 projects would show a workbook nobody is going to
         # get from a real run.
-        scope = resolve_scope(args, log)
+        scope = render_scope(args, log)
         log.info("--no-fetch: rebuilding %s from the store, fetching nothing (%d project(s))",
                  WORKBOOK.name, len(scope))
         build_workbook(st, WORKBOOK, only=[p["name"] for p in scope])
@@ -712,13 +797,15 @@ def _main(args, log) -> int:
     if n_gaps:
         log.warning("%d unresolved metrics — see the Gap Report tab, it is the to-do list", n_gaps)
 
-    # THE WORKBOOK IS DRAWN AT THE SCOPE THAT WAS FETCHED. Rendering a project this run never
-    # touched puts a frozen cell next to a fresh one with nothing to tell them apart.
-    build_workbook(st, WORKBOOK, run_id=run_id, only=[p["name"] for p in projects])
-    log.info("wrote %s — %d project(s) rendered%s", WORKBOOK, len(projects),
-             "" if len(projects) == len(config.PROJECTS)
-             else f" of {len(config.PROJECTS)}; the rest keep their stored history and are "
-                  f"redrawn by --all")
+    # THE WORKBOOK IS THE WHOLE PORTFOLIO (Round G 1.9; was "drawn at the scope that was fetched"): `--project X`
+    # fetches X only, and the workbook is still every project of the run's default scope (portfolio.txt, or --all),
+    # drawn from the store — Jake's `--project Ether.fi` run wrote a one-project workbook ("1 project(s) rendered of
+    # 30"). Each cell's as-of date and freshness marking say which values this run touched.
+    rendered = render_scope(args, log)
+    build_workbook(st, WORKBOOK, run_id=run_id, only=[p["name"] for p in rendered])
+    log.info("wrote %s — %d project(s) fetched, %d rendered from the store%s", WORKBOOK, len(projects), len(rendered),
+             "" if len(rendered) == len(config.PROJECTS)
+             else f" (the default scope; {len(config.PROJECTS)} configured, --all draws every one)")
     st.close()
     return 0
 

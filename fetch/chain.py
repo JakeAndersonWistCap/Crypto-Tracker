@@ -268,6 +268,50 @@ def redact_urls(text) -> str:
         return "<unprintable>"
 
 
+# THE ALCHEMY KEY ALREADY IN .env SERVES EVERY NETWORK ITS APP HAS ENABLED (Round G 1.2(c)). Ether.fi's Optimism
+# cashback reconciliation needs archive balanceOf, and no public Optimism endpoint served it on Jake's machine
+# (publicnode 403; mainnet.optimism.io / drpc empty; nodies / tenderly "block not found"). Jake's ETHEREUM_RPC_URL,
+# ARBITRUM_RPC_URL and BASE_RPC_URL are Alchemy URLs of one key; a chain with no <CHAIN>_RPC_URL of its own uses the
+# same key on that chain's Alchemy host (Alchemy's network hosts: https://www.alchemy.com/docs/reference/
+# node-supported-chains, read 2026-10-18). A network the app has not enabled answers 403, which marks the endpoint
+# down for the run (ChainReader._mark_down) and the public list behind it is used — so this can only add a route.
+ALCHEMY_HOSTS = {"ethereum": "eth-mainnet", "optimism": "opt-mainnet", "arbitrum": "arb-mainnet",
+                 "base": "base-mainnet", "polygon": "polygon-mainnet", "bsc": "bnb-mainnet",
+                 "berachain": "berachain-mainnet"}
+_ALCHEMY_KEY_RE = re.compile(r"https://[a-z0-9-]+\.g\.alchemy\.com/v2/([A-Za-z0-9_\-]+)")
+
+
+def alchemy_url(chain: str) -> str:
+    """The Alchemy URL for `chain` built from the key in any other <CHAIN>_RPC_URL, or "" (never logged)."""
+    net = ALCHEMY_HOSTS.get(chain)
+    if not net or os.environ.get("TOKEN_METRICS_NO_ALCHEMY_DERIVE", "").strip() in ("1", "true", "yes"):
+        return ""
+    for other in ALCHEMY_HOSTS:
+        m = _ALCHEMY_KEY_RE.search(os.environ.get(f"{other.upper()}_RPC_URL", ""))
+        if m:
+            return f"https://{net}.g.alchemy.com/v2/{m.group(1)}"
+    return ""
+
+
+def alchemy_endpoint(chain: str) -> str:
+    """The keyed Alchemy URL for `chain`: <CHAIN>_RPC_URL when it IS this chain's Alchemy host, else the one derived from
+    any other Alchemy *_RPC_URL key (alchemy_url), else "". For the Transfers API route (fetch/explorer.py); never logged."""
+    net = ALCHEMY_HOSTS.get(chain)
+    own = os.environ.get(f"{chain.upper()}_RPC_URL", "").strip()
+    if net and own.startswith(f"https://{net}.g.alchemy.com/v2/") and _ALCHEMY_KEY_RE.search(own):
+        return own
+    return alchemy_url(chain)
+
+
+def alchemy_keys() -> list[str]:
+    """Every Alchemy key in a *_RPC_URL entry — for scrubbing messages, never for printing."""
+    keys = []
+    for k, v in os.environ.items():
+        if k.endswith("_RPC_URL"):
+            keys += [m.group(1) for m in _ALCHEMY_KEY_RE.finditer(v or "")]
+    return sorted(set(keys), key=len, reverse=True)
+
+
 def rpc_endpoints(chain: str) -> list[str]:
     """Per-chain endpoint list, most-preferred first.
 
@@ -290,7 +334,7 @@ def rpc_endpoints(chain: str) -> list[str]:
     env = os.environ.get(f"RPC_{chain.upper()}", "").strip()
     if env:
         return [u.strip() for u in env.split(",") if u.strip()]
-    preferred = os.environ.get(f"{chain.upper()}_RPC_URL", "").strip()
+    preferred = os.environ.get(f"{chain.upper()}_RPC_URL", "").strip() or alchemy_url(chain)
     urls = ([u.strip() for u in preferred.split(",") if u.strip()] if preferred else [])
     urls += list(config.DEFAULT_RPC.get(chain, []))
     seen, out = set(), []
@@ -356,6 +400,7 @@ class ChainReader:
     def __init__(self):
         self._w3: dict[str, object] = {}
         self._w3_url: dict[str, str] = {}       # which endpoint each kept Web3 talks to (never logged with its key)
+        self._w3_by_url: dict[str, object] = {}  # a Web3 per endpoint for past-state reads (reused, not rebuilt)
         self._failed: dict[str, str] = {}
         # The eth_getLogs chunk size that actually worked, per chain. Reported rather than
         # assumed: the configured size is a request, and a provider that narrows it silently
@@ -412,7 +457,8 @@ class ChainReader:
                 # endpoint is kept only once it has answered the cheapest real call.
                 int(w3.eth.block_number)
                 # HOST ONLY — see rpc_host. A keyed endpoint carries its key in the path.
-                log.info("chain %s connected via %s", chain, rpc_host(url))
+                log.info("chain %s connected via %s%s", chain, rpc_host(url),
+                         f" (after: {'; '.join(errors)})" if errors else "")
                 self._w3[chain] = w3
                 self._w3_url[chain] = url
                 return w3
@@ -477,30 +523,117 @@ class ChainReader:
     def erc20(self, chain: str, address: str):
         return self.web3(chain).eth.contract(address=self.checksum(address), abi=ERC20_ABI)
 
-    def erc20_balance_at(self, chain: str, token: str, holder: str, block) -> int:
-        """balanceOf(holder) at `block`, FALLING THROUGH THE ENDPOINT LIST (Jake's run 2026-10-07: Fluid's Arbitrum
-        scan died on arbitrum-one-rpc.publicnode.com answering 403 to a past-block call — a node without archive
-        state). <CHAIN>_RPC_URL is first when set (rpc_endpoints); every endpoint refusing raises with each error."""
-        errors = []
-        tried = set()
-        # THE ENDPOINT THAT LAST SERVED PAST STATE GOES FIRST (run Y1, 2026-10-14: a hole search's 23 archive reads each
-        # paid publicnode's 403 before mainnet.optimism.io answered — 84 s inside a 300 s tier)
+    # ===== ENDPOINT HEALTH FOR THE RUN (Round G 1.2 / 1.6). =====
+    # Jake's runs 2026-10-18: Sky burn_logs FAILED on "403 Forbidden from ethereum-rpc.publicnode.com" (the keyed
+    # endpoint had failed its connect in the first minute, so publicnode was the kept one), and Ether.fi's Optimism
+    # probe paid publicnode's 403 on every one of ~23 past-block reads. A 403 is now "this endpoint is down for this
+    # run": it is skipped by every later read on the chain (the others are still tried, and one that is not down is
+    # always tried before giving up). Past-state reads go KEYED FIRST (rpc_endpoints order: <CHAIN>_RPC_URL, then
+    # the public list), after the endpoint that last served past state.
+    PAST_STATE_REFUSED = ("missing trie node", "header not found", "historical state", "state not available",
+                          "state is not available", "pruned", "archive", "state histories",
+                          "required historical state unavailable")
+
+    @staticmethod
+    def _is_forbidden(msg: str) -> bool:
+        m = msg.lower()
+        return "403" in m and ("forbidden" in m or "client error" in m)
+
+    def _mark_down(self, chain: str, url: str, why: str) -> None:
+        down = self.__dict__.setdefault("_down", {})
+        if (chain, url) not in down:
+            down[(chain, url)] = why
+            log.info("chain %s: %s is DOWN for this run (%s) — skipped by every later read on %s",
+                     chain, rpc_host(url), why, chain)
+
+    def is_down(self, chain: str, url: str) -> bool:
+        return (chain, url) in self.__dict__.get("_down", {})
+
+    def _w3_at(self, chain: str, url: str, read_timeout: float = 30):
+        """One Web3 per endpoint for the run (it was rebuilt for most past-state reads)."""
+        if url == self._w3_url.get(chain) and chain in self._w3:
+            return self._w3[chain]
+        cache = self.__dict__.setdefault("_w3_by_url", {})
+        if url not in cache:
+            cache[url] = self.make_web3(chain, url, read_timeout)
+        return cache[url]
+
+    def _past_state(self, chain: str, block, what: str, address: str, call):
+        """call(w3) at `block` through the endpoint list — the endpoint that last served past state first, then
+        rpc_endpoints order (keyed first) — skipping endpoints down for the run.
+
+          * a 403 marks the endpoint DOWN for the run;
+          * an EMPTY return (web3: "Could not decode ... return data: b''") is checked against eth_getCode at the same
+            block on the same endpoint: no code there means the contract was NOT YET DEPLOYED, and the answer is 0
+            (no balance, no supply) — a fact, not a refusal (Round G 1.2(b): mainnet.optimism.io and drpc answered b''
+            for ETHFI on Optimism at block 79,180,853, long before the token existed there);
+          * when every endpoint refused for a reason that is NOT about this block (403, no archive state), the chain is
+            marked NO HISTORICAL STATE for the run and later past-block reads fail at once (Round G 1.2(a): the
+            Optimism probe halved its block 13 times at 13–25 s a step on refusals that could never change)."""
+        nohist = self.__dict__.setdefault("_no_history", {})
+        if block not in ("latest", None) and chain in nohist:
+            raise RuntimeError(f"{what} at block {block}: NO HISTORICAL STATE on {chain} this run — {nohist[chain]}")
+        errors, kinds, tried = [], [], set()
         archive = self.__dict__.setdefault("_archive_ok", {})
-        for url in [archive.get(chain), self._w3_url.get(chain)] + rpc_endpoints(chain):
-            if not url or url in tried:
+        urls = [archive.get(chain)] + rpc_endpoints(chain)
+        live = [u for u in urls if u and not self.is_down(chain, u)]
+        for url in live or [u for u in urls if u]:
+            if url in tried:
                 continue
             tried.add(url)
             try:
-                w3 = self._w3[chain] if url == self._w3_url.get(chain) and chain in self._w3 \
-                    else self.__dict__.setdefault("_w3_by_url", {}).get(url) or self.make_web3(chain, url, 30)
-                self._w3_by_url[url] = w3
-                c = w3.eth.contract(address=self.checksum(token), abi=ERC20_ABI)
-                got = int(c.functions.balanceOf(self.checksum(holder)).call(block_identifier=block))
+                w3 = self._w3_at(chain, url)
+            except Exception as e:  # noqa: BLE001
+                errors.append(f"{rpc_host(url)}: {redact_urls(e)}")
+                kinds.append("other")
+                continue
+            try:
+                got = call(w3)
                 archive[chain] = url
                 return got
             except Exception as e:  # noqa: BLE001
-                errors.append(f"{rpc_host(url)}: {redact_urls(e)}")
-        raise RuntimeError(f"balanceOf at block {block} refused by every {chain} endpoint: {'; '.join(errors)}")
+                msg = self.error_detail(e)
+                low = msg.lower()
+                if "return data: b''" in low or 'return data: b""' in low:
+                    try:
+                        code = w3.eth.get_code(self.checksum(address), block_identifier=block)
+                    except Exception as e2:  # noqa: BLE001
+                        errors.append(f"{rpc_host(url)}: empty return, and eth_getCode refused too "
+                                      f"({redact_urls(self.error_detail(e2))[:120]})")
+                        kinds.append("no_state")
+                        continue
+                    if len(bytes(code)) == 0:
+                        log.info("chain %s: %s at block %s — no contract code at %s on %s at that block: NOT YET "
+                                 "DEPLOYED, read as 0", chain, what, block, address, rpc_host(url))
+                        archive[chain] = url
+                        return 0
+                    errors.append(f"{rpc_host(url)}: empty return although the contract has code at that block")
+                    kinds.append("no_state")
+                    continue
+                if self._is_forbidden(msg):
+                    self._mark_down(chain, url, "HTTP 403")
+                    kinds.append("no_state")
+                elif any(x in low for x in self.PAST_STATE_REFUSED):
+                    kinds.append("no_state")
+                else:
+                    kinds.append("other")
+                errors.append(f"{rpc_host(url)}: {redact_urls(msg)[:300]}")
+        text = f"{what} at block {block} refused by every {chain} endpoint: {'; '.join(errors)}"
+        if block not in ("latest", None) and kinds and all(k == "no_state" for k in kinds):
+            nohist[chain] = (f"every endpoint refused past state for a reason that is not about one block "
+                             f"({len(kinds)} endpoint(s): 403 or no archive state)")
+            log.warning("chain %s: NO HISTORICAL STATE for the rest of this run — %s", chain, text)
+        raise RuntimeError(text)
+
+    def erc20_balance_at(self, chain: str, token: str, holder: str, block) -> int:
+        """balanceOf(holder) at `block`, FALLING THROUGH THE ENDPOINT LIST (Jake's run 2026-10-07: Fluid's Arbitrum
+        scan died on arbitrum-one-rpc.publicnode.com answering 403 to a past-block call — a node without archive
+        state). <CHAIN>_RPC_URL is first when set (rpc_endpoints); every endpoint refusing raises with each error.
+        Endpoint health, empty returns and "no historical state": _past_state."""
+        def call(w3):
+            c = w3.eth.contract(address=self.checksum(token), abi=ERC20_ABI)
+            return int(c.functions.balanceOf(self.checksum(holder)).call(block_identifier=block))
+        return self._past_state(chain, block, "balanceOf", token, call)
 
     def logs_in_block(self, chain: str, address: str, topics: list, block: int) -> tuple[list, list]:
         """(logs, attempts): every log of `address` matching `topics` in ONE block, read from the chain itself, never
@@ -604,20 +737,10 @@ class ChainReader:
     def erc20_supply_at(self, chain: str, token: str, block) -> int:
         """totalSupply() at `block`, through the same endpoint list as erc20_balance_at (X1 follow-up: the supply
         side of a burn scan's reconciliation)."""
-        errors = []
-        tried = set()
-        for url in [self._w3_url.get(chain)] + rpc_endpoints(chain):
-            if not url or url in tried:
-                continue
-            tried.add(url)
-            try:
-                w3 = self._w3[chain] if url == self._w3_url.get(chain) and chain in self._w3 \
-                    else self.make_web3(chain, url, 30)
-                c = w3.eth.contract(address=self.checksum(token), abi=ERC20_ABI)
-                return int(c.functions.totalSupply().call(block_identifier=block))
-            except Exception as e:  # noqa: BLE001
-                errors.append(f"{rpc_host(url)}: {redact_urls(e)}")
-        raise RuntimeError(f"totalSupply at block {block} refused by every {chain} endpoint: {'; '.join(errors)}")
+        def call(w3):
+            c = w3.eth.contract(address=self.checksum(token), abi=ERC20_ABI)
+            return int(c.functions.totalSupply().call(block_identifier=block))
+        return self._past_state(chain, block, "totalSupply", token, call)
 
     # ===== ONE READ PER (chain, contract, call) PER RUN. Added 2026-09-28. =====
     # symbol(), decimals() and eth_getCode were re-read for every holder of the same token: 105
@@ -864,6 +987,16 @@ class ChainReader:
         tried: list[str] = []
         urls = rpc_endpoints(chain)
         w3 = self.web3(chain)
+        # KEYED FIRST FOR LOG READS (Round G 1.6): the kept endpoint can be a public one — the keyed endpoint failed its
+        # connect in the run's first minute — and publicnode refuses eth_getLogs with 403. A log read starts on the
+        # first endpoint in rpc_endpoints order that is not down for the run.
+        kept = self._w3_url.get(chain)
+        first = next((u for u in urls if not self.is_down(chain, u)), None)
+        if kept and first and first != kept:
+            try:
+                w3 = self._w3_at(chain, first, 60)
+            except Exception:  # noqa: BLE001 — the kept endpoint stays
+                pass
         while True:
             upper = min(block + chunk - 1, head)
             try:
@@ -907,13 +1040,15 @@ class ChainReader:
                     log.info("chain %s: eth_getLogs failed over blocks %d-%d at chunk %d — %s",
                              chain, block, upper, chunk, detail[:300])
                     raise
-                tried.append(rpc_host(getattr(getattr(w3, "provider", None),
-                                              "endpoint_uri", "?")))
+                cur_url = getattr(getattr(w3, "provider", None), "endpoint_uri", "?")
+                tried.append(rpc_host(cur_url))
+                if self._is_forbidden(msg) and cur_url in urls:
+                    self._mark_down(chain, cur_url, "HTTP 403 to eth_getLogs")
                 self.log_endpoints_refused.setdefault(chain, [])
                 if tried[-1] not in self.log_endpoints_refused[chain]:
                     self.log_endpoints_refused[chain].append(
                         f"{tried[-1]} ({redact_urls(e)[:60]})")
-                nxt = next((u for u in urls if rpc_host(u) not in tried), None)
+                nxt = next((u for u in urls if rpc_host(u) not in tried and not self.is_down(chain, u)), None)
                 if nxt is None:
                     raise RuntimeError(
                         f"ALL {len(tried)} configured {chain} RPC endpoint(s) refused "
@@ -927,6 +1062,7 @@ class ChainReader:
                          chain, tried[-1], redact_urls(e)[:80], rpc_host(nxt))
                 w3 = self.make_web3(chain, nxt, 60)
                 self._w3[chain] = w3
+                self._w3_url[chain] = nxt
 
     def burn_transfer_events(self, chain: str, token: str, burn_to: str, from_block: int,
                              chunk: int = 10_000, max_blocks: int | None = None, side: str = "to",
@@ -1373,7 +1509,9 @@ class Chain:
                     out.unconfigured(SOURCE, name, f"{key}: unknown contract kind {kind!r}", TIER)
                     continue
                 if self.backfill:
-                    if metric not in wanted:
+                    # a component wanted on its own (Round G 2.8: Pendle's per-wallet rows) is read even when the sum
+                    # it feeds is already stored; _emit_parts then writes the component only
+                    if metric not in wanted and spec.get("component_metric") not in wanted:
                         continue
                     if kind in ("spl_token_account", "spl_mint"):
                         v = (self.backfill.get("solana") or {}).get((name, key))
@@ -2152,7 +2290,15 @@ class Chain:
 
             # ARCHIVE MODE: the stock only, whole or not at all, marked as read at a past block.
             if self.backfill:
-                if refused.get(metric):
+                want_b = (self.backfill.get("metrics") or {}).get(name) or set()
+                for label, v in components:
+                    cm = ((project.get("contracts") or {}).get(label.split(":", 1)[-1]) or {}).get("component_metric")
+                    if cm and cm in want_b:
+                        out.add(point(name, cm, v, config.mark_source(f"{SOURCE}:{label}", "archive"), TIER, when),
+                                SOURCE, name, f"{cm}={v:,.4f} ({label}) [archive, {when.date()}]", TIER)
+                # the sum only when it was itself wanted — it is then read whole (every component); a day that read
+                # only the components it lacks never writes a partial sum
+                if refused.get(metric) or metric not in want_b:
                     continue
                 # FDV HISTORY ON ONE BASIS (Jake 2026-10-12, decision 6 on 6f8c86c): an on-chain-first total read at a
                 # block before the declared handover is labelled so; CoinGecko's stays as total_supply_coingecko
@@ -2181,6 +2327,15 @@ class Chain:
                                    "self-reported figure. The sheet labels this figure partial either way.")
 
             out.add(point(name, metric, total, src, TIER, when), SOURCE, name, detail, TIER)
+            # PER-WALLET ROWS (Round G 2.8): a component whose contract names a `component_metric` is ALSO stored on its
+            # own — the same read, nothing more — so a reference to one wallet's balance has a row to compare with
+            # (Pendle's governance / team / ecosystem wallets: the store kept only their sum)
+            for label, v in components:
+                ck = label.split(":", 1)[-1]
+                cm = ((project.get("contracts") or {}).get(ck) or {}).get("component_metric")
+                if cm and not is_partial:
+                    out.add(point(name, cm, v, f"{SOURCE}:{label}", TIER, when), SOURCE, name,
+                            f"{cm}={v:,.4f} ({label}, one component of {metric})", TIER)
             if metric == "burn_address_balance" and (project.get("burn_composition") or {}).get("status") == "contaminated":
                 self._flag_contaminated_cumulative(project, total, out, when)
             if metric == "burn_address_balance":

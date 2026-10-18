@@ -89,7 +89,7 @@ def serving_contracts(p: dict, metric: str) -> list[tuple[str, dict]]:
     for key, spec in (p.get("contracts") or {}).items():
         if spec["kind"] in REFERENCE_ONLY_KINDS:
             continue
-        if (spec.get("metric_override") or KIND_METRIC.get(spec["kind"])) == metric:
+        if metric in ((spec.get("metric_override") or KIND_METRIC.get(spec["kind"])), spec.get("component_metric")):
             out.append((key, spec))
     return out
 
@@ -97,9 +97,10 @@ def serving_contracts(p: dict, metric: str) -> list[tuple[str, dict]]:
 def state_metrics(p: dict) -> set[str]:
     """Every metric a contract read serves for this project."""
     from .chain import KIND_METRIC, REFERENCE_ONLY_KINDS
-    return {spec.get("metric_override") or KIND_METRIC.get(spec["kind"])
-            for spec in (p.get("contracts") or {}).values()
-            if spec["kind"] not in REFERENCE_ONLY_KINDS} - {None}
+    specs = [spec for spec in (p.get("contracts") or {}).values() if spec["kind"] not in REFERENCE_ONLY_KINDS]
+    # a component stored on its own (component_metric, Round G 2.8) has its own history to fill
+    return ({spec.get("metric_override") or KIND_METRIC.get(spec["kind"]) for spec in specs}
+            | {spec.get("component_metric") for spec in specs}) - {None}
 
 
 def archivable(p: dict, metric: str, archive_chains: set[str], solana_keys: set) -> tuple[bool, str]:

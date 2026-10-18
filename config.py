@@ -1878,7 +1878,10 @@ SOURCE_MARKERS = ("PARTIAL", "delta", "recurring-only", "rederived", "as-buyback
                   "cache",
                   # a stored buyback day set to 0 because its only inflow was not a purchase (orphan_cleanup.sql CO,
                   # Ether.fi's 2026-09-02 Arrakis LP withdrawal, Jake 2026-10-12 evening decision 2): same point
-                  "lp-withdrawal-removed")
+                  "lp-withdrawal-removed",
+                  # a past day's value read now from an on-chain RECORD that keeps it (Round G 2.3: DssVest.awards(id)
+                  # keeps bgn / fin / tot after a vest ends or is yanked) — the same measuring point as the live read
+                  "record")
 
 # A bracketed ANNOTATION appended to a contract key: "minter[tail@21bps]". Unlike the markers
 # above it is not its own colon-delimited piece — it is glued to the key — so every parser that
@@ -2700,7 +2703,32 @@ EXPLORERS = {
         # 14:35 while other adapters read the same host on their own spacing)
         "rate_per_s": 4.0,
     },
+    # ===== ALCHEMY'S TRANSFERS API (Round G 2.7, Jake 2026-10-18: "Build window accounting on Base via BASE_RPC_URL
+    # (Alchemy)"). alchemy_getAssetTransfers on the chain's keyed Alchemy URL (fetch.chain.alchemy_endpoint), pageKey
+    # paging, at most 1,000 records a page (maxCount default 0x3e8). Alchemy's own docs, read 2026-10-18:
+    # alchemy.com/docs/data/transfers-api/transfers-endpoints/alchemy-get-asset-transfers ("historical transactions for
+    # any address across Ethereum and supported L2s, including Base, Polygon, Arbitrum, and Optimism"; withMetadata
+    # "Available only on ETH, Base, Polygon, Arbitrum, Optimism"). BNB Chain and Berachain are NOT named in the text
+    # (the chain table is an image linking to the dashboard), so they are opened only where Jake's probe
+    # (check_offline_items.py alchemy_transfer_routes) is served. Transfer-shaped queries only (fetch/explorer.py).
+    "alchemy": {
+        "kind": "alchemy_transfers",
+        "key_env": "an Alchemy URL in <CHAIN>_RPC_URL (BASE_RPC_URL; or any Alchemy *_RPC_URL, derived per chain)",
+        "max_records": 1000,
+        "metadata_chains": (1, 8453, 137, 42161, 10),
+        # alchemy_getAssetTransfers costs 120 compute units; 2 calls a second stays well under the free plan's
+        # throughput (polite, one run-wide pacer per Alchemy host)
+        "rate_per_s": 2.0,
+    },
 }
+
+# TRANSFER ROUTES (Round G 2.7): chains on which a TRANSFER-SHAPED query (one token, from/to one non-zero address) may
+# also go to the Transfers API. Empty until Jake's probe lists the chain as served (wire_probed_scans opens it).
+EXPLORER_TRANSFER_ROUTES: dict = {}
+
+
+def transfer_route(chain_id: int) -> list[str]:
+    return list(EXPLORER_TRANSFER_ROUTES.get(int(chain_id)) or [])
 
 # Per chain: which explorer first, which as fallback. Researched 2026-09-24, NOT confirmed live.
 EXPLORER_LOG_ROUTES = {
@@ -8552,9 +8580,9 @@ PROJECTS = [
                 "registry_source": "https://raw.githubusercontent.com/KeystoneHQ/Smart-Contract-"
                                    "Metadata-Registry/master/ethereum/"
                                    "0x1b49f587feca530a7bf7cf2bd3fbda780e1b7490.json",
-                "open": "who holds owner() (sole minter) — STILL not established. 1:1 backing is "
-                       "answered structurally as a SNAPSHOT, not historically — see "
-                       "wrapper_three_way_match_2026_09_24.",
+                "open": "ANSWERED 2026-10-18 (Round G 2.9): owner() = the wrapper 0x3f69Bb14… (the sole "
+                        "minter). 1:1 backing is checked every run from Round G (in_locked_wrapper_peg) — still "
+                        "daily snapshots, not a mint-event trace.",
                 "decides": "check_offline_items.py — aethir_veaethir_probe (owner() still unread)",
             },
             "possible_overlap": "0x3f69Bb14860f7F3348Ac8A5f0D445322143F7feE — the only address "
@@ -8576,9 +8604,11 @@ PROJECTS = [
                 "interpretation": "PROVES 1:1 backing STRUCTURALLY: the wrapper mints stAethir "
                                   "and veAethir exactly against ATH it holds, so all three read "
                                   "the same outstanding amount. The Gaming/AI pools' combined "
-                                  "785.39M supply() (probe_2026_09_24) undercounts by ~23.3M — "
-                                  "veAethir minted but not yet deposited into either pool, not a "
-                                  "fourth pool or a double count.",
+                                  "785.39M supply() (probe_2026_09_24) is LESS than the wrapper: "
+                                  "CORRECTED 2026-10-18 (Round G 2.9) — the difference is veAethir "
+                                  "held OUTSIDE the pools by 2,358 wallets (23,530,110.52 at block "
+                                  "26,219,755, incl. Uniswap V4's PoolManager), reconciled holder by "
+                                  "holder to the wei; not 'minted but not yet deposited'.",
                 "proof_type": "SNAPSHOT, NOT HISTORICAL. One block, three numbers agreeing shows "
                               "the peg holds NOW, not that it has held continuously. A mismatch "
                               "introduced and later closed between two reads would not appear in "
@@ -18386,6 +18416,39 @@ for _name, _rows in _NONCIRC_WALLETS.items():
             _addr, _chain, "treasury_holding", _sym, _url, verified="2026-10-06", purpose=_why,
             provenance="read 2026-10-06 (credibility burn-down circulating research)", holder_has_code=False,
             metric_override=_NC)
+# AETHIR — veAethir RECONCILED ON-CHAIN (Round G 2.9, Jake 2026-10-18: "Aethir locked tokens don't reconcile (VeAethir
+# 815.05M vs 785.39M across pools); reconcile on-chain"). check_offline_items.aethir_veaethir_reconcile, block 26,219,755
+# (2026-10-18): veAethir.totalSupply() 816,251,691.359614 = ATH.balanceOf(wrapper 0x3f69…) to the wei = the sum of all
+# 2,361 holders eth.blockscout.com lists, each read by balanceOf at that block (0 wei apart). The pools LOCK 792,721,580.84
+# (AI 419,432,897.37 + Gaming 373,288,683.47; each balanceOf = its supply() to the wei); 23,530,110.52 (2.88%) sits
+# OUTSIDE both pools in 2,358 wallets — an EOA 0xc060dD98… holds 14,855,179.24 and Uniswap V4's PoolManager 177,068.93,
+# so veAethir is TRADED, not a lock receipt waiting to be deposited (the earlier reading, "minted but not yet locked",
+# was not evidence). owner() = the wrapper (the minter, open since 2026-09-24, now read). The 785.39M was the pools'
+# supply() on 2026-09-24 — another day, not a reconciliation. So: locked ATH on-chain = the two pools (locked_tokens_ai_
+# onchain + _gaming_onchain); the wrapper's ATH counts the liquid veAethir too. The PEG is read every run from here:
+# veAethir.totalSupply() stored as veaethir_total_supply_tokens beside the wrapper's ATH, judged to the token (tol 0).
+METRICS["veaethir_total_supply_tokens"] = {
+    "label": "veAethir.totalSupply() — the wrapper's receipt; equals ATH.balanceOf(wrapper) while the 1:1 peg holds",
+    "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [2], "sanity_min": 0, "sanity_max": 42e9,
+    "only_projects": ("Aethir",)}
+PROJECT_BY_NAME["Aethir"]["contracts"]["veaethir_supply"] = _contract(
+    # a stock of the RECEIPT token, read as totalSupply() (as Sky's lsSKY) — never an ATH supply kind
+    "0x1B49F587feca530a7Bf7Cf2bD3fBda780e1B7490", "ethereum", "ve_total_supply", "veAethir", "https://aethir.com/",
+    verified="2026-09-24", metric_override="veaethir_total_supply_tokens", token_standard="erc20",
+    read_method="erc20_total_supply",
+    provenance="pool.token() on both pools (Jake's read, 2026-09-24); owner() = the wrapper 0x3f69… (read 2026-10-18, "
+               "check_offline_items aethir_veaethir_reconcile)",
+    purpose="veAethir totalSupply — the peg check against ATH.balanceOf(wrapper) (Round G 2.9); never a supply of ATH")
+
+# PER-WALLET ROWS (Round G 2.8, Jake 2026-10-18: "Pendle per-wallet balances (governance multisig, team multisig 0x918c…,
+# ecosystem fund 0x399b…)"): each of Pendle's three wallets is ALSO stored on its own (fetch/chain._emit_parts
+# component_metric) — the same balanceOf that feeds the sum, so independent_references.csv's per-wallet rows compare.
+for _key in ("governance_multisig", "team_multisig", "ecosystem_fund"):
+    PROJECT_BY_NAME["Pendle"]["contracts"][f"noncirc_{_key}"]["component_metric"] = f"noncirc_{_key}_tokens"
+    METRICS[f"noncirc_{_key}_tokens"] = {
+        "label": f"PENDLE held by Pendle's {_key.replace('_', ' ')} (one component of noncirculating_holding_tokens)",
+        "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 3e8,
+        "only_projects": ("Pendle",)}
 
 # ===== THE FULL SWEEP (Jake, 2026-10-07): WALLETS THE PROJECTS THEMSELVES DOCUMENT. =====
 # Circulating = total - treasury - team/investor unvested - foundation - operating reserves - burned; staked tokens
@@ -23229,6 +23292,46 @@ FDV_TOTAL_NET = {
                     "label": "tokenDetails totalSupply − Assistance Fund (burned per the docs)"},
 }
 
+# THE WHOLE HISTORY, NOT THE ROLLING 455 DAYS (Round G 2.4): a series checked against a since-launch reference keeps every
+# day its free source serves (fetch.base.window). NEAR Intents: DefiLlama serves it from 2024-12-10; the store kept from
+# 2025-07-15 (455 days back), so "Σ since launch" was Σ since 2025-07-15 (−3.68% on the 31.4B reference, Dune quoted).
+FULL_HISTORY_SERIES = {
+    ("Near", "near_intents_volume_usd"): "references intents_cumulative_volume is since launch (2026-09-22, 31.4B)",
+}
+
+# FDV HISTORY BEFORE THE TOTAL'S FIRST READ (Round G 2.2, Jake 2026-10-18: FDV had ~1 quarter of history on 7 projects).
+# total_supply here is CoinGecko's SNAPSHOT — no history, so it starts when the store started reading it (2026-09-11 in
+# Jake's 10-13 dumps). The same quantity measured on chain / first-party has ~400 days. For the days BEFORE the primary
+# total's first row only, FDV uses this series, and only while it measures the same quantity: on the days both exist,
+# median |alt / total − 1| <= FDV_HISTORY_TOL with at least FDV_HISTORY_MIN_OVERLAP days (build_workbook._fdv_views; the
+# check runs every build, and a failed check uses nothing and says so). Overlap measured on Jake's 10-13 dumps
+# (25 days; 24 for Ethereum), judged on the most recent FDV_HISTORY_MIN_OVERLAP common days:
+FDV_HISTORY_TOL = 0.005
+FDV_HISTORY_MIN_OVERLAP = 14
+FDV_TOTAL_HISTORY = {
+    "Uniswap": {"total": "total_supply_gross", "less": "burn_address_balance",
+                "label": "UNI.totalSupply() − the 0xdead balance (CoinGecko's total is net of burn)",
+                "overlap_2026_10_13": "last −0.0005%, worst −0.2134%"},
+    "GEODNET": {"total": "total_supply_gross", "less": "burn_address_balance",
+                "label": "GEOD.totalSupply() on Polygon − the burn balances (Polygon + Solana token account)",
+                "overlap_2026_10_13": "−3.0% until 2026-10-11, −0.0086% / −0.0177% on 10-12 / 10-13: CoinGecko's total "
+                                      "became net of the burn on 2026-10-12; extends once 14 common days agree"},
+    "Plume": {"total": "total_supply_protocol", "less": None,
+              "label": "PLUME.totalSupply() on Ethereum", "overlap_2026_10_13": "0.0000% every day"},
+    "Near": {"total": "total_supply_protocol", "less": None,
+             "label": "NEAR block header total_supply (near_rpc, archival)", "overlap_2026_10_13": "last −0.0000%, worst −0.0063%"},
+    "Ethereum": {"total": "total_supply_ultrasound", "less": None,
+                 "label": "ultrasound.money supply-over-time", "overlap_2026_10_13": "−0.0058% every day"},
+}
+# NOT LISTED, and why (the Trajectory row says so): Hyperliquid — tokenDetails totalSupply is current-only (FORWARD-ONLY,
+# first read 2026-09-24); World Mobile — the Solana leg has no daily history provider (SOURCE-LIMITED, archive_backfill
+# plan: "token_solana is a Solana spl_mint with no daily history provider").
+FDV_SHORT_REASON = {
+    "Hyperliquid": "FORWARD-ONLY: HyperCore tokenDetails totalSupply is a current read (first stored 2026-09-24); no "
+                   "history exists to read back",
+    "World Mobile": "SOURCE-LIMITED: the Solana leg of the total (spl_mint) has no daily history provider",
+}
+
 
 # SUPPLY HISTORY BEFORE THE FIRST-PARTY READ (fix round 2, H1 / H3 / S12): Ethereum's total_supply_protocol (Etherscan
 # ethsupply2, current-only) starts 2026-09-29; the stored circulating before it was CoinGecko's mcap ÷ price, flat at
@@ -24974,6 +25077,13 @@ OPEN_QUESTIONS = [
         "reason": "AQAv2 went live 2026-08-26 and accrues on 30-day cycles, but the first payment is not expected "
                   "until 2026-10-03. Recorded with booked=False so the model cannot book revenue that has not landed.",
         "suggestion": "After 2026-10-03, confirm the first payment arrived, then set booked=True and add the source URL.",
+        # OBSERVED, NOT ATTRIBUTED (Round G 2.5, read 2026-10-18 — HyperCore info userNonFundingLedgerUpdates for the
+        # Assistance Fund 0xfefe…fefe): USDC 2.0 at 2026-10-03 00:00:00 UTC and USDC 14,580,774.69 at 2026-10-04
+        # 00:00:00 UTC, both "send" from the system address 0x5000…0000 — the only USDC into the Fund since 2026-08-01
+        # apart from 0.85 USDC on 09-03. It fits the AQAv2 schedule (first payment due 10-03, 30-day accrual) but no
+        # primary source names it, so booked stays False: Jake's decision, with Hyperliquid's own statement as the source.
+        "observed_2026_10_18": "USDC 14,580,774.69 to the Assistance Fund from 0x5000…0000 at 2026-10-04 00:00 UTC "
+                               "(+2.0 at 10-03 00:00) — consistent with the first AQAv2 payment; not attributed",
         # ===== NO ACTION TAKEN 2026-09-22, AND THAT IS THE ANSWER RATHER THAN A DEFERRAL. =====
         # The first payment is not due for eleven more days. Anything done now would be modelling
         # a payment that has not happened: booking it early, or estimating it, or "provisionally"
@@ -25505,6 +25615,13 @@ def _relation_pairs() -> list:
     fetch/validate.IMPOSSIBLE_RELATIONS rather than copying the pairs into config, where the copy
     would drift and the exemption check would start validating against a stale list.
     """
+    # NOT WHILE CONFIG IS STILL LOADING (Round G): validate_config() runs at import, and importing fetch then
+    # half-imported fetch.base (it reads config.TRAJECTORY, not yet defined) — the failed copy had already patched
+    # requests' HTTPAdapter.send, so every HTTP call registered with an orphaned module the heartbeat never read
+    # ("waiting on: nothing registered"). The answer at import time was [] before too (the import failed).
+    import sys as _sys
+    if "fetch.validate" not in _sys.modules and not globals().get("_CONFIG_LOADED"):
+        return []
     try:
         from fetch.validate import IMPOSSIBLE_RELATIONS
         return list(IMPOSSIBLE_RELATIONS)
@@ -26431,7 +26548,24 @@ CREDIBILITY: dict = {
                                                "0x6F5c81fe…), Ethereum, read the same day",
                                      "note": "The pools' supply() summed 785.39M on 2026-09-24; the dashboard's aiStaked + gamingStaked read "
                                              "785.74M in probes4 (a later day): expect a PASS. The pools lock "
-                                             "veAethir 1:1 against ATH (wrapper_three_way_match_2026_09_24)."}),
+                                             "veAethir 1:1 against ATH (wrapper_three_way_match_2026_09_24). Round G "
+                                             "2.9 (2026-10-18, block 26,219,755): the pools hold 792,721,580.84; the "
+                                             "wrapper's 816,251,691.36 also counts 23,530,110.52 veAethir held OUTSIDE "
+                                             "the pools (2,358 wallets, traded on Uniswap V4) — not locked."}),
+        # ROUND G 2.9: THE PEG, EVERY RUN — veAethir.totalSupply() against ATH.balanceOf(wrapper), the same day. Equal to
+        # the wei on 2026-09-24 and 2026-10-18 (816,251,691.359614); a gap means veAethir minted or burned without ATH.
+        "in_locked_wrapper_peg": _c_in_py("ATH held by the staking wrapper 0x3f69… (stAethir / veAethir backing)",
+                                          "sums_on_common_day",
+                                          {"a": ("locked_tokens_wrapper",), "b": ("veaethir_total_supply_tokens",),
+                                           "side": "ours"},
+                                          {"formula": "sums_on_common_day",
+                                           "args": {"a": ("locked_tokens_wrapper",),
+                                                    "b": ("veaethir_total_supply_tokens",), "side": "ref"},
+                                           "tol": 0.0,
+                                           "source": "veAethir.totalSupply() (0x1B49F587…), Ethereum, read the same day",
+                                           "note": "1:1 by construction (owner() = the wrapper mints veAethir against ATH "
+                                                   "it holds); reconciled to the wei at block 26,219,755 with all "
+                                                   "2,361 holders (check_offline_items aethir_veaethir_reconcile)."}),
         "in_arr": _c_in("ARR for ratios: last 3 complete months of monthlyNetworkRevenue x 4 (Jake 2026-10-10)",
                         "arr_usd", "now", _c_mat(
             "First-party only; the last reported ARR elsewhere is $166M (Q3-2025 blog) — too old to compare. Re-judged "
@@ -27612,9 +27746,13 @@ OUTFLOW_CATEGORIES = {
                        "out of syrupDrip 0x509712F3… and stopped accruing 2025-12-31 (final claims to 2026-02-18, "
                        "maple-docs drips-rewards.md) — drips_rewards_tokens (round 3 W4); Merkl incentives are "
                        "partner-funded (Maple funded 8,398 syrupUSDC, no SYRUP campaigns)"},
-    "Fluid": {"b": ("emissions_tokens",), "e": ("unlock_release_tokens",),
-              "basis": "FLUID rewards to lenders / LPs, read from the Merkle claims already scanned; no FLUID rewards "
-                       "are live now (2026-10-12)"},
+    # ROUND G 2.7c (2026-10-18): (b) held the MAINNET claims only, while OUTFLOW_INCOMPLETE called it "Ethereum + Arbitrum"
+    # — the Arbitrum distributors' claims (emissions_tokens_arbitrum, measured since 2026-10-06) were left out of the
+    # denominator. They are FLUID paid to suppliers like the mainnet claims; each L2 chain wired later joins too
+    # (wire_probed_scans).
+    "Fluid": {"b": ("emissions_tokens", "emissions_tokens_arbitrum"), "e": ("unlock_release_tokens",),
+              "basis": "FLUID rewards to lenders / LPs, read from the Merkle claims already scanned (Ethereum + "
+                       "Arbitrum; Base / Plasma when wired); no FLUID rewards are live now (2026-10-12)"},
     # SKY (fix round 2, S1 — Jake 2026-10-13, verified on-chain and in the executives, research r14): the SKY rewards
     # are TRANSFERS from the Pause Proxy (MCD_VEST_SKY_TREASURY 0x67eaDb32…, czar = Pause Proxy), split by what funds
     # them (REWARD_FUNDING["Sky"]): bought-back SKY (revenue) is a DISTRIBUTION of a buyback already credited to holder
@@ -27758,13 +27896,32 @@ def wire_probed_scans(state: dict | None = None) -> list:
     Idempotent (a key already wired is left alone)."""
     st = explorer_probe_state() if state is None else state
     served = {int(c) for c in (st.get("served") or ())}
+    # ROUND G 2.7: the Alchemy Transfers API probe (check_offline_items.py alchemy_transfer_routes) — a chain it serves
+    # opens a TRANSFER route (EXPLORER_TRANSFER_ROUTES) and wires the same scan; Etherscan, where served, stays first.
+    alc = st.get("alchemy") or {}
+    alc_served = {int(c) for c in (alc.get("served") or ())}
     wired = []
     for cid, proj, chain, key, metric, tok, holders in EXPLORER_PROBED_SCANS:
-        if cid not in served:
+        if cid not in served and cid not in alc_served:
             continue
-        routes = EXPLORER_LOG_ROUTES.setdefault(cid, [])
-        if "etherscan" not in routes:
-            routes.insert(0, "etherscan")
+        if cid in served:
+            routes = EXPLORER_LOG_ROUTES.setdefault(cid, [])
+            if "etherscan" not in routes:
+                routes.insert(0, "etherscan")
+        if cid in alc_served:
+            troutes = EXPLORER_TRANSFER_ROUTES.setdefault(cid, [])
+            if "alchemy" not in troutes:
+                troutes.append("alchemy")
+        route = " + ".join(x for x in (
+            f"Etherscan V2 chain {cid}, served per explorer_routes.json ({st.get('probed_on')})" if cid in served else "",
+            f"Alchemy Transfers API chain {cid}, served per explorer_routes.json alchemy ({alc.get('probed_on')})"
+            if cid in alc_served else "") if x)
+        if proj == "Fluid":
+            # FLUID'S (b) TAKES EVERY DISTRIBUTOR CHAIN STORED (Round G 2.7c): a wired L2 claims series joins the
+            # supply-side incentive denominator
+            fb = OUTFLOW_CATEGORIES["Fluid"]["b"]
+            if metric not in fb:
+                OUTFLOW_CATEGORIES["Fluid"]["b"] = tuple(fb) + (metric,)
         scans = PROJECT_BY_NAME[proj].setdefault("log_scans", [])
         if any(sp.get("key") == key for sp in scans):
             continue
@@ -27777,8 +27934,9 @@ def wire_probed_scans(state: dict | None = None) -> list:
                                               if proj == "Pendle" else
                                               "Instadapp/fluid-contracts-public@9496626f deployments/deployments.md"],
                       "exclude_counterparties": excl, "own_tier": "explorer_gauge_l2", "scan_budget_s": 140,
-                      "window_days": 100, "wired_on": st.get("probed_on") or "2026-10-14",
-                      "route": f"Etherscan V2 chain {cid}, served per explorer_routes.json ({st.get('probed_on')})"})
+                      "window_days": 100,
+                      "wired_on": (st.get("probed_on") if cid in served else alc.get("probed_on")) or "2026-10-14",
+                      "route": route})
         if proj == "Pendle":
             em = PROJECT_BY_NAME["Pendle"].get("emissions_from_metric") or ()
             if metric not in em:
@@ -27790,9 +27948,43 @@ def wire_probed_scans(state: dict | None = None) -> list:
 EXPLORER_PROBED_WIRED = wire_probed_scans()
 
 
-def outflow_incomplete(project_name: str, cats) -> list[str]:
-    """The declared gaps of a project's outflow categories, '(c) why' each."""
-    return [f"({c}) {OUTFLOW_INCOMPLETE[(project_name, c)]}" for c in cats if (project_name, c) in OUTFLOW_INCOMPLETE]
+# WHAT LIFTS EACH DECLARED GAP (Round G 2.7, Jake 2026-10-18: lift OUTFLOW_INCOMPLETE only when the scans are STORED):
+# every metric here stored over the WHOLE Q0 window (its Q0 covered days = the window) ends the gap by itself; one short
+# keeps it, naming what is still missing. A gap with no entry here (Aethir: time-based, until the checker cumulative spans
+# Q0, from 2027-01-03) holds until the text is removed.
+OUTFLOW_INCOMPLETE_NEEDS = {
+    ("Fluid", "b"): {"emissions_tokens_base": "Base MerkleDistributors 0x94312a60… / 0xF3602935…",
+                     "emissions_tokens_plasma": "Plasma MerkleDistributor 0x3413D185…"},
+    ("Pendle", "b"): {"emissions_tokens_gauge_bsc": "BNB Chain gaugeController 0x704478Dd…",
+                      "emissions_tokens_gauge_base": "Base gaugeController 0x17F100fB…",
+                      "emissions_tokens_gauge_mantle": "Mantle gaugeController 0x428f2f93…",
+                      "emissions_tokens_gauge_sonic": "Sonic gaugeController 0xeE708FC7…",
+                      "emissions_tokens_gauge_berachain": "Berachain gaugeController 0x704478Dd…",
+                      "emissions_tokens_gauge_hyperevm": "HyperEVM gaugeController 0x7e500c6e…"},
+}
+
+
+def outflow_incomplete(project_name: str, cats, q0_days=None, window: int = 90) -> list[str]:
+    """The declared gaps of a project's outflow categories, '(c) why' each. `q0_days(metric)` -> the metric's Q0 covered
+    days (None if not stored): with it, a gap whose OUTFLOW_INCOMPLETE_NEEDS are all stored over the whole window is
+    LIFTED, and one still short names what is missing. Without it (no data to hand) every declared gap holds."""
+    out = []
+    for c in cats:
+        if (project_name, c) not in OUTFLOW_INCOMPLETE:
+            continue
+        needs = OUTFLOW_INCOMPLETE_NEEDS.get((project_name, c))
+        text = OUTFLOW_INCOMPLETE[(project_name, c)]
+        if needs and q0_days is not None:
+            days = {m: q0_days(m) for m in needs}
+            missing = [f"{lab} ({m}: {'not stored' if d is None else f'{d:.0f} of {window} Q0 days'})"
+                       for m, lab in needs.items() for d in (days[m],) if d is None or d < window]
+            if not missing:
+                continue
+            have = [m for m in needs if days[m] is not None and days[m] >= window]
+            text += (" — STILL NOT STORED OVER THE WHOLE Q0: " + "; ".join(missing)
+                     + (f" (stored: {', '.join(have)})" if have else ""))
+        out.append(f"({c}) {text}")
+    return out
 
 
 def outflow_metrics(project_name: str, cat: str) -> tuple:
@@ -27974,6 +28166,74 @@ for _n, (_share_key, _sym, _den) in _INSIDER_STAKE.items():
         "not_wired": (f"NOT WIRED — no insider wallet identified among {_sym} holders: the {len(_checked)} issuer-side "
                       f"wallets checked hold 0 (route: {_sym} holders crossed with the issuer-wallet list; the ratio "
                       f"shows once one holds shares)")}
+
+# INSIDER SHARE — THE ROUTE, PER PROJECT (Round G 2.11, Jake 2026-10-18: "17 NOT WIRED cells. Don't invent wallet lists;
+# list the documents checked and the addresses needed"). Where no INSIDER_LOCK / INSIDER_SHARE_MONITOR wires the cell,
+# it says what was checked and what is missing — never a guessed list. `checked`: the issuer-side wallets on file and
+# what they were read against; `docs`: the first-party documents the wallet list comes from (as cited in config, with
+# their read dates); `needed`: the addresses that would wire it. `cell` (<= 240 chars) is what the cell shows.
+INSIDER_SHARE_ROUTES = {
+    "Chainlink": {
+        "stake": "Staking v0.2 community pool 0xBc10f2E8… + operator pool 0xA1d76A7c… (getStakerPrincipal per address)",
+        "checked": "the 27 non-circulating wallets on file: 0 LINK principal in either pool (getStakerPrincipal, "
+                   "Ethereum block 26,219,782, 2026-10-18; pools' totals 40,875,000.00 and 1,634,677.28)",
+        "docs": "blog.chain.link/sustainably-growing-chainlink (2022 list, 27 wallets) + Etherscan labels (read "
+                "2026-10-07); chain.link/circulating-supply not readable here",
+        "needed": "the staker addresses run by Chainlink Labs or its affiliates (no first-party list ties a staker or "
+                  "node operator to Chainlink Labs)",
+        "cell": "NOT WIRED — the 27 issuer-side wallets on file stake 0 LINK in either pool (block 26,219,782, "
+                "2026-10-18); no first-party list ties another staker to Chainlink Labs"},
+    "Sky": {
+        "stake": "lsSKY through the LockstakeEngine 0xCe01C90d… (urns per owner: ownerUrnsCount)",
+        "checked": "Pause Proxy 0xBE8E3e36… and the two MKR->SKY converters own 0 urns (ownerUrnsCount, Ethereum "
+                   "block 26,219,782, 2026-10-18)",
+        "docs": "sky-ecosystem/spells-mainnet@17926e18 src/test/addresses_mainnet.sol (protocol contracts only)",
+        "needed": "the addresses of Sky's founders / team / ecosystem actors (none published as a list)",
+        "cell": "NOT WIRED — the Pause Proxy and both converters own 0 Lockstake urns (block 26,219,782, 2026-10-18); "
+                "no first-party list of team / ecosystem staker addresses"},
+    "Ethereum": {
+        "stake": "beacon-chain ETH (validators' effective balance)",
+        "checked": "no issuer-side wallet list on file (Ethereum has no issuer allocation)",
+        "docs": "none on file",
+        "needed": "the Ethereum Foundation's validator withdrawal addresses, if it publishes them",
+        "cell": "NOT WIRED — no issuer-side wallet list on file; the Ethereum Foundation's validators' withdrawal "
+                "addresses would be needed"},
+    "Near": {
+        "stake": "validator staking pools (locked_tokens)",
+        "checked": "no issuer-side account list on file",
+        "docs": "none naming the NEAR Foundation's staking accounts",
+        "needed": "the NEAR Foundation's accounts, crossed with each pool's delegators",
+        "cell": "NOT WIRED — no NEAR Foundation account list on file; needed: its accounts crossed with the staking "
+                "pools' delegators"},
+    "Plume": {
+        "stake": "Plume staking (locked_tokens)", "checked": "no issuer-side wallet list on file",
+        "docs": "supply.plume.org (a circulating figure, no wallets)",
+        "needed": "Plume's foundation / ecosystem allocation wallets",
+        "cell": "NOT WIRED — Plume publishes no allocation wallets (supply.plume.org is a figure); needed: its "
+                "foundation / ecosystem wallets crossed with the stakers"},
+    "World Mobile": {
+        "stake": "WMTx staking (locked_tokens)", "checked": "no issuer-side wallet list on file",
+        "docs": "none naming World Mobile's allocation wallets",
+        "needed": "World Mobile's team / foundation wallets on Cardano and Ethereum",
+        "cell": "NOT WIRED — no World Mobile allocation wallet list on file; needed: its team / foundation wallets "
+                "crossed with the stakers"},
+    "GEODNET": {
+        "stake": "the staking wallet on Polygon 0x682BA846… (a pooled balance: no per-staker record on-chain)",
+        "checked": "7 issuer-side wallets on file; the stake is one pooled wallet, so who staked is not on-chain",
+        "docs": "GEODNET filings / docs as cited for its wallets in config",
+        "needed": "a per-staker record (GEODNET's console) — not readable here",
+        "cell": "NOT WIRED — the stake is one pooled wallet (0x682BA846…, no per-staker record on-chain); the 7 "
+                "issuer-side wallets cannot be matched to it"},
+    "Aethir": {
+        "stake": "dashboard totalStaked; on-chain the AI / Gaming veAethir pools (veAethir held per address)",
+        "checked": "no issuer-side wallet list on file (config DISCRETIONARY_NA)",
+        "docs": "docs.aethir.com ath-circulating-supply (a schedule, no wallets)",
+        "needed": "Aethir's allocation wallets, crossed with veAethir holders (check_offline_items "
+                  "aethir_veaethir_reconcile lists all 2,361)",
+        "cell": "NOT WIRED — Aethir publishes no allocation wallets; needed: them, crossed with the 2,361 veAethir "
+                "holders (aethir_veaethir_reconcile)"},
+}
+
 
 # ONE-OFF BURN EVENTS (Jake 2026-10-12 evening, decisions 3 and 5): dated burns that are not a mechanism — shown as their
 # own event row (CP and A4), never in a rate, trend or holder value. A one-off inside a stored burn series is moved out
@@ -28638,3 +28898,5 @@ SAME_BASIS = {
                "overlap (Jake's nearblocks_v3_parity, 2026-10-13)",
     },
 }
+
+_CONFIG_LOADED = True       # the last line: config is complete (see _relation_pairs)

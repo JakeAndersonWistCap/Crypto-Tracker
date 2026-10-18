@@ -64,6 +64,15 @@ def _matches(reads: set[str], inputs: set[str]) -> bool:
     return bool(reads & inputs) or any(r.startswith(_stem(i)) for r in reads for i in inputs)
 
 
+def flow_depth(fr: dict) -> int:
+    """Quarters with a value on a Flows line. The Status line is a TEXT VERDICT per quarter (Round G 2.2: it read 0 on
+    all 16 projects — by design, not short): its depth is the quarters carrying a verdict other than n/a."""
+    labs = ("Q0", "Q-1", "Q-2", "Q-3", "Q-4")
+    if fr.get("Line") == "Status":
+        return sum(1 for lab in labs if isinstance(fr.get(lab), str) and fr.get(lab) and not fr.get(lab).startswith("n/a"))
+    return sum(1 for lab in labs if isinstance(fr.get(lab), (int, float)))
+
+
 def _refs(wb, formula, depth: int = 3) -> set[str]:
     """The Data metrics a formula reads, following references to other tabs' cells up to `depth` levels."""
     import trajectory                                       # noqa: PLC0415
@@ -175,8 +184,7 @@ def audit(wb, trajectory_rows: list[dict] | None = None, flows_rows: list[dict] 
                      "Project": fr["Project"], "Value now": v if not isinstance(v, str) else v[:120],
                      "Status": status, "Reason / route / error": (why or "")[:240], "Axis": spec.axis_of(key),
                      "Direction": spec.direction_of(key), "Tier": con.get("tier", ""),
-                     "History depth (quarters with a value)": sum(
-                         1 for lab in ("Q0", "Q-1", "Q-2", "Q-3", "Q-4") if isinstance(fr.get(lab), (int, float))),
+                     "History depth (quarters with a value)": flow_depth(fr),
                      "Formula as built": fr.get("Series", ""), "SPEC formula": con.get("formula", ""),
                      "MATCHES-SPEC": "yes — computed at build from the SPEC section 8 statement"})
     for t in trajectory_rows or ():
@@ -186,6 +194,8 @@ def audit(wb, trajectory_rows: list[dict] | None = None, flows_rows: list[dict] 
         has_dir = t.get("direction") not in (None, "")
         status = "LIVE-UNVERIFIED" if n else "N/A BY DESIGN"
         why = "" if n else (str(t.get("why") or "no quarter with a value")[:240])
+        if 0 < n < 5:                          # a short history names its kind (Round G 2.2)
+            why = next((part for part in str(t.get("why") or "").split("; ") if part.startswith("HISTORY")), "")[:240]
         if not has_dir:
             status, why = "BLANK-UNEXPLAINED", "no direction declared for this row"
         rows.append({"Tab": "Trajectory", "Column": t.get("header", ""), "Key": key, "Project": t.get("project", ""),

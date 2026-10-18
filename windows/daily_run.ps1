@@ -17,6 +17,7 @@
 param(
     [string]$Python = "",                 # default: .venv\Scripts\python.exe if present, else python on PATH
     [int]$RerunPauseMinutes = 15,
+    [int]$LoginWaitMinutes = 5,           # the most an interactive Google login may hold the run (Round G 1.7)
     [switch]$Scheduled                    # set by register_task.ps1: never stop for a login prompt
 )
 
@@ -83,8 +84,13 @@ function Invoke-Step([string]$label, [string[]]$arguments) {
 }
 
 $Steps = @()                              # (label, exit code) of every step, for the closing console line
+$FinalWritten = $false
 
 Write-Log "daily run start (repo $Repo, python $Python)"
+# A FINAL STATUS LINE WHATEVER HAPPENS (Round G 1.8): run_2026-10-18.log ended at "=== BigQuery check" with nothing
+# after it. The body runs inside try/finally; if it ends any way other than the closing summary, the finally block
+# writes "daily run FINAL: stopped early" with the steps that ran.
+try {
 
 # 1. NEAR BigQuery, FIRST, before any other step (Jake 2026-10-12 evening, item 16): his user ADC keeps expiring and
 #    service-account keys are blocked by org policy. adc_check.py runs a REAL one-row query. On failure:
@@ -111,10 +117,16 @@ if ($adc[0] -ne 0) {
     if ((Test-Interactive) -and $gcloud) {
         Write-Log "BigQuery check failed - interactive: logging in (a browser window opens)"
         Write-Host "NEAR BigQuery: the Google login has expired - a browser window opens to log in."
-        & gcloud auth application-default login 2>&1 | ForEach-Object { Add-Content -Path $Log -Value "$_" -Encoding UTF8 }
-        & gcloud auth application-default set-quota-project near-data-510309 2>&1 |
-            ForEach-Object { Add-Content -Path $Log -Value "$_" -Encoding UTF8 }
-        $adc = Invoke-Step "BigQuery check (after login)" @("adc_check.py")
+        # BOUNDED (Round G 1.7(b)): the login waits at most $LoginWaitMinutes for the browser, then the run carries on
+        $lp = Start-Process -FilePath $gcloud.Source -ArgumentList @("auth", "application-default", "login") -PassThru -NoNewWindow
+        if ($lp.WaitForExit($LoginWaitMinutes * 60000)) {
+            & gcloud auth application-default set-quota-project near-data-510309 2>&1 |
+                ForEach-Object { Add-Content -Path $Log -Value "$_" -Encoding UTF8 }
+            $adc = Invoke-Step "BigQuery check (after login)" @("adc_check.py")
+        } else {
+            try { $lp.Kill() } catch { }
+            Write-Log "BigQuery login not completed in $LoginWaitMinutes minute(s) - skipped; the run carries on"
+        }
     }
     if ($adc[0] -ne 0) {
         # the em dash from its code point: Windows PowerShell 5.1 reads this BOM-less file as ANSI
@@ -137,7 +149,11 @@ if ($run[1] -match "NETWORK-WIDE TROUBLE") {
         Show-Toast "Crypto-Tracker: network trouble twice" "Both runs hit NETWORK-WIDE TROUBLE. Stored values stand. Log: $Log"
     }
 }
-if ($run[0] -ne 0) {
+if ($run[0] -eq 75) {
+    # RUN LOCK (Round G 1.8): another run held metrics.db for the whole wait; nothing was fetched by this one
+    Write-Log "token_metrics did NOT run: another run holds metrics.db (RUN LOCKED - see the line above)"
+    Show-Toast "Crypto-Tracker: run skipped" "Another run was using metrics.db; this one did not run. Log: $Log"
+} elseif ($run[0] -ne 0) {
     Show-Toast "Crypto-Tracker: run exited $($run[0])" "token_metrics.py did not finish cleanly. Log: $Log"
 }
 
@@ -175,7 +191,8 @@ $AdcFix = @{
     3 = "no credentials or library - run: gcloud auth application-default login (pip install google-cloud-bigquery if missing)";
     4 = "wrong quota project - run: gcloud auth application-default set-quota-project near-data-510309";
     7 = "permission denied - the logged-in user needs roles/bigquery.jobUser on near-data-510309";
-    8 = "the one-row query failed - check the network, then: python adc_check.py"
+    8 = "the one-row query failed - check the network, then: python adc_check.py";
+    9 = "the check timed out (a login prompt or the network) - run: gcloud auth application-default login; gcloud auth application-default set-quota-project near-data-510309"
 }
 $AdcFixLine = (($adc[1] -split "`n") | Where-Object { $_ -like "FIX: *" } | Select-Object -Last 1)
 $bqOk = ($adc[0] -eq 0)
@@ -197,4 +214,13 @@ $NbSunset = (($run[1] -split "`n") | Where-Object { $_ -like "*NEARBLOCKS API SU
 if ($NbSunset) { $summary = "NearBlocks: deprecation/sunset answer - see the log ($($NbSunset.Trim().Substring(0, [Math]::Min(160, $NbSunset.Trim().Length)))) | $summary" }
 Write-Log $summary
 Write-Host $summary
+Write-Log "daily run FINAL: complete - token_metrics exit $($run[0])"
+$FinalWritten = $true
 exit $run[0]
+} finally {
+    if (-not $FinalWritten) {
+        $ran = ($Steps | ForEach-Object { "$($_[0])=$($_[1])" }) -join ", "
+        if (-not $ran) { $ran = "none" }
+        Write-Log "daily run FINAL: stopped early - steps that ran: $ran"
+    }
+}

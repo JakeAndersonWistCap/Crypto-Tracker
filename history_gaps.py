@@ -115,8 +115,9 @@ def fix_for(p: dict, metric: str, row: dict) -> tuple[str, str, str, str]:
                     "circulating_supply_implied) — older: the project's own published history", "free", "token_metrics.py")
         if metric in ("price_usd", "market_cap_usd", "volume_usd"):
             return ("CoinGecko's free market_chart serves 365 days",
-                    "Q-1..Q-3: CoinGecko 365 days (free, the daily run); Q-4: DefiLlama coins chart history "
-                    "(free) — NOT WIRED as a price source yet", "free", "token_metrics.py")
+                    "Q-1..Q-3: CoinGecko 365 days (free, the daily run); before that: the price_history tier "
+                    "(DefiLlama coingecko:<id> chart, Round G 2.1) back to the first token flow", "free",
+                    "token_metrics.py")
         if metric == "total_supply" and p["name"] in config.TOTAL_SUPPLY_ONCHAIN_FIRST:
             # APPROVED (Jake 2026-10-12, decision 6 on 6f8c86c): the chain total at past blocks, labelled
             # "[chain backfill (pre-handover)]" — after orphan_cleanup.sql CJ moves CoinGecko's rows aside

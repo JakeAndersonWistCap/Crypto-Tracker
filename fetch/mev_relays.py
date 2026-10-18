@@ -54,7 +54,7 @@ import pandas as pd
 
 import config
 
-from .base import Http, Progress, limit_wait, tidy, today
+from .base import Http, Progress, limit_wait, pool_owner, tidy, today
 
 log = logging.getLogger("token_metrics.fetch.mev_relays")
 
@@ -234,7 +234,7 @@ class MevRelays:
                     return self._relay_day(spec, r, first, last)
                 except Exception as e:  # noqa: BLE001 — this relay is named missing; the day goes on
                     return e
-            with ThreadPoolExecutor(max_workers=max(len(live), 1)) as ex:
+            with ThreadPoolExecutor(max_workers=max(len(live), 1), **pool_owner()) as ex:
                 per = list(ex.map(one, live))
             failed = {r["name"]: f"{type(g).__name__}: {str(g).split('?')[0][:120]}"
                       for r, g in zip(live, per) if isinstance(g, Exception)}

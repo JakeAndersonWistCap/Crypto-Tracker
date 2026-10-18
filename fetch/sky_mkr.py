@@ -64,9 +64,111 @@ def read(spec: dict, block: str = "latest") -> dict:
         return {"error": redact_urls(e)}
 
 
+def vest_awards(spec: dict, upto: int, call=None) -> list[dict]:
+    """Every DssVest award 1..`upto` paying the VestedRewardsDistribution (awards(id).usr), read now from the vest's own
+    records — bgn, fin and tot stay on chain after an award ends or is yanked (DssVest._yank sets fin to the yank time and
+    tot to what had accrued, so tot / (fin − bgn) is the award's rate either way)."""
+    import check_offline_items as coi                      # noqa: PLC0415
+
+    def _call(to, data):
+        h, why = coi.eth_call(to, data, block="latest", chain="ethereum")
+        if h is None:
+            raise RuntimeError(f"{to[:10]} {data[:10]}: {why}")
+        return h
+    call = call or _call
+    vest = coi.as_address(call(spec["vest_distribution"], coi._selx("dssVest()")))
+    dist = spec["vest_distribution"].lower()
+    out = []
+    for i in range(1, int(upto) + 1):
+        aw = call(vest, coi._selx("awards(uint256)") + hex(i)[2:].rjust(64, "0"))
+        usr = "0x" + aw[2:66][-40:]
+        bgn, fin, tot = _word(aw, 1), _word(aw, 3), _word(aw, 6)
+        if usr.lower() != dist or not (bgn and fin and fin > bgn):
+            continue
+        out.append({"id": i, "bgn": bgn, "fin": fin, "tot": tot / 1e18, "annual": (tot / 1e18) * YEAR_S / (fin - bgn)})
+    return out
+
+
+def vest_rate_history(awards: list[dict], days) -> list[tuple]:
+    """[(day, annual rate, award)] — for each UTC day, the award in force at the day's CLOSE (23:59:59 UTC; the higher id
+    where two overlap: the newer award replaced the older) — the rate a read on that day reports once that day's spell
+    has run (vest 17 began 2026-09-13 12:42 UTC, so 2026-09-13 reads vest 17). Days no award covers are left out (no
+    rate is inferred for them)."""
+    import pandas as pd                                    # noqa: PLC0415
+    rows = []
+    for d in days:
+        d0 = pd.Timestamp(d).tz_localize("UTC") if pd.Timestamp(d).tzinfo is None else pd.Timestamp(d)
+        t = int((d0.normalize() + pd.Timedelta(days=1)).timestamp()) - 1
+        live = [a for a in awards if a["bgn"] <= t < a["fin"]]
+        if live:
+            a = max(live, key=lambda x: x["id"])
+            rows.append((pd.Timestamp(d), a["annual"], a))
+    return rows
+
+
+VEST_HISTORY_DAYS = 455
+
+
 class SkyMkr:
-    def __init__(self, reader=None, **_ignored):
+    def __init__(self, reader=None, stored_long=None, daily=None, awards_reader=None, **_ignored):
         self.reader = reader or read
+        self.stored = stored_long
+        self.awards_reader = awards_reader or vest_awards
+        if daily is None:
+            from .logcache import DailyChecks
+            daily = DailyChecks()
+        self.daily = daily
+
+    def _vest_history(self, name: str, spec: dict, vest: dict, out) -> None:
+        """THE RATE IN FORCE ON PAST DAYS, FROM THE AWARD RECORDS (Round G 2.3: emissions_rate_current_annual_tokens
+        started 2026-10-12, so the vest-17 reference of 2026-09-13 — 580.8M SKY/yr — had nothing to check). Only days
+        BEFORE the series' first stored row, never over a live read; once a day."""
+        import pandas as pd                                # noqa: PLC0415
+        metric = "emissions_rate_current_annual_tokens"
+        day = str(today().date())
+        key = f"{SOURCE}:{name}:vest_history"
+        # WITHOUT THE STORE THERE IS NO "BEFORE THE FIRST ROW": a caller that passes no stored_long (a one-off read, a
+        # test) gets the live rate only — never 455 days that could land on stored live reads
+        if self.stored is None or not self.daily.due(key, day):
+            return
+        s = self.stored
+        first = None
+        if s is not None and not getattr(s, "empty", True):
+            x = s[(s["project"] == name) & (s["metric"] == metric)]
+            if not x.empty:
+                first = pd.to_datetime(x["date"]).min().normalize()
+        end = first if first is not None else today()
+        start = today() - pd.Timedelta(days=VEST_HISTORY_DAYS)
+        days = list(pd.date_range(start, end - pd.Timedelta(days=1)))
+        if not days:
+            self.daily.done(key, day)
+            return
+        try:
+            awards = self.awards_reader(spec, vest["id"])
+        except Exception as e:  # noqa: BLE001
+            from .chain import redact_urls
+            out.fail(SOURCE, name, f"{metric} history: the DssVest award records could not be read — {redact_urls(e)}",
+                     TIER)
+            return
+        rows = vest_rate_history(awards, days)
+        if rows:
+            by_award: dict = {}
+            for d, v, a in rows:
+                by_award.setdefault(a["id"], []).append((d, v, a))
+            import config                                  # noqa: PLC0415
+            for aid, rs in sorted(by_award.items()):
+                a = rs[0][2]
+                when = (f"vest {aid}: {pd.Timestamp(a['bgn'], unit='s').date()}.."
+                        f"{pd.Timestamp(a['fin'], unit='s').date()}, {a['tot']:,.0f} SKY")
+                out.add(tidy([(d, float(v)) for d, v, _ in rs], name, metric,
+                             config.mark_source(f"{SOURCE}:dss_vest.awards[{when}]", "record"), TIER), SOURCE, name,
+                        f"{metric}: {len(rs)} past day(s) {rs[0][0].date()}..{rs[-1][0].date()} = {a['annual']:,.0f}/yr "
+                        f"from the award record ({when}) — the award in force at each day's close (UTC)", TIER)
+        out.mark_current(SOURCE, name, metric,
+                         f"{metric} history: {len(rows)} of {len(days)} day(s) before "
+                         f"{(end.date() if hasattr(end, 'date') else end)} covered by {len(awards)} award record(s) "
+                         f"paying the distribution; days no award covers are left out", TIER)
+        self.daily.done(key, day)
 
     def run(self, projects: list[dict], window_days, out):
         import pandas as pd                                # noqa: PLC0415
@@ -94,6 +196,7 @@ class SkyMkr:
                 out.add(tidy([(day, float(vest["annual"]))], name, "emissions_rate_current_annual_tokens",
                              f"{SOURCE}:dss_vest.awards[{when}]", TIER), SOURCE, name,
                         f"emissions_rate_current_annual_tokens={vest['annual']:,.0f}/yr ({when})", TIER)
+                self._vest_history(name, spec, vest, out)
             log.info("%s: MKR outstanding %s, issuer %s, rate %s, fee %.4f -> non-issuer backing %s SKY",
                      name, f"{got['outstanding']:,.2f}", f"{got['issuer']:,.2f}", got["rate"], got["fee"],
                      f"{got['backing']:,.0f}")

@@ -16,6 +16,7 @@ Reads only. It touches no contract state, writes nothing to the store, and needs
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import sys
@@ -1202,10 +1203,86 @@ def etherscan_v2_routes():
     out = {"probed_on": _dt.date.today().isoformat(), "host": "api.etherscan.io/v2", "served": served,
            "refused": refused}
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "explorer_routes.json")
+    out = {**_routes_file(path), **out}             # keeps the alchemy probe's section (Round G 2.7)
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(out, fh, indent=1)
     print(f"  wrote {os.path.basename(path)}: served {served or 'none'}. The next token_metrics.py run scans the "
           f"served chains (config EXPLORER_PROBED_SCANS).")
+    print("  PASTE BACK: the seven lines above.")
+
+
+def _routes_file(path) -> dict:
+    try:
+        with open(path, encoding="utf-8") as fh:
+            got = json.load(fh)
+        return got if isinstance(got, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def alchemy_transfer_routes():
+    """ROUND G 2.7 (Jake 2026-10-18: "Build window accounting on Base via BASE_RPC_URL (Alchemy) ... For BNB and
+    Berachain use keyless or Alchemy routes, or report plainly that none exists"). One alchemy_getAssetTransfers per
+    chain (the holder's first ERC-20 transfer out of the token) on the chain's keyed Alchemy URL — BASE_RPC_URL, or the
+    key of any Alchemy *_RPC_URL. SERVED = a result with a transfer; anything else is printed verbatim, key scrubbed.
+    Writes the "alchemy" section of explorer_routes.json — config opens the TRANSFER route and wires the scans
+    (EXPLORER_PROBED_SCANS) only for the chains served. Prints the host only."""
+    import datetime as _dt                                # noqa: PLC0415
+    head("ALCHEMY TRANSFER ROUTES — alchemy_getAssetTransfers on the L2 gauge / distributor chains")
+    try:
+        from dotenv import load_dotenv                    # noqa: PLC0415
+        load_dotenv()
+    except Exception:  # noqa: BLE001
+        pass
+    from fetch.chain import ALCHEMY_HOSTS, alchemy_endpoint, alchemy_keys, redact_urls  # noqa: PLC0415
+    import config as _cfg                                 # noqa: PLC0415
+    names = {v: k for k, v in _cfg.CHAIN_IDS.items()}
+    keys = alchemy_keys()
+
+    def scrub(x) -> str:
+        t = str(x)
+        for k in keys:
+            t = t.replace(k, "***")
+        return redact_urls(t)
+
+    served, refused = [], {}
+    for cid, label, token, holder in EXPLORER_PROBE:
+        chain = names.get(cid)
+        url = alchemy_endpoint(chain) if chain in ALCHEMY_HOSTS else ""
+        if not url:
+            refused[str(cid)] = ("no Alchemy network on file for this chain (fetch.chain.ALCHEMY_HOSTS)"
+                                 if chain not in ALCHEMY_HOSTS else
+                                 "no Alchemy key in .env (an Alchemy URL in any <CHAIN>_RPC_URL)")
+            print(f"  {cid:>6} {label:<10} NOT TRIED — {refused[str(cid)]}")
+            continue
+        body = {"jsonrpc": "2.0", "id": 1, "method": "alchemy_getAssetTransfers",
+                "params": [{"fromBlock": "0x0", "toBlock": "latest", "fromAddress": holder,
+                            "contractAddresses": [token], "category": ["erc20"], "excludeZeroValue": False,
+                            "order": "asc", "maxCount": "0x1"}]}
+        host = url.split("/")[2]
+        try:
+            got = requests.post(url, json=body, timeout=TIMEOUT).json()
+        except Exception as e:  # noqa: BLE001
+            refused[str(cid)] = f"unreachable ({host}): {scrub(e)[:160]}"
+            print(f"  {cid:>6} {label:<10} UNREACHABLE — {refused[str(cid)]}")
+            continue
+        tr = ((got.get("result") or {}).get("transfers") if isinstance(got, dict) else None)
+        if isinstance(tr, list) and tr:
+            served.append(cid)
+            print(f"  {cid:>6} {label:<10} SERVED by {host} — first transfer out block {int(tr[0]['blockNum'], 16):,} "
+                  f"tx {str(tr[0].get('hash'))[:12]}…")
+        else:
+            err = got.get("error") if isinstance(got, dict) else got
+            refused[str(cid)] = f"{host}: " + scrub(err if err else f"no transfer returned: {str(got)[:120]}")[:200]
+            print(f"  {cid:>6} {label:<10} NOT SERVED — {refused[str(cid)]}")
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "explorer_routes.json")
+    out = _routes_file(path)
+    out["alchemy"] = {"probed_on": _dt.date.today().isoformat(), "method": "alchemy_getAssetTransfers",
+                      "served": served, "refused": refused}
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(out, fh, indent=1)
+    print(f"  wrote {os.path.basename(path)} (alchemy): served {served or 'none'}. The next token_metrics.py run scans "
+          f"the served chains through the Transfers API (config EXPLORER_TRANSFER_ROUTES).")
     print("  PASTE BACK: the seven lines above.")
 
 
@@ -3431,10 +3508,11 @@ def aethir_veaethir_probe():
     print(f"  wrapper.veAethir() == 0x1b49f587…: {matches_wrapper_getter}")
 
     if supply is not None:
-        near = abs(supply / 1e18 - 785_390_000) < 1_000_000
-        print(f"\n  VeAethir.totalSupply() = {fmt(supply)} vs the two pools' summed supply() "
-              f"(785.39M, Jake's 2026-09-24 read) — "
-              f"{'MATCHES within rounding' if near else 'DOES NOT MATCH'}.")
+        # LIKE FOR LIKE (Round G 2.9, Jake 2026-10-18: "VeAethir 815.05M vs 785.39M across pools — reconcile
+        # on-chain"): the old line compared today's totalSupply with the pools' supply() of 2026-09-24. Every holder is
+        # now read at ONE block — aethir_veaethir_reconcile.
+        print(f"\n  VeAethir.totalSupply() = {fmt(supply)} — reconciled holder by holder at one block in "
+              f"aethir_veaethir_reconcile (the 785.39M was the pools' supply() on 2026-09-24, another day).")
 
     print("\n  READING IT:")
     if matches_wrapper_getter and is_wrapper:
@@ -3467,6 +3545,141 @@ def aethir_veaethir_probe():
 # transfers that are whole multiples of 1,000 GEOD (SuperHex increments). Candidates only —
 # nothing is wired from this without GEODNET's own material naming the address.
 GEOD_POLYGON = "0xAC0F66379A6d7801D7726d5a943356A172549Adb"
+
+
+BLOCKSCOUT_ETH_HOLDERS = "https://eth.blockscout.com/api/v2/tokens/{token}/holders"
+
+
+def aethir_veaethir_reconcile():
+    """ROUND G 2.9 (Jake 2026-10-18: "Aethir locked tokens don't reconcile (VeAethir 815.05M vs 785.39M across pools);
+    reconcile on-chain"). At ONE pinned block: veAethir.totalSupply(), ATH.balanceOf(wrapper), each pool's
+    veAethir.balanceOf and supply(), and balanceOf of EVERY holder Blockscout lists (eth.blockscout.com /api/v2, robots
+    allow /api; ~2,400 holders, 50 a page) through Multicall3. The listing only says WHO to ask — every balance is the
+    chain's own answer at the block, and the holders' sum must equal totalSupply to the wei or the gap is printed.
+    Read 2026-10-18, block 26,219,743: totalSupply 816,251,691.359614 = ATH.balanceOf(wrapper) (0 wei apart) = the sum
+    of 2,361 holders (0 wei apart); AI pool 419,432,897.37 + Gaming pool 373,288,683.47 = 792,721,580.84 locked (each
+    balanceOf = its supply() to the wei); 23,530,110.52 veAethir OUTSIDE both pools in 2,358 wallets (largest an EOA
+    0xc060dD98… 14,855,179.24; Uniswap V4's PoolManager 177,068.93 — veAethir trades); owner() = the wrapper."""
+    import time as _time                                   # noqa: PLC0415
+    head("AETHIR — veAethir reconciled holder by holder at one block")
+    fmt = lambda v: f"{v / 1e18:,.6f}"  # noqa: E731
+    holders, params, pages = [], {}, 0
+    while True:
+        try:
+            r = requests.get(BLOCKSCOUT_ETH_HOLDERS.format(token=VE_AETHIR), params=params, timeout=TIMEOUT,
+                             headers=_ua())
+            r.raise_for_status()
+            j = r.json()
+        except Exception as e:  # noqa: BLE001
+            print(f"  UNAVAILABLE — eth.blockscout.com holders page {pages + 1}: {type(e).__name__}: {str(e)[:120]}")
+            return
+        holders += [i["address"]["hash"] for i in j.get("items") or ()]
+        pages += 1
+        params = j.get("next_page_params") or None
+        if not params or pages >= 200:
+            break
+        _time.sleep(0.6)                                   # polite: ~1.5 pages a second
+    if params:
+        print(f"  STOPPED at {pages} pages ({len(holders):,} holders) — the reconciliation below is NOT complete")
+    head_hex = None
+    for url in _rpcs_for("ethereum"):
+        try:
+            head_hex = rpc(url, "eth_blockNumber").get("result")
+            if head_hex:
+                break
+        except Exception:  # noqa: BLE001
+            continue
+    if not head_hex:
+        print("  UNREACHABLE — no Ethereum RPC answered eth_blockNumber.")
+        return
+    blk = hex(int(head_hex, 16) - 5)
+    word = lambda a: SEL_BALANCE_OF + a.lower()[2:].rjust(64, "0")  # noqa: E731
+    fixed = [(VE_AETHIR, SEL_TOTAL_SUPPLY), (ATH_ETH, word(AETHIR_WRAPPER))]
+    pools = list(AETHIR_VE_POOLS.items())
+    fixed += [(VE_AETHIR, word(a)) for _, a in pools] + [(a, "0x047fc9aa") for _, a in pools]   # supply()
+    res = _batch_eth_calls("ethereum", fixed + [(VE_AETHIR, word(h)) for h in holders], block=blk)
+    val = [None if x is None else int(x, 16) for x in res]
+    if any(v is None for v in val[:len(fixed)]):
+        print("  UNAVAILABLE — a fixed read returned nothing: " + str(val[:len(fixed)]))
+        return
+    total, wrapped = val[0], val[1]
+    in_pool = val[2:2 + len(pools)]
+    pool_supply = val[2 + len(pools):len(fixed)]
+    bals = val[len(fixed):]
+    missing = sum(1 for v in bals if v is None)
+    hsum = sum(v for v in bals if v)
+    print(f"  block {int(blk, 16):,}; {len(holders):,} holder(s) listed by eth.blockscout.com, {missing} unread")
+    print(f"  veAethir.totalSupply()        {fmt(total)}")
+    print(f"  ATH.balanceOf(wrapper 0x3f69…) {fmt(wrapped)}  — {total - wrapped:+,} wei from totalSupply")
+    for (label, a), b, sp in zip(pools, in_pool, pool_supply):
+        print(f"  {label:<12} veAethir.balanceOf {fmt(b)}  supply() {fmt(sp)}  — {b - sp:+,} wei")
+    locked = sum(in_pool)
+    print(f"  LOCKED in the two pools       {fmt(locked)}")
+    print(f"  OUTSIDE the pools             {fmt(total - locked)}  ({(total - locked) / total:.2%} of veAethir)")
+    print(f"  every listed holder summed    {fmt(hsum)}  — {total - hsum:+,} wei from totalSupply "
+          + ("(RECONCILED TO THE WEI)" if total == hsum else "(NOT reconciled: the listing is incomplete or stale)"))
+    pool_set = {a.lower() for _, a in pools}
+    top = sorted(((v or 0, h) for h, v in zip(holders, bals) if h.lower() not in pool_set), reverse=True)[:8]
+    for v, h in top:
+        print(f"    outside: {h}  {fmt(v)}  ({_code(h, 'ethereum')})")
+    print("  PASTE BACK: the lines above.")
+
+
+def insider_stake_check():
+    """ROUND G 2.11 (Jake 2026-10-18: insider share — "list the documents checked and the addresses needed"). Reads the
+    stake of every issuer-side wallet on file where the lock contract keeps a per-address record, at one block:
+    Chainlink's 27 non-circulating wallets against both staking pools (getStakerPrincipal(address)), and Sky's Pause
+    Proxy and two converters against the LockstakeEngine (ownerUrnsCount(address)). 2026-10-18, block 26,219,782: all 0.
+    A non-zero answer is a wallet to wire (config INSIDER_SHARE_ROUTES / INSIDER_LOCK)."""
+    import config as _cfg                                  # noqa: PLC0415
+    head("INSIDER STAKE — issuer-side wallets on file, read against the lock contracts")
+    head_hex = None
+    for url in _rpcs_for("ethereum"):
+        try:
+            head_hex = rpc(url, "eth_blockNumber").get("result")
+            if head_hex:
+                break
+        except Exception:  # noqa: BLE001
+            continue
+    if not head_hex:
+        print("  UNREACHABLE — no Ethereum RPC answered eth_blockNumber.")
+        return
+    blk = hex(int(head_hex, 16) - 5)
+    word = lambda sel, a: sel + a.lower()[2:].rjust(64, "0")  # noqa: E731
+    link = _cfg.PROJECT_BY_NAME["Chainlink"]["contracts"]
+    wallets = [(r[0], r[1]) for d in (_cfg._NONCIRC_WALLETS, _cfg._NONCIRC_WALLETS_FIRST_PARTY)
+               for r in d.get("Chainlink", ())]
+    pools = [("community", link["staking_community"]["address"]), ("operator", link["staking_node_operator"]["address"])]
+    calls = [(pa, word(_selector("getStakerPrincipal(address)"), a)) for _, pa in pools
+             for _, a in wallets]
+    res = _batch_eth_calls("ethereum", calls, block=blk)
+    print(f"  block {int(blk, 16):,}")
+    i = 0
+    for pn, _pa in pools:
+        hits = []
+        for k, a in wallets:
+            v = res[i]
+            i += 1
+            if v is None:
+                hits.append(f"{k} UNREAD")
+            elif int(v, 16):
+                hits.append(f"{k} {a} {int(v, 16) / 1e18:,.2f} LINK")
+        print(f"  Chainlink {pn} pool: {len(wallets)} issuer-side wallet(s) — "
+              + ("; ".join(hits) if hits else "every one 0 principal"))
+    sky = _cfg.PROJECT_BY_NAME["Sky"]["contracts"]
+    eng = sky["lockstake_engine"]["address"]
+    sw = [("pause_proxy", sky["pause_proxy"]["address"])] + [(k, c["address"]) for k, c in sky.items()
+                                                              if k.startswith("noncirc_")]
+    res = _batch_eth_calls("ethereum", [(eng, word(_selector("ownerUrnsCount(address)"), a)) for _, a in sw],
+                           block=blk)
+    print("  Sky LockstakeEngine urns owned: " + "; ".join(
+        f"{k} {'UNREAD' if v is None else int(v, 16)}" for (k, _), v in zip(sw, res)))
+    print("  PASTE BACK: the lines above.")
+
+
+def _selector(sig: str) -> str:
+    from eth_utils import keccak                          # noqa: PLC0415
+    return "0x" + keccak(text=sig).hex()[:8]
 
 
 def geodnet_staking_candidates(days: int = 30):
@@ -4790,10 +5003,44 @@ def _safe_nonce_blocks(safe: str, b0: int, b1: int, chain: str = "base") -> tupl
     return sorted(out), f"{nonce(b1) - nonce(b0)} Safe transaction(s), {len(cache)} archive read(s)"
 
 
+# A BUDGET FOR A CALLER INSIDE THE RUN, AND SLEEPS THE HEARTBEAT CAN SEE (Round G 1.4). ve_managed timed out at 120 s
+# with "waiting on: nothing registered": the Foundation buyback window's Safe-nonce bisection was asleep in _retry /
+# _rpc_retry (a bare time.sleep between rounds of refused archive reads), invisible to the heartbeat and deaf to the
+# tier's budget. Now each nap is registered (fetch.base.sleep — it also stops an abandoned tier), names what it retries
+# and why, and a caller that sets call_budget(seconds) gets TimeoutError instead of a nap past its deadline.
+import threading as _threading
+
+_CALL_BUDGET = _threading.local()
+
+
+@contextlib.contextmanager
+def call_budget(seconds: float | None):
+    """Within the block, a retry nap that would end past `seconds` from now raises TimeoutError (this thread only)."""
+    import time as _t                                      # noqa: PLC0415
+    prev = getattr(_CALL_BUDGET, "deadline", None)
+    _CALL_BUDGET.deadline = None if seconds is None else _t.monotonic() + float(seconds)
+    try:
+        yield
+    finally:
+        _CALL_BUDGET.deadline = prev
+
+
+def _nap(seconds: float, what: str) -> None:
+    import time as _t                                      # noqa: PLC0415
+    deadline = getattr(_CALL_BUDGET, "deadline", None)
+    if deadline is not None and _t.monotonic() + seconds >= deadline:
+        raise TimeoutError(f"time budget spent — not retrying {what}")
+    try:
+        from fetch.base import sleep as _registered          # noqa: PLC0415
+    except ImportError:                                    # standalone use of this script
+        _t.sleep(seconds)
+        return
+    _registered(seconds, f"sleeping {seconds:.0f}s before retrying {what}")
+
+
 def _rpc_retry(chain: str, method: str, params: list, tries: int = 5):
     """`result` of a JSON-RPC call from the first endpoint that answers, retried with backoff over every endpoint
     (public Base endpoints rate-limit: 'request limit reached', archive 403s). Raises when none ever answers."""
-    import time as _t                                      # noqa: PLC0415
     why = ""
     for k in range(tries):
         for url in _rpcs_for(chain):
@@ -4803,20 +5050,22 @@ def _rpc_retry(chain: str, method: str, params: list, tries: int = 5):
                     return j["result"]
                 why = f"{_rpc_host(url)}: {str(j.get('error'))[:80]}"
             except Exception as e:  # noqa: BLE001 — next endpoint
+                if type(e).__name__ == "TierAbandoned":
+                    raise
                 why = f"{_rpc_host(url)}: {type(e).__name__}"
-        _t.sleep(2 ** k)
+        if k < tries - 1:
+            _nap(2 ** k, f"{chain} {method} ({why})")
     raise ValueError(f"{method} unanswered after {tries} round(s) ({why})")
 
 
 def _retry(fn, tries: int = 5):
-    import time as _t                                      # noqa: PLC0415
     for k in range(tries):
         try:
             return fn()
-        except ValueError:
+        except ValueError as e:
             if k == tries - 1:
                 raise
-            _t.sleep(2 ** k)
+            _nap(2 ** k, f"a read that failed: {str(e)[:120]}")
 
 
 def _block_receipts(chain: str, block: int) -> list:
@@ -7068,6 +7317,9 @@ def near_settlement_routes():
         "token_census_30d": ("bigquery_token_census.sql", {"d0": (yday - pd.Timedelta(days=29)).date(), "d1": yday.date()}),
         "buyback_wallet_balances_year": ("bigquery_buyback_wallet_balances.sql", {"d0": year0.date(), "d1": yday.date()}),
         "circulating_full_history": ("bigquery_circulating_supply.sql", {"since": "2000-01-01"}),
+        # Round G 2.6: the three revenue wallets' all-time inflow (native NEAR + wNEAR), from fefundsadmin's creation
+        "wallet_inflows_alltime": ("bigquery_wallet_inflows.sql", {"d0": pd.Timestamp("2025-09-22").date(),
+                                                                   "d1": yday.date()}),
     }
     nb = NearBigQuery()
     client, why = nb._client(spec)
@@ -11965,7 +12217,7 @@ CHECKS = (
     fluid_buyback_destination, aethir_staking_probe, aethir_wrapper_relationship,
     aethir_veaethir_probe, geodnet_staking_candidates, geod_candidate_wallets, sky_lssky_releases, geod_residual, alchemy_base_logs, near_buyback_wallets, sky_ba_endpoints, chainlink_revenue_coverage,
     maple_transparency, sky_burn_breakdown, geod_solana_burn_account, near_block_supply,
-    wm_cardano_supply, etherscan_ethsupply2, etherscan_v2_routes, geod_archive_probe, plume_growthepie,
+    wm_cardano_supply, etherscan_ethsupply2, etherscan_v2_routes, alchemy_transfer_routes, aethir_veaethir_reconcile, insider_stake_check, geod_archive_probe, plume_growthepie,
     chainlink_reward_rates, pendle_spendle_fees, archive_probe, coinmetrics_community,
     hl_af_fills_depth, etherfi_safe_owners, etherfi_sethfi_topups, etherfi_topup_safe, etherfi_cex_test, near_protocol_v87, aethir_pin_keys,
     robots_and_terms, ultrasound_history, hyperliquid_history_routes, blockworks_filings, maple_dao_vs_ssf, aethir_reward_distributors, etherfi_yield_reconcile, maple_ssf_candidates,

@@ -148,7 +148,8 @@ class PlumeStaking:
                 return None
         # BATCHED (Jake's run 2026-10-01: plume_staking timed out at 60s on one-by-one reads)
         from concurrent.futures import ThreadPoolExecutor
-        with ThreadPoolExecutor(max_workers=8) as pool:
+        from .base import pool_owner
+        with ThreadPoolExecutor(max_workers=8, **pool_owner()) as pool:
             flags = list(pool.map(active_of, [r[0] for r in parsed]))
         rows = [(vid, staked, comm, act) for (vid, staked, comm), act in zip(parsed, flags)]
         total = sum(r[1] for r in rows)

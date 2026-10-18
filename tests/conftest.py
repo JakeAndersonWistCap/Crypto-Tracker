@@ -25,6 +25,10 @@ def _isolated_logcache(monkeypatch, tmp_path):
     monkeypatch.setenv("TOKEN_METRICS_LOGCACHE", str(tmp_path / "logcache"))
     # once-a-day checks run every time in tests; the test of the gate itself unsets this
     monkeypatch.setenv("TOKEN_METRICS_DAILY_CHECKS", "always")
+    # tiers start together in tests (the stagger, Round G 1.1, has its own test)
+    monkeypatch.setenv("TOKEN_METRICS_TIER_STAGGER", "0")
+    # no connect-error retry naps in tests (Round G 1.1 has its own test, which sets it)
+    monkeypatch.setenv("TOKEN_METRICS_CONNECT_RETRIES", "0")
 
 
 @pytest.fixture(autouse=True)

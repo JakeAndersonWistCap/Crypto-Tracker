@@ -29,6 +29,7 @@ from .base import (FetchOutput, LogEntry, run_class, derive_flow_from_cumulative
                    point, today)  # noqa: F401
 from .chain import Chain
 from .coingecko import CoinGecko
+from .price_history import PriceHistory
 from .dune import Dune
 from .gaps import detect as detect_gaps, note_timeouts
 from .hl_candles import HLCandles
@@ -97,6 +98,8 @@ TIER_ORDER = [
     ("etherscan_supply", 1, lambda ctx: EtherscanSupply(prior_dates=ctx["prior_dates"],
                                                         prior_delta=ctx["prior_delta"])),
     ("coingecko", 1, lambda ctx: CoinGecko(known_absent=ctx["known_absent"], last_dates=ctx["last_dates"])),
+    # Prices back to each project's first token flow, where CoinGecko's free year stops short (Round G 2.1).
+    ("price_history", 1, lambda ctx: PriceHistory(stored_long=ctx.get("stored_long"))),
     # Hyperliquid's perps volume per day from its own daily candles (DefiLlama's is paid). 2026-10-01.
     ("hl_candles", 1, lambda ctx: HLCandles()),
     # Hyperliquid's issuer-side wallets replayed from their own ledgers, once a day (fix round 3, B1).
@@ -158,7 +161,7 @@ TIER_ORDER = [
     # Sky's accounting (Block Analitica's documented API): monthly NPS, buyback spending, staking rewards (2026-10-07).
     ("sky_accounting", 3, lambda ctx: SkyAccounting()),
     # Sky's MKR backing (non-issuer MKR is circulating) and the reward vest in force (Jake 2026-10-12, decision 2).
-    ("sky_mkr", 2, lambda ctx: SkyMkr()),
+    ("sky_mkr", 2, lambda ctx: SkyMkr(stored_long=ctx.get("stored_long"))),
     # Aethir's own dashboard, from the Next.js server-rendered payload (Jake's probes2, 2026-09-30).
     ("aethir_page", 3, lambda ctx: AethirPages()),
     # Pendle's per-epoch sPENDLE distributions and its own APR (spendle/data, 2026-09-29).
@@ -1743,6 +1746,12 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
             if not sources or name in sources]
     results = _dispatch(todo, projects, window_days, ctx)
     results = _recheck_robots(results, todo, projects, window_days, ctx)
+    # THE CONNECTION CAPS' EFFECT, ONE LINE (Round G 1.1): how many calls waited for a slot and for how long
+    from .base import MAX_CONN, MAX_CONN_PER_HOST, connection_stats
+    cs = connection_stats()
+    log.info("connections: at most %d in flight run-wide (cap %d, %d per host); %d call(s) queued for a slot, %.0fs "
+             "queued in all; %d connect retr%s", cs["peak"], MAX_CONN, MAX_CONN_PER_HOST, cs["queued"], cs["queued_s"],
+             cs["connect_retries"], "y" if cs["connect_retries"] == 1 else "ies")
 
     # MERGED IN TIER_ORDER, NOT IN COMPLETION ORDER. Sources run concurrently, each into its own
     # FetchOutput; folding them back in the fixed order below is what keeps the tier-collision
@@ -1862,7 +1871,7 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
 # with a third window of slack (nearblocks_daily_calls(), tested).
 TIER_BUDGET_S = {
     "schedule:config": 15, "defillama": 150, "morpho_api": 60, "growthepie": 60,
-    "nearblocks": 180, "coingecko": 240, "hypercore_info": 60, "chainlink_fees": 180, "xref": 90, "validatorqueue": 30, "treasury_bills": 60, "sky_ssr": 120, "business": 900, "share_vault": 60,
+    "nearblocks": 180, "coingecko": 240, "price_history": 120, "hypercore_info": 60, "chainlink_fees": 180, "xref": 90, "validatorqueue": 30, "treasury_bills": 60, "sky_ssr": 120, "business": 900, "share_vault": 60,
     "chain": 240, "tron_node": 60, "near_rpc": 90, "explorer": 300, "balance_flow": 150, "maple_page": 60,
     "explorer_gauge": 300,
     # run review D1 (2026-10-14): the L2 gauge scans' 140 s explorer budget + the full-history repair's 120 s of chain
@@ -1980,21 +1989,29 @@ def _dispatch(todo, projects, window_days, ctx) -> list[tuple]:
             return st["result"]
         return None
 
+    # STAGGERED STARTS (Round G 1.1): every tier used to start in the same instant, ~45 of them opening their
+    # first connections together. Each now starts TIER_STAGGER_S after the one before (its budget counts from
+    # its own start), while the ones already running are settled as usual.
+    stagger = float(os.environ.get("TOKEN_METRICS_TIER_STAGGER", 0.5))
     with Heartbeat():
         if serial:
             for name, tier, build in todo:
                 start(name, tier, build)
                 settle(name, wait=True)
         else:
-            for name, tier, build in todo:
-                start(name, tier, build)
-            pending = [n for n, _, _ in todo]
-            while pending:
+            queue = list(todo)
+            pending, next_at = [], time.monotonic()
+            while queue or pending:
+                while queue and time.monotonic() >= next_at:
+                    name, tier, build = queue.pop(0)
+                    start(name, tier, build)
+                    pending.append(name)
+                    next_at = time.monotonic() + stagger
                 for n in list(pending):
                     if settle(n, wait=False) is not None:
                         pending.remove(n)
-                if pending:
-                    time.sleep(0.2)
+                if queue or pending:
+                    time.sleep(min(0.2, stagger) if queue else 0.2)
     return [state[n]["result"] for n, _, _ in todo]
 
 
@@ -2073,5 +2090,9 @@ def _abandon(name, st, budget) -> tuple:
               st["tier"])
     log.warning("tier %s TIMED OUT after %.0fs — abandoned (waiting on: %s)", name, budget,
                 "; ".join(waiting) or "nothing registered")
+    # ...and it STOPS (Round G 1.2(d)): its next HTTP call or registered sleep raises, its log lines are dropped
+    from .base import abandon_thread
+    if st.get("thread") is not None:
+        abandon_thread(st["thread"])
     st["result"] = (name, st["tier"], kept, time.monotonic() - st["t0"], True)
     return st["result"]

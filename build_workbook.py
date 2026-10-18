@@ -2381,6 +2381,69 @@ def _market_cap_views(groups: dict) -> None:
         groups[(name, "circulating_supply_used")] = _as_stored(used, cols)
 
 
+def _history_class(p: dict, metrics, data_by_key: dict) -> str:
+    """'HISTORY <CLASS>: <metric> from <first date> — <reason>' for the youngest input of a trajectory row (Round G 2.2).
+    CLASS is FORWARD-ONLY (the source keeps no history), SOURCE-LIMITED (no route to earlier days) or BUG (a route exists
+    and has not filled it — the fix named). '' when no input has a first date."""
+    import history_gaps as hg                              # noqa: PLC0415 — the same classifier the gap list uses
+    name = p["name"]
+    firsts = []
+    for m in metrics:
+        row = data_by_key.get(f"{name}|{m}") or {}
+        f = str(row.get("first_date") or "")[:10]
+        if f:
+            firsts.append((f, m, row))
+    if not firsts:
+        return ""
+    first, m, row = max(firsts)
+    if m == "fdv_usd" and name in config.FDV_SHORT_REASON:
+        return f"HISTORY {config.FDV_SHORT_REASON[name].split(':')[0]}: fdv_usd from {first} — " \
+               f"{config.FDV_SHORT_REASON[name].split(':', 1)[1].strip()}"
+    try:
+        reason, fix, cost, _cmd = hg.fix_for(p, m, row)
+    except Exception as e:  # noqa: BLE001 — the label never breaks the build
+        return f"HISTORY: {m} from {first} (not classified: {e})"
+    if reason.startswith("FORWARD-ONLY") or (reason.startswith("CoinGecko serves this as a current snapshot")
+                                             and not fix.startswith("orphan_cleanup")):
+        cls = "FORWARD-ONLY"
+    elif cost == "none" or fix.startswith("none"):
+        cls = "SOURCE-LIMITED"
+    else:
+        cls = f"BUG (a route exists and has not filled it; cost: {cost})"
+    return f"HISTORY {cls}: {m} from {first} — {reason}; fix: {fix}"[:400]
+
+
+def _fdv_history(name: str, groups: dict, primary: pd.Series, daily) -> tuple[str, pd.Series | None]:
+    """(note, the total for days BEFORE the primary total's first row) from config.FDV_TOTAL_HISTORY — only when it
+    measures the same quantity: median |alt / primary − 1| <= FDV_HISTORY_TOL over >= FDV_HISTORY_MIN_OVERLAP common
+    days (Round G 2.2). (note, None) when the check fails or nothing is configured; the note says why."""
+    spec = config.FDV_TOTAL_HISTORY.get(name)
+    if not spec or primary is None or primary.empty:
+        return "", None
+    a_ = groups.get((name, spec["total"]))
+    if a_ is None or a_.empty:
+        return "", None
+    alt = daily(a_)
+    if spec.get("less"):
+        b_ = groups.get((name, spec["less"]))
+        if b_ is None or b_.empty:
+            return "", None
+        alt = (alt - daily(b_)).dropna()
+    # THE MOST RECENT common days: a primary that changed its own definition (CoinGecko's GEODNET total became net of
+    # the burn on 2026-10-12, −3.0%) is compared on what it means now, and extends once enough days agree
+    common = alt.index.intersection(primary.index).sort_values()[-config.FDV_HISTORY_MIN_OVERLAP:]
+    if len(common) < config.FDV_HISTORY_MIN_OVERLAP:
+        return (f"(history NOT extended: {spec['total']} overlaps the total on {len(common)} day(s), fewer than "
+                f"{config.FDV_HISTORY_MIN_OVERLAP})"), None
+    dev = (alt[common] / primary[common] - 1).abs().median()
+    if not dev <= config.FDV_HISTORY_TOL:
+        return (f"(history NOT extended: {spec['label']} differs from the total by a median {dev:.3%} over "
+                f"{len(common)} common day(s), over the {config.FDV_HISTORY_TOL:.1%} the same-quantity check allows)"), None
+    note = (f"(total before {primary.index.min().date()}: {spec['label']} — the same quantity, median |diff| "
+            f"{dev:.4%} over {len(common)} common day(s))")
+    return note, alt
+
+
 def _fdv_views(groups: dict) -> None:
     """FDV = PRICE x THE TOTAL SUPPLY WE USE, where total supply is on-chain first (config.TOTAL_SUPPLY_ONCHAIN_FIRST;
     Ether.fi, Jake's review of 97b29ae item 6: CoinGecko's FDV $700.3M rested on its 965.35M total — below the
@@ -2414,7 +2477,10 @@ def _fdv_views(groups: dict) -> None:
         # carried forward within its age limit, as market cap carries the circulating used — the latest price day
         # keeps the same basis (credibility.now_max_age)
         import credibility as _cred                       # noqa: PLC0415
+        hist_note, hist_days = _fdv_history(name, groups, total, s)
         total = total.reindex(total.index.union(price.index)).ffill(limit=_cred.now_max_age(name, "total_supply")).dropna()
+        if hist_days is not None and not hist_days.empty:
+            total = pd.concat([hist_days[hist_days.index < total.index.min()], total]) if not total.empty else hist_days
         both = price.index.intersection(total.index)
         if both.empty:
             continue
@@ -2424,10 +2490,14 @@ def _fdv_views(groups: dict) -> None:
         # total's basis is a SERIES BREAK on the trend only (trajectory.BRACKET_BASIS reads this bracket)
         from fetch.base import _measuring_point          # noqa: PLC0415
         src = {d: _measuring_point(v) for d, v in src.items()}
-        last = pd.Series(src, dtype=object).reindex(total.index).ffill().fillna("?").to_dict()
+        # days before the primary total's first row (FDV_TOTAL_HISTORY) carry ITS basis: the same quantity, checked
+        last = pd.Series(src, dtype=object).reindex(total.index).ffill().bfill().fillna("?").to_dict()
+        first_primary = min(src) if src else None
         view = pd.DataFrame({"date": both, "project": name, "metric": "fdv_usd",
                              "value": (price[both] * total[both]).values, "tier": 1,
-                             "source": [f"derived:price_x_total_supply[{last.get(d, '?')}]" for d in both]})
+                             "source": [f"derived:price_x_total_supply[{last.get(d, '?')}]"
+                                        + (f" {hist_note}" if hist_note and first_primary is not None
+                                           and d < first_primary else "") for d in both]})
         cols = cg.columns if cg is not None and not cg.empty else px.columns
         if cg is not None and not cg.empty:
             groups[(name, "fdv_usd_coingecko")] = _as_stored(cg.assign(metric="fdv_usd_coingecko"), cols)
@@ -3685,10 +3755,27 @@ def _macro_rows(groups: dict, asof: pd.Timestamp) -> list[dict]:
     return out
 
 
-def migration_watch_on(asof) -> bool:
-    """config.AERODROME_MIGRATION_WATCH applies from label_from until `built` is set."""
+def v3_rows_since(groups: dict | None = None) -> str | None:
+    """The first date a row from the post-migration reader (config.AERODROME_MIGRATION v3_source) is held, else None."""
+    m = config.AERODROME_MIGRATION
+    first = None
+    for (proj, _metric), g in (_LAST_GROUPS if groups is None else groups).items():
+        if proj != m["project"] or g is None or g.empty or "source" not in g:
+            continue
+        x = g[g["source"].astype(str).str.startswith(m.get("v3_source", "aero_v3"))]
+        if not x.empty:
+            d = pd.to_datetime(x["date"]).min()
+            first = d if first is None or d < first else first
+    return None if first is None else str(first.date())
+
+
+def migration_watch_on(asof, groups: dict | None = None) -> bool:
+    """config.AERODROME_MIGRATION_WATCH applies from label_from until `built` — set in config, or (Round G 2.10: only
+    aero_migration.json needs filling on launch day) the first day the v3 reader's rows are held."""
     mw = config.AERODROME_MIGRATION_WATCH
-    return not mw.get("built") and pd.Timestamp(asof).normalize() >= pd.Timestamp(mw["label_from"])
+    if mw.get("built") or v3_rows_since(groups):
+        return False
+    return pd.Timestamp(asof).normalize() >= pd.Timestamp(mw["label_from"])
 
 
 def monthly_table(long: pd.DataFrame, asof: pd.Timestamp) -> tuple[list[str], pd.DataFrame]:
@@ -6971,6 +7058,15 @@ def _cp_inner(f):
     return f[1:] if isinstance(f, str) and f.startswith("=") else None
 
 
+def _q0_days(data_by_key: dict, name: str, metric: str) -> float | None:
+    """A series' Q0 covered days from its Data row, None when nothing is stored (Round G 2.7: OUTFLOW_INCOMPLETE lifts)."""
+    row = data_by_key.get(f"{name}|{metric}") or {}
+    v = row.get("q0_covered_days")
+    if v is None or (isinstance(v, float) and pd.isna(v)) or not row.get("n_points"):
+        return None
+    return float(v)
+
+
 def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
     circ = lambda r, p: _circ(R, r, p)  # noqa: E731
     flt = lambda r, p: _cp_float(R, r, p)  # noqa: E731
@@ -7050,7 +7146,8 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
                         + " — see the outflow basis column")
             rv = _cp_revenue_metric(p)
             # V1: a denominator known to miss part of what is paid blocks the ratio (unequal coverage), named
-            gaps = config.outflow_incomplete(p["name"], got)
+            gaps = config.outflow_incomplete(p["name"], got, q0_days=lambda m, n=p["name"]: _q0_days(data_by_key, n, m),
+                                             window=int(GLOBALS["period_days"]))
             if gaps:
                 return ("BLOCKED — unequal coverage: the incentive denominator is incomplete — " + "; ".join(gaps)
                         + f" (numerator {rv}, whole)")
@@ -7170,9 +7267,10 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         if not spec and p["name"] in config.INSIDER_SHARE_MONITOR:
             return monitor(r, p, lambda n, d: f"IF(AND(ISNUMBER({d}),{d}>0),{n}/{d},{NA})")
         if not spec:
-            # NEVER A BLANK WHERE THE QUESTION APPLIES (alignment round C5)
-            return ("NOT WIRED — no issuer / insider wallet is identified among the stakers or lockers (route: the "
-                    "staking contract's depositors crossed with the issuer-wallet list)") if has_lock(p) else ""
+            # NEVER A BLANK WHERE THE QUESTION APPLIES (alignment round C5); THE ROUTE PER PROJECT (Round G 2.11)
+            route = (config.INSIDER_SHARE_ROUTES.get(p["name"]) or {}).get("cell")
+            return (route or "NOT WIRED — no issuer / insider wallet is identified among the stakers or lockers (route: "
+                    "the staking contract's depositors crossed with the issuer-wallet list)") if has_lock(p) else ""
         n, d = R.D(r, spec[0], "now"), R.D(r, spec[1], "now")
         return calc(f"IF(AND(ISNUMBER({n}),ISNUMBER({d}),{d}>0),{n}/{d},{NA})")
 
@@ -7217,8 +7315,15 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
                 f'IF(AND(ISNUMBER({d}),{d}>0,ISNUMBER({cr})),IF({cr}>0,({n}/{d})*MAX(0,{cr}-IF(ISNUMBER({rt}),{rt},0))/'
                 f'{cr},"n/a — no credited holder value in Q0"),{NA})'))
         if not spec:
-            return ("NOT WIRED — no issuer / insider wallet is identified among the stakers (route: the stake's holders "
-                    "crossed with the issuer-wallet list)")
+            # NOTHING DISTRIBUTED -> NOTHING TO LEAK (Round G 2.11): (i) = insider share x distributed / credited, so a
+            # quarter whose credited holder value was all retired (burned / held) reads 0 whatever the insider share;
+            # only a distributing quarter needs the share, and then the cell says what is missing
+            route = ((config.INSIDER_SHARE_ROUTES.get(p["name"]) or {}).get("cell")
+                     or "NOT WIRED — no issuer / insider wallet is identified among the stakers (route: the stake's "
+                        "holders crossed with the issuer-wallet list)").replace('"', '""')
+            cr, rt = R.D(r, "holder_value_revenue_usd", "q0"), R.D(r, "retired_buyback_usd", "q0")
+            return (f'=IF(NOT(ISNUMBER({cr})),{NA},IF({cr}<=0,"n/a — no credited holder value in Q0",'
+                    f'IF({cr}-IF(ISNUMBER({rt}),{rt},0)<=0,0,"{route}")))')
         n, d = R.D(r, spec[0], "now"), R.D(r, spec[1], "now")
         cr, rt = R.D(r, "holder_value_revenue_usd", "q0"), R.D(r, "retired_buyback_usd", "q0")
         num = lambda x: f"IF(ISNUMBER({x}),{x},0)"  # noqa: E731
@@ -8569,9 +8674,33 @@ def write_review_queue(ws, review: pd.DataFrame, run_id: str | None):
     _set_widths(ws, {"A": 16, "B": 26, "C": 11, "D": 13, "E": 18, "F": 18, "G": 11, "H": 18, "I": 15, "J": 26, "K": 6, "L": 64})
 
 
+def run_log_actions(runlog: pd.DataFrame | None) -> list[str]:
+    """The lines the Run Log opens with when something needs Jake: an expired NEAR BigQuery login this run (Round G
+    1.7(a)), with the two gcloud commands."""
+    if runlog is None or runlog.empty or "source" not in runlog:
+        return []
+    from fetch.near_bigquery import LOGIN_COMMANDS
+    nb = runlog[runlog["source"].astype(str) == "near_bigquery"]
+    msgs = " ".join(nb["message"].astype(str)).lower() if not nb.empty else ""
+    if not any(k in msgs for k in ("re-authentication", "near bigquery skipped", "reauthentication")):
+        return []
+    return ["ACTION NEEDED — NEAR BigQuery: the Google login expired, so every NEAR BigQuery read stopped this run "
+            "(stored values stand). Paste:",
+            f"    {LOGIN_COMMANDS[0]}",
+            f"    {LOGIN_COMMANDS[1]}",
+            "  The next run tops up every missed day (each series resumes from its last stored day)."]
+
+
 def write_runlog(ws, runlog: pd.DataFrame, fetch_status: pd.DataFrame, run_id: str | None, asof: pd.Timestamp, overrides_n: int):
     _title(ws, "Run Log", f"Run {run_id or '(build only)'} — workbook built {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')} — data as of {asof.date()} (UTC)")
     r = 4
+    # ACTION NEEDED FIRST (Round G 1.7(a)): an expired NEAR BigQuery login, with the two commands to paste
+    for line in run_log_actions(runlog):
+        c = ws.cell(row=r, column=1, value=line)
+        c.font = Font(name=FONT, size=11, color="C00000", bold=True)
+        r += 1
+    if r > 4:
+        r += 1
     ws.cell(row=r, column=1, value="Rows fetched per source (this run)").font = F_BOLD
     r += 1
     # "Skipped" gets its own column, next to Failed rather than folded into Unconfigured. A
@@ -9045,6 +9174,12 @@ def write_trajectory(wb, data_by_key: dict, asof=None) -> list[dict]:
                     covs = [float(c) for c in covs if isinstance(c, (int, float)) and c == c]
                     if covs and min(covs) < 0.9 * int(config.TRAJECTORY["period_days"]):
                         starts_in = oldest
+        # A SHORT HISTORY SAYS WHICH KIND IT IS (Round G 2.2): fewer than five quarters with a value -> the youngest input
+        # and FORWARD-ONLY (the source keeps none) / SOURCE-LIMITED (no route) / BUG (a route exists, not yet run)
+        if asof is not None and not w["independent"] and sum(1 for v in qs if trajectory._num(v) is not None) < len(qs):
+            hc = _history_class(spec["project"], trajectory.referenced_metrics(w["q0_formula"]), data_by_key)
+            if hc:
+                why.append(hc)
         g, n_g, g_label, why_g = trajectory.growth_rule(qs, step_at, starts_in)
         imp, n_imp = trajectory.improved(qs, d)
         tr = trajectory.trough(qs, d)

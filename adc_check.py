@@ -7,6 +7,7 @@ organisation's policy, so the daily run checks — and, run by hand, repairs —
     python adc_check.py        exit 0 = good
                                2 = login expired            3 = no credentials / library
                                4 = wrong ADC quota project  7 = permission denied      8 = the query failed otherwise
+                               9 = timed out (never waits for a login: see guarded())
 
 The query reads one row of yesterday's partition of the public NEAR blocks table, billed bytes capped at 100 MB
 (BigQuery bills a partition-pruned read at its 10 MB minimum). On failure the last line printed is
@@ -67,7 +68,35 @@ def main() -> int:
     return 0
 
 
+# NEVER WAITS FOR A LOGIN (Round G 1.7(b), Jake's run_2026-10-18.log: the daily run stopped at "=== BigQuery check" and
+# went no further). With an expired login google-auth's reauthentication asks for a password ON THE TERMINAL when stdin
+# is one — and under the daily runner the prompt is captured into the log, so the run waits for ever. The check now runs
+# in a child process with NO stdin (google-auth then refuses the interactive challenge at once and the login reads as
+# expired, exit 2) and a hard timeout: past ADC_TIMEOUT_S it is killed and reported as exit 9 — NEAR BigQuery is
+# skipped for this run and everything else carries on.
+ADC_TIMEOUT_S = 90
+
+
+def guarded(timeout_s: float | None = None, argv0: str | None = None) -> int:
+    import os
+    import subprocess
+    timeout_s = float(os.environ.get("TOKEN_METRICS_ADC_TIMEOUT", ADC_TIMEOUT_S) if timeout_s is None else timeout_s)
+    env = dict(os.environ, ADC_CHECK_CHILD="1")
+    try:
+        r = subprocess.run([sys.executable, argv0 or __file__], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                           stderr=subprocess.STDOUT, env=env, timeout=timeout_s, text=True, encoding="utf-8",
+                           errors="replace")
+    except subprocess.TimeoutExpired:
+        project = (config.PROJECT_BY_NAME.get("Near") or {}).get("near_bigquery", {}).get("project", "near-data-510309")
+        return fail(9, f"the check did not finish in {timeout_s:.0f}s (a login prompt or the network) — NEAR BigQuery "
+                       f"is skipped this run, everything else carries on",
+                    f"gcloud auth application-default login; gcloud auth application-default set-quota-project {project}")
+    sys.stdout.write(r.stdout or "")
+    return r.returncode
+
+
 if __name__ == "__main__":
     import progress                                    # stdout line-buffered when piped (2026-10-11)
     progress.line_buffered()
-    sys.exit(main())
+    import os
+    sys.exit(main() if os.environ.get("ADC_CHECK_CHILD") == "1" else guarded())

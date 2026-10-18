@@ -685,6 +685,12 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
         return (f"contract {redirected_here[0]} serves this metric (metric_override) and wrote "
                 f"nothing this run",
                 "See the chain adapter's Run Log line for that contract.")
+    # A COMPONENT STORED ON ITS OWN (Round G 2.8, component_metric): the same read as the sum it feeds
+    component_of = [k for k, c in (project.get("contracts") or {}).items() if c.get("component_metric") == metric]
+    if component_of:
+        return (f"contract {component_of[0]} serves this metric (component_metric, its own row beside the sum) and "
+                f"wrote nothing this run",
+                "See the chain adapter's Run Log line for that contract; archive_backfill.py --run fills its history.")
 
     want_kind = METRIC_CONTRACT_KIND.get(metric)
     if 2 in tiers and want_kind:
@@ -1042,6 +1048,22 @@ def detect(projects: list[dict], frame: pd.DataFrame, manual_keys: set[tuple[str
     # zero-burn entry is kept precisely because the wrong reasoning was nearly convincing — and a
     # deleted question is one that gets asked again. They are skipped HERE, on a structural
     # `status` field, so the record survives and the to-do list does not carry it.
+    # NEAR BIGQUERY LOGIN, P2 (Round G 1.7(a)): Jake's Google login lapsed on 2026-10-06, 10, 12, 13, 16 and 18 and each
+    # time every NEAR BigQuery read stopped. While the latest attempt needed a login, a P2 row carries the two commands.
+    if any(p.get("near_bigquery") for p in projects):
+        from .near_bigquery import LOGIN_COMMANDS, login_needed, login_state
+        ls = login_state()
+        if login_needed(ls):
+            rows.append({
+                "project": "Near", "metric": "[open] NEAR BigQuery login",
+                "tiers_attempted": "-",
+                "reason": (f"the Google login (Application Default Credentials) needed re-authentication on "
+                           f"{ls.get('needed_on')} — every NEAR BigQuery read stopped; stored values stand"
+                           + (f"; lapses on record: {', '.join(ls['dates'][-8:])}" if ls.get("dates") else "")),
+                "suggestion": (f"Paste: {LOGIN_COMMANDS[0]}  then  {LOGIN_COMMANDS[1]}  — the next run tops up "
+                               f"every missed day (each series resumes from its last stored day)."),
+                "_severity": 2,
+            })
     for q in getattr(config, "OPEN_QUESTIONS", []):
         # AN ANSWER WITH ITS DECISION ON FILE IS LISTED AT P5, NOT DROPPED. 2026-09-28. The
         # decision is the reason text, so the row is its own record of what was settled and why.
@@ -1189,8 +1211,9 @@ def served_by(source: str, project: dict) -> set[str] | None:
         if project.get("defillama_chain"):
             m |= {"tvl_usd", "stablecoin_supply_usd", "rwa_defillama_usd"}
     elif source == "chain":
-        m = {spec.get("metric_override") or config.KIND_METRIC.get(spec.get("kind"))
-             for spec in (project.get("contracts") or {}).values()} - {None}
+        specs = list((project.get("contracts") or {}).values())
+        m = ({spec.get("metric_override") or config.KIND_METRIC.get(spec.get("kind")) for spec in specs}
+             | {spec.get("component_metric") for spec in specs}) - {None}
     elif source == "dune":
         m = set(project.get("dune_queries") or {})
     elif source == "scrape":

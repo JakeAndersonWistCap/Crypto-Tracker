@@ -10,6 +10,7 @@ import contextlib
 import itertools
 import logging
 import os
+import random
 import threading
 import time
 import urllib.parse
@@ -164,6 +165,8 @@ def install_redaction(streams: bool = True) -> None:
     for h in root.handlers:
         if not any(isinstance(x, _RedactFilter) for x in h.filters):
             h.addFilter(f)
+        if DROP_ABANDONED not in h.filters:
+            h.addFilter(DROP_ABANDONED)        # an abandoned tier logs nothing (Round G 1.2(d))
     if streams:
         for name in ("stdout", "stderr"):
             cur = getattr(sys, name)
@@ -488,11 +491,61 @@ _INFLIGHT_LOCK = threading.Lock()
 _INFLIGHT_SEQ = itertools.count()
 
 
+# ===== AN ABANDONED TIER STOPS (Round G 1.2(d), Jake's Ether.fi run 2026-10-18). =====
+# fetch._dispatch used to mark a tier TIMED OUT and stop reading its output while its thread ran on — the
+# Optimism probe kept halving its block for minutes and logged after the run summary. Now the dispatcher
+# ABANDONS the thread: its next HTTP call (requests or web3), and its next registered sleep, raise
+# TierAbandoned, and its log lines are dropped. Worker threads a tier starts (ThreadPoolExecutor) inherit
+# their owner through pool_owner(), so they stop with it and the heartbeat names them by their source.
+_ABANDONED: set = set()
+_OWNER = threading.local()
+
+
+class TierAbandoned(RuntimeError):
+    """The tier this thread belongs to timed out and was abandoned by the dispatcher."""
+
+
+def _owner_thread() -> threading.Thread:
+    return getattr(_OWNER, "thread", None) or threading.current_thread()
+
+
+def pool_owner():
+    """ThreadPoolExecutor kwargs that make the pool's workers belong to the calling tier."""
+    return {"initializer": _adopt, "initargs": (threading.current_thread(),)}
+
+
+def _adopt(owner: threading.Thread) -> None:
+    _OWNER.thread = getattr(_OWNER, "thread", None) or owner
+
+
+def abandon_thread(t: threading.Thread) -> None:
+    _ABANDONED.add(t)
+
+
+def is_abandoned() -> bool:
+    return bool(_ABANDONED) and _owner_thread() in _ABANDONED
+
+
+def check_abandoned() -> None:
+    if is_abandoned():
+        raise TierAbandoned(f"tier {_owner_thread().name} was abandoned at its time budget — stopping")
+
+
+class _DropAbandoned(logging.Filter):
+    """No line from an abandoned tier reaches the log (it printed after the run summary)."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return not is_abandoned()
+
+
+DROP_ABANDONED = _DropAbandoned()
+
+
 @contextlib.contextmanager
 def waiting_on(what: str):
     token = next(_INFLIGHT_SEQ)
     with _INFLIGHT_LOCK:
-        _INFLIGHT[token] = (threading.current_thread().name, what, time.monotonic())
+        _INFLIGHT[token] = (_owner_thread().name, what, time.monotonic())
     try:
         yield
     finally:
@@ -509,29 +562,134 @@ def inflight() -> list[tuple[str, str, float]]:
 
 def sleep(seconds: float, what: str) -> None:
     """time.sleep, registered so the heartbeat can name it."""
+    check_abandoned()
     if seconds <= 0:
         return
     with waiting_on(what):
         time.sleep(seconds)
+    check_abandoned()
 
 
 # ===== THE SAFETY NET UNDER EVERY requests CALL, web3's included. =====
 # Registers the request for the heartbeat and, if a caller passed no timeout, applies
 # DEFAULT_TIMEOUT rather than letting it wait for ever. tests/test_adapters.py also checks
 # statically that every call in fetch/ passes one explicitly — this is the backstop, not the rule.
-_ORIGINAL_SEND = requests.adapters.HTTPAdapter.send
+# THE TRUE ORIGINAL, even when an earlier copy of this module already patched it (see the install below)
+_ORIGINAL_SEND = getattr(requests.adapters.HTTPAdapter.send, "_tm_original", requests.adapters.HTTPAdapter.send)
+
+
+#
+# ROUND G 1.1 (Jake's full runs 2026-10-15/18: 27–60 FAILED with SSLError/ConnectionError across ~25 hosts,
+# 4 FAILED when the same projects ran in four groups, 0 for one project alone). The cause, from the code:
+# fetch._dispatch starts ~45 tiers at once; every Http owned its own requests.Session and ChainReader built a
+# NEW web3 HTTPProvider (its own session, its own TLS handshake) for most reads; nothing bounded how many
+# connections were open, run-wide or to one host. The failing calls took 16–22 s each and clustered in the
+# first 60–90 s. So, under every requests call (web3 included):
+#   * at most MAX_CONN calls in flight run-wide and MAX_CONN_PER_HOST to any one host — the rest queue,
+#     registered as "queued for <host>" so the heartbeat shows it;
+#   * one shared connection pool for the run (_SHARED_ADAPTER): a session or provider created per call
+#     reuses the run's open TLS connections instead of handshaking again (headers, auth and cookies stay
+#     per session — only the sockets are shared);
+#   * a CONNECT-phase failure (SSLError, ConnectionError that is not a timeout) is retried CONNECT_RETRIES
+#     times with jittered backoff — unless the caller is Http, whose own loop already retries it.
+MAX_CONN = int(os.environ.get("TOKEN_METRICS_MAX_CONN", 16))
+MAX_CONN_PER_HOST = int(os.environ.get("TOKEN_METRICS_MAX_CONN_PER_HOST", 4))
+CONNECT_RETRIES = int(os.environ.get("TOKEN_METRICS_CONNECT_RETRIES", 2))
+CONNECT_BACKOFF_S = float(os.environ.get("TOKEN_METRICS_CONNECT_BACKOFF", 2.0))
+_GLOBAL_SLOTS = threading.BoundedSemaphore(MAX_CONN)
+_HOST_SLOTS: dict = {}
+_HOST_SLOTS_LOCK = threading.Lock()
+_CONN_STATS = {"queued": 0, "queued_s": 0.0, "connect_retries": 0, "peak": 0, "open": 0}
+_CONN_STATS_LOCK = threading.Lock()
+_HTTP_RETRIES = threading.local()       # set while Http._request runs: Http retries connect errors itself
+_SHARED_ADAPTER = requests.adapters.HTTPAdapter(pool_connections=64, pool_maxsize=max(MAX_CONN_PER_HOST, 10))
+
+
+def _host_slots(host: str) -> threading.BoundedSemaphore:
+    with _HOST_SLOTS_LOCK:
+        sem = _HOST_SLOTS.get(host)
+        if sem is None:
+            sem = _HOST_SLOTS[host] = threading.BoundedSemaphore(MAX_CONN_PER_HOST)
+        return sem
+
+
+def connection_stats() -> dict:
+    """Run-wide: calls that queued for a slot, seconds queued, connect retries, peak calls in flight."""
+    with _CONN_STATS_LOCK:
+        return dict(_CONN_STATS)
+
+
+@contextlib.contextmanager
+def connection_slot(host: str):
+    """A run-wide slot and a slot for `host`, always taken host first (one fixed order: no deadlock)."""
+    host_sem = _host_slots(host)
+    t0 = time.monotonic()
+    if host_sem.acquire(blocking=False):
+        if not _GLOBAL_SLOTS.acquire(blocking=False):
+            host_sem.release()
+            host_sem = None
+    else:
+        host_sem = None
+    if host_sem is None:
+        host_sem = _host_slots(host)
+        with waiting_on(f"queued for {host} (connection cap {MAX_CONN} run-wide, {MAX_CONN_PER_HOST} per host)"):
+            host_sem.acquire()
+            _GLOBAL_SLOTS.acquire()
+        with _CONN_STATS_LOCK:
+            _CONN_STATS["queued"] += 1
+            _CONN_STATS["queued_s"] += time.monotonic() - t0
+    with _CONN_STATS_LOCK:
+        _CONN_STATS["open"] += 1
+        _CONN_STATS["peak"] = max(_CONN_STATS["peak"], _CONN_STATS["open"])
+    try:
+        yield
+    finally:
+        with _CONN_STATS_LOCK:
+            _CONN_STATS["open"] -= 1
+        _GLOBAL_SLOTS.release()
+        host_sem.release()
+
+
+def _retryable_connect(e: Exception) -> bool:
+    # a proxy refusing the host is the proxy's answer, not a failed connection to the server: not retried
+    return (isinstance(e, (requests.exceptions.SSLError, requests.exceptions.ConnectionError))
+            and not isinstance(e, (requests.exceptions.Timeout, requests.exceptions.ProxyError)))
 
 
 def _instrumented_send(self, request, stream=False, timeout=None, **kw):
     if timeout is None:
         timeout = DEFAULT_TIMEOUT
+    check_abandoned()
     host = urllib.parse.urlsplit(request.url).netloc
-    with waiting_on(f"{request.method} {host}"):
-        return _ORIGINAL_SEND(self, request, stream=stream, timeout=timeout, **kw)
+    # only an adapter with requests' own defaults is swapped for the shared pool; one a caller configured
+    # (its own Retry, pool sizes) is used as it is
+    adapter = _SHARED_ADAPTER if (type(self) is requests.adapters.HTTPAdapter
+                                  and not getattr(self.max_retries, "total", 0)) else self
+    retries = int(os.environ.get("TOKEN_METRICS_CONNECT_RETRIES", CONNECT_RETRIES))
+    tries = 1 if getattr(_HTTP_RETRIES, "on", False) else 1 + max(retries, 0)
+    for attempt in range(tries):
+        try:
+            with connection_slot(host):
+                with waiting_on(f"{request.method} {host}"):
+                    return _ORIGINAL_SEND(adapter, request, stream=stream, timeout=timeout, **kw)
+        except Exception as e:  # noqa: BLE001 — re-raised unless it is a connect failure worth one more try
+            if attempt + 1 >= tries or not _retryable_connect(e):
+                raise
+            nap = CONNECT_BACKOFF_S * (2 ** attempt) * (0.75 + 0.5 * random.random())
+            with _CONN_STATS_LOCK:
+                _CONN_STATS["connect_retries"] += 1
+            log.warning("RETRY %s: %s on connect (attempt %d of %d); next try in %.1fs",
+                        host, type(e).__name__, attempt + 1, tries, nap)
+            sleep(nap, f"sleeping {nap:.0f}s before reconnecting to {host}")
 
 
-if getattr(requests.adapters.HTTPAdapter.send, "__name__", "") != "_instrumented_send":
-    requests.adapters.HTTPAdapter.send = _instrumented_send
+# INSTALLED BY THE LIVE MODULE, ALWAYS (Round G). It was installed only when absent, and a copy of this module whose
+# import later FAILED (config's import-time validation reached fetch before config was complete) had installed its
+# own — so every HTTP call ran on that orphan's globals: its in-flight registry (the heartbeat read the live one and
+# said "nothing registered"), and now its caps and abandon set. The last import to complete is the one in
+# sys.modules, and it replaces any earlier patch, wrapping the true original.
+_instrumented_send._tm_original = _ORIGINAL_SEND
+requests.adapters.HTTPAdapter.send = _instrumented_send
 
 
 def query_params(params: dict | None) -> dict:
@@ -608,9 +766,10 @@ class Http:
                      + (f" (slowest: {', '.join(f'{p} {t:.1f}s' for t, p in slow)})" if slow else ""))
         return line
 
-    def post(self, url: str, json_body: dict | None = None, headers: dict | None = None):
+    def post(self, url: str, json_body: dict | None = None, headers: dict | None = None,
+             deadline: float | None = None):
         """Same retry/backoff policy as get(). Some node APIs only accept POST."""
-        return self._request("POST", url, json_body=json_body, headers=headers)
+        return self._request("POST", url, json_body=json_body, headers=headers, deadline=deadline)
 
     def get(self, url: str, params: dict | None = None, headers: dict | None = None,
             deadline: float | None = None):
@@ -652,11 +811,13 @@ class Http:
                 self.stats["retries"] += 1
             try:
                 t0 = time.monotonic()
+                _HTTP_RETRIES.on = self.retries > 0     # this loop retries connect errors; the send layer need not
                 try:
                     r = (self.s.post(url, json=json_body or {}, headers=headers, timeout=timeout)
                          if verb == "POST" else
                          self.s.get(url, params=params, headers=headers, timeout=timeout))
                 finally:
+                    _HTTP_RETRIES.on = False
                     took = time.monotonic() - t0
                     self.stats["calls"] += 1
                     self.stats["http_s"] += took
@@ -841,6 +1002,10 @@ OVERLAP_DAYS = 3
 
 def window(df: pd.DataFrame, window_days: int | None) -> pd.DataFrame:
     if window_days is None or df.empty:
+        return df
+    # A SERIES CHECKED AGAINST A SINCE-LAUNCH REFERENCE KEEPS ITS WHOLE HISTORY (Round G 2.4, config.FULL_HISTORY_SERIES)
+    if {"project", "metric"} <= set(df.columns) and \
+            (df["project"].iloc[0], df["metric"].iloc[0]) in __import__("config").FULL_HISTORY_SERIES:
         return df
     if BACKFILL and {"project", "metric"} <= set(df.columns):
         key = (df["project"].iloc[0], df["metric"].iloc[0])

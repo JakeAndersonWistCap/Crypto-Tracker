@@ -78,7 +78,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from .base import HostPace, Http, Progress, host_pace, limit_wait, query_params, tidy, today
+from .base import HostPace, Http, Progress, host_pace, limit_wait, pool_owner, query_params, tidy, today
 
 log = logging.getLogger("token_metrics.fetch.plume_settlement")
 
@@ -535,7 +535,7 @@ class PlumeSettlement:
                                         f"{len(self._state_codes):,} address(es) checked"))
         calls, err = 0, None
         workers = max(int(cfg.get("workers", 4)), 1)
-        with ThreadPoolExecutor(max_workers=workers) as ex:
+        with ThreadPoolExecutor(max_workers=workers, **pool_owner()) as ex:
             queue, inflight = list(tasks), {}
             while queue or inflight:
                 while queue and len(inflight) < workers and err is None and not self._over(t0, unbounded):
@@ -830,7 +830,7 @@ class PlumeSettlement:
         if nw > 1 and todo_native:
             # NATIVE DAYS SIDE BY SIDE (Jake, 2026-10-01): each day is its own call chain, so `nw` run at
             # once within the shared request rate; results are applied here, one thread, newest first
-            with ThreadPoolExecutor(max_workers=nw) as ex:
+            with ThreadPoolExecutor(max_workers=nw, **pool_owner()) as ex:
                 queue, inflight, stop = list(todo_native), {}, False
                 while queue or inflight:
                     while queue and len(inflight) < nw and not stop and not self._over(t0, unbounded):

@@ -527,6 +527,39 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11cb. Round G — run reliability, data correctness, verification references (2026-10-18)
+
+**Run after pulling (PowerShell 5.1, repo root), IN THIS ORDER. No run_sql section this round: nothing stored is
+restated.**
+```
+git checkout -- fixtures; git clean -f fixtures; git pull
+python check_offline_items.py alchemy_transfer_routes
+python token_metrics.py --seed burn_history
+python token_metrics.py --seed pendle_gauges
+python archive_backfill.py --run --project Pendle --project Aethir
+python token_metrics.py
+python token_metrics.py --no-fetch
+python check_offline_items.py near_settlement_routes
+python check_offline_items.py aethir_veaethir_reconcile
+python check_offline_items.py insider_stake_check
+```
+- `alchemy_transfer_routes` (G2.7): one alchemy_getAssetTransfers per chain on the Alchemy key in your `*_RPC_URL`
+  (host printed, never the key). It writes the `alchemy` section of explorer_routes.json; the next run scans the Pendle
+  gauge / Fluid distributors on each SERVED chain (Base expected; BNB and Berachain answer for themselves), each window
+  stored only when balanceOf's change equals logged in − out to the wei. `--seed pendle_gauges` reads their history.
+- `--seed burn_history` (G2.3d): Sky's daily gross burn before its first stored row, from the held burn events.
+- `archive_backfill.py --project Pendle --project Aethir` (G2.8a, G2.9): history for the new per-wallet Pendle series
+  and veAethir's totalSupply (the peg).
+- The run itself: prices back to the first token flow (price_history tier), the vest-rate history, the
+  connections line after the robots re-check, the run lock (a second run waits, then exits 75).
+- `near_settlement_routes` dry-runs `sql/near/bigquery_wallet_inflows.sql` (bytes only) with the other NEAR routes.
+- `aethir_veaethir_reconcile` re-reads every veAethir holder at one block; `insider_stake_check` re-reads the
+  issuer-side wallets' stake (Chainlink pools, Sky Lockstake). PASTE BACK what each prints.
+- On launch day (2026-10-22) the only input is `aero_migration.json` (11bx). It is refused with the reason if any
+  address is a placeholder, repeated, mistyped (EIP-55), has no code on Base, or if `verified` predates the launch.
+- SPEC.md section 19 lists every amendment old → new.
+
+
 ## 11ca. Round F — Aero v3 readers, L2 explorer probe, Aethir on-chain supply, HyperEVM burn (2026-10-14)
 
 **Run after pulling (PowerShell, repo root), IN THIS ORDER (CQ / CR from 11bz first, if not yet run):**

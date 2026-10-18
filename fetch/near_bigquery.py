@@ -64,6 +64,27 @@ SOURCE = "near_bigquery"
 TIER = 1
 REAUTH_ACTION = "run `gcloud auth application-default login`"
 SKIP_ENV = "TOKEN_METRICS_SKIP_NEAR_BQ"      # set to 1 by windows/daily_run.ps1 when its BigQuery check failed
+LOGIN_COMMANDS = ("gcloud auth application-default login",
+                  "gcloud auth application-default set-quota-project near-data-510309")
+
+
+def login_state() -> dict:
+    """{'needed_on', 'ok_on', 'dates'} from the BigQuery state file — whether the LATEST attempt needed a Google login
+    (Round G 1.7(a): the Run Log and the Gap Report say so first). Empty when there is no state."""
+    import json
+    from .logcache import LogCache
+    try:
+        st = json.loads((LogCache().root / "near-bq.json").read_text())
+    except (OSError, ValueError):
+        return {}
+    return {"needed_on": st.get("login_needed_on"), "ok_on": st.get("login_ok_on"),
+            "dates": list((st.get("reauth") or {}).get("dates") or [])}
+
+
+def login_needed(state: dict | None = None) -> bool:
+    s = login_state() if state is None else state
+    need, ok = s.get("needed_on"), s.get("ok_on")
+    return bool(need) and (not ok or str(need) >= str(ok))
 QUOTA_REMINDER = "ADC has no quota project — run `gcloud auth application-default set-quota-project {project}`"
 
 
@@ -309,6 +330,9 @@ class NearBigQuery:
             out.skipped(SOURCE, name, "NEAR BigQuery skipped — log in: gcloud auth application-default login "
                                       "(the daily run's BigQuery check failed; each series resumes from its last "
                                       "stored day on the next good run)", TIER)
+            st = self._load()
+            st["login_needed_on"] = str(today().date())          # the Gap Report's P2 row reads it (Round G 1.7)
+            self._save(st)
             return
         self._run_bytes = self._backfill_bytes = 0
         st = self._load()
@@ -343,6 +367,8 @@ class NearBigQuery:
                                               "approved.p2p, Jake's decision on the logged estimates)", TIER)
             except ReauthNeeded as e:
                 self._reauth(spec, st, out, name, e)
+            else:
+                st["login_ok_on"] = str(today().date())
             out.skipped(SOURCE, name, self._quota_line(spec, st), TIER)
         if getattr(self, "quota_reminder", None):
             out.skipped(SOURCE, name, f"REMINDER: {self.quota_reminder}", TIER)
@@ -353,6 +379,7 @@ class NearBigQuery:
         """Expired ADC (probes6 4, Jake 2026-10-02): every BigQuery read stops for this run, the action goes
         to the run summary, and how often it has happened is kept (state `reauth`)."""
         day = str(today().date())
+        st["login_needed_on"] = day
         r = st.setdefault("reauth", {"count": 0, "dates": []})
         if day not in r["dates"]:
             r["count"] = int(r.get("count", 0)) + 1

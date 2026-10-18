@@ -255,7 +255,9 @@ def test_the_daily_run_checks_bigquery_first_logs_in_by_hand_and_skips_when_sche
     ps = (root / "windows" / "daily_run.ps1").read_text(encoding="utf-8")
     steps = [ln.strip() for ln in ps.splitlines() if "Invoke-Step " in ln and not ln.lstrip().startswith(("#", "function"))]
     assert steps[0].startswith('$adc = Invoke-Step "BigQuery check" @("adc_check.py")'), steps[:2]
-    login = ps.index("& gcloud auth application-default login")
+    # Round G 1.7(b): the interactive login is BOUNDED (Start-Process, WaitForExit of -LoginWaitMinutes), never a wait
+    login = ps.index('-ArgumentList @("auth", "application-default", "login")')
+    assert "$lp.WaitForExit($LoginWaitMinutes * 60000)" in ps and "[int]$LoginWaitMinutes = 5" in ps
     assert ps.index("if ((Test-Interactive) -and $gcloud)") < login < ps.index(
         "& gcloud auth application-default set-quota-project near-data-510309") < ps.index(
         'Invoke-Step "BigQuery check (after login)"')

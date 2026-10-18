@@ -15,6 +15,7 @@ team / foundation holdings — out of circulating on our convention even though 
 from __future__ import annotations
 
 import logging
+import time
 
 import pandas as pd
 
@@ -24,6 +25,7 @@ log = logging.getLogger("token_metrics.fetch.ve_managed")
 
 SOURCE = "ve_managed"
 TIER = 2
+WINDOW_BUDGET_S = 80          # of ve_managed's 120 s: the holdings and lock-stock reads come first and take seconds
 _ABI = [{"name": "balanceOf", "type": "function", "stateMutability": "view", "inputs": [{"type": "address"}],
          "outputs": [{"type": "uint256"}]},
         {"name": "ownerToNFTokenIdList", "type": "function", "stateMutability": "view",
@@ -62,35 +64,41 @@ class VeManaged:
         self.daily = daily
 
     def run(self, projects: list[dict], window_days, out):
+        # CHEAP READS FIRST, THE BUYBACK WINDOW LAST (Round G 1.4): the window's archive bisection is the one part that
+        # can run long, and it used to run before the holdings read — a timeout lost both
+        for p in projects:
+            self._holdings(p, out)
         for p in projects:
             if p.get("foundation_buyback"):
                 self._foundation(p, p["foundation_buyback"], out)
-            spec = p.get("ve_managed_holdings")
-            if not spec:
-                continue
-            name, metric, chain = p["name"], spec["metric"], spec.get("chain", "base")
-            day = str(today().date())
-            key = f"ve_managed:{name}:{metric}"
-            if not self.daily.due(key, day):
-                out.mark_current(SOURCE, name, metric, f"{metric}: read today already", TIER)
-                continue
-            try:
-                w3 = self.reader.web3(chain)
-                ve = w3.eth.contract(address=self.reader.checksum(spec["escrow"]), abi=_ABI)
-                head = int(self.reader.block_number(chain))
-                scale = 10 ** int(spec.get("decimals", 18))
-                total, parts = 0, []
-                for owner, label in spec["owners"].items():
-                    raw, n, held = deposits(ve, self.reader.checksum(owner), head)
-                    total += raw
-                    parts.append(f"{label} {raw / scale:,.0f} ({held} of {n} veNFT(s) in a managed NFT)")
-            except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
-                from .chain import redact_urls
-                out.fail(SOURCE, name, f"{metric}: {redact_urls(e)}", TIER)      # hosts only, never a key
-                continue
-            out.add(tidy([(today(), total / scale)], name, metric, f"{SOURCE}:{spec['escrow'][:10]}.weights", TIER),
-                    SOURCE, name, f"{metric} = {total / scale:,.0f} at block {head:,}: " + "; ".join(parts), TIER)
-            self.daily.done(key, day)
+
+    def _holdings(self, p, out):
+        spec = p.get("ve_managed_holdings")
+        if not spec:
+            return
+        name, metric, chain = p["name"], spec["metric"], spec.get("chain", "base")
+        day = str(today().date())
+        key = f"ve_managed:{name}:{metric}"
+        if not self.daily.due(key, day):
+            out.mark_current(SOURCE, name, metric, f"{metric}: read today already", TIER)
+            return
+        try:
+            w3 = self.reader.web3(chain)
+            ve = w3.eth.contract(address=self.reader.checksum(spec["escrow"]), abi=_ABI)
+            head = int(self.reader.block_number(chain))
+            scale = 10 ** int(spec.get("decimals", 18))
+            total, parts = 0, []
+            for owner, label in spec["owners"].items():
+                raw, n, held = deposits(ve, self.reader.checksum(owner), head)
+                total += raw
+                parts.append(f"{label} {raw / scale:,.0f} ({held} of {n} veNFT(s) in a managed NFT)")
+        except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
+            from .chain import redact_urls
+            out.fail(SOURCE, name, f"{metric}: {redact_urls(e)}", TIER)      # hosts only, never a key
+            return
+        out.add(tidy([(today(), total / scale)], name, metric, f"{SOURCE}:{spec['escrow'][:10]}.weights", TIER),
+                SOURCE, name, f"{metric} = {total / scale:,.0f} at block {head:,}: " + "; ".join(parts), TIER)
+        self.daily.done(key, day)
 
 
 def foundation_rows(name: str, spec: dict, day, got: dict, archive: bool = False) -> tuple[list, str]:
@@ -181,11 +189,20 @@ def _buyback_window(self, p, spec, out):
         out.mark_current(SOURCE, name, spec["window_metrics"]["compounded_owner"], "buyback window: read today already",
                          TIER)
         return
+    # ITS OWN DEADLINE (Round G 1.4): WINDOW_BUDGET_S of the tier's budget; past it the window stops with the reason and
+    # is read again on the next run (its daily marker is set only once it is stored)
+    import check_offline_items as coi                      # noqa: PLC0415
+    t0 = time.monotonic()
     try:
-        b0, b1 = (getattr(self, "day_blocks", None) or _day_blocks)(yday)
-        if not (b0 and b1):
-            raise ValueError("the day's Base blocks could not be resolved")
-        got = (getattr(self, "window_reader", None) or _window_reader)(b0, b1)
+        with coi.call_budget(float(spec.get("window_budget_s") or WINDOW_BUDGET_S)):
+            b0, b1 = (getattr(self, "day_blocks", None) or _day_blocks)(yday)
+            if not (b0 and b1):
+                raise ValueError("the day's Base blocks could not be resolved")
+            got = (getattr(self, "window_reader", None) or _window_reader)(b0, b1)
+    except TimeoutError as e:
+        out.fail(SOURCE, name, f"Foundation buyback window {yday.date()}: stopped after {time.monotonic() - t0:.0f}s — "
+                 f"{e}; nothing stored, read again on the next run", TIER)
+        return
     except Exception as e:  # noqa: BLE001
         from .chain import redact_urls
         out.fail(SOURCE, name, f"Foundation buyback window {yday.date()}: {redact_urls(e)}", TIER)

@@ -521,8 +521,12 @@ def test_daily_run_ends_with_the_snapshot_and_runs_the_weekly_lockups():
     steps = [ln for ln in ps.splitlines() if ln.startswith("[void](Invoke-Step")]
     assert steps[-1] == '[void](Invoke-Step "export snapshot" @("export_snapshot.py"))'
     # Jake's Phase 1 review 2026-10-12, item 9: the script closes with ONE console line (ran / exit code / log path)
-    tail = ps.rstrip().splitlines()[-4:]
-    assert tail[-2] == "Write-Host $summary" and tail[-1] == "exit $run[0]"
+    # Round G 1.8: the body sits in try/finally — the closing line, then "daily run FINAL: complete", then the exit;
+    # the finally block writes "daily run FINAL: stopped early" when the body ended any other way
+    lines = [ln.strip() for ln in ps.splitlines()]
+    i = lines.index("Write-Host $summary")
+    assert lines[i + 1].startswith('Write-Log "daily run FINAL: complete') and lines[i + 3] == "exit $run[0]"
+    assert ps.rstrip().endswith("}") and "} finally {" in ps and "daily run FINAL: stopped early" in ps
     assert "token_metrics exit $($run[0])" in ps and "log $Log" in ps and "$script:Steps += ,@($label, $code)" in ps
     assert '"near_lockups_weekly.py"' in ps
 

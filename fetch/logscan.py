@@ -77,6 +77,15 @@ def _tail_net(explorer, chain_id: int, token: str, holder: str, after_block: int
     return got
 
 
+def _takes_transfer(explorer) -> bool:
+    """A test's stand-in explorer may not know the `transfer` keyword (Round G 2.7)."""
+    import inspect
+    try:
+        return "transfer" in inspect.signature(explorer.configured).parameters
+    except (TypeError, ValueError):
+        return False
+
+
 def _amount(entry: dict) -> int:
     """Transfer's value is the DATA word — from and to are the indexed topics."""
     return hexint(entry.get("data"))
@@ -267,7 +276,11 @@ class LogScan:
             net = sum(_amount(e) for e in ins if int(e["blockNumber"]) <= b and topic_address(e["topics"][1])
                       not in internal) - sum(_amount(e) for e in outs if int(e["blockNumber"]) <= b and
                                              topic_address(e["topics"][2]) not in internal)
-            return sum(self._balance_at(chain, chain_id, token, h, b) for h in holders) - bal0 - net
+            # ARCHIVE STATE ONLY (Round G 1.2, Jake's Ether.fi run 2026-10-18): with no endpoint serving past state, the
+            # tip-minus-logged-tail stand-in answered every probe — and since it is made of the explorer's own logs, the
+            # difference it measures is the same at every block before the hole, so the bisection halved 79,180,853 ->
+            # 19,331 at 13-25 s a step and never found anything. No archive state: the search stops at once and says so.
+            return sum(self._balance_at(chain, chain_id, token, h, b, allow_tail=False) for h in holders) - bal0 - net
 
         def block_logs(topics, blk):
             if hasattr(self.reader, "logs_in_block"):
@@ -461,7 +474,10 @@ class LogScan:
                 got, v = self._window_logs(chain, chain_id, token, [TRANSFER_TOPIC, pad_address(h), None], b0, to_block)
                 outs += got
                 via.add(v)
-            bal0 = sum(self._balance_at(chain, chain_id, token, h, b0 - 1) for h in holders)
+            # THE OPENING BALANCE IS A REAL PAST-STATE READ when the window's logs came from an explorer (Round G 1.2):
+            # tip-minus-logged-tail at BOTH ends makes bal1 - bal0 the explorer's own window sum — a check that cannot fail
+            tail_ok = all(str(v).startswith("RPC") for v in via)
+            bal0 = sum(self._balance_at(chain, chain_id, token, h, b0 - 1, allow_tail=tail_ok) for h in holders)
             bal1 = sum(self._balance_at(chain, chain_id, token, h, to_block) for h in holders)
         except Exception as e:  # noqa: BLE001
             from .chain import redact_urls
@@ -542,7 +558,8 @@ class LogScan:
                                            b0, to_block)
                 ins += got
                 via.add(v)
-            bal0 = sum(self._balance_at(spec["chain"], chain_id, token, h, b0 - 1) for h in holders)
+            tail_ok = all(str(v).startswith("RPC") for v in via)       # see _window_scan (Round G 1.2)
+            bal0 = sum(self._balance_at(spec["chain"], chain_id, token, h, b0 - 1, allow_tail=tail_ok) for h in holders)
             bal1 = sum(self._balance_at(spec["chain"], chain_id, token, h, to_block) for h in holders)
         except Exception as e:  # noqa: BLE001
             from .chain import redact_urls
@@ -744,7 +761,8 @@ class LogScan:
         return f" SINCE {since}: counted {tot / scale:,.2f}" + (f" — {rows}." if rows else " (none).")
 
     # ------------------------------------------------------------------ one scan
-    def _balance_at(self, chain: str, chain_id: int, token: str, holder: str, block: int) -> int:
+    def _balance_at(self, chain: str, chain_id: int, token: str, holder: str, block: int,
+                    allow_tail: bool = True) -> int:
         """balanceOf(holder) at `block` for the reconciliation (Jake's run 2026-10-07). First the archive read, through
         every endpoint (<CHAIN>_RPC_URL first). If EVERY endpoint refuses past-block state, LOGS STAND IN FOR IT:
         balanceOf at the latest block minus the holder's Transfer net after `block` (explorer logs) — the same
@@ -761,6 +779,9 @@ class LogScan:
                     self.reader.checksum(holder)).call(block_identifier=block))
             except Exception as e:  # noqa: BLE001
                 archive_err = e
+        if not allow_tail:
+            raise RuntimeError(f"{archive_err} — and the latest-minus-logged-tail stand-in is not used here: it is "
+                               f"built from the same explorer logs being checked, so it cannot find their hole")
         try:
             latest = int(self.reader.erc20(chain, token).functions.balanceOf(
                 self.reader.checksum(holder)).call(block_identifier="latest"))
@@ -781,8 +802,10 @@ class LogScan:
         if chain_id is None:
             out.unconfigured(SOURCE, name, f"{key}: no chain id for {chain!r} in config.CHAIN_IDS", TIER)
             return
-        if not self.explorer.configured(chain_id):
-            routed = config.explorer_order(chain_id)
+        # every query below is a Transfer of one token from / to a holder: the chain's opened transfer route counts
+        if not (self.explorer.configured(chain_id, transfer=True) if _takes_transfer(self.explorer)
+                else self.explorer.configured(chain_id)):
+            routed = config.explorer_order(chain_id) + config.transfer_route(chain_id)
             why = (f"no explorer serves logs free on {chain} (chain {chain_id}) per "
                    f"EXPLORER_LOG_ROUTES" if not routed else
                    f"none of {', '.join(routed)} has its key in .env "

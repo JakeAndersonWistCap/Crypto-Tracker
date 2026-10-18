@@ -77,7 +77,8 @@ def _main(argv=None) -> int:
     a = ap.parse_args(argv)
     import logging
     # PROGRESS and RETRY lines (Jake, 2026-10-01) are log records; without a handler they were never shown.
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    # ON STDOUT (Round G 1.11): PowerShell 5.1 turns every stderr line under 2>&1 into a NativeCommandError
+    logging.basicConfig(level=logging.INFO, stream=sys.stdout, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     import store as store_mod
     ar.load_env()          # the keyed <CHAIN>_RPC_URL entries live in .env
     from fetch.base import install_redaction

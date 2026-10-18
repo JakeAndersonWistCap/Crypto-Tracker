@@ -1319,14 +1319,14 @@ Funding: revenue (the default: the programme documented base)
 | Flow | Category | Series |
 |---|---|---|
 | into circulating | (a) security emissions | **NO SERIES** |
-| into circulating | (b) supply-side incentives | `emissions_tokens` |
+| into circulating | (b) supply-side incentives | `emissions_tokens` + `emissions_tokens_arbitrum` |
 | into circulating | (c) demand-side incentives | **NO SERIES** |
 | into circulating | (d) ecosystem / grant spend | **NO SERIES** |
 | into circulating | (e) unlocks | `unlock_release_tokens` |
 | out of circulating | retirement (bought, burned + held) | `retired_buyback_tokens` |
 | out of circulating | burn (every burn) | **NO SERIES** |
 
-Basis: FLUID rewards to lenders / LPs, read from the Merkle claims already scanned; no FLUID rewards are live now (2026-10-12)
+Basis: FLUID rewards to lenders / LPs, read from the Merkle claims already scanned (Ethereum + Arbitrum; Base / Plasma when wired); no FLUID rewards are live now (2026-10-12)
 
 **Value flow statement**
 

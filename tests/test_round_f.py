@@ -88,8 +88,10 @@ def test_f1_epoch_rewards_prorates_streams_and_sums_fees():
 
 
 def _aero_state():
-    return {"launched": True, "addresses": {"minter": "0x" + "01" * 20, "voting_escrow": "0x" + "02" * 20,
-                                            "token": "0x" + "03" * 20},
+    # high-entropy test addresses (Round G 2.10 refuses repeated patterns like 0x0101… as placeholders)
+    return {"launched": True, "addresses": {"minter": "0x5f1c9a3e7b2d48c06e9f31a7b5d2c8e4f0a6b913",
+                                            "voting_escrow": "0x8e2d7c4b1a9f36e05d8c27b4a1f9e6d3c0b5a872",
+                                            "token": "0x3a7f9c1e5b8d24f06a3c9e7b1d5f82a4c6e0b391"},
             "source_url": "https://github.com/dromos-labs", "verified": "2026-10-22"}
 
 
@@ -111,6 +113,8 @@ def test_f1_aero_v3_run_writes_the_replaced_metrics_from_a_stub_chain(monkeypatc
     calls = []
 
     def rpc(method, params):
+        if method == "eth_getCode":
+            return "0x6080"                                 # code at every address (Round G 2.10 checks it first)
         assert method == "eth_call"
         calls.append(params[0]["data"][:10])
         return ans[params[0]["data"][:10]]
