@@ -119,9 +119,8 @@ TIER_ORDER = [
     # Pendle's GaugeController seed (millions of logs from block 0) on its own tier and budget, so it cannot starve
     # the explorer tier (Jake's run 2026-10-08 11:27: explorer timed out at 300s with the gauge scan at 90%).
     ("explorer_gauge", 2, lambda ctx: LogScan(own_tier="explorer_gauge")),
-    # Pendle's L2 gauge controllers (Jake's run 2026-10-09 11:41, item 2), their own tier so a first seed from genesis
-    # cannot starve the mainnet gauge scan.
-    ("explorer_gauge_l2", 2, lambda ctx: LogScan(own_tier="explorer_gauge_l2")),
+    # THE L2 SCANS, ONE TIER PER CHAIN (Round G3 item 1; inserted below as explorer_l2:<chain>): Jake's run on b6cf214
+    # lost 12 series on 8 chains to one stalled Katana RPC in the shared explorer_gauge_l2 tier.
     # A wallet group's outflow from daily archive balances and its few inflows (GEODNET, B1).
     ("balance_flow", 2, lambda ctx: BalanceFlow()),
     # Chainlink staking v0.2 emission rates from the RewardVault (2026-09-29).
@@ -175,6 +174,17 @@ TIER_ORDER = [
     ("dune", 4, lambda ctx: Dune(has_history=ctx["has_history"], last_dates=ctx["last_dates"],
                                  stored_long=ctx.get("stored_long"))),
 ]
+
+
+def _l2_tiers() -> list[str]:
+    """One tier per L2 chain: every chain a scan declares, and every chain a probed scan can be wired on (an unwired
+    chain's tier finds nothing to do and returns at once)."""
+    import config                                                    # noqa: PLC0415
+    return sorted(set(config.l2_scan_tiers()) | {config.l2_tier(c[2]) for c in config.EXPLORER_PROBED_SCANS})
+
+
+_at = next(i for i, t in enumerate(TIER_ORDER) if t[0] == "explorer_gauge") + 1
+TIER_ORDER[_at:_at] = [(t, 2, (lambda tier: (lambda ctx: LogScan(own_tier=tier)))(t)) for t in _l2_tiers()]
 
 
 def _resolve_tier_collisions(out: FetchOutput) -> None:
@@ -1741,6 +1751,9 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
     # backfill: (project, metric) pairs to re-read over BACKFILL_DAYS (see fetch.base.window).
     from .base import set_backfill
     set_backfill(backfill)
+    # THE STALL BREAKER IS PER RUN (Round G3 item 1): a host that stalled yesterday is asked again today
+    from .chain import BREAKER
+    BREAKER.reset()
     out = FetchOutput()
     todo = [(name, tier, build) for name, tier, build in TIER_ORDER
             if not sources or name in sources]
@@ -1874,9 +1887,7 @@ TIER_BUDGET_S = {
     "nearblocks": 180, "coingecko": 240, "price_history": 120, "hypercore_info": 60, "chainlink_fees": 180, "xref": 90, "validatorqueue": 30, "treasury_bills": 60, "sky_ssr": 120, "business": 900, "share_vault": 60,
     "chain": 240, "tron_node": 60, "near_rpc": 90, "explorer": 300, "balance_flow": 150, "maple_page": 60,
     "explorer_gauge": 300,
-    # run review D1 (2026-10-14): the L2 gauge scans' 140 s explorer budget + the full-history repair's 120 s of chain
-    # reads (fetch.logscan.REPAIR_BUDGET_S) and their balance reads
-    "explorer_gauge_l2": 420,
+    # the L2 chain tiers (explorer_l2:<chain>, G3 item 1) take config.L2_TIER_BUDGET_S, set below
     # one epoch a week: ~10 Multicall3 batches + one DefiLlama price call; the daily totalWeight is one eth_call
     "aero_voter": 180,
     "aero_v3": 240,
@@ -1895,6 +1906,9 @@ TIER_BUDGET_S = {
     "boros": 480,
 }
 DEFAULT_BUDGET_S = 120
+for _t in _l2_tiers():
+    import config as _config                                        # noqa: E402
+    TIER_BUDGET_S[_t] = _config.l2_tier_budget(_t)
 
 
 def nearblocks_daily_calls() -> int:
@@ -2090,6 +2104,11 @@ def _abandon(name, st, budget) -> tuple:
               st["tier"])
     log.warning("tier %s TIMED OUT after %.0fs — abandoned (waiting on: %s)", name, budget,
                 "; ".join(waiting) or "nothing registered")
+    # ITS DAILY MARKS ARE DROPPED (Round G3 item 5): a tier cut off mid-read has not stored what it marked as read
+    from .logcache import DailyChecks
+    dropped = DailyChecks.discard_tier(name)
+    if dropped:
+        log.info("tier %s: %d daily-check mark(s) dropped with it — those reads run again next run", name, dropped)
     # ...and it STOPS (Round G 1.2(d)): its next HTTP call or registered sleep raises, its log lines are dropped
     from .base import abandon_thread
     if st.get("thread") is not None:

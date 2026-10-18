@@ -310,7 +310,8 @@ def test_g1_2_alchemy_key_serves_optimism_when_no_optimism_url_is_set(monkeypatc
     assert ch.rpc_endpoints("optimism") == list(config.DEFAULT_RPC["optimism"])
     # chains with no known Alchemy host are untouched
     monkeypatch.delenv("TOKEN_METRICS_NO_ALCHEMY_DERIVE")
-    assert ch.rpc_endpoints("plasma") == list(config.DEFAULT_RPC["plasma"])
+    # (G3 item 10 gave Plasma an Alchemy host; Katana still has none)
+    assert ch.rpc_endpoints("katana") == list(config.DEFAULT_RPC["katana"])
 
 
 def test_g1_2_hole_bisection_never_uses_the_explorer_tail_as_a_balance(monkeypatch):

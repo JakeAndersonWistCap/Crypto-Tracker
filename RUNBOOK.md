@@ -527,6 +527,66 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11cd. Round G3 — stalls, keys, Alchemy, burns, NEAR in November (2026-10-18)
+
+**`.env` first.** Add `ALCHEMY_API_KEY=<the key only>` (not a URL: no "/", spaces, "<" or ">"). Every Alchemy URL is
+built from it and `fetch.chain.ALCHEMY_HOSTS`; `<CHAIN>_RPC_URL` (tried first) and `RPC_<CHAIN>` (replaces the list) still
+win. A malformed key stops the run at startup (exit 2) with the reason and never the value. `python
+check_offline_items.py env_keys` prints every key PRESENT / ABSENT, what an absence disables and the tiers it affects;
+every full run opens with the same one-line summary. A read skipped only because its key is absent is UNCONFIGURED (a
+CONFIG gap), not FAILED.
+
+**Run after pulling (PowerShell 5.1, repo root), IN THIS ORDER.** Each `--delete` shows the rows first and asks you to
+type `DELETE <section>`; nothing in the SQL file needs editing by hand.
+1. `python check_offline_items.py env_keys`, then `python check_offline_items.py alchemy_transfer_routes`. The probe
+   now reports SERVED / NOT SERVED / NOT TRIED; only a real NOT SERVED removes a served chain, and a probe where every
+   chain was NOT TRIED (no key) leaves `explorer_routes.json` untouched.
+2. `python token_metrics.py --seed katana_claims` — Morpho's Katana claims from block 0 through rpc.katana.network
+   (~10 chunks of 5M blocks and ~3,000 block-time reads; ~10 min here). State is saved after every chunk in
+   `.cache/seed_katana_claims.json`; run it again to resume. Nothing is stored until the history reconciles to the
+   wei at the head (on 2026-10-18 here: balanceOf 16,345.7186 = in − out over 74 + 20,881 transfers; 308,579.55 MORPHO
+   paid 2025-07-10..2026-10-17).
+3. `python token_metrics.py --seed hyperevm_burn` (add `--seed-days 600` to go back to HyperEVM's first block). It reads
+   from the earliest row of ANY Hyperliquid circulating / total series, Alchemy's HyperEVM first where it serves past
+   state (else rpc.purroofgroup.com), and stores every 30 days, so a stop keeps what it read.
+4. `python run_sql.py CX` (three dry runs: coverage, the first-party series as it will read, the days still without a
+   burn row — CX3 must be empty), then `python run_sql.py --delete CX`. Re-check `python run_sql.py CW` (CW3 empty).
+5. `python run_sql.py CY` (the stored multi-day new-users rows), then `python run_sql.py --delete CY`.
+6. `python token_metrics.py`, then `python sanity.py`.
+7. `python check_offline_items.py aero_migration` — exits 1 until `aero_migration.json` is complete (11bx); on launch
+   day (2026-10-22) fill it from Aero's own publication only.
+
+**What changed (SPEC.md §19 "G3" lists every item old → new):**
+- **One chain, one tier (item 1).** The L2 scans run as `explorer_l2:<chain>` tiers (240 s; Katana 300 s), concurrently.
+  Every Web3 has a hard (10 s connect, 30 s read) timeout and no retry on a timeout; three consecutive timeouts on a
+  host mark it STALLED for the run, and a chain with every host stalled reads "CHAIN STALLED THIS RUN: <chain> — …
+  Series gapped: …" (one FAILED line); the other chains' series land.
+- **Hyperliquid's stake bound (item 2).** locked_tokens is bounded by the same-day NET total (total_supply_gross −
+  Assistance Fund − HyperEVM burn, this run's reads first), never by circulating; the Run Log line shows the arithmetic.
+- **NEAR Intents (item 4).** A FULL_HISTORY series has its own daily key, so the first run on this code re-reads the
+  whole history (the CHECK compares since-launch figures again: −2.28% on 2026-10-18's read, inside the 3% tolerance).
+- **Daily marks wait for the store (item 5).** During a full run a "read today" mark is written only after the upsert
+  succeeds; a tier abandoned on its budget, or a killed run, leaves no mark — the read runs again.
+- **Aerodrome market cap (item 5).** The sanity hit now names both dates and prices; config.MCAP_MEASURING_POINT records
+  what market cap measures (price × our circulating, same day).
+- **NEAR stage 1 in November (item 6).** `check_offline_items.py near_wallet_inflow_days` (daily_run.ps1 step 2c) runs
+  `wallet_inflow_days` once inside 2026-11-01..2026-11-07 under that month's 900 GB and the top-up reserve rule
+  (NearBigQuery._run, backfill) and saves the day list in data/near; any other day it says so and exits 0.
+  `wallet_inflows_alltime` (2,001.57 GB) is never run.
+- **New users (item 7).** Only a one-day change in ASXN's cumulative users is stored as a day's new users.
+- **World Mobile Chain (item 7).** `check_offline_items.py worldmobile_probe` reads chainId, the head and the WMTX
+  addresses' code / totalSupply through Alchemy; nothing is wired from it. PASTE BACK what it prints.
+- **Sky burns (item 8).** The Stage 2 line names each burn: 2026-09-13 12:42:11 UTC, block 25,968,583, 2,860,943.76
+  SKY, tx 0xcd57535f7a9e60e61d34b31f793501fa6178b4ae37fe0b2900f76efd54e192c3; 2026-10-12 14:01:47 UTC, block 26,176,859,
+  7,372,288 SKY, tx 0x93389082b75a9e278b6b2a2d7dde53618c38214b5d71699fd60461dbe1e10275 — each checked against the burn
+  on file to the wei.
+- **getLogs and the free tier (item 11).** A plan refusal (Alchemy free tier: 10 blocks) marks the endpoint "NO getLogs"
+  for the run after ONE call, and the scan falls through: explorer, then mainnet.gateway.tenderly.co (Ethereum's public
+  log route), then the public list. A stated range of 2,000 blocks or more is used directly, not halved towards.
+- **Alchemy usage (item 10).** "ALCHEMY USAGE this run: …" closes every run, with the month's estimated CU in
+  `.cache/alchemy_usage.json`; WARN at 80% of the Free plan's 30M CU, a FAILED line at 95%.
+
+
 ## 11cc. Round G2 — Jake's decisions D1-D5, loose ends L1-L3, run addendum A1-A7 (2026-10-18)
 
 **Run after pulling (PowerShell 5.1, repo root), IN THIS ORDER.** Each `--delete` shows the rows first and asks you to
@@ -610,6 +670,7 @@ python check_offline_items.py insider_stake_check
   issuer-side wallets' stake (Chainlink pools, Sky Lockstake). PASTE BACK what each prints.
 - On launch day (2026-10-22) the only input is `aero_migration.json` (11bx). It is refused with the reason if any
   address is a placeholder, repeated, mistyped (EIP-55), has no code on Base, or if `verified` predates the launch.
+  `python check_offline_items.py aero_migration` (G3) says whether it is complete and exits 1 until it is.
 - SPEC.md section 19 lists every amendment old → new.
 
 
@@ -752,6 +813,9 @@ PASSED` as FAILED — loudly, never a silent 0. On launch day:
    Since E8 (2026-10-14) the guard accepts the file only COMPLETE: three real 0x addresses, a source_url and a
    `verified` date not in the future. `"launched": true` alone, or the template's `0x…` placeholders, keeps the refusal
    and the run log names what is missing.
+   G3 (2026-10-18): `python check_offline_items.py aero_migration` prints the file's fields and what is still missing
+   (voting_rewards_factory and deploy_block included), and exits 1 until it is complete. Never type an address that
+   was not read from Aero's own publication.
 3. Run `python token_metrics.py` and send back the run log. The readers for the new contracts ARE BUILT (F1,
    2026-10-14: fetch/aero_v3.py, from dromos-labs/metadex-public@0058bd9b — emissions minted on claim, the team share,
    the emission rate, sAERO supply / voting power / permanent stake, the escrow's AERO, the Voter's resolved total

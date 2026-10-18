@@ -211,18 +211,52 @@ class LogScan:
             self._declared_zero(p, spec, out)
         todo = [t for t in todo if not t[1].get("declared_zero")]
         self.planned = [(p["name"], spec.get("metric")) for p, spec in todo]
+        from .chain import BREAKER, ChainStalled, redact_urls
+        stalled: dict[str, str] = {}
+        gapped: dict[str, list] = {}
         for p, spec in todo:
+            chain = spec.get("chain") or "ethereum"
+            # A STALLED CHAIN IS NOT ASKED AGAIN THIS RUN (Round G3 item 1): its remaining scans are gapped at once and
+            # named in ONE line below, and the other chains' scans (their own tiers) are untouched.
+            why = stalled.get(chain) or BREAKER.chain_stalled(chain)
+            if why:
+                stalled[chain] = why
+                gapped.setdefault(chain, []).append((p["name"], spec))
+                continue
             # ONE SCAN'S FAILURE NEVER STOPS THE TIER (Jake's run 2026-10-06 18:21: one bad log crashed the
             # adapter and no later scan ran).
             try:
                 self._scan(p, spec, window_days, out)
             except ExplorerTimeout:
                 raise
+            except ChainStalled as e:
+                stalled[chain] = BREAKER.chain_stalled(chain) or str(e)
+                gapped.setdefault(chain, []).append((p["name"], spec))
+                continue
             except Exception as e:  # noqa: BLE001
-                from .chain import redact_urls
                 out.fail(SOURCE, p["name"], f"{spec.get('key')}: scan crashed — {type(e).__name__}: "
                                             f"{redact_urls(e)}. The other scans ran.", TIER)
                 log.exception("%s/%s crashed", p["name"], spec.get("key"))
+            # it stalled during this scan (STALL_AFTER timeouts on every host, or every host's last call timed out):
+            # its series did not land, and nothing more is asked of the chain this run
+            why = BREAKER.chain_stalled(chain) or (BREAKER.timed_out_all(chain) and BREAKER.mark_stalled(
+                chain, "every endpoint's last call timed out"))
+            if why:
+                stalled[chain] = why
+                gapped.setdefault(chain, []).append((p["name"], spec))
+        for chain, why in stalled.items():
+            series = [f"{n}/{m}" for n, sp in gapped.get(chain, []) for m in (sp.get("metric"), sp.get("direct_metric"))
+                      if m]
+            out.fail(SOURCE, gapped[chain][0][0] if gapped.get(chain) else None,
+                     f"CHAIN STALLED THIS RUN: {chain} — {redact_urls(why)}. Series gapped: {', '.join(series)}. Other "
+                     f"chains' series are unaffected (each chain has its own tier).", TIER)
+            have = {(g["project"], g["metric"]) for g in out.gaps}
+            for n, sp in gapped.get(chain, []):
+                for m in (sp.get("metric"), sp.get("direct_metric")):
+                    if m and (n, m) not in have:
+                        out.gap(n, m, tiers_attempted=str(TIER),
+                                reason=f"chain {chain} STALLED this run ({redact_urls(why)[:160]})",
+                                suggestion="re-run; if it persists, check the chain's RPC (RUNBOOK 11cd)")
 
     def _declared_zero(self, p, spec, out) -> None:
         """0 for each day of the scan's window (from `declared_zero.since`), to `metric` and `direct_metric`, under the

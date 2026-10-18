@@ -4933,3 +4933,79 @@ SELECT c.date, c.value, c.source
 --    AND source = 'hypercore_info:tokenDetails.circulatingSupply'
 --    AND EXISTS (SELECT 1 FROM metrics z WHERE z.project = 'Hyperliquid' AND z.date = metrics.date
 --                AND z.metric = 'hyperevm_zero_address_balance');
+
+-- ========================================================================================
+-- CX. HYPERLIQUID: THE HYPEREVM BURN OVER THE WHOLE SERIES  2026-10-18T18:30Z
+--     Round G3 item 3 (Jake 2026-10-18): CW covered the first-party rows before 2026-10-11; this covers every
+--     Hyperliquid circulating and total series over its WHOLE history. Run `python token_metrics.py --seed
+--     hyperevm_burn` FIRST (it now reads back to the earliest row of any of these series). CX1 coverage, CX2 the
+--     first-party series as it will read, CX3 the days still without a same-day hyperevm_zero_address_balance (empty
+--     when done). CX4 restates any first-party row still on a pre-burn measuring point (the raw tokenDetails leg and the
+--     -exclude_wallets leg) by the same day's balance. CoinGecko's own circulating rows are NOT restated: whether
+--     CoinGecko nets the HyperEVM burn is not published. Then: python run_sql.py CX, then python run_sql.py --delete CX.
+-- ========================================================================================
+-- CX1. COVERAGE: EACH SERIES, ITS ROWS, AND HOW MANY HAVE A SAME-DAY HYPEREVM BURN ROW.
+SELECT c.metric, c.source, COUNT(*) AS rows, MIN(c.date) AS first, MAX(c.date) AS last,
+       SUM(EXISTS (SELECT 1 FROM metrics z WHERE z.project = c.project AND z.date = c.date
+                   AND z.metric = 'hyperevm_zero_address_balance')) AS with_burn_row
+  FROM metrics c
+ WHERE c.project = 'Hyperliquid'
+   AND c.metric IN ('circulating_supply', 'circulating_supply_first_party', 'total_supply_gross',
+                    'total_supply_coingecko')
+ GROUP BY c.metric, c.source
+ ORDER BY c.metric, first;
+
+-- CX2. THE FIRST-PARTY SERIES AS IT WILL READ (every row; the burn already out of it or to come out in CX4).
+SELECT c.date, c.source, c.value, z.value AS hyperevm_burned,
+       CASE WHEN c.source IN ('hypercore_info:tokenDetails.circulatingSupply',
+                              'hypercore_info:tokenDetails.circulatingSupply-exclude_wallets')
+            THEN c.value - z.value ELSE c.value END AS value_after_cx
+  FROM metrics c
+  LEFT JOIN metrics z ON z.project = c.project AND z.date = c.date AND z.metric = 'hyperevm_zero_address_balance'
+ WHERE c.project = 'Hyperliquid' AND c.metric = 'circulating_supply_first_party'
+ ORDER BY c.date;
+
+-- CX3. DAYS OF ANY HYPERLIQUID CIRCULATING SERIES WITH NO HYPEREVM BALANCE ROW — empty after --seed hyperevm_burn.
+SELECT c.date, c.metric, c.value, c.source
+  FROM metrics c
+ WHERE c.project = 'Hyperliquid' AND c.metric IN ('circulating_supply', 'circulating_supply_first_party')
+   AND NOT EXISTS (SELECT 1 FROM metrics z WHERE z.project = c.project AND z.date = c.date
+                   AND z.metric = 'hyperevm_zero_address_balance')
+ ORDER BY c.date, c.metric;
+
+-- CX4. THE RESTATEMENT (first-party rows only; the same as CW4 / CU4, over the whole series).
+-- UPDATE metrics
+--    SET value = value - (SELECT z.value FROM metrics z
+--                          WHERE z.project = 'Hyperliquid' AND z.metric = 'hyperevm_zero_address_balance'
+--                            AND z.date = metrics.date),
+--        source = 'hypercore_info:tokenDetails.circulatingSupply-hyperevm_burn'
+--  WHERE project = 'Hyperliquid' AND metric = 'circulating_supply_first_party'
+--    AND source = 'hypercore_info:tokenDetails.circulatingSupply'
+--    AND EXISTS (SELECT 1 FROM metrics z WHERE z.project = 'Hyperliquid' AND z.date = metrics.date
+--                AND z.metric = 'hyperevm_zero_address_balance');
+-- UPDATE metrics
+--    SET value = value - (SELECT z.value FROM metrics z
+--                          WHERE z.project = 'Hyperliquid' AND z.metric = 'hyperevm_zero_address_balance'
+--                            AND z.date = metrics.date),
+--        source = 'hypercore_info:tokenDetails.circulatingSupply-exclude_wallets-hyperevm_burn'
+--  WHERE project = 'Hyperliquid' AND metric = 'circulating_supply_first_party'
+--    AND source = 'hypercore_info:tokenDetails.circulatingSupply-exclude_wallets'
+--    AND EXISTS (SELECT 1 FROM metrics z WHERE z.project = 'Hyperliquid' AND z.date = metrics.date
+--                AND z.metric = 'hyperevm_zero_address_balance');
+
+-- ========================================================================================
+-- CY. HYPERLIQUID NEW USERS: A MULTI-DAY CHANGE IS NOT ONE DAY'S FLOW  2026-10-18T18:30Z
+--     Round G3 item 7 (Jake 2026-10-18): browser_capture stored the change in ASXN's cumulative users over N > 1 days
+--     on the last day ("span=Nd": 6,565 since 2026-10-16 booked on 10-18). From now only a one-day change is stored;
+--     the cumulative hypercore_users_total stays, so any window's new users remain readable from it. CY1 lists the
+--     stored multi-day rows; CY2 removes them. Run: python run_sql.py CY, then python run_sql.py --delete CY.
+-- ========================================================================================
+-- CY1. THE MULTI-DAY ROWS.
+SELECT date, value, source
+  FROM metrics
+ WHERE project = 'Hyperliquid' AND metric = 'hypercore_new_users' AND source LIKE '%span=%'
+ ORDER BY date;
+
+-- CY2. THE REMOVAL.
+-- DELETE FROM metrics
+--  WHERE project = 'Hyperliquid' AND metric = 'hypercore_new_users' AND source LIKE '%span=%';

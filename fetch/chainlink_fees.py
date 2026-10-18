@@ -195,6 +195,7 @@ class ChainlinkFees:
         complete: dict = {k: True for k in ("ccip_legacy", "ccip_v2", "vrf", "automation", "aggregator")}
         why: dict = defaultdict(list)
         failed: dict = defaultdict(set)            # line -> chains not read through
+        nokey: dict = defaultdict(set)             # line -> chains not read ONLY because no explorer key is in .env
         prog = None
         if unbounded:
             prog = Progress(f"--seed chainlink_fees {name}", unit="passes", every_units=1,
@@ -206,6 +207,8 @@ class ChainlinkFees:
                 for k in complete:
                     complete[k] = False
                     failed[k].add(chain)
+                    if config.explorer_order(cid):
+                        nokey[k].add(chain)
                     why[k].append(f"{chain}: no explorer key/route ({config.explorer_order(cid) or 'none'})")
                 continue
             try:
@@ -272,7 +275,7 @@ class ChainlinkFees:
                                                   if state.get("seed_complete") else
                                                   "NOT complete: " + "; ".join(sum(why.values(), [])[:6])
                                                   + " — run the seed again; it resumes"), TIER)
-        self._emit(name, spec, streams, complete, why, start_day, out, failed)
+        self._emit(name, spec, streams, complete, why, start_day, out, failed, nokey)
 
     def _window_block(self, state: dict, chain: str, cid: int, start_day: pd.Timestamp) -> int:
         key = f"{chain}:{start_day.date()}"
@@ -512,8 +515,9 @@ class ChainlinkFees:
         return f"{chain} {ft.get('symbol', '?')} {token}"
 
     # ---------------------------------------------------------------- emit
-    def _emit(self, name, spec, streams, complete, why, start_day, out, failed=None) -> None:
+    def _emit(self, name, spec, streams, complete, why, start_day, out, failed=None, nokey=None) -> None:
         failed = failed or defaultdict(set)
+        nokey = nokey or defaultdict(set)              # line -> chains not read only for a key absent from .env
         optional = set(spec.get("optional_chains") or ())
         last = today().normalize() - pd.Timedelta(days=1)
         days = [str(d.date()) for d in pd.date_range(start_day, last)]
@@ -573,6 +577,15 @@ class ChainlinkFees:
                 continue
             missing = missing & set(line_chains)
             if missing - optional:
+                # A KEY ABSENT FROM .env IS A CONFIG GAP, NOT A FAILURE (Round G3 item 13): nothing was refused —
+                # the read was never possible this run (check_offline_items.py env_keys names the key)
+                if (missing - optional) <= nokey[base]:
+                    out.unconfigured(SOURCE, name, f"{metric}: CONFIG GAP — not read this run: no explorer key in .env "
+                                                   f"for " + "; ".join(why[base][:6]), TIER)
+                    out.gap(name, metric, reason="CONFIG: no explorer key in .env (ETHERSCAN_API_KEY / "
+                                                 "BLOCKSCOUT_API_KEY) for the chains it reads", tiers_attempted="2",
+                            suggestion="python check_offline_items.py env_keys")
+                    continue
                 out.fail(SOURCE, name, f"{metric}: NOT STORED this run — " + "; ".join(why[base][:6]), TIER)
                 continue
             chains = ",".join(c for c in line_chains if c not in missing)

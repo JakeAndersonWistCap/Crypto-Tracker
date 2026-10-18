@@ -976,13 +976,17 @@ def test_logscan_runs_only_its_own_tier_and_names_what_it_planned():
     plain._scan = lambda proj, spec, w, out: ran.append(spec["key"])
     plain.run([p], None, FetchOutput())
     assert "gauge_pendle_out" not in ran
-    l2 = LogScan(own_tier="explorer_gauge_l2")
+    # G3 item 1: one tier per chain (explorer_l2:<chain>) — each runs its own chain's scans only
     ran.clear()
-    l2._scan = lambda proj, spec, w, out: ran.append(spec["key"])
     o = FetchOutput()
-    l2.run([p], None, o)
+    planned = []
+    for t in (config.l2_tier("arbitrum"), config.l2_tier("optimism")):
+        l2 = LogScan(own_tier=t)
+        l2._scan = lambda proj, spec, w, out: ran.append(spec["key"])
+        l2.run([p], None, o)
+        planned += l2.planned
     # Optimism is a DECLARED 0 (Jake's run on ab3c7fe, 2026-10-11): written, never read, never planned
-    assert ran == ["gauge_pendle_out_arbitrum"] and l2.planned == [("Pendle", "emissions_tokens_gauge_arbitrum")]
+    assert ran == ["gauge_pendle_out_arbitrum"] and planned == [("Pendle", "emissions_tokens_gauge_arbitrum")]
     f = o.frame()
     assert set(f["metric"]) == {"emissions_tokens_gauge_optimism", "emissions_tokens_gauge_optimism_direct"}
     assert (f["value"] == 0).all() and f["source"].str.endswith(":declared-zero").all()

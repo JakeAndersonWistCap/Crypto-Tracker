@@ -1296,6 +1296,58 @@ CONTRACT_KINDS = {
 # is a primary source and is usually easier to reach than their docs site. Pendle's
 # deployments/1-core.json is the worked example — see PENDLE_DEPLOYMENTS_1_CORE.
 
+# NEAR STAGE 1 IN NOVEMBER (Round G3 item 6, Jake 2026-10-18): wallet_inflow_days dry-runs at 242.37 GB; October has
+# 216.7 GB left of 900 (644.0 used), so it never runs in October. check_offline_items.py near_wallet_inflow_days
+# (daily_run.ps1 step 2c) runs it once inside this window, under the new month's budget and the top-up reserve rule.
+NEAR_STAGE1_WINDOW = {"from": "2026-11-01", "to": "2026-11-07",
+                      "why": "the first days of November, under that month's 900 GB and the existing top-up reserve; "
+                             "never October (644.0 of 900 GB used, 216.7 GB left < 242.37 GB)"}
+
+# THE KEYS .env CAN HOLD, AND WHAT EACH ONE'S ABSENCE COSTS (Round G3 item 13 — the run with four keys missing logged six
+# chainlink_fees FAILED lines that were a missing key, not a failure). check_offline_items.py env_keys prints each one
+# PRESENT / ABSENT (never a value); every full run opens with a one-line summary; a read refused only because its key
+# is absent is a CONFIG gap (out.unconfigured), not a FAILED. (key, what its absence disables, the tiers it affects)
+ENV_KEYS = (
+    ("ALCHEMY_API_KEY", "every Alchemy endpoint: the first archive / RPC endpoint on each chain in "
+                        "fetch.chain.ALCHEMY_HOSTS, the Transfers API routes, HyperEVM past state for --seed hyperevm_burn "
+                        "(without it: the key in an Alchemy <CHAIN>_RPC_URL, else the public lists)",
+     ("chain", "explorer", "explorer_l2:<chain>", "aero_v3", "archive_backfill.py", "--seed hyperevm_burn")),
+    ("ETHERSCAN_API_KEY", "Etherscan V2 log scans: Sky's burn and buyback scans, Chainlink's fee lines, the gauge and "
+                          "distributor scans on Etherscan-served chains (the RPC routes remain, slower)",
+     ("explorer", "explorer_gauge", "explorer_l2:<chain>", "chainlink_fees", "chain")),
+    ("BLOCKSCOUT_API_KEY", "Blockscout log scans and stats (the chains Blockscout serves)",
+     ("explorer", "explorer_l2:<chain>", "chainlink_fees", "blockscout_stats")),
+    ("NEARBLOCKS_API_KEY", "NEAR's daily transactions and active accounts (NearBlocks v3)", ("nearblocks",)),
+    ("BEACONCHAIN_API_KEY", "nothing today: beaconcha.in is no longer read (Ethereum issuance is ultrasound.money's)",
+     ()),
+    ("ARTEMIS_API_KEY", "nothing today: Artemis is read from Jake's CSV exports (artemis_csv); the API is not wired",
+     ("artemis_csv",)),
+    ("DUNE_API_KEY", "tier 4 backfill from Dune (tiers 1-3 run without it)", ("dune",)),
+    ("COINGECKO_API_KEY", "CoinGecko's demo-key rate limit (tier 1 still runs, spaced wider)", ("coingecko",)),
+)
+
+
+def env_keys_status() -> list[tuple[str, bool, str, tuple]]:
+    """[(key, present, what its absence disables, tiers)] — presence only, never a value."""
+    import os as _os
+    return [(k, bool((_os.environ.get(k) or "").strip()), what, tiers) for k, what, tiers in ENV_KEYS]
+
+
+def env_keys_line() -> str:
+    st = env_keys_status()
+    pres = [k for k, ok, _, _ in st if ok]
+    absent = [k for k, ok, _, _ in st if not ok]
+    return f"KEYS present: {', '.join(pres) or 'none'} | ABSENT: {', '.join(absent) or 'none'}"
+
+
+# THE PUBLIC LOG ROUTE (Round G3 item 11): eth_getLogs only — tried after the keyed endpoints and before the public
+# list, whose Ethereum members refuse it (read 2026-10-18 for SKY's Transfer-to-zero filter: publicnode HTTP 403,
+# cloudflare "Max range: 800", ankr "Unauthorized ... API key", llamarpc HTTP 525, eth.drpc.org HTTP 400;
+# mainnet.gateway.tenderly.co served 1,000,000 blocks in one call, 2,939 logs, 5.3 s).
+LOG_RPC = {
+    "ethereum": ["https://mainnet.gateway.tenderly.co"],
+}
+
 # Public RPC endpoints. Fallback list per chain so one provider going down doesn't kill the run.
 # Override per chain in .env, e.g. RPC_ETHEREUM=https://...  (comma-separated for a custom list).
 DEFAULT_RPC = {
@@ -1304,6 +1356,10 @@ DEFAULT_RPC = {
         "https://eth.llamarpc.com",
         "https://rpc.ankr.com/eth",
         "https://cloudflare-eth.com",
+        # ROUND G3 (2026-10-18): served SKY totalSupply() at past blocks (eth_call, the burn days' UTC boundaries) and
+        # eth_getLogs over 1,000,000 blocks — the one public Ethereum endpoint here serving both; last, so a keyed
+        # endpoint and the others are asked first for everything but logs (config.LOG_RPC puts it first for those)
+        "https://mainnet.gateway.tenderly.co",
     ],
     "bsc": [
         "https://bsc-rpc.publicnode.com",
@@ -14695,6 +14751,8 @@ PROJECTS = [
                                          "2025-06-26 spell and this one",
                         # THE FIRST READ MUST CONTAIN THE KNOWN BURN. A floor, like the one above,
                         # because the cumulative grows by one burn a month from here.
+                        # exact: the burn is 2,860,943,760,000,000,000,000,000 wei (tx 0xcd57535f…, receipt read
+                        # 2026-10-18), so the floor is the burn itself
                         "first_read_floor": 2_860_943.76,
                     },
                     "pause_proxy_burns_on_file": [
@@ -14705,7 +14763,26 @@ PROJECTS = [
                          "source": "https://github.com/sky-ecosystem/spells-mainnet/blob/master/archive/2025-06-26-DssSpell/DssSpell.sol"},
                         {"spell": "2026-09-10", "amount": "2,860,943.76",
                          "what": "Treasury Management Function — the first Stage 2 burn",
-                         "source": "https://github.com/sky-ecosystem/spells-mainnet/blob/master/archive/2026-09-10-DssSpell/DssSpell.sol"},
+                         "source": "https://github.com/sky-ecosystem/spells-mainnet/blob/master/archive/2026-09-10-DssSpell/DssSpell.sol",
+                         # ROUND G3 item 8 (verified 2026-10-18): on-chain (eth_getLogs + totalSupply at the UTC day's
+                         # boundaries, mainnet.gateway.tenderly.co) — the only Transfer-to-zero on SKY that day, no
+                         # mint, totalSupply down by exactly this (0 wei residual); vote.sky.money/executive (spell
+                         # 0x86d6CdD0D259AAAfb8134D47464b77743F50380B): "Burn 2,860,943.76 SKY from the Pause Proxy
+                         # balance". NOT verified: the spell's doc hash against the executive markdown (no match)
+                         "tx": "0xcd57535f7a9e60e61d34b31f793501fa6178b4ae37fe0b2900f76efd54e192c3",
+                         "block": 25_968_583, "executed_utc": "2026-09-13 12:42:11",
+                         "amount_wei": "2860943760000000000000000",
+                         "spell_address": "0x86d6CdD0D259AAAfb8134D47464b77743F50380B", "verified": "2026-10-18"},
+                        {"spell": "2026-10-08", "amount": "7,372,288",
+                         "what": "Treasury Management Function — the second Stage 2 burn (Monthly Settlement Cycle for "
+                                 "September 2026)",
+                         "source": "https://vote.sky.money/executive (spell 0x4bdD1Cc8540E4c43ee210a6ff0EE96ad0Bba297A: "
+                                   "\"Burn 7,372,288 SKY from the Pause Proxy balance\"; passed 2026-10-09 19:02, "
+                                   "executed 2026-10-12 14:01 UTC), read 2026-10-18",
+                         "tx": "0x93389082b75a9e278b6b2a2d7dde53618c38214b5d71699fd60461dbe1e10275",
+                         "block": 26_176_859, "executed_utc": "2026-10-12 14:01:47",
+                         "amount_wei": "7372288000000000000000000",
+                         "spell_address": "0x4bdD1Cc8540E4c43ee210a6ff0EE96ad0Bba297A", "verified": "2026-10-18"},
                     ],
                     "stage2_burner": {
                         "address": "0xBE8E3e3618f7474F8cB1d074A26afFef007E98FB",
@@ -18766,6 +18843,23 @@ def archive_not_by_design(project_name: str, metric: str) -> str:
 # (fetch/validate.check_migration_cutover) — never a silent 0 from a stopped contract. The old veAERO's rebase is NOT
 # assumed to stop: aero.xyz/aero-economic-case (2026-03-30) says old veAERO/veVELO "will continue to receive rebases";
 # only sAERO has none (research 2026-10-13 — Jake's note "the rebase stops" is contradicted, recorded in SPEC §12).
+# THE DECLARED MEASURING POINT OF MARKET CAP (Round G3 item 5, Jake's run 2026-10-18: Aerodrome's market cap read −9.06%
+# against spot price x the circulating shown). Recomputed: $1,333,067,528 / 1,516,808,772 = 0.878863, the 2026-10-17
+# price; the spot 0.799237 is 2026-10-18's — the whole gap is the price move between the two days, no stock is counted
+# on one side and not the other. Recorded so the sanity rule's hit is read against what each side measures.
+MCAP_MEASURING_POINT = {
+    "rule": ("market_cap_usd = price_usd x the chosen circulating (build_workbook.chosen_circulating_metric), both on "
+             "the SAME day (build_workbook._market_cap_views); our own circulating is carried forward at most "
+             "credibility.now_max_age days, so on a day it is not read the market cap is dated by its last day in "
+             "range while Master's spot price is today's"),
+    "Aerodrome": ("price_usd (CoinGecko) x circulating_supply_onchain = AERO totalSupply on Base − the documented "
+                  "non-circulating set (config CIRCULATING_ONCHAIN: the filed wallets and their veAERO-managed locks), "
+                  "the same day. CoinGecko's own circulating (1,003,900,706 on 2026-10-18) excludes every veAERO lock — "
+                  "another basis, kept as market_cap_usd_coingecko"),
+    "declared": "2026-10-18 (G3-5)",
+}
+
+
 AERODROME_MIGRATION = {
     "project": "Aerodrome", "cutover_utc": "2026-10-22", "switch_file": "aero_migration.json",
     "legacy_metrics": ("gross_issuance_tokens", "emissions_tokens", "issuer_mint_tokens", "ve_locked_supply_tokens",
@@ -27986,6 +28080,29 @@ for _cid, _proj, _chain, _key, _metric, _tok, _holders in EXPLORER_PROBED_SCANS:
                                  "tiers": [2], "sanity_min": 0, "sanity_max": 1e8, "only_projects": (_proj,)})
 
 
+# ===== ONE CHAIN, ONE TIER (Round G3, item 1 — Jake's run on b6cf214: explorer_gauge_l2 timed out at 420 s "still
+# waiting on: POST rpc.katana.network" and gapped 12 series on 8 chains, most of which were fine). Every L2 scan runs in
+# its chain's own tier, explorer_l2:<chain>, with its own budget, so a stalled chain can only time out itself. The
+# default is 240 s (an L2 scan's 140 s explorer budget + its balance reads); Katana, read only by RPC over the 100-day
+# window, 300 s. A chain's history beyond the window is a one-off seed (`token_metrics.py --seed katana_claims`).
+L2_TIER_PREFIX = "explorer_l2:"
+L2_TIER_BUDGET_S = {"default": 240, "katana": 300}
+
+
+def l2_tier(chain: str) -> str:
+    return f"{L2_TIER_PREFIX}{chain}"
+
+
+def l2_tier_budget(tier: str) -> int:
+    return int(L2_TIER_BUDGET_S.get(tier[len(L2_TIER_PREFIX):], L2_TIER_BUDGET_S["default"]))
+
+
+def l2_scan_tiers() -> list[str]:
+    """Every L2 chain tier a configured scan declares, sorted (fetch.TIER_ORDER builds one tier per entry)."""
+    return sorted({sp["own_tier"] for p in PROJECTS for sp in p.get("log_scans") or ()
+                   if str(sp.get("own_tier", "")).startswith(L2_TIER_PREFIX)})
+
+
 def wire_probed_scans(state: dict | None = None) -> list:
     """Open the Etherscan route and wire the scan for every chain Jake's probe lists as served; returns the keys wired.
     Idempotent (a key already wired is left alone)."""
@@ -28032,7 +28149,7 @@ def wire_probed_scans(state: dict | None = None) -> list:
                                               "(one distributor address on every chain, read 2026-10-18)"
                                               if proj == "Morpho" else
                                               "Instadapp/fluid-contracts-public@9496626f deployments/deployments.md"],
-                      "exclude_counterparties": excl, "own_tier": "explorer_gauge_l2", "scan_budget_s": 140,
+                      "exclude_counterparties": excl, "own_tier": l2_tier(chain), "scan_budget_s": 140,
                       "window_days": 100,
                       "wired_on": (st.get("probed_on") if cid in served else alc.get("probed_on")) or "2026-10-14",
                       "route": route})
@@ -29091,5 +29208,11 @@ REFERENCE_BLOCK_READS = {
         "value": 83465.892107, "read_on": "2026-10-18", "rpc_host": "eth.drpc.org",
         "why_this_block": "the block the reference names (independent_references.csv, G2-L1)"},
 }
+
+# G3 item 1: the scans declared on the one shared L2 tier move to their chain's own tier (see l2_tier)
+for _p in PROJECTS:
+    for _sp in _p.get("log_scans") or ():
+        if _sp.get("own_tier") == "explorer_gauge_l2":
+            _sp["own_tier"] = l2_tier(_sp["chain"])
 
 _CONFIG_LOADED = True       # the last line: config is complete (see _relation_pairs)

@@ -10489,6 +10489,7 @@ def _reader_with(monkeypatch, stub, urls):
     """A real ChainReader wired to the stub, with the endpoint list under test."""
     from fetch import chain as chain_mod
     monkeypatch.setattr(chain_mod, "rpc_endpoints", lambda c: list(urls))
+    monkeypatch.setattr(config, "LOG_RPC", {})          # G3: the public log route stays out of the list under test
     monkeypatch.setattr(chain_mod, "Web3", None, raising=False)
     reader = chain_mod.ChainReader()
     reader._w3["ethereum"] = stub.provider_for(urls[0])
@@ -10725,7 +10726,8 @@ def test_a_400_whose_body_names_the_range_narrows_and_the_body_is_kept(monkeypat
     logs, upper, chunk = reader._get_logs_resilient(
         "ethereum", {"address": "0xabc", "topics": []}, 0, 5_400_000, 40_000)
     assert chunk == 10_000, f"narrowed to the provider's stated limit, got {chunk}"
-    assert [span for _, span in stub.calls] == [40_000, 20_000, 10_000]
+    # G3 item 11: the stated range is READ ("exceeds 10000") and used at once, not reached by halving
+    assert [span for _, span in stub.calls] == [40_000, 10_000]
 
     # ** THE BODY IS KEPT, because the working chunk size is only interpretable next to the
     # complaint that produced it. A 400 whose body was never printed is what left this
@@ -11101,7 +11103,11 @@ def test_hyperliquid_staked_hype_is_summed_from_the_aggregate_the_sdks_do_not_ex
     # 400,000,000 HYPE across four validators, one of them jailed, in 8-decimal units.
     stakes = [150_000_000, 120_000_000, 90_000_000, 40_000_000]
     summaries = [_validator(int(s * 10 ** 8), jailed=(i == 3)) for i, s in enumerate(stakes)]
-    hc = HyperCoreInfo(prior_values={("Hyperliquid", "total_supply"): 955_000_000.0},
+    # G3 item 2: the bound is the NET total from its legs (config.TOTAL_SUPPLY_NET), never circulating
+    hc = HyperCoreInfo(prior_values={("Hyperliquid", "total_supply_gross"): 998_862_059.40,
+                                     ("Hyperliquid", "burn_address_balance"): 48_007_021.50,
+                                     ("Hyperliquid", "hyperevm_zero_address_balance"): 308_538.17,
+                                     ("Hyperliquid", "circulating_supply"): 222_445_714.0},
                        prior_dates={}, prior_delta={})
     hc.http = _InfoStub(summaries)
     out = FetchOutput()
@@ -11185,7 +11191,9 @@ def test_the_stake_scaling_is_sourced_from_the_metadata_and_gated_by_supply():
 
     # ** THE METADATA IS READ ONCE PER RUN AND THE VALUE COMES FROM IT. **
     stub = _InfoStub([_validator(int(400_000_000 * 10 ** 8))], wei_decimals=8)
-    hc = HyperCoreInfo(prior_values={("Hyperliquid", "total_supply"): 955_000_000.0},
+    # G3 item 2: the bound is the net total from its legs (config.TOTAL_SUPPLY_NET)
+    hc = HyperCoreInfo(prior_values={("Hyperliquid", "total_supply_gross"): 998_862_059.40,
+                                     ("Hyperliquid", "hyperevm_zero_address_balance"): 308_538.17},
                        prior_dates={}, prior_delta={})
     hc.http = stub
     out = FetchOutput()
@@ -11198,7 +11206,8 @@ def test_the_stake_scaling_is_sourced_from_the_metadata_and_gated_by_supply():
     # scaled figure leaves the band and the run refuses with the raw number — which is the one
     # failure the metadata cannot self-report.
     stub2 = _InfoStub([_validator(int(400_000_000 * 10 ** 8))], wei_decimals=0)
-    hc2 = HyperCoreInfo(prior_values={("Hyperliquid", "total_supply"): 955_000_000.0},
+    hc2 = HyperCoreInfo(prior_values={("Hyperliquid", "total_supply_gross"): 998_862_059.40,
+                                      ("Hyperliquid", "hyperevm_zero_address_balance"): 308_538.17},
                         prior_dates={}, prior_delta={})
     hc2.http = stub2
     out2 = FetchOutput()

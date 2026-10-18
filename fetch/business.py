@@ -187,7 +187,11 @@ class Business:
             if name in names:
                 for spec in specs:
                     key = f"business:{name}:{spec['metric']}"
-                    if not self.daily.due(key, day):
+                    # A FULL-HISTORY SERIES HAS ITS OWN DAILY MARK (Round G3 item 4): NEAR Intents' since-launch read
+                    # shared the windowed read's mark, so after one windowed read that day the full history never ran
+                    # (Σ from 2025-07-15 only: CHECK −3.68%, against −2.28% over the whole history)
+                    dkey = key + (":full-history" if (name, spec["metric"]) in config.FULL_HISTORY_SERIES else "")
+                    if not self.daily.due(dkey, day):
                         out.mark_current(SOURCE, name, spec["metric"], f"{spec['metric']}: read today already", TIER)
                         continue
                     try:
@@ -201,7 +205,7 @@ class Business:
                     out.add(tidy(rows, name, spec["metric"], src, TIER), SOURCE, name,
                             f"{spec['metric']}: {len(rows)} day(s) {rows[0][0].date()}..{rows[-1][0].date()} — "
                             f"{detail}", TIER)
-                    self.daily.done(key, day)
+                    self.daily.done(dkey, day)
         for name, spec in config.MARKET_SHARE.items():
             if name in names and "na" not in spec:
                 self._share(name, spec, day, out)

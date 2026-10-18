@@ -22,6 +22,8 @@ import pandas as pd
 import requests
 import requests.adapters
 
+from . import alchemy_usage as _alchemy_usage
+
 log = logging.getLogger("token_metrics.fetch")
 
 LONG_COLUMNS = ["date", "project", "metric", "value", "source", "tier"]
@@ -383,7 +385,14 @@ class HttpError(RuntimeError):
 
     def __init__(self, status: int, url: str, detail: str = ""):
         self.status, self.url, self.detail = status, url, detail
-        super().__init__(f"HTTP {status} from {url}" + (f" — {detail}" if detail else ""))
+        super().__init__(f"HTTP {status} from {mask_url(url)}" + (f" — {detail}" if detail else ""))
+
+
+def mask_url(url) -> str:
+    """The URL with everything after /v2/ masked (Round G3: a keyed endpoint carries its key in the path)."""
+    s = str(url)
+    i = s.find("/v2/")
+    return s if i < 0 else s[:i + 4] + "***"
 
 
 class BudgetExhausted(RuntimeError):
@@ -811,6 +820,7 @@ class Http:
                 self.stats["retries"] += 1
             try:
                 t0 = time.monotonic()
+                _alchemy_usage.record(url, _alchemy_usage.method_of(json_body) or verb)
                 _HTTP_RETRIES.on = self.retries > 0     # this loop retries connect errors; the send layer need not
                 try:
                     r = (self.s.post(url, json=json_body or {}, headers=headers, timeout=timeout)
@@ -827,7 +837,7 @@ class Http:
                         self.stats["slowest_s"] = took
                         self.stats["slowest"] = urllib.parse.urlsplit(url).path[:80]
                 if r.status_code == 429 or r.status_code >= 500:
-                    last_err = RuntimeError(f"HTTP {r.status_code} from {url}")
+                    last_err = RuntimeError(f"HTTP {r.status_code} from {mask_url(url)}")
                     asked = retry_after(r.headers.get("Retry-After"))
                     if asked is None and r.status_code == 429 and self.ratelimit_reset_ms:
                         try:

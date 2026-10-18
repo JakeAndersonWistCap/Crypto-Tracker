@@ -82,12 +82,29 @@ def _data_now(wb, value) -> dict:
     return out
 
 
+def _data_dates(wb, value) -> dict:
+    """{(project, metric): the Data tab's 'Latest date'} (Round G3 item 5: a market cap and a spot price from
+    different days read as a gap in the stock unless the message says so)."""
+    ws = wb["Data"]
+    col = next((c for c in range(1, ws.max_column + 1) if str(ws.cell(1, c).value or "") == "Latest date"), None)
+    if col is None:
+        return {}
+    out = {}
+    for r in range(2, ws.max_row + 1):
+        k = str(ws.cell(r, 1).value or "")
+        if "|" in k:
+            v = value("Data", r, col)
+            out[tuple(k.split("|", 1))] = str(v)[:10] if v not in (None, "") else None
+    return out
+
+
 def hits(wb, value) -> list[tuple[str, str, str]]:
     import config
     import cross_tab
     found = []
     master = _rows(wb, "Master")
     data = _data_now(wb, value)
+    dates = _data_dates(wb, value)
 
     def mv(p, h):
         loc = master.get(p, {}).get(h)
@@ -101,8 +118,13 @@ def hits(wb, value) -> list[tuple[str, str, str]]:
         if circ and total and circ > total * (1 + 1e-9):
             found.append((p, "circ_above_total", f"circulating used {circ:,.0f} > total supply {total:,.0f}"))
         if mcap and circ and px and abs(mcap - px * circ) / mcap > TOL_MCAP:
-            found.append((p, "mcap_not_price_x_circ", f"market cap ${mcap:,.0f} vs price {px:,.6g} x circulating shown "
-                                                      f"{circ:,.0f} = ${px * circ:,.0f} ({px * circ / mcap - 1:+.2%})"))
+            # THE TWO SIDES' DATES AND PRICES (G3 item 5): the market cap implies a price (÷ the circulating shown); a
+            # gap that is only the price moving between their dates says so, a stock counted on one side does not
+            md, pd_ = dates.get((p, "market_cap_usd")), dates.get((p, "price_usd"))
+            found.append((p, "mcap_not_price_x_circ",
+                           f"market cap ${mcap:,.0f} (dated {md or '?'}; implies price {mcap / circ:,.6g} on the "
+                           f"circulating shown) vs spot price {px:,.6g} (dated {pd_ or '?'}) x circulating shown "
+                           f"{circ:,.0f} = ${px * circ:,.0f} ({px * circ / mcap - 1:+.2%})"))
         bb, rev = _num(mv(p, "Actual buyback Q0 ($) — observed")), _num(mv(p, "Revenue Q0 ($)"))
         proj = config.PROJECT_BY_NAME.get(p) or {}
         funded = proj.get("buyback_funding") or (proj.get("foundation_buyback") or {}).get("funding")

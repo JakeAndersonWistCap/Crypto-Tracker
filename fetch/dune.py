@@ -260,7 +260,8 @@ class Dune:
                     log.info("%s/%s: first backfill for this metric — pulling full history, "
                              "ignoring the %d-day window", name, metric, window_days)
                 if not self.key:
-                    out.fail(SOURCE, name, f"{metric}: DUNE_API_KEY not set in .env", TIER)
+                    # A CONFIG GAP, NOT A FAILURE (Round G3 item 13): nothing was refused; the key is absent
+                    out.unconfigured(SOURCE, name, f"{metric}: CONFIG GAP — DUNE_API_KEY not set in .env", TIER)
                     out.gap(name, metric, reason="Dune query configured but DUNE_API_KEY is not set",
                             tiers_attempted="4", suggestion="Add DUNE_API_KEY to .env")
                     continue

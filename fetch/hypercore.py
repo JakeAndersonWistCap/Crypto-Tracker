@@ -154,7 +154,8 @@ class HyperCoreInfo:
         return self._decimals_cache
 
     @staticmethod
-    def _apply_scale(raw: float, decimals: int, supply: float | None) -> tuple[float | None, str]:
+    def _apply_scale(raw: float, decimals: int, supply: float | None,
+                     label: str | None = None) -> tuple[float | None, str]:
         """Scale, then GATE against the token's own supply. Returns (value, detail).
 
         The gate is the right shape and it is ASYMMETRIC, which is worth stating plainly.
@@ -168,18 +169,45 @@ class HyperCoreInfo:
         """
         value = raw / (10 ** decimals)
         if supply is None or supply <= 0:
-            return None, (f"no total_supply in the store to gate the figure against. Raw sum "
-                          f"{raw:,.0f}, which at 10^{decimals} would be {value:,.4f}")
+            return None, (f"{'the bound cannot be formed: ' + label if label else 'no total_supply in the store'} "
+                          f"to gate the figure against. Raw sum {raw:,.0f}, which at 10^{decimals} would be "
+                          f"{value:,.4f}")
         if not (0 < value <= supply):
             return None, (f"THE SCALED FIGURE FAILS ITS BOUND and nothing was stored: "
                           f"{raw:,.0f} / 10^{decimals} = {value:,.4f}, which is outside "
-                          f"(0, total_supply={supply:,.0f}]. Nothing staked can exceed everything "
+                          f"(0, {label or f'total_supply={supply:,.0f}'}]. Nothing staked can exceed everything "
                           f"in existence, so either the decimals changed meaning or the field is "
                           f"not what it was")
         return value, (f"{raw:,.0f} / 10^{decimals} = {value:,.4f}, inside "
-                       f"(0, total_supply={supply:,.0f}]")
+                       f"(0, {label or f'total_supply={supply:,.0f}'}]")
 
-    def _sum_field(self, payload, api: dict, read: dict, supply: float | None) -> tuple[float | None, dict, str]:
+    def _net_total(self, name: str, out) -> tuple[float | None, str]:
+        """(the net total supply, its arithmetic) — config.TOTAL_SUPPLY_NET's legs, each from THIS run's rows where read,
+        else the stored latest; (None, why) when a leg has neither. A project with no declared net total uses its stored
+        total_supply alone (never circulating)."""
+        spec = config.TOTAL_SUPPLY_NET.get(name)
+        if not spec:
+            v = self.prior.get((name, "total_supply"))
+            return (v, f"total_supply={v:,.0f}") if v else (None, "no total_supply stored")
+        parts = []
+        for m in (spec["total"], *spec["less"]):
+            got = None
+            for f in reversed(out.frames):
+                sel = f[(f["project"] == name) & (f["metric"] == m)] if len(f) else f
+                if len(sel):
+                    got = (float(sel.sort_values("date")["value"].iloc[-1]), "this run")
+                    break
+            if got is None and self.prior.get((name, m)) is not None:
+                got = (float(self.prior[(name, m)]), "stored")
+            if got is None:
+                return None, f"no {m} read this run or stored (net total = {spec['total']} − {' − '.join(spec['less'])})"
+            parts.append((m, *got))
+        total = parts[0][1] - sum(v for _, v, _ in parts[1:])
+        return total, ("net total=" + f"{total:,.2f} (" + f"{parts[0][0]} {parts[0][1]:,.2f} [{parts[0][2]}]"
+                       + "".join(f" − {m} {v:,.2f} [{w}]" for m, v, w in parts[1:]) + ")")
+
+    def _sum_field(self, payload, api: dict, read: dict, supply: float | None,
+                   label: str | None = None) -> tuple[float | None, dict, str]:
         """Sum one numeric field across a list response — validatorSummaries' total delegated HYPE.
 
         ** JAILED AND INACTIVE VALIDATORS COUNT. ** Delegated HYPE is locked whatever the
@@ -220,7 +248,8 @@ class HyperCoreInfo:
         if decimals is None:
             return None, {}, (f"{field} summed across {n} validator(s) to {raw:,.0f}, but the "
                               f"scaling has no source: {dec_detail}")
-        value, detail = self._apply_scale(raw, decimals, supply)
+        value, detail = (self._apply_scale(raw, decimals, supply, label) if label
+                         else self._apply_scale(raw, decimals, supply))
         extra = {"validators": n, "active": n_active, "missing_field": missing,
                  "raw": raw, "active_raw": active_raw, "decimals": decimals,
                  "idle_raw": idle_raw, "idle": n_idle}
@@ -299,7 +328,8 @@ class HyperCoreInfo:
             # staking figure the official SDKs do not expose — every staking type in both of them
             # takes a `user` address, which is why this was refused on 2026-09-23 and is wired
             # now that the aggregate endpoint is on file.
-            for read in (api.get("extra_reads") or []):
+            # THE STAKE SUM LAST (G3 item 2): its bound is the net total, whose legs are read by the other extra reads
+            for read in sorted(api.get("extra_reads") or [], key=lambda r: r.get("shape", "sum_field") == "sum_field"):
                 self._extra_read(p, api, read, out, when)
 
     # ===== THE SUPPLY CONVENTION, SETTLED BY ARITHMETIC RATHER THAN BY A READING. Added 2026-09-22.
@@ -661,8 +691,12 @@ class HyperCoreInfo:
             out.unconfigured(SOURCE, name, f"{metric}: unknown extra-read shape {shape!r}", TIER)
             return
 
-        supply = self.prior.get((name, "total_supply")) or self.prior.get((name, "circulating_supply"))
-        value, extra, detail = self._sum_field(payload, api, read, supply)
+        # THE BOUND IS EVERYTHING IN EXISTENCE, SAME DAY, ON-CHAIN FIRST (Round G3 item 2, Jake's run 2026-10-18:
+        # 442,115,644.7157 was refused against "total_supply=222,445,714" — CoinGecko's CIRCULATING, the old fallback,
+        # because since G2-D2 Hyperliquid's total_supply is a read-time view with no stored row). Never circulating.
+        # (a bound that cannot be formed is refused inside the same gate, after the metadata — _apply_scale)
+        supply, label = self._net_total(name, out)
+        value, extra, detail = self._sum_field(payload, api, read, supply, label)
         if value is None:
             # REFUSED, WITH THE RAW FIGURE AND THE WHOLE CANDIDATE TABLE. A scaling that cannot
             # be established is not a missing source: the data arrived and the units are the open

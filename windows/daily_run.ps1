@@ -161,6 +161,10 @@ if ($run[0] -eq 75) {
 #     stored read is 7+ days old, and stores nothing when any lockup is unreadable.
 [void](Invoke-Step "NEAR lockups (weekly)" @("near_lockups_weekly.py"))
 
+# 2c. NEAR stage 1 (Round G3 item 6): wallet_inflow_days runs ONCE, inside 2026-11-01..2026-11-07, under that month's
+#     BigQuery budget and the top-up reserve rule; on any other day it says so and exits 0. Never wallet_inflows_alltime.
+[void](Invoke-Step "NEAR stage 1 (November)" @("check_offline_items.py", "near_wallet_inflow_days"))
+
 # 3. Credibility: the root-cause map, then the full report.
 [void](Invoke-Step "credibility roots" @("credibility_report.py", "--roots"))
 [void](Invoke-Step "credibility report" @("credibility_report.py"))

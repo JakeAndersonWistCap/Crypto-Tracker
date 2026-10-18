@@ -36,7 +36,7 @@ import re
 
 import pandas as pd
 
-from .base import USER_AGENT, point, tidy, today
+from .base import USER_AGENT, LogEntry, point, tidy, today
 
 log = logging.getLogger("token_metrics.fetch.browser_capture")
 
@@ -496,10 +496,18 @@ class BrowserCapture:
                 if prev:
                     d0 = max(prev)
                     span = (today().normalize() - d0).days
-                    out.add(point(name, sp["flow_metric"], v - prev[d0],
-                                  f"{SOURCE}:{sp['site']}.{k}[{sp['layer']}, daily change"
-                                  + (f", span={span}d" if span > 1 else "") + "]", TIER, today()),
-                            SOURCE, name, f"{sp['flow_metric']} = {v - prev[d0]:,.0f} since {d0.date()}", TIER)
+                    # ONLY A ONE-DAY CHANGE IS A DAY'S FLOW (Round G3 item 7, Jake's run 2026-10-18: 6,565 new users
+                    # since 2026-10-16 were booked on 10-18 as one day's, "span=2d"). A change over N > 1 days is not
+                    # stored — the cumulative stock is, so any window's new users stay readable from it.
+                    if span == 1:
+                        out.add(point(name, sp["flow_metric"], v - prev[d0],
+                                      f"{SOURCE}:{sp['site']}.{k}[{sp['layer']}, daily change]", TIER, today()),
+                                SOURCE, name, f"{sp['flow_metric']} = {v - prev[d0]:,.0f} since {d0.date()}", TIER)
+                    else:
+                        out.log.append(LogEntry(SOURCE, name, 0, "ok",
+                                                f"{sp['flow_metric']}: NOT stored — {v - prev[d0]:,.0f} is the change "
+                                                f"over {span} days since {d0.date()}, not one day's; the cumulative "
+                                                f"{sp['metric']} is stored", TIER))
         for t in pg.get("tiles") or ():
             if t["metric"] in held:                      # the chart's series resolved: the tile is its fallback
                 continue

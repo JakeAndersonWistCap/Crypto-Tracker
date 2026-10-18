@@ -1248,15 +1248,18 @@ def alchemy_transfer_routes():
             t = t.replace(k, "***")
         return redact_urls(t)
 
-    served, refused = [], {}
+    # THREE OUTCOMES (Round G3 items 10/14): SERVED (a transfer came back); NOT SERVED (Alchemy ANSWERED and refused
+    # the network, or served nothing for the holder); NOT TRIED (no host on file, no key, or no answer at all — a
+    # network error or a timeout says nothing about the route). Only a real NOT SERVED removes a chain served before.
+    served, not_served, not_tried = [], {}, {}
     for cid, label, token, holder in EXPLORER_PROBE:
         chain = names.get(cid)
         url = alchemy_endpoint(chain) if chain in ALCHEMY_HOSTS else ""
         if not url:
-            refused[str(cid)] = ("no Alchemy network on file for this chain (fetch.chain.ALCHEMY_HOSTS)"
-                                 if chain not in ALCHEMY_HOSTS else
-                                 "no Alchemy key in .env (an Alchemy URL in any <CHAIN>_RPC_URL)")
-            print(f"  {cid:>6} {label:<10} NOT TRIED — {refused[str(cid)]}")
+            not_tried[str(cid)] = ("no Alchemy network on file for this chain (fetch.chain.ALCHEMY_HOSTS)"
+                                   if chain not in ALCHEMY_HOSTS else
+                                   "no Alchemy key in .env (ALCHEMY_API_KEY, or an Alchemy URL in a <CHAIN>_RPC_URL)")
+            print(f"  {cid:>6} {label:<10} NOT TRIED — {not_tried[str(cid)]}")
             continue
         body = {"jsonrpc": "2.0", "id": 1, "method": "alchemy_getAssetTransfers",
                 "params": [{"fromBlock": "0x0", "toBlock": "latest", "fromAddress": holder,
@@ -1266,8 +1269,8 @@ def alchemy_transfer_routes():
         try:
             got = requests.post(url, json=body, timeout=TIMEOUT).json()
         except Exception as e:  # noqa: BLE001
-            refused[str(cid)] = f"unreachable ({host}): {scrub(e)[:160]}"
-            print(f"  {cid:>6} {label:<10} UNREACHABLE — {refused[str(cid)]}")
+            not_tried[str(cid)] = f"no answer from {host}: {scrub(e)[:160]}"
+            print(f"  {cid:>6} {label:<10} NOT TRIED — {not_tried[str(cid)]}")
             continue
         tr = ((got.get("result") or {}).get("transfers") if isinstance(got, dict) else None)
         if isinstance(tr, list) and tr:
@@ -1276,17 +1279,28 @@ def alchemy_transfer_routes():
                   f"tx {str(tr[0].get('hash'))[:12]}…")
         else:
             err = got.get("error") if isinstance(got, dict) else got
-            refused[str(cid)] = f"{host}: " + scrub(err if err else f"no transfer returned: {str(got)[:120]}")[:200]
-            print(f"  {cid:>6} {label:<10} NOT SERVED — {refused[str(cid)]}")
+            not_served[str(cid)] = f"{host}: " + scrub(err if err else f"no transfer returned: {str(got)[:120]}")[:200]
+            print(f"  {cid:>6} {label:<10} NOT SERVED — {not_served[str(cid)]}")
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "explorer_routes.json")
     out = _routes_file(path)
+    prev = out.get("alchemy") or {}
+    if not (served or not_served):
+        print(f"  {os.path.basename(path)} NOT WRITTEN: every chain was NOT TRIED, which says nothing about the routes — "
+              f"the served list stands ({prev.get('served') or 'none'}, probed {prev.get('probed_on') or 'never'}).")
+        print("  PASTE BACK: the lines above.")
+        return
+    # a chain NOT TRIED keeps what the last probe found; only a real NOT SERVED removes a served chain
+    kept = [int(c) for c in (prev.get("served") or ()) if str(int(c)) in not_tried and int(c) not in served]
     out["alchemy"] = {"probed_on": _dt.date.today().isoformat(), "method": "alchemy_getAssetTransfers",
-                      "served": served, "refused": refused}
+                      "served": sorted(set(served) | set(kept)), "refused": not_served, "not_tried": not_tried,
+                      "kept_from_last_probe": kept}
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(out, fh, indent=1)
-    print(f"  wrote {os.path.basename(path)} (alchemy): served {served or 'none'}. The next token_metrics.py run scans "
-          f"the served chains through the Transfers API (config EXPLORER_TRANSFER_ROUTES).")
-    print("  PASTE BACK: the seven lines above.")
+    print(f"  wrote {os.path.basename(path)} (alchemy): SERVED {served or 'none'}; NOT SERVED {sorted(not_served) or 'none'}; "
+          f"NOT TRIED {sorted(not_tried) or 'none'}" + (f" (kept as served from the last probe: {kept})" if kept else "")
+          + ". The next token_metrics.py run scans the served chains through the Transfers API (config "
+          f"EXPLORER_TRANSFER_ROUTES).")
+    print("  PASTE BACK: the lines above.")
 
 
 AETHIR_PIN_HINTS = {
@@ -12277,6 +12291,165 @@ def issuer_wallet_audit():
     return rows
 
 
+def env_keys():
+    """ROUND G3 item 13 (Jake 2026-10-18): each key .env can hold — PRESENT or ABSENT, never its value — what its
+    absence disables and the tiers it affects (config.ENV_KEYS). Also validates ALCHEMY_API_KEY's shape. Returns 0."""
+    import config as _cfg                                 # noqa: PLC0415
+    from fetch.chain import alchemy_key_problem          # noqa: PLC0415
+    head("ENV KEYS — present / absent (values are never printed)")
+    for k, ok, what, tiers in _cfg.env_keys_status():
+        print(f"  {k:<20} {'PRESENT' if ok else 'ABSENT ':<7}" + ("" if ok else f" — disables: {what}")
+              + (f" [tiers: {', '.join(tiers)}]" if tiers else ""))
+    problem = alchemy_key_problem()
+    if problem:
+        print(f"  !! {problem}")
+    print(f"  {_cfg.env_keys_line()}")
+    print("  A tier skipped only for an absent key reads as a CONFIG gap in the run summary, not as FAILED.")
+    return 0
+
+
+def aero_migration():
+    """ROUND G3 item 9 (Aerodrome v3 cutover, 2026-10-22): is aero_migration.json complete? Prints launched, each address
+    (minter, voting_escrow, token, migration), voting_rewards_factory, deploy_block, source_url and verified, and what is
+    missing (fetch.validate._migration_switch_missing, with voting_rewards_factory and deploy_block REQUIRED here). Never
+    writes an address. Returns 1 when incomplete (the process exits non-zero when this check is run alone)."""
+    import pandas as _pd                                  # noqa: PLC0415
+    import config as _cfg                                 # noqa: PLC0415
+    from fetch.validate import _migration_switch_missing  # noqa: PLC0415
+    m = _cfg.AERODROME_MIGRATION
+    head(f"AERODROME MIGRATION — {m['switch_file']} (cutover {m['cutover_utc']}; RUNBOOK 11bx / 11cb)")
+    st = _cfg.aerodrome_migration_state()
+    if not st:
+        print(f"  {m['switch_file']} is ABSENT. Fill it from Aero's own launch-day publication (RUNBOOK 11bx) — never "
+              f"from a guess.")
+        print("  INCOMPLETE (exit 1)")
+        return 1
+    if st.get("unreadable"):
+        print(f"  {m['switch_file']} is not valid JSON: {st['unreadable']}")
+        print("  INCOMPLETE (exit 1)")
+        return 1
+    addrs = st.get("addresses") or {}
+    print(f"  launched: {st.get('launched')!r}   verified: {st.get('verified')!r}")
+    print(f"  source_url: {st.get('source_url')!r}")
+    for k in ("minter", "voting_escrow", "token", "migration"):
+        print(f"  addresses.{k:<14} {addrs.get(k)!r}")
+    print(f"  voting_rewards_factory: {st.get('voting_rewards_factory')!r}   deploy_block: {st.get('deploy_block')!r}")
+    day = _pd.Timestamp.now(tz="UTC").tz_localize(None).normalize()
+    missing = list(_migration_switch_missing(st, day))
+    if st.get("launched") is not True:
+        missing.insert(0, "launched is not true")
+    for k in ("voting_rewards_factory", "deploy_block"):
+        if st.get(k) in (None, "") and not any(x.startswith(k) for x in missing):
+            missing.append(f"{k} is missing (required: the epoch read finds the VotingRewardsManagers from it)")
+    if missing:
+        for x in missing:
+            print(f"  MISSING: {x}")
+        print("  INCOMPLETE (exit 1)")
+        return 1
+    print("  COMPLETE — the v3 reader (fetch/aero_v3.py) reads from these on the next run")
+    return 0
+
+
+def near_wallet_inflow_days():
+    """ROUND G3 item 6 (Jake 2026-10-18): NEAR's stage 1 (wallet_inflow_days, dry run 242.37 GB) under the NEW month's
+    budget. Refuses before 2026-11-01 and after 2026-11-07 (October: 644.0 of 900 GB used, 216.7 GB left). Dry-runs,
+    then runs only when the bytes fit monthly_budget − used − the top-up reserve (NearBigQuery._reserve, the existing
+    rule) and the per-query cap, with maximum_bytes_billed = the dry run; saves the day list (data/near) and never runs
+    again once done. wallet_inflows_alltime (2,001.57 GB) is never run by any code path. daily_run.ps1 step 2c."""
+    import json as _json                                  # noqa: PLC0415
+    from pathlib import Path                              # noqa: PLC0415
+    import pandas as pd                                   # noqa: PLC0415
+    import config as _cfg                                 # noqa: PLC0415
+    from fetch.near_bigquery import NearBigQuery          # noqa: PLC0415
+    w = _cfg.NEAR_STAGE1_WINDOW
+    head(f"NEAR STAGE 1 — wallet_inflow_days, scheduled {w['from']}..{w['to']} under that month's budget")
+    done_file = Path(__file__).resolve().parent / "data" / "near" / "wallet_inflow_days.json"
+    if done_file.exists():
+        print(f"  DONE already ({done_file.name}) — not run again.")
+        return 0
+    day = pd.Timestamp.now(tz="UTC").tz_localize(None).normalize()
+    if not (pd.Timestamp(w["from"]) <= day <= pd.Timestamp(w["to"])):
+        print(f"  NOT RUN: today {day.date()} is outside {w['from']}..{w['to']} ({w['why']}).")
+        return 0
+    spec = _cfg.PROJECT_BY_NAME["Near"]["near_bigquery"]
+    nb = NearBigQuery()
+    client, why = nb._client(spec)
+    if client is None:
+        print(f"  NOT RUN: no BigQuery client — {why}")
+        return 0
+    from fetch.base import FetchOutput                    # noqa: PLC0415
+    here = Path(__file__).resolve().parent / "sql" / "near"
+    yday = day - pd.Timedelta(days=1)
+    p1 = {"d0": pd.Timestamp("2025-09-22").date(), "d1": yday.date()}
+    st = nb._load()
+    out = FetchOutput()
+    # THE EXISTING RULE, NOT A NEW ONE: NearBigQuery._run with backfill=True dry-runs, refuses over the per-query cap,
+    # holds the job unless it fits budget − used − the month's top-up reserve, caps billing at the dry run, and books
+    # what was billed in the month's ledger
+    rows = nb._run(client, "NEAR stage 1 wallet_inflow_days", (here / "bigquery_wallet_inflow_days.sql").read_text(),
+                   p1, spec, st, out, "Near", backfill=True)
+    for e in out.log:
+        print(f"  {e.status.upper()}: {e.message}")
+    print(f"  {nb._quota_line(spec, nb._load())}")
+    if rows is None:
+        print("  NOT RUN this time (see above); the next scheduled day in the window tries again.")
+        return 0
+    days = sorted({str(r["day"]) for r in rows})
+    done_file.parent.mkdir(parents=True, exist_ok=True)
+    done_file.write_text(_json.dumps({"ran_on": str(day.date()), "days": days}))
+    print(f"  RUN: {len(days)} day(s) with a native TRANSFER in to the three wallets; saved {done_file.name}. Stage 2 "
+          f"(args on those days) is dry-run only — by near_settlement_routes. wallet_inflows_alltime never runs.")
+    return 0
+
+
+def worldmobile_probe():
+    """ROUND G3 item 7 (Jake 2026-10-18): World Mobile Chain through Alchemy (worldmobilechain-mainnet) — chainId, the
+    head, and eth_getCode / totalSupply() at the WMTX addresses config holds (World Mobile's own, per each entry's
+    source). Prints what is served; WIRES NOTHING. total_supply_gross misses Cardano (650,787,233.25, Koios) and the
+    Base re-issue; this says whether WorldMobile Chain carries a third leg."""
+    import config as _cfg                                 # noqa: PLC0415
+    from fetch.chain import alchemy_url, rpc_host        # noqa: PLC0415
+    head("WORLD MOBILE CHAIN — via Alchemy (worldmobilechain-mainnet); nothing is wired from this")
+    url = alchemy_url("worldmobilechain")
+    if not url:
+        print("  NOT TRIED: no Alchemy key in .env (ALCHEMY_API_KEY)")
+        return 0
+    host = rpc_host(url)
+
+    def rpc(method, params):
+        r = requests.post(url, json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params}, timeout=TIMEOUT)
+        j = r.json()
+        if "result" not in j:
+            raise RuntimeError(str(j.get("error"))[:160])
+        return j["result"]
+    try:
+        cid, head_b = int(rpc("eth_chainId", []), 16), int(rpc("eth_blockNumber", []), 16)
+    except Exception as e:  # noqa: BLE001
+        print(f"  NOT SERVED / NOT REACHED by {host}: {str(e)[:200]}")
+        return 0
+    print(f"  {host}: chainId {cid}, head block {head_b:,}")
+    p = _cfg.PROJECT_BY_NAME["World Mobile"]
+    seen = set()
+    for key, c in (p.get("contracts") or {}).items():
+        a = str(c.get("address") or "")
+        if not a.startswith("0x") or a.lower() in seen:
+            continue
+        seen.add(a.lower())
+        try:
+            code = rpc("eth_getCode", [a, "latest"])
+            if code in ("0x", "0x0"):
+                print(f"  {a} ({key}): NO CODE on WorldMobile Chain")
+                continue
+            ts = int(rpc("eth_call", [{"to": a, "data": "0x18160ddd"}, "latest"]), 16)
+            dec = int(rpc("eth_call", [{"to": a, "data": "0x313ce567"}, "latest"]), 16)
+            print(f"  {a} ({key}): code present; totalSupply() = {ts / 10 ** dec:,.4f} (decimals {dec}) — a candidate "
+                  f"leg, NOT wired (source of the address: {c.get('source') or c.get('provenance') or 'see config'})")
+        except Exception as e:  # noqa: BLE001
+            print(f"  {a} ({key}): read refused — {str(e)[:160]}")
+    print("  PASTE BACK the lines above; wiring waits for them.")
+    return 0
+
+
 CHECKS = (
     sky_chainlog, sky, morpho_blue_api,
     sky_splitter, sky_splitter_params, sky_splitter_history,
@@ -12303,6 +12476,7 @@ CHECKS = (
     morpho_incentives, settlement_sources, hyperevm_etherscan, maple_ssf_inflows, aethir_pages,
     geod_stake_recipient, geod_stake_wallets, maple_ssf_lp_test, maple_drips, plume_archive, settlement_rebuild_coverage,
     near_settlement_routes,
+    env_keys, aero_migration, near_wallet_inflow_days, worldmobile_probe,
     aethir_mint_path,
     near_activity_break,
     plume_settlement_routes,
@@ -12407,7 +12581,7 @@ def main():
     else:
         print(f"check_offline_items.py — running only {selected[0].__name__}.")
     print("Paste the whole output back.")
-    ran = []
+    ran, worst = [], 0
     import progress                                       # noqa: PLC0415
     for fn in selected:
         ran.append(fn.__name__)
@@ -12415,7 +12589,11 @@ def main():
             # A HEARTBEAT LINE AT LEAST ONCE A MINUTE (Jake's run 2026-10-11: two probes piped through Tee-Object
             # printed nothing for 40+ minutes): the step, n/N, elapsed, ETA — the loops below report via tick()
             with progress.Heartbeat(fn.__name__):
-                _bind(fn, args)()
+                rc = _bind(fn, args)()
+            # ONE CHECK RUN ALONE CAN FAIL THE PROCESS (Round G3 item 9: aero_migration exits 1 when incomplete); the
+            # full set always exits 0 — one check's verdict never stops the rest
+            if selected is not CHECKS and isinstance(rc, int) and not isinstance(rc, bool) and rc:
+                worst = rc
         except Exception as e:  # noqa: BLE001 — one failure must not stop the rest
             print(f"\n  {fn.__name__} FAILED: {e}")
     # ** THE ROLL CALL IS THE POINT. ** A check that silently never ran is invisible; naming
@@ -12424,7 +12602,7 @@ def main():
     # one — it says "1 check ran: beaconchain" rather than leaving the reader to infer that
     # nothing else was supposed to.
     print(f"\nDone. {len(ran)} check{'s' if len(ran) != 1 else ''} ran: {', '.join(ran)}")
-    return 0
+    return worst
 
 
 if __name__ == "__main__":

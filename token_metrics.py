@@ -98,7 +98,7 @@ def parse_args(argv=None) -> argparse.Namespace:
                        help="fetch every project, whatever portfolio.txt says")
     ap.add_argument("--seed", choices=["nearblocks", "geodnet", "plume_staking", "hl_candles", "plume_settlement", "mev_relays",
                              "near_bigquery", "chainlink_fees", "pendle_gauges", "aero_epochs",
-                             "aero_buyback", "aero_managed_locks", "burn_history", "hyperevm_burn"],
+                             "aero_buyback", "aero_managed_locks", "burn_history", "hyperevm_burn", "katana_claims"],
                     help="one-off: run only this source with NO time budget, to finish a first "
                          "read that routine runs (60s) take many runs to complete. Stores what it "
                          "reads; records no gaps and does not rebuild the workbook. plume_settlement: a "
@@ -116,10 +116,13 @@ def parse_args(argv=None) -> argparse.Namespace:
                          "aero_managed_locks: the filing wallets' managed-veNFT deposits at each past day start "
                          "(archive, keyed BASE_RPC_URL) — Aerodrome's circulating history on the current basis. "
                          "hyperevm_burn: the HyperEVM zero address's HYPE at each past day start (archive) — "
-                         "Hyperliquid's burned-supply leg, before run_sql CU.")
+                         "Hyperliquid's burned-supply leg, from the earliest Hyperliquid supply row (or --seed-days back), before run_sql "
+                         "CU / CW / CX. katana_claims: Morpho's Katana Distributor claims from block 0 (rpc.katana.network), "
+                         "resumable, stored only once the history reconciles to the wei.")
     ap.add_argument("--seed-days", type=int, default=None,
-                    help="--seed mev_relays only: seed this many days back instead of the configured year "
-                         "(e.g. 90 first; a later full seed resumes from the days already held)")
+                    help="--seed mev_relays: seed this many days back instead of the configured year "
+                         "(e.g. 90 first; a later full seed resumes from the days already held). --seed hyperevm_burn: "
+                         "also read this many days back when further than the earliest supply row")
     return ap.parse_args(argv)
 
 
@@ -241,39 +244,87 @@ def seed_burn_history(st, log) -> int:
     return 0
 
 
-def seed_hyperevm_burn(st, log) -> int:
-    """Round G2 D2: the HyperEVM zero address's HYPE at each past UTC day start (archive), for the days Hyperliquid's
-    supply series need it and no row holds (fetch/hyperevm_burn.py). Run BEFORE run_sql CU, which restates the stored
-    circulating rows with the same day's balance."""
+def seed_hyperevm_burn(st, log, extra_days: int | None = None) -> int:
+    """Round G2 D2 / G3 item 3: the HyperEVM zero address's HYPE at each past UTC day start (archive), for every day from
+    the earliest row of any Hyperliquid circulating / total series (or --seed-days back, when further) that holds none
+    (fetch/hyperevm_burn.py). Alchemy's HyperEVM first where ALCHEMY_API_KEY is set and it serves past state, then the
+    archive list. Stored every 30 days read, so a stopped seed keeps what it read. Run BEFORE run_sql CW / CU / CX."""
     from fetch import hyperevm_burn as hb
     from fetch.base import Http
+    from fetch.chain import rpc_host
     from fetch.validate import validate_frame
     run_id = fetch.new_run_id()
-    out = fetch.FetchOutput()
     p = config.PROJECT_BY_NAME["Hyperliquid"]
     read = next(r for r in p["node_api"]["extra_reads"] if r.get("subtract_from_supply"))
-    days = hb.days_needed(st.load_long(), p["name"], read["metric"])
+    days = hb.days_needed(st.load_long(), p["name"], read["metric"], extra_days)
     if not days:
         log.info("--seed hyperevm_burn: every day already holds %s", read["metric"])
         return 0
     http = Http(min_interval=0.2)
-    url = (read.get("archive_endpoints") or read["endpoints"])[0]
+    url, refused = None, []
+    for u in hb.archive_urls(read):
+        def rpc(method, params, u=u):
+            body = http.post(u, json_body={"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
+            if "result" not in body:
+                raise RuntimeError(str(body.get("error"))[:160])
+            return body["result"]
+        why = hb.serves_past_state(rpc, read["address"])
+        if why is None:
+            url = u
+            break
+        refused.append(f"{rpc_host(u)}: {why}")
+    if url is None:
+        log.error("--seed hyperevm_burn: NO endpoint serves HyperEVM past state — %s", "; ".join(refused))
+        return 1
 
     def rpc(method, params):
-        return http.post(url, json_body={"jsonrpc": "2.0", "id": 1, "method": method, "params": params})["result"]
-    got, failed = hb.history_rows(p["name"], read, days, rpc)
-    for f in hb.frames(p["name"], read, got):
-        out.add(f, "hypercore_info", p["name"], f"{read['metric']} archive history", 1)
-    log.info("--seed hyperevm_burn: %d day(s) read %s..%s via %s; %d failed%s", len(got),
-             got[0][0].date() if got else "-", got[-1][0].date() if got else "-", url.split("/")[2], len(failed),
-             (" (first: " + f"{failed[0][0].date()} {failed[0][1]})") if failed else "")
+        body = http.post(url, json_body={"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
+        if "result" not in body:
+            raise RuntimeError(str(body.get("error"))[:160])
+        return body["result"]
+    log.info("--seed hyperevm_burn: %d day(s) %s..%s via %s%s", len(days), days[0].date(), days[-1].date(),
+             rpc_host(url), f" (after: {'; '.join(refused)})" if refused else "")
+    written, failed_all, got_all = 0, [], []
+    for i in range(0, len(days), 30):
+        out = fetch.FetchOutput()
+        got, failed = hb.history_rows(p["name"], read, days[i:i + 30], rpc)
+        got_all += got
+        failed_all += failed
+        for f in hb.frames(p["name"], read, got):
+            out.add(f, "hypercore_info", p["name"], f"{read['metric']} archive history", 1)
+        prior = st.latest_values()
+        frames = [validate_frame(f, prior, out) for f in out.frames]
+        written += sum(st.upsert(f) for f in frames if f is not None and not f.empty)
+        for e in out.log:
+            st.record_fetch(run_id, e.source, e.project, e.rows, e.status, e.message, e.tier)
+        log.info("--seed hyperevm_burn: %d/%d day(s) done; %d row(s) stored so far (state is the store: a re-run reads "
+                 "only days with no row)", min(i + 30, len(days)), len(days), written)
+    log.info("--seed hyperevm_burn: %d day(s) read %s..%s; %d not read%s; %d row(s) stored", len(got_all),
+             got_all[0][0].date() if got_all else "-", got_all[-1][0].date() if got_all else "-", len(failed_all),
+             (" (first: " + f"{failed_all[0][0].date()} {failed_all[0][1]})") if failed_all else "", written)
+    return 0
+
+
+def seed_katana_claims(st, log) -> int:
+    """Round G3 item 1(d): Morpho's Katana claims history (fetch/katana_seed.py) — block 0 to the head through the
+    chain's own RPC, chunked, state saved after every chunk (.cache/seed_katana_claims.json; a re-run resumes), stored
+    only once the whole history reconciles to the wei at the head."""
+    from fetch import Heartbeat, katana_seed
+    from fetch.chain import ChainReader
+    from fetch.validate import validate_frame
+    run_id = fetch.new_run_id()
+    out = fetch.FetchOutput()
+    t0 = time.monotonic()
+    with Heartbeat():
+        res = katana_seed.run(ChainReader(), out)
     prior = st.latest_values()
     frames = [validate_frame(f, prior, out) for f in out.frames]
     written = sum(st.upsert(f) for f in frames if f is not None and not f.empty)
     for e in out.log:
         st.record_fetch(run_id, e.source, e.project, e.rows, e.status, e.message, e.tier)
-    log.info("--seed hyperevm_burn: %d row(s) stored", written)
-    return 0
+        log.info("--seed katana_claims: %s — %s", e.status, e.message)
+    log.info("--seed katana_claims: %s after %.0fs — %d row(s) stored", res.get("status"), time.monotonic() - t0, written)
+    return 0 if res.get("status") == "stored" else 1
 
 
 def seed_geodnet(st, log) -> int:
@@ -484,7 +535,7 @@ def seed_aero_managed_locks(st, log) -> int:
 def seed_pendle_gauges(st, log) -> int:
     """Pendle's gauge-payout scans, every chain, in one sitting (Jake's run 2026-10-09 ~14:10: the Arbitrum and
     Optimism scans seed from block 0 at 140s a run, store nothing until their whole history reconciles, and the
-    emissions sum is refused until they have). Runs the explorer_gauge and explorer_gauge_l2 tiers' scans with NO
+    emissions sum is refused until they have). Runs the explorer_gauge and the per-chain explorer_l2:<chain> tiers' scans with NO
     time budget; each resumes from its cache. Stores what reconciles (and the once-a-day direct counts); records
     no gaps."""
     from fetch import Heartbeat
@@ -495,7 +546,7 @@ def seed_pendle_gauges(st, log) -> int:
     out = fetch.FetchOutput()
     t0 = time.monotonic()
     with Heartbeat():
-        for tier in ("explorer_gauge", "explorer_gauge_l2"):
+        for tier in ("explorer_gauge", *config.l2_scan_tiers()):     # G3: one tier per chain
             LogScan(own_tier=tier, unbounded=True).run(pl, None, out)
     prior = st.latest_values()
     frames = [validate_frame(f, prior, out) for f in out.frames]
@@ -667,6 +718,13 @@ def _main(args, log) -> int:
     # NO KEY IN ANY LOG LINE OR PRINT (2026-09-29): after .env, so its values are known secrets.
     from fetch.base import install_redaction
     install_redaction()
+    # ONE ALCHEMY KEY, CHECKED BEFORE ANYTHING READS (Round G3 item 12): a malformed ALCHEMY_API_KEY stops the run here,
+    # loudly, and the message never contains the value
+    from fetch.chain import alchemy_key_problem
+    problem = alchemy_key_problem()
+    if problem:
+        log.error("%s Fix .env (RUNBOOK 11cd) and run again.", problem)
+        return 2
 
     st = store_mod.Store(store_mod.DB_PATH)
 
@@ -676,7 +734,8 @@ def _main(args, log) -> int:
               "plume_settlement": seed_plume_settlement, "near_bigquery": seed_near_bigquery,
               "chainlink_fees": seed_chainlink_fees, "pendle_gauges": seed_pendle_gauges,
               "aero_epochs": seed_aero_epochs, "burn_history": seed_burn_history,
-              "hyperevm_burn": seed_hyperevm_burn,
+              "hyperevm_burn": lambda st_, log_: seed_hyperevm_burn(st_, log_, args.seed_days),
+              "katana_claims": seed_katana_claims,
               "aero_buyback": seed_aero_buyback, "aero_managed_locks": seed_aero_managed_locks,
               "mev_relays": lambda st_, log_: seed_mev_relays(st_, log_, args.seed_days)}[args.seed](st, log)
         st.close()
@@ -701,6 +760,11 @@ def _main(args, log) -> int:
 
     projects = resolve_scope(args, log)
     run_id = fetch.new_run_id()
+    # WHICH KEYS THIS RUN HAS (Round G3 item 13): presence only, never a value; a read skipped for an absent key is a
+    # CONFIG gap (python check_offline_items.py env_keys says what each absence disables)
+    log.info("%s", config.env_keys_line())
+    from fetch import alchemy_usage
+    alchemy_usage.reset()
     first_run = st.is_empty()
     window = None if first_run else REFETCH_WINDOW_DAYS
     log.info("run %s — %s", run_id, "FIRST RUN: full backfill" if first_run else f"incremental, trailing {window}d re-fetch")
@@ -750,6 +814,9 @@ def _main(args, log) -> int:
                      "this run — %s", len(why), fetch.base.BACKFILL_DAYS, "; ".join(why))
 
     started = time.monotonic()
+    # DAILY MARKS WAIT FOR THE STORE (Round G3 item 5): buffered now, written only once the upsert below succeeds
+    from fetch.logcache import DailyChecks
+    DailyChecks.defer()
     out = fetch.fetch_all(
         projects, window,
         backfill=backfill,
@@ -769,6 +836,16 @@ def _main(args, log) -> int:
 
     written = st.upsert(out.frame())
     log.info("upserted %d rows", written)
+    log.info("daily checks: %d mark(s) written after the store write (none from an abandoned tier)",
+             DailyChecks.commit())
+    # WHAT THIS RUN ASKED OF ALCHEMY, AND THE MONTH SO FAR (Round G3 item 10): WARN at 80% of the Free plan's CU, a
+    # FAILED line at 95% — before the allowance runs out, not after
+    line, level = alchemy_usage.report(fetch.today().strftime("%Y-%m"))
+    (log.warning if level else log.info)("%s%s", line, f" — {level}: the month is near the Free plan's allowance"
+                                                       if level else "")
+    if level:
+        from fetch.base import LogEntry
+        out.log.append(LogEntry("alchemy_usage", None, 0, "failed" if level == "FAIL" else "warn", line, 2))
     if backfill:
         frame = out.frame()
         answered = (set(map(tuple, frame[["project", "metric"]].drop_duplicates().values))

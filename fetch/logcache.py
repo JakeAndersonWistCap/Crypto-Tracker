@@ -164,14 +164,67 @@ class DailyChecks:
     interrupted one runs again on the next run the same day.
     """
 
+    # ===== DEFERRED DURING A FULL RUN (Round G3 item 5, Jake's run 2026-10-18). =====
+    # Aerodrome's filing_managed_lock_tokens had no live read from 2026-10-08: every run logged "read today already"
+    # because the day's mark had been written while that day's rows never reached the store (a killed run / an
+    # abandoned tier). During a full run (token_metrics.py) every done()/set() is BUFFERED and written only by
+    # commit(), which the run calls after the store upsert succeeds; a tier abandoned on its budget has its marks
+    # dropped (discard_tier, by the tier's thread name), and a killed run writes none. A deferred mark still counts
+    # within the run (due()/get()/ever() see it), so nothing is read twice in one run.
+    _defer = {"on": False, "marks": [], "dropped": set()}
+    _defer_lock = threading.Lock()
+
+    @classmethod
+    def defer(cls) -> None:
+        with cls._defer_lock:
+            cls._defer = {"on": True, "marks": [], "dropped": set()}
+
+    @classmethod
+    def discard_tier(cls, tier: str) -> int:
+        with cls._defer_lock:
+            d = cls._defer
+            if not d["on"]:
+                return 0
+            d["dropped"].add(tier)
+            before = len(d["marks"])
+            d["marks"] = [m for m in d["marks"] if m[3] != tier]
+            return before - len(d["marks"])
+
+    @classmethod
+    def commit(cls) -> int:
+        """Write every buffered mark (after the store upsert succeeded) and stop deferring. Returns how many."""
+        with cls._defer_lock:
+            marks, cls._defer = cls._defer["marks"], {"on": False, "marks": [], "dropped": set()}
+        by_file: dict = {}
+        for f, key, value, _tier in marks:
+            by_file.setdefault(f, {})[key] = value
+        for f, kv in by_file.items():
+            with file_lock(f):
+                try:
+                    state = json.loads(f.read_text())
+                except (OSError, ValueError):
+                    state = {}
+                state.update(kv)
+                atomic_write_text(f, json.dumps(state, sort_keys=True))
+        return len(marks)
+
+    def _buffered(self) -> dict:
+        d = DailyChecks._defer
+        if not d["on"]:
+            return {}
+        with DailyChecks._defer_lock:
+            return {k: v for f, k, v, _t in d["marks"] if f == self.f}
+
     def __init__(self, root: str | Path | None = None):
         self.f = LogCache(root).root / "daily-checks.json"
 
     def _read(self) -> dict:
         try:
-            return json.loads(self.f.read_text())
+            state = json.loads(self.f.read_text())
         except (OSError, ValueError):
-            return {}
+            state = {}
+        state.update(self._buffered())
+        return state
 
     def due(self, key: str, today: str) -> bool:
         # TOKEN_METRICS_DAILY_CHECKS=always runs every check on every run (after a config change
@@ -194,6 +247,13 @@ class DailyChecks:
         return key in self._read()
 
     def done(self, key: str, today: str) -> None:
+        d = DailyChecks._defer
+        if d["on"]:
+            tier = threading.current_thread().name
+            with DailyChecks._defer_lock:
+                if tier not in d["dropped"]:
+                    d["marks"].append((self.f, key, today, tier))
+            return
         with file_lock(self.f):                          # read-modify-write under one lock: no lost key
             state = self._read()
             state[key] = today

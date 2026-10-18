@@ -30,11 +30,13 @@ import json
 import logging
 import os
 import re
+import threading
 from urllib.parse import urlparse
 import time
 from collections import defaultdict
 
 import pandas as pd
+import requests
 
 import config
 
@@ -263,7 +265,11 @@ def redact_urls(text) -> str:
     somewhere else, and that is the one that matters.
     """
     try:
-        return _URL_RE.sub(lambda m: rpc_host(m.group(0)), str(text))
+        out = _URL_RE.sub(lambda m: rpc_host(m.group(0)), str(text))
+        # AND A BARE KEY (Round G3 item 12): a provider can echo the key outside a URL; every key in .env is cut
+        for k in alchemy_keys():
+            out = out.replace(k, "<key>")
+        return out
     except Exception:  # noqa: BLE001 — a redactor must never raise
         return "<unprintable>"
 
@@ -277,25 +283,74 @@ def redact_urls(text) -> str:
 # down for the run (ChainReader._mark_down) and the public list behind it is used — so this can only add a route.
 ALCHEMY_HOSTS = {"ethereum": "eth-mainnet", "optimism": "opt-mainnet", "arbitrum": "arb-mainnet",
                  "base": "base-mainnet", "polygon": "polygon-mainnet", "bsc": "bnb-mainnet",
-                 "berachain": "berachain-mainnet"}
+                 "berachain": "berachain-mainnet",
+                 # Round G3 item 10 (Jake 2026-10-18): the networks enabled on the app. No testnets, no opBNB. Katana
+                 # and Plume are not on Alchemy and stay on their own endpoints (config.DEFAULT_RPC).
+                 "hyperevm": "hyperliquid-mainnet", "plasma": "plasma-mainnet", "sonic": "sonic-mainnet",
+                 "mantle": "mantle-mainnet", "solana": "solana-mainnet", "tron": "tron-mainnet",
+                 "worldmobilechain": "worldmobilechain-mainnet"}
 _ALCHEMY_KEY_RE = re.compile(r"https://[a-z0-9-]+\.g\.alchemy\.com/v2/([A-Za-z0-9_\-]+)")
+# ONE KEY (Round G3 item 12): ALCHEMY_API_KEY builds every Alchemy URL as https://<host>.g.alchemy.com/v2/<key>. The
+# shape Alchemy's dashboard issues; anything else (a pasted URL, a placeholder "<key>", a stray space) is refused at
+# startup — loudly, and without the value.
+ALCHEMY_KEY_ENV = "ALCHEMY_API_KEY"
+_ALCHEMY_KEY_OK = re.compile(r"[A-Za-z0-9_\-]{16,64}")
 
 
-def alchemy_url(chain: str) -> str:
-    """The Alchemy URL for `chain` built from the key in any other <CHAIN>_RPC_URL, or "" (never logged)."""
-    net = ALCHEMY_HOSTS.get(chain)
-    if not net or os.environ.get("TOKEN_METRICS_NO_ALCHEMY_DERIVE", "").strip() in ("1", "true", "yes"):
-        return ""
+class AlchemyKeyInvalid(ValueError):
+    """ALCHEMY_API_KEY is set but is not a key. The message never contains the value."""
+
+
+def alchemy_key_problem() -> str | None:
+    """Why ALCHEMY_API_KEY cannot be a key (None when unset or valid). Never includes the value."""
+    raw = os.environ.get(ALCHEMY_KEY_ENV)
+    if raw is None or raw == "":
+        return None
+    why = []
+    if "/" in raw:
+        why.append("contains '/' (paste the key, not the URL)")
+    if any(c.isspace() for c in raw):
+        why.append("contains whitespace")
+    if "<" in raw or ">" in raw:
+        why.append("contains '<' or '>' (a placeholder, not a key)")
+    if not why and not _ALCHEMY_KEY_OK.fullmatch(raw):
+        why.append(f"is {len(raw)} character(s); a key is 16-64 of A-Z a-z 0-9 _ -")
+    return (f"{ALCHEMY_KEY_ENV} in .env is not a valid Alchemy key: {'; '.join(why)}. The value is not printed."
+            if why else None)
+
+
+def alchemy_api_key() -> str:
+    """The key every Alchemy URL is built from: ALCHEMY_API_KEY, else the key inside any Alchemy <CHAIN>_RPC_URL (the
+    pre-G3 route), else "". Raises AlchemyKeyInvalid on a malformed ALCHEMY_API_KEY. Never logged."""
+    problem = alchemy_key_problem()
+    if problem:
+        raise AlchemyKeyInvalid(problem)
+    key = os.environ.get(ALCHEMY_KEY_ENV, "")
+    if key:
+        return key
     for other in ALCHEMY_HOSTS:
         m = _ALCHEMY_KEY_RE.search(os.environ.get(f"{other.upper()}_RPC_URL", ""))
         if m:
-            return f"https://{net}.g.alchemy.com/v2/{m.group(1)}"
+            return m.group(1)
     return ""
 
 
+def alchemy_url(chain: str) -> str:
+    """The Alchemy URL for `chain` from ALCHEMY_API_KEY (or the key of any Alchemy <CHAIN>_RPC_URL), or "" (never
+    logged)."""
+    net = ALCHEMY_HOSTS.get(chain)
+    if not net or os.environ.get("TOKEN_METRICS_NO_ALCHEMY_DERIVE", "").strip() in ("1", "true", "yes"):
+        return ""
+    try:
+        key = alchemy_api_key()
+    except AlchemyKeyInvalid:
+        return ""                                # the startup check has already stopped a real run
+    return f"https://{net}.g.alchemy.com/v2/{key}" if key else ""
+
+
 def alchemy_endpoint(chain: str) -> str:
-    """The keyed Alchemy URL for `chain`: <CHAIN>_RPC_URL when it IS this chain's Alchemy host, else the one derived from
-    any other Alchemy *_RPC_URL key (alchemy_url), else "". For the Transfers API route (fetch/explorer.py); never logged."""
+    """The keyed Alchemy URL for `chain`: <CHAIN>_RPC_URL when it IS this chain's Alchemy host, else the one built from
+    ALCHEMY_API_KEY (alchemy_url), else "". For the Transfers API route (fetch/explorer.py); never logged."""
     net = ALCHEMY_HOSTS.get(chain)
     own = os.environ.get(f"{chain.upper()}_RPC_URL", "").strip()
     if net and own.startswith(f"https://{net}.g.alchemy.com/v2/") and _ALCHEMY_KEY_RE.search(own):
@@ -304,8 +359,11 @@ def alchemy_endpoint(chain: str) -> str:
 
 
 def alchemy_keys() -> list[str]:
-    """Every Alchemy key in a *_RPC_URL entry — for scrubbing messages, never for printing."""
+    """Every Alchemy key in .env (ALCHEMY_API_KEY and any *_RPC_URL) — for scrubbing messages, never for printing."""
     keys = []
+    raw = os.environ.get(ALCHEMY_KEY_ENV, "")
+    if raw and len(raw) >= 8:
+        keys.append(raw)
     for k, v in os.environ.items():
         if k.endswith("_RPC_URL"):
             keys += [m.group(1) for m in _ALCHEMY_KEY_RE.finditer(v or "")]
@@ -394,6 +452,129 @@ MULTICALL3_ABI = [{
 }]
 
 
+# ===== A STALLED CHAIN COSTS ITS OWN SERIES, NOT THE TIER'S (Round G3 item 1, Jake's run 2026-10-18). =====
+# explorer_gauge_l2 timed out at 420 s "still waiting on: POST rpc.katana.network" and gapped twelve series on six other
+# chains. Two things multiplied one slow host: web3's default retry (5 attempts on Timeout/ConnectionError for eth_call
+# and eth_getLogs) and one tier running every chain in turn. Every Web3 built here now (a) has a hard (connect, read)
+# timeout and NEVER retries a timeout, (b) retries only 429/5xx, twice, and (c) reports to the breaker: STALL_AFTER
+# consecutive timeouts on one (chain, host) mark the host STALLED for the run, and a later request to it raises
+# ChainStalled at once. A chain whose every endpoint is stalled is "STALLED THIS RUN" (LogScan names it and the series
+# it gapped). The breaker is per process run: fetch.run_all resets it.
+STALL_AFTER = 3
+
+
+class ChainStalled(RuntimeError):
+    """A host (or every host of a chain) timed out STALL_AFTER times in a row this run."""
+
+
+class NoGetLogs(RuntimeError):
+    """The endpoint(s) asked will not serve eth_getLogs this run (a plan limit or a stated range too short)."""
+
+
+class StallBreaker:
+    def __init__(self):
+        self._lock = threading.Lock()
+        self.reset()
+
+    def reset(self) -> None:
+        with getattr(self, "_lock", threading.Lock()):
+            self._streak: dict[tuple[str, str], int] = {}
+            self._stalled: dict[tuple[str, str], str] = {}
+
+    def check(self, chain: str, url: str) -> None:
+        why = self._stalled.get((chain, rpc_host(url)))
+        if why:
+            raise ChainStalled(f"{rpc_host(url)} on {chain} STALLED this run ({why}) — not asked again")
+
+    def ok(self, chain: str, url: str) -> None:
+        with self._lock:
+            self._streak[(chain, rpc_host(url))] = 0
+
+    def timeout(self, chain: str, url: str, e) -> None:
+        host = rpc_host(url)
+        with self._lock:
+            n = self._streak.get((chain, host), 0) + 1
+            self._streak[(chain, host)] = n
+            if n >= STALL_AFTER and (chain, host) not in self._stalled:
+                self._stalled[(chain, host)] = f"{n} consecutive timeouts, last: {type(e).__name__}"
+                log.warning("chain %s: %s STALLED for this run (%d consecutive timeouts) — skipped by every later "
+                            "read on %s", chain, host, n, chain)
+
+    def last_timed_out(self, chain: str, url: str) -> bool:
+        return self._streak.get((chain, rpc_host(url)), 0) >= 1
+
+    def timed_out_all(self, chain: str) -> bool:
+        """Every configured endpoint of `chain` timed out on its last call this run."""
+        hosts = {rpc_host(u) for u in rpc_endpoints(chain)}
+        return bool(hosts) and all(self._streak.get((chain, h), 0) >= 1 for h in hosts)
+
+    def mark_stalled(self, chain: str, why: str) -> str:
+        """Mark every endpoint of `chain` STALLED for the run (its last call on each timed out); returns why."""
+        with self._lock:
+            for u in rpc_endpoints(chain):
+                self._stalled.setdefault((chain, rpc_host(u)), why)
+        log.warning("chain %s: STALLED for this run (%s)", chain, why)
+        return self.chain_stalled(chain) or why
+
+    def stalled_hosts(self, chain: str) -> dict[str, str]:
+        return {h: w for (c, h), w in self._stalled.items() if c == chain}
+
+    def chain_stalled(self, chain: str) -> str | None:
+        """Why `chain` is stalled for the run (every configured endpoint stalled), else None."""
+        hosts = {rpc_host(u) for u in rpc_endpoints(chain)}
+        st = self.stalled_hosts(chain)
+        if hosts and hosts <= set(st):
+            return "; ".join(f"{h}: {w}" for h, w in sorted(st.items()))
+        return None
+
+
+BREAKER = StallBreaker()
+_RETRY_STATUS = (429, 500, 502, 503, 504)
+
+
+_GUARDED: dict = {}
+
+
+def _guarded_provider_class(HTTPProvider):
+    """HTTPProvider with the hard timeout, the breaker and the Alchemy usage count (built lazily: web3 is optional)."""
+    if HTTPProvider in _GUARDED:
+        return _GUARDED[HTTPProvider]
+    from . import alchemy_usage
+
+    class _GuardedProvider(HTTPProvider):
+        chain = ""
+
+        def _make_request(self, method, request_data):
+            url = str(self.endpoint_uri)
+            for attempt in range(3):
+                BREAKER.check(self.chain, url)
+                alchemy_usage.record(url, method)
+                try:
+                    out = self._request_session_manager.make_post_request(
+                        self.endpoint_uri, request_data, **self.get_request_kwargs())
+                except requests.exceptions.Timeout as e:   # connect or read: NEVER retried here
+                    BREAKER.timeout(self.chain, url, e)
+                    raise
+                except requests.exceptions.HTTPError as e:
+                    BREAKER.ok(self.chain, url)            # it answered
+                    code = getattr(getattr(e, "response", None), "status_code", None)
+                    if code in _RETRY_STATUS and attempt < 2:
+                        time.sleep(0.5 * 2 ** attempt)
+                        continue
+                    raise
+                except requests.exceptions.ConnectionError:
+                    if attempt < 1:
+                        time.sleep(0.25)
+                        continue
+                    raise
+                BREAKER.ok(self.chain, url)
+                return out
+            return None
+
+    _GUARDED[HTTPProvider] = _GuardedProvider
+    return _GuardedProvider
+
+
 class ChainReader:
     """Holds one working web3 connection per chain, trying the fallback list in order."""
 
@@ -478,8 +659,11 @@ class ChainReader:
         except Exception as e:  # noqa: BLE001
             errors.append(f"{rpc_host(self._w3_url.get(chain, '?'))}: {redact_urls(e)}")
         bad = self._w3_url.get(chain)
+        # NOT ASKED AGAIN STRAIGHT AFTER A TIMEOUT (G3 item 1): an endpoint whose last call timed out is skipped here —
+        # asking it again doubles a stalled chain's cost for no new answer; one that refused for any other reason is
+        # still tried, so a transient refusal recovers as before
         for url in rpc_endpoints(chain):
-            if url == bad:
+            if url == bad or BREAKER.last_timed_out(chain, url) or BREAKER.stalled_hosts(chain).get(rpc_host(url)):
                 continue
             try:
                 w3 = self.make_web3(chain, url, 30)
@@ -503,7 +687,18 @@ class ChainReader:
         search. Every provider this reader builds goes through here, so none can miss it.
         """
         from web3 import HTTPProvider, Web3
-        w3 = Web3(HTTPProvider(url, request_kwargs={"timeout": (10, read_timeout)}))
+        # TOKEN_METRICS_RPC_READ_TIMEOUT caps every read timeout (seconds) — the tests' stalled host, or a slow link
+        cap = os.environ.get("TOKEN_METRICS_RPC_READ_TIMEOUT", "").strip()
+        if cap:
+            read_timeout = min(float(read_timeout), float(cap))
+        if isinstance(HTTPProvider, type):
+            prov = _guarded_provider_class(HTTPProvider)(url, request_kwargs={"timeout": (min(10, read_timeout),
+                                                                                      read_timeout)},
+                                                         exception_retry_configuration=None)
+            prov.chain = chain
+        else:                                            # a stand-in web3 (the tests'): used as given
+            prov = HTTPProvider(url, request_kwargs={"timeout": (10, read_timeout)})
+        w3 = Web3(prov)
         if chain in config.POA_CHAINS:
             try:
                 from web3.middleware import ExtraDataToPOAMiddleware as poa   # web3 v7+
@@ -958,8 +1153,52 @@ class ChainReader:
                 out.append(part)
         return redact_urls(" | ".join(out))
 
+    # ===== A PLAN LIMIT IS NOT A RANGE TO HALVE TOWARDS (Round G3 item 11, Jake's run 2026-10-18). =====
+    # Alchemy's free tier answered "Under the Free tier plan, you can make eth_getLogs requests with up to a 10 block
+    # range. Based on your parameters, this block range should work: [0x1901823, 0x190182c]" and the scan halved
+    # 5000 -> 500 (five refused calls) and failed. The server had said its range; it is READ. A plan refusal, or a
+    # stated range under LOG_RANGE_USEFUL blocks, marks the endpoint "NO getLogs" for the run — it is never asked for
+    # logs again — and the scan falls through (explorer route, then the public log route, config.LOG_RPC, then the
+    # public list). A stated range of LOG_RANGE_USEFUL or more is used as the chunk at once.
+    LOG_RANGE_USEFUL = 2_000
+    _HINT_PAIR = re.compile(r"\[\s*(0x[0-9a-fA-F]+)\s*,\s*(0x[0-9a-fA-F]+)\s*\]")
+    _HINT_NUM = re.compile(r"(?:max(?:imum)?\s*(?:block\s*)?range\s*(?:is|of)?\s*:?\s*|ranges?\s+over\s+|"
+                           r"up\s+to\s+(?:a\s+)?|range\s+exceeds\s+)(\d[\d,]*)", re.I)
+    _PLAN = re.compile(r"free tier|upgrade|your (?:current )?plan|paid plan|plan limit", re.I)
+
+    @classmethod
+    def log_range_hint(cls, msg: str) -> int | None:
+        """The block range the server says it serves, read from its own error text (None if it names none)."""
+        m = cls._HINT_PAIR.search(msg or "")
+        if m:
+            lo, hi = int(m.group(1), 16), int(m.group(2), 16)
+            if hi >= lo:
+                return hi - lo + 1
+        m = cls._HINT_NUM.search(msg or "")
+        return int(m.group(1).replace(",", "")) if m else None
+
+    def no_getlogs(self, chain: str, url: str) -> str | None:
+        return self.__dict__.get("_nologs", {}).get((chain, url))
+
+    def _mark_no_getlogs(self, chain: str, url: str, why: str) -> None:
+        nl = self.__dict__.setdefault("_nologs", {})
+        if (chain, url) not in nl:
+            nl[(chain, url)] = why
+            log.info("chain %s: %s — NO getLogs for this run (%s); falling through", chain, rpc_host(url), why)
+
+    def log_endpoints(self, chain: str) -> list[str]:
+        """eth_getLogs order: the keyed endpoints (<CHAIN>_RPC_URL / Alchemy), then config.LOG_RPC (the public log
+        route), then the public list. RPC_<CHAIN> replaces everything, as it does for every read."""
+        eps = rpc_endpoints(chain)
+        if os.environ.get(f"RPC_{chain.upper()}", "").strip():
+            return eps
+        pub = set(config.DEFAULT_RPC.get(chain, []))
+        extra = list(getattr(config, "LOG_RPC", {}).get(chain, []))
+        keyed = [u for u in eps if u not in pub and u not in extra]
+        return keyed + extra + [u for u in eps if u in pub and u not in extra]
+
     def _get_logs_resilient(self, chain: str, base: dict, block: int, head: int,
-                            chunk: int) -> tuple[list, int, int]:
+                            chunk: int, only: list | None = None) -> tuple[list, int, int]:
         """One eth_getLogs chunk, falling over to the next endpoint on refusal, narrowing on range.
 
         ** THE FALLBACK LIST WAS ONLY CONSULTED AT CONNECT TIME, WHICH IS THE WRONG MOMENT. **
@@ -967,36 +1206,39 @@ class ChainReader:
         for every call on that chain. A provider can be perfectly connected and still refuse ONE
         method: ethereum-rpc.publicnode.com serves eth_blockNumber, eth_call and eth_getCode and
         returns 403 to eth_getLogs. So Sky's burn read failed with three working alternatives
-        sitting unused in the list.
+        sitting unused.
 
-        TWO FAILURES, TWO DIFFERENT ANSWERS, told apart by what the server SAID:
+        THREE FAILURES, THREE DIFFERENT ANSWERS, told apart by what the server SAID:
           REFUSED BY THIS ENDPOINT -> move to the next one and retry the same range. Each
             endpoint is tried at most once per chunk, so a request that is simply wrong fails
             after one pass instead of being hammered round the list.
-          RANGE TOO WIDE -> halve the chunk and retry, down to MIN_LOG_CHUNK. The server named
-            its own limit and narrowing is a reply to that, not a guess. Below the floor it
-            raises: a scan needing thousands of chunks is a configuration answer, not a retry.
+          A PLAN LIMIT, OR A STATED RANGE TOO SHORT TO SCAN WITH (G3) -> the endpoint is "NO
+            getLogs" for the run and the next one is asked; with `only` (the Alchemy-first try),
+            NoGetLogs is raised so scan_logs can fall through to the explorer.
+          RANGE TOO WIDE -> use the range the server states, or halve the chunk when it states
+            none, down to MIN_LOG_CHUNK. Below the floor it raises: a scan needing thousands of
+            chunks is a configuration answer, not a retry.
         Anything else raises immediately. A decoding error or a bad topic must not be papered
         over by trying another provider, which would turn one clear failure into four vague ones.
 
         Returns (logs, last_block_covered, chunk_that_worked) so the caller advances by what was
         actually read and reports the real chunk size rather than the one it asked for.
         """
-        from web3 import HTTPProvider, Web3
-
         tried: list[str] = []
-        urls = rpc_endpoints(chain)
-        w3 = self.web3(chain)
+        urls = list(only) if only else self.log_endpoints(chain)
+        usable = lambda u: not self.is_down(chain, u) and not self.no_getlogs(chain, u)  # noqa: E731
         # KEYED FIRST FOR LOG READS (Round G 1.6): the kept endpoint can be a public one — the keyed endpoint failed its
         # connect in the run's first minute — and publicnode refuses eth_getLogs with 403. A log read starts on the
-        # first endpoint in rpc_endpoints order that is not down for the run.
+        # first endpoint in log order that is not down (or NO getLogs) for the run.
+        first = next((u for u in urls if usable(u)), None)
+        if first is None:
+            raise NoGetLogs(f"no {chain} endpoint serves eth_getLogs this run: " + "; ".join(
+                f"{rpc_host(u)} ({self.no_getlogs(chain, u) or 'down'})" for u in urls))
         kept = self._w3_url.get(chain)
-        first = next((u for u in urls if not self.is_down(chain, u)), None)
-        if kept and first and first != kept:
-            try:
-                w3 = self._w3_at(chain, first, 60)
-            except Exception:  # noqa: BLE001 — the kept endpoint stays
-                pass
+        if only or kept != first:
+            w3 = self._w3_at(chain, first, 60)
+        else:
+            w3 = self.web3(chain)
         while True:
             upper = min(block + chunk - 1, head)
             try:
@@ -1008,12 +1250,37 @@ class ChainReader:
             except Exception as e:  # noqa: BLE001
                 detail = self.error_detail(e)
                 msg = detail.lower()
+                cur_url = getattr(getattr(w3, "provider", None), "endpoint_uri", "?")
                 # ** THE BODY IS RECORDED WHATEVER HAPPENS NEXT. ** Knowing that a provider said
                 # "block range exceeds 10000" is what turns a guessed chunk size into a read one,
                 # and it is lost the moment the exception is re-raised.
                 self.log_range_errors.setdefault(chain, [])
                 if detail not in self.log_range_errors[chain]:
                     self.log_range_errors[chain].append(detail[:300])
+                hint = self.log_range_hint(detail)
+                results_cap = "returned more than" in msg or "too many results" in msg
+                plan = bool(self._PLAN.search(detail))
+                if (plan or (hint is not None and hint < self.LOG_RANGE_USEFUL and not results_cap)) \
+                        and str(cur_url) in urls:
+                    self._mark_no_getlogs(chain, str(cur_url), (f"plan limit, {hint:,}-block range" if hint
+                                                                 else "plan limit") if plan else
+                                          f"serves only {hint:,} blocks per call")
+                    self.log_endpoints_refused.setdefault(chain, []).append(
+                        f"{rpc_host(cur_url)} (NO getLogs: {self.no_getlogs(chain, str(cur_url))})")
+                    if only:
+                        raise NoGetLogs(self.no_getlogs(chain, str(cur_url))) from e
+                    nxt = next((u for u in urls if usable(u)), None)
+                    if nxt is None:
+                        raise RuntimeError(
+                            f"no {chain} endpoint left that serves eth_getLogs this run, in order: "
+                            f"{'; '.join(self.log_endpoints_refused[chain])}") from e
+                    w3 = self._w3_at(chain, nxt, 60)
+                    continue
+                if hint is not None and hint < chunk and (hint >= self.MIN_LOG_CHUNK or results_cap):
+                    chunk = max(1, hint)
+                    log.info("chain %s: eth_getLogs — %s states %d blocks; chunk set to it (read, not halved)",
+                             chain, rpc_host(cur_url), chunk)
+                    continue
                 named_range = any(s in msg for s in self.LOGS_RANGE_TOO_WIDE)
                 # AN UNEXPLAINED 400 OVER A WIDE SPAN IS TREATED AS A RANGE REJECTION, and the
                 # inference is logged AS an inference. A 400 means the request was rejected, not
@@ -1040,7 +1307,6 @@ class ChainReader:
                     log.info("chain %s: eth_getLogs failed over blocks %d-%d at chunk %d — %s",
                              chain, block, upper, chunk, detail[:300])
                     raise
-                cur_url = getattr(getattr(w3, "provider", None), "endpoint_uri", "?")
                 tried.append(rpc_host(cur_url))
                 if self._is_forbidden(msg) and cur_url in urls:
                     self._mark_down(chain, cur_url, "HTTP 403 to eth_getLogs")
@@ -1048,7 +1314,9 @@ class ChainReader:
                 if tried[-1] not in self.log_endpoints_refused[chain]:
                     self.log_endpoints_refused[chain].append(
                         f"{tried[-1]} ({redact_urls(e)[:60]})")
-                nxt = next((u for u in urls if rpc_host(u) not in tried and not self.is_down(chain, u)), None)
+                if only:
+                    raise NoGetLogs(f"{tried[-1]} refused eth_getLogs ({redact_urls(e)[:80]})") from e
+                nxt = next((u for u in urls if rpc_host(u) not in tried and usable(u)), None)
                 if nxt is None:
                     raise RuntimeError(
                         f"ALL {len(tried)} configured {chain} RPC endpoint(s) refused "
@@ -1098,7 +1366,8 @@ class ChainReader:
         # actually scans. A silently shortened window returns a smaller number that looks
         # exactly like a quieter period.
 
-        topic = Web3.keccak(text="Transfer(address,address,uint256)").hex()
+        # 0x-PREFIXED (G3): hexbytes >= 1.0 returns .hex() without it, and an RPC refuses the bare topic ("invalid params")
+        topic = "0x" + Web3.keccak(text="Transfer(address,address,uint256)").hex().removeprefix("0x")
         to_topic = "0x" + self.checksum(burn_to)[2:].lower().rjust(64, "0")
         base = {"address": self.checksum(token),
                 "topics": [topic, None, to_topic] if side == "to" else [topic, to_topic, None]}
@@ -1132,9 +1401,12 @@ class ChainReader:
                 sender, recipient = entry["topics"][1], entry["topics"][2]
                 sender = sender.hex() if hasattr(sender, "hex") else str(sender)
                 recipient = recipient.hex() if hasattr(recipient, "hex") else str(recipient)
+                tx = entry.get("transactionHash") if hasattr(entry, "get") else None
                 events.append({"from": "0x" + sender[-40:], "to": "0x" + recipient[-40:],
                                "value": word,
                                "block": int(entry["blockNumber"]),
+                               # G3 item 8: the tx, so the Run Log names each burn (older cached events carry none)
+                               **({"tx": tx.hex() if hasattr(tx, "hex") else str(tx)} if tx else {}),
                                })
         self.log_chunk_used[chain] = used
         safe = head - BURN_CONFIRMATIONS
@@ -1176,7 +1448,17 @@ class ChainReader:
         # "SERVED BY" log line reports the explorer — or, after a refusal, why it fell back.
         # rpc_only (round 3 run X1 follow-up): a block the explorer does NOT index is read from the chain itself —
         # asking the explorer again would return the same empty answer that made the hole.
+        from . import alchemy_usage
         from .explorer import ExplorerLogs, ExplorerRefused
+        # ===== ALCHEMY FIRST (Round G3 items 10/11). ===== Where the first log endpoint is Alchemy (a paid plan serves
+        # wide ranges), it is asked first; a plan refusal marks it NO getLogs for the run (one refused call) and the
+        # scan falls through to the explorer route, then the public RPCs.
+        lead = next((u for u in self.log_endpoints(chain) if not self.is_down(chain, u)), None)
+        if lead and alchemy_usage.is_alchemy(lead) and not self.no_getlogs(chain, lead):
+            try:
+                return self._rpc_traverse(chain, base, from_block, to_block, chunk, only=[lead])
+            except NoGetLogs:
+                pass
         chain_id = None if rpc_only else config.CHAIN_IDS.get(chain)
         if chain_id is not None:
             if not hasattr(self, "explorer"):
@@ -1201,9 +1483,15 @@ class ChainReader:
                                               if meta["refused"] else ""))
                     return logs, meta["requests"], chunk
 
+        return self._rpc_traverse(chain, base, from_block, to_block, chunk)
+
+    def _rpc_traverse(self, chain: str, base: dict, from_block: int, to_block: int, chunk: int,
+                      only: list | None = None) -> tuple[list, int, int]:
+        """The chunked RPC eth_getLogs over [from_block, to_block] (scan_logs' last route)."""
         block, chunks, used, out = from_block, 0, chunk, []
         while block <= to_block:
-            logs, upper, used = self._get_logs_resilient(chain, base, block, to_block, used)
+            logs, upper, used = (self._get_logs_resilient(chain, base, block, to_block, used, only=only) if only
+                                 else self._get_logs_resilient(chain, base, block, to_block, used))
             chunks += 1
             out.extend(logs)
             # ** upper, NOT block + used. ** _get_logs_resilient may have NARROWED mid-scan, and
@@ -2059,7 +2347,8 @@ class Chain:
         # The Pause Proxy has burned for two unrelated reasons (config burn_logs
         # .pause_proxy_burns_on_file); only burns dated on or after stage2_split.from_date are the
         # buy-and-burn. Each Pause Proxy event is dated by its own block — one call a month.
-        split = cfg.get("stage2_split") or {}
+        split = ({**cfg["stage2_split"], "_on_file": cfg.get("pause_proxy_burns_on_file") or ()}
+                 if cfg.get("stage2_split") else {})
         if split and stage2:
             self._stage2_split(project, chain, key, split, stage2, events, dec, last_blk,
                                parts, source_suffix, suffix, out)
@@ -2128,7 +2417,8 @@ class Chain:
         net = lambda b: (sum(e["value"] for e in mints if e["block"] <= b)      # noqa: E731
                          - sum(e["value"] for e in burns if e["block"] <= b))
         holes, trace = [], []
-        topic = Web3.keccak(text="Transfer(address,address,uint256)").hex()
+        # 0x-PREFIXED (G3): hexbytes >= 1.0 returns .hex() without it, and an RPC refuses the bare topic ("invalid params")
+        topic = "0x" + Web3.keccak(text="Transfer(address,address,uint256)").hex().removeprefix("0x")
         topic = topic if topic.startswith("0x") else "0x" + topic
         zero = "0x" + self.reader.checksum(burn_to)[2:].lower().rjust(64, "0")
         for _ in range(5):
@@ -2200,13 +2490,24 @@ class Chain:
         # check to absorb that would be a tolerance on a check that must not have one.
         by_day: dict = defaultdict(int)
         before = 0
+        named = []                                       # each Stage 2 burn, for the Run Log (G3 item 8)
+        on_file = {int(r["block"]): r for r in split.get("_on_file") or () if r.get("block")}
         for e in events:
             if e["from"].lower() != burner.lower():
                 continue
-            day = pd.Timestamp(self.reader.block_timestamp(chain, e["block"]), unit="s").normalize()
+            ts = self.reader.block_timestamp(chain, e["block"])
+            day = pd.Timestamp(ts, unit="s").normalize()
             amount = int(e["value"])
             if day >= start:
                 by_day[day] += amount
+                rec = on_file.get(int(e["block"]))
+                tx = e.get("tx") or (rec or {}).get("tx")
+                if tx and not str(tx).startswith("0x"):
+                    tx = "0x" + str(tx)
+                check = ("" if not rec else " = the verified burn on file" if str(amount) == str(rec.get("amount_wei"))
+                         else f" ≠ the burn on file ({rec.get('amount_wei')} wei) — CHECK")
+                named.append(f"{pd.Timestamp(ts, unit='s'):%Y-%m-%d %H:%M:%S} UTC block {int(e['block']):,} "
+                             f"{amount / 10 ** dec:,.6f} SKY tx {tx or 'not in the cached event'}{check}")
             else:
                 before += amount
         from decimal import Decimal
@@ -2230,8 +2531,8 @@ class Chain:
                      f"{SOURCE}:{chain}:{key}[{flow_m}][{suffix}]", TIER)
         out.add(frame, SOURCE, name,
                 f"{flow_m}: {total:,.2f} SKY over {len(by_day)} burn day(s) from "
-                f"{split['from_date']} (Pause Proxy {burner}); {before / (10 ** dec):,.2f} SKY of earlier Pause "
-                f"Proxy burns excluded as not Stage 2", TIER)
+                f"{split['from_date']} (Pause Proxy {burner}): " + "; ".join(named) + f". "
+                f"{before / (10 ** dec):,.2f} SKY of earlier Pause Proxy burns excluded as not Stage 2", TIER)
 
     def _emit_parts(self, project: dict, parts: dict, partial_metrics: set, refused: dict, when, out,
                     disputed: dict | None = None, source_suffix: dict | None = None,
