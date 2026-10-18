@@ -366,8 +366,8 @@ _WRITE_TARGET = re.compile(
 def write_target(stmt: str) -> tuple[str, str, str] | None:
     """(verb, table, where) for a DELETE or UPDATE, or None if it is neither.
 
-    WHERE is the FIRST `WHERE` token after the table — the outer one, since a subquery's WHERE
-    can only come later (inside SET's value or inside the outer WHERE). Matched as a word, not
+    WHERE is the first `WHERE` token after the table OUTSIDE ALL BRACKETS — the outer one; a
+    subquery's WHERE (inside SET's value or inside the outer WHERE) is bracketed. Matched as a word, not
     as " WHERE " with spaces: a WHERE starting an unindented line has no leading space, and the
     old test then previewed the WHOLE table while the statement touched part of it.
     """
@@ -377,7 +377,20 @@ def write_target(stmt: str) -> tuple[str, str, str] | None:
         return None
     verb = "DELETE" if m.group("delete") else "UPDATE"
     rest = body[m.end():]
-    w = re.search(r"\bWHERE\b", rest, re.I)
+    # AT PARENTHESIS DEPTH 0. Fixed 2026-10-18 (section CU): an UPDATE whose SET value is a
+    # subquery — `SET value = value - (SELECT z.value FROM metrics z WHERE ...)` — has the
+    # subquery's WHERE first, and previewing that against the outer table fails ("no such
+    # column: z.value"), so the restatement was refused. The outer WHERE is the first one outside
+    # every bracket.
+    w, depth = None, 0
+    for t in re.finditer(r"\(|\)|\bWHERE\b", rest, re.I):
+        if t.group() == "(":
+            depth += 1
+        elif t.group() == ")":
+            depth -= 1
+        elif depth == 0:
+            w = t
+            break
     where = rest[w.end():].strip().rstrip(";").strip() if w else "1=1"
     return verb, m.group("table"), where
 

@@ -804,6 +804,30 @@ class LogScan:
             return
         # every query below is a Transfer of one token from / to a holder: the chain's opened transfer route counts
         if not (self.explorer.configured(chain_id, transfer=True) if _takes_transfer(self.explorer)
+                else self.explorer.configured(chain_id)) and spec.get("rpc_window"):
+            # NO EXPLORER, THE CHAIN'S OWN RPC (round G2 D1, Katana): a scan declared rpc_window reads only the window —
+            # eth_getLogs on the chain's RPC and balanceOf at both ends, reconciled to the wei (_window_scan). There is
+            # no full history to cache, so nothing else runs; an unreconciled window stores nothing, as everywhere.
+            try:
+                head = (int(self.reader.block_number(chain)) if hasattr(self.reader, "block_number")
+                        else int(self.reader.web3(chain).eth.block_number))
+            except Exception as e:  # noqa: BLE001
+                from .chain import redact_urls
+                out.fail(SOURCE, name, f"{key}: no RPC answered eth_blockNumber on {chain}: {redact_urls(e)}", TIER)
+                return
+            from .logcache import DailyChecks
+            if not DailyChecks(self.cache.root).due(f"window:{key}", str(today().date())):
+                out.log.append(LogEntry(SOURCE, name, 0, "ok", f"{key}: the RPC window was read and stored today "
+                                                               f"already (once a day)", TIER))
+                return
+            if not self._window_scan(p, spec, chain, chain_id, token, holders, head - CONFIRMATIONS,
+                                     f"no explorer serves {chain} (chain {chain_id}); the RPC window is the route "
+                                     f"({spec['rpc_window']})", out):
+                out.gap(name, metric, reason=f"the {key} RPC window did not store today (see the log line above; "
+                                             f"once a day)", tiers_attempted="2",
+                        suggestion=f"Check the {chain} RPC ({', '.join(config.DEFAULT_RPC.get(chain) or [])}).")
+            return
+        if not (self.explorer.configured(chain_id, transfer=True) if _takes_transfer(self.explorer)
                 else self.explorer.configured(chain_id)):
             routed = config.explorer_order(chain_id) + config.transfer_route(chain_id)
             why = (f"no explorer serves logs free on {chain} (chain {chain_id}) per "

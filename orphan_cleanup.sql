@@ -4773,3 +4773,113 @@ SELECT project, source, COUNT(*) AS rows, MIN(date) AS first, MAX(date) AS last,
 --  WHERE metric = 'total_supply' AND source LIKE 'coingecko%' AND project = 'Aethir'
 --    AND EXISTS (SELECT 1 FROM metrics c WHERE c.project = metrics.project AND c.date = metrics.date
 --                AND c.metric = 'total_supply_coingecko');
+
+-- ========================================================================================
+-- CT. MORPHO ON A CLAIMS BASIS: THE ETHEREUM CLAIMS SERIES GETS ITS OWN NAME  2026-10-18T14:30Z
+--     Jake's decision of 2026-10-18 (round G2, D1): Morpho's incentives are counted as CLAIMED, on every chain. The
+--     Ethereum claims scan (Merkl Distributor + the URD) wrote emissions_tokens; it becomes
+--     emissions_tokens_claims_ethereum (values untouched) and emissions_tokens is the sum of the four chains' claims
+--     (config emissions_from_metric). Run: python run_sql.py CT, then python run_sql.py --delete CT, BEFORE the next
+--     token_metrics.py (the scan writes the new name from then on).
+-- ========================================================================================
+-- CT1. WHAT MOVES.
+SELECT project, metric, source, COUNT(*) AS rows, MIN(date) AS first, MAX(date) AS last, SUM(value) AS tokens
+  FROM metrics
+ WHERE project = 'Morpho' AND metric IN ('emissions_tokens', 'emissions_tokens_claims_ethereum')
+ GROUP BY project, metric, source;
+
+-- CT2. THE MOVE (a day already held under the new name keeps that row).
+-- UPDATE OR IGNORE metrics
+--    SET metric = 'emissions_tokens_claims_ethereum'
+--  WHERE project = 'Morpho' AND metric = 'emissions_tokens';
+-- DELETE FROM metrics
+--  WHERE project = 'Morpho' AND metric = 'emissions_tokens'
+--    AND EXISTS (SELECT 1 FROM metrics c WHERE c.project = metrics.project AND c.date = metrics.date
+--                AND c.metric = 'emissions_tokens_claims_ethereum');
+
+-- ========================================================================================
+-- CU. HYPERLIQUID AND GEODNET: OUR TOTAL SUPPLY NET OF THE BURNS; HYPERLIQUID'S CIRCULATING NET OF THE HYPEREVM BURN
+--     2026-10-18T14:30Z
+--     Jake's decisions of 2026-10-18 (round G2, D2 and L3). total_supply is now our own net total, a read-time view
+--     (config.TOTAL_SUPPLY_NET): Hyperliquid = tokenDetails totalSupply − the Assistance Fund − the HyperEVM zero
+--     address; GEODNET = GEOD.totalSupply() on Polygon − the burn balances. CoinGecko's stored total_supply rows move to
+--     total_supply_coingecko (values untouched), as CM / CS did. Hyperliquid's circulating_supply_first_party is now
+--     written net of the HyperEVM burn; each stored row is restated by the same day's hyperevm_zero_address_balance and
+--     its source gets the new suffix. A day with no balance row is NOT restated (listed in CU3) — run
+--     `python token_metrics.py --seed hyperevm_burn` FIRST, then: python run_sql.py CU, then
+--     python run_sql.py --delete CU.
+-- ========================================================================================
+-- CU1. THE COINGECKO TOTALS THAT MOVE.
+SELECT project, source, COUNT(*) AS rows, MIN(date) AS first, MAX(date) AS last, MIN(value) AS min_value,
+       MAX(value) AS max_value
+  FROM metrics
+ WHERE metric = 'total_supply' AND source LIKE 'coingecko%' AND project IN ('Hyperliquid', 'GEODNET')
+ GROUP BY project, source;
+
+-- CU2. HYPERLIQUID CIRCULATING: BEFORE, THE SAME DAY'S HYPEREVM BURN, AFTER.
+SELECT c.date, c.value AS circulating_before, z.value AS hyperevm_burned, c.value - z.value AS circulating_after,
+       c.source
+  FROM metrics c
+  JOIN metrics z ON z.project = c.project AND z.date = c.date AND z.metric = 'hyperevm_zero_address_balance'
+ WHERE c.project = 'Hyperliquid' AND c.metric = 'circulating_supply_first_party'
+   AND c.source = 'hypercore_info:tokenDetails.circulatingSupply-exclude_wallets'
+ ORDER BY c.date;
+
+-- CU3. DAYS THAT CANNOT BE RESTATED YET (no HyperEVM balance row that day) — empty after --seed hyperevm_burn.
+SELECT c.date, c.value, c.source
+  FROM metrics c
+ WHERE c.project = 'Hyperliquid' AND c.metric = 'circulating_supply_first_party'
+   AND c.source = 'hypercore_info:tokenDetails.circulatingSupply-exclude_wallets'
+   AND NOT EXISTS (SELECT 1 FROM metrics z WHERE z.project = c.project AND z.date = c.date
+                   AND z.metric = 'hyperevm_zero_address_balance')
+ ORDER BY c.date;
+
+-- CU4. THE MOVE AND THE RESTATEMENT.
+-- UPDATE OR IGNORE metrics
+--    SET metric = 'total_supply_coingecko'
+--  WHERE metric = 'total_supply' AND source LIKE 'coingecko%' AND project IN ('Hyperliquid', 'GEODNET');
+-- DELETE FROM metrics
+--  WHERE metric = 'total_supply' AND source LIKE 'coingecko%' AND project IN ('Hyperliquid', 'GEODNET')
+--    AND EXISTS (SELECT 1 FROM metrics c WHERE c.project = metrics.project AND c.date = metrics.date
+--                AND c.metric = 'total_supply_coingecko');
+-- UPDATE metrics
+--    SET value = value - (SELECT z.value FROM metrics z
+--                          WHERE z.project = 'Hyperliquid' AND z.metric = 'hyperevm_zero_address_balance'
+--                            AND z.date = metrics.date),
+--        source = 'hypercore_info:tokenDetails.circulatingSupply-exclude_wallets-hyperevm_burn'
+--  WHERE project = 'Hyperliquid' AND metric = 'circulating_supply_first_party'
+--    AND source = 'hypercore_info:tokenDetails.circulatingSupply-exclude_wallets'
+--    AND EXISTS (SELECT 1 FROM metrics z WHERE z.project = 'Hyperliquid' AND z.date = metrics.date
+--                AND z.metric = 'hyperevm_zero_address_balance');
+
+-- ========================================================================================
+-- CV. ONE PRICE SERIES: THE PRICE_HISTORY TIER'S ROWS BECOME THE DECLARED OLDER LEG  2026-10-18T14:30Z
+--     Jake's run on e2250e5 (G2 addendum A1): 11 headline cells read "price_usd (q0): measuring_point_changed — NOT
+--     REPORTED". The G2.1 tier (fetch/price_history.py) stored price_usd as 'price_history:coins.llama.fi[coingecko:<id>]',
+--     a measuring point outside price_usd's declared handover (defillama_coins:history -> coingecko). The build already
+--     reads them correctly (build_workbook._price_tier_views); this makes the store say the same: a tier row dated before
+--     the project's first CoinGecko price is relabelled to the declared leg (value untouched); a tier row inside
+--     CoinGecko's range is removed (CoinGecko's series holds that range; the tier no longer writes there).
+--     Run: python run_sql.py CV, then python run_sql.py --delete CV.
+-- ========================================================================================
+-- CV1. THE TIER'S ROWS, BEFORE / INSIDE COINGECKO'S RANGE.
+SELECT t.project,
+       SUM(t.date < (SELECT MIN(c.date) FROM metrics c WHERE c.project = t.project AND c.metric = 'price_usd'
+                       AND c.source LIKE 'coingecko%')) AS before_coingecko,
+       SUM(t.date >= (SELECT MIN(c.date) FROM metrics c WHERE c.project = t.project AND c.metric = 'price_usd'
+                        AND c.source LIKE 'coingecko%')) AS inside_coingecko,
+       MIN(t.date) AS first, MAX(t.date) AS last
+  FROM metrics t
+ WHERE t.metric = 'price_usd' AND t.source LIKE 'price_history:%'
+ GROUP BY t.project;
+
+-- CV2. THE RELABEL AND THE REMOVAL.
+-- UPDATE metrics
+--    SET source = 'defillama_coins:history[coins.llama.fi ' || REPLACE(REPLACE(SUBSTR(source, 29), '[', ''), ']', '') || ']'
+--  WHERE metric = 'price_usd' AND source LIKE 'price_history:coins.llama.fi[%'
+--    AND date < (SELECT MIN(c.date) FROM metrics c WHERE c.project = metrics.project AND c.metric = 'price_usd'
+--                AND c.source LIKE 'coingecko%');
+-- DELETE FROM metrics
+--  WHERE metric = 'price_usd' AND source LIKE 'price_history:%'
+--    AND date >= (SELECT MIN(c.date) FROM metrics c WHERE c.project = metrics.project AND c.metric = 'price_usd'
+--                 AND c.source LIKE 'coingecko%');

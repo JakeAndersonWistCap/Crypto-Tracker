@@ -297,7 +297,7 @@ METRICS = {
     "utilisation_containers_pct": {"label": "Utilisation LOWER BOUND = compute hours delivered last week / (GPU containers x 168h) — assumes every container online all week", "kind": "stock", "unit": "pct", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 1.0, "only_projects": ("Aethir",)},
     "burn_auction_usd": {"label": "Deploy-gas AUCTION burns per day ($ as served by ASXN — USD by the unit check) — non-AF burn history", "kind": "flow", "unit": "usd", "archetypes": [1, 3, 4], "tiers": [3], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Hyperliquid",)},
     "burn_hyperevm_usd": {"label": "HyperEVM burn per day ($ as served by ASXN — USD by the unit check) — non-AF burn history", "kind": "flow", "unit": "usd", "archetypes": [1, 3, 4], "tiers": [3], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Hyperliquid",)},
-    "buyback_hypercore_asxn_usd": {"label": "HyperCore buybacks per day ($, ASXN — USD: median 0.938 of holders revenue over 558 days) — CROSS-CHECK of the Assistance Fund series", "kind": "flow", "unit": "usd", "archetypes": [1, 3, 4], "tiers": [3], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Hyperliquid",)},
+    "buyback_hypercore_asxn_usd": {"label": "HyperCore buybacks per day ($, ASXN — executed purchases) — CROSS-CHECK of the Assistance Fund series, which is PRIMARY (the Fund's own HyperCore balance, an on-chain stock). G2-L2 (Jake's 10-13 dump, 400 days): median 0.926 of DefiLlama's holders revenue, not timing (correlation 0.855 at lag 0, 0.45 at ±1 day; 7-day sums the same median) — a level gap of 0.89–0.97 a month to July 2026, then a DefiLlama definition break in August (its holders revenue rose to 0.91 of fees, above its own revenue), 0.80–0.85 since; 2026-10-04/05 read 3.70 / 3.00 because the Fund spent the AQAv2 USDC, which DefiLlama does not count. DefiLlama's holders revenue is a revenue model (fees × share), not a buyback measure", "kind": "flow", "unit": "usd", "archetypes": [1, 3, 4], "tiers": [3], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Hyperliquid",)},
     "hyperevm_burn_tokens_asxn": {"label": "HyperEVM HYPE burned per day (ASXN token-metrics burned_hype) — CROSS-CHECK of the HyperEVM Burn leg", "kind": "flow", "unit": "tokens", "archetypes": [1, 3, 4], "tiers": [3], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Hyperliquid",)},
     "hyperevm_burn_usd_asxn": {"label": "HyperEVM burn per day ($, ASXN token-metrics burned_usd) — CROSS-CHECK", "kind": "flow", "unit": "usd", "archetypes": [1, 3, 4], "tiers": [3], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Hyperliquid",)},
     "hyperevm_base_fees_tokens_asxn": {"label": "HyperEVM base fees per day (HYPE, ASXN token-metrics) — CROSS-CHECK", "kind": "flow", "unit": "tokens", "archetypes": [1], "tiers": [3], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Hyperliquid",)},
@@ -987,6 +987,9 @@ METRICS = {
     # manual_quarterly/manual_overrides.csv with the one known quarterly datapoint (Q2 2026) pending
     # a recurring source (Sky's own quarterly reporting, or insights.skyeco.com if it starts
     # publishing on a rolling basis).
+    "emissions_tokens_claims_ethereum": {"label": "MORPHO claimed out of Merkl's Distributor 0x3Ef3D8bA… and the Morpho URD 0x330eefa8… on ETHEREUM (log scan merkl_morpho_out, reconciled to the wei; G2-D1 — one leg of emissions_tokens)", "kind": "flow", "unit": "tokens", "archetypes": [2, 3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Morpho",)},
+    "emissions_tokens_claims_arbitrum": {"label": "MORPHO claimed out of Merkl's Distributor 0x3Ef3D8bA… on ARBITRUM (log scan merkl_morpho_out_arbitrum; G2-D1 — one leg of emissions_tokens)", "kind": "flow", "unit": "tokens", "archetypes": [2, 3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Morpho",)},
+    "emissions_tokens_claims_katana": {"label": "MORPHO claimed out of Merkl's Distributor 0x3Ef3D8bA… on KATANA (chain 747474; the 100-day window by Katana's RPC, reconciled to the wei; G2-D1 — one leg of emissions_tokens)", "kind": "flow", "unit": "tokens", "archetypes": [2, 3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Morpho",)},
     "merkl_campaigns_non_ethereum_tokens": {"label": "MORPHO paid per day by the DAO multisig 0xF057afee…'s Merkl campaigns PAID OFF Ethereum (Base, Katana, Arbitrum — distributionChainId; Arc / Tempo / Unichain campaigns are paid on Ethereum and sit in the claims): each campaign's amount spread evenly over its own [start, end), by UTC day (Merkl API v4, per chain)", "kind": "flow", "unit": "tokens", "archetypes": [3], "tiers": [1], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Morpho",)},
     "staker_yield_community_pool": {"label": "Community staking pool reward rate = the RewardVault's communityBase emission (LINK/yr) ÷ CommunityStakingPool.getTotalPrincipal() — the community staker's rate, apart from the blend of every pool", "kind": "stock", "unit": "ratio", "archetypes": [1], "tiers": [2], "sanity_min": 0, "sanity_max": 1, "only_projects": ("Chainlink",)},
     "staking_path_in_tokens": {"label": "LINK sent by the 27 non-circulating wallets to 0xD50f074E… (the staking/payments path's first hop), per day", "kind": "flow", "unit": "tokens", "archetypes": [1], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Chainlink",)},
@@ -10416,7 +10419,10 @@ PROJECTS = [
                       "&chainId=<id> (read 2026-10-13)",
         },
         "log_scans": [
-            {"key": "merkl_morpho_out", "metric": "emissions_tokens", "chain": "ethereum",
+            # ROUND G2 D1 (Jake 2026-10-18): CLAIMS ON EVERY CHAIN. This Ethereum series is emissions_tokens_claims_ethereum
+            # (run_sql CT renames the stored rows); emissions_tokens is the per-day sum of the four chains' claims
+            # (emissions_from_metric below). Base is wired by the Alchemy probe (EXPLORER_PROBED_SCANS).
+            {"key": "merkl_morpho_out", "metric": "emissions_tokens_claims_ethereum", "chain": "ethereum",
              "token": "0x58D97B57BB95320F9a05dC918Aef65434969c2B2",
              # + THE MORPHO URD (Jake, 2026-10-07): 0x330eefa8… is a UniversalRewardsDistributor instance (Morpho's docs,
              # with the Market Rewards Program Registry; URD factory 0x9baA5124… deployed 2023-12-28 —
@@ -10434,9 +10440,45 @@ PROJECTS = [
                                         "0x3Ef3D8bA38EBe18DB133cEc108f4D14CE00Dd9Ae",
                                         "0x330eefa8a787552DC5cAd3C3cA644844B1E61Ddb"],
              "partial_reason": "Merkl + the Morpho URD 0x330eefa8… (Ethereum): every MORPHO claimed from either, "
-                               "whoever funded the programme; other URD instances and other chains are not scanned",
+                               "whoever funded the programme; other URD instances are not scanned",
              "wired_on": "2026-09-30"},
+            # ARBITRUM (G2-D1b): the same Distributor address on every chain (AngleProtocol/merkl-contracts@ed53c694
+            # scripts/Distributor.s.sol L85; code present on Arbitrum, read 2026-10-18); the token is the Merkl API's
+            # Arbitrum MORPHO (merkl_campaigns above). Etherscan V2 / Blockscout route; the 100-day window reconciled to
+            # the wei when the full history cannot be used.
+            {"key": "merkl_morpho_out_arbitrum", "metric": "emissions_tokens_claims_arbitrum", "chain": "arbitrum",
+             "token": "0x40BD670A58238e6E230c430BBb5cE6ec0d40df48",
+             "holders": ["0x3Ef3D8bA38EBe18DB133cEc108f4D14CE00Dd9Ae"],
+             "direction": "out", "store": True, "attribution": "dedicated_wallet",
+             "attribution_sources": [
+                 "https://github.com/AngleProtocol/merkl-contracts/blob/ed53c694/scripts/Distributor.s.sol#L85 "
+                 "(one distributor address on every chain, read 2026-10-18)",
+                 "https://api.merkl.xyz/v4/campaigns?creatorAddress=0xF057afeEc22E220f47AD4220871364e9E828b2e9"
+                 "&chainId=42161 (rewardToken, read 2026-10-13)"],
+             "exclude_counterparties": ["0x0000000000000000000000000000000000000000"],
+             "own_tier": "explorer_gauge_l2", "scan_budget_s": 140, "window_days": 100,
+             "wired_on": "2026-10-18"},
+            # KATANA (chain 747474, G2-D1b): no explorer route; Katana's own RPC serves eth_getLogs over wide ranges
+            # (docs.katana.network/katana/technical-reference/network-information, read 2026-10-18), so the scan reads the
+            # 100-day window by RPC and stores it only when balanceOf's change equals in − out to the wei.
+            {"key": "merkl_morpho_out_katana", "metric": "emissions_tokens_claims_katana", "chain": "katana",
+             "token": "0x1e5eFCA3D0dB2c6d5C67a4491845c43253eB9e4e",
+             "holders": ["0x3Ef3D8bA38EBe18DB133cEc108f4D14CE00Dd9Ae"],
+             "direction": "out", "store": True, "attribution": "dedicated_wallet",
+             "attribution_sources": [
+                 "https://github.com/morpho-org/merkl-morpho-recipe/blob/b53e90c4/src/lib/constants.ts "
+                 "(DISTRIBUTOR_ADDRESS, used for its Katana reads)",
+                 "https://api.merkl.xyz/v4/campaigns?creatorAddress=0xF057afeEc22E220f47AD4220871364e9E828b2e9"
+                 "&chainId=747474 (rewardToken, read 2026-10-13)"],
+             "exclude_counterparties": ["0x0000000000000000000000000000000000000000"],
+             "rpc_window": "https://rpc.katana.network — docs.katana.network network-information, read 2026-10-18",
+             "own_tier": "explorer_gauge_l2", "window_days": 100,
+             "wired_on": "2026-10-18"},
         ],
+        # G2-D1c: INCENTIVES ON A CLAIMS BASIS — emissions_tokens = Σ by day of the four chains' claims; a chain with
+        # nothing stored BLOCKS the sum (never a smaller number). The Merkl schedule (merkl_campaigns) is context only.
+        "emissions_from_metric": ("emissions_tokens_claims_ethereum", "emissions_tokens_claims_arbitrum",
+                                  "emissions_tokens_claims_base", "emissions_tokens_claims_katana"),
         "name": "Morpho", "symbol": "MORPHO",
         # A2 FREE FLOAT (2026-09-28, Jake): there is no Morpho staking (not_applicable.
         # locked_tokens), so locked = 0 and free float = circulating supply. Declared here rather
@@ -11553,13 +11595,18 @@ PROJECTS = [
             # 2026-10-11: 302.17M -> 238.64M). Days before keep the published figure; the raw series continues as
             # circulating_supply_tokendetails.
             "circulating_supply_first_party": {
+                # G2-D2 (Jake 2026-10-18): a third leg, net of the HyperEVM burn as well; run_sql CU restates the stored
+                # middle leg onto it day by day (the same day's zero-address balance), so the middle leg empties
                 "ordered_points": ("hypercore_info:tokenDetails.circulatingSupply",
-                                   "hypercore_info:tokenDetails.circulatingSupply-exclude_wallets"),
+                                   "hypercore_info:tokenDetails.circulatingSupply-exclude_wallets",
+                                   "hypercore_info:tokenDetails.circulatingSupply-exclude_wallets-hyperevm_burn"),
                 "why": "Jake 2026-10-11 (A1): the Foundation (genesis 60M) and Community Grants (genesis 3M) wallets "
-                       "are non-circulating under the convention; tokenDetails counts them",
+                       "are non-circulating under the convention; tokenDetails counts them. Jake 2026-10-18 (G2-D2): the "
+                       "HyperEVM burn (the zero address's HYPE, ~308.5K on 10-13) leaves it too",
                 # alignment round 2026-10-13 (C7): without this the −21% step read as a trend once 09-30 left Q0
                 "composition_change": "THE STOCK NARROWS at the switch: the Hyper Foundation + Community Grants "
-                                      "wallets (63.53M) leave circulating, 302.17M -> 238.64M on 2026-10-11",
+                                      "wallets (63.53M) leave circulating, 302.17M -> 238.64M on 2026-10-11; then the "
+                                      "HyperEVM burn (308,538.17 on 2026-10-13, -0.129%) from the restated rows on",
                 "declared_on": "2026-10-11"},
             "emissions_tokens": {
                 "ordered_points": ("model:inverse_sqrt(locked_tokens)", "hypercore_info:tokenDetails.futureEmissions"),
@@ -12133,15 +12180,24 @@ PROJECTS = [
         "revenue_sources": [
             {"name": "Protocol fees -> Assistance Fund", "share": 0.99, "status": "active", "booked": True,
              "source_url": "https://hyperliquid.gitbook.io/hyperliquid-docs/hypercore/assistance-fund"},
-            {"name": "AQAv2 reserve yield on platform USDC", "share": 0.90, "status": "accruing",
-             "booked": False,
+            # BOOKED (Round G2, D4 — Jake 2026-10-18: "book it only if the sender is the AQAv2 address documented in
+            # Hyperliquid's own docs"). The docs (hypercore/aligned-quote-assets, AQAv2, read 2026-10-18) name the payer
+            # as "the system interest address `0x50...00 + {token_index}`"; the Fund's ledger shows the payment from
+            # 0x5000000000000000000000000000000000000000 = 0x50…00 + 0, and token index 0 is USDC (spotMeta), the token
+            # paid. Measured as aqa_revenue_usd and added to revenue (REVENUE_TOTAL).
+            {"name": "AQAv2 reserve yield on platform USDC", "share": 0.90, "status": "active",
+             "booked": True, "metric": "aqa_revenue_usd",
              "live_from": "2026-08-26", "first_payment_date": "2026-10-03", "accrual_days": 30,
-             "source_url": None,
+             "source_url": "https://hyperliquid.gitbook.io/hyperliquid-docs/hypercore/aligned-quote-assets",
+             "source_date": "2026-10-18",
+             "documented_payer": "system interest address 0x50...00 + {token_index}; token index 0 (USDC) -> "
+                                 "0x5000000000000000000000000000000000000000",
+             "observed": "USDC 2.0 at 2026-10-03 00:00 UTC and 14,580,774.69 at 2026-10-04 00:00 UTC, both 'send' from "
+                         "0x5000000000000000000000000000000000000000 to the Fund 0xfefe…fefe (userNonFundingLedgerUpdates)",
              "note": "Live from 2026-08-26: routes c.90% of cost-adjusted reserve yield on platform USDC "
-                     "into the Assistance Fund on 30-day accrual cycles. ACCRUAL HAS STARTED BUT NOTHING "
-                     "HAS BEEN PAID — first actual payment expected 2026-10-03. booked=False keeps it out "
-                     "of revenue so the model cannot book money that has not landed. Flip booked to True "
-                     "only once a payment is observed."},
+                     "into the Assistance Fund on 30-day accrual cycles, paid 8 days after each interval. First "
+                     "payment observed 2026-10-04 (14,580,774.69 USDC) from the documented system interest address "
+                     "— booked 2026-10-18 (G2-D4)."},
         ],
         "dune_queries": _dune("actual_buyback_usd", "actual_buyback_tokens", "emissions_tokens", "locked_tokens", "tx_count", "active_addresses", "gross_issuance_tokens"),
         "materiality": "high",
@@ -17718,9 +17774,10 @@ PROJECTS = [
                     # IDENTIFIED (Jake's probe, 2026-10-06 17:20): an EOA; 5,000,000 ETHFI in from the Binance hot wallet
                     # 0x28c6c062… on 2026-08-12, all forwarded here 2026-08-13. A CEX withdrawal: bought on Binance or
                     # ether.fi's own exchange holdings — etherfi_cex_test decides; never on-chain "bought" either way.
+                    # SIGNED OFF (Round G2, D3 — Jake 2026-10-18): a transfer, not a purchase; no CEX payment found
                     "0x83971edb4f24df6cf97b1b17d0e692bf11c63dcd":
-                        "EOA relaying a Binance withdrawal (5,000,000 ETHFI from Binance 14 on 2026-08-12) — not an "
-                        "on-chain purchase; 'bought on a CEX (inferred)' only if etherfi_cex_test finds the payment",
+                        "transfer (signed off, Jake 2026-10-18) — EOA relaying a Binance withdrawal (5,000,000 ETHFI "
+                        "from Binance 14 on 2026-08-12); no CEX payment found, not a purchase",
                     # IDENTIFIED (ether.fi's Blockworks filing, Jake 2026-10-07): the July top-up Safe inflows were
                     # STAKER REWARDS FUNDED FROM TREASURY AND CUSTODIAN ALLOCATIONS — transfers, never buybacks.
                     "0x5ec5e6b4eb6827914ca8bc3ae02c39417242adde": "ether.fi TREASURY (Blockworks filing) — July 2026 "
@@ -18717,7 +18774,9 @@ AERODROME_MIGRATION = {
     "v3_replaces": ("gross_issuance_tokens", "issuer_mint_tokens", "emission_rate_current", "ve_locked_supply_tokens",
                     "ve_voting_power_tokens", "permanent_locked_tokens", "locked_tokens", "voter_total_weight_tokens",
                     "voter_rewards_onchain_usd", "voter_rewards_onchain_fees_usd", "voter_rewards_onchain_bribes_usd",
-                    "voter_rewards_unpriced_count", "voter_rewards_onchain_apr"),
+                    "voter_rewards_unpriced_count", "voter_rewards_onchain_apr",
+                    # G2-D5 (Jake 2026-10-18): the supply, each AERO once across the migration (aero_v3.supply_once)
+                    "total_supply", "noncirculating_holding_tokens"),
     "v3_source": "aero_v3",
 }
 
@@ -18744,6 +18803,14 @@ for _m, _old, _new, _what in (
     PROJECT_BY_NAME["Aerodrome"].setdefault("series_handover", {})[_m] = {
         "ordered_points": (_old, _new), "why": "the Aero migration (2026-10-22 00:00 UTC; round F, F1)",
         "composition_change": _what, "declared": AERODROME_MIGRATION["cutover_utc"]}
+# G2-D5: Aerodrome's TOTAL keeps its 2026-10-11 handover (CoinGecko, then the legacy token on Base — the declared date
+# dates the chain backfill label) and gains the migration's leg: the same quantity, each AERO once across both tokens
+_ts = PROJECT_BY_NAME["Aerodrome"]["series_handover"]["total_supply"]
+_ts["ordered_points"] = tuple(_ts["ordered_points"]) + ("aero_v3:supply_once",)
+_ts["composition_change"] = (str(_ts["composition_change"]) + "; from the Aero migration (2026-10-22) the same quantity "
+                             "read across both tokens, each AERO once: (new − migration reserve) + min(ratio × (old − "
+                             "old held by the migration), reserve) (G2-D5; Token.sol L57-58, Migration.sol L121-123 / "
+                             "L156-158, AerodromeMigration.sol L44-46)")
 
 
 def aerodrome_migration_state() -> dict:
@@ -19820,7 +19887,7 @@ PROTOCOL_YIELD = {
     # The numerator is sethfi_topup_tokens — ETHFI paid INTO sETHFI with no shares minted, the reward that lifts the
     # share price — whatever funded it. Beside it, "of which bought" = ETHFI bought on DEXs over the same window
     # (actual_buyback_tokens), capped at the top-ups; the rest was transferred in (treasury / foundation — the
-    # top-up Safe received 5,000,000 from 0x83971edb…, unidentified). ETHFI is fungible, so the split ALLOCATES
+    # top-up Safe received 5,000,000 from 0x83971edb…, a transfer — signed off 2026-10-18). ETHFI is fungible, so the split ALLOCATES
     # purchases first; it does not trace tokens. The dollar column reads DefiLlama's holders revenue, which misses
     # this route ($0 over 2026-09-03..10-05) — a labelled cross-check, not the yield.
     # (Until 2026-10-06 the numerator was DefiLlama holders revenue and the cell carried "recipients
@@ -23163,6 +23230,13 @@ REGRESSION_ALLOWLIST = [
     # read the category / ratio reads BLOCKED with the leg named ("a missing leg is a gap, never a smaller outflow").
     {"project": "Morpho", "match": ("merkl_campaigns_non_ethereum_tokens",), "until": "2026-10-27",
      "reason": "R3 B3: (b) adds the Merkl campaigns paid off Ethereum (fetch/merkl_campaigns.py, first read next run)"},
+    # ROUND G2 D1 (Jake 2026-10-18): Morpho's incentives on a claims basis on every chain. Until the Base and Katana claims
+    # are first stored (Base: the Alchemy route; Katana: its RPC window), emissions_tokens and what reads it — A2's supply
+    # trajectory, CP dilution, net holder yield, subsidy cover — read BLOCKED with the chain named.
+    {"project": "Morpho", "match": ("emissions_tokens_claims_base", "emissions_tokens_claims_katana",
+                                    "emissions_tokens_claims_arbitrum", "emissions_tokens_claims_ethereum"),
+     "until": "2026-11-01",
+     "reason": "G2-D1: (b) is CLAIMS on every chain; BLOCKED until each chain's Distributor claims are first stored"},
     {"project": "Maple", "match": ("drips_rewards_tokens",), "until": "2026-10-27",
      "reason": "R3 W4: (b) is Drips (SYRUP out of syrupDrip; log scan drips_out, full history on the next run)"},
     {"project": "Ether.fi", "match": ("cashback_paid_tokens", "cashback_unfunded_tokens", "programmatic_buyback_tokens"),
@@ -23287,10 +23361,7 @@ def issuer_mint_rate(project_name: str, day) -> int | None:
 # yet the info API's tokenDetails totalSupply (998.86M) still includes the Fund's 48.0M (live circulatingSupply =
 # totalSupply − the non-circulating list − futureEmissions only with the Fund inside; research 2026-10-13). FDV uses
 # the API total LESS the Fund's balance (0xfefe…fefe, spotClearinghouseState), labelled; the API total stays stored.
-FDV_TOTAL_NET = {
-    "Hyperliquid": {"total": "total_supply_gross", "less": "burn_address_balance",
-                    "label": "tokenDetails totalSupply − Assistance Fund (burned per the docs)"},
-}
+FDV_TOTAL_NET: dict = {}   # Round G2 D2: Hyperliquid's total_supply is itself the net (TOTAL_SUPPLY_NET); FDV = price x it
 
 # THE WHOLE HISTORY, NOT THE ROLLING 455 DAYS (Round G 2.4): a series checked against a since-launch reference keeps every
 # day its free source serves (fetch.base.window). NEAR Intents: DefiLlama serves it from 2024-12-10; the store kept from
@@ -23312,10 +23383,8 @@ FDV_TOTAL_HISTORY = {
     "Uniswap": {"total": "total_supply_gross", "less": "burn_address_balance",
                 "label": "UNI.totalSupply() − the 0xdead balance (CoinGecko's total is net of burn)",
                 "overlap_2026_10_13": "last −0.0005%, worst −0.2134%"},
-    "GEODNET": {"total": "total_supply_gross", "less": "burn_address_balance",
-                "label": "GEOD.totalSupply() on Polygon − the burn balances (Polygon + Solana token account)",
-                "overlap_2026_10_13": "−3.0% until 2026-10-11, −0.0086% / −0.0177% on 10-12 / 10-13: CoinGecko's total "
-                                      "became net of the burn on 2026-10-12; extends once 14 common days agree"},
+    # GEODNET RETIRED HERE (Round G2, L3 — Jake 2026-10-18): its total_supply is the on-chain net itself
+    # (TOTAL_SUPPLY_NET below), with 401 days of history, so no history from another quantity is needed.
     "Plume": {"total": "total_supply_protocol", "less": None,
               "label": "PLUME.totalSupply() on Ethereum", "overlap_2026_10_13": "0.0000% every day"},
     "Near": {"total": "total_supply_protocol", "less": None,
@@ -25073,7 +25142,12 @@ OPEN_QUESTIONS = [
                       "entry. Until then the on-chain figure stays marked partial rather than looking complete.",
     },
     {
-        "project": "Hyperliquid", "topic": "AQAv2 revenue accruing but not yet paid",
+        "project": "Hyperliquid", "status": "answered", "answered_on": "2026-10-18",
+        "decision": "Jake 2026-10-18 (G2-D4): booked. The sender 0x5000000000000000000000000000000000000000 is the "
+                    "AQAv2 system interest address Hyperliquid's docs give (0x50...00 + token_index; USDC = index 0): "
+                    "https://hyperliquid.gitbook.io/hyperliquid-docs/hypercore/aligned-quote-assets (read 2026-10-18). "
+                    "Measured as aqa_revenue_usd (14,580,776.69 USDC over 10-03/10-04) and added to revenue.",
+        "topic": "ANSWERED 2026-10-18 (G2-D4): AQAv2 revenue — the first payment is booked",
         "reason": "AQAv2 went live 2026-08-26 and accrues on 30-day cycles, but the first payment is not expected "
                   "until 2026-10-03. Recorded with booked=False so the model cannot book revenue that has not landed.",
         "suggestion": "After 2026-10-03, confirm the first payment arrived, then set booked=True and add the source URL.",
@@ -25350,8 +25424,13 @@ OPEN_QUESTIONS = [
     },
     # ---------------------------------------------------------------- Ether.fi
     {
-        "project": "Ether.fi", "status": "open", "severity": 3,
-        "topic": "OPEN NOTE (Jake, 2026-10-06) — was the 5,000,000 ETHFI into the top-up Safe BOUGHT ON A CEX?",
+        # CLOSED (Round G2, D3 — Jake 2026-10-18): signed off as a TRANSFER, not a purchase; no CEX payment was found
+        "project": "Ether.fi", "status": "answered", "severity": 3, "answered_on": "2026-10-18",
+        "decision": "Jake 2026-10-18 (G2-D3): the 5,000,000 ETHFI from Binance 14 on 2026-08-12, relayed by the EOA "
+                    "0x83971edb… to the top-up Safe, is a TRANSFER, not a purchase — no CEX payment was found "
+                    "(etherfi_cex_test). Classified 'transfer (signed off)' in the buyback inflow scan; never bought.",
+        "topic": "ANSWERED 2026-10-18 (Jake, G2-D3): the 5,000,000 ETHFI into the top-up Safe was a TRANSFER, not a "
+                 "purchase (was: OPEN NOTE 2026-10-06 — bought on a CEX?)",
         "reason": "0x83971edb… (an EOA) received 5,000,000 ETHFI from the Binance hot wallet 0x28c6c062… and sent it to "
                   "the top-up Safe. check_offline_items.py etherfi_cex_test looks for ether.fi wallets paying "
                   "USDC/USDT/ETH to Binance deposit addresses, one hop and (probes8) a second hop via the owner EOA "
@@ -27732,15 +27811,17 @@ OUTFLOW_CATEGORIES = {
                         "to Binance, 105,753 recycled fees; no vesting unlock",
                "pending": "PROPOSED: move the Governance multisig's falls to (b) and take out days it funds the "
                           "GaugeController (else counted twice with emissions) — needs a per-transfer series"},
-    # round 3 B3: + the DAO multisig's Merkl campaigns OFF Ethereum (Base, Arc, …), as paid per day; Ethereum stays on
-    # its claims series (reading its campaigns too would count the same MORPHO twice)
-    "Morpho": {"b": ("emissions_tokens", "merkl_campaigns_non_ethereum_tokens"), "e": ("unlock_release_tokens",),
+    # ROUND G2 D1 (Jake 2026-10-18): (b) = CLAIMS on every chain (emissions_tokens = Σ Ethereum, Arbitrum, Base, Katana
+    # claims out of Merkl's Distributor), the basis of Pendle's gauges and Fluid's Merkle payouts. Was: Ethereum claims +
+    # the off-Ethereum campaign SCHEDULE (merkl_campaigns_non_ethereum_tokens), which stays stored as context only.
+    "Morpho": {"b": ("emissions_tokens",), "e": ("unlock_release_tokens",),
                "basis": "MORPHO rewards (Merkl campaigns): 2025-07-14..2026-10-12 budgets ~12.96M to suppliers (b) vs "
                         "~0.27M to borrowers (c) — the claims series is not split, so it sits in (b), the ~98% leg; "
                         "MORPHO now runs on the borrow side only (merkl.xyz /v4/campaigns?tokenSymbol=MORPHO, read "
                         "2026-10-12)",
-               "pending": "unsplit between (b) and (c): the claims and the campaigns sit in (b), the historical ~98% "
-                          "leg; Ethereum is claims (lagged), the other chains the campaign schedule"},
+               "pending": "unsplit between (b) and (c): the claims sit in (b), the historical ~98% leg; every chain on "
+                          "a claims basis (G2-D1) — the Merkl schedule (merkl_campaigns_non_ethereum_tokens) is shown "
+                          "as context and enters no calculation"},
     "Maple": {"a": ("emissions_tokens",), "b": ("drips_rewards_tokens",), "e": ("unlock_release_tokens",),
               "basis": "MIP-009 staker inflation (stSYRUP) is (a) — ended by MIP-019 (Nov 2025); Drips (b) paid SYRUP "
                        "out of syrupDrip 0x509712F3… and stopped accruing 2025-12-31 (final claims to 2026-02-18, "
@@ -27853,14 +27934,18 @@ def explorer_probe_state() -> dict:
         return {}
 
 
-CHAIN_IDS.update({"mantle": 5000, "sonic": 146, "berachain": 80094, "hyperevm": 999, "plasma": 9745})
+CHAIN_IDS.update({"mantle": 5000, "sonic": 146, "berachain": 80094, "hyperevm": 999, "plasma": 9745,
+                  # Katana (G2-D1b): chain id and RPC from docs.katana.network/katana/technical-reference/
+                  # network-information, read 2026-10-18
+                  "katana": 747474})
 for _chain, _urls in (("mantle", ["https://rpc.mantle.xyz", "https://mantle-rpc.publicnode.com"]),
                       ("sonic", ["https://rpc.soniclabs.com", "https://sonic-rpc.publicnode.com"]),
                       ("berachain", ["https://rpc.berachain.com", "https://berachain-rpc.publicnode.com"]),
                       # rpc.hyperliquid.xyz/evm IGNORES the block tag on eth_call (latest state for any block, E7):
                       # purroofgroup serves archive state, so it goes first for the pinned-block balanceOf
                       ("hyperevm", ["https://rpc.purroofgroup.com", "https://rpc.hyperliquid.xyz/evm"]),
-                      ("plasma", ["https://rpc.plasma.to"])):
+                      ("plasma", ["https://rpc.plasma.to"]),
+                      ("katana", ["https://rpc.katana.network"])):
     DEFAULT_RPC.setdefault(_chain, _urls)
 _PENDLE_EXCLUDE = {56: "0xd77E9062c6DF3F2d1CB5Bf45855fa1E7712A059e", 5000: "0x5C30d3578A4D07a340650a76B9Ae5dF20D5bdF55"}
 EXPLORER_PROBED_SCANS = (
@@ -27882,12 +27967,18 @@ EXPLORER_PROBED_SCANS = (
      ["0x94312a608246Cecfce6811Db84B3Ef4B2619054E", "0xF36029358A684CdDD5103A4b84dC8a832c6e5b40"]),
     (9745, "Fluid", "plasma", "merkle_rewards_out_plasma", "emissions_tokens_plasma",
      "0x61E030A56D33e8260FdD81f03B162A79Fe3449Cd", ["0x3413D18500D5140095513d57a9Fcd9D882CbD064"]),
+    # G2-D1b: Morpho's Base claims — MORPHO out of Merkl's Distributor (one address on every chain), the Alchemy route
+    (8453, "Morpho", "base", "merkl_morpho_out_base", "emissions_tokens_claims_base",
+     "0xBAa5CC21fd487B8Fcc2F632f3F4E8D37262a0842", ["0x3Ef3D8bA38EBe18DB133cEc108f4D14CE00Dd9Ae"]),
 )
 for _cid, _proj, _chain, _key, _metric, _tok, _holders in EXPLORER_PROBED_SCANS:
-    _what = ("PENDLE paid out of Pendle's " if _proj == "Pendle" else "FLUID claimed out of Fluid's ") + _chain.upper() + \
-        (" GaugeController to its markets" if _proj == "Pendle" else " MerkleDistributors")
+    _what = ("PENDLE paid out of Pendle's " if _proj == "Pendle" else "MORPHO claimed out of Merkl's " if _proj == "Morpho"
+             else "FLUID claimed out of Fluid's ") + _chain.upper() + \
+        (" GaugeController to its markets" if _proj == "Pendle" else " Distributor 0x3Ef3D8bA…" if _proj == "Morpho"
+         else " MerkleDistributors")
     METRICS.setdefault(_metric, {"label": f"{_what} (log scan; F2 — stored once explorer_routes.json lists chain "
-                                          f"{_cid})", "kind": "flow", "unit": "tokens", "archetypes": [3],
+                                          f"{_cid})", "kind": "flow", "unit": "tokens",
+                                 "archetypes": [2, 3] if _proj == "Morpho" else [3],
                                  "tiers": [2], "sanity_min": 0, "sanity_max": 1e8, "only_projects": (_proj,)})
 
 
@@ -27927,11 +28018,15 @@ def wire_probed_scans(state: dict | None = None) -> list:
             continue
         excl = ["0x0000000000000000000000000000000000000000"]
         excl += ([_PENDLE_EXCLUDE.get(cid, "0xCbcb48e22622a3778b6F14C2f5d258Ba026b05e6")] if proj == "Pendle" else
+                 [] if proj == "Morpho" else
                  ["0x4F6F977aCDD1177DCD81aB83074855EcB9C2D49e", "0x9800020b610194dBa52CF606E8Aa142F9F256166"])
         scans.append({"key": key, "metric": metric, "chain": chain, "token": tok, "holders": list(holders),
                       "direction": "out", "store": True, "attribution": "dedicated_wallet",
                       "attribution_sources": ["pendle-core-v2-public@87685c8 deployments/%d-core.json" % cid
                                               if proj == "Pendle" else
+                                              "AngleProtocol/merkl-contracts@ed53c694 scripts/Distributor.s.sol L85 "
+                                              "(one distributor address on every chain, read 2026-10-18)"
+                                              if proj == "Morpho" else
                                               "Instadapp/fluid-contracts-public@9496626f deployments/deployments.md"],
                       "exclude_counterparties": excl, "own_tier": "explorer_gauge_l2", "scan_budget_s": 140,
                       "window_days": 100,
@@ -27942,6 +28037,13 @@ def wire_probed_scans(state: dict | None = None) -> list:
             if metric not in em:
                 PROJECT_BY_NAME["Pendle"]["emissions_from_metric"] = tuple(em) + (metric,)
         wired.append(key)
+    # G2 ADDENDUM A7 (Jake 2026-10-18: OP Mainnet, BNB and Berachain enabled on his Alchemy app): every chain the probe
+    # lists as served opens the Transfers route, also where no pre-wired scan waits for it — OP's existing scans
+    # (Ether.fi cashback_out_optimism) gain it AFTER their explorers (a fallback, never ahead of a log route)
+    for cid in sorted(alc_served):
+        troutes = EXPLORER_TRANSFER_ROUTES.setdefault(cid, [])
+        if "alchemy" not in troutes:
+            troutes.append("alchemy")
     return wired
 
 
@@ -28897,6 +28999,93 @@ SAME_BASIS = {
                "view_account read (171,059.131 NEAR either way); NearBlocks v3 stats/balance agreed to 0.000% on the "
                "overlap (Jake's nearblocks_v3_parity, 2026-10-13)",
     },
+}
+
+# ===== ROUND G2 (Jake's decisions, 2026-10-18) ==========================================================================
+# D2 / L3 — TOTAL SUPPLY = OUR OWN ON-CHAIN / FIRST-PARTY TOTAL NET OF WHAT IS BURNED, PER DAY (a read-time view on
+# total_supply, build_workbook._total_supply_net_views; FDV = price x it). Every leg must hold the day: a day missing one
+# is not a total. CoinGecko's total is kept as total_supply_coingecko (fetch/coingecko writes it there; run_sql CU moves
+# the stored rows).
+#   Hyperliquid (D2): tokenDetails totalSupply − the Assistance Fund (burned per the docs, S6) − the HyperEVM zero address
+#     (priority-fee burns; HyperCore's totalSupply never sees them — F4). 2026-10-13: 998,862,059.40 − 48,007,021.50 −
+#     308,538.17 = 950,546,499.73 (CoinGecko 955,307,079.43).
+#   GEODNET (L3): GEOD.totalSupply() on Polygon − the burn balances (Polygon burn address + Solana burn account), 401 days.
+TOTAL_SUPPLY_NET = {
+    "Hyperliquid": {"total": "total_supply_gross", "less": ("burn_address_balance", "hyperevm_zero_address_balance"),
+                    "label": "tokenDetails totalSupply − Assistance Fund − HyperEVM zero address (both burned)",
+                    "decided": "Jake 2026-10-18 (G2-D2; the Fund since S6, 2026-10-13)"},
+    "GEODNET": {"total": "total_supply_gross", "less": ("burn_address_balance",),
+                "label": "GEOD.totalSupply() on Polygon − the burn balances (Polygon + Solana token account)",
+                "decided": "Jake 2026-10-18 (G2-L3)"},
+}
+for _n, _spec in TOTAL_SUPPLY_NET.items():
+    TOTAL_SUPPLY_ONCHAIN_FIRST[_n] = {"decided_by": "Jake", "decided_on": "2026-10-18", "why": _spec["label"],
+                                      "view": True}
+    PROJECT_BY_NAME[_n].setdefault("series_handover", {})["total_supply"] = {
+        "ordered_points": ("coingecko", f"derived:{_spec['total']}-{'-'.join(_spec['less'])}"),
+        "why": f"CoinGecko's total supply, then ours: {_spec['label']} (Round G2)",
+        "composition_change": "the total is ours from the first day every leg is held; CoinGecko's moves to "
+                              "total_supply_coingecko", "declared": "2026-10-18"}
+METRICS["total_supply_coingecko"]["only_projects"] = tuple(TOTAL_SUPPLY_ONCHAIN_FIRST)
+
+# D2 — the HyperEVM burn is subtracted from Hyperliquid's own circulating (fetch/hypercore._circ_less_wallets) and its
+# history is read from the archive (`--seed hyperevm_burn`, rpc.purroofgroup.com serves past state); the release adds
+# the day's burn back, as it does the Fund's buyback.
+for _r in PROJECT_BY_NAME["Hyperliquid"]["node_api"]["extra_reads"]:
+    if _r.get("shape") == "evm_native_balance" and _r.get("metric") == "hyperevm_zero_address_balance":
+        _r["subtract_from_supply"] = True
+        _r["archive_endpoints"] = ("https://rpc.purroofgroup.com",)
+CIRCULATING_ONCHAIN["Hyperliquid"]["release_first_party"]["plus"] = ("actual_buyback_tokens",
+                                                                     "hyperevm_priority_burn_tokens")
+
+# D4 — AQAv2 PAYMENTS, MEASURED (fetch/hypercore._aqa_payments): sends into the Assistance Fund from the documented
+# system interest address(es), 0 on a day with none, from activation. Added to Hyperliquid's revenue (REVENUE_TOTAL; a leg
+# that had not started is 0 before its start — REVENUE_LEG_FROM).
+METRICS["aqa_revenue_usd"] = {
+    "label": "AQAv2 reserve-yield payments to the Assistance Fund ($/day) — sends from the documented system interest "
+             "address 0x50…00 + token index (Hyperliquid docs, aligned-quote-assets)",
+    "kind": "flow", "unit": "usd", "archetypes": [1, 3, 4], "tiers": [1], "sanity_min": 0, "sanity_max": 1e10,
+    "only_projects": ("Hyperliquid",)}
+PROJECT_BY_NAME["Hyperliquid"]["node_api"]["extra_reads"].append({
+    "shape": "aqa_payments", "metric": "aqa_revenue_usd",
+    "recipient": "0xfefefefefefefefefefefefefefefefefefefefe", "live_from": "2026-08-26",
+    "interest_addresses": {"0x5000000000000000000000000000000000000000": "0x50…00 + token index 0 (USDC, spotMeta)"},
+    "source_url": "https://hyperliquid.gitbook.io/hyperliquid-docs/hypercore/aligned-quote-assets",
+    "read_on": "2026-10-18"})
+REVENUE_TOTAL["Hyperliquid"] = ("revenue_usd", "aqa_revenue_usd")
+REVENUE_LEG_FROM = {("Hyperliquid", "aqa_revenue_usd"): "2026-08-26"}
+METRICS["revenue_total_usd"]["only_projects"] = tuple(REVENUE_TOTAL)
+
+# G2-D5: Aerodrome's non-circulating set hands over at the migration — the legacy leg is the sum of every noncirc_
+# contract (named here, once all are configured), the v3 leg total − circulating from fetch/aero_v3.supply_once
+PROJECT_BY_NAME["Aerodrome"].setdefault("series_handover", {})["noncirculating_holding_tokens"] = {
+    "ordered_points": ("chain:sum(" + "+".join(f"base:{_k}" for _k, _c in PROJECT_BY_NAME["Aerodrome"]["contracts"].items()
+                                               if _k.startswith("noncirc_")) + ")", "aero_v3:supply_once"),
+    "why": "the Aero migration (2026-10-22 00:00 UTC; round G2, D5)",
+    "composition_change": "the seven non-circulating wallets' legacy AERO -> total − circulating, where circulating also "
+                          "leaves out the Velodrome allocation still held by VELODROME_MIGRATION() and the same wallets' "
+                          "new AERO (G2-D5)",
+    "declared": AERODROME_MIGRATION["cutover_utc"]}
+# ===== READS AT THE REFERENCE'S OWN BLOCK (G2 addendum A3, Jake's run on e2250e5: Sky Pause Proxy still BROKEN +1.29% —
+# the build compared 20,399,911, the 10-13 row as overwritten by a later read of that day, not the 16:22 read 20,142,230).
+# A stock that moves intraday (~43K SKY every ~47 min) agrees with a point reference only at the same instant, so the
+# reference is compared with OUR archive eth_call at its block (references route "block_read"). Read by Claude Code on
+# 2026-10-18 through eth.drpc.org (archive eth_call); re-read by `check_offline_items.py reference_block_reads`.
+REFERENCE_BLOCK_READS = {
+    ("Sky", "pause_proxy_sky_balance"): {
+        "chain": "ethereum", "call": "SKY.balanceOf(Pause Proxy 0xBE8E3e36…98FB)",
+        "to": "0x56072C95FAA701256059aa122697B133aDEd9279", "holder": "0xBE8E3e3618f7474F8cB1d074A26afFef007E98FB",
+        "data": "balanceOf", "decimals": 18, "block": 26184750, "block_time": "2026-10-13 16:25:23 UTC",
+        "value": 20142225.835854, "read_on": "2026-10-18", "rpc_host": "eth.drpc.org",
+        "why_this_block": "the reference (20.14M, read 2026-10-13 afternoon, block not given) lies on the balance "
+                          "plateau 20,142,225.835854 that holds from block 26,184,667 (16:08:35 UTC) to 26,184,900 "
+                          "(16:55:23); the inflows either side are 26,184,667 (+43,110.94) and 26,184,901 (+42,959.96). "
+                          "Any block of the plateau reads the same; 26,184,750 is inside it"},
+    ("Sky", "mkr_supply_unconverted"): {
+        "chain": "ethereum", "call": "MKR.totalSupply()", "to": "0x9f8F72aA9304c8B593d555F12eF6589cC3A579A2",
+        "data": "totalSupply", "decimals": 18, "block": 26184665, "block_time": "2026-10-13 16:08:11 UTC",
+        "value": 83465.892107, "read_on": "2026-10-18", "rpc_host": "eth.drpc.org",
+        "why_this_block": "the block the reference names (independent_references.csv, G2-L1)"},
 }
 
 _CONFIG_LOADED = True       # the last line: config is complete (see _relation_pairs)

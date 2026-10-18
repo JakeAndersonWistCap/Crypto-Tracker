@@ -986,6 +986,37 @@ def _consensus_history_views(groups: dict, asof=None) -> None:
 PRICE_HISTORY_POINT = "defillama_coins:history"
 
 
+PRICE_TIER_PREFIX = "price_history:"
+
+
+def _price_tier_views(groups: dict) -> None:
+    """ONE PRICE SERIES (G2 addendum A1, Jake's run on e2250e5: 11 headline cells — A3 buyback % of supply, A2 free
+    float ÷ ARR, A2 customer revenue ÷ emissions — read "price_usd (q0): measuring_point_changed"). The G2.1 tier
+    (fetch/price_history.py) wrote its rows as `price_history:coins.llama.fi[coingecko:<id>]`, a measuring point outside
+    price_usd's declared handover (defillama_coins:history -> coingecko), and filled ANY day without a price — days inside
+    CoinGecko's own range too, interleaved with it. Read time, no tolerance and no allowlist: a tier row dated BEFORE
+    CoinGecko's first stored day is the declared older leg (relabelled `defillama_coins:history[...]`, the same
+    CoinGecko price relayed by DefiLlama at 00:00 UTC); a tier row inside CoinGecko's range is not shown (CoinGecko's
+    own series holds that range; its missing day stays a gap). orphan_cleanup.sql CV does the same in the store."""
+    for (name, metric), g in list(groups.items()):
+        if metric != "price_usd" or g.empty:
+            continue
+        src = g["source"].astype(str)
+        tier = src.str.startswith(PRICE_TIER_PREFIX)
+        if not tier.any():
+            continue
+        cg = g[src.map(_measuring_point) == "coingecko"]
+        first = pd.to_datetime(cg["date"]).min() if not cg.empty else None
+        dates = pd.to_datetime(g["date"])
+        keep_tier = tier & (dates < first) if first is not None else tier
+        # "price_history:coins.llama.fi[coingecko:<id>]" -> "defillama_coins:history[coins.llama.fi coingecko:<id>]",
+        # what fetch/price_history.py writes from now on (one bracket: the annotation stripper reads one level)
+        inner = lambda x: x[len(PRICE_TIER_PREFIX):].replace("[", " ").replace("]", "")  # noqa: E731
+        relabelled = g["source"].where(~keep_tier, [f"{PRICE_HISTORY_POINT}[{inner(x)}]" if t else x
+                                                    for x, t in zip(src, keep_tier)])
+        groups[(name, metric)] = g.assign(source=relabelled)[~tier | keep_tier].reset_index(drop=True)
+
+
 def _price_history_views(groups: dict) -> None:
     """Q-4 PRICES (Jake's Phase 1 review 2026-10-12, item 8b). CoinGecko's free market_chart serves 365 days; the fifth
     quarter needs 455. DefiLlama's coins chart (price_usd_llama, fetch/xref — asked over the whole window once) is the
@@ -1000,7 +1031,7 @@ def _price_history_views(groups: dict) -> None:
         decl = config.declared_handover(name, "price_usd") or {}
         if tuple(decl.get("ordered_points") or ()) != (PRICE_HISTORY_POINT, "coingecko"):
             continue
-        if set(px["source"].astype(str).map(_measuring_point)) != {"coingecko"}:
+        if not set(px["source"].astype(str).map(_measuring_point)) <= {"coingecko", PRICE_HISTORY_POINT}:
             continue
         first = pd.to_datetime(px["date"]).min()
         older = ll[pd.to_datetime(ll["date"]) < first]
@@ -1970,6 +2001,9 @@ def _utilisation_views(groups: dict) -> None:
 
 # set before _VIEW_BLOCKS is cleared; re-applied after (like _ONE_OFF_BLOCKS)
 _VIEW_BLOCKS_PENDING: dict = {}
+# blocks raised by the views that run before _VIEW_BLOCKS is cleared mid-aggregate (G2-D1: the summed emissions view
+# blocked Morpho's emissions_tokens there and the block was lost, so the cell read "no rows stored"); re-applied after
+_EARLY_BLOCKS: dict = {}
 
 
 def _mev_estimate_views(groups: dict) -> None:
@@ -2573,6 +2607,50 @@ def _daily(g) -> pd.Series:
     return g.drop_duplicates("date", keep="last").set_index("date")["value"].astype(float)
 
 
+def _total_supply_net_views(groups: dict) -> None:
+    """TOTAL SUPPLY, OURS, NET OF WHAT IS BURNED (Round G2, Jake 2026-10-18 — D2 Hyperliquid, L3 GEODNET;
+    config.TOTAL_SUPPLY_NET): per day, the total leg − each burned leg, only on days every leg holds a row (a missing leg
+    is not a total). CoinGecko's own total stays beside it as total_supply_coingecko; a day before our first total keeps
+    CoinGecko's row, its source naming it, as FDV keeps CoinGecko's FDV."""
+    for p in scoped_projects():
+        spec = config.TOTAL_SUPPLY_NET.get(p["name"])
+        if not spec:
+            continue
+        name = p["name"]
+        legs = [spec["total"], *spec["less"]]
+        ss = [_daily(groups.get((name, m))) for m in legs]
+        cg = groups.get((name, "total_supply"))
+        if cg is not None and not cg.empty:
+            prev = groups.get((name, "total_supply_coingecko"))
+            moved = cg.assign(metric="total_supply_coingecko")
+            groups[(name, "total_supply_coingecko")] = _as_stored(
+                moved if prev is None or prev.empty else pd.concat([prev, moved]).drop_duplicates("date", keep="first"),
+                cg.columns)
+        missing = [m for m, s_ in zip(legs, ss) if s_.empty]
+        if missing:
+            # NOT CoinGecko's figure in its place: that is the gross basis (the burns inside it), another quantity —
+            # FDV and every ratio over the total read BLOCKED too until the leg is stored (G2-D2: --seed hyperevm_burn)
+            _VIEW_BLOCKS[(name, "total_supply")] = ("BLOCKED — the net total supply is not formed: no rows stored for "
+                                                    + ", ".join(missing))
+            groups.pop((name, "total_supply"), None)
+            continue
+        df = pd.concat(ss, axis=1).dropna()
+        if df.empty:
+            continue
+        net = df.iloc[:, 0] - df.iloc[:, 1:].sum(axis=1)
+        cols = next(g for g in (groups.get((name, m)) for m in legs) if g is not None).columns
+        view = pd.DataFrame({"date": net.index, "project": name, "metric": "total_supply", "value": net.values,
+                             "tier": 1, "source": f"derived:{spec['total']}-{'-'.join(spec['less'])}"})
+        cgt = groups.get((name, "total_supply_coingecko"))
+        if cgt is not None and not cgt.empty:
+            cgd = cgt.assign(date=pd.to_datetime(cgt["date"]).dt.normalize())
+            early = cgd[cgd["date"] < net.index.min()]
+            if not early.empty:
+                view = pd.concat([early.assign(metric="total_supply")[view.columns.intersection(early.columns)], view],
+                                 ignore_index=True)
+        groups[(name, "total_supply")] = _as_stored(view.sort_values("date"), cols)
+
+
 def _revenue_total_views(groups: dict) -> None:
     """REVENUE FROM EVERY STREAM (alignment round 2026-10-13, C10; config.REVENUE_TOTAL): revenue_total_usd = the sum
     of the streams per day, only on days every stream holds a row — a missing stream is a gap, never a smaller total."""
@@ -2587,6 +2665,12 @@ def _revenue_total_views(groups: dict) -> None:
             if missing:
                 _VIEW_BLOCKS[(name, metric)] = "BLOCKED — no rows stored for " + ", ".join(missing)
                 continue
+            # A LEG THAT HAD NOT STARTED IS 0 BEFORE ITS START (Round G2 D4: AQAv2 pays from 2026-08-26 — config
+            # REVENUE_LEG_FROM), on the other legs' days only; after its start a missing day is a gap as before
+            ss = [s_ if (name, m) not in config.REVENUE_LEG_FROM else
+                  pd.concat([pd.Series(0.0, index=[d for d in ss[0].index
+                                                   if d < pd.Timestamp(config.REVENUE_LEG_FROM[(name, m)])]), s_])
+                  for m, s_ in zip(legs, ss)]
             tot = pd.concat(ss, axis=1).dropna().sum(axis=1)
             if tot.empty:
                 continue
@@ -3185,11 +3269,13 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
         for r in fetch_status.itertuples(index=False):
             last_success[(r.source, r.project)] = r.last_success_at
     groups = {k: g for k, g in long.groupby(["project", "metric"])} if not long.empty else {}
+    _EARLY_BLOCKS.clear()
     _partial_sum_views(groups)    # FIRST: nothing downstream may read a partial sum
     _same_basis_views(groups)     # one basis read by several routes is one measuring point (config.SAME_BASIS)
     _epoch_paid_views(groups, asof)  # round 3 B4: a weekly row dated by the flip that paid it (config.EPOCH_PAID_AT)
     _history_prepend_views(groups)  # fix round 3: a series' history from another route on the same basis
     _declared_zero_views(groups, asof)   # an ENDED programme reads 0 after its end (config.DECLARED_ZERO)
+    _price_tier_views(groups)     # G2 A1: the price_history tier's rows are the declared older leg, never interleaved
     _price_history_views(groups)  # Q-4 prices: DefiLlama coins before CoinGecko's free 365 days (review item 8b)
     _consensus_history_views(groups, asof)  # ETH consensus rewards before Etherscan's first read (review 8c)
     _monthly_leg_views(groups)
@@ -3216,6 +3302,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _VIEW_BLOCKS.clear()
     _VIEW_BLOCKS.update(_ONE_OFF_BLOCKS)
     _VIEW_BLOCKS.update(_VIEW_BLOCKS_PENDING)
+    _VIEW_BLOCKS.update(_EARLY_BLOCKS)
     # THE HISTORY LEGS FIRST (2026-09-30): Ethereum's first-party issuance view keeps its
     # declared ETH.Store leg (history_prefix) only if the leg is already in the group.
     _history_leg_views(groups)
@@ -3229,6 +3316,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _reward_end_views(groups, asof)
     _net_common_views(groups)     # AFTER the issuance views it differences
     _first_party_history_views(groups)   # fix round 2, H1: Aethir's table / Plume's mirror before the first read
+    _total_supply_net_views(groups)   # Round G2 D2/L3: total supply = our total net of what is burned (FDV reads it)
     _circulating_views(groups)
     _cg_plus_staked_views(groups)
     _near_lockup_views(groups)    # BEFORE market cap: NEAR's circulating under Jake's lockup rule
@@ -3290,6 +3378,10 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                 gap = gap_by_key.get((name, metric))
                 if na_note:
                     row["status"], row["note"] = "n/a", na_note
+                elif (name, metric) in _VIEW_BLOCKS:
+                    # A VIEW THAT REFUSED TO FORM SAYS WHY (G2-D1: Morpho's emissions_tokens, the sum of four chains'
+                    # claims, read "no rows stored" while the view named the chains still missing)
+                    row["status"], row["note"] = "blocked", _VIEW_BLOCKS[(name, metric)]
                 elif gap is not None:
                     row["status"], row["note"] = "gap", f"{gap['reason']} | {gap['suggestion']}"
                 elif metric not in applicable.get(name, ()):
@@ -6015,16 +6107,19 @@ def _emissions_from_metric_views(groups: dict, after_issuance: bool = False) -> 
             parts = {m: groups.get((name, m)) for m in src_metric}
             got = {m: g.drop_duplicates("date", keep="last").set_index("date")["value"].astype(float)
                    for m, g in parts.items() if g is not None and not g.empty}
-            if not got:
-                continue
             missing = [m for m in src_metric if m not in got]
+            if not got and (name, "emissions_tokens") not in groups:
+                continue
             if missing:
                 # EVERY LISTED STREAM OR NO COLUMN (Jake's run 2026-10-09 ~14:10: the sum read mainnet only, 77,160, while
-                # Arbitrum paid 6,610.56 — its scan was still seeding). A stream that has stored nothing is not a 0.
-                _VIEW_BLOCKS[(name, "emissions_tokens")] = (
+                # Arbitrum paid 6,610.56 — its scan was still seeding). A stream that has stored nothing is not a 0 — and
+                # rows still stored under emissions_tokens itself (Morpho's Ethereum claims before run_sql CT renames
+                # them, G2-D1) are one leg, not the sum, so they are not shown either.
+                _VIEW_BLOCKS[(name, "emissions_tokens")] = _EARLY_BLOCKS[(name, "emissions_tokens")] = (
                     f"BLOCKED — the sum of {', '.join(src_metric)} is not formed: {', '.join(missing)} "
-                    f"stored nothing yet (a log scan stores only once its whole history reconciles). "
-                    f"`python token_metrics.py --seed pendle_gauges` finishes the seed in one sitting")
+                    f"stored nothing yet (a log scan stores only once its history, or its 100-day window, reconciles). "
+                    + ("`python token_metrics.py --seed pendle_gauges` finishes the seed in one sitting" if name == "Pendle"
+                       else "The next token_metrics.py run reads them (config log_scans / EXPLORER_PROBED_SCANS)"))
                 groups.pop((name, "emissions_tokens"), None)
                 continue
             # A HAND-ENTERED STREAM DOES NOT BOUND THE SUM (Pendle Optimism, Jake 2026-10-09 17:05: "paid nothing in
@@ -6032,9 +6127,15 @@ def _emissions_from_metric_views(groups: dict, after_issuance: bool = False) -> 
             # set the last day summed
             scanned = [m for m in got if not parts[m]["source"].astype(str).eq("manual").all()]
             end = min(got[m].index.max() for m in (scanned or list(got)))
+            # A WINDOW-ONLY STREAM BOUNDS THE START (G2-D1, Morpho Katana): an rpc_window scan has no full history, so a
+            # day before its first stored row was never read — not an observed 0. The sum starts at that row.
+            window_only = {sp.get("metric") for sp in p.get("log_scans") or () if sp.get("rpc_window")}
+            start = max((got[m].index.min() for m in got if m in window_only), default=None)
             idx = sorted(set().union(*(s.index for s in got.values())))
             total = pd.concat([s.reindex(idx).fillna(0.0) for s in got.values()], axis=1).sum(axis=1)
             total = total[total.index <= end]
+            if start is not None:
+                total = total[total.index >= start]
             base = next(iter(parts[m] for m in got))
             groups[(name, "emissions_tokens")] = _as_stored(pd.DataFrame(
                 {"date": total.index, "project": name, "metric": "emissions_tokens", "value": total.values,

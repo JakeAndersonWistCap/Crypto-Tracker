@@ -83,6 +83,8 @@ def within(ours: float, ref: float, kind: str, tol: float) -> bool:
 #   ("wallets", check)                   a config check (addresses), see _wallet_check
 #   ("flows", line prefix, label)        the Flows tab's own Token-flow line in that quarter (same series and window)
 #   ("not_wired", route)                 no series measures it yet — the route that would
+#   ("block_read", reference metric)     our own archive read AT THE REFERENCE'S BLOCK (config.REFERENCE_BLOCK_READS;
+#                                        G2 addendum A3: a stock that moves intraday is compared at one instant only)
 _NEAR_INFLOW_ROUTE = ("N5: all-time inflow of {} — fee inflows arrive as receipts, which NearBlocks' account txns do not "
                       "list; route: BigQuery receipt_actions TRANSFER + wNEAR ft_events (sql/near/"
                       "bigquery_wallet_inflows.sql), dry-run by `check_offline_items.py near_settlement_routes` — run "
@@ -158,8 +160,10 @@ ROUTES: dict[tuple[str, str], tuple] = {
     ("Pendle", "unclaimed_accrued_emissions"): ("latent", "Pendle"),
     ("Sky", "vest18_rate"): ("last", "emissions_rate_current_annual_tokens"),
     ("Sky", "vest17_rate"): ("last", "emissions_rate_current_annual_tokens"),
-    ("Sky", "pause_proxy_sky_balance"): ("last", "treasury_holding_tokens"),
-    ("Sky", "mkr_supply_unconverted"): ("last", "mkr_outstanding_tokens"),
+    # G2 ADDENDUM A3 (Jake's run on e2250e5: still BROKEN +1.29% — the 10-13 row had been overwritten by a later read of
+    # the same day, 20,399,911, ~5 h after the reference): both compare at the reference's own block
+    ("Sky", "pause_proxy_sky_balance"): ("block_read", "pause_proxy_sky_balance"),
+    ("Sky", "mkr_supply_unconverted"): ("block_read", "mkr_supply_unconverted"),
     ("Sky", "sky_total_supply"): ("last", "total_supply_protocol"),
     ("Sky", "spell_burn_2026-09-13"): ("on_day", "gross_burn_tokens"),
     ("Sky", "spell_burn_2026-10-12"): ("on_day", "gross_burn_tokens"),
@@ -174,7 +178,8 @@ ROUTES: dict[tuple[str, str], tuple] = {
     # MIP-021's own Snapshot text
     ("Maple", "buyback_top_tier"): ("fee_tier_top",),
     ("Morpho", "fee_recipient"): ("zero_sum", "revenue_usd", 90),
-    # D3 (2026-10-14): like for like — the off-Ethereum campaign SCHEDULE; (b) also holds Ethereum claims (paid basis)
+    # D3 (2026-10-14): like for like — the off-Ethereum campaign SCHEDULE against Merkl's own rate. G2-D1: the schedule is
+    # context only now ((b) is claims on every chain); this checks the context series, not (b)
     ("Morpho", "merkl_rewards_rate"): ("mean", "merkl_campaigns_non_ethereum_tokens", 30),
     ("Fluid", "treasury_to_team_rewards"): ("event", "treasury_holding_tokens", 21, -1),
     ("Fluid", "treasury_to_team_agi3_locked"): ("event", "treasury_holding_tokens", 21, -1),
@@ -327,6 +332,14 @@ def _our_value(route: tuple, groups: dict, project: str, at: pd.Timestamp, ref: 
                                               f"{ft.get('source_date', '')})", "")
     if kind == "not_wired":
         return None, "", route[1]
+    if kind == "block_read":
+        import config                                       # noqa: PLC0415
+        r = config.REFERENCE_BLOCK_READS.get((project, route[1]))
+        if not r:
+            return None, "config.REFERENCE_BLOCK_READS", "no read at the reference's block on file"
+        return (float(r["value"]), f"{r['call']} at {r['chain']} block {r['block']:,} ({r['block_time']}) = "
+                                   f"{r['value']:,.6f}, read {r['read_on']} via {r['rpc_host']} (archive eth_call); "
+                                   f"{r['why_this_block']}", "")
     metric = route[1]
     s = _series(groups, project, metric)
     if s is None:
@@ -493,7 +506,7 @@ def check(groups: dict, headline=None, projects: set[str] | None = None, rows: l
 
 
 # route kinds that read config, not stored rows: no data date applies
-CONFIG_ROUTES = ("latent", "dat_file", "issuer_rate", "fee_tier_top", "not_wired")
+CONFIG_ROUTES = ("latent", "dat_file", "issuer_rate", "fee_tier_top", "not_wired", "block_read")
 
 
 def _ref_date(as_of: str) -> pd.Timestamp:

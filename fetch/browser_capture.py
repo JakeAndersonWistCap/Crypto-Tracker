@@ -367,6 +367,15 @@ def shapes(captured: list) -> list[str]:
     return lines
 
 
+def pinned_metrics(pg: dict) -> list[str]:
+    """Every metric a page's pins can store: series (each unit's name for a unit leg), scalars, tiles."""
+    out = []
+    for pin in list(pg.get("series") or ()) + list(pg.get("scalars") or ()) + list(pg.get("tiles") or ()):
+        out += [pin["metric"]] if pin.get("metric") else []
+        out += list((pin.get("metric_by_unit") or {}).values())
+    return list(dict.fromkeys(out))
+
+
 class BrowserCapture:
     SOURCE = SOURCE
     TIER = TIER
@@ -398,6 +407,14 @@ class BrowserCapture:
             return
         day = str(today().date())
         if not self.daily.due(f"{SOURCE}:{url}", day):
+            # RENDERED TODAY ALREADY (G2 addendum A2, Jake's full run on e2250e5: 0 rows in 0.3 s after the morning's
+            # group D run stored 7,822 — this returned silently, so the run held none of the page's series and the 12
+            # ASXN series went back on its Gap Report). Once a day stays; each pinned series is CURRENT, and said so.
+            for m in pinned_metrics(pg):
+                out.mark_current(SOURCE, name, m, f"{url}: rendered today already (once a day, DailyChecks "
+                                                  f"{SOURCE}:{url}) — the rows that render stored are current", TIER)
+            log.info("%s / %s: %s rendered today already — %d pinned series current", SOURCE, name, url,
+                     len(pinned_metrics(pg)))
             return
         ok, why = robots_verdict(url)
         if not ok:

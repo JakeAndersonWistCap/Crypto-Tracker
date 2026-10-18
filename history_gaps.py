@@ -118,6 +118,12 @@ def fix_for(p: dict, metric: str, row: dict) -> tuple[str, str, str, str]:
                     "Q-1..Q-3: CoinGecko 365 days (free, the daily run); before that: the price_history tier "
                     "(DefiLlama coingecko:<id> chart, Round G 2.1) back to the first token flow", "free",
                     "token_metrics.py")
+        if metric == "total_supply" and (config.TOTAL_SUPPLY_ONCHAIN_FIRST.get(p["name"]) or {}).get("view"):
+            # Round G2: a read-time net of its legs (config.TOTAL_SUPPLY_NET) — its history is the legs' history
+            legs = config.TOTAL_SUPPLY_NET[p["name"]]
+            return ("a read-time net of its legs: it starts on the first day every leg is held",
+                    f"the legs' own history: {legs['total']} and {', '.join(legs['less'])} (archive_backfill.py --run / "
+                    f"--seed hyperevm_burn for the HyperEVM leg)", "free", "")
         if metric == "total_supply" and p["name"] in config.TOTAL_SUPPLY_ONCHAIN_FIRST:
             # APPROVED (Jake 2026-10-12, decision 6 on 6f8c86c): the chain total at past blocks, labelled
             # "[chain backfill (pre-handover)]" — after orphan_cleanup.sql CJ moves CoinGecko's rows aside

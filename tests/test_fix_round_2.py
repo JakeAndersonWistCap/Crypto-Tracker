@@ -242,13 +242,21 @@ def test_the_aero_cutover_refuses_legacy_rows_loudly():
 
 # --------------------------------------------------------------------------------------------- S6
 def test_hyperliquid_fdv_excludes_the_assistance_fund():
-    g = _groups("Hyperliquid")
+    # G2-D2 (Jake 2026-10-18): the total also excludes the HyperEVM burn — the zero address's balance, read at
+    # 2026-10-13 16:22 UTC (308,538.17 HYPE). The 10-13 dump predates that series, so the row is added as read.
+    burn = [{"date": "2026-10-13", "metric": "hyperevm_zero_address_balance", "value": 308_538.17,
+             "source": "hyperevm:eth_getBalance(0x0000…)", "tier": 1, "fetched_at": "2026-10-13T16:22:00Z"}]
+    g = _groups("Hyperliquid", burn)
     f = g[("Hyperliquid", "fdv_usd")]
     last = f.assign(d=pd.to_datetime(f["date"])).sort_values("d").iloc[-1]
     px = g[("Hyperliquid", "price_usd")]
     p = float(px[pd.to_datetime(px["date"]) == last["d"]]["value"].iloc[-1])
-    assert float(last["value"]) == pytest.approx(p * (998_862_059.4027 - 48_007_021.5047), rel=1e-6)
-    assert "total_supply_gross-burn_address_balance" in str(last["source"])
+    assert float(last["value"]) == pytest.approx(p * (998_862_059.4027 - 48_007_021.5047 - 308_538.17), rel=1e-6)
+    assert "total_supply_gross-burn_address_balance-hyperevm_zero_address_balance" in str(last["source"])
+    # without the burn leg there is no total — and no FDV on CoinGecko's gross figure in its place
+    g0 = _groups("Hyperliquid")
+    t0 = g0.get(("Hyperliquid", "total_supply"))
+    assert t0 is None or t0.empty
 
 
 # --------------------------------------------------------------------------------------------- T1 / T3 / §14

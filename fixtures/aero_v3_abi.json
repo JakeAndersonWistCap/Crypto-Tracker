@@ -1,7 +1,7 @@
 {
  "repo": "dromos-labs/metadex-public@0058bd9b1d49b0fb0a6d130dd51886b2c64e3d99",
  "transcribed_on": "2026-10-14",
- "note": "ABI fragments transcribed from the declarations at the pinned commit (no compiled ABI is published before launch); text is each declaration line verbatim",
+ "note": "ABI fragments transcribed from the declarations at the pinned commit (no compiled ABI is published before launch); text is each declaration line verbatim G2-D5 (2026-10-18): the supply reads (Token MIGRATION / VELODROME_MIGRATION / totalSupply, Migration V2_TOKEN / V2_ESCROW / MIGRATION_TOKEN_ID / previewConversion, AerodromeMigration V3_TOKEN / remaining) transcribed from the same commit.",
  "functions": {
   "emissionsMinted": {
    "signature": "emissionsMinted()",
@@ -118,6 +118,90 @@
    "file": "V3/src/rewards/IncentiveStreaming.sol",
    "line": 94,
    "text": "function incentive(uint256 _programId) external view returns (IncentiveProgram memory) {"
+  },
+  "totalSupply": {
+   "signature": "totalSupply()",
+   "returns": [
+    "uint256"
+   ],
+   "file": "V3/src/token/Token.sol",
+   "line": 9,
+   "text": "contract Token is BaseToken, ITokenExtensions {"
+  },
+  "MIGRATION": {
+   "signature": "MIGRATION()",
+   "returns": [
+    "address"
+   ],
+   "file": "V3/src/token/Token.sol",
+   "line": 17,
+   "text": "address public immutable MIGRATION;"
+  },
+  "VELODROME_MIGRATION": {
+   "signature": "VELODROME_MIGRATION()",
+   "returns": [
+    "address"
+   ],
+   "file": "V3/src/token/Token.sol",
+   "line": 20,
+   "text": "address public immutable VELODROME_MIGRATION;"
+  },
+  "V2_TOKEN": {
+   "signature": "V2_TOKEN()",
+   "returns": [
+    "address"
+   ],
+   "file": "V3/src/migration/Migration.sol",
+   "line": 32,
+   "text": "IERC20 public immutable V2_TOKEN;"
+  },
+  "V2_ESCROW": {
+   "signature": "V2_ESCROW()",
+   "returns": [
+    "address"
+   ],
+   "file": "V3/src/migration/Migration.sol",
+   "line": 38,
+   "text": "IV2VotingEscrow public immutable V2_ESCROW;"
+  },
+  "MIGRATION_TOKEN_ID": {
+   "signature": "MIGRATION_TOKEN_ID()",
+   "returns": [
+    "uint256"
+   ],
+   "file": "V3/src/migration/Migration.sol",
+   "line": 44,
+   "text": "uint256 public immutable MIGRATION_TOKEN_ID;"
+  },
+  "previewConversion": {
+   "signature": "previewConversion(uint256)",
+   "returns": [
+    "uint256",
+    "uint256",
+    "bool",
+    "bool"
+   ],
+   "file": "V3/src/migration/Migration.sol",
+   "line": 236,
+   "text": "function previewConversion(uint256 _tokenId) external view override returns (uint256, uint256, bool, bool) {"
+  },
+  "V3_TOKEN": {
+   "signature": "V3_TOKEN()",
+   "returns": [
+    "address"
+   ],
+   "file": "V3/src/migration/AerodromeMigration.sol",
+   "line": 26,
+   "text": "IERC20 public immutable V3_TOKEN;"
+  },
+  "remaining": {
+   "signature": "remaining()",
+   "returns": [
+    "uint256"
+   ],
+   "file": "V3/src/migration/AerodromeMigration.sol",
+   "line": 79,
+   "text": "function remaining() external view override returns (uint256 _remaining) {"
   }
  },
  "events": {

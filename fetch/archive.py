@@ -548,7 +548,14 @@ class ArchiveBackfill:
             chain = spec["chain"]
             if chain == "solana" or chain not in getattr(self.reader, "at_block", {}):
                 continue
-            addrs = [spec["address"]] + ([spec["underlying"]] if isinstance(spec.get("underlying"), str) else [])
+            # `underlying` is an ADDRESS on some contracts and a contract KEY on others (the W6 insider-stake reads name
+            # their share token by key, "spendle"): a key resolves to its address. G2 addendum A5: unresolved, the
+            # code check raised on "spendle", was skipped, and 180 days before sPENDLE's deployment (2026-01-16) read
+            # NOT WRITTEN instead of before deployment (cooldown_days, read from sPENDLE itself, was already right)
+            und = spec.get("underlying")
+            if isinstance(und, str) and not und.startswith("0x"):
+                und = ((p.get("contracts") or {}).get(und) or {}).get("address")
+            addrs = [spec["address"]] + ([und] if isinstance(und, str) and und.startswith("0x") else [])
             for a in addrs:
                 try:
                     w3 = self.reader.web3(chain)

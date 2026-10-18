@@ -1160,7 +1160,10 @@ EXPLORER_PROBE = (
     (146, "Sonic", "0xf1eF7d2D4C0c881cd634481e0586ed5d2871A74B", "0xeE708FC793a02F1eDd5BB9DBD7fD13010D1F7136"),
     (80094, "Berachain", "0xFf9c599D51C407A45D631c6e89cB047Efb88AeF6", "0x704478Dd72FD7F9B83d1F1e0fc18C14B54F034d0"),
     (999, "HyperEVM", "0xD6Eb81136884713E843936843E286FD2a85A205A", "0x7e500c6efbb00fd3227888256e477171a1304721"),
-    (9745, "Plasma", "0x61E030A56D33e8260FdD81f03B162A79Fe3449Cd", "0x3413D18500D5140095513d57a9Fcd9D882CbD064"))
+    (9745, "Plasma", "0x61E030A56D33e8260FdD81f03B162A79Fe3449Cd", "0x3413D18500D5140095513d57a9Fcd9D882CbD064"),
+    # G2 addendum A7 (Jake 2026-10-18, enabling OP Mainnet on his Alchemy app): Ether.fi's cashback Safe on OP and its
+    # token (log_scans.cashback_out_optimism) — served opens the Transfers route beside OP's explorers (a fallback)
+    (10, "OP Mainnet", "0xe0080d2F853ecDdbd81A643dC10DA075Df26fD3f", "0x38F2fBb259F042DE3A601E0f7135f768DE08F5A2"))
 
 
 def etherscan_v2_routes():
@@ -3623,6 +3626,35 @@ def aethir_veaethir_reconcile():
     for v, h in top:
         print(f"    outside: {h}  {fmt(v)}  ({_code(h, 'ethereum')})")
     print("  PASTE BACK: the lines above.")
+
+
+def reference_block_reads():
+    """G2 ADDENDUM A3 (Jake's run on e2250e5: the Sky Pause Proxy reference compared against a later read of its day).
+    Re-reads every config.REFERENCE_BLOCK_READS entry at its block (archive eth_call, the first Ethereum RPC that serves
+    past state) and prints it beside the value on file — MATCH to the wei-rounded 6 decimals, else DIFFERS (correct
+    config, never the tolerance). Prints the host only."""
+    import config as _cfg                                  # noqa: PLC0415
+    head("REFERENCE BLOCK READS — our read at each reference's own block")
+    for (proj, ref), r in _cfg.REFERENCE_BLOCK_READS.items():
+        data = (_selector("balanceOf(address)") + r["holder"].lower()[2:].rjust(64, "0") if r["data"] == "balanceOf"
+                else _selector("totalSupply()"))
+        got, tried = None, []
+        for url in _rpcs_for(r["chain"]):
+            try:
+                res = rpc(url, "eth_call", [{"to": r["to"], "data": data}, hex(r["block"])]).get("result")
+                if res and res != "0x":
+                    got = int(res, 16) / 10 ** int(r["decimals"])
+                    host = url.split("/")[2]
+                    break
+                tried.append(f"{url.split('/')[2]}: empty")
+            except Exception as e:  # noqa: BLE001 — try the next endpoint
+                tried.append(f"{url.split('/')[2]}: {str(e)[:80]}")
+        if got is None:
+            print(f"  {proj} {ref}: UNREAD at block {r['block']:,} — {'; '.join(tried)[:300]}")
+            continue
+        verdict = "MATCH" if round(got, 6) == round(float(r["value"]), 6) else "DIFFERS"
+        print(f"  {proj} {ref}: {r['call']} at block {r['block']:,} = {got:,.6f} via {host}; on file "
+              f"{float(r['value']):,.6f} -> {verdict}")
 
 
 def insider_stake_check():
@@ -7317,9 +7349,14 @@ def near_settlement_routes():
         "token_census_30d": ("bigquery_token_census.sql", {"d0": (yday - pd.Timedelta(days=29)).date(), "d1": yday.date()}),
         "buyback_wallet_balances_year": ("bigquery_buyback_wallet_balances.sql", {"d0": year0.date(), "d1": yday.date()}),
         "circulating_full_history": ("bigquery_circulating_supply.sql", {"since": "2000-01-01"}),
-        # Round G 2.6: the three revenue wallets' all-time inflow (native NEAR + wNEAR), from fefundsadmin's creation
-        "wallet_inflows_alltime": ("bigquery_wallet_inflows.sql", {"d0": pd.Timestamp("2025-09-22").date(),
+        # Round G 2.6: the three revenue wallets' all-time inflow (native NEAR + wNEAR), from fefundsadmin's creation.
+        # G2 addendum A6: two stages — the days with a TRANSFER to one of the three (narrow columns), then `args` on
+        # those days only. Here stage 2 is dry-run over EVERY day (its ceiling); the real day list follows below.
+        "wallet_inflow_days": ("bigquery_wallet_inflow_days.sql", {"d0": pd.Timestamp("2025-09-22").date(),
                                                                    "d1": yday.date()}),
+        "wallet_inflows_alltime": ("bigquery_wallet_inflows.sql", {
+            "d0": pd.Timestamp("2025-09-22").date(), "d1": yday.date(),
+            "days": [d.date() for d in pd.date_range("2025-09-22", yday)]}),
     }
     nb = NearBigQuery()
     client, why = nb._client(spec)
@@ -7363,6 +7400,33 @@ def near_settlement_routes():
             print(f"  DRY RUN {label}: {b / 1e9:,.2f} GB ({b / 1e12:,.3f} TB) — free; nothing billed")
         except Exception as e:  # noqa: BLE001
             print(f"  DRY RUN {label}: {type(e).__name__}: {str(e)[:200]}")
+    # G2 ADDENDUM A6: STAGE 1 IS RUN when its dry run is small (narrow columns; capped by maximum_bytes_billed), and
+    # stage 2 is dry-run on the days it returns — the bytes the all-time inflow really needs. Nothing else is run.
+    s1 = measured.get("wallet_inflow_days")
+    if s1 is not None and s1 <= WALLET_DAYS_RUN_CAP:
+        try:
+            p1 = {"d0": pd.Timestamp("2025-09-22").date(), "d1": yday.date()}
+            sql1 = (here / "bigquery_wallet_inflow_days.sql").read_text()
+            nb._guard_sql(sql1, spec)
+            rows = list(client.query(sql1, job_config=bigquery.QueryJobConfig(
+                query_parameters=nb._params(p1), maximum_bytes_billed=WALLET_DAYS_RUN_CAP)).result())
+            days = sorted({r["day"] for r in rows})
+            per = {}
+            for r in rows:
+                per[r["account_id"]] = per.get(r["account_id"], 0) + int(r["n"])
+            print(f"  STAGE 1 RUN wallet_inflow_days: {len(days)} day(s) with a native TRANSFER in "
+                  f"({', '.join(f'{a} {n}' for a, n in sorted(per.items()))}); billed <= {s1 / 1e9:,.2f} GB")
+            if days:
+                b2 = nb._dry(client, (here / "bigquery_wallet_inflows.sql").read_text(),
+                             {**p1, "days": days}, spec)
+                print(f"  DRY RUN wallet_inflows_alltime on those {len(days)} day(s): {b2 / 1e9:,.2f} GB "
+                      f"({b2 / 1e12:,.3f} TB) — " + ("UNDER" if b2 <= int(spec["max_bytes_per_query"]) else "OVER")
+                      + f" the {int(spec['max_bytes_per_query']) / 1e9:,.0f} GB per-query cap")
+        except Exception as e:  # noqa: BLE001
+            print(f"  STAGE 1 wallet_inflow_days not run: {type(e).__name__}: {str(e)[:200]}")
+    elif s1 is not None:
+        print(f"  STAGE 1 wallet_inflow_days NOT RUN: its dry run {s1 / 1e9:,.2f} GB is over the "
+              f"{WALLET_DAYS_RUN_CAP / 1e9:,.0f} GB a probe may run unasked")
     # THE REAL SIZES FEED THE TOP-UP RESERVE (Jake, 2026-10-01): saved where the adapter reads them,
     # so the first seed reserves the month's top-ups from measured figures, not estimates.
     st = nb._load()
@@ -7377,6 +7441,11 @@ def near_settlement_routes():
     print(f"  Budget in config: {int(spec['monthly_budget_bytes']) / 1e9:,.0f} GB/month of the free 1 TB; per query "
           f"<= {int(spec['max_bytes_per_query']) / 1e9:,.0f} GB. The FT leg's dry run ignores clustering (it bills less).")
     print("  PASTE BACK all lines. P2P is approved: routine runs top up first, then backfill under the budget.")
+
+# G2 addendum A6: stage 1 (narrow columns of receipt_actions since 2025-09-22) is run by the probe only under this many
+# bytes — a probe never runs anything heavy unasked
+WALLET_DAYS_RUN_CAP = 60 * 10 ** 9
+
 
 def plume_archive():
     """Jake's run 2026-09-30 17:21: does rpc.plume.org serve HISTORICAL state for the live staking
@@ -12217,7 +12286,7 @@ CHECKS = (
     fluid_buyback_destination, aethir_staking_probe, aethir_wrapper_relationship,
     aethir_veaethir_probe, geodnet_staking_candidates, geod_candidate_wallets, sky_lssky_releases, geod_residual, alchemy_base_logs, near_buyback_wallets, sky_ba_endpoints, chainlink_revenue_coverage,
     maple_transparency, sky_burn_breakdown, geod_solana_burn_account, near_block_supply,
-    wm_cardano_supply, etherscan_ethsupply2, etherscan_v2_routes, alchemy_transfer_routes, aethir_veaethir_reconcile, insider_stake_check, geod_archive_probe, plume_growthepie,
+    wm_cardano_supply, etherscan_ethsupply2, etherscan_v2_routes, alchemy_transfer_routes, aethir_veaethir_reconcile, insider_stake_check, reference_block_reads, geod_archive_probe, plume_growthepie,
     chainlink_reward_rates, pendle_spendle_fees, archive_probe, coinmetrics_community,
     hl_af_fills_depth, etherfi_safe_owners, etherfi_sethfi_topups, etherfi_topup_safe, etherfi_cex_test, near_protocol_v87, aethir_pin_keys,
     robots_and_terms, ultrasound_history, hyperliquid_history_routes, blockworks_filings, maple_dao_vs_ssf, aethir_reward_distributors, etherfi_yield_reconcile, maple_ssf_candidates,

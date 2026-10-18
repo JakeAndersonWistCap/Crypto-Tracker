@@ -1145,7 +1145,7 @@ Funding: revenue (the default: the programme documented base)
 | Flow | Category | Series |
 |---|---|---|
 | into circulating | (a) security emissions | **NO SERIES** |
-| into circulating | (b) supply-side incentives | `emissions_tokens` + `merkl_campaigns_non_ethereum_tokens` (**not applicable here:** merkl_campaigns_non_ethereum_tokens) |
+| into circulating | (b) supply-side incentives | `emissions_tokens` |
 | into circulating | (c) demand-side incentives | **NO SERIES** |
 | into circulating | (d) ecosystem / grant spend | **NO SERIES** |
 | into circulating | (e) unlocks | `unlock_release_tokens` |
@@ -1154,7 +1154,7 @@ Funding: revenue (the default: the programme documented base)
 
 Basis: MORPHO rewards (Merkl campaigns): 2025-07-14..2026-10-12 budgets ~12.96M to suppliers (b) vs ~0.27M to borrowers (c) — the claims series is not split, so it sits in (b), the ~98% leg; MORPHO now runs on the borrow side only (merkl.xyz /v4/campaigns?tokenSymbol=MORPHO, read 2026-10-12)
 
-PENDING: unsplit between (b) and (c): the claims and the campaigns sit in (b), the historical ~98% leg; Ethereum is claims (lagged), the other chains the campaign schedule
+PENDING: unsplit between (b) and (c): the claims sit in (b), the historical ~98% leg; every chain on a claims basis (G2-D1) — the Merkl schedule (merkl_campaigns_non_ethereum_tokens) is shown as context and enters no calculation
 
 **Value flow statement**
 
@@ -1385,7 +1385,7 @@ Funding: 2025-05-09..2025-11-03 treasury: April 2025 withdrawal-fee buyback (pai
 | Zcash | 1 | `circulating_supply` | CoinGecko first | none | `gross_burn_tokens` | `gross_issuance_tokens` | `emissions_tokens` | — |
 | Chainlink | 1, 2, 3 | `circulating_supply_onchain` | on-chain first | treasury_inflow | `gross_burn_tokens` | `pool_release_tokens` | `emissions_tokens` | `noncirculating_holding_tokens` |
 | World Mobile | 2, 3 | `circulating_supply` | CoinGecko first | distribute | `gross_burn_tokens` | `gross_issuance_tokens` | `emissions_tokens` | — |
-| GEODNET | 2, 3, 4 | `circulating_supply_onchain` | CoinGecko first | burn | `gross_burn_tokens` | `pool_release_tokens` | `emissions_tokens` | `noncirculating_holding_tokens` + `ecosystem_holding_tokens` |
+| GEODNET | 2, 3, 4 | `circulating_supply_onchain` | on-chain first | burn | `gross_burn_tokens` | `pool_release_tokens` | `emissions_tokens` | `noncirculating_holding_tokens` + `ecosystem_holding_tokens` |
 | peaq | 2 | `circulating_supply` | CoinGecko first | none | `gross_burn_tokens` | `gross_issuance_tokens` | `emissions_tokens` | — |
 | Render | 2, 3, 4 | `circulating_supply` | CoinGecko first | burn | `gross_burn_tokens` | `gross_issuance_tokens` | `emissions_tokens` | — |
 | Bittensor | 2 | `circulating_supply` | CoinGecko first | none | `gross_burn_tokens` | `gross_issuance_tokens` | `emissions_tokens` | — |
@@ -1395,7 +1395,7 @@ Funding: 2025-05-09..2025-11-03 treasury: April 2025 withdrawal-fee buyback (pai
 | Virtuals | 2 | `circulating_supply` | CoinGecko first | none | `gross_burn_tokens` | `gross_issuance_tokens` | `emissions_tokens` | — |
 | Maple | 3 | `circulating_supply_onchain` | on-chain first | treasury_inflow | `gross_burn_tokens` | `pool_release_tokens` | `emissions_tokens` | `treasury_holding_tokens_chain` + `noncirculating_holding_tokens` |
 | Morpho | 2 | `circulating_supply_onchain` | on-chain first | none | `gross_burn_tokens` | `gross_issuance_tokens` | `emissions_tokens` | `noncirculating_holding_tokens` + `noncirculating_entities_tokens` |
-| Hyperliquid | 3, 1, 4 | `circulating_supply_first_party` | CoinGecko first | burn | `gross_burn_tokens` | `pool_release_tokens` | `emissions_tokens` | `excluded_wallets_tokens` + `team_wallet_tokens` |
+| Hyperliquid | 3, 1, 4 | `circulating_supply_first_party` | on-chain first | burn | `gross_burn_tokens` | `pool_release_tokens` | `emissions_tokens` | `excluded_wallets_tokens` + `team_wallet_tokens` |
 | Uniswap | 4 | `circulating_supply_onchain` | CoinGecko first | burn | `gross_burn_tokens` | `gross_issuance_tokens` | `emissions_tokens` | `treasury_holding_tokens` + `noncirculating_holding_tokens` |
 | Aerodrome | 3 | `circulating_supply_onchain` | on-chain first | treasury_inflow | `gross_burn_tokens` | `gross_issuance_tokens` | `gross_issuance_tokens` + `emissions_tokens` | `noncirculating_holding_tokens` + `filing_managed_lock_tokens` |
 | PancakeSwap | 4, 3 | `circulating_supply` | CoinGecko first | none | `gross_burn_tokens` | `gross_issuance_tokens` | `emissions_tokens` | — |

@@ -552,8 +552,8 @@ def test_g2_1_prices_are_filled_back_to_the_first_token_flow_never_over_a_stored
     monkeypatch.delenv("TOKEN_METRICS_DAILY_CHECKS", raising=False)
     rows = [("2024-07-06", "actual_buyback_tokens", 1000.0), ("2024-07-07", "actual_buyback_tokens", 0.0)]
     rows += [(str(d.date()), "price_usd", 1.0) for d in pd.date_range("2025-09-12", "2026-10-17")]
-    stored = pd.DataFrame([{"date": d, "project": "Ether.fi", "metric": m, "value": v, "source": "x", "tier": 1}
-                           for d, m, v in rows])
+    stored = pd.DataFrame([{"date": d, "project": "Ether.fi", "metric": m, "value": v,
+                            "source": "coingecko" if m == "price_usd" else "x", "tier": 1} for d, m, v in rows])
     days, first = ph.missing_price_days(stored, "Ether.fi")
     assert first == "2024-07-06" and days[0] == pd.Timestamp("2024-07-06") and days[-1] == pd.Timestamp("2025-09-11")
     assert len(days) == 433
@@ -573,7 +573,8 @@ def test_g2_1_prices_are_filled_back_to_the_first_token_flow_never_over_a_stored
     assert all(p["span"] <= 499 for _, p in asked) and "coingecko:ether-fi" in asked[0][0]
     assert len(f) == 433 - len(asked)                          # one dropped point per call
     assert f["date"].min() == pd.Timestamp("2024-07-06") and f["date"].max() <= pd.Timestamp("2025-09-11")
-    assert set(f["source"]) == {"price_history:coins.llama.fi[coingecko:ether-fi]"}
+    # G2 addendum A1: the declared older leg of price_usd's handover, not a third measuring point
+    assert set(f["source"]) == {"defillama_coins:history[coins.llama.fi coingecko:ether-fi]"}
     # the next run the same day reads nothing
     out2 = FetchOutput()
     ph.PriceHistory(stored_long=stored, http=H(), daily=DailyChecks(tmp_path), robots=lambda u: (True, "")).run(
@@ -616,8 +617,12 @@ def test_g2_2_fdv_reaches_five_quarters_on_the_same_quantity(project, monkeypatc
 
 def test_g2_2_fdv_history_refused_when_the_quantity_differs(monkeypatch):
     """GEODNET: CoinGecko's total became net of the burn on 2026-10-12 (−3.0% before) — fewer than 14 recent days agree,
-    so nothing is extended and the note says why."""
+    so nothing is extended and the note says why. G2-L3 retired GEODNET's entry (its total is the on-chain net itself);
+    the refusal is kept, and tested here on the entry as it was."""
     import build_workbook as bw
+    monkeypatch.setitem(config.FDV_TOTAL_HISTORY, "GEODNET", {
+        "total": "total_supply_gross", "less": "burn_address_balance",
+        "label": "GEOD.totalSupply() on Polygon − the burn balances (Polygon + Solana token account)"})
     g = _fdv_groups("GEODNET")
     s = lambda x: (x.assign(date=pd.to_datetime(x["date"]).dt.normalize()).drop_duplicates("date", keep="last")  # noqa: E731
                    .set_index("date")["value"].astype(float))
@@ -658,11 +663,14 @@ def test_g2_6a_the_nearblocks_seed_line_names_what_it_reads():
 
 
 # ---------------------------------------------------------------------------------------------------- G2.3 Sky references
-def test_g2_3_a_dated_reference_reads_its_own_day_before_the_next():
+def test_g2_3_a_dated_reference_reads_its_own_day_before_the_next(monkeypatch):
     """Jake's 18 Oct workbook: the Pause Proxy reference of 2026-10-13 (20.14M) was compared with the 10-14 row (21.53M:
     the SKY received in the 25 hours between) although the 10-13 row (20,142,230) was stored — likewise MKR (83,465.89 on
     10-13 = the reference; 83,170 on 10-14). The reference's own day is read first; the one-day lag only without it."""
     import references as rf
+    # the generic "last" rule, on the two Sky references it was written for (both now compare at their block, A3)
+    monkeypatch.setitem(rf.ROUTES, ("Sky", "pause_proxy_sky_balance"), ("last", "treasury_holding_tokens"))
+    monkeypatch.setitem(rf.ROUTES, ("Sky", "mkr_supply_unconverted"), ("last", "mkr_outstanding_tokens"))
     rows = [("2026-10-12", "treasury_holding_tokens", 19_071_870.0), ("2026-10-13", "treasury_holding_tokens", 20_142_230.0),
             ("2026-10-14", "treasury_holding_tokens", 21_528_971.0),
             ("2026-10-13", "mkr_outstanding_tokens", 83_465.892107), ("2026-10-14", "mkr_outstanding_tokens", 83_170.0)]
@@ -766,10 +774,11 @@ def test_g2_5_the_asxn_series_are_not_listed_as_not_wired():
     caps = {c["metric"] for c in (p.get("browser_capture") or {}).get("captures", [])} if isinstance(
         p.get("browser_capture"), dict) else set()
     assert "buyback_hypercore_asxn_usd" in config.METRICS and (not caps or "buyback_hypercore_asxn_usd" in caps)
-    q = next(q for q in config.OPEN_QUESTIONS if q.get("topic") == "AQAv2 revenue accruing but not yet paid")
-    assert "14,580,774.69" in q["observed_2026_10_18"]
+    # G2-D4 (Jake 2026-10-18): booked once the sender was matched to the docs' address — the note is closed
+    q = next(q for q in config.OPEN_QUESTIONS if str(q.get("topic", "")).startswith("ANSWERED 2026-10-18 (G2-D4)"))
+    assert q["status"] == "answered"
     aq = next(s for s in p["revenue_sources"] if s["name"].startswith("AQAv2"))
-    assert aq["booked"] is False, "observed, not attributed: booked stays False until a primary source names it"
+    assert aq["booked"] is True and "0x5000000000000000000000000000000000000000" in aq["documented_payer"]
 
 
 # ------------------------------------------------------------------------------ G2.7 Base / BNB / Berachain transfers

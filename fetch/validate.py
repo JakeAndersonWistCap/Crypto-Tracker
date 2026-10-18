@@ -605,6 +605,13 @@ def _migration_switch_missing(st: dict, day) -> list:
             missing.append(f"addresses.{k} repeats addresses.{seen[str(addrs[k]).lower()]}")
         else:
             seen[str(addrs[k]).lower()] = k
+    # G2-D5: an optional addresses.migration (the reader takes the token's MIGRATION() and requires it to match)
+    if addrs.get("migration") not in (None, ""):
+        why = _placeholder_address(addrs.get("migration"))
+        if why:
+            missing.append(f"addresses.migration {why}")
+        elif str(addrs["migration"]).lower() in seen:
+            missing.append(f"addresses.migration repeats addresses.{seen[str(addrs['migration']).lower()]}")
     # THE EPOCH READ'S TWO FIELDS (Round G 2.10): optional — without them the voter fees / incentives are a named gap —
     # but a placeholder in either is refused like an address (the RUNBOOK template's "0x…" and deploy_block 0)
     fac, dep = st.get("voting_rewards_factory"), st.get("deploy_block")

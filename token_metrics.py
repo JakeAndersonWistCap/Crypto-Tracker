@@ -98,7 +98,7 @@ def parse_args(argv=None) -> argparse.Namespace:
                        help="fetch every project, whatever portfolio.txt says")
     ap.add_argument("--seed", choices=["nearblocks", "geodnet", "plume_staking", "hl_candles", "plume_settlement", "mev_relays",
                              "near_bigquery", "chainlink_fees", "pendle_gauges", "aero_epochs",
-                             "aero_buyback", "aero_managed_locks", "burn_history"],
+                             "aero_buyback", "aero_managed_locks", "burn_history", "hyperevm_burn"],
                     help="one-off: run only this source with NO time budget, to finish a first "
                          "read that routine runs (60s) take many runs to complete. Stores what it "
                          "reads; records no gaps and does not rebuild the workbook. plume_settlement: a "
@@ -114,7 +114,9 @@ def parse_args(argv=None) -> argparse.Namespace:
                          "Aerodrome voter epoch (fees, bribes, totalWeight at each epoch start). aero_buyback: the "
                          "Aerodrome Foundation's locked AERO at each day start over 100 days (archive) — its buy-and-lock. "
                          "aero_managed_locks: the filing wallets' managed-veNFT deposits at each past day start "
-                         "(archive, keyed BASE_RPC_URL) — Aerodrome's circulating history on the current basis.")
+                         "(archive, keyed BASE_RPC_URL) — Aerodrome's circulating history on the current basis. "
+                         "hyperevm_burn: the HyperEVM zero address's HYPE at each past day start (archive) — "
+                         "Hyperliquid's burned-supply leg, before run_sql CU.")
     ap.add_argument("--seed-days", type=int, default=None,
                     help="--seed mev_relays only: seed this many days back instead of the configured year "
                          "(e.g. 90 first; a later full seed resumes from the days already held)")
@@ -236,6 +238,41 @@ def seed_burn_history(st, log) -> int:
     for e in out.log:
         st.record_fetch(run_id, e.source, e.project, e.rows, e.status, e.message, e.tier)
     log.info("--seed burn_history: %d row(s) stored", written)
+    return 0
+
+
+def seed_hyperevm_burn(st, log) -> int:
+    """Round G2 D2: the HyperEVM zero address's HYPE at each past UTC day start (archive), for the days Hyperliquid's
+    supply series need it and no row holds (fetch/hyperevm_burn.py). Run BEFORE run_sql CU, which restates the stored
+    circulating rows with the same day's balance."""
+    from fetch import hyperevm_burn as hb
+    from fetch.base import Http
+    from fetch.validate import validate_frame
+    run_id = fetch.new_run_id()
+    out = fetch.FetchOutput()
+    p = config.PROJECT_BY_NAME["Hyperliquid"]
+    read = next(r for r in p["node_api"]["extra_reads"] if r.get("subtract_from_supply"))
+    days = hb.days_needed(st.load_long(), p["name"], read["metric"])
+    if not days:
+        log.info("--seed hyperevm_burn: every day already holds %s", read["metric"])
+        return 0
+    http = Http(min_interval=0.2)
+    url = (read.get("archive_endpoints") or read["endpoints"])[0]
+
+    def rpc(method, params):
+        return http.post(url, json_body={"jsonrpc": "2.0", "id": 1, "method": method, "params": params})["result"]
+    got, failed = hb.history_rows(p["name"], read, days, rpc)
+    for f in hb.frames(p["name"], read, got):
+        out.add(f, "hypercore_info", p["name"], f"{read['metric']} archive history", 1)
+    log.info("--seed hyperevm_burn: %d day(s) read %s..%s via %s; %d failed%s", len(got),
+             got[0][0].date() if got else "-", got[-1][0].date() if got else "-", url.split("/")[2], len(failed),
+             (" (first: " + f"{failed[0][0].date()} {failed[0][1]})") if failed else "")
+    prior = st.latest_values()
+    frames = [validate_frame(f, prior, out) for f in out.frames]
+    written = sum(st.upsert(f) for f in frames if f is not None and not f.empty)
+    for e in out.log:
+        st.record_fetch(run_id, e.source, e.project, e.rows, e.status, e.message, e.tier)
+    log.info("--seed hyperevm_burn: %d row(s) stored", written)
     return 0
 
 
@@ -639,6 +676,7 @@ def _main(args, log) -> int:
               "plume_settlement": seed_plume_settlement, "near_bigquery": seed_near_bigquery,
               "chainlink_fees": seed_chainlink_fees, "pendle_gauges": seed_pendle_gauges,
               "aero_epochs": seed_aero_epochs, "burn_history": seed_burn_history,
+              "hyperevm_burn": seed_hyperevm_burn,
               "aero_buyback": seed_aero_buyback, "aero_managed_locks": seed_aero_managed_locks,
               "mev_relays": lambda st_, log_: seed_mev_relays(st_, log_, args.seed_days)}[args.seed](st, log)
         st.close()

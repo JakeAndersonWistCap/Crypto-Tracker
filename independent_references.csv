@@ -39,8 +39,8 @@ Pendle,unclaimed_accrued_emissions,9800000,PENDLE,2026-10-13,derived from contra
 Pendle,spendle_underlying,31130378.14,PENDLE,2026-10-18,primary (eth_call PENDLE.balanceOf(sPENDLE)),0x999999999991E178D52Cd95AFd4b00d066664144 at Ethereum block 26219815,0.5%,Round G phase 3; the staked headline (locked_tokens)
 Sky,vest18_rate,403600000,SKY/yr,2026-10-12,primary (executive vote 2026-10-08),sky-ecosystem/executive-votes 2026-10-08,1%,LSSKY->SKY staking; transfer-based vest
 Sky,vest17_rate,580800000,SKY/yr,2026-09-13,primary (executive vote 2026-09-10),sky-ecosystem/executive-votes 2026-09-10,1%,ended early 2026-10-12
-Sky,pause_proxy_sky_balance,20140000,SKY,2026-10-13,primary (eth_call),Pause Proxy 0xBE8E...98FB,1%,
-Sky,mkr_supply_unconverted,83465.89,MKR,2026-10-13,primary (eth_call),,0.1%,converter pre-funded: 2042.2M SKY held
+Sky,pause_proxy_sky_balance,20140000,SKY,2026-10-13,primary (eth_call),Pause Proxy 0xBE8E...98FB (afternoon of 2026-10-13; the balance is 20142225.835854 from block 26184667 to 26184900),1%,compared with our read at block 26184750 (config REFERENCE_BLOCK_READS - G2 addendum A3); a day row is another instant
+Sky,mkr_supply_unconverted,83465.89,MKR,2026-10-13,primary (eth_call),MKR.totalSupply at Ethereum block 26184665 (2026-10-13 16:08 UTC) = 83465.892107,0.1%,converter pre-funded: 2042.2M SKY held; MKR converted to SKY after the read (10-15 00:00 83160.82 - G2-L1)
 Sky,sky_total_supply,23452400000,SKY,2026-10-13,primary (eth_call),,0.1%,
 Sky,spell_burn_2026-09-13,2860943.76,SKY,2026-09-13,primary (executive + chain),,exact,
 Sky,spell_burn_2026-10-12,7372288,SKY,2026-10-12,primary (executive + chain),,exact,

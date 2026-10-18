@@ -8246,16 +8246,17 @@ def test_the_hyperliquid_accrual_carries_its_trigger_date_and_stays_unbooked():
     due until 2026-10-03; anything done before then models a payment that has not happened.
     booked=False already does the only correct thing, which is keep it out of every revenue
     figure. The date is a TRIGGER — on 2026-10-03 there is a fact to check — not a reminder."""
+    # G2-D4 (Jake 2026-10-18): the trigger fired — the first payment (14,580,774.69 USDC, 2026-10-04) came from the
+    # system interest address Hyperliquid's docs document, so the leg is BOOKED and the note is answered
     q = next(q for q in config.OPEN_QUESTIONS
              if q.get("project") == "Hyperliquid" and "AQAv2" in q.get("topic", ""))
-    assert q["recheck_on"] == "2026-10-03"
-    assert "Reviewed 2026-09-22" in q["no_action_because"]
+    assert q["status"] == "answered" and q["topic"].startswith("ANSWERED 2026-10-18")
 
     hl = config.PROJECT_BY_NAME["Hyperliquid"]
     aqa = next(r for r in hl["revenue_sources"] if "AQAv2" in r["name"])
-    assert aqa.get("booked") is False, \
-        "an accruing-but-unpaid leg must stay unbooked — that is what keeps it out of revenue"
-    print("hyperliquid ok: unbooked, trigger date on file, no action taken and the reason recorded")
+    assert aqa.get("booked") is True and aqa["metric"] == "aqa_revenue_usd"
+    assert aqa["source_url"].endswith("/hypercore/aligned-quote-assets")
+    print("hyperliquid ok: booked from the documented payer, note answered")
 
 
 def test_the_offline_checks_cover_H1_to_H3_and_pin_their_paired_reads_to_one_block():
@@ -25019,7 +25020,8 @@ def test_ether_fi_buyback_counts_any_dex_fill_into_both_wallets_and_not_transfer
     line = next(e.message for e in out.log if "RECONCILED" in e.message)
     assert f"BY HOLDER: {old} 5.00 (last 2026-03-20) [OLD-programme buyback Safe" in line, line
     assert f"{safe} 3.00 (last 2026-09-10) [NEW top-up Safe" in line
-    assert f"{five_m} 5.00 [EOA relaying a Binance withdrawal" in line
+    # G2-D3 (Jake 2026-10-18): the 5M is signed off as a transfer
+    assert f"{five_m} 5.00 [transfer (signed off, Jake 2026-10-18) — EOA relaying a Binance withdrawal" in line
     assert "1 zero-value lookalike (address-poisoning) transfer(s) ignored." in line
     assert "0x0000000000000000000000000000000000000a90" not in line
     # ALL-TIME BOUGHT SHARE of the top-up Safe: 3 of 8 received (2 v4 + 1 router; 5 transferred)

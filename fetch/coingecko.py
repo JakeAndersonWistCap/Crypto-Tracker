@@ -169,7 +169,9 @@ class CoinGecko:
                 for metric, key in (("circulating_supply", "circulating_supply"),
                                     ("total_supply", "total_supply"), ("max_supply", "max_supply")):
                     v = md.get(key)
-                    if v is not None:
+                    # OUR TOTAL IS A NET VIEW (Round G2, config.TOTAL_SUPPLY_NET): CoinGecko's total is stored only
+                    # under its own name below, never as total_supply
+                    if v is not None and not (metric == "total_supply" and name in config.TOTAL_SUPPLY_NET):
                         rows.append({"date": when, "project": name, "metric": metric,
                                      "value": float(v), "source": SOURCE, "tier": TIER})
                     # where the chain read wins the total (config.TOTAL_SUPPLY_ONCHAIN_FIRST) CoinGecko's own total is

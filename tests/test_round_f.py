@@ -199,7 +199,7 @@ def test_f2_probe_writes_served_chains_and_never_prints_the_key(monkeypatch, tmp
     with contextlib.redirect_stdout(buf):
         coi.etherscan_v2_routes()
     st = json.loads((tmp_path / "explorer_routes.json").read_text())
-    assert st["served"] == [8453] and set(st["refused"]) == {"56", "5000", "146", "80094", "999", "9745"}
+    assert st["served"] == [8453] and set(st["refused"]) == {"56", "5000", "146", "80094", "999", "9745", "10"}  # 10: OP, G2 addendum A7
     assert secret not in buf.getvalue() and secret not in json.dumps(st)
     assert coi.etherscan_v2_routes in coi.CHECKS
 

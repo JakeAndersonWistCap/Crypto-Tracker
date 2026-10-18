@@ -26,7 +26,7 @@ import logging
 import config
 
 from .base import (Http, LogEntry, derive_flow_from_cumulative, json_path_get, parse_number,
-                   point, today)
+                   point, tidy, today)
 
 log = logging.getLogger("token_metrics.fetch.hypercore")
 
@@ -496,10 +496,101 @@ class HyperCoreInfo:
             parts.append(f"{w['label']} {v:,.2f} ({how})")
         out.add(point(name, "excluded_wallets_tokens", held, f"{SOURCE}:exclude_wallets", TIER, when),
                 SOURCE, name, f"excluded_wallets_tokens={held:,.2f}: " + "; ".join(parts), TIER)
+        # THE HYPEREVM BURN LEAVES CIRCULATING TOO (Round G2, D2 — Jake 2026-10-18): tokenDetails counts the HyperEVM
+        # zero address's HYPE inside circulatingSupply (the EVM supply is backed by the system address 0x2222…, which is
+        # not on nonCirculatingUserBalances). Read in the same run; unread -> no circulating row (never a partial one).
+        evm = self._evm_burn_read(api)
+        if evm is not None:
+            burned, how = self.evm_balance(evm)
+            if burned is None:
+                out.fail(SOURCE, name, f"circulating_supply_first_party NOT STORED: the HyperEVM burn (zero address) was "
+                                       f"unread — {how}", TIER)
+                return
+            out.add(point(name, "circulating_supply_first_party", circ - held - burned,
+                          f"{SOURCE}:tokenDetails.circulatingSupply-exclude_wallets-hyperevm_burn", TIER, when),
+                    SOURCE, name,
+                    f"circulating_supply_first_party={circ - held - burned:,.4f} = tokenDetails.circulatingSupply "
+                    f"{circ:,.4f} - the declared wallets {held:,.4f} - the HyperEVM burn {burned:,.4f} ({how})", TIER)
+            return
         out.add(point(name, "circulating_supply_first_party", circ - held,
                       f"{SOURCE}:tokenDetails.circulatingSupply-exclude_wallets", TIER, when), SOURCE, name,
                 f"circulating_supply_first_party={circ - held:,.4f} = tokenDetails.circulatingSupply {circ:,.4f} - "
                 f"the declared wallets {held:,.4f} ({read.get('exclude_wallets_decided', '')})", TIER)
+
+    @staticmethod
+    def _evm_burn_read(api: dict) -> dict | None:
+        """The extra read that measures the HyperEVM burn (shape evm_native_balance, subtract_from_supply), or None."""
+        return next((r for r in (api.get("extra_reads") or []) if r.get("shape") == "evm_native_balance"
+                     and r.get("subtract_from_supply")), None)
+
+    def evm_balance(self, read: dict, block: str = "latest") -> tuple[float | None, str]:
+        """(native HYPE balance of read['address'] on HyperEVM at `block`, how) — the first endpoint that answers;
+        (None, the errors) when none does. Cached for the run at 'latest' (one read serves circulating and the series)."""
+        cache = self.__dict__.setdefault("_evm_cache", {})
+        key = (read["address"].lower(), block)
+        if key in cache:
+            return cache[key]
+        errs = []
+        for url in read.get("archive_endpoints" if block != "latest" else "endpoints") or read["endpoints"]:
+            try:
+                r = self.http.post(url, json_body={"jsonrpc": "2.0", "id": 1, "method": "eth_getBalance",
+                                                   "params": [read["address"], block]})
+                cache[key] = (int(r["result"], 16) / 10 ** 18, f"eth_getBalance via {url.split('/')[2]}")
+                return cache[key]
+            except Exception as e:  # noqa: BLE001 — try the next endpoint
+                errs.append(f"{url.split('/')[2]}: {str(e)[:120]}")
+        return None, "; ".join(errs) or "no endpoint"
+
+    def _aqa_payments(self, project: dict, api: dict, read: dict, out, when) -> None:
+        """ROUND G2, D4 (Jake 2026-10-18: book the AQAv2 payment only if its sender is the address Hyperliquid's own docs
+        document). hyperliquid-docs hypercore/aligned-quote-assets (AQAv2, read 2026-10-18): reserve yield is sent "to the
+        Assistance Fund 8 days after each interval completes" from "the system interest address `0x50...00 +
+        {token_index}`". Every send into the Fund from a documented interest address (config interest_addresses, each
+        with the token index it is derived from) since activation is summed by UTC day — the day's $ (usdcValue) —
+        and every day from activation to yesterday is stored, 0 where nothing was paid."""
+        import pandas as pd                                # noqa: PLC0415
+        name, metric = project["name"], read["metric"]
+        endpoint = read.get("endpoint") or api.get("endpoint")
+        fund = read["recipient"].lower()
+        senders = {a.lower(): v for a, v in (read.get("interest_addresses") or {}).items()}
+        start = pd.Timestamp(read["live_from"]).normalize()
+        end = today().normalize()                          # exclusive: complete UTC days only
+        if end <= start:
+            return
+        t0, t1 = int(start.tz_localize("UTC").timestamp() * 1000), int(end.tz_localize("UTC").timestamp() * 1000)
+        by_day: dict = {}
+        seen = set()
+        for _page in range(50):                            # the API answers at most a page of updates per call
+            try:
+                led = self.http.post(endpoint, json_body={"type": "userNonFundingLedgerUpdates", "user": fund,
+                                                          "startTime": t0, "endTime": t1})
+            except Exception as e:  # noqa: BLE001
+                out.fail(SOURCE, name, f"{metric}: the Assistance Fund ledger was unread — {e}", TIER)
+                return
+            if not isinstance(led, list) or not led:
+                break
+            for x in led:
+                d = x.get("delta") or {}
+                k = (x.get("hash"), x.get("time"), d.get("amount"))
+                if k in seen:
+                    continue
+                seen.add(k)
+                if d.get("type") != "send" or str(d.get("user", "")).lower() not in senders \
+                        or str(d.get("destination", "")).lower() != fund:
+                    continue
+                day = pd.Timestamp(int(x["time"]), unit="ms").normalize()
+                by_day[day] = by_day.get(day, 0.0) + float(d.get("usdcValue") or 0.0)
+            last = max(int(x.get("time") or 0) for x in led)
+            if len(led) < int(read.get("page_size") or 2000) or last + 1 >= t1:
+                break
+            t0 = last + 1
+        days = list(pd.date_range(start, end - pd.Timedelta(days=1)))
+        rows = [(d, round(by_day.get(d, 0.0), 6)) for d in days]
+        paid = {str(d.date()): v for d, v in sorted(by_day.items())}
+        out.add(tidy(rows, name, metric, f"{SOURCE}:userNonFundingLedgerUpdates[AQAv2 interest address -> "
+                                         f"Assistance Fund]", TIER), SOURCE, name,
+                f"{metric}: {len(days)} day(s) from {start.date()}; paid {paid or 'nothing yet'} from "
+                f"{', '.join(f'{a[:6]}…{a[-4:]} ({v})' for a, v in senders.items())}", TIER)
 
     def _evm_native_balance(self, project: dict, read: dict, out, when) -> None:
         """F4 (2026-10-14): a native HYPE balance on HyperEVM (eth_getBalance, 18 decimals) and its day-on-day change.
@@ -507,18 +598,10 @@ class HyperCoreInfo:
         credits or debits HYPE only on a Transfer to the system address 0x2222…, so an EVM-side burn never reaches
         tokenDetails.totalSupply: this is its own burn line, not a part of core_burn_tokens."""
         name, metric, flow_metric = project["name"], read["metric"], read.get("derive_flow_metric")
-        errs = []
-        for url in read["endpoints"]:
-            try:
-                r = self.http.post(url, json_body={"jsonrpc": "2.0", "id": 1, "method": "eth_getBalance",
-                                                   "params": [read["address"], "latest"]})
-                value = int(r["result"], 16) / 10 ** 18
-                break
-            except Exception as e:  # noqa: BLE001 — try the next endpoint
-                errs.append(f"{url.split('/')[2]}: {str(e)[:120]}")
-        else:
-            out.fail(SOURCE, name, f"{metric}: every HyperEVM endpoint failed — {'; '.join(errs)}", TIER)
-            out.gap(name, metric, reason=f"HyperEVM eth_getBalance failed on every endpoint: {'; '.join(errs)}",
+        value, how = self.evm_balance(read)
+        if value is None:
+            out.fail(SOURCE, name, f"{metric}: every HyperEVM endpoint failed — {how}", TIER)
+            out.gap(name, metric, reason=f"HyperEVM eth_getBalance failed on every endpoint: {how}",
                     tiers_attempted="1", suggestion="Transient; the next run reads it.")
             return
         src = f"hyperevm:eth_getBalance({read['address'][:6]}…)"
@@ -536,6 +619,9 @@ class HyperCoreInfo:
         name, metric = project["name"], read.get("metric")
         if read.get("shape") == "evm_native_balance":
             self._evm_native_balance(project, read, out, when)
+            return
+        if read.get("shape") == "aqa_payments":
+            self._aqa_payments(project, api, read, out, when)
             return
         endpoint = read.get("endpoint") or api.get("endpoint")
         request = dict(read.get("request") or {})

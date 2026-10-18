@@ -38,8 +38,15 @@ def token_flow_metrics() -> set:
     return {m for m, d in config.METRICS.items() if d.get("kind") == "flow" and d.get("unit") == "tokens"}
 
 
+# THE DECLARED OLDER LEG of price_usd (config series_handover: defillama_coins:history -> coingecko). G2 addendum A1: the
+# tier wrote `price_history:coins.llama.fi[...]`, a third measuring point, and blanked every Q0 cell that reads price.
+HISTORY_POINT = "defillama_coins:history"
+
+
 def missing_price_days(stored: pd.DataFrame, name: str, flows: set | None = None) -> tuple[list, str | None]:
-    """(days with no price_usd from the first token flow to yesterday, the first flow's date) for one project."""
+    """(days with no price_usd from the first token flow to the day BEFORE CoinGecko's first stored price, the first
+    flow's date) for one project. Never a day inside CoinGecko's range (G2 addendum A1: interleaved with it, the series
+    had two measuring points in Q0); with no CoinGecko price stored yet, nothing (CoinGecko seeds its 365 days first)."""
     if stored is None or stored.empty:
         return [], None
     s = stored[stored["project"] == name]
@@ -49,8 +56,13 @@ def missing_price_days(stored: pd.DataFrame, name: str, flows: set | None = None
     if fl.empty:
         return [], None
     first = pd.to_datetime(fl["date"]).min().normalize()
-    have = set(pd.to_datetime(s.loc[s["metric"] == "price_usd", "date"]).dt.normalize())
-    days = [d for d in pd.date_range(first, today() - pd.Timedelta(days=1)) if d not in have]
+    px = s[s["metric"] == "price_usd"]
+    cg = px[px["source"].astype(str).str.split(":").str[0] == "coingecko"] if "source" in px else px.iloc[0:0]
+    if cg.empty:
+        return [], str(first.date())
+    have = set(pd.to_datetime(px["date"]).dt.normalize())
+    until = pd.to_datetime(cg["date"]).min().normalize() - pd.Timedelta(days=1)
+    days = [d for d in pd.date_range(first, until) if d not in have]
     return days, str(first.date())
 
 
@@ -97,7 +109,8 @@ class PriceHistory:
             if not days:
                 out.mark_current(SOURCE, name, "price_usd",
                                  "price history: every day from the first token flow"
-                                 + (f" ({first})" if first else "") + " has a price_usd", TIER)
+                                 + (f" ({first})" if first else "") + " to CoinGecko's first price has a price_usd",
+                                 TIER)
                 self.daily.done(key, day)
                 continue
             coin = f"coingecko:{cid}"
@@ -123,7 +136,7 @@ class PriceHistory:
             want = set(days)
             rows = sorted((d, v) for d, v in got.items() if d in want)
             if rows:
-                out.add(tidy(rows, name, "price_usd", f"{SOURCE}:coins.llama.fi[{coin}]", TIER), SOURCE, name,
+                out.add(tidy(rows, name, "price_usd", f"{HISTORY_POINT}[coins.llama.fi {coin}]", TIER), SOURCE, name,
                         f"price_usd: {len(rows)} day(s) {rows[0][0].date()}..{rows[-1][0].date()} filled from "
                         f"DefiLlama's {coin} (CoinGecko's price relayed, 00:00 UTC) — the days from the first token "
                         f"flow ({first}) with no stored price; {len(days) - len(rows)} day(s) not served", TIER)

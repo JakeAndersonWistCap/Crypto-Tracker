@@ -111,6 +111,9 @@ class _HypeHttp:
 
     def post(self, endpoint, json_body=None):
         u, t = (json_body or {}).get("user"), (json_body or {}).get("type")
+        if (json_body or {}).get("method") == "eth_getBalance":
+            # G2-D2: the HyperEVM zero address, read in the same run (308,538.17 HYPE on 2026-10-13 16:22)
+            return {"jsonrpc": "2.0", "id": 1, "result": hex(308_538_170_000_000_000_000_000)}
         if u == self.fail:
             raise RuntimeError("HTTP 500")
         spot = {"0xd57ecca444a9acb7208d286be439de12dd09de5d": "50000.00000044",
@@ -142,11 +145,12 @@ def test_hyperliquid_circulating_excludes_foundation_and_grants():
     a._circ_less_wallets("Hyperliquid", api, read, 302_167_698.0, read["exclude_wallets"], out, pd.Timestamp("2026-10-11"))
     f = out.frame().set_index("metric")
     assert f.loc["excluded_wallets_tokens", "value"] == pytest.approx(63_525_720.63, abs=0.01)
-    assert f.loc["circulating_supply_first_party", "value"] == pytest.approx(238_641_977.37, abs=0.01)
+    # G2-D2: and the HyperEVM burn read in the same run
+    assert f.loc["circulating_supply_first_party", "value"] == pytest.approx(238_641_977.37 - 308_538.17, abs=0.01)
     assert f.loc["circulating_supply_tokendetails", "value"] == 302_167_698.0
     h = config.declared_handover("Hyperliquid", "circulating_supply_first_party")
     from fetch.base import _measuring_point
-    assert _measuring_point(f.loc["circulating_supply_first_party", "source"]) == h["ordered_points"][1]
+    assert _measuring_point(f.loc["circulating_supply_first_party", "source"]) == h["ordered_points"][2]
 
 
 def test_hyperliquid_unread_wallet_stores_no_circulating():
@@ -166,8 +170,9 @@ def test_hyperliquid_unread_wallet_stores_no_circulating():
 def test_total_supply_on_chain_first_for_the_eight_and_aethir_since_14_oct():
     """Aethir joined on Jake's decision of 2026-10-14 (round F, F3): Ethereum's canonical totalSupply, PARTIAL for Solana."""
     import config
+    # G2-D2 / L3 (Jake 2026-10-18): Hyperliquid and GEODNET join, as net views (config.TOTAL_SUPPLY_NET)
     assert set(config.TOTAL_SUPPLY_ONCHAIN_FIRST) == {"Ether.fi", "Aerodrome", "Chainlink", "Fluid", "Maple", "Morpho",
-                                                      "Pendle", "Sky", "Aethir"}
+                                                      "Pendle", "Sky", "Aethir", "Hyperliquid", "GEODNET"}
     assert config.TOTAL_SUPPLY_ONCHAIN_FIRST["Aethir"]["decided_on"] == "2026-10-14"
     for n in config.TOTAL_SUPPLY_ONCHAIN_FIRST:
         assert config.declared_handover(n, "total_supply")["ordered_points"][0] == "coingecko"
@@ -561,7 +566,7 @@ def test_hyperliquid_team_wallet_is_an_unlock_stock_not_subtracted_again():
     a._token_details(config.PROJECT_BY_NAME["Hyperliquid"], api, read, payload, out, pd.Timestamp("2026-10-11"))
     f = out.frame().set_index("metric")["value"]
     assert f["team_wallet_tokens"] == pytest.approx(237_915_860.47, abs=0.01)
-    assert f["circulating_supply_first_party"] == pytest.approx(302_167_698.0 - 63_525_720.63, abs=0.01)
+    assert f["circulating_supply_first_party"] == pytest.approx(302_167_698.0 - 63_525_720.63 - 308_538.17, abs=0.01)
     assert config.unlock_stock_metrics("Hyperliquid") == ("excluded_wallets_tokens", "team_wallet_tokens")
 
 

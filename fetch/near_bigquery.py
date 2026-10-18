@@ -188,7 +188,11 @@ class NearBigQuery:
         out = []
         for k, v in params.items():
             if isinstance(v, (list, tuple)):
-                out.append(bq.ArrayQueryParameter(k, "STRING", list(v)))
+                # an array of dates is typed DATE so `block_date IN UNNEST(@days)` prunes partitions (G2 addendum A6)
+                dated = bool(v) and all(hasattr(x, "isoformat") and not isinstance(x, str) for x in v)
+                day = lambda x: str(x.date()) if hasattr(x, "hour") else str(x)  # noqa: E731 — Timestamp or date
+                out.append(bq.ArrayQueryParameter(k, "DATE", [day(x) for x in v]) if dated
+                           else bq.ArrayQueryParameter(k, "STRING", list(v)))
             else:
                 out.append(bq.ScalarQueryParameter(k, "DATE", str(v)))
         return out

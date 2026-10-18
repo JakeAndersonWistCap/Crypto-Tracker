@@ -65,7 +65,21 @@ CALLS = {
     "incentiveCount": ("incentiveCount()", ("uint256",), "V3/src/rewards/IncentiveStreaming.sol:24"),
     "incentive": ("incentive(uint256)", ("address", "uint256", "uint256", "uint48", "uint48", "address"),
                   "V3/src/rewards/IncentiveStreaming.sol:94"),
+    # G2-D5 (2026-10-18): the supply across the migration
+    "totalSupply": ("totalSupply()", ("uint256",), "V3/src/token/Token.sol:9 (solady ERC20)"),
+    "MIGRATION": ("MIGRATION()", ("address",), "V3/src/token/Token.sol:17"),
+    "VELODROME_MIGRATION": ("VELODROME_MIGRATION()", ("address",), "V3/src/token/Token.sol:20"),
+    "V2_TOKEN": ("V2_TOKEN()", ("address",), "V3/src/migration/Migration.sol:32"),
+    "V2_ESCROW": ("V2_ESCROW()", ("address",), "V3/src/migration/Migration.sol:38"),
+    "MIGRATION_TOKEN_ID": ("MIGRATION_TOKEN_ID()", ("uint256",), "V3/src/migration/Migration.sol:44"),
+    "previewConversion": ("previewConversion(uint256)", ("uint256", "uint256", "bool", "bool"),
+                          "V3/src/migration/Migration.sol:236"),
+    "V3_TOKEN": ("V3_TOKEN()", ("address",), "V3/src/migration/AerodromeMigration.sol:26"),
+    "remaining": ("remaining()", ("uint256",), "V3/src/migration/AerodromeMigration.sol:79"),
 }
+# THE LEGACY CONTRACTS the migration must name (config Aerodrome contracts token / ve): AERO v2 and veAERO on Base
+LEGACY_TOKEN = "0x940181a94a35a4569e4529a3cdfb74e38fd98631"
+LEGACY_ESCROW = "0xebf418fe2512e7e6bd9b87a8f0f294acdc67e6b4"
 EVENTS = {
     "NotifyFeesAmount": ("NotifyFeesAmount(address,address,uint256)",
                          "V3/src/interfaces/rewards/IFeeDistribution.sol:29"),
@@ -131,6 +145,26 @@ def epoch_rewards(fee_logs: list, programs: list, start: int, end: int) -> dict:
             f, i = out.get(tok.lower(), (0, 0))
             out[tok.lower()] = (f, i + rate * ov // WAD)
     return out
+
+
+def supply_once(new_total: float, reserve: float, velo_held: float, new_noncirc: float, old_total: float,
+                old_noncirc: float, old_held: float, ratio: float) -> dict:
+    """EACH AERO ONCE ACROSS THE MIGRATION (round G2, D5; dromos-labs/metadex-public@0058bd9b). New AERO pre-mints the
+    whole migration allocation to the migration contract (Token.sol L57-58) — the RESERVE that backs every old AERO not
+    yet migrated. Old AERO deposited is HELD (escrow.locked(MIGRATION_TOKEN_ID) via depositLiquid / depositVeNFT,
+    Migration.sol L121-123, L156-158), never burned. So the old AERO still out (old − held), converted at `ratio`, is
+    counted in place of the reserve that backs it, capped at the reserve: once burnRemaining() burns the reserve
+    (AerodromeMigration.sol L44-46) the old term is 0 by itself.
+        total       = (new − reserve) + min(ratio × (old − old held), reserve)
+        circulating = (new − reserve − Velodrome allocation held − the non-circulating wallets' new AERO)
+                      + min(ratio × (old circulating − old held), reserve)
+    old circulating = old total − the same wallets' old AERO. Tokens, floats."""
+    old_term = min(max(ratio * (old_total - old_held), 0.0), reserve)
+    old_circ_term = min(max(ratio * (old_total - old_noncirc - old_held), 0.0), reserve)
+    total = (new_total - reserve) + old_term
+    circ = (new_total - reserve - velo_held - new_noncirc) + old_circ_term
+    return {"total": total, "circulating": circ, "noncirculating": total - circ, "old_term": old_term,
+            "old_circ_term": old_circ_term}
 
 
 class AeroV3:
@@ -210,6 +244,11 @@ class AeroV3:
             self._state_reads(name, a, out)
         except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
             out.fail(SOURCE, name, f"state reads: {e}", TIER)
+        try:
+            self._supply(name, a, out)
+        except Exception as e:  # noqa: BLE001
+            out.fail(SOURCE, name, f"supply across the migration: {e} — total_supply / noncirculating_holding_tokens "
+                                   f"NOT written (legacy rows of the day are refused, so the day reads n/a)", TIER)
         if st.get("voting_rewards_factory") and st.get("deploy_block"):
             try:
                 self._epoch(name, a, st, out)
@@ -258,6 +297,53 @@ class AeroV3:
         out.add(point(name, "voter_total_weight_tokens", w, f"{SOURCE}:voter.totalPoint[resolved]", TIER, when),
                 SOURCE, name, f"voter_total_weight_tokens={w:,.4f}", TIER)
         self.voter, self.weight = voter, w
+
+    def _supply(self, name: str, a: dict, out) -> None:
+        """G2-D5: total_supply and noncirculating_holding_tokens with each AERO counted once (supply_once). The
+        migration contract is read from the new token (MIGRATION()) and must name the legacy token, the legacy escrow
+        and the file's token, hold code, and match an `addresses.migration` in the file when one is given."""
+        tok = a["token"]
+        mig = self.call(tok, "MIGRATION")[0].lower()
+        velo = self.call(tok, "VELODROME_MIGRATION")[0].lower()
+        if a.get("migration") and a["migration"] != mig:
+            raise RuntimeError(f"aero_migration.json addresses.migration {a['migration']} is not the token's "
+                               f"MIGRATION() {mig}")
+        for k, v in (("migration", mig), ("velodrome_migration", velo)):
+            if str(self.rpc("eth_getCode", [v, "latest"]) or "0x") in ("0x", "0x0"):
+                raise RuntimeError(f"no contract code at the token's {k} {v}")
+        named = {"V2_TOKEN": self.call(mig, "V2_TOKEN")[0].lower(), "V2_ESCROW": self.call(mig, "V2_ESCROW")[0].lower(),
+                 "V3_TOKEN": self.call(mig, "V3_TOKEN")[0].lower()}
+        want = {"V2_TOKEN": LEGACY_TOKEN, "V2_ESCROW": LEGACY_ESCROW, "V3_TOKEN": tok}
+        bad = [f"{k}() = {named[k]}, expected {want[k]}" for k in want if named[k] != want[k]]
+        if bad:
+            raise RuntimeError("the migration contract does not name the expected contracts: " + "; ".join(bad))
+        tid = self.call(mig, "MIGRATION_TOKEN_ID")[0]
+        basis, converted, _perm, _liquid = self.call(mig, "previewConversion", tid)
+        # THE RATIO FROM THE CONTRACT: previewConversion's converted / basis; with nothing deposited yet (basis 0) the
+        # contract's own conversion is the identity (AerodromeMigration.sol L143-145, `return _basis`)
+        ratio, ratio_src = ((converted / basis, f"previewConversion({tid}) {converted}/{basis}") if basis else
+                            (1.0, "1:1 — nothing deposited yet; AerodromeMigration.sol L143-145 returns the basis"))
+        reserve = self.call(mig, "remaining")[0] / WAD
+        held_old = (basis + self.call(LEGACY_TOKEN, "balanceOf", mig)[0]) / WAD
+        new_total = self.call(tok, "totalSupply")[0] / WAD
+        old_total = self.call(LEGACY_TOKEN, "totalSupply")[0] / WAD
+        velo_held = self.call(tok, "balanceOf", velo)[0] / WAD
+        # THE SAME NON-CIRCULATING SET the legacy noncirculating_holding_tokens sums (config contracts noncirc_*)
+        wallets = [c["address"].lower() for k, c in (config.PROJECT_BY_NAME[name].get("contracts") or {}).items()
+                   if k.startswith("noncirc_") and c.get("chain") == "base"
+                   and c.get("metric_override", "noncirculating_holding_tokens") == "noncirculating_holding_tokens"]
+        new_nc = sum(self.call(tok, "balanceOf", w)[0] for w in wallets) / WAD
+        old_nc = sum(self.call(LEGACY_TOKEN, "balanceOf", w)[0] for w in wallets) / WAD
+        r = supply_once(new_total, reserve, velo_held, new_nc, old_total, old_nc, held_old, ratio)
+        when = today()
+        src = f"{SOURCE}:supply_once[ratio {ratio:g}]"
+        msg = (f"new {new_total:,.4f} − reserve {reserve:,.4f} + min({ratio:g} × (old {old_total:,.4f} − held "
+               f"{held_old:,.4f}), reserve) = {r['total']:,.4f}; ratio {ratio_src}; circulating {r['circulating']:,.4f} "
+               f"(Velodrome allocation held {velo_held:,.4f}, {len(wallets)} wallets new {new_nc:,.4f} / old "
+               f"{old_nc:,.4f})")
+        out.add(point(name, "total_supply", r["total"], src, TIER, when), SOURCE, name, f"total_supply: {msg}", TIER)
+        out.add(point(name, "noncirculating_holding_tokens", r["noncirculating"], src, TIER, when), SOURCE, name,
+                f"noncirculating_holding_tokens = total − circulating = {r['noncirculating']:,.4f}", TIER)
 
     def _block_at(self, ts: int) -> int:
         hi = int(self.rpc("eth_blockNumber", []), 16)

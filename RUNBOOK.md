@@ -527,6 +527,52 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11cc. Round G2 — Jake's decisions D1-D5, loose ends L1-L3, run addendum A1-A7 (2026-10-18)
+
+**Run after pulling (PowerShell 5.1, repo root), IN THIS ORDER.** Each `--delete` shows the rows first and asks you to
+type `DELETE <section>`; nothing needs uncommenting.
+```
+git checkout -- fixtures; git clean -f fixtures; git pull
+copy metrics.db metrics.db.bak
+python check_offline_items.py alchemy_transfer_routes
+python token_metrics.py --seed hyperevm_burn
+python run_sql.py CT
+python run_sql.py --delete CT
+python run_sql.py CU
+python run_sql.py --delete CU
+python run_sql.py CV
+python run_sql.py --delete CV
+python archive_backfill.py --run --project Pendle
+python token_metrics.py
+python sanity.py --workbook token_metrics.xlsx
+python check_offline_items.py reference_block_reads
+python check_offline_items.py near_settlement_routes
+```
+- `alchemy_transfer_routes` (A7): once OP Mainnet, BNB and Berachain are enabled on your Alchemy app, each SERVED chain
+  opens the Transfers route. BNB and Berachain wire their Pendle gauge scans, Base wires Morpho's Base claims (D1), and
+  OP becomes a fallback for Ether.fi's cashback scan.
+- `--seed hyperevm_burn` (D2): the HyperEVM zero address's HYPE at each past UTC day start (archive,
+  rpc.purroofgroup.com), for every day Hyperliquid's supply series need it. Run it BEFORE CU: CU restates each stored
+  circulating row by the same day's balance and lists any day it cannot (CU3 should be empty).
+- CT (D1): Morpho's Ethereum claims are renamed `emissions_tokens_claims_ethereum`. `emissions_tokens` is now the sum of
+  the Ethereum, Arbitrum, Base and Katana claims, and stays BLOCKED, naming the chain, until all four are stored.
+- CU (D2, L3): CoinGecko's totals for Hyperliquid and GEODNET move to `total_supply_coingecko`. Our total is the net
+  view (gross − the burns); Hyperliquid's circulating is restated net of the HyperEVM burn.
+- CV (A1): the price_history tier's stored rows. Rows before CoinGecko's first day are relabelled to the declared
+  older leg; rows inside CoinGecko's range go. The build already reads them this way, so the 11 cells are back on the
+  next build whether or not CV has run.
+- `archive_backfill --project Pendle` (A5): `insider_stake_shares` before sPENDLE's deployment now reads "deployed at
+  block …" and the series is COMPLETE FROM there, not NOT WRITTEN.
+- `sanity.py --workbook` (A4): PASTE BACK the "SANITY RULES" block. The 14 hits of your e2250e5 run are not
+  reproducible from the 10-13 dumps.
+- `reference_block_reads` (A3, L1): re-reads the Pause Proxy's SKY and MKR's supply at their reference blocks; both
+  should print MATCH.
+- `near_settlement_routes` (A6): stage 1 of the NEAR wallet inflow (narrow columns) is dry-run, and run only if under
+  60 GB. Stage 2 is dry-run on the days it returns. PASTE BACK both byte figures.
+- On launch day (2026-10-22), aero_migration.json (11bx) also drives the supply (D5). `addresses.migration` is
+  optional; if given it must equal the token's MIGRATION().
+
+
 ## 11cb. Round G — run reliability, data correctness, verification references (2026-10-18)
 
 **Run after pulling (PowerShell 5.1, repo root), IN THIS ORDER. No run_sql section this round: nothing stored is
