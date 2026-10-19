@@ -102,11 +102,38 @@ def atomic_write_text(path, text: str) -> None:
         replace_with_retry(tmp, path)
 
 class LogCache:
+    """One gzip JSON file per stream: {"version", "scanned_to", "proven_to", "events"}.
+
+    APPEND, DON'T REWRITE (Round G6 item 0b, Jake's G5 run: Pendle's gauge scans hold 581,482 (Ethereum) and 936,388
+    (Arbitrum) events, and every run rewrote the whole file for 5-20 new ones — 21 s per 581k here, longer on Windows —
+    inside the "reconciling" phase that timed explorer_gauge out). A save whose events begin with exactly what was loaded
+    writes only the new tail as a delta segment (<sid>.d<to_block>.json.gz), or, with nothing new, only the two block
+    marks (<sid>.meta.json). load() merges base + deltas in block order and applies the marks. Past MAX_DELTAS segments,
+    or on any save that is not a pure append (a cut-back, a repair), the stream is compacted into one file again."""
+
+    MAX_DELTAS = 30
+
     def __init__(self, root: str | Path | None = None):
         self.root = Path(root or os.environ.get("TOKEN_METRICS_LOGCACHE", ".cache/logscan"))
+        self._loaded: dict[str, tuple[int, object]] = {}      # sid -> (events loaded, the last one), for append detection
 
     def path(self, sid: str) -> Path:
         return self.root / f"{sid}.json.gz"
+
+    def _meta_path(self, sid: str) -> Path:
+        return self.root / f"{sid}.meta.json"
+
+    def _deltas(self, sid: str) -> list[Path]:
+        if not self.root.exists():
+            return []
+        pre = f"{sid}.d"
+        out = [f for f in self.root.glob(f"{sid}.d*.json.gz") if f.name[len(pre):-len(".json.gz")].isdigit()]
+        return sorted(out, key=lambda f: int(f.name[len(pre):-len(".json.gz")]))
+
+    @staticmethod
+    def _read(f: Path) -> dict:
+        with gzip.open(f, "rt") as fh:
+            return json.load(fh)
 
     def load(self, sid: str) -> dict:
         """{"scanned_to": int|None, "proven_to": int|None, "events": [...]}; empty when absent
@@ -116,26 +143,55 @@ class LogCache:
         if not f.exists():
             return empty
         try:
-            with gzip.open(f, "rt") as fh:
-                st = json.load(fh)
+            st = self._read(f)
             if st.get("version") != VERSION:
                 return empty
-            return {"scanned_to": st.get("scanned_to"), "proven_to": st.get("proven_to"),
-                    "events": st.get("events") or []}
+            events = st.get("events") or []
+            scanned, proven = st.get("scanned_to"), st.get("proven_to")
+            for d in self._deltas(sid):
+                ds = self._read(d)
+                if ds.get("version") != VERSION:
+                    raise ValueError(f"delta {d.name} has another version")
+                events.extend(ds.get("events") or [])
+                scanned, proven = ds.get("scanned_to"), ds.get("proven_to")
+            m = self._meta_path(sid)
+            if m.exists():
+                ms = json.loads(m.read_text(encoding="utf-8"))
+                if ms.get("version") == VERSION and int(ms.get("events", -1)) == len(events):
+                    scanned, proven = ms.get("scanned_to"), ms.get("proven_to")
+            self._loaded[sid] = (len(events), events[-1] if events else None)
+            return {"scanned_to": scanned, "proven_to": proven, "events": events}
         except (OSError, ValueError, EOFError) as e:
             log.info("logcache: %s unreadable (%s) — reseeding that stream", f, e)
             return empty
 
+    def _write(self, f: Path, payload: dict) -> None:
+        tmp = unique_tmp(f)
+        with gzip.open(tmp, "wt") as fh:
+            json.dump(payload, fh, separators=(",", ":"))
+        replace_with_retry(tmp, f)
+
     def save(self, sid: str, events: list, scanned_to: int, proven_to) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
         f = self.path(sid)
+        marks = {"version": VERSION, "scanned_to": int(scanned_to),
+                 "proven_to": None if proven_to is None else int(proven_to)}
         with file_lock(f):
-            tmp = unique_tmp(f)
-            with gzip.open(tmp, "wt") as fh:
-                json.dump({"version": VERSION, "scanned_to": int(scanned_to),
-                           "proven_to": None if proven_to is None else int(proven_to),
-                           "events": events}, fh, separators=(",", ":"))
-            replace_with_retry(tmp, f)
+            n, last = self._loaded.get(sid, (None, None))
+            deltas = self._deltas(sid)
+            append = (n is not None and f.exists() and len(events) >= n and (n == 0 or events[n - 1] == last)
+                      and len(deltas) < self.MAX_DELTAS)
+            if append and len(events) == n:
+                atomic_write_text(self._meta_path(sid), json.dumps({**marks, "events": n}))
+            elif append:
+                self._write(self.root / f"{sid}.d{int(scanned_to)}.json.gz", {**marks, "events": events[n:]})
+                self._meta_path(sid).unlink(missing_ok=True)
+            else:
+                self._write(f, {**marks, "events": events})
+                for d in deltas:
+                    d.unlink(missing_ok=True)
+                self._meta_path(sid).unlink(missing_ok=True)
+            self._loaded[sid] = (len(events), events[-1] if events else None)
 
     def cut_back(self, sid: str, block_of) -> str:
         """Drop everything a reconciliation has not vouched for. Returns what was done."""
@@ -145,10 +201,15 @@ class LogCache:
             return "nothing cached"
         if st["proven_to"] is None:
             f.unlink(missing_ok=True)
+            for d in self._deltas(sid):
+                d.unlink(missing_ok=True)
+            self._meta_path(sid).unlink(missing_ok=True)
+            self._loaded.pop(sid, None)
             return f"removed {f} (never proven — the next run reseeds this stream)"
         if st["scanned_to"] == st["proven_to"]:
             return f"kept {f} (proven to block {st['proven_to']:,})"
         kept = [e for e in st["events"] if block_of(e) <= st["proven_to"]]
+        self._loaded.pop(sid, None)                                   # a cut is never an append: compact
         self.save(sid, kept, st["proven_to"], st["proven_to"])
         return (f"cut {f} back from block {st['scanned_to']:,} to its proven "
                 f"{st['proven_to']:,}")

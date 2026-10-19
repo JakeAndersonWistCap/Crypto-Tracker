@@ -5031,3 +5031,23 @@ SELECT project, COUNT(*) AS rows, MIN(date) AS first, MAX(date) AS last, MIN(sou
 -- DELETE FROM metrics
 --  WHERE metric = 'price_usd_coinbase'
 --    AND project NOT IN ('Ethereum', 'Chainlink', 'Near', 'Uniswap', 'Aerodrome');
+
+-- ========================================================================================
+-- DA. WORLD MOBILE total_supply_gross WITH THE COUNTERFEIT IN IT (2026-09-20..09-24)  2026-10-19T14:00Z
+--     Round G6 item 1 (Jake 2026-10-19): 500,479,231.217272 WMTX were minted on Ethereum without authorisation from
+--     03:38:23 UTC on 2026-09-20 (503 mints, read on-chain). Ethereum was summed until 2026-09-24, so the stock rows
+--     dated 2026-09-20 to 2026-09-24 whose source includes the Ethereum leg carry the counterfeit. From this round
+--     Ethereum is not read from 2026-09-20 (config contracts.token.deprecated_from) and the series breaks there.
+--     DA1 lists the rows; DA2 removes them. Run: python run_sql.py DA, then python run_sql.py --delete DA.
+-- ========================================================================================
+-- DA1. THE ROWS WITH THE ETHEREUM LEG ON OR AFTER THE EXPLOIT.
+SELECT date, value, source
+  FROM metrics
+ WHERE project = 'World Mobile' AND metric = 'total_supply_gross'
+   AND date >= '2026-09-20' AND source LIKE '%ethereum:token+%'
+ ORDER BY date;
+
+-- DA2. THE REMOVAL.
+-- DELETE FROM metrics
+--  WHERE project = 'World Mobile' AND metric = 'total_supply_gross'
+--    AND date >= '2026-09-20' AND source LIKE '%ethereum:token+%';

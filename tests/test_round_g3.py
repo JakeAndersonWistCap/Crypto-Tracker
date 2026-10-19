@@ -57,13 +57,15 @@ def test_g3_1a_one_tier_per_chain_with_its_own_budget():
     import fetch
     tiers = [t for t, _, _ in fetch.TIER_ORDER if t.startswith(config.L2_TIER_PREFIX)]
     assert "explorer_gauge_l2" not in [t for t, _, _ in fetch.TIER_ORDER]
-    assert {"explorer_l2:katana", "explorer_l2:arbitrum", "explorer_l2:optimism"} <= set(tiers)
-    assert fetch.TIER_BUDGET_S["explorer_l2:katana"] == 300 and fetch.TIER_BUDGET_S["explorer_l2:arbitrum"] == 240
+    # G6 0a: one tier per chain AND project (explorer_l2:<chain>@<Project>), each with its chain's budget
+    assert {"explorer_l2:katana@Morpho", "explorer_l2:arbitrum@Pendle", "explorer_l2:optimism@Pendle"} <= set(tiers)
+    assert fetch.TIER_BUDGET_S["explorer_l2:katana@Morpho"] == 300
+    assert fetch.TIER_BUDGET_S["explorer_l2:arbitrum@Pendle"] == 240
     # every L2 scan declares its chain's tier (the config remap of the old shared tier)
     for p in config.PROJECTS:
         for sc in p.get("log_scans") or ():
             if str(sc.get("own_tier", "")).startswith(config.L2_TIER_PREFIX):
-                assert sc["own_tier"] == config.l2_tier(sc["chain"]), sc["key"]
+                assert sc["own_tier"] == config.l2_tier(sc["chain"]) + config.PROJECT_TIER_SEP + p["name"], sc["key"]
 
 
 def test_g3_1b_a_hanging_host_times_out_once_per_call_and_stalls_after_three(local_only, monkeypatch):
@@ -118,13 +120,14 @@ def test_g3_1e_with_katana_hanging_every_other_chains_series_lands(local_only, m
         class BaseScan(LogScan):
             _scan = base_scan
 
-        todo = [(config.l2_tier("katana"), 2, lambda ctx: LogScan(own_tier=config.l2_tier("katana"))),
+        kt = katana["own_tier"]                       # G6 0a: explorer_l2:katana@Morpho
+        todo = [(kt, 2, lambda ctx: LogScan(own_tier=kt)),
                 (config.l2_tier("base"), 2, lambda ctx: BaseScan(own_tier=config.l2_tier("base")))]
         t0 = time.monotonic()
         results = fetch._dispatch(todo, [proj], None, {})
         assert time.monotonic() - t0 < 60, "the stall costs seconds, not the tier's whole budget"
         by = {name: (sub, timed_out) for name, _, sub, _, timed_out in results}
-        kat, kat_to = by[config.l2_tier("katana")]
+        kat, kat_to = by[kt]
         bas, bas_to = by[config.l2_tier("base")]
         assert not kat_to and not bas_to, "neither tier timed out"
         f = bas.frame()

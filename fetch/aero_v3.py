@@ -40,7 +40,7 @@ import pandas as pd
 
 import config
 
-from .base import Http, derive_flow_from_cumulative, point, today
+from .base import LogEntry, Http, derive_flow_from_cumulative, point, today
 
 log = logging.getLogger("token_metrics.fetch.aero_v3")
 
@@ -167,6 +167,29 @@ def supply_once(new_total: float, reserve: float, velo_held: float, new_noncirc:
             "old_circ_term": old_circ_term}
 
 
+def multichain_total(chain_tokens: dict, escrows: list, read_supply, read_balance) -> tuple[float, list, list]:
+    """THE UNIFIED AERO ON EVERY LAUNCH CHAIN (Round G6 item 2: Base, Ethereum, OP, Arc, Ink, Robinhood, Arbitrum —
+    aero.xyz/aero-upgrade). (sum of the non-Base chains' totalSupply − the bridge escrows' balances, the chains read, the
+    chains NOT read with why). Base is counted by supply_once; a token bridged out of Base is held by its escrow there
+    (or burned), so each declared escrow balance is subtracted once — never a chain counted twice. A chain with no RPC or
+    a failed read is named, never assumed 0."""
+    total, read, missing = 0.0, [], []
+    for chain, token in sorted(chain_tokens.items()):
+        if chain == "base":
+            continue
+        try:
+            total += float(read_supply(chain, token))
+            read.append(chain)
+        except Exception as e:  # noqa: BLE001
+            missing.append(f"{chain}: {str(e)[:80]}")
+    for esc in escrows or ():
+        try:
+            total -= float(read_balance(esc["chain"], chain_tokens[esc["chain"]], esc["address"]))
+        except Exception as e:  # noqa: BLE001
+            missing.append(f"escrow {esc.get('chain')}:{esc.get('address')}: {str(e)[:80]}")
+    return total, read, missing
+
+
 class AeroV3:
     """Daily state reads + the last complete voter epoch, once the switch file is complete."""
 
@@ -246,7 +269,7 @@ class AeroV3:
         except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
             out.fail(SOURCE, name, f"state reads: {e}", TIER)
         try:
-            self._supply(name, a, out)
+            self._supply(name, a, out, st)
         except Exception as e:  # noqa: BLE001
             out.fail(SOURCE, name, f"supply across the migration: {e} — total_supply / noncirculating_holding_tokens "
                                    f"NOT written (legacy rows of the day are refused, so the day reads n/a)", TIER)
@@ -299,7 +322,7 @@ class AeroV3:
                 SOURCE, name, f"voter_total_weight_tokens={w:,.4f}", TIER)
         self.voter, self.weight = voter, w
 
-    def _supply(self, name: str, a: dict, out) -> None:
+    def _supply(self, name: str, a: dict, out, st: dict | None = None) -> None:
         """G2-D5: total_supply and noncirculating_holding_tokens with each AERO counted once (supply_once). The
         migration contract is read from the new token (MIGRATION()) and must name the legacy token, the legacy escrow
         and the file's token, hold code, and match an `addresses.migration` in the file when one is given."""
@@ -349,6 +372,19 @@ class AeroV3:
         r = supply_once(new_total, reserve, velo_held, new_nc, old_total, old_nc, held_old, ratio)
         when = today()
         src = f"{SOURCE}:supply_once[ratio {ratio:g}]"
+        st = st or {}
+        ct = {k.lower(): v for k, v in (st.get("chain_tokens") or {}).items()}
+        if ct:
+            extra, read, missing = multichain_total(ct, st.get("bridge_escrows") or [], self._chain_supply,
+                                                    self._chain_balance)
+            r["total"] += extra
+            r["circulating"] += extra
+            src += f"+chains[{','.join(read)}]" + (":PARTIAL" if missing else "")
+            out.log.append(LogEntry(SOURCE, name, 0, "ok",
+                                    f"total_supply: the unified AERO on {len(read) + 1} chain(s) (base + "
+                                    f"{', '.join(read) or 'none'}) adds {extra:,.4f} net of bridge escrows"
+                                    + (f"; NOT READ — {'; '.join(missing)} (the total is PARTIAL)" if missing else ""),
+                                    TIER))
         msg = (f"at Base block {blk:,}: reserve = new AERO balanceOf(migration {mig}) = {reserve:,.4f}, read on-chain at "
                f"that block (remaining() agrees); new {new_total:,.4f} − reserve + min({ratio:g} × (old {old_total:,.4f} "
                f"− held {held_old:,.4f}), reserve) = {r['total']:,.4f}; ratio {ratio_src}; circulating "
@@ -357,6 +393,30 @@ class AeroV3:
         out.add(point(name, "total_supply", r["total"], src, TIER, when), SOURCE, name, f"total_supply: {msg}", TIER)
         out.add(point(name, "noncirculating_holding_tokens", r["noncirculating"], src, TIER, when), SOURCE, name,
                 f"noncirculating_holding_tokens = total − circulating = {r['noncirculating']:,.4f}", TIER)
+
+    def _chain_call(self, chain: str, to: str, data: str) -> int:
+        from .chain import rpc_endpoints  # noqa: PLC0415
+        urls = rpc_endpoints(chain)
+        if not urls:
+            raise RuntimeError(f"no RPC endpoint configured for {chain}")
+        errs = []
+        for url in urls:
+            try:
+                r = self.http.post(url, json_body={"jsonrpc": "2.0", "id": 1, "method": "eth_call",
+                                                   "params": [{"to": to, "data": data}, "latest"]})
+                if "result" in r:
+                    return int(r["result"], 16)
+                errs.append(str(r.get("error"))[:80])
+            except Exception as e:  # noqa: BLE001
+                from .chain import redact_urls  # noqa: PLC0415
+                errs.append(redact_urls(e)[:80])
+        raise RuntimeError("; ".join(errs))
+
+    def _chain_supply(self, chain: str, token: str) -> float:
+        return self._chain_call(chain, token, selector("totalSupply")) / 1e18
+
+    def _chain_balance(self, chain: str, token: str, holder: str) -> float:
+        return self._chain_call(chain, token, selector("balanceOf") + holder.lower()[2:].rjust(64, "0")) / 1e18
 
     def _block_at(self, ts: int) -> int:
         hi = int(self.rpc("eth_blockNumber", []), 16)

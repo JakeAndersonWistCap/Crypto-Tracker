@@ -27,6 +27,11 @@ CU_COST = {"eth_call": 26, "eth_getLogs": 60, "eth_blockNumber": 10, "eth_getBal
            "eth_getBlockByNumber": 20, "eth_getCode": 20, "eth_chainId": 0, "alchemy_getAssetTransfers": 120}
 CU_DEFAULT = 26
 FREE_TIER_CU_MONTH = 30_000_000
+# THROUGHPUT (Round G6 item 0c): the Free plan's documented limit is 300 compute units per second — alchemy.com/pricing
+# ("300 CU/s (15)" for Free, read 2026-10-19) and alchemy.com/docs/reference/throughput ("a Free tier customer with a
+# 300 CU/s limit can consume up to 3,000 CUs over any 10-second period"). Every request to an Alchemy host is paced to
+# it run-wide (all tiers, all Alchemy chains: one app, one key), so concurrent tiers queue here instead of drawing 429s.
+FREE_TIER_CU_PER_S = 300
 WARN_AT, FAIL_AT = 0.80, 0.95
 
 _lock = threading.Lock()
@@ -47,6 +52,35 @@ def record(url: str, method: str | None) -> None:
     with _lock:
         m = str(method or "?")
         _run[m] = _run.get(m, 0) + 1
+
+
+_pace_lock = threading.Lock()
+_next_free = 0.0
+_paced = {"requests": 0, "waited_s": 0.0}
+
+
+def pace(url: str, method: str | None, sleep=None) -> float:
+    """Hold an Alchemy request until the run's CU budget per second allows it; returns the seconds waited."""
+    if not is_alchemy(url):
+        return 0.0
+    import time
+    global _next_free
+    cost = CU_COST.get(str(method or ""), CU_DEFAULT) / float(FREE_TIER_CU_PER_S)
+    with _pace_lock:
+        now = time.monotonic()
+        start = max(now, _next_free)
+        _next_free = start + cost
+        wait = start - now
+        _paced["requests"] += 1
+        _paced["waited_s"] += wait
+    if wait > 0:
+        (sleep or time.sleep)(wait)
+    return wait
+
+
+def paced() -> dict:
+    with _pace_lock:
+        return dict(_paced)
 
 
 def method_of(body) -> str | None:

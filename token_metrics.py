@@ -799,6 +799,10 @@ def _alchemy_report(log, what: str):
     line, level = alchemy_usage.report(fetch.today().strftime("%Y-%m"))
     (log.warning if level else log.info)("%s (%s)%s", line, what, f" — {level}: the month is near the Free plan's "
                                                                    f"allowance" if level else "")
+    # PER-HOST RPC TIMING (Round G6 item 0c): saved for the next run's chain-tier endpoint order (fetch.chain)
+    from fetch.chain import rpc_latency_report
+    for ln in rpc_latency_report():
+        log.info("%s (%s)", ln, what)
     return line, level
 
 

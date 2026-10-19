@@ -231,6 +231,11 @@ def reference(p: dict, metric: str, row: dict) -> str:
     prim = config.issuance_primary(name) or {}
     if prim.get("kind") == "declared_rate" and prim.get("metric") == metric and prim.get("observed_source_prefix"):
         refs.append(f"cross-check {prim['observed_source_prefix']} (>{prim.get('max_ratio', 10)}x apart blocks)")
+    # A MEASURED PRIMARY IS GUARDED BY THE DECLARED RATE (NEAR from G6, 2026-10-19)
+    guard = prim.get("declared_guard") if prim.get("metric") == metric else None
+    if guard:
+        refs.append(f"guard declared {'.'.join(guard['rate_path'][1:])} x {guard['supply_metric']} "
+                    f"(>{guard.get('max_ratio', 10)}x apart blocks)")
     vy = config.VALIDATOR_YIELD.get(name) or {}
     if metric == "staking_yield_pct" and vy.get("cross_check_metric"):
         refs.append(f"cross-check {vy['cross_check_metric']}")

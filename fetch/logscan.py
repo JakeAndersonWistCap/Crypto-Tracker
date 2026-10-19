@@ -41,7 +41,10 @@ missing reading — every day in that span gets a row. Today is left out: it is 
 from __future__ import annotations
 
 import logging
+import threading
 from collections import defaultdict
+
+from pathlib import Path
 
 import pandas as pd
 
@@ -102,16 +105,34 @@ def _lookalike(a: str, b: str) -> bool:
     return a != b and (a[2:6] == b[2:6] or a[-4:] == b[-4:])
 
 
+def _sum_after(events: list, block: int) -> tuple[int, int]:
+    """(summed value, count) of the transfers after `block`, read from the end of a block-ordered list (G6 item 0b)."""
+    total = n = 0
+    for e in reversed(events):
+        if int(str(e["blockNumber"]), 0) <= block:
+            break
+        total += _amount(e)
+        n += 1
+    return total, n
+
+
 def drop_poison(events: list, side: int, known) -> tuple[list, int]:
     """(events, n dropped): a ZERO-VALUE transfer whose counterparty (topic `side`) mimics a known address is
     address-poisoning spam (Jake's etherfi_topup_safe probe, 2026-10-06 17:20) — dropped from every scan and probe.
     It moves no tokens, so no sum changes; it only pollutes the counterparty tables."""
-    known = [k.lower() for k in known]
+    # INDEXED BY THE FOUR DIGITS A LOOKALIKE SHARES (Round G6 item 0b): the scan over every known address per zero-value
+    # transfer was quadratic — 400 zero-value transfers against Pendle's ~570k counterparties took 8.9 s
+    pre: dict = defaultdict(set)
+    suf: dict = defaultdict(set)
+    for k in known:
+        k = k.lower()
+        pre[k[2:6]].add(k)
+        suf[k[-4:]].add(k)
     kept, n = [], 0
     for e in events:
         if _amount(e) == 0:
-            cp = topic_address(e["topics"][side])
-            if any(_lookalike(cp, k) for k in known):
+            cp = topic_address(e["topics"][side]).lower()
+            if any(k != cp for k in pre.get(cp[2:6], ())) or any(k != cp for k in suf.get(cp[-4:], ())):
                 n += 1
                 continue
         kept.append(e)
@@ -161,6 +182,7 @@ WINDOW_BUDGET_S = 120.0     # the reconciled-window fallback's own budget (fix r
 
 TIER_MARGIN_S = 15.0        # the scans stop this long before their tier's budget, to store what they read (G4 item 1)
 WINDOW_FLOOR_S = 30.0       # a window read with less time than this is not started (G4 item 1)
+_RECON_LOCK = threading.Lock()   # reconciled.json is shared by every per-project tier (G6 item 0a/0b)
 RESERVE_SHARE = 0.6         # at most this share of a tier is held back for headline scans (G5 item 2)
 
 
@@ -196,6 +218,26 @@ class LogScan:
             from .chain import ChainReader
             reader = ChainReader()
         self.reader = reader
+
+    def _recon_state(self) -> dict:
+        """{chain:token:holder: {"block", "net", "key"}} — the last block each holder reconciled to the wei at (G6 0b)."""
+        import json
+        f = Path(self.cache.root) / "reconciled.json"
+        try:
+            return json.loads(f.read_text(encoding="utf-8")) if f.exists() else {}
+        except (OSError, ValueError):
+            return {}
+
+    def _recon_save(self, state: dict) -> None:
+        import json
+        from .logcache import atomic_write_text
+        try:
+            with _RECON_LOCK:
+                cur = self._recon_state()
+                cur.update(state)
+                atomic_write_text(Path(self.cache.root) / "reconciled.json", json.dumps(cur, sort_keys=True))
+        except OSError as e:
+            log.info("reconcile state not saved (%s) — the next run sums the full history", e)
 
     def _date_undated(self, chain: str, events: list) -> list:
         """Events a route returned WITHOUT a timestamp (Alchemy's Transfers API off its metadata chains — Berachain, BNB,
@@ -1133,6 +1175,8 @@ class LogScan:
                      if not resumed else
                      f"seed completed: {cached_n:,} cached + {fetched_new:,} new event(s)")
 
+        import time as _t_rec
+        t_rec0 = _t_rec.monotonic()                           # G6 item 0b: poison filter + reconcile + cache save, timed
         # 2b. ADDRESS-POISONING SPAM OUT (2026-10-06 17:20): zero-value transfers from/to lookalikes of a holder or of
         # a real (non-zero) counterparty. They move nothing, so reconciliation is unaffected either way.
         known = set(holders) | {topic_address(e["topics"][1]) for h in holders for e in ins[h] if _amount(e)} \
@@ -1150,8 +1194,24 @@ class LogScan:
         # 3. RECONCILE, PER HOLDER, TO THE WEI.
         set_phase(f"scan {key} ({chain}): reconciling each holder's balanceOf to the wei")
         repairing = False
+        recon = self._recon_state()
         for h in holders:
-            net = sum(_amount(e) for e in ins[h]) - sum(_amount(e) for e in outs[h])
+            # INCREMENTAL (Round G6 item 0b): from the last block this holder reconciled at, only the transfers after it
+            # are summed onto the net proven there; with none, the stored net stands. balanceOf at the pinned block is
+            # still read — it is the proof — and a mismatch falls back to the full sum before anything is refused.
+            rkey = f"{chain}:{token.lower()}:{h.lower()}"
+            prev = recon.get(rkey) or {}
+            (a_in, n_in), (a_out, n_out) = ((_sum_after(ins[h], int(prev["block"])), _sum_after(outs[h], int(prev["block"])))
+                                            if prev.get("block") is not None else ((0, 0), (0, 0)))
+            # valid only while the events up to that block are the ones counted there (same number on each side)
+            if (prev.get("block") is not None and int(prev["block"]) <= int(to_block)
+                    and len(ins[h]) - n_in == int(prev.get("n_in", -1)) and len(outs[h]) - n_out == int(prev.get("n_out", -1))):
+                pb = int(prev["block"])
+                net = int(prev["net"]) + a_in - a_out
+                how_net = f"incremental from block {pb:,} ({n_in + n_out} new transfer(s))"
+            else:
+                net = sum(_amount(e) for e in ins[h]) - sum(_amount(e) for e in outs[h])
+                how_net = "full history"
             try:
                 bal = self._balance_at(chain, chain_id, token, h, to_block)
             except Exception as e:  # noqa: BLE001
@@ -1162,6 +1222,12 @@ class LogScan:
                                f"not stored.",
                         tiers_attempted="2", suggestion=f"Check the {chain} RPC.")
                 return
+            if net != bal and how_net != "full history":
+                net = sum(_amount(e) for e in ins[h]) - sum(_amount(e) for e in outs[h])
+                how_net = "full history (the incremental net disagreed)"
+            if net == bal:
+                recon[rkey] = {"block": int(to_block), "net": str(net), "key": key, "n_in": len(ins[h]),
+                               "n_out": len(outs[h])}
             rtrace, rstatus = [], None
             if net != bal and hasattr(self.reader, "dated_logs"):
                 # THE FULL HISTORY, REPAIRED FROM THE CHAIN (run review D1) — before falling back to the window
@@ -1219,6 +1285,7 @@ class LogScan:
                              self.cache.cut_back(sid, lambda e: int(e["blockNumber"])))
                 return
 
+        self._recon_save(recon)
         # RECONCILED: every stream is proven to the pinned block. Saved before attribution, which
         # reads the events but does not change them.
         # A stream holding an UNDATED event is not cached: step 5b refuses a counted one, and a
@@ -1228,6 +1295,7 @@ class LogScan:
             if all(int(e.get("timeStamp") or 0) > 0 for e in events):
                 self.cache.save(sid, events, to_block, to_block)
 
+        rec_note = f" Reconcile {_t_rec.monotonic() - t_rec0:.1f}s, net {how_net}."
         # 4. WHAT COUNTS.
         set_phase(f"scan {key} ({chain}): classifying the counted transfers")
         internal = set(holders)
@@ -1400,6 +1468,7 @@ class LogScan:
                    + f". Counted {direction}flow {c_total:,.4f} over {len(counted)} transfer(s), "
                      f"last on {last_moved} — top counterparties: {c_table}. Other inflow, not counted: "
                      f"{u_table}. Not-counted inflow AFTER the last counted transfer: {late_table}." + sm_note
+                   + rec_note
                    + (" BY HOLDER: " + "; ".join(
                        f"{hh} {v[0] / scale:,.2f}" + (f" (last {pd.Timestamp(v[1], unit='s').date()})" if v[1] else "")
                        + (f" [{labels[hh]}]" if hh in labels else "") for hh, v in per_holder.items()) + "."

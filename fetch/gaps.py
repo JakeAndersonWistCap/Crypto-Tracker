@@ -82,6 +82,31 @@ ACTIONABLE_SIGNALS = (
 )
 
 
+
+# ===== THE ROUND G6 ADAPTERS' ROUTES, for their Gap Report rows (Jake 2026-10-19). (project or "*", metric) -> (route,
+# the tier the Run Log names). =====
+G6_ADAPTER_ROUTES = {
+    ("Pendle", "latent_supply_tokens"): ("an eth_call of PENDLE.claimLiquidityEmissions() from the incentives recipient "
+                                         "(fetch/pendle_latent.py)", "pendle_latent"),
+    ("World Mobile", "wmtx_cardano_supply_tokens"): ("Koios asset_info for WMTx policy e5a42a1a… (fetch/wm_supply.py)",
+                                                     "wm_supply"),
+    ("World Mobile", "wmt_legacy_supply_tokens"): ("Koios asset_info for legacy WMT policy 1d7f33bd… "
+                                                   "(fetch/wm_supply.py)", "wm_supply"),
+    ("World Mobile", "locked_tokens_base"): ("balanceOf(World Mobile Locked Staking 0xBD4f…02Ae) on Base "
+                                            "(fetch/wm_supply.py)", "wm_supply"),
+    ("World Mobile", "locked_tokens_cardano"): ("Koios address_assets for the Locked Staking script addr1w9l52766… "
+                                               "(fetch/wm_supply.py)", "wm_supply"),
+    ("World Mobile", "locked_tokens"): ("the two World Mobile Locked Staking legs, Base + Cardano (fetch/wm_supply.py; "
+                                        "stored only when both read)", "wm_supply"),
+    ("Near", "gross_issuance_tokens"): ("each epoch's mint read at its first block on NEAR's archival RPC "
+                                        "(fetch/near_issuance.py); the block-header derivation fills older days",
+                                        "near_issuance"),
+    ("GEODNET", "issuance_feed_polygon_tokens"): ("GEODNET's own feed issuance-monthly (fetch/geodnet_feed.py)",
+                                                  "geodnet_feed"),
+    ("GEODNET", "issuance_feed_solana_tokens"): ("GEODNET's own feed issuance-monthly (fetch/geodnet_feed.py)",
+                                                 "geodnet_feed"),
+}
+
 def _priority(project_name: str, metric: str, reason: str, severity: int | None = None) -> int:
     if metric.startswith("[open]"):
         return P_CRITICAL if severity == 1 else P_DECISION
@@ -266,6 +291,30 @@ def _buyback_gap_reason(project: dict, metric: str, scrape_entries: dict) -> tup
     return None
 
 
+def _dashboard_page_of(project: dict, metric: str) -> str | None:
+    """The dashboard page (or browser-capture page) whose payload carries `metric`, from its own declaration, or None."""
+    def has(x) -> bool:
+        if isinstance(x, dict):
+            if x.get("metric") == metric or metric in ((x.get("values") or {}).values()
+                                                      if isinstance(x.get("values"), dict) else ()):
+                return True
+            return any(has(v) for v in x.values())
+        if isinstance(x, (list, tuple)):
+            return any(has(v) for v in x)
+        return False
+    dp = project.get("dashboard_pages") or {}
+    for page, spec in (dp.get("pages") or {}).items():
+        if has(spec):
+            return str(page)
+    for label, spec in (dp.get("labelled") or {}).items():
+        if has(spec):
+            return str((spec or {}).get("page") or label)
+    for bpg in (project.get("browser_capture") or {}).get("pages") or ():
+        if has(bpg):
+            return str(bpg.get("url") or bpg.get("name") or "browser capture")
+    return None
+
+
 def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, str]:
     """(reason, suggestion) for a metric this project has no data for."""
     name = project["name"]
@@ -412,6 +461,20 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
         dedicated.append((f"Jake's Artemis CSV export '{c['artemis_name']} - Settlement Volume.csv' "
                           f"in the repo root, read at run time (fetch/artemis.py; RUNBOOK 11j)",
                           "settlement_sources"))
+    if not dedicated:
+        page = _dashboard_page_of(project, metric)
+        if page:
+            # A DASHBOARD SERIES HAS ITS ROUTE (Round G6 item 0, Aethir's 13 P6 rows "no sources.yaml entry" on 10-18
+            # 17:35 and still on 10-19 12:34: each is read off the project's own dashboard payload, fetch/aethir_pages.py
+            # — the weekly ones were refused by the parser's 14-day age rule, G6 item 6)
+            dedicated.append((f"{name}'s own dashboard ({page}; fetch/aethir_pages.py or fetch/browser_capture.py)",
+                              "aethir_pages" if name == "Aethir" else "browser_capture"))
+    # ROUND G6 ADAPTERS (2026-10-19): each names its own tier, so its row says where to look in the Run Log
+    g6 = G6_ADAPTER_ROUTES.get((name, metric)) or G6_ADAPTER_ROUTES.get(("*", metric))
+    if g6 and not dedicated:
+        what, tier = g6
+        return (f"the route is {what}, and it produced nothing this run",
+                f"Check the Run Log's {tier} lines; `python token_metrics.py --project \"{name}\"` re-reads it.")
     if dedicated:
         what, probe = dedicated[0]
         run = (f"`python {probe}.py`" if probe == "llama_probe"
@@ -1250,16 +1313,19 @@ def served_by(source: str, project: dict) -> set[str] | None:
         m = {ps[k] for k in ("apr_metric", "stake_metric", "commission_metric", "net_apr_metric") if ps.get(k)}
     elif source == "maple_page":
         m = set((project.get("transparency_page") or {}).get("metrics") or {})
-    elif source == "explorer":
-        m = {sc["metric"] for sc in project.get("log_scans") or []}
+    elif source == "explorer" or source.startswith("explorer"):
+        # G6 item 0a: a per-project tier (explorer@<project>, explorer_l2:<chain>@<project>, explorer_gauge) serves only
+        # the scans that declare it; "explorer" is every scan of the project (the run-level view)
+        scans = [sc for sc in project.get("log_scans") or [] if source == "explorer" or sc.get("own_tier") == source]
+        m = {sc["metric"] for sc in scans}
         # the direct windowed count beside a scan (Pendle's gauges, Jake's run 2026-10-09 ~14:10)
-        m |= {sc["direct_metric"] for sc in project.get("log_scans") or [] if sc.get("direct_metric")}
+        m |= {sc["direct_metric"] for sc in scans if sc.get("direct_metric")}
         # the share-price decomposition's reconciled series comes out of the same scan (2026-10-06)
-        m |= {sc["decompose"]["metric"] for sc in project.get("log_scans") or [] if sc.get("decompose")}
+        m |= {sc["decompose"]["metric"] for sc in scans if sc.get("decompose")}
         # and its daily rebuilt assets-per-share (Jake's probes14, 2026-10-07)
-        m |= {sc["decompose"]["aps_metric"] for sc in project.get("log_scans") or []
+        m |= {sc["decompose"]["aps_metric"] for sc in scans
               if (sc.get("decompose") or {}).get("aps_metric")}
-        m |= {sc["decompose"]["aps_reward_metric"] for sc in project.get("log_scans") or []
+        m |= {sc["decompose"]["aps_reward_metric"] for sc in scans
               if (sc.get("decompose") or {}).get("aps_reward_metric")}
         if "actual_buyback_tokens" in m:
             m.add("buyback_last_inflow_date")

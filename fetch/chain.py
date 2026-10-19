@@ -27,6 +27,7 @@ plausible number is the dangerous failure:
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import logging
 import os
 import re
@@ -534,6 +535,93 @@ _RETRY_STATUS = (429, 500, 502, 503, 504)
 
 _GUARDED: dict = {}
 
+# EVERY RPC CALL TIMED BY HOST (Round G6 item 0c, Jake's G5 run 12:24: the chain tier timed out "waiting on POST
+# eth-mainnet.g.alchemy.com" and the run had no timing to say whether Alchemy was slow). (seconds, method, outcome) per
+# call; rpc_latency_report() summarises and saves them (.cache/rpc_latency.json, hosts only — never a URL), and the
+# next run's chain tier puts a public endpoint first when the keyed one measured slower (connect_order).
+RPC_TIMES: dict = {}
+_RPC_LOCK = threading.Lock()
+LATENCY_MIN_CALLS = 20          # the keyed endpoint needs this many timed calls before its timing decides anything
+FALLBACK_MIN_CALLS = 3          # a fallback is sampled (ChainReader._sample_fallback): 3 calls each connect
+
+
+def _time_rpc(url: str, method, secs: float, outcome: str) -> None:
+    with _RPC_LOCK:
+        RPC_TIMES.setdefault(rpc_host(url), []).append((float(secs), str(method or "?"), outcome))
+
+
+def latency_summary(times: dict | None = None) -> dict:
+    """{host: {"n", "p50", "p90", "max", "timeouts", "throttled", "errors"}} from (seconds, method, outcome) lists."""
+    out = {}
+    for host, xs in (RPC_TIMES if times is None else times).items():
+        ok = sorted(t for t, _m, o in xs)
+        if not ok:
+            continue
+        q = lambda f: ok[min(len(ok) - 1, int(f * len(ok)))]           # noqa: E731
+        out[host] = {"n": len(xs), "p50": round(q(0.5), 3), "p90": round(q(0.9), 3), "max": round(ok[-1], 3),
+                     "timeouts": sum(1 for _t, _m, o in xs if o == "timeout"),
+                     "throttled": sum(1 for _t, _m, o in xs if o == "429"),
+                     "errors": sum(1 for _t, _m, o in xs if o not in ("ok", "timeout", "429"))}
+    return out
+
+
+def _latency_file() -> Path:
+    return Path(os.environ.get("TOKEN_METRICS_LOGCACHE", ".cache/logscan")).parent / "rpc_latency.json"
+
+
+def rpc_latency_report(save: bool = True) -> list[str]:
+    """One line per host this run called, slowest p90 first; saved for the next run's connect_order."""
+    import json
+    from . import alchemy_usage
+    summ = latency_summary()
+    lines = [f"RPC LATENCY {h}: {v['n']} call(s), p50 {v['p50']:.2f}s p90 {v['p90']:.2f}s max {v['max']:.1f}s, "
+             f"{v['timeouts']} timeout(s), {v['throttled']} HTTP 429, {v['errors']} other error(s)"
+             for h, v in sorted(summ.items(), key=lambda kv: -kv[1]["p90"])]
+    pc = alchemy_usage.paced()
+    if pc["requests"]:
+        lines.append(f"ALCHEMY PACING: {pc['requests']} request(s) held to the Free plan's "
+                     f"{alchemy_usage.FREE_TIER_CU_PER_S} CU/s, {pc['waited_s']:.1f}s waited in all")
+    if save and summ:
+        try:
+            f = _latency_file()
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(json.dumps({"measured": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "hosts": summ},
+                                    indent=1), encoding="utf-8")
+        except OSError as e:
+            lines.append(f"RPC LATENCY not saved: {e}")
+    return lines
+
+
+def connect_order(chain: str, endpoints: list[str], prior: dict | None = None) -> tuple[list[str], str]:
+    """The chain tier's connect order: the keyed (Alchemy) endpoint first UNLESS the last run measured it slower than a
+    public fallback on the same chain — p50 higher, or timeouts / 429s where the fallback had none — with at least
+    LATENCY_MIN_CALLS calls on the keyed side and FALLBACK_MIN_CALLS on the fallback's. Returns (order, why) — why is "" when the order is unchanged."""
+    from . import alchemy_usage
+    if len(endpoints) < 2 or not alchemy_usage.is_alchemy(endpoints[0]):
+        return endpoints, ""
+    if prior is None:
+        import json
+        try:
+            prior = json.loads(_latency_file().read_text(encoding="utf-8")).get("hosts") or {}
+        except (OSError, ValueError):
+            prior = {}
+    a = prior.get(rpc_host(endpoints[0])) or {}
+    if int(a.get("n", 0)) < LATENCY_MIN_CALLS:
+        return endpoints, ""
+    for u in endpoints[1:]:
+        b = prior.get(rpc_host(u)) or {}
+        if int(b.get("n", 0)) < FALLBACK_MIN_CALLS:
+            continue
+        worse = (a["p50"] > b["p50"] or (a.get("timeouts", 0) + a.get("throttled", 0) > 0
+                                          and b.get("timeouts", 0) + b.get("throttled", 0) == 0))
+        if worse:
+            order = [u] + [x for x in endpoints if x != u]
+            return order, (f"{rpc_host(endpoints[0])} measured slower last run (p50 {a['p50']:.2f}s, "
+                           f"{a.get('timeouts', 0)} timeout(s), {a.get('throttled', 0)} 429) than {rpc_host(u)} "
+                           f"(p50 {b['p50']:.2f}s, {b.get('timeouts', 0)} timeout(s)) — {rpc_host(u)} first for the "
+                           f"chain tier's state reads; archive reads keep the keyed endpoint first")
+    return endpoints, ""
+
 
 def _guarded_provider_class(HTTPProvider):
     """HTTPProvider with the hard timeout, the breaker and the Alchemy usage count (built lazily: web3 is optional)."""
@@ -549,24 +637,30 @@ def _guarded_provider_class(HTTPProvider):
             for attempt in range(3):
                 BREAKER.check(self.chain, url)
                 alchemy_usage.record(url, method)
+                alchemy_usage.pace(url, method)
+                t0 = time.monotonic()
                 try:
                     out = self._request_session_manager.make_post_request(
                         self.endpoint_uri, request_data, **self.get_request_kwargs())
                 except requests.exceptions.Timeout as e:   # connect or read: NEVER retried here
+                    _time_rpc(url, method, time.monotonic() - t0, "timeout")
                     BREAKER.timeout(self.chain, url, e)
                     raise
                 except requests.exceptions.HTTPError as e:
                     BREAKER.ok(self.chain, url)            # it answered
                     code = getattr(getattr(e, "response", None), "status_code", None)
+                    _time_rpc(url, method, time.monotonic() - t0, "429" if code == 429 else f"http {code}")
                     if code in _RETRY_STATUS and attempt < 2:
                         time.sleep(0.5 * 2 ** attempt)
                         continue
                     raise
                 except requests.exceptions.ConnectionError:
+                    _time_rpc(url, method, time.monotonic() - t0, "connection")
                     if attempt < 1:
                         time.sleep(0.25)
                         continue
                     raise
+                _time_rpc(url, method, time.monotonic() - t0, "ok")
                 BREAKER.ok(self.chain, url)
                 return out
             return None
@@ -628,6 +722,9 @@ class ChainReader:
         if not endpoints:
             self._failed[chain] = f"no RPC endpoint configured for chain {chain!r} (set RPC_{chain.upper()} in .env)"
             raise RuntimeError(self._failed[chain])
+        endpoints, why = connect_order(chain, endpoints)
+        if why:
+            log.info("chain %s: %s", chain, why)
         errors = []
         for url in endpoints:
             try:
@@ -642,11 +739,29 @@ class ChainReader:
                          f" (after: {'; '.join(errors)})" if errors else "")
                 self._w3[chain] = w3
                 self._w3_url[chain] = url
+                self._sample_fallback(chain, url, endpoints)
                 return w3
             except Exception as e:  # noqa: BLE001
                 errors.append(f"{rpc_host(url)}: {redact_urls(e)}")
         self._failed[chain] = f"all RPC endpoints failed for {chain}: {'; '.join(errors)}"
         raise RuntimeError(self._failed[chain])
+
+    def _sample_fallback(self, chain: str, used: str, endpoints: list[str], n: int = 3) -> None:
+        """A FALLBACK IS MEASURED TOO (G6 item 0c): the keyed endpoint is timed on every call, a public one only when it
+        serves — so on connecting through Alchemy, the first other endpoint answers `n` eth_blockNumber calls (timed
+        like any call; errors ignored), and the next run compares the two (connect_order)."""
+        from . import alchemy_usage
+        if not alchemy_usage.is_alchemy(used):
+            return
+        other = next((u for u in endpoints if u != used and not alchemy_usage.is_alchemy(u)), None)
+        if other is None or os.environ.get("TOKEN_METRICS_NO_FALLBACK_SAMPLE"):
+            return
+        try:
+            w3 = self.make_web3(chain, other, 10)
+            for _ in range(n):
+                int(w3.eth.block_number)
+        except Exception:  # noqa: BLE001 — a sample, never a failure
+            pass
 
     def block_number(self, chain: str) -> int:
         """The chain's head block, FALLING THROUGH THE ENDPOINT LIST on failure (ETHEREUM_RPC_URL first,

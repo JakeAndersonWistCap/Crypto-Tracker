@@ -997,6 +997,15 @@ METRICS = {
     "staking_funding_tokens": {"label": "LINK forwarded by 0x7A28b8cF… to the staking hops 0x1661f928… / 0x8716f86f… (paid on to the RewardVault funder 0x7e10a625…), per day", "kind": "flow", "unit": "tokens", "archetypes": [1], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Chainlink",)},
     "staking_funding_release_tokens": {"label": "The part of the 27 wallets' releases that went on to fund staking rewards (FIFO through 0xD50f074E…, dated on the release day; FIFO is an ATTRIBUTION CONVENTION, ACCEPTED by Jake 2026-10-14) — taken out of (e), counted once in (a)", "kind": "flow", "unit": "tokens", "archetypes": [1], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Chainlink",), "view_only": True},
     "net_revenue_pre_distribution_usd": {"label": "Net revenue BEFORE distributions (Sky: Block Analitica's P&L revenue − expense; the revenue distribution — SKY buyback, USDS to stakers, Security and Maintenance — not deducted: S&M is TMF Step 1, an allocation OF Net Revenue, Sky Atlas A.2.3.1.2.2), monthly. The base of payout ratios (config.revenue_ratio_base_metric)", "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [3], "sanity_min": -1e10, "sanity_max": 1e11, "only_projects": ("Sky",)},
+    "wmtx_cardano_supply_tokens": {"label": "World Mobile: Cardano-native WMTx supply (Koios asset_info, policy e5a42a1a…ca05a) — a component of the declared supply (G6 item 1)", "kind": "stock", "unit": "tokens", "archetypes": [2, 3], "tiers": [2], "sanity_min": 0, "sanity_max": 2e9, "only_projects": ("World Mobile",)},
+    "wmt_legacy_supply_tokens": {"label": "World Mobile: LEGACY Cardano WMT (policy 1d7f33bd…f0a0f34e1e) — 2B minted once, never burned; where it sits is unknown, so it is a REFERENCE and never in a total (G6 item 1)", "kind": "stock", "unit": "tokens", "archetypes": [2, 3], "tiers": [2], "sanity_min": 0, "sanity_max": 2e9, "only_projects": ("World Mobile",), "view_only": True},
+    "locked_tokens_base": {"label": "World Mobile Locked Staking on Base (0xBD4f…02Ae balanceOf WMTX) — a leg of locked_tokens (G6 item 1)", "kind": "stock", "unit": "tokens", "archetypes": [2, 3], "tiers": [2], "sanity_min": 0, "sanity_max": 2e9, "only_projects": ("World Mobile",)},
+    "locked_tokens_cardano": {"label": "World Mobile Locked Staking on Cardano (script addr1w9l52766…, WMTx held) — a leg of locked_tokens (G6 item 1)", "kind": "stock", "unit": "tokens", "archetypes": [2, 3], "tiers": [2], "sanity_min": 0, "sanity_max": 2e9, "only_projects": ("World Mobile",)},
+    "own_chain_tx_count": {"label": "Transactions per day on the project's OWN chain, excluding the one-per-block system transaction (World Mobile Chain 869, an Arbitrum Orbit chain: Blockscout newTxns − newBlocks; G6 item 1)", "kind": "flow", "unit": "count", "archetypes": [2, 3], "tiers": [1], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("World Mobile",)},
+    "own_chain_active_addresses": {"label": "Active accounts per day on the project's OWN chain (Blockscout activeAccounts — addresses that sent a transaction; World Mobile Chain 869; G6 item 1)", "kind": "flow", "unit": "count", "archetypes": [2, 3], "tiers": [1], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("World Mobile",)},
+    "latent_supply_tokens": {"label": "Tokens ACCRUED BUT NOT YET MINTED — what the lazy mint would add now (Pendle: eth_call of PENDLE.claimLiquidityEmissions() from the incentives recipient; G6 item 3). Latent value capture is monitored beside A1-A4 (SPEC §1b T-c), never inside circulating or total supply", "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Pendle",)},
+    "issuance_feed_polygon_tokens": {"label": "GEOD issued as rewards on POLYGON per month — GEODNET's own data feed (issuance-monthly tokens_issued, loaded by geodnet.com/geod); REFERENCE for the mining-wallet release (G6 item 3)", "kind": "flow", "unit": "tokens", "archetypes": [2, 3, 4], "tiers": [3], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("GEODNET",)},
+    "issuance_feed_solana_tokens": {"label": "GEOD issued as rewards on SOLANA per month — GEODNET's own data feed (issuance-monthly sol_tokens_issued); NOT in our supply-side (b), which reads the two Polygon mining wallets only (G6 item 3)", "kind": "flow", "unit": "tokens", "archetypes": [2, 3, 4], "tiers": [3], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("GEODNET",)},
     "net_revenue_msc_usd": {"label": "Sky Net Revenue as the monthly settlement report states it (Soter Labs' MSC consolidated report, settlement-cycle sky_total/<month>/summary.md; the figure the TMF posts quote) — the monthly measuring point (G5 D1). The basis is in the source: buffer basis to 2026-06, accrual from 2026-07; never summed across the switch", "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [3], "sanity_min": -1e10, "sanity_max": 1e11, "only_projects": ("Sky",)},
     "net_protocol_surplus_usd": {"label": "Net Protocol Surplus (Sky's own accounting — Block Analitica's P&L: net less Security and Maintenance), monthly", "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [3], "sanity_min": -1e10, "sanity_max": 1e11, "only_projects": ("Sky",)},
     # Sky's NPS as it REPORTED the months by hand (insights / financial.skyeco.com), kept as the reference beside the API.
@@ -3804,7 +3813,12 @@ PROJECTS = [
             # circulating equals its total, should the entry ever be restored.
             "supply_stats_retired": {"path": "/v3/stats", "metric": "noncirculating_nearblocks_tokens",
                                      "yocto_exponent": 24, "retired_on": "2026-10-13",
-                                     "why": "v3 reports circulating == total (0 non-circulating)"},
+                                     "why": "v3 reports circulating == total (0 non-circulating)",
+                                     # G6 item 3 (Jake: "hasn't moved since June: don't use it"), re-read 2026-10-19:
+                                     # v1 /charts holds circulating_supply at exactly 1,249,836,992.159308 NEAR on every
+                                     # day from 2025-08-27 (2025-08-26: 1,249,646,623.62) while total_supply rose to
+                                     # 1,309,322,552.85 (2026-10-18) — flat for 14 months, not since June. Never read.
+                                     "v1_flat_since": "2025-08-27"},
             "metrics": {
                 "tx_count": {"path": "/v3/txn-stats", "field": "txns"},
                 # N3 (fix round 2): NearBlocks' own index of the intents.near events — stored BESIDE DefiLlama's
@@ -4344,6 +4358,20 @@ PROJECTS = [
             "annual_rate_max": 0.025,
             "effective_from": "2025-10-30",
             "supersedes": {"annual_rate_max": 0.05, "note": "halved on 2025-10-30"},
+            # THE DECLARED STEP, READ ON-CHAIN (G6 item 3, 2026-10-19): max_inflation_rate [1,20] at block 170,351,518
+            # (protocol 80) -> [1,40] at block 170,351,519 (protocol 81), the first block of an epoch, 2025-10-29
+            # 11:29:03.97 UTC (archival-rpc.mainnet.near.org EXPERIMENTAL_protocol_config at both heights).
+            # effective_from stays 2025-10-30, the first WHOLE UTC day at the new rate. A step in the RATE, not a break
+            # in the measure: the measured epoch mint (ISSUANCE_PRIMARY) reads the same quantity on both sides.
+            "step": {"block": 170_351_519, "utc": "2025-10-29 11:29:03.97", "protocol_version": (80, 81),
+                     "max_inflation_rate": ((1, 20), (1, 40)), "read_on": "2026-10-19",
+                     "source": "archival-rpc.mainnet.near.org EXPERIMENTAL_protocol_config"},
+            # THE TREASURY SHARE, MEASURED (2026-10-19): EXPERIMENTAL_protocol_config reads protocol_reward_rate [0,1]
+            # at protocol 86, but treasury.near (amount + locked) rose 2,675.036863 NEAR across the mint of block
+            # 220,636,334 (26,721.4286 NEAR minted) = 10.01% — the 90/10 split below holds; [0,1] is not what mainnet
+            # pays (the nearcore constant, as recorded under live_read_status).
+            "treasury_share_measured": {"block": 220_636_334, "minted": 26_721.4286, "treasury_delta": 2_675.036863,
+                                        "share": 0.1001, "read_on": "2026-10-19"},
             "approx_tokens_per_year": 32_200_000,
             "approx_note": "~32.2m NEAR/yr is the rate applied to the supply base at the time of the "
                            "change. It is NOT declared as a schedule step because the base moves; a "
@@ -5540,8 +5568,24 @@ PROJECTS = [
                 "unsourced figure, it is a figure that does not exist. Same category as Fluid's "
                 "completed vesting and Morpho's absent issuance. Declared 2026-09-15.",
         },
-        "fee_split": {"share_to_buyback": None, "source_url": "https://blog.chain.link/chainlink-reserve/", "source_date": BRIEF_DATE, "programmed": False, "status": "unconfirmed",
-                      "note": "Payment Abstraction / SVR route revenue to the Chainlink Reserve and to staking. VERIFY the split."},
+        # G6 item 4 (Jake 2026-10-19): THE ONLY DOCUMENTED SHARE is 50% of fees from staking-secured SVR services, to the
+        # Reserve via Payment Abstraction. No other revenue has a documented share, and no SVR fee series is stored, so
+        # the implied buyback stays SUPPRESSED (status unconfirmed: a 50% applied to all fees would invent a split); the
+        # MEASURED Reserve inflow (buyback_fund_balance's rise / the Reserve scan) stays the route. The Reserve
+        # 0x9A709B7B…69eC6 held 6,293,843.357358364 LINK at block 26,226,487 (2026-10-19; independent_references
+        # g6_reserve_holdings_2026_10_19).
+        "fee_split": {"share_to_buyback": None, "source_url": "https://chain.link/blog/chainlink-reserve-strategic-link-reserve",
+                      "source_date": "2025-08-07", "programmed": False, "status": "unconfirmed",
+                      "documented_part": {"share": 0.5, "of": "fees from staking-secured SVR services",
+                                          "quote": "Additionally, 50% of fees from staking-secured SVR services— originally "
+                                                   "planned to be used to cover the existing oracle rewards paid to node "
+                                                   "operators—is now planned to be used to help fund the Chainlink Reserve "
+                                                   "via Payment Abstraction.",
+                                          "page_dated": "Last updated on August 7, 2025", "read_on": "2026-10-19",
+                                          "series": None},
+                      "note": "SVR 50% ONLY is documented (chain.link blog, 2025-08-07): 50% of staking-secured SVR fees to "
+                              "the Reserve. No share for any other revenue and no SVR fee series, so the implied buyback "
+                              "is suppressed; the measured Reserve inflow is the route."},
         "burn_split": None,
         "issuance_schedule": None,
         "contracts": {
@@ -12329,6 +12373,21 @@ PROJECTS = [
         # LEVEL_BREAK_ACKNOWLEDGED to pre-silence a rise: a tenfold move that coincides with a
         # date on this list still deserves the flag, and the flag is where the comparison against
         # this list happens.
+        # VERIFIED ON-CHAIN 2026-10-19 (G6 item 4): GovernorBravo ProposalExecuted, mainnet execution UTC. The L2 legs
+        # are executed through bridges from these transactions; their own activation lag is NOT checked. Celo's leg of
+        # #94 did not execute ("configuration error", #96). v4 Part 2 (Celo, Soneium, X Layer, World Chain, Zora) is not
+        # proposed (proposalCount 102). fee_switch_dates below (2026-09-22, "record only") read 1-2 days later than these.
+        "fee_switch_executions": {
+            "#93 UNIfication (mainnet v2/v3, Firepit, 100M burn)": "2025-12-27 20:33:11",
+            "#94 vote 1 (mainnet OpenFeeAdapter; Arbitrum, Base, OP)": "2026-03-06 07:19:59",
+            "#95 vote 2 (Soneium, X Layer, Celo, World Chain, Zora)": "2026-03-07 14:36:23",
+            "#96 (BNB, Polygon; Celo fix)": "2026-06-01 04:21:59",
+            "#99 (Robinhood)": "2026-07-27 07:16:59",
+            "#100 v4 fees part 1 (Ethereum, Base, Robinhood, BNB, Arbitrum, OP, Polygon)": "2026-07-27 07:31:11",
+            "#102 (Arc)": "2026-10-05 13:11:23",
+            "source": "Uniswap Governor 0x408ED6354d4973f66138C91495F2f2FCbd8724C3 proposals()/ProposalExecuted, read "
+                      "2026-10-19",
+        },
         "fee_switch_dates": {
             "ethereum": "2025-12-28",
             "optimism": "2026-03-08",
@@ -12396,10 +12455,22 @@ PROJECTS = [
                            "approximately -burn: the signature of this exact mistake.",
         },
         "fee_split": dict(_NO_SPLIT),
-        "burn_split": {"share_of_fees_burned": None, "source_url": "https://gov.uniswap.org/", "source_date": BRIEF_DATE, "status": "unconfirmed",
-                       "note": "Burn-to-claim via Token Jars / fire pit. Fee routing is deterministic; realised burn depends on holder "
-                               "redemption. Post-activation burns ~4-5m UNI/yr, separate from the 100m one-off in Jan 2026. "
-                               "An implied figure also needs fees SPLIT BY VERSION, which is DefiLlama Pro — see the Gap Report."},
+        # CLOSED 2026-10-19 (G6 item 4, Jake): 100% of PROTOCOL fees can only leave the TokenJar by burning UNI through
+        # the Firepit (Uniswap/protocol-fees Firepit.sol, an ExchangeReleaser whose recipient is 0xdead; threshold() 4,000
+        # UNI on mainnet 0x0D5Cd355…6721, read 2026-10-19; the OP-stack bridged firepits burn 2,000 and bridge it back).
+        # So the documented share is 1.0 OF PROTOCOL FEES (fee_base_metric: DefiLlama's revenue_usd, which books the
+        # protocol fee by version and chain as charged), not of LP fees: the protocol's cut of LP fees is per version and
+        # tier — v2 1/6 of 0.30%; v3 1/4 in the 0.01%/0.05% tiers, 1/6 in 0.30%/1%; v4 static/CCA pools on a curve (5bp
+        # LP -> 1.25bp, 30 -> 5, 83.34 -> 10, 100 -> 10) and the aggregator-hook family 10bp default / 3bp stable pairs
+        # (3bp / 1bp on Base) — gov.uniswap.org/t/25881 and /t/26162, proposals #93 and #100 — from each chain's
+        # activation (fee_switch_executions). The ACTUAL burn is gross_burn_tokens (0xdead's balance rise) with the
+        # 2025-12-27 100,000,000 one-off out (ONE_OFF_BURN_EVENTS, tx 0x091f0083…2c1e).
+        "burn_split": {"share_of_fees_burned": 1.0, "fee_base_metric": "revenue_usd",
+                       "source_url": "https://gov.uniswap.org/t/25881", "source_date": "2026-10-19", "status": "active",
+                       "note": "100% of PROTOCOL fees (DefiLlama revenue_usd, by version and chain from each activation) "
+                               "are released only against UNI burned through the Firepit (4,000 UNI a release on mainnet). "
+                               "Implied burn = protocol fees ÷ avg price; actual = UNI to 0xdead less the 2025-12-27 100M "
+                               "one-off. Was 'unconfirmed' (no single share of LP fees exists: the cut is per version/tier)."},
         "issuance_schedule": None,
         "contracts": {
             "token": _contract("0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984", "ethereum", "erc20_total_supply", "UNI",
@@ -19762,14 +19833,20 @@ ISSUANCE_PRIMARY = {
     # observed_source_prefix (2026-09-28): the guard's cross-check is the issuance derived from
     # the block-header supply (d(total_supply_protocol) + burn); rows derived from CoinGecko's
     # total, which rose ~0.8M against ~8M expected, are no longer what it tests.
-    "Near": {"kind": "declared_rate", "metric": "gross_issuance_tokens",
-             "rate_path": ("issuance_rate_declared", "annual_rate_max"),
-             "supply_metric": "total_supply", "max_ratio": 10,
-             "observed_source_prefix": "derived:d_total_supply_protocol",
-             # THE DECLARED ROUTE'S HISTORY (Jake, 2026-09-30): CoinGecko's total_supply is held
-             # from 2026-09-11 only; the archival block-header total_supply covers the year, so
-             # the days before it read that level (at the superseded 5% before 2025-10-30).
-             "history_supply_metric": "total_supply_protocol"},
+    # MEASURED FROM G6 (Jake 2026-10-19, item 3): "wire gross_issuance_tokens from protocol issuance (total-supply
+    # change plus burnt gas, or epoch rewards), with the rate change as a declared step". The primary is each epoch's
+    # mint read at its first block (fetch/near_issuance.py); the stored block-header derivation (d(total_supply_protocol)
+    # + burn, the year) fills the days the epoch read has not reached — on a day both hold, the epoch read wins. The
+    # declared rate (2.5%/yr, 5% before the step) is no longer the figure: it is the guard — measured more than
+    # max_ratio from rate x total supply BLOCKS the row with both. Was (2026-09-30): kind declared_rate.
+    "Near": {"kind": "first_party", "metric": "gross_issuance_tokens",
+             "source_prefix": "near_issuance:near_rpc:epoch_mint",
+             "history_prefix": "derived:d_total_supply_protocol",
+             "prefer_primary_per_day": True,
+             "declared_guard": {"rate_path": ("issuance_rate_declared", "annual_rate_max"),
+                                "supply_metric": "total_supply", "max_ratio": 10},
+             "block_reason": "waiting for NEAR's epoch mints (fetch/near_issuance.py) or the block-header derivation "
+                             "to fall inside the Q0 window"},
     # MEASURED, NOT DECLARED (Jake's run 2026-10-09 11:41, item 2): the change in mainnet PENDLE totalSupply
     # (total_supply_gross, token_gross) — 0 over Q0 on pendle_emissions_q0. The declared 2%/yr terminal rate is a
     # ceiling (issuance_rate_declared), not the figure.
@@ -21477,6 +21554,8 @@ def series_granularity(project_name: str, metric: str) -> str:
     msc = p.get("sky_msc") or {}
     if metric == msc.get("metric"):
         return msc.get("granularity", "monthly")
+    if project_name == "GEODNET" and metric in GEODNET_FEED_MONTHLY:
+        return "monthly"                     # GEODNET's own feed, complete months only (fetch/geodnet_feed.py, G6 3)
     q = (p.get("dune_queries") or {}).get(metric) or {}
     if str(q.get("date_col") or "").lower() == "month":
         return "monthly"
@@ -23337,8 +23416,11 @@ LATENT_SUPPLY = {
                       "only by the liquidity-incentives contract 0xe8d28e2c… (research r15, 2026-10-13); totalSupply "
                       "flat at 281,527,448.4585 since the 2025-03-24 claim (weeks 121-204, 23.08M)",
                "entered_by": "Claude Code, pending Jake's review",
-               "route": "a daily contract read of the same state (NOT WIRED): the token's lastEpochEmissions / "
-                        "lastEpochMinted and the epoch clock"},
+               "route": "WIRED (G6 item 3): latent_supply_tokens, a daily eth_call of claimLiquidityEmissions() from the "
+                        "incentives recipient (fetch/pendle_latent.py); this entry is the 2026-10-13 reading, the reference",
+               "reconciled_2026_10_19": "the live read gives 9,837,598.561055 PENDLE at block 26,226,484 (week 286, the "
+                                        "same week as 2026-10-13): weeks 205-259 6,865,217.4860 + weeks 260-286 "
+                                        "2,972,381.0750"},
 }
 
 
@@ -28186,6 +28268,7 @@ OUTFLOW_CATEGORIES = {
 # feeds a headline holds HEADLINE_SCAN_RESERVE_S back from the scans run before it (fetch.logscan.LogScan.run), and
 # any scan cut on its share runs again on the tier's leftover time (pass 2). `reserve_s` on a scan spec overrides.
 HEADLINE_SCAN_RESERVE_S = 60.0
+GEODNET_FEED_MONTHLY = ("gross_burn_tokens_dune_monthly", "issuance_feed_polygon_tokens", "issuance_feed_solana_tokens")
 # token counts no source serves, converted at read time from the stored USD twin at the day's price (G5 item 6)
 USD_TWIN_TOKENS = {"Hyperliquid": (("buyback_hypercore_asxn_tokens", "buyback_hypercore_asxn_usd"),)}
 HEADLINE_SCAN_METRICS = ("gross_burn_tokens", "actual_buyback_tokens", "burn_address_balance", "buyback_fund_balance",
@@ -28325,13 +28408,41 @@ def l2_tier(chain: str) -> str:
 
 
 def l2_tier_budget(tier: str) -> int:
-    return int(L2_TIER_BUDGET_S.get(tier[len(L2_TIER_PREFIX):], L2_TIER_BUDGET_S["default"]))
+    chain = tier.split(PROJECT_TIER_SEP, 1)[0][len(L2_TIER_PREFIX):]
+    return int(L2_TIER_BUDGET_S.get(chain, L2_TIER_BUDGET_S["default"]))
 
 
 def l2_scan_tiers() -> list[str]:
     """Every L2 chain tier a configured scan declares, sorted (fetch.TIER_ORDER builds one tier per entry)."""
     return sorted({sp["own_tier"] for p in PROJECTS for sp in p.get("log_scans") or ()
                    if str(sp.get("own_tier", "")).startswith(L2_TIER_PREFIX)})
+
+
+# ONE TIER PER PROJECT (Round G6 item 0a, Jake's G5 run 2026-10-19 12:24): the shared explorer tier gave each of its ~25
+# scans (time left) / (scans left) of 300 s while every tier queued on one Etherscan key — Chainlink's noncirc scans got
+# 14 s and timed out "before the first attempt"; on explorer_l2:base Pendle's 183,925-event gauge scan took 3.7 min and
+# left Morpho's and Fluid's Base scans 1 s. Every scan now runs in `<tier>@<project>`: its project's own tier and budget,
+# so one project's long scan can only time out that project. Pendle's mainnet gauge keeps explorer_gauge (its own).
+PROJECT_TIER_SEP = "@"
+EXPLORER_PROJECT_TIER_BUDGET_S = 300
+
+
+def scan_tier(project_name: str, spec: dict) -> str:
+    own = spec.get("own_tier")
+    if own == "explorer_gauge" or PROJECT_TIER_SEP in str(own or ""):
+        return own
+    return f"{own or 'explorer'}{PROJECT_TIER_SEP}{project_name}"
+
+
+def explorer_scan_tiers() -> list[str]:
+    """Every per-project explorer tier a configured scan declares, sorted (fetch.TIER_ORDER builds one per entry)."""
+    return sorted({sp["own_tier"] for p in PROJECTS for sp in p.get("log_scans") or ()
+                   if PROJECT_TIER_SEP in str(sp.get("own_tier") or "")})
+
+
+def explorer_tier_budget(tier: str) -> int:
+    base = tier.split(PROJECT_TIER_SEP, 1)[0]
+    return l2_tier_budget(tier) if base.startswith(L2_TIER_PREFIX) else EXPLORER_PROJECT_TIER_BUDGET_S
 
 
 def wire_probed_scans(state: dict | None = None) -> list:
@@ -28380,7 +28491,9 @@ def wire_probed_scans(state: dict | None = None) -> list:
                                               "(one distributor address on every chain, read 2026-10-18)"
                                               if proj == "Morpho" else
                                               "Instadapp/fluid-contracts-public@9496626f deployments/deployments.md"],
-                      "exclude_counterparties": excl, "own_tier": l2_tier(chain), "scan_budget_s": 140,
+                      "exclude_counterparties": excl,
+                      # G6 0a: the project's own tier — a bare explorer_l2:<chain> is in no TIER_ORDER and never runs
+                      "own_tier": scan_tier(proj, {"own_tier": l2_tier(chain)}), "scan_budget_s": 140,
                       "window_days": 100,
                       "wired_on": (st.get("probed_on") if cid in served else alc.get("probed_on")) or "2026-10-14",
                       "route": route})
@@ -29445,5 +29558,208 @@ for _p in PROJECTS:
     for _sp in _p.get("log_scans") or ():
         if _sp.get("own_tier") == "explorer_gauge_l2":
             _sp["own_tier"] = l2_tier(_sp["chain"])
+        _sp["own_tier"] = scan_tier(_p["name"], _sp)                    # G6 item 0a: the project's own tier
+
+# G6 item 3: GEODNET's own data feed continues the monthly burn cross-check from 2026-08 (Dune 8683175 is backfill-only
+# and stopped at 2026-08-01) — a declared handover, same quantity (Polygon + Solana burned per month), not a break
+PROJECT_BY_NAME["GEODNET"].setdefault("series_handover", {})["gross_burn_tokens_dune_monthly"] = {
+    "ordered_points": ["dune:8683175", "geodnet_feed:burn-monthly[polygon+solana]"],
+    "why": "Dune 8683175's monthly rows (backfill-only, last 2026-08-01), then GEODNET's own feed (dune-dash.rajukhan641."
+           "workers.dev/geodnet/burn-monthly, loaded by geodnet.com/geod), complete months only",
+    "composition_change": "none: both are Polygon + Solana GEOD burned per calendar month",
+    "declared": "2026-10-19",
+}
+
+# G6 item 2: AERODROME AFTER THE UPGRADE (aero.xyz/aero-upgrade, read 2026-10-19): "~2.127B max. As existing AERO and VELO
+# both upgrade to a unified token, the total supply of the new AERO token will increase from ~2B to a max ~2.127B";
+# "The realized annual inflation rate for AERO is expected to be ~12%. The annual rate ceiling at launch will be set at
+# 20%." The G5 closure (uncapped, max_supply null) holds to 2026-10-21; from the cutover the hub's figure is the max.
+PROJECT_BY_NAME["Aerodrome"].setdefault("declared_stocks", {})["max_supply"] = {
+    "value": 2_127_000_000, "from": AERODROME_MIGRATION["cutover_utc"],
+    "source": "aero.xyz/aero-upgrade read 2026-10-19",
+    "why": "the unified AERO's published max (~2.127B, APPROXIMATE as published: AERO ~2B + VELO 2.66B x 0.044 = 117M); "
+           "expected inflation ~12% a year, ceiling 20% at launch"}
+AERODROME_MIGRATION["launch_chains"] = ("base", "ethereum", "optimism", "arc", "ink", "robinhood", "arbitrum")
+for _u in UNAVAILABLE:
+    if _u.get("project") == "Aerodrome" and _u.get("metric") == "max_supply":
+        _u["until"] = "2026-10-21"
+        _u["reopen_if"] = ("REOPENED BY THE UPGRADE: from 2026-10-22 the unified AERO has a published max (~2.127B, "
+                           "declared_stocks) — the closure covers the legacy token only")
+# a closure with an `until` stops applying the day after it (G6 item 2) — the gap rules then judge the metric again
+import datetime as _dt
+for _k, _u in list(UNAVAILABLE_BY_KEY.items()):
+    if _u.get("until") and _dt.date.today().isoformat() > str(_u["until"]):
+        del UNAVAILABLE_BY_KEY[_k]
+
+# ===== G6 item 1: WORLD MOBILE AFTER THE 2026-09-20 EXPLOIT — every figure read on-chain 2026-10-19 (scratch reads; no
+# key). The record below REPLACES the 53.838M figure (two secondary sources): the mint is 503 transactions to the
+# SingularityNET TokenConversionManagerV2 0x63BBC71C…d392, 2026-09-20 03:38:23-04:16:47 UTC, exactly 500,479,231.217272
+# WMTX (6 decimals); MINTER_ROLE revoked from the converter 05:12:59 (tx 0xb05a6897…) and from the CCIP pool 0x229a…27c9
+# 05:18:23 (tx 0x007804ed…). The +41.45M our EVM sum moved 09-21..09-28 — the reason the 500.6M figure was set aside —
+# is the Base RE-ISSUE (mints by 0x03fb0f5c…0254 to itself: 23,276,831.334 on 09-22 and 17,951,875.36 on 09-23), not
+# the exploit. =====
+_wm = PROJECT_BY_NAME["World Mobile"]
+_wm["wmtx_exploit_2026_09"].update({
+    "unauthorised_mint_tokens": 500_479_231.217272,
+    "mint_sources": ["ON-CHAIN (G6, 2026-10-19): 503 Transfer-from-0x0 events on 0xDBB5…39D7, blocks 26016082..; every "
+                     "tx to the converter 0x63BBC71C034bC99A905d5594dF985C218a35d392 from EOA 0xa7a31d20…ee48, minted TO "
+                     "the converter; first 03:38:23 (tx 0xa0c510d2…), last 04:16:47 (tx 0x66bc3af2…); sum "
+                     "500,479,231.217272",
+                     "SECONDARY (superseded): 53,838,000 (GitHub timeline, Cryptotimes); 500.6M (SlowMist via Chainletter)"],
+    "role_revocations": ["MINTER_ROLE from the converter 2026-09-20 05:12:59 UTC, block 26016555, tx 0xb05a6897…",
+                         "MINTER_ROLE from the CCIP pool 0x229a1956929489870A31b01854a80EF9B0fd27c9 05:18:23 UTC, block "
+                         "26016582, tx 0x007804ed…", "BURNER_ROLE from the converter 2026-09-24 11:55:59 (tx 0x97659917…)"],
+    "ethereum_supply_reads": {"2026-09-18 23:59:59 (block 26007835)": 1_014_114_387.477607,
+                              "2026-09-20 03:37:59 (just before the first mint)": 1_013_930_149.42,
+                              "2026-09-20 04:16:59 (peak)": 1_506_953_192.50,
+                              "2026-09-21 onward (block 26029315; latest 26226483)": 1_493_853_278.827176},
+    "base_reissue": {"by": "0x03fb0f5caba1f02d6582f55839ac2cff29330254 (an EOA, minting to itself)",
+                     "mints": [("2026-09-22 13:17:17", 23_276_831.334), ("2026-09-23 13:03:23", 17_951_875.36)],
+                     "total": 41_228_706.694,
+                     "not_in_the_claim": "10 WMTX on 2026-10-05 and 4,998,601 WMTX to 0x0c789114…4969 on 2026-10-07 "
+                                         "09:33:41 — purpose NOT stated by a primary source"},
+    "conflicting_figure": None,
+    "never_dilution": "the 500,479,231.22 counterfeit is excluded from every supply and issuance figure (G6 item 1)",
+    "x_posts": ["x.com/wmchain/status/2101538765332431188 (security notice)",
+                "x.com/SingularityNET/status/2102221596752482469 (unauthorised party … mint tokens … through our bridge)",
+                "x.com/wmchain/status/2103539583086440667 (recovery update 25 Sep: Ethereum WMTX permanently deprecated; "
+                "the Base<->BNB CCIP route reopened — Arbitrum and Solana routes still affected that day)"],
+})
+_wm.setdefault("supply_components", {
+    # THE DECLARED COMPONENTS (G6 item 1a). Read separately; which of them the measuring point sums is Jake's decision —
+    # PROPOSED in SPEC §19 G6-1a with the numbers. Never added: the Orbit bridge on Base (0x249888c9…539d, 5,355,859.62
+    # WMTX backing World Mobile Chain's native WMTX — already inside Base supply) and the legacy Cardano WMT (2B, location
+    # unknown).
+    "base": {"metric": "total_supply_gross (contracts.token_base)", "read_2026_10_19": 214_679_065.812156},
+    "bsc": {"metric": "total_supply_gross (contracts.token_bsc)", "read_2026_10_19": 52_120_204.935449},
+    "arbitrum": {"metric": "total_supply_gross (contracts.token_arbitrum)", "read_2026_10_19": 93_778.563955},
+    "solana": {"metric": "total_supply_gross (contracts.token_solana)", "read_2026_10_19": 2_486_255.188595},
+    "cardano_wmtx": {"metric": "wmtx_cardano_supply_tokens (fetch/wm_supply.py)", "read_2026_10_19": 650_795_981.305422},
+    "ethereum_legitimate_unreissued": {
+        "declared": "the Ethereum supply just before the first counterfeit mint (1,013,930,149.42 at 03:37:59 UTC "
+                    "2026-09-20) minus the Base re-issue (41,228,706.694 to 2026-10-19)",
+        "value_2026_10_19": 1_013_930_149.42 - 41_228_706.694, "status": "PROPOSED — inferred, not read: the snapshot's "
+        "eligible balances are World Mobile's, not published; the 4,998,601 Base mint of 10-07 is not counted as re-issue "
+        "(purpose not stated)"},
+})
+# the measuring point changes on the exploit day: a SERIES BREAK, never a flow (SPEC §1 rule 10)
+# (trajectory.basis_breaks steps every window at it; build_workbook marks the cell) and Ethereum is not read from that
+# day (contracts.token.deprecated_from moved 2026-09-25 -> 2026-09-20: every read on or after it carries the
+# counterfeit). The rows stored 09-20..09-24 with Ethereum in the sum are listed and removed by orphan_cleanup.sql DA.
+SOURCE_RECLASSIFICATIONS[("World Mobile", "total_supply_gross")] = (
+    ("2026-09-20", "SERIES BREAK — the exploit: 500,479,231.217272 counterfeit WMTX minted on Ethereum (excluded, never "
+                   "dilution); Ethereum leaves the sum that day (deprecated 2026-09-25) and its holders are re-issued "
+                   "on Base from 2026-09-22 (41,228,706.694 WMTX by 2026-10-19) — a restatement, not issuance"),
+)
+_wm["contracts"]["token"]["deprecated_from"] = "2026-09-20"
+_wm["contracts"]["token"]["deprecation_note"] = (
+    "not read from 2026-09-20 (G6 item 1, Jake 2026-10-19): the 500,479,231.217272 counterfeit WMTX was minted on "
+    "Ethereum from 03:38:23 UTC that day, so every read on or after it carries it; World Mobile deprecated Ethereum WMTx "
+    "on 2026-09-25 and re-issues eligible holders on Base")
+_wm["series_handover"]["total_supply_gross"]["why"] = (
+    "Ethereum WMTx leaves the sum on the exploit day 2026-09-20 (G6; was 2026-09-25, the deprecation); Solana WMTx "
+    "added 2026-09-29.")
+# World Mobile Chain (869): Blockscout v12 at explorer.worldmobile.io, an Arbitrum Orbit chain (every block opens with a
+# type-106 ArbitrumInternalTx from 0x…A4B05 startBlock, read 2026-10-19) — so transactions exclude the system one
+_wm["blockscout_stats"] = {
+    "base": "https://explorer.worldmobile.io/stats-service",
+    "lines": {"own_chain_tx_count": {"chart": "newOperationalTxns", "minus": ("newTxns", "newBlocks")},
+              "own_chain_active_addresses": "activeAccounts"},
+    "days": 365, "source_url": "https://explorer.worldmobile.io/stats-service", "read_on": "2026-10-19",
+    "robots": "explorer.worldmobile.io/robots.txt: Allow / (disallows /auth/*, /login, /chakra, /sprite, /account/*)",
+}
+# (b) locked_tokens IS READ (fetch/wm_supply.py): World Mobile Locked Staking on Base + Cardano. The block is kept,
+# renamed, as the record of how it was found (the GEODNET precedent, locked_tokens_resolved 2026-10-05).
+_wm["locked_tokens_resolved"] = {**_wm.pop("locked_tokens_blocked"),
+                                 "resolved_on": "2026-10-19",
+                                 "resolved_by": "G6 item 1b (Jake 2026-10-19): World Mobile's own post "
+                                                "worldmobile.io/blog/post/wmtx-locked-staking-is-live-pick-a-term-lock-"
+                                                "the-rate (2026-08-10) names both contracts — Base 0xBD4f5D76ecb370e06095"
+                                                "FFaF1CD485D9FD9f02Ae and the Cardano script addr1w9l52766gs8wypceuw64uuv"
+                                                "rqsw5glvmafa5nweskw8jqfc76yh4v; read 2026-10-19 7,321,544.14 + "
+                                                "29,556,739.39 = 36,878,283.53 WMTX",
+                                 "status": "RESOLVED 2026-10-19 — wired as fetch/wm_supply.py (locked_tokens = the two "
+                                           "Locked Staking legs). The EarthNode Plutus staking (the original block) is "
+                                           "NOT in it: no address is published for it"}
+# ... and it leaves manual_quarterly: the figure is read from the contracts now, not entered by hand
+_wm["manual_quarterly"] = [m for m in _wm.get("manual_quarterly") or [] if m != "locked_tokens"]
+# (d) treasury and buyback stay an ACCEPTED LIMIT: the unlabelled Ethereum Safes are never treasury without a source —
+# 0x76607a4d04Fc2Cd23224181F1C35CfEfCB0164d0 holds 410,000,000.0 WMTX (Safe 1.4.1, 2-of-3), unchanged 09-19..10-01, and
+# NO primary source labels it (G6 item 1d)
+_wm.setdefault("unlabelled_holders", {})["0x76607a4d04Fc2Cd23224181F1C35CfEfCB0164d0"] = {
+    "chain": "ethereum", "balance_2026_10_19": 410_000_000.0, "label": None,
+    "rule": "NOT treasury without a source (G6 item 1d)"}
+
+# ===== G6 item 3: NEAR'S ISSUANCE SERIES HANDS OVER FROM THE BLOCK-HEADER DERIVATION TO THE EPOCH MINT. =====
+# Both measure the same quantity — the supply's rise plus the gas burnt — one per day from daily header reads, the other
+# per epoch at the minting block; the epoch read wins on a shared day (ISSUANCE_PRIMARY prefer_primary_per_day). Declared
+# so a window spanning the switch is not read as a change of basis.
+PROJECT_BY_NAME["Near"].setdefault("series_handover", {})["gross_issuance_tokens"] = {
+    "ordered_points": ("derived:d_total_supply_protocol+burn", "near_issuance:near_rpc:epoch_mint"),
+    "why": "NEAR's gross issuance read at each epoch's minting block (fetch/near_issuance.py) from G6; the daily "
+           "block-header derivation (d(total_supply_protocol) + burn) for the days the epoch read has not reached",
+    "composition_change": "none: the same mint, measured per epoch instead of per day",
+    "declared": "2026-10-19",
+}
+# ===== G6 item 3: GEODNET'S SOLANA ISSUANCE — THE (b) LINE DOES NOT MISS IT; IT COUNTS IT WHEN FUNDED. =====
+# Our pool_release_tokens (the two Polygon mining wallets' outflow) minus GEODNET's own feed's Polygon tokens_issued is
+# a WHOLE MILLION every month (2025-10 1M; 11..01 2M; 02 4M; 03..06 2M; 07..09 1M — to the token: Sep 3,677,511.95 −
+# 2,677,511.95 = 1,000,000.00), 22,000,000 over Oct-25..Sep-26 against Solana's sol_tokens_issued 20,817,755. The round
+# transfers fund Solana rewards ahead of issue — INFERRED (the destination is not traced). So Solana issuance sits in
+# (b) as lumpy funding, ~1.18M ahead over the year, not as issued; the feed's Solana line (issuance_feed_solana_tokens)
+# is the reference for the issued figure. Read 2026-10-19 (fixtures/real_geodnet.json to 10-13, the feed live).
+PROJECT_BY_NAME["GEODNET"]["solana_issuance_answer"] = {
+    "answer": "NOT MISSED — counted when funded, in whole-million transfers out of the Polygon mining wallets",
+    "evidence": {"2026-07": (3_915_051.92, 2_915_051.92, 1_169_098), "2026-08": (3_743_922.96, 2_743_922.96, 1_102_922),
+                 "2026-09": (3_677_511.95, 2_677_511.95, 1_143_717)},
+    "evidence_cols": ("pool_release_tokens", "feed Polygon tokens_issued", "feed Solana sol_tokens_issued"),
+    "twelve_months": {"round_transfers": 22_000_000, "solana_issued": 20_817_755, "from": "2025-10", "to": "2026-09"},
+    "status": "INFERRED — the transfers' destination (a bridge to Solana) is not traced",
+    "settles_it": "the counterparty of the whole-million transfers out of 0xfa5fEd5c…B14F / 0x8FB9dd00…5478",
+    "read_on": "2026-10-19",
+}
+# ===== G6 item 3: ETHER.FI — WHY SUPPLY IS 1.46M SHORT, AND THE PROGRAMMATIC BUYBACK'S DECLARED SPLIT. =====
+# totalSupply() 998,535,999 = 1,000,000,000 − 1,464,001 (ETHFI is ERC20Burnable with no mint, read 2026-10-19): 8 burns
+# 2025-08-08..09-19 total 1,464,001 — 1,464,000 from the buyback wallet 0x2f5301a3… (ONE_OFF_BURN_EVENTS) and 1 ETHFI
+# from another holder. Nothing else is missing.
+PROJECT_BY_NAME["Ether.fi"]["supply_short_of_cap"] = {
+    "short": 1_464_001, "total_supply": 998_535_999, "cap": 1_000_000_000,
+    "why": "burned: 8 ETHFI.burn calls 2025-08-08..2025-09-19, 1,464,000 from 0x2f5301a3D59388c509C65f8698f521377D41Fd0F "
+           "(7 calls) + 1 ETHFI by another holder; no mint function exists",
+    "read_on": "2026-10-19",
+}
+PROJECT_BY_NAME["Ether.fi"]["programmatic_buyback_split"] = {
+    # Snapshot 0xed61adff5103b4e50be49b28fca8ecbbea9d685141d2d5a34d1d24232ac91891 (etherfi-dao.eth, closed 2026-09-03)
+    "declared": {"labs": 0.40, "buyback": 0.30, "user_cashback": 0.30},
+    "applies_to": "swap fees (the proposal's revenue base for the 40/30/30 split); Labs revenue bought by TWAP on CoW",
+    "buffer": "up to 20,000,000 ETHFI from Foundation holdings — paid 0 to date (Safe 0xe4439b1d…)",
+    "addresses": "'published at launch' — NOT PUBLISHED by ether.fi as of 2026-10-19. The Programmatic Buybacks Safe "
+                 "0x43F4cA92… in log_scans (programmatic_buyback_inflow, wired 2026-10-13) was IDENTIFIED ON-CHAIN (research "
+                 "r15: CoW fills, owners shared with 0x2f5301a3…), not published — kept as wired on 2026-10-13; Jake's G6 "
+                 "rule (wire addresses only once published) is raised in SPEC §19 G6-3 for his decision",
+    "other_streams": {"proposal_11": "monthly, 'all collected fees' from eETH withdrawals (NOT weekly, NOT '100%', NOT "
+                                     "sETHFI as the brief had it — the proposal's text)",
+                      "proposal_8": "5% of revenue, monthly, to stakers"},
+    "source": "snapshot.box/#/s:etherfi-dao.eth/proposal/0xed61adff… (read 2026-10-19)",
+    "status": "RECORDED — the split is declared, the addresses are not published",
+}
+
+# ===== G6 item 2: THE VotingEscrow GAP RE-CHECKED BEFORE THE 2026-10-22 CUTOVER (read 2026-10-19, Base block
+# 52,810,899). supply() 1,058,698,191.4827 − AERO.balanceOf(VE) 998,588,516.6248 = 60,109,674.8579 (59,653,709.90 at
+# block 51,693,612 — LOCK_DISPLAY_METRIC's note). The 75 MANAGED veNFTs' LockedManagedReward contracts hold
+# 60,109,790.4299 AERO = the gap + 115.57 (the LMRs hold slightly more: rewards not yet compounded). Mechanism unchanged:
+# _increaseAmountFor on a managed NFT approves and calls LockedManagedReward.notifyRewardAmount, which pulls the AERO OUT
+# of the escrow while supply counts it; it comes back only on withdrawManaged (getReward). depositManaged moves weight
+# only; merge and split leave supply alone. Largest: mNFT 10294 (LMR 0x27cc…769c) 22,287,789; 10297 19,666,518; 10298
+# 6,655,843; 11129 5,011,022; 10295 3,684,324. Not permanent locks (permanentLockBalance 987,879,472.88 is inside
+# supply either way) and not rebase accounting (the RewardsDistributor's 1,668,975.34 sits outside VE).
+AERODROME_MIGRATION["ve_gap_2026_10_19"] = {
+    "block": 52_810_899, "supply": 1_058_698_191.4827, "held": 998_588_516.6248, "gap": 60_109_674.8579,
+    "managed_nfts": 75, "lmr_held": 60_109_790.4299, "residual": 115.57,
+    "why": "managed veNFT compounding forwards AERO to each LockedManagedReward contract without decrementing supply "
+           "(VotingEscrow._increaseAmountFor -> LockedManagedReward.notifyRewardAmount)",
+    "at_cutover": "veAERO -> sAERO: the 60.1M in the LMRs is locked principal and must be in the upgraded stake; a "
+                  "migration that reads AERO.balanceOf(VE) alone would drop it",
+}
 
 _CONFIG_LOADED = True       # the last line: config is complete (see _relation_pairs)

@@ -18,11 +18,13 @@ from datetime import datetime, timezone
 import pandas as pd
 
 from .logcache import DailyChecks
-from .base import Http, point, tidy, today, window
+from .base import Http, LogEntry, point, tidy, today, window
 
 log = logging.getLogger("token_metrics.fetch.llama")
 
 SOURCE = "defillama"
+TVL_STOP_FLOOR_S = 40.0           # the tvl tier stops before a project when less than this (or its slowest) is left
+TVL_CURSOR_KEY = "defillama_tvl:cursor"
 # Named here so the skip message and store.ABSENT_RECHECK_DAYS cannot drift apart in prose.
 ABSENT_RECHECK_NOTE = "14 days without an attempt (store.ABSENT_RECHECK_DAYS)"
 TIER = 1
@@ -1093,8 +1095,28 @@ class DefiLlama:
         # with no failure is not called again until tomorrow (its metrics are marked current, not
         # gaps). Storing is unchanged: the window (30 days, 365 for a backfill pair) of what came.
         yday = today().normalize() - pd.Timedelta(days=1)
+        # THE TVL TIER STOPS ITSELF AND KEEPS WHAT IT READ (Round G6 item 0d, Jake's G5 run 12:24: defillama_tvl timed
+        # out at 150 s over 28 calls — /protocol/aerodrome 35.3 s, /protocol/uniswap 32.9 s — and an abandoned tier's
+        # 26 daily marks were dropped, so every run started again from the first project). Before each project it
+        # stops when less than the slowest project so far (at least TVL_STOP_FLOOR_S) is left; the projects done
+        # keep their marks, and a saved cursor starts the next run at the first project not reached.
+        import time as _time
+        deadline = None
+        if self.part == "tvl" and not getattr(self, "unbounded", False):
+            from . import _budget                                       # noqa: PLC0415
+            deadline = _time.monotonic() + _budget("defillama_tvl") - 10.0     # 10 s to hand back what it read
+            cur = self.daily.get(TVL_CURSOR_KEY) or ""
+            names = [p["name"] for p in projects]
+            if cur in names:
+                i = names.index(cur)
+                projects = list(projects[i:]) + list(projects[:i])
+        slowest, left_out = TVL_STOP_FLOOR_S, []
         for p in projects:
             name, key = p["name"], f"defillama{'' if self.part in ('all', 'fees') else '_' + self.part}:project:{p['name']}"
+            if deadline is not None and self.daily.due(key, self._today) \
+                    and deadline - _time.monotonic() < slowest:
+                left_out.append(name)
+                continue
             # A SERIES NEVER STORED IS READ TODAY, WHATEVER RAN EARLIER (Jake's fix round 2, R1 / R6: NEAR's Intents
             # revenue and Pendle's Boros fees were added mid-day and skipped as "read complete earlier today")
             unread = ([c["metric"] for c in p.get("defillama_component_slugs") or () if not self._stored(name, c["metric"])]
@@ -1110,14 +1132,24 @@ class DefiLlama:
                                      TIER)
                 continue
             n_log, n_frames = len(out.log), len(out.frames)
+            t0 = _time.monotonic()
             self._project(p, window_days, out)
+            slowest = max(slowest, _time.monotonic() - t0)
             mine = [e for e in out.log[n_log:] if e.source == SOURCE and e.project == name]
             frames = [f for f in out.frames[n_frames:] if not f.empty and (f["project"] == name).all()]
             complete = frames and max(pd.Timestamp(f["date"].max()) for f in frames) >= yday
             if complete and not any(e.status == "failed" for e in mine):
                 self.daily.set(key + ":metrics", ",".join(sorted({m for f in frames for m in f["metric"].unique()})))
                 self.daily.done(key, self._today)
-        if self.part in ("all", "tvl"):
+        if left_out:
+            self.daily.set(TVL_CURSOR_KEY, left_out[0])
+            out.log.append(LogEntry(SOURCE, None, 0, "ok",
+                                    f"defillama_tvl: STOPPED before its budget — {len(left_out)} project(s) left for "
+                                    f"the next run, which starts at {left_out[0]}: {', '.join(left_out)} (slowest "
+                                    f"project this run {slowest:.0f}s); the projects read keep their marks", TIER))
+        elif deadline is not None:
+            self.daily.set(TVL_CURSOR_KEY, "")
+        if self.part in ("all", "tvl") and (deadline is None or deadline - _time.monotonic() >= TVL_STOP_FLOOR_S):
             self.rwa(projects, window_days, out)
 
     def _project(self, p: dict, window_days, out) -> None:

@@ -42,6 +42,18 @@ class Schedule:
                         + ("" if spec.get("sourced") else
                            f"; NOT yet sourced — {spec.get('still_needed')}") + ")", TIER)
 
+            # A DECLARED STOCK FROM A DATE (Round G6 item 2): a figure the project publishes for a parameter that changes
+            # on a known day — Aerodrome's max supply after the 2026-10-22 upgrade ("~2.127B max", aero.xyz/aero-upgrade).
+            # Stored from its date only, the source string says it is a declaration, the note says approximate.
+            for metric, spec in (p.get("declared_stocks") or {}).items():
+                if metric not in config.metrics_for_project(p) or now < pd.Timestamp(spec["from"]):
+                    continue
+                out.add(pd.DataFrame({"date": [now], "project": [p["name"]], "metric": [metric],
+                                      "value": [float(spec["value"])], "source": [f"{SOURCE}:declared[{spec['source']}]"],
+                                      "tier": [TIER]})[LONG_COLUMNS],
+                        SOURCE, p["name"], f"{metric}={float(spec['value']):,.0f}, DECLARED from {spec['from']}: "
+                                           f"{spec['why']} ({spec['source']})", TIER)
+
             sched = p.get("issuance_schedule")
             if not sched or not sched.get("steps"):
                 continue

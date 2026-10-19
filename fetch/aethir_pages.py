@@ -401,12 +401,36 @@ def current_value(html: str, key: str, group: tuple = ()):
     return current_and_series(html, key)[0]
 
 
+def _declared_metrics(x) -> set:
+    """Every metric a page (or spec section) declares: `fields` values, any `metric`, any `values` mapping's values."""
+    out: set = set()
+    if isinstance(x, dict):
+        for k, v in x.items():
+            if k == "metric" and isinstance(v, str):
+                out.add(v)
+            elif k in ("fields", "values") and isinstance(v, dict):
+                out |= {m for m in v.values() if isinstance(m, str)}
+            else:
+                out |= _declared_metrics(v)
+    elif isinstance(x, (list, tuple)):
+        for v in x:
+            out |= _declared_metrics(v)
+    return out
+
+
+def _age(asof: pd.Timestamp, label_day: pd.Timestamp, step: int) -> int:
+    """Days from the END of the last labelled period to `asof` (Round G6 item 6): a weekly label is the week's START,
+    so on Monday 2026-10-19 the label 05/10 (the week to 11/10) is 8 days old, not 14 — counted from the start it was
+    refused while the 12/10 week was not yet published."""
+    return (asof - (label_day + pd.Timedelta(days=step - 1))).days
+
+
 def yearless_days(labels: list, granularity: str, asof: pd.Timestamp | None = None):
     """[day] for labels served as DD/MM with NO YEAR (weeklyNetworkRevenue "08/06"), or why not.
     The year is INFERRED FROM THE SEQUENCE, which ends at the current week (Jake's probes5): the last
     label gets the latest year that does not put it after today; walking back, the year drops by one
     whenever a label would not fall before the one after it. Accepted only if every step is exactly
-    the declared cadence and the last point is within two weeks of today — otherwise nothing."""
+    the declared cadence and the last period ENDS within two weeks of today — otherwise nothing."""
     asof = (asof or today()).normalize()
     try:
         dm = [tuple(int(x) for x in str(t).strip().split("/")) for t in labels]
@@ -430,7 +454,7 @@ def yearless_days(labels: list, granularity: str, asof: pd.Timestamp | None = No
                 days.insert(0, cand)
         except ValueError:                                  # 29/02 in a year without one
             continue
-        if all((b - a).days == step for a, b in zip(days, days[1:])) and (asof - days[-1]).days < 14:
+        if all((b - a).days == step for a, b in zip(days, days[1:])) and _age(asof, days[-1], step) < 14:
             return days[::order]
     # SERVED OUT OF ORDER (Jake's run on ab3c7fe 2026-10-11: supply-metric weeklyData came as 12/07, 16/08, 09/08, ...
     # 02/08). Each label takes the latest year that does not put it after today; accepted only if, sorted, the days
@@ -443,10 +467,10 @@ def yearless_days(labels: list, granularity: str, asof: pd.Timestamp | None = No
         days = None
     if days:
         srt = sorted(days)
-        if all((b - a).days == step for a, b in zip(srt, srt[1:])) and (asof - srt[-1]).days < 14:
+        if all((b - a).days == step for a, b in zip(srt, srt[1:])) and _age(asof, srt[-1], step) < 14:
             return days
     return (f"no year assignment makes {len(dm)} DD/MM labels {step} days apart and ending within two "
-            f"weeks of {asof.date()} (first {labels[0]}, last {labels[-1]})")
+            f"weeks of {asof.date()}, counted from the last period's end (first {labels[0]}, last {labels[-1]})")
 
 
 def _cadence_ok(pts: list, granularity: str) -> bool:
@@ -647,7 +671,10 @@ class AethirPages:
             html = self._read_page(name, spec, page, day, out)
             if html == "DONE":
                 self._done_pages.add(page)
-                for metric in (m.get("fields") or {}).values():
+                # EVERY SERIES THE PAGE CARRIES IS CURRENT, not only its scalar fields (Round G6 item 0: on the 12:34 run
+                # the arrays read at 06:30 — weekly revenue, compute rewards, monthly revenue — went to the Gap Report
+                # as P6 "no sources.yaml entry" because only `fields` were marked)
+                for metric in sorted(_declared_metrics(m)):
                     out.mark_current(SOURCE, name, metric, f"{metric}: {page} already read today", TIER)
                 continue
             if html is None:
@@ -671,6 +698,10 @@ class AethirPages:
             comp = m.get("components")
             if comp:
                 self._components(name, page, comp, html, out, group=tuple(m.get("current_group") or ()))
+        if self._done_pages and not pages:
+            # every page was read earlier today: the labelled tiles and the figures derived from them stand too
+            for metric in sorted(_declared_metrics({k: spec.get(k) for k in ("labelled", "derived", "series_totals")})):
+                out.mark_current(SOURCE, name, metric, f"{metric}: its pages were read earlier today", TIER)
         resolved = self._labelled(name, spec, pages, out)
         self._derived(name, spec, pages, resolved, out)
         self._cross_checks(name, spec, pages, out)

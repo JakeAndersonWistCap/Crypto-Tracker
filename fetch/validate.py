@@ -612,6 +612,23 @@ def _migration_switch_missing(st: dict, day) -> list:
             missing.append(f"addresses.migration {why}")
         elif str(addrs["migration"]).lower() in seen:
             missing.append(f"addresses.migration repeats addresses.{seen[str(addrs['migration']).lower()]}")
+    # THE UNIFIED AERO ON EVERY LAUNCH CHAIN (Round G6 item 2): optional chain_tokens {chain: address} for the declared
+    # launch chains, and bridge_escrows [{chain, address}] subtracted once — a placeholder, an unknown chain or an escrow
+    # on an undeclared chain is refused like an address
+    launch = set(config.AERODROME_MIGRATION.get("launch_chains") or ())
+    for ch, addr in (st.get("chain_tokens") or {}).items():
+        if str(ch).lower() not in launch:
+            missing.append(f"chain_tokens.{ch} is not a declared launch chain ({', '.join(sorted(launch))})")
+            continue
+        why = _placeholder_address(addr)
+        if why:
+            missing.append(f"chain_tokens.{ch} {why}")
+    for i, esc in enumerate(st.get("bridge_escrows") or ()):
+        if str((esc or {}).get("chain", "")).lower() not in {str(c).lower() for c in (st.get("chain_tokens") or {})}:
+            missing.append(f"bridge_escrows[{i}] is on a chain with no chain_tokens entry")
+        why = _placeholder_address((esc or {}).get("address"))
+        if why:
+            missing.append(f"bridge_escrows[{i}].address {why}")
     # THE EPOCH READ'S TWO FIELDS (Round G 2.10): optional — without them the voter fees / incentives are a named gap —
     # but a placeholder in either is refused like an address (the RUNBOOK template's "0x…" and deploy_block 0)
     fac, dep = st.get("voting_rewards_factory"), st.get("deploy_block")

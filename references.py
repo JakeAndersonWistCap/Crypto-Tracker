@@ -211,6 +211,124 @@ ROUTES: dict[tuple[str, str], tuple] = {
 }
 
 
+
+# ROUND G6 item 5 (Jake's g6_reference_batch.csv, 101 figures read 2026-10-19 + 4 two-chain sums): each mapped to the
+# metric and window that measures the same thing. ('recorded', why) = no metric measures it: shown with the reason,
+# never graded (status N/A BY DESIGN). Tolerances: stocks and cumulative counters 1%, completed-period flows 2%,
+# exact where the source is a contract constant or the very page our route reads.
+G6_ROUTES = {
+    ('Maple', 'g6_revenue_month_2026_09'): ('sum_period', 'revenue_usd', '2026-09-01', '2026-09-30'),
+    ('Maple', 'g6_revenue_month_2026_08'): ('sum_period', 'revenue_usd', '2026-08-01', '2026-08-31'),
+    ('Maple', 'g6_revenue_month_2026_07'): ('sum_period', 'revenue_usd', '2026-07-01', '2026-07-31'),
+    ('Maple', 'g6_buyback_usd_2026_09'): ('sum_period', 'actual_buyback_usd', '2026-09-01', '2026-09-30'),
+    ('Maple', 'g6_buyback_tokens_2026_09'): ('sum_period', 'actual_buyback_tokens', '2026-09-01', '2026-09-30'),
+    ('Maple', 'g6_buyback_usd_2026_08'): ('sum_period', 'actual_buyback_usd', '2026-08-01', '2026-08-31'),
+    ('Maple', 'g6_buyback_tokens_2026_08'): ('sum_period', 'actual_buyback_tokens', '2026-08-01', '2026-08-31'),
+    ('Maple', 'g6_buyback_usd_2026_07'): ('sum_period', 'actual_buyback_usd', '2026-07-01', '2026-07-31'),
+    ('Maple', 'g6_buyback_tokens_2026_07'): ('sum_period', 'actual_buyback_tokens', '2026-07-01', '2026-07-31'),
+    ('Maple', 'g6_revenue_ltm'): ('sum_days', 'revenue_usd', 365),
+    ('Maple', 'g6_treasury_syrup_2026_10_18'): ('last', 'treasury_holding_tokens'),
+    ('Maple', 'g6_stsyrup_total_assets'): ('last', 'locked_tokens'),
+    ('Maple', 'g6_syrup_total_supply_g6'): ('last', 'total_supply'),
+    ('Plume', 'g6_circulating_supply_api'): ('last', 'circulating_supply_first_party'),
+    ('Plume', 'g6_total_supply_api'): ('last', 'total_supply'),
+    ('Plume', 'g6_max_supply_page'): ('last', 'max_supply'),
+    ('Plume', 'g6_circulating_share_website'): ('recorded', "CONFLICT RECORDED (G6-5): plume.org's '57.3% in circulation' (~5.73B) vs supply.plume.org 6,606,142,167 (66.06%) — the supply API stays the measuring point; no metric holds the website share"),
+    ('Plume', 'g6_erc20_total_supply_ethereum'): ('last', 'total_supply'),
+    ('Plume', 'g6_total_staked_diamond'): ('last', 'locked_tokens'),
+    ('Ether.fi', 'g6_ethfi_total_supply'): ('last', 'total_supply'),
+    ('Ether.fi', 'g6_sethfi_vault_ethfi'): ('last', 'locked_tokens_underlying'),
+    ('Ether.fi', 'g6_sethfi_shares'): ('last', 'locked_tokens'),
+    ('Fluid', 'g6_fluid_total_supply'): ('last', 'total_supply'),
+    ('Fluid', 'g6_buyback_usd_cumulative'): ('sum_since', 'actual_buyback_usd', '2025-10-03'),
+    ('Fluid', 'g6_buyback_tokens_cumulative'): ('sum_since', 'actual_buyback_tokens', '2025-10-03'),
+    ('Fluid', 'g6_buyback_avg_price'): ('recorded', 'derived: cumulative $ ÷ cumulative FLUID (rows 24, 25) — no metric of its own; checked through them'),
+    ('Fluid', 'g6_buyback_usd_30d'): ('sum_days', 'actual_buyback_usd', 30),
+    ('Fluid', 'g6_buyback_records_q3_2026'): ('sum_period', 'actual_buyback_usd', '2026-07-01', '2026-09-30'),
+    ('Fluid', 'g6_buyback_spent_eth_panel'): ('recorded', "recorded only: the 'Spent on FLUID Buyback' panel's ETH balance — meaning not stated by Fluid; no metric"),
+    ('Fluid', 'g6_revenue_q4_2025_musd'): ('sum_period', 'revenue_usd', '2025-10-01', '2025-12-31'),
+    ('Morpho', 'g6_max_supply_docs'): ('last', 'max_supply'),
+    ('Morpho', 'g6_total_supply_wrapped'): ('last', 'total_supply'),
+    ('Morpho', 'g6_circulating_supply_tokenops'): ('last', 'circulating_supply_tokenops'),
+    ('Morpho', 'g6_total_supply_tokenops'): ('last', 'total_supply'),
+    ('Morpho', 'g6_merkl_base_campaign_total'): ('sum_period', 'merkl_campaigns_non_ethereum_tokens', '2026-09-21', '2026-10-21'),
+    ('Morpho', 'g6_merkl_arc_campaign'): ('recorded', 'recorded only: Arc campaign is paid on Ethereum (distributionChainId 1) — it lands in the Ethereum claims (merkl_morpho_out), not merkl_campaigns_non_ethereum_tokens'),
+    ('Uniswap', 'g6_uni_total_supply_gross'): ('last', 'total_supply_gross'),
+    ('Uniswap', 'g6_dead_balance'): ('last', 'burn_address_balance'),
+    ('Uniswap', 'g6_retro_burn_100m'): ('on_day', 'one_off_burn_tokens'),
+    ('Uniswap', 'g6_record_day_burn_june'): ('recorded', "recorded only: 'a day in June 2026' — no date to compare a daily row against"),
+    ('GEODNET', 'g6_total_supply_gross_filing'): ('last', 'total_supply_gross'),
+    ('GEODNET', 'g6_burn_polygon_2026_09'): ('recorded', "GEODNET feed (Polygon leg): compared as the two-chain monthly sum (row 'gross_burn_2026_09_feed'); per-chain burn has no metric"),
+    ('GEODNET', 'g6_burn_polygon_usd_2026_09'): ('recorded', 'USD of the Polygon burn: no per-chain $ metric'),
+    ('GEODNET', 'g6_burn_solana_2026_09'): ('recorded', 'GEODNET feed (Solana leg): see the two-chain monthly sum row'),
+    ('GEODNET', 'g6_burn_solana_usd_2026_09'): ('recorded', 'USD of the Solana burn: no per-chain $ metric'),
+    ('GEODNET', 'g6_burn_polygon_2026_08'): ('recorded', 'see the two-chain monthly sum row (2026-08)'),
+    ('GEODNET', 'g6_burn_solana_2026_08'): ('recorded', 'see the two-chain monthly sum row (2026-08)'),
+    ('GEODNET', 'g6_burn_polygon_2026_07'): ('recorded', 'see the two-chain monthly sum row (2026-07)'),
+    ('GEODNET', 'g6_burn_solana_2026_07'): ('recorded', 'see the two-chain monthly sum row (2026-07)'),
+    ('GEODNET', 'g6_issued_polygon_2026_09'): ('recorded', "recorded only: GEODNET's Polygon issuance (2,677,511.95) is not pool_release_tokens — the mining wallets' September outflow is 3,677,511.95 = this + a 1,000,000 transfer that funds Solana rewards (G6-3); the feed's own issuance_feed_polygon_tokens stores the figure"),
+    ('GEODNET', 'g6_issued_solana_2026_09'): ('recorded', "Solana issuance (1,143,717 GEOD in Sep): not read as issued, but NOT MISSED — our (b) line, the two Polygon mining wallets' outflow, equals the feed's Polygon issuance plus a whole-million transfer each month (Sep 1,000,000), which funds Solana rewards ahead of issue (INFERRED: destination not traced). See g6_solana_funding_12m (G6-3)"),
+    ('GEODNET', 'g6_solana_funding_12m'): ('recorded', "recorded only: 22,000,000 GEOD of whole-million transfers out of the Polygon mining wallets Oct-25..Sep-26 vs Solana issued 20,817,755 — the (b) line counts Solana when it is FUNDED, lumpy and ~1.18M ahead, not when issued (G6-3)"),
+    ('Plume', 'g6_reward_rate_diamond'): ('last', 'staking_yield_pct'),
+    ('GEODNET', 'g6_usage_revenue_cumulative'): ('recorded', 'unit not labelled by the feed (presumed USD) — not compared'),
+    ('GEODNET', 'g6_base_stations'): ('last', 'supply_units'),
+    ('GEODNET', 'g6_mining_wallet_outflow_day'): ('recorded', 'a part-day window (2026-10-18 15:35..10-19 10:20 UTC) — not comparable with a daily row'),
+    ('Aethir', 'g6_network_revenue_2026_09'): ('on_day', 'customer_revenue_monthly_usd'),
+    ('Aethir', 'g6_network_revenue_2026_08'): ('on_day', 'customer_revenue_monthly_usd'),
+    ('Aethir', 'g6_network_revenue_2026_07'): ('on_day', 'customer_revenue_monthly_usd'),
+    ('Aethir', 'g6_network_revenue_cumulative'): ('recorded', "recorded, not graded: Aethir's counter is every month since June 2024 to date (194,648,687 on 10-19); ours, customer_revenue_cumulative_usd, is the SUM OF THE COMPLETE MONTHS the page lists, PARTIAL by its own source — June-July 2024 not in the list, October not complete (191,935,463; −1.39%). Not like-for-like (G6-5)"),
+    ('Aethir', 'g6_arr_dashboard'): ('last', 'arr_tile_usd'),
+    ('Aethir', 'g6_compute_purchases_cumulative'): ('last', 'compute_purchases_cumulative_tokens'),
+    ('Aethir', 'g6_compute_hours_cumulative'): ('last', 'compute_hours_cumulative'),
+    ('Aethir', 'g6_compute_hours_last_week'): ('last', 'compute_hours_last_week'),
+    ('Aethir', 'g6_rewards_distributed_cumulative'): ('last', 'ecosystem_rewards_cumulative_tokens'),
+    ('Aethir', 'g6_circulating_dashboard_g6'): ('last', 'circulating_supply_first_party'),
+    ('Aethir', 'g6_staked_veath'): ('last', 'locked_tokens'),
+    ('Aethir', 'g6_locked_cloud_hosts'): ('last', 'locked_tokens_idc'),
+    ('Aethir', 'g6_staked_ai_sep'): ('on_day', 'locked_tokens_ai'),
+    ('Aethir', 'g6_staked_gaming_sep'): ('on_day', 'locked_tokens_gaming'),
+    ('Aethir', 'g6_ath_total_supply'): ('last', 'total_supply'),
+    ('Pendle', 'g6_total_pendle_staked_api'): ('recorded', "Pendle's totalPendleStaked counts sPENDLE PLUS the deprecated vePENDLE (ours: locked_tokens 31.13M sPENDLE incl. the unstake queue + locked_tokens_legacy_vependle 63.43M, never summed — Jake's rule); compared through rows 71-72"),
+    ('Pendle', 'g6_pendle_in_spendle'): ('last', 'locked_tokens_shares'),
+    ('Pendle', 'g6_virtual_spendle'): ('last', 'locked_tokens_virtual'),
+    ('Pendle', 'g6_epoch_revenue_0908'): ('recorded', "unit not labelled by Pendle's API — not compared"),
+    ('Pendle', 'g6_epoch_fees_0908'): ('recorded', 'unit not labelled — not compared'),
+    ('Pendle', 'g6_epoch_buyback_0908'): ('recorded', 'unit not labelled (buybackAmounts) — not compared'),
+    ('Pendle', 'g6_epoch_revenue_0922'): ('recorded', 'unit not labelled — not compared'),
+    ('Pendle', 'g6_spendle_alltime_revenue'): ('recorded', 'unit not labelled — not compared'),
+    ('Pendle', 'g6_pendle_total_supply_g6'): ('last', 'total_supply'),
+    ('Near', 'g6_total_supply_2026_09_30'): ('on_day', 'total_supply'),
+    ('Near', 'g6_total_supply_2026_06_30'): ('on_day', 'total_supply'),
+    ('Near', 'g6_total_supply_live'): ('last', 'total_supply'),
+    ('Near', 'g6_circulating_nearblocks_stale'): ('recorded', 'NOT USED (G6-3): NearBlocks /v1/stats circulating_supply has not moved since June — stale'),
+    ('Near', 'g6_max_inflation_rate'): ('recorded', 'protocol parameter, recorded: max_inflation_rate [1,40] since block 170,351,519 (declared step, G6-3)'),
+    ('Chainlink', 'g6_reserve_holdings_2026_10_19'): ('last', 'buyback_fund_balance'),
+    ('Chainlink', 'g6_link_total_supply_g6'): ('last', 'total_supply'),
+    ('Hyperliquid', 'g6_hype_max_supply'): ('last', 'max_supply'),
+    ('Hyperliquid', 'g6_hype_total_supply_api'): ('last', 'total_supply_gross'),
+    ('Hyperliquid', 'g6_hype_circulating_api'): ('last', 'circulating_supply_tokendetails'),
+    ('Hyperliquid', 'g6_assistance_fund_hype'): ('recorded', "recorded: the Assistance Fund balance is inside the API's own total; ours is total_supply_gross net of it (TOTAL_SUPPLY_NET)"),
+    ('Sky', 'g6_sky_cumulative_buyback_g6'): ('last', 'sky_cumulative_buyback_ba'),
+    ('Sky', 'g6_usds_spent_cumulative'): ('cumulative', 'buyback_spending_usd_ba'),
+    ('Sky', 'g6_sky_cumulative_buyback_0930'): ('on_day', 'sky_cumulative_buyback_ba'),
+    ('Sky', 'g6_sky_cumulative_buyback_0630'): ('on_day', 'sky_cumulative_buyback_ba'),
+    ('Sky', 'g6_staked_sky'): ('last', 'locked_tokens'),
+    ('Sky', 'g6_sky_treasury'): ('last', 'treasury_holding_tokens'),
+    ('Sky', 'g6_sky_total_supply_g6'): ('last', 'total_supply_protocol'),
+    ('Aerodrome', 'g6_aero_total_supply_g6'): ('last', 'total_supply'),
+    ('Aerodrome', 'g6_ve_supply_g6'): ('last', 've_locked_supply_tokens'),
+    ('Aerodrome', 'g6_ve_balance_g6'): ('last', 'locked_tokens'),
+    ('Ethereum', 'g6_eth_supply_2026_09_30'): ('on_day', 'total_supply'),
+    ('Ethereum', 'g6_eth_supply_2026_06_30'): ('on_day', 'total_supply'),
+    ('Ethereum', 'g6_eth_burn_since_london'): ('last', 'burn_cumulative_tokens'),
+    ('Ethereum', 'g6_eth_burn_since_merge'): ('recorded', 'recorded: ours is burn since London (row 102); no since-Merge metric'),
+    ('GEODNET', 'g6_gross_burn_2026_09_feed'): ('sum_period', 'gross_burn_tokens', '2026-09-01', '2026-09-30'),
+    ('GEODNET', 'g6_gross_burn_2026_08_feed'): ('sum_period', 'gross_burn_tokens', '2026-08-01', '2026-08-31'),
+    ('GEODNET', 'g6_gross_burn_2026_07_feed'): ('sum_period', 'gross_burn_tokens', '2026-07-01', '2026-07-31'),
+}
+ROUTES.update({(PROJECT_ALIASES.get(p, p), m): r for (p, m), r in G6_ROUTES.items()})
+
+
 def _series(groups: dict, project: str, metric: str) -> pd.DataFrame | None:
     g = groups.get((project, metric))
     if g is None or g.empty:
@@ -300,6 +418,12 @@ def _our_value(route: tuple, groups: dict, project: str, at: pd.Timestamp, ref: 
                 f"basis", "")
     if kind == "latent":
         import config                                       # noqa: PLC0415
+        live = _series(groups, route[1], "latent_supply_tokens")          # G6 item 3: the live read wins
+        if live is not None and not live.empty:
+            lv = live[live.date <= at + pd.Timedelta(days=SAMPLE_LAG_DAYS)]
+            if not lv.empty:
+                return (float(lv.value.iloc[-1]), f"latent_supply_tokens {lv.date.iloc[-1]:%Y-%m-%d} "
+                                                  f"({lv.source.iloc[-1]})", "")
         e = config.LATENT_SUPPLY.get(route[1])
         if not e:
             return None, "config.LATENT_SUPPLY", "no latent-supply reading on file"
@@ -395,6 +519,10 @@ def _our_value(route: tuple, groups: dict, project: str, at: pd.Timestamp, ref: 
         s1 = pd.Timestamp(route[3]) if kind == "sum_period" else at + pd.Timedelta(days=SAMPLE_LAG_DAYS)
         if first > s0 + pd.Timedelta(days=1):
             return None, metric, f"{metric} starts {first:%Y-%m-%d}, after {s0:%Y-%m-%d}"
+        # A PERIOD OUR SERIES HAS NOT REACHED IS NOT A ZERO (G6, 2026-10-19: Maple's September buyback read "ours 0.00"
+        # BROKEN on a store whose monthly rows end in August — the month was published later)
+        if kind == "sum_period" and s.date.max() < s1:
+            return None, metric, f"{metric} ends {s.date.max():%Y-%m-%d}, before the period's end {s1:%Y-%m-%d}"
         x = s[(s.date >= s0) & (s.date <= s1)]
         return float(x.value.sum()), f"Σ {metric} {s0:%Y-%m-%d}..{s1:%Y-%m-%d}", ""
     if kind == "cumulative":
@@ -467,6 +595,11 @@ def check(groups: dict, headline=None, projects: set[str] | None = None, rows: l
             out.append(base | {"ours": None, "status": "NOT WIRED", "route": "",
                                "detail": "NOT WIRED — reference check: no route maps this reference to a stored series"})
             continue
+        if route[0] == "recorded":
+            # G6 item 5: a published figure no metric measures — on the sheet with its reason, never graded
+            out.append(base | {"ours": None, "status": "N/A BY DESIGN", "route": "recorded",
+                               "detail": f"N/A BY DESIGN — recorded, not compared: {route[1]}"})
+            continue
         if route[0] == "wallets":
             ok, detail = _wallet_check(project, route[1], ref_txt)
             status = ("NOT WIRED" if ok is None else ("VERIFIED" if ok and rl == "primary" else
@@ -511,7 +644,7 @@ def check(groups: dict, headline=None, projects: set[str] | None = None, rows: l
 
 
 # route kinds that read config, not stored rows: no data date applies
-CONFIG_ROUTES = ("latent", "dat_file", "issuer_rate", "fee_tier_top", "not_wired", "block_read")
+CONFIG_ROUTES = ("latent", "dat_file", "issuer_rate", "fee_tier_top", "not_wired", "block_read", "recorded")
 
 
 def _ref_date(as_of: str) -> pd.Timestamp:
@@ -678,6 +811,29 @@ def _eth_burn_cause(groups, project, at, ours, ref) -> str:
             f"day's price, an estimate, and carries what difference remains")
 
 
+def _fluid_q4_revenue_cause(groups, project, at, ours, ref) -> str:
+    return (f"BASIS DIFFERS, NOT EXPLAINED: the reference is Fluid's OWN revenue (Q4 2025 update PDF, 3.19M; "
+            f"revenue.instadapp.io), ours is DefiLlama's revenue_usd summed over 2025-10-01..12-31 ({ours:,.0f}). The PDF "
+            f"says DefiLlama is MISSING Jupiter Lend, which would make DefiLlama LOWER — ours is {ours / ref - 1:+.1%}. "
+            f"Settles it: revenue.instadapp.io's Q4 2025 by deployment against DefiLlama's fluid revenue by chain (G6-5)")
+
+
+def _geodnet_feed_month_cause(groups, project, at, ours, ref) -> str:
+    """GEODNET's feed dates a burn by its transaction; our daily burn is the change between once-a-day balance reads, so
+    a burn read the day after it happened moves across a month boundary — the neighbouring months offset."""
+    g = groups.get((project, "gross_burn_tokens"))
+    txt = ""
+    if g is not None and not g.empty:
+        s = g.assign(date=pd.to_datetime(g["date"])).set_index("date")["value"].astype(float)
+        m = s.groupby(s.index.to_period("M")).sum()
+        p = pd.Timestamp(at).to_period("M")
+        txt = "; ours by month " + ", ".join(f"{q}: {m[q]:,.0f}" for q in (p - 1, p, p + 1) if q in m.index)
+    return ("MONTH BOUNDARY, NOT A MISSING BURN: the feed dates each burn by its transaction; our gross_burn_tokens is the "
+            "daily change between once-a-day balance reads (chain:sum(polygon:burn_polygon+solana:…):delta), so a burn "
+            "read the next day lands in the next month. Over Dec-25..Sep-26 the monthly differences (+85,000 / −120,000 / "
+            "+95,000 / −50,000 / +85,000 / 0 / −25,000 …) offset to −63,000 of 42M (−0.15%)" + txt)
+
+
 CAUSES = {
     ("Ethereum", "burn_30d"): _eth_burn_cause,
     ("Maple", "dao_safe_balance"): _maple_dao_cause,
@@ -687,6 +843,10 @@ CAUSES = {
     ("Sky", "net_revenue_sep_2026"): _sky_revenue_cause,
     ("Ethereum", "supply"): _eth_supply_cause,
     ("Near", "intents_cumulative_volume"): _near_intents_cause,
+    ("Fluid", "g6_revenue_q4_2025_musd"): _fluid_q4_revenue_cause,
+    ("GEODNET", "g6_gross_burn_2026_07_feed"): _geodnet_feed_month_cause,
+    ("GEODNET", "g6_gross_burn_2026_08_feed"): _geodnet_feed_month_cause,
+    ("GEODNET", "g6_gross_burn_2026_09_feed"): _geodnet_feed_month_cause,
 }
 
 

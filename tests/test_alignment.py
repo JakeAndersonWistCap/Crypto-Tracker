@@ -31,7 +31,10 @@ DUMPS = ("Aerodrome", "Chainlink", "Ethereum", "Maple", "Pendle", "Plume",
 # predates orphan_cleanup.sql CQ (Etherscan BurntFees rows a day late, 2026-09-29 counted twice) — BROKEN against the
 # measured burn until CQ runs on the store and the dump is refreshed; the cause names CQ (test_fix_round_3 runs CQ on
 # this dump and the row verifies).
-KNOWN_REFERENCE_BROKEN: set = {("Ethereum", "References", "burn_30d")}
+KNOWN_REFERENCE_BROKEN: set = {("Ethereum", "References", "burn_30d"),
+                               # G6-5 (2026-10-19): both stay BROKEN, each with its Cause — none is loosened
+                               ("Fluid", "References", "g6_revenue_q4_2025_musd"),
+                               ("GEODNET", "References", "g6_gross_burn_2026_07_feed")}
 TABS = ("Master", "A1 Infrastructure", "A2 Coordination", "A3 Revenue Buyback", "A4 Permanent Burn", "CP Comparability")
 
 

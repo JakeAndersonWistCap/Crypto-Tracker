@@ -61,6 +61,11 @@ from .xref import CrossRefs
 from .staked_eth import StakedEth
 from .treasury import TreasuryBills
 from .sky_msc import SkyMsc
+from .fluid_buybacks import FluidBuybacks
+from .geodnet_feed import GeodnetFeed
+from .pendle_latent import PendleLatent
+from .wm_supply import WmSupply
+from .near_issuance import NearIssuance
 from .sky_ssr import SkySSR
 from .business import Business
 from .sky_accounting import SkyAccounting
@@ -165,6 +170,12 @@ TIER_ORDER = [
     ("sky_accounting", 3, lambda ctx: SkyAccounting()),
     # Sky Net Revenue as Soter Labs' monthly settlement report states it — the monthly measuring point (G5 D1).
     ("sky_msc", 3, lambda ctx: SkyMsc()),
+    # Fluid's own buyback list (api.fluid.io; G6 item 5) and GEODNET's own data feed (geodnet.com/geod; G6 item 3).
+    ("fluid_buybacks", 1, lambda ctx: FluidBuybacks()),
+    ("geodnet_feed", 3, lambda ctx: GeodnetFeed()),
+    ("pendle_latent", 2, lambda ctx: PendleLatent()),
+    ("wm_supply", 2, lambda ctx: WmSupply()),
+    ("near_issuance", 1, lambda ctx: NearIssuance(deadline_s=100.0)),
     # Sky's MKR backing (non-issuer MKR is circulating) and the reward vest in force (Jake 2026-10-12, decision 2).
     ("sky_mkr", 2, lambda ctx: SkyMkr(stored_long=ctx.get("stored_long"))),
     # Aethir's own dashboard, from the Next.js server-rendered payload (Jake's probes2, 2026-09-30).
@@ -183,10 +194,11 @@ TIER_ORDER = [
 
 
 def _l2_tiers() -> list[str]:
-    """One tier per L2 chain: every chain a scan declares, and every chain a probed scan can be wired on (an unwired
-    chain's tier finds nothing to do and returns at once)."""
+    """One tier per project and chain (G3 item 1, G6 item 0a): every tier a scan declares, and every tier a probed scan
+    can be wired on (an unwired one finds nothing to do and returns at once)."""
     import config                                                    # noqa: PLC0415
-    return sorted(set(config.l2_scan_tiers()) | {config.l2_tier(c[2]) for c in config.EXPLORER_PROBED_SCANS})
+    return sorted(set(config.explorer_scan_tiers())
+                  | {config.scan_tier(c[1], {"own_tier": config.l2_tier(c[2])}) for c in config.EXPLORER_PROBED_SCANS})
 
 
 _at = next(i for i, t in enumerate(TIER_ORDER) if t[0] == "explorer_gauge") + 1
@@ -1910,7 +1922,7 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
 # with a third window of slack (nearblocks_daily_calls(), tested).
 TIER_BUDGET_S = {
     "schedule:config": 15, "defillama": 150, "defillama_tvl": 150, "morpho_api": 60, "growthepie": 60,
-    "nearblocks": 180, "coingecko": 240, "price_history": 120, "hypercore_info": 60, "chainlink_fees": 180, "xref": 90, "validatorqueue": 30, "treasury_bills": 60, "sky_ssr": 120, "sky_msc": 60, "business": 900, "share_vault": 60,
+    "nearblocks": 180, "coingecko": 240, "price_history": 120, "hypercore_info": 60, "chainlink_fees": 180, "xref": 90, "validatorqueue": 30, "treasury_bills": 60, "sky_ssr": 120, "sky_msc": 60, "fluid_buybacks": 60, "geodnet_feed": 60, "pendle_latent": 60, "wm_supply": 60, "near_issuance": 120, "business": 900, "share_vault": 60,
     "chain": 240, "tron_node": 60, "near_rpc": 90, "explorer": 300, "balance_flow": 150, "maple_page": 60,
     "explorer_gauge": 300,
     # the L2 chain tiers (explorer_l2:<chain>, G3 item 1) take config.L2_TIER_BUDGET_S, set below
@@ -1934,7 +1946,7 @@ TIER_BUDGET_S = {
 DEFAULT_BUDGET_S = 120
 for _t in _l2_tiers():
     import config as _config                                        # noqa: E402
-    TIER_BUDGET_S[_t] = _config.l2_tier_budget(_t)
+    TIER_BUDGET_S[_t] = _config.explorer_tier_budget(_t)
 
 
 def nearblocks_daily_calls() -> int:

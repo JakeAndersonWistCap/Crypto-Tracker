@@ -70,7 +70,7 @@ def _groups(project: str, extra_rows: list | None = None) -> dict:
 def test_the_reference_table_loads_and_grades():
     import references as rf
     rows = rf.load()
-    assert len(rows) == 86 and {   # Round G: +3 Aerodrome (2.8), +16 phase 3 headline reads
+    assert len(rows) == 195 and {   # Round G: +3 Aerodrome (2.8), +16 phase 3 headline reads; G6: +109 g6_* rows
           # round 3 B7: + the end-Q1 on-chain Chainlink Reserve row; E9: + the blended rate; G5 D1: + Sky Jul, Aug
         "project", "metric", "value", "tolerance", "source_type"} <= set(rows[0])
     assert rf.tolerance("0.5%", "1") == ("rel", 0.005)

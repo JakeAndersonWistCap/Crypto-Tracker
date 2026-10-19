@@ -12479,16 +12479,19 @@ def spec_coverage():
         if m:
             have[(r["Tab"], r["Project"])].add(f"outflow_{m.group(1)}")
     missing = defaultdict(list)
+    by_design = defaultdict(list)
     for key, c in _spec.concepts().items():
         for t in c.get("tabs") or ():
             tab = _TAB_OF.get(t, t)
             for proj in sorted(on_tab.get(tab, ())):
                 if proj in ("(all)", "") or key in have[(tab, proj)]:
                     continue
-                missing[(key, tab)].append(proj)
+                (by_design if (key, tab) in NOT_BUILT_BY_DESIGN else missing)[(key, tab)].append(proj)
     print(f"  (1) SPEC formulas with no column for a project on their tab: {len(missing)} formula x tab pair(s)")
     for (key, tab), projs in sorted(missing.items()):
         print(f"      {key:<34} {tab:<22} {len(projs):2d}: {', '.join(projs)[:150]}")
+    for (key, tab), projs in sorted(by_design.items()):
+        print(f"      NOT BUILT BY DESIGN  {key} on {tab} ({len(projs)} project(s)): {NOT_BUILT_BY_DESIGN[(key, tab)]}")
     nocon = [r for r in rows if str(r.get("MATCHES-SPEC", "")).startswith("no — no SPEC concept")]
     by_col = defaultdict(set)
     for r in nocon:
@@ -12503,7 +12506,7 @@ def spec_coverage():
             (a, b, __import__("pandas").Timestamp(c), __import__("pandas").Timestamp(d))
             for a, b, c, d in con.execute("SELECT project, metric, MIN(date), MAX(date) FROM metrics GROUP BY 1, 2"))}
     cs = _spec.concepts()
-    short = []
+    short, na, lacking = [], [], []
     for r in rows:
         if r["Tab"] != "Trajectory":
             continue
@@ -12514,16 +12517,52 @@ def spec_coverage():
         if depth >= 5:
             continue
         ins = (cs.get(r["Key"]) or {}).get("inputs") or ()
-        longest = max((span.get((r["Project"], m)).days for m in ins if span.get((r["Project"], m)) is not None),
-                      default=None)
-        if longest is not None and longest >= 450:
-            short.append((r["Project"], r["Column"], depth, longest))
-    print(f"  (3) Trajectory columns under 5 quarters whose input series spans >= 450 days: {len(short)}")
-    for proj, col, depth, longest in sorted(short):
-        print(f"      {proj:<14} {col[:60]:<60} {depth} quarter(s); input spans {longest} days")
+        spans = {m: span.get((r["Project"], m)) for m in ins}
+        stored = {m: d.days for m, d in spans.items() if d is not None}
+        longest = max(stored.values(), default=None)
+        if longest is None or longest < 450:
+            continue
+        cls, why = classify_short_history(r, stored, [m for m in ins if spans.get(m) is None])
+        (na if cls == "N/A BY DESIGN" else lacking if cls == "GENUINELY LACKS HISTORY" else short).append(
+            (r["Project"], r["Column"], depth, longest, min(stored.values()), cls, why))
+    print(f"  (3) Trajectory columns under 5 quarters whose longest input spans >= 450 days: "
+          f"{len(short) + len(na) + len(lacking)} — {len(short)} computable or blocked (each with its reason below), "
+          f"{len(lacking)} genuinely lacking history, {len(na)} N/A by design (no quantity to trend)")
+    for proj, col, depth, longest, shortest, cls, why in sorted(short) + sorted(lacking):
+        print(f"      {proj:<14} {col[:52]:<52} {depth}q; inputs span {shortest}..{longest} d — {cls}: {why[:160]}")
+    for proj, col, depth, *_r in sorted(na):
+        print(f"      {proj:<14} {col[:52]:<52} N/A BY DESIGN")
     if not span:
         print("      (no metrics.db here: (3) needs the store)")
     return 0
+
+
+# G6 item 8: a SPEC concept left off a tab on purpose — listed apart, never as missing
+NOT_BUILT_BY_DESIGN = {
+    ("tvl_native", "CP Comparability"): "SPEC §10 — chains' TVL in native units would restate price, not deposits "
+                                        "(the per-token breakdown is paid); Ether.fi / Sky native units are on A3",
+}
+
+
+def classify_short_history(row: dict, stored: dict, never: list) -> tuple[str, str]:
+    """ROUND G6 item 9: why a Trajectory row has fewer than 5 quarters although an input spans 450+ days — one of
+    N/A BY DESIGN · INPUT NEVER STORED · SPLIT WITH NO HISTORICAL DATES · READ-TIME VIEW ONLY · COVERAGE BLOCKED ·
+    BUILDER NOT WIRED · GENUINELY LACKS HISTORY (the shortest needed input is under 450 days), with the evidence."""
+    why = str(row.get("Reason / route / error") or "")
+    low = why.lower()
+    if row.get("Status") == "N/A BY DESIGN" or "does not read a trailing window" in low:
+        return "N/A BY DESIGN", why[:160]
+    if never:
+        return "INPUT NEVER STORED", f"{', '.join(never)} has no stored rows (the cell needs it)"
+    if "split" in low and ("as at this" in low or "the split that applied" in str(row.get("Column", "")).lower()):
+        return "SPLIT WITH NO HISTORICAL DATES", why[:160]
+    if "blocked" in low or "unequal coverage" in low or "coverage gap" in low:
+        return "COVERAGE BLOCKED", why[:160]
+    if "read-time view" in low:
+        return "READ-TIME VIEW ONLY", why[:160]
+    if min(stored.values(), default=0) < 450 or "forward-only" in low or "source-limited" in low:
+        return "GENUINELY LACKS HISTORY", why[:160] or f"shortest input spans {min(stored.values(), default=0)} days"
+    return "BUILDER NOT WIRED", why[:160] or "Q0 has a value; the shifted quarters return none"
 
 
 def gap_routes():

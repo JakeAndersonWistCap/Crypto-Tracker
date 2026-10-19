@@ -920,6 +920,7 @@ class Http:
             try:
                 t0 = time.monotonic()
                 _alchemy_usage.record(url, _alchemy_usage.method_of(json_body) or verb)
+                _alchemy_usage.pace(url, _alchemy_usage.method_of(json_body) or verb)      # G6 0c: 300 CU/s, run-wide
                 _HTTP_RETRIES.on = self.retries > 0     # this loop retries connect errors; the send layer need not
                 try:
                     r = (self.s.post(url, json=json_body or {}, headers=headers, timeout=timeout)

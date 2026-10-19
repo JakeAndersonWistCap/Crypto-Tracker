@@ -174,7 +174,7 @@ def test_g4_1e_with_blockscout_and_katana_blocked_every_other_series_lands(local
                         "explorer", p["name"], "stub", 2)
         projects = [{**morpho, "log_scans": [katana, base_spec]}, {**pendle, "log_scans": [op]}]
         todo = [("explorer", 2, lambda ctx: LogScan(own_tier="explorer", explorer=ExplorerLogs())),
-                (config.l2_tier("katana"), 2, lambda ctx: LogScan(own_tier=config.l2_tier("katana"))),
+                (katana["own_tier"], 2, lambda ctx: LogScan(own_tier=katana["own_tier"])),   # G6 0a: @Morpho
                 (config.l2_tier("base"), 2, lambda ctx: BaseScan(own_tier=config.l2_tier("base")))]
         t0 = time.monotonic()
         results = fetch._dispatch(todo, projects, None, {})
@@ -185,7 +185,7 @@ def test_g4_1e_with_blockscout_and_katana_blocked_every_other_series_lands(local
         ex = [e.message for e in by["explorer"][0].log if e.status == "failed"]
         src = [m for m in ex if m.startswith("SOURCE STALLED THIS RUN: 127.0.0.1")]
         assert len(src) == 1 and "Pendle/emissions_tokens_gauge_optimism" in src[0], ex
-        kat = [e.message for e in by[config.l2_tier("katana")][0].log if e.status == "failed"]
+        kat = [e.message for e in by[katana["own_tier"]][0].log if e.status == "failed"]
         assert any(m.startswith("CHAIN STALLED THIS RUN: katana") and "Morpho/emissions_tokens_claims_katana" in m
                    for m in kat), kat
     finally:

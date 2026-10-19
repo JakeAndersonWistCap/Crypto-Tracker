@@ -129,7 +129,7 @@ COLUMN_MAP: tuple[tuple[str, str, str], ...] = (
     ("*", "Net mint Q0", "net_issuance"), ("*", "Self-reported", "net_issuance"), ("*", "Derived net supply", "net_issuance"),
     ("*", "Cross-check: Δ implied circulating", "cross_check"),
     ("*", "SUPPLY TRAJECTORY", "supply_trajectory"), ("*", "PUBLISHED UNLOCK SCHEDULE", "unlocks"),
-    ("*", "UNLOCK DILUTION", "unlocks"), ("*", "Unlock dilution", "unlocks"), ("*", "TOTAL DILUTION", "total_dilution"),
+    ("*", "UNLOCK DILUTION", "unlocks"), ("*", "Unlocks Q0", "unlocks"), ("*", "Unlock dilution", "unlocks"), ("*", "TOTAL DILUTION", "total_dilution"),
     ("*", "Emissions to suppliers", "emissions"), ("*", "  Emissions", "emissions"), ("*", "  of which", "emissions"),
     ("*", "Emissions", "emissions"), ("*", "Dilution (a)", "outflow_a"), ("*", "Dilution (b)", "outflow_b"),
     ("*", "Dilution (c)", "outflow_c"), ("*", "Dilution (d)", "outflow_d"), ("*", "Dilution (e)", "outflow_e"),

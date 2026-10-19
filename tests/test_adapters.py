@@ -7911,7 +7911,8 @@ def test_world_mobile_sums_four_evm_deployments_and_names_every_component():
     contracts = wm["contracts"]
     # 2026-09-29: Ethereum DEPRECATED from 2026-09-25 (kept, date-bounded); Solana ADDED.
     assert set(contracts) == {"token", "token_arbitrum", "token_bsc", "token_base", "token_solana"}
-    assert contracts["token"]["deprecated_from"] == "2026-09-25"
+    # G6 (Jake 2026-10-19): not read from the exploit day, 2026-09-20 (was the deprecation, 2026-09-25)
+    assert contracts["token"]["deprecated_from"] == "2026-09-20"
     assert contracts["token_solana"]["address"] == "WMTXyYKUMTG3VuZA5beXuHVRLpyTwwaoP7h2i8YpuRH"
     assert contracts["token_solana"]["kind"] == "spl_mint" and contracts["token_solana"]["required_component"]
     assert contracts["token"]["address"] == contracts["token_arbitrum"]["address"] \
@@ -7964,7 +7965,7 @@ def test_world_mobile_sums_four_evm_deployments_and_names_every_component():
     from fetch.base import _measuring_point
     assert _measuring_point(src) == config.WMTX_SUM_POINT_AFTER, src
     detail = " ".join(e.message for e in out.log if e.status == "ok")
-    assert "4 components" in detail and "DEPRECATED from 2026-09-25" in detail, detail
+    assert "4 components" in detail and "DEPRECATED from 2026-09-20" in detail, detail     # G6: the exploit day
     # THE COMPOSITION CHANGE IS A DECLARED HANDOVER, so the stock is not blanked.
     import build_workbook as bw
     pts = (config.WMTX_SUM_POINT_BEFORE, config.WMTX_SUM_POINT_AFTER)
@@ -13289,8 +13290,10 @@ def test_the_research_round_records_answers_with_sources_and_never_wires_an_unve
     assert "not extended" in b["why"] and b["source_url"].startswith("https://")
     assert not any(c.get("kind") == "ve_total_supply" for c in config.PROJECT_BY_NAME["GEODNET"]["contracts"].values())
     # 4d — the contract EXISTS and is a Cardano Plutus validator, which is the answer.
-    b = config.PROJECT_BY_NAME["World Mobile"]["locked_tokens_blocked"]
-    assert "Cardano Plutus" in b["status"] and "wmt-staking-plutus-smart-contract" in b["source_url"]
+    # G6: resolved (World Mobile Locked Staking, Base + Cardano); the record of how it was found is kept
+    b = config.PROJECT_BY_NAME["World Mobile"]["locked_tokens_resolved"]
+    assert "Cardano Plutus" in b["why"] and "wmt-staking-plutus-smart-contract" in b["source_url"]
+    assert b["status"].startswith("RESOLVED 2026-10-19")
 
 
 def test_the_small_items_landed_as_specified_or_with_the_reason_they_did_not():
@@ -14131,8 +14134,9 @@ def test_answered_rows_stay_listed_and_leave_the_open_count(tmp_path):
     assert by_key[("Maple", "actual_buyback_tokens")]["priority_label"] != "P5 answered"
     # the blocked record stays as the reason the contract is unreadable; the FIGURE now comes by hand
     wm = config.PROJECT_BY_NAME["World Mobile"]
-    assert wm["locked_tokens_blocked"]["answered"] is True and "manual_route" in wm["locked_tokens_blocked"]
-    assert "locked_tokens" in wm["manual_quarterly"] and ("World Mobile", "locked_tokens") not in by_key
+    # G6 (2026-10-19): the lock is READ now (fetch/wm_supply.py) — no longer blocked, no longer by hand
+    assert "locked_tokens_blocked" not in wm and wm["locked_tokens_resolved"]["answered"] is True
+    assert "locked_tokens" not in wm["manual_quarterly"]
     # gap_count: an old baseline's "P5 by design" is read as answered and removed from its total
     old = {"total": 55, "projects": 16, "by_priority": {"P5 by design": 9, "P6 uncovered": 46}, "by_metric": {}}
     b = gap_count._normalise(old)
@@ -14705,7 +14709,9 @@ def test_valuation_config_chainlink_manual_routes_and_the_two_yields_stay_apart(
     assert comp["core"] == "fees_usd" and "customer_revenue_ccip_legacy_usd" in comp["plus"]
     assert "fee aggregator" in config.metric_label("Chainlink", "customer_revenue_usd")
     assert config.not_applicable_reason("Chainlink", "utilisation_pct")
-    assert "locked_tokens" in config.PROJECT_BY_NAME["World Mobile"]["manual_quarterly"]
+    # G6 (2026-10-19): World Mobile's lock is READ (Locked Staking, Base + Cardano); the rest stays by hand
+    assert "locked_tokens" not in config.PROJECT_BY_NAME["World Mobile"]["manual_quarterly"]
+    assert "supply_units" in config.PROJECT_BY_NAME["World Mobile"]["manual_quarterly"]
     # SETTLEMENT VOLUME (2026-09-30): Artemis's daily series from CSV exports replaces The Block's
     # manual quarterly figure — no manual template, and Plume's old closure went with The Block
     assert "settlement_volume_annual_usd" not in config.METRICS
@@ -15615,20 +15621,21 @@ def test_declared_or_first_party_issuance_is_primary_in_every_consumer():
                             review=pd.DataFrame()).set_index(["project", "metric"])
 
     supply = 1_288_000_000.0
-    # (a) NEAR, derived consistent with declared over its covered days -> declared shown
+    # (a) NEAR (G6, Jake 2026-10-19: MEASURED primary): the epoch mint where read, the block-header derivation on the
+    #     other days, one row a day, the epoch read winning a shared day
     base = rows("Near", "total_supply", supply, "near_rpc")
-    near_obs = rows("Near", "gross_issuance_tokens", supply * 0.025 / 365,
-                    "derived:d_total_supply_protocol+burn",
-                    dates=days[-3:])
-    out = agg(base + near_obs)
+    daily = supply * 0.025 / 365
+    near_hist = rows("Near", "gross_issuance_tokens", daily, "derived:d_total_supply_protocol+burn")
+    near_epoch = rows("Near", "gross_issuance_tokens", 2 * daily, "near_issuance:near_rpc:epoch_mint[3 epochs]",
+                      dates=days[-3:])
+    out = agg(base + near_hist + near_epoch)
     r = out.loc[("Near", "gross_issuance_tokens")]
     assert r["status"] not in bw.WITHHELD_STATUSES, r["note"]
-    assert abs(r["q0"] - supply * 0.025 / 365 * 89) / r["q0"] < 1e-9, "declared, every day of Q0"
-    # (b) NEAR derived 30x low over a full window -> BLOCKED with both figures
-    low = rows("Near", "gross_issuance_tokens", supply * 0.025 / 365 / 30,
-               "derived:d_total_supply_protocol+burn")
+    assert abs(r["q0"] - daily * (89 + 3)) / r["q0"] < 1e-9, "86 derived days + 3 epoch days at twice the rate"
+    # (b) NEAR measured 30x below the declared 2.5% x total supply -> BLOCKED with both figures (the declared guard)
+    low = rows("Near", "gross_issuance_tokens", daily / 30, "near_issuance:near_rpc:epoch_mint[3 epochs]")
     r = agg(base + low).loc[("Near", "gross_issuance_tokens")]
-    assert r["status"] == "blocked" and "declared 32,200,000 vs observed 1,073,333" in r["note"], r["note"]
+    assert r["status"] == "blocked" and "measured 1,073,333 vs declared 32,200,000" in r["note"], r["note"]
     # (c) Ethereum: CoinGecko-derived rows only -> BLOCKED waiting for Etherscan (A9, 2026-09-28:
     #     first-party is now d(total_supply_protocol) + d(BurntFees)); first-party -> shown
     eth_d = rows("Ethereum", "gross_issuance_tokens", 101.2, "derived:d_supply+burn")
@@ -16506,7 +16513,9 @@ def test_the_workbook_builds_from_a_store_holding_every_read_time_view(tmp_path)
                              "value": value, "source": source, "tier": 2})
 
     st.upsert(pd.concat([
-        rows("Near", "total_supply", 1.288e9, "near_rpc"),               # declared view, NO derived
+        rows("Near", "total_supply", 1.288e9, "near_rpc"),               # the declared guard's supply
+        # G6 (Jake 2026-10-19): NEAR's primary is the measured epoch mint (first_party), no longer a declared view
+        rows("Near", "gross_issuance_tokens", 80_000.0, "near_issuance:near_rpc:epoch_mint[3 epochs]"),
         rows("Near", "locked_tokens", 5.57e8, "near_rpc"),
         rows("Pendle", "holders_revenue_usd", 10_000.0, "defillama"),     # restatement view
         rows("Pendle", "total_supply", 2.8e8, "coingecko"),               # declared view (Pendle)
@@ -17450,7 +17459,8 @@ def test_near_issuance_is_derived_from_the_block_header_supply_and_the_guard_rea
     iss = f[f.metric == "gross_issuance_tokens"]
     assert len(iss) == 1 and abs(iss.value.iloc[0] - 85_000.0) < 1e-3, iss
     assert iss.source.iloc[0].startswith("derived:d_total_supply_protocol+burn")
-    assert config.issuance_primary("Near")["observed_source_prefix"] == "derived:d_total_supply_protocol"
+    # G6: the derivation is the HISTORY leg of the measured epoch mint (was the declared route's cross-check)
+    assert config.issuance_primary("Near")["history_prefix"] == "derived:d_total_supply_protocol"
 
 
 def test_world_mobile_emissions_are_the_whitepaper_curve_on_the_calendar_not_evm_minting():
@@ -18016,8 +18026,9 @@ def test_sky_purchases_are_pair_transfers_inside_flapper_exec_transactions(tmp_p
 
         out = FetchOutput()
         p = dict(config.PROJECT_BY_NAME["Sky"], log_scans=[spec])
+        # G6 0a: the scan runs in its project's own tier (config.scan_tier: explorer@Sky)
         LogScan(explorer=Ex(), reader=R(), cache=LogCache(tmp_path / f"run{len(runs)}"),
-                unbounded=True).run([p], None, out)
+                unbounded=True, own_tier=spec["own_tier"]).run([p], None, out)
         return out
 
     out = run([ex("0xaa", 60_000, 1_000_000, 10)])
@@ -19580,46 +19591,35 @@ def test_near_and_ethereum_issuance_history_from_backfilled_inputs():
 
 
 def test_near_declared_issuance_covers_the_archival_header_year():
-    """Jake, 2026-09-30: NEAR's primary issuance is declared 2.5%/yr x total_supply, shown for 19
-    days because CoinGecko's total_supply starts 2026-09-11. The archival header total_supply
-    covers the year, so each earlier day reads that level — at the superseded 5% before the
-    2025-10-30 halving — under ONE measuring point. The derived series stays the cross-check."""
+    """Jake, 2026-09-30: NEAR's issuance must cover the archival header year, not only CoinGecko's days from
+    2026-09-11. G6 (Jake 2026-10-19): the primary is the MEASURED epoch mint; the block-header derivation —
+    d(total_supply_protocol) + burn over the archival year — fills every day the epoch read has not reached, under one
+    declared handover; the declared 2.5% (5% before the 2025-10-29 step) is the guard."""
     import build_workbook as bw
-    from fetch.base import _measuring_point
     spec = config.issuance_primary("Near")
-    assert spec["history_supply_metric"] == "total_supply_protocol"
+    assert spec["kind"] == "first_party" and spec["history_prefix"] == "derived:d_total_supply_protocol"
+    assert config.PROJECT_BY_NAME["Near"]["series_handover"]["gross_issuance_tokens"]["ordered_points"] == (
+        "derived:d_total_supply_protocol+burn", "near_issuance:near_rpc:epoch_mint")
     asof = pd.Timestamp("2026-09-30")
     base = {"tier": 1, "fetched_at": "x", "is_manual": False, "entered_on": "", "source_note": ""}
-    hdr = [dict(base, date=d, project="Near", metric="total_supply_protocol", value=1.20e9 + i * 100_000.0,
-                source="near_rpc:block.header.total_supply:archive")
-           for i, d in enumerate(pd.date_range(asof - pd.Timedelta(days=365), asof - pd.Timedelta(days=1)))]
+    year = pd.date_range(asof - pd.Timedelta(days=365), asof - pd.Timedelta(days=1))
+    hist = [dict(base, date=d, project="Near", metric="gross_issuance_tokens", value=85_000.0,
+                 source="derived:d_total_supply_protocol+burn:archive", tier=2) for d in year]
+    epoch = [dict(base, date=d, project="Near", metric="gross_issuance_tokens", value=86_000.0,
+                  source="near_issuance:near_rpc:epoch_mint[3 epochs]") for d in year[-7:]]
     cg = [dict(base, date=d, project="Near", metric="total_supply", value=1.25e9, source="coingecko")
           for d in pd.date_range("2026-09-11", asof - pd.Timedelta(days=1))]
-    obs = [dict(base, date=d, project="Near", metric="gross_issuance_tokens", value=85_000.0,
-                source="derived:d_total_supply_protocol+burn", tier=2)
-           for d in pd.date_range(asof - pd.Timedelta(days=60), asof - pd.Timedelta(days=1))]
-    groups = {("Near", "total_supply_protocol"): pd.DataFrame(hdr), ("Near", "total_supply"): pd.DataFrame(cg),
-              ("Near", "gross_issuance_tokens"): pd.DataFrame(obs)}
+    groups = {("Near", "total_supply"): pd.DataFrame(cg),
+              ("Near", "gross_issuance_tokens"): pd.DataFrame(hist + epoch)}
     bw._VIEW_BLOCKS.clear()
     bw._issuance_views(groups, asof)
     view = groups[("Near", "gross_issuance_tokens")].set_index("date")
-    assert len(view) == 365 and view.index.min() == asof - pd.Timedelta(days=365)
+    assert len(view) == 365 and view.index.is_unique and view.index.min() == year[0]
     assert ("Near", "gross_issuance_tokens") not in bw._VIEW_BLOCKS
-    ann = bw.GLOBALS["days_per_year"]
-    d0 = pd.Timestamp("2025-10-29")
-    assert abs(view.loc[d0, "value"] - 0.05 * hdr[(d0 - hdr[0]["date"]).days]["value"] / ann) < 1e-6
-    assert view.loc[d0, "source"] == "declared:2.50%/yr x total_supply[5.00%/yr x total_supply_protocol]"
-    d1 = pd.Timestamp("2026-09-10")
-    assert abs(view.loc[d1, "value"] - 0.025 * hdr[(d1 - hdr[0]["date"]).days]["value"] / ann) < 1e-6
-    assert view.loc[d1, "source"] == "declared:2.50%/yr x total_supply[2.50%/yr x total_supply_protocol]"
-    d2 = pd.Timestamp("2026-09-11")
-    assert abs(view.loc[d2, "value"] - 0.025 * 1.25e9 / ann) < 1e-6
-    assert view.loc[d2, "source"] == "declared:2.50%/yr x total_supply", "the live label is unchanged"
-    assert {_measuring_point(s) for s in view["source"]} == {"declared:2.50%/yr x total_supply"}
+    assert (view.loc[year[-7:], "value"] == 86_000.0).all() and (view.loc[year[:-7], "value"] == 85_000.0).all()
     import completeness_report as cr
     ref = cr.reference(config.PROJECT_BY_NAME["Near"], "gross_issuance_tokens", {})
-    assert "cross-check derived:d_total_supply_protocol (>10x apart blocks)" in ref
-
+    assert "guard declared annual_rate_max x total_supply (>10x apart blocks)" in ref
 
 def test_every_exit_of_the_issuance_history_step_says_why(caplog):
     """Jake, 2026-09-30: NEAR's 'issuance history INPUTS' line never appeared, on the console or
@@ -21590,17 +21590,17 @@ def test_jake_run_2026_10_01_1434_fixes():
     config.SERIES_BREAKS.clear()
     config.SERIES_BREAKS.update(_orig_breaks)
     # 3 — manual rows (GEODNET's locked_tokens was the example until it went on chain, 2026-10-05;
-    # World Mobile's is the same quarterly manual path)
+    # World Mobile's locked_tokens the same until G6 read it on chain, 2026-10-19; its supply_units is the manual path)
     g = config.PROJECT_BY_NAME["World Mobile"]
-    assert config.is_manual_quarterly("World Mobile", "locked_tokens")
+    assert config.is_manual_quarterly("World Mobile", "supply_units")
     asof = pd.Timestamp("2026-10-01")
     row = {"status": "manual", "note": "Blockworks Staking Flow chart, read by Jake 2026-09-30",
            "latest_date": "2026-09-30", "entered_on": "2026-10-01"}
-    v, d = cr.classify(g, "locked_tokens", row, "2026-09-30", asof, {})
+    v, d = cr.classify(g, "supply_units", row, "2026-09-30", asof, {})
     assert v == "COMPLETE (MANUAL)" and "refreshed quarterly, due by 2027-01-14" in d
-    v, d = cr.classify(g, "locked_tokens", row, "2026-09-30", pd.Timestamp("2027-02-01"), {})
+    v, d = cr.classify(g, "supply_units", row, "2026-09-30", pd.Timestamp("2027-02-01"), {})
     assert v == "NEEDS JAKE" and "past its 106-day cadence" in d
-    assert cr.classify(g, "locked_tokens", {**row, "note": ""}, "2026-09-30", asof, {})[0] == "BUG"
+    assert cr.classify(g, "supply_units", {**row, "note": ""}, "2026-09-30", asof, {})[0] == "BUG"
     # 5 — Maple: history from 2024, newest month not published yet
     m = config.PROJECT_BY_NAME["Maple"]
     mrow = {"status": "ok", "q0_basis": "3 complete months", "q0_covered_days": 62, "latest_date": "2026-08-31"}
@@ -26306,7 +26306,7 @@ def test_jakes_readings_of_2026_10_07_are_stored_against_real_rows_and_name_no_p
     entered by Claude Code; each maps to a Credibility row that exists; the NEAR staking account is not stored."""
     import credibility as cred
     import manual_refs as mr
-    got = mr.load()
+    got = [r for r in mr.load() if r["read_on"] == "2026-10-07"]     # G6's World Mobile counters are another batch
     # 21 since Aethir's in_circ is checked against the docs table itself (Jake copied it, 2026-10-07)
     assert len(got) == 21 and all(r["read_on"] == "2026-10-07" and r["read_by"] == "Jake" and r["url"] for r in got)
     assert all("entered by Claude Code" in r["note"] for r in got)

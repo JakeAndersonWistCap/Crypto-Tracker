@@ -527,6 +527,44 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11cg. Round G6 — per-project scan tiers, incremental reconcile, World Mobile's break, measured NEAR issuance (2026-10-19)
+
+**Run after pulling (PowerShell 5.1, repo root), in this order.** One run_sql section this round (DA).
+1. `python run_sql.py DA` — dry run: lists World Mobile's total_supply_gross rows dated 2026-09-20..09-24 whose source
+   still includes the Ethereum leg (they carry the 500,479,231.22 counterfeit). Read them, then on its own line
+   `python run_sql.py --delete DA`.
+2. `python token_metrics.py` — the full run. New in the log: one explorer tier per project (`explorer@Chainlink`,
+   `explorer_l2:base@Morpho`, …), each with its own 300 s; "Reconcile Ns, net incremental" on every RECONCILED line;
+   the RPC latency lines (hosts only) and why the chain tier put Alchemy or the fallback first; defillama_tvl
+   "stopped … resumes at <protocol> next run" when it nears its budget. New tiers: wm_supply, near_issuance,
+   fluid_buybacks, geodnet_feed, pendle_latent.
+3. `python sanity.py`.
+4. `python check_offline_items.py spec_coverage` — part 3 now gives every short quarterly row one reason.
+
+**Done when** the run shows 0 FAILED from a time budget. If a tier still times out, the line names its own project.
+
+**World Mobile.** total_supply_gross breaks on 2026-09-20 (the exploit): Ethereum is not read from that day, the
+counterfeit is excluded, and the Base re-issue is a restatement, not issuance. locked_tokens is now read (Locked Staking
+on Base + Cardano, fetch/wm_supply.py). The Cardano WMTx supply is stored beside the sum
+(wmtx_cardano_supply_tokens); which components make the measuring point is Jake's decision (SPEC §19 G6-1a, three
+options with numbers). WorldMobile Chain's daily transactions and active accounts come from its Blockscout stats.
+
+**NEAR gross issuance** is measured: each epoch's mint read at its first block. The first run reads a week; every later
+run tops up and backfills a little further (towards a year) from where the last one stopped (.cache/near-issuance.json —
+delete it to start over). Until the backfill reaches the Q0 window's start, the stored block-header derivation fills the
+older days. The declared 2.5% is the guard: measured more than 10× from it blocks the row.
+
+**Uniswap** burn split is active: 100% of protocol fees (DefiLlama revenue) against UNI burned through the Firepit.
+Chainlink stays unconfirmed (only the SVR 50% share is documented), so its implied buyback stays suppressed.
+
+**What changed (SPEC.md §19 "G6" lists every item old → new):** per-project explorer tiers; incremental reconcile and
+append-only log caches; the Alchemy pacer, RPC timings and connect order; the defillama_tvl cursor; Aethir pages mark
+every series they carry and age weekly labels from the week's end; World Mobile's exploit record, break, components,
+locked staking, chain stats and headline references; Aero max supply from the cutover and the VotingEscrow gap; NEAR's
+measured issuance and declared step; Pendle's live latent supply; GEODNET's feed and the Solana answer; Fluid's
+buyback list; Ether.fi's split; Uniswap and Chainlink splits; 109 G6 references; SPEC §1b theory and §11 scoring
+register; the SPEC coverage columns.
+
 ## 11cf. Round G5 — Sky's monthly measuring point, VERIFIED (derived), starved scans, MISSING (2026-10-19)
 
 **Run after pulling (PowerShell 5.1, repo root), in this order.** One run_sql section this round (CZ).

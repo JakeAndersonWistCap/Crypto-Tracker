@@ -3217,6 +3217,29 @@ def _issuance_views(groups: dict, asof: pd.Timestamp) -> None:
                 prefixes = tuple(x for x in (spec["source_prefix"], spec.get("history_prefix")) if x)
                 mine = (observed[observed["source"].astype(str).str.startswith(prefixes)]
                         if observed is not None and not observed.empty else None)
+                # ONE ROW A DAY, THE PRIMARY'S WHERE BOTH HOLD (NEAR, G6 2026-10-19): the history leg fills only the
+                # days the primary has not reached.
+                if mine is not None and not mine.empty and spec.get("prefer_primary_per_day"):
+                    rank = (~mine["source"].astype(str).str.startswith(spec["source_prefix"])).astype(int)
+                    mine = (mine.assign(_r=rank).sort_values(["date", "_r"])
+                            .drop_duplicates("date", keep="first").drop(columns="_r"))
+                guard = spec.get("declared_guard")
+                if guard and mine is not None and not in_q0(mine).empty:
+                    rate = p
+                    for k in guard["rate_path"]:
+                        rate = rate[k]
+                    sup = groups.get((name, guard["supply_metric"]))
+                    if sup is not None and not sup.empty:
+                        ob = in_q0(mine)
+                        covered = (ob["date"].max() - ob["date"].min()).days + 1
+                        obs = float(ob["value"].astype(float).sum()) / covered * ann
+                        decl = float(rate) * float(sup.sort_values("date")["value"].iloc[-1])
+                        k = float(guard.get("max_ratio", 10))
+                        if obs <= 0 or decl / obs > k or obs / decl > k:
+                            _VIEW_BLOCKS[key] = (
+                                f"BLOCKED — measured {obs:,.0f} vs declared {decl:,.0f} issuance/yr "
+                                f"({float(rate):.2%} x {guard['supply_metric']}) differ >{k:.0f}x; one of them is "
+                                f"wrong, so neither is shown")
                 if mine is not None and not in_q0(mine).empty:
                     groups[key] = _as_stored(mine, observed.columns)
                 elif observed is not None and not observed.empty:
@@ -3989,6 +4012,11 @@ def calc(expr: str) -> str:
     return f"=IFERROR({expr},{NA})"
 
 
+def _burn_fee_base(p: dict) -> str:
+    """The fee series a documented burn share is a share OF: config burn_split.fee_base_metric, else fees_usd."""
+    return (p.get("burn_split") or {}).get("fee_base_metric") or "fees_usd"
+
+
 def gated(status_expr: str, expr: str, share_expr: str | None = None) -> str:
     """Suppress the derived figure when the split is unconfirmed; n/a when no share is documented."""
     inner = f"IFERROR({expr},{NA})"
@@ -4731,10 +4759,16 @@ def _net_annual_pct(R, r: int, p: dict, circ: str) -> str:
 # Valuation-framework headlines — the "What Do I Own?" note's figures, at the LEFT of each
 # archetype tab: project | symbol | price | market cap | that archetype's ratios | the rest.
 # ---------------------------------------------------------------------------------------
-def _valuation_head(R: Refs) -> list[tuple]:
+def _valuation_head(R: Refs, circulating: bool = False, fdv: bool = False) -> list[tuple]:
+    """The "What Do I Own?" valuation inputs every archetype tab leads with (SPEC §1b T-f). G6 item 8: circulating supply
+    on A1 / A2 / A4 (A3 has its own beside the float block) and FDV on A3 (spec_coverage)."""
     return [
         ("Price — spot ($)", lambda r, p: pull(R.D(r, "price_usd", "now")), FMT_USD4, "pull", False, {"metric": "price_usd"}),
         ("Market cap ($)", lambda r, p: pull(R.D(r, "market_cap_usd", "now")), FMT_USD, "pull", False, {"metric": "market_cap_usd"}),
+        *([("Circulating supply (used, tokens)", lambda r, p: pull(_circ(R, r, p)), FMT_NUM, "pull", False,
+            {"metric": "circulating_supply_used"})] if circulating else []),
+        *([("FDV ($)", lambda r, p: pull(R.D(r, "fdv_usd", "now")), FMT_USD, "pull", False, {"metric": "fdv_usd"})]
+          if fdv else []),
     ]
 
 
@@ -5024,6 +5058,20 @@ def _a3_headline(R: Refs, data_by_key: dict | None = None) -> list[tuple]:
          zero_or(lambda r, p: f"IF({gate_fd(r)},{_annualise(R, r, p, 'actual_buyback_usd', bb(r))}/{fdv(r)},{NA})"),
          FMT_PCT, "calc", False, {"metric": "actual_buyback_usd", "flag_fn": flag}),
     ]
+
+
+def _no_issuance_text(p: dict) -> str:
+    """'n/a — …' for fees ÷ issuance where nothing is issued (Round G6 item 9: the ratio read MISSING "gross_issuance_tokens
+    nothing stored" on Chainlink, Ether.fi, Fluid, GEODNET, Hyperliquid, Aethir, Plume — pre-minted tokens with no
+    issuance to divide by); a fixed supply with a recorded mint stream (Maple) keeps the ratio. '' otherwise."""
+    why = config.fixed_supply_reason(p["name"])
+    if p["name"] in getattr(config, "LATENT_SUPPLY", {}):
+        return ""                        # minted lazily (Pendle): issuance exists, accrued but unminted (G6 item 3)
+    if why and "gross_issuance_tokens" not in config.metrics_for_project(p):
+        return f"n/a — no issuance to divide by: {why}"[:240]
+    if why and p["name"] not in config.FIXED_SUPPLY_NOT:
+        return f"n/a — no issuance to divide by: {why}"[:240]
+    return ""
 
 
 def _fixed_supply_text(p: dict) -> str:
@@ -7060,7 +7108,7 @@ def write_master(ws, R: Refs, data_by_key: dict):
          lambda r, p: pull(R.D(r, "pool_release_tokens", "q0")) if _premint(p) else "", FMT_NUM, "pull", False,
          {"metric_fn": lambda n: "pool_release_tokens" if config.issuance_basis(n) == "pool_release_tokens" else None}),
         ("Fees ÷ issuance ($, Q0; issuance at 90d avg price)",
-         lambda r, p: _coverage_guard(R, r, [("fees", "fees_usd", "q0"), ("issuance", "gross_issuance_tokens", "q0")],
+         lambda r, p: _no_issuance_text(p) or _coverage_guard(R, r, [("fees", "fees_usd", "q0"), ("issuance", "gross_issuance_tokens", "q0")],
                                       f"{_flow_rate(R, r, 'fees_usd')}/({_flow_rate(R, r, 'gross_issuance_tokens')}*{R.D(r, 'price_usd', 'q0')})"), FMT_X, "calc"),
         ("Fees ÷ FDV (annualised)", lambda r, p: calc(f"{_annualise(R, r, p, 'fees_usd', R.D(r, 'fees_usd', 'q0'))}/{R.D(r, 'fdv_usd', 'now')}"), FMT_PCT, "calc"),
         ("Buyback % of supply (annualised, implied, split as at this window)",
@@ -7514,6 +7562,16 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         ("Project", lambda r, p: p["name"], FMT_TEXT, "text"),
         ("Symbol", lambda r, p: p["symbol"], FMT_TEXT, "text"),
         ("Market cap ($)", lambda r, p: pull(mc(r)), FMT_USD, "pull", False, {"metric": "market_cap_usd"}),
+        # G6 item 8 (spec_coverage): price, emissions and unlocks on CP, the same cells the A-tabs read
+        ("Price — spot ($)", lambda r, p: pull(R.D(r, "price_usd", "now")), FMT_USD4, "pull", False,
+         {"metric": "price_usd"}),
+        ("Emissions Q0 (tokens) — every incentive programme, as the A-tabs read it",
+         lambda r, p: _fixed_supply_text(p) or pull(R.D(r, "emissions_tokens", "q0")), FMT_NUM, "pull", False,
+         {"metric": "emissions_tokens"}),
+        ("Unlocks Q0 (tokens) — releases from the non-circulating wallets",
+         lambda r, p: (pull(R.D(r, "unlock_release_tokens", "q0")) if config.unlock_stock_metrics(p["name"])
+                       else "n/a — no non-circulating wallet set on this project (config.unlock_stock_metrics)"),
+         FMT_NUM, "pull", False, {"metric": "unlock_release_tokens"}),
         # ---- SUPPLY LAYERS (item 1) ----
         ("Max supply (tokens)", lambda r, p: pull(R.D(r, "max_supply", "now")), FMT_NUM, "pull", False, {"metric": "max_supply"}),
         ("Total supply (tokens)", lambda r, p: pull(R.D(r, "total_supply", "now")), FMT_NUM, "pull", False, {"metric": "total_supply"}),
@@ -7840,7 +7898,7 @@ def write_a4(ws, R: Refs, data_by_key: dict):
         # MOVED HERE 2026-09-24 from further right (burn yield, crossover ratio, both net-change
         # columns) — not duplicated. The crossover now runs on config.issuance_basis: pool
         # release for pre-minted supply (GEODNET, Hyperliquid), gross issuance for everyone else.
-        *_valuation_head(R),
+        *_valuation_head(R, circulating=True),
         *_a4_headline(R, burn, data_by_key),
         *_unlock_cols(R),
         ("Burn execution", lambda r, p: pull(R.C(r, "Burn execution")), FMT_TEXT, "pull"),
@@ -7888,11 +7946,13 @@ def write_a4(ws, R: Refs, data_by_key: dict):
          FMT_PCT, "calc"),
         ("Issuance as % of supply (annualised)", lambda r, p: calc(f"{_annualise(R, r, p, 'gross_issuance_tokens', iss(r))}/{R.D(r, 'circulating_supply', 'now')}"), FMT_PCT, "calc"),
         *_a4_phase2_cols(R),
+        # THE BASE THE SHARE IS OF (Uniswap, G6 2026-10-19): config burn_split.fee_base_metric — Uniswap's documented
+        # share is 100% of PROTOCOL fees (revenue_usd), not of LP fees; fees_usd everywhere else.
         ("Implied burn Q0 (tokens) = fees × documented share ÷ avg price",
-         lambda r, p: gated(R.C(r, "Burn split status"), f"{R.D(r, 'fees_usd', 'q0')}*{R.C(r, 'Share of fees burned')}/{price(r)}", R.C(r, 'Share of fees burned')), FMT_NUM, "calc", False, {"gate": "burn_split"}),
+         lambda r, p: gated(R.C(r, "Burn split status"), f"{R.D(r, _burn_fee_base(p), 'q0')}*{R.C(r, 'Share of fees burned')}/{price(r)}", R.C(r, 'Share of fees burned')), FMT_NUM, "calc", False, {"gate": "burn_split"}),
         ("Actual − implied burn (tokens)", lambda r, p: circular_gated(p, gated(R.C(r, "Burn split status"), _coverage_guard(
-            R, r, [("burn", config.a4_burn_metric(p["name"]), "q0"), ("fees", "fees_usd", "q0")],
-            f"{burn(r, p)}-{R.D(r, 'fees_usd', 'q0')}*{R.C(r, 'Share of fees burned')}/{price(r)}", same_span=True, bare=True),
+            R, r, [("burn", config.a4_burn_metric(p["name"]), "q0"), ("fees", _burn_fee_base(p), "q0")],
+            f"{burn(r, p)}-{R.D(r, _burn_fee_base(p), 'q0')}*{R.C(r, 'Share of fees burned')}/{price(r)}", same_span=True, bare=True),
             R.C(r, 'Share of fees burned'))), FMT_NUM, "calc", False, {"gate": "burn_split"}),
         ("Supply figure complete?", lambda r, p: ("PARTIAL — " + (p.get("supply_partial_reason", "")[:90]))
          if p.get("supply_is_partial") else "", FMT_TEXT, "text"),
@@ -7942,7 +8002,7 @@ def write_a3(ws, R: Refs, data_by_key: dict):
     specs = [
         ("Project", lambda r, p: p["name"], FMT_TEXT, "text"),
         ("Symbol", lambda r, p: p["symbol"], FMT_TEXT, "text"),
-        *_valuation_head(R),
+        *_valuation_head(R, fdv=True),
         *_a3_headline(R, data_by_key),
         ("Materiality", lambda r, p: pull(R.C(r, "Materiality")), FMT_TEXT, "pull"),
         # THE PROGRAMME'S STATUS, as on Master and Config (Jake's review of 97b29ae, 2026-10-11: this read the Q0 window
@@ -8158,7 +8218,7 @@ def write_a1(ws, R: Refs, data_by_key: dict, months: list[str]):
     specs = [
         ("Project", lambda r, p: p["name"], FMT_TEXT, "text"),
         ("Symbol", lambda r, p: p["symbol"], FMT_TEXT, "text"),
-        *_valuation_head(R),
+        *_valuation_head(R, circulating=True),
         *_a1_headline(R),
         ("Transactions Q0", lambda r, p: pull(R.D(r, "tx_count", "q0")), FMT_NUM, "pull", False, {"metric": "tx_count"}),
         ("Fees Q0 ($)", lambda r, p: pull(fees(r)), FMT_USD, "pull", False, {"metric": "fees_usd"}),
@@ -8203,7 +8263,7 @@ def write_a1(ws, R: Refs, data_by_key: dict, months: list[str]):
         ("Issuer releases Q0 (tokens) — pre-minted supply released into circulation, NOT issuance",
          lambda r, p: pull(R.D(r, "pool_release_tokens", "q0")) if _premint(p) else "", FMT_NUM, "pull", False,
          {"metric_fn": lambda n: "pool_release_tokens" if config.issuance_basis(n) == "pool_release_tokens" else None}),
-        ("FEES ÷ ISSUANCE (x) — key ratio", lambda r, p: _coverage_guard(R, r, [("fees", "fees_usd", "q0"), ("issuance", "gross_issuance_tokens", "q0")],
+        ("FEES ÷ ISSUANCE (x) — key ratio", lambda r, p: _no_issuance_text(p) or _coverage_guard(R, r, [("fees", "fees_usd", "q0"), ("issuance", "gross_issuance_tokens", "q0")],
                                       f"{_flow_rate(R, r, 'fees_usd', 'q0')}/({_flow_rate(R, r, 'gross_issuance_tokens', 'q0')}*{price(r, 'q0')})"), FMT_X, "calc", True),
         ("Fees ÷ issuance at Q1 (−3m window)", lambda r, p: _coverage_guard(R, r, [("fees", "fees_usd", "q1"), ("issuance", "gross_issuance_tokens", "q1")],
                                       f"{_flow_rate(R, r, 'fees_usd', 'q1')}/({_flow_rate(R, r, 'gross_issuance_tokens', 'q1')}*{price(r, 'q1')})"), FMT_X, "calc"),
@@ -8236,7 +8296,7 @@ def write_a2(ws, R: Refs, data_by_key: dict, months: list[str]):
     specs = [
         ("Project", lambda r, p: p["name"], FMT_TEXT, "text"),
         ("Symbol", lambda r, p: p["symbol"], FMT_TEXT, "text"),
-        *_valuation_head(R),
+        *_valuation_head(R, circulating=True),
         *_a2_headline(R),
         *_unlock_cols(R),
         ("Materiality", lambda r, p: pull(R.C(r, "Materiality")), FMT_TEXT, "pull"),
@@ -9122,6 +9182,7 @@ def flow_statements(groups: dict, asof) -> list[dict]:
         series = {"fees": config.fees_headline_metric(name), "revenue": rev_m, "retired": "retired_buyback_usd",
                   "bought": "actual_buyback_usd", "credited": "holder_value_revenue_usd",
                   "other": "holder_value_other_usd", "incent_b": "outflow_b_usd", "incent_c": "outflow_c_usd",
+                  "incent_a": "outflow_a_usd", "incent_d": "outflow_d_usd", "incent_e": "outflow_e_usd",
                   "credited_fees": "holder_value_fees_only_usd", "rbase": rb}
         for key_, m in series.items():
             vrows[key_] = [(_flow_sum(d(m), *_flow_window(asof, k))[0] if m in have else None) for k in range(5)]
@@ -9162,6 +9223,14 @@ def flow_statements(groups: dict, asof) -> list[dict]:
                    "treasury, opex and insiders together — the insider leg has no series (NOT WIRED)"),
                   ("Incentives paid beside: supply side (b)", vrows["incent_b"], "usd", "outflow_b_usd", ""),
                   ("Incentives paid beside: demand side (c)", vrows["incent_c"], "usd", "outflow_c_usd", ""),
+                  # THE OTHER THREE OUTFLOW CATEGORIES (Round G6 item 8, spec_coverage): each has its line on every
+                  # project; a project without the category reads blank with its series named
+                  ("Outflows beside: security emissions (a)", vrows["incent_a"], "usd", "outflow_a_usd",
+                   "" if "outflow_a_usd" in have else "no (a) on this project"),
+                  ("Outflows beside: ecosystem / grants (d)", vrows["incent_d"], "usd", "outflow_d_usd",
+                   "" if "outflow_d_usd" in have else "no (d) on this project"),
+                  ("Outflows beside: unlocks (e)", vrows["incent_e"], "usd", "outflow_e_usd",
+                   "" if "outflow_e_usd" in have else "no (e) on this project"),
                   ("Status", stat, "text", "", "")]
         for line, vals, unit, series_, note in vlines:
             out.append({"Project": name, "Statement": "Value flow", "Line": line,

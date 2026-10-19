@@ -980,7 +980,9 @@ def test_logscan_runs_only_its_own_tier_and_names_what_it_planned():
     ran.clear()
     o = FetchOutput()
     planned = []
-    for t in (config.l2_tier("arbitrum"), config.l2_tier("optimism")):
+    # G6 0a: one tier per chain AND project (explorer_l2:<chain>@<Project>)
+    for t in (config.l2_tier("arbitrum") + config.PROJECT_TIER_SEP + "Pendle",
+              config.l2_tier("optimism") + config.PROJECT_TIER_SEP + "Pendle"):
         l2 = LogScan(own_tier=t)
         l2._scan = lambda proj, spec, w, out: ran.append(spec["key"])
         l2.run([p], None, o)
