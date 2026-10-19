@@ -41,6 +41,28 @@ cell note says PROPOSED.
 12. **SOURCES.** Primary first (protocol docs, contracts, governance, on-chain); a dashboard source says so on its row
     with what an on-chain replacement needs. Nothing filled from inference.
 
+## 1b. Theory decisions on record (Jake) — Round G6 item 7, written 2026-10-19
+
+Decisions Jake made that the code already follows in part but SPEC did not state. "Date" is the decision's date where
+the repo records it; otherwise "G6 brief 2026-10-19" — the original date is not in the repo, and none is guessed.
+Nothing here builds a score (section 11).
+
+| # | Decision (Jake) | Date | Already partly covered | Implies (column / label) |
+|---|---|---|---|---|
+| T-a | Non-native rewards are converted at the PAYMENT-DAY price. | 2026-10-09 ("Jake's price convention", A3 protocol-yield header; config `token_yield_payday_pct`) | §4 protocol_yield; A3 Aerodrome/Sky yields | every non-native reward line states "at payment-day prices"; today's-price figures are a labelled second column only |
+| T-b | Cross-project comparisons are TOKEN-denominated (tokens as commodities); USD figures sit alongside. | G6 brief 2026-10-19 | §4 dilution / yields in tokens; CP "(tokens)" columns | CP leads with the token column of each pair; a USD-only comparison column is labelled "USD, alongside" |
+| T-c | The PRIMARY archetype decides the leaderboard; secondary mechanisms add components. A1 chains' fee burns stay off the A4 tab entirely. Latent value capture is monitored alongside A1–A4, not an A5. | G6 brief 2026-10-19 | §2 axes; Master "Archetypes (primary first)" | (1) Hyperliquid (primary A3, also A1/A4) shows on A4 a gross burn that includes burn_hyperevm_tokens — a chain-fee burn: it leaves A4 (whether the deploy-auction burn stays on A4 is Jake's call); (2) a "Latent capture" monitor beside A1–A4 (Pendle latent supply, §10, is its first row); no A5 tab |
+| T-d | Retirement counts only buybacks that are BURNED or HELD; buybacks paid to stakers are staking yield. | 2026-10-10 | §4 holder_value / protocol_yield split; §6 outflow categories | confirmed: retirement = burned + held; Ether.fi's sETHFI top-ups and Pendle's sPENDLE distributions are protocol yield, never retirement |
+| T-e | Circulating supply: the project's own published figure wherever one exists; CoinGecko only as fallback. | 2026-10-07 (config "THE CIRCULATING POLICY, PER PROJECT") | config.circulating_primary_metric | the circulating column names its basis (own / on-chain set / CoinGecko fallback) |
+| T-f | Each archetype tab LEADS with its headline valuation inputs (the "What Do I Own?" note); supporting calculations further right. | 2026-09-24 (config "ARCHETYPE 1 VALUATION INPUTS … from 'What Do I Own?'") | A1–A4 column order | a column-order test per tab: the note's inputs are the first data columns |
+| T-g | Mechanism ranking (burn vs hold vs distribute) is UNSETTLED: track all, rank only once the frameworks are applied and price reactions observed. | G6 brief 2026-10-19 | §11 (nothing built) | no column ranks mechanisms; destination is an attribute (config: "never penalties") |
+| T-h | Judge TRAJECTORY, not snapshots; business growth that does not yet reach the token is tracked, not discounted (tokenomics can change: SKY, UNI). | G6 brief 2026-10-19 | §3 trajectory methods; Trajectory tab | BUSINESS rows carry trajectories even where capture is 0; no discount factor on uncaptured business |
+| T-i | Locking is a sign of support: NO negative weight on lock terms. Insider allocations are judged on whether they look predatory or are put to work. | G6 brief 2026-10-19 | §4 lock_terms (attributes), insider_share | lock terms stay attributes; insider rows carry "use of allocation" text, never a penalty |
+| T-j | Whether emissions go to activity with attributable revenue matters a lot: "Subsidy targeting by pool" (§10) is the NEXT BUILD PRIORITY. | G6 brief 2026-10-19 | §10 Subsidy targeting by pool; §4 subsidy cover | §10 row marked NEXT BUILD; route: Pendle gauge votes per pool (votingController/gaugeController per-pool rates) and Aerodrome RewardsSugar per-epoch per-pool emissions vs that pool's fees |
+| T-k | Sell rate is MEASURED per project from on-chain data, never assumed. | G6 brief 2026-10-19 | §4 sell_rate (LATER), §10 Phase 5 | no assumed sell-rate constant anywhere; the column stays LATER until measured |
+| T-l | No ledger of tokenomics promises vs delivery. | G6 brief 2026-10-19 | — | none built, none planned |
+| T-m | Older LITMUS notes are superseded by what the tracker and primary sources show. | G6 brief 2026-10-19 | config LITMUS A/B/C labels | where a LITMUS note and a primary source differ, the primary source wins and the LITMUS label is a history note only |
+
 ---------------------------------------------------------------------------------------------------------------------
 ## 2. Axes (mapping; PROPOSED where marked)
 
@@ -230,12 +252,12 @@ FDV and Hyperliquid still need Jake's run (archive / ledger replay — commands 
 |---|---|
 | Phase 5 sell rate by recipient cohort | LATER — recipient cohorts from the outflow scans, then their onward transfers to exchanges |
 | Exchange balances | paid labelled-wallet source (Nansen / CoinGlass / Arkham) or DefiLlama CEX pages (secondary) — Jake's decision |
-| Subsidy targeting by pool | Pendle gauge votes per pool; Aerodrome RewardsSugar per-epoch per-pool (routes probed) |
+| Subsidy targeting by pool — **NEXT BUILD PRIORITY (Jake, T-j, G6)** | Pendle gauge votes per pool; Aerodrome RewardsSugar per-epoch per-pool (routes probed): each pool's emissions against that pool's own fees |
 | Pendle TVL by maturity | api-v2.pendle.finance core/v2/markets/all + historical-data fields=totalTvl per market |
 | CCIP token value | CCIP API sourceTokenAmount × token decimals × daily price |
 | GEODNET customers | no public source (console needs a wallet login) |
 | Aethir business series beyond revenue / compute hours | dashboard.aethir.com demand metrics (current only) |
-| Chains' TVL in native units | USD ÷ the native price only (the per-token breakdown is paid) — not built: it would restate price, not deposits |
+| Chains' TVL in native units (tvl_native) — **NOT BUILT BY DESIGN** (G6 item 8) | USD ÷ the native price only (the per-token breakdown is paid) — not built: it would restate price, not deposits; spec_coverage labels it NOT BUILT BY DESIGN, never missing |
 | Market share LINK / PLUME / ATH / GEOD | oracle TVS (paid) / RWA-by-chain rebuild / no comparable category |
 | Pendle latent supply (S4) | live read of the token's emission state (accrued, unminted: 9,837,598.56 PENDLE on 2026-10-13, config.LATENT_SUPPLY, pending Jake's review) |
 | Insider share of the stake — Ether.fi, Maple, Pendle (review W6) | the share token's holders crossed with the issuer-wallet list: the issuer-side wallets checked (Ether.fi 8, Maple 8, Pendle 3 — config.INSIDER_SHARE_MONITOR) hold 0 shares; the team / investor wallets are not identified. Read on as a monitor: the cell turns into the ratio once a checked wallet holds shares |
@@ -244,6 +266,21 @@ FDV and Hyperliquid still need Jake's run (archive / ledger replay — commands 
 
 Inputs it will need, all already on the workbook after this round: per row its axis (section 2), level (Q0 value) and
 trajectory (growth, direction, quarters improved). Nothing built.
+
+### Scoring principles register (LATER, not scored) — Jake, from the Aerodrome call (G6 brief 2026-10-19)
+
+Kept as principles only; no column scores them.
+
+1. Pay your most important external user (on a DEX, the LP).
+2. When code replaces most of the team, return as close to 100% of value as possible.
+3. LPs have no network-effect lock-in.
+4. A dollar of buyback isn't a dollar of value accrual unless credibly permanent.
+5. Distribute revenue directly, and the token needs a function beyond being bought back.
+6. Fees taken from LPs/users to fund a team invite a fork.
+7. Long locks are a feature.
+8. The moat is a network of owners.
+9. Holders should direct emissions to activity with attributable revenue.
+10. Partnering is easiest between protocols with the same economics.
 
 ## 12. PROPOSED — for Jake (Jake's decisions of 2026-10-13 recorded under each; FR2 = fix round 2)
 
@@ -653,3 +690,70 @@ gap_routes 73 open rows; na_reasons 230 MISSING ROUTE). The 01:48 manual run (SS
 | G5-8c | Etherscan rate limit | — | Cited: docs.etherscan.io/rate-limits — free plan 3 calls/s, 100,000/day; Base, BNB, OP paid-only, Berachain and HyperEVM free (supported-chains). TRANSFER_FIRST_CHAINS {8453, 56, 10, 80094, 999}: Alchemy's Transfers API first there (timestamps only on its metadata chains; free-plan eth_getLogs 10 blocks). |
 | G5-8d | Master market cap date | — | Column "Market cap date (shown only when not the spot price's date)": "as of <mcap date> (spot price <date>)" when they differ, else blank. |
 | G5-R | Standing rule: never print a key | The HTTP timing summary printed paths without their host (`/v2/historicalChainTvl/…`). | Anything after `/v2/` in any URL or bare path is masked (`fetch.base.mask_v2`, redact); timing paths are masked when recorded. |
+
+### G6 — Round G6 (Jake, 2026-10-19), old → new
+
+Judged on the G5 build of 12:34 (Data tab extracted from token_metrics.xlsx), coverage_audit.csv, scoreboard.json,
+g5_lost_verified_and_aethir_p6.csv and g6_reference_batch.csv. Research for the round was done 2026-10-19; every address
+and figure below was re-read on 2026-10-19 (on-chain or the primary page) before it was wired. Where a figure could not
+be re-read it says so.
+
+#### Item 0 — the G5 run and its 15 FAILED
+
+| # | Item | Old | New |
+|---|---|---|---|
+| G6-0 | The 15 lost VERIFIED cells and 14 Aethir P6 rows | — | The 15 (Uniswap 4, Near 4, Fluid 4, Sky 3) were lost to the Review Queue flag; G5's ACCEPT fix brought every one back to VERIFIED on the 12:34 build, each within 1% of its 10-18 value (Pendle subsidy cover also gained VERIFIED, 12.66). Of the 14 Aethir P6 rows, pool_release_tokens cleared because data arrived; the other 13 were a second run of the day: a page "already read today" marked only its `fields` current, so labelled / derived / series_totals metrics fell to "no sources.yaml entry", and the 14-day weekly rule refused weeklyNetworkRevenue / weeklyComputeHoursDelivered at 01:49 (G6-6). A DONE page now marks every metric it declares (`aethir_pages._declared_metrics`), and a dashboard route names its page instead of sources.yaml (`gaps._dashboard_page_of`). G5 seeds: Morpho Base reconciled to the wei, 584 rows (373,345 new events, 754 s); Plume payouts 242,062 events, 470 rows 2025-04-28..2026-10-18 (not balance-reconciled). Morpho: BROKEN 4 → 0, VERIFIED 22 → 27 (subsidy cover 31.95, dilution (b) 0.57%). The 15 FAILED are by tier: explorer (Chainlink staking_rewards_out 6 s, noncirc_in / noncirc_out 14 s each, Pendle issuer_to_gauges, Ether.fi buyback_wallet_inflow), explorer_l2:base starved Morpho merkl_morpho_out_base and Fluid merkle_rewards_out_base ("1 s left"), explorer_gauge (216 s in reconcile), explorer_l2:arbitrum, explorer_l2:berachain (Alchemy page 67), chain (waiting on POST to the Alchemy Ethereum host), defillama_tvl (150 s: /protocol/aerodrome 35.3 s, /protocol/uniswap 32.9 s). |
+| G6-0a | Shared explorer tier | Every project's headline scans shared `explorer` (300 s) and `explorer_l2:<chain>`. | Each project has its own tier and budget: `explorer@<Project>` and `explorer_l2:<chain>@<Project>` (config.scan_tier, explorer_scan_tiers; EXPLORER_PROJECT_TIER_BUDGET_S 300; an L2 tier keeps its chain's budget). `explorer_gauge` unchanged. A timeout stamps only its own tier's scans (gaps.served_by by `own_tier`). Scans wired at start-up by the explorer probe (config.wire_probed_scans: Morpho and Fluid on Base) get their project's tier too — before this fix they kept the bare `explorer_l2:<chain>`, which is in no tier and would never have run. |
+| G6-0b | balanceOf reconciliation | Every run re-summed every event and rewrote the whole cache; the poison filter was quadratic. | Incremental: `<cache>/reconciled.json` keeps, per `chain:token:holder`, the last reconciled block, net and counts; the net is the stored net + the events after that block (`_sum_after`), with a full re-sum on any mismatch. LogCache appends a delta segment (`<sid>.d<block>.json.gz`) or a marks file instead of rewriting, compacting past 30 deltas. Poison filter indexed. Measured on a synthetic 581,482-event stream: save 21.3 s → 0.00 s; net 0.46 s; poison filter ~260 s (extrapolated) → 4.6 s; load unchanged (13.9–23 s). The RECONCILED line now says "Reconcile Ns, net incremental/full". Before/after on Jake's store: printed by his next run (not measurable here). |
+| G6-0c | Alchemy first for the chain tier | Alchemy was put first whenever a key was set. | Documented free-plan throughput: 300 CU/s (alchemy.com/pricing "300 CU/s"; docs/reference/throughput), 30M CU a month — `alchemy_usage.FREE_TIER_CU_PER_S`; a run-wide pacer keeps every Alchemy call under it. Every RPC call is timed by host (ok / timeout / 429 / http / connection — `chain.RPC_TIMES`), saved to .cache/rpc_latency.json (hosts only) and logged. `connect_order` puts the fallback first when the measured Alchemy median is slower than the fallback's (≥ 20 Alchemy calls and ≥ 3 fallback calls; the fallback is sampled with 3 eth_blockNumber calls when it has no timings). The measurement itself comes from Jake's next run: no figure is claimed here. |
+| G6-0d | defillama_tvl | 150 s timeout with frames lost. | Stops TVL_STOP_FLOOR_S 40 s before its budget (deadline = budget − 10 s), keeps what it read, saves the next protocol in a cursor (`defillama_tvl:cursor`) and starts there next run. |
+| G6-0 done when | — | — | A normal run with 0 FAILED from time budgets: to be confirmed on Jake's next run. |
+
+#### Item 1 — World Mobile after the exploit
+
+| # | Item | Old | New |
+|---|---|---|---|
+| G6-1a | The exploit record | 53,838,000 WMTX (two secondary sources); 500.6M set aside because our EVM sum moved only +41.45M. | ON-CHAIN: 503 mints on Ethereum 0xDBB5…39D7, 2026-09-20 03:38:23–04:16:47 UTC, all to the SingularityNET converter 0x63BBC71C…d392, total 500,479,231.217272 WMTX (6 decimals); MINTER_ROLE revoked from the converter 05:12:59 and from the CCIP pool 05:18:23, BURNER_ROLE 09-24. The +41.45M was the Base RE-ISSUE (0x03fb0f5c… minting to itself 23,276,831.334 on 09-22 and 17,951,875.36 on 09-23 = 41,228,706.694), not the exploit. A further 10 WMTX (10-05) and 4,998,601 WMTX (10-07, to 0x0c789114…) were minted on Base with no stated purpose. |
+| G6-1a | total_supply_gross: SERIES BREAK 2026-09-20 | Ethereum summed until 2026-09-24; handover at the deprecation. | Ethereum is not read from 2026-09-20 (contracts.token.deprecated_from), so the counterfeit is never in the sum and never dilution; SOURCE_RECLASSIFICATIONS steps every window at 2026-09-20; the re-issue is a restatement, not issuance. Stored rows 09-20..09-24 that include the Ethereum leg: orphan_cleanup.sql DA (DA1 SELECT, DA2 commented DELETE). |
+| G6-1a | PROPOSED measuring point (for Jake) | — | Components read 2026-10-19 (DECLARED = read on-chain / Koios): Base 214,679,065.81 · BSC 52,120,204.94 · Arbitrum 93,778.56 · Solana 2,486,255.19 (= 269,379,304.50, today's stored sum) · Cardano WMTx 650,795,981.31 (new: wmtx_cardano_supply_tokens). INFERRED: Ethereum's legitimate supply not yet re-issued = 1,013,930,149.42 (Ethereum just before the first counterfeit mint) − 41,228,706.69 (re-issue so far) = 972,701,442.73 — the snapshot's eligible balances are World Mobile's and unpublished. Options: (A) today's 269.38M; (B) + Cardano = 920,175,285.81; (C) + the un-reissued Ethereum = 1,892,876,728.54 (1,887,878,127.54 if the 10-07 4,998,601 is also re-issue). Never added: the Orbit bridge's 5,355,859.62 (inside Base) and legacy Cardano WMT 2,000,000,000 (location unknown; wmt_legacy_supply_tokens, a reference). Recommendation: (C) as the measuring point once World Mobile publishes the snapshot total; (B) until then, labelled. Jake decides. |
+| G6-1b | locked_tokens | BLOCKED (Cardano Plutus, no read). | fetch/wm_supply.py (tier 2, daily): World Mobile Locked Staking on Base 0xBD4f5D76…02Ae (balanceOf, 6 dp) + the Cardano script addr1w9l52766…76yh4v (Koios address_assets, WMTx policy only — the script also holds NFTs) — both named in World Mobile's post of 2026-08-10. Read 2026-10-19: 7,321,544.14 + 29,556,739.39 = 36,878,283.53. locked_tokens_blocked → locked_tokens_resolved. The EarthNode Plutus staking is not in it (no address published). |
+| G6-1c | WorldMobile Chain activity | — | blockscout_stats on explorer.worldmobile.io/stats-service (Blockscout v12; robots allows): own_chain_tx_count = newOperationalTxns, else newTxns − newBlocks (an Arbitrum Orbit chain: one ArbitrumInternalTx per block); own_chain_active_addresses = activeAccounts. New metrics, World Mobile only (tx_count / active_addresses are archetype 1). Explorer totals 2026-10-19: 71,461,060 transactions, 3,293,856 addresses. |
+| G6-1d | Treasury and buyback | — | Stay an ACCEPTED LIMIT. The Safe 0x76607a4d…64d0 (410,000,000 WMTX, 2-of-3, unchanged since before the exploit) has no primary label and is recorded `label: None` — never treasury. The 25 Sep recovery update reopened Base↔BNB CCIP only; Arbitrum and Solana routes were still affected that day. |
+| G6-1e | Headline counters | — | worldmobile.io/airnodes (→ airnode.worldmobile.io), re-read 2026-10-19: "165,000+ AirNodes worldwide", "$2.5M+ Rewards paid out", "3M+ Subscribers" — undated lower bounds, in manual_references.csv only. |
+
+#### Item 2 — Aero upgrade (2026-10-22 00:00 UTC)
+
+| # | Item | Old | New |
+|---|---|---|---|
+| G6-2a | max_supply | G5 closed it as uncapped. | From the cutover: declared_stocks max_supply 2,127,000,000 (aero.xyz/aero-upgrade, read 2026-10-19: "~2.127B max"; inflation ~12% expected, 20% ceiling); the uncapped UNAVAILABLE entry expires 2026-10-21. Launch chains Base, Ethereum, OP, Arc, Ink, Robinhood, Arbitrum: total supply becomes the multi-chain sum net of bridge escrows (aero_v3.multichain_total; ":PARTIAL" while a chain is missing). |
+| G6-2b | VotingEscrow gap | supply() 1,058,698,045 vs 998,586,770 held. | Explained from the contracts (Base block 52,810,899): gap 60,109,674.86 = AERO forwarded by managed-veNFT compounding (_increaseAmountFor → LockedManagedReward.notifyRewardAmount) to the 75 managed NFTs' LMR contracts, which hold 60,109,790.43 (residual 115.57, uncompounded rewards). Not permanent locks, not rebase accounting. AERODROME_MIGRATION.ve_gap_2026_10_19. |
+| G6-2c | aero_migration.json | — | The switch file must give per-chain token addresses for every launch chain and the bridge escrows (validate._migration_switch_missing). The file is Jake's local input and is not in the repo: not checked here. |
+
+#### Item 3 — issuance routes
+
+| # | Item | Old | New |
+|---|---|---|---|
+| G6-3 NEAR | gross_issuance_tokens | Declared rate × total supply. | MEASURED: fetch/near_issuance.py reads each epoch's mint at its first block — total_supply(first) − total_supply(parent) + balance_burnt of chunks included in it — per UTC day, complete days only, top-up then a resumable backfill to 365 days on the paced archival RPC. Live 2026-10-19: block 220,636,334 minted 26,721.43 NEAR (2.499%/yr over a 25,771.5 s epoch); 10-13..10-18 ≈ 79–107k NEAR a day from 3–4 epochs. ISSUANCE_PRIMARY Near = first_party, the stored block-header derivation filling days the epoch read has not reached (the epoch read wins on a shared day); the declared rate is now the guard (> 10× apart BLOCKS). The rate change is a DECLARED STEP: [1,20] → [1,40] at block 170,351,519 (2025-10-29 11:29:03.97 UTC, protocol 80 → 81). NearBlocks circulating is never read: v1 holds 1,249,836,992.159308 on every day since 2025-08-27 (not since June). |
+| G6-3 NEAR split | Treasury share | The brief read protocol_reward_rate [0,1] as 0% to treasury. | Measured: treasury.near rose 2,675.04 NEAR across the 26,721.43 mint = 10.01% — the documented 90/10 holds; [0,1] is not what mainnet pays. |
+| G6-3 Pendle | LATENT_SUPPLY | A figure recorded 10-13. | Live: fetch/pendle_latent.py simulates claimLiquidityEmissions() from liquidityIncentivesRecipient() (eth_call; nothing sent) → latent_supply_tokens. 9,837,598.561055 PENDLE = weeks 205–259 (×0.989 a week) 6,865,217.4860 + weeks 260–286 (2%/yr terminal) 2,972,381.0750 — equal to the recorded figure. |
+| G6-3 GEODNET | Feed and Solana | — | fetch/geodnet_feed.py: burn-monthly (Polygon + Solana) → gross_burn_tokens_dune_monthly (series_handover from Dune 8683175), issuance-monthly → issuance_feed_polygon_tokens / issuance_feed_solana_tokens, miner-stats total_miner → supply_units; complete months only. Solana answer: our (b) line does NOT miss it — pool_release_tokens = the feed's Polygon issuance + a whole-million transfer every month (Sep 3,677,511.95 − 2,677,511.95 = 1,000,000.00), 22,000,000 over Oct-25..Sep-26 vs 20,817,755 Solana issued: Solana is counted when FUNDED, lumpy, ~1.18M ahead. INFERRED — the transfers' destination is not traced. |
+| G6-3 Ether.fi | 1.46M short; the split | — | 1,000,000,000 − 998,535,999 = 1,464,001 burned (8 burns 2025-08-08..09-19: 1,464,000 from 0x2f5301a3… + 1 by another holder; no mint function). Programmatic buyback (Snapshot 0xed61adff…, 2026-09-03): Labs 40% / Buyback 30% / User cashback 30%, buffer up to 20M ETHFI (paid 0), addresses "published at launch" — NOT published. The Safe 0x43F4cA92… wired 2026-10-13 was identified on-chain, not published: kept as wired; FOR JAKE — unwire until published, or keep. #11 says monthly, "all collected fees" (not weekly, not "100%", not sETHFI); #8 5% monthly to stakers. |
+| G6-3 Morpho | Merkl | — | Base 199,378.3625 (distributionChainId 8453) is in merkl_campaigns_non_ethereum_tokens; Arc 10,144.3425 is paid on Ethereum (distributionChainId 1) and sits in the Ethereum claims — correct by design. "Cut rewards on all assets and chains" for May: forum 1855 post 8 (2026-04-27); MIP 111 is topic 1879. |
+| G6-3 Plume | Staking references | — | Diamond 0x30c791E4… (Blockscout "PlumeStaking", not in docs): totalAmountStaked 128,195,948.73 (locked_tokens reference, 1%); getRewardRate 1,584,404,391 → 4.9966% gross APR (staking_yield_pct reference). |
+
+#### Item 4 — splits
+
+| # | Item | Old | New |
+|---|---|---|---|
+| G6-4 Uniswap | Burn split | UNCONFIRMED (no single share of LP fees). | CLOSED: 100% of PROTOCOL fees, released only against UNI burned through the Firepit (threshold 4,000 UNI, recipient 0xdead). burn_split share 1.0, status active, fee_base_metric revenue_usd (DefiLlama books the protocol fee by version and chain as charged): implied burn = protocol fees ÷ avg price. Shares by version recorded (v2 1/6 of 0.30%; v3 1/4 at 0.01/0.05%, 1/6 at 0.30/1%; v4 curve and aggregator-hook family), activation per chain verified on-chain (fee_switch_executions: #93 2025-12-27 … #102 2026-10-05; L2 lag not checked; v4 part 2 not proposed). Actual burn = 0xdead's rise less the 2025-12-27 100,000,000 (since 12-27: 1,432 Firepit releases × 4,000 = 5,728,000 on mainnet + 7,254,004.59 bridged L2 burns = 12,982,004.59). The 10-13 dump's last 90 days: revenue $29.8M vs 5.59M UNI burned. |
+| G6-4 Chainlink | Fee split | unconfirmed, "verify the split". | Only documented share: 50% of staking-secured SVR fees to the Reserve (chain.link blog, last updated 2025-08-07, quoted). Status stays unconfirmed so the implied buyback is suppressed for all other revenue; the measured Reserve inflow stays the route. Reserve 6,293,843.357358 LINK at block 26,226,487. |
+
+#### Items 5–9
+
+| # | Item | Old | New |
+|---|---|---|---|
+| G6-5 | Reference batch | — | 107 rows `g6_*` added to independent_references.csv (+2: Plume reward rate, GEODNET Solana funding), each mapped in references.G6_ROUTES. Tolerances: stocks 1%, cumulative counters 1%, completed-period flows 2%, exact where the source is the same contract or the same page. Rows with no metric are kind `recorded` (N/A BY DESIGN, with the reason). Mismatches: UNI total_supply 886,968,418.79 vs 1B and GEODNET 930,026,063.62 vs 1B (ours net of burns) — remapped to total_supply_gross; Pendle "total staked" 92.28M = sPENDLE + vePENDLE 63.43M (recorded; shares 28,855,832.97 vs 28,855,963.14 compared instead); Aethir cumulative revenue 191,935,463 vs 194,648,687 (−1.39%: ours lacks Jun–Jul 2024 and October to date); Sky cumulative buyback −0.03% (1-day lag); Sky treasury +0.166%; ETH burn −0.108% (10-18 vs 10-19); GEODNET stations 21,952 (09-15) vs 21,963. Fluid: api.fluid.io lists 125 buybacks 2025-10-03..2026-03-20, $4,745,304.89 / 1,306,296.83 FLUID (1.31% of supply), $0 in 30 days — fetch/fluid_buybacks.py stores them, zero-filled to the declared halt. Plume: supply API 6,606,142,167 (66.06%) vs plume.org "57.3%" — conflict recorded; the API stays the measuring point. Fluid fees: no 90% fall (DefiLlama 10-18 105,133; our 11,744/12,089 were early reads; adapter fix 2efc4c4, 10-18 06:40 UTC); Instadapp's revenue API reads 9,278.47 on 10-18 in an undocumented unit — not comparable. Near intents: revenue.near.org (Dune 6162763) 10-18 252,092.91 vs DefiLlama 12,315 — no adapter change; most likely read before Dune filled (not proven). Hyperliquid: 302,064,777.87 − Foundation + Grants 63,555,826.67 − HyperEVM zero-address burn 309,422.78 = 238,199,528.42 = ours; 0 left. On the real-data dumps (to 10-13): Fluid Q4 2025 revenue — Fluid's own 3,190,000 vs DefiLlama 4,105,817 (+28.7%), BROKEN, UNEXPLAINED (the PDF says DefiLlama misses Jupiter Lend, which would make it lower), cause registered; GEODNET July burn 3,635,000 vs the feed 3,550,000 (+2.39%), BROKEN with cause: a month-boundary effect of daily balance deltas against transaction-dated burns (Dec-25..Sep-26 differences offset to −0.15%); tolerances unchanged. Aethir cumulative revenue is recorded, not graded (ours sums the complete months, PARTIAL by its own source). A period our series has not reached is no longer read as 0 (Maple's September buyback on a store ending in August). |
+| G6-6 | Aethir weekly parser | A weekly label was aged from its start (05/10 on 10-19 = 14 days: refused). | Aged from the week's END (label + 6 days): 05/10 is 8 days old on 10-19 and accepted. |
+| G6-7 | Theory into SPEC | — | §1b "Theory decisions on record (Jake)" T-a..T-m with dates, where each is partly covered and the columns each implies; §11 Scoring principles register (10). Scoring not built. |
+| G6-8 | SPEC coverage builds | — | Built: A1/A2/A4 circulating, A3 FDV, CP price, emissions and unlocks, Flows outflow (a), (d), (e). tvl_native: NOT BUILT BY DESIGN (labelled). The quarterly-history check runs against the store (spec_coverage part 3). |
+| G6-9 | Trajectory: 92 short rows | No reason per row. | spec_coverage part 3 gives each short row one class: N/A BY DESIGN, INPUT NEVER STORED, SPLIT WITH NO HISTORICAL DATES, COVERAGE BLOCKED, READ-TIME VIEW ONLY, GENUINELY LACKS HISTORY or BUILDER NOT WIRED; fees ÷ issuance is n/a where nothing is issued. |
