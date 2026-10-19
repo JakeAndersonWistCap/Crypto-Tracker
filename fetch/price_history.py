@@ -32,6 +32,29 @@ TIER = 1
 CHART = "https://coins.llama.fi/chart/{key}"
 MAX_POINTS = 499
 STAMP_TOLERANCE_S = 600
+EMPTY_RECHECK_DAYS = 30     # a span DefiLlama served no price for is not asked again for this long (G5 item 3)
+STOP_BEFORE_S = 15.0        # the adapter stops this long before its tier's budget and keeps what it read (G5 item 3)
+
+
+def _empty_path():
+    import os
+    from pathlib import Path
+    return Path(os.environ.get("TOKEN_METRICS_LOGCACHE", ".cache/logscan")).parent / "price_history_empty.json"
+
+
+def _load_empty() -> dict:
+    import json
+    try:
+        return json.loads(_empty_path().read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_empty(d: dict) -> None:
+    import json
+    from .logcache import atomic_write_text
+    _empty_path().parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(_empty_path(), json.dumps(d, indent=1, sort_keys=True))
 
 
 def token_flow_metrics() -> set:
@@ -95,8 +118,24 @@ class PriceHistory:
             robots = robots_verdict
         self.robots = robots
 
-    def run(self, projects: list[dict], window_days, out):
+    def run(self, projects: list[dict], window_days, out, unbounded: bool = False):
+        # ITS OWN CLOCK (Round G5 item 3, Jake's 06:30 run: the tier timed out at 120 s after 88 calls, 61 s of them rate
+        # spacing, and kept 0 frames — every day's read re-asked the same spans DefiLlama has no price for). Spans that
+        # came back empty are remembered for EMPTY_RECHECK_DAYS; the adapter stops STOP_BEFORE_S before the tier's
+        # budget, stores what it read, and the next run resumes (the project is not marked done).
+        import time as _time
+        from . import _budget                                 # noqa: PLC0415
+        deadline = None if unbounded else _time.monotonic() + _budget(SOURCE) - STOP_BEFORE_S
+        empty = _load_empty()
+        cutoff = str((today() - pd.Timedelta(days=EMPTY_RECHECK_DAYS)).date())
         day = str(today().date())
+        try:
+            self._run(projects, out, day, deadline, empty, cutoff)
+        finally:
+            _save_empty(empty)
+
+    def _run(self, projects, out, day, deadline, empty, cutoff):
+        import time as _time
         for p in projects:
             cid, name = p.get("coingecko_id"), p["name"]
             if not cid:
@@ -118,8 +157,16 @@ class PriceHistory:
             if not ok:
                 out.fail(SOURCE, name, f"price_usd history: robots.txt refuses coins.llama.fi ({why})", TIER)
                 continue
-            got, errors = {}, []
+            got, errors, stopped, skipped_empty = {}, [], False, 0
+            known_empty = empty.setdefault(name, {})
             for run in runs(days):
+                span = f"{run[0].date()}..{run[-1].date()}"
+                if known_empty.get(span, "") >= cutoff:
+                    skipped_empty += len(run)
+                    continue
+                if deadline is not None and _time.monotonic() >= deadline:
+                    stopped = True
+                    break
                 start = int(run[0].tz_localize("UTC").timestamp())
                 try:
                     body = self.http.get(CHART.format(key=coin), params={"start": start, "span": len(run),
@@ -128,11 +175,14 @@ class PriceHistory:
                     from .chain import redact_urls
                     errors.append(f"{run[0].date()}..{run[-1].date()}: {redact_urls(e)}"[:200])
                     continue
+                n0 = len(got)
                 for pt in ((body or {}).get("coins") or {}).get(coin, {}).get("prices") or []:
                     ts = int(pt.get("timestamp") or 0)
                     d = pd.Timestamp(ts, unit="s").normalize()
                     if abs(ts - int(d.tz_localize("UTC").timestamp())) <= STAMP_TOLERANCE_S and pt.get("price"):
                         got[d] = float(pt["price"])
+                if len(got) == n0:
+                    known_empty[span] = day           # answered, with nothing for these days: not re-asked for a while
             want = set(days)
             rows = sorted((d, v) for d, v in got.items() if d in want)
             if rows:
@@ -146,5 +196,17 @@ class PriceHistory:
             elif not rows:
                 out.skipped(SOURCE, name, f"price_usd history: DefiLlama serves no {coin} price for the "
                                           f"{len(days)} missing day(s) from {days[0].date()}", TIER)
+            if skipped_empty:
+                out.log.append(_entry(name, f"price_usd history: {skipped_empty} day(s) in span(s) DefiLlama served no "
+                                            f"price for within {EMPTY_RECHECK_DAYS} days — not re-asked"))
+            if stopped:
+                out.log.append(_entry(name, f"price_usd history: stopped {STOP_BEFORE_S:.0f}s before the tier's budget; "
+                                            f"what was read is stored and the next run resumes"))
+                break
             if not errors:
                 self.daily.done(key, day)
+
+
+def _entry(name, msg):
+    from .base import LogEntry
+    return LogEntry(SOURCE, name, 0, "ok", msg, TIER)

@@ -60,6 +60,7 @@ from .chainlink_fees import ChainlinkFees
 from .xref import CrossRefs
 from .staked_eth import StakedEth
 from .treasury import TreasuryBills
+from .sky_msc import SkyMsc
 from .sky_ssr import SkySSR
 from .business import Business
 from .sky_accounting import SkyAccounting
@@ -81,7 +82,10 @@ log = logging.getLogger("token_metrics.fetch")
 TIER_ORDER = [
     ("schedule:config", 1, lambda ctx: Schedule()),
     ("defillama", 1, lambda ctx: DefiLlama(known_absent=ctx["known_absent"],
-                                           stored_long=ctx.get("stored_long"))),
+                                           stored_long=ctx.get("stored_long"), part="fees")),
+    # G5 item 3: the slow full-history TVL payloads in their own concurrent tier (source stays "defillama")
+    ("defillama_tvl", 1, lambda ctx: DefiLlama(known_absent=ctx["known_absent"],
+                                               stored_long=ctx.get("stored_long"), part="tvl")),
     # BEFORE DefiLlama's own lending route would matter, and independent of it: the protocol's
     # API gives the unbiased figure, and DefiLlama's stands down once it is confirmed. The two
     # must never alternate — see DefiLlama.lending_supply.
@@ -159,6 +163,8 @@ TIER_ORDER = [
     ("maple_page", 3, lambda ctx: MapleTransparency()),
     # Sky's accounting (Block Analitica's documented API): monthly NPS, buyback spending, staking rewards (2026-10-07).
     ("sky_accounting", 3, lambda ctx: SkyAccounting()),
+    # Sky Net Revenue as Soter Labs' monthly settlement report states it — the monthly measuring point (G5 D1).
+    ("sky_msc", 3, lambda ctx: SkyMsc()),
     # Sky's MKR backing (non-issuer MKR is circulating) and the reward vest in force (Jake 2026-10-12, decision 2).
     ("sky_mkr", 2, lambda ctx: SkyMkr(stored_long=ctx.get("stored_long"))),
     # Aethir's own dashboard, from the Next.js server-rendered payload (Jake's probes2, 2026-09-30).
@@ -632,6 +638,17 @@ def _derive_pool_release(out: FetchOutput, projects: list[dict], prior_delta: di
                         f"NOTHING STORED — this resolves itself once both series have a reading "
                         f"on the same day.", tier=2)
             continue
+        # A ONE-DAY CHANGE ONLY (Round G5 item 8a, the G3-7a rule): CoinGecko serves no supply history, so the prior is
+        # the last STORED reading — after a day with no run it is two or more days back, and that change booked on one
+        # day reads as a day's release several times too large. Not stored; the next consecutive-day pair is.
+        if dc is not None:
+            span = (pd.Timestamp(when).normalize() - pd.Timestamp(dc).normalize()).days
+            if span > 1:
+                out.skipped(SOURCE_DERIVED, name,
+                            f"pool_release_tokens: the prior readings are {span} days back ({str(dc)[:10]}); a change "
+                            f"over {span} days is not one day's release — NOT STORED (d(circulating) {d_circ:,.0f} - "
+                            f"d({tm}) {d_total:,.0f} = {release:,.0f} over the span)", tier=2)
+                continue
         out.add(point(name, "pool_release_tokens", release,
                       f"{SOURCE_DERIVED}:d_circulating-d_total", 2, when),
                 SOURCE_DERIVED, name,
@@ -1892,8 +1909,8 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
 # ~54s for the window, so 60s cut it with 5 of 9 read and Near's series gapped. 180s = two pacing windows + requests,
 # with a third window of slack (nearblocks_daily_calls(), tested).
 TIER_BUDGET_S = {
-    "schedule:config": 15, "defillama": 150, "morpho_api": 60, "growthepie": 60,
-    "nearblocks": 180, "coingecko": 240, "price_history": 120, "hypercore_info": 60, "chainlink_fees": 180, "xref": 90, "validatorqueue": 30, "treasury_bills": 60, "sky_ssr": 120, "business": 900, "share_vault": 60,
+    "schedule:config": 15, "defillama": 150, "defillama_tvl": 150, "morpho_api": 60, "growthepie": 60,
+    "nearblocks": 180, "coingecko": 240, "price_history": 120, "hypercore_info": 60, "chainlink_fees": 180, "xref": 90, "validatorqueue": 30, "treasury_bills": 60, "sky_ssr": 120, "sky_msc": 60, "business": 900, "share_vault": 60,
     "chain": 240, "tron_node": 60, "near_rpc": 90, "explorer": 300, "balance_flow": 150, "maple_page": 60,
     "explorer_gauge": 300,
     # the L2 chain tiers (explorer_l2:<chain>, G3 item 1) take config.L2_TIER_BUDGET_S, set below

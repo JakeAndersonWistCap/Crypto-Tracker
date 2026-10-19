@@ -378,7 +378,10 @@ def test_g3_4_a_full_history_series_has_its_own_daily_mark(tmp_path, monkeypatch
     daily.done("business:Near:near_intents_volume_usd", today)        # the windowed read's mark, as on 10-18
     b = Business(daily=daily)
     seen = []
-    b._series = lambda name, spec, key: (seen.append(key) or ([(pd.Timestamp("2025-01-01"), 1.0)], "s", "d"))
+    from fetch.business import last_complete
+    # the read reaches the last complete day: a shorter read is stored and NOT marked (G5 item 4, test_round_g5)
+    b._series = lambda name, spec, key: (seen.append(key) or ([(pd.Timestamp("2025-01-01"), 1.0),
+                                                                (pd.Timestamp(last_complete()), 1.0)], "s", "d"))
     near = config.PROJECT_BY_NAME["Near"]
     out = FetchOutput()
     b.run([near], None, out)

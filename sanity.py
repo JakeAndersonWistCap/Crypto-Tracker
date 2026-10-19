@@ -209,7 +209,9 @@ def lost_headlines(wb, previous: dict, headline_cells: list, prev_date: str = ""
         if stated_number(now) is None:
             out.append((hc["project"], "headline_lost",
                         f"{hc['sheet'][:2]} {hc['header'][:70]}: {was:,.6g} in the previous run ({prev_date}), now "
-                        f"{str(xlcalc.display(now) if not isinstance(now, str) else now)[:80]}"))
+                        f"{str(xlcalc.display(now) if not isinstance(now, str) else now)[:400]}"))
+            # the whole reason, not 80 characters of it (G5 item 7: three Morpho hits were cut before the chain name
+            # REGRESSION_ALLOWLIST matches on, so the allow-listed losses read as open)
     return out
 
 

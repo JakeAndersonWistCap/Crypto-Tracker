@@ -76,6 +76,9 @@ ACTIONABLE_SIGNALS = (
     # with its route and the command that runs it). P6 is "no source covers it, and none is configured to".
     "stored nothing this run", "tier timed out this run", "source stalled this run", "returned no data for this series",
     "produced nothing this run",
+    # G5 (Jake's 06:30 run): "explorer scan timed out after 45s" — a configured scan that ran out of its share
+    "scan timed out after",
+    "is not assembled yet",
 )
 
 
@@ -360,8 +363,22 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
         dedicated.append(("Plume's staking diamond getValidatorsList() (fetch/plume_staking.py, "
                           f"{ps.get('address')} on {ps.get('rpc')})", "plume_sources"))
     if metric == "circulating_supply_first_party":
-        dedicated.append(("Hyperliquid's own tokenDetails.circulatingSupply (fetch/hypercore.py)",
-                          "hyperliquid_history_routes"))
+        # EACH PROJECT'S OWN ROUTE (Round G5 item 6: Near's row described Hyperliquid's tokenDetails — the text was one
+        # project's, written for all)
+        if (project.get("near_bigquery") or {}).get("circulating_metric") == metric:
+            dedicated.append(("NEAR's circulating_supply table in Google's public BigQuery dataset "
+                              "(fetch/near_bigquery.py; needs Jake's Google login — gcloud auth application-default "
+                              "login)", "near"))
+        elif any(v == metric for v in ((project.get("aethir_pages") or {}).get("fields") or {}).values()) \
+                or name == "Aethir":
+            dedicated.append(("Aethir's own dashboard athCirculatingSupply (dashboard.aethir.com/protocol/onchain-"
+                              "metric, fetch/aethir_pages.py) — the docs' emission-schedule figure", "aethir_pages"))
+        elif name == "Hyperliquid":
+            dedicated.append(("Hyperliquid's own tokenDetails.circulatingSupply (fetch/hypercore.py)",
+                              "hyperliquid_history_routes"))
+        else:
+            dedicated.append((f"{name}'s own published circulating figure (config.CIRCULATING_ONCHAIN['{name}'])",
+                              "circulating_sources"))
     # 2026-09-30: the explorer stats service, growthepie's cross-checks, DefiLlama's staking series.
     bs = project.get("blockscout_stats") or {}
     if metric in (bs.get("lines") or {}):
@@ -912,11 +929,29 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
     if entry is not None:
         return (entry, f"Complete the sources.yaml entry for {name}/{metric}.")
 
+    if metric == "settlement_volume_usd" and name not in config.ARTEMIS_SETTLEMENT["chains"]:
+        # ROUND G5 item 4: Near's and Plume's rows said "no sources.yaml entry" — Artemis covers neither chain (Jake
+        # checked 2026-09-30); the route is the declared rebuild (config.SETTLEMENT_REBUILD), not a page to scrape
+        rb = config.SETTLEMENT_REBUILD.get(name.lower()) or {}
+        return (f"Artemis does not cover {name} (Jake checked 2026-09-30); settlement = P2P + DEX + NFT volume is to be "
+                f"REBUILT (config.SETTLEMENT_REBUILD.{name.lower()}: {str(rb.get('route', 'no route declared'))[:160]}) "
+                f"and is not assembled yet — its P2P leg is p2p_transfer_volume_usd",
+                "Build the rebuild leg by leg and validate it against Artemis's Ethereum history before it is "
+                "shown (SETTLEMENT_REBUILD.ethereum_validation); the P2P leg's own Gap Report row says what it needs.")
     if 3 in tiers or 5 in tiers:
         return ("no sources.yaml entry for this metric",
                 f"Add an entry for {name}/{metric} in sources.yaml pointing at the page that publishes it.")
 
     if 4 in tiers:
+        # A MONTHLY CROSS-CHECK SERIES IS WRITTEN BY ITS PARENT'S DUNE QUERY (Round G5 item 4: GEODNET's
+        # gross_burn_tokens_dune_monthly said "no Dune query id" while query 8683175, keyed gross_burn_tokens, writes it)
+        for parent, q in (project.get("dune_queries") or {}).items():
+            if q.get("query_id") and config.monthly_crosscheck_metric(name, parent) == metric:
+                return (f"written by Dune query {q['query_id']} (dune_queries.{parent}, monthly rows routed here); tier 4 "
+                        f"is a BACKFILL — skipped once the store holds the series, so a month after the last pull is "
+                        f"not read",
+                        f"Re-pull the months since the last row: TOKEN_METRICS_DUNE_ALWAYS=1 python token_metrics.py "
+                        f"--project {name} (spends Dune credits; DUNE_API_KEY).")
         return ("no Dune query id in config",
                 f"Add a dune_queries entry for {name}/{metric} in config.py, or a sources.yaml entry if the "
                 f"protocol publishes the figure itself.")
@@ -967,6 +1002,29 @@ def detect(projects: list[dict], frame: pd.DataFrame, manual_keys: set[tuple[str
         bt = config.burn_total(p["name"])
         if bt and (p["name"], bt["components"][0]) in have:
             have.add((p["name"], bt["metric"]))
+        # A TOKEN COUNT CONVERTED AT READ TIME FROM ITS USD TWIN IS COVERED WHEN THE TWIN IS (Round G5 item 6:
+        # Hyperliquid's burn_auction_tokens, burn_hyperevm_tokens and buyback_hypercore_asxn_tokens said "no sources.yaml
+        # entry" — ASXN serves USD only, stored as *_usd, and the burn total's history converts them at the day's price)
+        for leg in (bt or {}).get("history_extra") or ():
+            if (p["name"], leg["usd"]) in have:
+                have.add((p["name"], leg["tokens"]))
+        for tok, usd in config.USD_TWIN_TOKENS.get(p["name"], ()):
+            if (p["name"], usd) in have:
+                have.add((p["name"], tok))
+        # A BUYBACK BUILT AT READ TIME IS COVERED BY ITS INPUTS (Round G5 item 6: Near's and Aerodrome's
+        # actual_buyback_tokens sat at P6 "no source" while both routes are built — NEAR's is the daily change of the three
+        # wallets' combined close, buyback_fund_balance_eod; Aerodrome's is the Foundation window parts summed by
+        # build_workbook._foundation_buyback_views)
+        nbh = (p.get("nearblocks") or {}).get("balance_history") or {}
+        if nbh.get("flow") and (p["name"], nbh.get("metric")) in have:
+            have.add((p["name"], nbh["flow"]))
+        fwin = ((p.get("foundation_buyback") or {}).get("window_metrics") or {}).values()
+        if any((p["name"], m) in have for m in fwin):
+            have.add((p["name"], "actual_buyback_tokens"))
+        # A READ-TIME NET TOTAL IS COVERED BY ITS LEGS (G5 item 6: Hyperliquid's total_supply said "no contract of kind
+        # erc20_total_supply declared" — since G2-D2 it is total_supply_gross net of the Fund and the HyperEVM burn)
+        if p["name"] in config.TOTAL_SUPPLY_NET and (p["name"], "total_supply_gross") in have:
+            have.add((p["name"], "total_supply"))
         # And a buyback token count derived from that usd and the price (Pendle, 2026-09-28).
         if (config.buyback_tokens_from_usd(p["name"]) and (p["name"], "actual_buyback_usd") in have
                 and (p["name"], "price_usd") in have):
@@ -1207,13 +1265,14 @@ def served_by(source: str, project: dict) -> set[str] | None:
             m.add("buyback_last_inflow_date")
     elif source == "coingecko":
         m = set(COINGECKO_METRICS) if project.get("coingecko_id") else set()
-    elif source == "defillama":
+    elif source in ("defillama", "defillama_tvl"):
+        # G5 item 3: the fees tier and the TVL tier serve different metrics — a timeout is stamped on its own only
         m = set()
-        if project.get("defillama_fees_slug"):
+        if project.get("defillama_fees_slug") and source == "defillama":
             m |= {"fees_usd", "revenue_usd", "holders_revenue_usd"}
-        if project.get("defillama_protocol"):
-            m |= {"protocol_tvl_usd"}
-        if project.get("defillama_chain"):
+        if project.get("defillama_protocol") and source == "defillama_tvl":
+            m |= {"protocol_tvl_usd", "protocol_tvl_constant_price_usd"}
+        if project.get("defillama_chain") and source == "defillama_tvl":
             m |= {"tvl_usd", "stablecoin_supply_usd", "rwa_defillama_usd"}
     elif source == "chain":
         specs = list((project.get("contracts") or {}).values())

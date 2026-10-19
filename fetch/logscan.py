@@ -161,6 +161,7 @@ WINDOW_BUDGET_S = 120.0     # the reconciled-window fallback's own budget (fix r
 
 TIER_MARGIN_S = 15.0        # the scans stop this long before their tier's budget, to store what they read (G4 item 1)
 WINDOW_FLOOR_S = 30.0       # a window read with less time than this is not started (G4 item 1)
+RESERVE_SHARE = 0.6         # at most this share of a tier is held back for headline scans (G5 item 2)
 
 
 class LogScan:
@@ -196,9 +197,41 @@ class LogScan:
             reader = ChainReader()
         self.reader = reader
 
+    def _date_undated(self, chain: str, events: list) -> list:
+        """Events a route returned WITHOUT a timestamp (Alchemy's Transfers API off its metadata chains — Berachain, BNB,
+        HyperEVM; Round G5 item 2) get their block's time from the chain: timestamps never decrease with the block, so a
+        run of blocks whose first and last share a UTC day is dated without reading the blocks between (the Katana
+        seed's bracketing, fetch.katana_seed.date_blocks). An event is given its block's exact time where read, else
+        its day's midnight — only the day is used downstream. Nothing is dated without a chain reader; a failed read
+        leaves the events undated (refused later, never guessed)."""
+        undated = [e for e in events if not int(e.get("timeStamp") or 0)]
+        if not undated or not hasattr(self.reader, "block_timestamp"):
+            return events
+        from .katana_seed import date_blocks
+        seen: dict[int, int] = {}
+
+        def ts(b):
+            if b not in seen:
+                seen[b] = int(self.reader.block_timestamp(chain, int(b)))
+            return seen[b]
+        try:
+            day_of = date_blocks(sorted({int(e["blockNumber"]) for e in undated}), ts)
+        except Exception as ex:  # noqa: BLE001 — left undated, said once
+            from .chain import redact_urls
+            log.info("dating %d undated event(s) on %s stopped: %s", len(undated), chain, redact_urls(ex))
+            return events
+        for e in undated:
+            b = int(e["blockNumber"])
+            e["timeStamp"] = seen.get(b) or int(day_of[b].timestamp())
+        log.info("dated %d event(s) on %s from %d block-time read(s) (the route returned no timestamps)",
+                 len(undated), chain, len(seen))
+        return events
+
     def _save_progress(self, streams, e, to_block) -> str:
         """Out of budget mid-scan: keep what was read, so the seed resumes. Nothing here is
         proven — proven_to is left where it was."""
+        if getattr(e, "partial", None) and getattr(e, "stream", None):
+            self._date_undated(getattr(self, "_chain_now", "ethereum"), e.partial)
         done = []
         dated = lambda evs: all(int(x.get("timeStamp") or 0) > 0 for x in evs)  # noqa: E731
         for sid, st, new, _, _ in streams:
@@ -247,12 +280,32 @@ class LogScan:
             tname = _th.current_thread().name
             if tname in TIER_BUDGET_S:
                 tier_deadline = _time.monotonic() + _budget(tname) - TIER_MARGIN_S
+        # A HEADLINE SCAN'S RESERVE (Round G5 item 2, Jake's 06:30 run: merkl_morpho_out_base got 45 s of a 240 s tier
+        # and Chainlink's noncirc scans 14 s each of the explorer tier's 300 s): while a scan feeding a headline is still
+        # to run, its reserve (config.scan_reserve_s) is held back from every other scan's share, so they cannot eat it.
+        reserve = {id(spec): config.scan_reserve_s(p["name"], spec) for p, spec in todo}
+        if tier_deadline is not None and sum(reserve.values()):
+            # never more than RESERVE_SHARE of the tier held back in all: the other scans keep a share too
+            cap = RESERVE_SHARE * max(0.0, tier_deadline - _time.monotonic())
+            k = min(1.0, cap / sum(reserve.values()))
+            reserve = {sid: r * k for sid, r in reserve.items()}
+        retry: list[tuple[int, dict, dict, int, int, int]] = []    # (index, p, spec, log/gap/frame marks) of pass 1
+
+        def deadline_for(i: int, seq: list) -> None:
+            if tier_deadline is None:
+                return
+            left = max(0.0, tier_deadline - _time.monotonic())
+            spec_i = seq[i][1]
+            held = sum(reserve[id(sp)] for _p, sp in seq[i + 1:])
+            fair = max(0.0, left - held) / (len(seq) - i)
+            mine = max(fair, min(reserve[id(spec_i)], left)) if reserve[id(spec_i)] else fair
+            self._scan_deadline = _time.monotonic() + mine
+
         for i, (p, spec) in enumerate(todo):
             chain = spec.get("chain") or "ethereum"
-            if tier_deadline is not None:
-                self._scan_deadline = _time.monotonic() + max(0.0, tier_deadline - _time.monotonic()) / (len(todo) - i)
+            deadline_for(i, todo)
             set_phase(f"scan {spec.get('key')} ({i + 1}/{len(todo)}, {chain}): starting")
-            n_log = len(out.log)
+            n_log, n_gap, n_frame = len(out.log), len(out.gaps), len(out.frames)
             # A STALLED CHAIN IS NOT ASKED AGAIN THIS RUN (Round G3 item 1): its remaining scans are gapped at once and
             # named in ONE line below, and the other chains' scans (their own tiers) are untouched.
             why = stalled.get(chain) or BREAKER.chain_stalled(chain)
@@ -263,7 +316,8 @@ class LogScan:
             # ONE SCAN'S FAILURE NEVER STOPS THE TIER (Jake's run 2026-10-06 18:21: one bad log crashed the
             # adapter and no later scan ran).
             try:
-                self._scan(p, spec, window_days, out)
+                if self._scan(p, spec, window_days, out) == "budget" and tier_deadline is not None:
+                    retry.append((i, p, spec, n_log, n_gap, n_frame))
             except ExplorerTimeout:
                 raise
             except ChainStalled as e:
@@ -287,6 +341,43 @@ class LogScan:
             if why:
                 stalled[chain] = why
                 gapped.setdefault(chain, []).append((p["name"], spec))
+        # PASS 2 — THE TIER'S LEFTOVER TIME (Round G5 item 2: explorer_l2:base finished in 84 s of its 240 s with
+        # Morpho's Base claims cut at 45 s). A scan that stopped on its share, not on an error, runs again with the time
+        # the others did not use; it resumes from its cache. When it completes, its pass-1 failure lines and gap rows are
+        # withdrawn (one line says so); when it stops again, pass 2's own lines stand.
+        if retry and tier_deadline is not None:
+            seq = [(p, spec) for _i, p, spec, *_m in retry]
+            for j, (i, p, spec, n_log, n_gap, n_frame) in enumerate(retry):
+                if tier_deadline - _time.monotonic() < WINDOW_FLOOR_S:
+                    break
+                chain = spec.get("chain") or "ethereum"
+                if stalled.get(chain) or BREAKER.chain_stalled(chain):
+                    continue
+                deadline_for(j, seq)
+                set_phase(f"scan {spec.get('key')} (pass 2, {chain}): resuming with the tier's leftover time")
+                first = (out.log[n_log:], out.gaps[n_gap:])
+                m_log, m_gap, m_frame = len(out.log), len(out.gaps), len(out.frames)
+                try:
+                    again = self._scan(p, spec, window_days, out)
+                except ExplorerTimeout:
+                    raise
+                except ChainStalled as e:
+                    stalled[chain] = BREAKER.chain_stalled(chain) or str(e)
+                    gapped.setdefault(chain, []).append((p["name"], spec))
+                    continue
+                except Exception as e:  # noqa: BLE001
+                    out.fail(SOURCE, p["name"], f"{spec.get('key')}: pass 2 crashed — {type(e).__name__}: "
+                                                f"{redact_urls(e)}", TIER)
+                    continue
+                if again != "budget" and len(out.frames) > m_frame:
+                    drop_log = {id(e) for e in first[0] if e.status == "failed"}
+                    drop_gap = {id(g) for g in first[1]}
+                    out.log[:] = [e for e in out.log if id(e) not in drop_log]
+                    out.gaps[:] = [g for g in out.gaps if id(g) not in drop_gap]
+                    out.log.append(LogEntry(SOURCE, p["name"], 0, "ok",
+                                            f"{spec.get('key')}: completed in PASS 2 on the tier's leftover time (pass 1 "
+                                            f"stopped on its share; its failure line is withdrawn)", TIER))
+                del m_log, m_gap
         for host, items in src_stalled.items():
             from .base import host_stalled as _hs
             series = [f"{n}/{m}" for n, sp in items for m in (sp.get("metric"), sp.get("direct_metric")) if m]
@@ -547,8 +638,9 @@ class LogScan:
         if last is not None and pd.Timestamp(last).normalize() > start:
             start = pd.Timestamp(last).normalize()
             if start >= today().normalize() - pd.Timedelta(days=1):
-                out.log.append(LogEntry(SOURCE, name, 0, "ok", f"{key}: up to date — stored through {start.date()} "
-                                                               f"(seeded history; nothing newer to read)", TIER))
+                # CURRENT, NOT A GAP (G5 item 2: the Katana tier read 0 rows and the Gap Report opened a P4 row)
+                out.mark_current(SOURCE, name, metric, f"{key}: up to date — stored through {start.date()} "
+                                                       f"(seeded history; nothing newer to read)", TIER)
                 daily.done(f"window:{key}", day)
                 return True
         # ITS OWN BUDGET (fix round 2, R8: Pendle's Arbitrum gauge read "etherscan time budget exhausted before the first
@@ -895,7 +987,7 @@ class LogScan:
                  chain, holder, block, archive_err)
         return bal
 
-    def _scan(self, p: dict, spec: dict, window_days, out) -> None:
+    def _scan(self, p: dict, spec: dict, window_days, out) -> str | None:
         name, key, metric = p["name"], spec["key"], spec["metric"]
         chain, token = spec["chain"], spec["token"]
         holders = [h.lower() for h in spec["holders"]]
@@ -919,8 +1011,8 @@ class LogScan:
                 return
             from .logcache import DailyChecks
             if not DailyChecks(self.cache.root).due(f"window:{key}", str(today().date())):
-                out.log.append(LogEntry(SOURCE, name, 0, "ok", f"{key}: the RPC window was read and stored today "
-                                                               f"already (once a day)", TIER))
+                out.mark_current(SOURCE, name, metric, f"{key}: the RPC window was read and stored today already "
+                                                       f"(once a day)", TIER)
                 return
             if not self._window_scan(p, spec, chain, chain_id, token, holders, head - CONFIRMATIONS,
                                      f"no explorer serves {chain} (chain {chain_id}); the RPC window is the route "
@@ -965,6 +1057,7 @@ class LogScan:
         # run seeds from block 0; a seed too big for the budget is saved as far as it got and
         # resumed next run. Reconciliation below still covers the WHOLE history, cached + new.
         ins, outs, served, requests, refused = {}, {}, set(), 0, []
+        self._chain_now = chain
         streams, fetched_new = [], 0     # (sid, cached state, new events, holder, direction)
         # ONE 120s budget for the whole scan, both providers included (config.EXPLORER_SCAN_BUDGET_S).
         budget = getattr(self.explorer, "start_budget", None)
@@ -988,6 +1081,7 @@ class LogScan:
                         except ExplorerTimeout as e:
                             e.stream = (sid, st, start)
                             raise
+                        new = self._date_undated(chain, new)
                     streams.append((sid, st, new, h, way))
                     fetched_new += len(new)
                     events = _merge(st["events"], new)
@@ -1012,7 +1106,7 @@ class LogScan:
                                 "The providers' own errors are above. Re-runs are cheap now — "
                                 "the scan stops at the budget instead of retrying for most of "
                                 "an hour."))
-            return
+            return "budget"                      # stopped on its share: LogScan.run's pass 2 may resume it (G5 item 2)
         except ExplorerRefused as e:
             if self._window_scan(p, spec, chain, chain_id, token, holders, to_block,
                                  f"refused: {e}", out):

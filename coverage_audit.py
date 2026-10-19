@@ -33,7 +33,8 @@ SHEET = "Coverage"
 TABS = ("Master", "A1 Infrastructure", "A2 Coordination", "A3 Revenue Buyback", "A4 Permanent Burn", "CP Comparability")
 HEAD = ["Tab", "Column", "Key", "Project", "Value now", "Status", "Reason / route / error", "Axis", "Direction", "Tier",
         "History depth (quarters with a value)", "Formula as built", "SPEC formula", "MATCHES-SPEC"]
-STATUSES = ("VERIFIED", "LIVE-UNVERIFIED", "CHECK", "N/A BY DESIGN", "NOT WIRED", "BROKEN", "BLANK-UNEXPLAINED")
+STATUSES = ("VERIFIED", "VERIFIED (derived)", "LIVE-UNVERIFIED", "CHECK", "N/A BY DESIGN", "MISSING", "NOT WIRED",
+            "BROKEN", "BLANK-UNEXPLAINED")
 _SHEET_REF = re.compile(r"'([^']+)'!\$?([A-Z]{1,3})\$?(\d+)")
 _ERRORS = ("#REF!", "#VALUE!", "#DIV/0!", "#NAME?", "#N/A", "#NUM!", "#NULL!")
 _GREEN = "D6E9CE"         # build_workbook.FILL_GREEN
@@ -106,7 +107,7 @@ def classify(raw, value, fill: str) -> tuple[str, str]:
 
 def audit(wb, trajectory_rows: list[dict] | None = None, flows_rows: list[dict] | None = None,
           X=None, groups: dict | None = None, sanity_hits: list | None = None,
-          windows: dict | None = None) -> list[dict]:
+          windows: dict | None = None, series_green=None, gap_rows: list | None = None) -> list[dict]:
     """The coverage rows for a built workbook (openpyxl, formulas kept). `X` is an xlcalc.Workbook over it."""
     import xlcalc                                           # noqa: PLC0415
     X = X or xlcalc.Workbook(wb)
@@ -139,6 +140,10 @@ def audit(wb, trajectory_rows: list[dict] | None = None, flows_rows: list[dict] 
                 val = X.value(tab, r, c) if isinstance(raw, str) and raw.startswith("=") else raw
                 val = xlcalc.display(val) if hasattr(xlcalc, "display") else val
                 status, why = classify(raw, val, _fill(cell))
+                if status == "LIVE-UNVERIFIED" and not why and cell.comment is not None:
+                    # WHY IT IS NOT GREEN, from the cell's own band note (Round G5 item 1: 15 cells lost VERIFIED and
+                    # Coverage said nothing; the band's reason was in the cell comment all along)
+                    why = "band: " + " ".join(str(cell.comment.text).split())[:300]
                 con = cs.get(key) or {}
                 out_match = output_matches(tab, str(h), proj, val, groups, windows)
                 if out_match:
@@ -156,6 +161,15 @@ def audit(wb, trajectory_rows: list[dict] | None = None, flows_rows: list[dict] 
                         match = "yes"
                     else:
                         match = f"no — reads {', '.join(sorted(reads))[:120]}; SPEC inputs {', '.join(sorted(ins))[:120]}"
+                if (status == "LIVE-UNVERIFIED" and series_green is not None and match.startswith("yes")
+                        and isinstance(raw, str) and raw.startswith("=")):
+                    # D2 (Jake 2026-10-19): VERIFIED (derived) — a calculated cell whose every input series is
+                    # VERIFIED (a green band: verified source, mechanism confirmed, the window covered) and whose
+                    # formula MATCHES-SPEC. A separate label, counted apart, never added to VERIFIED.
+                    reads = _refs(wb, raw)
+                    if reads and all(series_green(proj, m) for m in reads):
+                        status, why = "VERIFIED (derived)", (f"every input VERIFIED: {', '.join(sorted(reads))[:200]}; "
+                                                             f"formula matches SPEC")
                 rows.append({
                     "Tab": tab, "Column": str(h), "Key": key or "", "Project": proj,
                     "Value now": val if not isinstance(val, str) else val[:120], "Status": status,
@@ -213,7 +227,36 @@ def audit(wb, trajectory_rows: list[dict] | None = None, flows_rows: list[dict] 
                      "Status": "NOT WIRED", "Reason / route / error": route, "Axis": "", "Direction": "", "Tier": "",
                      "History depth (quarters with a value)": "", "Formula as built": "", "SPEC formula": "",
                      "MATCHES-SPEC": "yes — SPEC.md section 10"})
+    mark_missing(rows, gap_rows)
     return rows
+
+
+# AN N/A THAT IS A MISSING ROUTE (Round G5 item 5g, Jake 2026-10-19: na_reasons flagged 230 N/A cells whose reason is
+# "no rows stored", an empty registry stub, a series not read — not a column that does not apply). The same signs as
+# check_offline_items.na_reasons.
+NA_MISSING_ROUTE_SIGNS = ("no rows stored", "empty stub", "stored nothing", "no series in q", "not wired",
+                          "produced nothing", "no url on file", "history bug", "returned no data")
+_NA_METRIC = re.compile(r"n/a\s*[—-]\s*([a-z][a-z0-9_]+)\s*\(")
+
+
+def mark_missing(rows: list[dict], gap_rows: list | None = None) -> int:
+    """N/A BY DESIGN -> MISSING where the reason is a missing route, with the route and the fix from the Gap Report
+    row of the same (project, metric) where one exists. Returns how many."""
+    gaps = {(str(g.get("project")), str(g.get("metric"))): g for g in gap_rows or ()}
+    n = 0
+    for r in rows:
+        why = str(r.get("Reason / route / error") or "")
+        if r.get("Status") != "N/A BY DESIGN" or not any(k in why.lower() for k in NA_MISSING_ROUTE_SIGNS):
+            continue
+        m = _NA_METRIC.search(why)
+        metric = m.group(1) if m else ""
+        g = gaps.get((str(r["Project"]), metric))
+        fix = (f" | ROUTE: {str(g.get('reason'))[:160]} | FIX: {str(g.get('suggestion'))[:200]}" if g else
+               f" | FIX: the series{' ' + metric if metric else ''} has no stored rows for this window — its Gap Report "
+               f"row (or check_offline_items.py gap_routes) names the route")
+        r["Status"], r["Reason / route / error"] = "MISSING", ("MISSING — " + why + fix)[:400]
+        n += 1
+    return n
 
 
 # T5 (fix round 2): MATCHES-SPEC on OUTPUTS. For these columns the SPEC formula is recomputed in Python from the series
@@ -340,6 +383,7 @@ def reference_rows(wb, X, groups: dict, audited: list[dict], flows_rows: list[di
     headline's own row in `audited` (VERIFIED / BROKEN / CHECK, both values in the reason)."""
     import references                                      # noqa: PLC0415
     results = references.check(groups, headline=_headline_reader(wb, X), flows=flows_rows)
+    results += references.basis_rows(groups)
     for x in results:
         route = references.ROUTES.get((x["project"], x["metric"])) or ()
         if not route or route[0] != "headline" or x["status"] not in ("VERIFIED", "BROKEN", "CHECK"):
@@ -381,7 +425,9 @@ def verified_share(rows: list[dict]) -> dict:
     out = {}
     for r in rows:
         p = r["Project"]
-        if p in ("(all)", "") or r["Status"] not in ("VERIFIED", "LIVE-UNVERIFIED", "CHECK", "BROKEN"):
+        # VERIFIED (derived) holds a value but is never counted as VERIFIED (D2)
+        if p in ("(all)", "") or r["Status"] not in ("VERIFIED", "VERIFIED (derived)", "LIVE-UNVERIFIED", "CHECK",
+                                                     "BROKEN"):
             continue
         v, n = out.get(p, (0, 0))
         out[p] = (v + (r["Status"] == "VERIFIED"), n + 1)
@@ -408,8 +454,8 @@ def counts(rows: list[dict]) -> dict:
     return c
 
 
-BOARD_COLS = ("VERIFIED", "LIVE-UNVERIFIED", "N/A", "NOT WIRED", "BROKEN", "CHECK", "BLANK-UNEXPLAINED", "Gap P4",
-              "Gap P5", "Gap P6", "Review Queue", "Verified share")
+BOARD_COLS = ("VERIFIED", "VERIFIED (derived)", "LIVE-UNVERIFIED", "N/A", "MISSING", "NOT WIRED", "BROKEN", "CHECK",
+              "BLANK-UNEXPLAINED", "Gap P4", "Gap P5", "Gap P6", "Review Queue", "Verified share")
 
 
 def scoreboard(rows: list[dict], gaps: dict | None = None, review_open: dict | None = None) -> dict:
@@ -438,9 +484,35 @@ def scoreboard(rows: list[dict], gaps: dict | None = None, review_open: dict | N
         if p in board:
             board[p]["Review Queue"] += n
     for p, b in board.items():
-        held = b["VERIFIED"] + b["LIVE-UNVERIFIED"] + b["CHECK"] + b["BROKEN"]
+        held = b["VERIFIED"] + b["VERIFIED (derived)"] + b["LIVE-UNVERIFIED"] + b["CHECK"] + b["BROKEN"]
         b["Verified share"] = f"{b['VERIFIED']}/{held} = {b['VERIFIED'] / held:.0%}" if held else "-"
     return board
+
+
+def read_csv(path) -> list[dict]:
+    """The coverage rows a previous build wrote beside its workbook, or [] (G5 item 1: the run compares with them)."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            return list(csv.DictReader(f))
+    except OSError:
+        return []
+
+
+def lost_verified(prev: list[dict], rows: list[dict]) -> list[dict]:
+    """Cells VERIFIED in the previous build and not now (Round G5 item 1, Jake: "a verified cell must never go
+    unverified without the Run Log naming the cell and why") — each with its status and reason now."""
+    key = lambda r: (r["Tab"], r["Column"], r["Key"], r["Project"])  # noqa: E731
+    was = {key(r) for r in prev if r.get("Status") == "VERIFIED"}
+    return [r for r in rows if key(r) in was and r["Status"] != "VERIFIED"]
+
+
+def board_delta(board: dict, prev: dict | None) -> dict:
+    """{project: {column: change since the previous build}} for the integer scoreboard columns (G5 item 1)."""
+    out = {}
+    for p, b in board.items():
+        pb = (prev or {}).get(p) or {}
+        out[p] = {k: (v - int(pb.get(k, 0))) for k, v in b.items() if isinstance(v, int) and pb}
+    return out
 
 
 def write(wb, rows: list[dict], csv_path: Path | None = None, board: dict | None = None) -> None:

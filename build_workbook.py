@@ -3262,7 +3262,11 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
             gap_by_key.setdefault((r["project"], r["metric"]), r)
     review_keys = set()
     if review is not None and not review.empty:
-        review_keys = {(r["project"], r["metric"]) for r in review.to_dict("records")}
+        # AN ACCEPTED ROW NO LONGER FLAGS ITS SERIES (Round G5 item 1: 15 cells lost VERIFIED on 10-19 because single-day
+        # change flags marked whole Q0 figures "flagged in the Review Queue"). A row config.REVIEW_ANSWERED decides ACCEPT
+        # for its date is a reviewed value; REJECT and every open row still flag.
+        review_keys = {(r["project"], r["metric"]) for r in review.to_dict("records")
+                       if (config.review_answered(r) or {}).get("decision") != "ACCEPT"}
     applicable = {p["name"]: set(config.metrics_for_project(p)) for p in scoped_projects()}
     short, period, stale_days = GLOBALS["short_days"], GLOBALS["period_days"], GLOBALS["stale_after_days"]
     last_success = {}
@@ -6992,6 +6996,15 @@ def _txt(fn):
     return fn
 
 
+def _mcap_date_note(data_by_key: dict, name: str) -> str:
+    """'as of <date>' when the market cap's newest row is not dated the spot price's day, else '' (G5 item 8d)."""
+    mc = (data_by_key.get(f"{name}|market_cap_usd") or {}).get("latest_date") or ""
+    px = (data_by_key.get(f"{name}|price_usd") or {}).get("latest_date") or ""
+    if mc and px and str(mc)[:10] != str(px)[:10]:
+        return f"as of {str(mc)[:10]} (spot price {str(px)[:10]})"
+    return ""
+
+
 def write_master(ws, R: Refs, data_by_key: dict):
     # THE TITLE STATES THE SCOPE. "all projects" on a 16-project workbook is the same class of
     # untruth as a stale cell presented as fresh: it tells the reader nothing is missing.
@@ -7012,6 +7025,10 @@ def write_master(ws, R: Refs, data_by_key: dict):
         ("Price — spot ($)", lambda r, p: pull(R.D(r, "price_usd", "now")), FMT_USD4, "pull", False, {"metric": "price_usd"}),
         ("Price — 90d average ($)", lambda r, p: pull(R.D(r, "price_usd", "q0")), FMT_USD4, "pull", False, {"metric": "price_usd"}),
         ("Market cap ($)", lambda r, p: pull(R.D(r, "market_cap_usd", "now")), FMT_USD, "pull", False, {"metric": "market_cap_usd"}),
+        # THE DATE BESIDE THE MARKET CAP WHEN ITS INPUTS DIFFER (Round G5 item 8d, Jake 2026-10-19): market cap is price x
+        # the circulating used on one day; when that day is not the spot price's, the cell says which day it is
+        ("Market cap date (shown only when not the spot price's date)",
+         lambda r, p: _mcap_date_note(data_by_key, p["name"]), FMT_TEXT, "text"),
         # THE SUPPLY ACTUALLY USED (item 9, 2026-10-11): the figure market cap multiplies; CoinGecko's beside it
         ("Circulating supply (used)", lambda r, p: pull(_circ(R, r, p)), FMT_NUM, "pull", False, {"metric": "circulating_supply_used"}),
         ("Circulating supply — CoinGecko (cross-check)", lambda r, p: pull(R.D(r, "circulating_supply", "now")), FMT_NUM, "pull", False, {"metric": "circulating_supply"}),
@@ -8581,6 +8598,7 @@ def write_gap_report(ws, gaps: pd.DataFrame, run_id: str | None):
     _header(ws, 4, headers)
     r = 5
     BOARD_INPUTS["gaps"].clear()
+    GAP_ROWS.clear()
     if gaps is None or gaps.empty:
         ws.cell(row=r, column=1, value="No gaps — every applicable metric resolved.").font = F_BOLD
         _set_widths(ws, {"A": 14, "B": 16, "C": 26, "D": 12, "E": 62, "F": 86})
@@ -8596,6 +8614,7 @@ def write_gap_report(ws, gaps: pd.DataFrame, run_id: str | None):
     g = g.sort_values(["_answered", "priority", "project", "metric"])
     for (proj, pr), n in g.groupby(["project", "priority"]).size().items():      # the Coverage scoreboard (G4 7f)
         BOARD_INPUTS["gaps"][(str(proj), int(pr))] = int(n)
+    GAP_ROWS[:] = g.to_dict("records")                       # the MISSING status's route and fix (G5 item 5g)
     for row in g.to_dict("records"):
         is_config = bool(row["_config"]) or bool(row["_open"])
         vals = [row.get("priority_label", ""), row["project"], row["metric"], row.get("tiers_attempted", ""),
@@ -9623,11 +9642,36 @@ def build_workbook(store, path: Path | str, run_id: str | None = None,
     COVERAGE_ROWS.clear()
     try:
         import coverage_audit                              # noqa: PLC0415
+        def _series_green(project, metric, _cache={}):            # noqa: B006 — memo for this build only
+            k = f"{project}|{metric}"
+            if k not in _cache:
+                row = data_by_key.get(k)
+                try:
+                    _cache[k] = bool(row) and confidence_for(project, metric, row, asof)[0] == "GREEN"
+                except Exception:  # noqa: BLE001 — an input that cannot be judged is not verified
+                    _cache[k] = False
+            return _cache[k]
         COVERAGE_ROWS.extend(coverage_audit.audit(wb, TRAJECTORY_ROWS, FLOWS_ROWS, groups=_LAST_GROUPS,
+                                                  series_green=_series_green, gap_rows=list(GAP_ROWS),
                                                   sanity_hits=SANITY_HITS, windows=dict(_WINDOWS)))
         board = coverage_audit.scoreboard(COVERAGE_ROWS, BOARD_INPUTS["gaps"], BOARD_INPUTS["review_open"])
-        coverage_audit.write(wb, COVERAGE_ROWS, Path(path).with_name("coverage_audit.csv"), board=board)
-        SCOREBOARD_LINES[:] = scoreboard_lines(board)
+        # THE PREVIOUS BUILD, BEFORE IT IS OVERWRITTEN (Round G5 item 1): its coverage rows name every cell that was
+        # VERIFIED, and its scoreboard gives "change since the previous run"
+        csv_path = Path(path).with_name("coverage_audit.csv")
+        board_path = Path(path).with_name("scoreboard.json")
+        prev_rows = coverage_audit.read_csv(csv_path)
+        try:
+            prev_board = __import__("json").loads(board_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            prev_board = None
+        LOST_VERIFIED[:] = coverage_audit.lost_verified(prev_rows, COVERAGE_ROWS)
+        coverage_audit.write(wb, COVERAGE_ROWS, csv_path, board=board)
+        try:
+            board_path.write_text(__import__("json").dumps(board, indent=1), encoding="utf-8")
+        except OSError:
+            pass
+        SCOREBOARD_LINES[:] = scoreboard_lines(board, coverage_audit.board_delta(board, prev_board))
+        SCOREBOARD_LINES.extend(lost_verified_lines(LOST_VERIFIED))
         _write_runlog_scoreboard(ws_log, SCOREBOARD_LINES)
     except Exception as e:  # noqa: BLE001
         wb.create_sheet("Coverage").cell(1, 1, value=f"COVERAGE AUDIT NOT RUN: {type(e).__name__}: {str(e)[:300]}")
@@ -9678,15 +9722,32 @@ BOARD_INPUTS: dict = {"gaps": {}, "review_open": Counter()}
 SCOREBOARD_LINES: list = []     # the Run Log's per-project scoreboard lines of the last build
 
 
-def scoreboard_lines(board: dict) -> list[str]:
-    """One line per project (ALL first): the scoreboard as text, for the Run Log and the console."""
+LOST_VERIFIED: list = []          # coverage rows VERIFIED in the previous build and not in this one (G5 item 1)
+GAP_ROWS: list = []               # the Gap Report rows of this build (G5 item 5g)
+
+
+def scoreboard_lines(board: dict, delta: dict | None = None) -> list[str]:
+    """One line per project (ALL first): the scoreboard as text, for the Run Log and the console; each count with its
+    change since the previous build where one is known (G5 item 1)."""
     out = []
     for p, b in board.items():
-        out.append(f"SCOREBOARD {p}: VERIFIED {b['VERIFIED']} · LIVE-UNVERIFIED {b['LIVE-UNVERIFIED']} · N/A {b['N/A']} · "
-                   f"NOT WIRED {b['NOT WIRED']} · BROKEN {b['BROKEN']} · CHECK {b['CHECK']} · Gap P4 {b['Gap P4']} / "
-                   f"P5 {b['Gap P5']} / P6 {b['Gap P6']} · Review Queue {b['Review Queue']} · verified share "
+        d = (delta or {}).get(p) or {}
+
+        def n(k):
+            ch = d.get(k)
+            return f"{b[k]}" + (f" ({ch:+d})" if ch else "")
+        out.append(f"SCOREBOARD {p}: VERIFIED {n('VERIFIED')} · VERIFIED (derived) {n('VERIFIED (derived)')} · "
+                   f"LIVE-UNVERIFIED {n('LIVE-UNVERIFIED')} · N/A {n('N/A')} · MISSING {n('MISSING')} · "
+                   f"NOT WIRED {n('NOT WIRED')} · BROKEN {n('BROKEN')} · CHECK {n('CHECK')} · Gap P4 {n('Gap P4')} / "
+                   f"P5 {n('Gap P5')} / P6 {n('Gap P6')} · Review Queue {n('Review Queue')} · verified share "
                    f"{b['Verified share']}")
     return out
+
+
+def lost_verified_lines(lost: list[dict]) -> list[str]:
+    """One Run Log line per cell that was VERIFIED in the previous build and is not now, with why (G5 item 1)."""
+    return [f"VERIFIED LOST {r['Project']} | {r['Tab']} | {str(r['Column'])[:70]}: now {r['Status']} — "
+            f"{(r.get('Reason / route / error') or 'no reason recorded')[:300]}" for r in lost]
 
 
 def _write_runlog_scoreboard(ws, lines: list[str]) -> None:

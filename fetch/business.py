@@ -38,7 +38,7 @@ from collections import defaultdict
 import pandas as pd
 
 import config
-from .base import Http, tidy, today
+from .base import Http, LogEntry, tidy, today
 
 log = logging.getLogger("token_metrics.fetch.business")
 
@@ -205,7 +205,17 @@ class Business:
                     out.add(tidy(rows, name, spec["metric"], src, TIER), SOURCE, name,
                             f"{spec['metric']}: {len(rows)} day(s) {rows[0][0].date()}..{rows[-1][0].date()} — "
                             f"{detail}", TIER)
-                    self.daily.done(dkey, day)
+                    # MARKED ONLY WHEN THE NEWEST COMPLETE DAY IS IN (Round G5 item 4: the 01:48 run read DefiLlama
+                    # before it had published 10-18, stored rows to 10-17 and marked all 40 series "read today"; the
+                    # 06:30 run then skipped every one — 13 series "marked read today with no row today"). A read that
+                    # stops short is stored and NOT marked, so the next run reads again.
+                    if pd.Timestamp(rows[-1][0]).normalize() >= pd.Timestamp(last_complete()).normalize():
+                        self.daily.done(dkey, day)
+                    else:
+                        out.log.append(LogEntry(SOURCE, name, 0, "ok",
+                                                f"{spec['metric']}: newest day served {rows[-1][0].date()}, before "
+                                                f"{pd.Timestamp(last_complete()).date()} — NOT marked read today; the "
+                                                f"next run reads it again", TIER))
         for name, spec in config.MARKET_SHARE.items():
             if name in names and "na" not in spec:
                 self._share(name, spec, day, out)

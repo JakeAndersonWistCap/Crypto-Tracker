@@ -167,7 +167,12 @@ ROUTES: dict[tuple[str, str], tuple] = {
     ("Sky", "sky_total_supply"): ("last", "total_supply_protocol"),
     ("Sky", "spell_burn_2026-09-13"): ("on_day", "gross_burn_tokens"),
     ("Sky", "spell_burn_2026-10-12"): ("on_day", "gross_burn_tokens"),
-    ("Sky", "net_revenue_sep_2026"): ("on_day", "net_revenue_pre_distribution_usd"),
+    # G5 D1 (Jake 2026-10-19): the MSC settlement report is the monthly measuring point — each TMF month against our own
+    # read of the same report (net_revenue_msc_usd, fetch/sky_msc.py); Block Analitica's P&L month is compared in
+    # basis_rows(), labelled a known accounting-basis difference with the numbers, not graded
+    ("Sky", "net_revenue_jul_2026"): ("on_day", "net_revenue_msc_usd"),
+    ("Sky", "net_revenue_aug_2026"): ("on_day", "net_revenue_msc_usd"),
+    ("Sky", "net_revenue_sep_2026"): ("on_day", "net_revenue_msc_usd"),
     ("Ether.fi", "total_supply"): ("last", "total_supply"),
     ("Ether.fi", "sethfi_vault_assets"): ("last", "locked_tokens_underlying"),
     ("Maple", "total_supply"): ("last", "total_supply"),
@@ -534,23 +539,48 @@ def _aero_dilution_cause(groups, project, at, ours, ref) -> str:
 
 
 def _sky_revenue_cause(groups, project, at, ours, ref) -> str:
-    def month(metric, d):
-        s = _series(groups, project, metric)
-        hit = s[s.date == pd.Timestamp(d)] if s is not None else None
-        return f"{float(hit.value.iloc[0]):,.0f}" if hit is not None and len(hit) else "?"
-    return (f"two different accounts, not one P&L at two vintages (G4 7a, read 2026-10-18). The TMF figure is Soter Labs' "
-            f"MSC #13 consolidated report (settlement-cycle 536f149, sky_total/2026-09/summary.md), ACCRUAL basis: MSC leg "
-            f"13,927,348.22 (prime mint/debt 20,154,616 − sends to primes 6,050,154 − Skybase prior-period true-ups "
-            f"177,113.78) + non-MSC leg 708,599.21 (income 14,938,630.49 − expense 14,230,031.28) = 14,635,947.43. Its "
-            f"prime mints carry Jan–Aug reconciliation corrections (MSC #13 post: Spark 11,627,438 = Sky share 8,218,668 + "
-            f"Spark share 1,016,416 + correction 2,392,354; Grove 6,806,996 = 5,930,611 + 1,041,399 − 165,013.90), net "
-            f"+2,050,226 with Skybase's −177,114, so September alone on that basis is ~12,585,721. Ours is Block "
-            f"Analitica's P&L (profit-and-loss/history, group_by=month): revenue 30,795,767 − expense 15,416,783 = "
-            f"{month('net_revenue_pre_distribution_usd', '2026-09-30')} (Aug "
-            f"{month('net_revenue_pre_distribution_usd', '2026-08-31')} vs MSC #12 15,745,296; Jul NPS "
-            f"{month('net_protocol_surplus_usd', '2026-07-31')} vs MSC #11 10,517,426). Gross differs too (MSC income "
-            f"35.09M vs P&L revenue 30.80M), so no line reconciles one to the other. The report publishes subtotals "
-            f"only, so the gap cannot be split by line from a primary source; the row stays BROKEN at its 2% tolerance")
+    s = _series(groups, project, "net_revenue_msc_usd")
+    src = str(s.source.iloc[-1]) if s is not None and len(s) else "no net_revenue_msc_usd rows"
+    return (f"ours is our own read of the same Soter Labs summary.md ({src}); a gap means the report was restated after "
+            f"the reference was taken (the CSV cites the file at a fixed commit) or the parser misread it — read both "
+            f"files before accepting either")
+
+
+# G5 D1: Block Analitica's monthly P&L (revenue − expense, before distributions) against the MSC report's Sky Net Revenue
+BASIS_PAIRS = {"Sky": ("net_revenue_pre_distribution_usd", "net_revenue_msc_usd")}
+BASIS_LABEL = "KNOWN ACCOUNTING-BASIS DIFFERENCE"
+BASIS_WHY = ("two accounts, not one P&L at two vintages (G4 7a): the MSC report nets prime mint/debt against sends to "
+             "primes and carries reconciliation corrections for earlier months (Sep: Jan–Aug corrections net "
+             "+2,050,226 with Skybase's −177,114); Block Analitica books P&L revenue − expense; gross differs too (Sep: "
+             "MSC income 35.09M vs P&L revenue 30.80M) and the report publishes subtotals only, so the gap cannot be "
+             "split by line from a primary source. The MSC figure is the monthly measuring point (G5 D1); BA stays the "
+             "daily series")
+
+
+def basis_rows(groups: dict, projects: set[str] | None = None) -> list[dict]:
+    """G5 D1: one row per month both series hold — the difference stated with its numbers and labelled, never graded
+    (status N/A BY DESIGN: the two figures measure different accounts, so neither can be BROKEN against the other)."""
+    built = projects if projects is not None else {k[0] for k in groups}
+    out = []
+    for project, (ours_m, ref_m) in BASIS_PAIRS.items():
+        if project not in built:
+            continue
+        a, b = _series(groups, project, ours_m), _series(groups, project, ref_m)
+        if a is None or b is None:
+            continue
+        m = a[["date", "value"]].merge(b[["date", "value", "source"]], on="date", suffixes=("_ba", "_msc"))
+        for _i, r in m.sort_values("date").iterrows():
+            ba, msc = float(r.value_ba), float(r.value_msc)
+            basis = str(r.source).rsplit("[", 1)[-1].rstrip("]") if "[" in str(r.source) else "basis not stated"
+            gap = ba - msc
+            rel = f" ({gap / msc:+.2%})" if msc else ""
+            out.append({"project": project, "metric": f"net_revenue_ba_vs_msc_{r.date:%Y-%m}", "ref": f"{msc:.2f}",
+                        "unit": "USD", "as_of": f"{r.date:%Y-%m-%d}", "source_type": "primary (Soter Labs MSC)",
+                        "source": str(r.source), "tolerance": "", "note": "", "role": "context", "ours": ba,
+                        "status": "N/A BY DESIGN", "route": f"{ours_m} vs {ref_m} {r.date:%Y-%m}",
+                        "detail": f"{BASIS_LABEL} (G5 D1) — Block Analitica {_fmt(ba)} vs MSC {_fmt(msc)} USDS "
+                                  f"({basis}); difference {_fmt(gap)}{rel}; not BROKEN: {BASIS_WHY}"})
+    return out
 
 
 def _maple_supply_cause(groups, project, at, ours, ref) -> str:

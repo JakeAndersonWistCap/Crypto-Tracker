@@ -45,7 +45,7 @@ COLUMN_MAP: tuple[tuple[str, str, str], ...] = (
     ("*", "Materiality", "identity"), ("*", "Notes", "notes"), ("*", "Data flags", "notes"),
     ("*", "Latest data date", "notes"), ("*", "Trend — ", "trend"),
     # ---- CONTEXT ----
-    ("*", "Price — spot", "price"), ("*", "Price — 90d average", "price"), ("*", "Market cap — CoinGecko", "cross_check"),
+    ("*", "Price — spot", "price"), ("*", "Price — 90d average", "price"), ("*", "Market cap date", "notes"), ("*", "Market cap — CoinGecko", "cross_check"),
     ("*", "Market cap", "market_cap"), ("*", "Free float market cap", "float"), ("*", "FDV RETIREMENT RATE", "retirement"),
     ("*", "FDV retirement rate", "retirement"), ("*", "FDV", "fdv"),
     ("*", "Circulating supply — CoinGecko", "cross_check"), ("*", "Circulating supply", "circulating"),

@@ -154,7 +154,14 @@ def fix_for(p: dict, metric: str, row: dict) -> tuple[str, str, str, str]:
         return ("a Dune query", "re-run the Dune query over the longer range (DUNE_API_KEY on file — credits)",
                 "Dune credits", "")
     if base == "artemis":
-        return ("an Artemis export", "Artemis history (key on file)", "Artemis credits", "")
+        # SAY WHETHER THE KEY IS THERE (Round G5 item 4: the line said "key on file" while the run's KEYS line said
+        # ARTEMIS_API_KEY ABSENT). The route in use is Jake's CSV export from classic.artemis.ai; the API needs the key
+        # (api.artemisxyz.com answered HTTP 410 without one, config.ARTEMIS_SETTLEMENT.api).
+        import os as _os
+        key = "ARTEMIS_API_KEY present" if _os.environ.get("ARTEMIS_API_KEY") else "ARTEMIS_API_KEY ABSENT"
+        return ("an Artemis export",
+                f"re-export the CSV from classic.artemis.ai (the stored series is Jake's 2026-09-30 export); the "
+                f"Artemis API route needs ARTEMIS_API_KEY ({key})", "Artemis plan", "")
     if base == "manual" or row.get("status") == "manual":
         return ("hand-entered readings", "the project's own archive (reports, posts) — entered as manual rows",
                 "manual", "")

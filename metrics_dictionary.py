@@ -94,6 +94,12 @@ ENTRIES = {
         inputs=["price_usd", "circulating_supply_used"],
         decided=[(J, "2026-10-05", "market cap = price × the circulating the ratios use"),
                  (J, "2026-10-11", "one basis on every day (review of 97b29ae, item 8)")]),
+    "Market cap date (shown only when not the spot price's date)": dict(
+        what="The day the market cap's newest row is dated, printed only when it is not the spot price's day — market "
+             "cap is price × the circulating used on ONE day, so an older day says which day the figure is.",
+        formula="'as of <market_cap_usd date> (spot price <price_usd date>)' when the dates differ, else blank",
+        window="now", unit="text", inputs=["market_cap_usd", "price_usd"],
+        decided=[(J, "2026-10-19", "print the date beside market cap when its inputs' dates differ (G5 item 8d)")]),
     "Circulating supply (used)": dict(
         what="The circulating supply every ratio divides by.",
         formula="per project: config.circulating_primary_metric — the project's own figure, adjusted to Jake's "

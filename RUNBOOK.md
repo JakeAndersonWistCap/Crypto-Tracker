@@ -527,6 +527,53 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11cf. Round G5 — Sky's monthly measuring point, VERIFIED (derived), starved scans, MISSING (2026-10-19)
+
+**Run after pulling (PowerShell 5.1, repo root), in this order.** One run_sql section this round (CZ).
+1. `python run_sql.py CZ` — dry run: lists the guessed-product price_usd_coinbase rows by project (every project except
+   Ethereum, Chainlink, Near, Uniswap, Aerodrome). Read the counts, then `python run_sql.py --delete CZ`.
+2. `python token_metrics.py --seed morpho_base_claims` — Morpho's Base claims with no time budget; the cache saves as it
+   reads, so a stop resumes when run again. Needs ALCHEMY_API_KEY (Base is paid-only on Etherscan); it says NOT WIRED
+   and reads nothing otherwise. "AFTER … 0 row(s) stored" means run it again.
+3. `python token_metrics.py --seed plume_payouts` — Plume's RewardDistributed backlog from 2025-08-11 through
+   rpc.plume.org (no key). Resumable: the cursor is saved after every chunk.
+4. `python token_metrics.py` — the full run. The SCOREBOARD lines now end with the change since the previous build per
+   status, and any cell that lost VERIFIED since the previous build is named with its reason ("VERIFIED LOST …").
+5. `python sanity.py`.
+6. `python check_offline_items.py stale_series`, then `gap_routes`, `na_reasons`, `spec_coverage` (each its own line).
+
+**Sky net revenue (D1).** Soter Labs' monthly settlement report is the measuring point: `net_revenue_msc_usd`, one row a
+month at month end, the basis in its source (buffer basis to 2026-06, accrual from 2026-07 — never sum across the
+switch). The References rows for Jul/Aug/Sep are checked against it exactly. The Block Analitica month beside it is a
+"KNOWN ACCOUNTING-BASIS DIFFERENCE" row with both numbers — not BROKEN, nothing to fix.
+
+**VERIFIED (derived) (D2).** A formula cell whose every input series is VERIFIED and whose formula matches SPEC. Counted
+in its own scoreboard column, never in VERIFIED; the verified share is unchanged in definition.
+
+**MISSING.** An N/A cell whose reason is a missing route (no rows stored, empty stub, stored nothing, no series in Q,
+not wired, history bug, returned no data) is MISSING, with the Gap Report's route and fix in the reason. Target 0.
+
+**Scans.** A scan that feeds a headline keeps a 60 s reserve no earlier scan can eat (all reserves ≤ 60% of the tier),
+and a scan stopped on its share is retried on the tier's leftover time ("completed in PASS 2"). On Base, BNB, OP,
+Berachain and HyperEVM the Alchemy Transfers route goes first (Etherscan's free key does not serve Base, BNB or OP:
+docs.etherscan.io/supported-chains); with no ALCHEMY_API_KEY these scans fall back to the explorer.
+
+**DefiLlama** is two tiers now: `defillama` (fees, revenue) and `defillama_tvl` (TVL, stablecoins, volume, RWA), 150 s
+each. price_history stops 15 s before its budget and keeps what it read; spans DefiLlama has no price for are not asked
+again for 30 days (`.cache/price_history_empty.json` — delete it to force a re-ask).
+
+**Never a key on screen.** Anything after `/v2/` in a URL or path is masked in every log line, including the HTTP timing
+summary of a tier timeout.
+
+**What changed (SPEC.md §19 "G5" lists every item old → new):** the Soter MSC series and the basis-difference rows; the
+VERIFIED (derived) and MISSING statuses; lost-VERIFIED lines and scoreboard deltas; accepted Review Queue rows no longer
+flag their cells; headline scan reserves, pass 2, Alchemy partials kept and undated events dated; the Morpho Base and
+Plume payout seeds; the DefiLlama split; price_history resumable; business marks only when the last complete day is in;
+stale_series explains closed, retired, read-time and rejected series; gap fixes (USD twins, Hyperliquid total supply,
+first-party circulating labels per project, Dune monthly, settlement rebuilds, max_supply closed for PENDLE, AERO,
+SYRUP); the Foundation buyback window falls back to Alchemy on Base; Master shows the market cap's date when it differs
+from the spot price's.
+
 ## 11ce. Round G4 — tier timeouts, like-for-like checks, the workbook pass (2026-10-18 night)
 
 **Run after pulling (PowerShell 5.1, repo root), in this order.** No run_sql section this round.

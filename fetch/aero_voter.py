@@ -170,9 +170,14 @@ class AeroVoter:
             done = all(self.stored(name, m, str(when.date())) for m in need)
             if e == latest:
                 if mark_day == str(when.date()) and done:
-                    out.mark_current(SOURCE, name, spec["usd_metric"], f"epoch {when.date()} stored already"
-                                     + (f" (a complete read did not produce {', '.join(partial)} for this epoch — "
-                                        f"not re-read for it)" if partial else ""), TIER)
+                    # EVERY SERIES OF THE EPOCH IS CURRENT, not the usd line alone (Round G5 item 4: six voter_rewards
+                    # series opened P4 rows "configured but stored nothing this run" while the epoch was stored)
+                    for m in [spec[k] for k in ("usd_metric", "unpriced_metric", "apr_metric", "fees_metric",
+                                                "bribes_metric", "illiquid_fees_metric", "illiquid_bribes_metric")
+                              if spec.get(k)]:
+                        out.mark_current(SOURCE, name, m, f"epoch {when.date()} stored already"
+                                         + (f" (a complete read did not produce {', '.join(partial)} for this epoch "
+                                            f"— not re-read for it)" if partial else ""), TIER)
                     continue
                 if mark_day == str(when.date()):
                     # THE STORE DECIDES, NOT THE MARKER (Jake's run 2026-10-09 11:41, 3c)

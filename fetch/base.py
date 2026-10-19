@@ -69,6 +69,17 @@ _KEYISH = _re.compile(r"^(?!0x)(?=[A-Za-z0-9_\-]*[A-Za-z])(?=[A-Za-z0-9_\-]*\d)[
 _HEX_DIGEST = _re.compile(r"^[0-9a-fA-F]{40}$|^[0-9a-fA-F]{64}$")
 
 
+# JAKE'S STANDING RULE (G5): "mask anything after /v2/ in any URL" — a keyed provider puts the key there (Alchemy's
+# /v2/<key>), and a path printed without its host (the HTTP timing summary's slowest calls) carries no host to judge by.
+_V2_BARE = _re.compile(r"/v2/[^\s,;)\]'\"]+")
+
+
+def mask_v2(path: str) -> str:
+    """The path with everything after its first /v2/ masked."""
+    head, sep, _rest = str(path).partition("/v2/")
+    return f"{head}/v2/***" if sep else str(path)
+
+
 def _env_secrets() -> list[str]:
     out = []
     for name, val in os.environ.items():
@@ -94,6 +105,8 @@ def _url(m) -> str:
     if any(bare == h or bare.endswith("." + h) for h in _KEYED_HOSTS):
         return f"{scheme}://{host}"
     path, _, query = rest.partition("?")
+    if "/v2/" in path:
+        return f"{scheme}://{host}{mask_v2(path)}"
     segs = path.split("/")
     if any(_KEYISH.match(x) and not _HEX_DIGEST.match(x) for x in segs):
         return f"{scheme}://{host}"
@@ -112,6 +125,7 @@ def redact(text) -> str:
             if secret in s:
                 s = s.replace(secret, "***")
         s = _URL_ANY.sub(_url, s)
+        s = _V2_BARE.sub("/v2/***", s)
         return _KEY_PARAM.sub(lambda m: m.group(1) + "***", s)
     except Exception:  # noqa: BLE001 — a redactor must never raise
         return "<unprintable: redaction failed>"
@@ -917,10 +931,10 @@ class Http:
                     self.stats["calls"] += 1
                     self.stats["http_s"] += took
                     if len(self.stats.setdefault("times", [])) < 2000:
-                        self.stats["times"].append((took, urllib.parse.urlsplit(url).path[:60]))
+                        self.stats["times"].append((took, mask_v2(urllib.parse.urlsplit(url).path)[:60]))
                     if took > self.stats["slowest_s"]:
                         self.stats["slowest_s"] = took
-                        self.stats["slowest"] = urllib.parse.urlsplit(url).path[:80]
+                        self.stats["slowest"] = mask_v2(urllib.parse.urlsplit(url).path)[:80]
                 if r.status_code == 429 or r.status_code >= 500:
                     last_err = RuntimeError(f"HTTP {r.status_code} from {mask_url(url)}")
                     asked = retry_after(r.headers.get("Retry-After"))

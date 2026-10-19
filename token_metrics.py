@@ -98,7 +98,8 @@ def parse_args(argv=None) -> argparse.Namespace:
                        help="fetch every project, whatever portfolio.txt says")
     ap.add_argument("--seed", choices=["nearblocks", "geodnet", "plume_staking", "hl_candles", "plume_settlement", "mev_relays",
                              "near_bigquery", "chainlink_fees", "pendle_gauges", "aero_epochs",
-                             "aero_buyback", "aero_managed_locks", "burn_history", "hyperevm_burn", "katana_claims"],
+                             "aero_buyback", "aero_managed_locks", "burn_history", "hyperevm_burn", "katana_claims",
+                             "morpho_base_claims", "plume_payouts"],
                     help="one-off: run only this source with NO time budget, to finish a first "
                          "read that routine runs (60s) take many runs to complete. Stores what it "
                          "reads; records no gaps and does not rebuild the workbook. plume_settlement: a "
@@ -118,7 +119,10 @@ def parse_args(argv=None) -> argparse.Namespace:
                          "hyperevm_burn: the HyperEVM zero address's HYPE at each past day start (archive) — "
                          "Hyperliquid's burned-supply leg, from the earliest Hyperliquid supply row (or --seed-days back), before run_sql "
                          "CU / CW / CX. katana_claims: Morpho's Katana Distributor claims from block 0 (rpc.katana.network), "
-                         "resumable, stored only once the history reconciles to the wei.")
+                         "resumable, stored only once the history reconciles to the wei. morpho_base_claims: Morpho's Base "
+                         "Distributor claims (merkl_morpho_out_base) with no time budget, through its routed explorers "
+                         "(Alchemy's Transfers API on Base), the cache saved as it goes; stored once it reconciles. plume_payouts: Plume's "
+                         "staking payouts backlog (RewardDistributed) through rpc.plume.org eth_getLogs, resumable.")
     ap.add_argument("--seed-days", type=int, default=None,
                     help="--seed mev_relays: seed this many days back instead of the configured year "
                          "(e.g. 90 first; a later full seed resumes from the days already held). --seed hyperevm_burn: "
@@ -324,6 +328,68 @@ def seed_katana_claims(st, log) -> int:
         st.record_fetch(run_id, e.source, e.project, e.rows, e.status, e.message, e.tier)
         log.info("--seed katana_claims: %s — %s", e.status, e.message)
     log.info("--seed katana_claims: %s after %.0fs — %d row(s) stored", res.get("status"), time.monotonic() - t0, written)
+    return 0 if res.get("status") == "stored" else 1
+
+
+def seed_morpho_base_claims(st, log) -> int:
+    """Round G5 item 2: Morpho's Base claims (merkl_morpho_out_base, emissions_tokens_claims_base) have never stored —
+    the history does not fit a routine run's share of explorer_l2:base, so emissions_tokens (the four-chain claims sum)
+    stays BLOCKED and Morpho's four headline cells with it. This runs that one scan with NO time budget through the same
+    LogScan as the routine run: the same routes, the cache saved as it reads (a stop resumes), reconciled to the wei at
+    the head before anything is stored, then the 100-day window. Records no gaps."""
+    from fetch import Heartbeat
+    from fetch.logscan import LogScan
+    from fetch.validate import validate_frame
+    p = config.PROJECT_BY_NAME["Morpho"]
+    spec = next((s for s in p.get("log_scans") or () if s.get("key") == "merkl_morpho_out_base"), None)
+    if spec is None:
+        log.error("--seed morpho_base_claims: merkl_morpho_out_base is NOT WIRED here — it opens only when "
+                  "explorer_routes.json lists Base (8453) as served (check_offline_items.py alchemy_transfer_routes, "
+                  "with ALCHEMY_API_KEY in .env). Nothing read.")
+        return 2
+    run_id = fetch.new_run_id()
+    out = fetch.FetchOutput()
+    t0 = time.monotonic()
+    one = {**p, "log_scans": [spec]}
+    with Heartbeat():
+        LogScan(own_tier=spec.get("own_tier"), unbounded=True).run([one], None, out)
+    prior = st.latest_values()
+    frames = [validate_frame(f, prior, out) for f in out.frames]
+    written = sum(st.upsert(f) for f in frames if f is not None and not f.empty)
+    for e in out.log:
+        st.record_fetch(run_id, e.source, e.project, e.rows, e.status, e.message, e.tier)
+        log.info("--seed morpho_base_claims: %s — %s", e.status, e.message)
+    log.info("--seed morpho_base_claims: AFTER (%.0fs) — %d row(s) stored%s", time.monotonic() - t0, written,
+             "" if written else " (run it again: the cache resumes where it stopped)")
+    return 0 if written else 1
+
+
+def seed_plume_payouts(st, log) -> int:
+    """Round G5 item 4: Plume's emissions_claimed_tokens (RewardDistributed(PLUME) from the staking treasury) stopped at
+    2025-08-11 — the explorer API's 10 calls per 40 minutes never caught up. This reads the backlog through
+    rpc.plume.org eth_getLogs from the routine's own cursor (fetch.plume_staking.PlumeStaking.seed_payouts_rpc), saving
+    the cursor after every chunk; the daily read continues from where it stops. Records no gaps."""
+    from fetch import Heartbeat
+    from fetch.plume_staking import PlumeStaking
+    from fetch.validate import validate_frame
+    p = next((p for p in config.PROJECTS if p.get("plume_staking")), None)
+    if p is None:
+        log.error("--seed plume_payouts: no project declares plume_staking")
+        return 2
+    run_id = fetch.new_run_id()
+    out = fetch.FetchOutput()
+    t0 = time.monotonic()
+    with Heartbeat():
+        res = PlumeStaking().seed_payouts_rpc(p["name"], p["plume_staking"], out,
+                                             say=lambda m: log.info("--seed plume_payouts: %s", m))
+    prior = st.latest_values()
+    frames = [validate_frame(f, prior, out) for f in out.frames]
+    written = sum(st.upsert(f) for f in frames if f is not None and not f.empty)
+    for e in out.log:
+        st.record_fetch(run_id, e.source, e.project, e.rows, e.status, e.message, e.tier)
+        log.info("--seed plume_payouts: %s — %s", e.status, e.message)
+    log.info("--seed plume_payouts: %s after %.0fs — %d event(s), %d row(s) stored", res.get("status"),
+             time.monotonic() - t0, res.get("events", 0), written)
     return 0 if res.get("status") == "stored" else 1
 
 
@@ -758,7 +824,8 @@ def _main(args, log) -> int:
               "chainlink_fees": seed_chainlink_fees, "pendle_gauges": seed_pendle_gauges,
               "aero_epochs": seed_aero_epochs, "burn_history": seed_burn_history,
               "hyperevm_burn": lambda st_, log_: seed_hyperevm_burn(st_, log_, args.seed_days),
-              "katana_claims": seed_katana_claims,
+              "katana_claims": seed_katana_claims, "morpho_base_claims": seed_morpho_base_claims,
+              "plume_payouts": seed_plume_payouts,
               "aero_buyback": seed_aero_buyback, "aero_managed_locks": seed_aero_managed_locks,
               "mev_relays": lambda st_, log_: seed_mev_relays(st_, log_, args.seed_days)}[args.seed](st, log)
         st.close()

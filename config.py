@@ -997,6 +997,7 @@ METRICS = {
     "staking_funding_tokens": {"label": "LINK forwarded by 0x7A28b8cF… to the staking hops 0x1661f928… / 0x8716f86f… (paid on to the RewardVault funder 0x7e10a625…), per day", "kind": "flow", "unit": "tokens", "archetypes": [1], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Chainlink",)},
     "staking_funding_release_tokens": {"label": "The part of the 27 wallets' releases that went on to fund staking rewards (FIFO through 0xD50f074E…, dated on the release day; FIFO is an ATTRIBUTION CONVENTION, ACCEPTED by Jake 2026-10-14) — taken out of (e), counted once in (a)", "kind": "flow", "unit": "tokens", "archetypes": [1], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Chainlink",), "view_only": True},
     "net_revenue_pre_distribution_usd": {"label": "Net revenue BEFORE distributions (Sky: Block Analitica's P&L revenue − expense; the revenue distribution — SKY buyback, USDS to stakers, Security and Maintenance — not deducted: S&M is TMF Step 1, an allocation OF Net Revenue, Sky Atlas A.2.3.1.2.2), monthly. The base of payout ratios (config.revenue_ratio_base_metric)", "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [3], "sanity_min": -1e10, "sanity_max": 1e11, "only_projects": ("Sky",)},
+    "net_revenue_msc_usd": {"label": "Sky Net Revenue as the monthly settlement report states it (Soter Labs' MSC consolidated report, settlement-cycle sky_total/<month>/summary.md; the figure the TMF posts quote) — the monthly measuring point (G5 D1). The basis is in the source: buffer basis to 2026-06, accrual from 2026-07; never summed across the switch", "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [3], "sanity_min": -1e10, "sanity_max": 1e11, "only_projects": ("Sky",)},
     "net_protocol_surplus_usd": {"label": "Net Protocol Surplus (Sky's own accounting — Block Analitica's P&L: net less Security and Maintenance), monthly", "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [3], "sanity_min": -1e10, "sanity_max": 1e11, "only_projects": ("Sky",)},
     # Sky's NPS as it REPORTED the months by hand (insights / financial.skyeco.com), kept as the reference beside the API.
     "revenue_usd_reported": {"label": "Sky revenue as Sky reported the month (its own financials table, 'Revenue' — gross; manual) — reference for Block Analitica's P&L revenue", "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [5], "sanity_min": 0, "sanity_max": 1e11, "only_projects": ("Sky",), "view_only": True},
@@ -2731,7 +2732,11 @@ EXPLORERS = {
         "max_records": 1000,           # free tier since July 2026 — researched, confirm live
         # 3 req/s ON THE FREE KEY, as Etherscan itself says: "NOTOK — Max calls per sec rate limit reached
         # (3/sec)" on polygon ccip_v2 (Jake's run 2026-10-06 17:20; the pacer ran 4/s). Run under it.
-        "limits": "3 req/s, 100,000 req/day (free) — Etherscan's own NOTOK message, 2026-10-06",
+        "limits": "3 req/s, 100,000 req/day on the FREE plan, selected chains only — docs.etherscan.io/rate-limits "
+                  "(read 2026-10-19; Lite 5/s, Standard 10/s, Advanced 20/s, Professional and Pro Plus 30/s); the "
+                  "free plan does NOT serve Base 8453, BNB 56 or OP 10 (docs.etherscan.io/supported-chains). Paced at "
+                  "2.5/s, under the documented 3/s, which the NOTOK 'Max calls per sec rate limit reached (3/sec)' "
+                  "also states",
         # ONE limit for the key across every chain id: one run-wide pacer for api.etherscan.io
         "rate_per_s": 2.5,
     },
@@ -2823,6 +2828,15 @@ EXPLORER_MAX_REQUESTS_PER_SCAN = 5000   # a runaway guard, not a budget: 5m reco
 EXPLORER_SCAN_BUDGET_S = 120
 # Round G4 item 1: an explorer page answers in seconds; the read timeout is 30 s (the HTTP default is 60 s, retried)
 EXPLORER_READ_TIMEOUT_S = 30
+
+
+# TRANSFER ROUTE FIRST (Round G5 item 8c, Jake 2026-10-19: "move scans to Alchemy wherever Alchemy serves the chain, so
+# fewer scans queue on one budget"). On these chains a Transfer-shaped query goes to Alchemy's Transfers API before the
+# shared Etherscan key (one 2.5 req/s pacer for every chain). Alchemy's feature matrix lists alchemy_getAssetTransfers
+# for Base, BNB, OP, Berachain and Hyperliquid (HyperEVM) — alchemy.com/docs/reference/feature-support-by-chain, read
+# 2026-10-19; timestamps come only on ETH/Base/Polygon/Arbitrum/OP, the rest are dated from the chain
+# (fetch.logscan.LogScan._date_undated). A chain whose Transfers route is not opened keeps its log route first.
+TRANSFER_FIRST_CHAINS = {8453, 56, 10, 80094, 999}
 
 
 def explorer_order(chain_id: int) -> list[str]:
@@ -15612,6 +15626,14 @@ PROJECTS = [
                                             "0x38e4254bd82ed5ee97cd1c4278faae748d998865": {
                                                 "staked": "locked_tokens_usds_farm_ba", "apy": "usds_farm_apy_ba",
                                                 "rewards": "usds_farm_rewards_usds_ba"}}}},
+        # ===== SKY NET REVENUE FROM THE MONTHLY SETTLEMENT REPORT (G5 D1, Jake 2026-10-19). =====
+        # Soter Labs' MSC consolidated report is the monthly measuring point; Block Analitica (above) stays the daily
+        # series. fetch/sky_msc.py reads one summary.md a month; the BA-vs-MSC monthly difference is a KNOWN
+        # ACCOUNTING-BASIS DIFFERENCE (references.basis_rows), with the numbers, never BROKEN.
+        "sky_msc": {"metric": "net_revenue_msc_usd", "granularity": "monthly", "from": "2026-01",
+                    "url": "https://raw.githubusercontent.com/soterlabs/settlement-cycle/main/settlements/sky_total/"
+                           "<YYYY-MM>/summary.md",
+                    "compare_with": "net_revenue_pre_distribution_usd"},
         # THE MONTHS MUST ADD UP TO THE QUARTER, where every month of it is present. Two months
         # of three compared against the quarter's own total is guaranteed to disagree, and
         # reporting that would be reporting a missing month as an error in the months that are
@@ -21365,6 +21387,17 @@ def stale_after_days(project_name: str, metric: str, default: int) -> int:
     art = ARTEMIS_SETTLEMENT
     if metric == art["metric"] and project_name in art["chains"]:
         return int(art["stale_after_days"])
+    # AN EPOCH SERIES IS DATED AT ITS EPOCH START (Round G5 item 4: Aerodrome's voter_rewards_* "11 days old" on 10-19
+    # held the last COMPLETE weekly epoch, 10-08..10-15; Pendle's sPENDLE epochs run 14 days): stale only after two
+    # epochs and two days — the running epoch is not complete yet, the one before it is the newest a source can give
+    pj = PROJECT_BY_NAME.get(project_name) or {}
+    ve = pj.get("voter_epochs") or {}
+    if ve and metric in {ve.get(k) for k in ("usd_metric", "unpriced_metric", "apr_metric", "fees_metric",
+                                              "bribes_metric", "illiquid_fees_metric", "illiquid_bribes_metric")}:
+        return 7 * 2 + 2
+    se = pj.get("spendle_epochs") or {}
+    if se and metric in {se.get("metric"), se.get("apr_metric"), se.get("epoch_apr_metric")}:
+        return int(se.get("epoch_days") or 14) * 2 + 2
     # A SOURCE THAT PUBLISHES LATE (ASXN's HyperEVM series, ~10 days behind — Jake's probes9): the threshold
     # is widened by the lag declared on the read that produces the series.
     for bpg in (PROJECT_BY_NAME.get(project_name) or {}).get("browser_capture", {}).get("pages") or ():
@@ -21441,6 +21474,9 @@ def series_granularity(project_name: str, metric: str) -> str:
     sa = p.get("sky_accounting") or {}
     if metric in (sa.get("metrics") or {}).values():
         return sa.get("granularity", "monthly")
+    msc = p.get("sky_msc") or {}
+    if metric == msc.get("metric"):
+        return msc.get("granularity", "monthly")
     q = (p.get("dune_queries") or {}).get(metric) or {}
     if str(q.get("date_col") or "").lower() == "month":
         return "monthly"
@@ -22004,6 +22040,20 @@ def per_product_shares(project_name: str) -> list[tuple[str, str, float | None]]
 # load-bearing field: it is what stops the next person repeating the work.
 # =======================================================================================
 UNAVAILABLE = [
+    # ===== NO MAX SUPPLY: THE TOKEN IS UNCAPPED (Round G5 item 6, read 2026-10-19). CoinGecko answers max_supply null
+    # with max_supply_infinite true for all three; each token's own docs and contract confirm there is no cap. =====
+    *[{"project": p_, "metric": "max_supply", "closed_on": "2026-10-19",
+       "summary": f"NO MAX SUPPLY — {why}",
+       "what_was_tried": "CoinGecko /coins/{id} (max_supply null, max_supply_infinite true, id checked against the "
+                         "token address in config) and the project's own docs / contract (read 2026-10-19)",
+       "impact": "FDV is price x the minted total, never x a cap; nothing reads max_supply as a ceiling",
+       "reopen_if": "the project or its governance declares a cap"} for p_, why in (
+        ("Pendle", "PENDLE has a terminal inflation of 2% a year from week 260 (docs.pendle.finance Tokenomics; "
+                   "PENDLE.sol terminalInflationRateNumerator 379848538, read on-chain 2026-10-19)"),
+        ("Aerodrome", "AERO's tail emissions are a share of supply each week (Minter.sol tailEmissionRate 21 bps, "
+                      "~10.92% a year; MAXIMUM_TAIL_RATE caps the rate, not the supply; read on-chain 2026-10-19)"),
+        ("Maple", "SYRUP's supply is set by governance through mint modules; the token imposes no cap "
+                  "(docs.maple.finance syrup modules; supply 1,267,875,000 = the end of the MIP-010 3-year schedule)"))],
     # ---------------------------------------------------------------- PancakeSwap (Jake's sanity run, 2026-10-11)
     # THE DEAD-ADDRESS INFLOW IS ~99% MINT-AND-BURN (BUYBACK_ROUTE_OVERRIDE["PancakeSwap"] has the reads): as a GROSS
     # BURN it gives a burn yield of several hundred % a year for a token PancakeSwap reports as ~2M CAKE/month net
@@ -23382,6 +23432,99 @@ REVIEW_ANSWERED = [
     {"project": "Ether.fi", "metric": "locked_tokens_underlying", "reason": "supply_partial", "until": "2026-11-30",
      "decision": "ACCEPT",
      "why": "the same standing PARTIAL label on the underlying ETHFI (109,245,301 on 10-18, -297 on the day)"},
+    # ===== ROUND G5 ITEM 7 (Jake 2026-10-19): the 06:30 queue, row by row. Numbers from the 05:34 workbook and from
+    # each source read live 2026-10-19 ~09:00 UTC (DefiLlama /summary/fees). A row not listed here stays OPEN, and its
+    # reason is in SPEC §19 G5-7. =====
+    *[{"project": "Near", "metric": m, "reason": "change_threshold", "date": "2026-10-18", "decision": "ACCEPT",
+       "why": f"10-18 is an ordinary day; the comparison day 10-11 was a spike. DefiLlama NEAR {lab} (read live "
+              f"2026-10-19): 10-10..10-18 = {vals}. The same-weekday rule set a normal day against the spike"}
+      for m, lab, vals in (("fees_usd", "fees", "14,521; 24,112; 5,937; 6,171; 5,587; 25,893; 4,738; 4,061; 3,776"),
+                           ("revenue_usd", "revenue", "10,165; 16,878; 4,156; 4,320; 3,911; 18,125; 3,316; 2,842; 2,643"),
+                           ("holders_revenue_usd", "revenue", "10,165; 16,878; 4,156; 4,320; 3,911; 18,125; 3,316; 2,842; "
+                                                              "2,643"),
+                           ("fees_native_tokens", "fees in USD — the NEAR-unit fees (756.09 vs 4,116.17) spike on the "
+                                                  "same day",
+                            "14,521; 24,112; 5,937; 6,171; 5,587; 25,893; 4,738; 4,061; 3,776"))],
+    *[{"project": "Uniswap", "metric": m, "reason": "change_threshold", "date": "2026-10-18", "decision": "ACCEPT",
+       "why": "197,770 sits inside the prior week; the comparison Sunday 10-11 was the week's low. DefiLlama Uniswap "
+              "revenue 10-11..10-19 (read live 2026-10-19): 107,758; 299,201; 266,228; 333,664; 316,953; 292,171; "
+              "128,740; 197,770; 183,443"} for m in ("revenue_usd", "holders_revenue_usd")],
+    {"project": "Uniswap", "metric": "gross_burn_tokens", "reason": "change_threshold", "date": "2026-10-19",
+     "decision": "ACCEPT",
+     "why": "UNI is burned in fixed 4,000-UNI releases when the fee threshold is met (the Firepit, A4 credibility note): "
+            "4,000 is one release, the prior 56,000 fourteen over a longer read span — event-sized, not a misread"},
+    {"project": "Sky", "metric": "sky_stage2_burn_tokens", "reason": "change_threshold", "date": "2026-10-19",
+     "decision": "ACCEPT",
+     "why": "Stage 2 burns come with the monthly settlement spell: 2,860,943.76 SKY on 2026-09-13 and 7,372,288 on "
+            "2026-10-12 (each verified on-chain, G3-8). A 0 on 10-19 against the spell day 10-12 is the flow"},
+    {"project": "Sky", "metric": "emissions_tokens_scan", "reason": "change_threshold", "date": "2026-10-18",
+     "decision": "ACCEPT",
+     "why": "lsSKY rewards are released when the vest is dripped (vest18, 403.6M SKY/yr from 2026-10-12), not daily: "
+            "0 on Sunday 10-18 against 11,075,003 on the drip day 10-11, reconciled to the wei (lssky_rewards_released)"},
+    *[{"project": p_, "metric": m, "reason": "change_threshold", "date": "2026-10-18", "decision": "ACCEPT",
+       "why": f"{why} — read from the Distributor's Transfer events and reconciled to the wei; a claim lands when the "
+              f"holder claims, so a week's sum moves with a few large claims ({v})"}
+      for p_, m, why, v in (
+          ("Chainlink", "emissions_claimed_tokens", "staking rewards claimed out of the rewards vault",
+           "7-day 65,072 vs 17,866"),
+          ("Ether.fi", "sethfi_reward_tokens_reconciled", "sETHFI reward top-ups (LUMPY_FLOWS)",
+           "7-day 29,349 vs 17,613"),
+          ("Fluid", "emissions_tokens", "FLUID Merkle rewards claimed (LUMPY_FLOWS)", "7-day 1,722.8 vs 9,769.3"),
+          ("Fluid", "emissions_tokens_arbitrum", "FLUID Merkle rewards on Arbitrum (LUMPY_FLOWS)", "7-day 73.0 vs 453.0"),
+          ("Fluid", "emissions_tokens_base", "FLUID Merkle rewards on Base", "14.48 vs 113.35 a week apart"),
+          ("Morpho", "emissions_tokens_claims_ethereum", "MORPHO claimed from Merkl / the URD (LUMPY_FLOWS)",
+           "440.9 vs 58.6"),
+          ("Pendle", "emissions_tokens_gauge_arbitrum", "PENDLE gauge payouts on Arbitrum", "51.5 vs 198.2"),
+          ("Pendle", "emissions_tokens_gauge_arbitrum_direct", "the same Arbitrum gauge, direct count", "51.5 vs 198.2"),
+          ("Pendle", "emissions_tokens_gauge_base", "PENDLE gauge payouts on Base", "19.0 vs 10.3"),
+          ("Pendle", "emissions_tokens_gauge_hyperevm", "PENDLE gauge payouts on HyperEVM", "20.9 vs 7.9"))],
+    {"project": "Chainlink", "metric": "customer_revenue_vrf_usd", "reason": "change_threshold", "date": "2026-10-18",
+     "decision": "ACCEPT",
+     "why": "VRF fees read from the coordinators' own fee events (chainlink_fees, PARTIAL: Base not covered); a week of "
+            "2,096.88 against 12,885.13 is fewer paid requests, an on-chain count, not a read fault"},
+    *[{"project": p_, "metric": "volume_usd", "reason": "change_threshold", "date": "2026-10-18", "decision": "ACCEPT",
+       "why": f"CoinGecko's own daily trading volume, Sunday against Saturday ({v}); a market figure, not a read"}
+      for p_, v in (("Near", "544.2M vs 1,090.1M"), ("World Mobile", "119,756 vs 67,182"))],
+    *[{"project": "Ethereum", "metric": m, "reason": "change_threshold", "date": "2026-10-07", "decision": "ACCEPT",
+       "why": "141.85 ETH against 50.19: the relays' own delivered-payload values (flashbots, ultrasound, aestus, "
+              "agnostic, titan); MEV is event-driven and one day's large bundles move it — the read is the relays' sum"}
+      for m in ("execution_rewards_eth", "mev_relay_value_eth")],
+    {"project": "Ethereum", "metric": "settlement_volume_usd", "reason": "change_threshold", "date": "2026-08-25",
+     "decision": "ACCEPT",
+     "why": "Artemis's own figures as Jake exported them (CSV, 2026-09-30): 6.27B on 08-25 against 15.44B a week before; "
+            "stored as exported"},
+    {"project": "GEODNET", "metric": "circulating_supply", "reason": "flat_supply", "until": "2026-11-30",
+     "decision": "ACCEPT",
+     "why": "CoinGecko's GEODNET circulating is a rarely updated figure (static_cross_check: 462,360,759 recorded "
+            "2026-10-07, 462,548,399.54 now — +187,640): it is recorded, never the judge; the bridge reconciliation "
+            "judges GEODNET circulating"},
+    {"project": "Near", "metric": "circulating_supply", "reason": "impossible_relation", "until": "2026-11-30",
+     "decision": "ACCEPT",
+     "why": "the KNOWN PROVIDER ISSUE answered 2026-09-28: CoinGecko's own circulating and total from one response differ "
+            "by 2 NEAR (1,309,349,095 vs 1,309,349,093, 1.5e-9)"},
+    {"project": "Aethir", "metric": "circulating_supply", "reason": "onchain_vs_coingecko", "until": "2026-11-30",
+     "decision": "ACCEPT",
+     "why": "both are Aethir's published EMISSION SCHEDULE, five months apart: docs.aethir.com ath-circulating-supply "
+            "lists 24,053,550,151 for Oct 2026 (the dashboard's athCirculatingSupply, ours) and 20,128,764,593 for May "
+            "2026 (CoinGecko's figure, exactly). CoinGecko has not moved its row since May; ours stands. Neither is an "
+            "on-chain measurement (read 2026-10-19)"},
+    {"project": "World Mobile", "metric": "total_supply_gross", "reason": "out_of_bounds", "until": "2026-11-30",
+     "decision": "REJECT",
+     "why": "rejected correctly: with Ethereum WMTx deprecated from 2026-09-25 (1,493,853,279 still minted there) and the "
+            "holders' re-issue not on Base 0x3e31 (its totalSupply is flat at 214,679,066, read 2026-10-19), the "
+            "Arbitrum + BNB + Base + Solana sum 269,379,305 is below the curve floor 1.42bn — most of the supply is "
+            "outside it. Withheld until World Mobile names where the re-issue went; never a lower floor"},
+    *[{"project": p_, "metric": m, "reason": "supply_partial", "until": "2026-11-30", "decision": "ACCEPT",
+       "why": why} for p_, m, why in (
+        ("Aethir", "locked_tokens_wrapper", "a standing PARTIAL label: the Ethereum staking wrapper only (816.7M ATH); "
+                                            "Arbitrum staking is not in it"),
+        ("Aethir", "total_supply", "a standing PARTIAL label on the 42,000,000,000 cap read on Ethereum"),
+        ("Hyperliquid", "gross_burn_tokens", "a standing PARTIAL label: the Assistance Fund is one of several HYPE burns "
+                                             "(Hyperliquid's docs: HyperEVM base and priority fees, order priority "
+                                             "fees, HIP-3 slashing)"),
+        ("Maple", "treasury_holding_tokens_chain", "a standing PARTIAL label: the daoMultisig chain read (42,290,111 "
+                                                   "SYRUP); the transparency page is primary for the treasury"),
+        ("World Mobile", "total_supply_gross", "a standing PARTIAL label: Cardano-native WMTX is outside the EVM sum"))],
 ]
 
 
@@ -28037,6 +28180,40 @@ OUTFLOW_CATEGORIES = {
 # Subsidy cover = revenue ÷ $ incentives: where the incentive series is known to miss part of what is paid, the ratio
 # reads high by exactly the missing part (Morpho read 344.8x while Merkl was read on Ethereum only). The unequal-coverage
 # rule: such a ratio is BLOCKED, naming the missing part — never a number. (project, category) -> what is missing.
+# ===== A HEADLINE SCAN'S RESERVE (Round G5 item 2, Jake 2026-10-19). =====
+# In a shared tier (explorer, explorer_l2:<chain>) every scan got (time left) / (scans left); on the 06:30 run that left
+# Morpho's Base claims 45 s and Chainlink's non-circulating scans 14 s while cached scans finished in 2 s. A scan that
+# feeds a headline holds HEADLINE_SCAN_RESERVE_S back from the scans run before it (fetch.logscan.LogScan.run), and
+# any scan cut on its share runs again on the tier's leftover time (pass 2). `reserve_s` on a scan spec overrides.
+HEADLINE_SCAN_RESERVE_S = 60.0
+# token counts no source serves, converted at read time from the stored USD twin at the day's price (G5 item 6)
+USD_TWIN_TOKENS = {"Hyperliquid": (("buyback_hypercore_asxn_tokens", "buyback_hypercore_asxn_usd"),)}
+HEADLINE_SCAN_METRICS = ("gross_burn_tokens", "actual_buyback_tokens", "burn_address_balance", "buyback_fund_balance",
+                         "noncirc_inflow_scan_tokens", "noncirc_outflow_scan_tokens",
+                         "cashback_paid_tokens")      # Ether.fi (c): the cashback the purchases did not cover
+
+
+def scan_feeds_headline(project_name: str, spec: dict) -> bool:
+    """Whether a log scan's series reaches a headline cell: a declared `headline`, a leg of the project's emissions sum,
+    a leg of an outflow category (the CP subsidy / dilution / holder-value lines), or a headline metric itself."""
+    if spec.get("headline") is not None:
+        return bool(spec["headline"])
+    m = spec.get("metric")
+    p = PROJECT_BY_NAME.get(project_name) or {}
+    em = p.get("emissions_from_metric")
+    if m and m in (em if isinstance(em, (tuple, list)) else (em,)):
+        return True
+    if any(m in tuple(legs or ()) for legs in (OUTFLOW_CATEGORIES.get(project_name) or {}).values()):
+        return True
+    return m in HEADLINE_SCAN_METRICS
+
+
+def scan_reserve_s(project_name: str, spec: dict) -> float:
+    if spec.get("reserve_s") is not None:
+        return float(spec["reserve_s"])
+    return HEADLINE_SCAN_RESERVE_S if scan_feeds_headline(project_name, spec) else 0.0
+
+
 OUTFLOW_INCOMPLETE = {
     ("Fluid", "b"): "FLUID rewards are read from the Ethereum Merkle distributors + Arbitrum's only — the Base and Plasma "
                     "distributors (bridged FLUID) are not scanned. E7 (2026-10-14), measured once and reconciled to the "

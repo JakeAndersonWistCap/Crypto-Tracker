@@ -71,7 +71,14 @@ def constant_price_tvl(j: dict) -> tuple[list, str]:
                      if cover else ""))
 
 class DefiLlama:
-    def __init__(self, known_absent: set | None = None, stored_long=None):
+    # TWO TIERS (Round G5 item 3, Jake's 06:30 run: "defillama" timed out at 150 s doing real work — 69 calls, 136 s in
+    # requests, slowest /protocol/morpho 21.5 s). part="fees": the daily fees / revenue summaries and the restructure
+    # check (the headline reads); part="tvl": the multi-MB /protocol, chain TVL, stablecoin, DEX-volume and RWA reads,
+    # tier "defillama_tvl". They run concurrently, each inside its own budget, and keep separate once-a-day marks.
+    PARTS = ("fees", "tvl")
+
+    def __init__(self, known_absent: set | None = None, stored_long=None, part: str = "all"):
+        self.part = part
         self.http = Http(min_interval=0.25)
         # The store as of the run's start — read only to find summed days stored PARTIAL before
         # 2026-10-05 (source "[missing: …]"), which the next complete run re-stores (_sum_slugs).
@@ -1087,10 +1094,11 @@ class DefiLlama:
         # gaps). Storing is unchanged: the window (30 days, 365 for a backfill pair) of what came.
         yday = today().normalize() - pd.Timedelta(days=1)
         for p in projects:
-            name, key = p["name"], f"defillama:project:{p['name']}"
+            name, key = p["name"], f"defillama{'' if self.part in ('all', 'fees') else '_' + self.part}:project:{p['name']}"
             # A SERIES NEVER STORED IS READ TODAY, WHATEVER RAN EARLIER (Jake's fix round 2, R1 / R6: NEAR's Intents
             # revenue and Pendle's Boros fees were added mid-day and skipped as "read complete earlier today")
-            unread = [c["metric"] for c in p.get("defillama_component_slugs") or () if not self._stored(name, c["metric"])]
+            unread = ([c["metric"] for c in p.get("defillama_component_slugs") or () if not self._stored(name, c["metric"])]
+                      if self.part != "tvl" else [])
             if unread and not self.daily.due(key, self._today):
                 log.info("defillama %s: read again today — never stored: %s", name, ", ".join(unread))
             elif not self.daily.due(key, self._today):
@@ -1109,15 +1117,19 @@ class DefiLlama:
             if complete and not any(e.status == "failed" for e in mine):
                 self.daily.set(key + ":metrics", ",".join(sorted({m for f in frames for m in f["metric"].unique()})))
                 self.daily.done(key, self._today)
-        self.rwa(projects, window_days, out)
+        if self.part in ("all", "tvl"):
+            self.rwa(projects, window_days, out)
 
     def _project(self, p: dict, window_days, out) -> None:
-        self.fees(p, window_days, out)
-        # AFTER the fetch, so the check costs nothing when the fetch already failed — and
-        # runs on every project with a slug rather than only where somebody suspects one.
-        # Morpho's restructure sat unnoticed for eleven days precisely because nothing looked
-        # unless a human went looking.
-        self.check_restructure(p, out)
+        if self.part in ("all", "fees"):
+            self.fees(p, window_days, out)
+            # AFTER the fetch, so the check costs nothing when the fetch already failed — and
+            # runs on every project with a slug rather than only where somebody suspects one.
+            # Morpho's restructure sat unnoticed for eleven days precisely because nothing looked
+            # unless a human went looking.
+            self.check_restructure(p, out)
+        if self.part == "fees":
+            return
         self.protocol_tvl(p, window_days, out)
         self.lending_supply(p, window_days, out)
         self.chain_tvl(p, window_days, out)

@@ -337,6 +337,85 @@ class PlumeStaking:
                                      f"{pts[0][0].date()}..{pts[-1][0].date()}; unlocks are NOT in it (no vesting "
                                      f"address is documented)", TIER)
 
+    # ===== THE PAYOUT BACKLOG BY RPC (Round G5 item 4, Jake 2026-10-19). =====
+    def seed_payouts_rpc(self, name: str, spec: dict, out, say=print, chunk: int = 100_000, w3=None) -> dict:
+        """emissions_claimed_tokens stopped at 2025-08-11: the explorer's /api allows 10 calls per >= 40 minutes, shared
+        with plume_settlement, and the routine's 8 pages a day never caught up with 2025's ~3,000 payouts a day. This
+        reads the same RewardDistributed(PLUME) events from the routine's own cursor to the head through rpc.plume.org
+        eth_getLogs (read here 2026-10-19: 100,000 blocks in 1.2 s; it refuses a query over 10,000 logs, -32005), the
+        range halved on a refusal and grown back after a success, each event dated by its block (bracketed: a run of
+        blocks on one UTC day is not read block by block), state saved after every chunk in the routine's file
+        (plume-payouts.json) — the daily read then continues from where this stops. Returns {"status", "events",
+        "to_block"}."""
+        import json
+        from pathlib import Path
+        import pandas as pd
+        from web3 import Web3
+        from .katana_seed import date_blocks
+        pay = spec.get("payouts") or {}
+        w3 = w3 or Web3(Web3.HTTPProvider(spec["rpc"], request_kwargs={"timeout": 60}))
+        treasury = self._call(self._contract(spec).functions.getTreasury(), None)
+        path = Path(self._cache_file) if self._cache_file else None
+        if path is None:
+            from .logcache import LogCache
+            path = LogCache().root / "plume-payouts.json"
+        try:
+            st = json.loads(path.read_text())
+        except (OSError, ValueError):
+            st = {}
+        if st.get("treasury", "").lower() != str(treasury).lower():
+            st = {"treasury": str(treasury), "next_block": 0, "days": {}}
+        native_topic = "0x" + spec["reward_token"][2:].lower().rjust(64, "0")
+        head = int(w3.eth.block_number) - 20
+        blk, n_events, span = int(st["next_block"]), 0, int(chunk)
+        say(f"plume payouts by RPC: treasury {treasury}, from block {blk:,} to {head:,} "
+            f"(the routine's cursor; {len(st['days'])} day(s) already summed)")
+        times: dict[int, int] = {}
+
+        def ts(b):
+            if b not in times:
+                times[b] = int(w3.eth.get_block(int(b))["timestamp"])
+            return times[b]
+        while blk <= head:
+            hi = min(head, blk + span - 1)
+            try:
+                logs = w3.eth.get_logs({"address": Web3.to_checksum_address(str(treasury)), "fromBlock": blk,
+                                        "toBlock": hi, "topics": [pay["topic0"], native_topic]})
+            except Exception as e:  # noqa: BLE001
+                if "-32005" in str(e) or "limit exceeded" in str(e).lower():
+                    if span <= 1:
+                        raise
+                    span = max(1, span // 2)
+                    continue
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(json.dumps(st))
+                from .chain import redact_urls
+                say(f"plume payouts by RPC: stopped at block {blk:,} — {redact_urls(e)}; state saved, re-run to resume")
+                return {"status": "stopped", "events": n_events, "to_block": blk - 1}
+            day_of = date_blocks(sorted({int(x["blockNumber"]) for x in logs}), ts) if logs else {}
+            for x in logs:
+                data = x["data"]
+                amount = int(data.hex() if hasattr(data, "hex") else str(data), 16) / 1e18
+                d = str(day_of[int(x["blockNumber"])].date())
+                st["days"][d] = st["days"].get(d, 0.0) + amount
+            n_events += len(logs)
+            st["next_block"] = hi + 1
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(st))
+            blk = hi + 1
+            span = min(span * 2, 2_000_000) if len(logs) < 5_000 else span
+            if n_events and n_events % 20_000 < len(logs):
+                say(f"plume payouts by RPC: {n_events:,} event(s) to block {hi:,} of {head:,}; state saved")
+        today_ = str(pd.Timestamp.now(tz="UTC").tz_localize(None).normalize().date())
+        pts = sorted((pd.Timestamp(d), v) for d, v in st["days"].items() if d < today_)
+        if pts:
+            from .base import tidy
+            out.add(tidy(pts, name, pay["metric"], f"{SOURCE}:treasury.RewardDistributed[paid, PLUME]", TIER), SOURCE,
+                    name, f"{pay['metric']}: --seed plume_payouts — {n_events:,} RewardDistributed(PLUME) event(s) "
+                          f"read by RPC to block {head:,}; {len(pts)} day(s) {pts[0][0].date()}..{pts[-1][0].date()}",
+                    TIER)
+        return {"status": "stored", "events": n_events, "to_block": head}
+
     # ===== HISTORY: THE LIVE DIAMOND READ ON PAST DAYS (Jake's run 2026-09-30 17:21). =====
     def _chain(self, spec: dict):
         """(block_at(day) -> first block at/after 00:00 UTC, has_code(block) -> bool). Binary

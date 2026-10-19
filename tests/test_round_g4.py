@@ -375,11 +375,12 @@ def test_g4_6_seed_runs_report_and_add_their_alchemy_usage():
 
 
 # ------------------------------------------------------------------------------------------------ item 7(a) Sky TMF
-def test_g4_7a_the_sky_tmf_reference_is_the_msc13_figure_and_stays_broken_explained():
+def test_g4_7a_the_sky_tmf_reference_is_the_msc13_figure():
     import csv
     with open(ROOT / "independent_references.csv", encoding="utf-8") as f:
         row = next(r for r in csv.DictReader(f) if r["metric"] == "net_revenue_sep_2026")
-    assert float(row["value"]) == 14_635_947.43 and row["tolerance"] == "2%"          # tolerance kept
+    # G5 D1: graded against our read of the same report, so tightened from 2% to exact (never loosened)
+    assert float(row["value"]) == 14_635_947.43 and row["tolerance"] == "exact"
     assert "settlement-cycle" in row["source"] and "summary.md" in row["source"]
     # the MSC #13 arithmetic the cause quotes: MSC leg + non-MSC leg, and each leg's lines
     assert round(20_154_616.00 - 6_050_154.00 - 177_113.78, 2) == 13_927_348.22

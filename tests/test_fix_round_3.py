@@ -133,13 +133,19 @@ def test_sky_ratio_base_is_before_distributions_and_the_implied_buyback_stays_on
     assert sep == pytest.approx(15_379_185, abs=1)          # revenue − expense; NPS (after distribution) 7,153,241
 
 
-def test_sky_reference_reads_the_pre_distribution_series():
+def test_sky_reference_reads_the_msc_series_and_ba_is_a_labelled_basis_difference():
+    # G5 D1: the TMF months are checked against our own read of Soter's report; Block Analitica's month is not graded
     import references as rf
-    g = _groups("Sky", _sky_rows())
+    msc = _rows("net_revenue_msc_usd", [(pd.Timestamp("2026-09-30"), 14_635_947.43)],
+                "sky_msc:soterlabs/settlement-cycle sky_total[accrual]", 3)
+    g = _groups("Sky", _sky_rows() + msc)
     r = {x["metric"]: x for x in rf.check(g)}["net_revenue_sep_2026"]
-    assert r["ours"] == pytest.approx(15_379_185, abs=1)
-    assert "two different accounts" in r["detail"] and "13,927,348.22" in r["detail"]
-    assert r["status"] == "BROKEN"          # +5.08% against 2%: explained, not loosened (G4 7a)
+    assert r["ours"] == pytest.approx(14_635_947.43, abs=0.01) and r["status"] == "VERIFIED"
+    b = {x["metric"]: x for x in rf.basis_rows(g)}["net_revenue_ba_vs_msc_2026-09"]
+    assert b["status"] == "N/A BY DESIGN" and b["status"] != "BROKEN"
+    assert b["ours"] == pytest.approx(15_379_185, abs=1)
+    assert "KNOWN ACCOUNTING-BASIS DIFFERENCE" in b["detail"] and "accrual" in b["detail"]
+    assert "15,379,185" in b["detail"] and "14,635,947" in b["detail"] and "+5.08%" in b["detail"]
 
 
 # ------------------------------------------------------------------------------------------------------- B7 references

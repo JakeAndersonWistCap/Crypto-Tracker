@@ -265,6 +265,10 @@ def _rpcs_for(chain: str) -> list:
     if chain == "base":
         keyed = os.environ.get("BASE_RPC_URL", "").strip()
         urls = [u.strip() for u in keyed.split(",") if u.strip()] if keyed else []
+        # THE ONE ALCHEMY KEY TOO (Round G5 item 8b: the Foundation buyback window read only BASE_RPC_URL; with
+        # ALCHEMY_API_KEY set and BASE_RPC_URL unset it fell to the public RPCs, which cannot serve its receipts)
+        if not urls and os.environ.get("ALCHEMY_API_KEY", "").strip():
+            urls.append(f"https://base-mainnet.g.alchemy.com/v2/{os.environ['ALCHEMY_API_KEY'].strip()}")
         urls += _PUBLIC_BASE_RPCS
         seen, out = set(), []
         for u in urls:
@@ -12332,6 +12336,7 @@ def stale_series():
     today = pd.Timestamp.now(tz="UTC").tz_localize(None).normalize()
     by = {(p_, m_): (f, l, n) for p_, m_, f, l, n in rows}
     n_stale = n_marked = 0
+    explained = []
     for p in _portfolio_projects():
         name = p["name"]
         stale = []
@@ -12343,7 +12348,19 @@ def stale_series():
             allowed = _cfg.stale_after_days(name, m, STALE_DAILY_ALLOWED_DAYS)
             age = (today - pd.Timestamp(str(last)[:10])).days
             marked = [k for k, v in marks.items() if str(v) == str(today.date()) and k.split(":")[1:3] == [name, m]]
-            if age <= allowed and not (marked and age > 0):
+            # A MARK IS WRONG ONLY PAST ITS SOURCE'S OWN NEWEST DAY (Round G5 item 4: the 13 business series "marked
+            # read today with no row today" held 10-17 on 10-19 — fetch.business.last_complete() stores through the day
+            # before yesterday by design, an aggregator's yesterday being partial). A daily flow's newest is yesterday.
+            lag = max((MARK_EXPECTED_LAG_DAYS.get(k.split(":")[0], 1) for k in marked), default=1)
+            marked = [k for k in marked if age > lag]
+            if age <= allowed and not marked:
+                continue
+            # NOT EVERY OLD SERIES IS STALE (Round G5 item 4, Jake's g4b_stale.txt): a series CLOSED in config, a route
+            # RETIRED by declaration, a READ-TIME VIEW the workbook builds from fresher inputs, or a read REJECTED by its
+            # bound each says so instead of offering a backfill that cannot help
+            why_not = _not_stale(_cfg, con, name, m, str(last)[:10])
+            if why_not:
+                explained.append((name, m, str(last)[:10], why_not))
                 continue
             reason, fix, cost, _cmd = hg.fix_for(p, m, {"source": last_src.get((name, m)), "first_date": first})
             lost = reason.startswith("FORWARD-ONLY") or "current snapshot" in reason
@@ -12357,18 +12374,27 @@ def stale_series():
             n_marked += bool(marked)
             print(f"    {m:<44} last {last}  expected >= {exp}  ({age} day(s) old, {gran})  "
                   + ("LOST: the source keeps no history" if lost else f"BACKFILL: {fix[:110]}")
-                  + (f"  !! MARKED READ TODAY ({', '.join(marked)}) WITH NO ROW TODAY" if marked else ""))
-    print(f"\n  {n_stale} stale series across the portfolio; {n_marked} marked 'read today' with no row today.")
+                  + (f"  !! MARKED READ TODAY ({', '.join(marked)}) BUT ITS NEWEST ROW IS OLDER THAN THE SOURCE SERVES"
+                     if marked else ""))
+    if explained:
+        print(f"\n  NOT STALE ({len(explained)}) — closed, retired, a view, or rejected by its bound:")
+        for name, m, last, why in explained:
+            print(f"    {name:<14} {m:<40} last {last}  {why[:220]}")
+    print(f"\n  {n_stale} stale series across the portfolio; {n_marked} marked 'read today' with a row older than its "
+          f"source's newest day.")
     print("  PASTE BACK the lines above.")
     return 0
+
+
+# the newest day a source's daily read stores, in days before today (G5 item 4): fetch.business.last_complete
+MARK_EXPECTED_LAG_DAYS = {"business": 2}
 
 
 # G4 item 7 (Jake 2026-10-18): the whole-workbook pass reads the CSV the build writes beside the workbook
 G4_FIRST = ("Aethir", "Pendle", "Aerodrome", "Hyperliquid")
 # an N/A whose reason is one of these is a MISSING ROUTE (nothing stored, an empty registry stub, a series not read),
 # not a column that does not apply — G4 7e
-NA_MISSING_ROUTE_SIGNS = ("no rows stored", "empty stub", "stored nothing", "no series in q", "not wired",
-                          "produced nothing", "no url on file", "history bug", "returned no data")
+from coverage_audit import NA_MISSING_ROUTE_SIGNS  # noqa: E402 — one list for the check and the MISSING status
 
 
 def _coverage_csv():
@@ -12401,7 +12427,7 @@ def na_reasons():
             p = r.get("Project") or ""
             if p in ("", "(all)"):
                 continue
-            if r.get("Status") == "N/A BY DESIGN":
+            if r.get("Status") in ("N/A BY DESIGN", "MISSING"):           # MISSING since G5 item 5g
                 na[p][_norm_reason(r.get("Reason / route / error"))] += 1
             elif r.get("Status") in ("VERIFIED", "LIVE-UNVERIFIED", "CHECK", "BROKEN"):
                 values[p] += 1
@@ -12417,6 +12443,86 @@ def na_reasons():
             mark = "  << MISSING ROUTE" if any(k in why.lower() for k in NA_MISSING_ROUTE_SIGNS) else ""
             print(f"      {n:4d}  {why}{mark}")
     print(f"  TOTAL: {sum(sum(c.values()) for c in na.values())} N/A; {flagged_all} flagged MISSING ROUTE")
+    return 0
+
+
+_TAB_OF = {"Master": "Master", "A1": "A1 Infrastructure", "A2": "A2 Coordination", "A3": "A3 Revenue Buyback",
+           "A4": "A4 Permanent Burn", "CP": "CP Comparability", "Flows": "Flows", "Trajectory": "Trajectory"}
+
+
+def spec_coverage():
+    """ROUND G5 item 5h: every SPEC formula against the workbook (the last build's coverage_audit.csv): (1) a concept
+    whose tab lists a project with no column for it; (2) columns with no SPEC concept; (3) Trajectory columns with
+    fewer than 5 quarters where the store's input series spans 5 quarters or more. The formula register is SPEC's
+    concept table (spec.concepts) — the section 13-19 amendment rows change those formulas in prose and are covered
+    through them. Reads the CSV and metrics.db; changes nothing."""
+    import csv as _csv                                    # noqa: PLC0415
+    import sqlite3                                        # noqa: PLC0415
+    from collections import defaultdict                   # noqa: PLC0415
+    import spec as _spec                                  # noqa: PLC0415
+    import store as _store                                # noqa: PLC0415
+    head("SPEC COVERAGE — formulas with no column, columns with no formula, short quarterly columns (last build)")
+    path = _coverage_csv()
+    if path is None:
+        print("  no coverage_audit.csv beside the workbook — build the workbook first")
+        return 0
+    with open(path, encoding="utf-8") as f:
+        rows = list(_csv.DictReader(f))
+    on_tab = defaultdict(set)
+    have = defaultdict(set)
+    import re as _re                                      # noqa: PLC0415
+    for r in rows:
+        on_tab[r["Tab"]].add(r["Project"])
+        have[(r["Tab"], r["Project"])].add(r["Key"])
+        # a Flows line is keyed token_flow / value_flow; its outflow category is the "(b)" in its label
+        m = _re.search(r"\(([a-e])\)", r["Column"]) if r["Tab"] == "Flows" else None
+        if m:
+            have[(r["Tab"], r["Project"])].add(f"outflow_{m.group(1)}")
+    missing = defaultdict(list)
+    for key, c in _spec.concepts().items():
+        for t in c.get("tabs") or ():
+            tab = _TAB_OF.get(t, t)
+            for proj in sorted(on_tab.get(tab, ())):
+                if proj in ("(all)", "") or key in have[(tab, proj)]:
+                    continue
+                missing[(key, tab)].append(proj)
+    print(f"  (1) SPEC formulas with no column for a project on their tab: {len(missing)} formula x tab pair(s)")
+    for (key, tab), projs in sorted(missing.items()):
+        print(f"      {key:<34} {tab:<22} {len(projs):2d}: {', '.join(projs)[:150]}")
+    nocon = [r for r in rows if str(r.get("MATCHES-SPEC", "")).startswith("no — no SPEC concept")]
+    by_col = defaultdict(set)
+    for r in nocon:
+        by_col[(r["Tab"], r["Column"])].add(r["Project"])
+    print(f"  (2) columns with no SPEC formula: {len(by_col)}")
+    for (tab, col), projs in sorted(by_col.items()):
+        print(f"      {tab:<22} {col[:70]:<70} ({len(projs)} project(s))")
+    span = {}
+    if os.path.exists(_store.DB_PATH):
+        con = sqlite3.connect(str(_store.DB_PATH))
+        span = {(p_, m_): (pd_max - pd_min) for p_, m_, pd_min, pd_max in (
+            (a, b, __import__("pandas").Timestamp(c), __import__("pandas").Timestamp(d))
+            for a, b, c, d in con.execute("SELECT project, metric, MIN(date), MAX(date) FROM metrics GROUP BY 1, 2"))}
+    cs = _spec.concepts()
+    short = []
+    for r in rows:
+        if r["Tab"] != "Trajectory":
+            continue
+        try:
+            depth = int(float(r.get("History depth (quarters with a value)") or 0))
+        except ValueError:
+            continue
+        if depth >= 5:
+            continue
+        ins = (cs.get(r["Key"]) or {}).get("inputs") or ()
+        longest = max((span.get((r["Project"], m)).days for m in ins if span.get((r["Project"], m)) is not None),
+                      default=None)
+        if longest is not None and longest >= 450:
+            short.append((r["Project"], r["Column"], depth, longest))
+    print(f"  (3) Trajectory columns under 5 quarters whose input series spans >= 450 days: {len(short)}")
+    for proj, col, depth, longest in sorted(short):
+        print(f"      {proj:<14} {col[:60]:<60} {depth} quarter(s); input spans {longest} days")
+    if not span:
+        print("      (no metrics.db here: (3) needs the store)")
     return 0
 
 
@@ -12455,6 +12561,38 @@ def gap_routes():
             print(f"      {pl} x{len(ms)}  {route}")
             print(f"            {', '.join(sorted(ms))[:300]}")
     return 0
+
+
+def _not_stale(cfg, con, name: str, metric: str, last: str) -> str:
+    """Why an old (project, metric) series is not stale, or "" (Round G5 item 4)."""
+    closed = (getattr(cfg, "UNAVAILABLE_BY_KEY", {}) or {}).get((name, metric))
+    if closed:
+        return f"CLOSED {closed.get('closed_on', '')}: {closed.get('summary', '')}"
+    if metric == "price_usd_coinbase" and name not in (cfg.CREDIBILITY_XREF.get("coinbase_product") or {}):
+        return ("RETIRED ROUTE: no declared Coinbase product since 2026-10-05 (a guessed <SYMBOL>-USD can be another "
+                "asset); the rows to 10-05 are the guesses — run_sql CZ removes them")
+    origin = cfg.relabelled_from(name, metric) if hasattr(cfg, "relabelled_from") else None
+    bt = cfg.burn_total(name) if hasattr(cfg, "burn_total") else None
+    if origin:
+        legs = (bt["components"] if bt and origin == bt["metric"] else [origin])
+        lasts = [r[0] for leg in legs for r in con.execute(
+            "SELECT MAX(date) FROM metrics WHERE project = ? AND metric = ?", (name, leg)) if r[0]]
+        return (f"READ-TIME VIEW: the workbook shows {metric} as {origin}"
+                + (f" (= {' + '.join(legs)})" if len(legs) > 1 else "")
+                + (f", inputs through {min(lasts)[:10]}" if lasts else "") + "; the stored rows are superseded")
+    if metric == "emissions_tokens" and ((getattr(cfg, "ISSUANCE_PRIMARY", {}) or {}).get(name) or {}).get("kind") \
+            == "declared_curve":
+        return "READ-TIME VIEW: emissions_tokens is the declared curve at read time (ISSUANCE_PRIMARY); not stored since"
+    rej = con.execute("SELECT date, basis, reason FROM review_queue WHERE project = ? AND metric = ? AND action = "
+                      "'rejected' AND date > ? ORDER BY date DESC LIMIT 1", (name, metric, last)).fetchone() \
+        if _has_table(con, "review_queue") else None
+    if rej:
+        return f"REJECTED BY ITS BOUND since {last} (latest {rej[0]}): {rej[2]} — {str(rej[1] or '')[:160]}"
+    return ""
+
+
+def _has_table(con, name: str) -> bool:
+    return bool(con.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)).fetchone())
 
 
 def mcap_inputs():
@@ -12681,7 +12819,7 @@ CHECKS = (
     morpho_incentives, settlement_sources, hyperevm_etherscan, maple_ssf_inflows, aethir_pages,
     geod_stake_recipient, geod_stake_wallets, maple_ssf_lp_test, maple_drips, plume_archive, settlement_rebuild_coverage,
     near_settlement_routes,
-    env_keys, aero_migration, near_wallet_inflow_days, worldmobile_probe, stale_series, mcap_inputs, na_reasons, gap_routes,
+    env_keys, aero_migration, near_wallet_inflow_days, worldmobile_probe, stale_series, mcap_inputs, na_reasons, gap_routes, spec_coverage,
     aethir_mint_path,
     near_activity_break,
     plume_settlement_routes,

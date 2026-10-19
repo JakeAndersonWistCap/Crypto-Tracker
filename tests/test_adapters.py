@@ -18813,7 +18813,9 @@ def test_an_exception_from_a_keyed_url_never_reaches_a_log_print_store_or_sheet_
     assert any("arb-mainnet.g.alchemy.com" in s for s in seen), "the host still says which provider"
     # a key-shaped path on an unknown host, and a key query parameter, go too; docs links stay
     assert redact("https://rpc.example.org/v1/Xk82hd7FJ29sLq01mNbV33") == "https://rpc.example.org"
-    assert "apikey=***" in redact("https://api.etherscan.io/v2/api?module=stats&apikey=ABCDEF1234567890")
+    assert "apikey=***" in redact("https://api.example.io/api?module=stats&apikey=ABCDEF1234567890")
+    # G5: "mask anything after /v2/ in any URL" — the query with it
+    assert redact("https://api.etherscan.io/v2/api?module=stats&apikey=ABCDEF1234567890") == "https://api.etherscan.io/v2/***"
     doc = "https://github.com/pendle-finance/documentation/blob/9b9509e/docs/ApiOverview.mdx"
     assert redact(doc) == doc
 

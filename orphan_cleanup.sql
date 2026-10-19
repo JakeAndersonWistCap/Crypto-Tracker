@@ -5009,3 +5009,25 @@ SELECT date, value, source
 -- CY2. THE REMOVAL.
 -- DELETE FROM metrics
 --  WHERE project = 'Hyperliquid' AND metric = 'hypercore_new_users' AND source LIKE '%span=%';
+
+-- ========================================================================================
+-- CZ. COINBASE PRICE ROWS FROM A GUESSED PRODUCT (no product declared since 2026-10-05)  2026-10-19T10:00Z
+--     Round G5 item 4 (Jake 2026-10-19): stale_series listed price_usd_coinbase "last 2026-10-05" on 10 projects. They
+--     are not late: since 2026-10-05 only a DECLARED Coinbase product is read (config CREDIBILITY_XREF.coinbase_product:
+--     Ethereum ETH-USD, Chainlink LINK-USD, Near NEAR-USD, Uniswap UNI-USD, Aerodrome AERO-USD) — a guessed
+--     "<SYMBOL>-USD" can be another asset with the ticker (Fluid read 22% off CoinGecko on FLUID-USD). The rows to
+--     10-05 for every other project came from those guesses, and the Credibility tab still reads them as a price
+--     reference. CZ1 lists them by project; CZ2 removes them. Run: python run_sql.py CZ, then python run_sql.py --delete CZ.
+-- ========================================================================================
+-- CZ1. THE GUESSED-PRODUCT ROWS.
+SELECT project, COUNT(*) AS rows, MIN(date) AS first, MAX(date) AS last, MIN(source) AS source
+  FROM metrics
+ WHERE metric = 'price_usd_coinbase'
+   AND project NOT IN ('Ethereum', 'Chainlink', 'Near', 'Uniswap', 'Aerodrome')
+ GROUP BY project
+ ORDER BY project;
+
+-- CZ2. THE REMOVAL.
+-- DELETE FROM metrics
+--  WHERE metric = 'price_usd_coinbase'
+--    AND project NOT IN ('Ethereum', 'Chainlink', 'Near', 'Uniswap', 'Aerodrome');

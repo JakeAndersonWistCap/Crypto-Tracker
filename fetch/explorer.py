@@ -295,11 +295,26 @@ class ExplorerLogs:
             params["withMetadata"] = True
         pace = host_pace(url, float(spec.get("rate_per_s") or 2.0), sleep=self._pace_sleep)
         out, seen, n, page_key = [], set(), 0, None
+
+        def timed_out(e: ExplorerTimeout) -> ExplorerTimeout:
+            # WHAT WAS READ BEFORE THE BUDGET RAN OUT, for a resumable seed (Round G5 item 2: this route raised its
+            # timeout bare, so a history longer than one run's share — Morpho's Base claims, Pendle's Berachain gauge —
+            # started from block 0 every run and never stored). Transfers come in block order: only blocks BELOW the
+            # last one read are whole, so the next run resumes AT that block.
+            if out:
+                last = max(x["blockNumber"] for x in out)
+                e.partial = sorted((x for x in out if x["blockNumber"] < last),
+                                   key=lambda x: (x["blockNumber"], x["logIndex"]))
+                e.resume_from = last
+            return e
         while True:
             if n >= cap:
                 raise ExplorerRefused(f"{name}: stopped at {cap} requests without exhausting the range — a "
                                       f"truncated history is not returned as a complete one")
-            self._check_budget()
+            try:
+                self._check_budget()
+            except ExplorerTimeout as e:
+                raise timed_out(e) from None
             pace.wait(urllib.parse.urlsplit(url).netloc)
             from .base import set_phase
             set_phase(f"{name} Transfers API on chain {chain_id}: page {n + 1}, {len(out):,} transfer(s) so far")
@@ -309,7 +324,7 @@ class ExplorerLogs:
                 res = self.http.post(url, json_body=body, deadline=self._deadline)
             except BudgetExhausted as e:
                 self._errors.append(f"{name}: {self._scrub(e)}")
-                raise self._timed_out() from None
+                raise timed_out(self._timed_out()) from None
             except Exception as e:  # noqa: BLE001 — reported as a refusal, never swallowed
                 self._errors.append(f"{name}: {self._scrub(e)[:160]}")
                 raise ExplorerRefused(f"{name}: {self._scrub(e)}") from None
@@ -423,7 +438,9 @@ class ExplorerLogs:
         # A TRANSFER-SHAPED QUERY also goes to the chain's opened transfer route (Round G 2.7: Alchemy's Transfers API,
         # opened per chain by Jake's probe — config.EXPLORER_TRANSFER_ROUTES), after the log explorers.
         if transfer_shaped(address, topics):
-            order = order + [n for n in config.transfer_route(chain_id) if n not in order]
+            tr = [n for n in config.transfer_route(chain_id) if n not in order]
+            # G5 item 8c: on config.TRANSFER_FIRST_CHAINS the opened Transfers route goes FIRST
+            order = (tr + order) if int(chain_id) in config.TRANSFER_FIRST_CHAINS else (order + tr)
         if not order:
             raise ExplorerRefused(f"no explorer is routed for chain {chain_id} in "
                                   f"config.EXPLORER_LOG_ROUTES")
