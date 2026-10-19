@@ -293,7 +293,8 @@ def payday_yield(flow, price, stake, lo, hi, year=365.0, epoch_days=None) -> dic
     value = tokens * float(year) / n / mean_stake
     p_eff = usd / tokens if tokens else None
     how = (f"PAYMENT-DAY PRICES: ${usd:,.0f} paid over {n} day(s) {priced[0].date()}..{priced[-1].date()}, each day's "
-           f"$ / that day's price = {tokens:,.0f} tokens (payment-weighted price ${p_eff:,.4f}) x {float(year):g}/{n} / "
+           f"$ / that day's price = {tokens:,.0f} tokens (payment-weighted price "
+           f"{'n/a — nothing paid' if p_eff is None else f'${p_eff:,.4f}'}) x {float(year):g}/{n} / "
            f"mean stake {mean_stake:,.0f} over its {len(st)} stored day(s) in the window = {value:.2%}"
            + (f"; left out, no same-day price: {', '.join(str(d.date()) for d in no_price)}" if no_price else ""))
     return {"value": value, "tokens": tokens, "usd": usd, "days": n, "p_eff": p_eff, "stake": mean_stake,

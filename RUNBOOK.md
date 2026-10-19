@@ -443,8 +443,10 @@ would produce plausible-looking wrong numbers.
 ## 11j. Monthly: refresh the Artemis settlement-volume export (manual step)
 
 Settlement volume, and the Network Reserve Ratio built on it, come from Artemis CSV exports that
-you save by hand. The Artemis API answered HTTP 410 without a key, so nothing reads it
-automatically. Once a month:
+you save by hand. The Artemis API answered HTTP 410 without a key and its route is RETIRED (Round G7 item 8,
+2026-10-19: no key will be bought) — nothing calls it, and an ARTEMIS_API_KEY in .env is ignored. The CSV is
+Ethereum's history; the forward route is the free rebuild (11ch, SETTLEMENT_REBUILD.ethereum_rebuild). If you can
+still export, once a month:
 
 1. Open Artemis → the asset (e.g. Ethereum) → Metrics → Market Data → **Settlement Volume**
    (`classic.artemis.ai/asset/ethereum?tab=metrics&category=MARKET_DATA&metric=SETTLEMENT_VOLUME`).
@@ -469,8 +471,8 @@ old, the cell turns stale (AMBER). Plume is closed as an ACCEPTED LIMIT: it is n
 The Block does not cover it. A chain Artemis does not list gets the same treatment, with the page you
 checked. Do not substitute another source's volume.
 
-If an `ARTEMIS_API_KEY` ever appears, run `python check_offline_items.py settlement_sources` and paste
-back what it prints. The API is wired only after a keyed response has been seen.
+`python check_offline_items.py settlement_sources` probes the free rebuild legs (DefiLlama DEX and NFT; the P2P leg's
+dry run is in the run itself); it no longer calls Artemis.
 
 ## 11k. beaconcha.in — dropped (2026-10-01)
 
@@ -526,6 +528,49 @@ with each endpoint's own limit counted.
 A Plume seed started on code older than 2026-10-01 saved its state only at the end. Let it finish,
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
+
+## 11ch. Round G7 — World Mobile option C, NEAR's overlap check, period labels, settlement rebuild legs (2026-10-19)
+
+**Run after pulling (PowerShell 5.1, repo root), in this order.** No run_sql section this round (nothing stored needs
+removing: superseded rows are replaced at read time).
+1. `python token_metrics.py` — the full run. The first run after this pull clears every tier's "read today already"
+   marks once (new: "ADAPTER CHANGED <tier>" lines — a changed adapter reads again the same day), so it is longer than
+   usual. New tiers: eth_nft_volume (DefiLlama NFT volume, Ethereum) and eth_p2p_bigquery (dry runs only: it logs
+   "Ethereum P2P DRY RUNS … one week N GB; validation window N GB"). Sky now reads buyback spending by day from
+   2024-11-13; Plume reads DefiLlama `plume-mainnet` fees as a cross-check; World Mobile Chain's daily gas is read.
+2. `python sanity.py --workbook token_metrics.xlsx` — now counts the build's own hits too (sanity_hits.json beside the
+   workbook), so it agrees with the Review Queue.
+3. `python check_offline_items.py missing_triage` — every MISSING cell by cause; PASTE BACK.
+4. `python check_offline_items.py spec_coverage` and `python check_offline_items.py stale_series`.
+
+**World Mobile.** total_supply is option C: the chains read (B, its own row total_supply_with_cardano_tokens) + the
+Ethereum supply before the exploit awaiting re-issue (1,013,930,149.415209), labelled "inferred from chain". When World
+Mobile publishes its snapshot total, enter it in config (`total_supply_option_c.snapshot_total` and `snapshot_source`)
+and it replaces the inferred leg. The 46,227,317.694 WMTX of recovery mints on Base are inside B and not subtracted.
+
+**NEAR issuance** reads the BigQuery epoch mint as the history; the RPC epoch mint takes over only after 3 days agree
+within 1% — the Run Log / ISSUANCE_OVERLAP says which leg stands and why.
+
+**Ethereum settlement.** The Artemis API route is retired; the CSV stays the history (11j). To let the P2P leg run,
+read the dry-run bytes in the Run Log, then set `SETTLEMENT_REBUILD["ethereum_rebuild"]["p2p"]["approved"] = True` in
+config.py (weekly; it shares NEAR's BigQuery quota project and ledger). Until it is approved, or until the validation
+passes (every complete week within ±10% of the CSV to 2026-08-25), the workbook shows the CSV only and
+`settlement_rebuilt_usd` beside it. A hand-run of `sql/ethereum/bigquery_p2p_daily.sql` in the console, saved as CSV
+(day, token, amount, n) in `data/ethereum/`, is read the same way (never committed).
+
+**Aerodrome buyback history.** `python token_metrics.py --seed aero_buyback` reads eth_call, eth_getBlockByNumber and
+eth_getBlockReceipts only — no eth_getLogs — so the Alchemy free plan's 10-block getLogs limit does not apply; an
+ALCHEMY_API_KEY alone is a keyed Base endpoint.
+
+**NEAR BigQuery login.** Five options for a login that does not lapse, with their trade-offs, are in SPEC §19 G7;
+nothing is changed until Jake picks one.
+
+**What changed (SPEC.md §19 "G7" lists every item old → new):** World Mobile option C / B; Ether.fi's programmatic Safe
+label, silence check and proposal read; Hyperliquid's HyperEVM gas burn A1 only; NEAR's overlap-checked issuance; the
+short-history classes, price history span, quarterly yield views and the older total_supply legs; one period-end helper;
+the one-call RWA sum and Alchemy page checkpoints; Sky's treasury at its block and USDS spent by day; sanity / stale-series
+fixes; the Artemis API retired and Ethereum's rebuild legs; MISSING by cause and populated / applicable; Plume's
+`plume-mainnet` slug and World Mobile Chain's gas; changed adapters re-read.
 
 ## 11cg. Round G6 — per-project scan tiers, incremental reconcile, World Mobile's break, measured NEAR issuance (2026-10-19)
 

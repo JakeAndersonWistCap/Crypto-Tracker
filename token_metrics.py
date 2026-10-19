@@ -912,6 +912,11 @@ def _main(args, log) -> int:
     started = time.monotonic()
     # DAILY MARKS WAIT FOR THE STORE (Round G3 item 5): buffered now, written only once the upsert below succeeds
     from fetch.logcache import DailyChecks
+    # A CHANGED ADAPTER READS AGAIN TODAY (Round G7 item 11): its "read today already" marks are cleared first
+    try:
+        fetch.refresh_changed_adapters(say=lambda m: log.info("%s", m))
+    except Exception as e:  # noqa: BLE001 — the check must never stop a run
+        log.warning("adapter-version check not run: %s", e)
     DailyChecks.defer()
     out = fetch.fetch_all(
         projects, window,

@@ -65,6 +65,7 @@ from .fluid_buybacks import FluidBuybacks
 from .geodnet_feed import GeodnetFeed
 from .pendle_latent import PendleLatent
 from .wm_supply import WmSupply
+from .eth_settlement import EthNftVolume, EthP2PBigQuery
 from .near_issuance import NearIssuance
 from .sky_ssr import SkySSR
 from .business import Business
@@ -164,6 +165,10 @@ TIER_ORDER = [
     # NEAR from Google's public BigQuery dataset: its own circulating supply, and the P2P leg of the
     # settlement rebuild (approved 2026-10-01), via Jake's Application Default Credentials.
     ("near_bigquery", 1, lambda ctx: NearBigQuery(stored_long=ctx["stored_long"])),
+    # Ethereum's settlement rebuilt from free sources (G7 item 8): the NFT leg daily; the P2P leg weekly on BigQuery,
+    # dry runs only until Jake approves (config SETTLEMENT_REBUILD.ethereum_rebuild), on NEAR's quota ledger
+    ("eth_nft_volume", 1, lambda ctx: EthNftVolume()),
+    ("eth_p2p_bigquery", 1, lambda ctx: EthP2PBigQuery(stored_long=ctx["stored_long"])),
     # Maple's own transparency page — server-rendered, so a plain GET (no browser).
     ("maple_page", 3, lambda ctx: MapleTransparency()),
     # Sky's accounting (Block Analitica's documented API): monthly NPS, buyback spending, staking rewards (2026-10-07).
@@ -1936,6 +1941,7 @@ TIER_BUDGET_S = {
     # daily top-up ~60 ERC-20 pages + the day's native pages; the adapter stops itself at 240s
     "plume_settlement": 300,
     "near_bigquery": 300,
+    "eth_nft_volume": 60, "eth_p2p_bigquery": 300,
     # ~45 relay pages + ~700 non-relay blocks' receipts a day; the adapter stops itself at 240s
     "mev_relays": 300,
     "browser_capture": 180,
@@ -1947,6 +1953,60 @@ DEFAULT_BUDGET_S = 120
 for _t in _l2_tiers():
     import config as _config                                        # noqa: E402
     TIER_BUDGET_S[_t] = _config.explorer_tier_budget(_t)
+
+
+def adapter_files() -> dict:
+    """{tier: (adapter source file, SOURCE prefix of its daily marks)} for every registered tier, from the class its
+    factory names (fetch module globals). A tier whose class cannot be resolved is left out."""
+    import inspect                                                # noqa: PLC0415
+    import sys                                                    # noqa: PLC0415
+    mod = sys.modules[__name__]
+    out = {}
+    for name, _t, factory in TIER_ORDER:
+        cls = next((getattr(mod, n) for n in factory.__code__.co_names if inspect.isclass(getattr(mod, n, None))),
+                   None)
+        if cls is None:
+            continue
+        try:
+            f = inspect.getsourcefile(cls)
+        except TypeError:
+            continue
+        src = getattr(cls, "SOURCE", None) or getattr(sys.modules.get(cls.__module__), "SOURCE", None) or name
+        out[name] = (f, str(src))
+    return out
+
+
+def refresh_changed_adapters(daily=None, root=None, say=None) -> list:
+    """ROUND G7 item 11 (Jake 2026-10-19: "already read today" skips hide problems): an adapter whose source file
+    changed since the last run has its daily marks cleared, so its reads run again today on the new code. The file's
+    sha1 per tier is kept in <logcache>/adapter-versions.json; with no record yet every tier counts as changed.
+    [(tier, marks cleared)]."""
+    import hashlib                                                # noqa: PLC0415
+    import json                                                   # noqa: PLC0415
+    from .logcache import DailyChecks, LogCache, atomic_write_text  # noqa: PLC0415
+    daily = daily or DailyChecks(root)
+    f = LogCache(root).root / "adapter-versions.json"
+    try:
+        seen = json.loads(f.read_text())
+    except (OSError, ValueError):
+        seen = None
+    now, changed = {}, []
+    for tier, (path, prefix) in adapter_files().items():
+        try:
+            now[tier] = hashlib.sha1(open(path, "rb").read()).hexdigest()
+        except OSError:
+            continue
+        # no record yet (the first run with this check): every adapter counts as changed — the round that added the
+        # check changed many, and their marks of the same day were written by the old code
+        if seen is None or seen.get(tier) != now[tier]:
+            gone = daily.forget(prefix + ":")
+            changed.append((tier, len(gone)))
+            if say:
+                say(f"ADAPTER CHANGED {tier} ({path.rsplit('/', 1)[-1]}): {len(gone)} daily mark(s) cleared — read "
+                    f"again today on the new code")
+    f.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(f, json.dumps({**(seen or {}), **now}, sort_keys=True))
+    return changed
 
 
 def nearblocks_daily_calls() -> int:

@@ -240,7 +240,7 @@ def why_nothing_stored(tally: dict, frames_rows: int) -> str:
     if tally["window_error"]:
         parts.append(f"{tally['window_error']} buyback-window read(s) failed (first: {tally['first_window_error']})")
     if not tally.get("keyed"):
-        parts.append("NO KEYED BASE_RPC_URL: the public Base RPCs serve archive eth_call but not archive "
+        parts.append("NO KEYED BASE_RPC_URL (nor ALCHEMY_API_KEY): the public Base RPCs serve archive eth_call but not archive "
                      "eth_getLogs / receipts at volume, so the buyback window (purchases, locks, compounding) cannot "
                      "be read — set BASE_RPC_URL to a keyed archive endpoint")
     if tally["window_read"] and not frames_rows:
@@ -248,6 +248,11 @@ def why_nothing_stored(tally: dict, frames_rows: int) -> str:
     elif frames_rows:
         parts.append(f"{frames_rows} row(s) read but none written (already stored, or refused by validation)")
     return "; ".join(parts) or "nothing to read"
+
+
+def _alchemy_base() -> str:
+    from .chain import alchemy_url                         # noqa: PLC0415
+    return alchemy_url("base") or ""
 
 
 def seed_foundation(projects: list[dict], days: int = 100, stored=None, say=print, reader=None,
@@ -264,7 +269,10 @@ def seed_foundation(projects: list[dict], days: int = 100, stored=None, say=prin
     LAST_SEED.clear()
     LAST_SEED.update({"days": 0, "already_stored": 0, "no_block": 0, "read_error": 0, "window_error": 0,
                       "window_stored": 0, "window_read": 0, "first_error": "", "first_window_error": "",
-                      "keyed": bool(os.environ.get("BASE_RPC_URL", "").strip())})
+                      # Round G7 item 7: an ALCHEMY_API_KEY alone keys Base too (fetch.chain.rpc_endpoints prepends
+                      # alchemy_url("base")); the seed reads eth_call / eth_getBlockByNumber / eth_getBlockReceipts
+                      # only — no eth_getLogs, so the free plan's 10-block getLogs limit does not apply
+                      "keyed": bool(os.environ.get("BASE_RPC_URL", "").strip() or _alchemy_base())})
     for p in projects:
         spec = p.get("foundation_buyback")
         if not spec:

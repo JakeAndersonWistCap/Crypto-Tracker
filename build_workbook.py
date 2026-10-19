@@ -353,6 +353,7 @@ def _age_in_days(latest: pd.Timestamp, asof: pd.Timestamp, granularity: str) -> 
 
     Daily points are their own period, so this is the identity for them.
     """
+    # the period rule lives in config.period_end (Round G7 item 3), shared with stale_series and the reference matcher
     if granularity == "monthly":
         end = (latest.to_period("M") + 1).to_timestamp() - pd.Timedelta(days=1)
     elif granularity == "weekly":
@@ -1363,10 +1364,25 @@ def _burn_total_views(groups: dict) -> None:
         days = sorted(set.intersection(*(set(v) for v in per_leg.values()))) if per_leg else []
         if not days:
             continue
+        # OPTIONAL LEGS (G6 decision 0c, Jake 2026-10-19: the HyperEVM gas burn is A1 only): added on the total's own days
+        # where held, never cutting a day — and never before the total's first day, where the history leg's ASXN
+        # HyperEVM figure already stands
+        opt = {}
+        for m in spec.get("optional_components") or ():
+            g = groups.get((name, m))
+            if g is not None and not g.empty:
+                opt[m] = g.drop_duplicates("date", keep="last").set_index("date")["value"].astype(float).to_dict()
+        base_vals = [sum(per_leg[m][d] for m in spec["components"]) for d in days]
         view = pd.DataFrame({"date": days, "project": name, "metric": spec["metric"],
-                             "value": [sum(per_leg[m][d] for m in spec["components"]) for d in days],
-                             "source": "derived:burn_total(" + "+".join(spec["components"]) + ")",
+                             "value": [v + sum(o.get(d, 0.0) for o in opt.values()) for v, d in zip(base_vals, days)],
+                             "source": ["derived:burn_total(" + "+".join(spec["components"] + [m for m, o in opt.items()
+                                                                                                  if d in o]) + ")"
+                                        for d in days],
                              "tier": 2})
+        a4v = spec.get("a4_view") or {}
+        a4_view = (pd.DataFrame({"date": days, "project": name, "metric": a4v["metric"], "value": base_vals,
+                                 "source": "derived:burn_total(" + "+".join(spec["components"]) + ")", "tier": 2})
+                   if a4v else None)
         # BEFORE THE FIRST COMPLETE DAY, ONE DECLARED LEG STANDS IN (Hyperliquid, Jake 2026-09-30):
         # the Assistance Fund's burn history (its buyback / same-day price) — the Core leg has no
         # history. Only rows from that leg's declared history source, only before the total's first
@@ -1409,19 +1425,27 @@ def _burn_total_views(groups: dict) -> None:
                         label = leg["tokens"] if label == leg["tokens"] else f"{leg['tokens']} | {label}"
                     if not ser.empty:
                         extra[label] = ser
-                if extra:
+                def with_extra(h, skip=()):
                     vals, srcs = [], []
                     for d, v in zip(h["date"], h["value"].astype(float)):
-                        got = [m for m in extra if d in extra[m].index]
+                        got = [m for m in extra if d in extra[m].index and not m.startswith(tuple(skip))]
                         vals.append(v + sum(float(extra[m][d]) for m in got))
                         srcs.append(f"{hl['source']}[{hl['component']} + {' + '.join(got)} (ASXN): the Core "
                                     f"leg's own read starts {min(days).date()}]" if got else
                                     f"{hl['source']}[{hl['component']} leg only: the other legs are unmeasured "
                                     f"before {min(days).date()}]")
-                    h = h.assign(value=vals, source=srcs)
+                    return h.assign(value=vals, source=srcs)
+                h0 = h
+                if extra:
+                    h = with_extra(h0)
                 view = pd.concat([h[view.columns], view], ignore_index=True).sort_values("date")
+                if a4_view is not None:
+                    h4 = with_extra(h0, a4v.get("exclude_extra") or ()) if extra else h0
+                    a4_view = pd.concat([h4[a4_view.columns], a4_view], ignore_index=True).sort_values("date")
         first = groups.get((name, spec["components"][0]))
         groups[(name, spec["metric"])] = _as_stored(view, first.columns if first is not None else view.columns)
+        if a4_view is not None:
+            groups[(name, a4v["metric"])] = _as_stored(a4_view, first.columns if first is not None else a4_view.columns)
 
 
 # (project, flow metric) -> tokens moved out by _one_off_views, which the flow-vs-stock
@@ -2479,6 +2503,36 @@ def _fdv_history(name: str, groups: dict, primary: pd.Series, daily) -> tuple[st
     return note, alt
 
 
+TOTAL_SUPPLY_HISTORY_NOTE: dict = {}      # project -> the same-quantity check's note, last build (Round G7 item 2e)
+
+
+def _total_supply_history_views(groups: dict) -> None:
+    """total_supply BEFORE ITS FIRST ROW from the declared older leg (Round G7 item 2e, Jake 2026-10-19: Near and
+    Ethereum total_supply starts 2026-09-11 — CoinGecko's — leaving the 2026-06-30 references NOT WIRED). The leg is the one
+    FDV history already uses (config.TOTAL_SUPPLY_HISTORY: NEAR's block-header total_supply, ultrasound.money's supply),
+    under the SAME same-quantity check, run every build (_fdv_history: >= FDV_HISTORY_MIN_OVERLAP common days, median
+    |diff| <= FDV_HISTORY_TOL). Only days before the primary's first row; each keeps its own source, so the series is a
+    declared handover (series_handover total_supply). A failed check extends nothing and says why."""
+    for name in [p["name"] for p in scoped_projects() if p["name"] in config.TOTAL_SUPPLY_HISTORY]:
+        tot, leg = groups.get((name, "total_supply")), config.TOTAL_SUPPLY_HISTORY[name]
+        legrows = groups.get((name, leg["total"]))
+        if tot is None or tot.empty or legrows is None or legrows.empty:
+            continue
+        s = lambda g: (g.assign(date=pd.to_datetime(g["date"]).dt.normalize())  # noqa: E731
+                       .drop_duplicates("date", keep="last").set_index("date")["value"].astype(float))
+        note, alt = _fdv_history(name, groups, s(tot), s)
+        TOTAL_SUPPLY_HISTORY_NOTE[name] = note
+        if alt is None:
+            continue
+        first = pd.to_datetime(tot["date"]).min().normalize()
+        lr = legrows.assign(date=pd.to_datetime(legrows["date"]).dt.normalize()).drop_duplicates("date", keep="last")
+        older = lr[lr["date"] < first].assign(metric="total_supply")
+        if older.empty:
+            continue
+        groups[(name, "total_supply")] = _as_stored(pd.concat([older[tot.columns.intersection(older.columns)], tot],
+                                                              ignore_index=True).sort_values("date"), tot.columns)
+
+
 def _fdv_views(groups: dict) -> None:
     """FDV = PRICE x THE TOTAL SUPPLY WE USE, where total supply is on-chain first (config.TOTAL_SUPPLY_ONCHAIN_FIRST;
     Ether.fi, Jake's review of 97b29ae item 6: CoinGecko's FDV $700.3M rested on its 965.35M total — below the
@@ -2649,6 +2703,57 @@ def _total_supply_net_views(groups: dict) -> None:
             if not early.empty:
                 view = pd.concat([early.assign(metric="total_supply")[view.columns.intersection(early.columns)], view],
                                  ignore_index=True)
+        groups[(name, "total_supply")] = _as_stored(view.sort_values("date"), cols)
+
+
+def _wm_total_supply_views(groups: dict) -> None:
+    """WORLD MOBILE'S TOTAL SUPPLY = OPTION C (Round G7 0a, Jake 2026-10-19; config <project>.total_supply_option_c):
+    per day where both are read, B = total_supply_gross (the EVM chains + Solana) + wmtx_cardano_supply_tokens, stored as
+    its own row total_supply_with_cardano_tokens; C = B + the Ethereum holders' supply not yet re-issued (from the
+    exploit day; before it, Ethereum is inside total_supply_gross) = Ethereum totalSupply at the block before the first
+    counterfeit mint − the re-issue confirmed on Base — or World Mobile's published snapshot total in its place once one
+    exists. C is total_supply (FDV reads it); the stored total keeps the days before C's first, CoinGecko's moves beside
+    it as total_supply_coingecko."""
+    for p in scoped_projects():
+        spec = p.get("total_supply_option_c")
+        if not spec:
+            continue
+        name = p["name"]
+        gross, card = _daily(groups.get((name, "total_supply_gross"))), _daily(groups.get((name, "wmtx_cardano_supply_tokens")))
+        both = pd.concat([gross.rename("g"), card.rename("c")], axis=1).dropna()
+        if both.empty:
+            continue
+        cols = groups[(name, "total_supply_gross")].columns
+        b = both["g"] + both["c"]
+        groups[(name, "total_supply_with_cardano_tokens")] = _as_stored(pd.DataFrame({
+            "date": b.index, "project": name, "metric": "total_supply_with_cardano_tokens", "value": b.values, "tier": 1,
+            "source": "derived:total_supply_gross+wmtx_cardano_supply_tokens[option B: the chains read]"}), cols)
+        if spec.get("snapshot_total") is not None:
+            leg = float(spec["snapshot_total"]) - float(spec["reissue_confirmed"])
+            how = (f"World Mobile's published snapshot total {float(spec['snapshot_total']):,.6f} ({spec.get('snapshot_source')})"
+                   f" − re-issue confirmed on Base {float(spec['reissue_confirmed']):,.6f}")
+        else:
+            leg = float(spec["eth_pre_exploit"]) - float(spec["reissue_confirmed"])
+            how = (f"{spec['label']}: Ethereum totalSupply {float(spec['eth_pre_exploit']):,.6f} at block "
+                   f"{int(spec['eth_block']):,} − re-issue confirmed on Base {float(spec['reissue_confirmed']):,.6f}; "
+                   f"{spec['recovery_mints_note']}")
+        after = b.index >= pd.Timestamp(spec["from"])
+        c = b + leg * after
+        view = pd.DataFrame({"date": b.index, "project": name, "metric": "total_supply", "value": c.values, "tier": 1,
+                             "source": [f"derived:option_c[{how}]" if a else "derived:option_c[before the exploit: "
+                                        "Ethereum inside total_supply_gross]" for a in after]})
+        old = groups.get((name, "total_supply"))
+        if old is not None and not old.empty:
+            prev = groups.get((name, "total_supply_coingecko"))
+            moved = old[old["source"].astype(str).str.startswith("coingecko")].assign(metric="total_supply_coingecko")
+            if not moved.empty:
+                groups[(name, "total_supply_coingecko")] = _as_stored(
+                    moved if prev is None or prev.empty else pd.concat([prev, moved]).drop_duplicates("date", keep="first"),
+                    old.columns)
+            od = old.assign(date=pd.to_datetime(old["date"]).dt.normalize())
+            early = od[od["date"] < b.index.min()]
+            if not early.empty:
+                view = pd.concat([early[view.columns.intersection(early.columns)], view], ignore_index=True)
         groups[(name, "total_supply")] = _as_stored(view.sort_values("date"), cols)
 
 
@@ -3123,6 +3228,80 @@ def _supply_history_views(groups: dict) -> None:
         groups[(name, iss["metric"])] = pd.concat([view, keep], ignore_index=True) if keep is not None else view
 
 
+ISSUANCE_OVERLAP: dict = {}        # project -> the history/primary overlap check and the derived cross-check, last build
+
+
+def _measured_with_history(name: str, spec: dict, observed: pd.DataFrame, groups: dict, asof: pd.Timestamp):
+    """ONE MEASURING POINT for a measured issuance series (Round G7 item 1 — NEAR, Jake 2026-10-19: "two measuring points:
+    the derived reading and the measured epoch mint (2 rows)" blanked Q0 as a change of measuring point).
+
+    The series is the SAME quantity read two ways: spec["history_metric"] (NEAR's epoch mint from Google's BigQuery blocks
+    table, the year) and the primary rows (source_prefix: the epoch mint read at each minting block on NEAR's RPC). The
+    primary takes over only after an OVERLAP CHECK, run every build, like FDV_TOTAL_HISTORY: at least
+    overlap_check.min_days common days, each within overlap_check.tolerance_pct. Until it passes — or when it fails — the
+    history leg alone stands, every day it covers. Once it passes: history before the primary's first day, the primary from
+    it; the legs never share a day, so the declared handover (series_handover) holds. Days the history has not reached
+    before either leg starts take the fallback (history_prefix — NEAR's derived d(header supply) + burn) under the same
+    declared handover. The derived reading is also the CROSS-CHECK: its Q0 sum beside the measured one (ISSUANCE_OVERLAP)."""
+    def rows_of(df):
+        return df.drop_duplicates("date", keep="last").sort_values("date") if df is not None and not df.empty else None
+    src = observed["source"].astype(str)
+    prim = rows_of(observed[src.str.startswith(spec["source_prefix"])])
+    fb = rows_of(observed[src.str.startswith(spec["history_prefix"])]) if spec.get("history_prefix") else None
+    hist = rows_of(groups.get((name, spec["history_metric"])))
+    oc = spec.get("overlap_check") or {}
+    need, tol = int(oc.get("min_days", 3)), float(oc.get("tolerance_pct", 1.0))
+    check = {"history_metric": spec["history_metric"], "min_days": need, "tolerance_pct": tol, "common_days": 0,
+             "worst_pct": None, "passed": False}
+    if hist is not None and prim is not None:
+        h = hist.set_index("date")["value"].astype(float)
+        q = prim.set_index("date")["value"].astype(float)
+        common = h.index.intersection(q.index)
+        common = common[h[common] != 0]
+        check["common_days"] = int(len(common))
+        if len(common):
+            pct = ((q[common] / h[common]) - 1.0) * 100.0
+            worst = pct.abs().idxmax()
+            check.update(worst_pct=float(pct[worst]), worst_day=str(worst.date()),
+                         pairs=[(str(d.date()), float(h[d]), float(q[d])) for d in common[-7:]])
+            check["passed"] = len(common) >= need and float(pct.abs().max()) <= tol
+    if hist is None:
+        legs = [x for x in (fb, prim) if x is not None]
+        if len(legs) == 2:                       # no history leg stored: the fallback before the primary's first day
+            legs = [fb[fb["date"] < prim["date"].min()], prim]
+        out = pd.concat(legs, ignore_index=True) if legs else None
+        check["used"] = "no history leg stored: " + ("fallback + primary" if len(legs) == 2 else "one leg")
+    else:
+        h0 = hist["date"].min()
+        if check["passed"]:
+            p0 = prim["date"].min()
+            parts = [hist[hist["date"] < p0], prim]
+            check["used"] = f"history to {(p0 - pd.Timedelta(days=1)).date()}, primary from {p0.date()}"
+        else:
+            parts = [hist]
+            check["used"] = ("history leg alone — the primary takes over after "
+                             f"{need} common days within {tol}% (has {check['common_days']}"
+                             + (f", worst {check['worst_pct']:+.3f}% on {check['worst_day']}" if check["worst_pct"]
+                                is not None else "") + ")")
+        if fb is not None:
+            parts = [fb[fb["date"] < h0]] + parts
+        hrows = pd.concat(parts, ignore_index=True)
+        out = hrows.assign(metric=observed["metric"].iloc[0]) if not hrows.empty else None
+    # THE CROSS-CHECK: the derived reading's Q0 beside the measured series' Q0, on the days both cover
+    if fb is not None and out is not None and not out.empty:
+        start = asof - pd.Timedelta(days=GLOBALS["period_days"])
+        m = out[(out["date"] > start) & (out["date"] <= asof)].set_index("date")["value"].astype(float)
+        d = fb[(fb["date"] > start) & (fb["date"] <= asof)].set_index("date")["value"].astype(float)
+        both = m.index.intersection(d.index)
+        if len(both):
+            check["q0_cross_check"] = {"days": int(len(both)), "measured": float(m[both].sum()),
+                                       "derived": float(d[both].sum()),
+                                       "derived_vs_measured_pct": (float(d[both].sum()) / float(m[both].sum()) - 1) * 100
+                                       if float(m[both].sum()) else None}
+    ISSUANCE_OVERLAP[name] = check
+    return out
+
+
 def _issuance_views(groups: dict, asof: pd.Timestamp) -> None:
     """The PRIMARY issuance series, for every consumer. See config.ISSUANCE_PRIMARY.
 
@@ -3217,6 +3396,10 @@ def _issuance_views(groups: dict, asof: pd.Timestamp) -> None:
                 prefixes = tuple(x for x in (spec["source_prefix"], spec.get("history_prefix")) if x)
                 mine = (observed[observed["source"].astype(str).str.startswith(prefixes)]
                         if observed is not None and not observed.empty else None)
+                # ONE MEASURING POINT OVER THE WINDOW (NEAR, Round G7 item 1): the same quantity stored under another
+                # metric is the history leg, handed over only after a checked overlap
+                if spec.get("history_metric") and observed is not None:
+                    mine = _measured_with_history(name, spec, observed, groups, asof)
                 # ONE ROW A DAY, THE PRIMARY'S WHERE BOTH HOLD (NEAR, G6 2026-10-19): the history leg fills only the
                 # days the primary has not reached.
                 if mine is not None and not mine.empty and spec.get("prefer_primary_per_day"):
@@ -3319,9 +3502,10 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _buyback_tokens_from_usd_views(groups)
     _buyback_split_views(groups)  # AFTER every view that builds actual_buyback_* (retirement = burned + held)
     _emissions_from_metric_views(groups)
-    _trailing_yield_views(groups)
-    _payday_yield_views(groups, asof)
-    _epoch_mean_views(groups, asof)
+    # EACH QUARTER END, NOT ONLY ASOF (Round G7 item 2c): the shifted quarters read these stocks at asof − k x period
+    _quarterly_views(lambda g, a: _trailing_yield_views(g), groups, asof)
+    _quarterly_views(_payday_yield_views, groups, asof)
+    _quarterly_views(_epoch_mean_views, groups, asof)
     _native_fee_usd_views(groups)
     _mev_estimate_views(groups)
     _VIEW_BLOCKS_PENDING.clear()
@@ -3345,11 +3529,13 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _net_common_views(groups)     # AFTER the issuance views it differences
     _first_party_history_views(groups)   # fix round 2, H1: Aethir's table / Plume's mirror before the first read
     _total_supply_net_views(groups)   # Round G2 D2/L3: total supply = our total net of what is burned (FDV reads it)
+    _wm_total_supply_views(groups)    # Round G7 0a: World Mobile's total = option C, option B its own row
     _circulating_views(groups)
     _cg_plus_staked_views(groups)
     _near_lockup_views(groups)    # BEFORE market cap: NEAR's circulating under Jake's lockup rule
     _market_cap_views(groups)     # AFTER the on-chain circulating it may use; BEFORE NRR reads it
     _fdv_views(groups)            # price x the total supply used, where total supply is on-chain first
+    _total_supply_history_views(groups)   # Round G7 2e: the declared older leg before total_supply's first row
     _reward_funding_views(groups)  # fix round 2 S1: a reward split by what funds it (mint / treasury / revenue)
     _issuer_mint_views(groups)    # fix round 2 S5/S3: mints straight to issuer-side wallets, BEFORE the unlock view
     _unlock_views(groups)         # releases from the non-circulating wallets (Jake 2026-10-11, A2)
@@ -4686,7 +4872,7 @@ def _burns_nothing(p: dict) -> bool:
     return config.a1_burn_metric(p["name"]) not in config.metrics_for_project(p) and not p.get("self_reported_burn")
 
 
-def _net_guarded(R, r: int, p: dict, iss, burn) -> str:
+def _net_guarded(R, r: int, p: dict, iss, burn, bm: str | None = None) -> str:
     """_net_change as a cell: a SELF-REPORTED figure as published; a derived one BLOCKED where
     issuance and burn cover materially different days of the window."""
     name = p["name"]
@@ -4698,8 +4884,8 @@ def _net_guarded(R, r: int, p: dict, iss, burn) -> str:
                                       ("burn", config.a1_burn_metric(name), "q0")],
                                R.D(r, nc["metric"], "q0"), same_span=True, p=p)
     # EVERY BURN THE SUPPLY SEES (Phase 2 amendment 1, config.a1_burn_metric): Hyperliquid's A4 burn is the Assistance
-    # Fund alone, its net supply change counts the Core burns too
-    bm = config.a1_burn_metric(name)
+    # Fund alone, its net supply change counts the Core burns too (on A4 without the HyperEVM gas burn: `bm` given)
+    bm = bm or config.a1_burn_metric(name)
     if _premint(p):
         # MINT − BURN, AND NOTHING IS MINTED (item 9): −burn, or 0 where nothing burns
         guarded = ("=0" if _burns_nothing(p) else
@@ -4723,7 +4909,7 @@ def _price_net(cell: str, price: str) -> str:
     return f"=IFERROR(IF(ISNUMBER({x}),({x})*{price},{x}),{NA})"
 
 
-def _net_annual_pct(R, r: int, p: dict, circ: str) -> str:
+def _net_annual_pct(R, r: int, p: dict, circ: str, bm: str | None = None) -> str:
     """Net supply change per year, % of circulating: each side annualised over ITS OWN covered
     days (was the Q0 difference x365/90, 2026-09-29), BLOCKED where either covers under a week."""
     name = p["name"]
@@ -4734,7 +4920,7 @@ def _net_annual_pct(R, r: int, p: dict, circ: str) -> str:
         return _coverage_guard(R, r, [("issuance", config.issuance_basis(name), "q0"),
                                       ("burn", config.a1_burn_metric(name), "q0")],
                                f"{_annualise(R, r, p, m, R.D(r, m, 'q0'))}/({circ})", same_span=True, p=p)
-    im, bm = config.issuance_basis(name), config.a1_burn_metric(name)
+    im, bm = config.issuance_basis(name), (bm or config.a1_burn_metric(name))
     if _premint(p):                            # mint − burn with nothing minted (item 9)
         return ("=0" if _burns_nothing(p) else
                 _coverage_guard(R, r, [("burn", bm, "q0")],
@@ -5263,14 +5449,16 @@ def _a4_headline(R: Refs, burn, data_by_key: dict | None = None) -> list[tuple]:
         # is a stream; otherwise it says, with numbers, why the pair is not yet a rate.
         ("Q0 WINDOW CAVEAT — read before the yield and crossover",
          lambda r, p: _a4_window_caveat(p, data_by_key or {}), FMT_TEXT, "text", True),
+        # A1 CHAINS' FEE BURNS STAY OFF A4 (T-c; G7 decision 0c, Jake 2026-10-19): the A4 net reads config.a4_net_burn_metric
+        # — Hyperliquid's every burn WITHOUT the HyperEVM gas burn, which is A1 only
         ("NET SUPPLY CHANGE Q0 (tokens) — self-reported where published, else issuance − burn, on the basis to the left",
-         lambda r, p: _zero_issuance(R, r, p, f"-{R.D(r, config.a1_burn_metric(p['name']), 'q0')}")
-         or _net_guarded(R, r, p, _basis_iss(R, p), burn),
+         lambda r, p: _zero_issuance(R, r, p, f"-{R.D(r, config.a4_net_burn_metric(p['name']), 'q0')}")
+         or _net_guarded(R, r, p, _basis_iss(R, p), burn, bm=config.a4_net_burn_metric(p["name"])),
          FMT_NUM, "calc", True),
         ("NET SUPPLY CHANGE, annualised % of circulating (signed; + is net inflation)",
          lambda r, p: _zero_issuance(
-             R, r, p, f"-{_annualise(R, r, p, config.a1_burn_metric(p['name']), R.D(r, config.a1_burn_metric(p['name']), 'q0'))}/({circ(r, p)})")
-         or _net_annual_pct(R, r, p, circ(r, p)), FMT_PCT, "calc", True),
+             R, r, p, f"-{_annualise(R, r, p, config.a4_net_burn_metric(p['name']), R.D(r, config.a4_net_burn_metric(p['name']), 'q0'))}/({circ(r, p)})")
+         or _net_annual_pct(R, r, p, circ(r, p), bm=config.a4_net_burn_metric(p["name"])), FMT_PCT, "calc", True),
     ]
 
 
@@ -6203,6 +6391,48 @@ def _emissions_from_metric_views(groups: dict, after_issuance: bool = False) -> 
             groups[(name, "emissions_tokens")] = held[~held["source"].astype(str).str.startswith("schedule")]
 
 
+def _quarterly_views(fn, groups: dict, asof: pd.Timestamp) -> None:
+    """Run a one-row-at-asof view builder at EACH quarter end — asof − k x period_days, k = 4..0 — on the store cut at
+    that day, and keep every row it writes (Round G7 item 2c, Jake 2026-10-19: rows whose Q0 has a value but whose shifted
+    quarters return none — the protocol-yield views wrote one row, at asof, so Q-1..Q-4 found nothing). The builder is
+    the same one Q0 uses, run on what was stored by that quarter's end: Q-k is built the way Q0 is. Q0's row is the one
+    the builder writes for asof itself, unchanged."""
+    period = int(GLOBALS["period_days"])
+    before = {k: id(v) for k, v in groups.items()}
+    made: dict = {}
+    made_k: dict = {}
+    for k in range(len(QUARTERS) - 1, -1, -1):
+        a_k = pd.Timestamp(asof) - pd.Timedelta(days=period * k)
+        if k == 0:
+            sub = groups
+        else:
+            # only the projects these views read (config.PROTOCOL_YIELD) — the others would be copied for nothing
+            sub = {key: (g[pd.to_datetime(g["date"]) <= a_k] if g is not None and not g.empty and "date" in g else g)
+                   for key, g in groups.items() if key[0] in config.PROTOCOL_YIELD}
+        ids = {key: id(v) for key, v in sub.items()}
+        fn(sub, a_k)
+        for key, v in sub.items():
+            if (ids.get(key) != id(v)) and v is not None and not v.empty:
+                made.setdefault(key, []).append(v)
+                made_k.setdefault(key, []).append(k)
+    for key, frames in made.items():
+        if before.get(key) == id(groups.get(key)) and key in before and len(frames) == 1:
+            continue
+        # ONE MEASURING POINT ACROSS THE QUARTERS: a builder's source text carries that quarter's own figures (rates,
+        # windows), which the measuring-point checks would read as a new source each quarter. A shifted quarter's rows
+        # take Q0's source with their own text as a bracketed annotation (stripped by config.strip_source_annotations).
+        q0 = next((f for f, k in zip(frames, made_k[key]) if k == 0), None)
+        if q0 is not None and "source" in q0 and len(q0):
+            base = str(q0["source"].iloc[-1])
+            frames = [f if k == 0 else f.assign(source=[
+                f"{base}[as at {pd.Timestamp(d):%Y-%m-%d}: {str(s_).replace('[', '(').replace(']', ')')}]"
+                for d, s_ in zip(f["date"], f["source"])]) for f, k in zip(frames, made_k[key])]
+        joined = pd.concat(frames, ignore_index=True)
+        joined = joined.assign(_d=pd.to_datetime(joined["date"]).dt.normalize()).sort_values("_d") \
+            .drop_duplicates("_d", keep="last").drop(columns="_d")
+        groups[key] = joined
+
+
 def _payday_yield_views(groups: dict, asof: pd.Timestamp) -> None:
     """THE PROTOCOL YIELD AT PAYMENT-DAY PRICES (Jake's price convention, 2026-10-09 — Aerodrome and Sky): token_yield
     `payday` = {flow ($ paid), price, stock (the stake in tokens), days, metric, year}: each day's $ / that day's price,
@@ -6403,6 +6633,7 @@ def _settlement_views(groups: dict) -> None:
     spec = config.ARTEMIS_SETTLEMENT
     for p in scoped_projects():
         _rebuilt_settlement_view(groups, p)
+    _settlement_rebuild_views(groups)       # G7 item 8: Ethereum's rebuild beside the CSV, extending it only if valid
     for p in scoped_projects():
         _nrr_views(groups, p["name"], spec["metric"], "settlement_volume_365d_usd", "network_reserve_ratio",
                    int(spec["window_days"]), config.ARTEMIS_DERIVED,
@@ -6417,6 +6648,88 @@ def _settlement_views(groups: dict) -> None:
                    (tt["sum_metric"], tt["nrr_metric"]),
                    "DefiLlama's DEX + perps series holds {have} of the {n} days ending {last} — a short "
                    "window would understate throughput and overstate the ratio")
+
+
+SETTLEMENT_VALIDATION: dict = {}    # project -> the last build's rebuild-vs-CSV validation (G7 item 8)
+
+
+def settlement_validation(rebuilt: pd.Series, csv: pd.Series, spec: dict) -> dict:
+    """The rebuild against Artemis's CSV on the days both hold, up to spec['to'] (G7 item 8; the tolerance is stated in
+    config before any number): the daily gap reported (median, 90th percentile of |gap|), every complete Monday..Sunday
+    week's sum within ±weekly_tol, and at least min_days. {"status": PASSED / FAILED / NOT VALIDATED, ...}."""
+    to = pd.Timestamp(spec["to"])
+    both = pd.concat([rebuilt.rename("r"), csv.rename("c")], axis=1, sort=True).dropna()
+    both = both[(both.index <= to) & (both["c"] > 0)]
+    out = {"days": int(len(both)), "tol": float(spec["weekly_tol"]), "min_days": int(spec["min_days"])}
+    if len(both) < int(spec["min_days"]):
+        return out | {"status": "NOT VALIDATED", "why": f"{len(both)} overlapping day(s) up to {to.date()}, fewer than "
+                                                         f"{int(spec['min_days'])}"}
+    gap = both["r"] / both["c"] - 1
+    wk = both.groupby(both.index.to_period("W-SUN"))
+    full = wk.size()[wk.size() == 7].index
+    wsum = wk.sum().loc[full]
+    wgap = wsum["r"] / wsum["c"] - 1
+    out |= {"from": str(both.index.min().date()), "to": str(both.index.max().date()),
+            "daily_median_abs_gap": float(gap.abs().median()), "daily_p90_abs_gap": float(gap.abs().quantile(0.9)),
+            "weeks": int(len(wgap)), "weekly_max_abs_gap": float(wgap.abs().max()) if len(wgap) else None,
+            "weeks_outside": int((wgap.abs() > float(spec["weekly_tol"])).sum()),
+            "total_ratio": float(both["r"].sum() / both["c"].sum())}
+    if not len(wgap):
+        return out | {"status": "NOT VALIDATED", "why": "no complete week in the overlap"}
+    ok = out["weeks_outside"] == 0
+    return out | {"status": "PASSED" if ok else "FAILED",
+                  "why": (f"{out['weeks']} complete week(s) {out['from']}..{out['to']}: weekly |gap| max "
+                          f"{out['weekly_max_abs_gap']:.1%} against ±{float(spec['weekly_tol']):.0%}"
+                          + ("" if ok else f" — {out['weeks_outside']} week(s) outside")
+                          + f"; daily |gap| median {out['daily_median_abs_gap']:.1%}, p90 "
+                            f"{out['daily_p90_abs_gap']:.1%}; rebuild / CSV over the overlap {out['total_ratio']:.3f}")}
+
+
+def _settlement_rebuild_views(groups: dict) -> None:
+    """ETHEREUM'S SETTLEMENT REBUILT FROM FREE SOURCES (Round G7 item 8, config SETTLEMENT_REBUILD.ethereum_rebuild):
+    settlement_rebuilt_usd = DEX + NFT + P2P on the days all three are stored, always shown beside the CSV. Validated
+    against the CSV (settlement_validation). PASSED: settlement_volume_usd gains the rebuild's days after the CSV's last,
+    each labelled a different measuring point with the validation that admitted it. Otherwise the CSV stands alone and
+    SETTLEMENT_VALIDATION says why."""
+    spec = config.SETTLEMENT_REBUILD.get("ethereum_rebuild")
+    if not spec or spec["project"] not in {p["name"] for p in scoped_projects()}:
+        return
+    name = spec["project"]
+    legs = {k: _daily(groups.get((name, m))) for k, m in spec["legs"].items()}
+    missing = [spec["legs"][k] for k, v in legs.items() if v.empty]
+    csv = _daily(groups.get((name, config.ARTEMIS_SETTLEMENT["metric"])))
+    if missing:
+        SETTLEMENT_VALIDATION[name] = {"status": "NOT VALIDATED",
+                                       "why": "leg(s) not stored: " + ", ".join(missing)
+                                              + (" (the P2P leg needs SETTLEMENT_REBUILD.ethereum_rebuild.p2p.approved"
+                                                 " — the dry-run bytes are in the Run Log)"
+                                                 if spec["legs"]["p2p"] in missing else "")}
+        return
+    df = pd.concat([v.rename(k) for k, v in legs.items()], axis=1, sort=True).dropna()
+    if df.empty:
+        SETTLEMENT_VALIDATION[name] = {"status": "NOT VALIDATED", "why": "no day holds all three legs"}
+        return
+    rebuilt = df.sum(axis=1)
+    cols = groups[(name, spec["legs"]["dex"])].columns
+    val = settlement_validation(rebuilt, csv, spec["validation"]) if not csv.empty else \
+        {"status": "NOT VALIDATED", "why": "no Artemis CSV rows to validate against"}
+    SETTLEMENT_VALIDATION[name] = val
+    tag = f"{spec['label']}; validation {val['status']}: {val.get('why', '')}"[:400]
+    groups[(name, "settlement_rebuilt_usd")] = _as_stored(pd.DataFrame({
+        "date": rebuilt.index, "project": name, "metric": "settlement_rebuilt_usd", "value": rebuilt.values, "tier": 1,
+        "source": f"derived:dex+nft+p2p[{tag}]"}), cols)
+    if val["status"] != "PASSED" or csv.empty:
+        return
+    after = rebuilt[rebuilt.index > csv.index.max()]
+    if after.empty:
+        return
+    ext = pd.DataFrame({"date": after.index, "project": name, "metric": config.ARTEMIS_SETTLEMENT["metric"],
+                        "value": after.values, "tier": 1,
+                        "source": f"derived:settlement_rebuild[{spec['label']}; validated against the Artemis CSV "
+                                  f"{val['from']}..{val['to']}]"})
+    g = groups[(name, config.ARTEMIS_SETTLEMENT["metric"])]
+    groups[(name, config.ARTEMIS_SETTLEMENT["metric"])] = _as_stored(
+        pd.concat([g, ext[g.columns.intersection(ext.columns)]], ignore_index=True).sort_values("date"), g.columns)
 
 
 def _rebuilt_settlement_view(groups: dict, p: dict) -> None:
@@ -9706,6 +10019,15 @@ def build_workbook(store, path: Path | str, run_id: str | None = None,
     except Exception as e:  # noqa: BLE001 — a rule that cannot run is said, never a silent pass
         SANITY_HITS.append(("(all)", "sanity_not_run", f"{type(e).__name__}: {str(e)[:200]}"))
     _write_sanity(ws_rev, SANITY_HITS)
+    # THE BUILD'S HITS BESIDE THE WORKBOOK (Round G7 item 7): `sanity.py --workbook` re-evaluates the workbook alone and
+    # cannot see the rules that need the build's state (headline_lost, headline_starved) — it printed 0 while the Review
+    # Queue said 5. It reads this file, so both count the same open hits.
+    try:
+        Path(path).with_name("sanity_hits.json").write_text(__import__("json").dumps(
+            {"workbook": Path(path).name, "built": str(asof)[:10],
+             "hits": [list(h) for h in SANITY_HITS]}, indent=1), encoding="utf-8")
+    except OSError:
+        pass
     # THE COVERAGE AUDIT (alignment round 2026-10-13, D1): every column against SPEC.md, as a tab and a CSV beside the
     # workbook; a failure to audit is said on the tab, never a silent pass
     COVERAGE_ROWS.clear()
@@ -9809,7 +10131,8 @@ def scoreboard_lines(board: dict, delta: dict | None = None) -> list[str]:
                    f"LIVE-UNVERIFIED {n('LIVE-UNVERIFIED')} · N/A {n('N/A')} · MISSING {n('MISSING')} · "
                    f"NOT WIRED {n('NOT WIRED')} · BROKEN {n('BROKEN')} · CHECK {n('CHECK')} · Gap P4 {n('Gap P4')} / "
                    f"P5 {n('Gap P5')} / P6 {n('Gap P6')} · Review Queue {n('Review Queue')} · verified share "
-                   f"{b['Verified share']}")
+                   f"{b['Verified share']} · populated {b.get('Populated', '-')} · MISSING by cause "
+                   f"{b.get('MISSING by cause', '-')}")
     return out
 
 

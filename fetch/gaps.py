@@ -852,6 +852,22 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                         f"{project.get(field)!r}. Do NOT add a sources.yaml entry or a second "
                         f"contract — the redirect is intentional; see config.py.")
 
+    # ETHEREUM'S SETTLEMENT REBUILD LEGS (Round G7 item 8, config SETTLEMENT_REBUILD.ethereum_rebuild)
+    er = config.SETTLEMENT_REBUILD.get("ethereum_rebuild") or {}
+    if er and project["name"] == er.get("project") and metric in (er["legs"]["nft"], er["legs"]["p2p"]):
+        if metric == er["legs"]["nft"]:
+            return (f"DefiLlama {er['nft_endpoint']} (tier eth_nft_volume) has stored no day yet",
+                    "A routine run reads it (keyless, once a day); the Run Log line eth_settlement says what came back.")
+        if not er["p2p"].get("approved"):
+            return ("the P2P leg (BigQuery crypto_ethereum, tier eth_p2p_bigquery) is NOT APPROVED — it dry-runs only and "
+                    "logs the bytes a week and the validation window would cost",
+                    "Jake's decision: read the dry-run bytes in the Run Log, then set SETTLEMENT_REBUILD['ethereum_rebuild']"
+                    "['p2p']['approved'] = True (weekly), or hand-run sql/ethereum/bigquery_p2p_daily.sql and save the CSV "
+                    "in data/ethereum/ (RUNBOOK 11ch).")
+        return ("the P2P leg (BigQuery crypto_ethereum) has no valued day yet — it needs Jake's Application Default "
+                "Credentials and a stored Ethereum price_usd for each day",
+                "Run `gcloud auth application-default login` (RUNBOOK 11n); the weekly turn reads the validation window "
+                "first, then each complete week.")
     # PLUME'S SETTLEMENT REBUILD AND REWARD PAYOUTS (Jake, 2026-10-01).
     if metric == ((project.get("settlement_rebuild") or {}).get("p2p_metric")):
         if (project.get("settlement_rebuild") or {}).get("engine") == "bigquery":

@@ -33,6 +33,7 @@ carries the full URL. Every message leaving this module is scrubbed of it.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -132,6 +133,63 @@ def alchemy_transfer_log(t: dict, token: str) -> dict:
             "topics": [TRANSFER_TOPIC, pad_address(str(t.get("from") or "0x0")), pad_address(str(t.get("to") or "0x0"))],
             "data": str(raw), "blockNumber": _int(t["blockNum"]), "timeStamp": when,
             "transactionHash": str(t["hash"]).lower(), "logIndex": _int(m.group(1))}
+
+
+class AlchemyCheckpoint:
+    """The append-only page checkpoint of one Transfers-API query (Round G7 item 4b). One line per page: the page's
+    transfers and the pageKey that follows it. The query is identified by its chain and parameters (never the URL, which
+    carries the key)."""
+
+    def __init__(self, chain_id: int, params: dict, root=None):
+        import hashlib
+        import os
+        from pathlib import Path
+        q = json.dumps({"chain": int(chain_id), **{k: v for k, v in params.items() if k != "pageKey"}}, sort_keys=True)
+        base = Path(root) if root else Path(os.environ.get("TOKEN_METRICS_LOGCACHE", ".cache/logscan"))
+        self.path = base / "alchemy-pages" / (hashlib.sha1(q.encode()).hexdigest()[:20] + ".jsonl")
+
+    def load(self):
+        """(transfers read so far, the pageKey to continue at, the block to restart at if the key is refused) or None."""
+        try:
+            lines = self.path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return None
+        out, key, skip = [], None, False
+        for ln in lines:
+            try:
+                rec = json.loads(ln)
+            except ValueError:
+                break                                   # a torn last line: everything before it stands
+            if rec.get("expired"):
+                skip = True
+                continue
+            out.extend(rec.get("transfers") or [])
+            key = rec.get("page_key")
+        if not out:
+            return None
+        last = max(int(e["blockNumber"]) for e in out)
+        if skip:                                         # restart at the last whole block: drop that block's transfers
+            out = [e for e in out if int(e["blockNumber"]) < last]
+            return out, None, last
+        return out, key, last
+
+    def append(self, transfers: list, page_key: str) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.path, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"transfers": transfers, "page_key": page_key}) + "\n")
+
+    def expire_page_key(self, out: list) -> bool:
+        if not self.path.exists():
+            return False
+        with open(self.path, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"expired": True}) + "\n")
+        return True
+
+    def clear(self) -> None:
+        try:
+            self.path.unlink()
+        except OSError:
+            pass
 
 
 class ExplorerLogs:
@@ -295,6 +353,18 @@ class ExplorerLogs:
             params["withMetadata"] = True
         pace = host_pace(url, float(spec.get("rate_per_s") or 2.0), sleep=self._pace_sleep)
         out, seen, n, page_key = [], set(), 0, None
+        # A PAGE CHECKPOINT, WRITTEN AFTER EVERY PAGE (Round G7 item 4b, Jake 2026-10-19: explorer_l2:berachain@Pendle
+        # paged 100,000 transfers in 240 s and kept nothing — the tier was stopped at its budget, so no partial was
+        # raised). Each page's transfers are APPENDED to <logcache>/alchemy-pages/<query>.jsonl with the pageKey; the
+        # next run reloads them and continues at that pageKey (an expired pageKey: from the last whole block). Deleted
+        # once the range is read through; the scan then tops up incrementally from its cache like every other.
+        ck = AlchemyCheckpoint(chain_id, params)
+        resumed = ck.load()
+        if resumed:
+            out, page_key, from_blk = resumed
+            seen = {(e["transactionHash"], e["logIndex"]) for e in out}
+            if page_key is None and from_blk is not None:
+                params = {**params, "fromBlock": hex(int(from_blk))}
 
         def timed_out(e: ExplorerTimeout) -> ExplorerTimeout:
             # WHAT WAS READ BEFORE THE BUDGET RAN OUT, for a resumable seed (Round G5 item 2: this route raised its
@@ -335,19 +405,30 @@ class ExplorerLogs:
             if res.get("error"):
                 err = res["error"]
                 msg = err.get("message") if isinstance(err, dict) else err
+                if page_key and resumed and ck.expire_page_key(out):
+                    # a pageKey from an earlier run the provider no longer honours: restart at the last whole block
+                    out, page_key, from_blk = ck.load()
+                    seen = {(e["transactionHash"], e["logIndex"]) for e in out}
+                    params = {**params, "fromBlock": hex(int(from_blk))}
+                    resumed = None
+                    continue
                 raise ExplorerRefused(f"{name}: {self._scrub(msg)[:240]}")
             result = res.get("result") or {}
             if not isinstance(result, dict) or not isinstance(result.get("transfers"), list):
                 raise ExplorerRefused(f"{name}: result carries no transfers list: {self._scrub(str(result))[:160]}")
+            new = []
             for tr in result["transfers"]:
                 e = alchemy_transfer_log(tr, address)
                 k = (e["transactionHash"], e["logIndex"])
                 if k not in seen:
                     seen.add(k)
-                    out.append(e)
+                    new.append(e)
+            out.extend(new)
             page_key = result.get("pageKey") or None
             if not page_key:
                 break
+            ck.append(new, page_key)            # this page's NEW transfers only (a repeat is already in the file)
+        ck.clear()
         out.sort(key=lambda e: (e["blockNumber"], e["logIndex"]))
         return out, n
 

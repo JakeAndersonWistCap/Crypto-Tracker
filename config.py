@@ -1014,6 +1014,7 @@ METRICS = {
     "revenue_usd_ba": {"label": "Sky revenue per month ($, Block Analitica P&L type 'revenue' — gross, before expenses and distributions) — REFERENCE for DefiLlama's Sky revenue, month by month", "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [3], "sanity_min": -1e9, "sanity_max": 1e10, "only_projects": ("Sky",)},
     "revenue_allocation_usd_ba": {"label": "Sky Revenue Allocation per month ($, Block Analitica P&L revenue_distribution less Security and Maintenance = the SKY buyback + the USDS distribution)", "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [3], "sanity_min": -1e9, "sanity_max": 1e10, "only_projects": ("Sky",)},
     "buyback_spending_usd_ba": {"label": "SKY buyback spending per month ($, Block Analitica cash flow 'Buyback Spending') — reference for the flapper buyback", "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [3], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Sky",)},
+    "buyback_spending_usd_ba_daily": {"label": "SKY buyback spending per day ($, Block Analitica cash flow 'Buyback Spending' by day, from the first SKY buyback 2024-11-14) — the cumulative USDS-spent reference sums it", "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [3], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Sky",)},
     "staking_rewards_usd_ba": {"label": "Staking rewards paid per month ($, Block Analitica cash flow 'Staking Rewards') — reference for the USDS-farm rewards", "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [3], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Sky",)},
     # info-sky.blockanalitica.com (Jake, 2026-10-07 12:06) — references only, beside our on-chain reads.
     "sky_cumulative_buyback_ba": {"label": "SKY bought by the flapper, CUMULATIVE (Block Analitica info-sky buyback/historic sky_cumulative_buyback) — reference for our counted flapper inflow", "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [3], "sanity_min": 0, "sanity_max": 3e10, "only_projects": ("Sky",)},
@@ -2474,11 +2475,17 @@ def events_per_year(project_name: str, metric: str) -> float | None:
 
 
 def program_cadence(project_name: str, metric: str | None = None) -> dict | None:
-    """The project's documented program cadence, optionally only if it is declared on `metric`."""
+    """The project's documented program cadence, optionally only if it is declared on `metric`. A second programme on
+    another series of the same project is in PROGRAM_CADENCE_BY_METRIC (Ether.fi's programmatic buyback, G7 0b)."""
     c = PROGRAM_CADENCE.get(project_name)
     if c and (metric is None or c["metric"] == metric):
         return c
+    if metric is not None:
+        return PROGRAM_CADENCE_BY_METRIC.get((project_name, metric))
     return None
+
+
+PROGRAM_CADENCE_BY_METRIC: dict = {}
 
 
 def burn_total(project_name: str) -> dict | None:
@@ -2502,6 +2509,12 @@ def a4_burn_metric(project_name: str) -> str:
     unrelated events, so its headline reads the Stage 2 leg alone (sky_stage2_burn_tokens).
     """
     return (PROJECT_BY_NAME.get(project_name) or {}).get("a4_burn_metric") or "gross_burn_tokens"
+
+
+def a4_net_burn_metric(project_name: str) -> str:
+    """The burn the A4 tab's NET SUPPLY CHANGE reads: every burn the supply sees EXCEPT an A1 chain's fee burn (T-c; G7
+    decision 0c, Jake 2026-10-19: Hyperliquid's HyperEVM gas burn is A1 only). a1_burn_metric everywhere else."""
+    return (PROJECT_BY_NAME.get(project_name) or {}).get("a4_net_burn_metric") or a1_burn_metric(project_name)
 
 
 def a1_burn_metric(project_name: str) -> str:
@@ -15676,9 +15689,10 @@ PROJECTS = [
         # NPS = revenue - expense - revenue_distribution ("Remitted to Sky Reserves") — CONFIRMED by Jake against Sky's
         # own monthly table (2026-10-07 afternoon; net_protocol_surplus_reference.sky_monthly_table_2026_10_07).
         "sky_accounting": {"base_url": "https://sky.data.blockanalitica.com", "from": "2025-01-01",
-                           "granularity": "monthly",
+                           "granularity": "monthly", "daily_from": "2024-11-13",
                            "nps_formula": "revenue-expense-revenue_distribution",
                            "metrics": {"nps": "net_protocol_surplus_usd", "buyback": "buyback_spending_usd_ba",
+                                       "buyback_daily": "buyback_spending_usd_ba_daily",
                                        "staking": "staking_rewards_usd_ba",
                                        "revenue_allocation": "revenue_allocation_usd_ba",
                                        "revenue": "revenue_usd_ba",
@@ -19843,6 +19857,14 @@ ISSUANCE_PRIMARY = {
              "source_prefix": "near_issuance:near_rpc:epoch_mint",
              "history_prefix": "derived:d_total_supply_protocol",
              "prefer_primary_per_day": True,
+             # ROUND G7 ITEM 1 (Jake 2026-10-19): ONE MEASURING POINT. The epoch mint read from BigQuery's blocks table
+             # (gross_issuance_tokens_bigquery — the same quantity: the epoch-first block's rise in header total_supply
+             # + its burnt gas) is the history leg; the RPC epoch read takes over only after 3 common days each within
+             # 1% (checked every build). The derived daily reading fills only days before BigQuery's first and is the
+             # Q0 cross-check: over the 10-13 dump's 371 common days it is within 0.14% of BigQuery in total but
+             # −72%..+99% day to day (an epoch's mint lands on whichever day its block falls).
+             "history_metric": "gross_issuance_tokens_bigquery",
+             "overlap_check": {"min_days": 3, "tolerance_pct": 1.0},
              "declared_guard": {"rate_path": ("issuance_rate_declared", "annual_rate_max"),
                                 "supply_metric": "total_supply", "max_ratio": 10},
              "block_reason": "waiting for NEAR's epoch mints (fetch/near_issuance.py) or the block-header derivation "
@@ -20671,7 +20693,12 @@ ARTEMIS_SETTLEMENT = {
     "source_url": "https://classic.artemis.ai/asset/ethereum?tab=metrics&category=MARKET_DATA&metric=SETTLEMENT_VOLUME",
     "column_suffix": " - Settlement Volume",
     "api": {"key_env": "ARTEMIS_API_KEY", "checked_on": "2026-09-30",
-            "without_key": "https://api.artemisxyz.com/asset answered HTTP 410 (Jake's probe)"},
+            "without_key": "https://api.artemisxyz.com/asset answered HTTP 410 (Jake's probe)",
+            # RETIRED (Round G7 item 8, Jake 2026-10-19: "settlement without an Artemis key"): no key will be bought;
+            # nothing calls the API, a key in .env is ignored and said once. The CSV export stays Ethereum's history.
+            "retired": {"on": "2026-10-19", "by": "Jake, Round G7 item 8",
+                        "why": "HTTP 410 without a key, and no key will be bought — the CSV is the history; "
+                               "SETTLEMENT_REBUILD['Ethereum'] is the forward route"}},
     "stale_after_days": 45,
     "window_days": 365,
     # One file per chain. Either name form is accepted: Artemis's download ("<Chain> - Settlement
@@ -21452,6 +21479,22 @@ def lumpy_flow(project_name: str, metric: str) -> dict | None:
     ran on the series most likely to hide a source change.
     """
     return LUMPY_FLOWS.get((project_name, metric))
+
+
+def period_end(project_name: str, metric: str, day):
+    """THE DAY A PERIODIC ROW STANDS FOR (Round G7 item 3, Jake 2026-10-19). A row stamped with its period's START — a
+    monthly row on the 1st (Dune's date_col month, GEODNET's feed, Aethir's monthly arrays), a weekly row on the week's
+    first day (Aethir's weekly labels) — is aged and matched by that period's END: the month's last day, the week's
+    seventh. A daily row, and a monthly row already stamped at its month's end, are their own end. One helper for
+    stale_series, the reference matcher and the build's staleness (build_workbook._age_in_days)."""
+    import pandas as _pd                                   # noqa: PLC0415
+    d = _pd.Timestamp(day).normalize()
+    g = series_granularity(project_name, metric)
+    if g == "monthly":
+        return (d.to_period("M") + 1).to_timestamp() - _pd.Timedelta(days=1)
+    if g == "weekly":
+        return d + _pd.Timedelta(days=6)
+    return d
 
 
 def stale_after_days(project_name: str, metric: str, default: int) -> int:
@@ -29546,6 +29589,17 @@ REFERENCE_BLOCK_READS = {
                           "plateau 20,142,225.835854 that holds from block 26,184,667 (16:08:35 UTC) to 26,184,900 "
                           "(16:55:23); the inflows either side are 26,184,667 (+43,110.94) and 26,184,901 (+42,959.96). "
                           "Any block of the plateau reads the same; 26,184,750 is inside it"},
+    # G7 item 5 (2026-10-19): Block Analitica's "Treasury" is the Pause Proxy's SKY balance alone (its /treasury/ endpoint's
+    # sky_balance; no MKR counted) — the SAME wallet we read. Its 28,244,406.70 was read at 09:53 UTC, ours (20,782,403) at
+    # 13:48; between them 7,695,439.49 SKY went to REWARDS_DIST_LSSKY_SKY 0x675671a8… at 13:04:23 (block 26,226,800) — a
+    # timing difference, not a basis one. Compared at the reference's own block:
+    ("Sky", "g6_sky_treasury"): {
+        "chain": "ethereum", "call": "SKY.balanceOf(Pause Proxy 0xBE8E3e36…98FB)",
+        "to": "0x56072C95FAA701256059aa122697B133aDEd9279", "holder": "0xBE8E3e3618f7474F8cB1d074A26afFef007E98FB",
+        "data": "balanceOf", "decimals": 18, "block": 26225851, "block_time": "2026-10-19 09:53:11 UTC",
+        "value": 28244406.69674779, "read_on": "2026-10-19", "rpc_host": "eth.drpc.org",
+        "why_this_block": "the block of Block Analitica's read: its 28,244,406.70 is the balance after the buyback inflow "
+                          "of block 26,225,851 (+46,330.99); the treasury endpoint's own address is the Pause Proxy"},
     ("Sky", "mkr_supply_unconverted"): {
         "chain": "ethereum", "call": "MKR.totalSupply()", "to": "0x9f8F72aA9304c8B593d555F12eF6589cC3A579A2",
         "data": "totalSupply", "decimals": 18, "block": 26184665, "block_time": "2026-10-13 16:08:11 UTC",
@@ -29695,7 +29749,8 @@ _wm.setdefault("unlabelled_holders", {})["0x76607a4d04Fc2Cd23224181F1C35CfEfCB01
 # per epoch at the minting block; the epoch read wins on a shared day (ISSUANCE_PRIMARY prefer_primary_per_day). Declared
 # so a window spanning the switch is not read as a change of basis.
 PROJECT_BY_NAME["Near"].setdefault("series_handover", {})["gross_issuance_tokens"] = {
-    "ordered_points": ("derived:d_total_supply_protocol+burn", "near_issuance:near_rpc:epoch_mint"),
+    "ordered_points": ("derived:d_total_supply_protocol+burn", "near_bigquery:blocks.total_supply",
+                       "near_issuance:near_rpc:epoch_mint"),
     "why": "NEAR's gross issuance read at each epoch's minting block (fetch/near_issuance.py) from G6; the daily "
            "block-header derivation (d(total_supply_protocol) + burn) for the days the epoch read has not reached",
     "composition_change": "none: the same mint, measured per epoch instead of per day",
@@ -29761,5 +29816,326 @@ AERODROME_MIGRATION["ve_gap_2026_10_19"] = {
     "at_cutover": "veAERO -> sAERO: the 60.1M in the LMRs is locked principal and must be in the upgraded stake; a "
                   "migration that reads AERO.balanceOf(VE) alone would drop it",
 }
+
+# ===== G7 decision 0c (Jake 2026-10-19): THE HYPEREVM GAS BURN IS A1 ONLY. =====
+# Under T-c (A1 chains' fee burns stay off A4), Hyperliquid's A4 NET SUPPLY CHANGE reads burn_ex_chain_fee_tokens: the
+# Assistance Fund + the Core burns (+ ASXN's deploy-auction history), WITHOUT the HyperEVM gas burn. A1's every-burn total
+# (total_burn_tokens) now ADDS the measured HyperEVM priority-fee burn (hyperevm_priority_burn_tokens = d(zero-address
+# balance)) on the total's own days — it was left out pending this decision (the METRICS note above). Before the Core
+# leg's first day the history leg already carries ASXN's HyperEVM figure on A1; it is dropped from the A4 view.
+# The A4 headline burn (gross_burn_tokens, the Fund) is unchanged; whether the deploy-auction burn stays on A4 is still
+# Jake's call (it stays, as before).
+METRICS["burn_ex_chain_fee_tokens"] = {
+    "label": "HYPE burned except the HyperEVM gas burn — the Assistance Fund + Core burns (A4's net supply change; the "
+             "chain-fee burn is A1 only, G7 0c)", "kind": "flow", "unit": "tokens", "archetypes": [4], "tiers": [2],
+    "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Hyperliquid",), "view_only": True}
+_hl = PROJECT_BY_NAME["Hyperliquid"]
+_hl["burn_total"]["optional_components"] = ["hyperevm_priority_burn_tokens"]
+_hl["burn_total"]["a4_view"] = {"metric": "burn_ex_chain_fee_tokens", "exclude_extra": ("burn_hyperevm",)}
+_hl["a4_net_burn_metric"] = "burn_ex_chain_fee_tokens"
+
+# ===== G7 decision 0b (Jake 2026-10-19): ETHER.FI'S PROGRAMMATIC BUYBACKS SAFE — KEPT, LABELLED, AND WATCHED. =====
+# Jake's label, with ONE clause corrected from chain (G7 read 2026-10-19, getOwners/getThreshold): the Safe (1-of-2:
+# 0x95a21150…, 0x9eac7114… — the proposal's author) shares BOTH owners with the old buyback Safe 0x2f5301a3… (2-of-5),
+# but NONE with the top-up Safe 0xf40bcc08… (2-of-5, five other owners). The top-up Safe is linked by funding only.
+ETHERFI_PROGRAMMATIC_SAFE_LABEL = (
+    "identified on-chain (owners shared with the old buyback Safe; funded by weekly USDC from the top-up Safe "
+    "0xf40bcc08…, which shares no owner; CoW fills), not published by ether.fi; bought ETHFI paid on as OP cashback, "
+    "none held or retired")
+for _sc in PROJECT_BY_NAME["Ether.fi"]["log_scans"]:
+    if _sc.get("key") == "programmatic_buyback_inflow":
+        _sc["label"] = "Programmatic Buybacks Safe 0x43F4cA92… — " + ETHERFI_PROGRAMMATIC_SAFE_LABEL
+        _sc["identified"] = "on-chain, not published"
+PROJECT_BY_NAME["Ether.fi"]["programmatic_buyback_split"]["addresses"] = (
+    "'published at launch' — NOT published by ether.fi as of 2026-10-19. KEPT (Jake, G7 0b): the Safe 0x43F4cA92… is "
+    + ETHERFI_PROGRAMMATIC_SAFE_LABEL)
+# THE SECOND BUYER (G7 read 2026-10-19): the EthfiBuyback contract 0xa7b1d3a045fe9566513f3ecc858469640c88be29 is funded
+# FROM the Safe (80,200 USDC on 09-29, 10-05, 10-13; +110 test) and buys on CoW in 416.67-USDC slices (95 fills
+# 09-13..10-17, 120,382.93 ETHFI for 80,310 USDC), bridging daily to the OP CashbackDistributor 0x38F2… — the same
+# programme, so it is a second holder of the same scan (Safe -> contract USDC is not ETHFI, so nothing is double counted).
+for _sc in PROJECT_BY_NAME["Ether.fi"]["log_scans"]:
+    if _sc.get("key") == "programmatic_buyback_inflow" and \
+            "0xa7b1d3a045fe9566513f3ecc858469640c88be29" not in [h.lower() for h in _sc["holders"]]:
+        _sc["holders"] = list(_sc["holders"]) + ["0xa7b1d3a045fe9566513f3ecc858469640c88be29"]
+        _sc["attribution_sources"] = list(_sc["attribution_sources"]) + [
+            "G7 2026-10-19: EthfiBuyback 0xa7b1d3a0… receives its USDC from the Safe and buys on CoW (on-chain; not "
+            "published by ether.fi either)"]
+# THE COMMITMENT (Snapshot 0xed61adff…, read in full 2026-10-19 via hub.snapshot.org): Labs contributes "a share of" its
+# card interchange, swap-volume and staking revenue — NO PERCENTAGE IS STATED; "~$1.33M based on last month's numbers"
+# is an illustrative estimate, not a commitment; the 40/30/30 split is labelled "an illustrative example" for swap fees.
+# Cadence: contributions weekly in USDC to a published Foundation address, bought by CoW TWAP. Destination: "held in the
+# Foundation treasury or distributed as user rewards". So NO RATIO of funding to commitment is computed. Funding received
+# 2026-09-09..10-12: 1,255,229.08 USDC from 0xf40bcc08… in 6 transfers (none in the week of 09-14). On chain the bought
+# ETHFI went to the OP CashbackDistributor, not a treasury: 51,656.86 ETHFI is left in the Safe.
+PROJECT_BY_NAME["Ether.fi"]["programmatic_buyback_split"].update({
+    "commitment_stated": {"share_of_revenue": None, "revenue_base": "Labs' card interchange, swap volume and staking "
+                          "revenue ('a share of')", "cadence": "weekly USDC transfers, CoW TWAP buys",
+                          "destination": "held in the Foundation treasury or distributed as user rewards",
+                          "illustrative_only": ("~$1.33M a month (last month's numbers)", "swap-fee split 40/30/30")},
+    "funding_received": {"usdc": 1_255_229.08, "from": "0xf40bcc0845528873784f36e5c105e62a93ff7021",
+                         "transfers": 6, "first": "2026-09-09", "last": "2026-10-12", "read_on": "2026-10-19"},
+    "ratio_to_commitment": None,
+    "ratio_why_none": "the proposal states no share of revenue and no committed amount (the ~$1.33M is illustrative)",
+    "buys_to_2026_10_19": {"safe": {"fills": 383, "ethfi": 1_693_164.62, "usdc": 1_174_783.79,
+                                    "last_fill": "2026-10-18 21:34:23"},
+                           "ethfi_buyback_contract": {"fills": 95, "ethfi": 120_382.93, "usdc": 80_310.0,
+                                                      "last_fill": "2026-10-17 23:36:59"}},
+    "destination_on_chain": "bridged to OP, paid to CashbackDistributor 0x38F2fBb2… (1,940,449.04 ETHFI from the OP "
+                            "Safe to 10-18); 51,656.86 ETHFI left in the Ethereum Safe — not held in a treasury"})
+# THE SILENCE CHECK: flagged once 14 days pass with no fill (the purchases run weekly — Snapshot 0xed61adff…)
+PROGRAM_CADENCE_BY_METRIC[("Ether.fi", "programmatic_buyback_tokens")] = {
+    "metric": "programmatic_buyback_tokens", "cadences": (("weekly", 7),), "silent_after_days": 14,
+    "declared_by": "Jake, 2026-10-19 (G7 0b)",
+    "source": "Snapshot 0xed61adff… (etherfi-dao.eth, Programmatic ETHFI Buybacks, closed 2026-09-03): buys run weekly "
+              "as CoW TWAP orders"}
+METRICS["programmatic_buyback_tokens"]["label"] = (
+    "ETHFI bought by the Programmatic Buybacks Safe 0x43F4cA92… on CoW (Snapshot 0xed61adff…, from 2026-09-03) — "
+    + ETHERFI_PROGRAMMATIC_SAFE_LABEL + "; not retired, not credited to holder value; its own series (fix round 2, S2); "
+      "SILENT after 14 days with no fill (G7)")
+
+# ===== G7 item 2e (Jake 2026-10-19): total_supply's DECLARED OLDER LEG — the same legs FDV history uses, under the same
+# same-quantity check (build_workbook._total_supply_history_views). CoinGecko's total starts 2026-09-11. =====
+TOTAL_SUPPLY_HISTORY = {n: FDV_TOTAL_HISTORY[n] for n in ("Near", "Ethereum")}
+for _n, _pt in (("Near", "near_rpc:block.header.total_supply"), ("Ethereum", "ultrasound:supply-over-time")):
+    PROJECT_BY_NAME[_n].setdefault("series_handover", {})["total_supply"] = {
+        "ordered_points": (_pt, "coingecko"),
+        "why": f"{FDV_TOTAL_HISTORY[_n]['label']} for the days before CoinGecko's first total (2026-09-11) — the same "
+               "quantity, checked every build (median |diff| within FDV_HISTORY_TOL over FDV_HISTORY_MIN_OVERLAP days)",
+        "composition_change": "none: the same total supply, read from another source for the older days",
+        "declared": "2026-10-19 (G7 2e)"}
+
+# ===== G7 0a — WORLD MOBILE TOTAL SUPPLY = OPTION C, OPTION B ITS OWN ROW (Jake 2026-10-19). =====
+# C = the EVM chains + Solana (total_supply_gross) + Cardano WMTx + the Ethereum holders' supply not yet re-issued, where
+# the last = Ethereum totalSupply at the block before the first counterfeit mint − the re-issue CONFIRMED on Base. Replaced
+# by World Mobile's published snapshot total once one exists (snapshot_total). B (= C without the Ethereum leg) is its own
+# row, total_supply_with_cardano_tokens.
+# RECONCILED ON CHAIN (2026-10-19, Ethereum via rpc.mevblocker.io / eth.drpc.org, Base via mainnet.base.org archive
+# eth_call + public log RPCs; the Base mint/burn log set rebuilds totalSupply exactly at all 35 day-end blocks):
+#   Ethereum: first counterfeit mint block 26,016,082 (2026-09-20 03:38:23 UTC, tx 0xa0c510d2…c245, 1,000,000 WMTX to the
+#     converter 0x63BB…d392); totalSupply at block 26,016,081 = 1,013,930,149.415209.
+#   Base 0x3e31…E98D = 161,336,057.257586 (2026-09-14) + 1,109 CCIP mints 10,066,034.984429 − 394 CCIP burns
+#     2,950,344.123859 + 4 DIRECT mint() calls by 0x03fb0f5c… 46,227,317.694 = 214,679,065.812156 (exact). The direct
+#     mints (09-22 23,276,831.334; 09-23 17,951,875.36; 10-05 10; 10-07 4,998,601 to 0x0c789114…) are the recovery
+#     minting World Mobile announced (Telegram "World Mobile Updates" 2026-09-22 13:27 UTC: "Planned WMTX minting on Base …
+#     part of the recovery process and preparation for centralized exchange trading to resume" — channel not confirmed
+#     official). They went to ~10 wallets (an exchange-like EOA 0xab782bc7… 13,000,000; a DEX pool; two Safes); no claim
+#     or distributor contract, no fan-out to holders. The holder recovery portal is not live (posts of 10-08 / 10-12 /
+#     10-16). So the review queue's "Base 0x3e31 is flat at 214,679,066 and the re-issue is not on it" is right for the
+#     HOLDER re-issue (none yet) and wrong if read as "no recovery mint on Base" (46,227,317.694 is inside 214.68M); the
+#     supply has been exactly flat only since 2026-10-18 21:12:41 UTC (CCIP BNB-lane traffic moved it ±0.08% before).
+#   Re-issue CONFIRMED on Base = 0: no transfer to a pre-exploit holder is identified as a re-issue. The 46,227,317.694
+#   recovery mints are NOT subtracted (not shown to be holder re-issue) — so C may count up to that much twice, said on
+#   every row.
+_wm["total_supply_option_c"] = {
+    "decided_by": "Jake, 2026-10-19 (G7 0a)",
+    "eth_pre_exploit": 1_013_930_149.415209, "eth_block": 26_016_081, "first_counterfeit_block": 26_016_082,
+    "first_counterfeit_utc": "2026-09-20 03:38:23", "from": "2026-09-20",
+    "reissue_confirmed": 0.0,
+    "reissue_basis": "no holder re-issue identified on Base 0x3e31 to 2026-10-19 (the recovery portal is not live)",
+    "recovery_mints_base": 46_227_317.694,
+    "recovery_mints_note": "4 direct mint() calls by 0x03fb0f5c… (2026-09-22..10-07) — inside Base's supply, not shown "
+                           "to be holder re-issue, so not subtracted: C may count up to 46,227,317.694 twice",
+    "label": "inferred from chain: pre-exploit Ethereum supply awaiting re-issue",
+    "snapshot_total": None,            # World Mobile's published pre-exploit snapshot total, when one exists
+    "snapshot_source": None,
+}
+_wm["supply_components"]["ethereum_legitimate_unreissued"] = {
+    "declared": "Ethereum totalSupply at block 26,016,081 (the block before the first counterfeit mint) = "
+                "1,013,930,149.415209, minus the re-issue confirmed on Base (0 to 2026-10-19)",
+    "value_2026_10_19": 1_013_930_149.415209,
+    "status": "DECIDED (Jake G7 0a): option C's Ethereum leg, labelled 'inferred from chain: pre-exploit Ethereum supply "
+              "awaiting re-issue'"}
+_wm["wmtx_exploit_2026_09"]["base_reissue"]["holder_reissue_confirmed"] = 0.0
+_wm["wmtx_exploit_2026_09"]["base_reissue"]["recovery_mints_total"] = 46_227_317.694
+_wm["wmtx_exploit_2026_09"]["base_reissue"]["reconciled"] = (
+    "G7 0a (2026-10-19, on chain): 4 direct mint() calls by 0x03fb0f5c… total 46,227,317.694 (the 41,228,706.694 above + "
+    "10 + 4,998,601); none reached holders through a claim or distributor — holder re-issue confirmed: 0")
+METRICS["total_supply_with_cardano_tokens"] = {
+    "label": "World Mobile option B: the EVM chains + Solana (total_supply_gross) + Cardano WMTx — the chains read, without "
+             "the Ethereum holders' supply awaiting re-issue (G7 0a: its own row beside option C, the total supply used)",
+    "kind": "stock", "unit": "tokens", "archetypes": [2, 3], "tiers": [2], "sanity_min": 0, "sanity_max": 2e9,
+    "only_projects": ("World Mobile",), "view_only": True}
+
+
+# ===== G7 8 — SETTLEMENT WITHOUT AN ARTEMIS KEY: ETHEREUM REBUILT FROM FREE SOURCES, LEG BY LEG (Jake 2026-10-19). =====
+# The Artemis CSV (to 2026-08-25) stays Ethereum's history. The rebuild = DEX + NFT + P2P, each leg its own stored series:
+#   DEX  dex_volume_usd — DefiLlama /overview/dexs/ethereum (already read, fetch/llama.trading_volume; 365 d to 10-19
+#        $679.9B = 9.8% of Artemis's $6.945T).
+#   NFT  nft_volume_usd — DefiLlama /overview/nft-volume/ethereum (keyless; from 2023-12-16; ~$0.71B/365 d).
+#   P2P  p2p_transfer_volume_usd — BigQuery bigquery-public-data.crypto_ethereum (sql/ethereum/bigquery_p2p_daily.sql),
+#        dry-run first, in NEAR's quota project and on ITS ledger (one free 1 TB a month: 644 of the 900 GB budget used
+#        in October by 10-19). Measured cost (agent, 2026-10-19, schema + partition sizes; no dry run possible here):
+#        ~5.7 GB a day read daily (~170 GB a month), ~13 GB a WEEK read weekly (~56 GB a month), the validation month
+#        ~42 GB, a year's backfill ~455 GB. PROPOSED: weekly. NOT APPROVED until Jake reads the dry runs.
+# VALIDATION (stated before any number is seen): the rebuild is compared with the CSV on every day both hold up to
+# 2026-08-25 — at least 90 days — the daily gap is reported (median and 90th percentile of |gap|, not gated: Artemis's
+# day boundaries and late rows move single days), and it PASSES only if every complete week's sum is within ±10% of the
+# CSV's. Failed or unbuilt: the workbook shows the CSV only. Passed: the rebuild extends settlement_volume_usd past the
+# CSV's last day, labelled a different measuring point, the overlap check being that validation.
+SETTLEMENT_REBUILD["ethereum_rebuild"] = {
+    "project": "Ethereum", "decided_by": "Jake, 2026-10-19 (G7 item 8)",
+    "legs": {"dex": "dex_volume_usd", "nft": "nft_volume_usd", "p2p": "p2p_transfer_volume_usd"},
+    "nft_endpoint": "/overview/nft-volume/ethereum",
+    "validation": {"to": "2026-08-25", "min_days": 90, "weekly_tol": 0.10,
+                   "daily": "median and 90th percentile of |daily gap| reported, not gated"},
+    "label": "settlement rebuild (DefiLlama DEX + DefiLlama NFT + BigQuery P2P, Artemis method) — a different "
+             "measuring point from Artemis's CSV",
+    "p2p": {
+        "allowed_dataset": "bigquery-public-data.crypto_ethereum.", "sql": "bigquery_p2p_daily.sql",
+        "approved": False, "cadence_days": 7, "validation_from": "2026-07-27", "max_bytes_per_query": 60_000_000_000,
+        "price_api": "https://coins.llama.fi", "csv_dir": "data/ethereum",
+        # (symbol, address, decimals) — decimals are checked against DefiLlama's answer before a day is valued
+        "tokens": (("USDT", "0xdac17f958d2ee523a2206206994597c13d831ec7", 6),
+                   ("USDC", "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", 6),
+                   ("DAI", "0x6b175474e89094c44da98b954eedeac495271d0f", 18),
+                   ("USDS", "0xdc035d45d973e3ec169d2276ddab16f1e407384f", 18),
+                   ("WETH", "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2", 18)),
+        "estimates_gb": {"day": 5.7, "week": 13.0, "validation_month": 42.0, "year": 455.0,
+                         "source": "agent 2026-10-19 from table sizes; the adapter's dry runs replace them"},
+    },
+    "other_chains_label": "rebuild, not validated on this chain",
+}
+for _n in ("Near", "Plume"):
+    _sr = PROJECT_BY_NAME[_n]["settlement_rebuild"]
+    _sr["label"] = ("Artemis method (adapted to NEAR), rebuild, not validated on this chain" if _n == "Near"
+                    else "Artemis method, rebuild, not validated on this chain")
+    _sr["validation"] = ("rebuild, not validated on this chain — Artemis publishes no settlement series for it; the "
+                         "method's check is Ethereum's (SETTLEMENT_REBUILD.ethereum_rebuild)")
+METRICS["p2p_transfer_volume_usd"]["only_projects"] = ("Plume", "Near", "Ethereum")
+METRICS["p2p_transfer_volume_usd"]["label"] = (
+    "P2P transfer volume per day ($, Artemis method: token + native transfers between non-contract accounts, same-day "
+    "prices) — a settlement rebuild leg; validated only on Ethereum, against Artemis's CSV")
+METRICS["nft_volume_usd"] = {
+    "label": "NFT trading volume per day ($, DefiLlama /overview/nft-volume/<chain>) — the NFT leg of the settlement "
+             "rebuild (G7 item 8)", "kind": "flow", "unit": "usd", "archetypes": [1], "tiers": [1], "sanity_min": 0,
+    "sanity_max": 1e11, "only_projects": ("Ethereum",)}
+METRICS["settlement_rebuilt_usd"] = {
+    "label": "Settlement volume REBUILT (DEX + NFT + P2P, Artemis method) per day — shown beside Artemis's CSV; it "
+             "extends settlement_volume_usd only after the validation passes (G7 item 8)", "kind": "flow", "unit": "usd",
+    "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e13, "only_projects": ("Ethereum",),
+    "view_only": True}
+
+
+# G7 0c: the A4 burn view is the same series as total_burn_tokens without the chain-fee legs — the same declared handover
+# (the Assistance Fund's history leg, then the components), or the Trajectory reads its first day as a series break
+_hl["series_handover"]["burn_ex_chain_fee_tokens"] = dict(
+    _hl["series_handover"]["total_burn_tokens"],
+    why=_hl["series_handover"]["total_burn_tokens"]["why"] + " A4 view (G7 0c): the same legs without the HyperEVM gas burn.")
+
+# ===== G7 6 — PRIMARY CHECKS FOR THE TRAJECTORY'S Q0 AND Q-1 (Jake 2026-10-19). =====
+# Each check holds the PRIMARY EVENTS (read on chain 2026-10-19, block and tx per event), not a window total, so it grades
+# whatever quarter windows a build has: the events dated in (asof − 90(k+1), asof − 90k] are summed and set against the
+# Trajectory row's Q-k (coverage_audit.trajectory_primary_checks). A window reaching past `read_through` or starting
+# before `covers_from` is not judged (the events would be incomplete). Within tolerance: VERIFIED; outside: BROKEN.
+#   Aerodrome — Minter.weekly() is FROZEN in tail mode (8,969,149.540107 at every block), so it is not the emission: each
+#     epoch's emission is the Mint event's `_weekly` = totalSupply(block − 1) × tailEmissionRate (21 bps) ÷ 10,000 — checked
+#     to the wei for all 27 epochs. Read: mainnet.base.org archive eth_call (activePeriod() bisection) + eth_getBlockReceipts.
+#     Dated to the epoch start, as gross_issuance_tokens is. (Total minted incl. rebase and team share differs: not this row.)
+#   Sky — "− burned": SKY Transfer(from Pause Proxy 0xBE8E3e36…98FB, to 0x0), eth.blockscout.com getLogs from block 22,000,000.
+#   NOT BUILT, with why: Pendle (GaugeController has no global pendlePerSec — rewardData(market) per market; the integral
+#     is mainnet only, 70,628.757 PENDLE Q0 / 205,935.176 Q-1 to 10-19, claims 70,610.270 / 206,553.402 — while the
+#     row sums mainnet + Arbitrum + Optimism: not the same scope); Hyperliquid (no keyless historical Assistance Fund
+#     balance: userFillsByTime reaches ~15 days, the HyperEVM precompile ignores the block tag); Ether.fi (the Blockworks
+#     filing a87eafc6…, B2 2025-08-19, states no buyback amount). metrics.chain.link skipped (robots).
+TRAJECTORY_PRIMARY_CHECKS = [
+    {"project": "Aerodrome", "tab": "Master", "hid": "master_gross_issuance_q0_tokens", "tolerance_pct": 0.1,
+     "basis": "epoch emission = Mint event _weekly (totalSupply(B−1) × 21 bps), dated to the epoch start",
+     "source": "Base Minter 0xeB018363…3FE5 Mint events (mainnet.base.org archive, read 2026-10-19)",
+     "covers_from": "2026-04-16", "read_through": "2026-10-21",
+     # (epoch start, AERO, updatePeriod block, tx)
+     "events": (
+        ("2026-04-16", 3938996.153997322901979357, 44754130, "0x7e4fe5c2…"),
+        ("2026-04-23", 3948620.243775031643792066, 45056530, "0xf040b70f…"),
+        ("2026-04-30", 3958216.030134542946609161, 45358930, "0x8cba254e…"),
+        ("2026-05-07", 3967811.100899974126063697, 45661330, "0x5a0b6f41…"),
+        ("2026-05-14", 3977417.143770581689778949, 45963730, "0xb1446245…"),
+        ("2026-05-21", 3987023.075110412931357809, 46266130, "0x8ed6d8d3…"),
+        ("2026-05-28", 3996693.129523198478197508, 46568530, "0x428661a6…"),
+        ("2026-06-04", 4006361.749447108905173359, 46870930, "0x2ca53904…"),
+        ("2026-06-11", 4016085.759413875988003666, 47173330, "0x3b72abab…"),
+        ("2026-06-18", 4025834.022572888739440616, 47475729, "0x53aff543…"),
+        ("2026-06-25", 4035612.401217932056378312, 47778130, "0x086f86c7…"),
+        ("2026-07-02", 4045392.476147813265114336, 48080530, "0x7b719be6…"),
+        ("2026-07-09", 4055219.096404421209082943, 48382930, "0x3d7af20d…"),
+        ("2026-07-16", 4065058.917478947162950081, 48685330, "0x9377f1ff…"),
+        ("2026-07-23", 4074932.400898049466884047, 48987730, "0x1e1fdd4d…"),
+        ("2026-07-30", 4084845.835616513903610263, 49290129, "0x81e8361d…"),
+        ("2026-08-06", 4094784.417553297693913816, 49592578, "0x263bf16d…"),
+        ("2026-08-13", 4104746.867936709211615348, 49894989, "0x3a6c6d3e…"),
+        ("2026-08-20", 4114726.288380328179162436, 50197385, "0x984cf5f5…"),
+        ("2026-08-27", 4124766.295226748650171984, 50499783, "0x47487769…"),
+        ("2026-09-03", 4134726.189036499533465059, 50802206, "0x18869902…"),
+        ("2026-09-10", 4144738.687920292871441382, 51104578, "0xeb582a77…"),
+        ("2026-09-17", 4154745.633114352350607149, 51407018, "0xd75b5517…"),
+        ("2026-09-24", 4164805.544711262038144656, 51709411, "0x890224d5…"),
+        ("2026-10-01", 4174873.269482247764098654, 52011802, "0x30fd43a2…"),
+        ("2026-10-08", 4184974.454763277336192232, 52314144, "0x069cac6d…"),
+        ("2026-10-15", 4195055.805918967363856892, 52616544, "0x876451a5…"),
+     )},
+    {"project": "Sky", "tab": "A4", "hid": "a4_gross_burn", "tolerance_pct": 0.1,
+     "basis": "SKY sent from the Pause Proxy to 0x0 (spell burns), dated to the UTC day",
+     "source": "SKY 0x56072C95…9279 Transfer(Pause Proxy → 0x0), eth.blockscout.com getLogs (read 2026-10-19 15:25 UTC)",
+     "covers_from": "2025-03-08", "read_through": "2026-10-18",
+     "events": (("2025-06-30", 426292860.23, 22817692, "0x666eb780…"),
+                ("2026-09-13", 2860943.76, 25968583, "0xcd57535f…"),
+                ("2026-10-12", 7372288.0, 26176859, "0x93389082…"))},
+]
+
+
+# ===== G7 10 — PLUME ON DEFILLAMA: THE CHAIN'S SLUG IS plume-mainnet (Jake 2026-10-19). =====
+# summary/fees/plume answers HTTP 400 (no such slug); summary/fees/plume-mainnet answers: dailyFees = the chain's gas
+# (DefiLlama's blockscout fee factory), daily from 2025-04-09 (2026-10-18 $86; 30 days $2,806). It has NO revenue
+# (dailyRevenue 400) — a chain-gas adapter. plume-vaults (Nest) is a protocol, not the chain; overview/fees/Plume%20Mainnet
+# is the sum of the apps on Plume, not chain revenue. DefiLlama's figure reads the same explorer as ours
+# (fees_native_tokens = explorer.plume.org stats txnsFee x price, from 2025-02-20), so it is stored as a CROSS-CHECK,
+# fees_usd_defillama; fees_usd stays our explorer read. The declared-absent entry for summary/fees/plume is retired.
+_pl = PROJECT_BY_NAME["Plume"]
+_pl["defillama_fees_slug"] = "plume-mainnet"
+_pl.setdefault("defillama_metric_as", {})["fees_usd"] = "fees_usd_defillama"
+_pl["defillama_skip_types"] = {
+    "dailyRevenue": "plume-mainnet is DefiLlama's chain-gas adapter: no revenue series (HTTP 400, 2026-10-19)",
+    "dailyHoldersRevenue": "plume-mainnet is DefiLlama's chain-gas adapter: no holders-revenue series (2026-10-19)"}
+_pl["known_absent_calls_retired"] = [dict(d, retired_on="2026-10-19", why="the slug was wrong: plume-mainnet answers")
+                                     for d in _pl.pop("known_absent_calls", [])]
+METRICS["fees_usd_defillama"] = {
+    "label": "Fees per day ($, DefiLlama summary/fees/<chain slug>) — a CROSS-CHECK where our own read is the fee series "
+             "(Plume: DefiLlama's plume-mainnet chain gas beside our explorer txnsFee x price; G7 item 10)",
+    "kind": "flow", "unit": "usd", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e10,
+    "only_projects": ("Plume",)}
+
+
+# ===== G7 10 — WORLD MOBILE CHAIN'S FEES (Jake 2026-10-19: "check WM's own published figures"; untried route). =====
+# explorer.worldmobile.io/stats-service txnsFee — the gas paid on World Mobile Chain per day, in WMTX (the chain's native
+# coin), daily from 2025-06-01 (2026-10-18: 15,803.65). Earned by the EarthNode operators and their stakers, not by the
+# token's treasury: a business series (throughput of the chain), not revenue to holders. The $ figure = WMTX x the same
+# day's price (build_workbook._native_fee_usd_views, usd_metric own_chain_fees_usd).
+_wm["blockscout_stats"]["lines"]["own_chain_fees_native_tokens"] = "txnsFee"
+_wm["blockscout_stats"].setdefault("unit_note", {})["own_chain_fees_native_tokens"] = "WMTX"
+_wm["fees_usd_from_native"] = {"native_metric": "own_chain_fees_native_tokens", "usd_metric": "own_chain_fees_usd",
+                               "source": "derived:blockscout_stats:txnsFee*price"}
+METRICS["own_chain_fees_native_tokens"] = {
+    "label": "Gas paid per day on the project's OWN chain, in its native coin (World Mobile Chain: Blockscout txnsFee, "
+             "WMTX; earned by EarthNode operators and stakers — not holder revenue; G7 item 10)",
+    "kind": "flow", "unit": "tokens", "archetypes": [2, 3], "tiers": [1], "sanity_min": 0, "sanity_max": 1e9,
+    "only_projects": ("World Mobile",)}
+METRICS["own_chain_fees_usd"] = {
+    "label": "Gas paid per day on the project's OWN chain ($ = native coin x the same day's price; World Mobile Chain; "
+             "G7 item 10)", "kind": "flow", "unit": "usd", "archetypes": [2, 3], "tiers": [1], "sanity_min": 0,
+    "sanity_max": 1e9, "only_projects": ("World Mobile",), "view_only": True}
+# World Mobile's own dated headline figures (blog / posts read 2026-10-19) — RECORDED, not compared: no series measures
+# AirNodes, users or Spark payouts; the ecosystem-metrics dashboard (worldmobilegroup.github.io/dashboard-ecosystem-
+# metrics, Last-Modified 2026-08-28) is a "Coming soon" placeholder, so no revenue / buyback / treasury figure exists.
+_wm["published_headlines"] = (
+    ("2026-07-23", "AirNodes deployed", "160,000+"),
+    ("2026-05-28", "AirNodes / rewards paid / daily active users", "145,000+ / $2M+ / 3.4M"),
+    ("2026-05-26", "AirNodes deployed", "155,000+"),
+    ("2026-04-01", "Spark payouts (monthly)", "$220,789.20"),
+    ("2026-03-24", "AirNodes deployed", "130,000+"),
+    ("2026-03-05", "AirNodes deployed in February 2026", "6,956"),
+    ("2026-01-23", "AirNodes / daily active users", "100,000+ / 3M"),
+    ("2025-09-04", "daily active users", "2.2M"),
+    ("2025-02-13", "users", "1.5M"),
+)
+
 
 _CONFIG_LOADED = True       # the last line: config is complete (see _relation_pairs)

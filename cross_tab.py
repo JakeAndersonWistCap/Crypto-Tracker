@@ -37,13 +37,14 @@ MASTER_SOURCES = {
     "Gross burn Q0 (tokens)": [("A1", "Gross burn Q0 (tokens) — every burn, fee-market included"),
                                ("A4", "GROSS BURN Q0 (tokens)")],
     "Gross issuance Q0 (tokens)": [("A4", "GROSS ISSUANCE Q0 (tokens)"), ("A1", "Gross issuance Q0 (tokens)")],
-    # the fee-burn chains' net change is on A1 since Phase 2 amendment 1 (Jake 2026-10-12)
+    # the fee-burn chains' net change is on A1 since Phase 2 amendment 1 (Jake 2026-10-12). A1 FIRST (Round G7 0c): Master
+    # counts every burn, as its Gross burn does; A4 leaves out an A1 chain's fee burn (Hyperliquid's HyperEVM gas)
     "NET SUPPLY CHANGE Q0 (tokens) = issuance − burn": [
-        ("A4", "NET SUPPLY CHANGE Q0 (tokens) — self-reported where published, else issuance − burn, on the basis to the left"),
-        ("A1", "NET ISSUANCE AFTER BURN Q0 (tokens) — issuance − every burn, on the basis A4 uses")],
+        ("A1", "NET ISSUANCE AFTER BURN Q0 (tokens) — issuance − every burn, on the basis A4 uses"),
+        ("A4", "NET SUPPLY CHANGE Q0 (tokens) — self-reported where published, else issuance − burn, on the basis to the left")],
     "Net supply change, annualised % of circulating": [
-        ("A4", "NET SUPPLY CHANGE, annualised % of circulating (signed; + is net inflation)"),
-        ("A1", "NET ISSUANCE AFTER BURN, annualised % of circulating (+ is net inflation; fee-market burns included)")],
+        ("A1", "NET ISSUANCE AFTER BURN, annualised % of circulating (+ is net inflation; fee-market burns included)"),
+        ("A4", "NET SUPPLY CHANGE, annualised % of circulating (signed; + is net inflation)")],
     "Fees ÷ issuance ($, Q0; issuance at 90d avg price)": [("A1", "FEES ÷ ISSUANCE (x) — key ratio")],
     "Fees ÷ FDV (annualised)": [("A3", "Fees ÷ FDV (annualised)")],
     "Buyback % of supply (annualised, implied, split as at this window)": [

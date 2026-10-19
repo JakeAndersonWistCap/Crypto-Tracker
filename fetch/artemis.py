@@ -20,8 +20,8 @@ non-numeric value, refuses the whole file: a half-read export would sum to a wro
 Blank cells are days Artemis has no figure for; they are left out and counted in the log line.
 
 LOCAL FILES ONLY — no network. The Artemis API (/asset) answered HTTP 410 without a key
-(2026-09-30), so it is not wired: with ARTEMIS_API_KEY set, the run says so and asks for the
-probe's keyed response before anything is built on it.
+(2026-09-30); the route is RETIRED (Round G7 item 8, Jake 2026-10-19: no key will be bought). A key in .env is
+ignored and said once. The CSV is Ethereum's history; fetch/settlement_rebuild.py is the forward route.
 """
 from __future__ import annotations
 
@@ -121,10 +121,10 @@ class ArtemisCSV:
         spec = config.ARTEMIS_SETTLEMENT
         metric = spec["metric"]
         if os.environ.get(spec["api"]["key_env"], "").strip():
-            out.skipped(SOURCE, None, f"{spec['api']['key_env']} is set, but the Artemis API is NOT wired: "
-                                      f"{spec['api']['without_key']} and no keyed response has been seen. "
-                                      f"Run `python check_offline_items.py settlement_sources` and paste "
-                                      f"back the keyed response; the CSV exports stay the route.", TIER)
+            # THE API ROUTE IS RETIRED (Round G7 item 8): the key is never sent anywhere
+            r = spec["api"]["retired"]
+            out.skipped(SOURCE, None, f"{spec['api']['key_env']} is set and IGNORED: the Artemis API route is RETIRED "
+                                      f"({r['on']}, {r['by']}: {r['why']})", TIER)
         names = {p["name"] for p in projects}
         for name, chain in spec["chains"].items():
             if name not in names:

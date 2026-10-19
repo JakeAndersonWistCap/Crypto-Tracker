@@ -201,6 +201,8 @@ def audit(wb, trajectory_rows: list[dict] | None = None, flows_rows: list[dict] 
                      "History depth (quarters with a value)": flow_depth(fr),
                      "Formula as built": fr.get("Series", ""), "SPEC formula": con.get("formula", ""),
                      "MATCHES-SPEC": "yes — computed at build from the SPEC section 8 statement"})
+    prim = trajectory_primary_checks(trajectory_rows, (windows or {}).get("q0", (None, None))[1]) \
+        if (windows or {}).get("q0") else {}
     for t in trajectory_rows or ():
         key = spec.concept_for(t.get("tab", ""), t.get("header", "")) or ""
         con = cs.get(key) or {}
@@ -212,6 +214,9 @@ def audit(wb, trajectory_rows: list[dict] | None = None, flows_rows: list[dict] 
             why = next((part for part in str(t.get("why") or "").split("; ") if part.startswith("HISTORY")), "")[:240]
         if not has_dir:
             status, why = "BLANK-UNEXPLAINED", "no direction declared for this row"
+        pc = prim.get((t.get("project"), t.get("tab"), t.get("hid")))
+        if pc and n:                                       # G7 item 6: a primary check graded its Q0 / Q-1
+            status, why = pc[0], pc[1][:400]
         rows.append({"Tab": "Trajectory", "Column": t.get("header", ""), "Key": key, "Project": t.get("project", ""),
                      "Value now": t.get("Q0") if not isinstance(t.get("Q0"), str) else str(t.get("Q0"))[:120],
                      "Status": status, "Reason / route / error": why, "Axis": spec.axis_of(key),
@@ -231,12 +236,79 @@ def audit(wb, trajectory_rows: list[dict] | None = None, flows_rows: list[dict] 
     return rows
 
 
+def trajectory_primary_checks(trajectory_rows, asof, period_days: int = 90, quarters=("Q0", "Q-1")) -> dict:
+    """{(project, tab, hid): (status, detail)} from config.TRAJECTORY_PRIMARY_CHECKS (Round G7 item 6): for each quarter
+    the events dated in (asof − period·(k+1), asof − period·k] are summed and set against the row's Q-k. A quarter whose
+    window starts before covers_from or ends after read_through is not judged; a row is VERIFIED when every judged
+    quarter is within tolerance (at least one judged), BROKEN when any is outside."""
+    import pandas as pd                                    # noqa: PLC0415
+    cfg = _config()
+    by = {(t.get("project"), t.get("tab"), t.get("hid")): t for t in trajectory_rows or ()}
+    out = {}
+    for c in getattr(cfg, "TRAJECTORY_PRIMARY_CHECKS", ()):
+        t = by.get((c["project"], c["tab"], c["hid"]))
+        if t is None:
+            continue
+        parts, ok_all, judged = [], True, 0
+        for k, lab in enumerate(QUARTER_LABELS):
+            if lab not in quarters:
+                continue
+            hi = pd.Timestamp(asof).normalize() - pd.Timedelta(days=period_days * k)
+            lo = hi - pd.Timedelta(days=period_days)
+            if lo + pd.Timedelta(days=1) < pd.Timestamp(c["covers_from"]) or hi > pd.Timestamp(c["read_through"]):
+                parts.append(f"{lab} {lo.date() + pd.Timedelta(days=1)}..{hi.date()}: not judged (primary events read "
+                             f"{c['covers_from']}..{c['read_through']})")
+                continue
+            ev = [e for e in c["events"] if lo < pd.Timestamp(e[0]) <= hi]
+            prim = float(sum(e[1] for e in ev))
+            ours = t.get(lab)
+            if not isinstance(ours, (int, float)):
+                parts.append(f"{lab}: primary {prim:,.2f} ({len(ev)} event(s)); ours blank — not judged")
+                continue
+            judged += 1
+            gap = (ours / prim - 1) * 100 if prim else (0.0 if ours == 0 else float("inf"))
+            ok = abs(gap) <= float(c["tolerance_pct"])
+            ok_all &= ok
+            parts.append(f"{lab}: ours {ours:,.2f} vs primary {prim:,.2f} ({len(ev)} event(s)) {gap:+.4f}% — "
+                         + ("within" if ok else "OUTSIDE") + f" {c['tolerance_pct']}%")
+        if judged:
+            out[(c["project"], c["tab"], c["hid"])] = (
+                "VERIFIED" if ok_all else "BROKEN",
+                f"PRIMARY CHECK ({c['basis']}; {c['source']}): " + "; ".join(parts))
+    return out
+
+
+QUARTER_LABELS = ("Q0", "Q-1", "Q-2", "Q-3", "Q-4")
+
+
 # AN N/A THAT IS A MISSING ROUTE (Round G5 item 5g, Jake 2026-10-19: na_reasons flagged 230 N/A cells whose reason is
 # "no rows stored", an empty registry stub, a series not read — not a column that does not apply). The same signs as
 # check_offline_items.na_reasons.
 NA_MISSING_ROUTE_SIGNS = ("no rows stored", "empty stub", "stored nothing", "no series in q", "not wired",
                           "produced nothing", "no url on file", "history bug", "returned no data")
 _NA_METRIC = re.compile(r"n/a\s*[—-]\s*([a-z][a-z0-9_]+)\s*\(")
+
+
+# THE CAUSE OF A MISSING CELL (Round G7 item 9, Jake 2026-10-19: 233 MISSING — "classify by cause; fix the first two
+# classes without a paid source; list the rest for Jake"). In order: the first sign that matches decides.
+MISSING_CAUSES = ("ROUTE EXISTS, NOT FILLED", "ONE-OFF SEED", "JAKE'S DECISION", "NO SOURCE")
+_CAUSE_SIGNS = (
+    ("NO SOURCE", ("no public source", "no free source", "not published", "accepted limit", "no source",
+                   "never published", "no history provider", "source-limited")),
+    ("JAKE'S DECISION", ("jake's decision", "jake decides", "approve", "not approved", "paid", "api key", "a key",
+                         "pending jake", "proposed")),
+    ("ONE-OFF SEED", ("--seed", "archive_backfill", "seed ", "backfill")),
+)
+
+
+def missing_cause(why: str, gap: dict | None = None) -> str:
+    """One of MISSING_CAUSES for a MISSING cell, from its reason and its Gap Report row's reason and suggestion. A cell
+    whose route is wired but holds no rows for the window — the default — is ROUTE EXISTS, NOT FILLED."""
+    text = " ".join(str(x or "") for x in (why, (gap or {}).get("reason"), (gap or {}).get("suggestion"))).lower()
+    for cause, signs in _CAUSE_SIGNS:
+        if any(sg in text for sg in signs):
+            return cause
+    return MISSING_CAUSES[0]
 
 
 def mark_missing(rows: list[dict], gap_rows: list | None = None) -> int:
@@ -254,7 +326,8 @@ def mark_missing(rows: list[dict], gap_rows: list | None = None) -> int:
         fix = (f" | ROUTE: {str(g.get('reason'))[:160]} | FIX: {str(g.get('suggestion'))[:200]}" if g else
                f" | FIX: the series{' ' + metric if metric else ''} has no stored rows for this window — its Gap Report "
                f"row (or check_offline_items.py gap_routes) names the route")
-        r["Status"], r["Reason / route / error"] = "MISSING", ("MISSING — " + why + fix)[:400]
+        cause = missing_cause(why, g)
+        r["Status"], r["Reason / route / error"] = "MISSING", (f"MISSING [{cause}] — " + why + fix)[:400]
         n += 1
     return n
 
@@ -455,7 +528,9 @@ def counts(rows: list[dict]) -> dict:
 
 
 BOARD_COLS = ("VERIFIED", "VERIFIED (derived)", "LIVE-UNVERIFIED", "N/A", "MISSING", "NOT WIRED", "BROKEN", "CHECK",
-              "BLANK-UNEXPLAINED", "Gap P4", "Gap P5", "Gap P6", "Review Queue", "Verified share")
+              "BLANK-UNEXPLAINED", "Gap P4", "Gap P5", "Gap P6", "Review Queue", "Verified share", "Populated",
+              "MISSING by cause")
+_BOARD_TEXT = ("Verified share", "Populated", "MISSING by cause")
 
 
 def scoreboard(rows: list[dict], gaps: dict | None = None, review_open: dict | None = None) -> dict:
@@ -465,7 +540,7 @@ def scoreboard(rows: list[dict], gaps: dict | None = None, review_open: dict | N
     gaps, review_open = gaps or {}, review_open or {}
     projects = sorted({r["Project"] for r in rows if r["Project"] not in ("(all)", "")}
                       | {p for p, _ in gaps} | set(review_open))
-    blank = lambda: {k: 0 for k in BOARD_COLS if k != "Verified share"}  # noqa: E731
+    blank = lambda: {k: 0 for k in BOARD_COLS if k not in _BOARD_TEXT}  # noqa: E731
     board = {"ALL": blank(), **{p: blank() for p in projects}}
     for r in rows:
         k = "N/A" if r["Status"] == "N/A BY DESIGN" else r["Status"]
@@ -483,9 +558,22 @@ def scoreboard(rows: list[dict], gaps: dict | None = None, review_open: dict | N
         board["ALL"]["Review Queue"] += n
         if p in board:
             board[p]["Review Queue"] += n
+    # POPULATED / APPLICABLE (Round G7 item 9): the cells holding a value over every cell that applies (all but N/A)
+    causes: dict = {}
+    for r in rows:
+        if r["Status"] == "MISSING":
+            m = re.match(r"MISSING \[([^\]]+)\]", str(r.get("Reason / route / error") or ""))
+            c = m.group(1) if m else MISSING_CAUSES[0]
+            for k in ("ALL", r["Project"]):
+                causes.setdefault(k, {}).setdefault(c, 0)
+                causes[k][c] += 1
     for p, b in board.items():
         held = b["VERIFIED"] + b["VERIFIED (derived)"] + b["LIVE-UNVERIFIED"] + b["CHECK"] + b["BROKEN"]
         b["Verified share"] = f"{b['VERIFIED']}/{held} = {b['VERIFIED'] / held:.0%}" if held else "-"
+        applicable = sum(b[k] for k in ("VERIFIED", "VERIFIED (derived)", "LIVE-UNVERIFIED", "MISSING", "NOT WIRED",
+                                        "BROKEN", "CHECK", "BLANK-UNEXPLAINED"))
+        b["Populated"] = f"{held}/{applicable} = {held / applicable:.0%}" if applicable else "-"
+        b["MISSING by cause"] = " · ".join(f"{c} {n}" for c, n in sorted((causes.get(p) or {}).items())) or "-"
     return board
 
 

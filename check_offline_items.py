@@ -8414,21 +8414,22 @@ def morpho_incentives():
 
 
 def settlement_sources():
-    """B: which settlement-volume sources answer, and on what terms (robots + a keyed call)."""
-    head("SETTLEMENT VOLUME — Artemis and Visa Onchain Analytics reachability")
-    key = os.environ.get("ARTEMIS_API_KEY", "").strip()
-    try:
-        r = requests.get("https://api.artemisxyz.com/asset", params={"APIKey": key} if key else {},
-                         headers=_ua(), timeout=TIMEOUT)
-        print(f"  Artemis /asset: HTTP {r.status_code} ({'keyed' if key else 'no ARTEMIS_API_KEY'})")
-        if key and r.ok:
-            try:
-                j = r.json()
-                print(f"    keyed body: {type(j).__name__}, keys {sorted(j)[:20] if isinstance(j, dict) else len(j)}")
-            except ValueError:
-                print(f"    keyed body is not JSON: {r.text[:200]!r}")
-    except Exception as e:  # noqa: BLE001
-        print(f"  Artemis UNREACHABLE — {e}")
+    """B: which settlement-volume sources answer, and on what terms. The Artemis API route is RETIRED (Round G7 item 8):
+    it is not called; the free legs of SETTLEMENT_REBUILD['Ethereum'] are probed instead."""
+    import config                                          # noqa: PLC0415
+    head("SETTLEMENT VOLUME — the free rebuild legs (the Artemis API route is retired)")
+    r = config.ARTEMIS_SETTLEMENT["api"]["retired"]
+    print(f"  Artemis API: RETIRED {r['on']} ({r['by']}): {r['why']} — not called")
+    for leg, url in (("DEX (DefiLlama dexs, chain)", "https://api.llama.fi/overview/dexs/ethereum"),
+                     ("NFT (DefiLlama nft-volume, chain)", "https://api.llama.fi/overview/nft-volume/ethereum")):
+        try:
+            resp = requests.get(url, params={"excludeTotalDataChart": "false", "excludeTotalDataChartBreakdown": "true"},
+                                headers=_ua(), timeout=TIMEOUT)
+            n = len((resp.json() or {}).get("totalDataChart") or []) if resp.ok else 0
+            print(f"  {leg}: HTTP {resp.status_code}, {n} day(s)")
+        except Exception as e:  # noqa: BLE001
+            print(f"  {leg}: UNREACHABLE — {str(e)[:120]}")
+    print("  P2P (BigQuery crypto_ethereum): `python check_offline_items.py eth_settlement_p2p` dry-runs the bytes first")
     _xhr_capture("https://visaonchainanalytics.com/", ("adjusted", "Adjusted", "volume"))
 
 
@@ -12346,13 +12347,20 @@ def stale_series():
             first, last, n = by[(name, m)]
             gran = _cfg.series_granularity(name, m)
             allowed = _cfg.stale_after_days(name, m, STALE_DAILY_ALLOWED_DAYS)
-            age = (today - pd.Timestamp(str(last)[:10])).days
+            # AGED FROM THE PERIOD'S END (Round G7 item 3): GEODNET's monthly feed rows on the 1st and Aethir's weekly labels
+            # on the week's first day read falsely stale when aged from the label
+            age = (today - _cfg.period_end(name, m, str(last)[:10])).days
             marked = [k for k, v in marks.items() if str(v) == str(today.date()) and k.split(":")[1:3] == [name, m]]
             # A MARK IS WRONG ONLY PAST ITS SOURCE'S OWN NEWEST DAY (Round G5 item 4: the 13 business series "marked
             # read today with no row today" held 10-17 on 10-19 — fetch.business.last_complete() stores through the day
             # before yesterday by design, an aggregator's yesterday being partial). A daily flow's newest is yesterday.
             lag = max((MARK_EXPECTED_LAG_DAYS.get(k.split(":")[0], 1) for k in marked), default=1)
             marked = [k for k in marked if age > lag]
+            # A MONTHLY SOURCE SERVES THE LAST COMPLETE MONTH (Round G7 item 7: Sky net_revenue_msc_usd, 09-30 read on
+            # 10-19, was "marked read today with an older row" — Soter publishes sky_total/<month>/summary.md after the
+            # month closes, so September is the newest it serves): the mark is wrong only before that month's end
+            if gran == "monthly" and _cfg.period_end(name, m, str(last)[:10]) >= today.replace(day=1) - pd.Timedelta(days=1):
+                marked = []
             if age <= allowed and not marked:
                 continue
             # NOT EVERY OLD SERIES IS STALE (Round G5 item 4, Jake's g4b_stale.txt): a series CLOSED in config, a route
@@ -12366,6 +12374,13 @@ def stale_series():
             lost = reason.startswith("FORWARD-ONLY") or "current snapshot" in reason
             stale.append((m, str(last)[:10], str((today - pd.Timedelta(days=allowed)).date()), age, gran, lost, fix,
                           marked))
+        # A SERIES WITH STORED ROWS THAT NO LONGER APPLIES (Round G7 item 7: Maple locked_tokens, last row 10-07, was simply
+        # absent here): listed with its N/A reason instead of silently skipped
+        own = set(_cfg.metrics_for_project(p))
+        for (pn, m), (f, l, n) in by.items():
+            if pn == name and m not in own and _cfg.not_applicable_reason(name, m):
+                explained.append((name, m, str(l)[:10], "N/A FOR THIS PROJECT (no longer read): "
+                                  + _cfg.not_applicable_reason(name, m)))
         if not stale:
             continue
         print(f"\n  {name}: {len(stale)} stale series")
@@ -12446,6 +12461,50 @@ def na_reasons():
     return 0
 
 
+def missing_triage():
+    """ROUND G7 item 9 (Jake 2026-10-19): every MISSING cell of the last build (coverage_audit.csv) by CAUSE —
+    ROUTE EXISTS, NOT FILLED · ONE-OFF SEED · JAKE'S DECISION · NO SOURCE (coverage_audit.missing_cause) — per project,
+    with the populated / applicable count. The first two classes are ours to fill; the last two are listed for Jake.
+    Reads the CSV; changes nothing."""
+    import csv as _csv                                    # noqa: PLC0415
+    import re as _re                                      # noqa: PLC0415
+    from collections import defaultdict                   # noqa: PLC0415
+    import coverage_audit as _ca                          # noqa: PLC0415
+    head("MISSING TRIAGE — every MISSING cell by cause (last build)")
+    path = _coverage_csv()
+    if path is None:
+        print("  no coverage_audit.csv beside the workbook — build the workbook first (token_metrics.py --build-only)")
+        return 0
+    by = defaultdict(lambda: defaultdict(list))
+    held, appl = defaultdict(int), defaultdict(int)
+    with open(path, encoding="utf-8") as f:
+        for r in _csv.DictReader(f):
+            p, st = r.get("Project") or "", r.get("Status") or ""
+            if p in ("", "(all)"):
+                continue
+            if st not in ("N/A BY DESIGN", ""):
+                appl[p] += 1
+            if st in ("VERIFIED", "VERIFIED (derived)", "LIVE-UNVERIFIED", "CHECK", "BROKEN"):
+                held[p] += 1
+            if st == "MISSING":
+                why = r.get("Reason / route / error") or ""
+                m = _re.match(r"MISSING \[([^\]]+)\]", why)
+                by[m.group(1) if m else _ca.missing_cause(why)][p].append(f"{r.get('Tab')} | {r.get('Column')}: {why}")
+    for cause in _ca.MISSING_CAUSES:
+        rows = by.get(cause) or {}
+        print(f"\n  {cause}: {sum(len(v) for v in rows.values())}"
+              + ("  — ours to fill" if cause in _ca.MISSING_CAUSES[:2] else "  — for Jake"))
+        for p in sorted(rows):
+            print(f"    {p} ({len(rows[p])})")
+            for line in rows[p][:40]:
+                print(f"      {line[:230]}")
+    print("\n  POPULATED / APPLICABLE per project:")
+    for p in sorted(appl):
+        print(f"    {p:<16} {held[p]}/{appl[p]} = {held[p] / appl[p]:.0%}")
+    print("  PASTE BACK the lines above.")
+    return 0
+
+
 _TAB_OF = {"Master": "Master", "A1": "A1 Infrastructure", "A2": "A2 Coordination", "A3": "A3 Revenue Buyback",
            "A4": "A4 Permanent Burn", "CP": "CP Comparability", "Flows": "Flows", "Trajectory": "Trajectory"}
 
@@ -12516,7 +12575,7 @@ def spec_coverage():
             continue
         if depth >= 5:
             continue
-        ins = (cs.get(r["Key"]) or {}).get("inputs") or ()
+        ins = project_inputs(r["Project"], (cs.get(r["Key"]) or {}).get("inputs") or ())
         spans = {m: span.get((r["Project"], m)) for m in ins}
         stored = {m: d.days for m, d in spans.items() if d is not None}
         longest = max(stored.values(), default=None)
@@ -12542,6 +12601,19 @@ NOT_BUILT_BY_DESIGN = {
     ("tvl_native", "CP Comparability"): "SPEC §10 — chains' TVL in native units would restate price, not deposits "
                                         "(the per-token breakdown is paid); Ether.fi / Sky native units are on A3",
 }
+
+
+def project_inputs(project: str, inputs) -> tuple:
+    """The SPEC concept's inputs THIS project's built formula reads (Round G7 item 2a: Chainlink, Ether.fi, Maple and Pendle
+    rows were blamed on net_protocol_surplus_usd, Sky's series): a metric outside the project's own metric set
+    (config.metrics_for_project — only_projects, archetypes) is another project's input, and a read-time view (METRICS
+    view_only) is never stored, so neither can be 'never stored' here."""
+    import config as _cfg                                 # noqa: PLC0415
+    p = _cfg.PROJECT_BY_NAME.get(project)
+    if p is None:
+        return tuple(inputs)
+    own = set(_cfg.metrics_for_project(p))
+    return tuple(m for m in inputs if m in own and not (_cfg.METRICS.get(m) or {}).get("view_only"))
 
 
 def classify_short_history(row: dict, stored: dict, never: list) -> tuple[str, str]:
@@ -12607,6 +12679,11 @@ def _not_stale(cfg, con, name: str, metric: str, last: str) -> str:
     closed = (getattr(cfg, "UNAVAILABLE_BY_KEY", {}) or {}).get((name, metric))
     if closed:
         return f"CLOSED {closed.get('closed_on', '')}: {closed.get('summary', '')}"
+    # A BLOCK RECORD CLOSED ON THE PROJECT (Round G7 item 3: Maple pool_release_tokens read CLOSED on the Gap Report —
+    # pool_release_tokens_blocked.status — and stale here): the same record, one answer
+    blk = (cfg.PROJECT_BY_NAME.get(name) or {}).get(f"{metric}_blocked") or {}
+    if str(blk.get("status", "")).upper().startswith("CLOSED"):
+        return str(blk["status"])
     if metric == "price_usd_coinbase" and name not in (cfg.CREDIBILITY_XREF.get("coinbase_product") or {}):
         return ("RETIRED ROUTE: no declared Coinbase product since 2026-10-05 (a guessed <SYMBOL>-USD can be another "
                 "asset); the rows to 10-05 are the guesses — run_sql CZ removes them")
@@ -12619,6 +12696,17 @@ def _not_stale(cfg, con, name: str, metric: str, last: str) -> str:
         return (f"READ-TIME VIEW: the workbook shows {metric} as {origin}"
                 + (f" (= {' + '.join(legs)})" if len(legs) > 1 else "")
                 + (f", inputs through {min(lasts)[:10]}" if lasts else "") + "; the stored rows are superseded")
+    # THE USD TWIN OF A RELABELLED BUYBACK (Round G7 item 7: Hyperliquid actual_buyback_usd, last stored 09-29, read
+    # stale while its tokens twin read as a view): build_workbook._relabel_views prices the tokens view per day
+    tok_origin = cfg.relabelled_from(name, "actual_buyback_tokens") if hasattr(cfg, "relabelled_from") else None
+    if metric == "actual_buyback_usd" and tok_origin and not cfg.dune_query_declared(name, metric):
+        bt0 = cfg.burn_total(name) if hasattr(cfg, "burn_total") else None
+        legs = bt0["components"] if bt0 and tok_origin == bt0["metric"] else [tok_origin]
+        lasts = [r[0] for leg in legs for r in con.execute(
+            "SELECT MAX(date) FROM metrics WHERE project = ? AND metric = ?", (name, leg)) if r[0]]
+        return (f"READ-TIME VIEW: the workbook shows actual_buyback_usd as actual_buyback_tokens (= {tok_origin}) x the "
+                f"same-day price_usd" + (f", inputs through {min(lasts)[:10]}" if lasts else "")
+                + "; the stored rows are superseded")
     if metric == "emissions_tokens" and ((getattr(cfg, "ISSUANCE_PRIMARY", {}) or {}).get(name) or {}).get("kind") \
             == "declared_curve":
         return "READ-TIME VIEW: emissions_tokens is the declared curve at read time (ISSUANCE_PRIMARY); not stored since"
@@ -12858,7 +12946,7 @@ CHECKS = (
     morpho_incentives, settlement_sources, hyperevm_etherscan, maple_ssf_inflows, aethir_pages,
     geod_stake_recipient, geod_stake_wallets, maple_ssf_lp_test, maple_drips, plume_archive, settlement_rebuild_coverage,
     near_settlement_routes,
-    env_keys, aero_migration, near_wallet_inflow_days, worldmobile_probe, stale_series, mcap_inputs, na_reasons, gap_routes, spec_coverage,
+    env_keys, aero_migration, near_wallet_inflow_days, worldmobile_probe, stale_series, mcap_inputs, na_reasons, missing_triage, gap_routes, spec_coverage,
     aethir_mint_path,
     near_activity_break,
     plume_settlement_routes,

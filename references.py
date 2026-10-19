@@ -285,8 +285,9 @@ G6_ROUTES = {
     ('Aethir', 'g6_circulating_dashboard_g6'): ('last', 'circulating_supply_first_party'),
     ('Aethir', 'g6_staked_veath'): ('last', 'locked_tokens'),
     ('Aethir', 'g6_locked_cloud_hosts'): ('last', 'locked_tokens_idc'),
-    ('Aethir', 'g6_staked_ai_sep'): ('on_day', 'locked_tokens_ai'),
-    ('Aethir', 'g6_staked_gaming_sep'): ('on_day', 'locked_tokens_gaming'),
+    # G7 item 3: the September PERIOD row (stakeHistory, stamped at its startTime 2026-09-01) — the reference is it exactly
+    ('Aethir', 'g6_staked_ai_sep'): ('on_period', 'locked_tokens_ai', 'month'),
+    ('Aethir', 'g6_staked_gaming_sep'): ('on_period', 'locked_tokens_gaming', 'month'),
     ('Aethir', 'g6_ath_total_supply'): ('last', 'total_supply'),
     ('Pendle', 'g6_total_pendle_staked_api'): ('recorded', "Pendle's totalPendleStaked counts sPENDLE PLUS the deprecated vePENDLE (ours: locked_tokens 31.13M sPENDLE incl. the unstake queue + locked_tokens_legacy_vependle 63.43M, never summed — Jake's rule); compared through rows 71-72"),
     ('Pendle', 'g6_pendle_in_spendle'): ('last', 'locked_tokens_shares'),
@@ -309,11 +310,13 @@ G6_ROUTES = {
     ('Hyperliquid', 'g6_hype_circulating_api'): ('last', 'circulating_supply_tokendetails'),
     ('Hyperliquid', 'g6_assistance_fund_hype'): ('recorded', "recorded: the Assistance Fund balance is inside the API's own total; ours is total_supply_gross net of it (TOTAL_SUPPLY_NET)"),
     ('Sky', 'g6_sky_cumulative_buyback_g6'): ('last', 'sky_cumulative_buyback_ba'),
-    ('Sky', 'g6_usds_spent_cumulative'): ('cumulative', 'buyback_spending_usd_ba'),
+    ('Sky', 'g6_usds_spent_cumulative'): ('cumulative', 'buyback_spending_usd_ba_daily'),   # G7 5: by day from 2024-11-14
     ('Sky', 'g6_sky_cumulative_buyback_0930'): ('on_day', 'sky_cumulative_buyback_ba'),
     ('Sky', 'g6_sky_cumulative_buyback_0630'): ('on_day', 'sky_cumulative_buyback_ba'),
     ('Sky', 'g6_staked_sky'): ('last', 'locked_tokens'),
-    ('Sky', 'g6_sky_treasury'): ('last', 'treasury_holding_tokens'),
+    # G7 item 5: compared AT THE REFERENCE'S BLOCK (config.REFERENCE_BLOCK_READS) — Block Analitica read at 09:53 UTC, ours
+    # at 13:48, and 7,695,439.49 SKY left the Pause Proxy for the lsSKY rewards at 13:04 in between
+    ('Sky', 'g6_sky_treasury'): ('block_read', 'g6_sky_treasury'),
     ('Sky', 'g6_sky_total_supply_g6'): ('last', 'total_supply_protocol'),
     ('Aerodrome', 'g6_aero_total_supply_g6'): ('last', 'total_supply'),
     ('Aerodrome', 'g6_ve_supply_g6'): ('last', 've_locked_supply_tokens'),
@@ -335,6 +338,11 @@ def _series(groups: dict, project: str, metric: str) -> pd.DataFrame | None:
         return None
     s = g[["date", "value", "source"]].copy()
     s["date"] = pd.to_datetime(s["date"]).dt.normalize()
+    # A PERIODIC ROW IS MATCHED BY ITS PERIOD'S END (Round G7 item 3, config.period_end): Aethir's monthly revenue stamped
+    # 2026-09-01 is September's row, so a reference dated 2026-09-30 finds it
+    import config                                          # noqa: PLC0415
+    if config.series_granularity(project, metric) in ("monthly", "weekly"):
+        s["date"] = [config.period_end(project, metric, d) for d in s["date"]]
     s = s.dropna(subset=["value"]).sort_values("date")
     return s if not s.empty else None
 
@@ -493,6 +501,15 @@ def _our_value(route: tuple, groups: dict, project: str, at: pd.Timestamp, ref: 
         if (at - d).days > STALE_DAYS:
             return None, metric, f"{metric}'s last row on or before {at:%Y-%m-%d} is {d:%Y-%m-%d}"
         return float(x.value.iloc[-1]), f"{metric} {d:%Y-%m-%d} ({x.source.iloc[-1]})", ""
+    if kind == "on_period":
+        # A PERIOD ROW STAMPED AT ITS START IN A SERIES THAT IS OTHERWISE DAILY (Round G7 item 3: Aethir's stakeHistory
+        # months sit at startTime among the daily tile reads): the period's own row is the one stamped at its first day
+        p0 = pd.Timestamp(at).to_period("M").to_timestamp() if route[2] == "month" else \
+            pd.Timestamp(at) - pd.Timedelta(days=6)
+        x = s[s.date == p0]
+        if x.empty:
+            return None, metric, f"{metric} has no row stamped at the period's start {p0:%Y-%m-%d}"
+        return float(x.value.iloc[-1]), f"{metric} {p0:%Y-%m-%d} (the {route[2]}'s period row)", ""
     if kind == "on_day":
         if first > at:
             return None, metric, f"{metric} starts {first:%Y-%m-%d}, after the reference date (history not restated)"

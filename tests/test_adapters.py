@@ -14720,7 +14720,9 @@ def test_valuation_config_chainlink_manual_routes_and_the_two_yields_stay_apart(
     # Plume: the 2026-09-30 ACCEPTED LIMIT was withdrawn 2026-10-01 — rebuilt by Artemis's method
     for m in ("settlement_volume_usd", "network_reserve_ratio", "settlement_volume_365d_usd"):
         assert config.unavailable_for("Plume", m) is None
-    assert config.PROJECT_BY_NAME["Plume"]["settlement_rebuild"]["label"] == "Artemis method, UNVALIDATED"
+    # G7 item 8: Jake's wording for a rebuild with no Artemis series on its chain
+    assert config.PROJECT_BY_NAME["Plume"]["settlement_rebuild"]["label"] == ("Artemis method, rebuild, not validated "
+                                                                              "on this chain")
     # validator and protocol yields never share a project list or a metric
     assert not set(config.VALIDATOR_YIELD) & set(config.PROTOCOL_YIELD)
     # Aerodrome joined 2026-09-30 (L1): voter rewards (fees + bribes) over veAERO locked
@@ -15970,7 +15972,10 @@ def test_plume_defillama_fees_is_declared_absent_and_rechecked_weekly(tmp_path):
     from fetch.llama import DefiLlama
 
     st = storemod.Store(tmp_path / "m.db")
-    plume = config.PROJECT_BY_NAME["Plume"]
+    # G7 item 10: the live entry is retired (the slug was wrong: plume-mainnet answers); the mechanism is kept and
+    # tested on the retired entry
+    plume = dict(config.PROJECT_BY_NAME["Plume"],
+                 known_absent_calls=config.PROJECT_BY_NAME["Plume"]["known_absent_calls_retired"])
     assert st.declared_absent([plume]) == set(), "no attempt on record: call it"
 
     def attempt(days_ago, status, msg="plume:dailyFees: HTTP 400 from https://api.llama.fi/x"):
@@ -19598,8 +19603,9 @@ def test_near_declared_issuance_covers_the_archival_header_year():
     import build_workbook as bw
     spec = config.issuance_primary("Near")
     assert spec["kind"] == "first_party" and spec["history_prefix"] == "derived:d_total_supply_protocol"
+    # G7 item 1: the BigQuery epoch mint is the declared history leg between the two
     assert config.PROJECT_BY_NAME["Near"]["series_handover"]["gross_issuance_tokens"]["ordered_points"] == (
-        "derived:d_total_supply_protocol+burn", "near_issuance:near_rpc:epoch_mint")
+        "derived:d_total_supply_protocol+burn", "near_bigquery:blocks.total_supply", "near_issuance:near_rpc:epoch_mint")
     asof = pd.Timestamp("2026-09-30")
     base = {"tier": 1, "fetched_at": "x", "is_manual": False, "entered_on": "", "source_note": ""}
     year = pd.date_range(asof - pd.Timedelta(days=365), asof - pd.Timedelta(days=1))
@@ -21160,7 +21166,8 @@ def test_plume_settlement_rebuild_by_artemis_method_is_unvalidated_and_stores_on
     plume = copy.deepcopy(config.PROJECT_BY_NAME["Plume"])
     plume["settlement_rebuild"]["erc20_route"] = "v2"                 # this test is the v2 route
     spec = plume["settlement_rebuild"]
-    assert spec["label"] == "Artemis method, UNVALIDATED" and spec["chain_key"] == "plume_mainnet"
+    # G7 item 8: the read-time label is Jake's wording; the stored rows keep fetch.plume_settlement.LABEL
+    assert spec["label"] == "Artemis method, rebuild, not validated on this chain" and spec["chain_key"] == "plume_mainnet"
     assert config.unavailable_for("Plume", "settlement_volume_usd") is None, "reopened: Jake decided to build it"
     spec["days"] = 3
     d = [(today() - pd.Timedelta(days=k)).normalize() for k in range(0, 5)]   # today, -1, -2, -3, -4
@@ -21227,7 +21234,8 @@ def test_plume_settlement_rebuild_by_artemis_method_is_unvalidated_and_stores_on
     bw._rebuilt_settlement_view(groups, plume)
     sv = groups[("Plume", "settlement_volume_usd")].set_index("date")
     assert sv.loc[d[1], "value"] == f[d[1]] + 10.0
-    assert sv["source"].iloc[0] == "derived:dex_volume_usd+p2p_transfer_volume_usd[Artemis method, UNVALIDATED; NFT ~0]"
+    assert sv["source"].iloc[0] == ("derived:dex_volume_usd+p2p_transfer_volume_usd[Artemis method, rebuild, not "
+                                    "validated on this chain; NFT ~0]")
     assert "UNVALIDATED" in config.TRADING_THROUGHPUT["meaningful"]["Plume"]
 
 
@@ -23441,7 +23449,9 @@ def test_a_declared_absent_defillama_call_is_remembered_by_the_adapter(monkeypat
     revenue legs are not tried after the refusal, and a success clears it."""
     from fetch.llama import DefiLlama
     monkeypatch.delenv("TOKEN_METRICS_DAILY_CHECKS", raising=False)
-    plume = config.PROJECT_BY_NAME["Plume"]
+    # G7 item 10: Plume's live slug is plume-mainnet and its entry retired; the mechanism is tested on the old one
+    pl = config.PROJECT_BY_NAME["Plume"]
+    plume = dict(pl, defillama_fees_slug="plume", known_absent_calls=pl["known_absent_calls_retired"])
     calls = []
     ll = DefiLlama()
 
@@ -26664,7 +26674,10 @@ def test_sky_accounting_reads_monthly_nps_buyback_and_staking_from_block_analiti
     assert list(f[f.metric == "sky_farm_rewards_tokens_ba"].value) == [60.0]
     assert f[f.metric == "usds_farm_rewards_usds_ba"].empty, "a fall of total_farmed is refused, not negative rewards"
     acct = [p for u, p in calls if "/v1/accounting/" in u]
-    assert all(p.get("group_by") == "month" and p.get("date_from") == "2025-01-01" for p in acct)
+    # G7 item 5: one call by day (Buyback Spending from the first SKY buyback); every other accounting call monthly
+    daily = [p for p in acct if p.get("group_by") == "day"]
+    assert daily == [{"group_by": "day", "date_from": "2024-11-13", "category": "Buyback Spending"}]
+    assert all(p.get("group_by") == "month" and p.get("date_from") == "2025-01-01" for p in acct if p not in daily)
     assert config.series_granularity("Sky", "net_protocol_surplus_usd") == "monthly"
     assert config.CREDIBILITY["Sky"]["in_nps"]["ref"]["args"]["metric"] == "net_protocol_surplus_usd_reported"
     rows = [ln for ln in open("manual_overrides.csv") if ",Sky,net_protocol_surplus_usd" in ln]

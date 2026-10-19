@@ -282,7 +282,10 @@ def main(argv=None) -> int:
         import build_workbook as bw                        # noqa: PLC0415
         found = list(bw.SANITY_HITS)
     else:
-        found = check_workbook(path)
+        found = with_build_hits(check_workbook(path), path)
+    # THE SAME OPEN COUNT AS THE REVIEW QUEUE (Round G7 item 7): a headline_lost hit config.REGRESSION_ALLOWLIST answers
+    # is listed apart there, so it is here
+    found, answered = split_answered(found)
     # PARKED PROJECTS ARE SHOWN APART AND DO NOT SET THE EXIT STATUS (Jake's run on 3500042, item 26: World Mobile,
     # parked 2026-10-05 — config.CREDIBILITY_PARKED — kept the run red): live hits first, parked ones listed below
     live, parked = split_parked(found)
@@ -292,7 +295,35 @@ def main(argv=None) -> int:
         print(f"\nPARKED PROJECTS — {len(parked)} hit(s), shown for the record, not counted "
               f"({', '.join(f'{n}: {config.CREDIBILITY_PARKED[n]}' for n in sorted({h[0] for h in parked}))})")
         _print_hits(parked)
+    if answered:
+        print(f"\nANSWERED — not open ({len(answered)}): config.REGRESSION_ALLOWLIST")
+        _print_hits(answered)
     return 1 if live else 0
+
+
+def with_build_hits(found: list, workbook_path) -> list:
+    """The workbook's own hits plus the build's (sanity_hits.json beside the workbook, written by build_workbook for the
+    same file): headline_lost and headline_starved need the build's state, so a workbook alone never shows them."""
+    import json
+    from pathlib import Path
+    f = Path(workbook_path).with_name("sanity_hits.json")
+    try:
+        body = json.loads(f.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        print(f"(no {f.name} beside the workbook: the build-state rules headline_lost / headline_starved are not "
+              f"shown — rebuild with token_metrics.py)")
+        return found
+    if body.get("workbook") != Path(workbook_path).name:
+        print(f"({f.name} is for {body.get('workbook')!r}, not this workbook: the build-state rules are not shown)")
+        return found
+    seen = {tuple(h) for h in found}
+    return found + [tuple(h) for h in body.get("hits") or () if tuple(h) not in seen]
+
+
+def split_answered(found: list) -> tuple[list, list]:
+    """(open hits, headline_lost hits config.REGRESSION_ALLOWLIST answers) — the Review Queue's split."""
+    ans = [h for h in found if h[1] == "headline_lost" and config.regression_allowance(h[0], h[2]) is not None]
+    return [h for h in found if h not in ans], ans
 
 
 def split_parked(found: list) -> tuple[list, list]:

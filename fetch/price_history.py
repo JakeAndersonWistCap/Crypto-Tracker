@@ -1,5 +1,6 @@
 """
-fetch/price_history.py — tier 1: DAILY PRICES BACK TO THE FIRST TOKEN FLOW (Round G 2.1, Jake 2026-10-18).
+fetch/price_history.py — tier 1: DAILY PRICES BACK TO THE FIRST SERIES THAT NEEDS ONE (Round G 2.1, Jake 2026-10-18; G7
+item 2b, 2026-10-19: from the first token or USD flow or token stock, not only the first token flow).
 
 Ether.fi's actual_buyback_usd left 433 of 834 days unvalued from 2024-07-06: the store held no ETHFI price_usd before
 2025-09-12 (CoinGecko's free market_chart serves 365 days, fetch.coingecko.FREE_MAX_DAYS). A past flow is never valued
@@ -61,19 +62,29 @@ def token_flow_metrics() -> set:
     return {m for m, d in config.METRICS.items() if d.get("kind") == "flow" and d.get("unit") == "tokens"}
 
 
+def price_needing_metrics() -> set:
+    """EVERY series a price is applied to (Round G7 item 2b, Jake 2026-10-19: price_usd reached back only to the first
+    token flow, so Ethereum's and NEAR's history_derive refused 3,689 and 1,794 days for "no price" and FDV history
+    stopped short): flows in tokens (valued at the day's price) or in USD (divided by it — burns derived from USD, implied
+    buybacks) and stocks in tokens (FDV, market cap)."""
+    return {m for m, d in config.METRICS.items()
+            if (d.get("kind") == "flow" and d.get("unit") in ("tokens", "usd"))
+            or (d.get("kind") == "stock" and d.get("unit") == "tokens")}
+
+
 # THE DECLARED OLDER LEG of price_usd (config series_handover: defillama_coins:history -> coingecko). G2 addendum A1: the
 # tier wrote `price_history:coins.llama.fi[...]`, a third measuring point, and blanked every Q0 cell that reads price.
 HISTORY_POINT = "defillama_coins:history"
 
 
 def missing_price_days(stored: pd.DataFrame, name: str, flows: set | None = None) -> tuple[list, str | None]:
-    """(days with no price_usd from the first token flow to the day BEFORE CoinGecko's first stored price, the first
-    flow's date) for one project. Never a day inside CoinGecko's range (G2 addendum A1: interleaved with it, the series
+    """(days with no price_usd from the first series that needs a price — price_needing_metrics: a token or USD flow, a
+    token stock — to the day BEFORE CoinGecko's first stored price, that first date) for one project. Never a day inside CoinGecko's range (G2 addendum A1: interleaved with it, the series
     had two measuring points in Q0); with no CoinGecko price stored yet, nothing (CoinGecko seeds its 365 days first)."""
     if stored is None or stored.empty:
         return [], None
     s = stored[stored["project"] == name]
-    flows = token_flow_metrics() if flows is None else flows
+    flows = price_needing_metrics() if flows is None else flows
     fl = s[s["metric"].isin(flows)]
     fl = fl[pd.to_numeric(fl["value"], errors="coerce").fillna(0) != 0]
     if fl.empty:
@@ -147,7 +158,7 @@ class PriceHistory:
             days, first = missing_price_days(self.stored, name)
             if not days:
                 out.mark_current(SOURCE, name, "price_usd",
-                                 "price history: every day from the first token flow"
+                                 "price history: every day from the first series that needs a price"
                                  + (f" ({first})" if first else "") + " to CoinGecko's first price has a price_usd",
                                  TIER)
                 self.daily.done(key, day)

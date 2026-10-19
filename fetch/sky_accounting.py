@@ -85,6 +85,24 @@ def monthly_sum(rows: list[dict], field: str = "amount", sign: float = 1.0) -> d
     return out
 
 
+DAILY_BUYBACK_FROM = "2024-11-13"   # the first SKY buyback is 2024-11-14; earlier rows are the MKR flap (2020-24)
+
+
+def daily_spending(rows: list[dict], first: str, now: pd.Timestamp) -> list[tuple]:
+    """[(day, USD spent)] from the by-day cash-flow rows: outflows negative, so the sign is flipped; several sources a
+    day are added; days before `first` and from `now`'s day on (still accruing) are left out."""
+    lo, hi = pd.Timestamp(first), pd.Timestamp(now).normalize()
+    acc: dict = {}
+    for r in rows:
+        try:
+            d, v = pd.Timestamp(str(r["date"])[:10]), -float(r["amount"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if lo <= d < hi:
+            acc[d] = acc.get(d, 0.0) + v
+    return sorted(acc.items())
+
+
 def nps_candidates(by_type: list[dict], security: list[dict]) -> dict:
     """{candidate: {month: value}} from the per-type P&L history and the Security and Maintenance rows. A month is a
     candidate's only where revenue and expense are both present."""
@@ -283,6 +301,30 @@ class SkyAccounting:
                 self._store(out, name, m, monthly_sum(rows, sign=-1.0), last_complete,
                             f"{SOURCE}:cash-flow.{category.replace(' ', '_')}",
                             f"cash-flow category {category!r}, summed over sources, sign flipped (outflows)")
+            # 2b. BUYBACK SPENDING PER DAY (Round G7 item 5, Jake 2026-10-19): the cumulative USDS-spent reference counts
+            #     from the first SKY buyback (2024-11-14) to the moment it is read; the monthly series starts 2025-01
+            #     and holds complete months only. The same category by day, from DAILY_BUYBACK_FROM, complete days only.
+            dm = spec["metrics"].get("buyback_daily")
+            if dm:
+                try:
+                    rows = _rows(self.http.get(base + "/v1/accounting/cash-flow/items/history/",
+                                               params={"group_by": "day", "date_from": spec.get("daily_from",
+                                                                                                DAILY_BUYBACK_FROM),
+                                                       "category": "Buyback Spending"}))
+                except Exception as e:  # noqa: BLE001
+                    rows = f"{e}"
+                if isinstance(rows, str):
+                    out.fail(SOURCE, name, f"{dm}: {rows} — NOTHING STORED", TIER)
+                else:
+                    keep = daily_spending(rows, spec.get("daily_from", DAILY_BUYBACK_FROM), today())
+                    if not keep:
+                        out.fail(SOURCE, name, f"{dm}: no complete day in the answer", TIER)
+                    else:
+                        out.add(tidy(keep, name, dm, f"{SOURCE}:cash-flow.Buyback_Spending[day]", TIER), SOURCE, name,
+                                f"{dm}: {len(keep)} complete day(s) {keep[0][0]:%Y-%m-%d}..{keep[-1][0]:%Y-%m-%d}, "
+                                f"Σ ${sum(v for _, v in keep):,.0f} — cash-flow 'Buyback Spending' by day, sign "
+                                f"flipped; rows before {spec.get('daily_from', DAILY_BUYBACK_FROM)} (the MKR flap "
+                                f"auctions) are not SKY buybacks and are left out", TIER)
             self._info_sky(out, name, spec.get("info_sky") or {})
 
     def _info_sky(self, out, name: str, spec: dict) -> None:

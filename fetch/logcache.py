@@ -316,6 +316,20 @@ class DailyChecks:
         """True once the check has completed on any day — a series' history has been read."""
         return key in self._read()
 
+    def forget(self, prefix: str) -> list:
+        """Drop every mark whose key starts with `prefix` (written at once, not deferred) — the keys dropped. Round G7
+        item 11: an adapter whose code changed since its marks were written reads again the same day."""
+        with file_lock(self.f):
+            try:
+                state = json.loads(self.f.read_text())
+            except (OSError, ValueError):
+                state = {}
+            gone = sorted(k for k in state if k.startswith(prefix))
+            if gone:
+                atomic_write_text(self.f, json.dumps({k: v for k, v in state.items() if k not in gone},
+                                                     sort_keys=True))
+        return gone
+
     def done(self, key: str, today: str) -> None:
         d = DailyChecks._defer
         if d["on"]:

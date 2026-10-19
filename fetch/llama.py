@@ -385,8 +385,10 @@ class DefiLlama:
                 rows = self._summary_chart(slug, "dailyFees")
                 if d:
                     self.daily.set(absent_key, "")
-                out.add(window(tidy(rows, name, "fees_usd", SOURCE, TIER), window_days), SOURCE,
-                        name, f"{slug}:dailyFees", TIER)
+                # Plume (G7 item 10): DefiLlama's chain-gas fees are a cross-check beside our own explorer read
+                fm = (project.get("defillama_metric_as") or {}).get("fees_usd", "fees_usd")
+                out.add(window(tidy(rows, name, fm, SOURCE, TIER), window_days), SOURCE,
+                        name, f"{slug}:dailyFees" + (f" -> {fm}" if fm != "fees_usd" else ""), TIER)
             except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
                 out.fail(SOURCE, name, f"{slug}:dailyFees: {e}", TIER)
                 if d:                       # declared absent: remembered, and its revenue legs not tried
@@ -400,10 +402,14 @@ class DefiLlama:
         # A METRIC A LISTING-SUM PRODUCES IS NOT ALSO WRITTEN FROM THE MAIN SLUG (Ether.fi, 2026-10-05:
         # DefiLlama split its adapter on 2026-08-04 and holders revenue now lives in the Stake child only).
         summed = {sp["metric"] for sp in project.get("defillama_sum_slugs") or ()}
+        skip = project.get("defillama_skip_types") or {}
         for data_type, metric in (("dailyRevenue", "revenue_usd"),
                                   ("dailyHoldersRevenue", "holders_revenue_usd")):
             metric = rename.get(metric, metric)
             if metric in summed:
+                continue
+            if data_type in skip:            # declared: the adapter serves no such series (Plume, G7 item 10)
+                out.skipped(SOURCE, name, f"{slug}:{data_type}: not called — {skip[data_type]}", TIER)
                 continue
             try:
                 rows = self._summary_chart(slug, data_type)
@@ -1071,6 +1077,38 @@ class DefiLlama:
                                  f"{chain}: RWA category already rebuilt today ({self._today}); "
                                  f"a daily TVL series, rebuilt tomorrow.", TIER)
             return
+        # ONE CALL A DAY ONCE THE HISTORY IS STORED (Round G7 item 4a, Jake 2026-10-19: defillama_tvl timed out with 62
+        # calls — the slowest /protocol/theo-network-thusd 14.2 s — and rwa_defillama_usd for Near and Plume went 11 days
+        # stale). The RWA figure is a SUM over every RWA-category protocol on the chain — 60 on Ethereum, which is why the
+        # tier called protocols outside the portfolio. DefiLlama has no free category-by-chain route (/categories answers
+        # 402, paid), but /protocols — ONE call — carries each protocol's CURRENT TVL per chain (chainTvls), so today's sum
+        # needs no per-protocol call: every portfolio chain gets a fresh read EVERY run. The per-protocol history build
+        # runs only for a chain with no stored history yet.
+        need_history = {c: n for c, n in wanted.items() if not self._stored(n, "rwa_defillama_usd")}
+        today_rows = {}
+        try:
+            protocols = self.http.get(f"{API}/protocols")
+            rwa = [q for q in protocols if str(q.get("category", "")).lower() in ("rwa", "rwa lending")]
+            for chain in wanted:
+                on = [q for q in rwa if chain in (q.get("chains") or [])]
+                today_rows[chain] = (sum(float((q.get("chainTvls") or {}).get(chain) or 0) for q in on), len(on))
+        except Exception as e:  # noqa: BLE001
+            out.fail(SOURCE, None, f"RWA category (/protocols): {e}", TIER)
+            return
+        for chain, name in wanted.items():
+            if chain in need_history:
+                continue
+            v, n = today_rows[chain]
+            if not n:
+                out.add(None, SOURCE, name, f"{chain}: no RWA-category protocols on chain", TIER)
+                continue
+            # the same source label as the history rows: the same quantity from the same provider — ONE measuring point
+            out.add(tidy([(pd.Timestamp(self._today), v)], name, "rwa_defillama_usd", SOURCE, TIER), SOURCE, name,
+                    f"{chain}:rwa category = Σ chainTvls[{chain}] over {n} RWA protocol(s) from /protocols (one call)", TIER)
+        if not need_history:
+            self.daily.done("defillama:rwa", self._today)
+            return
+        wanted = need_history
         try:
             if self._rwa_by_chain is None:
                 self._rwa_by_chain = self._build_rwa_by_chain(set(wanted))
@@ -1110,6 +1148,15 @@ class DefiLlama:
             if cur in names:
                 i = names.index(cur)
                 projects = list(projects[i:]) + list(projects[:i])
+        # THE RWA SUM FIRST (Round G7 item 4a): one /protocols call once every chain has history — the per-project TVL
+        # downloads after it can no longer starve it (Near / Plume rwa_defillama_usd went 11 days stale behind them).
+        # A chain still without history keeps the costly per-protocol build at the end, where it always was.
+        rwa_after = True
+        if self.part in ("all", "tvl"):
+            wanted = [p for p in projects if p.get("defillama_chain") and 1 in p["archetypes"]]
+            if wanted and all(self._stored(p["name"], "rwa_defillama_usd") for p in wanted):
+                self.rwa(projects, window_days, out)
+                rwa_after = False
         slowest, left_out = TVL_STOP_FLOOR_S, []
         for p in projects:
             name, key = p["name"], f"defillama{'' if self.part in ('all', 'fees') else '_' + self.part}:project:{p['name']}"
@@ -1149,7 +1196,8 @@ class DefiLlama:
                                     f"project this run {slowest:.0f}s); the projects read keep their marks", TIER))
         elif deadline is not None:
             self.daily.set(TVL_CURSOR_KEY, "")
-        if self.part in ("all", "tvl") and (deadline is None or deadline - _time.monotonic() >= TVL_STOP_FLOOR_S):
+        if self.part in ("all", "tvl") and rwa_after and (deadline is None
+                                                         or deadline - _time.monotonic() >= TVL_STOP_FLOOR_S):
             self.rwa(projects, window_days, out)
 
     def _project(self, p: dict, window_days, out) -> None:
