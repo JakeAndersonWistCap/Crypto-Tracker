@@ -188,6 +188,9 @@ def _main(argv=None) -> int:
         print(f"  {line}")
     for n, m, why in res["skipped"]:
         print(f"  not backfillable {n}/{m}: {why}")
+    # ITS ALCHEMY CALLS COUNT TOWARDS THE MONTH (Round G4 item 6)
+    from fetch import alchemy_usage
+    print("  " + alchemy_usage.report(today().strftime("%Y-%m"))[0])
     return 0
 
 

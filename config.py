@@ -2821,6 +2821,8 @@ EXPLORER_MAX_REQUESTS_PER_SCAN = 5000   # a runaway guard, not a budget: 5m reco
 # Etherscan then Blockscout; out of time, a scan now fails at once and gaps with the providers'
 # own errors instead of starting the next provider.
 EXPLORER_SCAN_BUDGET_S = 120
+# Round G4 item 1: an explorer page answers in seconds; the read timeout is 30 s (the HTTP default is 60 s, retried)
+EXPLORER_READ_TIMEOUT_S = 30
 
 
 def explorer_order(chain_id: int) -> list[str]:
@@ -10529,6 +10531,8 @@ PROJECTS = [
              "exclude_counterparties": ["0x0000000000000000000000000000000000000000"],
              "rpc_window": "https://rpc.katana.network — docs.katana.network network-information, read 2026-10-18",
              "own_tier": "explorer_gauge_l2", "window_days": 100,
+             # G4 item 1: --seed katana_claims stored the whole history; the live read takes the days after it
+             "incremental_after_seed": True,
              "wired_on": "2026-10-18"},
         ],
         # G2-D1c: INCENTIVES ON A CLAIMS BASIS — emissions_tokens = Σ by day of the four chains' claims; a chain with
@@ -23345,6 +23349,56 @@ REGRESSION_ALLOWLIST = [
      "reason": "R3 Q2: the payout-type ratios divide by revenue − expense BEFORE distributions (sky_accounting, stored "
                "from 2025-01 on the next run)"},
 ]
+
+
+def regression_allowance(project: str, detail: str, on=None) -> dict | None:
+    """The REGRESSION_ALLOWLIST entry that covers a headline_lost hit (its project, a `match` substring of the hit, not
+    past `until`, and — for a declared-gap allowance — only while that gap is still declared), or None. One rule for
+    the Coverage regression guard and the Review Queue (G4 7b: the queue listed the allow-listed hits as open)."""
+    import pandas as _pd
+    day = _pd.Timestamp(on).normalize() if on is not None else _pd.Timestamp.today().normalize()
+    return next((a for a in REGRESSION_ALLOWLIST if a["project"] == project
+                 and any(x in detail for x in a.get("match") or (a.get("header", ""),))
+                 and (not a.get("until") or day <= _pd.Timestamp(a["until"]))
+                 and (not a.get("while_outflow_incomplete")
+                      or outflow_incomplete(project, [a["while_outflow_incomplete"]]))), None)
+
+
+# REVIEW QUEUE ROWS ANSWERED (G4 item 7b, Jake 2026-10-18: "accept, reject or fix each, with numbers; clear the resolved
+# rows"). A validation row matching an entry (project, metric, reason; `date` = that row's date only, else every date
+# up to `until`) is written under "ANSWERED — not open" on the Review Queue with the decision, never counted as open
+# work. A FIX is never answered here — it is fixed in code; an entry records an ACCEPT (the value stands) or a REJECT
+# (the value is wrong and is not used, with where it is withheld). Past `until` the row is open again.
+REVIEW_ANSWERED = [
+    {"project": "Ether.fi", "metric": "sethfi_reward_tokens_reconciled", "reason": "change_threshold",
+     "date": "2026-10-17", "decision": "ACCEPT",
+     "why": "a declared LUMPY flow (LUMPY_FLOWS: sETHFI reward top-ups land as discrete Safe transfers into the vault, "
+            "max/median 351): the trailing 7-day sum 6,816.65 (10-11..10-17) against 24,213.41 (10-04..10-10) is one "
+            "top-up landing in the earlier week, read and reconciled to the wei (aps_walk); the value stands"},
+    {"project": "Ether.fi", "metric": "locked_tokens", "reason": "supply_partial", "until": "2026-11-30",
+     "decision": "ACCEPT",
+     "why": "a standing PARTIAL label, not a change: sETHFI.totalSupply() on Ethereum only (87,478,043 on 10-18, "
+            "-246 on the day); the sheet labels the figure partial. Re-check when the L2 sETHFI share legs are wired"},
+    {"project": "Ether.fi", "metric": "locked_tokens_underlying", "reason": "supply_partial", "until": "2026-11-30",
+     "decision": "ACCEPT",
+     "why": "the same standing PARTIAL label on the underlying ETHFI (109,245,301 on 10-18, -297 on the day)"},
+]
+
+
+def review_answered(row: dict, on=None) -> dict | None:
+    """The REVIEW_ANSWERED entry for a Review Queue row, or None (open)."""
+    import pandas as _pd
+    day = _pd.Timestamp(on).normalize() if on is not None else _pd.Timestamp.today().normalize()
+    d = str(row.get("date") or "")[:10]
+    for a in REVIEW_ANSWERED:
+        if (a["project"], a["metric"], a["reason"]) != (row.get("project"), row.get("metric"), row.get("reason")):
+            continue
+        if a.get("date") and a["date"] != d:
+            continue
+        if a.get("until") and day > _pd.Timestamp(a["until"]):
+            continue
+        return a
+    return None
 
 
 # REWARD FUNDING PERIODS (fix round 2, S1 — research r14, 2026-10-13, every row on-chain or in an executive): which

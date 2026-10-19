@@ -12291,6 +12291,211 @@ def issuer_wallet_audit():
     return rows
 
 
+def _portfolio_projects():
+    import config as _cfg                                 # noqa: PLC0415
+    held, _unknown = _cfg.read_portfolio(_cfg.PORTFOLIO_FILE)
+    names = [n for n in held if n in _cfg.PROJECT_BY_NAME] or [p["name"] for p in _cfg.PROJECTS]
+    return [_cfg.PROJECT_BY_NAME[n] for n in names]
+
+
+STALE_DAILY_ALLOWED_DAYS = 2      # a daily series' newest row may be yesterday's (UTC) — older is stale
+
+
+def stale_series():
+    """ROUND G4 item 5 (Jake 2026-10-18): every series of the portfolio projects whose newest stored row is older than
+    its cadence allows (config.series_granularity / stale_after_days; a daily series may lag
+    STALE_DAILY_ALLOWED_DAYS), with the last row's date, the expected date, its age, and whether the missing days can
+    be backfilled from the source or are lost (history_gaps.fix_for). Flags the case that hid Aerodrome's circulating
+    for a week: a series MARKED READ TODAY (daily-checks.json) with no row today. Reads metrics.db; changes nothing."""
+    import json as _json                                  # noqa: PLC0415
+    import sqlite3                                        # noqa: PLC0415
+    import pandas as pd                                   # noqa: PLC0415
+    import config as _cfg                                 # noqa: PLC0415
+    import history_gaps as hg                             # noqa: PLC0415
+    import store as _store                                # noqa: PLC0415
+    from fetch.logcache import DailyChecks                # noqa: PLC0415
+    head("STALE SERIES — the newest stored row against each series' cadence (portfolio projects)")
+    db = _store.DB_PATH
+    if not os.path.exists(db):
+        print(f"  no store at {db} — nothing to audit")
+        return 0
+    con = sqlite3.connect(str(db))
+    rows = con.execute("SELECT project, metric, MIN(date), MAX(date), COUNT(*) FROM metrics GROUP BY project, metric") \
+        .fetchall()
+    last_src = {(p_, m_): s_ for p_, m_, s_ in con.execute(
+        "SELECT m.project, m.metric, m.source FROM metrics m JOIN (SELECT project, metric, MAX(date) d FROM metrics "
+        "GROUP BY project, metric) x ON m.project = x.project AND m.metric = x.metric AND m.date = x.d")}
+    try:
+        marks = _json.loads(DailyChecks().f.read_text())
+    except (OSError, ValueError):
+        marks = {}
+    today = pd.Timestamp.now(tz="UTC").tz_localize(None).normalize()
+    by = {(p_, m_): (f, l, n) for p_, m_, f, l, n in rows}
+    n_stale = n_marked = 0
+    for p in _portfolio_projects():
+        name = p["name"]
+        stale = []
+        for m in sorted(_cfg.metrics_for_project(p)):
+            if (name, m) not in by:
+                continue
+            first, last, n = by[(name, m)]
+            gran = _cfg.series_granularity(name, m)
+            allowed = _cfg.stale_after_days(name, m, STALE_DAILY_ALLOWED_DAYS)
+            age = (today - pd.Timestamp(str(last)[:10])).days
+            marked = [k for k, v in marks.items() if str(v) == str(today.date()) and k.split(":")[1:3] == [name, m]]
+            if age <= allowed and not (marked and age > 0):
+                continue
+            reason, fix, cost, _cmd = hg.fix_for(p, m, {"source": last_src.get((name, m)), "first_date": first})
+            lost = reason.startswith("FORWARD-ONLY") or "current snapshot" in reason
+            stale.append((m, str(last)[:10], str((today - pd.Timedelta(days=allowed)).date()), age, gran, lost, fix,
+                          marked))
+        if not stale:
+            continue
+        print(f"\n  {name}: {len(stale)} stale series")
+        for m, last, exp, age, gran, lost, fix, marked in stale:
+            n_stale += 1
+            n_marked += bool(marked)
+            print(f"    {m:<44} last {last}  expected >= {exp}  ({age} day(s) old, {gran})  "
+                  + ("LOST: the source keeps no history" if lost else f"BACKFILL: {fix[:110]}")
+                  + (f"  !! MARKED READ TODAY ({', '.join(marked)}) WITH NO ROW TODAY" if marked else ""))
+    print(f"\n  {n_stale} stale series across the portfolio; {n_marked} marked 'read today' with no row today.")
+    print("  PASTE BACK the lines above.")
+    return 0
+
+
+# G4 item 7 (Jake 2026-10-18): the whole-workbook pass reads the CSV the build writes beside the workbook
+G4_FIRST = ("Aethir", "Pendle", "Aerodrome", "Hyperliquid")
+# an N/A whose reason is one of these is a MISSING ROUTE (nothing stored, an empty registry stub, a series not read),
+# not a column that does not apply — G4 7e
+NA_MISSING_ROUTE_SIGNS = ("no rows stored", "empty stub", "stored nothing", "no series in q", "not wired",
+                          "produced nothing", "no url on file", "history bug", "returned no data")
+
+
+def _coverage_csv():
+    from pathlib import Path as _P                        # noqa: PLC0415
+    p = _P(os.environ.get("TOKEN_METRICS_COVERAGE_CSV", "") or _P(__file__).resolve().parent / "coverage_audit.csv")
+    return p if p.exists() else None
+
+
+def _norm_reason(text: str) -> str:
+    import re as _re                                      # noqa: PLC0415
+    t = _re.sub(r"\d[\d,.]*", "#", str(text or "").strip())
+    return t[:110]
+
+
+def na_reasons():
+    """ROUND G4 item 7e: the N/A BY DESIGN cells of the last build (coverage_audit.csv beside the workbook) counted by
+    reason, per project, beside the project's value count — and each reason that is really a MISSING ROUTE
+    (NA_MISSING_ROUTE_SIGNS: nothing stored, an empty stub, a series not read) flagged, with its total. Reads the CSV;
+    changes nothing."""
+    import csv as _csv                                    # noqa: PLC0415
+    from collections import Counter, defaultdict          # noqa: PLC0415
+    head("N/A REASONS — by count per project; MISSING ROUTE flags the N/A that is not by design (last build)")
+    path = _coverage_csv()
+    if path is None:
+        print("  no coverage_audit.csv beside the workbook — build the workbook first (token_metrics.py --build-only)")
+        return 0
+    na, values = defaultdict(Counter), Counter()
+    with open(path, encoding="utf-8") as f:
+        for r in _csv.DictReader(f):
+            p = r.get("Project") or ""
+            if p in ("", "(all)"):
+                continue
+            if r.get("Status") == "N/A BY DESIGN":
+                na[p][_norm_reason(r.get("Reason / route / error"))] += 1
+            elif r.get("Status") in ("VERIFIED", "LIVE-UNVERIFIED", "CHECK", "BROKEN"):
+                values[p] += 1
+    order = [p for p in G4_FIRST if p in na] + sorted(p for p in na if p not in G4_FIRST)
+    flagged_all = 0
+    for p in order:
+        tot = sum(na[p].values())
+        missing = sum(n for why, n in na[p].items() if any(k in why.lower() for k in NA_MISSING_ROUTE_SIGNS))
+        flagged_all += missing
+        print(f"  {p}: {tot} N/A vs {values[p]} value(s){' — N/A EXCEEDS VALUES' if tot > values[p] else ''}; "
+              f"{missing} of them a MISSING ROUTE")
+        for why, n in na[p].most_common():
+            mark = "  << MISSING ROUTE" if any(k in why.lower() for k in NA_MISSING_ROUTE_SIGNS) else ""
+            print(f"      {n:4d}  {why}{mark}")
+    print(f"  TOTAL: {sum(sum(c.values()) for c in na.values())} N/A; {flagged_all} flagged MISSING ROUTE")
+    return 0
+
+
+def gap_routes():
+    """ROUND G4 item 7c: the Gap Report's open rows (P3/P4/P6) of the last build grouped by project and by route — the
+    route named on the row (the source or read that is configured, and the command that runs it), or NO ROUTE (an
+    empty registry stub, no source on file). Aethir, Pendle, Aerodrome, Hyperliquid first. Reads metrics.db's
+    gap_report for the newest run; changes nothing."""
+    import sqlite3                                        # noqa: PLC0415
+    from collections import defaultdict                   # noqa: PLC0415
+    import store as _store                                # noqa: PLC0415
+    head("GAP ROUTES — open Gap Report rows by project and route (the newest run)")
+    if not os.path.exists(_store.DB_PATH):
+        print(f"  no store at {_store.DB_PATH}")
+        return 0
+    con = sqlite3.connect(str(_store.DB_PATH))
+    run = con.execute("SELECT run_id FROM gap_report ORDER BY rowid DESC LIMIT 1").fetchone()
+    if not run:
+        print("  no gap_report rows stored")
+        return 0
+    rows = con.execute("SELECT priority_label, project, metric, reason, suggestion FROM gap_report WHERE run_id = ? "
+                       "AND priority_label NOT LIKE 'P5%'", (run[0],)).fetchall()
+    by = defaultdict(lambda: defaultdict(list))
+    for pl, proj, metric, reason, sugg in rows:
+        low = str(reason or "").lower()
+        if "empty stub" in low or "no url on file" in low:
+            route = "NO ROUTE — empty registry stub (sources.yaml), no source on file"
+        else:
+            route = f"ROUTE: {_norm_reason(reason)} -> {str(sugg or '')[:120]}"
+        by[proj][(str(pl or '')[:2], route)].append(metric)
+    order = [p for p in G4_FIRST if p in by] + sorted(p for p in by if p not in G4_FIRST)
+    print(f"  run {run[0]}: {len(rows)} open row(s) in {len(by)} project(s)")
+    for p in order:
+        print(f"  {p}: {sum(len(v) for v in by[p].values())}")
+        for (pl, route), ms in sorted(by[p].items(), key=lambda kv: (kv[0][0], -len(kv[1]))):
+            print(f"      {pl} x{len(ms)}  {route}")
+            print(f"            {', '.join(sorted(ms))[:300]}")
+    return 0
+
+
+def mcap_inputs():
+    """ROUND G4 item 2: for each portfolio project, the newest stored row of every market-cap input — price, the
+    circulating metric in use and its on-chain legs, the total supply (or its net legs) — with its value, source and
+    the time it was READ (fetched_at). Market cap itself is a read-time view (price x the circulating used, same day);
+    this shows which input stopped it moving. Reads metrics.db; changes nothing."""
+    import sqlite3                                        # noqa: PLC0415
+    import config as _cfg                                 # noqa: PLC0415
+    import store as _store                                # noqa: PLC0415
+    head("MARKET-CAP INPUTS — newest stored row and read time of each input (portfolio projects)")
+    if not os.path.exists(_store.DB_PATH):
+        print(f"  no store at {_store.DB_PATH}")
+        return 0
+    con = sqlite3.connect(str(_store.DB_PATH))
+    for p in _portfolio_projects():
+        name = p["name"]
+        circ_m = _cfg.circulating_primary_metric(name)
+        spec = _cfg.circulating_onchain(name) or {}
+        net = _cfg.TOTAL_SUPPLY_NET.get(name) or {}
+        legs = ["price_usd", "market_cap_usd_coingecko", "market_cap_usd", circ_m, "circulating_supply",
+                *([spec["total"], *spec.get("subtract", ()), *spec.get("add", ())] if spec.get("total") else []),
+                *([net["total"], *net.get("less", ())] if net else ["total_supply"])]
+        seen = []
+        print(f"\n  {name} (circulating in use: {circ_m}" + (f" = {spec['total']} − {' − '.join(spec.get('subtract', ()))}"
+                                                            if spec.get("total") else "") + ")")
+        for m in legs:
+            if m in seen:
+                continue
+            seen.append(m)
+            r = con.execute("SELECT date, value, source, fetched_at FROM metrics WHERE project = ? AND metric = ? "
+                            "ORDER BY date DESC, fetched_at DESC LIMIT 1", (name, m)).fetchone()
+            if r is None:
+                print(f"    {m:<36} no stored row (a read-time view, or never read)")
+            else:
+                print(f"    {m:<36} {str(r[0])[:10]}  {float(r[1]):>22,.4f}  read {r[3] or '?'}  {str(r[2])[:70]}")
+    print("\n  Market cap on the workbook = price x the circulating used ON ONE DATE: the older of the two inputs above "
+          "dates it. PASTE BACK the lines above.")
+    return 0
+
+
 def env_keys():
     """ROUND G3 item 13 (Jake 2026-10-18): each key .env can hold — PRESENT or ABSENT, never its value — what its
     absence disables and the tiers it affects (config.ENV_KEYS). Also validates ALCHEMY_API_KEY's shape. Returns 0."""
@@ -12476,7 +12681,7 @@ CHECKS = (
     morpho_incentives, settlement_sources, hyperevm_etherscan, maple_ssf_inflows, aethir_pages,
     geod_stake_recipient, geod_stake_wallets, maple_ssf_lp_test, maple_drips, plume_archive, settlement_rebuild_coverage,
     near_settlement_routes,
-    env_keys, aero_migration, near_wallet_inflow_days, worldmobile_probe,
+    env_keys, aero_migration, near_wallet_inflow_days, worldmobile_probe, stale_series, mcap_inputs, na_reasons, gap_routes,
     aethir_mint_path,
     near_activity_break,
     plume_settlement_routes,

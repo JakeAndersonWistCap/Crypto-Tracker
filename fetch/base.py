@@ -449,13 +449,22 @@ class HostPace:
             with self._lock:
                 self.gap = max(self.gap, 1.0 / float(per_s))
 
-    def wait(self) -> None:
+    def wait(self, host: str = "") -> None:
+        # ROUND G4 item 1: an abandoned tier stops HERE, before it reserves a slot every other tier then waits behind,
+        # and the wait is REGISTERED ("paced for <host>") — Jake's run of 2026-10-18 22:06 timed out Arbitrum and Base
+        # at 240 s with "waiting on: nothing registered" while they queued on the shared Etherscan / Alchemy pacers
+        check_abandoned()
         with self._lock:
             now = self.clock()
             at = max(now, self._next)
             self._next = at + self.gap
         if at > now:
-            self.sleep(at - now)
+            if self.sleep is time.sleep:
+                with waiting_on(f"paced for {host or 'its host'} ({1 / self.gap:.2f} req/s shared run-wide)"):
+                    time.sleep(at - now)
+                check_abandoned()
+            else:
+                self.sleep(at - now)
 
 
 # ONE PACER PER HOST FOR EVERY ADAPTER IN THE RUN (Jake, 2026-10-05, G5): plume_staking drew HTTP 429
@@ -567,6 +576,78 @@ def inflight() -> list[tuple[str, str, float]]:
     now = time.monotonic()
     with _INFLIGHT_LOCK:
         return [(src, what, now - t0) for src, what, t0 in _INFLIGHT.values()]
+
+
+# ===== WHAT A TIER IS DOING WHEN NOTHING IS IN FLIGHT (Round G4 item 1). =====
+# A tier can be busy with no HTTP call in flight — merging a cached history, reconciling, dating events, waiting on
+# a lock. Each long step sets its PHASE (a short label plus counts); the timeout message names the last phase
+# entered and how long ago, so "waiting on: nothing registered" always comes with what the tier was doing.
+_PHASES: dict = {}
+_PHASES_LOCK = threading.Lock()
+
+
+def set_phase(what: str) -> None:
+    with _PHASES_LOCK:
+        _PHASES[_owner_thread().name] = (what, time.monotonic())
+
+
+def last_phase(source: str) -> tuple[str, float] | None:
+    """(the last phase `source` entered, seconds since) or None."""
+    with _PHASES_LOCK:
+        got = _PHASES.get(source)
+    return (got[0], time.monotonic() - got[1]) if got else None
+
+
+@contextlib.contextmanager
+def phase(what: str):
+    set_phase(what)
+    yield
+
+
+# ===== A SLOW HOST IS STALLED FOR THE RUN, NOT WAITED ON (Round G4 item 1). =====
+# Jake's run of 2026-10-18 22:06: the explorer tier timed out at 300 s "waiting on: GET api.blockscout.com" — each
+# call could take the 60 s read timeout three times over (Http retries=2). Now a read timeout on a host is retried at
+# most ONCE, and HOST_STALL_AFTER consecutive timeouts mark the host STALLED for the run: every later call to it raises
+# HostStalled at once, so the caller falls back (another explorer, the RPC) and keeps what it has. Reset per run.
+HOST_STALL_AFTER = 2
+_HOST_TIMEOUTS: dict = {}
+_HOST_STALLED: dict = {}
+_HOST_STALL_LOCK = threading.Lock()
+
+
+class HostStalled(RuntimeError):
+    """A host timed out HOST_STALL_AFTER times in a row this run; not asked again."""
+
+
+def host_stall_reset() -> None:
+    with _HOST_STALL_LOCK:
+        _HOST_TIMEOUTS.clear()
+        _HOST_STALLED.clear()
+
+
+def host_stalled(host: str) -> str | None:
+    return _HOST_STALLED.get(host)
+
+
+def stalled_hosts() -> dict:
+    with _HOST_STALL_LOCK:
+        return dict(_HOST_STALLED)
+
+
+def _host_timeout(host: str, e) -> bool:
+    """Count a timeout on `host`; True once it is stalled."""
+    with _HOST_STALL_LOCK:
+        n = _HOST_TIMEOUTS.get(host, 0) + 1
+        _HOST_TIMEOUTS[host] = n
+        if n >= HOST_STALL_AFTER and host not in _HOST_STALLED:
+            _HOST_STALLED[host] = f"{n} consecutive timeouts, last {type(e).__name__}"
+            log.warning("HOST STALLED for this run: %s (%d consecutive timeouts) — callers fall back", host, n)
+        return host in _HOST_STALLED
+
+
+def _host_ok(host: str) -> None:
+    with _HOST_STALL_LOCK:
+        _HOST_TIMEOUTS[host] = 0
 
 
 def sleep(seconds: float, what: str) -> None:
@@ -810,9 +891,13 @@ class Http:
         if wait < self.min_interval:
             nap(self.min_interval - wait, "rate spacing")
         backoff, last_err = 2.0, None
+        timed_out = False
         for attempt in range(self.retries + 1):
             if left() <= 0:
                 raise BudgetExhausted(f"time budget exhausted ({last_err or 'before the first attempt'})")
+            why = host_stalled(host)
+            if why:
+                raise HostStalled(f"HOST STALLED this run: {host} ({why}) — not asked again")
             read = min(self.timeout, max(1.0, left()))
             timeout = (min(CONNECT_TIMEOUT_S, read), read)
             self._last = time.monotonic()
@@ -872,11 +957,20 @@ class Http:
                 # THE LAST RESPONSE'S HEADERS (2026-09-30): a caller budgeting against the
                 # server's own rate-limit counters (beaconcha.in's x-ratelimit-*) reads them here.
                 self.last_headers = dict(r.headers)
+                _host_ok(host)
                 return r.text if as_text else r.json()
             except HttpError:
                 raise          # a 4xx is a definite answer from the server, not worth retrying
             except requests.RequestException as e:
                 last_err = e
+                if isinstance(e, requests.exceptions.Timeout):
+                    # A TIMEOUT IS RETRIED AT MOST ONCE, and two in a row stall the host for the run (G4 item 1)
+                    if _host_timeout(host, e):
+                        raise HostStalled(f"HOST STALLED this run: {host} ({host_stalled(host)}) — last: "
+                                          f"{type(e).__name__} after {time.monotonic() - t0:.0f}s") from None
+                    if timed_out:
+                        raise
+                    timed_out = True
                 if attempt < self.retries:
                     # A STALLED OR DROPPED CALL IS SAID, NOT WAITED ON IN SILENCE (Jake, 2026-10-01).
                     # Host and error type only: the exception text can carry the URL, and the URL a key.

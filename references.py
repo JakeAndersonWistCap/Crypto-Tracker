@@ -538,16 +538,19 @@ def _sky_revenue_cause(groups, project, at, ours, ref) -> str:
         s = _series(groups, project, metric)
         hit = s[s.date == pd.Timestamp(d)] if s is not None else None
         return f"{float(hit.value.iloc[0]):,.0f}" if hit is not None and len(hit) else "?"
-    return (f"the TMF series does not sit on one Block Analitica basis: its July 10,517,426 is AFTER the distribution "
-            f"(ours, NPS: {month('net_protocol_surplus_usd', '2026-07-31')}), its August 15,745,296 and September "
-            f"14,640,000 are BEFORE it (ours, revenue − expense: Aug {month('net_revenue_pre_distribution_usd', '2026-08-31')}, "
-            f"Sep {month('net_revenue_pre_distribution_usd', '2026-09-30')}) — the facilitator's own figures, read at a "
-            f"different vintage of the P&L. Ours is Block Analitica's P&L, the primary account. Round G 2.3, read "
-            f"2026-10-18 (profit-and-loss/history + items/history, group_by=month): September revenue 30,795,767 − "
-            f"expense 15,416,783 = 15,378,984 (ours, to the dollar); revenue_distribution 8,225,945 is not netted in it. "
-            f"TMF's 14,640,000 is 738,984 lower and no single September line is that size (nearest: LSE-SKY revenue "
-            f"789,385; stUSDS staking 839,073; Spark distribution rewards 839,680) — the basis is not reconciled, so the "
-            f"row stays BROKEN at its 2% tolerance until the facilitator's line items are published")
+    return (f"two different accounts, not one P&L at two vintages (G4 7a, read 2026-10-18). The TMF figure is Soter Labs' "
+            f"MSC #13 consolidated report (settlement-cycle 536f149, sky_total/2026-09/summary.md), ACCRUAL basis: MSC leg "
+            f"13,927,348.22 (prime mint/debt 20,154,616 − sends to primes 6,050,154 − Skybase prior-period true-ups "
+            f"177,113.78) + non-MSC leg 708,599.21 (income 14,938,630.49 − expense 14,230,031.28) = 14,635,947.43. Its "
+            f"prime mints carry Jan–Aug reconciliation corrections (MSC #13 post: Spark 11,627,438 = Sky share 8,218,668 + "
+            f"Spark share 1,016,416 + correction 2,392,354; Grove 6,806,996 = 5,930,611 + 1,041,399 − 165,013.90), net "
+            f"+2,050,226 with Skybase's −177,114, so September alone on that basis is ~12,585,721. Ours is Block "
+            f"Analitica's P&L (profit-and-loss/history, group_by=month): revenue 30,795,767 − expense 15,416,783 = "
+            f"{month('net_revenue_pre_distribution_usd', '2026-09-30')} (Aug "
+            f"{month('net_revenue_pre_distribution_usd', '2026-08-31')} vs MSC #12 15,745,296; Jul NPS "
+            f"{month('net_protocol_surplus_usd', '2026-07-31')} vs MSC #11 10,517,426). Gross differs too (MSC income "
+            f"35.09M vs P&L revenue 30.80M), so no line reconciles one to the other. The report publishes subtotals "
+            f"only, so the gap cannot be split by line from a primary source; the row stays BROKEN at its 2% tolerance")
 
 
 def _maple_supply_cause(groups, project, at, ours, ref) -> str:

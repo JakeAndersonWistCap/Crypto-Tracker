@@ -17,6 +17,7 @@ figure suppressed · orange fill = stale (last good fetch in comment).
 from __future__ import annotations
 
 import re
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -8579,6 +8580,7 @@ def write_gap_report(ws, gaps: pd.DataFrame, run_id: str | None):
     headers = ["Priority", "Project", "Metric", "Tiers attempted", "Reason unresolved", "What would fix it"]
     _header(ws, 4, headers)
     r = 5
+    BOARD_INPUTS["gaps"].clear()
     if gaps is None or gaps.empty:
         ws.cell(row=r, column=1, value="No gaps — every applicable metric resolved.").font = F_BOLD
         _set_widths(ws, {"A": 14, "B": 16, "C": 26, "D": 12, "E": 62, "F": 86})
@@ -8592,6 +8594,8 @@ def write_gap_report(ws, gaps: pd.DataFrame, run_id: str | None):
     # ANSWERED ROWS LAST: they are the record of what was settled, not the next thing to do.
     g["_answered"] = g["priority"] == 5
     g = g.sort_values(["_answered", "priority", "project", "metric"])
+    for (proj, pr), n in g.groupby(["project", "priority"]).size().items():      # the Coverage scoreboard (G4 7f)
+        BOARD_INPUTS["gaps"][(str(proj), int(pr))] = int(n)
     for row in g.to_dict("records"):
         is_config = bool(row["_config"]) or bool(row["_open"])
         vals = [row.get("priority_label", ""), row["project"], row["metric"], row.get("tiers_attempted", ""),
@@ -8736,12 +8740,21 @@ def write_review_queue(ws, review: pd.DataFrame, run_id: str | None):
                "Reason", "Action", "Source", "Tier", "Compared against"]
     _header(ws, 4, headers)
     r = 5
+    BOARD_INPUTS["review_open"].clear()
     if review is None or review.empty:
         ws.cell(row=r, column=1, value="Nothing flagged this run.").font = F_BOLD
         _set_widths(ws, {"A": 16, "B": 26, "C": 11, "D": 13, "E": 18, "F": 18, "G": 11, "H": 18, "I": 15, "J": 26, "K": 6, "L": 64})
         return
     rv = review.sort_values(["reason", "project", "metric"])
-    for row in rv.to_dict("records"):
+    # ANSWERED ROWS LAST, NOT COUNTED (G4 7b): a row config.REVIEW_ANSWERED decides is written under its own heading
+    # with the decision and the numbers; everything else is open work
+    recs = rv.to_dict("records")
+    answered = [(row, config.review_answered(row)) for row in recs]
+    open_rows = [row for row, a in answered if a is None]
+    answered = [(row, a) for row, a in answered if a is not None]
+    for row in open_rows:
+        BOARD_INPUTS["review_open"][str(row["project"])] += 1
+    for row in open_rows:
         rejected = row.get("action") == "rejected"
         ws.cell(row=r, column=1, value=row["project"]).font = F_BASE
         ws.cell(row=r, column=2, value=row["metric"]).font = F_BASE
@@ -8770,8 +8783,25 @@ def write_review_queue(ws, review: pd.DataFrame, run_id: str | None):
             if not ws.cell(row=r, column=j).fill.fgColor.rgb or ws.cell(row=r, column=j).fill.patternType is None:
                 ws.cell(row=r, column=j).fill = fill
         r += 1
+    last_open = r - 1
+    if answered:
+        r += 1
+        ws.cell(row=r, column=1, value=f"ANSWERED — not open ({len(answered)}): decided in config.REVIEW_ANSWERED, "
+                                       f"with the numbers; listed so the decision is on the sheet, never counted as "
+                                       f"open work").font = F_SUB
+        r += 1
+        for row, a in answered:
+            vals = [row["project"], row["metric"], row.get("date") or "", row.get("prior_date") or "",
+                    row.get("value"), row.get("prior_value"), "", row.get("reason") or "",
+                    f"ANSWERED: {a['decision']}", str(row.get("source") or ""), row.get("tier"), a["why"]]
+            for j, v in enumerate(vals, start=1):
+                if isinstance(v, float) and pd.isna(v):
+                    v = None
+                c = ws.cell(row=r, column=j, value=v if not isinstance(v, float) else float(v))
+                c.font = F_SUB
+            r += 1
     ws.freeze_panes = "A5"
-    ws.auto_filter.ref = f"A4:L{r - 1}"
+    ws.auto_filter.ref = f"A4:L{max(last_open, 4)}"
     _set_widths(ws, {"A": 16, "B": 26, "C": 11, "D": 13, "E": 18, "F": 18, "G": 11, "H": 18, "I": 15, "J": 26, "K": 6, "L": 64})
 
 
@@ -9595,7 +9625,10 @@ def build_workbook(store, path: Path | str, run_id: str | None = None,
         import coverage_audit                              # noqa: PLC0415
         COVERAGE_ROWS.extend(coverage_audit.audit(wb, TRAJECTORY_ROWS, FLOWS_ROWS, groups=_LAST_GROUPS,
                                                   sanity_hits=SANITY_HITS, windows=dict(_WINDOWS)))
-        coverage_audit.write(wb, COVERAGE_ROWS, Path(path).with_name("coverage_audit.csv"))
+        board = coverage_audit.scoreboard(COVERAGE_ROWS, BOARD_INPUTS["gaps"], BOARD_INPUTS["review_open"])
+        coverage_audit.write(wb, COVERAGE_ROWS, Path(path).with_name("coverage_audit.csv"), board=board)
+        SCOREBOARD_LINES[:] = scoreboard_lines(board)
+        _write_runlog_scoreboard(ws_log, SCOREBOARD_LINES)
     except Exception as e:  # noqa: BLE001
         wb.create_sheet("Coverage").cell(1, 1, value=f"COVERAGE AUDIT NOT RUN: {type(e).__name__}: {str(e)[:300]}")
     wb.save(path)
@@ -9608,7 +9641,14 @@ PREVIOUS_SNAPSHOT: dict = {}    # {"date", "values"} — the previous run's snap
 
 
 def _write_sanity(ws, found: list) -> None:
-    """The sanity-rule hits, under the Review Queue's own rows."""
+    """The sanity-rule hits, under the Review Queue's own rows. A headline_lost hit that config.REGRESSION_ALLOWLIST
+    covers (the Coverage tab already reads it N/A BY DESIGN) is listed under ANSWERED with the allowance's reason, not
+    as an open hit (G4 7b)."""
+    allowed = [(h, config.regression_allowance(h[0], h[2]) if h[1] == "headline_lost" else None) for h in found]
+    answered = [(h, a) for h, a in allowed if a is not None]
+    found = [h for h, a in allowed if a is None]
+    for proj, _rule, _d in found:
+        BOARD_INPUTS["review_open"][str(proj)] += 1
     r = ws.max_row + 3
     ws.cell(row=r, column=1, value=f"SANITY RULES — {len(found)} hit(s) on this build's numbers (sanity.py): FDV < "
                                    f"market cap; circulating > total; market cap != price x circulating shown; "
@@ -9620,3 +9660,41 @@ def _write_sanity(ws, found: list) -> None:
         c = ws.cell(row=r + i, column=3, value=detail)
         c.font = F_BASE
         c.fill = FILL_REVIEW
+    r += len(found) + 2
+    if answered:
+        ws.cell(row=r, column=1, value=f"ANSWERED — not open ({len(answered)}): headlines lost on purpose, named in "
+                                       f"config.REGRESSION_ALLOWLIST with the reason and the date they clear by "
+                                       f"(Coverage: N/A BY DESIGN)").font = F_SUB
+        for i, ((proj, rule, detail), a) in enumerate(answered, start=1):
+            ws.cell(row=r + i, column=1, value=proj).font = F_SUB
+            ws.cell(row=r + i, column=2, value=f"{rule} — ANSWERED").font = F_SUB
+            ws.cell(row=r + i, column=3, value=f"{detail[:200]} || allow-listed until {a.get('until', '-')}: "
+                                               f"{a['reason']}"[:600]).font = F_SUB
+
+
+# THE SCOREBOARD (G4 item 7f): counts the Gap Report and the Review Queue leave here as they are written, for the block
+# at the top of Coverage and the Run Log's per-project line
+BOARD_INPUTS: dict = {"gaps": {}, "review_open": Counter()}
+SCOREBOARD_LINES: list = []     # the Run Log's per-project scoreboard lines of the last build
+
+
+def scoreboard_lines(board: dict) -> list[str]:
+    """One line per project (ALL first): the scoreboard as text, for the Run Log and the console."""
+    out = []
+    for p, b in board.items():
+        out.append(f"SCOREBOARD {p}: VERIFIED {b['VERIFIED']} · LIVE-UNVERIFIED {b['LIVE-UNVERIFIED']} · N/A {b['N/A']} · "
+                   f"NOT WIRED {b['NOT WIRED']} · BROKEN {b['BROKEN']} · CHECK {b['CHECK']} · Gap P4 {b['Gap P4']} / "
+                   f"P5 {b['Gap P5']} / P6 {b['Gap P6']} · Review Queue {b['Review Queue']} · verified share "
+                   f"{b['Verified share']}")
+    return out
+
+
+def _write_runlog_scoreboard(ws, lines: list[str]) -> None:
+    """The scoreboard at the top of the Run Log (under its title), one line per project — after every build, so after
+    every full run (G4 7f)."""
+    if not lines:
+        return
+    ws.insert_rows(4, amount=len(lines) + 2)
+    ws.cell(row=4, column=1, value="SCOREBOARD — this build (the same block opens the Coverage tab)").font = F_BOLD
+    for i, line in enumerate(lines, start=5):
+        ws.cell(row=i, column=1, value=line).font = F_BASE

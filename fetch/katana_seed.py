@@ -132,8 +132,11 @@ def run(reader, out: FetchOutput, path: Path | None = None, chunk: int = CHUNK) 
     excluded = {a.lower() for a in spec.get("exclude_counterparties") or []}
     counted = [e for e in outs if topic_address(e["topics"][2]) not in internal | excluded]
     dec = int(c.functions.decimals().call())
-    day_of = date_blocks(sorted({e["blockNumber"] for e in counted}),
-                         lambda b: _ts(reader, chain, st, b))
+    blocks = sorted({e["blockNumber"] for e in counted})
+    log.info("--seed katana_claims: reconciled; dating %s payout(s) in %s distinct block(s) (block times read only where "
+             "a day boundary can fall; progress every 30 s)", f"{len(counted):,}", f"{len(blocks):,}")
+    day_of = date_blocks(blocks, lambda b: _ts(reader, chain, st, b), say=lambda m: log.info("--seed katana_claims: %s", m))
+    log.info("--seed katana_claims: dated %s block(s); %d block time(s) cached", f"{len(day_of):,}", len(st["ts"]))
     _save(path, st)
     by_day = defaultdict(float)
     for e in counted:
@@ -165,14 +168,21 @@ def _ts(reader, chain: str, st: dict, block: int) -> int:
     return st["ts"][k]
 
 
-def date_blocks(blocks: list[int], ts) -> dict[int, pd.Timestamp]:
+def date_blocks(blocks: list[int], ts, say=None, every: float = 30.0) -> dict[int, pd.Timestamp]:
     """{block: its UTC day} for sorted `blocks`, asking ts(block) only where a day boundary can fall: timestamps never
     decrease with the block number, so when the first and last block of a run share a day every block between does too
-    (~ days x log2(events a day) calls instead of one per block)."""
+    (~ days x log2(events a day) calls instead of one per block). `say(msg)` reports progress every `every` seconds
+    (G4 item 4: this phase ran ~16 minutes with no output)."""
+    import time as _time
     out: dict[int, pd.Timestamp] = {}
     day = lambda b: pd.Timestamp(ts(b), unit="s").normalize()  # noqa: E731
     stack = [(0, len(blocks) - 1)] if blocks else []
+    t0 = last = _time.monotonic()
     while stack:
+        if say and _time.monotonic() - last >= every:
+            last = _time.monotonic()
+            say(f"dating payouts: {len(out):,} of {len(blocks):,} block(s) dated ({len(out) / max(1, len(blocks)):.0%}), "
+                f"{len(stack)} range(s) left, {last - t0:.0f}s in")
         i, j = stack.pop()
         di, dj = day(blocks[i]), day(blocks[j])
         if di == dj:

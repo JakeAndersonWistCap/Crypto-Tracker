@@ -27,13 +27,49 @@ _STACK: list = []
 _LOCK = threading.Lock()
 
 
+# ROUND G4 item 4 (Jake's run 2026-10-18 22:06): a U+2212 minus sign raised UnicodeEncodeError on a cp1252 console
+# and the whole log line was lost. On a console that cannot encode a character, the common typography is written in
+# ASCII (− -> -, — -> -, × -> x, ≠ -> !=, …) and anything else becomes "?": a line is never dropped.
+_CONSOLE_MAP = str.maketrans({"\u2212": "-", "\u2014": "-", "\u2013": "-", "\u2026": "...", "\u2192": "->",
+                              "\u2190": "<-", "\u00b1": "+/-", "\u00f7": "/", "\u00d7": "x", "\u201c": '"',
+                              "\u201d": '"', "\u2018": "'", "\u2019": "'", "\u2264": "<=", "\u2265": ">=",
+                              "\u2260": "!=", "\u2248": "~", "\u00a0": " ", "\u2022": "*", "\u2713": "ok"})
+
+
+class ConsoleSafe:
+    """A text stream that never raises on a character its console cannot encode."""
+
+    def __init__(self, stream):
+        self._s = stream
+        self._enc = getattr(stream, "encoding", None) or "ascii"
+
+    def write(self, text):
+        t = str(text).translate(_CONSOLE_MAP)
+        return self._s.write(t.encode(self._enc, "replace").decode(self._enc, "replace"))
+
+    def __getattr__(self, name):
+        return getattr(self._s, name)
+
+
+def console_can_encode(stream, sample: str = "\u2212\u2014\u00d7") -> bool:
+    try:
+        sample.encode(getattr(stream, "encoding", None) or "ascii")
+        return True
+    except (UnicodeEncodeError, LookupError):
+        return False
+
+
 def line_buffered() -> None:
-    """stdout and stderr flush at every newline, also when piped (Tee-Object, | tee, > file)."""
-    for s in (sys.stdout, sys.stderr):
+    """stdout and stderr flush at every newline, also when piped (Tee-Object, | tee, > file) — and never raise on a
+    character the console cannot encode (G4 item 4)."""
+    for name in ("stdout", "stderr"):
+        s = getattr(sys, name)
         try:
             s.reconfigure(line_buffering=True)
         except (AttributeError, ValueError):          # a replaced stream (pytest capture) has no reconfigure
             pass
+        if not isinstance(s, ConsoleSafe) and not console_can_encode(s):
+            setattr(sys, name, ConsoleSafe(s))
 
 
 def _fmt(seconds: float) -> str:

@@ -5,7 +5,9 @@ sanity.py — rules no published figure may break (Jake's review of the 97b29ae 
 Each rule reads the EVALUATED workbook (the numbers a reader sees) and returns (project, rule, detail):
   fdv_below_mcap        FDV < market cap
   circ_above_total      the circulating supply used > total supply
-  mcap_not_price_x_circ market cap != spot price x the circulating supply shown (beyond 0.5%)
+  mcap_not_price_x_circ market cap != spot price x the circulating supply shown (beyond 0.5%), both of one date
+  mcap_stale            the market cap is dated before the spot price: its circulating input stopped refreshing
+                        (named, with its last date; like for like the market cap agrees by construction — G4 item 2)
   buyback_above_revenue actual buyback $ > revenue $ by more than 5% with no documented funding source
   status_contradicts    a buyback / burn status label contradicts the data (a measured flow > 0 under n/a /
                         unconfirmed / none; or an 'active' label with no flow measured in the window)
@@ -117,10 +119,22 @@ def hits(wb, value) -> list[tuple[str, str, str]]:
             found.append((p, "fdv_below_mcap", f"FDV ${fdv:,.0f} < market cap ${mcap:,.0f}"))
         if circ and total and circ > total * (1 + 1e-9):
             found.append((p, "circ_above_total", f"circulating used {circ:,.0f} > total supply {total:,.0f}"))
-        if mcap and circ and px and abs(mcap - px * circ) / mcap > TOL_MCAP:
-            # THE TWO SIDES' DATES AND PRICES (G3 item 5): the market cap implies a price (÷ the circulating shown); a
-            # gap that is only the price moving between their dates says so, a stock counted on one side does not
-            md, pd_ = dates.get((p, "market_cap_usd")), dates.get((p, "price_usd"))
+        md, pd_ = dates.get((p, "market_cap_usd")), dates.get((p, "price_usd"))
+        if mcap and circ and px and md and pd_ and md < pd_:
+            # LIKE WITH LIKE (Round G4 item 2): the market cap is price x the circulating used ON ITS OWN DATE
+            # (build_workbook._market_cap_views), so against its own day it agrees by construction; against today's
+            # spot the gap is the price move plus whatever stopped the circulating read. That is a STALE input, named
+            # with its last date — not a stock one side counts and the other does not.
+            prim = config.circulating_primary_metric(p)
+            cd = dates.get((p, prim)) or dates.get((p, "circulating_supply_used"))
+            found.append((p, "mcap_stale",
+                           f"market cap ${mcap:,.0f} is dated {md} (price {mcap / circ:,.6g} x circulating "
+                           f"{circ:,.0f} that day — like for like it agrees); spot price {px:,.6g} is dated {pd_}. "
+                           f"{prim} last stored {cd or '?'}: the circulating read has not refreshed, so the market "
+                           f"cap cannot move to today (against today's spot it would read "
+                           f"{px * circ / mcap - 1:+.2%})"))
+        elif mcap and circ and px and abs(mcap - px * circ) / mcap > TOL_MCAP:
+            # the same date on both sides and still apart: a real difference in what is counted
             found.append((p, "mcap_not_price_x_circ",
                            f"market cap ${mcap:,.0f} (dated {md or '?'}; implies price {mcap / circ:,.6g} on the "
                            f"circulating shown) vs spot price {px:,.6g} (dated {pd_ or '?'}) x circulating shown "

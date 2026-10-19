@@ -44,7 +44,7 @@ Sky,mkr_supply_unconverted,83465.89,MKR,2026-10-13,primary (eth_call),MKR.totalS
 Sky,sky_total_supply,23452400000,SKY,2026-10-13,primary (eth_call),,0.1%,
 Sky,spell_burn_2026-09-13,2860943.76,SKY,2026-09-13,primary (executive + chain),,exact,
 Sky,spell_burn_2026-10-12,7372288,SKY,2026-10-12,primary (executive + chain),,exact,
-Sky,net_revenue_sep_2026,14640000,USDS,2026-09-30,primary (forum TMF thread 28153),https://forum.skyeco.com/t/treasury-management-function-tmf-configurations/28153,2%,Jul 10.52M; Aug 15.75M
+Sky,net_revenue_sep_2026,14635947.43,USDS,2026-09-30,primary (Soter Labs MSC #13 consolidated report; TMF thread 28153 post 8),https://github.com/soterlabs/settlement-cycle/blob/536f1492089ed82fbf6eaabb956f7a194b887d47/settlements/sky_total/2026-09/summary.md,2%,accrual basis: MSC leg 13927348.22 + non-MSC leg 708599.21 (G4 7a); Jul 10517426 (MSC #11); Aug 15745296 (MSC #12)
 Sky,lssky_total_supply,17398182790.33,SKY,2026-10-18,primary (eth_call lsSKY.totalSupply),0xf9A9cfD3229E985B91F99Bc866d42938044FFa1C at Ethereum block 26219809,0.5%,Round G phase 3; the staked headline (locked_tokens)
 Ether.fi,total_supply,998535999,ETHFI,2026-10-13,primary (eth_call),,exact,1464000 burned Aug-Sep 2025 from 0x2f5301...Fd0F
 Ether.fi,sethfi_vault_assets,109950000,ETHFI,2026-10-13,primary (eth_call),sETHFI vault 0x86B5...0161 (88.05M shares),1%,

@@ -190,11 +190,20 @@ class DailyChecks:
             d["marks"] = [m for m in d["marks"] if m[3] != tier]
             return before - len(d["marks"])
 
+    last_dropped: list = []
+
     @classmethod
-    def commit(cls) -> int:
-        """Write every buffered mark (after the store upsert succeeded) and stop deferring. Returns how many."""
+    def commit(cls, verify=None) -> int:
+        """Write every buffered mark (after the store upsert succeeded) and stop deferring. Returns how many.
+        verify(key) -> bool (Round G4 item 2): a mark whose series did NOT reach the store this run (rows refused by
+        validation, held for review) is dropped — its read runs again — and listed in DailyChecks.last_dropped."""
         with cls._defer_lock:
             marks, cls._defer = cls._defer["marks"], {"on": False, "marks": [], "dropped": set()}
+        if verify is not None:
+            cls.last_dropped = sorted({k for _f, k, _v, _t in marks if not verify(k)})
+            marks = [m for m in marks if m[1] not in cls.last_dropped]
+        else:
+            cls.last_dropped = []
         by_file: dict = {}
         for f, key, value, _tier in marks:
             by_file.setdefault(f, {})[key] = value

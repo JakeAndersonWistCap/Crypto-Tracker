@@ -359,17 +359,12 @@ def regression_rows(sanity_hits) -> list[dict]:
     a `match` substring of the hit: the header or the reason it is now n/a), with its reason and clear-by date; then
     N/A BY DESIGN with that reason."""
     import config                                          # noqa: PLC0415
-    import pandas as pd                                    # noqa: PLC0415
     out = []
     for proj, rule, detail in sanity_hits:
         if rule != "headline_lost":
             continue
-        allow = next((a for a in config.REGRESSION_ALLOWLIST if a["project"] == proj
-                      and any(x in detail for x in a.get("match") or (a.get("header", ""),))
-                      and (not a.get("until") or pd.Timestamp.today().normalize() <= pd.Timestamp(a["until"]))
-                      # D2: an allowance tied to a declared gap lapses the moment the gap is closed
-                      and (not a.get("while_outflow_incomplete")
-                           or config.outflow_incomplete(proj, [a["while_outflow_incomplete"]]))), None)
+        # D2: an allowance tied to a declared gap lapses the moment the gap is closed (config.regression_allowance)
+        allow = config.regression_allowance(proj, detail)
         status = "N/A BY DESIGN" if allow else "BROKEN"
         why = (f"allow-listed ({allow['reason']}): {detail}" if allow else
                f"REGRESSION — {detail}; not on config.REGRESSION_ALLOWLIST")
@@ -413,23 +408,67 @@ def counts(rows: list[dict]) -> dict:
     return c
 
 
-def write(wb, rows: list[dict], csv_path: Path | None = None) -> None:
+BOARD_COLS = ("VERIFIED", "LIVE-UNVERIFIED", "N/A", "NOT WIRED", "BROKEN", "CHECK", "BLANK-UNEXPLAINED", "Gap P4",
+              "Gap P5", "Gap P6", "Review Queue", "Verified share")
+
+
+def scoreboard(rows: list[dict], gaps: dict | None = None, review_open: dict | None = None) -> dict:
+    """THE SCOREBOARD (G4 item 7f, Jake 2026-10-18): per project, ALL first — the Coverage statuses (N/A = N/A BY
+    DESIGN), the Gap Report's P4 / P5 / P6 rows ({(project, priority): n}), the Review Queue's OPEN rows ({project: n},
+    answered rows excluded) and the verified share (T4: VERIFIED ÷ rows holding a value)."""
+    gaps, review_open = gaps or {}, review_open or {}
+    projects = sorted({r["Project"] for r in rows if r["Project"] not in ("(all)", "")}
+                      | {p for p, _ in gaps} | set(review_open))
+    blank = lambda: {k: 0 for k in BOARD_COLS if k != "Verified share"}  # noqa: E731
+    board = {"ALL": blank(), **{p: blank() for p in projects}}
+    for r in rows:
+        k = "N/A" if r["Status"] == "N/A BY DESIGN" else r["Status"]
+        if k not in board["ALL"]:
+            continue
+        board["ALL"][k] += 1
+        if r["Project"] in board and r["Project"] != "ALL":
+            board[r["Project"]][k] += 1
+    for (p, pr), n in gaps.items():
+        if pr in (4, 5, 6):
+            board["ALL"][f"Gap P{pr}"] += n
+            if p in board:
+                board[p][f"Gap P{pr}"] += n
+    for p, n in review_open.items():
+        board["ALL"]["Review Queue"] += n
+        if p in board:
+            board[p]["Review Queue"] += n
+    for p, b in board.items():
+        held = b["VERIFIED"] + b["LIVE-UNVERIFIED"] + b["CHECK"] + b["BROKEN"]
+        b["Verified share"] = f"{b['VERIFIED']}/{held} = {b['VERIFIED'] / held:.0%}" if held else "-"
+    return board
+
+
+def write(wb, rows: list[dict], csv_path: Path | None = None, board: dict | None = None) -> None:
     from build_workbook import F_BOLD, F_HEAD, FILL_AMBER, FILL_HEAD, FILL_RED, _title  # noqa: PLC0415
     ws = wb.create_sheet(SHEET)
     _title(ws, "Coverage — every column against SPEC.md",
            "One row per SPEC concept x project x column on Master, A1–A4, CP, Flows and Trajectory, plus SPEC.md's NOT "
            "WIRED list. Status from the cell: VERIFIED (green band) · LIVE-UNVERIFIED · N/A BY DESIGN + reason · NOT "
            "WIRED + route · BROKEN + error · BLANK-UNEXPLAINED. Targets: 0 BLANK-UNEXPLAINED, 0 BROKEN, 0 "
-           "MATCHES-SPEC = no. Also written as coverage_audit.csv.")
-    c = counts(rows)
-    for i, (k, v) in enumerate(c.items()):
-        ws.cell(3, 1 + 2 * i, value=k).font = F_BOLD
-        ws.cell(3, 2 + 2 * i, value=v)
-    share = verified_share(rows)
-    ws.cell(4, 1, value="VERIFIED share (T4)").font = F_BOLD
-    for i, (p, (v, n, x)) in enumerate(share.items()):
-        ws.cell(4, 2 + i, value=f"{p}: {v}/{n} = {x:.0%}")
-    hr = 5
+           "MATCHES-SPEC = no. Also written as coverage_audit.csv. The SCOREBOARD below opens every build (G4 7f); "
+           "Review Queue counts OPEN rows only.")
+    board = board if board is not None else scoreboard(rows)
+    ws.cell(3, 1, value="SCOREBOARD").font = F_BOLD
+    ws.cell(3, 3, value=f"MATCHES-SPEC = no: {counts(rows)['MATCHES-SPEC = no']}")
+    for j, h in enumerate(("Project",) + BOARD_COLS, start=1):
+        cell = ws.cell(4, j, value=h)
+        cell.font, cell.fill = F_HEAD, FILL_HEAD
+    for i, (p, b) in enumerate(board.items(), start=5):
+        c1 = ws.cell(i, 1, value=p)
+        if p == "ALL":
+            c1.font = F_BOLD
+        for j, h in enumerate(BOARD_COLS, start=2):
+            cell = ws.cell(i, j, value=b[h])
+            if h in ("BROKEN", "BLANK-UNEXPLAINED") and b[h]:
+                cell.fill = FILL_RED
+            elif h == "CHECK" and b[h]:
+                cell.fill = FILL_AMBER
+    hr = 5 + len(board) + 1
     for j, h in enumerate(HEAD, start=1):
         cell = ws.cell(hr, j, value=h)
         cell.font, cell.fill = F_HEAD, FILL_HEAD

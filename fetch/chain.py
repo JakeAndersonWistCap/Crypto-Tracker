@@ -1278,6 +1278,9 @@ class ChainReader:
                     continue
                 if hint is not None and hint < chunk and (hint >= self.MIN_LOG_CHUNK or results_cap):
                     chunk = max(1, hint)
+                    # a DENSITY narrowing (too many results here) grows back after; a server's range limit does not
+                    if results_cap:
+                        self.__dict__.setdefault("_dense", set()).add(chain)
                     log.info("chain %s: eth_getLogs — %s states %d blocks; chunk set to it (read, not halved)",
                              chain, rpc_host(cur_url), chunk)
                     continue
@@ -1488,12 +1491,31 @@ class ChainReader:
     def _rpc_traverse(self, chain: str, base: dict, from_block: int, to_block: int, chunk: int,
                       only: list | None = None) -> tuple[list, int, int]:
         """The chunked RPC eth_getLogs over [from_block, to_block] (scan_logs' last route)."""
+        from .base import set_phase
         block, chunks, used, out = from_block, 0, chunk, []
+        want = chunk                                 # the size asked for; a narrowed chunk grows back to it
+        t0 = last_said = time.monotonic()
         while block <= to_block:
+            set_phase(f"{chain} eth_getLogs walk: chunk {chunks + 1} at block {block:,} of {to_block:,} "
+                      f"({used:,} blocks a call, {len(out):,} log(s) so far)")
             logs, upper, used = (self._get_logs_resilient(chain, base, block, to_block, used, only=only) if only
                                  else self._get_logs_resilient(chain, base, block, to_block, used))
             chunks += 1
             out.extend(logs)
+            # A NARROWED CHUNK GROWS BACK (Round G4 item 1): a "too many results — try [a, b]" hint narrows the chunk
+            # for one dense stretch; kept narrow, the rest of the walk crawled in tiny ranges. It doubles after each
+            # served call, up to the size asked for (a range the server refuses narrows it again).
+            if used < want and chain in self.__dict__.get("_dense", ()):
+                used = min(want, used * 2)
+                if used == want:
+                    self._dense.discard(chain)
+            # A LONG WALK SAYS SO (Round G4 item 1): one line every 30 s — blocks covered, chunk size, endpoint
+            if time.monotonic() - last_said >= 30:
+                last_said = time.monotonic()
+                log.info("chain %s: eth_getLogs walk %.0fs in — %d chunk(s), block %s of %s (%.0f%%), %s blocks a "
+                         "call, %d log(s), via %s", chain, last_said - t0, chunks, f"{upper:,}", f"{to_block:,}",
+                         100.0 * (upper - from_block + 1) / max(1, to_block - from_block + 1), f"{used:,}", len(out),
+                         self.log_endpoint_used.get(chain, "?"))
             # ** upper, NOT block + used. ** _get_logs_resilient may have NARROWED mid-scan, and
             # advancing by the requested size after a narrowed chunk would skip every block
             # between the narrowed end and the assumed one — silently, and only on the runs

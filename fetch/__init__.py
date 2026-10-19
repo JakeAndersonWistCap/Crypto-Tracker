@@ -184,7 +184,8 @@ def _l2_tiers() -> list[str]:
 
 
 _at = next(i for i, t in enumerate(TIER_ORDER) if t[0] == "explorer_gauge") + 1
-TIER_ORDER[_at:_at] = [(t, 2, (lambda tier: (lambda ctx: LogScan(own_tier=tier)))(t)) for t in _l2_tiers()]
+TIER_ORDER[_at:_at] = [(t, 2, (lambda tier: (lambda ctx: LogScan(own_tier=tier, last_dates=ctx.get("last_dates"))))(t))
+                       for t in _l2_tiers()]
 
 
 def _resolve_tier_collisions(out: FetchOutput) -> None:
@@ -591,9 +592,15 @@ def _derive_pool_release(out: FetchOutput, projects: list[dict], prior_delta: di
                         "pool_release_tokens: NOT derived — a measured release (Transfer events "
                         "out of the pool wallets) is in the frame this run and is primary.", tier=2)
             continue
-        circ, total = latest.get((name, "circulating_supply")), latest.get((name, "total_supply"))
+        # THE PAIR IS BOTH COINGECKO'S (Round G4 item 3): where our total is the net read-time view
+        # (config.TOTAL_SUPPLY_NET — Hyperliquid, GEODNET) no total_supply row is ever in the run ("missing
+        # total_supply in this run" on every run since G2-D2); CoinGecko's own total is, as total_supply_coingecko —
+        # the same source as circulating_supply, and the figure total_supply held for them before G2. Never our net
+        # total against CoinGecko's circulating: that would difference two classifications.
+        tm = "total_supply_coingecko" if name in config.TOTAL_SUPPLY_NET else "total_supply"
+        circ, total = latest.get((name, "circulating_supply")), latest.get((name, tm))
         if circ is None or total is None:
-            missing = [m for m, v in (("circulating_supply", circ), ("total_supply", total))
+            missing = [m for m, v in (("circulating_supply", circ), (tm, total))
                        if v is None]
             out.skipped(SOURCE_DERIVED, name,
                         f"pool_release_tokens: needs BOTH circulating_supply and total_supply "
@@ -601,12 +608,12 @@ def _derive_pool_release(out: FetchOutput, projects: list[dict], prior_delta: di
                         f"between the two, so one of them alone says nothing.", tier=2)
             continue
         p_circ = prior_delta.get((name, "circulating_supply"))
-        p_total = prior_delta.get((name, "total_supply"))
+        p_total = prior_delta.get((name, tm))
         if p_circ is None or p_total is None:
             out.skipped(SOURCE_DERIVED, name,
                         f"pool_release_tokens: a FLOW needs an earlier-dated reading of both "
                         f"stocks to difference against, and the store has none for "
-                        f"{'circulating_supply' if p_circ is None else 'total_supply'}. Not a "
+                        f"{'circulating_supply' if p_circ is None else tm}. Not a "
                         f"gap in the source: the series simply has no prior yet.", tier=2)
             continue
         d_circ, d_total = float(circ[0]) - float(p_circ), float(total[0]) - float(p_total)
@@ -616,7 +623,7 @@ def _derive_pool_release(out: FetchOutput, projects: list[dict], prior_delta: di
         # independently, so their prior readings can sit on different dates — and subtracting a
         # 7-day change from a 1-day change produces a number with no referent that still looks
         # like a release.
-        dc, dt = prior_dates.get((name, "circulating_supply")), prior_dates.get((name, "total_supply"))
+        dc, dt = prior_dates.get((name, "circulating_supply")), prior_dates.get((name, tm))
         if dc is not None and dt is not None and pd.Timestamp(dc) != pd.Timestamp(dt):
             out.skipped(SOURCE_DERIVED, name,
                         f"pool_release_tokens: the two stocks' prior readings are on DIFFERENT "
@@ -629,7 +636,7 @@ def _derive_pool_release(out: FetchOutput, projects: list[dict], prior_delta: di
                       f"{SOURCE_DERIVED}:d_circulating-d_total", 2, when),
                 SOURCE_DERIVED, name,
                 f"pool_release_tokens={release:,.0f} = d(circulating) {d_circ:,.0f} - "
-                f"d(total) {d_total:,.0f}. RELEASE, NOT ISSUANCE: supply that already existed "
+                f"d({tm}) {d_total:,.0f}. RELEASE, NOT ISSUANCE: supply that already existed "
                 f"entering circulation. Derived from two independently-sourced CoinGecko "
                 f"stocks, so it carries their classification of what counts as circulating.", 2)
 
@@ -1752,8 +1759,10 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
     from .base import set_backfill
     set_backfill(backfill)
     # THE STALL BREAKER IS PER RUN (Round G3 item 1): a host that stalled yesterday is asked again today
+    from .base import host_stall_reset
     from .chain import BREAKER
     BREAKER.reset()
+    host_stall_reset()
     out = FetchOutput()
     todo = [(name, tier, build) for name, tier, build in TIER_ORDER
             if not sources or name in sources]
@@ -2090,6 +2099,10 @@ def _abandon(name, st, budget) -> tuple:
     kept = FetchOutput(frames=list(sub.frames), log=list(sub.log), review=list(sub.review),
                        gaps=list(sub.gaps), staged=list(sub.staged), current=set(sub.current))
     waiting = [what for src, what, _ in inflight() if src == name]
+    # THE LAST PHASE ENTERED (Round G4 item 1): with nothing in flight, what the tier was doing — and since when
+    from .base import last_phase
+    lp = last_phase(name)
+    doing = f"{lp[0]} (entered {lp[1]:.0f}s before the cut-off)" if lp else "no phase recorded"
     # NAME WHAT WAS GAPPED (Jake's run 2026-10-08 11:27: "everything else it serves is gapped" named nothing). An
     # adapter that lists what it planned to serve (LogScan.planned) has those not in the kept frames printed.
     planned = list(getattr(st.get("adapter"), "planned", None) or [])
@@ -2100,10 +2113,11 @@ def _abandon(name, st, budget) -> tuple:
               f"TIER TIMED OUT after {budget:.0f}s — abandoned and the run moved on. Kept the "
               f"{len(kept.frames)} frame(s) it had produced; everything else it serves is gapped "
               f"for this run" + (f": {', '.join(gapped)}" if gapped else "") + ". Still waiting on: "
-              f"{'; '.join(waiting) or 'nothing registered'}. Where the time went: {_http_summary(st)}.",
+              f"{'; '.join(waiting) or 'nothing registered'}. Last phase: {doing}. Where the time went: "
+              f"{_http_summary(st)}.",
               st["tier"])
-    log.warning("tier %s TIMED OUT after %.0fs — abandoned (waiting on: %s)", name, budget,
-                "; ".join(waiting) or "nothing registered")
+    log.warning("tier %s TIMED OUT after %.0fs — abandoned (waiting on: %s; last phase: %s)", name, budget,
+                "; ".join(waiting) or "nothing registered", doing)
     # ITS DAILY MARKS ARE DROPPED (Round G3 item 5): a tier cut off mid-read has not stored what it marked as read
     from .logcache import DailyChecks
     dropped = DailyChecks.discard_tier(name)

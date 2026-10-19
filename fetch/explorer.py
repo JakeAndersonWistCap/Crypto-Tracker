@@ -37,6 +37,7 @@ import logging
 import os
 import re
 import time
+import urllib.parse
 
 import config
 from .base import BudgetExhausted, Http, host_pace, sleep
@@ -138,8 +139,9 @@ class ExplorerLogs:
 
     def __init__(self, http: Http | None = None, pace_sleep=None):
         # 5 req/s is the free-tier ceiling on both; 0.25s keeps a margin under it.
+        # 30 s a read (G4 item 1): an explorer page answers in seconds; a 60 s wait, retried, held a tier for minutes
         self.http = http or Http(min_interval=float(config.EXPLORER_MIN_INTERVAL_S), retries=2,
-                                 ratelimit_reset_ms=True)
+                                 ratelimit_reset_ms=True, timeout=float(config.EXPLORER_READ_TIMEOUT_S))
         # ONE PACER PER HOST FOR THE WHOLE RUN (Jake, 2026-10-05): each adapter used to hold its own
         # ExplorerLogs and its own spacing, so chainlink_fees, logscan and balance_flow together drew
         # HTTP 429 from base.blockscout.com. Every call now waits on fetch.base.host_pace for its host —
@@ -220,7 +222,10 @@ class ExplorerLogs:
                          sleep=self._pace_sleep)
         for attempt in range(1, BUSY_TRIES + 1):
             self._check_budget()
-            pace.wait()
+            pace.wait(urllib.parse.urlsplit(url).netloc)
+            from .base import set_phase
+            set_phase(f"{name} getLogs on chain {chain_id}: request {self.requests.get(name, 0) + 1} "
+                      f"({params.get('fromBlock')}..{params.get('toBlock')})")
             try:
                 body = (self.http.get(url, params=query, deadline=self._deadline)
                         if self._deadline is not None else self.http.get(url, params=query))
@@ -295,7 +300,9 @@ class ExplorerLogs:
                 raise ExplorerRefused(f"{name}: stopped at {cap} requests without exhausting the range — a "
                                       f"truncated history is not returned as a complete one")
             self._check_budget()
-            pace.wait()
+            pace.wait(urllib.parse.urlsplit(url).netloc)
+            from .base import set_phase
+            set_phase(f"{name} Transfers API on chain {chain_id}: page {n + 1}, {len(out):,} transfer(s) so far")
             body = {"jsonrpc": "2.0", "id": n + 1, "method": "alchemy_getAssetTransfers",
                     "params": [{**params, **({"pageKey": page_key} if page_key else {})}]}
             try:

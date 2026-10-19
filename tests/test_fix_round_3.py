@@ -138,7 +138,8 @@ def test_sky_reference_reads_the_pre_distribution_series():
     g = _groups("Sky", _sky_rows())
     r = {x["metric"]: x for x in rf.check(g)}["net_revenue_sep_2026"]
     assert r["ours"] == pytest.approx(15_379_185, abs=1)
-    assert "TMF series does not sit on one Block Analitica basis" in r["detail"]
+    assert "two different accounts" in r["detail"] and "13,927,348.22" in r["detail"]
+    assert r["status"] == "BROKEN"          # +5.08% against 2%: explained, not loosened (G4 7a)
 
 
 # ------------------------------------------------------------------------------------------------------- B7 references

@@ -19,6 +19,8 @@ import pandas as pd
 
 import config
 
+from .base import LogEntry
+
 SOURCE = "derived:onchain_total-noncirculating"
 
 
@@ -127,6 +129,22 @@ def check(out, h: pd.DataFrame, projects: list[dict]) -> None:
                 lock = (lock - config.locked_excluded_from_circulating(name)).clip(lower=0)
             ours = (ours - lock).dropna()
             basis = " (ours as FREE FLOAT: CoinGecko's circulating excludes staked/locked tokens)"
+        elif config.coingecko_counts_holdings(name) and st in ("established", "partial"):
+            # LIKE-FOR-LIKE, AS THE CREDIBILITY TAB ALREADY JUDGES IT (G4 7b, credibility in_circ): ours PLUS the
+            # documented wallets CoinGecko still counts, on CoinGecko's own total where ours is the chain read
+            # (TOTAL_SUPPLY_ONCHAIN_FIRST: − total_supply + total_supply_coingecko). Without it this check raised
+            # Ether.fi -16.10% every run (809,949,018 vs 965,350,000) — the definitional gap, not a disagreement.
+            # The tolerance is unchanged; a gap left beyond it is real.
+            counts = config.coingecko_counts_holdings(name)
+            for m in counts:
+                ours = (ours + _daily(h, name, m)).dropna()
+            basis = f" (ours + {' + '.join(counts)}, the wallets CoinGecko counts"
+            if name in config.TOTAL_SUPPLY_ONCHAIN_FIRST:
+                cg_tot, our_tot = _daily(h, name, "total_supply_coingecko"), _daily(h, name, spec.get("total") or "total_supply")
+                if not cg_tot.empty and not our_tot.empty:
+                    ours = (ours - our_tot + cg_tot).dropna()
+                    basis += f", on CoinGecko's own total (− {spec.get('total') or 'total_supply'} + total_supply_coingecko)"
+            basis += ")"
         cg = _daily(h, name, "circulating_supply")
         both = pd.concat([ours.rename("ours"), cg.rename("cg")], axis=1).dropna()
         if both.empty:
@@ -135,6 +153,18 @@ def check(out, h: pd.DataFrame, projects: list[dict]) -> None:
         if row["cg"] <= 0:
             continue
         diff = row["ours"] / row["cg"] - 1
+        static = spec.get("static_cross_check") or {}
+        if abs(diff) > tol and static.get("figure") and abs(row["cg"] / float(static["figure"]) - 1) < 1e-3:
+            # THE DOCUMENTED STATIC AGGREGATOR FIGURE (GEODNET, G4 7b): CoinGecko still shows the frozen figure the
+            # config records (static_cross_check, "never the judge" — Credibility in_circ_static); the bridge
+            # reconciliation judges circulating. Recorded on the Run Log, not queued; a CoinGecko figure that MOVES off
+            # it is reviewed again.
+            out.log.append(LogEntry(SOURCE, name, 0, "ok",
+                                    f"circulating vs CoinGecko: {row['cg']:,.0f} is still the documented static figure "
+                                    f"({static['who']}: {float(static['figure']):,.0f}; {static.get('why_static', '')}) "
+                                    f"— ours {row['ours']:,.0f} ({diff:+.2%}) is judged by the bridge reconciliation",
+                                    2))
+            continue
         if abs(diff) > tol:
             partial = f" The exclusion set is PARTIAL — {spec.get('missing')}, so ours reads high." \
                 if st == "partial" else ""

@@ -713,6 +713,29 @@ def main(argv=None) -> int:
         return 75
 
 
+def _mark_stored(frame):
+    """verify(key) for DailyChecks.commit: a key shaped <source>:<project>:<metric>[:…] whose metric and project are
+    known is kept only when that series is in the frame written to the store; any other key is kept (G4 item 2)."""
+    pairs = set() if frame is None or frame.empty else set(map(tuple, frame[["project", "metric"]].drop_duplicates()
+                                                              .to_numpy()))
+
+    def verify(key: str) -> bool:
+        parts = str(key).split(":")
+        if len(parts) >= 3 and parts[1] in config.PROJECT_BY_NAME and parts[2] in config.METRICS:
+            return (parts[1], parts[2]) in pairs
+        return True
+    return verify
+
+
+def _alchemy_report(log, what: str):
+    """Log what this process asked of Alchemy and the month so far (fetch/alchemy_usage.py); (line, level)."""
+    from fetch import alchemy_usage
+    line, level = alchemy_usage.report(fetch.today().strftime("%Y-%m"))
+    (log.warning if level else log.info)("%s (%s)%s", line, what, f" — {level}: the month is near the Free plan's "
+                                                                   f"allowance" if level else "")
+    return line, level
+
+
 def _main(args, log) -> int:
     load_dotenv(ROOT / ".env")
     # NO KEY IN ANY LOG LINE OR PRINT (2026-09-29): after .env, so its values are known secrets.
@@ -739,6 +762,8 @@ def _main(args, log) -> int:
               "aero_buyback": seed_aero_buyback, "aero_managed_locks": seed_aero_managed_locks,
               "mev_relays": lambda st_, log_: seed_mev_relays(st_, log_, args.seed_days)}[args.seed](st, log)
         st.close()
+        # SEEDS COUNT TOO (Round G4 item 6): the run's Alchemy usage and the month's total include every seed
+        _alchemy_report(log, f"--seed {args.seed}")
         return rc
 
     # ===== BUILD ONLY. =====
@@ -837,12 +862,15 @@ def _main(args, log) -> int:
     written = st.upsert(out.frame())
     log.info("upserted %d rows", written)
     log.info("daily checks: %d mark(s) written after the store write (none from an abandoned tier)",
-             DailyChecks.commit())
+             DailyChecks.commit(verify=_mark_stored(out.frame())))
+    if DailyChecks.last_dropped:
+        # A MARK WITHOUT ITS ROWS IS NOT KEPT (Round G4 item 2): Aerodrome's filing_managed_lock_tokens read "read today
+        # already" while no row of it reached the store, so circulating_supply_onchain stopped at 2026-10-14
+        log.warning("daily checks NOT kept (their series did not reach the store this run; read again next run): %s",
+                    ", ".join(DailyChecks.last_dropped))
     # WHAT THIS RUN ASKED OF ALCHEMY, AND THE MONTH SO FAR (Round G3 item 10): WARN at 80% of the Free plan's CU, a
     # FAILED line at 95% — before the allowance runs out, not after
-    line, level = alchemy_usage.report(fetch.today().strftime("%Y-%m"))
-    (log.warning if level else log.info)("%s%s", line, f" — {level}: the month is near the Free plan's allowance"
-                                                       if level else "")
+    line, level = _alchemy_report(log, "run")
     if level:
         from fetch.base import LogEntry
         out.log.append(LogEntry("alchemy_usage", None, 0, "failed" if level == "FAIL" else "warn", line, 2))
@@ -921,6 +949,10 @@ def _main(args, log) -> int:
     log.info("wrote %s — %d project(s) fetched, %d rendered from the store%s", WORKBOOK, len(projects), len(rendered),
              "" if len(rendered) == len(config.PROJECTS)
              else f" (the default scope; {len(config.PROJECTS)} configured, --all draws every one)")
+    # THE SCOREBOARD AFTER EVERY FULL RUN (G4 7f): the same per-project line the Run Log tab and Coverage open with
+    import build_workbook as _bw                           # noqa: PLC0415
+    for line in _bw.SCOREBOARD_LINES:
+        log.info("%s", line)
     st.close()
     return 0
 

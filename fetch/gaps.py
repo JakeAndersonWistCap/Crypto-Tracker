@@ -71,6 +71,11 @@ ACTIONABLE_SIGNALS = (
     "not verified", "unverified", "ambiguous", "not established", "no address", "needs sourcing",
     "symbol mismatch", "no deployed bytecode", "returned nothing this run", "no same-chain",
     "component(s) refused", "every component was refused", "is partial",
+    # A CONFIGURED ROUTE THAT STORED NOTHING THIS RUN IS NOT UNCOVERED (G4 7c, Jake's 65 P6 rows of 2026-10-18: 14 of
+    # Aerodrome's were the Foundation buyback window, the voter-rewards epoch read and CoinGecko's max_supply — each
+    # with its route and the command that runs it). P6 is "no source covers it, and none is configured to".
+    "stored nothing this run", "tier timed out this run", "source stalled this run", "returned no data for this series",
+    "produced nothing this run",
 )
 
 

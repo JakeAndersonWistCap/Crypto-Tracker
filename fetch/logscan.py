@@ -159,15 +159,33 @@ def _merge(cached: list, new: list) -> list:
 
 WINDOW_BUDGET_S = 120.0     # the reconciled-window fallback's own budget (fix round 2, R8)
 
+TIER_MARGIN_S = 15.0        # the scans stop this long before their tier's budget, to store what they read (G4 item 1)
+WINDOW_FLOOR_S = 30.0       # a window read with less time than this is not started (G4 item 1)
+
+
 class LogScan:
     """Runs every project's `log_scans`, each against one token and one or more holders."""
 
+    unbounded = False               # defaults for an instance built without __init__ (tests); __init__ sets both
+    _scan_deadline = None
+
+    def _share(self, want: float, reserve: float = 0.0) -> float:
+        """`want` seconds, capped at what is left of this scan's share of the tier's budget less `reserve` (G4 item 1)."""
+        if self._scan_deadline is None:
+            return float(want)
+        import time as _time
+        return max(1.0, min(float(want), self._scan_deadline - _time.monotonic() - reserve))
+
     def __init__(self, explorer: ExplorerLogs | None = None, reader=None,
-                 cache: LogCache | None = None, unbounded: bool = False, own_tier: str | None = None):
+                 cache: LogCache | None = None, unbounded: bool = False, own_tier: str | None = None,
+                 last_dates: dict | None = None):
         # own_tier: run ONLY the scans declaring that tier (Pendle's gauge scan, Jake's run 2026-10-08 11:27: a long
         # first seed starved the explorer tier into its 300s timeout); without it, those scans are skipped here.
         self.own_tier = own_tier
         self.planned: list[tuple[str, str]] = []     # (project, metric) this run means to serve — named on a timeout
+        # (project, metric) -> newest stored date (fetch ctx last_dates): a seeded history's live read starts there
+        self.last_dates = last_dates or {}
+        self._scan_deadline: float | None = None     # this scan's share of the tier's budget (G4 item 1)
         # unbounded: no per-scan budget — `token_metrics.py --seed geodnet` (2026-09-28) finishes
         # a first read in one sitting instead of 120s a run.
         self.unbounded = unbounded
@@ -211,11 +229,30 @@ class LogScan:
             self._declared_zero(p, spec, out)
         todo = [t for t in todo if not t[1].get("declared_zero")]
         self.planned = [(p["name"], spec.get("metric")) for p, spec in todo]
+        import re as _re
+        import threading as _th
+        import time as _time
+        from .base import set_phase
         from .chain import BREAKER, ChainStalled, redact_urls
         stalled: dict[str, str] = {}
         gapped: dict[str, list] = {}
-        for p, spec in todo:
+        src_stalled: dict[str, list] = {}               # explorer / API host -> [(project, spec)] (G4 item 1)
+        # A FAIR SHARE OF THE TIER'S BUDGET PER SCAN (Round G4 item 1): a scan's own budgets (full history 120-140 s,
+        # then the window 120 s) added up to more than its tier's 240 s, so the tier was cut off mid-scan — the window
+        # never stored and the scans after it never started ("kept 0 frames"). Each scan now gets the time left
+        # divided by the scans left, so every one ends inside the tier and saves what it read.
+        tier_deadline = None
+        if not self.unbounded:
+            from . import TIER_BUDGET_S, _budget          # noqa: PLC0415
+            tname = _th.current_thread().name
+            if tname in TIER_BUDGET_S:
+                tier_deadline = _time.monotonic() + _budget(tname) - TIER_MARGIN_S
+        for i, (p, spec) in enumerate(todo):
             chain = spec.get("chain") or "ethereum"
+            if tier_deadline is not None:
+                self._scan_deadline = _time.monotonic() + max(0.0, tier_deadline - _time.monotonic()) / (len(todo) - i)
+            set_phase(f"scan {spec.get('key')} ({i + 1}/{len(todo)}, {chain}): starting")
+            n_log = len(out.log)
             # A STALLED CHAIN IS NOT ASKED AGAIN THIS RUN (Round G3 item 1): its remaining scans are gapped at once and
             # named in ONE line below, and the other chains' scans (their own tiers) are untouched.
             why = stalled.get(chain) or BREAKER.chain_stalled(chain)
@@ -237,6 +274,12 @@ class LogScan:
                 out.fail(SOURCE, p["name"], f"{spec.get('key')}: scan crashed — {type(e).__name__}: "
                                             f"{redact_urls(e)}. The other scans ran.", TIER)
                 log.exception("%s/%s crashed", p["name"], spec.get("key"))
+            # A SOURCE THAT STALLED during this scan and left it with nothing (G4 item 1): named once, below
+            for e in out.log[n_log:]:
+                m = _re.search(r"HOST STALLED this run: ([^\s(]+)", str(e.message)) if e.status == "failed" else None
+                if m:
+                    src_stalled.setdefault(m.group(1), []).append((p["name"], spec))
+                    break
             # it stalled during this scan (STALL_AFTER timeouts on every host, or every host's last call timed out):
             # its series did not land, and nothing more is asked of the chain this run
             why = BREAKER.chain_stalled(chain) or (BREAKER.timed_out_all(chain) and BREAKER.mark_stalled(
@@ -244,6 +287,12 @@ class LogScan:
             if why:
                 stalled[chain] = why
                 gapped.setdefault(chain, []).append((p["name"], spec))
+        for host, items in src_stalled.items():
+            from .base import host_stalled as _hs
+            series = [f"{n}/{m}" for n, sp in items for m in (sp.get("metric"), sp.get("direct_metric")) if m]
+            out.fail(SOURCE, items[0][0], f"SOURCE STALLED THIS RUN: {host} — {_hs(host) or 'timed out'}. Series "
+                                          f"gapped: {', '.join(series)} (each fell back where another route serves "
+                                          f"it; these did not land). Other series are unaffected.", TIER)
         for chain, why in stalled.items():
             series = [f"{n}/{m}" for n, sp in gapped.get(chain, []) for m in (sp.get("metric"), sp.get("direct_metric"))
                       if m]
@@ -491,13 +540,32 @@ class LogScan:
         if not daily.due(f"window:{key}", day):
             return False
         start = today() - pd.Timedelta(days=days_n)
+        # A SEEDED HISTORY READS ONLY THE DAYS AFTER ITS LAST STORED ROW (Round G4 item 1, Katana: --seed katana_claims
+        # stored the whole history; reading 100 days a day put a stalled RPC in front of every one of them). The window
+        # starts at the newest stored day, so a stall gaps today only.
+        last = self.last_dates.get((name, metric)) if spec.get("incremental_after_seed") else None
+        if last is not None and pd.Timestamp(last).normalize() > start:
+            start = pd.Timestamp(last).normalize()
+            if start >= today().normalize() - pd.Timedelta(days=1):
+                out.log.append(LogEntry(SOURCE, name, 0, "ok", f"{key}: up to date — stored through {start.date()} "
+                                                               f"(seeded history; nothing newer to read)", TIER))
+                daily.done(f"window:{key}", day)
+                return True
         # ITS OWN BUDGET (fix round 2, R8: Pendle's Arbitrum gauge read "etherscan time budget exhausted before the first
-        # attempt" — the fallback ran on the full-history scan's spent budget): a fresh window_budget_s for the window
+        # attempt" — the fallback ran on the full-history scan's spent budget): a fresh window_budget_s for the window,
+        # within this scan's share of the tier's budget (G4 item 1)
         clear, budget = getattr(self.explorer, "clear_budget", None), getattr(self.explorer, "start_budget", None)
         if clear:
             clear()
         if budget and not self.unbounded:
-            budget(float(spec.get("window_budget_s") or WINDOW_BUDGET_S))
+            left = self._share(float(spec.get("window_budget_s") or WINDOW_BUDGET_S))
+            if left < WINDOW_FLOOR_S:
+                out.fail(SOURCE, name, f"{key}: the Q0 window NOT read — {left:.0f}s left of this scan's share of its "
+                                       f"tier's budget (needs >= {WINDOW_FLOOR_S:.0f}s); the next run reads it", TIER)
+                return False
+            budget(left)
+        from .base import set_phase
+        set_phase(f"scan {key} ({chain}): Q0 window from {start.date()} — finding the start block")
         try:
             b0 = self._block_at_ts(chain, chain_id, int(start.tz_localize("UTC").timestamp()), to_block)
             ins, outs, via = [], [], set()
@@ -901,7 +969,10 @@ class LogScan:
         # ONE 120s budget for the whole scan, both providers included (config.EXPLORER_SCAN_BUDGET_S).
         budget = getattr(self.explorer, "start_budget", None)
         if budget and not self.unbounded:
-            budget(float(spec.get("scan_budget_s") or config.EXPLORER_SCAN_BUDGET_S))
+            budget(self._share(float(spec.get("scan_budget_s") or config.EXPLORER_SCAN_BUDGET_S), WINDOW_FLOOR_S
+                               if spec.get("window_days") else 0.0))
+        from .base import set_phase
+        set_phase(f"scan {key} ({chain}): reading new Transfer logs after the cached history")
         try:
             for h in holders:
                 for way, topics in (("in", [TRANSFER_TOPIC, None, pad_address(h)]),
@@ -983,6 +1054,7 @@ class LogScan:
             poisoned += n_in + n_out
 
         # 3. RECONCILE, PER HOLDER, TO THE WEI.
+        set_phase(f"scan {key} ({chain}): reconciling each holder's balanceOf to the wei")
         repairing = False
         for h in holders:
             net = sum(_amount(e) for e in ins[h]) - sum(_amount(e) for e in outs[h])
@@ -1063,6 +1135,7 @@ class LogScan:
                 self.cache.save(sid, events, to_block, to_block)
 
         # 4. WHAT COUNTS.
+        set_phase(f"scan {key} ({chain}): classifying the counted transfers")
         internal = set(holders)
         excluded = {a.lower() for a in spec.get("exclude_counterparties") or []}
         count_from = {a.lower() for a in spec["count_from"]} if spec.get("count_from") else None
@@ -1275,6 +1348,7 @@ class LogScan:
             return
 
         # 6. THE DAILY SERIES, ZEROS INCLUDED.
+        set_phase(f"scan {key} ({chain}): dating the counted transfers into days")
         first = min((e["timeStamp"] for h in holders for e in ins[h] + outs[h]), default=None)
         if first is None:
             out.gap(name, metric, reason=f"the {key} holders have no Transfer history at all",

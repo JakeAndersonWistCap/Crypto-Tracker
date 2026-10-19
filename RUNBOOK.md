@@ -527,6 +527,37 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11ce. Round G4 — tier timeouts, like-for-like checks, the workbook pass (2026-10-18 night)
+
+**Run after pulling (PowerShell 5.1, repo root), in this order.** No run_sql section this round.
+1. `python token_metrics.py --seed katana_claims` — resumes from `.cache/seed_katana_claims.json`; once stored, the
+   live Katana tier reads only the days after the last stored row. The dating phase now logs every 30 s.
+2. `python token_metrics.py` — the Run Log tab and the console end with one SCOREBOARD line per project.
+3. `python sanity.py`.
+4. `python check_offline_items.py stale_series`, then `mcap_inputs`, `gap_routes`, `na_reasons` (each its own line).
+
+**Reading a tier timeout.** The FAILED line now ends "Last phase: <scan> — <step>" and names what was in flight:
+"paced for api.etherscan.io (2.50 req/s shared run-wide)" means the tier was queued behind the other tiers on
+Etherscan's one key, not hung. A host that times out twice in a row is "HOST STALLED this run" and is not asked again;
+the Run Log line "SOURCE STALLED THIS RUN: <host> — … Series gapped: …" lists every series it cost. What was read
+before the stall is kept.
+
+**Review Queue.** Rows decided in `config.REVIEW_ANSWERED` (ACCEPT / REJECT with the numbers) and lost headlines on
+`config.REGRESSION_ALLOWLIST` sit under "ANSWERED — not open" and are not counted. Past an entry's `until` the row is
+open again. A fix is never "answered": it is fixed in code.
+
+**Gap Report.** P6 is only "no source, none configured" (an empty registry stub). A configured route that stored
+nothing this run is P4 (P3 for a headline) with the command that runs it: `gap_routes` groups them by route.
+
+**What changed (SPEC.md §19 "G4" lists every item old → new):** the shared Etherscan pacer is registered and
+abandonable; each scan gets a fair share of its tier's budget; explorer reads time out at 30 s with one retry, and a host
+stall breaker; Katana is incremental after the seed; getLogs chunks regrow only after a density narrowing; market cap is
+judged on its own date (`mcap_stale` names the stale input); Hyperliquid pool release pairs CoinGecko with CoinGecko;
+consoles that cannot print "−" get "-"; seeds count toward Alchemy usage; Sky's TMF reference is the MSC #13 figure,
+14,635,947.43 (BROKEN at 2%, explained: a different account); Ether.fi's circulating check is like-for-like; the Coverage
+tab opens with a scoreboard.
+
+
 ## 11cd. Round G3 — stalls, keys, Alchemy, burns, NEAR in November (2026-10-18)
 
 **`.env` first.** Add `ALCHEMY_API_KEY=<the key only>` (not a URL: no "/", spaces, "<" or ">"). Every Alchemy URL is
