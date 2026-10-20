@@ -71,18 +71,19 @@ accumulatedPendle, lastUpdated, incentiveEndsAt). ONLY THE CURRENT STATE IS READ
 ethereum-rpc.publicnode.com refused a historical eth_call even 1,000 blocks back ("Archive requests require a personal
 token"), and refused eth_getLogs past ~5,000 blocks (~17 h). So no past epoch's rates (state or UpdateMarketReward
 events) can be read from a primary source without a key. THE DESIGN: every run SAMPLES rewardData for every
-Ethereum market (the active list + the markets the fee list names) into data/subsidy/pendle_rates_<epoch_start>.json.
-Once the epoch is complete, each market's PENDLE is the piecewise rate between the samples, each instant taking its
-NEAREST sample's rate, capped at that sample's incentiveEndsAt. A market that a successful sample did not list counts
-as rate 0 at that sample (an unlisted market is not incentivised). A failed read is a gap. A gap over spec max_gap_s
-(default 2 days), including from the epoch's start to its first sample or from its last sample to its end, makes that
-market's emissions UNKNOWN. Nothing is stored until the first fully sampled epoch completes (2026-11-03 for the epoch
-that began 2026-10-20).
+market ON EVERY CHAIN WITH A GAUGECONTROLLER ON FILE (pendle_gauge_chains: mainnet, arbitrum, optimism, bsc, base,
+mantle, sonic, berachain, hyperevm — G9 A1; G8 sampled chain 1 only) into data/subsidy/pendle_rates_<epoch_start>.json,
+each sample tagged with its chain. Once the epoch is complete, each market's PENDLE is summed DAY BY DAY over the UTC
+days on which ITS chain was sampled (pendle_emissions_by_day: inside a day, the nearest of that day's samples, capped at
+incentiveEndsAt). A day with no sample on a chain is NEVER extrapolated and never refuses the epoch: it is excluded and
+every figure of the epoch is stored PARTIAL naming the chain and days (".coverage.txt" beside the table keeps them for
+the re-derivation). A market that a successful sample did not list counts as rate 0 at that sample. Nothing is stored
+until the first sampled epoch completes (2026-11-03 for the epoch that began 2026-10-20).
 WHY NOT THE PROXY: pendleApy × tvl from /core/v3/{chain}/markets/{addr}/historical-data serves history, but it is a
 DERIVED APY that Pendle annualises from the rate (two derivation steps from the state). It would be stored under its
 own "proxy" source, never this one. Gauge votes are no signal: voting ended under sPENDLE (lastEpochVotes 0), so votes
-is blank. Only chain 1: other chains' markets (about 1/3 of fees on 10-06) take their rates from sidechain gauge
-controllers this module does not read. Prices: PENDLE from DefiLlama coins at the epoch's end.
+is blank. Each chain's rewardData is read from that chain's own GaugeController on its public endpoints. Prices: PENDLE
+from DefiLlama coins at the epoch's end (one token, bridged).
 
 INCREMENTAL AND BOUNDED. An epoch whose CSV exists is never read again. Its summary is re-derived from the CSV with no
 network call, so a run that died after writing a table still stores the points. An epoch is written only after every
@@ -210,6 +211,25 @@ def complete_epochs(now_ts: int, n: int, week: int = WEEK) -> list[int]:
 
 def day_of(ts: int) -> str:
     return time.strftime("%Y-%m-%d", time.gmtime(int(ts)))
+
+
+def coverage_path(table: Path) -> Path:
+    """Beside a Pendle epoch's table: the chains / days not sampled ("" when complete), so a re-derived epoch stays
+    PARTIAL with the same names."""
+    return Path(table).with_suffix(".coverage.txt")
+
+
+def _day_ranges(days: list[str]) -> str:
+    """'2026-10-20, 2026-10-22..2026-10-24' from sorted ISO days."""
+    ts = [pd.Timestamp(d) for d in sorted(days)]
+    out, i = [], 0
+    while i < len(ts):
+        j = i
+        while j + 1 < len(ts) and (ts[j + 1] - ts[j]).days == 1:
+            j += 1
+        out.append(f"{ts[i].date()}" if i == j else f"{ts[i].date()}..{ts[j].date()}")
+        i = j + 1
+    return ", ".join(out)
 
 
 def table_path(directory, project: str, epoch_start: int) -> Path:
@@ -352,6 +372,48 @@ def pendle_emissions(points: list[tuple], start: int, end: int, max_gap_s: float
     return wei, ""
 
 
+def pendle_emissions_by_day(points: list[tuple], start: int, end: int) -> tuple[float, list[str], list[str]]:
+    """PENDLE wei emitted to one market over the UTC days of [start, end) that hold a rate sample, and (days sampled,
+    days NOT sampled). Round G8 / G9 A1 (Jake 2026-10-20): a day with no sample is NEVER extrapolated and never refuses
+    the epoch — it is excluded and named. Inside a sampled day each instant takes the nearest of THAT day's samples'
+    rates (boundaries at their midpoints), capped at the sample's incentiveEndsAt."""
+    pts = sorted((int(t), int(r), int(e)) for t, r, e in points if start <= int(t) < end)
+    wei, have, miss = 0.0, [], []
+    d0 = start
+    while d0 < end:
+        d1 = min(d0 + 86_400, end)
+        day = [p for p in pts if d0 <= p[0] < d1]
+        if not day:
+            miss.append(day_of(d0))
+        else:
+            have.append(day_of(d0))
+            bounds = [d0] + [(a[0] + b[0]) / 2 for a, b in zip(day, day[1:])] + [d1]
+            for (_t, rate, ends), lo, hi in zip(day, bounds, bounds[1:]):
+                wei += rate * max(0.0, min(hi, ends) - lo)
+        d0 = d1
+    return wei, have, miss
+
+
+def pendle_gauge_chains() -> list[dict]:
+    """Every chain on which Pendle has a GaugeController on file — the same set Pendle|emissions_tokens sums (its
+    gauge_pendle_out* log scans: mainnet, arbitrum, optimism, and the probed L2s bsc, base, mantle, sonic, berachain,
+    hyperevm). One list, read from config, so a gauge added there is sampled here."""
+    out, seen = [], set()
+    p = config.PROJECT_BY_NAME.get("Pendle") or {}
+    for sc in p.get("log_scans") or ():
+        if str(sc.get("key", "")).startswith("gauge_pendle_out") and sc.get("holders"):
+            out.append({"chain": sc["chain"], "chain_id": int(config.CHAIN_IDS[sc["chain"]]), "gauge": sc["holders"][0]})
+    for cid, proj, chain, key, _m, _t, holders in getattr(config, "EXPLORER_PROBED_SCANS", ()):
+        if proj == "Pendle" and key.startswith("gauge_pendle_out"):
+            out.append({"chain": chain, "chain_id": int(cid), "gauge": holders[0]})
+    res = []
+    for c in out:
+        if c["chain_id"] not in seen:
+            seen.add(c["chain_id"])
+            res.append(c)
+    return res
+
+
 # ===================================================================================================== JSON-RPC
 class Rpc:
     """eth_call / Multicall3 aggregate3 against one JSON-RPC endpoint, through the run's Http (spacing, retries, the
@@ -428,6 +490,9 @@ class SubsidyTargeting:
         self.wall = wall or time.time
 
     def run(self, projects: list[dict], window_days, out):
+        # PENDLE FIRST (G9 A1): its daily sample is time-critical (a missed day is a hole in the epoch for good) and
+        # cheap; Aerodrome's epoch reads take the rest of the tier's budget
+        projects = sorted(projects, key=lambda p: (p.get("subsidy_targeting") or {}).get("route") != "pendle_gauge")
         for p in projects:
             spec = p.get("subsidy_targeting")
             if not spec:
@@ -468,9 +533,15 @@ class SubsidyTargeting:
     def _store(self, out, name: str, epoch: int, summ: dict, src: str, how: str, restored: bool = False) -> None:
         d = pd.Timestamp(day_of(epoch))
         tag = f"epoch {day_of(epoch)}"
+        cov = summ.get("coverage") or ""
+        # DAYS NOT SAMPLED (Pendle, G9 A1): every figure of the epoch is PARTIAL and names them — the emissions exclude
+        # those days; the fees are the whole epoch's, so the cover reads HIGH by what those days emitted
+        src_cov = (config.mark_source(src, "PARTIAL") + f"[{cov}; cover reads high by the unsampled days' emissions]"
+                   if cov else src)
         if summ["emissions_usd"] is not None:
-            out.add(tidy([(d, summ["emissions_usd"])], name, M_EMIT, src, TIER), SOURCE, name,
-                    f"{M_EMIT} {tag}: ${summ['emissions_usd']:,.0f} over {summ['pools']} pool(s) ({how})", TIER)
+            out.add(tidy([(d, summ["emissions_usd"])], name, M_EMIT, src_cov, TIER), SOURCE, name,
+                    f"{M_EMIT} {tag}: ${summ['emissions_usd']:,.0f} over {summ['pools']} pool(s) ({how})"
+                    + (f" — PARTIAL: {cov}" if cov else ""), TIER)
         if summ["status"] == "refused":
             msg = (f"{M_COVER} / {M_SHARE} {tag}: REFUSED — {summ['why']}"
                    + ("" if summ["emissions_usd"] is not None else f"; {M_EMIT} refused too"))
@@ -478,15 +549,17 @@ class SubsidyTargeting:
             # later run says it once more, as skipped, rather than adding a fresh failure a day
             (out.skipped if restored else out.fail)(SOURCE, name, msg + (f" ({how})" if restored else ""), TIER)
             return
-        s = src
+        s = src_cov
         if summ["status"] == "partial":
             s = config.mark_source(src, "PARTIAL") + (
                 f"[{len(summ['unvalued'])} of {summ['pools']} pools' fees unvalued, {summ['unvalued_share']:.2%} of "
-                f"emissions: {_names(summ['unvalued'])}]")
+                f"emissions: {_names(summ['unvalued'])}]") + (
+                f"[{cov}; cover reads high by the unsampled days' emissions]" if cov else "")
         for m, v in ((M_COVER, summ["cover"]), (M_SHARE, summ["covered_share"])):
             out.add(tidy([(d, v)], name, m, s, TIER), SOURCE, name,
                     f"{m} {tag}: {v:.4f}" + (" — PARTIAL (unvalued pools named on the cell)"
-                                             if summ["status"] == "partial" else "") + f" ({how})", TIER)
+                                             if summ["status"] == "partial" else "")
+                    + (f" — PARTIAL: {cov}" if cov else "") + f" ({how})", TIER)
 
     def _restore(self, out, name: str, spec: dict, epochs: list[int], src: str) -> list[int]:
         """Re-derive the summary of every epoch whose table is already written (no network call). Returns the epochs
@@ -504,7 +577,10 @@ class SubsidyTargeting:
                                                                  f"again", TIER))
                 todo.append(ep)
                 continue
-            self._store(out, name, ep, summarize(rows, float(spec.get("max_unvalued_share", 0.05))), src,
+            summ = summarize(rows, float(spec.get("max_unvalued_share", 0.05)))
+            cp = coverage_path(p)
+            summ["coverage"] = cp.read_text(encoding="utf-8").strip() if cp.exists() else ""
+            self._store(out, name, ep, summ, src,
                         f"from the table {p.name} written earlier; not read again", restored=True)
         return todo
 
@@ -725,7 +801,7 @@ class SubsidyTargeting:
     def _pendle(self, name: str, spec: dict, out, deadline: float) -> None:
         src = f"{SOURCE}:pendle_gauge"
         api = spec.get("api", "https://api-v2.pendle.finance/core").rstrip("/")
-        chain_id = int(spec.get("chain_id", 1))
+        chains = spec.get("chains") or pendle_gauge_chains()
         directory = Path(spec.get("dir", DEFAULT_DIR))
         directory = directory if directory.is_absolute() else ROOT / directory
         # sampled epochs whose table is not written yet decide how far back the fee read goes
@@ -744,18 +820,20 @@ class SubsidyTargeting:
         on = ongoing[0]
         on_start, on_end = int(pd.Timestamp(on["epochStart"]).timestamp()), int(pd.Timestamp(on["epochEnd"]).timestamp())
         now = int(self.wall())
-        # 1. SAMPLE the rates now, for the epoch in progress
-        try:
-            n_mk, n_rate = self._pendle_sample(spec, name, api, chain_id, eps, on_start, on_end, now, deadline)
-            out.log.append(LogEntry(SOURCE, name, 0, "ok", f"rewardData sampled for {n_mk} chain-{chain_id} market(s) "
-                                                           f"({n_rate} with a rate) into the epoch from "
-                                                           f"{day_of(on_start)}", TIER))
-        except BudgetExhausted:
-            raise
-        except Exception as e:  # noqa: BLE001 — a missed sample is a gap the coverage rule judges later
-            out.log.append(LogEntry(SOURCE, name, 0, "warn", f"rate sample NOT taken this run — {type(e).__name__}: "
-                                                             f"{str(e)[:160]} (a gap in the epoch from "
-                                                             f"{day_of(on_start)})", TIER))
+        # 1. SAMPLE the rates now, for the epoch in progress — EVERY chain with a gauge (G9 A1: Jake's run sampled
+        # "52 chain-1 market(s)" only, while Pendle|emissions_tokens sums nine chains' gauges). One chain failing is
+        # a gap in that chain's days, named when the epoch is stored; it never stops the others.
+        said = []
+        for ch in chains:
+            try:
+                n_mk, n_rate = self._pendle_sample(spec, name, api, ch, eps, on_start, on_end, now, deadline)
+                said.append(f"{ch['chain']} {n_mk} market(s) ({n_rate} with a rate)")
+            except BudgetExhausted:
+                raise
+            except Exception as e:  # noqa: BLE001 — a missed sample is a gap the coverage rule names later
+                said.append(f"{ch['chain']} NOT SAMPLED ({type(e).__name__}: {str(e)[:80]})")
+        out.log.append(LogEntry(SOURCE, name, 0, "ok" if all("NOT SAMPLED" not in x for x in said) else "warn",
+                                f"rewardData sampled into the epoch from {day_of(on_start)}: " + "; ".join(said), TIER))
         # 2. COMPLETE sampled epochs: the stored ones re-derived, the new ones computed
         complete = [s for s in sampled if s < on_start]
         todo = self._restore(out, name, spec, sorted(complete, reverse=True), src)
@@ -772,25 +850,43 @@ class SubsidyTargeting:
                 out.fail(SOURCE, name, f"epoch {day_of(start)}: market-fees served no such epoch (asked {n_back} back) "
                                        f"— NOTHING STORED; read again next run", TIER)
                 continue
-            rows, how = self._pendle_epoch(spec, name, chain_id, start, e, deadline)
+            rows, how, gaps = self._pendle_epoch(spec, name, chains, start, e, deadline)
             p = table_path(directory, name, start)
             write_table(p, start, rows)
-            self._store(out, name, start, summarize(rows, float(spec.get("max_unvalued_share", 0.05))), src,
-                        f"{how}; table {p.name}")
+            from .logcache import atomic_write_text         # noqa: PLC0415
+            atomic_write_text(coverage_path(p), gaps)        # "" when every chain was sampled every day
+            summ = summarize(rows, float(spec.get("max_unvalued_share", 0.05)))
+            summ["coverage"] = gaps
+            self._store(out, name, start, summ, src, f"{how}; table {p.name}")
 
-    def _pendle_sample(self, spec, name, api, chain_id, eps, on_start, on_end, now, deadline) -> tuple[int, int]:
+    def _chain_aggregate(self, spec, ch, calls, deadline):
+        """Multicall3 on the chain's public endpoints, in order, until one answers (hosts only ever logged)."""
+        from .chain import rpc_endpoints                    # noqa: PLC0415
+        urls = list((spec.get("rpcs") or {}).get(ch["chain"]) or ()) or [
+            u for u in rpc_endpoints(ch["chain"]) if "alchemy" not in u and "infura" not in u]
+        last = None
+        for u in urls[:3]:
+            try:
+                return self.rpc_factory(u, deadline).aggregate(calls)
+            except BudgetExhausted:
+                raise
+            except Exception as e:  # noqa: BLE001 — the next endpoint
+                last = e
+        raise RuntimeError(f"no {ch['chain']} endpoint answered ({type(last).__name__ if last else 'none listed'})")
+
+    def _pendle_sample(self, spec, name, api, ch, eps, on_start, on_end, now, deadline) -> tuple[int, int]:
+        chain_id = int(ch["chain_id"])
         act = self.http.get(f"{api}/v1/{chain_id}/markets/active", deadline=deadline)
         names = {str(m["address"]).lower(): m.get("name") for m in (act or {}).get("markets") or []}
-        if not names:
-            raise RuntimeError(f"markets/active for chain {chain_id}: no market listed")
         for e in eps.values():                              # markets the fee list names, unexpired
             for m in e.get("markets") or []:
                 if int(m.get("chainId") or 0) == chain_id and pd.Timestamp(m.get("expiry") or 0).timestamp() > now:
                     names.setdefault(str(m["address"]).lower(), m.get("name"))
         mk = sorted(names)
-        rpc = self.rpc_factory(spec["rpc"], deadline)
-        gc = spec["gauge"]
-        res = rpc.aggregate([(gc, selector("rewardData(address)") + _enc(["address"], [m])) for m in mk])
+        res = []
+        if mk:                                              # no market on the chain: a sample of nothing, still a sample
+            res = self._chain_aggregate(spec, ch, [(ch["gauge"], selector("rewardData(address)")
+                                                    + _enc(["address"], [m])) for m in mk], deadline)
         rates = {}
         for m, b in zip(mk, res):
             if b is None or len(b) < 128:
@@ -802,23 +898,29 @@ class SubsidyTargeting:
         try:
             st = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            st = {"epoch_start": on_start, "epoch_end": on_end, "chain_id": chain_id, "names": {}, "samples": []}
+            st = {"epoch_start": on_start, "epoch_end": on_end, "names": {}, "samples": []}
         st["names"].update({m: n for m, n in names.items() if n})
-        st["samples"].append({"t": now, "rates": rates})
+        st["samples"].append({"t": now, "chain_id": chain_id, "rates": rates})
         from .logcache import atomic_write_text             # noqa: PLC0415
         atomic_write_text(path, json.dumps(st, separators=(",", ":")))
         return len(mk), sum(1 for v in rates.values() if v and int(v[0]))
 
-    def _pendle_epoch(self, spec, name, chain_id, start, fee_epoch, deadline) -> tuple[list, str]:
+    def _pendle_epoch(self, spec, name, chains, start, fee_epoch, deadline) -> tuple[list, str, str]:
         st = json.loads(self._rates_path(spec, name, start).read_text(encoding="utf-8"))
         end = int(st["epoch_end"])
-        max_gap = float(spec.get("max_gap_s", 2 * 86_400))
-        samples = sorted(st["samples"], key=lambda s: s["t"])
-        markets = sorted({m for s in samples for m in s["rates"]})
+        ids = {int(c["chain_id"]): c["chain"] for c in chains}
+        # a sample written before G9 carries no chain: it was the mainnet-only sample (spec chain_id 1)
+        samples = sorted(({**s, "chain_id": int(s.get("chain_id", st.get("chain_id", 1)))} for s in st["samples"]),
+                         key=lambda s: s["t"])
+        by_chain = {cid: [s for s in samples if s["chain_id"] == cid] for cid in ids}
+        market_chain = {m: s["chain_id"] for s in samples for m in (s["rates"] or {})}
+        markets = sorted(market_chain)
         fee_fields = list(spec.get("fee_fields") or ["poolFeeUsd"])
-        fees = {}
+        fees, other_chains = {}, {}
         for m in fee_epoch.get("markets") or []:
-            if int(m.get("chainId") or 0) == chain_id:
+            if int(m.get("chainId") or 0) not in ids:
+                other_chains[int(m.get("chainId") or 0)] = other_chains.get(int(m.get("chainId") or 0), 0) + 1
+            if int(m.get("chainId") or 0) in ids:
                 vals = [m.get(f) for f in fee_fields]
                 fees[str(m["address"]).lower()] = (None if any(v is None for v in vals)
                                                    else sum(float(v) for v in vals))
@@ -827,27 +929,35 @@ class SubsidyTargeting:
         pr = self._prices([reward], at, deadline).get(reward) or {}
         minc = float(spec.get("min_confidence", MIN_CONFIDENCE))
         price = float(pr["price"]) if _usable(pr, minc) else None
-        rows, unknown = [], []
+        rows = []
         for m in markets:
+            cid = market_chain[m]
             pts = []
-            for s in samples:
-                v = s["rates"].get(m, [0, 0])              # not listed by a successful sample: not incentivised
+            for s in by_chain[cid]:
+                v = (s["rates"] or {}).get(m, [0, 0])       # not listed by a successful sample: not incentivised
                 if v is not None:
                     pts.append((s["t"], int(v[0]), int(v[1])))
-            wei, why = pendle_emissions(pts, start, end, max_gap)
-            if wei is not None and wei <= 0:
-                continue                                    # no emissions: not a receiving pool
-            if wei is None:
-                unknown.append(f"{st['names'].get(m) or m[:10]}: {why}")
-            tok = None if wei is None else wei / 1e18
+            wei, _have, _miss = pendle_emissions_by_day(pts, start, end)
+            if wei <= 0:
+                continue                                    # no emissions on the sampled days: not a receiving pool
+            tok = wei / 1e18
             rows.append({"pool": m, "name": st["names"].get(m) or "", "emissions_tokens": tok,
-                         "emissions_usd": None if tok is None or price is None else tok * price,
+                         "emissions_usd": None if price is None else tok * price,
                          "fees_usd": fees.get(m), "votes": None})
+        # DAYS NOT SAMPLED, PER CHAIN: excluded from the emissions (never extrapolated), named on the stored cells
+        n_days = -(-(end - start) // 86_400)
+        gaps = []
+        for cid, chain in ids.items():
+            _w, have, miss = pendle_emissions_by_day([(s["t"], 0, 0) for s in by_chain[cid]], start, end)
+            if miss:
+                gaps.append(f"{chain} {len(miss)} of {n_days} day(s) not sampled ({_day_ranges(miss)})")
         nofee = [r["name"] or r["pool"][:10] for r in rows if r["fees_usd"] is None]
-        how = (f"{len(samples)} rewardData sample(s) over {day_of(start)}..{day_of(end)}, {len(rows)} chain-{chain_id} "
-               f"market(s) with emissions; fees = {'+'.join(fee_fields)} (Pendle market-fees, USD); PENDLE priced at "
-               f"{time.strftime('%Y-%m-%d %H:%M', time.gmtime(at))} UTC"
+        how = (f"{len(samples)} rewardData sample(s) over {day_of(start)}..{day_of(end)} on {len(ids)} chain(s), "
+               f"{len(rows)} market(s) with emissions; fees = {'+'.join(fee_fields)} (Pendle market-fees, USD, the whole "
+               f"epoch); PENDLE priced at {time.strftime('%Y-%m-%d %H:%M', time.gmtime(at))} UTC"
                + ("" if price is not None else "; NO usable PENDLE price")
-               + (f"; emissions unknown for {len(unknown)}: {'; '.join(unknown[:4])}" if unknown else "")
-               + (f"; {len(nofee)} market(s) absent from the fee list: {', '.join(nofee[:6])}" if nofee else ""))
-        return rows, how
+               + (f"; {len(nofee)} market(s) absent from the fee list: {', '.join(nofee[:6])}" if nofee else "")
+               # a market on a chain with no GaugeController on file earns no PENDLE gauge incentive: not a gap
+               + ("; fee-list markets on chains with no gauge on file (no PENDLE incentive): "
+                  + ", ".join(f"chain {c} ×{n}" for c, n in sorted(other_chains.items())) if other_chains else ""))
+        return rows, how, "; ".join(gaps)

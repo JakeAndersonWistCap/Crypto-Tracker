@@ -370,7 +370,10 @@ def test_business_adapter_refuses_a_renamed_protocol(monkeypatch):
     monkeypatch.setitem(config.BUSINESS_SERIES, "Aerodrome", [config.BUSINESS_SERIES["Aerodrome"][0]])
     out = _Out()
     b.Business(http=_Http(), daily=_Daily()).run([config.PROJECT_BY_NAME["Aerodrome"]], None, out)
-    assert any("lists no protocol named ['Aerodrome Slipstream', 'Aero Lite']" in f for f in out.fails)
+    # G9 A2: children are matched by DefiLlama id (a name is not an identity — "Aero Lite" was renamed "Aero"); a
+    # listing that carries none of the declared ids stores nothing and names every one
+    assert any("lists none of" in f and "Aerodrome V1 (id 3450)" in f and "Aero Lite (id 8691)" in f
+               for f in out.fails)
 
 
 def test_etf_and_treasury_holdings_are_dated_issuer_readings_on_cp(tmp_path, monkeypatch):

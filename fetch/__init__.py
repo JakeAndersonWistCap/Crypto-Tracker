@@ -1961,7 +1961,7 @@ TIER_BUDGET_S = {
     "ccip_value": 330,
     # Base calls spaced 1 s (mainnet.base.org 429s bursts): ~60-85 s an Aerodrome epoch; a first read of 4 epochs
     # takes 2-4 runs, then one epoch a week
-    "subsidy_targeting": 200,
+    "subsidy_targeting": 300,          # G9 A1: Pendle's nine-chain sample (90 s) first, then Aerodrome (150 s)
 }
 DEFAULT_BUDGET_S = 120
 for _t in _l2_tiers():

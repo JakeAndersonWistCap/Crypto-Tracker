@@ -529,6 +529,15 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11cj. Round G9 Part A — Pendle samples every gauge chain; Aerodrome's children by DefiLlama id (2026-10-20)
+
+**Pull before the next run.** Pendle's subsidy sample now covers every chain with a gauge (ethereum, arbitrum, optimism,
+bsc, base, mantle, sonic, berachain, hyperevm). The epoch from 2026-10-20 is stored when it ends (11-03), PARTIAL for
+any chain-day not sampled — a run before 2026-10-21 00:00 UTC samples day 1 on every chain. Aerodrome's TVL, market
+share and DEX volume match DefiLlama's children by id ("Aero Lite" is listed as "Aero"); a new child under Aero Protocol
+after the 2026-10-22 launch is logged "NEW child … not summed" until a handover is declared in config
+(`defillama_protocol_parts.handover`).
+
 ## 11ci. Round G8 — the measuring-point guard, MISSING classes A–E, Aerodrome on DefiLlama, NOT WIRED labelled (2026-10-20)
 
 **Run after pulling (PowerShell 5.1, repo root), in this order.** No run_sql section this round (nothing stored needs

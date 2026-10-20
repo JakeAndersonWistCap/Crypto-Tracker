@@ -87,6 +87,26 @@ def _sum_children(per: dict) -> tuple[list, list]:
     return rows, refused
 
 
+def _handover_ok(old: dict, new: dict, ho: dict) -> tuple[bool, str]:
+    """A declared change of the children summed (G9 A2) takes effect from ho['on'] only when the OLD set's sum and the
+    NEW set's sum agree before that day: >= min_days common days (default 14), median |new − old| ÷ old <= max_median_diff
+    (default 0.5%) — FDV_TOTAL_HISTORY's rule. A child migrating INTO the set holds ~nothing before the switch, so a real
+    migration passes; a child that adds unrelated TVL fails, and the old set stands."""
+    on = pd.Timestamp(ho["on"])
+    a, _ = _sum_children(old)
+    b, _ = _sum_children(new)
+    a, b = dict(a), dict(b)
+    common = sorted(d for d in set(a) & set(b) if d < on and a[d] > 0)
+    need, tol = int(ho.get("min_days", 14)), float(ho.get("max_median_diff", 0.005))
+    if len(common) < need:
+        return False, f"overlap check NOT passed — {len(common)} common day(s) before {on.date()} (< {need}); old set stands"
+    diffs = sorted(abs(b[d] - a[d]) / a[d] for d in common)
+    med = diffs[len(diffs) // 2]
+    if med > tol:
+        return False, f"overlap check NOT passed — median diff {med:.3%} > {tol:.1%} over {len(common)} day(s); old set stands"
+    return True, f"overlap check passed — median diff {med:.3%} over {len(common)} day(s)"
+
+
 class DefiLlama:
     # TWO TIERS (Round G5 item 3, Jake's 06:30 run: "defillama" timed out at 150 s doing real work — 69 calls, 136 s in
     # requests, slowest /protocol/morpho 21.5 s). part="fees": the daily fees / revenue summaries and the restructure
@@ -921,15 +941,17 @@ class DefiLlama:
         return self._memo[key]
 
     def _protocol_tvl_parts(self, project: dict, window_days, out) -> None:
-        """protocol_tvl_usd = the SUM of the named children of a DefiLlama parent (Round G8 item 3a).
+        """protocol_tvl_usd = the SUM of the declared children of a DefiLlama parent (Round G8 item 3a; G9 A2).
 
-        DefiLlama renamed Aerodrome's parent: `parent#aerodrome` left /protocols and every Aerodrome and Velodrome
-        listing now sits under `parent#aero-protocol`; /protocol/aerodrome answers 400 (Jake's 06:02 run, 10-20).
-        The old parent was Aerodrome V1 + Aerodrome Slipstream + Aero Lite, so the same three children summed are
-        the same measuring point — Velodrome and Ignition (Launchpad) are not added. The children are READ from
-        /protocols by parent and exact name, never guessed; a named child the listing does not carry stores nothing.
-        A child counts from its first reported day (before that it was not listed — DefiLlama's own parent sum
-        works the same way); a day inside a child's span that it does not report is refused, never filled with 0."""
+        G8: DefiLlama moved Aerodrome under `parent#aero-protocol`; the old parent was Aerodrome V1 + Slipstream + Aero
+        Lite, so the same three children summed keep the measuring point. G9 A2 (Jake's run 2026-10-20: "/protocols
+        lists no Aero Lite under parent#aero-protocol — NOTHING STORED"): DefiLlama RENAMED that child — "Aero Lite" is
+        now "Aero", slug `aero` (id 8691, module aero-lite, read 2026-10-20). A name is not an identity, so children are
+        matched by DefiLlama's numeric `id`, and the run quotes the names the live listing gives them.
+          - A declared child the listing does not carry: the others are summed and stored PARTIAL, naming it.
+          - A child under the parent that is neither declared nor excluded (a new listing — Aero launches 2026-10-22):
+            logged, NOT summed. It joins only through a declared `handover` with an overlap check (_handover_ok).
+          - A child counts from its first reported day; a hole inside its span refuses the day (never a 0)."""
         spec, name = project["defillama_protocol_parts"], project["name"]
         try:
             listing = self._protocols_listing()
@@ -937,24 +959,37 @@ class DefiLlama:
             out.fail(SOURCE, name, f"protocol tvl: /protocols listing unreadable ({e}) — NOTHING STORED; no slug "
                                    f"is guessed", TIER)
             return
-        want = list(spec["names"])
-        kids = {str(k.get("name")): str(k.get("slug") or "") for k in listing
-                if str(k.get("parentProtocol") or "").lower() == spec["parent_id"].lower()
-                and str(k.get("name")) in want}
-        missing = [n for n in want if not kids.get(n)]
-        if missing:
-            out.fail(SOURCE, name, f"protocol tvl: /protocols lists no {', '.join(missing)} under "
+        under = {str(k.get("id")): k for k in listing
+                 if str(k.get("parentProtocol") or "").lower() == spec["parent_id"].lower()}
+        declared = {str(k): v for k, v in spec["children"].items()}
+        excluded = {str(k) for k in spec.get("excluded") or {}}
+        ho = spec.get("handover") or {}
+        new_ids = {str(k): v for k, v in (ho.get("add") or {}).items()}
+        unknown = [f"{k.get('name')} (id {i})" for i, k in under.items()
+                   if i not in declared and i not in excluded and i not in new_ids]
+        if unknown:
+            log.warning("%s: protocol tvl: %s listed under %s and NOT summed — a new child joins only through a declared "
+                        "handover with an overlap check (config defillama_protocol_parts.handover)", name,
+                        ", ".join(unknown), spec["parent_id"])
+            out.skipped(SOURCE, name, f"protocol tvl: NEW child(ren) under {spec['parent_id']} not summed: "
+                                      f"{', '.join(unknown)} — declare a handover (overlap check) to add", TIER)
+        present = {i: under[i] for i in declared if i in under}
+        absent = [f"{declared[i]} (id {i})" for i in declared if i not in under]
+        if not present:
+            out.fail(SOURCE, name, f"protocol tvl: /protocols lists none of {', '.join(absent)} under "
                                    f"{spec['parent_id']} — NOTHING STORED", TIER)
             return
-        import config                                      # noqa: PLC0415
         payloads = {}
-        for label in want:
+        for i, k in {**present, **{i: under[i] for i in new_ids if i in under}}.items():
             try:
-                payloads[label] = self._protocol(kids[label])
+                payloads[i] = self._protocol(str(k.get("slug")))
             except Exception as e:  # noqa: BLE001
-                out.fail(SOURCE, name, f"protocol tvl: /protocol/{kids[label]} ({label}): {e} — NOTHING STORED", TIER)
+                out.fail(SOURCE, name, f"protocol tvl: /protocol/{k.get('slug')} ({k.get('name')}): {e} — NOTHING "
+                                       f"STORED", TIER)
                 return
-        label = " + ".join(f"{k}={kids[k]}" for k in want)
+        live = " + ".join(f"{present[i].get('name')}" + (f" (was {declared[i]})" if present[i].get("name") != declared[i]
+                                                          else "") for i in present)
+        import config                                      # noqa: PLC0415
         legs = [("protocol_tvl_usd", SOURCE,
                  lambda j: [(pt["date"], pt["totalLiquidityUSD"]) for pt in j.get("tvl") or []], "tvl")]
         if "protocol_tvl_constant_price_usd" in config.metrics_for_project(project):
@@ -964,24 +999,36 @@ class DefiLlama:
                          "tokens at latest prices"))
         for metric, src, read, what in legs:
             per = {}
-            for k in want:
+            for i in payloads:
                 seen = {}
-                for ts, v in read(payloads[k]):
+                for ts, v in read(payloads[i]):
                     if v is not None:
                         seen[pd.Timestamp(int(ts), unit="s").normalize()] = float(v)
-                if not seen:
-                    out.fail(SOURCE, name, f"{metric}: /protocol/{kids[k]} ({k}) carried no {what} series — NOTHING "
-                                           f"STORED", TIER)
-                    break
-                per[k] = seen
-            else:
-                rows, refused = _sum_children(per)
-                if refused:
-                    log.info("%s: %s: %d day(s) refused, a child did not report: %s", name, metric, len(refused),
-                             "; ".join(refused[-5:]))
-                out.add(window(tidy(rows, name, metric, src, TIER), window_days), SOURCE, name,
-                        f"{metric} = sum({label}) under {spec['parent_id']} ({what}) — {len(rows)} day(s), "
-                        f"{len(refused)} refused", TIER)
+                per[i] = seen
+            empty = [i for i in present if not per[i]]
+            if empty:
+                out.fail(SOURCE, name, f"{metric}: {', '.join(present[i].get('name') for i in empty)} carried no "
+                                       f"{what} series — NOTHING STORED", TIER)
+                continue
+            rows, refused = _sum_children({i: per[i] for i in present})
+            note = ""
+            if ho and new_ids and all(i in per and per[i] for i in new_ids):
+                ok, why = _handover_ok({i: per[i] for i in present}, {i: per[i] for i in list(present) + list(new_ids)},
+                                       ho)
+                if ok:
+                    rows2, _r = _sum_children({i: per[i] for i in list(present) + list(new_ids)})
+                    on = pd.Timestamp(ho["on"])
+                    rows = [r for r in rows if r[0] < on] + [r for r in rows2 if r[0] >= on]
+                note = f"; handover {ho['on']} ({', '.join(new_ids.values())}): {why}"
+            if refused:
+                log.info("%s: %s: %d day(s) refused, a child did not report: %s", name, metric, len(refused),
+                         "; ".join(refused[-5:]))
+            s = src if not absent else (config.mark_source(src, "PARTIAL")
+                                        + f"[absent from /protocols: {', '.join(absent)}]")
+            out.add(window(tidy(rows, name, metric, s, TIER), window_days), SOURCE, name,
+                    f"{metric} = sum({live}) under {spec['parent_id']} ({what}) — {len(rows)} day(s), "
+                    f"{len(refused)} refused" + (f"; PARTIAL — absent: {', '.join(absent)}" if absent else "") + note,
+                    TIER)
 
     # ===== A LENDING PROTOCOL'S SUPPLY SIDE, AND THE CAVEAT THAT TRAVELS WITH IT. =====
     #

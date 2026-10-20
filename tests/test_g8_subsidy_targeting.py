@@ -405,8 +405,9 @@ def pendle_chain(now_ref):
 
 
 def pendle_spec(tmp_path, **kw):
-    return {"route": "pendle_gauge", "api": "https://api.example/core", "chain_id": 1, "rpc": "https://rpc.example",
-            "gauge": GAUGE, "reward_token": PENDLE_KEY, "budget_s": 120, "dir": str(tmp_path / "subsidy"), **kw}
+    return {"route": "pendle_gauge", "api": "https://api.example/core",
+            "chains": [{"chain": "ethereum", "chain_id": 1, "gauge": GAUGE}], "rpcs": {"ethereum": ["https://rpc.example"]},
+            "reward_token": PENDLE_KEY, "budget_s": 120, "dir": str(tmp_path / "subsidy"), **kw}
 
 
 def test_pendle_samples_then_stores_the_completed_epoch(tmp_path):
@@ -417,7 +418,7 @@ def test_pendle_samples_then_stores_the_completed_epoch(tmp_path):
     out = _run(spec, ch, http, name="Pendle", wall=lambda: now[0])
     assert out.frame().empty                                          # sampling only: nothing complete yet
     assert any("no fully sampled epoch complete yet" in e.message for e in out.log)
-    for d in range(2, 14, 2):                                          # a run every two days (gaps ≤ max_gap_s)
+    for d in range(1, 14):                                             # a run every day (G9: coverage is per UTC day)
         now[0] = PS + d * DAY
         _run(spec, ch, http, name="Pendle", wall=lambda: now[0])
     now[0] = PS + 14 * DAY + 3600                                     # the epoch has ended
@@ -434,17 +435,59 @@ def test_pendle_samples_then_stores_the_completed_epoch(tmp_path):
     rows = {r["pool"]: r for r in st.read_table(tmp_path / "subsidy" / "pendle_2026-10-20.csv")}
     assert set(rows) == {M1, M2, M3} and rows[M3]["fees_usd"] is None and rows[M1]["votes"] is None
     state = json.loads((tmp_path / "subsidy" / "pendle_rates_2026-10-20.json").read_text())
-    assert len(state["samples"]) == 7
+    assert len(state["samples"]) == 14 and all(x["chain_id"] == 1 for x in state["samples"])
 
 
-def test_pendle_sparse_samples_refuse(tmp_path):
+def test_pendle_unsampled_days_are_named_partial_never_extrapolated_never_refused(tmp_path):
+    """G9 A1: one sample on day 1, then nothing for 13 days — the epoch is STORED, PARTIAL, naming the 13 days; the
+    emissions are day 1's only (never extrapolated)."""
     now = [PS + 3600]
     http = FakeHttp({PENDLE_KEY: {"price": 2.0, "confidence": 0.99}}, pendle=pendle_api(now))
     ch = pendle_chain(now)
     spec = pendle_spec(tmp_path)
-    _run(spec, ch, http, name="Pendle", wall=lambda: now[0])           # one sample at +1 h, then nothing for 14 days
+    _run(spec, ch, http, name="Pendle", wall=lambda: now[0])
     now[0] = PS + 14 * DAY + 3600
     out = _run(spec, ch, http, name="Pendle", wall=lambda: now[0])
     pts = _points(out)
-    assert not any(day == "2026-10-20" for day, _m in pts)              # every metric refused — never filled with 0
-    assert any(e.status == "failed" and "EMISSIONS" in e.message for e in out.log)
+    emis, src = pts[("2026-10-20", st.M_EMIT)]
+    assert emis == pytest.approx((86.4 + 86.4 + 8.64) * 2.0)            # day 1 at each market's rate, PENDLE $2
+    assert ":PARTIAL[" in src and "ethereum 13 of 14 day(s) not sampled (2026-10-21..2026-11-02)" in src
+    cover, csrc = pts[("2026-10-20", st.M_COVER)]
+    assert "13 of 14 day(s) not sampled" in csrc and "cover reads high" in csrc
+    # re-derived from the table on a later run: still PARTIAL, same names
+    out2 = _run(spec, ch, http, name="Pendle", wall=lambda: now[0])
+    assert "13 of 14 day(s) not sampled" in _points(out2)[("2026-10-20", st.M_EMIT)][1]
+
+
+def test_pendle_samples_every_gauge_chain_and_names_a_chain_that_failed(tmp_path):
+    now = [PS + 3600]
+    http = FakeHttp({PENDLE_KEY: {"price": 2.0, "confidence": 0.99}}, pendle=pendle_api(now))
+    ch = pendle_chain(now)
+    spec = pendle_spec(tmp_path, chains=[{"chain": "ethereum", "chain_id": 1, "gauge": GAUGE},
+                                         {"chain": "arbitrum", "chain_id": 42161, "gauge": GAUGE}],
+                       rpcs={"ethereum": ["https://rpc.example"], "arbitrum": ["https://arb.example"]})
+
+    def factory(url, deadline):
+        if "arb" in url:
+            raise ConnectionError("down")
+        return ch
+
+    def run():
+        out = FetchOutput()
+        st.SubsidyTargeting(http=http, rpc_factory=factory, wall=lambda: now[0]).run(
+            [{"name": "Pendle", "subsidy_targeting": spec}], None, out)
+        return out
+    out = run()
+    msg = " ".join(e.message for e in out.log)
+    assert "ethereum 4 market(s)" in msg and "arbitrum NOT SAMPLED" in msg
+    for d in range(1, 14):
+        now[0] = PS + d * DAY
+        run()
+    now[0] = PS + 14 * DAY + 3600
+    src = _points(run())[("2026-10-20", st.M_EMIT)][1]
+    assert "arbitrum 14 of 14 day(s) not sampled (2026-10-20..2026-11-02)" in src and "ethereum" not in src.split("[")[1]
+
+
+def test_the_gauge_chains_are_the_ones_pendle_emissions_sums():
+    chains = {c["chain"] for c in st.pendle_gauge_chains()}
+    assert chains == {"ethereum", "arbitrum", "optimism", "bsc", "base", "mantle", "sonic", "berachain", "hyperevm"}

@@ -102,6 +102,20 @@ def overview_frame(j: dict) -> tuple[dict, dict]:
     return dict(by), meta
 
 
+def resolve_ids(meta: dict, ids: dict) -> tuple[dict, list]:
+    """({declared name: live name} present, ["declared name (id N)" absent]) — DefiLlama children matched by their
+    numeric id (G9 A2: "Aero Lite" was renamed "Aero" on DefiLlama; an id survives a rename, a name does not)."""
+    by_id = {str(p.get("defillamaId") or p.get("id")): n for n, p in meta.items()}
+    present, absent = {}, []
+    for i, declared in ids.items():
+        live = by_id.get(str(i))
+        if live is None:
+            absent.append(f"{declared} (id {i})")
+        else:
+            present[declared] = live
+    return present, absent
+
+
 def protocol_series(j: dict, field: str) -> dict:
     """{day: value} from an api.llama.fi/protocol response (the last point of a day wins)."""
     ct = j.get("chainTvls") or {}
@@ -230,12 +244,23 @@ class Business:
         route = spec["route"]
         if route == "overview":
             by, meta = self._overview(spec["type"])
+            src = f"defillama:overview/{spec['type']}:{'+'.join(spec['names'])}"     # the declared names: the basis
+            if spec.get("ids"):
+                # G9 A2: by DefiLlama id; the live names quoted; an absent child named and the sum PARTIAL
+                present, absent = resolve_ids(meta, spec["ids"])
+                if not present:
+                    raise RuntimeError(f"overview/{spec['type']} lists none of {absent}")
+                s = strict_sum({d: by.get(live, {}) for d, live in present.items()})
+                live = ", ".join(v if v == d else f"{v} (was {d})" for d, v in present.items())
+                if absent:
+                    src = config.mark_source(src, "PARTIAL") + f"[absent from overview/{spec['type']}: {', '.join(absent)}]"
+                return (self._keep(s, key), src, f"DefiLlama overview/{spec['type']} {live} (dashboard)"
+                        + (f"; PARTIAL — absent: {', '.join(absent)}" if absent else ""))
             missing = [n for n in spec["names"] if n not in meta]
             if missing:
                 raise RuntimeError(f"overview/{spec['type']} lists no protocol named {missing}")
             s = strict_sum({n: by.get(n, {}) for n in spec["names"]})
-            return (self._keep(s, key), f"defillama:overview/{spec['type']}:{'+'.join(spec['names'])}",
-                    f"DefiLlama overview/{spec['type']} {', '.join(spec['names'])} (dashboard)")
+            return (self._keep(s, key), src, f"DefiLlama overview/{spec['type']} {', '.join(spec['names'])} (dashboard)")
         if route == "protocol":
             s = strict_sum({slug: self._protocol(slug, exp, spec["field"]) for slug, exp in spec["slugs"]})
             tag = "+".join(x for x, _ in spec["slugs"])
@@ -304,6 +329,7 @@ class Business:
             out.mark_current(SOURCE, name, metric, f"{metric}: read today already", TIER)
             out.mark_current(SOURCE, name, denominator, f"{denominator}: read today already", TIER)
             return
+        self._share_absent = []
         try:
             own, total, n_peers = self._share_parts(spec)
         except Exception as e:  # noqa: BLE001
@@ -315,6 +341,8 @@ class Business:
             out.fail(SOURCE, name, f"{metric}: no day where the project and every peer reported", TIER)
             return
         tag = f"defillama:{spec['how']}:{spec['category']}[{n_peers}]"
+        if self._share_absent:              # G9 A2: a declared own child DefiLlama no longer lists — named, PARTIAL
+            tag = config.mark_source(tag, "PARTIAL") + f"[own child absent: {', '.join(self._share_absent)}]"
         out.add(tidy(rows, name, metric, tag, TIER), SOURCE, name,
                 f"{metric}: latest {rows[-1][1]:.2%} ({rows[-1][0].date()}) of {spec['category']} — "
                 f"{n_peers}; {len(rows)} day(s)", TIER)
@@ -338,7 +366,10 @@ class Business:
         if how == "overview":
             by, meta = self._overview(spec["type"])
             cat = [n for n, p in meta.items() if p.get("category") == spec["category"]]
-            if spec.get("own_names"):
+            if spec.get("own_ids"):
+                present, self._share_absent = resolve_ids(meta, spec["own_ids"])
+                own_names = list(present.values())
+            elif spec.get("own_names"):
                 own_names = list(spec["own_names"])
             else:
                 own_names = [n for n in cat if meta[n].get("parentProtocol") == spec["own_parent"]]

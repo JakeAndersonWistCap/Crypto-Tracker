@@ -170,10 +170,11 @@ def test_2_missing_triage_prints_counts_by_class():
 def test_3a_aerodrome_tvl_is_the_sum_of_the_three_children_read_from_the_listing():
     from fetch.llama import DefiLlama
     t = lambda d: int(pd.Timestamp(d).timestamp())  # noqa: E731
-    listing = [{"name": "Aerodrome V1", "slug": "aerodrome-v1", "parentProtocol": "parent#aero-protocol"},
-               {"name": "Aerodrome Slipstream", "slug": "aerodrome-slipstream", "parentProtocol": "parent#aero-protocol"},
-               {"name": "Aero Lite", "slug": "aero-lite", "parentProtocol": "parent#aero-protocol"},
-               {"name": "Velodrome V2", "slug": "velodrome-v2", "parentProtocol": "parent#aero-protocol"}]
+    listing = [{"id": "3450", "name": "Aerodrome V1", "slug": "aerodrome-v1", "parentProtocol": "parent#aero-protocol"},
+               {"id": "4524", "name": "Aerodrome Slipstream", "slug": "aerodrome-slipstream",
+                "parentProtocol": "parent#aero-protocol"},
+               {"id": "8691", "name": "Aero Lite", "slug": "aero-lite", "parentProtocol": "parent#aero-protocol"},
+               {"id": "3302", "name": "Velodrome V2", "slug": "velodrome-v2", "parentProtocol": "parent#aero-protocol"}]
     tvl = {"aerodrome-v1": [("2026-09-16", 10), ("2026-09-17", 11), ("2026-09-18", 12), ("2026-09-19", 13)],
            "aerodrome-slipstream": [("2026-09-16", 20), ("2026-09-17", 21), ("2026-09-18", 22), ("2026-09-19", 23)],
            "aero-lite": [("2026-09-18", 1), ("2026-09-19", 2)],
@@ -203,13 +204,13 @@ def test_3a_aerodrome_tvl_is_the_sum_of_the_three_children_read_from_the_listing
     out2 = FetchOutput()
     a2.protocol_tvl(p, None, out2)
     assert pd.Timestamp("2026-09-17") not in set(out2.frame()["date"])
-    # a renamed child: nothing stored, nothing guessed
-    listing[0]["name"] = "Aerodrome Classic"
+    # G9 A2: a RENAMED child is still the same id — summed, its live name quoted (DefiLlama: Aero Lite -> Aero)
+    listing[2]["name"] = "Aero"
     a3 = DefiLlama()
     a3.http = H()
     out3 = FetchOutput()
     a3.protocol_tvl(p, None, out3)
-    assert out3.frame().empty and "lists no Aerodrome V1" in " ".join(e.message for e in out3.log)
+    assert not out3.frame().empty and "Aero (was Aero Lite)" in " ".join(e.message for e in out3.log)
 
 
 def test_3a_aerodrome_market_share_names_its_children_not_the_retired_parent():

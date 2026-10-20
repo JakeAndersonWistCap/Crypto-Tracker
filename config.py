@@ -12943,8 +12943,15 @@ PROJECTS = [
         # The fees slug `aerodrome` still answers (a legacy alias, id parent#aerodrome) and is kept; its newest day
         # read 292,375 against the children's 272,881 on 10-19 while earlier days match — the complete-day rule
         # already drops the newest day.
+        # G9 A2: matched by DefiLlama's numeric id, not name — DefiLlama renamed "Aero Lite" to "Aero" (slug `aero`,
+        # id 8691, module aero-lite; its chains now read Arc, Base, Optimism, Arbitrum, Ethereum, Ink, Robinhood Chain,
+        # 2026-10-20). The value is the name when declared; the Run Log quotes the live name. Excluded: Velodrome V1-V3
+        # and Aerodrome Ignition (Launchpad). A child appearing after the Aero launch (2026-10-22) joins only through a
+        # declared `handover` {"on", "add": {id: name}, "min_days", "max_median_diff"} with its overlap check.
         "defillama_protocol_parts": {"parent_id": "parent#aero-protocol",
-                                     "names": ("Aerodrome V1", "Aerodrome Slipstream", "Aero Lite"),
+                                     "children": {3450: "Aerodrome V1", 4524: "Aerodrome Slipstream", 8691: "Aero Lite"},
+                                     "excluded": {1799: "Velodrome V1", 3302: "Velodrome V2", 4249: "Velodrome V3",
+                                                  6942: "Aerodrome Ignition"},
                                      "read_on": "2026-10-20"},
         # ARCHETYPE 3 ONLY, AND ARCHETYPE 4 IS REFUTED RATHER THAN MERELY ABSENT.
         # Aerodrome's own SPECIFICATION.md describes the complete supply mechanics — Minter,
@@ -29147,6 +29154,8 @@ BUSINESS_SERIES = {
     "Aerodrome": [
         {"metric": "protocol_dex_volume_usd", "route": "overview", "type": "dexs",
          "names": ("Aerodrome V1", "Aerodrome Slipstream", "Aero Lite"), "source_kind": _DL_DASH,
+         # G9 A2: matched by DefiLlama id ("Aero Lite" is listed as "Aero" since 2026-10-20); names stay the basis
+         "ids": {3450: "Aerodrome V1", 4524: "Aerodrome Slipstream", 8691: "Aero Lite"},
          "onchain_replacement": "Swap events of every Aerodrome V1 / Slipstream / Aero Lite pool on Base, priced"}],
     "Fluid": [
         {"metric": "protocol_dex_volume_usd", "route": "overview", "type": "dexs",
@@ -29277,6 +29286,9 @@ MARKET_SHARE = {
                   # run logged "own protocols [] not all in Dexs". Named, not parent-matched: parent#aero-protocol would
                   # add Velodrome V1-V3, which the basis below excludes. Read from /overview/dexs 2026-10-20.
                   "own_names": ("Aerodrome V1", "Aerodrome Slipstream", "Aero Lite"),
+                  # G9 A2: matched by DefiLlama id (the names as declared; "Aero Lite" is listed as "Aero" since
+                  # 2026-10-20) — an absent one is named and the share stored PARTIAL
+                  "own_ids": {3450: "Aerodrome V1", 4524: "Aerodrome Slipstream", 8691: "Aero Lite"},
                   "basis": "DEX volume (V1 + Slipstream + Aero Lite) ÷ every protocol under Dexs"},
     "Hyperliquid": {"how": "overview", "type": "open-interest", "category": "Derivatives",
                     "own_names": ("Hyperliquid Perps",),
@@ -30298,11 +30310,15 @@ PROJECT_BY_NAME["Aerodrome"]["subsidy_targeting"] = {
     "voter": "0x16613524e02ad97eDfeF371bC883F2F5d6C480A5", "rpc": "https://mainnet.base.org", "chain": "base",
     "reward_token": "base:0x940181a94A35A4569E4529A3CDfB74e38FD98631", "epochs_back": 4, "budget_s": 150,
     "dir": "data/subsidy", "max_unvalued_share": 0.05, "min_confidence": 0.9, "early_s": 10800, "max_late_gauges": 60}
+# G9 A1: every chain with a GaugeController on file is sampled (subsidy_targeting.pendle_gauge_chains — the gauges
+# Pendle|emissions_tokens sums: mainnet, arbitrum, optimism, bsc, base, mantle, sonic, berachain, hyperevm), each on its
+# own public endpoints; a UTC day a chain was not sampled is excluded and named (PARTIAL), never extrapolated. Read live
+# 2026-10-20: rewardData answers on every chain with active markets (ethereum 52, arbitrum 4, bsc 6, base 8,
+# hyperevm 5; optimism, mantle, sonic, berachain list none). Pendle runs first in the tier (its sample is time-critical).
 PROJECT_BY_NAME["Pendle"]["subsidy_targeting"] = {
-    "route": "pendle_gauge", "api": "https://api-v2.pendle.finance/core", "chain_id": 1,
-    "rpc": "https://ethereum-rpc.publicnode.com", "gauge": "0x47D74516B33eD5D70ddE7119A40839f6Fcc24e57",
+    "route": "pendle_gauge", "api": "https://api-v2.pendle.finance/core",
     "reward_token": "ethereum:0x808507121b80c02388fad14726482e061b8da827", "fee_fields": ["poolFeeUsd"],
-    "max_gap_s": 172800, "budget_s": 30, "dir": "data/subsidy", "max_unvalued_share": 0.05}
+    "budget_s": 90, "dir": "data/subsidy", "max_unvalued_share": 0.05}
 
 
 # ===== G8 3e — A STORED SERIES SUPERSEDED BY A READ-TIME VIEW (stale_series labels it, not stale). =====
