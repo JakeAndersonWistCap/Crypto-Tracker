@@ -108,10 +108,11 @@ def test_a_blocked_or_empty_outflow_leg_blocks_the_category_with_its_reason(monk
     groups = {("Near", "unlock_release_tokens"): df,
               ("Near", "price_usd"): df.assign(metric="price_usd"),
               ("Near", "gross_issuance_tokens"): df.assign(metric="gross_issuance_tokens")}
+    bw._treasury_split_views(groups)     # G9 L3: (a) is the mint less the treasury's share — a blocked mint blocks it
     bw._outflow_views(groups)
     assert ("Near", "outflow_a_usd") not in groups
     assert bw._VIEW_BLOCKS[("Near", "outflow_a_usd")].startswith(
-        "BLOCKED — outflow (a) is not formed: gross_issuance_tokens: BLOCKED — declared vs observed")
+        "BLOCKED — outflow (a) is not formed: near_validator_rewards_tokens: BLOCKED — declared vs observed")
     assert ("Near", "outflow_e_usd") in groups
 
 

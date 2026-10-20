@@ -295,7 +295,8 @@ def test_d_every_flows_line_with_evidence_is_resolved_and_class_d_is_at_most_ten
 def test_d_included_and_no_such_flow_lines_render_as_declared(built):
     fl = {(r["Project"], r["Line"]): r for r in built["flows"]}
     near_m = fl[("Near", config.FLOW_LEG_LINES["m"])]
-    assert str(near_m["Q0"]).startswith("n/a — included in line 'Outflows beside: security emissions (a)'")
+    # G9 L3: NEAR's treasury share is MEASURED as line m (inside '+ minted'), no longer "included in (a)"
+    assert isinstance(near_m["Q0"], float) and near_m["Q0"] > 0 and "INSIDE '+ minted'" in near_m["Note"]
     eth_m = fl[("Ethereum", config.FLOW_LEG_LINES["m"])]
     assert eth_m["Q0"] == 0.0 and "Jake's decision J1" in eth_m["Note"]
     hv = fl[("Chainlink", "Holder value recorded, NOT credited")]

@@ -135,14 +135,19 @@ def test_cp_plume_has_no_measured_outflow_and_says_why(tmp_path, monkeypatch):
     payload = json.loads(Path(__file__).resolve().parents[1].joinpath("fixtures/real_plume.json").read_text())
     iss = [m["value"] for m in payload["metrics"] if m["metric"] == "gross_issuance_tokens"]
     assert iss and not any(iss)
-    # G9 D3: the staking rewards PAID (RewardDistributed claims, emissions_claimed_tokens) are (a); nothing else is wired
+    # G9 D3: the staking rewards PAID (RewardDistributed claims, emissions_claimed_tokens) are (a); G9 N: (b) the Merkl
+    # campaigns (merkl_campaigns_plume_tokens), (e) the insider unlocks from the published schedule (EVIDENCE_LADDER)
     assert {c: config.outflow_metrics("Plume", c) for c in config.OUTFLOW_CATEGORY_NAMES
-            if config.outflow_metrics("Plume", c)} == {"a": ("emissions_claimed_tokens",)}
+            if config.outflow_metrics("Plume", c)} == {"a": ("emissions_claimed_tokens",),
+                                                         "b": ("merkl_campaigns_plume_tokens",),
+                                                         "e": ("insider_unlock_tokens",)}
     wb, _rows = _built(tmp_path, monkeypatch, "Plume")
     X = xlcalc.Workbook(wb)
     o = _row(wb, X, CP, "Plume")
     td = _get(o, "TOTAL DILUTION = outflows a+b+c+d+e (annualised) ÷ circ")
-    assert td in (None, "") or (isinstance(td, str) and "emissions_claimed_tokens" in td), td   # never a 0
+    # never a 0 while a leg holds nothing: blank, or the text naming the leg that has no rows
+    assert td in (None, "") or (isinstance(td, str) and ("emissions_claimed_tokens" in td
+                                                         or "merkl_campaigns_plume_tokens" in td)), td
     assert "pre-minted" in _get(o, "Outflow categories").lower()
 
 

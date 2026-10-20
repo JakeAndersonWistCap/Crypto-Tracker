@@ -3062,6 +3062,10 @@ def _treasury_split_views(groups: dict) -> None:
     for name, sp in config.TREASURY_SHARE_SPLIT.items():
         if not any(p["name"] == name for p in scoped_projects()):
             continue
+        if (name, sp["gross"]) in _VIEW_BLOCKS:         # a blocked mint blocks both of its parts, with its reason
+            for m in (sp["out"], sp["m_view"]):
+                _VIEW_BLOCKS[(name, m)] = _VIEW_BLOCKS[(name, sp["gross"])]
+            continue
         gross, tr = _daily(groups.get((name, sp["gross"]))), _daily(groups.get((name, sp["treasury"])))
         if gross.empty:
             continue

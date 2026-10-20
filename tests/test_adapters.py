@@ -5261,8 +5261,11 @@ def test_an_armed_cross_check_reads_as_WAITING_not_as_an_unbuilt_metric():
     assert "ARMED" in gap["reason"] and str(registry[("Pendle", "locked_tokens_dashboard")]["url"]) in gap["reason"], \
         f"an armed entry must name its url so the reader can tell the cases apart: {gap['reason']}"
     assert "Run Log" in gap["suggestion"], "and point at where 'did it actually run' is answered"
-    why_link = registry[("Chainlink", "buyback_fund_balance_dashboard")]
-    assert isinstance(why_link, str) and "DELIBERATELY disabled" in why_link, why_link
+    # G9 N (2026-10-20): Chainlink's entry is ARMED again — re-pointed at metrics.chain.link's own JSON API after its
+    # robots.txt was read (HTTP 404: nothing disallowed); it is no longer the disabled example
+    link = registry[("Chainlink", "buyback_fund_balance_dashboard")]
+    assert isinstance(link, dict) and link["ready"] and link["method"] == "json" and \
+        link["url"] == "https://metrics.chain.link/api/reserve/latest", link
 
     # AND THE OTHER HALF OF THE SAME DISTINCTION, which is what the Maple entry now demonstrates:
     # a DISABLED entry must not read as an absent one either. "We are not allowed to fetch this"

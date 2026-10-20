@@ -1072,6 +1072,29 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
         r3[m] = ("the subsidy-targeting reader (fetch/subsidy_targeting.py) stored no complete epoch this run — an "
                  "epoch with a pool whose fees or price cannot be valued is refused, never filled with 0",
                  "Check the Run Log's subsidy_targeting line for {name}.")
+    # ROUND G9 K–N READERS (2026-10-20)
+    for c in ("base", "arbitrum"):
+        r3[f"ccip_v2_fees_api_{c}_usd"] = (
+            f"the CCIP reader (fetch/ccip_value.py) has not closed a day with every message sent from {c.title()} read "
+            "in detail (fees.fixedFeesDetails), or a fee token on it has no price that day",
+            "Check the Run Log's ccip_value line for {name}; the history comes with python token_metrics.py --seed "
+            "ccip_value.")
+    r3["ccip_v2_fees_log_arbitrum_usd"] = (
+        "the Chainlink fee-line scan (fetch/chainlink_fees.py) has not read Arbitrum's OnRamps through this day, or a "
+        "receipt on it is unpriced",
+        "Check the Run Log's chainlink_fees line for {name}.")
+    r3["near_treasury_mint_tokens"] = (
+        "the NEAR epoch walk (fetch/near_issuance.py) has not re-read these epochs with the treasury read yet (state v2 "
+        "re-walks the year at 100 s a run)",
+        "Check the Run Log's near_issuance line for {name}; it says where the backfill resumes.")
+    r3["merkl_campaigns_plume_tokens"] = (
+        "the Merkl campaigns reader (fetch/merkl_campaigns.py, api.merkl.xyz) stored nothing this run",
+        "Check the Run Log's merkl_campaigns line for {name} (a chain that failed stores nothing).")
+    for c in getattr(config, "PENDLE_RATE_CHECK", {}).get("chains", ()):
+        r3[f"emissions_tokens_gauge_rate_{c}"] = (
+            f"the subsidy-targeting reader (fetch/subsidy_targeting.py) has no complete UTC day with a rewardData sample "
+            f"on {c} yet (sampled from 2026-10-20, forward only)",
+            "Check the Run Log's subsidy_targeting line for {name}.")
     if metric in r3:
         why, fix = r3[metric]
         return why, fix.format(name=name)
