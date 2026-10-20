@@ -539,6 +539,7 @@ class ChainlinkFees:
         # (kind, day) -> [(chain, token, amount, events or None, decimals-guess)]
         unpriced: dict = defaultdict(list)
         aliased: dict = defaultdict(set)            # kind -> labels priced through their underlying
+        by_chain: dict = defaultdict(float)         # G9 K4: (chain, day) -> the ccip_v2 receipts of that chain alone
 
         def price_of(day, chain, tok):
             pr = prices.get((day, self._coin(spec, chain, tok)))
@@ -566,6 +567,8 @@ class ChainlinkFees:
                         aliased[kind].add(self._label(spec, chain, tok))
                     px, dec = pr
                     totals[kind][day] += int(amt) / 10 ** dec * px
+                    if kind == "ccip_v2":
+                        by_chain[(chain, day)] += int(amt) / 10 ** dec * px
                     if kind == "ccip_v2":
                         totals["ccip_v2_premium"][day] += int(prem) / 10 ** dec * px
         cap = float(spec.get("unpriced_partial_max_share", 0.05))
@@ -639,6 +642,21 @@ class ChainlinkFees:
                                           + (" — UNPRICED: " + self._unpriced_listing(spec, unpriced, base, refused + excluded)
                                              if refused or excluded else ""), TIER)
 
+        # G9 K4: THE OVERLAP LEG — one chain's CCIP 2.0 receipts from its own logs (spec ccip_v2_overlap_chains), the
+        # check on the per-chain fees read from api.ccip.chain.link's message detail (fetch/ccip_value, Base has no
+        # free log route). A day is stored only where the chain was read through and every receipt on it priced.
+        for chain in spec.get("ccip_v2_overlap_chains") or ():
+            if chain not in spec["chains"] or chain in failed["ccip_v2"]:
+                continue
+            bad = {d for (k, d), lst in unpriced.items() if k == "ccip_v2" for c, *_r in lst if c == chain}
+            if not any(key.startswith(f"{chain}:ccip_v2") for key in streams):
+                continue
+            rows = [(pd.Timestamp(d), by_chain.get((chain, d), 0.0)) for d in days if d not in bad]
+            if rows:
+                m = f"ccip_v2_fees_log_{chain}_usd"
+                out.add(tidy(rows, name, m, f"{SOURCE}:ccip_v2[{chain}]", TIER), SOURCE, name,
+                        f"{m}: {len(rows)} day(s) — {chain}'s CCIP 2.0 receipts alone (the overlap check on the "
+                        f"message-detail fees)", TIER)
         if getattr(self, "_price_pending", 0):
             out.skipped(SOURCE, name, f"pricing PAUSED at the {PRICE_BUDGET_S}s budget: {self._price_pending} day(s) "
                                       f"still to price (newest first) — their days are refused this run and priced "

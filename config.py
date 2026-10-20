@@ -14302,7 +14302,14 @@ PROJECTS = [
                      # prefixes as reported by the probe; the full hashes are in its output
                      "txs": ["0x84251b30...", "0xac07e2ce...", "0x6b91f578..."],
                      "kind": "CONTRACT",
-                     "identified_as": "unidentified — not a known Sky contract on file",
+                     # G9 N (research read 2026-10-20, eth.blockscout.com + chainlog.skyeco.com/api/mainnet/active
+                     # .json, 520 entries): NOT a Sky contract and not in the chainlog — a personal wallet set up as a
+                     # MetaMask smart account (EIP-7702); the three calls were burn(self, 1 wei), burn(self, 1 wei),
+                     # burn(self, 1000 wei) among 48 test-like transactions that day (MKR->SKY conversion, voting,
+                     # staking engine, failed mint calls). Dust by a user, not a protocol burn: 1,002 wei, outside
+                     # every burn line.
+                     "identified_as": "a user's EIP-7702 MetaMask smart account (not in Sky's chainlog): 1,002 wei of "
+                                      "dust burns among test transactions — not a protocol burn",
                  },
                  "practically_closed": "practically closed — no SKY burned outside the Pause "
                                        "Proxy since block 22,817,692; one contract made three "
@@ -21173,9 +21180,14 @@ METHODOLOGY_FLAGS = {
     "chainlink_reserve_validated": "VALIDATED (Jake, 2026-10-05): Chainlink announced on X (2026-09-25) that the "
                                    "Reserve added 373,791 LINK in September for $4.3M+, total 6,047,498 LINK. Our "
                                    "reserve_inflow measured 373,791 LINK over the same 30 days and 6,047,475.54 "
-                                   "cumulative (a 22.46-LINK difference, 0.0004%, consistent with rounding and the "
-                                   "announcement's cut-off). The Reserve inflow (LINK from the Payment Abstraction "
-                                   "layer into 0x9A709B7B...) is Chainlink's A3 buyback-and-hold figure.",
+                                   "cumulative. CORRECTED G9 N (research read 2026-10-20, metrics.chain.link/api/"
+                                   "reserve/latest): the difference is NOT rounding — it is exactly the 22.854825 LINK of "
+                                   "29 small transfers from 15 third-party addresses (0.00001-7.0 LINK, 2025-08-07.."
+                                   "2026-08-21), which Chainlink's balance counts and reserve_inflow (count_from the "
+                                   "Payment Abstraction layer 0x5680681E…171d only, as DefiLlama's adapter) leaves out; "
+                                   "the API's 64 Payment Abstraction transfers sum to 6,293,820.500933 LINK to "
+                                   "2026-10-20 (balance 6,293,843.36). The Reserve inflow (LINK from the Payment "
+                                   "Abstraction layer into 0x9A709B7B...) is Chainlink's A3 buyback-and-hold figure.",
     "aethir_released_vs_earned": "MEASURED FROM THE DASHBOARD (Jake, 2026-10-02): node rewards vest (Aethir node-sale "
                                  "terms, Feb 2024: 'accrued and earned upon a vesting logic'; the 50% Checkers & "
                                  "Compute Providers allocation vests linearly over ~5 years). Released compute rewards "
@@ -23983,6 +23995,12 @@ for _m, _live in (("emissions_tokens", "hypercore_info:tokenDetails.futureEmissi
                "labelled MODELLED on every row that reads it, excluded from any scoring (fix round 3, B1)",
         "composition_change": "none: the same quantity, modelled before it was read (within ~1%: research r11)",
         "declared": "2026-10-13"})
+# G9 M (Jake 2026-10-20: "every cell and Trajectory row built on it reads MODELLED"): the published-formula row
+# (emissions_modelled_tokens, build_workbook._emissions_model_views) is a model too — it was shown on its own row but its
+# source was not a MODELLED point, so a cell reading it graded like a measurement.
+MODELLED_POINTS["model:inverse_sqrt(locked_tokens)"] = (
+    "Hyperliquid staking rewards from the published formula, 2.37% x sqrt(400M / staked) x staked / 365 a day, over the "
+    "stake history (its own row; never the history leg — the reference-yield model is)")
 MODELLED_POINTS["modelled:hl_reference_yield"] = (
     "Hyperliquid staking rewards and total stake before the tracker's own reads: the Community Grants wallet's gross "
     "rate with rate = k ÷ sqrt(stake), k calibrated on the stored validatorSummaries reads (about 1%)")
@@ -26724,7 +26742,7 @@ CREDIBILITY: dict = {
                                       "tol": 5.0, "note": "The announcement was made on 09-25; our September sum runs "
                                                           "to 09-30 — expect ours a little above."}),
         "in_locked": _c_in("LINK staked (both v0.2 pools)", "locked_tokens", "now", _c_chk(
-            "staking.chain.link's 'Total staked' is the independent figure; metrics.chain.link is robots-blocked.",
+            "staking.chain.link's 'Total staked' is the independent figure (metrics.chain.link: robots.txt 404 on 2026-10-20, its Reserve JSON API is read since G9 N).",
             "read staking.chain.link 'Total staked' by hand and record it here as a manual reference")),
         # B5 (overnight 2026-10-06): CoinGecko's pool release (d circulating - d total, Q0) against LINK actually
         # leaving the 24 Etherscan-labelled 'Chainlink: Noncirculating Supply' wallets over the same window — their
@@ -30596,8 +30614,15 @@ def flow_line_evidence(project_name: str, line: str) -> dict | None:
 # stored ONE ROW PER DAY by construction, where a missing day is a day not read. Ethereum's P2P leg (BigQuery daily
 # aggregates, fetch.eth_settlement) held 37 of the 85 days since its first and read GREEN; it now reads
 # "COVERS 37 OF 90 DAYS" with the cell AMBER until the pieces are read.
+# G9 K3: the value is WHY a day is not held, said on the row beside "Q0 COVERS n OF 90 DAYS — not held: <days>".
 DENSE_DAILY_FLOWS = {
-    ("Ethereum", "p2p_transfer_volume_usd"),
+    ("Ethereum", "p2p_transfer_volume_usd"): "a BigQuery week not read yet (EthP2PBigQuery.pieces)",
+    # CCIP: a day refused for more than max_unpriced_share of its token-moving messages unpriced (fetch/ccip_value
+    # _emit) stores NO row, so it is a day not held — never a quiet day; the Q0 sum is annualised over the days held.
+    ("Chainlink", "ccip_token_value_usd"): "refused — more than 10% of the day's token-moving messages unpriced "
+                                           "(fetch/ccip_value.py; re-read by --seed ccip_value --days <list>)",
+    ("Chainlink", "ccip_token_transfers"): "a day the message walk has not completed (fetch/ccip_value.py stores the "
+                                           "count for every complete day, priced or refused)",
 }
 
 
@@ -30672,6 +30697,53 @@ PROJECT_BY_NAME["Chainlink"]["ccip_value"] = {
     "environment": "mainnet", "state_path": ".cache/ccip/state.json", "tokens_path": ".cache/ccip/tokens.json",
     "prices_path": ".cache/ccip/prices.json", "history_days": 270, "budget_s": 300, "max_unpriced_share": 0.10,
     "detail_sample": 1.0, "seed_detail_sample": 0.1, "recent_days": 7, "tokens_max_age_days": 7}
+# G9 K1 (research read 2026-10-20, api.ccip.chain.link + coins.llama.fi, walk of 2026-09-10..10-20): the six refused
+# days of 09-11..10-19 (09-11 10.68%, 09-22 10.58%, 09-23 23.58%, 09-24 20.96%, 09-25 13.12%, 09-30 16.07% of token-moving
+# messages unpriced) fail on ONE token — TESTTR, 1,219 of their 1,291 unpriced messages. Its CCIP group spans 68 chains
+# (63 DefiLlama-mapped: no price on any, current / 09-11 / 09-23; no CoinGecko listing); its verified source on Ethereum
+# (0x5904eBd0…C328, eth.blockscout.com) is Chainlink's test helper src/v0.8/shared/test/helpers/BurnMintERC20WithDrip.sol,
+# `function drip(address to) external { _mint(to, 1e18); }` — anyone mints it free, so it has no market value BY
+# CONSTRUCTION (the contract code is the positive evidence SPEC §1 rule 13 asks for a 0); 1,391 of 1,398 TESTTR messages
+# move exactly 1 raw unit, sender = receiver 0x96056D13…Ee26 on 2.0.0 lanes (lane testing). Declared zero-value: its
+# transfers are valued 0 and counted on the row, never "unpriced". Without it the six days read 1.75% / 0.86% / 0.86% /
+# 0.72% / 0.68% / 0.91% unpriced. The other steps (destination contract, declared underlying) priced 1 more message on
+# 09-22 and 09-24 (USD1 from Canton -> Ethereum USD1, but the directory has no decimals for the Canton token: not used);
+# no receipt token was found 1:1 (stTAO 1.2717 wTAO, wstPOL, stBRL need a historical rate — none declared). Reverse by
+# removing the group below.
+# G9 K4 — THE FEE IS IN THE MESSAGE DETAIL (research read 2026-10-20, api.ccip.chain.link spec 2.13.0): the list record
+# carries no fee; GET /v2/messages/{id} carries fees.fixedFeesDetails {tokenAddress, totalAmount} on every message —
+# on a 2.0 lane with items VERIFIER / EXECUTOR / TOKEN_POOL / NETWORK summing exactly to the total (Base 2.0: total
+# 61,629,367,067,220 wei WETH = EXECUTOR 20,543,122,355,740 + NETWORK 41,086,244,711,480; Ethereum 2.0 in LINK: total
+# 38,159,081,316,223,478 = EXECUTOR 3,115,027,046,222,328 + NETWORK 35,044,054,270,001,150), on a 1.x lane the total
+# only. No field is named premium or nativeFee; NETWORK is documented only as "Network-level fee". So the per-chain 2.0
+# fee (all receipts — ccip_v2_fees_usd's definition) is read for every message SENT FROM a fee chain: Base (no free log
+# route: Blockscout's Base API is paid) and Arbitrum (the OVERLAP: its log leg is read free through Etherscan, so the two
+# routes are compared day by day — config CCIP_FEE_OVERLAP).
+PROJECT_BY_NAME["Chainlink"]["ccip_value"]["fee_chains"] = {"15971525489660198786": "base",
+                                                            "4949039107694359620": "arbitrum"}
+PROJECT_BY_NAME["Chainlink"]["chainlink_fee_lines"]["ccip_v2_overlap_chains"] = ("arbitrum",)
+for _c in ("base", "arbitrum"):
+    METRICS[f"ccip_v2_fees_api_{_c}_usd"] = {
+        "label": f"CCIP 2.0 fees of messages sent from {_c.title()} per day ($) — api.ccip.chain.link message detail "
+                 f"fees.fixedFeesDetails x DefiLlama price", "kind": "flow", "unit": "usd", "archetypes": [],
+        "tiers": [1], "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Chainlink",)}
+METRICS["ccip_v2_fees_log_arbitrum_usd"] = {
+    "label": "CCIP 2.0 receipts on Arbitrum alone per day ($, its OnRamp logs) — the overlap check on the API fee read",
+    "kind": "flow", "unit": "usd", "archetypes": [], "tiers": [2], "sanity_min": 0, "sanity_max": 1e8,
+    "only_projects": ("Chainlink",)}
+METRICS["ccip_v2_fees_with_base_usd"] = {
+    "label": "CCIP 2.0 fees per day ($) — the log legs (ccip_v2_fees_usd) + Base from the message detail, on days both "
+             "hold; the Base leg is used only while the Arbitrum overlap agrees", "kind": "flow", "unit": "usd",
+    "archetypes": [], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Chainlink",),
+    "view_only": True}
+CCIP_FEE_OVERLAP = {"project": "Chainlink", "api": "ccip_v2_fees_api_arbitrum_usd", "log": "ccip_v2_fees_log_arbitrum_usd",
+                    "leg": "ccip_v2_fees_api_base_usd", "into": "ccip_v2_fees_usd",
+                    "out": "ccip_v2_fees_with_base_usd", "tolerance": 0.02, "min_days": 7}
+PROJECT_BY_NAME["Chainlink"]["ccip_value"]["zero_value_groups"] = {
+    "dbfad97a-19ea-59e6-a1cb-0694887755b0": {
+        "symbol": "TESTTR", "evidence": "BurnMintERC20WithDrip.sol drip(): _mint(to, 1e18) to anyone, free",
+        "source": "eth.blockscout.com verified source of 0x5904eBd0519028ca1550fbe96466b4b226f0c328",
+        "read_on": "2026-10-20"}}
 BUSINESS_SLOTS["Chainlink"] = tuple(BUSINESS_SLOTS["Chainlink"]) + ("ccip_token_value_usd",)
 # Pendle's third business slot: TVL within 30 days of expiry — the rollover exposure; the full split is the four buckets
 BUSINESS_SLOTS["Pendle"] = tuple(BUSINESS_SLOTS["Pendle"]) + ("tvl_maturity_le_30d_usd",)
@@ -30697,6 +30769,304 @@ for _m, _lab in (("tvl_maturity_le_30d_usd", "1-30 days from expiry"),
 PROJECT_BY_NAME["Pendle"]["pendle_maturity"] = {"history_days": 400, "budget_s": 120,
                                                 "state_path": ".cache/pendle_maturity/state.json",
                                                 "weekly_reserve_cu": 20_000}
+
+
+# ===== G9 L3 — NEAR: THE TREASURY'S SHARE OF THE EPOCH MINT IS LINE m, NOT (a) (Jake 2026-10-20). =====
+# Confirmed twice (research read 2026-10-20): (1) the protocol rule — nearcore@942b968f chain/epoch-manager/src/
+# reward_calculator.rs L63-84: protocol_reward_rate = 1/10 whenever genesis_protocol_version == PROD_GENESIS_PROTOCOL_
+# VERSION (29, core/primitives/src/version.rs L216) — the [0,1] EXPERIMENTAL_protocol_config reports is the genesis
+# file's value, not what mainnet pays; treasury_reward = floor(epoch_total_reward x 1/10) to protocol_treasury_account
+# treasury.near; unchanged by the 5% -> 2.5% cut (nearcore 2.9.0, epoch_configs/mainnet/81.json, block 170,351,519).
+# (2) the account's actual inflows — archival view_account at 7 epoch boundaries (blocks 220,679,534 / 220,722,734 /
+# 220,765,934 / 220,809,134 at 2.5%; 170,308,317 / 170,351,519 at 5%; 170,394,719 the first at 2.5%): each inflow equals
+# floor(epoch_total_reward / 10) to the yoctoNEAR, 0.1001 of the supply rise (validators earn slightly under 90%: uptime).
+# So: line m = near_treasury_mint_tokens (fetch/near_issuance, MEASURED at each epoch's mint block, ON-CHAIN; the view
+# near_treasury_mint_view_tokens adds the constant x the mint on a day not yet read, the same days (a) leaves it out); (a) =
+# near_validator_rewards_tokens = the measured mint less the treasury's inflow that day. On a day the treasury read does
+# not cover yet (the v2 walk re-reads the year, a few runs), (a) is the mint less 1/10 of it — MECHANISM (the protocol
+# constant) x the MEASURED mint, said in the row's source; the measured days are its check (0.1001 vs 0.1000).
+METRICS["near_treasury_mint_tokens"] = {
+    "label": "NEAR minted to the protocol treasury (treasury.near's balance rise across each epoch's mint block)",
+    "kind": "flow", "unit": "tokens", "archetypes": [], "tiers": [1], "sanity_min": 0, "sanity_max": 1e6,
+    "only_projects": ("Near",)}
+METRICS["near_validator_rewards_tokens"] = {
+    "label": "NEAR minted to validators and delegators — the epoch mint less the treasury's 1/10 (line a)",
+    "kind": "flow", "unit": "tokens", "archetypes": [], "tiers": [1], "sanity_min": 0, "sanity_max": 1e7,
+    "only_projects": ("Near",), "view_only": True}
+TREASURY_SHARE_SPLIT = {
+    "Near": {"gross": "gross_issuance_tokens", "treasury": "near_treasury_mint_tokens",
+             "out": "near_validator_rewards_tokens", "m_view": "near_treasury_mint_view_tokens", "rate": 0.1,
+             "mechanism": "protocol_reward_rate 1/10 (nearcore reward_calculator.rs L63-84)"},
+}
+OUTFLOW_CATEGORIES["Near"] = {
+    **OUTFLOW_CATEGORIES["Near"], "a": ("near_validator_rewards_tokens",),
+    "basis": "minted rewards to validators (the epoch mint less the protocol treasury's 1/10, G9 L3) are (a); the "
+             "treasury's 1/10 is line m (near_treasury_mint_tokens); (e) = releases from lockup.near + "
+             "contributors.near (the accounts NEAR's own circulating method subtracts)"}
+METRICS["near_treasury_mint_view_tokens"] = {
+    "label": "NEAR minted to treasury.near (line m) — measured where the epoch walk read it, else 1/10 of the measured "
+             "mint (MECHANISM, the protocol constant), the day's source says which", "kind": "flow", "unit": "tokens",
+    "archetypes": [], "tiers": [1], "sanity_min": 0, "sanity_max": 1e6, "only_projects": ("Near",), "view_only": True}
+ISSUER_MINTS["Near"] = {
+    "kind": "series", "metric": "near_treasury_mint_view_tokens", "wallet": "treasury.near",
+    "source": "near_issuance:near_rpc:treasury_inflow",
+    # treasury.near is NOT subtracted by NEAR's circulating method (lockup.near + contributors.near only): this mint is
+    # already inside '+ minted' on the token statement — the memo line shows its part, it is not added again
+    "inside_minted": True}
+FLOW_LINE_EVIDENCE.pop(("Near", "memo: minted straight to issuer-side wallets (insider emission, not circulating "
+                                "until released)"), None)
+
+
+# ===== G9 N — PENDLE'S GAUGE CHAINS FROM THE SAMPLED RATES (fetch/subsidy_targeting._pendle_daily). =====
+# "Gauge chains with no free log route (BNB 56, Sonic 146, Mantle 5000, Berachain 80094)" predates the Alchemy probe
+# (G2 A7: BNB / Berachain / OP enabled; EXPLORER_PROBED_SCANS wires gauge_pendle_out_<chain> for bsc, base, mantle,
+# sonic, berachain, hyperevm into emissions_from_metric). The rewardData rates sampled daily on every gauge chain since
+# 2026-10-20 (G9 A1) give each chain's PENDLE per day as pendlePerSec x seconds — ON-CHAIN state, forward only — stored
+# as emissions_tokens_gauge_rate_<chain>: the CHECK on every chain whose log scan stores (mainnet, arbitrum: the
+# reference chains), and the figure for a chain whose scan stores nothing. Research read 2026-10-20 (Pendle API
+# /core/v2/markets/all pendleEmission.totalIncentive − limitOrderIncentive = on-chain pendlePerSec x 604,800 exactly on 3
+# markets): PENDLE a week now — Ethereum 2,991.5, Arbitrum 439.5, Base 226.2, HyperEVM 81.6, BSC 51.6; Sonic (17
+# markets, all expired by 2025-12-18), Mantle (7, by 2025-09-18) and Berachain (14, by 2025-12-18) pay 0 — no market,
+# no gauge rate (the G9 A1 sampling lists none there). Pendle's API serves NO emissions history (OpenAPI, 67 paths);
+# pendleApy x tvl ÷ price reproduces the rate within ~0.2% but is derived — not used.
+PENDLE_RATE_CHECK = {"tolerance": 0.02, "min_days": 3,
+                     "chains": ("ethereum", "arbitrum", "optimism", "bsc", "base", "mantle", "sonic", "berachain",
+                                "hyperevm")}
+for _c in PENDLE_RATE_CHECK["chains"]:
+    METRICS[f"emissions_tokens_gauge_rate_{_c}"] = {
+        "label": f"PENDLE paid by the {_c} GaugeController per day — sampled rewardData pendlePerSec x seconds (G9 N; "
+                 f"the check on the gauge log scan)", "kind": "flow", "unit": "tokens", "archetypes": [],
+        "tiers": [2], "sanity_min": 0, "sanity_max": 1e7, "only_projects": ("Pendle",)}
+
+
+# ===== G9 N — PLUME (b): MERKL'S PUBLISHED CAMPAIGNS (as merkl_campaigns already reads for Morpho). =====
+# Research read 2026-10-20 (api.merkl.xyz/v4/campaigns?chainId=98866): 84 campaigns computed on Plume, 72 pay WPLUME
+# 0xEa237441…4bd1 (all distributionChainId 98866) — 34,633,563 WPLUME from 2025-05-23 to 2026-10-02, funded by NINE
+# creators (one, 0xb11813F5…, 8.26M, outside Merkl's "plume" creator group): read by token, never by creator. Ethereum:
+# 5 campaigns pay PLUME 0x4C1746A8…a5F1 (1,410,520 from 2026-09-18). Merkl's cumulative credited rewards
+# (/v4/rewards/token/total): 33,821,878 WPLUME, 1,233,940 PLUME — the schedule's check. WPLUME is PLUME wrapped 1:1.
+PROJECT_BY_NAME["Plume"]["merkl_campaigns"] = {
+    "url": "https://api.merkl.xyz/v4/campaigns", "creator": None, "metric": "merkl_campaigns_plume_tokens",
+    "chains": {98866: {"name": "Plume", "token": "0xEa237441c92CAe6FC17Caaf9a7acB3f953be4bd1"},
+               1: {"name": "Ethereum", "token": "0x4C1746A800D224393fE2470C70A35717eD4eA5F1"}},
+    "source": "https://api.merkl.xyz/v4/campaigns?chainId=<id>&tokenAddress=<token> (read 2026-10-20)"}
+METRICS["merkl_campaigns_plume_tokens"] = {
+    "label": "PLUME paid per day by Merkl campaigns (WPLUME on Plume + PLUME on Ethereum) — each campaign's amount spread "
+             "evenly over its own [start, end), by UTC day (Merkl API v4, PUBLISHED by the distributor)",
+    "kind": "flow", "unit": "tokens", "archetypes": [], "tiers": [1], "sanity_min": 0, "sanity_max": 1e8,
+    "only_projects": ("Plume",)}
+OUTFLOW_CATEGORIES["Plume"]["b"] = ("merkl_campaigns_plume_tokens",)
+FLOW_LINE_EVIDENCE.pop(("Plume", "Incentives paid beside: supply side (b)"), None)
+
+
+# ===== G9 N — PLUME REVENUE = THE FEES ITS REWARDDISTRIBUTOR RECEIVES (Jake's fallback, 2026-10-20). =====
+# DefiLlama lists no Plume revenue (summary/fees/plume-mainnet?dataType=dailyRevenue: "not found"; its methodology's
+# "Revenue: Burned coins" leg serves no series and Plume's MiCA paper says no burn exists; read 2026-10-20); growthepie
+# and Token Terminal / Artemis give fees only or nothing. So Plume's revenue is the chain's gas, received in full by the
+# RewardDistributor 0x60be7a0c… (ArbOS getInfraFeeAccount; getMinimumGasPrice = eth_gasPrice, so the whole L2 base fee
+# is the infra fee — G9 I4, read on chain 2026-10-20): revenue_usd = fees_usd (ON-CHAIN, explorer txnsFee), and
+# "to suppliers" is 0. Of what it receives, 87.5% goes to the unlabelled EOA 0x07DC8589… — RETAINED, recipient not yet
+# identified — and 12.5% is bridged to Ethereum (Orbit revenue sharing, unlabelled). Check: growthepie fees_paid_usd.
+REVENUE_FROM_FEES = {
+    "Plume": {"fees": "fees_usd", "revenue": "revenue_usd",
+              "why": "the chain's gas, received in full by the RewardDistributor 0x60be7a0c… (ArbOS infraFeeAccount)",
+              "check": {"metric": "fees_usd_growthepie", "relation": "equal", "tolerance": 0.10,
+                        "what": "growthepie fees_paid_usd"}},
+}
+FLOW_LINE_NOTES = {
+    ("Plume", "→ retained (revenue − credited holder value)"):
+        "retained — of the RewardDistributor's receipts 87.5% goes to the unlabelled EOA 0x07DC8589… (recipient not yet "
+        "identified) and 12.5% is bridged to Ethereum (Orbit revenue sharing, unlabelled)",
+    ("Plume", "→ to suppliers (fees − revenue)"):
+        "0: the whole L2 base fee is the infra fee to the RewardDistributor (no sequencer / supplier share on Plume)",
+}
+for _l in ("Revenue (every stream)", "→ to suppliers (fees − revenue)", "→ retained (revenue − credited holder value)"):
+    FLOW_LINE_EVIDENCE.pop(("Plume", _l), None)
+
+
+# ===== G9 N — CLASS E ONLY AFTER STEPS 2-4 WERE CHECKED (SPEC §1 rule 13): THE SOURCES CHECKED, WITH DATES. =====
+# Every Flows line left without a value names what was checked at steps 2 (the project's own figure), 3 (aggregators)
+# and 4 (mechanism × published base), and what each gave. `checked` is read into the line's Note and the Coverage
+# reason (tests/test_round_g9k.py N3).
+_RD = "2026-10-20"
+_CHECKED_WM = (
+    ("worldmobile.io/blog", _RD, "rewards 'over $2 million distributed' (2026-05-28); Spark payouts $220,789.20/month "
+                                 "(2026-04-01); operator earnings $1.5M+ (as of 2026-04) — no revenue, fee or buyback "
+                                 "amount"),
+    ("worldmobile.io/about/ecosystem-metrics", _RD, "'Coming soon' — the monthly Network / Hardware / Affiliate revenue "
+                                                    "and buyback-pool fields have no data"),
+    ("worldmobiletoken.com/mica_whitepaper_wmtx.pdf", _RD, "the buyback in words ('revenue … used to purchase WMTX from "
+                                                           "open markets'); no amounts"),
+    ("World Mobile 'Buyback Brief' on X, via cryptobeatnews", _RD, "2024-07-18: 29,707 WMT, cumulative 1,170,791 — the "
+                                                                  "last published buyback, before Q-4"),
+    ("DefiLlama / Token Terminal / Artemis", _RD, "no World Mobile revenue or buyback listing; DefiLlama's chain gas "
+                                                  "($12,527 / 30 days) is World Mobile's relayers' gas, not customer fees"),
+)
+_CHECKED_AETHIR_D = (
+    ("docs.aethir.com token-vesting", _RD, "'Ecosystem Development: 50% at TGE, 24 Months Linear; DAO Treasury: 48 Months "
+                                           "Linear' — the split of the 15% between the two is not published"),
+    ("docs.aethir.com token-distribution chart / Tokenomist / DefiLlama dataset", _RD, "Ecosystem 15% as one block"),
+    ("Aethir MiCA white paper (2025-12-18)", _RD, "field D.9 'Resource allocation' empty; text layer unreadable"),
+)
+_CHECKED_AETHIR_C = (
+    ("aethir.com blog 2025-10-21", _RD, "Season 3 (1.26B ATH) REDIRECTED to the Digital Asset Treasury — no Season 3 "
+                                        "airdrop; Season 2 was due at 8 months (2025-02), before Q-4"),
+    ("docs.aethir.com (eATH redemption)", _RD, "Season 2 holders redeem eATH through user.aethir.com; no redemption "
+                                               "figure published; no distributor contract published"),
+)
+_CHECKED_PLUME_C = (
+    ("plume.org blog (Season 2)", _RD, "150,000,000 PLUME — but the figure covers the Plume Points airdrop AND the "
+                                       "Royco / Merkl incentives together (it overlaps (b)); claim 'later in May' 2026"),
+    ("plume.org blog (Nest Points Season 1)", _RD, "dates only (accrual ended 2026-03-13, registration in April); no "
+                                                   "amount published"),
+)
+_CHECKED_NEAR_BC = (
+    ("near.org/blog/near-token-supply-and-distribution", _RD, "'Community Grants and Programs' fund 'community efforts, "
+                                                              "community projects' — no named liquidity-mining or user "
+                                                              "reward programme"),
+    ("NEAR's circulating method (lockup.near + contributors.near)", _RD, "a payment out of those accounts is in (e)"),
+    ("near.foundation programme pages", _RD, "404; only secondary mentions of a 2021-22 DeFi liquidity-mining fund"),
+)
+for _k, _c in ((("Near", "Incentives paid beside: supply side (b)"), _CHECKED_NEAR_BC),
+               (("Near", "Incentives paid beside: demand side (c)"), _CHECKED_NEAR_BC),
+               (("World Mobile", "Fees paid by customers"), _CHECKED_WM),
+               (("World Mobile", "Revenue (every stream)"), _CHECKED_WM),
+               (("Aethir", "Outflows beside: ecosystem / grants (d)"), _CHECKED_AETHIR_D),
+               (("Aethir", "Incentives paid beside: demand side (c)"), _CHECKED_AETHIR_C),
+               (("Plume", "Incentives paid beside: demand side (c)"), _CHECKED_PLUME_C)):
+    if _k in FLOW_LINE_EVIDENCE:
+        FLOW_LINE_EVIDENCE[_k] = {**FLOW_LINE_EVIDENCE[_k], "checked": _c}
+FLOW_LINE_EVIDENCE[("Sky", "Outflows beside: ecosystem / grants (d)")] = {
+    "verdict": "pending", "checked": (
+        ("spell 0x3F89feDD… (2025-08-21 executive, cast 2025-08-25 tx 0x9dff3cf2…)", _RD,
+         "SKY_FRONTIER_FOUNDATION 0xca5183FB… received 1,977,443,914 SKY + 50M USDS + the UNI-V2 LP; "
+         "FORTIFICATION_FOUNDATION 0x483413cc… 200,000,000 SKY + 10M USDS"),
+        ("forum.skyeco.com 27008 / 26985", _RD, "Ecosystem Entity GRANTS into 'Unsellable' endowments: barred from "
+                                                "selling or distributing SKY, used for Staking Borrow / Staking Rewards "
+                                                "only (minimal short-term commitments to core contributor teams)")),
+    "why": "CLASSIFIED (G9 N): the 2025-08-25 transfers are Ecosystem Entity endowment grants — SKY moved from the Pause "
+           "Proxy into two unsellable foundation endowments, an issuer-side move, NOT spend: (d) is what leaves those "
+           "endowments (and the Pause Proxy's ~11.4M SKY of delegate / core payments in Q-3/Q-4). Route: a Transfer-out "
+           "scan of SKY from the Pause Proxy, 0xca5183FB… and 0x483413cc… excluding the farm distributors and 0x0 — not "
+           "built; whether the two endowments join Sky's non-circulating set is Jake's call"}
+# HYPERLIQUID network issuance (N1): published staking figures were checked — Hyperliquid publishes the current
+# futureEmissions only; Hypurrscan's stake-history JSON (test.hypurrscan.io) doubles every validator's rewards on many
+# stretches (unusable as is); ASXN is session-gated. The MODELLED history stays MODELLED (G9 M).
+HL_ISSUANCE_CHECKED = (
+    ("api.hyperliquid.xyz tokenDetails.futureEmissions", _RD, "current value only (the tracker's own reads from "
+                                                              "2026-09-25: ~26,900 HYPE/day)"),
+    ("test.hypurrscan.io/staking/stake-history", _RD, "per-validator daily rewards 2025-09-27.., ~26,930-27,000/day Oct "
+                                                      "13-19 (within ~0.1% of the futureEmissions fall) — but every "
+                                                      "validator's reward doubles on many stretches: not usable as is"),
+    ("ASXN dashboards", _RD, "session-gated (config: read only through rendered page loads) — no staking series found"),
+)
+
+
+# A CELL OUTSIDE THE FLOWS TAB resting on an unpublished wallet (World Mobile's buyback: the mechanism is confirmed —
+# MiCA: 'revenue generated by the network is used to purchase WMTX from open markets' — the treasury wallet is not):
+# no longer N/A by an accepted limit but MISSING E with the sources checked (coverage_audit.apply_checked).
+EVIDENCE_CHECKED_CELLS = {
+    "World Mobile": {"match": r"never published its treasury address",
+                     "why": "the buyback mechanism exists (MiCA white paper: network revenue buys WMTX on the open "
+                            "market) — no wallet and no published amount for Q-4..Q0",
+                     "checked": _CHECKED_WM},
+}
+
+
+# ===== G9 N — THE EVIDENCE LADDER (SPEC §1 rule 13, Jake 2026-10-20: "never write a flow off because the chain can't
+# trace it"). =====
+# A flow the chain cannot trace (an unpublished wallet, no free log route, off-chain billing, a chart-only schedule) is
+# filled from the highest step available: ON-CHAIN · PUBLISHED: <source> · AGGREGATOR: <source> · MECHANISM × PUBLISHED
+# BASE. Each entry below is a figure for a PERIOD as published (a calendar quarter, a month, a campaign), spread EVENLY
+# over the period's days into the target series at read time (build_workbook._evidence_views; never stored), so a
+# trailing 90-day block is the pro-rata blend of the periods it overlaps — said on the cell. A target that holds stored
+# rows on any day of the entry is not written over (the on-chain leg stands; the entry is reported as superseded).
+# The partial on-chain trace, where one exists, is the CHECK (`check`): relation "lower_bound" (the trace may not
+# exceed the value by more than `tolerance`) or "equal" (within `tolerance`), over every Q0..Q-4 block both cover.
+# Status: VERIFIED when the check agrees, CHECK (both figures shown) when it disagrees, LIVE-UNVERIFIED with no check.
+EVIDENCE_STEPS = ("ON-CHAIN", "PUBLISHED", "AGGREGATOR", "MECHANISM × PUBLISHED BASE")
+
+
+def _linear(start: str, end: str, total: float, quote: str) -> dict:
+    """A tranche released linearly over [start, end] (both days inclusive) as one evenly spread period."""
+    return {"from": start, "to": end, "value": float(total), "quote": quote}
+
+
+_EF = "https://blog.ethereum.org"
+EVIDENCE_LADDER: dict = {
+    # L1 (Jake 2026-10-20): Ethereum (d) = the EF Ecosystem Support Program's quarterly "Total awarded", each spread
+    # evenly over its calendar quarter's days (labelled so); a 90-day block is then the pro-rata blend of the quarters
+    # it overlaps, said on the cell. Every total as written in its post (read 2026-10-20). No Q3-2026 post yet (feed and
+    # ESP category page read to 2026-10-16): Q0's days after 2026-06-30 are not covered — the cell says COVERS n OF 90.
+    ("Ethereum", "outflow_d_usd"): {
+        "step": "PUBLISHED", "source": "EF quarterly report (ESP Allocation Update, 'Total awarded'), spread evenly",
+        "url": f"{_EF}/category/ecosystem-support-program", "read_on": "2026-10-20", "tier": 2,
+        "spread": "EF quarterly report, spread evenly over each calendar quarter's days",
+        "periods": [
+            {"from": "2024-07-01", "to": "2024-09-30", "value": 12_848_780.33, "quote": "Total awarded in Q3: $12,848,780.33", "url": f"{_EF}/2024/12/03/esp-allocation-q324"},
+            {"from": "2024-10-01", "to": "2024-12-31", "value": 11_638_706.29, "quote": "Total awarded in Q4: $11,638,706.29", "url": f"{_EF}/2025/02/06/allocation-q4-24"},
+            {"from": "2025-01-01", "to": "2025-03-31", "value": 32_647_065.32, "quote": "Total awarded in Q1 2025: $32,647,065.32", "url": f"{_EF}/2025/05/08/allocation-q1-25"},
+            {"from": "2025-04-01", "to": "2025-06-30", "value": 8_374_108.64, "quote": "Total awarded in Q2 2025: $8,374,108.64", "url": f"{_EF}/2025/07/23/allocation-q2-25"},
+            {"from": "2025-07-01", "to": "2025-09-30", "value": 14_347_918.55, "quote": "Total awarded in Q3 2025: $14,347,918.55", "url": f"{_EF}/2025/12/02/allocation-q3-25"},
+            {"from": "2025-10-01", "to": "2025-12-31", "value": 7_385_528.84, "quote": "Total awarded in Q4 2025: $7,385,528.84", "url": f"{_EF}/2026/01/27/allocation-q4-25"},
+            {"from": "2026-01-01", "to": "2026-03-31", "value": 9_856_014.14, "quote": "Total awarded in Q1 2026: 9,856,014.14 USD", "url": f"{_EF}/2026/04/29/allocation-q1-26"},
+            {"from": "2026-04-01", "to": "2026-06-30", "value": 5_502_930.20, "quote": "Total awarded in Q2 2026: 5,502,930.20 USD", "url": f"{_EF}/2026/08/18/allocation-q2-26"}]},
+    # N1 Aethir (e): the docs' vesting TEXT (docs.aethir.com/aethir-tokenomics/token-vesting, read 2026-10-20: "Team:
+    # 18 Months Cliff, 36 Months Linear Vest"; "Investors: 12 Months Cliff, 24 Months Linear Vest"; listing 2024-06-12)
+    # applied to the allocation shares — Team 12.5%, Investors 11.5% of 42B — read from the docs' chart
+    # (Tokenomics3D.png, by eye) and given in text by Tokenomist and DefiLlama's dataset (Aethir's own text gives none).
+    # Advisors (5%) and Ecosystem (15%: development / DAO treasury split unpublished) are NOT included: PARTIAL, a lower
+    # bound of (e). Check: it cannot exceed the published monthly circulating schedule's own steps.
+    ("Aethir", "insider_unlock_tokens"): {
+        "step": "MECHANISM × PUBLISHED BASE",
+        "mechanism": "docs.aethir.com token-vesting (team 18-mo cliff + 36-mo linear; investors 12-mo cliff + 24-mo linear)",
+        "source": "allocation Team 12.5% / Investors 11.5% of 42B (docs chart Tokenomics3D.png; Tokenomist / DefiLlama "
+                  "in text) — PARTIAL: advisors 5% and ecosystem 15% not included",
+        "url": "https://docs.aethir.com/aethir-tokenomics/token-vesting", "read_on": "2026-10-20", "tier": 3,
+        "spread": "each tranche spread evenly over its linear vesting days",
+        "check": {"metric": "scheduled_release_tokens", "relation": "upper_bound", "tolerance": 0.0,
+                  "what": "the steps of Aethir's own monthly circulating table"},
+        "periods": [_linear("2025-12-12", "2028-12-11", 0.125 * 42e9, "Team 12.5%: 18-mo cliff from 2024-06-12, 36-mo linear"),
+                    _linear("2025-06-12", "2027-06-11", 0.115 * 42e9, "Investors 11.5%: 12-mo cliff, 24-mo linear")]},
+    # N1 Plume (e): Plume publishes the release schedule as a CHART only (plume.org/blog/tokenomics, PNG rev.
+    # 2025-10-11); the free machine-readable reading of it is DefiLlama's emissions dataset (defillama-datasets.llama.fi/
+    # emissions/plume-mainnet, read 2026-10-20 — AGGREGATOR): 2026-01-21 cliffs Core Contributors 660,000,000 and Early
+    # Backers 693,000,000, then 12,830,000 and 13,470,000 a week linear to 2028-01-22. (e) = those two insider legs.
+    # Check: they cannot exceed the published circulating's own steps (supply.plume.org: +212,116,114.6 about the 21st of
+    # each month from 2026-03 — every category together).
+    ("Plume", "insider_unlock_tokens"): {
+        "step": "AGGREGATOR", "source": "DefiLlama emissions dataset (its reading of Plume's published chart)",
+        "url": "https://defillama-datasets.llama.fi/emissions/plume-mainnet", "read_on": "2026-10-20", "tier": 3,
+        "spread": "cliffs on their day; each linear leg spread evenly at its weekly rate",
+        "check": {"metric": "scheduled_release_tokens", "relation": "upper_bound", "tolerance": 0.0,
+                  "what": "the steps of Plume's published circulating (supply.plume.org)"},
+        "periods": [{"from": "2026-01-21", "to": "2026-01-21", "value": 660_000_000, "quote": "Core Contributors cliff"},
+                    {"from": "2026-01-21", "to": "2026-01-21", "value": 693_000_000, "quote": "Early Backers cliff"},
+                    _linear("2026-01-21", "2028-01-21", 12_830_000 / 7 * 731, "Core Contributors 12,830,000/week"),
+                    _linear("2026-01-21", "2028-01-21", 13_470_000 / 7 * 731, "Early Backers 13,470,000/week")]},
+}
+METRICS["insider_unlock_tokens"] = {
+    "label": "Insider unlocks per day (team / contributors / investors) — the published vesting applied to the published "
+             "allocation where no wallet is published (G9 N, config.EVIDENCE_LADDER)", "kind": "flow",
+    "unit": "tokens", "archetypes": [], "tiers": [3], "sanity_min": 0, "sanity_max": 1e10,
+    "only_projects": ("Aethir", "Plume"), "view_only": True}
+OUTFLOW_CATEGORIES["Aethir"]["e"] = ("insider_unlock_tokens",)
+OUTFLOW_CATEGORIES["Plume"]["e"] = ("insider_unlock_tokens",)
+for _k in (("Aethir", "Outflows beside: unlocks (e)"), ("Plume", "Outflows beside: unlocks (e)"),
+           ("Ethereum", "Outflows beside: ecosystem / grants (d)")):
+    FLOW_LINE_EVIDENCE.pop(_k, None)
+
+
+def evidence_for(project_name: str, metric: str) -> dict | None:
+    """The declared step-2/3/4 entry filling (project, metric), or None."""
+    return EVIDENCE_LADDER.get((project_name, metric))
+
+
+def evidence_label(e: dict) -> str:
+    """'PUBLISHED: <source>' / 'AGGREGATOR: <source>' / 'MECHANISM × PUBLISHED BASE: <mechanism> × <source>'."""
+    if e["step"] == "MECHANISM × PUBLISHED BASE":
+        return f"MECHANISM × PUBLISHED BASE: {e['mechanism']} × {e['source']}"
+    return f"{e['step']}: {e['source']}"
 
 
 _CONFIG_LOADED = True       # the last line: config is complete (see _relation_pairs)

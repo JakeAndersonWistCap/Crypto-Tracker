@@ -982,7 +982,7 @@ Funding: revenue (the default: the programme documented base)
 
 | Flow | Category | Series |
 |---|---|---|
-| into circulating | (a) security emissions | `gross_issuance_tokens` |
+| into circulating | (a) security emissions | `near_validator_rewards_tokens` |
 | into circulating | (b) supply-side incentives | **NO SERIES** |
 | into circulating | (c) demand-side incentives | **NO SERIES** |
 | into circulating | (d) ecosystem / grant spend | **NO SERIES** |
@@ -990,7 +990,7 @@ Funding: revenue (the default: the programme documented base)
 | out of circulating | retirement (bought, burned + held) | `retired_buyback_tokens` |
 | out of circulating | burn (every burn) | `gross_burn_tokens_bigquery` |
 
-Basis: minted rewards to validators (90%) and the protocol treasury (10%, inside the mint) are (a); (e) = releases from lockup.near + contributors.near (the accounts NEAR's own circulating method subtracts; daily, NearBlocks v3 history before 2026-10-12, the RPC read after — fix round 2, R10 / N2)
+Basis: minted rewards to validators (the epoch mint less the protocol treasury's 1/10, G9 L3) are (a); the treasury's 1/10 is line m (near_treasury_mint_tokens); (e) = releases from lockup.near + contributors.near (the accounts NEAR's own circulating method subtracts)
 
 PENDING: PARTIAL (e): the lockup CONTRACTS' releases (near_lockup_release_tokens) join (e) once the weekly lockup read has two readings — one so far (2026-10-11)
 
@@ -1013,10 +1013,10 @@ Funding: revenue (the default: the programme documented base)
 | Flow | Category | Series |
 |---|---|---|
 | into circulating | (a) security emissions | `emissions_claimed_tokens` |
-| into circulating | (b) supply-side incentives | **NO SERIES** |
+| into circulating | (b) supply-side incentives | `merkl_campaigns_plume_tokens` |
 | into circulating | (c) demand-side incentives | **NO SERIES** |
 | into circulating | (d) ecosystem / grant spend | **NO SERIES** |
-| into circulating | (e) unlocks | **NO SERIES** |
+| into circulating | (e) unlocks | `insider_unlock_tokens` |
 | out of circulating | retirement (bought, burned + held) | **NO SERIES** |
 | out of circulating | burn (every burn) | **NO SERIES** |
 
@@ -1102,7 +1102,7 @@ Funding: revenue (the default: the programme documented base)
 | into circulating | (b) supply-side incentives | `supplier_rewards_b_tokens` |
 | into circulating | (c) demand-side incentives | **NO SERIES** |
 | into circulating | (d) ecosystem / grant spend | **NO SERIES** |
-| into circulating | (e) unlocks | **NO SERIES** |
+| into circulating | (e) unlocks | `insider_unlock_tokens` |
 | out of circulating | retirement (bought, burned + held) | **NO SERIES** |
 | out of circulating | burn (every burn) | **NO SERIES** |
 

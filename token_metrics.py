@@ -134,6 +134,10 @@ def parse_args(argv=None) -> argparse.Namespace:
                     help="--seed mev_relays: seed this many days back instead of the configured year "
                          "(e.g. 90 first; a later full seed resumes from the days already held). --seed hyperevm_burn: "
                          "also read this many days back when further than the earliest supply row")
+    ap.add_argument("--dates", default=None, metavar="YYYY-MM-DD,…",
+                    help="--seed ccip_value: re-read ONLY these UTC days (G9 K2 — the days refused for more than 10%% "
+                         "of their token-moving messages unpriced): one walk down to the oldest, nothing else closed, "
+                         "their remembered no-price answers asked again")
     return ap.parse_args(argv)
 
 
@@ -626,9 +630,10 @@ def uni_retro_burn_row(tx: dict, transfers: list, spec: dict):
     return {"date": day, "value": amt, "source": f"tx:{t['hash']} (block {t['block']}, {spec['what']})"}, ""
 
 
-def seed_ccip_value(st, log) -> int:
+def seed_ccip_value(st, log, dates: str | None = None) -> int:
     """Round G8 4b: Chainlink's CCIP token value, its 270-day history in one sitting (no time budget; the walk is
-    checkpointed, so an interrupted seed resumes). ~1.5-3 h at the default 10% detail sample. Records no gaps."""
+    checkpointed, so an interrupted seed resumes). ~1.5-3 h at the default 10% detail sample. Records no gaps.
+    dates (G9 K2): re-read only those days (comma-separated)."""
     from fetch import Heartbeat
     from fetch.ccip_value import CcipValue
     from fetch.validate import validate_frame
@@ -637,7 +642,10 @@ def seed_ccip_value(st, log) -> int:
     out = fetch.FetchOutput()
     t0 = time.monotonic()
     with Heartbeat():
-        CcipValue().run(pl, None, out, unbounded=True)
+        days = [d.strip() for d in str(dates or "").split(",") if d.strip()]
+        if days:
+            log.info("--seed ccip_value: re-reading %d listed day(s) only: %s", len(days), ", ".join(days))
+        CcipValue().run(pl, None, out, unbounded=True, days=days or None)
     prior = st.latest_values()
     written = sum(st.upsert(f) for f in (validate_frame(f, prior, out) for f in out.frames) if f is not None and not f.empty)
     for e in out.log:
@@ -1018,7 +1026,7 @@ def _main(args, log) -> int:
               "katana_claims": seed_katana_claims, "morpho_base_claims": seed_morpho_base_claims,
               "plume_payouts": seed_plume_payouts, "pendle_berachain": seed_pendle_berachain,
               "eth_p2p_validation": seed_eth_p2p_validation, "uni_retro_burn": seed_uni_retro_burn,
-              "ccip_value": seed_ccip_value, "aero_subsidy": seed_aero_subsidy,
+              "ccip_value": lambda st_, log_: seed_ccip_value(st_, log_, args.dates), "aero_subsidy": seed_aero_subsidy,
               "aero_buyback": seed_aero_buyback, "aero_managed_locks": seed_aero_managed_locks,
               "mev_relays": lambda st_, log_: seed_mev_relays(st_, log_, args.seed_days)}[args.seed](st, log)
         st.close()

@@ -397,6 +397,32 @@ def _dense_days(s: pd.Series, start: pd.Timestamp, end: pd.Timestamp) -> int:
     return int(idx[(idx > start) & (idx <= end)].nunique())
 
 
+def _dense_missing(s: pd.Series, start: pd.Timestamp, end: pd.Timestamp) -> list[pd.Timestamp]:
+    """The days in (start, end] from the series' first row on that hold no row — a DENSE_DAILY_FLOWS series (G9 K3).
+    The day `end` itself is left out while it is not complete (a daily query stores a day once it has closed)."""
+    if s.empty:
+        return []
+    idx = set(pd.DatetimeIndex(s.index).normalize())
+    lo = max(start + pd.Timedelta(days=1), min(idx))
+    hi = end.normalize() - pd.Timedelta(days=1) if end.normalize() not in idx else end.normalize()
+    return [d for d in pd.date_range(lo, hi) if d not in idx] if hi >= lo else []
+
+
+def _day_ranges(days: list[pd.Timestamp]) -> str:
+    """'2026-09-11, 2026-09-22..09-25' — consecutive days folded into one range."""
+    out, run = [], []
+    for d in sorted(days):
+        if run and d - run[-1] == pd.Timedelta(days=1):
+            run.append(d)
+            continue
+        if run:
+            out.append(run)
+        run = [d]
+    if run:
+        out.append(run)
+    return ", ".join(str(r[0].date()) if len(r) == 1 else f"{r[0].date()}..{r[-1].strftime('%m-%d')}" for r in out)
+
+
 def _window_coverage(s: pd.Series, start: pd.Timestamp, end: pd.Timestamp,
                      differenced: bool = False) -> tuple[int, int]:
     """(days the series actually covers inside the window, days the window asks for).
@@ -881,6 +907,8 @@ def confidence_for(project: str, metric: str, row: dict, asof: pd.Timestamp) -> 
     if window and covered is not None and covered < window:
         why.append(f"covers only {covered} of the {window} days in the window — the figure is a "
                    f"{covered}-day total, not a low {window}-day one")
+    if row.get("q0_dense_note"):
+        why.append(row["q0_dense_note"])      # G9 K3: the Q0 days a dense daily series does not hold, named
     if row["status"] == "review":
         why.append("flagged to the Review Queue")
     if row["status"] == "stale":
@@ -2925,6 +2953,246 @@ def _cashback_funding_views(groups: dict) -> None:
             cols)
 
 
+EVIDENCE_SRC = "evidence:"          # the measuring point of a step-2/3/4 leg: evidence:<step>:<metric>
+# (project, metric) -> {"label", "note", "verdict": VERIFIED | CHECK | LIVE-UNVERIFIED, "check": text, "days": n}
+EVIDENCE_RESULTS: dict = {}
+
+
+def _evidence_check(e: dict, filled: pd.Series, groups: dict, name: str, asof) -> tuple[str, str]:
+    """(verdict, text) of an entry's on-chain CHECK over the Q0..Q-4 blocks both cover (SPEC §1 rule 13)."""
+    c = e.get("check")
+    if not c:
+        return "LIVE-UNVERIFIED", "no on-chain check exists for this flow"
+    chk = _daily(groups.get((name, c["metric"])))
+    if chk.empty or filled.empty or asof is None:
+        return "LIVE-UNVERIFIED", f"check {c['metric']}: nothing stored to compare"
+    tol, rel, parts, bad, n = float(c.get("tolerance", 0.05)), c.get("relation", "equal"), [], [], 0
+    for k in range(5):
+        a, b = _flow_window(asof, k)
+        v, nv = _flow_sum(filled, a, b)
+        w, nw = _flow_sum(chk, a, b)
+        if v is None or w is None or not nv or not nw:
+            continue
+        # A QUARTER THE CHECK DOES NOT SPAN IS NOT JUDGED: its series must start by the block's first day and reach its
+        # last month (a monthly step series' last row may sit up to a month before the block's end)
+        if chk.index.min() > a + pd.Timedelta(days=1) or chk.index.max() < b - pd.Timedelta(days=31):
+            continue
+        n += 1
+        ok = ((w <= v * (1 + tol)) if rel == "lower_bound" else (v <= w * (1 + tol)) if rel == "upper_bound"
+              else (abs(w / v - 1) <= tol if v else w == 0))
+        parts.append(f"{trajectory.LABELS[k]} {v:,.0f} vs check {w:,.0f}")
+        if not ok:
+            bad.append(trajectory.LABELS[k])
+    if not n:
+        return "LIVE-UNVERIFIED", f"check {c['metric']}: no quarter holds both"
+    what = (f"{c['metric']} ({c.get('what', '')}) as "
+            + {"lower_bound": "a lower bound", "upper_bound": "an upper bound"}.get(rel, "a reconciliation")
+            + f" within {tol:.0%}: " + "; ".join(parts))
+    if bad:
+        return "CHECK", f"{what} — DISAGREES in {', '.join(bad)}"
+    # VERIFIED ONLY BY AN INDEPENDENT MEASUREMENT (SPEC §1 rule 13: "the chain check agrees"): a bound or a
+    # reconciliation against another published figure agrees, and says so, but grades LIVE-UNVERIFIED
+    return ("VERIFIED" if c.get("onchain", False) else "LIVE-UNVERIFIED"), what + " — agrees"
+
+
+def evidence_on(name: str, metric: str) -> dict | None:
+    """The EVIDENCE_RESULTS entry a series reads — its own, or (an outflow_<c>_tokens/usd view) one of its category's
+    legs' (G9 N). None when the series is wholly on-chain."""
+    if (name, metric) in EVIDENCE_RESULTS:
+        return EVIDENCE_RESULTS[(name, metric)]
+    m = re.match(r"outflow_([a-e])_(?:tokens|usd)$", str(metric or ""))
+    if m:
+        for leg in config.outflow_metrics(name, m.group(1)) or ():
+            if (name, leg) in EVIDENCE_RESULTS:
+                return EVIDENCE_RESULTS[(name, leg)]
+    return None
+
+
+def _revenue_from_fees_views(groups: dict) -> None:
+    """G9 N (config.REVENUE_FROM_FEES): a project whose every fee is received by the protocol (Plume: the whole L2 base
+    fee to its RewardDistributor) has revenue = its measured fees, day by day, where no revenue row is stored; the check
+    against an aggregator's fee figure is said on the row."""
+    asof = pd.Timestamp(_WINDOWS["q0"][1]) if _WINDOWS.get("q0") else None
+    for name, spec in config.REVENUE_FROM_FEES.items():
+        if not any(p["name"] == name for p in scoped_projects()):
+            continue
+        f, have = groups.get((name, spec["fees"])), groups.get((name, spec["revenue"]))
+        if f is None or f.empty or (have is not None and not have.empty):
+            continue
+        groups[(name, spec["revenue"])] = f.assign(metric=spec["revenue"], source=f"derived:revenue_from_fees["
+                                                   f"{spec['fees']}: {spec['why']}]")
+        verdict, chk = _evidence_check({"check": spec.get("check")}, _daily(f), groups, name, asof)
+        EVIDENCE_RESULTS[(name, spec["revenue"])] = {
+            "label": f"ON-CHAIN: revenue = {spec['fees']} ({spec['why']})", "verdict": verdict, "check": chk,
+            "days": len(f), "note": f"ON-CHAIN: revenue = {spec['fees']} — {spec['why']}. CHECK: {chk}"}
+
+
+def _pendle_rate_check(groups: dict) -> None:
+    """G9 N (config.PENDLE_RATE_CHECK): per gauge chain, the log scan's PENDLE (emissions_tokens_gauge_<chain>) against
+    the sampled rates' (emissions_tokens_gauge_rate_<chain>) over their common days — total ÷ total within tolerance on
+    min_days days → VERIFIED, else CHECK with both figures; said on the scan's Data row. A chain whose scan holds nothing
+    shows the rate series as its only figure (its own row)."""
+    o = config.PENDLE_RATE_CHECK
+    for c in o["chains"]:
+        scan_m = "emissions_tokens_gauge_mainnet" if c == "ethereum" else f"emissions_tokens_gauge_{c}"
+        rate, scan = _daily(groups.get(("Pendle", f"emissions_tokens_gauge_rate_{c}"))), _daily(groups.get(("Pendle", scan_m)))
+        if rate.empty:
+            continue
+        common = rate.index.intersection(scan.index)
+        if scan.empty or len(common) < int(o["min_days"]):
+            EVIDENCE_RESULTS[("Pendle", scan_m)] = {
+                "label": "ON-CHAIN (sampled rate)", "verdict": "LIVE-UNVERIFIED", "days": len(common), "note": "",
+                "check": (f"{c}: the sampled rates hold {len(rate)} day(s), the log scan " +
+                          ("nothing" if scan.empty else f"{len(common)} common day(s) (needs {o['min_days']})"))}
+            continue
+        a, b = float(scan[common].sum()), float(rate[common].sum())
+        ok = (abs(a / b - 1) <= float(o["tolerance"])) if b else a == 0
+        EVIDENCE_RESULTS[("Pendle", scan_m)] = {
+            "label": "ON-CHAIN (log scan; sampled rate the check)", "verdict": "VERIFIED" if ok else "CHECK",
+            "days": len(common), "note": "",
+            "check": (f"{c} {common.min().date()}..{common.max().date()} ({len(common)} days): log scan {a:,.1f} vs "
+                      f"rate x seconds {b:,.1f} PENDLE" + (f" — agrees within {float(o['tolerance']):.0%}" if ok
+                                                          else " — DISAGREES"))}
+
+
+def _treasury_split_views(groups: dict) -> None:
+    """G9 L3 (config.TREASURY_SHARE_SPLIT): the validators' part of the mint = the measured mint less the treasury's
+    MEASURED inflow that day; on a day the treasury read does not cover, less `rate` of the mint (MECHANISM: the protocol
+    constant x the measured mint), the day's source says which. The measured days are the mechanism's check."""
+    for name, sp in config.TREASURY_SHARE_SPLIT.items():
+        if not any(p["name"] == name for p in scoped_projects()):
+            continue
+        gross, tr = _daily(groups.get((name, sp["gross"]))), _daily(groups.get((name, sp["treasury"])))
+        if gross.empty:
+            continue
+        rate = float(sp["rate"])
+        rows = []
+        for d, v in gross.items():
+            if d in tr.index:
+                rows.append((d, v - float(tr[d]), f"derived:validator_rewards[{sp['gross']} − {sp['treasury']} (measured)]"))
+            else:
+                rows.append((d, v * (1 - rate), f"derived:validator_rewards[{sp['gross']} x (1 − {rate:g}): MECHANISM "
+                                                f"{sp['mechanism']} x the measured mint — the treasury read does not "
+                                                f"cover this day]"))
+        g = groups[(name, sp["gross"])]
+        groups[(name, sp["out"])] = _as_stored(pd.DataFrame(
+            {"date": [r[0] for r in rows], "project": name, "metric": sp["out"], "value": [r[1] for r in rows],
+             "tier": 1, "source": [r[2] for r in rows]}), g.columns)
+        # LINE m, THE SAME DAYS (counted once, never dropped): the measured inflow where read, else the same constant x
+        # the measured mint — so the treasury's share leaves (a) only on a day it is in m
+        mrows = [(d, float(tr[d]) if d in tr.index else v * rate,
+                  f"derived:treasury_mint[{sp['treasury']} (measured)]" if d in tr.index else
+                  f"derived:treasury_mint[{rate:g} x {sp['gross']}: MECHANISM {sp['mechanism']}]")
+                 for d, v in gross.items()]
+        groups[(name, sp["m_view"])] = _as_stored(pd.DataFrame(
+            {"date": [r[0] for r in mrows], "project": name, "metric": sp["m_view"], "value": [r[1] for r in mrows],
+             "tier": 1, "source": [r[2] for r in mrows]}), g.columns)
+        both = gross.index.intersection(tr.index)
+        if len(both):
+            share = float(tr[both].sum()) / float(gross[both].sum())
+            chk = (f"{sp['treasury']} ÷ {sp['gross']} over {len(both)} measured day(s) = {share:.4f} (the protocol "
+                   f"constant {rate:g} of the epoch's MAXIMUM reward; validators earn slightly less than 1 − {rate:g})")
+            EVIDENCE_RESULTS[(name, sp["out"])] = {
+                "label": "ON-CHAIN (mint − measured treasury inflow; the protocol constant where not yet read)",
+                "verdict": "VERIFIED" if abs(share - rate) <= 0.002 else "CHECK", "check": chk, "days": len(both),
+                "note": ""}
+
+
+def _ccip_fee_overlap_view(groups: dict) -> None:
+    """G9 K4 (config.CCIP_FEE_OVERLAP): the per-chain CCIP 2.0 fee read from api.ccip.chain.link's message detail is
+    checked against the same chain's OnRamp logs (Arbitrum) over their common days — total API ÷ total log within the
+    tolerance on at least min_days days — and only then is the Base leg (no free log route) added to the log legs' total,
+    day by day where both hold. A failed or too-short check builds nothing and says why (CHECK, both figures)."""
+    o = config.CCIP_FEE_OVERLAP
+    name = o["project"]
+    if not any(p["name"] == name for p in scoped_projects()):
+        return
+    api, log_, leg, into = (_daily(groups.get((name, o[k]))) for k in ("api", "log", "leg", "into"))
+    common = api.index.intersection(log_.index)
+    if len(common) < int(o["min_days"]) or not float(log_[common].sum()):
+        _VIEW_BLOCKS[(name, o["out"])] = (f"NOT FORMED — the Arbitrum overlap holds {len(common)} common day(s) "
+                                          f"(needs {o['min_days']})")
+        return
+    r = float(api[common].sum()) / float(log_[common].sum())
+    chk = (f"Arbitrum overlap {common.min().date()}..{common.max().date()} ({len(common)} days): message detail "
+           f"${float(api[common].sum()):,.0f} vs OnRamp logs ${float(log_[common].sum()):,.0f} = {r:.4f}")
+    ok = abs(r - 1) <= float(o["tolerance"])
+    EVIDENCE_RESULTS[(name, o["out"])] = {
+        "label": "ON-CHAIN (log legs) + PUBLISHED: api.ccip.chain.link message detail (Base)",
+        "verdict": "VERIFIED" if ok else "CHECK", "days": len(common),
+        "check": chk + (f" — agrees within {float(o['tolerance']):.0%}" if ok else
+                        f" — DISAGREES beyond {float(o['tolerance']):.0%}: the Base leg is not added"),
+        "note": ""}
+    if not ok:
+        _VIEW_BLOCKS[(name, o["out"])] = "CHECK — " + EVIDENCE_RESULTS[(name, o["out"])]["check"]
+        return
+    both = into.index.intersection(leg.index)
+    if both.empty:
+        return
+    g = groups.get((name, o["into"]))
+    tot = into[both] + leg[both]
+    groups[(name, o["out"])] = _as_stored(pd.DataFrame(
+        {"date": both, "project": name, "metric": o["out"], "value": tot.values, "tier": 2,
+         "source": f"derived:ccip_v2_fees_with_base[{o['into']} + {o['leg']}; {chk}]"}), g.columns)
+
+
+def _evidence_views(groups: dict, usd: bool) -> None:
+    """THE EVIDENCE LADDER (G9 N; config.EVIDENCE_LADDER): each published period's figure spread evenly over its days
+    into the target series, on the days no stored row covers — tagged with its step and source. A target holding stored
+    rows inside an entry's span is left to them (superseded, said in EVIDENCE_RESULTS)."""
+    asof = pd.Timestamp(_WINDOWS["q0"][1]) if _WINDOWS.get("q0") else None
+    for (name, metric), e in config.EVIDENCE_LADDER.items():
+        if (METRICS.get(metric, {}).get("unit") == "usd") != usd:
+            continue
+        if not any(p["name"] == name for p in scoped_projects()):
+            continue
+        g = groups.get((name, metric))
+        days, quotes = {}, []
+        for per in e["periods"]:
+            span = pd.date_range(per["from"], per["to"])
+            for d_ in span:
+                days[d_] = days.get(d_, 0.0) + float(per["value"]) / len(span)
+            quotes.append(f"{per['from']}..{per['to']} {per['value']:,.2f}")
+        if not days:
+            continue
+        lo, hi = min(days), max(days)
+        stored = pd.Series(dtype=float)
+        if g is not None and not g.empty:
+            own = g[~g["source"].astype(str).str.startswith(EVIDENCE_SRC)]
+            stored = own[(pd.to_datetime(own["date"]).dt.normalize() >= lo)
+                         & (pd.to_datetime(own["date"]).dt.normalize() <= hi)]
+            if not stored.empty:
+                EVIDENCE_RESULTS[(name, metric)] = {
+                    "label": config.evidence_label(e), "verdict": "superseded",
+                    "note": f"{config.evidence_label(e)} not used: {len(stored)} stored row(s) of {metric} inside "
+                            f"{lo.date()}..{hi.date()} — the measured leg stands", "check": "", "days": 0}
+                continue
+        slug = e["step"].split(" ")[0].lower()
+        src = (f"{EVIDENCE_SRC}{slug}:{metric}[{config.evidence_label(e)}, read {e['read_on']}; "
+               f"{e.get('spread', 'spread evenly over each published period')}]")
+        s_ = pd.Series(days).sort_index()
+        if asof is not None:
+            s_ = s_[s_.index <= asof]                   # a published schedule's FUTURE days are not flows yet
+        if s_.empty:
+            continue
+        cols = next((g_.columns for (n_, _m), g_ in groups.items() if n_ == name and g_ is not None and not g_.empty),
+                    None)
+        if cols is None:
+            continue
+        view = _as_stored(pd.DataFrame({"date": s_.index, "project": name, "metric": metric, "value": s_.values,
+                                        "tier": int(e.get("tier", 2)), "source": src}), cols)
+        groups[(name, metric)] = view if g is None or g.empty else pd.concat([g, view], ignore_index=True)
+        _VIEW_BLOCKS.pop((name, metric), None)          # a step-2/3/4 value is a value: nothing withholds it
+        verdict, chk = _evidence_check(e, s_, groups, name, asof)
+        EVIDENCE_RESULTS[(name, metric)] = {
+            "label": config.evidence_label(e), "verdict": verdict, "check": chk, "days": len(s_),
+            "from": str(s_.index.min().date()), "to": str(s_.index.max().date()),
+            "note": (f"{config.evidence_label(e)} (read {e['read_on']}; {e.get('url', '')}) — "
+                     f"{e.get('spread', 'each published period spread evenly over its days')}: "
+                     f"{'; '.join(quotes)}; a 90-day block is the pro-rata blend of the periods it overlaps. "
+                     f"CHECK: {chk}")}
+
+
 def _outflow_views(groups: dict) -> None:
     """THE FIVE OUTFLOW CATEGORIES (Jake 2026-10-12, Phase 2 amendment 3): per project and category (config
     OUTFLOW_CATEGORIES), outflow_<c>_tokens = the category's series summed per day — a day only where EVERY series in
@@ -3708,14 +3976,21 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _fdv_views(groups)            # price x the total supply used, where total supply is on-chain first
     _total_supply_history_views(groups)   # Round G7 2e: the declared older leg before total_supply's first row
     _reward_funding_views(groups)  # fix round 2 S1: a reward split by what funds it (mint / treasury / revenue)
+    _treasury_split_views(groups)       # G9 L3: NEAR's (a) = the epoch mint less the treasury's 1/10 (line m)
     _issuer_mint_views(groups)    # fix round 2 S5/S3: mints straight to issuer-side wallets, BEFORE the unlock view
     _unlock_views(groups)         # releases from the non-circulating wallets (Jake 2026-10-11, A2)
     _revenue_total_views(groups)  # alignment C10: NEAR's revenue = gas + Intents fee switch
     _stake_prorata_views(groups)  # alignment C1: Hyperliquid's (a) = rewards to circulating stake only
     _cashback_funding_views(groups)  # round 3 W3: the cashback its market purchases did not cover — (c)
+    EVIDENCE_RESULTS.clear()
+    _evidence_views(groups, usd=False)  # G9 N: published / aggregator / mechanism figures in tokens (config.EVIDENCE_LADDER)
     _stock_rise_views(groups)     # G9 D2: a declared flow read as the rises of a published cumulative (config.STOCK_RISE_VIEWS)
     _supplier_b_views(groups)     # G9 I3: Aethir's (b) = checker schedule + weekly compute rewards before the measured sum
     _outflow_views(groups)        # Phase 2: the five outflow categories, tokens and $ (after unlocks and emissions)
+    _evidence_views(groups, usd=True)   # G9 N: ... in $ — after the outflow views, so a $ outflow line can be filled
+    _ccip_fee_overlap_view(groups)      # G9 K4: CCIP 2.0 fees with Base from the message detail, Arbitrum the check
+    _pendle_rate_check(groups)          # G9 N: each Pendle gauge chain's log scan against its sampled rates
+    _revenue_from_fees_views(groups)    # G9 N: Plume's revenue = the fees its RewardDistributor receives
     _holder_value_views(groups)   # Phase 2: revenue-funded holder value, credited vs recorded (LITMUS A)
     _settlement_views(groups)
     _LAST_GROUPS.clear()
@@ -3917,6 +4192,14 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                     # a missing day of a daily query is a day not read, never a quiet day.
                     row["covered_days"] = _dense_days(s, w_start, asof)
                     row["q0_covered_days"] = _dense_days(s, q_start, asof)
+                    # G9 K3: THE DAYS NOT HELD ARE NAMED, with the series' own reason (CCIP: refused for >10%
+                    # unpriced), on the row and on the cell — "Q0 COVERS n OF 90 DAYS — not held: <days>".
+                    miss = _dense_missing(s, q_start, asof)
+                    if miss:
+                        row["q0_dense_note"] = (f"Q0 COVERS {row['q0_covered_days']} OF {period} DAYS — not held: "
+                                                f"{_day_ranges(miss)} ({config.DENSE_DAILY_FLOWS[(name, metric)]}); "
+                                                f"the Q0 sum is annualised over the {row['q0_covered_days']} "
+                                                f"day(s) held")
                 row["q0_events"] = int(((s.index > q_start) & (s.index <= asof) & (s > 0)).sum())
                 # ** A SCHEDULE THAT HAS ENDED STILL FILLS THE WINDOW BEHIND IT. Added 2026-09-25. **
                 # The mirror of a part-filled window: after the declared end the true rate is zero,
@@ -4127,6 +4410,12 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                            f"{window} days"))
                 row["note"] = (f"COVERS {covered} OF {window} DAYS — {why}"
                                + (f" | {row['note']}" if row["note"] else ""))
+            if row.get("q0_dense_note"):
+                row["note"] = row["q0_dense_note"] + (f" | {row['note']}" if row["note"] else "")
+            ev_ = EVIDENCE_RESULTS.get((name, metric))
+            if ev_ and ev_.get("check"):            # G9 N: the series' step and its check, said on its row
+                row["note"] = (f"{ev_['label']} — {ev_['verdict']}: {ev_['check']}"
+                               + (f" | {row['note']}" if row["note"] else ""))[:1200]
 
             # A SUPPRESSION WITH PROOF THAT THE QUANTITY IS ZERO IS NOT A WITHHELD FIGURE.
             # GEODNET's issuance is the case: total_supply_gross reads exactly 1,000,000,000 and
@@ -9730,7 +10019,9 @@ def flow_statements(groups: dict, asof) -> list[dict]:
                    if (name, "issuer_mint_tokens") in groups else None) for k in range(5)], "tokens",
                  "issuer_mint_tokens" if (name, "issuer_mint_tokens") in groups else "— (none declared: config.ISSUER_MINTS)",
                  # G9 D2: a DECLARED mint route with nothing stored yet is a route not filled, not "none declared"
-                 ("not in the expected closing: it lands in a non-circulating wallet; its release is (e)"
+                 (("G9 L3: INSIDE '+ minted' — the wallet is circulating by the project's own method; its part of "
+                   "the mint is shown here, not added again" if (config.ISSUER_MINTS.get(name) or {}).get("inside_minted")
+                   else "not in the expected closing: it lands in a non-circulating wallet; its release is (e)")
                   if (name, "issuer_mint_tokens") in groups or name not in config.ISSUER_MINTS else
                   f"ROUTE PENDING — config.ISSUER_MINTS declares the {config.ISSUER_MINTS[name]['kind']} route "
                   f"({config.ISSUER_MINTS[name].get('metric') or config.ISSUER_MINTS[name].get('source', '')}); "
@@ -9801,6 +10092,11 @@ def flow_statements(groups: dict, asof) -> list[dict]:
                   ("Status", stat, "text", "", "")]
         out[:] = [_no_such_flow(r) for r in out]
         for line, vals, unit, series_, note in vlines:
+            ev = evidence_on(name, series_)
+            if ev and ev["verdict"] != "superseded" and ev.get("note"):    # G9 N: the line carries its step and check
+                note = ev["note"] + (f" | {note}" if note else "")
+            if (name, line) in config.FLOW_LINE_NOTES:
+                note = config.FLOW_LINE_NOTES[(name, line)] + (f" | {note}" if note else "")
             out.append(_no_such_flow({"Project": name, "Statement": "Value flow", "Line": line,
                         **{lab: v for lab, v in zip(trajectory.LABELS, vals)}, "Unit": unit, "Series": series_,
                         "Note": note}, have))
@@ -9808,6 +10104,12 @@ def flow_statements(groups: dict, asof) -> list[dict]:
 
 
 HOLDER_OTHER_LINE = "Holder value recorded, NOT credited"
+
+
+def _checked_text(fl: dict) -> str:
+    """G9 N3: the step-2/3/4 sources a line without a value was checked against, with dates."""
+    ch = fl.get("checked") or ()
+    return ("; checked: " + "; ".join(f"{src} ({d}): {what}" for src, d, what in ch)) if ch else ""
 
 
 def _no_such_flow(row: dict, have: set | None = None) -> dict:
@@ -9833,9 +10135,9 @@ def _no_such_flow(row: dict, have: set | None = None) -> dict:
                     "Note": f"{txt}: {fl['evidence']} ({fl['source']}, read {fl['read_on']})"[:400]}
         elif v == "class_e":
             return {**row, "Note": (f"NO SOURCE — {fl['evidence']}; would be measured by: {fl['would_measure']} "
-                                    f"({fl['source']}, read {fl['read_on']})")[:400]}
+                                    f"({fl['source']}, read {fl['read_on']})" + _checked_text(fl))[:1200]}
         elif v == "pending":
-            return {**row, "Note": f"ROUTE PENDING — {fl['why']}"[:400]}
+            return {**row, "Note": (f"ROUTE PENDING — {fl['why']}" + _checked_text(fl))[:1200]}
     if not ev and line == HOLDER_OTHER_LINE and have is not None and "holder_value_other_usd" not in have:
         ev = {"evidence": f"no holder value on {name} is funded from outside revenue — config.HOLDER_VALUE declares no "
                           f"treasury- or emissions-funded period for it (holder_value_other_usd exists for "

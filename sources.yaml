@@ -996,18 +996,23 @@
 - project: Chainlink
   metric: buyback_fund_balance_dashboard
   tier: 3
-  enabled: false            # PARKED 2026-09-28 (Jake) — see note.
-  url: https://metrics.chain.link/reserve
-  method: xhr
-  url_contains: /api/
-  json_path: reserve.balance
-  anchor: "Reserve Balance"
+  enabled: true             # G9 N (2026-10-20): re-enabled on the page's own JSON API — robots.txt checked first
+  # G9 N (research read 2026-10-20): https://metrics.chain.link/robots.txt answers HTTP 404 — the host disallows nothing
+  # (chain.link/robots.txt disallows /metrics/* on chain.link, another host; reserve.chain.link 302s here). The page's
+  # data is the JSON API /api/reserve/latest (found in the page bundle, queryKey ['reserve','latest']):
+  # reserveActivity.aggregate {balanceLink, balanceUsd, costBasis, linkUsd, lastUpdated}, .daily (441 rows from
+  # 2025-08-06; its USD column is priced at TODAY's LINK, not that day's), .transactions (93 inflows). Read 2026-10-20:
+  # balanceLink 6,293,843.36. The DOM scrape ("anchor 'Reserve Balance' not found" since 2026-09-28) is retired.
+  url: https://metrics.chain.link/api/reserve/latest
+  method: json
+  url_contains: /api/reserve/latest
+  json_path: reserveActivity.aggregate.balanceLink
   needs_first_run_check: true
   sanity_min: 0
   sanity_max: 100000000
   change_threshold_pct: 40
   added: 2026-09-11
-  note: "PARKED 2026-09-28 (Jake): disabled, no longer attempted each run; the reserve inflow is read by log_scans.reserve_inflow and the balance by the tier 2 read. BLOCKED BY robots.txt on metrics.chain.link as of the first live run, and NOT worked around. LOW STAKES: this was only ever a cross-check for the tier 2 read of LINK.balanceOf(reserve), which is verified and working, so nothing is lost but the second opinion. Reference points for the series: c.2.17m LINK (Feb 2026), c.5.2m LINK (Jul 2026)."
+  note: "RE-ENABLED G9 N (2026-10-20) on the JSON API: metrics.chain.link/robots.txt answers 404 (nothing disallowed; checked 2026-10-20). Was PARKED 2026-09-28 (Jake): the first live run read robots.txt as blocking, and that was NOT worked around; the reserve inflow is read by log_scans.reserve_inflow and the balance by the tier 2 read. LOW STAKES: this was only ever a cross-check for the tier 2 read of LINK.balanceOf(reserve), which is verified and working, so nothing is lost but the second opinion. Reference points for the series: c.2.17m LINK (Feb 2026), c.5.2m LINK (Jul 2026)."
 
 # ---- PLUME's OWN CIRCULATING SUPPLY (Jake, 2026-10-07). supply.plume.org/supply answers
 # {"result": "6606142167.0...", "total": "10000000000.0..."} — Plume's published circulating and total, in PLUME

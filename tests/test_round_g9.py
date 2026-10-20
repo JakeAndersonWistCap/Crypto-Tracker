@@ -476,3 +476,23 @@ def test_i5_a_current_stored_series_is_not_a_gap():
     fresh = fetch.stored_fresh({("Hyperliquid", "burn_auction_usd"): "2026-10-12",
                                 ("Hyperliquid", "hypercore_new_users"): "2026-08-01"}, "2026-10-13")
     assert fresh == {("Hyperliquid", "burn_auction_usd")}
+
+
+# ======================================================================================== G9 N3 (add-on N, Jake 2026-10-20)
+def test_n3_no_untraced_reason_without_the_sources_checked(built):
+    """SPEC §1 rule 13: no N/A or MISSING E cell's reason is only an untraced address, an unpublished wallet or 'no free
+    log route' without the list of published / aggregator sources it checked (with dates)."""
+    import coverage_audit as ca
+    bad = [(r["Tab"], r["Project"], r["Column"], str(r["Reason / route / error"])[:160]) for r in built["cov"]
+           if (r["Status"] == "N/A BY DESIGN" or (r["Status"] == "MISSING" and "[E" in str(r["Reason / route / error"])))
+           and ca.UNTRACED.search(str(r["Reason / route / error"] or ""))
+           and "checked:" not in str(r["Reason / route / error"])]
+    assert not bad, bad[:10]
+
+
+def test_n3_every_class_e_line_lists_its_checked_sources_with_dates():
+    for k, v in config.FLOW_LINE_EVIDENCE.items():
+        if v["verdict"] == "class_e":
+            assert v.get("checked"), k
+            for src, d, what in v["checked"]:
+                assert src and what and pd.Timestamp(d) <= pd.Timestamp("2026-10-20"), (k, src)

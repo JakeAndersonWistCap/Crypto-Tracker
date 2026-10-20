@@ -84,11 +84,14 @@ class MerklCampaigns:
             daily_checks = DailyChecks()
         self.daily = daily_checks
 
-    def _campaigns(self, url: str, creator: str, chain_id: int) -> list:
+    def _campaigns(self, url: str, creator: str | None, chain_id: int, token: str | None = None) -> list:
+        """Every campaign computed on chain_id — by `creator` (Morpho), or, with no creator (Plume, G9 N: WPLUME is
+        funded by at least nine creators), every campaign paying `token` (tokenAddress filter; matched by address)."""
         rows = []
         for page in range(100):
-            got = self.http.get(url, params={"creatorAddress": creator, "chainId": chain_id, "items": PAGE,
-                                             "page": page})
+            params = {"chainId": chain_id, "items": PAGE, "page": page}
+            params.update({"creatorAddress": creator} if creator else {"tokenAddress": token})
+            got = self.http.get(url, params=params)
             if not isinstance(got, list):
                 raise ValueError(f"chain {chain_id}: not a list ({type(got).__name__})")
             rows += got
@@ -111,7 +114,7 @@ class MerklCampaigns:
         notes, seen = [], set()
         try:
             for chain_id, chain in spec["chains"].items():
-                camps = self._campaigns(spec["url"], spec["creator"], int(chain_id))
+                camps = self._campaigns(spec["url"], spec.get("creator"), int(chain_id), chain["token"])
                 per_day, skipped = daily_amounts(camps, chain["token"], today().date(), int(chain_id), seen)
                 for d, v in per_day.items():
                     total[d] += v

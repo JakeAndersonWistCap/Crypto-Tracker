@@ -31,6 +31,7 @@ from .base import tidy, today
 log = logging.getLogger("token_metrics.fetch.near_issuance")
 
 SOURCE = "near_issuance"
+TREASURY_METRIC = "near_treasury_mint_tokens"
 TIER = 1
 YOCTO = 10 ** 24
 FIRST_PASS_DAYS = 7
@@ -49,7 +50,18 @@ def _day(block: dict) -> pd.Timestamp:
     return pd.Timestamp(int(block["header"]["timestamp_nanosec"]), unit="ns").normalize()
 
 
-def walk(rpc, floor: pd.Timestamp, deadline: float | None = None, clock=time.monotonic, start: int | None = None):
+TREASURY = "treasury.near"     # protocol_treasury_account (EXPERIMENTAL_protocol_config, read 2026-10-20)
+STATE_VERSION = 2              # G9 L3: v2 records treasury.near's inflow at every epoch mint (v1 states are re-walked)
+
+
+def treasury_balance(rpc, height, account: str = TREASURY) -> int:
+    """amount + locked (yoctoNEAR) of the treasury account at a block (archival view_account)."""
+    a = rpc("query", {"request_type": "view_account", "account_id": account, "block_id": height})
+    return int(a["amount"]) + int(a.get("locked") or 0)
+
+
+def walk(rpc, floor: pd.Timestamp, deadline: float | None = None, clock=time.monotonic, start: int | None = None,
+         treasury: str | None = None):
     """Epochs newest first from `start` (default: the current epoch) back to `floor`. Returns ([(day, minted, start
     height)] of COMPLETE days only — every epoch start on them read —, the epoch start height to continue from, and
     whether `floor` was reached). At the floor, the continuation is the first epoch start before it (the latest one on
@@ -69,7 +81,15 @@ def walk(rpc, floor: pd.Timestamp, deadline: float | None = None, clock=time.mon
         if d < floor:
             return out, start, True
         parent = rpc("block", {"block_id": blk["header"]["prev_hash"]})
-        out.append((d, epoch_mint(blk, parent), start))
+        if treasury:
+            # G9 L3: THE TREASURY'S SHARE OF THE MINT, MEASURED — its balance rise across the epoch's first block
+            # (nearcore reward_calculator.rs: treasury_reward = floor(epoch_total_reward x 1/10), credited in the block
+            # that mints; 7 epochs read 2026-10-20 matched to the yoctoNEAR)
+            tr = (treasury_balance(rpc, int(blk["header"]["height"]), treasury)
+                  - treasury_balance(rpc, int(parent["header"]["height"]), treasury)) / YOCTO
+            out.append((d, epoch_mint(blk, parent), start, tr))
+        else:
+            out.append((d, epoch_mint(blk, parent), start))
         start = int(rpc("validators", {"epoch_id": parent["header"]["epoch_id"]})["epoch_start_height"])
 
 
@@ -103,6 +123,11 @@ class NearIssuance:
             from .archive import NearArchive
             self.archive = NearArchive()
         st, now = self._state(), today()
+        if st and st.get("version") != STATE_VERSION:
+            # G9 L3: a v1 state never read the treasury — the walk starts again, so every day it re-stores carries both
+            # the mint (the same value) and the treasury's inflow
+            st = {}
+        st["version"] = STATE_VERSION
         deadline = time.monotonic() + self.deadline_s
         target = now - pd.Timedelta(days=BACKFILL_DAYS)
         epochs = []
@@ -111,7 +136,7 @@ class NearIssuance:
             #    stops keeps its complete days but not `through`, so the next run reads the gap again.
             first = not st.get("through")
             through = now - pd.Timedelta(days=FIRST_PASS_DAYS) if first else pd.Timestamp(st["through"])
-            top, cont, reached = walk(self.archive.rpc, through, deadline)
+            top, cont, reached = walk(self.archive.rpc, through, deadline, treasury=TREASURY)
             epochs += top
             if top and (reached or first):
                 st["through"] = str(max(e[0] for e in top).date())
@@ -119,7 +144,7 @@ class NearIssuance:
                 st["back_next"] = cont          # the backfill continues below where the first pass stopped
             # 2. THE BACKFILL, with what is left, towards BACKFILL_DAYS ago
             if st.get("back_next") and not st.get("back_done") and time.monotonic() < deadline:
-                back, cont, reached = walk(self.archive.rpc, target, deadline, start=st["back_next"])
+                back, cont, reached = walk(self.archive.rpc, target, deadline, start=st["back_next"], treasury=TREASURY)
                 epochs += back
                 st["back_next"], st["back_done"] = (None, True) if reached else (cont, False)
         except Exception as e:  # noqa: BLE001
@@ -131,6 +156,16 @@ class NearIssuance:
                     fn()
                 except Exception:  # noqa: BLE001
                     pass
+        tr = pd.DataFrame([(e[0], e[3]) for e in epochs if len(e) > 3], columns=["date", "v"])
+        tr = tr[tr["date"] < now]
+        if not tr.empty:
+            td = tr.groupby("date")["v"].agg(["sum", "count"])
+            tp = list(zip(td.index, td["sum"]))
+            ft = tidy(tp, "Near", TREASURY_METRIC, f"{SOURCE}:near_rpc:treasury_inflow", TIER)
+            ft["source"] = [f"{SOURCE}:near_rpc:treasury_inflow[{int(n)} epochs]" for n in td["count"]]
+            out.add(ft, SOURCE, "Near", f"{TREASURY_METRIC}: {len(tp)} complete day(s) "
+                                        f"{td.index.min().date()}..{td.index.max().date()} — {TREASURY}'s balance rise "
+                                        f"across each epoch's mint block; last day {tp[-1][1]:,.2f} NEAR", TIER)
         frame = pd.DataFrame([e[:2] for e in epochs], columns=["date", "v"])
         frame = frame[frame["date"] < now]
         if frame.empty:

@@ -529,6 +529,35 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11cl. Round G9 add-on K–N — CCIP refused days and fees, EF grants, NEAR treasury, MODELLED, the evidence ladder (2026-10-20)
+
+**Run after pulling (PowerShell 5.1, repo root), in this order.** No run_sql section this round (nothing stored needs
+removing).
+1. `python token_metrics.py --seed ccip_value --dates 2026-09-11,2026-09-22,2026-09-23,2026-09-24,2026-09-25,2026-09-30`
+   — re-reads ONLY those days (one walk down to 09-11; nothing else re-closed), asks DefiLlama again for their
+   remembered "no price" coins and values TESTTR (Chainlink's free-mint CCIP test token) at 0 with its contract as the
+   evidence. Then the same line again with Jake's other refused days (the Run Log's "REFUSED" line names them; they
+   are before 09-11).
+2. `python token_metrics.py` — the full run. NEAR's epoch walk starts again from the newest epoch (state v2: it now
+   reads treasury.near across every mint block); the backfill re-walks the year over the next runs at 100 s a run, the
+   mint values re-stored unchanged. The CCIP walk now reads every message sent from Base and Arbitrum in detail (their
+   fees); Plume's Merkl campaigns are read; the Chainlink Reserve is read from metrics.chain.link's JSON API.
+3. `python check_offline_items.py missing_triage`, `python check_offline_items.py spec_coverage` — PASTE BACK.
+4. `python measuring_guard.py --newer metrics.db` — PASTE BACK.
+5. `Get-Content scoreboard.json` — PASTE BACK.
+
+**What to look for.** BUSINESS 4 (Chainlink) says "Q0 COVERS n OF 90 DAYS — not held: <days>" while any refused day is
+left. ccip_v2_fees_with_base_usd appears once Arbitrum's API and log legs agree within 2% over 7 days (else its Data
+row says CHECK with both figures). Ethereum's Flows (d) is the EF quarterly totals spread evenly; Q0 waits for the Q3-2026
+report. NEAR's line (a) no longer holds the treasury's 1/10 — it is line m. Coverage has a MODELLED column: Ethereum's
+consensus-formula quarters, Hyperliquid's modelled history. World Mobile's buyback cells read MISSING E with the sources
+checked (the mechanism exists; nothing is published for the window).
+
+**Not fillable from a free source (said, not filled):** World Mobile revenue, fees and buyback amounts (dashboard
+"Coming soon"); Aethir's ecosystem split (d) and Season 2 redemptions (c); Plume's Nest Season 1 airdrop amount;
+Hyperliquid's network issuance history before the first futureEmissions read (MODELLED); whether Maple's revenue includes
+OTC.
+
 ## 11ck. Round G9 B–J — honest statuses, FDV and GEODNET handovers, Flows researched, P2P pieces, seeds (2026-10-20)
 
 **Run after pulling (PowerShell 5.1, repo root), in this order.** No run_sql section this round (nothing stored needs

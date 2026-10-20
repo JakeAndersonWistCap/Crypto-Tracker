@@ -100,6 +100,12 @@ PRICE_API = "https://coins.llama.fi"
 SRC = "ccip_api:messages.sourceTokenAmount x llama price"     # the stored value source — keep it stable
 SRC_COUNT = "ccip_api:messages.sourceTokenAmount count"         # the transfer count (no price involved)
 VALUE = "ccip_token_value_usd"
+FEE_SRC = "ccip_api:messages.fees.fixedFeesDetails x llama price"     # G9 K4
+
+
+def fee_metric(chain: str) -> str:
+    """The stored per-chain CCIP 2.0 fee series read from the message detail (G9 K4)."""
+    return f"ccip_v2_fees_api_{chain}_usd"
 TRANSFERS = "ccip_token_transfers"
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -220,16 +226,19 @@ def compact(rec: dict, details: dict) -> dict:
     """A closed day's messages -> per-token raw sums. A message read in detail counts every token it moved
     (tokenAmounts[]); the others count the list's one token."""
     tokens: dict = defaultdict(lambda: [0, 0])
+    dests: dict = defaultdict(set)
     multi = []
     for mid, _ts, lane, key, amt in rec["tok"]:
         d = details.get(mid)
-        src = lane.split(">")[0]
+        src, dst = (lane.split(">") + [""])[:2]
+        dests[key].add(dst)
         if d is not None and d[1]:
             keys = []
             for addr, a in d[1]:
                 k = tkey(src, addr)
                 tokens[k][0] += int(a)
                 tokens[k][1] += 1
+                dests[k].add(dst)
                 keys.append(k)
             if len(keys) > 1:
                 multi.append(keys)
@@ -238,7 +247,10 @@ def compact(rec: dict, details: dict) -> dict:
             tokens[key][1] += 1
     return {"stage": "closed", "n_msgs": rec["n_msgs"], "n_token_msgs": len(rec["tok"]),
             "tokens": {k: [str(v[0]), v[1]] for k, v in sorted(tokens.items())}, "multi": multi,
-            "check": rec.get("check") or {}}
+            "check": rec.get("check") or {},
+            # G9 K1: the DESTINATION chains each token went to — its destination-chain contract (the same CCIP token
+            # group on that chain) is the second pricing step
+            "dests": {k: sorted(x for x in v if x) for k, v in sorted(dests.items())}}
 
 
 def day_value(rec: dict, price_of) -> dict:
@@ -316,15 +328,36 @@ class CcipValue:
         return http.get(url, params=params, deadline=time.monotonic() + max(self._left(), 1.0))
 
     # ------------------------------------------------------------------ run
-    def run(self, projects: list[dict], window_days, out, unbounded: bool = False):
+    def run(self, projects: list[dict], window_days, out, unbounded: bool = False, days=None):
         """unbounded=True is a `--seed` run (the chainlink_fees convention): no time budget — the seed walks, checks
-        and prices until it reaches history_days, saving as it goes. A routine run stops at spec budget_s."""
+        and prices until it reaches history_days, saving as it goes. A routine run stops at spec budget_s.
+        days (G9 K2, `--seed ccip_value --dates d1,d2`): ONLY those UTC days are read again — one walk from the
+        newest message down to the oldest of them, closing nothing else; their remembered "no price" answers are
+        dropped so DefiLlama is asked again, and the destination-chain and declared-underlying steps apply."""
         for p in projects:
             spec = p.get("ccip_value")
             if spec:
-                self._project(p["name"], {**DEFAULTS, **spec}, out, unbounded)
+                self._project(p["name"], {**DEFAULTS, **spec}, out, unbounded, days=days)
 
-    def _project(self, name: str, spec: dict, out, unbounded: bool = False) -> None:
+    def _reread(self, days) -> None:
+        """G9 K2: the listed days are walked again (their destination chains are recorded) and re-priced."""
+        st = self.st
+        only = sorted({str(pd.Timestamp(d).date()) for d in days if str(pd.Timestamp(d).date()) <= self.yesterday})
+        if not only:
+            return
+        for d in only:
+            st["days"].pop(d, None)
+            for c, v in list(self.prices.get(d, {}).items()):
+                if v is None:
+                    del self.prices[d][c]
+        st["walks"] = [w for w in st["walks"] if not w.get("only")]
+        w = self._new_walk(only[-1], only[0])
+        w["only"] = only
+        st["walks"].append(w)
+        self.stats["reread_days"] = len(only)
+        self.target = f"{only[0]}..{only[-1]} (re-read of {len(only)} listed day(s))"
+
+    def _project(self, name: str, spec: dict, out, unbounded: bool = False, days=None) -> None:
         self._deadline = self.clock() + (float("inf") if unbounded else float(spec["budget_s"]))
         self.stats = defaultdict(int)
         self.spec = spec
@@ -338,10 +371,17 @@ class CcipValue:
         self._detail_error = self._price_error = None
         yesterday = str((today() - pd.Timedelta(days=1)).date())
         self.yesterday = yesterday
-        self._plan(yesterday, spec)
         notes = []
+        if days:
+            self.target = "re-read"
+            self._reread(days)
+            walks = [w for w in st["walks"] if w.get("only")]
+            notes.append(f"re-read of {len(walks[0]['only']) if walks else 0} listed day(s) only (G9 K2)")
+        else:
+            self._plan(yesterday, spec)
+            walks = [w for w in st["walks"] if not w.get("only")]
         try:
-            for w in sorted(list(st["walks"]), key=lambda w: w["upper"], reverse=True):
+            for w in sorted(walks, key=lambda w: w["upper"], reverse=True):
                 while self._left() > 0:
                     res = self._walk(w)
                     self._settle()
@@ -374,8 +414,9 @@ class CcipValue:
         for w in st["walks"]:
             w["lower"] = max(w["lower"], target)
         st["walks"] = [w for w in st["walks"] if w["lower"] <= w["upper"]]
-        his = list(st["days"]) + [w["upper"] for w in st["walks"]]
-        los = list(st["days"]) + [w["lower"] for w in st["walks"]]
+        own = [w for w in st["walks"] if not w.get("only")]        # a re-read (G9 K2) plans nothing
+        his = list(st["days"]) + [w["upper"] for w in own]
+        los = list(st["days"]) + [w["lower"] for w in own]
         if not his:
             if target <= yesterday:
                 st["walks"].append(self._new_walk(yesterday, target))
@@ -383,8 +424,14 @@ class CcipValue:
         hi, lo = max(his), min(los)
         if yesterday > hi:
             st["walks"].append(self._new_walk(yesterday, _shift(hi, 1)))
-        if lo > target and not any(w["lower"] <= _shift(lo, -1) <= w["upper"] for w in st["walks"]):
+        if lo > target and not any(w["lower"] <= _shift(lo, -1) <= w["upper"] for w in own):
             st["walks"].append(self._new_walk(_shift(lo, -1), target))
+
+    def _new_acc(self) -> dict:
+        acc = {"stage": "walked", "n_msgs": 0, "tok": []}
+        if self.spec.get("fee_chains"):
+            acc["fee"] = []                             # G9 K4: a fee chain with no message that day is a measured 0
+        return acc
 
     @staticmethod
     def _new_walk(upper: str, lower: str) -> dict:
@@ -392,6 +439,8 @@ class CcipValue:
                 "fails": 0, "pages": 0}
 
     def _close(self, w: dict, day: str, rec: dict | None) -> None:
+        if w.get("only") and day not in w["only"]:
+            return                                      # G9 K2: a re-read closes only the listed days
         if w["lower"] <= day <= w["upper"]:
             self.st["days"][day] = rec if rec is not None else {"stage": "gap"}
             self.stats["closed"] += 1
@@ -446,17 +495,21 @@ class CcipValue:
                 if w["open"] is None:
                     if w["prev"] is not None and _shift(d, 1) <= min(_shift(w["prev"], -1), w["upper"]):
                         self._gaps(w, min(_shift(w["prev"], -1), w["upper"]), _shift(d, 1))
-                    w["open"], w["acc"] = d, {"stage": "walked", "n_msgs": 0, "tok": []}
+                    w["open"], w["acc"] = d, self._new_acc()
                 elif d < w["open"]:
                     self._close(w, w["open"], w["acc"])
                     if _shift(d, 1) <= _shift(w["open"], -1):
                         self._gaps(w, _shift(w["open"], -1), _shift(d, 1))
-                    w["open"], w["acc"] = d, {"stage": "walked", "n_msgs": 0, "tok": []}
+                    w["open"], w["acc"] = d, self._new_acc()
                 elif d > w["open"]:
                     # out of order across a closed day: cannot be added to a closed day — counted and said
                     self.stats["out_of_order"] += 1
                     continue
                 w["acc"]["n_msgs"] += 1
+                fsrc = str((m.get("sourceNetworkInfo") or {}).get("chainSelector"))
+                if fsrc in (self.spec.get("fee_chains") or {}):
+                    # G9 K4: every message SENT FROM a fee chain (token-moving or not) — its fee is in the detail
+                    w["acc"].setdefault("fee", []).append([m["messageId"], fsrc])
                 e = entry(m)
                 if e:
                     w["acc"]["tok"].append(e)
@@ -506,7 +559,11 @@ class CcipValue:
         j = self._get(self.http, f"{API}/messages/{mid}")
         self.stats["details"] += 1
         ta = [[t["sourceTokenAddress"], str(t["amount"])] for t in (j or {}).get("tokenAmounts") or []]
-        cache[mid] = [str(j.get("version") or ""), ta]
+        ff = (((j or {}).get("fees") or {}).get("fixedFeesDetails") or {})
+        # G9 K4: fees.fixedFeesDetails {tokenAddress, totalAmount} — the fee in the fee token's smallest units (on a 2.0
+        # lane the VERIFIER / EXECUTOR / TOKEN_POOL / NETWORK items sum to it exactly; a 1.x lane gives the total only)
+        fee = [ff["tokenAddress"], str(ff["totalAmount"])] if ff.get("tokenAddress") and ff.get("totalAmount") else None
+        cache[mid] = [str(j.get("version") or ""), ta, fee]
         if self.stats["details"] % SAVE_EVERY_DETAILS == 0:
             self._checkpoint()
         return cache[mid]
@@ -577,8 +634,34 @@ class CcipValue:
             self.stats["detail_errors"] += 1
             self._detail_error = f"{type(e).__name__}: {str(e)[:120]}"
             return False
+        fees: dict = defaultdict(lambda: [0, 0])
+        fee_v1 = defaultdict(int)
+        try:
+            for mid, fsrc in rec.get("fee") or ():
+                if self._left() <= 0:
+                    return False
+                d = detailed.get(mid) or self._detail(mid)
+                if not is_v2(d[0]):
+                    fee_v1[fsrc] += 1             # a 1.x fee is already in the aggregator core (chainlink_fees)
+                    continue
+                if len(d) < 3 or d[2] is None:
+                    fee_v1[f"{fsrc}:nofee"] += 1
+                    continue
+                k = tkey(fsrc, d[2][0])
+                fees[k][0] += int(d[2][1])
+                fees[k][1] += 1
+        except Exception as e:  # noqa: BLE001 — the day stays open for the next run
+            self.stats["detail_errors"] += 1
+            self._detail_error = f"{type(e).__name__}: {str(e)[:120]}"
+            return False
         rec["check"] = check
         new = compact(rec, detailed)
+        if rec.get("fee") is not None:
+            new["fees"] = {k: [str(v[0]), v[1]] for k, v in sorted(fees.items())}
+            new["fee_v1"] = dict(fee_v1)
+            new["fee_msgs"] = len(rec["fee"])
+        for mid, _src in rec.get("fee") or ():
+            self.st["detail"].pop(mid, None)
         self.st["days"][day] = new
         for e in rec["tok"]:
             self.st["detail"].pop(e[0], None)
@@ -676,9 +759,25 @@ class CcipValue:
                            if isinstance(v, dict) and v.get("price") is not None else None)
         return ok
 
+    def _dest_members(self, key: str, rec: dict | None) -> list[str]:
+        """G9 K1 step 2: the token's DESTINATION-chain contracts — members of its CCIP token group on the chains the
+        day's messages went to (rec["dests"]), beyond the MAX_SIBLINGS already tried."""
+        tok = (self._tok or {}).get("tokens", {}).get(key)
+        dests = set(((rec or {}).get("dests") or {}).get(key) or ())
+        if not tok or not tok[2] or not dests:
+            return []
+        tried = set(self._siblings(key))
+        return [k for k in sorted(self._groups.get(tok[2], [])) if k != key and k not in tried
+                and k.split("|")[0] in dests and self._coin(k)]
+
+    def _underlying(self, key: str) -> dict | None:
+        """G9 K1 step 3: a DECLARED underlying for a documented receipt / vault / wrapped token (spec
+        declared_underlying: {key: {"coin": "<llama coin>", "rate": 1.0, "source": …}}) — never assumed."""
+        return (self.spec.get("declared_underlying") or {}).get(key)
+
     def _price_day(self, day: str, rec: dict) -> None:
         toks = self._tokens(need=list(rec["tokens"]))
-        primary = [c for c in (self._coin(k) for k in rec["tokens"]) if c]
+        primary = [c for c in (self._coin(k) for k in list(rec["tokens"]) + list(rec.get("fees") or {})) if c]
         if not self._ask(day, primary):
             return
         have = self.prices.get(day, {})
@@ -689,19 +788,38 @@ class CcipValue:
                 sib += [self._coin(s) for s in self._siblings(k)]
         if sib and not self._ask(day, sib):
             return
+        more = []
+        for k in rec["tokens"]:
+            c = self._coin(k)
+            if (c is None or have.get(c) is None) and (toks.get(k) or [None])[0] is not None and \
+                    not any(have.get(self._coin(s)) is not None for s in self._siblings(k)):
+                more += [self._coin(s) for s in self._dest_members(k, rec)]
+                u = self._underlying(k)
+                if u:
+                    more.append(u["coin"])
+        if more and not self._ask(day, more):
+            return
         self._priced.add(day)
         n = len(self._priced)
         if n % 10 == 0:
             self._save(self.spec["prices_path"], self.prices)
 
-    def price_of(self, day: str):
-        """price_of(key) -> (usd per whole token, decimals) | None (unpriced) | "pending" (not yet answered)."""
+    def price_of(self, day: str, rec: dict | None = None):
+        """price_of(key) -> (usd per whole token, decimals) | None (unpriced) | "pending" (not yet answered).
+        Order (G9 K1): the source-chain contract, its group siblings, its destination-chain contracts (rec's
+        dests), a declared underlying — never an invented price."""
         have = self.prices.get(day, {})
         toks = self._tok["tokens"] if self._tok else {}
+
+        zero = self.spec.get("zero_value_groups") or {}
 
         def f(key):
             c = self._coin(key)
             dec = (toks.get(key) or [None])[0]
+            if zero and (toks.get(key) or [None, None, None])[2] in zero:
+                # G9 K1: a DECLARED zero-value token (its verified contract mints it free to anyone — CCIP's TESTTR):
+                # valued 0 with the contract as the evidence, counted on the row, never "unpriced"
+                return 0.0, int(dec if dec is not None else 18)
             if c is not None:
                 if c not in have:
                     return "pending"
@@ -718,8 +836,56 @@ class CcipValue:
                 if have[s] is not None:
                     self.stats["sibling_priced"] += 1
                     return have[s][0], int(dec)
+            for s in (self._coin(k) for k in self._dest_members(key, rec)) if self._tok else ():
+                if s in have and have[s] is not None:
+                    self.stats["dest_priced"] += 1
+                    return have[s][0], int(dec)
+            u = self._underlying(key)
+            if u and have.get(u["coin"]) is not None:
+                self.stats["underlying_priced"] += 1
+                return have[u["coin"]][0] * float(u.get("rate", 1.0)), int(dec)
             return None
         return f
+
+    def _emit_fees(self, name: str, out) -> None:
+        """G9 K4: per fee chain, the CCIP 2.0 fees of the messages SENT FROM it per day ($) — fees.fixedFeesDetails of
+        the message detail x the fee token's DefiLlama price at 12:00 UTC (fee_metric(chain)). 1.x-lane fees are
+        counted and left out (they reach the aggregator core). A day with a fee token unpriced is refused."""
+        for sel, chain in (self.spec.get("fee_chains") or {}).items():
+            metric, rows, refused = fee_metric(chain), [], []
+            for day in sorted(self.st["days"]):
+                rec = self.st["days"][day]
+                if rec.get("stage") != "closed" or rec.get("fees") is None:
+                    continue
+                pf = self.price_of(day, rec)
+                val, bad, n = 0.0, [], 0
+                for k, (raw, cnt) in rec["fees"].items():
+                    if not k.startswith(f"{sel}|"):
+                        continue
+                    pr = pf(k)
+                    if pr in (None, "pending"):
+                        bad.append(k.split("|", 1)[1])
+                        continue
+                    val += int(raw) / 10 ** int(pr[1]) * float(pr[0])
+                    n += int(cnt)
+                if bad:
+                    refused.append(f"{day} (fee token {', '.join(b[:10] + '…' for b in bad)} unpriced)")
+                    continue
+                v1 = int((rec.get("fee_v1") or {}).get(sel, 0))
+                rows.append((day, val, f"{FEE_SRC}[{chain}: {n} 2.0 message(s); {v1} 1.x left out]"))
+            if rows:
+                frame = pd.concat([tidy([(d, v)], name, metric, s_, TIER) for d, v, s_ in rows], ignore_index=True)
+                out.add(frame, SOURCE, name, f"{metric}: {len(rows)} day(s) {rows[0][0]}..{rows[-1][0]} — CCIP 2.0 fees "
+                                             f"of messages sent from {chain} (message detail fees.fixedFeesDetails)",
+                        TIER)
+            if refused:
+                out.warn(SOURCE, name, f"{metric}: {len(refused)} day(s) refused — " + "; ".join(refused[-4:]), TIER)
+
+    def _zero_valued(self, rec: dict) -> int:
+        """Transfers of a declared zero-value group on a closed day (G9 K1)."""
+        zero = self.spec.get("zero_value_groups") or {}
+        toks = (self._tok or {}).get("tokens", {})
+        return sum(int(n) for k, (_raw, n) in rec["tokens"].items() if zero and (toks.get(k) or [None] * 3)[2] in zero)
 
     # ------------------------------------------------------------------ emit
     @staticmethod
@@ -751,7 +917,7 @@ class CcipValue:
                 refused.append(f"{day} (no token-moving message: an API hole, not a zero)")
                 continue
             nrows.append((day, float(rec["n_token_msgs"])))
-            v = day_value(rec, self.price_of(day))
+            v = day_value(rec, self.price_of(day, rec))
             if "pending" in v:
                 pending.append(day)
                 continue
@@ -763,6 +929,9 @@ class CcipValue:
                 src = (config.mark_source(SRC, "PARTIAL")
                        + f"[{v['unpriced_transfers']:,} of {v['transfers']:,} transfers unpriced, "
                          f"{v['share']:.1%} of messages]")
+            z = self._zero_valued(rec)
+            if z:
+                src += f"[{z:,} transfer(s) of a declared zero-value test token valued 0]"
             vrows[src].append((day, v["value"]))
             newest = (day, v, rec)
         frames = [tidy(r, name, VALUE, s, TIER) for s, r in vrows.items()]
@@ -807,6 +976,7 @@ class CcipValue:
             out.log.append(LogEntry(
                 SOURCE, name, 0, "ok", f"{VALUE}: {len(walked)} day(s) awaiting the multi-token check, "
                                        f"{len(pending)} awaiting prices — the next run continues", TIER))
+        self._emit_fees(name, out)
         if nrows:
             out.add(tidy(nrows, name, TRANSFERS, SRC_COUNT, TIER), SOURCE, name,
                     f"{TRANSFERS}: {len(nrows)} day(s) {nrows[0][0]}..{nrows[-1][0]} — token-moving messages "

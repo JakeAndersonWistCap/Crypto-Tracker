@@ -394,6 +394,11 @@ def pendle_emissions_by_day(points: list[tuple], start: int, end: int) -> tuple[
     return wei, have, miss
 
 
+def rate_daily_metric(chain: str) -> str:
+    """G9 N: the per-chain daily PENDLE emissions read from the sampled gauge rates."""
+    return f"emissions_tokens_gauge_rate_{chain}"
+
+
 def pendle_gauge_chains() -> list[dict]:
     """Every chain on which Pendle has a GaugeController on file — the same set Pendle|emissions_tokens sums (its
     gauge_pendle_out* log scans: mainnet, arbitrum, optimism, and the probed L2s bsc, base, mantle, sonic, berachain,
@@ -834,6 +839,13 @@ class SubsidyTargeting:
                 said.append(f"{ch['chain']} NOT SAMPLED ({type(e).__name__}: {str(e)[:80]})")
         out.log.append(LogEntry(SOURCE, name, 0, "ok" if all("NOT SAMPLED" not in x for x in said) else "warn",
                                 f"rewardData sampled into the epoch from {day_of(on_start)}: " + "; ".join(said), TIER))
+        # 1b. G9 N: EVERY CHAIN'S PENDLE PER DAY FROM ITS SAMPLED RATES (rate x seconds, on-chain state) — the route for
+        # a gauge chain whose log scan stores nothing, and a check on the ones whose scan does
+        try:
+            self._pendle_daily(name, directory, chains, now, out)
+        except Exception as e:  # noqa: BLE001 — a check series, never a reason to stop the epochs
+            out.log.append(LogEntry(SOURCE, name, 0, "warn", f"rate-derived daily emissions not formed: "
+                                                               f"{type(e).__name__}: {str(e)[:120]}", TIER))
         # 2. COMPLETE sampled epochs: the stored ones re-derived, the new ones computed
         complete = [s for s in sampled if s < on_start]
         todo = self._restore(out, name, spec, sorted(complete, reverse=True), src)
@@ -858,6 +870,40 @@ class SubsidyTargeting:
             summ = summarize(rows, float(spec.get("max_unvalued_share", 0.05)))
             summ["coverage"] = gaps
             self._store(out, name, start, summ, src, f"{how}; table {p.name}")
+
+    def _pendle_daily(self, name: str, directory: Path, chains: list, now: int, out) -> None:
+        """G9 N: per gauge chain and COMPLETE sampled UTC day, the PENDLE its gauges paid = Σ over its markets of
+        pendlePerSec x seconds (pendle_emissions_by_day on that day alone), stored as rate_daily_metric(chain). A day
+        the chain was not sampled stores nothing (never extrapolated); today is never stored."""
+        ids = {int(c["chain_id"]): c["chain"] for c in chains}
+        today0 = now - now % 86_400
+        per: dict = {}
+        for f in sorted(directory.glob(f"{name.lower()}_rates_*.json")) if directory.exists() else ():
+            st = json.loads(f.read_text(encoding="utf-8"))
+            samples = sorted(({**s_, "chain_id": int(s_.get("chain_id", st.get("chain_id", 1)))}
+                              for s_ in st["samples"]), key=lambda s_: s_["t"])
+            for cid, chain in ids.items():
+                own = [s_ for s_ in samples if s_["chain_id"] == cid]
+                if not own:
+                    continue
+                markets = sorted({m for s_ in own for m in (s_["rates"] or {})})
+                d0 = int(own[0]["t"]) - int(own[0]["t"]) % 86_400
+                while d0 + 86_400 <= min(today0, int(st["epoch_end"])):
+                    day_s = [s_ for s_ in own if d0 <= s_["t"] < d0 + 86_400]
+                    if day_s and all(None not in (s_["rates"] or {}).values() for s_ in day_s):
+                        wei = 0.0
+                        for m in markets:
+                            pts = [(s_["t"], int(((s_["rates"] or {}).get(m) or [0, 0])[0]),
+                                    int(((s_["rates"] or {}).get(m) or [0, 0])[1])) for s_ in day_s]
+                            wei += pendle_emissions_by_day(pts, d0, d0 + 86_400)[0]
+                        per.setdefault(chain, []).append((pd.Timestamp(d0, unit="s"), wei / 1e18, len(day_s)))
+                    d0 += 86_400
+        for chain, rows in per.items():
+            m = rate_daily_metric(chain)
+            frame = pd.concat([tidy([(d, v)], name, m, f"{SOURCE}:pendle_rewardData_rate[{chain}: {n} sample(s)]", TIER)
+                               for d, v, n in rows], ignore_index=True)
+            out.add(frame, SOURCE, name, f"{m}: {len(rows)} sampled day(s) {rows[0][0].date()}..{rows[-1][0].date()} — "
+                                         f"pendlePerSec x seconds over {chain}'s gauge markets", TIER)
 
     def _chain_aggregate(self, spec, ch, calls, deadline):
         """Multicall3 on the chain's public endpoints, in order, until one answers (hosts only ever logged)."""

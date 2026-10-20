@@ -33,8 +33,8 @@ SHEET = "Coverage"
 TABS = ("Master", "A1 Infrastructure", "A2 Coordination", "A3 Revenue Buyback", "A4 Permanent Burn", "CP Comparability")
 HEAD = ["Tab", "Column", "Key", "Project", "Value now", "Status", "Reason / route / error", "Axis", "Direction", "Tier",
         "History depth (quarters with a value)", "Formula as built", "SPEC formula", "MATCHES-SPEC"]
-STATUSES = ("VERIFIED", "VERIFIED (derived)", "LIVE-UNVERIFIED", "CHECK", "N/A BY DESIGN", "MISSING", "NOT WIRED", "PARKED",
-            "BROKEN", "BLANK-UNEXPLAINED")
+STATUSES = ("VERIFIED", "VERIFIED (derived)", "LIVE-UNVERIFIED", "MODELLED", "CHECK", "N/A BY DESIGN", "MISSING",
+            "NOT WIRED", "PARKED", "BROKEN", "BLANK-UNEXPLAINED")
 _SHEET_REF = re.compile(r"'([^']+)'!\$?([A-Z]{1,3})\$?(\d+)")
 _ERRORS = ("#REF!", "#VALUE!", "#DIV/0!", "#NAME?", "#N/A", "#NUM!", "#NULL!")
 _GREEN = "D6E9CE"         # build_workbook.FILL_GREEN
@@ -177,6 +177,7 @@ def audit(wb, trajectory_rows: list[dict] | None = None, flows_rows: list[dict] 
                     "Tier": con.get("tier", ""),
                     "History depth (quarters with a value)": depth.get((tab, proj, str(h)), ""),
                     "Formula as built": (raw[:200] if isinstance(raw, str) and raw.startswith("=") else ""),
+                    "_raw": raw if isinstance(raw, str) and raw.startswith("=") else "",
                     "SPEC formula": con.get("formula", spec.SUPPORT.get(key, "")),
                     "MATCHES-SPEC": match})
     for fr in flows_rows or ():
@@ -204,7 +205,7 @@ def audit(wb, trajectory_rows: list[dict] | None = None, flows_rows: list[dict] 
         con = cs.get(key) or {}
         rows.append({"Tab": "Flows", "Column": f"{fr['Statement']}: {fr['Line']}", "Key": key,
                      "Project": fr["Project"], "Value now": v if not isinstance(v, str) else v[:120],
-                     "Status": status, "Reason / route / error": (why or "")[:240], "Axis": spec.axis_of(key),
+                     "Status": status, "Reason / route / error": (why or "")[:1200], "Axis": spec.axis_of(key),
                      "Direction": spec.direction_of(key), "Tier": con.get("tier", ""),
                      "History depth (quarters with a value)": flow_depth(fr),
                      "Formula as built": fr.get("Series", ""), "SPEC formula": con.get("formula", ""),
@@ -248,10 +249,201 @@ def audit(wb, trajectory_rows: list[dict] | None = None, flows_rows: list[dict] 
     honest_statuses(rows, gap_rows, groups, asof)
     mark_missing(rows, gap_rows, groups, asof)
     align_absent_statuses(rows)
+    apply_checked(rows)
+    mark_evidence(rows, flows_rows)
+    mark_modelled(rows, trajectory_rows, flows_rows, groups, asof)
+    for r in rows:
+        r.pop("_raw", None)
     return rows
 
 
-_HOLDS = ("VERIFIED", "VERIFIED (derived)", "LIVE-UNVERIFIED")
+_HOLDS = ("VERIFIED", "VERIFIED (derived)", "LIVE-UNVERIFIED", "MODELLED")
+
+# ===== G9 M — A FIGURE BUILT ON A MODELLED LEG READS "MODELLED", NEVER MEASURED OR VERIFIED (Jake 2026-10-20). =====
+# config.MODELLED_POINTS (Hyperliquid's reference-yield history and published formula, Ethereum's consensus formula):
+# every cell, Trajectory row and Flows line whose value reads such a leg in the window it shows is status MODELLED with
+# the leg named — after every other rule, so no primary check or derived-green can lift it. A cell that holds no value
+# keeps its own status (nothing was built on the model).
+_DATA_REF = re.compile(r'INDEX\(Data!\$([A-Z]{1,3})\$\d+:\$[A-Z]{1,3}\$\d+,MATCH\(\$A\d+&"\|([a-z0-9_]+)"')
+_WIN_DAYS = {"now": (30, 0), "m1": (60, 30), "q0": (90, 0), "q1": (180, 90), "q2": (270, 180), "q3": (360, 270),
+             "q4": (450, 360), "y1": (365, 0)}
+
+
+def modelled_in(groups: dict | None, project: str, metric: str, lo, hi) -> list:
+    """Dates in (lo, hi] on which the series (its declared inputs included) is a MODELLED leg."""
+    import pandas as pd                                     # noqa: PLC0415
+    import config                                           # noqa: PLC0415
+    import trajectory                                       # noqa: PLC0415
+    if not groups:
+        return []
+    out, seen, todo = [], set(), [metric]
+    while todo:
+        m = todo.pop()
+        if m in seen:
+            continue
+        seen.add(m)
+        g = groups.get((project, m))
+        if g is not None and not g.empty:
+            d = pd.to_datetime(g["date"])
+            mod = g[g["source"].astype(str).map(config.is_modelled) & (d > lo) & (d <= hi)]
+            out += list(pd.to_datetime(mod["date"]))
+        todo += [x for x in trajectory._inputs(project, m, groups) if x not in seen]
+    return out
+
+
+def _cell_modelled(raw, groups, project, asof) -> list[str]:
+    """'metric (window)' for each Data read of a formula that holds a MODELLED leg inside that window."""
+    import pandas as pd                                     # noqa: PLC0415
+    import build_workbook as bw                             # noqa: PLC0415
+    inv = {v: k for k, v in bw.DC.items()}
+    out = []
+    for col, metric in _DATA_REF.findall(str(raw or "")):
+        w = inv.get(col)
+        if w not in _WIN_DAYS:
+            continue
+        a, b = _WIN_DAYS[w]
+        hi = pd.Timestamp(asof) - pd.Timedelta(days=b)
+        if modelled_in(groups, project, metric, hi - pd.Timedelta(days=a - b), hi):
+            out.append(f"{metric} ({w})")
+    return out
+
+
+def _modelled_label(groups, project, metrics) -> str:
+    """The MODELLED_POINTS the named metrics read (all of the project's, where none is named)."""
+    import config                                           # noqa: PLC0415
+    from fetch.base import _measuring_point                 # noqa: PLC0415
+    pts = set()
+    keys = ([(project, m.split(" (")[0]) for m in metrics] if metrics
+            else [k for k in (groups or {}) if k[0] == project])
+    for k in keys:
+        g = (groups or {}).get(k)
+        if g is not None and not g.empty:
+            pts |= {_measuring_point(s) for s in g["source"].astype(str) if config.is_modelled(s)}
+    return "; ".join(f"{p}: {config.MODELLED_POINTS[p]}" for p in sorted(pts) if p in config.MODELLED_POINTS)
+
+
+# G9 N3: a reason resting on what the chain cannot trace — an unpublished wallet or address, no free log route, an
+# off-chain / fiat flow, a chart-only schedule. Such a cell is N/A or MISSING E only with the sources checked at steps
+# 2-4 listed ("checked: … (date)").
+UNTRACED = re.compile(r"never (been )?published|not published|unpublished|no free log route|chart[- ]only|as a chart|"
+                      r"off-chain|fiat|untraced|cannot be traced", re.I)
+
+
+def checked_text(checked) -> str:
+    return "checked: " + "; ".join(f"{src} ({d}): {what}" for src, d, what in checked)
+
+
+def apply_checked(rows: list[dict]) -> int:
+    """G9 N (SPEC §1 rule 13): a cell N/A or MISSING because of an untraced flow, whose project declares the sources
+    checked (config.EVIDENCE_CHECKED_CELLS), becomes MISSING E with that list — never N/A by an accepted limit while the
+    mechanism exists."""
+    import config                                           # noqa: PLC0415
+    n = 0
+    for r in rows:
+        spec = getattr(config, "EVIDENCE_CHECKED_CELLS", {}).get(r["Project"])
+        why = str(r.get("Reason / route / error") or "")
+        if not spec or r["Status"] not in ("N/A BY DESIGN", "MISSING") or not re.search(spec["match"], why):
+            continue
+        r["Status"] = "MISSING"
+        r["Reason / route / error"] = (f"MISSING [{MISSING_CLASSES[4]}] — {spec['why']}; {checked_text(spec['checked'])}"
+                                       f" | was: {why[:200]}")[:1200]
+        n += 1
+    return n
+
+
+def mark_evidence(rows: list[dict], flows_rows=None) -> int:
+    """G9 N (SPEC §1 rule 13): a value filled from step 2/3/4 of the evidence ladder carries its step, and its status
+    is its on-chain check's — VERIFIED (agrees within the line's tolerance), CHECK (disagrees: both figures shown),
+    LIVE-UNVERIFIED (no check). Rows holding no value keep their own status."""
+    import build_workbook as bw                             # noqa: PLC0415
+    if not bw.EVIDENCE_RESULTS:
+        return 0
+    flows = {(f.get("Project"), f"{f.get('Statement')}: {f.get('Line')}"): f for f in flows_rows or ()}
+    n = 0
+    for r in rows:
+        if r["Tab"] == "Flows" and r["Status"] == "MISSING":
+            # a line the ladder fills for past quarters but not Q0 (the EF's Q3-2026 report not out yet): its Q0 is a
+            # published period still to come — said with the periods held, never "the route stored nothing"
+            f = flows.get((r["Project"], r["Column"])) or {}
+            e = next((bw.evidence_on(r["Project"], m.strip()) for m in re.split(r"[+,;]| − | - ",
+                                                                             str(f.get("Series") or "")) if m.strip()
+                      and bw.evidence_on(r["Project"], m.strip())), None)
+            if e and e.get("to"):
+                held = [q for q in ("Q-1", "Q-2", "Q-3", "Q-4") if isinstance(f.get(q), (int, float))]
+                r["Reason / route / error"] = (
+                    f"MISSING [{MISSING_CLASSES[3]}] — {e['label']}: no published period covers Q0 yet (periods "
+                    f"{e['from']}..{e['to']}); {', '.join(held) or 'no quarter'} hold it")[:1200]
+                n += 1
+            continue
+        if r["Status"] not in _HOLDS + ("CHECK",):
+            continue
+        if r["Tab"] == "Flows":
+            f = flows.get((r["Project"], r["Column"])) or {}
+            metrics = [m.strip() for m in re.split(r"[+,;]| − | - ", str(f.get("Series") or "")) if m.strip()]
+        elif r["Tab"] == "Trajectory":
+            continue
+        else:
+            metrics = [m for _c, m in _DATA_REF.findall(str(r.get("_raw") or ""))]
+        evs = [e for e in (bw.evidence_on(r["Project"], m) for m in metrics) if e and e["verdict"] != "superseded"]
+        if not evs:
+            continue
+        rank = {"CHECK": 0, "LIVE-UNVERIFIED": 1, "VERIFIED": 2}
+        e = min(evs, key=lambda x: rank.get(x["verdict"], 1))
+        st = e["verdict"]
+        if st == "VERIFIED" and len({x["verdict"] for x in evs}) > 1:
+            st = "LIVE-UNVERIFIED"
+        r["Status"] = st
+        r["Reason / route / error"] = f"{e['label']} — check: {e['check']}"[:400]
+        n += 1
+    return n
+
+
+def mark_modelled(rows: list[dict], trajectory_rows=None, flows_rows=None, groups: dict | None = None,
+                  asof=None) -> int:
+    """Rows built on a MODELLED leg -> status MODELLED (G9 M). Returns how many changed."""
+    import pandas as pd                                     # noqa: PLC0415
+    traj = {(t.get("tab"), t.get("project"), t.get("header")): t for t in trajectory_rows or ()}
+    flows = {(f.get("Project"), f"{f.get('Statement')}: {f.get('Line')}"): f for f in flows_rows or ()}
+    n = 0
+    for r in rows:
+        if r["Status"] not in _HOLDS + ("CHECK",):
+            continue
+        what = []
+        if r["Tab"] == "Trajectory":
+            t = traj.get((str(r.get("Formula as built") or "").split(" → ")[0], r["Project"], r["Column"])) or {}
+            q = t.get("modelled_quarters")
+            q = [x for x in (q if isinstance(q, list) else str(q or "").strip("[]").replace("'", "").split(","))
+                 if str(x).strip()]
+            if q:
+                what = [f"MODELLED in {', '.join(str(x).strip() for x in q)}"]
+                metrics = []
+        elif r["Tab"] == "Flows":
+            f = flows.get((r["Project"], r["Column"])) or {}
+            if asof is not None and f:
+                hi = pd.Timestamp(asof)
+                ms = [m.strip() for m in re.split(r"[+,;]| − | - ", str(f.get("Series") or "")) if m.strip()]
+                metrics = [m for m in ms if modelled_in(groups, r["Project"], m, hi - pd.Timedelta(days=450), hi)]
+                if metrics and isinstance(f.get("Q0") if f.get("Q0") is not None else f.get("Q-1"), (int, float)):
+                    what = [f"reads {', '.join(metrics)} with a MODELLED leg in Q0..Q-4"]
+        else:
+            val = str(r.get("Value now") or "")
+            metrics = _cell_modelled(r.get("_raw") or r.get("Formula as built"), groups, r["Project"], asof) \
+                if asof is not None else []
+            if metrics:
+                what = [f"reads {', '.join(metrics)} — a MODELLED leg inside that window"]
+            elif "MODELLED" in val:
+                what = [f"shows {val[:80]}"]
+        if not what:
+            continue
+        lab = _modelled_label(groups, r["Project"], [m for m in (metrics if isinstance(metrics, list) else [])])
+        if r["Project"] == "Hyperliquid":                   # G9 N: the published figures checked, with dates
+            import config                                   # noqa: PLC0415
+            lab = (lab + "; " if lab else "") + checked_text(config.HL_ISSUANCE_CHECKED)
+        r["Status"] = "MODELLED"
+        r["Reason / route / error"] = (f"MODELLED — {'; '.join(what)} — shown, excluded from any scoring; never "
+                                       f"VERIFIED" + (f" ({lab})" if lab else ""))[:1200]
+        n += 1
+    return n
 
 
 def absent_status(source: dict | None, own: dict) -> tuple[str, str]:
@@ -723,8 +915,8 @@ def verified_share(rows: list[dict]) -> dict:
     for r in rows:
         p = r["Project"]
         # VERIFIED (derived) holds a value but is never counted as VERIFIED (D2)
-        if p in ("(all)", "") or r["Status"] not in ("VERIFIED", "VERIFIED (derived)", "LIVE-UNVERIFIED", "CHECK",
-                                                     "BROKEN"):
+        if p in ("(all)", "") or r["Status"] not in ("VERIFIED", "VERIFIED (derived)", "LIVE-UNVERIFIED", "MODELLED",
+                                                     "CHECK", "BROKEN"):
             continue
         v, n = out.get(p, (0, 0))
         out[p] = (v + (r["Status"] == "VERIFIED"), n + 1)
@@ -751,7 +943,7 @@ def counts(rows: list[dict]) -> dict:
     return c
 
 
-BOARD_COLS = ("VERIFIED", "VERIFIED (derived)", "LIVE-UNVERIFIED", "N/A", "MISSING", "NOT WIRED", "BROKEN", "PARKED",
+BOARD_COLS = ("VERIFIED", "VERIFIED (derived)", "LIVE-UNVERIFIED", "MODELLED", "N/A", "MISSING", "NOT WIRED", "BROKEN", "PARKED",
               "CHECK",
               "BLANK-UNEXPLAINED", "Gap P4", "Gap P5", "Gap P6", "Review Queue", "Verified share", "Populated",
               "MISSING by cause")
@@ -793,9 +985,10 @@ def scoreboard(rows: list[dict], gaps: dict | None = None, review_open: dict | N
                 causes.setdefault(k, {}).setdefault(c, 0)
                 causes[k][c] += 1
     for p, b in board.items():
-        held = b["VERIFIED"] + b["VERIFIED (derived)"] + b["LIVE-UNVERIFIED"] + b["CHECK"] + b["BROKEN"]
+        held = b["VERIFIED"] + b["VERIFIED (derived)"] + b["LIVE-UNVERIFIED"] + b["MODELLED"] + b["CHECK"] + b["BROKEN"]
         b["Verified share"] = f"{b['VERIFIED']}/{held} = {b['VERIFIED'] / held:.0%}" if held else "-"
-        applicable = sum(b[k] for k in ("VERIFIED", "VERIFIED (derived)", "LIVE-UNVERIFIED", "MISSING", "NOT WIRED",
+        applicable = sum(b[k] for k in ("VERIFIED", "VERIFIED (derived)", "LIVE-UNVERIFIED", "MODELLED", "MISSING",
+                                        "NOT WIRED",
                                         "BROKEN", "CHECK", "BLANK-UNEXPLAINED"))
         b["Populated"] = f"{held}/{applicable} = {held / applicable:.0%}" if applicable else "-"
         b["MISSING by cause"] = " · ".join(f"{c} {n}" for c, n in sorted((causes.get(p) or {}).items())) or "-"
