@@ -12,7 +12,8 @@ series-break and measuring-point rules read) and every headline cell that holds 
   - a series whose set of bases gained a basis that is neither a declared handover point (config series_handover
     ordered_points) nor a declared component (config.DECLARED_COMPONENTS);
   - a headline that held a value before and holds none after (config.REGRESSION_ALLOWLIST answers it, as the build's
-    own continuity guard does).
+    own continuity guard does);
+  - a headline whose text names measuring_point_changed, even one blank in the baseline too (G9 C3) — no allowance.
 "Before" is the baseline committed beside the tests (tests/fixtures/guard_baseline.json), written by the last accepted
 code; "after" is the code under test. A legitimate change of basis is declared in config, then the baseline rewritten:
 
@@ -30,6 +31,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 PROBE_DAYS = 7
+MPC = "measuring_point_changed"
 
 
 def _payloads() -> list[dict]:
@@ -95,6 +97,7 @@ def build(out_dir: Path, probes: bool = True, previous: dict | None = None) -> d
     wb = openpyxl.load_workbook(path)
     X = xlcalc.Workbook(wb)
     heads: dict = {}
+    mpc: list = []
     for hc in bw._HEADLINE_CELLS:
         cell = wb[hc["sheet"]][hc["cell"]]
         try:
@@ -104,7 +107,9 @@ def build(out_dir: Path, probes: bool = True, previous: dict | None = None) -> d
         n = sanity.stated_number(v)
         if n is not None:
             heads.setdefault(hc["project"], {})[f"{hc['sheet'][:2]} | {hc['header']}"] = float(n)
-    snap = {"asof": str(max(asofs)), "bases": bases, "headlines": heads, "probed": probed}
+        elif MPC in str(v or ""):
+            mpc.append([hc["project"], f"{hc['sheet'][:2]} | {hc['header']}", str(v)[:200]])
+    snap = {"asof": str(max(asofs)), "bases": bases, "headlines": heads, "probed": probed, "mpc_headlines": mpc}
     if previous is not None:
         snap["sanity_lost"] = [list(h) for h in sanity.lost_headlines(wb, previous, bw._HEADLINE_CELLS, "baseline")]
     return snap
@@ -162,6 +167,9 @@ def compare(before: dict, after: dict) -> list[str]:
             if config.regression_allowance(proj, head):
                 continue
             bad.append(f"HEADLINE LOST {proj} {head}: {v:,.6g} before, no value after")
+    # G9 C3: a headline blanked by a change of measuring point fails whatever the baseline held — blank before too
+    for proj, head, text in after.get("mpc_headlines") or ():
+        bad.append(f"HEADLINE BLANKED BY {MPC} {proj} {head}: {text}")
     return bad
 
 

@@ -389,6 +389,14 @@ def _after_leg_gap(g: pd.DataFrame, s: pd.Series) -> pd.Series:
     return s[s.index >= cut.max()] if len(cut) else s
 
 
+def _dense_days(s: pd.Series, start: pd.Timestamp, end: pd.Timestamp) -> int:
+    """Distinct days holding a row in (start, end] — coverage for a config.DENSE_DAILY_FLOWS series (G9 F1)."""
+    if s.empty:
+        return 0
+    idx = pd.DatetimeIndex(s.index).normalize()
+    return int(idx[(idx > start) & (idx <= end)].nunique())
+
+
 def _window_coverage(s: pd.Series, start: pd.Timestamp, end: pd.Timestamp,
                      differenced: bool = False) -> tuple[int, int]:
     """(days the series actually covers inside the window, days the window asks for).
@@ -537,7 +545,7 @@ def method_points(g: pd.DataFrame):
     return mp, f"READ METHOD CHANGED and the values DIVERGE ({'; '.join(how)})"
 
 
-def handover_refusal(project: str, metric: str, points, spans: dict) -> str | None:
+def handover_refusal(project: str, metric: str, points, spans: dict, edges: dict | None = None) -> str | None:
     """None when a multi-point series is a DECLARED, non-overlapping handover; else why not.
 
     Three ways to fail, and all three keep the series blanked:
@@ -570,6 +578,17 @@ def handover_refusal(project: str, metric: str, points, spans: dict) -> str | No
         if a[1] >= b[0]:
             return (f"the declared legs OVERLAP: {earlier} runs to {a[1]:%Y-%m-%d} and {later} "
                     f"starts {b[0]:%Y-%m-%d}. The overlapping period is counted twice")
+        # A DECLARED max_step IS CHECKED AT THE SEAM (G9 C2, GEODNET supply_units): with no common day, the earlier
+        # leg's last value against the later leg's first. A step past it is a different quantity, not a handover.
+        if decl.get("max_step") is not None:
+            ea, eb = (edges or {}).get(earlier), (edges or {}).get(later)
+            if ea is None or eb is None or not eb[0]:
+                return f"the declared max_step cannot be checked: no values for {earlier if ea is None else later}"
+            step = abs(ea[1] / eb[0] - 1)
+            if not step <= decl["max_step"]:
+                return (f"the declared handover's seam step is {step:.3%} ({earlier} {ea[1]:,.6g} on "
+                        f"{a[1]:%Y-%m-%d}, {later} {eb[0]:,.6g} on {b[0]:%Y-%m-%d}), over the declared "
+                        f"{decl['max_step']:.1%}: not the same quantity")
     return None
 
 
@@ -631,7 +650,8 @@ def withheld_for(project: str, metric: str, row: dict) -> tuple[str, str] | None
     # 5. TWO MEASURING POINTS. A window spanning the change reports the move between two different
     #    addresses as though it were a flow.
     points = row.get("measuring_points") or ()
-    if len(points) > 1 and (refusal := handover_refusal(project, metric, points, row.get("point_spans") or {})):
+    if len(points) > 1 and (refusal := handover_refusal(project, metric, points, row.get("point_spans") or {},
+                                                        row.get("point_edges"))):
         return "measuring_point_changed", (
             f"MEASURING POINT CHANGED — this series was read from {len(points)} different places "
             f"over its history ({', '.join(sorted(points))}). A window spanning the change reports "
@@ -2591,14 +2611,28 @@ def _fdv_views(groups: dict) -> None:
         # total's basis is a SERIES BREAK on the trend only (trajectory.BRACKET_BASIS reads this bracket)
         from fetch.base import _measuring_point          # noqa: PLC0415
         src = {d: _measuring_point(v) for d, v in src.items()}
-        # days before the primary total's first row (FDV_TOTAL_HISTORY) carry ITS basis: the same quantity, checked
+        # ===== THE 2026-09-11 HANDOVER, DECLARED AND CHECKED (Round G9 C1, Jake: Master FDV blank for Ethereum, Uniswap,
+        # Near and Plume since G6 — "MEASURING POINT CHANGED … total before 2026-09-11"). G7's history leg did extend
+        # the total, but (a) Uniswap / Plume: its note was appended OUTSIDE the bracket, so the value's measuring point
+        # differed before the primary's first day; (b) Near / Ethereum: G7 extended total_supply itself
+        # (TOTAL_SUPPLY_HISTORY), so the bracket named the older leg's source before 09-11. Both are one quantity
+        # (price x total supply) under a declared handover: every day before the primary total's first day carries
+        # the PRIMARY's point, and the leg is named in its own bracket — only when the same-quantity check passes
+        # (fdv_handover_check: >= FDV_HISTORY_MIN_OVERLAP common days, median |diff| <= FDV_HISTORY_TOL; with no common
+        # days, the two totals compared at the handover date within the same tolerance). A failed check changes
+        # nothing: the older days keep their own point and the series reads MEASURING POINT CHANGED, honestly.
+        pp = src[max(src)] if src else "?"
+        first_pp = min((d for d, v in src.items() if v == pp), default=None)
+        ok, hnote = fdv_handover_check(name, groups, total, src, pp, s)
+        if hist_note and first_pp is not None and not ok:
+            ok, hnote = True, hist_note.strip("()")       # the Uniswap / Plume leg: _fdv_history's own check passed
         last = pd.Series(src, dtype=object).reindex(total.index).ffill().bfill().fillna("?").to_dict()
-        first_primary = min(src) if src else None
+        FDV_HANDOVER_NOTE[name] = hnote
         view = pd.DataFrame({"date": both, "project": name, "metric": "fdv_usd",
                              "value": (price[both] * total[both]).values, "tier": 1,
-                             "source": [f"derived:price_x_total_supply[{last.get(d, '?')}]"
-                                        + (f" {hist_note}" if hist_note and first_primary is not None
-                                           and d < first_primary else "") for d in both]})
+                             "source": [(f"derived:price_x_total_supply[{pp}][{hnote}]"
+                                         if ok and first_pp is not None and d < first_pp
+                                         else f"derived:price_x_total_supply[{last.get(d, '?')}]") for d in both]})
         cols = cg.columns if cg is not None and not cg.empty else px.columns
         if cg is not None and not cg.empty:
             groups[(name, "fdv_usd_coingecko")] = _as_stored(cg.assign(metric="fdv_usd_coingecko"), cols)
@@ -2609,6 +2643,48 @@ def _fdv_views(groups: dict) -> None:
                 view = pd.concat([view, rest.assign(metric="fdv_usd")[view.columns.intersection(rest.columns)]],
                                  ignore_index=True).sort_values("date")
         groups[(name, "fdv_usd")] = _as_stored(view, cols)
+
+
+FDV_HANDOVER_NOTE: dict = {}      # project -> the 2026-09-11 handover check's note, last build (G9 C1)
+
+
+def fdv_handover_check(name: str, groups: dict, total: pd.Series, src: dict, pp: str, daily) -> tuple[bool, str]:
+    """(passes, note) for the declared handover of FDV's total at the primary total's first day (G9 C1). The older
+    leg is config.FDV_TOTAL_HISTORY[name]["total"] (minus "less"); compared with the PRIMARY rows only (those whose point
+    is `pp`): >= FDV_HISTORY_MIN_OVERLAP common days within FDV_HISTORY_TOL median |diff| — or, with no common days, the
+    leg's last value before the handover against the primary's first, within the same tolerance."""
+    spec = config.FDV_TOTAL_HISTORY.get(name)
+    if not spec or not src:
+        return False, ""
+    prim_days = sorted(d for d, v in src.items() if v == pp)
+    older = [d for d, v in src.items() if v != pp and d < prim_days[0]] if prim_days else []
+    if not older:
+        return False, ""                                   # nothing before the primary carries another point
+    a_ = groups.get((name, spec["total"]))
+    if a_ is None or a_.empty:
+        return False, f"handover NOT checked: no {spec['total']} rows"
+    alt = daily(a_)
+    if spec.get("less"):
+        b_ = groups.get((name, spec["less"]))
+        if b_ is None or b_.empty:
+            return False, f"handover NOT checked: no {spec['less']} rows"
+        alt = (alt - daily(b_)).dropna()
+    prim = total.reindex(prim_days).dropna()
+    common = alt.index.intersection(prim.index).sort_values()[-config.FDV_HISTORY_MIN_OVERLAP:]
+    h = prim.index.min()
+    if len(common) >= config.FDV_HISTORY_MIN_OVERLAP:
+        dev = float((alt[common] / prim[common] - 1).abs().median())
+        how = f"median |diff| {dev:.4%} over {len(common)} common day(s)"
+    else:
+        before = alt[alt.index < h]
+        if before.empty:
+            return False, f"handover NOT checked: {spec['total']} has no value before {h.date()}"
+        dev = abs(float(before.iloc[-1]) / float(prim.iloc[0]) - 1)
+        how = (f"no common days: {spec['total']} {before.index[-1].date()} vs the total {h.date()}, |diff| "
+               f"{dev:.4%}")
+    if not dev <= config.FDV_HISTORY_TOL:
+        return False, f"handover NOT passed ({how} > {config.FDV_HISTORY_TOL:.1%})"
+    return True, f"total before {h.date()}: {spec['label']} — declared handover, same quantity, {how}"
 
 
 NEAR_LOCKUP_MAX_AGE_DAYS = 10      # a weekly read, plus slack
@@ -2993,6 +3069,8 @@ def _issuer_mint_views(groups: dict) -> None:
                 continue
             g = g.assign(date=pd.to_datetime(g["date"]).dt.normalize()).drop_duplicates("date", keep="last")
             rows += [(d, float(v), spec["source"]) for d, v in zip(g["date"], g["value"])]
+        if spec["kind"] == "supply_rise":
+            rows += _supply_rise_rows(groups.get((name, spec["metric"])), spec)
         for ev in spec.get("events") or ():
             rows.append((pd.Timestamp(ev["date"]), float(ev["tokens"]), spec["source"]))
         if not rows:
@@ -3001,6 +3079,87 @@ def _issuer_mint_views(groups: dict) -> None:
         groups[(name, "issuer_mint_tokens")] = _as_stored(pd.DataFrame(
             {"date": [r[0] for r in rows], "project": name, "metric": "issuer_mint_tokens",
              "value": [r[1] for r in rows], "tier": 2, "source": [r[2] for r in rows]}), cols)
+
+
+def _supply_rise_rows(g, spec: dict) -> list[tuple]:
+    """G9 D2: a token whose ONLY mint path lands with the issuer (config.ISSUER_MINTS kind "supply_rise") mints, per day,
+    the RISE of its stored on-chain totalSupply (rows read at the declared `point` only) since the previous stored day
+    (at most SUPPLY_RISE_MAX_GAP days before, the same measuring point); a fall is a burn, not a negative mint (0). A pair of days further apart, or read
+    at different points, stores nothing — the gap stays visible as days not covered."""
+    from fetch.base import _measuring_point          # noqa: PLC0415
+    if g is None or g.empty:
+        return []
+    g = (g.assign(date=pd.to_datetime(g["date"]).dt.normalize()).sort_values("date")
+         .drop_duplicates("date", keep="last"))
+    out, prev = [], None
+    for d, v, src in zip(g["date"], g["value"].astype(float), g["source"].astype(str)):
+        mp = _measuring_point(src)
+        if mp != spec["point"]:
+            continue                                    # only the declared on-chain read; another source is no mint
+        if prev is not None and (d - prev[0]).days <= SUPPLY_RISE_MAX_GAP and mp == prev[2]:
+            share = float(spec.get("share", 1.0))     # PancakeSwap: devaddr's 1/11 of every CAKE mint (G9 J2)
+            out.append((d, share * max(0.0, v - prev[1]),
+                        f"{spec['source']}[rise of {spec['metric']}" + (f" x {spec['share_label']}]" if
+                                                                         spec.get("share_label") else "]")))
+        prev = (d, v, mp)
+    return out
+
+
+SUPPLY_RISE_MAX_GAP = 3
+
+
+def _supplier_b_views(groups: dict) -> None:
+    """G9 I3 (config.SUPPLIER_B_VIEW): a project's supply-side (b) series. On a day the base leg is the DECLARED schedule
+    (source starting `schedule_prefix`: Aethir's checker-node base rewards, PARTIAL), the weekly legs are added at their
+    week's total ÷ 7 for each of the seven days from the served label; from the base's first MEASURED day the base stands
+    alone (it holds those legs already: Aethir's cloud hosts are the compute providers). A schedule day no weekly leg
+    covers keeps the schedule alone, and its source says the leg is missing."""
+    for name, spec in config.SUPPLIER_B_VIEW.items():
+        base = groups.get((name, spec["base"]))
+        if base is None or base.empty:
+            continue
+        b = (base.assign(date=pd.to_datetime(base["date"]).dt.normalize()).sort_values("date")
+             .drop_duplicates("date", keep="last").set_index("date"))
+        per_day: dict = {}
+        for m in spec["weekly_adds"]:
+            w = _daily(groups.get((name, m)))
+            for d, v in w.items():
+                for k in range(7):
+                    per_day.setdefault(m, {})[d + pd.Timedelta(days=k)] = float(v) / 7.0
+        rows = []
+        for d, r in b.iterrows():
+            v, src = float(r["value"]), str(r["source"])
+            if src.startswith(spec["schedule_prefix"]):
+                got = [m for m in spec["weekly_adds"] if d in per_day.get(m, {})]
+                v += sum(per_day[m][d] for m in got)
+                miss = [m for m in spec["weekly_adds"] if m not in got]
+                src = (f"derived:supplier_b[{spec['base']} (schedule)"
+                       + "".join(f" + {m}/7" for m in got) + "]"
+                       + (f"[PARTIAL: {', '.join(miss)} not on file this day]" if miss else "")
+                       + f"[{spec['note']}]")
+            rows.append((d, v, src))
+        groups[(name, spec["metric"])] = _as_stored(pd.DataFrame(
+            {"date": [x[0] for x in rows], "project": name, "metric": spec["metric"], "value": [x[1] for x in rows],
+             "tier": 2, "source": [x[2] for x in rows]}), base.columns)
+
+
+def _stock_rise_views(groups: dict) -> None:
+    """G9 D2 (config.STOCK_RISE_VIEWS): a flow published only as a cumulative — Aethir's staking-rewards emission
+    schedule — read as the rise between consecutive stored points at most `max_gap_days` apart, dated on the later point;
+    a fall is not a negative payment (0). The first point, and a pair further apart, store nothing."""
+    for (name, metric), spec in config.STOCK_RISE_VIEWS.items():
+        g = groups.get((name, spec["stock"]))
+        if g is None or g.empty:
+            continue
+        s = _daily(g)
+        prev = s.index.to_series().shift(1)
+        ok = (s.index.to_series() - prev).dt.days.le(spec["max_gap_days"])
+        rise = s.diff().clip(lower=0)[ok.values].dropna()
+        if rise.empty:
+            continue
+        groups[(name, metric)] = _as_stored(pd.DataFrame(
+            {"date": rise.index, "project": name, "metric": metric, "value": rise.values, "tier": 2,
+             "source": f"derived:stock_rise[{spec['stock']}]"}), g.columns)
 
 
 def _unlock_views(groups: dict) -> None:
@@ -3554,6 +3713,8 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _revenue_total_views(groups)  # alignment C10: NEAR's revenue = gas + Intents fee switch
     _stake_prorata_views(groups)  # alignment C1: Hyperliquid's (a) = rewards to circulating stake only
     _cashback_funding_views(groups)  # round 3 W3: the cashback its market purchases did not cover — (c)
+    _stock_rise_views(groups)     # G9 D2: a declared flow read as the rises of a published cumulative (config.STOCK_RISE_VIEWS)
+    _supplier_b_views(groups)     # G9 I3: Aethir's (b) = checker schedule + weekly compute rewards before the measured sum
     _outflow_views(groups)        # Phase 2: the five outflow categories, tokens and $ (after unlocks and emissions)
     _holder_value_views(groups)   # Phase 2: revenue-funded holder value, credited vs recorded (LITMUS A)
     _settlement_views(groups)
@@ -3665,6 +3826,9 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
             # WHEN each measuring point was in use. A declared handover is accepted only if the
             # stored dates show no overlap, so the spans have to travel with the row.
             row["point_spans"] = {mp: (gg["date"].min(), gg["date"].max()) for mp, gg in g.groupby(mps)}
+            # ...and each point's first and last VALUE, for a handover that declares a max_step at the seam (G9 C2)
+            row["point_edges"] = {mp: (float(gg["value"].iloc[0]), float(gg["value"].iloc[-1]))
+                                  for mp, gg in g.sort_values("date").groupby(mps)}
             # A DIFFERENCED FLOW IS BOUNDED BY THE STOCK IT CAME FROM. Captured here rather than
             # inside withheld_for because only aggregate() has the series; withheld_for sees one
             # row. Restricted to rows whose source carries the :delta marker, so a genuine
@@ -3740,12 +3904,19 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                 if len(s_cov) < len(s) and not s_cov.empty:     # the current leg: its own first row decides
                     diff_first = _differenced_first(g[pd.to_datetime(g["date"]).dt.normalize() >= s_cov.index.min()])
                 row["covered_days"], row["window_days"] = _window_coverage(s_cov, w_start, asof, diff_first)
+                dense = (name, metric) in config.DENSE_DAILY_FLOWS
                 # THE SAME TWO QUESTIONS FOR THE Q0 WINDOW, which A4's headline annualises
                 # (x days_per_year / period_days). A Q0 sum over a series that began 42 days ago
                 # is a 42-day sum; a Q0 holding ONE discrete burn is an event, not a rate. Both
                 # are what A4's window caveat reads (_a4_window_caveat). Added 2026-09-25.
                 q_start = asof - pd.Timedelta(days=period)
                 row["q0_covered_days"], _ = _window_coverage(s_cov, q_start, asof, diff_first)
+                if dense:
+                    # G9 F1: A SERIES WITH ONE ROW PER DAY BY CONSTRUCTION COUNTS ITS DAYS, NOT ITS SPAN. Ethereum's P2P
+                    # leg read GREEN with 37 days held of the 85 since its first (a 48-day hole the span ignores):
+                    # a missing day of a daily query is a day not read, never a quiet day.
+                    row["covered_days"] = _dense_days(s, w_start, asof)
+                    row["q0_covered_days"] = _dense_days(s, q_start, asof)
                 row["q0_events"] = int(((s.index > q_start) & (s.index <= asof) & (s > 0)).sum())
                 # ** A SCHEDULE THAT HAS ENDED STILL FILLS THE WINDOW BEHIND IT. Added 2026-09-25. **
                 # The mirror of a part-filled window: after the declared end the true rate is zero,
@@ -4220,7 +4391,10 @@ def gated(status_expr: str, expr: str, share_expr: str | None = None) -> str:
     inner = f"IFERROR({expr},{NA})"
     if share_expr:
         inner = f"IF(ISNUMBER({share_expr}),{inner},{NA})"
-    return f'=IF({status_expr}="unconfirmed","unconfirmed",{inner})'
+    # G9 B1: the word alone read as a held value (Chainlink's implied buyback graded VERIFIED (derived)); it is a missing
+    # split, said as one — "UNCONFIRMED" is classed MISSING by coverage_audit's honest rules
+    return (f'=IF({status_expr}="unconfirmed","n/a — UNCONFIRMED: no published share of revenue to buyback '
+            f'(config fee_split status unconfirmed)",{inner})')
 
 
 def threshold_gated(project: dict, expr: str) -> str:
@@ -4390,9 +4564,13 @@ def base_gated(project: dict, expr: str, window: str | None = None) -> str:
             return '="window not resolved — cannot tell if the base applies"'
         if start_iso >= effective:
             return expr
-        return (f'="base applies from {effective} — this window '
-                f'{"spans that date" if end_iso >= effective else "ends before it"}"')
-    return '="base unconfirmed"'
+        if end_iso >= effective:                     # G9 B1: a window short of the base is MISSING C, with its date
+            valid = (pd.Timestamp(effective) + pd.Timedelta(days=(pd.Timestamp(end_iso) - pd.Timestamp(start_iso)).days)
+                     ).date()
+            return (f'="n/a — BLOCKED: the revenue base applies from {effective} — this window spans that date; '
+                    f'valid from {valid}"')
+        return f'="n/a — the revenue base applies from {effective} — this window ends before it (no share existed)"'
+    return '="n/a — UNCONFIRMED: no revenue base declared"'
 
 
 def supply_additive(project: dict) -> bool:
@@ -4564,6 +4742,9 @@ def derived_statuses(data: pd.DataFrame | None, silence: dict | None = None) -> 
     return out
 
 
+CFG_WRITTEN: dict = {}     # (project, Config & Sources column) -> the value written this build (G9 B3: _reasoned_na)
+
+
 def write_config(ws, asof: pd.Timestamp, silence: dict | None = None, statuses: dict | None = None):
     silence = silence or {}
     statuses = statuses or {}
@@ -4665,6 +4846,7 @@ def write_config(ws, asof: pd.Timestamp, silence: dict | None = None, statuses: 
         for j, v in enumerate(values, start=1):
             c = ws.cell(row=r, column=j, value=v)
             head = CFG_COLS[j - 1][0]
+            CFG_WRITTEN[(p["name"], head)] = v
             if head.startswith("Share Q") or head in ("Share of revenue to buyback", "Share of fees burned",
                                                       "Destination split (share burned, where destination = split)"):
                 _style(c, "input", FMT_TEXT if isinstance(v, str) else FMT_PCT)
@@ -7138,9 +7320,56 @@ def _reasoned_na(formula: str, p: dict, data_by_key: dict) -> str:
             absent = absent or desc
         elif st in _NA_BLANK_STATUS:
             weak = weak or desc
-    why = absent or weak or "the inputs are present; the computation has no value (a ratio over zero or an empty window)"
+    why = absent or weak or _no_value_cause(formula, p, data_by_key) or \
+        "the inputs are present; the computation has no value (a ratio over zero or an empty window)"
     text = ("n/a — " + why)[:240].replace('"', "'")
     return formula.replace(NA, f'"{text}"')
+
+
+_CFG_REF = re.compile(r"'Config & Sources'!\$([A-Z]+)\$\d+:\$[A-Z]+\$\d+")
+_CFG_EQ = re.compile(r"'Config & Sources'!\$([A-Z]+)\$\d+:\$[A-Z]+\$\d+,MATCH\([^)]*\)\)=\"([a-z_]+)\"")
+
+
+def _no_value_cause(formula: str, p: dict, data_by_key: dict) -> str:
+    """WHY A FORMULA WHOSE INPUTS ARE ALL PRESENT HAS NO VALUE (Round G9 B3, Jake: 43 cells said "the inputs are present;
+    the computation has no value"). Read from what the formula reads, in order:
+      1. a Config & Sources column it tests for a value (=“yield_payout”) holding another — the declared destination;
+      2. a Config & Sources column it multiplies by that holds TEXT — the declared share / split / status, quoted
+         ("no share of revenue to buyback documented for this window");
+      3. a Data input that is 0 in the window it reads — a ratio over zero.
+    "" when none applies (the caller keeps the generic text, which coverage reads as unresolved)."""
+    inv = {v: k for k, v in CC.items()}
+    name = p["name"]
+    for letter, want in _CFG_EQ.findall(formula):
+        head = inv.get(letter)
+        v = CFG_WRITTEN.get((name, head)) if head else None
+        # the "unconfirmed" test is the GATE (gated(): an unconfirmed split shows no figure), never the line's
+        # applicability — a status other than "unconfirmed" is exactly when the line computes
+        if want == "unconfirmed":
+            continue
+        if head and str(v) != want:
+            return f"{head} is {v!r} (declared), not {want!r} — this line applies only to that destination"
+    for letter in dict.fromkeys(_CFG_REF.findall(formula)):
+        head = inv.get(letter)
+        v = CFG_WRITTEN.get((name, head)) if head else None
+        # the MATCH key column (Project) and the status columns are not the declared split
+        if head and isinstance(v, str) and v and head != "Project" and not head.startswith("Status") \
+                and head not in ("Buyback status", "Burn split status"):
+            return f"{head}: {v}"[:200] + " (declared in config)"
+    # a share the formula needs and config leaves BLANK: no documented value — an unconfirmed split, said as one
+    for letter in dict.fromkeys(_CFG_REF.findall(formula)):
+        head = inv.get(letter)
+        if head and head != "Project" and (name, head) in CFG_WRITTEN and CFG_WRITTEN[(name, head)] in (None, "") \
+                and head.lower().startswith("share"):
+            return f"UNCONFIRMED: {head} has no documented value in config"
+    col_of = {v: k for k, v in DC.items()}
+    for letter, metric, gproj, gmetric in _REF.findall(formula):
+        row = data_by_key.get(f"{gproj}|{gmetric}" if gproj else f"{name}|{metric}")
+        col = col_of.get(letter, "now")
+        if row is not None and isinstance(row.get(col), (int, float)) and row.get(col) == 0 \
+                and not col.endswith(("_covered_days", "_events")):
+            return f"a ratio over zero: {gmetric or metric} ({col}) is 0 in the window it reads"
+    return ""
 
 
 def _write_table(ws, R: Refs, projects: list[dict], specs: list[tuple], data_by_key: dict, flag_metrics: list[str],
@@ -9500,7 +9729,12 @@ def flow_statements(groups: dict, asof) -> list[dict]:
                  [(_flow_sum(d("issuer_mint_tokens"), *_flow_window(asof, k))[0]
                    if (name, "issuer_mint_tokens") in groups else None) for k in range(5)], "tokens",
                  "issuer_mint_tokens" if (name, "issuer_mint_tokens") in groups else "— (none declared: config.ISSUER_MINTS)",
-                 "not in the expected closing: it lands in a non-circulating wallet; its release is (e)"),
+                 # G9 D2: a DECLARED mint route with nothing stored yet is a route not filled, not "none declared"
+                 ("not in the expected closing: it lands in a non-circulating wallet; its release is (e)"
+                  if (name, "issuer_mint_tokens") in groups or name not in config.ISSUER_MINTS else
+                  f"ROUTE PENDING — config.ISSUER_MINTS declares the {config.ISSUER_MINTS[name]['kind']} route "
+                  f"({config.ISSUER_MINTS[name].get('metric') or config.ISSUER_MINTS[name].get('source', '')}); "
+                  f"nothing stored for it yet")),
                 ("Residual ÷ opening", tok["pct"], "pct", "", f"CHECK beyond ±{FLOW_RESIDUAL_LIMIT:.1%}"),
                 ("Status", tok["status"], "text", "", basis)]
         for line, vals, unit, series, note in rows:
@@ -9569,17 +9803,45 @@ def flow_statements(groups: dict, asof) -> list[dict]:
         for line, vals, unit, series_, note in vlines:
             out.append(_no_such_flow({"Project": name, "Statement": "Value flow", "Line": line,
                         **{lab: v for lab, v in zip(trajectory.LABELS, vals)}, "Unit": unit, "Series": series_,
-                        "Note": note}))
+                        "Note": note}, have))
     return out
 
 
-def _no_such_flow(row: dict) -> dict:
+HOLDER_OTHER_LINE = "Holder value recorded, NOT credited"
+
+
+def _no_such_flow(row: dict, have: set | None = None) -> dict:
     """CLASS A (Round G8 item 2, Jake 2026-10-20): a Flows line with no value in any quarter whose mechanism does not
     exist per a PRIMARY source (config.NO_SUCH_FLOW) reads 0 in every quarter, labelled "0 — no such flow" with the
-    evidence and its source. A line with any value, or with no recorded evidence, is left as it is: unknown is never 0."""
-    leg = next((k for k, lab in config.FLOW_LEG_LINES.items() if lab == row.get("Line")), None)
-    ev = config.NO_SUCH_FLOW.get((row.get("Project"), leg)) if leg else None
-    if not ev or any(row.get(lab) is not None for lab in trajectory.LABELS):
+    evidence and its source. A line with any value, or with no recorded evidence, is left as it is: unknown is never 0.
+    G9 D2 — every line, not only the legs (config.flow_line_evidence): "included in line X" writes n/a naming the line
+    that holds the amount; class E and a pending route keep the line empty and say why in the Note. The holder value
+    NOT credited line is structural: it exists only where config.HOLDER_VALUE declares a non-revenue funding period
+    (holder_value_other_usd's only_projects); elsewhere nothing is recorded outside revenue, so it reads 0."""
+    if any(row.get(lab) is not None for lab in trajectory.LABELS):
+        return row
+    name, line = row.get("Project"), row.get("Line")
+    leg = next((k for k, lab in config.FLOW_LEG_LINES.items() if lab == line), None)
+    ev = config.NO_SUCH_FLOW.get((name, leg)) if leg else None
+    if not ev and (fl := config.flow_line_evidence(name, line)):
+        v = fl["verdict"]
+        if v == "no_such_flow":
+            ev = fl
+        elif v == "included_in":
+            txt = f"n/a — included in line '{fl['line']}'"
+            return {**row, **{lab: txt for lab in trajectory.LABELS},
+                    "Note": f"{txt}: {fl['evidence']} ({fl['source']}, read {fl['read_on']})"[:400]}
+        elif v == "class_e":
+            return {**row, "Note": (f"NO SOURCE — {fl['evidence']}; would be measured by: {fl['would_measure']} "
+                                    f"({fl['source']}, read {fl['read_on']})")[:400]}
+        elif v == "pending":
+            return {**row, "Note": f"ROUTE PENDING — {fl['why']}"[:400]}
+    if not ev and line == HOLDER_OTHER_LINE and have is not None and "holder_value_other_usd" not in have:
+        ev = {"evidence": f"no holder value on {name} is funded from outside revenue — config.HOLDER_VALUE declares no "
+                          f"treasury- or emissions-funded period for it (holder_value_other_usd exists for "
+                          f"{', '.join(config.METRICS['holder_value_other_usd'].get('only_projects') or ())} only)",
+              "source": "config.HOLDER_VALUE / config.holder_funding", "read_on": "every build"}
+    if not ev:
         return row
     return {**row, **{lab: 0.0 for lab in trajectory.LABELS},
             "Note": f"0 — no such flow: {ev['evidence']} ({ev['source']}, read {ev['read_on']})"[:400]}
@@ -9615,6 +9877,7 @@ def write_trajectory(wb, data_by_key: dict, asof=None) -> list[dict]:
     """THE TRAJECTORY TAB (theory layer, Phase 1, 2026-10-12; trajectory.py). One row per registered headline: Q0..Q-4
     as live formulas (the cell's own builder under shifted(k)), then the derived columns, computed here with xlcalc and
     written as values. Returns the rows as dicts (export_snapshot, history_gaps, the tests)."""
+    import coverage_audit                                  # noqa: PLC0415
     import xlcalc                                          # noqa: PLC0415
     ws = wb.create_sheet(trajectory.SHEET, index=wb.sheetnames.index("Credibility") + 1)
     _title(ws, "Trajectory — every headline over five consecutive trailing 90-day blocks",
@@ -9742,8 +10005,14 @@ def write_trajectory(wb, data_by_key: dict, asof=None) -> list[dict]:
         # A SHORT HISTORY SAYS WHICH KIND IT IS (Round G 2.2): fewer than five quarters with a value -> the youngest input
         # and FORWARD-ONLY (the source keeps none) / SOURCE-LIMITED (no route) / BUG (a route exists, not yet run)
         if asof is not None and not w["independent"] and sum(1 for v in qs if trajectory._num(v) is not None) < len(qs):
-            hc = _history_class(spec["project"], trajectory.referenced_metrics(w["q0_formula"]), data_by_key)
-            if hc:
+            # G9 E1: a headline that is n/a BY ITS OWN TEXT in every quarter (no split documented, a destination this line
+            # does not apply to) has no history to fill — saying "HISTORY BUG … re-reads 455 days" sent the reader after
+            # a backfill that could never change it
+            q0t = qs[0] if isinstance(qs[0], str) else ""
+            if (q0t.lower().startswith("n/a") and all(trajectory._num(v) is None for v in qs)
+                    and not coverage_audit.DISHONEST_NA.search(q0t)):
+                why.append(f"n/a in every quarter by the cell's own declaration (nothing to backfill) — {q0t[:200]}")
+            elif hc := _history_class(spec["project"], trajectory.referenced_metrics(w["q0_formula"]), data_by_key):
                 why.append(hc)
         g, n_g, g_label, why_g = trajectory.growth_rule(qs, step_at, starts_in)
         imp, n_imp = trajectory.improved(qs, d)

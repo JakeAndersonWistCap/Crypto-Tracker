@@ -565,22 +565,29 @@ def test_g2_1_prices_are_filled_back_to_the_first_token_flow_never_over_a_stored
             asked.append((url, dict(params)))
             t0 = params["start"]
             pts = [{"timestamp": t0 + i * 86400 + 60, "price": 2.0 + i} for i in range(params["span"])]
-            pts[1]["timestamp"] += 3600                   # one point an hour off 00:00: dropped
-            return {"coins": {"coingecko:ether-fi": {"prices": pts}}}
+            if len(pts) > 1:
+                pts[1]["timestamp"] += 3600               # one point an hour off 00:00: dropped
+            return {"coins": {url.rsplit("/", 1)[1]: {"prices": pts}}}
     a = ph.PriceHistory(stored_long=stored, http=H(), daily=DailyChecks(tmp_path), robots=lambda u: (True, "404"))
     out = FetchOutput()
     a.run([config.PROJECT_BY_NAME["Ether.fi"]], None, out)
     f = out.frame()
-    assert all(p["span"] <= 499 for _, p in asked) and "coingecko:ether-fi" in asked[0][0]
-    assert len(f) == 433 - len(asked)                          # one dropped point per call
+    # G9 G1 (Jake 2026-10-20): DefiLlama coins by CONTRACT first (config.PRICE_HISTORY_KEYS), coingecko:<id> after
+    assert all(p["span"] <= 499 for _, p in asked) and "ethereum:0xFe0c30065B384F05761f15d0CC899D4F9F9Cc0eB" in asked[0][0]
+    first_key = [a for a in asked if "ethereum:0x" in a[0]]
+    contract = f[f["source"].str.contains("ETHFI")]
+    assert len(contract) == 433 - len(first_key)                # one dropped point per call on the contract key
+    assert len(f) <= 433 and len(f) > len(contract)            # coingecko:<id> fills only what the contract key left
     assert f["date"].min() == pd.Timestamp("2024-07-06") and f["date"].max() <= pd.Timestamp("2025-09-11")
     # G2 addendum A1: the declared older leg of price_usd's handover, not a third measuring point
-    assert set(f["source"]) == {"defillama_coins:history[coins.llama.fi coingecko:ether-fi]"}
+    assert set(f["source"]) == {"defillama_coins:history[coins.llama.fi ethereum:ETHFI 0xFe0c3006…]",
+                                "defillama_coins:history[coins.llama.fi coingecko:ether-fi]"}
     # the next run the same day reads nothing
     out2 = FetchOutput()
+    n_asked = len(asked)
     ph.PriceHistory(stored_long=stored, http=H(), daily=DailyChecks(tmp_path), robots=lambda u: (True, "")).run(
         [config.PROJECT_BY_NAME["Ether.fi"]], None, out2)
-    assert out2.frame().empty and len(asked) == 1
+    assert out2.frame().empty and len(asked) == n_asked, "the next run the same day asks nothing"
     import fetch
     assert "price_history" in [n for n, _, _ in fetch.TIER_ORDER] and fetch._budget("price_history") == 120
 

@@ -105,10 +105,27 @@ def fix_for(p: dict, metric: str, row: dict) -> tuple[str, str, str, str]:
     if not src:
         return ("nothing stored", "the series' own route (Gap Report)", "see Gap Report", "")
     if base in ("defillama", "defillama_coins", "llama"):
+        # G9 E1: the "re-reads 455 days" promise is checked against fetch.backfill's memo — a re-read that ran and found
+        # nothing older is the source's limit, said with its date, not a bug promised again on every build
+        try:
+            from fetch import backfill as _bf                  # noqa: PLC0415
+            seen = _bf._read().get(f"{p['name']}|{metric}") or {}
+        except Exception:  # noqa: BLE001
+            seen = {}
+        if seen.get("first") and first and str(seen["first"])[:10] == str(first)[:10] \
+                and int(seen.get("asked_days") or 0) >= _bf.BACKFILL_DAYS:
+            return (f"DefiLlama answered the {seen['asked_days']}-day re-read of {seen.get('checked_on')} with nothing "
+                    f"older than {str(first)[:10]}", "none — the source starts there", "none", "")
         return ("stored from the store's first window (the routine run asks for 30 days)",
                 "DefiLlama full history (free API): the next daily run re-reads 455 days for a short pair "
                 "(fetch.backfill)", "free", "token_metrics.py")
     if base == "coingecko":
+        if metric == "circulating_supply" and first:
+            # G9 E2: the 365-day market cap ÷ price leg IS the declared derived history (fetch.history_derive.
+            # _circ_history, coingecko:mcap/price, prepended on every run) — it is stored, so the limit is the source's
+            return (f"CoinGecko serves circulating as a current snapshot; its 365-day market cap ÷ price is stored as the "
+                    f"declared older leg (coingecko:mcap/price) from {str(first)[:10]}",
+                    "none free reaches earlier — the project's own published history, where one exists", "none", "")
         if metric == "circulating_supply":
             return ("CoinGecko serves circulating as a current snapshot",
                     "CoinGecko market cap ÷ price = implied circulating, 365 days (free; stored as "

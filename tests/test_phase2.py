@@ -135,11 +135,14 @@ def test_cp_plume_has_no_measured_outflow_and_says_why(tmp_path, monkeypatch):
     payload = json.loads(Path(__file__).resolve().parents[1].joinpath("fixtures/real_plume.json").read_text())
     iss = [m["value"] for m in payload["metrics"] if m["metric"] == "gross_issuance_tokens"]
     assert iss and not any(iss)
-    assert not any(config.outflow_metrics("Plume", c) for c in config.OUTFLOW_CATEGORY_NAMES)
+    # G9 D3: the staking rewards PAID (RewardDistributed claims, emissions_claimed_tokens) are (a); nothing else is wired
+    assert {c: config.outflow_metrics("Plume", c) for c in config.OUTFLOW_CATEGORY_NAMES
+            if config.outflow_metrics("Plume", c)} == {"a": ("emissions_claimed_tokens",)}
     wb, _rows = _built(tmp_path, monkeypatch, "Plume")
     X = xlcalc.Workbook(wb)
     o = _row(wb, X, CP, "Plume")
-    assert _get(o, "TOTAL DILUTION = outflows a+b+c+d+e (annualised) ÷ circ") in (None, "")
+    td = _get(o, "TOTAL DILUTION = outflows a+b+c+d+e (annualised) ÷ circ")
+    assert td in (None, "") or (isinstance(td, str) and "emissions_claimed_tokens" in td), td   # never a 0
     assert "pre-minted" in _get(o, "Outflow categories").lower()
 
 

@@ -100,7 +100,7 @@ def parse_args(argv=None) -> argparse.Namespace:
                              "near_bigquery", "chainlink_fees", "pendle_gauges", "aero_epochs",
                              "aero_buyback", "aero_managed_locks", "burn_history", "hyperevm_burn", "katana_claims",
                              "morpho_base_claims", "plume_payouts", "pendle_berachain", "eth_p2p_validation",
-                             "uni_retro_burn", "ccip_value"],
+                             "uni_retro_burn", "ccip_value", "aero_subsidy"],
                     help="one-off: run only this source with NO time budget, to finish a first "
                          "read that routine runs (60s) take many runs to complete. Stores what it "
                          "reads; records no gaps and does not rebuild the workbook. plume_settlement: a "
@@ -127,7 +127,9 @@ def parse_args(argv=None) -> argparse.Namespace:
                          "Pendle's Berachain gauge scan (gauge_pendle_out_berachain) with its own one-hour budget, the "
                          "Alchemy pages checkpointed as it reads (a stop resumes); routine runs are incremental after. "
                          "eth_p2p_validation: the Ethereum P2P leg's validation window on BigQuery (dry run first, Jake's "
-                         "approval in config), then the rebuild-vs-Artemis validation printed.")
+                         "approval in config), then the rebuild-vs-Artemis validation printed. aero_subsidy: "
+                         "Aerodrome's subsidy targeting for the last 65 complete epochs (five quarters), no time budget, "
+                         "resumable — each epoch's table is kept as it completes.")
     ap.add_argument("--seed-days", type=int, default=None,
                     help="--seed mev_relays: seed this many days back instead of the configured year "
                          "(e.g. 90 first; a later full seed resumes from the days already held). --seed hyperevm_burn: "
@@ -645,6 +647,35 @@ def seed_ccip_value(st, log) -> int:
     return 0
 
 
+def seed_aero_subsidy(st, log) -> int:
+    """Round G9 H1 (Jake 2026-10-20): Aerodrome's subsidy targeting back five quarters — config seed_epochs_back (65)
+    complete epochs — with NO time budget. Each epoch is read from the contracts' own per-epoch records
+    (gauge.rewardRateByEpoch, Sugar), so no archive node is needed; each epoch's table is written as it completes, so an
+    interrupted seed resumes (fetch.subsidy_targeting._restore skips a tabled epoch). Records no gaps."""
+    from fetch import Heartbeat
+    from fetch.subsidy_targeting import SubsidyTargeting
+    from fetch.validate import validate_frame
+    p = config.PROJECT_BY_NAME["Aerodrome"]
+    spec = dict(p["subsidy_targeting"])
+    spec["epochs_back"] = int(spec.get("seed_epochs_back", 65))
+    spec["budget_s"] = 10 ** 7
+    run_id = fetch.new_run_id()
+    out = fetch.FetchOutput()
+    t0 = time.monotonic()
+    log.info("--seed aero_subsidy: %d complete epoch(s) back, resumable (tables in %s)", spec["epochs_back"],
+             spec.get("dir", "data/subsidy"))
+    with Heartbeat():
+        SubsidyTargeting().run([dict(p, subsidy_targeting=spec)], None, out)
+    prior = st.latest_values()
+    written = sum(st.upsert(f) for f in (validate_frame(f, prior, out) for f in out.frames) if f is not None and not f.empty)
+    for e in out.log:
+        st.record_fetch(run_id, e.source, e.project, e.rows, e.status, e.message, e.tier)
+        log.info("--seed aero_subsidy: %s — %s", e.status, e.message)
+    log.info("--seed aero_subsidy: AFTER (%.0fs) — %d row(s) stored%s", time.monotonic() - t0, written,
+             "" if written else " (run it again: tabled epochs are kept and the rest resume)")
+    return 0 if written else 1
+
+
 def seed_uni_retro_burn(st, log) -> int:
     """Round G8 item 4c (Jake): Uniswap's 100M UNI retroactive burn, stored as history from the transaction itself
     (config one_off_flows tx). Keyless explorer reads; idempotent (upsert on the same day). Records no gaps."""
@@ -726,7 +757,7 @@ def seed_eth_p2p_validation(st, log) -> int:
     a._save(stt)
     led0 = dict(a._load().get("ledger") or {})
     t0 = time.monotonic()
-    a.run([config.PROJECT_BY_NAME["Ethereum"]], None, out)
+    a.run([config.PROJECT_BY_NAME["Ethereum"]], None, out, unbounded=True)
     prior = st.latest_values()
     written = sum(st.upsert(f) for f in (validate_frame(f, prior, out) for f in out.frames) if f is not None and not f.empty)
     for e in out.log:
@@ -987,7 +1018,7 @@ def _main(args, log) -> int:
               "katana_claims": seed_katana_claims, "morpho_base_claims": seed_morpho_base_claims,
               "plume_payouts": seed_plume_payouts, "pendle_berachain": seed_pendle_berachain,
               "eth_p2p_validation": seed_eth_p2p_validation, "uni_retro_burn": seed_uni_retro_burn,
-              "ccip_value": seed_ccip_value,
+              "ccip_value": seed_ccip_value, "aero_subsidy": seed_aero_subsidy,
               "aero_buyback": seed_aero_buyback, "aero_managed_locks": seed_aero_managed_locks,
               "mev_relays": lambda st_, log_: seed_mev_relays(st_, log_, args.seed_days)}[args.seed](st, log)
         st.close()

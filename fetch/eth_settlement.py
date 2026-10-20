@@ -145,8 +145,10 @@ class EthP2PBigQuery(NearBigQuery):
                 out.skipped(SOURCE, name, f"{spec['legs']['p2p']}: NOT READ — {why}", TIER)
             else:
                 try:
-                    self._turn(client, bq, p2p, st, e, out, name, now)
-                    e["turn_on"] = str(now.date())
+                    # a turn that left pieces unread (the routine run's time, or a piece held for the budget) is not a
+                    # weekly turn done: the next run continues it rather than waiting a week (G9 F2)
+                    if self._turn(client, bq, p2p, st, e, out, name, now, unbounded=unbounded):
+                        e["turn_on"] = str(now.date())
                 except ReauthNeeded as ex:
                     out.fail(SOURCE, name, f"{spec['legs']['p2p']}: ADC re-authentication needed — {str(ex)[:120]}",
                              TIER)
@@ -154,7 +156,12 @@ class EthP2PBigQuery(NearBigQuery):
         self._save(st)
         self._value_eth(p2p, st, e, out, name, spec["legs"]["p2p"])
 
-    def _turn(self, client, bq, p2p, st, e, out, name, now) -> None:
+    ROUTINE_SECONDS = 240           # inside the tier's 300 s: a routine turn starts no piece after this
+
+    def _turn(self, client, bq, p2p, st, e, out, name, now, unbounded: bool = False) -> bool:
+        """True when every piece due is read."""
+        import time
+        t0 = time.monotonic()
         sql = (SQL / p2p["sql"]).read_text()
         toks = [t[1] for t in p2p["tokens"]]
         wk = self.weeks(None, now)[-1]
@@ -167,7 +174,7 @@ class EthP2PBigQuery(NearBigQuery):
                 if is_reauth(ex):
                     raise ReauthNeeded(str(ex)) from ex
                 out.fail(SOURCE, name, f"p2p dry run ({what}): {type(ex).__name__}: {str(ex)[:160]}", TIER)
-                return
+                return False
         e["dry"] = {k: int(v) for k, v in est.items()} | {"on": str(now.date())}
         out.skipped(SOURCE, name, "Ethereum P2P DRY RUNS (bytes, no quota): " + "; ".join(
             f"{k} {v / 1e9:,.1f} GB" for k, v in est.items()) + f" — weekly ≈ {est['one week'] * 52 / 12 / 1e9:,.0f} GB "
@@ -175,23 +182,56 @@ class EthP2PBigQuery(NearBigQuery):
         if not p2p.get("approved"):
             out.skipped(SOURCE, name, "p2p_transfer_volume_usd NOT APPROVED — dry runs only (config SETTLEMENT_REBUILD."
                                       "ethereum_rebuild.p2p.approved, Jake's decision on the logged bytes)", TIER)
-            return
+            return True
         todo = []
         if not e.get("validation_done"):
             todo.append(("validation window", val, True))
-        through = pd.Timestamp(e["through"]) if e.get("through") else None
-        todo += [(f"week {a.date()}..{b.date()}", (a, b), False) for a, b in self.weeks(through, now)]
-        for what, (a, b), is_val in todo:
+        # G9 F2/F3: EVERY UNHELD WEEK, NOT ONLY THE LATEST. With no cursor, weeks(None, now) gave only the last complete
+        # week, so after the validation window (07-27..08-25) the 48 days to 10-18 were never asked (Jake's G8 build:
+        # 37 of 85 days). The pieces: the weeks after the validation window first (F2), then back to
+        # validation_extend_from (F3: >= 90 days overlapping Artemis's CSV). Each piece is a BACKFILL under NEAR's
+        # top-up reserve (near_bigquery._run): its dry run is printed, and a piece that does not fit is held and resumes
+        # after the month's reset — never past the budget.
+        held = set(e.get("days") or {})
+        todo += [(f"week {a.date()}..{b.date()}", (a, b), True) for a, b in self.pieces(held, p2p, now)]
+        if todo:
+            out.skipped(SOURCE, name, f"Ethereum P2P pieces to read ({len(todo)}): " + "; ".join(
+                f"{w}" for w, _r, _v in todo[:12]) + (" …" if len(todo) > 12 else ""), TIER)
+        for i, (what, (a, b), is_val) in enumerate(todo):
+            if not unbounded and time.monotonic() - t0 > self.ROUTINE_SECONDS:
+                out.skipped(SOURCE, name, f"Ethereum P2P: {len(todo) - i} piece(s) left for the next run (the routine "
+                                          f"turn's {self.ROUTINE_SECONDS} s are spent)", TIER)
+                return False
             rows = self._run(client, f"p2p {what}", sql, {"d0": a.date(), "d1": b.date(), "tokens": toks}, bq, st, out,
                              name, backfill=is_val)          # topup_bytes stays NEAR's (its reserve)
             if rows is None:
-                break
+                return False
             for r in rows:
                 e["days"].setdefault(str(pd.Timestamp(r["day"]).date()), {})[str(r["token"])] = str(r["amount"])
-            if is_val:
+            if what == "validation window":
                 e["validation_done"] = True
             else:
-                e["through"] = str(b.date())
+                e["through"] = max(str(b.date()), str(e.get("through") or ""))
+            self._save(st)
+        return True
+
+    @staticmethod
+    def pieces(held: set, p2p: dict, now: pd.Timestamp) -> list[tuple[pd.Timestamp, pd.Timestamp]]:
+        """The Monday..Sunday weeks (clipped to validation_extend_from) from validation_extend_from to the last complete
+        week that hold a day not yet read: those after the validation window's end first, oldest first, then those
+        before it, newest first (G9 F2, F3)."""
+        lo = pd.Timestamp(p2p.get("validation_extend_from") or p2p["validation_from"])
+        val_to = pd.Timestamp(_spec()["validation"]["to"])
+        last_sun = now.normalize() - pd.Timedelta(days=now.weekday() + 1)
+        start = lo - pd.Timedelta(days=lo.weekday())
+        after, before = [], []
+        while start + pd.Timedelta(days=6) <= last_sun:
+            a, b = max(start, lo), start + pd.Timedelta(days=6)
+            days = {str(d.date()) for d in pd.date_range(a, b)}
+            if not days <= held:
+                (after if b > val_to else before).append((a, b))
+            start += pd.Timedelta(days=7)
+        return after + before[::-1]
 
     def _import_eth_csv(self, e, out, name, p2p) -> None:
         import csv

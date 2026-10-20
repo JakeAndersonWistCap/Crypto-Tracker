@@ -218,11 +218,16 @@ def test_coverage_audit_has_no_unexplained_blank_no_broken_cell_and_matches_spec
         # every listed reference is still BROKEN (a fixed one comes off the list) and names its cause
         for t, col in known:
             hit = [r for r in rows if r["Tab"] == t and r["Column"].startswith(col)]
-            assert hit and all(r["Status"] == "BROKEN" for r in hit), (project, t, col, [r["Status"] for r in hit])
-            assert all("Cause:" in r["Reason / route / error"] for r in hit if t == "References"), (project, col)
+            # G9 B4: a reference Jake parked reads PARKED, its own count, never BROKEN
+            import config
+            want = "PARKED" if any(p == project and col.startswith(m) for p, m in config.PARKED_REFERENCES) else "BROKEN"
+            assert hit and all(r["Status"] == want for r in hit), (project, t, col, [r["Status"] for r in hit])
+            assert all("Cause:" in r["Reason / route / error"] for r in hit if t == "References" and want == "BROKEN"), \
+                (project, col)
         # the NOT WIRED list of SPEC.md section 10 is on the tab
         # (G8 item 4: a §10 item labelled with its blocker counts N/A BY DESIGN, not NOT WIRED)
-        open_items = [r for _i, r in ca.not_wired() if not r.startswith(("NOT BUILT BY DESIGN", "BLOCKED —"))]
+        # (G9 B1: the label is "NAMED BLOCKER —"; "BLOCKED" alone is a refused computation)
+        open_items = [r for _i, r in ca.not_wired() if not r.startswith(("NOT BUILT BY DESIGN", "NAMED BLOCKER —"))]
         assert c["NOT WIRED"] >= len(open_items) > 0
 
 

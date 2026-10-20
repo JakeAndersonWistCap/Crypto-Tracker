@@ -529,6 +529,42 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11ck. Round G9 B–J — honest statuses, FDV and GEODNET handovers, Flows researched, P2P pieces, seeds (2026-10-20)
+
+**Run after pulling (PowerShell 5.1, repo root), in this order.** No run_sql section this round (nothing stored needs
+removing).
+1. `python token_metrics.py --seed aero_subsidy` — Aerodrome's subsidy targeting back 65 complete epochs (five
+   quarters), no time budget. Each epoch's table is written as it completes (data/subsidy/), so an interrupted seed
+   resumes; run it again until it says nothing is left.
+2. `python token_metrics.py --seed eth_p2p_validation` — the Ethereum P2P leg in weekly PIECES: first the weeks after the
+   validation window (08-26 onward, the 48 empty days), then back to 2026-05-28 (>= 90 days overlapping Artemis's CSV).
+   Each piece is dry-run first and its GB printed; a piece that does not fit the month (900 GB less what is used and
+   NEAR's top-up reserve) is HELD and resumes after the 11-01 reset — never past the budget. It prints the bytes billed
+   and the validation (PASSED / FAILED / NOT VALIDATED). Run it again after 2026-11-01 if it held.
+3. `python token_metrics.py` — the full run.
+4. `python check_offline_items.py missing_triage`, `python check_offline_items.py stale_series`,
+   `python check_offline_items.py spec_coverage` — PASTE BACK.
+5. `python measuring_guard.py --newer metrics.db` — PASTE BACK.
+6. `Get-Content scoreboard.json` — PASTE BACK.
+
+**What changed in the statuses.** N/A BY DESIGN now comes only from a declared reason; a cell whose text says gap, no
+rows, BLOCKED, stale, a changed measuring point or an UNCONFIRMED split takes the status that text describes (MISSING
+with its class, CHECK, BROKEN). A Trajectory row with no quarter takes its source cell's status (one function). The
+three parked references (Fluid Q4 2025 revenue, Sky USDS spent, GEODNET July burn) read PARKED, their own scoreboard
+count. The measuring-point guard now also fails on any headline blanked by `measuring_point_changed`, even one blank in
+the baseline.
+
+**Flows.** Every remaining Flows line was researched into measured / "0 — no such flow" (with its primary source) /
+"n/a — included in line X" / class E (no source, with what would measure it); a route identified but not filled says
+ROUTE PENDING and what it waits on (config.FLOW_LINE_EVIDENCE). The memo line "minted straight to issuer-side wallets"
+is MEASURED from the token's own totalSupply rise for Uniswap, Fluid, Morpho, Pendle and Plume (0 so far), and is
+PancakeSwap's dev share (1/11 of every CAKE mint, Jake's J2). Ethereum's is 0 by Jake's J1.
+
+**Not fillable from a free source (said, not filled):** Chainlink CCIP lines on Base stay PARTIAL — Base logs need a
+paid plan (Blockscout 402, Etherscan's free key, Alchemy's 10-block cap; public RPCs refuse older blocks or rate-limit).
+Hyperliquid's network issuance before the first futureEmissions read is the declared MODELLED series only — the ledger
+replay is exact for the three issuer wallets, not for every delegator.
+
 ## 11cj. Round G9 Part A — Pendle samples every gauge chain; Aerodrome's children by DefiLlama id (2026-10-20)
 
 **Pull before the next run.** Pendle's subsidy sample now covers every chain with a gauge (ethereum, arbitrum, optimism,

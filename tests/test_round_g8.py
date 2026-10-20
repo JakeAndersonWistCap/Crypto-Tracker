@@ -362,15 +362,15 @@ def test_4c_aethir_compute_purchases_is_read_from_the_demand_metric_payload():
 def test_4e_a_named_blocker_leaves_the_not_wired_count(monkeypatch):
     import coverage_audit as ca
     monkeypatch.setattr(ca, "not_wired", lambda: [("x", "NOT BUILT BY DESIGN — restates price"),
-                                                  ("y", "BLOCKED — paid source; Jake's decision"),
+                                                  ("y", "NAMED BLOCKER — paid source; Jake's decision"),
                                                   ("z", "LATER — not built")])
     rows = []
     for item, route in ca.not_wired():
-        st = "N/A BY DESIGN" if route.startswith(("NOT BUILT BY DESIGN", "BLOCKED —")) else "NOT WIRED"
+        st = "N/A BY DESIGN" if route.startswith(("NOT BUILT BY DESIGN", "NAMED BLOCKER —")) else "NOT WIRED"
         rows.append(st)
     assert rows == ["N/A BY DESIGN", "N/A BY DESIGN", "NOT WIRED"]
     src = Path(ca.__file__).read_text(encoding="utf-8")
-    assert 'route.startswith(("NOT BUILT BY DESIGN", "BLOCKED —"))' in src
+    assert 'route.startswith(("NOT BUILT BY DESIGN", "NAMED BLOCKER —"))' in src
 
 
 def test_4e_spec_section_10_has_no_unlabelled_blocked_item():
@@ -378,7 +378,7 @@ def test_4e_spec_section_10_has_no_unlabelled_blocked_item():
     items = dict(ca.not_wired())
     for k, route in items.items():
         if k.startswith(("Exchange balances", "GEODNET customers", "Chains' TVL", "Market share")):
-            assert route.startswith(("BLOCKED —", "NOT BUILT BY DESIGN")), k
+            assert route.startswith(("NAMED BLOCKER —", "NOT BUILT BY DESIGN")), k
 
 
 # ======================================================================================== 5 approvals

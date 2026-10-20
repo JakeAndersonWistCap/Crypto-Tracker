@@ -1911,9 +1911,30 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
     # entry that had never been written — and Maple's armed cross-check was reported as "no
     # sources.yaml entry for this metric" when there plainly was one. A ready entry that returned
     # nothing is a different problem from a missing entry and has to say so.
-    out.gaps = detect_gaps(projects, out.frame(), (manual_keys or set()) | out.current,
+    out.gaps = detect_gaps(projects, out.frame(), (manual_keys or set()) | out.current | stored_fresh(last_dates),
                            registry_reasons(), out.gaps)
     note_timeouts(out.gaps, out.timed_out, projects)
+    return out
+
+
+def stored_fresh(last_dates: dict | None, asof=None) -> set:
+    """(project, metric) pairs whose newest STORED row is within the series' own staleness threshold (G9 I5, Jake: 17
+    Gap Report "P4 fixable" items; on the 10-13 store all 13 were Hyperliquid's ASXN series, stored to 10-12/10-13, gapped
+    "stored nothing for it this run" on a run whose browser tier did not render). The Gap Report lists what could not be
+    resolved at all; a current stored series is resolved, whichever tier ran this time. A stale one still gaps."""
+    import pandas as pd
+    import config as _c
+    if not last_dates:
+        return set()
+    now = pd.Timestamp(asof) if asof is not None else today()
+    out = set()
+    for (proj, metric), d in last_dates.items():
+        try:
+            age = (now - pd.Timestamp(str(d)[:10])).days
+        except (ValueError, TypeError):
+            continue
+        if age <= _c.stale_after_days(proj, metric, int(_c.GLOBALS.get("stale_after_days", 7))):
+            out.add((proj, metric))
     return out
 
 

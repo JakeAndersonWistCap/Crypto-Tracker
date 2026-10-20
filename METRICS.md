@@ -1012,7 +1012,7 @@ Funding: revenue (the default: the programme documented base)
 
 | Flow | Category | Series |
 |---|---|---|
-| into circulating | (a) security emissions | **NO SERIES** |
+| into circulating | (a) security emissions | `emissions_claimed_tokens` |
 | into circulating | (b) supply-side incentives | **NO SERIES** |
 | into circulating | (c) demand-side incentives | **NO SERIES** |
 | into circulating | (d) ecosystem / grant spend | **NO SERIES** |
@@ -1022,7 +1022,7 @@ Funding: revenue (the default: the programme documented base)
 
 Basis: staking rewards to validators / delegators are (a) security — paid out of PRE-MINTED supply (the 10bn total does not move: gross_issuance_tokens is 0 on every stored day), so no series measures them yet; reward rate x stake would be MODELLED and is not used. Nest Points Season One (ended 2026-03-13) and Plume Points Season 2 (ended 2026-03-31) were paid as PLUME airdrops (1% of supply, claimed April 2026; 150M, May 2026) — (c), one-offs with no series; Merkl pays 1-3.9M WPLUME a month to Morpho-on-Plume lenders — (b), no series
 
-PENDING: a paid staking-rewards series for (a); the Merkl WPLUME series for (b) (merkl /v4/creators/plume/distributed/over-time)
+PENDING: the Merkl WPLUME series for (b) (merkl /v4/creators/plume/distributed/over-time); the airdrops (c) are one-offs with no series
 
 **Value flow statement**
 
@@ -1098,8 +1098,8 @@ Funding: revenue (the default: the programme documented base)
 
 | Flow | Category | Series |
 |---|---|---|
-| into circulating | (a) security emissions | **NO SERIES** |
-| into circulating | (b) supply-side incentives | `emissions_tokens` |
+| into circulating | (a) security emissions | `staker_rewards_paid_tokens` |
+| into circulating | (b) supply-side incentives | `supplier_rewards_b_tokens` |
 | into circulating | (c) demand-side incentives | **NO SERIES** |
 | into circulating | (d) ecosystem / grant spend | **NO SERIES** |
 | into circulating | (e) unlocks | **NO SERIES** |

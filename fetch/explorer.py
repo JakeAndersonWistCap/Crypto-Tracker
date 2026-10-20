@@ -144,12 +144,20 @@ class AlchemyCheckpoint:
         import hashlib
         import os
         from pathlib import Path
-        q = json.dumps({"chain": int(chain_id), **{k: v for k, v in params.items() if k != "pageKey"}}, sort_keys=True)
+        # NOT KEYED ON toBlock (G9 I1, Jake: explorer_l2:berachain@Pendle never resumed): the daily tier asks to the
+        # head, a new block number every run, so the key — and the file — changed each run and every run started from
+        # block 0. The toBlock travels with each page instead; a checkpoint written for another toBlock resumes at its
+        # last whole block (its pageKey belongs to the old range and could end the read there, short).
+        self.to_block = params.get("toBlock")
+        q = json.dumps({"chain": int(chain_id), **{k: v for k, v in params.items() if k not in ("pageKey", "toBlock")}},
+                       sort_keys=True)
         base = Path(root) if root else Path(os.environ.get("TOKEN_METRICS_LOGCACHE", ".cache/logscan"))
         self.path = base / "alchemy-pages" / (hashlib.sha1(q.encode()).hexdigest()[:20] + ".jsonl")
 
     def load(self):
-        """(transfers read so far, the pageKey to continue at, the block to restart at if the key is refused) or None."""
+        """(transfers read so far, the pageKey to continue at, the block to restart at if the key is refused) or None.
+        A checkpoint whose last page was read for another toBlock gives no pageKey: the restart is at its last whole
+        block."""
         try:
             lines = self.path.read_text(encoding="utf-8").splitlines()
         except OSError:
@@ -165,8 +173,17 @@ class AlchemyCheckpoint:
                 continue
             out.extend(rec.get("transfers") or [])
             key = rec.get("page_key")
+            skip = rec.get("to_block", self.to_block) != self.to_block     # read for another range
         if not out:
             return None
+        # a block re-read after a restart is in the file twice: one copy of each transfer
+        seen, uniq = set(), []
+        for e in out:
+            k = (e.get("transactionHash"), e.get("logIndex"))
+            if None in k or k not in seen:
+                seen.add(k)
+                uniq.append(e)
+        out = uniq
         last = max(int(e["blockNumber"]) for e in out)
         if skip:                                         # restart at the last whole block: drop that block's transfers
             out = [e for e in out if int(e["blockNumber"]) < last]
@@ -176,7 +193,7 @@ class AlchemyCheckpoint:
     def append(self, transfers: list, page_key: str) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with open(self.path, "a", encoding="utf-8") as f:
-            f.write(json.dumps({"transfers": transfers, "page_key": page_key}) + "\n")
+            f.write(json.dumps({"transfers": transfers, "page_key": page_key, "to_block": self.to_block}) + "\n")
 
     def expire_page_key(self, out: list) -> bool:
         if not self.path.exists():

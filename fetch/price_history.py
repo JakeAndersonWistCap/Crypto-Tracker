@@ -77,6 +77,18 @@ def price_needing_metrics() -> set:
 HISTORY_POINT = "defillama_coins:history"
 
 
+def price_keys(p: dict) -> list[dict]:
+    """DefiLlama coins keys for a project's price history, in order (Round G9 G1/G2): config.PRICE_HISTORY_KEYS — the
+    token's contract address ("<chain>:0x…") first, any declared DERIVED leg last (a factor and its label) — then
+    coingecko:<id> where not already listed. Each {"key", "label", "factor"}."""
+    out = [dict(k, label=k.get("label") or k["key"]) for k in (config.PRICE_HISTORY_KEYS.get(p["name"]) or ())]
+    cg = f"coingecko:{p.get('coingecko_id')}"
+    if p.get("coingecko_id") and not any(k["key"] == cg for k in out):
+        derived = [k for k in out if k.get("factor", 1.0) != 1.0]
+        out = [k for k in out if k.get("factor", 1.0) == 1.0] + [{"key": cg, "label": cg}] + derived
+    return out
+
+
 def missing_price_days(stored: pd.DataFrame, name: str, flows: set | None = None) -> tuple[list, str | None]:
     """(days with no price_usd from the first series that needs a price — price_needing_metrics: a token or USD flow, a
     token stock — to the day BEFORE CoinGecko's first stored price, that first date) for one project. Never a day inside CoinGecko's range (G2 addendum A1: interleaved with it, the series
@@ -98,6 +110,25 @@ def missing_price_days(stored: pd.DataFrame, name: str, flows: set | None = None
     until = pd.to_datetime(cg["date"]).min().normalize() - pd.Timedelta(days=1)
     days = [d for d in pd.date_range(first, until) if d not in have]
     return days, str(first.date())
+
+
+def first_flow_day(stored: pd.DataFrame, name: str) -> pd.Timestamp | None:
+    """The project's first non-zero FLOW day (a token or USD flow) — before it no price is missing (G9 G3)."""
+    flows = {m for m, d in config.METRICS.items() if d.get("kind") == "flow" and d.get("unit") in ("tokens", "usd")}
+    _days, first = missing_price_days(stored, name, flows=flows)
+    return pd.Timestamp(first) if first else None
+
+
+def stamp_day(ts: int) -> pd.Timestamp | None:
+    """The UTC day a DefiLlama chart point prices: the NEAREST midnight, if the point is within STAMP_TOLERANCE_S of it.
+
+    ROUND G9 G (Jake's run: Sky 342 of 750, Ether.fi 225 of 836 buyback rows unvalued). A span that starts before the
+    coin's first price is answered on the coin's own daily grid, stamped a minute or two BEFORE midnight (coingecko:sky
+    from 2024-03-08: 2024-09-27T23:57:57, 2024-09-28T23:56:08, … read 2026-10-20). The old check measured the distance to
+    the point's own day's 00:00 (~86,000 s) and dropped every one: 5 of 2,050 Sky days were filled. 23:57:57 on the 27th
+    is the price at 00:00 on the 28th — the same instant CoinGecko's daily rows stand for."""
+    d = pd.Timestamp(int(ts) + 43_200, unit="s").normalize()            # the nearest midnight
+    return d if abs(int(ts) - int(d.tz_localize("UTC").timestamp())) <= STAMP_TOLERANCE_S else None
 
 
 def runs(days: list, cap: int = MAX_POINTS) -> list:
@@ -163,50 +194,85 @@ class PriceHistory:
                                  TIER)
                 self.daily.done(key, day)
                 continue
-            coin = f"coingecko:{cid}"
-            ok, why = self.robots(CHART.format(key=coin))
+            # THE KEYS, IN ORDER (Round G9 G1/G2): the token's contract address first (DefiLlama's own price, often the
+            # longer history), then coingecko:<id>, then any declared DERIVED leg (Sky: MKR ÷ 24,000, the fixed upgrade
+            # rate, for days before SKY had a price). A key fills only the days the earlier keys left empty.
+            keys = price_keys(p)
+            ok, why = self.robots(CHART.format(key=keys[0]["key"]))
             if not ok:
                 out.fail(SOURCE, name, f"price_usd history: robots.txt refuses coins.llama.fi ({why})", TIER)
                 continue
             got, errors, stopped, skipped_empty = {}, [], False, 0
+            by_key: dict = {}
             known_empty = empty.setdefault(name, {})
             for run in runs(days):
                 span = f"{run[0].date()}..{run[-1].date()}"
                 if known_empty.get(span, "") >= cutoff:
                     skipped_empty += len(run)
                     continue
-                if deadline is not None and _time.monotonic() >= deadline:
-                    stopped = True
+                n_run = 0
+                for k in keys:
+                    todo = [d for d in run if d not in got]
+                    if not todo:
+                        break
+                    if deadline is not None and _time.monotonic() >= deadline:
+                        stopped = True
+                        break
+                    start = int(todo[0].tz_localize("UTC").timestamp())
+                    try:
+                        body = self.http.get(CHART.format(key=k["key"]), params={
+                            "start": start, "span": min(MAX_POINTS, (todo[-1] - todo[0]).days + 1), "period": "1d",
+                            "searchWidth": 600})
+                    except Exception as e:  # noqa: BLE001 — one span failing leaves the others
+                        from .chain import redact_urls
+                        errors.append(f"{span} {k['key']}: {redact_urls(e)}"[:200])
+                        continue
+                    want_run = set(todo)
+                    for pt in ((body or {}).get("coins") or {}).get(k["key"], {}).get("prices") or []:
+                        d = stamp_day(int(pt.get("timestamp") or 0))
+                        if d is not None and d in want_run and pt.get("price") and d not in got:
+                            got[d] = float(pt["price"]) * float(k.get("factor", 1.0))
+                            by_key.setdefault(k["label"], []).append(d)
+                            n_run += 1
+                if stopped:
                     break
-                start = int(run[0].tz_localize("UTC").timestamp())
-                try:
-                    body = self.http.get(CHART.format(key=coin), params={"start": start, "span": len(run),
-                                                                          "period": "1d", "searchWidth": 600})
-                except Exception as e:  # noqa: BLE001 — one span failing leaves the others
-                    from .chain import redact_urls
-                    errors.append(f"{run[0].date()}..{run[-1].date()}: {redact_urls(e)}"[:200])
-                    continue
-                n0 = len(got)
-                for pt in ((body or {}).get("coins") or {}).get(coin, {}).get("prices") or []:
-                    ts = int(pt.get("timestamp") or 0)
-                    d = pd.Timestamp(ts, unit="s").normalize()
-                    if abs(ts - int(d.tz_localize("UTC").timestamp())) <= STAMP_TOLERANCE_S and pt.get("price"):
-                        got[d] = float(pt["price"])
-                if len(got) == n0:
+                if not n_run:
                     known_empty[span] = day           # answered, with nothing for these days: not re-asked for a while
-            want = set(days)
-            rows = sorted((d, v) for d, v in got.items() if d in want)
+            rows = []
+            for k in keys:
+                ds = sorted(by_key.get(k["label"]) or ())
+                if not ds:
+                    continue
+                kr = [(d, got[d]) for d in ds]
+                rows += kr
+                out.add(tidy(kr, name, "price_usd", f"{HISTORY_POINT}[coins.llama.fi {k['label']}]", TIER), SOURCE,
+                        name, f"price_usd: {len(kr)} day(s) {ds[0].date()}..{ds[-1].date()} filled from DefiLlama's "
+                              f"{k['label']} (00:00 UTC) — the days from the first series that needs a price ({first}) "
+                              f"with no stored price", TIER)
+            # G9 G3: A DAY BEFORE THE FIRST FLOW IS NOT A MISSING PRICE. The days are asked from the first series that
+            # needs a price (token stocks too — FDV and market-cap history), but only days from the project's first
+            # FLOW are reported missing: before it nothing is valued, and counting them read as unvalued flows.
+            ff = first_flow_day(self.stored, name)
+            flow_days = [d for d in days if ff is not None and d >= ff]
+            flow_got = sum(1 for d in flow_days if d in got)
             if rows:
-                out.add(tidy(rows, name, "price_usd", f"{HISTORY_POINT}[coins.llama.fi {coin}]", TIER), SOURCE, name,
-                        f"price_usd: {len(rows)} day(s) {rows[0][0].date()}..{rows[-1][0].date()} filled from "
-                        f"DefiLlama's {coin} (CoinGecko's price relayed, 00:00 UTC) — the days from the first token "
-                        f"flow ({first}) with no stored price; {len(days) - len(rows)} day(s) not served", TIER)
+                out.log.append(_entry(name, f"price_usd history: {flow_got} of {len(flow_days)} missing day(s) from "
+                                            f"the first flow ({ff.date() if ff is not None else 'none'}) filled; "
+                                            f"{len(flow_days) - flow_got} not served by "
+                                            f"{', '.join(k['label'] for k in keys)}"
+                                            + (f"; {len(days) - len(flow_days)} earlier day(s) asked for the token "
+                                               f"stocks only ({len(rows) - flow_got} filled) — not missing"
+                                               if len(days) > len(flow_days) else "")))
             if errors:
                 out.fail(SOURCE, name, f"price_usd history: {len(errors)} span(s) not read — {'; '.join(errors[:3])}",
                          TIER)
             elif not rows:
-                out.skipped(SOURCE, name, f"price_usd history: DefiLlama serves no {coin} price for the "
-                                          f"{len(days)} missing day(s) from {days[0].date()}", TIER)
+                out.skipped(SOURCE, name, f"price_usd history: DefiLlama serves no price ("
+                                          f"{', '.join(k['label'] for k in keys)}) for the {len(flow_days)} missing "
+                                          f"day(s) from the first flow"
+                                          + (f" ({flow_days[0].date()})" if flow_days else "")
+                                          + (f"; {len(days) - len(flow_days)} earlier day(s) for the token stocks only"
+                                             if len(days) > len(flow_days) else ""), TIER)
             if skipped_empty:
                 out.log.append(_entry(name, f"price_usd history: {skipped_empty} day(s) in span(s) DefiLlama served no "
                                             f"price for within {EMPTY_RECHECK_DAYS} days — not re-asked"))

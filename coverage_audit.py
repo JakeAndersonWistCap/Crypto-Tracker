@@ -9,7 +9,7 @@ as the "Coverage" tab (counts at the top) and as coverage_audit.csv beside the w
 STATUS, from the cell itself:
   VERIFIED            a value in a GREEN confidence band (verified source, mechanism confirmed, not PARTIAL)
   LIVE-UNVERIFIED     a value, any other band
-  N/A BY DESIGN       "n/a — reason" / "BLOCKED — reason" / "0 — reason", or no cell written because the column does
+  N/A BY DESIGN       "n/a — reason" / "0 — reason" (a DECLARED reason only — G9 B1), or no cell written because the column does
                       not apply to the project (its builder writes nothing: another archetype, a category not held)
   NOT WIRED           "NOT WIRED — route"
   BROKEN              an Excel error (#REF!, #VALUE!, #DIV/0!, #NAME?, #N/A) — the error is shown
@@ -33,7 +33,7 @@ SHEET = "Coverage"
 TABS = ("Master", "A1 Infrastructure", "A2 Coordination", "A3 Revenue Buyback", "A4 Permanent Burn", "CP Comparability")
 HEAD = ["Tab", "Column", "Key", "Project", "Value now", "Status", "Reason / route / error", "Axis", "Direction", "Tier",
         "History depth (quarters with a value)", "Formula as built", "SPEC formula", "MATCHES-SPEC"]
-STATUSES = ("VERIFIED", "VERIFIED (derived)", "LIVE-UNVERIFIED", "CHECK", "N/A BY DESIGN", "MISSING", "NOT WIRED",
+STATUSES = ("VERIFIED", "VERIFIED (derived)", "LIVE-UNVERIFIED", "CHECK", "N/A BY DESIGN", "MISSING", "NOT WIRED", "PARKED",
             "BROKEN", "BLANK-UNEXPLAINED")
 _SHEET_REF = re.compile(r"'([^']+)'!\$?([A-Z]{1,3})\$?(\d+)")
 _ERRORS = ("#REF!", "#VALUE!", "#DIV/0!", "#NAME?", "#N/A", "#NUM!", "#NULL!")
@@ -192,6 +192,12 @@ def audit(wb, trajectory_rows: list[dict] | None = None, flows_rows: list[dict] 
                 status, why = "BROKEN", "; ".join(f"{q}: {t}" for q, t in broken)
         elif str(fr.get("Note") or "").startswith("0 — no such flow"):
             status, why = "N/A BY DESIGN", str(fr.get("Note"))       # class A (G8 item 2): 0 with its primary source
+        elif str(fr.get("Note") or "").startswith("n/a — included in line"):
+            status, why = "N/A BY DESIGN", str(fr.get("Note"))       # G9 D2 (iii): the amount sits in the named line
+        elif v is None and str(fr.get("Note") or "").startswith("NO SOURCE —"):
+            status, why = "MISSING", f"MISSING [{MISSING_CLASSES[4]}] — {fr.get('Note')}"   # G9 D2 (iv)
+        elif v is None and str(fr.get("Note") or "").startswith("ROUTE PENDING —"):
+            status, why = "MISSING", f"MISSING [{MISSING_CLASSES[3]}] — {fr.get('Note')}"   # a route named, not filled
         else:
             status, why = ("LIVE-UNVERIFIED", "") if v is not None else (
                 "N/A BY DESIGN", "no series in Q0 for this line (see the Status line)")
@@ -231,15 +237,115 @@ def audit(wb, trajectory_rows: list[dict] | None = None, flows_rows: list[dict] 
     rows.extend(regression_rows(sanity_hits or ()))
     for item, route in not_wired():
         # A NAMED BLOCKER IS NOT "NOT WIRED" (Round G8 item 4, Jake's standing rule): an item ends a round wired, or
-        # relabelled with its blocker — "NOT BUILT BY DESIGN" or "BLOCKED — paid / no public source / no comparable
+        # relabelled with its blocker — "NOT BUILT BY DESIGN" or "NAMED BLOCKER — paid / no public source / no comparable
         # category / Jake's decision" — which is N/A BY DESIGN, off the NOT WIRED count
-        st = "N/A BY DESIGN" if route.startswith(("NOT BUILT BY DESIGN", "BLOCKED —")) else "NOT WIRED"
+        st = "N/A BY DESIGN" if route.startswith(("NOT BUILT BY DESIGN", "NAMED BLOCKER —")) else "NOT WIRED"
         rows.append({"Tab": "(not on a tab)", "Column": item, "Key": "", "Project": "(all)", "Value now": "",
                      "Status": st, "Reason / route / error": route, "Axis": "", "Direction": "", "Tier": "",
                      "History depth (quarters with a value)": "", "Formula as built": "", "SPEC formula": "",
                      "MATCHES-SPEC": "yes — SPEC.md section 10"})
-    mark_missing(rows, gap_rows, groups, (windows or {}).get("q0", (None, None))[1])
+    asof = (windows or {}).get("q0", (None, None))[1]
+    honest_statuses(rows, gap_rows, groups, asof)
+    mark_missing(rows, gap_rows, groups, asof)
+    align_absent_statuses(rows)
     return rows
+
+
+_HOLDS = ("VERIFIED", "VERIFIED (derived)", "LIVE-UNVERIFIED")
+
+
+def absent_status(source: dict | None, own: dict) -> tuple[str, str]:
+    """ONE FUNCTION FOR A VALUE THAT IS NOT THERE (Round G9 B2, Jake: ~45 Trajectory rows said MISSING where Master said
+    N/A for the same metric). A Trajectory row with no quarter takes the status and reason of the cell it re-runs (its
+    tab, project and header) when that cell holds no value either — a cell N/A by declaration is N/A in its history too,
+    a cell MISSING is MISSING with the same class. Only a cell that HOLDS a value lets the history row keep its own
+    status (its inputs are short of the quarters: a history question)."""
+    if source is None or source.get("Status") in _HOLDS:
+        return own["Status"], own["Reason / route / error"]
+    # the source's reason FIRST, so a MISSING class ("MISSING [D — …]") reads the same on both tabs and counts once
+    return source["Status"], f"{source.get('Reason / route / error') or ''} (as on {source['Tab']})"[:400]
+
+
+def align_absent_statuses(rows: list[dict]) -> int:
+    """Trajectory rows with no quarter (History depth 0) take absent_status of their source cell. Returns how many."""
+    src = {(r["Tab"], r["Project"], r["Column"]): r for r in rows if r["Tab"] not in ("Trajectory", "Flows")}
+    n = 0
+    for r in rows:
+        if r["Tab"] != "Trajectory" or r.get("History depth (quarters with a value)") not in (0, "0"):
+            continue
+        tab = str(r.get("Formula as built") or "").split(" → ")[0]
+        st, why = absent_status(src.get((tab, r["Project"], r["Column"])), r)
+        if (st, why) != (r["Status"], r["Reason / route / error"]):
+            r["Status"], r["Reason / route / error"] = st, why
+            n += 1
+    return n
+
+
+# ===== STATUS HONESTY (Round G9 B1, Jake 2026-10-20: 158 cells were N/A BY DESIGN whose own text said otherwise). =====
+# N/A BY DESIGN comes only from a DECLARED reason (not applicable to the archetype, fixed supply, no programme, "0 — no
+# such flow" with its citation, a declared destination / share, a ratio over zero, a NAMED BLOCKER of SPEC §10). Every
+# other n/a gets the status its text describes. Order matters: the first match decides.
+DISHONEST_NA = re.compile(r"\bgap\b|no rows stored|BLOCKED|measuring_point_changed|MEASURING POINT CHANGED|"
+                          r"inputs are present|\bstale\b|NOT TRACKED BY DEFILLAMA|(?-i:UNCONFIRMED:)", re.I)
+_HONEST_RULES = (
+    (re.compile(r"measuring_point_changed|MEASURING POINT CHANGED", re.I), "BROKEN"),
+    (re.compile(r"\bstale\b", re.I), "CHECK"),
+    (re.compile(r"BLOCKED[^;|]{0,12}unequal coverage|this window spans that date", re.I), "MISSING C"),
+    (re.compile(r"BLOCKED|\bgap\b|no rows stored|NOT TRACKED BY DEFILLAMA|inputs are present|(?-i:UNCONFIRMED:)",
+                re.I), "MISSING"),
+)
+_VALID_FROM = re.compile(r"valid from (\d{4}-\d{2}-\d{2})")
+
+
+def _valid_from(named: list[str], proj: str, groups: dict | None, asof, span: int = 90) -> str:
+    """The date a window of `span` days over every named input becomes complete (from each input's first stored day)."""
+    import pandas as pd                                    # noqa: PLC0415
+    firsts = []
+    for m in named:
+        g = (groups or {}).get((proj, m))
+        if g is not None and not getattr(g, "empty", True):
+            firsts.append(pd.to_datetime(g["date"]).min().normalize())
+    if not firsts:
+        return ""
+    return str((max(firsts) + pd.Timedelta(days=span - 1)).date())
+
+
+def honest_statuses(rows: list[dict], gap_rows: list | None = None, groups: dict | None = None, asof=None) -> int:
+    """N/A BY DESIGN whose text is not a declared reason -> the status the text describes (G9 B1): measuring point
+    changed -> BROKEN; stale -> CHECK; BLOCKED for unequal coverage -> MISSING [C] naming the short input and the date it
+    becomes valid; any other BLOCKED / gap / no rows / not tracked / "inputs are present" -> MISSING with its class
+    (missing_class). Returns how many changed."""
+    gaps = {(str(g.get("project")), str(g.get("metric"))): g for g in gap_rows or ()}
+    n = 0
+    for r in rows:
+        why = str(r.get("Reason / route / error") or "")
+        if r.get("Status") != "N/A BY DESIGN" or not DISHONEST_NA.search(why):
+            continue
+        rule = next(st for rx, st in _HONEST_RULES if rx.search(why))
+        if rule in ("BROKEN", "CHECK"):
+            r["Status"] = rule
+            n += 1
+            continue
+        named = _metrics_named(why, r.get("Formula as built"))
+        g = next((gaps.get((str(r["Project"]), m)) for m in named if gaps.get((str(r["Project"]), m))), None)
+        if rule == "MISSING C":
+            cls, ev = missing_class(r, g, groups, asof)
+            if cls != MISSING_CLASSES[2]:
+                said = _VALID_FROM.search(why)            # the cell's own date (the Sky revenue base) wins
+                vf = said.group(1) if said else _valid_from(named, str(r["Project"]), groups, asof)
+                cls, ev = MISSING_CLASSES[2], (f"{', '.join(named) or 'an input'} short of the window"
+                                               + (f" — valid from {vf}" if vf else " — valid once every input covers it"))
+        else:
+            cls, ev = missing_class(r, g, groups, asof)
+            if cls == "N/A":                                # an input DECLARED not applicable: the declaration
+                r["Reason / route / error"] = f"N/A BY DESIGN — {ev}"[:400]
+                continue
+            if cls == MISSING_CLASSES[1]:
+                r["Reason / route / error"] = f"N/A BY DESIGN — accepted limit: {ev}"[:400]
+                continue
+        r["Status"], r["Reason / route / error"] = "MISSING", f"MISSING [{cls}] — {ev} | {why}"[:400]
+        n += 1
+    return n
 
 
 def trajectory_primary_checks(trajectory_rows, asof, period_days: int = 90, quarters=("Q0", "Q-1")) -> dict:
@@ -363,6 +469,11 @@ def missing_class(row: dict, gap: dict | None = None, groups: dict | None = None
     why = str(row.get("Reason / route / error") or "")
     named = _metrics_named(why, row.get("Formula as built"), (gap or {}).get("reason"))
     proj = str(row.get("Project"))
+    cfg = _config()
+    for m in named:                                         # G9 H2: an epoch series before its first epoch closes
+        fe = getattr(cfg, "first_epoch_closes", lambda *_a: None)(proj, m)
+        if fe and (asof is None or pd.Timestamp(asof) < pd.Timestamp(fe)):
+            return MISSING_CLASSES[2], f"{m}: first epoch closes {fe} — valid from {fe}"
     for m in named:
         a = accepted_limit(proj, m)
         if a:
@@ -559,8 +670,12 @@ def reference_rows(wb, X, groups: dict, audited: list[dict], flows_rows: list[di
     import references                                      # noqa: PLC0415
     results = references.check(groups, headline=_headline_reader(wb, X), flows=flows_rows)
     results += references.basis_rows(groups)
+    import config                                          # noqa: PLC0415
+    parked = getattr(config, "PARKED_REFERENCES", {}) or {}
     for x in results:
         route = references.ROUTES.get((x["project"], x["metric"])) or ()
+        if (x["project"], x["metric"]) in parked:
+            continue                     # G9 B4: a parked reference grades nothing (its headline keeps its own status)
         if not route or route[0] != "headline" or x["status"] not in ("VERIFIED", "BROKEN", "CHECK"):
             continue
         for r in audited:
@@ -569,7 +684,14 @@ def reference_rows(wb, X, groups: dict, audited: list[dict], flows_rows: list[di
                     continue
                 r["Status"] = x["status"] if x["status"] != "CHECK" or r["Status"] != "VERIFIED" else r["Status"]
                 r["Reason / route / error"] = (f"independent reference ({x['metric']}): {x['detail']}")[:400]
-    return references.coverage_rows(results)
+    rows = references.coverage_rows(results)
+    # PARKED (Round G9 B4, Jake 2026-10-20): references he parked for the sense-check phase leave BROKEN, so BROKEN
+    # means broken; counted apart on the scoreboard, with his label
+    for r, x in zip(rows, results):
+        lab = parked.get((x["project"], x["metric"]))
+        if lab and r.get("Status") in ("BROKEN", "CHECK"):
+            r["Status"], r["Reason / route / error"] = "PARKED", f"PARKED — {lab}: {r.get('Reason / route / error')}"[:400]
+    return rows
 
 
 def regression_rows(sanity_hits) -> list[dict]:
@@ -629,7 +751,8 @@ def counts(rows: list[dict]) -> dict:
     return c
 
 
-BOARD_COLS = ("VERIFIED", "VERIFIED (derived)", "LIVE-UNVERIFIED", "N/A", "MISSING", "NOT WIRED", "BROKEN", "CHECK",
+BOARD_COLS = ("VERIFIED", "VERIFIED (derived)", "LIVE-UNVERIFIED", "N/A", "MISSING", "NOT WIRED", "BROKEN", "PARKED",
+              "CHECK",
               "BLANK-UNEXPLAINED", "Gap P4", "Gap P5", "Gap P6", "Review Queue", "Verified share", "Populated",
               "MISSING by cause")
 _BOARD_TEXT = ("Verified share", "Populated", "MISSING by cause")
