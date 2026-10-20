@@ -440,3 +440,13 @@ def test_4b_pendle_maturity_and_ccip_are_registered_tiers_with_business_slots_an
     assert "fetch/pendle_maturity.py" in src and "fetch/ccip_value.py" in src
     assert '"ccip_value"' in (ROOT / "token_metrics.py").read_text(encoding="utf-8")
     assert gaps is not None
+    # 4a: subsidy targeting
+    assert files["subsidy_targeting"][0].endswith("subsidy_targeting.py")
+    for p in ("Aerodrome", "Pendle"):
+        spec = config.PROJECT_BY_NAME[p]["subsidy_targeting"]
+        assert fetch._budget("subsidy_targeting") > spec["budget_s"] and spec["dir"] == "data/subsidy"
+    assert "data/subsidy/" in (ROOT / ".gitignore").read_text(encoding="utf-8")
+    import spec as _spec
+    assert "subsidy_targeting" in _spec.concepts()
+    import coverage_audit as ca
+    assert not any(i.startswith("Subsidy targeting") for i, _r in ca.not_wired())

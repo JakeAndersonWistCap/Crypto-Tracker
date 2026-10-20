@@ -545,7 +545,9 @@ removing).
    momentum-fund references).
 6. `python token_metrics.py` — the full run. New tiers: pendle_maturity (Pendle TVL by days to expiry; the first read
    takes 4–5 runs, ~120 markets each, and stores a day only once every market live that day is read) and ccip_value
-   (after the seed, the days since the last closed one).
+   (after the seed, the days since the last closed one) and subsidy_targeting (Aerodrome per weekly epoch, 2-4 runs for
+   the first 4 epochs; Pendle samples each market's gauge rate daily — the first Pendle epoch, 2026-10-20..11-03, is
+   stored only if this tier first runs before 2026-10-22 00:00 UTC; per-pool tables in data/subsidy/).
    Aerodrome's TVL is now the sum of DefiLlama's Aerodrome V1 + Slipstream + Aero Lite (its parent was renamed).
 7. `python check_offline_items.py missing_triage` — every MISSING cell classed A–E with its evidence, counts by class per
    project; PASTE BACK.
@@ -571,7 +573,7 @@ category / Jake's decision, or "NOT BUILT BY DESIGN"), which takes it off the NO
 declared component of the A1 total (lost headlines restored) and the Assistance Fund figure cited; MISSING A–E;
 Aerodrome on DefiLlama (TVL and market share); ve_managed batched with phases; balance_flow and the Arbitrum repair
 inside their budgets; the Berachain, P2P and Uniswap seeds; Aethir arr_usd and Near's retired NearBlocks route labelled;
-Pendle TVL by maturity and CCIP token value built (subsidy targeting being built); Aethir compute purchases read; NEAR's three
+subsidy targeting by pool, Pendle TVL by maturity and CCIP token value built; Aethir compute purchases read; NEAR's three
 all-time inflow references read stage 2; Maple's stSYRUP reference re-pointed; the P2P leg approved weekly.
 
 ## 11ch. Round G7 — World Mobile option C, NEAR's overlap check, period labels, settlement rebuild legs (2026-10-19)

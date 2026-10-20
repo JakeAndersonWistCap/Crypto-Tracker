@@ -38,6 +38,7 @@ from .merkl_campaigns import MerklCampaigns
 from .boros import BorosVolume
 from .pendle_maturity import PendleMaturity
 from .ccip_value import CcipValue
+from .subsidy_targeting import SubsidyTargeting
 from .hypercore import HyperCoreInfo
 from .growthepie import GrowThePie
 from .blockscout_stats import BlockscoutStats
@@ -122,6 +123,8 @@ TIER_ORDER = [
     ("pendle_maturity", 1, lambda ctx: PendleMaturity()),
     # Chainlink CCIP token value by day (Round G8 4b): walks the message list to the last closed day, stops at 300 s
     ("ccip_value", 1, lambda ctx: CcipValue()),
+    # each pool's emissions against its own fees per epoch (Round G8 4a): Aerodrome weekly, Pendle per sPENDLE epoch
+    ("subsidy_targeting", 2, lambda ctx: SubsidyTargeting()),
     ("hypercore_info", 1, lambda ctx: HyperCoreInfo(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"],
                                                     prior_delta=ctx["prior_delta"])),
     ("chain", 2, lambda ctx: Chain(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"],
@@ -1956,6 +1959,9 @@ TIER_BUDGET_S = {
     "boros": 480,
     "pendle_maturity": 150,
     "ccip_value": 330,
+    # Base calls spaced 1 s (mainnet.base.org 429s bursts): ~60-85 s an Aerodrome epoch; a first read of 4 epochs
+    # takes 2-4 runs, then one epoch a week
+    "subsidy_targeting": 200,
 }
 DEFAULT_BUDGET_S = 120
 for _t in _l2_tiers():

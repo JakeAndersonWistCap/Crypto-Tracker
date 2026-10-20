@@ -28988,8 +28988,13 @@ RETENTION_TESTS = (
 # $0.785 of voter fees per $1 of AERO emitted over 69 epochs); Pendle api-v2.pendle.finance core/v2/{chain}/markets/{mkt}/
 # historical-data (pendleApy, tvl, swapFeeApy, tradingVolume; daily from 2025-07-01). GEODNET SuperHex: held.
 SUBSIDY_TARGETING_ROUTES = {
-    "Aerodrome": "RewardsSugar 0x1b121EfDaF4ABb8785a315C51D29BCE0552A7678 epochsByAddress — per pool emissions / fees / bribes",
-    "Pendle": "api-v2.pendle.finance core/v2/{chain}/markets/{market}/historical-data — per market incentive APY vs fee APY",
+    # WIRED Round G8 4a (fetch/subsidy_targeting.py; PROJECT["subsidy_targeting"] below): the basis each CP row states
+    "Aerodrome": "per weekly epoch: each gauged pool's AERO emitted (gauge rate re-read 3 h into the epoch; a gauge "
+                 "distributed late is counted from its switch block) vs the fees that pool paid veAERO voters that "
+                 "epoch (RewardsSugar epochsByAddress, Base); per-pool table data/subsidy/aerodrome_<epoch>.csv",
+    "Pendle": "per 14-day sPENDLE epoch: each Ethereum market's PENDLE (GaugeController rewardData, sampled daily — no "
+              "keyless source serves past rates) vs its poolFeeUsd (Pendle market-fees); votes blank (gauge voting "
+              "ended under sPENDLE); first epoch stored 2026-10-20..11-03",
 }
 
 # THE PHASE 2 SERIES (read-time views, build_workbook._outflow_views / _holder_value_views)
@@ -30270,6 +30275,34 @@ _wm["published_headlines"] = (
     ("2025-02-13", "users", "1.5M"),
 )
 
+
+
+# ===== G8 4a — SUBSIDY TARGETING BY POOL (Round G8, Jake 2026-10-20: NEXT BUILD PRIORITY → built). =====
+# Each pool's emissions against its own fees, per epoch (fetch/subsidy_targeting.py). A pool whose fees cannot be valued
+# is dropped from both sides of the two ratios and NAMED (PARTIAL while those pools hold <=5% of emissions, refused above);
+# a pool with unknown emissions refuses the epoch. Live (Aerodrome, AERO priced at the epoch end): 2026-10-08 714 pools,
+# 4,185,455 AERO = $3,783,865 vs fees $1,500,293 — cover 0.397, 0.83% of emissions to pools covering them (PARTIAL: 35
+# pools, 0.04% of emissions unvalued); 2026-10-01 622 pools, $3,322,145 vs $1,678,507 — cover 0.506, 5.3%.
+for _m, _lab, _kind, _unit in (
+        ("subsidy_fee_cover_pools", "Subsidy targeting: Σ pool fees ÷ Σ emissions $, over the pools receiving emissions "
+                                    "that epoch (dated at the epoch start)", "stock", "ratio"),
+        ("subsidy_emissions_to_covered_share", "Subsidy targeting: share of the epoch's emissions $ going to pools whose "
+                                               "own fees ≥ their emissions", "stock", "fraction"),
+        ("subsidy_emissions_usd", "Subsidy targeting: the epoch's emissions to pools, valued ($, dated at the epoch "
+                                  "start)", "flow", "usd")):
+    METRICS[_m] = {"label": _lab, "kind": _kind, "unit": _unit, "archetypes": [], "tiers": [2], "sanity_min": 0,
+                   "sanity_max": 1 if _unit == "fraction" else (1e6 if _unit == "ratio" else 1e11),
+                   "only_projects": ("Aerodrome", "Pendle")}
+PROJECT_BY_NAME["Aerodrome"]["subsidy_targeting"] = {
+    "route": "aerodrome_sugar", "sugar": "0x1b121EfDaF4ABb8785a315C51D29BCE0552A7678",
+    "voter": "0x16613524e02ad97eDfeF371bC883F2F5d6C480A5", "rpc": "https://mainnet.base.org", "chain": "base",
+    "reward_token": "base:0x940181a94A35A4569E4529A3CDfB74e38FD98631", "epochs_back": 4, "budget_s": 150,
+    "dir": "data/subsidy", "max_unvalued_share": 0.05, "min_confidence": 0.9, "early_s": 10800, "max_late_gauges": 60}
+PROJECT_BY_NAME["Pendle"]["subsidy_targeting"] = {
+    "route": "pendle_gauge", "api": "https://api-v2.pendle.finance/core", "chain_id": 1,
+    "rpc": "https://ethereum-rpc.publicnode.com", "gauge": "0x47D74516B33eD5D70ddE7119A40839f6Fcc24e57",
+    "reward_token": "ethereum:0x808507121b80c02388fad14726482e061b8da827", "fee_fields": ["poolFeeUsd"],
+    "max_gap_s": 172800, "budget_s": 30, "dir": "data/subsidy", "max_unvalued_share": 0.05}
 
 
 # ===== G8 3e — A STORED SERIES SUPERSEDED BY A READ-TIME VIEW (stale_series labels it, not stale). =====

@@ -83,6 +83,7 @@ COLUMN_MAP: tuple[tuple[str, str, str], ...] = (
     ("*", "Supplier earnings from customers", "customer_revenue"), ("*", "Supplier earnings", "supplier_payout"),
     ("*", "Customer share of supplier", "subsidy_cover"), ("*", "Business ", "business_n"),
     ("*", "BUSINESS ", "business_n"), ("*", "Market share", "market_share"), ("*", "MARKET SHARE", "market_share"),
+    ("*", "Subsidy targeting — ", "subsidy_targeting"),
     ("*", "Boros", "boros"), ("*", "Post-incentive retention", "business_n"),
     # ---- CAPTURE ----
     ("*", "VALIDATOR STAKING YIELD", "validator_yield"), ("*", "Validator yield", "validator_yield"),

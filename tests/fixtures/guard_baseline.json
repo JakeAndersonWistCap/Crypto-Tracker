@@ -1,0 +1,3262 @@
+{
+ "asof": "2026-10-13",
+ "bases": {
+  "Aerodrome|actual_buyback_tokens": [
+   "derived:foundation_buyback"
+  ],
+  "Aerodrome|actual_buyback_usd": [
+   "derived:tokens*price"
+  ],
+  "Aerodrome|avg_lock_duration_days": [
+   "derived:decay_proxy"
+  ],
+  "Aerodrome|buyback_burned_tokens": [
+   "derived:actual_buyback_tokens x burn share (from start: burn 0% / hold 100% / distribute 0%)"
+  ],
+  "Aerodrome|buyback_distributed_tokens": [
+   "derived:actual_buyback_tokens x distribute share (from start: burn 0% / hold 100% / distribute 0%)"
+  ],
+  "Aerodrome|buyback_held_tokens": [
+   "derived:actual_buyback_tokens x hold share (from start: burn 0% / hold 100% / distribute 0%)"
+  ],
+  "Aerodrome|circulating_supply": [
+   "coingecko",
+   "coingecko:mcap/price"
+  ],
+  "Aerodrome|circulating_supply_implied": [
+   "coingecko:mcap/price"
+  ],
+  "Aerodrome|circulating_supply_onchain": [
+   "derived:onchain_total-noncirculating"
+  ],
+  "Aerodrome|circulating_supply_used": [
+   "circulating_supply_onchain"
+  ],
+  "Aerodrome|emissions_tokens": [
+   "chain:base:rewards_distributor"
+  ],
+  "Aerodrome|fdv_usd": [
+   "chain:base:token"
+  ],
+  "Aerodrome|fdv_usd_coingecko": [
+   "coingecko"
+  ],
+  "Aerodrome|fees_usd": [
+   "defillama"
+  ],
+  "Aerodrome|filing_managed_lock_tokens": [
+   "ve_managed:0xeBf418Fe.weights"
+  ],
+  "Aerodrome|foundation_aero_purchased_tokens": [
+   "probe:foundation_aero_purchased_tokens"
+  ],
+  "Aerodrome|foundation_bought_locked_same_tx_tokens": [
+   "probe:foundation_bought_locked_same_tx_tokens"
+  ],
+  "Aerodrome|foundation_buyback_trace_tokens": [
+   "trace:base:foundation_buyer_safe"
+  ],
+  "Aerodrome|foundation_buyback_trace_usd": [
+   "trace:base:foundation_buyer_safe"
+  ],
+  "Aerodrome|foundation_compounded_owner_tokens": [
+   "probe:foundation_compounded_owner_tokens"
+  ],
+  "Aerodrome|foundation_lock_from_balance_tokens": [
+   "probe:foundation_lock_from_balance_tokens"
+  ],
+  "Aerodrome|foundation_locked_aero_tokens": [
+   "ve_managed:foundation_locks"
+  ],
+  "Aerodrome|foundation_rebase_claimable_tokens": [
+   "ve_managed:foundation_locks"
+  ],
+  "Aerodrome|foundation_rebase_owner_tokens": [
+   "probe:foundation_rebase_owner_tokens"
+  ],
+  "Aerodrome|gross_issuance_tokens": [
+   "chain:base:minter"
+  ],
+  "Aerodrome|holder_value_fees_only_usd": [
+   "derived:holder_value_fees_only"
+  ],
+  "Aerodrome|holder_value_other_usd": [
+   "derived:holder_value"
+  ],
+  "Aerodrome|holder_value_revenue_usd": [
+   "derived:holder_value",
+   "derived:holder_value_with_liquid_bribes"
+  ],
+  "Aerodrome|holders_revenue_usd": [
+   "defillama"
+  ],
+  "Aerodrome|issuer_mint_tokens": [
+   "derived:minter_team_formula"
+  ],
+  "Aerodrome|issuer_return_tokens": [
+   "derived:issuer_return"
+  ],
+  "Aerodrome|locked_tokens": [
+   "chain:base:ve"
+  ],
+  "Aerodrome|market_cap_usd": [
+   "derived:price_x_circulating"
+  ],
+  "Aerodrome|market_cap_usd_coingecko": [
+   "coingecko"
+  ],
+  "Aerodrome|market_share_category_usd": [
+   "defillama:overview:Dexs"
+  ],
+  "Aerodrome|market_share_pct": [
+   "defillama:overview:Dexs"
+  ],
+  "Aerodrome|max_supply": [
+   "probe:max_supply"
+  ],
+  "Aerodrome|noncirculating_holding_tokens": [
+   "chain:sum(base:noncirc_foundation_multisig+base:noncirc_public_goods_fund+base:noncirc_airdrop_distributor+base:noncirc_flight_school+base:noncirc_buyback_locked_funds+base:noncirc_tge_incentives+base:noncirc_velodrome_foundation_airdrop)"
+  ],
+  "Aerodrome|outflow_b_tokens": [
+   "derived:outflow_b"
+  ],
+  "Aerodrome|outflow_b_usd": [
+   "derived:outflow_b*price"
+  ],
+  "Aerodrome|outflow_c_tokens": [
+   "derived:outflow_c"
+  ],
+  "Aerodrome|outflow_c_usd": [
+   "derived:outflow_c*price"
+  ],
+  "Aerodrome|outflow_e_tokens": [
+   "derived:outflow_e"
+  ],
+  "Aerodrome|outflow_e_usd": [
+   "derived:outflow_e*price"
+  ],
+  "Aerodrome|permanent_locked_tokens": [
+   "chain:base:ve_permanent"
+  ],
+  "Aerodrome|price_usd": [
+   "coingecko",
+   "defillama_coins:history"
+  ],
+  "Aerodrome|price_usd_coinbase": [
+   "coinbase_exchange:AERO-USD:open"
+  ],
+  "Aerodrome|price_usd_llama": [
+   "defillama_coins:base:0x940181a94a35a4569e4529a3cdfb74e38fd98631"
+  ],
+  "Aerodrome|protocol_dex_volume_usd": [
+   "defillama:overview/dexs:Aerodrome V1+Aerodrome Slipstream+Aero Lite"
+  ],
+  "Aerodrome|protocol_tvl_constant_price_usd": [
+   "probe:protocol_tvl_constant_price_usd"
+  ],
+  "Aerodrome|protocol_tvl_usd": [
+   "defillama"
+  ],
+  "Aerodrome|retired_buyback_tokens": [
+   "derived:actual_buyback_tokens x burn+hold share (from start: burn 0% / hold 100% / distribute 0%)"
+  ],
+  "Aerodrome|retired_buyback_usd": [
+   "derived:actual_buyback_usd x burn+hold share (from start: burn 0% / hold 100% / distribute 0%)"
+  ],
+  "Aerodrome|revenue_usd": [
+   "defillama"
+  ],
+  "Aerodrome|rewards_illiquid_excluded_usd": [
+   "derived:voter_rewards_illiquid_fees_usd + voter_rewards_illiquid_bribes_usd over the 90d window (fees on the week before each epoch, bribes on its own days)"
+  ],
+  "Aerodrome|rewards_tokens_payday_annual": [
+   "derived:holders_revenue_usd / same-day price_usd, 88 day(s), annualised"
+  ],
+  "Aerodrome|subsidy_emissions_to_covered_share": [
+   "probe:subsidy_emissions_to_covered_share"
+  ],
+  "Aerodrome|subsidy_emissions_usd": [
+   "probe:subsidy_emissions_usd"
+  ],
+  "Aerodrome|subsidy_fee_cover_pools": [
+   "probe:subsidy_fee_cover_pools"
+  ],
+  "Aerodrome|token_yield_payday_pct": [
+   "derived:holders_revenue_usd / same-day price_usd, 90d, / each epoch's voter_total_weight_tokens \u2014 PAYMENT-DAY PRICES, PER-EPOCH STAKE: $17,098,315 paid over 88 day(s) 2026-07-16..2026-10-11, each day's $ / that day's price = 29,370,531 tokens (payment-weighted price $0.5822); each day over its epoch's stake, x 365.25/88 = 12.03% (effective stake 1,012,950,053 over 13 epoch(s): 12 read at the epoch's start, 1 read later in the epoch (2026-10-08 on 2026-10-09)); ILLIQUID-TOKEN RULE (Jake 2026-10-09): illiquid-token rewards excluded: $7,385,354 (fees $1,256, bribes $7,384,098; 13 epoch(s) read) \u2014 17.55% before the exclusion"
+  ],
+  "Aerodrome|total_supply": [
+   "chain:base:token"
+  ],
+  "Aerodrome|total_supply_coingecko": [
+   "coingecko"
+  ],
+  "Aerodrome|unlock_release_tokens": [
+   "derived:unlock_release"
+  ],
+  "Aerodrome|ve_locked_supply_tokens": [
+   "chain:base:ve_locked_supply"
+  ],
+  "Aerodrome|ve_voting_power_tokens": [
+   "chain:base:ve_voting_power"
+  ],
+  "Aerodrome|volume_usd": [
+   "coingecko"
+  ],
+  "Aerodrome|voter_rewards_illiquid_bribes_usd": [
+   "aero_voter:tokenRewardsPerEpoch"
+  ],
+  "Aerodrome|voter_rewards_illiquid_fees_usd": [
+   "aero_voter:tokenRewardsPerEpoch"
+  ],
+  "Aerodrome|voter_rewards_onchain_apr": [
+   "aero_voter:tokenRewardsPerEpoch"
+  ],
+  "Aerodrome|voter_rewards_onchain_bribes_usd": [
+   "aero_voter:tokenRewardsPerEpoch"
+  ],
+  "Aerodrome|voter_rewards_onchain_fees_usd": [
+   "aero_voter:tokenRewardsPerEpoch"
+  ],
+  "Aerodrome|voter_rewards_onchain_usd": [
+   "aero_voter:tokenRewardsPerEpoch"
+  ],
+  "Aerodrome|voter_rewards_unpriced_count": [
+   "aero_voter:tokenRewardsPerEpoch"
+  ],
+  "Aerodrome|voter_total_weight_tokens": [
+   "aero_voter:Voter.totalWeight"
+  ],
+  "Aethir|arr_tile_usd": [
+   "aethir_page:protocol/demand-metric.arr"
+  ],
+  "Aethir|arr_usd": [
+   "derived:customer_revenue_monthly_usd last 3 complete months x 4"
+  ],
+  "Aethir|avg_lock_duration_days_ai": [
+   "probe:avg_lock_duration_days_ai"
+  ],
+  "Aethir|avg_lock_duration_days_gaming": [
+   "probe:avg_lock_duration_days_gaming"
+  ],
+  "Aethir|capacity_monthly_total": [
+   "aethir_page:protocol/supply-metric.totalMonthlyCapacity"
+  ],
+  "Aethir|checker_rewards_cumulative_tokens": [
+   "aethir_page:protocol/onchain-metric.base+bonus+airdropRewardDistributed"
+  ],
+  "Aethir|circulating_supply": [
+   "coingecko",
+   "coingecko:mcap/price"
+  ],
+  "Aethir|circulating_supply_first_party": [
+   "aethir_page:protocol/onchain-metric.athCirculatingSupply",
+   "first_party_schedule:ath-circulating-supply"
+  ],
+  "Aethir|circulating_supply_implied": [
+   "coingecko:mcap/price"
+  ],
+  "Aethir|circulating_supply_used": [
+   "circulating_supply_first_party"
+  ],
+  "Aethir|cloud_host_rewards_cumulative_tokens": [
+   "aethir_page:protocol/ecosystem.cloudHostRewards"
+  ],
+  "Aethir|compute_hours_cumulative": [
+   "aethir_page:protocol/demand-metric.totalComputeHoursDelivered"
+  ],
+  "Aethir|compute_hours_last_week": [
+   "aethir_page:protocol/demand-metric.totalComputeHoursDeliveredLastWeek"
+  ],
+  "Aethir|compute_hours_weekly": [
+   "aethir_page:protocol/demand-metric.weeklyComputeHoursDelivered.amount"
+  ],
+  "Aethir|compute_power_total": [
+   "aethir_page:protocol/supply-metric.totalComputePower"
+  ],
+  "Aethir|compute_purchases_cumulative_tokens": [
+   "probe:compute_purchases_cumulative_tokens"
+  ],
+  "Aethir|compute_rewards_cumulative_tokens": [
+   "aethir_page:protocol/supply-metric.totalRewards"
+  ],
+  "Aethir|compute_rewards_locked_tokens": [
+   "aethir_page:protocol/supply-metric.totalLockedRewards"
+  ],
+  "Aethir|compute_rewards_tokens": [
+   "aethir_page:protocol/supply-metric.weeklyData.reward"
+  ],
+  "Aethir|compute_service_fee_cumulative_tokens": [
+   "aethir_page:protocol/supply-metric.totalServiceFee"
+  ],
+  "Aethir|compute_service_fee_tokens": [
+   "aethir_page:protocol/supply-metric.weeklyData.service"
+  ],
+  "Aethir|customer_revenue_cumulative_usd": [
+   "aethir_page:protocol/demand-metric.sum(monthlyNetworkRevenue)"
+  ],
+  "Aethir|customer_revenue_monthly_usd": [
+   "aethir_page:protocol/demand-metric.monthlyNetworkRevenue.earning"
+  ],
+  "Aethir|customer_revenue_usd": [
+   "aethir_page:protocol/demand-metric.weeklyNetworkRevenue.amount"
+  ],
+  "Aethir|customer_revenue_usd_defillama": [
+   "derived:=fees_usd"
+  ],
+  "Aethir|eco_checker_rewards_cumulative_tokens": [
+   "aethir_page:protocol/ecosystem.checkerRewards"
+  ],
+  "Aethir|ecosystem_rewards_cumulative_tokens": [
+   "aethir_page:protocol/ecosystem.checker+cloudHost+edge+stakingRewards"
+  ],
+  "Aethir|edge_daily_reward_pool_tokens": [
+   "probe:edge_daily_reward_pool_tokens"
+  ],
+  "Aethir|edge_earnings_cumulative_tokens": [
+   "probe:edge_earnings_cumulative_tokens"
+  ],
+  "Aethir|edge_earnings_monthly_tokens": [
+   "aethir_page:protocol/ecosystem.rewards"
+  ],
+  "Aethir|edge_rewards_cumulative_tokens": [
+   "aethir_page:protocol/ecosystem.edgeRewards"
+  ],
+  "Aethir|edge_stipend_cumulative_tokens": [
+   "probe:edge_stipend_cumulative_tokens"
+  ],
+  "Aethir|emissions_checker_tokens": [
+   "aethir_page:supplier_rewards"
+  ],
+  "Aethir|emissions_cloud_host_tokens": [
+   "aethir_page:supplier_rewards"
+  ],
+  "Aethir|emissions_earned_tokens": [
+   "aethir_page:supplier_rewards"
+  ],
+  "Aethir|emissions_edge_tokens": [
+   "aethir_page:supplier_rewards"
+  ],
+  "Aethir|emissions_released_tokens": [
+   "aethir_page:supplier_rewards"
+  ],
+  "Aethir|emissions_tokens": [
+   "aethir_page:supplier_rewards",
+   "schedule:config"
+  ],
+  "Aethir|fdv_usd": [
+   "coingecko"
+  ],
+  "Aethir|fdv_usd_coingecko": [
+   "coingecko"
+  ],
+  "Aethir|fees_usd": [
+   "defillama"
+  ],
+  "Aethir|gross_issuance_tokens": [
+   "schedule:config:declared"
+  ],
+  "Aethir|holders_revenue_usd": [
+   "defillama"
+  ],
+  "Aethir|locked_tokens": [
+   "aethir_page:protocol/onchain-metric.totalStaked",
+   "chain:ethereum:staking_wrapper"
+  ],
+  "Aethir|locked_tokens_ai": [
+   "aethir_page:protocol/onchain-metric.aiStaked"
+  ],
+  "Aethir|locked_tokens_ai_onchain": [
+   "chain:ethereum:staking_ai_pool_balance"
+  ],
+  "Aethir|locked_tokens_edge": [
+   "aethir_page:protocol/onchain-metric.edgeStaked"
+  ],
+  "Aethir|locked_tokens_gaming": [
+   "aethir_page:protocol/onchain-metric.gamingStaked"
+  ],
+  "Aethir|locked_tokens_gaming_onchain": [
+   "chain:ethereum:staking_gaming_pool_balance"
+  ],
+  "Aethir|locked_tokens_idc": [
+   "aethir_page:protocol/onchain-metric.idcStaked"
+  ],
+  "Aethir|locked_tokens_wrapper": [
+   "chain:ethereum:staking_wrapper"
+  ],
+  "Aethir|market_cap_usd": [
+   "derived:price_x_circulating"
+  ],
+  "Aethir|market_cap_usd_coingecko": [
+   "coingecko"
+  ],
+  "Aethir|max_supply": [
+   "coingecko"
+  ],
+  "Aethir|online_hours_cumulative": [
+   "aethir_page:protocol/supply-metric.totalOnlineHours"
+  ],
+  "Aethir|outflow_b_tokens": [
+   "derived:outflow_b"
+  ],
+  "Aethir|outflow_b_usd": [
+   "derived:outflow_b*price"
+  ],
+  "Aethir|pool_release_tokens": [
+   "aethir_page:release"
+  ],
+  "Aethir|price_usd": [
+   "coingecko"
+  ],
+  "Aethir|price_usd_coinbase": [
+   "coinbase_exchange:ATH-USD:open"
+  ],
+  "Aethir|price_usd_llama": [
+   "defillama_coins:arbitrum:0xc87b37a581ec3257b734886d9d3a581f5a9d056c"
+  ],
+  "Aethir|revenue_usd": [
+   "defillama"
+  ],
+  "Aethir|scheduled_release_tokens": [
+   "config:circulating_schedule"
+  ],
+  "Aethir|staker_rewards_cumulative_tokens": [
+   "aethir_page:protocol/ecosystem.stakingRewards"
+  ],
+  "Aethir|staker_rewards_emitted": [
+   "aethir_page:protocol/onchain-metric.emissionStakeRewardSchedule.emitted"
+  ],
+  "Aethir|staking_apr_ai": [
+   "probe:staking_apr_ai"
+  ],
+  "Aethir|staking_apr_gaming": [
+   "probe:staking_apr_gaming"
+  ],
+  "Aethir|stath_sophon_pool_tokens": [
+   "aethir_page:protocol/ecosystem.totalStaked"
+  ],
+  "Aethir|supply_locations": [
+   "aethir_page:protocol/supply-metric.locations"
+  ],
+  "Aethir|supply_units": [
+   "aethir_page:protocol/supply-metric.nodes",
+   "manual"
+  ],
+  "Aethir|supply_units_checker_licences": [
+   "aethir_page:protocol/onchain-metric.numberDelegatedCheckers"
+  ],
+  "Aethir|supply_units_edge": [
+   "probe:supply_units_edge"
+  ],
+  "Aethir|total_supply": [
+   "coingecko"
+  ],
+  "Aethir|total_supply_coingecko": [
+   "probe:total_supply_coingecko"
+  ],
+  "Aethir|utilisation_containers_pct": [
+   "aethir_page:derived.compute_hours_last_week/nodes_x_168"
+  ],
+  "Aethir|utilisation_cumulative_pct": [
+   "derived:utilisation"
+  ],
+  "Aethir|utilisation_pct": [
+   "derived:utilisation"
+  ],
+  "Aethir|veaethir_total_supply_tokens": [
+   "probe:veaethir_total_supply_tokens"
+  ],
+  "Aethir|volume_usd": [
+   "coingecko"
+  ],
+  "Chainlink|actual_buyback_tokens": [
+   "explorer:reserve_inflow"
+  ],
+  "Chainlink|actual_buyback_usd": [
+   "derived:tokens*price"
+  ],
+  "Chainlink|buyback_burned_tokens": [
+   "derived:actual_buyback_tokens x burn share (from start: burn 0% / hold 100% / distribute 0%)"
+  ],
+  "Chainlink|buyback_distributed_tokens": [
+   "derived:actual_buyback_tokens x distribute share (from start: burn 0% / hold 100% / distribute 0%)"
+  ],
+  "Chainlink|buyback_fund_balance": [
+   "chain:ethereum:reserve"
+  ],
+  "Chainlink|buyback_fund_balance_dashboard": [
+   "probe:buyback_fund_balance_dashboard"
+  ],
+  "Chainlink|buyback_held_tokens": [
+   "derived:actual_buyback_tokens x hold share (from start: burn 0% / hold 100% / distribute 0%)"
+  ],
+  "Chainlink|buyback_last_inflow_date": [
+   "explorer:reserve_inflow"
+  ],
+  "Chainlink|ccip_messages": [
+   "ccip_api:v2/messages"
+  ],
+  "Chainlink|ccip_token_transfers": [
+   "probe:ccip_token_transfers"
+  ],
+  "Chainlink|ccip_token_value_usd": [
+   "probe:ccip_token_value_usd"
+  ],
+  "Chainlink|ccip_v2_fees_usd": [
+   "chainlink_fees:ccip_v2"
+  ],
+  "Chainlink|ccip_v2_premium_usd": [
+   "chainlink_fees:ccip_v2_premium"
+  ],
+  "Chainlink|circulating_supply": [
+   "coingecko",
+   "coingecko:mcap/price"
+  ],
+  "Chainlink|circulating_supply_implied": [
+   "coingecko:mcap/price"
+  ],
+  "Chainlink|circulating_supply_onchain": [
+   "derived:onchain_total-noncirculating"
+  ],
+  "Chainlink|circulating_supply_used": [
+   "circulating_supply_onchain"
+  ],
+  "Chainlink|customer_revenue_automation_premium_usd": [
+   "chainlink_fees:automation"
+  ],
+  "Chainlink|customer_revenue_ccip_legacy_usd": [
+   "chainlink_fees:ccip_legacy"
+  ],
+  "Chainlink|customer_revenue_requests_usd": [
+   "defillama:chainlink-requests"
+  ],
+  "Chainlink|customer_revenue_usd": [
+   "derived:sum(fees_usd + customer_revenue_requests_usd + customer_revenue_ccip_legacy_usd + customer_revenue_vrf_usd + customer_revenue_automation_premium_usd)"
+  ],
+  "Chainlink|customer_revenue_vrf_usd": [
+   "chainlink_fees:vrf"
+  ],
+  "Chainlink|emissions_claimed_tokens": [
+   "explorer:staking_rewards_out"
+  ],
+  "Chainlink|emissions_tokens": [
+   "rewardvault:getRewardBuckets:rate_x_time"
+  ],
+  "Chainlink|fdv_usd": [
+   "chain:ethereum:token"
+  ],
+  "Chainlink|fdv_usd_coingecko": [
+   "coingecko"
+  ],
+  "Chainlink|fees_usd": [
+   "defillama"
+  ],
+  "Chainlink|fees_usd_aggregator_scan": [
+   "chainlink_fees:aggregator"
+  ],
+  "Chainlink|holder_value_revenue_usd": [
+   "derived:holder_value"
+  ],
+  "Chainlink|holders_revenue_usd": [
+   "defillama"
+  ],
+  "Chainlink|issuer_return_tokens": [
+   "derived:issuer_return"
+  ],
+  "Chainlink|locked_tokens": [
+   "chain:sum(ethereum:staking_community+ethereum:staking_node_operator)"
+  ],
+  "Chainlink|locked_tokens_principal": [
+   "chain:sum(ethereum:staking_community_principal+ethereum:staking_node_operator_principal)"
+  ],
+  "Chainlink|market_cap_usd": [
+   "derived:price_x_circulating"
+  ],
+  "Chainlink|market_cap_usd_coingecko": [
+   "coingecko"
+  ],
+  "Chainlink|max_supply": [
+   "coingecko"
+  ],
+  "Chainlink|noncirc_inflow_scan_tokens": [
+   "explorer:noncirc_in"
+  ],
+  "Chainlink|noncirc_outflow_scan_tokens": [
+   "explorer:noncirc_out"
+  ],
+  "Chainlink|noncirculating_holding_tokens": [
+   "chain:sum(ethereum:noncirc_noncirculating_supply_1+ethereum:noncirc_noncirculating_supply_2+ethereum:noncirc_noncirculating_supply_3+ethereum:noncirc_noncirculating_supply_4+ethereum:noncirc_noncirculating_supply_5+ethereum:noncirc_noncirculating_supply_6+ethereum:noncirc_noncirculating_supply_7+ethereum:noncirc_noncirculating_supply_8+ethereum:noncirc_noncirculating_supply_9+ethereum:noncirc_noncirculating_supply_10+ethereum:noncirc_noncirculating_supply_11+ethereum:noncirc_noncirculating_supply_12+ethereum:noncirc_noncirculating_supply_13+ethereum:noncirc_noncirculating_supply_14+ethereum:noncirc_noncirculating_supply_15+ethereum:noncirc_noncirculating_supply_16+ethereum:noncirc_noncirculating_supply_17+ethereum:noncirc_noncirculating_supply_18+ethereum:noncirc_noncirculating_supply_19+ethereum:noncirc_noncirculating_supply_20+ethereum:noncirc_noncirculating_supply_21+ethereum:noncirc_noncirculating_supply_22+ethereum:noncirc_noncirculating_supply_23+ethereum:noncirc_noncirculating_supply_24+ethereum:noncirc_blog_2022_7m_a+ethereum:noncirc_blog_2022_7m_b+ethereum:noncirc_blog_2022_400k)"
+  ],
+  "Chainlink|outflow_a_tokens": [
+   "derived:outflow_a"
+  ],
+  "Chainlink|outflow_a_usd": [
+   "derived:outflow_a*price"
+  ],
+  "Chainlink|outflow_e_tokens": [
+   "derived:outflow_e"
+  ],
+  "Chainlink|outflow_e_usd": [
+   "derived:outflow_e*price"
+  ],
+  "Chainlink|pool_release_tokens": [
+   "derived:-d(noncirculating_holding_tokens)"
+  ],
+  "Chainlink|pool_release_tokens_coingecko": [
+   "derived:d_circulating-d_total"
+  ],
+  "Chainlink|price_usd": [
+   "coingecko",
+   "defillama_coins:history"
+  ],
+  "Chainlink|price_usd_coinbase": [
+   "coinbase_exchange:LINK-USD:open"
+  ],
+  "Chainlink|price_usd_llama": [
+   "defillama_coins:ethereum:0x514910771af9ca656af840dff83e8264ecf986ca"
+  ],
+  "Chainlink|protocol_tvl_usd": [
+   "defillama"
+  ],
+  "Chainlink|retired_buyback_tokens": [
+   "derived:actual_buyback_tokens x burn+hold share (from start: burn 0% / hold 100% / distribute 0%)"
+  ],
+  "Chainlink|retired_buyback_usd": [
+   "derived:actual_buyback_usd x burn+hold share (from start: burn 0% / hold 100% / distribute 0%)"
+  ],
+  "Chainlink|revenue_usd": [
+   "defillama"
+  ],
+  "Chainlink|reward_emission_rate_annual": [
+   "rewardvault:getRewardBuckets"
+  ],
+  "Chainlink|reward_rate_ends_unix": [
+   "rewardvault:getRewardBuckets"
+  ],
+  "Chainlink|staker_yield_community_pool": [
+   "probe:staker_yield_community_pool"
+  ],
+  "Chainlink|staking_funding_release_tokens": [
+   "derived:fifo \u2014 ATTRIBUTION CONVENTION: FIFO matching of the forwards to the releases (ACCEPTED, Jake 2026-10-14)"
+  ],
+  "Chainlink|staking_funding_tokens": [
+   "probe:staking_funding_tokens"
+  ],
+  "Chainlink|staking_path_in_tokens": [
+   "probe:staking_path_in_tokens"
+  ],
+  "Chainlink|staking_path_out_tokens": [
+   "probe:staking_path_out_tokens"
+  ],
+  "Chainlink|supply_units": [
+   "manual",
+   "probe:supply_units"
+  ],
+  "Chainlink|total_supply": [
+   "chain:ethereum:token"
+  ],
+  "Chainlink|total_supply_coingecko": [
+   "coingecko"
+  ],
+  "Chainlink|unlock_release_tokens": [
+   "derived:unlock_release-staking_funding_release_tokens (ATTRIBUTION CONVENTION: FIFO matching of the forwards to the releases (ACCEPTED, Jake 2026-10-14))"
+  ],
+  "Chainlink|volume_usd": [
+   "coingecko"
+  ],
+  "Ether.fi|actual_buyback_tokens": [
+   "explorer:buyback_wallet_inflow"
+  ],
+  "Ether.fi|actual_buyback_usd": [
+   "derived:tokens*price"
+  ],
+  "Ether.fi|buyback_bought_share_alltime": [
+   "explorer:buyback_wallet_inflow"
+  ],
+  "Ether.fi|buyback_burned_tokens": [
+   "derived:actual_buyback_tokens x burn share (from start: burn 0% / hold 0% / distribute 100%)"
+  ],
+  "Ether.fi|buyback_distributed_tokens": [
+   "derived:actual_buyback_tokens x distribute share (from start: burn 0% / hold 0% / distribute 100%)"
+  ],
+  "Ether.fi|buyback_held_tokens": [
+   "derived:actual_buyback_tokens x hold share (from start: burn 0% / hold 0% / distribute 100%)"
+  ],
+  "Ether.fi|buyback_last_inflow_date": [
+   "explorer:buyback_wallet_inflow"
+  ],
+  "Ether.fi|cash_volume_usd": [
+   "defillama:overview/dexs:EtherFi Cash Liquid"
+  ],
+  "Ether.fi|cashback_paid_tokens": [
+   "probe:cashback_paid_tokens"
+  ],
+  "Ether.fi|cashback_unfunded_tokens": [
+   "derived:cashback_funding"
+  ],
+  "Ether.fi|circulating_supply": [
+   "coingecko",
+   "coingecko:mcap/price"
+  ],
+  "Ether.fi|circulating_supply_implied": [
+   "coingecko:mcap/price"
+  ],
+  "Ether.fi|circulating_supply_onchain": [
+   "derived:onchain_total-noncirculating"
+  ],
+  "Ether.fi|circulating_supply_used": [
+   "circulating_supply_onchain"
+  ],
+  "Ether.fi|eth_staked_etherfi_tokens": [
+   "probe:eth_staked_etherfi_tokens"
+  ],
+  "Ether.fi|fdv_usd": [
+   "chain:ethereum:token"
+  ],
+  "Ether.fi|fdv_usd_coingecko": [
+   "coingecko"
+  ],
+  "Ether.fi|fees_usd": [
+   "defillama"
+  ],
+  "Ether.fi|holder_value_other_usd": [
+   "derived:holder_value"
+  ],
+  "Ether.fi|holder_value_revenue_usd": [
+   "derived:holder_value"
+  ],
+  "Ether.fi|holders_revenue_usd": [
+   "probe:holders_revenue_usd"
+  ],
+  "Ether.fi|holders_revenue_usd_defillama": [
+   "defillama",
+   "defillama:sum(ether.fi services)"
+  ],
+  "Ether.fi|insider_stake_shares": [
+   "probe:insider_stake_shares"
+  ],
+  "Ether.fi|issuer_return_tokens": [
+   "derived:issuer_return"
+  ],
+  "Ether.fi|lock_assets_per_share": [
+   "derived:ratio"
+  ],
+  "Ether.fi|lock_rate_pct": [
+   "dune:8683038"
+  ],
+  "Ether.fi|locked_tokens": [
+   "chain:ethereum:sethfi_shares"
+  ],
+  "Ether.fi|locked_tokens_dashboard": [
+   "dune:8683038"
+  ],
+  "Ether.fi|locked_tokens_underlying": [
+   "chain:ethereum:sethfi"
+  ],
+  "Ether.fi|market_cap_usd": [
+   "derived:price_x_circulating"
+  ],
+  "Ether.fi|market_cap_usd_coingecko": [
+   "coingecko"
+  ],
+  "Ether.fi|market_share_category_usd": [
+   "defillama:peers:ETH liquid (re)staking \u2014 Ethereum TVL"
+  ],
+  "Ether.fi|market_share_pct": [
+   "defillama:peers:ETH liquid (re)staking \u2014 Ethereum TVL"
+  ],
+  "Ether.fi|max_supply": [
+   "coingecko"
+  ],
+  "Ether.fi|noncirculating_holding_tokens": [
+   "chain:sum(ethereum:noncirc_custodian_origin_1+ethereum:noncirc_custodian_origin_2+ethereum:noncirc_treasury_1+ethereum:noncirc_treasury_2+ethereum:noncirc_treasury_3+ethereum:noncirc_operating_topup_safe+ethereum:noncirc_buyback_safe_old+ethereum:noncirc_treasury_reserve_safe)"
+  ],
+  "Ether.fi|outflow_c_tokens": [
+   "derived:outflow_c"
+  ],
+  "Ether.fi|outflow_c_usd": [
+   "derived:outflow_c*price"
+  ],
+  "Ether.fi|outflow_e_tokens": [
+   "derived:outflow_e"
+  ],
+  "Ether.fi|outflow_e_usd": [
+   "derived:outflow_e*price"
+  ],
+  "Ether.fi|price_usd": [
+   "coingecko"
+  ],
+  "Ether.fi|price_usd_coinbase": [
+   "coinbase_exchange:ETHFI-USD:open"
+  ],
+  "Ether.fi|price_usd_llama": [
+   "defillama_coins:ethereum:0xfe0c30065b384f05761f15d0cc899d4f9f9cc0eb"
+  ],
+  "Ether.fi|programmatic_buyback_tokens": [
+   "probe:programmatic_buyback_tokens"
+  ],
+  "Ether.fi|protocol_tvl_usd": [
+   "defillama"
+  ],
+  "Ether.fi|retired_buyback_tokens": [
+   "derived:actual_buyback_tokens x burn+hold share (from start: burn 0% / hold 0% / distribute 100%)"
+  ],
+  "Ether.fi|retired_buyback_usd": [
+   "derived:actual_buyback_usd x burn+hold share (from start: burn 0% / hold 0% / distribute 100%)"
+  ],
+  "Ether.fi|revenue_usd": [
+   "defillama"
+  ],
+  "Ether.fi|sethfi_accountant_rate": [
+   "share_vault:accountant.getRate"
+  ],
+  "Ether.fi|sethfi_aps_rebuilt": [
+   "explorer:sethfi_reward_topups.aps_walk"
+  ],
+  "Ether.fi|sethfi_aps_reward_only": [
+   "explorer:sethfi_reward_topups.aps_reward_walk"
+  ],
+  "Ether.fi|sethfi_reward_tokens_reconciled": [
+   "explorer:sethfi_reward_topups.aps_walk"
+  ],
+  "Ether.fi|sethfi_share_price_onchain": [
+   "share_vault:0x86B5780b.balanceOf/totalSupply"
+  ],
+  "Ether.fi|sethfi_topup_tokens": [
+   "explorer:sethfi_reward_topups"
+  ],
+  "Ether.fi|stake_tvl_usd": [
+   "defillama:protocol/ether.fi-stake"
+  ],
+  "Ether.fi|staker_count": [
+   "dune:8683038"
+  ],
+  "Ether.fi|token_yield_accountant_trailing_pct": [
+   "derived:sethfi_accountant_rate 1.116803 (2025-10-10) -> 1.205564 (2026-10-13), annualised over 368 day(s)"
+  ],
+  "Ether.fi|token_yield_share_price_trailing_pct": [
+   "derived:sethfi_share_price_onchain 2026-07-09..2026-10-12, annualised"
+  ],
+  "Ether.fi|token_yield_trailing_pct": [
+   "derived:sum over 365 day(s) of sethfi_reward_tokens_reconciled / that day's locked_tokens_underlying (10,532,161 tokens; average stake 90,383,074), 2025-10-13..2026-10-12 x 365/365"
+  ],
+  "Ether.fi|total_supply": [
+   "chain:ethereum:token"
+  ],
+  "Ether.fi|total_supply_coingecko": [
+   "coingecko"
+  ],
+  "Ether.fi|treasury_holding_tokens": [
+   "chain:ethereum:treasury"
+  ],
+  "Ether.fi|unlock_release_tokens": [
+   "derived:unlock_release"
+  ],
+  "Ether.fi|volume_usd": [
+   "coingecko"
+  ],
+  "Ethereum|active_addresses": [
+   "growthepie"
+  ],
+  "Ethereum|actual_buyback_tokens": [
+   "derived:defillama_burned_fee_revenue/price"
+  ],
+  "Ethereum|actual_buyback_usd": [
+   "derived:tokens*price"
+  ],
+  "Ethereum|beacon_chain_eth": [
+   "validatorqueue:staked_amount"
+  ],
+  "Ethereum|beacon_validators_eth": [
+   "probe:beacon_validators_eth"
+  ],
+  "Ethereum|burn_cumulative_tokens": [
+   "etherscan:ethsupply2.BurntFees"
+  ],
+  "Ethereum|circulating_supply": [
+   "coingecko",
+   "coingecko:mcap/price"
+  ],
+  "Ethereum|circulating_supply_implied": [
+   "coingecko:mcap/price"
+  ],
+  "Ethereum|circulating_supply_onchain": [
+   "derived:onchain_total-noncirculating"
+  ],
+  "Ethereum|circulating_supply_used": [
+   "circulating_supply_onchain"
+  ],
+  "Ethereum|consensus_rewards_cumulative": [
+   "etherscan:ethsupply2.Eth2Staking"
+  ],
+  "Ethereum|consensus_rewards_tokens": [
+   "derived:consensus_formula",
+   "etherscan:ethsupply2.Eth2Staking"
+  ],
+  "Ethereum|dex_volume_usd": [
+   "defillama:dexs:ethereum"
+  ],
+  "Ethereum|execution_rewards_eth": [
+   "mev_relays:relay_value+nonrelay_priority_fees"
+  ],
+  "Ethereum|fdv_usd": [
+   "coingecko"
+  ],
+  "Ethereum|fdv_usd_coingecko": [
+   "coingecko"
+  ],
+  "Ethereum|fees_native_tokens": [
+   "blockscout_stats:txnsFee"
+  ],
+  "Ethereum|fees_usd": [
+   "defillama"
+  ],
+  "Ethereum|fees_usd_blockscout": [
+   "derived:blockscout_stats:txnsFee*price"
+  ],
+  "Ethereum|gross_burn_tokens": [
+   "derived:defillama_burned_fee_revenue/price",
+   "etherscan:ethsupply2.BurntFees"
+  ],
+  "Ethereum|gross_issuance_tokens": [
+   "derived:d_total_supply_protocol+burn"
+  ],
+  "Ethereum|holder_value_revenue_usd": [
+   "derived:holder_value"
+  ],
+  "Ethereum|holders_revenue_usd": [
+   "defillama"
+  ],
+  "Ethereum|l2_tx_count": [
+   "growthepie:export/txcount"
+  ],
+  "Ethereum|market_cap_usd": [
+   "derived:price_x_circulating"
+  ],
+  "Ethereum|market_cap_usd_coingecko": [
+   "coingecko"
+  ],
+  "Ethereum|market_share_2_category_usd": [
+   "defillama:peers:chain fees \u2014 13 chains"
+  ],
+  "Ethereum|market_share_2_pct": [
+   "defillama:peers:chain fees \u2014 13 chains"
+  ],
+  "Ethereum|market_share_category_usd": [
+   "defillama:chain_tvl:all chains \u2014 TVL"
+  ],
+  "Ethereum|market_share_pct": [
+   "defillama:chain_tvl:all chains \u2014 TVL"
+  ],
+  "Ethereum|mev_relay_block_share": [
+   "mev_relays:relay_blocks/blocks"
+  ],
+  "Ethereum|mev_relay_value_eth": [
+   "mev_relays:delivered"
+  ],
+  "Ethereum|net_supply_change_tokens": [
+   "derived:d_net:gross_issuance_tokens-gross_burn_tokens(common days)"
+  ],
+  "Ethereum|network_reserve_ratio_throughput": [
+   "derived:market_cap/trading_throughput_365d"
+  ],
+  "Ethereum|nft_volume_usd": [
+   "probe:nft_volume_usd"
+  ],
+  "Ethereum|outflow_a_tokens": [
+   "derived:outflow_a"
+  ],
+  "Ethereum|outflow_a_usd": [
+   "derived:outflow_a*price"
+  ],
+  "Ethereum|p2p_transfer_volume_usd": [
+   "probe:p2p_transfer_volume_usd"
+  ],
+  "Ethereum|price_usd": [
+   "coingecko",
+   "defillama_coins:history"
+  ],
+  "Ethereum|price_usd_coinbase": [
+   "coinbase_exchange:ETH-USD:open"
+  ],
+  "Ethereum|price_usd_llama": [
+   "defillama_coins:coingecko:ethereum"
+  ],
+  "Ethereum|revenue_usd": [
+   "defillama"
+  ],
+  "Ethereum|rwa_defillama_usd": [
+   "defillama"
+  ],
+  "Ethereum|settlement_rebuilt_usd": [
+   "derived:dex+nft+p2p"
+  ],
+  "Ethereum|settlement_volume_usd": [
+   "artemis:settlement_volume (CSV export, Jake, 2026-09-30)"
+  ],
+  "Ethereum|stablecoin_supply_usd": [
+   "defillama"
+  ],
+  "Ethereum|staking_apr_lido": [
+   "lido_api:steth/apr/sma"
+  ],
+  "Ethereum|total_supply": [
+   "coingecko",
+   "ultrasound:supply-over-time"
+  ],
+  "Ethereum|total_supply_dashboard": [
+   "probe:total_supply_dashboard"
+  ],
+  "Ethereum|total_supply_protocol": [
+   "etherscan:ethsupply2.supply",
+   "ultrasound:supply-over-time"
+  ],
+  "Ethereum|total_supply_ultrasound": [
+   "ultrasound:supply-over-time"
+  ],
+  "Ethereum|trading_throughput_365d_usd": [
+   "derived:sum365(derived:dex_volume_usd)"
+  ],
+  "Ethereum|trading_throughput_usd": [
+   "derived:dex_volume_usd"
+  ],
+  "Ethereum|tvl_usd": [
+   "defillama"
+  ],
+  "Ethereum|tx_count": [
+   "growthepie"
+  ],
+  "Ethereum|volume_usd": [
+   "coingecko"
+  ],
+  "Fluid|actual_buyback_tokens": [
+   "declared:zero",
+   "probe:actual_buyback_tokens"
+  ],
+  "Fluid|actual_buyback_usd": [
+   "declared:zero",
+   "probe:actual_buyback_usd"
+  ],
+  "Fluid|buyback_burned_tokens": [
+   "derived:actual_buyback_tokens x burn share (from start: burn 0% / hold 100% / distribute 0%)"
+  ],
+  "Fluid|buyback_distributed_tokens": [
+   "derived:actual_buyback_tokens x distribute share (from start: burn 0% / hold 100% / distribute 0%)"
+  ],
+  "Fluid|buyback_held_tokens": [
+   "derived:actual_buyback_tokens x hold share (from start: burn 0% / hold 100% / distribute 0%)"
+  ],
+  "Fluid|circulating_supply": [
+   "coingecko",
+   "coingecko:mcap/price"
+  ],
+  "Fluid|circulating_supply_implied": [
+   "coingecko:mcap/price"
+  ],
+  "Fluid|circulating_supply_onchain": [
+   "derived:onchain_total-noncirculating"
+  ],
+  "Fluid|circulating_supply_used": [
+   "circulating_supply_onchain"
+  ],
+  "Fluid|emissions_tokens": [
+   "explorer:merkle_rewards_out"
+  ],
+  "Fluid|emissions_tokens_arbitrum": [
+   "explorer:merkle_rewards_out_arbitrum"
+  ],
+  "Fluid|emissions_tokens_base": [
+   "probe:emissions_tokens_base"
+  ],
+  "Fluid|emissions_tokens_plasma": [
+   "probe:emissions_tokens_plasma"
+  ],
+  "Fluid|fdv_usd": [
+   "chain:ethereum:token"
+  ],
+  "Fluid|fdv_usd_coingecko": [
+   "coingecko"
+  ],
+  "Fluid|fees_usd": [
+   "defillama"
+  ],
+  "Fluid|gross_issuance_tokens": [
+   "schedule:config"
+  ],
+  "Fluid|holder_value_revenue_usd": [
+   "derived:holder_value"
+  ],
+  "Fluid|holders_revenue_usd": [
+   "defillama"
+  ],
+  "Fluid|issuer_return_tokens": [
+   "derived:issuer_return"
+  ],
+  "Fluid|market_cap_usd": [
+   "derived:price_x_circulating"
+  ],
+  "Fluid|market_cap_usd_coingecko": [
+   "coingecko"
+  ],
+  "Fluid|market_share_category_usd": [
+   "defillama:peers:lending \u2014 active loans (borrowed)"
+  ],
+  "Fluid|market_share_pct": [
+   "defillama:peers:lending \u2014 active loans (borrowed)"
+  ],
+  "Fluid|max_supply": [
+   "coingecko"
+  ],
+  "Fluid|noncirculating_holding_tokens": [
+   "chain:sum(ethereum:noncirc_team_multisig+ethereum:noncirc_governance_timelock+ethereum:noncirc_team_multisig_2+ethereum:noncirc_foundation+ethereum:noncirc_merkle_distributor_rewards_dec2024+ethereum:noncirc_merkle_distributor_cbbtc_wbtc+ethereum:noncirc_merkle_distributor_deusd_usdc+ethereum:noncirc_merkle_distributor_gho_vaults+ethereum:noncirc_merkle_distributor_eth_usdc_lp)"
+  ],
+  "Fluid|noncirculating_igp137_tokens": [
+   "chain:ethereum:noncirc_igp137_lock"
+  ],
+  "Fluid|outflow_b_tokens": [
+   "derived:outflow_b"
+  ],
+  "Fluid|outflow_b_usd": [
+   "derived:outflow_b*price"
+  ],
+  "Fluid|outflow_e_tokens": [
+   "derived:outflow_e"
+  ],
+  "Fluid|outflow_e_usd": [
+   "derived:outflow_e*price"
+  ],
+  "Fluid|price_usd": [
+   "coingecko"
+  ],
+  "Fluid|price_usd_coinbase": [
+   "coinbase_exchange:FLUID-USD:open"
+  ],
+  "Fluid|price_usd_llama": [
+   "defillama_coins:ethereum:0x6f40d4a6237c257fff2db00fa0510deeecd303eb"
+  ],
+  "Fluid|protocol_dex_volume_usd": [
+   "defillama:overview/dexs:Fluid DEX+Fluid DEX Lite"
+  ],
+  "Fluid|protocol_tvl_constant_price_usd": [
+   "probe:protocol_tvl_constant_price_usd"
+  ],
+  "Fluid|protocol_tvl_usd": [
+   "defillama"
+  ],
+  "Fluid|retired_buyback_tokens": [
+   "derived:actual_buyback_tokens x burn+hold share (from start: burn 0% / hold 100% / distribute 0%)"
+  ],
+  "Fluid|retired_buyback_usd": [
+   "derived:actual_buyback_usd x burn+hold share (from start: burn 0% / hold 100% / distribute 0%)"
+  ],
+  "Fluid|revenue_usd": [
+   "defillama"
+  ],
+  "Fluid|total_supply": [
+   "chain:ethereum:token"
+  ],
+  "Fluid|total_supply_coingecko": [
+   "coingecko"
+  ],
+  "Fluid|treasury_holding_tokens": [
+   "chain:ethereum:treasury"
+  ],
+  "Fluid|unlock_release_tokens": [
+   "derived:unlock_release"
+  ],
+  "Fluid|volume_usd": [
+   "coingecko"
+  ],
+  "GEODNET|actual_buyback_tokens": [
+   "chain:sum(polygon:burn_polygon+solana:burn_solana_token_account)"
+  ],
+  "GEODNET|actual_buyback_usd": [
+   "derived:tokens*price"
+  ],
+  "GEODNET|burn_address_balance": [
+   "chain:sum(polygon:burn_polygon+solana:burn_solana_token_account)"
+  ],
+  "GEODNET|buyback_burned_tokens": [
+   "derived:actual_buyback_tokens x burn share (from start: burn 100% / hold 0% / distribute 0%)"
+  ],
+  "GEODNET|buyback_distributed_tokens": [
+   "derived:actual_buyback_tokens x distribute share (from start: burn 100% / hold 0% / distribute 0%)"
+  ],
+  "GEODNET|buyback_held_tokens": [
+   "derived:actual_buyback_tokens x hold share (from start: burn 100% / hold 0% / distribute 0%)"
+  ],
+  "GEODNET|circulating_supply": [
+   "coingecko",
+   "coingecko:mcap/price"
+  ],
+  "GEODNET|circulating_supply_implied": [
+   "coingecko:mcap/price"
+  ],
+  "GEODNET|circulating_supply_onchain": [
+   "derived:onchain_total-noncirculating"
+  ],
+  "GEODNET|circulating_supply_third_party": [
+   "manual",
+   "probe:circulating_supply_third_party"
+  ],
+  "GEODNET|circulating_supply_used": [
+   "circulating_supply_onchain"
+  ],
+  "GEODNET|customer_revenue_usd": [
+   "derived:=fees_usd"
+  ],
+  "GEODNET|ecosystem_holding_tokens": [
+   "chain:polygon:ecosystem_stock_polygon"
+  ],
+  "GEODNET|emissions_tokens": [
+   "derived:=pool_release_tokens"
+  ],
+  "GEODNET|fdv_usd": [
+   "derived:total_supply_gross-burn_address_balance"
+  ],
+  "GEODNET|fdv_usd_coingecko": [
+   "coingecko"
+  ],
+  "GEODNET|fees_usd": [
+   "defillama"
+  ],
+  "GEODNET|gross_burn_tokens": [
+   "chain:sum(polygon:burn_polygon+solana:burn_solana_token_account)"
+  ],
+  "GEODNET|gross_burn_tokens_dune_monthly": [
+   "dune:8683175"
+  ],
+  "GEODNET|gross_issuance_tokens": [
+   "probe:gross_issuance_tokens"
+  ],
+  "GEODNET|holder_value_revenue_usd": [
+   "derived:holder_value"
+  ],
+  "GEODNET|holders_revenue_usd": [
+   "defillama"
+  ],
+  "GEODNET|issuance_feed_polygon_tokens": [
+   "probe:issuance_feed_polygon_tokens"
+  ],
+  "GEODNET|issuance_feed_solana_tokens": [
+   "probe:issuance_feed_solana_tokens"
+  ],
+  "GEODNET|issuer_return_tokens": [
+   "derived:issuer_return"
+  ],
+  "GEODNET|locked_tokens": [
+   "chain:polygon:staking_wallet_polygon"
+  ],
+  "GEODNET|market_cap_usd": [
+   "derived:price_x_circulating"
+  ],
+  "GEODNET|market_cap_usd_coingecko": [
+   "coingecko"
+  ],
+  "GEODNET|max_supply": [
+   "coingecko"
+  ],
+  "GEODNET|noncirculating_holding_tokens": [
+   "chain:sum(polygon:noncirc_candidate_1+polygon:noncirc_candidate_2+polygon:noncirc_candidate_3+polygon:noncirc_candidate_4)"
+  ],
+  "GEODNET|outflow_b_tokens": [
+   "derived:outflow_b"
+  ],
+  "GEODNET|outflow_b_usd": [
+   "derived:outflow_b*price"
+  ],
+  "GEODNET|outflow_e_tokens": [
+   "derived:outflow_e"
+  ],
+  "GEODNET|outflow_e_usd": [
+   "derived:outflow_e*price"
+  ],
+  "GEODNET|pool_release_tokens": [
+   "balance_flow:mining_wallets_release"
+  ],
+  "GEODNET|price_usd": [
+   "coingecko",
+   "defillama_coins:history"
+  ],
+  "GEODNET|price_usd_coinbase": [
+   "coinbase_exchange:GEOD-USD:open"
+  ],
+  "GEODNET|price_usd_llama": [
+   "defillama_coins:polygon:0xac0f66379a6d7801d7726d5a943356a172549adb"
+  ],
+  "GEODNET|retired_buyback_tokens": [
+   "derived:actual_buyback_tokens x burn+hold share (from start: burn 100% / hold 0% / distribute 0%)"
+  ],
+  "GEODNET|retired_buyback_usd": [
+   "derived:actual_buyback_usd x burn+hold share (from start: burn 100% / hold 0% / distribute 0%)"
+  ],
+  "GEODNET|revenue_usd": [
+   "defillama"
+  ],
+  "GEODNET|stations_total": [
+   "geodnet:websiteapi.getMinerStatistics"
+  ],
+  "GEODNET|supply_units": [
+   "manual",
+   "probe:supply_units"
+  ],
+  "GEODNET|total_supply": [
+   "derived:total_supply_gross-burn_address_balance"
+  ],
+  "GEODNET|total_supply_coingecko": [
+   "coingecko",
+   "probe:total_supply_coingecko"
+  ],
+  "GEODNET|total_supply_gross": [
+   "chain:polygon:token_polygon"
+  ],
+  "GEODNET|treasury_holding_tokens": [
+   "chain:sum(polygon:mining_polygon+polygon:mining_distribution_polygon+polygon:ecosystem_polygon)"
+  ],
+  "GEODNET|unlock_release_tokens": [
+   "derived:unlock_release"
+  ],
+  "GEODNET|volume_usd": [
+   "coingecko"
+  ],
+  "Hyperliquid|active_addresses": [
+   "probe:active_addresses"
+  ],
+  "Hyperliquid|actual_buyback_tokens": [
+   "defillama:holders_revenue_usd/price",
+   "derived:burn_total(gross_burn_tokens+core_burn_tokens)"
+  ],
+  "Hyperliquid|actual_buyback_usd": [
+   "derived:tokens*price"
+  ],
+  "Hyperliquid|aqa_revenue_usd": [
+   "probe:aqa_revenue_usd"
+  ],
+  "Hyperliquid|burn_address_balance": [
+   "hypercore_info:spotClearinghouseState"
+  ],
+  "Hyperliquid|burn_auction_tokens": [
+   "probe:burn_auction_tokens"
+  ],
+  "Hyperliquid|burn_auction_usd": [
+   "browser_capture:asxn.Auction Burn"
+  ],
+  "Hyperliquid|burn_ex_chain_fee_tokens": [
+   "defillama:holders_revenue_usd/price",
+   "derived:burn_total(gross_burn_tokens+core_burn_tokens)"
+  ],
+  "Hyperliquid|burn_hyperevm_tokens": [
+   "probe:burn_hyperevm_tokens"
+  ],
+  "Hyperliquid|burn_hyperevm_usd": [
+   "browser_capture:asxn.HyperEVM Burn"
+  ],
+  "Hyperliquid|buyback_burned_tokens": [
+   "derived:actual_buyback_tokens x burn share (from start: burn 100% / hold 0% / distribute 0%)"
+  ],
+  "Hyperliquid|buyback_distributed_tokens": [
+   "derived:actual_buyback_tokens x distribute share (from start: burn 100% / hold 0% / distribute 0%)"
+  ],
+  "Hyperliquid|buyback_held_tokens": [
+   "derived:actual_buyback_tokens x hold share (from start: burn 100% / hold 0% / distribute 0%)"
+  ],
+  "Hyperliquid|buyback_hypercore_asxn_tokens": [
+   "probe:buyback_hypercore_asxn_tokens"
+  ],
+  "Hyperliquid|buyback_hypercore_asxn_usd": [
+   "browser_capture:asxn.HyperCore Buybacks"
+  ],
+  "Hyperliquid|circulating_supply": [
+   "coingecko",
+   "coingecko:mcap/price"
+  ],
+  "Hyperliquid|circulating_supply_first_party": [
+   "hypercore_info:tokenDetails.circulatingSupply",
+   "hypercore_info:tokenDetails.circulatingSupply-exclude_wallets"
+  ],
+  "Hyperliquid|circulating_supply_implied": [
+   "coingecko:mcap/price"
+  ],
+  "Hyperliquid|circulating_supply_tokendetails": [
+   "hypercore_info:tokenDetails.circulatingSupply"
+  ],
+  "Hyperliquid|circulating_supply_used": [
+   "circulating_supply",
+   "circulating_supply_first_party"
+  ],
+  "Hyperliquid|core_burn_tokens": [
+   "hypercore_info:tokenDetails.totalSupply"
+  ],
+  "Hyperliquid|dex_volume_usd": [
+   "defillama:dexs:hyperliquid-l1"
+  ],
+  "Hyperliquid|emissions_circulating_stake_tokens": [
+   "derived:stake_prorata"
+  ],
+  "Hyperliquid|emissions_modelled_tokens": [
+   "model:inverse_sqrt(locked_tokens)"
+  ],
+  "Hyperliquid|emissions_tokens": [
+   "hypercore_info:tokenDetails.futureEmissions"
+  ],
+  "Hyperliquid|excluded_wallets_tokens": [
+   "hypercore_info:exclude_wallets"
+  ],
+  "Hyperliquid|fdv_usd": [
+   "coingecko",
+   "derived:total_supply_gross-burn_address_balance-hyperevm_zero_address_balance"
+  ],
+  "Hyperliquid|fdv_usd_coingecko": [
+   "coingecko"
+  ],
+  "Hyperliquid|fees_usd": [
+   "defillama"
+  ],
+  "Hyperliquid|future_emissions_tokens": [
+   "hypercore_info:tokenDetails"
+  ],
+  "Hyperliquid|gross_burn_tokens": [
+   "defillama:holders_revenue_usd/price",
+   "hypercore_info:spotClearinghouseState"
+  ],
+  "Hyperliquid|gross_issuance_tokens": [
+   "derived:d_supply"
+  ],
+  "Hyperliquid|holder_value_revenue_usd": [
+   "derived:holder_value"
+  ],
+  "Hyperliquid|holders_revenue_usd": [
+   "defillama"
+  ],
+  "Hyperliquid|hypercore_new_users": [
+   "browser_capture:asxn.total_users"
+  ],
+  "Hyperliquid|hypercore_users_total": [
+   "browser_capture:asxn.total_users"
+  ],
+  "Hyperliquid|hyperevm_base_fees_tokens_asxn": [
+   "browser_capture:asxn.base_fees_hype"
+  ],
+  "Hyperliquid|hyperevm_burn_tokens_asxn": [
+   "browser_capture:asxn.burned_hype"
+  ],
+  "Hyperliquid|hyperevm_burn_usd_asxn": [
+   "browser_capture:asxn.burned_usd"
+  ],
+  "Hyperliquid|hyperevm_priority_burn_tokens": [
+   "probe:hyperevm_priority_burn_tokens"
+  ],
+  "Hyperliquid|hyperevm_priority_fees_tokens_asxn": [
+   "browser_capture:asxn.priority_fees_hype"
+  ],
+  "Hyperliquid|hyperevm_zero_address_balance": [
+   "probe:hyperevm_zero_address_balance"
+  ],
+  "Hyperliquid|issuer_return_tokens": [
+   "derived:issuer_return"
+  ],
+  "Hyperliquid|locked_tokens": [
+   "hypercore_info:validatorSummaries"
+  ],
+  "Hyperliquid|locked_tokens_inactive": [
+   "hypercore_info:validatorSummaries"
+  ],
+  "Hyperliquid|market_cap_usd": [
+   "derived:price_x_circulating"
+  ],
+  "Hyperliquid|market_cap_usd_coingecko": [
+   "coingecko"
+  ],
+  "Hyperliquid|market_share_category_usd": [
+   "defillama:overview:Derivatives"
+  ],
+  "Hyperliquid|market_share_pct": [
+   "defillama:overview:Derivatives"
+  ],
+  "Hyperliquid|max_supply": [
+   "coingecko"
+  ],
+  "Hyperliquid|network_reserve_ratio_throughput": [
+   "derived:market_cap/trading_throughput_365d"
+  ],
+  "Hyperliquid|open_interest_usd": [
+   "defillama:overview/open-interest:Hyperliquid Perps"
+  ],
+  "Hyperliquid|open_interest_usd_asxn": [
+   "browser_capture:asxn.total_open_interest"
+  ],
+  "Hyperliquid|outflow_a_tokens": [
+   "derived:outflow_a"
+  ],
+  "Hyperliquid|outflow_a_usd": [
+   "derived:outflow_a*price"
+  ],
+  "Hyperliquid|outflow_e_tokens": [
+   "derived:outflow_e"
+  ],
+  "Hyperliquid|outflow_e_usd": [
+   "derived:outflow_e*price"
+  ],
+  "Hyperliquid|perps_volume_usd": [
+   "hl_candles:candleSnapshot"
+  ],
+  "Hyperliquid|perps_volume_usd_asxn": [
+   "browser_capture:asxn.total_volume"
+  ],
+  "Hyperliquid|pool_release_tokens": [
+   "derived:d(circulating_supply_first_party)+actual_buyback_tokens+hyperevm_priority_burn_tokens"
+  ],
+  "Hyperliquid|pool_release_tokens_coingecko": [
+   "derived:d_circulating-d_total"
+  ],
+  "Hyperliquid|price_usd": [
+   "coingecko"
+  ],
+  "Hyperliquid|price_usd_coinbase": [
+   "coinbase_exchange:HYPE-USD:open"
+  ],
+  "Hyperliquid|price_usd_llama": [
+   "defillama_coins:coingecko:hyperliquid"
+  ],
+  "Hyperliquid|protocol_tvl_usd": [
+   "defillama"
+  ],
+  "Hyperliquid|retired_buyback_tokens": [
+   "derived:actual_buyback_tokens x burn+hold share (from start: burn 100% / hold 0% / distribute 0%)"
+  ],
+  "Hyperliquid|retired_buyback_usd": [
+   "derived:actual_buyback_usd x burn+hold share (from start: burn 100% / hold 0% / distribute 0%)"
+  ],
+  "Hyperliquid|revenue_annualised_usd_asxn": [
+   "browser_capture:asxn.annualized_revenue_30d"
+  ],
+  "Hyperliquid|revenue_total_usd": [
+   "derived:revenue_total"
+  ],
+  "Hyperliquid|revenue_usd": [
+   "defillama"
+  ],
+  "Hyperliquid|rwa_defillama_usd": [
+   "defillama"
+  ],
+  "Hyperliquid|settlement_volume_usd": [
+   "probe:settlement_volume_usd"
+  ],
+  "Hyperliquid|stablecoin_supply_usd": [
+   "defillama"
+  ],
+  "Hyperliquid|staked_noncirculating_tokens": [
+   "hypercore_info:delegatorSummary"
+  ],
+  "Hyperliquid|team_wallet_tokens": [
+   "hypercore_info:tokenDetails.nonCirculatingUserBalances"
+  ],
+  "Hyperliquid|total_burn_tokens": [
+   "defillama:holders_revenue_usd/price",
+   "derived:burn_total(gross_burn_tokens+core_burn_tokens)"
+  ],
+  "Hyperliquid|total_supply": [
+   "coingecko",
+   "derived:total_supply_gross-burn_address_balance-hyperevm_zero_address_balance"
+  ],
+  "Hyperliquid|total_supply_coingecko": [
+   "coingecko",
+   "probe:total_supply_coingecko"
+  ],
+  "Hyperliquid|total_supply_gross": [
+   "hypercore_info:tokenDetails"
+  ],
+  "Hyperliquid|trading_throughput_365d_usd": [
+   "derived:sum365(derived:dex_volume_usd+perps_volume_usd)"
+  ],
+  "Hyperliquid|trading_throughput_usd": [
+   "derived:dex_volume_usd+perps_volume_usd"
+  ],
+  "Hyperliquid|tvl_usd": [
+   "defillama"
+  ],
+  "Hyperliquid|tx_count": [
+   "browser_capture:asxn.transaction_count"
+  ],
+  "Hyperliquid|tx_count_successful": [
+   "browser_capture:asxn.successful_transactions"
+  ],
+  "Hyperliquid|unlock_release_counted_tokens": [
+   "derived:unlock_release"
+  ],
+  "Hyperliquid|unlock_release_tokens": [
+   "derived:unlock_release"
+  ],
+  "Hyperliquid|volume_usd": [
+   "coingecko"
+  ],
+  "Maple|actual_buyback_tokens": [
+   "maple_page"
+  ],
+  "Maple|actual_buyback_usd": [
+   "maple_page"
+  ],
+  "Maple|buyback_burned_tokens": [
+   "derived:actual_buyback_tokens x burn share (from start: burn 0% / hold 100% / distribute 0%)"
+  ],
+  "Maple|buyback_distributed_tokens": [
+   "derived:actual_buyback_tokens x distribute share (from start: burn 0% / hold 100% / distribute 0%)"
+  ],
+  "Maple|buyback_held_tokens": [
+   "derived:actual_buyback_tokens x hold share (from start: burn 0% / hold 100% / distribute 0%)"
+  ],
+  "Maple|circulating_supply": [
+   "coingecko",
+   "coingecko:mcap/price"
+  ],
+  "Maple|circulating_supply_implied": [
+   "coingecko:mcap/price"
+  ],
+  "Maple|circulating_supply_onchain": [
+   "derived:onchain_total-noncirculating"
+  ],
+  "Maple|circulating_supply_used": [
+   "circulating_supply_onchain"
+  ],
+  "Maple|drips_rewards_tokens": [
+   "probe:drips_rewards_tokens"
+  ],
+  "Maple|emissions_tokens": [
+   "declared:zero",
+   "probe:emissions_tokens"
+  ],
+  "Maple|fdv_usd": [
+   "chain:ethereum:token"
+  ],
+  "Maple|fdv_usd_coingecko": [
+   "coingecko"
+  ],
+  "Maple|fees_usd": [
+   "defillama"
+  ],
+  "Maple|holder_value_revenue_usd": [
+   "derived:holder_value"
+  ],
+  "Maple|holders_revenue_usd": [
+   "defillama"
+  ],
+  "Maple|insider_stake_shares": [
+   "probe:insider_stake_shares"
+  ],
+  "Maple|issuer_mint_tokens": [
+   "chain:ethereum:recapitalization_module_mints"
+  ],
+  "Maple|issuer_return_tokens": [
+   "derived:issuer_return"
+  ],
+  "Maple|loans_outstanding_usd": [
+   "defillama:protocol/maple-finance"
+  ],
+  "Maple|locked_tokens": [
+   "chain:ethereum:stsyrup"
+  ],
+  "Maple|market_cap_usd": [
+   "derived:price_x_circulating"
+  ],
+  "Maple|market_cap_usd_coingecko": [
+   "coingecko"
+  ],
+  "Maple|market_share_category_usd": [
+   "defillama:peers:lending \u2014 active loans (borrowed)"
+  ],
+  "Maple|market_share_pct": [
+   "defillama:peers:lending \u2014 active loans (borrowed)"
+  ],
+  "Maple|max_supply": [
+   "probe:max_supply"
+  ],
+  "Maple|noncirculating_holding_tokens": [
+   "chain:sum(ethereum:noncirc_treasury_registry+ethereum:noncirc_migrator+ethereum:noncirc_syrup_drip+ethereum:noncirc_recapitalization_module+ethereum:noncirc_governor_timelock+ethereum:noncirc_operational_admin+ethereum:noncirc_security_admin+ethereum:noncirc_ssf_safe)"
+  ],
+  "Maple|outflow_a_tokens": [
+   "derived:outflow_a"
+  ],
+  "Maple|outflow_a_usd": [
+   "derived:outflow_a*price"
+  ],
+  "Maple|outflow_b_tokens": [
+   "derived:outflow_b"
+  ],
+  "Maple|outflow_b_usd": [
+   "derived:outflow_b*price"
+  ],
+  "Maple|outflow_e_tokens": [
+   "derived:outflow_e"
+  ],
+  "Maple|outflow_e_usd": [
+   "derived:outflow_e*price"
+  ],
+  "Maple|pool_release_tokens": [
+   "maple_page:ssf_release"
+  ],
+  "Maple|price_usd": [
+   "coingecko",
+   "defillama_coins:history"
+  ],
+  "Maple|price_usd_coinbase": [
+   "coinbase_exchange:SYRUP-USD:open"
+  ],
+  "Maple|price_usd_llama": [
+   "defillama_coins:ethereum:0x643c4e15d7d62ad0abec4a9bd4b001aa3ef52d66"
+  ],
+  "Maple|protocol_tvl_constant_price_usd": [
+   "probe:protocol_tvl_constant_price_usd"
+  ],
+  "Maple|protocol_tvl_usd": [
+   "defillama"
+  ],
+  "Maple|retired_buyback_tokens": [
+   "derived:actual_buyback_tokens x burn+hold share (from start: burn 0% / hold 100% / distribute 0%)"
+  ],
+  "Maple|retired_buyback_usd": [
+   "derived:actual_buyback_usd x burn+hold share (from start: burn 0% / hold 100% / distribute 0%)"
+  ],
+  "Maple|revenue_usd": [
+   "maple_page:island.ALL.revenueUsd"
+  ],
+  "Maple|revenue_usd_defillama": [
+   "defillama"
+  ],
+  "Maple|ssf_holdings_tokens": [
+   "maple_page:island.ALL"
+  ],
+  "Maple|ssf_net_outflow_tokens": [
+   "maple_page:ssf_release"
+  ],
+  "Maple|stsyrup_legacy_tokens": [
+   "chain:ethereum:stsyrup"
+  ],
+  "Maple|total_supply": [
+   "chain:ethereum:token"
+  ],
+  "Maple|total_supply_coingecko": [
+   "coingecko"
+  ],
+  "Maple|treasury_holding_tokens": [
+   "chain:ethereum:treasury",
+   "maple_page"
+  ],
+  "Maple|treasury_holding_tokens_chain": [
+   "chain:ethereum:treasury"
+  ],
+  "Maple|unlock_release_tokens": [
+   "derived:unlock_release"
+  ],
+  "Maple|volume_usd": [
+   "coingecko"
+  ],
+  "Morpho|borrow_interest_usd_day_morpho_api": [
+   "morpho_api:markets.borrowApy"
+  ],
+  "Morpho|borrowed_usd_llama": [
+   "defillama"
+  ],
+  "Morpho|circulating_supply": [
+   "coingecko",
+   "coingecko:mcap/price"
+  ],
+  "Morpho|circulating_supply_implied": [
+   "coingecko:mcap/price"
+  ],
+  "Morpho|circulating_supply_onchain": [
+   "derived:onchain_total-noncirculating"
+  ],
+  "Morpho|circulating_supply_tokenops": [
+   "scrape:api.tokenops.xyz"
+  ],
+  "Morpho|circulating_supply_used": [
+   "circulating_supply_onchain"
+  ],
+  "Morpho|customer_revenue_usd": [
+   "derived:=fees_usd"
+  ],
+  "Morpho|emissions_tokens": [
+   "derived:sum(emissions_tokens_claims_ethereum+emissions_tokens_claims_arbitrum+emissions_tokens_claims_base+emissions_tokens_claims_katana)"
+  ],
+  "Morpho|emissions_tokens_claims_arbitrum": [
+   "probe:emissions_tokens_claims_arbitrum"
+  ],
+  "Morpho|emissions_tokens_claims_base": [
+   "probe:emissions_tokens_claims_base"
+  ],
+  "Morpho|emissions_tokens_claims_ethereum": [
+   "probe:emissions_tokens_claims_ethereum"
+  ],
+  "Morpho|emissions_tokens_claims_katana": [
+   "probe:emissions_tokens_claims_katana"
+  ],
+  "Morpho|fdv_usd": [
+   "chain:ethereum:token"
+  ],
+  "Morpho|fdv_usd_coingecko": [
+   "coingecko"
+  ],
+  "Morpho|fees_usd": [
+   "defillama"
+  ],
+  "Morpho|holders_revenue_usd": [
+   "defillama"
+  ],
+  "Morpho|issuer_return_tokens": [
+   "derived:issuer_return"
+  ],
+  "Morpho|liquidation_bonus_usd_day_morpho_api": [
+   "morpho_api:marketTransactions.Liquidation"
+  ],
+  "Morpho|market_cap_usd": [
+   "derived:price_x_circulating"
+  ],
+  "Morpho|market_cap_usd_coingecko": [
+   "coingecko"
+  ],
+  "Morpho|market_share_category_usd": [
+   "defillama:peers:lending \u2014 active loans (borrowed)"
+  ],
+  "Morpho|market_share_pct": [
+   "defillama:peers:lending \u2014 active loans (borrowed)"
+  ],
+  "Morpho|max_supply": [
+   "coingecko"
+  ],
+  "Morpho|noncirculating_entities_tokens": [
+   "chain:sum(ethereum:noncirc_rewards_multisig+ethereum:noncirc_association_master_safe+ethereum:noncirc_association_ops_safe+ethereum:noncirc_contributor_grants_safe+ethereum:noncirc_contributor_grants_safe_2+ethereum:noncirc_operative_safe_1+ethereum:noncirc_operative_safe_2+ethereum:noncirc_association_master_legacy+ethereum:noncirc_contributor_grants_2_legacy+ethereum:noncirc_rewards_multisig_legacy+ethereum:noncirc_operative_safe_2_legacy)"
+  ],
+  "Morpho|noncirculating_holding_tokens": [
+   "chain:sum(ethereum:noncirc_dao_treasury+ethereum:noncirc_dao_treasury_legacy+base:noncirc_dao_treasury_base)"
+  ],
+  "Morpho|outflow_b_tokens": [
+   "derived:outflow_b"
+  ],
+  "Morpho|outflow_b_usd": [
+   "derived:outflow_b*price"
+  ],
+  "Morpho|outflow_e_tokens": [
+   "derived:outflow_e"
+  ],
+  "Morpho|outflow_e_usd": [
+   "derived:outflow_e*price"
+  ],
+  "Morpho|price_usd": [
+   "coingecko"
+  ],
+  "Morpho|price_usd_coinbase": [
+   "coinbase_exchange:MORPHO-USD:open"
+  ],
+  "Morpho|price_usd_llama": [
+   "defillama_coins:ethereum:0x58d97b57bb95320f9a05dc918aef65434969c2b2"
+  ],
+  "Morpho|protocol_tvl_constant_price_usd": [
+   "probe:protocol_tvl_constant_price_usd"
+  ],
+  "Morpho|protocol_tvl_usd": [
+   "defillama"
+  ],
+  "Morpho|revenue_usd": [
+   "defillama"
+  ],
+  "Morpho|supply_units": [
+   "morpho_api:markets"
+  ],
+  "Morpho|total_supply": [
+   "chain:ethereum:token"
+  ],
+  "Morpho|total_supply_coingecko": [
+   "coingecko"
+  ],
+  "Morpho|unlock_release_tokens": [
+   "derived:unlock_release"
+  ],
+  "Morpho|utilisation_pct": [
+   "morpho_api:markets"
+  ],
+  "Morpho|volume_usd": [
+   "coingecko"
+  ],
+  "Near|active_addresses": [
+   "nearblocks"
+  ],
+  "Near|actual_buyback_tokens": [
+   "derived:d(buyback_fund_balance_eod)"
+  ],
+  "Near|actual_buyback_usd": [
+   "derived:tokens*price"
+  ],
+  "Near|buyback_burned_tokens": [
+   "derived:actual_buyback_tokens x burn share (from start: burn 0% / hold 100% / distribute 0%)"
+  ],
+  "Near|buyback_distributed_tokens": [
+   "derived:actual_buyback_tokens x distribute share (from start: burn 0% / hold 100% / distribute 0%)"
+  ],
+  "Near|buyback_fund_balance": [
+   "near_rpc:view_account"
+  ],
+  "Near|buyback_fund_balance_eod": [
+   "nearblocks:stats/balance"
+  ],
+  "Near|buyback_held_tokens": [
+   "derived:actual_buyback_tokens x hold share (from start: burn 0% / hold 100% / distribute 0%)"
+  ],
+  "Near|circulating_supply": [
+   "coingecko",
+   "coingecko:mcap/price"
+  ],
+  "Near|circulating_supply_first_party": [
+   "near_bigquery:circulating_supply"
+  ],
+  "Near|circulating_supply_implied": [
+   "coingecko:mcap/price"
+  ],
+  "Near|circulating_supply_lockup_rule": [
+   "first_party; no lockup read in force",
+   "total_supply \u2212 LOCKED \u2212 lockup.near \u2212 contributors.near, lockups read"
+  ],
+  "Near|circulating_supply_used": [
+   "circulating_supply_lockup_rule"
+  ],
+  "Near|dex_volume_usd": [
+   "defillama:dexs:near"
+  ],
+  "Near|emissions_tokens": [
+   "probe:emissions_tokens"
+  ],
+  "Near|fdv_usd": [
+   "coingecko"
+  ],
+  "Near|fdv_usd_coingecko": [
+   "coingecko"
+  ],
+  "Near|fees_native_tokens": [
+   "nearblocks"
+  ],
+  "Near|fees_total_usd": [
+   "derived:fees_total"
+  ],
+  "Near|fees_usd": [
+   "defillama"
+  ],
+  "Near|gross_burn_tokens": [
+   "derived:near_protocol_rule_x_defillama_fees/price"
+  ],
+  "Near|gross_burn_tokens_bigquery": [
+   "near_bigquery:blocks.total_supply"
+  ],
+  "Near|gross_issuance_tokens": [
+   "derived:d_total_supply_protocol+burn",
+   "near_bigquery:blocks.total_supply"
+  ],
+  "Near|gross_issuance_tokens_bigquery": [
+   "near_bigquery:blocks.total_supply"
+  ],
+  "Near|holder_value_revenue_usd": [
+   "derived:holder_value"
+  ],
+  "Near|holders_revenue_usd": [
+   "defillama"
+  ],
+  "Near|intents_fees_usd": [
+   "defillama:near-intents"
+  ],
+  "Near|intents_revenue_usd": [
+   "defillama:near-intents"
+  ],
+  "Near|issuer_return_tokens": [
+   "derived:issuer_return"
+  ],
+  "Near|locked_tokens": [
+   "near_rpc:validators"
+  ],
+  "Near|locked_tokens_nearblocks": [
+   "nearblocks:validators/info"
+  ],
+  "Near|market_cap_usd": [
+   "derived:price_x_circulating"
+  ],
+  "Near|market_cap_usd_coingecko": [
+   "coingecko"
+  ],
+  "Near|market_share_2_category_usd": [
+   "defillama:peers:chain fees \u2014 13 chains"
+  ],
+  "Near|market_share_2_pct": [
+   "defillama:peers:chain fees \u2014 13 chains"
+  ],
+  "Near|market_share_category_usd": [
+   "defillama:chain_tvl:all chains \u2014 TVL"
+  ],
+  "Near|market_share_pct": [
+   "defillama:chain_tvl:all chains \u2014 TVL"
+  ],
+  "Near|near_foundation_accounts_tokens": [
+   "near_rpc:view_account"
+  ],
+  "Near|near_intents_volume_usd": [
+   "defillama:overview/dexs:NEAR Intents"
+  ],
+  "Near|near_intents_volume_usd_nearblocks": [
+   "nearblocks"
+  ],
+  "Near|near_lockup_locked_tokens": [
+   "manual",
+   "probe:near_lockup_locked_tokens"
+  ],
+  "Near|near_lockup_release_tokens": [
+   "derived:unlock_release"
+  ],
+  "Near|near_lockup_unvested_tokens": [
+   "manual",
+   "probe:near_lockup_unvested_tokens"
+  ],
+  "Near|near_protocol_version": [
+   "near_rpc:status.protocol_version"
+  ],
+  "Near|network_reserve_ratio_throughput": [
+   "derived:market_cap/trading_throughput_365d"
+  ],
+  "Near|noncirculating_nearblocks_tokens": [
+   "nearblocks:stats"
+  ],
+  "Near|outflow_a_tokens": [
+   "derived:outflow_a"
+  ],
+  "Near|outflow_a_usd": [
+   "derived:outflow_a*price"
+  ],
+  "Near|outflow_e_tokens": [
+   "derived:outflow_e"
+  ],
+  "Near|outflow_e_usd": [
+   "derived:outflow_e*price"
+  ],
+  "Near|p2p_transfer_volume_usd": [
+   "near_bigquery:p2p"
+  ],
+  "Near|price_usd": [
+   "coingecko",
+   "defillama_coins:history"
+  ],
+  "Near|price_usd_coinbase": [
+   "coinbase_exchange:NEAR-USD:open"
+  ],
+  "Near|price_usd_llama": [
+   "defillama_coins:coingecko:near"
+  ],
+  "Near|retired_buyback_tokens": [
+   "derived:actual_buyback_tokens x burn+hold share (from start: burn 0% / hold 100% / distribute 0%)"
+  ],
+  "Near|retired_buyback_usd": [
+   "derived:actual_buyback_usd x burn+hold share (from start: burn 0% / hold 100% / distribute 0%)"
+  ],
+  "Near|revenue_total_usd": [
+   "derived:revenue_total"
+  ],
+  "Near|revenue_usd": [
+   "defillama"
+  ],
+  "Near|rwa_defillama_usd": [
+   "defillama"
+  ],
+  "Near|settlement_volume_usd": [
+   "probe:settlement_volume_usd"
+  ],
+  "Near|stablecoin_supply_usd": [
+   "defillama"
+  ],
+  "Near|total_supply": [
+   "coingecko",
+   "near_rpc:block.header.total_supply"
+  ],
+  "Near|total_supply_dashboard": [
+   "probe:total_supply_dashboard"
+  ],
+  "Near|total_supply_protocol": [
+   "near_rpc:block.header.total_supply"
+  ],
+  "Near|trading_throughput_365d_usd": [
+   "derived:sum365(derived:dex_volume_usd)"
+  ],
+  "Near|trading_throughput_usd": [
+   "derived:dex_volume_usd"
+  ],
+  "Near|tvl_usd": [
+   "defillama"
+  ],
+  "Near|tx_count": [
+   "nearblocks"
+  ],
+  "Near|tx_count_ex_kaiching": [
+   "near_bigquery:transactions"
+  ],
+  "Near|tx_count_kaiching": [
+   "near_bigquery:transactions"
+  ],
+  "Near|unlock_release_tokens": [
+   "derived:unlock_release"
+  ],
+  "Near|volume_usd": [
+   "coingecko"
+  ],
+  "Pendle|actual_buyback_tokens": [
+   "probe:actual_buyback_tokens"
+  ],
+  "Pendle|actual_buyback_usd": [
+   "derived:=holders_revenue_usd"
+  ],
+  "Pendle|boros_fees_usd": [
+   "defillama:boros"
+  ],
+  "Pendle|boros_volume_usd": [
+   "probe:boros_volume_usd"
+  ],
+  "Pendle|buyback_burned_tokens": [
+   "derived:actual_buyback_tokens x burn share (from start: burn 0% / hold 0% / distribute 100%)"
+  ],
+  "Pendle|buyback_distributed_tokens": [
+   "derived:actual_buyback_tokens x distribute share (from start: burn 0% / hold 0% / distribute 100%)"
+  ],
+  "Pendle|buyback_held_tokens": [
+   "derived:actual_buyback_tokens x hold share (from start: burn 0% / hold 0% / distribute 100%)"
+  ],
+  "Pendle|circulating_supply": [
+   "coingecko",
+   "coingecko:mcap/price"
+  ],
+  "Pendle|circulating_supply_implied": [
+   "coingecko:mcap/price"
+  ],
+  "Pendle|circulating_supply_onchain": [
+   "derived:onchain_total-noncirculating"
+  ],
+  "Pendle|circulating_supply_used": [
+   "circulating_supply_onchain"
+  ],
+  "Pendle|cooldown_days": [
+   "chain:ethereum:spendle_cooldown"
+  ],
+  "Pendle|emissions_tokens": [
+   "derived:sum(emissions_tokens_gauge_mainnet+emissions_tokens_gauge_arbitrum+emissions_tokens_gauge_optimism)"
+  ],
+  "Pendle|emissions_tokens_gauge_arbitrum": [
+   "explorer:gauge_pendle_out_arbitrum"
+  ],
+  "Pendle|emissions_tokens_gauge_arbitrum_direct": [
+   "explorer:direct:gauge_pendle_out_arbitrum"
+  ],
+  "Pendle|emissions_tokens_gauge_base": [
+   "probe:emissions_tokens_gauge_base"
+  ],
+  "Pendle|emissions_tokens_gauge_berachain": [
+   "probe:emissions_tokens_gauge_berachain"
+  ],
+  "Pendle|emissions_tokens_gauge_bsc": [
+   "probe:emissions_tokens_gauge_bsc"
+  ],
+  "Pendle|emissions_tokens_gauge_hyperevm": [
+   "probe:emissions_tokens_gauge_hyperevm"
+  ],
+  "Pendle|emissions_tokens_gauge_mainnet": [
+   "explorer:gauge_pendle_out"
+  ],
+  "Pendle|emissions_tokens_gauge_mainnet_direct": [
+   "explorer:direct:gauge_pendle_out"
+  ],
+  "Pendle|emissions_tokens_gauge_mantle": [
+   "probe:emissions_tokens_gauge_mantle"
+  ],
+  "Pendle|emissions_tokens_gauge_optimism": [
+   "explorer:gauge_pendle_out_optimism",
+   "manual"
+  ],
+  "Pendle|emissions_tokens_gauge_optimism_direct": [
+   "explorer:direct:gauge_pendle_out_optimism",
+   "manual"
+  ],
+  "Pendle|emissions_tokens_gauge_sonic": [
+   "probe:emissions_tokens_gauge_sonic"
+  ],
+  "Pendle|fdv_usd": [
+   "chain:ethereum:token"
+  ],
+  "Pendle|fdv_usd_coingecko": [
+   "coingecko"
+  ],
+  "Pendle|fees_usd": [
+   "defillama"
+  ],
+  "Pendle|holder_value_revenue_usd": [
+   "derived:holder_value"
+  ],
+  "Pendle|holders_revenue_usd": [
+   "defillama"
+  ],
+  "Pendle|insider_stake_shares": [
+   "probe:insider_stake_shares"
+  ],
+  "Pendle|issuer_return_tokens": [
+   "derived:issuer_return"
+  ],
+  "Pendle|issuer_to_gauges_tokens": [
+   "probe:issuer_to_gauges_tokens"
+  ],
+  "Pendle|latent_supply_tokens": [
+   "probe:latent_supply_tokens"
+  ],
+  "Pendle|lock_assets_per_share": [
+   "derived:ratio"
+  ],
+  "Pendle|locked_tokens": [
+   "chain:ethereum:spendle_underlying"
+  ],
+  "Pendle|locked_tokens_dashboard": [
+   "scrape:api-v2.pendle.finance"
+  ],
+  "Pendle|locked_tokens_legacy_vependle": [
+   "chain:ethereum:vependle_legacy"
+  ],
+  "Pendle|locked_tokens_shares": [
+   "chain:ethereum:spendle"
+  ],
+  "Pendle|locked_tokens_virtual": [
+   "scrape:api-v2.pendle.finance"
+  ],
+  "Pendle|market_cap_usd": [
+   "derived:price_x_circulating"
+  ],
+  "Pendle|market_cap_usd_coingecko": [
+   "coingecko"
+  ],
+  "Pendle|market_share_category_usd": [
+   "defillama:peers:yield tokenization \u2014 TVL"
+  ],
+  "Pendle|market_share_pct": [
+   "defillama:peers:yield tokenization \u2014 TVL"
+  ],
+  "Pendle|max_supply": [
+   "probe:max_supply"
+  ],
+  "Pendle|noncirc_ecosystem_fund_tokens": [
+   "probe:noncirc_ecosystem_fund_tokens"
+  ],
+  "Pendle|noncirc_governance_multisig_tokens": [
+   "probe:noncirc_governance_multisig_tokens"
+  ],
+  "Pendle|noncirc_team_multisig_tokens": [
+   "probe:noncirc_team_multisig_tokens"
+  ],
+  "Pendle|noncirculating_holding_tokens": [
+   "chain:sum(ethereum:noncirc_ecosystem_fund+ethereum:noncirc_governance_multisig+ethereum:noncirc_team_multisig)"
+  ],
+  "Pendle|outflow_b_tokens": [
+   "derived:outflow_b"
+  ],
+  "Pendle|outflow_b_usd": [
+   "derived:outflow_b*price"
+  ],
+  "Pendle|outflow_e_tokens": [
+   "derived:outflow_e"
+  ],
+  "Pendle|outflow_e_usd": [
+   "derived:outflow_e*price"
+  ],
+  "Pendle|pendle_distributed_tokens": [
+   "pendle_api:sPendleHistoricalData.buybackAmounts"
+  ],
+  "Pendle|pendle_epoch_apr_published": [
+   "probe:pendle_epoch_apr_published"
+  ],
+  "Pendle|price_usd": [
+   "coingecko",
+   "defillama_coins:history"
+  ],
+  "Pendle|price_usd_coinbase": [
+   "coinbase_exchange:PENDLE-USD:open"
+  ],
+  "Pendle|price_usd_llama": [
+   "defillama_coins:ethereum:0x808507121b80c02388fad14726482e061b8da827"
+  ],
+  "Pendle|protocol_tvl_constant_price_usd": [
+   "probe:protocol_tvl_constant_price_usd"
+  ],
+  "Pendle|protocol_tvl_usd": [
+   "defillama"
+  ],
+  "Pendle|retired_buyback_tokens": [
+   "derived:actual_buyback_tokens x burn+hold share (from start: burn 0% / hold 0% / distribute 100%)"
+  ],
+  "Pendle|retired_buyback_usd": [
+   "derived:actual_buyback_usd x burn+hold share (from start: burn 0% / hold 0% / distribute 100%)"
+  ],
+  "Pendle|revenue_usd": [
+   "defillama"
+  ],
+  "Pendle|staking_apr_published": [
+   "pendle_api:lastEpochApr"
+  ],
+  "Pendle|subsidy_emissions_to_covered_share": [
+   "probe:subsidy_emissions_to_covered_share"
+  ],
+  "Pendle|subsidy_emissions_usd": [
+   "probe:subsidy_emissions_usd"
+  ],
+  "Pendle|subsidy_fee_cover_pools": [
+   "probe:subsidy_fee_cover_pools"
+  ],
+  "Pendle|token_yield_epoch_mean_pct": [
+   "derived:mean of 4 Q0 epoch APRs \u2014 07-28 2.30% (calibrated on-chain rebuild); 08-11 1.12% (calibrated on-chain rebuild); 08-25 1.68% (calibrated on-chain rebuild); 09-08 1.01% (calibrated on-chain rebuild); 09-22 left out (0 read; within Pendle's observed 7-day publish lag (ended 2026-10-06))"
+  ],
+  "Pendle|total_supply": [
+   "chain:ethereum:token"
+  ],
+  "Pendle|total_supply_coingecko": [
+   "coingecko"
+  ],
+  "Pendle|total_supply_gross": [
+   "chain:ethereum:token_gross"
+  ],
+  "Pendle|treasury_holding_tokens": [
+   "chain:ethereum:treasury"
+  ],
+  "Pendle|tvl_maturity_31_90d_usd": [
+   "probe:tvl_maturity_31_90d_usd"
+  ],
+  "Pendle|tvl_maturity_91_180d_usd": [
+   "probe:tvl_maturity_91_180d_usd"
+  ],
+  "Pendle|tvl_maturity_gt_180d_usd": [
+   "probe:tvl_maturity_gt_180d_usd"
+  ],
+  "Pendle|tvl_maturity_le_30d_usd": [
+   "probe:tvl_maturity_le_30d_usd"
+  ],
+  "Pendle|tvl_maturity_total_usd": [
+   "probe:tvl_maturity_total_usd"
+  ],
+  "Pendle|unlock_release_tokens": [
+   "derived:unlock_release-issuer_to_gauges_tokens"
+  ],
+  "Pendle|vependle_voting_supply_tokens": [
+   "chain:ethereum:vependle_voting_supply"
+  ],
+  "Pendle|volume_usd": [
+   "coingecko"
+  ],
+  "Plume|active_addresses": [
+   "blockscout_stats:activeAccounts"
+  ],
+  "Plume|active_addresses_growthepie": [
+   "growthepie"
+  ],
+  "Plume|circulating_supply": [
+   "coingecko",
+   "coingecko:mcap/price"
+  ],
+  "Plume|circulating_supply_first_party": [
+   "coingecko:mirror_of_supply.plume.org",
+   "scrape:supply.plume.org"
+  ],
+  "Plume|circulating_supply_implied": [
+   "coingecko:mcap/price"
+  ],
+  "Plume|circulating_supply_used": [
+   "circulating_supply",
+   "circulating_supply_first_party"
+  ],
+  "Plume|dex_volume_usd": [
+   "defillama:dexs:plume-mainnet"
+  ],
+  "Plume|emissions_claimed_tokens": [
+   "probe:emissions_claimed_tokens"
+  ],
+  "Plume|fdv_usd": [
+   "coingecko"
+  ],
+  "Plume|fdv_usd_coingecko": [
+   "coingecko"
+  ],
+  "Plume|fees_native_tokens": [
+   "blockscout_stats:txnsFee"
+  ],
+  "Plume|fees_usd": [
+   "probe:fees_usd"
+  ],
+  "Plume|fees_usd_defillama": [
+   "probe:fees_usd_defillama"
+  ],
+  "Plume|fees_usd_growthepie": [
+   "growthepie"
+  ],
+  "Plume|gross_issuance_tokens": [
+   "derived:d_total_supply_protocol"
+  ],
+  "Plume|locked_tokens": [
+   "plume_staking:0x30c791E4.totalAmountStaked"
+  ],
+  "Plume|market_cap_usd": [
+   "derived:price_x_circulating"
+  ],
+  "Plume|market_cap_usd_coingecko": [
+   "coingecko"
+  ],
+  "Plume|max_supply": [
+   "coingecko"
+  ],
+  "Plume|network_reserve_ratio_throughput": [
+   "derived:market_cap/trading_throughput_365d"
+  ],
+  "Plume|p2p_transfer_volume_usd": [
+   "plume_settlement:p2p"
+  ],
+  "Plume|price_usd": [
+   "coingecko",
+   "defillama_coins:history"
+  ],
+  "Plume|price_usd_coinbase": [
+   "coinbase_exchange:PLUME-USD:open"
+  ],
+  "Plume|price_usd_llama": [
+   "defillama_coins:ethereum:0x4c1746a800d224393fe2470c70a35717ed4ea5f1"
+  ],
+  "Plume|rwa_defillama_usd": [
+   "defillama"
+  ],
+  "Plume|settlement_volume_usd": [
+   "probe:settlement_volume_usd"
+  ],
+  "Plume|stablecoin_supply_usd": [
+   "defillama"
+  ],
+  "Plume|staking_apy_published": [
+   "manual",
+   "probe:staking_apy_published"
+  ],
+  "Plume|staking_commission_pct": [
+   "plume_staking:0x30c791E4.getValidatorsList.commission"
+  ],
+  "Plume|staking_yield_net_pct": [
+   "plume_staking:0x30c791E4.gross*active(1-commission)"
+  ],
+  "Plume|staking_yield_pct": [
+   "plume_staking:0x30c791E4.getRewardRate(PLUME_NATIVE)"
+  ],
+  "Plume|total_supply": [
+   "coingecko"
+  ],
+  "Plume|total_supply_protocol": [
+   "chain:ethereum:token_ethereum"
+  ],
+  "Plume|trading_throughput_365d_usd": [
+   "derived:sum365(derived:dex_volume_usd)"
+  ],
+  "Plume|trading_throughput_usd": [
+   "derived:dex_volume_usd"
+  ],
+  "Plume|tvl_usd": [
+   "defillama"
+  ],
+  "Plume|tx_count": [
+   "blockscout_stats:newTxns-newBlocks"
+  ],
+  "Plume|tx_count_growthepie": [
+   "growthepie"
+  ],
+  "Plume|volume_usd": [
+   "coingecko"
+  ],
+  "Sky|actual_buyback_tokens": [
+   "explorer:flapper_purchases"
+  ],
+  "Sky|actual_buyback_usd": [
+   "derived:tokens*price"
+  ],
+  "Sky|burn_address_balance": [
+   "chain:ethereum:burn_logs"
+  ],
+  "Sky|buyback_burned_tokens": [
+   "derived:actual_buyback_tokens x burn share (from 2026-08-17: burn 18% / hold 0% / distribute 82%; from start: burn 0% / hold 100% / distribute 0%)"
+  ],
+  "Sky|buyback_distributed_tokens": [
+   "derived:actual_buyback_tokens x distribute share (from 2026-08-17: burn 18% / hold 0% / distribute 82%; from start: burn 0% / hold 100% / distribute 0%)"
+  ],
+  "Sky|buyback_held_tokens": [
+   "derived:actual_buyback_tokens x hold share (from 2026-08-17: burn 18% / hold 0% / distribute 82%; from start: burn 0% / hold 100% / distribute 0%)"
+  ],
+  "Sky|buyback_last_inflow_date": [
+   "explorer:flapper_purchases"
+  ],
+  "Sky|buyback_spending_usd_ba": [
+   "sky_accounting:cash-flow.Buyback_Spending"
+  ],
+  "Sky|buyback_spending_usd_ba_daily": [
+   "probe:buyback_spending_usd_ba_daily"
+  ],
+  "Sky|circulating_supply": [
+   "coingecko",
+   "coingecko:mcap/price"
+  ],
+  "Sky|circulating_supply_implied": [
+   "coingecko:mcap/price"
+  ],
+  "Sky|circulating_supply_onchain": [
+   "derived:onchain_total-noncirculating"
+  ],
+  "Sky|circulating_supply_used": [
+   "circulating_supply",
+   "circulating_supply_onchain"
+  ],
+  "Sky|emissions_mint_funded_tokens": [
+   "derived:emissions_tokens"
+  ],
+  "Sky|emissions_rate_current_annual_tokens": [
+   "sky_mkr:dss_vest.awards"
+  ],
+  "Sky|emissions_revenue_funded_tokens": [
+   "derived:emissions_tokens"
+  ],
+  "Sky|emissions_tokens": [
+   "explorer:lssky_rewards_released"
+  ],
+  "Sky|emissions_tokens_declared": [
+   "schedule:config"
+  ],
+  "Sky|emissions_tokens_scan": [
+   "explorer:lssky_rewards_released"
+  ],
+  "Sky|emissions_treasury_funded_tokens": [
+   "derived:emissions_tokens"
+  ],
+  "Sky|fdv_usd": [
+   "chain:ethereum:token"
+  ],
+  "Sky|fdv_usd_coingecko": [
+   "coingecko"
+  ],
+  "Sky|fees_usd": [
+   "defillama"
+  ],
+  "Sky|gross_burn_tokens": [
+   "chain:ethereum:burn_logs"
+  ],
+  "Sky|gross_issuance_tokens": [
+   "schedule:config:declared"
+  ],
+  "Sky|holder_value_revenue_usd": [
+   "derived:holder_value"
+  ],
+  "Sky|holders_revenue_usd": [
+   "defillama"
+  ],
+  "Sky|locked_tokens": [
+   "chain:ethereum:lssky"
+  ],
+  "Sky|locked_tokens_dashboard": [
+   "probe:locked_tokens_dashboard"
+  ],
+  "Sky|locked_tokens_sky_farm": [
+   "chain:ethereum:sky_farm_stake"
+  ],
+  "Sky|locked_tokens_sky_farm_ba": [
+   "sky_accounting:info-sky.farm.total_staked"
+  ],
+  "Sky|locked_tokens_usds_farm": [
+   "chain:ethereum:usds_farm_stake"
+  ],
+  "Sky|locked_tokens_usds_farm_ba": [
+   "sky_accounting:info-sky.farm.total_staked"
+  ],
+  "Sky|market_cap_usd": [
+   "derived:price_x_circulating"
+  ],
+  "Sky|market_cap_usd_coingecko": [
+   "coingecko"
+  ],
+  "Sky|market_share_category_usd": [
+   "defillama:stablecoins:USD stablecoins \u2014 supply"
+  ],
+  "Sky|market_share_pct": [
+   "defillama:stablecoins:USD stablecoins \u2014 supply"
+  ],
+  "Sky|max_supply": [
+   "coingecko"
+  ],
+  "Sky|mkr_issuer_tokens": [
+   "sky_mkr:mkr.balanceOf(pause_proxy)"
+  ],
+  "Sky|mkr_outstanding_tokens": [
+   "sky_mkr:mkr.totalSupply"
+  ],
+  "Sky|mkr_sky_fee": [
+   "sky_mkr:mkr_sky.fee"
+  ],
+  "Sky|net_protocol_surplus_usd": [
+   "sky_accounting:pnl.revenue-expense-revenue_distribution"
+  ],
+  "Sky|net_protocol_surplus_usd_reported": [
+   "manual"
+  ],
+  "Sky|net_revenue_msc_usd": [
+   "probe:net_revenue_msc_usd"
+  ],
+  "Sky|net_revenue_pre_distribution_usd": [
+   "probe:net_revenue_pre_distribution_usd"
+  ],
+  "Sky|noncirculating_holding_tokens": [
+   "chain:sum(ethereum:noncirc_mkr_sky_converter+ethereum:noncirc_mkr_sky_legacy_converter)"
+  ],
+  "Sky|other_burn_balance": [
+   "chain:ethereum:burn_logs"
+  ],
+  "Sky|other_burn_tokens": [
+   "chain:ethereum:burn_logs"
+  ],
+  "Sky|outflow_c_tokens": [
+   "derived:outflow_c"
+  ],
+  "Sky|outflow_c_usd": [
+   "derived:outflow_c*price"
+  ],
+  "Sky|outflow_e_tokens": [
+   "derived:outflow_e"
+  ],
+  "Sky|outflow_e_usd": [
+   "derived:outflow_e*price"
+  ],
+  "Sky|price_usd": [
+   "coingecko"
+  ],
+  "Sky|price_usd_coinbase": [
+   "coinbase_exchange:SKY-USD:open"
+  ],
+  "Sky|price_usd_llama": [
+   "defillama_coins:ethereum:0x56072c95faa701256059aa122697b133aded9279"
+  ],
+  "Sky|protocol_tvl_usd": [
+   "defillama"
+  ],
+  "Sky|retired_buyback_tokens": [
+   "derived:actual_buyback_tokens x burn+hold share (from 2026-08-17: burn 18% / hold 0% / distribute 82%; from start: burn 0% / hold 100% / distribute 0%)"
+  ],
+  "Sky|retired_buyback_usd": [
+   "derived:actual_buyback_usd x burn+hold share (from 2026-08-17: burn 18% / hold 0% / distribute 82%; from start: burn 0% / hold 100% / distribute 0%)"
+  ],
+  "Sky|revenue_allocation_usd_ba": [
+   "sky_accounting:pnl.revenue_distribution-security_and_maintenance"
+  ],
+  "Sky|revenue_usd": [
+   "defillama"
+  ],
+  "Sky|revenue_usd_ba": [
+   "sky_accounting:pnl.revenue"
+  ],
+  "Sky|revenue_usd_reported": [
+   "manual"
+  ],
+  "Sky|sky_cumulative_buyback_ba": [
+   "sky_accounting:info-sky.buyback.sky_cumulative_buyback"
+  ],
+  "Sky|sky_farm_apy_ba": [
+   "sky_accounting:info-sky.farm.apy"
+  ],
+  "Sky|sky_farm_reward_rate_tokens_per_s": [
+   "chain:ethereum:sky_farm_reward_rate"
+  ],
+  "Sky|sky_farm_rewards_tokens_ba": [
+   "sky_accounting:info-sky.farm.d(total_farmed)"
+  ],
+  "Sky|sky_mkr_nonissuer_backing_tokens": [
+   "sky_mkr:(mkr.totalSupply-pause_proxy)xratex(1-fee)"
+  ],
+  "Sky|sky_stage2_burn_balance": [
+   "chain:ethereum:burn_logs"
+  ],
+  "Sky|sky_stage2_burn_tokens": [
+   "chain:ethereum:burn_logs"
+  ],
+  "Sky|staking_rewards_usd_ba": [
+   "sky_accounting:cash-flow.Staking_Rewards"
+  ],
+  "Sky|staking_rewards_usds_usd": [
+   "explorer:usds_farm_rewards"
+  ],
+  "Sky|staking_yield_usds_farm_28d_pct": [
+   "derived:staking_rewards_usds_usd / same-day price_usd, 28d, / mean locked_tokens_usds_farm \u2014 PAYMENT-DAY PRICES: $2,392,200 paid over 27 day(s) 2026-09-16..2026-10-12, each day's $ / that day's price = 31,658,228 tokens (payment-weighted price $0.0756) x 365/27 / mean stake 8,636,543,829 over its 28 stored day(s) in the window = 4.96%"
+  ],
+  "Sky|total_supply": [
+   "chain:ethereum:token"
+  ],
+  "Sky|total_supply_coingecko": [
+   "coingecko"
+  ],
+  "Sky|total_supply_protocol": [
+   "chain:ethereum:token_supply_protocol"
+  ],
+  "Sky|treasury_holding_tokens": [
+   "chain:ethereum:pause_proxy"
+  ],
+  "Sky|usds_farm_apy_ba": [
+   "sky_accounting:info-sky.farm.apy"
+  ],
+  "Sky|usds_farm_reward_rate_usds_per_s": [
+   "chain:ethereum:usds_farm_reward_rate"
+  ],
+  "Sky|usds_farm_rewards_usds_ba": [
+   "sky_accounting:info-sky.farm.d(total_farmed)"
+  ],
+  "Sky|usds_supply_tokens": [
+   "chain:ethereum:usds_supply"
+  ],
+  "Sky|volume_usd": [
+   "coingecko"
+  ],
+  "Uniswap|actual_buyback_tokens": [
+   "chain:ethereum:burn_dead"
+  ],
+  "Uniswap|actual_buyback_usd": [
+   "derived:tokens*price"
+  ],
+  "Uniswap|burn_address_balance": [
+   "chain:ethereum:burn_dead"
+  ],
+  "Uniswap|buyback_burned_tokens": [
+   "derived:actual_buyback_tokens x burn share (from start: burn 100% / hold 0% / distribute 0%)"
+  ],
+  "Uniswap|buyback_distributed_tokens": [
+   "derived:actual_buyback_tokens x distribute share (from start: burn 100% / hold 0% / distribute 0%)"
+  ],
+  "Uniswap|buyback_fund_balance": [
+   "chain:sum(ethereum:token_jar+ethereum:v3_fee_adapter)"
+  ],
+  "Uniswap|buyback_held_tokens": [
+   "derived:actual_buyback_tokens x hold share (from start: burn 100% / hold 0% / distribute 0%)"
+  ],
+  "Uniswap|circulating_supply": [
+   "coingecko",
+   "coingecko:mcap/price"
+  ],
+  "Uniswap|circulating_supply_implied": [
+   "coingecko:mcap/price"
+  ],
+  "Uniswap|circulating_supply_onchain": [
+   "derived:onchain_total-noncirculating"
+  ],
+  "Uniswap|circulating_supply_used": [
+   "circulating_supply_onchain"
+  ],
+  "Uniswap|dex_volume_v2_usd": [
+   "defillama:overview/dexs:Uniswap V2"
+  ],
+  "Uniswap|dex_volume_v3_usd": [
+   "defillama:overview/dexs:Uniswap V3"
+  ],
+  "Uniswap|dex_volume_v4_usd": [
+   "defillama:overview/dexs:Uniswap V4"
+  ],
+  "Uniswap|fdv_usd": [
+   "coingecko"
+  ],
+  "Uniswap|fdv_usd_coingecko": [
+   "coingecko"
+  ],
+  "Uniswap|fees_usd": [
+   "defillama"
+  ],
+  "Uniswap|gross_burn_tokens": [
+   "chain:ethereum:burn_dead"
+  ],
+  "Uniswap|gross_issuance_tokens": [
+   "derived:d_supply_gross"
+  ],
+  "Uniswap|growth_budget_release_tokens": [
+   "derived:unlock_release"
+  ],
+  "Uniswap|holder_value_revenue_usd": [
+   "derived:holder_value"
+  ],
+  "Uniswap|holders_revenue_usd": [
+   "defillama"
+  ],
+  "Uniswap|issuer_return_tokens": [
+   "derived:issuer_return"
+  ],
+  "Uniswap|market_cap_usd": [
+   "derived:price_x_circulating"
+  ],
+  "Uniswap|market_cap_usd_coingecko": [
+   "coingecko"
+  ],
+  "Uniswap|market_share_category_usd": [
+   "defillama:overview:Dexs"
+  ],
+  "Uniswap|market_share_pct": [
+   "defillama:overview:Dexs"
+  ],
+  "Uniswap|max_supply": [
+   "coingecko"
+  ],
+  "Uniswap|noncirculating_holding_tokens": [
+   "chain:sum(ethereum:noncirc_treasury_vesting_1+ethereum:noncirc_treasury_vesting_2+ethereum:noncirc_treasury_vesting_3+ethereum:noncirc_treasury_vesting_4+ethereum:noncirc_merkle_distributor)"
+  ],
+  "Uniswap|one_off_burn_tokens": [
+   "one_off:UNIfication retroactive treasury burn (100,000,000 UNI) (https://vote.uniswapfoundation.org/proposals/93)"
+  ],
+  "Uniswap|outflow_d_tokens": [
+   "derived:outflow_d"
+  ],
+  "Uniswap|outflow_d_usd": [
+   "derived:outflow_d*price"
+  ],
+  "Uniswap|outflow_e_tokens": [
+   "derived:outflow_e"
+  ],
+  "Uniswap|outflow_e_usd": [
+   "derived:outflow_e*price"
+  ],
+  "Uniswap|price_usd": [
+   "coingecko"
+  ],
+  "Uniswap|price_usd_coinbase": [
+   "coinbase_exchange:UNI-USD:open"
+  ],
+  "Uniswap|price_usd_llama": [
+   "defillama_coins:ethereum:0x1f9840a85d5af5bf1d1762f925bdaddc4201f984"
+  ],
+  "Uniswap|protocol_dex_volume_usd": [
+   "defillama:overview/dexs:Uniswap V1+Uniswap V2+Uniswap V3+Uniswap V4"
+  ],
+  "Uniswap|protocol_tvl_usd": [
+   "defillama"
+  ],
+  "Uniswap|retired_buyback_tokens": [
+   "derived:actual_buyback_tokens x burn+hold share (from start: burn 100% / hold 0% / distribute 0%)"
+  ],
+  "Uniswap|retired_buyback_usd": [
+   "derived:actual_buyback_usd x burn+hold share (from start: burn 100% / hold 0% / distribute 0%)"
+  ],
+  "Uniswap|revenue_usd": [
+   "defillama"
+  ],
+  "Uniswap|total_supply": [
+   "coingecko"
+  ],
+  "Uniswap|total_supply_gross": [
+   "chain:ethereum:token"
+  ],
+  "Uniswap|treasury_holding_tokens": [
+   "chain:ethereum:treasury"
+  ],
+  "Uniswap|unlock_release_tokens": [
+   "derived:unlock_release"
+  ],
+  "Uniswap|unlock_release_vesting_tokens": [
+   "derived:unlock_release"
+  ],
+  "Uniswap|volume_usd": [
+   "coingecko"
+  ]
+ },
+ "headlines": {
+  "Aerodrome": {
+   "A3 | Actual buyback as % of supply (annualised) \u2014 RETIRED (burned + held) only": 0.0045245287413494305,
+   "A3 | BUYBACK AS % OF SUPPLY (annualised, implied)": 0.0,
+   "A3 | CIRCULATING RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) \u00f7 circulating \u2014 primary": 0.0045245287413494305,
+   "A3 | FDV RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) \u00f7 FDV supply (the total supply FDV uses) \u2014 always read with the rate to its left": 0.0034354666352518527,
+   "A3 | Net absorption Q0 (tokens) = RETIRED buyback (burned + held) \u2212 emissions": -58087576.12977486,
+   "A3 | PROTOCOL STAKING YIELD (tokens) \u2014 primary: tokens paid to stakers per year \u00f7 reward-bearing stake (real + virtual); dollars paid are converted at each PAYMENT DAY's price (Aerodrome, Sky \u2014 Jake's price convention 2026-10-09) over the mean stake in the same window": 0.1203459044595958,
+   "CP | BUSINESS 1 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 154739057236.8333,
+   "CP | BUSINESS 2 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 1.0,
+   "CP | HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) \u00f7 market cap \u2014 treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": 0.07974063731850535,
+   "CP | MARKET SHARE vs its category (now; a shifted quarter: that quarter's mean) \u2014 peer set beside": 0.0913998642749294,
+   "CP | NET HOLDER YIELD = holder value yield \u2212 dilution (outflows a+b+c+d+e at each day's price, annualised) \u00f7 market cap": -0.016139850721273802,
+   "CP | SUBSIDY COVER = revenue \u00f7 $ supply-side incentives (b), per covered day": 1.1155019267686912,
+   "CP | TRADEABLE FLOAT = circulating \u2212 staked/locked \u2212 protocol/treasury-held (tokens) \u2014 protocol/treasury-held is already out of circulating by the convention, so this is A2's free float": 903043091.0131285
+  },
+  "Aethir": {
+   "A2 | CUSTOMER REVENUE PER TOKEN EMITTED ($/token) \u2014 key ratio": 0.04178376847401636,
+   "A2 | Customer revenue Q0 ($)": 11925590.09132746,
+   "A2 | Customer revenue \u00f7 emissions value (x)": 8.521311384446905,
+   "A2 | Emissions to suppliers Q0 (tokens)": 285412027.848649,
+   "A2 | FREE FLOAT = circulating \u2212 locked (tokens)": 22259833682.57,
+   "A2 | FREE FLOAT \u00f7 ARR (x) = free float market cap \u00f7 ARR (the project's own where published, else customer revenue annualised) \u2014 headline": 2.6645170893650327,
+   "A2 | SUPPLY TRAJECTORY = emissions (annualised) \u00f7 free float \u2014 annual dilution %": 0.05199968479864789,
+   "CP | BUSINESS 1 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 48364893.14816137,
+   "CP | BUSINESS 2 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 1077083211.110272,
+   "CP | TRADEABLE FLOAT = circulating \u2212 staked/locked \u2212 protocol/treasury-held (tokens) \u2014 protocol/treasury-held is already out of circulating by the convention, so this is A2's free float": 22259833682.57
+  },
+  "Chainlink": {
+   "A1 | Gross issuance Q0 (tokens)": 0.0,
+   "A1 | NET ISSUANCE AFTER BURN Q0 (tokens) \u2014 issuance \u2212 every burn, on the basis A4 uses": 0.0,
+   "A1 | NET ISSUANCE AFTER BURN, annualised % of circulating (+ is net inflation; fee-market burns included)": 0.0,
+   "A1 | TOTAL YIELD \u2014 stakers = validator staking yield \u2212 net inflation \u2212 issuer releases (annual; rewards and foundation releases paid from issuer reserves count)": -0.05497477705226458,
+   "A1 | VALIDATOR STAKING YIELD (annual) \u2014 securing the chain, NOT a protocol revenue share": 0.04765737890131668,
+   "A2 | CUSTOMER REVENUE PER TOKEN EMITTED ($/token) \u2014 key ratio": 31.8718448551814,
+   "A2 | Customer revenue Q0 ($)": 15914110.05090114,
+   "A2 | Customer revenue \u00f7 emissions value (x)": 2.91669190429098,
+   "A2 | Emissions to suppliers Q0 (tokens)": 499315.6224,
+   "A2 | FREE FLOAT = circulating \u2212 locked (tokens)": 718120127.2729971,
+   "A2 | FREE FLOAT \u00f7 ARR (x) = free float market cap \u00f7 ARR (the project's own where published, else customer revenue annualised) \u2014 headline": 143.74694986857932,
+   "A2 | SUPPLY TRAJECTORY = emissions (annualised) \u00f7 free float \u2014 annual dilution %": 0.00281986560394816,
+   "A3 | Actual buyback as % of supply (annualised) \u2014 RETIRED (burned + held) only": 0.007478969697521125,
+   "A3 | Buyback to LOCKED supply (destination = hold) \u2014 reduces effective float": 6204681.792609468,
+   "A3 | CIRCULATING RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) \u00f7 circulating \u2014 primary": 0.007478969697521125,
+   "A3 | FDV RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) \u00f7 FDV supply (the total supply FDV uses) \u2014 always read with the rate to its left": 0.0056888432846651776,
+   "A3 | Net absorption Q0 (tokens) = RETIRED buyback (burned + held) \u2212 emissions": 903412.858750318,
+   "CP | BUSINESS 1 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 559569.3333333333,
+   "CP | BUSINESS 2 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 5688843.284665178,
+   "CP | BUSINESS 3 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 64540557.42865462,
+   "CP | BUSINESS 4 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 365.0,
+   "CP | HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) \u00f7 market cap \u2014 treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": 0.005930254280097274,
+   "CP | NET HOLDER YIELD = holder value yield \u2212 dilution (outflows a+b+c+d+e at each day's price, annualised) \u00f7 market cap": -0.09538229350914539,
+   "CP | TRADEABLE FLOAT = circulating \u2212 staked/locked \u2212 protocol/treasury-held (tokens) \u2014 protocol/treasury-held is already out of circulating by the convention, so this is A2's free float": 718120127.2729971
+  },
+  "Ether.fi": {
+   "A3 | Actual buyback as % of supply (annualised) \u2014 RETIRED (burned + held) only": 0.0,
+   "A3 | CIRCULATING RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) \u00f7 circulating \u2014 primary": 0.0,
+   "A3 | FDV RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) \u00f7 FDV supply (the total supply FDV uses) \u2014 always read with the rate to its left": 0.0,
+   "A3 | PROTOCOL STAKING YIELD (tokens) \u2014 primary: tokens paid to stakers per year \u00f7 reward-bearing stake (real + virtual); dollars paid are converted at each PAYMENT DAY's price (Aerodrome, Sky \u2014 Jake's price convention 2026-10-09) over the mean stake in the same window": 0.07880509259681512,
+   "CP | BUSINESS 1 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 4780411852.0,
+   "CP | BUSINESS 2 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 1373579063.5555556,
+   "CP | BUSINESS 3 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 1.0,
+   "CP | HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) \u00f7 market cap \u2014 treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": 0.0,
+   "CP | MARKET SHARE vs its category (now; a shifted quarter: that quarter's mean) \u2014 peer set beside": 0.1110851748666935,
+   "CP | NET HOLDER YIELD = holder value yield \u2212 dilution (outflows a+b+c+d+e at each day's price, annualised) \u00f7 market cap": -0.04141463721236282,
+   "CP | TRADEABLE FLOAT = circulating \u2212 staked/locked \u2212 protocol/treasury-held (tokens) \u2014 protocol/treasury-held is already out of circulating by the convention, so this is A2's free float": 722641283.712476
+  },
+  "Ethereum": {
+   "A1 | FEES \u00f7 ISSUANCE (x) \u2014 key ratio": 0.06266608541882758,
+   "A1 | Gross burn Q0 (tokens) \u2014 every burn, fee-market included": 4764.739966655914,
+   "A1 | Gross issuance Q0 (tokens)": 260697.0630432548,
+   "A1 | NET ISSUANCE AFTER BURN Q0 (tokens) \u2014 issuance \u2212 every burn, on the basis A4 uses": 244733.1873774529,
+   "A1 | NET ISSUANCE AFTER BURN, annualised % of circulating (+ is net inflation; fee-market burns included)": 0.008126776957468836,
+   "A1 | NRR ON TRADING THROUGHPUT \u2014 market cap \u00f7 trailing-365d DEX + perps volume (DefiLlama)": 0.5327029099382382,
+   "A1 | TOTAL YIELD \u2014 stakers = validator staking yield \u2212 net inflation \u2212 issuer releases (annual; rewards and foundation releases paid from issuer reserves count)": 0.017849126201818957,
+   "A1 | TVL \u2014 chain ($) [primary demand metric]": 51408129742.0,
+   "A1 | VALIDATOR STAKING YIELD (annual) \u2014 securing the chain, NOT a protocol revenue share": 0.025975903159287793,
+   "CP | BUSINESS 1 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 742433003.111111,
+   "CP | BUSINESS 2 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 11331996817.11111,
+   "CP | BUSINESS 3 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 151638256.3888889,
+   "CP | MARKET SHARE vs its category (now; a shifted quarter: that quarter's mean) \u2014 peer set beside": 0.5577503875502422,
+   "CP | MARKET SHARE, SECOND BASIS \u2014 chain fees vs 13 chains (now; a shifted quarter: that quarter's mean)": 0.118895121703392,
+   "CP | TRADEABLE FLOAT = circulating \u2212 staked/locked \u2212 protocol/treasury-held (tokens) \u2014 protocol/treasury-held is already out of circulating by the convention, so this is A2's free float": 78452006.7379206
+  },
+  "Fluid": {
+   "A3 | Actual buyback as % of supply (annualised) \u2014 RETIRED (burned + held) only": 3.640945725905916e-07,
+   "A3 | BUYBACK AS % OF SUPPLY (annualised, implied)": 0.0,
+   "A3 | CIRCULATING RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) \u00f7 circulating \u2014 primary": 0.0,
+   "A3 | FDV RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) \u00f7 FDV supply (the total supply FDV uses) \u2014 always read with the rate to its left": 0.0,
+   "A3 | Net absorption Q0 (tokens) = RETIRED buyback (burned + held) \u2212 emissions": -137922.7380952933,
+   "CP | BUSINESS 1 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 916054569.0,
+   "CP | BUSINESS 2 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 36257756540.44444,
+   "CP | BUSINESS 3 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 1.0,
+   "CP | HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) \u00f7 market cap \u2014 treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": 1.6220676400759088e-07,
+   "CP | MARKET SHARE vs its category (now; a shifted quarter: that quarter's mean) \u2014 peer set beside": 0.02772241707597547,
+   "CP | NET HOLDER YIELD = holder value yield \u2212 dilution (outflows a+b+c+d+e at each day's price, annualised) \u00f7 market cap": -0.008599562657852737
+  },
+  "GEODNET": {
+   "A2 | CUSTOMER REVENUE PER TOKEN EMITTED ($/token) \u2014 key ratio": 0.22856258145920239,
+   "A2 | Customer revenue Q0 ($)": 2693724.0,
+   "A2 | Customer revenue \u00f7 emissions value (x)": 0.9988181747115966,
+   "A2 | Emissions to suppliers Q0 (tokens)": 11785498.67087855,
+   "A2 | FREE FLOAT = circulating \u2212 locked (tokens)": 513407599.8067304,
+   "A2 | FREE FLOAT \u00f7 ARR (x) = free float market cap \u00f7 ARR (the project's own where published, else customer revenue annualised) \u2014 headline": 12.528133298100812,
+   "A2 | SUPPLY TRAJECTORY = emissions (annualised) \u00f7 free float \u2014 annual dilution %": 0.09309707263325855,
+   "A3 | Actual buyback as % of supply (annualised) \u2014 RETIRED (burned + held) only": 0.07701630986378712,
+   "A3 | BUYBACK AS % OF SUPPLY (annualised, implied)": 0.07397066015601525,
+   "A3 | CIRCULATING RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) \u00f7 circulating \u2014 primary": 0.07701630986378712,
+   "A3 | FDV RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) \u00f7 FDV supply (the total supply FDV uses) \u2014 always read with the rate to its left": 0.042739104759902204,
+   "A3 | Net absorption Q0 (tokens) = RETIRED buyback (burned + held) \u2212 emissions": -1980498.6708785426,
+   "A4 | BURN \u00f7 ISSUANCE (x) \u2014 crossover, on the basis to the left": 0.8319546142097264,
+   "A4 | GROSS BURN Q0 (tokens)": 9805000.000000007,
+   "A4 | GROSS ISSUANCE Q0 (tokens)": 0.0,
+   "A4 | NET SUPPLY CHANGE Q0 (tokens) \u2014 self-reported where published, else issuance \u2212 burn, on the basis to the left": -9805000.000000007,
+   "A4 | NET SUPPLY CHANGE, annualised % of circulating (signed; + is net inflation)": -0.07701630986378712,
+   "A4 | PERMANENT BURN YIELD = burn as % of supply (annualised, tokens)": 0.07701630986378712,
+   "A4 | Pool release Q0 (tokens) \u2014 measured, premint distribution (where issuance is n/a)": 11785498.67087855,
+   "CP | BUSINESS 1 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 21929.0,
+   "CP | BUSINESS 2 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 10924547.333333332,
+   "CP | HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) \u00f7 market cap \u2014 treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": 0.06512146945930754,
+   "CP | NET HOLDER YIELD = holder value yield \u2212 dilution (outflows a+b+c+d+e at each day's price, annualised) \u00f7 market cap": -0.04567837259741611,
+   "CP | SUBSIDY COVER = revenue \u00f7 $ supply-side incentives (b), per covered day": 0.997864481805856,
+   "CP | TRADEABLE FLOAT = circulating \u2212 staked/locked \u2212 protocol/treasury-held (tokens) \u2014 protocol/treasury-held is already out of circulating by the convention, so this is A2's free float": 513407599.8067304
+  },
+  "Hyperliquid": {
+   "A1 | Gross burn Q0 (tokens) \u2014 every burn, fee-market included": 2467824.226318465,
+   "A1 | Gross issuance Q0 (tokens)": 0.0,
+   "A1 | NET ISSUANCE AFTER BURN Q0 (tokens) \u2014 issuance \u2212 every burn, on the basis A4 uses": -2467824.226318465,
+   "A1 | NET ISSUANCE AFTER BURN, annualised % of circulating (+ is net inflation; fee-market burns included)": -0.04194609081104667,
+   "A1 | NRR ON TRADING THROUGHPUT \u2014 market cap \u00f7 trailing-365d DEX + perps volume (DefiLlama)": 0.007372486534687073,
+   "A1 | TVL \u2014 chain ($) [primary demand metric]": 1068971002.0,
+   "A1 | VALIDATOR STAKING YIELD (annual) \u2014 securing the chain, NOT a protocol revenue share": 0.02220657836389549,
+   "A3 | Actual buyback as % of supply (annualised) \u2014 RETIRED (burned + held) only": 0.04194609081104667,
+   "A3 | BUYBACK AS % OF SUPPLY (annualised, implied)": 0.0377764507902934,
+   "A3 | CIRCULATING RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) \u00f7 circulating \u2014 primary": 0.04194609081104667,
+   "A3 | FDV RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) \u00f7 FDV supply (the total supply FDV uses) \u2014 always read with the rate to its left": 0.010525375986932473,
+   "A4 | BURN \u00f7 ISSUANCE (x) \u2014 crossover, on the basis to the left": 0.0826083807855409,
+   "A4 | GROSS BURN Q0 (tokens)": 2377700.257402171,
+   "A4 | GROSS ISSUANCE Q0 (tokens)": 0.0,
+   "A4 | NET SUPPLY CHANGE Q0 (tokens) \u2014 self-reported where published, else issuance \u2212 burn, on the basis to the left": -2441314.738644402,
+   "A4 | NET SUPPLY CHANGE, annualised % of circulating (signed; + is net inflation)": -0.04149550386669633,
+   "A4 | PERMANENT BURN YIELD = burn as % of supply (annualised, tokens)": 0.040414236092992294,
+   "A4 | Pool release Q0 (tokens) \u2014 measured, premint distribution (where issuance is n/a)": 3837706.27111052,
+   "CP | BUSINESS 1 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 2829049086950.842,
+   "CP | BUSINESS 2 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 7861371215.0,
+   "CP | HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) \u00f7 market cap \u2014 treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": 0.039660445792578596,
+   "CP | MARKET SHARE vs its category (now; a shifted quarter: that quarter's mean) \u2014 peer set beside": 0.5676667777782378,
+   "CP | TRADEABLE FLOAT = circulating \u2212 staked/locked \u2212 protocol/treasury-held (tokens) \u2014 protocol/treasury-held is already out of circulating by the convention, so this is A2's free float": 99825846.9169401
+  },
+  "Maple": {
+   "A3 | Actual buyback as % of supply (annualised) \u2014 RETIRED (burned + held) only": 0.007796447050298428,
+   "A3 | CIRCULATING RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) \u00f7 circulating \u2014 primary": 0.007796447050298428,
+   "A3 | FDV RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) \u00f7 FDV supply (the total supply FDV uses) \u2014 always read with the rate to its left": 0.007236365241052943,
+   "CP | BUSINESS 1 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 1829451273.0,
+   "CP | BUSINESS 2 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 2844949290.0,
+   "CP | BUSINESS 3 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 1.0,
+   "CP | HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) \u00f7 market cap \u2014 treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": 0.0040527229897458356,
+   "CP | MARKET SHARE vs its category (now; a shifted quarter: that quarter's mean) \u2014 peer set beside": 0.06723516914939225,
+   "CP | NET HOLDER YIELD = holder value yield \u2212 dilution (outflows a+b+c+d+e at each day's price, annualised) \u00f7 market cap": -0.030526995298430885,
+   "CP | SUBSIDY COVER = revenue \u00f7 $ supply-side incentives (b), per covered day": 1226749.109776544,
+   "CP | TRADEABLE FLOAT = circulating \u2212 staked/locked \u2212 protocol/treasury-held (tokens) \u2014 protocol/treasury-held is already out of circulating by the convention, so this is A2's free float": 1176793290.688585
+  },
+  "Morpho": {
+   "A2 | CUSTOMER REVENUE PER TOKEN EMITTED ($/token) \u2014 key ratio": 153129.74327777777,
+   "A2 | Customer revenue Q0 ($)": 55126707.58,
+   "A2 | Customer revenue \u00f7 emissions value (x)": 66995.47277911464,
+   "A2 | Emissions to suppliers Q0 (tokens)": 28.0,
+   "A2 | FREE FLOAT = circulating \u2212 locked (tokens)": 547252376.9371623,
+   "A2 | FREE FLOAT \u00f7 ARR (x) = free float market cap \u00f7 ARR (the project's own where published, else customer revenue annualised) \u2014 headline": 5.844671269552213,
+   "A2 | SUPPLY TRAJECTORY = emissions (annualised) \u00f7 free float \u2014 annual dilution %": 2.667873291243179e-06,
+   "CP | BUSINESS 1 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 5781889549.0,
+   "CP | BUSINESS 2 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 6288795503.964233,
+   "CP | BUSINESS 3 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 1.0,
+   "CP | MARKET SHARE vs its category (now; a shifted quarter: that quarter's mean) \u2014 peer set beside": 0.2111744149034757,
+   "CP | SUBSIDY COVER = revenue \u00f7 $ supply-side incentives (b), per covered day": 61013.43137685679,
+   "CP | TRADEABLE FLOAT = circulating \u2212 staked/locked \u2212 protocol/treasury-held (tokens) \u2014 protocol/treasury-held is already out of circulating by the convention, so this is A2's free float": 547252376.9371623
+  },
+  "Near": {
+   "A1 | FEES \u00f7 ISSUANCE (x) \u2014 key ratio": 0.013130734551088659,
+   "A1 | Gross burn Q0 (tokens) \u2014 every burn, fee-market included": 72252.03931458713,
+   "A1 | Gross issuance Q0 (tokens)": 7921966.829284985,
+   "A1 | NET ISSUANCE AFTER BURN Q0 (tokens) \u2014 issuance \u2212 every burn, on the basis A4 uses": 7849714.789970398,
+   "A1 | NET ISSUANCE AFTER BURN, annualised % of circulating (+ is net inflation; fee-market burns included)": 0.024325312799620934,
+   "A1 | NRR ON TRADING THROUGHPUT \u2014 market cap \u00f7 trailing-365d DEX + perps volume (DefiLlama)": 0.1987269752003047,
+   "A1 | TOTAL YIELD \u2014 stakers = validator staking yield \u2212 net inflation \u2212 issuer releases (annual; rewards and foundation releases paid from issuer reserves count)": 0.02521811705950404,
+   "A1 | TVL \u2014 chain ($) [primary demand metric]": 239376747.0,
+   "A1 | VALIDATOR STAKING YIELD (annual) \u2014 securing the chain, NOT a protocol revenue share": 0.04954342985977688,
+   "A3 | Actual buyback as % of supply (annualised) \u2014 RETIRED (burned + held) only": 0.004030282317572821,
+   "A3 | Buyback to LOCKED supply (destination = hold) \u2014 reduces effective float": 3854384.390369332,
+   "A3 | CIRCULATING RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) \u00f7 circulating \u2014 primary": 0.004030282317572821,
+   "A3 | FDV RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) \u00f7 FDV supply (the total supply FDV uses) \u2014 always read with the rate to its left": 0.004029755595268752,
+   "CP | BUSINESS 1 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 41173144283.11111,
+   "CP | BUSINESS 2 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 272548034.7222222,
+   "CP | BUSINESS 3 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 1148123.7222222222,
+   "CP | HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) \u00f7 market cap \u2014 treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": 0.002251635986697279,
+   "CP | MARKET SHARE vs its category (now; a shifted quarter: that quarter's mean) \u2014 peer set beside": 0.002709601691214772,
+   "CP | MARKET SHARE, SECOND BASIS \u2014 chain fees vs 13 chains (now; a shifted quarter: that quarter's mean)": 0.01056035766466835,
+   "CP | NET HOLDER YIELD = holder value yield \u2212 dilution (outflows a+b+c+d+e at each day's price, annualised) \u00f7 market cap": -0.010870097727069924,
+   "CP | TRADEABLE FLOAT = circulating \u2212 staked/locked \u2212 protocol/treasury-held (tokens) \u2014 protocol/treasury-held is already out of circulating by the convention, so this is A2's free float": 714289505.7662529
+  },
+  "Pendle": {
+   "A3 | Actual buyback as % of supply (annualised) \u2014 RETIRED (burned + held) only": 0.0,
+   "A3 | BUYBACK AS % OF SUPPLY (annualised, implied)": 0.012723089097240474,
+   "A3 | CIRCULATING RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) \u00f7 circulating \u2014 primary": 0.0,
+   "A3 | FDV RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) \u00f7 FDV supply (the total supply FDV uses) \u2014 always read with the rate to its left": 0.0,
+   "A3 | PROTOCOL STAKING YIELD (tokens) \u2014 primary: tokens paid to stakers per year \u00f7 reward-bearing stake (real + virtual); dollars paid are converted at each PAYMENT DAY's price (Aerodrome, Sky \u2014 Jake's price convention 2026-10-09) over the mean stake in the same window": 0.01528324932496995,
+   "CP | BUSINESS 1 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 1239933980.0,
+   "CP | BUSINESS 2 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 1.0,
+   "CP | BUSINESS 3 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 1.0,
+   "CP | HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) \u00f7 market cap \u2014 treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": 0.01053274137100495,
+   "CP | MARKET SHARE vs its category (now; a shifted quarter: that quarter's mean) \u2014 peer set beside": 0.9277103208919527,
+   "CP | NET HOLDER YIELD = holder value yield \u2212 dilution (outflows a+b+c+d+e at each day's price, annualised) \u00f7 market cap": -0.01739320503088599,
+   "CP | TRADEABLE FLOAT = circulating \u2212 staked/locked \u2212 protocol/treasury-held (tokens) \u2014 protocol/treasury-held is already out of circulating by the convention, so this is A2's free float": 143108806.85638747
+  },
+  "Plume": {
+   "A1 | Gross issuance Q0 (tokens)": 0.0,
+   "A1 | NET ISSUANCE AFTER BURN Q0 (tokens) \u2014 issuance \u2212 every burn, on the basis A4 uses": 0.0,
+   "A1 | NET ISSUANCE AFTER BURN, annualised % of circulating (+ is net inflation; fee-market burns included)": 0.0,
+   "A1 | NRR ON TRADING THROUGHPUT \u2014 market cap \u00f7 trailing-365d DEX + perps volume (DefiLlama)": 2.094836649754794,
+   "A1 | TVL \u2014 chain ($) [primary demand metric]": 2698815.0,
+   "A1 | VALIDATOR STAKING YIELD (annual) \u2014 securing the chain, NOT a protocol revenue share": 0.0449691991871184,
+   "CP | BUSINESS 1 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 231866640.0,
+   "CP | BUSINESS 2 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 72329312.5,
+   "CP | TRADEABLE FLOAT = circulating \u2212 staked/locked \u2212 protocol/treasury-held (tokens) \u2014 protocol/treasury-held is already out of circulating by the convention, so this is A2's free float": 6471180752.254872
+  },
+  "Sky": {
+   "A3 | Actual buyback as % of supply (annualised) \u2014 RETIRED (burned + held) only": 0.005936614332870528,
+   "A3 | CIRCULATING RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) \u00f7 circulating \u2014 primary": 0.005936614332870528,
+   "A3 | FDV RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) \u00f7 FDV supply (the total supply FDV uses) \u2014 always read with the rate to its left": 0.005895998340145778,
+   "A3 | Net absorption Q0 (tokens) = RETIRED buyback (burned + held) \u2212 emissions": -149401185.82225233,
+   "A3 | PROTOCOL STAKING YIELD (tokens) \u2014 primary: tokens paid to stakers per year \u00f7 reward-bearing stake (real + virtual); dollars paid are converted at each PAYMENT DAY's price (Aerodrome, Sky \u2014 Jake's price convention 2026-10-09) over the mean stake in the same window": 0.04955365875470867,
+   "A4 | GROSS BURN Q0 (tokens)": 10233231.76,
+   "A4 | GROSS ISSUANCE Q0 (tokens)": 0.0,
+   "A4 | NET SUPPLY CHANGE Q0 (tokens) \u2014 self-reported where published, else issuance \u2212 burn, on the basis to the left": -10233231.76,
+   "A4 | NET SUPPLY CHANGE, annualised % of circulating (signed; + is net inflation)": -0.002636074380198134,
+   "A4 | PERMANENT BURN YIELD = burn as % of supply (annualised, tokens)": 0.002636074380198134,
+   "CP | BUSINESS 1 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 7142776778.017811,
+   "CP | HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) \u00f7 market cap \u2014 treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": 0.02383699954852378,
+   "CP | MARKET SHARE vs its category (now; a shifted quarter: that quarter's mean) \u2014 peer set beside": 0.03719901067115192,
+   "CP | NET HOLDER YIELD = holder value yield \u2212 dilution (outflows a+b+c+d+e at each day's price, annualised) \u00f7 market cap": 0.012683161866122021,
+   "CP | TRADEABLE FLOAT = circulating \u2212 staked/locked \u2212 protocol/treasury-held (tokens) \u2014 protocol/treasury-held is already out of circulating by the convention, so this is A2's free float": 5918249556.286961
+  },
+  "Uniswap": {
+   "A4 | GROSS BURN Q0 (tokens)": 5594001.24623929,
+   "A4 | GROSS ISSUANCE Q0 (tokens)": 0.0,
+   "A4 | NET SUPPLY CHANGE Q0 (tokens) \u2014 self-reported where published, else issuance \u2212 burn, on the basis to the left": -5594001.24623929,
+   "A4 | NET SUPPLY CHANGE, annualised % of circulating (signed; + is net inflation)": -0.037045103325753614,
+   "A4 | PERMANENT BURN YIELD = burn as % of supply (annualised, tokens)": 0.037045103325753614,
+   "CP | BUSINESS 1 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 817667264077.7222,
+   "CP | BUSINESS 2 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 16015764015.61111,
+   "CP | BUSINESS 3 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 414734248499.3333,
+   "CP | BUSINESS 4 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 386894237603.05554,
+   "CP | HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) \u00f7 market cap \u2014 treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": 0.028101946977325154,
+   "CP | MARKET SHARE vs its category (now; a shifted quarter: that quarter's mean) \u2014 peer set beside": 0.2955723294245103,
+   "CP | NET HOLDER YIELD = holder value yield \u2212 dilution (outflows a+b+c+d+e at each day's price, annualised) \u00f7 market cap": -0.01135816289649963
+  }
+ },
+ "probed": {
+  "Aerodrome": [
+   "actual_buyback_tokens",
+   "actual_buyback_usd",
+   "foundation_aero_purchased_tokens",
+   "foundation_bought_locked_same_tx_tokens",
+   "foundation_compounded_owner_tokens",
+   "foundation_lock_from_balance_tokens",
+   "foundation_rebase_owner_tokens",
+   "max_supply",
+   "protocol_tvl_constant_price_usd",
+   "subsidy_emissions_to_covered_share",
+   "subsidy_emissions_usd",
+   "subsidy_fee_cover_pools"
+  ],
+  "Aethir": [
+   "avg_lock_duration_days_ai",
+   "avg_lock_duration_days_gaming",
+   "compute_purchases_cumulative_tokens",
+   "edge_daily_reward_pool_tokens",
+   "edge_earnings_cumulative_tokens",
+   "edge_stipend_cumulative_tokens",
+   "staking_apr_ai",
+   "staking_apr_gaming",
+   "supply_units_edge",
+   "total_supply_coingecko",
+   "utilisation_pct",
+   "veaethir_total_supply_tokens"
+  ],
+  "Chainlink": [
+   "buyback_fund_balance_dashboard",
+   "ccip_token_transfers",
+   "ccip_token_value_usd",
+   "customer_revenue_usd",
+   "staker_yield_community_pool",
+   "staking_funding_tokens",
+   "staking_path_in_tokens",
+   "staking_path_out_tokens",
+   "supply_units"
+  ],
+  "Ether.fi": [
+   "cashback_paid_tokens",
+   "eth_staked_etherfi_tokens",
+   "holders_revenue_usd",
+   "insider_stake_shares",
+   "programmatic_buyback_tokens"
+  ],
+  "Ethereum": [
+   "beacon_validators_eth",
+   "nft_volume_usd",
+   "p2p_transfer_volume_usd",
+   "total_supply_dashboard"
+  ],
+  "Fluid": [
+   "actual_buyback_tokens",
+   "actual_buyback_usd",
+   "emissions_tokens_base",
+   "emissions_tokens_plasma",
+   "protocol_tvl_constant_price_usd"
+  ],
+  "GEODNET": [
+   "circulating_supply_third_party",
+   "gross_issuance_tokens",
+   "issuance_feed_polygon_tokens",
+   "issuance_feed_solana_tokens",
+   "supply_units",
+   "total_supply_coingecko"
+  ],
+  "Hyperliquid": [
+   "active_addresses",
+   "aqa_revenue_usd",
+   "burn_auction_tokens",
+   "burn_hyperevm_tokens",
+   "buyback_hypercore_asxn_tokens",
+   "hyperevm_priority_burn_tokens",
+   "hyperevm_zero_address_balance",
+   "settlement_volume_usd",
+   "total_burn_tokens",
+   "total_supply_coingecko"
+  ],
+  "Maple": [
+   "drips_rewards_tokens",
+   "emissions_tokens",
+   "insider_stake_shares",
+   "max_supply",
+   "protocol_tvl_constant_price_usd"
+  ],
+  "Morpho": [
+   "emissions_tokens_claims_arbitrum",
+   "emissions_tokens_claims_base",
+   "emissions_tokens_claims_ethereum",
+   "emissions_tokens_claims_katana",
+   "protocol_tvl_constant_price_usd"
+  ],
+  "Near": [
+   "actual_buyback_tokens",
+   "actual_buyback_usd",
+   "emissions_tokens",
+   "near_lockup_locked_tokens",
+   "near_lockup_unvested_tokens",
+   "settlement_volume_usd",
+   "total_supply_dashboard"
+  ],
+  "Pendle": [
+   "actual_buyback_tokens",
+   "boros_volume_usd",
+   "emissions_tokens",
+   "emissions_tokens_gauge_base",
+   "emissions_tokens_gauge_berachain",
+   "emissions_tokens_gauge_bsc",
+   "emissions_tokens_gauge_hyperevm",
+   "emissions_tokens_gauge_mantle",
+   "emissions_tokens_gauge_sonic",
+   "insider_stake_shares",
+   "issuer_to_gauges_tokens",
+   "latent_supply_tokens",
+   "max_supply",
+   "noncirc_ecosystem_fund_tokens",
+   "noncirc_governance_multisig_tokens",
+   "noncirc_team_multisig_tokens",
+   "pendle_epoch_apr_published",
+   "protocol_tvl_constant_price_usd",
+   "subsidy_emissions_to_covered_share",
+   "subsidy_emissions_usd",
+   "subsidy_fee_cover_pools",
+   "tvl_maturity_31_90d_usd",
+   "tvl_maturity_91_180d_usd",
+   "tvl_maturity_gt_180d_usd",
+   "tvl_maturity_le_30d_usd",
+   "tvl_maturity_total_usd"
+  ],
+  "Plume": [
+   "emissions_claimed_tokens",
+   "fees_usd",
+   "fees_usd_defillama",
+   "settlement_volume_usd",
+   "staking_apy_published"
+  ],
+  "Sky": [
+   "buyback_spending_usd_ba_daily",
+   "emissions_tokens",
+   "locked_tokens_dashboard",
+   "net_revenue_msc_usd",
+   "net_revenue_pre_distribution_usd"
+  ]
+ }
+}

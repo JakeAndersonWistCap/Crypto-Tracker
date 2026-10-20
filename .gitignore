@@ -27,3 +27,5 @@ snapshots/
 # dump_fixture.py output (run review D8): machine-local; copied into fixtures/ when it becomes a test fixture
 dumps/
 explorer_routes.json
+# subsidy targeting's per-pool tables and Pendle's daily gauge-rate samples (Round G8 4a): machine-local output
+data/subsidy/
