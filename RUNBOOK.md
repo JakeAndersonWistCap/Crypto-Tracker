@@ -529,6 +529,51 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11ci. Round G8 — the measuring-point guard, MISSING classes A–E, Aerodrome on DefiLlama, NOT WIRED labelled (2026-10-20)
+
+**Run after pulling (PowerShell 5.1, repo root), in this order.** No run_sql section this round (nothing stored needs
+removing).
+1. `python token_metrics.py --seed pendle_berachain` — Pendle's Berachain gauge scan alone with a one-hour budget; run it
+   again if it says the pages resume. Daily runs are incremental after it.
+2. `python token_metrics.py --seed eth_p2p_validation` — the approved Ethereum P2P leg now (dry runs, then the validation
+   window and the weeks since) and the rebuild against the Artemis CSV; prints the bytes billed and PASSED / FAILED.
+3. `python token_metrics.py --seed uni_retro_burn` — stores Uniswap's 100M UNI burn from transaction 0x091f0083… (block
+   24,106,378, 2025-12-27) as history; keyless, idempotent.
+4. `python token_metrics.py --seed ccip_value` — Chainlink's CCIP token value, 270 days in one sitting (~1.5-3 h;
+   checkpointed, so an interrupted seed resumes). Days with an unpriced token are stored PARTIAL (refused above 10%).
+5. `python token_metrics.py --seed aero_buyback` — the Aerodrome Foundation's buy-and-lock history (fills the three
+   momentum-fund references).
+6. `python token_metrics.py` — the full run. New tiers: pendle_maturity (Pendle TVL by days to expiry; the first read
+   takes 4–5 runs, ~120 markets each, and stores a day only once every market live that day is read) and ccip_value
+   (after the seed, the days since the last closed one).
+   Aerodrome's TVL is now the sum of DefiLlama's Aerodrome V1 + Slipstream + Aero Lite (its parent was renamed).
+7. `python check_offline_items.py missing_triage` — every MISSING cell classed A–E with its evidence, counts by class per
+   project; PASTE BACK.
+8. `python check_offline_items.py stale_series`, then `python check_offline_items.py spec_coverage`.
+9. `python measuring_guard.py --newer metrics.db` — the series your store holds past the fixtures' cut (2026-10-13);
+   PASTE BACK (it is what the guard can only exercise through probe rows).
+
+**The measuring-point guard.** `python measuring_guard.py --compare tests/fixtures/guard_baseline.json` builds on the
+fixture store with probe rows and fails on a series that gains an undeclared basis or a headline that loses its value;
+it also prints sanity's lost_headlines on the same build. A deliberate change of basis is declared in config
+(`series_handover` or `DECLARED_COMPONENTS`), then the baseline rewritten with `--write`.
+
+**MISSING classes.** A — no such flow (a primary source says the mechanism does not exist: the Flows line reads 0 with
+the evidence); B — accepted limit (Jake's decision, cited: N/A BY DESIGN); C — needs history (the date it becomes
+valid); D — a route exists and has not filled it (fixed, or the command that fills it); E — no source (what would fill
+it). A cell whose input is declared not applicable stays N/A BY DESIGN.
+
+**NOT WIRED.** An item is wired, or labelled with its blocker ("BLOCKED —" paid / no public source / no comparable
+category / Jake's decision, or "NOT BUILT BY DESIGN"), which takes it off the NOT WIRED count. Insider share / leakage
+(i) stays NOT WIRED; SPEC §19 G8 item 4f lists the wallets that would unlock each cell.
+
+**What changed (SPEC.md §19 "G8" lists every item old → new):** the measuring-point guard; Hyperliquid's HyperEVM burn a
+declared component of the A1 total (lost headlines restored) and the Assistance Fund figure cited; MISSING A–E;
+Aerodrome on DefiLlama (TVL and market share); ve_managed batched with phases; balance_flow and the Arbitrum repair
+inside their budgets; the Berachain, P2P and Uniswap seeds; Aethir arr_usd and Near's retired NearBlocks route labelled;
+Pendle TVL by maturity and CCIP token value built (subsidy targeting being built); Aethir compute purchases read; NEAR's three
+all-time inflow references read stage 2; Maple's stSYRUP reference re-pointed; the P2P leg approved weekly.
+
 ## 11ch. Round G7 — World Mobile option C, NEAR's overlap check, period labels, settlement rebuild legs (2026-10-19)
 
 **Run after pulling (PowerShell 5.1, repo root), in this order.** No run_sql section this round (nothing stored needs

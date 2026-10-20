@@ -36,6 +36,8 @@ from .hl_candles import HLCandles
 from .hl_ledger import HLLedgerReplay
 from .merkl_campaigns import MerklCampaigns
 from .boros import BorosVolume
+from .pendle_maturity import PendleMaturity
+from .ccip_value import CcipValue
 from .hypercore import HyperCoreInfo
 from .growthepie import GrowThePie
 from .blockscout_stats import BlockscoutStats
@@ -116,6 +118,10 @@ TIER_ORDER = [
     ("hl_ledger", 1, lambda ctx: HLLedgerReplay()),
     ("merkl_campaigns", 1, lambda ctx: MerklCampaigns()),
     ("boros", 1, lambda ctx: BorosVolume()),
+    # Pendle TVL by days to expiry (Round G8 4b): resumes from .cache/pendle_maturity/state.json, stops itself at 120 s
+    ("pendle_maturity", 1, lambda ctx: PendleMaturity()),
+    # Chainlink CCIP token value by day (Round G8 4b): walks the message list to the last closed day, stops at 300 s
+    ("ccip_value", 1, lambda ctx: CcipValue()),
     ("hypercore_info", 1, lambda ctx: HyperCoreInfo(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"],
                                                     prior_delta=ctx["prior_delta"])),
     ("chain", 2, lambda ctx: Chain(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"],
@@ -1948,6 +1954,8 @@ TIER_BUDGET_S = {
     # round 3 run X2: the adapter stops itself at 420s (fetch.boros.MAX_SECONDS, ~60 exports at 6.5s) and resumes
     # next run from .cache/boros/state.json — the first read of 232 markets takes 4 runs, a day's top-up ~40 exports
     "boros": 480,
+    "pendle_maturity": 150,
+    "ccip_value": 330,
 }
 DEFAULT_BUDGET_S = 120
 for _t in _l2_tiers():

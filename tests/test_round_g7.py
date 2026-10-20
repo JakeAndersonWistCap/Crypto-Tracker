@@ -254,8 +254,10 @@ def test_8_near_and_plume_rebuilds_are_labelled_not_validated_on_their_chain():
         assert config.PROJECT_BY_NAME[n]["settlement_rebuild"]["label"].endswith("rebuild, not validated on this chain")
 
 
-def test_8_nft_leg_reads_defillama_and_p2p_is_dry_run_only_until_approved(tmp_path):
+def test_8_nft_leg_reads_defillama_and_p2p_is_dry_run_only_until_approved(tmp_path, monkeypatch):
     import fetch.eth_settlement as es
+    # Jake approved the leg in G8 (item 5); the rule this tests — dry runs only while NOT approved — still holds
+    monkeypatch.setitem(config.SETTLEMENT_REBUILD["ethereum_rebuild"]["p2p"], "approved", False)
 
     class H:
         def get(self, url, params=None, **_):
@@ -361,18 +363,19 @@ def test_10_world_mobile_chain_fees_are_read_and_priced_and_headlines_recorded(m
 # ======================================================================================== 9 MISSING triage
 def test_9_missing_cells_carry_their_cause_and_the_scoreboard_counts_populated():
     import coverage_audit as ca
-    assert ca.missing_cause("no rows stored", {"suggestion": "python token_metrics.py --seed aero_buyback"}) \
-        == "ONE-OFF SEED"
-    assert ca.missing_cause("no rows stored", {"reason": "ACCEPTED LIMIT: never published"}) == "NO SOURCE"
-    assert ca.missing_cause("nothing stored", {"suggestion": "paid source — Jake's decision"}) == "JAKE'S DECISION"
-    assert ca.missing_cause("nothing stored", None) == "ROUTE EXISTS, NOT FILLED"
+    # G8 item 2 replaced G7's causes with classes A–E (coverage_audit.MISSING_CLASSES); the G7 cases, re-classed
+    D, E = ca.MISSING_CLASSES[3], ca.MISSING_CLASSES[4]
+    assert ca.missing_cause("no rows stored", {"suggestion": "python token_metrics.py --seed aero_buyback"}) == D
+    assert ca.missing_cause("no rows stored", {"reason": "never published"}) == E
+    assert ca.missing_cause("nothing stored", {"suggestion": "paid source — Jake's decision"}) == E
+    assert ca.missing_cause("fees_usd: nothing stored", None) == D
     rows = [{"Project": "Sky", "Status": "N/A BY DESIGN", "Reason / route / error": "n/a — x_tokens (no rows stored in Q0)"},
             {"Project": "Sky", "Status": "LIVE-UNVERIFIED", "Reason / route / error": ""},
             {"Project": "Sky", "Status": "N/A BY DESIGN", "Reason / route / error": "n/a — another archetype"}]
     ca.mark_missing(rows, [{"project": "Sky", "metric": "x_tokens", "reason": "r", "suggestion": "--seed x"}])
-    assert rows[0]["Status"] == "MISSING" and rows[0]["Reason / route / error"].startswith("MISSING [ONE-OFF SEED]")
+    assert rows[0]["Status"] == "MISSING" and rows[0]["Reason / route / error"].startswith(f"MISSING [{D}]")
     b = ca.scoreboard(rows)["Sky"]
-    assert b["Populated"] == "1/2 = 50%" and b["MISSING by cause"] == "ONE-OFF SEED 1"
+    assert b["Populated"] == "1/2 = 50%" and b["MISSING by cause"] == f"{D} 1"
 
 
 def test_9_missing_triage_is_a_registered_check():

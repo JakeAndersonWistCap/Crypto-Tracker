@@ -73,32 +73,42 @@ class VeManaged:
                 self._foundation(p, p["foundation_buyback"], out)
 
     def _holdings(self, p, out):
+        """THE FILING WALLETS' MANAGED DEPOSITS, BATCHED (Round G8 item 3b, Jake 2026-10-20: ve_managed timed out on both
+        runs — "nothing registered", then waiting on POST base-mainnet.g.alchemy.com with no phase). The read walked every
+        veNFT one eth_call at a time (balanceOf, then ownerToNFTokenIdList, idToManaged and weights per NFT: ~150 calls in
+        sequence on the keyed host). It now makes the four Multicall3 rounds the seed already used
+        (check_offline_items.aerodrome_managed_deposits), each named as a phase."""
+        from .base import set_phase
         spec = p.get("ve_managed_holdings")
         if not spec:
             return
-        name, metric, chain = p["name"], spec["metric"], spec.get("chain", "base")
+        name, metric = p["name"], spec["metric"]
         day = str(today().date())
         key = f"ve_managed:{name}:{metric}"
         if not self.daily.due(key, day):
             out.mark_current(SOURCE, name, metric, f"{metric}: read today already", TIER)
             return
+        owners = list(spec["owners"])
+        set_phase(f"ve_managed {name}: managed-veNFT deposits of {len(owners)} filing wallet(s), Multicall3 (4 rounds)")
         try:
-            w3 = self.reader.web3(chain)
-            ve = w3.eth.contract(address=self.reader.checksum(spec["escrow"]), abi=_ABI)
-            head = int(self.reader.block_number(chain))
-            scale = 10 ** int(spec.get("decimals", 18))
-            total, parts = 0, []
-            for owner, label in spec["owners"].items():
-                raw, n, held = deposits(ve, self.reader.checksum(owner), head)
-                total += raw
-                parts.append(f"{label} {raw / scale:,.0f} ({held} of {n} veNFT(s) in a managed NFT)")
+            got = (getattr(self, "managed_reader", None) or _managed_reader)(owners, spec["escrow"])
         except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
             from .chain import redact_urls
             out.fail(SOURCE, name, f"{metric}: {redact_urls(e)}", TIER)      # hosts only, never a key
             return
-        out.add(tidy([(today(), total / scale)], name, metric, f"{SOURCE}:{spec['escrow'][:10]}.weights", TIER),
-                SOURCE, name, f"{metric} = {total / scale:,.0f} at block {head:,}: " + "; ".join(parts), TIER)
+        if got.get("error"):
+            out.fail(SOURCE, name, f"{metric}: {got['error']}", TIER)
+            return
+        parts = [f"{spec['owners'][o]} {v:,.0f}" for o, v in got["by_owner"].items()]
+        out.add(tidy([(today(), got["total"])], name, metric, f"{SOURCE}:{spec['escrow'][:10]}.weights", TIER),
+                SOURCE, name, f"{metric} = {got['total']:,.0f} ({got['in_managed']} of {got['nfts']} veNFT(s) in a "
+                              f"managed NFT): " + "; ".join(parts), TIER)
         self.daily.done(key, day)
+
+
+def _managed_reader(owners, escrow):
+    import check_offline_items as coi                      # noqa: PLC0415
+    return coi.aerodrome_managed_deposits(owners, escrow=escrow)
 
 
 def foundation_rows(name: str, spec: dict, day, got: dict, archive: bool = False) -> tuple[list, str]:
@@ -129,6 +139,8 @@ def _foundation(self, p, spec, out):
     if not self.daily.due(key, day):
         out.mark_current(SOURCE, name, metric, f"{metric}: read today already", TIER)
         return
+    from .base import set_phase
+    set_phase(f"ve_managed {name}: Foundation lock stock of {len(spec['owners'])} wallet(s), Multicall3")
     try:
         got = (getattr(self, "foundation_reader", None) or _foundation_reader)(spec["owners"])
     except Exception as e:  # noqa: BLE001
@@ -192,12 +204,15 @@ def _buyback_window(self, p, spec, out):
     # ITS OWN DEADLINE (Round G 1.4): WINDOW_BUDGET_S of the tier's budget; past it the window stops with the reason and
     # is read again on the next run (its daily marker is set only once it is stored)
     import check_offline_items as coi                      # noqa: PLC0415
+    from .base import set_phase
     t0 = time.monotonic()
     try:
         with coi.call_budget(float(spec.get("window_budget_s") or WINDOW_BUDGET_S)):
+            set_phase(f"ve_managed {name}: buyback window {yday.date()} — the day's first Base blocks")
             b0, b1 = (getattr(self, "day_blocks", None) or _day_blocks)(yday)
             if not (b0 and b1):
                 raise ValueError("the day's Base blocks could not be resolved")
+            set_phase(f"ve_managed {name}: buyback window {yday.date()} — state bisection + receipts, blocks {b0:,}..{b1:,}")
             got = (getattr(self, "window_reader", None) or _window_reader)(b0, b1)
     except TimeoutError as e:
         out.fail(SOURCE, name, f"Foundation buyback window {yday.date()}: stopped after {time.monotonic() - t0:.0f}s — "

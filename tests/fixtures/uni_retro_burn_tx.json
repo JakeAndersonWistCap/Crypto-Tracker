@@ -1,0 +1,31 @@
+{
+ "read_on": "2026-10-20",
+ "from": "eth.blockscout.com/api/v2/transactions/<hash> and /token-transfers (trimmed)",
+ "tx": {
+  "hash": "0x091f0083242a777d55821c1189e568d6d033d9da501b75087dc736fa143d2c1e",
+  "status": "ok",
+  "block_number": 24106378,
+  "timestamp": "2025-12-27T20:33:11.000000Z",
+  "method": "execute"
+ },
+ "transfers": [
+  {
+   "token": {
+    "address_hash": "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984",
+    "symbol": "UNI",
+    "decimals": "18"
+   },
+   "from": {
+    "hash": "0x1a9C8182C09F50C8318d769245beA52c32BE35BC"
+   },
+   "to": {
+    "hash": "0x000000000000000000000000000000000000dEaD"
+   },
+   "total": {
+    "decimals": "18",
+    "value": "100000000000000000000000000"
+   },
+   "log_index": 11
+  }
+ ]
+}

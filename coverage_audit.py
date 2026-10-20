@@ -190,6 +190,8 @@ def audit(wb, trajectory_rows: list[dict] | None = None, flows_rows: list[dict] 
                       if isinstance(fr.get(q), str) and fr.get(q).startswith("BROKEN")]
             if broken:
                 status, why = "BROKEN", "; ".join(f"{q}: {t}" for q, t in broken)
+        elif str(fr.get("Note") or "").startswith("0 — no such flow"):
+            status, why = "N/A BY DESIGN", str(fr.get("Note"))       # class A (G8 item 2): 0 with its primary source
         else:
             status, why = ("LIVE-UNVERIFIED", "") if v is not None else (
                 "N/A BY DESIGN", "no series in Q0 for this line (see the Status line)")
@@ -228,11 +230,15 @@ def audit(wb, trajectory_rows: list[dict] | None = None, flows_rows: list[dict] 
         rows.extend(reference_rows(wb, X, groups, rows, flows_rows))
     rows.extend(regression_rows(sanity_hits or ()))
     for item, route in not_wired():
+        # A NAMED BLOCKER IS NOT "NOT WIRED" (Round G8 item 4, Jake's standing rule): an item ends a round wired, or
+        # relabelled with its blocker — "NOT BUILT BY DESIGN" or "BLOCKED — paid / no public source / no comparable
+        # category / Jake's decision" — which is N/A BY DESIGN, off the NOT WIRED count
+        st = "N/A BY DESIGN" if route.startswith(("NOT BUILT BY DESIGN", "BLOCKED —")) else "NOT WIRED"
         rows.append({"Tab": "(not on a tab)", "Column": item, "Key": "", "Project": "(all)", "Value now": "",
-                     "Status": "NOT WIRED", "Reason / route / error": route, "Axis": "", "Direction": "", "Tier": "",
+                     "Status": st, "Reason / route / error": route, "Axis": "", "Direction": "", "Tier": "",
                      "History depth (quarters with a value)": "", "Formula as built": "", "SPEC formula": "",
                      "MATCHES-SPEC": "yes — SPEC.md section 10"})
-    mark_missing(rows, gap_rows)
+    mark_missing(rows, gap_rows, groups, (windows or {}).get("q0", (None, None))[1])
     return rows
 
 
@@ -289,31 +295,118 @@ NA_MISSING_ROUTE_SIGNS = ("no rows stored", "empty stub", "stored nothing", "no 
 _NA_METRIC = re.compile(r"n/a\s*[—-]\s*([a-z][a-z0-9_]+)\s*\(")
 
 
-# THE CAUSE OF A MISSING CELL (Round G7 item 9, Jake 2026-10-19: 233 MISSING — "classify by cause; fix the first two
-# classes without a paid source; list the rest for Jake"). In order: the first sign that matches decides.
-MISSING_CAUSES = ("ROUTE EXISTS, NOT FILLED", "ONE-OFF SEED", "JAKE'S DECISION", "NO SOURCE")
-_CAUSE_SIGNS = (
-    ("NO SOURCE", ("no public source", "no free source", "not published", "accepted limit", "no source",
-                   "never published", "no history provider", "source-limited")),
-    ("JAKE'S DECISION", ("jake's decision", "jake decides", "approve", "not approved", "paid", "api key", "a key",
-                         "pending jake", "proposed")),
-    ("ONE-OFF SEED", ("--seed", "archive_backfill", "seed ", "backfill")),
-)
+# THE CAUSE OF A MISSING CELL (Round G8 item 2, Jake 2026-10-20 — G7's four causes put all 232 in "route exists, not
+# filled"). Every MISSING cell is classed WITH EVIDENCE:
+#   A  mechanism absent per a primary source — the Flows line shows 0 labelled "no such flow" with its citation
+#      (config.NO_SUCH_FLOW; build_workbook.flow_statements), so it is no longer MISSING. Unknown is never 0.
+#   B  an accepted limit Jake decided — N/A BY DESIGN, citing the decision (a `<metric>_blocked` record answered ACCEPTED
+#      LIMIT, config.ACCEPTED_LIMIT_CASCADE, or a config.UNAVAILABLE closure).
+#   C  needs more history — the input is stored but starts inside the window; the date the cell becomes valid is stated.
+#   D  a route exists and has not filled the cell — fixed in the round, or the command named.
+#   E  no source — listed for Jake with what would fill it.
+MISSING_CLASSES = ("A — NO SUCH FLOW", "B — ACCEPTED LIMIT", "C — NEEDS HISTORY", "D — ROUTE NOT FILLED",
+                   "E — NO SOURCE")
+MISSING_CAUSES = MISSING_CLASSES                  # the G7 name, kept for the scoreboard and missing_triage
+_E_SIGNS = ("no public source", "no free source", "no source configured", "empty stub", "no url on file",
+            "not published", "never published", "no series on file", "no route", "paid", "no history provider")
+_IDENT = re.compile(r"[a-z][a-z0-9_]{3,}")
+
+
+def _metrics_named(*texts) -> list[str]:
+    cfg = _config()
+    seen = []
+    for t in texts:
+        for w in _IDENT.findall(str(t or "")):
+            if w in cfg.METRICS and w not in seen:
+                seen.append(w)
+    return seen
+
+
+def accepted_limit(project: str, metric: str) -> str | None:
+    """The decision that makes (project, metric) an ACCEPTED LIMIT, cited — or None."""
+    cfg = _config()
+    p = cfg.PROJECT_BY_NAME.get(project) or {}
+    blk = p.get(f"{metric}_blocked") or {}
+    txt = f"{blk.get('status', '')} {blk.get('answered', '')}"
+    if "ACCEPTED LIMIT" in txt.upper():
+        return str(blk.get("answered") or blk.get("status"))
+    casc = (getattr(cfg, "ACCEPTED_LIMIT_CASCADE", {}) or {}).get(project) or {}
+    if metric in (casc.get("metrics") or ()):
+        return f"{casc['decision']} (cascade: {metric} is built from {', '.join(casc['roots'])})"
+    u = (getattr(cfg, "UNAVAILABLE_BY_KEY", {}) or {}).get((project, metric))
+    if u:
+        return f"CLOSED {u.get('closed_on', '')}: {str(u.get('summary', ''))[:200]}"
+    return None
+
+
+def declared_not_applicable(project: str, named: list[str]) -> str | None:
+    """Why a cell whose inputs are DECLARED unable to exist for the project is N/A BY DESIGN, not MISSING (Round G8 item
+    2, found on the fixture triage: Aerodrome's "Buyback to LOCKED supply" read MISSING [D] although config declares
+    buyback_fund_balance not applicable — repurchased AERO passes straight to lockers). Every named input must carry a
+    declaration (config.declared_na: not_applicable, or a decided classification). Archetype membership alone is NOT
+    enough (it would blank Uniswap's FDV and Pendle's issuance, which exist): those stay D and are listed for Jake."""
+    cfg = _config()
+    if not named or project not in cfg.PROJECT_BY_NAME:
+        return None
+    out = []
+    for m in named:
+        r = cfg.declared_na(project, m)
+        if not r:
+            return None
+        out.append(f"{m}: declared not applicable — {str(r)[:160]}")
+    return "; ".join(out)
+
+
+def missing_class(row: dict, gap: dict | None = None, groups: dict | None = None, asof=None) -> tuple[str, str]:
+    """(class, evidence) for one MISSING cell — one of MISSING_CLASSES (A is resolved on the Flows tab before this)."""
+    import pandas as pd                                    # noqa: PLC0415
+    why = str(row.get("Reason / route / error") or "")
+    named = _metrics_named(why, row.get("Formula as built"), (gap or {}).get("reason"))
+    proj = str(row.get("Project"))
+    for m in named:
+        a = accepted_limit(proj, m)
+        if a:
+            return MISSING_CLASSES[1], f"{m}: {a}"
+    na = declared_not_applicable(proj, named)
+    if na:
+        return "N/A", na
+    text = " ".join(str(x or "") for x in (why, (gap or {}).get("reason"), (gap or {}).get("suggestion"))).lower()
+    if groups is not None and asof is not None:
+        for m in named:
+            g = groups.get((proj, m))
+            if g is None or getattr(g, "empty", True):
+                continue
+            first = pd.to_datetime(g["date"]).min().normalize()
+            span = 365 if "365" in m or "365" in why else 90
+            k = 0
+            mt = re.search(r"Q-(\d)", str(row.get("Column", "")) + " " + why)
+            if mt and row.get("Tab") == "Trajectory":
+                k = int(mt.group(1))
+            start = pd.Timestamp(asof).normalize() - pd.Timedelta(days=span * (k + 1) - 1)
+            if first > start:
+                valid = first + pd.Timedelta(days=span * (k + 1) - 1)
+                return MISSING_CLASSES[2], (f"{m} is stored from {first.date()}; the {span}-day window needs it from "
+                                            f"{start.date()} — valid from {valid.date()}")
+    if "--seed" in text and not any(sg in text for sg in _E_SIGNS):
+        # a one-off seed fills it: the route exists (D), the fix is the command
+        return MISSING_CLASSES[3], (f"{', '.join(named) or 'the series'} — one-off seed: "
+                                    + str((gap or {}).get("suggestion") or why)[:200])
+    if any(sg in text for sg in _E_SIGNS) or not named:
+        what = (gap or {}).get("suggestion") or "no series is wired for this line"
+        return MISSING_CLASSES[4], f"{', '.join(named) or 'no input series'} — {str(what)[:200]}"
+    return MISSING_CLASSES[3], (f"{', '.join(named)} — " + str((gap or {}).get("suggestion") or
+                                                              "the route is configured and stored nothing for the window")[:200])
 
 
 def missing_cause(why: str, gap: dict | None = None) -> str:
-    """One of MISSING_CAUSES for a MISSING cell, from its reason and its Gap Report row's reason and suggestion. A cell
-    whose route is wired but holds no rows for the window — the default — is ROUTE EXISTS, NOT FILLED."""
-    text = " ".join(str(x or "") for x in (why, (gap or {}).get("reason"), (gap or {}).get("suggestion"))).lower()
-    for cause, signs in _CAUSE_SIGNS:
-        if any(sg in text for sg in signs):
-            return cause
-    return MISSING_CAUSES[0]
+    """The class of a MISSING cell from its reason alone (no store): B, E or D (G7's helper, G8 classes)."""
+    return missing_class({"Reason / route / error": why}, gap)[0]
 
 
-def mark_missing(rows: list[dict], gap_rows: list | None = None) -> int:
-    """N/A BY DESIGN -> MISSING where the reason is a missing route, with the route and the fix from the Gap Report
-    row of the same (project, metric) where one exists. Returns how many."""
+def mark_missing(rows: list[dict], gap_rows: list | None = None, groups: dict | None = None, asof=None) -> int:
+    """N/A BY DESIGN -> MISSING where the reason is a missing route, classed A–E with its evidence (missing_class); a
+    class B cell (an accepted limit Jake decided) goes back to N/A BY DESIGN citing the decision. Returns how many are
+    MISSING."""
     gaps = {(str(g.get("project")), str(g.get("metric"))): g for g in gap_rows or ()}
     n = 0
     for r in rows:
@@ -323,11 +416,20 @@ def mark_missing(rows: list[dict], gap_rows: list | None = None) -> int:
         m = _NA_METRIC.search(why)
         metric = m.group(1) if m else ""
         g = gaps.get((str(r["Project"]), metric))
-        fix = (f" | ROUTE: {str(g.get('reason'))[:160]} | FIX: {str(g.get('suggestion'))[:200]}" if g else
-               f" | FIX: the series{' ' + metric if metric else ''} has no stored rows for this window — its Gap Report "
-               f"row (or check_offline_items.py gap_routes) names the route")
-        cause = missing_cause(why, g)
-        r["Status"], r["Reason / route / error"] = "MISSING", (f"MISSING [{cause}] — " + why + fix)[:400]
+        if g is None:
+            for mm in _metrics_named(why, r.get("Formula as built")):
+                g = gaps.get((str(r["Project"]), mm))
+                if g:
+                    break
+        cls, ev = missing_class(r, g, groups, asof)
+        if cls == "N/A":
+            r["Reason / route / error"] = f"N/A BY DESIGN — {ev}"[:400]
+            continue
+        if cls == MISSING_CLASSES[1]:
+            r["Reason / route / error"] = f"N/A BY DESIGN — accepted limit: {ev}"[:400]
+            continue
+        fix = (f" | ROUTE: {str(g.get('reason'))[:160]} | FIX: {str(g.get('suggestion'))[:200]}" if g else "")
+        r["Status"], r["Reason / route / error"] = "MISSING", (f"MISSING [{cls}] — {ev} | {why}" + fix)[:400]
         n += 1
     return n
 

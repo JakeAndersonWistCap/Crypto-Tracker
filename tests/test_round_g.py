@@ -1113,7 +1113,10 @@ def test_g2_6_the_wallet_inflow_sql_is_dry_run_by_near_settlement_routes():
     import references as rf
     for k in ("fefundsadmin_alltime_inflow", "buybacks_multisig_alltime_inflow"):
         r = rf.ROUTES.get(("Near", k))
-        assert r and r[0] == "not_wired" and "receipts" in r[1], k
+        # G8 4c: wired to BigQuery stage 2's answer (route near_inflow), the account named
+        assert r and r[0] == "near_inflow" and r[1] == {"fefundsadmin_alltime_inflow": "fefundsadmin.sputnik-dao.near",
+                                                        "buybacks_multisig_alltime_inflow":
+                                                            "buybacks.multisignature.near"}[k], k
 
 
 # ------------------------------------------------------------------------------- G3 verification coverage references

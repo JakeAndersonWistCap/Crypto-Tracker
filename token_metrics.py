@@ -99,7 +99,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     ap.add_argument("--seed", choices=["nearblocks", "geodnet", "plume_staking", "hl_candles", "plume_settlement", "mev_relays",
                              "near_bigquery", "chainlink_fees", "pendle_gauges", "aero_epochs",
                              "aero_buyback", "aero_managed_locks", "burn_history", "hyperevm_burn", "katana_claims",
-                             "morpho_base_claims", "plume_payouts"],
+                             "morpho_base_claims", "plume_payouts", "pendle_berachain", "eth_p2p_validation",
+                             "uni_retro_burn", "ccip_value"],
                     help="one-off: run only this source with NO time budget, to finish a first "
                          "read that routine runs (60s) take many runs to complete. Stores what it "
                          "reads; records no gaps and does not rebuild the workbook. plume_settlement: a "
@@ -122,7 +123,11 @@ def parse_args(argv=None) -> argparse.Namespace:
                          "resumable, stored only once the history reconciles to the wei. morpho_base_claims: Morpho's Base "
                          "Distributor claims (merkl_morpho_out_base) with no time budget, through its routed explorers "
                          "(Alchemy's Transfers API on Base), the cache saved as it goes; stored once it reconciles. plume_payouts: Plume's "
-                         "staking payouts backlog (RewardDistributed) through rpc.plume.org eth_getLogs, resumable.")
+                         "staking payouts backlog (RewardDistributed) through rpc.plume.org eth_getLogs, resumable. pendle_berachain: "
+                         "Pendle's Berachain gauge scan (gauge_pendle_out_berachain) with its own one-hour budget, the "
+                         "Alchemy pages checkpointed as it reads (a stop resumes); routine runs are incremental after. "
+                         "eth_p2p_validation: the Ethereum P2P leg's validation window on BigQuery (dry run first, Jake's "
+                         "approval in config), then the rebuild-vs-Artemis validation printed.")
     ap.add_argument("--seed-days", type=int, default=None,
                     help="--seed mev_relays: seed this many days back instead of the configured year "
                          "(e.g. 90 first; a later full seed resumes from the days already held). --seed hyperevm_burn: "
@@ -598,6 +603,157 @@ def seed_aero_managed_locks(st, log) -> int:
     return 0
 
 
+def uni_retro_burn_row(tx: dict, transfers: list, spec: dict):
+    """The one-off's stored row from the explorer's answers, or (None, why): the tx must be status ok at the declared
+    block, and carry ONE token Transfer of exactly spec['tokens'] from the declared sender to the declared receiver."""
+    import pandas as pd
+    t = spec["tx"]
+    if str(tx.get("status")) != "ok" or int(tx.get("block_number") or tx.get("block") or -1) != int(t["block"]):
+        return None, f"tx status {tx.get('status')!r} at block {tx.get('block_number')} — expected ok at {t['block']}"
+    lo = lambda a: str(a or "").lower()  # noqa: E731
+    hits = [x for x in transfers
+            if lo((x.get("token") or {}).get("address_hash") or (x.get("token") or {}).get("address")) == lo(t["token"])
+            and lo((x.get("from") or {}).get("hash")) == lo(t["from"]) and lo((x.get("to") or {}).get("hash")) == lo(t["to"])]
+    if len(hits) != 1:
+        return None, f"{len(hits)} matching Transfer(s) of the token from the sender to the receiver — expected 1"
+    tot = (hits[0].get("total") or {})
+    amt = int(tot.get("value")) / 10 ** int(tot.get("decimals") or 18)
+    if abs(amt - float(spec["tokens"])) > 1e-6:
+        return None, f"the Transfer moved {amt:,.6f}, not the declared {spec['tokens']:,.0f}"
+    day = pd.Timestamp(tx["timestamp"]).tz_convert(None).normalize()
+    return {"date": day, "value": amt, "source": f"tx:{t['hash']} (block {t['block']}, {spec['what']})"}, ""
+
+
+def seed_ccip_value(st, log) -> int:
+    """Round G8 4b: Chainlink's CCIP token value, its 270-day history in one sitting (no time budget; the walk is
+    checkpointed, so an interrupted seed resumes). ~1.5-3 h at the default 10% detail sample. Records no gaps."""
+    from fetch import Heartbeat
+    from fetch.ccip_value import CcipValue
+    from fetch.validate import validate_frame
+    pl = [p for p in config.PROJECTS if p.get("ccip_value")]
+    run_id = fetch.new_run_id()
+    out = fetch.FetchOutput()
+    t0 = time.monotonic()
+    with Heartbeat():
+        CcipValue().run(pl, None, out, unbounded=True)
+    prior = st.latest_values()
+    written = sum(st.upsert(f) for f in (validate_frame(f, prior, out) for f in out.frames) if f is not None and not f.empty)
+    for e in out.log:
+        st.record_fetch(run_id, e.source, e.project, e.rows, e.status, e.message, e.tier)
+        log.info("--seed ccip_value: %s — %s", e.status, e.message)
+    log.info("--seed ccip_value: AFTER (%.0fs) — %d row(s) stored", time.monotonic() - t0, written)
+    return 0
+
+
+def seed_uni_retro_burn(st, log) -> int:
+    """Round G8 item 4c (Jake): Uniswap's 100M UNI retroactive burn, stored as history from the transaction itself
+    (config one_off_flows tx). Keyless explorer reads; idempotent (upsert on the same day). Records no gaps."""
+    from fetch.base import Http, tidy
+    p = config.PROJECT_BY_NAME["Uniswap"]
+    spec = next(s for s in p["one_off_flows"] if s.get("tx"))
+    base = spec["tx"]["explorer"] + spec["tx"]["hash"]
+    h = Http(min_interval=0.5)
+    try:
+        tx = h.get(base)
+        tr = h.get(base + "/token-transfers")
+    except Exception as e:  # noqa: BLE001
+        log.error("--seed uni_retro_burn: eth.blockscout.com did not answer (%s) — nothing stored", e)
+        return 1
+    row, why = uni_retro_burn_row(tx, (tr or {}).get("items") or [], spec)
+    if row is None:
+        log.error("--seed uni_retro_burn: NOT STORED — %s", why)
+        return 1
+    n = st.upsert(tidy([(row["date"], row["value"])], "Uniswap", "one_off_burn_tokens", row["source"], 1))
+    log.info("--seed uni_retro_burn: %s UNI on %s stored (%d row) — %s", f"{row['value']:,.0f}", row["date"].date(),
+             n, row["source"])
+    return 0
+
+
+SEED_BERACHAIN_BUDGET_S = 3600        # G8 3d: one hour for the scan, its window and its repair
+
+
+def seed_pendle_berachain(st, log) -> int:
+    """Round G8 item 3d (Jake 2026-10-20: Berachain moved 25% -> 27% in a run). Pendle's Berachain gauge scan, alone,
+    with its own long budget (SEED_BERACHAIN_BUDGET_S for the history, the window and the repair) through the same LogScan
+    and routes as the routine run. The Alchemy Transfers API pages are checkpointed after each page
+    (<logcache>/alchemy-pages/), so a stop — the budget or Ctrl-C — resumes on the next seed or routine run. Stored only
+    once the history reconciles, as every scan. Records no gaps."""
+    from fetch import Heartbeat
+    from fetch.logscan import LogScan
+    from fetch.validate import validate_frame
+    p = config.PROJECT_BY_NAME["Pendle"]
+    spec = next((s for s in p.get("log_scans") or () if "berachain" in str(s.get("own_tier", ""))), None)
+    if spec is None:
+        log.error("--seed pendle_berachain: gauge_pendle_out_berachain is NOT WIRED here — it opens when "
+                  "explorer_routes.json lists Berachain (80094) as served (check_offline_items.py "
+                  "alchemy_transfer_routes, with ALCHEMY_API_KEY in .env). Nothing read.")
+        return 2
+    long = {**spec, "scan_budget_s": SEED_BERACHAIN_BUDGET_S, "window_budget_s": SEED_BERACHAIN_BUDGET_S,
+            "repair_budget_s": SEED_BERACHAIN_BUDGET_S}
+    run_id = fetch.new_run_id()
+    out = fetch.FetchOutput()
+    t0 = time.monotonic()
+    with Heartbeat():
+        LogScan(own_tier=spec.get("own_tier")).run([{**p, "log_scans": [long]}], None, out)
+    prior = st.latest_values()
+    frames = [validate_frame(f, prior, out) for f in out.frames]
+    written = sum(st.upsert(f) for f in frames if f is not None and not f.empty)
+    for e in out.log:
+        st.record_fetch(run_id, e.source, e.project, e.rows, e.status, e.message, e.tier)
+        log.info("--seed pendle_berachain: %s — %s", e.status, e.message)
+    log.info("--seed pendle_berachain: AFTER (%.0fs) — %d row(s) stored%s", time.monotonic() - t0, written,
+             "" if written else " (run it again: the pages resume where they stopped)")
+    return 0 if written else 1
+
+
+def seed_eth_p2p_validation(st, log) -> int:
+    """Round G8 item 5 (Jake approved the weekly P2P leg, 2026-10-20): the Ethereum P2P leg's turn now, whatever the
+    weekly cadence — dry runs, then the validation window and the complete weeks since (fetch.eth_settlement), on
+    NEAR's BigQuery quota ledger — then the rebuild (DEX + NFT + P2P) against the Artemis CSV to 2026-08-25
+    (build_workbook.settlement_validation: every complete week within ±10%), printed with the bytes billed."""
+    import json as _json
+    from fetch.eth_settlement import EthP2PBigQuery
+    from fetch.validate import validate_frame
+    import build_workbook as bw
+    run_id = fetch.new_run_id()
+    out = fetch.FetchOutput()
+    import pandas as pd
+    px = pd.DataFrame(st.conn.execute("SELECT project, metric, date, value FROM metrics WHERE project = 'Ethereum' "
+                                      "AND metric = 'price_usd'").fetchall(), columns=["project", "metric", "date", "value"])
+    a = EthP2PBigQuery(stored_long=px)
+    stt = a._load()
+    stt.setdefault("eth_p2p", {}).pop("turn_on", None)          # the turn runs now
+    a._save(stt)
+    led0 = dict(a._load().get("ledger") or {})
+    t0 = time.monotonic()
+    a.run([config.PROJECT_BY_NAME["Ethereum"]], None, out)
+    prior = st.latest_values()
+    written = sum(st.upsert(f) for f in (validate_frame(f, prior, out) for f in out.frames) if f is not None and not f.empty)
+    for e in out.log:
+        st.record_fetch(run_id, e.source, e.project, e.rows, e.status, e.message, e.tier)
+        log.info("--seed eth_p2p_validation: %s — %s", e.status, e.message)
+    led1 = a._load().get("ledger") or {}
+    billed = sum(int(v) for v in led1.values()) - sum(int(v) for v in led0.values())
+    spec = config.SETTLEMENT_REBUILD["ethereum_rebuild"]
+    rows = st.conn.execute("SELECT metric, date, value FROM metrics WHERE project = 'Ethereum' AND metric IN (?, ?, ?, ?)",
+                           (*spec["legs"].values(), config.ARTEMIS_SETTLEMENT["metric"])).fetchall()
+    df = pd.DataFrame(rows, columns=["metric", "date", "value"])
+    ser = {m: df[df.metric == m].assign(date=lambda x: pd.to_datetime(x.date).dt.normalize())
+           .drop_duplicates("date", keep="last").set_index("date")["value"].astype(float) for m in df.metric.unique()}
+    legs = [ser.get(m) for m in spec["legs"].values()]
+    if any(x is None or x.empty for x in legs) or config.ARTEMIS_SETTLEMENT["metric"] not in ser:
+        missing = [m for m, x in zip(spec["legs"].values(), legs) if x is None or x.empty]
+        log.info("--seed eth_p2p_validation: NOT VALIDATED — not stored: %s", ", ".join(missing) or "the Artemis CSV")
+        val = {"status": "NOT VALIDATED", "why": "legs not stored: " + ", ".join(missing)}
+    else:
+        rebuilt = pd.concat(legs, axis=1, sort=True).dropna().sum(axis=1)
+        val = bw.settlement_validation(rebuilt, ser[config.ARTEMIS_SETTLEMENT["metric"]], spec["validation"])
+    log.info("--seed eth_p2p_validation: %d row(s) stored; %.2f GB billed this seed (%.0fs); VALIDATION %s — %s",
+             written, billed / 1e9, time.monotonic() - t0, val["status"], val.get("why", ""))
+    print(_json.dumps({"bytes_billed": billed, "validation": val}, indent=1, default=str))
+    return 0 if val["status"] == "PASSED" else 1
+
+
 def seed_pendle_gauges(st, log) -> int:
     """Pendle's gauge-payout scans, every chain, in one sitting (Jake's run 2026-10-09 ~14:10: the Arbitrum and
     Optimism scans seed from block 0 at 140s a run, store nothing until their whole history reconciles, and the
@@ -829,7 +985,9 @@ def _main(args, log) -> int:
               "aero_epochs": seed_aero_epochs, "burn_history": seed_burn_history,
               "hyperevm_burn": lambda st_, log_: seed_hyperevm_burn(st_, log_, args.seed_days),
               "katana_claims": seed_katana_claims, "morpho_base_claims": seed_morpho_base_claims,
-              "plume_payouts": seed_plume_payouts,
+              "plume_payouts": seed_plume_payouts, "pendle_berachain": seed_pendle_berachain,
+              "eth_p2p_validation": seed_eth_p2p_validation, "uni_retro_burn": seed_uni_retro_burn,
+              "ccip_value": seed_ccip_value,
               "aero_buyback": seed_aero_buyback, "aero_managed_locks": seed_aero_managed_locks,
               "mev_relays": lambda st_, log_: seed_mev_relays(st_, log_, args.seed_days)}[args.seed](st, log)
         st.close()

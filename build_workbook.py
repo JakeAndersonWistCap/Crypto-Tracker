@@ -1373,10 +1373,18 @@ def _burn_total_views(groups: dict) -> None:
             if g is not None and not g.empty:
                 opt[m] = g.drop_duplicates("date", keep="last").set_index("date")["value"].astype(float).to_dict()
         base_vals = [sum(per_leg[m][d] for m in spec["components"]) for d in days]
+        # A DECLARED COMPONENT, NOT A NEW MEASURING POINT (Round G8 item 1, Jake 2026-10-20: G7 named the optional leg in
+        # the source — "burn_total(gross+core+hyperevm_priority_burn_tokens)" — a third basis that blanked 22 Hyperliquid
+        # cells). The source keeps the total's own basis; the component is a bracketed annotation (stripped by
+        # config.strip_source_annotations) naming it and its start date (config.DECLARED_COMPONENTS).
+        base_src = "derived:burn_total(" + "+".join(spec["components"]) + ")"
+        starts = {m: min(o) for m, o in opt.items() if o}
         view = pd.DataFrame({"date": days, "project": name, "metric": spec["metric"],
                              "value": [v + sum(o.get(d, 0.0) for o in opt.values()) for v, d in zip(base_vals, days)],
-                             "source": ["derived:burn_total(" + "+".join(spec["components"] + [m for m, o in opt.items()
-                                                                                                  if d in o]) + ")"
+                             # a day after the component's start that it did not report is SAID, never a silent 0
+                             "source": [base_src + "".join(f"[+{m} declared component from {starts[m]:%Y-%m-%d}]"
+                                                           if d in o else f"[{m} not read this day — excluded]"
+                                                           for m, o in opt.items() if d >= starts[m])
                                         for d in days],
                              "tier": 2})
         a4v = spec.get("a4_view") or {}
@@ -1488,11 +1496,15 @@ def _one_off_views(groups: dict) -> None:
             g.loc[i, "value"] = float(g.loc[i, "value"]) - float(spec["tokens"])
             g.loc[i, "source"] = config.mark_source(str(g.loc[i, "source"]), "one-off-removed")
             groups[key] = g
-            one = g.loc[[i]].copy()
-            one["metric"] = "one_off_burn_tokens"
-            one["value"] = float(spec["tokens"])
-            one["source"] = f"one_off:{spec['what']} ({spec['source_url']})"
-            groups[(name, "one_off_burn_tokens")] = _as_stored(one, g.columns)
+            # THE STORED TRANSACTION DATES THE ONE-OFF (Round G8 item 4c): `--seed uni_retro_burn` stores the event
+            # from the tx itself on its block's day; where that row is held it stands, else the differenced row's day
+            held = groups.get((name, "one_off_burn_tokens"))
+            if held is None or held.empty or not held["source"].astype(str).str.startswith("tx:").any():
+                one = g.loc[[i]].copy()
+                one["metric"] = "one_off_burn_tokens"
+                one["value"] = float(spec["tokens"])
+                one["source"] = f"one_off:{spec['what']} ({spec['source_url']})"
+                groups[(name, "one_off_burn_tokens")] = _as_stored(one, g.columns)
             _ONE_OFF_REMOVED[key] = _ONE_OFF_REMOVED.get(key, 0.0) + float(spec["tokens"])
 
 
@@ -9545,11 +9557,24 @@ def flow_statements(groups: dict, asof) -> list[dict]:
                   ("Outflows beside: unlocks (e)", vrows["incent_e"], "usd", "outflow_e_usd",
                    "" if "outflow_e_usd" in have else "no (e) on this project"),
                   ("Status", stat, "text", "", "")]
+        out[:] = [_no_such_flow(r) for r in out]
         for line, vals, unit, series_, note in vlines:
-            out.append({"Project": name, "Statement": "Value flow", "Line": line,
+            out.append(_no_such_flow({"Project": name, "Statement": "Value flow", "Line": line,
                         **{lab: v for lab, v in zip(trajectory.LABELS, vals)}, "Unit": unit, "Series": series_,
-                        "Note": note})
+                        "Note": note}))
     return out
+
+
+def _no_such_flow(row: dict) -> dict:
+    """CLASS A (Round G8 item 2, Jake 2026-10-20): a Flows line with no value in any quarter whose mechanism does not
+    exist per a PRIMARY source (config.NO_SUCH_FLOW) reads 0 in every quarter, labelled "0 — no such flow" with the
+    evidence and its source. A line with any value, or with no recorded evidence, is left as it is: unknown is never 0."""
+    leg = next((k for k, lab in config.FLOW_LEG_LINES.items() if lab == row.get("Line")), None)
+    ev = config.NO_SUCH_FLOW.get((row.get("Project"), leg)) if leg else None
+    if not ev or any(row.get(lab) is not None for lab in trajectory.LABELS):
+        return row
+    return {**row, **{lab: 0.0 for lab in trajectory.LABELS},
+            "Note": f"0 — no such flow: {ev['evidence']} ({ev['source']}, read {ev['read_on']})"[:400]}
 
 
 def write_flows(wb, rows: list[dict]) -> None:

@@ -72,6 +72,21 @@ def constant_price_tvl(j: dict) -> tuple[list, str]:
                      f"({datetime.fromtimestamp(cover[1], tz=timezone.utc).date()}) is in tokens so priced"
                      if cover else ""))
 
+def _sum_children(per: dict) -> tuple[list, list]:
+    """[(day, sum)] over named children's {day: value}: a child counts from its first day (before it, it was not
+    listed); a day inside a child's span that it does not report is refused, never filled with 0. And the refused."""
+    spans = {k: min(v) for k, v in per.items()}
+    rows, refused = [], []
+    for d in sorted(set().union(*per.values())):
+        live = [k for k in per if spans[k] <= d]
+        short = [k for k in live if d not in per[k]]
+        if short:
+            refused.append(f"{d.date()} ({', '.join(short)})")
+            continue
+        rows.append((d, sum(per[k][d] for k in live)))
+    return rows, refused
+
+
 class DefiLlama:
     # TWO TIERS (Round G5 item 3, Jake's 06:30 run: "defillama" timed out at 150 s doing real work — 69 calls, 136 s in
     # requests, slowest /protocol/morpho 21.5 s). part="fees": the daily fees / revenue summaries and the restructure
@@ -873,6 +888,9 @@ class DefiLlama:
         slug, name = project.get("defillama_protocol"), project["name"]
         if not slug:
             return
+        if project.get("defillama_protocol_parts"):
+            self._protocol_tvl_parts(project, window_days, out)
+            return
         try:
             j = self._protocol(slug)
             rows = [(datetime.fromtimestamp(p["date"], tz=timezone.utc), p["totalLiquidityUSD"]) for p in j.get("tvl", [])]
@@ -891,6 +909,79 @@ class DefiLlama:
                 out.add(window(tidy(rows, name, "protocol_tvl_constant_price_usd", f"{SOURCE}:tokens_at_latest_prices",
                                     TIER), window_days), SOURCE, name,
                         f"{slug}:protocol_tvl_constant_price_usd — {note}", TIER)
+
+    def _protocols_listing(self) -> list:
+        """/protocols — every listing with its `slug`, `name` and `parentProtocol`. Memoised for the run."""
+        key = ("listing", "protocols")
+        if key not in self._memo:
+            rows = self.http.get(f"{API}/protocols")
+            if not isinstance(rows, list):
+                raise ValueError(f"/protocols is not a list ({type(rows).__name__})")
+            self._memo[key] = rows
+        return self._memo[key]
+
+    def _protocol_tvl_parts(self, project: dict, window_days, out) -> None:
+        """protocol_tvl_usd = the SUM of the named children of a DefiLlama parent (Round G8 item 3a).
+
+        DefiLlama renamed Aerodrome's parent: `parent#aerodrome` left /protocols and every Aerodrome and Velodrome
+        listing now sits under `parent#aero-protocol`; /protocol/aerodrome answers 400 (Jake's 06:02 run, 10-20).
+        The old parent was Aerodrome V1 + Aerodrome Slipstream + Aero Lite, so the same three children summed are
+        the same measuring point — Velodrome and Ignition (Launchpad) are not added. The children are READ from
+        /protocols by parent and exact name, never guessed; a named child the listing does not carry stores nothing.
+        A child counts from its first reported day (before that it was not listed — DefiLlama's own parent sum
+        works the same way); a day inside a child's span that it does not report is refused, never filled with 0."""
+        spec, name = project["defillama_protocol_parts"], project["name"]
+        try:
+            listing = self._protocols_listing()
+        except Exception as e:  # noqa: BLE001
+            out.fail(SOURCE, name, f"protocol tvl: /protocols listing unreadable ({e}) — NOTHING STORED; no slug "
+                                   f"is guessed", TIER)
+            return
+        want = list(spec["names"])
+        kids = {str(k.get("name")): str(k.get("slug") or "") for k in listing
+                if str(k.get("parentProtocol") or "").lower() == spec["parent_id"].lower()
+                and str(k.get("name")) in want}
+        missing = [n for n in want if not kids.get(n)]
+        if missing:
+            out.fail(SOURCE, name, f"protocol tvl: /protocols lists no {', '.join(missing)} under "
+                                   f"{spec['parent_id']} — NOTHING STORED", TIER)
+            return
+        import config                                      # noqa: PLC0415
+        payloads = {}
+        for label in want:
+            try:
+                payloads[label] = self._protocol(kids[label])
+            except Exception as e:  # noqa: BLE001
+                out.fail(SOURCE, name, f"protocol tvl: /protocol/{kids[label]} ({label}): {e} — NOTHING STORED", TIER)
+                return
+        label = " + ".join(f"{k}={kids[k]}" for k in want)
+        legs = [("protocol_tvl_usd", SOURCE,
+                 lambda j: [(pt["date"], pt["totalLiquidityUSD"]) for pt in j.get("tvl") or []], "tvl")]
+        if "protocol_tvl_constant_price_usd" in config.metrics_for_project(project):
+            # the BUSINESS column (tokens at the latest day's prices): each child's own, summed under the same rule
+            legs.append(("protocol_tvl_constant_price_usd", f"{SOURCE}:tokens_at_latest_prices",
+                         lambda j: [(int(d.timestamp()), v) for d, v in constant_price_tvl(j)[0]],
+                         "tokens at latest prices"))
+        for metric, src, read, what in legs:
+            per = {}
+            for k in want:
+                seen = {}
+                for ts, v in read(payloads[k]):
+                    if v is not None:
+                        seen[pd.Timestamp(int(ts), unit="s").normalize()] = float(v)
+                if not seen:
+                    out.fail(SOURCE, name, f"{metric}: /protocol/{kids[k]} ({k}) carried no {what} series — NOTHING "
+                                           f"STORED", TIER)
+                    break
+                per[k] = seen
+            else:
+                rows, refused = _sum_children(per)
+                if refused:
+                    log.info("%s: %s: %d day(s) refused, a child did not report: %s", name, metric, len(refused),
+                             "; ".join(refused[-5:]))
+                out.add(window(tidy(rows, name, metric, src, TIER), window_days), SOURCE, name,
+                        f"{metric} = sum({label}) under {spec['parent_id']} ({what}) — {len(rows)} day(s), "
+                        f"{len(refused)} refused", TIER)
 
     # ===== A LENDING PROTOCOL'S SUPPLY SIDE, AND THE CAVEAT THAT TRAVELS WITH IT. =====
     #

@@ -1004,7 +1004,7 @@ class ChainReader:
         raise RuntimeError("block " + f"{block:,} could not be read from the chain: " + "; ".join(attempts))
 
     def dated_logs(self, chain: str, address: str, topics: list, lo: int, hi: int, chunk: int,
-                   trace: list) -> tuple[list, int]:
+                   trace: list, deadline: float | None = None) -> tuple[list, int]:
         """(logs, last block covered): Transfer logs of `address` in [lo, hi] FROM THE CHAIN, each DATED (run review
         D1, Jake 2026-10-14). An endpoint whose logs carry no blockTimestamp (arb1.arbitrum.io answers 0x0 on every
         log) is passed over — an undated outflow cannot be put on a day. A range an endpoint refuses as too wide is
@@ -1021,8 +1021,14 @@ class ChainReader:
             flt = {"address": self.checksum(address), "topics": topics, "fromBlock": int(lo), "toBlock": int(upper)}
             narrowed, said = False, []
             for u in urls:
+                # a caller's deadline (G8 3c: the repair pass inside its scan's share) — no new call past it, and no call
+                # given longer than what is left
+                left = None if deadline is None else deadline - time.monotonic()
+                if left is not None and left < 5:
+                    raise TimeoutError(f"deadline reached before blocks {lo:,}..{upper:,} on {rpc_host(u)}")
                 try:
-                    got = list(self.__dict__.setdefault("_w3_by_url", {}).get(u) or self.make_web3(chain, u, 60)
+                    got = list(self.__dict__.setdefault("_w3_by_url", {}).get(u) or self.make_web3(
+                        chain, u, 60 if left is None else max(5, min(60, int(left))))
                                .eth.get_logs(flt))
                 except Exception as e:  # noqa: BLE001
                     msg = redact_urls(self.error_detail(e))[:160]

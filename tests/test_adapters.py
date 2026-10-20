@@ -20859,9 +20859,13 @@ def test_aethir_dashboard_by_label_supplier_vs_staker_emissions_and_components()
     assert tot.source.iloc[0] == ("aethir_page:protocol/demand-metric.sum(monthlyNetworkRevenue):PARTIAL"
                                   "[June-July 2024 not in the monthly list]")
     # the figures not in any payload are UNAVAILABLE, never value-matched
-    for m in ("compute_purchases_cumulative_tokens", "supply_units_edge", "edge_stipend_cumulative_tokens",
+    for m in ("supply_units_edge", "edge_stipend_cumulative_tokens",
               "edge_earnings_cumulative_tokens", "edge_daily_reward_pool_tokens"):
         assert config.unavailable_for("Aethir", m) is not None and one(m).empty, m
+    # compute purchases REOPENED (Round G8 4c): read by key now; this older recorded payload does not carry it, so
+    # nothing is stored — never value-matched
+    assert config.unavailable_for("Aethir", "compute_purchases_cumulative_tokens") is None
+    assert one("compute_purchases_cumulative_tokens").empty
     # WEEKLY REVENUE: DD/MM, year inferred from the sequence; the week in progress reported, not stored
     rv = one("customer_revenue_usd")
     assert len(rv) == len(weeks) - 1 and rv.date.iloc[0] == pd.Timestamp("2024-06-03")

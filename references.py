@@ -200,10 +200,11 @@ ROUTES: dict[tuple[str, str], tuple] = {
     # Round G 2.6: fee inflows arrive as RECEIPTS (intents.near withdrawals), which NearBlocks' account txns do not list
     # (fefundsadmin's newest "transaction" there is 2026-03-27) — the route is BigQuery receipt_actions + wNEAR ft_events
     # (sql/near/bigquery_wallet_inflows.sql), dry-run in check_offline_items near_settlement_routes; Jake decides the bytes
-    ("Near", "fefundsadmin_alltime_inflow"): ("not_wired", _NEAR_INFLOW_ROUTE.format("fefundsadmin.sputnik-dao.near")),
-    ("Near", "buybacks_multisig_alltime_inflow"): ("not_wired",
-                                                   _NEAR_INFLOW_ROUTE.format("buybacks.multisignature.near")),
-    ("Near", "1csfundsadmin_alltime_inflow"): ("not_wired", _NEAR_INFLOW_ROUTE.format("1csfundsadmin.sputnik-dao.near")),
+    # G8 4c: the BigQuery route is wired — stage 1 (Nov 1-7 window) then stage 2 cut at the references' date; the route
+    # reads data/near/wallet_inflows_alltime.json (check_offline_items.near_wallet_inflows_stage2)
+    ("Near", "fefundsadmin_alltime_inflow"): ("near_inflow", "fefundsadmin.sputnik-dao.near"),
+    ("Near", "buybacks_multisig_alltime_inflow"): ("near_inflow", "buybacks.multisignature.near"),
+    ("Near", "1csfundsadmin_alltime_inflow"): ("near_inflow", "1csfundsadmin.sputnik-dao.near"),
     ("Near", "intents_cumulative_volume"): ("cumulative", "near_intents_volume_usd"),
     ("GEODNET", "mining_pool_wallets"): ("wallets", "mining"),
     ("GEODNET", "team_investor_ecosystem_vendor_publicsale_wallets"): ("wallets", "discretionary"),
@@ -228,7 +229,9 @@ G6_ROUTES = {
     ('Maple', 'g6_buyback_tokens_2026_07'): ('sum_period', 'actual_buyback_tokens', '2026-07-01', '2026-07-31'),
     ('Maple', 'g6_revenue_ltm'): ('sum_days', 'revenue_usd', 365),
     ('Maple', 'g6_treasury_syrup_2026_10_18'): ('last', 'treasury_holding_tokens'),
-    ('Maple', 'g6_stsyrup_total_assets'): ('last', 'locked_tokens'),
+    # G8 4c: stSYRUP.totalAssets() is the SYRUP held by the LEGACY vault (staking ended, MIP-019, 2026-10-07): it is
+    # stsyrup_legacy_tokens, not locked_tokens (N/A for Maple since then) — re-pointed, same contract read
+    ('Maple', 'g6_stsyrup_total_assets'): ('last', 'stsyrup_legacy_tokens'),
     ('Maple', 'g6_syrup_total_supply_g6'): ('last', 'total_supply'),
     ('Plume', 'g6_circulating_supply_api'): ('last', 'circulating_supply_first_party'),
     ('Plume', 'g6_total_supply_api'): ('last', 'total_supply'),
@@ -424,6 +427,20 @@ def _our_value(route: tuple, groups: dict, project: str, at: pd.Timestamp, ref: 
         return (sum(vals) * n / float(d.value.iloc[-1]),
                 f"({' + '.join(dates)}) × {n} ÷ {den} {d.date.iloc[-1]:%Y-%m-%d} — our (b) + (c) on the reference's "
                 f"basis", "")
+    if kind == "near_inflow":
+        import json                                         # noqa: PLC0415
+        f = ROOT / "data" / "near" / "wallet_inflows_alltime.json"
+        try:
+            got = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None, "BigQuery stage 2", (f"{route[1]}: stage 2 has not run yet — stage 1 runs in "
+                                              f"{config_window()} (NEAR_STAGE1_WINDOW), stage 2 after it "
+                                              f"(check_offline_items near_wallet_inflow_days)")
+        a = got.get(route[1])
+        if not a:
+            return None, f"{f.name}", f"{route[1]}: no inflow row in stage 2's answer"
+        return (float(a["total_near"]), f"BigQuery receipt_actions TRANSFER + wNEAR ft_events to {a['through']} "
+                                        f"({f.name})", "")
     if kind == "latent":
         import config                                       # noqa: PLC0415
         live = _series(groups, route[1], "latent_supply_tokens")          # G6 item 3: the live read wins
@@ -661,7 +678,14 @@ def check(groups: dict, headline=None, projects: set[str] | None = None, rows: l
 
 
 # route kinds that read config, not stored rows: no data date applies
-CONFIG_ROUTES = ("latent", "dat_file", "issuer_rate", "fee_tier_top", "not_wired", "block_read", "recorded")
+CONFIG_ROUTES = ("latent", "dat_file", "issuer_rate", "fee_tier_top", "not_wired", "block_read", "recorded",
+                 "near_inflow")
+
+
+def config_window() -> str:
+    import config                                           # noqa: PLC0415
+    w = config.NEAR_STAGE1_WINDOW
+    return f"{w['from']}..{w['to']}"
 
 
 def _ref_date(as_of: str) -> pd.Timestamp:

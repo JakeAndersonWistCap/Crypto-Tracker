@@ -12462,10 +12462,10 @@ def na_reasons():
 
 
 def missing_triage():
-    """ROUND G7 item 9 (Jake 2026-10-19): every MISSING cell of the last build (coverage_audit.csv) by CAUSE —
-    ROUTE EXISTS, NOT FILLED · ONE-OFF SEED · JAKE'S DECISION · NO SOURCE (coverage_audit.missing_cause) — per project,
-    with the populated / applicable count. The first two classes are ours to fill; the last two are listed for Jake.
-    Reads the CSV; changes nothing."""
+    """ROUND G8 item 2 (Jake 2026-10-20; G7 item 9): every MISSING cell of the last build (coverage_audit.csv) by CLASS
+    with its evidence — A no such flow · B accepted limit · C needs history (valid-from date) · D route not filled · E no
+    source (coverage_audit.missing_class) — the counts by class per project, then each cell, and the populated /
+    applicable count. Reads the CSV; changes nothing."""
     import csv as _csv                                    # noqa: PLC0415
     import re as _re                                      # noqa: PLC0415
     from collections import defaultdict                   # noqa: PLC0415
@@ -12486,14 +12486,26 @@ def missing_triage():
                 appl[p] += 1
             if st in ("VERIFIED", "VERIFIED (derived)", "LIVE-UNVERIFIED", "CHECK", "BROKEN"):
                 held[p] += 1
+            why = r.get("Reason / route / error") or ""
             if st == "MISSING":
-                why = r.get("Reason / route / error") or ""
                 m = _re.match(r"MISSING \[([^\]]+)\]", why)
                 by[m.group(1) if m else _ca.missing_cause(why)][p].append(f"{r.get('Tab')} | {r.get('Column')}: {why}")
+            elif st == "N/A BY DESIGN" and why.startswith("N/A BY DESIGN — accepted limit"):     # resolved as B
+                by[_ca.MISSING_CLASSES[1]][p].append(f"{r.get('Tab')} | {r.get('Column')}: {why}")
+            elif st == "N/A BY DESIGN" and why.startswith("0 — no such flow"):                   # resolved as A
+                by[_ca.MISSING_CLASSES[0]][p].append(f"{r.get('Tab')} | {r.get('Column')}: {why}")
+    projects = sorted({p for rows_ in by.values() for p in rows_})
+    print("  COUNTS BY CLASS PER PROJECT:")
+    print("    " + f"{'project':<16}" + "".join(f"{c[0]:>5}" for c in _ca.MISSING_CLASSES) + "  total")
+    for p in projects:
+        cnt = [len((by.get(c) or {}).get(p) or ()) for c in _ca.MISSING_CLASSES]
+        print("    " + f"{p:<16}" + "".join(f"{x:>5}" for x in cnt) + f"  {sum(cnt):>5}")
     for cause in _ca.MISSING_CAUSES:
         rows = by.get(cause) or {}
         print(f"\n  {cause}: {sum(len(v) for v in rows.values())}"
-              + ("  — ours to fill" if cause in _ca.MISSING_CAUSES[:2] else "  — for Jake"))
+              + {"A": "  — 0 with its source (should not remain MISSING)", "B": "  — N/A BY DESIGN, cited",
+                 "C": "  — valid from the date on each line", "D": "  — ours: route exists, fix or run the named seed",
+                 "E": "  — for Jake: no source; what would fill it is on each line"}.get(cause[0], ""))
         for p in sorted(rows):
             print(f"    {p} ({len(rows[p])})")
             for line in rows[p][:40]:
@@ -12696,6 +12708,23 @@ def _not_stale(cfg, con, name: str, metric: str, last: str) -> str:
         return (f"READ-TIME VIEW: the workbook shows {metric} as {origin}"
                 + (f" (= {' + '.join(legs)})" if len(legs) > 1 else "")
                 + (f", inputs through {min(lasts)[:10]}" if lasts else "") + "; the stored rows are superseded")
+    # A RETIRED NEARBLOCKS ROUTE (Round G8 item 3f, Jake: "Near noncirculating_nearblocks_tokens last stored 10-13
+    # although the tier ran"): /v3/stats was retired on 2026-10-13 (fix round 2 N1: v3 answers circulating == total) and
+    # v1 is flat since 2025-08-27 (G6 item 3, Jake: "don't use it") — the tier runs but never reads it, by design
+    rs = ((cfg.PROJECT_BY_NAME.get(name) or {}).get("nearblocks") or {}).get("supply_stats_retired") or {}
+    if rs.get("metric") == metric:
+        return (f"RETIRED ROUTE {rs.get('retired_on')}: NearBlocks {rs.get('path')} — {rs.get('why')}; v1 flat since "
+                f"{rs.get('v1_flat_since')} (Jake, G6 item 3: don't use it). Never read; the rows to {last} stand as history")
+    # A VIEW-ONLY METRIC IS NEVER STORED (Round G8 item 3e, Jake: "Aethir arr_usd still ends 10-10 … find out why ARR
+    # isn't stored"): METRICS view_only series are built at read time — Aethir's arr_usd is the last 3 complete months of
+    # customer_revenue_monthly_usd x 4 (Jake, 2026-10-10); the rows stored under it to 10-10 were the dashboard tile,
+    # which the build carries to arr_tile_usd. They are superseded, not stale.
+    # ONLY A DECLARED ONE: view_only alone is not enough (Aerodrome's filing_managed_lock_tokens is view_only on the
+    # sheet and still stored daily by ve_managed — its age is real)
+    sup = (getattr(cfg, "SUPERSEDED_BY_VIEW", {}) or {}).get((name, metric))
+    if sup:
+        return (f"READ-TIME VIEW: {metric} is built at read time ({sup}); never stored since — the stored rows to "
+                f"{last} are superseded")
     # THE USD TWIN OF A RELABELLED BUYBACK (Round G7 item 7: Hyperliquid actual_buyback_usd, last stored 09-29, read
     # stale while its tokens twin read as a view): build_workbook._relabel_views prices the tokens view per day
     tok_origin = cfg.relabelled_from(name, "actual_buyback_tokens") if hasattr(cfg, "relabelled_from") else None
@@ -12825,7 +12854,8 @@ def near_wallet_inflow_days():
     budget. Refuses before 2026-11-01 and after 2026-11-07 (October: 644.0 of 900 GB used, 216.7 GB left). Dry-runs,
     then runs only when the bytes fit monthly_budget − used − the top-up reserve (NearBigQuery._reserve, the existing
     rule) and the per-query cap, with maximum_bytes_billed = the dry run; saves the day list (data/near) and never runs
-    again once done. wallet_inflows_alltime (2,001.57 GB) is never run by any code path. daily_run.ps1 step 2c."""
+    again once done. The one-stage all-time query (2,001.57 GB) is never run by any code path; stage 2 (G8 4c) reads
+    only stage 1's days, once stage 1 is done (near_wallet_inflows_stage2). daily_run.ps1 step 2c."""
     import json as _json                                  # noqa: PLC0415
     from pathlib import Path                              # noqa: PLC0415
     import pandas as pd                                   # noqa: PLC0415
@@ -12836,7 +12866,7 @@ def near_wallet_inflow_days():
     done_file = Path(__file__).resolve().parent / "data" / "near" / "wallet_inflow_days.json"
     if done_file.exists():
         print(f"  DONE already ({done_file.name}) — not run again.")
-        return 0
+        return near_wallet_inflows_stage2(done_file)
     day = pd.Timestamp.now(tz="UTC").tz_localize(None).normalize()
     if not (pd.Timestamp(w["from"]) <= day <= pd.Timestamp(w["to"])):
         print(f"  NOT RUN: today {day.date()} is outside {w['from']}..{w['to']} ({w['why']}).")
@@ -12869,6 +12899,58 @@ def near_wallet_inflow_days():
     done_file.write_text(_json.dumps({"ran_on": str(day.date()), "days": days}))
     print(f"  RUN: {len(days)} day(s) with a native TRANSFER in to the three wallets; saved {done_file.name}. Stage 2 "
           f"(args on those days) is dry-run only — by near_settlement_routes. wallet_inflows_alltime never runs.")
+    return 0
+
+
+NEAR_INFLOW_REF_DAY = "2026-10-13"      # the three references' as_of (revenue.near.org, read 2026-10-13)
+
+
+def near_wallet_inflows_stage2(done_file) -> int:
+    """ROUND G8 item 4c (Jake 2026-10-20: wire the BigQuery receipt_actions TRANSFER route for the three accounts'
+    all-time inflows). Once stage 1 has saved its day list, stage 2 (sql/near/bigquery_wallet_inflows.sql: native
+    TRANSFER deposits on those days + wNEAR ft_events) runs ONCE under the same rule — dry run, refused over the per-query
+    cap, held unless it fits budget − used − the month's top-up reserve, billing capped — cut at NEAR_INFLOW_REF_DAY so it
+    is the same span as the references, and saves data/near/wallet_inflows_alltime.json, which the three references
+    read (references route `near_inflow`). Never re-run once saved."""
+    import json as _json                                  # noqa: PLC0415
+    from pathlib import Path                              # noqa: PLC0415
+    import pandas as pd                                   # noqa: PLC0415
+    import config as _cfg                                 # noqa: PLC0415
+    from fetch.base import FetchOutput                    # noqa: PLC0415
+    from fetch.near_bigquery import NearBigQuery          # noqa: PLC0415
+    out_file = Path(done_file).with_name("wallet_inflows_alltime.json")
+    if out_file.exists():
+        print(f"  STAGE 2 DONE already ({out_file.name}).")
+        return 0
+    cut = pd.Timestamp(NEAR_INFLOW_REF_DAY)
+    days = [d for d in _json.loads(Path(done_file).read_text()).get("days") or () if pd.Timestamp(d) <= cut]
+    if not days:
+        print("  STAGE 2 NOT RUN: stage 1 found no day on or before the references' date")
+        return 0
+    spec = _cfg.PROJECT_BY_NAME["Near"]["near_bigquery"]
+    nb = NearBigQuery()
+    client, why = nb._client(spec)
+    if client is None:
+        print(f"  STAGE 2 NOT RUN: no BigQuery client — {why}")
+        return 0
+    here = Path(__file__).resolve().parent / "sql" / "near"
+    out = FetchOutput()
+    rows = nb._run(client, "NEAR stage 2 wallet_inflows_alltime", (here / "bigquery_wallet_inflows.sql").read_text(),
+                   {"d0": pd.Timestamp("2025-09-22").date(), "d1": cut.date(),
+                    "days": [pd.Timestamp(d).date() for d in days]}, spec, nb._load(), out, "Near", backfill=True)
+    for e in out.log:
+        print(f"  {e.status.upper()}: {e.message}")
+    if rows is None:
+        print("  STAGE 2 NOT RUN this time (see above); the next scheduled run tries again.")
+        return 0
+    acc: dict = {}
+    for r in rows:
+        a = acc.setdefault(str(r["account_id"]), {"through": str(cut.date()), "total_near": 0.0})
+        a[str(r["token"])] = float(r["amount_near"])
+        a["total_near"] += float(r["amount_near"])
+    out_file.write_text(_json.dumps(acc, indent=1, sort_keys=True))
+    print(f"  STAGE 2 RUN: all-time inflow to {cut.date()} — "
+          + "; ".join(f"{k} {v['total_near']:,.2f} NEAR" for k, v in sorted(acc.items())) + f"; saved {out_file.name}")
     return 0
 
 

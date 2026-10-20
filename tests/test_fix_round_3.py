@@ -949,7 +949,7 @@ def _arb_gauge_world(drop_every: int):
             return [x for x in fx["ins"] + fx["outs"] if int(x["blockNumber"], 16) == block], \
                 [f"tenderly eth_getLogs block {block:,} -> logs"]
 
-        def dated_logs(self, chain, address, topics, lo, hi, chunk, trace):
+        def dated_logs(self, chain, address, topics, lo, hi, chunk, trace, deadline=None):
             upper = min(hi, lo + chunk - 1)
             src = fx["outs"] if topics[1] is not None else fx["ins"]
             trace.append(f"tenderly eth_getLogs {lo:,}..{upper:,}")

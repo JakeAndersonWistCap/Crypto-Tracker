@@ -43,7 +43,7 @@ import pandas as pd
 import config
 from .base import LogEntry, tidy, today, Progress
 from .logcache import LogCache, stream_id
-from .explorer import ExplorerLogs, ExplorerRefused, TRANSFER_TOPIC, pad_address, topic_address
+from .explorer import ExplorerLogs, ExplorerRefused, ExplorerTimeout, TRANSFER_TOPIC, pad_address, topic_address
 from .logcache import atomic_write_text
 
 log = logging.getLogger("token_metrics.fetch.balance_flow")
@@ -127,6 +127,12 @@ class BalanceFlow:
 
     # ------------------------------------------------------------------ run
     def run(self, projects: list[dict], window_days, out):
+        # ONE DEADLINE FOR THE TIER (Round G8 item 3c, Jake's 06:02 run: balance_flow timed out). The balance pass had
+        # its own 60 s and the event scan another EXPLORER_SCAN_BUDGET_S (120 s) — 180 s inside a 150 s tier, so the tier
+        # was abandoned mid-scan and nothing read was kept. Both now share what is left of the tier's budget.
+        if not self.unbounded:
+            from . import _budget                                       # noqa: PLC0415
+            self.tier_deadline = time.monotonic() + _budget("balance_flow") - 10.0
         for p in projects:
             for spec in p.get("balance_flows") or []:
                 try:
@@ -143,7 +149,8 @@ class BalanceFlow:
         holders = [h.lower() for h in spec["holders"]]
         excluded = [a.lower() for a in spec.get("exclude_counterparties") or []]
         chain_id = config.CHAIN_IDS[chain]
-        deadline = None if self.unbounded else time.monotonic() + self.budget_s
+        deadline = None if self.unbounded else min(time.monotonic() + self.budget_s,
+                                                   getattr(self, "tier_deadline", float("inf")))
         # HISTORICAL BALANCES NEED AN ARCHIVE ENDPOINT: the shared resolver (fetch.archive),
         # not the first endpoint that connects. A reader injected by a test keeps its own.
         if hasattr(self.reader, "_w3") and chain not in self.reader._w3:
@@ -197,7 +204,8 @@ class BalanceFlow:
                     for h in holders for x in excluded]
         budget = getattr(self.explorer, "start_budget", None)
         if budget and not self.unbounded:
-            budget(config.EXPLORER_SCAN_BUDGET_S)
+            left = getattr(self, "tier_deadline", float("inf")) - time.monotonic()
+            budget(max(5.0, min(float(config.EXPLORER_SCAN_BUDGET_S), left)))
         events = {"in": [], "burn": []}
         try:
             for way, h, topics in streams:
@@ -206,7 +214,18 @@ class BalanceFlow:
                 start = 0 if c["scanned_to"] is None else int(c["scanned_to"]) + 1
                 new = []
                 if start <= to_block:
-                    new, _ = self.explorer.get_logs(chain_id, token, topics, start, to_block)
+                    try:
+                        new, _ = self.explorer.get_logs(chain_id, token, topics, start, to_block)
+                    except ExplorerTimeout as e:
+                        # THE WHOLE BLOCKS READ ARE KEPT (G8 3c): the next run resumes at the block it stopped in
+                        part, rf = getattr(e, "partial", None), getattr(e, "resume_from", None)
+                        if part and rf:
+                            keep = {(x["transactionHash"], int(x["logIndex"])): x for x in list(c["events"]) + part}
+                            self.cache.save(sid, list(keep.values()), int(rf) - 1, c.get("proven_to"))
+                        out.fail(SOURCE, name, f"{key}: the {way} events of {h[:10]}… stopped at the tier's budget — "
+                                               f"{len(part or [])} event(s) kept, resumes at block "
+                                               f"{int(rf) if rf else start:,} next run", TIER)
+                        return
                 seen, merged = set(), []
                 for e in list(c["events"]) + list(new):
                     k = (e["transactionHash"], int(e["logIndex"]))

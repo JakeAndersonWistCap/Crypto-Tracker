@@ -9358,7 +9358,12 @@ PROJECTS = [
                 # Only FINISHED weeks/months are stored; the one in progress is reported. Weekly compute
                 # hours are NOT in the server payload (client-loaded) — config UNAVAILABLE.
                 "protocol/demand-metric": {
-                    "fields": {},
+                    # ONCHAIN COMPUTE PURCHASES IS IN THE SERVER PAYLOAD NOW (Round G8 item 4c, read 2026-10-20):
+                    # "onChainComputePurchases":11213170271.22408 beside totalNetworkRevenue; the rendered tile reads
+                    # "Onchain Compute Purchases 11,213,170,271 ATH" ("Total amount of ATH deposited for purchasing
+                    # compute credits"). One cumulative scalar, no dated series: history starts with the daily reads.
+                    "fields": {"onChainComputePurchases": "compute_purchases_cumulative_tokens"},
+                    "current_only": ("onChainComputePurchases",),
                     "arrays": {
                         "weeklyNetworkRevenue": {"value_key": "amount", "metric": "customer_revenue_usd",
                                                  "granularity": "weekly", "date_key": "startDate", "yearless": True,
@@ -11915,7 +11920,7 @@ PROJECTS = [
         # vote recognised all Assistance Fund HYPE, past and future, as permanently burned, and the
         # address has never had a private key. Reporting that same balance again as a "buyback
         # fund" would describe permanently burned supply as a redeemable holding — the opposite
-        # sign on float — and put the same 48.42m HYPE on the sheet twice under two names.
+        # sign on float — and put the same ~48.1m HYPE on the sheet twice under two names.
         #
         # AND IT COULD NOT HAVE READ ANYWAY. Two independent blockers, either one fatal: HyperCore
         # is not in EVM_CHAINS or DEFAULT_RPC, so the chain-coverage gate refuses it; and there is
@@ -11968,7 +11973,10 @@ PROJECTS = [
         # exist, at an address nobody can spend from. So issuance is the supply delta ALONE
         # (ISSUANCE_FROM_SUPPLY_DELTA maps transfer_to_dead_address -> delta_only). Declaring
         # protocol_level_destruction instead would add the burn back on top of the delta and
-        # OVERSTATE issuance by the entire cumulative burn — 48.42m HYPE as of 6 Sep 2026.
+        # OVERSTATE issuance by the entire cumulative burn — the Assistance Fund's HYPE (G8 1: was "48.42m HYPE as of 6
+        # Sep 2026", unsourced and above every later read; the fund only grows. Read from HyperCore's info API
+        # spotClearinghouseState(0xfefe…fefe): 47,590,997.04 on 2026-09-30, 48,134,671.13 on 2026-10-19 ~15:00 UTC,
+        # 48,145,239.17 on 2026-10-20 09:02 UTC).
         "burn_mechanism": {
             "model": "transfer_to_dead_address", "status": "confirmed",
             "source_url": "https://hyperliquid.gitbook.io/hyperliquid-docs/hypercore/assistance-fund",
@@ -12339,7 +12347,9 @@ PROJECTS = [
         "notes": "DESTINATION RESOLVED: validators voted 27 Dec 2025, 85% of staked weight in favour, to formally "
                  "recognise all Assistance Fund HYPE — past and future — as permanently burned. Independently "
                  "corroborated by an SEC-filed exhibit from Hyperliquid Strategies Inc dated 7 May 2026. Lifetime "
-                 "burned was 48.42m HYPE as of 6 Sep 2026, c.4.84% of max supply. Assistance Fund absorbs 99% of "
+                 "burned (the Assistance Fund's HYPE, HyperCore info API spotClearinghouseState of 0xfefe…fefe): "
+                 "47,590,997.04 on 2026-09-30 and 48,145,239.17 on 2026-10-20 09:02 UTC, c.4.81% of the 1bn max supply "
+                 "(G8 1: replaces an unsourced \"48.42m as of 6 Sep 2026\" that exceeded every later read). Assistance Fund absorbs 99% of "
                  "net protocol fees (historical range 97-99%). Own L1 + HyperEVM hence the 1 block. "
                  "SECOND REVENUE LEG: AQAv2 from 26 Aug 2026 accrues c.90% of cost-adjusted reserve yield on "
                  "platform USDC, first payment due 3 Oct 2026 — accruing but NOT yet booked.",
@@ -12625,7 +12635,16 @@ PROJECTS = [
              "source_url": "https://vote.uniswapfoundation.org/proposals/93", "source_date": "2026-09-14",
              # the day the data puts it (stored 2025-12-28 above the 100M floor), executed 2025-12-27 20:33 UTC per the
              # research of 2026-10-12; paid from the treasury (Jake 2026-10-12 evening, decision 5)
-             "landed": "2025-12-27", "funding": "treasury"},
+             "landed": "2025-12-27", "funding": "treasury",
+             # THE TRANSACTION ITSELF, STORED AS HISTORY (Round G8 item 4c): `--seed uni_retro_burn` reads it from
+             # eth.blockscout.com (keyless), checks the UNI Transfer Timelock -> 0x…dEaD of exactly `tokens`, and stores
+             # one_off_burn_tokens on the block's UTC day (block 24,106,378, 2025-12-27 20:33:11 UTC). The stored row
+             # then dates the one-off; the differenced row still has `tokens` taken out of every rate.
+             "tx": {"hash": "0x091f0083242a777d55821c1189e568d6d033d9da501b75087dc736fa143d2c1e",
+                    "token": "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984",
+                    "from": "0x1a9C8182C09F50C8318d769245beA52c32BE35BC",
+                    "to": "0x000000000000000000000000000000000000dEaD", "block": 24106378,
+                    "explorer": "https://eth.blockscout.com/api/v2/transactions/"}},
         ],
         "burn_read_method": "transfer",
         # The UNI-burn threshold required to call release() is a GOVERNANCE-SETTABLE parameter, not a
@@ -12916,6 +12935,17 @@ PROJECTS = [
                       "Jake's aerodrome_managed_venfts read 2026-10-07: Team 175,788,092, Public Goods 174,772,260, "
                       "Flight School 66,991,134, Velodrome Foundation airdrop 26,725,510"},
         "defillama_fees_slug": "aerodrome", "defillama_protocol": "aerodrome", "defillama_chain": None,
+        # ===== /protocol/aerodrome ANSWERS 400 (Round G8 item 3a, Jake's 06:02 run 2026-10-20). =====
+        # Read from DefiLlama's own /protocols on 2026-10-20: `parent#aerodrome` is gone; every Aerodrome and
+        # Velodrome listing is under `parent#aero-protocol` (Aero Protocol, the merged token). The old parent was
+        # Aerodrome V1 + Aerodrome Slipstream + Aero Lite — the same three children summed keep the measuring point
+        # (fetch/llama._protocol_tvl_parts). Velodrome V1-V3 and Aerodrome Ignition (Launchpad) are NOT added.
+        # The fees slug `aerodrome` still answers (a legacy alias, id parent#aerodrome) and is kept; its newest day
+        # read 292,375 against the children's 272,881 on 10-19 while earlier days match — the complete-day rule
+        # already drops the newest day.
+        "defillama_protocol_parts": {"parent_id": "parent#aero-protocol",
+                                     "names": ("Aerodrome V1", "Aerodrome Slipstream", "Aero Lite"),
+                                     "read_on": "2026-10-20"},
         # ARCHETYPE 3 ONLY, AND ARCHETYPE 4 IS REFUTED RATHER THAN MERELY ABSENT.
         # Aerodrome's own SPECIFICATION.md describes the complete supply mechanics — Minter,
         # emissions, veAERO locking, gauges, rebases — and contains NO BURN OF ANY KIND. There is
@@ -22214,8 +22244,8 @@ UNAVAILABLE = [
        "impact": impact,
        "reopen_if": "the figure appears in a readable payload under a key."}
       for m, label, impact in (
-          ("compute_purchases_cumulative_tokens", "Onchain Compute Purchases (ATH)",
-           "no on-page purchases total; customer revenue is measured in USD (weekly / monthly lists, ARR)"),
+          # compute_purchases_cumulative_tokens REOPENED 2026-10-20 (Round G8 item 4c): the payload now carries
+          # onChainComputePurchases — read on protocol/demand-metric (aethir_pages fields).
           ("supply_units_edge", "Staked edge devices", "edge supply is counted in ATH (edgeStaked), not devices"),
           ("edge_stipend_cumulative_tokens", "Edge Total Stipend Reward",
            "inside edgeRewards (earnings + stipend), not separately"),
@@ -29176,11 +29206,7 @@ BUSINESS_SLOTS = {
     "Fluid": ("protocol_tvl_usd", "protocol_dex_volume_usd", "protocol_tvl_constant_price_usd"),
 }
 BUSINESS_NOT_WIRED = {
-    "Pendle": "TVL BY MATURITY not wired overnight: Pendle's API (api-v2.pendle.finance core/v2/markets/all, 819 "
-              "markets, 100 a page; then core/v2/{chainId}/markets/{addr}/historical-data?time_frame=day&fields="
-              "totalTvl per market — totalTvl, not tvl, which is pool liquidity only) holds it with history",
-    "Chainlink": "CCIP TOKEN VALUE not wired: the CCIP API gives each message's sourceTokenAmount, which needs the "
-                 "token's decimals (/v2/tokens/{selector}/{addr}) and a price per token per day",
+    # Pendle TVL by maturity and Chainlink CCIP token value: WIRED in Round G8 (4b) — business slots below
     "GEODNET": "CUSTOMERS / SUBSCRIPTIONS: no public source (the console needs a wallet login)",
     "Ether.fi": "Cash card SPEND is DefiLlama's 'EtherFi Cash Liquid' volume; card count has no public source",
 }
@@ -29240,7 +29266,12 @@ MARKET_SHARE = {
     "Uniswap": {"how": "overview", "type": "dexs", "category": "Dexs", "own_parent": "parent#uniswap",
                 "basis": "DEX volume (V1-V4) ÷ every protocol DefiLlama files under Dexs (Uniswap Auctions, a "
                          "Launchpad, and the aggregator are out)"},
-    "Aerodrome": {"how": "overview", "type": "dexs", "category": "Dexs", "own_parent": "parent#aerodrome",
+    "Aerodrome": {"how": "overview", "type": "dexs", "category": "Dexs",
+                  # SAME CAUSE AS /protocol/aerodrome's 400 (Round G8 item 3a): own_parent "parent#aerodrome" matched no
+                  # listing once DefiLlama moved the children under parent#aero-protocol, so the own list was [] and the
+                  # run logged "own protocols [] not all in Dexs". Named, not parent-matched: parent#aero-protocol would
+                  # add Velodrome V1-V3, which the basis below excludes. Read from /overview/dexs 2026-10-20.
+                  "own_names": ("Aerodrome V1", "Aerodrome Slipstream", "Aero Lite"),
                   "basis": "DEX volume (V1 + Slipstream + Aero Lite) ÷ every protocol under Dexs"},
     "Hyperliquid": {"how": "overview", "type": "open-interest", "category": "Derivatives",
                     "own_names": ("Hyperliquid Perps",),
@@ -29982,7 +30013,9 @@ SETTLEMENT_REBUILD["ethereum_rebuild"] = {
              "measuring point from Artemis's CSV",
     "p2p": {
         "allowed_dataset": "bigquery-public-data.crypto_ethereum.", "sql": "bigquery_p2p_daily.sql",
-        "approved": False, "cadence_days": 7, "validation_from": "2026-07-27", "max_bytes_per_query": 60_000_000_000,
+        # APPROVED weekly (Jake 2026-10-20, G8 item 5): the validation window first, then each complete week
+        "approved": True, "approved_by": "Jake, 2026-10-20 (G8 item 5)", "cadence_days": 7,
+        "validation_from": "2026-07-27", "max_bytes_per_query": 60_000_000_000,
         "price_api": "https://coins.llama.fi", "csv_dir": "data/ethereum",
         # (symbol, address, decimals) — decimals are checked against DefiLlama's answer before a day is valued
         "tokens": (("USDT", "0xdac17f958d2ee523a2206206994597c13d831ec7", 6),
@@ -30082,6 +30115,106 @@ TRAJECTORY_PRIMARY_CHECKS = [
 ]
 
 
+# ===== G8 0/1 — DECLARED COMPONENTS (Jake 2026-10-20). =====
+# A series that GAINS a leg at a date (the quantity steps up; the measuring point does not change): its rows from that day
+# carry "[+<component> declared component from <date>]", an annotation the measuring-point rules strip. Declared here so
+# measuring_guard.compare accepts the leg, and so the step is on record with its reason. `from` None = the component's
+# own first stored day (said on every row).
+DECLARED_COMPONENTS = {
+    ("Hyperliquid", "total_burn_tokens"): [
+        {"metric": "hyperevm_priority_burn_tokens", "from": None,
+         "source": "derived:burn_total(gross_burn_tokens+core_burn_tokens)",
+         "why": "Jake 2026-10-19 (G7 0c) and 2026-10-20 (G8 1): the HyperEVM gas burn is A1 only — every burn the supply "
+                "sees. It adds to the A1 total from its own first stored day; before then the history leg's ASXN "
+                "HyperEVM figure stands. A4 (burn_ex_chain_fee_tokens) never includes it."},
+    ],
+}
+
+
+# ===== G8 2 — MISSING TRIAGE: ACCEPTED LIMITS AND THEIR CASCADE (Jake 2026-10-20). =====
+# Class B: a cell that cannot be filled because of a limit Jake ACCEPTED is N/A BY DESIGN, citing the decision. A limit on
+# a ROOT series carries to every series built from it (coverage_audit.accepted_limit).
+ACCEPTED_LIMIT_CASCADE = {
+    "World Mobile": {
+        "decision": _WM_TREASURY_ACCEPTED,
+        "roots": ("actual_buyback_tokens", "treasury_holding_tokens", "buyback_fund_balance"),
+        "metrics": ("actual_buyback_tokens", "actual_buyback_usd", "retired_buyback_tokens", "retired_buyback_usd",
+                    "buyback_fund_balance", "treasury_holding_tokens", "holder_value_revenue_usd",
+                    "holder_value_fees_only_usd"),
+    },
+}
+# Class A: a Flows line whose mechanism does not exist per a PRIMARY source shows 0 labelled "no such flow" with the
+# citation (build_workbook.flow_statements). Keyed (project, leg): a = security emissions, b = incentives supply side,
+# c = incentives demand side, d = ecosystem / grants, m = minted straight to issuer-side wallets. Filled from
+# research read 2026-10-20 (G8_NO_SUCH_FLOW below); unknown is never 0.
+NO_SUCH_FLOW: dict = {
+    # GROUP A (16 tracked projects x legs a b c d m, read 2026-10-20; scratch evidence file flows_evidence_A.json).
+    # NOT taken: Ethereum m (the Foundation solo-stakes, so issuance does land in EF wallets as validator rewards —
+    # whether that is line m is Jake's call; the repo counts Hyperliquid's equivalent as m). Mint CAPABILITY never used
+    # (Uniswap, Sky, Morpho, Plume, Fluid m) is NOT 'no such flow': the mechanism exists and measures 0.
+    ('Aerodrome', 'a'): {"evidence": "Minter.updatePeriod() sends each epoch's mint to exactly three places: `aero.safeTransfer(address(team), _teamEmissions); aero.safeTransfer(address(rewardsDistributor), _growth); ... voter.notifyRewardAmount(_emission);` (team, veAERO rebase, gauges). SPECIFICATION.md: AERO 'Minting permissions granted to Minter.' No validator/staker security reward exists; AERO is an ERC-20 on Base.",
+        "source": 'https://raw.githubusercontent.com/aerodrome-finance/contracts/main/contracts/Minter.sol (L200-205); .../SPECIFICATION.md L69', "read_on": '2026-10-20'},
+    ('Pendle', 'a'): {"evidence": "PENDLE.sol: the only post-construction mint is claimLiquidityEmissions(): `require(msg.sender == liquidityIncentivesRecipient ...)` → `_mint(liquidityIncentivesRecipient, lastWeeklyEmission)` (liquidity incentives). sPENDLE rewards are bought-back PENDLE: '80% of Pendle V2 fees ... allocated to PENDLE token buybacks ... distributed to active sPENDLE holders' (a revenue distribution, not a security emission). …",
+        "source": 'https://raw.githubusercontent.com/pendle-finance/pendle-core/master/contracts/tokens/PENDLE.sol L487-507; https://docs.pendle.finance/pendle-v2/ProtocolMechanics/Mechanisms/sPENDLE', "read_on": '2026-10-20'},
+    ('Sky', 'a'): {"evidence": 'SKY is an ERC-20 on Ethereum with no consensus role; its reward streams are farm vests (REWARDS_DIST_USDS_SKY, REWARDS_DIST_LSSKY_SKY) that pay USDS savers and SKY stakers for using/locking, which the repo classifies (c)/(e) by funding (config.REWARD_FUNDING). Nothing pays SKY for securing a network.',
+        "source": "sky-ecosystem/spells-mainnet (2025-10-30 spell L163-200 @c1ce7e14, TreasuryFundedFarmingInit); config.OUTFLOW_CATEGORIES['Sky']", "read_on": '2026-10-20'},
+    ('Uniswap', 'a'): {"evidence": "Uni.sol is a plain ERC-20 with delegation; its only supply path is `mint(address dst, uint rawAmount)` callable by the minter (Timelock). No UNI staking/validator reward contract exists; the 2020 launch post ('UNI') describes no staking. (Unichain's UVN design paid stakers a share of chain revenue, not UNI issuance; live status not verified.)",
+        "source": 'https://raw.githubusercontent.com/Uniswap/governance/master/contracts/Uni.sol; https://blog.uniswap.org/uni', "read_on": '2026-10-20'},
+    ('Chainlink', 'm'): {"evidence": 'LinkToken.sol: `uint public constant totalSupply = 10**27;` assigned to the deployer in the constructor; the contract has no mint function (no mint selector in deployed bytecode); on-chain totalSupply() = 1,000,000,000.',
+        "source": 'LinkToken.sol L10-18; eth_call/eth_getCode 0x514910771AF9Ca656af840dff83E8264EcF986CA 2026-10-20', "read_on": '2026-10-20'},
+    ('Ether.fi', 'm'): {"evidence": "'The ETHFI token has been fully minted with a fixed supply of 1B. There will be no further issuance.' Verified source: constructor-only `_mint(0x7A6A41F3…, 1000000000 * 10 ** decimals())`, no public mint (ERC20Burnable only); on-chain totalSupply 998,535,999 (burns).",
+        "source": 'https://etherfi.gitbook.io/gov/llms-full.txt; eth.blockscout.com verified source EtherFiGovernanceToken 0xFe0c30065B384F05761f15d0CC899D4F9F9Cc0eB', "read_on": '2026-10-20'},
+    ('Morpho', 'a'): {"evidence": 'MORPHO is a governance token; the token page describes no staking; the 2024-11 forum staking proposal was never implemented (config not_applicable.locked_tokens). Morpho is immutable lending contracts on EVM chains — no validator set.',
+        "source": 'https://docs.morpho.org/learn/governance/morpho-token/; config.py Morpho not_applicable', "read_on": '2026-10-20'},
+    ('Fluid', 'a'): {"evidence": "Repo check of fluid-contracts-public: 'no FLUID-token staking or lock contract exists'; the only staking contract stakes fToken receipts (FluidLendingStakingRewards: 'distribute an ERC-20 reward to users who stake their fToken shares' — lender rewards, b). FLUID is an ERC-20 (InstaToken); no validators.",
+        "source": 'https://raw.githubusercontent.com/Instadapp/fluid-contracts-public/main/contracts/periphery/resolvers/stakingRewards/SPEC.md; config.py Fluid fluid_token_staking_checked', "read_on": '2026-10-20'},
+    ('GEODNET', 'a'): {"evidence": 'GEOD is a capped ERC-20 on Polygon (no own consensus). Docs allocation wallets: Mining, Ecosystem, Team, Investor, Vendor/Marketing, Public sale — no validator/security allocation. Miner rewards pay data supply (b).',
+        "source": 'https://docs.geodnet.com/llms-full.txt (Tokenomics); polygon eth_call GEOD cap()/totalSupply()', "read_on": '2026-10-20'},
+    ('GEODNET', 'm'): {"evidence": "'The total supply of GEOD token is 1 billion.' On-chain (Polygon 0xAC0F6637…): cap() = 1e27 wei = 1,000,000,000 and totalSupply() = 1,000,000,000 → minting impossible (ERC20Capped).",
+        "source": 'https://docs.geodnet.com/llms-full.txt; polygon eth_call cap()/totalSupply() 2026-10-20', "read_on": '2026-10-20'},
+    ('Aethir', 'm'): {"evidence": "Ethereum ATH totalSupply 42,000,000,000 = cap 42,000,000,000 → minting impossible; Arbitrum ATH is an Axelar ITS InterchainToken (mint/burn moves supply between chains). 'Total Supply 42,000,000,000'.",
+        "source": 'eth_call 0xbe0Ed413… totalSupply 2026-10-20; config.py Aethir mint_path (probes5); https://docs.aethir.com/llms-full.txt', "read_on": '2026-10-20'},
+    ('Ethereum', 'b'): {"evidence": "Protocol: 'Since The Merge, issuance on the execution layer is now zero' and consensus issuance pays validators only — no LP emission. EF treasury policy describes DeFi deployments for yield, not incentives paid.",
+        "source": 'https://ethereum.org/roadmap/merge/issuance/; https://blog.ethereum.org/2025/06/04/ef-treasury-policy', "read_on": '2026-10-20'},
+    ('Ethereum', 'c'): {"evidence": 'Same: the protocol has no user/trader reward; the only new ETH is validator issuance.',
+        "source": 'https://ethereum.org/roadmap/merge/issuance/', "read_on": '2026-10-20'},
+    # GROUP B (14 more projects, read 2026-10-20; flows_evidence_B.json). NOT taken: OriginTrail a (a one-off 100k TRAC
+    # 'staking security bounty' was paid in 2024-25 — the mechanism existed). Render a: node-operator rewards are line b
+    # (config's emissions-to-suppliers); RENDER runs on Solana with no validators of its own.
+    ('Bitcoin', 'b'): {"evidence": "Whitepaper s.6: 'the first transaction in a block is a special transaction that starts a new coin owned by the creator of the block ... since there is no central authority to issue them.' Consensus caps coinbase at fees + subsidy ('coinbase pays too much' -> bad-cb-amount); no other issuance path and no issuer-held allocation exists that could fund LP incentives.",
+        "source": 'https://bitcoin.org/bitcoin.pdf (section 6, Incentive); https://github.com/bitcoin/bitcoin/blob/master/src/validation.cpp (GetBlockSubsidy; ConnectBlock bad-cb-amount; genesis special case)', "read_on": '2026-10-20'},
+    ('Bitcoin', 'c'): {"evidence": "Same: new BTC enters only via the coinbase to the block creator ('there is no central authority to issue them'); no protocol or issuer treasury exists to pay users/traders.",
+        "source": 'https://bitcoin.org/bitcoin.pdf (section 6, Incentive); https://github.com/bitcoin/bitcoin/blob/master/src/validation.cpp (GetBlockSubsidy; ConnectBlock bad-cb-amount; genesis special case)', "read_on": '2026-10-20'},
+    ('Bitcoin', 'd'): {"evidence": "No foundation/ecosystem allocation: coins are distributed only via the coinbase ('provides a way to initially distribute coins into circulation, since there is no central authority to issue them'); the genesis coinbase is unspendable (validation.cpp: 'Special case for the genesis block ... (its coinbase is unspendable)').",
+        "source": 'https://bitcoin.org/bitcoin.pdf (section 6, Incentive); https://github.com/bitcoin/bitcoin/blob/master/src/validation.cpp (GetBlockSubsidy; ConnectBlock bad-cb-amount; genesis special case)', "read_on": '2026-10-20'},
+    ('Bitcoin', 'm'): {"evidence": 'No premine and no mint to any issuer wallet: block reward <= nFees + GetBlockSubsidy, paid to whoever mines the block; genesis coinbase unspendable.',
+        "source": 'https://github.com/bitcoin/bitcoin/blob/master/src/validation.cpp (GetBlockSubsidy; ConnectBlock bad-cb-amount; genesis special case)', "read_on": '2026-10-20'},
+    ('Solana', 'm'): {"evidence": "solana-sdk inflation: Inflation::full() sets 'foundation: 0.0, foundation_term: 0.0'; bank.rs activates it on the full_inflation feature ('*self.inflation.write().unwrap() = Inflation::full();') and mints only validator(slot_in_year) = total - foundation. No mint to any foundation/treasury account.",
+        "source": 'https://github.com/anza-xyz/solana-sdk/blob/master/inflation/src/lib.rs; https://github.com/anza-xyz/agave/blob/master/runtime/src/bank.rs', "read_on": '2026-10-20'},
+    ('Tron', 'm'): {"evidence": 'java-tron payReward is the only per-block issuance: TRX goes to the producing witness (payBlockReward) and to the 127 standby/active SRs and their voters (payStandbyWitness, getWitness127PayPerBlock). No issuance to a foundation account.',
+        "source": 'https://github.com/tronprotocol/java-tron/blob/master/framework/src/main/java/org/tron/core/db/Manager.java; .../chainbase/src/main/java/org/tron/core/service/MortgageService.java', "read_on": '2026-10-20'},
+    ('Render', 'a'): {"evidence": "RENDER is an SPL token on Solana (no own consensus). RNP-022 Year 3 BME emissions (5.9M RENDER) are allocated in full to '1.5M RENDER - Artist and AI grants', '1.5M RENDER - Node rewards', '2.9M RENDER - Operations, R&D, and growth initiatives' - no validator/staker security emission.",
+        "source": 'https://github.com/rendernetwork/RNPs/blob/main/RNP-022.md', "read_on": '2026-10-20'},
+    ('Bittensor', 'b'): {"evidence": "'Pool liquidity is protocol-owned by default: the chain has a user-liquidity feature (per-subnet user_liquidity_enabled toggle, off by default) but with it off there are no user LP positions or LP tokens.' run_coinbase.rs credits injected TAO to SubnetTAO/TotalStake (protocol liquidity), not to LPs; miners are paid alpha, not TAO.",
+        "source": 'https://www.bittensor.com/docs/concepts/emissions; https://github.com/opentensor/subtensor/blob/main/pallets/subtensor/src/coinbase/run_coinbase.rs', "read_on": '2026-10-20'},
+    ('Bittensor', 'm'): {"evidence": "run_coinbase.rs inject_and_maybe_swap: every block's TAO credit is spent to the subnet account and added to SubnetTAO ('Inject TAO in') or swapped for protocol-owned alpha ('SubnetProtocolAlpha'); no TAO is minted to any team/foundation account. Subnet-owner cut (18%) is paid in alpha, not TAO.",
+        "source": 'https://github.com/opentensor/subtensor/blob/main/pallets/subtensor/src/coinbase/run_coinbase.rs; https://www.bittensor.com/docs/concepts/emissions', "read_on": '2026-10-20'},
+    ('OriginTrail', 'm'): {"evidence": 'TracToken.mint() is gated by canMint (require(!mintingFinished)); mintingFinished() returns true on-chain and finishMinting has no reversal. Base/Gnosis/NeuroWeb TRAC are bridged representations.',
+        "source": 'eth_call TracToken 0xaA7a9CA87d3694B5755f213B5D04094b8d0F0A6F mintingFinished() = 1 (verified source via eth.blockscout.com)', "read_on": '2026-10-20'},
+    ('Virtuals', 'a'): {"evidence": "'The total $VIRTUAL supply is 1,000,000,000 tokens. The supply is minted without future inflation.' On-chain (Ethereum VirtualToken 0x44ff8620...BF73): totalSupply() = cap() = 1,000,000,000 and owner() = 0x0. veVIRTUAL staking benefits are 'Eligibility for Airdrops' and governance, not VIRTUAL yield; not a chain, no validators.",
+        "source": 'https://whitepaper.virtuals.io/info-hub/usdvirtual-token-base-asset-for-ai-agents/usdvirtual-token-distribution-and-tokenomics; .../usdvirtual-staking-and-vevirtual; eth_call 2026-10-20', "read_on": '2026-10-20'},
+    ('Virtuals', 'm'): {"evidence": 'VirtualToken is ERC20Capped(1e9) with owner-only mint; on-chain totalSupply() == cap() == 1,000,000,000 and owner() == 0x0 (renounced) -> no further mint possible. Base VIRTUAL is a bridged OptimismMintableERC20/OFT.',
+        "source": 'eth_call Ethereum 0x44ff8620b8cA30902395A7bD3F2407e1A091BF73 totalSupply()/cap()/owner(); verified source eth.blockscout.com', "read_on": '2026-10-20'},
+    ('PancakeSwap', 'a'): {"evidence": "Not a chain. Tokenomics 3.0: 'Products that receive CAKE emissions include: Multichain farms, Lottery, Ecosystem Growth'; veCAKE/staking retired ('Starting 00:00 AM UTC April 23, 2025, veCAKE and all gauge voting will be retired'). On-chain MasterChef v2 (0xa5f8C5Db...7652) allocated pools are only dLOTTO, Incentive Emissions Dummy, BSC/ETH/ARB/Base V3 Emissions Dummies and a 1-point WrapperDummy - no CAKE …",
+        "source": 'https://docs.pancakeswap.finance/protocol/cake-tokenomics; https://docs.pancakeswap.finance/welcome-to-pancakeswap/vecake-sunset; eth_call BSC MasterChefV2.poolInfo/lpToken (187 pools) 2026-10-20', "read_on": '2026-10-20'},
+    ('Aave', 'm'): {"evidence": 'AaveTokenV3 implementation (0x5d4aa78b...1322 behind the proxy) and its BaseAaveToken/BaseAaveTokenV2 sources contain no mint function or _mint call; totalSupply() = 16,000,000.000 AAVE exactly.',
+        "source": 'eth.blockscout.com verified source for impl 0x5d4aa78b08bc7c530e21bf7447988b1be7991322; eth_call 0x7Fc66500...DaE9 totalSupply()', "read_on": '2026-10-20'},
+}
+FLOW_LEG_LINES = {"a": "Outflows beside: security emissions (a)", "b": "Incentives paid beside: supply side (b)",
+                  "c": "Incentives paid beside: demand side (c)", "d": "Outflows beside: ecosystem / grants (d)",
+                  "m": "memo: minted straight to issuer-side wallets (insider emission, not circulating until released)"}
+
+
 # ===== G7 10 — PLUME ON DEFILLAMA: THE CHAIN'S SLUG IS plume-mainnet (Jake 2026-10-19). =====
 # summary/fees/plume answers HTTP 400 (no such slug); summary/fees/plume-mainnet answers: dailyFees = the chain's gas
 # (DefiLlama's blockscout fee factory), daily from 2025-04-09 (2026-10-18 $86; 30 days $2,806). It has NO revenue
@@ -30136,6 +30269,62 @@ _wm["published_headlines"] = (
     ("2025-09-04", "daily active users", "2.2M"),
     ("2025-02-13", "users", "1.5M"),
 )
+
+
+
+# ===== G8 3e — A STORED SERIES SUPERSEDED BY A READ-TIME VIEW (stale_series labels it, not stale). =====
+SUPERSEDED_BY_VIEW = {
+    ("Aethir", "arr_usd"): "Jake 2026-10-10: the last 3 complete months of customer_revenue_monthly_usd x 4; the rows "
+                           "stored to 2026-10-10 were the dashboard tile, carried as arr_tile_usd",
+}
+
+
+# ===== G8 4b — CCIP TOKEN VALUE (Round G8, Jake 2026-10-20: NOT WIRED → built; fetch/ccip_value.py). =====
+# The documented keyless API (api.ccip.chain.link v2, spec 2.13.0; robots allow it): /v2/messages walked newest-first by
+# cursor (no date filter; ~2 pages a day), each message's sourceTokenAmount (raw units, source chain) × 10^-decimals
+# (/v2/tokens directory, cached weekly) × DefiLlama coins price at 12:00 UTC of the send day. A transfer with no price
+# is left out and COUNTED: the day is stored PARTIAL ("[n of m transfers unpriced, x% of messages]"), or refused above
+# max_unpriced_share (10%: live days ran 2.3-3.8%, long-tail tokens). CCIP 2.0 OnRamps reject >1 token a message; 1.x
+# lanes are read in detail (recent days all, older a 10% sample) — 0 multi-token messages in 1,145 read. Live 2026-10-19:
+# $30,468,435 over 773 token-moving messages (of 2,778), 3.8% unpriced → PARTIAL. History: --seed ccip_value (270 days,
+# the API's ~271-day limit; ~1.5-3 h unbounded).
+METRICS["ccip_token_value_usd"] = {
+    "label": "CCIP token value moved per day ($) — source-chain amount × 10^-decimals × DefiLlama price at 12:00 UTC, "
+             "mainnet, by send day (PARTIAL where a token has no price)",
+    "kind": "flow", "unit": "usd", "archetypes": [], "tiers": [1], "sanity_min": 0, "sanity_max": 1e11,
+    "only_projects": ("Chainlink",), "source_kind": "first-party API (api.ccip.chain.link) priced by DefiLlama"}
+METRICS["ccip_token_transfers"] = {
+    "label": "CCIP token-moving messages per day (mainnet, by send day)", "kind": "flow", "unit": "count",
+    "archetypes": [], "tiers": [1], "sanity_min": 0, "sanity_max": 1e7, "only_projects": ("Chainlink",)}
+PROJECT_BY_NAME["Chainlink"]["ccip_value"] = {
+    "environment": "mainnet", "state_path": ".cache/ccip/state.json", "tokens_path": ".cache/ccip/tokens.json",
+    "prices_path": ".cache/ccip/prices.json", "history_days": 270, "budget_s": 300, "max_unpriced_share": 0.10,
+    "detail_sample": 1.0, "seed_detail_sample": 0.1, "recent_days": 7, "tokens_max_age_days": 7}
+BUSINESS_SLOTS["Chainlink"] = tuple(BUSINESS_SLOTS["Chainlink"]) + ("ccip_token_value_usd",)
+# Pendle's third business slot: TVL within 30 days of expiry — the rollover exposure; the full split is the four buckets
+BUSINESS_SLOTS["Pendle"] = tuple(BUSINESS_SLOTS["Pendle"]) + ("tvl_maturity_le_30d_usd",)
+
+
+# ===== G8 4b — PENDLE TVL BY MATURITY (Round G8, Jake 2026-10-20: NOT WIRED → built). =====
+# Pendle's own API (api-v2.pendle.finance, keyless; read 2026-10-20): core/v2/markets/all lists every market (830: 97
+# unexpired) with its expiry; core/v3/{chain}/markets/{address}/historical-data?time_frame=day&fields=totalTvl,tvl serves
+# each market's daily history to its expiry. totalTvl (the market's whole TVL, PT held outside the pool included) is
+# summed by DAYS TO EXPIRY on each day; an expired market leaves the sum (its frozen totalTvl — $72.3B over 733 expired
+# markets — is not a current figure). A day is stored only once every market live that day has been read and holds a
+# point; a hole refuses the day for every bucket (fetch/pendle_maturity.py). First read: ~509 markets in 400 days,
+# ~530 CU of the 200,000 weekly, 4-5 runs at 120 s; then ~100 calls a day. Live 2026-10-20 (current totalTvl, 97
+# markets): <=30d $0.225B, 31-90d $0.738B, 91-180d $0.046B, >180d $0.007B = $1.015B (DefiLlama /tvl/pendle $1.117B).
+for _m, _lab in (("tvl_maturity_le_30d_usd", "1-30 days from expiry"),
+                 ("tvl_maturity_31_90d_usd", "31-90 days from expiry"),
+                 ("tvl_maturity_91_180d_usd", "91-180 days from expiry"),
+                 ("tvl_maturity_gt_180d_usd", "more than 180 days from expiry"),
+                 ("tvl_maturity_total_usd", "all unexpired markets — the four buckets summed (check against TVL)")):
+    METRICS[_m] = {"label": f"Pendle TVL in markets {_lab} (Pendle API totalTvl, PT outside the pool included)",
+                   "kind": "stock", "unit": "usd", "archetypes": [], "tiers": [1], "sanity_min": 0, "sanity_max": 1e12,
+                   "only_projects": ("Pendle",)}
+PROJECT_BY_NAME["Pendle"]["pendle_maturity"] = {"history_days": 400, "budget_s": 120,
+                                                "state_path": ".cache/pendle_maturity/state.json",
+                                                "weekly_reserve_cu": 20_000}
 
 
 _CONFIG_LOADED = True       # the last line: config is complete (see _relation_pairs)

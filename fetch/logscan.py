@@ -589,18 +589,30 @@ class LogScan:
                          f"from the chain (resumable)")
         t0 = time.monotonic()
         budget = float(spec.get("repair_budget_s") or REPAIR_BUDGET_S)
-        first_pass = True                          # at least one range a run, whatever the budget, so it always advances
-        while state["next"] <= state["to"] and (first_pass or self.unbounded or time.monotonic() - t0 < budget):
+        # WITHIN THE SCAN'S SHARE OF THE TIER (Round G8 item 3c, Jake's 06:02 run: explorer_l2:arbitrum@Pendle timed out).
+        # The first range used to run "whatever the budget", and one range can try every Arbitrum endpoint at 60 s each
+        # while halving — past the tier's budget, so the tier was abandoned. Now a range starts only inside the scan's
+        # share, the chain reads carry its deadline, and a range cut short is read again next run (state is saved after
+        # each whole range).
+        first_pass = True                          # at least one range a run while the share allows, so it advances
+        scan_dl = None if self.unbounded else self._scan_deadline
+        while state["next"] <= state["to"] and (self.unbounded or (
+                (first_pass or time.monotonic() - t0 < budget) and (scan_dl is None or time.monotonic() < scan_dl))):
             first_pass = False
             lo = state["next"]
-            got_out, upper = self.reader.dated_logs(chain, token, [TRANSFER_TOPIC, pad_address(h), None], lo,
-                                                    min(lo + state["chunk"] - 1, state["to"]), state["chunk"], trace)
-            got_in, cur = [], lo
-            while cur <= upper:
-                part, up2 = self.reader.dated_logs(chain, token, [TRANSFER_TOPIC, None, pad_address(h)], cur, upper,
-                                                   upper - cur + 1, trace)
-                got_in += part
-                cur = up2 + 1
+            try:
+                got_out, upper = self.reader.dated_logs(chain, token, [TRANSFER_TOPIC, pad_address(h), None], lo,
+                                                        min(lo + state["chunk"] - 1, state["to"]), state["chunk"],
+                                                        trace, deadline=scan_dl)
+                got_in, cur = [], lo
+                while cur <= upper:
+                    part, up2 = self.reader.dated_logs(chain, token, [TRANSFER_TOPIC, None, pad_address(h)], cur,
+                                                       upper, upper - cur + 1, trace, deadline=scan_dl)
+                    got_in += part
+                    cur = up2 + 1
+            except TimeoutError as e:
+                trace.append(f"span re-read stopped at the scan's share of the tier ({e}); resumes at block {lo:,}")
+                break
             for x in got_out:
                 e = _norm_log(x)
                 e["timeStamp"] = int(str(x["blockTimestamp"]), 16) if str(x["blockTimestamp"]).startswith("0x") \

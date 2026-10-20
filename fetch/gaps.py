@@ -394,8 +394,11 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                 "is older than the week — it stores nothing when any lockup is unreadable",
                 "Run `python near_lockups_weekly.py --force` (windows/daily_run.ps1 runs it weekly).")
     if metric == "noncirculating_nearblocks_tokens":
-        return ("NearBlocks /v3/stats (fetch/nearblocks.py _supply_stats) stored nothing this run",
-                "Check the Run Log for nearblocks; it needs NEARBLOCKS_API_KEY.")
+        rs = (project.get("nearblocks") or {}).get("supply_stats_retired") or {}
+        return (f"RETIRED ROUTE {rs.get('retired_on', '2026-10-13')}: NearBlocks /v3/stats answers circulating == total "
+                f"(0 not circulating) and v1 is flat since {rs.get('v1_flat_since', '2025-08-27')} — not read by design "
+                f"(fix round 2 N1; G6 item 3)",
+                "Nothing to run: NEAR circulating stays on our own lockup-rule basis; the cross-check is closed.")
 
     # ===== A DEDICATED ADAPTER DECLARED FOR THIS METRIC (second pass, 2026-09-30). =====
     # Plume's staking diamond, ultrasound.money's daily history, Hyperliquid's tokenDetails: the
@@ -1051,6 +1054,24 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
               "day, at the API's own pace (one export every 6.5 s; the first run ~22 min)",
               "Check the Run Log's boros_api line for {name}: a 429 waits the minute out; a failure stores nothing "
               "(a market missing would understate the day).")}
+    # ROUND G8 READERS (2026-10-20): Pendle TVL by maturity, CCIP token value, subsidy targeting by pool
+    for m in ("tvl_maturity_le_30d_usd", "tvl_maturity_31_90d_usd", "tvl_maturity_91_180d_usd",
+              "tvl_maturity_gt_180d_usd", "tvl_maturity_total_usd"):
+        r3[m] = ("the Pendle maturity reader (fetch/pendle_maturity.py, api-v2.pendle.finance) has not stored this day — "
+                 "a day is stored only once every market live that day has been read and holds a point (the first "
+                 "read takes 4-5 runs)",
+                 "Check the Run Log's pendle_maturity line for {name}: it says how many markets remain, or names the "
+                 "market whose missing point refused the day.")
+    for m in ("ccip_token_value_usd", "ccip_token_transfers"):
+        r3[m] = ("the CCIP reader (fetch/ccip_value.py, api.ccip.chain.link + coins.llama.fi) has not closed this day — a "
+                 "day is stored once the message walk has passed below it; a day whose unpriced share is above "
+                 "max_unpriced_share is refused",
+                 "Check the Run Log's ccip_value line for {name}; the history is filled by python token_metrics.py "
+                 "--seed ccip_value.")
+    for m in ("subsidy_fee_cover_pools", "subsidy_emissions_to_covered_share", "subsidy_emissions_usd"):
+        r3[m] = ("the subsidy-targeting reader (fetch/subsidy_targeting.py) stored no complete epoch this run — an "
+                 "epoch with a pool whose fees or price cannot be valued is refused, never filled with 0",
+                 "Check the Run Log's subsidy_targeting line for {name}.")
     if metric in r3:
         why, fix = r3[metric]
         return why, fix.format(name=name)

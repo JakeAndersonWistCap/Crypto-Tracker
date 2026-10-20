@@ -221,7 +221,9 @@ def test_coverage_audit_has_no_unexplained_blank_no_broken_cell_and_matches_spec
             assert hit and all(r["Status"] == "BROKEN" for r in hit), (project, t, col, [r["Status"] for r in hit])
             assert all("Cause:" in r["Reason / route / error"] for r in hit if t == "References"), (project, col)
         # the NOT WIRED list of SPEC.md section 10 is on the tab
-        assert c["NOT WIRED"] >= len(ca.not_wired()) > 0
+        # (G8 item 4: a §10 item labelled with its blocker counts N/A BY DESIGN, not NOT WIRED)
+        open_items = [r for _i, r in ca.not_wired() if not r.startswith(("NOT BUILT BY DESIGN", "BLOCKED —"))]
+        assert c["NOT WIRED"] >= len(open_items) > 0
 
 
 def test_no_headline_reads_a_bare_na(built):
