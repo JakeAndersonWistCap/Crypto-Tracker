@@ -5051,3 +5051,25 @@ SELECT date, value, source
 -- DELETE FROM metrics
 --  WHERE project = 'World Mobile' AND metric = 'total_supply_gross'
 --    AND date >= '2026-09-20' AND source LIKE '%ethereum:token+%';
+
+-- ========================================================================================
+-- DB. MAPLE locked_tokens FROM THE stSYRUP VAULT AFTER THE MIP-019 SUNSET (withdrawn)  2026-10-21T14:00Z
+--     Round G11 C2 (Jake 2026-10-21): Maple's locked_tokens rows were written by the stsyrup contract, which since
+--     2026-10-07 serves stsyrup_legacy_tokens ("SYRUP still held by the legacy stSYRUP vault — NOT a lock"; staking
+--     ended, config Maple not_applicable.locked_tokens). stsyrup_legacy_tokens is stored on every one of those days
+--     (chain + archive, 2025-09-08..), so the rows are the same reading under the withdrawn name: cleared, not moved.
+--     After the removal Maple's lock rate reads N/A BY DESIGN with the MIP-019 reason.
+--     DB1 lists them, with the legacy row of the same day beside each; DB2 removes them.
+--     Run: python run_sql.py DB, then python run_sql.py --delete DB.
+-- ========================================================================================
+-- DB1. THE WITHDRAWN ROWS, EACH BESIDE THE LEGACY READING OF ITS DAY.
+SELECT l.date, l.value AS locked_tokens, l.source, s.value AS stsyrup_legacy_tokens
+  FROM metrics l
+  LEFT JOIN metrics s ON s.project = l.project AND s.date = l.date AND s.metric = 'stsyrup_legacy_tokens'
+ WHERE l.project = 'Maple' AND l.metric = 'locked_tokens' AND l.source LIKE 'chain:ethereum:stsyrup%'
+ ORDER BY l.date;
+
+-- DB2. THE REMOVAL.
+-- DELETE FROM metrics
+--  WHERE project = 'Maple' AND metric = 'locked_tokens' AND source LIKE 'chain:ethereum:stsyrup%';
+

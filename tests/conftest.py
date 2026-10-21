@@ -53,3 +53,10 @@ def dumps_20261009(monkeypatch):
     monkeypatch.setattr(real_dump, "VINTAGE", "20261009")
     return "20261009"
 
+
+
+@pytest.fixture(autouse=True)
+def _no_cached_values(monkeypatch):
+    """Round G11 A1: a build writes every formula's calculated value into the file (workbook_values, ~1 min on a full
+    build). Tests skip it; the test of A1 itself sets TOKEN_METRICS_STORE_VALUES=1."""
+    monkeypatch.setenv("TOKEN_METRICS_STORE_VALUES", "0")

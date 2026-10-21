@@ -335,8 +335,12 @@ def test_eth_validator_yield_has_history_from_the_spec_formula_on_the_real_dump(
     g = bw._LAST_GROUPS[("Ethereum", "consensus_rewards_tokens")]
     leg = g[g["source"].astype(str).str.startswith("derived:consensus_formula[")]
     assert len(leg) > 250 and "k=" in leg["source"].iloc[0]
-    # never inside Q0 (follow-up item 2): the headline window stays as read
-    assert pd.to_datetime(leg["date"]).max() <= pd.Timestamp("2026-10-09") - pd.Timedelta(days=90)
+    # G11 B6 (supersedes follow-up item 2's "never inside Q0", which left a hole between the leg and the first measured
+    # read): the leg runs to the day before the measured series, and its days inside Q0 say so on the row
+    meas = g[~g["source"].astype(str).str.startswith("derived:consensus_formula[")]
+    assert pd.to_datetime(leg["date"]).max() == pd.to_datetime(meas["date"]).min() - pd.Timedelta(days=1)
+    inside = leg[pd.to_datetime(leg["date"]) > pd.Timestamp("2026-10-09") - pd.Timedelta(days=90)]
+    assert len(inside) and inside["source"].str.contains("INSIDE THE HEADLINE WINDOW").all()
     k = float(leg["source"].iloc[0].split("k=")[1].split(";")[0])
     assert 0.9 < k < 1.05                                  # participation and penalties: a little under the maximum
     vy = next(r for r in rows if r["hid"] == "a1_validator_yield")

@@ -529,6 +529,39 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11cn. Round G11 — plumbing only, no new data: cached values, handovers, buyback and release legs (2026-10-21)
+
+**Run after pulling (PowerShell 5.1, repo root), in this order.** No new fetcher, no seed, no BigQuery change. One
+run_sql section (DB, Maple's withdrawn locked_tokens rows).
+1. `python run_sql.py DB` — lists Maple's locked_tokens rows written by the stSYRUP vault, each beside the
+   stsyrup_legacy_tokens reading of the same day (the fixture copy: 371 rows). PASTE BACK the count.
+2. `python run_sql.py --delete DB` (type `DELETE DB`) — only once step 1 shows the legacy column filled on every row.
+3. `python token_metrics.py` — the full run. The workbook is now saved WITH every formula's value (about a minute after
+   "saved"; the Run Log line names how many formulas were valued). `TOKEN_METRICS_STORE_VALUES=0` skips it.
+4. `python measuring_guard.py --newer metrics.db` — the as-of is now the newest store day on or before today and only
+   portfolio.txt's projects are compared. PASTE BACK the VERDICT.
+5. `python check_offline_items.py missing_triage` and `Get-Content scoreboard.json` — PASTE BACK.
+
+**What to look for.** Every Master / A-tab cell reads a value in Excel AND in any reader that does not recalculate.
+Credibility CONTINUITY rows say "every held headline still reads a number" or name what was lost. Trajectory Q-4
+implied-buyback cells read "n/a — no split for this window". Maple's monthly buyback / retired / holder value and Aethir's
+ARR are no longer stale at 7 days. Uniswap Q-3 (d) reads ~5.0M ($31.1M), not 105M; the 100M burn is a memo line on the
+token flow. Maple: gross issuance 23.2M; Flows residual 0. Plume Flows: the insider unlock line (~338M a quarter);
+residual ~+5% (the non-insider categories). Hyperliquid: buyback = the Assistance Fund only (Q0 ~$182M on the fixture);
+circulating_supply_used / market cap AMBER with "OVERLAP CHECK NOT PASSED … a CHANGE OF BASIS"; Transactions Q0 shows the
+HyperEVM count. Pendle: actual buyback = its per-epoch distribution (the derived one on actual_buyback_tokens_derived);
+staking_apr_published reads BLOCKED (publish lag) instead of 0. Fluid's buyback is 0 from 2026-03-21. Ether.fi's status
+names the programmatic buyback. Ethereum: settlement_rebuilt_usd's source lists every day a leg lacks and the 365-day sum
+says where it stops; the consensus-rewards MODELLED leg fills 07-23..09-28 (yield cells read MODELLED); A1 staked /
+staking rate / float read beacon_chain_eth. Chainlink's Master TVL is protocol TVL. Sky's gross issuance has history
+(0 on every day of the fixture year: the vest pays from the treasury). World Mobile's Fees Q0 shows "(own-chain fees)".
+Aethir's schedule-filled emissions / (b) and World Mobile's whitepaper emissions read AMBER (SCHEDULE / MODELLED); Aethir's
+lock trends stop at 2026-09-30 (SERIES BREAK). Sky's buyback_spending_usd_ba_daily reads BLOCKED "NOT DAILY" if Block
+Analitica answered monthly. A tier that times out no longer stores the stocks it had read (named in its timeout line).
+
+**Not changed, on the evidence:** GEODNET's ecosystem wallet (B3) is already out of circulating — it is inside
+treasury_holding_tokens (ecosystem_polygon, 0x3A6906E4…); subtracting it again counted it twice.
+
 ## 11cm. Round G10 — fix what we already have: stored but not shown, honest statuses, Sky day by day, Ethereum's handover (2026-10-21)
 
 **Run after pulling (PowerShell 5.1, repo root), in this order.** No run_sql section and no BigQuery this round.

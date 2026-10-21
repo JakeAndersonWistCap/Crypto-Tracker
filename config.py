@@ -2139,11 +2139,15 @@ def orphaned_contract_keys(project_name: str, source: str) -> list[str]:
     else:
         pieces = [body]
     contracts = (PROJECT_BY_NAME.get(project_name) or {}).get("contracts") or {}
+    # G11 B2: a CONFIGURED event source is not an orphan — ISSUER_MINTS' declared events (Maple's RecapitalizationModule
+    # mints, source chain:ethereum:recapitalization_module_mints) are written from config, not from a contract key
+    configured = {str(m.get("source") or "").split(":")[-1] for m in (globals().get("ISSUER_MINTS", {}).get(project_name),)
+                  if isinstance(m, dict) and m.get("source")}
     missing = []
     for piece in pieces:
         bits = piece.split(":")
         key = bits[-1] if bits else ""
-        if key and key not in contracts:
+        if key and key not in contracts and key not in configured:
             missing.append(key)
     return missing
 
@@ -2276,7 +2280,10 @@ def withdrawn_contract_keys(project_name: str, metric: str, source: str) -> list
         # 2026-09-21 (that metric is retired — see METRICS); the live examples now are the
         # net_of_burn token contracts, whose override points at total_supply_gross. Old rows
         # stored under a vacated metric name must read as withdrawn, not as still current.
-        if not (contract_serves(spec) & allowed):
+        # G11 C2 (Jake's 10-21 run: Pendle's three per-wallet rows read WITHDRAWN): a contract that ALSO stores its own
+        # balance under a component_metric (Round G 2.8) serves that metric too
+        if not ((contract_serves(spec) | ({spec["component_metric"]} if spec.get("component_metric") else set()))
+                & allowed):
             withdrawn.append(key)
     return withdrawn
 
@@ -12663,6 +12670,9 @@ PROJECTS = [
              # the day the data puts it (stored 2025-12-28 above the 100M floor), executed 2025-12-27 20:33 UTC per the
              # research of 2026-10-12; paid from the treasury (Jake 2026-10-12 evening, decision 5)
              "landed": "2025-12-27", "funding": "treasury",
+             # G11 B1: the wallet it left — the Timelock, the treasury_holding_tokens leg (taken out of that leg's falls
+             # only: the vesting contracts' releases are untouched)
+             "from_stock": "treasury_holding_tokens",
              # THE TRANSACTION ITSELF, STORED AS HISTORY (Round G8 item 4c): `--seed uni_retro_burn` reads it from
              # eth.blockscout.com (keyless), checks the UNI Transfer Timelock -> 0x…dEaD of exactly `tokens`, and stores
              # one_off_burn_tokens on the block's UTC day (block 24,106,378, 2025-12-27 20:33:11 UTC). The stored row
@@ -19678,7 +19688,12 @@ def buyback_route(project_name: str) -> dict:
                 "reason": "no buyback mechanism is declared for this project"}
     if dest == "burn":
         # A declared burn total (Hyperliquid, 2026-09-29) is what the bought tokens equal.
-        return {"route": "burn", "metric": (burn_total(project_name) or {}).get("metric") or "gross_burn_tokens",
+        # G11 B7 (Jake's 10-21 run: buyback $195.2M above revenue $176M): a burn total may hold burns that were never
+        # bought (Hyperliquid's Core leg — deploy-auction and HyperEVM gas fees paid in HYPE and burned — and the ASXN
+        # auction / HyperEVM history legs). The buyback is the bought part only (burn_total buyback_metric); the total
+        # stays A1's burn.
+        bt = burn_total(project_name) or {}
+        return {"route": "burn", "metric": bt.get("buyback_metric") or bt.get("metric") or "gross_burn_tokens",
                 "reason": "the bought tokens are burned, so the buyback flow and the burn flow "
                           "are one event under two names — taken from gross_burn_tokens rather "
                           "than sourced again, because two reads of one event can disagree"}
@@ -21594,6 +21609,12 @@ def stale_after_days(project_name: str, metric: str, default: int) -> int:
     se = pj.get("spendle_epochs") or {}
     if se and metric in {se.get("metric"), se.get("apr_metric"), se.get("epoch_apr_metric")}:
         return int(se.get("epoch_days") or 14) * 2 + 2
+    # G11 B9: a buyback spread from a per-epoch figure (MEASURED_BUYBACK) has the epochs' cadence, not a daily one
+    mb = globals().get("MEASURED_BUYBACK", {}).get(project_name)
+    if mb and metric in ("actual_buyback_tokens", "actual_buyback_usd", "buyback_burned_tokens", "buyback_held_tokens",
+                         "buyback_distributed_tokens", "retired_buyback_tokens", "retired_buyback_usd",
+                         "holder_value_revenue_usd"):
+        return int(mb["epoch_days"]) * 2 + 2
     # G9 H2: a declared programme cadence on the series itself (PROGRAM_CADENCE_BY_METRIC stale_by_cadence)
     pc = PROGRAM_CADENCE_BY_METRIC.get((project_name, metric)) or {}
     if pc.get("stale_by_cadence"):
@@ -23970,6 +23991,28 @@ for (_n, _m), _h in HISTORY_PREPEND.items():
 FLOW_RELEASE_LEGS = {
     "Hyperliquid": (("+ staking rewards to stake inside circulating (a)", "emissions_circulating_stake_tokens"),
                     ("+ released from the team / Foundation / Grants wallets (e)", "unlock_release_tokens")),
+    # G11 B2 (Jake's 10-21 run: Maple's Q0 residual +1.01%): circulating is total − the treasury − the registry's
+    # non-circulating set, so what enters circulation is that set's FALLS (unlock_release_tokens; a mint landing in the set
+    # is added back, so it is not a return). The fixture's Q0 residual was exactly those falls (3.0M 08-04, 5.0M 08-26,
+    # 4.0M 10-13) less the SSF release — the SSF Safe 0x58BE is OUT of the set (counted circulating, Jake 2026-10-12), so
+    # its pool release does not move circulating and is not a leg here.
+    "Maple": (("+ released from the treasury / registry wallets (e) — their falls, mints added back", "unlock_release_tokens"),),
+    # G11 B4 (Jake's 10-21 run: insider_unlock_tokens drives outflow_e but the token flow read no release): Plume is
+    # pre-minted with no issuer-wallet series, so its one release leg is the insider unlocks (e) — DefiLlama's reading
+    # of Plume's published chart (EVIDENCE_LADDER, AGGREGATOR, tier 3). Core Contributors + Early Backers only: the
+    # ecosystem / community / foundation categories of the published schedule have no series and stay in the residual.
+    "Plume": (("+ insider unlocks (e) — AGGREGATOR: DefiLlama's reading of Plume's chart (contributors + backers only)",
+               "insider_unlock_tokens"),),
+}
+
+# G11 B2: GROSS ISSUANCE FROM THE STORED TOTAL SUPPLY, where the supply only grows by minting (burn_mechanism no_burn,
+# confirmed) and nothing stores gross_issuance_tokens: each rise of total_supply between consecutive stored days (at most
+# `max_gap_days` apart) is minted supply that day; a fall is not a negative mint (0). The mints land in the treasury, so
+# circulating is unchanged until they leave it — the Flows release leg (e) carries that. Checked against the declared
+# mints (ISSUER_MINTS events) on the source.
+ISSUANCE_FROM_TOTAL_SUPPLY = {
+    "Maple": {"max_gap_days": 3, "why": "SYRUP grows only by RecapitalizationModule mints (burn_mechanism no_burn, "
+                                         "confirmed; totalSupply moved by exactly the mints, Jake's run 2026-10-09)"},
 }
 
 
@@ -28072,10 +28115,10 @@ CREDIBILITY: dict = {
         # the whole published epochs inside Q0; the tolerance is unchanged.
         "in_buyback": _c_in_py("PENDLE bought over Q0's whole published epochs (DefiLlama holders revenue / same-day "
                                "price, summed over the epochs' own days)", "epoch_span_sum",
-                               {"epochs": "pendle_distributed_tokens", "daily": "actual_buyback_tokens",
+                               {"epochs": "pendle_distributed_tokens", "daily": "actual_buyback_tokens_derived",
                                 "epoch_days": 14, "side": "ours", "use_views": True},
                                {"formula": "epoch_span_sum", "tol": 25.0,
-                                "args": {"epochs": "pendle_distributed_tokens", "daily": "actual_buyback_tokens",
+                                "args": {"epochs": "pendle_distributed_tokens", "daily": "actual_buyback_tokens_derived",
                                          "epoch_days": 14, "side": "ref"},
                                 "source": "Pendle's own per-epoch distribution (spendle/data buybackAmounts): every "
                                           "published epoch lying wholly inside Q0",
@@ -29944,6 +29987,16 @@ METRICS["burn_ex_chain_fee_tokens"] = {
     "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Hyperliquid",), "view_only": True}
 _hl = PROJECT_BY_NAME["Hyperliquid"]
 _hl["burn_total"]["optional_components"] = ["hyperevm_priority_burn_tokens"]
+# G11 B7: THE BUYBACK IS THE ASSISTANCE FUND'S PURCHASES ONLY (as A4 since Phase 2 amendment 1). The Fund converts
+# trading fees to HYPE — bought; the Core burns (spot-deploy auction fees, HyperEVM base + priority gas) are fees PAID IN
+# HYPE and burned — never bought. Jake's 10-21 run read $195.2M of "buyback" because the view copied the whole burn
+# total (Fund + Core + the ASXN auction / HyperEVM history legs). Every burn stays in A1's total_burn_tokens.
+_hl["burn_total"]["buyback_metric"] = "gross_burn_tokens"
+_hl["series_handover"]["actual_buyback_tokens"] = dict(
+    _hl["series_handover"]["gross_burn_tokens"],
+    why="DefiLlama holders revenue / price before the first HyperCore read; the live Assistance Fund balance delta "
+        "(gross_burn_tokens, as buyback) from its first day — the Fund's purchases only (G11 B7)",
+    declared_on="2026-10-21")
 _hl["burn_total"]["a4_view"] = {"metric": "burn_ex_chain_fee_tokens", "exclude_extra": ("burn_hyperevm",)}
 _hl["a4_net_burn_metric"] = "burn_ex_chain_fee_tokens"
 
@@ -31133,3 +31186,242 @@ def evidence_label(e: dict) -> str:
 
 
 _CONFIG_LOADED = True       # the last line: config is complete (see _relation_pairs)
+
+
+# ===== G11 B3 (Jake's 10-21 run: "the ecosystem wallet is counted circulating") — NOT CHANGED, ON THE EVIDENCE. =====
+# The Ecosystem allocation wallet 0x3A6906E4… is ALREADY out of circulating: treasury_holding_tokens (in `subtract`) is
+# chain:sum(mining_polygon + mining_distribution_polygon + ecosystem_polygon), and ecosystem_polygon IS 0x3A6906E4
+# (fixture 2026-10-13: treasury 145,945,988 of which ecosystem 50,522,654). Subtracting ecosystem_holding_tokens as well
+# counted it twice (516.3M -> 465.8M; the Flows residual Q-1 went 0.0% -> +2.31% BROKEN). The releases are disjoint
+# too: (b) = the two mining wallets (config.mining_wallets), (e) = the four noncirc wallets + 0x3A6906E4
+# (config.discretionary_wallets). CoinGecko's 462.4M is the static aggregator figure (static_cross_check: ~54.4M below the
+# set, frozen since ~mid-2025), not a reading of this wallet.
+GEODNET_ECOSYSTEM_ALREADY_SUBTRACTED = {
+    "wallet": "0x3A6906E4239F9860C81035c54198Df58D892653b", "inside": "treasury_holding_tokens (ecosystem_polygon)",
+    "checked": "G11 B3, 2026-10-21"}
+
+# ===== G11 B8 (Jake's 10-21 run): HYPERLIQUID'S CIRCULATING HANDOVER, DECLARED, WITH ITS OVERLAP CHECK. =====
+# circulating_supply_used read CoinGecko (222.4M) until Hyperliquid's own figure was stored (2026-09-30), then the
+# first-party figure (238.2M net of the declared Foundation / Grants exclusions from 2026-10-11). The seam was undeclared:
+# a quarter spanning it read the step as a flow. Declared here; the two legs are compared on every common day each build
+# (build_workbook.handover_overlap) — a gap past 2% is a CHANGE OF BASIS at the seam, said on the cell, never a flow.
+_hl.setdefault("series_handover", {})["circulating_supply_used"] = {
+    "ordered_points": ("derived:circulating_used[circulating_supply]",
+                       "derived:circulating_used[circulating_supply_first_party]"),
+    "why": "CoinGecko's circulating before Hyperliquid's own tokenDetails figure was stored (2026-09-30); the first-party "
+           "figure (net of the declared exclusions) from its first stored day",
+    "composition_change": "CoinGecko's count vs Hyperliquid's own (net of the Foundation / Community Grants wallets "
+                          "from 2026-10-11): a different basis — see the overlap check",
+    "declared": "2026-10-21",
+    "overlap": {"a": "circulating_supply", "b": "circulating_supply_first_party", "tolerance_pct": 2.0, "min_days": 3,
+                "if_not_passed": "a CHANGE OF BASIS at the seam (the first-party figure excludes wallets CoinGecko "
+                                 "counts differently), not a flow — a window spanning it is a series break"}}
+_hl["series_handover"]["market_cap_usd"] = dict(
+    _hl["series_handover"]["circulating_supply_used"],
+    ordered_points=("derived:price_x_circulating[circulating_supply]",
+                    "derived:price_x_circulating[circulating_supply_first_party]"))
+_hl.setdefault("metric_labels", {}).update({
+    "circulating_supply_first_party": "Circulating supply — Hyperliquid's own tokenDetails.circulatingSupply NET of the "
+                                      "declared exclusions (Foundation / Community Grants wallets from 2026-10-11, Jake "
+                                      "decision A1; the HyperEVM burn) — the figure the ratios use",
+    "circulating_supply_tokendetails": "Circulating supply — Hyperliquid tokenDetails.circulatingSupply AS PUBLISHED "
+                                       "(gross: includes the Foundation / Community Grants wallets the first-party "
+                                       "figure excludes) — reference only, never a denominator",
+})
+
+# ===== G11 B9 (Jake's 10-21 run): PENDLE'S BUYBACK IS ITS OWN PER-EPOCH DISTRIBUTION. =====
+# actual_buyback_tokens was DefiLlama's holders revenue / same-day price (a revenue model) while Pendle publishes the
+# PENDLE it distributed each epoch (spendle/data sPendleHistoricalData.buybackAmounts, pendle_distributed_tokens —
+# stored). The measured figure is the buyback; the derived one stays beside it as actual_buyback_tokens_derived /
+# actual_buyback_usd_derived, the cross-check (Credibility in_buyback). Epochs are fortnightly (epoch_days 14): the
+# series' cadence for staleness is its own (build_workbook._observed_cadence: weekly limit, 14 days).
+MEASURED_BUYBACK = {
+    "Pendle": {"metric": "pendle_distributed_tokens", "epoch_days": 14,
+               "label": "Pendle's own per-epoch distribution (spendle/data buybackAmounts)",
+               "apr_metric": "staking_apr_published", "epoch_apr_metric": "pendle_epoch_apr_published",
+               "decided": "Jake, 2026-10-21 (G11 B9)",
+               # the declared points of the replaced columns (measuring_guard reads them as declared)
+               "points": {"actual_buyback_tokens": "pendle_api:sPendleHistoricalData.buybackAmounts",
+                          "actual_buyback_usd": "derived:tokens*price"}},
+}
+for _m, _lab in (("actual_buyback_tokens_derived", "PENDLE bought, DERIVED (DefiLlama holders revenue / same-day price) — "
+                                                   "the CROSS-CHECK of Pendle's own per-epoch distribution (G11 B9)"),
+                 ("actual_buyback_usd_derived", "Buyback $, DERIVED (DefiLlama holders revenue) — the CROSS-CHECK of "
+                                                "Pendle's per-epoch distribution x price (G11 B9)")):
+    METRICS[_m] = {"label": _lab, "kind": "flow", "unit": "tokens" if _m.endswith("tokens_derived") else "usd",
+                   "archetypes": [3], "tiers": [3], "sanity_min": 0, "sanity_max": 1e12, "only_projects": ("Pendle",),
+                   "view_only": True}
+
+# ===== G11 B10 (Jake decided, 2026-10-21): FLUID'S BUYBACK ENDED 2026-03-20, NOT 2026-05-11. =====
+# "last execution in Fluid's own API record is 2026-03-20 (125 records, $4.745M / 1.306M FLUID, totals match /stats);
+# the 2026-05-11 governance proposal to halt is the formal end, cited as a note" (Jake). The declared zero now starts the
+# day after the last execution; the API's own zero-filled days already stored (to 2026-05-11) stay — a declared zero is
+# never written over a stored row, so the two never meet. The API -> declared-zero pair is a declared handover, so the
+# guard reads it as one series.
+_FLUID_END = ("last execution in Fluid's own API record is 2026-03-20 (125 records, $4.745M / 1.306M FLUID, totals match "
+              "/stats); the 2026-05-11 governance proposal to halt is the formal end, cited as a note (Jake, 2026-10-21)")
+for _m in ("actual_buyback_tokens", "actual_buyback_usd"):
+    DECLARED_ZERO[("Fluid", _m)] = {"since": "2026-03-21", "why": _FLUID_END}
+    PROJECT_BY_NAME["Fluid"].setdefault("series_handover", {})[_m] = {
+        "ordered_points": ("fluid_buybacks:api.fluid.io/v2/fluid-token/buybacks/charts", "declared:zero"),
+        "why": "Fluid's own buyback API (every execution, to the last on 2026-03-20), then the declared zero",
+        "composition_change": "none: the same programme — measured while it ran, declared 0 after its last execution",
+        "declared": "2026-10-21"}
+
+# ===== G11 B11 (Jake's 10-21 run): A SIDE BUYBACK BESIDE A SILENT ONE. =====
+# Ether.fi's wallet buyback (the declared programme) is silent since 2026-09-02, while the Programmatic Buybacks Safe
+# 0x43F4cA92… buys ETHFI on CoW every week (programmatic_buyback_tokens) and pays it on as OP cashback — correctly kept
+# out of holder value. The status names both: "wallet buyback silent since …; programmatic buyback active (xM/30d) —
+# paid on as cashback, not credited".
+SIDE_BUYBACK = {
+    "Ether.fi": {"metric": "programmatic_buyback_tokens", "label": "programmatic buyback",
+                 "fate": "paid on as cashback, not credited"},
+}
+
+# ===== G11 C1 (Jake's 10-21 run): MEASURING-POINT CHANGES THAT WERE INTENDED, DECLARED. =====
+# Ethereum total_supply_protocol was declared (fix round 2, SUPPLY_HISTORY) but its first point carries an annotation
+# ("ultrasound:supply-over-time[next-day 00:00Z]") the stored measuring point does not — build_workbook.handover_refusal
+# now reads declared points as measuring points. Pendle latent_supply_tokens: the block tag (@<block>) is stripped from
+# measuring points (fetch.base._measuring_point). The rest:
+for _m in ("holders_revenue_usd", "holders_revenue_usd_defillama"):
+    PROJECT_BY_NAME["Ether.fi"].setdefault("series_handover", {})[_m] = {
+        "ordered_points": ("defillama", "defillama:sum(ether.fi services)"),
+        "why": "DefiLlama's ether.fi parent figure to 2026-09-05, then the sum of DefiLlama's ether.fi service adapters "
+               "(the parent stopped reporting holders revenue; the services sum is the same scope)",
+        "composition_change": "the same scope, summed from the service adapters — no common day to compare them on",
+        "declared": "2026-10-21"}
+PROJECT_BY_NAME["Ether.fi"]["series_handover"]["insider_stake_shares"] = {
+    "nested_sums": True,
+    "why": "the issuer-side wallet set grew (E1, 2026-10-14: the two ether.fi Treasury wallets added) — each later sum "
+           "contains every earlier wallet; every wallet read 0 sETHFI",
+    "composition_change": "wallets added to the set, none removed",
+    "declared": "2026-10-21"}
+PROJECT_BY_NAME["Aethir"].setdefault("series_handover", {})["price_usd_llama"] = {
+    "ordered_points": ("defillama_coins:arbitrum:0xc87b37a581ec3257b734886d9d3a581f5a9d056c",
+                       "defillama_coins:ethereum:0xbe0ed4138121ecfc5c0e56b40517da27e6c5226b"),
+    "why": "DefiLlama coins keyed by ATH's Arbitrum address, then by its verified Ethereum address (fetch.xref.llama_key "
+           "takes the verified erc20_total_supply contract)",
+    "composition_change": "none: the same ATH price, keyed by another chain's address of the one token",
+    "declared": "2026-10-21"}
+for _m, _scan in (("emissions_tokens_gauge_optimism", "explorer:gauge_pendle_out_optimism"),
+                  ("emissions_tokens_gauge_optimism_direct", "explorer:direct:gauge_pendle_out_optimism")):
+    PROJECT_BY_NAME["Pendle"].setdefault("series_handover", {})[_m] = {
+        "ordered_points": ("manual", _scan),
+        "why": "Jake's hand-read 0 (2026-10-09: the Optimism gauge's last token transfer ~2024-09-26) while the "
+               "Blockscout scan could not run, then the scan",
+        "composition_change": "none: the same gauge's PENDLE payouts, read by hand then scanned",
+        "declared": "2026-10-21"}
+PROJECT_BY_NAME["Maple"].setdefault("series_handover", {})["treasury_holding_tokens"] = {
+    "ordered_points": ("chain:ethereum:treasury", "maple_page"),
+    "cut": True,
+    "why": "the daoMultisig chain read until Maple's transparency page became primary (2026-09-24); the chain archive "
+           "backfill's later rows (written into the page's missing days) are cut at read time — the daoMultisig stays "
+           "its own series, treasury_holding_tokens_chain, which circulating and the release leg read",
+    "composition_change": "a DIFFERENT quantity: the page's SYRUP Holdings is the Syrup Strategic Fund (~78M), the chain "
+                          "read one address (~23M) — see the overlap check",
+    "declared": "2026-10-21",
+    "overlap": {"a": "treasury_holding_tokens_chain", "b": "ssf_holdings_tokens", "tolerance_pct": 2.0, "min_days": 3,
+                "if_not_passed": "a CHANGE OF QUANTITY at the seam (the Strategic Fund vs the daoMultisig), not a "
+                                 "flow — circulating and the release leg read the chain series, never this one"}}
+
+# ===== G11 C5 (Jake's 10-21 run): HYPERLIQUID'S TRANSACTIONS ARE SHOWN — HyperEVM's, labelled so. =====
+# tx_count is stored from ASXN's HyperEVM network metrics (browser_capture:asxn.transaction_count[HyperEVM], Q0 3.5e7)
+# and already feeds "Fee per transaction"; A1's Transactions cell read "none available" because the 2026-09-23 closure
+# (no info-API request type) still stood. That closure was of a ROUTE: the figure itself is live — HyperEVM activity
+# only, never HyperCore's order book.
+TX_COUNT_SCOPE = {"Hyperliquid": "HyperEVM"}
+for _e in UNAVAILABLE:
+    if _e.get("project") == "Hyperliquid" and _e.get("metric") == "tx_count":
+        _e["route_only"] = True
+        _e["route_closed"] = "Hyperliquid's info API (no transaction-count request type); the figure is ASXN's HyperEVM count"
+PROJECT_BY_NAME["Hyperliquid"].setdefault("metric_labels", {})["tx_count"] = (
+    "Transactions — HyperEVM only (ASXN network metrics), not HyperCore's order book")
+
+# ===== G11 C6 (Jake's 10-21 run): SKY'S GROSS ISSUANCE OVER THE STORED HISTORY. =====
+# gross_issuance_tokens was stored only from 2026-10-06 (schedule:config:declared), which held 10 Sky A4 cells at
+# "NEEDS HISTORY". total_supply_protocol (Sky.sol totalSupply, chain + archive, from 2025-09-08) moves only by mints
+# (DssVestMintable awards) and by Stage 2 burns (Sky.sol burn() decrements totalSupply, burn_mechanism
+# protocol_level_destruction from 2026-09-14), so the minted supply of a day is d(total supply) + that day's Stage 2
+# burn. Before 2026-09-14 Sky had no burn at all (burn_mechanism note). Filled before the stored series' first day only.
+ISSUANCE_FROM_TOTAL_SUPPLY["Sky"] = {
+    "supply_metric": "total_supply_protocol", "plus_burn": "sky_stage2_burn_tokens", "burn_from": "2026-09-13",
+    "tolerance_tokens": 1.0,
+    # the archive reading dated D is D's opening: the Stage 2 burn of 2026-09-13 (2,860,943.76) is in the reading dated
+    # 09-14 (fixture 10-13) — so a day's mint is the next reading − this one + that day's burn (0 to the token there)
+    "close_shift_days": 1,
+    "why": "SKY's totalSupply moves only by vest mints and Stage 2 burns (Sky.sol)"}
+PROJECT_BY_NAME["Sky"].setdefault("series_handover", {})["gross_issuance_tokens"] = {
+    "ordered_points": ("derived:d_supply", "schedule:config:declared"),
+    "why": "d(total_supply_protocol) + the Stage 2 burn over the stored history, then the declared schedule's series "
+           "from its first stored day (2026-10-06)",
+    "composition_change": "none: both are SKY minted per day — measured from the supply before, declared after",
+    "declared": "2026-10-21"}
+
+# ===== G11 C8 (Jake's 10-21 run): WORLD MOBILE'S MASTER FEES ARE ITS OWN CHAIN'S GAS. =====
+# fees_usd has no source for World Mobile; own_chain_fees_usd (World Mobile Chain gas x the same day's price, Blockscout;
+# G7 item 10; Q0 $41.8k on Jake's store) is stored. Master's Fees Q0 shows it, labelled "own-chain fees" on the number —
+# not protocol fees.
+MASTER_FEES_OVERRIDE = {"World Mobile": ("own_chain_fees_usd", "own-chain fees")}
+
+# ===== G11 D1 (Jake's 10-21 run): MODELLED AND SCHEDULED SERIES ARE NEVER GRADED LIKE MEASUREMENTS. =====
+# World Mobile's emissions_tokens is the whitepaper curve evaluated on the calendar from an implied, unconfirmed t0
+# (ISSUANCE_PRIMARY declared_curve) — a model. Aethir's emissions_tokens before the dashboard's measured series, and the
+# (b) series built on it, are the declared checker-node schedule back-filled at a constant (258.7M a quarter) — a
+# schedule. Both are labelled on their rows and read AMBER (build_workbook.confidence_for).
+MODELLED_POINTS[ISSUANCE_PRIMARY["World Mobile"]["source_label"]] = (
+    "World Mobile's whitepaper issuance curve S(t)=S0(t+1)^0.1141 on the calendar from t0 2022-04-16 — implied by the "
+    "curve, not a documented first-emission date (unconfirmed)")
+_AETHIR_SCHEDULE = ("Aethir's declared checker-node base schedule (schedule:config), a constant per day, back-filled "
+                    "before the dashboard's measured supplier rewards")
+SCHEDULE_LEGS = {
+    ("Aethir", "emissions_tokens"): {"prefix": "schedule:config", "why": _AETHIR_SCHEDULE},
+    **{("Aethir", _m): {"from": "emissions_tokens", "prefix": "schedule:config", "why": _AETHIR_SCHEDULE}
+       for _m in ("supplier_rewards_b_tokens", "outflow_b_tokens", "outflow_b_usd")},
+}
+
+# ===== G11 D2 (Jake's 10-21 run): AETHIR'S STAKE CHANGED DEFINITION ON 2026-09-30 — NO TREND READS ACROSS IT. =====
+# locked_tokens: the Ethereum staking wrapper (808.7M) to 2026-09-29, then Aethir's own totalStaked (1.797bn, which
+# adds the IDC stake) — declared 2026-10-01, with no composition_change, so the trajectory read the step as one series
+# and the lock-rate trends spanned it. Now: the change of definition is declared, the overlap check compares the two
+# on their common days (the wrapper is still read as locked_tokens_wrapper), and every Δ / trajectory comparison that
+# spans 2026-09-30 reads SERIES BREAK.
+_aeth_lt = PROJECT_BY_NAME["Aethir"]["series_handover"]["locked_tokens"]
+_aeth_lt["composition_change"] = ("a CHANGE OF DEFINITION: the wrapper's ATH alone, then every Aethir stake (IDC "
+                                  "included) — a step, not a flow")
+_aeth_lt["declared"] = "2026-10-21"
+_aeth_lt["overlap"] = {"a": "locked_tokens_wrapper", "b": "locked_tokens", "tolerance_pct": 2.0, "min_days": 3,
+                       "if_not_passed": "a CHANGE OF DEFINITION (totalStaked adds the IDC stake to the wrapper's), "
+                                        "not a flow — no trend reads across 2026-09-30"}
+SOURCE_RECLASSIFICATIONS[("Aethir", "locked_tokens")] = (
+    ("2026-09-30", "locked_tokens changed definition: the staking wrapper (808.7M) -> Aethir's totalStaked (1.797bn, "
+                   "IDC stake included)"),)
+
+# ===== G11 D3 (Jake's 10-21 run): A DAILY SERIES THAT IS ITS MONTHLY TWIN. =====
+# Sky's buyback_spending_usd_ba_daily equalled buyback_spending_usd_ba in every window: Block Analitica's by-day cash
+# flow answered monthly. Read time drops it where that holds (build_workbook._daily_twin_views); the fetch refuses a
+# by-day answer whose rows all fall on one day of the month (fetch/sky_accounting.looks_daily).
+DAILY_TWIN = {("Sky", "buyback_spending_usd_ba_daily"): "buyback_spending_usd_ba"}
+
+# ===== G11 D6 (Jake's 10-21 run): THE SKY FARM RATES ARE JUDGED ON THE DATE JAKE READ THEM. =====
+# Jake's readings of info.skyeco.com (SKY farm 6.58%, USDS farm 4.61%) were taken on 2026-10-07; today's on-chain SKY
+# farm rate is 4.65% because rewardRate fell 18.4 -> 12.8 SKY/s — a change of the farm, not a disagreement. Ours is
+# now computed as of 2026-10-07 (credibility.ours_value `as_of`), the reading's own date.
+for _k in ("in_apy_sky_farm", "in_apy_usds_farm"):
+    if _k in CREDIBILITY.get("Sky", {}):
+        CREDIBILITY["Sky"][_k]["ours"]["as_of"] = CREDIBILITY["Sky"][_k]["ref"]["manual"]["read_on"]
+
+# ===== G11 D7 (Jake's 10-21 run): NEAR'S TREASURY MINT ON THE VALUE FLOW — N/A BY DESIGN ON (d), SAID ON THE LINE. =====
+# Line m (near_treasury_mint_tokens, 1/10 of each epoch's mint to treasury.near; ~0.79M NEAR / ~$2.4M a quarter on
+# Jake's store) is NEW SUPPLY to the protocol's own treasury account — counted circulating under our NEAR convention
+# (only lockup.near + contributors.near and the lockups are subtracted), so it is on the token flow's "+ minted". It is
+# not a PAYMENT to anyone: a grant paid OUT of treasury.near would be (d), and treasury.near's outflows have no series
+# (needs data). The value flow shows the mint as a memo with its $ and says it is not (d).
+VALUE_FLOW_MEMO = {
+    "Near": (("memo: minted to the protocol treasury (line m, 1/10 of the epoch mint) — NOT an outflow (d)",
+              "near_treasury_mint_view_tokens",
+              "N/A BY DESIGN on (d): new supply to treasury.near (counted circulating; on '+ minted'), not a payment — "
+              "a grant paid out of treasury.near would be (d), and its outflows have no series"),),
+}
+FLOW_LINE_NOTES[("Near", "Outflows beside: ecosystem / grants (d)")] = (
+    "the treasury's 1/10 of the epoch mint (line m) is NOT here — N/A BY DESIGN: it is minted to treasury.near, not paid "
+    "out (memo line below); grants paid from treasury.near would be (d) and have no series")

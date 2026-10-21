@@ -17889,7 +17889,8 @@ def test_hyperliquid_total_burn_is_fund_plus_core_and_a4_and_a3_read_it():
 
     assert config.a1_burn_metric("Hyperliquid") == "total_burn_tokens"
     assert config.a4_burn_metric("Hyperliquid") == "gross_burn_tokens"
-    assert config.buyback_route("Hyperliquid")["metric"] == "total_burn_tokens"
+    # G11 B7: the buyback is the Fund's purchases only — the Core / gas burns were never bought
+    assert config.buyback_route("Hyperliquid")["metric"] == "gross_burn_tokens"
     assert config.buyback_route("GEODNET")["metric"] == "gross_burn_tokens", "others unchanged"
     days = pd.date_range("2026-09-24", "2026-09-28")
 

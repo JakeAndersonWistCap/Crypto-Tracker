@@ -103,6 +103,11 @@ def daily_spending(rows: list[dict], first: str, now: pd.Timestamp) -> list[tupl
     return sorted(acc.items())
 
 
+def looks_daily(keep: list[tuple]) -> bool:
+    """A by-day answer is daily unless three or more rows all fall on the same day of the month (G11 D3)."""
+    return len(keep) < 3 or len({d.day for d, _v in keep}) > 1
+
+
 def nps_candidates(by_type: list[dict], security: list[dict]) -> dict:
     """{candidate: {month: value}} from the per-type P&L history and the Security and Maintenance rows. A month is a
     candidate's only where revenue and expense are both present."""
@@ -319,6 +324,11 @@ class SkyAccounting:
                     keep = daily_spending(rows, spec.get("daily_from", DAILY_BUYBACK_FROM), today())
                     if not keep:
                         out.fail(SOURCE, name, f"{dm}: no complete day in the answer", TIER)
+                    elif not looks_daily(keep):
+                        # G11 D3 (Jake's 10-21 run: the "daily" series equalled the monthly one in every window): an
+                        # answer whose rows all fall on one day of the month is the monthly series, not a daily one
+                        out.fail(SOURCE, name, f"{dm}: the by-day answer is MONTHLY ({len(keep)} rows, every one on day "
+                                               f"{keep[0][0].day} of its month) — NOTHING STORED", TIER)
                     else:
                         out.add(tidy(keep, name, dm, f"{SOURCE}:cash-flow.Buyback_Spending[day]", TIER), SOURCE, name,
                                 f"{dm}: {len(keep)} complete day(s) {keep[0][0]:%Y-%m-%d}..{keep[-1][0]:%Y-%m-%d}, "

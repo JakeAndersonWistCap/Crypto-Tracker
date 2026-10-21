@@ -2217,10 +2217,31 @@ def _http_summary(st: dict) -> str:
     return fn() if callable(fn) else "no Http client"
 
 
+def _drop_stocks(frames: list) -> tuple[list, list[str]]:
+    """(frames without any STOCK row, ['project/metric', ...] dropped). G11 E (Jake's 10-21 run: Aerodrome's
+    filing_managed_lock_tokens fell 444.3M -> 245.1M on the day ve_managed timed out with 3 frames kept, and the fall
+    read as a 199.3M unlock): a stock written by a tier that timed out in the same run is not stored — its reading may
+    be a sum over the part of the scan that finished. Flows are kept as before (their rows are dated per day read)."""
+    import config
+    out, dropped = [], []
+    for f in frames:
+        if f is None or f.empty or "metric" not in f:
+            out.append(f)
+            continue
+        stock = f["metric"].astype(str).map(lambda m: (config.METRICS.get(m) or {}).get("kind") == "stock")
+        if stock.any():
+            dropped += sorted({f"{p}/{m}" for p, m in zip(f.loc[stock, "project"], f.loc[stock, "metric"])})
+        rest = f[~stock]
+        if not rest.empty:
+            out.append(rest)
+    return out, sorted(set(dropped))
+
+
 def _abandon(name, st, budget) -> tuple:
     """Keep what the source produced before the cut-off; stop reading its output."""
     sub = st["sub"]
-    kept = FetchOutput(frames=list(sub.frames), log=list(sub.log), review=list(sub.review),
+    frames, stocks_dropped = _drop_stocks(list(sub.frames))
+    kept = FetchOutput(frames=frames, log=list(sub.log), review=list(sub.review),
                        gaps=list(sub.gaps), staged=list(sub.staged), current=set(sub.current))
     waiting = [what for src, what, _ in inflight() if src == name]
     # THE LAST PHASE ENTERED (Round G4 item 1): with nothing in flight, what the tier was doing — and since when
@@ -2236,7 +2257,9 @@ def _abandon(name, st, budget) -> tuple:
     kept.fail(name, None,
               f"TIER TIMED OUT after {budget:.0f}s — abandoned and the run moved on. Kept the "
               f"{len(kept.frames)} frame(s) it had produced; everything else it serves is gapped "
-              f"for this run" + (f": {', '.join(gapped)}" if gapped else "") + ". Still waiting on: "
+              f"for this run" + (f": {', '.join(gapped)}" if gapped else "")
+              + (f". STOCKS NOT STORED (a stock read by a tier that timed out may be a partial sum — G11 E): "
+                 f"{', '.join(stocks_dropped)}" if stocks_dropped else "") + ". Still waiting on: "
               f"{'; '.join(waiting) or 'nothing registered'}. Last phase: {doing}. Where the time went: "
               f"{_http_summary(st)}.",
               st["tier"])

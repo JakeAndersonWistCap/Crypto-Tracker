@@ -159,14 +159,21 @@ def live_check(db_path: str, baseline: dict) -> tuple[list[str], dict]:
     with tempfile.TemporaryDirectory() as d:
         db = Path(d) / "metrics.db"
         shutil.copyfile(db_path, db)
+        # G11 A2: the as-of is the store's newest day NOT AFTER TODAY — a schedule or evidence row dated ahead (Plume's
+        # unlock schedule) set it in the future, every window was empty and every headline read "lost"
+        today = pd.Timestamp.now("UTC").tz_localize(None).normalize()
         con = sqlite3.connect(str(db))
-        asof = pd.Timestamp(con.execute("SELECT MAX(date) FROM metrics").fetchone()[0]).normalize()
+        newest = con.execute("SELECT MAX(date) FROM metrics WHERE date <= ?", (str(today.date()) + "T23:59:59",)
+                             ).fetchone()[0]
         con.close()
+        asof = min(pd.Timestamp(newest).normalize(), today) if newest else today
+        # ... and the run's own scope (portfolio.txt), as token_metrics builds: a parked project is not compared
+        scope, _unknown = config.read_portfolio(ROOT / config.PORTFOLIO_FILE)
         sm.DB_PATH = str(db)
         st = sm.Store(str(db))
         path = Path(d) / "wb.xlsx"
         try:
-            bw.build_workbook(st, path, asof=asof)
+            bw.build_workbook(st, path, asof=asof, only=scope or None)
         finally:
             st.close()
         bases = {}
@@ -195,7 +202,7 @@ def live_check(db_path: str, baseline: dict) -> tuple[list[str], dict]:
         proj, metric = key.split("|", 1)
         was = {b for b in (baseline.get("bases") or {}).get(key) or () if not str(b).startswith("probe:")}
         new = set(now) - was - _declared(proj, metric)
-        if new:
+        if new and not _nested_growth(proj, metric, set(now) | was):
             bad.append(f"BASIS {proj} {metric}: {sorted(new)} beside {sorted(set(now) - new)} with no declared handover "
                        f"or component")
     # LOST HEADLINES against the PREVIOUS RUN'S SNAPSHOT (export_snapshot, written at the end of every run) — the fixture
@@ -204,6 +211,8 @@ def live_check(db_path: str, baseline: dict) -> tuple[list[str], dict]:
     import export_snapshot as _es
     prev_date, prev = _es.load_previous(asof - pd.Timedelta(days=1))
     for proj, cells in (prev or {}).items():
+        if scope and proj not in scope:
+            continue                                      # outside the run's scope: not this run's headline
         for head, v in cells.items():
             if not isinstance(v, float) or head in (heads.get(proj) or {}) or config.regression_allowance(proj, head):
                 continue
@@ -211,7 +220,18 @@ def live_check(db_path: str, baseline: dict) -> tuple[list[str], dict]:
     for proj, head, text in mpc:
         bad.append(f"HEADLINE BLANKED BY {MPC} {proj} {head}: {text}")
     return bad, {"asof": str(asof.date()), "bases": bases, "headlines": heads, "mpc_headlines": mpc,
-                 "previous": prev_date}
+                 "previous": prev_date, "scope": scope}
+
+
+def _nested_growth(project: str, metric: str, bases: set) -> bool:
+    """A declared wallet-set growth (series_handover nested_sums, G11 C1): every basis a summed point whose component
+    sets form one chain under inclusion — the set grew, nothing was swapped."""
+    import build_workbook as bw
+    import config
+    if not (config.declared_handover(project, metric) or {}).get("nested_sums"):
+        return False
+    sets = sorted((bw.sum_components(b) for b in bases), key=len)
+    return all(a <= b for a, b in zip(sets, sets[1:]))
 
 
 def _declared(project: str, metric: str) -> set:
@@ -227,6 +247,11 @@ def _declared(project: str, metric: str) -> set:
     # declaration — the build never counts it as a measuring point (aggregate drops declared:zero from the points)
     if (project, metric) in (getattr(config, "DECLARED_ZERO", {}) or {}):
         out.add(trajectory.basis_of(metric, "declared:zero[x]"))
+    # a DECLARED REPLACEMENT (config.MEASURED_BUYBACK, G11 B9: Pendle's buyback = its own per-epoch distribution) — the
+    # measured series and its priced twin are the declared points of the buyback columns
+    mb = (getattr(config, "MEASURED_BUYBACK", {}) or {}).get(project)
+    if mb and metric in mb.get("points", {}):
+        out.add(trajectory.basis_of(metric, mb["points"][metric]))
     return out
 
 
@@ -240,7 +265,7 @@ def compare(before: dict, after: dict) -> list[str]:
             continue                                      # a new series is not a change of basis
         proj, metric = key.split("|", 1)
         new = set(now) - set(was) - _declared(proj, metric)
-        if new:
+        if new and not _nested_growth(proj, metric, set(now) | set(was)):
             bad.append(f"BASIS {proj} {metric}: {sorted(new)} added to {was} with no declared handover or component")
     for proj, cells in before["headlines"].items():
         for head, v in cells.items():
@@ -274,7 +299,8 @@ def main(argv=None) -> int:
         base = json.loads((ROOT / "tests" / "fixtures" / "guard_baseline.json").read_text(encoding="utf-8"))
         bad, snap = live_check(a.newer, base)
         print(f"LIVE STORE (built on a copy, as of {snap['asof']}): {len(snap['bases'])} series, "
-              f"{sum(len(v) for v in snap['headlines'].values())} headlines with a value; lost headlines judged "
+              f"{sum(len(v) for v in snap['headlines'].values())} headlines with a value; scope "
+              f"{len(snap['scope']) or 'every'} project(s) (portfolio.txt); lost headlines judged "
               + (f"against the {snap['previous']} snapshot" if snap["previous"] else
                  "against NO snapshot (none on file before the store's last day — export_snapshot writes one at the end "
                  "of every run): only the basis and measuring_point_changed checks ran"))

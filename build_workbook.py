@@ -16,6 +16,7 @@ figure suppressed · orange fill = stale (last good fetch in comment).
 """
 from __future__ import annotations
 
+import os
 import re
 from collections import Counter
 from datetime import datetime, timezone
@@ -343,6 +344,29 @@ def _months_until_live(row: dict, name: str, metric: str, g: pd.DataFrame, s: pd
         row["y1"], _ = _month_block(s, asof, 0, 12)
 
 
+def _observed_cadence(g) -> str:
+    """'monthly' / 'weekly' / 'daily' from the series' OWN spacing — the median gap between its last seven distinct
+    dates (declared zeros left out). G11 A4 (Jake's 10-21 run): Maple's buyback / retired / holder-value views (month
+    ends from the transparency page) and Aethir's arr_usd (monthly network revenue) read "stale — no fresh value in 7
+    days" because a read-time view declares no granularity of its own; Pendle's sPENDLE buybacks are weekly."""
+    if g is None or getattr(g, "empty", True):
+        return "daily"
+    src = g["source"].astype(str) if "source" in g else None
+    d = pd.to_datetime(g["date"] if src is None else g.loc[~src.str.startswith("declared:zero"), "date"])
+    d = pd.Series(sorted(set(d.dt.normalize())))[-7:]
+    if len(d) < 3:
+        return "daily"
+    gap = d.diff().dt.days.dropna().median()
+    return "monthly" if gap >= 25 else "weekly" if gap >= 6 else "daily"
+
+
+def _stale_limit(name: str, metric: str, default: int, g=None) -> int:
+    """The staleness threshold: config's (declared cadence) and, never below it, the series' observed cadence's."""
+    lim = config.stale_after_days(name, metric, default)
+    seen = config.STALE_AFTER_DAYS_BY_GRANULARITY.get(_observed_cadence(g)) or 0
+    return max(int(lim), int(seen))
+
+
 def _age_in_days(latest: pd.Timestamp, asof: pd.Timestamp, granularity: str) -> int:
     """How old the newest point is, measured from the END of the period it represents.
 
@@ -571,6 +595,49 @@ def method_points(g: pd.DataFrame):
     return mp, f"READ METHOD CHANGED and the values DIVERGE ({'; '.join(how)})"
 
 
+def sum_components(point: str) -> frozenset:
+    """The components of a summed measuring point ("chain:sum(ethereum:a+ethereum:b)" -> {ethereum:a, ethereum:b});
+    a single-component point is its own one-element set (G11 C1)."""
+    m = re.search(r"sum\((.*)\)$", str(point))
+    if m:
+        return frozenset(x for x in m.group(1).split("+") if x)
+    return frozenset([str(point).split(":", 1)[1] if ":" in str(point) else str(point)])
+
+
+def _handover_cut_views(groups: dict) -> None:
+    """A DECLARED CUT (G11 C1, Maple treasury_holding_tokens: the transparency page is primary from 2026-09-24, and the
+    chain archive backfill wrote the daoMultisig read into the days the page had no row): where a series_handover sets
+    `cut`, rows of an earlier declared point dated on or after the later point's first row are dropped at read time,
+    so the legs meet once. What was dropped is recorded (HANDOVER_CUT)."""
+    from fetch.base import _measuring_point                        # noqa: PLC0415
+    HANDOVER_CUT.clear()
+    for p in scoped_projects():
+        for metric, decl in (p.get("series_handover") or {}).items():
+            if not isinstance(decl, dict) or not decl.get("cut"):
+                continue
+            g = groups.get((p["name"], metric))
+            if g is None or g.empty:
+                continue
+            order = [_measuring_point(x) for x in decl.get("ordered_points") or ()]
+            mp = g["source"].astype(str).map(_measuring_point)
+            keep = pd.Series(True, index=g.index)
+            for i, later in enumerate(order[1:], start=1):
+                if not (mp == later).any():
+                    continue
+                start = g.loc[mp == later, "date"].min()
+                drop = mp.isin(order[:i]) & (g["date"] >= start)
+                if drop.any():
+                    HANDOVER_CUT[(p["name"], metric)] = (f"{int(drop.sum())} row(s) of {', '.join(sorted(set(mp[drop])))} "
+                                                         f"dated on/after {later}'s first row "
+                                                         f"({pd.Timestamp(start).date()}) dropped — the declared cut")
+                keep &= ~drop
+            if not keep.all():
+                groups[(p["name"], metric)] = g[keep]
+
+
+HANDOVER_CUT: dict = {}
+
+
 def handover_refusal(project: str, metric: str, points, spans: dict, edges: dict | None = None) -> str | None:
     """None when a multi-point series is a DECLARED, non-overlapping handover; else why not.
 
@@ -586,7 +653,21 @@ def handover_refusal(project: str, metric: str, points, spans: dict, edges: dict
     decl = config.declared_handover(project, metric)
     if not decl:
         return "no handover is declared for this series"
-    declared = tuple(decl.get("ordered_points") or ())
+    # G11 C1 (Jake's 10-21 run: Ethereum total_supply_protocol hidden though its handover was declared): the stored
+    # points are measuring points — bracket annotations stripped — so the declared ones are read the same way
+    # ("ultrasound:supply-over-time[next-day 00:00Z]" IS the point ultrasound:supply-over-time)
+    from fetch.base import _measuring_point                        # noqa: PLC0415
+    # A WALLET SET THAT GREW (G11 C1, Ether.fi insider_stake_shares): a declared `nested_sums` handover accepts sum points
+    # whose component sets only grow, oldest to newest, with no two in use on the same day
+    if decl.get("nested_sums"):
+        order = sorted(points, key=lambda p_: spans[p_][0] if p_ in spans else pd.Timestamp.max)
+        sets = [sum_components(p_) for p_ in order]
+        if all(a <= b for a, b in zip(sets, sets[1:])) and all(
+                spans[a][1] < spans[b][0] for a, b in zip(order, order[1:]) if a in spans and b in spans):
+            return None
+        return (f"the declared wallet-set growth does not hold: {order} — each later set must contain the earlier "
+                f"one, and no two may be in use on the same day")
+    declared = tuple(dict.fromkeys(_measuring_point(x) for x in (decl.get("ordered_points") or ())))
     # THE LEGS PRESENT MUST ALL BE DECLARED; A DECLARED LEG MAY BE ABSENT (2026-09-28). GEODNET's
     # handover gained a third leg (the Polygon + Solana sum) that has no rows until the first run
     # reads it — and a store whose Polygon rows were cleaned has no middle leg. Requiring every
@@ -802,6 +883,76 @@ def withheld_for(project: str, metric: str, row: dict) -> tuple[str, str] | None
     return None
 
 
+def _daily_twin_views(groups: dict, asof) -> None:
+    """G11 D3 (config.DAILY_TWIN; Jake's 10-21 run: Sky's buyback_spending_usd_ba_daily equalled the monthly series in
+    every window): where a declared daily series sums to its monthly twin within 0.5% in EVERY trailing quarter both
+    cover, it is the monthly series under a daily name — dropped, and the reason said on its row."""
+    period = int(GLOBALS["period_days"])
+    for (name, daily_m), monthly_m in config.DAILY_TWIN.items():
+        d_, m_ = _daily(groups.get((name, daily_m))), _daily(groups.get((name, monthly_m)))
+        if d_.empty or m_.empty:
+            continue
+        same, seen = 0, 0
+        for k in range(5):
+            hi = pd.Timestamp(asof) - pd.Timedelta(days=period * k)
+            lo = hi - pd.Timedelta(days=period)
+            a = float(d_[(d_.index > lo) & (d_.index <= hi)].sum())
+            b = float(m_[(m_.index > lo) & (m_.index <= hi)].sum())
+            if a or b:
+                seen += 1
+                same += bool(b) and abs(a / b - 1) <= 0.005
+        if seen >= 2 and same == seen:
+            groups.pop((name, daily_m), None)
+            _VIEW_BLOCKS[(name, daily_m)] = (f"BLOCKED — NOT DAILY: equals {monthly_m} in every window ({seen} "
+                                             f"quarter(s)) — the by-day read returned the monthly series; dropped until "
+                                             f"a by-day answer is daily (fetch/sky_accounting.looks_daily refuses it)")
+
+
+HANDOVER_OVERLAP: dict = {}     # (project, metric) -> the declared handover's overlap check, last build (G11 B8 / C1)
+
+
+def handover_overlap(groups: dict, project: str, spec: dict) -> dict:
+    """A DECLARED HANDOVER'S OVERLAP CHECK (G11 B8 / C1): the two legs, each stored as its own series (spec["a"] — the
+    earlier point, spec["b"] — the later), compared on every day both hold. {"common_days", "latest", "a", "b", "gap",
+    "worst_gap", "passed", "text"}. passed: at least min_days common days, every one within tolerance_pct. No common day
+    is said, never passed: the seam is then unchecked."""
+    def daily(m):
+        g = groups.get((project, m))
+        if g is None or g.empty:
+            return pd.Series(dtype=float)
+        return (g.assign(d=pd.to_datetime(g["date"]).dt.normalize()).drop_duplicates("d", keep="last")
+                .set_index("d")["value"].astype(float))
+    a, b = daily(spec["a"]), daily(spec["b"])
+    tol, need = float(spec.get("tolerance_pct", 2.0)), int(spec.get("min_days", 3))
+    common = a.index.intersection(b.index)
+    common = common[a[common] != 0]
+    out = {"a_metric": spec["a"], "b_metric": spec["b"], "common_days": int(len(common)), "tolerance_pct": tol,
+           "min_days": need, "passed": False}
+    if not len(common):
+        out["text"] = (f"OVERLAP CHECK: {spec['a']} and {spec['b']} share no stored day — the seam is UNCHECKED"
+                       + (f" ({spec['why_none']})" if spec.get("why_none") else ""))
+        return out
+    gap = (b[common] / a[common] - 1.0) * 100.0
+    last, worst = common.max(), gap.abs().idxmax()
+    out.update(latest=str(last.date()), a=float(a[last]), b=float(b[last]), gap=float(gap[last]),
+               worst_gap=float(gap[worst]), worst_day=str(worst.date()))
+    out["passed"] = len(common) >= need and float(gap.abs().max()) <= tol
+    out["text"] = (f"OVERLAP CHECK {'PASSED' if out['passed'] else 'NOT PASSED'}: {spec['b']} vs {spec['a']} on "
+                   f"{len(common)} common day(s) — {last.date()}: {b[last]:,.6g} vs {a[last]:,.6g} ({gap[last]:+.2f}%); "
+                   f"worst {gap[worst]:+.2f}% on {worst.date()}; tolerance ±{tol:g}% over ≥{need} days"
+                   + ("" if out["passed"] else f" — {spec.get('if_not_passed', 'a CHANGE OF BASIS at the seam, not a flow')}"))
+    return out
+
+
+def _handover_overlap_checks(groups: dict) -> None:
+    """Every declared series_handover with an "overlap" spec, checked on this build's groups (G11 B8 / C1)."""
+    HANDOVER_OVERLAP.clear()
+    for p in scoped_projects():
+        for metric, decl in (p.get("series_handover") or {}).items():
+            if isinstance(decl, dict) and decl.get("overlap"):
+                HANDOVER_OVERLAP[(p["name"], metric)] = handover_overlap(groups, p["name"], decl["overlap"])
+
+
 def confidence_for(project: str, metric: str, row: dict, asof: pd.Timestamp) -> tuple[str, str]:
     """GREEN / AMBER / RED, derived mechanically. Returns (band, why).
 
@@ -899,6 +1050,16 @@ def confidence_for(project: str, metric: str, row: dict, asof: pd.Timestamp) -> 
         legs = " then ".join(handover.get("ordered_points") or ())
         why.append(f"STITCHED SERIES: {legs}, handed over with no overlap"
                    + (f". {handover['composition_change']}" if handover.get("composition_change") else ""))
+    # G11 B8 / C1: a declared handover's overlap check travels on the cell, whether or not this row's points differ
+    # (a read-time view such as circulating_supply_used keeps one measuring point while its basis changes)
+    if row.get("modelled"):
+        why.append(f"{row['modelled']} — not a measurement; shown, excluded from any scoring")
+    if (project, metric) in HANDOVER_CUT:
+        why.append(HANDOVER_CUT[(project, metric)])
+    ho = HANDOVER_OVERLAP.get((project, metric))
+    if ho and (not ho["passed"] or why):          # a PASSED seam alone does not turn a cell AMBER
+        why.append(f"DECLARED HANDOVER ({(handover or {}).get('declared', '')}): "
+                   + ho["text"])
     # A FAILED VALIDATION IS NEVER GREEN (G10 2d: settlement_rebuilt_usd read GREEN beside "validation FAILED" in its own
     # source). The result travels on the cell.
     vfail = re.search(r"validation (FAILED|NOT VALIDATED)(?::\s*([^\]]*))?", str(row.get("source") or ""))
@@ -920,7 +1081,7 @@ def confidence_for(project: str, metric: str, row: dict, asof: pd.Timestamp) -> 
         why.append("flagged to the Review Queue")
     if row["status"] == "stale":
         limit = (config.MANUAL_QUARTERLY_STALE_DAYS if config.is_manual_quarterly(project, metric)
-                 else config.stale_after_days(project, metric, GLOBALS["stale_after_days"]))
+                 else row.get("stale_limit") or config.stale_after_days(project, metric, GLOBALS["stale_after_days"]))
         why.append(f"stale — no fresh value in {limit} days")
     if row["status"] == "manual" and config.is_manual_quarterly(project, metric):
         entered = str(row.get("entered_on") or "")[:10]
@@ -1025,16 +1186,20 @@ def _consensus_history_views(groups: dict, asof=None) -> None:
     k = num / den
     both = pd.DatetimeIndex(used)
     older = formula[formula.index < m.index.min()]
-    # NEVER INSIDE Q0 (Jake 2026-10-12, Phase 1 follow-up item 2): the headline stays as read — the MODELLED leg fills
-    # the quarters before it only (Q-1..Q-4 of the trajectory), never the window the headline cell sums
-    if asof is not None:
-        older = older[older.index <= pd.Timestamp(asof) - pd.Timedelta(days=int(GLOBALS["period_days"]))]
+    # G11 B6 (Jake's 10-21 run: a hole 07-23..09-28 — the leg stopped at the start of Q0, the measured series starts
+    # 09-29/30): the MODELLED leg now runs to the day before the first measured read, so every day to the measured
+    # series is covered. (It was held out of Q0 since 2026-10-12 — Phase 1 follow-up item 2 — which left the hole once
+    # Q0 moved past the measured start.) The days inside the headline window carry their own label, so a Q0 cell that
+    # sums them reads MODELLED in part.
     if older.empty:
         return
-    src = (f"{CONSENSUS_HISTORY_POINT}[MODELLED — excluded from scoring: {f['coefficient']} x sqrt(staked ETH) / 365 "
-           f"x k={k:.4f}; k = measured "
-           f"Eth2Staking ÷ formula over {len(both)} reading(s) {both.min().date()}..{both.max().date()}, each over "
-           f"its own span]")
+    q0_from = (pd.Timestamp(asof) - pd.Timedelta(days=int(GLOBALS["period_days"]) - 1)) if asof is not None else None
+    base = (f"{CONSENSUS_HISTORY_POINT}[MODELLED — excluded from scoring: {f['coefficient']} x sqrt(staked ETH) / 365 "
+            f"x k={k:.4f}; k = measured "
+            f"Eth2Staking ÷ formula over {len(both)} reading(s) {both.min().date()}..{both.max().date()}, each over "
+            f"its own span")
+    src = [base + ("; INSIDE THE HEADLINE WINDOW — fills the days before the first measured read (G11 B6)]"
+                   if q0_from is not None and d >= q0_from else "]") for d in older.index]
     view = pd.DataFrame({"date": older.index, "project": "Ethereum", "metric": cm, "value": (older * k).values,
                          "tier": 2, "source": src})
     groups[("Ethereum", cm)] = pd.concat([_as_stored(view, meas.columns), meas], ignore_index=True).sort_values("date")
@@ -1515,6 +1680,7 @@ def _burn_total_views(groups: dict) -> None:
 # reconciliation adds back; and the blocks it raises, re-applied after _VIEW_BLOCKS is cleared.
 _ONE_OFF_REMOVED: dict = {}
 _ONE_OFF_BLOCKS: dict = {}
+_ONE_OFF_UNMATCHED: dict = {}     # (project, release metric) -> one-off tokens no stored fall matched (G11 B1)
 
 
 def _one_off_views(groups: dict) -> None:
@@ -3334,6 +3500,85 @@ def _reward_funding_views(groups: dict) -> None:
                  "source": f"derived:{spec['metric']}[{funding}-funded, config.REWARD_FUNDING]"}), g.columns)
 
 
+def _issuance_from_supply_views(groups: dict) -> None:
+    """G11 B2 (config.ISSUANCE_FROM_TOTAL_SUPPLY): gross_issuance_tokens = the rises of the stored total_supply between
+    consecutive stored days at most max_gap_days apart (a fall is 0), where nothing stores gross issuance. Each mint day
+    is compared with the declared mints (ISSUER_MINTS events) on its source."""
+    for name, spec in config.ISSUANCE_FROM_TOTAL_SUPPLY.items():
+        if not any(p["name"] == name for p in scoped_projects()):
+            continue
+        have = groups.get((name, "gross_issuance_tokens"))
+        if spec.get("plus_burn"):
+            _issuance_supply_plus_burn(groups, name, spec, have)
+            continue
+        if have is not None and not have.empty:
+            continue
+        ts = _daily(groups.get((name, "total_supply")))
+        if len(ts) < 2:
+            continue
+        gap = ts.index.to_series().diff().dt.days
+        rise = ts.diff().clip(lower=0.0)[(gap <= int(spec["max_gap_days"])).values].dropna()
+        if rise.empty:
+            continue
+        declared = {pd.Timestamp(e["date"]): float(e["tokens"])
+                    for e in (config.ISSUER_MINTS.get(name) or {}).get("events") or ()}
+        g0 = groups[(name, "total_supply")]
+        srcs = []
+        for d, v in rise.items():
+            m = next((t for dd, t in declared.items() if abs((d - dd).days) <= 2), None)
+            chk = (f"; declared mint {m:,.0f} — {'agrees' if m and abs(v / m - 1) <= 0.01 else 'DIFFERS'}" if m and v
+                   else "")
+            srcs.append(f"derived:d_supply[total_supply rises; no burn — {spec['why'][:120]}{chk}]")
+        groups[(name, "gross_issuance_tokens")] = _as_stored(pd.DataFrame(
+            {"date": rise.index, "project": name, "metric": "gross_issuance_tokens", "value": rise.values, "tier": 2,
+             "source": srcs}), g0.columns)
+
+
+def _issuance_supply_plus_burn(groups: dict, name: str, spec: dict, have) -> None:
+    """G11 C6 (Sky): gross issuance = d(total supply) + the burn that day, between consecutive stored days, where the
+    token's burn decrements its total supply (config burn_mechanism protocol_level_destruction). The burn before its
+    first possible day (spec burn_from) is 0 by the mechanism's record; a later day without a burn row is unknown and
+    left out. A negative result (an impossible negative mint) is left out and named. Only days BEFORE the first stored
+    gross_issuance_tokens row: the stored series stands from its first day (declared handover)."""
+    ts = _daily(groups.get((name, spec.get("supply_metric", "total_supply"))))
+    if len(ts) < 2:
+        return
+    burn = _daily(groups.get((name, spec["plus_burn"])))
+    first = pd.to_datetime(have["date"]).min() if have is not None and not have.empty else None
+    # THE READING DATED D IS D's OPENING where spec close_shift_days = 1 (Sky's archive read: the Stage 2 burn of
+    # 2026-09-13 is in the reading dated 09-14) — so the day's change is the NEXT reading less this one
+    shift = int(spec.get("close_shift_days", 0))
+    nxt = ts.shift(-shift) if shift else ts
+    prv = ts if shift else ts.shift(1)
+    idx = ts.index.to_series()
+    gap = (idx.shift(-shift) - idx).dt.days if shift else idx.diff().dt.days
+    rows, odd = [], []
+    for d, dv in (nxt - prv).items():
+        if pd.isna(dv) or gap[d] != 1 or (first is not None and d >= first):
+            continue
+        if d in burn.index:
+            b = float(burn[d])
+        elif d < pd.Timestamp(spec["burn_from"]):
+            b = 0.0
+        else:
+            continue                                    # a burn could have happened and is not stored: unknown
+        v = float(dv) + b
+        if v < -float(spec.get("tolerance_tokens", 1.0)):
+            odd.append(f"{d.date()} {v:,.0f}")
+            continue
+        rows.append((d, max(v, 0.0)))
+    if not rows:
+        return
+    src = (f"derived:d_supply[d({spec.get('supply_metric', 'total_supply')}) + {spec['plus_burn']}; {spec['why'][:120]}"
+           + (f"; {len(odd)} negative day(s) left out: {', '.join(odd[:3])}" if odd else "") + "]")
+    cols = groups[(name, spec.get("supply_metric", "total_supply"))].columns
+    view = _as_stored(pd.DataFrame({"date": [r[0] for r in rows], "project": name, "metric": "gross_issuance_tokens",
+                                    "value": [r[1] for r in rows], "tier": 2, "source": src}), cols)
+    groups[(name, "gross_issuance_tokens")] = (pd.concat([view, have[view.columns.intersection(have.columns)]],
+                                                         ignore_index=True).sort_values("date")
+                                               if have is not None and not have.empty else view)
+
+
 def _issuer_mint_views(groups: dict) -> None:
     """issuer_mint_tokens (config.ISSUER_MINTS): new supply minted straight into a non-circulating wallet. Aerodrome's
     team emission from the Minter's own formula at each flip (the rebase row of that flip x the teamRate in force);
@@ -3460,6 +3705,7 @@ def _unlock_views(groups: dict) -> None:
     EMISSIONS_ALIAS_DECLINED stands). A day counts only when EVERY leg holds a row that day and on its previous stored
     day (at most 3 days before), measured by the SAME wallet set (the source names the composition): a wallet added to
     the set is a change of measuring point, never an unlock (Aerodrome's filing wallets 2026-10-07: 4.9M -> 36.2M)."""
+    _ONE_OFF_UNMATCHED.clear()
     for p in scoped_projects():
         name = p["name"]
         # the whole set, and any declared SUBSET (config.UNLOCK_RELEASE_SUBSETS: Hyperliquid's Foundation / Grants
@@ -3519,10 +3765,22 @@ def _unlock_release_view(groups: dict, name: str, metric: str, legs: tuple) -> N
                 left -= take
     # A DECLARED TREASURY-FUNDED ONE-OFF IS NOT A RELEASE (alignment round 2026-10-13, C1): Uniswap's 100M UNIfication
     # burn left the Timelock (one_off_flows, funding treasury) — a burn, not spend or an unlock; taken out on its day
+    # G11 B1 (Jake's 10-21 run: (d) read 105M = $627.2M in Q-3): the Timelock is read at each day's FIRST block, so a burn
+    # executed 2025-12-27 20:33 UTC shows as the fall between the 12-27 and 12-28 readings — dated 12-28. The one-off is
+    # taken out of the fall on its landed day or the next stored days (up to 3), never past the fall itself, and only
+    # from a release series whose legs hold the wallet it left (`from_stock`) — never the vesting contracts' releases.
     for f in (config.PROJECT_BY_NAME.get(name) or {}).get("one_off_flows") or ():
-        d = pd.Timestamp(f.get("landed") or "1900-01-01")
-        if f.get("funding") == "treasury" and d in total.index:
-            total.loc[d] -= float(f["tokens"])
+        if f.get("funding") != "treasury" or (f.get("from_stock") and f["from_stock"] not in legs):
+            continue
+        d, left = pd.Timestamp(f.get("landed") or "1900-01-01"), float(f["tokens"])
+        for day in (d + pd.Timedelta(days=j) for j in range(4)):
+            if left <= 0 or day not in total.index:
+                continue
+            take = min(left, max(0.0, float(total.loc[day])))
+            total.loc[day] -= take
+            left -= take
+        if left > 0:
+            _ONE_OFF_UNMATCHED[(name, metric)] = left     # said on the Flows memo, never turned into a "return"
     returned = (-total).clip(lower=0.0)
     total = total.clip(lower=0.0)
     cols = next(g.columns for m in legs if (g := groups.get((name, m))) is not None)
@@ -3943,6 +4201,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
             last_success[(r.source, r.project)] = r.last_success_at
     groups = {k: g for k, g in long.groupby(["project", "metric"])} if not long.empty else {}
     _EARLY_BLOCKS.clear()
+    _handover_cut_views(groups)       # G11 C1: a declared cut — the earlier leg's rows after the later leg starts dropped
     _partial_sum_views(groups)    # FIRST: nothing downstream may read a partial sum
     _same_basis_views(groups)     # one basis read by several routes is one measuring point (config.SAME_BASIS)
     _epoch_paid_views(groups, asof)  # round 3 B4: a weekly row dated by the flip that paid it (config.EPOCH_PAID_AT)
@@ -3962,6 +4221,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _relabel_views(groups)
     _restatement_views(groups)
     _buyback_tokens_from_usd_views(groups)
+    _measured_buyback_views(groups)   # G11 B9: Pendle's buyback = its own per-epoch distribution; derived = cross-check
     _buyback_split_views(groups)  # AFTER every view that builds actual_buyback_* (retirement = burned + held)
     _emissions_from_metric_views(groups)
     # EACH QUARTER END, NOT ONLY ASOF (Round G7 item 2c): the shifted quarters read these stocks at asof − k x period
@@ -4001,6 +4261,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _reward_funding_views(groups)  # fix round 2 S1: a reward split by what funds it (mint / treasury / revenue)
     _treasury_split_views(groups)       # G9 L3: NEAR's (a) = the epoch mint less the treasury's 1/10 (line m)
     _issuer_mint_views(groups)    # fix round 2 S5/S3: mints straight to issuer-side wallets, BEFORE the unlock view
+    _issuance_from_supply_views(groups)   # G11 B2: Maple's gross issuance = the rises of its stored total supply
     _unlock_views(groups)         # releases from the non-circulating wallets (Jake 2026-10-11, A2)
     _revenue_total_views(groups)  # alignment C10: NEAR's revenue = gas + Intents fee switch
     _stake_prorata_views(groups)  # alignment C1: Hyperliquid's (a) = rewards to circulating stake only
@@ -4016,6 +4277,8 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _revenue_from_fees_views(groups)    # G9 N: Plume's revenue = the fees its RewardDistributor receives
     _holder_value_views(groups)   # Phase 2: revenue-funded holder value, credited vs recorded (LITMUS A)
     _settlement_views(groups)
+    _handover_overlap_checks(groups)  # G11 B8 / C1: each declared handover's two legs compared on their common days
+    _daily_twin_views(groups, asof)   # G11 D3: a "daily" series that IS its monthly twin in every window is dropped
     _LAST_GROUPS.clear()
     _LAST_GROUPS.update(groups)       # the views, for Credibility rows that read them (credibility.VIEWS_LONG)
     # The latest value of every series, keyed the same way — so a flow can be checked against the
@@ -4355,12 +4618,12 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                 row["note"] = latest.get("source_note", "") or ""
             elif base_source == "schedule":
                 row["status"] = "ok"
-            elif _age_in_days(latest["date"], asof, granularity) > config.stale_after_days(name, metric, stale_days):
+            elif _age_in_days(latest["date"], asof, granularity) > _stale_limit(name, metric, stale_days, g):
                 # THE THRESHOLD FOLLOWS THE CADENCE. A monthly series cannot have a point from
                 # this week — the incomplete current month is dropped by design — so judging it
                 # against the 7-day global marked a perfectly current series stale forever.
                 row["status"] = "stale"
-                limit = config.stale_after_days(name, metric, stale_days)
+                limit = row["stale_limit"] = _stale_limit(name, metric, stale_days, g)
                 # ===== WHOSE STALENESS IS IT? Added 2026-09-22. =====
                 # "last point 2026-09-10; last successful fetch 2026-09-22" reads as a pipeline
                 # that has fallen behind, and sends the reader to check the fetch. For Ether.fi
@@ -4406,6 +4669,21 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                                    + f"MODELLED leg {md.min().date()}..{md.max().date()} ({len(mod)} day(s)) — "
                                    f"{config.MODELLED_POINTS[_measuring_point(str(mod['source'].iloc[0]))]}; "
                                    f"excluded from any scoring")
+                    # G11 D1 (Jake's 10-21 run: World Mobile's whitepaper-curve emissions read GREEN): a modelled leg
+                    # is never graded like a measurement
+                    row["modelled"] = f"MODELLED leg {md.min().date()}..{md.max().date()} ({len(mod)} day(s))"
+            # G11 D1: A DECLARED SCHEDULE STANDING IN FOR A MEASUREMENT (config.SCHEDULE_LEGS — Aethir's emissions and
+            # (b) back-filled with a constant from schedule:config before the measured series)
+            sl = config.SCHEDULE_LEGS.get((name, metric))
+            if sl:
+                gs = groups.get((name, sl.get("from", metric)))
+                if gs is not None and not gs.empty:
+                    sd = pd.to_datetime(gs.loc[gs["source"].astype(str).str.startswith(sl["prefix"]), "date"])
+                    if len(sd):
+                        lab = f"SCHEDULE leg {sd.min().date()}..{sd.max().date()} ({len(sd)} day(s)) — {sl['why']}"
+                        row["note"] = (row["note"] + " | " if row["note"] else "") + lab + "; not a measurement"
+                        row["modelled"] = (row.get("modelled") + " | " if row.get("modelled") else "") + \
+                            f"SCHEDULE leg {sd.min().date()}..{sd.max().date()}"
             # ================ ALL SEVEN WITHHELD CASES, HANDLED IN ONE PLACE ================
             # A config change guards the WRITE path and cannot touch what is already stored, and
             # aggregate() consults the Gap Report only when the store has NO rows for a key
@@ -4679,7 +4957,10 @@ class Refs:
             j = int(q[1:]) + _SHIFT["k"]
             table = WINDOW_SHARE_COL if kind == "share" else WINDOW_STATUS_COL
             if f"q{j}" not in table:
-                return "NA()"
+                # G11 A3: Config resolves the split for Q0..Q-3 only; Q-4 says so in words, as those windows do when no
+                # split is documented — NA() made every implied-buyback Q-4 cell #N/A (its status compared an error)
+                return ('"n/a — no split for this window (Config & Sources resolves Q0..Q-3)"' if kind == "share"
+                        else '"n/a — no split documented for this window"')
             colname = table[f"q{j}"]
         c = CC[colname]
         r1 = _cfg_r1()
@@ -4713,6 +4994,8 @@ def gated(status_expr: str, expr: str, share_expr: str | None = None, kind: str 
     """Suppress the derived figure when the split is unconfirmed; n/a when no share is documented.
     G10 2a (Jake 2026-10-21): an unconfirmed split is NOT a missing value — the protocol publishes no split, so the
     implied figure does not exist by design; the cell says so and names where the ACTUAL figure is (N/A BY DESIGN)."""
+    if isinstance(share_expr, str) and share_expr.startswith('"n/a'):
+        return f"={share_expr}"                         # G11 A3: a window Config does not resolve says so
     inner = f"IFERROR({expr},{NA})"
     if share_expr:
         inner = f"IF(ISNUMBER({share_expr}),{inner},{NA})"
@@ -5063,6 +5346,19 @@ def buyback_silence(data: pd.DataFrame | None) -> dict:
     return out
 
 
+def _window_value(data: pd.DataFrame | None, project: str, metric: str, col: str):
+    """One Data column of a series: a number (> 0 kept as is) or a non-empty text; else None."""
+    if data is None or data.empty or col not in data:
+        return None
+    hit = data[(data["project"] == project) & (data["metric"] == metric)]
+    if hit.empty:
+        return None
+    v = hit.iloc[0].get(col)
+    if isinstance(v, (int, float)) and not pd.isna(v):
+        return float(v)
+    return str(v) if isinstance(v, str) and v and not v.startswith("n/a") else None
+
+
 def _q0(data: pd.DataFrame | None, project: str, metric: str):
     if data is None or data.empty:
         return None
@@ -5094,6 +5390,16 @@ def derived_statuses(data: pd.DataFrame | None, silence: dict | None = None) -> 
             bb = f"halted since {closed['renders_as_zero_since']}"
         elif name in silence and fs_st == "active":
             bb = f"SILENT since {silence[name]} (declared active; program cadence broken)"
+            # G11 B11 (Jake's 10-21 run: Ether.fi "SILENT since 2026-09-02" while its Programmatic Buybacks Safe bought
+            # 1.4M ETHFI in 30 days): a SIDE programme measured on its own series (config.SIDE_BUYBACK) is named beside
+            # the silent wallet buyback — with what happens to its tokens, which is why it is not credited
+            side = config.SIDE_BUYBACK.get(name)
+            v30 = _window_value(data, name, side["metric"], "now") if side else None
+            if side and v30:
+                last = _window_value(data, name, side["metric"], "latest_date")
+                bb = (f"wallet buyback silent since {silence[name]}; {side['label']} active "
+                      f"({v30 / 1e6:,.1f}M {p['symbol']}/30d" + (f", last {last}" if last else "")
+                      + f") — {side['fate']}")
         elif any(v > 0 for v in vals):
             bb = "active (measured Q0)"
         elif vals:
@@ -5848,6 +6154,8 @@ def _fixed_supply_text(p: dict) -> str:
         return f"0 — fixed supply: {why}"[:240]
     # MINTED ONLY INTO THE ISSUER'S OWN WALLET (fix round 2, S3: Maple): the mints are new supply, but none reaches
     # circulation until it leaves the treasury, then it is a release (e) — said with the Q0 figure, never a bare 0
+    if p["name"] in config.ISSUANCE_FROM_TOTAL_SUPPLY and _LAST_GROUPS.get((p["name"], "gross_issuance_tokens")) is not None:
+        return ""                                   # G11 B2: the mint is shown, derived from the stored total supply
     if p["name"] in config.FIXED_SUPPLY_NOT and (config.ISSUER_MINTS.get(p["name"]) or {}).get("events"):
         g = _LAST_GROUPS.get((p["name"], "issuer_mint_tokens"))
         q0 = None
@@ -6505,11 +6813,16 @@ def _a1_headline(R: Refs) -> list[tuple]:
          lambda r, p: pull(R.D(r, "settlement_volume_365d_usd", "now")) if "settlement_volume_365d_usd"
          in config.metrics_for_project(p) else "", FMT_USD, "pull", False,
          {"metric": "settlement_volume_365d_usd", "trajectory_id": "a1_settlement_volume"}),
-        ("Settlement volume: last date of the Artemis export (both NRR inputs end here)",
+        # G11 B5 (Jake's 10-21 run: the label said "last date of the Artemis export" over 2026-09-19 while the CSV
+        # ends 2026-08-25): the date is the NRR inputs' last day; where a declared rebuild extends the CSV, the cell
+        # says where the CSV ends and the rebuild begins
+        ("Settlement volume: last date of the NRR inputs (both end here) — the Artemis export, then any declared "
+         "rebuild",
          lambda r, p: (f'=IF({R.D(r, "network_reserve_ratio", "latest_date")}="",'
                        f'"n/a — no settlement series stored (Artemis export not read for this project)",'
-                       f'{R.D(r, "network_reserve_ratio", "latest_date")})') if "network_reserve_ratio"
-         in config.metrics_for_project(p) else "", FMT_TEXT, "pull", False, {"metric": "network_reserve_ratio"}),
+                       f'{R.D(r, "network_reserve_ratio", "latest_date")}{_settlement_end_text(p["name"])})')
+         if "network_reserve_ratio" in config.metrics_for_project(p) else "", FMT_TEXT, "pull", False,
+         {"metric": "network_reserve_ratio"}),
         ("NRR ON SETTLEMENT VOLUME — market cap ÷ trailing-365d settlement volume (Artemis definition: "
          "DEX + NFT + P2P), same end date",
          lambda r, p: pull(R.D(r, "network_reserve_ratio", "now")) if "network_reserve_ratio"
@@ -6535,6 +6848,22 @@ def _a1_headline(R: Refs) -> list[tuple]:
          lambda r, p: config.TRADING_THROUGHPUT["meaningful"].get(p["name"], "")
          if p["name"] in config.TRADING_THROUGHPUT["chains"] else "", FMT_TEXT, "text"),
     ]
+
+
+def _settlement_end_text(name: str) -> str:
+    """G11 B5: '&" — …"' naming where the Artemis CSV ends and a declared rebuild carries on (settlement_volume_usd rows
+    whose source is the rebuild), or "" where the series is the CSV alone."""
+    g = _LAST_GROUPS.get((name, config.ARTEMIS_SETTLEMENT["metric"]))
+    if g is None or g.empty:
+        return ""
+    src = g["source"].astype(str)
+    reb, csv = g[src.str.startswith("derived:settlement_rebuild")], g[~src.str.startswith("derived:settlement_rebuild")]
+    if reb.empty:
+        return ""
+    end = pd.to_datetime(csv["date"]).max() if not csv.empty else None
+    v = SETTLEMENT_VALIDATION.get(name) or {}
+    return (f'&" — Artemis CSV to {end.date() if end is not None else "?"}, then the rebuild (DEX + NFT + P2P) to '
+            f'{pd.to_datetime(reb["date"]).max().date()}{"; " + v["legs_end"] if v.get("legs_end") else ""}"')
 
 
 def _token_yield(R: Refs, data_by_key: dict | None = None):
@@ -6751,6 +7080,81 @@ def _buyback_tokens_from_usd_views(groups: dict) -> None:
         tok["value"] = tok["value"].astype(float) / tok["date"].map(price_on)
         tok["metric"], tok["source"] = "actual_buyback_tokens", DERIVED_USD_OVER_PRICE
         groups[(name, "actual_buyback_tokens")] = _as_stored(tok, usd.columns)
+
+
+def _measured_buyback_views(groups: dict) -> None:
+    """THE BUYBACK FROM THE PROJECT'S OWN PER-EPOCH FIGURE (G11 B9, Jake's 10-21 run — config.MEASURED_BUYBACK; Pendle:
+    spendle/data buybackAmounts). Each epoch dated d pays out days d..d+epoch_days−1, so its amount is spread evenly
+    over them — never past the store's last priced day. The LATEST epoch reading 0 is Pendle's publish lag (the amount
+    is not out yet), not a zero: left out and said. actual_buyback_usd = tokens x the same-day price. The derived series
+    (holders revenue / same-day price) moves to <metric>_derived and stays the cross-check."""
+    for name, spec in config.MEASURED_BUYBACK.items():
+        if name not in {p["name"] for p in scoped_projects()}:
+            continue
+        ep, px = groups.get((name, spec["metric"])), groups.get((name, "price_usd"))
+        for m in ("actual_buyback_tokens", "actual_buyback_usd"):
+            g = groups.get((name, m))
+            if g is not None and not g.empty:
+                groups[(name, f"{m}_derived")] = _as_stored(g.assign(metric=f"{m}_derived"), g.columns)
+        if ep is None or ep.empty:
+            continue
+        e = (ep.assign(date=pd.to_datetime(ep["date"]).dt.normalize()).drop_duplicates("date", keep="last")
+             .sort_values("date"))
+        lag = ""
+        if float(e["value"].iloc[-1]) == 0.0:
+            lag = (f"; the epoch of {e['date'].iloc[-1].date()} reads 0 — Pendle's publish lag, not a zero: left out "
+                   f"until its amount is published")
+            e = e.iloc[:-1]
+        if e.empty:
+            continue
+        end = pd.to_datetime(px["date"]).max() if px is not None and not px.empty else None
+        n = int(spec["epoch_days"])
+        rows = []
+        for d, v in zip(e["date"], e["value"].astype(float)):
+            for day in pd.date_range(d, periods=n, freq="D"):
+                if end is None or day <= end:
+                    rows.append((day, v / n))
+        if not rows:
+            continue
+        src = (f"{e['source'].iloc[-1]}[{spec['label']}: each epoch spread over its {n} days{lag}; cross-check "
+               f"actual_buyback_tokens_derived (holders revenue / same-day price)]")[:500]
+        tok = pd.DataFrame({"date": [r[0] for r in rows], "project": name, "metric": "actual_buyback_tokens",
+                            "value": [r[1] for r in rows], "tier": 2, "source": src})
+        groups[(name, "actual_buyback_tokens")] = _as_stored(tok, ep.columns)
+        if px is None or px.empty:
+            continue
+        price_on = px.assign(date=pd.to_datetime(px["date"]).dt.normalize()).drop_duplicates("date", keep="last") \
+            .set_index("date")["value"].astype(float)
+        usd = tok[tok["date"].isin(price_on.index[price_on > 0])].copy()
+        usd["value"] = usd["value"].astype(float).values * price_on.loc[usd["date"]].values
+        usd["metric"], usd["source"] = "actual_buyback_usd", "derived:tokens*price"
+        if not usd.empty:
+            groups[(name, "actual_buyback_usd")] = _as_stored(usd, ep.columns)
+        # lastEpochApr read 0 (Pendle's publish lag, the same as the epoch's 0): a 0 is no APR — the last COMPLETE
+        # epoch's published APR stands in where stored, else the row is left out and the reason said
+        am, ea = spec.get("apr_metric"), groups.get((name, spec.get("epoch_apr_metric") or ""))
+        ag = groups.get((name, am)) if am else None
+        if ag is not None and not ag.empty and (ag["value"].astype(float) == 0).any():
+            zero = ag["value"].astype(float) == 0
+            if ea is not None and not ea.empty:
+                es = ea.assign(date=pd.to_datetime(ea["date"]).dt.normalize()).drop_duplicates("date", keep="last") \
+                    .set_index("date")["value"].astype(float).sort_index()
+                fill = ag[zero].copy()
+                prev = [es[es.index <= pd.Timestamp(d)] for d in fill["date"]]
+                keep = [len(x) > 0 for x in prev]
+                fill = fill[keep]
+                fill["value"] = [float(x.iloc[-1]) for x in prev if len(x)]
+                fill["source"] = [f"{spec['epoch_apr_metric']}[lastEpochApr read 0 (publish lag): the last complete "
+                                  f"epoch's APR, {x.index[-1].date()}]" for x in prev if len(x)]
+                ag = pd.concat([ag[~zero], fill], ignore_index=True).sort_values("date")
+            else:
+                ag = ag[~zero]
+            if ag.empty:
+                _EARLY_BLOCKS[(name, am)] = ("BLOCKED — lastEpochApr read 0: Pendle's publish lag, not a 0% "
+                                             "APR; no complete epoch's APR (pendle_epoch_apr_published) stored")
+                groups.pop((name, am), None)
+            else:
+                groups[(name, am)] = _as_stored(ag, ag.columns)
 
 
 def _buyback_split_views(groups: dict) -> None:
@@ -7217,9 +7621,7 @@ def _settlement_views(groups: dict) -> None:
     _settlement_rebuild_views(groups)       # G7 item 8: Ethereum's rebuild beside the CSV, extending it only if valid
     for p in scoped_projects():
         _nrr_views(groups, p["name"], spec["metric"], "settlement_volume_365d_usd", "network_reserve_ratio",
-                   int(spec["window_days"]), config.ARTEMIS_DERIVED,
-                   "the Artemis export holds {have} of the {n} days ending {last} — a short window would "
-                   "understate settlement volume and overstate the ratio; re-export the full history")
+                   int(spec["window_days"]), config.ARTEMIS_DERIVED, _settlement_short_why(groups, p))
     # TRADING THROUGHPUT (Jake, 2026-09-30): the same ratio on DefiLlama's DEX + perps volume, for
     # every chain from one source. A DIFFERENT DEFINITION — its own metrics, never mixed with the above.
     tt = config.TRADING_THROUGHPUT
@@ -7229,6 +7631,23 @@ def _settlement_views(groups: dict) -> None:
                    (tt["sum_metric"], tt["nrr_metric"]),
                    "DefiLlama's DEX + perps series holds {have} of the {n} days ending {last} — a short "
                    "window would understate throughput and overstate the ratio")
+
+
+def _settlement_short_why(groups: dict, p: dict) -> str:
+    """Why the 365-day settlement sum is not formed, in the series' OWN terms (G11 D5, Jake's 10-21 run: Near's reason
+    read "the Artemis export holds 203 of 365 days" — Near's settlement is the DEX + P2P rebuild, its P2P read from
+    BigQuery from 2026-04-01). `{have}`, `{n}`, `{last}` are filled by _nrr_views."""
+    rb = p.get("settlement_rebuild") or {}
+    if not rb:
+        return ("the Artemis export holds {have} of the {n} days ending {last} — a short window would understate "
+                "settlement volume and overstate the ratio; re-export the full history")
+    leg = groups.get((p["name"], rb["p2p_metric"]))
+    first = pd.to_datetime(leg["date"]).min().date() if leg is not None and not leg.empty else None
+    return ("the settlement REBUILD (" + rb["dex_metric"] + " + " + rb["p2p_metric"]
+            + (f", P2P from {({'bigquery': 'BigQuery'}).get(rb.get('engine'), rb.get('engine') or 'its source')} from "
+               f"{first}" if first else "")
+            + ") holds {have} of the {n} days ending {last} — a 365-day sum needs every day; it forms once the P2P leg "
+              "has a year behind it")
 
 
 SETTLEMENT_VALIDATION: dict = {}    # project -> the last build's rebuild-vs-CSV validation (G7 item 8)
@@ -7294,8 +7713,26 @@ def _settlement_rebuild_views(groups: dict) -> None:
     cols = groups[(name, spec["legs"]["dex"])].columns
     val = settlement_validation(rebuilt, csv, spec["validation"]) if not csv.empty else \
         {"status": "NOT VALIDATED", "why": "no Artemis CSV rows to validate against"}
+    # G11 B5 (Jake's 10-21 run: the rebuild read BELOW its own legs — Q0 −5.5%, 30 days below P2P alone — and the
+    # 365-day sum and NRR stopped at 2026-09-19): the rebuild is a day ONLY where all three legs are stored, so a window
+    # sum covers the common days and the series ends on the shortest leg's last day. Each leg's end and the common days
+    # are stated; a leg's missing day is never filled (unknown is never 0).
+    ends = {k: v.index.max() for k, v in legs.items()}
+    short = min(ends, key=ends.get)
+    # THE DAYS DROPPED, PER LEG: every day inside the legs' joint span that one leg lacks (so the rebuild lacks it, and a
+    # trailing-365-day sum containing it is not formed — the 365d / NRR stop at the first such day)
+    span = pd.date_range(max(v.index.min() for v in legs.values()), max(ends.values()), freq="D")
+    miss = {k: span.difference(v.index) for k, v in legs.items()}
+    val["dropped_days"] = {k: [str(d_.date()) for d_ in m_] for k, m_ in miss.items() if len(m_)}
+    val["legs_end"] = (f"the rebuild is a day only where all three legs are stored — it ends with the shortest leg "
+                       f"({short} to {ends[short].date()}; "
+                       + ", ".join(f"{k} to {d_.date()}" for k, d_ in ends.items()) + ")"
+                       + ("; days a leg lacks inside the joint span: " + "; ".join(
+                           f"{k} {len(m_)} ({', '.join(str(d_.date()) for d_ in m_[:4])}{'…' if len(m_) > 4 else ''})"
+                           for k, m_ in miss.items() if len(m_)) if any(len(m_) for m_ in miss.values()) else ""))
+    val["common_days"] = int(len(df))
     SETTLEMENT_VALIDATION[name] = val
-    tag = f"{spec['label']}; validation {val['status']}: {val.get('why', '')}"[:400]
+    tag = f"{spec['label']}; validation {val['status']}: {val.get('why', '')}; {val['legs_end']}"[:500]
     groups[(name, "settlement_rebuilt_usd")] = _as_stored(pd.DataFrame({
         "date": rebuilt.index, "project": name, "metric": "settlement_rebuilt_usd", "value": rebuilt.values, "tier": 1,
         "source": f"derived:dex+nft+p2p[{tag}]"}), cols)
@@ -7434,7 +7871,16 @@ def _nrr_views(groups: dict, name: str, vol_metric: str, sum_metric: str, nrr_me
         for m in blocked:
             _VIEW_BLOCKS[(name, m)] = short_why.format(have=have, n=n, last=last.date())
         return
-    _nrr_rows(groups, name, sv, sums, sum_metric, nrr_metric, n, src, "")
+    # G11 B5 (Jake's 10-21 run: Ethereum's 365-day sum and NRR stopped at 2026-09-19 while the daily series ran to
+    # 10-18): a window holding a blank day is not formed, so the sums stop before the first blank day after them —
+    # the blank days are named on every row
+    stop = ""
+    if sums.index.max() < last:
+        blank = full[(full.index > sums.index.max()) & full.isna()].index
+        stop = (f"[stops at {sums.index.max().date()}: {vol_metric} has no value on {len(blank)} day(s) after it ("
+                + ", ".join(str(d.date()) for d in blank[:5]) + ("…" if len(blank) > 5 else "")
+                + f") — a {n}-day window holding a blank day is not formed]")
+    _nrr_rows(groups, name, sv, sums, sum_metric, nrr_metric, n, src, stop)
 
 
 def _nrr_rows(groups: dict, name: str, sv, sums, sum_metric: str, nrr_metric: str, n: int, src: str, tag) -> None:
@@ -7792,6 +8238,10 @@ def _write_table(ws, R: Refs, projects: list[dict], specs: list[tuple], data_by_
                 c.fill = FILL_KEY
             # visual flags from the underlying data / config
             meta = spec[5] if len(spec) > 5 else {}
+            # A PER-PROJECT SCOPE ON THE NUMBER ITSELF (G11 C5: Hyperliquid's transactions are HyperEVM's only) — the cell
+            # stays a number, its format says what it counts
+            if meta.get("fmt_fn") and meta["fmt_fn"](p["name"]):
+                c.number_format = meta["fmt_fn"](p["name"])
             # A cell whose figure — or whose only input — was chased and closed says so, instead
             # of showing "n/a" next to twenty real ones and reading as missing data.
             # metric_fn: the metric this cell reads is PER PROJECT. Sky's implied-buyback base is
@@ -7964,7 +8414,12 @@ def _a4_iss_metric(name: str) -> str:
     config issuance_derivation) — there the MEASURED release from the mining wallets (config.issuance_basis =
     pool_release_tokens, the primary Jake chose 2026-09-28) is what enters circulation, and the Data row names it."""
     p = config.PROJECT_BY_NAME.get(name) or {}
-    if config.issuance_basis(name) == "pool_release_tokens" and (p.get("issuance_derivation") or {}).get("suppressed"):
+    # G11 C7 (Jake's 10-21 run: Hyperliquid's Master read "0 — fixed supply" while 11 A4 cells were blocked on a 29-day
+    # gross_issuance_tokens): ONE BASIS — a pre-minted supply whose minted figure is declared n/a (Hyperliquid: "PRE-MINTED
+    # TOKEN, ZERO ISSUANCE BY CONSTRUCTION") reads its release too, as GEODNET does
+    if config.issuance_basis(name) == "pool_release_tokens" and (
+            (p.get("issuance_derivation") or {}).get("suppressed")
+            or config.not_applicable_reason(name, "gross_issuance_tokens")):
         return "pool_release_tokens"
     return "gross_issuance_tokens"
 
@@ -8051,11 +8506,21 @@ def write_master(ws, R: Refs, data_by_key: dict):
          lambda r, p: pull(R.D(r, "market_cap_usd_coingecko", "now")), FMT_USD, "pull", False,
          {"metric": "market_cap_usd_coingecko"}),
         ("FDV ($)", lambda r, p: pull(R.D(r, "fdv_usd", "now")), FMT_USD, "pull", False, {"metric": "fdv_usd"}),
-        ("Fees Q0 ($)", lambda r, p: pull(R.D(r, "fees_usd", "q0")), FMT_USD, "pull", False, {"metric": "fees_usd"}),
+        # G11 C8 (Jake's 10-21 run: World Mobile's Fees Q0 a gap with own_chain_fees_usd stored): a project whose only
+        # fee series is its own chain's gas shows it, labelled on the number (config.MASTER_FEES_OVERRIDE)
+        ("Fees Q0 ($)", lambda r, p: pull(R.D(r, config.MASTER_FEES_OVERRIDE.get(p["name"], ("fees_usd",))[0], "q0")),
+         FMT_USD, "pull", False,
+         {"metric_fn": lambda n: config.MASTER_FEES_OVERRIDE.get(n, ("fees_usd",))[0],
+          "fmt_fn": lambda n: (f'$#,##0" ({config.MASTER_FEES_OVERRIDE[n][1]})"' if n in config.MASTER_FEES_OVERRIDE
+                               else None)}),
         ("Revenue Q0 ($)", lambda r, p: pull(R.D(r, config.revenue_headline_metric(p["name"]), "q0")), FMT_USD, "pull",
          False, {"metric_fn": config.revenue_headline_metric}),
+        # G11 C4 (Jake's 10-21 run: Chainlink's Master TVL n/a — it is A1 but not a chain, and protocol_tvl_usd $2.0B is
+        # stored): chain TVL for the A1 names that ARE chains (config is_chain), protocol TVL otherwise
+        # (the header keeps its text: the trend and Trajectory ids are built from it — "A1 names" now means chains)
         ("TVL ($) — chain for A1 names, protocol otherwise",
-         lambda r, p: pull(R.D(r, "tvl_usd" if 1 in p["archetypes"] else "protocol_tvl_usd", "now")), FMT_USD, "pull"),
+         lambda r, p: pull(R.D(r, _master_tvl_metric(p), "now")), FMT_USD, "pull", False,
+         {"metric_fn": lambda n: _master_tvl_metric(config.PROJECT_BY_NAME[n])}),
         ("Implied buyback Q0 ($) = revenue × the split that applied to this window",
          lambda r, p: gated(R.C(r, WINDOW_STATUS_COL["q0"]), f"{R.D(r, 'revenue_usd', 'q0')}*{R.C(r, WINDOW_SHARE_COL['q0'])}", R.C(r, WINDOW_SHARE_COL["q0"])),
          FMT_USD, "calc", False, {"gate_window": "q0"}),
@@ -8167,6 +8632,12 @@ CP_SUPPLIER_HEAD = ("Supplier payout per $ of fees = (fees to suppliers + incent
 def _cp_revenue_metric(p: dict) -> str:
     """Subsidy cover's numerator: customer revenue where the project has the series (archetype 2's demand), else fees."""
     return "customer_revenue_usd" if "customer_revenue_usd" in config.metrics_for_project(p) else "fees_usd"
+
+
+def _master_tvl_metric(p: dict) -> str:
+    """Master's TVL: the chain's own (tvl_usd) for an A1 name that is a chain, the protocol's (protocol_tvl_usd)
+    otherwise — Chainlink is A1 and no chain (G11 C4)."""
+    return "tvl_usd" if 1 in p["archetypes"] and p.get("is_chain") else "protocol_tvl_usd"
 
 
 def _cp_cats(p: dict, cats=CP_DILUTION_CATS) -> list[str]:
@@ -9198,7 +9669,9 @@ def write_a1(ws, R: Refs, data_by_key: dict, months: list[str]):
         ("Symbol", lambda r, p: p["symbol"], FMT_TEXT, "text"),
         *_valuation_head(R, circulating=True),
         *_a1_headline(R),
-        ("Transactions Q0", lambda r, p: pull(R.D(r, "tx_count", "q0")), FMT_NUM, "pull", False, {"metric": "tx_count"}),
+        ("Transactions Q0", lambda r, p: pull(R.D(r, "tx_count", "q0")), FMT_NUM, "pull", False,
+         {"metric": "tx_count", "fmt_fn": lambda n: (f'#,##0" ({config.TX_COUNT_SCOPE[n]})"'
+                                                     if n in config.TX_COUNT_SCOPE else None)}),
         ("Fees Q0 ($)", lambda r, p: pull(fees(r)), FMT_USD, "pull", False, {"metric": "fees_usd"}),
         ("Fee per transaction ($)", lambda r, p: _fee_per_tx(R, r, p, price(r)), FMT_USD4, "calc"),
         ("Fee per transaction — what it divides",
@@ -9218,12 +9691,18 @@ def write_a1(ws, R: Refs, data_by_key: dict, months: list[str]):
         ("Issuance as % of supply (annualised)", lambda r, p: calc(f"{_annualise(R, r, p, 'gross_issuance_tokens', iss(r))}/{circ(r)}"), FMT_PCT, "calc"),
         # staked_tokens WAS MERGED INTO locked_tokens (2bc2e5d); these three still looked it up and
         # read #N/A on every row until 2026-09-28.
-        ("Staked tokens (locked_tokens)", lambda r, p: pull(R.D(r, "locked_tokens", "now")), FMT_NUM, "pull", False, {"metric": "locked_tokens"}),
+        # G11 C3 (Jake's 10-21 run: Ethereum's staked / staking rate / float read n/a with beacon_chain_eth 43.67M
+        # stored): the stake is the declared stake series where there is one (config.CP_STAKE_METRIC — ETH staked on
+        # the beacon chain), as CP reads it, else locked_tokens
+        ("Staked tokens (locked_tokens)",
+         lambda r, p: pull(R.D(r, config.CP_STAKE_METRIC.get(p["name"], "locked_tokens"), "now")), FMT_NUM, "pull",
+         False, {"metric_fn": lambda n: config.CP_STAKE_METRIC.get(n, "locked_tokens")}),
         ("Staking rate = staked inside circulating ÷ circulating",
-         lambda r, p: calc(f"({_ff_lock(R, r, p)})/({_circ(R, r, p)})"), FMT_PCT, "calc"),
-        # THE SAME FLOAT AS A2 AND CP (item 1): circulating − the lock inside it (_ff_lock)
+         lambda r, p: calc(f"({_cp_lock(R, r, p)})/({_circ(R, r, p)})"), FMT_PCT, "calc"),
+        # THE SAME FLOAT AS A2 AND CP (item 1): circulating − the lock inside it (_ff_lock; the declared stake series
+        # where CP reads one)
         ("Resulting float = circulating − staked inside circulating",
-         lambda r, p: calc(f"({_circ(R, r, p)})-({_ff_lock(R, r, p)})"), FMT_NUM, "calc"),
+         lambda r, p: calc(f"({_circ(R, r, p)})-({_cp_lock(R, r, p)})"), FMT_NUM, "calc"),
         # THE HEADLINE BURN, as A4 reads it (Jake's review of 97b29ae, item 5: NEAR's Master 61,580 vs A1 69,238 were two
         # series; the headline is config.a4_burn_metric — for NEAR the chain's record, Jake's run 2026-10-08)
         # EVERY BURN, fee-market burns included (Phase 2 amendment 1: they come off A4 and feed net issuance here)
@@ -9520,6 +9999,28 @@ def write_credibility(ws, R: Refs, data_by_key: dict, long: pd.DataFrame, asof) 
 
     def text(v):                     # a note that starts with "=" must never become a formula
         return (" " + v) if isinstance(v, str) and v[:1] in "=+-@" else v
+    # G11 A2: A CONTINUITY CHECK NAMES THE CELLS IT LOST. The headline tabs are complete here: each held cell is evaluated
+    # (xlcalc, the values the file carries) and the note leads with those that no longer read a number — Jake read the
+    # old note's full list of previous values and found every one present
+    _X = None
+    for row in rows:
+        held = row.pop("held", None)
+        if row.get("mode") == "continuity" and held:
+            if _X is None:
+                import xlcalc                              # noqa: PLC0415
+                _X = xlcalc.Workbook(ws.parent)
+            lost = []
+            for sh, cell, head, was in held:
+                try:
+                    c = ws.parent[sh][cell]
+                    now = _X.value(sh, c.row, c.column)
+                except Exception as e:  # noqa: BLE001
+                    now = f"unevaluable ({type(e).__name__})"
+                if not isinstance(now, (int, float)) or isinstance(now, bool):
+                    lost.append(f"{sh[:2]} {head[:60]} ({cell}) was {was:,.6g}, now {str(xlcalc.display(now))[:80]}")
+            row["note"] = ((f"LOST NOW ({len(lost)}): " + "; ".join(lost) + " | ") if lost else
+                           "every held headline still reads a number | ") + row["note"]
+            row["note"] = row["note"][:2000]
     for k, row in enumerate(rows):
         r = d0 + k
         ws.cell(row=r, column=1, value=row["project"])
@@ -9641,8 +10142,21 @@ def write_gap_report(ws, gaps: pd.DataFrame, run_id: str | None):
         ws.cell(row=r, column=1, value="No gaps — every applicable metric resolved.").font = F_BOLD
         _set_widths(ws, {"A": 14, "B": 16, "C": 26, "D": 12, "E": 62, "F": 86})
         return r
-    # config gaps first (they block derived figures), then by project, then metric
+    # G11 A5b: A GAP THE STORE HAS SINCE ANSWERED IS NOT ON THE LIST. The run's gap detection judges the series one
+    # route was meant to fill (Plume fees_usd "DefiLlama returned no data") while another route stored it (Blockscout's
+    # txnsFee, current): a row whose (project, metric) holds a current stored or view series is dropped, said in one line
     g = gaps.copy()
+    keep = [not _gap_answered_by_store(str(pj), str(m)) for pj, m in zip(g["project"], g["metric"])]
+    dropped = g[[not k for k in keep]]
+    g = g[keep]
+    if not dropped.empty:
+        ws.cell(row=2, column=8, value=f"{len(dropped)} gap row(s) dropped: a current series is stored for them — "
+                                       + "; ".join(f"{a}/{b}" for a, b in zip(dropped["project"], dropped["metric"]))[:400]
+                ).font = F_SUB
+    if g.empty:
+        ws.cell(row=r, column=1, value="No gaps — every applicable metric resolved.").font = F_BOLD
+        return r
+    # config gaps first (they block derived figures), then by project, then metric
     g["_open"] = g["metric"].astype(str).str.startswith("[open]")
     g["_config"] = g["metric"].astype(str).str.startswith("[config]")
     if "priority" not in g.columns:
@@ -9730,6 +10244,19 @@ def write_staging(ws, staged: pd.DataFrame, run_id: str | None):
     _set_widths(ws, {"A": 16, "B": 20, "C": 11, "D": 18, "E": 20, "F": 6, "G": 80})
 
 
+def _gap_answered_by_store(project: str, metric: str) -> bool:
+    """A metric row (not an [open] / [config] / [answered] question) whose series is held — stored or built at read
+    time — and current by its own cadence at the build's as-of (G11 A5b)."""
+    if metric.startswith("[") or not _WINDOWS.get("q0"):
+        return False
+    g = _LAST_GROUPS.get((project, metric))
+    if g is None or g.empty:
+        return False
+    asof = pd.Timestamp(_WINDOWS["q0"][1])
+    last = pd.to_datetime(g["date"]).max().normalize()
+    return (asof - last).days <= _stale_limit(project, metric, GLOBALS["stale_after_days"], g)
+
+
 def _write_manual_quarterly(ws, row: int, long: pd.DataFrame) -> int:
     """Figures that are typed in, not fetched — with when each was last entered.
 
@@ -9751,6 +10278,21 @@ def _write_manual_quarterly(ws, row: int, long: pd.DataFrame) -> int:
     for project, metric in sorted(entries):
         g = long[(long["project"] == project) & (long["metric"] == metric)] if not long.empty else long
         entered, age, value = "never", None, None
+        # G11 A5c: a series FILLED by a route (Aethir's utilisation_pct, derived at read time) is not due for a hand
+        # entry — "never — DUE" sat beside a stored 0.642
+        filled = _LAST_GROUPS.get((project, metric))
+        if (g is None or g.empty or not bool(g.sort_values("date").iloc[-1].get("is_manual", True))) \
+                and filled is not None and not filled.empty:
+            last = filled.sort_values("date").iloc[-1]
+            if not str(last["source"]).startswith("manual"):
+                vals = [project, metric, str(last["date"])[:10], None, float(last["value"]),
+                        f"filled by {str(last['source'])[:60]} — no hand entry needed"]
+                for j, v in enumerate(vals, start=1):
+                    c = ws.cell(row=row, column=j, value="n/a" if v is None else v)
+                    c.font = F_BASE
+                    c.number_format = FMT_NUM if isinstance(v, (int, float)) else FMT_TEXT
+                row += 1
+                continue
         if g is not None and not g.empty:
             last = g.sort_values("date").iloc[-1]
             entered = str(last.get("entered_on") or last["date"])[:10]
@@ -10072,9 +10614,10 @@ def flow_statements(groups: dict, asof) -> list[dict]:
         note_tok = {"Sky": "MKR -> SKY conversions (converter 0xA1Ea1bA1…) enter circulating with NO series — NOT WIRED "
                            "(149.6M SKY in the 90 days to 2026-10-12, research of 2026-10-13); they are not dilution "
                            "(SPEC.md section 12, item 7) and show here as residual",
-                    "Plume": "Plume's unlocks (linear to Jan 2028) are published as a CHART only (plume.org/blog/tokenomics, "
-                             "rev. 2025-10-11) — no monthly amounts, so no release leg; the monthly schedule steps "
-                             "(+212,116,114.6 about the 21st from 2026-03) show here as residual (research 2026-10-13)"}.get(name, "")
+                    "Plume": "Plume's non-insider unlocks (ecosystem / community / foundation) have no series — the "
+                             "insider leg (e) is DefiLlama's reading of the published chart (G11 B4); the rest of the "
+                             "monthly schedule steps (+212,116,114.6 about the 21st from 2026-03, every category) shows "
+                             "here as residual"}.get(name, "")
         tok = {"open": [], "close": [], "expected": [], "residual": [], "pct": [], "status": []}
         leg_vals = {lab: [] for lab, _m, _s in legs}
         for k in range(5):
@@ -10132,7 +10675,9 @@ def flow_statements(groups: dict, asof) -> list[dict]:
                 tok["status"].append(("CHECK — " + "; ".join([lead] + why)) if why else f"BROKEN — {lead}; no named cause")
             else:
                 tok["status"].append(("CHECK — " + "; ".join(why)) if why else "OK — balances within ±0.5%")
-        basis = ("pre-minted supply: nothing is minted; releases = pool_release_tokens" if pre else
+        basis = (("releases = the named legs: " + ", ".join(m for _l, m in config.FLOW_RELEASE_LEGS[name]))
+                 if config.FLOW_RELEASE_LEGS.get(name) else
+                 "pre-minted supply: nothing is minted; releases = pool_release_tokens" if pre else
                  "releases = the falls of the non-circulating wallets (unlock_release_tokens)" if rel_m else
                  "no issuer-wallet release series")
         rows = [("Opening circulating", tok["open"], "tokens", "circulating_supply_used (start of the quarter)", ""),
@@ -10153,6 +10698,19 @@ def flow_statements(groups: dict, asof) -> list[dict]:
                   f"ROUTE PENDING — config.ISSUER_MINTS declares the {config.ISSUER_MINTS[name]['kind']} route "
                   f"({config.ISSUER_MINTS[name].get('metric') or config.ISSUER_MINTS[name].get('source', '')}); "
                   f"nothing stored for it yet")),
+                # G11 B1: a declared one-off burn FROM AN ISSUER-SIDE WALLET (Uniswap's 100M retroactive burn left the
+                # Timelock): burned supply that was never circulating — shown here, out of the release leg and out of
+                # the expected closing, so the statement still balances
+                *([("memo: one-off burn from issuer-side wallets (never circulating — out of the release leg and of the "
+                    "expected closing)",
+                    # a DECLARED single event: 0 in every quarter it did not land in (never unknown)
+                    [_flow_sum(d("one_off_burn_tokens"), *_flow_window(asof, k))[0] or 0.0 for k in range(5)], "tokens",
+                    "one_off_burn_tokens",
+                    "; ".join(f"{f['what']}, landed {f.get('landed')}" for f in p.get("one_off_flows") or ())
+                    + ("; NOT MATCHED to a stored fall: "
+                       + ", ".join(f"{m} {v:,.0f}" for (n_, m), v in _ONE_OFF_UNMATCHED.items() if n_ == name)
+                       if any(n_ == name for n_, _m in _ONE_OFF_UNMATCHED) else ""))]
+                  if (name, "one_off_burn_tokens") in groups else []),
                 ("Residual ÷ opening", tok["pct"], "pct", "", f"CHECK beyond ±{FLOW_RESIDUAL_LIMIT:.1%}"),
                 ("Status", tok["status"], "text", "", basis)]
         for line, vals, unit, series, note in rows:
@@ -10216,6 +10774,10 @@ def flow_statements(groups: dict, asof) -> list[dict]:
                    "" if "outflow_d_usd" in have else "no (d) on this project"),
                   ("Outflows beside: unlocks (e)", vrows["incent_e"], "usd", "outflow_e_usd",
                    "" if "outflow_e_usd" in have else "no (e) on this project"),
+                  # G11 D7 (Jake's 10-21 run: NEAR's treasury mint sat inside "+ minted" on no value-flow line): a
+                  # declared memo (config.VALUE_FLOW_MEMO) shows the $ of a minted leg and says which line it is not
+                  *[(lab, [_flow_sum(_usd_daily(d(m), d("price_usd")), *_flow_window(asof, k))[0] for k in range(5)],
+                     "usd", f"{m} x price_usd", why) for lab, m, why in config.VALUE_FLOW_MEMO.get(name, ())],
                   ("Status", stat, "text", "", "")]
         out[:] = [_no_such_flow(r) for r in out]
         for line, vals, unit, series_, note in vlines:
@@ -10228,6 +10790,15 @@ def flow_statements(groups: dict, asof) -> list[dict]:
                         **{lab: v for lab, v in zip(trajectory.LABELS, vals)}, "Unit": unit, "Series": series_,
                         "Note": note}, have))
     return out
+
+
+def _usd_daily(tokens: pd.Series, price: pd.Series) -> pd.Series:
+    """tokens x the same day's price, on the days both hold (a day without a price is left out, never valued at another
+    day's)."""
+    if tokens.empty or price.empty:
+        return pd.Series(dtype=float)
+    both = tokens.index.intersection(price.index)
+    return (tokens[both] * price[both]).sort_index()
 
 
 HOLDER_OTHER_LINE = "Holder value recorded, NOT credited"
@@ -10802,7 +11373,20 @@ def build_workbook(store, path: Path | str, run_id: str | None = None,
     except Exception as e:  # noqa: BLE001
         wb.create_sheet("Coverage").cell(1, 1, value=f"COVERAGE AUDIT NOT RUN: {type(e).__name__}: {str(e)[:300]}")
     wb.save(path)
+    # THE FILE CARRIES ITS VALUES (Round G11 A1, Jake 2026-10-21): openpyxl writes formulas with empty caches, so a
+    # reader that does not recalculate (data_only, the guard, Credibility CONTINUITY) saw blanks. Every formula is
+    # evaluated (xlcalc) and its value written as the cached value. TOKEN_METRICS_STORE_VALUES=0 skips it (tests).
+    WORKBOOK_VALUES.clear()
+    if os.environ.get("TOKEN_METRICS_STORE_VALUES", "1") != "0":
+        try:
+            import workbook_values                         # noqa: PLC0415
+            WORKBOOK_VALUES.update(workbook_values.store_values(path, wb))
+        except Exception as e:  # noqa: BLE001 — a file without values is said, never silently left blank
+            WORKBOOK_VALUES.update({"error": f"{type(e).__name__}: {str(e)[:200]}"})
     return path
+
+
+WORKBOOK_VALUES: dict = {}      # {"formulas", "valued", "failed", ...} — the cached values written into the last build
 
 
 SANITY_HITS: list = []          # (project, rule, detail) from the last build (sanity.py)

@@ -1371,6 +1371,15 @@ def _common_day(p, long, a, b, asof):
     sa, sb = _series(long, p, a), _series(long, p, b)
     days = sorted(set(sa.index) & set(sb.index))
     days = [d for d in days if d < asof.normalize()]
+    # LIKE FOR LIKE (G11 D4, Jake's 10-21 run: CoinGecko's 10:46 UTC spot against Coinbase's 00:00 open read AERO +5.1%,
+    # NEAR −4.9%): our side counts only a day whose row was read AFTER the day closed (CoinGecko's 00:00 history point),
+    # never the run's own intraday spot stored under that day
+    if long is not None and "fetched_at" in long and not long.empty:
+        g = long[(long.project == p) & (long.metric == a)]
+        if not g.empty:
+            f = pd.to_datetime(g["fetched_at"], errors="coerce", utc=True).dt.tz_localize(None).dt.normalize()
+            closed = set(g.loc[(f > g["date"].dt.normalize()).values, "date"].dt.normalize())
+            days = [d for d in days if d in closed]
     if not days:
         return None, None, None
     d = days[-1]
@@ -1380,7 +1389,8 @@ def _common_day(p, long, a, b, asof):
 def _common_day_value(p, rows, long, asof, metric="price_usd", ref="price_usd_coinbase", side="ours", **_):
     d, va, vb = _common_day(p, long, metric, ref, asof)
     if d is None:
-        return None, None, f"no completed day on which both {metric} and {ref} have a 00:00 point"
+        return None, None, (f"no completed day on which both {metric} and {ref} have a 00:00 point (ours read after "
+                            f"the day closed — an intraday spot is never compared with an open)")
     return (va if side == "ours" else vb), str(d.date()), f"{metric if side == 'ours' else ref} on {d.date()} (00:00 UTC)"
 
 
@@ -2124,7 +2134,10 @@ def ours_value(project: str, ours: dict, rows: dict, long, asof):
     a cell / Data reference written as a formula."""
     if "py" not in ours:
         return None
-    v, _d, _how = FORMULAS[ours["py"]](project, rows, _long_for(ours, long), asof, **(ours.get("args") or {}))
+    # JUDGED ON THE REFERENCE'S OWN DATE (G11 D6, Jake's 10-21 run: Sky's farm rate today, 4.65%, against Jake's 6.58%
+    # read 2026-10-07 — rewardRate fell 18.4 -> 12.8/s since): `as_of` evaluates ours at the reading's date
+    at = min(asof, pd.Timestamp(ours["as_of"])) if ours.get("as_of") else asof
+    v, _d, _how = FORMULAS[ours["py"]](project, rows, _long_for(ours, long), at, **(ours.get("args") or {}))
     return v
 
 
@@ -2491,7 +2504,8 @@ def continuity_row(name: str, headline_cells: list[dict], previous: dict | None,
                     f"do (a value -> n/a / BLOCKED is a CHECK)",
             "ours": {"cell": ours}, "fmt": "0", "tol": 0.0, "value": float(len(held)), "date": prev_date or None,
             "source": f"the previous run's snapshot (snapshots/snapshot_{prev_date}.csv)", "mode": "continuity",
-            "verdict": None, "note": f"Previous values: {note}"[:2000]}
+            "verdict": None, "note": f"Previous values: {note}"[:2000],
+            "held": [(hc["sheet"], hc["cell"], hc["header"], v) for hc, v in held]}
 
 
 def build_rows(headline_cells: list[dict], rows: dict, long, asof, projects=None, previous: dict | None = None,
@@ -2606,7 +2620,8 @@ def build_rows(headline_cells: list[dict], rows: dict, long, asof, projects=None
             ours = dict(spec["ours"])
             if "py" in ours:
                 ours["value"] = ours_value(name, ours, rows, long, asof)
-                cell = f"computed: {ours['py']} {ours.get('args', {})}"
+                cell = (f"computed: {ours['py']} {ours.get('args', {})}"
+                        + (f" — judged on {ours['as_of']}, the reading's own date" if ours.get("as_of") else ""))
             elif "cell" in ours:
                 cell = ours["cell"]
             else:

@@ -84,7 +84,7 @@ def login_state() -> dict:
 def login_needed(state: dict | None = None) -> bool:
     s = login_state() if state is None else state
     need, ok = s.get("needed_on"), s.get("ok_on")
-    return bool(need) and (not ok or str(need) >= str(ok))
+    return bool(need) and (not ok or str(need) > str(ok))
 QUOTA_REMINDER = "ADC has no quota project — run `gcloud auth application-default set-quota-project {project}`"
 
 
@@ -372,7 +372,10 @@ class NearBigQuery:
             except ReauthNeeded as e:
                 self._reauth(spec, st, out, name, e)
             else:
+                # G11 A5a: a read that SUCCEEDED clears the login row — the P2 "NEAR BigQuery login" stayed open after
+                # Jake logged in and the run read 2.6 GB, because a lapse and a success on the same date compared equal
                 st["login_ok_on"] = str(today().date())
+                st.pop("login_needed_on", None)
             out.skipped(SOURCE, name, self._quota_line(spec, st), TIER)
         if getattr(self, "quota_reminder", None):
             out.skipped(SOURCE, name, f"REMINDER: {self.quota_reminder}", TIER)

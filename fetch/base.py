@@ -9,6 +9,7 @@ from __future__ import annotations
 import contextlib
 import itertools
 import logging
+import re
 import os
 import random
 import threading
@@ -1229,8 +1230,13 @@ def _measuring_point(source: str) -> str:
     # and comparing them as written would have reported a change of measuring point the moment
     # Aerodrome's tail branch flipped — blanking a series for a change that never happened.
     src = config.strip_source_annotations(source)
-    parts = [p for p in src.split(":") if p not in config.SOURCE_MARKERS]
+    # A BLOCK TAG SAYS WHEN, NOT WHAT (G11 C1, Jake's 10-21 run: Pendle's latent_supply_tokens hidden as a change of
+    # measuring point — "claimLiquidityEmissions()@<block>" is one call read at a new block every day)
+    parts = [_BLOCK_TAG.sub("", p) for p in src.split(":") if p not in config.SOURCE_MARKERS]
     return ":".join(parts)
+
+
+_BLOCK_TAG = re.compile(r"@\d+$")
 
 
 def _no_flow(out, project: str, metric: str, stock_metric: str | None, why: str):
