@@ -315,6 +315,20 @@ def _dashboard_page_of(project: dict, metric: str) -> str | None:
     return None
 
 
+def defillama_settled(project_name: str, metric: str) -> str:
+    """G10 2b: the "NOT TRACKED BY DEFILLAMA — checked …" answer for a tier-1 DefiLlama metric of a project whose listing
+    was checked and found absent (config defillama_listing_checked) — the same condition _tier_note below answers with —
+    else "". coverage_audit classes such a cell E where a build has no Gap Report row to say so."""
+    p = config.PROJECT_BY_NAME.get(project_name) or {}
+    chk = p.get("defillama_listing_checked") or {}
+    api, field = TIER1_SOURCE.get(metric, ("", ""))
+    if chk.get("status") != "absent" or api != "DefiLlama" or p.get(field) or \
+            1 not in (config.METRICS.get(metric) or {}).get("tiers", []):
+        return ""
+    return (f"NOT TRACKED BY DEFILLAMA — checked {chk.get('checked_on')}; nothing to add: a sources.yaml entry if "
+            f"{project_name} publishes it, otherwise this metric has no source and that is the settled answer")
+
+
 def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, str]:
     """(reason, suggestion) for a metric this project has no data for."""
     name = project["name"]
@@ -1203,6 +1217,8 @@ def detect(projects: list[dict], frame: pd.DataFrame, manual_keys: set[tuple[str
                 continue
             if config.METRICS[metric].get("view_only"):
                 continue       # built at read time from another stored series; its gaps are that series'
+            if (config.REVENUE_FROM_FEES.get(name) or {}).get("revenue") == metric:
+                continue       # G10 1: Plume's revenue is its stored fee series at read time — the fees' gaps are its
 
             if (name, metric) in already_expired:
                 rows.append({

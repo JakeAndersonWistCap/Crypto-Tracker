@@ -233,6 +233,8 @@ def test_8_the_rebuild_extends_the_csv_only_after_it_passes(monkeypatch):
                                                                "eth_settlement:bigquery"),
                 ("Ethereum", "settlement_volume_usd"): _rows("Ethereum", "settlement_volume_usd", csv_days, 100.0,
                                                              "artemis:settlement_volume (CSV export)")}
+    # the rule without Jake's G10 declared handover (G10 4 hands over from 2026-08-26 whatever the validation)
+    monkeypatch.delitem(config.SETTLEMENT_REBUILD["ethereum_rebuild"], "handover")
     g = groups(89.0)
     bw._settlement_rebuild_views(g)
     sv = g[("Ethereum", "settlement_volume_usd")]

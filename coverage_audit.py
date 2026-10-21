@@ -178,6 +178,7 @@ def audit(wb, trajectory_rows: list[dict] | None = None, flows_rows: list[dict] 
                     "History depth (quarters with a value)": depth.get((tab, proj, str(h)), ""),
                     "Formula as built": (raw[:200] if isinstance(raw, str) and raw.startswith("=") else ""),
                     "_raw": raw if isinstance(raw, str) and raw.startswith("=") else "",
+                    "_addr": f"{tab}!{cell.coordinate}",
                     "SPEC formula": con.get("formula", spec.SUPPORT.get(key, "")),
                     "MATCHES-SPEC": match})
     for fr in flows_rows or ():
@@ -254,6 +255,7 @@ def audit(wb, trajectory_rows: list[dict] | None = None, flows_rows: list[dict] 
     mark_modelled(rows, trajectory_rows, flows_rows, groups, asof)
     for r in rows:
         r.pop("_raw", None)
+        r.pop("_addr", None)
     return rows
 
 
@@ -443,7 +445,36 @@ def mark_modelled(rows: list[dict], trajectory_rows=None, flows_rows=None, group
         r["Reason / route / error"] = (f"MODELLED — {'; '.join(what)} — shown, excluded from any scoring; never "
                                        f"VERIFIED" + (f" ({lab})" if lab else ""))[:1200]
         n += 1
+    # G10 2f: A CELL BUILT ON A MODELLED CELL IS MODELLED (Jake: "every cell built on HL_REWARD_MODEL reads MODELLED,
+    # never measured or VERIFIED") — a formula that reads another tab's MODELLED cell (the CP rows re-reading A1, a
+    # ratio over a modelled yield) took its own band. Propagated until nothing changes.
+    changed = True
+    while changed:
+        changed = False
+        modelled = {str(r.get("_addr") or "").replace("$", ""): r for r in rows if r["Status"] == "MODELLED"}
+        if not modelled:
+            break
+        for r in rows:
+            if r["Status"] == "MODELLED" or r["Status"] not in _HOLDS + ("CHECK",) or not r.get("_raw"):
+                continue
+            src = [modelled[a] for a in _cell_refs(str(r["_raw"])) if a in modelled and a != r.get("_addr")]
+            if not src:
+                continue
+            s0 = src[0]
+            r["Status"] = "MODELLED"
+            r["Reason / route / error"] = (f"MODELLED — reads {s0['Tab']} '{s0['Column'][:60]}', a MODELLED cell — shown, "
+                                           f"excluded from any scoring; never VERIFIED")[:1200]
+            n += 1
+            changed = True
     return n
+
+
+_SHEET_REF = re.compile(r"'([^']+)'!\$?([A-Z]{1,3})\$?(\d+)")
+
+
+def _cell_refs(raw: str) -> list[str]:
+    """'<sheet>!<cell>' for each single-cell reference to another sheet in a formula (ranges' corners included)."""
+    return [f"{sh}!{c}{n}" for sh, c, n in _SHEET_REF.findall(raw)]
 
 
 def absent_status(source: dict | None, own: dict) -> tuple[str, str]:
@@ -478,15 +509,55 @@ def align_absent_statuses(rows: list[dict]) -> int:
 # such flow" with its citation, a declared destination / share, a ratio over zero, a NAMED BLOCKER of SPEC §10). Every
 # other n/a gets the status its text describes. Order matters: the first match decides.
 DISHONEST_NA = re.compile(r"\bgap\b|no rows stored|BLOCKED|measuring_point_changed|MEASURING POINT CHANGED|"
-                          r"inputs are present|\bstale\b|NOT TRACKED BY DEFILLAMA|(?-i:UNCONFIRMED:)", re.I)
+                          r"inputs are present|\bstale\b|NOT TRACKED BY DEFILLAMA|(?-i:UNCONFIRMED:)|(?-i:PENDING)|"
+                          r"(?-i:COVERS \d+ OF \d+ DAYS)", re.I)
 _HONEST_RULES = (
     (re.compile(r"measuring_point_changed|MEASURING POINT CHANGED", re.I), "BROKEN"),
     (re.compile(r"\bstale\b", re.I), "CHECK"),
-    (re.compile(r"BLOCKED[^;|]{0,12}unequal coverage|this window spans that date", re.I), "MISSING C"),
-    (re.compile(r"BLOCKED|\bgap\b|no rows stored|NOT TRACKED BY DEFILLAMA|inputs are present|(?-i:UNCONFIRMED:)",
-                re.I), "MISSING"),
+    (re.compile(r"BLOCKED[^;|]{0,12}unequal coverage|this window spans that date|(?-i:PENDING) — first epoch", re.I),
+     "MISSING C"),
+    (re.compile(r"BLOCKED|\bgap\b|no rows stored|NOT TRACKED BY DEFILLAMA|inputs are present|(?-i:UNCONFIRMED:)|"
+                r"(?-i:COVERS \d+ OF \d+ DAYS)", re.I), "MISSING"),
 )
 _VALID_FROM = re.compile(r"valid from (\d{4}-\d{2}-\d{2})")
+
+
+# a BLOCKED-for-unequal-coverage leg as the build writes it since G10: "<label> (<metric>, <window>) covers N days of a
+# M-day window"; the window's first day is this many days before the as-of day
+_COVER_LEG = re.compile(r"([^:;|]+?) \(([a-z][a-z0-9_]+), (now|m1|q[0-4])\) covers (\d+|\?) days of a (\d+)-day window")
+_WIN_START = {"now": 29, "m1": 59, "q0": 89, "q1": 179, "q2": 269, "q3": 359, "q4": 449}
+
+
+def _short_legs(why: str, proj: str, groups: dict | None, asof) -> tuple[str, str] | None:
+    """(class, evidence) of a cell BLOCKED for unequal coverage, from its SHORT legs (Round G10 item 3c: Aethir's
+    customer revenue Δ6m read "valid from 2026-09-12" — the date a Q0 window over the series' first row, while the cell
+    compares Q2, which the weekly series reaches only on 2027-03-11). Each short leg is dated from its own first stored
+    row and its own window; the latest date is the cell's. A short leg with no rows at all, or one stored from before
+    its window began (a hole inside the window), is not history the calendar will bring: class D, named. None when
+    the text names no leg (a cell built before G10)."""
+    import pandas as pd                                    # noqa: PLC0415
+    legs = [(m, w, c, int(n)) for _lab, m, w, c, n in _COVER_LEG.findall(why)]
+    short = [(m, w) for m, w, c, n in legs if c == "?" or int(c) < n]
+    if not short or asof is None:
+        return None
+    asof = pd.Timestamp(asof).normalize()
+    dated, holes = [], []
+    for m, w in dict.fromkeys(short):
+        g = (groups or {}).get((proj, m))
+        if g is None or getattr(g, "empty", True):
+            holes.append(f"{m} ({w}): nothing stored")
+            continue
+        first = pd.to_datetime(g["date"]).min().normalize()
+        start = asof - pd.Timedelta(days=_WIN_START[w])
+        if first <= start:
+            holes.append(f"{m} ({w}): stored from {first.date()} but short inside the window (a hole, not history)")
+            continue
+        dated.append((first + pd.Timedelta(days=_WIN_START[w]), m, w, first, start))
+    if holes:
+        return MISSING_CLASSES[3], "; ".join(holes)
+    valid, m, w, first, start = max(dated)
+    return MISSING_CLASSES[2], (f"{m} is stored from {first.date()}; the {w} window needs it from {start.date()} — "
+                                f"valid from {valid.date()}")
 
 
 def _valid_from(named: list[str], proj: str, groups: dict | None, asof, span: int = 90) -> str:
@@ -521,12 +592,24 @@ def honest_statuses(rows: list[dict], gap_rows: list | None = None, groups: dict
         named = _metrics_named(why, r.get("Formula as built"))
         g = next((gaps.get((str(r["Project"]), m)) for m in named if gaps.get((str(r["Project"]), m))), None)
         if rule == "MISSING C":
-            cls, ev = missing_class(r, g, groups, asof)
-            if cls != MISSING_CLASSES[2]:
+            short = _short_legs(why, str(r["Project"]), groups, asof)
+            cls, ev = short if short else missing_class(r, g, groups, asof)
+            if not short and cls != MISSING_CLASSES[2]:
                 said = _VALID_FROM.search(why)            # the cell's own date (the Sky revenue base) wins
-                vf = said.group(1) if said else _valid_from(named, str(r["Project"]), groups, asof)
-                cls, ev = MISSING_CLASSES[2], (f"{', '.join(named) or 'an input'} short of the window"
-                                               + (f" — valid from {vf}" if vf else " — valid once every input covers it"))
+                incomplete = "denominator is incomplete" in why
+                vf = said.group(1) if said else ("" if incomplete else
+                                                 _valid_from(named, str(r["Project"]), groups, asof))
+                if vf:
+                    cls, ev = MISSING_CLASSES[2], (f"{', '.join(named) or 'an input'} short of the window — valid "
+                                                   f"from {vf}")
+                elif incomplete:
+                    # G10 3d: a declared incomplete DENOMINATOR (a chain not scanned) is a route not filled, not
+                    # history — no date the calendar brings (it read "C — valid once every input covers it")
+                    cls, ev = MISSING_CLASSES[3], ("the incentive denominator is incomplete (config.OUTFLOW_INCOMPLETE) "
+                                                   "— " + why.split("incomplete — ", 1)[-1][:200])
+                else:
+                    cls, ev = MISSING_CLASSES[2], (f"{', '.join(named) or 'an input'} short of the window — valid once "
+                                                   f"every input covers it")
         else:
             cls, ev = missing_class(r, g, groups, asof)
             if cls == "N/A":                                # an input DECLARED not applicable: the declaration
@@ -606,7 +689,10 @@ MISSING_CLASSES = ("A — NO SUCH FLOW", "B — ACCEPTED LIMIT", "C — NEEDS HI
                    "E — NO SOURCE")
 MISSING_CAUSES = MISSING_CLASSES                  # the G7 name, kept for the scoreboard and missing_triage
 _E_SIGNS = ("no public source", "no free source", "no source configured", "empty stub", "no url on file",
-            "not published", "never published", "no series on file", "no route", "paid", "no history provider")
+            "not published", "never published", "no series on file", "no route", "paid", "no history provider",
+            # G10 2b: DefiLlama checked and absent, nothing the project publishes — "no source and that is the
+            # settled answer" (World Mobile's 33 cells read D)
+            "settled answer", "not tracked by defillama — checked")
 _IDENT = re.compile(r"[a-z][a-z0-9_]{3,}")
 
 
@@ -674,7 +760,10 @@ def missing_class(row: dict, gap: dict | None = None, groups: dict | None = None
     if na:
         return "N/A", na
     text = " ".join(str(x or "") for x in (why, (gap or {}).get("reason"), (gap or {}).get("suggestion"))).lower()
-    if groups is not None and asof is not None:
+    # an input the cell says has NO ROWS at all is not history the calendar brings: that one decides (D / E below)
+    unstored = [m for m, _w in re.findall(r"\b([a-z][a-z0-9_]+) \((now|m1|q[0-4])\): no rows stored", why)
+                if groups is None or getattr(groups.get((proj, m)), "empty", True)]
+    if groups is not None and asof is not None and not unstored:
         for m in named:
             g = groups.get((proj, m))
             if g is None or getattr(g, "empty", True):
@@ -685,11 +774,18 @@ def missing_class(row: dict, gap: dict | None = None, groups: dict | None = None
             mt = re.search(r"Q-(\d)", str(row.get("Column", "")) + " " + why)
             if mt and row.get("Tab") == "Trajectory":
                 k = int(mt.group(1))
+            mw = re.search(re.escape(m) + r" \(q(\d)\)", why)      # G10 3d: the window the cell says it reads
+            if mw and row.get("Tab") != "Trajectory":
+                k = int(mw.group(1))
             start = pd.Timestamp(asof).normalize() - pd.Timedelta(days=span * (k + 1) - 1)
             if first > start:
                 valid = first + pd.Timedelta(days=span * (k + 1) - 1)
                 return MISSING_CLASSES[2], (f"{m} is stored from {first.date()}; the {span}-day window needs it from "
                                             f"{start.date()} — valid from {valid.date()}")
+    if gap is None and named and all(_defillama_settled(proj, m) for m in named):
+        # G10 2b: DefiLlama checked and absent (config defillama_listing_checked) is the settled answer even where this
+        # build has no Gap Report row to say so (a fixture store) — class E with fetch/gaps' own text
+        return MISSING_CLASSES[4], f"{', '.join(named)} — {_defillama_settled(proj, named[0])}"
     if "--seed" in text and not any(sg in text for sg in _E_SIGNS):
         # a one-off seed fills it: the route exists (D), the fix is the command
         return MISSING_CLASSES[3], (f"{', '.join(named) or 'the series'} — one-off seed: "
@@ -699,6 +795,16 @@ def missing_class(row: dict, gap: dict | None = None, groups: dict | None = None
         return MISSING_CLASSES[4], f"{', '.join(named) or 'no input series'} — {str(what)[:200]}"
     return MISSING_CLASSES[3], (f"{', '.join(named)} — " + str((gap or {}).get("suggestion") or
                                                               "the route is configured and stored nothing for the window")[:200])
+
+
+def _defillama_settled(project: str, metric: str) -> str:
+    """fetch/gaps' "NOT TRACKED BY DEFILLAMA — checked …" text for a tier-1 DefiLlama metric of a project whose listing
+    was checked and found absent (config defillama_listing_checked), else ""."""
+    try:
+        from fetch.gaps import defillama_settled            # noqa: PLC0415
+    except Exception:  # noqa: BLE001
+        return ""
+    return defillama_settled(project, metric)
 
 
 def missing_cause(why: str, gap: dict | None = None) -> str:

@@ -708,15 +708,15 @@ def seed_uni_retro_burn(st, log) -> int:
     return 0
 
 
-SEED_BERACHAIN_BUDGET_S = 3600        # G8 3d: one hour for the scan, its window and its repair
 
 
 def seed_pendle_berachain(st, log) -> int:
     """Round G8 item 3d (Jake 2026-10-20: Berachain moved 25% -> 27% in a run). Pendle's Berachain gauge scan, alone,
-    with its own long budget (SEED_BERACHAIN_BUDGET_S for the history, the window and the repair) through the same LogScan
-    and routes as the routine run. The Alchemy Transfers API pages are checkpointed after each page
-    (<logcache>/alchemy-pages/), so a stop — the budget or Ctrl-C — resumes on the next seed or routine run. Stored only
-    once the history reconciles, as every scan. Records no gaps."""
+    through the same LogScan and routes as the routine run — G10 5c (Jake 2026-10-21): RUN TO COMPLETION, NO TIME BUDGET
+    (LogScan unbounded, as --seed geodnet), with an ETA on every progress line (the Transfers API pages report the share of
+    the block range read). The pages are checkpointed after each page (<logcache>/alchemy-pages/), so a stop — Ctrl-C or a
+    lost connection — resumes on the next seed or routine run. Stored only once the history reconciles, as every scan.
+    Records no gaps."""
     from fetch import Heartbeat
     from fetch.logscan import LogScan
     from fetch.validate import validate_frame
@@ -727,13 +727,13 @@ def seed_pendle_berachain(st, log) -> int:
                   "explorer_routes.json lists Berachain (80094) as served (check_offline_items.py "
                   "alchemy_transfer_routes, with ALCHEMY_API_KEY in .env). Nothing read.")
         return 2
-    long = {**spec, "scan_budget_s": SEED_BERACHAIN_BUDGET_S, "window_budget_s": SEED_BERACHAIN_BUDGET_S,
-            "repair_budget_s": SEED_BERACHAIN_BUDGET_S}
     run_id = fetch.new_run_id()
     out = fetch.FetchOutput()
     t0 = time.monotonic()
+    log.info("--seed pendle_berachain: no time budget — runs to completion, resumable (pages checkpointed); progress "
+             "lines carry the ETA")
     with Heartbeat():
-        LogScan(own_tier=spec.get("own_tier")).run([{**p, "log_scans": [long]}], None, out)
+        LogScan(own_tier=spec.get("own_tier"), unbounded=True).run([{**p, "log_scans": [spec]}], None, out)
     prior = st.latest_values()
     frames = [validate_frame(f, prior, out) for f in out.frames]
     written = sum(st.upsert(f) for f in frames if f is not None and not f.empty)

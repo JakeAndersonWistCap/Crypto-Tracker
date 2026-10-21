@@ -5834,6 +5834,10 @@ def test_gap_detection_covers_every_applicable_metric():
             if config.METRICS[m].get("view_only"):
                 assert (p["name"], m) not in keys, f"{p['name']}/{m} is a read-time view"
                 continue
+            # G10 1e: a revenue filled at read time from the stored fees (config.REVENUE_FROM_FEES, Plume) is a view too
+            if (config.REVENUE_FROM_FEES.get(p["name"]) or {}).get("revenue") == m:
+                assert (p["name"], m) not in keys, f"{p['name']}/{m} is filled from the stored fees at read time"
+                continue
             # ONE GAP, NOT TWO: usd folds into the tokens row wherever tokens is itself a gap.
             if m == "actual_buyback_usd" and (p["name"], "actual_buyback_tokens") in keys:
                 assert (p["name"], m) not in keys, f"{p['name']}/{m} must fold into the tokens row"

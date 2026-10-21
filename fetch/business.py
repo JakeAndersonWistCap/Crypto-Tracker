@@ -32,8 +32,11 @@ of days; later reads 30. Once a day per series (DailyChecks).
 """
 from __future__ import annotations
 
+import json
 import logging
+import time
 from collections import defaultdict
+from pathlib import Path
 
 import pandas as pd
 
@@ -52,6 +55,12 @@ CCIP = "https://api.ccip.chain.link/v2/messages"
 CCIP_PAGE = 1000
 CCIP_MAX_PAGES_FIRST = 700          # ~271 days were reachable on 2026-10-12 (the API answered 500 beyond)
 CCIP_MAX_PAGES = 60
+# G10 5a (Jake's G9 run: the business tier timed out at 900 s, the CCIP walk re-paging 618-643 calls): EACH SOURCE HAS
+# ITS OWN BUDGET (seconds, cumulative over the run) — a source past it fails its remaining series, named, and the others
+# run; the CCIP walk goes LAST so it can never starve the rest. Sum 780 s, inside the tier's 900 s backstop.
+SOURCE_BUDGET_S = {"defillama": 300, "share": 180, "growthepie": 60, "geodnet": 30, "ccip": 210}
+_ROUTE_SOURCE = {"overview": "defillama", "protocol": "defillama", "growthepie": "growthepie", "geodnet": "geodnet",
+                 "ccip": "ccip"}
 
 
 def _day(t) -> pd.Timestamp:
@@ -145,6 +154,8 @@ def protocol_series(j: dict, field: str) -> dict:
 class Business:
     SOURCE = SOURCE
     TIER = TIER
+    _deadline = None                 # defaults for an instance built without __init__ (tests)
+    ccip_root = None
 
     def __init__(self, http: Http | None = None, daily=None, **_ignored):
         self.http = http or Http(min_interval=0.5, retries=2)
@@ -153,13 +164,51 @@ class Business:
             daily = DailyChecks()
         self.daily = daily
         self._cache: dict = {}
+        self._spent: dict = defaultdict(float)       # G10 5a: seconds used per source this run
+        self.ccip_root = _ignored.get("ccip_root")    # tests: where ccip_value's state lives
+        self._deadline: float | None = None
+
+    def _dl(self) -> dict:
+        """{"deadline": …} for an Http that takes one (fetch.base.Http); {} for a client without it."""
+        import inspect                                    # noqa: PLC0415
+        if self._deadline is None:
+            return {}
+        try:
+            ps = inspect.signature(self.http.get).parameters
+        except (TypeError, ValueError):
+            return {}
+        ok = "deadline" in ps or any(p.kind is p.VAR_KEYWORD for p in ps.values())
+        return {"deadline": self._deadline} if ok else {}
+
+    def _budget(self, src: str):
+        """A context for one call of `src`: the Http deadline is what is left of the source's budget; the time taken is
+        added to it. Raises BudgetExhausted-like RuntimeError before starting when nothing is left."""
+        outer = self
+
+        if "_spent" not in outer.__dict__:
+            outer._spent = defaultdict(float)
+
+        class _B:
+            def __enter__(self_):
+                left = SOURCE_BUDGET_S.get(src, 120) - outer._spent[src]
+                if left <= 0:
+                    raise RuntimeError(f"time budget exhausted — source {src} used its {SOURCE_BUDGET_S.get(src, 120)} s "
+                                       f"this run (fetch.business.SOURCE_BUDGET_S); the next run reads it")
+                self_.t0, outer._deadline = time.monotonic(), time.monotonic() + left
+                return self_
+
+            def __exit__(self_, *exc):
+                outer._spent[src] += time.monotonic() - self_.t0
+                outer._deadline = None
+                return False
+        return _B()
 
     # ------------------------------------------------------------------ cached reads
     def _json(self, url: str, params: dict | None = None):
         key = (url, tuple(sorted((params or {}).items())))
         if key not in self._cache:
             try:
-                self._cache[key] = self.http.get(url, params=params)
+                self._cache[key] = self.http.get(url, params=params, **self._dl())
             except Exception as e:  # noqa: BLE001 — one failed route must not kill the run
                 self._cache[key] = RuntimeError(f"{type(e).__name__}: {str(e)[:140]}")
         v = self._cache[key]
@@ -197,39 +246,10 @@ class Business:
     def run(self, projects: list[dict], window_days, out):
         names = {p["name"] for p in projects}
         day = str(today().date())
-        for name, specs in config.BUSINESS_SERIES.items():
-            if name in names:
-                for spec in specs:
-                    key = f"business:{name}:{spec['metric']}"
-                    # A FULL-HISTORY SERIES HAS ITS OWN DAILY MARK (Round G3 item 4): NEAR Intents' since-launch read
-                    # shared the windowed read's mark, so after one windowed read that day the full history never ran
-                    # (Σ from 2025-07-15 only: CHECK −3.68%, against −2.28% over the whole history)
-                    dkey = key + (":full-history" if (name, spec["metric"]) in config.FULL_HISTORY_SERIES else "")
-                    if not self.daily.due(dkey, day):
-                        out.mark_current(SOURCE, name, spec["metric"], f"{spec['metric']}: read today already", TIER)
-                        continue
-                    try:
-                        rows, src, detail = self._series(name, spec, key)
-                    except Exception as e:  # noqa: BLE001
-                        out.fail(SOURCE, name, f"{spec['metric']}: NOTHING STORED — {e}", TIER)
-                        continue
-                    if not rows:
-                        out.fail(SOURCE, name, f"{spec['metric']}: no complete day in the window ({detail})", TIER)
-                        continue
-                    out.add(tidy(rows, name, spec["metric"], src, TIER), SOURCE, name,
-                            f"{spec['metric']}: {len(rows)} day(s) {rows[0][0].date()}..{rows[-1][0].date()} — "
-                            f"{detail}", TIER)
-                    # MARKED ONLY WHEN THE NEWEST COMPLETE DAY IS IN (Round G5 item 4: the 01:48 run read DefiLlama
-                    # before it had published 10-18, stored rows to 10-17 and marked all 40 series "read today"; the
-                    # 06:30 run then skipped every one — 13 series "marked read today with no row today"). A read that
-                    # stops short is stored and NOT marked, so the next run reads again.
-                    if pd.Timestamp(rows[-1][0]).normalize() >= pd.Timestamp(last_complete()).normalize():
-                        self.daily.done(dkey, day)
-                    else:
-                        out.log.append(LogEntry(SOURCE, name, 0, "ok",
-                                                f"{spec['metric']}: newest day served {rows[-1][0].date()}, before "
-                                                f"{pd.Timestamp(last_complete()).date()} — NOT marked read today; the "
-                                                f"next run reads it again", TIER))
+        # the CCIP walk LAST (G10 5a): it is the one source that can run long
+        work = [(name, spec) for name, specs in config.BUSINESS_SERIES.items() if name in names for spec in specs]
+        for name, spec in [w for w in work if w[1].get("route") != "ccip"]:
+            self._one(name, spec, day, out)
         for name, spec in config.MARKET_SHARE.items():
             if name in names and "na" not in spec:
                 self._share(name, spec, day, out)
@@ -239,6 +259,42 @@ class Business:
             if name in names:
                 self._share(name, spec, day, out, metric="market_share_2_pct",
                             denominator="market_share_2_category_usd")
+        for name, spec in [w for w in work if w[1].get("route") == "ccip"]:
+            self._one(name, spec, day, out)
+
+    def _one(self, name: str, spec: dict, day: str, out) -> None:
+        """One business series: its daily mark, its source's budget (G10 5a), store, mark."""
+        key = f"business:{name}:{spec['metric']}"
+        # A FULL-HISTORY SERIES HAS ITS OWN DAILY MARK (Round G3 item 4): NEAR Intents' since-launch read
+        # shared the windowed read's mark, so after one windowed read that day the full history never ran
+        # (Σ from 2025-07-15 only: CHECK −3.68%, against −2.28% over the whole history)
+        dkey = key + (":full-history" if (name, spec["metric"]) in config.FULL_HISTORY_SERIES else "")
+        if not self.daily.due(dkey, day):
+            out.mark_current(SOURCE, name, spec["metric"], f"{spec['metric']}: read today already", TIER)
+            return
+        try:
+            with self._budget(_ROUTE_SOURCE.get(spec.get("route"), str(spec.get("route")))):
+                rows, src, detail = self._series(name, spec, key)
+        except Exception as e:  # noqa: BLE001
+            out.fail(SOURCE, name, f"{spec['metric']}: NOTHING STORED — {e}", TIER)
+            return
+        if not rows:
+            out.fail(SOURCE, name, f"{spec['metric']}: no complete day in the window ({detail})", TIER)
+            return
+        out.add(tidy(rows, name, spec["metric"], src, TIER), SOURCE, name,
+                f"{spec['metric']}: {len(rows)} day(s) {rows[0][0].date()}..{rows[-1][0].date()} — "
+                f"{detail}", TIER)
+        # MARKED ONLY WHEN THE NEWEST COMPLETE DAY IS IN (Round G5 item 4: the 01:48 run read DefiLlama
+        # before it had published 10-18, stored rows to 10-17 and marked all 40 series "read today"; the
+        # 06:30 run then skipped every one — 13 series "marked read today with no row today"). A read that
+        # stops short is stored and NOT marked, so the next run reads again.
+        if pd.Timestamp(rows[-1][0]).normalize() >= pd.Timestamp(last_complete()).normalize():
+            self.daily.done(dkey, day)
+        else:
+            out.log.append(LogEntry(SOURCE, name, 0, "ok",
+                                    f"{spec['metric']}: newest day served {rows[-1][0].date()}, before "
+                                    f"{pd.Timestamp(last_complete()).date()} — NOT marked read today; the "
+                                    f"next run reads it again", TIER))
 
     def _series(self, name: str, spec: dict, key: str) -> tuple[list, str, str]:
         route = spec["route"]
@@ -288,38 +344,62 @@ class Business:
             return self._ccip(key)
         raise ValueError(route)
 
+    def _ccip_value_days(self) -> dict:
+        """{day: messages} from ccip_value's walk state (G10 5a): every CLOSED day it walked holds n_msgs — every
+        message sent that UTC day, the same count by sendTimestamp day this series stores. Gap days are left out."""
+        from .ccip_value import DEFAULTS as _CV, ROOT as _ROOT        # noqa: PLC0415
+        spec = next((p.get("ccip_value") for p in config.PROJECTS if p.get("ccip_value")), None) or {}
+        path = Path(spec.get("state_path") or _CV["state_path"])
+        path = path if path.is_absolute() else Path(self.ccip_root or _ROOT) / path
+        try:
+            days = json.loads(path.read_text(encoding="utf-8")).get("days") or {}
+        except (OSError, ValueError):
+            return {}
+        return {pd.Timestamp(d).normalize(): float(r["n_msgs"]) for d, r in days.items()
+                if isinstance(r, dict) and r.get("stage") not in (None, "gap") and r.get("n_msgs")}
+
     def _ccip(self, key: str) -> tuple[list, str, str]:
-        lo = self._span_start(key)
-        pages = CCIP_MAX_PAGES_FIRST if not self.daily.ever(key) else CCIP_MAX_PAGES
+        """Messages per UTC day. THE DAYS ccip_value HAS ALREADY WALKED ARE READ FROM ITS STATE (G10 5a: the business tier
+        timed out at 900 s re-paging 618-643 calls ccip_value had already made); the API is walked only for the days
+        newer than its newest closed day, inside the ccip source's budget (Http deadline)."""
+        lo, top = self._span_start(key), today().normalize() - pd.Timedelta(days=1)
+        held = {d: n for d, n in self._ccip_value_days().items() if lo <= d <= top}
+        need = (max(held) + pd.Timedelta(days=1)) if held else lo
+        need = max(need, lo)
         counts, cursor, oldest, n = defaultdict(int), None, None, 0
-        why = "walk reached the window start"
-        while n < pages:
-            params = {"limit": CCIP_PAGE, "environment": "mainnet"}
-            if cursor:
-                params["cursor"] = cursor
-            try:
-                j = self.http.get(CCIP, params=params)
-            except Exception as e:  # noqa: BLE001 — keep the complete days already walked
-                why = f"walk stopped at page {n + 1}: {type(e).__name__}: {str(e)[:100]}"
-                break
-            n += 1
-            for m in (j or {}).get("data") or []:
-                d = _day(m["sendTimestamp"])
-                counts[d] += 1
-                oldest = d if oldest is None or d < oldest else oldest
-            pg = (j or {}).get("pagination") or {}
-            cursor = pg.get("cursor")
-            if not pg.get("hasNextPage") or not cursor or (oldest is not None and oldest < lo):
-                break
-        else:
-            why = f"page cap {pages} reached"
-        if oldest is None:
+        why = f"{len(held)} day(s) from ccip_value's walk state"
+        if need <= top:
+            pages = CCIP_MAX_PAGES_FIRST if not self.daily.ever(key) and not held else CCIP_MAX_PAGES
+            why = "walk reached the first day not held"
+            while n < pages:
+                params = {"limit": CCIP_PAGE, "environment": "mainnet"}
+                if cursor:
+                    params["cursor"] = cursor
+                try:
+                    j = self.http.get(CCIP, params=params, **self._dl())
+                except Exception as e:  # noqa: BLE001 — keep the complete days already walked
+                    why = f"walk stopped at page {n + 1}: {type(e).__name__}: {str(e)[:100]}"
+                    break
+                n += 1
+                for m in (j or {}).get("data") or []:
+                    d = _day(m["sendTimestamp"])
+                    counts[d] += 1
+                    oldest = d if oldest is None or d < oldest else oldest
+                pg = (j or {}).get("pagination") or {}
+                cursor = pg.get("cursor")
+                if not pg.get("hasNextPage") or not cursor or (oldest is not None and oldest < need):
+                    break
+            else:
+                why = f"page cap {pages} reached"
+            why = f"{why}; {len(held)} day(s) from ccip_value's walk state"
+        if oldest is None and not held:
             raise RuntimeError(f"no message read ({why})")
-        # a day is complete once the walk holds a message from before it
-        rows = [(d, float(c)) for d, c in sorted(counts.items()) if oldest < d <= today().normalize() - pd.Timedelta(
-            days=1) and d >= lo]
+        # a walked day is complete once the walk holds a message from before it
+        walked = {d: float(c) for d, c in counts.items() if oldest is not None and oldest < d <= top and d >= need}
+        rows = sorted({**held, **walked}.items())
         return rows, "ccip_api:v2/messages[mainnet, count by sendTimestamp day]", (
-            f"CCIP API, {n} page(s), oldest message {oldest.date()} ({why}); first-party API")
+            f"CCIP API, {n} page(s) walked" + (f", oldest message {oldest.date()}" if oldest is not None else "")
+            + f" ({why}); first-party API")
 
     # ------------------------------------------------------------------ market share
     def _share(self, name: str, spec: dict, day: str, out, metric: str = "market_share_pct",
@@ -331,7 +411,8 @@ class Business:
             return
         self._share_absent = []
         try:
-            own, total, n_peers = self._share_parts(spec)
+            with self._budget("share"):
+                own, total, n_peers = self._share_parts(spec)
         except Exception as e:  # noqa: BLE001
             out.fail(SOURCE, name, f"{metric}: NOTHING STORED — {e}", TIER)
             return

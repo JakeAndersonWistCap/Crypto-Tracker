@@ -286,8 +286,9 @@ def test_3d_berachain_and_p2p_and_uniswap_seeds_are_registered():
     src = (ROOT / "token_metrics.py").read_text(encoding="utf-8")
     for s in ("pendle_berachain", "eth_p2p_validation", "uni_retro_burn"):
         assert f'"{s}"' in src, s
-    import token_metrics as tm
-    assert tm.SEED_BERACHAIN_BUDGET_S >= 3600
+    # G10 5c: the seed runs to completion — no time budget (LogScan unbounded), an ETA on its progress lines
+    seed = src[src.index("def seed_pendle_berachain"):src.index("def seed_eth_p2p_validation")]
+    assert "unbounded=True" in seed and "SEED_BERACHAIN_BUDGET_S" not in src
 
 
 def test_3e_3f_view_only_and_retired_series_are_labelled_not_stale():

@@ -1029,7 +1029,7 @@ PENDING: the Merkl WPLUME series for (b) (merkl /v4/creators/plume/distributed/o
 | Step | Series |
 |---|---|
 | customers pay (gross fees) | `fees_usd` |
-| the project's revenue basis | **NO SERIES** |
+| the project's revenue basis | `revenue_usd` |
 | bought back ($, every funding source) | **NO SERIES** |
 | paid to holders, not bought | **NO SERIES** |
 | holder value CREDITED (revenue-funded) | **NO SERIES** |

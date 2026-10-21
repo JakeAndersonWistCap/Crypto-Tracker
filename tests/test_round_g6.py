@@ -53,7 +53,10 @@ def test_0a_every_scan_runs_in_its_projects_own_tier():
 def test_0a_a_tier_timeout_is_stamped_only_on_that_tiers_scans():
     from fetch import gaps
     cl = config.PROJECT_BY_NAME["Chainlink"]
-    assert "noncirc_outflow_scan_tokens" in gaps.served_by("explorer@Chainlink", cl)
+    assert "emissions_claimed_tokens" in gaps.served_by("explorer@Chainlink", cl)
+    # G10 5b: the noncirc scans have their own tier — a timeout there is stamped on them only
+    assert "noncirc_outflow_scan_tokens" in gaps.served_by("explorer_noncirc@Chainlink", cl)
+    assert "noncirc_outflow_scan_tokens" not in gaps.served_by("explorer@Chainlink", cl)
     assert gaps.served_by("explorer@Sky", cl) == set()
 
 

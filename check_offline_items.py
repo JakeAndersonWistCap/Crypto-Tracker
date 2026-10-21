@@ -12492,8 +12492,7 @@ def missing_triage():
                 by[m.group(1) if m else _ca.missing_cause(why)][p].append(f"{r.get('Tab')} | {r.get('Column')}: {why}")
             elif st == "N/A BY DESIGN" and why.startswith("N/A BY DESIGN — accepted limit"):     # resolved as B
                 by[_ca.MISSING_CLASSES[1]][p].append(f"{r.get('Tab')} | {r.get('Column')}: {why}")
-            elif st == "N/A BY DESIGN" and why.startswith("0 — no such flow"):                   # resolved as A
-                by[_ca.MISSING_CLASSES[0]][p].append(f"{r.get('Tab')} | {r.get('Column')}: {why}")
+            # G10 2c: a "0 — no such flow" cell shows 0 with its citation and counts as N/A — never listed here
     projects = sorted({p for rows_ in by.values() for p in rows_})
     print("  COUNTS BY CLASS PER PROJECT:")
     print("    " + f"{'project':<16}" + "".join(f"{c[0]:>5}" for c in _ca.MISSING_CLASSES) + "  total")
@@ -12503,7 +12502,7 @@ def missing_triage():
     for cause in _ca.MISSING_CAUSES:
         rows = by.get(cause) or {}
         print(f"\n  {cause}: {sum(len(v) for v in rows.values())}"
-              + {"A": "  — 0 with its source (should not remain MISSING)", "B": "  — N/A BY DESIGN, cited",
+              + {"A": "  — should be none: a no-such-flow cell shows 0 with its source", "B": "  — N/A BY DESIGN, cited",
                  "C": "  — valid from the date on each line", "D": "  — ours: route exists, fix or run the named seed",
                  "E": "  — for Jake: no source; what would fill it is on each line"}.get(cause[0], ""))
         for p in sorted(rows):
@@ -12514,6 +12513,244 @@ def missing_triage():
     for p in sorted(appl):
         print(f"    {p:<16} {held[p]}/{appl[p]} = {held[p] / appl[p]:.0%}")
     print("  PASTE BACK the lines above.")
+    return 0
+
+
+_WIN_FROM = {"now": (30, 0), "m1": (60, 30), "q0": (90, 0), "q1": (180, 90), "q2": (270, 180), "q3": (360, 270),
+             "q4": (450, 360)}
+
+
+_DECLARED_NA = __import__("re").compile(
+    r"ratio over zero|not applicable|Destination effect|no share of|no published|fixed supply|(?-i:MODELLED)|SERIES BREAK|"
+    r"measuring_point_changed|nothing to backfill|this line applies only|declared in config|no such flow|"
+    r"included in line|pre-minted|no issuance", __import__("re").I)
+
+
+def _concept_keys(project: str, metric: str, stored: set) -> list[tuple[str, str]]:
+    """(key, why) of the stored metrics of `project` that are the same CONCEPT as `metric`: the measured basis a derived
+    input stands for (issuance_basis, emissions_from_metric, REVENUE_FROM_FEES, a defillama_metric_as rename), and a
+    renamed / project-suffixed key (the same stem)."""
+    import re as _re                                      # noqa: PLC0415
+    import config                                         # noqa: PLC0415
+    p = config.PROJECT_BY_NAME.get(project) or {}
+    out = []
+
+    def add(k, why):
+        if k and k != metric and k in stored and k not in [x for x, _ in out]:
+            out.append((k, why))
+    if metric in ("gross_issuance_tokens", "emissions_tokens"):
+        add(config.issuance_basis(project), "the declared issuance basis (config.issuance_basis)")
+    em = p.get("emissions_from_metric")
+    if metric == "emissions_tokens" and em:
+        for k in (em if isinstance(em, (list, tuple)) else (em,)):
+            add(k, "emissions_from_metric")
+    if metric == "emissions_tokens" and (config.emissions_model(project) or {}).get("model") == "minted":
+        add("gross_issuance_tokens", "emissions_model 'minted': the emissions are the measured mint")
+    rf = getattr(config, "REVENUE_FROM_FEES", {}).get(project)
+    if rf and metric == rf["revenue"]:
+        add(rf["fees"], "REVENUE_FROM_FEES")
+    for a, b in (p.get("defillama_metric_as") or {}).items():
+        if metric == a:
+            add(b, "defillama_metric_as (renamed)")
+        if metric == b:
+            add(a, "defillama_metric_as (renamed)")
+    # a renamed or project-suffixed key (X stored as X_<suffix>). Never the other way (a chain LEG X_<chain> is not
+    # its sum X), never a cross-check against the series it checks (*_dashboard), and never a different basis of the
+    # same stem (the TVL at constant prices takes the price moves out of the TVL)
+    stem = _re.sub(r"_(tokens|usd|eth)$", "", metric)
+    if metric.endswith(_OTHER_BASIS_SUFFIXES) or "_constant_price" in metric:
+        return out
+    for k in sorted(stored):
+        ks = _re.sub(r"_(tokens|usd|eth)$", "", k)
+        if k != metric and (k.startswith(stem + "_") or ks == stem) and not k.endswith(_OTHER_BASIS_SUFFIXES) \
+                and "_constant_price" not in k:
+            add(k, "the same stem (renamed or project-suffixed)")
+    return out
+
+
+# a key with one of these endings is another MEASURING POINT of its stem (a protocol dashboard read as a cross-check,
+# a self-reported figure) — never a stand-in for the stem's own series, nor the other way round
+_OTHER_BASIS_SUFFIXES = ("_dashboard", "_self_reported", "_reported", "_defillama")
+
+
+def stored_but_unshown():
+    """ROUND G10 item 1 (Jake 2026-10-21): every MISSING or N/A cell of the last build (coverage_audit.csv) whose input
+    metric HAS rows in metrics.db for the cell's window — under its own key, or under another key of the same concept
+    (the measured basis of a derived input, a renamed metric, a project-suffixed key). A hit is a cell pointed at the
+    wrong series, not a missing source. Reads the CSV and metrics.db (TOKEN_METRICS_COVERAGE_CSV / TOKEN_METRICS_DB
+    point it at another build); changes nothing."""
+    import csv as _csv                                    # noqa: PLC0415
+    import re as _re                                      # noqa: PLC0415
+    import sqlite3                                        # noqa: PLC0415
+    from collections import defaultdict                   # noqa: PLC0415
+    import coverage_audit as _ca                          # noqa: PLC0415
+    import pandas as _pd                                  # noqa: PLC0415
+    import store as _store                                # noqa: PLC0415
+    import config                                         # noqa: PLC0415
+    from pathlib import Path                              # noqa: PLC0415
+    head("STORED BUT NOT SHOWN — MISSING / N/A cells whose input is stored for their window (last build)")
+    path = _coverage_csv()
+    if path is None:
+        print("  no coverage_audit.csv beside the workbook — build the workbook first (token_metrics.py --build-only)")
+        return 0
+    db = Path(_store.DB_PATH)
+    if not db.exists():
+        print(f"  no store at {db}")
+        return 0
+    con = sqlite3.connect(str(db))
+    asof = _pd.Timestamp(con.execute("SELECT MAX(date) FROM metrics").fetchone()[0])
+    stored: dict = defaultdict(set)
+    for proj, met in con.execute("SELECT DISTINCT project, metric FROM metrics"):
+        stored[proj].add(met)
+
+    def rows_in(proj, met, w):
+        """(rows, first, last, sources) inside the window — rows only where they SPAN it (a first row within a week
+        of its start and a last within a week of its end): a series that starts inside the window is class C, not a
+        stored-but-unshown hit."""
+        a, b = _WIN_FROM.get(w, _WIN_FROM["q0"])
+        lo, hi = (asof - _pd.Timedelta(days=a)).date().isoformat(), (asof - _pd.Timedelta(days=b)).date().isoformat()
+        n, d0, d1 = con.execute("SELECT COUNT(*), MIN(date), MAX(date) FROM metrics WHERE project=? AND metric=? "
+                                "AND date>? AND date<=?", (proj, met, lo, hi)).fetchone()
+        first = con.execute("SELECT MIN(date) FROM metrics WHERE project=? AND metric=?", (proj, met)).fetchone()[0]
+        if not n or str(first)[:10] > (asof - _pd.Timedelta(days=a - 7)).date().isoformat() or \
+                str(d1)[:10] < (asof - _pd.Timedelta(days=b + 7)).date().isoformat():
+            return 0, d0, d1, []
+        src = [x[0] for x in con.execute("SELECT DISTINCT source FROM metrics WHERE project=? AND metric=? AND date>? "
+                                         "AND date<=? LIMIT 3", (proj, met, lo, hi))]
+        return n, d0, d1, src
+    hits, checked = [], 0
+    with open(path, encoding="utf-8") as f:
+        for r in _csv.DictReader(f):
+            st, proj = r.get("Status") or "", r.get("Project") or ""
+            if st not in ("MISSING", "N/A BY DESIGN") or proj in ("", "(all)"):
+                continue
+            why = r.get("Reason / route / error") or ""
+            if why.startswith(("0 — no such flow", "n/a — included in line")) or _DECLARED_NA.search(why):
+                continue                                  # a declared n/a: the stored input is not what is missing
+            checked += 1
+            # THE INPUT THE CELL ITSELF SAYS IS ABSENT: "<metric> (<window>): gap / no rows / …" in its text, or the
+            # metrics a MISSING reason lists — never every metric its formula happens to read
+            text = f"{r.get('Value now')} {why}"
+            said = [(m, w) for m, w in _re.findall(r"\b([a-z][a-z0-9_]+) \((now|m1|q[0-4])\)", text)
+                    if m in config.METRICS]
+            hdr = _re.match(r"MISSING \[[^\]]+\] — ([a-z0-9_, ]+) — ", why)
+            listed = [m.strip() for m in (hdr.group(1).split(",") if hdr else ()) if m.strip() in config.METRICS]
+            pairs = said or [(m, "q0") for m in listed]
+            if r.get("Tab") == "Trajectory" and not pairs:
+                pairs = [(m, "q0") for m in _ca._metrics_named(why) if m in config.METRICS]
+            if _re.search(r"withdrawn|SOURCE-LIMITED|FORWARD-ONLY|recorded, not compared", text):
+                continue                                  # a decided state of the stored row, not an unshown one
+            # A BLOCKED cell names what blocks it ("no rows stored for X", "the sum of X, Y", "X has no value"): those
+            # are its absent inputs, not the derived metric the text opens with
+            blk = _re.search(r"BLOCKED — (.*)", text)
+            if blk:
+                blockers = [m for m in _re.findall(r"\b([a-z][a-z0-9_]+)\b", blk.group(1)) if m in config.METRICS]
+                if blockers:
+                    w0 = pairs[0][1] if pairs else "q0"
+                    pairs = [(m, w0) for m in blockers]
+            # a cell BLOCKED for unequal coverage names each leg's series and window: the SHORT legs are its inputs
+            legs = [(m, w) for _l, m, w, c, n in _ca._COVER_LEG.findall(text) if c == "?" or int(c) < int(n)]
+            if legs:
+                pairs = legs
+            # a sum of legs (emissions_from_metric) is read from its legs, never from rows under the sum's own key
+            em = (config.PROJECT_BY_NAME.get(proj) or {}).get("emissions_from_metric")
+            if isinstance(em, (list, tuple)):
+                pairs = [p_ for m, w in pairs for p_ in ([(x, w) for x in em] if m == "emissions_tokens" else [(m, w)])]
+            # every input the cell names must be stored (under its key or the same concept's): a cell with one input
+            # stored and another absent is waiting on the absent one, not pointed at the wrong series
+            found, whole = [], True
+            for met, w in dict.fromkeys(pairs):
+                if (config.METRICS.get(met) or {}).get("view_only"):
+                    continue                              # built at read time: its inputs are what is stored
+                n, d0, d1, src = rows_in(proj, met, w)
+                if n:
+                    found.append((proj, r["Tab"], r["Column"], st, met, w, met, "its own key", n, d0, d1, src))
+                    continue
+                for k, how in _concept_keys(proj, met, stored.get(proj, set())):
+                    n, d0, d1, src = rows_in(proj, k, w)
+                    if n:
+                        found.append((proj, r["Tab"], r["Column"], st, met, w, k, how, n, d0, d1, src))
+                        break
+                else:
+                    whole = False
+            if whole:
+                hits.extend(found)
+    print(f"  store {db} (latest row {asof.date()}); {checked} MISSING / N/A cell(s) read; {len(hits)} hit(s)")
+    by = defaultdict(list)
+    for h in hits:
+        by[h[0]].append(h)
+    for proj in sorted(by):
+        print(f"\n  {proj} ({len(by[proj])})")
+        for _p, tab, col, st, met, w, k, how, n, d0, d1, src in by[proj][:60]:
+            print(f"    {tab} | {col[:60]} [{st}] reads {met} ({w}) — STORED as {k} ({how}): {n} row(s) "
+                  f"{d0}..{d1}; source {', '.join(str(x)[:50] for x in src)}")
+    print("  PASTE BACK the lines above. A hit is a cell to point at the stored series (with its measuring point), "
+          "not a source to add.")
+    return 0
+
+
+def review_triage():
+    """ROUND G10 item 6 (Jake 2026-10-21: "Review Queue (20): for each item, fix it or write why it stays"): every OPEN row
+    of the store's latest Review Queue (config.review_answered rows are listed apart), with the numbers a disposition
+    needs. change_threshold: the day and its comparison day against the series' own 28-day median before the day
+    (a comparison day >= 3x that median with the day inside 1/3..3x is an ordinary day set against a spike — accept with
+    the numbers; a day itself outside 1/3..3x is OPEN — check the read; a declared LUMPY flow is event-sized). Other
+    reasons print their own rule. Reads metrics.db (TOKEN_METRICS_DB); changes nothing."""
+    import sqlite3                                        # noqa: PLC0415
+    import pandas as _pd                                  # noqa: PLC0415
+    import config                                         # noqa: PLC0415
+    import store as _store                                # noqa: PLC0415
+    head("REVIEW QUEUE TRIAGE — each open row of the latest run, with the numbers for its disposition")
+    if not os.path.exists(_store.DB_PATH):
+        print(f"  no store at {_store.DB_PATH}")
+        return 0
+    con = sqlite3.connect(str(_store.DB_PATH))
+    run = con.execute("SELECT run_id FROM review_queue ORDER BY ts DESC, rowid DESC LIMIT 1").fetchone()
+    if not run:
+        print("  the review queue is empty")
+        return 0
+    rows = [dict(zip(("project", "metric", "date", "prior_date", "value", "prior_value", "reason", "action", "source"), r))
+            for r in con.execute("SELECT project, metric, date, prior_date, value, prior_value, reason, action, source "
+                                 "FROM review_queue WHERE run_id=? ORDER BY project, metric", (run[0],))]
+    opened = [r for r in rows if not config.review_answered(r)]
+    print(f"  run {run[0]}: {len(rows)} row(s), {len(rows) - len(opened)} answered in config.REVIEW_ANSWERED, "
+          f"{len(opened)} open")
+    rules = {"anchor_unconfirmed": "STAYS — the page's anchor was inferred, never eyeballed (sources.yaml "
+                                   "needs_first_run_check); compare the value with the page once and set "
+                                   "first_run_confirmed",
+             "onchain_vs_coingecko": "STAYS — ours (on-chain) is the figure; CoinGecko is recorded beside it, never the "
+                                     "judge; answer it in REVIEW_ANSWERED with the reconciliation once the gap is "
+                                     "explained",
+             "supply_partial": "STAYS — a standing PARTIAL label (the figure is labelled partial on the sheet)",
+             "flat_supply": "STAYS — a provider figure that does not move; recorded, not used to judge"}
+    for r in opened:
+        d = str(r["date"] or "")[:10]
+        line = (f"  {r['project']:<12} {r['metric']:<36} {d} {r['reason']}: {r['value']!r:.14} "
+                f"(prior {r['prior_value']!r:.14} on {str(r['prior_date'] or '')[:10]})")
+        verdict = rules.get(r["reason"], "")
+        if r["reason"] == "change_threshold" and d:
+            lo = (_pd.Timestamp(d) - _pd.Timedelta(days=28)).date().isoformat()
+            vals = [v for (v,) in con.execute("SELECT value FROM metrics WHERE project=? AND metric=? AND date>=? "
+                                              "AND date<? ORDER BY date", (r["project"], r["metric"], lo, d))]
+            med = float(_pd.Series(vals).median()) if vals else None
+            lumpy = config.lumpy_flow(r["project"], r["metric"])
+            if lumpy:
+                verdict = "ACCEPT — a declared LUMPY flow (config.LUMPY_FLOWS): event-sized, the week moves with an event"
+            elif med is None:
+                verdict = "OPEN — no 28-day history before the day to judge it against"
+            elif med == 0:
+                verdict = (f"OPEN — the series' 28-day median is 0 ({sum(1 for v in vals if v == 0)} of {len(vals)} days "
+                           f"0): the flow stopped or the read did — check the read")
+            else:
+                k_day = (r["value"] or 0) / med
+                k_pri = (r["prior_value"] or 0) / med
+                verdict = (f"28-day median {med:,.6g}: the day {k_day:.2f}x, the comparison day {k_pri:.2f}x — "
+                           + ("ACCEPT — an ordinary day set against a spike comparison day" if k_pri >= 3 and 1 / 3 <= k_day <= 3
+                              else "OPEN — the day itself is off its median: check the read" if not 1 / 3 <= k_day <= 3
+                              else "ACCEPT — both within 3x of the median: an ordinary weekly swing"))
+        print(line)
+        print(f"      -> {verdict or 'OPEN — no rule for this reason; answer it in config.REVIEW_ANSWERED or fix it'}")
+    print("  PASTE BACK the lines above. An ACCEPT line goes into config.REVIEW_ANSWERED with its numbers; OPEN is work.")
     return 0
 
 
@@ -13029,6 +13266,7 @@ CHECKS = (
     geod_stake_recipient, geod_stake_wallets, maple_ssf_lp_test, maple_drips, plume_archive, settlement_rebuild_coverage,
     near_settlement_routes,
     env_keys, aero_migration, near_wallet_inflow_days, worldmobile_probe, stale_series, mcap_inputs, na_reasons, missing_triage, gap_routes, spec_coverage,
+    stored_but_unshown, review_triage,
     aethir_mint_path,
     near_activity_break,
     plume_settlement_routes,

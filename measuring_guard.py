@@ -19,7 +19,7 @@ code; "after" is the code under test. A legitimate change of basis is declared i
 
     python measuring_guard.py --write tests/fixtures/guard_baseline.json
     python measuring_guard.py --compare tests/fixtures/guard_baseline.json
-    python measuring_guard.py --newer metrics.db        # the series a store holds past the fixtures' cut
+    python measuring_guard.py --newer metrics.db        # the checks on the live store (a copy): violations or OK
 """
 from __future__ import annotations
 
@@ -136,6 +136,84 @@ def newer_series(db_path: str) -> list[tuple[str, str, str, str]]:
                   if p in names and str(d)[:10] > max(cut, fx.get((p, m), "")))
 
 
+def live_check(db_path: str, baseline: dict) -> tuple[list[str], dict]:
+    """ROUND G10 5d (Jake: `--newer metrics.db` printed 570 series and no verdict): the basis and lost-headline checks ON
+    THE LIVE STORE. The workbook is built on a COPY of the store (the store itself is never written) at its newest day;
+    then, per series, a basis outside the fixture baseline's real bases and the declared handover points / components,
+    on a series that now holds more than one basis, is a violation (a series the fixtures held only as probe rows has
+    no fixture basis: its bases must all be declared once there are two); a headline the PREVIOUS RUN'S SNAPSHOT held
+    that this build does not (config.regression_allowance answers it), and a headline blanked by
+    measuring_point_changed, are violations. Returns (violations, snapshot)."""
+    import shutil
+    import sqlite3
+    import pandas as pd
+    sys.path.insert(0, str(ROOT / "tests"))
+    sys.modules.setdefault("recalc", None)
+    import openpyxl
+    import build_workbook as bw
+    import config
+    import sanity
+    import store as sm
+    import trajectory
+    import xlcalc
+    with tempfile.TemporaryDirectory() as d:
+        db = Path(d) / "metrics.db"
+        shutil.copyfile(db_path, db)
+        con = sqlite3.connect(str(db))
+        asof = pd.Timestamp(con.execute("SELECT MAX(date) FROM metrics").fetchone()[0]).normalize()
+        con.close()
+        sm.DB_PATH = str(db)
+        st = sm.Store(str(db))
+        path = Path(d) / "wb.xlsx"
+        try:
+            bw.build_workbook(st, path, asof=asof)
+        finally:
+            st.close()
+        bases = {}
+        for (proj, metric), g in bw._LAST_GROUPS.items():
+            if g is None or getattr(g, "empty", True) or "source" not in g:
+                continue
+            bases[f"{proj}|{metric}"] = sorted({trajectory.basis_of(metric, s) for s in g["source"].astype(str).unique()})
+        wb = openpyxl.load_workbook(path)
+        X = xlcalc.Workbook(wb)
+        heads, mpc = {}, []
+        for hc in bw._HEADLINE_CELLS:
+            cell = wb[hc["sheet"]][hc["cell"]]
+            try:
+                v = X.value(hc["sheet"], cell.row, cell.column)
+            except Exception:  # noqa: BLE001
+                v = None
+            n = sanity.stated_number(v)
+            if n is not None:
+                heads.setdefault(hc["project"], {})[f"{hc['sheet'][:2]} | {hc['header']}"] = float(n)
+            elif MPC in str(v or ""):
+                mpc.append([hc["project"], f"{hc['sheet'][:2]} | {hc['header']}", str(v)[:200]])
+    bad = []
+    for key, now in sorted(bases.items()):
+        if len(now) < 2:
+            continue
+        proj, metric = key.split("|", 1)
+        was = {b for b in (baseline.get("bases") or {}).get(key) or () if not str(b).startswith("probe:")}
+        new = set(now) - was - _declared(proj, metric)
+        if new:
+            bad.append(f"BASIS {proj} {metric}: {sorted(new)} beside {sorted(set(now) - new)} with no declared handover "
+                       f"or component")
+    # LOST HEADLINES against the PREVIOUS RUN'S SNAPSHOT (export_snapshot, written at the end of every run) — the fixture
+    # baseline's headlines are built with probe rows (a probed BUSINESS slot reads 1), so they are no "before" for a
+    # live store
+    import export_snapshot as _es
+    prev_date, prev = _es.load_previous(asof - pd.Timedelta(days=1))
+    for proj, cells in (prev or {}).items():
+        for head, v in cells.items():
+            if not isinstance(v, float) or head in (heads.get(proj) or {}) or config.regression_allowance(proj, head):
+                continue
+            bad.append(f"HEADLINE LOST {proj} {head}: {v:,.6g} in the {prev_date} snapshot, no value on the live store")
+    for proj, head, text in mpc:
+        bad.append(f"HEADLINE BLANKED BY {MPC} {proj} {head}: {text}")
+    return bad, {"asof": str(asof.date()), "bases": bases, "headlines": heads, "mpc_headlines": mpc,
+                 "previous": prev_date}
+
+
 def _declared(project: str, metric: str) -> set:
     """Bases a series may gain: its declared handover points and declared components."""
     import config
@@ -145,6 +223,10 @@ def _declared(project: str, metric: str) -> set:
         out.add(trajectory.basis_of(metric, pt))
     for c in (getattr(config, "DECLARED_COMPONENTS", {}) or {}).get((project, metric), ()):
         out.add(trajectory.basis_of(metric, c.get("source", "")))
+    # a DECLARED ZERO (config.DECLARED_ZERO, G10 3b: Sky's Stage 2 burn before its first row) is the series' own
+    # declaration — the build never counts it as a measuring point (aggregate drops declared:zero from the points)
+    if (project, metric) in (getattr(config, "DECLARED_ZERO", {}) or {}):
+        out.add(trajectory.basis_of(metric, "declared:zero[x]"))
     return out
 
 
@@ -178,14 +260,30 @@ def main(argv=None) -> int:
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--write", help="build and write the baseline snapshot to this path")
     g.add_argument("--compare", help="build and compare with this baseline snapshot")
-    g.add_argument("--newer", metavar="DB", help="list the series this store holds past the fixtures' cut")
+    g.add_argument("--newer", metavar="DB", help="the basis and lost-headline checks on this (live) store, built on a "
+                                                 "copy; with --list, the series it holds past the fixtures' cut")
+    ap.add_argument("--list", action="store_true", help="with --newer: list every series newer than the fixtures")
     a = ap.parse_args(argv)
     if a.newer:
         rows = newer_series(a.newer)
-        print(f"SERIES NEWER THAN THE FIXTURES — {len(rows)}")
-        for p, m, d, f in rows:
-            print(f"  {p:<14} {m:<48} stored to {d}  fixtures to {f}")
-        return 0
+        print(f"SERIES NEWER THAN THE FIXTURES — {len(rows)} (the count only; the checks below are the verdict)")
+        if a.list:
+            for p, m, d, f in rows:
+                print(f"  {p:<14} {m:<48} stored to {d}  fixtures to {f}")
+        # G10 5d: the verdict — the basis and lost-headline checks run on (a copy of) the live store
+        base = json.loads((ROOT / "tests" / "fixtures" / "guard_baseline.json").read_text(encoding="utf-8"))
+        bad, snap = live_check(a.newer, base)
+        print(f"LIVE STORE (built on a copy, as of {snap['asof']}): {len(snap['bases'])} series, "
+              f"{sum(len(v) for v in snap['headlines'].values())} headlines with a value; lost headlines judged "
+              + (f"against the {snap['previous']} snapshot" if snap["previous"] else
+                 "against NO snapshot (none on file before the store's last day — export_snapshot writes one at the end "
+                 "of every run): only the basis and measuring_point_changed checks ran"))
+        print(f"MEASURING-POINT GUARD ON THE LIVE STORE — {len(bad)} violation(s)")
+        for b in bad:
+            print("  " + b)
+        print("VERDICT: " + ("OK — no undeclared basis, no lost headline" if not bad else
+                             f"{len(bad)} VIOLATION(S) — each line above"))
+        return 1 if bad else 0
     base = json.loads(Path(a.compare).read_text(encoding="utf-8")) if a.compare else None
     with tempfile.TemporaryDirectory() as d:
         snap = build(Path(d), previous=(base or {}).get("headlines"))

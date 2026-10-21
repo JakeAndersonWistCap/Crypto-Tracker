@@ -820,6 +820,8 @@ def confidence_for(project: str, metric: str, row: dict, asof: pd.Timestamp) -> 
         # a reader looking for the source that is missing.
         return CONFIDENCE_NA, (str(row.get("note") or "").split(" | ")[0]
                                or "not applicable to this project")
+    if row["status"] == "pending":                   # G10 2e: a first epoch not yet closed — dated, not a failure
+        return "AMBER", str(row.get("note") or "").split(" | ")[0]
     if row["status"] in ("missing", "gap", "waiting"):
         return "RED", {"missing": "no value in the store",
                        "gap": "unresolved — see the Gap Report",
@@ -897,6 +899,11 @@ def confidence_for(project: str, metric: str, row: dict, asof: pd.Timestamp) -> 
         legs = " then ".join(handover.get("ordered_points") or ())
         why.append(f"STITCHED SERIES: {legs}, handed over with no overlap"
                    + (f". {handover['composition_change']}" if handover.get("composition_change") else ""))
+    # A FAILED VALIDATION IS NEVER GREEN (G10 2d: settlement_rebuilt_usd read GREEN beside "validation FAILED" in its own
+    # source). The result travels on the cell.
+    vfail = re.search(r"validation (FAILED|NOT VALIDATED)(?::\s*([^\]]*))?", str(row.get("source") or ""))
+    if vfail:
+        why.append(f"VALIDATION {vfail.group(1)}" + (f": {vfail.group(2).strip()[:300]}" if vfail.group(2) else ""))
     if int(row.get("n_points") or 0) < 2:
         why.append("a single observation — no trend, and nothing to validate it against")
     # A SHORT WINDOW IS NOT A SMALL NUMBER. A 10-day sum under a 30-day header understates by
@@ -1844,7 +1851,12 @@ def _declared_zero_views(groups: dict, asof) -> None:
         g = groups.get((name, metric))
         have = set(pd.to_datetime(g["date"]).dt.normalize()) if g is not None and not g.empty else set()
         lo = max(pd.Timestamp(spec["since"]), end - pd.Timedelta(days=int(config.TRAJECTORY["history_days"])))
-        days = [d for d in pd.date_range(lo, end) if d not in have]
+        hi = end
+        if spec.get("until_first_row"):              # G10 3b: 0 before the first stored row, where config records the
+            if not have or pd.Timestamp(spec["record_date"]) < min(have):   # programme began on or after it
+                continue
+            hi = min(have) - pd.Timedelta(days=1)
+        days = [d for d in pd.date_range(lo, hi) if d not in have]
         if not days:
             continue
         cols = g.columns if g is not None and not g.empty else _view_cols(groups, name)
@@ -3079,6 +3091,13 @@ def _treasury_split_views(groups: dict) -> None:
                                                 f"{sp['mechanism']} x the measured mint — the treasury read does not "
                                                 f"cover this day]"))
         g = groups[(name, sp["gross"])]
+        if sp.get("emissions") and (groups.get((name, "emissions_tokens")) is None
+                                    or groups[(name, "emissions_tokens")].empty):
+            # G10 1: emissions_model "minted" — the emissions ARE the mint to validators; nothing stores emissions_tokens
+            # for NEAR, so it is the measured mint less the treasury's share (the same rows as line (a))
+            groups[(name, "emissions_tokens")] = _as_stored(pd.DataFrame(
+                {"date": [r[0] for r in rows], "project": name, "metric": "emissions_tokens",
+                 "value": [r[1] for r in rows], "tier": 1, "source": [r[2] for r in rows]}), g.columns)
         groups[(name, sp["out"])] = _as_stored(pd.DataFrame(
             {"date": [r[0] for r in rows], "project": name, "metric": sp["out"], "value": [r[1] for r in rows],
              "tier": 1, "source": [r[2] for r in rows]}), g.columns)
@@ -4070,6 +4089,14 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                         f"armed and correctly idle; it starts comparing the moment the primary "
                         f"becomes reportable."
                         + (f" | {prior_note}" if prior_note else ""))
+                # A SERIES WHOSE FIRST EPOCH HAS NOT CLOSED IS PENDING, NOT A GAP (G10 2e: Pendle's subsidy-targeting rows
+                # read "gap / RED" while the audit classed them C — first epoch closes 2026-11-03). AMBER, dated.
+                fe = config.first_epoch_closes(name, metric)
+                if fe and row["status"] in ("missing", "gap") and asof < pd.Timestamp(fe):
+                    prior_note = row["note"]
+                    row["status"] = "pending"
+                    row["note"] = (f"first epoch closes {fe} — no complete epoch before it (valid from {fe})"
+                                   + (f" | {prior_note}" if prior_note else ""))
                 # A HALTED PROGRAMME READS 0, NOT "missing" (Fluid, Jake 2026-09-29). A closure
                 # that records renders_as_zero_since (config.UNAVAILABLE) makes every window that
                 # starts on or after that date a measured 0; a window reaching back before it
@@ -4679,15 +4706,18 @@ def _burn_fee_base(p: dict) -> str:
     return (p.get("burn_split") or {}).get("fee_base_metric") or "fees_usd"
 
 
-def gated(status_expr: str, expr: str, share_expr: str | None = None) -> str:
-    """Suppress the derived figure when the split is unconfirmed; n/a when no share is documented."""
+IMPLIED_ACTUAL_ON = {"buyback": "'Actual buyback Q0 ($) — observed' (A3)", "burn": "'GROSS BURN Q0 (tokens)' (A4)"}
+
+
+def gated(status_expr: str, expr: str, share_expr: str | None = None, kind: str = "buyback") -> str:
+    """Suppress the derived figure when the split is unconfirmed; n/a when no share is documented.
+    G10 2a (Jake 2026-10-21): an unconfirmed split is NOT a missing value — the protocol publishes no split, so the
+    implied figure does not exist by design; the cell says so and names where the ACTUAL figure is (N/A BY DESIGN)."""
     inner = f"IFERROR({expr},{NA})"
     if share_expr:
         inner = f"IF(ISNUMBER({share_expr}),{inner},{NA})"
-    # G9 B1: the word alone read as a held value (Chainlink's implied buyback graded VERIFIED (derived)); it is a missing
-    # split, said as one — "UNCONFIRMED" is classed MISSING by coverage_audit's honest rules
-    return (f'=IF({status_expr}="unconfirmed","n/a — UNCONFIRMED: no published share of revenue to buyback '
-            f'(config fee_split status unconfirmed)",{inner})')
+    return (f'=IF({status_expr}="unconfirmed","n/a — no published buyback/burn split (config fee_split status '
+            f'unconfirmed) — the actual {kind} is on {IMPLIED_ACTUAL_ON[kind]}",{inner})')
 
 
 def threshold_gated(project: dict, expr: str) -> str:
@@ -4801,6 +4831,18 @@ def telescoping(project: str, metric: str, parent: str, series, stock) -> dict:
             "flow_recon_blocked": None}
 
 
+def _burn_leg_dbd(project: dict) -> str | None:
+    """G10 3a: a Q0 window applied day by day has no burn-leg share for its days before the Stage 2 date — said, never the
+    Stage 2 5% applied backwards. None where the window is not applied day by day."""
+    if _SHIFT["k"] or not _DAY_BY_DAY.get((project["name"], "q0")) or not _leg(project, "burn", lambda sh: "x"):
+        return None
+    rb = config.revenue_base(project["name"]) or {}
+    # the date first: a formula's text literal is cut at 255 characters
+    return (f'="n/a — BLOCKED: valid from {(pd.Timestamp(rb.get("effective_from")) + pd.Timedelta(days=89)).date()} — '
+            f'the revenue base applies from {rb.get("effective_from")} — this window spans that date; the buying share is '
+            f'applied day by day, {(rb.get("day_by_day") or {}).get("not_burn", "no burn share is recorded before it")}"')
+
+
 def _leg(project: dict, key: str, build) -> str:
     """Render one documented allocation leg, or an empty cell where the project declares none.
 
@@ -4857,6 +4899,8 @@ def base_gated(project: dict, expr: str, window: str | None = None) -> str:
             return '="window not resolved — cannot tell if the base applies"'
         if start_iso >= effective:
             return expr
+        if end_iso >= effective and (base.get("day_by_day") and _DAY_BY_DAY.get((project["name"], window or "q0"))):
+            return expr                              # G10 3a: the window's share is the day-by-day one (Config)
         if end_iso >= effective:                     # G9 B1: a window short of the base is MISSING C, with its date
             valid = (pd.Timestamp(effective) + pd.Timedelta(days=(pd.Timestamp(end_iso) - pd.Timestamp(start_iso)).days)
                      ).date()
@@ -4864,6 +4908,47 @@ def base_gated(project: dict, expr: str, window: str | None = None) -> str:
                     f'valid from {valid}"')
         return f'="n/a — the revenue base applies from {effective} — this window ends before it (no share existed)"'
     return '="n/a — UNCONFIRMED: no revenue base declared"'
+
+
+def day_by_day_share(name: str, start, end, i: int, asof) -> tuple[float, str] | None:
+    """THE SHARE APPLIED DAY BY DAY (G10 3a; config revenue_base.day_by_day): (base-weighted share, why) for a window that
+    SPANS a change of split — Σ_d base_d × share_d ÷ Σ_d base_d over the days the base's own window sums (a monthly base:
+    the i-th block of three complete months, each month spread evenly over its days; a daily base: (start, end]). So
+    base × this share is the day-by-day sum exactly. None when not declared, when the window is wholly inside one split,
+    when any day's share is undocumented, or when the base sums to zero."""
+    rb = config.revenue_base(name) or {}
+    if not rb.get("day_by_day"):
+        return None
+    eff = str(rb.get("effective_from") or "")
+    s0, e0 = pd.Timestamp(start).normalize(), pd.Timestamp(end).normalize()
+    if not eff or not (s0 < pd.Timestamp(eff) <= e0):
+        return None
+    base = _daily(_LAST_GROUPS.get((name, config.revenue_base_metric(name))))
+    if base.empty:
+        return None
+    days = {}
+    if config.series_granularity(name, config.revenue_base_metric(name)) == "monthly":
+        last = pd.Timestamp(asof).to_period("M") - 1 - 3 * i
+        for m, v in base.groupby(base.index.to_period("M")).sum().items():
+            if last - 2 <= m <= last:
+                for d in pd.date_range(m.start_time, m.end_time.normalize(), freq="D"):
+                    days[d] = float(v) / m.days_in_month
+    else:
+        days = {d: float(v) for d, v in base.items() if s0 < d <= e0}
+    num, den, regimes = 0.0, 0.0, {}
+    for d, b in sorted(days.items()):
+        a = config.split_for_window(name, d.date().isoformat(), d.date().isoformat())
+        sh = a.get("share_to_buyback")
+        if not isinstance(sh, (int, float)) or a.get("status") == "unconfirmed":
+            return None
+        num, den = num + b * sh, den + b
+        regimes.setdefault(float(sh), [d, d])[1] = d
+    if not den or len(regimes) < 2:
+        return None
+    parts = ", ".join(f"{sh:.1%} {a.date()}..{b.date()}" for sh, (a, b) in sorted(regimes.items(), key=lambda kv: kv[1][0]))
+    return num / den, (f"day by day ({rb['day_by_day']['declared_by']}): each day's {config.revenue_base_metric(name)} × "
+                       f"the share in force that day — {parts}; {rb['day_by_day']['monthly']}; base-weighted share "
+                       f"{num / den:.2%}")
 
 
 def supply_additive(project: dict) -> bool:
@@ -5038,6 +5123,9 @@ def derived_statuses(data: pd.DataFrame | None, silence: dict | None = None) -> 
 CFG_WRITTEN: dict = {}     # (project, Config & Sources column) -> the value written this build (G9 B3: _reasoned_na)
 
 
+_DAY_BY_DAY: dict = {}               # (project, window) -> why, where the Config window share is applied day by day
+
+
 def write_config(ws, asof: pd.Timestamp, silence: dict | None = None, statuses: dict | None = None):
     silence = silence or {}
     statuses = statuses or {}
@@ -5089,9 +5177,14 @@ def write_config(ws, asof: pd.Timestamp, silence: dict | None = None, statuses: 
 
         # The split that actually applied to each window.
         window_cells = []
-        for _, start, end in windows:
+        for wi, (_, start, end) in enumerate(windows):
             applied = config.split_for_window(p["name"], start.date().isoformat(), end.date().isoformat())
             sh, stat = applied["share_to_buyback"], applied["status"]
+            dbd = day_by_day_share(p["name"], start, end, wi, asof) if stat == "unconfirmed" else None
+            _DAY_BY_DAY.pop((p["name"], f"q{wi}"), None)
+            if dbd:                                  # G10 3a: a window spanning a split change, applied day by day
+                sh, stat = dbd[0], f"active — {dbd[1]}"[:240]
+                _DAY_BY_DAY[(p["name"], f"q{wi}")] = dbd[1]
             # SILENT THROUGH THE WHOLE WINDOW: no buyback since before it opened (Jake, 2026-10-05).
             quiet = silence.get(p["name"])
             if stat == "active" and quiet and pd.Timestamp(quiet) < start:
@@ -5539,7 +5632,8 @@ def _coverage_guard(R: Refs, r: int, legs: list[tuple[str, str, str]], expr: str
     for lab, m, w in legs:
         c, n = R.D(r, m, _COV[w]), _nominal(w)
         conds.append(f"IFERROR(AND(ISNUMBER({c}),{c}<{RATE_MIN_DAYS}),FALSE)")
-        parts.append(f'"{lab} covers "&IFERROR(IF(ISNUMBER({c}),{c},{n}),"?")&" days of a "&{n}&"-day window"')
+        # the leg names its series and window (G10 3c: the audit dates a class C cell from the SHORT leg's first row)
+        parts.append(f'"{lab} ({m}, {w}) covers "&IFERROR(IF(ISNUMBER({c}),{c},{n}),"?")&" days of a "&{n}&"-day window"')
     # every further leg against the first (two legs: exactly as before; Aerodrome's net absorption has three since
     # 2026-10-11 — buyback, gauge emissions, rebase)
     if same_span and len(legs) >= 2:
@@ -7205,15 +7299,24 @@ def _settlement_rebuild_views(groups: dict) -> None:
     groups[(name, "settlement_rebuilt_usd")] = _as_stored(pd.DataFrame({
         "date": rebuilt.index, "project": name, "metric": "settlement_rebuilt_usd", "value": rebuilt.values, "tier": 1,
         "source": f"derived:dex+nft+p2p[{tag}]"}), cols)
-    if val["status"] != "PASSED" or csv.empty:
+    # G10 4 (Jake 2026-10-21): A DECLARED HANDOVER. From its date the rebuild IS the live settlement_volume_usd whatever
+    # this build's validation says — never scaled to the CSV; the CSV stays the reference check and its days are never
+    # overwritten (the rebuild starts the day after the CSV's last). Without the declaration only a PASSED validation
+    # extends the series, as before.
+    ho = spec.get("handover")
+    if csv.empty or (val["status"] != "PASSED" and not ho):
         return
-    after = rebuilt[rebuilt.index > csv.index.max()]
+    start = max(csv.index.max() + pd.Timedelta(days=1), pd.Timestamp(ho["from"])) if ho else \
+        csv.index.max() + pd.Timedelta(days=1)
+    after = rebuilt[rebuilt.index >= start]
     if after.empty:
         return
+    how = (f"DECLARED HANDOVER from {ho['from']} ({ho['declared_by']}): {ho['validation_note']}; never scaled; "
+           f"reference check: the Artemis CSV to {csv.index.max().date()}; this build's validation {val['status']}"
+           if ho else f"validated against the Artemis CSV {val['from']}..{val['to']}")
     ext = pd.DataFrame({"date": after.index, "project": name, "metric": config.ARTEMIS_SETTLEMENT["metric"],
                         "value": after.values, "tier": 1,
-                        "source": f"derived:settlement_rebuild[{spec['label']}; validated against the Artemis CSV "
-                                  f"{val['from']}..{val['to']}]"})
+                        "source": f"derived:settlement_rebuild[{spec['label']}; {how}]"[:500]})
     g = groups[(name, config.ARTEMIS_SETTLEMENT["metric"])]
     groups[(name, config.ARTEMIS_SETTLEMENT["metric"])] = _as_stored(
         pd.concat([g, ext[g.columns.intersection(ext.columns)]], ignore_index=True).sort_values("date"), g.columns)
@@ -7585,7 +7688,7 @@ def _with_trend_columns(title: str, specs: list[tuple], key_cols: set[int] | Non
 
 _REF = re.compile(r'INDEX\(Data!\$([A-Z]+)\$\d+:\$[A-Z]+\$\d+,MATCH\((?:\$A\d+&"\|([a-z0-9_]+)"|"([A-Za-z.]+)\|([a-z0-9_]+)")')
 _NA_BLANK_STATUS = {"missing": "no rows stored", "n/a": "not applicable to this project", "stale": "stale",
-                    "blocked": "BLOCKED"}
+                    "blocked": "BLOCKED", "pending": "PENDING"}
 
 
 def _reasoned_na(formula: str, p: dict, data_by_key: dict) -> str:
@@ -7654,7 +7757,10 @@ def _no_value_cause(formula: str, p: dict, data_by_key: dict) -> str:
         head = inv.get(letter)
         if head and head != "Project" and (name, head) in CFG_WRITTEN and CFG_WRITTEN[(name, head)] in (None, "") \
                 and head.lower().startswith("share"):
-            return f"UNCONFIRMED: {head} has no documented value in config"
+            # G10 2a: no published split is a fact about the protocol, not a missing value — N/A BY DESIGN
+            kind = "burn" if "burn" in head.lower() else "buyback"
+            return (f"no published buyback/burn split ({head} has no documented value in config) — the actual {kind} "
+                    f"is on {IMPLIED_ACTUAL_ON[kind]}")
     col_of = {v: k for k, v in DC.items()}
     for letter, metric, gproj, gmetric in _REF.findall(formula):
         row = data_by_key.get(f"{gproj}|{gmetric}" if gproj else f"{name}|{metric}")
@@ -7766,7 +7872,10 @@ def _write_table(ws, R: Refs, projects: list[dict], specs: list[tuple], data_by_
             if gw:
                 from datetime import timedelta as _td
                 applied = config.split_for_window(p["name"], _WINDOWS[gw][0], _WINDOWS[gw][1])
-                if applied["status"] == "unconfirmed":
+                if _DAY_BY_DAY.get((p["name"], gw)) and not _SHIFT["k"]:
+                    # G10 3a: the window's share is applied day by day — said on the cell, never greyed as unconfirmed
+                    c.comment = Comment(f"Share applied DAY BY DAY: {_DAY_BY_DAY[(p['name'], gw)]}", "token_metrics")
+                elif applied["status"] == "unconfirmed":
                     c.fill = FILL_UNCONFIRMED
                     c.comment = Comment(
                         f"Split for this window is unconfirmed: {applied['why']}. "
@@ -7847,6 +7956,17 @@ def _write_table(ws, R: Refs, projects: list[dict], specs: list[tuple], data_by_
         r += 1
     ws.freeze_panes = ws.cell(row=start_row + 1, column=3)
     return r
+
+
+def _a4_iss_metric(name: str) -> str:
+    """G10 1 (Jake 2026-10-21): the issuance A4's net-change, Δ and %-of-supply columns read. gross_issuance_tokens,
+    except where the supply is PRE-MINTED and the minted figure is suppressed by declaration (GEODNET: nothing is minted,
+    config issuance_derivation) — there the MEASURED release from the mining wallets (config.issuance_basis =
+    pool_release_tokens, the primary Jake chose 2026-09-28) is what enters circulation, and the Data row names it."""
+    p = config.PROJECT_BY_NAME.get(name) or {}
+    if config.issuance_basis(name) == "pool_release_tokens" and (p.get("issuance_derivation") or {}).get("suppressed"):
+        return "pool_release_tokens"
+    return "gross_issuance_tokens"
 
 
 def _trajectory(R: Refs, metric: str, label: str, fmt=FMT_PCT):
@@ -8789,7 +8909,7 @@ def write_a4(ws, R: Refs, data_by_key: dict):
             x for x in ["net mint" if p.get("self_reported_net_mint") else "",
                         "burn" if p.get("self_reported_burn") else ""] if x), FMT_TEXT, "text"),
         ("Derived net supply change (issuance − burn), for comparison",
-         lambda r, p: _guarded_net(R, r, p, "gross_issuance_tokens", config.a1_burn_metric(p["name"])), FMT_NUM, "calc"),
+         lambda r, p: _guarded_net(R, r, p, _a4_iss_metric(p["name"]), config.a1_burn_metric(p["name"])), FMT_NUM, "calc"),
         ("Self-reported − derived (a gap here means one of the two is wrong)",
          lambda r, p: _guarded_net(R, r, p, "gross_issuance_tokens", config.a1_burn_metric(p["name"]),
                                    total=f"{R.D(r, 'net_mint_monthly', 'q0')}-({iss(r)}-{burn(r, p)})"), FMT_NUM, "calc"),
@@ -8799,12 +8919,12 @@ def write_a4(ws, R: Refs, data_by_key: dict):
          lambda r, p: _coverage_guard(R, r, [("burn", config.a4_burn_metric(p["name"]), "q0"), ("fees", "fees_usd", "q0")],
                                       f"{_flow_rate(R, r, config.a4_burn_metric(p['name']), p=p)}*{price(r)}/{_flow_rate(R, r, 'fees_usd')}"),
          FMT_PCT, "calc"),
-        ("Issuance as % of supply (annualised)", lambda r, p: calc(f"{_annualise(R, r, p, 'gross_issuance_tokens', iss(r))}/{R.D(r, 'circulating_supply', 'now')}"), FMT_PCT, "calc"),
+        ("Issuance as % of supply (annualised)", lambda r, p: calc(f"{_annualise(R, r, p, _a4_iss_metric(p['name']), R.D(r, _a4_iss_metric(p['name']), 'q0'))}/{R.D(r, 'circulating_supply', 'now')}"), FMT_PCT, "calc"),
         *_a4_phase2_cols(R),
         # THE BASE THE SHARE IS OF (Uniswap, G6 2026-10-19): config burn_split.fee_base_metric — Uniswap's documented
         # share is 100% of PROTOCOL fees (revenue_usd), not of LP fees; fees_usd everywhere else.
         ("Implied burn Q0 (tokens) = fees × documented share ÷ avg price",
-         lambda r, p: gated(R.C(r, "Burn split status"), f"{R.D(r, _burn_fee_base(p), 'q0')}*{R.C(r, 'Share of fees burned')}/{price(r)}", R.C(r, 'Share of fees burned')), FMT_NUM, "calc", False, {"gate": "burn_split"}),
+         lambda r, p: gated(R.C(r, "Burn split status"), f"{R.D(r, _burn_fee_base(p), 'q0')}*{R.C(r, 'Share of fees burned')}/{price(r)}", R.C(r, 'Share of fees burned'), kind="burn"), FMT_NUM, "calc", False, {"gate": "burn_split"}),
         ("Actual − implied burn (tokens)", lambda r, p: circular_gated(p, gated(R.C(r, "Burn split status"), _coverage_guard(
             R, r, [("burn", config.a4_burn_metric(p["name"]), "q0"), ("fees", _burn_fee_base(p), "q0")],
             f"{burn(r, p)}-{R.D(r, _burn_fee_base(p), 'q0')}*{R.C(r, 'Share of fees burned')}/{price(r)}", same_span=True, bare=True),
@@ -8813,11 +8933,11 @@ def write_a4(ws, R: Refs, data_by_key: dict):
          if p.get("supply_is_partial") else "", FMT_TEXT, "text"),
         ("Cross-check: Δ implied circulating supply Q0 vs Q1 (CoinGecko mcap ÷ price)",
          lambda r, p: calc(f"{R.D(r, 'circulating_supply_implied', 'q0')}-{R.D(r, 'circulating_supply_implied', 'q1')}"), FMT_NUM, "calc"),
-        ("Net supply change Q1 (tokens, −3m window)", lambda r, p: _guarded_net(R, r, p, "gross_issuance_tokens", config.a1_burn_metric(p["name"]), "q1"), FMT_NUM, "calc"),
-        ("Net supply change Q2 (−6m window)", lambda r, p: _guarded_net(R, r, p, "gross_issuance_tokens", config.a1_burn_metric(p["name"]), "q2"), FMT_NUM, "calc"),
-        ("Net supply change Q3 (−9m window)", lambda r, p: _guarded_net(R, r, p, "gross_issuance_tokens", config.a1_burn_metric(p["name"]), "q3"), FMT_NUM, "calc"),
+        ("Net supply change Q1 (tokens, −3m window)", lambda r, p: _guarded_net(R, r, p, _a4_iss_metric(p["name"]), config.a1_burn_metric(p["name"]), "q1"), FMT_NUM, "calc"),
+        ("Net supply change Q2 (−6m window)", lambda r, p: _guarded_net(R, r, p, _a4_iss_metric(p["name"]), config.a1_burn_metric(p["name"]), "q2"), FMT_NUM, "calc"),
+        ("Net supply change Q3 (−9m window)", lambda r, p: _guarded_net(R, r, p, _a4_iss_metric(p["name"]), config.a1_burn_metric(p["name"]), "q3"), FMT_NUM, "calc"),
         *_trajectory(R, config.a4_burn_metric, "Burn"),
-        *_trajectory(R, "gross_issuance_tokens", "Issuance"),
+        *_trajectory(R, _a4_iss_metric, "Issuance"),
         # FOOTNOTES FIRST: burned SKY that is deliberately NOT in any burn column above
         # (Sky's five-way split, 2026-09-24). Leading, so the text that explains a small
         # headline next to a huge on-chain total is the first thing in the cell.
@@ -8939,16 +9059,19 @@ def write_a3(ws, R: Refs, data_by_key: dict):
         # carry their own effect on supply, because a single "implied buyback" figure is right
         # as buy pressure and wrong as supply reduction by the ratio between the two legs, and
         # nothing on a row of numbers tells a reader which they are looking at.
+        # G10 3a: both legs together ARE the buying share, so a window applied day by day reads the Config window share
+        # (the buying share in force each day); the 5% burn leg has no recorded share before Stage 2 and stays blocked
         ("Implied SKY purchased, both legs ($) — buy pressure, NOT supply reduction",
          lambda r, p: _leg(p, "sky_buying", lambda sh: base_gated(
-             p, gated(st(r), f"{rev(r, p)}*{sh}", share(r)))), FMT_USD, "calc", False,
-         {"gate": "fee_split", "base": True}),
+             p, gated(st(r), f"{rev(r, p)}*{share(r) if _DAY_BY_DAY.get((p['name'], 'q0')) and not _SHIFT['k'] else sh}",
+                      share(r)))),
+         FMT_USD, "calc", False, {"gate": "fee_split", "base": True}),
         ("Implied BURN ($) — the only leg that removes supply",
-         lambda r, p: _leg(p, "burn", lambda sh: base_gated(
+         lambda r, p: _burn_leg_dbd(p) or _leg(p, "burn", lambda sh: base_gated(
              p, gated(st(r), f"{rev(r, p)}*{sh}", share(r)))), FMT_USD, "calc", False,
          {"gate": "fee_split", "base": True}),
         ("Implied burn (tokens) = burn $ ÷ avg price",
-         lambda r, p: _leg(p, "burn", lambda sh: base_gated(
+         lambda r, p: _burn_leg_dbd(p) or _leg(p, "burn", lambda sh: base_gated(
              p, gated(st(r), f"{rev(r, p)}*{sh}/{price(r)}", share(r)))), FMT_NUM, "calc", False,
          {"gate": "fee_split", "base": True}),
         # C3: THE IMPLIED BURN AGAINST THE BURN THAT ACTUALLY HAPPENED. Same comparison the tab
@@ -8957,7 +9080,7 @@ def write_a3(ws, R: Refs, data_by_key: dict):
         # another derivation. A persistent gap is a finding about the base, the share, or the
         # read; it is not an error in any of them by itself.
         ("Implied burn − ACTUAL burn (tokens) — the 5% leg against the chain",
-         lambda r, p: _leg(p, "burn", lambda sh: base_gated(
+         lambda r, p: _burn_leg_dbd(p) or _leg(p, "burn", lambda sh: base_gated(
              p, gated(st(r), _coverage_guard(
                  R, r, [("revenue", config.revenue_base_metric(p["name"]), "q0"), ("burn", "gross_burn_tokens", "q0")],
                  f"{rev(r, p)}*{sh}/{price(r)}-{R.D(r, 'gross_burn_tokens', 'q0')}", same_span=True, bare=True),
@@ -10315,7 +10438,11 @@ def write_trajectory(wb, data_by_key: dict, asof=None) -> list[dict]:
             # does not apply to) has no history to fill — saying "HISTORY BUG … re-reads 455 days" sent the reader after
             # a backfill that could never change it
             q0t = qs[0] if isinstance(qs[0], str) else ""
-            if (q0t.lower().startswith("n/a") and all(trajectory._num(v) is None for v in qs)
+            # G10 1: a cell that reads a declared TEXT value (Uniswap's crossover "no issuance — burn only") is the same
+            # case — the inputs are stored; the line has no number by its own rule, not for want of history
+            declared = q0t and not q0t.startswith("#") and (
+                q0t.lower().startswith("n/a") or not q0t.lower().startswith(("blocked", "missing", "history", "not wired")))
+            if (declared and all(trajectory._num(v) is None for v in qs)
                     and not coverage_audit.DISHONEST_NA.search(q0t)):
                 why.append(f"n/a in every quarter by the cell's own declaration (nothing to backfill) — {q0t[:200]}")
             elif hc := _history_class(spec["project"], trajectory.referenced_metrics(w["q0_formula"]), data_by_key):

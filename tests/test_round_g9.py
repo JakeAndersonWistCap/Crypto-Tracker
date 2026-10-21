@@ -185,8 +185,17 @@ def test_b1_honest_statuses_reclassify_by_the_text():
 
 def test_b1_the_unconfirmed_split_is_never_a_held_value():
     import build_workbook as bw
+    import coverage_audit as ca
     f = bw.gated('"x"', "1+1")
-    assert '"unconfirmed","unconfirmed"' not in f and "UNCONFIRMED: no published share" in f
+    # G10 2a: no published split is N/A BY DESIGN, naming where the actual figure is — never a held value, never MISSING
+    assert '"unconfirmed","unconfirmed"' not in f and "no published buyback/burn split" in f
+    assert "the actual buyback is on 'Actual buyback Q0 ($) — observed' (A3)" in f
+    assert "the actual burn is on 'GROSS BURN Q0 (tokens)' (A4)" in bw.gated('"x"', "1", kind="burn")
+    txt = f.split('"unconfirmed","', 1)[1].split('",', 1)[0]
+    rows = [{"Tab": "Master", "Project": "P", "Column": "c", "Status": "N/A BY DESIGN", "Reason / route / error": txt,
+             "Formula as built": ""}]
+    ca.honest_statuses(rows)
+    assert rows[0]["Status"] == "N/A BY DESIGN"
 
 
 # ======================================================================================== B2 one status function

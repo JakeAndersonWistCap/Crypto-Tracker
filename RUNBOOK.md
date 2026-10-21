@@ -529,6 +529,36 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11cm. Round G10 — fix what we already have: stored but not shown, honest statuses, Sky day by day, Ethereum's handover (2026-10-21)
+
+**Run after pulling (PowerShell 5.1, repo root), in this order.** No run_sql section and no BigQuery this round.
+1. `python check_offline_items.py stored_but_unshown` — every MISSING / N/A cell whose input IS stored for its window
+   (own key or the same concept's). PASTE BACK. After this round it should list nothing; a line is a cell to point at
+   the stored series, not a source to add.
+2. `python token_metrics.py --seed pendle_berachain` — no time budget: it runs until Berachain's gauge history is read
+   and reconciled. Progress lines every 10 pages say the share of the block range read and "remaining ~…". Ctrl-C is
+   safe: the pages are checkpointed and the next seed (or run) continues.
+3. `python token_metrics.py` — the full run. The business tier's CCIP count now reads ccip_value's walked days (its
+   Run Log line says "N day(s) from ccip_value's walk state") and each business source stops at its own budget; Chainlink's
+   noncirc scans run in their own tier explorer_noncirc@Chainlink.
+4. `python check_offline_items.py missing_triage` — PASTE BACK. Class A is no longer listed; every class C line has its
+   date. `python check_offline_items.py review_triage` — PASTE BACK: each open Review Queue row with its numbers.
+5. `python measuring_guard.py --newer metrics.db` — builds on a copy of the store (a few minutes) and ends with
+   "VERDICT: OK" or the violations. PASTE BACK.
+6. `Get-Content scoreboard.json` — PASTE BACK.
+
+**What to look for.** GEODNET's A4 issuance cells read the mining-wallet release. NEAR's emissions are line (a) (the
+measured mint less the treasury). Sky's Q0 implied buyback shows a value with "Share applied DAY BY DAY" on the share cell;
+its three burn-leg cells stay MISSING C to 2026-11-14. Implied buyback cells with no published split read N/A BY DESIGN
+and name the actual-buyback cell. Ethereum's settlement_volume_usd continues past 2026-08-25 from the rebuild, labelled a
+declared handover with "+6.8% vs Artemis … 11/12 weeks within ±10%"; settlement_rebuilt_usd is AMBER with the
+validation result. Pendle's subsidy-targeting Data rows read "pending" (AMBER) until 2026-11-03.
+
+**Not fixable without new data (said, left):** Sky's 5% burn-leg share before 2026-08-17; Aethir customer revenue Δ6m /
+Δ9m (weekly series from 2026-06-15: 2027-03-11 / 2027-06-09); Hyperliquid's issuance history before 2026-09-14 (and its
+modelled leg needs the reference-yield reads); the Morpho claims chains not stored on a store (the sum stays BLOCKED,
+never the Ethereum leg alone).
+
 ## 11cl. Round G9 add-on K–N — CCIP refused days and fees, EF grants, NEAR treasury, MODELLED, the evidence ladder (2026-10-20)
 
 **Run after pulling (PowerShell 5.1, repo root), in this order.** No run_sql section this round (nothing stored needs

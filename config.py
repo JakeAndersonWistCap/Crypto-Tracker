@@ -29494,6 +29494,16 @@ DECLARED_ZERO = {
         "since": "2026-05-12",
         "why": "the FLUID buyback HALTED on 2026-05-11 — history before is real"},
 }
+# G10 3b (Jake 2026-10-21): 0 BEFORE A PROGRAMME'S FIRST STORED ROW, where config already records that it began on or
+# after that row. Sky's Stage 2 burn leg went on-chain 2026-08-17 and its FIRST BURN was 2026-09-14 (fee_split_v2
+# first_burn_date — Sky's own account); sky_stage2_burn_tokens is stored from 2026-09-10. So every earlier day is 0 —
+# filled only BEFORE the first stored row (`until_first_row`), and only while the recorded first burn is not before it
+# (`record_date`: a stored burn earlier than the record would be a contradiction, and nothing is filled).
+DECLARED_ZERO[("Sky", "sky_stage2_burn_tokens")] = {
+    "since": "2025-01-01", "until_first_row": True,
+    "record_date": PROJECT_BY_NAME["Sky"]["fee_split_v2"]["first_burn_date"],
+    "why": "no Stage 2 burn before the first stored row: Stage 2 went on-chain 2026-08-17, first burn 2026-09-14 "
+           "(config Sky fee_split_v2.first_burn_date, Sky's own account x.com/SkyEcosystem/status/2099488996099227965)"}
 
 
 # =====================================================================================================================
@@ -29710,6 +29720,12 @@ for _p in PROJECTS:
         if _sp.get("own_tier") == "explorer_gauge_l2":
             _sp["own_tier"] = l2_tier(_sp["chain"])
         _sp["own_tier"] = scan_tier(_p["name"], _sp)                    # G6 item 0a: the project's own tier
+# G10 5b (Jake's G9 run: Chainlink noncirc_out "time budget exhausted (before the first attempt)"): the two scans of the 27
+# non-circulating wallets share explorer@Chainlink with five others and ran after them; they get their own tier and
+# budget (EXPLORER_PROJECT_TIER_BUDGET_S), so the other Chainlink scans cannot use it up.
+for _sp in PROJECT_BY_NAME["Chainlink"]["log_scans"]:
+    if _sp["key"] in ("noncirc_out", "noncirc_in"):
+        _sp["own_tier"] = f"explorer_noncirc{PROJECT_TIER_SEP}Chainlink"
 
 # G6 item 3: GEODNET's own data feed continues the monthly burn cross-check from 2026-08 (Dune 8683175 is backfill-only
 # and stopped at 2026-08-01) — a declared handover, same quantity (Polygon + Solana burned per month), not a break
@@ -30113,6 +30129,40 @@ METRICS["nft_volume_usd"] = {
     "label": "NFT trading volume per day ($, DefiLlama /overview/nft-volume/<chain>) — the NFT leg of the settlement "
              "rebuild (G7 item 8)", "kind": "flow", "unit": "usd", "archetypes": [1], "tiers": [1], "sanity_min": 0,
     "sanity_max": 1e11, "only_projects": ("Ethereum",)}
+# ===== G10 3a (Jake 2026-10-21): SKY'S SPLIT APPLIED DAY BY DAY. =====
+# "the revenue base applies from 2026-08-17" blocked 11 A3 / Master cells until 2026-11-15 because the Q0 window spans the
+# Stage 2 date. Each day's base (net_protocol_surplus_usd; a monthly figure spread evenly over its month's days, the
+# evidence ladder's convention) x the share in force THAT DAY (fee_split.history: 7.5% to 2026-08-16, 27.5% from
+# 2026-08-17), summed over the days the base's own window holds — written to the Config window share as the base-weighted
+# share, so base x share = the day-by-day sum exactly. Only a window that SPANS the date; a window wholly before it keeps
+# the recorded rule (base_gated: "this window ends before it"). The 5% BURN leg is not applied day by day: config records
+# the buying share before 2026-08-17 (fee_split.history), not a burn share — the Splitter's 'burn' parameter is the share
+# sent to the Smart Burn Engine, not the share burned.
+PROJECT_BY_NAME["Sky"]["revenue_base"]["day_by_day"] = {
+    "declared_by": "Jake, 2026-10-21 (G10 item 3a)", "shares_from": "fee_split.history",
+    "monthly": "a monthly base row is spread evenly over the days of its month",
+    "legs": ("sky_buying",),
+    "not_burn": "no burn share is recorded before it (fee_split.history holds the buying share)"}
+
+
+# ===== G10 4 (Jake 2026-10-21): THE REBUILD IS THE LIVE ETHEREUM SETTLEMENT FROM 2026-08-26 — A DECLARED HANDOVER. =====
+# Artemis's CSV ends 2026-08-25 and its API is retired; the rebuild (DefiLlama DEX + DefiLlama NFT + the stored BigQuery
+# P2P) takes over the next day as a different measuring point, stitched, never scaled. Jake's G9 run measured it over
+# the overlap: +6.8% vs Artemis over 2026-05-28..08-25, 11 of 12 complete weeks within ±10% (the ±10% weekly gate FAILED
+# on one week — recorded on the cell, not loosened). The CSV stays the reference check (settlement_validation runs on
+# every build). No BigQuery is read for this: the P2P rows already stored are what the rebuild sums.
+SETTLEMENT_REBUILD["ethereum_rebuild"]["handover"] = {
+    "from": "2026-08-26", "declared_by": "Jake, 2026-10-21 (G10 item 4)", "scaled": False,
+    "validation_note": "rebuild +6.8% vs Artemis over 2026-05-28..08-25; 11/12 weeks within ±10%"}
+_eth_csv = ARTEMIS_SETTLEMENT["chains"]["Ethereum"]
+PROJECT_BY_NAME["Ethereum"].setdefault("series_handover", {})["settlement_volume_usd"] = {
+    "ordered_points": [f"artemis:settlement_volume (CSV export, {_eth_csv['exported_by']}, {_eth_csv['exported_on']})",
+                       "derived:settlement_rebuild"],
+    "why": "Artemis's CSV export to 2026-08-25, then the settlement rebuild (DEX + NFT + P2P, Artemis method) from "
+           "2026-08-26 — Jake's declared handover (G10 item 4); the rebuild is never scaled to the CSV",
+    "composition_change": "a DIFFERENT MEASURING POINT from 2026-08-26 — rebuild +6.8% vs Artemis over "
+                          "2026-05-28..08-25; 11/12 weeks within ±10%; never scaled; Artemis's CSV is the reference check",
+    "declared_on": "2026-10-21"}
 METRICS["settlement_rebuilt_usd"] = {
     "label": "Settlement volume REBUILT (DEX + NFT + P2P, Artemis method) per day — shown beside Artemis's CSV; it "
              "extends settlement_volume_usd only after the validation passes (G7 item 8)", "kind": "flow", "unit": "usd",
@@ -30659,6 +30709,13 @@ SUPPLIER_B_VIEW = {
                "note": "checker bonus not on file before 2026-10-05; compute week labels as served (start/end not "
                        "established)"},
 }
+# G10 5d (the live-store guard): the (b) view is stitched BY CONSTRUCTION — the schedule days carry derived:supplier_b,
+# the measured days the base's own point — the same handover emissions_tokens declares, declared for the view too
+PROJECT_BY_NAME["Aethir"].setdefault("series_handover", {})["supplier_rewards_b_tokens"] = {
+    "ordered_points": ["derived:supplier_b", "aethir_page:supplier_rewards"],
+    "why": "SUPPLIER_B_VIEW: the schedule days (checker base + compute rewards ÷ 7) until the base is measured, then the "
+           "measured base alone — emissions_tokens' own declared handover (schedule:config -> aethir_page)",
+    "declared_on": "2026-10-21"}
 METRICS["supplier_rewards_b_tokens"] = {
     "label": "Supply-side incentives (b), ATH per day — Aethir: the checker schedule + compute-provider rewards (weekly "
              "÷ 7) before the measured supplier rewards, the measured sum after", "kind": "flow", "unit": "tokens",
@@ -30796,6 +30853,8 @@ METRICS["near_validator_rewards_tokens"] = {
 TREASURY_SHARE_SPLIT = {
     "Near": {"gross": "gross_issuance_tokens", "treasury": "near_treasury_mint_tokens",
              "out": "near_validator_rewards_tokens", "m_view": "near_treasury_mint_view_tokens", "rate": 0.1,
+             # G10 1: emissions_model "minted" and nothing stores emissions_tokens — they are line (a)'s rows
+             "emissions": True,
              "mechanism": "protocol_reward_rate 1/10 (nearcore reward_calculator.rs L63-84)"},
 }
 OUTFLOW_CATEGORIES["Near"] = {
@@ -30869,14 +30928,18 @@ FLOW_LINE_EVIDENCE.pop(("Plume", "Incentives paid beside: supply side (b)"), Non
 # identified — and 12.5% is bridged to Ethereum (Orbit revenue sharing, unlabelled). Check: growthepie fees_paid_usd.
 REVENUE_FROM_FEES = {
     "Plume": {"fees": "fees_usd", "revenue": "revenue_usd",
-              "why": "the chain's gas, received in full by the RewardDistributor 0x60be7a0c… (ArbOS infraFeeAccount)",
+              "why": "protocol captures 100% of gas (RewardDistributor 0x60be7a0c…, ArbOS infraFeeAccount); 87.5% to "
+                     "unlabelled EOA 0x07DC8589…, retained — recipient not yet identified; 12.5% bridged",
               "check": {"metric": "fees_usd_growthepie", "relation": "equal", "tolerance": 0.10,
                         "what": "growthepie fees_paid_usd"}},
 }
+# G10 1 (Jake 2026-10-21): remove Plume's archetype exclusion — revenue_usd (an archetype-3 metric) applies to Plume,
+# which is archetype 1; it is filled at read time from the stored fee series (REVENUE_FROM_FEES), never fetched.
+PROJECT_BY_NAME["Plume"]["extra_metrics"] = tuple(PROJECT_BY_NAME["Plume"].get("extra_metrics") or ()) + ("revenue_usd",)
 FLOW_LINE_NOTES = {
     ("Plume", "→ retained (revenue − credited holder value)"):
-        "retained — of the RewardDistributor's receipts 87.5% goes to the unlabelled EOA 0x07DC8589… (recipient not yet "
-        "identified) and 12.5% is bridged to Ethereum (Orbit revenue sharing, unlabelled)",
+        "protocol captures 100% of gas; 87.5% to unlabelled EOA 0x07DC8589…, retained — recipient not yet identified; "
+        "12.5% bridged (to Ethereum, Orbit revenue sharing, unlabelled)",
     ("Plume", "→ to suppliers (fees − revenue)"):
         "0: the whole L2 base fee is the infra fee to the RewardDistributor (no sequencer / supplier share on Plume)",
 }

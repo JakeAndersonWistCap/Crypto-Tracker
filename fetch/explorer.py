@@ -394,6 +394,21 @@ class ExplorerLogs:
                                    key=lambda x: (x["blockNumber"], x["logIndex"]))
                 e.resume_from = last
             return e
+        # G10 5c: AN ETA ON EVERY PROGRESS LINE (the Berachain seed ran with none): transfers come in block order, so the
+        # last block read over the range's blocks is the share covered
+        from .base import Progress
+        hi_blk = None if isinstance(to_block, str) else int(to_block)
+        # the share of what is LEFT that this session has read (a resumed seed starts part-way: the ETA is its own pace)
+        lo_blk = max([int(from_block)] + [int(x["blockNumber"]) for x in out[-1000:]])
+
+        def covered() -> float | None:
+            if not out or not hi_blk or hi_blk <= lo_blk:
+                return None
+            return min(1.0, max(0.0, (max(x["blockNumber"] for x in out[-1000:]) - lo_blk) / (hi_blk - lo_blk)))
+        prog = Progress(f"{name} Transfers API chain {chain_id}", unit="pages", every_units=10, fraction=covered,
+                        status=lambda: (f"{len(out):,} transfer(s), block {max(x['blockNumber'] for x in out[-1000:]):,}"
+                                        f" of {hi_blk:,}" if out and hi_blk else f"{len(out):,} transfer(s)")
+                        + ", checkpointed after every page")
         while True:
             if n >= cap:
                 raise ExplorerRefused(f"{name}: stopped at {cap} requests without exhausting the range — a "
@@ -441,10 +456,13 @@ class ExplorerLogs:
                     seen.add(k)
                     new.append(e)
             out.extend(new)
+            prog.tick()
             page_key = result.get("pageKey") or None
             if not page_key:
                 break
             ck.append(new, page_key)            # this page's NEW transfers only (a repeat is already in the file)
+        if n >= 10:
+            prog.flush(final=True)
         ck.clear()
         out.sort(key=lambda e: (e["blockNumber"], e["logIndex"]))
         return out, n
