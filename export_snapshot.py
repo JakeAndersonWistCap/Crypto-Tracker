@@ -154,6 +154,30 @@ def _trajectory(wb, value) -> dict:
 SNAPSHOT_DIR = ROOT / "snapshots"
 
 
+def _headline_key(k) -> bool:
+    """A "<tab> | <header>" column of the snapshot — not a verdict / near-limit / coverage column, not a trajectory."""
+    return not (k in ("project", "asof") or str(k).startswith("traj |") or " | " not in str(k)
+                or str(k).count(" | ") != 1)
+
+
+def snapshot_heads(wb, value, headline_cells: list, asof) -> dict:
+    """{project: {"<tab> | <header>": float}} — every figure the snapshot would record, by the snapshot's OWN keys
+    (snapshot_rows), a stated number ("0 — fixed supply") counted as its number. G12 C1 (Jake's 10-21 run: the guard
+    printed 329 HEADLINE LOST, "Ethereum Master | Price — spot ($) … no value on the live store" beside a workbook
+    showing 2,451.12): the guard's live build collected the A-tab headline cells only, so every "Master | …" key of
+    the previous snapshot read lost. ONE definition of the keys, here."""
+    import sanity                                          # noqa: PLC0415
+    out: dict = {}
+    for row in snapshot_rows(wb, value, [], [], headline_cells, asof):
+        for k, v in row.items():
+            if not _headline_key(k):
+                continue
+            n = sanity.stated_number(v)
+            if n is not None:
+                out.setdefault(row["project"], {})[k] = float(n)
+    return out
+
+
 def load_previous(asof, out_dir: Path | str | None = None) -> tuple[str, dict]:
     """(its date, {project: {"<tab> | <header>": float or None}}) from the latest snapshot dated on or before `asof` —
     the previous run's, since the daily run writes the snapshot LAST (a same-day re-run compares with the day's earlier
@@ -170,7 +194,7 @@ def load_previous(asof, out_dir: Path | str | None = None) -> tuple[str, dict]:
         for row in csv.DictReader(fh):
             vals = {}
             for k, v in row.items():
-                if k in ("project", "asof") or k.startswith("traj |") or " | " not in str(k) or str(k).count(" | ") != 1:
+                if not _headline_key(k):
                     continue
                 try:
                     vals[k] = float(v) if v not in ("", None) else None

@@ -183,17 +183,21 @@ def live_check(db_path: str, baseline: dict) -> tuple[list[str], dict]:
             bases[f"{proj}|{metric}"] = sorted({trajectory.basis_of(metric, s) for s in g["source"].astype(str).unique()})
         wb = openpyxl.load_workbook(path)
         X = xlcalc.Workbook(wb)
-        heads, mpc = {}, []
+        import export_snapshot as _es
+
+        def value(sheet, row, col):
+            try:
+                return X.value(sheet, row, col)
+            except Exception:  # noqa: BLE001
+                return None
+        # G12 C1: the live headlines by the SNAPSHOT'S OWN KEYS (Master columns included) — the previous snapshot is
+        # compared key for key
+        heads = _es.snapshot_heads(wb, value, bw._HEADLINE_CELLS, asof)
+        mpc = []
         for hc in bw._HEADLINE_CELLS:
             cell = wb[hc["sheet"]][hc["cell"]]
-            try:
-                v = X.value(hc["sheet"], cell.row, cell.column)
-            except Exception:  # noqa: BLE001
-                v = None
-            n = sanity.stated_number(v)
-            if n is not None:
-                heads.setdefault(hc["project"], {})[f"{hc['sheet'][:2]} | {hc['header']}"] = float(n)
-            elif MPC in str(v or ""):
+            v = value(hc["sheet"], cell.row, cell.column)
+            if sanity.stated_number(v) is None and MPC in str(v or ""):
                 mpc.append([hc["project"], f"{hc['sheet'][:2]} | {hc['header']}", str(v)[:200]])
     bad = []
     for key, now in sorted(bases.items()):

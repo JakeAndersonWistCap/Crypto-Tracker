@@ -33,6 +33,7 @@ import re
 import pandas as pd
 
 import config
+import wiring
 
 VERDICTS = ("PASS", "CHECK", "FRESH-only", "UNVERIFIABLE", "N/A")
 
@@ -82,6 +83,7 @@ def _num(v):
 
 
 def _series(long, project: str, metric: str) -> pd.Series:
+    wiring.note(project, metric)            # G12 A1: a Credibility formula's read is a CROSS-CHECK edge
     if long is None or long.empty:
         return pd.Series(dtype=float, index=pd.DatetimeIndex([]))
     g = long[(long.project == project) & (long.metric == metric)]
@@ -2332,6 +2334,73 @@ def generic_inputs(name: str) -> dict:
     return out
 
 
+def _has_number(rows: dict, name: str, metric: str) -> bool:
+    r = (rows or {}).get(f"{name}|{metric}") or {}
+    return any(_num(r.get(w)) is not None for w in ("now", "m1", "q0", "q1", "q2", "q3", "y1"))
+
+
+def wiring_inputs(name: str, rows: dict) -> dict:
+    """G12 PART B (Jake 2026-10-21): a stored series that measures the same thing as a shown one from another source is
+    a CROSS-CHECK row. Generic rows for every project that holds the second source (CoinGecko's FDV and total supply —
+    judged; CoinGecko's pool release, DefiLlama's holders revenue, a chain's native fees — recorded), then the project's
+    own (config.CREDIBILITY_WIRING). A project's CREDIBILITY specs are applied after these, and win. A row is built only
+    where the second source holds a number: nothing to compare is not a CHECK."""
+    parked = name in config.DETAIL_PARKED          # Aerodrome (G12 B14): only B1's CoinGecko rows, nothing else new
+    spec_p = config.CREDIBILITY.get(name) or {}
+    named: set = set()
+    wiring._strings(spec_p, named)
+    out = {}
+    if _has_number(rows, name, "fdv_usd_coingecko"):
+        out["in_fdv_coingecko"] = {
+            "what": "FDV ($) — ours (price x our total supply) vs CoinGecko's (price x CoinGecko's total)",
+            "ours": {"metric": "fdv_usd", "window": "now"}, "fmt": '$#,##0;($#,##0);-',
+            "ref": {"metric": "fdv_usd_coingecko", "window": "now", "tol": 1.0, "same_source": True,
+                    "source": "CoinGecko fully_diluted_valuation (fdv_usd_coingecko)",
+                    "note": "The price is CoinGecko's on both sides, so a match is FRESH-only; the supply leg is judged "
+                            "independently in in_total_supply_coingecko."}}
+    if _has_number(rows, name, "total_supply_coingecko"):
+        out["in_total_supply_coingecko"] = {
+            "what": "Total supply (tokens) — ours vs CoinGecko's",
+            "ours": {"metric": "total_supply", "window": "now"}, "fmt": '#,##0;(#,##0);-',
+            "ref": {"metric": "total_supply_coingecko", "window": "now", "tol": 1.0,
+                    "source": "CoinGecko total_supply (total_supply_coingecko, kept beside the on-chain total we use)"}}
+    if parked:
+        return out
+    if "pool_release_tokens_coingecko" not in named and _has_number(rows, name, "pool_release_tokens_coingecko"):
+        out["in_release_coingecko"] = {
+            "what": "Pool release Q0 (tokens) — ours (on-chain) vs CoinGecko's d(circulating) − d(total)",
+            "ours": {"metric": "pool_release_tokens", "window": "q0"}, "fmt": '#,##0;(#,##0);-',
+            "ref": config._c_rec("CoinGecko moves its circulating figure in steps (Jake's run 2026-10-08: stepwise, no "
+                                 "evidence) — never the judge of an on-chain release",
+                                 metric="pool_release_tokens_coingecko", window="q0", source="CoinGecko supply deltas")}
+    for hm in ("holders_revenue_usd", "holders_revenue_usd_defillama"):
+        if hm not in named and _has_number(rows, name, hm):
+            if not _has_number(rows, name, "actual_buyback_usd"):
+                break           # nothing of ours to set it against: shown as A-tab detail (config.DETAIL_COLUMNS)
+            out["in_holders_revenue_llama"] = {
+                "what": "Buyback Q0 ($) — ours vs DefiLlama holders revenue",
+                "ours": {"metric": "actual_buyback_usd", "window": "q0"}, "fmt": '$#,##0;($#,##0);-',
+                "ref": config._c_rec("DefiLlama's holders revenue is its own accrual of value to holders (fees routed "
+                                     "to burns, buybacks or stakers), not an executed purchase — the gap is shown, not "
+                                     "judged", metric=hm, window="q0", source=f"DefiLlama ({hm})")}
+            break
+    if name not in ("Plume",) and "fees_native_tokens" not in named and _has_number(rows, name, "fees_native_tokens"):
+        out["in_fees_native"] = {
+            "what": "Fees, 30 common days ($) — DefiLlama vs the explorer's native fees x same-day price",
+            "ours": {"py": "common_days_sum", "args": {"a": "fees_usd", "b": "fees_native_tokens", "b_times_price": True,
+                                                        "side": "ours"}}, "fmt": '$#,##0;($#,##0);-',
+            "ref": config._c_rec("the explorer counts every transaction's fee; DefiLlama's chain fees may scope differently",
+                                 formula="common_days_sum", args={"a": "fees_usd", "b": "fees_native_tokens",
+                                                                  "b_times_price": True, "side": "ref"},
+                                 source="explorer txnsFee (fees_native_tokens) x price_usd")}
+    for k, v in (config.CREDIBILITY_WIRING.get(name) or {}).items():
+        ref_m = (v.get("ref") or {}).get("metric")
+        if ref_m and not _has_number(rows, name, ref_m):
+            continue                                 # the second source holds no number: nothing to compare
+        out[k] = v
+    return out
+
+
 def price_inputs(name: str) -> dict:
     """Price beside a second source on the SAME instant (00:00 UTC of the latest completed day both hold):
     Coinbase Exchange where a product is declared, and DefiLlama's price for the token's verified address
@@ -2487,6 +2556,9 @@ def circulating_input(name: str) -> dict:
                                        "by hand and record it in config.CREDIBILITY as a manual reference."}}
 
 
+DECLARED_ZERO = "0 —"          # "0 — fixed supply": a stated zero (sanity.stated_number), a value
+
+
 def continuity_row(name: str, headline_cells: list[dict], previous: dict | None, prev_date: str = "") -> dict | None:
     """THE CONTINUITY GUARD (Jake's Phase 1 review 2026-10-12, item 1: GEODNET's burn, yield, crossover and net change
     all went from a value to n/a after history_gaps --run-fixes, and the Credibility tab changed 0 verdicts). One row
@@ -2497,7 +2569,10 @@ def continuity_row(name: str, headline_cells: list[dict], previous: dict | None,
     held = [(hc, v) for hc, v in held if isinstance(v, float)]
     if not held:
         return None
-    ours = "+".join(f"IF(ISNUMBER('{hc['sheet']}'!{hc['cell']}),1,0)" for hc, _v in held)
+    # G12 C2 (Jake's 10-21 workbook: Plume AS9 / Uniswap AA7 "was 0, now 0 — fixed supply" counted as LOST): a
+    # DECLARED ZERO ("0 — <why>") is the value 0 in words, and holds the headline
+    ours = "+".join(f"IF(OR(ISNUMBER('{hc['sheet']}'!{hc['cell']}),LEFT('{hc['sheet']}'!{hc['cell']},{len(DECLARED_ZERO)})"
+                    f"=\"{DECLARED_ZERO}\"),1,0)" for hc, _v in held)
     note = "; ".join(f"{hc['sheet'][:2]} {hc['header'][:60]} was {v:,.6g}" for hc, v in held)
     return {"project": name, "tab": "", "cell": "", "id": "continuity",
             "what": f"CONTINUITY — headlines that read a value in the previous run ({prev_date or 'snapshot'}) and still "
@@ -2605,6 +2680,7 @@ def build_rows(headline_cells: list[dict], rows: dict, long, asof, projects=None
                         "why": f"recorded, never the judge: {st['figure']:,} ({st['who']}); {st['why_static']}. "
                                f"in_circ is judged by the bridge reconciliation."}}
         inputs.update(generic_inputs(name))
+        inputs.update(wiring_inputs(name, rows))
         inputs.update({k: v for k, v in spec_p.items() if k.startswith("in_")})
         inputs.update(beside)
         for iid, spec in inputs.items():

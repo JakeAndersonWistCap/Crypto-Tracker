@@ -531,6 +531,12 @@ class StallBreaker:
 
 BREAKER = StallBreaker()
 _RETRY_STATUS = (429, 500, 502, 503, 504)
+HTTP_RETRIES = 4                     # Http's default (fetch/base.Http): the explorer tier's retry count
+_RETRY_STATS = {"retries": 0, "waited_s": 0.0}
+
+
+def _sleep(seconds: float) -> None:          # one seam for the tests
+    time.sleep(seconds)
 
 
 _GUARDED: dict = {}
@@ -578,6 +584,9 @@ def rpc_latency_report(save: bool = True) -> list[str]:
              f"{v['timeouts']} timeout(s), {v['throttled']} HTTP 429, {v['errors']} other error(s)"
              for h, v in sorted(summ.items(), key=lambda kv: -kv[1]["p90"])]
     pc = alchemy_usage.paced()
+    if _RETRY_STATS["retries"]:
+        lines.append(f"CHAIN TIER RETRIES: {_RETRY_STATS['retries']} retr{'y' if _RETRY_STATS['retries'] == 1 else 'ies'} "
+                     f"on HTTP 429 / 5xx, {_RETRY_STATS['waited_s']:.0f}s waited (Retry-After, else 2 s doubling)")
     if pc["requests"]:
         lines.append(f"ALCHEMY PACING: {pc['requests']} request(s) held to the Free plan's "
                      f"{alchemy_usage.FREE_TIER_CU_PER_S} CU/s, {pc['waited_s']:.1f}s waited in all")
@@ -634,7 +643,12 @@ def _guarded_provider_class(HTTPProvider):
 
         def _make_request(self, method, request_data):
             url = str(self.endpoint_uri)
-            for attempt in range(3):
+            # G12 C7 (Jake's 15:37 UTC run: 9 chain-tier reads lost to Alchemy HTTP 429): the explorer tier's policy —
+            # Http's — on a 429 / 5xx: up to HTTP_RETRIES retries, waiting Retry-After when the server sends one (never
+            # past MAX_RETRY_WAIT_S) and an exponential backoff from 2 s otherwise. Was: two retries after 0.5 s and 1 s,
+            # inside the Free plan's one-second CU window. Only the host is ever logged (an Alchemy key sits in the URL).
+            backoff = 2.0
+            for attempt in range(HTTP_RETRIES + 1):
                 BREAKER.check(self.chain, url)
                 alchemy_usage.record(url, method)
                 alchemy_usage.pace(url, method)
@@ -648,10 +662,21 @@ def _guarded_provider_class(HTTPProvider):
                     raise
                 except requests.exceptions.HTTPError as e:
                     BREAKER.ok(self.chain, url)            # it answered
-                    code = getattr(getattr(e, "response", None), "status_code", None)
+                    resp = getattr(e, "response", None)
+                    code = getattr(resp, "status_code", None)
                     _time_rpc(url, method, time.monotonic() - t0, "429" if code == 429 else f"http {code}")
-                    if code in _RETRY_STATUS and attempt < 2:
-                        time.sleep(0.5 * 2 ** attempt)
+                    if code in _RETRY_STATUS and attempt < HTTP_RETRIES:
+                        from .base import MAX_RETRY_WAIT_S, retry_after
+                        asked = retry_after((getattr(resp, "headers", None) or {}).get("Retry-After"))
+                        if asked is not None and asked > MAX_RETRY_WAIT_S:
+                            raise
+                        wait = min(max(asked or 0.0, backoff), MAX_RETRY_WAIT_S)
+                        log.warning("RETRY %s: HTTP %s on %s (attempt %d of %d), waiting %.0fs", rpc_host(url), code,
+                                    method, attempt + 1, HTTP_RETRIES + 1, wait)
+                        _RETRY_STATS["retries"] += 1
+                        _RETRY_STATS["waited_s"] += wait
+                        _sleep(wait)
+                        backoff *= 2
                         continue
                     raise
                 except requests.exceptions.ConnectionError:

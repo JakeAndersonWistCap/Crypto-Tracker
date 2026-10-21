@@ -510,12 +510,12 @@ def align_absent_statuses(rows: list[dict]) -> int:
 # other n/a gets the status its text describes. Order matters: the first match decides.
 DISHONEST_NA = re.compile(r"\bgap\b|no rows stored|BLOCKED|measuring_point_changed|MEASURING POINT CHANGED|"
                           r"inputs are present|\bstale\b|NOT TRACKED BY DEFILLAMA|(?-i:UNCONFIRMED:)|(?-i:PENDING)|"
-                          r"(?-i:COVERS \d+ OF \d+ DAYS)", re.I)
+                          r"(?-i:COVERS \d+ OF \d+ DAYS)|(?-i:NEEDS HISTORY)", re.I)
 _HONEST_RULES = (
     (re.compile(r"measuring_point_changed|MEASURING POINT CHANGED", re.I), "BROKEN"),
     (re.compile(r"\bstale\b", re.I), "CHECK"),
-    (re.compile(r"BLOCKED[^;|]{0,12}unequal coverage|this window spans that date|(?-i:PENDING) — first epoch", re.I),
-     "MISSING C"),
+    (re.compile(r"BLOCKED[^;|]{0,12}unequal coverage|this window spans that date|(?-i:PENDING) — first epoch|"
+                r"(?-i:NEEDS HISTORY)", re.I), "MISSING C"),
     (re.compile(r"BLOCKED|\bgap\b|no rows stored|NOT TRACKED BY DEFILLAMA|inputs are present|(?-i:UNCONFIRMED:)|"
                 r"(?-i:COVERS \d+ OF \d+ DAYS)", re.I), "MISSING"),
 )

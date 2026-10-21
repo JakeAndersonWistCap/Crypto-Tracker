@@ -44,6 +44,8 @@ COLUMN_MAP: tuple[tuple[str, str, str], ...] = (
     ("*", "Project", "identity"), ("*", "Symbol", "identity"), ("*", "Archetypes", "identity"), ("*", "Held", "identity"),
     ("*", "Materiality", "identity"), ("*", "Notes", "notes"), ("*", "Data flags", "notes"),
     ("*", "Latest data date", "notes"), ("*", "Trend — ", "trend"),
+    # G12 (the wiring round): detail columns beside the figure they explain, and Master's liquidity pair
+    ("*", "Detail — ", "detail"), ("*", "Trading volume, 30d", "liquidity"), ("*", "Turnover = 30d volume", "liquidity"),
     # ---- CONTEXT ----
     ("*", "Price — spot", "price"), ("*", "Price — 90d average", "price"), ("*", "Market cap date", "notes"), ("*", "Market cap — CoinGecko", "cross_check"),
     ("*", "Market cap", "market_cap"), ("*", "Free float market cap", "float"), ("*", "FDV RETIREMENT RATE", "retirement"),
@@ -147,7 +149,9 @@ COLUMN_MAP: tuple[tuple[str, str, str], ...] = (
 # change-over-period columns): axis CONTEXT, direction neutral, never a headline.
 SUPPORT = {"identity": "row identity", "notes": "notes / flags / caveats", "trend": "the trend cell beside a headline",
            "cross_check": "an independent cross-check of a figure beside it",
-           "delta": "change of a series over 30d / 3m / 6m / 9m"}
+           "delta": "change of a series over 30d / 3m / 6m / 9m",
+           "detail": "a stored series shown beside the figure it explains (G12 wiring: supply, demand or capture detail)",
+           "liquidity": "market liquidity: 30-day spot volume and turnover (volume ÷ market cap) — context, not a score"}
 
 
 def concept_for(tab: str, header: str) -> str | None:

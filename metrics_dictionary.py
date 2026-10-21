@@ -118,6 +118,14 @@ ENTRIES = {
         unit="tokens", inputs=["circulating_supply"]),
     "Market cap — CoinGecko": dict(what="CoinGecko's market cap, the cross-check.", formula="market_cap_usd_coingecko",
                                    window="now", unit="$", inputs=["market_cap_usd_coingecko"]),
+    "Trading volume, 30d": dict(
+        what="CoinGecko's spot trading volume over the trailing 30 days, all venues — liquidity, beside the market cap "
+             "(G12 B1).", formula="volume_usd now (a flow: the trailing 30-day sum)", window="now (30 days)", unit="$",
+        inputs=["volume_usd"]),
+    "Turnover = 30d volume": dict(
+        what="How much of the market cap traded in the last 30 days — liquidity, not demand for the token's cash flows "
+             "(G12 B1).", formula="volume_usd now ÷ market_cap_usd now", window="now (30 days)", unit="x",
+        inputs=["volume_usd", "market_cap_usd"]),
     "FDV ($)": dict(
         what="Spot price × the total supply we use, on one day.",
         formula="price_usd × total_supply (on-chain first where declared; carried forward within its age limit); "

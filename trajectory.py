@@ -394,7 +394,28 @@ def _inputs(project: str, metric: str, groups: dict) -> tuple:
                                  *(spec.get("add") or ())) if x)
     if metric == "circulating_supply_lockup_rule":
         return ("total_supply", "near_lockup_locked_tokens", "near_foundation_accounts_tokens")
-    return ()
+    return _stepping_parents(project, metric, groups)
+
+
+def _stepping_parents(project: str, metric: str, groups: dict) -> tuple:
+    """G12 C6: a series DERIVED from another at read time ("derived:tokens*price", "derived:actual_buyback_tokens x …")
+    carries its parent's DECLARED composition change — Hyperliquid's buyback in $ and its retired tokens step where the
+    tokens stitch. Only a parent whose handover declares a stepping composition_change is followed, so an undeclared
+    change in a parent is not newly reported here."""
+    g = groups.get((project, metric))
+    if g is None or g.empty:
+        return ()
+    out = []
+    for s in g["source"].astype(str).unique():
+        if not s.startswith("derived:"):
+            continue
+        cands = re.findall(r"[a-z][a-z0-9_]+", s) + ([metric.replace("_usd", "_tokens")] if "tokens*price" in s else [])
+        for par in cands:
+            decl = config.declared_handover(project, par) or {}
+            cc = str(decl.get("composition_change", "none")).strip().lower()
+            if par != metric and par in config.METRICS and decl and not cc.startswith("none") and par not in out:
+                out.append(par)
+    return tuple(out)
 
 
 def _own_breaks(project: str, metric: str, groups: dict, since) -> list[tuple]:

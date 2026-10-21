@@ -12517,7 +12517,7 @@ def missing_triage():
 
 
 _WIN_FROM = {"now": (30, 0), "m1": (60, 30), "q0": (90, 0), "q1": (180, 90), "q2": (270, 180), "q3": (360, 270),
-             "q4": (450, 360)}
+             "q4": (450, 360), "y1": (365, 0)}
 
 
 _DECLARED_NA = __import__("re").compile(
@@ -12615,6 +12615,13 @@ def stored_but_unshown():
         if not n or str(first)[:10] > (asof - _pd.Timedelta(days=a - 7)).date().isoformat() or \
                 str(d1)[:10] < (asof - _pd.Timedelta(days=b + 7)).date().isoformat():
             return 0, d0, d1, []
+        # G12 C4 (Jake's 10-21 run: Near's six 365-day settlement cells listed with 203 of 365 days held): a DAILY
+        # series must also FILL the window the cell needs — spanning it with a hole is the cell's own gap, not a
+        # stored-but-unshown hit
+        days = con.execute("SELECT COUNT(DISTINCT substr(date, 1, 10)) FROM metrics WHERE project=? AND metric=? "
+                           "AND date>? AND date<=?", (proj, met, lo, hi)).fetchone()[0]
+        if config.series_granularity(proj, met) == "daily" and days < (a - b) - 7:
+            return 0, d0, d1, []
         src = [x[0] for x in con.execute("SELECT DISTINCT source FROM metrics WHERE project=? AND metric=? AND date>? "
                                          "AND date<=? LIMIT 3", (proj, met, lo, hi))]
         return n, d0, d1, src
@@ -12631,11 +12638,15 @@ def stored_but_unshown():
             # THE INPUT THE CELL ITSELF SAYS IS ABSENT: "<metric> (<window>): gap / no rows / …" in its text, or the
             # metrics a MISSING reason lists — never every metric its formula happens to read
             text = f"{r.get('Value now')} {why}"
-            said = [(m, w) for m, w in _re.findall(r"\b([a-z][a-z0-9_]+) \((now|m1|q[0-4])\)", text)
+            said = [(m, w) for m, w in _re.findall(r"\b([a-z][a-z0-9_]+) \((now|m1|q[0-4]|y1)\)", text)
                     if m in config.METRICS]
             hdr = _re.match(r"MISSING \[[^\]]+\] — ([a-z0-9_, ]+) — ", why)
             listed = [m.strip() for m in (hdr.group(1).split(",") if hdr else ()) if m.strip() in config.METRICS]
-            pairs = said or [(m, "q0") for m in listed]
+            # the window the CELL needs: a trailing-365-day column reads its inputs over 365 days (G12 C4)
+            w_cell = "y1" if _re.search(r"365", r.get("Column") or "") else "q0"
+            pairs = said or [(m, w_cell) for m in listed]
+            if w_cell == "y1":
+                pairs = [(m, "y1") for m, _w in pairs]
             if r.get("Tab") == "Trajectory" and not pairs:
                 pairs = [(m, "q0") for m in _ca._metrics_named(why) if m in config.METRICS]
             if _re.search(r"withdrawn|SOURCE-LIMITED|FORWARD-ONLY|recorded, not compared", text):
@@ -12686,6 +12697,23 @@ def stored_but_unshown():
                   f"{d0}..{d1}; source {', '.join(str(x)[:50] for x in src)}")
     print("  PASTE BACK the lines above. A hit is a cell to point at the stored series (with its measuring point), "
           "not a source to add.")
+    return 0
+
+
+def wiring():
+    """ROUND G12 A1 (Jake 2026-10-21): every series of the last build with a number, classified from the build's own
+    dependency graph — SHOWN (a display cell reads it), CROSS-CHECK (a Credibility row), INPUT (a view built a shown /
+    cross-checked series from it; the parents named), NOT SHOWN (config.NOT_SHOWN, its reason) — and every UNWIRED one,
+    by project, with its label and latest value. Reads wiring.json beside the workbook (TOKEN_METRICS_WIRING points it at
+    another build); changes nothing."""
+    import wiring as _w                                   # noqa: PLC0415
+    from pathlib import Path                              # noqa: PLC0415
+    head("WIRING — every series with a number: shown, cross-checked, an input, declared not shown, or UNWIRED")
+    p = Path(os.environ.get("TOKEN_METRICS_WIRING", "") or Path(__file__).resolve().parent / "wiring.json")
+    if not p.exists():
+        print("  no wiring.json beside the workbook — build the workbook first (token_metrics.py --build-only)")
+        return 0
+    print(_w.report(p, unwired_only=not os.environ.get("TOKEN_METRICS_WIRING_ALL")))
     return 0
 
 
@@ -13266,7 +13294,7 @@ CHECKS = (
     geod_stake_recipient, geod_stake_wallets, maple_ssf_lp_test, maple_drips, plume_archive, settlement_rebuild_coverage,
     near_settlement_routes,
     env_keys, aero_migration, near_wallet_inflow_days, worldmobile_probe, stale_series, mcap_inputs, na_reasons, missing_triage, gap_routes, spec_coverage,
-    stored_but_unshown, review_triage,
+    stored_but_unshown, review_triage, wiring,
     aethir_mint_path,
     near_activity_break,
     plume_settlement_routes,

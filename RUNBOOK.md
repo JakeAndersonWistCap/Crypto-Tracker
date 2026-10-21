@@ -529,6 +529,42 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11co. Round G12 — wiring: every stored series reaches a cell, a cross-check, a parent or a reason (2026-10-21)
+
+**Run after pulling (PowerShell 5.1, repo root), in this order.** Nothing new is fetched: no seed, no dry run, no
+run_sql section, no extra call beyond the normal daily run.
+1. `python token_metrics.py` — the normal daily run. Its end now runs the WIRING AUDIT: `wiring.json` beside the
+   workbook, a "WIRING: UNWIRED n" line on the Run Log and the scoreboard. The chain tier retries an HTTP 429 / 5xx like
+   the explorer tier (Retry-After, else 2 s doubling, up to 4 retries); "CHAIN TIER RETRIES: …" on the run summary when it
+   happened. The Ethereum P2P weekly turn asks again for any week holding a day whose answer had no ETH row
+   (2026-09-14..09-27 on Jake's store) — read inside NEAR's BigQuery budget like every weekly piece.
+2. `python check_offline_items.py wiring` — every UNWIRED series by project with its label and latest value.
+   PASTE BACK. Target: none for the 15 projects outside Aerodrome; Aerodrome's are listed and left until after its
+   migration run. `$env:TOKEN_METRICS_WIRING_ALL=1` before it prints every class (SHOWN / CROSS-CHECK / INPUT with its
+   parents / NOT SHOWN with its reason).
+3. `python measuring_guard.py --newer metrics.db` — PASTE BACK the VERDICT. The 329 "HEADLINE LOST" lines were the
+   guard's own keys: it now reads the live headlines by the snapshot's keys, Master columns included.
+4. `python check_offline_items.py stored_but_unshown` — PASTE BACK. Near's six 365-day settlement cells are no longer
+   listed (the 365-day window is read whole, and a daily series must fill it).
+5. `Get-Content scoreboard.json` — PASTE BACK (it carries "unwired").
+
+**What to look for.** Master: "Trading volume, 30d ($)" and "Turnover" beside the CoinGecko market cap; World Mobile's
+Fees Q0 reads "(own-chain fees)" (the A3 cell Master references now carries it). Every A-tab has "Detail — …" columns
+beside the figure they explain (Near organic transactions beside Transactions Q0 with the Kai-Ching memo; Hyperliquid's
+supply overhang in tokens and % of total supply; Aethir's service fees, rewards, utilisation and stakes; Pendle's TVL by
+maturity; Maple's SSF; Sky's MKR; Ether.fi's programmatic buyback "BOUGHT, paid on as cashback, NOT credited"; the
+DEX / NFT / P2P settlement legs). Credibility: CoinGecko FDV (FRESH-only on a match: the price is CoinGecko's on both
+sides) and total supply (judged, 1%) for every project holding them — Ether.fi's total supply should read CHECK (ours
+998.5M on-chain vs CoinGecko's 965.35M, +3.4% on the fixture: CoinGecko's total equals its circulating); recorded rows
+("N/A (recorded)", both values and the gap) for every second source whose definition or window differs; the 40 rows that
+read "our value 0" now read "no figure by design". CONTINUITY no longer counts "0 — fixed supply" as lost. Sky's
+buyback_spending_usd_ba_daily reads BLOCKED "NOT DAILY". Hyperliquid's buyback Δ columns and trajectory read "SERIES
+BREAK" at the first Assistance Fund day. A2 Supply units Δ3m/6m/9m read "NEEDS HISTORY … valid from <date>".
+
+**Not changed:** Aerodrome (parked) — its three UNWIRED rows (the foundation buyback trace, tokens and $, and the rebase
+claimable) wait for the migration run. Hyperliquid's burn trends (A4) cross the same stitch as the buyback; only the
+buyback was declared a SERIES BREAK this round (Jake to decide the burn).
+
 ## 11cn. Round G11 — plumbing only, no new data: cached values, handovers, buyback and release legs (2026-10-21)
 
 **Run after pulling (PowerShell 5.1, repo root), in this order.** No new fetcher, no seed, no BigQuery change. One

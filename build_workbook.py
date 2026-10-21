@@ -31,6 +31,7 @@ from openpyxl.utils import get_column_letter
 
 import config
 import trajectory
+import wiring
 from config import GLOBALS, METRICS, PROJECTS
 from fetch.base import _measuring_point
 
@@ -892,10 +893,16 @@ def _daily_twin_views(groups: dict, asof) -> None:
         d_, m_ = _daily(groups.get((name, daily_m))), _daily(groups.get((name, monthly_m)))
         if d_.empty or m_.empty:
             continue
+        # G12 C3 (Jake's 10-21 workbook: the twin was still there): only quarters BOTH series cover are compared. The
+        # by-day read reaches back to 2024-11-14 while Block Analitica's monthly answer holds 13 months, so the
+        # oldest quarter held daily rows and no monthly ones — counted as a difference, it kept the twin alive
+        first = max(d_.index.min(), m_.index.min())
         same, seen = 0, 0
         for k in range(5):
             hi = pd.Timestamp(asof) - pd.Timedelta(days=period * k)
             lo = hi - pd.Timedelta(days=period)
+            if lo < first:
+                continue
             a = float(d_[(d_.index > lo) & (d_.index <= hi)].sum())
             b = float(m_[(m_.index > lo) & (m_.index <= hi)].sum())
             if a or b:
@@ -4176,7 +4183,7 @@ def _issuance_views(groups: dict, asof: pd.Timestamp) -> None:
                     f"{float(c['value'].iloc[-1]):,.0f} on all {len(c)} stored day(s) of the window")
 
 
-_LAST_GROUPS: dict = {}            # aggregate()'s groups after every read-time view
+_LAST_GROUPS: dict = wiring.TrackingDict()   # aggregate()'s groups after every read-time view (reads recorded, G12)
 
 
 def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp,
@@ -4200,6 +4207,8 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
         for r in fetch_status.itertuples(index=False):
             last_success[(r.source, r.project)] = r.last_success_at
     groups = {k: g for k, g in long.groupby(["project", "metric"])} if not long.empty else {}
+    # G12 A1: every view's reads and writes are recorded — the wiring audit's dependency graph (wiring.py)
+    groups = wiring.TrackingDict(groups)
     _EARLY_BLOCKS.clear()
     _handover_cut_views(groups)       # G11 C1: a declared cut — the earlier leg's rows after the later leg starts dropped
     _partial_sum_views(groups)    # FIRST: nothing downstream may read a partial sum
@@ -5847,6 +5856,44 @@ def _valuation_head(R: Refs, circulating: bool = False, fdv: bool = False) -> li
 def _key_cols(specs: list[tuple], *prefixes: str) -> set[int]:
     """1-based column numbers of the headers starting with any prefix — never hard-coded."""
     return {i for i, s in enumerate(specs, start=1) if any(s[0].startswith(x) for x in prefixes)}
+
+
+_DETAIL_FMT = {"num": FMT_NUM, "usd": FMT_USD, "pct": FMT_PCT, "ratio": '#,##0.0000;(#,##0.0000);-',
+               "date": FMT_DATE, "unix_date": FMT_DATE}
+
+
+def _detail_spec(R: Refs, d: dict) -> tuple:
+    """One G12 detail column (config.DETAIL_COLUMNS): the project's own series, blank for a project it does not apply
+    to. A stock reads its latest, a flow its window; ratio_to divides, per_day takes the window's per-covered-day
+    rate, unix_date turns unix seconds into a date."""
+    cells, kind = d["cells"], d.get("fmt", "num")
+
+    def build(r, p):
+        m, w = cells.get(p["name"], (None, None))
+        if not m:
+            return ""
+        x = _flow_rate(R, r, m, w) if d.get("per_day") else R.D(r, m, w)
+        if d.get("ratio_to"):
+            return calc(f"{x}/{R.D(r, *d['ratio_to'])}")
+        if kind == "unix_date":
+            return calc(f"{x}/86400+25569")
+        return calc(x) if d.get("per_day") else pull(x)
+    return (d["header"], build, _DETAIL_FMT[kind], "pull", False,
+            {"metric_fn": lambda n, _c=cells: (_c.get(n) or (None,))[0]})
+
+
+def _with_details(tab: str, specs: list[tuple], R: Refs) -> list[tuple]:
+    """THE G12 WIRING (Jake 2026-10-21): every series that measures supply, demand or value capture is SHOWN on its
+    archetype tab — each config.DETAIL_COLUMNS entry right after the column its `after` names (before Notes when that
+    column is absent), so the figure sits beside the one it explains."""
+    out = list(specs)
+    for d in config.detail_columns(tab):
+        spec = _detail_spec(R, d)
+        at = next((i for i, s in enumerate(out) if str(s[0]).startswith(d.get("after") or "\0")), None)
+        if at is None:
+            at = next((i - 1 for i, s in enumerate(out) if s[0] == "Notes"), len(out) - 1)
+        out.insert(at + 1, spec)
+    return out
 
 
 def _widths(specs: list[tuple]) -> dict:
@@ -8158,6 +8205,16 @@ def _reasoned_na(formula: str, p: dict, data_by_key: dict) -> str:
         st = str(row.get("status") or "")
         note = str(row.get("note") or "").split(" | ")[0]
         desc = f"{m} ({col}): " + (_NA_BLANK_STATUS.get(st, st) or "no value in this window") + (f" — {note}" if note else "")
+        # G12 C8 (Jake's 10-21 workbook: A2 "Supply units Δ3m/6m/9m" read "n/a — supply_units (q1): ok"): an input
+        # whose series STARTS after the window opens is not "ok" there — it needs history, from a date
+        first, win = str(row.get("first_date") or "")[:10], _WINDOWS.get(col)
+        first = first if re.fullmatch(r"\d{4}-\d{2}-\d{2}", first) else ""
+        if (val is None or (isinstance(val, float) and pd.isna(val))) and st not in _NA_BLANK_STATUS and first and \
+                win and first > win[0]:
+            valid = (pd.Timestamp(first) + (pd.Timestamp(win[1]) - pd.Timestamp(win[0]))
+                     + (pd.Timestamp(_WINDOWS["q0"][1]) - pd.Timestamp(win[1])) if _WINDOWS.get("q0") else None)
+            desc = (f"NEEDS HISTORY: {m} is held from {first}, after the {col.upper()} window opens ({win[0]})"
+                    + (f" — valid from {valid.date()}" if valid is not None else ""))
         if val is None or (isinstance(val, float) and pd.isna(val)):
             absent = absent or desc
         elif st in _NA_BLANK_STATUS:
@@ -8424,6 +8481,28 @@ def _a4_iss_metric(name: str) -> str:
     return "gross_issuance_tokens"
 
 
+def _stitch_breaks(name: str, metric: str) -> list[tuple[str, str]]:
+    """[(day, why)] — the stitch of a DECLARED handover whose composition_change says the quantity steps (G12 C6:
+    Hyperliquid's buyback, DefiLlama's revenue model before the first Assistance Fund read, the Fund's own balance
+    from it), on the series itself or on the one it is derived from (actual_buyback_usd from actual_buyback_tokens).
+    The day is the first row off the first leg in this build's series. A benign handover ("none …") is one series."""
+    out = []
+    for m in dict.fromkeys((metric, metric.replace("_usd", "_tokens"))):
+        decl = config.declared_handover(name, m) or {}
+        cc = str(decl.get("composition_change", "none")).strip().lower()
+        pts = tuple(decl.get("ordered_points") or ())
+        g = _LAST_GROUPS.get((name, m))
+        if not decl or cc.startswith("none") or len(pts) < 2 or g is None or g.empty:
+            continue
+        first_leg = g["source"].astype(str).map(lambda s: trajectory.basis_of(m, s)) == pts[0]
+        later, earlier = g[~first_leg], g[first_leg]
+        if later.empty or earlier.empty:
+            continue
+        out.append((str(pd.to_datetime(later["date"]).min().date()),
+                    f"{m}: {decl['composition_change']}"))
+    return out
+
+
 def _trajectory(R: Refs, metric: str, label: str, fmt=FMT_PCT):
     """Δ30d, Δ3m, Δ6m, Δ9m columns for a metric (now vs prior 30d; Q0 vs Q1/Q2/Q3).
 
@@ -8438,7 +8517,7 @@ def _trajectory(R: Refs, metric: str, label: str, fmt=FMT_PCT):
             # A DECLARED RECLASSIFICATION INSIDE THE COMPARISON IS NOT A CHANGE (fix round 2, R4: Plume's chain TVL
             # Δ9m read −96% across DefiLlama's moves of RWA out of Plume Mainnet's chain TVL). The trajectory already
             # marks the SERIES BREAK; the Δ columns now say it instead of a number
-            for day, why in config.SOURCE_RECLASSIFICATIONS.get((p["name"], mm), ()):
+            for day, why in (*config.SOURCE_RECLASSIFICATIONS.get((p["name"], mm), ()), *_stitch_breaks(p["name"], mm)):
                 lo = _WINDOWS.get(b, (None,))[0] if b in _WINDOWS else None
                 end = _WINDOWS.get("q0", (None, None))[1]
                 if b == "m1" and end:
@@ -8475,6 +8554,19 @@ def _mcap_date_note(data_by_key: dict, name: str) -> str:
     return ""
 
 
+def _fees_q0_col(R: Refs) -> tuple:
+    """"Fees Q0 ($)": fees_usd, or — for a project whose only fee series is its own chain's gas
+    (config.MASTER_FEES_OVERRIDE, G11 C8) — that series, labelled on the number. ONE spec on Master and on every
+    A-tab: Master's cell is a reference to the A-tab's (cross_tab.MASTER_SOURCES), so an override on Master alone never
+    reached the cell (G12 B2: Jake's 10-21 workbook still read the DefiLlama gap for World Mobile)."""
+    def metric(n):
+        return config.MASTER_FEES_OVERRIDE.get(n, ("fees_usd",))[0]
+    return ("Fees Q0 ($)", lambda r, p: pull(R.D(r, metric(p["name"]), "q0")), FMT_USD, "pull", False,
+            {"metric_fn": metric,
+             "fmt_fn": lambda n: (f'$#,##0" ({config.MASTER_FEES_OVERRIDE[n][1]})"' if n in config.MASTER_FEES_OVERRIDE
+                                  else None)})
+
+
 def write_master(ws, R: Refs, data_by_key: dict):
     # THE TITLE STATES THE SCOPE. "all projects" on a 16-project workbook is the same class of
     # untruth as a stale cell presented as fresh: it tells the reader nothing is missing.
@@ -8505,14 +8597,15 @@ def write_master(ws, R: Refs, data_by_key: dict):
         ("Market cap — CoinGecko ($, cross-check: price x CoinGecko's circulating)",
          lambda r, p: pull(R.D(r, "market_cap_usd_coingecko", "now")), FMT_USD, "pull", False,
          {"metric": "market_cap_usd_coingecko"}),
+        # G12 B1 (Jake 2026-10-21): CoinGecko's 30-day spot volume beside the market cap, and turnover = that volume ÷
+        # the market cap — how much of the float trades in a month (liquidity, not demand for the token's cash flows)
+        ("Trading volume, 30d ($) — CoinGecko spot, all venues",
+         lambda r, p: pull(R.D(r, "volume_usd", "now")), FMT_USD, "pull", False, {"metric": "volume_usd"}),
+        ("Turnover = 30d volume ÷ market cap (x)",
+         lambda r, p: calc(f"{R.D(r, 'volume_usd', 'now')}/{R.D(r, 'market_cap_usd', 'now')}"), FMT_X, "calc", False,
+         {"metric": "volume_usd"}),
         ("FDV ($)", lambda r, p: pull(R.D(r, "fdv_usd", "now")), FMT_USD, "pull", False, {"metric": "fdv_usd"}),
-        # G11 C8 (Jake's 10-21 run: World Mobile's Fees Q0 a gap with own_chain_fees_usd stored): a project whose only
-        # fee series is its own chain's gas shows it, labelled on the number (config.MASTER_FEES_OVERRIDE)
-        ("Fees Q0 ($)", lambda r, p: pull(R.D(r, config.MASTER_FEES_OVERRIDE.get(p["name"], ("fees_usd",))[0], "q0")),
-         FMT_USD, "pull", False,
-         {"metric_fn": lambda n: config.MASTER_FEES_OVERRIDE.get(n, ("fees_usd",))[0],
-          "fmt_fn": lambda n: (f'$#,##0" ({config.MASTER_FEES_OVERRIDE[n][1]})"' if n in config.MASTER_FEES_OVERRIDE
-                               else None)}),
+        _fees_q0_col(R),
         ("Revenue Q0 ($)", lambda r, p: pull(R.D(r, config.revenue_headline_metric(p["name"]), "q0")), FMT_USD, "pull",
          False, {"metric_fn": config.revenue_headline_metric}),
         # G11 C4 (Jake's 10-21 run: Chainlink's Master TVL n/a — it is A1 but not a chain, and protocol_tvl_usd $2.0B is
@@ -8553,7 +8646,7 @@ def write_master(ws, R: Refs, data_by_key: dict):
     specs = [_master_ref(s) for s in specs]
     _write_table(ws, R, scoped_projects(), specs, data_by_key,
                  ["price_usd", "fees_usd", "revenue_usd", "circulating_supply", "gross_burn_tokens", "gross_issuance_tokens", "actual_buyback_usd"],
-                 key_cols={21, 22})
+                 key_cols=_key_cols(specs, "Gross burn Q0 (tokens)", "Gross issuance Q0 (tokens)"))
     _assert_master_refs(ws)
     _set_widths(ws, {"A": 16, "B": 8, "C": 10, "D": 6, "E": 9, "F": 10, "G": 10, **{get_column_letter(i): 14 for i in range(8, 32)}, "AF": 12, "AG": 60, "AH": 60})
 
@@ -9244,7 +9337,7 @@ def write_cp(ws, R: Refs, data_by_key: dict):
                                      "staker vs whole-token yield, and the attributes (lock terms, payout currency, "
                                      "destination, mechanism certainty, capture status) — attributes, never "
                                      "penalties. RAW METRICS ONLY: no scores, bands or leaderboards.")
-    specs = _cp_cols(R, data_by_key)
+    specs = _with_details("CP", _cp_cols(R, data_by_key), R)
     end = _write_table(ws, R, projects, specs, data_by_key,
                        ["market_cap_usd", "circulating_supply", "locked_tokens", "fees_usd"],
                        key_cols=_key_cols(specs, "TRADEABLE FLOAT", "HOLDER VALUE YIELD", "NET HOLDER YIELD",
@@ -9350,7 +9443,7 @@ def write_a4(ws, R: Refs, data_by_key: dict):
         ("Burn execution", lambda r, p: pull(R.C(r, "Burn execution")), FMT_TEXT, "pull"),
         ("Burn status", lambda r, p: pull(R.C(r, "Burn status")), FMT_TEXT, "pull", False, {"status_fill": "burn_split"}),
         ("Documented share of fees burned (config)", lambda r, p: pull(R.C(r, "Share of fees burned")), FMT_PCT, "pull", False, {"gate": "burn_split"}),
-        ("Fees Q0 ($)", lambda r, p: pull(R.D(r, "fees_usd", "q0")), FMT_USD, "pull", False, {"metric": "fees_usd"}),
+        _fees_q0_col(R),
         ("Price — 90d average ($)", lambda r, p: pull(price(r)), FMT_USD4, "pull", False, {"metric": "price_usd"}),
         ("GROSS BURN Q0 (tokens)", lambda r, p: pull(burn(r, p)), FMT_NUM, "pull", True, {"metric_fn": config.a4_burn_metric}),
         ("Gross burn Q0 ($ at avg price)", lambda r, p: calc(f"{burn(r, p)}*{price(r)}"), FMT_USD, "calc"),
@@ -9415,6 +9508,7 @@ def write_a4(ws, R: Refs, data_by_key: dict):
         ("Notes", lambda r, p: "; ".join(x for x in [*("FOOTNOTE — " + t for t in config.burn_footnotes(p["name"])),
                                                      p.get("notes", ""), (p.get("burn_split") or {}).get("note", "")] if x), FMT_TEXT, "text"),
     ]
+    specs = _with_details("A4", specs, R)
     end = _write_table(ws, R, projects, specs, data_by_key,
                        ["fees_usd", "price_usd", "gross_burn_tokens", "sky_stage2_burn_tokens", "gross_issuance_tokens", "pool_release_tokens", "circulating_supply"],
                        key_cols=_key_cols(specs, "PERMANENT BURN YIELD", "BURN ÷ ISSUANCE", "NET SUPPLY CHANGE",
@@ -9468,7 +9562,7 @@ def write_a3(ws, R: Refs, data_by_key: dict):
         # the series the figure actually came from.
         ("Base for the implied buyback ($) — revenue, or the metric the protocol's share names",
          lambda r, p: pull(rev(r, p)), FMT_USD, "pull", False, {"metric_fn": config.revenue_base_metric}),
-        ("Fees Q0 ($)", lambda r, p: pull(R.D(r, "fees_usd", "q0")), FMT_USD, "pull", False, {"metric": "fees_usd"}),
+        _fees_q0_col(R),
         ("Implied buyback Q0 ($) = revenue × share", lambda r, p: no_buy(p) or base_gated(p, gated(st(r), f"{rev(r, p)}*{share(r)}", share(r))), FMT_USD, "calc", False, {"gate": "fee_split", "base": True}),
         ("Price — 90d average ($)", lambda r, p: pull(price(r)), FMT_USD4, "pull", False, {"metric": "price_usd"}),
         ("Implied buyback Q0 (tokens) = $ ÷ avg price", lambda r, p: no_buy(p) or base_gated(p, gated(st(r), f"{rev(r, p)}*{share(r)}/{price(r)}", share(r))), FMT_NUM, "calc", False, {"gate": "fee_split", "base": True}),
@@ -9647,6 +9741,7 @@ def write_a3(ws, R: Refs, data_by_key: dict):
         ("Buyback % supply at Q3 (−9m, split as at Q3)", lambda r, p: no_buy(p) or base_gated(p, gated(st(r, 'q3'), f"{rev(r, p, 'q3')}*{share(r, 'q3')}/{price(r, 'q3')}*{ann}/({circ(r, p)})", share(r, 'q3')), window='q3'), FMT_PCT, "calc", False, {"gate_window": "q3"}),
         ("Notes", lambda r, p: "; ".join(x for x in [p.get("notes", ""), (p.get("fee_split") or {}).get("note", "")] if x), FMT_TEXT, "text"),
     ]
+    specs = _with_details("A3", specs, R)
     end = _write_table(ws, R, projects, specs, data_by_key, ["revenue_usd", "fees_usd", "price_usd", "circulating_supply", "actual_buyback_usd", "actual_buyback_tokens", "emissions_tokens", "locked_tokens"],
                        key_cols=_key_cols(specs, "CIRCULATING RETIREMENT", "FDV RETIREMENT",
                                           "BUYBACK AS % OF SUPPLY", "Net absorption Q0"))
@@ -9662,7 +9757,6 @@ def write_a1(ws, R: Refs, data_by_key: dict, months: list[str]):
     ann = ANN
     price = lambda r, w="q0": R.D(r, "price_usd", w)  # noqa: E731
     iss = lambda r, w="q0": R.D(r, "gross_issuance_tokens", w)  # noqa: E731
-    fees = lambda r, w="q0": R.D(r, "fees_usd", w)  # noqa: E731
     circ = lambda r: R.D(r, "circulating_supply", "now")  # noqa: E731
     specs = [
         ("Project", lambda r, p: p["name"], FMT_TEXT, "text"),
@@ -9672,7 +9766,7 @@ def write_a1(ws, R: Refs, data_by_key: dict, months: list[str]):
         ("Transactions Q0", lambda r, p: pull(R.D(r, "tx_count", "q0")), FMT_NUM, "pull", False,
          {"metric": "tx_count", "fmt_fn": lambda n: (f'#,##0" ({config.TX_COUNT_SCOPE[n]})"'
                                                      if n in config.TX_COUNT_SCOPE else None)}),
-        ("Fees Q0 ($)", lambda r, p: pull(fees(r)), FMT_USD, "pull", False, {"metric": "fees_usd"}),
+        _fees_q0_col(R),
         ("Fee per transaction ($)", lambda r, p: _fee_per_tx(R, r, p, price(r)), FMT_USD4, "calc"),
         ("Fee per transaction — what it divides",
          lambda r, p: (config.fee_per_tx(p["name"]) or {}).get("label", "fees_usd ÷ tx_count, Q0 per covered day"),
@@ -9736,6 +9830,7 @@ def write_a1(ws, R: Refs, data_by_key: dict, months: list[str]):
         *_trajectory(R, "stablecoin_supply_usd", "Stablecoins"),
         ("Notes", lambda r, p: p.get("notes", ""), FMT_TEXT, "text"),
     ]
+    specs = _with_details("A1", specs, R)
     end = _write_table(ws, R, projects, specs, data_by_key, ["tx_count", "fees_usd", "tvl_usd", "stablecoin_supply_usd", "rwa_defillama_usd", "gross_issuance_tokens", "price_usd", "locked_tokens", "circulating_supply"],
                        key_cols=_key_cols(specs, "VALIDATOR STAKING YIELD", "TVL — chain", "FEES ÷ ISSUANCE"))
     _confidence_tally(ws, end + 2, projects, specs, data_by_key)
@@ -9813,6 +9908,7 @@ def write_a2(ws, R: Refs, data_by_key: dict, months: list[str]):
         *_trajectory(R, "emissions_tokens", "Emissions"),
         ("Notes", lambda r, p: p.get("notes", ""), FMT_TEXT, "text"),
     ]
+    specs = _with_details("A2", specs, R)
     end = _write_table(ws, R, projects, specs, data_by_key, ["supply_units", "utilisation_pct", "customer_revenue_usd", "emissions_tokens", "price_usd", "publisher_conviction_usd"],
                        key_cols=_key_cols(specs, "FREE FLOAT", "SUPPLY TRAJECTORY", "CUSTOMER REVENUE PER TOKEN",
                                           "Customer revenue ÷ emissions value"))
@@ -9957,6 +10053,19 @@ def _now_staleness(ours: dict, row: dict, asof) -> tuple[str, str] | None:
     return (worst, "; ".join(parts)) if parts else None
 
 
+def _empty_by_design(wb, ref: str) -> bool:
+    """True when "'<sheet>'!<cell>" names a written sheet's cell that holds nothing (None or "") — a cell the tab
+    leaves blank because the column does not apply to the project (coverage_audit: N/A BY DESIGN)."""
+    sh, _, addr = ref.lstrip("=").rpartition("!")
+    sh = sh.strip("'")
+    if sh not in wb.sheetnames or not addr:
+        return False
+    try:
+        return wb[sh][addr].value in (None, "")
+    except (ValueError, KeyError):
+        return False
+
+
 def write_credibility(ws, R: Refs, data_by_key: dict, long: pd.DataFrame, asof) -> list[dict]:
     """THE CREDIBILITY TAB (Jake, 2026-10-05): every headline cell on A1-A4 for the projects in
     config.CREDIBILITY_PROJECTS, plus each project's input rows, beside an independent reference.
@@ -10010,6 +10119,7 @@ def write_credibility(ws, R: Refs, data_by_key: dict, long: pd.DataFrame, asof) 
         held = row.pop("held", None)
         if row.get("mode") == "continuity" and held:
             if _X is None:
+                import sanity                              # noqa: PLC0415
                 import xlcalc                              # noqa: PLC0415
                 _X = xlcalc.Workbook(ws.parent)
             lost = []
@@ -10019,7 +10129,7 @@ def write_credibility(ws, R: Refs, data_by_key: dict, long: pd.DataFrame, asof) 
                     now = _X.value(sh, c.row, c.column)
                 except Exception as e:  # noqa: BLE001
                     now = f"unevaluable ({type(e).__name__})"
-                if not isinstance(now, (int, float)) or isinstance(now, bool):
+                if (not isinstance(now, (int, float)) or isinstance(now, bool)) and sanity.stated_number(now) is None:
                     lost.append(f"{sh[:2]} {head[:60]} ({cell}) was {was:,.6g}, now {str(xlcalc.display(now))[:80]}")
             row["note"] = ((f"LOST NOW ({len(lost)}): " + "; ".join(lost) + " | ") if lost else
                            "every held headline still reads a number | ") + row["note"]
@@ -10036,6 +10146,14 @@ def write_credibility(ws, R: Refs, data_by_key: dict, long: pd.DataFrame, asof) 
         if "fallback" in ours:                          # the last stored value, dated (credibility.now_max_age)
             d = R.D(r, ours["metric"], ours.get("window", "now"))
             f = f'=IF(ISNUMBER({d}),{d},{ours["fallback"]!r})'
+        # G12 A2 (Jake 2026-10-21): a row reading a cell that is EMPTY BY DESIGN (CP's BUSINESS 4 for a project with
+        # three series, the second market-share basis for a non-chain, A3's protocol staking yield where nothing is
+        # staked for yield) showed "our value 0" in Excel. It says so instead, and is N/A — never a measured zero.
+        if "cell" in ours and _empty_by_design(ws.parent, ours["cell"]):
+            f = "no figure by design"
+            row.update(mode="static", verdict="N/A (no figure by design)",
+                       note=f"the cell {ours['cell']} is empty by design (the column does not apply to this project)"
+                            + (f" | {row['note']}" if row.get("note") else ""))
         stale = _now_staleness(ours, row, asof)
         c = ws.cell(row=r, column=5, value=f)
         _style(c, "pull", row.get("fmt") or FMT_NUM2)
@@ -11236,8 +11354,9 @@ def build_workbook(store, path: Path | str, run_id: str | None = None,
     for label, start, end in _period_windows(asof):
         _WINDOWS[label.lower()] = (start.date().isoformat(), end.date().isoformat())
 
+    wiring.reset()
     data = aggregate(long, fetch_status, asof, gaps=gaps, review=review)
-    data_by_key = {r["key"]: r for r in data.to_dict("records")}
+    data_by_key = wiring.TrackingDict({r["key"]: r for r in data.to_dict("records")})
     months, monthly = monthly_table(long, asof)
     R = Refs(len(data), len(monthly), months)
 
@@ -11265,19 +11384,22 @@ def build_workbook(store, path: Path | str, run_id: str | None = None,
     _HEADLINE_CELLS.clear()
     _TAB_CELLS.clear()
     trajectory.reset()
-    a4 = write_a4(ws_a4, R, data_by_key)
-    a3 = write_a3(ws_a3, R, data_by_key)
-    a1 = write_a1(ws_a1, R, data_by_key, months)
-    a2 = write_a2(ws_a2, R, data_by_key, months)
-    write_cp(ws_cp, R, data_by_key)            # Phase 2 comparability (2026-10-12): reads no other tab
-    # MASTER AFTER THE A-TABS (Jake's review of 97b29ae, 2026-10-11): every Master column that summarises an A-tab
-    # figure is a REFERENCE to that A-tab cell, so the headline and the A-tabs cannot disagree (cross_tab.py)
-    write_master(ws_master, R, data_by_key)
+    with wiring.phase("shown"):                # G12 A1: what the display writers read is SHOWN
+        a4 = write_a4(ws_a4, R, data_by_key)
+        a3 = write_a3(ws_a3, R, data_by_key)
+        a1 = write_a1(ws_a1, R, data_by_key, months)
+        a2 = write_a2(ws_a2, R, data_by_key, months)
+        write_cp(ws_cp, R, data_by_key)            # Phase 2 comparability (2026-10-12): reads no other tab
+        # MASTER AFTER THE A-TABS (Jake's review of 97b29ae, 2026-10-11): every Master column that summarises an A-tab
+        # figure is a REFERENCE to that A-tab cell, so the headline and the A-tabs cannot disagree (cross_tab.py)
+        write_master(ws_master, R, data_by_key)
     for _ws in (ws_master, ws_a1, ws_a2, ws_a3, ws_a4, ws_cp):     # the SPEC.md axis of every column (C13)
         _axis_row(_ws)
-    FLOWS_ROWS[:] = flow_statements(_LAST_GROUPS, asof)          # alignment C11: the Flows tab
-    write_flows(wb, FLOWS_ROWS)
-    CREDIBILITY_ROWS[:] = write_credibility(ws_cred, R, data_by_key, long, asof)
+    with wiring.phase("shown"):
+        FLOWS_ROWS[:] = flow_statements(_LAST_GROUPS, asof)          # alignment C11: the Flows tab
+        write_flows(wb, FLOWS_ROWS)
+    with wiring.phase("cross"):
+        CREDIBILITY_ROWS[:] = write_credibility(ws_cred, R, data_by_key, long, asof)
     write_charts(ws_ch, {"a3": a3, "a4": a4, "a1": a1, "a2": a2, "ws_a3": ws_a3, "ws_a4": ws_a4, "ws_a1": ws_a1, "ws_a2": ws_a2})
     gap_end = write_gap_report(ws_gap, gaps, run_id) or (len(gaps) + 8 if gaps is not None else 8)
     _write_manual_quarterly(ws_gap, gap_end + 2, long)
@@ -11311,7 +11433,18 @@ def build_workbook(store, path: Path | str, run_id: str | None = None,
             c.fill = fill
 
     # THE TRAJECTORY TAB (theory layer, Phase 1): after every tab it reads is written
-    TRAJECTORY_ROWS[:] = write_trajectory(wb, data_by_key, asof=asof)
+    with wiring.phase("shown"):
+        TRAJECTORY_ROWS[:] = write_trajectory(wb, data_by_key, asof=asof)
+    # THE WIRING AUDIT (Round G12 A1): every series with a number, SHOWN / CROSS-CHECK / INPUT / NOT SHOWN / UNWIRED, from
+    # the dependency graph this build recorded; beside the workbook (wiring.json) and summarised on the Run Log
+    WIRING.clear()
+    try:
+        WIRING.update(wiring.audit(data.to_dict("records"), wb, CREDIBILITY_ROWS, FLOWS_ROWS,
+                                   projects={p["name"] for p in scoped_projects()}))
+        wiring.write(WIRING, Path(path).with_name("wiring.json"))
+    except Exception as e:  # noqa: BLE001 — an audit that cannot run is said, never a silent pass
+        WIRING[("(all)", "(wiring audit not run)")] = {"class": "ERROR", "why": f"{type(e).__name__}: {str(e)[:200]}",
+                                                       "label": "", "latest": None, "latest_date": ""}
 
     # SANITY RULES ON THE BUILT NUMBERS (Jake's review of 97b29ae, item 17 — permanent): evaluated in Python (xlcalc)
     # and written under the Review Queue; credibility_report prints them (SANITY_HITS)
@@ -11366,11 +11499,13 @@ def build_workbook(store, path: Path | str, run_id: str | None = None,
             prev_board = None
         LOST_VERIFIED[:] = coverage_audit.lost_verified(prev_rows, COVERAGE_ROWS)
         coverage_audit.write(wb, COVERAGE_ROWS, csv_path, board=board)
+        _board_unwired(board, WIRING)
         try:
             board_path.write_text(__import__("json").dumps(board, indent=1), encoding="utf-8")
         except OSError:
             pass
         SCOREBOARD_LINES[:] = scoreboard_lines(board, coverage_audit.board_delta(board, prev_board))
+        SCOREBOARD_LINES.extend(wiring_lines(WIRING))
         SCOREBOARD_LINES.extend(lost_verified_lines(LOST_VERIFIED))
         _write_runlog_scoreboard(ws_log, SCOREBOARD_LINES)
     except Exception as e:  # noqa: BLE001
@@ -11456,6 +11591,26 @@ def scoreboard_lines(board: dict, delta: dict | None = None) -> list[str]:
                    f"{b['Verified share']} · populated {b.get('Populated', '-')} · MISSING by cause "
                    f"{b.get('MISSING by cause', '-')}")
     return out
+
+
+WIRING: dict = {}               # (project, metric) -> the wiring audit's class of the last build (G12 A1)
+
+
+def wiring_lines(result: dict) -> list[str]:
+    """The Run Log's wiring line: UNWIRED n, by project (G12 A1)."""
+    s = wiring.summary(result)
+    un = {p: c.get("UNWIRED", 0) for p, c in s["by_project"].items() if c.get("UNWIRED")}
+    return [f"WIRING: UNWIRED {s['unwired']} — " + (", ".join(f"{p} {n}" for p, n in sorted(un.items())) or "none")
+            + " · " + ", ".join(f"{k} {v}" for k, v in sorted(s["counts"].items()))
+            + " (python check_offline_items.py wiring lists them)"]
+
+
+def _board_unwired(board: dict, result: dict) -> None:
+    """Each scoreboard project gains "UNWIRED" (the ALL row the total) — G12 A1."""
+    s = wiring.summary(result)
+    for p, b in board.items():
+        if isinstance(b, dict):
+            b["UNWIRED"] = s["unwired"] if p == "ALL" else (s["by_project"].get(p) or {}).get("UNWIRED", 0)
 
 
 def lost_verified_lines(lost: list[dict]) -> list[str]:

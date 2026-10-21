@@ -29996,7 +29996,14 @@ _hl["series_handover"]["actual_buyback_tokens"] = dict(
     _hl["series_handover"]["gross_burn_tokens"],
     why="DefiLlama holders revenue / price before the first HyperCore read; the live Assistance Fund balance delta "
         "(gross_burn_tokens, as buyback) from its first day — the Fund's purchases only (G11 B7)",
-    declared_on="2026-10-21")
+    declared_on="2026-10-21",
+    # G12 C6 (Jake's 10-21 workbook: Q1–Q3 the DefiLlama-derived leg, Q0 the Assistance Fund basis). No Assistance Fund
+    # history is STORED before the stitch — gross_burn_tokens' rows back to 2024-12-23 are this same DefiLlama leg,
+    # prepended at read time — so the AF leg cannot be extended back, and a trend across the stitch compares two bases
+    composition_change="THE BASIS CHANGES at the stitch: before the first live Assistance Fund read the buyback is "
+                       "DefiLlama holders revenue ÷ price, a revenue model (0.89–0.97 of the executed buybacks a month "
+                       "to July 2026, a DefiLlama definition break in August); from it, the Fund's own balance change. "
+                       "A trend across it is a SERIES BREAK")
 _hl["burn_total"]["a4_view"] = {"metric": "burn_ex_chain_fee_tokens", "exclude_extra": ("burn_hyperevm",)}
 _hl["a4_net_burn_metric"] = "burn_ex_chain_fee_tokens"
 
@@ -31424,3 +31431,402 @@ VALUE_FLOW_MEMO = {
 FLOW_LINE_NOTES[("Near", "Outflows beside: ecosystem / grants (d)")] = (
     "the treasury's 1/10 of the epoch mint (line m) is NOT here — N/A BY DESIGN: it is minted to treasury.near, not paid "
     "out (memo line below); grants paid from treasury.near would be (d) and have no series")
+
+# ===== G12 A1: SERIES DELIBERATELY NOT SHOWN (the wiring audit's class 4). =====
+# {(project, metric) or ("*", metric): one-line reason}. A series with a number that no cell, Credibility row or view
+# reads is UNWIRED unless it is here.
+NOT_SHOWN: dict = {}
+
+
+
+# ===== G12 A1 — FETCH-TIME INPUTS (the wiring audit's class 3 for series a FETCHER consumes). =====
+# A stored series that the fetch layer turns into another stored series never passes through aggregate(), so the
+# build's dependency graph cannot see the edge. Each entry names the child, its parent(s) and the module whose code
+# makes the derivation; tests/test_round_g12 asserts every module named here really reads the parent and writes the
+# child. {child metric: ((parent metric, ...), module, projects or None for every project that has both)}.
+FETCH_INPUTS: tuple = (
+    ("market_share_pct", ("market_share_category_usd",), "fetch/business.py", None),
+    ("market_share_2_pct", ("market_share_2_category_usd",), "fetch/business.py", None),
+    ("gross_burn_tokens", ("burn_cumulative_tokens",), "fetch/etherscan_supply.py", ("Ethereum",)),
+    ("consensus_rewards_tokens", ("consensus_rewards_cumulative",), "fetch/etherscan_supply.py", ("Ethereum",)),
+    # NEAR's protocol burn share (70% before protocol v87, 100% from it) is dated by the version read every run
+    ("gross_burn_tokens", ("near_protocol_version",), "fetch/history_derive.py", ("Near",)),
+)
+
+
+def fetch_inputs(project_name: str) -> dict:
+    """{child: (parents, module)} for one project — FETCH_INPUTS, plus CoinGecko's market cap ÷ price as the declared
+    history leg of circulating_supply where the live circulating leg is CoinGecko's (fetch/history_derive.py
+    derives nothing for an on-chain-first project)."""
+    out: dict = {}
+    for child, parents, module, projects in FETCH_INPUTS:
+        if projects is None or project_name in projects:
+            had = out.get(child, ((), ""))
+            out[child] = (tuple(had[0]) + tuple(parents), " + ".join(x for x in (had[1], module) if x))
+    if not circulating_onchain_primary(project_name):
+        had = out.get("circulating_supply", ((), ""))
+        out["circulating_supply"] = (tuple(had[0]) + ("circulating_supply_implied",), "fetch/history_derive.py")
+    return out
+
+
+# ===== G12 A1 — DECLARED NOT SHOWN (class 4): every entry a one-line reason. =====
+def _g12_not_shown_rules(project_name: str, metric: str) -> str:
+    """Reasons that follow from config itself, so they cannot drift from it."""
+    if metric == "price_usd_coinbase" and project_name not in (CREDIBILITY_XREF.get("coinbase_product") or {}):
+        return ("Coinbase candles under a GUESSED <SYMBOL>-USD product: since 2026-10-05 only a declared product is read "
+                "(CREDIBILITY_XREF.coinbase_product); these rows are the old guess's, removed by orphan_cleanup.sql CZ")
+    if metric == "circulating_supply_implied" and circulating_onchain_primary(project_name):
+        return ("CoinGecko's market cap ÷ price — the same source as the CoinGecko circulating shown on Master (a "
+                "duplicate, not a second source); used only as the history leg where the live circulating is "
+                "CoinGecko's (fetch/history_derive.py), which it is not for this on-chain-first project")
+    return ""
+
+
+def not_shown_reason(project_name: str, metric: str) -> str:
+    """Why a series is deliberately not shown (config.NOT_SHOWN, then the config-derived rules), or ''."""
+    return (NOT_SHOWN.get((project_name, metric)) or NOT_SHOWN.get(("*", metric))
+            or _g12_not_shown_rules(project_name, metric) or "")
+
+
+# ===== G12 PART B — SHOWN AS DETAIL ON THE ARCHETYPE TAB (Jake 2026-10-21: "if a series measures supply, demand or
+# value capture for the project, SHOW it on its archetype tab"). =====
+# Each entry is one column on `tab`, its header starting "Detail — " (spec.COLUMN_MAP: SUPPORT "detail"), placed right
+# after the first column whose header starts with `after` (else before Notes). `cells` maps a project to
+# (metric, window): a STOCK reads "now" (its latest), a FLOW "q0" (trailing 90 days) or "now" (trailing 30 days; for a
+# monthly series the latest complete month). Optional per entry: "fmt" (num / usd / pct / ratio / date / unix_date),
+# "ratio_to": (metric, window) to divide by, "per_day": the window's per-covered-day rate. Other projects' cells are
+# blank: the column does not apply to them. Aerodrome is parked (G12 B14): no detail cell until after its migration run.
+DETAIL_COLUMNS: list = [
+    # ---- A1 — chains ----
+    {"tab": "A1", "after": "Transactions Q0", "header": "Detail — Transactions Q0, ORGANIC (ex Kai-Ching's signers)",
+     "cells": {"Near": ("tx_count_ex_kaiching", "q0")}},
+    {"tab": "A1", "after": "Detail — Transactions Q0, ORGANIC",
+     "header": "Detail — memo: transactions Q0 SIGNED by Kai-Ching (*.kaiching; excluded from the organic count)",
+     "cells": {"Near": ("tx_count_kaiching", "q0")}},
+    {"tab": "A1", "after": "Transactions Q0", "header": "Detail — HyperEVM SUCCESSFUL transactions Q0 (ASXN)",
+     "cells": {"Hyperliquid": ("tx_count_successful", "q0")}},
+    {"tab": "A1", "after": "Active addresses", "header": "Detail — HyperCore users, cumulative (latest, ASXN)",
+     "cells": {"Hyperliquid": ("hypercore_users_total", "now")}},
+    {"tab": "A1", "after": "Detail — HyperCore users", "header": "Detail — HyperCore NEW users Q0 (ASXN)",
+     "cells": {"Hyperliquid": ("hypercore_new_users", "q0")}},
+    {"tab": "A1", "after": "TVL — chain", "header": "Detail — Protocol TVL ($, latest; the chain TVL is to the left)",
+     "cells": {"Hyperliquid": ("protocol_tvl_usd", "now")}, "fmt": "usd"},
+    {"tab": "A1", "after": "Gross issuance Q0 (tokens)",
+     "header": "Detail — SUPPLY OVERHANG: staking-reward reserve not yet emitted (tokens, latest)",
+     "cells": {"Hyperliquid": ("future_emissions_tokens", "now")}},
+    {"tab": "A1", "after": "Detail — SUPPLY OVERHANG",
+     "header": "Detail — Supply overhang, % of total supply (reserve ÷ total supply, latest)",
+     "cells": {"Hyperliquid": ("future_emissions_tokens", "now")}, "ratio_to": ("total_supply", "now"), "fmt": "pct"},
+    {"tab": "A1", "after": "Staked tokens", "header": "Detail — Staked OUTSIDE the active set or jailed (tokens, latest)",
+     "cells": {"Hyperliquid": ("locked_tokens_inactive", "now")}},
+    {"tab": "A1", "after": "Circulating supply", "header": "Detail — NEAR still UNVESTED in lockup contracts (tokens, latest; out of circulating)",
+     "cells": {"Near": ("near_lockup_unvested_tokens", "now")}},
+    {"tab": "A1", "after": "Validator yield GROSS", "header": "Detail — Validator commission, stake-weighted (latest)",
+     "cells": {"Plume": ("staking_commission_pct", "now")}, "fmt": "pct"},
+    {"tab": "A1", "after": "Execution part", "header": "Detail — Share of blocks delivered by the covered MEV-Boost relays (latest day)",
+     "cells": {"Ethereum": ("mev_relay_block_share", "now")}, "fmt": "pct"},
+    {"tab": "A1", "after": "Detail — Share of blocks", "header": "Detail — ETH delivered to proposers by MEV-Boost relays Q0",
+     "cells": {"Ethereum": ("mev_relay_value_eth", "q0")}},
+    {"tab": "A1", "after": "Settlement volume: last date", "header": "Detail — Settlement leg: DEX volume Q0 ($)",
+     "cells": {"Ethereum": ("dex_volume_usd", "q0"), "Near": ("dex_volume_usd", "q0"), "Plume": ("dex_volume_usd", "q0"),
+               "Hyperliquid": ("dex_volume_usd", "q0")}, "fmt": "usd"},
+    {"tab": "A1", "after": "Detail — Settlement leg: DEX", "header": "Detail — Settlement leg: NFT volume Q0 ($)",
+     "cells": {"Ethereum": ("nft_volume_usd", "q0")}, "fmt": "usd"},
+    {"tab": "A1", "after": "Detail — Settlement leg: NFT", "header": "Detail — Settlement leg: P2P transfer volume Q0 ($)",
+     "cells": {"Ethereum": ("p2p_transfer_volume_usd", "q0"), "Near": ("p2p_transfer_volume_usd", "q0"),
+               "Plume": ("p2p_transfer_volume_usd", "q0")}, "fmt": "usd"},
+    # ---- A2 — coordination ----
+    {"tab": "A2", "after": "Customer revenue Q0", "header": "Detail — Own-chain transactions Q0 (World Mobile chain, ex the per-block system tx)",
+     "cells": {"World Mobile": ("own_chain_tx_count", "q0")}},
+    {"tab": "A2", "after": "Detail — Own-chain transactions", "header": "Detail — Own-chain ACTIVE ACCOUNTS per day (Q0 average)",
+     "cells": {"World Mobile": ("own_chain_active_addresses", "q0")}, "per_day": True},
+    {"tab": "A2", "after": "Detail — Own-chain ACTIVE", "header": "Detail — Own-chain fees Q0 (native coin)",
+     "cells": {"World Mobile": ("own_chain_fees_native_tokens", "q0")}},
+    {"tab": "A2", "after": "Detail — Own-chain fees", "header": "Detail — Active addresses (latest; World Mobile: manual reading)",
+     "cells": {"World Mobile": ("active_addresses", "now")}},
+    {"tab": "A2", "after": "Customer revenue Q0", "header": "Detail — Compute SERVICE FEES paid Q0 (ATH; demand, never rewards)",
+     "cells": {"Aethir": ("compute_service_fee_tokens", "q0")}},
+    {"tab": "A2", "after": "Detail — Compute SERVICE FEES paid Q0", "header": "Detail — Compute service fees, cumulative (ATH, latest)",
+     "cells": {"Aethir": ("compute_service_fee_cumulative_tokens", "now")}},
+    {"tab": "A2", "after": "Detail — Compute service fees, cumulative", "header": "Detail — Compute hours delivered last week (latest)",
+     "cells": {"Aethir": ("compute_hours_last_week", "now")}},
+    {"tab": "A2", "after": "Customer revenue Q0", "header": "Detail — Holders revenue Q0 ($, DefiLlama; no buyback of ours to set it against)",
+     "cells": {"Aethir": ("holders_revenue_usd", "q0"), "Morpho": ("holders_revenue_usd", "q0")}, "fmt": "usd"},
+    {"tab": "A2", "after": "Customer revenue Q0", "header": "Detail — Liquidation bonuses Q0 ($, Morpho API — paid by borrowers to liquidators)",
+     "cells": {"Morpho": ("liquidation_bonus_usd_day_morpho_api", "q0")}, "fmt": "usd"},
+    {"tab": "A2", "after": "Emissions to suppliers Q0", "header": "Detail — Compute rewards Q0 (ATH; supply-side cost)",
+     "cells": {"Aethir": ("compute_rewards_tokens", "q0")}},
+    {"tab": "A2", "after": "Detail — Compute rewards Q0", "header": "Detail — Compute rewards, cumulative (ATH, latest)",
+     "cells": {"Aethir": ("compute_rewards_cumulative_tokens", "now")}},
+    {"tab": "A2", "after": "Detail — Compute rewards, cumulative", "header": "Detail — Compute rewards LOCKED (ATH, latest)",
+     "cells": {"Aethir": ("compute_rewards_locked_tokens", "now")}},
+    {"tab": "A2", "after": "Detail — Compute rewards LOCKED", "header": "Detail — Emissions RELEASED to holders Q0 (ATH)",
+     "cells": {"Aethir": ("emissions_released_tokens", "q0")}},
+    {"tab": "A2", "after": "Detail — Emissions RELEASED", "header": "Detail — Checker-node rewards, cumulative (ATH, latest)",
+     "cells": {"Aethir": ("checker_rewards_cumulative_tokens", "now")}},
+    {"tab": "A2", "after": "Detail — Checker-node rewards", "header": "Detail — All ecosystem rewards, cumulative (ATH, latest)",
+     "cells": {"Aethir": ("ecosystem_rewards_cumulative_tokens", "now")}},
+    {"tab": "A2", "after": "Detail — All ecosystem rewards", "header": "Detail — Staking rewards, cumulative (ATH, latest; not supplier emissions)",
+     "cells": {"Aethir": ("staker_rewards_cumulative_tokens", "now")}},
+    {"tab": "A2", "after": "Detail — Staking rewards, cumulative", "header": "Detail — Edge earnings, latest complete month (ATH)",
+     "cells": {"Aethir": ("edge_earnings_monthly_tokens", "now")}},
+    {"tab": "A2", "after": "Capacity utilisation", "header": "Detail — Utilisation since launch (cumulative hours delivered ÷ online)",
+     "cells": {"Aethir": ("utilisation_cumulative_pct", "now")}, "fmt": "pct"},
+    {"tab": "A2", "after": "Detail — Utilisation since launch", "header": "Detail — Utilisation LOWER BOUND (last week's hours ÷ containers × 168h)",
+     "cells": {"Aethir": ("utilisation_containers_pct", "now")}, "fmt": "pct"},
+    {"tab": "A2", "after": "Supply units", "header": "Detail — Compute power (TFLOPs, latest)",
+     "cells": {"Aethir": ("compute_power_total", "now")}},
+    {"tab": "A2", "after": "Detail — Compute power", "header": "Detail — Countries / locations with supply (latest)",
+     "cells": {"Aethir": ("supply_locations", "now")}},
+    {"tab": "A2", "after": "Detail — Countries", "header": "Detail — Delegated checker-node licences (latest)",
+     "cells": {"Aethir": ("supply_units_checker_licences", "now")}},
+    {"tab": "A2", "after": "Detail — Delegated checker", "header": "Detail — Monthly capacity of players (gaming measure, NOT GPU-hours; latest)",
+     "cells": {"Aethir": ("capacity_monthly_total", "now")}},
+    {"tab": "A2", "after": "Staked tokens", "header": "Detail — Staked: Edge (ATH, latest)",
+     "cells": {"Aethir": ("locked_tokens_edge", "now")}},
+    {"tab": "A2", "after": "Detail — Staked: Edge", "header": "Detail — Staked: compute providers / Cloud Hosts (ATH, latest)",
+     "cells": {"Aethir": ("locked_tokens_idc", "now")}},
+    {"tab": "A2", "after": "Detail — Staked: compute", "header": "Detail — stATH in the Sophon pool (ATH, latest; never added to staked)",
+     "cells": {"Aethir": ("stath_sophon_pool_tokens", "now")}},
+    # ---- A3 — revenue buyback ----
+    {"tab": "A3", "after": "Actual buyback Q0 (tokens)", "header": "Detail — Last counted buyback inflow (date)",
+     "cells": {"Chainlink": ("buyback_last_inflow_date", "now"), "Ether.fi": ("buyback_last_inflow_date", "now"),
+               "Sky": ("buyback_last_inflow_date", "now")}, "fmt": "date"},
+    {"tab": "A3", "after": "Actual buyback Q0 (tokens)",
+     "header": "Detail — Programmatic buyback Q0 (tokens) — BOUGHT, paid on as cashback, NOT credited to holders",
+     "cells": {"Ether.fi": ("programmatic_buyback_tokens", "q0")}},
+    {"tab": "A3", "after": "Actual buyback Q0 (tokens)", "header": "Detail — SYRUP Strategic Fund holdings (tokens, latest)",
+     "cells": {"Maple": ("ssf_holdings_tokens", "now")}},
+    {"tab": "A3", "after": "Detail — SYRUP Strategic Fund holdings", "header": "Detail — SSF net outflow, latest complete month (tokens, signed)",
+     "cells": {"Maple": ("ssf_net_outflow_tokens", "now")}},
+    {"tab": "A3", "after": "Detail — SSF net outflow", "header": "Detail — Treasury holding (governance-controlled, tokens, latest)",
+     "cells": {"Maple": ("treasury_holding_tokens", "now")}},
+    {"tab": "A3", "after": "Emissions Q0 (tokens)", "header": "Detail — Rewards paid from tokens BOUGHT BACK Q0 (a distribution of a buyback already counted)",
+     "cells": {"Sky": ("emissions_revenue_funded_tokens", "q0")}},
+    {"tab": "A3", "after": "Supply figure complete?", "header": "Detail — Accrued, NOT YET MINTED (tokens, latest; the lazy mint)",
+     "cells": {"Pendle": ("latent_supply_tokens", "now")}},
+    {"tab": "A3", "after": "Circulating supply", "header": "Detail — MKR outstanding (tokens, latest)",
+     "cells": {"Sky": ("mkr_outstanding_tokens", "now")}},
+    {"tab": "A3", "after": "Detail — MKR outstanding", "header": "Detail — MKR held by the issuer (Pause Proxy, tokens, latest)",
+     "cells": {"Sky": ("mkr_issuer_tokens", "now")}},
+    {"tab": "A3", "after": "Detail — MKR held by the issuer", "header": "Detail — SKY backing MKR held by non-issuers (tokens, latest)",
+     "cells": {"Sky": ("sky_mkr_nonissuer_backing_tokens", "now")}},
+    {"tab": "A3", "after": "Detail — SKY backing MKR", "header": "Detail — MKR → SKY conversion fee (latest)",
+     "cells": {"Sky": ("mkr_sky_fee", "now")}, "fmt": "pct"},
+    {"tab": "A3", "after": "Tokens locked (ve)", "header": "Detail — Staked position: assets per share (latest)",
+     "cells": {"Ether.fi": ("lock_assets_per_share", "now"), "Pendle": ("lock_assets_per_share", "now")}, "fmt": "ratio"},
+    {"tab": "A3", "after": "Average lock duration", "header": "Detail — Unstaking cooldown (days, contract)",
+     "cells": {"Pendle": ("cooldown_days", "now")}},
+    {"tab": "A3", "after": "PENDLE still in the OLD", "header": "Detail — Legacy vePENDLE VOTING supply (decaying weight, latest)",
+     "cells": {"Pendle": ("vependle_voting_supply_tokens", "now")}},
+    {"tab": "A3", "after": "PROTOCOL STAKING YIELD (tokens)", "header": "Detail — sETHFI top-ups Q0 (ETHFI added with NO shares minted)",
+     "cells": {"Ether.fi": ("sethfi_topup_tokens", "q0")}},
+    {"tab": "A3", "after": "Detail — sETHFI top-ups", "header": "Detail — sETHFI assets per share, REBUILT from the logs (latest)",
+     "cells": {"Ether.fi": ("sethfi_aps_rebuilt", "now")}, "fmt": "ratio"},
+    {"tab": "A3", "after": "Detail — sETHFI assets per share, REBUILT", "header": "Detail — sETHFI assets per share, REWARD-ONLY walk (latest)",
+     "cells": {"Ether.fi": ("sethfi_aps_reward_only", "now")}, "fmt": "ratio"},
+    {"tab": "A3", "after": "Sky Savings Rate", "header": "Detail — USDS farm: USDS paid per second to lsSKY stakers (rewardRate, latest)",
+     "cells": {"Sky": ("usds_farm_reward_rate_usds_per_s", "now")}, "fmt": "ratio"},
+    {"tab": "A3", "after": "Staking APR as the protocol publishes", "header": "Detail — Staking reward rate ends (date; earliest active RewardVault bucket)",
+     "cells": {"Chainlink": ("reward_rate_ends_unix", "now")}, "fmt": "unix_date"},
+    *[{"tab": "A3", "after": "Fees Q0", "header": f"Detail — TVL in markets {lab} from expiry ($, latest)",
+       "cells": {"Pendle": (m, "now")}, "fmt": "usd"}
+      for m, lab in (("tvl_maturity_gt_180d_usd", "more than 180 days"), ("tvl_maturity_91_180d_usd", "91-180 days"),
+                     ("tvl_maturity_31_90d_usd", "31-90 days"), ("tvl_maturity_le_30d_usd", "1-30 days"))],
+    {"tab": "A3", "after": "Fees Q0", "header": "Detail — TVL in all unexpired markets ($, latest; the four maturity buckets follow)",
+     "cells": {"Pendle": ("tvl_maturity_total_usd", "now")}, "fmt": "usd"},
+    # ---- A4 — permanent burn ----
+    {"tab": "A4", "after": "GROSS BURN Q0 (tokens)", "header": "Detail — Actual buyback Q0 BURNED (tokens)",
+     "cells": {"Uniswap": ("buyback_burned_tokens", "q0")}},
+    {"tab": "A4", "after": "Detail — Actual buyback Q0 BURNED", "header": "Detail — Actual buyback Q0 HELD (tokens: treasury, reserve, foundation-locked)",
+     "cells": {"Uniswap": ("buyback_held_tokens", "q0")}},
+    {"tab": "A4", "after": "Detail — Actual buyback Q0 HELD", "header": "Detail — Actual buyback Q0 DISTRIBUTED to stakers (tokens)",
+     "cells": {"Uniswap": ("buyback_distributed_tokens", "q0")}},
+    {"tab": "A4", "after": "Detail — Actual buyback Q0 DISTRIBUTED", "header": "Detail — Buyback fund balance (tokens, latest)",
+     "cells": {"Uniswap": ("buyback_fund_balance", "now")}},
+    {"tab": "A4", "after": "GROSS BURN Q0 (tokens)", "header": "Detail — Stage 2 buy-and-burn, cumulative since 2026-09-10 (SKY, latest)",
+     "cells": {"Sky": ("sky_stage2_burn_balance", "now")}},
+    # ---- CP — comparability ----
+    {"tab": "CP", "after": "BUSINESS 1", "header": "Detail — CCIP token-moving messages Q0 (beside BUSINESS 1, all messages)",
+     "cells": {"Chainlink": ("ccip_token_transfers", "q0")}},
+    {"tab": "CP", "after": "Unlocks Q0", "header": "Detail — Returned to the issuer wallets Q0 (tokens; the rise in their stock)",
+     "cells": {"Chainlink": ("issuer_return_tokens", "q0")}},
+    {"tab": "CP", "after": "Unlocks Q0", "header": "Detail — Released from issuer wallets the circulating figure COUNTS Q0 (tokens)",
+     "cells": {"Hyperliquid": ("unlock_release_counted_tokens", "q0")}},
+]
+
+
+def detail_columns(tab: str) -> list:
+    """DETAIL_COLUMNS for one tab prefix ("A1".."A4", "CP"), Aerodrome's cells removed while it is parked."""
+    out = []
+    for d in DETAIL_COLUMNS:
+        if d["tab"] == tab:
+            cells = {k: v for k, v in d["cells"].items() if k not in DETAIL_PARKED}
+            if cells:
+                out.append({**d, "cells": cells})
+    return out
+
+
+DETAIL_PARKED = {"Aerodrome": "parked until after the migration run (G12 B14)"}
+
+
+# ===== G12 PART B — CROSS-CHECK ROWS FOR STORED SECOND SOURCES (Jake 2026-10-21: "if it measures the same thing as a
+# shown series from another source -> a CROSS-CHECK row"). =====
+# A RECORDED row (verdict "N/A (recorded)") shows the second source's figure and the gap beside ours, never judged: the
+# two differ by DEFINITION or WINDOW in a way the row states. Judged rows carry a tolerance. Built by
+# credibility.wiring_inputs, after the generic rows and before each project's own CREDIBILITY specs (which win).
+def _c_rec(why: str, **ref) -> dict:
+    """A recorded, not judged, reference: its value is shown beside ours with the gap; the verdict stays N/A."""
+    return {"force_verdict": "N/A (recorded)", "why": f"recorded, not judged: {why}", **ref}
+
+
+_PENDLE_GAUGE_CHAINS = (("ethereum", "emissions_tokens_gauge_mainnet"), ("arbitrum", "emissions_tokens_gauge_arbitrum"),
+                        ("optimism", "emissions_tokens_gauge_optimism"), ("bsc", "emissions_tokens_gauge_bsc"),
+                        ("base", "emissions_tokens_gauge_base"), ("mantle", "emissions_tokens_gauge_mantle"),
+                        ("sonic", "emissions_tokens_gauge_sonic"), ("berachain", "emissions_tokens_gauge_berachain"),
+                        ("hyperevm", "emissions_tokens_gauge_hyperevm"))
+
+CREDIBILITY_WIRING: dict = {
+    "Aethir": {
+        "in_arr_tile": _c_in("ARR ($) — ours vs Aethir's ARR tile", "arr_usd", "now", _c_rec(
+            "Aethir's tile is the last complete month x 12; ours (arr_usd) is built from the weekly customer revenue — "
+            "different windows of the same revenue", metric="arr_tile_usd", window="now",
+            source="Aethir demand-metric 'ARR (1d)' tile (arr_tile_usd)"), _C_USD),
+        "in_cust_rev_month": _c_in("Customer revenue, last 30 days ($) vs Aethir's latest complete month", "customer_revenue_usd",
+                                   "now", _c_rec("ours is the trailing 30 days of the weekly series, Aethir's a calendar "
+                                                 "month", metric="customer_revenue_monthly_usd", window="now",
+                                                 source="Aethir monthlyNetworkRevenue (customer_revenue_monthly_usd)"), _C_USD),
+        "in_cust_rev_cumulative": _c_in_py(
+            "Customer revenue since June 2024 ($) — the stored weekly series summed vs Aethir's own cumulative",
+            "sum_since", {"metrics": ("customer_revenue_usd",), "since": "2024-06-01"}, _c_rec(
+                "ours sums only the weeks we hold; Aethir's total runs from June 2024", metric="customer_revenue_cumulative_usd",
+                window="now", source="Aethir Total Network Revenue (customer_revenue_cumulative_usd)"), _C_USD),
+        "in_cust_rev_llama": _c_in("Customer revenue Q0 ($) vs DefiLlama's AethirCore deposits", "customer_revenue_usd", "q0",
+                                   _c_rec("DefiLlama counts service-fee DEPOSITS net of withdrawals (a prepayment, can be "
+                                          "negative), ours the revenue Aethir reports", metric="customer_revenue_usd_defillama",
+                                          window="q0", source="DefiLlama aethir fees"), _C_USD),
+    },
+    "Chainlink": {
+        "in_ccip_v2_fees": _c_in("Aggregator payments Q0 ($) vs CCIP 2.0 fees (all receipts)", "fees_usd", "q0", _c_rec(
+            "CCIP 2.0's network-fee part is already inside the aggregator payments; the rest is paid to other parties",
+            metric="ccip_v2_fees_usd", window="q0", source="CCIP 2.0 OnRamp receipts (ccip_v2_fees_usd)"), _C_USD),
+        "in_ccip_v2_premium": _c_in("Aggregator payments Q0 ($) vs the CCIP 2.0 network fee (premium)", "fees_usd", "q0",
+                                    _c_rec("the premium is the part of CCIP 2.0's fee that stays in the OnRamp — a part "
+                                           "of ours, not the same total", metric="ccip_v2_premium_usd", window="q0",
+                                           source="CCIP 2.0 OnRamp last receipt (ccip_v2_premium_usd)"), _C_USD),
+    },
+    "Ethereum": {
+        "in_holders_revenue_llama": _c_in_py(
+            "Burn, 90 common days ($) — ours (BurntFees x same-day price) vs DefiLlama holders revenue",
+            "common_days_sum", {"a": "holders_revenue_usd", "b": "gross_burn_tokens", "b_times_price": True,
+                                "days": 90, "min_days": 60, "side": "ref"},
+            _c_rec("DefiLlama's Ethereum holders revenue is the burned base fee in $; ours the protocol's BurntFees "
+                   "counter at the same-day price — the same quantity, recorded until a tolerance is decided",
+                   formula="common_days_sum", args={"a": "holders_revenue_usd", "b": "gross_burn_tokens",
+                                                    "b_times_price": True, "days": 90, "min_days": 60, "side": "ours"},
+                   source="DefiLlama holders revenue (holders_revenue_usd)"), _C_USD),
+        "in_fees_blockscout": _c_in("Fees Q0 ($) — DefiLlama vs Blockscout txnsFee x same-day price", "fees_usd", "q0",
+                                    _c_rec("two sources of the same fees over the same 90 days; recorded beside in_fees "
+                                           "(whose reference this is) until a tolerance is decided",
+                                           metric="fees_usd_blockscout", window="q0",
+                                           source="Blockscout stats txnsFee (fees_usd_blockscout)"), _C_USD),
+    },
+    "GEODNET": {
+        "in_circ_third_party": _c_in("Circulating supply — ours vs Blockworks' published figure", "circulating_supply", "now",
+                                     _c_rec("a STATIC third-party figure, read once", metric="circulating_supply_third_party",
+                                            window="now", source="Blockworks (circulating_supply_third_party)")),
+        "in_issuance_feed": _c_in_py("Rewards issued — GEODNET's own feed (Polygon + Solana, latest month) vs our release",
+                                     "now_sum", {"metrics": ("pool_release_tokens",)},
+                                     _c_rec("ours is the measured release from the mining wallets over the trailing 30 "
+                                            "days, the feed a calendar month of rewards issued",
+                                            formula="now_sum",
+                                            args={"metrics": ("issuance_feed_polygon_tokens", "issuance_feed_solana_tokens")},
+                                            source="GEODNET issuance data feed, Polygon + Solana")),
+    },
+    "Hyperliquid": {
+        "in_buyback_asxn": _c_in("Buyback Q0 ($) — the Assistance Fund series vs ASXN's executed HyperCore buybacks",
+                                 "actual_buyback_usd", "q0", _c_rec(
+                                     "ours is the Assistance Fund basis from the stitch (C6), ASXN's executed purchases",
+                                     metric="buyback_hypercore_asxn_usd", window="q0", source="ASXN (buyback_hypercore_asxn_usd)",
+                                     same_source=True), _C_USD),
+        "in_burn_hyperevm_asxn": _c_in("HyperEVM burn Q0 (HYPE) vs ASXN token-metrics burned_hype", "burn_hyperevm_tokens",
+                                       "q0", _c_rec("both are ASXN's; ours is the hyperscreener history",
+                                                    metric="hyperevm_burn_tokens_asxn", window="q0",
+                                                    source="ASXN token-metrics (hyperevm_burn_tokens_asxn)")),
+        "in_burn_hyperevm_asxn_usd": _c_in("HyperEVM burn Q0 ($) vs ASXN token-metrics burned_usd", "burn_hyperevm_usd", "q0",
+                                           _c_rec("both are ASXN's", metric="hyperevm_burn_usd_asxn", window="q0",
+                                                  source="ASXN token-metrics (hyperevm_burn_usd_asxn)"), _C_USD),
+        "in_oi_asxn": _c_in("Open interest ($) — DefiLlama (one-sided) vs ASXN", "open_interest_usd", "now", _c_rec(
+            "DefiLlama's figure is one-sided; ASXN's basis is not documented", metric="open_interest_usd_asxn", window="now",
+            source="ASXN (open_interest_usd_asxn)"), _C_USD),
+        "in_circ_tokendetails": _c_in("Circulating supply — ours vs Hyperliquid tokenDetails as published", "circulating_supply",
+                                      "now", _c_rec("ours removes the declared Foundation / Community wallets and the "
+                                                    "HyperEVM burn; tokenDetails does not",
+                                                    metric="circulating_supply_tokendetails", window="now",
+                                                    source="Hyperliquid tokenDetails.circulatingSupply")),
+        "in_emissions_modelled": _c_in("Staking rewards Q0 (tokens) — observed vs MODELLED from stake", "emissions_tokens",
+                                       "q0", _c_rec("the model (2.37% x sqrt(400M / staked)) is a model, never a reference",
+                                                    metric="emissions_modelled_tokens", window="q0",
+                                                    source="emissions_modelled_tokens (our model)", same_source=True)),
+    },
+    "Near": {
+        "in_intents_nearblocks": _c_in("NEAR Intents volume Q0 ($) — DefiLlama vs NearBlocks v3", "near_intents_volume_usd",
+                                       "q0", _c_rec("NearBlocks indexes the intents.near events; DefiLlama passes through "
+                                                    "NEAR's own Dune query — scopes not yet reconciled",
+                                                    metric="near_intents_volume_usd_nearblocks", window="q0",
+                                                    source="NearBlocks /v3/intents/volume-stats"), _C_USD),
+        "in_noncirc_nearblocks": _c_in_py("Not circulating (tokens) — ours (total − circulating) vs NearBlocks",
+                                          "now_combo", {"metrics": ("total_supply",), "minus": ("circulating_supply",)},
+                                          _c_rec("NearBlocks' circulating rule is its own (total − circulating per "
+                                                 "api.nearblocks.io/v3/stats)", metric="noncirculating_nearblocks_tokens",
+                                                 window="now", source="NearBlocks v3 stats")),
+    },
+    "Pendle": {
+        "in_buyback_derived": _c_in("Buyback Q0 ($) vs DefiLlama holders revenue (derived)", "actual_buyback_usd", "q0",
+                                    _c_rec("DefiLlama's holders revenue is an accrual; ours the per-epoch distribution x price",
+                                           metric="actual_buyback_usd_derived", window="q0",
+                                           source="DefiLlama holders revenue (actual_buyback_usd_derived)"), _C_USD),
+        **{f"in_gauge_{c}_direct": _c_in(f"Gauge payouts Q0 ({c}) — log scan vs one windowed DIRECT count",
+                                         f"emissions_tokens_gauge_{'mainnet' if c == 'mainnet' else c}", "q0", _c_rec(
+                                             "the same GaugeController's outflow counted two ways (log scan and one "
+                                             "windowed explorer query)", metric=f"emissions_tokens_gauge_{c}_direct",
+                                             window="q0", source=f"explorer windowed query ({c})", same_source=True))
+           for c in ("mainnet", "arbitrum")},
+        **{f"in_gauge_rate_{c}": _c_in(f"Gauge payouts Q0 ({c}) vs the sampled pendlePerSec rate", m, "q0", _c_rec(
+            "the rate is sampled, the payouts are every transfer — a rate change inside the window moves the gap",
+            metric=f"emissions_tokens_gauge_rate_{c}", window="q0", source=f"{c} GaugeController rewardData pendlePerSec"))
+           for c, m in _PENDLE_GAUGE_CHAINS},
+    },
+    "Plume": {
+        "in_dau_growthepie": _c_in("Active addresses (latest) — ours vs growthepie daa", "active_addresses", "now", _c_rec(
+            "the two count 'active' differently (growthepie: daa)", metric="active_addresses_growthepie", window="now",
+            source="growthepie daa")),
+        "in_fees_llama": _c_in("Fees Q0 ($) — ours (native fees x price) vs DefiLlama", "fees_usd", "q0", _c_rec(
+            "DefiLlama's chain-fee figure for Plume; ours is the explorer's native fees at the same-day price",
+            metric="fees_usd_defillama", window="q0", source="DefiLlama summary/fees (fees_usd_defillama)"), _C_USD),
+    },
+    "Sky": {
+        "in_nps_reported_month": _c_in("Net protocol surplus, last 30 days ($) vs Sky's reported month",
+                                       "net_protocol_surplus_usd", "now", _c_rec(
+                                           "Sky reports calendar months by hand; ours is the trailing 30 days",
+                                           metric="net_protocol_surplus_usd_reported", window="now",
+                                           source="Sky financials (manual)"), _C_USD),
+        "in_revenue_reported_month": _c_in("Revenue, last 30 days ($) vs Sky's reported gross revenue (month)",
+                                           "revenue_usd", "now", _c_rec(
+                                               "Sky's 'Revenue' is gross; ours (DefiLlama) is net of costs; windows differ",
+                                               metric="revenue_usd_reported", window="now",
+                                               source="Sky financials table (manual)"), _C_USD),
+        "in_revenue_msc_month": _c_in("Revenue, last 30 days ($) vs the monthly settlement's net revenue (MSC)",
+                                      "revenue_usd", "now", _c_rec(
+                                          "a known accounting-basis difference (references.basis_rows); windows differ",
+                                          metric="net_revenue_msc_usd", window="now",
+                                          source="Soter Labs MSC consolidated report"), _C_USD),
+        "in_sky_farm_rewards_ba": _c_in_py("SKY farm rewards (30 common days) — our measured release vs Block Analitica",
+                                           "common_days_sum", {"a": "emissions_tokens", "b": "sky_farm_rewards_tokens_ba",
+                                                               "side": "ours"},
+                                           _c_rec("ours is every farm's SKY release; Block Analitica's the SKY-rewards "
+                                                  "farm alone", formula="common_days_sum",
+                                                  args={"a": "emissions_tokens", "b": "sky_farm_rewards_tokens_ba",
+                                                        "side": "ref"}, source="Block Analitica info-sky farm d(total_farmed)")),
+    },
+}

@@ -4,6 +4,7 @@ metrics.db-journal
 metrics.db.credibility.pkl
 token_metrics.xlsx
 coverage_audit.csv
+wiring.json
 .env
 __pycache__/
 *.pyc

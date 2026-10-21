@@ -192,7 +192,7 @@ class EthP2PBigQuery(NearBigQuery):
         # validation_extend_from (F3: >= 90 days overlapping Artemis's CSV). Each piece is a BACKFILL under NEAR's
         # top-up reserve (near_bigquery._run): its dry run is printed, and a piece that does not fit is held and resumes
         # after the month's reset — never past the budget.
-        held = set(e.get("days") or {})
+        held = self.held_days(e)
         todo += [(f"week {a.date()}..{b.date()}", (a, b), True) for a, b in self.pieces(held, p2p, now)]
         if todo:
             out.skipped(SOURCE, name, f"Ethereum P2P pieces to read ({len(todo)}): " + "; ".join(
@@ -206,6 +206,10 @@ class EthP2PBigQuery(NearBigQuery):
                              name, backfill=is_val)          # topup_bytes stays NEAR's (its reserve)
             if rows is None:
                 return False
+            for d in pd.date_range(a, b):                 # a re-read week replaces its days' answers whole
+                if str(d.date()) not in self.held_days(e):
+                    e["days"].pop(str(d.date()), None)
+                    e["prices"].pop(str(d.date()), None)
             for r in rows:
                 e["days"].setdefault(str(pd.Timestamp(r["day"]).date()), {})[str(r["token"])] = str(r["amount"])
             if what == "validation window":
@@ -214,6 +218,15 @@ class EthP2PBigQuery(NearBigQuery):
                 e["through"] = max(str(b.date()), str(e.get("through") or ""))
             self._save(st)
         return True
+
+    @staticmethod
+    def held_days(e: dict) -> set:
+        """The days the weekly cursor counts as READ: those whose query answer carries native ETH. G12 C5 (Jake's 10-21
+        store: no p2p rows 2026-09-20..09-23): a day entered the state with whatever token rows the answer held — a
+        day answered while the public dataset had landed only part of it (no ETH row: every Ethereum day moves ETH)
+        was "held" for good, never asked again, and valued to nothing. Such a day is asked again by the next weekly
+        top-up; a day whose ETH row is held is never re-read."""
+        return {d for d, toks in (e.get("days") or {}).items() if isinstance(toks, dict) and "ETH" in toks}
 
     @staticmethod
     def pieces(held: set, p2p: dict, now: pd.Timestamp) -> list[tuple[pd.Timestamp, pd.Timestamp]]:
@@ -272,7 +285,10 @@ class EthP2PBigQuery(NearBigQuery):
                 except Exception as ex:  # noqa: BLE001
                     notes.append(f"prices {key}: {str(ex).split('?')[0][:80]}")
                     break
-                e["prices"][key] = px
+                # G12 C5: an answer missing a token's price is NOT cached — the day is asked again on the next run
+                # instead of being refused for good
+                if all((px.get(f"ethereum:{t}") or (None,))[0] is not None for t in stables):
+                    e["prices"][key] = px
             px = px or {}
             try:
                 usd = float(Decimal(toks.get("ETH", "0")) / Decimal(10) ** 18) * p_eth
