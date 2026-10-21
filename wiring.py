@@ -139,9 +139,9 @@ _FORMULA_REF = re.compile(r'\$A\$?(\d+)&"\|([a-z0-9_]+)",Data!')
 SHOWN_SHEETS = ("Master", "A1", "A2", "A3", "A4", "CP", "Trajectory")
 
 
-def formula_refs(wb) -> tuple[set, set]:
-    """({(project, metric)} read by a formula on a display sheet, {...} read by a Credibility formula)."""
-    shown, cross = set(), set()
+def formula_refs(wb) -> tuple[dict, dict]:
+    """({(project, metric): {sheet, ...}} read by a formula on a display sheet, {...} read by a Credibility formula)."""
+    shown, cross = {}, {}
     for ws in wb.worksheets:
         target = shown if ws.title.startswith(SHOWN_SHEETS) else cross if ws.title == "Credibility" else None
         if target is None:
@@ -153,7 +153,7 @@ def formula_refs(wb) -> tuple[set, set]:
                     for r, m in _FORMULA_REF.findall(v):
                         proj = ws.cell(int(r), 1).value
                         if isinstance(proj, str) and proj:
-                            target.add((proj, m))
+                            target.setdefault((proj, m), set()).add(ws.title)
     return shown, cross
 
 
@@ -216,16 +216,22 @@ def audit(data_rows: list, wb=None, cred_rows=None, flows_rows=None, projects=No
     universe = {(r["project"], r["metric"]): r for r in data_rows if _has_number(r)
                 and (projects is None or r["project"] in projects)}
     known = set(universe) | {(r["project"], r["metric"]) for r in data_rows}
-    shown_f, cross_f = formula_refs(wb) if wb is not None else (set(), set())
-    shown = set(shown_f) | flows_refs(flows_rows, known)
-    cross = set(cross_f) | credibility_refs(cred_rows, known)
+    shown_f, cross_f = formula_refs(wb) if wb is not None else ({}, {})
+    # WHERE each is read (G13 10: wiring.json carries a parent or a reason for EVERY series)
+    where: dict = {k: set(v) for k, v in shown_f.items()}
+    for k in flows_refs(flows_rows, known):
+        where.setdefault(k, set()).add("Flows")
+    cwhere: dict = {k: set(v) for k, v in cross_f.items()}
+    for k in credibility_refs(cred_rows, known):
+        cwhere.setdefault(k, set()).add("Credibility (row spec)")
     for p, m, fs, ph in READS:
         if ph == "shown" and fs and fs[0] in STYLE_FUNCS:
             continue                      # a confidence fill, a flag or an n/a reason — no cell shows the figure
         if ph == "shown":
-            shown.add((p, m))
+            where.setdefault((p, m), set()).add(f"display builder {fs[0] if fs else '?'}")
         elif ph == "cross":
-            cross.add((p, m))
+            cwhere.setdefault((p, m), set()).add(f"Credibility ({fs[0] if fs else '?'})")
+    shown, cross = set(where), set(cwhere)
     edges = view_edges()
     # FETCH-TIME DERIVATIONS (config.FETCH_INPUTS): a stored series a fetcher turns into another stored series
     for p in {k[0] for k in universe}:
@@ -248,9 +254,9 @@ def audit(data_rows: list, wb=None, cred_rows=None, flows_rows=None, projects=No
     for k, row in universe.items():
         ns = config.not_shown_reason(*k)
         if k in shown:
-            cls, why = "SHOWN", ""
+            cls, why = "SHOWN", "read on " + ", ".join(sorted(where[k]))[:200]
         elif k in cross:
-            cls, why = "CROSS-CHECK", ""
+            cls, why = "CROSS-CHECK", "read by " + ", ".join(sorted(cwhere[k]))[:200]
         elif k in parents:
             ps = sorted(parents[k])
             cls, why = "INPUT", "; ".join(f"{m} ({f})" for m, f in ps[:4]) + ("…" if len(ps) > 4 else "")

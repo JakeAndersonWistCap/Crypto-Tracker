@@ -31451,6 +31451,8 @@ FETCH_INPUTS: tuple = (
     ("consensus_rewards_tokens", ("consensus_rewards_cumulative",), "fetch/etherscan_supply.py", ("Ethereum",)),
     # NEAR's protocol burn share (70% before protocol v87, 100% from it) is dated by the version read every run
     ("gross_burn_tokens", ("near_protocol_version",), "fetch/history_derive.py", ("Near",)),
+    # G13 1a: World Mobile's locked_tokens = Base + Cardano, summed by the fetcher that reads both legs
+    ("locked_tokens", ("locked_tokens_base", "locked_tokens_cardano"), "fetch/wm_supply.py", ("World Mobile",)),
 )
 
 
@@ -31466,6 +31468,14 @@ def fetch_inputs(project_name: str) -> dict:
     if not circulating_onchain_primary(project_name):
         had = out.get("circulating_supply", ((), ""))
         out["circulating_supply"] = (tuple(had[0]) + ("circulating_supply_implied",), "fetch/history_derive.py")
+    # G13 1a: a contract read stored ALSO per wallet under its `component_metric` (Round G 2.8, fetch/chain.py "PER-WALLET
+    # ROWS") — the same balanceOf that feeds the sum it serves (Pendle's three noncirc wallets -> noncirculating_holding)
+    for spec in ((PROJECT_BY_NAME.get(project_name) or {}).get("contracts") or {}).values():
+        cm = spec.get("component_metric") if isinstance(spec, dict) else None
+        for child in (contract_serves(spec) if cm else ()):
+            had = out.get(child, ((), ""))
+            how = "fetch/chain.py component_metric"
+            out[child] = (tuple(had[0]) + (cm,), had[1] if how in had[1] else " + ".join(x for x in (had[1], how) if x))
     return out
 
 
@@ -31830,3 +31840,112 @@ CREDIBILITY_WIRING: dict = {
                                                         "side": "ref"}, source="Block Analitica info-sky farm d(total_farmed)")),
     },
 }
+
+
+# ===== G13 2 (Jake 2026-10-21): ONE FEES DEFINITION PER PROJECT, ON EVERY CELL. =====
+# MASTER_FEES_OVERRIDE gave World Mobile's Master Fees Q0 its own-chain gas, but "Fees ÷ issuance", "Fees ÷ FDV" and the
+# Fees Δ columns still read fees_usd (the DefiLlama gap). A project that declares its own definition of a metric reads it
+# in every cell built for its row (build_workbook.Refs.D, under _project_row).
+METRIC_ALIASES: dict = {(n, "fees_usd"): m for n, (m, _label) in MASTER_FEES_OVERRIDE.items()}
+
+
+def metric_alias(project_name: str, metric: str) -> str:
+    """The metric this project's cells read for `metric` (METRIC_ALIASES), else `metric`."""
+    return METRIC_ALIASES.get((project_name, metric), metric)
+
+
+# ===== G13 6 (Jake's 10-21 store: Aethir's CP SUBSIDY COVER was 8.26, now BLOCKED "unequal coverage"). =====
+# The (b) denominator is complete only from the day its MEASURED leg begins (the checker bonus, cloud host and edge are
+# in the dashboard cumulatives from 2026-10-05; before, the declared base schedule). The column is "per covered day":
+# it is computed over the days every leg covers from that day (build_workbook._subsidy_common_views), the dates on the
+# number; under RATE_MIN_DAYS such days it says NEEDS HISTORY with the date it becomes valid.
+SUBSIDY_COMPLETE_FROM = {
+    ("Aethir", "b"): {"metric": "supplier_rewards_b_tokens", "measured_point": "aethir_page:supplier_rewards",
+                      "declared": "2026-10-05"},
+}
+for _m, _l in (("subsidy_cover_num_usd", "Subsidy cover's numerator ($) on the days every leg covers from the day the "
+                                         "(b) denominator is complete (G13 6) — customer revenue"),
+               ("subsidy_cover_den_usd", "Subsidy cover's denominator ($) on the same days — supply-side incentives "
+                                         "(b) at the day's price (G13 6)")):
+    METRICS[_m] = {"label": _l, "kind": "flow", "unit": "usd", "archetypes": [], "tiers": [2], "sanity_min": 0,
+                   "sanity_max": 1e12, "view_only": True,
+                   "only_projects": tuple(sorted({n for n, _c in SUBSIDY_COMPLETE_FROM}))}
+
+
+# ===== G13 8 (Jake's call, agreed 2026-10-21): HYPERLIQUID'S BURN TRENDS BREAK AT THE BUYBACK'S STITCH. =====
+# The Assistance Fund's burn IS its buyback (validator vote 2025-12-27), stitched from the same DefiLlama leg (holders
+# revenue ÷ price, a revenue model) before the first live Fund read. A trend across that stitch compares two bases, as
+# the buyback's does (G12 C6): the burn handovers declare the same composition change, so the trajectory and the Δ
+# columns read SERIES BREAK there.
+for _m in ("gross_burn_tokens", "total_burn_tokens", "burn_ex_chain_fee_tokens"):
+    if _m in PROJECT_BY_NAME["Hyperliquid"].get("series_handover", {}):
+        PROJECT_BY_NAME["Hyperliquid"]["series_handover"][_m] = dict(
+            PROJECT_BY_NAME["Hyperliquid"]["series_handover"][_m],
+            composition_change="THE BASIS CHANGES at the stitch: before the first live Assistance Fund read the burn "
+                               "is DefiLlama holders revenue ÷ price (the buyback's revenue model); from it, the "
+                               "Fund's own balance change. A trend across it is a SERIES BREAK (G13 8, as the "
+                               "buyback, G12 C6)")
+
+
+# ===== G13 1 — THE LAST UNWIRED SERIES ON JAKE'S STORE (run 20261021T173335Z: 22, of which Aerodrome's 4 stay). =====
+NOT_SHOWN.update({
+    ("Hyperliquid", "future_emissions_modelled_tokens"):
+        "the reward reserve MODELLED BACKWARD before its first stored read — a separately named MODELLED history that "
+        "back-fills nothing and is excluded from any scoring (fix round 3 B1); the reserve as read "
+        "(future_emissions_tokens) is A1's supply overhang",
+    ("World Mobile", "wmt_legacy_supply_tokens"):
+        "LEGACY Cardano WMT (2B minted once, never burned): where it sits is unknown, so it is a reference and never in "
+        "a total (G6 item 1) — no figure of the supply model reads it",
+    ("Sky", "buyback_spending_usd_ba_daily"):
+        "Block Analitica's by-day cash flow answered MONTH totals (equal to buyback_spending_usd_ba to the dollar in "
+        "every window, G13 1c): a monthly twin is dropped at read time (build_workbook.daily_twin) and the monthly "
+        "series stays the Credibility reference for actual_buyback_usd",
+})
+DETAIL_COLUMNS.extend([
+    {"tab": "A2", "after": "Detail — Compute service fees, cumulative",
+     "header": "Detail — Onchain compute PURCHASES, cumulative (ATH, latest; Aethir's demand page 'Onchain Compute "
+               "Purchases' — what customers bought on-chain)",
+     "cells": {"Aethir": ("compute_purchases_cumulative_tokens", "now")}},
+    {"tab": "A2", "after": "Supply units", "header": "Detail — WMTx supply on Cardano (tokens, latest; a component of "
+                                                     "the declared total supply, options B / C)",
+     "cells": {"World Mobile": ("wmtx_cardano_supply_tokens", "now")}},
+    {"tab": "A1", "after": "VALIDATOR STAKING YIELD", "header": "Detail — Community staking pool rate (communityBase "
+                                                                "emission ÷ community principal; the blend's community leg)",
+     "cells": {"Chainlink": ("staker_yield_community_pool", "now")}, "fmt": "pct"},
+    {"tab": "CP", "after": "Unlocks Q0", "header": "Detail — Staking-funding part taken OUT of (e) Q0 (tokens; counted "
+                                                  "once in (a); FIFO attribution convention, accepted 2026-10-14)",
+     "cells": {"Chainlink": ("staking_funding_release_tokens", "q0")}},
+])
+# the service-fee column says what it counts, beside the purchases (G13 1b)
+for _d in DETAIL_COLUMNS:
+    if _d["header"].startswith("Detail — Compute service fees, cumulative"):
+        _d["header"] = ("Detail — Compute service fees, cumulative (ATH, latest; Aethir's supply page 'totalServiceFee' "
+                        "— what compute providers were paid for service)")
+CREDIBILITY_WIRING.setdefault("Morpho", {})["in_merkl_off_ethereum"] = _c_in_py(
+    "Off-Ethereum MORPHO rewards Q0 — our claims (the Arbitrum + Base + Katana legs of emissions_tokens) vs the DAO's "
+    "Merkl campaigns paid off Ethereum", "scans_q0",
+    {"metrics": ("emissions_tokens_claims_arbitrum", "emissions_tokens_claims_base", "emissions_tokens_claims_katana"),
+     "labels": ("Arbitrum claims", "Base claims", "Katana claims"), "require_all": True},
+    _c_rec("emissions_tokens INCLUDES the off-Ethereum claims (it is the per-day sum of the Ethereum, Arbitrum, Base "
+           "and Katana claims, G2-D1); this row sets the three off-Ethereum claim legs against the campaign SCHEDULE "
+           "paid on those chains — claims lag the schedule, so the gap is timing as well as coverage",
+           metric="merkl_campaigns_non_ethereum_tokens", window="q0",
+           source="Merkl API v4 campaigns of the DAO multisig 0xF057afee…, distributionChainId Base / Katana / Arbitrum"))
+CREDIBILITY_WIRING.setdefault("Chainlink", {})["in_ccip_v2_arbitrum_overlap"] = _c_in_py(
+    "CCIP 2.0 fees on Arbitrum ($, the days both hold) — the message API vs the OnRamp's own receipts (the overlap "
+    "check)", "common_days_sum", {"a": "ccip_v2_fees_api_arbitrum_usd", "b": "ccip_v2_fees_log_arbitrum_usd",
+                                  "days": 30, "min_days": CCIP_FEE_OVERLAP["min_days"], "side": "ours"},
+    {"formula": "common_days_sum", "tol": 100.0 * CCIP_FEE_OVERLAP["tolerance"],
+     "args": {"a": "ccip_v2_fees_api_arbitrum_usd", "b": "ccip_v2_fees_log_arbitrum_usd", "days": 30,
+              "min_days": CCIP_FEE_OVERLAP["min_days"], "side": "ref"},
+     "source": "Arbitrum OnRamp receipt logs (ccip_v2_fees_log_arbitrum_usd)",
+     "note": "The tolerance is CCIP_FEE_OVERLAP's own (the overlap that admits the Base leg into ccip_v2_fees_usd)."},
+    _C_USD)
+CREDIBILITY_WIRING.setdefault("Hyperliquid", {})["in_issuer_release_replay"] = _c_in(
+    "Issuer releases Q0 (tokens) — the release we count vs the ledger replay's GROSS outflow of the team + Foundation "
+    "+ Grants wallets", "unlock_release_tokens", "q0",
+    _c_rec("the replay counts every token leaving the three wallets (transfers out + HYPE sold), ours the falls of the "
+           "wallets the circulating figure excludes — the replay is the cross-check of (e)",
+           metric="issuer_release_replay_tokens", window="q0", source="fetch/hl_ledger.py replay (issuer_release_replay)"))
+# WORLD MOBILE'S CREDIBILITY IS PARKED; these rows are recorded for it anyway (G13 1b), never judged
+CREDIBILITY_PARKED_RECORDED = {"World Mobile": ("in_fdv_coingecko",)}

@@ -529,6 +529,41 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11cp. Round G13 — finish the wiring: the last UNWIRED, one Fees definition, the P2P cache, cached zeros (2026-10-21)
+
+**Run after pulling (PowerShell 5.1, repo root), in this order.** Nothing new is fetched: no seed, no dry run, no
+run_sql section, no BigQuery or API call beyond the normal daily run.
+1. `python token_metrics.py` — the normal daily run. The Ethereum P2P weekly turn re-values the cached days 09-20..09-23
+   from the cache (symbol keys mapped to the declared token addresses; a cached price answer lacking a coin is asked
+   again in the run's normal price call). Any cached day still NOT stored is a WARN on the run summary naming the day and
+   the reason ("p2p_transfer_volume_usd: n cached day(s) NOT stored — <day>: <reason>"). PASTE BACK that line if present.
+2. `python check_offline_items.py wiring` — PASTE BACK. Target: UNWIRED 4, all Aerodrome (parked).
+   `$env:TOKEN_METRICS_WIRING_ALL=1` first prints every class with its parent or reason (wiring.json beside the
+   workbook carries the same: SHOWN "read on <sheet>", CROSS-CHECK "read by <row>", INPUT its parents, NOT SHOWN its
+   reason).
+3. `python measuring_guard.py --newer metrics.db` — PASTE BACK the VERDICT. The 10 "HEADLINE LOST … Master | Archetypes
+   (primary first)" were an attribute column read as a number; attributes are no longer headlines.
+4. `python check_offline_items.py stored_but_unshown` — PASTE BACK. Near's six hits should be gone (a cell built on a
+   365-day figure is judged on 365 days, whatever input window its text names).
+5. `Get-Content scoreboard.json` — PASTE BACK.
+
+**What to look for.** A2 Aethir: "Detail — Onchain compute PURCHASES, cumulative" beside "Detail — Compute service fees,
+cumulative" (each header says what it counts); A2 World Mobile: "Detail — WMTx supply on Cardano". A1 Chainlink:
+"Detail — Community staking pool rate". CP Chainlink: "Detail — Staking-funding part taken OUT of (e) Q0". Credibility:
+Morpho "Off-Ethereum MORPHO rewards Q0" (recorded; states emissions_tokens INCLUDES the off-Ethereum claims), Chainlink
+"CCIP 2.0 fees on Arbitrum … the overlap check" (judged at 2%), Hyperliquid "Issuer releases Q0 … ledger replay"
+(recorded), World Mobile CoinGecko FDV (recorded although WM is parked). The Credibility gap column never reads blank:
+"no figure of ours" / "no reference value". World Mobile: Fees ÷ issuance, Fees ÷ FDV and the Fees Δ cells read the
+own-chain fees, as Master's Fees Q0. Aethir CP SUBSIDY COVER: a number with "x over <first>..<last> (n common days; (b)
+complete from <date>)" once 7 common days exist (the weekly revenue spread over its week), else "n/a — NEEDS HISTORY …
+valid from <date>". Hyperliquid A4 burn Δ columns and the burn trajectory: "SERIES BREAK" at the buyback's stitch.
+Ethereum settlement_volume_365d and NRR run past 2026-09-19 once step 1 stores 09-20..09-23. Sky's
+buyback_spending_usd_ba_daily: BLOCKED "NOT DAILY" on Data (dropped as the monthly twin; the monthly series stays the
+Credibility reference).
+
+**Not changed:** Aerodrome (parked) — its UNWIRED rows wait for the migration run. Ether.fi's total supply (998.5M,
+on-chain totalSupply()) — CoinGecko's 965.35M equals its own circulating; no stored series accounts for the 33.19M gap.
+
 ## 11co. Round G12 — wiring: every stored series reaches a cell, a cross-check, a parent or a reason (2026-10-21)
 
 **Run after pulling (PowerShell 5.1, repo root), in this order.** Nothing new is fetched: no seed, no dry run, no

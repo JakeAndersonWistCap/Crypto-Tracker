@@ -2735,6 +2735,24 @@ def build_rows(headline_cells: list[dict], rows: dict, long, asof, projects=None
                          "Judged by: " + ", ".join(out[i]["id"] for i in got)
                          + (f". UNCHECKED input(s): {', '.join(missing)} — no row checks them" if missing else "")
                          + ". PASS only when every input passes on an independent reference.")
+    # A PARKED PROJECT'S RECORDED ROWS (G13 1b: World Mobile's CoinGecko FDV): built like any input row, forced to
+    # "N/A (recorded)" — the figures side by side, nothing judged while its Credibility is parked
+    for name, ids in (getattr(config, "CREDIBILITY_PARKED_RECORDED", {}) or {}).items():
+        if name in names or (projects is not None and name not in projects) or name not in config.PROJECT_BY_NAME:
+            continue
+        avail = wiring_inputs(name, rows)
+        for iid in ids:
+            spec = avail.get(iid)
+            if not spec:
+                continue
+            why = (f"{name}'s Credibility is parked ({config.CREDIBILITY_PARKED.get(name, 'parked')}): recorded beside "
+                   f"ours, never judged")
+            ref = reference(name, {**spec["ref"], "tol": None, "force_verdict": "N/A (recorded)", "why": why},
+                            rows, long, asof)
+            ours = dict(spec["ours"])
+            out.append({"project": name, "tab": "input", "cell": f"Data {ours['metric']} ({ours.get('window', 'now')})",
+                        "id": iid, "what": spec["what"] + " — PARKED, recorded", "ours": ours, "fmt": spec.get("fmt"),
+                        **{**ref, "tol": None}})
     return out
 
 

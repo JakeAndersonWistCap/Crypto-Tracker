@@ -89,7 +89,8 @@ def test_a1_a_formula_on_a_display_tab_and_on_credibility_counts():
     cr["A7"] = "Near"
     cr["E7"] = '=IFERROR(INDEX(Data!$J$2:$J$9,MATCH($A7&"|fees_usd",Data!$A$2:$A$9,0)),NA())'
     shown, cross = wiring.formula_refs(wb)
-    assert shown == {("Near", "tx_count")} and cross == {("Near", "fees_usd")}
+    assert set(shown) == {("Near", "tx_count")} and set(cross) == {("Near", "fees_usd")}
+    assert shown[("Near", "tx_count")] == {"A1 Infrastructure"}
 
 
 def test_a1_a_series_named_only_in_prose_is_not_read():

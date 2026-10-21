@@ -218,8 +218,9 @@ def live_check(db_path: str, baseline: dict) -> tuple[list[str], dict]:
         if scope and proj not in scope:
             continue                                      # outside the run's scope: not this run's headline
         for head, v in cells.items():
-            if not isinstance(v, float) or head in (heads.get(proj) or {}) or config.regression_allowance(proj, head):
-                continue
+            if not isinstance(v, float) or head in (heads.get(proj) or {}) or config.regression_allowance(proj, head) \
+                    or _es.is_attribute(head):
+                continue                                  # G13 5: an attribute (identity / notes) is not a headline
             bad.append(f"HEADLINE LOST {proj} {head}: {v:,.6g} in the {prev_date} snapshot, no value on the live store")
     for proj, head, text in mpc:
         bad.append(f"HEADLINE BLANKED BY {MPC} {proj} {head}: {text}")

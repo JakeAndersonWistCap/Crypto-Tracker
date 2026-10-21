@@ -104,8 +104,16 @@ def daily_spending(rows: list[dict], first: str, now: pd.Timestamp) -> list[tupl
 
 
 def looks_daily(keep: list[tuple]) -> bool:
-    """A by-day answer is daily unless three or more rows all fall on the same day of the month (G11 D3)."""
-    return len(keep) < 3 or len({d.day for d, _v in keep}) > 1
+    """A by-day answer is daily unless three or more rows all fall on the same day of the month (G11 D3), or — G13 1c:
+    month-END dates are the 28th..31st, so the G11 rule let a monthly answer through — it holds three or more non-zero
+    rows and no calendar month with more than one of them."""
+    if len(keep) < 3:
+        return True
+    if len({d.day for d, _v in keep}) <= 1:
+        return False
+    nz = [d for d, v in keep if v]
+    months = [(d.year, d.month) for d in nz]
+    return not (len(nz) >= 3 and len(set(months)) == len(months))
 
 
 def nps_candidates(by_type: list[dict], security: list[dict]) -> dict:

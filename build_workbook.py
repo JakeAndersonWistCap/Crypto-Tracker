@@ -16,6 +16,7 @@ figure suppressed · orange fill = stale (last good fetch in comment).
 """
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 from collections import Counter
@@ -884,35 +885,100 @@ def withheld_for(project: str, metric: str, row: dict) -> tuple[str, str] | None
     return None
 
 
-def _daily_twin_views(groups: dict, asof) -> None:
-    """G11 D3 (config.DAILY_TWIN; Jake's 10-21 run: Sky's buyback_spending_usd_ba_daily equalled the monthly series in
-    every window): where a declared daily series sums to its monthly twin within 0.5% in EVERY trailing quarter both
-    cover, it is the monthly series under a daily name — dropped, and the reason said on its row."""
+def daily_twin(daily: pd.Series, monthly: pd.Series, tol: float = 0.005) -> tuple[bool, str]:
+    """(is the "daily" series its monthly twin?, the evidence). G13 1c (Jake's 10-21 store: buyback_spending_usd_ba_daily
+    equal to buyback_spending_usd_ba to the dollar in EVERY window, Now and Prior 30d included — 2,791,800 / 1,644,300 —
+    while G12's quarter comparison let it through). VALUE-BASED, so the twin is found whatever day of the month the
+    answer dates its rows on and whatever zero rows or extra history it carries: every NON-ZERO row of the daily series
+    inside the monthly series' span (less a month) matches a monthly row's value within `tol`, dated within 31 days of
+    it, and at least two rows match. A real daily series (many rows a month, each a fraction of the month) never does."""
+    d = daily[daily.abs() > 0]
+    if d.empty or monthly.empty:
+        return False, "nothing to compare"
+    lo, hi = monthly.index.min() - pd.Timedelta(days=31), monthly.index.max() + pd.Timedelta(days=31)
+    d = d[(d.index >= lo) & (d.index <= hi)]
+    if len(d) < 2:
+        return False, f"{len(d)} non-zero row(s) inside the monthly span"
+    matched = 0
+    for day, v in d.items():
+        near = monthly[(monthly.index >= day - pd.Timedelta(days=31)) & (monthly.index <= day + pd.Timedelta(days=31))]
+        if not any(abs(float(v) / float(m) - 1) <= tol for m in near if m):
+            return False, f"{day.date()} {float(v):,.0f} matches no monthly row within 31 days"
+        matched += 1
+    return True, (f"every one of its {matched} non-zero row(s) {d.index.min().date()}..{d.index.max().date()} is a "
+                  f"monthly row's value (±{tol:.1%}, ±31 days)")
+
+
+SUBSIDY_COMMON: dict = {}           # project -> {"from", "first", "last", "days"} of the last build (G13 6)
+
+
+def _per_day(g) -> pd.Series:
+    """A flow as its amount PER DAY on every day it covers, by its observed cadence: a weekly row (dated the week's
+    first day, _age_in_days) spread over its seven days, a monthly row over its month, a daily row as it is. G13 6:
+    Aethir's revenue is weekly, its (b) daily — a sum over the days both "hold" would set a week against a day."""
+    s = _daily(g)
+    cad = _observed_cadence(g)
+    if s.empty or cad == "daily":
+        return s
+    parts = []
+    for d, v in s.items():
+        days = (pd.date_range(d, d + pd.Timedelta(days=6)) if cad == "weekly"
+                else pd.date_range(d.to_period("M").start_time, d.to_period("M").end_time.normalize()))
+        parts.append(pd.Series(float(v) / len(days), index=days))
+    out = pd.concat(parts)
+    return out[~out.index.duplicated(keep="last")].sort_index()
+
+
+def _subsidy_common_views(groups: dict, asof) -> None:
+    """G13 6 (config.SUBSIDY_COMPLETE_FROM): subsidy cover's numerator and denominator on the days EVERY leg covers from
+    the day the (b) denominator is complete — the first day on its measured leg (else the declared date) — inside Q0,
+    each leg per day by its cadence (_per_day). Written as subsidy_cover_num_usd / subsidy_cover_den_usd (each the
+    same days), so the cell's ratio is per covered day by construction."""
+    SUBSIDY_COMMON.clear()
     period = int(GLOBALS["period_days"])
+    hi = pd.Timestamp(asof).normalize()
+    lo = hi - pd.Timedelta(days=period)
+    for (name, cat), spec in config.SUBSIDY_COMPLETE_FROM.items():
+        p = config.PROJECT_BY_NAME.get(name)
+        g = groups.get((name, spec["metric"]))
+        if p is None or g is None or g.empty:
+            continue
+        meas = g[g["source"].astype(str).map(lambda s: trajectory.basis_of(spec["metric"], s)) == spec["measured_point"]]
+        start = pd.to_datetime(meas["date"]).min().normalize() if not meas.empty else pd.Timestamp(spec["declared"])
+        num = _per_day(groups.get((name, _cp_revenue_metric(p))))
+        dens = [_per_day(groups.get((name, f"outflow_{c}_usd"))) for c in (cat,)]
+        if num.empty or any(d.empty for d in dens):
+            continue
+        df = pd.concat([num.rename("n")] + [d.rename(f"d{i}") for i, d in enumerate(dens)], axis=1, sort=True).dropna()
+        df = df[(df.index >= start) & (df.index > lo) & (df.index <= hi)]
+        info = {"from": str(start.date()), "days": int(len(df)),
+                "first": str(df.index.min().date()) if len(df) else None,
+                "last": str(df.index.max().date()) if len(df) else None}
+        SUBSIDY_COMMON[name] = info
+        if len(df) < RATE_MIN_DAYS:
+            continue                          # the cell says NEEDS HISTORY: nothing would read the two series
+        cols = g.columns
+        tag = f"derived:subsidy_common[({cat}) complete from {info['from']}; {info['days']} common day(s)]"
+        for m, v in (("subsidy_cover_num_usd", df["n"]), ("subsidy_cover_den_usd", df.drop(columns="n").sum(axis=1))):
+            groups[(name, m)] = _as_stored(pd.DataFrame({"date": v.index, "project": name, "metric": m,
+                                                         "value": v.values, "tier": 2, "source": tag}), cols)
+
+
+def _daily_twin_views(groups: dict, asof) -> None:
+    """G11 D3 / G13 1c (config.DAILY_TWIN): a declared "daily" series whose rows are its monthly twin's values
+    (daily_twin) is the monthly series under a daily name. Windowed as days, a month's total dated on one day lands in
+    whichever trailing window holds that day — which is why it equalled the monthly series in Now and Prior 30d. It is
+    dropped, the reason said on its row; the monthly series stays (the Credibility reference for actual_buyback_usd)."""
     for (name, daily_m), monthly_m in config.DAILY_TWIN.items():
         d_, m_ = _daily(groups.get((name, daily_m))), _daily(groups.get((name, monthly_m)))
         if d_.empty or m_.empty:
             continue
-        # G12 C3 (Jake's 10-21 workbook: the twin was still there): only quarters BOTH series cover are compared. The
-        # by-day read reaches back to 2024-11-14 while Block Analitica's monthly answer holds 13 months, so the
-        # oldest quarter held daily rows and no monthly ones — counted as a difference, it kept the twin alive
-        first = max(d_.index.min(), m_.index.min())
-        same, seen = 0, 0
-        for k in range(5):
-            hi = pd.Timestamp(asof) - pd.Timedelta(days=period * k)
-            lo = hi - pd.Timedelta(days=period)
-            if lo < first:
-                continue
-            a = float(d_[(d_.index > lo) & (d_.index <= hi)].sum())
-            b = float(m_[(m_.index > lo) & (m_.index <= hi)].sum())
-            if a or b:
-                seen += 1
-                same += bool(b) and abs(a / b - 1) <= 0.005
-        if seen >= 2 and same == seen:
+        twin, why = daily_twin(d_, m_)
+        if twin:
             groups.pop((name, daily_m), None)
-            _VIEW_BLOCKS[(name, daily_m)] = (f"BLOCKED — NOT DAILY: equals {monthly_m} in every window ({seen} "
-                                             f"quarter(s)) — the by-day read returned the monthly series; dropped until "
-                                             f"a by-day answer is daily (fetch/sky_accounting.looks_daily refuses it)")
+            _VIEW_BLOCKS[(name, daily_m)] = (f"BLOCKED — NOT DAILY: {why} — the by-day read returned the monthly series "
+                                             f"({monthly_m}, kept as the reference); dropped until a by-day answer is "
+                                             f"daily (fetch/sky_accounting.looks_daily refuses it)")
 
 
 HANDOVER_OVERLAP: dict = {}     # (project, metric) -> the declared handover's overlap check, last build (G11 B8 / C1)
@@ -1964,6 +2030,12 @@ def _hl_model_views(groups: dict) -> None:
         rew, stk = k * k / (365.0 * a), (k / a) ** 2
         cols = next(g.columns for (n_, _m), g in groups.items() if n_ == name and g is not None and not g.empty)
         tag = f"{spec['source']}[k={k:.3f} on {len(both)} day(s)]"
+        # the stake model whole, under its own name; locked_tokens' MODELLED leg is read back from it (G13 1a: the
+        # back-fill's dependency is the code's own — locked_tokens_modelled is an INPUT of locked_tokens)
+        groups[(name, spec["stake_modelled"])] = _as_stored(pd.DataFrame(
+            {"date": stk.index, "project": name, "metric": spec["stake_modelled"], "value": stk.values, "tier": 1,
+             "source": tag}), cols)
+        stk = _daily(groups[(name, spec["stake_modelled"])])
         for metric, model in ((spec["emissions"], rew), (spec["stake"], stk)):
             g = groups.get((name, metric))
             first = pd.to_datetime(g["date"]).min().normalize() if g is not None and not g.empty else None
@@ -1973,9 +2045,7 @@ def _hl_model_views(groups: dict) -> None:
             view = _as_stored(pd.DataFrame({"date": lead.index, "project": name, "metric": metric,
                                             "value": lead.values, "tier": 1, "source": tag}), cols)
             groups[(name, metric)] = pd.concat([view, g], ignore_index=True) if first is not None else view
-        groups[(name, spec["stake_modelled"])] = _as_stored(pd.DataFrame(
-            {"date": stk.index, "project": name, "metric": spec["stake_modelled"], "value": stk.values, "tier": 1,
-             "source": tag}), cols)
+
         fe = _daily(groups.get((name, spec["future"])))
         if fe.empty:
             continue
@@ -4289,6 +4359,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _handover_overlap_checks(groups)  # G11 B8 / C1: each declared handover's two legs compared on their common days
     _daily_twin_views(groups, asof)   # G11 D3: a "daily" series that IS its monthly twin in every window is dropped
     _LAST_GROUPS.clear()
+    _subsidy_common_views(groups, asof)   # G13 6: subsidy cover over the days every leg covers once (b) is complete
     _LAST_GROUPS.update(groups)       # the views, for Credibility rows that read them (credibility.VIEWS_LONG)
     # The latest value of every series, keyed the same way — so a flow can be checked against the
     # stock it was differenced from without depending on the order METRICS happens to iterate in.
@@ -4933,6 +5004,19 @@ class shifted:
         return False
 
 
+_PROJECT = {"name": None}         # the project whose row is being built (G13 2: config.metric_alias)
+
+
+@contextlib.contextmanager
+def _project_row(name: str | None):
+    was = _PROJECT["name"]
+    _PROJECT["name"] = name
+    try:
+        yield
+    finally:
+        _PROJECT["name"] = was
+
+
 class Refs:
     def __init__(self, data_rows: int, monthly_rows: int, months: list[str]):
         self.d0, self.d1 = 2, data_rows + 1
@@ -4942,6 +5026,10 @@ class Refs:
         self.mc1 = get_column_letter(4 + len(months))
 
     def D(self, r: int, metric: str, col: str = "q0") -> str:
+        # ONE DEFINITION PER PROJECT (G13 2): while a project's row is built, a metric it defines otherwise reads its own
+        # (World Mobile's fees are its own chain's gas: every fee-derived cell, Δ and ratio included, not fees_usd)
+        if _PROJECT["name"]:
+            metric = config.metric_alias(_PROJECT["name"], metric)
         if _SHIFT["k"]:
             col = _shift_col(metric, col, _SHIFT["k"])
             if col is None:
@@ -7783,6 +7871,9 @@ def _settlement_rebuild_views(groups: dict) -> None:
     groups[(name, "settlement_rebuilt_usd")] = _as_stored(pd.DataFrame({
         "date": rebuilt.index, "project": name, "metric": "settlement_rebuilt_usd", "value": rebuilt.values, "tier": 1,
         "source": f"derived:dex+nft+p2p[{tag}]"}), cols)
+    # G13 1a: the live settlement_volume_usd's days after the handover ARE the rebuilt series — read back from it, so
+    # the dependency is the code's own (the wiring audit's INPUT edge), not a local copy beside it
+    rebuilt = _daily(groups[(name, "settlement_rebuilt_usd")])
     # G10 4 (Jake 2026-10-21): A DECLARED HANDOVER. From its date the rebuild IS the live settlement_volume_usd whatever
     # this build's validation says — never scaled to the CSV; the CSV stays the reference check and its days are never
     # overwritten (the rebuild starts the day after the CSV's last). Without the declaration only a PASSED validation
@@ -8284,7 +8375,8 @@ def _write_table(ws, R: Refs, projects: list[dict], specs: list[tuple], data_by_
         for j, spec in enumerate(specs, start=1):
             head, builder, fmt, kind = spec[:4]
             bold = len(spec) > 4 and spec[4]
-            v = builder(r, p)
+            with _project_row(p["name"]):
+                v = builder(r, p)
             if isinstance(v, str) and v.startswith("=") and NA in v:
                 v = _reasoned_na(v, p, data_by_key)
             c = ws.cell(row=r, column=j, value=v)
@@ -8306,6 +8398,8 @@ def _write_table(ws, R: Refs, projects: list[dict], specs: list[tuple], data_by_
             # would attach the wrong series' confidence, coverage and staleness to the cell.
             if meta.get("metric_fn"):
                 meta = dict(meta, metric=meta["metric_fn"](p["name"]))
+            if meta.get("metric"):
+                meta = dict(meta, metric=config.metric_alias(p["name"], meta["metric"]))
             dep = meta.get("closed_with") or meta.get("metric")
             closed = config.unavailable_for(p["name"], dep) if dep else None
             if closed and closed.get("route_only"):
@@ -8722,6 +8816,15 @@ CP_SUPPLIER_HEAD = ("Supplier payout per $ of fees = (fees to suppliers + incent
                     "covered day (PROPOSED)")
 
 
+def _subsidy_dates_fmt(name: str):
+    """The covered dates ON the number where subsidy cover is computed over the common complete days (G13 6)."""
+    info = SUBSIDY_COMMON.get(name) or {}
+    if (name, "b") not in config.SUBSIDY_COMPLETE_FROM or int(info.get("days") or 0) < RATE_MIN_DAYS:
+        return None
+    return (f'0.00"x over {info["first"]}..{info["last"]} ({info["days"]} common days; (b) complete from '
+            f'{info["from"]})"')
+
+
 def _cp_revenue_metric(p: dict) -> str:
     """Subsidy cover's numerator: customer revenue where the project has the series (archetype 2's demand), else fees."""
     return "customer_revenue_usd" if "customer_revenue_usd" in config.metrics_for_project(p) else "fees_usd"
@@ -8846,6 +8949,16 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
             # V1: a denominator known to miss part of what is paid blocks the ratio (unequal coverage), named
             gaps = config.outflow_incomplete(p["name"], got, q0_days=lambda m, n=p["name"]: _q0_days(data_by_key, n, m),
                                              window=int(GLOBALS["period_days"]))
+            if gaps and (p["name"], "b") in config.SUBSIDY_COMPLETE_FROM and got == ["b"]:
+                # G13 6: per covered day, over the days every leg covers once (b) is complete — never lost to BLOCKED
+                info = SUBSIDY_COMMON.get(p["name"]) or {}
+                if int(info.get("days") or 0) >= RATE_MIN_DAYS:
+                    return calc(f"{R.D(r, 'subsidy_cover_num_usd', 'q0')}/{R.D(r, 'subsidy_cover_den_usd', 'q0')}")
+                frm = info.get("from") or config.SUBSIDY_COMPLETE_FROM[(p["name"], "b")]["declared"]
+                valid = (pd.Timestamp(frm) + pd.Timedelta(days=RATE_MIN_DAYS - 1)).date()
+                return (f"n/a — NEEDS HISTORY: the (b) denominator is complete from {frm} — "
+                        f"{int(info.get('days') or 0)} common day(s) of the {RATE_MIN_DAYS} a per-day ratio needs; "
+                        f"valid from {valid}")
             if gaps:
                 return ("BLOCKED — unequal coverage: the incentive denominator is incomplete — " + "; ".join(gaps)
                         + f" (numerator {rv}, whole)")
@@ -9125,7 +9238,8 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         # ---- SUBSIDY COVER (item 5, amendment 3) ----
         ("Subsidy cover — revenue basis", lambda r, p: _cp_revenue_metric(p) if _cp_cats(p, ("b", "c")) else "",
          FMT_TEXT, "text"),
-        (CP_SUBSIDY_HEAD, subsidy(("b",)), FMT_X, "calc", True, {"metric": "outflow_b_usd"}),
+        (CP_SUBSIDY_HEAD, subsidy(("b",)), FMT_X, "calc", True,
+         {"metric": "outflow_b_usd", "fmt_fn": _subsidy_dates_fmt}),
         (CP_SUBSIDY_BC_HEAD, subsidy(("b", "c")), FMT_X, "calc"),
         # ---- HOLDER VALUE (item 3, LITMUS A) ----
         (CP_HVY_HEAD, hvy, FMT_PCT, "calc", True, {"metric": "holder_value_revenue_usd"}),
@@ -10162,8 +10276,11 @@ def write_credibility(ws, R: Refs, data_by_key: dict, long: pd.DataFrame, asof) 
         _style(g, "input", row.get("fmt") or FMT_NUM2)
         ws.cell(row=r, column=8, value=row["date"])
         # A ZERO REFERENCE (a halted programme) is met by a zero, and by nothing else.
+        # G13 7 (Jake's 10-21 store: 345 Credibility formula cells saved blank, read as 0 by a recalculating reader):
+        # the gap with nothing to compare says which side is missing — never an empty string
         gap = ws.cell(row=r, column=9, value=f'=IF(AND(ISNUMBER(E{r}),ISNUMBER(G{r})),'
-                                             f'IF(G{r}=0,IF(E{r}=0,0,1),(E{r}-G{r})/ABS(G{r})),"")')
+                                             f'IF(G{r}=0,IF(E{r}=0,0,1),(E{r}-G{r})/ABS(G{r})),'
+                                             f'IF(ISNUMBER(G{r}),"no figure of ours","no reference value"))')
         gap.number_format = FMT_PCT
         tol = row.get("tol")
         t = ws.cell(row=r, column=10, value=(tol / 100.0) if tol is not None else None)
@@ -11033,7 +11150,7 @@ def write_trajectory(wb, data_by_key: dict, asof=None) -> list[dict]:
         ws.cell(row=r, column=6, value=trajectory.direction(spec["hid"], k.split("|")[0], spec["header"]))
         forms = []
         for q in range(len(trajectory.LABELS)):
-            with shifted(q):
+            with shifted(q), _project_row(p["name"]):
                 try:
                     f = spec["builder"](r, p)
                 except Exception as e:  # noqa: BLE001 — a builder that cannot shift is said, never guessed
@@ -11088,7 +11205,9 @@ def write_trajectory(wb, data_by_key: dict, asof=None) -> list[dict]:
                 n_clean = trajectory.clean_quarters(asof, brk[0], int(config.TRAJECTORY["period_days"]), len(qs))
                 if n_clean < len(qs):
                     brk_text = (f"SERIES BREAK {brk[0].date()} — {brk[1]}: {brk[2][:60]} -> {brk[3][:60]}"
-                                + (f" (+{len(found) - 1} earlier)" if len(found) > 1 else ""))
+                                + (f" (+{len(found) - 1} earlier: " + ", ".join(  # G13 8: each earlier stitch named
+                                    f"{x[0].date()} {x[1]}" for x in found[-4:-1]) + ("…" if len(found) > 4 else "")
+                                    + ")" if len(found) > 1 else ""))
                     why.append(f"{brk_text}; statistics over the {n_clean} quarter(s) wholly after it — restate the "
                                f"history on the current basis to lift it (RUNBOOK 11bp)")
                     qs = list(qs[:n_clean]) + [None] * (len(qs) - n_clean)

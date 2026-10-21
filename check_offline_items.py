@@ -12642,11 +12642,12 @@ def stored_but_unshown():
                     if m in config.METRICS]
             hdr = _re.match(r"MISSING \[[^\]]+\] — ([a-z0-9_, ]+) — ", why)
             listed = [m.strip() for m in (hdr.group(1).split(",") if hdr else ()) if m.strip() in config.METRICS]
-            # the window the CELL needs: a trailing-365-day column reads its inputs over 365 days (G12 C4)
-            w_cell = "y1" if _re.search(r"365", r.get("Column") or "") else "q0"
+            # the window the CELL needs: a trailing-365-day column reads its inputs over 365 days (G12 C4) — and so does
+            # a cell built on a 365-day figure, whose own text names that window (G13 4: Near's "NRR HEADROOM
+            # (settlement)" reads network_reserve_ratio, "… holds 195 of the 365 days")
+            w_cell = "y1" if (_re.search(r"365", r.get("Column") or "")
+                              or _re.search(r"of the 365 days|the 365-day window|trailing[- ]365", text)) else "q0"
             pairs = said or [(m, w_cell) for m in listed]
-            if w_cell == "y1":
-                pairs = [(m, "y1") for m, _w in pairs]
             if r.get("Tab") == "Trajectory" and not pairs:
                 pairs = [(m, "q0") for m in _ca._metrics_named(why) if m in config.METRICS]
             if _re.search(r"withdrawn|SOURCE-LIMITED|FORWARD-ONLY|recorded, not compared", text):
@@ -12663,6 +12664,11 @@ def stored_but_unshown():
             legs = [(m, w) for _l, m, w, c, n in _ca._COVER_LEG.findall(text) if c == "?" or int(c) < int(n)]
             if legs:
                 pairs = legs
+            # G13 4 (Jake's 10-21 store: Near's 365-day settlement / NRR cells were still judged on their inputs' q0 tag
+            # — the "unequal coverage" legs above name the window the INPUT was tagged with): the window the CELL needs
+            # wins, whatever its text names
+            if w_cell == "y1":
+                pairs = [(m, "y1") for m, _w in pairs]
             # a sum of legs (emissions_from_metric) is read from its legs, never from rows under the sum's own key
             em = (config.PROJECT_BY_NAME.get(proj) or {}).get("emissions_from_metric")
             if isinstance(em, (list, tuple)):

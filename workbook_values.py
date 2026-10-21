@@ -11,6 +11,7 @@ the file changes. No LibreOffice needed.
 from __future__ import annotations
 
 import os
+import numbers
 import re
 
 import tempfile
@@ -45,10 +46,10 @@ def _cached(v) -> tuple[str, str] | None:
         return ' t="e"', escape(v.code)
     if isinstance(v, bool):
         return ' t="b"', "1" if v else "0"
-    if isinstance(v, (int, float)):
+    if isinstance(v, numbers.Real):             # numpy's numbers too (G13 7: a 0 is saved as 0, never as text)
         if v != v or v in (float("inf"), float("-inf")):
             return ' t="e"', "#NUM!"
-        return "", repr(float(v)) if isinstance(v, float) else str(v)
+        return "", repr(float(v)) if not isinstance(v, int) else str(v)
     if v is None:
         return ' t="str"', ""
     return ' t="str"', escape(str(v))

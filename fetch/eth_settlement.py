@@ -257,33 +257,68 @@ class EthP2PBigQuery(NearBigQuery):
                         d = str(pd.Timestamp(r["day"]).date())
                     except (KeyError, ValueError):
                         continue
-                    if d not in e["days"] or r["token"] not in e["days"][d]:
-                        e["days"].setdefault(d, {})[str(r["token"]).lower() if r["token"] != "ETH" else "ETH"] = \
-                            str(r["amount"])
+                    tok, _unk = self.by_address({r["token"]: 1}, p2p)
+                    key = next(iter(tok), str(r["token"]).lower())     # a symbol is stored on the token's address
+                    if d not in e["days"] or key not in e["days"][d]:
+                        e["days"].setdefault(d, {})[key] = str(r["amount"])
                         added += 1
         if added:
             out.skipped(SOURCE, name, f"P2P CSV (hand-run query): {added} token-day(s) read from {root}", TIER)
+
+    @staticmethod
+    def by_address(toks: dict, p2p: dict) -> tuple[dict, list]:
+        """A cached day's amounts keyed as the SQL keys them (native "ETH", every ERC-20 by lower-case address), and the
+        keys no declared token answers to. G13 3 (Jake's store: 2026-09-20..09-23 cached with DAI, USDC, WETH, USDT,
+        0xdc035d45…, ETH and prices held, never stored): a hand-run CSV keyed the tokens by SYMBOL, valuation priced
+        "ethereum:dai" (no such coin), the day was refused on every run without a word. A symbol is mapped through
+        config's token list (case-insensitive); an address key wins over a symbol for the same token."""
+        sym = {str(t[0]).lower(): str(t[1]).lower() for t in p2p["tokens"]}
+        addrs = set(sym.values())
+        out, unknown = {}, []
+        for k, v in sorted(toks.items(), key=lambda kv: str(kv[0]).lower() in addrs):   # address keys last: they win
+            kk = str(k).lower()
+            if kk == "eth":
+                out["ETH"] = v
+            elif sym.get(kk, kk) in addrs:
+                out[sym.get(kk, kk)] = v
+            else:
+                unknown.append(str(k))
+        return out, unknown
 
     def _value_eth(self, p2p, st, e, out, name, metric) -> None:
         eth_px = self._stored(name, "price_usd")
         dec = {t[1]: int(t[2]) for t in p2p["tokens"]}
         weth = next(t[1] for t in p2p["tokens"] if t[0] == "WETH")
-        stored, no_eth, refused, notes = [], 0, 0, []
+        stored, no_eth, refused, notes, why = [], 0, 0, [], {}
         for key in sorted(e["days"]):
-            day, toks = pd.Timestamp(key), e["days"][key]
+            day = pd.Timestamp(key)
             if day >= today():
                 continue
+            toks, unknown = self.by_address(e["days"][key], p2p)
+            if toks != e["days"][key] and not unknown:
+                e["days"][key] = toks                    # the cache is rewritten on the SQL's own keys
             p_eth = eth_px.get(day) if eth_px is not None else None
             if p_eth is None or pd.isna(p_eth):
                 no_eth += 1
+                why[key] = "no stored Ethereum price_usd that day"
+                continue
+            if unknown:
+                refused += 1
+                why[key] = f"token key(s) no declared token answers to: {', '.join(unknown)[:80]}"
                 continue
             stables = [t for t in toks if t not in ("ETH", weth)]
             px = e["prices"].get(key)
+            # G13 3: a cached answer that lacks a token the day holds (an answer cached before G12, or for symbol keys)
+            # is asked again — valuing the day without it would understate it, refusing it for good hides it
+            if px is not None and stables and not all((px.get(f"ethereum:{t}") or (None,))[0] is not None
+                                                      for t in stables):
+                px = None
             if px is None and stables:
                 try:
                     px = {c: list(v) for c, v in self._price(p2p, day, [f"ethereum:{t}" for t in stables]).items()}
                 except Exception as ex:  # noqa: BLE001
                     notes.append(f"prices {key}: {str(ex).split('?')[0][:80]}")
+                    why[key] = "the DefiLlama price request failed this run"
                     break
                 # G12 C5: an answer missing a token's price is NOT cached — the day is asked again on the next run
                 # instead of being refused for good
@@ -298,16 +333,23 @@ class EthP2PBigQuery(NearBigQuery):
                     p = px.get(f"ethereum:{t}") or (None, None)
                     if p[0] is None or p[1] is None or int(p[1]) != dec.get(t):
                         ok = False                       # unpriced, or decimals not as declared: the day is refused
+                        why[key] = (f"ethereum:{t} " + ("unpriced" if p[0] is None else
+                                                        f"decimals {p[1]} (declared {dec.get(t)})"))
                         break
                     usd += float(Decimal(toks[t]) / Decimal(10) ** dec[t]) * p[0]
-            except (InvalidOperation, ValueError) as ex:
+            except (InvalidOperation, ValueError, TypeError) as ex:
                 notes.append(f"{key}: {ex}")
+                why[key] = f"unreadable amount ({str(ex)[:60]})"
                 continue
             if not ok:
                 refused += 1
                 continue
             stored.append((day, usd))
         self._save(st)
+        if why:
+            # EVERY CACHED DAY THAT IS NOT STORED SAYS WHY (G13 3): the hole at 09-20..09-23 was silent for two rounds
+            out.warn(SOURCE, name, f"{metric}: {len(why)} cached day(s) NOT stored — " + "; ".join(
+                f"{k}: {v}" for k, v in sorted(why.items())[:12]) + (" …" if len(why) > 12 else ""), TIER)
         if not stored:
             if e["days"]:
                 out.skipped(SOURCE, name, f"{metric}: {len(e['days'])} day(s) held, none valued ({no_eth} without "

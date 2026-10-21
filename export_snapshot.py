@@ -160,6 +160,15 @@ def _headline_key(k) -> bool:
                 or str(k).count(" | ") != 1)
 
 
+def is_attribute(key: str) -> bool:
+    """A "<tab> | <header>" key that is an ATTRIBUTE of the row — identity or notes (spec.py: Project, Symbol,
+    Archetypes, Held, Materiality, Notes, flags) — not a figure. G13 5 (Jake's 10-21 store: 10 HEADLINE LOST, all
+    "Master | Archetypes (primary first)": "3" reads as a number, "3, 1, 4" does not)."""
+    import spec                                            # noqa: PLC0415
+    tab, _, head = str(key).partition(" | ")
+    return spec.concept_for(tab, head) in ("identity", "notes")
+
+
 def snapshot_heads(wb, value, headline_cells: list, asof) -> dict:
     """{project: {"<tab> | <header>": float}} — every figure the snapshot would record, by the snapshot's OWN keys
     (snapshot_rows), a stated number ("0 — fixed supply") counted as its number. G12 C1 (Jake's 10-21 run: the guard
@@ -170,7 +179,7 @@ def snapshot_heads(wb, value, headline_cells: list, asof) -> dict:
     out: dict = {}
     for row in snapshot_rows(wb, value, [], [], headline_cells, asof):
         for k, v in row.items():
-            if not _headline_key(k):
+            if not _headline_key(k) or is_attribute(k):
                 continue
             n = sanity.stated_number(v)
             if n is not None:
