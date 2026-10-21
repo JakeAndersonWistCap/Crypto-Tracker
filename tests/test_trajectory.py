@@ -86,7 +86,8 @@ def test_the_shift_maps_each_window_reference():
     with bw.shifted(1):
         assert R.C(5, bw.WINDOW_SHARE_COL["q0"]) == q1_share          # the window's split moves with it
     with bw.shifted(4):
-        assert R.C(5, bw.WINDOW_SHARE_COL["q0"]) == "NA()"            # no Q4 split column
+        # no Q4 split column: the declared text, never #N/A (G11 A3)
+        assert R.C(5, bw.WINDOW_SHARE_COL["q0"]).startswith('"n/a — no split for this window')
     assert bw._SHIFT["k"] == 0
 
 

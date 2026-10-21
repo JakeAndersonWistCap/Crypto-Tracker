@@ -1158,6 +1158,6 @@ Evidence: Jake's workbook of the 2026-10-21 11:47 run. Fixture: the 10-13 dumps 
 | G11-D3 | Sky daily buyback spending | Equal to the monthly series in every window. | Dropped at read time where that holds (DAILY_TWIN); the fetch refuses a by-day answer whose rows all fall on one day of the month. |
 | G11-D4 | Price cross-check | CoinGecko intraday spot vs Coinbase 00:00 open. | Our side counts only a day read after it closed (the 00:00 history point). |
 | G11-D5 | Near settlement wording | "the Artemis export holds 203 of 365 days". | The rebuild's own terms: "the settlement REBUILD (dex + p2p, P2P from BigQuery from <first day>) holds …". |
-| G11-D6 | Sky farm rate reference | Today's rate vs Jake's 10-07 reading. | Ours judged on the reading's own date (`as_of`). |
+| G11-D6 | Sky farm rate reference | Today's rate vs Jake's 10-07 reading. | The SKY-farm row's ours is judged on the reading's own date (`as_of`); the USDS-farm row stays on the as-of (it is the A3 headline itself). |
 | G11-D7 | NEAR treasury mint | On no value-flow line. | N/A BY DESIGN on (d), said on the line; a memo line shows its $ (VALUE_FLOW_MEMO). |
 | G11-E | Aerodrome (parked) | A tier that timed out stored the stocks of its partial frames (filing_managed_lock_tokens 444.3M → 245.1M). | A stock written by a tier that timed out in the same run is not stored; the timeout message names them. Nothing else changed until the post-migration run. |

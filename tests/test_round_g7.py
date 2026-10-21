@@ -161,7 +161,9 @@ def test_7_hyperliquid_buyback_usd_is_a_read_time_view(tmp_path):
     con = _store(tmp_path, [("Hyperliquid", "gross_burn_tokens", "2026-10-18", 1.0, "x"),
                             ("Hyperliquid", "core_burn_tokens", "2026-10-17", 1.0, "x")])
     why = coi._not_stale(config, con, "Hyperliquid", "actual_buyback_usd", "2026-09-29")
-    assert why.startswith("READ-TIME VIEW") and "price_usd" in why and "inputs through 2026-10-17" in why
+    # G11 B7: the buyback is the Fund leg alone (gross_burn_tokens), so the Core leg's later gap does not hold it back
+    assert why.startswith("READ-TIME VIEW") and "price_usd" in why and "inputs through 2026-10-18" in why
+    assert "gross_burn_tokens" in why
 
 
 def test_7_pendle_latent_supply_is_off_the_not_wired_list():

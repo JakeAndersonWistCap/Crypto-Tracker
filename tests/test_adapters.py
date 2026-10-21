@@ -15521,8 +15521,10 @@ def test_a_burn_route_buyback_is_a_view_of_the_whole_burn_series():
     b, t, u = by["Hyperliquid|gross_burn_tokens"], by["Hyperliquid|actual_buyback_tokens"], by["Hyperliquid|actual_buyback_usd"]
     tot = by["Hyperliquid|total_burn_tokens"]
     assert b["q0"] == 290_000.0, b["q0"]                              # the Fund leg, unchanged
-    assert t["q0"] == tot["q0"] == 348_000.0, (t["q0"], tot["q0"])     # 29 days x (10,000 + 2,000)
-    assert u["q0"] == 348_000.0 * 40 and u["q0_covered_days"] == b["q0_covered_days"] == 29
+    assert tot["q0"] == 348_000.0, tot["q0"]                           # 29 days x (10,000 + 2,000): A1's burn
+    # G11 B7: the buyback is the Fund's purchases only — the Core burns were never bought
+    assert t["q0"] == 290_000.0, t["q0"]
+    assert u["q0"] == 290_000.0 * 40 and u["q0_covered_days"] == b["q0_covered_days"] == 29
     assert "as-buyback" in str(t["source"])
     # GEODNET's buyback is no longer Dune-sourced (2026-09-28): it is this same view of its burn.
     assert config.dune_query_declared("GEODNET", "actual_buyback_tokens") is None
@@ -16102,8 +16104,11 @@ def test_a_source_that_hangs_is_abandoned_at_its_budget_and_the_rest_merge_in_ti
 
     class Hangs:
         def run(self, projects, window_days, out):
-            out.add(point("Ethereum", "price_usd", 1.0, "hangs", 1, pd.Timestamp("2026-09-20")),
+            out.add(point("Ethereum", "fees_usd", 1.0, "hangs", 1, pd.Timestamp("2026-09-20")),
                     "hangs", "Ethereum", "first figure", 1)
+            # a STOCK read before the hang is not stored (G11 E: it may be a partial sum)
+            out.add(point("Ethereum", "price_usd", 1.0, "hangs", 1, pd.Timestamp("2026-09-20")),
+                    "hangs", "Ethereum", "a stock", 1)
             release.wait(30)            # the beaconchain hang, in miniature
 
     class Slow:
@@ -16131,11 +16136,13 @@ def test_a_source_that_hangs_is_abandoned_at_its_budget_and_the_rest_merge_in_ti
     assert _t.monotonic() - t0 < 10, "the run must not wait on the hung source"
     df = out.frame()
     assert set(df.source) >= {"hangs", "slow"}, "what the hung source produced is kept"
+    assert df[(df.source == "hangs")].metric.tolist() == ["fees_usd"], "its stock is not stored (G11 E)"
     tx = df[(df.metric == "tx_count")]
     assert list(tx.source) == ["slow"], \
         "tier 1 'slow' finished LAST but was declared first, so it wins the collision"
     msg = next(e.message for e in out.log if e.source == "etherscan_supply" and e.status == "failed")
     assert "TIER TIMED OUT after 2s" in msg or "TIER TIMED OUT after 1s" in msg, msg
+    assert "STOCKS NOT STORED" in msg and "Ethereum/price_usd" in msg, msg
     assert out.timed_out["etherscan_supply"][0] == 1
     timed = {(g["project"], g["metric"]) for g in out.gaps
              if g["reason"].startswith("TIER TIMED OUT this run")}
@@ -19446,14 +19453,16 @@ def test_maturing_round_history_backfills(tmp_path, monkeypatch):
         hl.append(dict(base, project="Hyperliquid", metric="holders_revenue_usd", date=d, value=2_000_000.0, source="defillama:dailyHoldersRevenue"))
         hl.append(dict(base, project="Hyperliquid", metric="price_usd", date=d, value=40.0, source="coingecko"))
         if d >= live:
-            for m in ("gross_burn_tokens", "core_burn_tokens"):
-                hl.append(dict(base, project="Hyperliquid", metric=m, date=d, value=25_000.0, source="hypercore_info:x:delta"))
+            for m in ("gross_burn_tokens", "core_burn_tokens"):       # the Fund's own read point (G11 B7)
+                hl.append(dict(base, project="Hyperliquid", metric=m, date=d, value=25_000.0,
+                               source="hypercore_info:spotClearinghouseState:delta"))
     data = bw.aggregate(pd.DataFrame(hl), pd.DataFrame(), today()).set_index(["project", "metric"])
     b = data.loc[("Hyperliquid", "actual_buyback_tokens")]
     assert b["status"] not in bw.WITHHELD_STATUSES, b["note"]
-    assert b["first_date"] == str(days[0].date()) and abs(b["y1"] - 364 * 50_000.0) < 1e-3
+    # the live days carry the Fund's 25,000 only (G11 B7: the Core leg is a burn, never a buyback)
+    assert b["first_date"] == str(days[0].date()) and abs(b["y1"] - (347 * 50_000.0 + 17 * 25_000.0)) < 1e-3
     u = data.loc[("Hyperliquid", "actual_buyback_usd")]
-    assert abs(u["q0"] - (72 * 2_000_000.0 + 17 * 50_000.0 * 40.0)) < 1e-3          # (asof-90, asof], data to asof-1
+    assert abs(u["q0"] - (72 * 2_000_000.0 + 17 * 25_000.0 * 40.0)) < 1e-3          # (asof-90, asof], data to asof-1
 
 
 def test_reward_vault_history_reads_each_past_day_at_its_first_block():

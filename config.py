@@ -31403,12 +31403,11 @@ SOURCE_RECLASSIFICATIONS[("Aethir", "locked_tokens")] = (
 DAILY_TWIN = {("Sky", "buyback_spending_usd_ba_daily"): "buyback_spending_usd_ba"}
 
 # ===== G11 D6 (Jake's 10-21 run): THE SKY FARM RATES ARE JUDGED ON THE DATE JAKE READ THEM. =====
-# Jake's readings of info.skyeco.com (SKY farm 6.58%, USDS farm 4.61%) were taken on 2026-10-07; today's on-chain SKY
+# Jake's reading of info.skyeco.com (SKY farm 6.58%) was taken on 2026-10-07; today's on-chain SKY
 # farm rate is 4.65% because rewardRate fell 18.4 -> 12.8 SKY/s — a change of the farm, not a disagreement. Ours is
 # now computed as of 2026-10-07 (credibility.ours_value `as_of`), the reading's own date.
-for _k in ("in_apy_sky_farm", "in_apy_usds_farm"):
-    if _k in CREDIBILITY.get("Sky", {}):
-        CREDIBILITY["Sky"][_k]["ours"]["as_of"] = CREDIBILITY["Sky"][_k]["ref"]["manual"]["read_on"]
+# The USDS farm row stays on the build's as-of: it is the A3 headline itself (one number, test_signoff_fixtures).
+CREDIBILITY["Sky"]["in_apy_sky_farm"]["ours"]["as_of"] = CREDIBILITY["Sky"]["in_apy_sky_farm"]["ref"]["manual"]["read_on"]
 
 # ===== G11 D7 (Jake's 10-21 run): NEAR'S TREASURY MINT ON THE VALUE FLOW — N/A BY DESIGN ON (d), SAID ON THE LINE. =====
 # Line m (near_treasury_mint_tokens, 1/10 of each epoch's mint to treasury.near; ~0.79M NEAR / ~$2.4M a quarter on

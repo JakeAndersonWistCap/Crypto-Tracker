@@ -9688,7 +9688,10 @@ def write_a1(ws, R: Refs, data_by_key: dict, months: list[str]):
         ("Price — 90d average ($)", lambda r, p: pull(price(r)), FMT_USD4, "pull", False, {"metric": "price_usd"}),
         ("Gross issuance Q0 ($ at avg price)", lambda r, p: _fixed_supply_text(p) or calc(f"{iss(r)}*{price(r)}"),
          FMT_USD, "calc"),
-        ("Issuance as % of supply (annualised)", lambda r, p: calc(f"{_annualise(R, r, p, 'gross_issuance_tokens', iss(r))}/{circ(r)}"), FMT_PCT, "calc"),
+        # G11 C7: ONE BASIS with A4 — a pre-minted token whose minted figure is declared n/a reads its release
+        ("Issuance as % of supply (annualised)",
+         lambda r, p: calc(f"{_annualise(R, r, p, _a4_iss_metric(p['name']), R.D(r, _a4_iss_metric(p['name']), 'q0'))}"
+                           f"/{circ(r)}"), FMT_PCT, "calc"),
         # staked_tokens WAS MERGED INTO locked_tokens (2bc2e5d); these three still looked it up and
         # read #N/A on every row until 2026-09-28.
         # G11 C3 (Jake's 10-21 run: Ethereum's staked / staking rate / float read n/a with beacon_chain_eth 43.67M

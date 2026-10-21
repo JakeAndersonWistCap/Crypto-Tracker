@@ -446,7 +446,8 @@ def test_the_spec_formula_leg_is_labelled_modelled_everywhere_on_the_real_dump(t
     r = next(r for r in range(2, ws.max_row + 1) if ws.cell(r, 1).value == "Ethereum|consensus_rewards_tokens")
     assert "MODELLED leg" in str(ws.cell(r, bw.DATA_COLS.index("note") + 1).value)
     vy = next(x for x in rows if x["hid"] == "a1_validator_yield")
-    assert vy["modelled_quarters"][:1] == ["Q-1"] and "Q0" not in vy["modelled_quarters"]
+    # G11 B6: the leg now reaches the first measured read, so Q0 is MODELLED in part (said, excluded from scoring)
+    assert vy["modelled_quarters"][:2] == ["Q0", "Q-1"]
     assert "MODELLED" in vy["trend"]
     assert not next(x for x in rows if x["hid"] == "master_price_spot")["modelled_quarters"]
     cw = wb["Credibility"]
