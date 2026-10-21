@@ -23904,7 +23904,11 @@ def test_credibility_tab_has_a_row_for_every_headline_cell_of_the_fifteen_projec
         if ((config.CREDIBILITY.get(h["project"]) or {}).get(h["id"]) or {}).get("ours_py"):
             assert any(r[0] == h["project"] and r[1] and r[4] is not None for r in rows), h["id"]
             continue
-        assert f"='{h['sheet']}'!{h['cell']}" in ours, f"{h['project']} {h['id']} has no Credibility row"
+        # G12 A2: a row on a cell EMPTY BY DESIGN keeps the cell's address (column C) and says "no figure by design"
+        # in place of the formula that read Excel's blank as 0
+        by_design = any(r[0] == h["project"] and r[1] == h["sheet"] and r[2] == h["cell"]
+                        and r[4] == "no figure by design" and str(r[10]).startswith("N/A") for r in rows)
+        assert f"='{h['sheet']}'!{h['cell']}" in ours or by_design, f"{h['project']} {h['id']} has no Credibility row"
     import credibility as cred
     allowed = ("PASS", "CHECK", "FRESH-only", "UNVERIFIABLE", "N/A") + cred.SIGNED     # + the sign-off categories
     for r in rows:
