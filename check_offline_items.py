@@ -12723,6 +12723,80 @@ def wiring():
     return 0
 
 
+def settlement_legs():
+    """ROUND G14 item 3 (Jake's 10-22 run: settlement_rebuilt_usd 140 days against p2p_transfer_volume_usd's 144;
+    settlement_volume_usd blank 2026-09-20..09-23): Ethereum's three rebuild legs FROM THE STORE, day by day over
+    TOKEN_METRICS_FROM..TOKEN_METRICS_TO (default 2026-09-15..2026-09-30) — each row's value and source, the days a leg
+    lacks — then the build's own read (aggregate on Ethereum's rows): the leg series the rebuild joined and the days its
+    join dropped, by leg (build_workbook.SETTLEMENT_VALIDATION). A day every leg holds in the store but the join lacks
+    is a read-time drop; a day a leg lacks in the store is the leg's. Reads metrics.db (TOKEN_METRICS_DB); changes
+    nothing; no call."""
+    import sqlite3                                        # noqa: PLC0415
+    import pandas as _pd                                  # noqa: PLC0415
+    import config                                         # noqa: PLC0415
+    import store as _store                                # noqa: PLC0415
+    head("SETTLEMENT LEGS — Ethereum's DEX / NFT / P2P rows in the store, and the days the rebuild's join drops")
+    if not os.path.exists(_store.DB_PATH):
+        print(f"  no store at {_store.DB_PATH}")
+        return 0
+    spec = config.SETTLEMENT_REBUILD["ethereum_rebuild"]
+    name, legs = spec["project"], spec["legs"]
+    lo = os.environ.get("TOKEN_METRICS_FROM") or "2026-09-15"
+    hi = os.environ.get("TOKEN_METRICS_TO") or "2026-09-30"
+    con = sqlite3.connect(_store.DB_PATH)
+    got = {}
+    for k, m in legs.items():
+        rows = con.execute("SELECT date, value, source FROM metrics WHERE project=? AND metric=? ORDER BY date",
+                           (name, m)).fetchall()
+        odd = [d for d, _v, _s in rows if len(str(d)) != 10]
+        nulls = [d for d, v, _s in rows if v is None]
+        print(f"  {k:4} {m}: {len(rows)} row(s) {rows[0][0] if rows else '-'}..{rows[-1][0] if rows else '-'}"
+              + (f"; {len(odd)} date(s) not YYYY-MM-DD (e.g. {odd[0]!r})" if odd else "")
+              + (f"; {len(nulls)} NULL value(s) (e.g. {nulls[0]})" if nulls else ""))
+        got[k] = {str(d)[:10]: (v, s) for d, v, s in rows}
+    print("\n  day         " + "  ".join(f"{k:>26}" for k in legs))
+    for d in _pd.date_range(lo, hi):
+        day = str(d.date())
+        cells = []
+        for k in legs:
+            v = got[k].get(day)
+            cells.append(f"{v[0]:>26,.0f}" if v and v[0] is not None else f"{'— none —':>26}")
+        print(f"  {day}  " + "  ".join(cells))
+    # the build's own read: the leg series after every read-time view, and the join's dropped days
+    import build_workbook as _bw                          # noqa: PLC0415
+    st = _store.Store(_store.DB_PATH)
+    try:
+        long = st.load_long()
+    finally:
+        st.close()
+    long = long[long["project"] == name]
+    asof = _pd.Timestamp(long["date"].max()).normalize() if not long.empty else _pd.Timestamp.today().normalize()
+    scope = list(_bw._SCOPE)                              # narrowed for this read only, restored after
+    _bw._SCOPE[:] = [config.PROJECT_BY_NAME[name]]
+    try:
+        _bw.aggregate(long, _pd.DataFrame(), asof, gaps=_pd.DataFrame(), review=_pd.DataFrame())
+    finally:
+        _bw._SCOPE[:] = scope
+    val = _bw.SETTLEMENT_VALIDATION.get(name) or {}
+    print(f"\n  THE BUILD'S READ (as of {asof.date()}): validation {val.get('status')}; {val.get('common_days')} common "
+          f"day(s); {val.get('legs_end', val.get('why', ''))}")
+    for k, m in legs.items():
+        s = _bw._daily(_bw._LAST_GROUPS.get((name, m)))
+        held = {str(x.date()) for x in s.index}
+        lost = sorted(d for d in got[k] if lo <= d <= hi and d not in held)
+        print(f"  {k:4} after the read-time views: {len(s)} day(s)"
+              + (f"; DROPPED AT READ TIME in the window: {', '.join(lost)}" if lost else "; none dropped in the window"))
+    rb = _bw._daily(_bw._LAST_GROUPS.get((name, "settlement_rebuilt_usd")))
+    rb_days = {str(x.date()) for x in rb.index}
+    for d in _pd.date_range(lo, hi):
+        day = str(d.date())
+        if day not in rb_days:
+            lacking = [k for k in legs if day not in got[k]]
+            print(f"  {day}: NO REBUILD ROW — " + (f"the store lacks {', '.join(lacking)}" if lacking else
+                                                    "every leg is stored: a READ-TIME drop (see the lines above)"))
+    return 0
+
+
 def review_triage():
     """ROUND G10 item 6 (Jake 2026-10-21: "Review Queue (20): for each item, fix it or write why it stays"): every OPEN row
     of the store's latest Review Queue (config.review_answered rows are listed apart), with the numbers a disposition
@@ -13300,7 +13374,7 @@ CHECKS = (
     geod_stake_recipient, geod_stake_wallets, maple_ssf_lp_test, maple_drips, plume_archive, settlement_rebuild_coverage,
     near_settlement_routes,
     env_keys, aero_migration, near_wallet_inflow_days, worldmobile_probe, stale_series, mcap_inputs, na_reasons, missing_triage, gap_routes, spec_coverage,
-    stored_but_unshown, review_triage, wiring,
+    stored_but_unshown, review_triage, wiring, settlement_legs,
     aethir_mint_path,
     near_activity_break,
     plume_settlement_routes,

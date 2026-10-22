@@ -171,7 +171,11 @@ class CoinGecko:
                     v = md.get(key)
                     # OUR TOTAL IS A NET VIEW (Round G2, config.TOTAL_SUPPLY_NET): CoinGecko's total is stored only
                     # under its own name below, never as total_supply
-                    if v is not None and not (metric == "total_supply" and name in config.TOTAL_SUPPLY_NET):
+                    # G14 1: where the chain read is the declared total (TOTAL_SUPPLY_ONCHAIN_FIRST) CoinGecko's total
+                    # is never written as total_supply — a chain timeout left it holding the day — only as
+                    # total_supply_coingecko below
+                    if v is not None and not (metric == "total_supply" and (name in config.TOTAL_SUPPLY_NET
+                                                                            or name in config.TOTAL_SUPPLY_ONCHAIN_FIRST)):
                         rows.append({"date": when, "project": name, "metric": metric,
                                      "value": float(v), "source": SOURCE, "tier": TIER})
                     # where the chain read wins the total (config.TOTAL_SUPPLY_ONCHAIN_FIRST) CoinGecko's own total is

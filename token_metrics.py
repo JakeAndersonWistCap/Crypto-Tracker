@@ -988,6 +988,28 @@ def _mark_stored(frame):
     return verify
 
 
+def apply_run_cleanups(st, run_id: str, log) -> list[str]:
+    """config.RUN_CLEANUPS (G14 1): delete exactly the rows each declared one-off names, logging every row removed —
+    console and Run Log. Returns the lines logged. A second run finds nothing to remove."""
+    lines = []
+    for c in config.RUN_CLEANUPS:
+        for proj in c["projects"]:
+            q = ("FROM metrics WHERE project=? AND metric=? AND substr(date, 1, 10)=? AND source=?",
+                 (proj, c["metric"], c["date"], c["source"]))
+            rows = st.conn.execute("SELECT date, value " + q[0], q[1]).fetchall()
+            if not rows:
+                continue
+            st.conn.execute("DELETE " + q[0], q[1])
+            for d, v in rows:
+                line = (f"CLEAN-UP {c['id']}: removed {proj} / {c['metric']} {str(d)[:10]} from {c['source']} "
+                        f"({float(v):,.6g}) — {c['why']}")
+                log.warning("%s", line)
+                st.record_fetch(run_id, f"cleanup:{c['id']}", proj, 1, "ok", line)
+                lines.append(line)
+    st.conn.commit()
+    return lines
+
+
 def _alchemy_report(log, what: str):
     """Log what this process asked of Alchemy and the month so far (fetch/alchemy_usage.py); (line, level)."""
     from fetch import alchemy_usage
@@ -1053,6 +1075,7 @@ def _main(args, log) -> int:
 
     projects = resolve_scope(args, log)
     run_id = fetch.new_run_id()
+    apply_run_cleanups(st, run_id, log)     # G14 1: declared one-offs (config.RUN_CLEANUPS), each row logged
     # WHICH KEYS THIS RUN HAS (Round G3 item 13): presence only, never a value; a read skipped for an absent key is a
     # CONFIG gap (python check_offline_items.py env_keys says what each absence disables)
     log.info("%s", config.env_keys_line())

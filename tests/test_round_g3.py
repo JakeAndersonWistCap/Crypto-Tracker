@@ -271,7 +271,10 @@ def test_g3_3_hyperevm_burn_reaches_the_earliest_supply_row_and_further():
     assert days[0] == pd.Timestamp("2025-10-20") and pd.Timestamp("2025-10-21") not in days, \
         "from CoinGecko's earliest circulating row, skipping days already held"
     more = hb.days_needed(long, "Hyperliquid", "hyperevm_zero_address_balance", extra_days=600)
-    assert more[0] < pd.Timestamp("2025-03-01")
+    # G14 0: was `< 2025-03-01`, a fixed date — false from 2026-10-22, when today − 600 days IS 2025-03-01. The claim is
+    # the reach: exactly 600 days back from today, further than the earliest supply row
+    from fetch.base import today
+    assert more[0] == today().normalize() - pd.Timedelta(days=600) and more[0] < days[0]
 
     # a day before HyperEVM's first block is skipped and named, never read as 0
     def rpc(m, p):

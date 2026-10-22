@@ -31949,3 +31949,17 @@ CREDIBILITY_WIRING.setdefault("Hyperliquid", {})["in_issuer_release_replay"] = _
            metric="issuer_release_replay_tokens", window="q0", source="fetch/hl_ledger.py replay (issuer_release_replay)"))
 # WORLD MOBILE'S CREDIBILITY IS PARKED; these rows are recorded for it anyway (G13 1b), never judged
 CREDIBILITY_PARKED_RECORDED = {"World Mobile": ("in_fdv_coingecko",)}
+
+
+# ===== G14 1 (Jake's 10-22 run on 1eb632d): DECLARED ONE-OFF CLEAN-UPS, APPLIED BY THE DAILY RUN. =====
+# The chain tier timed out on 2026-10-22 and CoinGecko's total took that day in nine on-chain-first total_supply series
+# (MEASURING POINT CHANGED chain:…:token -> coingecko). The cause is fixed (fetch/coingecko never writes total_supply for
+# TOTAL_SUPPLY_ONCHAIN_FIRST; fetch._refuse_fallback_into_primary). Each entry deletes exactly the rows it names — every
+# condition must match — and the run logs each row removed (project, metric, date, source, value) on the console and
+# the Run Log. Idempotent: a second run finds nothing. CoinGecko's own figure for the day stays in
+# total_supply_coingecko, untouched.
+RUN_CLEANUPS = (
+    {"id": "G14-1", "metric": "total_supply", "date": "2026-10-22", "source": "coingecko",
+     "projects": ("Chainlink", "Maple", "Morpho", "Sky", "Pendle", "Aerodrome", "Ether.fi", "Aethir", "Fluid"),
+     "why": "CoinGecko's total written into the on-chain series when the chain tier timed out (G14 1)"},
+)

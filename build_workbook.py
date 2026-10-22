@@ -929,6 +929,24 @@ def _per_day(g) -> pd.Series:
     return out[~out.index.duplicated(keep="last")].sort_index()
 
 
+def not_read_since(groups: dict, name: str, metric: str, g=None) -> str:
+    """G14 1: "STALE — last read <date>, not read on <day>" for a chain-read STOCK whose newest row is older than the
+    project's newest price row (the run's day for that project: its chain tier timed out or failed), else ''. The last
+    stored value stands; a fallback never writes into the series (fetch._refuse_fallback_into_primary)."""
+    if (METRICS.get(metric) or {}).get("kind") != "stock":
+        return ""
+    g = groups.get((name, metric)) if g is None else g
+    px = groups.get((name, "price_usd"))
+    if g is None or g.empty or px is None or px.empty:
+        return ""
+    g = g.assign(date=pd.to_datetime(g["date"]).dt.normalize()).sort_values("date")
+    if not str(g["source"].iloc[-1]).startswith("chain:"):
+        return ""
+    last, day = g["date"].iloc[-1], pd.to_datetime(px["date"]).max().normalize()
+    return (f"STALE — last read {last.date()}, not read on {day.date()} (the chain read did not answer); the last "
+            f"stored value stands" if last < day else "")
+
+
 def _subsidy_common_views(groups: dict, asof) -> None:
     """G13 6 (config.SUBSIDY_COMPLETE_FROM): subsidy cover's numerator and denominator on the days EVERY leg covers from
     the day the (b) denominator is complete — the first day on its measured leg (else the declared date) — inside Q0,
@@ -1189,6 +1207,8 @@ def confidence_for(project: str, metric: str, row: dict, asof: pd.Timestamp) -> 
     unverified = config.metric_addresses_unverified(project, metric)
     if unverified:
         why.append(f"read from address(es) never verified against protocol docs: {', '.join(unverified)}")
+    if row.get("not_read"):
+        why.append(row["not_read"])                  # G14 1: the last stored value stands, dated
 
     return ("AMBER", " | ".join(why)) if why else ("GREEN", "")
 
@@ -4764,6 +4784,13 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                         row["note"] = (row["note"] + " | " if row["note"] else "") + lab + "; not a measurement"
                         row["modelled"] = (row.get("modelled") + " | " if row.get("modelled") else "") + \
                             f"SCHEDULE leg {sd.min().date()}..{sd.max().date()}"
+            # G14 1 (Jake's 10-22 run: the chain tier timed out and CoinGecko's total took the day): A CHAIN-READ STOCK
+            # NOT READ ON THE PROJECT'S LATEST DAY keeps its last stored value — never another source's — and says so,
+            # dated (AMBER via confidence_for). The project's latest day is its newest price row.
+            last_read = not_read_since(groups, name, metric, g)
+            if last_read:
+                row["not_read"] = last_read
+                row["note"] = (row["note"] + " | " if row["note"] else "") + last_read
             # ================ ALL SEVEN WITHHELD CASES, HANDLED IN ONE PLACE ================
             # A config change guards the WRITE path and cannot touch what is already stored, and
             # aggregate() consults the Gap Report only when the store has NO rows for a key
@@ -5184,6 +5211,17 @@ def telescoping(project: str, metric: str, parent: str, series, stock) -> dict:
             f"is not in the store, the rows that produced them have been deleted or were written "
             f"under another name.")}
     st = stock.sort_values("date")
+    # OVER THE DATES BOTH HOLD (G14 2, Jake's 10-22 run: GEODNET's and Hyperliquid's burn flows ran to 10-22 while the
+    # stock's tier timed out at 10-21 — "THE FLOWS DO NOT SUM", −105,000 and −22,648, 9 BROKEN cells). A flow row dated
+    # after the stock's last reading is not unaccounted for: the reading it telescopes to is not stored yet. The check
+    # ends at the earlier of the two series' last days and says which flow rows wait.
+    end = min(deltas.iloc[-1]["date"], st.iloc[-1]["date"])
+    waiting = deltas[deltas["date"] > end]
+    deltas = deltas[deltas["date"] <= end]
+    if deltas.empty:
+        return {"flow_recon_blocked": (
+            f"no {parent} reading on or after the first {metric} row ({pd.Timestamp(waiting.iloc[0]['date']):%Y-%m-%d})"
+            f" — the stock series ends before the flow series begins.")}
     first, last = deltas.iloc[0]["date"], deltas.iloc[-1]["date"]
     ends, starts = st[st["date"] <= last], st[st["date"] < first]
     if starts.empty:
@@ -5208,7 +5246,10 @@ def telescoping(project: str, metric: str, parent: str, series, stock) -> dict:
             "flow_residual": moved - accounted,
             "flow_span": (starts.iloc[-1]["date"].strftime("%Y-%m-%d"),
                           ends.iloc[-1]["date"].strftime("%Y-%m-%d")),
-            "flow_recon_blocked": None}
+            "flow_recon_blocked": None,
+            "flow_recon_waiting": (f"{len(waiting)} {metric} row(s) after {pd.Timestamp(end):%Y-%m-%d} wait for the "
+                                   f"{parent} reading they telescope to; reconciled over the dates both hold"
+                                   if len(waiting) else None)}
 
 
 def _burn_leg_dbd(project: dict) -> str | None:

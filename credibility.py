@@ -2339,6 +2339,19 @@ def _has_number(rows: dict, name: str, metric: str) -> bool:
     return any(_num(r.get(w)) is not None for w in ("now", "m1", "q0", "q1", "q2", "q3", "y1"))
 
 
+def cg_total_is_its_circulating(rows: dict, name: str) -> float | None:
+    """CoinGecko's total supply when it equals CoinGecko's own circulating supply (to 1 token), else None (G14 1)."""
+    tot = _num(((rows or {}).get(f"{name}|total_supply_coingecko") or {}).get("now"))
+    for m in ("circulating_supply_coingecko", "circulating_supply"):
+        r = (rows or {}).get(f"{name}|{m}") or {}
+        if m == "circulating_supply" and not str(r.get("source") or "").startswith("coingecko"):
+            continue
+        circ = _num(r.get("now"))
+        if tot is not None and circ is not None and tot > 0 and abs(tot - circ) <= 1.0:
+            return tot
+    return None
+
+
 def wiring_inputs(name: str, rows: dict) -> dict:
     """G12 PART B (Jake 2026-10-21): a stored series that measures the same thing as a shown one from another source is
     a CROSS-CHECK row. Generic rows for every project that holds the second source (CoinGecko's FDV and total supply —
@@ -2364,6 +2377,15 @@ def wiring_inputs(name: str, rows: dict) -> dict:
             "ours": {"metric": "total_supply", "window": "now"}, "fmt": '#,##0;(#,##0);-',
             "ref": {"metric": "total_supply_coingecko", "window": "now", "tol": 1.0,
                     "source": "CoinGecko total_supply (total_supply_coingecko, kept beside the on-chain total we use)"}}
+        same = cg_total_is_its_circulating(rows, name)
+        if same:
+            # G14 1 (Jake's 10-22 run, Ether.fi 965,350,000 both): a "total" equal to the publisher's own circulating is
+            # not a total — never the judge of ours, so never a CHECK
+            out["in_total_supply_coingecko"]["ref"].update(
+                force_verdict="UNVERIFIABLE — reference unreliable: CoinGecko total = its circulating",
+                why=f"CoinGecko's total_supply equals its own circulating_supply ({same:,.0f} both), so it is not a "
+                    f"total supply and cannot judge ours.",
+                resolve="none needed — the on-chain totalSupply() is the figure; re-judged when CoinGecko's two differ")
     if parked:
         return out
     if "pool_release_tokens_coingecko" not in named and _has_number(rows, name, "pool_release_tokens_coingecko"):

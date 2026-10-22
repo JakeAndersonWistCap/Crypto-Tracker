@@ -529,6 +529,29 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11cq. Round G14 — a fallback never writes into a primary; flows reconciled where the stock exists (2026-10-22)
+
+**Run after pulling (PowerShell 5.1, repo root), in this order.** Nothing new is fetched: no seed, no dry run, no
+run_sql section, no BigQuery or API call beyond the normal daily run.
+1. `python token_metrics.py` — the normal daily run. It opens with the declared one-off CLEAN-UP G14-1: the 2026-10-22
+   CoinGecko rows in the nine on-chain-first total_supply series (Chainlink, Maple, Morpho, Sky, Pendle, Aerodrome,
+   Ether.fi, Aethir, Fluid) are removed, one console and Run Log line per row ("CLEAN-UP G14-1: removed …"). PASTE BACK
+   those lines (nine on the first run; none after). From now on, if the chain tier times out again, CoinGecko's total is
+   stored only as total_supply_coingecko, and any row of an earlier handover leg is refused: "FALLBACK REFUSED …; the
+   series keeps its last stored value" (a WARN on the run summary). PASTE BACK any such line.
+2. `python measuring_guard.py --newer metrics.db` — PASTE BACK the VERDICT. The 12 lines from the CoinGecko rows and the
+   13 from the burn reconciliation should be gone.
+3. `python check_offline_items.py settlement_legs` — store only, no call. PASTE BACK the whole output: each settlement
+   leg's rows for 2026-09-15..09-30 and, for each day without a rebuild row, which leg the store lacks (or "every leg is
+   stored: a READ-TIME drop"). `$env:TOKEN_METRICS_FROM` / `$env:TOKEN_METRICS_TO` widen the window.
+4. `python check_offline_items.py stored_but_unshown` — PASTE BACK (GEODNET's 21 should be gone).
+
+**What to look for.** CP Total supply ×9 and A3 FDV retirement rate ×6 read numbers again (no MEASURING POINT CHANGED).
+A total read on the chain but not today reads its last value, AMBER, "STALE — last read <date>, not read on <day>".
+Ether.fi's Credibility CoinGecko total-supply row reads "UNVERIFIABLE — reference unreliable: CoinGecko total = its
+circulating". GEODNET's and Hyperliquid's burns are reconciled over the days the stock holds; a flow dated after the
+stock's last reading "waits for the burn_address_balance reading". Ethereum's settlement: step 3 names the leg.
+
 ## 11cp. Round G13 — finish the wiring: the last UNWIRED, one Fees definition, the P2P cache, cached zeros (2026-10-21)
 
 **Run after pulling (PowerShell 5.1, repo root), in this order.** Nothing new is fetched: no seed, no dry run, no

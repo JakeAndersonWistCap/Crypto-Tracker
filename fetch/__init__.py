@@ -311,6 +311,43 @@ def _resolve_tier_collisions(out: FetchOutput) -> None:
     out.frames = [deduped]
 
 
+def _refuse_fallback_into_primary(out: FetchOutput, stored_long=None) -> list[str]:
+    """A FALLBACK NEVER WRITES INTO A PRIMARY'S SERIES (G14 1, Jake's 10-22 run: the chain tier timed out and CoinGecko's
+    total_supply took 2026-10-22 for nine on-chain-first projects — MEASURING POINT CHANGED, 15 BROKEN cells). A row whose
+    measuring point is an EARLIER leg of the series' declared handover than a stored row dated on or before it
+    (fetch.archive.breaks_handover_order — the rule the archive backfill already obeys) is not stored: the series keeps
+    its last stored value, and the build marks it stale with its date (build_workbook.not_read_since). A handover's
+    LATER leg is never refused (Ethereum's ultrasound -> CoinGecko price). Returns the lines logged, one per row."""
+    from .archive import breaks_handover_order
+    frame = out.frame()
+    if frame.empty or stored_long is None or getattr(stored_long, "empty", True):
+        return []
+    keys = {(p, m) for p, m in frame[["project", "metric"]].drop_duplicates().itertuples(index=False)
+            if config.declared_handover(p, m)}
+    if not keys:
+        return []
+    st = stored_long.assign(date=pd.to_datetime(stored_long["date"]))
+    drop, lines = [], []
+    for (p, m), idx in frame[frame.set_index(["project", "metric"]).index.isin(list(keys))].groupby(
+            ["project", "metric"]).groups.items():
+        stored = st[(st["project"] == p) & (st["metric"] == m)].sort_values("date")
+        for i in idx:
+            row = frame.loc[i]
+            why = breaks_handover_order(p, m, stored, pd.Timestamp(row["date"]), str(row["source"]))
+            if why:
+                drop.append(i)
+                last = stored.iloc[-1] if len(stored) else None
+                lines.append((p, f"FALLBACK REFUSED {p} / {m} {str(row['date'])[:10]} from {row['source']}: {why}; the "
+                             f"series keeps its last stored value"
+                             + (f" ({float(last['value']):,.6g} on {last['date'].date()})" if last is not None
+                                else "")))
+    for p, line in lines:
+        out.warn("fallback_guard", p, line)
+    if drop:
+        out.frames = [frame.drop(index=drop)]
+    return [line for _p, line in lines]
+
+
 def _resolve_period_overlaps(out: FetchOutput) -> None:
     """Stop two tiers double counting the same FLOW over the same month.
 
@@ -1847,6 +1884,7 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
         out.frames = [f for f in out.frames if f is not None and not f.empty]
 
     _resolve_tier_collisions(out)
+    _refuse_fallback_into_primary(out, stored_long)
     _resolve_period_overlaps(out)
     # AFTER the collision guards, so a derivation can never displace a measured figure, and so the
     # burn it consumes is the deduped one rather than a double-counted month.
