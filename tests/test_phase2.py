@@ -140,6 +140,8 @@ def test_cp_plume_has_no_measured_outflow_and_says_why(tmp_path, monkeypatch):
     assert {c: config.outflow_metrics("Plume", c) for c in config.OUTFLOW_CATEGORY_NAMES
             if config.outflow_metrics("Plume", c)} == {"a": ("emissions_claimed_tokens",),
                                                          "b": ("merkl_campaigns_plume_tokens",),
+                                                         # G17-1f: (c) the airdrop claims out of the Hedgey contract
+                                                         "c": ("plume_airdrop_claims_tokens",),
                                                          "e": ("insider_unlock_tokens",)}
     wb, _rows = _built(tmp_path, monkeypatch, "Plume")
     X = xlcalc.Workbook(wb)
@@ -147,7 +149,8 @@ def test_cp_plume_has_no_measured_outflow_and_says_why(tmp_path, monkeypatch):
     td = _get(o, "TOTAL DILUTION = outflows a+b+c+d+e (annualised) ÷ circ")
     # never a 0 while a leg holds nothing: blank, or the text naming the leg that has no rows
     assert td in (None, "") or (isinstance(td, str) and ("emissions_claimed_tokens" in td
-                                                         or "merkl_campaigns_plume_tokens" in td)), td
+                                                         or "merkl_campaigns_plume_tokens" in td
+                                                         or "plume_airdrop_claims_tokens" in td)), td
     assert "pre-minted" in _get(o, "Outflow categories").lower()
 
 

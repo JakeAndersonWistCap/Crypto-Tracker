@@ -194,12 +194,19 @@ def test_3a_a_release_day_with_nothing_forwarded_to_staking_is_a_measured_zero()
     assert list(out.index) == list(days) and float(out.loc[pd.Timestamp("2025-12-24")]) == 0.0
 
 
-def test_3b_a_recorded_reference_keeps_its_declared_status():
+def test_3b_the_recorded_reference_reads_n_a_by_its_own_words():
+    """3b: the reference's reason said "stale", which the status-honesty rule reads as CHECK (it was a word in the
+    reason, not a stale series). The reason now says what it records — and the honesty rule is unchanged."""
+    import references as rf
+    route = rf.ROUTES[("Near", "g6_circulating_nearblocks_stale")]
+    assert route[0] == "recorded" and "retired 2026-10-13" in route[1]
     rows = [{"Tab": "References", "Project": "Near", "Column": "g6_circulating_nearblocks_stale (NEAR)",
-             "Status": "N/A BY DESIGN", "Reason / route / error": "N/A BY DESIGN — recorded, not compared: NOT USED "
-             "(G6-3): … has not moved since June — stale; the route was retired 2026-10-13"}]
+             "Status": "N/A BY DESIGN", "Reason / route / error": f"N/A BY DESIGN — recorded, not compared: {route[1]}"}]
     ca.honest_statuses(rows)
     assert rows[0]["Status"] == "N/A BY DESIGN"
+    stale = [dict(rows[0], **{"Reason / route / error": "n/a — the series is stale"})]
+    ca.honest_statuses(stale)
+    assert stale[0]["Status"] == "CHECK"                     # the rule itself still holds
 
 
 # ================================================================================================== 4

@@ -32172,6 +32172,10 @@ PROJECT_BY_NAME["Sky"]["log_scans"] += [
                                 PROJECT_BY_NAME["Sky"]["contracts"]["lockstake_engine"]["address"]],
      "attribution_sources": [_SKY_SPELL_SRC, _SKY_ADDR_SRC], "wired_on": "2026-10-23"},
 ]
+# their own tier and budget (as Chainlink's noncirc scans, G10 5b): their first seed must not starve Sky's other scans
+for _sp in PROJECT_BY_NAME["Sky"]["log_scans"]:
+    if _sp["key"] in ("sky_issuer_mints", "sky_ecosystem_out"):
+        _sp["own_tier"] = f"explorer_issuer{PROJECT_TIER_SEP}Sky"
 ISSUER_MINTS["Sky"] = {"kind": "series", "metric": "sky_issuer_mint_tokens", "wallet": f"Pause Proxy {_SKY_PAUSE[:10]}…",
                        "source": "explorer:sky_issuer_mints (Transfer from 0x0 into the Pause Proxy)"}
 OUTFLOW_CATEGORIES["Sky"]["d"] = ("sky_ecosystem_out_tokens",)
@@ -32214,6 +32218,7 @@ PROJECT_BY_NAME["Plume"].setdefault("log_scans", []).append(
      "holders": [PLUME_CLAIM["contract"]],
      "direction": "out", "store": True,
      "attribution": "dedicated_wallet", "attribution_sources": [PLUME_CLAIM["source"]], "wired_on": "2026-10-23"})
+PROJECT_BY_NAME["Plume"]["log_scans"][-1]["own_tier"] = scan_tier("Plume", {"own_tier": l2_tier("plume")})
 OUTFLOW_CATEGORIES["Plume"]["c"] = ("plume_airdrop_claims_tokens",)
 FLOW_LINE_EVIDENCE.pop(("Plume", "Incentives paid beside: demand side (c)"), None)
 

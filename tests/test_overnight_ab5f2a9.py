@@ -348,7 +348,10 @@ def test_business_and_market_share_are_na_with_the_reason_where_unsourced(tmp_pa
     wb, _ = _built(tmp_path, monkeypatch, "Plume")
     X = xlcalc.Workbook(wb)
     o = _row(wb, X, "CP Comparability", "Plume")
-    assert str(_get(o, "MARKET SHARE vs its category")).startswith("n/a — share of DefiLlama RWA")
+    # G17-5: Plume's share is routed (the weekly RWA turn); the dump predates the turn, so the cell says no rows stored
+    # and the basis names the route — not the old "n/a — share of DefiLlama RWA" closure
+    assert str(_get(o, "MARKET SHARE vs its category")) == "n/a — Data: no rows stored"
+    assert "the weekly RWA turn" in str(_get(o, "Market share — basis"))
 
 
 def test_market_share_drops_a_day_a_launched_peer_did_not_report():

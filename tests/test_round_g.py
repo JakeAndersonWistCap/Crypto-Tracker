@@ -1095,7 +1095,7 @@ def test_g2_10_the_migration_watch_ends_when_v3_rows_arrive_without_a_config_edi
 def test_g2_11_each_not_wired_insider_cell_names_what_was_checked_and_what_is_needed():
     for n, r in config.INSIDER_SHARE_ROUTES.items():
         assert set(r) >= {"stake", "checked", "docs", "needed", "cell"} and len(r["cell"]) <= 240, n
-        assert r["cell"].startswith("NOT WIRED — "), n
+        assert r["cell"].startswith(config.INSIDER_LIST_NEEDED), n                    # G17-2a: MISSING E, not NOT WIRED
     assert "block 26,219,782" in config.INSIDER_SHARE_ROUTES["Chainlink"]["checked"]
 
 

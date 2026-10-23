@@ -551,7 +551,7 @@ references read MISSING C, valid from 2026-11-08. Sky's "Tokens locked — cross
 design …"; NEAR's total supply cross-check fills from NearBlocks. Pendle's published APR reads MISSING E (Pendle publishes
 0 for every epoch); Ethereum Flows (d) MISSING C valid from 2026-12-03; Plume Flows (d) MISSING E. Chainlink's
 "Staking-funding part taken OUT of (e) Q0" reads 0 (measured), not CHECK. NEAR's g6_circulating_nearblocks_stale reads N/A
-BY DESIGN. Gap P4 beacon_validators_eth is gone (P5 answered). Plume's market share fills once the weekly turn completes
+BY DESIGN (its recorded reason now says what is true — the route was retired 2026-10-13 — rather than "stale"). Gap P4 beacon_validators_eth is gone (P5 answered). Plume's market share fills once the weekly turn completes
 (~3 runs at 60 protocol calls a run).
 
 ## 11cs. Round G16 — the provisional day is per series; Ether.fi's total supply row judged when it agrees (2026-10-23)

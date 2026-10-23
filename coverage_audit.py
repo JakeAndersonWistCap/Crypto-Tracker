@@ -535,9 +535,7 @@ _HONEST_RULES = (
                 r"(?-i:COVERS \d+ OF \d+ DAYS)", re.I), "MISSING"),
 )
 _VALID_FROM = re.compile(r"valid from (\d{4}-\d{2}-\d{2})")
-# G17-3b (Jake's run 20261023T132001Z: Near's g6_circulating_nearblocks_stale read CHECK while its reason reads N/A BY
-# DESIGN — "recorded, not compared: NOT USED … stale"): a reference RECORDED by decision is a declared reason
-DECLARED_NA_PREFIXES = ("N/A BY DESIGN — recorded, not compared",)
+
 
 
 # a BLOCKED-for-unequal-coverage leg as the build writes it since G10: "<label> (<metric>, <window>) covers N days of a
@@ -601,8 +599,6 @@ def honest_statuses(rows: list[dict], gap_rows: list | None = None, groups: dict
     for r in rows:
         why = str(r.get("Reason / route / error") or "")
         if r.get("Status") != "N/A BY DESIGN" or not DISHONEST_NA.search(why):
-            continue
-        if why.startswith(DECLARED_NA_PREFIXES):         # G17-3b: a declared reason is not re-read by its wording
             continue
         rule = next(st for rx, st in _HONEST_RULES if rx.search(why))
         if rule in ("BROKEN", "CHECK"):

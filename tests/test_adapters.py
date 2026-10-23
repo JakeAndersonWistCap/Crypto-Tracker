@@ -14126,8 +14126,8 @@ def test_answered_rows_stay_listed_and_leave_the_open_count(tmp_path):
     listed = {("World Mobile", m) for m in ("fees_usd", "revenue_usd", "holders_revenue_usd",
                                              "protocol_tvl_usd", "[config] revenue-to-buyback split")}
     listed |= {("Chainlink", "buyback_fund_balance_dashboard"), ("Chainlink", "[config] revenue-to-buyback split"),
-               ("Near", "total_supply_dashboard"), ("Sky", "locked_tokens_dashboard"),
-               ("Pendle", "locked_tokens_dashboard")}
+               ("Near", "total_supply_dashboard"), ("Pendle", "locked_tokens_dashboard")}
+    # G17-1a: Sky's locked_tokens_dashboard is CLOSED (config UNAVAILABLE, the reason on the cell) — off the Gap Report
     listed |= {(n, "emissions_tokens") for n in ("Chainlink", "Maple", "Hyperliquid",
                                                   "Aethir", "Near", "Pendle")}
     robots = [{"project": p, "metric": m, "tiers_attempted": "3", "suggestion": "x",
@@ -15703,8 +15703,9 @@ def test_nearblocks_stats_run_first_and_calls_are_paced_to_the_free_plan(monkeyp
     # ORDER REVERSED 2026-09-28: the once-a-day stats first (1 credit each), then the buyback
     # read, which resumes across runs — see NearBlocks.run. The third v3 call is /v3/validators/info's total_stake,
     # once a day (Jake's run 2026-10-08 11:27); the fourth is /v3/stats, NEAR's non-circulating cross-check (Jake
-    # 2026-10-11, C), once a day too — RETIRED in fix round 2 (N1: v3 reports circulating == total), so three.
-    assert kinds == ["v3", "v3", "v3", "flow", "flow"], kinds
+    # 2026-10-11, C), once a day too — RETIRED in fix round 2 (N1: v3 reports circulating == total); G17-1a reads
+    # /v3/stats again for its TOTAL only (total_supply_dashboard, once a day), so four.
+    assert kinds == ["v3", "v3", "v3", "v3", "flow", "flow"], kinds
     # BILLED AS NEARBLOCKS BILLS: ceil(per_page/25), per_page defaulting to 25 (rateLimiter.ts L132). Every call is v3
     # since 2026-10-13 and sends `limit`, never per_page — so each costs 1, the flow pages included.
     cost = {"flow": 1, "v3": 1}
@@ -16256,7 +16257,9 @@ def test_nearblocks_buyback_is_incremental_newest_first_and_daily_stats_run_once
                                                 ("Near", "active_addresses"): yesterday,
                                                 ("Near", "fees_native_tokens"): yesterday,
                                                 ("Near", "locked_tokens_nearblocks"): today(),
-                                                ("Near", "noncirculating_nearblocks_tokens"): today()}).run([near], 35,
+                                                ("Near", "noncirculating_nearblocks_tokens"): today(),
+                                                # G17-1a: the /v3/stats total, read once a day, is today's already
+                                                ("Near", "total_supply_dashboard"): today()}).run([near], 35,
                                                                                                            out2)
     assert len(h2.calls) == 1, f"a routine run makes ONE call: {h2.calls}"
     got2 = out2.frame().query("metric == 'actual_buyback_tokens'")
@@ -26400,7 +26403,9 @@ def test_log_scan_counts_mints_only_where_declared():
     from fetch import logscan
     src = inspect.getsource(logscan)
     assert '(frm in MINT_SENDERS and not spec.get("count_mints"))' in src
-    assert sum(1 for p in config.PROJECTS for s in p.get("log_scans") or [] if s.get("count_mints")) == 1
+    # two declare it, both Sky's: the USDS farm (2026-10-07) and SKY minted to the Pause Proxy (G17-1d)
+    assert sorted(s["key"] for p in config.PROJECTS for s in p.get("log_scans") or [] if s.get("count_mints")) == \
+        ["sky_issuer_mints", "usds_farm_rewards"]
 
 
 def test_maple_staking_ended_so_nothing_is_locked_and_the_vault_balance_is_shown_apart():

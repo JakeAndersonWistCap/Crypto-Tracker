@@ -424,7 +424,8 @@ def test_w6_insider_share_is_not_wired_when_no_checked_wallet_holds_shares(tmp_p
     wb, _ = _built(tmp_path, monkeypatch, project)
     o = _row(wb, xlcalc.Workbook(wb), "CP Comparability", project)
     cell = str(_get(o, "Insider share of staked / locked supply"))
-    assert cell.startswith(f"NOT WIRED — no insider wallet identified among {sym} holders"), cell
+    # G17-2a: still never 0 — now MISSING E, naming what Jake must supply (the issuer wallet list)
+    assert cell.startswith(f"{config.INSIDER_LIST_NEEDED}no insider wallet identified among {sym} holders"), cell
     assert len(cell) <= 255                                                   # an Excel string constant
     what = str(_get(o, "Insider share — what is divided"))
     assert f"Wallets checked ({n}, 0 {sym} each on 2026-10-14)" in what     # E6: re-read 2026-10-14 (E1 added two)

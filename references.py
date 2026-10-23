@@ -304,7 +304,7 @@ G6_ROUTES = {
     ('Near', 'g6_total_supply_2026_09_30'): ('on_day', 'total_supply'),
     ('Near', 'g6_total_supply_2026_06_30'): ('on_day', 'total_supply'),
     ('Near', 'g6_total_supply_live'): ('last', 'total_supply'),
-    ('Near', 'g6_circulating_nearblocks_stale'): ('recorded', 'NOT USED (G6-3): NearBlocks /v1/stats circulating_supply has not moved since June — stale; the route was retired 2026-10-13 (v3 answers circulating == total; v1 flat since 2025-08-27) — Gap row answered'),
+    ('Near', 'g6_circulating_nearblocks_stale'): ('recorded', 'NOT USED (G6-3): NearBlocks /v1/stats circulating_supply is flat at 1,249,836,992.16 NEAR since 2025-08-27 while the total rose; the route was retired 2026-10-13 (v3 answers circulating == total)'),
     ('Near', 'g6_max_inflation_rate'): ('recorded', 'protocol parameter, recorded: max_inflation_rate [1,40] since block 170,351,519 (declared step, G6-3)'),
     ('Chainlink', 'g6_reserve_holdings_2026_10_19'): ('last', 'buyback_fund_balance'),
     ('Chainlink', 'g6_link_total_supply_g6'): ('last', 'total_supply'),

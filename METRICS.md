@@ -1031,7 +1031,7 @@ Funding: revenue (the default: the programme documented base)
 |---|---|---|
 | into circulating | (a) security emissions | `emissions_claimed_tokens` |
 | into circulating | (b) supply-side incentives | `merkl_campaigns_plume_tokens` |
-| into circulating | (c) demand-side incentives | **NO SERIES** |
+| into circulating | (c) demand-side incentives | `plume_airdrop_claims_tokens` |
 | into circulating | (d) ecosystem / grant spend | **NO SERIES** |
 | into circulating | (e) unlocks | `insider_unlock_tokens` |
 | out of circulating | retirement (bought, burned + held) | **NO SERIES** |
@@ -1290,7 +1290,7 @@ Funding: 2000-01-01..now treasury: the Foundation buys AERO with its own voting 
 | into circulating | (a) security emissions | **NO SERIES** |
 | into circulating | (b) supply-side incentives | **NO SERIES** |
 | into circulating | (c) demand-side incentives | `emissions_mint_funded_tokens` |
-| into circulating | (d) ecosystem / grant spend | **NO SERIES** |
+| into circulating | (d) ecosystem / grant spend | `sky_ecosystem_out_tokens` |
 | into circulating | (e) unlocks | `emissions_treasury_funded_tokens` |
 | out of circulating | retirement (bought, burned + held) | `retired_buyback_tokens` |
 | out of circulating | burn (every burn) | `sky_stage2_burn_tokens` |
