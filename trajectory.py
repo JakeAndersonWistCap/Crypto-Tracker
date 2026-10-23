@@ -455,7 +455,8 @@ def basis_breaks(project: str, metrics, groups: dict, since) -> list[tuple]:
         seen.add(m)
         out += _own_breaks(project, m, groups, since)
         todo += [x for x in _inputs(project, m, groups) if x not in seen]
-    return sorted(out, key=lambda t: t[0])
+    # G17-6: a total order — two breaks on one date (Hyperliquid 2026-09-12) read the same in every build
+    return sorted(out, key=lambda t: (t[0], str(t[1]), str(t[2]), str(t[3])))
 
 
 def modelled_quarters(project: str, metrics, groups: dict, asof, period_days: int, n: int) -> list[str]:

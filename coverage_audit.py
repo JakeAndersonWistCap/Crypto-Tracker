@@ -85,6 +85,10 @@ def _refs(wb, formula, depth: int = 3) -> set[str]:
     return out
 
 
+_BUILD_MISSING = re.compile(r"^MISSING ([CE]) — (.*)$", re.S)
+_CLASS_BY_LETTER = {"C": "C — NEEDS HISTORY", "E": "E — NO SOURCE"}
+
+
 def classify(raw, value, fill: str) -> tuple[str, str]:
     """(status, reason) of one cell: `raw` as written, `value` as evaluated."""
     if raw is None or raw == "":
@@ -98,6 +102,9 @@ def classify(raw, value, fill: str) -> tuple[str, str]:
         t = value.strip()
         if t.upper().startswith("NOT WIRED"):
             return "NOT WIRED", t[:240]
+        mc = _BUILD_MISSING.match(t)
+        if mc:                                       # G17-0: the build names the class (a route that waits on data)
+            return "MISSING", f"MISSING [{_CLASS_BY_LETTER[mc.group(1)]}] — {mc.group(2)}"[:400]
         if t.lower() in ("n/a", "n/a —", "–", "-"):
             return "BLANK-UNEXPLAINED", f"a bare {t!r} with no reason"
         if t.lower().startswith(("n/a", "blocked", "withheld", "0 —", "none available", "held —", "parked")):
@@ -249,6 +256,7 @@ def audit(wb, trajectory_rows: list[dict] | None = None, flows_rows: list[dict] 
     asof = (windows or {}).get("q0", (None, None))[1]
     honest_statuses(rows, gap_rows, groups, asof)
     mark_missing(rows, gap_rows, groups, asof)
+    propagate_view_classes(rows)
     align_absent_statuses(rows)
     apply_checked(rows)
     mark_evidence(rows, flows_rows)
@@ -372,9 +380,16 @@ def mark_evidence(rows: list[dict], flows_rows=None) -> int:
                       and bw.evidence_on(r["Project"], m.strip())), None)
             if e and e.get("to"):
                 held = [q for q in ("Q-1", "Q-2", "Q-3", "Q-4") if isinstance(f.get(q), (int, float))]
+                # G17-1c: waiting on the publisher's next period is history the calendar brings — its declared class
+                # and date (config.MISSING_DECLARED) when there is one
+                dec = next(((m, d) for m in re.split(r"[+,;]| − | - ", str(f.get("Series") or ""))
+                            if (d := (getattr(_config(), "MISSING_DECLARED", {}) or {}).get((r["Project"], m.strip())))),
+                           None)
+                cls = _CLASS_BY_LETTER[dec[1][0]] if dec else MISSING_CLASSES[3]
                 r["Reason / route / error"] = (
-                    f"MISSING [{MISSING_CLASSES[3]}] — {e['label']}: no published period covers Q0 yet (periods "
-                    f"{e['from']}..{e['to']}); {', '.join(held) or 'no quarter'} hold it")[:1200]
+                    f"MISSING [{cls}] — {e['label']}: no published period covers Q0 yet (periods "
+                    f"{e['from']}..{e['to']}); {', '.join(held) or 'no quarter'} hold it"
+                    + (f" — {dec[1][1]}" if dec else ""))[:1200]
                 n += 1
             continue
         if r["Status"] not in _HOLDS + ("CHECK",):
@@ -520,6 +535,9 @@ _HONEST_RULES = (
                 r"(?-i:COVERS \d+ OF \d+ DAYS)", re.I), "MISSING"),
 )
 _VALID_FROM = re.compile(r"valid from (\d{4}-\d{2}-\d{2})")
+# G17-3b (Jake's run 20261023T132001Z: Near's g6_circulating_nearblocks_stale read CHECK while its reason reads N/A BY
+# DESIGN — "recorded, not compared: NOT USED … stale"): a reference RECORDED by decision is a declared reason
+DECLARED_NA_PREFIXES = ("N/A BY DESIGN — recorded, not compared",)
 
 
 # a BLOCKED-for-unequal-coverage leg as the build writes it since G10: "<label> (<metric>, <window>) covers N days of a
@@ -583,6 +601,8 @@ def honest_statuses(rows: list[dict], gap_rows: list | None = None, groups: dict
     for r in rows:
         why = str(r.get("Reason / route / error") or "")
         if r.get("Status") != "N/A BY DESIGN" or not DISHONEST_NA.search(why):
+            continue
+        if why.startswith(DECLARED_NA_PREFIXES):         # G17-3b: a declared reason is not re-read by its wording
             continue
         rule = next(st for rx, st in _HONEST_RULES if rx.search(why))
         if rule in ("BROKEN", "CHECK"):
@@ -748,6 +768,10 @@ def missing_class(row: dict, gap: dict | None = None, groups: dict | None = None
     named = _metrics_named(why, row.get("Formula as built"), (gap or {}).get("reason"))
     proj = str(row.get("Project"))
     cfg = _config()
+    for m in named:                                         # G17-0: a class DECLARED with its evidence decides
+        dec = (getattr(cfg, "MISSING_DECLARED", {}) or {}).get((proj, m))
+        if dec:
+            return _CLASS_BY_LETTER[dec[0]], f"{m}: {dec[1]}"
     for m in named:                                         # G9 H2: an epoch series before its first epoch closes
         fe = getattr(cfg, "first_epoch_closes", lambda *_a: None)(proj, m)
         if fe and (asof is None or pd.Timestamp(asof) < pd.Timestamp(fe)):
@@ -810,6 +834,40 @@ def _defillama_settled(project: str, metric: str) -> str:
 def missing_cause(why: str, gap: dict | None = None) -> str:
     """The class of a MISSING cell from its reason alone (no store): B, E or D (G7's helper, G8 classes)."""
     return missing_class({"Reason / route / error": why}, gap)[0]
+
+
+# G17-1h: the cells propagate_view_classes moved in the last audit, [(tab, project, column, old class, new class)]
+VIEW_CLASS_MOVES: list = []
+_VIEW_SIGN = "a read-time view"
+
+
+def propagate_view_classes(rows: list[dict]) -> list:
+    """A READ-TIME VIEW SHORT OF ITS WINDOW IS C, NEVER D (G17-1h, Jake's run 20261023T132001Z: Near's Trajectory
+    "Settlement volume, trailing 365d" and "NRR on settlement volume" read D / HISTORY BUG while the same metrics on A1
+    read C — the P2P leg starts 2026-04-01). A Trajectory row re-runs its headline column's own builder, so the two
+    share a header: a Trajectory MISSING [D] cell whose text says it is a read-time view takes the class and evidence
+    of the same project's headline cell under the same header when that one is MISSING [C] (it names the short input
+    and its valid-from date). Returns the moves (also kept in VIEW_CLASS_MOVES)."""
+    head = {}
+    for r in rows:
+        if r.get("Tab") != "Trajectory" and r.get("Status") == "MISSING":
+            m = re.match(r"MISSING \[(C — NEEDS HISTORY)\] — (.*?)(?: \| |$)", str(r.get("Reason / route / error") or ""))
+            if m:
+                head.setdefault((r["Project"], r["Column"]), m.group(2))
+    moves = []
+    for r in rows:
+        why = str(r.get("Reason / route / error") or "")
+        if (r.get("Tab") != "Trajectory" or r.get("Status") != "MISSING"
+                or not why.startswith(f"MISSING [{MISSING_CLASSES[3]}]") or _VIEW_SIGN not in why):
+            continue
+        ev = head.get((r["Project"], r["Column"]))
+        if not ev:
+            continue
+        r["Reason / route / error"] = (f"MISSING [{MISSING_CLASSES[2]}] — {ev} (a read-time view: its inputs are "
+                                       f"short of the window, as on the headline cell)")[:400]
+        moves.append(("Trajectory", r["Project"], r["Column"], MISSING_CLASSES[3], MISSING_CLASSES[2]))
+    VIEW_CLASS_MOVES[:] = moves
+    return moves
 
 
 def mark_missing(rows: list[dict], gap_rows: list | None = None, groups: dict | None = None, asof=None) -> int:

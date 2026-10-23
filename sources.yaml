@@ -375,6 +375,9 @@
   anchor: null                                      # TODO the label beside the total-supply figure
   added: 2026-09-15
   note: >-
+    ARMED 2026-10-23 (G17-1a) THROUGH THE ADAPTER, NOT THIS SCRAPE: fetch/nearblocks.py reads
+    api.nearblocks.io/v3/stats with the key and the robots check and stores its total_supply as
+    total_supply_dashboard (config Near nearblocks.supply_total). This scrape entry stays disabled.
     NET SUPPLY CROSS-CHECK on CoinGecko's total_supply, the same role ultrasound.money plays for
     Ethereum. Pulled directly from the NEAR blockchain, so it is an independent construction
     rather than a second vendor quote. DO NOT derive a burn figure from it - it is net of
@@ -872,7 +875,7 @@
   sanity_max: 30000000000
   change_threshold_pct: 25
   added: 2026-09-11
-  note: "DISABLED: info.skyeco.com robots.txt disallows scraping, AND this is now superseded. The lssky contract address is verified (0xf9A9cfD3229E985B91F99Bc866d42938044FFa1C, erc20_total_supply), so Sky has a working tier 2 lock read that does not depend on this page at all. Re-enable only if a cross-check becomes worthwhile and robots permits it."
+  note: "CLOSED 2026-10-23 (G17-1a, config UNAVAILABLE): info.skyeco.com's backend (info-sky.blockanalitica.com) publishes per-farm total_staked only — no total of SKY locked; the cross-check is N/A BY DESIGN. DISABLED: info.skyeco.com robots.txt disallows scraping, AND this is now superseded. The lssky contract address is verified (0xf9A9cfD3229E985B91F99Bc866d42938044FFa1C, erc20_total_supply), so Sky has a working tier 2 lock read that does not depend on this page at all. Re-enable only if a cross-check becomes worthwhile and robots permits it."
 
 - project: Sky
   metric: net_protocol_surplus_usd

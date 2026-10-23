@@ -251,7 +251,8 @@ class Business:
         for name, spec in [w for w in work if w[1].get("route") != "ccip"]:
             self._one(name, spec, day, out)
         for name, spec in config.MARKET_SHARE.items():
-            if name in names and "na" not in spec:
+            # G17-5: "rwa_turn" is stored by the weekly RWA turn (fetch/llama.DefiLlama.rwa_share), not here
+            if name in names and "na" not in spec and spec.get("how") != "rwa_turn":
                 self._share(name, spec, day, out)
         # a SECOND basis beside the first (Jake's decision 5 on 3500042: chain fees vs 12 peer chains for Ethereum
         # and NEAR, beside the chain-TVL share)

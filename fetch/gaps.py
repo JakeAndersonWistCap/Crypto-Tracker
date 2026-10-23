@@ -411,8 +411,15 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
         rs = (project.get("nearblocks") or {}).get("supply_stats_retired") or {}
         return (f"RETIRED ROUTE {rs.get('retired_on', '2026-10-13')}: NearBlocks /v3/stats answers circulating == total "
                 f"(0 not circulating) and v1 is flat since {rs.get('v1_flat_since', '2025-08-27')} — not read by design "
-                f"(fix round 2 N1; G6 item 3)",
+                f"(fix round 2 N1; G6 item 3) — answered, not open",
                 "Nothing to run: NEAR circulating stays on our own lockup-rule basis; the cross-check is closed.")
+
+    us_ = project.get("ultrasound_history") or {}
+    if us_.get("disabled") and metric in (us_.get("series") or {}).values():
+        # G17-4 (Jake's run 20261023T132001Z, Gap P4 beacon_validators_eth): the block is switched off by decision
+        return (f"RETIRED ROUTE 2026-10-05: ultrasound.money's supply-projection-inputs is {us_['disabled']}; the "
+                f"staked-ETH history is ETH.Store's — not read by design — answered, not open",
+                "Nothing to run: no cell reads this series; the route stays off (config ultrasound_history.disabled).")
 
     # ===== A DEDICATED ADAPTER DECLARED FOR THIS METRIC (second pass, 2026-09-30). =====
     # Plume's staking diamond, ultrasound.money's daily history, Hyperliquid's tokenDetails: the

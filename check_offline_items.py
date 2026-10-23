@@ -12767,6 +12767,91 @@ def morning_reads():
     return 0
 
 
+WIRING_APART = ("Aerodrome", "World Mobile")      # G17: counted separately (migration pending / out of the round)
+WIRING_OPEN = ("NOT WIRED", "UNWIRED", "CHECK", "BLANK-UNEXPLAINED")
+
+
+def wiring_complete():
+    """ROUND G17 item 8 (Jake 2026-10-23): from the last build (coverage_audit.csv and wiring.json beside it), every cell
+    outside Aerodrome and World Mobile whose status is NOT WIRED, UNWIRED, CHECK, MISSING [D …] or BLANK-UNEXPLAINED, and
+    every stored series referenced nowhere (wiring UNWIRED) or NOT SHOWN without a config reason; per project, Aerodrome
+    and World Mobile counted apart. "WIRING COMPLETE" when nothing is open outside them, else each cell and why it
+    stays. Also lists the read-time-view cells G17-1h re-classed C. Reads the files only; no call."""
+    import csv as _csv                                    # noqa: PLC0415
+    import json                                           # noqa: PLC0415
+    from collections import Counter                       # noqa: PLC0415
+    import config                                         # noqa: PLC0415
+    head("WIRING COMPLETE? — open cells outside Aerodrome and World Mobile (last build)")
+    path = _coverage_csv()
+    if path is None:
+        print("  no coverage_audit.csv beside the workbook — build the workbook first (token_metrics.py --build-only)")
+        return 0
+    with open(path, encoding="utf-8") as f:
+        rows = list(_csv.DictReader(f))
+    open_rows = []
+    for r in rows:
+        st, why = str(r.get("Status") or ""), str(r.get("Reason / route / error") or "")
+        if st in WIRING_OPEN or (st == "MISSING" and why.startswith("MISSING [D")):
+            open_rows.append((r.get("Project") or "", r.get("Tab") or "", r.get("Column") or "",
+                              "MISSING D" if st == "MISSING" else st, why))
+    wpath = path.with_name("wiring.json")
+    if wpath.exists():
+        w = json.loads(wpath.read_text(encoding="utf-8"))
+        for x in w.get("rows") or ():
+            if x.get("class") == "UNWIRED":
+                open_rows.append((x["project"], "(wiring)", x["metric"], "UNWIRED", str(x.get("why") or "")))
+            elif x.get("class") == "NOT SHOWN" and not config.not_shown_reason(x["project"], x["metric"]):
+                open_rows.append((x["project"], "(wiring)", x["metric"], "NOT SHOWN — no reason", ""))
+    else:
+        print(f"  (no wiring.json beside {path.name}: the stored-series half is not checked)")
+    inside = [o for o in open_rows if o[0] not in WIRING_APART]
+    apart = [o for o in open_rows if o[0] in WIRING_APART]
+    by = Counter(o[0] for o in inside)
+    print(f"  {len(rows)} coverage row(s) read from {path}")
+    print("  OUTSIDE Aerodrome and World Mobile: " + (", ".join(f"{p} {n}" for p, n in sorted(by.items())) or "0"))
+    for p in WIRING_APART:
+        c = Counter(o[3] for o in apart if o[0] == p)
+        print(f"  {p} (apart): " + (", ".join(f"{k} {n}" for k, n in sorted(c.items())) or "0"))
+    for o in sorted(inside):
+        print(f"    {o[3]:18} {o[0]:12} {o[1]:22} {o[2][:60]:60} — {o[4][:200]}")
+    moved = [r for r in rows if "a read-time view: its inputs are short of the window" in str(r.get("Reason / route / error"))]
+    if moved:
+        print(f"  G17-1h: {len(moved)} read-time-view cell(s) re-classed D -> C:")
+        for r in moved:
+            print(f"    {r['Project']:12} {r['Tab']:12} {str(r['Column'])[:70]}")
+    print("  WIRING COMPLETE" if not inside else f"  {len(inside)} open cell(s) outside Aerodrome and World Mobile")
+    return 0
+
+
+def chainlink_staking_funding():
+    """ROUND G17 item 3a: the evidence behind Chainlink's "Staking-funding part taken OUT of (e)" — each of the three
+    LINK log scans (staking_path_in / staking_path_out / staking_funding): its stored span, its last non-zero day, and
+    the Run Log's last reconciled line. A scan reconciled to a recent block with no forward to the staking hops is a
+    MEASURED zero (the flow stopped); a scan not reconciled recently is a reader that stopped. Reads metrics.db only."""
+    import sqlite3                                        # noqa: PLC0415
+    import store as _store                                # noqa: PLC0415
+    head("CHAINLINK — staking funding: the three LINK scans behind (e)'s staking part")
+    if not os.path.exists(_store.DB_PATH):
+        print(f"  no store at {_store.DB_PATH}")
+        return 0
+    con = sqlite3.connect(_store.DB_PATH)
+    for m in ("staking_path_in_tokens", "staking_path_out_tokens", "staking_funding_tokens"):
+        span = con.execute("SELECT MIN(date), MAX(date), COUNT(*) FROM metrics WHERE project='Chainlink' AND metric=?",
+                           (m,)).fetchone()
+        nz = con.execute("SELECT MAX(date) FROM metrics WHERE project='Chainlink' AND metric=? AND value > 0",
+                         (m,)).fetchone()[0]
+        print(f"  {m:26} rows {span[2]:5} {span[0]}..{span[1]}  last non-zero {nz}")
+    key = {"staking_path_in_tokens": "staking_path_in", "staking_path_out_tokens": "staking_path_out",
+           "staking_funding_tokens": "staking_funding"}
+    for m, k in key.items():
+        r = con.execute("SELECT ts, substr(message, 1, 200) FROM run_log WHERE project='Chainlink' AND message LIKE ? "
+                        "AND message LIKE '%RECONCILED%' ORDER BY ts DESC LIMIT 1", (f"{k}:%",)).fetchone()
+        print(f"  {k:26} last reconciled: " + (f"{r[0]} — {r[1]}" if r else "NONE in the Run Log"))
+    print("  READ: last non-zero day of staking_funding well before a recent reconciled block = the flow STOPPED "
+          "(a measured 0 from then); no recent reconciled line = the reader stopped. PASTE BACK.")
+    return 0
+
+
 def flow_stock_days():
     """ROUND G15 item 2 (Jake's 10-23 run: GEODNET's burn 53,198,504 recorded against 53,093,504 of movement, −105,000;
     Hyperliquid's 1,082,617.76 against 1,059,970.08, −22,647.68): for GEODNET and Hyperliquid, each day of
@@ -13504,7 +13589,7 @@ CHECKS = (
     geod_stake_recipient, geod_stake_wallets, maple_ssf_lp_test, maple_drips, plume_archive, settlement_rebuild_coverage,
     near_settlement_routes,
     env_keys, aero_migration, near_wallet_inflow_days, worldmobile_probe, stale_series, mcap_inputs, na_reasons, missing_triage, gap_routes, spec_coverage,
-    stored_but_unshown, review_triage, wiring, settlement_legs, total_supply_rows, flow_stock_days, morning_reads,
+    stored_but_unshown, review_triage, wiring, settlement_legs, total_supply_rows, flow_stock_days, morning_reads, wiring_complete, chainlink_staking_funding,
     aethir_mint_path,
     near_activity_break,
     plume_settlement_routes,

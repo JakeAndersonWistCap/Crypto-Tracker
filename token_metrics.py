@@ -1006,6 +1006,10 @@ def apply_run_cleanups(st, run_id: str, log) -> list[str]:
                     continue
                 q = ("FROM metrics WHERE project=? AND metric=? AND substr(date, 1, 10)>=? AND "
                      "(source=? OR source LIKE ?)", (proj, c["metric"], since, c["source"], c["source"] + ":%"))
+            elif c.get("value") is not None:
+                # G17-1b: every row of that source holding exactly this value, whatever its date (a 0 never a reading)
+                q = ("FROM metrics WHERE project=? AND metric=? AND value=? AND (source=? OR source LIKE ?)",
+                     (proj, c["metric"], float(c["value"]), c["source"], c["source"] + ":%"))
             else:
                 q = ("FROM metrics WHERE project=? AND metric=? AND substr(date, 1, 10)=? AND source=?",
                      (proj, c["metric"], c["date"], c["source"]))

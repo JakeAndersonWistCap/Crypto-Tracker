@@ -1202,6 +1202,114 @@ class DefiLlama:
             return pd.DataFrame(columns=["date", "chain", "value"])
         return pd.concat(frames).groupby(["chain", "date"], as_index=False)["value"].sum()
 
+    # ------------------------------------------------------------------ RWA share (G17-5), a weekly turn
+    # chainTvls keys that are not a chain's own TVL (DefiLlama's default TVL leaves them out)
+    _NOT_CHAIN_TVL = {"borrowed", "staking", "pool2", "treasury", "vesting", "offers", "doublecounted", "liquidstaking",
+                      "dcandlsoverlap"}
+
+    def _rwa_share_file(self):
+        return self.daily.f.parent / "rwa-share.json"
+
+    def rwa_share(self, projects: list[dict], out, deadline=None) -> None:
+        """PLUME'S SHARE OF DEFILLAMA'S RWA CATEGORY (G17-5; config.RWA_SHARE_TURN, MARKET_SHARE['Plume']): the RWA
+        rebuild WITHOUT the chain filter — /protocols, then every RWA / RWA Lending protocol's /protocol/{slug} history
+        (the reads _build_rwa_by_chain makes) — on a WEEKLY turn, at most `calls_per_run` protocol calls a run, resumed
+        from a cache until every protocol is read (the BigQuery P2P turn's pattern). Then, per complete day:
+        market_share_category_usd = Σ each protocol's TVL on every chain, market_share_pct = Σ its TVL on the project's
+        chain ÷ that. A protocol that could not be read leaves the total incomplete: nothing is stored, and it says so."""
+        import json
+        import time as _time
+        import config                                      # noqa: PLC0415
+        spec = getattr(config, "RWA_SHARE_TURN", None) or {}
+        name = spec.get("project")
+        if not name or name not in {p["name"] for p in projects}:
+            return
+        f = self._rwa_share_file()
+        try:
+            st = json.loads(f.read_text(encoding="utf-8")) if f.exists() else {}
+        except (OSError, ValueError):
+            st = {}
+        now = pd.Timestamp(self._today)
+        if not st.get("slugs"):
+            last = st.get("turn_on")
+            if last and (now - pd.Timestamp(last)).days < int(spec["cadence_days"]):
+                out.mark_current(SOURCE, name, "market_share_pct", f"market_share_pct: the RWA turn is weekly — last "
+                                                                   f"turn {last}", TIER)
+                return
+            try:
+                protocols = self.http.get(f"{API}/protocols")
+            except Exception as e:  # noqa: BLE001
+                out.fail(SOURCE, name, f"market_share_pct: RWA turn — /protocols: {e}", TIER)
+                return
+            slugs = sorted({str(q["slug"]) for q in protocols
+                            if str(q.get("category", "")).lower() in ("rwa", "rwa lending") and q.get("slug")})
+            st = {"turn_on": st.get("turn_on"), "started": self._today, "slugs": slugs, "done": {}, "failed": {}}
+        keep_from = now - pd.Timedelta(days=int(spec.get("keep_days", 455)))
+        pending = [x for x in st["slugs"] if x not in st["done"]]
+        calls = 0
+        for slug in pending:
+            if calls >= int(spec["calls_per_run"]) or (deadline is not None and deadline - _time.monotonic() < 5):
+                break
+            calls += 1
+            try:
+                j = self.http.get(f"{API}/protocol/{slug}")
+            except Exception as e:  # noqa: BLE001
+                tries = int((st["failed"].get(slug) or {}).get("tries", 0)) + 1
+                st["failed"][slug] = {"tries": tries, "error": str(e)[:160]}
+                if tries >= 2:
+                    st["done"][slug] = {"t": {}, "o": {}, "failed": str(e)[:160]}
+                continue
+            tot: dict = {}
+            own: dict = {}
+            for ch, block in (j.get("chainTvls") or {}).items():
+                if "-" in ch or ch.lower() in self._NOT_CHAIN_TVL:
+                    continue
+                for pt in block.get("tvl") or []:
+                    d = pd.Timestamp(int(pt["date"]), unit="s").normalize()
+                    if d < keep_from or d >= now:
+                        continue                      # older than the window, or today (not over)
+                    k = str(d.date())
+                    v = float(pt.get("totalLiquidityUSD") or 0.0)
+                    tot[k] = tot.get(k, 0.0) + v
+                    if ch == spec["chain"]:
+                        own[k] = own.get(k, 0.0) + v
+            st["done"][slug] = {"t": tot, "o": own}
+        left = [x for x in st["slugs"] if x not in st["done"]]
+        if left:
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(json.dumps(st), encoding="utf-8")
+            out.log.append(LogEntry(SOURCE, name, 0, "ok", f"market_share_pct: RWA turn IN PROGRESS — {len(st['done'])} "
+                                                           f"of {len(st['slugs'])} RWA protocol(s) read ({calls} this "
+                                                           f"run); resumes next run", TIER))
+            return
+        failed = sorted(x for x, v in st["done"].items() if v.get("failed"))
+        st_done, n = st["done"], len(st["slugs"])
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps({"turn_on": self._today, "slugs": [], "done": {}, "failed": {}}), encoding="utf-8")
+        if failed:
+            out.fail(SOURCE, name, f"market_share_pct: RWA turn read {n - len(failed)} of {n} protocol(s) — "
+                                   f"{', '.join(failed[:6])} could not be read: the category total is incomplete, "
+                                   f"NOTHING STORED (the next weekly turn reads them again)", TIER)
+            return
+        days = sorted({d for v in st_done.values() for d in v["t"]})
+        rows_t, rows_s = [], []
+        for d in days:
+            t = sum(v["t"].get(d, 0.0) for v in st_done.values())
+            o = sum(v["o"].get(d, 0.0) for v in st_done.values())
+            if t > 0:
+                rows_t.append((pd.Timestamp(d), t))
+                rows_s.append((pd.Timestamp(d), o / t))
+        if not rows_t:
+            out.fail(SOURCE, name, f"market_share_pct: RWA turn read {n} protocol(s) and no day holds a total", TIER)
+            return
+        src = f"{SOURCE}:rwa_turn:RWA[{n}]"
+        out.add(tidy(rows_t, name, "market_share_category_usd", src, TIER), SOURCE, name,
+                f"market_share_category_usd: Σ TVL on every chain of {n} RWA-category protocol(s), {len(rows_t)} day(s) "
+                f"{rows_t[0][0]:%Y-%m-%d}..{rows_t[-1][0]:%Y-%m-%d}", TIER)
+        out.add(tidy(rows_s, name, "market_share_pct", src, TIER), SOURCE, name,
+                f"market_share_pct: Σ chainTvls['{spec['chain']}'] ÷ that, latest {rows_s[-1][1]:.2%} "
+                f"({rows_s[-1][0]:%Y-%m-%d}) — weekly RWA turn complete", TIER)
+
     def rwa(self, projects: list[dict], window_days, out):
         wanted = {p["defillama_chain"]: p["name"] for p in projects
                   if p.get("defillama_chain") and 1 in p["archetypes"]}
@@ -1337,6 +1445,8 @@ class DefiLlama:
         if self.part in ("all", "tvl") and rwa_after and (deadline is None
                                                          or deadline - _time.monotonic() >= TVL_STOP_FLOOR_S):
             self.rwa(projects, window_days, out)
+        if self.part in ("all", "tvl") and (deadline is None or deadline - _time.monotonic() >= TVL_STOP_FLOOR_S):
+            self.rwa_share(projects, out, deadline)
 
     def _project(self, p: dict, window_days, out) -> None:
         if self.part in ("all", "fees"):

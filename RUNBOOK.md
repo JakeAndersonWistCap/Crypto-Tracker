@@ -529,6 +529,31 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11ct. Round G17 — finish the wiring outside Aerodrome and World Mobile (2026-10-23)
+
+**Run after pulling (PowerShell 5.1, repo root), in this order.** No new source or endpoint; the one new run pattern is
+Plume's weekly RWA turn (inside the normal run, spread over runs).
+1. `python token_metrics.py` — the normal daily run. It opens with CLEAN-UP G17-1 (Pendle's stored 0 APR, if any). New
+   reads inside it: the two Sky log scans (sky_issuer_mints, sky_ecosystem_out — the first seeds the Pause Proxy's and
+   the endowments' SKY history from their first transfer, reconciled to the wei; resumes from its cache if the tier
+   runs out of time), Plume's claim-contract scan on explorer.plume.org (plume_airdrop_claims), NEAR's NearBlocks total
+   (/v3/stats, once a day) and the first run of the weekly RWA turn ("market_share_pct: RWA turn IN PROGRESS — n of N").
+   PASTE BACK each new scan's RECONCILED line (or its failure), its counterparty table, and the RWA turn line.
+2. `python check_offline_items.py chainlink_staking_funding` — store only. PASTE BACK (3a's evidence: each LINK scan's
+   last non-zero day and last reconciled block).
+3. `python check_offline_items.py wiring_complete` — PASTE BACK the whole output. Target: "WIRING COMPLETE"; otherwise
+   each open cell outside Aerodrome and World Mobile with why it stays.
+4. `python measuring_guard.py --newer metrics.db` — PASTE BACK the VERDICT.
+
+**What to look for.** No NOT WIRED outside Aerodrome / World Mobile except a cell with no route code (none expected):
+the insider-share and Leakage (i) cells read MISSING E "needs issuer wallet list (Jake)"; NEAR's three all-time inflow
+references read MISSING C, valid from 2026-11-08. Sky's "Tokens locked — cross-check" and its divergence read "n/a — by
+design …"; NEAR's total supply cross-check fills from NearBlocks. Pendle's published APR reads MISSING E (Pendle publishes
+0 for every epoch); Ethereum Flows (d) MISSING C valid from 2026-12-03; Plume Flows (d) MISSING E. Chainlink's
+"Staking-funding part taken OUT of (e) Q0" reads 0 (measured), not CHECK. NEAR's g6_circulating_nearblocks_stale reads N/A
+BY DESIGN. Gap P4 beacon_validators_eth is gone (P5 answered). Plume's market share fills once the weekly turn completes
+(~3 runs at 60 protocol calls a run).
+
 ## 11cs. Round G16 — the provisional day is per series; Ether.fi's total supply row judged when it agrees (2026-10-23)
 
 **Run after pulling (PowerShell 5.1, repo root), in this order.** Nothing new is fetched: no seed, no dry run, no

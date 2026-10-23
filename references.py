@@ -304,7 +304,7 @@ G6_ROUTES = {
     ('Near', 'g6_total_supply_2026_09_30'): ('on_day', 'total_supply'),
     ('Near', 'g6_total_supply_2026_06_30'): ('on_day', 'total_supply'),
     ('Near', 'g6_total_supply_live'): ('last', 'total_supply'),
-    ('Near', 'g6_circulating_nearblocks_stale'): ('recorded', 'NOT USED (G6-3): NearBlocks /v1/stats circulating_supply has not moved since June — stale'),
+    ('Near', 'g6_circulating_nearblocks_stale'): ('recorded', 'NOT USED (G6-3): NearBlocks /v1/stats circulating_supply has not moved since June — stale; the route was retired 2026-10-13 (v3 answers circulating == total; v1 flat since 2025-08-27) — Gap row answered'),
     ('Near', 'g6_max_inflation_rate'): ('recorded', 'protocol parameter, recorded: max_inflation_rate [1,40] since block 170,351,519 (declared step, G6-3)'),
     ('Chainlink', 'g6_reserve_holdings_2026_10_19'): ('last', 'buyback_fund_balance'),
     ('Chainlink', 'g6_link_total_supply_g6'): ('last', 'total_supply'),
@@ -658,6 +658,13 @@ def check(groups: dict, headline=None, projects: set[str] | None = None, rows: l
                           else _our_value(route, groups, project, at, ref, headline))
         if route[0] == "zero_sum":
             ref = 0.0                                      # the zero address: no fee recipient = no protocol fee
+        if ours is None and route[0] == "near_inflow" and "stage 2 has not run yet" in str(why):
+            # G17-2b: the route is built; it waits on the scheduled BigQuery run — a date the calendar brings
+            import config                                   # noqa: PLC0415
+            out.append(base | {"ours": None, "status": "MISSING", "route": how,
+                               "detail": f"MISSING [C — NEEDS HISTORY] — pending the scheduled BigQuery run: {why} — "
+                                         f"valid from {config.NEAR_STAGE2_BY}"})
+            continue
         if ours is None:
             out.append(base | {"ours": None, "status": "NOT WIRED", "route": how,
                                "detail": f"NOT WIRED — reference check: {why}"})

@@ -32059,3 +32059,178 @@ RUN_CLEANUPS = (
      "why": "a differenced burn whose stock reading was dropped when its tier timed out — the next reading's span row "
             "already counts the day (G15 2)"},
 )
+
+
+# ===================================================================================================================
+# ROUND G17 — FINISH THE WIRING OUTSIDE AERODROME AND WORLD MOBILE (Jake 2026-10-23, run 20261023T132001Z on de4a779).
+# No new source or endpoint; SPEC §19 G17.
+# ===================================================================================================================
+
+# G17-0: A MISSING CELL'S CLASS DECLARED WITH ITS EVIDENCE (coverage_audit.missing_class reads this first). (project,
+# metric) -> (class letter, evidence). A "C" carries "valid from <date>"; an "E" says what was checked and what would
+# fill it. Unknown is never 0: a declared class keeps the cell MISSING.
+MISSING_DECLARED: dict = {
+    # G17-1b: Pendle publishes no per-epoch APR in its API — every read 0 (fixture Run Log, 72 reads 09-29..10-13)
+    **{("Pendle", m): ("E", "Pendle's API publishes no epoch APR: spendle/data lastEpochApr read 0 on every read "
+                            "(72 reads 2026-09-29..10-13) and sPendleHistoricalData.aprs is 0 for EVERY epoch, including "
+                            "those complete for months (back to 2026-01-29) — not a publish lag; the APR is shown only "
+                            "on app.pendle.finance's staking page (robots-disallowed). The reader stores an epoch APR in "
+                            "(0, 1) the day one appears (fetch/pendle_epochs.py); would fill it: Pendle publishing aprs")
+       for m in ("staking_apr_published", "pendle_epoch_apr_published")},
+    # G17-1c: the EF's ESP report for Q3 2026 is the next period; due by 2026-12-03 on the longest lag on record
+    ("Ethereum", "outflow_d_usd"): ("C", "the EF ESP reports cover periods to 2026-06-30 (Q2 2026, published "
+                                         "2026-08-18); the next (Q3 2026) is due by 2026-12-03 on the longest publish "
+                                         "lag on record (64 days after its quarter; shortest 23) — valid from "
+                                         "2026-12-03; earlier periods are never spread into Q0"),
+    # G17-1g: there is no (d) route for Plume — OUTFLOW_CATEGORIES['Plume'] declares no (d) leg
+    ("Plume", "outflow_d_usd"): ("E", "no (d) route: Plume publishes no ecosystem / foundation wallet list "
+                                      "(supply.plume.org is a circulating figure; docs.plume.org tokenomics gives "
+                                      "percentages, no addresses — INSIDER_SHARE_ROUTES['Plume']); would fill it: those "
+                                      "wallets, then a Transfer-out scan of them"),
+}
+
+# G17-2a: the insider-share and Leakage (i) cells have their route (built, run as monitors); what they wait on is the
+# issuer wallet list — data Jake supplies. MISSING E with that sub-cause, each cell's reason kept. NOT WIRED stays for a
+# cell with no route code at all (build_workbook's fallback text).
+INSIDER_LIST_NEEDED = "MISSING E — needs issuer wallet list (Jake): "
+for _v in INSIDER_SHARE_ROUTES.values():
+    if _v["cell"].startswith("NOT WIRED — "):
+        _v["cell"] = INSIDER_LIST_NEEDED + _v["cell"][len("NOT WIRED — "):]
+for _v in INSIDER_SHARE_MONITOR.values():
+    if _v["not_wired"].startswith("NOT WIRED — "):
+        _v["not_wired"] = INSIDER_LIST_NEEDED + _v["not_wired"][len("NOT WIRED — "):]
+
+# G17-2b: NEAR's stage 2 runs on the first daily run after stage 1 (check_offline_items near_wallet_inflow_days), which
+# runs once inside NEAR_STAGE1_WINDOW — at the latest the day after the window closes
+NEAR_STAGE2_BY = "2026-11-08"
+
+# G17-1a SKY: no total of SKY locked on info.skyeco.com's backend — closed with the reason ON the cell
+UNAVAILABLE.append({
+    "project": "Sky", "metric": "locked_tokens_dashboard", "closed_on": "2026-10-23",
+    "summary": "No dashboard total of SKY locked: info.skyeco.com/staking is robots-disallowed, and its backend "
+               "(info-sky.blockanalitica.com, read by fetch/sky_accounting.py) publishes per-FARM total_staked and "
+               "cumulative buyback — no total locked.",
+    "cell_text": "n/a — by design: no dashboard total of SKY locked (info.skyeco.com robots-disallowed; its backend "
+                 "publishes per-farm staked only — cross-checked on Credibility); locked SKY is read on-chain",
+    "what_was_tried": "sources.yaml Sky locked_tokens_dashboard (disabled: robots.txt); info-sky.blockanalitica.com "
+                      "/api/v1/farms/<farm>/historic/ (total_staked per farm — Credibility in_locked_sky_farm_ba / "
+                      "in_locked_usds_farm_ba) and /buyback/historic/; /api/v1/overall/ was never read by code (a new "
+                      "endpoint, not used — G17 rule)",
+    "impact": "NONE on the figure: locked_tokens is lsSKY.totalSupply() (0xf9A9cfD3…, tier 2); each farm's stake is "
+              "checked against Block Analitica on Credibility",
+    "reopen_if": "Sky's backend publishes a total of SKY locked on a path the code already reads",
+})
+UNAVAILABLE_BY_KEY[("Sky", "locked_tokens_dashboard")] = UNAVAILABLE[-1]
+
+# G17-1a NEAR: NearBlocks /v3/stats (already read by fetch/nearblocks.py, key + robots) carries the chain's own
+# total_supply — the net-supply cross-check the disabled sources.yaml entry wanted
+PROJECT_BY_NAME["Near"]["nearblocks"]["supply_total"] = {
+    "path": "/v3/stats", "metric": "total_supply_dashboard", "yocto_exponent": 24,
+    "why": "the chain's own total supply as NearBlocks indexes it (stats.total_supply, yoctoNEAR) — the cross-check on "
+           "total_supply the sources.yaml entry was disabled for (403 / no selector / needs an adapter: the adapter "
+           "now exists, robots respected)"}
+PROJECT_BY_NAME["Near"].setdefault("cross_checks", []).append(
+    {"primary": "total_supply", "primary_source": "NEAR total supply as stored",
+     "secondary": "total_supply_dashboard", "secondary_source": "NearBlocks /v3/stats total_supply",
+     "tolerance": 0.01, "prefer": "primary",
+     "note": "G17-1a: an independent construction from the chain's own indexer; a divergence is flagged, never picked"})
+
+# G17-1d / 1e SKY — two log scans on the SKY token (Ethereum), reconciled to the wei like every scan
+_SKY_TOKEN = PROJECT_BY_NAME["Sky"]["contracts"]["token"]["address"]
+_SKY_PAUSE = PROJECT_BY_NAME["Sky"]["contracts"]["pause_proxy"]["address"]
+SKY_ENDOWMENTS = {   # sky-ecosystem/spells-mainnet archive/2025-08-21-DssSpell/DssSpell.sol L84-85 (read 2026-10-23)
+    "SKY_FRONTIER_FOUNDATION": "0xca5183FB9997046fbd9bA8113139bf5a5Af122A0",
+    "FORTIFICATION_FOUNDATION": "0x483413ccCD796Deddee88E4d3e202425d5E891C6",
+}
+_SKY_SPELL_SRC = ("https://raw.githubusercontent.com/sky-ecosystem/spells-mainnet/master/archive/2025-08-21-DssSpell/"
+                  "DssSpell.sol (L84-85), read 2026-10-23")
+_SKY_ADDR_SRC = ("https://raw.githubusercontent.com/sky-ecosystem/spells-mainnet/master/src/test/addresses_mainnet.sol, "
+                 "read 2026-10-23")
+METRICS["sky_issuer_mint_tokens"] = {
+    "label": "SKY minted straight to the Pause Proxy (Transfer from 0x0, log scan, reconciled) — the memo 'minted to "
+             "issuer-side wallets'; MKR->SKY conversions (minted by the converter to users) are not in it",
+    "kind": "flow", "unit": "tokens", "archetypes": [3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e11,
+    "only_projects": ("Sky",)}
+METRICS["sky_ecosystem_out_tokens"] = {
+    "label": "SKY leaving the Pause Proxy and the two Ecosystem Entity endowments for anyone but each other, the farm "
+             "distributors, the converters, the LockstakeEngine and 0x0 (log scan, reconciled) — Flows (d)",
+    "kind": "flow", "unit": "tokens", "archetypes": [3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e11,
+    "only_projects": ("Sky",)}
+PROJECT_BY_NAME["Sky"]["log_scans"] += [
+    {"key": "sky_issuer_mints", "metric": "sky_issuer_mint_tokens", "chain": "ethereum", "token": _SKY_TOKEN,
+     "holders": [_SKY_PAUSE], "direction": "in", "store": True, "attribution": "count_from",
+     "count_from": [BURN_ADDRESSES["zero"]], "count_mints": True, "count_from_source": _SKY_ADDR_SRC,
+     "attribution_sources": [_SKY_ADDR_SRC], "wired_on": "2026-10-23"},
+    {"key": "sky_ecosystem_out", "metric": "sky_ecosystem_out_tokens", "chain": "ethereum", "token": _SKY_TOKEN,
+     "holders": [_SKY_PAUSE, *SKY_ENDOWMENTS.values()], "direction": "out", "store": True,
+     "attribution": "dedicated_wallet",
+     "exclude_counterparties": [BURN_ADDRESSES["zero"],
+                                "0x675671A8756dDb69F7254AFB030865388Ef699Ee",   # REWARDS_DIST_LSSKY_SKY
+                                "0xC8d67Fcf101d3f89D0e1F3a2857485A84072a63F",   # REWARDS_DIST_USDS_SKY
+                                PROJECT_BY_NAME["Sky"]["contracts"]["noncirc_mkr_sky_converter"]["address"],
+                                PROJECT_BY_NAME["Sky"]["contracts"]["noncirc_mkr_sky_legacy_converter"]["address"],
+                                PROJECT_BY_NAME["Sky"]["contracts"]["lockstake_engine"]["address"]],
+     "attribution_sources": [_SKY_SPELL_SRC, _SKY_ADDR_SRC], "wired_on": "2026-10-23"},
+]
+ISSUER_MINTS["Sky"] = {"kind": "series", "metric": "sky_issuer_mint_tokens", "wallet": f"Pause Proxy {_SKY_PAUSE[:10]}…",
+                       "source": "explorer:sky_issuer_mints (Transfer from 0x0 into the Pause Proxy)"}
+OUTFLOW_CATEGORIES["Sky"]["d"] = ("sky_ecosystem_out_tokens",)
+for _l in ("Outflows beside: ecosystem / grants (d)", FLOW_LEG_LINES["m"]):
+    FLOW_LINE_EVIDENCE.pop(("Sky", _l), None)
+
+# G17-1f PLUME — the Nest Season One claim contract, named by a primary source, read on Plume's Blockscout
+CHAIN_IDS["plume"] = 98866
+EXPLORERS["blockscout"]["hosts"][98866] = "https://explorer.plume.org/api"   # the instance fetch/plume_settlement reads
+EXPLORERS["blockscout"]["direct_hosts"] = (98866,)
+EXPLORER_LOG_ROUTES[98866] = ["blockscout"]
+DEFAULT_RPC["plume"] = ["https://rpc.plume.org"]          # the endpoint the Plume readers already use (plume_staking)
+PLUME_CLAIM = {
+    "contract": "0x8A2725a6f04816A5274dDD9FEaDd3bd0C253C1A6", "chain": "plume", "token_symbol": "WPLUME",
+    "source": "https://claim-pnp.nest.credit/ (the official 'Nest · Plume' claim page): its served JS "
+              "(/_next/static/chunks/app/page-bf09e2ba2e48f27a.js) — c={contractAddress:\"0x8A2725a6f04816A5274dDD9FEaDd3bd0C"
+              "253C1A6\",proofEndpoint:…\"https://api.hedgey.finance/token-claims/proof\"}; campaignId cbe8a16c-d0b2-4481-"
+              "8c41-a3826fb1092d; one network: Plume id 98866 (read 2026-10-23)",
+    "campaigns": {"Nest Season One": {"id": "cbe8a16c-d0b2-4481-8c41-a3826fb1092d", "from": "2026-05-12",
+                                      "to": "2026-08-12", "named_by": "claim-pnp.nest.credit (address and campaign id)"},
+                  "Plume Points Season 2": {"id": "8f5ea864-3707-492f-8766-93f0da811a98", "from": "2026-06-02",
+                                            "to": "2026-09-03",
+                                            "named_by": "claim-pp.plume.org names Hedgey and the campaign id, NOT the "
+                                                        "address (an unfilled NEXT_PUBLIC_CONTRACT_ADDRESS) — matched to "
+                                                        "this contract on-chain by campaigns(id) (token WPLUME, end "
+                                                        "2026-09-03 = the page's); Jake's decision to keep"}},
+    "shared": "Hedgey's ClaimCampaigns contract is shared: every WPLUME campaign on Plume pays from it — the series "
+              "counts each WPLUME claim out of it, labelled so",
+    "overlap": "Plume's 150M PLUME Season 2 figure covers the airdrop AND the Royco / Merkl incentives ((b)) — never "
+               "added to (b)",
+}
+METRICS["plume_airdrop_claims_tokens"] = {
+    "label": "WPLUME claimed out of Hedgey's ClaimCampaigns on Plume (0x8A2725a6…, the Nest S1 claim contract; S2 by "
+             "campaign id) — the points airdrops, Flows (c); every WPLUME campaign on the shared contract",
+    "kind": "flow", "unit": "tokens", "archetypes": [1], "tiers": [2], "sanity_min": 0, "sanity_max": 2e9,
+    "only_projects": ("Plume",)}
+PROJECT_BY_NAME["Plume"].setdefault("log_scans", []).append(
+    {"key": "plume_airdrop_claims", "metric": "plume_airdrop_claims_tokens", "chain": "plume",
+     "token": PROJECT_BY_NAME["Plume"]["merkl_campaigns"]["chains"][98866]["token"],   # WPLUME (docs.plume.org)
+     "holders": [PLUME_CLAIM["contract"]],
+     "direction": "out", "store": True,
+     "attribution": "dedicated_wallet", "attribution_sources": [PLUME_CLAIM["source"]], "wired_on": "2026-10-23"})
+OUTFLOW_CATEGORIES["Plume"]["c"] = ("plume_airdrop_claims_tokens",)
+FLOW_LINE_EVIDENCE.pop(("Plume", "Incentives paid beside: demand side (c)"), None)
+
+# G17-5 PLUME MARKET SHARE — a weekly turn of the RWA rebuild without the chain filter (fetch/llama.DefiLlama.rwa_share)
+RWA_SHARE_TURN = {"project": "Plume", "chain": "Plume Mainnet", "cadence_days": 7, "calls_per_run": 60,
+                  "keep_days": 455,
+                  "why": "~178 /protocol calls (every RWA-category protocol's full history): too many for the nightly "
+                         "tier — spread over runs from a cache, once a week (the BigQuery P2P turn's pattern)"}
+MARKET_SHARE["Plume"] = {"how": "rwa_turn", "category": "RWA — TVL on every chain",
+                         "basis": "Plume's RWA TVL (Σ chainTvls['Plume Mainnet'] over DefiLlama's RWA + RWA Lending "
+                                  "protocols) ÷ the same protocols' TVL on every chain — the weekly RWA turn"}
+for _m in ("market_share_pct", "market_share_category_usd"):
+    METRICS[_m]["only_projects"] = tuple(dict.fromkeys(tuple(METRICS[_m]["only_projects"]) + ("Plume",)))
+
+# G17-1b: a 0 is never Pendle's APR — the one written before the guard is removed
+RUN_CLEANUPS = RUN_CLEANUPS + (
+    {"id": "G17-1", "metric": "staking_apr_published", "value": 0.0, "source": "pendle_api",
+     "projects": ("Pendle",),
+     "why": "lastEpochApr read 0 is not Pendle's APR — stored before the 0-guard (G17 1b)"},
+)

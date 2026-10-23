@@ -209,6 +209,14 @@ class AlchemyCheckpoint:
             pass
 
 
+def _direct(name: str, chain_id) -> bool:
+    """A chain whose explorer is its own instance, not on the PRO API (config EXPLORERS[name]['direct_hosts'])."""
+    try:
+        return int(chain_id) in (config.EXPLORERS[name].get("direct_hosts") or ())
+    except (TypeError, ValueError):
+        return False
+
+
 class ExplorerLogs:
     """getLogs against the explorers configured for a chain, paging by record count."""
 
@@ -260,7 +268,7 @@ class ExplorerLogs:
         """The explorers that would be tried for this chain, in order: routed AND keyed. `transfer`: the caller's
         queries are all transfer-shaped, so the chain's opened TRANSFER routes count too."""
         order = config.explorer_order(chain_id) + (config.transfer_route(chain_id) if transfer else [])
-        return [n for n in order if self.key(n, chain_id)]
+        return [n for n in order if self.key(n, chain_id) or _direct(n, chain_id)]
 
     def _scrub(self, text) -> str:
         s = str(text)
@@ -279,7 +287,10 @@ class ExplorerLogs:
         spec = config.EXPLORERS[name]
         if name == "etherscan":
             return spec["base_url"], {"chainid": chain_id}
-        # A KEY GOES TO THE PRO API (per-instance keys are deprecated): one host for every chain.
+        # A KEY GOES TO THE PRO API (per-instance keys are deprecated): one host for every chain — except a chain whose
+        # explorer is its own instance (config direct_hosts, G17-1f: explorer.plume.org), called on its host, keyless
+        if _direct(name, chain_id):
+            return spec["hosts"][int(chain_id)], {}
         if spec.get("pro_api") and self.key(name):
             return spec["pro_api"].format(chain_id=int(chain_id)), {}
         host = (spec.get("hosts") or {}).get(chain_id)
@@ -288,11 +299,13 @@ class ExplorerLogs:
         return host, {}
 
     def _call(self, name: str, chain_id: int, params: dict):
-        key = self.key(name)
-        if not key:
+        direct = _direct(name, chain_id)
+        key = "" if direct else self.key(name)
+        if not key and not direct:
             raise ExplorerRefused(f"{name}: no {config.EXPLORERS[name]['key_env']} in .env")
         url, base = self._endpoint(name, chain_id)
-        query = {**base, **params, "apikey": key}
+        # a direct host is another operator's instance: our key is never sent to it
+        query = {**base, **params} if direct else {**base, **params, "apikey": key}
         pace = host_pace(url, float(config.EXPLORERS[name].get("rate_per_s") or 1.0 / config.EXPLORER_MIN_INTERVAL_S),
                          sleep=self._pace_sleep)
         for attempt in range(1, BUSY_TRIES + 1):

@@ -3999,7 +3999,14 @@ def _staking_funding_split(groups: dict, name: str, sp: dict, total: pd.Series, 
             total.loc[day] -= t
             taken[day] = taken.get(day, 0.0) + t
             left -= t
-    ser = pd.Series(taken, dtype=float).sort_index()
+    # A MEASURED ZERO ON EVERY RELEASE DAY THE SCANS COVER (G17-3a, Jake's run 20261023T132001Z: CHECK — "stale, last
+    # point 2025-12-20"): the three inputs are reconciled log scans, so a release day after the first attributed one
+    # with nothing attributed is 0 by the convention (a lump not forwarded stays in (e)), not a day unread
+    if taken:
+        first = min(taken)
+        ser = pd.Series({d: float(taken.get(d, 0.0)) for d in total.index if d >= first}, dtype=float).sort_index()
+    else:
+        ser = pd.Series(taken, dtype=float).sort_index()
     groups[(name, sp["out"])] = _as_stored(pd.DataFrame(
         {"date": ser.index, "project": name, "metric": sp["out"], "value": ser.values, "tier": 2,
          "source": f"derived:fifo[{sp['lumps']}|{sp['forwarded']}|{sp['funding']}] — {FIFO_CONVENTION}"}), cols)
@@ -8540,7 +8547,7 @@ def _write_table(ws, R: Refs, projects: list[dict], specs: list[tuple], data_by_
                     f"{closed['summary']}\n\nReopen if: {closed['reopen_if']}", "token_metrics")
                 continue
             if closed:
-                c.value = CLOSED_TEXT
+                c.value = closed.get("cell_text") or CLOSED_TEXT     # G17-1a: a closure may name its reason on the cell
                 c.font = Font(name=FONT, size=10, color="999999", italic=True)
                 c.number_format = FMT_TEXT
                 c.comment = Comment(
