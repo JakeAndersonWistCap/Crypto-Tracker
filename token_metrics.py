@@ -1089,6 +1089,14 @@ def _main(args, log) -> int:
     projects = resolve_scope(args, log)
     run_id = fetch.new_run_id()
     apply_run_cleanups(st, run_id, log)     # G14 1: declared one-offs (config.RUN_CLEANUPS), each row logged
+    # G16 1: the series whose yesterday is provisional — declared, or read low on >= 2 days in this store's history
+    config.set_provisional_from_store(store_mod.low_read_days(st.conn, config.PROVIDERS_WITH_INCOMPLETE_CURRENT_PERIOD,
+                                                              config.PROVISIONAL_LOW_READ_RATIO))
+    _listed = config.provisional_series()
+    _line = (f"PROVISIONAL LIST (G16 1): {len(_listed)} series whose latest day waits for a re-read — "
+             + "; ".join(f"{p} / {m}" for p, m in sorted(_listed)))
+    log.info("%s", _line)
+    st.record_fetch(run_id, "provisional_list", None, len(_listed), "ok", _line, None)
     # WHICH KEYS THIS RUN HAS (Round G3 item 13): presence only, never a value; a read skipped for an absent key is a
     # CONFIG gap (python check_offline_items.py env_keys says what each absence disables)
     log.info("%s", config.env_keys_line())

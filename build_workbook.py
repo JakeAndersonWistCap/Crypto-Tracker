@@ -2601,10 +2601,14 @@ def _circulating_views(groups: dict) -> None:
 PROVISIONAL: dict = {}      # (project, metric) -> [(day, read_at)] left out of this build (G15 5)
 
 
+PROVIDER_RUNS: dict = {}     # (provider, project) -> start times of the runs that read it (store.provider_runs, G16 1)
+
+
 def _provisional_views(groups: dict) -> None:
-    """G15 5 (config.provisional): a daily flow's LATEST row from a provider that publishes early, read before 16:00 UTC
-    the day after its date, is left out of every window — its day reads as not yet held — and named on the Data row, until
-    a later run re-reads it (the store keeps the latest read's fetched_at)."""
+    """G16 1 (config.provisional): a LISTED series' LATEST row from a provider that publishes early (config.
+    provisional_series — it read low on at least two days, or is declared) is left out of every window — its day reads
+    as not yet held — and named on the Data row, until a later run re-reads it (PROVIDER_RUNS: two successful reads of
+    the provider for the project after the day closed, up to the row's fetched_at)."""
     PROVISIONAL.clear()
     for key in list(groups.keys()):
         # read UNTRACKED: the view trims a series' own rows and depends on no other series — a tracked read of every
@@ -2617,7 +2621,7 @@ def _provisional_views(groups: dict) -> None:
         # window has replaced it; one that does not would otherwise hold it provisional for ever)
         tail = g[pd.to_datetime(g["date"]) == pd.to_datetime(g["date"]).max()]
         prov = [i for i, d, s_, fa in zip(tail.index, tail["date"], tail["source"], tail["fetched_at"])
-                if config.provisional(p, m, s_, d, fa)]
+                if config.provisional(p, m, s_, d, fa, PROVIDER_RUNS.get((str(s_).split(":")[0].lower(), p), ()))]
         if prov:
             PROVISIONAL[key] = [(str(pd.Timestamp(g.loc[i, "date"]).date()), str(g.loc[i, "fetched_at"])) for i in prov]
             groups[key] = g.drop(index=prov)
@@ -4832,8 +4836,9 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                 prov = PROVISIONAL[(name, metric)]
                 row["note"] = (row["note"] + " | " if row["note"] else "") + (
                     "PROVISIONAL: " + ", ".join(f"{d} read {str(fa)[:16]}Z" for d, fa in prov)
-                    + f" — before {config.PROVISIONAL_UNTIL_UTC_HOUR_NEXT_DAY}:00 UTC the day after, when the provider's "
-                      f"day is often still partial; not in any window or change flag until a later run re-reads it")
+                    + " — this series' latest day often reads low when first read ("
+                    + config.provisional_series().get((name, metric), "listed") + "); not in any window or change "
+                      "flag until a later run re-reads it")
             # ================ ALL SEVEN WITHHELD CASES, HANDLED IN ONE PLACE ================
             # A config change guards the WRITE path and cannot touch what is already stored, and
             # aggregate() consults the Gap Report only when the store has NO rows for a key
@@ -11541,6 +11546,12 @@ def build_workbook(store, path: Path | str, run_id: str | None = None,
     else:
         _SCOPE = list(PROJECTS)
     long = store.load_long()
+    # G16 1: the provisional list counts this store's low reads; a listed row is released by the runs that re-read it
+    import store as _store_mod                       # noqa: PLC0415
+    _early = config.PROVIDERS_WITH_INCOMPLETE_CURRENT_PERIOD
+    config.set_provisional_from_store(_store_mod.low_read_days(store.conn, _early, config.PROVISIONAL_LOW_READ_RATIO))
+    PROVIDER_RUNS.clear()
+    PROVIDER_RUNS.update(_store_mod.provider_runs(store.conn, _early))
     fetch_status = store.fetch_status()
     runlog = store.run_log(run_id) if run_id else store.run_log()
     gaps = store.gap_report(run_id) if run_id else store.gap_report()

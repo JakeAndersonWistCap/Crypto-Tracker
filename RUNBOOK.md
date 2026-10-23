@@ -529,6 +529,24 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11cs. Round G16 — the provisional day is per series; Ether.fi's total supply row judged when it agrees (2026-10-23)
+
+**Run after pulling (PowerShell 5.1, repo root), in this order.** Nothing new is fetched: no seed, no dry run, no
+run_sql section, no API call beyond the normal daily run.
+1. `python check_offline_items.py morning_reads` — store only. PASTE BACK the "THE PROVISIONAL LIST" block: every
+   series with its low-read days, flags and hours, LISTED (declared, or low on >= 2 days on your store) or not listed.
+   Expected LISTED: Fluid fees_usd and revenue_usd, Near intents_fees_usd (declared from your 10-23 output), plus any
+   series your store shows low on two or more days (Near intents_revenue_usd if it was low on two days).
+2. `python token_metrics.py` — the normal daily run.
+3. `python measuring_guard.py --newer metrics.db` — PASTE BACK the VERDICT.
+
+**What to look for.** No series is held back by the clock any more: an unlisted series' yesterday is in its windows
+whatever the hour. A listed series' latest day reads "PROVISIONAL: <day> read <time>Z — this series' latest day often
+reads low when first read (…)" on Data until a later run has read it again; DefiLlama is read once a day per project,
+so on one run a day that is the next day's run. Ether.fi's Credibility "Total supply — ours vs CoinGecko's" reads PASS
+while CoinGecko's total equals ours (998,535,999); "UNVERIFIABLE — reference unreliable" only when they differ by more
+than 1% and CoinGecko's total equals its own circulating.
+
 ## 11cr. Round G15 — the guard keeps the current leg; flows go with their readings; provisional mornings (2026-10-23)
 
 **Run after pulling (PowerShell 5.1, repo root), in this order.** Nothing new is fetched: no seed, no dry run, no

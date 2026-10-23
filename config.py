@@ -21306,33 +21306,68 @@ PROVIDERS_WITH_INCOMPLETE_CURRENT_PERIOD = ("defillama", "coingecko")
 # cumulative burn are all true as at the moment they were read, and dropping them would throw
 # away the only reading of the day for no gain. This is exactly the flow/stock distinction the
 # metric library already carries, used for the one thing it decides here.
-# ===== G15 5: YESTERDAY IS PROVISIONAL UNTIL 16:00 UTC TODAY (Jake's 10-23 run at 07:42 UTC: DefiLlama's 2026-10-22
-# rows for Fluid, Near and Pendle fees / revenue came in 63-93% below 10-15; 69 VERIFIED (derived) cells fell). The
-# store's Review Queue history (99 runs, 2026-09-22..10-13) holds the value each flagged run READ for yesterday beside
-# the value finally stored after later re-reads: low reads of yesterday came at 07:59 UTC (Near DEX, 14% of final),
-# 08:20 and 08:44 (Fluid, 13% / 26%), 12:38 (Morpho fees ~0%; Hyperliquid revenue 88%) and 15:05 (Hyperliquid 88%);
-# no read at or after 16:00 UTC the next day was below 90% of the final value (290 such flags; `python
-# check_offline_items.py morning_reads` re-counts on any store). So a daily flow's row from a
-# provider that publishes early (PROVIDERS_WITH_INCOMPLETE_CURRENT_PERIOD) read before 16:00 UTC the day after its
-# date is PROVISIONAL: stored (a later run's re-read replaces it), but kept out of every window and every change flag
-# until a run reads it at or after that hour.
-PROVISIONAL_UNTIL_UTC_HOUR_NEXT_DAY = 16
+# ===== G16 1: A PER-SERIES LIST, NOT A CLOCK (replaces G15 5's 16:00 UTC cut-off). Jake's morning_reads on his store
+# (1,212 flags, 2026-09-22..10-23): "the cut-off is too early" — the low reads are SERIES-specific: Fluid fees_usd and
+# revenue_usd read 11-26% of final at 08-10h UTC on every day listed; Near intents_fees_usd 4-8% on six days (10-13,
+# 15, 17, 18, 19, 20); the rest (Near intents_revenue_usd, Near dex_volume_usd 10-06 14%, Morpho fees_usd 09-21,
+# Hyperliquid revenue_usd 88%) rarer; at least one low read at or after 16:00. So a series is LISTED when it read below
+# 90% of its final value on at least PROVISIONAL_LOW_READ_MIN_DAYS distinct days of the store's Review Queue history
+# (store.low_read_days — the count morning_reads prints), or when it is DECLARED below from Jake's evidence: the Review
+# Queue cannot see a partial day that was never re-read (its "final" is the partial itself — the 10-13 fixture's Fluid
+# fees_usd 10-11 reads 6,913 against ~110,000 the days before, read once). N = 2: on the fixture every low-reading
+# series read low on exactly ONE day (6 of 987 flags — one-offs); a repeat on a second day is the smallest count that
+# separates a pattern from an event. A listed series' LATEST row is provisional, whatever the hour, until a later run
+# re-reads it (store run_log: two runs that read the provider for the project after the day closed). UNLISTED
+# SERIES HAVE NO CUT-OFF: their low reads are single events at any hour (07h-15h on the fixture, 16h+ on Jake's store),
+# so no hour separates them, and a late cut-off would hold every early provider's latest day back on every run.
+PROVISIONAL_LOW_READ_MIN_DAYS = 2
+PROVISIONAL_LOW_READ_RATIO = 0.9
+PROVISIONAL_SERIES_DECLARED = {
+    ("Fluid", "fees_usd"): "Jake's morning_reads 2026-10-23: 11-26% of final at 08-10h UTC on every day listed",
+    ("Fluid", "revenue_usd"): "Jake's morning_reads 2026-10-23: 11-26% of final at 08-10h UTC on every day listed",
+    ("Near", "intents_fees_usd"): "Jake's morning_reads 2026-10-23: 4-8% of final on 10-13, 15, 17, 18, 19, 20",
+}
+# {(project, metric): low-read days} from the store in use — set by set_provisional_from_store at the start of a run
+# and of a build (store.low_read_days); empty until then
+PROVISIONAL_FROM_STORE: dict = {}
 
 
-def provisional(project_name: str, metric: str, source: str, day, read_at) -> bool:
-    """Is this daily-flow row, dated `day` and read at `read_at` (UTC), still provisional (G15 5)?"""
+def set_provisional_from_store(days: dict) -> None:
+    PROVISIONAL_FROM_STORE.clear()
+    PROVISIONAL_FROM_STORE.update({k: int(n) for k, n in (days or {}).items()})
+
+
+def provisional_series() -> dict:
+    """{(project, metric): why} — the series whose latest day is provisional until re-read (G16 1)."""
+    out = {k: f"declared — {w}" for k, w in PROVISIONAL_SERIES_DECLARED.items()}
+    for k, n in PROVISIONAL_FROM_STORE.items():
+        if n >= PROVISIONAL_LOW_READ_MIN_DAYS:
+            out[k] = (out[k] + "; " if k in out else "") + f"read below {PROVISIONAL_LOW_READ_RATIO:.0%} of final on {n} day(s)"
+    return out
+
+
+def provisional(project_name: str, metric: str, source: str, day, read_at, runs=None) -> bool:
+    """Is this daily-flow row, dated `day`, still provisional (G16 1)? Only a LISTED series' row from a provider that
+    publishes early. `runs`: the start times of the runs that read this provider for the project with a success
+    (store run_log) — the row is released once two of them, after the day closed and up to `read_at` (the write that
+    left it), read it. Without `runs` (at fetch time, `read_at` = now) yesterday is provisional: this is its first read."""
     import pandas as _pd
     m = METRICS.get(metric) or {}
     if m.get("kind") != "flow" or str(source or "").split(":")[0].lower() not in PROVIDERS_WITH_INCOMPLETE_CURRENT_PERIOD:
         return False
-    if series_granularity(project_name, metric) != "daily" or read_at is None or str(read_at) in ("", "nan", "NaT"):
+    if (project_name, metric) not in provisional_series() or series_granularity(project_name, metric) != "daily":
+        return False
+    if read_at is None or str(read_at) in ("", "nan", "NaT"):
         return False
     try:
         t = _pd.Timestamp(read_at)
     except (ValueError, TypeError):
         return False                       # no readable read time: not known to be early
     t = t.tz_convert(None) if t.tzinfo else t
-    return t < _pd.Timestamp(day).normalize() + _pd.Timedelta(days=1, hours=PROVISIONAL_UNTIL_UTC_HOUR_NEXT_DAY)
+    closed = _pd.Timestamp(day).normalize() + _pd.Timedelta(days=1)
+    if runs is None:
+        return closed <= t < closed + _pd.Timedelta(days=1)
+    return sum(1 for r in runs if closed <= r <= t) < 2
 
 
 def drop_current_day(project_name: str, metric: str, source: str) -> bool:

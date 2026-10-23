@@ -12724,13 +12724,13 @@ def wiring():
 
 
 def morning_reads():
-    """ROUND G15 item 5 (Jake's 10-23 run at 07:42 UTC: DefiLlama's 10-22 rows for Fluid, Near and Pendle 63-93% low):
-    from the store's Review Queue history, every change flag on YESTERDAY's row from a provider that publishes early
-    (config.PROVIDERS_WITH_INCOMPLETE_CURRENT_PERIOD) — the value the flagged run READ beside the value finally stored
-    after later re-reads — by the run's UTC hour; then each read below 90% of the final value. The provisional cut-off
-    (config.PROVISIONAL_UNTIL_UTC_HOUR_NEXT_DAY) is checked against it. Reads metrics.db; changes nothing; no call."""
+    """ROUND G15 item 5 / G16 item 1: from the store's Review Queue history, every change flag on YESTERDAY's row from a
+    provider that publishes early (config.PROVIDERS_WITH_INCOMPLETE_CURRENT_PERIOD) — the value the flagged run READ
+    beside the value finally stored — by the run's UTC hour; each read below 90% of final; then THE PROVISIONAL LIST
+    (config.provisional_series): every series with its low-read days and flags, its hours, and why it is listed (declared,
+    or low on >= config.PROVISIONAL_LOW_READ_MIN_DAYS days here) or not. store.morning_reads_frame is the one computation,
+    shared with the build. Reads metrics.db; changes nothing; no call."""
     import sqlite3                                        # noqa: PLC0415
-    import pandas as _pd                                  # noqa: PLC0415
     import config                                         # noqa: PLC0415
     import store as _store                                # noqa: PLC0415
     head("MORNING READS — yesterday's early-publishing rows as each run read them, against the value finally stored")
@@ -12738,29 +12738,32 @@ def morning_reads():
         print(f"  no store at {_store.DB_PATH}")
         return 0
     con = sqlite3.connect(_store.DB_PATH)
-    rq = _pd.read_sql("SELECT run_id, project, metric, date, value, source FROM review_queue WHERE "
-                      "reason='change_threshold'", con)
-    rq = rq[rq["source"].astype(str).str.split(":").str[0].str.lower().isin(config.PROVIDERS_WITH_INCOMPLETE_CURRENT_PERIOD)]
-    fin = _pd.read_sql("SELECT project, metric, substr(date, 1, 10) AS d, value AS final FROM metrics", con)
-    rq["d"] = rq["date"].astype(str).str[:10]
-    x = rq.merge(fin, on=["project", "metric", "d"])
-    x = x[(_pd.to_datetime(x["run_id"].str[:8]) - _pd.Timedelta(days=1) == _pd.to_datetime(x["d"])) & (x["final"] > 0)]
+    ratio, n_min = config.PROVISIONAL_LOW_READ_RATIO, config.PROVISIONAL_LOW_READ_MIN_DAYS
+    x = _store.morning_reads_frame(con, config.PROVIDERS_WITH_INCOMPLETE_CURRENT_PERIOD)
+    config.set_provisional_from_store(_store.low_read_days(con, config.PROVIDERS_WITH_INCOMPLETE_CURRENT_PERIOD, ratio))
     if x.empty:
         print("  no change flag on yesterday's row in the Review Queue history")
-        return 0
-    x["hour"] = x["run_id"].str[9:11].astype(int)
-    x["r"] = x["value"] / x["final"]
-    cut = config.PROVISIONAL_UNTIL_UTC_HOUR_NEXT_DAY
-    print(f"  {len(x)} flag(s) on yesterday's row, {x['run_id'].str[:8].min()}..{x['run_id'].str[:8].max()}")
-    for h, g in x.groupby("hour"):
-        print(f"    {h:02d}h UTC  n={len(g):3}  read below 90% of final: {int((g['r'] < 0.9).sum()):3}  "
-              f"(below 50%: {int((g['r'] < 0.5).sum())})")
-    low = x[x["r"] < 0.9].sort_values("run_id")
-    for r in low.itertuples(index=False):
-        print(f"    {r.run_id}  {r.project} / {r.metric} {r.d}: read {r.value:,.0f} = {r.r:.0%} of the final {r.final:,.0f}")
-    late = low[low["hour"] >= cut]
-    print(f"  the cut-off is {cut}:00 UTC the day after: {len(late)} low read(s) at or after it"
-          + (" — the cut-off is too early" if len(late) else ""))
+    else:
+        print(f"  {len(x)} flag(s) on yesterday's row, {x['run_id'].str[:8].min()}..{x['run_id'].str[:8].max()}")
+        for h, g in x.groupby("hour"):
+            print(f"    {h:02d}h UTC  n={len(g):3}  read below {ratio:.0%} of final: {int((g['r'] < ratio).sum()):3}  "
+                  f"(below 50%: {int((g['r'] < 0.5).sum())})")
+        for r in x[x["r"] < ratio].sort_values("run_id").itertuples(index=False):
+            print(f"    {r.run_id}  {r.project} / {r.metric} {r.d}: read {r.value:,.0f} = {r.r:.0%} of the final {r.final:,.0f}")
+    low = x[x["r"] < ratio] if not x.empty else x
+    listed = config.provisional_series()
+    keys = sorted(set(listed) | ({tuple(k) for k, _g in low.groupby(["project", "metric"])} if not low.empty else set()))
+    print(f"\n  THE PROVISIONAL LIST (G16 1): a series is listed when it read below {ratio:.0%} of final on at least "
+          f"{n_min} distinct days here, or is declared (config.PROVISIONAL_SERIES_DECLARED); a listed series' latest day "
+          f"is provisional until a later run re-reads it. Unlisted series: no cut-off.")
+    for k in keys:
+        g = low[(low["project"] == k[0]) & (low["metric"] == k[1])] if not low.empty else low
+        days, n = (int(g["d"].nunique()), len(g)) if len(g) else (0, 0)
+        hours = ",".join(f"{h:02d}" for h in sorted(set(g["hour"]))) if len(g) else "-"
+        why = listed.get(k)
+        print(f"    {'LISTED    ' if why else 'not listed'}  {k[0]} / {k[1]}: low on {days} day(s), {n} flag(s), "
+              f"hours {hours}" + (f" — {why}" if why else f" — fewer than {n_min} days: a one-off"))
+    print(f"  {len(listed)} series listed")
     return 0
 
 

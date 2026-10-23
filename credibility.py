@@ -2378,9 +2378,13 @@ def wiring_inputs(name: str, rows: dict) -> dict:
             "ref": {"metric": "total_supply_coingecko", "window": "now", "tol": 1.0,
                     "source": "CoinGecko total_supply (total_supply_coingecko, kept beside the on-chain total we use)"}}
         same = cg_total_is_its_circulating(rows, name)
-        if same:
+        ours_t = _num(((rows or {}).get(f"{name}|total_supply") or {}).get("now"))
+        tol_t = out["in_total_supply_coingecko"]["ref"]["tol"]
+        if same and not (ours_t and abs(ours_t / same - 1) <= tol_t / 100.0):
             # G14 1 (Jake's 10-22 run, Ether.fi 965,350,000 both): a "total" equal to the publisher's own circulating is
-            # not a total — never the judge of ours, so never a CHECK
+            # not a total — never the judge of ours, so never a CHECK. G16 2 (Jake's 10-23 store: CoinGecko's total
+            # 998,535,999, identical to ours): only when the two DISAGREE beyond the tolerance; when they agree the row
+            # is judged as for every other project
             out["in_total_supply_coingecko"]["ref"].update(
                 force_verdict="UNVERIFIABLE — reference unreliable: CoinGecko total = its circulating",
                 why=f"CoinGecko's total_supply equals its own circulating_supply ({same:,.0f} both), so it is not a "

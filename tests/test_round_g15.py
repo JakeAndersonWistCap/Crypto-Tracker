@@ -223,18 +223,18 @@ def test_4_the_ccip_base_leg_has_its_credibility_row():
 
 
 # ================================================================================================== 5 provisional days
-def test_5_yesterday_read_before_1600_utc_is_provisional():
+def test_5_the_clock_cut_off_is_replaced_by_the_per_series_list():
+    """G16 1 replaced G15's 16:00 UTC cut-off (Jake's morning_reads: low reads are series-specific): a listed series is
+    provisional at any hour until re-read; an unlisted one is never held (tests/test_round_g16.py has the rule)."""
     pv = config.provisional
-    assert config.PROVISIONAL_UNTIL_UTC_HOUR_NEXT_DAY == 16
-    assert pv("Fluid", "fees_usd", "defillama:fees:fluid", "2026-10-22", "2026-10-23T07:42:00Z")
-    assert pv("Fluid", "fees_usd", "defillama:fees:fluid", "2026-10-22", "2026-10-23T15:59:00Z")
-    assert not pv("Fluid", "fees_usd", "defillama:fees:fluid", "2026-10-22", "2026-10-23T16:00:00Z")
-    assert not pv("Fluid", "fees_usd", "defillama:fees:fluid", "2026-10-21", "2026-10-23T07:42:00Z")
+    assert not hasattr(config, "PROVISIONAL_UNTIL_UTC_HOUR_NEXT_DAY")
+    assert pv("Fluid", "fees_usd", "defillama:fees:fluid", "2026-10-22", "2026-10-23T16:00:00Z", ())
     assert not pv("Fluid", "tvl_usd", "defillama:tvl:fluid", "2026-10-22", "2026-10-23T07:42:00Z")   # a stock
     assert not pv("GEODNET", "gross_burn_tokens", "chain:x:delta", "2026-10-22", "2026-10-23T07:42:00Z")
 
 
 def test_5_a_provisional_row_is_stored_but_not_in_windows_or_change_flags(monkeypatch):
+    monkeypatch.setattr(bw, "PROVIDER_RUNS", {})
     from fetch import validate
     from fetch.base import FetchOutput
     days = pd.date_range("2026-10-08", "2026-10-22")
@@ -254,8 +254,11 @@ def test_5_a_provisional_row_is_stored_but_not_in_windows_or_change_flags(monkey
     assert not [r for r in out.review if r["reason"] == "change_threshold"]
 
 
-def test_5_only_the_latest_day_is_provisional():
-    """An older day read early is not held provisional for ever: once a newer day is held, a run has read past it."""
+def test_5_only_the_latest_day_is_provisional(monkeypatch):
+    """An older day read early is not held provisional for ever: once a newer day is held, a run has read past it. The
+    latest day (G16 1) is released by two reads after it closed (here the 10-13 07:08 and 21:15 runs)."""
+    monkeypatch.setattr(bw, "PROVIDER_RUNS", {("defillama", "Fluid"): [pd.Timestamp("2026-10-13T07:08:00"),
+                                                                        pd.Timestamp("2026-10-13T21:15:00")]})
     g = _g("Fluid", "revenue_usd", ["2026-10-10", "2026-10-11", "2026-10-12"], [1.0, 1.0, 1.0], "defillama:fees:fluid",
            fetched_at=["2026-10-11T07:08:00Z", "2026-10-12T07:08:00Z", "2026-10-13T21:15:00Z"])
     groups = {("Fluid", "revenue_usd"): g}

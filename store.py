@@ -177,6 +177,47 @@ CREATE TABLE IF NOT EXISTS gap_report (
 LONG_COLUMNS = ["date", "project", "metric", "value", "source", "tier"]
 
 
+def morning_reads_frame(conn: sqlite3.Connection, providers) -> pd.DataFrame:
+    """G15 5 / G16 1: every change flag in the Review Queue history on YESTERDAY's row (relative to the flagged run) from
+    an early-publishing provider, with the value that run READ beside the value finally stored (`final`), the run's
+    UTC hour and their ratio `r`. One function for morning_reads and the provisional list, so they cannot disagree."""
+    try:
+        rq = pd.read_sql("SELECT run_id, project, metric, date, value, source FROM review_queue WHERE "
+                         "reason='change_threshold'", conn)
+        fin = pd.read_sql("SELECT project, metric, substr(date, 1, 10) AS d, value AS final FROM metrics", conn)
+    except Exception:                                  # noqa: BLE001 — no table yet: no evidence
+        return pd.DataFrame(columns=["run_id", "project", "metric", "d", "value", "final", "hour", "r"])
+    providers = {str(p).lower() for p in providers}
+    rq = rq[rq["source"].astype(str).str.split(":").str[0].str.lower().isin(providers)]
+    rq = rq.assign(d=rq["date"].astype(str).str[:10])
+    x = rq.merge(fin, on=["project", "metric", "d"])
+    run_day = pd.to_datetime(x["run_id"].astype(str).str[:8], format="%Y%m%d", errors="coerce")
+    x = x[(run_day - pd.Timedelta(days=1) == pd.to_datetime(x["d"])) & (x["final"] > 0)].copy()
+    x["hour"] = pd.to_numeric(x["run_id"].astype(str).str[9:11], errors="coerce").fillna(-1).astype(int)
+    x["r"] = x["value"] / x["final"]
+    return x
+
+
+def low_read_days(conn: sqlite3.Connection, providers, ratio: float = 0.9) -> dict:
+    """{(project, metric): distinct days} on which a run read yesterday's row below `ratio` of its final value (G16 1)."""
+    x = morning_reads_frame(conn, providers)
+    low = x[x["r"] < ratio]
+    return {k: int(g["d"].nunique()) for k, g in low.groupby(["project", "metric"])} if not low.empty else {}
+
+
+def provider_runs(conn: sqlite3.Connection, providers) -> dict:
+    """{(provider, project): sorted start times (naive UTC) of the runs with a successful read of it} (G16 1)."""
+    try:
+        rl = pd.read_sql("SELECT DISTINCT run_id, source, project FROM run_log WHERE status='ok'", conn)
+    except Exception:                                  # noqa: BLE001
+        return {}
+    providers = {str(p).lower() for p in providers}
+    rl = rl[rl["source"].astype(str).str.lower().isin(providers)]
+    rl = rl.assign(t=pd.to_datetime(rl["run_id"].astype(str).str[:15], format="%Y%m%dT%H%M%S", errors="coerce")).dropna(
+        subset=["t"])
+    return {(str(s).lower(), p): sorted(set(g["t"])) for (s, p), g in rl.groupby(["source", "project"])}
+
+
 def utcnow() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
