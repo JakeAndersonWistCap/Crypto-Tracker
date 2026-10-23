@@ -57,9 +57,9 @@ def test_real_aerodrome_price_finding_and_one_price_epoch_row(tmp_path, monkeypa
     # Coinbase on the 33 overlapping days (3a)
     assert o["in_apr_today_price"]["verdict"] == "N/A (recorded, not judged)", o["in_apr_today_price"]
     pc = o["in_price_confirmed"]
-    # G15 5: 32 — the payment day 10-08 (holders_revenue_usd read on 10-09 before 16:00 UTC) is provisional, so the
-    # Credibility rows leave it out as the headline does (33 -> 32 overlapping days, still >= 30)
-    assert pc["verdict"].startswith("PASS") and "32 of the" in pc["note"] and "..2026-10-07" in pc["note"], pc
+    # G16 1: Aerodrome's holders_revenue_usd is not a provisional series (it never read low on two days), so the 10-08
+    # payment day counts again (G15's clock cut-off had made it 32)
+    assert pc["verdict"].startswith("PASS") and "33 of the" in pc["note"] and "..2026-10-08" in pc["note"], pc
     # 3c: no on-chain epoch was stored (a lost row) — MATURING naming it, not "CHECK (no reference)"
     for k in ("in_voter_apr_epoch", "in_revenue"):
         # in_revenue: a VERIFIED FINDING once the fee leg is stored (Jake's run 2026-10-09 18:13)
@@ -189,10 +189,10 @@ def test_real_aerodrome_illiquid_cap_fee_leg_finding_and_tolerances(tmp_path, mo
     assert "THE ON-CHAIN FIGURE IS THE REFERENCE" in rv["note"] and "FEE LEG over" in rv["note"], rv["note"][:600]
     assert "2026-10-01 -37.4%" in rv["note"] and "2026-08-20 -21.5%" in rv["note"], rv["note"]
     assert o["in_bribe_outliers"]["verdict"] == "N/A (recorded, not judged)", o["in_bribe_outliers"]
-    # today's-price APR on the SAME capped flow (was 12.2% beside "the headline 17.55%"); G15 5: on the SAME days as the
-    # headline too — holders_revenue_usd 10-11 (read 10-12 07:08 UTC) is provisional, so 87 days: 8.52% -> 8.44%
+    # today's-price APR on the SAME capped flow (was 12.2% beside "the headline 17.55%"), on the same days as the
+    # headline (G15 5b); G16 1: holders_revenue_usd is not a provisional series, so 88 days again (8.44% under G15's clock)
     tp = o["in_apr_today_price"]
-    assert abs(float(tp["ours"]) - 0.0844) < 0.0005 and f"headline at payment-day prices: {float(head['ours']):.2%}" in \
+    assert abs(float(tp["ours"]) - 0.0852) < 0.0005 and f"headline at payment-day prices: {float(head['ours']):.2%}" in \
         tp["note"], tp
 
 
