@@ -16267,8 +16267,9 @@ def test_nearblocks_buyback_is_incremental_newest_first_and_daily_stats_run_once
     assert sorted(got2.value) == pytest.approx([1.0, 2.0, 3.0, 7.0]), "the window is re-emitted from kept totals"
     # /v3/stats (noncirculating_nearblocks_tokens) is retired (fix round 2, N1: v3 circulating == total), so it is no
     # longer marked current
+    # G17-1a: the /v3/stats total, already read today, is marked current like the lockup total
     assert out2.current == {("Near", "tx_count"), ("Near", "active_addresses"), ("Near", "fees_native_tokens"),
-                            ("Near", "locked_tokens_nearblocks")}
+                            ("Near", "locked_tokens_nearblocks"), ("Near", "total_supply_dashboard")}
     from fetch.gaps import detect
     gaps = detect([near], out2.frame(), out2.current, {}, [])
     assert not [g for g in gaps if g["metric"] in ("tx_count", "active_addresses")], \
