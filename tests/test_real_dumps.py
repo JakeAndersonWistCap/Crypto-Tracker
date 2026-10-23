@@ -57,7 +57,9 @@ def test_real_aerodrome_price_finding_and_one_price_epoch_row(tmp_path, monkeypa
     # Coinbase on the 33 overlapping days (3a)
     assert o["in_apr_today_price"]["verdict"] == "N/A (recorded, not judged)", o["in_apr_today_price"]
     pc = o["in_price_confirmed"]
-    assert pc["verdict"].startswith("PASS") and "33 of the" in pc["note"], pc
+    # G15 5: 32 — the payment day 10-08 (holders_revenue_usd read on 10-09 before 16:00 UTC) is provisional, so the
+    # Credibility rows leave it out as the headline does (33 -> 32 overlapping days, still >= 30)
+    assert pc["verdict"].startswith("PASS") and "32 of the" in pc["note"] and "..2026-10-07" in pc["note"], pc
     # 3c: no on-chain epoch was stored (a lost row) — MATURING naming it, not "CHECK (no reference)"
     for k in ("in_voter_apr_epoch", "in_revenue"):
         # in_revenue: a VERIFIED FINDING once the fee leg is stored (Jake's run 2026-10-09 18:13)
