@@ -2598,6 +2598,41 @@ def _circulating_views(groups: dict) -> None:
         groups[(name, "circulating_supply_onchain")] = _as_stored(view, parts[0].columns)
 
 
+PROVISIONAL: dict = {}      # (project, metric) -> [(day, read_at)] left out of this build (G15 5)
+
+
+def _provisional_views(groups: dict) -> None:
+    """G15 5 (config.provisional): a daily flow's LATEST row from a provider that publishes early, read before 16:00 UTC
+    the day after its date, is left out of every window — its day reads as not yet held — and named on the Data row, until
+    a later run re-reads it (the store keeps the latest read's fetched_at)."""
+    PROVISIONAL.clear()
+    for key in list(groups.keys()):
+        # read UNTRACKED: the view trims a series' own rows and depends on no other series — a tracked read of every
+        # key would make every series of a project a "parent" of its trimmed flows in the wiring audit
+        g = dict.get(groups, key)
+        if g is None or g.empty or "fetched_at" not in g:
+            continue
+        p, m = key
+        # the LATEST day only: once a newer day is held, a run has read past it (a source that re-reads its trailing
+        # window has replaced it; one that does not would otherwise hold it provisional for ever)
+        tail = g[pd.to_datetime(g["date"]) == pd.to_datetime(g["date"]).max()]
+        prov = [i for i, d, s_, fa in zip(tail.index, tail["date"], tail["source"], tail["fetched_at"])
+                if config.provisional(p, m, s_, d, fa)]
+        if prov:
+            PROVISIONAL[key] = [(str(pd.Timestamp(g.loc[i, "date"]).date()), str(g.loc[i, "fetched_at"])) for i in prov]
+            groups[key] = g.drop(index=prov)
+
+
+def _without_provisional(long: pd.DataFrame) -> pd.DataFrame:
+    """The store frame less the rows _provisional_views held back, so a check that reproduces a headline from the store
+    (the Credibility rows) reads the same days the headline does."""
+    if long is None or long.empty or not PROVISIONAL:
+        return long
+    held = {(p, m, d) for (p, m), rows in PROVISIONAL.items() for d, _fa in rows}
+    keys = zip(long["project"], long["metric"], pd.to_datetime(long["date"]).dt.strftime("%Y-%m-%d"))
+    return long[[k not in held for k in keys]]
+
+
 def _partial_sum_views(groups: dict) -> None:
     """A SUMMED METRIC NEVER READS A PARTIAL DAY (Jake, 2026-10-05). Before that date
     fetch/llama.py _sum_slugs stored a day on which an active service had no point, flagged
@@ -4300,6 +4335,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     # G12 A1: every view's reads and writes are recorded — the wiring audit's dependency graph (wiring.py)
     groups = wiring.TrackingDict(groups)
     _EARLY_BLOCKS.clear()
+    _provisional_views(groups)        # G15 5: yesterday read before 16:00 UTC is stored, not used
     _handover_cut_views(groups)       # G11 C1: a declared cut — the earlier leg's rows after the later leg starts dropped
     _partial_sum_views(groups)    # FIRST: nothing downstream may read a partial sum
     _same_basis_views(groups)     # one basis read by several routes is one measuring point (config.SAME_BASIS)
@@ -4791,6 +4827,13 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
             if last_read:
                 row["not_read"] = last_read
                 row["note"] = (row["note"] + " | " if row["note"] else "") + last_read
+            # G15 5: a provisional latest day, stored but left out of the windows — said, with when it was read
+            if (name, metric) in PROVISIONAL:
+                prov = PROVISIONAL[(name, metric)]
+                row["note"] = (row["note"] + " | " if row["note"] else "") + (
+                    "PROVISIONAL: " + ", ".join(f"{d} read {str(fa)[:16]}Z" for d, fa in prov)
+                    + f" — before {config.PROVISIONAL_UNTIL_UTC_HOUR_NEXT_DAY}:00 UTC the day after, when the provider's "
+                      f"day is often still partial; not in any window or change flag until a later run re-reads it")
             # ================ ALL SEVEN WITHHELD CASES, HANDLED IN ONE PLACE ================
             # A config change guards the WRITE path and cannot touch what is already stored, and
             # aggregate() consults the Gap Report only when the store has NO rows for a key
@@ -7861,6 +7904,13 @@ def settlement_validation(rebuilt: pd.Series, csv: pd.Series, spec: dict) -> dic
                             f"{out['daily_p90_abs_gap']:.1%}; rebuild / CSV over the overlap {out['total_ratio']:.3f}")}
 
 
+def _short_usd(v: float) -> str:
+    """$5.7B / $8.7M / $0.7M / $65K — a size named in a note."""
+    a = abs(v)
+    return (f"${v / 1e9:,.1f}B" if a >= 1e9 else f"${v / 1e6:,.1f}M" if a >= 1e5 else f"${v / 1e3:,.0f}K" if a >= 1e3
+            else f"${v:,.0f}")
+
+
 def _settlement_rebuild_views(groups: dict) -> None:
     """ETHEREUM'S SETTLEMENT REBUILT FROM FREE SOURCES (Round G7 item 8, config SETTLEMENT_REBUILD.ethereum_rebuild):
     settlement_rebuilt_usd = DEX + NFT + P2P on the days all three are stored, always shown beside the CSV. Validated
@@ -7886,6 +7936,25 @@ def _settlement_rebuild_views(groups: dict) -> None:
         SETTLEMENT_VALIDATION[name] = {"status": "NOT VALIDATED", "why": "no day holds all three legs"}
         return
     rebuilt = df.sum(axis=1)
+    # G15 3 (Jake's 10-23 store: NFT lacks 2026-09-20..09-23, DEX and P2P present): THE NFT LEG ABSENT AT ITS SOURCE. The
+    # NFT read stores DefiLlama's whole daily chart and omits a day only where the chart has no point or a null for it
+    # (fetch/eth_settlement.EthNftVolume, which names such days) — so a day INSIDE the NFT series' span where DEX and P2P
+    # are stored and NFT is not is a source gap. The rebuild stands on DEX + P2P there, flagged on the row with the NFT
+    # leg's size on the nearby days; no zero is stored and the NFT leg itself stays absent. A day outside the NFT span
+    # (before its first row or after its last) is not filled.
+    nft = legs["nft"]
+    both = pd.concat([legs["dex"].rename("dex"), legs["p2p"].rename("p2p")], axis=1, sort=True).dropna()
+    gap = both[(both.index > nft.index.min()) & (both.index < nft.index.max()) & ~both.index.isin(nft.index)]
+    nft_gap_note = {}
+    for d in gap.index:
+        near = [x for x in df.index if abs((x - d).days) <= 7]
+        n_lo, n_hi = (float(df.loc[near, "nft"].min()), float(df.loc[near, "nft"].max())) if near else (None, None)
+        p_lo, p_hi = (float(df.loc[near, "p2p"].min()), float(df.loc[near, "p2p"].max())) if near else (None, None)
+        nft_gap_note[d] = ("NFT leg absent (source gap): DEX + P2P only on this day"
+                           + (f"; NFT {_short_usd(n_lo)}–{_short_usd(n_hi)} vs P2P {_short_usd(p_lo)}–{_short_usd(p_hi)} "
+                              f"on the days within 7 either side" if near else ""))
+    if len(gap):
+        rebuilt = pd.concat([rebuilt, gap.sum(axis=1)]).sort_index()
     cols = groups[(name, spec["legs"]["dex"])].columns
     val = settlement_validation(rebuilt, csv, spec["validation"]) if not csv.empty else \
         {"status": "NOT VALIDATED", "why": "no Artemis CSV rows to validate against"}
@@ -7907,11 +7976,13 @@ def _settlement_rebuild_views(groups: dict) -> None:
                            f"{k} {len(m_)} ({', '.join(str(d_.date()) for d_ in m_[:4])}{'…' if len(m_) > 4 else ''})"
                            for k, m_ in miss.items() if len(m_)) if any(len(m_) for m_ in miss.values()) else ""))
     val["common_days"] = int(len(df))
+    val["nft_gap_days"] = [str(d.date()) for d in sorted(nft_gap_note)]
     SETTLEMENT_VALIDATION[name] = val
     tag = f"{spec['label']}; validation {val['status']}: {val.get('why', '')}; {val['legs_end']}"[:500]
     groups[(name, "settlement_rebuilt_usd")] = _as_stored(pd.DataFrame({
         "date": rebuilt.index, "project": name, "metric": "settlement_rebuilt_usd", "value": rebuilt.values, "tier": 1,
-        "source": f"derived:dex+nft+p2p[{tag}]"}), cols)
+        "source": [f"derived:dex+nft+p2p[{(nft_gap_note[d] + '; ' + tag)[:600]}]" if d in nft_gap_note
+                   else f"derived:dex+nft+p2p[{tag}]" for d in rebuilt.index]}), cols)
     # G13 1a: the live settlement_volume_usd's days after the handover ARE the rebuilt series — read back from it, so
     # the dependency is the code's own (the wiring audit's INPUT edge), not a local copy beside it
     rebuilt = _daily(groups[(name, "settlement_rebuilt_usd")])
@@ -11559,7 +11630,7 @@ def build_workbook(store, path: Path | str, run_id: str | None = None,
         FLOWS_ROWS[:] = flow_statements(_LAST_GROUPS, asof)          # alignment C11: the Flows tab
         write_flows(wb, FLOWS_ROWS)
     with wiring.phase("cross"):
-        CREDIBILITY_ROWS[:] = write_credibility(ws_cred, R, data_by_key, long, asof)
+        CREDIBILITY_ROWS[:] = write_credibility(ws_cred, R, data_by_key, _without_provisional(long), asof)
     write_charts(ws_ch, {"a3": a3, "a4": a4, "a1": a1, "a2": a2, "ws_a3": ws_a3, "ws_a4": ws_a4, "ws_a1": ws_a1, "ws_a2": ws_a2})
     gap_end = write_gap_report(ws_gap, gaps, run_id) or (len(gaps) + 8 if gaps is not None else 8)
     _write_manual_quarterly(ws_gap, gap_end + 2, long)

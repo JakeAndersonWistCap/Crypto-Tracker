@@ -48,7 +48,7 @@ def test_1_a_timed_out_primary_takes_no_row_from_another_source():
     assert ((kept["project"] == "Chainlink") & (kept["metric"] == "total_supply_coingecko")).any()
     assert ((kept["project"] == "Ethereum") & (kept["metric"] == "total_supply")).any()
     assert len(lines) == 1 and lines[0].startswith("FALLBACK REFUSED Chainlink / total_supply 2026-10-22 from coingecko")
-    assert "keeps its last stored value (1e+09 on 2026-10-21)" in lines[0]
+    assert "keeps its current leg's value (1e+09 on 2026-10-21, chain:ethereum:token)" in lines[0]
     assert any(e.status == "warn" and "FALLBACK REFUSED" in e.message for e in out.log)
     # the primary's own row on the day is never refused
     out = FetchOutput()
@@ -168,14 +168,15 @@ def test_3_three_legs_stored_on_a_day_make_a_rebuild_row_that_day(monkeypatch):
     assert list(rb.index) == list(days)
     assert all(rb[pd.Timestamp(d)] == 1e9 + 2e7 + 3e9 for d in ("2026-09-20", "2026-09-21", "2026-09-22",
                                                                  "2026-09-23"))
-    # a leg lacking a day: that day only is dropped, and the build says which leg
-    groups[("Ethereum", "nft_volume_usd")] = groups[("Ethereum", "nft_volume_usd")][
-        ~groups[("Ethereum", "nft_volume_usd")]["date"].isin(pd.to_datetime(["2026-09-21"]))]
+    # a DEX day missing: that day only is dropped, and the build says which leg (an NFT day missing inside its span is
+    # G15 3's source gap — tests/test_round_g15.py)
+    groups[("Ethereum", "dex_volume_usd")] = groups[("Ethereum", "dex_volume_usd")][
+        ~groups[("Ethereum", "dex_volume_usd")]["date"].isin(pd.to_datetime(["2026-09-21"]))]
     groups.pop(("Ethereum", "settlement_rebuilt_usd"))
     bw._settlement_rebuild_views(groups)
     rb = bw._daily(groups[("Ethereum", "settlement_rebuilt_usd")])
     assert pd.Timestamp("2026-09-21") not in rb.index and len(rb) == len(days) - 1
-    assert bw.SETTLEMENT_VALIDATION["Ethereum"]["dropped_days"] == {"nft": ["2026-09-21"]}
+    assert bw.SETTLEMENT_VALIDATION["Ethereum"]["dropped_days"] == {"dex": ["2026-09-21"]}
 
 
 def test_3_the_store_diagnostic_names_the_leg_and_leaves_the_build_scope_as_it_found_it(tmp_path, monkeypatch, capsys):
@@ -187,7 +188,7 @@ def test_3_the_store_diagnostic_names_the_leg_and_leaves_the_build_scope_as_it_f
     rows = []
     for m, v in (("dex_volume_usd", 1e9), ("nft_volume_usd", 2e7), ("p2p_transfer_volume_usd", 3e9)):
         for d in days:
-            if m == "nft_volume_usd" and str(d.date()) == "2026-09-21":
+            if m == "dex_volume_usd" and str(d.date()) == "2026-09-21":
                 continue
             rows.append(_row("Ethereum", m, d, v, "x"))
     st.upsert(pd.DataFrame(rows))
@@ -197,5 +198,5 @@ def test_3_the_store_diagnostic_names_the_leg_and_leaves_the_build_scope_as_it_f
     coi.settlement_legs()
     out = capsys.readouterr().out
     assert bw._SCOPE == before, "a check must not narrow the build's scope for whatever runs after it"
-    assert "2026-09-21: NO REBUILD ROW — the store lacks nft" in out
+    assert "2026-09-21: NO REBUILD ROW — the store lacks dex" in out
     assert "2026-09-20: NO REBUILD ROW" not in out

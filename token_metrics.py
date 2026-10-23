@@ -994,15 +994,28 @@ def apply_run_cleanups(st, run_id: str, log) -> list[str]:
     lines = []
     for c in config.RUN_CLEANUPS:
         for proj in c["projects"]:
-            q = ("FROM metrics WHERE project=? AND metric=? AND substr(date, 1, 10)=? AND source=?",
-                 (proj, c["metric"], c["date"], c["source"]))
-            rows = st.conn.execute("SELECT date, value " + q[0], q[1]).fetchall()
+            if c.get("orphan_delta_of"):
+                # G15 2: a differenced row dated a day its stock holds no reading
+                q = ("FROM metrics WHERE project=? AND metric=? AND source LIKE '%:delta%' AND substr(date, 1, 10) "
+                     "NOT IN (SELECT substr(date, 1, 10) FROM metrics WHERE project=? AND metric=?)",
+                     (proj, c["metric"], proj, c["orphan_delta_of"]))
+            elif c.get("from") == "handover":
+                # G15 1c: every row of that source dated on or after the series' declared handover
+                since = str((config.declared_handover(proj, c["metric"]) or {}).get("declared") or "")[:10]
+                if not since:
+                    continue
+                q = ("FROM metrics WHERE project=? AND metric=? AND substr(date, 1, 10)>=? AND "
+                     "(source=? OR source LIKE ?)", (proj, c["metric"], since, c["source"], c["source"] + ":%"))
+            else:
+                q = ("FROM metrics WHERE project=? AND metric=? AND substr(date, 1, 10)=? AND source=?",
+                     (proj, c["metric"], c["date"], c["source"]))
+            rows = st.conn.execute("SELECT date, value, source " + q[0], q[1]).fetchall()
             if not rows:
                 continue
             st.conn.execute("DELETE " + q[0], q[1])
-            for d, v in rows:
-                line = (f"CLEAN-UP {c['id']}: removed {proj} / {c['metric']} {str(d)[:10]} from {c['source']} "
-                        f"({float(v):,.6g}) — {c['why']}")
+            for d, v, src in rows:
+                line = (f"CLEAN-UP {c['id']}: removed {proj} / {c['metric']} {str(d)[:10]} from {src} "
+                        f"({float(v):,.2f}) — {c['why']}")
                 log.warning("%s", line)
                 st.record_fetch(run_id, f"cleanup:{c['id']}", proj, 1, "ok", line)
                 lines.append(line)

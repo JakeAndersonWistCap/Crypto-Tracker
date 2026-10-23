@@ -529,6 +529,31 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11cr. Round G15 — the guard keeps the current leg; flows go with their readings; provisional mornings (2026-10-23)
+
+**Run after pulling (PowerShell 5.1, repo root), in this order.** Nothing new is fetched: no seed, no dry run, no
+run_sql section, no BigQuery or API call beyond the normal daily run.
+1. `python check_offline_items.py total_supply_rows` — BEFORE the run (store only). PASTE BACK: each of the nine
+   totals' rows since 10-20 with the run that wrote it — which run put CoinGecko into total_supply on 10-23, and
+   whether the Ether.fi 998,535,999 row's same-day total_supply_coingecko reads 965.35M or 998.5M.
+2. `python check_offline_items.py flow_stock_days` — BEFORE the run. PASTE BACK: GEODNET's and Hyperliquid's flow
+   against the stock's move per day; the 10-22 rows should read ORPHAN.
+3. `python token_metrics.py` — the normal daily run. It opens with CLEAN-UP G15-1 (every CoinGecko row in the nine
+   total_supply series dated on/after their handover — the 10-23 ones) and G15-2 (the orphan burn rows), one line per
+   row; PASTE BACK those lines. The chain's total is stored again (the guard refuses only an EARLIER leg now: any
+   "FALLBACK REFUSED" line should name coingecko or another earlier leg, never chain:…). Pendle's Optimism gauge scan is
+   stored again (its rows are 0). The NFT read's log line names any day DefiLlama's chart lacks ("SOURCE GAP — …").
+4. `python measuring_guard.py --newer metrics.db` — PASTE BACK the VERDICT.
+5. `python check_offline_items.py settlement_legs` and `python check_offline_items.py morning_reads` — PASTE BACK.
+
+**What to look for.** CP Total supply ×9 and A3 FDV retirement ×6 read numbers; Chainlink and Aethir pool release
+derive again; Aethir fdv_usd off the BASIS list. GEODNET and Hyperliquid burns reconcile (no "FLOWS DO NOT SUM").
+Ethereum settlement 09-20..09-23 rebuilt on DEX + P2P, the row saying "NFT leg absent (source gap)"; settlement 365d and
+NRR running to the last P2P day. Chainlink's Credibility has "CCIP 2.0 fees on Base" (UNVERIFIABLE, the reason stated).
+A run before 16:00 UTC: yesterday's DefiLlama / CoinGecko flow rows read "PROVISIONAL: <day> read <time>Z" on Data and
+stay out of windows and change flags until a later run re-reads them — the morning's 63-93% lows no longer reach the
+Review Queue or the cells.
+
 ## 11cq. Round G14 — a fallback never writes into a primary; flows reconciled where the stock exists (2026-10-22)
 
 **Run after pulling (PowerShell 5.1, repo root), in this order.** Nothing new is fetched: no seed, no dry run, no

@@ -12723,6 +12723,130 @@ def wiring():
     return 0
 
 
+def morning_reads():
+    """ROUND G15 item 5 (Jake's 10-23 run at 07:42 UTC: DefiLlama's 10-22 rows for Fluid, Near and Pendle 63-93% low):
+    from the store's Review Queue history, every change flag on YESTERDAY's row from a provider that publishes early
+    (config.PROVIDERS_WITH_INCOMPLETE_CURRENT_PERIOD) — the value the flagged run READ beside the value finally stored
+    after later re-reads — by the run's UTC hour; then each read below 90% of the final value. The provisional cut-off
+    (config.PROVISIONAL_UNTIL_UTC_HOUR_NEXT_DAY) is checked against it. Reads metrics.db; changes nothing; no call."""
+    import sqlite3                                        # noqa: PLC0415
+    import pandas as _pd                                  # noqa: PLC0415
+    import config                                         # noqa: PLC0415
+    import store as _store                                # noqa: PLC0415
+    head("MORNING READS — yesterday's early-publishing rows as each run read them, against the value finally stored")
+    if not os.path.exists(_store.DB_PATH):
+        print(f"  no store at {_store.DB_PATH}")
+        return 0
+    con = sqlite3.connect(_store.DB_PATH)
+    rq = _pd.read_sql("SELECT run_id, project, metric, date, value, source FROM review_queue WHERE "
+                      "reason='change_threshold'", con)
+    rq = rq[rq["source"].astype(str).str.split(":").str[0].str.lower().isin(config.PROVIDERS_WITH_INCOMPLETE_CURRENT_PERIOD)]
+    fin = _pd.read_sql("SELECT project, metric, substr(date, 1, 10) AS d, value AS final FROM metrics", con)
+    rq["d"] = rq["date"].astype(str).str[:10]
+    x = rq.merge(fin, on=["project", "metric", "d"])
+    x = x[(_pd.to_datetime(x["run_id"].str[:8]) - _pd.Timedelta(days=1) == _pd.to_datetime(x["d"])) & (x["final"] > 0)]
+    if x.empty:
+        print("  no change flag on yesterday's row in the Review Queue history")
+        return 0
+    x["hour"] = x["run_id"].str[9:11].astype(int)
+    x["r"] = x["value"] / x["final"]
+    cut = config.PROVISIONAL_UNTIL_UTC_HOUR_NEXT_DAY
+    print(f"  {len(x)} flag(s) on yesterday's row, {x['run_id'].str[:8].min()}..{x['run_id'].str[:8].max()}")
+    for h, g in x.groupby("hour"):
+        print(f"    {h:02d}h UTC  n={len(g):3}  read below 90% of final: {int((g['r'] < 0.9).sum()):3}  "
+              f"(below 50%: {int((g['r'] < 0.5).sum())})")
+    low = x[x["r"] < 0.9].sort_values("run_id")
+    for r in low.itertuples(index=False):
+        print(f"    {r.run_id}  {r.project} / {r.metric} {r.d}: read {r.value:,.0f} = {r.r:.0%} of the final {r.final:,.0f}")
+    late = low[low["hour"] >= cut]
+    print(f"  the cut-off is {cut}:00 UTC the day after: {len(late)} low read(s) at or after it"
+          + (" — the cut-off is too early" if len(late) else ""))
+    return 0
+
+
+def flow_stock_days():
+    """ROUND G15 item 2 (Jake's 10-23 run: GEODNET's burn 53,198,504 recorded against 53,093,504 of movement, −105,000;
+    Hyperliquid's 1,082,617.76 against 1,059,970.08, −22,647.68): for GEODNET and Hyperliquid, each day of
+    TOKEN_METRICS_FROM..TOKEN_METRICS_TO (default 2026-10-10..2026-10-23) — the differenced burn row (value, source,
+    when written) beside the stock's move since its previous stored reading — and every row that does not match, named:
+    an ORPHAN (a :delta row on a day the stock holds no reading; config.RUN_CLEANUPS G15-2 removes these) or a MISMATCH.
+    Reads metrics.db (TOKEN_METRICS_DB); changes nothing; no call."""
+    import sqlite3                                        # noqa: PLC0415
+    import store as _store                                # noqa: PLC0415
+    head("FLOW vs STOCK BY DAY — GEODNET and Hyperliquid gross_burn_tokens against burn_address_balance")
+    if not os.path.exists(_store.DB_PATH):
+        print(f"  no store at {_store.DB_PATH}")
+        return 0
+    lo = os.environ.get("TOKEN_METRICS_FROM") or "2026-10-10"
+    hi = os.environ.get("TOKEN_METRICS_TO") or "2026-10-23"
+    con = sqlite3.connect(_store.DB_PATH)
+    for proj in ("GEODNET", "Hyperliquid"):
+        stock = con.execute("SELECT substr(date, 1, 10), value FROM metrics WHERE project=? AND "
+                            "metric='burn_address_balance' ORDER BY date", (proj,)).fetchall()
+        flows = {d: (v, s_, fa) for d, v, s_, fa in con.execute(
+            "SELECT substr(date, 1, 10), value, source, fetched_at FROM metrics WHERE project=? AND "
+            "metric='gross_burn_tokens' AND source LIKE '%:delta%'", (proj,)).fetchall()}
+        print(f"\n  {proj}")
+        prev = None
+        move = {}
+        for d, v in stock:
+            if prev is not None:
+                move[d] = (float(v) - prev[1], prev[0])
+            prev = (d, float(v))
+        bad = 0
+        for d in sorted(set(flows) | set(move)):
+            if not (lo <= d <= hi):
+                continue
+            f, m = flows.get(d), move.get(d)
+            fv = f"{f[0]:>16,.2f}" if f else f"{'—':>16}"
+            mv = f"{m[0]:>16,.2f} since {m[1]}" if m else f"{'— no reading':>16}"
+            tag = ""
+            if f and not m and d not in {x for x, _ in stock}:
+                tag, bad = "   <- ORPHAN: no stock reading this day (counted again by the next span)", bad + 1
+            elif f and m and abs(f[0] - m[0]) > max(1e-6, abs(m[0]) * 1e-9):
+                tag, bad = f"   <- MISMATCH {f[0] - m[0]:+,.2f}", bad + 1
+            print(f"    {d}  flow {fv}  stock move {mv}  {f[1][:58] if f else '':58} {f[2] if f else ''}{tag}")
+        print(f"  {bad} row(s) that do not match")
+    return 0
+
+
+def total_supply_rows():
+    """ROUND G15 item 1a/1d (Jake's 10-23 run on a0e74ee: the chain's total_supply refused against a CoinGecko row
+    "dated 2026-10-23"): for the nine on-chain-first totals, every total_supply and total_supply_coingecko row from
+    TOKEN_METRICS_FROM (default 2026-10-20) — date, value, source and WHEN IT WAS WRITTEN (fetched_at) — beside each
+    run's first and last Run Log time, so which run wrote a CoinGecko row into total_supply is read off the store, not
+    inferred. Reads metrics.db (TOKEN_METRICS_DB); changes nothing; no call."""
+    import sqlite3                                        # noqa: PLC0415
+    import config                                         # noqa: PLC0415
+    import store as _store                                # noqa: PLC0415
+    head("TOTAL SUPPLY ROWS — the nine on-chain-first totals: value, source, and the run that wrote each row")
+    if not os.path.exists(_store.DB_PATH):
+        print(f"  no store at {_store.DB_PATH}")
+        return 0
+    lo = os.environ.get("TOKEN_METRICS_FROM") or "2026-10-20"
+    con = sqlite3.connect(_store.DB_PATH)
+    runs = con.execute("SELECT run_id, MIN(ts), MAX(ts) FROM run_log WHERE substr(ts, 1, 10) >= ? GROUP BY run_id "
+                       "ORDER BY MIN(ts)", (lo,)).fetchall()
+    print("  runs:")
+    for rid, t0, t1 in runs:
+        print(f"    {rid}  {t0} .. {t1}")
+    for p in sorted(config.TOTAL_SUPPLY_ONCHAIN_FIRST):
+        if config.TOTAL_SUPPLY_ONCHAIN_FIRST[p].get("view"):
+            continue
+        h = config.declared_handover(p, "total_supply") or {}
+        print(f"\n  {p} (handover {' -> '.join(h.get('ordered_points') or ()) or 'none'} from {h.get('declared')})")
+        for m in ("total_supply", "total_supply_coingecko"):
+            for d, v, src, fa in con.execute("SELECT date, value, source, fetched_at FROM metrics WHERE project=? AND "
+                                             "metric=? AND date>=? ORDER BY date", (p, m, lo)).fetchall():
+                # a run's rows are written before its Run Log lines: its window opens at the start its id carries
+                run = next((r for r, t0, t1 in runs
+                            if f"{r[:4]}-{r[4:6]}-{r[6:8]}T{r[9:11]}:{r[11:13]}:{r[13:15]}Z" <= str(fa) <= t1), "?")
+                flag = "   <- CoinGecko IN THE ON-CHAIN SERIES" if m == "total_supply" and str(src).startswith(
+                    "coingecko") else ""
+                print(f"    {m:22} {d}  {v:>22,.2f}  {src:40} written {fa} (run {run}){flag}")
+    return 0
+
+
 def settlement_legs():
     """ROUND G14 item 3 (Jake's 10-22 run: settlement_rebuilt_usd 140 days against p2p_transfer_volume_usd's 144;
     settlement_volume_usd blank 2026-09-20..09-23): Ethereum's three rebuild legs FROM THE STORE, day by day over
@@ -12788,9 +12912,12 @@ def settlement_legs():
               + (f"; DROPPED AT READ TIME in the window: {', '.join(lost)}" if lost else "; none dropped in the window"))
     rb = _bw._daily(_bw._LAST_GROUPS.get((name, "settlement_rebuilt_usd")))
     rb_days = {str(x.date()) for x in rb.index}
+    gap_days = set(val.get("nft_gap_days") or ())
     for d in _pd.date_range(lo, hi):
         day = str(d.date())
-        if day not in rb_days:
+        if day in gap_days:
+            print(f"  {day}: REBUILD ON DEX + P2P — NFT leg absent (source gap); flagged on the row (G15 3)")
+        elif day not in rb_days:
             lacking = [k for k in legs if day not in got[k]]
             print(f"  {day}: NO REBUILD ROW — " + (f"the store lacks {', '.join(lacking)}" if lacking else
                                                     "every leg is stored: a READ-TIME drop (see the lines above)"))
@@ -13374,7 +13501,7 @@ CHECKS = (
     geod_stake_recipient, geod_stake_wallets, maple_ssf_lp_test, maple_drips, plume_archive, settlement_rebuild_coverage,
     near_settlement_routes,
     env_keys, aero_migration, near_wallet_inflow_days, worldmobile_probe, stale_series, mcap_inputs, na_reasons, missing_triage, gap_routes, spec_coverage,
-    stored_but_unshown, review_triage, wiring, settlement_legs,
+    stored_but_unshown, review_triage, wiring, settlement_legs, total_supply_rows, flow_stock_days, morning_reads,
     aethir_mint_path,
     near_activity_break,
     plume_settlement_routes,

@@ -72,15 +72,25 @@ class EthNftVolume:
         if got and got.lower() != name.lower():
             out.fail(SOURCE, name, f"{metric}: {path} answered for chain {got!r}, not {name!r} — NOTHING STORED", TIER)
             return
-        rows = [(pd.Timestamp(int(t), unit="s").normalize(), float(v))
-                for t, v in ((j or {}).get("totalDataChart") or []) if v is not None]
-        rows = [(d, v) for d, v in rows if d < today()]
+        chart = [(pd.Timestamp(int(t), unit="s").normalize(), v) for t, v in ((j or {}).get("totalDataChart") or [])]
+        rows = [(d, float(v)) for d, v in chart if v is not None and d < today()]
         if not rows:
             out.fail(SOURCE, name, f"{metric}: {path} carried no daily chart", TIER)
             return
+        # G15 3: WHAT THE CHART ITSELF LACKS, named — a day inside its span with no point, or a point whose value is null
+        # (the only two ways a day is not stored: every point with a value is written). The rebuild reads such a day as
+        # "NFT leg absent (source gap)" (build_workbook._settlement_rebuild_views).
+        held = {d for d, _v in chart}
+        absent = [d for d in pd.date_range(rows[0][0], rows[-1][0]) if d not in held]
+        null = [d for d, v in chart if v is None and rows[0][0] <= d <= rows[-1][0]]
+        holes = "; ".join(x for x in (
+            (f"the chart has NO POINT for {len(absent)} day(s): " + ", ".join(str(d.date()) for d in absent[:10])
+             + (" …" if len(absent) > 10 else "")) if absent else "",
+            (f"the chart's value is NULL on {len(null)} day(s): " + ", ".join(str(d.date()) for d in null[:10])
+             + (" …" if len(null) > 10 else "")) if null else "") if x)
         out.add(tidy(rows, name, metric, f"{SOURCE}:defillama{path}", TIER), SOURCE, name,
                 f"{metric} = DefiLlama {path}: {len(rows)} day(s) {rows[0][0].date()}..{rows[-1][0].date()} — the NFT "
-                f"leg of the settlement rebuild", TIER)
+                f"leg of the settlement rebuild" + (f"; SOURCE GAP — {holes}" if holes else ""), TIER)
         self.daily.done(key, day)
 
 

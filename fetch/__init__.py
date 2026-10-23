@@ -312,35 +312,57 @@ def _resolve_tier_collisions(out: FetchOutput) -> None:
 
 
 def _refuse_fallback_into_primary(out: FetchOutput, stored_long=None) -> list[str]:
-    """A FALLBACK NEVER WRITES INTO A PRIMARY'S SERIES (G14 1, Jake's 10-22 run: the chain tier timed out and CoinGecko's
-    total_supply took 2026-10-22 for nine on-chain-first projects — MEASURING POINT CHANGED, 15 BROKEN cells). A row whose
-    measuring point is an EARLIER leg of the series' declared handover than a stored row dated on or before it
-    (fetch.archive.breaks_handover_order — the rule the archive backfill already obeys) is not stored: the series keeps
-    its last stored value, and the build marks it stale with its date (build_workbook.not_read_since). A handover's
-    LATER leg is never refused (Ethereum's ultrasound -> CoinGecko price). Returns the lines logged, one per row."""
-    from .archive import breaks_handover_order
+    """A FALLBACK NEVER WRITES INTO A PRIMARY'S SERIES (G14 1; the rule corrected in G15 1b).
+
+    A row whose measuring point is an EARLIER leg of the series' declared handover is refused when a row of a LATER leg
+    — stored, or arriving in this run — is dated on or before it: the later leg is current from its first row, so an
+    earlier leg's row after that is a fallback written into the primary. The CURRENT leg is NEVER refused. G14 also
+    refused a current-leg row whenever an earlier leg's row was stored on or after its day (fetch.archive's
+    interleave rule, right for a backfill dated in the past, wrong for today's read): on Jake's 10-23 run the chain's
+    total_supply was refused against a CoinGecko row an earlier run had stored that morning, and Pendle's Optimism gauge
+    scan (344 rows of 0) against Jake's hand-entered 0 of 2026-10-09. Now the current leg's row is stored and, on the
+    same day, replaces the earlier leg's row (the store upserts on date, project, metric). Runs BEFORE the tier
+    collisions, so two legs on one day leave the later. Returns the lines logged, one per refused row."""
+    from .base import _measuring_point
     frame = out.frame()
-    if frame.empty or stored_long is None or getattr(stored_long, "empty", True):
+    if frame.empty:
         return []
     keys = {(p, m) for p, m in frame[["project", "metric"]].drop_duplicates().itertuples(index=False)
-            if config.declared_handover(p, m)}
+            if (config.declared_handover(p, m) or {}).get("ordered_points")}
     if not keys:
         return []
-    st = stored_long.assign(date=pd.to_datetime(stored_long["date"]))
+    st = (stored_long.assign(date=pd.to_datetime(stored_long["date"]))
+          if stored_long is not None and not getattr(stored_long, "empty", True) else None)
     drop, lines = [], []
-    for (p, m), idx in frame[frame.set_index(["project", "metric"]).index.isin(list(keys))].groupby(
-            ["project", "metric"]).groups.items():
-        stored = st[(st["project"] == p) & (st["metric"] == m)].sort_values("date")
-        for i in idx:
-            row = frame.loc[i]
-            why = breaks_handover_order(p, m, stored, pd.Timestamp(row["date"]), str(row["source"]))
-            if why:
-                drop.append(i)
-                last = stored.iloc[-1] if len(stored) else None
-                lines.append((p, f"FALLBACK REFUSED {p} / {m} {str(row['date'])[:10]} from {row['source']}: {why}; the "
-                             f"series keeps its last stored value"
-                             + (f" ({float(last['value']):,.6g} on {last['date'].date()})" if last is not None
-                                else "")))
+    for p, m in sorted(keys):
+        pts = [_measuring_point(x) for x in config.declared_handover(p, m)["ordered_points"]]
+        lead = config.handover_monthly_leg(p, m)
+        legs = []                                        # (date, leg index, value, source) of every known row
+        if st is not None:
+            for r in st[(st["project"] == p) & (st["metric"] == m)].itertuples(index=False):
+                q = _measuring_point(str(r.source))
+                if q in pts and not (lead and q == lead[0]):
+                    legs.append((pd.Timestamp(r.date), pts.index(q), r.value, "stored"))
+        rows = frame[(frame["project"] == p) & (frame["metric"] == m)]
+        for i, r in rows.iterrows():
+            q = _measuring_point(str(r["source"]))
+            if q in pts and not (lead and q == lead[0]):
+                legs.append((pd.Timestamp(r["date"]), pts.index(q), r["value"], "this run"))
+        for i, r in rows.iterrows():
+            q = _measuring_point(str(r["source"]))
+            if q not in pts or (lead and q == lead[0]):
+                continue
+            k, day = pts.index(q), pd.Timestamp(r["date"])
+            later = [x for x in legs if x[1] > k and x[0] <= day]
+            if not later:
+                continue                                 # the current leg, or an earlier leg before the switch
+            first = min(later, key=lambda x: x[0])
+            cur = max(later, key=lambda x: x[0])
+            drop.append(i)
+            lines.append((p, f"FALLBACK REFUSED {p} / {m} {day.date()} from {r['source']}: the series' current leg "
+                             f"{pts[first[1]]} has rows from {first[0].date()} ({first[3]}) — an earlier leg's row "
+                             f"after that is a fallback; the series keeps its current leg's value "
+                             f"({float(cur[2]):,.6g} on {cur[0].date()}, {pts[cur[1]]})"))
     for p, line in lines:
         out.warn("fallback_guard", p, line)
     if drop:
@@ -1883,8 +1905,8 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
                             "skipped": sum(run_class(e) == "SKIPPED" for e in sub.log)})
         out.frames = [f for f in out.frames if f is not None and not f.empty]
 
+    _refuse_fallback_into_primary(out, stored_long)     # BEFORE the collisions: two legs on one day leave the later
     _resolve_tier_collisions(out)
-    _refuse_fallback_into_primary(out, stored_long)
     _resolve_period_overlaps(out)
     # AFTER the collision guards, so a derivation can never displace a measured figure, and so the
     # burn it consumes is the deduped one rather than a double-counted month.
@@ -2259,17 +2281,38 @@ def _drop_stocks(frames: list) -> tuple[list, list[str]]:
     """(frames without any STOCK row, ['project/metric', ...] dropped). G11 E (Jake's 10-21 run: Aerodrome's
     filing_managed_lock_tokens fell 444.3M -> 245.1M on the day ve_managed timed out with 3 frames kept, and the fall
     read as a 199.3M unlock): a stock written by a tier that timed out in the same run is not stored — its reading may
-    be a sum over the part of the scan that finished. Flows are kept as before (their rows are dated per day read)."""
+    be a sum over the part of the scan that finished. Flows read per day are kept.
+
+    A DIFFERENCED FLOW GOES WITH ITS READING (G15 2, Jake's 10-23 run: GEODNET's burn recorded 105,000 more than its
+    stock moved, Hyperliquid's 22,647.68). A `:delta` row is the difference between the stock's last stored reading and
+    the one this tier just took; when that reading is dropped, the next run differences against the older stored one
+    (GEODNET's "delta[span=2d]" on 10-23), so the dropped day's move is counted twice. A `:delta` row of a project whose
+    stock was dropped here — the declared stock (config.stock_for_flow) or the reading its source was differenced from
+    — is dropped with it, and the next reading's span carries the day once."""
     import config
+    stocks: set = set()                                  # (project, stock metric) dropped
+    srcs: set = set()                                    # (project, source) of a dropped stock reading
+    for f in frames:
+        if f is None or f.empty or "metric" not in f:
+            continue
+        stock = f["metric"].astype(str).map(lambda m: (config.METRICS.get(m) or {}).get("kind") == "stock")
+        stocks |= set(zip(f.loc[stock, "project"], f.loc[stock, "metric"]))
+        if "source" in f:
+            srcs |= set(zip(f.loc[stock, "project"], f.loc[stock, "source"].astype(str)))
     out, dropped = [], []
     for f in frames:
         if f is None or f.empty or "metric" not in f:
             out.append(f)
             continue
         stock = f["metric"].astype(str).map(lambda m: (config.METRICS.get(m) or {}).get("kind") == "stock")
-        if stock.any():
-            dropped += sorted({f"{p}/{m}" for p, m in zip(f.loc[stock, "project"], f.loc[stock, "metric"])})
-        rest = f[~stock]
+        src = f["source"].astype(str) if "source" in f else pd.Series("", index=f.index)
+        delta = src.str.contains(":delta", regex=False) & pd.Series(
+            [(p, config.stock_for_flow(p, m)) in stocks or (p, s_.split(":delta")[0]) in srcs
+             for p, m, s_ in zip(f["project"], f["metric"], src)], index=f.index)
+        gone = stock | delta
+        if gone.any():
+            dropped += sorted({f"{p}/{m}" for p, m in zip(f.loc[gone, "project"], f.loc[gone, "metric"])})
+        rest = f[~gone]
         if not rest.empty:
             out.append(rest)
     return out, sorted(set(dropped))

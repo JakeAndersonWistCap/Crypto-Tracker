@@ -170,7 +170,7 @@
    "derived:voter_rewards_illiquid_fees_usd + voter_rewards_illiquid_bribes_usd over the 90d window (fees on the week before each epoch, bribes on its own days)"
   ],
   "Aerodrome|rewards_tokens_payday_annual": [
-   "derived:holders_revenue_usd / same-day price_usd, 88 day(s), annualised"
+   "derived:holders_revenue_usd / same-day price_usd, 87 day(s), annualised"
   ],
   "Aerodrome|subsidy_emissions_to_covered_share": [
    "probe:subsidy_emissions_to_covered_share"
@@ -182,7 +182,7 @@
    "probe:subsidy_fee_cover_pools"
   ],
   "Aerodrome|token_yield_payday_pct": [
-   "derived:holders_revenue_usd / same-day price_usd, 90d, / each epoch's voter_total_weight_tokens \u2014 PAYMENT-DAY PRICES, PER-EPOCH STAKE: $17,098,315 paid over 88 day(s) 2026-07-16..2026-10-11, each day's $ / that day's price = 29,370,531 tokens (payment-weighted price $0.5822); each day over its epoch's stake, x 365.25/88 = 12.03% (effective stake 1,012,950,053 over 13 epoch(s): 12 read at the epoch's start, 1 read later in the epoch (2026-10-08 on 2026-10-09)); ILLIQUID-TOKEN RULE (Jake 2026-10-09): illiquid-token rewards excluded: $7,385,354 (fees $1,256, bribes $7,384,098; 13 epoch(s) read) \u2014 17.55% before the exclusion"
+   "derived:holders_revenue_usd / same-day price_usd, 90d, / each epoch's voter_total_weight_tokens \u2014 PAYMENT-DAY PRICES, PER-EPOCH STAKE: $16,904,381 paid over 87 day(s) 2026-07-16..2026-10-10, each day's $ / that day's price = 29,164,286 tokens (payment-weighted price $0.5796); each day over its epoch's stake, x 365.25/87 = 12.09% (effective stake 1,012,910,197 over 13 epoch(s): 12 read at the epoch's start, 1 read later in the epoch (2026-10-08 on 2026-10-09)); ILLIQUID-TOKEN RULE (Jake 2026-10-09): illiquid-token rewards excluded: $7,385,354 (fees $1,256, bribes $7,384,098; 13 epoch(s) read) \u2014 17.66% before the exclusion"
   ],
   "Aerodrome|total_supply": [
    "chain:base:token"

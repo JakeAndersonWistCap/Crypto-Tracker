@@ -187,9 +187,10 @@ def test_real_aerodrome_illiquid_cap_fee_leg_finding_and_tolerances(tmp_path, mo
     assert "THE ON-CHAIN FIGURE IS THE REFERENCE" in rv["note"] and "FEE LEG over" in rv["note"], rv["note"][:600]
     assert "2026-10-01 -37.4%" in rv["note"] and "2026-08-20 -21.5%" in rv["note"], rv["note"]
     assert o["in_bribe_outliers"]["verdict"] == "N/A (recorded, not judged)", o["in_bribe_outliers"]
-    # today's-price APR on the SAME capped flow (was 12.2% beside "the headline 17.55%")
+    # today's-price APR on the SAME capped flow (was 12.2% beside "the headline 17.55%"); G15 5: on the SAME days as the
+    # headline too — holders_revenue_usd 10-11 (read 10-12 07:08 UTC) is provisional, so 87 days: 8.52% -> 8.44%
     tp = o["in_apr_today_price"]
-    assert abs(float(tp["ours"]) - 0.0852) < 0.0005 and f"headline at payment-day prices: {float(head['ours']):.2%}" in \
+    assert abs(float(tp["ours"]) - 0.0844) < 0.0005 and f"headline at payment-day prices: {float(head['ours']):.2%}" in \
         tp["note"], tp
 
 

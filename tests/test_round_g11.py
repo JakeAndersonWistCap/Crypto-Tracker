@@ -131,15 +131,16 @@ def test_b4_plume_release_leg_is_the_insider_unlocks():
 def test_b5_the_rebuild_names_the_days_a_leg_lacks_and_the_365d_sum_says_where_it_stops(monkeypatch):
     spec = config.SETTLEMENT_REBUILD["ethereum_rebuild"]
     days = _days("2026-08-20", "2026-09-25")
-    groups = {("Ethereum", spec["legs"]["dex"]): _g("Ethereum", spec["legs"]["dex"], days, [1.0] * len(days)),
-              ("Ethereum", spec["legs"]["p2p"]): _g("Ethereum", spec["legs"]["p2p"], days, [1.0] * len(days)),
-              ("Ethereum", spec["legs"]["nft"]): _g("Ethereum", spec["legs"]["nft"], [d for d in days if d != days[30]],
+    # G15 3: an interior NFT hole is rebuilt on DEX + P2P (flagged), so the leg that lacks a day here is DEX
+    groups = {("Ethereum", spec["legs"]["dex"]): _g("Ethereum", spec["legs"]["dex"], [d for d in days if d != days[30]],
                                                     [1.0] * (len(days) - 1)),
+              ("Ethereum", spec["legs"]["p2p"]): _g("Ethereum", spec["legs"]["p2p"], days, [1.0] * len(days)),
+              ("Ethereum", spec["legs"]["nft"]): _g("Ethereum", spec["legs"]["nft"], days, [1.0] * len(days)),
               ("Ethereum", "settlement_volume_usd"): _g("Ethereum", "settlement_volume_usd", _days("2025-08-01", "2026-08-25"),
                                                         [1.0] * 390, "artemis")}
     bw._settlement_rebuild_views(groups)
     v = bw.SETTLEMENT_VALIDATION["Ethereum"]
-    assert v["dropped_days"] == {"nft": [str(days[30].date())]} and "nft 1" in v["legs_end"]
+    assert v["dropped_days"] == {"dex": [str(days[30].date())]} and "dex 1" in v["legs_end"]
     bw._nrr_views(groups, "Ethereum", "settlement_volume_usd", "settlement_volume_365d_usd", "network_reserve_ratio",
                   365, ("settlement_volume_365d_usd",), "short {have} {n} {last}")
     src = groups[("Ethereum", "settlement_volume_365d_usd")]["source"].iloc[-1]

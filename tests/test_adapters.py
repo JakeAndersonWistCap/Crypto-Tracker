@@ -7565,8 +7565,10 @@ def test_but_a_real_step_change_between_two_complete_days_still_fires():
     counts as a big move. A guard that stopped firing entirely would pass the test above."""
     import pandas as pd
     today = pd.Timestamp.now("UTC").date()
-    yesterday = today - pd.Timedelta(days=1)
-    before = today - pd.Timedelta(days=2)
+    # G15 5: yesterday read before 16:00 UTC is provisional (never change-checked), so the two COMPLETE days are the
+    # two before it — complete at any hour the test runs
+    yesterday = today - pd.Timedelta(days=2)
+    before = today - pd.Timedelta(days=3)
 
     flags = _validated([
         (before, "Chainlink", "revenue_usd", 1_050_000.0, "defillama:chainlink", 1),
@@ -9936,9 +9938,11 @@ def test_validate_frame_hands_the_store_python_ints_not_numpy_scalars():
     df = pd.DataFrame([
         {"date": pd.Timestamp("2026-09-20"), "project": "Uniswap", "metric": "gross_burn_tokens",
          "value": 9e14, "source": "chain:x", "tier": 2},
-        {"date": pd.Timestamp(today - pd.Timedelta(days=2)), "project": "Chainlink",
+        # days −3 and −2 (G15 5): yesterday's DefiLlama row is provisional before 16:00 UTC and never change-checked,
+        # so a test on the change path uses two complete days whatever the hour it runs at
+        {"date": pd.Timestamp(today - pd.Timedelta(days=3)), "project": "Chainlink",
          "metric": "revenue_usd", "value": 1_000_000.0, "source": "defillama:c", "tier": 1},
-        {"date": pd.Timestamp(today - pd.Timedelta(days=1)), "project": "Chainlink",
+        {"date": pd.Timestamp(today - pd.Timedelta(days=2)), "project": "Chainlink",
          "metric": "revenue_usd", "value": 10.0, "source": "defillama:c", "tier": 1},
     ])
     assert df["tier"].dtype == "int64", "the frame must actually hold numpy ints, or this proves nothing"

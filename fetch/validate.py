@@ -136,7 +136,11 @@ def validate_frame(df: pd.DataFrame, prior_values: dict[tuple[str, str], float],
         # instead would hide the real step changes this check exists to catch.
         provider = str(g["source"].iloc[-1] or "").split(":")[0]
         if provider in config.PROVIDERS_WITH_INCOMPLETE_CURRENT_PERIOD:
-            complete = g[pd.to_datetime(g["date"]) < today]
+            # G15 5: and YESTERDAY read before 16:00 UTC today is provisional too — never the day a change is judged on
+            now = pd.Timestamp.now("UTC")
+            complete = g[(pd.to_datetime(g["date"]) < today) & ~pd.Series(
+                [config.provisional(project, metric, s_, d, now) for d, s_ in zip(g["date"], g["source"])],
+                index=g.index)]
             if complete.empty:
                 continue                  # nothing but the partial day — nothing to compare
             # The prior COMPLETE day from THIS frame where the provider gave us one, rather than

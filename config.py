@@ -21306,6 +21306,35 @@ PROVIDERS_WITH_INCOMPLETE_CURRENT_PERIOD = ("defillama", "coingecko")
 # cumulative burn are all true as at the moment they were read, and dropping them would throw
 # away the only reading of the day for no gain. This is exactly the flow/stock distinction the
 # metric library already carries, used for the one thing it decides here.
+# ===== G15 5: YESTERDAY IS PROVISIONAL UNTIL 16:00 UTC TODAY (Jake's 10-23 run at 07:42 UTC: DefiLlama's 2026-10-22
+# rows for Fluid, Near and Pendle fees / revenue came in 63-93% below 10-15; 69 VERIFIED (derived) cells fell). The
+# store's Review Queue history (99 runs, 2026-09-22..10-13) holds the value each flagged run READ for yesterday beside
+# the value finally stored after later re-reads: low reads of yesterday came at 07:59 UTC (Near DEX, 14% of final),
+# 08:20 and 08:44 (Fluid, 13% / 26%), 12:38 (Morpho fees ~0%; Hyperliquid revenue 88%) and 15:05 (Hyperliquid 88%);
+# no read at or after 16:00 UTC the next day was below 90% of the final value (290 such flags; `python
+# check_offline_items.py morning_reads` re-counts on any store). So a daily flow's row from a
+# provider that publishes early (PROVIDERS_WITH_INCOMPLETE_CURRENT_PERIOD) read before 16:00 UTC the day after its
+# date is PROVISIONAL: stored (a later run's re-read replaces it), but kept out of every window and every change flag
+# until a run reads it at or after that hour.
+PROVISIONAL_UNTIL_UTC_HOUR_NEXT_DAY = 16
+
+
+def provisional(project_name: str, metric: str, source: str, day, read_at) -> bool:
+    """Is this daily-flow row, dated `day` and read at `read_at` (UTC), still provisional (G15 5)?"""
+    import pandas as _pd
+    m = METRICS.get(metric) or {}
+    if m.get("kind") != "flow" or str(source or "").split(":")[0].lower() not in PROVIDERS_WITH_INCOMPLETE_CURRENT_PERIOD:
+        return False
+    if series_granularity(project_name, metric) != "daily" or read_at is None or str(read_at) in ("", "nan", "NaT"):
+        return False
+    try:
+        t = _pd.Timestamp(read_at)
+    except (ValueError, TypeError):
+        return False                       # no readable read time: not known to be early
+    t = t.tz_convert(None) if t.tzinfo else t
+    return t < _pd.Timestamp(day).normalize() + _pd.Timedelta(days=1, hours=PROVISIONAL_UNTIL_UTC_HOUR_NEXT_DAY)
+
+
 def drop_current_day(project_name: str, metric: str, source: str) -> bool:
     """Should a row dated TODAY be discarded before it is stored?
 
@@ -31941,6 +31970,22 @@ CREDIBILITY_WIRING.setdefault("Chainlink", {})["in_ccip_v2_arbitrum_overlap"] = 
      "source": "Arbitrum OnRamp receipt logs (ccip_v2_fees_log_arbitrum_usd)",
      "note": "The tolerance is CCIP_FEE_OVERLAP's own (the overlap that admits the Base leg into ccip_v2_fees_usd)."},
     _C_USD)
+# G15 4 (Jake's 10-23 run: ccip_v2_fees_api_base_usd UNWIRED): the Base leg's own row. The Arbitrum row's check — the
+# message API against the OnRamp's receipt logs, the days both hold — needs Base's OnRamp receipts, which no route reads
+# (fetch/chainlink_fees builds ccip_v2_fees_log_<chain>_usd for the configured chains: Arbitrum only); adding Base is a
+# new fetch, not this round's. So the row reads the Base leg and says what vouches for it: the API's agreement with the
+# receipts on Arbitrum, which is what admits the leg into ccip_v2_fees_usd (CCIP_FEE_OVERLAP).
+CREDIBILITY_WIRING.setdefault("Chainlink", {})["in_ccip_v2_base_overlap"] = _c_in(
+    "CCIP 2.0 fees on Base ($, Q0) — the message API leg, admitted into ccip_v2_fees_usd only while the API agrees with "
+    "the OnRamp receipts on Arbitrum", "ccip_v2_fees_api_base_usd", "q0",
+    {"verdict": "UNVERIFIABLE",
+     "why": "no second source on Base: no route reads Base's OnRamp receipt logs. The message API is vouched for by its "
+            "agreement with the OnRamp receipts on ARBITRUM (in_ccip_v2_arbitrum_overlap: within "
+            f"{100.0 * CCIP_FEE_OVERLAP['tolerance']:g}% on at least {CCIP_FEE_OVERLAP['min_days']} common days), "
+            "which is what admits this leg into ccip_v2_fees_usd.",
+     "resolve": "read Base's OnRamp receipt logs as ccip_v2_fees_log_base_usd (a new route, Jake's call) and judge this "
+                "row like Arbitrum's"},
+    _C_USD)
 CREDIBILITY_WIRING.setdefault("Hyperliquid", {})["in_issuer_release_replay"] = _c_in(
     "Issuer releases Q0 (tokens) — the release we count vs the ledger replay's GROSS outflow of the team + Foundation "
     "+ Grants wallets", "unlock_release_tokens", "q0",
@@ -31962,4 +32007,20 @@ RUN_CLEANUPS = (
     {"id": "G14-1", "metric": "total_supply", "date": "2026-10-22", "source": "coingecko",
      "projects": ("Chainlink", "Maple", "Morpho", "Sky", "Pendle", "Aerodrome", "Ether.fi", "Aethir", "Fluid"),
      "why": "CoinGecko's total written into the on-chain series when the chain tier timed out (G14 1)"},
+    # G15 1c (Jake's 10-23 run on a0e74ee: a CoinGecko row dated 2026-10-23 was already stored when the run began, from
+    # an earlier run that day): EVERY CoinGecko row of these nine total_supply series dated on or after the series'
+    # declared coingecko -> chain handover ("from": "handover" = config.declared_handover(...)["declared"])
+    {"id": "G15-1", "metric": "total_supply", "from": "handover", "source": "coingecko",
+     "projects": ("Chainlink", "Maple", "Morpho", "Sky", "Pendle", "Aerodrome", "Ether.fi", "Aethir", "Fluid"),
+     "why": "a CoinGecko row in an on-chain total after its declared handover to the chain read (G15 1c)"},
+    # G15 2 (Jake's 10-23 run: GEODNET's burn 105,000 and Hyperliquid's 22,647.68 above their stocks' move): a
+    # differenced row whose stock reading is NOT stored — the 10-22 rows, kept when their timed-out tier's stock was
+    # dropped — while the next reading's "delta[span=2d]" row already carries the same day. Removed: every `:delta` row
+    # of the pair dated a day the stock holds no row ("orphan_delta_of" = that stock). Zero such rows on the 10-13
+    # fixture for either pair. Ethereum's gross burn is NOT listed: it is differenced from Etherscan's BurntFees
+    # cumulative, not from burn_address_balance, so its days without a burn_address_balance row are not orphans.
+    {"id": "G15-2", "metric": "gross_burn_tokens", "orphan_delta_of": "burn_address_balance",
+     "projects": ("GEODNET", "Hyperliquid"),
+     "why": "a differenced burn whose stock reading was dropped when its tier timed out — the next reading's span row "
+            "already counts the day (G15 2)"},
 )
