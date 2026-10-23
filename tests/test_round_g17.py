@@ -294,3 +294,22 @@ def test_8_wiring_complete_counts_outside_aerodrome_and_world_mobile(tmp_path, m
     coi.wiring_complete()
     o = capsys.readouterr().out
     assert "  WIRING COMPLETE\n" not in o and "Chainlink 1" in o and "MISSING D" in o and "1 open cell(s)" in o
+
+
+def test_8_a_not_shown_series_without_any_reason_is_open(tmp_path, monkeypatch, capsys):
+    import csv
+    import json
+    import check_offline_items as coi
+    p = tmp_path / "coverage_audit.csv"
+    with open(p, "w", encoding="utf-8", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=["Tab", "Column", "Project", "Status", "Reason / route / error"])
+        w.writeheader()
+        w.writerow({"Tab": "CP", "Column": "c", "Project": "Near", "Status": "VERIFIED", "Reason / route / error": ""})
+    (tmp_path / "wiring.json").write_text(json.dumps({"rows": [
+        {"project": "Ether.fi", "metric": "staker_count", "class": "NOT SHOWN", "why": "CLOSED 2026-09-24 (config "
+                                                                                      "UNAVAILABLE)"},
+        {"project": "Near", "metric": "zz_no_reason_tokens", "class": "NOT SHOWN", "why": ""}]}), encoding="utf-8")
+    monkeypatch.setenv("TOKEN_METRICS_COVERAGE_CSV", str(p))
+    coi.wiring_complete()
+    o = capsys.readouterr().out
+    assert "zz_no_reason_tokens" in o and "staker_count" not in o and "Near 1" in o

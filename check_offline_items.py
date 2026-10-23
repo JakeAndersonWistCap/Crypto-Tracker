@@ -12800,7 +12800,8 @@ def wiring_complete():
         for x in w.get("rows") or ():
             if x.get("class") == "UNWIRED":
                 open_rows.append((x["project"], "(wiring)", x["metric"], "UNWIRED", str(x.get("why") or "")))
-            elif x.get("class") == "NOT SHOWN" and not config.not_shown_reason(x["project"], x["metric"]):
+            elif (x.get("class") == "NOT SHOWN" and not config.not_shown_reason(x["project"], x["metric"])
+                  and not str(x.get("why") or "").strip()):        # a closure's reason (config UNAVAILABLE) counts
                 open_rows.append((x["project"], "(wiring)", x["metric"], "NOT SHOWN — no reason", ""))
     else:
         print(f"  (no wiring.json beside {path.name}: the stored-series half is not checked)")
