@@ -430,7 +430,7 @@ def test_w6_insider_share_is_not_wired_when_no_checked_wallet_holds_shares(tmp_p
     what = str(_get(o, "Insider share — what is divided"))
     assert f"Wallets checked ({n}, 0 {sym} each on 2026-10-14)" in what     # E6: re-read 2026-10-14 (E1 added two)
     leak = _get(o, "Leakage (i)")
-    assert leak in ("", None) or str(leak).startswith("NOT WIRED"), leak
+    assert leak in ("", None) or str(leak).startswith(config.INSIDER_LIST_NEEDED), leak     # G17-2a: the same reason
 
 
 def test_only_declared_gaps_block():
