@@ -125,10 +125,14 @@ def test_1d_1e_sky_scans_are_declared_with_their_primary_sources():
 
 
 def test_1f_plume_claims_scan_and_its_explorer_never_sends_our_key(monkeypatch):
-    sc = next(s for s in config.PROJECT_BY_NAME["Plume"]["log_scans"] if s["key"] == "plume_airdrop_claims")
-    assert sc["holders"] == [config.PLUME_CLAIM["contract"]] and sc["chain"] == "plume"
+    # G18-2: the Transfer scan on explorer.plume.org is replaced by fetch/plume_claims.py (rpc.plume.org, by campaign
+    # id); the series and its Flows (c) line stand. A self-hosted Blockscout routed directly still never gets our key.
+    assert not any(s["key"] == "plume_airdrop_claims" for s in config.PROJECT_BY_NAME["Plume"].get("log_scans") or [])
     assert config.OUTFLOW_CATEGORIES["Plume"]["c"] == ("plume_airdrop_claims_tokens",)
     from fetch import explorer as ex
+    monkeypatch.setitem(config.EXPLORERS["blockscout"]["hosts"], 98866, "https://explorer.plume.org/api")
+    monkeypatch.setitem(config.EXPLORERS["blockscout"], "direct_hosts", (98866,))
+    monkeypatch.setitem(config.EXPLORER_LOG_ROUTES, 98866, ["blockscout"])
     monkeypatch.setenv("BLOCKSCOUT_API_KEY", "secret")
     e = ex.ExplorerLogs.__new__(ex.ExplorerLogs)
     url, base = e._endpoint("blockscout", 98866)

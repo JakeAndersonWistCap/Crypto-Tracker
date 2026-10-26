@@ -80,6 +80,7 @@ from .aero_v3 import AeroV3
 from .aero_voter import AeroVoter
 from .near_bigquery import NearBigQuery
 from .plume_staking import PlumeStaking
+from .plume_claims import PlumeClaims
 from .scrape import Scrape, entry_ready, load_registry
 from .validate import (REASON_CHANGE, check_cross_checks, check_impossible_relations,
                        check_flat_series, check_level_breaks, check_reference_values, check_watched_wallet,
@@ -95,6 +96,10 @@ TIER_ORDER = [
     # G5 item 3: the slow full-history TVL payloads in their own concurrent tier (source stays "defillama")
     ("defillama_tvl", 1, lambda ctx: DefiLlama(known_absent=ctx["known_absent"],
                                                stored_long=ctx.get("stored_long"), part="tvl")),
+    # G18-6: the weekly RWA turn (Plume's market share) in its own tier — at the end of the tvl tier it ran only when 40 s
+    # were left, which the per-project downloads never left, and it said nothing (no Run Log line on Jake's 10-26 run)
+    ("defillama_rwa_share", 1, lambda ctx: DefiLlama(known_absent=ctx["known_absent"],
+                                                     stored_long=ctx.get("stored_long"), part="rwa_share")),
     # BEFORE DefiLlama's own lending route would matter, and independent of it: the protocol's
     # API gives the unbiased figure, and DefiLlama's stands down once it is confirmed. The two
     # must never alternate — see DefiLlama.lending_supply.
@@ -146,6 +151,8 @@ TIER_ORDER = [
     ("reward_vault", 2, lambda ctx: RewardVaultRates(prior_values=ctx["prior_values"])),
     # Plume's staking APR and total staked, from its own staking diamond (2026-09-30).
     ("plume_staking", 2, lambda ctx: PlumeStaking()),
+    # G18-2: Plume's airdrop claims by campaign id over rpc.plume.org (never explorer.plume.org, plume_staking's host)
+    ("plume_claims", 2, lambda ctx: PlumeClaims()),
     # Plume's settlement volume rebuilt by Artemis's method — P2P transfers from Blockscout (2026-10-01).
     ("plume_settlement", 1, lambda ctx: PlumeSettlement()),
     # Ethereum's execution reward with MEV: relay-delivered value + non-relay priority fees (2026-10-02).
@@ -2016,7 +2023,7 @@ def stored_fresh(last_dates: dict | None, asof=None) -> set:
 # ~54s for the window, so 60s cut it with 5 of 9 read and Near's series gapped. 180s = two pacing windows + requests,
 # with a third window of slack (nearblocks_daily_calls(), tested).
 TIER_BUDGET_S = {
-    "schedule:config": 15, "defillama": 150, "defillama_tvl": 150, "morpho_api": 60, "growthepie": 60,
+    "schedule:config": 15, "defillama": 150, "defillama_tvl": 150, "defillama_rwa_share": 150, "morpho_api": 60, "growthepie": 60,
     "nearblocks": 180, "coingecko": 240, "price_history": 120, "hypercore_info": 60, "chainlink_fees": 180, "xref": 90, "validatorqueue": 30, "treasury_bills": 60, "sky_ssr": 120, "sky_msc": 60, "fluid_buybacks": 60, "geodnet_feed": 60, "pendle_latent": 60, "wm_supply": 60, "near_issuance": 120, "business": 900, "share_vault": 60,
     "chain": 240, "tron_node": 60, "near_rpc": 90, "explorer": 300, "balance_flow": 150, "maple_page": 60,
     "explorer_gauge": 300,
@@ -2024,7 +2031,7 @@ TIER_BUDGET_S = {
     # one epoch a week: ~10 Multicall3 batches + one DefiLlama price call; the daily totalWeight is one eth_call
     "aero_voter": 180,
     "aero_v3": 240,
-    "scrape": 240, "dune": 420, "ultrasound": 60, "plume_staking": 180, "blockscout_stats": 90,
+    "scrape": 240, "dune": 420, "ultrasound": 60, "plume_staking": 180, "plume_claims": 180, "blockscout_stats": 90,
     # one candle call per perp market a day, paced to Hyperliquid's 1200 weight/min (~50 calls/min);
     # the adapter stops itself at 540s and resumes next run, storing only fully-read days
     "hl_candles": 600,

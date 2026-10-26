@@ -433,8 +433,10 @@ def test_near_circulating_under_the_lockup_rule(monkeypatch):
               ("Near", "near_lockup_locked_tokens"): lk}
     bw._near_lockup_views(groups)
     s = groups[("Near", "circulating_supply_lockup_rule")].set_index("date")
-    # decision 3 on 6f8c86c: no lockup.near / contributors.near read -> never a rule figure missing that leg
-    assert s.loc["2026-10-11", "value"] == 1_250_000_000 and "no lockup read" in s.loc["2026-10-11", "source"]
+    # decision 3 on 6f8c86c: no lockup.near / contributors.near read -> never a rule figure missing that leg; G18-1: from
+    # the first lockup read on, never NEAR's own figure either — the day is not formed (before it, NEAR's own stands)
+    assert pd.Timestamp("2026-10-11") not in s.index
+    assert s.loc["2026-10-10", "value"] == 1_250_000_000 and "no lockup read" in s.loc["2026-10-10", "source"]
     # lockup.near + contributors.near at the same block (manual_overrides.csv, 2026-10-11: 171,059.131)
     fa = pd.DataFrame({"date": [rd], "project": "Near", "metric": "near_foundation_accounts_tokens",
                        "value": [171_059.131], "source": "manual", "tier": 3})
@@ -445,7 +447,7 @@ def test_near_circulating_under_the_lockup_rule(monkeypatch):
     assert s.loc["2026-10-11", "value"] == pytest.approx(1_306_900_000 - 21_568_722 - 171_059.131)
     assert "lockups read 2026-10-11" in s.loc["2026-10-11", "source"]
     assert "lockup.near − contributors.near" in s.loc["2026-10-11", "source"]
-    assert s.loc["2026-10-22", "value"] == 1_250_000_000                         # 11 days past the read
+    assert pd.Timestamp("2026-10-22") not in s.index                    # 11 days past the read: not formed (G18-1)
 
 
 def test_near_lockups_weekly_never_stores_a_partial_read(monkeypatch, tmp_path, capsys):

@@ -3059,6 +3059,12 @@ def _near_lockup_views(groups: dict) -> None:
             days = days.union(total.index)
         if days.empty:
             continue
+        # G18-1: NEAR's own figure stands in only BEFORE the first lockup read (the declared start, 2026-10-11). After it,
+        # a day whose read is older than NEAR_LOCKUP_MAX_AGE_DAYS is NOT FORMED — never NEAR's own figure (another
+        # basis: the buggy-code lockups uncorrected) and never CoinGecko's (config no_coingecko_fallback); the latest
+        # day says so (BLOCKED, with the read's age), so the headline never changes basis unflagged
+        first_read = lk.index.min() if lk is not None and not lk.empty else None
+        unformed = []
         idx, vals, srcs = [], [], []
         for d in days:
             read = acc = None
@@ -3072,10 +3078,24 @@ def _near_lockup_views(groups: dict) -> None:
                 vals.append(float(total[d]) - read[1] - acc)
                 srcs.append(f"derived:circulating_lockup_rule[total_supply − LOCKED − lockup.near − contributors.near, "
                             f"lockups read {read[0].date()}]")
+            elif first_read is not None and d >= first_read:
+                unformed.append(d)
             elif base is not None and d in base.index:
                 idx.append(d)
                 vals.append(float(base[d]))
                 srcs.append("derived:circulating_lockup_rule[first_party; no lockup read in force]")
+        import credibility as _cred                       # noqa: PLC0415
+        carry = int(_cred.now_max_age(name, "circulating_supply_lockup_rule"))
+        if unformed and unformed[-1] == days.max() and not any(
+                d >= days.max() - pd.Timedelta(days=carry) for d in idx):
+            last = lk.index.max()
+            age = (days.max() - last).days
+            why = (f"BLOCKED — NEAR'S LOCKUP RULE CANNOT FORM ON {days.max().date()}: the last weekly lockup read is "
+                   f"{last.date()}, {age} days old (the rule takes a read at most {NEAR_LOCKUP_MAX_AGE_DAYS} days old); "
+                   f"no CoinGecko or first-party figure stands in (another basis). Run `python near_lockups_weekly.py` "
+                   f"(~2.5 h; windows/daily_run.ps1 runs it weekly)")
+            for m in ("circulating_supply_lockup_rule", "circulating_supply_used", "market_cap_usd"):
+                _VIEW_BLOCKS[(name, m)] = why
         if not vals:
             continue
         cols = (fp if fp is not None else tot_g).columns
@@ -11559,6 +11579,8 @@ def build_workbook(store, path: Path | str, run_id: str | None = None,
     config.set_provisional_from_store(_store_mod.low_read_days(store.conn, _early, config.PROVISIONAL_LOW_READ_RATIO))
     PROVIDER_RUNS.clear()
     PROVIDER_RUNS.update(_store_mod.provider_runs(store.conn, _early))
+    # G18-6: Plume's market-share cells are class C while the weekly RWA turn is part-way
+    config.set_rwa_turn_progress(_store_mod.rwa_turn_progress(store.conn, config.RWA_SHARE_TURN["project"]))
     fetch_status = store.fetch_status()
     runlog = store.run_log(run_id) if run_id else store.run_log()
     gaps = store.gap_report(run_id) if run_id else store.gap_report()

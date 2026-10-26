@@ -235,6 +235,10 @@ class ExplorerLogs:
         self._deadline: float | None = None
         self._budget_s: float | None = None
         self._errors: list[str] = []
+        # G18-8: the caller's dater for transfers a route returns WITHOUT a timestamp (Alchemy off its metadata chains):
+        # each page is dated as it arrives, so the checkpoint and a timed-out partial are dated — never left for one
+        # pass over the whole history after the last page (Pendle's Berachain gauge: ~700k transfers)
+        self.date_events = None
 
     # ------------------------------------------------------------------ the time budget
     def start_budget(self, seconds: float) -> None:
@@ -390,8 +394,11 @@ class ExplorerLogs:
         # once the range is read through; the scan then tops up incrementally from its cache like every other.
         ck = AlchemyCheckpoint(chain_id, params)
         resumed = ck.load()
+        dater = self.date_events if int(chain_id) not in set(spec.get("metadata_chains") or ()) else None
         if resumed:
             out, page_key, from_blk = resumed
+            if dater and any(not int(e.get("timeStamp") or 0) for e in out):
+                out = dater(out)                 # a checkpoint written before G18-8: dated once, here
             seen = {(e["transactionHash"], e["logIndex"]) for e in out}
             if page_key is None and from_blk is not None:
                 params = {**params, "fromBlock": hex(int(from_blk))}
@@ -468,6 +475,8 @@ class ExplorerLogs:
                 if k not in seen:
                     seen.add(k)
                     new.append(e)
+            if dater and new:
+                new = dater(new)                 # G18-8: dated page by page (a run of one day costs two block reads)
             out.extend(new)
             prog.tick()
             page_key = result.get("pageKey") or None

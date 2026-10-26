@@ -1379,6 +1379,13 @@ class DefiLlama:
         # with no failure is not called again until tomorrow (its metrics are marked current, not
         # gaps). Storing is unchanged: the window (30 days, 365 for a backfill pair) of what came.
         yday = today().normalize() - pd.Timedelta(days=1)
+        if self.part == "rwa_share":
+            # G18-6: the weekly RWA turn alone, on its own budget (fetch.TIER_ORDER defillama_rwa_share)
+            import time as _time
+            from . import _budget                                       # noqa: PLC0415
+            self.rwa_share(projects, out, None if getattr(self, "unbounded", False)
+                           else _time.monotonic() + _budget("defillama_rwa_share") - 10.0)
+            return
         # THE TVL TIER STOPS ITSELF AND KEEPS WHAT IT READ (Round G6 item 0d, Jake's G5 run 12:24: defillama_tvl timed
         # out at 150 s over 28 calls — /protocol/aerodrome 35.3 s, /protocol/uniswap 32.9 s — and an abandoned tier's
         # 26 daily marks were dropped, so every run started again from the first project). Before each project it
@@ -1445,7 +1452,7 @@ class DefiLlama:
         if self.part in ("all", "tvl") and rwa_after and (deadline is None
                                                          or deadline - _time.monotonic() >= TVL_STOP_FLOOR_S):
             self.rwa(projects, window_days, out)
-        if self.part in ("all", "tvl") and (deadline is None or deadline - _time.monotonic() >= TVL_STOP_FLOOR_S):
+        if self.part == "all":
             self.rwa_share(projects, out, deadline)
 
     def _project(self, p: dict, window_days, out) -> None:

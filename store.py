@@ -21,6 +21,7 @@ current run's rows.
 from __future__ import annotations
 
 import numbers
+import re
 import os
 import sqlite3
 from datetime import datetime, timedelta, timezone
@@ -216,6 +217,27 @@ def provider_runs(conn: sqlite3.Connection, providers) -> dict:
     rl = rl.assign(t=pd.to_datetime(rl["run_id"].astype(str).str[:15], format="%Y%m%dT%H%M%S", errors="coerce")).dropna(
         subset=["t"])
     return {(str(s).lower(), p): sorted(set(g["t"])) for (s, p), g in rl.groupby(["source", "project"])}
+
+
+RWA_TURN_PROGRESS = re.compile(r"RWA turn IN PROGRESS — (\d+) of (\d+) RWA protocol\(s\) read \((\d+) this run\)")
+
+
+def rwa_turn_progress(conn: sqlite3.Connection, project: str) -> dict | None:
+    """The weekly RWA turn's latest state from the run log (G18-6): {run_on, done, total, this_run} when its latest line
+    says IN PROGRESS, else None (complete, never run, or a store without the line)."""
+    try:
+        rl = pd.read_sql("SELECT run_id, message FROM run_log WHERE project=? AND message LIKE 'market_share_pct: RWA turn%'"
+                         " ORDER BY run_id", conn, params=(project,))
+    except Exception:                                  # noqa: BLE001
+        return None
+    if rl.empty:
+        return None
+    m = RWA_TURN_PROGRESS.search(str(rl["message"].iloc[-1]))
+    if not m:
+        return None
+    t = pd.to_datetime(str(rl["run_id"].iloc[-1])[:15], format="%Y%m%dT%H%M%S", errors="coerce")
+    return None if pd.isna(t) else {"run_on": t.normalize(), "done": int(m.group(1)), "total": int(m.group(2)),
+                                    "this_run": int(m.group(3))}
 
 
 def utcnow() -> str:

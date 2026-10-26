@@ -32184,9 +32184,10 @@ for _l in ("Outflows beside: ecosystem / grants (d)", FLOW_LEG_LINES["m"]):
 
 # G17-1f PLUME — the Nest Season One claim contract, named by a primary source, read on Plume's Blockscout
 CHAIN_IDS["plume"] = 98866
-EXPLORERS["blockscout"]["hosts"][98866] = "https://explorer.plume.org/api"   # the instance fetch/plume_settlement reads
-EXPLORERS["blockscout"]["direct_hosts"] = (98866,)
-EXPLORER_LOG_ROUTES[98866] = ["blockscout"]
+# G18-2: NO LOG SCAN IS ROUTED TO explorer.plume.org. Its /api serves 10 calls per >= 40-minute window, and plume_staking's
+# payouts read (the host's existing reader, 8 a run) owns them: the G17 claims scan spent the window on 10-26 (429, reset
+# ~2,631 s) and plume_staking failed for the first time. The claims are read over rpc.plume.org (fetch/plume_claims.py).
+EXPLORERS["blockscout"]["direct_hosts"] = ()
 DEFAULT_RPC["plume"] = ["https://rpc.plume.org"]          # the endpoint the Plume readers already use (plume_staking)
 PLUME_CLAIM = {
     "contract": "0x8A2725a6f04816A5274dDD9FEaDd3bd0C253C1A6", "chain": "plume", "token_symbol": "WPLUME",
@@ -32201,24 +32202,29 @@ PLUME_CLAIM = {
                                             "named_by": "claim-pp.plume.org names Hedgey and the campaign id, NOT the "
                                                         "address (an unfilled NEXT_PUBLIC_CONTRACT_ADDRESS) — matched to "
                                                         "this contract on-chain by campaigns(id) (token WPLUME, end "
-                                                        "2026-09-03 = the page's); Jake's decision to keep"}},
-    "shared": "Hedgey's ClaimCampaigns contract is shared: every WPLUME campaign on Plume pays from it — the series "
-              "counts each WPLUME claim out of it, labelled so",
+                                                        "2026-09-03 = the page's); Jake's decision to keep. G18-2c: the "
+                                                        "id is on the official page (claim-pp.plume.org HTML, the "
+                                                        "__next_f data: \"campaignId\":\"8f5ea864-…\", re-read "
+                                                        "2026-10-26), so S2 counts"}},
+    # G18-2: read over the chain's RPC by campaign id (fetch/plume_claims.py); verified source on explorer.plume.org
+    # (ClaimCampaigns, solc 0.8.28 = github.com/hedgey-finance/ClaimCampaigns); topics keccak'd 2026-10-26
+    "rpc": "https://rpc.plume.org", "deploy_block": 52_607_933,
+    "topics": {"claimed": "0xeda9c5842f9de63a524e4bafcab717969b8cfdb8bbd1533e39497520dbc11275",   # UnlockedTokensClaimed
+               "started": "0xc1d41f85682afff3c8291bb0c88f077fa6a77781d61c4941bd0344a6b780db9c",   # CampaignStarted
+               "cancelled": "0x88511e0182a386da19fdcadcde158de4729b63240d9a034ce75f3cb0dc5288a5"},  # CampaignCancelled
+    "shared": "Hedgey's ClaimCampaigns contract is shared (8 campaigns on it by 2026-10-26: 6 test-sized, 61 WPLUME "
+              "claimed in all) — G18-2c, Jake 2026-10-26: ONLY the two campaign ids above count, filtered on the claim "
+              "event's own id",
     "overlap": "Plume's 150M PLUME Season 2 figure covers the airdrop AND the Royco / Merkl incentives ((b)) — never "
                "added to (b)",
 }
 METRICS["plume_airdrop_claims_tokens"] = {
-    "label": "WPLUME claimed out of Hedgey's ClaimCampaigns on Plume (0x8A2725a6…, the Nest S1 claim contract; S2 by "
-             "campaign id) — the points airdrops, Flows (c); every WPLUME campaign on the shared contract",
+    "label": "WPLUME claimed in Plume's two points airdrops — Nest Season One and Plume Season 2, by their campaign ids "
+             "on Hedgey's ClaimCampaigns (0x8A2725a6…), read over rpc.plume.org and reconciled per campaign to the wei "
+             "(G18-2) — Flows (c)",
     "kind": "flow", "unit": "tokens", "archetypes": [1], "tiers": [2], "sanity_min": 0, "sanity_max": 2e9,
     "only_projects": ("Plume",)}
-PROJECT_BY_NAME["Plume"].setdefault("log_scans", []).append(
-    {"key": "plume_airdrop_claims", "metric": "plume_airdrop_claims_tokens", "chain": "plume",
-     "token": PROJECT_BY_NAME["Plume"]["merkl_campaigns"]["chains"][98866]["token"],   # WPLUME (docs.plume.org)
-     "holders": [PLUME_CLAIM["contract"]],
-     "direction": "out", "store": True,
-     "attribution": "dedicated_wallet", "attribution_sources": [PLUME_CLAIM["source"]], "wired_on": "2026-10-23"})
-PROJECT_BY_NAME["Plume"]["log_scans"][-1]["own_tier"] = scan_tier("Plume", {"own_tier": l2_tier("plume")})
+# (the G17 Transfer scan of the contract's WPLUME out, on explorer.plume.org, is replaced by fetch/plume_claims.py — G18-2)
 OUTFLOW_CATEGORIES["Plume"]["c"] = ("plume_airdrop_claims_tokens",)
 FLOW_LINE_EVIDENCE.pop(("Plume", "Incentives paid beside: demand side (c)"), None)
 
@@ -32238,4 +32244,42 @@ RUN_CLEANUPS = RUN_CLEANUPS + (
     {"id": "G17-1", "metric": "staking_apr_published", "value": 0.0, "source": "pendle_api",
      "projects": ("Pendle",),
      "why": "lastEpochApr read 0 is not Pendle's APR — stored before the 0-guard (G17 1b)"},
+)
+
+# ===================================================================================================================
+# ROUND G18 (Jake 2026-10-26, run on 4ebc061) — the last wiring gaps. SPEC §19 G18.
+# ===================================================================================================================
+# G18-1: NEAR's headline circulating is Jake's lockup rule or nothing. CoinGecko's figure is another basis (it does not
+# take the lockups' LOCKED out by the rule), so it never stands in on a day the rule cannot form (the guard's BASIS
+# violation on 10-26: circulating_supply_used read CoinGecko from 10-26 once the 10-11 lockup read aged past 10 days).
+CIRCULATING_ONCHAIN["Near"]["no_coingecko_fallback"] = (
+    "CoinGecko's circulating does not take the lockups' LOCKED out (Jake's rule, 2026-10-12) — another basis, never a "
+    "stand-in; a day the rule cannot form reads BLOCKED with the lockup read's age (G18-1)")
+
+
+# G18-6: while the weekly RWA turn is part-way (its latest Run Log line says IN PROGRESS), Plume's market-share cells are
+# MISSING C with the expected completion date — set by the build from the store (store.rwa_turn_progress)
+def set_rwa_turn_progress(progress: dict | None) -> None:
+    import math
+    for m in ("market_share_pct", "market_share_category_usd"):
+        MISSING_DECLARED.pop((RWA_SHARE_TURN["project"], m), None)
+    if not progress:
+        return
+    left = max(0, int(progress["total"]) - int(progress["done"]))
+    runs = math.ceil(left / max(1, int(RWA_SHARE_TURN["calls_per_run"])))
+    import pandas as _pd
+    eta = (_pd.Timestamp(progress["run_on"]) + _pd.Timedelta(days=runs)).date()
+    why = (f"the weekly RWA turn is in progress — {progress['done']} of {progress['total']} RWA-category protocol(s) "
+           f"read by {_pd.Timestamp(progress['run_on']).date()} ({progress['this_run']} that run); {left} left at "
+           f"{RWA_SHARE_TURN['calls_per_run']} a run completes it in {runs} more run(s) — valid from {eta} at one run a day")
+    for m in ("market_share_pct", "market_share_category_usd"):
+        MISSING_DECLARED[(RWA_SHARE_TURN["project"], m)] = ("C", why)
+
+# G18-2: the G17 Transfer scan counted every WPLUME campaign on the shared Hedgey contract (and read explorer.plume.org);
+# any row it stored goes — the campaign-filtered RPC read replaces the series whole
+RUN_CLEANUPS = RUN_CLEANUPS + (
+    {"id": "G18-2", "metric": "plume_airdrop_claims_tokens", "every_row": True,
+     "source": "explorer:plume_airdrop_claims", "projects": ("Plume",),
+     "why": "the G17 scan counted every campaign on Hedgey's shared contract; replaced by the two campaign ids over "
+            "rpc.plume.org (G18 2c)"},
 )

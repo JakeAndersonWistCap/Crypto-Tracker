@@ -250,7 +250,8 @@ class LogScan:
         if not undated or not hasattr(self.reader, "block_timestamp"):
             return events
         from .katana_seed import date_blocks
-        seen: dict[int, int] = {}
+        # one memo per chain for the run (G18-8: pages are dated as they arrive; a block's time never changes)
+        seen: dict[int, int] = self.__dict__.setdefault("_ts_memo", {}).setdefault(chain, {})
 
         def ts(b):
             if b not in seen:
@@ -1130,12 +1131,23 @@ class LogScan:
                     if start > to_block:
                         new, meta = [], {"explorer": "cache", "requests": 0, "refused": []}
                     else:
+                        # G18-8: a route without timestamps dates each page as it arrives (the explorer's checkpoint
+                        # and a timed-out partial are then dated, so the partial is cached)
+                        self.explorer.date_events = lambda evs, _c=chain: self._date_undated(_c, evs)
                         try:
                             new, meta = self.explorer.get_logs(chain_id, token, topics, start, to_block)
                         except ExplorerTimeout as e:
                             e.stream = (sid, st, start)
                             raise
+                        finally:
+                            self.explorer.date_events = None
                         new = self._date_undated(chain, new)
+                        # G18-8: A STREAM READ IN FULL IS CACHED AT ONCE, not after the whole scan: the explorer's page
+                        # checkpoint is deleted once its range is read, so a tier stopped later in this scan (another
+                        # stream, the reconciliation) would otherwise start this one again from its first block. Nothing
+                        # is proven here — proven_to stays where it was (as _save_progress).
+                        if new and all(int(x.get("timeStamp") or 0) > 0 for x in new):
+                            self.cache.save(sid, _merge(st["events"], new), to_block, st["proven_to"])
                     streams.append((sid, st, new, h, way))
                     fetched_new += len(new)
                     events = _merge(st["events"], new)

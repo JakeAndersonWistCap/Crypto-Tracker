@@ -249,6 +249,11 @@ def audit(wb, trajectory_rows: list[dict] | None = None, flows_rows: list[dict] 
         # relabelled with its blocker — "NOT BUILT BY DESIGN" or "NAMED BLOCKER — paid / no public source / no comparable
         # category / Jake's decision" — which is N/A BY DESIGN, off the NOT WIRED count
         st = "N/A BY DESIGN" if route.startswith(("NOT BUILT BY DESIGN", "NAMED BLOCKER —")) else "NOT WIRED"
+        # G18-7: an item whose cells are MISSING C / E (the insider cells: E, the issuer wallet list Jake supplies) reads
+        # as its cells do — the summary row never says NOT WIRED for cells that are classed
+        mc = _BUILD_MISSING.match(route)
+        if mc:
+            st, route = "MISSING", f"MISSING [{_CLASS_BY_LETTER[mc.group(1)]}] — {mc.group(2)}"[:400]
         rows.append({"Tab": "(not on a tab)", "Column": item, "Key": "", "Project": "(all)", "Value now": "",
                      "Status": st, "Reason / route / error": route, "Axis": "", "Direction": "", "Tier": "",
                      "History depth (quarters with a value)": "", "Formula as built": "", "SPEC formula": "",

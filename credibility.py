@@ -2390,6 +2390,14 @@ def wiring_inputs(name: str, rows: dict) -> dict:
                 why=f"CoinGecko's total_supply equals its own circulating_supply ({same:,.0f} both), so it is not a "
                     f"total supply and cannot judge ours.",
                 resolve="none needed — the on-chain totalSupply() is the figure; re-judged when CoinGecko's two differ")
+    if _has_number(rows, name, "total_supply_dashboard"):
+        # G18-5 (Jake's 10-26 run: total_supply_dashboard UNWIRED, armed in G17-1a and shown nowhere): the project's own
+        # indexer total — NEAR: NearBlocks /v3/stats total_supply — judged against ours, as CoinGecko's is
+        out["in_total_supply_dashboard"] = {
+            "what": "Total supply (tokens) — ours vs the chain indexer's own total",
+            "ours": {"metric": "total_supply", "window": "now"}, "fmt": '#,##0;(#,##0);-',
+            "ref": {"metric": "total_supply_dashboard", "window": "now", "tol": 1.0,
+                    "source": "NearBlocks /v3/stats total_supply (total_supply_dashboard, read once a day; G17-1a)"}}
     if parked:
         return out
     if "pool_release_tokens_coingecko" not in named and _has_number(rows, name, "pool_release_tokens_coingecko"):
