@@ -35,10 +35,19 @@ PAGE = 100
 DAY = 86_400
 
 
+CANCELLED = "INVALID"                # Merkl's type for a cancelled campaign (docs: "overrides … to an invalid type")
+
+
 def daily_amounts(campaigns: list[dict], token_address: str, end_day: _dt.date, chain_id: int | None = None,
-                  seen: set | None = None) -> tuple[dict, list]:
+                  seen: set | None = None, refunds: dict | None = None) -> tuple[dict, list]:
     """({date: tokens}, [skipped (campaignId, reason)]) for the campaigns paying `token_address` ON `chain_id` (their
-    distributionChainId), complete days < end; a campaignId already in `seen` is skipped (and added when counted)."""
+    distributionChainId), complete days < end; a campaignId already in `seen` is skipped (and added when counted).
+
+    D1-2 (Morpho, reconciled 2026-10-26): a SUB-CAMPAIGN (parentCampaignId set) is the engine's forwarder share of its
+    parent — no new money (Merkl docs; the child id is no campaign in DistributionCreator) — and is never counted: the
+    parent's amount already holds it (1.0M MORPHO double-counted 2025-10..2026-10). A CANCELLED campaign (type INVALID)
+    counts its amount less what went back to its creator (`refunds` {campaignId: raw amount}, Merkl's own
+    /users/{creator}/rewards/campaign/{id}); without that read it is not counted and says so."""
     tok = token_address.lower()
     per_day: dict = defaultdict(float)
     skipped = []
@@ -48,6 +57,9 @@ def daily_amounts(campaigns: list[dict], token_address: str, end_day: _dt.date, 
         dist = c.get("distributionChainId")
         if chain_id is not None and dist is not None and int(dist) != int(chain_id):
             skipped.append((c.get("campaignId"), f"distributed on chain {dist}"))
+            continue
+        if c.get("parentCampaignId"):
+            skipped.append((c.get("campaignId"), "sub-campaign (forwarder share of its parent: no new money)"))
             continue
         if seen is not None and c.get("campaignId") in seen:
             skipped.append((c.get("campaignId"), "already counted"))
@@ -61,7 +73,14 @@ def daily_amounts(campaigns: list[dict], token_address: str, end_day: _dt.date, 
             continue
         if seen is not None:
             seen.add(c.get("campaignId"))
-        amount = int(c["amount"]) / 10 ** int(rt.get("decimals") or 18)
+        raw = int(c["amount"])
+        if str(c.get("type") or "") == CANCELLED:
+            back = (refunds or {}).get(c.get("campaignId"))
+            if back is None:
+                skipped.append((c.get("campaignId"), "cancelled: its refund to the creator was not read"))
+                continue
+            raw = max(0, raw - int(back))
+        amount = raw / 10 ** int(rt.get("decimals") or 18)
         t = start - start % DAY
         while t < min(end, end_ts):
             inside = min(end, t + DAY) - max(start, t)
@@ -99,6 +118,24 @@ class MerklCampaigns:
                 return rows
         raise ValueError(f"chain {chain_id}: more than {100 * PAGE} campaigns — not read in full")
 
+    def _refunds(self, url: str, camps: list, chain_id: int, token: str) -> dict:
+        """{campaignId: raw amount returned to its creator} for every CANCELLED root campaign paying `token` on chain_id
+        (D1-2) — Merkl's own GET /v4/users/{creator}/rewards/campaign/{id}?chainId=. A failed read raises: nothing is
+        stored rather than a cancelled campaign counted at its full amount."""
+        base = url.rsplit("/campaigns", 1)[0]
+        out = {}
+        for c in camps:
+            if (str(c.get("type") or "") != CANCELLED or c.get("parentCampaignId")
+                    or str((c.get("rewardToken") or {}).get("address") or "").lower() != token.lower()):
+                continue
+            creator = c.get("creatorAddress") or (c.get("creator") or {}).get("address")
+            got = self.http.get(f"{base}/users/{creator}/rewards/campaign/{c['campaignId']}",
+                                params={"chainId": chain_id})
+            if not isinstance(got, dict) or "amount" not in got:
+                raise ValueError(f"chain {chain_id}: cancelled campaign {c['campaignId'][:10]}…: no refund amount")
+            out[c["campaignId"]] = int(got["amount"])
+        return out
+
     def run(self, projects: list[dict], window_days, out):
         for p in projects:
             spec = p.get("merkl_campaigns")
@@ -115,7 +152,8 @@ class MerklCampaigns:
         try:
             for chain_id, chain in spec["chains"].items():
                 camps = self._campaigns(spec["url"], spec.get("creator"), int(chain_id), chain["token"])
-                per_day, skipped = daily_amounts(camps, chain["token"], today().date(), int(chain_id), seen)
+                refunds = self._refunds(spec["url"], camps, int(chain_id), chain["token"])
+                per_day, skipped = daily_amounts(camps, chain["token"], today().date(), int(chain_id), seen, refunds)
                 for d, v in per_day.items():
                     total[d] += v
                 notes.append(f"{chain['name']}: {len(camps)} campaign(s), {len(skipped)} not counted"

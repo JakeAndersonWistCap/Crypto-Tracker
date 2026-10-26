@@ -132,3 +132,48 @@ def test_3_a_pre_minted_token_reads_n_a_for_issuance_at_every_quarter(tmp_path, 
     o = _row(wb, X, "A4 Permanent Burn", "Hyperliquid")
     assert str(_get(o, "Self-reported − derived (a gap here means one of the two is wrong)")).startswith(
         "n/a — nothing issued and nothing self-reported")
+
+
+def _camp(cid, amount, start, end, **kw):
+    return {"campaignId": cid, "amount": str(int(amount * 10 ** 18)), "startTimestamp": T(start), "endTimestamp": T(end),
+            "distributionChainId": 8453, "rewardToken": {"address": "0xTOK", "symbol": "MORPHO", "decimals": 18},
+            "creatorAddress": "0xCREATOR", **kw}
+
+
+def test_2_sub_campaigns_are_not_counted_and_a_cancelled_one_counts_what_was_paid():
+    from fetch.merkl_campaigns import daily_amounts
+    camps = [_camp("0xroot", 300, "2026-01-01", "2026-01-04"),
+             _camp("0xchild", 120, "2026-01-01", "2026-01-04", parentCampaignId="123"),       # forwarder share
+             _camp("0xcancel", 100, "2026-01-05", "2026-01-06", type="INVALID")]
+    per_day, skipped = daily_amounts(camps, "0xtok", pd.Timestamp("2026-02-01").date(), 8453, set(),
+                                     {"0xcancel": 80 * 10 ** 18})
+    assert sum(per_day.values()) == pytest.approx(300 + 20)            # child out; cancelled: 100 − 80 refunded
+    assert any(c == "0xchild" and "sub-campaign" in r for c, r in skipped)
+    per_day, skipped = daily_amounts(camps, "0xtok", pd.Timestamp("2026-02-01").date(), 8453, set(), {})
+    assert sum(per_day.values()) == pytest.approx(300)                 # refund not read: not counted, and said
+    assert any(c == "0xcancel" and "refund" in r for c, r in skipped)
+
+
+def test_2_a_failed_refund_read_stores_nothing():
+    from fetch.base import FetchOutput
+    from fetch.merkl_campaigns import MerklCampaigns
+
+    class H:
+        def get(self, url, params=None):
+            if "/users/" in url:
+                return {"error": "down"}
+            return [_camp("0xcancel", 100, "2026-01-05", "2026-01-06", type="INVALID")] if params.get("page") == 0 else []
+
+    class Dc:
+        def due(self, *a):
+            return True
+
+        def done(self, *a):
+            pass
+    m = MerklCampaigns(http=H(), daily_checks=Dc())
+    out = FetchOutput()
+    spec = {"url": "https://api.merkl.xyz/v4/campaigns", "creator": "0xCREATOR", "metric": "x",
+            "chains": {8453: {"name": "Base", "token": "0xTOK"}}}
+    m._project("Morpho", spec, out)
+    assert not [f for f in out.frames if f is not None and not f.empty]
+    assert any("NOTHING STORED" in e.message and "no refund amount" in e.message for e in out.log)
