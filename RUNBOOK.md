@@ -529,6 +529,26 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11cv. Round D1 — the data phase, round 1 (2026-10-26)
+
+**Pull this only after the weekly NEAR lockup read and your second build have finished.** Then, in PowerShell 5.1 at
+the repo root, in this order:
+1. `python token_metrics.py` — the normal run. It opens with CLEAN-UP D1-1: four rows removed (Near dex_volume_usd
+   2026-10-23/24/25 from defillama:dexs:near, intents_fees_usd 2026-10-22 from defillama:near-intents), and DefiLlama's
+   next read re-stores them (DefiLlama backfilled them on 10-26: ~103.8M / 95.4M / 93.7M; fees 160,221). From now on a
+   Near DEX day without NEAR Intents in DefiLlama's breakdown is not stored ("dex_volume_usd: REFUSED n day(s) — NEAR
+   Intents absent …"), and an Intents fees day below its revenue is refused. PASTE BACK the CLEAN-UP D1-1 lines and the
+   defillama Near lines.
+2. `python check_offline_items.py wiring_complete` — PASTE BACK the output.
+3. `python measuring_guard.py --newer metrics.db` — PASTE BACK the VERDICT.
+
+**What to look for.** Morpho's Reference "g6_merkl_base_campaign_total" reads PASS: ours is now the mean of the Merkl
+schedule over the 29 days wholly inside the campaign × 30 (199,378.6 vs Merkl's 199,378) — the old 31-day sum took in
+the neighbouring campaigns' boundary hours. Pendle's "Staking APR as the protocol publishes it" reads "n/a — by design:
+Pendle publishes no sPENDLE APR …". Hyperliquid's (and every pre-minted token's) "Fees ÷ issuance at Q1/Q2/Q3" and A4
+"Self-reported − derived" read n/a like Q0 — no longer MISSING C. Near's DEX volume, trading throughput and the
+settlement rebuild read the restored 10-23..10-25 days.
+
 ## 11cu. Round G18 — the last wiring gaps (2026-10-26)
 
 **Run after pulling (PowerShell 5.1, repo root), in this order.** No new source or endpoint: Plume's claims move from
