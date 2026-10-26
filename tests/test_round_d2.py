@@ -323,3 +323,47 @@ def test_4f_near_b_stays_e_with_the_trace_and_the_route_is_declared_not_shown():
     assert ev["verdict"] == "class_e" and "treasury.near" in ev["evidence"] and "House of Stake" in ev["evidence"]
     assert "b" not in config.OUTFLOW_CATEGORIES["Near"]
     assert ("Near", "near_mpc_operator_payments_tokens") in config.NOT_SHOWN
+
+
+# ================================================================================================== 5
+def _spendle(rows):
+    """A spendle/data payload: rows of (start date, revenues, airdropInUSDs, buybackAmounts)."""
+    return {"sPendleHistoricalData": {"timestamps": [T(d) for d, *_ in rows], "revenues": [r for _, r, _a, _b in rows],
+                                      "airdropInUSDs": [a for _, _r, a, _b in rows],
+                                      "buybackAmounts": [b for *_x, b in rows], "aprs": [0] * len(rows)},
+            "lastEpochApr": 0}
+
+
+def test_5_the_reader_stores_complete_epochs_revenue_less_airdrops_dated_at_the_start():
+    from fetch import pendle_epochs as pe
+    from fetch.base import FetchOutput
+    spec = config.PROJECT_BY_NAME["Pendle"]["spendle_epochs"]
+    payload = _spendle([("2026-03-24", 1_507_514.07, 973_833.38, 196_115), ("2026-10-06", 264_054.96, 0, 0),
+                        ("2026-10-20", 142_207.83, 0, 0)])                       # 10-20: in progress on 10-27
+    out = FetchOutput()
+    pe.PendleEpochs._epoch_revenues("Pendle", spec, payload, pd.Timestamp("2026-10-27"), out)
+    f = [x for x in out.frames if x is not None and not x.empty][0]
+    got = {str(pd.Timestamp(d).date()): round(v, 2) for d, v in zip(f["date"], f["value"])}
+    assert got == {"2026-03-24": 533_680.69, "2026-10-06": 264_054.96}
+    assert config.stale_after_days("Pendle", "pendle_epoch_revenue_usd", 7) == 30
+
+
+def test_5_the_cross_check_sums_the_same_utc_days_of_q0s_complete_epochs():
+    import credibility as cred
+    days = pd.date_range("2026-07-28", "2026-10-26")
+    rev = pd.DataFrame({"date": days, "project": "Pendle", "metric": "revenue_usd", "value": 10_000.0})
+    ref = pd.DataFrame({"date": pd.to_datetime(["2026-07-28", "2026-08-11", "2026-08-25", "2026-10-06"]),
+                        "project": "Pendle", "metric": "pendle_epoch_revenue_usd", "value": [1.0, 150_000.0, 150_000.0,
+                                                                                               150_000.0]})
+    long = pd.concat([rev, ref])
+    asof = pd.Timestamp("2026-10-27")                  # Q0 from 07-29: the 07-28 epoch starts before it — out
+    ours, last, how = cred._pendle_epoch_revenue("Pendle", {}, long, asof, side="ours")
+    theirs, _l, _h = cred._pendle_epoch_revenue("Pendle", {}, long, asof, side="ref")
+    assert ours == 3 * 14 * 10_000.0 and theirs == 450_000.0 and last == "2026-10-19"
+    assert "2026-08-11, 2026-08-25, 2026-10-06" in how
+    # a missing day of ours takes the whole epoch out
+    gap = long[~((long.metric == "revenue_usd") & (long.date == pd.Timestamp("2026-08-30")))]
+    assert cred._pendle_epoch_revenue("Pendle", {}, gap, asof, side="ref")[0] == 300_000.0
+    row = config.CREDIBILITY["Pendle"]["in_revenue"]
+    assert row["ref"]["tol"] == 10.0 and "BASIS" in row["ref"]["note"] and "airdrop" in row["ref"]["note"]
+    assert "revenues_closed" not in config.PROJECT_BY_NAME["Pendle"]["spendle_epochs"]

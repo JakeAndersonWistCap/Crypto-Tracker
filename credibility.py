@@ -1721,6 +1721,37 @@ def _aero_epochs(long, p, asof, onchain, flow, epoch_days=7, fees="voter_rewards
     return got, skipped
 
 
+def _pendle_epoch_revenue(p, rows, long, asof, flow="revenue_usd", ref="pendle_epoch_revenue_usd", side="ref",
+                          epoch_days=14, window=90, min_epochs=2, **_):
+    """D2-5: PENDLE'S OWN EPOCH REVENUE AGAINST OURS, LIKE FOR LIKE. Over the complete sPENDLE epochs that lie wholly
+    inside the Q0 window ([asof − window, asof)), each epoch [start, start + epoch_days) on Pendle's accounting (its
+    revenues less the airdrops it counts, `ref`, dated at the start) against our `flow` summed over the same UTC days.
+    An epoch counts only when every one of its days is stored on our side; fewer than `min_epochs`: nothing."""
+    end = asof.normalize()
+    lo = end - pd.Timedelta(days=int(window))
+    sf, sr = _series(long, p, flow), _series(long, p, ref)
+    used, ours, theirs, holes = [], 0.0, 0.0, []
+    for start, v in sr.items():
+        stop = start + pd.Timedelta(days=int(epoch_days))
+        if start < lo or stop > end:
+            continue
+        days = pd.date_range(start, stop - pd.Timedelta(days=1))
+        if not days.isin(sf.index).all():
+            holes.append(str(start.date()))
+            continue
+        used.append(start)
+        ours += float(sf.loc[days].sum())
+        theirs += float(v)
+    if len(used) < int(min_epochs):
+        return None, None, (f"{ref}: {len(used)} complete epoch(s) inside {lo.date()}..{end.date()} with every day of "
+                            f"{flow} stored, {min_epochs} needed" + (f" (days missing: {', '.join(holes)})" if holes
+                                                                      else ""))
+    last = (max(used) + pd.Timedelta(days=int(epoch_days) - 1)).date()
+    return (ours if side == "ours" else theirs), str(last), \
+        (f"{flow if side == 'ours' else ref} over the {len(used)} complete sPENDLE epoch(s) starting "
+         f"{', '.join(str(d.date()) for d in used)} — each [start, start + {epoch_days} d)")
+
+
 def _aero_epoch_revenue(p, rows, long, asof, flow="revenue_usd", onchain="voter_rewards_onchain_usd", side="ref", **_):
     """JUDGED OVER THE QUARTER (Jake's run 2026-10-09 ~14:10, 1b): the sum over every judged Q0 epoch of DefiLlama's
     like-for-like figure (_aero_epochs: the week before's fees + the epoch's own bribes) against the sum of the fees +
@@ -2014,7 +2045,7 @@ FORMULAS = {"sum_months": _sum_months, "free_float_now": _free_float_now, "windo
             "eth_issuance_curve": _eth_issuance_formula, "flow_usd_over_price": _flow_usd_over_price,
             "delta_q0": _delta_q0, "delta_diff_q0": _delta_diff_q0, "hl_reward_formula": _hl_reward_formula,
             "share_price_growth": _share_price_growth, "per_day_x_covered": _per_day_x_covered,
-            "value_on": _value_on, "epoch_apr": _epoch_apr, "published_epoch_aprs": _published_epoch_aprs, "epoch_reproduction": _epoch_reproduction, "epoch_mean_check": _epoch_mean_check, "epochs_first_party": _epochs_first_party, "aero_epoch_revenue": _aero_epoch_revenue, "aero_rebase_apr": _aero_rebase_apr, "aero_epoch_pending": _aero_epoch_pending, "aero_bribe_outliers": _aero_bribe_outliers, "aero_fee_leg": _aero_fee_leg, "price_basis_gap": _price_basis_gap, "price_overlap": _price_overlap,
+            "value_on": _value_on, "epoch_apr": _epoch_apr, "published_epoch_aprs": _published_epoch_aprs, "epoch_reproduction": _epoch_reproduction, "epoch_mean_check": _epoch_mean_check, "epochs_first_party": _epochs_first_party, "aero_epoch_revenue": _aero_epoch_revenue, "pendle_epoch_revenue": _pendle_epoch_revenue, "aero_rebase_apr": _aero_rebase_apr, "aero_epoch_pending": _aero_epoch_pending, "aero_bribe_outliers": _aero_bribe_outliers, "aero_fee_leg": _aero_fee_leg, "price_basis_gap": _price_basis_gap, "price_overlap": _price_overlap,
             "aero_epoch_apr": _aero_epoch_apr, "q0_net_flow": _q0_net_flow,
             "negative_release": _negative_release, "sum_month": _sum_month, "last30_annualised": _last30_annualised,
             "common_day_value": _common_day_value, "months_match": _months_match,

@@ -296,3 +296,39 @@ class PendleEpochs:
                         + note, TIER)
             self._published_apr(name, spec, payload, now, out)
             self._epoch_aprs(name, spec, payload, out)
+            self._epoch_revenues(name, spec, payload, now, out)
+
+    @staticmethod
+    def _epoch_revenues(name, spec, payload, now, out):
+        """D2-5: Pendle's own revenue per COMPLETE epoch, less the third-party airdrops it counts in it — the
+        first-party reference of revenue_usd (Credibility in_revenue), dated at the epoch's start. An epoch whose
+        revenue or airdrop $ is missing is not stored; the epoch in progress is not stored until it ends."""
+        metric = spec.get("revenue_metric")
+        if not metric:
+            return
+        hist = payload.get(spec["history_key"]) or {}
+        ts, rev = hist.get(spec["time_field"]) or [], hist.get(spec["revenue_field"]) or []
+        air = hist.get(spec["airdrop_usd_field"]) or []
+        if not ts or len(ts) != len(rev) or len(ts) != len(air):
+            out.fail(SOURCE, name, f"{metric}: {len(ts)} epochs against {len(rev)} revenues and {len(air)} airdrop $ "
+                                   f"— NOTHING STORED", TIER)
+            return
+        rows, skipped = [], []
+        for t, r, a in sorted(zip(ts, rev, air), key=lambda x: int(float(x[0]))):
+            t = int(float(t))
+            when = pd.Timestamp(t, unit="s" if t < 10**11 else "ms").normalize()
+            if when + pd.Timedelta(days=int(spec.get("epoch_days", 14))) > now:
+                continue                                          # in progress
+            if r is None or a is None:
+                skipped.append(str(when.date()))
+                continue
+            rows.append((when, float(r) - float(a)))
+        if not rows:
+            out.fail(SOURCE, name, f"{metric}: no complete epoch with both revenues and airdrop $ — NOTHING STORED", TIER)
+            return
+        frame = pd.DataFrame([point(name, metric, v, f"{SOURCE}:{spec['history_key']}.{spec['revenue_field']}"
+                                    f"-{spec['airdrop_usd_field']}", TIER, d).iloc[0] for d, v in rows])
+        out.add(frame, SOURCE, name,
+                f"{metric}: {len(rows)} complete epoch(s) {rows[0][0].date()}..{rows[-1][0].date()} (revenues less "
+                f"airdrop $); latest {rows[-1][1]:,.0f}" + (f"; NOT STORED (a field missing): {', '.join(skipped)}"
+                                                             if skipped else ""), TIER)

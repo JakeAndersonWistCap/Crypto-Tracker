@@ -27507,9 +27507,11 @@ def test_probes16_records_and_probes():
     assert "0x52Aa899454998Be5b000Ad077a46Bbe360F4e497" in fl["counted_as_circulating"]
     # sign-off round: the Avocado wallets are not the team's -> circulating, and Fluid is on-chain primary
     assert "fluid_avocado_owners" in fl["avocado_not_team"]["source"] and config.circulating_onchain_primary("Fluid")
-    sp = config.PROJECT_BY_NAME["Pendle"]["spendle_epochs"]["revenues_closed"]
-    assert sp["latest_epoch"] == "2026-04-07" and config.CREDIBILITY["Pendle"]["in_revenue"]["ref"]["verdict"] == \
-        "DOCUMENTED LIMITATION"                       # sign-off round: closed as single-source, with its evidence
+    # sign-off round: closed as single-source while spendle/data's revenues stopped at 2026-04-07; D2-5 (re-read
+    # 2026-10-26): current again, the first-party reference of in_revenue
+    sp = config.PROJECT_BY_NAME["Pendle"]["spendle_epochs"]["revenues_status"]
+    assert sp["latest_epoch"] == "2026-10-20" and "2026-04-07" in sp["verdict"]
+    assert config.CREDIBILITY["Pendle"]["in_revenue"]["ref"]["formula"] == "pendle_epoch_revenue"
     for fn in (coi.etherfi_accountant, coi.maple_ssf_trail, coi.fluid_avocado_owners, coi.hl_pool_release_compare):
         assert fn in coi.CHECKS
 

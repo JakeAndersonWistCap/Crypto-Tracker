@@ -16267,9 +16267,10 @@ PROJECTS = [
         # staking page Jake read 2026-09-29 (past epochs ~170K-350K PENDLE) — see fetch/pendle_epochs.
         # lastEpochApr is not in the official docs (Jake reports it in the response).
         "spendle_epochs": {
-            # PENDLE'S OWN EPOCH REVENUES ARE STALE (Jake's probes16, pendle_epoch_revenues, 2026-10-07 20:57):
-            # sPendleHistoricalData.revenues stops at the epoch of 2026-04-07 (latest $535,130; allTimeRevenues
-            # $8,353,237) — not a Q0 reference. CLOSED: Pendle's revenue stays single-source (DefiLlama).
+            # PENDLE'S OWN EPOCH REVENUES — SUPERSEDED BY D2-5 (re-read 2026-10-26: current again, 20 epochs to the one
+            # starting 2026-10-20; revenues_status below, set at the end of this file). Jake's probes16 of 2026-10-07 had
+            # found sPendleHistoricalData.revenues stopping at the epoch of 2026-04-07 (latest $535,130;
+            # allTimeRevenues $8,353,237) and closed the row as single-source (DefiLlama).
             "revenues_closed": {"latest_epoch": "2026-04-07", "latest_usd": 535_130, "all_time_usd": 8_353_237,
                                 "verdict": "stale — not a Q0 reference; in_revenue stays single-source DefiLlama",
                                 "read_by": "Jake, 2026-10-07 20:57"},
@@ -28033,8 +28034,9 @@ CREDIBILITY: dict = {
     },
     # ---------------------------------------------------------------- Pendle
     "Pendle": {
-        # Jake's probes16 (2026-10-07): Pendle's own per-epoch revenues (spendle/data) stop at 2026-04-07 — stale, so no
-        # first-party reference for Q0. CLOSED as single-source.
+        # Jake's probes16 (2026-10-07) found Pendle's own per-epoch revenues (spendle/data) stopping at 2026-04-07 and
+        # closed this row as single-source. SUPERSEDED BY D2-5 (2026-10-26): they are current again and the row is the
+        # first-party cross-check (redefined at the end of this file).
         "in_revenue": _c_in("Revenue Q0 (DefiLlama)", "revenue_usd", "q0", _c_lim(
             "DefiLlama is the only current source for Pendle's revenue.",
             "Pendle's own spendle/data revenues stop at the 2026-04-07 epoch (latest $535,130; all-time $8,353,237 — "
@@ -32643,3 +32645,42 @@ FLOW_LINE_EVIDENCE[("Near", "Incentives paid beside: supply side (b)")] = dict(
 NOT_SHOWN[("Near", "near_mpc_operator_payments_tokens")] = (
     "D2-4f: the measured part of a (b) route whose other payer (House of Stake wallets) is unnamed — (b) stays MISSING "
     "E with this series' reading on its evidence; stored so a payment shows the day it lands")
+
+# D2-5 PENDLE'S OWN EPOCH REVENUE — current again (re-read 2026-10-26: all 20 sPENDLE epochs to the one starting
+# 2026-10-20; allTimeRevenues 8,715,887.93). Jake's read of 2026-10-07 found it stopped at the 2026-04-07 epoch; that note
+# is superseded, and the figure becomes the first-party reference of Pendle's revenue (Credibility in_revenue).
+_SPE = PROJECT_BY_NAME["Pendle"]["spendle_epochs"]
+_SPE.pop("revenues_closed", None)
+_SPE["revenues_status"] = {
+    "read_on": "2026-10-26", "latest_epoch": "2026-10-20", "epochs": 20, "all_time_usd": 8_715_887.93,
+    "verdict": "current — the first-party reference of in_revenue (D2-5); Jake's read of 2026-10-07 had it stopping at "
+               "the 2026-04-07 epoch"}
+_SPE.update({"revenue_metric": "pendle_epoch_revenue_usd", "revenue_field": "revenues",
+             "airdrop_usd_field": "airdropInUSDs"})
+METRICS["pendle_epoch_revenue_usd"] = {
+    "label": "Pendle's own revenue per sPENDLE epoch less the third-party tokens airdropped to stakers ($; spendle/data "
+             "sPendleHistoricalData.revenues − airdropInUSDs), complete epochs, dated at the epoch's start — the "
+             "first-party reference of revenue_usd (D2-5)",
+    "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [1], "sanity_min": 0, "sanity_max": 1e8,
+    "only_projects": ("Pendle",)}
+_stale_after_days_d2 = stale_after_days
+
+
+def stale_after_days(project_name: str, metric: str, default: int) -> int:  # noqa: F811 — D2-5: an epoch series
+    if metric == "pendle_epoch_revenue_usd":
+        return int(_SPE.get("epoch_days") or 14) * 2 + 2
+    return _stale_after_days_d2(project_name, metric, default)
+
+
+CREDIBILITY["Pendle"]["in_revenue"] = _c_in_py(
+    "Revenue over Q0's complete sPENDLE epochs — ours (DefiLlama revenue_usd, the epoch's UTC days) vs Pendle's own "
+    "epoch revenues less airdrops", "pendle_epoch_revenue", {"side": "ours"},
+    {"formula": "pendle_epoch_revenue", "args": {"side": "ref"}, "tol": 10.0, "show_how": True,
+     "source": "Pendle's own spendle/data (api-v2.pendle.finance/core/v1/spendle/data, sPendleHistoricalData.revenues "
+               "− airdropInUSDs per epoch; fetch/pendle_epochs.py stores pendle_epoch_revenue_usd)",
+     "note": "BASIS: Pendle's accounting of each 14-day epoch [start, start + 14 d) — its protocol revenue, with the "
+             "third-party tokens airdropped to sPENDLE stakers taken out (Pendle counts them in revenues, DefiLlama "
+             "does not) — against DefiLlama's dailyRevenue summed over the same UTC days. ±10% as Aerodrome's "
+             "first-party epoch check. Not established: whether ptLoopingFees (~3K an epoch) or any other leg is in one "
+             "basis and not the other."},
+    fmt=_C_USD)
