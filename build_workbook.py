@@ -2573,6 +2573,26 @@ def _first_party_history_views(groups: dict) -> None:
                      "source": f"config:circulating_schedule[{config.CIRCULATING_SCHEDULE[name]['source']}]"}), cols)
 
 
+def _subtract_when_complete(groups: dict, name: str, s: pd.Series, tag: str, swc: dict) -> tuple[pd.Series, str]:
+    """G18-3c (Sky's endowments): a leg taken out of circulating only once it is held for EVERY day from its declared
+    start (0 before it, by evidence) through the series' last day — the whole series moves to the new basis in one
+    build, never a series on two bases. Until then the old basis stands and swc["state"] says what is pending."""
+    leg = _daily(groups.get((name, swc["metric"])))
+    start = pd.Timestamp(swc["zero_before"])
+    need = s.index[s.index >= start]
+    have = need.intersection(leg.index)
+    if len(need) and len(have) == len(need):
+        swc["state"] = (f"in force: {swc['metric']} held on all {len(need)} day(s) from {start.date()}; "
+                        f"{leg.reindex(need).iloc[-1]:,.0f} SKY taken out on {need[-1].date()}")
+        out = s - leg.reindex(s.index).where(s.index >= start, 0.0)
+        return out, tag + f"[− {swc['metric']}]"
+    first = leg.index.min().date() if not leg.empty else None
+    swc["state"] = (f"PENDING — {swc['metric']} held on {len(have)} of {len(need)} day(s) from {start.date()}"
+                    + (f" (live reads from {first})" if first else "") + "; the subtraction switches on when every day "
+                    "is held — `python archive_backfill.py --run --project Sky` fills the history")
+    return s, tag
+
+
 def _circulating_views(groups: dict) -> None:
     """circulating_supply_onchain := on-chain total − the documented non-circulating set, per day
     (M, Jake 2026-09-30; fetch/circulating.py). Only days where every input was read."""
@@ -2593,6 +2613,9 @@ def _circulating_views(groups: dict) -> None:
         if s.empty:
             continue
         tag = circ_mod.SOURCE + ("" if spec["status"] == "established" else "[PARTIAL set]")
+        swc = spec.get("subtract_when_complete")
+        if swc:
+            s, tag = _subtract_when_complete(groups, name, s, tag, swc)
         view = pd.DataFrame({"date": s.index, "project": name, "metric": "circulating_supply_onchain",
                              "value": s.values, "source": tag, "tier": 2})
         groups[(name, "circulating_supply_onchain")] = _as_stored(view, parts[0].columns)

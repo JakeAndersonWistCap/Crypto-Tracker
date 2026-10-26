@@ -227,8 +227,13 @@ def test_coverage_audit_has_no_unexplained_blank_no_broken_cell_and_matches_spec
         # the NOT WIRED list of SPEC.md section 10 is on the tab
         # (G8 item 4: a §10 item labelled with its blocker counts N/A BY DESIGN, not NOT WIRED)
         # (G9 B1: the label is "NAMED BLOCKER —"; "BLOCKED" alone is a refused computation)
-        open_items = [r for _i, r in ca.not_wired() if not r.startswith(("NOT BUILT BY DESIGN", "NAMED BLOCKER —"))]
-        assert c["NOT WIRED"] >= len(open_items) > 0
+        # (G18-7: an item whose cells are MISSING C / E reads as its cells — the insider row, MISSING E — so §10 may hold
+        # no open NOT WIRED item at all; each classed item is a MISSING row)
+        open_items = [r for _i, r in ca.not_wired() if not r.startswith(("NOT BUILT BY DESIGN", "NAMED BLOCKER —"))
+                      and not ca._BUILD_MISSING.match(r)]
+        assert c["NOT WIRED"] >= len(open_items)
+        classed = [i for i, r in ca.not_wired() if ca._BUILD_MISSING.match(r)]
+        assert classed and all(any(x["Column"] == i and x["Status"] == "MISSING" for x in rows) for i in classed)
 
 
 def test_no_headline_reads_a_bare_na(built):

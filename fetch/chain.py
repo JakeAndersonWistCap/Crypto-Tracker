@@ -1689,6 +1689,36 @@ class ChainReader:
         self.last_scaled = (int(raw), int(decimals))
         return float(raw) / (10 ** int(decimals))
 
+    LOCKSTAKE_ABI = [
+        {"inputs": [], "name": "ilk", "outputs": [{"name": "", "type": "bytes32"}], "stateMutability": "view",
+         "type": "function"},
+        {"inputs": [], "name": "vat", "outputs": [{"name": "", "type": "address"}], "stateMutability": "view",
+         "type": "function"},
+        {"inputs": [{"name": "owner", "type": "address"}], "name": "ownerUrnsCount",
+         "outputs": [{"name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"},
+        {"inputs": [{"name": "owner", "type": "address"}, {"name": "index", "type": "uint256"}], "name": "ownerUrns",
+         "outputs": [{"name": "", "type": "address"}], "stateMutability": "view", "type": "function"},
+        {"inputs": [{"name": "ilk", "type": "bytes32"}, {"name": "urn", "type": "address"}], "name": "urns",
+         "outputs": [{"name": "ink", "type": "uint256"}, {"name": "art", "type": "uint256"}], "stateMutability": "view",
+         "type": "function"}]
+
+    def lockstake_ink(self, chain: str, engine: str, owner: str) -> float:
+        """SKY an owner holds LOCKED in Sky's Lockstake (G18-3c): Σ Vat.urns(engine.ilk(), urn).ink over every urn
+        engine.ownerUrns(owner, i) lists — the engine's own ledger (LockstakeEngine.sol; ink is in wad, 18 decimals).
+        At the reader's block, so an archive read pins it like every other state read."""
+        w3, bi = self.web3(chain), self._bi(chain)
+        eng = w3.eth.contract(address=self.checksum(engine), abi=self.LOCKSTAKE_ABI)
+        ilk = self._paced(chain, lambda: eng.functions.ilk().call(block_identifier=bi))
+        vat = w3.eth.contract(address=self.checksum(self._paced(chain, lambda: eng.functions.vat().call(
+            block_identifier=bi))), abi=self.LOCKSTAKE_ABI)
+        o = self.checksum(owner)
+        n = int(self._paced(chain, lambda: eng.functions.ownerUrnsCount(o).call(block_identifier=bi)))
+        total = 0
+        for i in range(n):
+            urn = self._paced(chain, lambda i=i: eng.functions.ownerUrns(o, i).call(block_identifier=bi))
+            total += int(self._paced(chain, lambda u=urn: vat.functions.urns(ilk, u).call(block_identifier=bi))[0])
+        return total / 10 ** 18
+
     def raw_call(self, chain: str, address: str, call: str, *args) -> float:
         """Call `call` and return the integer AS RETURNED — no decimals scaling.
 
@@ -2024,6 +2054,13 @@ class Chain:
                         refused[metric].append(f"{key} ({chain}): no same-chain token for decimals")
                         continue
                     symbol_address = decimals_address = under["address"]
+                elif kind == "lockstake_owner_ink":
+                    # G18-3c: the symbol is checked on the same-chain token; the value is the engine's ledger
+                    under = self._underlying_on_chain(contracts, spec, chain)
+                    if under is None:
+                        refused[metric].append(f"{key} ({chain}): no same-chain token")
+                        continue
+                    symbol_address = under["address"]
                 elif kind in ("burn_address_balance", "buyback_fund_balance", "treasury_holding") \
                         or spec.get("read_method") == "escrow_balance_of":
                     under = self._underlying_on_chain(contracts, spec, chain)
@@ -2084,7 +2121,10 @@ class Chain:
                     # totalSupply path, which called cooldownDuration() and then scaled it, and
                     # the test is what caught it. Kind dispatch belongs where every other kind is
                     # decided.
-                    if kind == "cooldown_duration":
+                    if kind == "lockstake_owner_ink":
+                        value = self.reader.lockstake_ink(chain, spec["engine"], spec["address"])
+                        log.info("%s/%s: Lockstake ink of %s = %.6f", name, key, spec["address"], value)
+                    elif kind == "cooldown_duration":
                         seconds = self.reader.raw_call(chain, read_address,
                                                        spec.get("call") or "cooldownDuration")
                         value = seconds / 86_400.0

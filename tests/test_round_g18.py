@@ -284,3 +284,100 @@ def test_2_explorer_plume_is_left_to_plume_staking():
     for k in ("Nest Season One", "Plume Points Season 2"):
         assert len(config.PLUME_CLAIM["campaigns"][k]["id"]) == 36
     assert any(c["id"] == "G18-2" and c.get("every_row") for c in config.RUN_CLEANUPS)
+
+
+# ================================================================================================== 3 / 4 Sky
+def test_3_every_d_recipient_is_labelled_and_the_budget_safes_are_holders():
+    sc = next(s for s in config.PROJECT_BY_NAME["Sky"]["log_scans"] if s["key"] == "sky_ecosystem_out")
+    holders = {h.lower() for h in sc["holders"]}
+    # the configured endowments were right and stay; the two Atlas budget Safes join them (pass-throughs)
+    assert {a.lower() for a in config.SKY_ENDOWMENTS.values()} <= holders
+    assert {a.lower() for a in config.SKY_ATLAS_BUDGET_SAFES.values()} <= holders
+    assert len(config.SKY_D_RECIPIENTS) == 8 and all(len(v) == 3 and v[1] for v in config.SKY_D_RECIPIENTS.values())
+    for safe in config.SKY_ATLAS_BUDGET_SAFES.values():
+        assert "holder" in config.SKY_D_RECIPIENTS[safe.lower()][2]
+    # (b): the distributors stay out of (d) and the rewards they pay are counted elsewhere — never dropped
+    ex = {a.lower() for a in sc["exclude_counterparties"]}
+    assert {"0x675671a8756ddb69f7254afb030865388ef699ee", "0xc8d67fcf101d3f89d0e1f3a2857485a84072a63f"} <= ex
+    assert config.OUTFLOW_CATEGORIES["Sky"]["c"] and config.OUTFLOW_CATEGORIES["Sky"]["e"]
+    assert "allowance" in config.SKY_TREASURY_VEST["how"] or "transferFrom" in config.SKY_TREASURY_VEST["how"]
+
+
+def test_4_the_mints_are_matched_to_spells_and_are_treasury_mkr_conversions():
+    rows = config.SKY_PAUSE_MINTS
+    assert len(rows) == 16 and sum(r[3] for r in rows) == 426_792_000
+    assert rows[-1][0] == "2025-05-02" and all(r[2].startswith("0x") and len(r[2]) == 66 for r in rows)
+    assert "conversion of TREASURY MKR" in config.METRICS["sky_issuer_mint_tokens"]["label"]
+    src = (ROOT / "config.py").read_text(encoding="utf-8")
+    assert "CORRECTED G18-4" in src and config.ISSUER_MINTS["Sky"]["metric"] == "sky_issuer_mint_tokens"
+
+
+def test_3c_the_endowments_come_out_only_once_their_history_is_complete():
+    swc = dict(config.SKY_ENDOWMENT)
+    d = pd.date_range("2025-08-20", "2025-09-05")
+    s = pd.Series(20_000_000_000.0, index=d)
+    groups = {("Sky", "sky_endowment_tokens"): _g("Sky", "sky_endowment_tokens", pd.date_range("2025-09-01", "2025-09-05"),
+                                                    2_968_000_000.0)}
+    out, tag = bw._subtract_when_complete(groups, "Sky", s, "circulating", swc)
+    assert out.equals(s) and tag == "circulating" and swc["state"].startswith("PENDING — sky_endowment_tokens held on 5 "
+                                                                                "of 12 day(s) from 2025-08-25")
+    assert "archive_backfill.py --run --project Sky" in swc["state"]
+    groups[("Sky", "sky_endowment_tokens")] = _g("Sky", "sky_endowment_tokens", pd.date_range("2025-08-25", "2025-09-05"),
+                                                 2_968_000_000.0)
+    out, tag = bw._subtract_when_complete(groups, "Sky", s, "circulating", swc)
+    assert out["2025-08-24"] == 20_000_000_000.0                      # 0 before the funding day, by evidence
+    assert out["2025-09-05"] == pytest.approx(20_000_000_000.0 - 2_968_000_000.0)
+    assert tag == "circulating[− sky_endowment_tokens]" and swc["state"].startswith("in force")
+
+
+def test_3c_the_endowment_legs_are_read_and_credibility_names_the_basis():
+    import credibility
+    c = config.PROJECT_BY_NAME["Sky"]["contracts"]
+    legs = {k: v for k, v in c.items() if k.startswith("endowment_")}
+    assert len(legs) == 4 and all(v.get("metric_override") == "sky_endowment_tokens" and v.get("required_component")
+                                  for v in legs.values())
+    assert {v["kind"] for v in legs.values()} == {"treasury_holding", "lockstake_owner_ink"}
+    assert config.CIRCULATING_ONCHAIN["Sky"]["subtract_when_complete"]["zero_before"] == "2025-08-25"
+    spec = credibility.circulating_input("Sky")
+    assert "sky_endowment_tokens" in spec["what"] and "CoinGecko counts them" in spec["ref"]["note"]
+
+
+def test_3c_lockstake_ink_sums_the_vat_ink_of_every_urn_the_engine_lists():
+    from fetch.chain import ChainReader
+
+    class Fn:
+        def __init__(self, v):
+            self.v = v
+
+        def call(self, block_identifier=None):
+            return self.v
+
+    class Funcs:
+        def ilk(self):
+            return Fn(b"LSEV2-SKY-A".ljust(32, b"\0"))
+
+        def vat(self):
+            return Fn("0x" + "35" * 20)
+
+        def ownerUrnsCount(self, o):
+            return Fn(2)
+
+        def ownerUrns(self, o, i):
+            return Fn(["0x" + "aa" * 20, "0x" + "bb" * 20][i])
+
+        def urns(self, ilk, u):
+            return Fn(({"0x" + "aa" * 20: 0, "0x" + "bb" * 20: 2_714_074_035 * 10 ** 18}[u], 7))
+
+    class C:
+        functions = Funcs()
+
+    class W3:
+        class eth:  # noqa: N801
+            @staticmethod
+            def contract(address=None, abi=None):
+                return C()
+    r = ChainReader.__new__(ChainReader)
+    r.at_block, r.pacers = {}, {}
+    r.web3 = lambda chain: W3()
+    r.checksum = lambda a: a
+    assert r.lockstake_ink("ethereum", "0xengine", "0xowner") == pytest.approx(2_714_074_035.0)

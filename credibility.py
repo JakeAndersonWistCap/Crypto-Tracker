@@ -2494,13 +2494,19 @@ def circulating_input(name: str) -> dict:
     if config.coingecko_counts_total(name) and ours_m == "circulating_supply_onchain":
         # our set is primary (Sky since the full sweep, 2026-10-07) and CoinGecko counts every token: the like-for-like
         # comparison is our on-chain TOTAL against CoinGecko; ours is stricter by exactly the subtracted balances
+        # G18-3c: a leg taken out once its history is complete (Sky's endowments) is named, with its state
+        swc = spec.get("subtract_when_complete") or {}
+        extra = f" + {swc['metric']} ({swc.get('state') or 'not yet built'})" if swc else ""
+        note = spec.get("project_definition") or spec.get("decision", "")
+        if spec.get("endowment_note"):
+            note = f"{note} | {spec['endowment_note']}"
         return {"what": f"Circulating as CoinGecko counts it = OUR TOTAL ({spec['total']}); ours ({ours_m}) is stricter "
-                        f"by {' + '.join(spec.get('subtract') or ())}",
+                        f"by {' + '.join(spec.get('subtract') or ())}{extra}",
                 "ours": {"metric": spec["total"], "window": "now"}, "fmt": '#,##0;(#,##0);-',
                 "ref": {"metric": "circulating_supply", "window": "now", "tol": 2.0,
                         "source": "CoinGecko circulating_supply — it counts (almost) every token, so it is compared "
                                   "with our on-chain total, not with our stricter circulating",
-                        "note": spec.get("project_definition") or spec.get("decision", "")}}
+                        "note": note}}
     if config.coingecko_counts_total(name) and ours_m == "circulating_supply":
         # CoinGecko counts every token (Sky): its like-for-like on-chain figure is our TOTAL
         return {"what": f"Circulating as the ratios use it = CoinGecko's, which counts every token: set against OUR "

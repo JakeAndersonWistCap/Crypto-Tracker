@@ -529,6 +529,34 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11cu. Round G18 — the last wiring gaps (2026-10-26)
+
+**Run after pulling (PowerShell 5.1, repo root), in this order.** No new source or endpoint: Plume's claims move from
+explorer.plume.org to rpc.plume.org (the RPC every Plume reader already uses).
+1. `python near_lockups_weekly.py` — the weekly NEAR lockup read (~2.5 h). Its last stored read is 2026-10-11, so the
+   lockup rule could not form after 10-21 and NEAR's headline circulating fell back to CoinGecko (the guard's violation).
+   windows/daily_run.ps1 runs it weekly; a plain `python token_metrics.py` does not. PASTE BACK its last line.
+2. `python token_metrics.py` — the normal daily run. It opens with CLEAN-UP G18-2 (any row the G17 Plume claims scan
+   stored). New in it: tier plume_claims ("plume_airdrop_claims_tokens: reconciled to the wei at block … — Nest Season One
+   3,532 claim(s) 12,788,561.26 WPLUME …; Plume Points Season 2 8,799 claim(s) 6,791,804.36 …"), tier defillama_rwa_share
+   ("RWA turn IN PROGRESS — n of N"), the Sky endowment legs (chain tier: endowment_sff_/ff_liquid and _locked), the Sky
+   (d) scan with the two Atlas budget Safes as holders (their history seeds; resumes if the tier runs out), and Pendle's
+   Berachain seed now caching as it goes. PASTE BACK those lines, plume_staking's lines, and explorer_l2:berachain's.
+3. `python archive_backfill.py --run --project Sky --budget-min 60` — fills sky_endowment_tokens from 2025-08-25 (pinned
+   archive reads). Re-run until its coverage shows every day; the endowment subtraction switches on in the build that
+   holds every day (Credibility's Sky circulating row says "PENDING — held on n of N day(s)" until then).
+4. `python check_offline_items.py wiring_complete` — PASTE BACK the whole output. Target: "WIRING COMPLETE".
+5. `python measuring_guard.py --newer metrics.db` — PASTE BACK the VERDICT. Target: 0 violations.
+
+**What to look for.** NEAR's circulating / market cap read the lockup rule again (source "lockups read 2026-10-2x");
+had the weekly read not run, they read "BLOCKED — NEAR'S LOCKUP RULE CANNOT FORM ON …" with the read's age — never
+CoinGecko's figure. NEAR's Credibility gains "Total supply — ours vs the chain indexer's own total" (PASS expected:
+CoinGecko 1,309,976,215 vs NearBlocks 1,310,001,847 on 10-26). Plume's two market-share cells read MISSING C "valid from
+<date>" while the turn is part-way, then the share. coverage_audit's "(all)" insider row reads MISSING E. Sky's Flows (d)
+history changes: the 320M of 2024-09-30 and the 96M to the Launch Project leave it (internal now); what those two Safes
+paid out counts on the day it left. Plume's Flows (c) = the two campaigns' claims only (19,580,365.62 WPLUME, 2026-05-11
+.. 09-02).
+
 ## 11ct. Round G17 — finish the wiring outside Aerodrome and World Mobile (2026-10-23)
 
 **Run after pulling (PowerShell 5.1, repo root), in this order.** No new source or endpoint; the one new run pattern is

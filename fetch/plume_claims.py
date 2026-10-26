@@ -123,8 +123,9 @@ class PlumeClaims:
         return out
 
     def _remaining(self, uuid: str, block: int) -> int:
-        """campaigns(id).amount at the pinned block (selector 0x50b4aebe)."""
-        data = "0x50b4aebe" + campaign_topic(uuid)[2:]
+        """campaigns(id).amount at the pinned block (the selector computed from the signature, never hand-written)."""
+        from eth_utils import keccak                       # noqa: PLC0415
+        data = "0x" + keccak(text="campaigns(bytes16)")[:4].hex() + campaign_topic(uuid)[2:]
         res = self._rpc("eth_call", [{"to": config.PLUME_CLAIM["contract"], "data": data}, hex(block)])
         return _words(res)[2]
 

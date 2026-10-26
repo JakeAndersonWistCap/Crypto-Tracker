@@ -30733,12 +30733,13 @@ FLOW_LINE_EVIDENCE.update({
     ("Sky", "Outflows beside: ecosystem / grants (d)"): {
         "verdict": "pending", "why": "SKY out of the Pause Proxy 0xbE8E3e36… to anything but the farm distributors and "
         "0x0 (Blockscout token-transfers): Q0..Q-2 read 0; Q-3/Q-4 hold ~11.4M SKY of delegate/core payments and, on "
-        "2025-08-25, 1,977,443,914 SKY to Safe 0xca5183FB… — that Safe must be classified (spend or an internal Star "
-        "allocation) before the scan is counted"},
+        "2025-08-25, 1,977,443,914 SKY to Safe 0xca5183FB… — classified G17/G18-3: that Safe is SKY_FRONTIER_FOUNDATION, "
+        "an endowment (a holder, internal, non-circulating); every recipient is labelled in config.SKY_D_RECIPIENTS"},
     ("Sky", _M_LINE): {
-        "verdict": "pending", "why": "SKY's mint capability (PauseProxy ward) is unused toward issuer wallets per the "
-        "research read of 2026-10-20, but the totalSupply rise is MKR->SKY conversions, not issuer mints; the route is a "
-        "Transfer(from 0x0) scan to the Pause Proxy — not built"},
+        "verdict": "pending", "why": "CORRECTED G18-4 (2026-10-26): the 2026-10-20 read that SKY's mint capability was "
+        "unused toward issuer wallets was wrong — SKY was minted to the Pause Proxy 16 times (426,792,000, 2024-09-30.."
+        "2025-05-02), each a conversion of treasury MKR through MKR_SKY_LEGACY passed straight on (config.SKY_PAUSE_MINTS); "
+        "not new supply. Wired G17-1d: the Transfer(from 0x0) scan sky_issuer_mints"},
     ("Aethir", "Outflows beside: unlocks (e)"): {
         "verdict": "pending", "why": "team (18-month cliff, 36 linear) and investor (12-month cliff, 24 linear) "
         "schedules from listing 2024-06-12 are published, but the allocation shares are on the docs' chart image only "
@@ -32283,3 +32284,131 @@ RUN_CLEANUPS = RUN_CLEANUPS + (
      "why": "the G17 scan counted every campaign on Hedgey's shared contract; replaced by the two campaign ids over "
             "rpc.plume.org (G18 2c)"},
 )
+
+# G18-3 SKY (d), CLASSIFIED BEFORE IT IS SHOWN. sky_ecosystem_out reproduced from chain logs (71 transfers, 439,400,000
+# SKY; transfers among the holders left out) and every recipient labelled from spells-mainnet @0cdb284b. Jake 2026-10-26:
+# (a) a DssVest is a pass-through; (b) SKY to the rewards distributors is incentives; (c) the endowments are
+# non-circulating. The two Atlas budget Safes are issuer-side pass-throughs like a vest: HOLDERS of the scan, so the
+# Pause Proxy -> Safe leg is internal and what each sends on to anyone outside the holders counts (d) when it leaves.
+_SKY_WALLETS_SRC = ("https://raw.githubusercontent.com/sky-ecosystem/spells-mainnet/0cdb284be3772f9686f0605610565faf130b76ef/"
+                    "src/test/addresses_wallets.sol (L149, L152, L161, L164), read 2026-10-26")
+SKY_ATLAS_BUDGET_SAFES = {
+    "LIQUIDITY_BOOTSTRAPPING": "0xD8507ef0A59f37d15B5D7b630FA6EEa40CE4AFdD",   # Atlas A.5.5.1.9; 320M on 2024-09-30
+    "LAUNCH_PROJECT_FUNDING": "0x3C5142F28567E6a0F172fd0BaaF1f2847f49D02F",    # Accessibility Scope, Atlas A.5.6
+}
+# every recipient of the 71 transfers: (label, primary source, class). (d) = counted as ecosystem / grant spend.
+SKY_D_RECIPIENTS = {
+    "0xd8507ef0a59f37d15b5d7b630fa6eea40ce4afdd": ("LIQUIDITY_BOOTSTRAPPING (Safe)", "addresses_wallets.sol L151-152; "
+        "archive/2024-09-27 L90, L164-188", "issuer-side pass-through — a holder (G18-3); 251.2M sent back to SFF"),
+    "0x3c5142f28567e6a0f172fd0baaf1f2847f49d02f": ("LAUNCH_PROJECT_FUNDING (Safe)", "addresses_wallets.sol L148-149; "
+        "archive/2025-01-23 L88, L122-130", "issuer-side pass-through — a holder (G18-3)"),
+    "0xb6c09680d822f162449cdfb8248a7d3fc26ec9bf": ("BLUE", "addresses_wallets.sol L189; archive/2025-01-09 L184-189 "
+        "(Atlas Core Development SKY payments)", "(d)"),
+    "0x9e72629df4fcaa2c2f5813fbbdc55064345431b1": ("VOTEWIZARD (EndgameEdge facilitator)", "archive/2025-01-23 L99, "
+        "L261-271", "(d) — MCD_VEST_SKY_TREASURY claims"),
+    "0xfca6e196c2ad557e64d9397e283c2afe57344b75": ("ECOSYSTEM_FACILITATOR", "archive/2025-01-23 L101, L285-295",
+        "(d) — MCD_VEST_SKY_TREASURY claims"),
+    "0xf3f868534fad48ef5a228fe78669cf242745a755": ("JANSKY (facilitator, Safe)", "archive/2025-01-23 L100, L273-283",
+        "(d) — MCD_VEST_SKY_TREASURY claims"),
+    "0x9244f47d70587fa2329b89b6f503022b63ad54a5": ("CLOAKY_2", "addresses_wallets.sol L187; archive/2025-02-21 L103, "
+        "L370-371", "(d)"),
+    "0x869b6d5d8fa7f4ffdaca4d23ffe0735c5ed1f818": ("CLOAKY", "addresses_wallets.sol L186; archive/2025-01-09 L86, "
+        "L191-192", "(d)"),
+}
+for _sp in PROJECT_BY_NAME["Sky"]["log_scans"]:
+    if _sp["key"] == "sky_ecosystem_out":
+        _sp["holders"] = [*_sp["holders"], *SKY_ATLAS_BUDGET_SAFES.values()]
+        _sp["attribution_sources"] = [*_sp["attribution_sources"], _SKY_WALLETS_SRC]
+METRICS["sky_ecosystem_out_tokens"]["label"] = (
+    "SKY leaving the Pause Proxy, the two Ecosystem Entity endowments and the two Atlas budget Safes (Liquidity "
+    "Bootstrapping, Launch Project) for anyone but each other, the farm distributors, the converters, the LockstakeEngine "
+    "and 0x0 (log scan, reconciled) — Flows (d); the treasury vest's claims are paid from the Pause Proxy, so counted")
+# (a) the treasury vest never holds SKY: it pulls each claim from the Pause Proxy by allowance (no Pause Proxy -> vest leg)
+SKY_TREASURY_VEST = {"address": "0x67eaDb3288cceDe034cE95b0511DCc65cf630bB6", "label": "MCD_VEST_SKY_TREASURY",
+                     "source": "addresses_mainnet.sol L516; archive/2025-01-23 L201-217",
+                     "how": "transferFrom(Pause Proxy, beneficiary) on each vest() — the Pause Proxy -> beneficiary "
+                            "transfers ARE the claims; nothing to treat as internal"}
+# (b) the distributors stay out of (d) and are not dropped: the SKY the farms pay is rewards paid — (c) mint-funded,
+# (e) paid from Pause Proxy reserves (OUTFLOW_CATEGORIES Sky, REWARD_FUNDING). Moving it to (b) is put to Jake.
+
+# G18-3c THE TWO ENDOWMENTS ARE NON-CIRCULATING (issuer-side, G9 N; Jake 2026-10-26): their liquid SKY + their SKY LOCKED in
+# Lockstake (Vat ink of every urn the engine lists for them). First SKY to either: block 23,218,581, 2025-08-25 (the
+# 2025-08-21 spell's cast, tx 0x9dff3cf2…) — 0 before that day by evidence. The subtraction switches on only when the
+# series is held for every day from then (archive_backfill.py fills it): never a circulating series on two bases.
+SKY_ENDOWMENT = {"metric": "sky_endowment_tokens", "zero_before": "2025-08-25", "funded_block": 23_218_581,
+                 "engine": PROJECT_BY_NAME["Sky"]["contracts"]["lockstake_engine"]["address"],
+                 "zero_before_source": "eth.blockscout.com getLogs, every SKY Transfer to each endowment (read "
+                                       "2026-10-26): the first is block 23,218,581 (2025-08-25 14:00:23 UTC)",
+                 "read_2026_10_26": {"SKY_FRONTIER_FOUNDATION": (37_685_589.87, 2_714_074_035.02),
+                                     "FORTIFICATION_FOUNDATION": (95_532.80, 216_686_568.58)}}
+METRICS["sky_endowment_tokens"] = {
+    "label": "SKY held by Sky's two Ecosystem Entity endowments (SKY Frontier Foundation, Fortification Foundation): "
+             "liquid + locked in Lockstake (Vat ink) — non-circulating, issuer-side (G18-3c)",
+    "kind": "stock", "unit": "tokens", "archetypes": [3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e11,
+    "only_projects": ("Sky",)}
+CONTRACT_KINDS["lockstake_owner_ink"] = {"metric": None, "call": "ink", "scale": "decimals"}
+KIND_METRIC["lockstake_owner_ink"] = "sky_endowment_tokens"     # (each spec also names it, metric_override)
+for _k, _addr in SKY_ENDOWMENTS.items():
+    _short = "sff" if _k.startswith("SKY_FRONTIER") else "ff"
+    PROJECT_BY_NAME["Sky"]["contracts"][f"endowment_{_short}_liquid"] = _contract(
+        _addr, "ethereum", "treasury_holding", "SKY", _SKY_WALLETS_SRC, verified="2026-10-26",
+        purpose=f"{_k} — its liquid SKY (one leg of sky_endowment_tokens)", provenance="spells-mainnet (G18-3c)",
+        holder_has_code=False, metric_override="sky_endowment_tokens", required_component=True)
+    PROJECT_BY_NAME["Sky"]["contracts"][f"endowment_{_short}_locked"] = _contract(
+        _addr, "ethereum", "lockstake_owner_ink", "SKY", _SKY_WALLETS_SRC, verified="2026-10-26",
+        purpose=f"{_k} — its SKY locked in Lockstake: Σ Vat.urns(engine.ilk(), urn).ink over engine.ownerUrns(owner, i)",
+        provenance="spells-mainnet (G18-3c); LockstakeEngine 0xCe01C90d… (addresses_mainnet L530)",
+        metric_override="sky_endowment_tokens", required_component=True)
+    PROJECT_BY_NAME["Sky"]["contracts"][f"endowment_{_short}_locked"]["engine"] = SKY_ENDOWMENT["engine"]
+CIRCULATING_ONCHAIN["Sky"]["subtract_when_complete"] = SKY_ENDOWMENT
+CIRCULATING_ONCHAIN["Sky"]["endowment_note"] = (
+    "Ours also takes out Sky's two Ecosystem Entity endowments (SKY Frontier Foundation, Fortification Foundation: liquid "
+    "+ locked in Lockstake, 2,968.5M SKY on 2026-10-26) as issuer-side (Jake 2026-10-26, G18-3c); CoinGecko counts them")
+
+# G18-4 THE 16 MINTS TO THE PAUSE PROXY, EACH MATCHED TO ITS SPELL: every one a CONVERSION of treasury MKR through
+# MKR_SKY_LEGACY (the tx burns the MKR, emits MkrToSky; 24,000 SKY per MKR), passed straight on — not new supply.
+# (date, block, tx, SKY, spell, purpose); spells-mainnet @0cdb284b archive/<spell>/DssSpell.sol lines as cited.
+SKY_PAUSE_MINTS = (
+    ("2024-09-30", 20_863_927, "0xfc1d79ef313c8b5af720830fb9f7f029bf700cbdfc0a472e12df1c72cce6be43", 320_016_000,
+     "2024-09-27", "L181-188: 13,334 MKR converted; 320M to LIQUIDITY_BOOTSTRAPPING"),
+    ("2025-01-13", 21_616_020, "0xdfdb92656de7a33727914e3013c214287ed0c59a02ce6f6c5e3c63fcd0fb8650", 550_000,
+     "2025-01-09", "L184-189: Atlas Core Development SKY payment, BLUE"),
+    ("2025-01-13", 21_616_020, "0xdfdb92656de7a33727914e3013c214287ed0c59a02ce6f6c5e3c63fcd0fb8650", 438_000,
+     "2025-01-09", "L191-192: CLOAKY"),
+    ("2025-01-28", 21_723_481, "0x7236e4886857aa0c6cf4a2f1e784158b6a2e698515f64898f41c7e4ae27ba2e9", 24_000_000,
+     "2025-01-23", "L122-130: Launch Project Funding"),
+    ("2025-01-28", 21_723_481, "0x7236e4886857aa0c6cf4a2f1e784158b6a2e698515f64898f41c7e4ae27ba2e9", 550_000,
+     "2025-01-23", "L183-184: BLUE"),
+    ("2025-01-28", 21_723_481, "0x7236e4886857aa0c6cf4a2f1e784158b6a2e698515f64898f41c7e4ae27ba2e9", 438_000,
+     "2025-01-23", "L186-187: CLOAKY"),
+    ("2025-01-28", 21_723_481, "0x7236e4886857aa0c6cf4a2f1e784158b6a2e698515f64898f41c7e4ae27ba2e9", 14_976_000,
+     "2025-01-23", "L201-217: 624 MKR converted to fund MCD_VEST_SKY_TREASURY (14,256,000 approved, L258-296)"),
+    ("2025-02-24", 21_916_640, "0x395e70dfbb3b3a23fbfd0e7a4ad659c77302e2f5923606e006e981097cc27ef9", 550_000,
+     "2025-02-21", "L363-368: BLUE"),
+    ("2025-02-24", 21_916_640, "0x395e70dfbb3b3a23fbfd0e7a4ad659c77302e2f5923606e006e981097cc27ef9", 438_000,
+     "2025-02-21", "L370-371: CLOAKY_2"),
+    ("2025-03-10", 22_016_933, "0xb12149a559725f28a742a85219ea71b824652ebe5f4b125480b5dbca3395aa2a", 9_600_000,
+     "2025-03-06", "L225-233: Launch Project"),
+    ("2025-03-24", 22_117_224, "0xfa915f838ad5b31fe05d1f31669af9496e65c5cc0656695298bd14dc8b6793ab", 330_000,
+     "2025-03-20", "L230-235: BLUE"),
+    ("2025-03-24", 22_117_224, "0xfa915f838ad5b31fe05d1f31669af9496e65c5cc0656695298bd14dc8b6793ab", 288_000,
+     "2025-03-20", "L237-238: CLOAKY_2"),
+    ("2025-04-21", 22_317_839, "0xc147db030f1033e0fcc151f8c74236eee05604d16be7403f5becf193b2b1e45f", 24_000_000,
+     "2025-04-17", "L322-330: Launch Project"),
+    ("2025-04-21", 22_317_839, "0xc147db030f1033e0fcc151f8c74236eee05604d16be7403f5becf193b2b1e45f", 330_000,
+     "2025-04-17", "L380-385: BLUE"),
+    ("2025-04-21", 22_317_839, "0xc147db030f1033e0fcc151f8c74236eee05604d16be7403f5becf193b2b1e45f", 288_000,
+     "2025-04-17", "L387-388: CLOAKY_2"),
+    ("2025-05-02", 22_396_576, "0xf84bbb02e89091769f32e593856bb70a9886b1f425fef22ee6e7dfc8e6e3fa1b", 30_000_000,
+     "2025-04-30", "L140-148: Launch Project"),
+)
+METRICS["sky_issuer_mint_tokens"]["label"] = (
+    "SKY minted to the Pause Proxy (Transfer from 0x0, log scan, reconciled) — every one a conversion of TREASURY MKR "
+    "through MKR_SKY_LEGACY, passed straight on (config.SKY_PAUSE_MINTS: 16, 426,792,000 SKY, last 2025-05-02); not new "
+    "supply — the memo 'minted to issuer-side wallets'")
+# shown (G12 rule: a supply series is shown on its archetype tab) — the leg Sky's circulating takes out once complete
+DETAIL_COLUMNS.append(
+    {"tab": "A3", "after": "Detail — Treasury holding",
+     "header": "Detail — SKY held by Sky's two Ecosystem Entity endowments (liquid + locked in Lockstake; "
+               "non-circulating, G18-3c; tokens, latest)",
+     "cells": {"Sky": ("sky_endowment_tokens", "now")}})

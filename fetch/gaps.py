@@ -952,6 +952,15 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
     if metric in ("market_share_2_pct", "market_share_2_category_usd") and name in config.MARKET_SHARE_2:
         return ("fetch/business.py stored no second-basis market share this run — a chain in the 13-chain fee set "
                 "may not have answered", "Check the Run Log's business market_share_2_pct line for this project.")
+    if metric in ("market_share_pct", "market_share_category_usd") and (config.MARKET_SHARE.get(name) or {}).get(
+            "how") == "rwa_turn":
+        return ("the weekly RWA turn (fetch/llama.DefiLlama.rwa_share, tier defillama_rwa_share) has not completed — "
+                "60 protocol calls a run until every RWA-category protocol is read",
+                "Check the Run Log's defillama market_share_pct line: IN PROGRESS n of N, or the protocols that failed.")
+    if metric == "plume_airdrop_claims_tokens" and name == "Plume":
+        return ("the campaign-filtered claims read (fetch/plume_claims.py, rpc.plume.org) stored nothing this run — it "
+                "stores only when both campaigns reconcile to the wei",
+                "Check the Run Log's plume_claims line: it names a campaign that did not reconcile, or the RPC error.")
     if metric in ("market_share_pct", "market_share_category_usd") and name in config.MARKET_SHARE:
         return ("fetch/business.py stored no market share this run — a declared peer may not have answered "
                 f"({config.MARKET_SHARE[name].get('basis', '')[:120]})",
