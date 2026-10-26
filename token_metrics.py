@@ -991,6 +991,7 @@ def _mark_stored(frame):
 def apply_run_cleanups(st, run_id: str, log) -> list[str]:
     """config.RUN_CLEANUPS (G14 1): delete exactly the rows each declared one-off names, logging every row removed —
     console and Run Log. Returns the lines logged. A second run finds nothing to remove."""
+    from fetch.logcache import DailyChecks
     lines = []
     for c in config.RUN_CLEANUPS:
         for proj in c["projects"]:
@@ -1021,6 +1022,14 @@ def apply_run_cleanups(st, run_id: str, log) -> list[str]:
             if not rows:
                 continue
             st.conn.execute("DELETE " + q[0], q[1])
+            # D2-7: THE REMOVED SERIES IS RE-READ THIS RUN — its daily read marks go with its rows (Jake's 17:37 run of
+            # 2026-10-26: D1-1 removed Near's rows and the DefiLlama tier then skipped Near as "read complete earlier
+            # today")
+            for src in sorted({r[2] for r in rows}):
+                for k in DailyChecks().forget_series(proj, c["metric"], src):
+                    line = f"CLEAN-UP {c['id']}: daily read mark {k} cleared — {proj} / {c['metric']} is re-read this run"
+                    log.warning("%s", line)
+                    lines.append(line)
             for d, v, src in rows:
                 line = (f"CLEAN-UP {c['id']}: removed {proj} / {c['metric']} {str(d)[:10]} from {src} "
                         f"({float(v):,.2f}) — {c['why']}")

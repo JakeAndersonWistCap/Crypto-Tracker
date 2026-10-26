@@ -330,6 +330,31 @@ class DailyChecks:
                                                      sort_keys=True))
         return gone
 
+    def forget_series(self, project: str, metric: str, source: str = "") -> list:
+        """D2-7: drop every mark that would skip re-reading (project, metric) today — written at once — and return the
+        keys dropped: a per-project mark (`…:project:<project>`) whose `:metrics` list names the metric (key and list),
+        any `<prefix>:<project>:<metric>…` mark, and `<source head>:<project>` for the source the rows came from."""
+        head = str(source or "").split(":")[0]
+        with file_lock(self.f):
+            try:
+                state = json.loads(self.f.read_text())
+            except (OSError, ValueError):
+                state = {}
+            gone = set()
+            for k in state:
+                if k.endswith(f":project:{project}") and metric in str(state.get(k + ":metrics") or "").split(","):
+                    gone |= {k, k + ":metrics"}
+                parts = k.split(":")
+                if len(parts) >= 3 and parts[1] == project and parts[2] == metric:
+                    gone.add(k)
+                if head and k == f"{head}:{project}":
+                    gone.add(k)
+            gone &= set(state)
+            if gone:
+                atomic_write_text(self.f, json.dumps({k: v for k, v in state.items() if k not in gone},
+                                                     sort_keys=True))
+        return sorted(gone)
+
     def done(self, key: str, today: str) -> None:
         d = DailyChecks._defer
         if d["on"]:

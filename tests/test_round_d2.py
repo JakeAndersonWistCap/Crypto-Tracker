@@ -367,3 +367,51 @@ def test_5_the_cross_check_sums_the_same_utc_days_of_q0s_complete_epochs():
     row = config.CREDIBILITY["Pendle"]["in_revenue"]
     assert row["ref"]["tol"] == 10.0 and "BASIS" in row["ref"]["note"] and "airdrop" in row["ref"]["note"]
     assert "revenues_closed" not in config.PROJECT_BY_NAME["Pendle"]["spendle_epochs"]
+
+
+# ================================================================================================== 7
+def test_7_a_clean_up_that_removes_rows_clears_the_series_daily_read_mark(tmp_path, monkeypatch):
+    """Jake's 17:37 run of 2026-10-26: D1-1 removed Near's DefiLlama rows, then the DefiLlama tier skipped Near as
+    "read complete through 2026-10-25 earlier today" — the days stayed empty. The marks now go with the rows."""
+    import json
+    import logging
+    import store as sm
+    import token_metrics as tm
+    from fetch.logcache import DailyChecks
+    monkeypatch.setenv("TOKEN_METRICS_LOGCACHE", str(tmp_path / "cache"))
+    monkeypatch.setattr(config, "RUN_CLEANUPS", tuple(c for c in config.RUN_CLEANUPS if c["id"] == "D1-1"))
+    dc = DailyChecks()
+    dc.f.parent.mkdir(parents=True, exist_ok=True)
+    marks = {"defillama:project:Near": "2026-10-26",
+             "defillama:project:Near:metrics": "dex_volume_usd,fees_usd,intents_fees_usd,revenue_usd",
+             "defillama:project:Pendle": "2026-10-26", "defillama:project:Pendle:metrics": "fees_usd",
+             "merkl_campaigns:Morpho": "2026-10-26"}
+    dc.f.write_text(json.dumps(marks))
+    st = sm.Store(str(tmp_path / "metrics.db"))
+    st.upsert(pd.DataFrame([
+        {"date": "2026-10-23", "project": "Near", "metric": "dex_volume_usd", "value": 8.27e6,
+         "source": "defillama:dexs:near", "tier": 1},
+        {"date": "2026-10-22", "project": "Near", "metric": "intents_fees_usd", "value": 11_925.0,
+         "source": "defillama:near-intents", "tier": 1}]))
+    lines = tm.apply_run_cleanups(st, "r", logging.getLogger("t"))
+    left = json.loads(dc.f.read_text())
+    assert "defillama:project:Near" not in left and "defillama:project:Near:metrics" not in left
+    assert left["defillama:project:Pendle"] == "2026-10-26" and left["merkl_campaigns:Morpho"] == "2026-10-26"
+    assert dc.get("defillama:project:Near") is None                   # the DefiLlama tier reads Near again this run
+    assert any("daily read mark defillama:project:Near cleared" in x for x in lines)
+    # nothing left to remove: no mark is touched
+    dc.done("defillama:project:Near", "2026-10-26")
+    assert tm.apply_run_cleanups(st, "r2", logging.getLogger("t")) == []
+    assert dc.get("defillama:project:Near") == "2026-10-26"
+    st.close()
+
+
+def test_7_forget_series_matches_the_three_key_shapes(tmp_path):
+    import json
+    from fetch.logcache import DailyChecks
+    dc = DailyChecks(tmp_path)
+    dc.f.parent.mkdir(parents=True, exist_ok=True)
+    dc.f.write_text(json.dumps({"defillama_tvl:project:Near": "d", "defillama_tvl:project:Near:metrics": "tvl_usd",
+                                "chain:Near:dex_volume_usd:x": "d", "nearblocks:Near": "d", "nearblocks:Plume": "d"}))
+    gone = dc.forget_series("Near", "dex_volume_usd", "nearblocks:x")
+    assert gone == ["chain:Near:dex_volume_usd:x", "nearblocks:Near"]       # tvl's list does not name the metric
