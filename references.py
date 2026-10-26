@@ -186,7 +186,11 @@ ROUTES: dict[tuple[str, str], tuple] = {
     ("Morpho", "fee_recipient"): ("zero_sum", "revenue_usd", 90),
     # D3 (2026-10-14): like for like — the off-Ethereum campaign SCHEDULE against Merkl's own rate. G2-D1: the schedule is
     # context only now ((b) is claims on every chain); this checks the context series, not (b)
-    ("Morpho", "merkl_rewards_rate"): ("mean", "merkl_campaigns_non_ethereum_tokens", 30),
+    # D2-3: a SCHEDULE figure (6,645.9/day = the campaigns' amounts); since D2 the series is what Merkl allocated to users
+    ("Morpho", "merkl_rewards_rate"): ("recorded", "schedule basis (the campaigns' amounts, 6,645.9 MORPHO/day): "
+                                       "merkl_campaigns_non_ethereum_tokens is ALLOCATED TO USERS since D2-3 (Jake "
+                                       "2026-10-26) — the creator's returns are out; like for like see "
+                                       "d2_merkl_base_campaign_allocated"),
     ("Fluid", "treasury_to_team_rewards"): ("event", "treasury_holding_tokens", 21, -1),
     ("Fluid", "treasury_to_team_agi3_locked"): ("event", "treasury_holding_tokens", 21, -1),
     ("Aethir", "dat_holding_axe_compute"): ("dat_file", "Axe Compute"),
@@ -258,8 +262,13 @@ G6_ROUTES = {
     # D1-2: Merkl campaign 0x0dfbe8e7… (199,378.3625 MORPHO, 2026-09-21 18:00 -> 10-21 18:00 UTC): a UTC-day SUM over
     # 09-21..10-21 took in 18 h of the previous campaign (4,984.46) and 6 h of the next (1,729.32) = the whole 6,714
     # gap — like for like, the 29 days wholly inside it, averaged, x 30
-    ('Morpho', 'g6_merkl_base_campaign_total'): ('mean_period_x', 'merkl_campaigns_non_ethereum_tokens', '2026-09-22',
-                                                 '2026-10-20', 30),
+    # D2-3: the campaign's AMOUNT is its schedule; the series is allocated to users since D2 — the same campaign's
+    # allocation (199,378.3625 less the 61,137.478 credited back to the creator at its end) is the like-for-like row
+    ('Morpho', 'g6_merkl_base_campaign_total'): ('recorded', "schedule basis (the campaign's amount, 199,378 MORPHO): "
+                                                 "merkl_campaigns_non_ethereum_tokens is ALLOCATED TO USERS since D2-3 "
+                                                 "(Jake 2026-10-26); like for like see d2_merkl_base_campaign_allocated"),
+    ('Morpho', 'd2_merkl_base_campaign_allocated'): ('mean_period_x', 'merkl_campaigns_non_ethereum_tokens',
+                                                     '2026-09-22', '2026-10-20', 30),
     ('Morpho', 'g6_merkl_arc_campaign'): ('recorded', 'recorded only: Arc campaign is paid on Ethereum (distributionChainId 1) — it lands in the Ethereum claims (merkl_morpho_out), not merkl_campaigns_non_ethereum_tokens'),
     ('Uniswap', 'g6_uni_total_supply_gross'): ('last', 'total_supply_gross'),
     ('Uniswap', 'g6_dead_balance'): ('last', 'burn_address_balance'),

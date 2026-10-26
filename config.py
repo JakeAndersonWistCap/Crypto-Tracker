@@ -32455,3 +32455,36 @@ for _m in ("staking_apr_published", "pendle_epoch_apr_published"):
         "reopen_if": "Pendle publishes a non-zero sPENDLE epoch APR (the reader stores one in (0, 1) the day it appears)",
     })
     UNAVAILABLE_BY_KEY[("Pendle", _m)] = UNAVAILABLE[-1]
+
+
+# ===================================================================================================================
+# ROUND D2 (Jake 2026-10-26, head 6537f98) — the data phase, round 2. SPEC §19 D2.
+# ===================================================================================================================
+# D2-3 MERKL = ALLOCATED TO USERS (Jake's decision 3). Each root campaign counts Merkl's allocated total under it
+# (/v4/rewards/total) less what Merkl credited back to its creator (/v4/users/{creator}/rewards/campaign/{id}, reasons
+# end_campaign / reallocation / Invalid / no_recipient — fetch/merkl_campaigns.RETURN_REASONS); allocated-but-unclaimed
+# stays in; a running campaign counts to the engine's computedUntil; a read that fails stores nothing. Read live
+# 2026-10-26: Morpho 2025-10-01..2026-10-25 3,580,102 -> 2,983,073 MORPHO (all-time 4,287,323 -> 3,637,193; the
+# creator's credits 726,409 = end_campaign 437,674 + reallocation 190,136 + Invalid 96,915 + no_recipient 1,684);
+# Plume all-time 35,130,994 -> 35,129,039 WPLUME/PLUME (its creators got back only cancellation refunds, already out
+# since D1; the −1,955 is two Aave campaigns' budget Merkl never allocated).
+METRICS["merkl_campaigns_non_ethereum_tokens"]["label"] = (
+    "MORPHO ALLOCATED TO USERS per day by the DAO multisig 0xF057afee…'s Merkl campaigns PAID OFF Ethereum (Base, "
+    "Katana, Arbitrum — distributionChainId; Arc / Tempo / Unichain campaigns are paid on Ethereum and sit in the "
+    "claims): each root campaign's allocated total less what Merkl credited back to the creator, spread evenly over its "
+    "[start, end) by UTC day (Merkl API v4, per chain; D2-3)")
+METRICS["merkl_campaigns_plume_tokens"]["label"] = (
+    "PLUME ALLOCATED TO USERS per day by Merkl campaigns (WPLUME on Plume + PLUME on Ethereum) — each root campaign's "
+    "allocated total less what Merkl credited back to its creator, spread evenly over its [start, end) by UTC day "
+    "(Merkl API v4, PUBLISHED by the distributor; D2-3)")
+OUTFLOW_CATEGORIES["Morpho"]["pending"] = OUTFLOW_CATEGORIES["Morpho"]["pending"].replace(
+    "the Merkl schedule (merkl_campaigns_non_ethereum_tokens)",
+    "Merkl's allocation to users (merkl_campaigns_non_ethereum_tokens)")
+CREDIBILITY_WIRING["Morpho"]["in_merkl_off_ethereum"]["what"] = (
+    "Off-Ethereum MORPHO rewards Q0 — our claims (the Arbitrum + Base + Katana legs of emissions_tokens) vs what the "
+    "DAO's Merkl campaigns paid off Ethereum allocated to users")
+CREDIBILITY_WIRING["Morpho"]["in_merkl_off_ethereum"]["ref"]["why"] = (
+    "recorded, not judged: emissions_tokens INCLUDES the off-Ethereum claims (it is the per-day sum of the Ethereum, "
+    "Arbitrum, Base and Katana claims, G2-D1); this row sets the three off-Ethereum claim legs against what Merkl "
+    "ALLOCATED TO USERS on those chains (D2-3: the creator's returns out) — claims lag allocation, so the gap is "
+    "timing (allocated, not yet claimed) as well as coverage")

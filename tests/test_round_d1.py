@@ -89,7 +89,10 @@ def test_1_the_stale_rows_are_cleaned_by_declared_clean_ups():
 # ================================================================================================== 2
 def test_2_the_merkl_campaign_total_is_compared_like_for_like():
     import references as rf
-    route = rf.ROUTES[("Morpho", "g6_merkl_base_campaign_total")]
+    # D2-3: the campaign's amount (a schedule figure) is recorded since the series became allocated to users; the same
+    # like-for-like window now compares the campaign's allocation (d2_merkl_base_campaign_allocated)
+    assert rf.ROUTES[("Morpho", "g6_merkl_base_campaign_total")][0] == "recorded"
+    route = rf.ROUTES[("Morpho", "d2_merkl_base_campaign_allocated")]
     assert route == ("mean_period_x", "merkl_campaigns_non_ethereum_tokens", "2026-09-22", "2026-10-20", 30)
     # the repo's own daily series around the campaign: 6,645.954 a day inside it, 6,713.77 on 10-21 (boundary)
     d = pd.date_range("2026-09-15", "2026-10-25")

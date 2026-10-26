@@ -240,9 +240,10 @@ def test_morpho_b_against_the_merkl_reference():
     import references as rf
     g = _groups("Morpho", _morpho_rows())
     r = {x["metric"]: x for x in rf.check(g)}["merkl_rewards_rate"]
-    # F5 (2026-10-14): the reference reads the same Merkl API our series does — same-source, so a match is
-    # LIVE-UNVERIFIED (it checks the arithmetic, not the figure), never VERIFIED
-    assert r["status"] == "LIVE-UNVERIFIED" and 6_500 < r["ours"] < 8_500 and "same-source" in r["detail"]
+    # F5 (2026-10-14): the reference reads the same Merkl API our series does — same-source, never VERIFIED.
+    # D2-3 (Jake 2026-10-26): the series is what Merkl ALLOCATED TO USERS; this reference is the campaigns' SCHEDULE
+    # (6,645.9/day), so it is recorded, not compared (the like-for-like row is d2_merkl_base_campaign_allocated)
+    assert r["status"] == "N/A BY DESIGN" and "schedule basis" in r["detail"]
 
 
 # --------------------------------------------------------------------------------------------------- B4 Aerodrome
