@@ -1181,7 +1181,7 @@ Funding: revenue (the default: the programme documented base)
 
 Basis: MORPHO rewards (Merkl campaigns): 2025-07-14..2026-10-12 budgets ~12.96M to suppliers (b) vs ~0.27M to borrowers (c) — the claims series is not split, so it sits in (b), the ~98% leg; MORPHO now runs on the borrow side only (merkl.xyz /v4/campaigns?tokenSymbol=MORPHO, read 2026-10-12)
 
-PENDING: unsplit between (b) and (c): the claims sit in (b), the historical ~98% leg; every chain on a claims basis (G2-D1) — the Merkl schedule (merkl_campaigns_non_ethereum_tokens) is shown as context and enters no calculation
+PENDING: unsplit between (b) and (c): the claims sit in (b), the historical ~98% leg; every chain on a claims basis (G2-D1) — Merkl's allocation to users (merkl_campaigns_non_ethereum_tokens) is shown as context and enters no calculation
 
 **Value flow statement**
 

@@ -1120,6 +1120,19 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
     r3["merkl_campaigns_plume_tokens"] = (
         "the Merkl campaigns reader (fetch/merkl_campaigns.py, api.merkl.xyz) stored nothing this run",
         "Check the Run Log's merkl_campaigns line for {name} (a chain that failed stores nothing).")
+    # D2: the round's new readers
+    r3["insider_stake_filing_tokens"] = (
+        "the filing reader (fetch/filing_statements.py) stored no confirmation: the page did not answer, or it no longer "
+        "serves the declared filing (same filed date, current, latest) with the declared answer",
+        "Check the Run Log's filing_statement line for {name}: it says what changed.")
+    r3["pendle_epoch_revenue_usd"] = (
+        "the sPENDLE epoch reader (fetch/pendle_epochs.py) stored no complete epoch's revenues less airdrop $ "
+        "(spendle/data did not answer, or a field is missing)",
+        "Check the Run Log's pendle_epochs line for {name}.")
+    r3["near_mpc_operator_payments_tokens"] = (
+        "the treasury.near payer scan (fetch/nearblocks.py, NearBlocks v3 receipts + v1.signer's participants) stored "
+        "nothing: no NEARBLOCKS_API_KEY, the operator list did not read, or the receipts did not reach 2026-01-29",
+        "Check the Run Log's nearblocks line for {name} (near_mpc_operator_payments_tokens).")
     for c in getattr(config, "PENDLE_RATE_CHECK", {}).get("chains", ()):
         r3[f"emissions_tokens_gauge_rate_{c}"] = (
             f"the subsidy-targeting reader (fetch/subsidy_targeting.py) has no complete UTC day with a rewardData sample "

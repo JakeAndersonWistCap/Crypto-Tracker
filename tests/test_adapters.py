@@ -1881,7 +1881,9 @@ def test_etherfis_two_addresses_have_two_roles_and_neither_is_read_as_a_balance(
     # THE TREASURY WAS WIRED 2026-09-23 ON INSTRUCTION (as treasury_holding, a HOLDING — the
     # right shape for a treasury, unlike the buyback flow). The basis is an aggregator plus the
     # instruction, and the contract entry says so rather than wearing a clean 'verified'.
-    wired = [c for c in p["contracts"].values() if c.get("address", "").lower() == tr["address"].lower()]
+    # (D2-4: its sETHFI SHARES are read for the insider check — another token, not its ETHFI)
+    wired = [c for c in p["contracts"].values() if c.get("address", "").lower() == tr["address"].lower()
+             and c.get("metric_override") != "insider_stake_shares"]
     assert len(wired) == 1 and wired[0]["kind"] == "treasury_holding"
     assert "AGGREGATOR-SOURCED" in wired[0]["provenance"] and tr["wired_on"] == "2026-09-23"
     print("ether.fi ok: buyback wallet and treasury told apart by three sources, and the "
@@ -25627,12 +25629,13 @@ def test_circulating_decisions_are_applied_consistently_and_coingecko_free_float
         assert "noncirculating_holding_tokens" in config.circulating_onchain(n)["subtract"], n
     # THE FULL SWEEP (2026-10-07): wallets the projects themselves document, each with its first-party source and date
     # E1 (2026-10-14): + ether.fi's two further Treasury wallets from its own allocations page
-    for n, (cnt, sym, src) in {"Ether.fi": (10, "ETHFI", "https://"), "Morpho": (8, "MORPHO", "https://"),
+    # D2-4 (Jake 2026-10-26): + ether.fi's two Q18 Foundation wallets, + the six chain.link/circulating-supply wallets
+    for n, (cnt, sym, src) in {"Ether.fi": (12, "ETHFI", "https://"), "Morpho": (8, "MORPHO", "https://"),
                                "Aerodrome": (4, "AERO", "https://blockworks.com/"),
                                "Uniswap": (5, "UNI", "https://github.com/Uniswap/docs/blob/1c7597d7"),
                                # + the IGP-137 custody (probes15), sourced to its address page and Jake's trace
                                "Fluid": (9, "FLUID", ("https://github.com/Instadapp/", "https://etherscan.io/address/")),
-                               "Chainlink": (3, "LINK", "https://blog.chain.link/"),
+                               "Chainlink": (9, "LINK", ("https://blog.chain.link/", "https://chain.link/")),
                                # + the Maple-controlled Safe 0x58BE (Jake 2026-10-12 evening, decision 1)
                                "Maple": (3, "SYRUP", ("https://blockworks.com/", "https://etherscan.io/address/"))}.items():
         rows = config._NONCIRC_WALLETS_FIRST_PARTY[n]
@@ -25645,6 +25648,7 @@ def test_circulating_decisions_are_applied_consistently_and_coingecko_free_float
                                              else "noncirculating_holding_tokens")
                    and c["verified"] == ("2026-10-12" if k == "noncirc_ssf_safe"
                                          else "2026-10-14" if k in ("noncirc_treasury_docs_3", "noncirc_treasury_docs_4")
+                                         else "2026-10-26" if k.startswith(("noncirc_cl_page_", "noncirc_foundation_q18_"))
                                          else "2026-10-07")
                    and c["source_url"].startswith(src) and c["expected_symbol"] == sym
                    and c["holder_has_code"] is False for k, c in cs.items()), n

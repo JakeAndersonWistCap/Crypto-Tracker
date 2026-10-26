@@ -32501,18 +32501,18 @@ _D2_READ = "2026-10-26"
 _LINK_PAGE = "https://chain.link/circulating-supply"
 _D2_CL = [(f"cl_page_{_i}", _a, "ethereum", "LINK", _LINK_PAGE, _D2_READ,
            "non-circulating wallet listed on chain.link/circulating-supply (read 2026-10-26)")
-          for _i, _a in enumerate(("0x98c63b7b319dfbdf3d811530f2ab9dfe4983af9d",
-                                   "0x75398564ce69b7498da10a11ab06fd8ff549001c",
-                                   "0x5560d001f977df5e49ead7ab0bdd437c4ee3a99e",
-                                   "0xbe6977e08d4479c0a6777539ae0e8fa27be4e9d6",
-                                   "0xdad22a85ef8310ef582b70e4051e543f3153e11f",
-                                   "0xe0362f7445e3203a496f6f8b3d51cbb413b69be2"), start=1)]
+          for _i, _a in enumerate(("0x98C63b7B319dFBDF3d811530F2ab9DfE4983Af9D",
+                                   "0x75398564ce69B7498dA10a11ab06Fd8fF549001c",
+                                   "0x5560d001f977dF5e49eaD7AB0bDD437c4ee3a99E",
+                                   "0xbe6977E08D4479C0A6777539Ae0e8fa27BE4e9d6",
+                                   "0xdAD22a85ef8310eF582b70e4051E543F3153e11F",
+                                   "0xe0362F7445e3203A496f6f8b3d51CBB413B69Be2"), start=1)]
 # D2-4b ETHER.FI: its own filing (Blockworks TTF, B2 v1.0 filed 2025-08-19, Q18 "Foundation assets are held within the
 # following addresses", re-read 2026-10-26) lists seven wallets: five are already non-circulating; these two join them
 # (0 ETHFI each today — no circulating change)
-_D2_EF = [("foundation_q18_1", "0xe67a6ccc7ded59ef055194ed6402465e738339a8", "ethereum", "ETHFI", _ETHERFI_FILING,
+_D2_EF = [("foundation_q18_1", "0xe67a6CCc7Ded59ef055194eD6402465E738339a8", "ethereum", "ETHFI", _ETHERFI_FILING,
            _D2_READ, "Foundation wallet (filing Q18, re-read 2026-10-26)"),
-          ("foundation_q18_2", "0xbe2cfe1a304b6497e6f64525d0017abab7a5e8cb", "ethereum", "ETHFI", _ETHERFI_FILING,
+          ("foundation_q18_2", "0xbe2cfe1a304B6497E6f64525D0017AbaB7a5E8Cb", "ethereum", "ETHFI", _ETHERFI_FILING,
            _D2_READ, "Foundation wallet (filing Q18, re-read 2026-10-26)")]
 for _name, _rows in (("Chainlink", _D2_CL), ("Ether.fi", _D2_EF)):
     _NONCIRC_WALLETS_FIRST_PARTY[_name] = list(_NONCIRC_WALLETS_FIRST_PARTY.get(_name) or []) + _rows
