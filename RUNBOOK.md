@@ -529,6 +529,53 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11cw. Round D2 — the data phase, round 2 (2026-10-26)
+
+**Pull this only after the weekly NEAR lockup read and your second build have finished** (as D1). Then, in PowerShell
+5.1 at the repo root, in this order:
+1. `python token_metrics.py` — the normal run. New on its Run Log:
+   - `merkl_campaigns` lines: both Merkl series are now what Merkl ALLOCATED TO USERS (each campaign's allocated total
+     less what Merkl credited back to its creator). The first read rewrites them whole: Morpho 2025-10..2026-10-25
+     3,580,102 → 2,983,073 MORPHO (all-time 4,287,323 → 3,637,193); Plume all-time 35,130,994 → 35,129,039. The read
+     takes two Merkl calls per campaign (~3–4 minutes). If a line says "ends <date>: a running campaign is computed by
+     Merkl only to …", the series stops there on purpose and the next run carries it on.
+   - `filing_statement` GEODNET: "insider_stake_filing_tokens: 0 — … (filed 2025-08-19, Q11) still current and
+     unchanged, confirmed <today>". A FAILED line here means the filing changed or was superseded: nothing is stored and
+     the dated zero lapses 90 days after its last confirmation.
+   - `nearblocks` Near: "near_mpc_operator_payments_tokens: 0.00 NEAR from treasury.near to the 16 signer operators
+     2026-01-29..<yesterday>; to other receivers (named, not counted): dcc79d2c… 20,371,200; ecotreasury4… 4,900,000;
+     ecotreasury5… 4,900,000; foundation.near 3". A non-zero operator total is the first HSP-007 payment seen.
+   - `pendle_epochs`: "pendle_epoch_revenue_usd: 19 complete epoch(s) …".
+   - Chainlink, Ether.fi, Maple, Pendle, Sky: the new wallet reads (six chain.link wallets: 29.47 LINK together, so
+     Chainlink's circulating falls by ~29 LINK; every new share-token wallet reads 0; Sky's two endowments' locked SKY).
+   PASTE BACK the merkl_campaigns, filing_statement, nearblocks payer and pendle_epoch_revenue lines.
+2. `python check_offline_items.py wiring_complete` — PASTE BACK the output.
+3. `python check_offline_items.py insider_stake_check` — the 33 Chainlink wallets against both staking pools and Sky's
+   wallets against the LockstakeEngine. PASTE BACK the output.
+4. `python measuring_guard.py --newer metrics.db` — PASTE BACK the VERDICT.
+
+**What to look for.**
+- Sky's "Insider share of staked / locked supply" reads ~16.8% (the endowments' 2,930,760,603.60 locked SKY of
+  ~17.41B lsSKY on 2026-10-26) and its Leakage (i) a number; GEODNET's insider share reads 0 (its own filing, dated).
+- The other 12 insider cells still read "MISSING E — needs issuer wallet list (Jake): …", now naming 13 sETHFI, 9
+  stSYRUP, 6 sPENDLE and 33 Chainlink wallets checked, all 0.
+- Near's "(b) supply side" stays MISSING E: its evidence now says treasury.near has paid no MPC operator and the House
+  of Stake wallets HSP-007 also names are unidentified.
+- Pendle's Credibility "in_revenue" is now a judged cross-check against Pendle's own epoch revenues less airdrops, ±10%.
+  Expect CHECK: over the five complete Q0 epochs (08-11..10-06) Pendle's figure is ~12% above DefiLlama's (ours
+  1,256,628 vs Pendle 1,410,612 on 10-26's reads). That gap is the finding; neither series is changed.
+- Morpho's References: "merkl_rewards_rate" and "g6_merkl_base_campaign_total" read N/A BY DESIGN (schedule basis); the
+  new "d2_merkl_base_campaign_allocated" (138,240.88 MORPHO) reads LIVE-UNVERIFIED (same source) if within 1%.
+
+**A possible overnight job, not scheduled (decision 2, Jake 2026-10-26: not now).** Plume's settlement before
+2026-04-01 (Points Season 2 farming) feeds only the incentive-inflated full-year NRR. To build it: in config.py set
+Plume's `settlement_rebuild` `native_from` to None and raise `native_max_pages_per_day` (a farmed day needs more than
+400 pages; unmeasured), then `python token_metrics.py --seed plume_settlement` overnight — ~110–130k explorer pages,
+10–13 hours on the D1-3 estimate. Nothing else depends on it.
+
+**Not built (decision 1).** Morpho's supply-unit history is not seeded from today's market list (it would leave out
+closed markets and overstate growth): the Δ cells keep their valid-from dates (Q-1 2027-03-21 … 365 days 2027-09-22).
+
 ## 11cv. Round D1 — the data phase, round 1 (2026-10-26)
 
 **Pull this only after the weekly NEAR lockup read and your second build have finished.** Then, in PowerShell 5.1 at
