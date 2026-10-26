@@ -9755,8 +9755,11 @@ def write_a4(ws, R: Refs, data_by_key: dict):
                         "burn" if p.get("self_reported_burn") else ""] if x), FMT_TEXT, "text"),
         ("Derived net supply change (issuance − burn), for comparison",
          lambda r, p: _guarded_net(R, r, p, _a4_iss_metric(p["name"]), config.a1_burn_metric(p["name"])), FMT_NUM, "calc"),
+        # D1-3: nothing issued and nothing self-reported (Hyperliquid: pre-minted) — n/a, never a history wait
         ("Self-reported − derived (a gap here means one of the two is wrong)",
-         lambda r, p: _guarded_net(R, r, p, "gross_issuance_tokens", config.a1_burn_metric(p["name"]),
+         lambda r, p: (_no_issuance_text(p).replace("no issuance to divide by", "nothing issued and nothing self-reported")
+                       if not p.get("self_reported_net_mint") else "") or _guarded_net(
+             R, r, p, "gross_issuance_tokens", config.a1_burn_metric(p["name"]),
                                    total=f"{R.D(r, 'net_mint_monthly', 'q0')}-({iss(r)}-{burn(r, p)})"), FMT_NUM, "calc"),
         ("Net supply change ($ at avg price)",
          lambda r, p: _price_net(_net_guarded(R, r, p, _basis_iss(R, p), burn), price(r)), FMT_USD, "calc"),
@@ -10100,11 +10103,11 @@ def write_a1(ws, R: Refs, data_by_key: dict, months: list[str]):
          {"metric_fn": lambda n: "pool_release_tokens" if config.issuance_basis(n) == "pool_release_tokens" else None}),
         ("FEES ÷ ISSUANCE (x) — key ratio", lambda r, p: _no_issuance_text(p) or _coverage_guard(R, r, [("fees", "fees_usd", "q0"), ("issuance", "gross_issuance_tokens", "q0")],
                                       f"{_flow_rate(R, r, 'fees_usd', 'q0')}/({_flow_rate(R, r, 'gross_issuance_tokens', 'q0')}*{price(r, 'q0')})"), FMT_X, "calc", True),
-        ("Fees ÷ issuance at Q1 (−3m window)", lambda r, p: _coverage_guard(R, r, [("fees", "fees_usd", "q1"), ("issuance", "gross_issuance_tokens", "q1")],
+        ("Fees ÷ issuance at Q1 (−3m window)", lambda r, p: _no_issuance_text(p) or _coverage_guard(R, r, [("fees", "fees_usd", "q1"), ("issuance", "gross_issuance_tokens", "q1")],
                                       f"{_flow_rate(R, r, 'fees_usd', 'q1')}/({_flow_rate(R, r, 'gross_issuance_tokens', 'q1')}*{price(r, 'q1')})"), FMT_X, "calc"),
-        ("Fees ÷ issuance at Q2 (−6m)", lambda r, p: _coverage_guard(R, r, [("fees", "fees_usd", "q2"), ("issuance", "gross_issuance_tokens", "q2")],
+        ("Fees ÷ issuance at Q2 (−6m)", lambda r, p: _no_issuance_text(p) or _coverage_guard(R, r, [("fees", "fees_usd", "q2"), ("issuance", "gross_issuance_tokens", "q2")],
                                       f"{_flow_rate(R, r, 'fees_usd', 'q2')}/({_flow_rate(R, r, 'gross_issuance_tokens', 'q2')}*{price(r, 'q2')})"), FMT_X, "calc"),
-        ("Fees ÷ issuance at Q3 (−9m)", lambda r, p: _coverage_guard(R, r, [("fees", "fees_usd", "q3"), ("issuance", "gross_issuance_tokens", "q3")],
+        ("Fees ÷ issuance at Q3 (−9m)", lambda r, p: _no_issuance_text(p) or _coverage_guard(R, r, [("fees", "fees_usd", "q3"), ("issuance", "gross_issuance_tokens", "q3")],
                                       f"{_flow_rate(R, r, 'fees_usd', 'q3')}/({_flow_rate(R, r, 'gross_issuance_tokens', 'q3')}*{price(r, 'q3')})"), FMT_X, "calc"),
         *_trajectory(R, "tvl_usd", "TVL"),
         *_trajectory(R, "fees_usd", "Fees"),
