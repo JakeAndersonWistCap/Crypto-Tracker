@@ -567,6 +567,37 @@ or stop it and start again on the new code. Don't run both at once: they write t
 - Morpho's References: "merkl_rewards_rate" and "g6_merkl_base_campaign_total" read N/A BY DESIGN (schedule basis); the
   new "d2_merkl_base_campaign_allocated" (138,240.88 MORPHO) reads LIVE-UNVERIFIED (same source) if within 1%.
 
+**A clean-up that removes rows clears that series' daily read mark (D2-7).** When a declared clean-up (config.RUN_CLEANUPS)
+deletes rows, the run logs "CLEAN-UP <id>: daily read mark <key> cleared — … is re-read this run" and the source reads that
+project again in the same run, instead of skipping it as "read complete … earlier today" (what kept Near's 10-23..25 DEX
+days empty on your 17:37 run).
+
+**NEAR lockups and the scheduled task (D2-8, D2-8a).**
+- The weekly read is now RESUMABLE. It pins one block and keeps each lockup's result (logs cache:
+  near-lockups-read.json — local only). A read cut short stores nothing (never a partial total) and says "Progress is kept
+  at that block: a rerun … before <pin + 48 h> reads only the rest". The next daily run, or
+  `python near_lockups_weekly.py --force` by hand, continues it at the same block. After 48 h (or once the public RPC no
+  longer serves the block) a new block is pinned and it starts over.
+- Calls go through one pacer over rpc.mainnet.fastnear.com and rpc.mainnet.near.org: an HTTP 429 or 5xx cools that
+  endpoint for its Retry-After (else 5 s doubling to 60 s) and the call moves to the other one. Expect ~80 minutes
+  (measured here: ~6.5 calls a lockup at ~2.7 calls/s), plus ~7 minutes for the NearBlocks list when it is not cached.
+- Its progress lines ("… 300/1,956 lockups at block …; ~62 min left") now reach logs\run_<date>.log as they are
+  printed: every step's output is written to the log line by line, so a killed step keeps what it printed.
+- A KILLED RUN IS CLOSED OUT. If a run is stopped from outside (Task Scheduler, battery, sleep, shutdown), the next run's
+  first line is "PREVIOUS RUN: the previous run (started …) was KILLED during <step>; FINAL lines appended to <its log>",
+  and that log ends with `=== <step> : KILLED - no exit code (started …)` and `daily run FINAL: KILLED during <step> -
+  steps that ran: …; not run: …`. To close one out by hand without a run:
+  `powershell -ExecutionPolicy Bypass -File windows\daily_run.ps1 -Reconcile`.
+- THE TASK. Check it in PowerShell:
+  `Get-ScheduledTask -TaskName "Crypto-Tracker daily" | Select-Object -ExpandProperty Actions` (Execute powershell.exe,
+  Arguments ending `daily_run.ps1" -Scheduled`), `(Get-ScheduledTask -TaskName "Crypto-Tracker daily").Settings |
+  Select-Object ExecutionTimeLimit, DisallowStartIfOnBatteries, StopIfGoingOnBatteries` (expected: PT0S, False, False —
+  what you set by hand), and `Get-ScheduledTaskInfo -TaskName "Crypto-Tracker daily"` (LastRunTime, LastTaskResult: 0 is
+  success; 267014 = 0x41306 means the task was stopped). register_task.ps1 now registers exactly those settings by
+  default, so re-running it never puts back the 4 h cap or the battery stop (-LimitHours N or -StopOnBattery to set them).
+- Proposal, not applied (SPEC D2-8a (5)): move the lockup read to its own weekly task (Sunday 02:15, its own log), with
+  daily_run's step 2b kept as the fallback when the last stored read is 8+ days old.
+
 **A possible overnight job, not scheduled (decision 2, Jake 2026-10-26: not now).** Plume's settlement before
 2026-04-01 (Points Season 2 farming) feeds only the incentive-inflated full-year NRR. To build it: in config.py set
 Plume's `settlement_rebuild` `native_from` to None and raise `native_max_pages_per_day` (a farmed day needs more than

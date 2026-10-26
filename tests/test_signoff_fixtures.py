@@ -1321,14 +1321,16 @@ def test_near_lockups_splits_unvested_from_vested_and_names_no_account(monkeypat
         return state[acc].get(method), ""
     monkeypatch.setattr(coi, "_near_view", view)
 
-    def fake_rpc(url, method, params=None):
-        if method == "block":
-            return {"result": {"header": {"height": 123}}}
-        if params["account_id"] == "dddd.lockup.near":       # an error reply is an UNREAD lockup, never a non-buggy one
-            return {"error": {"name": "HANDLER_ERROR", "cause": {"name": "GARBAGE_COLLECTED_BLOCK"}}}
-        return {"result": {"code_hash": "3kVY9qcVRoW3B5498SMX6R3rtSLiCdmBzKs7zcnzDJ7Q"
-                           if params["account_id"] == "bbbb.lockup.near" else "x"}}
-    monkeypatch.setattr(coi, "rpc", fake_rpc)
+    # D2-8: the block and the code hash go through the pacer's RPC helpers; the read's cache in a temp LogCache root
+    monkeypatch.setenv("TOKEN_METRICS_LOGCACHE", str(tmp_path / "logcache"))
+    monkeypatch.setattr(coi, "_near_post", lambda params, method="query", urls=None, attempts=None:
+                        iter([("u", {"result": {"header": {"height": 123, "timestamp": 1}}})]))
+
+    def code(acc, block_id, urls=None):
+        if acc == "dddd.lockup.near":                        # an error reply is an UNREAD lockup, never a non-buggy one
+            return None, "rpc.mainnet.near.org: view_account GARBAGE_COLLECTED_BLOCK"
+        return ("3kVY9qcVRoW3B5498SMX6R3rtSLiCdmBzKs7zcnzDJ7Q" if acc == "bbbb.lockup.near" else "x"), ""
+    monkeypatch.setattr(coi, "_near_code_hash", code)
     coi.near_lockups()
     out = capsys.readouterr().out
     assert all(b == 123 for *_x, b in seen), "every read at one block"

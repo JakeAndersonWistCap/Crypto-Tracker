@@ -532,7 +532,9 @@ def test_daily_run_ends_with_the_snapshot_and_runs_the_weekly_lockups():
     # the finally block writes "daily run FINAL: stopped early" when the body ended any other way
     lines = [ln.strip() for ln in ps.splitlines()]
     i = lines.index("Write-Host $summary")
-    assert lines[i + 1].startswith('Write-Log "daily run FINAL: complete') and lines[i + 3] == "exit $run[0]"
+    # D2-8a: the run state is marked final (Save-State) between the FINAL line and the exit
+    assert lines[i + 1].startswith('Write-Log "daily run FINAL: complete') and lines[i + 2] == "$FinalWritten = $true"
+    assert lines[i + 3] == 'Save-State ""' and lines[i + 4] == "exit $run[0]"
     assert ps.rstrip().endswith("}") and "} finally {" in ps and "daily run FINAL: stopped early" in ps
     assert "token_metrics exit $($run[0])" in ps and "log $Log" in ps and "$script:Steps += ,@($label, $code)" in ps
     assert '"near_lockups_weekly.py"' in ps

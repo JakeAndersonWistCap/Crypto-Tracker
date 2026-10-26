@@ -4569,34 +4569,119 @@ NEAR_LOCKUP_BUGGY_CODE = ("3kVY9qcVRoW3B5498SMX6R3rtSLiCdmBzKs7zcnzDJ7Q", "DiC9b
 NEAR_RPC_LIVE = ("https://rpc.mainnet.fastnear.com", "https://rpc.mainnet.near.org")
 
 
+# ===== ONE PACER FOR EVERY NEAR RPC CALL (D2-8, Jake's lockup run of 2026-10-26: 456 + 84 x HTTP 429 and 132
+# view_account errors from rpc.mainnet.near.org, nothing stored). Each endpoint is called at most once per its interval;
+# an HTTP 429 / 5xx cools THAT endpoint for its Retry-After (else 5 s doubling to 60 s) and the call moves to the
+# endpoint free soonest. Neither public endpoint publishes a limit (none was reproduced from the build environment), so
+# the pacer adapts instead of assuming one. Thread-safe: near_lockups reads several lockups at once.
+NEAR_RPC_PACE = {"https://rpc.mainnet.fastnear.com": 0.25, "https://rpc.mainnet.near.org": 1.0}
+NEAR_RPC_ATTEMPTS = 8
+
+
+class _NearPacer:
+    def __init__(self, pace: dict, default: float = 0.25):
+        import threading                                   # noqa: PLC0415
+        self.lock = threading.Lock()
+        self.pace, self.default = dict(pace), default
+        self.next_ok: dict = {}
+        self.strikes: dict = {}
+        self.stats = {"calls": 0, "throttled": 0, "cooled_s": 0.0}
+
+    def _gap(self, url: str) -> float:
+        return self.pace.get(url, self.default)
+
+    def pick(self, urls) -> str:
+        with self.lock:
+            return min(urls, key=lambda u: self.next_ok.get(u, 0.0))
+
+    def wait_turn(self, url: str, sleep=None) -> None:
+        import time as _t                                  # noqa: PLC0415
+        sleep = sleep or _t.sleep
+        while True:
+            with self.lock:
+                now = _t.monotonic()
+                at = self.next_ok.get(url, 0.0)
+                if now >= at:
+                    self.next_ok[url] = now + self._gap(url)
+                    self.stats["calls"] += 1
+                    return
+                wait = at - now
+            sleep(min(wait, 5.0))
+
+    def throttled(self, url: str, retry_after=None) -> float:
+        import time as _t                                  # noqa: PLC0415
+        with self.lock:
+            self.strikes[url] = self.strikes.get(url, 0) + 1
+            try:
+                cool = float(retry_after)
+            except (TypeError, ValueError):
+                cool = min(60.0, 5.0 * 2 ** (self.strikes[url] - 1))
+            self.next_ok[url] = max(self.next_ok.get(url, 0.0), _t.monotonic() + cool)
+            self.stats["throttled"] += 1
+            self.stats["cooled_s"] += cool
+            return cool
+
+    def ok(self, url: str) -> None:
+        with self.lock:
+            self.strikes[url] = 0
+
+
+NEAR_PACER = _NearPacer(NEAR_RPC_PACE)
+
+
+def _near_post(params: dict, method: str = "query", urls: tuple | None = None, attempts: int | None = None):
+    """Yields (url, json) — one JSON-RPC call through NEAR_PACER, LAZILY: the next endpoint is asked only when the caller
+    asks for another answer (it stops at the first usable one, so a good answer costs one call). HTTP 429 / 5xx and
+    network errors yield {"_transient": why} (the endpoint cools; the next attempt goes where the pacer allows); a 200
+    — an error object included — is that endpoint's answer, and each endpoint answers at most once."""
+    urls = tuple(urls or NEAR_RPC_LIVE)
+    answered = set()
+    for _ in range(int(attempts or NEAR_RPC_ATTEMPTS)):
+        left = [u for u in urls if u not in answered]
+        if not left:
+            break
+        url = NEAR_PACER.pick(left)
+        NEAR_PACER.wait_turn(url)
+        try:
+            r = requests.post(url, json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
+                              headers=_ua(), timeout=TIMEOUT)
+        except Exception as e:  # noqa: BLE001
+            why = f"{urlparse(url).netloc}: {type(e).__name__}"
+            NEAR_PACER.throttled(url)
+            yield url, {"_transient": why}
+            continue
+        if r.status_code == 429 or r.status_code >= 500:
+            why = f"{urlparse(url).netloc}: HTTP {r.status_code}"
+            NEAR_PACER.throttled(url, r.headers.get("Retry-After"))
+            yield url, {"_transient": why}
+            continue
+        NEAR_PACER.ok(url)
+        answered.add(url)
+        try:
+            j = r.json()
+        except ValueError:
+            j = {"_transient": f"{urlparse(url).netloc}: not JSON (HTTP {r.status_code})"}
+        yield url, j
+
+
 def _near_view(account: str, method: str, args: dict | None = None, block_id: int | None = None, pace: float = 0.12,
                urls: tuple | None = None):
-    """call_function on a NEAR contract at `block_id` (or final): (result, why). FastNEAR first, then near.org; a 429
-    waits and tries the next endpoint. The lockup getters return JSON."""
+    """call_function on a NEAR contract at `block_id` (or final): (result, why), through NEAR_PACER (D2-8; `pace` is
+    kept for callers, the pacer spaces calls now). The lockup getters return JSON."""
     import base64                                          # noqa: PLC0415
     import json as _json                                   # noqa: PLC0415
-    import time as _t                                      # noqa: PLC0415
     params = {"request_type": "call_function", "account_id": account, "method_name": method,
               "args_base64": base64.b64encode(_json.dumps(args or {}).encode()).decode()}
     params.update({"block_id": block_id} if block_id else {"finality": "final"})
     why = ""
-    for url in urls or NEAR_RPC_LIVE:
-        _t.sleep(pace)
-        try:
-            r = requests.post(url, json={"jsonrpc": "2.0", "id": 1, "method": "query", "params": params},
-                              headers=_ua(), timeout=TIMEOUT)
-        except Exception as e:  # noqa: BLE001
-            why = f"{urlparse(url).netloc}: {type(e).__name__}"
+    for url, j in _near_post(params, urls=urls):
+        if "_transient" in j:
+            why = j["_transient"]
             continue
-        if r.status_code == 429:
-            why = f"{urlparse(url).netloc}: HTTP 429"
-            _t.sleep(2.0)
-            continue
-        j = r.json() if r.status_code == 200 else {}
         res = j.get("result") or {}
         if "result" in res:
             return _json.loads(bytes(res["result"]).decode() or "null"), ""
-        why = f"{urlparse(url).netloc}: {(j.get('error') or res.get('error') or r.status_code)!s:.160}"
+        why = f"{urlparse(url).netloc}: {(j.get('error') or res.get('error') or 'no result')!s:.160}"
         if "MethodNotFound" in why or "CodeDoesNotExist" in why or "does not exist" in why:
             return None, why
     return None, why
@@ -4770,13 +4855,11 @@ def near_locked_recomputed(state: dict, ts: int, has_bug: bool) -> int:
 
 def _near_code_hash(account: str, block_id: int, urls: tuple | None = None) -> tuple[str | None, str]:
     """(code_hash, why) at `block_id` — None with the reason when no endpoint answers (an error reply is NOT a
-    non-buggy lockup: 2026-10-12, a garbage-collected block read 1,960 lockups as 0 buggy)."""
+    non-buggy lockup: 2026-10-12, a garbage-collected block read 1,960 lockups as 0 buggy). Through NEAR_PACER."""
     why = ""
-    for url in urls or NEAR_RPC_LIVE:
-        try:
-            va = rpc(url, "query", {"request_type": "view_account", "account_id": account, "block_id": block_id})
-        except Exception as e:  # noqa: BLE001
-            why = f"{urlparse(url).netloc}: view_account {type(e).__name__}"
+    for url, va in _near_post({"request_type": "view_account", "account_id": account, "block_id": block_id}, urls=urls):
+        if "_transient" in va:
+            why = f"view_account {va['_transient']}"
             continue
         code = (va.get("result") or {}).get("code_hash")
         if code:
@@ -4787,24 +4870,15 @@ def _near_code_hash(account: str, block_id: int, urls: tuple | None = None) -> t
 
 
 def _near_view_state(account: str, block_id: int, urls: tuple | None = None) -> tuple[bytes | None, str]:
-    """The contract's raw state value (the lockup keeps one key, the serialised LockupContract)."""
+    """The contract's raw state value (the lockup keeps one key, the serialised LockupContract). Through NEAR_PACER."""
     import base64                                          # noqa: PLC0415
-    import time as _t                                      # noqa: PLC0415
     why = ""
-    for url in urls or NEAR_RPC_LIVE:
-        try:
-            r = requests.post(url, json={"jsonrpc": "2.0", "id": 1, "method": "query",
-                                         "params": {"request_type": "view_state", "account_id": account,
-                                                    "prefix_base64": "", "block_id": block_id}},
-                              headers=_ua(), timeout=TIMEOUT)
-        except Exception as e:  # noqa: BLE001
-            why = f"{urlparse(url).netloc}: {type(e).__name__}"
+    for url, j in _near_post({"request_type": "view_state", "account_id": account, "prefix_base64": "",
+                              "block_id": block_id}, urls=urls):
+        if "_transient" in j:
+            why = j["_transient"]
             continue
-        if r.status_code == 429:
-            why = f"{urlparse(url).netloc}: HTTP 429"
-            _t.sleep(2.0)
-            continue
-        vals = ((r.json() if r.status_code == 200 else {}).get("result") or {}).get("values") or []
+        vals = (j.get("result") or {}).get("values") or []
         if vals:
             return base64.b64decode(vals[0]["value"]), ""
         why = f"{urlparse(url).netloc}: no state"
@@ -4892,7 +4966,7 @@ def near_lockups_buggy_recompute(block_id: int | None = 219_544_718, workers: in
     return out
 
 
-def near_lockups(limit: int | None = None):
+def near_lockups(limit: int | None = None, resume: bool = True, workers: int = 4, cache_path=None):
     """NEAR LOCKUPS, FROM THE CONTRACTS' OWN VIEW METHODS (follow-up to 0eda6ce). The list: every live *.lockup.near —
     the lockup factory's sub-accounts from NearBlocks' free API (near_lockup_accounts; Jake's run on ab3c7fe 2026-10-11:
     no BigQuery), or a file NEAR_LOCKUPS_FILE (one account per line). Per lockup, at ONE block (near/core-contracts
@@ -4906,7 +4980,14 @@ def near_lockups(limit: int | None = None):
     Lockups on the two buggy code hashes (near-public-lakehouse lockup.rs) are totalled apart: their RPC locked figure
     is known to be wrong. AGGREGATES ONLY are printed — no account is named. Nothing is stored. THE COST, said first:
     the list is ~1 NearBlocks call per 100 lockup accounts ever created (free; no BigQuery), then 2-6 NEAR RPC view
-    calls per live lockup (free public RPC)."""
+    calls per live lockup (free public RPC).
+
+    RESUMABLE AT ONE PINNED BLOCK (D2-8): each lockup's result is cached (LogCache root near-lockups-read.json — local,
+    never printed, never committed) with the block it was read at; a rerun re-reads only the lockups not yet read, at
+    the SAME block, while the pin is at most NEAR_LOCKUP_PIN_MAX_H old and the RPC still serves that block (the public
+    nodes keep ~5 epochs). Otherwise a new pin starts. `workers` lockups are read at once, every call through
+    NEAR_PACER. The totals are over the lockups read at the pin; `unreadable` counts the rest (never a partial total:
+    near_lockups_weekly stores only when it is 0)."""
     import os                                              # noqa: PLC0415
     import time as _t                                      # noqa: PLC0415
     head("NEAR — lockup contracts: unvested vs vested-but-locked vs released-not-withdrawn (contracts' own getters)")
@@ -4925,77 +5006,94 @@ def near_lockups(limit: int | None = None):
             return None
     if limit:
         accounts = accounts[:int(limit)]
-    height = ((rpc(NEAR_RPC_LIVE[0], "block", {"finality": "final"}).get("result") or {}).get("header") or {}).get("height")
-    print(f"  every read at block {height:,} ({_now_utc()}); {len(accounts):,} account(s), ~4-6 calls each")
+    from concurrent.futures import ThreadPoolExecutor, as_completed   # noqa: PLC0415
+    from pathlib import Path as _P                         # noqa: PLC0415
+    cache_f = _P(cache_path) if cache_path else _lockup_cache_path()
+    cache = _lockup_cache_load(cache_f) if resume else None
+    if cache and not _lockup_pin_live(cache):
+        print(f"  a cached read at block {cache['height']:,} (pinned {cache['pinned_at']}) can no longer be resumed — "
+              f"older than {NEAR_LOCKUP_PIN_MAX_H} h or no longer served; a new pin starts")
+        cache = None
+    if cache:
+        height, block_ts = int(cache["height"]), int(cache["block_ts"])
+        done = sum(1 for a in accounts if a in cache["results"])
+        print(f"  RESUMING the read pinned at block {height:,} ({cache['pinned_at']}): {done:,} of {len(accounts):,} "
+              f"lockup(s) already read there; reading the rest at the same block")
+    else:
+        hdr, whys = {}, []
+        for _u, j in _near_post({"finality": "final"}, method="block"):
+            hdr = (j.get("result") or {}).get("header") or {}
+            if hdr.get("height"):
+                break
+            whys.append(j.get("_transient") or "no header")
+        if not hdr.get("height"):
+            print(f"  no endpoint gave the final block ({whys}) — nothing read")
+            return None
+        height, block_ts = int(hdr["height"]), int(hdr.get("timestamp") or 0)
+        cache = {"height": height, "block_ts": block_ts, "pinned_at": _now_utc(), "results": {}}
+        print(f"  new pin: every read at block {height:,} ({cache['pinned_at']})")
+    todo = [a for a in accounts if a not in cache["results"]]
+    # measured 2026-10-26 (D2-8a smoke, 40 lockups): ~6.5 calls a lockup, ~2.7 calls/s through the pacer with 4 in flight
+    calls = int(len(todo) * 6.5)
+    print(f"  {len(todo):,} lockup(s) to read, ~{calls:,} RPC calls; ~{calls / 2.7 / 60:,.0f} min at the rate measured "
+          f"2026-10-26 (~2.7 calls/s), longer when an endpoint answers HTTP 429", flush=True)
+    errs: dict = {}
+    t0 = _t.time()
+    import progress                                       # noqa: PLC0415
+    n_done = 0
+    try:
+        with ThreadPoolExecutor(max_workers=max(1, int(workers))) as pool:
+            futs = {pool.submit(_read_lockup, acc, height, block_ts): acc for acc in todo}
+            for fut in as_completed(futs):
+                acc = futs[fut]
+                n_done += 1
+                progress.tick("lockups read", n_done, len(todo))
+                try:
+                    res, why = fut.result()
+                except Exception as e:  # noqa: BLE001 — one lockup's surprise is that lockup's failure, not the run's
+                    res, why = None, f"{type(e).__name__}: {str(e)[:80]}"
+                if res is not None:
+                    cache["results"][acc] = res
+                else:
+                    errs[why[:60]] = errs.get(why[:60], 0) + 1
+                if n_done % 25 == 0:
+                    _lockup_cache_save(cache_f, cache)
+                if n_done % 100 == 0 or n_done == len(todo):    # kept in the daily log as printed (D2-8a)
+                    el = _t.time() - t0
+                    print(f"    … {n_done:,}/{len(todo):,} lockups at block {height:,} ({el / 60:,.1f} min; ~"
+                          f"{el / n_done * (len(todo) - n_done) / 60:,.0f} min left; pacer {NEAR_PACER.stats})",
+                          flush=True)
+    finally:
+        _lockup_cache_save(cache_f, cache)
     yocto = 10 ** 24
     tot = {"balance": 0, "locked": 0, "unvested": 0, "owners": 0}
     buggy = {"n": 0, "balance": 0, "locked": 0, "recomputed": 0}
-    block_ts = int((((rpc(NEAR_RPC_LIVE[0], "block", {"block_id": height}).get("result") or {}).get("header") or {})
-                    .get("timestamp")) or 0)
-    n_read = n_zero = n_err = 0
-    errs = {}
-    t0 = _t.time()
-    import progress                                       # noqa: PLC0415
-    for i, acc in enumerate(accounts, 1):
-        progress.tick("lockups read", i, len(accounts))
-        bal, why = _near_view(acc, "get_balance", block_id=height)
-        if bal is None:
-            n_err += 1
-            errs[why[:60]] = errs.get(why[:60], 0) + 1
+    n_read = n_zero = n_fault = 0
+    for acc in accounts:
+        r = cache["results"].get(acc)
+        if r is None:
             continue
-        if int(bal) == 0:
+        if r.get("fault"):
+            n_fault += 1
+            errs[r["fault"][:60]] = errs.get(r["fault"][:60], 0) + 1
+            continue
+        if r.get("zero"):
             n_zero += 1
             continue
-        locked, why = _near_view(acc, "get_locked_amount", block_id=height)
-        if locked is None:
-            n_err += 1
-            errs[why[:60]] = errs.get(why[:60], 0) + 1
-            continue
-        owners, _w = _near_view(acc, "get_owners_balance", block_id=height)
-        vest, _w = _near_view(acc, "get_vesting_information", block_id=height)
-        unv = 0
-        if isinstance(vest, dict) and "VestingSchedule" in vest:
-            u, _w = _near_view(acc, "get_unvested_amount", {"vesting_schedule": vest["VestingSchedule"]},
-                               block_id=height)
-            unv = int(u or 0)
-        elif isinstance(vest, dict) and "Terminating" in vest:
-            unv = int((vest["Terminating"] or {}).get("unvested_amount") or 0)
         n_read += 1
-        bal, locked, owners = int(bal), int(locked), int(owners or 0)
-        # an unread code hash is an unread lockup — never taken for a non-buggy one (2026-10-12)
-        code, why = _near_code_hash(acc, height)
-        if code is None:
-            n_read -= 1
-            n_err += 1
-            errs[why[:60]] = errs.get(why[:60], 0) + 1
-            continue
-        if code in NEAR_LOCKUP_BUGGY_CODE:
+        tot["balance"] += int(r["balance"])
+        tot["locked"] += int(r["locked"])
+        tot["unvested"] += min(int(r["unvested"]), int(r["locked"]))
+        tot["owners"] += int(r["owners"])
+        if r.get("buggy"):
             buggy["n"] += 1
-            buggy["balance"] += bal
-            buggy["locked"] += locked
-            # THE LAKEHOUSE'S FIGURE, NOT THE RPC'S (Jake 2026-10-12, decision 8): recomputed from the lockup's own
-            # schedule; a state that cannot be read is an unread lockup (never the known-wrong RPC figure)
-            raw, why = _near_view_state(acc, height)
-            try:
-                st_ = near_lockup_state(raw) if raw is not None else None
-            except ValueError as e:
-                st_, why = None, f"state: {e}"
-            if st_ is None:
-                n_err += 1
-                errs[f"buggy lockup state: {why}"[:60]] = errs.get(f"buggy lockup state: {why}"[:60], 0) + 1
-                continue
-            locked = near_locked_recomputed(st_, block_ts, True)
-            owners = max(bal - locked, 0)
-            unv = near_unvested(st_, block_ts)
-            buggy["recomputed"] += locked
-        tot["balance"] += bal
-        tot["locked"] += locked
-        tot["unvested"] += min(unv, locked)
-        tot["owners"] += owners
-        if i % 250 == 0:
-            print(f"    … {i:,}/{len(accounts):,} ({_t.time() - t0:,.0f}s)", flush=True)
+            buggy["balance"] += int(r["balance"])
+            buggy["locked"] += int(r["rpc_locked"])
+            buggy["recomputed"] += int(r["locked"])
+    n_err = sum(1 for a in accounts if a not in cache["results"]) + n_fault
     n = lambda x: f"{x / yocto:>18,.0f} NEAR"  # noqa: E731
-    print(f"\n  read {n_read:,}; zero balance {n_zero:,}; unreadable {n_err:,}" + (f" {errs}" if errs else ""))
+    print(f"\n  read {n_read:,}; zero balance {n_zero:,}; unreadable {n_err:,}" + (f" {errs}" if errs else "")
+          + f"; this run {_t.time() - t0:,.0f}s, pacer {NEAR_PACER.stats}")
     print(f"  balance in lockups (incl. staked)            {n(tot['balance'])}")
     print(f"  LOCKED (NEAR's own: lockup or vesting)       {n(tot['locked'])}")
     print(f"    of which STILL UNVESTED                    {n(tot['unvested'])}")
@@ -5006,10 +5104,105 @@ def near_lockups(limit: int | None = None):
     print("  UNDER JAKE'S RULE (clarified 2026-10-12) everything NOT YET TRANSFERABLE — LOCKED, i.e. unvested + "
           "lockup-locked — comes out of circulating; released-not-withdrawn stays in. PASTE BACK the totals.")
     return {"height": height, "accounts": len(accounts), "read": n_read, "zero": n_zero, "unreadable": n_err,
-            "errors": dict(errs),
+            "errors": dict(errs), "pinned_at": cache["pinned_at"], "block_ts": block_ts,
             "buggy_rpc_locked": buggy["locked"] / yocto, "buggy_recomputed": buggy["recomputed"] / yocto,
             "balance": tot["balance"] / yocto, "locked": tot["locked"] / yocto, "unvested": tot["unvested"] / yocto,
             "owners": tot["owners"] / yocto, "buggy": buggy["n"]}
+
+
+NEAR_LOCKUP_PIN_MAX_H = 48
+# the contract's own getter failing inside the contract — the same answer every time: a lockup left out, not unread
+_NEAR_CONTRACT_FAULT = "wasm execution failed"
+
+
+def lockup_pin_utc(when):
+    """A pin time (str or Timestamp, with or without a zone) as a naive UTC Timestamp."""
+    import pandas as _pd                                   # noqa: PLC0415
+    t = _pd.Timestamp(when)
+    return t.tz_convert("UTC").tz_localize(None) if t.tzinfo is not None else t
+
+
+def _lockup_cache_path():
+    from fetch.logcache import LogCache                    # noqa: PLC0415
+    return LogCache().root / "near-lockups-read.json"
+
+
+def _lockup_cache_load(f) -> dict | None:
+    import json as _json                                   # noqa: PLC0415
+    try:
+        c = _json.loads(f.read_text())
+    except (OSError, ValueError):
+        return None
+    return c if isinstance(c, dict) and c.get("height") and isinstance(c.get("results"), dict) else None
+
+
+def _lockup_cache_save(f, cache: dict) -> None:
+    import json as _json                                   # noqa: PLC0415
+    from fetch.logcache import atomic_write_text           # noqa: PLC0415
+    f.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(f, _json.dumps(cache))
+
+
+def _lockup_pin_live(cache: dict, now=None) -> bool:
+    """A cached pin resumes only while it is at most NEAR_LOCKUP_PIN_MAX_H old and the RPC still serves its block."""
+    import pandas as _pd                                   # noqa: PLC0415
+    try:
+        age_h = ((lockup_pin_utc(now) if now is not None else _pd.Timestamp.now(tz="UTC").tz_localize(None))
+                 - lockup_pin_utc(cache["pinned_at"])).total_seconds() / 3600
+    except (ValueError, TypeError, KeyError):
+        return False
+    if age_h > NEAR_LOCKUP_PIN_MAX_H:
+        return False
+    got = _near_post({"block_id": int(cache["height"])}, method="block")
+    return any((j.get("result") or {}).get("header") for _u, j in got)
+
+
+def _read_lockup(acc: str, height: int, block_ts: int) -> tuple[dict | None, str]:
+    """One lockup at the pinned block: ({balance, locked, unvested, owners[, buggy, rpc_locked]} in yocto, or
+    {"zero": True}, or {"fault": why} — its own getter failing inside the contract), or (None, why) when it could not be
+    READ this time (a rerun tries it again)."""
+    bal, why = _near_view(acc, "get_balance", block_id=height)
+    if bal is None:
+        return ({"fault": why}, "") if _NEAR_CONTRACT_FAULT in why else (None, why)
+    if int(bal) == 0:
+        return {"zero": True}, ""
+    locked, why = _near_view(acc, "get_locked_amount", block_id=height)
+    if locked is None:
+        return ({"fault": why}, "") if _NEAR_CONTRACT_FAULT in why else (None, why)
+    owners, why_o = _near_view(acc, "get_owners_balance", block_id=height)
+    vest, why_v = _near_view(acc, "get_vesting_information", block_id=height)
+    if (owners is None and why_o) or (vest is None and why_v and "MethodNotFound" not in why_v):
+        w = why_o or why_v
+        return ({"fault": w}, "") if _NEAR_CONTRACT_FAULT in w else (None, w)
+    unv = 0
+    if isinstance(vest, dict) and "VestingSchedule" in vest:
+        u, why_u = _near_view(acc, "get_unvested_amount", {"vesting_schedule": vest["VestingSchedule"]},
+                              block_id=height)
+        if u is None and why_u:
+            return ({"fault": why_u}, "") if _NEAR_CONTRACT_FAULT in why_u else (None, why_u)
+        unv = int(u or 0)
+    elif isinstance(vest, dict) and "Terminating" in vest:
+        unv = int((vest["Terminating"] or {}).get("unvested_amount") or 0)
+    bal, locked, owners = int(bal), int(locked), int(owners or 0)
+    # an unread code hash is an unread lockup — never taken for a non-buggy one (2026-10-12)
+    code, why = _near_code_hash(acc, height)
+    if code is None:
+        return None, why
+    out = {"balance": str(bal), "locked": str(locked), "unvested": str(unv), "owners": str(owners)}
+    if code in NEAR_LOCKUP_BUGGY_CODE:
+        # THE LAKEHOUSE'S FIGURE, NOT THE RPC'S (Jake 2026-10-12, decision 8): recomputed from the lockup's own
+        # schedule; a state that cannot be read is an unread lockup (never the known-wrong RPC figure)
+        raw, why = _near_view_state(acc, height)
+        try:
+            st_ = near_lockup_state(raw) if raw is not None else None
+        except ValueError as e:
+            st_, why = None, f"state: {e}"
+        if st_ is None:
+            return None, f"buggy lockup state: {why}"
+        rec = near_locked_recomputed(st_, block_ts, True)
+        out.update({"buggy": True, "rpc_locked": str(locked), "locked": str(rec), "owners": str(max(bal - rec, 0)),
+                    "unvested": str(near_unvested(st_, block_ts))})
+    return out, ""
 
 
 # ===== JAKE'S RUN ON 20d0eb4 (2026-10-10): BRIBE DEPOSITS, MORPHO LISTED vs ALL, FOUNDATION Q0, NEAR BACKFILL =====
