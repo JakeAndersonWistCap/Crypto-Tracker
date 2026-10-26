@@ -529,6 +529,50 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11cx. Round D3 — Jake's decisions on D2 (2026-10-26)
+
+**Pull this, then in PowerShell 5.1 at the repo root, in this order:**
+1. **Register the weekly NEAR lockup task (once)** — exactly:
+   ```
+   powershell -ExecutionPolicy Bypass -File windows\register_lockup_task.ps1
+   ```
+   It registers "Crypto-Tracker NEAR lockups": weekly, Sunday 02:15, stopped after 4 hours, WakeToRun,
+   StartWhenAvailable, never two copies at once, as you, while logged on, running on battery like the daily task.
+   It prints `Registered 'Crypto-Tracker NEAR lockups' weekly, Sunday at 02:15 (stopped after 4 h).` Check it:
+   ```
+   Get-ScheduledTask -TaskName "Crypto-Tracker NEAR lockups" | Select-Object -ExpandProperty Triggers
+   (Get-ScheduledTask -TaskName "Crypto-Tracker NEAR lockups").Settings | Select-Object ExecutionTimeLimit, WakeToRun, StartWhenAvailable
+   ```
+   (expected: a weekly trigger on Sunday at 02:15; PT4H, True, True). Its log is logs\near_lockups_<date>.log, written
+   line by line, ending `near lockups FINAL: exit <code>` — no FINAL line means the task was stopped mid-read; the read
+   is kept at its block and continued by the next run within 48 h.
+2. **Re-register the daily task (optional)** — `powershell -ExecutionPolicy Bypass -File windows\register_task.ps1` now
+   registers a 6-hour cap (PT6H, what you set by hand) and keeps running on battery: nothing changes on yours.
+3. `python token_metrics.py` — the normal run. New on its Run Log:
+   - `CLEAN-UP D3-5: applied once — <n> row(s) of Pendle / fees_usd from defillama removed — …` (and revenue_usd,
+     holders_revenue_usd), each removed row listed, then `daily read mark defillama:project:Pendle cleared`. The same run
+     re-reads Pendle's fees / revenue / holders revenue in full from DefiLlama's V2 child (`pendle-v2:dailyFees`, …): Boros
+     is no longer summed in. Q0 revenue ~1,687,748 → ~1,586,895; fees ~1,711,921 → ~1,610,849; holders revenue unchanged.
+     It runs ONCE (a marker in fetch_status); a later run finds nothing to do and logs nothing.
+   - `pendle_epochs` Pendle: `pendle_pt_looping_fees_usd: 5 complete epoch(s) 2026-08-11..2026-10-06 …` and
+     `pendle_epoch_market_revenue_usd: 13 complete epoch(s) 2026-04-21..2026-10-06 …`.
+   - The daily run's step 2b now reads the lockups only when the last stored read is 8+ days old (the fallback); the
+     Sunday task reads at 7.
+   PASTE BACK the CLEAN-UP D3-5 "applied once" lines, the defillama Pendle lines and the two pendle_epochs lines.
+4. `python measuring_guard.py --newer metrics.db` — PASTE BACK the VERDICT.
+5. **Long, last:** if the lockup read has not stored since 10-11, `python near_lockups_weekly.py --force` (~90 min,
+   resumable at its block), or `Start-ScheduledTask -TaskName "Crypto-Tracker NEAR lockups"`.
+
+**What to look for.**
+- NEAR: with the 10-11 read, circulating_supply_lockup_rule, circulating_supply_used and market cap FORM again (a read up
+  to 30 days old), AMBER — hover: "lockups read 2026-10-11, <age> days old … between reads circulating can move by at
+  most LOCKED itself (2,058,522 NEAR, 0.16% of total supply)". From 2026-11-11 (31 days) they BLOCK until a new read.
+  The 56 blocked cells / 8 guard headlines come back, AMBER.
+- Pendle's Credibility "in_revenue" stays CHECK (accepted as the finding). Its working now names the legs: over the
+  epochs with every leg stored, Pendle's figure = per-market protocol + realized YT fee + PT-looping fee + an
+  epoch-level remainder Pendle attributes to no market; and ours against the per-market leg alone (−7.8% over Q0's five
+  epochs on 10-26's reads). Pendle's revenue, fees, Total Yield and the ratios built on them fall ~6% (Boros out).
+
 ## 11cw. Round D2 — the data phase, round 2 (2026-10-26)
 
 **Pull this only after the weekly NEAR lockup read and your second build have finished** (as D1). Then, in PowerShell
@@ -591,12 +635,10 @@ days empty on your 17:37 run).
 - THE TASK. Check it in PowerShell:
   `Get-ScheduledTask -TaskName "Crypto-Tracker daily" | Select-Object -ExpandProperty Actions` (Execute powershell.exe,
   Arguments ending `daily_run.ps1" -Scheduled`), `(Get-ScheduledTask -TaskName "Crypto-Tracker daily").Settings |
-  Select-Object ExecutionTimeLimit, DisallowStartIfOnBatteries, StopIfGoingOnBatteries` (expected: PT0S, False, False —
-  what you set by hand), and `Get-ScheduledTaskInfo -TaskName "Crypto-Tracker daily"` (LastRunTime, LastTaskResult: 0 is
-  success; 267014 = 0x41306 means the task was stopped). register_task.ps1 now registers exactly those settings by
-  default, so re-running it never puts back the 4 h cap or the battery stop (-LimitHours N or -StopOnBattery to set them).
-- Proposal, not applied (SPEC D2-8a (5)): move the lockup read to its own weekly task (Sunday 02:15, its own log), with
-  daily_run's step 2b kept as the fallback when the last stored read is 8+ days old.
+  Select-Object ExecutionTimeLimit, DisallowStartIfOnBatteries, StopIfGoingOnBatteries` and `Get-ScheduledTaskInfo
+  -TaskName "Crypto-Tracker daily"` (LastRunTime, LastTaskResult: 0 is success; 267014 = 0x41306 means the task was
+  stopped). SUPERSEDED BY D3-3 (§11cx): the default is a 6-hour cap (PT6H, what you set), not none.
+- The lockup read's own weekly task: APPROVED and built in D3-2 (§11cx).
 
 **A possible overnight job, not scheduled (decision 2, Jake 2026-10-26: not now).** Plume's settlement before
 2026-04-01 (Points Season 2 farming) feeds only the incentive-inflated full-year NRR. To build it: in config.py set

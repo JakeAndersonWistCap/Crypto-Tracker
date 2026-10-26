@@ -10,11 +10,13 @@
 #     Modern Standby laptops honour wake timers only on AC power);
 #   - runs, and keeps running, on battery (-StopOnBattery for the old start-on-AC-only, stop-on-battery behaviour), and
 #     runs as soon as possible after a missed time (laptop off or asleep without a wake timer);
-#   - has NO time limit (-LimitHours N to set one), and never starts a second copy while one is running.
-#   Round D2-8a (2026-10-26): these defaults match what Jake set by hand after the runs of 10-22, 10-23 and 10-25 died
-#   silently (the task stopped on battery and was capped at 4 h; he removed both), so re-registering never puts them
-#   back. Open risk: with no limit, a run that HANGS keeps the next morning's run from starting (IgnoreNew); daily_run.ps1
-#   closes out a killed run's log on its next start (or: daily_run.ps1 -Reconcile).
+#   - is stopped after 6 hours (-LimitHours; 0 = no limit, not the default), and never starts a second copy while one
+#     is running.
+#   Round D2-8a / D3-3 (2026-10-26): Jake removed the stop-on-battery and set his task to PT6H after the runs of 10-22,
+#   10-23 and 10-25 died silently; these defaults match, so re-registering never puts the old settings back. A cap stays
+#   so a run that HANGS cannot keep the next morning's run from starting (IgnoreNew). daily_run.ps1 closes out a killed
+#   run's log on its next start (or: daily_run.ps1 -Reconcile). The weekly NEAR lockup read has its own task
+#   (register_lockup_task.ps1).
 # Remove it with:  Unregister-ScheduledTask -TaskName "Crypto-Tracker daily" -Confirm:$false
 # Run it now:      Start-ScheduledTask -TaskName "Crypto-Tracker daily"
 
@@ -23,7 +25,7 @@ param(
     [string]$TaskName = "Crypto-Tracker daily",
     [switch]$StopOnBattery,
     [switch]$AllowBattery,                # kept so older command lines still work; running on battery is the default
-    [int]$LimitHours = 0                  # 0 = no limit
+    [int]$LimitHours = 6                  # 0 = no limit (not the default: Jake 2026-10-26, D3-3)
 )
 
 $script = Join-Path $PSScriptRoot "daily_run.ps1"

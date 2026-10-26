@@ -1722,7 +1722,7 @@ def _aero_epochs(long, p, asof, onchain, flow, epoch_days=7, fees="voter_rewards
 
 
 def _pendle_epoch_revenue(p, rows, long, asof, flow="revenue_usd", ref="pendle_epoch_revenue_usd", side="ref",
-                          epoch_days=14, window=90, min_epochs=2, **_):
+                          epoch_days=14, window=90, min_epochs=2, markets=None, looping=None, **_):
     """D2-5: PENDLE'S OWN EPOCH REVENUE AGAINST OURS, LIKE FOR LIKE. Over the complete sPENDLE epochs that lie wholly
     inside the Q0 window ([asof − window, asof)), each epoch [start, start + epoch_days) on Pendle's accounting (its
     revenues less the airdrops it counts, `ref`, dated at the start) against our `flow` summed over the same UTC days.
@@ -1747,9 +1747,30 @@ def _pendle_epoch_revenue(p, rows, long, asof, flow="revenue_usd", ref="pendle_e
                             f"{flow} stored, {min_epochs} needed" + (f" (days missing: {', '.join(holes)})" if holes
                                                                       else ""))
     last = (max(used) + pd.Timedelta(days=int(epoch_days) - 1)).date()
-    return (ours if side == "ours" else theirs), str(last), \
-        (f"{flow if side == 'ours' else ref} over the {len(used)} complete sPENDLE epoch(s) starting "
-         f"{', '.join(str(d.date()) for d in used)} — each [start, start + {epoch_days} d)")
+    how = (f"{flow if side == 'ours' else ref} over the {len(used)} complete sPENDLE epoch(s) starting "
+           f"{', '.join(str(d.date()) for d in used)} — each [start, start + {epoch_days} d)")
+    # D3-5b: THE LEGS, NAMED — Pendle's figure split into its per-market revenue, its PT-looping fee and the epoch-level
+    # remainder it attributes to no market; ours against the per-market leg (like for like). Only over epochs where
+    # every leg is stored; otherwise the working says which leg is missing.
+    if side == "ref" and (markets or looping):
+        sm = _series(long, p, markets) if markets else pd.Series(dtype=float)
+        sl = _series(long, p, looping) if looping else pd.Series(dtype=float)
+        split = [d for d in used if d in sm.index and d in sl.index]
+        miss = [str(d.date()) for d in used if d not in split]
+        sr_all, sf_all = _series(long, p, ref), _series(long, p, flow)
+        mk = float(sm.loc[split].sum()) if split else 0.0
+        if mk:
+            lp, total = float(sl.loc[split].sum()), float(sr_all.loc[split].sum())
+            ours_v = float(sum(sf_all.loc[pd.date_range(d, d + pd.Timedelta(days=int(epoch_days) - 1))].sum()
+                               for d in split))
+            how += (f". LEGS (Pendle's own, over the {len(split)} epoch(s) with every leg stored, "
+                    f"{split[0].date()}..{split[-1].date()}): Pendle {total:,.0f} = per-market protocol + realized YT "
+                    f"fee {mk:,.0f} + PT-looping fee {lp:,.0f} + an epoch-level remainder attributed to no market "
+                    f"{total - mk - lp:,.0f} (Pendle's docs: unrealized YT fees; not broken down). Ours {ours_v:,.0f} "
+                    f"against the per-market leg alone: {ours_v / mk - 1:+.1%}")
+        if miss:
+            how += f". Legs not split for {', '.join(miss)} ({markets} or {looping} not stored)"
+    return (ours if side == "ours" else theirs), str(last), how
 
 
 def _aero_epoch_revenue(p, rows, long, asof, flow="revenue_usd", onchain="voter_rewards_onchain_usd", side="ref", **_):

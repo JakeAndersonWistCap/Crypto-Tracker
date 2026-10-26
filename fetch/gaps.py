@@ -1129,6 +1129,14 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
         "the sPENDLE epoch reader (fetch/pendle_epochs.py) stored no complete epoch's revenues less airdrop $ "
         "(spendle/data did not answer, or a field is missing)",
         "Check the Run Log's pendle_epochs line for {name}.")
+    r3["pendle_epoch_market_revenue_usd"] = (
+        "the sPENDLE epoch reader (fetch/pendle_epochs.py) stored no complete epoch's per-market revenue "
+        "(statistics/market-fees did not answer, or a total is missing)",
+        "Check the Run Log's pendle_epochs line for {name}.")
+    r3["pendle_pt_looping_fees_usd"] = (
+        "the sPENDLE epoch reader (fetch/pendle_epochs.py) stored no complete epoch's PT-looping fee (spendle/data did "
+        "not answer, or no epoch has a fee read)",
+        "Check the Run Log's pendle_epochs line for {name}.")
     r3["near_mpc_operator_payments_tokens"] = (
         "the treasury.near payer scan (fetch/nearblocks.py, NearBlocks v3 receipts + v1.signer's participants) stored "
         "nothing: no NEARBLOCKS_API_KEY, the operator list did not read, or the receipts did not reach 2026-01-29",

@@ -48,19 +48,26 @@ def test_1_a_stale_lockup_read_blocks_the_headline_and_coingecko_never_stands_in
     figure and 10-26 CoinGecko's (the guard's BASIS violation). Now: not formed, said, and no other basis."""
     monkeypatch.setattr(bw, "_SCOPE", list(config.PROJECTS))
     monkeypatch.setattr(bw, "_VIEW_BLOCKS", {})
-    g = _near_groups()
+    # D3-1 (Jake 2026-10-26): the limit is 30 days, so the stale read here is 2026-09-25 — in force through 10-25
+    g = _near_groups(read_on="2026-09-25")
     bw._near_lockup_views(g)
     s = g[("Near", "circulating_supply_lockup_rule")].set_index("date")
-    assert s.index.max() == pd.Timestamp("2026-10-21")                # the read in force through 10-21 (10 days)
-    assert "lockups read 2026-10-11" in s.loc["2026-10-21", "source"]
-    assert s.loc["2026-10-10", "source"].endswith("no lockup read in force]")   # before the first read: NEAR's own
+    assert s.index.max() == pd.Timestamp("2026-10-25")                # the read in force through 10-25 (30 days)
+    assert "lockups read 2026-09-25" in s.loc["2026-10-25", "source"]
+    g2 = _near_groups(read_on="2026-09-05")                            # 51 days before 10-26: never in force here
+    bw._near_lockup_views(g2)
     why = bw._VIEW_BLOCKS[("Near", "circulating_supply_used")]
     assert why.startswith("BLOCKED — NEAR'S LOCKUP RULE CANNOT FORM ON 2026-10-26")
-    assert "2026-10-11, 15 days old" in why and "near_lockups_weekly.py" in why
+    assert "2026-09-05, 51 days old" in why and "near_lockups_weekly.py" in why
+    g3 = _near_groups(read_on="2026-10-11")
+    bw._VIEW_BLOCKS.clear()
+    bw._near_lockup_views(g3)
+    s3 = g3[("Near", "circulating_supply_lockup_rule")].set_index("date")
+    assert s3.loc["2026-10-10", "source"].endswith("no lockup read in force]")  # before the first read: NEAR's own
+    g = g2
     bw._market_cap_views(g)
     used = g[("Near", "circulating_supply_used")]
     assert not used["source"].str.contains(r"\[circulating_supply[\]+]").any()     # never CoinGecko's figure
-    assert pd.to_datetime(used["date"]).max() == pd.Timestamp("2026-10-24")      # the rule carried its 3 days, no more
     assert config.no_coingecko_fallback("Near")
 
 

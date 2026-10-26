@@ -528,10 +528,11 @@ def test_8_a_pin_older_than_48h_or_no_longer_served_is_not_resumed(monkeypatch):
     assert coi.NEAR_LOCKUP_PIN_MAX_H == 48
 
 
-def test_8a_the_task_matches_what_jake_set_no_limit_and_runs_on_battery():
-    """D2-8a: Jake removed the 4 h cap and the stop-on-battery; re-registering must not put either back."""
+def test_8a_the_task_matches_what_jake_set_a_6h_cap_and_runs_on_battery():
+    """D2-8a: Jake removed the 4 h cap and the stop-on-battery; re-registering must not put either back. D3-3: his task
+    is set to PT6H, so the default is a 6-hour cap (0 = none, not the default)."""
     reg = (ROOT / "windows" / "register_task.ps1").read_text()
-    assert "[int]$LimitHours = 0" in reg and "New-TimeSpan -Hours $LimitHours" in reg and "Hours 4)" not in reg
+    assert "[int]$LimitHours = 6" in reg and "New-TimeSpan -Hours $LimitHours" in reg and "Hours 4)" not in reg
     assert "if (-not $StopOnBattery) {" in reg and "$settings.StopIfGoingOnBatteries = $false" in reg
     assert "daily_run.ps1" in reg and "-Daily -At $At" in reg and "-Scheduled" in reg
     assert not any(ord(ch) > 127 for ch in reg), "Windows PowerShell 5.1 reads the BOM-less file as ANSI"

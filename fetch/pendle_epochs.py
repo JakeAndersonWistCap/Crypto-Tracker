@@ -297,6 +297,8 @@ class PendleEpochs:
             self._published_apr(name, spec, payload, now, out)
             self._epoch_aprs(name, spec, payload, out)
             self._epoch_revenues(name, spec, payload, now, out)
+            self._pt_looping(name, spec, payload, now, out)
+            self._market_revenue(name, spec, now, out)
 
     @staticmethod
     def _epoch_revenues(name, spec, payload, now, out):
@@ -332,3 +334,80 @@ class PendleEpochs:
                 f"{metric}: {len(rows)} complete epoch(s) {rows[0][0].date()}..{rows[-1][0].date()} (revenues less "
                 f"airdrop $); latest {rows[-1][1]:,.0f}" + (f"; NOT STORED (a field missing): {', '.join(skipped)}"
                                                              if skipped else ""), TIER)
+
+    @staticmethod
+    def _pt_looping(name, spec, payload, now, out):
+        """D3-5b: Pendle's PT-looping service fee per COMPLETE epoch (spendle/data ptLoopingFees, "already included in
+        fees"), dated at the epoch's start. Pendle's API gives 0 for epochs before the fee was tracked and a null
+        ptLoopingVolumes for epochs closed before the volume was stored: a fee above 0 is a reading either way; a 0 is
+        one only beside a stored volume."""
+        metric = spec.get("pt_looping_metric")
+        if not metric:
+            return
+        hist = payload.get(spec["history_key"]) or {}
+        ts = hist.get(spec["time_field"]) or []
+        fee, vol = hist.get(spec["pt_looping_field"]), hist.get(spec["pt_looping_volume_field"])
+        if not isinstance(fee, list) or not isinstance(vol, list) or len(fee) != len(ts) or len(vol) != len(ts):
+            out.fail(SOURCE, name, f"{metric}: {len(ts)} epochs against "
+                                   f"{len(fee) if isinstance(fee, list) else 'no'} fees and "
+                                   f"{len(vol) if isinstance(vol, list) else 'no'} volumes — NOTHING STORED", TIER)
+            return
+        rows, untracked = [], 0
+        for t, f, v in sorted(zip(ts, fee, vol), key=lambda x: int(float(x[0]))):
+            t = int(float(t))
+            when = pd.Timestamp(t, unit="s" if t < 10**11 else "ms").normalize()
+            if when + pd.Timedelta(days=int(spec.get("epoch_days", 14))) > now:
+                continue                                          # in progress
+            if f is None or (float(f) == 0 and v is None):
+                untracked += 1
+                continue
+            rows.append((when, float(f)))
+        if not rows:
+            out.fail(SOURCE, name, f"{metric}: no complete epoch with a PT-looping fee read — NOTHING STORED", TIER)
+            return
+        frame = pd.DataFrame([point(name, metric, v, f"{SOURCE}:{spec['history_key']}.{spec['pt_looping_field']}",
+                                    TIER, d).iloc[0] for d, v in rows])
+        out.add(frame, SOURCE, name,
+                f"{metric}: {len(rows)} complete epoch(s) {rows[0][0].date()}..{rows[-1][0].date()}; latest "
+                f"{rows[-1][1]:,.0f}" + (f"; {untracked} earlier epoch(s) before tracking, not stored" if untracked
+                                         else ""), TIER)
+
+    def _market_revenue(self, name, spec, now, out):
+        """D3-5b: Pendle's own per-market revenue per COMPLETE epoch — statistics/market-fees totals, protocol fee +
+        realized YT fee over every market Pendle lists for the epoch — dated at the epoch's start. An ongoing epoch, or
+        one whose totals lack either field, is not stored."""
+        metric, url = spec.get("market_revenue_metric"), spec.get("market_fees_url")
+        if not metric or not url:
+            return
+        try:
+            payload = self.get(url)
+        except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
+            out.fail(SOURCE, name, f"{metric}: statistics/market-fees: {e} — NOTHING STORED", TIER)
+            return
+        rows, bad = [], []
+        for e in (payload or {}).get("epochs") or []:
+            try:
+                when = pd.Timestamp(e["epochStart"]).tz_convert(None).normalize() \
+                    if pd.Timestamp(e["epochStart"]).tzinfo else pd.Timestamp(e["epochStart"]).normalize()
+            except (KeyError, ValueError, TypeError):
+                bad.append("an epoch without a start")
+                continue
+            if e.get("isOngoing") or when + pd.Timedelta(days=int(spec.get("epoch_days", 14))) > now:
+                continue
+            tot = e.get("totals") or {}
+            if tot.get("protocolFeeUsd") is None or tot.get("realizedYtFeeUsd") is None:
+                bad.append(str(when.date()))
+                continue
+            rows.append((when, float(tot["protocolFeeUsd"]) + float(tot["realizedYtFeeUsd"]), len(e.get("markets") or [])))
+        if not rows:
+            out.fail(SOURCE, name, f"{metric}: statistics/market-fees gave no complete epoch with both fees — NOTHING "
+                                   f"STORED" + (f" ({', '.join(bad)})" if bad else ""), TIER)
+            return
+        rows.sort()
+        frame = pd.DataFrame([point(name, metric, v, f"{SOURCE}:statistics/market-fees.totals."
+                                                     f"protocolFeeUsd+realizedYtFeeUsd", TIER, d).iloc[0]
+                              for d, v, _n in rows])
+        out.add(frame, SOURCE, name,
+                f"{metric}: {len(rows)} complete epoch(s) {rows[0][0].date()}..{rows[-1][0].date()} (protocol fee + "
+                f"realized YT fee over {rows[-1][2]} market(s) in the latest); latest {rows[-1][1]:,.0f}"
+                + (f"; NOT STORED (a field missing): {', '.join(bad)}" if bad else ""), TIER)

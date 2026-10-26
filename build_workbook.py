@@ -1147,6 +1147,8 @@ def confidence_for(project: str, metric: str, row: dict, asof: pd.Timestamp) -> 
         why.append(f"{row['modelled']} — not a measurement; shown, excluded from any scoring")
     if (project, metric) in HANDOVER_CUT:
         why.append(HANDOVER_CUT[(project, metric)])
+    if (project, metric) in LOCKUP_AGE_AMBER:
+        why.append(LOCKUP_AGE_AMBER[(project, metric)])      # D3-1: a lockup read 11-30 days old
     ho = HANDOVER_OVERLAP.get((project, metric))
     if ho and (not ho["passed"] or why):          # a PASSED seam alone does not turn a cell AMBER
         why.append(f"DECLARED HANDOVER ({(handover or {}).get('declared', '')}): "
@@ -3052,7 +3054,11 @@ def fdv_handover_check(name: str, groups: dict, total: pd.Series, src: dict, pp:
     return True, f"total before {h.date()}: {spec['label']} — declared handover, same quantity, {how}"
 
 
-NEAR_LOCKUP_MAX_AGE_DAYS = 10      # a weekly read, plus slack
+NEAR_LOCKUP_MAX_AGE_DAYS = 30      # D3-1 (Jake 2026-10-26): a read up to 30 days old forms the rule; BLOCKED after
+NEAR_LOCKUP_FRESH_DAYS = 10        # a weekly read, plus slack: older than this (and at most 30) the rule reads AMBER
+# D3-1: (project, metric) -> why, for the cells formed from a lockup read older than NEAR_LOCKUP_FRESH_DAYS (AMBER via
+# confidence_for). Set by _near_lockup_views on each build.
+LOCKUP_AGE_AMBER: dict = {}
 
 
 def _near_lockup_views(groups: dict) -> None:
@@ -3063,6 +3069,7 @@ def _near_lockup_views(groups: dict) -> None:
     circulating_supply_lockup_rule = total_supply − LOCKED − those two accounts, from the latest
     weekly lockup read on or before the day and at most NEAR_LOCKUP_MAX_AGE_DAYS old. A day without such a read carries
     NEAR's own figure, and its source says so; a day with one names the read's date."""
+    LOCKUP_AGE_AMBER.clear()
     for p in scoped_projects():
         if config.circulating_primary_metric(p["name"]) != "circulating_supply_lockup_rule":
             continue
@@ -3088,7 +3095,7 @@ def _near_lockup_views(groups: dict) -> None:
         # day says so (BLOCKED, with the read's age), so the headline never changes basis unflagged
         first_read = lk.index.min() if lk is not None and not lk.empty else None
         unformed = []
-        idx, vals, srcs = [], [], []
+        idx, vals, srcs, read_on = [], [], [], []
         for d in days:
             read = acc = None
             if lk is not None and fa is not None and total is not None and d in total.index:
@@ -3101,12 +3108,26 @@ def _near_lockup_views(groups: dict) -> None:
                 vals.append(float(total[d]) - read[1] - acc)
                 srcs.append(f"derived:circulating_lockup_rule[total_supply − LOCKED − lockup.near − contributors.near, "
                             f"lockups read {read[0].date()}]")
+                read_on.append(read)
             elif first_read is not None and d >= first_read:
                 unformed.append(d)
             elif base is not None and d in base.index:
                 idx.append(d)
                 vals.append(float(base[d]))
                 srcs.append("derived:circulating_lockup_rule[first_party; no lockup read in force]")
+        # D3-1: A READ 11-30 DAYS OLD STILL FORMS THE RULE, AMBER — the reason names the read, its age and the most the
+        # figure can be off by: circulating can move between reads by at most LOCKED itself (no rate is established)
+        if idx and read_on:
+            last_d, (rd, locked) = idx[-1], read_on[-1]
+            age = (last_d - rd).days
+            if age > NEAR_LOCKUP_FRESH_DAYS:
+                tot = float(total[last_d]) if total is not None and last_d in total.index else None
+                share = f", {locked / tot:.2%} of total supply" if tot else ""
+                why = (f"lockups read {rd.date()}, {age} days old on {last_d.date()} (AMBER: a read up to "
+                       f"{NEAR_LOCKUP_MAX_AGE_DAYS} days old forms NEAR's lockup rule, BLOCKED after) — between reads "
+                       f"circulating can move by at most LOCKED itself ({locked:,.0f} NEAR{share})")
+                for m in ("circulating_supply_lockup_rule", "circulating_supply_used", "market_cap_usd"):
+                    LOCKUP_AGE_AMBER[(name, m)] = why
         import credibility as _cred                       # noqa: PLC0415
         carry = int(_cred.now_max_age(name, "circulating_supply_lockup_rule"))
         if unformed and unformed[-1] == days.max() and not any(
@@ -3115,8 +3136,10 @@ def _near_lockup_views(groups: dict) -> None:
             age = (days.max() - last).days
             why = (f"BLOCKED — NEAR'S LOCKUP RULE CANNOT FORM ON {days.max().date()}: the last weekly lockup read is "
                    f"{last.date()}, {age} days old (the rule takes a read at most {NEAR_LOCKUP_MAX_AGE_DAYS} days old); "
-                   f"no CoinGecko or first-party figure stands in (another basis). Run `python near_lockups_weekly.py` "
-                   f"(~2.5 h; windows/daily_run.ps1 runs it weekly)")
+                   f"no CoinGecko or first-party figure stands in (another basis). Run `python near_lockups_weekly.py "
+                   f"--force` (~90 min, resumable; the \"Crypto-Tracker NEAR lockups\" task runs it each Sunday)")
+            for m in ("circulating_supply_lockup_rule", "circulating_supply_used", "market_cap_usd"):
+                LOCKUP_AGE_AMBER.pop((name, m), None)
             for m in ("circulating_supply_lockup_rule", "circulating_supply_used", "market_cap_usd"):
                 _VIEW_BLOCKS[(name, m)] = why
         if not vals:

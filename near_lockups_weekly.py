@@ -7,8 +7,13 @@ LOCKED in the lockup contracts. So the circulating the ratios use for NEAR is NE
 unvested), both from ONE read of every live *.lockup.near at one block (check_offline_items.near_lockups: the
 contracts' own getters, near/core-contracts@1b0436c9 lockup/src/getters.rs). It runs once a week:
 
-    python near_lockups_weekly.py            read and store when the last stored read is 7+ days old (else says so)
-    python near_lockups_weekly.py --force    read and store now
+    python near_lockups_weekly.py                  read and store when the last stored read is 7+ days old (else says so)
+    python near_lockups_weekly.py --force          read and store now
+    python near_lockups_weekly.py --every-days 8   daily_run.ps1's FALLBACK (D3-2): only when the last read is 8+ days
+                                                   old — the "Crypto-Tracker NEAR lockups" task runs it each Sunday
+
+ONE READ AT A TIME (D3-2): a lock file (LogCache root near-lockups.lock: PID and start time) — a second copy finds a live
+lock and exits 0 saying so; a lock older than LOCK_MAX_H hours, or whose process is gone, is taken over.
 
 Stores near_lockup_unvested_tokens and near_lockup_locked_tokens at the PINNED BLOCK's UTC date (source names the
 block). NOTHING IS STORED when a lockup could not be READ (a network or RPC failure) — never a partial total.
@@ -36,6 +41,7 @@ import pandas as pd
 
 METRICS = ("near_lockup_unvested_tokens", "near_lockup_locked_tokens")
 EVERY_DAYS = 7
+LOCK_MAX_H = 6
 
 
 CONTRACT_FAULT = "wasm execution failed"
@@ -102,18 +108,84 @@ def pin_expiry(got: dict) -> str:
         return f"{coi.NEAR_LOCKUP_PIN_MAX_H} h from the pin"
 
 
+def _pid_alive(pid: int) -> bool:
+    import os
+    if pid <= 0:
+        return False
+    if os.name == "nt":                                   # Windows: os.kill(pid, 0) would terminate it
+        import ctypes
+        h = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)     # PROCESS_QUERY_LIMITED_INFORMATION
+        if not h:
+            return False
+        code = ctypes.c_ulong()
+        ok = ctypes.windll.kernel32.GetExitCodeProcess(h, ctypes.byref(code))
+        ctypes.windll.kernel32.CloseHandle(h)
+        return bool(ok) and code.value == 259             # STILL_ACTIVE
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def take_lock(path, now=None) -> str:
+    """'' when this process holds the read lock, else why another read holds it (D3-2)."""
+    import json
+    import os
+    now = now or pd.Timestamp.now(tz="UTC").tz_localize(None)
+    try:
+        held = json.loads(path.read_text())
+        since = pd.Timestamp(held["since"])
+        if _pid_alive(int(held["pid"])) and (now - since) < pd.Timedelta(hours=LOCK_MAX_H) and int(held["pid"]) != os.getpid():
+            return f"another lockup read (PID {held['pid']}) has held the lock since {since:%Y-%m-%d %H:%M} UTC"
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"pid": os.getpid(), "since": str(now.floor("s"))}))
+    return ""
+
+
+def release_lock(path) -> None:
+    import json
+    import os
+    try:
+        if int(json.loads(path.read_text())["pid"]) == os.getpid():
+            path.unlink()
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--force", action="store_true")
+    ap.add_argument("--every-days", type=int, default=EVERY_DAYS,
+                    help="read only when the last stored read is at least this many days old (default 7; daily_run's "
+                         "fallback passes 8)")
     a = ap.parse_args(argv)
     import store as store_mod
     from pathlib import Path
     prev = last_read(store_mod.DB_PATH, str(Path(__file__).resolve().parent / "manual_overrides.csv"))
     today = pd.Timestamp.now(tz="UTC").normalize().tz_localize(None)
-    if prev is not None and not a.force and (today - prev).days < EVERY_DAYS:
+    every = max(1, int(a.every_days))
+    if prev is not None and not a.force and (today - prev).days < every:
         print(f"NEAR lockups: last read {prev.date()} ({(today - prev).days} day(s) ago) — next due "
-              f"{(prev + pd.Timedelta(days=EVERY_DAYS)).date()}; nothing read")
+              f"{(prev + pd.Timedelta(days=every)).date()}; nothing read")
         return 0
+    from fetch.logcache import LogCache
+    lock = LogCache().root / "near-lockups.lock"
+    held = take_lock(lock)
+    if held:
+        print(f"NEAR lockups: {held} — nothing read by this copy")
+        return 0
+    try:
+        return _read_and_store(store_mod, today)
+    finally:
+        release_lock(lock)
+
+
+def _read_and_store(store_mod, today) -> int:
     import check_offline_items as coi
     import progress
     with progress.Heartbeat("near_lockups_weekly"):

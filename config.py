@@ -32684,3 +32684,76 @@ CREDIBILITY["Pendle"]["in_revenue"] = _c_in_py(
              "first-party epoch check. Not established: whether ptLoopingFees (~3K an epoch) or any other leg is in one "
              "basis and not the other."},
     fmt=_C_USD)
+
+
+# ===================================================================================================================
+# ROUND D3 — JAKE'S DECISIONS ON D2 (2026-10-26, head 483d926). SPEC §19 D3.
+# ===================================================================================================================
+
+# D3-5a PENDLE'S FEES AND REVENUE FROM DEFILLAMA'S V2 CHILD — A WRONG STORED SERIES, FIXED FIRST. The parent "pendle"
+# summary is Pendle V2 + Boros (its breakdown carries both; parent − V2 child − Boros = 0 on every day checked
+# 2026-06..10, to rounding), so fees_usd and revenue_usd summed Boros in since 2025-07-30 — against C16 ("shown beside,
+# never summed into revenue"). The child "pendle-v2" is the declared basis; Boros stays on its own line
+# (boros_fees_usd). Q0 to 2026-10-25: revenue 1,687,748 -> 1,586,895, fees 1,711,921 -> 1,610,849; holders revenue
+# unchanged (Boros has none). The source label stays "defillama" (the same measuring point: DefiLlama's fees summary).
+PROJECT_BY_NAME["Pendle"]["defillama_fees_slug"] = "pendle-v2"
+# ONCE: every row of the three series stored from the parent goes; the same run re-reads them over the backfill window
+# from the child (fetch.backfill: a series with no row is re-read in full). `once` (token_metrics.apply_run_cleanups):
+# runs while fetch_status holds no "cleanup:D3-5:<metric>" marker for the project, and records it when it has run.
+RUN_CLEANUPS = RUN_CLEANUPS + tuple(
+    {"id": "D3-5", "metric": m, "source": "defillama", "once": True, "projects": ("Pendle",),
+     "why": "Pendle's DefiLlama parent summary (Pendle V2 + Boros) — re-read this run from the V2 child "
+            "(pendle-v2), the declared basis (SPEC D3-5a)"}
+    for m in ("fees_usd", "revenue_usd", "holders_revenue_usd"))
+
+# D3-5b PENDLE'S OWN EPOCH LEGS (api-v2.pendle.finance/core/docs, read 2026-10-26), stored per COMPLETE epoch, dated at
+# its start: the per-market revenue (statistics/market-fees totals: protocolFeeUsd + realizedYtFeeUsd, "for each 14-day
+# sPENDLE epoch (Tuesday 00:00 UTC)", at most 13 epochs) and the PT-looping service fee (spendle/data ptLoopingFees,
+# "already included in fees"; a 0 is a reading only beside a stored ptLoopingVolumes — Pendle gives 0 before tracking).
+# They are what the revenue cross-check names; NOT added to revenue_usd (Pendle publishes them per epoch only — a
+# spreading rule would be a model; decision for Jake).
+_SPE.update({"market_fees_url": "https://api-v2.pendle.finance/core/v1/statistics/market-fees?epochs=13",
+             "market_revenue_metric": "pendle_epoch_market_revenue_usd",
+             "pt_looping_metric": "pendle_pt_looping_fees_usd", "pt_looping_field": "ptLoopingFees",
+             "pt_looping_volume_field": "ptLoopingVolumes"})
+METRICS["pendle_epoch_market_revenue_usd"] = {
+    "label": "Pendle's own per-market revenue per sPENDLE epoch ($; statistics/market-fees totals: protocol fee + "
+             "realized YT fee over every market), complete epochs, dated at the epoch's start (D3-5b)",
+    "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [1], "sanity_min": 0, "sanity_max": 1e8,
+    "only_projects": ("Pendle",)}
+METRICS["pendle_pt_looping_fees_usd"] = {
+    "label": "Pendle's PT-looping service fee per sPENDLE epoch ($; spendle/data ptLoopingFees), complete epochs since "
+             "it was tracked, dated at the epoch's start (D3-5b)",
+    "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [1], "sanity_min": 0, "sanity_max": 1e7,
+    "only_projects": ("Pendle",)}
+NOT_SHOWN[("Pendle", "pendle_epoch_market_revenue_usd")] = (
+    "D3-5b: Pendle's per-market leg of its epoch revenue — named in Credibility in_revenue's working, not a headline")
+NOT_SHOWN[("Pendle", "pendle_pt_looping_fees_usd")] = (
+    "D3-5b: Pendle's PT-looping fee per epoch — a leg DefiLlama does not read; named in Credibility in_revenue's "
+    "working; not added to revenue_usd (decision for Jake)")
+_stale_after_days_d3 = stale_after_days
+
+
+def stale_after_days(project_name: str, metric: str, default: int) -> int:  # noqa: F811 — D3-5b: epoch series
+    if metric in ("pendle_epoch_market_revenue_usd", "pendle_pt_looping_fees_usd"):
+        return int(_SPE.get("epoch_days") or 14) * 2 + 2
+    return _stale_after_days_d3(project_name, metric, default)
+
+
+# the in_revenue check: UNCHANGED in what it compares and its ±10% tolerance; its working names the legs (D3-5b)
+for _side in ("ours", "ref"):
+    CREDIBILITY["Pendle"]["in_revenue"][_side]["args"].update(
+        {"markets": "pendle_epoch_market_revenue_usd", "looping": "pendle_pt_looping_fees_usd"})
+CREDIBILITY["Pendle"]["in_revenue"]["what"] = (
+    "Revenue over Q0's complete sPENDLE epochs — ours (DefiLlama's Pendle V2 revenue_usd, the epoch's UTC days) vs "
+    "Pendle's own epoch revenues less airdrops")
+CREDIBILITY["Pendle"]["in_revenue"]["ref"]["note"] = (
+    "BASIS (D3-5b, read 2026-10-26): Pendle's accounting of each 14-day epoch [start, start + 14 d) — its revenues less "
+    "the third-party tokens airdropped to sPENDLE stakers — against DefiLlama's Pendle V2 dailyRevenue over the same UTC "
+    "days (Boros out since D3-5a). Pendle's revenues = its per-market protocol fee + realized YT fee "
+    "(pendle_epoch_market_revenue_usd) + the PT-looping service fee (pendle_pt_looping_fees_usd) + an epoch-level "
+    "remainder it attributes to no market (its API docs: unrealized YT fees). DefiLlama counts the SY and reward tokens "
+    "received by Pendle's treasury for the markets listed now, priced by DefiLlama (tokens it cannot price — Robinhood "
+    "Chain's, HyperEVM's — read near 0), plus non-USDT tokens sent to the airdrop distributor ('Other Fees', when they "
+    "arrive): so DefiLlama does count airdrops, on its own timing (the D2-5 note said it did not — corrected). ±10% as "
+    "Aerodrome's first-party epoch check; a CHECK here is the finding (Jake 2026-10-26), its legs named in the working.")

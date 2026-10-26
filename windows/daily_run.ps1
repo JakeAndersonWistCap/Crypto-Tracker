@@ -240,10 +240,11 @@ if ($run[0] -eq 75) {
     Show-Toast "Crypto-Tracker: run exited $($run[0])" "token_metrics.py did not finish cleanly. Log: $Log"
 }
 
-# 2b. NEAR's still-unvested lockups (Jake 2026-10-11, C), WEEKLY: the script reads only when the last stored read is
-#     7+ days old, and stores nothing when any lockup is unreadable. Resumable at its pinned block for 48 h (D2-8), so
-#     a read cut short is continued by the next day's run; ~80 min when neither RPC endpoint throttles (D2-8a).
-[void](Invoke-Step "NEAR lockups (weekly)" @("near_lockups_weekly.py"))
+# 2b. NEAR's still-unvested lockups: THE FALLBACK ONLY (D3-2, Jake 2026-10-26). The read has its own weekly task
+#     ("Crypto-Tracker NEAR lockups", Sunday 02:15, register_lockup_task.ps1); this step reads only when the last stored
+#     read is 8+ days old (the Sunday read failed or did not run), stores nothing when any lockup is unreadable, and
+#     resumes a read cut short at its pinned block within 48 h (D2-8). One read at a time (a lock file).
+[void](Invoke-Step "NEAR lockups (weekly)" @("near_lockups_weekly.py", "--every-days", "8"))
 
 # 2c. NEAR stage 1 (Round G3 item 6): wallet_inflow_days runs ONCE, inside 2026-11-01..2026-11-07, under that month's
 #     BigQuery budget and the top-up reserve rule; on any other day it says so and exits 0. Never wallet_inflows_alltime.

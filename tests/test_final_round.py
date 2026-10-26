@@ -454,6 +454,7 @@ def test_near_lockups_weekly_never_stores_a_partial_read(monkeypatch, tmp_path, 
     import near_lockups_weekly as nl
     import check_offline_items as coi
     import store as sm
+    monkeypatch.setenv("TOKEN_METRICS_LOGCACHE", str(tmp_path / "lc"))     # D3-2: the read lock lives there
     monkeypatch.setattr(sm, "DB_PATH", str(tmp_path / "m.db"))
     sm.Store(str(tmp_path / "m.db")).close()
     monkeypatch.setattr(coi, "near_lockups", lambda: {"height": 1, "accounts": 1960, "read": 1958, "zero": 0,

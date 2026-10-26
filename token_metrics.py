@@ -995,7 +995,16 @@ def apply_run_cleanups(st, run_id: str, log) -> list[str]:
     lines = []
     for c in config.RUN_CLEANUPS:
         for proj in c["projects"]:
-            if c.get("orphan_delta_of"):
+            mark = f"cleanup:{c['id']}:{c['metric']}"
+            if c.get("once"):
+                # D3-5: ONCE — every row of exactly that source, removed on the first run that carries the declaration
+                # (the series is then re-read from its new basis under the same label, which must never be removed
+                # again): skipped while fetch_status holds this clean-up's marker for the project
+                if st.conn.execute("SELECT 1 FROM fetch_status WHERE source=? AND project=?",
+                                   (mark, proj)).fetchone():
+                    continue
+                q = ("FROM metrics WHERE project=? AND metric=? AND source=?", (proj, c["metric"], c["source"]))
+            elif c.get("orphan_delta_of"):
                 # G15 2: a differenced row dated a day its stock holds no reading
                 q = ("FROM metrics WHERE project=? AND metric=? AND source LIKE '%:delta%' AND substr(date, 1, 10) "
                      "NOT IN (SELECT substr(date, 1, 10) FROM metrics WHERE project=? AND metric=?)",
@@ -1019,6 +1028,15 @@ def apply_run_cleanups(st, run_id: str, log) -> list[str]:
                 q = ("FROM metrics WHERE project=? AND metric=? AND substr(date, 1, 10)=? AND source=?",
                      (proj, c["metric"], c["date"], c["source"]))
             rows = st.conn.execute("SELECT date, value, source " + q[0], q[1]).fetchall()
+            if c.get("once"):
+                # the marker is recorded whatever was found (a store with no such row never needs it); a line is
+                # returned only when rows go — each of them is logged below as every clean-up's are
+                done = (f"CLEAN-UP {c['id']}: applied once — {len(rows)} row(s) of {proj} / {c['metric']} from "
+                        f"{c['source']} removed — {c['why']}")
+                (log.warning if rows else log.info)("%s", done)
+                if rows:
+                    lines.append(done)
+                st.record_fetch(run_id, mark, proj, len(rows), "ok", done)
             if not rows:
                 continue
             st.conn.execute("DELETE " + q[0], q[1])
