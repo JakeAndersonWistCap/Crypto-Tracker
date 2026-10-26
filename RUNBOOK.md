@@ -547,7 +547,10 @@ schedule over the 29 days wholly inside the campaign × 30 (199,378.6 vs Merkl's
 the neighbouring campaigns' boundary hours. Pendle's "Staking APR as the protocol publishes it" reads "n/a — by design:
 Pendle publishes no sPENDLE APR …". Hyperliquid's (and every pre-minted token's) "Fees ÷ issuance at Q1/Q2/Q3" and A4
 "Self-reported − derived" read n/a like Q0 — no longer MISSING C. Near's DEX volume, trading throughput and the
-settlement rebuild read the restored 10-23..10-25 days.
+settlement rebuild read the restored 10-23..10-25 days. Morpho's Merkl schedule (merkl_campaigns_non_ethereum_tokens) and
+Plume's (b) (merkl_campaigns_plume_tokens) are re-stated by the first read: sub-campaigns no longer counted, cancelled
+campaigns net of their refunds — Morpho 2025-10..2026-10 4,685,205 → 3,580,102 MORPHO, Plume −1,036,950 WPLUME; the
+Run Log's merkl_campaigns lines say how many campaigns were not counted and why.
 
 ## 11cu. Round G18 — the last wiring gaps (2026-10-26)
 
