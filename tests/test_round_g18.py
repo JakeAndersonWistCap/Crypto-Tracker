@@ -365,6 +365,9 @@ def test_3c_lockstake_ink_sums_the_vat_ink_of_every_urn_the_engine_lists():
         def ownerUrns(self, o, i):
             return Fn(["0x" + "aa" * 20, "0x" + "bb" * 20][i])
 
+        def decimals(self):
+            return Fn(18)
+
         def urns(self, ilk, u):
             return Fn(({"0x" + "aa" * 20: 0, "0x" + "bb" * 20: 2_714_074_035 * 10 ** 18}[u], 7))
 
@@ -379,5 +382,6 @@ def test_3c_lockstake_ink_sums_the_vat_ink_of_every_urn_the_engine_lists():
     r = ChainReader.__new__(ChainReader)
     r.at_block, r.pacers = {}, {}
     r.web3 = lambda chain: W3()
+    r.erc20 = lambda chain, a: C()
     r.checksum = lambda a: a
-    assert r.lockstake_ink("ethereum", "0xengine", "0xowner") == pytest.approx(2_714_074_035.0)
+    assert r.lockstake_ink("ethereum", "0xengine", "0xowner", "0xsky") == pytest.approx(2_714_074_035.0)
