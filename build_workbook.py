@@ -9249,8 +9249,22 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
             route = (config.INSIDER_SHARE_ROUTES.get(p["name"]) or {}).get("cell")
             return (route or "NOT WIRED — no issuer / insider wallet is identified among the stakers or lockers (route: "
                     "the staking contract's depositors crossed with the issuer-wallet list)") if has_lock(p) else ""
+        lapsed = dated_zero_lapsed(p, spec)
+        if lapsed:
+            return lapsed
         n, d = R.D(r, spec[0], "now"), R.D(r, spec[1], "now")
         return calc(f"IF(AND(ISNUMBER({n}),ISNUMBER({d}),{d}>0),{n}/{d},{NA})")
+
+    def dated_zero_lapsed(p, spec):
+        """D2-4e: a DATED ZERO (config.INSIDER_DATED_ZERO — GEODNET's filing statement) holds only while a read confirmed
+        it within INSIDER_DATED_ZERO_LAPSE_DAYS: its series stale means it lapsed — MISSING E, naming the lapse."""
+        dz = config.INSIDER_DATED_ZERO.get(p["name"])
+        row = data_by_key.get(f"{p['name']}|{spec[0]}") or {}
+        if not dz or row.get("status") != "stale":
+            return ""
+        return (f"MISSING E — the dated zero lapsed: {p['name']}'s filing statement (filed {dz['filed']}, "
+                f"{dz['question'].upper()}) was last confirmed {row.get('latest_date') or '?'}, over "
+                f"{config.INSIDER_DATED_ZERO_LAPSE_DAYS} days before this build — re-check {dz['url']}")[:240]
 
     def disc_tokens(r, p):
         spec = config.DISCRETIONARY_SUPPLY.get(p["name"])
@@ -9305,6 +9319,14 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         n, d = R.D(r, spec[0], "now"), R.D(r, spec[1], "now")
         cr, rt = R.D(r, "holder_value_revenue_usd", "q0"), R.D(r, "retired_buyback_usd", "q0")
         num = lambda x: f"IF(ISNUMBER({x}),{x},0)"  # noqa: E731
+        if config.INSIDER_DATED_ZERO.get(p["name"]):
+            # D2-4e: NOTHING DISTRIBUTED -> NOTHING TO LEAK, whatever the share (as before the dated zero); a
+            # distributing quarter needs the share — the dated zero while it holds, else what lapsed or is not read
+            lapsed = dated_zero_lapsed(p, spec)
+            share = "NA()" if lapsed else f"IF(AND(ISNUMBER({n}),ISNUMBER({d}),{d}>0),{n}/{d},NA())"
+            return (f'=IF(NOT(ISNUMBER({cr})),{NA},IF({cr}<=0,"n/a — no credited holder value in Q0",'
+                    f'IF({cr}-{num(rt)}<=0,0,'
+                    + (f'"{lapsed}"' if lapsed else f"{share}*({cr}-{num(rt)})/{cr}") + ")))")
         return (f'=IF(AND(ISNUMBER({n}),ISNUMBER({d}),{d}>0,ISNUMBER({cr})),IF({cr}>0,({n}/{d})*MAX(0,{cr}-{num(rt)})/'
                 f'{cr},"n/a — no credited holder value in Q0"),{NA})')
 

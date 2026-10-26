@@ -32488,3 +32488,158 @@ CREDIBILITY_WIRING["Morpho"]["in_merkl_off_ethereum"]["ref"]["why"] = (
     "Arbitrum, Base and Katana claims, G2-D1); this row sets the three off-Ethereum claim legs against what Merkl "
     "ALLOCATED TO USERS on those chains (D2-3: the creator's returns out) — claims lag allocation, so the gap is "
     "timing (allocated, not yet claimed) as well as coverage")
+
+# D2-4 WALLET ADDITIONS (Jake's decision 4: approved for FIRST-PARTY sources only; each address with its source URL and
+# the date read). Read at Ethereum block 26,278,435 (2026-10-26): every added wallet holds 0 stake shares.
+_D2_READ = "2026-10-26"
+# D2-4a CHAINLINK: chain.link/circulating-supply lists 33 non-circulating wallets — the 27 on file (all present) and
+# these 6 ("Legacy Wallet Addresses" column by the page's CSS grid; the text does not say). Read: 29.47 LINK together,
+# 0 principal in either staking pool. They join the non-circulating set (circulating −29.47 LINK) and so the insider
+# check (check_offline_items insider_stake_check reads every non-circulating wallet against both pools).
+_LINK_PAGE = "https://chain.link/circulating-supply"
+_D2_CL = [(f"cl_page_{_i}", _a, "ethereum", "LINK", _LINK_PAGE, _D2_READ,
+           "non-circulating wallet listed on chain.link/circulating-supply (read 2026-10-26)")
+          for _i, _a in enumerate(("0x98c63b7b319dfbdf3d811530f2ab9dfe4983af9d",
+                                   "0x75398564ce69b7498da10a11ab06fd8ff549001c",
+                                   "0x5560d001f977df5e49ead7ab0bdd437c4ee3a99e",
+                                   "0xbe6977e08d4479c0a6777539ae0e8fa27be4e9d6",
+                                   "0xdad22a85ef8310ef582b70e4051e543f3153e11f",
+                                   "0xe0362f7445e3203a496f6f8b3d51cbb413b69be2"), start=1)]
+# D2-4b ETHER.FI: its own filing (Blockworks TTF, B2 v1.0 filed 2025-08-19, Q18 "Foundation assets are held within the
+# following addresses", re-read 2026-10-26) lists seven wallets: five are already non-circulating; these two join them
+# (0 ETHFI each today — no circulating change)
+_D2_EF = [("foundation_q18_1", "0xe67a6ccc7ded59ef055194ed6402465e738339a8", "ethereum", "ETHFI", _ETHERFI_FILING,
+           _D2_READ, "Foundation wallet (filing Q18, re-read 2026-10-26)"),
+          ("foundation_q18_2", "0xbe2cfe1a304b6497e6f64525d0017abab7a5e8cb", "ethereum", "ETHFI", _ETHERFI_FILING,
+           _D2_READ, "Foundation wallet (filing Q18, re-read 2026-10-26)")]
+for _name, _rows in (("Chainlink", _D2_CL), ("Ether.fi", _D2_EF)):
+    _NONCIRC_WALLETS_FIRST_PARTY[_name] = list(_NONCIRC_WALLETS_FIRST_PARTY.get(_name) or []) + _rows
+    for _key, _addr, _chain, _sym, _url, _date, _why in _rows:
+        PROJECT_BY_NAME[_name]["contracts"][f"noncirc_{_key}"] = _contract(
+            _addr, _chain, "treasury_holding", _sym, _url, verified=_date, purpose=_why,
+            provenance=f"first-party wallet list (D2-4, Jake 2026-10-26): {_url}", holder_has_code=False,
+            metric_override=_NC)
+DISCRETIONARY_SUPPLY["Chainlink"] = (("noncirculating_holding_tokens",),
+                                     "the 33 non-circulating wallets chain.link/circulating-supply lists (Chainlink "
+                                     "publishes no release schedule)")
+
+
+def _d2_insider_stake(name: str, key: str, address: str, source: str, why: str) -> None:
+    """One more issuer-side wallet read against the project's stake-share token (W6), with its own source and date."""
+    share_key, sym, _den = _INSIDER_STAKE[name]
+    PROJECT_BY_NAME[name]["contracts"][f"insider_stake_{key}"] = _contract(
+        address, "ethereum", "treasury_holding", sym, source, verified=_D2_READ,
+        provenance=f"{why} x the {sym} share token (config {share_key}); balanceOf 0 at block 26,278,435 (D2-4)",
+        metric_override="insider_stake_shares", underlying=share_key, holder_has_code=False,
+        purpose=f"{sym} shares held by an issuer-side wallet (W6: insider share of the stake; D2-4)")
+
+
+# D2-4b/c: into the insider check — the Q18 wallets, and the treasury / multisig / timelock wallets ALREADY ON FILE
+for _key, _addr, _chain, _sym, _url, _date, _why in _D2_EF:
+    _d2_insider_stake("Ether.fi", f"noncirc_{_key}", _addr, _url, _why)
+_d2_insider_stake("Ether.fi", "treasury", "0x0c83EAe1FE72c390A02E426572854931EefF93BA",
+                  "https://raw.githubusercontent.com/etherfi-protocol/smart-contracts/master/script/deploys/"
+                  "Deployed.s.sol (L56 TREASURY, read 2026-10-26)", "ether.fi TREASURY (contracts.treasury)")
+_d2_insider_stake("Maple", "dao_multisig", "0xd6d4Bcde6c816F17889f1Dd3000aF0261B03a196",
+                  "https://github.com/maple-labs/address-registry/blob/main/MapleAddressRegistryETH.md (daoMultisig, "
+                  "read 2026-10-26)", "Maple DAO multisig (contracts.treasury)")
+_PENDLE_CORE = ("https://raw.githubusercontent.com/pendle-finance/pendle-core-v2-public/main/deployments/1-core.json "
+                "(read 2026-10-26)")
+for _key, _addr, _why in (("treasury", "0x8270400d528c34e1596EF367eeDEc99080A1b592", "Pendle network.treasury"),
+                          ("dev_multisig", "0xE6F0489ED91dc27f40f9dbe8f81fccbFC16b9cb1", "Pendle network.devMultisig"),
+                          ("timelock", "0x68d8D192dF476bC01895E16b0ED3945673d777AC", "Pendle timelockController")):
+    _d2_insider_stake("Pendle", _key, _addr, _PENDLE_CORE, _why)
+# the monitors re-counted (G17-2a wording kept)
+for _n, (_share_key, _sym, _den) in _INSIDER_STAKE.items():
+    _checked = sorted(k[len("insider_stake_"):] for k in PROJECT_BY_NAME[_n]["contracts"] if k.startswith("insider_stake_"))
+    INSIDER_SHARE_MONITOR[_n]["what"] = (
+        f"{_sym} shares held by the project's issuer-side wallets ÷ {_sym} totalSupply (shares over shares). Wallets "
+        f"checked ({len(_checked)}, 0 {_sym} each at Ethereum block 26,278,435, 2026-10-26): {', '.join(_checked)}")
+    INSIDER_SHARE_MONITOR[_n]["not_wired"] = (
+        INSIDER_LIST_NEEDED + f"no insider wallet identified among {_sym} holders: the {len(_checked)} issuer-side "
+                              f"wallets checked hold 0 (route: {_sym} holders crossed with the issuer-wallet list; the "
+                              f"ratio shows once one holds shares)")
+INSIDER_SHARE_ROUTES["Chainlink"].update({
+    "checked": "the 33 non-circulating wallets chain.link/circulating-supply lists: 0 LINK principal in either pool "
+               "(getStakerPrincipal, Ethereum block 26,278,435, 2026-10-26; pools' totals 40,875,000.00 and "
+               "1,646,261.19)",
+    "docs": "https://chain.link/circulating-supply (33 wallets, read 2026-10-26) + blog.chain.link/"
+            "sustainably-growing-chainlink (2022)",
+    "cell": INSIDER_LIST_NEEDED + "the 33 non-circulating wallets chain.link lists stake 0 LINK in either pool (block "
+                                  "26,278,435, 2026-10-26); no first-party list ties another staker to Chainlink Labs"})
+
+# D2-4d SKY: the endowments' LOCKED SKY ÷ all SKY locked in Lockstake (locked_tokens = lsSKY totalSupply, minted 1:1 on
+# lock = Σ Vat ink). The endowments are issuer-side (Jake, G18-3c) and lock in that same engine, so the definition fits.
+# sky_endowment_tokens also holds their LIQUID SKY, so the numerator is a series of its own: the two locked legs.
+# Read 2026-10-26: 2,714,074,035.02 + 216,686,568.58 = 2,930,760,603.60 of 17,414,332,005.52 lsSKY = 16.83%.
+METRICS["sky_endowment_locked_tokens"] = {
+    "label": "SKY locked in Lockstake by Sky's two Ecosystem Entity endowments (SKY Frontier Foundation, Fortification "
+             "Foundation): Σ Vat ink over their urns — the insider share's numerator (D2-4)",
+    "kind": "stock", "unit": "tokens", "archetypes": [3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e11,
+    "only_projects": ("Sky",)}
+for _short in ("sff", "ff"):
+    _src = PROJECT_BY_NAME["Sky"]["contracts"][f"endowment_{_short}_locked"]
+    PROJECT_BY_NAME["Sky"]["contracts"][f"insider_lock_endowment_{_short}"] = dict(
+        _src, metric_override="sky_endowment_locked_tokens", verified=_D2_READ,
+        purpose=_src["purpose"].replace("its SKY locked", "its SKY locked (the insider share's numerator, D2-4)"))
+INSIDER_LOCK["Sky"] = ("sky_endowment_locked_tokens", "locked_tokens",
+                       "SKY the two Ecosystem Entity endowments lock in Lockstake ÷ all SKY locked (lsSKY totalSupply)")
+
+# D2-4e GEODNET: A DATED ZERO from its own filing, re-checked on every run and never carried forward. fetch/
+# filing_statements.py stores 0 only while Blockworks still serves that filing as current and latest, filed on the same
+# day, with the same answer; it lapses INSIDER_DATED_ZERO_LAPSE_DAYS after the last read that confirmed it.
+INSIDER_DATED_ZERO_LAPSE_DAYS = 90
+METRICS["insider_stake_filing_tokens"] = {
+    "label": "GEOD earning rewards in locked team / investor wallets, per GEODNET's own filing (Blockworks TTF, filed "
+             "2025-08-19, Q11): 0 while that filing is current — stored on each read that confirms it (D2-4)",
+    "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [1], "sanity_min": 0, "sanity_max": 0,
+    "only_projects": ("GEODNET",)}
+PROJECT_BY_NAME["GEODNET"]["filing_statements"] = [{
+    "metric": "insider_stake_filing_tokens", "value": 0.0,
+    "url": "https://blockworks.com/token-transparency/filing/geodnet",
+    "filed": "2025-08-19", "question": "q11",
+    "quote": "There is no current GEOD or other GEOD related rewards being earned by any locked wallet team or investor",
+    "scope": "team and investor locked wallets (Q11's prompt names Foundation and advisors too; the answer does not)",
+    "first_read": _D2_READ}]
+INSIDER_LOCK["GEODNET"] = ("insider_stake_filing_tokens", "locked_tokens",
+                           "GEOD earning rewards in locked team / investor wallets (0 per GEODNET's own filing, Q11, "
+                           "filed 2025-08-19) ÷ GEOD staked in the pooled staking wallet")
+INSIDER_DATED_ZERO = {"GEODNET": PROJECT_BY_NAME["GEODNET"]["filing_statements"][0]}
+_stale_after_days_d1 = stale_after_days
+
+
+def stale_after_days(project_name: str, metric: str, default: int) -> int:  # noqa: F811 — D2-4e: the lapse
+    if metric == "insider_stake_filing_tokens":
+        return INSIDER_DATED_ZERO_LAPSE_DAYS
+    return _stale_after_days_d1(project_name, metric, default)
+
+
+# D2-4f NEAR (b): HSP-007's payer, read on chain (four-step rule, 2026-10-26) — treasury.near has paid no MPC operator,
+# ever: its whole history (195 receipts) holds 30,171,203 NEAR out in 8 transfers on 2026-04-15 / 05-13, all to
+# Foundation-side wallets (ecotreasury4/5.multisignature.near 4,900,000 each, implicit dcc79d2c… 20,371,200,
+# foundation.near 3), followed on to 5c5e57de… → f9e0ff50… and 574b7748… → opgran01.near — none paid any of the 16
+# operators. Stored as its own series (NEAR from treasury.near to v1.signer's participants, 0-filled from HSP-007's
+# date); NOT made (b): HSP-007 also pays from "House of Stake wallets" no source names, so (b) = 0 would be a guess.
+METRICS["near_mpc_operator_payments_tokens"] = {
+    "label": "NEAR paid by treasury.near to the MPC signer's operators (v1.signer participants) — HSP-007's named payer, "
+             "every receipt treasury.near sends, by UTC day (NearBlocks v3; D2-4)",
+    "kind": "flow", "unit": "tokens", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e7,
+    "only_projects": ("Near",)}
+PROJECT_BY_NAME["Near"]["nearblocks"]["payer_out"] = {
+    "account": "treasury.near", "path": "/v3/accounts/{account}/receipts", "metric": "near_mpc_operator_payments_tokens",
+    "from": "2026-01-29", "yocto_exponent": 24,
+    "recipients": {"rpc": "https://rpc.mainnet.near.org", "contract": "v1.signer", "method": "state"},
+    "source": "houseofstake/proposals HSPs/hsp-007.md (Final, 2026-01-29; read 2026-10-26)"}
+FLOW_LINE_EVIDENCE[("Near", "Incentives paid beside: supply side (b)")] = dict(
+    FLOW_LINE_EVIDENCE[("Near", "Incentives paid beside: supply side (b)")],
+    evidence="HSP-007 (houseofstake/proposals, Final 2026-01-29) pays MPC node operators from treasury.near AND 'House "
+             "of Stake wallets'. treasury.near read on chain 2026-10-26 (four-step rule): it has paid no MPC operator "
+             "— its only outflows, 30,171,203 NEAR on 2026-04-15 / 05-13, went to Foundation-side wallets and, traced "
+             "two hops on, to none of the 16 operators (near_mpc_operator_payments_tokens = 0, stored daily). The House "
+             "of Stake wallets are named by no source, so (b) is not 0 — it is unknown.",
+    would_measure="The House of Stake wallets' accounts (then the same receipts scan against the signer's operators).",
+    source="https://raw.githubusercontent.com/houseofstake/proposals/main/HSPs/hsp-007.md ; NearBlocks v3 "
+           "/accounts/treasury.near/receipts", read_on=_D2_READ)
+NOT_SHOWN[("Near", "near_mpc_operator_payments_tokens")] = (
+    "D2-4f: the measured part of a (b) route whose other payer (House of Stake wallets) is unnamed — (b) stays MISSING "
+    "E with this series' reading on its evidence; stored so a payment shows the day it lands")

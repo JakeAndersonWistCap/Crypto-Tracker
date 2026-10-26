@@ -35,6 +35,7 @@ from .gaps import detect as detect_gaps, note_timeouts
 from .hl_candles import HLCandles
 from .hl_ledger import HLLedgerReplay
 from .merkl_campaigns import MerklCampaigns
+from .filing_statements import FilingStatements
 from .boros import BorosVolume
 from .pendle_maturity import PendleMaturity
 from .ccip_value import CcipValue
@@ -123,6 +124,8 @@ TIER_ORDER = [
     # Hyperliquid's issuer-side wallets replayed from their own ledgers, once a day (fix round 3, B1).
     ("hl_ledger", 1, lambda ctx: HLLedgerReplay()),
     ("merkl_campaigns", 1, lambda ctx: MerklCampaigns()),
+    # a project's own published statement, stored dated only while the page still carries it (D2-4e: GEODNET's filing)
+    ("filing_statements", 1, lambda ctx: FilingStatements()),
     ("boros", 1, lambda ctx: BorosVolume()),
     # Pendle TVL by days to expiry (Round G8 4b): resumes from .cache/pendle_maturity/state.json, stops itself at 120 s
     ("pendle_maturity", 1, lambda ctx: PendleMaturity()),

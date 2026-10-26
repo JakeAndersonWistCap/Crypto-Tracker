@@ -139,3 +139,187 @@ def test_3_labels_say_allocated_to_users():
         assert "ALLOCATED TO USERS" in config.METRICS[m]["label"]
     assert "ALLOCATED TO USERS" in config.CREDIBILITY_WIRING["Morpho"]["in_merkl_off_ethereum"]["ref"]["why"]
     assert "INCLUDES the off-Ethereum claims" in config.CREDIBILITY_WIRING["Morpho"]["in_merkl_off_ethereum"]["ref"]["why"]
+
+
+# ================================================================================================== 4
+def test_4a_chainlinks_six_page_wallets_join_the_issuer_set_with_their_source():
+    cs = config.PROJECT_BY_NAME["Chainlink"]["contracts"]
+    page = {k: c for k, c in cs.items() if k.startswith("noncirc_cl_page_")}
+    assert len(page) == 6 and sum(1 for k in cs if k.startswith("noncirc_")) == 33
+    for c in page.values():
+        assert c["metric_override"] == "noncirculating_holding_tokens"
+        assert c["source_url"] == "https://chain.link/circulating-supply" and c["verified"] == "2026-10-26"
+    # the insider check reads every non-circulating wallet (check_offline_items.insider_stake_check)
+    listed = {a.lower() for _k, a, *_ in config._NONCIRC_WALLETS_FIRST_PARTY["Chainlink"]}
+    assert {c["address"].lower() for c in page.values()} <= listed
+    assert config.INSIDER_SHARE_ROUTES["Chainlink"]["cell"].startswith("MISSING E — ")
+    assert "33" in config.INSIDER_SHARE_ROUTES["Chainlink"]["cell"]
+
+
+def test_4bc_share_token_checks_hold_the_approved_wallets_each_with_source_and_date():
+    want = {"Ether.fi": {"0xe67a6ccc7ded59ef055194ed6402465e738339a8", "0xbe2cfe1a304b6497e6f64525d0017abab7a5e8cb",
+                         "0x0c83eae1fe72c390a02e426572854931eeff93ba"},
+            "Maple": {"0xd6d4bcde6c816f17889f1dd3000af0261b03a196"},
+            "Pendle": {"0x8270400d528c34e1596ef367eedec99080a1b592", "0xe6f0489ed91dc27f40f9dbe8f81fccbfc16b9cb1",
+                       "0x68d8d192df476bc01895e16b0ed3945673d777ac"}}
+    counts = {"Ether.fi": 13, "Maple": 9, "Pendle": 6}
+    for n, addrs in want.items():
+        stake = {k: c for k, c in config.PROJECT_BY_NAME[n]["contracts"].items() if k.startswith("insider_stake_")}
+        assert len(stake) == counts[n], n
+        new = [c for c in stake.values() if c["address"].lower() in addrs]
+        assert len(new) == len(addrs), n
+        assert all(c["verified"] == "2026-10-26" and c["source_url"].startswith("https://") for c in new), n
+        mon = config.INSIDER_SHARE_MONITOR[n]
+        assert f"the {counts[n]} issuer-side wallets checked hold 0" in mon["not_wired"]
+        assert mon["not_wired"].startswith("MISSING E — ") and len(mon["not_wired"]) <= 255
+    # Ether.fi's Q18 wallets are non-circulating like the other five Q18 addresses; the admin Safes / timelocks of
+    # Deployed.s.sol are NOT on file and NOT added (Jake: "already on file")
+    ef = config.PROJECT_BY_NAME["Ether.fi"]["contracts"]
+    assert {"noncirc_foundation_q18_1", "noncirc_foundation_q18_2"} <= set(ef)
+    every = {c["address"].lower() for c in ef.values()}
+    for a in ("0x2aca71020de61bb532008049e1bd41e451ae8adc", "0xcdd57d11476c22d265722f68390b036f3da48c21",
+              "0x9f26d4c958fd811a1f59b01b86be7dffc9d20761", "0xcd425f44758a08baab3c4908f3e3de5776e45d7a"):
+        assert a not in every
+
+
+def test_4d_sky_numerator_is_the_endowments_locked_legs_only():
+    assert config.INSIDER_LOCK["Sky"][:2] == ("sky_endowment_locked_tokens", "locked_tokens")
+    cs = config.PROJECT_BY_NAME["Sky"]["contracts"]
+    legs = {k: c for k, c in cs.items() if c.get("metric_override") == "sky_endowment_locked_tokens"}
+    assert set(legs) == {"insider_lock_endowment_sff", "insider_lock_endowment_ff"}
+    assert all(c["kind"] == "lockstake_owner_ink" and c["engine"] for c in legs.values())
+    # the liquid legs stay out of the numerator
+    assert not any(c["kind"] == "treasury_holding" for c in legs.values())
+
+
+GEOD_PAGE = ('{"filedDate":"2025-08-19","filingStatus":"current","isLatestFiling":true,"x":1,'
+             '{"answerMarkdown":"There is no current GEOD or other GEOD related rewards being earned by any locked '
+             'wallet team or investor. We commit to 3 should it change.","id":"q11","ordinal":11}')
+
+
+def test_4e_geodnet_filing_check_confirms_only_the_same_current_filing_and_answer():
+    from fetch.filing_statements import check_filing
+    spec = config.PROJECT_BY_NAME["GEODNET"]["filing_statements"][0]
+    assert check_filing(GEOD_PAGE, spec) == ""
+    assert "superseded" in check_filing(GEOD_PAGE.replace("2025-08-19", "2026-11-02"), spec)
+    assert "no longer marked current" in check_filing(GEOD_PAGE.replace('"isLatestFiling":true',
+                                                                         '"isLatestFiling":false'), spec)
+    assert "no longer says it" in check_filing(GEOD_PAGE.replace("no current GEOD", "some GEOD"), spec)
+    assert config.stale_after_days("GEODNET", "insider_stake_filing_tokens", 7) == 90
+
+
+def test_4e_the_reader_stores_the_zero_dated_the_read_day_or_nothing(monkeypatch):
+    from fetch import filing_statements as fs
+    from fetch.base import FetchOutput
+    monkeypatch.setattr(fs, "today", lambda: pd.Timestamp("2026-10-26"))
+    import fetch.scrape as sc
+    monkeypatch.setattr(sc, "robots_verdict", lambda u: (True, "ok"))
+    spec = config.PROJECT_BY_NAME["GEODNET"]["filing_statements"][0]
+    for page, stored in ((GEOD_PAGE, True), (GEOD_PAGE.replace("2025-08-19", "2026-11-02"), False)):
+        r = fs.FilingStatements(http=type("H", (), {"get_text": lambda self, u: page})())
+        out = FetchOutput()
+        r._one("GEODNET", spec, out)
+        fr = [f for f in out.frames if f is not None and not f.empty]
+        if stored:
+            assert fr[0]["value"].tolist() == [0.0] and str(fr[0]["date"].iloc[0])[:10] == "2026-10-26"
+        else:
+            assert not fr and any("NOTHING STORED" in e.message and "superseded" in e.message for e in out.log)
+
+
+def _build_with(tmp_path, monkeypatch, project, extra):
+    """A real-dump build of one project with `extra` rows [(metric, date, value)] added to its store."""
+    import sqlite3
+    import openpyxl
+    import store as sm
+    import build_workbook as bw
+    import xlcalc
+    from real_dump import load, to_store
+    payload = load(project)
+    monkeypatch.setitem(sys.modules, "recalc", None)
+    db = tmp_path / "metrics.db"
+    to_store(payload, db)
+    con = sqlite3.connect(db)
+    con.executemany("INSERT OR REPLACE INTO metrics (date, project, metric, value, source, tier, fetched_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)", [(d, project, m, v, "test", 1, d) for m, d, v in extra])
+    con.commit()
+    con.close()
+    monkeypatch.setattr(sm, "DB_PATH", str(db))
+    st = sm.Store(str(db))
+    try:
+        bw.build_workbook(st, tmp_path / "wb.xlsx", asof=pd.Timestamp(payload["meta"]["asof"]), only=[project])
+    finally:
+        st.close()
+    wb = openpyxl.load_workbook(tmp_path / "wb.xlsx")
+    return wb, xlcalc.Workbook(wb), payload
+
+
+def test_4e_geodnet_insider_share_is_the_dated_zero_and_lapses_after_90_days(tmp_path, monkeypatch):
+    from test_overnight_ab5f2a9 import _get, _row
+    from real_dump import load
+    asof = pd.Timestamp(load("GEODNET")["meta"]["asof"])
+    for sub, day, want in (("held", asof - pd.Timedelta(days=3), 0), ("lapsed", asof - pd.Timedelta(days=120), None)):
+        (tmp_path / sub).mkdir()
+        wb, X, _ = _build_with(tmp_path / sub, monkeypatch, "GEODNET",
+                               [("insider_stake_filing_tokens", str(day.date()), 0.0)])
+        cell = _get(_row(wb, X, "CP Comparability", "GEODNET"), "Insider share of staked / locked supply")
+        if want is None:
+            assert str(cell).startswith("MISSING E — the dated zero lapsed") and "2025-08-19" in str(cell), cell
+        else:
+            assert cell == 0, cell
+
+
+def test_4d_sky_insider_share_reads_the_endowments_locked_share(tmp_path, monkeypatch):
+    from test_overnight_ab5f2a9 import _get, _row
+    from real_dump import load
+    p = load("Sky")
+    asof = str(pd.Timestamp(p["meta"]["asof"]).date())
+    locked = [r for r in p["metrics"] if r["metric"] == "locked_tokens" and r["date"][:10] <= asof]
+    last = max(locked, key=lambda r: r["date"])
+    wb, X, _ = _build_with(tmp_path, monkeypatch, "Sky", [("sky_endowment_locked_tokens", asof, 2_930_760_603.60)])
+    cell = _get(_row(wb, X, "CP Comparability", "Sky"), "Insider share of staked / locked supply")
+    assert cell == pytest.approx(2_930_760_603.60 / float(last["value"]), rel=1e-9)
+
+
+def test_4f_near_payer_scan_counts_operators_and_names_every_other_receiver(monkeypatch):
+    import base64
+    import json
+    from fetch import nearblocks as nb
+    from fetch.base import FetchOutput
+    state = {"Running": {"parameters": {"participants": {"participants": [["op-a.near", 1, {}], ["op-b.near", 2, {}]]}}}}
+    ns = lambda d: str(int(pd.Timestamp(d).value))  # noqa: E731
+    rows = [{"predecessor_account_id": "treasury.near", "receiver_account_id": "op-a.near",
+             "actions_agg": {"deposit": str(4600 * 10 ** 24)}, "block": {"block_timestamp": ns("2026-02-03 10:00")},
+             "outcome": {"status": True}},
+            {"predecessor_account_id": "treasury.near", "receiver_account_id": "ecotreasury4.multisignature.near",
+             "actions_agg": {"deposit": str(4_900_000 * 10 ** 24)},
+             "block": {"block_timestamp": ns("2026-04-15 13:00")}, "outcome": {"status": True}},
+            {"predecessor_account_id": "someone.near", "receiver_account_id": "treasury.near",
+             "actions_agg": {"deposit": str(9 * 10 ** 24)}, "block": {"block_timestamp": ns("2026-03-01")},
+             "outcome": {"status": True}},
+            {"predecessor_account_id": "treasury.near", "receiver_account_id": "op-b.near",
+             "actions_agg": {"deposit": str(1 * 10 ** 24)}, "block": {"block_timestamp": ns("2025-12-01")},
+             "outcome": {"status": True}}]                       # before HSP-007: outside the series
+
+    class H:
+        def post(self, url, json_body=None):
+            return {"result": {"result": list(json.dumps(state).encode())}}
+    monkeypatch.setattr(nb, "today", lambda: pd.Timestamp("2026-04-20"))
+    monkeypatch.setenv("NEARBLOCKS_API_KEY", "k")
+    r = nb.NearBlocks(http=H())
+    monkeypatch.setattr(r, "_get", lambda url, params, key: {"data": rows, "meta": {}})
+    spec = config.PROJECT_BY_NAME["Near"]["nearblocks"]
+    out = FetchOutput()
+    r._payer_out("Near", spec, spec["payer_out"], out)
+    f = [x for x in out.frames if x is not None and not x.empty][0]
+    s = f.assign(date=pd.to_datetime(f["date"])).set_index("date")["value"]
+    assert s.index.min() == pd.Timestamp("2026-01-29") and s.index.max() == pd.Timestamp("2026-04-19")
+    assert s.sum() == pytest.approx(4600) and s[pd.Timestamp("2026-02-03")] == pytest.approx(4600)
+    assert any("ecotreasury4.multisignat 4,900,000" in e.message for e in out.log)
+    assert base64 and nb.signer_participants(H(), spec["payer_out"]["recipients"]) == {"op-a.near", "op-b.near"}
+
+
+def test_4f_near_b_stays_e_with_the_trace_and_the_route_is_declared_not_shown():
+    ev = config.FLOW_LINE_EVIDENCE[("Near", "Incentives paid beside: supply side (b)")]
+    assert ev["verdict"] == "class_e" and "treasury.near" in ev["evidence"] and "House of Stake" in ev["evidence"]
+    assert "b" not in config.OUTFLOW_CATEGORIES["Near"]
+    assert ("Near", "near_mpc_operator_payments_tokens") in config.NOT_SHOWN

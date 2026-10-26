@@ -1096,7 +1096,8 @@ def test_g2_11_each_not_wired_insider_cell_names_what_was_checked_and_what_is_ne
     for n, r in config.INSIDER_SHARE_ROUTES.items():
         assert set(r) >= {"stake", "checked", "docs", "needed", "cell"} and len(r["cell"]) <= 240, n
         assert r["cell"].startswith(config.INSIDER_LIST_NEEDED), n                    # G17-2a: MISSING E, not NOT WIRED
-    assert "block 26,219,782" in config.INSIDER_SHARE_ROUTES["Chainlink"]["checked"]
+    # D2-4a: the 33 wallets chain.link/circulating-supply lists, re-read at block 26,278,435 (was 27 at 26,219,782)
+    assert "block 26,278,435" in config.INSIDER_SHARE_ROUTES["Chainlink"]["checked"]
 
 
 def test_g2_11_leakage_i_is_zero_when_nothing_was_distributed():
@@ -1105,8 +1106,10 @@ def test_g2_11_leakage_i_is_zero_when_nothing_was_distributed():
     import build_workbook as bw
     cols = bw._cp_cols(bw.Refs(10, 10, ["2026-09"]), {})
     build = next(f for h, f, *_ in cols if h.startswith("Leakage (i)"))
-    f = build(5, config.PROJECT_BY_NAME["Sky"])
-    assert f.startswith("=IF(NOT(ISNUMBER(") and "<=0,0," in f and "Pause Proxy" in f
+    # D2-4d: Sky's share is now a number (the endowments' locked SKY, INSIDER_LOCK) — the route branch is Chainlink's
+    f = build(5, config.PROJECT_BY_NAME["Chainlink"])
+    assert f.startswith("=IF(NOT(ISNUMBER(") and "<=0,0," in f and "33 non-circulating wallets" in f
+    assert "sky_endowment_locked_tokens" in build(5, config.PROJECT_BY_NAME["Sky"])
 
 
 # ------------------------------------------------------------------------------- G2.6 NEAR all-time wallet inflows

@@ -416,7 +416,8 @@ def test_subsidy_cover_on_an_incomplete_denominator_is_blocked(tmp_path, monkeyp
     assert config.OUTFLOW_INCOMPLETE[(project, "b")][:20] in str(cover)
 
 
-@pytest.mark.parametrize("project,sym,n", [("Ether.fi", "sETHFI", 10), ("Maple", "stSYRUP", 8), ("Pendle", "sPENDLE", 3)])
+# D2-4 (Jake 2026-10-26): the approved first-party wallets joined the checks — Ether.fi 10 -> 13, Maple 8 -> 9, Pendle 3 -> 6
+@pytest.mark.parametrize("project,sym,n", [("Ether.fi", "sETHFI", 13), ("Maple", "stSYRUP", 9), ("Pendle", "sPENDLE", 6)])
 def test_w6_insider_share_is_not_wired_when_no_checked_wallet_holds_shares(tmp_path, monkeypatch, project, sym, n):
     """Round 3 review W6 (Jake 2026-10-14): 'If none are identified, the cell is NOT WIRED with the route, not 0.'"""
     import xlcalc
@@ -429,7 +430,8 @@ def test_w6_insider_share_is_not_wired_when_no_checked_wallet_holds_shares(tmp_p
     assert cell.startswith(f"{config.INSIDER_LIST_NEEDED}no insider wallet identified among {sym} holders"), cell
     assert len(cell) <= 255                                                   # an Excel string constant
     what = str(_get(o, "Insider share — what is divided"))
-    assert f"Wallets checked ({n}, 0 {sym} each on 2026-10-14)" in what     # E6: re-read 2026-10-14 (E1 added two)
+    # E6: re-read 2026-10-14 (E1 added two); D2-4: every wallet re-read 0 at block 26,278,435 (2026-10-26)
+    assert f"Wallets checked ({n}, 0 {sym} each at Ethereum block 26,278,435, 2026-10-26)" in what
     leak = _get(o, "Leakage (i)")
     assert leak in ("", None) or str(leak).startswith(config.INSIDER_LIST_NEEDED), leak     # G17-2a: the same reason
 

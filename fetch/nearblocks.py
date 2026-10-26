@@ -198,6 +198,35 @@ def _save_state(f, after: str, newest_ts, newest_ids, by_day: dict) -> None:
                                "by_day": {str(d.date()): v for d, v in sorted(by_day.items())}}))
 
 
+def signer_participants(http, spec: dict) -> set:
+    """The MPC signer's operator accounts from the contract itself (D2-4f): view `state` on `contract` over NEAR RPC,
+    the participants list wherever the state nests it (Running / Resharing / Initializing). Raises if none."""
+    import base64
+
+    body = http.post(spec["rpc"], json_body={
+        "jsonrpc": "2.0", "id": 1, "method": "query",
+        "params": {"request_type": "call_function", "finality": "final", "account_id": spec["contract"],
+                   "method_name": spec["method"], "args_base64": base64.b64encode(b"{}").decode()}})
+    raw = ((body or {}).get("result") or {}).get("result")
+    if not raw:
+        raise ValueError(f"{spec['contract']}.{spec['method']}: no result ({str(body)[:160]})")
+    found: set = set()
+
+    def walk(x):
+        if isinstance(x, dict):
+            for k, v in x.items():
+                if k == "participants" and isinstance(v, list):
+                    found.update(str(e[0]) for e in v if isinstance(e, list) and e and isinstance(e[0], str))
+                walk(v)
+        elif isinstance(x, list):
+            for v in x:
+                walk(v)
+    walk(json.loads(bytes(raw).decode()))
+    if not found:
+        raise ValueError(f"{spec['contract']}.{spec['method']}: no participants list in the state")
+    return found
+
+
 class NearBlocks:
     """Daily chain activity for any project declaring a `nearblocks` block."""
 
@@ -280,6 +309,8 @@ class NearBlocks:
                     self._supply_stats(p["name"], spec, spec["supply_stats"], out)
                 if spec.get("supply_total"):
                     self._supply_total(p["name"], spec, spec["supply_total"], out)
+                if spec.get("payer_out"):
+                    self._payer_out(p["name"], spec, spec["payer_out"], out)
         for p in projects:
             for flow in p.get("near_account_flows") or []:
                 self._account_flow(p["name"], flow, window_days, out)
@@ -548,6 +579,72 @@ class NearBlocks:
         out.add(frame, SOURCE, name,
                 f"{metric} = NearBlocks {m['path']} `{field}`, {len(pairs)} complete day(s) "
                 f"{min(pairs)[0].date()}..{max(pairs)[0].date()}; live row shape {sample}", TIER)
+
+    def _payer_out(self, name: str, spec: dict, po: dict, out):
+        """D2-4f, THE FOUR-STEP RULE AS A READ: every receipt the payer (HSP-007's treasury.near) has SENT since `from`,
+        each receiver classified — an MPC signer operator (the contract's own participant list) counts in `metric`, any
+        other receiver is named in the Run Log line, never dropped. NEAR's v3 /accounts/{account}/receipts (newest
+        first, `next` cursors); a page cap reached before `from` stores nothing (a partial scan would read low)."""
+        metric, account = po["metric"], po["account"]
+        key = self._key(spec)
+        if not key:
+            out.unconfigured(SOURCE, name, f"{metric}: no {spec['key_env']} in .env", TIER)
+            return
+        try:
+            ops = signer_participants(self.http, po["recipients"])
+        except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
+            out.fail(SOURCE, name, f"{metric}: the operator list ({po['recipients']['contract']}) did not read: "
+                                   f"{self._scrub(spec, e)} — NOTHING STORED", TIER)
+            return
+        url = spec["base_url"].rstrip("/") + po["path"].format(account=account)
+        since = pd.Timestamp(po["from"])
+        rows, nxt, complete = [], None, False
+        for _page in range(self.page_cap):
+            params = {"limit": 100}
+            if nxt:
+                params["next"] = nxt
+            try:
+                body = self._get(url, params, key)
+            except Exception as e:  # noqa: BLE001
+                out.fail(SOURCE, name, f"{metric}: {url}: {self._scrub(spec, e)} — NOTHING STORED", TIER)
+                return
+            data = body.get("data") if isinstance(body, dict) else None
+            need = {"predecessor_account_id", "receiver_account_id", "actions_agg", "block", "outcome"}
+            if not isinstance(data, list) or (data and not need.issubset(data[0])):
+                got = sorted(data[0]) if isinstance(data, list) and data else type(body).__name__
+                out.fail(SOURCE, name, f"{metric}: {url} answered {got}, not rows carrying {sorted(need)} — "
+                                       f"NOTHING STORED", TIER)
+                return
+            rows += data
+            nxt = (body.get("meta") or {}).get("next_page")
+            oldest = min((int(r["block"]["block_timestamp"]) for r in data), default=None)
+            if not nxt or oldest is None or pd.Timestamp(oldest, unit="ns") < since:
+                complete = True
+                break
+        if not complete:
+            out.fail(SOURCE, name, f"{metric}: {self.page_cap} pages of {account}'s receipts did not reach "
+                                   f"{since.date()} — NOTHING STORED (a partial scan reads low)", TIER)
+            return
+        scale = 10 ** int(po.get("yocto_exponent", 24))
+        to_ops, others = {}, {}
+        for r in rows:
+            dep = int((r.get("actions_agg") or {}).get("deposit") or 0)
+            ts = pd.Timestamp(int(r["block"]["block_timestamp"]), unit="ns")
+            if r["predecessor_account_id"] != account or dep <= 0 or ts < since \
+                    or not (r.get("outcome") or {}).get("status"):
+                continue
+            who = r["receiver_account_id"]
+            if who in ops:
+                d = ts.normalize()
+                to_ops[d] = to_ops.get(d, 0.0) + dep / scale
+            else:
+                others[who] = others.get(who, 0.0) + dep / scale
+        last = today() - pd.Timedelta(days=1)                       # complete days only
+        pts = [(d, to_ops.get(d, 0.0)) for d in pd.date_range(since, last)]
+        named = "; ".join(f"{w[:24]} {v:,.0f}" for w, v in sorted(others.items(), key=lambda x: -x[1]))
+        out.add(tidy(pts, name, metric, SOURCE, TIER), SOURCE, name,
+                f"{metric}: {sum(to_ops.values()):,.2f} NEAR from {account} to the {len(ops)} signer operators "
+                f"{since.date()}..{last.date()}; to other receivers (named, not counted): {named or 'none'}", TIER)
 
     def _account_flow(self, name: str, spec: dict, window_days, out):
         """near_account_flows — v3 account txns, ACTUAL INFLOW (see the module docstring)."""
