@@ -75,6 +75,7 @@ def within(ours: float, ref: float, kind: str, tol: float) -> bool:
 #   ("sum_days", metric, days)           sum over the `days` ending at the reference date
 #   ("sum_since", metric, start)         sum from `start` to the reference date (+ SAMPLE_LAG_DAYS)
 #   ("sum_period", metric, start, end)   sum over [start, end]
+#   ("mean_period_x", metric, start, end, n)   mean over [start, end] x n (a campaign total vs a daily series, D1-2)
 #   ("on_day", metric)                   the value dated on the reference date
 #   ("event", metric, days, sign)        a single-day move of the stock equal to the reference, within ±days
 #   ("cumulative", metric)               every stored row up to the reference date (the series' first date is named)
@@ -254,7 +255,11 @@ G6_ROUTES = {
     ('Morpho', 'g6_total_supply_wrapped'): ('last', 'total_supply'),
     ('Morpho', 'g6_circulating_supply_tokenops'): ('last', 'circulating_supply_tokenops'),
     ('Morpho', 'g6_total_supply_tokenops'): ('last', 'total_supply'),
-    ('Morpho', 'g6_merkl_base_campaign_total'): ('sum_period', 'merkl_campaigns_non_ethereum_tokens', '2026-09-21', '2026-10-21'),
+    # D1-2: Merkl campaign 0x0dfbe8e7… (199,378.3625 MORPHO, 2026-09-21 18:00 -> 10-21 18:00 UTC): a UTC-day SUM over
+    # 09-21..10-21 took in 18 h of the previous campaign (4,984.46) and 6 h of the next (1,729.32) = the whole 6,714
+    # gap — like for like, the 29 days wholly inside it, averaged, x 30
+    ('Morpho', 'g6_merkl_base_campaign_total'): ('mean_period_x', 'merkl_campaigns_non_ethereum_tokens', '2026-09-22',
+                                                 '2026-10-20', 30),
     ('Morpho', 'g6_merkl_arc_campaign'): ('recorded', 'recorded only: Arc campaign is paid on Ethereum (distributionChainId 1) — it lands in the Ethereum claims (merkl_morpho_out), not merkl_campaigns_non_ethereum_tokens'),
     ('Uniswap', 'g6_uni_total_supply_gross'): ('last', 'total_supply_gross'),
     ('Uniswap', 'g6_dead_balance'): ('last', 'burn_address_balance'),
@@ -559,6 +564,20 @@ def _our_value(route: tuple, groups: dict, project: str, at: pd.Timestamp, ref: 
             return None, metric, f"{metric} ends {s.date.max():%Y-%m-%d}, before the period's end {s1:%Y-%m-%d}"
         x = s[(s.date >= s0) & (s.date <= s1)]
         return float(x.value.sum()), f"Σ {metric} {s0:%Y-%m-%d}..{s1:%Y-%m-%d}", ""
+    if kind == "mean_period_x":
+        # D1-2: a campaign TOTAL (Merkl's amount, paid 18:00 -> 18:00 UTC) against our daily series: the days wholly
+        # inside the campaign, averaged, times its length — never a UTC-day sum, which takes in the neighbouring
+        # campaigns' boundary hours
+        s0, s1, n = pd.Timestamp(route[2]), pd.Timestamp(route[3]), float(route[4])
+        if first > s0 + pd.Timedelta(days=1):
+            return None, metric, f"{metric} starts {first:%Y-%m-%d}, after {s0:%Y-%m-%d}"
+        if s.date.max() < s1:
+            return None, metric, f"{metric} ends {s.date.max():%Y-%m-%d}, before the period's end {s1:%Y-%m-%d}"
+        x = s[(s.date >= s0) & (s.date <= s1)]
+        if x.empty:
+            return None, metric, f"{metric}: no rows {s0:%Y-%m-%d}..{s1:%Y-%m-%d}"
+        return (float(x.value.mean()) * n, f"mean {metric} per day over {s0:%Y-%m-%d}..{s1:%Y-%m-%d} (the days wholly "
+                                           f"inside the campaign, {len(x)} stored) x {n:g} days", "")
     if kind == "cumulative":
         x = s[s.date <= at]
         return (float(x.value.sum()), f"Σ {metric} {first:%Y-%m-%d}..{at:%Y-%m-%d} (our series starts "

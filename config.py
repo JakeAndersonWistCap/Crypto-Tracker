@@ -32412,3 +32412,46 @@ DETAIL_COLUMNS.append(
      "header": "Detail — SKY held by Sky's two Ecosystem Entity endowments (liquid + locked in Lockstake; "
                "non-circulating, G18-3c; tokens, latest)",
      "cells": {"Sky": ("sky_endowment_tokens", "now")}})
+
+# ===================================================================================================================
+# ROUND D1 (Jake 2026-10-26, head 3de3ba9) — the data phase, round 1. SPEC §19 D1.
+# ===================================================================================================================
+# D1-1 NEAR DEX VOLUME / INTENTS FEES. DefiLlama's own responses (re-read 2026-10-26 ~15:42 UTC against the ~11:19 read):
+# NEAR Intents was NOT delisted, renamed, re-parented or re-categorised (slug near-intents, id 6225, category Bridge,
+# parent#near-protocol, deadFrom null); its adapter reads NEAR's Dune dataset and was LATE — 10-23..10-25 had no NEAR
+# Intents entry in /overview/dexs/near until DefiLlama backfilled them the same afternoon (103.8M / 95.4M / 93.7M against
+# the 8.27M / 9.37M / 4.44M we stored), and the 10-22 fees day was restated 11,925 -> 160,221 (revenue 58,819 unchanged).
+# Same slug, same endpoints: no handover. The stale rows go (clean-up D1-1) and the next read re-stores them; a day
+# without NEAR Intents, or a fees day below its revenue, is refused from now on.
+TRADING_THROUGHPUT["chains"]["Near"]["required_in_breakdown"] = {"dex_volume_usd": ("NEAR Intents",)}
+for _c in PROJECT_BY_NAME["Near"]["defillama_component_slugs"]:
+    if _c["metric"] == "intents_fees_usd":
+        _c["not_below"] = "intents_revenue_usd"
+# the revenue component must be read first for the fees floor to apply
+PROJECT_BY_NAME["Near"]["defillama_component_slugs"].sort(key=lambda c: c["metric"] != "intents_revenue_usd")
+RUN_CLEANUPS = RUN_CLEANUPS + tuple(
+    {"id": "D1-1", "metric": "dex_volume_usd", "date": _d, "source": "defillama:dexs:near", "projects": ("Near",),
+     "why": "stored while NEAR Intents was absent from DefiLlama's breakdown (adapter lag; backfilled 2026-10-26) — "
+            "re-read next run"} for _d in ("2026-10-23", "2026-10-24", "2026-10-25")) + (
+    {"id": "D1-1", "metric": "intents_fees_usd", "date": "2026-10-22", "source": "defillama:near-intents",
+     "projects": ("Near",), "why": "a partial day (fees 11,925 < revenue 58,819), restated to 160,221 by DefiLlama "
+                                   "2026-10-26 — re-read next run"},)
+
+# D1-4 PENDLE'S PUBLISHED sPENDLE APR — N/A BY DESIGN: no primary Pendle source publishes one (re-read 2026-10-26)
+for _m in ("staking_apr_published", "pendle_epoch_apr_published"):
+    MISSING_DECLARED.pop(("Pendle", _m), None)
+    UNAVAILABLE.append({
+        "project": "Pendle", "metric": _m, "closed_on": "2026-10-26",
+        "summary": "Pendle publishes no sPENDLE APR: api-v2.pendle.finance/core/v1/spendle/data lastEpochApr 0 (marked "
+                   "DEPRECATED in Pendle's live API spec) and sPendleHistoricalData.aprs 0 for all 20 sPENDLE epochs "
+                   "(2026-01-29..2026-10-20); the app shows no sPENDLE APR; the sPENDLE contract has no rate getter.",
+        "cell_text": "n/a — by design: Pendle publishes no sPENDLE APR (spendle/data aprs 0 for all 20 epochs to "
+                     "2026-10-20, 72 reads 09-29..10-13; lastEpochApr deprecated; no app figure; no contract getter)",
+        "what_was_tried": "spendle/data (lastEpochApr, sPendleHistoricalData.aprs); docs.pendle.finance sPENDLE "
+                          "mechanics + ApiOverview (documentation @1db66ab5); the live API spec (core/docs); "
+                          "app.pendle.finance's served JS (its only sPENDLE source is spendle/data; no APR shown); "
+                          "StakedPendle 0xA98D… (verified): no rewardRate/apr/epoch getter",
+        "impact": "NONE on our figure: the staker yield is computed from the epoch buybacks (pendle_distributed_tokens)",
+        "reopen_if": "Pendle publishes a non-zero sPENDLE epoch APR (the reader stores one in (0, 1) the day it appears)",
+    })
+    UNAVAILABLE_BY_KEY[("Pendle", _m)] = UNAVAILABLE[-1]

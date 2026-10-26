@@ -456,9 +456,24 @@ class DefiLlama:
             self._sum_slugs(project, spec, window_days, out)
         # ONE SLUG, ONE COMPONENT METRIC (Chainlink requests, 2026-10-05): a line of a read-time sum,
         # stored under its own name so the sum can refuse a day it is missing.
+        got_rows: dict = {}
         for c in project.get("defillama_component_slugs") or ():
             try:
                 rows = self._summary_chart(c["slug"], c.get("data_type", "dailyFees"))
+                got_rows[c["metric"]] = rows
+                # D1-1: GROSS FEES CAN NEVER BE BELOW THE REVENUE TAKEN FROM THEM — a fees day under its revenue day is a
+                # partial read (NEAR Intents 2026-10-22: fees 11,925 vs revenue 58,819, restated to 160,221 the same day):
+                # refused, never stored
+                floor = got_rows.get(c.get("not_below") or "")
+                if floor:
+                    fl = {pd.Timestamp(d).normalize(): float(v) for d, v in floor}
+                    bad = [d for d, v in rows if pd.Timestamp(d).normalize() in fl
+                           and float(v) < fl[pd.Timestamp(d).normalize()]]
+                    if bad:
+                        rows = [(d, v) for d, v in rows if d not in bad]
+                        out.log.append(LogEntry(SOURCE, name, 0, "ok", f"{c['metric']}: REFUSED {len(bad)} day(s) where "
+                                                f"{c['metric']} < {c['not_below']} (a partial day): "
+                                                f"{', '.join(str(pd.Timestamp(d).date()) for d in bad[-5:])}", TIER))
                 # A FIRST READ STORES THE HISTORY (Jake's fix round 2, R1: NEAR Intents revenue had to be backfilled
                 # 455 days): a component series with no stored row takes config.TRAJECTORY history_days, not the
                 # routine window
@@ -1487,8 +1502,13 @@ class DefiLlama:
             if metric not in config.TRADING_THROUGHPUT["endpoints"]:
                 continue                    # served elsewhere (Hyperliquid perps: fetch/hl_candles.py)
             path = config.TRADING_THROUGHPUT["endpoints"][metric].format(slug=spec["slug"])
+            # D1-1: a chain whose total is dominated by one protocol reads the per-protocol breakdown too (same call)
+            required = tuple((spec.get("required_in_breakdown") or {}).get(metric) or ())
+            params = dict(config.TRADING_THROUGHPUT["params"])
+            if required:
+                params["excludeTotalDataChartBreakdown"] = "false"
             try:
-                j = self.http.get(f"{API}{path}", params=config.TRADING_THROUGHPUT["params"])
+                j = self.http.get(f"{API}{path}", params=params)
             except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
                 out.fail(SOURCE, name, f"{metric}: {path}: {e}"
                          + (" — the derivatives route is PRO-ONLY in DefiLlama's current docs" if
@@ -1502,6 +1522,25 @@ class DefiLlama:
             rows = [(pd.Timestamp(int(t), unit="s").normalize(), float(v)) for t, v in (j.get("totalDataChart") or [])
                     if v is not None]
             rows = [(d, v) for d, v in rows if d < today()]
+            refused = []
+            if required:
+                # A DAY WITHOUT THE PROTOCOL THAT MAKES MOST OF IT IS PARTIAL, NOT LOW (D1-1, Jake's 10-26 run: NEAR
+                # Intents — 85-95% of Near's DEX volume, read from a Dune dataset — was absent from the breakdown on
+                # 10-23..10-25 until DefiLlama backfilled it the same afternoon; the chain total read 4.4M-9.4M against
+                # ~90M-140M). Such a day is NOT STORED, so every window over it refuses it rather than summing it.
+                bd = {pd.Timestamp(int(t), unit="s").normalize(): (b or {})
+                      for t, b in (j.get("totalDataChartBreakdown") or [])}
+                keep = []
+                for d, v in rows:
+                    miss = [r for r in required if not float((bd.get(d) or {}).get(r) or 0) > 0]
+                    (refused if miss else keep).append((d, miss))
+                ok_days = {d for d, _m in keep}
+                rows = [(d, v) for d, v in rows if d in ok_days]
+                if refused:
+                    out.log.append(LogEntry(SOURCE, name, 0, "ok", f"{metric}: REFUSED {len(refused)} day(s) — "
+                                            f"{', '.join(sorted(set(m for _d, ms in refused for m in ms)))} absent "
+                                            f"from DefiLlama's breakdown on {', '.join(str(d.date()) for d, _m in refused[-5:])}"
+                                            f" (a partial day, not stored; re-read next run)", 1))
             if not rows:
                 out.fail(SOURCE, name, f"{metric}: {path} carried no daily chart", 1)
                 continue

@@ -52,8 +52,8 @@ def test_2a_a_route_waiting_on_a_wallet_list_is_missing_e_and_no_route_is_not_wi
 
 
 def test_0_declared_classes_decide_before_inference():
-    cls, ev = ca.missing_class({"Project": "Pendle", "Reason / route / error": "staking_apr_published: no rows stored"})
-    assert cls == "E — NO SOURCE" and "aprs is 0 for EVERY epoch" in ev
+    # (D1-4: Pendle's published APR is closed N/A by design — config.UNAVAILABLE — so it is no longer a declared E)
+    assert ("Pendle", "staking_apr_published") in config.UNAVAILABLE_BY_KEY
     cls, ev = ca.missing_class({"Project": "Ethereum", "Reason / route / error": "outflow_d_usd (q0): BLOCKED"})
     assert cls == "C — NEEDS HISTORY" and "valid from 2026-12-03" in ev
     cls, ev = ca.missing_class({"Project": "Plume", "Reason / route / error": "outflow_d_usd (q0): no rows stored"})
