@@ -412,7 +412,8 @@ def test_seeded_bisection_finds_a_pass_through_wallet(monkeypatch):
 # ----------------------------------------------------------------------------------------------- C NEAR lockups
 def test_near_circulating_under_the_lockup_rule(monkeypatch):
     """Jake 2026-10-12 (decision 8): everything NOT YET TRANSFERABLE is out — circulating = total − LOCKED from the latest
-    weekly read <= 10 days old; without one, NEAR's own figure unchanged and said so. Jake's probe: LOCKED 21,568,722."""
+    weekly read <= 30 days old (D3-1; 10 before); without one, NEAR's own figure unchanged and said so. Jake's probe: LOCKED
+    21,568,722."""
     import build_workbook as bw
     import config
     monkeypatch.setattr(bw, "_SCOPE", list(config.PROJECTS))
@@ -447,7 +448,15 @@ def test_near_circulating_under_the_lockup_rule(monkeypatch):
     assert s.loc["2026-10-11", "value"] == pytest.approx(1_306_900_000 - 21_568_722 - 171_059.131)
     assert "lockups read 2026-10-11" in s.loc["2026-10-11", "source"]
     assert "lockup.near − contributors.near" in s.loc["2026-10-11", "source"]
-    assert pd.Timestamp("2026-10-22") not in s.index                    # 11 days past the read: not formed (G18-1)
+    # D3-1 (Jake 2026-10-26): a read up to 30 days old forms the rule, AMBER after 10 days; not formed after 30
+    assert s.loc["2026-10-22", "value"] == pytest.approx(1_306_900_000 - 21_568_722 - 171_059.131)
+    assert "14 days old on 2026-10-25" in bw.LOCKUP_AGE_AMBER[("Near", "circulating_supply_used")]
+    d2 = pd.date_range("2026-10-01", "2026-11-12")
+    groups[("Near", "total_supply")] = pd.DataFrame({"date": d2, "project": "Near", "metric": "total_supply",
+                                                     "value": 1_306_900_000.0, "source": "coingecko", "tier": 1})
+    bw._near_lockup_views(groups)
+    s = groups[("Near", "circulating_supply_lockup_rule")].set_index("date")
+    assert pd.Timestamp("2026-11-10") in s.index and pd.Timestamp("2026-11-11") not in s.index   # 30 days, not 31
 
 
 def test_near_lockups_weekly_never_stores_a_partial_read(monkeypatch, tmp_path, capsys):
