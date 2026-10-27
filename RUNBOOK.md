@@ -533,6 +533,33 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11da. Round D5 — data collection, the 14 projects (2026-10-27)
+
+What changes on your store (SPEC §19 D5):
+- **DefiLlama's fee family keeps every day it serves** (D5-0). The first run rewrites Fluid's revenue and fees, Near's
+  revenue (now 0.70 of fees) and Uniswap's fees back through history. Each quarter that moves more than 0.5% is logged
+  first: `RESTATED BY THE SOURCE: <project> <metric> <quarter>: stored X → now Y (±z%)`. Expect Fluid 2025Q4 revenue
+  about 4.11M → 3.71M. Later runs log a line only when DefiLlama restates again.
+- **Aethir customer revenue before 2026-06-15** reads Aethir's own monthly revenue, each complete month spread over
+  its days (D5-1a). Nothing is fetched or stored: it is a read-time view.
+- **Ethereum consensus rewards before 2026-09-30** are MEASURED from ultrasound's supply + burn (D5-2a); the formula
+  stays (MODELLED) only before ultrasound's first day. Nothing is fetched or stored.
+- **Maple's SSF net outflow** is removed: `CLEAN-UP D5-3c: removed Maple / ssf_net_outflow_tokens <date> …` once per
+  stored month, then the A3 detail cell reads BLOCKED with the reason; the Maple read logs it SKIPPED (D5-3c).
+- Nothing else is fetched. Morpho, Chainlink and Aethir supply units and Hyperliquid's pool release stay waits (D5-1b,
+  1c).
+
+**Pull this, then in PowerShell 5.1 at the repo root, in this order:**
+1. `python token_metrics.py` — the normal run. PASTE BACK every `RESTATED BY THE SOURCE` and `CLEAN-UP D5-3c` line.
+2. Optional, uses your beaconcha.in key (reads 24 days at most, 6 s apart, stores nothing):
+   `python check_offline_items.py ethstore_check` — one line a month, ours vs ETH.STORE. PASTE BACK the lines. If it
+   stops on an HTTP status, paste that line; do not re-run it the same day.
+3. Optional, LONG (about 10–11 hours, resumable — stop it any time and run the same line again):
+   `python token_metrics.py --seed plume_settlement --plume-native-from 2025-10-27 --plume-native-cap 1200`
+   — Plume's native transfers for 2025-10-27..2026-03-31 (Points Season 2). Only that invocation reads those days;
+   the daily run keeps 2026-04-01 / 400 pages. Don't run it beside a daily run (they share the state file).
+
+
 ## 11cz. Round P1 Stage 1 — the reader and the audit file (2026-10-27)
 
 No data changes. Each run now writes TWO workbooks:
