@@ -509,9 +509,22 @@ def series_starts() -> dict:
     out = {k: dict(v) for k, v in config.ARCHIVE_SERIES_START.items()}
     for key, v in _read_json("archive-series-start.json").items():
         name, m = key.split("|", 1)
+        if _start_from_codeless_holder(name, str(v.get("why") or "")):
+            continue                     # P2b-2: recorded off an EOA's empty code — not a start; ignored, re-read
         if (name, m) not in out or v["from"] > out[(name, m)]["from"]:
             out[(name, m)] = v
     return out
+
+
+def _start_from_codeless_holder(name: str, why: str) -> bool:
+    """A recorded start whose reason is the empty code of a holder that is never meant to have code (P2b-2: before the
+    fix in _undeployed, an EOA wallet's "no code at block N" ended a series' history after one failed day)."""
+    from .chain import holder_should_have_code
+    bits = why.split(" ")
+    spec = ((config.PROJECT_BY_NAME.get(name) or {}).get("contracts") or {}).get(bits[0])
+    if not spec or len(bits) < 2 or " has no code at block " not in why or holder_should_have_code(spec):
+        return False
+    return bits[1].rstrip(".").lower() == str(spec.get("address") or "")[:10].lower()   # the holder, not its token
 
 
 def record_series_start(name: str, metric: str, begin: str, why: str) -> None:
@@ -555,7 +568,14 @@ class ArchiveBackfill:
             und = spec.get("underlying")
             if isinstance(und, str) and not und.startswith("0x"):
                 und = ((p.get("contracts") or {}).get(und) or {}).get("address")
-            addrs = [spec["address"]] + ([und] if isinstance(und, str) and und.startswith("0x") else [])
+            # P2b-2 (found reading Chainlink's 33 wallets at past blocks, 2026-10-27): a holder that is NOT meant to have
+            # code (holder_has_code False — an EOA such as 0xbe6977E0…, one of chain.link's listed wallets) has none at
+            # EVERY block, so its empty code is no deployment date. Read here, one rate-limited day recorded the whole
+            # series as starting the day after and never retried the restatement. Only an address that should carry
+            # code (fetch.chain.holder_should_have_code) or the token read through it can date a series' start.
+            from .chain import holder_should_have_code
+            addrs = (([spec["address"]] if holder_should_have_code(spec) else [])
+                     + ([und] if isinstance(und, str) and und.startswith("0x") else []))
             for a in addrs:
                 try:
                     w3 = self.reader.web3(chain)

@@ -714,6 +714,65 @@ def _handover_cut_views(groups: dict) -> None:
                 groups[(p["name"], metric)] = g[keep]
 
 
+RESTATEMENT_STATUS: dict = {}   # (project, metric) -> what a declared restatement still lacks, last build (P2b-2)
+
+
+def _named_day_ranges(days, most: int = 6) -> str:
+    """'2025-07-30..2025-08-02, 2025-09-01' — consecutive days joined, at most `most` ranges then a count."""
+    days = sorted(pd.Timestamp(d).normalize() for d in days)
+    runs = []
+    for d in days:
+        if runs and d - runs[-1][1] == pd.Timedelta(days=1):
+            runs[-1][1] = d
+        else:
+            runs.append([d, d])
+    txt = [f"{a.date()}" if a == b else f"{a.date()}..{b.date()}" for a, b in runs]
+    return ", ".join(txt[:most]) + (f" and {len(txt) - most} more range(s)" if len(txt) > most else "")
+
+
+def _series_restatement_views(groups: dict, asof) -> None:
+    """A DECLARED RESTATEMENT (config.SERIES_RESTATEMENTS, P2b-2 — Chainlink's non-circulating sum on the 33-wallet set):
+    the history before the current point's first day is re-read on that point (the clean-up, then the archive). Nothing
+    in the series is changed here; what the store holds decides what is said:
+      * rows on a superseded point remain (the clean-up has not run): the pending handover is declared for this build
+        (config.RESTATEMENT_ACTIVE — the nested_sums seam, its SERIES BREAK and overlap check, as before), and the cell
+        names the days still on the superseded set — never presented as the current set;
+      * none remain: no handover, one basis, no break. A day of the history span (TRAJECTORY history_days) before the
+        current point's first day with no row on it is a HOLE, named on the cell — never filled, never 0."""
+    from fetch.base import _measuring_point                        # noqa: PLC0415
+    RESTATEMENT_STATUS.clear()
+    config.RESTATEMENT_ACTIVE.clear()
+    for (proj, metric), r in config.SERIES_RESTATEMENTS.items():
+        g = groups.get((proj, metric))
+        if g is None or g.empty:
+            continue
+        dates = pd.to_datetime(g["date"]).dt.normalize()
+        srcs = g["source"].astype(str)
+        old = [config.restatement_superseded(proj, metric, d, s) for d, s in zip(dates, srcs)]
+        old = pd.Series(old, index=g.index, dtype=bool)
+        before = pd.Timestamp(r["before"])
+        if old.any():
+            config.RESTATEMENT_ACTIVE[(proj, metric)] = r["pending_handover"]
+            RESTATEMENT_STATUS[(proj, metric)] = (
+                f"NOT YET RESTATED ({r['id']}): {int(old.sum())} day(s) still hold {r['superseded_label']}, not "
+                f"{r['point_label']} — {_named_day_ranges(dates[old])}. The declared seam (SERIES BREAK {before.date()}) "
+                f"stands until the daily run's CLEAN-UP {r['id']} removes them and `{r['refill']}` re-reads each day")
+            continue
+        cur = _measuring_point(r["point"])
+        on_point = srcs.map(lambda x: config._sum_set(_measuring_point(x)) == config._sum_set(cur))
+        held = set(dates[on_point & (dates < before)])
+        if asof is None:
+            continue
+        start = (pd.Timestamp(asof).normalize() - pd.Timedelta(days=int(config.TRAJECTORY["history_days"])))
+        span = pd.date_range(start, min(before - pd.Timedelta(days=1), pd.Timestamp(asof).normalize()), freq="D")
+        holes = [d for d in span if d not in held]
+        if holes:
+            RESTATEMENT_STATUS[(proj, metric)] = (
+                f"RESTATEMENT {r['id']} INCOMPLETE: {len(holes)} day(s) of {span[0].date()}..{span[-1].date()} hold no "
+                f"row on {r['point_label']} — HOLES (never the earlier set's sum, never 0): {_named_day_ranges(holes)}; "
+                f"`{r['refill']}` re-reads them (resumable)")
+
+
 HANDOVER_CUT: dict = {}
 HANDOVER_CONTINUED: dict = {}   # (project, metric) -> what the declared continuation added, last build (P2a D5a)
 
@@ -1232,7 +1291,9 @@ def _handover_overlap_checks(groups: dict) -> None:
     """Every declared series_handover with an "overlap" spec, checked on this build's groups (G11 B8 / C1)."""
     HANDOVER_OVERLAP.clear()
     for p in scoped_projects():
-        for metric, decl in (p.get("series_handover") or {}).items():
+        # P2b-2: a restatement's pending handover is declared for the build that found the superseded rows
+        active = {m: d for (n, m), d in config.RESTATEMENT_ACTIVE.items() if n == p["name"]}
+        for metric, decl in {**active, **(p.get("series_handover") or {})}.items():
             if isinstance(decl, dict) and decl.get("overlap"):
                 HANDOVER_OVERLAP[(p["name"], metric)] = handover_overlap(groups, p["name"], decl["overlap"])
 
@@ -1338,6 +1399,8 @@ def confidence_for(project: str, metric: str, row: dict, asof: pd.Timestamp) -> 
     # (a read-time view such as circulating_supply_used keeps one measuring point while its basis changes)
     if row.get("modelled"):
         why.append(f"{row['modelled']} — not a measurement; shown, excluded from any scoring")
+    if (project, metric) in RESTATEMENT_STATUS:
+        why.append(RESTATEMENT_STATUS[(project, metric)])     # P2b-2: days still on the superseded set, or holes
     if (project, metric) in HANDOVER_CUT:
         why.append(HANDOVER_CUT[(project, metric)])
     if (MONTHLY_FLOW_FORMED.get((project, metric)) or {}).get("holes"):
@@ -4743,6 +4806,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _EARLY_BLOCKS.clear()
     _retired_series_views(groups)     # D5-3c: a series whose stored figures measure nothing it claims — dropped, said why
     _provisional_views(groups)        # G15 5: yesterday read before 16:00 UTC is stored, not used
+    _series_restatement_views(groups, asof)  # P2b-2: a declared restatement — its pending seam, or its holes, named
     _handover_continuation_views(groups)   # P2a D5a: a declared later leg read from another stored series (Maple)
     _handover_cut_views(groups)       # G11 C1: a declared cut — the earlier leg's rows after the later leg starts dropped
     _partial_sum_views(groups)    # FIRST: nothing downstream may read a partial sum
@@ -11854,6 +11918,12 @@ def write_trajectory(wb, data_by_key: dict, asof=None) -> list[dict]:
                                     + ")" if len(found) > 1 else ""))
                     why.append(f"{brk_text}; statistics over the {n_clean} quarter(s) wholly after it — restate the "
                                f"history on the current basis to lift it (RUNBOOK 11bp)")
+        # P2b-2: a declared restatement not yet complete says what it lacks — the days still on the superseded set (the
+        # break above is its seam), or the days not yet re-read (holes)
+        if asof is not None and not w["independent"]:
+            for m in sorted(trajectory.referenced_metrics(w["q0_formula"])):
+                if (spec["project"]["name"], m) in RESTATEMENT_STATUS:
+                    why.append(f"{m}: {RESTATEMENT_STATUS[(spec['project']['name'], m)]}")
                     qs = list(qs[:n_clean]) + [None] * (len(qs) - n_clean)
                     step_at = n_clean            # the quarter that holds the break
         # MODELLED QUARTERS (Jake 2026-10-12, Phase 1 follow-up item 2): shown, and excluded from any scoring

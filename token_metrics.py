@@ -1068,6 +1068,16 @@ def restatement_lines(st, frame) -> list[tuple[str, str]]:
     return lines
 
 
+def _short_source(src: str) -> str:
+    """A summed source names every component; in a log line its count stands in for the list (P2b-2: 27 wallet keys a
+    row, 450 rows). Other sources are shown whole."""
+    src = str(src)
+    i, j = src.find("sum("), src.rfind(")")
+    if i < 0 or j < i or len(src) <= 120:
+        return src
+    return f"{src[:i]}sum({len([x for x in src[i + 4:j].split('+') if x])} components){src[j + 1:]}"
+
+
 def apply_run_cleanups(st, run_id: str, log) -> list[str]:
     """config.RUN_CLEANUPS (G14 1): delete exactly the rows each declared one-off names, logging every row removed —
     console and Run Log. Returns the lines logged. A second run finds nothing to remove."""
@@ -1083,7 +1093,14 @@ def apply_run_cleanups(st, run_id: str, log) -> list[str]:
                 if st.conn.execute("SELECT 1 FROM fetch_status WHERE source=? AND project=?",
                                    (mark, proj)).fetchone():
                     continue
-                q = ("FROM metrics WHERE project=? AND metric=? AND source=?", (proj, c["metric"], c["source"]))
+                q = ("FROM metrics WHERE project=? AND metric=? AND source=?", (proj, c["metric"], c.get("source")))
+                if c.get("superseded_by") == "restatement":
+                    # P2b-2: every row a declared restatement replaces (config.restatement_superseded: dated before the
+                    # current point's first day, read from another point) — whatever its source variant (archive,
+                    # live, PARTIAL). Selected here, deleted below by its exact key and source.
+                    r = config.restatement(proj, c["metric"]) or {}
+                    q = ("FROM metrics WHERE project=? AND metric=? AND substr(date, 1, 10)<?",
+                         (proj, c["metric"], str(r.get("before") or "")))
                 if c.get("dates"):              # D6-5: once, on exactly these days
                     q = (q[0] + f" AND substr(date, 1, 10) IN ({','.join('?' * len(c['dates']))})",
                          q[1] + tuple(c["dates"]))
@@ -1111,18 +1128,29 @@ def apply_run_cleanups(st, run_id: str, log) -> list[str]:
                 q = ("FROM metrics WHERE project=? AND metric=? AND substr(date, 1, 10)=? AND source=?",
                      (proj, c["metric"], c["date"], c["source"]))
             rows = st.conn.execute("SELECT date, value, source " + q[0], q[1]).fetchall()
+            restating = c.get("superseded_by") == "restatement"
+            if restating:
+                rows = [r for r in rows if config.restatement_superseded(proj, c["metric"], r[0], r[2])]
             if c.get("once"):
                 # the marker is recorded whatever was found (a store with no such row never needs it); a line is
                 # returned only when rows go — each of them is logged below as every clean-up's are
+                what = (c.get("source") if not restating else
+                        f"every point but {(config.restatement(proj, c['metric']) or {}).get('point_label', 'the current')} "
+                        f"dated before {(config.restatement(proj, c['metric']) or {}).get('before')}")
                 done = (f"CLEAN-UP {c['id']}: applied once — {len(rows)} row(s) of {proj} / {c['metric']} from "
-                        f"{c['source']} removed — {c['why']}")
+                        f"{what} removed — {c['why']}")
                 (log.warning if rows else log.info)("%s", done)
                 if rows:
                     lines.append(done)
                 st.record_fetch(run_id, mark, proj, len(rows), "ok", done)
             if not rows:
                 continue
-            st.conn.execute("DELETE " + q[0], q[1])
+            if restating:
+                # exactly the rows selected — by key AND source, so a row re-written since the SELECT is never touched
+                st.conn.executemany("DELETE FROM metrics WHERE project=? AND metric=? AND date=? AND source=?",
+                                    [(proj, c["metric"], d, src) for d, _v, src in rows])
+            else:
+                st.conn.execute("DELETE " + q[0], q[1])
             # D2-7: THE REMOVED SERIES IS RE-READ THIS RUN — its daily read marks go with its rows (Jake's 17:37 run of
             # 2026-10-26: D1-1 removed Near's rows and the DefiLlama tier then skipped Near as "read complete earlier
             # today")
@@ -1132,7 +1160,8 @@ def apply_run_cleanups(st, run_id: str, log) -> list[str]:
                     log.warning("%s", line)
                     lines.append(line)
             for d, v, src in rows:
-                line = (f"CLEAN-UP {c['id']}: removed {proj} / {c['metric']} {str(d)[:10]} from {src} "
+                shown = _short_source(src) if restating else src
+                line = (f"CLEAN-UP {c['id']}: removed {proj} / {c['metric']} {str(d)[:10]} from {shown} "
                         f"({float(v):,.2f}) — {c['why']}")
                 log.warning("%s", line)
                 st.record_fetch(run_id, f"cleanup:{c['id']}", proj, 1, "ok", line)

@@ -1864,6 +1864,11 @@ def declared_handover(project_name: str, metric: str) -> dict | None:
     own = (p.get("series_handover") or {}).get(metric)
     if own:
         return own
+    # A RESTATEMENT NOT YET APPLIED (P2b-2): its pending handover, declared by the build that found the superseded rows
+    # still in the store (build_workbook._series_restatement_views); never once they are gone
+    pending = globals().get("RESTATEMENT_ACTIVE", {}).get((project_name, metric))
+    if pending:
+        return pending
     # A RE-LABELLED SERIES IS ITS ORIGIN, SO IT INHERITS ITS ORIGIN'S HANDOVER (2026-09-29).
     # GEODNET's buyback view is gross_burn_tokens row for row (Dune monthly history, then the live
     # sum); without this it read as a change of measuring point and was blanked, and A3 fell back
@@ -33314,7 +33319,11 @@ CHAINLINK_NONCIRC_POINTS = {
     "27": "chain:sum(" + "+".join(f"ethereum:{k}" for k in _CL_NC_KEYS_27) + ")",
     "33": "chain:sum(" + "+".join(f"ethereum:{k}" for k in _CL_NC_KEYS_ALL) + ")",
 }
-PROJECT_BY_NAME["Chainlink"].setdefault("series_handover", {})["noncirculating_holding_tokens"] = {
+# P2b-2 (Jake 2026-10-27): the history is RESTATED on the 33-wallet set (SERIES_RESTATEMENTS, below) and this
+# declaration is NO LONGER STATIC — it applies only while the store still holds rows on the 27-wallet set before
+# 2026-10-26 (build_workbook._series_restatement_views installs it for that build, the days named); on a restated store the
+# series is one basis and no break shows at 10-26.
+_CL_NC_PENDING_HANDOVER = {
     "nested_sums": True,
     "why": "the non-circulating wallet set grew: 27 wallets to 2026-10-25, the 33 chain.link/circulating-supply lists "
            "from 2026-10-26 (D2-4a) — the 27 are all among the 33",
@@ -33439,3 +33448,65 @@ PROJECT_BY_NAME["Maple"]["metric_labels"]["treasury_holding_tokens"] = (
     "SYRUP held — Maple's page tile (SYRUP Holdings, ±5,000) from 2026-09-24 until it disappeared; from the next day the "
     "DAO Safe 0xd6d4… on chain (treasury_holding_tokens_chain) — a declared handover (P2a D5a) to a DIFFERENT quantity: "
     "the tile followed the Strategic Fund")
+
+
+# ===== P2b-2 (Jake 2026-10-27; SPEC §19 P2b-2): CHAINLINK'S NON-CIRCULATING HISTORY RESTATED ON THE 33-WALLET SET. =====
+# The route (the CK precedent of 2026-10-12, when the set grew 24 -> 27): the rows on the superseded set go ONCE (CLEAN-UP
+# P2b-2, applied by the daily run, every row logged), then `archive_backfill.py --run --project Chainlink` re-reads EVERY
+# day at its first block on all 33 wallets — the same read, the same source string plus `archive`, so the whole history
+# is one measuring point. The archive writes only days with no row, whole or not at all (a day with any of the 33
+# unread is not written), refuses a day whose stored neighbours are on another set, newest first, resumable.
+# A day of the history span with no 33-wallet row is a HOLE, named on the cell (build_workbook._series_restatement_views) —
+# never the 27-wallet sum presented as 33, never a 0 for an unread wallet. Until the clean-up has run, the store's
+# 27-wallet rows keep the declared nested_sums handover (_CL_NC_PENDING_HANDOVER: the SERIES BREAK at 2026-10-26) and
+# the cell names the days still on the 27-wallet set.
+# THE 6 ADDED WALLETS' HISTORY (LINK Transfer scan from the token's deployment, every log in and out, reconciled per
+# wallet to balanceOf at Ethereum block 26,286,993 TO THE WEI; read 2026-10-27): all six received LINK at the 2017-09-16
+# distribution (50,000,000 each; 0x98C63b7B… up to 350,000,026.99 on 2021-12-17) and moved it all out on 2022-06-28/29;
+# since then 0x98C63b7B… 26.99, 0x75398564… 0.78, 0xe0362F74… 1.70 LINK and the other three 0, with dust deposits only
+# (+0.00001 on 2025-09-28/29, +0.0014 on 2026-05-09/10). Over the 455-day span the restatement adds 29.469 → 29.472 LINK
+# a day (≤ 0.000013% of the sum): not material, and the restatement still runs — one basis is the point.
+# (project, metric) -> the pending handover, set per build by build_workbook._series_restatement_views while the store still
+# holds rows on a superseded point; empty otherwise (config.declared_handover reads it)
+RESTATEMENT_ACTIVE: dict = {}
+SERIES_RESTATEMENTS = {
+    ("Chainlink", "noncirculating_holding_tokens"): {
+        "id": "P2b-2",
+        "point": CHAINLINK_NONCIRC_POINTS["33"],
+        "point_label": "the 33 chain.link/circulating-supply wallets",
+        "superseded_label": "the 27-wallet set (24 Etherscan labels + 3 from the 2022 blog)",
+        "before": "2026-10-26",          # the current set's first live day; every earlier day is restated
+        "pending_handover": _CL_NC_PENDING_HANDOVER,
+        "refill": "python archive_backfill.py --run --project Chainlink",
+        "decided": "Jake 2026-10-27 (P2b-2): history restated on the 33-wallet set; the 10-26 break removed",
+    },
+}
+RUN_CLEANUPS = RUN_CLEANUPS + (
+    {"id": "P2b-2", "metric": "noncirculating_holding_tokens", "once": True, "superseded_by": "restatement",
+     "projects": ("Chainlink",),
+     "why": "the 27-wallet sum, restated on the 33-wallet set (SPEC P2b-2): every day before 2026-10-26 is re-read at its "
+            "first block by `archive_backfill.py --run --project Chainlink`; a day not yet re-read is a hole"},
+)
+
+
+def restatement(project: str, metric: str) -> dict | None:
+    """The declared restatement of a series on its current measuring point (SERIES_RESTATEMENTS), else None."""
+    return SERIES_RESTATEMENTS.get((project, metric))
+
+
+def restatement_superseded(project: str, metric: str, date, source: str) -> bool:
+    """Is this stored row one the declared restatement replaces? — dated before the current point's first day and read
+    from any other point (the earlier wallet set, or a PARTIAL sum of it). A sum is compared by its component SET, so the
+    order the wallets were read in does not matter."""
+    r = restatement(project, metric)
+    if not r or str(date)[:10] >= r["before"]:
+        return False
+    from fetch.base import _measuring_point                        # noqa: PLC0415
+    return _sum_set(_measuring_point(str(source))) != _sum_set(_measuring_point(r["point"]))
+
+
+def _sum_set(point: str) -> frozenset:
+    body = point.split(":", 1)[1] if ":" in point else point
+    if body.startswith("sum(") and body.endswith(")"):
+        return frozenset(x for x in body[4:-1].split("+") if x)
+    return frozenset([body])

@@ -135,7 +135,10 @@ def test_d4b_chainlink_wallet_set_growth_is_a_declared_nested_handover():
     import build_workbook as bw
     import measuring_guard as mg
     from fetch.base import _measuring_point
-    decl = config.declared_handover("Chainlink", "noncirculating_holding_tokens")
+    # P2b-2: the declaration is the restatement's PENDING handover — declared for a build whose store still holds the
+    # 27-wallet rows (build_workbook._series_restatement_views), never static
+    assert config.declared_handover("Chainlink", "noncirculating_holding_tokens") is None
+    decl = config.restatement("Chainlink", "noncirculating_holding_tokens")["pending_handover"]
     assert decl["nested_sums"] and decl["valid_from"] == "2026-10-26"
     p27, p33 = config.CHAINLINK_NONCIRC_POINTS["27"], config.CHAINLINK_NONCIRC_POINTS["33"]
     s27, s33 = bw.sum_components(p27), bw.sum_components(p33)
@@ -148,6 +151,7 @@ def test_d4b_chainlink_wallet_set_growth_is_a_declared_nested_handover():
                       [p27 + ":archive", p27]),
                    _g("Chainlink", "noncirculating_holding_tokens", ["2026-10-26", "2026-10-27"], [233_150_029.58] * 2,
                       p33)])
+    bw._series_restatement_views({("Chainlink", "noncirculating_holding_tokens"): g}, pd.Timestamp("2026-10-27"))
     row = _row(bw, g)
     assert len(row["measuring_points"]) == 2 and bw.withheld_for("Chainlink", "noncirculating_holding_tokens", row) is None
     assert mg._nested_growth("Chainlink", "noncirculating_holding_tokens", set(row["measuring_points"]))
@@ -156,11 +160,12 @@ def test_d4b_chainlink_wallet_set_growth_is_a_declared_nested_handover():
     g2 = pd.concat([g[g["date"] < "2026-10-26"], _g("Chainlink", "noncirculating_holding_tokens", ["2026-10-26"],
                                                     [1.0], swapped)])
     assert bw.withheld_for("Chainlink", "noncirculating_holding_tokens", _row(bw, g2))[0] == "measuring_point_changed"
+    config.RESTATEMENT_ACTIVE.clear()
 
 
 def test_d4b_chainlink_overlap_is_unchecked_on_the_store_and_reads_the_sets_by_component_set():
     import build_workbook as bw
-    decl = config.declared_handover("Chainlink", "noncirculating_holding_tokens")
+    decl = config.restatement("Chainlink", "noncirculating_holding_tokens")["pending_handover"]   # P2b-2
     p27, p33 = config.CHAINLINK_NONCIRC_POINTS["27"], config.CHAINLINK_NONCIRC_POINTS["33"]
     g = pd.concat([_g("Chainlink", "noncirculating_holding_tokens", ["2026-10-25"], [233_150_000.10], p27),
                    _g("Chainlink", "noncirculating_holding_tokens", ["2026-10-26"], [233_150_029.58], p33)])

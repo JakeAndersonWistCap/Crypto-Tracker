@@ -11973,6 +11973,66 @@ def chainlink_noncirc_set_overlap(days: int = 10):
     return 0
 
 
+def chainlink_noncirc_restatement(db: str = "metrics.db"):
+    """P2b-2 (Jake 2026-10-27): IS CHAINLINK'S NON-CIRCULATING HISTORY ON THE 33-WALLET SET? Reads metrics.db only
+    (look only). Every stored day of noncirculating_holding_tokens over the history span (TRAJECTORY history_days),
+    grouped by the wallet set its source names (33 / 27 / other, PARTIAL marked) and by how it was read (archive at the
+    day's first block, or live); whether CLEAN-UP P2b-2 has run (its fetch_status marker); every day before 2026-10-26
+    with no 33-wallet row, named (a hole — never the 27-wallet sum, never 0). Ends with one verdict line."""
+    import sqlite3                                         # noqa: PLC0415
+    import pandas as pd                                    # noqa: PLC0415
+    import config                                          # noqa: PLC0415
+    from fetch.base import _measuring_point                # noqa: PLC0415
+    import build_workbook as bw                            # noqa: PLC0415
+    r = config.restatement("Chainlink", "noncirculating_holding_tokens")
+    head(f"CHAINLINK — non-circulating history on {r['point_label']} ({r['id']})")
+    try:
+        con = sqlite3.connect(db)
+        rows = con.execute("SELECT substr(date, 1, 10), value, source FROM metrics WHERE project = 'Chainlink' AND "
+                           "metric = 'noncirculating_holding_tokens' ORDER BY date").fetchall()
+        mark = con.execute("SELECT last_success_at FROM fetch_status WHERE source = ? AND project = 'Chainlink'",
+                           (f"cleanup:{r['id']}:noncirculating_holding_tokens",)).fetchone()
+        con.close()
+    except Exception as e:  # noqa: BLE001
+        print(f"  {db} unreadable here ({e})")
+        return 1
+    cur = config._sum_set(_measuring_point(r["point"]))
+    today0 = pd.Timestamp.now(tz="UTC").tz_localize(None).normalize()
+    start = today0 - pd.Timedelta(days=int(config.TRAJECTORY["history_days"]))
+    before = pd.Timestamp(r["before"])
+    groups, on33, old = {}, set(), []
+    for d, v, src in rows:
+        day = pd.Timestamp(d)
+        if day < start:
+            continue
+        comps = config._sum_set(_measuring_point(src))
+        n = len(comps)
+        what = ("33-wallet set" if comps == cur else f"{n}-wallet set") + (" PARTIAL" if "PARTIAL" in src else "")
+        how = "archive (first block)" if ":archive" in src else "live"
+        g = groups.setdefault((what, how), [])
+        g.append(day)
+        if comps == cur and "PARTIAL" not in src:
+            on33.add(day)
+        if config.restatement_superseded("Chainlink", "noncirculating_holding_tokens", d, src):
+            old.append(day)
+    print(f"  span {start.date()}..{today0.date()} ({config.TRAJECTORY['history_days']} days); restated before "
+          f"{before.date()}; CLEAN-UP {r['id']} {'RUN ' + str(mark[0])[:19] if mark else 'NOT RUN on this store'}")
+    for (what, how), ds in sorted(groups.items(), key=lambda kv: min(kv[1])):
+        print(f"  {what:<24} {how:<22} {len(ds):>4} day(s)  {min(ds).date()}..{max(ds).date()}")
+    span = pd.date_range(start, before - pd.Timedelta(days=1), freq="D")
+    holes = [d for d in span if d not in on33]
+    if old:
+        print(f"  -> NOT YET RESTATED: {len(old)} day(s) before {before.date()} on another set ({bw._named_day_ranges(old)}) — "
+              f"the daily run's CLEAN-UP {r['id']} removes them, then `{r['refill']}`. PASTE BACK the lines above.")
+    elif holes:
+        print(f"  -> RESTATEMENT INCOMPLETE: {len(holes)} day(s) before {before.date()} hold no 33-wallet row (holes): "
+              f"{bw._named_day_ranges(holes)} — re-run `{r['refill']}` (stored days are skipped). PASTE BACK the lines above.")
+    else:
+        print(f"  -> RESTATED: every day {span[0].date()}..{span[-1].date()} on {r['point_label']}. PASTE BACK the "
+              f"lines above.")
+    return 0
+
+
 def chainlink_release_steps():
     """CHAINLINK pool_release_tokens (Jake's run 2026-10-09 ~10:15: ours −400,000 over Q0 while the 27 wallets held
     251,900,000.10 at both ends, with no transfer). Every stored day of noncirculating_holding_tokens: the sum, how many
@@ -14603,7 +14663,7 @@ CHECKS = (
     etherfi_vault_archive, etherfi_contract_ids, etherfi_accountant, fluid_vesting_recipients, maple_ssf_partial,
     aerodrome_managed_venfts, pendle_epoch_revenues, maple_ssf_trail, fluid_avocado_owners, hl_pool_release_compare,
     pendle_spendle_rewards_onchain, maple_buyback_inflows, maple_syrup_mints, etherfi_withdrawal_fees, aerodrome_voter_rewards, aerodrome_epochs_q0, aerodrome_epoch_rewards, pendle_gauge_reconcile,
-    sky_farm_rates, plume_supply_read, chainlink_noncirc_transfers, chainlink_noncirc_set_overlap, chainlink_release_steps, aerodrome_price_q0, pendle_epoch_table, pendle_emissions_q0, price_basis_before_after, pendle_virtual_rebuild,
+    sky_farm_rates, plume_supply_read, chainlink_noncirc_transfers, chainlink_noncirc_set_overlap, chainlink_noncirc_restatement, chainlink_release_steps, aerodrome_price_q0, pendle_epoch_table, pendle_emissions_q0, price_basis_before_after, pendle_virtual_rebuild,
     plume_sources, aethir_dashboard_xhr, maple_ssf_history, blockworks_geodnet,
     morpho_incentives, settlement_sources, hyperevm_etherscan, maple_ssf_inflows, aethir_pages,
     geod_stake_recipient, geod_stake_wallets, maple_ssf_lp_test, maple_drips, plume_archive, settlement_rebuild_coverage,

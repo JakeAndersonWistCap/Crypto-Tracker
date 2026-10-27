@@ -260,7 +260,9 @@ def _nested_growth(project: str, metric: str, bases: set) -> bool:
     sets form one chain under inclusion — the set grew, nothing was swapped."""
     import build_workbook as bw
     import config
-    if not (config.declared_handover(project, metric) or {}).get("nested_sums"):
+    # P2b-2: a declared restatement's pending handover is a declared growth whether or not this process built the store
+    decl = config.declared_handover(project, metric) or (config.restatement(project, metric) or {}).get("pending_handover")
+    if not (decl or {}).get("nested_sums"):
         return False
     sets = sorted((bw.sum_components(b) for b in bases), key=len)
     return all(a <= b for a, b in zip(sets, sets[1:]))
