@@ -554,7 +554,11 @@ What changes (SPEC §19 P2a):
   computedUntil logs `PARTIAL — HELD …` and is never counted as 0). A Plume payout day on the read's edge is HELD
   until a later read passes it (D8). Seven Review Queue rows answered (D8). Hyperliquid's pool release is NOT
   backfilled — not served on its basis (D1); `run_sql.py DC` names each missing day's cause. Hyperliquid's market cap
-  comment states its circulating basis (D6). A NEAR Artemis CSV would not be read (D7).
+  comment states its circulating basis (D6). A NEAR Artemis CSV would not be read (D7). Declared handovers with overlap
+  checks: Near lockups manual → weekly RPC (D4a; the weekly read's buggy-code lockups no longer crash its totals),
+  Chainlink's 27 → 33 non-circulating wallets (D4b; a series break at 2026-10-26 until history is restated), Maple's
+  treasury page tile → the DAO Safe on chain (D5a; a different quantity, so a break, never a flow). Maple's SSF Safe
+  0x58BE is scanned daily in explorer@Maple (D5b; the first run reads its whole history, 6 events; Data tab only).
 
 **Pull this, then in PowerShell 5.1 at the repo root (the long steps are last):**
 ```
@@ -563,15 +567,19 @@ python check_offline_items.py aero_migration
 python check_offline_items.py hl_circulating_overlap 2>&1 | Tee-Object -FilePath hl_circulating_overlap.txt
 python check_offline_items.py plume_native_seed
 python run_sql.py DC
+python check_offline_items.py chainlink_noncirc_set_overlap
 python token_metrics.py
 python measuring_guard.py --newer metrics.db
 python recalc_check.py token_metrics.xlsx
 python recalc_check.py token_metrics_audit.xlsx 1800
+python check_offline_items.py near_lockups_at_block
 ```
 PASTE BACK: the last two lines of `aero_migration` (COMPLETE / PARKED); the whole of `hl_circulating_overlap.txt`;
-every `plume_native_seed` line; DC1 and DC2; from the run, both `merkl_campaigns` lines, any `PARTIAL`, `HELD`,
+every `plume_native_seed` line; DC1 and DC2; the OVERLAP / WORST GAP lines of `chainlink_noncirc_set_overlap` and
+`near_lockups_at_block` (about 50 minutes on the archival RPC, resumable: run it again until it prints them); from the
+run, both `merkl_campaigns` lines, any `PARTIAL`, `HELD`,
 `NOT YET COMPLETE` or `TIER TIMED OUT` line, and the `wrote …token_metrics.xlsx` line (it must say 0 unexplained
-blanks); the guard's VERDICT; each recalc's `"mismatches"` and `"errors"`. If `plume_native_seed` ends `-> RESTART`,
+blanks); the guard's VERDICT (no BROKEN for the Near lockup, Chainlink and Maple treasury series); each recalc's `"mismatches"` and `"errors"`. If `plume_native_seed` ends `-> RESTART`,
 run the line it prints afterwards (about 10–11 hours, resumable, never beside a daily run), then the check again.
 
 **What to look for.** Summary: change B2 to 30D, then 1Y — every "selected period" column on every tab follows. Hover
