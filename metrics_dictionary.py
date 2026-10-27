@@ -444,6 +444,15 @@ ENTRIES = {
                 "covered day)", window="Q0 / now", unit="x",
         inputs=["retired_buyback_tokens", "emissions_rate_current_annual_tokens", "unlock_release_tokens"],
         decided=[(J, "2026-10-12", "decision 2 on 6f8c86c")]),
+    "RETIRED ÷ EMISSIONS (x)": dict(
+        what="A3's rank key: retired buyback against emissions alone (unlocks excluded), at the emission rate in force; "
+             "1.0 is the crossover.",
+        formula="retired_buyback_tokens per covered day ÷ (the tab's absorption emissions per covered day, with the "
+                "declared rate in force ÷ 365 in place of the leg it replaces — Sky); a structural 0 retirement reads "
+                "0; BLOCKED where a side covers under a week",
+        window="Q0 / now", unit="x",
+        inputs=["retired_buyback_tokens", "emissions_tokens", "emissions_rate_current_annual_tokens"],
+        decided=[(J, "2026-10-27", "P1 Stage 1: the archetype rank keys, higher is better")]),
     "RETIREMENT ÷ DILUTION (x)": dict(
         what="Retired buyback against dilution as a ratio: 1.0 is the crossover where buybacks absorb what emissions "
              "and unlocks add.",

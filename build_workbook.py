@@ -6904,8 +6904,34 @@ def _current_rate_cols(R: Refs) -> list[tuple]:
     ]
 
 
+RETIRE_VS_EMISSIONS_HEAD = ("RETIRED ÷ EMISSIONS (x) = RETIRED buyback ÷ emissions, unlocks EXCLUDED, at the emission "
+                            "rate IN FORCE — A3's rank key (P1-6)")
+
+
+def _retire_vs_emissions_col(R: Refs) -> tuple:
+    """A3'S RANK KEY (P1-6, Jake 2026-10-27): retired buyback tokens (burned + held) per covered day ÷ the tab's
+    absorption emissions per covered day — unlocks excluded — with the emission rate IN FORCE in place of the series it
+    replaces where one is declared (config.CURRENT_EMISSION_RATE: Sky); elsewhere the last 90 days' measured rate is the
+    rate in force. A structural 0 retirement reads 0; a project with no emissions series says so."""
+    def build(r, p):
+        if _retirement_zero(p):
+            return "=0"
+        name = p["name"]
+        cr = config.CURRENT_EMISSION_RATE.get(name)
+        ems = [m for m in config.absorption_emission_metrics(name) if not cr or m != cr["replaces"]]
+        parts = ([f"({R.D(r, cr['metric'], 'now')}/{G('days_per_year')})"] if cr else []) + \
+            [_flow_rate(R, r, m, p=p) for m in ems]
+        if not parts:
+            return "n/a — no emissions series to divide by"
+        legs = [("buyback", "retired_buyback_tokens", "q0")]
+        expr = f"{_flow_rate(R, r, 'retired_buyback_tokens', p=p)}/({'+'.join(parts)})"
+        return _coverage_guard(R, r, legs + [(m, m, "q0") for m in ems], expr) if cr else \
+            _absorption_guard(R, r, p, legs, expr)
+    return (RETIRE_VS_EMISSIONS_HEAD, build, FMT_X, "calc", False, {"metric": "retired_buyback_tokens"})
+
+
 EXTRA_SNAPSHOT_HEADERS = (UNLOCK_HEAD, UNLOCK_PCT_HEAD, TOTAL_DILUTION_HEAD, NET_ABS_UNLOCK_HEAD, RETIRE_VS_DILUTION_HEAD,
-                          CURRENT_RATE_HEAD, RETIRE_VS_DILUTION_NOW_HEAD)
+                          CURRENT_RATE_HEAD, RETIRE_VS_DILUTION_NOW_HEAD, RETIRE_VS_EMISSIONS_HEAD)
 
 
 def _published_unlock_column() -> tuple:
@@ -10010,6 +10036,7 @@ def write_a3(ws, R: Refs, data_by_key: dict):
         *_unlock_cols(R, absorption=True),
         _retire_vs_dilution_col(R),
         *_current_rate_cols(R),
+        _retire_vs_emissions_col(R),
         # ===== DOCUMENTED ALLOCATION LEGS, ONE ROW EACH, NEVER COLLAPSED. =====
         # Blank for every project that declares none, which is all of them but Sky. The legs
         # carry their own effect on supply, because a single "implied buyback" figure is right
@@ -11681,8 +11708,10 @@ TRAJECTORY_ROWS: list = []      # the last build's trajectory rows (write_trajec
 
 
 def build_workbook(store, path: Path | str, run_id: str | None = None,
-                   asof: pd.Timestamp | None = None, only: list[str] | None = None, previous="auto") -> Path:
-    """Render the workbook. `only` narrows it to those project names; None renders every project.
+                   asof: pd.Timestamp | None = None, only: list[str] | None = None, previous="auto",
+                   reader_path: Path | str | None = None) -> Path:
+    """Render the workbook. `only` narrows it to those project names; None renders every project. `reader_path`
+    (P1, the daily run): the full workbook at `path` is the AUDIT file, and the reader (reader.py) is written there.
 
     ** PORTFOLIO SCOPE APPLIED TO THE FETCH AND NOT TO THE BUILD. Fixed 2026-09-23. ** A run that
     politely fetched 16 projects still drew 30 tabs' worth of rows, fourteen of them frozen at
@@ -11925,10 +11954,35 @@ def build_workbook(store, path: Path | str, run_id: str | None = None,
             WORKBOOK_VALUES.update(workbook_values.store_values(path, wb))
         except Exception as e:  # noqa: BLE001 — a file without values is said, never silently left blank
             WORKBOOK_VALUES.update({"error": f"{type(e).__name__}: {str(e)[:200]}"})
+    # THE READER (P1, Jake 2026-10-27): derived from this build in memory. A reader that cannot be built is REPLACED by
+    # a one-tab file saying so — never left as yesterday's file looking current.
+    READER_STATS.clear()
+    if reader_path:
+        write_reader(wb, reader_path, path, asof)
     return path
 
 
+def write_reader(wb, reader_path, audit_path, asof) -> dict:
+    """THE READER (P1): reader.build_reader on this build — or, when it fails, a one-tab file at reader_path saying so
+    (the error in READER_STATS), never yesterday's reader left looking current."""
+    try:
+        import reader                                      # noqa: PLC0415
+        READER_STATS.update(reader.build_reader(wb, reader_path, asof=asof, groups=_LAST_GROUPS,
+                                                headline_cells=list(_HEADLINE_CELLS),
+                                                projects=scoped_projects(), previous=dict(PREVIOUS_SNAPSHOT)))
+    except Exception as e:  # noqa: BLE001
+        import traceback                                   # noqa: PLC0415
+        READER_STATS.update({"error": f"{type(e).__name__}: {str(e)[:300]}", "trace": traceback.format_exc()[-1500:]})
+        err = Workbook()
+        err.active.title = "READER NOT BUILT"
+        err.active.cell(1, 1, f"THE READER WAS NOT BUILT on {pd.Timestamp(asof).date()}: {READER_STATS['error']} — "
+                              f"every figure is on {Path(audit_path).name}")
+        err.save(reader_path)
+    return dict(READER_STATS)
+
+
 WORKBOOK_VALUES: dict = {}      # {"formulas", "valued", "failed", ...} — the cached values written into the last build
+READER_STATS: dict = {}         # P1: the reader's stats (reader.STATS), or its error
 
 
 SANITY_HITS: list = []          # (project, rule, detail) from the last build (sanity.py)

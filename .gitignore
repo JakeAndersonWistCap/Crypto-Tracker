@@ -3,6 +3,8 @@ metrics.db
 metrics.db-journal
 metrics.db.credibility.pkl
 token_metrics.xlsx
+token_metrics_audit.xlsx
+reader_column_map.csv
 coverage_audit.csv
 wiring.json
 .env

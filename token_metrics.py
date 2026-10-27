@@ -76,7 +76,8 @@ from build_workbook import build_workbook
 ROOT = Path(__file__).resolve().parent
 OVERRIDES_CSV = ROOT / "manual_overrides.csv"
 PORTFOLIO_TXT = ROOT / config.PORTFOLIO_FILE
-WORKBOOK = ROOT / "token_metrics.xlsx"
+WORKBOOK = ROOT / "token_metrics.xlsx"               # P1: THE READER (reader.py)
+AUDIT_WORKBOOK = ROOT / "token_metrics_audit.xlsx"  # P1: the full workbook — every tab and working column
 REFETCH_WINDOW_DAYS = 30
 SEED_WINDOW_DAYS = 365     # --seed nearblocks reads a year
 
@@ -1116,8 +1117,8 @@ def _main(args, log) -> int:
         scope = render_scope(args, log)
         log.info("--no-fetch: rebuilding %s from the store, fetching nothing (%d project(s))",
                  WORKBOOK.name, len(scope))
-        build_workbook(st, WORKBOOK, only=[p["name"] for p in scope])
-        log.info("wrote %s", WORKBOOK)
+        build_workbook(st, AUDIT_WORKBOOK, only=[p["name"] for p in scope], reader_path=WORKBOOK)
+        log.info("wrote %s and %s%s", WORKBOOK, AUDIT_WORKBOOK, _reader_note())
         st.close()
         return 0
 
@@ -1297,16 +1298,29 @@ def _main(args, log) -> int:
     # drawn from the store — Jake's `--project Ether.fi` run wrote a one-project workbook ("1 project(s) rendered of
     # 30"). Each cell's as-of date and freshness marking say which values this run touched.
     rendered = render_scope(args, log)
-    build_workbook(st, WORKBOOK, run_id=run_id, only=[p["name"] for p in rendered])
-    log.info("wrote %s — %d project(s) fetched, %d rendered from the store%s", WORKBOOK, len(projects), len(rendered),
+    build_workbook(st, AUDIT_WORKBOOK, run_id=run_id, only=[p["name"] for p in rendered], reader_path=WORKBOOK)
+    log.info("wrote %s (the reader) and %s (every working column) — %d project(s) fetched, %d rendered from the "
+             "store%s%s", WORKBOOK, AUDIT_WORKBOOK.name, len(projects), len(rendered),
              "" if len(rendered) == len(config.PROJECTS)
-             else f" (the default scope; {len(config.PROJECTS)} configured, --all draws every one)")
+             else f" (the default scope; {len(config.PROJECTS)} configured, --all draws every one)", _reader_note())
     # THE SCOREBOARD AFTER EVERY FULL RUN (G4 7f): the same per-project line the Run Log tab and Coverage open with
     import build_workbook as _bw                           # noqa: PLC0415
     for line in _bw.SCOREBOARD_LINES:
         log.info("%s", line)
     st.close()
     return 0
+
+
+def _reader_note() -> str:
+    """P1: the reader's one line — or its error, loudly (the reader file then says it was not built)."""
+    import build_workbook as _bw                           # noqa: PLC0415
+    st = _bw.READER_STATS
+    if st.get("error"):
+        return f" — READER NOT BUILT: {st['error']} (token_metrics.xlsx says so; every figure is on the audit file)"
+    if not st:
+        return ""
+    return (f" — reader: {', '.join(st.get('tabs', []))}; {sum(st.get('numbers', {}).values()):,} number cells, "
+            f"{sum(st.get('codes', {}).values()):,} codes, {st.get('failed', 0)} formula(s) unevaluated")
 
 
 NETWORK_SIGNS = ("timed out", "timeout", "connection", "could not connect", "couldn't connect", "refused",

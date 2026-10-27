@@ -58,6 +58,26 @@ def probe_rows(payload: dict) -> list[dict]:
     return out
 
 
+def headline_reader(wb, X, reader_path: Path):
+    """P1-9 (Jake 2026-10-27): a headline the reader shows is read AT ITS NEW LOCATION (reader.HEADLINE_LOCATIONS);
+    every other headline on the audit file, as before. Returns value(hc) for a _HEADLINE_CELLS entry."""
+    import openpyxl
+    import reader
+    import xlcalc
+    rwb = openpyxl.load_workbook(reader_path) if Path(reader_path).exists() and reader.HEADLINE_LOCATIONS else None
+    RX = xlcalc.Workbook(rwb) if rwb is not None else None
+
+    def value(hc):
+        loc = reader.HEADLINE_LOCATIONS.get((hc["sheet"], hc["project"], hc["header"])) if rwb is not None else None
+        sheet, ref, book, calc = (loc[0], loc[1], rwb, RX) if loc else (hc["sheet"], hc["cell"], wb, X)
+        cell = book[sheet][ref]
+        try:
+            return calc.value(sheet, cell.row, cell.column)
+        except Exception:  # noqa: BLE001
+            return None
+    return value
+
+
 def build(out_dir: Path, probes: bool = True, previous: dict | None = None) -> dict:
     """Build on the fixture store (+ probes); the snapshot: bases per series, headline values, probed series — and, given
     a previous snapshot's headlines, sanity's own lost-headline guard (sanity.lost_headlines) on this build."""
@@ -86,7 +106,7 @@ def build(out_dir: Path, probes: bool = True, previous: dict | None = None) -> d
     st = sm.Store(str(db))
     path = out_dir / "wb.xlsx"
     try:
-        bw.build_workbook(st, path, asof=pd.Timestamp(max(asofs)))
+        bw.build_workbook(st, path, asof=pd.Timestamp(max(asofs)), reader_path=out_dir / "reader.xlsx")
     finally:
         st.close()
     bases = {}
@@ -98,12 +118,9 @@ def build(out_dir: Path, probes: bool = True, previous: dict | None = None) -> d
     X = xlcalc.Workbook(wb)
     heads: dict = {}
     mpc: list = []
+    head_value = headline_reader(wb, X, out_dir / "reader.xlsx")
     for hc in bw._HEADLINE_CELLS:
-        cell = wb[hc["sheet"]][hc["cell"]]
-        try:
-            v = X.value(hc["sheet"], cell.row, cell.column)
-        except Exception:  # noqa: BLE001
-            v = None
+        v = head_value(hc)
         n = sanity.stated_number(v)
         if n is not None:
             heads.setdefault(hc["project"], {})[f"{hc['sheet'][:2]} | {hc['header']}"] = float(n)
@@ -173,7 +190,7 @@ def live_check(db_path: str, baseline: dict) -> tuple[list[str], dict]:
         st = sm.Store(str(db))
         path = Path(d) / "wb.xlsx"
         try:
-            bw.build_workbook(st, path, asof=asof, only=scope or None)
+            bw.build_workbook(st, path, asof=asof, only=scope or None, reader_path=Path(d) / "reader.xlsx")
         finally:
             st.close()
         bases = {}
@@ -193,10 +210,20 @@ def live_check(db_path: str, baseline: dict) -> tuple[list[str], dict]:
         # G12 C1: the live headlines by the SNAPSHOT'S OWN KEYS (Master columns included) — the previous snapshot is
         # compared key for key
         heads = _es.snapshot_heads(wb, value, bw._HEADLINE_CELLS, asof)
+        # P1-9: a headline the reader shows is read there
+        import reader as _rd
+        head_value = headline_reader(wb, X, Path(d) / "reader.xlsx")
+        for hc in bw._HEADLINE_CELLS:
+            if (hc["sheet"], hc["project"], hc["header"]) in _rd.HEADLINE_LOCATIONS:
+                n = sanity.stated_number(head_value(hc))
+                k = f"{hc['sheet'][:2]} | {hc['header']}"
+                if n is None:
+                    (heads.get(hc["project"]) or {}).pop(k, None)
+                else:
+                    heads.setdefault(hc["project"], {})[k] = float(n)
         mpc = []
         for hc in bw._HEADLINE_CELLS:
-            cell = wb[hc["sheet"]][hc["cell"]]
-            v = value(hc["sheet"], cell.row, cell.column)
+            v = head_value(hc)
             if sanity.stated_number(v) is None and MPC in str(v or ""):
                 mpc.append([hc["project"], f"{hc['sheet'][:2]} | {hc['header']}", str(v)[:200]])
     bad = []

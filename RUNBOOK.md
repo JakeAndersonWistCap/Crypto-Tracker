@@ -214,9 +214,11 @@ twice, set the relevant `RPC_*` variable in `.env` to a provider you control.
 **Optional formula check** (needs LibreOffice):
 ```bash
 python recalc.py token_metrics.xlsx
+python recalc_check.py token_metrics.xlsx
+python recalc_check.py token_metrics_audit.xlsx 1800
 ```
-**Expected:** `"status": "success"` with `"total_errors": 0`. Anything else means a formula
-problem; send me the output.
+**Expected:** `"status": "success"` with `"total_errors": 0`; recalc_check prints `"mismatches": 0, "errors": 0` (every
+stored value equals LibreOffice's). Anything else means a formula problem; send me the output.
 
 ---
 
@@ -226,7 +228,9 @@ All in the repo root:
 
 | Path | What it is | Keep it? |
 |---|---|---|
-| `token_metrics.xlsx` | The workbook. **Rebuilt from scratch every run.** | Disposable. Never edit it expecting changes to survive. |
+| `token_metrics.xlsx` | THE READER (P1): About, Summary, the archetype tabs, Definitions. **Rebuilt every run.** | Disposable. Never edit it expecting changes to survive. |
+| `token_metrics_audit.xlsx` | The full workbook: every tab and working column, the checks and the Run Log. **Rebuilt every run.** | Disposable. |
+| `reader_column_map.csv` | Where every Master / A3 column lives now (reader or audit file). | Disposable. |
 | `metrics.db` | SQLite store, the full history. **This is the durable artefact.** | Back this up. Losing it means re-backfilling. |
 | `.cache/scrape/YYYY-MM-DD/` | Cached page responses, one folder per day | Safe to delete; it just forces a re-scrape. |
 | `manual_overrides.csv` | Your hand-entered values | Yours. Never overwritten by a run. |
@@ -528,6 +532,31 @@ with each endpoint's own limit counted.
 A Plume seed started on code older than 2026-10-01 saved its state only at the end. Let it finish,
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
+
+## 11cz. Round P1 Stage 1 — the reader and the audit file (2026-10-27)
+
+No data changes. Each run now writes TWO workbooks:
+- `token_metrics.xlsx` — THE READER: About, Summary, A3 Revenue Buyback, Definitions (and a hidden `_data` sheet the
+  formulas read). Stage 2 adds Business, A1, A2, A4, Comparison, Project View and Charts.
+- `token_metrics_audit.xlsx` — the full workbook as before (every tab, every working column, same column letters),
+  plus one new A3 column, "RETIRED ÷ EMISSIONS (x)", A3's rank key.
+- `reader_column_map.csv` — every Master and A3 column and where it now lives (or why it stays on the audit file).
+
+**Pull this, then in PowerShell 5.1 at the repo root:**
+1. `python token_metrics.py --no-fetch` — rebuilds both files from your store, fetching nothing (a few minutes). The
+   last line reads `wrote …token_metrics.xlsx and …token_metrics_audit.xlsx — reader: About, Summary, A3 Revenue
+   Buyback, Definitions, _data; <n> number cells, <m> codes, 0 formula(s) unevaluated`. If it says `READER NOT BUILT`,
+   paste that line back: the reader file then says so on its only tab, and every figure is on the audit file.
+2. Optional, needs LibreOffice: `python recalc_check.py token_metrics.xlsx` and
+   `python recalc_check.py token_metrics_audit.xlsx 1800` — each prints `"mismatches": 0, "errors": 0`.
+3. `python measuring_guard.py --newer metrics.db` — the A3 headlines are now read from the reader; PASTE BACK the
+   VERDICT.
+
+**What to look for.** Summary: one row per project under A1 / A2 / A3 / A4, ranked by that archetype's key (A1's key
+needs two years of settlement history; a project without it ranks last, by name, the reason in its rank cell). Change B2 to 30D or 1Y:
+the two "selected period" columns follow it; "—" where the history is shorter (hover for each period's reason). On A3,
+click the "+" above the columns to open block (e). Every number's fill is its audit cell's confidence; hover a number
+for its audit cell.
 
 ## 11cy. Round D4 — Jake's run on D2: lockups, timeouts, Pendle's epoch basis (2026-10-27)
 
