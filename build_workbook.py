@@ -4699,6 +4699,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _LAST_GROUPS.update(groups)       # the views, for Credibility rows that read them (credibility.VIEWS_LONG)
     COVERED_SETS.clear()
     COVERED_SETS.update(_covered_day_sets(groups))   # D6-1: the days each daily flow's rows cover
+    WINDOW_HOLES.clear()
     # The latest value of every series, keyed the same way — so a flow can be checked against the
     # stock it was differenced from without depending on the order METRICS happens to iterate in.
     latest_value = {}
@@ -4925,6 +4926,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                     h_q = _interior_holes(cov_set, q_start, asof, first_cov)
                     row["covered_days"] = max(int(row["covered_days"] or 0) - len(h_w), 0)
                     row["q0_covered_days"] = max(int(row["q0_covered_days"] or 0) - len(h_q), 0)
+                    WINDOW_HOLES[(name, metric, "now")], WINDOW_HOLES[(name, metric, "q0")] = h_w, h_q
                     if h_q:
                         row["q0_dense_note"] = (f"Q0 COVERS {row['q0_covered_days']} OF {period} DAYS — holes (no row): "
                                                 f"{_day_ranges(h_q)}; the Q0 sum is annualised over the "
@@ -4983,14 +4985,15 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                 row["m1_covered_days"], _ = _window_coverage(s_cov, asof - pd.Timedelta(days=2 * short),
                                                              asof - pd.Timedelta(days=short))
                 if cov_set:                                  # D6-1: the same holes off every window
-                    row["m1_covered_days"] = max(int(row["m1_covered_days"] or 0) - len(_interior_holes(
-                        cov_set, asof - pd.Timedelta(days=2 * short), asof - pd.Timedelta(days=short), first_cov)), 0)
+                    h_m = WINDOW_HOLES[(name, metric, "m1")] = _interior_holes(
+                        cov_set, asof - pd.Timedelta(days=2 * short), asof - pd.Timedelta(days=short), first_cov)
+                    row["m1_covered_days"] = max(int(row["m1_covered_days"] or 0) - len(h_m), 0)
                 for i, q in enumerate(QUARTERS[1:], start=1):
                     lo_q, hi_q = asof - pd.Timedelta(days=period * (i + 1)), asof - pd.Timedelta(days=period * i)
                     row[f"{q}_covered_days"], _ = _window_coverage(s, lo_q, hi_q)
                     if cov_set:
-                        row[f"{q}_covered_days"] = max(int(row[f"{q}_covered_days"] or 0) - len(_interior_holes(
-                            cov_set, lo_q, hi_q, s.index.min())), 0)
+                        h_i = WINDOW_HOLES[(name, metric, q)] = _interior_holes(cov_set, lo_q, hi_q, s.index.min())
+                        row[f"{q}_covered_days"] = max(int(row[f"{q}_covered_days"] or 0) - len(h_i), 0)
                 # The USD twin of a relabelled buyback carries "derived:tokens*price"; its legs
                 # are read off the tokens series it was priced from.
                 legs_g = (groups.get((name, "actual_buyback_tokens"))
@@ -5749,7 +5752,8 @@ def _absorption_emissions_cell(R, r: int, p: dict) -> str:
                            "+".join(R.D(r, m, "q0") for m in ms), same_span=True)
 
 
-def _absorption_guard(R, r: int, p: dict, legs: list, expr: str, same_span: bool = False, bare: bool = False) -> str:
+def _absorption_guard(R, r: int, p: dict, legs: list, expr: str, same_span: bool | None = None,
+                      bare: bool = False) -> str:
     """_coverage_guard over `legs` plus one leg per absorption emissions metric. same_span compares the first two legs
     (the buyback / revenue side against the first emissions series), as before; every leg must still cover a week."""
     ems = [("emissions" if len(config.absorption_emission_metrics(p["name"])) == 1 else
@@ -6450,12 +6454,14 @@ def _fee_per_tx(R: Refs, r: int, p: dict, avg_price: str) -> str:
 
 
 def _coverage_guard(R: Refs, r: int, legs: list[tuple[str, str, str]], expr: str,
-                    same_span: bool = False, bare: bool = False, p: dict | None = None) -> str:
+                    same_span: bool | None = None, bare: bool = False, p: dict | None = None) -> str:
     """=IF(a side covers < RATE_MIN_DAYS, "BLOCKED — ... each side's coverage", expr).
 
     legs: (label, metric, window). same_span: also block where the two sides' covered days differ
-    by more than a tenth of the window — for a DIFFERENCE of two window totals, which cannot be
-    put on a per-day basis without changing what the column states.
+    by more than a tenth of the window. D7-2 (SPEC §1 rule 9 — "two sides of a net OR RATIO over materially
+    different spans are BLOCKED"): None, the default, means every guard with two or more legs — a ratio of two
+    per-covered-day rates included (Hyperliquid's BURN ÷ ISSUANCE read 0.0501x with the release covering 7 of its 12
+    days against a burn covering 87 of 90). The BLOCKED text names each leg's holes where the build knows them.
     A DECLARED ZERO IS FULL COVERAGE (Jake's review of 97b29ae, item 2: Sky's net supply read "issuance covers 5
     days" on Master while A4 passed): with `p` given, the issuance leg of a project declaring zero issuance
     (config.issuance_declared_zero) covers the whole window — the declaration's own check (_zero_issuance) still
@@ -6466,12 +6472,15 @@ def _coverage_guard(R: Refs, r: int, legs: list[tuple[str, str, str]], expr: str
             if len(legs) > 1 else legs
         if len(legs) < 2:
             same_span = False
+    if same_span is None:
+        same_span = len(legs) >= 2
     conds, parts = [], []
     for lab, m, w in legs:
         c, n = R.D(r, m, _COV[w]), _nominal(w)
         conds.append(f"IFERROR(AND(ISNUMBER({c}),{c}<{RATE_MIN_DAYS}),FALSE)")
         # the leg names its series and window (G10 3c: the audit dates a class C cell from the SHORT leg's first row)
-        parts.append(f'"{lab} ({m}, {w}) covers "&IFERROR(IF(ISNUMBER({c}),{c},{n}),"?")&" days of a "&{n}&"-day window"')
+        parts.append(f'"{lab} ({m}, {w}) covers "&IFERROR(IF(ISNUMBER({c}),{c},{n}),"?")&" days of a "&{n}&"-day window'
+                     f'{_holes_text(m, w)}"')
     # every further leg against the first (two legs: exactly as before; Aerodrome's net absorption has three since
     # 2026-10-11 — buyback, gauge emissions, rebase)
     if same_span and len(legs) >= 2:
@@ -6483,6 +6492,22 @@ def _coverage_guard(R: Refs, r: int, legs: list[tuple[str, str, str]], expr: str
     if bare:            # nested inside gated()/circular_gated(), which supply the IFERROR and "="
         return f"IF(OR({','.join(conds)}),{msg},{expr})"
     return f"=IF(OR({','.join(conds)}),{msg},IFERROR({expr},{NA}))"
+
+
+def _holes_text(metric: str, w: str) -> str:
+    """D7-2: ' — holes: <days>' for the project whose row is being built, where the build found interior days with no
+    row in that window (WINDOW_HOLES, D6-1); '' otherwise (a shifted Trajectory quarter: its own window's holes are not
+    this one's). Quotes are doubled for the formula string."""
+    name = _PROJECT["name"]
+    if not name or _SHIFT["k"]:
+        return ""
+    h = WINDOW_HOLES.get((name, config.metric_alias(name, metric), w))
+    if not h:
+        return ""
+    txt = _day_ranges(h)
+    if len(txt) > 150:                       # Excel: a string constant in a formula is at most 255 characters
+        txt = txt[:150].rsplit(", ", 1)[0] + f", … ({len(h)} days)"
+    return f" — holes: {txt}".replace('"', '""')
 
 
 def _guarded_net(R: Refs, r: int, p: dict, iss_m: str, burn_m: str, w: str = "q0",
@@ -7007,9 +7032,9 @@ def _unlock_cols(R: Refs, absorption: bool = False) -> list[tuple]:
             R, r, [("unlocks", "unlock_release_tokens", "q0")],
             f"({ann_unl(r, p)})/({_ff_expr(R, r, p)})")[1:]), FMT_PCT, "calc", False,
          {"metric": "unlock_release_tokens"}),
-        (TOTAL_DILUTION_HEAD, ff_cell(lambda r, p: _absorption_guard(
+        (TOTAL_DILUTION_HEAD, ff_cell(lambda r, p: _absorption_guard(      # D7-2: a SUM over a stock, not a net
             R, r, p, [("unlocks", "unlock_release_tokens", "q0")],
-            f"(({ann_em(r, p)})+({ann_unl(r, p)}))/({_ff_expr(R, r, p)})")[1:]), FMT_PCT, "calc", False,
+            f"(({ann_em(r, p)})+({ann_unl(r, p)}))/({_ff_expr(R, r, p)})", same_span=False)[1:]), FMT_PCT, "calc", False,
          {"metric": "unlock_release_tokens"}),
     ]
     if absorption:
@@ -7165,7 +7190,7 @@ def _eth_yield_columns(R: Refs) -> list[tuple]:
             if not s:
                 return ""
             parts = _eth_yield_parts(R, r, p, s)
-            return _coverage_guard(R, r, parts[2], parts[i])
+            return _coverage_guard(R, r, parts[2], parts[i], same_span=False)    # D7-2: yield parts add, not net
         return build
 
     def ceiling(r, p):
@@ -7223,7 +7248,7 @@ def _total_yield_dilution(R: Refs, r: int, p: dict) -> str | None:
     circ = _circ(R, r, p)
     rel = "+".join(_annualise(R, r, p, m, R.D(r, m, "q0")) for m in adds)
     return _coverage_guard(R, r, [(m.replace("_tokens", "").replace("_", " "), m, "q0") for m in adds],
-                           f"({ni})+({rel})/({circ})", bare=True, p=p)
+                           f"({ni})+({rel})/({circ})", bare=True, p=p, same_span=False)   # D7-2: releases ADD
 
 
 def _total_yield_cols(R: Refs, vyield) -> list[tuple]:
@@ -7333,7 +7358,7 @@ def _a1_headline(R: Refs) -> list[tuple]:
             return calc(f"IF(AND(ISNUMBER({supply}),ISNUMBER({stake})),{val},{NA})")
         if spec["method"] == "consensus_plus_execution":
             cons, exe, legs = _eth_yield_parts(R, r, p, spec)
-            return _coverage_guard(R, r, legs, f"{cons}+{exe}")
+            return _coverage_guard(R, r, legs, f"{cons}+{exe}", same_span=False)   # D7-2: a SUM of two yields
         if spec["method"] == "rate_share":
             # Chainlink (2026-09-29): an emission RATE (tokens/yr) over stake — no annualising.
             rate, stake = R.D(r, spec["rate_metric"], "now"), R.D(r, spec["stake_metric"], "now")
@@ -9338,7 +9363,9 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
                 if basis == "float" and _cp_float_reason(p):
                     return _cp_float_reason(p)
                 d = den_fn(r, p)
-                return _coverage_guard(R, r, legs_fn(p), f"IF(ISNUMBER({d}),({num_fn(r, p)})/({d}),{NA})")
+                # D7-2: a SUM of separately annualised flows over a stock — rule 9's net / ratio test does not apply
+                return _coverage_guard(R, r, legs_fn(p), f"IF(ISNUMBER({d}),({num_fn(r, p)})/({d}),{NA})",
+                                       same_span=False)
             return build
         return [(f"{label} ÷ circulating", mk(circ, "circ"), FMT_PCT, "calc"),
                 (f"{label} ÷ tradeable float", mk(flt, "float"), FMT_PCT, "calc")]
