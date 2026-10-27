@@ -390,6 +390,15 @@ def _age_in_days(latest: pd.Timestamp, asof: pd.Timestamp, granularity: str) -> 
 
 
 COVERED_SETS: dict = {}       # (project, metric) -> the days a daily flow's rows cover (D6-1), set per build
+WINDOW_HOLES: dict = {}       # (project, metric, window) -> its interior days with no row (D6-1), named by D7-2's BLOCKED
+
+
+def drop_store_only(long: pd.DataFrame) -> pd.DataFrame:
+    """D7-1: a STORE-ONLY project (config.STORE_ONLY_PROJECTS — Pyth's STOCK reads) is stored, never shown: its rows
+    leave the build before anything reads them, whatever the scope."""
+    if long is None or long.empty or not config.STORE_ONLY_PROJECTS:
+        return long
+    return long[~long["project"].isin(config.STORE_ONLY_PROJECTS)]
 
 
 def _covered_day_sets(groups: dict) -> dict:
@@ -11909,6 +11918,7 @@ def build_workbook(store, path: Path | str, run_id: str | None = None,
     else:
         _SCOPE = list(PROJECTS)
     long = store.load_long()
+    long = drop_store_only(long)
     # G16 1: the provisional list counts this store's low reads; a listed row is released by the runs that re-read it
     import store as _store_mod                       # noqa: PLC0415
     _early = config.PROVIDERS_WITH_INCOMPLETE_CURRENT_PERIOD

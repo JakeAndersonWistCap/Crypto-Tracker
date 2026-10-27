@@ -33007,3 +33007,70 @@ RUN_CLEANUPS = RUN_CLEANUPS + (
      "why": "stored before the THORSwap hold (SPEC D6-5): THORSwap's NEAR leg reads 0 after 10-22's 543,647 — the day is "
             "re-decided by the rule (held until re-read non-zero or 7 days old)"},
 )
+
+
+# ===== D7-1 (Jake, 2026-10-27; SPEC §19 D7-1): PYTH STOCK READS — STORE ONLY. =====
+# A project here is read and STORED but shown on no tab: build_workbook drops its rows before anything reads them,
+# whatever the build's scope. Pyth is not in PROJECTS (no row, no archetype) until Jake decides its wiring.
+STORE_ONLY_PROJECTS = ("Pyth",)
+
+# Every address is the FULL string from research/pyth/sources.csv / dossier.md §4 (read and checked on-chain 2026-10-27).
+# ADDRESS POISONING IS ACTIVE on these wallets (dossier §5.1: lookalikes such as 2ru3aG7B…8xxy for Douro's 2ru31e9g…8xxy,
+# Gx4MpV…Fyak, CeWsii…JRhu): a token account is stored only when its mint AND owner equal the full strings below.
+_PYTH_MINT = "HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3"
+# USDC on Solana: Circle's own address list (https://developers.circle.com/stablecoins/usdc-contract-addresses, read
+# 2026-10-27); the mint every USDC account below reports on-chain
+_USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+_PYTH_TREASURY = "Gx4MBPb1vqZLJajZmsKLg8fGw9ErhoKsR8LeKcCKFyak"        # DAO Treasury (native-treasury PDA)
+_PYTH_COUNCIL_VAULT = "GAdn7TZhszf5KTfwNRx3A2nP6KCRFEWucZubgdEqbJA2"   # Pythian Council Ops vault (Squads v4 vault 0)
+_PYTH_DOURO = "2ru31e9g8RF2mSSNgTQ11QMb166NE6LJccmBqGJM8xxy"           # Douro Labs' paying wallet
+PYTH_STOCKS = {
+    "project": "Pyth",
+    # the public endpoint only (Jake): Solana's documented limits are 100 requests / 10 s per IP and 40 per RPC method;
+    # observed x-ratelimit-method-limit 10 for some methods, Retry-After 10 on a 429 — so one call every 0.5 s
+    "rpc": "https://api.mainnet-beta.solana.com",
+    "rpc_min_interval_s": 0.5,
+    "max_retry_wait_s": 30.0,
+    "mint": _PYTH_MINT, "usdc_mint": _USDC_MINT,
+    "token_accounts": (
+        # (metric, token account, expected mint, expected owner, what it is)
+        ("pyth_treasury_pyth_tokens", "AYBdhJU8Wao48SEDyKVRXgDRbo9SU8Thnytakof4HDDH", _PYTH_MINT, _PYTH_TREASURY,
+         "DAO Treasury PYTH"),
+        ("pyth_treasury_usdc", "5Unq3fgfSNdyeGjiq2Pu5XAQUJWo2rauKGErbUyxqUGe", _USDC_MINT, _PYTH_TREASURY,
+         "DAO Treasury USDC"),
+        ("pyth_council_pyth_tokens", "BTy44YBx9AVLHbKkSVLGaCBNKUpzw78W6hKy43vpeCHp", _PYTH_MINT, _PYTH_COUNCIL_VAULT,
+         "Pythian Council vault PYTH (bought, not yet returned)"),
+        ("pyth_council_usdc", "HeMtL8F8PPsEWXxUzwBirNE2mYBtYpvZ4oq6erhjGr3n", _USDC_MINT, _PYTH_COUNCIL_VAULT,
+         "Pythian Council vault USDC (unconverted)"),
+        ("pyth_community_council_pyth_tokens", "6fLL4ZFTguNpiJNWzFHs3HmLonPPigok54rsi6ZVXb4g", _PYTH_MINT,
+         "GKuPcXtNRJwZGrJ8tV25jSbLHZe71BUdUXVzjGLXkSt9", "Community Council vault PYTH"),
+        ("pyth_douro_pyth_tokens", "8iRsZ71SSe34neW644NBNB9qn2VMx84yZYKD3oLkr6ma", _PYTH_MINT, _PYTH_DOURO,
+         "Douro paying wallet PYTH"),
+        ("pyth_douro_usdc", "C6G3jRs1SD7GSNxvKNHJZy7aSar7eZiLioPpDRFFtKTf", _USDC_MINT, _PYTH_DOURO,
+         "Douro paying wallet USDC"),
+        ("pyth_funder_cewsb_pyth_tokens", "2tEAnoFKyJJBLcpqcZwksQFM8dpUuo3GHvJdrvHGsgy7", _PYTH_MINT,
+         "CeWsBRksDcuVd9quoNZNT2Hvr9ei7uxEqGBoWwr5JRhu", "funds Douro's wallet (controller not established)"),
+        ("pyth_funder_e6nab_pyth_tokens", "8UkJ2UYf1GeJUM5rUGuZqmGZushDvsYYMfxmoqK9gvtx", _PYTH_MINT,
+         "E6nAbv4qnxRi4X4uBJuPZjFJJ9VNdsYr7R5KZ6eDHtge", "funds Douro's wallet (controller not established)"),
+        ("pyth_ois_unclaimed_tokens", "FbSivnCf6iXfXns6osFih2MgX8icmSKx9iba3gyFpiCT", _PYTH_MINT,
+         "BE8Xq1iHSQYKG8CZorZsrTnxyeHKQLzCWm4dYKdFkVEL", "OIS reward custody (accrued, unclaimed)"),
+    ),
+    "staking_program": "pytS9TjG1qyAZypk7n8rw8gfW9sUaqqYyMhJQ4E7JCQ",
+    "staking_config": "6RYqefZNXXATuXrgXfSxi9rDj9JS1bi5CQkRwyyQ72Bd",      # pyth_token_list_time: Option<i64> at 179
+    "voting_target": "6njqtZeuLbSFU7Yo72GxPcdwhLQWahEPx1iN9GD6DRgV",       # PDA ["target","voting"]
+    "ois_pool_config": "BE8Xq1iHSQYKG8CZorZsrTnxyeHKQLzCWm4dYKdFkVEL",     # y: u64 at bytes 104..112
+    "ois_pool_data": "poo1zPoi5xrNzi4yk4i23oWcJrNNkDYAniBCewJY8kb",        # del_state at 32,792, self at 49,176
+    "dca_program": "DCA265Vj8a9CEuX1eb1LWRnDT7uK6q1xMipnNyatn23M",         # Jupiter DCA (user Pubkey at offset 8)
+    "council_vault": _PYTH_COUNCIL_VAULT,
+    # dossier §4 test reads, 2026-10-27 10:44 UTC — the first read is reported against these (not used as values)
+    "test_values": {"pyth_mint_supply_tokens": 9_999_958_880.265383, "pyth_treasury_pyth_tokens": 41_088_354.294652,
+                    "pyth_treasury_usdc": 0.0, "pyth_council_pyth_tokens": 13_856_169.013175, "pyth_council_usdc": 0.0,
+                    "pyth_council_dca_open_usdc": 14_018.575658 + 76_963.350561,
+                    "pyth_gov_staked_tokens": 1_114_446_379.263919, "pyth_ois_staked_tokens": 671_239_783.876362,
+                    "pyth_ois_reward_rate_y": 0.0, "pyth_ois_unclaimed_tokens": 84_834.191564,
+                    "pyth_unvested_genesis_tokens": 2_154_583_334.002472,
+                    "pyth_unvested_other_tokens": 193_766_254.274998,
+                    "pyth_community_council_pyth_tokens": 1_384_697.563871, "pyth_douro_pyth_tokens": 15_885_913.447,
+                    "pyth_douro_usdc": 8_968.040129, "pyth_funder_cewsb_pyth_tokens": 34_416_632.001,
+                    "pyth_funder_e6nab_pyth_tokens": 31_389_650.0},
+}

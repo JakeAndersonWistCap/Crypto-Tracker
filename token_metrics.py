@@ -101,7 +101,7 @@ def parse_args(argv=None) -> argparse.Namespace:
                              "near_bigquery", "chainlink_fees", "pendle_gauges", "aero_epochs",
                              "aero_buyback", "aero_managed_locks", "burn_history", "hyperevm_burn", "katana_claims",
                              "morpho_base_claims", "plume_payouts", "pendle_berachain", "eth_p2p_validation",
-                             "uni_retro_burn", "ccip_value", "aero_subsidy"],
+                             "uni_retro_burn", "ccip_value", "aero_subsidy", "pyth_stocks"],
                     help="one-off: run only this source with NO time budget, to finish a first "
                          "read that routine runs (60s) take many runs to complete. Stores what it "
                          "reads; records no gaps and does not rebuild the workbook. plume_settlement: a "
@@ -926,6 +926,23 @@ def seed_plume_staking(st, log) -> int:
     return 0
 
 
+def read_pyth_stocks(st, log, run_id: str | None = None) -> int:
+    """D7-1 (SPEC §19): Pyth's STOCK reads from the public Solana RPC, STORE ONLY (config.STORE_ONLY_PROJECTS) — every
+    line dated today (UTC) with its slot in the source; a line that does not read stores nothing and is logged FAILED."""
+    from fetch import pyth_stocks
+    res = pyth_stocks.read()
+    n = st.upsert(pyth_stocks.frame(res, fetch.today().date().isoformat()))
+    for e in pyth_stocks.log_entries(res):
+        (log.info if e.status == "ok" else log.warning)("PYTH STOCKS (store only): %s", e.message)
+        if run_id:
+            st.record_fetch(run_id, e.source, e.project, e.rows, e.status, e.message, e.tier)
+    return 0 if n else 1
+
+
+def seed_pyth_stocks(st, log) -> int:
+    return read_pyth_stocks(st, log, fetch.new_run_id())
+
+
 def render_scope(args, log) -> list[dict]:
     """Which projects the workbook draws: the run's default scope (portfolio.txt, or --all) even when --project
     narrowed the FETCH (Round G 1.9). A --project name outside that scope is drawn too."""
@@ -1166,7 +1183,8 @@ def _main(args, log) -> int:
               "eth_p2p_validation": seed_eth_p2p_validation, "uni_retro_burn": seed_uni_retro_burn,
               "ccip_value": lambda st_, log_: seed_ccip_value(st_, log_, args.dates), "aero_subsidy": seed_aero_subsidy,
               "aero_buyback": seed_aero_buyback, "aero_managed_locks": seed_aero_managed_locks,
-              "mev_relays": lambda st_, log_: seed_mev_relays(st_, log_, args.seed_days)}[args.seed](st, log)
+              "mev_relays": lambda st_, log_: seed_mev_relays(st_, log_, args.seed_days),
+              "pyth_stocks": seed_pyth_stocks}[args.seed](st, log)
         st.close()
         # SEEDS COUNT TOO (Round G4 item 6): the run's Alchemy usage and the month's total include every seed
         _alchemy_report(log, f"--seed {args.seed}")
@@ -1285,6 +1303,12 @@ def _main(args, log) -> int:
         st.record_fetch(run_id, "restated:defillama", proj, 0, "ok", line)
     written = st.upsert(out.frame())
     log.info("upserted %d rows", written)
+    # D7-1: Pyth's STOCK reads, store only — never a reason to stop the run
+    try:
+        read_pyth_stocks(st, log, run_id)
+    except Exception as e:  # noqa: BLE001
+        log.warning("PYTH STOCKS (store only): not read — %s", e)
+        st.record_fetch(run_id, "pyth_stocks", config.PYTH_STOCKS["project"], 0, "failed", f"not read — {e}", 2)
     log.info("daily checks: %d mark(s) written after the store write (none from an abandoned tier)",
              DailyChecks.commit(verify=_mark_stored(out.frame())))
     if DailyChecks.last_dropped:
