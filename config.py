@@ -32929,3 +32929,20 @@ RUN_CLEANUPS = RUN_CLEANUPS + (
      "why": "Maple's SSF chart is not a ledger of the fund's outflows (SPEC D5-3c): buybacks never entered it before "
             "2025-10-29 and it counts price-sensitive exchange-held SYRUP after"},
 )
+
+
+# D6-3 (read live 2026-10-27; robots Allow /): MAPLE SPLIT ITS TRANSPARENCY PAGE. The index now links to sub-pages; the SSF
+# chart (syrupHoldings) and the monthly revenueUsd islands are on /transparency/financials, the Token Buybacks table on
+# /transparency/syrup. SAME SERIES, checked against the store: the SSF chart = stored ssf_holdings_tokens on all 400 common
+# days (max relative difference 1.4e-15); revenueUsd = stored revenue_usd on all 13 common months; the buyback months =
+# the stored rows to the unit. The "SYRUP Holdings" tile (treasury_holding_tokens) is GONE: /financials shows "SYRUP
+# 127.15M held by the DAO and the SSF" — a different quantity, not used; the old tile matched the chart's previous-day
+# point on 9 of 15 stored days only, so it is not rebuilt from the chart.
+PROJECT_BY_NAME["Maple"]["transparency_page"]["pages"] = {
+    "ssf_series": "https://maple.finance/transparency/financials",
+    "revenue_monthly": "https://maple.finance/transparency/financials",
+    "syrup": "https://maple.finance/transparency/syrup",
+}
+PROJECT_BY_NAME["Maple"]["transparency_page"]["holdings_gone"] = (
+    "the tile is gone (D6-3, read 2026-10-27): /transparency/financials shows 'SYRUP 127.15M held by the DAO and the SSF', "
+    "a different quantity, not used; the DAO Safe 0xd6d4… is its own series (treasury_holding_tokens_chain)")

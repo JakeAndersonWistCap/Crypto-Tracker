@@ -98,3 +98,48 @@ def test_2_morphos_10_22_volume_flag_is_answered_with_the_exchange_evidence():
     assert a and a["decision"] == "ACCEPT" and "Coinbase" in a["why"] and "SPEC D6-2" in a["why"]
     assert config.review_answered({"project": "Morpho", "metric": "volume_usd", "reason": "change_threshold",
                                    "date": "2026-10-23"}) is None          # that day only
+
+
+# ================================================================================================== 3
+def test_3_maple_fields_are_read_from_the_pages_they_moved_to(monkeypatch, tmp_path):
+    import html as _html
+    import json
+    from fetch import maple_transparency as mt
+    from fetch import scrape
+    from fetch.base import FetchOutput
+    monkeypatch.setattr(scrape, "CACHE_DIR", tmp_path)
+    monkeypatch.setattr(scrape, "robots_verdict", lambda url: (True, "test"))
+
+    def enc(v):
+        if isinstance(v, dict):
+            return [0, {k: enc(x) for k, x in v.items()}]
+        if isinstance(v, list):
+            return [1, [enc(x) for x in v]]
+        return [0, v]
+    ms = lambda d: int(pd.Timestamp(d).timestamp() * 1000)  # noqa: E731
+    days = pd.date_range("2026-09-01", "2026-09-29")
+    ssf = {"datasets": enc({"ALL": [{"ts": ms(d), "syrupHoldings": 80e6 - i, "liquidAssetsUsd": 1} for i, d in
+                                     enumerate(days)]})}
+    rev = {"datasets": enc({"ALL": [{"ts": ms("2026-08-31"), "revenueUsd": 1_470_979.15}]})}
+    fin = "".join(f'<astro-island uid="{i}" props="{_html.escape(json.dumps(p))}"></astro-island>'
+                  for i, p in enumerate((ssf, rev)))
+    syrup = ("<p>Showing 1-1 of 1</p><table><tr><td>Aug 2026</td><td>$147,098.00</td><td>676,293.73</td>"
+             "<td>$0.2175</td></tr></table>")
+    pages = {"https://maple.finance/transparency": "<a href='/transparency/syrup'>SYRUP</a>",
+             "https://maple.finance/transparency/financials": fin, "https://maple.finance/transparency/syrup": syrup}
+    asked = []
+
+    def get(url):
+        asked.append(url)
+        return pages[url]
+    out = FetchOutput()
+    mt.MapleTransparency(get=get).run([config.PROJECT_BY_NAME["Maple"]], 30, out)
+    f = out.frame()
+    assert len(f[f.metric == "ssf_holdings_tokens"]) == len(days)
+    assert f[f.metric == "revenue_usd"]["value"].tolist() == [1_470_979.15]
+    assert f[(f.metric == "actual_buyback_tokens") & (f.source == "maple_page")]["value"].tolist() == [676_293.73]
+    assert not (f.metric == "treasury_holding_tokens").any()
+    msgs = " | ".join(e.message for e in out.log)
+    assert "different quantity, not used" in msgs                         # the tile: gone, said why
+    assert "ssf_net_outflow_tokens: not stored (SPEC D5-3c)" in msgs and "ssf_net_outflow_tokens: no astro" not in msgs
+    assert sorted(set(asked)) == sorted(pages)                             # each page fetched once

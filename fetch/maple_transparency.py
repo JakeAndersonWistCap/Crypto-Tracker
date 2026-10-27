@@ -67,6 +67,7 @@ from __future__ import annotations
 import html
 import logging
 import re
+from urllib.parse import urlparse
 
 import pandas as pd
 
@@ -420,7 +421,10 @@ class MapleTransparency:
 
     def _fetch(self, url: str) -> str:
         from .scrape import CACHE_DIR
-        f = CACHE_DIR / str(today().date()) / "maple_transparency.html"
+        # one cached copy a day PER PAGE (D6-3: the content is split over /transparency, /financials and /syrup)
+        tail = urlparse(url).path.strip("/").replace("/", "_") or "index"
+        f = CACHE_DIR / str(today().date()) / ("maple_transparency.html" if tail == "transparency"
+                                               else f"maple_{tail}.html")
         if f.exists():
             return f.read_text(encoding="utf-8")
         if self._get is not None:
@@ -459,6 +463,20 @@ class MapleTransparency:
             out.fail(SOURCE, name, f"{url}: {e}", TIER)
             self._gap_all(name, spec, out, f"{url} did not answer: {e}", "Check the page.")
             return
+        # D6-3: MAPLE SPLIT THE PAGE (read 2026-10-27) — each field read from the page that now carries it
+        # (spec["pages"]); a field without one stays on the index page
+        pages, texts = spec.get("pages") or {}, {url: text}
+
+        def page_text(field: str) -> tuple[str, str]:
+            u = pages.get(field) or url
+            if u not in texts:
+                try:
+                    texts[u] = self._fetch(u)
+                except Exception as e:  # noqa: BLE001
+                    texts[u] = ""
+                    out.fail(SOURCE, name, f"{u}: {e}", TIER)
+            return u, texts[u]
+
         got = parse(text)
         for why_refused in got["refused"]:
             out.skipped(SOURCE, name, f"{url}: {why_refused}", TIER)
@@ -467,7 +485,8 @@ class MapleTransparency:
         m = next((k for k, v in metrics.items() if v["field"] == "holdings_syrup"), None)
         if m:
             if got["holdings_syrup"] is None:
-                out.fail(SOURCE, name, f"{m}: 'SYRUP Holdings' not found on {url}", TIER)
+                out.fail(SOURCE, name, f"{m}: 'SYRUP Holdings' not found on {url}"
+                                       + (f" — {spec['holdings_gone']}" if spec.get("holdings_gone") else ""), TIER)
                 out.gap(name, m, reason=f"'SYRUP Holdings' was not found on {url} — a redesign, "
                                         f"or the label moved", tiers_attempted="3",
                         suggestion="Re-check HOLDINGS_RE in fetch/maple_transparency.py.")
@@ -481,12 +500,16 @@ class MapleTransparency:
         # THE SSF CHART: daily holdings and the monthly release (Jake's probe 5, 2026-09-30).
         hm = next((k for k, v in metrics.items() if v["field"] == "ssf_series"), None)
         rm = next((k for k, v in metrics.items() if v["field"] == "ssf_release"), None)
+        retired = spec.get("ssf_release_retired") if rm else None     # D5-3c: said whatever the page serves
+        if retired:
+            out.skipped(SOURCE, name, f"{rm}: {retired}", TIER)
         if hm or rm:
-            ser = ssf_series(text)
+            s_url, s_text = page_text("ssf_series")
+            ser = ssf_series(s_text)
             if isinstance(ser, str):
-                for m_ in (hm, rm):
+                for m_ in (hm, None if retired else rm):
                     if m_:
-                        out.fail(SOURCE, name, f"{m_}: {ser} on {url}. NOTHING STORED.", TIER)
+                        out.fail(SOURCE, name, f"{m_}: {ser} on {s_url}. NOTHING STORED.", TIER)
             else:
                 pts, key = ser
                 pts = [(d, v) for d, v in pts if d < today()]
@@ -494,10 +517,7 @@ class MapleTransparency:
                     out.add(tidy(pts, name, hm, f"{SOURCE}:island.{key}", TIER), SOURCE, name,
                             f"{hm} = the SSF chart's syrupHoldings, dataset {key}: {len(pts)} day(s) "
                             f"{pts[0][0].date()}..{pts[-1][0].date()}", TIER)
-                retired = spec.get("ssf_release_retired") if rm else None     # D5-3c
-                if retired:
-                    out.skipped(SOURCE, name, f"{rm}: {retired}", TIER)
-                elif rm:
+                if rm and not retired:
                     zeros_, _ = buyback_zero_months(got["buybacks"], list(got["buybacks"]["month"]), today())
                     rel, skipped = ssf_release(pts, got["buybacks"], today(), zeros_)
                     neg = [f"{d:%Y-%m} {v:,.0f}" for d, v in rel if v < 0]
@@ -514,9 +534,10 @@ class MapleTransparency:
         # MAPLE'S OWN MONTHLY REVENUE.
         vm = next((k for k, v in metrics.items() if v["field"] == "revenue_monthly"), None)
         if vm:
-            rs = revenue_series(text)
+            r_url, r_text = page_text("revenue_monthly")
+            rs = revenue_series(r_text)
             if isinstance(rs, str):
-                out.fail(SOURCE, name, f"{vm}: {rs} on {url}. NOTHING STORED.", TIER)
+                out.fail(SOURCE, name, f"{vm}: {rs} on {r_url}. NOTHING STORED.", TIER)
             else:
                 rev, key = rs
                 rev = [(d, v) for d, v in rev if d < today()]           # complete months only
@@ -525,6 +546,12 @@ class MapleTransparency:
                             f"{vm} = Maple's own monthly revenueUsd (dataset {key}): {len(rev)} month(s) "
                             f"{rev[0][0]:%Y-%m}..{rev[-1][0]:%Y-%m}, dated to month-end", TIER)
 
+        b_url, b_text = page_text("syrup")
+        if b_url != url:
+            got_b = parse(b_text)
+            for why_refused in got_b["refused"]:
+                out.skipped(SOURCE, name, f"{b_url}: {why_refused}", TIER)
+            got = {**got, "buybacks": got_b["buybacks"], "showing": got_b["showing"]}
         bb = got["buybacks"]
         cutoff = today()
         done = bb[[month_end(mo) < cutoff for mo in bb["month"]]] if not bb.empty else bb
@@ -538,7 +565,7 @@ class MapleTransparency:
             if done.empty:
                 out.fail(SOURCE, name, f"{metric}: no complete month in the Token Buybacks table "
                                        f"({limit})", TIER)
-                out.gap(name, metric, reason=f"no complete month parsed from {url} ({limit})",
+                out.gap(name, metric, reason=f"no complete month parsed from {b_url} ({limit})",
                         tiers_attempted="3", suggestion="Re-check BUYBACK_RE.")
                 continue
             rows = [(month_end(r.month), float(getattr(r, v["field"]))) for r in done.itertuples()]
