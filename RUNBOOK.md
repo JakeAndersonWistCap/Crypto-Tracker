@@ -534,6 +534,51 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11dd. Round P2a — the Charlie build (2026-10-29)
+
+What changes (SPEC §19 P2a):
+- **The reader is complete.** `token_metrics.xlsx` has About, Summary, A1 Infrastructure, A2 Coordination, A3 Revenue
+  Buyback, A4 Permanent Burn, Comparison, Business, Charts and Definitions (plus the hidden `_data` and `_series`).
+  The audit file's tabs and columns are unchanged.
+- **One period selector** (Summary B2: 1D, 7D, 30D, 90D, 6M, 1Y, 3Y, custom = the days in D2) drives every growth and
+  price-change column on every tab, live. "n/a" where the store does not hold every day of both windows.
+- **No blank cells.** A cell is a number or a code (n/a · blocked · not wired · by design · parked · unranked) with
+  the reason in its comment. A project with no measured key reads "unranked" and sorts last. The build line counts
+  unexplained blanks; it must say 0.
+- **Parked:** World Mobile (Jake, 2026-09-29), and Aerodrome as "PARKED — migration" while
+  `config.aerodrome_park_reason` gives a reason. Today it does: no v3 rows held yet, and the filing wallets' holdings
+  of the new token have no reader (~441M circulating overstated). Their rows are grey, numbers visible, outside the
+  ranks and the charts.
+- **Data fixes:** Aerodrome's legacy unlock legs stop at 2026-10-19 (the migration is not an unlock; D2). Both Merkl
+  series store again (D3; Plume's Merkl read is now its own tier `merkl_campaigns_plume`; a running campaign without
+  computedUntil logs `PARTIAL — HELD …` and is never counted as 0). A Plume payout day on the read's edge is HELD
+  until a later read passes it (D8). Seven Review Queue rows answered (D8). Hyperliquid's pool release is NOT
+  backfilled — not served on its basis (D1); `run_sql.py DC` names each missing day's cause. Hyperliquid's market cap
+  comment states its circulating basis (D6). A NEAR Artemis CSV would not be read (D7).
+
+**Pull this, then in PowerShell 5.1 at the repo root (the long steps are last):**
+```
+git pull
+python check_offline_items.py aero_migration
+python check_offline_items.py hl_circulating_overlap 2>&1 | Tee-Object -FilePath hl_circulating_overlap.txt
+python check_offline_items.py plume_native_seed
+python run_sql.py DC
+python token_metrics.py
+python measuring_guard.py --newer metrics.db
+python recalc_check.py token_metrics.xlsx
+python recalc_check.py token_metrics_audit.xlsx 1800
+```
+PASTE BACK: the last two lines of `aero_migration` (COMPLETE / PARKED); the whole of `hl_circulating_overlap.txt`;
+every `plume_native_seed` line; DC1 and DC2; from the run, both `merkl_campaigns` lines, any `PARTIAL`, `HELD`,
+`NOT YET COMPLETE` or `TIER TIMED OUT` line, and the `wrote …token_metrics.xlsx` line (it must say 0 unexplained
+blanks); the guard's VERDICT; each recalc's `"mismatches"` and `"errors"`. If `plume_native_seed` ends `-> RESTART`,
+run the line it prints afterwards (about 10–11 hours, resumable, never beside a daily run), then the check again.
+
+**What to look for.** Summary: change B2 to 30D, then 1Y — every "selected period" column on every tab follows. Hover
+any number for its audit cell; a code's comment says why. Charts: each chart lists the parked and unplottable
+projects under it.
+
+
 ## 11dc. Round D7 — Pyth STOCK reads (store only), rule 9 on ratios (2026-10-27)
 
 What changes (SPEC §19 D7):
