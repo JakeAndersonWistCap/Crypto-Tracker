@@ -945,11 +945,24 @@ def _eth_burn_cause(groups, project, at, ours, ref) -> str:
             f"day's price, an estimate, and carries what difference remains")
 
 
+FLUID_Q4_BASIS = {"jupiter_lend_share": 437_490.0, "dashboard_daily": 3_116_324.0, "dashboard_window": 2_965_386.0}
+
+
 def _fluid_q4_revenue_cause(groups, project, at, ours, ref) -> str:
-    return (f"BASIS DIFFERS, NOT EXPLAINED: the reference is Fluid's OWN revenue (Q4 2025 update PDF, 3.19M; "
-            f"revenue.instadapp.io), ours is DefiLlama's revenue_usd summed over 2025-10-01..12-31 ({ours:,.0f}). The PDF "
-            f"says DefiLlama is MISSING Jupiter Lend, which would make DefiLlama LOWER — ours is {ours / ref - 1:+.1%}. "
-            f"Settles it: revenue.instadapp.io's Q4 2025 by deployment against DefiLlama's fluid revenue by chain (G6-5)")
+    """D6-6: BASIS DIFFERS — EXPLAINED (still PARKED). The parts read 2026-10-27: Fluid's 50% share of Jupiter Lend on
+    Solana in DefiLlama (dashboard / PDF: none), and the pricing date (Fluid's revenue.api.instadapp.io serves token
+    amounts; a window is priced at its last day, a day-by-day sum each day at its own price, as DefiLlama)."""
+    b = FLUID_Q4_BASIS
+    ex = ours - b["jupiter_lend_share"]
+    return (f"BASIS DIFFERS — EXPLAINED (SPEC D6-6), the residual stated: ours is DefiLlama's revenue_usd over "
+            f"2025-10-01..12-31 ({ours:,.0f}); less Fluid's 50% share of Jupiter Lend on Solana, which DefiLlama counts "
+            f"(since 2026-03-05) and Fluid's dashboard and PDF do not ({b['jupiter_lend_share']:,.0f}) = {ex:,.0f}. Like "
+            f"for like, each day at its own price: Fluid's own dashboard summed day by day {b['dashboard_daily']:,.0f} — "
+            f"RESIDUAL {ex / b['dashboard_daily'] - 1:+.2%} (DefiLlama's method on the EVM chains; NOT a Plasma double "
+            f"count — the adapter subtracts the DEX cut on Plasma too). On the PDF's pricing date ours cannot be formed "
+            f"(DefiLlama serves USD only); Fluid's own Q4 window priced at its last day is "
+            f"{b['dashboard_window']:,.0f} and the PDF ({ref:,.0f}) sits {ref / b['dashboard_window'] - 1:+.2%} above it "
+            f"— NOT ESTABLISHED. PARKED (Jake, sense-check phase)")
 
 
 def _geodnet_feed_month_cause(groups, project, at, ours, ref) -> str:

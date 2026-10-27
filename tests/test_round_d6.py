@@ -219,3 +219,14 @@ def test_5_the_days_stored_before_the_rule_are_removed_once(tmp_path):
     assert not any("D6-5" in x for x in lines)                                                 # once only
     assert st.conn.execute("SELECT COUNT(*) FROM metrics WHERE date='2026-10-26'").fetchone()[0] == 1
     st.close()
+
+
+# ================================================================================================== 6
+def test_6_the_fluid_reference_reads_basis_differs_explained_with_its_residuals_and_stays_parked():
+    import references
+    txt = references.CAUSES[("Fluid", "g6_revenue_q4_2025_musd")]({}, "Fluid", None, 3_711_427.0, 3_190_000.0)
+    assert txt.startswith("BASIS DIFFERS — EXPLAINED")
+    assert "= 3,273,937" in txt and "RESIDUAL +5.06%" in txt and "+7.57% above it" in txt
+    assert "NOT a Plasma double count" in txt and "PARKED" in txt
+    parked = [v for k, v in vars(config).items() if isinstance(v, dict) and ("Fluid", "g6_revenue_q4_2025_musd") in v]
+    assert parked and "EXPLAINED" in str(parked[0][("Fluid", "g6_revenue_q4_2025_musd")])

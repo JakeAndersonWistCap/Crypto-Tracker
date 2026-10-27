@@ -30627,7 +30627,8 @@ PROJECT_BY_NAME["Pendle"]["subsidy_targeting"] = {
 
 # ===== G9 B4 — REFERENCES PARKED FOR THE SENSE-CHECK PHASE (Jake 2026-10-20): status PARKED, never BROKEN. =====
 PARKED_REFERENCES = {
-    ("Fluid", "g6_revenue_q4_2025_musd"): "parked by Jake for the sense-check phase (Fluid Q4 2025 revenue, +28.71%)",
+    ("Fluid", "g6_revenue_q4_2025_musd"): "parked by Jake for the sense-check phase (Fluid Q4 2025 revenue, +28.71%; "
+                                          "BASIS DIFFERS — EXPLAINED, SPEC D6-6)",
     ("Sky", "g6_usds_spent_cumulative"): "parked by Jake for the sense-check phase (Sky USDS spent, −1.51%)",
     ("GEODNET", "g6_gross_burn_2026_07_feed"): "known month-boundary basis difference — Jake's decision (GEODNET July "
                                                "burn, +2.39%)",
