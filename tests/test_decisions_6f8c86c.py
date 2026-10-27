@@ -440,20 +440,23 @@ def test_the_spec_formula_leg_is_labelled_modelled_everywhere_on_the_real_dump(t
     wb, rows = _built(tmp_path, monkeypatch, "Ethereum")
     assert config.is_modelled("derived:consensus_formula[MODELLED — x]") and not config.is_modelled(
         "etherscan:ethsupply2.Eth2Staking:delta")
+    assert not config.is_modelled("ultrasound:issuance[MEASURED: d(ultrasound supply-over-time) + burn — SPEC D5-2a]")
     g = bw._LAST_GROUPS[("Ethereum", "consensus_rewards_tokens")]
     assert g[g["source"].str.startswith("derived:consensus_formula")]["source"].str.contains("MODELLED").all()
+    # D5-2a (Jake 2026-10-27, MODELLED -> measured): on the real dump ultrasound's supply history covers every day the
+    # formula used to fill before Etherscan's first read, so nothing under the headline is MODELLED any more (the
+    # formula leg, when it is used, stays labelled — tests/test_round_d5.py test_2a_*)
+    assert g["source"].str.startswith("ultrasound:issuance").any()
     ws = wb["Data"]
     r = next(r for r in range(2, ws.max_row + 1) if ws.cell(r, 1).value == "Ethereum|consensus_rewards_tokens")
-    assert "MODELLED leg" in str(ws.cell(r, bw.DATA_COLS.index("note") + 1).value)
+    assert "MODELLED leg" not in str(ws.cell(r, bw.DATA_COLS.index("note") + 1).value)
     vy = next(x for x in rows if x["hid"] == "a1_validator_yield")
-    # G11 B6: the leg now reaches the first measured read, so Q0 is MODELLED in part (said, excluded from scoring)
-    assert vy["modelled_quarters"][:2] == ["Q0", "Q-1"]
-    assert "MODELLED" in vy["trend"]
+    assert not vy["modelled_quarters"] and "MODELLED" not in vy["trend"]
     assert not next(x for x in rows if x["hid"] == "master_price_spot")["modelled_quarters"]
     cw = wb["Credibility"]
     notes = [str(cw.cell(i, 12).value or "") for i in range(1, cw.max_row + 1)
              if cw.cell(i, 1).value == "Ethereum" and "VALIDATOR STAKING YIELD" in str(cw.cell(i, 4).value or "")]
-    assert notes and notes[0].startswith("MODELLED history under this headline")
+    assert notes and not notes[0].startswith("MODELLED history under this headline")
     assert "MODELLED quarters (excluded from any scoring)" in es.TRAJ_FIELDS
 
 
