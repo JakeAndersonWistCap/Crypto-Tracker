@@ -542,14 +542,25 @@ What changes (SPEC §19 P2b):
   your store at most Ethereum can form. The key changes only on your go-ahead.
 - **Hyperliquid A4:** no common-days ratio (P2b-3). The A4 key cell reads "blocked"; its comment gives each leg's
   covered days of the 90-day window and the holes.
-- Aerodrome (P2b-1) and Chainlink's 33-wallet history (P2b-2): in progress, not in this pull.
+- **Aerodrome's filing locks across the migration** (P2b-1). The legacy managed-lock read fell from ~444M to 2.85M
+  because the Team, Public Goods and Flight School wallets withdrew from their managed veNFTs, migrated them to sAERO
+  and moved the stake into Aero Relays (they hold the Relay principal); the Velodrome Foundation airdrop wallet keeps
+  4 sAERO. `aero_v3` now reads all of it at the supply's block into filing_managed_lock_tokens. Circulating falls
+  from ~2,036.6M to ~1,538.9M (overstated by ~497.7M, not ~441M). Aerodrome STAYS PARKED: no primary source publishes
+  circulating on this basis to tie to. Days from 2026-10-22 to your first run with this change have no v3 filing row
+  and stay holes; 2026-10-21 still reads ~218.8M high (not fixed).
+- Chainlink's 33-wallet history (P2b-2): in progress, not in this pull.
 
 **Pull this, then in PowerShell 5.1 at the repo root:**
 ```
 git pull
+python token_metrics.py --project Aerodrome
 python token_metrics.py --no-fetch
 ```
-Look at A1 Infrastructure: the interim column is the third, after "Rank in A1"; hover a cell for its audit cell.
+PASTE BACK the Run Log line `aero_v3 / Aerodrome: filing_managed_lock_tokens at Base block …` (expect about 500.5M:
+Relay principal ~468.3M from 9 Relays of 1 factory, sAERO stakes ~29.3M, legacy ~2.85M) — or the line that says it
+could not be read (the day then reads n/a, never 0). Look at A1 Infrastructure: the interim column is the third,
+after "Rank in A1"; hover a cell for its audit cell.
 
 
 ## 11dd. Round P2a — the Charlie build (2026-10-29)
