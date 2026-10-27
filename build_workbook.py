@@ -389,6 +389,74 @@ def _age_in_days(latest: pd.Timestamp, asof: pd.Timestamp, granularity: str) -> 
     return max(int((asof - end).days), 0)
 
 
+COVERED_SETS: dict = {}       # (project, metric) -> the days a daily flow's rows cover (D6-1), set per build
+
+
+def _covered_day_sets(groups: dict) -> dict:
+    """D6-1: per daily flow, THE DAYS ITS ROWS COVER — a row covers its own day, or its declared span (`[span=Nd]`: the N
+    days ending on its date); a DERIVED row with no span of its own covers what its inputs' rows on the same date cover
+    (wiring.view_edges: the view that wrote it read them — Hyperliquid's buyback $ = tokens x price inherits the tokens'
+    `[span=4d]`). A derived series never gains a day it holds no row for. Read by _interior_holes."""
+    from fetch.validate import _span_days                  # noqa: PLC0415
+    spans: dict = {}
+    stock_days: dict = {}
+
+    def _stock_span(name: str, src: str, day) -> int:
+        # A ROW STORED BEFORE THE FETCH TAGGED ITS SPAN (fetch/__init__ tags `derived:d_<stock>` since 2026-10-09):
+        # d(stock) between two readings covers every day since the stock's previous reading — the row's own definition
+        m_ = re.match(r"derived:d\(([a-z0-9_]+)\)", src)
+        stock = m_.group(1) if m_ else re.split(r"[+\-\[:(]", src[len("derived:d_"):])[0]
+        stock = "total_supply" if stock == "supply" else stock
+        if (name, stock) not in stock_days:
+            gs = groups.get((name, stock))
+            stock_days[(name, stock)] = (sorted(set(pd.to_datetime(gs["date"]).dt.normalize()))
+                                         if gs is not None and not gs.empty else [])
+        prev = [x for x in stock_days[(name, stock)] if x < day]
+        return max(int((day - prev[-1]).days), 1) if prev and day in stock_days[(name, stock)] else 1
+
+    for (name, metric), g in groups.items():
+        if g is None or getattr(g, "empty", True) or (METRICS.get(metric) or {}).get("kind") != "flow":
+            continue
+        d = pd.to_datetime(g["date"]).dt.normalize()
+        sp: dict = {}
+        for day, src in zip(d, g["source"].astype(str)):
+            n = _span_days(src)
+            if n == 1 and (src.startswith("derived:d_") or src.startswith("derived:d(")):
+                n = _stock_span(name, src, day)
+            sp[day] = max(sp.get(day, 1), n)
+        spans[(name, metric)] = sp
+    try:
+        edges = wiring.view_edges()
+    except Exception:  # noqa: BLE001 — no graph (a view called outside a tracked build): own spans only
+        edges = {}
+    for _ in range(4):                                     # derived of derived (tokens -> $ -> holder value), to depth 4
+        changed = False
+        for (name, w), ins in edges.items():
+            own = spans.get((name, w))
+            if not own:
+                continue
+            srcs = [spans.get((name, r)) for r, _f in ins]
+            srcs = [x for x in srcs if x]
+            for day, n in own.items():
+                best = max([n] + [x.get(day, 1) for x in srcs])
+                if best > n:
+                    own[day] = best
+                    changed = True
+        if not changed:
+            break
+    return {k: {day - pd.Timedelta(days=i) for day, n in sp.items() for i in range(int(n))} for k, sp in spans.items()}
+
+
+def _interior_holes(cov: set, start: pd.Timestamp, end: pd.Timestamp, first=None) -> list:
+    """D6-1: the days in (start, end] that no row covers, between the series' first covered day (or `first`) and its last
+    — days after the last row are the lag allowance (staleness reports a series that stopped), never holes."""
+    if not cov:
+        return []
+    lo = max(start + pd.Timedelta(days=1), min(cov) if first is None else max(first, min(cov)))
+    hi = min(end, max(cov))
+    return [d for d in pd.date_range(lo, hi) if d not in cov] if hi >= lo else []
+
+
 def _differenced_first(g: pd.DataFrame) -> bool:
     """True when the series' FIRST row is a difference of two readings (`derived:d_…` or a `:delta` source):
     dated the day it was read, it holds the interval ENDING that day, so its coverage starts the day before."""
@@ -4620,6 +4688,8 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _LAST_GROUPS.clear()
     _subsidy_common_views(groups, asof)   # G13 6: subsidy cover over the days every leg covers once (b) is complete
     _LAST_GROUPS.update(groups)       # the views, for Credibility rows that read them (credibility.VIEWS_LONG)
+    COVERED_SETS.clear()
+    COVERED_SETS.update(_covered_day_sets(groups))   # D6-1: the days each daily flow's rows cover
     # The latest value of every series, keyed the same way — so a flow can be checked against the
     # stock it was differenced from without depending on the order METRICS happens to iterate in.
     latest_value = {}
@@ -4833,6 +4903,23 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                                                 f"{_day_ranges(miss)} ({config.DENSE_DAILY_FLOWS[(name, metric)]}); "
                                                 f"the Q0 sum is annualised over the {row['q0_covered_days']} "
                                                 f"day(s) held")
+                # D6-1 (SPEC §1 rule 9): A DAY WITH NO ROW IS A HOLE, NEVER A ZERO. A daily flow's interior days that no row
+                # covers (its own day, its [span=Nd], or — a derived row — its inputs' span) come off the span counted above.
+                # Not for a scan read from genesis (every scanned day is read), a period-dated (weekly / epoch / monthly)
+                # series, or a DENSE_DAILY_FLOWS series (counted already); days after the last row are the lag allowance.
+                cov_set = (COVERED_SETS.get((name, metric))
+                           if not dense and not config.scanned_from_genesis(name, metric)
+                           and _observed_cadence(g) == "daily" else None)
+                first_cov = s_cov.index.min() if cov_set and not s_cov.empty else None
+                if cov_set:
+                    h_w = _interior_holes(cov_set, w_start, asof, first_cov)
+                    h_q = _interior_holes(cov_set, q_start, asof, first_cov)
+                    row["covered_days"] = max(int(row["covered_days"] or 0) - len(h_w), 0)
+                    row["q0_covered_days"] = max(int(row["q0_covered_days"] or 0) - len(h_q), 0)
+                    if h_q:
+                        row["q0_dense_note"] = (f"Q0 COVERS {row['q0_covered_days']} OF {period} DAYS — holes (no row): "
+                                                f"{_day_ranges(h_q)}; the Q0 sum is annualised over the "
+                                                f"{row['q0_covered_days']} day(s) covered (SPEC D6-1)")
                 row["q0_events"] = int(((s.index > q_start) & (s.index <= asof) & (s > 0)).sum())
                 # ** A SCHEDULE THAT HAS ENDED STILL FILLS THE WINDOW BEHIND IT. Added 2026-09-25. **
                 # The mirror of a part-filled window: after the declared end the true rate is zero,
@@ -4870,7 +4957,10 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                     h0 = max(pd.Timestamp(hole["from"]), w_start)
                     h1 = min(pd.Timestamp(hole["to"]), asof)
                     if h1 >= h0:
-                        lost = int((h1 - h0).days) + 1
+                        # D6-1: a declared hole's days with NO row are already off the coverage (_interior_holes); only
+                        # its days that hold a row (a partial figure the source reported) come off here — never twice
+                        lost = (sum(1 for d_ in pd.date_range(h0, h1) if d_ in cov_set) if cov_set
+                                else int((h1 - h0).days) + 1)
                         row["covered_days"] = max(int(row["covered_days"]) - lost, 0)
                         row["hole_note"] = (
                             f"{lost} day(s) in this window ({h0.date()}..{h1.date()}) are "
@@ -4879,9 +4969,15 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                 row["now_covered_days"] = row["covered_days"]
                 row["m1_covered_days"], _ = _window_coverage(s_cov, asof - pd.Timedelta(days=2 * short),
                                                              asof - pd.Timedelta(days=short))
+                if cov_set:                                  # D6-1: the same holes off every window
+                    row["m1_covered_days"] = max(int(row["m1_covered_days"] or 0) - len(_interior_holes(
+                        cov_set, asof - pd.Timedelta(days=2 * short), asof - pd.Timedelta(days=short), first_cov)), 0)
                 for i, q in enumerate(QUARTERS[1:], start=1):
-                    row[f"{q}_covered_days"], _ = _window_coverage(
-                        s, asof - pd.Timedelta(days=period * (i + 1)), asof - pd.Timedelta(days=period * i))
+                    lo_q, hi_q = asof - pd.Timedelta(days=period * (i + 1)), asof - pd.Timedelta(days=period * i)
+                    row[f"{q}_covered_days"], _ = _window_coverage(s, lo_q, hi_q)
+                    if cov_set:
+                        row[f"{q}_covered_days"] = max(int(row[f"{q}_covered_days"] or 0) - len(_interior_holes(
+                            cov_set, lo_q, hi_q, s.index.min())), 0)
                 # The USD twin of a relabelled buyback carries "derived:tokens*price"; its legs
                 # are read off the tokens series it was priced from.
                 legs_g = (groups.get((name, "actual_buyback_tokens"))
