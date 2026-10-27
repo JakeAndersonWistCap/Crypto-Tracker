@@ -82,8 +82,8 @@ ARCHETYPE_KEYS = {
 # PARKED (P2a A8): shown greyed, outside the ranks, numbers visible; left out of the charts
 READER_PARKED = {"World Mobile": "PARKED — no further work on World Mobile until Jake reopens it (parked 2026-09-29); "
                                  "its row is shown with its numbers, outside the ranks and the charts."}
-AERO_PARKED_MIGRATION = ("PARKED — migration: Aerodrome's switch to the v3 token did not complete on this build "
-                         "(the migration check refused it), so its figures are not ranked or charted until it does.")
+AERO_PARKED_MIGRATION = "Its figures are shown, outside the ranks and the charts, until the migration completes."
+_AERO_PARK: dict = {}                       # this build's Aerodrome park reason (build_reader resets it with the as-of day)
 
 # STATE OF THE LAST BUILD — read by measuring_guard and the tests
 HEADLINE_LOCATIONS: dict = {}               # (audit sheet, project, audit header) -> (reader sheet, cell)
@@ -92,14 +92,17 @@ COLUMN_MAP: list = []
 
 
 def parked_reason(name: str) -> str:
-    """Why a project is parked on the reader, or ''. Aerodrome is parked only when its migration switch failed."""
+    """Why a project is parked on the reader, or ''. Aerodrome is parked while config.aerodrome_park_reason gives a
+    reason on the as-of day (P2a D2: switch file incomplete, no v3 rows held, or a named unpark blocker)."""
     if name in READER_PARKED:
         return READER_PARKED[name]
     if name == "Aerodrome":
-        import config                                      # noqa: PLC0415
-        fn = getattr(config, "aero_migration_failed", None)
-        if fn is not None and fn():
-            return AERO_PARKED_MIGRATION
+        if "why" not in _AERO_PARK:
+            import config                                      # noqa: PLC0415
+            fn = getattr(config, "aerodrome_park_reason", None)
+            why = fn(day=_AERO_PARK.get("day")) if fn is not None else ""
+            _AERO_PARK["why"] = f"{why}. {AERO_PARKED_MIGRATION}" if why else ""
+        return _AERO_PARK["why"]
     return ""
 
 
@@ -694,6 +697,8 @@ def build_reader(wb, path, *, asof, groups: dict, headline_cells: list, projects
     STATS.clear()
     COLUMN_MAP.clear()
     asof = pd.Timestamp(asof).normalize()
+    _AERO_PARK.clear()
+    _AERO_PARK["day"] = asof
     A = Audit(wb)
     out = Workbook()
     ws_about = out.active

@@ -458,7 +458,8 @@ still export, once a month:
 2. Save it in the **repository root** or in **`data/artemis/`**, overwriting the old file. Both name
    forms work, so you never need to rename: Artemis's own `<Chain> - Settlement Volume.csv` and
    `<Chain>_-_Settlement_Volume.csv`. The chains are listed in `config.ARTEMIS_SETTLEMENT["chains"]`
-   (Ethereum, Near, Hyperliquid). Setting `TOKEN_METRICS_ARTEMIS_DIR` in `.env` replaces both folders.
+   (Ethereum only: Artemis was recorded as not covering Near, Hyperliquid or Plume, 2026-09-30; a file for any
+   other chain is not read — P2a-D7). Setting `TOKEN_METRICS_ARTEMIS_DIR` in `.env` replaces both folders.
    The file must have exactly two columns, `DateTime` and `<Chain> - Settlement Volume`, or it is
    refused, so a second definition can never be mixed in. A UTF-8 byte-order mark is fine. The
    **whole file** is imported every run, whatever the run's window.
@@ -1649,8 +1650,9 @@ PASSED` as FAILED — loudly, never a silent 0. On launch day:
    complete, and the legacy rows of the metrics they replace are dropped from the cutover (the legacy rebase stays).
 READINESS (F1, 2026-10-14): guard and readers built and tested against the source's ABI fragments
 (fixtures/aero_v3_abi.json); only the addresses (steps 1–2) wait for launch day. Emissions and transfers begin at
-ACTIVATION_TIMESTAMP = migration open + 1 week (Minter.sol L133), so expect emissions 0 and no complete v3 epoch
-until then. The old veAERO keeps receiving rebases — settled from the contracts (E8): Minter.updatePeriod() is
+ACTIVATION_TIMESTAMP = epochNext(migration open) = 2026-10-22 00:00 UTC (Minter.sol L130 in the deployed source
+@8b506b45; the "+1 week" read came from the older source @0058bd9b — P2a-D2), so expect no complete v3 epoch
+until 2026-10-29. The old veAERO keeps receiving rebases — settled from the contracts (E8): Minter.updatePeriod() is
 permissionless, Minter.rewardsDistributor / RewardsDistributor.ve are immutable, and the tail rate's floor is 1 bp
 (live read at Base block 52,597,339: rewardsDistributor 0x227f6513…, ve 0xeBf418Fe… on both, tailEmissionRate 21,
 MINIMUM_TAIL_RATE 1, tokensPerWeek for the week of 2026-10-01 489,618.34 AERO). Once the file is complete, the legacy reads (the (c) rebase line included) continue as before.

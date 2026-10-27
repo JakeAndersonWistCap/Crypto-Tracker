@@ -33163,3 +33163,15 @@ PYTH_STOCKS = {
                     "pyth_douro_usdc": 8_968.040129, "pyth_funder_cewsb_pyth_tokens": 34_416_632.001,
                     "pyth_funder_e6nab_pyth_tokens": 31_389_650.0},
 }
+
+# P2a D6: the circulating basis behind a project's market cap, stated in the reader's market cap comment.
+MCAP_BASIS_NOTE = {
+    "Hyperliquid": (
+        "Market cap = price × Hyperliquid's own circulating supply: tokenDetails.circulatingSupply (which already "
+        "excludes the team wallet, the Assistance Fund and the unminted staking-reward reserve), less the Hyper "
+        "Foundation (0xd57e…de5d) and Community Grants (0xa20f…bdba) wallets from 2026-10-11 and the HyperEVM burn — "
+        "238.10M HYPE on 2026-10-27. CoinGecko's circulating figure (222.45M, unchanged since 2026-05-27) is 15.65M "
+        "(7.0%) lower; CoinGecko publishes no wallet list, so that difference is not attributed. Before Hyperliquid's "
+        "own figure was first stored (2026-09-30) the figure is CoinGecko's: a period spanning that date is a change "
+        "of basis, not a flow."),
+}
