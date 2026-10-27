@@ -23956,6 +23956,15 @@ FULL_HISTORY_SERIES = {
     ("Near", "near_intents_volume_usd"): "references intents_cumulative_volume is since launch (2026-09-22, 31.4B)",
 }
 
+# D5-0 (Jake's D5 rule: a wrong stored number is fixed first): DefiLlama restates days long past the trailing 30-day
+# re-read — Fluid revenue (adapters #10394, 2026-10-24: DEX revenue no longer counted twice on EVM; 2025Q4 4,105,817 ->
+# 3,711,427), Near revenue (now 0.70 of fees, stored = fees before 2026Q3), Uniswap fees (2026Q2-Q3 restated up). The fee
+# family from the `defillama` source keeps EVERY day the call returns (fetch.base.window: the call already returns the
+# whole history), and token_metrics.restatement_lines logs each quarter that moves more than RESTATEMENT_LOG_PCT.
+DEFILLAMA_REREAD_METRICS = frozenset({"fees_usd", "revenue_usd", "holders_revenue_usd", "fees_usd_defillama",
+                                      "revenue_usd_defillama", "holders_revenue_usd_defillama"})
+RESTATEMENT_LOG_PCT = 0.5
+
 # FDV HISTORY BEFORE THE TOTAL'S FIRST READ (Round G 2.2, Jake 2026-10-18: FDV had ~1 quarter of history on 7 projects).
 # total_supply here is CoinGecko's SNAPSHOT — no history, so it starts when the store started reading it (2026-09-11 in
 # Jake's 10-13 dumps). The same quantity measured on chain / first-party has ~400 days. For the days BEFORE the primary

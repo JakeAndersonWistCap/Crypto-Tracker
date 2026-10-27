@@ -989,6 +989,37 @@ def _mark_stored(frame):
     return verify
 
 
+def restatement_lines(st, frame) -> list[tuple[str, str]]:
+    """D5-0: per series of the DefiLlama fee family (config.DEFILLAMA_REREAD_METRICS, source `defillama`) and calendar
+    quarter, the incoming rows against the stored rows on the same days; a quarter whose sum moves more than
+    config.RESTATEMENT_LOG_PCT gives (project, "RESTATED BY THE SOURCE: <project> <metric> <quarter>: stored X → now Y (±z%)")."""
+    import pandas as pd
+    if frame is None or frame.empty:
+        return []
+    f = frame[(frame["source"].astype(str) == "defillama") & frame["metric"].isin(config.DEFILLAMA_REREAD_METRICS)]
+    lines = []
+    for (proj, metric), g in f.groupby(["project", "metric"]):
+        rows = st.conn.execute("SELECT substr(date, 1, 10), value FROM metrics WHERE project=? AND metric=? AND "
+                               "source='defillama'", (proj, metric)).fetchall()
+        if not rows:
+            continue
+        old = pd.Series({pd.Timestamp(d): float(v) for d, v in rows})
+        new = (g.assign(date=pd.to_datetime(g["date"]).dt.normalize()).drop_duplicates("date", keep="last")
+               .set_index("date")["value"].astype(float))
+        both = old.index.intersection(new.index)
+        if both.empty:
+            continue
+        q = pd.DataFrame({"old": old[both], "new": new[both]})
+        for per, r in q.groupby(q.index.to_period("Q")).sum().iterrows():
+            if r["new"] == r["old"]:
+                continue
+            pct = (r["new"] / r["old"] - 1) * 100 if r["old"] else float("inf")
+            if abs(pct) > float(config.RESTATEMENT_LOG_PCT):
+                lines.append((proj, f"RESTATED BY THE SOURCE: {proj} {metric} {per}: stored {r['old']:,.0f} → now "
+                             f"{r['new']:,.0f} ({pct:+.1f}%) — DefiLlama's current figure is stored (SPEC D5-0)"))
+    return lines
+
+
 def apply_run_cleanups(st, run_id: str, log) -> list[str]:
     """config.RUN_CLEANUPS (G14 1): delete exactly the rows each declared one-off names, logging every row removed —
     console and Run Log. Returns the lines logged. A second run finds nothing to remove."""
@@ -1212,6 +1243,10 @@ def _main(args, log) -> int:
         stored_long=st.load_long(),
     )
 
+    # D5-0: what the source restated, said before it overwrites the stored days (the store then follows the source)
+    for proj, line in restatement_lines(st, out.frame()):
+        log.warning("%s", line)
+        st.record_fetch(run_id, "restated:defillama", proj, 0, "ok", line)
     written = st.upsert(out.frame())
     log.info("upserted %d rows", written)
     log.info("daily checks: %d mark(s) written after the store write (none from an abandoned tier)",

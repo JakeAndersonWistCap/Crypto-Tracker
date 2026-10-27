@@ -1131,6 +1131,11 @@ def window(df: pd.DataFrame, window_days: int | None) -> pd.DataFrame:
     if {"project", "metric"} <= set(df.columns) and \
             (df["project"].iloc[0], df["metric"].iloc[0]) in __import__("config").FULL_HISTORY_SERIES:
         return df
+    # D5-0: DEFILLAMA RESTATES OLD DAYS (Fluid's 2026-10-24 double-count fix moved 2025Q4 revenue −9.6%); the fee family
+    # keeps every day the call returned, so the store follows the source (config.DEFILLAMA_REREAD_METRICS)
+    if {"metric", "source"} <= set(df.columns) and str(df["source"].iloc[0]) == "defillama" \
+            and df["metric"].iloc[0] in __import__("config").DEFILLAMA_REREAD_METRICS:
+        return df
     if BACKFILL and {"project", "metric"} <= set(df.columns):
         key = (df["project"].iloc[0], df["metric"].iloc[0])
         if key in BACKFILL:
