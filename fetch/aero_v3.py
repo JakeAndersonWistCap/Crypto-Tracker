@@ -13,7 +13,13 @@ legacy rows of these metrics are refused from the cutover once the switch is com
                                the team share is NOT in it (minted to SPLITTER beside the cap)
     issuer_mint_tokens         that delta x teamRate / 1e6  (Minter.sol L162: _splitterShare = amount x teamRate /
                                MAX_PIPS, floor — per mint; summed per day it can differ by < 1 wei a mint)
-    emission_rate_current      Minter.emissionRate() x 604,800 / 1e18 (per-second rate, 0 before ACTIVATION_TIMESTAMP)
+    emission_rate_current      Minter.emissionRate() x 604,800 / 1e18, AERO a WEEK — the CEILING, not emissions: the rate
+                               the emissions CAP accrues at (Minter._accrueEmissionsCap; mint() reverts above the cap).
+                               What is minted is gross_issuance_tokens (on claim). 0 before ACTIVATION_TIMESTAMP =
+                               epochNext(migrationOpen) (Minter.sol L130 at the DEPLOYED source @8b506b45; @0058bd9b
+                               L133 read migrationOpen + 1 week). Read 2026-10-27: 13.489345 AERO/s = 8,158,355.856 a
+                               week = 425.4M a year, 20.0% of the 2.127B max — aero.xyz's "annual rate ceiling at
+                               launch 20%"; emissionsMinted 2.25M against a cap accrued to 6.68M
     ve_locked_supply_tokens    sAERO.supply()                    (TOKEN held in escrow)
     ve_voting_power_tokens     sAERO.totalVotingPower()          (NOT totalSupply(): on sAERO that is the NFT COUNT,
                                VotingEscrow.sol L583)
@@ -49,6 +55,9 @@ TIER = 2
 REPO = "dromos-labs/metadex-public@0058bd9b1d49b0fb0a6d130dd51886b2c64e3d99"
 WEEK = 7 * 86400
 WAD = 10 ** 18
+# P2a D2 (2026-10-27): what emission_rate_current IS (config metric_labels carries the same text for the workbook)
+EMISSION_RATE_LABEL = ("the emissions CAP rate (a ceiling, not AERO emitted): Minter.emissionRate() x 604,800, the "
+                       "AERO a week the cap accrues; minted AERO is gross_issuance_tokens")
 
 # name -> (signature, returns, where it is declared at REPO)
 CALLS = {
@@ -304,7 +313,8 @@ class AeroV3:
                                     + f"[x teamRate {team}/1e6, Minter.sol L162]")
             out.add(team_flow, SOURCE, name, f"issuer_mint_tokens = delta x teamRate {team} PIPS", TIER)
         out.add(point(name, "emission_rate_current", rate * WEEK / WAD, f"{src}.emissionRate[x604800]", TIER, when),
-                SOURCE, name, f"emissionRate {rate} wei/s", TIER)
+                SOURCE, name, f"emission_rate_current = {rate * WEEK / WAD:,.4f} AERO a week (emissionRate {rate} wei/s) "
+                              f"— {EMISSION_RATE_LABEL}", TIER)
         ve = a["voting_escrow"]
         for metric, call in (("ve_locked_supply_tokens", "supply"), ("ve_voting_power_tokens", "totalVotingPower"),
                              ("permanent_locked_tokens", "permanentStakeBalance")):

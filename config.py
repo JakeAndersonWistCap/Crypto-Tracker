@@ -19135,6 +19135,52 @@ AERODROME_MIGRATION_WATCH = {
     "label_metrics": ("voter_rewards_onchain_apr", "voter_rewards_onchain_usd", "emissions_tokens", "rebase_tokens",
                       "gross_issuance_tokens"),
 }
+
+
+# ===== P2a D2 (2026-10-27): WHAT emission_rate_current IS, from the deployed source (Dromos-Labs/metadex-public@8b506b45
+# V3/src/minter/Minter.sol). emissionRate() is the rate the emissions CAP accrues at (_accrueEmissionsCap: emissionsCap +=
+# _effectiveRate() x elapsed); mint() reverts above the cap (L163). Minting is on claim, so the AERO actually emitted is
+# d(emissionsMinted) = gross_issuance_tokens; this rate is the ceiling. Read 2026-10-27 at Base block 53,166,582:
+# baseRate = emissionRate = 13.489345 AERO/s (dynamicRate 0, no module) = 8,158,355.856 a week = 425.4M a year = 20.0% of
+# the 2.127B max (aero.xyz/aero-upgrade: "annual rate ceiling at launch 20%"); emissionsCap 6,681,420.96 accrued since
+# ACTIVATION_TIMESTAMP, emissionsMinted 2,248,756.77. emission_rate_current has no METRICS entry (it would join every
+# archetype's gap list), so its label is Aerodrome's own.
+PROJECT_BY_NAME["Aerodrome"].setdefault("metric_labels", {})["emission_rate_current"] = (
+    "Emissions CAP rate, AERO a week — the CEILING on minting, not AERO emitted: Minter.emissionRate() x 604,800, the "
+    "rate the emissions cap accrues (mint() reverts above it). AERO actually minted is gross issuance (on claim)")
+
+
+# ===== P2a D2 (2026-10-27): WHEN AERODROME IS PARKED FOR THE MIGRATION. Aerodrome stays in DETAIL_PARKED while this
+# returns a reason; the reader shows "PARKED — migration" then. The switch file must be complete, v3 rows must be held
+# (AERODROME_MIGRATION_WATCH built set to the first v3 day), and every open blocker below closed.
+AERODROME_MIGRATION["unpark_blockers"] = (
+    ("filing_v3", "the filing wallets' holdings on the NEW token have no reader: from 2026-10-20 their legacy managed "
+                  "veAERO locks (444.3M) moved to the new token through the migration, so circulating = total - "
+                  "noncirculating_holding_tokens - filing_managed_lock_tokens no longer subtracts them (the legacy read "
+                  "holds 2.85M), and Aerodrome's unlocks (e) have no day after 2026-10-19 (config.UNLOCK_LEGACY_CUT). On "
+                  "2026-10-27 the Team / Public Goods / Flight School wallets own 25 / 26 / 5 sAERO NFTs whose "
+                  "staked().amount reads 0 (the Velodrome Foundation airdrop wallet's 4 hold 29,343,635.27): where "
+                  "their stake sits is not established"),
+)
+
+
+def aerodrome_park_reason(state: dict | None = None, day=None) -> str:
+    """'' when Aerodrome may leave DETAIL_PARKED, else "PARKED — migration: <every reason>" (P2a D2). Tests, in order:
+    the switch file (launched + fetch.validate._migration_switch_missing), v3 rows held (AERODROME_MIGRATION_WATCH
+    built), and AERODROME_MIGRATION unpark_blockers."""
+    import pandas as _pd
+    from fetch.validate import _migration_switch_missing          # noqa: PLC0415 — config is imported by fetch
+    st = aerodrome_migration_state() if state is None else state
+    d = _pd.Timestamp(day if day is not None else _pd.Timestamp.now(tz="UTC").tz_localize(None)).normalize()
+    why = []
+    if st.get("unreadable") or st.get("launched") is not True:
+        why.append(f"{AERODROME_MIGRATION['switch_file']} is not launched")
+    else:
+        why += [f"{AERODROME_MIGRATION['switch_file']}: {x}" for x in _migration_switch_missing(st, d)]
+    if not AERODROME_MIGRATION_WATCH.get("built"):
+        why.append("no v3 rows held yet (MIGRATION WATCH built = None)")
+    why += [w for _k, w in AERODROME_MIGRATION.get("unpark_blockers") or ()]
+    return ("PARKED — migration: " + "; ".join(why)) if why else ""
 # Chainlink's own post (blog.chain.link/sustainably-growing-chainlink, 2022; read via the mirror
 # apachecn/chainlink-blog-zh @a6efb6ef): it lists 27 non-circulating wallets. 24 are wired above from Etherscan's labels;
 # these are the other three, now read. Chainlink's CURRENT list (chain.link/circulating-supply) stays unreadable here.
@@ -24668,6 +24714,42 @@ def unlock_stock_metrics(project_name: str) -> tuple:
     if spec.get("status") not in ("established", "partial"):
         return ()
     return tuple(m for m in (spec.get("subtract") or ()) if m not in UNLOCK_NOT_A_RELEASE)
+
+
+# ===== THE AERO MIGRATION IS NOT AN UNLOCK (round P2a D2, Jake's 2026-10-27 16:47 Summary: Aerodrome total dilution
+# 1.326 = 132% a year, 1.258bn tokens a year). Aerodrome's unlock legs (noncirculating_holding_tokens = the seven filing
+# wallets' AERO; filing_managed_lock_tokens = what they deposited into managed veNFTs) are LEGACY reads: AERO v2 and
+# veAERO 0xeBf418Fe. For the migration the filing wallets moved that stock to the NEW token through the migration
+# contract (Migration.sol depositVeNFT requires a NORMAL veNFT, so the managed deposits were withdrawn first; the
+# new AERO / sAERO they received is paid from the new token's pre-mint to the migration contract, Token.sol constructor,
+# dromos-labs/metadex-public@8b506b45). The legacy reads saw the stock LEAVE and the unlock view counted every fall as
+# a release. Read on-chain 2026-10-27 (public Base RPC, noon UTC each day; check_offline_items.aerodrome_managed_deposits
+# and the wallets' balanceOf): filing_managed_lock_tokens 444,276,994.97 (10-20) -> 245,053,379.53 (10-21; the first
+# withdrawManaged at block 52,859,877, 2026-10-20 15:11 UTC, into the SAME wallets' normal veNFTs: 15 normal NFTs then
+# held 218,786,853.18 locked) -> 5,541,059.88 (10-22) -> 2,848,932.04 (10-23 on); the wallets' legacy AERO 36,868,406.67
+# -> 7,622,093.67 (10-22) -> 741.21 (10-23 on) while their NEW AERO rose 0 -> 37,018,899.29. ~478.3M of "unlocks" in Q0,
+# annualised over the covered days — none of it a release. So a LEGACY-measured row of these legs dated after
+# `last_day` is not read by the unlock view (build_workbook._unlock_release_view); a v3 row (source `v3_prefix`) is.
+# UNKNOWN, NEVER 0: no v3 reader holds the filing wallets' sAERO stakes, so Aerodrome's (e) has no day after last_day
+# until one exists (every leg must hold the day) — the CP cell is annualised over the days it does cover.
+UNLOCK_LEGACY_CUT = {
+    "Aerodrome": {
+        "last_day": "2026-10-19",
+        "legs": ("noncirculating_holding_tokens", "filing_managed_lock_tokens"),
+        "v3_prefix": "aero_v3",
+        "why": "the Aero migration: the filing wallets' AERO and managed veAERO locks moved to the new token from "
+               "2026-10-20 (first withdrawManaged block 52,859,877) — a legacy read's fall from then is the migration, "
+               "not a release (round P2a D2)",
+    },
+}
+
+
+def unlock_leg_legacy_cut(project_name: str, metric: str) -> dict | None:
+    """The declared end of a LEGACY unlock leg ({last_day, v3_prefix, why}), or None (config.UNLOCK_LEGACY_CUT)."""
+    spec = UNLOCK_LEGACY_CUT.get(project_name)
+    if not spec or metric not in spec["legs"]:
+        return None
+    return spec
 
 
 def absorption_emission_metrics(project_name: str) -> tuple:

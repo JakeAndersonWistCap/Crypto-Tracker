@@ -13899,6 +13899,15 @@ def aero_migration():
     for k in ("minter", "voting_escrow", "token", "migration"):
         print(f"  addresses.{k:<14} {addrs.get(k)!r}")
     print(f"  voting_rewards_factory: {st.get('voting_rewards_factory')!r}   deploy_block: {st.get('deploy_block')!r}")
+    # P2a D2: every launch chain — its token and escrows, or the named gap the file records (never a blank)
+    ct = {str(k).lower(): v for k, v in (st.get("chain_tokens") or {}).items()}
+    gaps = {str(k).lower(): v for k, v in (st.get("chain_tokens_gaps") or {}).items()}
+    for ch in m.get("launch_chains") or ():
+        if ch == "base":
+            continue
+        esc = [e.get("address") for e in st.get("bridge_escrows") or () if str(e.get("chain", "")).lower() == ch]
+        print(f"  chain_tokens.{ch:<10} " + (f"{ct[ch]!r}   bridge_escrows: {esc or 'none'}" if ch in ct else
+                                              f"none — {gaps.get(ch) or 'NO REASON RECORDED'}"))
     day = _pd.Timestamp.now(tz="UTC").tz_localize(None).normalize()
     missing = list(_migration_switch_missing(st, day))
     if st.get("launched") is not True:
@@ -13912,6 +13921,8 @@ def aero_migration():
         print("  INCOMPLETE (exit 1)")
         return 1
     print("  COMPLETE — the v3 reader (fetch/aero_v3.py) reads from these on the next run")
+    park = _cfg.aerodrome_park_reason(st, day)
+    print(f"  {park or 'NOT PARKED — every unpark condition holds (config.aerodrome_park_reason)'}")
     return 0
 
 

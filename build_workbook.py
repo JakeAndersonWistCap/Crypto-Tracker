@@ -1891,6 +1891,7 @@ def _burn_total_views(groups: dict) -> None:
 _ONE_OFF_REMOVED: dict = {}
 _ONE_OFF_BLOCKS: dict = {}
 _ONE_OFF_UNMATCHED: dict = {}     # (project, release metric) -> one-off tokens no stored fall matched (G11 B1)
+UNLOCK_LEGACY_DROPPED: dict = {}  # (project, release metric, leg) -> legacy rows past config.UNLOCK_LEGACY_CUT (P2a D2)
 
 
 def _one_off_views(groups: dict) -> None:
@@ -4109,6 +4110,7 @@ def _unlock_views(groups: dict) -> None:
     day (at most 3 days before), measured by the SAME wallet set (the source names the composition): a wallet added to
     the set is a change of measuring point, never an unlock (Aerodrome's filing wallets 2026-10-07: 4.9M -> 36.2M)."""
     _ONE_OFF_UNMATCHED.clear()
+    UNLOCK_LEGACY_DROPPED.clear()
     for p in scoped_projects():
         name = p["name"]
         # the whole set, and any declared SUBSET (config.UNLOCK_RELEASE_SUBSETS: Hyperliquid's Foundation / Grants
@@ -4123,12 +4125,24 @@ def _unlock_release_view(groups: dict, name: str, metric: str, legs: tuple) -> N
     """The release series `metric` from the falls of `legs`' summed stock (see _unlock_views)."""
     from fetch.base import _measuring_point          # noqa: PLC0415
     diffs = []
+    cut_note = ""
     for m in legs:
         g = groups.get((name, m))
         if g is None or g.empty:
             return
         g = (g.assign(date=pd.to_datetime(g["date"]).dt.normalize()).sort_values("date")
              .drop_duplicates("date", keep="last").set_index("date"))
+        # P2a D2 (config.UNLOCK_LEGACY_CUT): a LEGACY read of a leg dated after its declared end measures a stock the
+        # migration moved to the new token — its fall is the migration, never a release; a v3 row is read
+        cut = config.unlock_leg_legacy_cut(name, m)
+        if cut:
+            gone = (g.index > pd.Timestamp(cut["last_day"])) & ~g["source"].astype(str).str.startswith(cut["v3_prefix"])
+            if gone.any():
+                UNLOCK_LEGACY_DROPPED[(name, metric, m)] = int(gone.sum())
+                cut_note = f"[legacy legs read to {cut['last_day']}, config.UNLOCK_LEGACY_CUT]"
+                g = g[~gone]
+            if g.empty:
+                return
         v, mp = g["value"].astype(float), g["source"].astype(str).map(_measuring_point)
         gap = v.index.to_series().diff().dt.days
         ok = (mp == mp.shift(1)) & (gap <= config.unlock_max_gap_days(m))
@@ -4206,13 +4220,13 @@ def _unlock_release_view(groups: dict, name: str, metric: str, legs: tuple) -> N
         split_src += f"-{m}"
     groups[(name, metric)] = _as_stored(pd.DataFrame(
         {"date": total.index, "project": name, "metric": metric, "value": total.values,
-         "tier": 1, "source": f"derived:unlock_release[{'+'.join(legs)}]{split_src}"}), cols)
+         "tier": 1, "source": f"derived:unlock_release[{'+'.join(legs)}]{split_src}{cut_note}"}), cols)
     # F1 (fix round 2): the rises of the same stock, on the same gated days — tokens RETURNED to the issuer side (the
     # token-flow statement's "− returned to issuer-side wallets"); never netted into the release
     if metric == "unlock_release_tokens":
         groups[(name, "issuer_return_tokens")] = _as_stored(pd.DataFrame(
             {"date": returned.index, "project": name, "metric": "issuer_return_tokens", "value": returned.values,
-             "tier": 1, "source": f"derived:issuer_return[{'+'.join(legs)}]"}), cols)
+             "tier": 1, "source": f"derived:issuer_return[{'+'.join(legs)}]{cut_note}"}), cols)
 
 
 # P1 (round 3 review, Jake 2026-10-14: "FIFO matching of staking-vault funding — ACCEPTED, labelled as an attribution

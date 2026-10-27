@@ -11,5 +11,16 @@
   "velo_conversion": 0.044,
   "voting_rewards_factory": "0x8fbAaC4dbF170687ce6c3078f29556d97d197110",
   "deploy_block": 52880070,
-  "_note": "Addresses from Dromos-Labs/metadex-public @8b506b45 (root-base.json, migration-base.json, gaugestack-base.json). Verified on Base 2026-10-27 at block 53,165,286: token name Aero / symbol AERO, totalSupply 2,129,347,490; sAERO.VOTER() = Voter 0x49d7d4f1...; token.MIGRATION() = migration; migration V2_TOKEN / V2_ESCROW = legacy AERO / veAERO, V3_TOKEN = token; reserve balanceOf = remaining() 922,713,511; factory first code at block 52,880,070 (2026-10-21 02:24 UTC), 288 VotingRewardsCreated since. chain_tokens / bridge_escrows not yet filled (non-Base launch chains)."
+  "chain_tokens": {},
+  "bridge_escrows": [],
+  "chain_tokens_gaps": {
+    "_read": "2026-10-27: every deployment-addresses/*.json at Dromos-Labs/metadex-public@8b506b45 (the repo's HEAD of main that day). The only AERO ERC20 in them is the Base token (root-base.json 'token'; Token.sol: 'Canonical root chain token'). No file names an AERO token, bridge, lockbox or escrow on any other chain. Each leaf-<chain>.json names a 'receiptToken' (ReceiptToken.sol: 'Leaf chain receipt token minted and burned by the local LeafVoter') whose constructor args encode name 'Aero', symbol 'xAERO' - not AERO, so it is not entered here.",
+    "ethereum": "GAP - no AERO token published (leaf-ethereum.json). receiptToken 0x9e148C5716b5aAdCFD3B71cEAE9EE7a9e22C29E2 read at block 26,285,628 (ethereum-rpc.publicnode.com): code 3,115 bytes, symbol 'xAERO', totalSupply 43,954.7821. The Base token address holds no code on Ethereum.",
+    "optimism": "GAP - no AERO token published (leaf-optimism.json). receiptToken 0xbdEaeA5205d16f34Cb40038052d91235D87B4C54 read at block 158,762,174 (optimism-rpc.publicnode.com): code 3,115 bytes, symbol 'xAERO', totalSupply 10,553.4716. The Base token address holds no code on OP.",
+    "arbitrum": "GAP - no AERO token published (leaf-arbitrum.json). receiptToken 0x436a085B2751cB87db270FFa66f8d698F87bEC82 read at block 518,809,010 (arbitrum-one-rpc.publicnode.com): code 3,115 bytes, symbol 'xAERO', totalSupply 16,268.0342. The Base token address holds no code on Arbitrum.",
+    "arc": "GAP - no AERO token published (leaf-arc.json, arclitelaunch-arc.json); not verified on-chain: no Arc RPC in config.DEFAULT_RPC.",
+    "ink": "GAP - no AERO token published (leaf-ink.json); not verified on-chain: no Ink RPC in config.DEFAULT_RPC.",
+    "robinhood": "GAP - no AERO token published (leaf-robinhood.json); not verified on-chain: no Robinhood RPC in config.DEFAULT_RPC."
+  },
+  "_note": "Addresses from Dromos-Labs/metadex-public @8b506b45 (root-base.json, migration-base.json, gaugestack-base.json). Verified on Base 2026-10-27 at block 53,165,286: token name Aero / symbol AERO, totalSupply 2,129,347,490; sAERO.VOTER() = Voter 0x49d7d4f1...; token.MIGRATION() = migration; migration V2_TOKEN / V2_ESCROW = legacy AERO / veAERO, V3_TOKEN = token; reserve balanceOf = remaining() 922,713,511; factory first code at block 52,880,070 (2026-10-21 02:24 UTC), 288 VotingRewardsCreated since. chain_tokens / bridge_escrows: EMPTY BY THE SOURCE, not unfilled - Dromos-Labs' deployment files publish no AERO token and no bridge escrow on Ethereum, OP, Arc, Ink, Robinhood or Arbitrum (each chain's named gap in chain_tokens_gaps); total_supply is the Base token's, read once (aero_v3.supply_once)."
 }
