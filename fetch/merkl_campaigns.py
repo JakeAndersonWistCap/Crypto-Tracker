@@ -379,6 +379,8 @@ def fill_cache(projects: list[dict] | None = None, http: Http | None = None, cac
 
 
 if __name__ == "__main__":
+    import progress
+    progress.line_buffered()
     import sys as _sys
     if "--fill" not in _sys.argv[1:]:
         _sys.exit("usage: python -m fetch.merkl_campaigns --fill   (fills merkl-allocations.json; stores nothing)")

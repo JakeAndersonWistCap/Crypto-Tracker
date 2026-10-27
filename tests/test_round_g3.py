@@ -627,7 +627,7 @@ class _Plan:
         return w3
 
 
-def test_g3_11_a_plan_limit_costs_one_call_and_the_scan_falls_through(monkeypatch):
+def test_g3_11_a_plan_limit_costs_no_call_and_the_scan_falls_through(monkeypatch):
     import types
     from fetch import chain as ch
     al = f"https://eth-mainnet.g.alchemy.com/v2/{KEY}"
@@ -644,12 +644,15 @@ def test_g3_11_a_plan_limit_costs_one_call_and_the_scan_falls_through(monkeypatc
     r._w3_url["ethereum"] = al
     logs, chunks, used = r.scan_logs("ethereum", {"address": "0xabc", "topics": []}, 0, 99_999, 50_000, rpc_only=True)
     al_calls = [c for c in stub.calls if "alchemy" in c[0]]
-    assert len(al_calls) == 1, f"ONE refused call on Alchemy, not a halving ladder: {stub.calls}"
-    assert r.no_getlogs("ethereum", al).startswith("plan limit, 10-block range")
+    # D4-2a: G3 cost ONE refused call; Alchemy's free-plan cap (ALCHEMY_GETLOGS_MAX_RANGE) is now known, so a span it
+    # cannot serve is never sent to it
+    assert len(al_calls) == 0, f"no call on Alchemy for a span its plan refuses: {stub.calls}"
+    assert r.no_getlogs("ethereum", al).startswith("its plan serves 10 blocks per call")
     assert {c[0] for c in stub.calls if "alchemy" not in c[0]} == {"https://mainnet.gateway.tenderly.co"}, \
         "the public log route served it, before the public list"
     assert chunks == 2 and used == 50_000
-    assert KEY not in " ".join(r.log_endpoints_refused["ethereum"] + r.log_range_errors["ethereum"])
+    assert KEY not in " ".join(r.log_endpoints_refused.get("ethereum", []) + r.log_range_errors.get("ethereum", [])
+                               + [r.no_getlogs("ethereum", al)])
     # and the next scan this run never asks Alchemy for logs again
     stub.calls.clear()
     r.scan_logs("ethereum", {"address": "0xabc", "topics": []}, 0, 9_999, 50_000, rpc_only=True)

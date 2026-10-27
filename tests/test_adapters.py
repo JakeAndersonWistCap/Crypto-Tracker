@@ -27515,7 +27515,8 @@ def test_probes16_records_and_probes():
     # 2026-10-26): current again, the first-party reference of in_revenue
     sp = config.PROJECT_BY_NAME["Pendle"]["spendle_epochs"]["revenues_status"]
     assert sp["latest_epoch"] == "2026-10-20" and "2026-04-07" in sp["verdict"]
-    assert config.CREDIBILITY["Pendle"]["in_revenue"]["ref"]["formula"] == "pendle_epoch_revenue"
+    # D4-5 (Jake): Pendle's epoch figures became the primary; the in_revenue reference is now DefiLlama pendle-v2
+    assert config.CREDIBILITY["Pendle"]["in_revenue"]["ref"]["formula"] == "pendle_basis_vs_defillama"
     for fn in (coi.etherfi_accountant, coi.maple_ssf_trail, coi.fluid_avocado_owners, coi.hl_pool_release_compare):
         assert fn in coi.CHECKS
 
