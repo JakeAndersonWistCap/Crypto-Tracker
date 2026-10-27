@@ -534,6 +534,24 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11de. Round P2b — Jake's answers on P2a (2026-10-27)
+
+What changes (SPEC §19 P2b):
+- **A1 tab:** a labelled interim column, "Fees ÷ issuance, Q0 (interim)", sits beside the rank key. It is the audit
+  A1 tab's FEES ÷ ISSUANCE (x) cell, not ranked; the rank key stays settlement per token, 1-year change, which on
+  your store at most Ethereum can form. The key changes only on your go-ahead.
+- **Hyperliquid A4:** no common-days ratio (P2b-3). The A4 key cell reads "blocked"; its comment gives each leg's
+  covered days of the 90-day window and the holes.
+- Aerodrome (P2b-1) and Chainlink's 33-wallet history (P2b-2): in progress, not in this pull.
+
+**Pull this, then in PowerShell 5.1 at the repo root:**
+```
+git pull
+python token_metrics.py --no-fetch
+```
+Look at A1 Infrastructure: the interim column is the third, after "Rank in A1"; hover a cell for its audit cell.
+
+
 ## 11dd. Round P2a — the Charlie build (2026-10-29)
 
 What changes (SPEC §19 P2a):

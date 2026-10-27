@@ -1134,6 +1134,7 @@ def tab_specs(bw) -> list:
     return [
         TabSpec(A1_TAB, 1, "A1 Infrastructure — ranked by settlement volume per token, 1-year change", ("a1",),
                 "Settlement per token, 1-yr change", "Rank in A1",
+                a_extra=(("interim", "FEES ÷ ISSUANCE (x)"),),
                 valuation=((None, "Price — spot ($)", "Price", ""), (None, "Market cap ($)", "Market cap", ""),
                            (M, "FDV ($)", "FDV", ""),
                            (None, "NRR ON SETTLEMENT VOLUME — market cap", "NRR on settlement", ""),
@@ -1477,6 +1478,13 @@ def _write_arch_tab(sh: Sheet, ctx: Ctx, spec: TabSpec) -> None:
                     "in force where one is declared) — the unlock-inclusive figure beside the key.", FMT_X,
                     "(a) Rank key", f"{tab}, RETIREMENT ÷ DILUTION (at the rate in force where declared)", 0, 13,
                     audit=(tab, extra[1]), family="buyback"), ("dilution", dc, dn))
+        elif extra[0] == "interim":
+            ic = audit_col(extra[1])
+            ih = A.header(tab, ic) if ic else extra[1]
+            add(Col("Fees ÷ issuance, Q0 (interim)", "INTERIM, not the rank key: fees ÷ gross issuance over the last 90 "
+                    "days, shown beside the rank key while settlement per token, 1-year change forms for one project at "
+                    "most. The rank key changes only on Jake's go-ahead.", FMT_X, "(a) Rank key", f"{tab}, {ih}", 0, 13,
+                    audit=(tab, ih)), ("interim", ic))
     if spec.arch == 4:
         audit_col("Release ÷ burn (x)")              # its reciprocal IS the key for a pre-minted supply (header comment)
     # (b) valuation
@@ -1612,6 +1620,13 @@ def _write_arch_tab(sh: Sheet, ctx: Ctx, spec: TabSpec) -> None:
                 src = A.at(tab, r_a, h[1]) if h[1] else None
                 extra = _premint_note(p, src) if src is not None and "NET SUPPLY CHANGE" in src.header.upper() else ""
                 cell = put_src(sh, data, row, col, p, src, extra=extra)
+                ctx.record(src, tab, cell, name)
+            elif kind == "interim":
+                src = A.at(tab, r_a, h[1]) if h[1] else None
+                cell = put_src(sh, data, row, col, p, src, extra=(
+                    f"INTERIM — not the rank key and not ranked. {ranked} of {len(names)} projects on this tab hold the "
+                    f"rank key ({spec.key_header.lower()}) on this build; this column is shown until more do. The rank "
+                    "key changes only on Jake's go-ahead."))
                 ctx.record(src, tab, cell, name)
             elif kind == "a1key":
                 v, why = settlement_key(ctx.groups, name)

@@ -542,3 +542,36 @@ def test_p2a_e_the_column_map_places_every_new_tab_column_and_every_number_names
                 if isinstance(cell.value, str) and cell.value.startswith("=") and cell.number_format != "General":
                     assert cell.comment and ("Working:" in cell.comment.text or "audit file" in cell.comment.text), \
                         (tab, cell.coordinate, ws.cell(4, c).value)
+
+
+# ================================================================================================== P2b
+def test_p2b_3_hyperliquid_a4_key_is_blocked_with_each_legs_covered_days(built):
+    # P2b-3 (Jake 2026-10-27): the common-days ratio is NOT built; the cell says blocked and counts the covered days.
+    ws = openpyxl.load_workbook(built["reader"])["A4 Permanent Burn"]
+    rows, kc = _rows_of(ws), _col_of(ws, "Burn ÷ issuance (x)")
+    cell = ws.cell(rows["Hyperliquid"], kc)
+    assert cell.value == "blocked"
+    covered = re.findall(r"covers (\d+) days of a 90-day window", cell.comment.text)
+    assert len(covered) == 2, cell.comment.text                     # the burn leg and the issuance leg
+    assert "COMMON" not in cell.comment.text.upper()
+
+
+def test_p2b_4_a1_interim_fees_over_issuance_beside_the_unchanged_rank_key(built):
+    r = openpyxl.load_workbook(built["reader"])
+    ws = r["A1 Infrastructure"]
+    hdr = [ws.cell(4, c).value for c in range(1, ws.max_column + 1)]
+    i = hdr.index("Fees ÷ issuance, Q0 (interim)")
+    assert hdr[i - 2:i] == ["Settlement per token, 1-yr change", "Rank in A1"]   # the key stays the rank key
+    rows = _rows_of(ws)
+    assert rows
+    for name, rr in rows.items():
+        c = ws.cell(rr, i + 1)
+        assert c.value not in (None, "") and c.comment is not None, name
+        if not (isinstance(c.value, str) and not c.value.startswith("=")):
+            assert "INTERIM — not the rank key" in c.comment.text and "Working: audit file, A1 Infrastructure!" \
+                in c.comment.text, name
+    assert ws.cell(4, i + 1).comment is not None and "INTERIM" in ws.cell(4, i + 1).comment.text
+    defs = r["Definitions"]
+    assert any(defs.cell(rr, 1).value == "A1 Infrastructure" and defs.cell(rr, 3).value ==
+               "Fees ÷ issuance, Q0 (interim)" and "INTERIM" in defs.cell(rr, 4).value
+               for rr in range(4, defs.max_row + 1))
