@@ -1773,6 +1773,52 @@ def _pendle_epoch_revenue(p, rows, long, asof, flow="revenue_usd", ref="pendle_e
     return (ours if side == "ours" else theirs), str(last), how
 
 
+def _pendle_basis_vs_defillama(p, rows, long, asof, ours="revenue_usd", ref="revenue_usd_defillama",
+                               markets="pendle_epoch_market_revenue_usd", looping="pendle_pt_looping_fees_usd",
+                               total="pendle_epoch_revenue_usd", side="ref", epoch_days=14, window=90, min_epochs=2,
+                               **_):
+    """D4-5: PENDLE'S OWN BASIS AGAINST DEFILLAMA, LIKE FOR LIKE. Over the complete sPENDLE epochs wholly inside Q0
+    ([asof − window, asof)) whose per-market figure is stored, `ours` (Pendle's epoch figure, spread — the read-time
+    view) against DefiLlama pendle-v2 (`ref`) summed over the same UTC days; an epoch counts only when every day of both
+    is held. The working names the legs (per-market, PT-looping) and the reconciling line: what Pendle's epoch revenues
+    (`total`, less airdrops) hold beyond the two — attributed to no market, out of revenue."""
+    end = asof.normalize()
+    lo = end - pd.Timedelta(days=int(window))
+    so, sr, sm = _series(long, p, ours), _series(long, p, ref), _series(long, p, markets)
+    sl, st = _series(long, p, looping), _series(long, p, total)
+    used, holes, a, b = [], [], 0.0, 0.0
+    for start in sm.index:
+        stop = start + pd.Timedelta(days=int(epoch_days))
+        if start < lo or stop > end:
+            continue
+        days = pd.date_range(start, stop - pd.Timedelta(days=1))
+        if not (days.isin(so.index).all() and days.isin(sr.index).all()):
+            holes.append(str(start.date()))
+            continue
+        used.append(start)
+        a += float(so.loc[days].sum())
+        b += float(sr.loc[days].sum())
+    if len(used) < int(min_epochs):
+        return None, None, (f"{markets}: {len(used)} complete epoch(s) inside {lo.date()}..{end.date()} with every day of "
+                            f"{ours} and {ref} held, {min_epochs} needed" + (f" (days missing: {', '.join(holes)})"
+                                                                            if holes else ""))
+    last = (max(used) + pd.Timedelta(days=int(epoch_days) - 1)).date()
+    mk = float(sm.loc[used].sum())
+    lp = float(sum(float(sl[d]) for d in used if d in sl.index))
+    untracked = [str(d.date()) for d in used if d not in sl.index]
+    how = (f"{ours if side == 'ours' else ref} over the {len(used)} complete sPENDLE epoch(s) "
+           f"{used[0].date()}..{last} — ours {a:,.0f} = per-market protocol + realized YT fee {mk:,.0f} + PT-looping fee "
+           f"{lp:,.0f}" + (f" (not tracked: {', '.join(untracked)})" if untracked else "")
+           + f"; DefiLlama pendle-v2 {b:,.0f} ({b / a - 1:+.1%} against ours)" if a else "")
+    tot = [d for d in used if d in st.index]
+    if len(tot) == len(used):
+        rest = float(st.loc[used].sum()) - mk - lp
+        how += (f". RECONCILING LINE: Pendle's epoch revenues less airdrops {float(st.loc[used].sum()):,.0f} − ours = "
+                f"{rest:,.0f} attributed to no market — OUT of revenue (undecomposed; includes unrealized YT fees; Boros "
+                f"not excluded, C16)")
+    return (a if side == "ours" else b), str(last), how
+
+
 def _aero_epoch_revenue(p, rows, long, asof, flow="revenue_usd", onchain="voter_rewards_onchain_usd", side="ref", **_):
     """JUDGED OVER THE QUARTER (Jake's run 2026-10-09 ~14:10, 1b): the sum over every judged Q0 epoch of DefiLlama's
     like-for-like figure (_aero_epochs: the week before's fees + the epoch's own bribes) against the sum of the fees +
@@ -2066,7 +2112,7 @@ FORMULAS = {"sum_months": _sum_months, "free_float_now": _free_float_now, "windo
             "eth_issuance_curve": _eth_issuance_formula, "flow_usd_over_price": _flow_usd_over_price,
             "delta_q0": _delta_q0, "delta_diff_q0": _delta_diff_q0, "hl_reward_formula": _hl_reward_formula,
             "share_price_growth": _share_price_growth, "per_day_x_covered": _per_day_x_covered,
-            "value_on": _value_on, "epoch_apr": _epoch_apr, "published_epoch_aprs": _published_epoch_aprs, "epoch_reproduction": _epoch_reproduction, "epoch_mean_check": _epoch_mean_check, "epochs_first_party": _epochs_first_party, "aero_epoch_revenue": _aero_epoch_revenue, "pendle_epoch_revenue": _pendle_epoch_revenue, "aero_rebase_apr": _aero_rebase_apr, "aero_epoch_pending": _aero_epoch_pending, "aero_bribe_outliers": _aero_bribe_outliers, "aero_fee_leg": _aero_fee_leg, "price_basis_gap": _price_basis_gap, "price_overlap": _price_overlap,
+            "value_on": _value_on, "epoch_apr": _epoch_apr, "published_epoch_aprs": _published_epoch_aprs, "epoch_reproduction": _epoch_reproduction, "epoch_mean_check": _epoch_mean_check, "epochs_first_party": _epochs_first_party, "aero_epoch_revenue": _aero_epoch_revenue, "pendle_epoch_revenue": _pendle_epoch_revenue, "pendle_basis_vs_defillama": _pendle_basis_vs_defillama, "aero_rebase_apr": _aero_rebase_apr, "aero_epoch_pending": _aero_epoch_pending, "aero_bribe_outliers": _aero_bribe_outliers, "aero_fee_leg": _aero_fee_leg, "price_basis_gap": _price_basis_gap, "price_overlap": _price_overlap,
             "aero_epoch_apr": _aero_epoch_apr, "q0_net_flow": _q0_net_flow,
             "negative_release": _negative_release, "sum_month": _sum_month, "last30_annualised": _last30_annualised,
             "common_day_value": _common_day_value, "months_match": _months_match,

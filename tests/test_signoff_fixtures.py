@@ -1331,7 +1331,7 @@ def test_near_lockups_splits_unvested_from_vested_and_names_no_account(monkeypat
             return None, "rpc.mainnet.near.org: view_account GARBAGE_COLLECTED_BLOCK"
         return ("3kVY9qcVRoW3B5498SMX6R3rtSLiCdmBzKs7zcnzDJ7Q" if acc == "bbbb.lockup.near" else "x"), ""
     monkeypatch.setattr(coi, "_near_code_hash", code)
-    coi.near_lockups()
+    coi.near_lockups(route="getters")                      # D4-1c: the getters route (the state route has its own test)
     out = capsys.readouterr().out
     assert all(b == 123 for *_x, b in seen), "every read at one block"
     assert ("aaaa.lockup.near", "get_unvested_amount", {"vesting_schedule": sched}, 123) in seen

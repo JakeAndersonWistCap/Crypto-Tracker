@@ -938,6 +938,9 @@ class Http:
                         self.stats["slowest_s"] = took
                         self.stats["slowest"] = mask_v2(urllib.parse.urlsplit(url).path)[:80]
                 if r.status_code == 429 or r.status_code >= 500:
+                    # D4-2c: a 429 is the server's rate limit, a 5xx the server or the path to it
+                    key = "throttled" if r.status_code == 429 else "net_errors"
+                    self.stats[key] = self.stats.get(key, 0) + 1
                     last_err = RuntimeError(f"HTTP {r.status_code} from {mask_url(url)}")
                     asked = retry_after(r.headers.get("Retry-After"))
                     if asked is None and r.status_code == 429 and self.ratelimit_reset_ms:
@@ -979,6 +982,7 @@ class Http:
                 raise          # a 4xx is a definite answer from the server, not worth retrying
             except requests.RequestException as e:
                 last_err = e
+                self.stats["net_errors"] = self.stats.get("net_errors", 0) + 1     # D4-2c: timeout / connection
                 if isinstance(e, requests.exceptions.Timeout):
                     # A TIMEOUT IS RETRIED AT MOST ONCE, and two in a row stall the host for the run (G4 item 1)
                     if _host_timeout(host, e):

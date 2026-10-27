@@ -32757,3 +32757,101 @@ CREDIBILITY["Pendle"]["in_revenue"]["ref"]["note"] = (
     "Chain's, HyperEVM's — read near 0), plus non-USDT tokens sent to the airdrop distributor ('Other Fees', when they "
     "arrive): so DefiLlama does count airdrops, on its own timing (the D2-5 note said it did not — corrected). ±10% as "
     "Aerodrome's first-party epoch check; a CHECK here is the finding (Jake 2026-10-26), its legs named in the working.")
+
+
+# ===================================================================================================================
+# ROUND D4 (Jake 2026-10-27, head fe9a2e8; his overnight run was on D2 483d926). SPEC §19 D4.
+# ===================================================================================================================
+
+# D4-2a: Alchemy's Free tier serves eth_getLogs over at most 10 blocks — its own error body ("Under the Free tier plan,
+# you can make eth_getLogs requests with up to a 10 block range", read 2026-09-23 and on Jake's run of 2026-10-26).
+# fetch.chain never sends it a wider range; ALCHEMY_GETLOGS_MAX_RANGE in .env overrides this for a paid plan.
+ALCHEMY_GETLOGS_MAX_RANGE = 10
+
+
+# D4-5 PENDLE'S OWN EPOCH FIGURES ARE ITS PRIMARY FEES / REVENUE / HOLDERS REVENUE (Jake 2026-10-27, decision 5 on D3).
+# Pendle publishes them per 14-day sPENDLE epoch only (api-v2.pendle.finance/core/docs, read 2026-10-26), so each
+# complete epoch is SPREAD EVENLY over its 14 days (the precedent: Pendle's own buyback, MEASURED_BUYBACK, and Aethir's
+# weekly figures) and labelled as spread; DefiLlama's pendle-v2 daily figure is the CROSS-CHECK (stored under *_defillama)
+# and stands, labelled, only where Pendle has not published: the epoch in progress, and the days before Pendle's first
+# stored epoch. Per series, from Pendle's own figures:
+#   revenue_usd          statistics/market-fees protocolFeeUsd + realizedYtFeeUsd (every market) + spendle/data
+#                        ptLoopingFees (the PT-looping service fee; a 0 only beside a stored ptLoopingVolumes — D3-5b)
+#   fees_usd             statistics/market-fees poolFeeUsd + realizedYtFeeUsd (all fees users paid, the LPs' share
+#                        included) + the PT-looping fee
+#   holders_revenue_usd  spendle/data fees — Pendle's per-epoch BUYBACK amount ($): its docs deprecate
+#                        lastEpochBuybackAmount for "the first value of fee in sPendleHistoricalData"; ptLoopingFees is
+#                        "already included in fees"
+# OUT of revenue (Jake): the epoch-level remainder of spendle/data `revenues` that Pendle attributes to no market
+# (undecomposed; includes unrealized YT fees; Boros not excluded — C16) — the named reconciling line of the cross-check.
+_SPE.update({"market_fees_metric": "pendle_epoch_market_fees_usd",
+             "buyback_usd_metric": "pendle_epoch_buyback_usd", "buyback_usd_field": "fees"})
+METRICS["pendle_epoch_market_fees_usd"] = {
+    "label": "Pendle's own per-market fees per sPENDLE epoch ($; statistics/market-fees totals: pool fee + realized YT "
+             "fee over every market), complete epochs, dated at the epoch's start (D4-5)",
+    "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [1], "sanity_min": 0, "sanity_max": 1e8,
+    "only_projects": ("Pendle",)}
+METRICS["pendle_epoch_buyback_usd"] = {
+    "label": "Pendle's own buyback amount per sPENDLE epoch ($; spendle/data sPendleHistoricalData.fees — Pendle's docs: "
+             "the buyback amount), complete epochs, dated at the epoch's start (D4-5)",
+    "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [1], "sanity_min": 0, "sanity_max": 1e8,
+    "only_projects": ("Pendle",)}
+PROJECT_BY_NAME["Pendle"]["defillama_metric_as"] = {"fees_usd": "fees_usd_defillama", "revenue_usd": "revenue_usd_defillama",
+                                                    "holders_revenue_usd": "holders_revenue_usd_defillama"}
+for _m in ("fees_usd_defillama", "revenue_usd_defillama", "holders_revenue_usd_defillama"):
+    METRICS[_m]["only_projects"] = tuple(dict.fromkeys((*METRICS[_m].get("only_projects", ()), "Pendle")))
+PROJECT_BY_NAME["Pendle"].setdefault("metric_labels", {}).update({
+    "fees_usd_defillama": "DefiLlama pendle-v2 dailyFees ($) — the cross-check of Pendle's own epoch fees (D4-5)",
+    "revenue_usd_defillama": "DefiLlama pendle-v2 dailyRevenue ($) — the cross-check of Pendle's own epoch revenue (D4-5)",
+    "holders_revenue_usd_defillama": "DefiLlama pendle-v2 dailyHoldersRevenue ($) — the cross-check of Pendle's own "
+                                     "epoch buyback (D4-5)",
+})
+EPOCH_PRIMARY = {"Pendle": {"epoch_days": 14, "daily_label": "DefiLlama pendle-v2", "series": {
+    "revenue_usd": {"epoch": "pendle_epoch_market_revenue_usd", "plus": ("pendle_pt_looping_fees_usd",),
+                    "daily": "revenue_usd_defillama"},
+    "fees_usd": {"epoch": "pendle_epoch_market_fees_usd", "plus": ("pendle_pt_looping_fees_usd",),
+                 "daily": "fees_usd_defillama"},
+    "holders_revenue_usd": {"epoch": "pendle_epoch_buyback_usd", "plus": (), "daily": "holders_revenue_usd_defillama"},
+}}}
+_EPOCH_POINTS = ("defillama", "pendle_api:epoch_spread", "defillama:in_progress_epoch")
+for _m in EPOCH_PRIMARY["Pendle"]["series"]:
+    PROJECT_BY_NAME["Pendle"].setdefault("series_handover", {})[_m] = {
+        "ordered_points": _EPOCH_POINTS,
+        "why": "D4-5 (Jake 2026-10-27): DefiLlama pendle-v2 before Pendle's first stored epoch; then Pendle's own epoch "
+               "figure spread evenly over each complete epoch; DefiLlama pendle-v2 again for the epoch in progress, until "
+               "Pendle publishes it",
+        "composition_change": "the basis steps at Pendle's first stored epoch and at the epoch in progress: DefiLlama "
+                              "counts the tokens reaching Pendle's treasury that it can price (Robinhood Chain's and "
+                              "HyperEVM's markets read near 0) plus airdrop-distributor tokens, on its own timing; "
+                              "Pendle's figure is its per-market fees by epoch (D3-5b)",
+        "declared": "2026-10-27"}
+for _m in ("pendle_epoch_market_revenue_usd", "pendle_pt_looping_fees_usd"):
+    NOT_SHOWN.pop(("Pendle", _m), None)
+_stale_after_days_d4 = stale_after_days
+
+
+def stale_after_days(project_name: str, metric: str, default: int) -> int:  # noqa: F811 — D4-5: epoch series
+    if metric in ("pendle_epoch_market_fees_usd", "pendle_epoch_buyback_usd"):
+        return int(_SPE.get("epoch_days") or 14) * 2 + 2
+    return _stale_after_days_d4(project_name, metric, default)
+
+
+# the cross-check, rewired (D4-5): ours = Pendle's basis over Q0's complete epochs; the reference = DefiLlama pendle-v2
+# over the same UTC days; ±10% as before; the working names each leg and the reconciling line
+CREDIBILITY["Pendle"]["in_revenue"] = _c_in_py(
+    "Revenue over Q0's complete sPENDLE epochs — ours (Pendle's own: per-market protocol + realized YT fee + PT-looping "
+    "fee, each epoch spread) vs DefiLlama pendle-v2 over the same UTC days", "pendle_basis_vs_defillama",
+    {"side": "ours", "use_views": True},
+    {"formula": "pendle_basis_vs_defillama", "args": {"side": "ref", "use_views": True}, "tol": 10.0, "show_how": True,
+     "source": "DefiLlama pendle-v2 dailyRevenue (revenue_usd_defillama), against Pendle's own statistics/market-fees and "
+               "spendle/data (fetch/pendle_epochs.py)",
+     "note": "BASIS (D4-5, Jake 2026-10-27): ours is Pendle's own per-epoch figure — every market's protocol fee + "
+             "realized YT fee (statistics/market-fees) + the PT-looping service fee (spendle/data), spread evenly over "
+             "each complete 14-day epoch; DefiLlama pendle-v2 is the cross-check. DefiLlama counts the SY and reward "
+             "tokens reaching Pendle's treasury that it can PRICE, for the markets listed now, plus non-USDT tokens sent "
+             "to the airdrop distributor, on its own timing — so tokens it cannot price read near 0: Robinhood Chain "
+             "574 vs Pendle's 32,994 and HyperEVM 12,438 vs 30,317 over Q0's five epochs to 2026-10-19 (read "
+             "2026-10-26). RECONCILING LINE, out of revenue: the part of Pendle's epoch `revenues` it attributes to no "
+             "market (110,750 over those five epochs) — undecomposed, includes unrealized YT fees, Boros not excluded "
+             "(C16)."},
+    fmt=_C_USD)

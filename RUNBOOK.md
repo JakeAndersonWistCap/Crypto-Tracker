@@ -529,6 +529,47 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11cy. Round D4 — Jake's run on D2: lockups, timeouts, Pendle's epoch basis (2026-10-27)
+
+**Pull this, then in PowerShell 5.1 at the repo root, in this order:**
+1. **Re-register the weekly NEAR lockup task (once)** — it now stops after 8 hours (your read took 4 h 35 m):
+   ```
+   powershell -ExecutionPolicy Bypass -File windows\register_lockup_task.ps1
+   (Get-ScheduledTask -TaskName "Crypto-Tracker NEAR lockups").Settings | Select-Object ExecutionTimeLimit
+   ```
+   (expected: PT8H). Any run — this task or the daily task's step 2b — continues an unfinished read at its block
+   while the block is under 48 hours old, whatever the age of the last stored read.
+2. **Fill the Merkl cache (once, ~4 min)** — `python -m fetch.merkl_campaigns --fill`. It reads every
+   Morpho and Plume campaign once and writes logs-cache merkl-allocations.json; it stores nothing. Without it the daily
+   run fills the cache 100 s at a time and stores Morpho / Plume's Merkl series only once the cache is complete (about
+   three runs). Prints `Morpho: 0 campaign(s) already cached, <n> read`, the same for Plume.
+3. `python token_metrics.py` — the normal run. New on its Run Log:
+   - `CLEAN-UP D3-5: applied once …` (still to run on your store: your last run was on D2).
+   - Pendle: `pendle_epochs` stores `pendle_epoch_market_fees_usd` and `pendle_epoch_buyback_usd` beside the D3 legs;
+     DefiLlama's pendle-v2 lines now store `fees_usd_defillama`, `revenue_usd_defillama`,
+     `holders_revenue_usd_defillama` (the cross-check). Pendle's fees / revenue / holders revenue in the workbook are
+     now Pendle's own epoch figures spread over each complete epoch; hover a cell to see "pendle_api:epoch_spread[…]";
+     the in-progress epoch reads "defillama:in_progress_epoch[…]".
+   - `merkl_campaigns` Morpho: `… campaign allocations: <n> cached …, <m> read …; <k> call(s) in <s>s`.
+   - Any TIER TIMED OUT line now ends `CAUSE: NETWORK|THROTTLED|CODE|UNCLASSIFIED — <evidence>`. CODE / THROTTLED
+     timeouts are listed under "TIMED OUT, NOT THE NETWORK" and no longer make NETWORK-WIDE TROUBLE.
+   PASTE BACK: every TIER TIMED OUT line, the merkl_campaigns lines, the pendle_epochs and defillama Pendle lines.
+4. `python measuring_guard.py --newer metrics.db` — PASTE BACK the VERDICT.
+5. No lockup read: the stored read is 2026-10-26 (1 day old). The Sunday task reads next.
+
+**What to look for.**
+- Morpho's Credibility d2_merkl_base_campaign_allocated: CHECK becomes "MISSING [D — ROUTE NOT FILLED] — NOT
+  REFRESHED" until the Merkl series is re-read on the allocated basis (step 2–3), then LIVE-UNVERIFIED (or MATCH).
+- Sky's insider cells form once the chain tier completes (sky_endowment_locked_tokens stored).
+- Pendle Credibility in_revenue: ours (market + PT-looping, spread) vs DefiLlama pendle-v2, ±10%; Q0 on 10-26's reads
+  −9.4%. The working names the RECONCILING LINE (110,750 in Q0, out of revenue). Q0 revenue ~1,685,523, fees
+  ~1,802,612, holders revenue ~1,312,582; holder value yield unchanged.
+- NEAR lockup read (the Sunday task): it now prints `… lockup(s) to read by the state route … ETA …` (~1.4 h,
+  estimated). If a checked lockup disagrees it prints `STATE ROUTE REFUTED …`, drops the state results and carries on by the getters (~4.6 h) —
+  paste that line back. It names the one lockup left out: `LEFT OUT: 3e0161be…lockup.near … 32.76 NEAR … LOCKED can be
+  off by at most that`.
+
+
 ## 11cx. Round D3 — Jake's decisions on D2 (2026-10-26)
 
 **Pull this, then in PowerShell 5.1 at the repo root, in this order:**

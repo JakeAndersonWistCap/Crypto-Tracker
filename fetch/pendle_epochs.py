@@ -298,6 +298,7 @@ class PendleEpochs:
             self._epoch_aprs(name, spec, payload, out)
             self._epoch_revenues(name, spec, payload, now, out)
             self._pt_looping(name, spec, payload, now, out)
+            self._epoch_buyback_usd(name, spec, payload, now, out)
             self._market_revenue(name, spec, now, out)
 
     @staticmethod
@@ -398,7 +399,8 @@ class PendleEpochs:
             if tot.get("protocolFeeUsd") is None or tot.get("realizedYtFeeUsd") is None:
                 bad.append(str(when.date()))
                 continue
-            rows.append((when, float(tot["protocolFeeUsd"]) + float(tot["realizedYtFeeUsd"]), len(e.get("markets") or [])))
+            rows.append((when, float(tot["protocolFeeUsd"]) + float(tot["realizedYtFeeUsd"]), len(e.get("markets") or []),
+                         None if tot.get("poolFeeUsd") is None else float(tot["poolFeeUsd"]) + float(tot["realizedYtFeeUsd"])))
         if not rows:
             out.fail(SOURCE, name, f"{metric}: statistics/market-fees gave no complete epoch with both fees — NOTHING "
                                    f"STORED" + (f" ({', '.join(bad)})" if bad else ""), TIER)
@@ -406,8 +408,49 @@ class PendleEpochs:
         rows.sort()
         frame = pd.DataFrame([point(name, metric, v, f"{SOURCE}:statistics/market-fees.totals."
                                                      f"protocolFeeUsd+realizedYtFeeUsd", TIER, d).iloc[0]
-                              for d, v, _n in rows])
+                              for d, v, _n, _f in rows])
         out.add(frame, SOURCE, name,
                 f"{metric}: {len(rows)} complete epoch(s) {rows[0][0].date()}..{rows[-1][0].date()} (protocol fee + "
                 f"realized YT fee over {rows[-1][2]} market(s) in the latest); latest {rows[-1][1]:,.0f}"
                 + (f"; NOT STORED (a field missing): {', '.join(bad)}" if bad else ""), TIER)
+        # D4-5: the same epochs' fees users paid — pool fee (the LPs' share included) + realized YT fee
+        fm = spec.get("market_fees_metric")
+        fees = [(d, f) for d, _v, _n, f in rows if f is not None]
+        if fm and fees:
+            out.add(pd.DataFrame([point(name, fm, f, f"{SOURCE}:statistics/market-fees.totals.poolFeeUsd+realizedYtFeeUsd",
+                                        TIER, d).iloc[0] for d, f in fees]), SOURCE, name,
+                    f"{fm}: {len(fees)} complete epoch(s) {fees[0][0].date()}..{fees[-1][0].date()}; latest "
+                    f"{fees[-1][1]:,.0f}", TIER)
+
+    @staticmethod
+    def _epoch_buyback_usd(name, spec, payload, now, out):
+        """D4-5: Pendle's own buyback amount per COMPLETE epoch in $ (spendle/data sPendleHistoricalData.fees — its docs
+        deprecate lastEpochBuybackAmount for "the first value of fee"), dated at the epoch's start. A complete epoch
+        reading 0 is Pendle's publish lag, not a zero: not stored."""
+        metric, field = spec.get("buyback_usd_metric"), spec.get("buyback_usd_field")
+        if not metric or not field:
+            return
+        hist = payload.get(spec["history_key"]) or {}
+        ts, vals = hist.get(spec["time_field"]) or [], hist.get(field)
+        if not isinstance(vals, list) or len(vals) != len(ts):
+            out.fail(SOURCE, name, f"{metric}: {len(ts)} epochs against "
+                                   f"{len(vals) if isinstance(vals, list) else 'no'} {field} — NOTHING STORED", TIER)
+            return
+        rows, lag = [], []
+        for t, v in sorted(zip(ts, vals), key=lambda x: int(float(x[0]))):
+            t = int(float(t))
+            when = pd.Timestamp(t, unit="s" if t < 10**11 else "ms").normalize()
+            if when + pd.Timedelta(days=int(spec.get("epoch_days", 14))) > now:
+                continue                                          # in progress
+            if v is None or float(v) == 0:
+                lag.append(str(when.date()))
+                continue
+            rows.append((when, float(v)))
+        if not rows:
+            out.fail(SOURCE, name, f"{metric}: no complete epoch with a buyback amount — NOTHING STORED", TIER)
+            return
+        out.add(pd.DataFrame([point(name, metric, v, f"{SOURCE}:{spec['history_key']}.{field}", TIER, d).iloc[0]
+                              for d, v in rows]), SOURCE, name,
+                f"{metric}: {len(rows)} complete epoch(s) {rows[0][0].date()}..{rows[-1][0].date()}; latest "
+                f"{rows[-1][1]:,.0f}" + (f"; reading 0, not stored (publish lag): {', '.join(lag)}" if lag else ""), TIER)
+

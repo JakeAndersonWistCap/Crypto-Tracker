@@ -8,7 +8,8 @@
 #     on (Interactive, like the daily task);
 #   - weekly, Sunday at 02:15 local; WAKES THE LAPTOP to run (WakeToRun) and runs as soon as possible after a missed
 #     time (StartWhenAvailable);
-#   - is stopped after 4 hours (-LimitHours), never starts a second copy while one is running, and runs on battery as
+#   - is stopped after 8 hours (-LimitHours; 4 until D4-1a - Jake's read of 2026-10-26 took 4h35m, so 4 h killed every
+#     read), never starts a second copy while one is running, and runs on battery as
 #     the daily task does (-StopOnBattery for AC only).
 #   The daily task's step 2b stays as the fallback: it reads only when the last stored read is 8+ days old.
 # Remove it with:  Unregister-ScheduledTask -TaskName "Crypto-Tracker NEAR lockups" -Confirm:$false
@@ -19,7 +20,7 @@ param(
     [string]$Day = "Sunday",
     [string]$TaskName = "Crypto-Tracker NEAR lockups",
     [switch]$StopOnBattery,
-    [int]$LimitHours = 4
+    [int]$LimitHours = 8
 )
 
 $script = Join-Path $PSScriptRoot "near_lockups_run.ps1"

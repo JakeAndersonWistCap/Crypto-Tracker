@@ -169,7 +169,15 @@ def main(argv=None) -> int:
     prev = last_read(store_mod.DB_PATH, str(Path(__file__).resolve().parent / "manual_overrides.csv"))
     today = pd.Timestamp.now(tz="UTC").normalize().tz_localize(None)
     every = max(1, int(a.every_days))
-    if prev is not None and not a.force and (today - prev).days < every:
+    import check_offline_items as coi
+    # D4-1a: AN UNFINISHED READ IS RESUMED BY ANY RUN — the Sunday task or daily_run's step 2b — at its pin while the pin
+    # is valid, whatever the age of the last stored read (Jake's run of 2026-10-26: a read cut short and the next Sunday
+    # pinning anew would never complete)
+    pending = coi.lockup_resumable()
+    if pending:
+        print(f"NEAR lockups: an unfinished read pinned at block {int(pending['height']):,} ({pending['pinned_at']}; "
+              f"{len(pending.get('results') or {}):,} lockup(s) read there) — resuming it at the same block")
+    elif prev is not None and not a.force and (today - prev).days < every:
         print(f"NEAR lockups: last read {prev.date()} ({(today - prev).days} day(s) ago) — next due "
               f"{(prev + pd.Timedelta(days=every)).date()}; nothing read")
         return 0

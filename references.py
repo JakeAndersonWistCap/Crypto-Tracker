@@ -697,6 +697,13 @@ def check(groups: dict, headline=None, projects: set[str] | None = None, rows: l
             out.append(base | {"ours": None, "status": "NOT WIRED", "route": how,
                                "detail": f"NOT WIRED — reference check: {why}"})
             continue
+        stale = not_refreshed(r, key, route, groups, at)
+        if stale:
+            out.append(base | {"ours": ours, "status": "MISSING", "route": how,
+                               "detail": f"MISSING [D — ROUTE NOT FILLED] — NOT REFRESHED: {stale}. A same-source "
+                                         f"reference checks the arithmetic of a read, so it is not graded against a "
+                                         f"series that was not re-read (D4-3)"})
+            continue
         kind, tol = tolerance(r["tolerance"], "0" if route[0] == "zero_sum" else ref_txt)
         ok = within(ours, ref, kind, tol)
         status = ("VERIFIED" if ok else "BROKEN") if rl == "primary" else ("LIVE-UNVERIFIED" if ok else "CHECK")
@@ -710,6 +717,57 @@ def check(groups: dict, headline=None, projects: set[str] | None = None, rows: l
             detail += f". Cause: {cause(groups, project, at, ours, ref) if callable(cause) else cause}"
         out.append(base | {"ours": ours, "status": status, "route": how, "detail": detail})
     return out
+
+
+# D4-3: A SAME-SOURCE REFERENCE IS JUDGED ONLY AGAINST A SERIES ON ITS BASIS, REFRESHED SINCE IT WAS READ. Jake's run on
+# D2 (2026-10-26): merkl_campaigns timed out, so Morpho's series still held the SCHEDULE basis (the campaign's amount,
+# 199,378) and d2_merkl_base_campaign_allocated read CHECK against the ALLOCATED figure it was never computed on. A same-
+# source reference only checks the arithmetic of a read, so a series not re-read on the reference's basis is a GAP (not
+# refreshed), never a CHECK. (project, reference) -> (the source basis the compared rows must carry, what it is).
+REFERENCE_BASIS = {
+    ("Morpho", "d2_merkl_base_campaign_allocated"): (
+        "merkl_campaigns:allocated", "Merkl's allocation to users (D2-3), the reference's basis — rows from the earlier "
+                                     "schedule basis (source merkl_campaigns) are the campaign's amount"),
+}
+_READ_ON = re.compile(r"\bread (\d{4}-\d{2}-\d{2})")
+
+
+def _window_rows(route: tuple, groups: dict, project: str, at) -> "pd.DataFrame | None":
+    """The stored rows a route compares (its own window where it names one; else the series up to `at`)."""
+    g = groups.get((project, route[1])) if len(route) > 1 else None
+    if g is None or getattr(g, "empty", True):
+        return None
+    d = pd.to_datetime(g["date"]).dt.normalize()
+    if route[0] in ("mean_period_x", "sum_period") and len(route) >= 4:
+        return g[(d >= pd.Timestamp(route[2])) & (d <= pd.Timestamp(route[3]))]
+    return g[d <= at]
+
+
+def not_refreshed(r: dict, key: tuple, route: tuple, groups: dict, at) -> str:
+    """'' when a same-source reference may be graded; else why its series has not been refreshed onto the reference's
+    basis (D4-3): a declared basis (REFERENCE_BASIS) the rows do not all carry, or rows all fetched before the day the
+    reference was read ("read YYYY-MM-DD" in its note)."""
+    if not str(r.get("source_type") or "").startswith("same-source"):
+        return ""
+    rows = _window_rows(route, groups, key[0], at)
+    if rows is None or rows.empty:
+        return ""
+    want = REFERENCE_BASIS.get(key)
+    if want:
+        src = rows["source"].astype(str)
+        off = src[~src.str.startswith(want[0])]
+        if len(off):
+            return (f"{len(off)} of {len(rows)} compared day(s) of {route[1]} are stored on another basis "
+                    f"({', '.join(sorted(set(off))[:3])}), not {want[0]} — {want[1]}. The series has not been re-read on "
+                    f"the reference's basis since (its source did not refresh: a timed-out or skipped tier)")
+    m = _READ_ON.search(str(r.get("note") or ""))
+    if m and "fetched_at" in rows:
+        fa = rows["fetched_at"].astype(str).str[:10]
+        fa = fa[fa.str.match(r"\d{4}-\d{2}-\d{2}")]
+        if len(fa) and fa.max() < m.group(1):
+            return (f"every compared day of {route[1]} was fetched by {fa.max()}, before the reference was read "
+                    f"({m.group(1)}) — the series has not been refreshed since")
+    return ""
 
 
 # route kinds that read config, not stored rows: no data date applies

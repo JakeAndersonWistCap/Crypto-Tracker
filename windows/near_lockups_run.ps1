@@ -1,11 +1,11 @@
 # windows/near_lockups_run.ps1 - the weekly NEAR lockup read, for its own scheduled task (Round D3-2, Jake 2026-10-26).
-# register_lockup_task.ps1 sets it up: "Crypto-Tracker NEAR lockups", Sunday 02:15, stopped after 4 hours.
+# register_lockup_task.ps1 sets it up: "Crypto-Tracker NEAR lockups", Sunday 02:15, stopped after 8 hours.
 #
 #   python near_lockups_weekly.py  - reads every live lockup at one pinned block and stores the totals only when all
 #                                    are read (never a partial total); resumable at that block for 48 hours
 #
 # Its own log: logs\near_lockups_YYYY-MM-DD.log, written LINE BY LINE as the output arrives (so a stopped read keeps
-# its progress lines), closing with "near lockups FINAL: exit <code>". If the task is stopped (its 4-hour limit,
+# its progress lines), closing with "near lockups FINAL: exit <code>". If the task is stopped (its 8-hour limit,
 # battery, sleep, shutdown) no FINAL line is written: the log ends at the last progress line, and daily_run.ps1's
 # fallback (step 2b, when the last stored read is 8+ days old) continues the read at the same block.
 # Windows PowerShell 5.1 compatible. Run by hand:  powershell -ExecutionPolicy Bypass -File windows\near_lockups_run.ps1

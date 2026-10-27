@@ -498,19 +498,19 @@ def _lockup_world(monkeypatch, tmp_path, fail: set, height=500):
 
 def test_8_a_rerun_reads_only_the_missing_lockups_at_the_same_block_and_never_totals_part(monkeypatch, tmp_path):
     coi, seen = _lockup_world(monkeypatch, tmp_path, {"c.lockup.near"})
-    got = coi.near_lockups(workers=2)
+    got = coi.near_lockups(workers=2, route="getters")
     assert got["height"] == 500 and got["read"] == 2 and got["unreadable"] == 1
     import near_lockups_weekly as nl
     assert nl.read_failures(got) == 1                                   # the weekly script stores nothing
     coi2, seen2 = _lockup_world(monkeypatch, tmp_path, set())
-    got2 = coi2.near_lockups(workers=2)
+    got2 = coi2.near_lockups(workers=2, route="getters")
     assert got2["height"] == 500, "resumed at the SAME pinned block"
     assert {a for a, _b in seen2} == {"c.lockup.near"} and {b for _a, b in seen2} == {500}
     assert got2["read"] == 3 and got2["unreadable"] == 0 and got2["locked"] == 12.0
     assert nl.read_day(got2, pd.Timestamp("2027-01-01")) == pd.Timestamp("2026-10-26")   # dated at the block
     # resume=False (or a stale pin) starts over at a new block
     coi3, seen3 = _lockup_world(monkeypatch, tmp_path, set())
-    got3 = coi3.near_lockups(resume=False)
+    got3 = coi3.near_lockups(resume=False, route="getters")
     assert got3["height"] == 500 and len({a for a, _b in seen3}) == 3
 
 
@@ -584,7 +584,7 @@ def test_8a_the_lockup_read_prints_progress_every_100_with_time_left(monkeypatch
     coi, _seen = _lockup_world(monkeypatch, tmp_path, set())
     f = tmp_path / "l.txt"
     f.write_text("".join(f"x{i:03d}.lockup.near\n" for i in range(205)))
-    coi.near_lockups(workers=3)
+    coi.near_lockups(workers=3, route="getters")
     out = capsys.readouterr().out
     prog = [ln for ln in out.splitlines() if "lockups at block 500" in ln]
     assert [ln.split("/")[0].strip() for ln in prog] == ["… 100", "… 200", "… 205"]

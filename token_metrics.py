@@ -1334,13 +1334,24 @@ def run_banner(log_entries) -> list[str]:
                 "    gcloud auth application-default login",
                 f"    gcloud auth application-default set-quota-project {proj}",
                 "  then rerun. Every NEAR BigQuery read was skipped this run; stored values stand."]
-    net = {}
+    net, work = {}, {}
     for e in log_entries:
         if e.status != "failed":
             continue
         m = e.message.lower()
+        # D4-2c: a timeout whose own calls all answered (CAUSE: CODE) or that waited on 429s (CAUSE: THROTTLED) is not the
+        # network — it is listed apart and never counted towards NETWORK-WIDE TROUBLE
+        if "tier timed out" in m and ("cause: code" in m or "cause: throttled" in m):
+            work.setdefault(e.source, "THROTTLED" if "cause: throttled" in m else "CODE")
+            continue
         if "tier timed out" in m or any(k in m for k in NETWORK_SIGNS):
             net.setdefault(e.source, e.message)
+    if work:
+        out += ["=" * 78,
+                f"TIMED OUT, NOT THE NETWORK — {len(work)} source(s) whose calls all answered: "
+                + ", ".join(f"{k} ({v})" for k, v in sorted(work.items())) + ".",
+                "  CODE: the work did not fit the budget; THROTTLED: the server's rate limit. A rerun does not fix "
+                "either — see each source's TIER TIMED OUT line (CAUSE)."]
     if len(net) >= NETWORK_WIDE_MIN_SOURCES:
         out += ["=" * 78,
                 f"NETWORK-WIDE TROUBLE — {len(net)} sources timed out or could not connect this run: "

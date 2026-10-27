@@ -4817,7 +4817,57 @@ def near_lockup_state(raw: bytes) -> dict:
         vest = ("terminating", r.u128(), r.u8())                 # unvested_amount, status
     else:
         raise ValueError(f"unknown VestingInformation tag {v}")
-    return {"owner": owner, "lockup": li, "vesting": vest}
+    out = {"owner": owner, "lockup": li, "vesting": vest}
+    # D4-1c: THE STATE'S TAIL (lib.rs LockupContract): staking_pool_whitelist_account_id, staking_information
+    # Option<{staking_pool_account_id, status u8, deposit_amount u128}>, foundation_account_id Option<AccountId>. The
+    # known deposit is what get_balance adds to the account balance. A tail that does not parse leaves `deposit` None
+    # (the state route then reads that lockup by its getters).
+    try:
+        out["whitelist"] = r.string()
+        stk = r.option(lambda: (r.string(), r.u8(), r.u128()))
+        out["staking_pool"], out["deposit"] = (stk[0], stk[2]) if stk else (None, 0)
+        out["foundation"] = r.option(r.string)
+        if r.i != len(r.b):
+            out["deposit"] = None
+    except (ValueError, UnicodeDecodeError):
+        out["deposit"] = None
+    return out
+
+
+def near_locked_getter(state: dict, ts: int) -> int:
+    """getters.rs get_locked_amount (near/core-contracts@1b0436c9), exactly — the state's OWN transfers information
+    (a lockup whose state still says transfers disabled is wholly locked, as its getter says), the release counted from
+    the lockup timestamp. For the fixed code only: the two buggy code hashes are recomputed as the lakehouse does."""
+    li = state["lockup"]
+    amount, withdrawn = li["lockup_amount"], li["termination_withdrawn_tokens"]
+    if li["transfers"][0] == "enabled":
+        lockup_ts = max(li["transfers"][1] + li["lockup_duration"], li["lockup_timestamp"] or 0)
+        if lockup_ts <= ts:
+            rd = li["release_duration"]
+            unreleased = 0
+            if rd is not None:
+                end = lockup_ts + rd
+                unreleased = 0 if ts >= end else amount * (end - ts) // rd
+            return max(max(unreleased - withdrawn, 0), near_unvested(state, ts))
+    return amount - withdrawn
+
+
+def near_lockup_from_state(state: dict, account_amount: int, ts: int, buggy: bool) -> dict | None:
+    """One lockup's figures from its view_account amount and its state, as its getters give them (D4-1c):
+    get_balance = account balance + known deposit; get_locked_amount (getters.rs, or the lakehouse's recomputation for
+    the buggy code); unvested as get_unvested_amount; get_owners_balance = balance − locked, floored at 0. None when
+    the state's tail did not parse (the lockup is then read by its getters)."""
+    if state.get("deposit") is None:
+        return None
+    bal = int(account_amount) + int(state["deposit"])
+    if bal == 0:
+        return {"zero": True}
+    locked = near_locked_recomputed(state, ts, True) if buggy else near_locked_getter(state, ts)
+    out = {"balance": str(bal), "locked": str(locked), "unvested": str(near_unvested(state, ts)),
+           "owners": str(max(bal - locked, 0))}
+    if buggy:
+        out["buggy"] = True
+    return out
 
 
 def near_unvested(state: dict, ts: int) -> int:
@@ -4966,7 +5016,8 @@ def near_lockups_buggy_recompute(block_id: int | None = 219_544_718, workers: in
     return out
 
 
-def near_lockups(limit: int | None = None, resume: bool = True, workers: int = 4, cache_path=None):
+def near_lockups(limit: int | None = None, resume: bool = True, workers: int = 4, cache_path=None,
+                 route: str | None = None):
     """NEAR LOCKUPS, FROM THE CONTRACTS' OWN VIEW METHODS (follow-up to 0eda6ce). The list: every live *.lockup.near —
     the lockup factory's sub-accounts from NearBlocks' free API (near_lockup_accounts; Jake's run on ab3c7fe 2026-10-11:
     no BigQuery), or a file NEAR_LOCKUPS_FILE (one account per line). Per lockup, at ONE block (near/core-contracts
@@ -5032,18 +5083,27 @@ def near_lockups(limit: int | None = None, resume: bool = True, workers: int = 4
         height, block_ts = int(hdr["height"]), int(hdr.get("timestamp") or 0)
         cache = {"height": height, "block_ts": block_ts, "pinned_at": _now_utc(), "results": {}}
         print(f"  new pin: every read at block {height:,} ({cache['pinned_at']})")
+    route = route or cache.get("route") or NEAR_LOCKUP_ROUTE
+    cache["route"] = route
     todo = [a for a in accounts if a not in cache["results"]]
-    # measured 2026-10-26 (D2-8a smoke, 40 lockups): ~6.5 calls a lockup, ~2.7 calls/s through the pacer with 4 in flight
-    calls = int(len(todo) * 6.5)
-    print(f"  {len(todo):,} lockup(s) to read, ~{calls:,} RPC calls; ~{calls / 2.7 / 60:,.0f} min at the rate measured "
-          f"2026-10-26 (~2.7 calls/s), longer when an endpoint answers HTTP 429", flush=True)
+    # D4-1b: THE ETA FROM THROTTLED THROUGHPUT, not the raw call rate (Jake's run of 2026-10-26: "~78 min" promised, 4h35m
+    # taken — 2,733 of 15,183 calls throttled, 28,620 s cooled). calls a lockup by route x the calls a second measured
+    # end to end on the last full read (429 cool-downs included); Jake's run until a read here measures one.
+    tp = _lockup_throughput()
+    cpl = NEAR_LOCKUP_CALLS_PER_LOCKUP[route]
+    calls = int(len(todo) * cpl)
+    eta = calls / max(tp["calls_per_s"], 1e-6)
+    print(f"  {len(todo):,} lockup(s) to read by the {route} route, ~{calls:,} RPC calls ({cpl:g} a lockup); ETA "
+          f"~{eta / 3600:,.1f} h at the {tp['calls_per_s']:.2f} calls/s measured end to end {tp['measured']} "
+          f"({tp['how']}) — throttling included", flush=True)
     errs: dict = {}
     t0 = _t.time()
+    calls0 = NEAR_PACER.stats["calls"]
     import progress                                       # noqa: PLC0415
     n_done = 0
     try:
         with ThreadPoolExecutor(max_workers=max(1, int(workers))) as pool:
-            futs = {pool.submit(_read_lockup, acc, height, block_ts): acc for acc in todo}
+            futs = {pool.submit(_read_one, acc, height, block_ts, route, _validate_this(acc)): acc for acc in todo}
             for fut in as_completed(futs):
                 acc = futs[fut]
                 n_done += 1
@@ -5066,9 +5126,27 @@ def near_lockups(limit: int | None = None, resume: bool = True, workers: int = 4
     finally:
         _lockup_cache_save(cache_f, cache)
     yocto = 10 ** 24
+    # D4-1c: A STATE-ROUTE FIGURE THAT DISAGREES WITH THE GETTERS ON ANY CHECKED LOCKUP condemns the route for this pin:
+    # every state-route result is dropped and the read goes on by the getters (nothing stored until it is complete)
+    bad = {a: r["mismatch"] for a, r in cache["results"].items() if r.get("mismatch")}
+    if bad:
+        drop = [a for a, r in cache["results"].items() if r.get("via") == "state"]
+        for a in drop:
+            cache["results"].pop(a, None)
+        cache["route"] = "getters"
+        print(f"  STATE ROUTE REFUTED: the state figures disagree with the contracts' getters on {len(bad)} checked "
+              f"lockup(s) ({'; '.join(f'{v}' for v in list(bad.values())[:3])}) — the {len(drop):,} state-route result(s) "
+              f"are dropped and the read continues by the getters at the same block (the next run)")
+        _lockup_cache_save(cache_f, cache)
+    # D4-1b: the throughput this run measured, for the next ETA (a read of 200+ lockups only)
+    took = _t.time() - t0
+    if n_done >= 200 and took > 0:
+        _lockup_throughput_save({"calls_per_s": (NEAR_PACER.stats["calls"] - calls0) / took, "measured": _now_utc()[:10],
+                                 "how": f"{n_done:,} lockups by the {route} route in {took / 3600:.1f} h"})
     tot = {"balance": 0, "locked": 0, "unvested": 0, "owners": 0}
     buggy = {"n": 0, "balance": 0, "locked": 0, "recomputed": 0}
     n_read = n_zero = n_fault = 0
+    faults = []
     for acc in accounts:
         r = cache["results"].get(acc)
         if r is None:
@@ -5076,6 +5154,7 @@ def near_lockups(limit: int | None = None, resume: bool = True, workers: int = 4
         if r.get("fault"):
             n_fault += 1
             errs[r["fault"][:60]] = errs.get(r["fault"][:60], 0) + 1
+            faults.append((acc, r))
             continue
         if r.get("zero"):
             n_zero += 1
@@ -5091,7 +5170,15 @@ def near_lockups(limit: int | None = None, resume: bool = True, workers: int = 4
             buggy["locked"] += int(r["rpc_locked"])
             buggy["recomputed"] += int(r["locked"])
     n_err = sum(1 for a in accounts if a not in cache["results"]) + n_fault
+    cache["complete"] = n_err - n_fault == 0
+    _lockup_cache_save(cache_f, cache)
     n = lambda x: f"{x / yocto:>18,.0f} NEAR"  # noqa: E731
+    # D4-1d: A LOCKUP LEFT OUT IS NAMED, WITH ITS BALANCE — the bound on what its omission can move (Jake 2026-10-27)
+    for acc, r in faults:
+        amt = r.get("account_amount")
+        print(f"  LEFT OUT: {acc} — its own getter fails inside the contract ({r['fault'][:90]}); balance "
+              + (f"{int(amt) / yocto:,.2f} NEAR (view_account at the pinned block): LOCKED can be off by at most that"
+                 if amt is not None else "not read") )
     print(f"\n  read {n_read:,}; zero balance {n_zero:,}; unreadable {n_err:,}" + (f" {errs}" if errs else "")
           + f"; this run {_t.time() - t0:,.0f}s, pacer {NEAR_PACER.stats}")
     print(f"  balance in lockups (incl. staked)            {n(tot['balance'])}")
@@ -5107,10 +5194,132 @@ def near_lockups(limit: int | None = None, resume: bool = True, workers: int = 4
             "errors": dict(errs), "pinned_at": cache["pinned_at"], "block_ts": block_ts,
             "buggy_rpc_locked": buggy["locked"] / yocto, "buggy_recomputed": buggy["recomputed"] / yocto,
             "balance": tot["balance"] / yocto, "locked": tot["locked"] / yocto, "unvested": tot["unvested"] / yocto,
-            "owners": tot["owners"] / yocto, "buggy": buggy["n"]}
+            "owners": tot["owners"] / yocto, "buggy": buggy["n"], "route": cache.get("route"),
+            "faults": [(a, (int(r["account_amount"]) / yocto if r.get("account_amount") is not None else None))
+                       for a, r in faults]}
 
 
 NEAR_LOCKUP_PIN_MAX_H = 48
+# D4-1c: "state" = view_account + view_state, the getters' figures computed from the contract's own state exactly as
+# getters.rs computes them (2 calls a lockup); "getters" = the contracts' view methods (~7.8 calls a lockup measured on
+# Jake's run of 2026-10-26: 15,183 calls for 1,955 lockups). One lockup in NEAR_LOCKUP_CHECK_EVERY is ALSO read by its
+# getters and must agree to the yoctoNEAR, or the route is dropped for the pin (near_lockups). A code hash outside
+# NEAR_LOCKUP_STATE_CODES is read by its getters.
+NEAR_LOCKUP_ROUTE = "state"
+NEAR_LOCKUP_CALLS_PER_LOCKUP = {"getters": 7.8, "state": 2.4}
+NEAR_LOCKUP_CHECK_EVERY = 20
+# VALIDATED 2026-10-27 at block 221,804,206 (scratch probe: view_account of all 1,956 lockups, then 160 sampled read
+# both ways): the codes on 1,954 of the 1,956 — 3kVY… 1,725 (the buggy code: 60 sampled; balance 60/60 and unvested
+# 28/28 equal to the getters; locked and owners are the lakehouse recomputation on both routes), 4Pfw… 125 (58 sampled),
+# 3skH… 101 (39), Cw7b… 3 (2) — balance, locked, owners 99/99 and unvested 30/30 equal to the yoctoNEAR. Not listed,
+# so read by the getters: DiC9… (1 lockup, buggy, not sampled) and ETTv… (1: not a lockup contract — every getter
+# MethodNotFound, a 25-byte state).
+NEAR_LOCKUP_STATE_CODES: tuple = ("3kVY9qcVRoW3B5498SMX6R3rtSLiCdmBzKs7zcnzDJ7Q",
+                                  "4Pfw2RU6e35dUsHQQoFYfwX8KFFvSRNwMSNLXuSFHXrC",
+                                  "3skHaUtj85RPdUZwx6M4Jp4PfC9qJHqnsyuWLtuq2xBT",
+                                  "Cw7bnyp4B6ypwvgZuMmJtY6rHsxP2D4PC8deqeJ3HP7D")
+# Jake's run of 2026-10-26: 15,183 calls in 4h35m (2,733 throttled, 28,620 s cooled) — 0.92 calls/s end to end
+NEAR_LOCKUP_THROUGHPUT_DEFAULT = {"calls_per_s": 15_183 / (4 * 3600 + 35 * 60), "measured": "2026-10-26",
+                                  "how": "Jake's run: 1,955 lockups by the getters in 4h35m, 2,733 calls throttled"}
+
+
+def _lockup_throughput() -> dict:
+    import json as _json                                   # noqa: PLC0415
+    try:
+        got = _json.loads((_lockup_cache_path().parent / "near-lockups-throughput.json").read_text())
+        if float(got.get("calls_per_s", 0)) > 0:
+            return got
+    except (OSError, ValueError):
+        pass
+    return dict(NEAR_LOCKUP_THROUGHPUT_DEFAULT)
+
+
+def _lockup_throughput_save(tp: dict) -> None:
+    import json as _json                                   # noqa: PLC0415
+    from fetch.logcache import atomic_write_text           # noqa: PLC0415
+    f = _lockup_cache_path().parent / "near-lockups-throughput.json"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(f, _json.dumps(tp))
+
+
+def lockup_resumable(cache_path=None) -> dict | None:
+    """D4-1a: an UNFINISHED read whose pin is still valid (any run resumes it rather than pinning anew): its cache, else
+    None."""
+    from pathlib import Path as _P                         # noqa: PLC0415
+    c = _lockup_cache_load(_P(cache_path) if cache_path else _lockup_cache_path())
+    if not c or c.get("complete"):
+        return None
+    return c if _lockup_pin_live(c) else None
+
+
+def _validate_this(acc: str) -> bool:
+    import hashlib                                         # noqa: PLC0415
+    return int(hashlib.sha1(acc.encode()).hexdigest()[:8], 16) % NEAR_LOCKUP_CHECK_EVERY == 0
+
+
+def _near_view_account(acc: str, height: int) -> tuple[dict | None, str]:
+    why = ""
+    for url, va in _near_post({"request_type": "view_account", "account_id": acc, "block_id": height}):
+        if "_transient" in va:
+            why = f"view_account {va['_transient']}"
+            continue
+        res = va.get("result") or {}
+        if res.get("code_hash"):
+            return res, ""
+        err = va.get("error") or {}
+        why = f"{urlparse(url).netloc}: view_account {(err.get('cause') or {}).get('name') or err.get('name') or 'no result'}"
+    return None, why
+
+
+def _read_lockup_state(acc: str, height: int, block_ts: int) -> tuple[dict | None, str]:
+    """The state route: (figures, "") / (None, why) when unread / (None, "GETTERS") when the getters must read it (a
+    code hash outside the known lockup codes, or a state whose tail does not parse)."""
+    va, why = _near_view_account(acc, height)
+    if va is None:
+        return None, why
+    code = va["code_hash"]
+    buggy = code in NEAR_LOCKUP_BUGGY_CODE
+    if code not in NEAR_LOCKUP_STATE_CODES:
+        return None, "GETTERS"
+    raw, why = _near_view_state(acc, height)
+    if raw is None:
+        return None, f"state: {why}"
+    try:
+        st_ = near_lockup_state(raw)
+    except ValueError:
+        return None, "GETTERS"
+    out = near_lockup_from_state(st_, int(va["amount"]), block_ts, buggy)
+    if out is None:
+        return None, "GETTERS"
+    out["via"] = "state"
+    return out, ""
+
+
+def _read_one(acc: str, height: int, block_ts: int, route: str = "getters", check: bool = False):
+    """One lockup by the route in force; a checked one is read by both routes and must agree (D4-1c)."""
+    if route != "state":
+        res, why = _read_lockup(acc, height, block_ts)
+        return (dict(res, via="getters") if res is not None else None), why
+    res, why = _read_lockup_state(acc, height, block_ts)
+    if res is None and why == "GETTERS":
+        g, gwhy = _read_lockup(acc, height, block_ts)
+        return (dict(g, via="getters") if g is not None else None), gwhy
+    if res is None or not check:
+        return res, why
+    g, gwhy = _read_lockup(acc, height, block_ts)
+    if g is None:
+        return None, gwhy                                  # checked lockups are never taken unchecked: read again
+    keys = ("balance", "owners") + (() if res.get("buggy") else ("locked", "unvested"))
+    if res.get("zero") or g.get("zero"):
+        diff = "" if bool(res.get("zero")) == bool(g.get("zero")) else "zero balance on one route only"
+    elif g.get("fault"):
+        diff = ""                                          # the getter faults; the state route has a figure — said below
+    else:
+        diff = "; ".join(f"{k} state {res.get(k)} vs getter {g.get(k)}" for k in keys
+                         if str(res.get(k)) != str(g.get(k)))
+    if diff:
+        return dict(g, via="getters", mismatch=f"{acc}: {diff}"), ""
+    return dict(res, checked=True), ""
 # the contract's own getter failing inside the contract — the same answer every time: a lockup left out, not unread
 _NEAR_CONTRACT_FAULT = "wasm execution failed"
 
@@ -5157,29 +5366,36 @@ def _lockup_pin_live(cache: dict, now=None) -> bool:
     return any((j.get("result") or {}).get("header") for _u, j in got)
 
 
+def _fault(acc: str, height: int, why: str) -> dict:
+    """A lockup whose own getter fails inside the contract, with its account balance (D4-1d: the bound on leaving it
+    out)."""
+    va, _w = _near_view_account(acc, height)
+    return {"fault": why, "account_amount": (str(va.get("amount")) if va else None)}
+
+
 def _read_lockup(acc: str, height: int, block_ts: int) -> tuple[dict | None, str]:
     """One lockup at the pinned block: ({balance, locked, unvested, owners[, buggy, rpc_locked]} in yocto, or
     {"zero": True}, or {"fault": why} — its own getter failing inside the contract), or (None, why) when it could not be
     READ this time (a rerun tries it again)."""
     bal, why = _near_view(acc, "get_balance", block_id=height)
     if bal is None:
-        return ({"fault": why}, "") if _NEAR_CONTRACT_FAULT in why else (None, why)
+        return (_fault(acc, height, why), "") if _NEAR_CONTRACT_FAULT in why else (None, why)
     if int(bal) == 0:
         return {"zero": True}, ""
     locked, why = _near_view(acc, "get_locked_amount", block_id=height)
     if locked is None:
-        return ({"fault": why}, "") if _NEAR_CONTRACT_FAULT in why else (None, why)
+        return (_fault(acc, height, why), "") if _NEAR_CONTRACT_FAULT in why else (None, why)
     owners, why_o = _near_view(acc, "get_owners_balance", block_id=height)
     vest, why_v = _near_view(acc, "get_vesting_information", block_id=height)
     if (owners is None and why_o) or (vest is None and why_v and "MethodNotFound" not in why_v):
         w = why_o or why_v
-        return ({"fault": w}, "") if _NEAR_CONTRACT_FAULT in w else (None, w)
+        return (_fault(acc, height, w), "") if _NEAR_CONTRACT_FAULT in w else (None, w)
     unv = 0
     if isinstance(vest, dict) and "VestingSchedule" in vest:
         u, why_u = _near_view(acc, "get_unvested_amount", {"vesting_schedule": vest["VestingSchedule"]},
                               block_id=height)
         if u is None and why_u:
-            return ({"fault": why_u}, "") if _NEAR_CONTRACT_FAULT in why_u else (None, why_u)
+            return (_fault(acc, height, why_u), "") if _NEAR_CONTRACT_FAULT in why_u else (None, why_u)
         unv = int(u or 0)
     elif isinstance(vest, dict) and "Terminating" in vest:
         unv = int((vest["Terminating"] or {}).get("unvested_amount") or 0)

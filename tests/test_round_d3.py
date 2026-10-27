@@ -70,12 +70,12 @@ def test_1_b_the_amber_reason_reaches_the_cell_band(monkeypatch):
 
 
 # ================================================================================================== 2
-def test_2_a_the_lockup_task_is_weekly_sunday_0215_4h_wake_and_its_own_log():
+def test_2_a_the_lockup_task_is_weekly_sunday_0215_8h_wake_and_its_own_log():
     reg = (ROOT / "windows" / "register_lockup_task.ps1").read_text(encoding="utf-8")
     assert '[string]$TaskName = "Crypto-Tracker NEAR lockups"' in reg
     assert '[string]$At = "02:15"' in reg and '[string]$Day = "Sunday"' in reg
     assert "New-ScheduledTaskTrigger -Weekly -DaysOfWeek $Day -At $At" in reg
-    assert "-WakeToRun -StartWhenAvailable" in reg and "[int]$LimitHours = 4" in reg
+    assert "-WakeToRun -StartWhenAvailable" in reg and "[int]$LimitHours = 8" in reg      # D4-1a: 8 h (4 until D4)
     assert "-ExecutionTimeLimit (New-TimeSpan -Hours $LimitHours) -MultipleInstances IgnoreNew" in reg
     assert "near_lockups_run.ps1" in reg and "-LogonType Interactive" in reg
     run = (ROOT / "windows" / "near_lockups_run.ps1").read_text(encoding="utf-8")
@@ -249,8 +249,12 @@ def test_5b_market_revenue_is_protocol_plus_realized_yt_for_closed_epochs_only()
     out = FetchOutput()
     PendleEpochs(get=lambda url: mf)._market_revenue("Pendle", spec, pd.Timestamp("2026-10-26"), out)
     f = pd.concat(out.frames, ignore_index=True)
-    assert f["date"].tolist() == [pd.Timestamp("2026-10-06")] and f["value"].tolist() == [249_621.0]
-    assert "NOT STORED (a field missing): 2026-09-22" in out.log[-1].message
+    r = f[f["metric"] == "pendle_epoch_market_revenue_usd"]
+    assert r["date"].tolist() == [pd.Timestamp("2026-10-06")] and r["value"].tolist() == [249_621.0]
+    assert any("NOT STORED (a field missing): 2026-09-22" in e.message for e in out.log)
+    # D4-5a: the same epoch's market fees (pool fee + realized YT fee) are stored beside it
+    m = f[f["metric"] == "pendle_epoch_market_fees_usd"]
+    assert m["date"].tolist() == [pd.Timestamp("2026-10-06")] and m["value"].tolist() == [9e9 + 186_396.0]
 
 
 def _long(rows):
@@ -267,8 +271,9 @@ def test_5b_the_cross_check_names_its_legs_and_its_verdict_basis_is_unchanged():
                  (e, "pendle_pt_looping_fees_usd", lp)]
         rows += [(d, "revenue_usd", ours / 14) for d in pd.date_range(e, periods=14)]
     long = _long(rows)
-    args = config.CREDIBILITY["Pendle"]["in_revenue"]["ref"]["args"]
-    assert args["markets"] == "pendle_epoch_market_revenue_usd" and args["looping"] == "pendle_pt_looping_fees_usd"
+    # D4-5 (Jake): the Credibility row is now ours vs DefiLlama (tests/test_round_d4.py); D3's working, still in
+    # credibility.FORMULAS, is tested here with its own arguments
+    args = {"side": "ref", "markets": "pendle_epoch_market_revenue_usd", "looping": "pendle_pt_looping_fees_usd"}
     assert config.CREDIBILITY["Pendle"]["in_revenue"]["ref"]["tol"] == 10.0              # the tolerance is unchanged
     ours = cr._pendle_epoch_revenue("Pendle", None, long, pd.Timestamp("2026-10-10"), **{**args, "side": "ours"})
     ref = cr._pendle_epoch_revenue("Pendle", None, long, pd.Timestamp("2026-10-10"), **args)
@@ -283,4 +288,4 @@ def test_5b_the_cross_check_names_its_legs_and_its_verdict_basis_is_unchanged():
     assert "over the 1 epoch(s) with every leg stored, 2026-09-22..2026-09-22" in how2
     assert "Legs not split for 2026-09-08" in how2
     note = config.CREDIBILITY["Pendle"]["in_revenue"]["ref"]["note"]
-    assert "DefiLlama does count airdrops" in note and "Boros out since D3-5a" in note
+    assert "BASIS (D4-5" in note and "110,750" in note

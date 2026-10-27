@@ -1046,6 +1046,11 @@ class ChainReader:
             flt = {"address": self.checksum(address), "topics": topics, "fromBlock": int(lo), "toBlock": int(upper)}
             narrowed, said = False, []
             for u in urls:
+                # D4-2a: never a range over an endpoint's known per-call limit
+                cap = self.getlogs_cap(u)
+                if cap is not None and upper - lo + 1 > cap:
+                    said.append(f"{rpc_host(u)}: not asked — its plan serves {cap:,} blocks per call")
+                    continue
                 # a caller's deadline (G8 3c: the repair pass inside its scan's share) — no new call past it, and no call
                 # given longer than what is left
                 left = None if deadline is None else deadline - time.monotonic()
@@ -1323,6 +1328,32 @@ class ChainReader:
         m = cls._HINT_NUM.search(msg or "")
         return int(m.group(1).replace(",", "")) if m else None
 
+    # ===== NEVER SEND ALCHEMY A RANGE IT WILL REJECT (Round D4-2a, Jake's run on D2 2026-10-26). =====
+    # Sky/burn_logs still sent Alchemy wide eth_getLogs ranges each run — the "Alchemy first" try (G3 items 10/11) and the
+    # first chunk of a walk learn the plan's limit only from the 400 ("Under the Free tier plan, you can make eth_getLogs
+    # requests with up to a 10 block range"). The limit is now KNOWN before asking: config.ALCHEMY_GETLOGS_MAX_RANGE (10,
+    # Alchemy's Free tier, from its own error body read 2026-09-23 and 2026-10-26; ALCHEMY_GETLOGS_MAX_RANGE in .env for
+    # a paid plan). A span Alchemy can serve in at most SMALL_SPAN_CALLS calls is chunked to its limit; a wider one is
+    # never sent to it — the scan goes to the explorer route (Etherscan) and the public log RPCs.
+    SMALL_SPAN_CALLS = 20
+
+    @staticmethod
+    def getlogs_cap(url: str) -> int | None:
+        """The most blocks an endpoint serves per eth_getLogs, where it is known before asking (Alchemy's plan)."""
+        from . import alchemy_usage
+        if not alchemy_usage.is_alchemy(url):
+            return None
+        env = os.environ.get("ALCHEMY_GETLOGS_MAX_RANGE", "").strip()
+        try:
+            return max(1, int(env)) if env else int(config.ALCHEMY_GETLOGS_MAX_RANGE)
+        except ValueError:
+            return int(config.ALCHEMY_GETLOGS_MAX_RANGE)
+
+    def _cap_refuses(self, url: str, span: int) -> int | None:
+        """The cap when `span` blocks need more than SMALL_SPAN_CALLS calls at it (the endpoint is not asked)."""
+        cap = self.getlogs_cap(url)
+        return cap if cap is not None and cap < self.LOG_RANGE_USEFUL and span > cap * self.SMALL_SPAN_CALLS else None
+
     def no_getlogs(self, chain: str, url: str) -> str | None:
         return self.__dict__.get("_nologs", {}).get((chain, url))
 
@@ -1372,6 +1403,14 @@ class ChainReader:
         """
         tried: list[str] = []
         urls = list(only) if only else self.log_endpoints(chain)
+        # D4-2a: an endpoint whose known per-call limit cannot serve this span is never asked for it
+        for u in urls:
+            cap = self._cap_refuses(u, head - block + 1)
+            if cap is not None and not self.no_getlogs(chain, u):
+                self._mark_no_getlogs(chain, u, f"its plan serves {cap:,} blocks per call (ALCHEMY_GETLOGS_MAX_RANGE) "
+                                                f"and this span is {head - block + 1:,} — not asked")
+        if only and all(self.no_getlogs(chain, u) for u in urls):
+            raise NoGetLogs("; ".join(str(self.no_getlogs(chain, u)) for u in urls))
         usable = lambda u: not self.is_down(chain, u) and not self.no_getlogs(chain, u)  # noqa: E731
         # KEYED FIRST FOR LOG READS (Round G 1.6): the kept endpoint can be a public one — the keyed endpoint failed its
         # connect in the run's first minute — and publicnode refuses eth_getLogs with 403. A log read starts on the
@@ -1386,6 +1425,10 @@ class ChainReader:
         else:
             w3 = self.web3(chain)
         while True:
+            # D4-2a: never a range over the endpoint's known per-call limit
+            cap = self.getlogs_cap(str(getattr(getattr(w3, "provider", None), "endpoint_uri", "") or ""))
+            if cap is not None and chunk > cap:
+                chunk = cap
             upper = min(block + chunk - 1, head)
             try:
                 logs = list(w3.eth.get_logs({**base, "fromBlock": block, "toBlock": upper}))
@@ -1603,7 +1646,9 @@ class ChainReader:
         # wide ranges), it is asked first; a plan refusal marks it NO getLogs for the run (one refused call) and the
         # scan falls through to the explorer route, then the public RPCs.
         lead = next((u for u in self.log_endpoints(chain) if not self.is_down(chain, u)), None)
-        if lead and alchemy_usage.is_alchemy(lead) and not self.no_getlogs(chain, lead):
+        # D4-2a: Alchemy first only where its plan serves the span (a paid plan, or a short span chunked to its limit)
+        if lead and alchemy_usage.is_alchemy(lead) and not self.no_getlogs(chain, lead) \
+                and self._cap_refuses(lead, to_block - from_block + 1) is None:
             try:
                 return self._rpc_traverse(chain, base, from_block, to_block, chunk, only=[lead])
             except NoGetLogs:

@@ -3150,6 +3150,67 @@ def _near_lockup_views(groups: dict) -> None:
              "tier": 1, "source": srcs}), cols)
 
 
+def _epoch_primary_views(groups: dict, asof=None) -> None:
+    """D4-5 (Jake 2026-10-27, decision 5 on D3): A PROJECT'S OWN PER-EPOCH FIGURE IS THE PRIMARY BASIS (config.EPOCH_PRIMARY;
+    Pendle's fees, revenue and holders revenue). Each complete epoch's figure — its `epoch` series plus every `plus` leg
+    stored for that epoch — is spread evenly over the epoch's days (source pendle_api:epoch_spread[...], naming the epoch,
+    its legs and any leg not tracked that epoch). The project's DAILY cross-check (DefiLlama, stored under `daily`) stands
+    only where no epoch is published: before the first stored epoch (its own source, "defillama") and after the last
+    complete one — the epoch in progress (defillama:in_progress_epoch[...]). An epoch ends where the next stored one
+    begins, at most `epoch_days`; a missing epoch between two stored ones leaves its days unformed — never a daily figure
+    in the middle of the epoch leg (unknown is never 0). The three legs are a declared handover (config series_handover). With no
+    epoch stored the cross-check stands alone, as stored."""
+    for p in scoped_projects():
+        spec = config.EPOCH_PRIMARY.get(p["name"])
+        if not spec:
+            continue
+        name, n = p["name"], int(spec["epoch_days"])
+        for metric, leg in spec["series"].items():
+            dlg = groups.get((name, leg["daily"]))
+            ep = _daily(groups.get((name, leg["epoch"])))
+            base = dlg if dlg is not None and not dlg.empty else groups.get((name, leg["epoch"]))
+            if base is None or base.empty:
+                continue
+            dl = (dlg.assign(date=pd.to_datetime(dlg["date"]).dt.normalize()).sort_values("date")
+                  .drop_duplicates("date", keep="last") if dlg is not None and not dlg.empty else None)
+            rows, kept = [], sorted(ep.index)
+            # AN EPOCH ENDS WHERE THE NEXT BEGINS, at most `n` days (Pendle's first sPENDLE epoch, 2026-01-29, ran 12 days
+            # to 02-10); a longer gap before the next stored epoch is days no epoch covers — left unformed
+            length = {st: min(n, (nx - st).days) for st, nx in zip(kept, kept[1:])}
+            if kept:
+                length[kept[-1]] = n
+            plus = {m: _daily(groups.get((name, m))) for m in leg.get("plus", ())}
+            for st in kept:
+                k = length[st]
+                v, parts, untracked = float(ep[st]), [f"{leg['epoch']} {float(ep[st]):,.0f}"], []
+                for m, ser in plus.items():
+                    if st in ser.index:
+                        v += float(ser[st])
+                        parts.append(f"{m} {float(ser[st]):,.0f}")
+                    else:
+                        untracked.append(m)
+                src = (f"pendle_api:epoch_spread[epoch {st.date()}: {' + '.join(parts)}, spread evenly over its {k} days"
+                       + (f"; not tracked this epoch: {', '.join(untracked)}" if untracked else "") + "]")
+                for d in pd.date_range(st, periods=k):
+                    rows.append((d, v / k, src[:500]))
+            if dl is not None:
+                first = kept[0] if kept else None
+                last_end = kept[-1] + pd.Timedelta(days=length[kept[-1]] - 1) if kept else None
+                for d, v, s_ in zip(dl["date"], dl["value"].astype(float), dl["source"].astype(str)):
+                    if first is None or d < first:
+                        rows.append((d, v, s_))
+                    elif d > last_end and (asof is None or d <= pd.Timestamp(asof)):
+                        rows.append((d, v, f"defillama:in_progress_epoch[{spec.get('daily_label', leg['daily'])} "
+                                           f"({leg['daily']}) for the epoch from {(last_end + pd.Timedelta(days=1)).date()}"
+                                           f", until it closes and is published]"))
+            if not rows:
+                continue
+            rows.sort(key=lambda r: r[0])
+            groups[(name, metric)] = _as_stored(pd.DataFrame(
+                {"date": [r[0] for r in rows], "project": name, "metric": metric, "value": [r[1] for r in rows],
+                 "tier": 1, "source": [r[2] for r in rows]}), base.columns)
+
+
 def _daily(g) -> pd.Series:
     """A stored or view frame as one value per day (the last row of a day), float."""
     if g is None or g.empty:
@@ -4415,6 +4476,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _provisional_views(groups)        # G15 5: yesterday read before 16:00 UTC is stored, not used
     _handover_cut_views(groups)       # G11 C1: a declared cut — the earlier leg's rows after the later leg starts dropped
     _partial_sum_views(groups)    # FIRST: nothing downstream may read a partial sum
+    _epoch_primary_views(groups, asof)   # D4-5: Pendle's own epoch figures, spread; DefiLlama only where none
     _same_basis_views(groups)     # one basis read by several routes is one measuring point (config.SAME_BASIS)
     _epoch_paid_views(groups, asof)  # round 3 B4: a weekly row dated by the flip that paid it (config.EPOCH_PAID_AT)
     _history_prepend_views(groups)  # fix round 3: a series' history from another route on the same basis

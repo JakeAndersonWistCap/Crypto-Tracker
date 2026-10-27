@@ -2328,6 +2328,42 @@ def _drop_stocks(frames: list) -> tuple[list, list[str]]:
     return out, sorted(set(dropped))
 
 
+def timeout_cause(stats: dict | None, budget: float, rpc: dict | None = None) -> tuple[str, str]:
+    """WHY A TIER TIMED OUT, FROM ITS OWN CALLS (Round D4-2c, Jake's run on D2: five sources timed out and the run said
+    "NETWORK-WIDE TROUBLE"). (cause, evidence):
+      NETWORK      the calls failed: >= 3 timeouts / connection errors / 5xx, or >= 3 calls of 10 s or more, or a tenth of
+                   the calls failed — the path to the servers, not the work
+      THROTTLED    >= 3 HTTP 429 and a quarter of the budget spent waiting on them — the server's rate limit: fewer calls
+                   or a cache, not a rerun
+      CODE         every call answered at its usual speed and the budget still ran out — the work did not fit (too many
+                   calls for the budget): fixed in the code, never by a rerun
+      UNCLASSIFIED no call record, or a mix
+    `stats` is the tier's Http stats (fetch.base.Http); `rpc` a {"n", "timeouts", "throttled", "errors", "p50", "p90"}
+    total of its RPC calls (fetch.chain.latency_summary), for a tier reading through web3."""
+    if stats and stats.get("calls"):
+        calls, net, thr = int(stats["calls"]), int(stats.get("net_errors", 0)), int(stats.get("throttled", 0))
+        times = [t for t, _p in stats.get("times") or ()]
+        slow = sum(1 for t in times if t >= 10)
+        http_s, waited = float(stats.get("http_s", 0.0)), float(stats.get("waited_s", 0.0))
+        p50 = sorted(times)[len(times) // 2] if times else 0.0
+        ev = (f"{calls} call(s), {net} network error(s), {thr} HTTP 429, {slow} call(s) >= 10s, p50 {p50:.2f}s; "
+              f"{http_s:.0f}s in calls + {waited:.0f}s waiting/spacing of the {budget:.0f}s budget")
+    elif rpc and rpc.get("n"):
+        calls, net, thr = int(rpc["n"]), int(rpc.get("timeouts", 0)) + int(rpc.get("errors", 0)), int(rpc.get("throttled", 0))
+        slow, waited = int(rpc.get("slow", 0)), float(rpc.get("waited_s", 0.0))
+        ev = (f"{calls} RPC call(s), {net} timeout(s)/error(s), {thr} HTTP 429, p50 {float(rpc.get('p50', 0)):.2f}s "
+              f"p90 {float(rpc.get('p90', 0)):.2f}s, of the {budget:.0f}s budget")
+    else:
+        return "UNCLASSIFIED", "no call record for this tier"
+    if net >= 3 or slow >= 3 or (calls and net / calls >= 0.1):
+        return "NETWORK", ev
+    if thr >= 3 and waited >= 0.25 * budget:
+        return "THROTTLED", ev
+    if net == 0 and slow == 0:
+        return "CODE", ev + " — every call answered at its usual speed: the work did not fit the budget"
+    return "UNCLASSIFIED", ev
+
+
 def _abandon(name, st, budget) -> tuple:
     """Keep what the source produced before the cut-off; stop reading its output."""
     sub = st["sub"]
@@ -2345,6 +2381,17 @@ def _abandon(name, st, budget) -> tuple:
     got = {(str(r.project), str(r.metric)) for f in kept.frames for r in f[["project", "metric"]].itertuples()} \
         if kept.frames else set()
     gapped = [f"{pn}/{m}" for pn, m in planned if (pn, m) not in got]
+    # D4-2c: the cause, from the tier's own calls (its Http client, or the chain tier's RPC timing)
+    rpc = None
+    if getattr(getattr(st.get("adapter"), "http", None), "stats", None) is None:
+        from .chain import latency_summary
+        summ = latency_summary()
+        if summ:
+            rpc = {"n": sum(v["n"] for v in summ.values()), "timeouts": sum(v["timeouts"] for v in summ.values()),
+                   "throttled": sum(v["throttled"] for v in summ.values()),
+                   "errors": sum(v["errors"] for v in summ.values()),
+                   "p50": max(v["p50"] for v in summ.values()), "p90": max(v["p90"] for v in summ.values())}
+    cause, evidence = timeout_cause(getattr(getattr(st.get("adapter"), "http", None), "stats", None), budget, rpc)
     kept.fail(name, None,
               f"TIER TIMED OUT after {budget:.0f}s — abandoned and the run moved on. Kept the "
               f"{len(kept.frames)} frame(s) it had produced; everything else it serves is gapped "
@@ -2352,7 +2399,7 @@ def _abandon(name, st, budget) -> tuple:
               + (f". STOCKS NOT STORED (a stock read by a tier that timed out may be a partial sum — G11 E): "
                  f"{', '.join(stocks_dropped)}" if stocks_dropped else "") + ". Still waiting on: "
               f"{'; '.join(waiting) or 'nothing registered'}. Last phase: {doing}. Where the time went: "
-              f"{_http_summary(st)}.",
+              f"{_http_summary(st)}. CAUSE: {cause} — {evidence}.",
               st["tier"])
     log.warning("tier %s TIMED OUT after %.0fs — abandoned (waiting on: %s; last phase: %s)", name, budget,
                 "; ".join(waiting) or "nothing registered", doing)
