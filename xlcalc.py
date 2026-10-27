@@ -7,7 +7,7 @@ evaluates them directly. It covers exactly the subset build_workbook.py writes �
 `unsupported()`, which names any function outside it rather than guessing:
 
     INDEX  MATCH(…,0)  IF  IFERROR  ISNUMBER  AND  OR  NOT  LEFT  ABS  ROUND  SQRT  NA
-    COUNTIF  COUNTIFS  COUNTA  TEXT(…,"#,##0")
+    COUNTIF  COUNTIFS  COUNTA  SUMIFS  TEXT(…,"#,##0" | "+0%;-0%")
     + - * / ^ & = <> < > <= >=, unary minus, %, sheet-qualified cells and ranges
 
 Excel's rules where they matter: errors propagate through arithmetic and comparisons; IF and IFERROR
@@ -26,7 +26,7 @@ import sys
 from openpyxl.utils import column_index_from_string, get_column_letter
 
 SUPPORTED = {"INDEX", "MATCH", "IF", "IFERROR", "ISNUMBER", "AND", "OR", "NOT", "LEFT", "ABS", "ROUND",
-             "SQRT", "NA", "COUNTIF", "COUNTIFS", "COUNTA", "TEXT", "MAX", "MIN"}
+             "SQRT", "NA", "COUNTIF", "COUNTIFS", "COUNTA", "TEXT", "MAX", "MIN", "SUMIFS"}
 
 
 class XLError(Exception):
@@ -503,6 +503,10 @@ class Workbook:
                 return v                         # TEXT of text is the text itself, as in Excel
         if fmt == "#,##0":
             return _format_thousands(v)
+        if fmt == "+0%;-0%":                     # the reader's "what changed": a signed whole percent
+            n = _num(v) * 100
+            r = math.floor(abs(n) + 0.5)          # Excel rounds half away from zero
+            return ("-" if n < 0 and r else "+") + f"{r:.0f}%"
         raise XLError("#VALUE!")                 # a format this evaluator does not know: said, not guessed
 
     def _f_INDEX(self, args, sheet):
@@ -597,6 +601,32 @@ class Workbook:
 
     def _f_COUNTIF(self, args, sheet):
         return self._countifs([(args[0], args[1])], sheet)
+
+    def _f_SUMIFS(self, args, sheet):
+        """SUMIFS(sum range, range1, criterion1, ...): the sum of the numbers in the sum range whose rows meet every
+        criterion (text and empty cells add nothing, as in Excel)."""
+        srng = self._eval(args[0], sheet)
+        if not isinstance(srng, Range):
+            raise XLError("#VALUE!")
+        cells = list(srng.cells())
+        ranges, tests = [], []
+        for rng_node, crit_node in zip(args[1::2], args[2::2]):
+            rng = self._eval(rng_node, sheet)
+            if not isinstance(rng, Range):
+                raise XLError("#VALUE!")
+            ranges.append(list(rng.cells()))
+            tests.append((rng.sheet, self._criterion(self._val(crit_node, sheet))))
+        if any(len(r) != len(cells) for r in ranges):
+            raise XLError("#VALUE!")
+        total = 0.0
+        for i, (r, c) in enumerate(cells):
+            if all(t(self.value(sh, *ranges[k][i])) for k, (sh, t) in enumerate(tests)):
+                v = self.value(srng.sheet, r, c)
+                if isinstance(v, XLError):
+                    raise v
+                if isinstance(v, (int, float)) and not isinstance(v, bool):
+                    total += float(v)
+        return total
 
     def _f_COUNTA(self, args, sheet):
         n = 0

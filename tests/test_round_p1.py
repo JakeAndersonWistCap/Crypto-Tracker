@@ -56,7 +56,8 @@ def built(tmp_path_factory):
 # ================================================================================================== P1-1 / P1-3
 def test_p1_1_two_files_the_reader_tabs_in_order_and_the_audit_file_whole(built):
     r = openpyxl.load_workbook(built["reader"])
-    assert r.sheetnames == ["About", "Summary", "A3 Revenue Buyback", "Definitions", "_data"]
+    assert r.sheetnames == ["About", "Summary", "A1 Infrastructure", "A2 Coordination", "A3 Revenue Buyback",
+                            "A4 Permanent Burn", "Comparison", "Business", "Charts", "Definitions", "_data", "_series"]
     assert r["_data"].sheet_state == "hidden"
     a = openpyxl.load_workbook(built["audit"], read_only=True)
     for tab in ("Master", "A1 Infrastructure", "A2 Coordination", "A3 Revenue Buyback", "A4 Permanent Burn",
@@ -117,7 +118,7 @@ def test_p1_2_a_value_cell_is_a_number_or_one_short_code(built):
             if v is None or h in text_cols or c.number_format == "@":
                 continue
             if isinstance(v, str) and v.startswith("="):
-                assert "_data!" in v, (tab, c.coordinate, v)
+                assert "_data!" in v or "_series!" in v, (tab, c.coordinate, v)
                 continue
             if isinstance(v, (int, float)):
                 continue
@@ -150,26 +151,48 @@ def test_p1_5_periods_are_like_for_like_windows_and_a_short_history_is_said():
     assert reader.price_change(p, 7, pd.Timestamp("2026-10-27"))[0] is None
 
 
-def test_p1_5_the_selector_picks_the_period_precomputed_on_data(built):
+def test_p1_5_the_selector_drives_the_period_columns_live_custom_included(built):
+    """P2a (Jake 2026-10-27): the selector (1D … 3Y, custom) drives every growth and price-change column from the one
+    cell — each a formula on the daily series in `_series`, equal to the Python definition for every period."""
     import xlcalc
+    import store as sm
     r = openpyxl.load_workbook(built["reader"])
     ws = r["Summary"]
     assert ws["B2"].value == "90D" and ws.data_validations.dataValidation
-    gcol = next(c for c in range(1, ws.max_column + 1) if ws.cell(4, c).value == "Price change, selected period")
-    rows = [rr for rr in range(5, ws.max_row + 1) if ws.cell(rr, 2).value]
+    assert "custom" in ws.data_validations.dataValidation[0].formula1
+    pcol = next(c for c in range(1, ws.max_column + 1) if ws.cell(4, c).value == "Price change, selected period")
+    gcol = next(c for c in range(1, ws.max_column + 1) if ws.cell(4, c).value == "Revenue growth, selected period")
+    rows = {ws.cell(rr, 1).value: rr for rr in range(5, ws.max_row + 1) if ws.cell(rr, 2).value}
+    st = sm.Store(str(built["dir"] / "metrics.db")) if (built["dir"] / "metrics.db").exists() else None
+    long = None
+    if st is None:
+        import measuring_guard as mg
+        from real_dump import to_store
+        db = built["dir"] / "series.db"
+        for pl in mg._payloads():
+            to_store(pl, db)
+        st = sm.Store(str(db))
+    try:
+        long = st.load_long()
+    finally:
+        st.close()
     seen = 0
-    for period in ("30D", "3Y"):
+    for period, days in (("30D", 30), ("1Y", 365), ("custom", 45)):
         ws["B2"] = period
+        ws["D2"] = 45
         X = xlcalc.Workbook(r)
-        for rr in rows:
-            v = X.value("Summary", rr, gcol)
-            com = ws.cell(rr, gcol).comment.text
-            line = next(x for x in com.splitlines() if x.startswith(f"{period}:"))
-            if isinstance(v, float):
-                assert f"{v:+.1%}" in line, (period, line)
-                seen += 1
+        for name, rr in rows.items():
+            s = long[(long.project == name) & (long.metric == "price_usd")]
+            s = s.assign(date=pd.to_datetime(s.date).dt.normalize()).groupby("date")["value"].last().sort_index()
+            want, _why = reader.price_change(s, days, built["asof"])
+            got = X.value("Summary", rr, pcol)
+            if want is None:
+                assert got == "n/a", (period, name, got)
             else:
-                assert v == "—" and "— —" in line, (period, v, line)
+                assert got == pytest.approx(want, rel=1e-9), (period, name, got, want)
+                seen += 1
+            g = X.value("Summary", rr, gcol)
+            assert isinstance(g, float) or g == "n/a", (period, name, g)
     assert seen > 0
 
 
@@ -202,13 +225,15 @@ def test_p1_6_each_group_is_ranked_by_its_key_and_the_unmeasured_rank_last(built
             cur.append((X.value("Summary", rr, kc), X.value("Summary", rr, rc), ws.cell(rr, rc).comment.text))
     assert len(groups) == 4
     for g in groups:
-        assert [x[1] for x in g] == list(range(1, len(g) + 1))
+        g = [x for x in g if x[1] != "parked"]
         keys = [x[0] for x in g]
         nums = [k for k in keys if isinstance(k, float)]
         assert nums == sorted(nums, reverse=True)
         first_text = next((i for i, k in enumerate(keys) if not isinstance(k, float)), len(keys))
-        assert all(not isinstance(k, float) for k in keys[first_text:]), "the unmeasured rank last"
-        assert all("Ranked last" in x[2] for x in g[first_text:])
+        assert [x[1] for x in g[:first_text]] == list(range(1, first_text + 1))
+        assert all(not isinstance(k, float) for k in keys[first_text:]), "the unmeasured sort last"
+        # P2a A1: no measured key reads "unranked", the reason in the comment
+        assert all(x[1] == "unranked" and "Unranked" in x[2] for x in g[first_text:])
 
 
 def test_p1_6_the_a3_key_is_the_dilution_ratio_without_its_unlock_leg(built):
@@ -251,8 +276,8 @@ def test_p1_9_every_headline_shown_on_the_reader_equals_its_audit_value(built):
         va = sanity.stated_number(XA.value(h["sheet"], ca.row, ca.column))
         vr = XR.value(sheet, cr.row, cr.column)
         if va is None:
-            blank = not str(XA.value(h["sheet"], ca.row, ca.column) or "").strip()
-            assert (vr is None) if blank else (vr in CODES), (h["project"], h["header"], vr)
+            # P2a A2: an EMPTY audit cell reads a code too (by design / n/a with its reason), never a blank
+            assert vr in CODES, (h["project"], h["header"], vr)
         else:
             assert vr == pytest.approx(float(va), rel=1e-12), (h["project"], h["header"])
             numbers += 1
@@ -313,3 +338,207 @@ def test_p1_8_a3_blocks_in_order_and_the_rest_in_four_collapsed_groups(built):
         hidden = ws.column_dimensions[get_column_letter(c)].hidden
         assert hidden == (c >= e0), (c, ws.cell(4, c).value)
     assert not any(str(ws.cell(4, c).value).startswith("Detail") for c in range(1, ws.max_column + 1))
+
+
+# ================================================================================================== P2a (the Charlie build)
+def _rows_of(ws):
+    return {ws.cell(r, 1).value: r for r in range(5, ws.max_row + 1) if ws.cell(r, 2).value is not None}
+
+
+def _col_of(ws, header):
+    return next(c for c in range(1, ws.max_column + 1) if ws.cell(4, c).value == header)
+
+
+def test_p2a_tabs_in_order_and_nothing_blank(built):
+    r = openpyxl.load_workbook(built["reader"])
+    assert r.sheetnames == ["About", "Summary", "A1 Infrastructure", "A2 Coordination", "A3 Revenue Buyback",
+                            "A4 Permanent Burn", "Comparison", "Business", "Charts", "Definitions", "_data", "_series"]
+    assert r["_data"].sheet_state == r["_series"].sheet_state == "hidden"
+    assert built["stats"]["blank_unexplained"] == 0, built["stats"]["blank_cells"]
+    for tab in ("Summary", "A1 Infrastructure", "A2 Coordination", "A3 Revenue Buyback", "A4 Permanent Burn",
+                "Comparison", "Business"):
+        ws = r[tab]
+        for rr in _rows_of(ws).values():
+            for c in range(1, ws.max_column + 1):
+                assert ws.cell(rr, c).value not in (None, ""), (tab, ws.cell(rr, c).coordinate, ws.cell(4, c).value)
+
+
+def test_p2a_a1_no_measured_key_reads_unranked_and_a_parked_project_is_outside_the_ranks(built):
+    r = openpyxl.load_workbook(built["reader"])
+    ws = r["Summary"]
+    rows, rc, kc = _rows_of(ws), _col_of(ws, "Rank in archetype"), _col_of(ws, "Archetype key")
+    for name, rr in rows.items():
+        rank, key = ws.cell(rr, rc).value, ws.cell(rr, kc).value
+        if reader.parked_reason(name):
+            assert rank == "parked" and ws.cell(rr, rc).comment.text.startswith("PARKED"), name
+            assert ws.cell(rr, 4).fill.fgColor.rgb.endswith("EDEDED"), "a parked row is greyed"
+        elif isinstance(key, str) and not key.startswith("="):
+            assert rank == "unranked" and "Unranked" in ws.cell(rr, rc).comment.text, (name, key, rank)
+    wm = rows.get("World Mobile")
+    assert wm and ws.cell(wm, rc).value == "parked"
+
+
+def test_p2a_a2_a_blank_audit_cell_reads_a_code_with_its_reason(built):
+    r = openpyxl.load_workbook(built["reader"])
+    ws = r["Summary"]
+    rows, pc = _rows_of(ws), _col_of(ws, "Payout ratio")
+    for name in ("Ethereum", "Plume", "Morpho", "Aethir"):
+        if name in rows:
+            c = ws.cell(rows[name], pc)
+            assert c.value == "by design" and "no revenue-funded value to holders" in c.comment.text, (name, c.value)
+
+
+def test_p2a_a3_a_payout_above_one_says_what_funds_the_excess(built):
+    import xlcalc
+    r = openpyxl.load_workbook(built["reader"])
+    X = xlcalc.Workbook(r)
+    ws = r["Summary"]
+    pc = _col_of(ws, "Payout ratio")
+    seen = 0
+    for name, rr in _rows_of(ws).items():
+        v = X.value("Summary", rr, pc)
+        if isinstance(v, float) and v > 1:
+            assert "Above 1.0x" in ws.cell(rr, pc).comment.text and "gross fees" in ws.cell(rr, pc).comment.text, name
+            seen += 1
+    assert seen >= 1
+
+
+def test_p2a_a4_a_status_driven_zero_keeps_its_zero_and_shows_the_status(built):
+    import xlcalc
+    r = openpyxl.load_workbook(built["reader"])
+    X = xlcalc.Workbook(r)
+    ws = r["Summary"]
+    rr = _rows_of(ws)["Fluid"]
+    for head in ("Holder value yield", "Archetype key"):
+        c = ws.cell(rr, _col_of(ws, head))
+        assert X.value("Summary", rr, c.column) == 0.0, head
+        assert "halted since 2026-05-11" in c.number_format and "halted since 2026-05-11" in c.comment.text, head
+    assert reader.status_note(config.PROJECT_BY_NAME["Maple"], "staking").startswith("ended since 2025-11")
+
+
+def test_p2a_a5_a_pre_minted_zero_net_supply_change_says_releases_are_dilution(built):
+    import xlcalc
+    r = openpyxl.load_workbook(built["reader"])
+    X = xlcalc.Workbook(r)
+    ws = r["Summary"]
+    nc, seen = _col_of(ws, "Net supply change, % a year"), 0
+    for name, rr in _rows_of(ws).items():
+        if X.value("Summary", rr, nc) == 0.0 and reader.is_premint(config.PROJECT_BY_NAME[name]):
+            assert "appear under dilution" in ws.cell(rr, nc).comment.text, name
+            seen += 1
+    assert seen >= 3
+
+
+def test_p2a_a6_a_quarter_change_inherits_the_state_of_what_it_compares():
+    asof = pd.Timestamp("2026-10-13")
+    t = {"vals": [2.0, 1.0, None, None], "row": 9, "break": "", "modelled": "", "trend": "", "t12m": None,
+         "t12m_prev": None}
+    assert reader._quarter_change(t, asof)[:2] == ("ok", 1.0)
+    assert reader._quarter_change(dict(t, **{"break": "SERIES BREAK 2026-10-12 — x"}), asof)[0] == "blocked"
+    assert reader._quarter_change(dict(t, **{"break": "SERIES BREAK 2025-01-12 — x"}), asof)[0] == "ok"
+    k, v, why = reader._quarter_change(dict(t, trend="▲ · T12M +17% (rolling T12M)", t12m=12.0, t12m_prev=10.0), asof)
+    assert k == "t12m" and v == pytest.approx(0.2) and "TRAILING-12-MONTH" in why
+    k, v, why = reader._quarter_change(dict(t, modelled="Q-1"), asof)
+    assert k == "modelled" and "MODELLED" in why
+
+
+def test_p2a_a7_what_changed_follows_the_selector(built):
+    import xlcalc
+    r = openpyxl.load_workbook(built["reader"])
+    ws = r["Summary"]
+    wc, rows = _col_of(ws, "What changed"), _rows_of(ws)
+    assert all("Summary!$B$2" in str(ws.cell(rr, wc).value) for n, rr in rows.items()
+               if str(ws.cell(rr, wc).value).startswith("="))
+    texts = {}
+    for period in ("7D", "1Y"):
+        ws["B2"] = period
+        X = xlcalc.Workbook(r)
+        texts[period] = {n: X.value("Summary", rr, wc) for n, rr in rows.items()}
+    assert any(str(v).startswith(("over 7D", "no figure moved")) for v in texts["7D"].values())
+    assert any(texts["7D"][n] != texts["1Y"][n] for n in rows)
+
+
+def test_p2a_b_archetype_tabs_are_built_like_a3_with_their_keys(built):
+    r = openpyxl.load_workbook(built["reader"])
+    defs = {(row[0].value, row[2].value) for row in r["Definitions"].iter_rows(min_row=4) if row[0].value}
+    keys = {"A1 Infrastructure": "Settlement per token, 1-yr change", "A2 Coordination": "Customer revenue ÷ emissions (x)",
+            "A3 Revenue Buyback": "Retired ÷ emissions (x)", "A4 Permanent Burn": "Burn ÷ issuance (x)"}
+    for tab, key in keys.items():
+        ws = r[tab]
+        labels = [ws.cell(3, c).value for c in range(1, ws.max_column + 1) if ws.cell(3, c).value]
+        assert labels[:4] == ["(a) Rank key", "(b) Valuation", "(c) Trajectory", "(d) Drivers"], (tab, labels)
+        assert ws.cell(4, 3).value == key and "Higher is better" in ws.cell(4, 3).comment.text, tab
+        for c in range(1, ws.max_column + 1):
+            h = ws.cell(4, c).value
+            assert h and len(h) <= 35 and (tab, h) in defs, (tab, h)
+        assert not any(re.search(r"Δ(30d|3m|6m|9m)$", str(ws.cell(4, c).value)) for c in range(1, ws.max_column + 1))
+
+
+def test_p2a_b_comparison_is_sorted_by_net_holder_yield_and_marks_the_archetype(built):
+    import xlcalc
+    r = openpyxl.load_workbook(built["reader"])
+    X = xlcalc.Workbook(r)
+    ws = r["Comparison"]
+    nc, ac = _col_of(ws, "Net holder yield"), _col_of(ws, "Primary archetype")
+    vals = [(n, X.value("Comparison", rr, nc)) for n, rr in _rows_of(ws).items() if not reader.parked_reason(n)]
+    nums = [v for _n, v in vals if isinstance(v, float)]
+    assert nums == sorted(nums, reverse=True) and nums
+    first_text = next((i for i, (_n, v) in enumerate(vals) if not isinstance(v, float)), len(vals))
+    assert all(not isinstance(v, float) for _n, v in vals[first_text:])
+    assert all(str(ws.cell(rr, ac).value).startswith("A") for rr in _rows_of(ws).values())
+
+
+def test_p2a_b_business_shows_constant_price_growth_for_protocols(built):
+    r = openpyxl.load_workbook(built["reader"])
+    ws = r["Business"]
+    cc, rows = _col_of(ws, "TVL change at constant prices"), _rows_of(ws)
+    for name, rr in rows.items():
+        p = config.PROJECT_BY_NAME[name]
+        v = ws.cell(rr, cc).value
+        if reader._primary(p) == 1:
+            assert v == "by design", name
+        elif "protocol_tvl_constant_price_usd" in config.metrics_for_project(p):
+            ok = str(v).startswith("=") and "_series!" in v
+            assert ok or (v == "n/a" and "No daily" in ws.cell(rr, cc).comment.text), (name, v)
+    unit = _col_of(ws, "Unit of demand")
+    assert not any("_usd" in str(ws.cell(rr, unit).value) for rr in rows.values()), "plain words, not series keys"
+
+
+def test_p2a_b_charts_read_data_and_leave_out_the_parked(built):
+    r = openpyxl.load_workbook(built["reader"])
+    ws = r["Charts"]
+    assert len(ws._charts) >= 4
+    notes = [ws.cell(rr, 1).value for rr in (29, 61, 93, 125)]
+    parked = [p["name"] for p in config.PROJECTS if reader.parked_reason(p["name"])]
+    assert all(n and n.startswith("Not shown:") for n in notes)
+    assert all(all(f"{x} (parked)" in n for x in parked) for n in notes)
+
+
+def test_p2a_c_about_describes_the_file_as_it_is(built):
+    r = openpyxl.load_workbook(built["reader"])
+    text = "\n".join(str(c.value) for c in r["About"]["A"] if c.value)
+    assert "Coming next" not in text and "Stage" not in text
+    for k in ("A1 Infrastructure", "A2 Coordination", "A3 Revenue buyback", "A4 Permanent burn", "Summary!B2",
+              "custom", "parked", "token_metrics_audit.xlsx", "Data as of"):
+        assert k in text, k
+    assert sum(1 for line in text.splitlines() if line.startswith("Parked: ")) == sum(
+        1 for p in config.PROJECTS if reader.parked_reason(p["name"]))
+
+
+def test_p2a_e_the_column_map_places_every_new_tab_column_and_every_number_names_its_source(built):
+    rows = list(csv.DictReader(open(built["dir"] / "reader_column_map.csv", encoding="utf-8")))
+    a = openpyxl.load_workbook(built["audit"], read_only=True)
+    for tab in ("A1 Infrastructure", "A2 Coordination", "A4 Permanent Burn", "CP Comparability"):
+        heads = [c.value for c in next(a[tab].iter_rows(min_row=4, max_row=4)) if isinstance(c.value, str)]
+        mapped = {x["audit_header"] for x in rows if x["audit_tab"] == tab}
+        assert set(heads) <= mapped, (tab, set(heads) - mapped)
+    r = openpyxl.load_workbook(built["reader"])
+    for tab in ("Summary", "A1 Infrastructure", "A2 Coordination", "A3 Revenue Buyback", "A4 Permanent Burn",
+                "Comparison", "Business"):
+        ws = r[tab]
+        for rr in _rows_of(ws).values():
+            for c in range(3, ws.max_column + 1):
+                cell = ws.cell(rr, c)
+                if isinstance(cell.value, str) and cell.value.startswith("=") and cell.number_format != "General":
+                    assert cell.comment and ("Working:" in cell.comment.text or "audit file" in cell.comment.text), \
+                        (tab, cell.coordinate, ws.cell(4, c).value)
