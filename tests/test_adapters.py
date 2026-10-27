@@ -7893,9 +7893,12 @@ def test_the_incremental_window_narrows_the_request_on_coingecko_and_only_trims_
     ll.fees(config.PROJECT_BY_NAME["Uniswap"], 30, out)
     stored = out.frame()
     assert fetched, "the request is still made"
-    # 400 days came back; at most 31 are kept. THE WIRE CARRIED 400.
-    per_metric = stored.groupby("metric").size().max()
-    assert per_metric <= 31, f"the window must trim to ~30 days, kept {per_metric}"
+    # 400 days came back. D5-0 (2026-10-27): the FEE FAMILY keeps all of them, so DefiLlama's restatements of old days
+    # reach the store; every other DefiLlama series is still trimmed to ~30 days locally. THE WIRE CARRIED 400.
+    per_metric = stored.groupby("metric").size()
+    assert (per_metric == 400).all(), f"the fee family keeps every day served (D5-0), kept {per_metric.to_dict()}"
+    other = trim(stored[stored["metric"] == "fees_usd"].assign(metric="tvl_usd"), 30)
+    assert len(other) <= 31, f"any other DefiLlama series is trimmed to ~30 days, kept {len(other)}"
     assert len(rows) == 400, "and the response really did carry the full history"
 
     # (3) THE TRIM IS A LOCAL FILTER, which is what makes (2) unavoidable rather than an oversight.
@@ -17289,12 +17292,14 @@ def test_a_short_series_is_re_read_over_a_year_and_a_source_that_starts_later_is
     assert any(w.startswith("GEODNET/fees_usd: oldest stored") for w in why)
 
     days = [(t - pd.Timedelta(days=d), 1.0) for d in range(0, 300)]
-    frame = tidy(days, "GEODNET", "fees_usd", "defillama", 1)
-    base.set_backfill(pairs)
+    # a series outside DefiLlama's fee family (D5-0 keeps that family whole on every run, backfilled or not)
+    frame = tidy(days, "GEODNET", "tvl_usd", "defillama", 1)
+    base.set_backfill(pairs | {("GEODNET", "tvl_usd")})
     assert len(window(frame, 30)) == 300, "a backfilled pair keeps the year"
-    assert len(window(tidy(days, "Uniswap", "fees_usd", "defillama", 1), 30)) == 31
+    assert len(window(tidy(days, "Uniswap", "tvl_usd", "defillama", 1), 30)) == 31
     base.set_backfill(set())
     assert len(window(frame, 30)) == 31
+    assert len(window(tidy(days, "GEODNET", "fees_usd", "defillama", 1), 30)) == 300, "D5-0: the fee family"
 
     # the source had nothing older: remembered, and not re-asked this month
     bf.record({("GEODNET", "fees_usd")}, first)
