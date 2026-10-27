@@ -23910,6 +23910,64 @@ REVIEW_ANSWERED = [
         ("Maple", "treasury_holding_tokens_chain", "a standing PARTIAL label: the daoMultisig chain read (42,290,111 "
                                                    "SYRUP); the transparency page is primary for the treasury"),
         ("World Mobile", "total_supply_gross", "a standing PARTIAL label: Cardano-native WMTX is outside the EVM sum"))],
+    # ===== ROUND P2a D8 (Jake 2026-10-27): his run's queue outside Aerodrome, from PRIMARY data read 2026-10-27 (public
+    # RPCs: mainnet.gateway.tenderly.co, arb1.arbitrum.io/rpc, rpc.plume.org). Each row is its run's date only; SPEC §19
+    # P2a-D8. The daily sums below reproduce our stored rows exactly where the 10-13 dumps overlap (Fluid 10-06..10-12). =====
+    {"project": "Pendle", "metric": "lock_assets_per_share", "reason": "accrued_rate_implausible", "date": "2026-10-27",
+     "decision": "ACCEPT",
+     "why": "not a yield: sPENDLE does not compound (StakedPendle.sol mints 1:1, burns at cooldown(), the PENDLE leaves "
+            "at finalizeCooldown()), so PENDLE.balanceOf(sPENDLE) / sPENDLE.totalSupply() = 1 + unstake queue / active "
+            "stake. Read on-chain: 1.050773 at block 26,284,536 (30,323,790.19 / 28,858,541.90) -> 1.062094 at block "
+            "26,285,136 (30,323,989.49 / 28,551,138.40), +1.08%: CooldownInitiated(0x951f33a9...cda771, 307,602.81 "
+            "sPENDLE) burned in tx 0x565b3217e8190c15e6faf5d66e6402a6bc6db636779c4fe4f77039c0c5138db9 (block 26,285,022, "
+            "15:43:59 UTC) with no PENDLE leaving. The day before it fell 1.075083 -> 1.050734 as 709,645.37 PENDLE was "
+            "finalized out (tx 0x733c676b...b261d5, block 26,274,975). The ratio stands as measured"},
+    {"project": "Plume", "metric": "emissions_claimed_tokens", "reason": "change_threshold", "date": "2026-10-26",
+     "decision": "ACCEPT",
+     "why": "a declared LUMPY flow (paid when claimed): the trailing 7-day sum 222,419.48 PLUME (10-20..10-26) against "
+            "24,049.01 (10-13..10-19), x9.25, is ONE claimAll(): treasury 0x14789d64...d7f2cf paid 212,334.48 PLUME to "
+            "staker 0x48f03991...e0ead9 (validator 11) in tx 0xe8b2951a2644afcc40c42a6d1226863da9f4301f1798c7a92cd29d41110"
+            "df9c7 (block 100,477,689, 10-20 03:06 UTC) — its rewards since its last claim on 2026-07-01, on 14,000,100 "
+            "PLUME staked then 16,500,100 from 08-12: at the diamond's 4.9966% gross less 10% commission that accrues "
+            "212,334.41. It then unstaked the 16,500,100 (block 100,482,827). Every other day 10-13..10-26 is 507-12,499 "
+            "PLUME (rpc.plume.org RewardDistributed(PLUME))"},
+    {"project": "Fluid", "metric": "emissions_tokens", "reason": "change_threshold", "date": "2026-10-26",
+     "decision": "ACCEPT",
+     "why": "a declared LUMPY flow (FLUID Merkle rewards counted when CLAIMED): the trailing 7-day sum 4,812.03 FLUID "
+            "(10-20..10-26) against 994.50 (10-13..10-19), x4.84, is mostly one transaction: Safe 0x7ca1aa23...1d35fd "
+            "claimed 2,180.72 + 1,227.80 FLUID for itself from distributor 0x7060FE0D (Fluid Rewards Dec 2024) through "
+            "MultiSend, two claim() calls (LogClaimed x2), tx 0xaa43e23115760a2de8cd44330438834242d4d48f4990f5abea2f7da635"
+            "d0dc4a, block 26,230,745 (10-20). Read from FLUID Transfer events out of the five mainnet distributors, sweeps "
+            "to the funders excluded"},
+    {"project": "Fluid", "metric": "emissions_tokens_arbitrum", "reason": "change_threshold", "date": "2026-10-26",
+     "decision": "ACCEPT",
+     "why": "a declared LUMPY flow (FLUID Merkle rewards on Arbitrum, counted when CLAIMED): the trailing 7-day sum 775.06 "
+            "FLUID (10-20..10-26) against 47.31 (10-13..10-19), x16.4, is mostly one claim: 0xc42973b5...43a912 claimed "
+            "470.66 FLUID from distributor 0xF3602935 ($FLUID rewards GHO) in tx 0x954bfe4ad19b864bd6e8fa68b32821c8c7e9a8a"
+            "91e118dbe615dc5b984045436 (block 518,366,924, 10-26) — the same address also claimed on Ethereum that day "
+            "(120.55 + 38.86 + 22.54); and 150.62 on 10-23 (93.56 + 35.85 from the same distributor). Read on "
+            "arb1.arbitrum.io/rpc"},
+    # The fixture build's own queue (the 10-13 dumps, run 20261013T211210Z): rows answered from the source read 2026-10-27
+    {"project": "Chainlink", "metric": "emissions_claimed_tokens", "reason": "change_threshold", "date": "2026-10-12",
+     "decision": "ACCEPT",
+     "why": "LINK claimed out of the staking RewardVault 0x996913c8 (Transfer events, read 2026-10-27, equal to the stored "
+            "rows to the token): 6,036.81 in 43 claims on 10-12 against 2,387.41 in 46 on 10-05 — inside the fortnight "
+            "before it (731.74 on 10-11 to 18,152.93 on 10-02); claims land when stakers claim"},
+    *[{"project": "Pendle", "metric": m, "reason": "change_threshold", "date": "2026-10-12", "decision": "ACCEPT",
+       "why": f"10-12 is an ordinary day; the comparison day 10-05 was the spike. DefiLlama Pendle {lab} (read live "
+              f"2026-10-27): 10-03..10-13 = {vals}"}
+      for m, lab, vals in (
+          ("fees_usd", "dailyFees", "5,893; 7,315; 44,539; 15,095; 11,754; 9,980; 9,625; 8,944; 9,307; 13,579; 9,974"),
+          ("revenue_usd", "dailyRevenue", "5,747; 7,195; 44,406; 14,840; 11,547; 9,630; 9,453; 8,803; 9,217; 13,316; "
+                                          "9,628"),
+          ("holders_revenue_usd", "dailyHoldersRevenue", "4,269; 5,430; 34,811; 11,522; 7,548; 6,909; 6,936; 6,295; "
+                                                         "6,745; 9,918; 6,965"))],
+    *[{"project": p_, "metric": "volume_usd", "reason": "change_threshold", "date": "2026-10-12", "decision": "ACCEPT",
+       "why": f"CoinGecko's own daily trading volume (market_chart, read 2026-10-27; the 10-12 point is the 24h of 10-11): "
+              f"{v}; a market figure, stored as CoinGecko serves it"}
+      for p_, v in (("Plume", "45,158,655 against 14,393,492 the day before, and 57,581,854 the day after"),
+                    ("Maple", "SYRUP 9,866,975 against 5,413,898 the day before; 12,511,140 and 23,044,778 the next two"),
+                    ("GEODNET", "1,468,104 against 887,666 the day before; 1,515,413 and 1,948,243 the next two"))],
 ]
 
 
