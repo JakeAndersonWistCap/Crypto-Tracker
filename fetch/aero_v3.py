@@ -34,6 +34,9 @@ legacy rows of these metrics are refused from the cutover once the switch is com
                                ("bribes") = each IncentiveStreaming program's rate x its overlap with the epoch (rate is
                                per second x 1e18, IIncentiveStreaming.sol L9) — there is no per-epoch bucket in v3.
                                Priced by DefiLlama's coins API at the epoch's end, as the legacy aero_voter does.
+    filing_managed_lock_tokens the Blockworks filing wallets' LOCKED AERO at the supply's block (P2b-1, _filing_locks):
+                               legacy managed weights + their sAERO stakes + their Aero Relay principal (PT x
+                               totalBacking / PT supply) + pending Relay deposits — circulating subtracts it
 NO REBASE: sAERO has none (no RewardsDistributor in V3/src; Minter.mint pays only the recipient and SPLITTER) — the
 legacy veAERO rebase keeps its own legacy read (emissions_tokens), which is not replaced.
 """
@@ -86,6 +89,32 @@ CALLS = {
     "V3_TOKEN": ("V3_TOKEN()", ("address",), "V3/src/migration/AerodromeMigration.sol:26"),
     "remaining": ("remaining()", ("uint256",), "V3/src/migration/AerodromeMigration.sol:79"),
 }
+# P2b-1 (2026-10-27): THE FILING WALLETS' LOCKED AERO ACROSS THE MIGRATION (_filing_locks). Transcribed from the
+# DEPLOYED source (FILING_REPO, the commit aero_migration.json's addresses come from) and the legacy escrow's
+# (LEGACY_REPO); the declaration text of each is in tests/fixtures/aero_v3_filing_abi.json.
+# name -> (signature, returns, repo, file, line). RelayToken's totalSupply / balanceOf are the ERC20 calls in CALLS.
+FILING_REPO = "Dromos-Labs/metadex-public@8b506b450aaa9d4a9f1a77e264f2d9dd508e9ddf"
+LEGACY_REPO = "aerodrome-finance/contracts@1ba30815"
+FILING_CALLS = {
+    "tokenOfOwnerByIndex": ("tokenOfOwnerByIndex(address,uint256)", ("uint256",), FILING_REPO,
+                            "V3/src/core/VotingEscrow.sol", 38),          # OZ ERC721Enumerable
+    "staked": ("staked(uint256)", ("uint128", "uint48", "bool"), FILING_REPO, "V3/src/core/VotingEscrow.sol", 523),
+    "relayFactories": ("relayFactories()", (), FILING_REPO, "V3/src/relay/RelayFactoryRegistry.sol", 68),
+    "allRelaysLength": ("allRelaysLength()", ("uint256",), FILING_REPO, "V3/src/relay/RelayFactory.sol", 228),
+    "allRelays": ("allRelays(uint256,uint256)", (), FILING_REPO, "V3/src/relay/RelayFactory.sol", 233),
+    "principalToken": ("principalToken()", ("address",), FILING_REPO, "V3/src/relay/RelayBase.sol", 103),
+    "totalBacking": ("totalBacking()", ("uint256",), FILING_REPO, "V3/src/relay/RelayBase.sol", 115),
+    "depositList": ("depositList()", ("uint40", "uint40", "uint40"), FILING_REPO,
+                    "V3/src/interfaces/relay/IRelay.sol", 1068),
+    "pendingDeposits": ("pendingDeposits(uint256)", ("address", "uint48", "uint128", "uint128"), FILING_REPO,
+                        "V3/src/interfaces/relay/IRelay.sol", 1059),
+    "ownerToNFTokenIdList": ("ownerToNFTokenIdList(address,uint256)", ("uint256",), LEGACY_REPO,
+                             "contracts/VotingEscrow.sol", 441),
+    "idToManaged": ("idToManaged(uint256)", ("uint256",), LEGACY_REPO, "contracts/VotingEscrow.sol", 108),
+    "weights": ("weights(uint256,uint256)", ("uint256",), LEGACY_REPO, "contracts/VotingEscrow.sol", 110),
+}
+MULTICALL3 = "0xca11bde05977b3631167028862be2a173976ca11"
+MAX_PENDING_SCAN = 1000          # deposit-queue ids walked per Relay; a longer live queue is a named failure, never 0
 # THE LEGACY CONTRACTS the migration must name (config Aerodrome contracts token / ve): AERO v2 and veAERO on Base
 LEGACY_TOKEN = "0x940181a94a35a4569e4529a3cdfb74e38fd98631"
 LEGACY_ESCROW = "0xebf418fe2512e7e6bd9b87a8f0f294acdc67e6b4"
@@ -103,7 +132,7 @@ def _keccak(text: str) -> str:
 
 
 def selector(name: str) -> str:
-    return _keccak(CALLS[name][0])[:10]
+    return _keccak((CALLS.get(name) or FILING_CALLS[name])[0])[:10]
 
 
 def topic0(name: str) -> str:
@@ -176,6 +205,30 @@ def supply_once(new_total: float, reserve: float, velo_held: float, new_noncirc:
             "old_circ_term": old_circ_term}
 
 
+def relay_claim(shares: int, backing: int, supply: int) -> int:
+    """A Relay holder's AERO (wei): principal shares x totalBacking / principal totalSupply, floored — the price every
+    exit settles at (QueueLib.processWithdrawals L439, requireUncoveredHead L508, @8b506b45). PT never moves holder to
+    holder and a queued exit's shares stay on the holder's balance until burned (RelayBase L1-20, QueueLib.registerExit),
+    so the balance is the whole claim."""
+    if not shares:
+        return 0
+    if not supply:
+        raise RuntimeError(f"a Relay principal balance of {shares} wei against a principal totalSupply of 0")
+    return shares * backing // supply
+
+
+def _words_of(hexdata: str) -> list:
+    h = hexdata[2:] if hexdata.startswith("0x") else hexdata
+    return [int(h[i:i + 64], 16) for i in range(0, len(h), 64)]
+
+
+def _address_array(hexdata: str) -> list:
+    """An ABI-encoded address[] return (offset, length, items) -> lower-case addresses."""
+    w = _words_of(hexdata)
+    n = w[1] if len(w) > 1 else 0
+    return ["0x" + f"{x:040x}"[-40:] for x in w[2:2 + n]]
+
+
 def multichain_total(chain_tokens: dict, escrows: list, read_supply, read_balance) -> tuple[float, list, list]:
     """THE UNIFIED AERO ON EVERY LAUNCH CHAIN (Round G6 item 2: Base, Ethereum, OP, Arc, Ink, Robinhood, Arbitrum —
     aero.xyz/aero-upgrade). (sum of the non-Base chains' totalSupply − the bridge escrows' balances, the chains read, the
@@ -230,10 +283,32 @@ class AeroV3:
                 errs.append(f"{url.split('/')[2]}: {str(e)[:100]}")
         raise RuntimeError("; ".join(errs))
 
+    @staticmethod
+    def calldata(name: str, *args) -> str:
+        return selector(name) + "".join(f"{int(a, 16) if isinstance(a, str) else a:064x}" for a in args)
+
     def call(self, to: str, name: str, *args, block="latest") -> tuple:
-        data = selector(name) + "".join(f"{int(a, 16) if isinstance(a, str) else a:064x}" for a in args)
         tag = hex(block) if isinstance(block, int) else block
-        return decode_words(self.rpc("eth_call", [{"to": to, "data": data}, tag]), CALLS[name][1])
+        return decode_words(self.rpc("eth_call", [{"to": to, "data": self.calldata(name, *args)}, tag]),
+                            CALLS[name][1])
+
+    def multi(self, calls: list, block: int, chunk: int = 150) -> list:
+        """[(to, name, args)] -> [raw hex return], through Multicall3.aggregate3 at ONE block with allowFailure false:
+        any call that reverts reverts the whole batch, so a part is never silently missing (P2b-1)."""
+        from eth_abi import decode, encode                # noqa: PLC0415
+        out = []
+        for i in range(0, len(calls), chunk):
+            part = calls[i:i + chunk]
+            data = "0x82ad56cb" + encode(["(address,bool,bytes)[]"], [[
+                (to, False, bytes.fromhex(self.calldata(name, *args)[2:])) for to, name, args in part]]).hex()
+            res = self.rpc("eth_call", [{"to": MULTICALL3, "data": data}, hex(block)])
+            if not res or res == "0x":
+                raise RuntimeError(f"Multicall3 answered nothing at block {block:,}")
+            (got,) = decode(["(bool,bytes)[]"], bytes.fromhex(res[2:]))
+            if len(got) != len(part) or not all(ok for ok, _ in got):
+                raise RuntimeError(f"Multicall3 returned {len(got)} result(s) for {len(part)} call(s), or a failure")
+            out += ["0x" + ret.hex() for _ok, ret in got]
+        return out
 
     def prices(self, tokens: list, ts: int) -> dict:
         """{token: (price_usd, decimals)} from DefiLlama's coins API at `ts` (base: chain)."""
@@ -262,9 +337,9 @@ class AeroV3:
         name, a = m["project"], {k: v.lower() for k, v in st["addresses"].items()}
         # EVERY ADDRESS MUST HOLD CODE ON BASE before anything is read from it (Round G 2.10): a well-formed address
         # that is not the deployed contract would answer eth_call with nothing or with another contract's figures
-        fac = st.get("voting_rewards_factory")
+        extra = [(k, st[k]) for k in ("voting_rewards_factory", "relay_factory_registry") if st.get(k)]
         try:
-            empty = [k for k, v in [*a.items(), *((("voting_rewards_factory", fac),) if fac else ())]
+            empty = [k for k, v in [*a.items(), *extra]
                      if str(self.rpc("eth_getCode", [v, "latest"]) or "0x") in ("0x", "0x0")]
         except Exception as e:  # noqa: BLE001
             out.fail(SOURCE, name, f"aero_migration.json addresses: eth_getCode could not be read — {e}", TIER)
@@ -403,6 +478,110 @@ class AeroV3:
         out.add(point(name, "total_supply", r["total"], src, TIER, when), SOURCE, name, f"total_supply: {msg}", TIER)
         out.add(point(name, "noncirculating_holding_tokens", r["noncirculating"], src, TIER, when), SOURCE, name,
                 f"noncirculating_holding_tokens = total − circulating = {r['noncirculating']:,.4f}", TIER)
+        # P2b-1: the filing wallets' LOCKED AERO at the SAME block (circulating subtracts it as filing_managed_lock_tokens)
+        try:
+            self._filing_locks(name, blk, out, st)
+        except Exception as e:  # noqa: BLE001 — never a partial or zero figure: the day reads n/a
+            out.fail(SOURCE, name, f"filing_managed_lock_tokens at Base block {blk:,}: {str(e)[:200]} — NOT written "
+                                   f"(circulating reads n/a that day; unknown, never 0)", TIER)
+
+    def _filing_locks(self, name: str, blk: int, out, st: dict) -> None:
+        """P2b-1 (2026-10-27): THE AERO THE BLOCKWORKS FILING WALLETS HOLD LOCKED, across the migration, at Base block
+        `blk` (the block _supply reads every other term at). Traced at block 53,174,900: the wallets withdrew their
+        managed veAERO (weight + locked managed reward, legacy VotingEscrow.withdrawManaged L182-204), migrated each
+        veNFT to themselves as a decaying sAERO (AerodromeMigration._settleStake -> createStake), then moved those
+        stakes into Aero ProtocolRelays ('Autopilot Internal 001-007') with VotingEscrow.rebalanceUnderlying; the Relay
+        owns the sAERO and the wallet holds its principal token (PT). So, summed over the filing wallets
+        (config ve_managed_holdings owners):
+            legacy  weights(tokenId, idToManaged) on the OLD escrow — managed deposits not yet withdrawn (old AERO,
+                    counted inside supply_once's old term)
+            direct  sAERO.staked(id).amount for every sAERO the wallet owns (ERC721Enumerable)
+            relay   PT.balanceOf(wallet) x totalBacking / PT.totalSupply for every Relay of every factory the
+                    RelayFactoryRegistry lists (relay_claim)
+            pending live Relay deposit-queue entries naming the wallet (weight moved, PT not yet minted)
+        Every read goes through Multicall3 at `blk` with allowFailure false; any failure writes nothing."""
+        spec = config.PROJECT_BY_NAME[name].get("ve_managed_holdings") or {}
+        labels = {o.lower(): v for o, v in (spec.get("owners") or {}).items()}
+        owners = list(labels)
+        reg = str((st or {}).get("relay_factory_registry") or "").lower()
+        ve = str(((st or {}).get("addresses") or {}).get("voting_escrow") or "").lower()
+        if not owners or not reg or not ve:
+            raise RuntimeError("no filing owners (ve_managed_holdings), no relay_factory_registry or no voting_escrow "
+                               "in aero_migration.json — the Relay principal cannot be enumerated")
+        legacy_ve = str(spec.get("escrow") or LEGACY_ESCROW).lower()
+        W = _words_of
+        # round 1: NFT counts on both escrows, the Relay factories
+        r1 = self.multi([(ve, "balanceOf", (o,)) for o in owners] + [(legacy_ve, "balanceOf", (o,)) for o in owners]
+                        + [(reg, "relayFactories", ())], blk)
+        n_new = [W(x)[0] for x in r1[:len(owners)]]
+        n_old = [W(x)[0] for x in r1[len(owners):2 * len(owners)]]
+        factories = _address_array(r1[-1])
+        if not factories:
+            raise RuntimeError(f"RelayFactoryRegistry {reg} lists no factory")
+        # round 2: token ids, Relay counts
+        new_pairs = [(o, i) for o, n in zip(owners, n_new) for i in range(n)]
+        old_pairs = [(o, i) for o, n in zip(owners, n_old) for i in range(n)]
+        r2 = self.multi([(ve, "tokenOfOwnerByIndex", (o, i)) for o, i in new_pairs]
+                        + [(legacy_ve, "ownerToNFTokenIdList", (o, i)) for o, i in old_pairs]
+                        + [(f, "allRelaysLength", ()) for f in factories], blk)
+        new_ids = [W(x)[0] for x in r2[:len(new_pairs)]]
+        old_ids = [W(x)[0] for x in r2[len(new_pairs):len(new_pairs) + len(old_pairs)]]
+        n_rel = [W(x)[0] for x in r2[len(new_pairs) + len(old_pairs):]]
+        # round 3: stakes, managed links, the Relay lists
+        r3 = self.multi([(ve, "staked", (t,)) for t in new_ids] + [(legacy_ve, "idToManaged", (t,)) for t in old_ids]
+                        + [(f, "allRelays", (0, n)) for f, n in zip(factories, n_rel)], blk)
+        staked = [W(x)[0] for x in r3[:len(new_ids)]]
+        mids = [W(x)[0] for x in r3[len(new_ids):len(new_ids) + len(old_ids)]]
+        relays = [r for x in r3[len(new_ids) + len(old_ids):] for r in _address_array(x)]
+        if len(relays) != sum(n_rel):
+            raise RuntimeError(f"the factories list {len(relays)} Relays, allRelaysLength says {sum(n_rel)}")
+        # round 4: legacy weights, each Relay's principal token, backing and deposit queue
+        managed = [(o, t, m) for (o, _i), t, m in zip(old_pairs, old_ids, mids) if m]
+        r4 = self.multi([(legacy_ve, "weights", (t, m)) for _o, t, m in managed]
+                        + [(r, fn, ()) for r in relays for fn in ("principalToken", "totalBacking", "depositList")], blk)
+        weights = [W(x)[0] for x in r4[:len(managed)]]
+        rel = r4[len(managed):]
+        pts = ["0x" + f"{W(rel[3 * k])[0]:040x}" for k in range(len(relays))]
+        backing = [W(rel[3 * k + 1])[0] for k in range(len(relays))]
+        queues = [W(rel[3 * k + 2])[:3] for k in range(len(relays))]
+        # round 5: principal supply and the wallets' principal; live deposit-queue entries
+        pend_ids = []
+        for r, (head, tail, count) in zip(relays, queues):
+            if not count:
+                continue
+            if tail - max(head, 1) + 1 > MAX_PENDING_SCAN:
+                raise RuntimeError(f"Relay {r}: deposit queue spans {tail - head + 1} ids (> {MAX_PENDING_SCAN})")
+            pend_ids += [(r, i) for i in range(max(head, 1), tail + 1)]
+        r5 = self.multi([(pt, "totalSupply", ()) for pt in pts] + [(pt, "balanceOf", (o,)) for pt in pts for o in owners]
+                        + [(r, "pendingDeposits", (i,)) for r, i in pend_ids], blk)
+        sup = [W(x)[0] for x in r5[:len(pts)]]
+        bals = r5[len(pts):len(pts) + len(pts) * len(owners)]
+        by = {o: [0, 0, 0, 0] for o in owners}                       # legacy, direct, relay, pending (wei)
+        for (o, _t, _m), wt in zip(managed, weights):
+            by[o][0] += wt
+        for (o, _i), amt in zip(new_pairs, staked):
+            by[o][1] += amt
+        held_in = []
+        for k, (r, pt) in enumerate(zip(relays, pts)):
+            for j, o in enumerate(owners):
+                c = relay_claim(W(bals[k * len(owners) + j])[0], backing[k], sup[k])
+                if c:
+                    by[o][2] += c
+                    held_in.append(f"{r[:10]}… {labels[o]} {c / WAD:,.2f}")
+        for (r, _i), x in zip(pend_ids, r5[len(pts) + len(pts) * len(owners):]):
+            rec, at, _tid, amt = decode_words(x, FILING_CALLS["pendingDeposits"][1])
+            if at and rec.lower() in by:
+                by[rec.lower()][3] += amt
+        parts = [sum(v[i] for v in by.values()) / WAD for i in range(4)]
+        total = sum(parts)
+        when = today()
+        out.add(point(name, "filing_managed_lock_tokens", total, f"{SOURCE}:filing_locks", TIER, when), SOURCE, name,
+                f"filing_managed_lock_tokens at Base block {blk:,} = {total:,.4f}: legacy managed veAERO "
+                f"{parts[0]:,.4f} ({len(managed)} veNFT(s)) + sAERO stakes {parts[1]:,.4f} ({len(new_ids)} sAERO) + "
+                f"Relay principal {parts[2]:,.4f} ({len(relays)} Relay(s) of {len(factories)} factory(ies)) + pending "
+                f"Relay deposits {parts[3]:,.4f}; by wallet: "
+                + "; ".join(f"{labels[o]} {sum(v) / WAD:,.2f}" for o, v in by.items() if sum(v))
+                + (f"; Relays: {'; '.join(held_in)}" if held_in else ""), TIER)
 
     def _chain_call(self, chain: str, to: str, data: str) -> int:
         from .chain import rpc_endpoints  # noqa: PLC0415

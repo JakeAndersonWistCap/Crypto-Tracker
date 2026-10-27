@@ -720,9 +720,11 @@ METRICS = {
                                                "circulating moves in steps)", "kind": "flow", "unit": "tokens",
                                       "archetypes": [1, 3], "tiers": [2], "sanity_min": -1e12, "sanity_max": 1e12,
                                       "only_projects": ("Chainlink", "Hyperliquid"), "view_only": True},
-    "filing_managed_lock_tokens": {"label": "AERO the Blockworks filing wallets deposited into MANAGED veNFTs "
-                                            "(VotingEscrow weights[tokenId][idToManaged]) — team / foundation, out of "
-                                            "circulating although locked (fetch/ve_managed.py, Jake's probes16)",
+    "filing_managed_lock_tokens": {"label": "AERO the Blockworks filing wallets hold LOCKED — team / foundation, out "
+                                            "of circulating although locked. To the migration: their deposits into "
+                                            "MANAGED veNFTs (VotingEscrow weights[tokenId][idToManaged]; "
+                                            "fetch/ve_managed.py, Jake's probes16). From it: those legacy weights + "
+                                            "their sAERO stakes + their Aero Relay principal (fetch/aero_v3.py, P2b-1)",
                                    "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0,
                                    "sanity_max": 2e9, "only_projects": ("Aerodrome",), "view_only": True},
     "sethfi_accountant_rate": {"label": "sETHFI TRUE share price — the BoringVault's AccountantWithRateProviders getRate() "
@@ -19073,7 +19075,9 @@ AERODROME_MIGRATION = {
                     "voter_rewards_onchain_usd", "voter_rewards_onchain_fees_usd", "voter_rewards_onchain_bribes_usd",
                     "voter_rewards_unpriced_count", "voter_rewards_onchain_apr",
                     # G2-D5 (Jake 2026-10-18): the supply, each AERO once across the migration (aero_v3.supply_once)
-                    "total_supply", "noncirculating_holding_tokens"),
+                    "total_supply", "noncirculating_holding_tokens",
+                    # P2b-1 (2026-10-27): the filing wallets' locked AERO at the supply's block (aero_v3._filing_locks)
+                    "filing_managed_lock_tokens"),
     "v3_source": "aero_v3",
 }
 
@@ -19108,6 +19112,21 @@ _ts["composition_change"] = (str(_ts["composition_change"]) + "; from the Aero m
                              "read across both tokens, each AERO once: (new − migration reserve) + min(ratio × (old − "
                              "old held by the migration), reserve) (G2-D5; Token.sol L57-58, Migration.sol L121-123 / "
                              "L156-158, AerodromeMigration.sol L44-46)")
+# P2b-1 (2026-10-27): THE FILING WALLETS' LOCKED AERO hands over to the v3 read. Traced at Base block 53,174,900: of
+# the legacy 444,276,994.97 in managed veNFTs (block 52,859,876), 441,448,938.86 of weights + 46,065,018.47 of locked
+# managed reward (withdrawManaged, legacy VotingEscrow.sol L182-204) were migrated by the wallets to themselves as 55
+# decaying sAERO (VeNFTMigrated, blocks 52,917,168-52,954,115) = 487,513,957.33; Team, Public Goods and Flight School
+# then moved theirs (+ Team's 10,179,013.33 from the Velodrome entrypoint) into six Aero ProtocolRelays with
+# rebalanceUnderlying (blocks 52,958,619-53,001,368) and hold their principal: 468,349,335.40; the Velodrome Foundation
+# airdrop wallet keeps 4 sAERO, 29,343,635.27; 2,848,932.04 is still in legacy managed veNFTs. `cut`: a legacy row dated
+# on/after the first v3 row is dropped at read time, so the legs meet once.
+PROJECT_BY_NAME["Aerodrome"]["series_handover"]["filing_managed_lock_tokens"] = {
+    "ordered_points": ("ve_managed:0xeBf418Fe.weights", "aero_v3:filing_locks"), "cut": True,
+    "why": "the Aero migration: the filing wallets' managed veAERO went to sAERO and Aero Relays (round P2b-1)",
+    "composition_change": "legacy: weights(tokenId, idToManaged) on veAERO 0xeBf418Fe; v3: the same legacy weights + "
+                          "the wallets' sAERO staked amounts + their Relay principal x totalBacking / PT supply + "
+                          "pending Relay deposits, at the supply's block (aero_v3._filing_locks)",
+    "declared": AERODROME_MIGRATION["cutover_utc"]}
 
 
 def aerodrome_migration_state() -> dict:
@@ -24796,6 +24815,8 @@ def unlock_stock_metrics(project_name: str) -> tuple:
 # `last_day` is not read by the unlock view (build_workbook._unlock_release_view); a v3 row (source `v3_prefix`) is.
 # UNKNOWN, NEVER 0: no v3 reader holds the filing wallets' sAERO stakes, so Aerodrome's (e) has no day after last_day
 # until one exists (every leg must hold the day) — the CP cell is annualised over the days it does cover.
+# P2b-1 (2026-10-27): that reader now exists — aero_v3._filing_locks writes filing_managed_lock_tokens (source
+# aero_v3:filing_locks) from the first run with relay_factory_registry in aero_migration.json; days before it stay holes.
 UNLOCK_LEGACY_CUT = {
     "Aerodrome": {
         "last_day": "2026-10-19",

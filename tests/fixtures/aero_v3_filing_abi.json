@@ -1,0 +1,132 @@
+{
+ "repos": [
+  "Dromos-Labs/metadex-public@8b506b450aaa9d4a9f1a77e264f2d9dd508e9ddf",
+  "aerodrome-finance/contracts@1ba30815"
+ ],
+ "read": "2026-10-27",
+ "functions": {
+  "tokenOfOwnerByIndex": {
+   "signature": "tokenOfOwnerByIndex(address,uint256)",
+   "returns": [
+    "uint256"
+   ],
+   "repo": "Dromos-Labs/metadex-public@8b506b450aaa9d4a9f1a77e264f2d9dd508e9ddf",
+   "file": "V3/src/core/VotingEscrow.sol",
+   "line": 38,
+   "text": "ERC721Enumerable,"
+  },
+  "staked": {
+   "signature": "staked(uint256)",
+   "returns": [
+    "uint128",
+    "uint48",
+    "bool"
+   ],
+   "repo": "Dromos-Labs/metadex-public@8b506b450aaa9d4a9f1a77e264f2d9dd508e9ddf",
+   "file": "V3/src/core/VotingEscrow.sol",
+   "line": 523,
+   "text": "function staked(uint256 _tokenId) external view returns (StakedBalance memory) {"
+  },
+  "relayFactories": {
+   "signature": "relayFactories()",
+   "returns": [],
+   "repo": "Dromos-Labs/metadex-public@8b506b450aaa9d4a9f1a77e264f2d9dd508e9ddf",
+   "file": "V3/src/relay/RelayFactoryRegistry.sol",
+   "line": 68,
+   "text": "function relayFactories() external view returns (address[] memory _factories) {"
+  },
+  "allRelaysLength": {
+   "signature": "allRelaysLength()",
+   "returns": [
+    "uint256"
+   ],
+   "repo": "Dromos-Labs/metadex-public@8b506b450aaa9d4a9f1a77e264f2d9dd508e9ddf",
+   "file": "V3/src/relay/RelayFactory.sol",
+   "line": 228,
+   "text": "function allRelaysLength() external view returns (uint256 _length) {"
+  },
+  "allRelays": {
+   "signature": "allRelays(uint256,uint256)",
+   "returns": [],
+   "repo": "Dromos-Labs/metadex-public@8b506b450aaa9d4a9f1a77e264f2d9dd508e9ddf",
+   "file": "V3/src/relay/RelayFactory.sol",
+   "line": 233,
+   "text": "function allRelays(uint256 _start, uint256 _end) external view returns (address[] memory _relays) {"
+  },
+  "principalToken": {
+   "signature": "principalToken()",
+   "returns": [
+    "address"
+   ],
+   "repo": "Dromos-Labs/metadex-public@8b506b450aaa9d4a9f1a77e264f2d9dd508e9ddf",
+   "file": "V3/src/relay/RelayBase.sol",
+   "line": 103,
+   "text": "IRelayToken public principalToken;"
+  },
+  "totalBacking": {
+   "signature": "totalBacking()",
+   "returns": [
+    "uint256"
+   ],
+   "repo": "Dromos-Labs/metadex-public@8b506b450aaa9d4a9f1a77e264f2d9dd508e9ddf",
+   "file": "V3/src/relay/RelayBase.sol",
+   "line": 115,
+   "text": "uint256 public totalBacking;"
+  },
+  "depositList": {
+   "signature": "depositList()",
+   "returns": [
+    "uint40",
+    "uint40",
+    "uint40"
+   ],
+   "repo": "Dromos-Labs/metadex-public@8b506b450aaa9d4a9f1a77e264f2d9dd508e9ddf",
+   "file": "V3/src/interfaces/relay/IRelay.sol",
+   "line": 1068,
+   "text": "function depositList() external view returns (uint40 _head, uint40 _tail, uint40 _count);"
+  },
+  "pendingDeposits": {
+   "signature": "pendingDeposits(uint256)",
+   "returns": [
+    "address",
+    "uint48",
+    "uint128",
+    "uint128"
+   ],
+   "repo": "Dromos-Labs/metadex-public@8b506b450aaa9d4a9f1a77e264f2d9dd508e9ddf",
+   "file": "V3/src/interfaces/relay/IRelay.sol",
+   "line": 1059,
+   "text": "function pendingDeposits(uint256 _id)"
+  },
+  "ownerToNFTokenIdList": {
+   "signature": "ownerToNFTokenIdList(address,uint256)",
+   "returns": [
+    "uint256"
+   ],
+   "repo": "aerodrome-finance/contracts@1ba30815",
+   "file": "contracts/VotingEscrow.sol",
+   "line": 441,
+   "text": "mapping(address => mapping(uint256 => uint256)) public ownerToNFTokenIdList;"
+  },
+  "idToManaged": {
+   "signature": "idToManaged(uint256)",
+   "returns": [
+    "uint256"
+   ],
+   "repo": "aerodrome-finance/contracts@1ba30815",
+   "file": "contracts/VotingEscrow.sol",
+   "line": 108,
+   "text": "mapping(uint256 => uint256) public idToManaged;"
+  },
+  "weights": {
+   "signature": "weights(uint256,uint256)",
+   "returns": [
+    "uint256"
+   ],
+   "repo": "aerodrome-finance/contracts@1ba30815",
+   "file": "contracts/VotingEscrow.sol",
+   "line": 110,
+   "text": "mapping(uint256 => mapping(uint256 => uint256)) public weights;"
+  }
+ }
+}

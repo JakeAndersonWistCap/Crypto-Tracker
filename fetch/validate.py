@@ -648,6 +648,15 @@ def _migration_switch_missing(st: dict, day) -> list:
                 raise ValueError
         except (TypeError, ValueError):
             missing.append("deploy_block is not a positive block number")
+    # P2b-1: optional relay_factory_registry (the filing wallets' Relay principal is enumerated from it) — without it
+    # filing_managed_lock_tokens is not written (a named failure); a placeholder is refused like an address
+    reg = st.get("relay_factory_registry")
+    if reg not in (None, ""):
+        why = _placeholder_address(reg)
+        if why:
+            missing.append(f"relay_factory_registry {why}")
+        elif str(reg).lower() in seen:
+            missing.append(f"relay_factory_registry repeats addresses.{seen[str(reg).lower()]}")
     src = str(st.get("source_url") or "")
     if not src.startswith("http") or any(x in src for x in ("…", "<", ">", "example")):
         missing.append("source_url is not a URL")
