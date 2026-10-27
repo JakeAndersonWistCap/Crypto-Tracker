@@ -18975,9 +18975,12 @@ def is_modelled(source) -> bool:
 # ETH CONSENSUS REWARDS HISTORY (Jake's Phase 1 review 2026-10-12, item 8c): the spec's issuance formula on staked ETH,
 # scaled to the measured Eth2Staking series over their overlap (build_workbook._consensus_history_views) — one series
 PROJECT_BY_NAME["Ethereum"].setdefault("series_handover", {}).setdefault("consensus_rewards_tokens", {
-    "ordered_points": ("derived:consensus_formula", "etherscan:ethsupply2.Eth2Staking"),
+    # D5-2a: MEASURED before MODELLED — ultrasound's issuance (d supply + burn) on every day it covers before Etherscan's
+    # first read; the formula only before ultrasound's first day
+    "ordered_points": ("derived:consensus_formula", "ultrasound:issuance", "etherscan:ethsupply2.Eth2Staking"),
     "why": "the consensus spec's issuance (166.32 x sqrt(staked ETH) a year at full participation) on beacon_chain_eth, "
-           "scaled by k = measured ÷ formula over the measured days; then Etherscan's measured Eth2Staking deltas",
+           "scaled by k = measured ÷ formula over the measured days, only before ultrasound's first day; then "
+           "ultrasound.money's measured issuance (d supply + burn, SPEC D5-2a); then Etherscan's Eth2Staking deltas",
     "composition_change": "none: the formula leg is scaled to the measured leg over their overlap (k on every row)",
     "declared": "2026-10-12"})
 

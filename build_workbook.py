@@ -1249,6 +1249,25 @@ def _reward_end_views(groups: dict, asof: pd.Timestamp) -> None:
 
 
 CONSENSUS_HISTORY_POINT = "derived:consensus_formula"
+CONSENSUS_MEASURED_POINT = "ultrasound:issuance"
+
+
+def _ultrasound_issuance(groups: dict, name: str) -> pd.Series:
+    """D5-2a: gross issuance per day MEASURED from the supply history route (config.SUPPLY_HISTORY: ultrasound's
+    next-day 00:00Z supply point = the end of day D) — d(supply) on consecutive days + the stored burn of the day.
+    Post-merge ETH issuance is the net consensus reward (the execution layer issues nothing). Empty when not declared."""
+    h = config.SUPPLY_HISTORY.get(name) or {}
+    iss = h.get("issuance") or {}
+    u, b = groups.get((name, h.get("from_metric"))), groups.get((name, iss.get("burn")))
+    if not h or u is None or u.empty or b is None or b.empty:
+        return pd.Series(dtype=float, index=pd.DatetimeIndex([]))
+    ser = lambda g: (g.assign(date=pd.to_datetime(g["date"]).dt.normalize())  # noqa: E731
+                     .drop_duplicates("date", keep="last").set_index("date")["value"].astype(float).sort_index())
+    lead = ser(u).shift(-int(h.get("shift_days", 0)), freq="D")
+    d_ = lead.diff()[lead.index.to_series().diff().dt.days == 1]
+    bb = ser(b)
+    days = d_.index.intersection(bb.index)
+    return (d_[days] + bb[days]).sort_index()
 
 
 def _consensus_history_views(groups: dict, asof=None) -> None:
@@ -1259,7 +1278,9 @@ def _consensus_history_views(groups: dict, asof=None) -> None:
     consensus-specs@e321975f). Per day before the first measured day: that ÷ 365 on the day's staked ETH
     (beacon_chain_eth, a year of history), x k = the measured rewards ÷ the formula over the days both exist — so the
     older leg is on the measured basis (participation and penalties folded into k). Labelled with k and its days;
-    declared as a handover. No measured overlap: nothing derived."""
+    declared as a handover. No measured overlap: nothing derived. D5-2a: where ultrasound's supply history covers a day
+    before the first Etherscan read, that day is MEASURED (_ultrasound_issuance) and the formula is used only before
+    ultrasound's first day."""
     spec = config.VALIDATOR_YIELD.get("Ethereum") or {}
     f = spec.get("issuance_formula")
     cm = spec.get("consensus_metric")
@@ -1287,13 +1308,19 @@ def _consensus_history_views(groups: dict, asof=None) -> None:
         return
     k = num / den
     both = pd.DatetimeIndex(used)
+    # D5-2a: MEASURED BEFORE MODELLED — ultrasound's issuance (d supply + burn) on every day it covers before the first
+    # Etherscan read; the formula only on the days before that (never interleaved: a day neither measures stays empty)
+    meas_hist = _ultrasound_issuance(groups, "Ethereum")
+    meas_hist = meas_hist[meas_hist.index < m.index.min()]
     older = formula[formula.index < m.index.min()]
+    if not meas_hist.empty:
+        older = older[older.index < meas_hist.index.min()]
     # G11 B6 (Jake's 10-21 run: a hole 07-23..09-28 — the leg stopped at the start of Q0, the measured series starts
     # 09-29/30): the MODELLED leg now runs to the day before the first measured read, so every day to the measured
     # series is covered. (It was held out of Q0 since 2026-10-12 — Phase 1 follow-up item 2 — which left the hole once
     # Q0 moved past the measured start.) The days inside the headline window carry their own label, so a Q0 cell that
     # sums them reads MODELLED in part.
-    if older.empty:
+    if older.empty and meas_hist.empty:
         return
     q0_from = (pd.Timestamp(asof) - pd.Timedelta(days=int(GLOBALS["period_days"]) - 1)) if asof is not None else None
     base = (f"{CONSENSUS_HISTORY_POINT}[MODELLED — excluded from scoring: {f['coefficient']} x sqrt(staked ETH) / 365 "
@@ -1304,7 +1331,11 @@ def _consensus_history_views(groups: dict, asof=None) -> None:
                    if q0_from is not None and d >= q0_from else "]") for d in older.index]
     view = pd.DataFrame({"date": older.index, "project": "Ethereum", "metric": cm, "value": (older * k).values,
                          "tier": 2, "source": src})
-    groups[("Ethereum", cm)] = pd.concat([_as_stored(view, meas.columns), meas], ignore_index=True).sort_values("date")
+    mview = pd.DataFrame({"date": meas_hist.index, "project": "Ethereum", "metric": cm, "value": meas_hist.values,
+                          "tier": 3, "source": f"{CONSENSUS_MEASURED_POINT}[MEASURED: d(ultrasound supply-over-time, "
+                                               f"next-day 00:00Z) + gross_burn_tokens — SPEC D5-2a]"})
+    groups[("Ethereum", cm)] = pd.concat([_as_stored(view, meas.columns), _as_stored(mview, meas.columns), meas],
+                                         ignore_index=True).sort_values("date")
 
 
 PRICE_HISTORY_POINT = "defillama_coins:history"

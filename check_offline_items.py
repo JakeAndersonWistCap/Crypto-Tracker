@@ -1153,6 +1153,102 @@ def etherscan_ethsupply2():
           "and BurntFees in the millions.")
 
 
+ETHSTORE_GENESIS = "2020-12-01"     # beacon genesis 2020-12-01 12:00:23 UTC: ETH.STORE day d starts here + d days
+ETHSTORE_SAMPLES = 12
+ETHSTORE_PAUSE_S = 6.0
+_RUN_BY_NAME = False                  # ethstore_check runs only by name (beaconcha.in dropped 2026-10-01: lockouts)
+
+
+def ethstore_day_pair(day) -> tuple[int, int]:
+    """The two ETH.STORE days (12:00:23 → 12:00:23 UTC from beacon genesis) that each hold half of UTC day `day`."""
+    import pandas as pd                                   # noqa: PLC0415
+    b = (pd.Timestamp(day).normalize() - pd.Timestamp(ETHSTORE_GENESIS)).days
+    return b - 1, b
+
+
+def ethstore_consensus_eth(data: dict) -> float | None:
+    """ETH.STORE's network consensus rewards for its day, in ETH — from the one field whose name says consensus rewards
+    and its unit (wei / gwei). None when no such field is present (the caller prints the field names, never guesses)."""
+    hits = [(k, v) for k, v in (data or {}).items() if "consensus_rewards" in str(k).lower()]
+    if len(hits) != 1:
+        return None
+    k, v = hits[0]
+    unit = 1e18 if str(k).lower().endswith("_wei") else 1e9 if str(k).lower().endswith("_gwei") else None
+    try:
+        return float(v) / unit if unit else None
+    except (TypeError, ValueError):
+        return None
+
+
+def ethstore_check():
+    """D5-2a (Jake: the beaconcha.in key is present): Ethereum's MEASURED consensus-rewards leg before Etherscan's first
+    read (ultrasound's d supply + burn, build_workbook._ultrasound_issuance, recomputed from the store) against
+    beaconcha.in's ETH.STORE network consensus rewards, one UTC day a month (the 15th; at most 12 days, two ETH.STORE days
+    each — its days run 12:00→12:00 UTC, so a UTC day is half of each), one call every 6 s, the key in the request header.
+    ETH.STORE counts validators active the whole day, so it can sit slightly below network issuance. Stores nothing. Runs
+    only when named (`python check_offline_items.py ethstore_check`)."""
+    head("ETHEREUM — measured consensus rewards vs beaconcha.in ETH.STORE (SPEC D5-2a)")
+    if not _RUN_BY_NAME:
+        print("  skipped in the run-everything mode — run it by name: python check_offline_items.py ethstore_check")
+        return
+    import pandas as pd                                   # noqa: PLC0415
+    import config                                         # noqa: PLC0415
+    import store as store_mod                             # noqa: PLC0415
+    import build_workbook as bw                           # noqa: PLC0415
+    key = os.environ.get("BEACONCHAIN_API_KEY", "").strip()
+    if not key:
+        print("  NO BEACONCHAIN_API_KEY in .env — nothing to compare.")
+        return
+    h = config.SUPPLY_HISTORY["Ethereum"]
+    st = store_mod.Store(store_mod.DB_PATH)
+    groups = {}
+    for m in (h["from_metric"], h["issuance"]["burn"], config.VALIDATOR_YIELD["Ethereum"]["consensus_metric"]):
+        groups[("Ethereum", m)] = pd.read_sql("SELECT date, project, metric, value, source, tier FROM metrics WHERE "
+                                              "project='Ethereum' AND metric=?", st.conn, params=(m,))
+    st.close()
+    iss = bw._ultrasound_issuance(groups, "Ethereum")
+    first = pd.to_datetime(groups[("Ethereum", config.VALIDATOR_YIELD["Ethereum"]["consensus_metric"])]["date"]).min()
+    if pd.notna(first):
+        iss = iss[iss.index < pd.Timestamp(first).normalize()]
+    days = [d for d in iss.index if d.day == 15][-ETHSTORE_SAMPLES:]
+    if not days:
+        print("  no measured day on the 15th of a month in the store — nothing to compare.")
+        return
+    print(f"  {len(days)} day(s), {2 * len(days)} call(s) to beaconcha.in, {ETHSTORE_PAUSE_S:.0f} s apart")
+    sess, cache, shown = requests.Session(), {}, False
+    for d in days:
+        vals = []
+        for idx in ethstore_day_pair(d):
+            if idx not in cache:
+                try:
+                    r = sess.get(f"https://beaconcha.in/api/v1/ethstore/{idx}", headers={"apikey": key},
+                                 timeout=TIMEOUT)
+                    body = r.json() if r.content else {}
+                except Exception as e:  # noqa: BLE001
+                    print(f"  beaconcha.in UNREACHABLE — {type(e).__name__}")
+                    return
+                if r.status_code != 200:
+                    print(f"  beaconcha.in HTTP {r.status_code} on ETH.STORE day {idx} — stopping (no retry; "
+                          f"rate-limit headers: {', '.join(k for k in r.headers if 'ratelimit' in k.lower())})")
+                    return
+                data = body.get("data") if isinstance(body, dict) else None
+                data = data[0] if isinstance(data, list) and data else data
+                cache[idx] = ethstore_consensus_eth(data if isinstance(data, dict) else {})
+                if cache[idx] is None and not shown:
+                    print(f"  NO consensus-rewards field with a wei/gwei unit; the fields served: "
+                          f"{sorted((data or {}).keys()) if isinstance(data, dict) else type(data).__name__}")
+                    shown = True
+                time.sleep(ETHSTORE_PAUSE_S)
+            vals.append(cache[idx])
+        if any(v is None for v in vals):
+            print(f"  {d.date()}  ours {iss[d]:>10,.1f} ETH   ETH.STORE n/a")
+            continue
+        es = 0.5 * (vals[0] + vals[1])
+        print(f"  {d.date()}  ours {iss[d]:>10,.1f} ETH   ETH.STORE {es:>10,.1f} ETH (half of days "
+              f"{ethstore_day_pair(d)[0]} and {ethstore_day_pair(d)[1]})   {(iss[d] / es - 1) * 100:+.2f}%")
+    print("  PASTE BACK the lines above. Stores nothing.")
+
+
 # F2 (round F, 2026-10-14): the L2 Pendle GaugeControllers and Fluid MerkleDistributors measured in the sandbox
 # (E7) need a log route on Jake's machine to be STORED. One getLogs per chain through the Etherscan V2 API with the key
 # in .env: the first PENDLE / FLUID Transfer out of the holder. Addresses: pendle-core-v2-public@87685c8
@@ -14010,6 +14106,7 @@ CHECKS = (
     mev_relays,
     spot_checks,
     nearblocks_v3_parity,
+    ethstore_check,
 )
 
 # The three that need a value off the command line. Kept beside the registry rather than folded
@@ -14098,6 +14195,8 @@ def main():
             print(f"\n  {err}\n")
             return 1
         selected = (fn,)
+        global _RUN_BY_NAME
+        _RUN_BY_NAME = True
 
     if selected is CHECKS:
         print("check_offline_items.py — running every check the build sandbox cannot reach.")
