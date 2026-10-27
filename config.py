@@ -32768,6 +32768,18 @@ CREDIBILITY["Pendle"]["in_revenue"]["ref"]["note"] = (
 # fetch.chain never sends it a wider range; ALCHEMY_GETLOGS_MAX_RANGE in .env overrides this for a paid plan.
 ALCHEMY_GETLOGS_MAX_RANGE = 10
 
+# D4-2b A WRONG STORED SERIES, REMOVED FIRST: the schedule-basis Merkl rows (source "merkl_campaigns"; the allocated
+# rows read from D4 on carry "merkl_campaigns:allocated") go once, and the same run re-reads both series in full — a
+# schedule row past the allocated series' end would otherwise stay beside it (SPEC D4-2b)
+RUN_CLEANUPS = RUN_CLEANUPS + (
+    {"id": "D4-2b", "metric": "merkl_campaigns_non_ethereum_tokens", "source": "merkl_campaigns", "once": True,
+     "projects": ("Morpho",),
+     "why": "Merkl's campaign SCHEDULE (the pre-D2 basis) — re-read this run as allocated to users (SPEC D2-3, D4-2b)"},
+    {"id": "D4-2b", "metric": "merkl_campaigns_plume_tokens", "source": "merkl_campaigns", "once": True,
+     "projects": ("Plume",),
+     "why": "Merkl's campaign SCHEDULE (the pre-D2 basis) — re-read this run as allocated to users (SPEC D2-3, D4-2b)"},
+)
+
 
 # D4-5 PENDLE'S OWN EPOCH FIGURES ARE ITS PRIMARY FEES / REVENUE / HOLDERS REVENUE (Jake 2026-10-27, decision 5 on D3).
 # Pendle publishes them per 14-day sPENDLE epoch only (api-v2.pendle.finance/core/docs, read 2026-10-26), so each

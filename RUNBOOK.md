@@ -545,6 +545,10 @@ or stop it and start again on the new code. Don't run both at once: they write t
    three runs). Prints `Morpho: 0 campaign(s) already cached, <n> read`, the same for Plume.
 3. `python token_metrics.py` — the normal run. New on its Run Log:
    - `CLEAN-UP D3-5: applied once …` (still to run on your store: your last run was on D2).
+   - `CLEAN-UP D4-2b: applied once — <n> row(s) of Morpho / merkl_campaigns_non_ethereum_tokens from merkl_campaigns
+     removed …` and the same for Plume / merkl_campaigns_plume_tokens: the schedule-basis rows go, and the same run
+     re-reads both on the allocated basis (`daily read mark merkl_campaigns:<project> cleared`). If that read does not
+     complete, the two series read MISSING until it does — never the schedule figure.
    - Pendle: `pendle_epochs` stores `pendle_epoch_market_fees_usd` and `pendle_epoch_buyback_usd` beside the D3 legs;
      DefiLlama's pendle-v2 lines now store `fees_usd_defillama`, `revenue_usd_defillama`,
      `holders_revenue_usd_defillama` (the cross-check). Pendle's fees / revenue / holders revenue in the workbook are
@@ -553,7 +557,8 @@ or stop it and start again on the new code. Don't run both at once: they write t
    - `merkl_campaigns` Morpho: `… campaign allocations: <n> cached …, <m> read …; <k> call(s) in <s>s`.
    - Any TIER TIMED OUT line now ends `CAUSE: NETWORK|THROTTLED|CODE|UNCLASSIFIED — <evidence>`. CODE / THROTTLED
      timeouts are listed under "TIMED OUT, NOT THE NETWORK" and no longer make NETWORK-WIDE TROUBLE.
-   PASTE BACK: every TIER TIMED OUT line, the merkl_campaigns lines, the pendle_epochs and defillama Pendle lines.
+   PASTE BACK: every TIER TIMED OUT line, the CLEAN-UP D3-5 / D4-2b "applied once" lines, the merkl_campaigns lines,
+   the pendle_epochs and defillama Pendle lines.
 4. `python measuring_guard.py --newer metrics.db` — PASTE BACK the VERDICT.
 5. No lockup read: the stored read is 2026-10-26 (1 day old). The Sunday task reads next.
 

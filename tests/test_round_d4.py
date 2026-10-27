@@ -458,3 +458,34 @@ def test_1c_only_the_validated_codes_take_the_state_route(monkeypatch):
         monkeypatch.setattr(coi, "_near_view_account", lambda a, h, c=code: ({"amount": "1", "code_hash": c}, ""))
         assert coi._read_lockup_state("a.lockup.near", 1, 1) == (None, goes)
     assert states == ["a.lockup.near"]
+
+
+def test_2b_the_schedule_rows_go_once_and_the_allocated_rows_stay(tmp_path, monkeypatch):
+    import logging
+    import store as sm
+    import token_metrics as tm
+    from fetch.logcache import DailyChecks
+    monkeypatch.setenv("TOKEN_METRICS_LOGCACHE", str(tmp_path / "cache"))
+    monkeypatch.setattr(config, "RUN_CLEANUPS", tuple(c for c in config.RUN_CLEANUPS if c["id"] == "D4-2b"))
+    assert {(c["projects"], c["metric"], c["source"]) for c in config.RUN_CLEANUPS} == {
+        (("Morpho",), "merkl_campaigns_non_ethereum_tokens", "merkl_campaigns"),
+        (("Plume",), "merkl_campaigns_plume_tokens", "merkl_campaigns")}
+    dc = DailyChecks()
+    dc.f.parent.mkdir(parents=True, exist_ok=True)
+    dc.f.write_text(json.dumps({"merkl_campaigns:Morpho": "2026-10-27"}))
+    st = sm.Store(str(tmp_path / "metrics.db"))
+    # Jake's store: the schedule rows to 10-25 (6,645.95 a day = 199,378 / 30)
+    sched = [{"date": str(d.date()), "project": "Morpho", "metric": "merkl_campaigns_non_ethereum_tokens",
+              "value": 6_645.95, "source": "merkl_campaigns", "tier": 1}
+             for d in pd.date_range("2026-10-20", "2026-10-25")]
+    st.upsert(pd.DataFrame(sched))
+    lines = tm.apply_run_cleanups(st, "r", logging.getLogger("t"))
+    assert sum("applied once — 6 row(s) of Morpho / merkl_campaigns_non_ethereum_tokens" in x for x in lines) == 1
+    assert pd.read_sql("SELECT * FROM metrics", st.conn).empty
+    assert dc.get("merkl_campaigns:Morpho") is None, "the same run re-reads Morpho's campaigns"
+    # the allocated read, computed only to 10-22 (a running campaign): nothing of the schedule is left past it
+    st.upsert(pd.DataFrame([dict(r, value=4_608.03, source="merkl_campaigns:allocated") for r in sched[:3]]))
+    assert tm.apply_run_cleanups(st, "r2", logging.getLogger("t")) == []
+    left = pd.read_sql("SELECT date, source FROM metrics", st.conn)
+    assert set(left["source"]) == {"merkl_campaigns:allocated"} and left["date"].max().startswith("2026-10-22")
+    st.close()
