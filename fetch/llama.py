@@ -1504,8 +1504,9 @@ class DefiLlama:
             path = config.TRADING_THROUGHPUT["endpoints"][metric].format(slug=spec["slug"])
             # D1-1: a chain whose total is dominated by one protocol reads the per-protocol breakdown too (same call)
             required = tuple((spec.get("required_in_breakdown") or {}).get(metric) or ())
+            hold = (spec.get("hold_after_drop") or {}).get(metric)          # D6-5
             params = dict(config.TRADING_THROUGHPUT["params"])
-            if required:
+            if required or hold:
                 params["excludeTotalDataChartBreakdown"] = "false"
             try:
                 j = self.http.get(f"{API}{path}", params=params)
@@ -1523,13 +1524,32 @@ class DefiLlama:
                     if v is not None]
             rows = [(d, v) for d, v in rows if d < today()]
             refused = []
+            bd = ({pd.Timestamp(int(t), unit="s").normalize(): (b or {})
+                   for t, b in (j.get("totalDataChartBreakdown") or [])} if (required or hold) else {})
+            if hold:
+                # D6-5 (Jake, APPROVED 2026-10-27): A LEG THAT DROPS TO 0 IS HELD, NOT FORMED. A day whose
+                # hold["protocol"] leg reads 0 (or is absent) inside a run that began right after a day it was non-zero
+                # is not stored until a re-read shows the leg, or the day is hold["days"] old (then stored as served);
+                # each held day goes on the provisional list (config.provisional_series) with the reason.
+                held, prev, in_run = [], None, False
+                for d, _v in sorted(rows):
+                    lv = float((bd.get(d) or {}).get(hold["protocol"]) or 0)
+                    in_run = (lv <= 0) and (in_run or (prev is not None and prev > 0))
+                    if in_run and (today() - d).days < int(hold["days"]):
+                        held.append(d)
+                    prev = lv
+                rows = [(d, v) for d, v in rows if d not in set(held)]
+                why_h = (f"{hold['protocol']}'s leg reads 0 after a non-zero day — not formed until re-read non-zero or "
+                         f"{hold['days']} days old (SPEC D6-5)")
+                config.set_provisional_held(name, metric, [str(d.date()) for d in held], why_h)
+                if held:
+                    out.log.append(LogEntry(SOURCE, name, 0, "ok", f"{metric}: HELD {len(held)} day(s) "
+                                            f"{', '.join(str(d.date()) for d in held)} — {why_h}", 1))
             if required:
                 # A DAY WITHOUT THE PROTOCOL THAT MAKES MOST OF IT IS PARTIAL, NOT LOW (D1-1, Jake's 10-26 run: NEAR
                 # Intents — 85-95% of Near's DEX volume, read from a Dune dataset — was absent from the breakdown on
                 # 10-23..10-25 until DefiLlama backfilled it the same afternoon; the chain total read 4.4M-9.4M against
                 # ~90M-140M). Such a day is NOT STORED, so every window over it refuses it rather than summing it.
-                bd = {pd.Timestamp(int(t), unit="s").normalize(): (b or {})
-                      for t, b in (j.get("totalDataChartBreakdown") or [])}
                 keep = []
                 for d, v in rows:
                     miss = [r for r in required if not float((bd.get(d) or {}).get(r) or 0) > 0]

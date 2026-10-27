@@ -162,3 +162,60 @@ def test_4_skys_endowment_purchase_is_named_on_the_flows_tab_never_a_claimed_zer
     assert any(v in (None, "n/a") or str(v).startswith("n/a") for v in vals), vals
     assert ret[qs[0]] in (0, 0.0)
     assert any("SKY Frontier Foundation" in str(status[i]) for i in qs)
+
+
+# ================================================================================================== 5
+def _near_llama(monkeypatch, today_, days, thor):
+    from fetch import llama
+    T = lambda x: int(pd.Timestamp(x).timestamp())  # noqa: E731
+
+    class H:
+        def get(self, url, params=None):
+            return {"chain": "Near", "totalDataChart": [[T(x), 100e6] for x in days],
+                    "totalDataChartBreakdown": [[T(x), {"NEAR Intents": 90e6, **({"THORSwap": v} if v else {})}]
+                                                for x, v in zip(days, thor)]}
+    d = llama.DefiLlama.__new__(llama.DefiLlama)
+    d.http = H()
+    monkeypatch.setattr(llama, "today", lambda: pd.Timestamp(today_))
+    return d
+
+
+def test_5_a_near_day_whose_thorswap_leg_drops_to_zero_is_held_and_listed(monkeypatch):
+    from fetch.base import FetchOutput
+    days = [str(x.date()) for x in pd.date_range("2026-10-14", "2026-10-26")]
+    thor = [5e5, 0, 3e5, 4e5, 1e5, 2e5, 6e5, 7e5, 5.4e5, 0, 0, 0, 0]       # 10-15: a one-day zero, 9 days old
+    d = _near_llama(monkeypatch, "2026-10-27", days, thor)
+    out = FetchOutput()
+    d.trading_volume(config.PROJECT_BY_NAME["Near"], out)
+    f = [x for x in out.frames if x is not None and not x.empty][0]
+    kept = {str(x.date()) for x in pd.to_datetime(f["date"])}
+    assert {"2026-10-23", "2026-10-24", "2026-10-25", "2026-10-26"}.isdisjoint(kept)     # held: < 7 days old
+    assert "2026-10-15" in kept and "2026-10-22" in kept                                # 9 days old: stored as served
+    assert any("HELD 4 day(s)" in e.message and "SPEC D6-5" in e.message for e in out.log)
+    why = config.provisional_series()[("Near", "dex_volume_usd")]
+    assert "HELD 2026-10-23, 2026-10-24, 2026-10-25, 2026-10-26" in why and "THORSwap" in why
+    # a re-read showing the leg releases the day; a run with nothing held clears the list entry
+    d2 = _near_llama(monkeypatch, "2026-10-28", days, thor[:9] + [2e5, 1e5, 3e5, 4e5])
+    out2 = FetchOutput()
+    d2.trading_volume(config.PROJECT_BY_NAME["Near"], out2)
+    f2 = [x for x in out2.frames if x is not None and not x.empty][0]
+    assert {"2026-10-23", "2026-10-26"} <= {str(x.date()) for x in pd.to_datetime(f2["date"])}
+    assert ("Near", "dex_volume_usd") not in config.provisional_series()
+
+
+def test_5_the_days_stored_before_the_rule_are_removed_once(tmp_path):
+    import logging
+
+    import store as sm
+    import token_metrics as tm
+    st = sm.Store(str(tmp_path / "m.db"))
+    st.upsert(_g("Near", "dex_volume_usd", ["2026-10-22", "2026-10-23", "2026-10-26"], [142e6, 103e6, 141e6],
+                 "defillama:dexs:near"))
+    tm.apply_run_cleanups(st, "r1", logging.getLogger("t"))
+    left = [r[0] for r in st.conn.execute("SELECT date FROM metrics WHERE project='Near' ORDER BY date")]
+    assert left == ["2026-10-22"]
+    st.upsert(_g("Near", "dex_volume_usd", ["2026-10-26"], [141e6], "defillama:dexs:near"))   # the rule stored it
+    lines = tm.apply_run_cleanups(st, "r2", logging.getLogger("t"))
+    assert not any("D6-5" in x for x in lines)                                                 # once only
+    assert st.conn.execute("SELECT COUNT(*) FROM metrics WHERE date='2026-10-26'").fetchone()[0] == 1
+    st.close()

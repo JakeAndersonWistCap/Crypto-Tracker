@@ -1067,6 +1067,9 @@ def apply_run_cleanups(st, run_id: str, log) -> list[str]:
                                    (mark, proj)).fetchone():
                     continue
                 q = ("FROM metrics WHERE project=? AND metric=? AND source=?", (proj, c["metric"], c["source"]))
+                if c.get("dates"):              # D6-5: once, on exactly these days
+                    q = (q[0] + f" AND substr(date, 1, 10) IN ({','.join('?' * len(c['dates']))})",
+                         q[1] + tuple(c["dates"]))
             elif c.get("orphan_delta_of"):
                 # G15 2: a differenced row dated a day its stock holds no reading
                 q = ("FROM metrics WHERE project=? AND metric=? AND source LIKE '%:delta%' AND substr(date, 1, 10) "

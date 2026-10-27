@@ -21344,9 +21344,41 @@ def set_provisional_from_store(days: dict) -> None:
     PROVISIONAL_FROM_STORE.update({k: int(n) for k, n in (days or {}).items()})
 
 
+def _held_path():
+    import os as _os
+    from pathlib import Path as _P
+    return _P(_os.environ.get("TOKEN_METRICS_LOGCACHE", ".cache/logscan")) / "provisional-held.json"
+
+
+def provisional_held() -> dict:
+    """{(project, metric): (days, why)} — the days a fetch HELD (not formed) on its last read (D6-5)."""
+    import json as _json
+    try:
+        raw = _json.loads(_held_path().read_text())
+    except (OSError, ValueError):
+        return {}
+    return {tuple(k.split("|", 1)): (v["days"], v["why"]) for k, v in raw.items() if v.get("days")}
+
+
+def set_provisional_held(project_name: str, metric: str, days: list, why: str) -> None:
+    """Record the days this read HELD for a series (an empty list clears it) — the provisional list reads them."""
+    import json as _json
+    p = _held_path()
+    try:
+        raw = _json.loads(p.read_text())
+    except (OSError, ValueError):
+        raw = {}
+    raw[f"{project_name}|{metric}"] = {"days": list(days), "why": why}
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(_json.dumps(raw, indent=1))
+
+
 def provisional_series() -> dict:
-    """{(project, metric): why} — the series whose latest day is provisional until re-read (G16 1)."""
+    """{(project, metric): why} — the series whose latest day is provisional until re-read (G16 1), and the series with
+    days HELD by a fetch rule (D6-5)."""
     out = {k: f"declared — {w}" for k, w in PROVISIONAL_SERIES_DECLARED.items()}
+    for k, (days, why) in provisional_held().items():
+        out[k] = (out[k] + "; " if k in out else "") + f"HELD {', '.join(days)}: {why}"
     for k, n in PROVISIONAL_FROM_STORE.items():
         if n >= PROVISIONAL_LOW_READ_MIN_DAYS:
             out[k] = (out[k] + "; " if k in out else "") + f"read below {PROVISIONAL_LOW_READ_RATIO:.0%} of final on {n} day(s)"
@@ -32960,3 +32992,17 @@ FLOW_UNMEASURED_RETURNS = {
             "why": "SKY bought on market into the SKY Frontier Foundation (issuer-side endowment): 642.74M SKY "
                    "2025-08-27..12-01 (611.92M direct) — leaves circulating, no series (SPEC D6-4)"},
 }
+
+
+# D6-5 (Jake, APPROVED 2026-10-27; SPEC §19 D6-5): NEAR'S DEX DAY WITH THORSWAP'S LEG DROPPED TO 0 IS HELD. THORSwap's own
+# backend restated earlier zero runs (D5-3e: 2026-02-13..15, 05-26..06-04) and 10-23 carried THORSwap-tagged swaps on a
+# day it reported 0. A day inside a zero run that follows a non-zero day is not stored until the leg reads non-zero or the
+# day is 7 days old (fetch/llama.trading_volume); held days are on the provisional list. The days stored before the rule
+# (10-23..10-26, THORSwap absent from the breakdown) are removed once, so the rule decides them.
+TRADING_THROUGHPUT["chains"]["Near"]["hold_after_drop"] = {"dex_volume_usd": {"protocol": "THORSwap", "days": 7}}
+RUN_CLEANUPS = RUN_CLEANUPS + (
+    {"id": "D6-5", "metric": "dex_volume_usd", "source": "defillama:dexs:near", "once": True,
+     "dates": ("2026-10-23", "2026-10-24", "2026-10-25", "2026-10-26"), "projects": ("Near",),
+     "why": "stored before the THORSwap hold (SPEC D6-5): THORSwap's NEAR leg reads 0 after 10-22's 543,647 — the day is "
+            "re-decided by the rule (held until re-read non-zero or 7 days old)"},
+)
