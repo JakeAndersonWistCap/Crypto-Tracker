@@ -13856,6 +13856,231 @@ def mcap_inputs():
     return 0
 
 
+# ===== P2a D6: HYPERLIQUID'S CIRCULATING HANDOVER — BOTH SERIES SIDE BY SIDE, AND THE WALLETS BETWEEN THEM. =====
+_HL_LEG_SHORT = {"hypercore_info:tokenDetails.circulatingSupply": "gross",
+                 "hypercore_info:tokenDetails.circulatingSupply-hyperevm_burn": "gross-burn",
+                 "hypercore_info:tokenDetails.circulatingSupply-exclude_wallets": "net",
+                 "hypercore_info:tokenDetails.circulatingSupply-exclude_wallets-hyperevm_burn": "net-burn"}
+
+
+def _hl_handover_spec() -> tuple[dict, dict, list]:
+    """(the handover declaration with its overlap spec, the Hyperliquid project, the declared exclude_wallets)."""
+    import config as _cfg                                 # noqa: PLC0415
+    p = _cfg.PROJECT_BY_NAME["Hyperliquid"]
+    decl = (p.get("series_handover") or {}).get("circulating_supply_used") or {}
+    excl = [w for rd in (p.get("node_api") or {}).get("extra_reads") or () for w in rd.get("exclude_wallets") or ()]
+    return decl, p, excl
+
+
+def _hl_store_series(con, metric: str, start: str, end: str) -> dict:
+    """{YYYY-MM-DD: (value, source)} for Hyperliquid's `metric` between start and end inclusive (metrics.db)."""
+    rows = con.execute("SELECT substr(date, 1, 10), value, source FROM metrics WHERE project = 'Hyperliquid' AND "
+                       "metric = ? AND substr(date, 1, 10) BETWEEN ? AND ? ORDER BY date", (metric, start, end))
+    return {d: (float(v), str(s or "")) for d, v, s in rows if v is not None}
+
+
+def hl_wallet_parts(message: str, labels: list[str]) -> dict:
+    """{label: (total, spot, staked)} parsed from one run-log line 'excluded_wallets_tokens=...: <label> <total>
+    (spot <s> + staked <k>); ...' (fetch/hypercore._circ_less_wallets). A label not in the line is absent, never 0."""
+    import re                                             # noqa: PLC0415
+    num = r"(-?[\d,]+(?:\.\d+)?)"
+    out = {}
+    for lab in labels:
+        m = re.search(re.escape(lab) + rf" {num} \(spot {num} \+ staked {num}\)", message or "")
+        if m:
+            out[lab] = tuple(float(g.replace(",", "")) for g in m.groups())
+    return out
+
+
+def _hl_live(url: str, body: dict):
+    r = requests.post(url, json=body, timeout=TIMEOUT)
+    r.raise_for_status()
+    return r.json()
+
+
+def _hl_live_wallet(url: str, addr: str) -> tuple[float, float, float] | None:
+    """(total, spot, staked) HYPE for one address, as fetch/hypercore.wallet_hype reads it (spot + delegated +
+    undelegated + pending withdrawal), or None when unread — never 0."""
+    try:
+        spot = _hl_live(url, {"type": "spotClearinghouseState", "user": addr})
+        ds = _hl_live(url, {"type": "delegatorSummary", "user": addr})
+        if not isinstance(spot.get("balances"), list) or ds.get("delegated") is None:
+            return None
+        sp = sum(float(b.get("total") or 0) for b in spot["balances"] if b.get("coin") == "HYPE")
+        st = sum(float(ds.get(k) or 0) for k in ("delegated", "undelegated", "totalPendingWithdrawal"))
+        return sp + st, sp, st
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def hl_attribution(gross: float | None, a: float | None, parts: dict, burn: float | None) -> list[tuple[str, float]]:
+    """How tokenDetails' gross circulating exceeds CoinGecko's figure, leg by leg: each declared wallet, the HyperEVM
+    burn, and the remainder no primary source names. [] when gross or a is unknown (Unknown is never 0); a wallet or
+    burn that is unknown is listed as such and leaves the remainder unformed."""
+    if gross is None or a is None:
+        return []
+    out, known = [], True
+    for lab, v in parts.items():
+        if v is None:
+            known = False
+        out.append((lab, v))
+    out.append(("HyperEVM burn (zero address on HyperEVM)", burn))
+    known = known and burn is not None
+    out.append(("UNATTRIBUTED: CoinGecko publishes no wallet list for its figure",
+                (gross - a - sum(v for _, v in out if v is not None)) if known else None))
+    return out
+
+
+def hl_circulating_overlap(days: int = 30, live: bool = True):
+    """P2a D6 (Jake's run: the declared 2026-10-21 handover circulating_supply_used, CoinGecko -> Hyperliquid's own,
+    FAILED its overlap check, +7.04% on 10-27, worst +35.72% on 10-07). Reads metrics.db (read-only) and prints, for the
+    last `days` stored days, BOTH SERIES SIDE BY SIDE — a = circulating_supply (CoinGecko), b =
+    circulating_supply_first_party — with b - a, the gap, tokenDetails' gross figure, each declared exclusion wallet
+    (from the run log line of that day) and the HyperEVM burn, and b's leg. Then the overlap verdict as the build
+    computes it, the wallets with their addresses, and (live=True) today's figures from api.hyperliquid.xyz with the
+    gap attributed wallet by wallet. Changes nothing."""
+    import sqlite3                                        # noqa: PLC0415
+    import pandas as pd                                   # noqa: PLC0415
+    import store as _store                                # noqa: PLC0415
+    head("HYPERLIQUID CIRCULATING — the 2026-10-21 handover's two series side by side, and the wallets between them")
+    decl, p, excl = _hl_handover_spec()
+    ov = decl.get("overlap") or {}
+    a_m, b_m = ov.get("a", "circulating_supply"), ov.get("b", "circulating_supply_first_party")
+    print(f"  handover circulating_supply_used, declared {decl.get('declared', '?')}: a = {a_m} (CoinGecko) -> "
+          f"b = {b_m} (Hyperliquid's own, net of the declared wallets from 2026-10-11); tolerance "
+          f"+/-{ov.get('tolerance_pct', '?')}% over >= {ov.get('min_days', '?')} common days")
+    labels = [w["label"] for w in excl]
+    print("  THE DECLARED EXCLUSION (config Hyperliquid node_api exclude_wallets, Jake A1 2026-10-11) + the HyperEVM burn:")
+    for w in excl:
+        print(f"    {w['address']}  {w['label']}  (read {w.get('source_date', '?')}: "
+              f"{float(w['read_2026_10_11']):,.2f})" if w.get("read_2026_10_11") is not None else
+              f"    {w['address']}  {w['label']}")
+    print("    0x0000000000000000000000000000000000000000 on HyperEVM  HyperEVM burn (hyperevm_zero_address_balance)")
+    rows_out = {}
+    if not os.path.exists(_store.DB_PATH):
+        print(f"\n  no store at {_store.DB_PATH} — the side-by-side needs Jake's metrics.db")
+    else:
+        con = sqlite3.connect(f"file:{_store.DB_PATH}?mode=ro", uri=True)
+        try:
+            last = con.execute("SELECT max(substr(date, 1, 10)) FROM metrics WHERE project = 'Hyperliquid' AND metric "
+                               "IN (?, ?)", (a_m, b_m)).fetchone()[0]
+            if not last:
+                print(f"\n  the store holds no Hyperliquid {a_m} or {b_m} row")
+            else:
+                start = str((pd.Timestamp(last) - pd.Timedelta(days=days - 1)).date())
+                ser = {m: _hl_store_series(con, m, start, last) for m in
+                       (a_m, b_m, "circulating_supply_tokendetails", "excluded_wallets_tokens",
+                        "excluded_wallets_tokens_replay", "hyperevm_zero_address_balance")}
+                parts = {}
+                if _has_table(con, "run_log"):
+                    for ts, msg in con.execute(
+                            "SELECT ts, message FROM run_log WHERE project = 'Hyperliquid' AND message LIKE "
+                            "'excluded_wallets_tokens=%' AND substr(ts, 1, 10) BETWEEN ? AND ? ORDER BY ts",
+                            (start, last)):
+                        got = hl_wallet_parts(msg, labels)
+                        if got:
+                            parts[str(ts)[:10]] = got        # the day's last read wins
+                short = [lab.split(" (")[0] for lab in labels]
+                print(f"\n  {'date':<10} {'a CoinGecko':>15} {'b first-party':>15} {'b - a':>13} {'gap':>8} "
+                      f"{'tokenDetails':>15} " + " ".join(f"{s[:16]:>16}" for s in short)
+                      + f" {'EVM burn':>11}  b's leg")
+                fmt = (lambda v, w=15: f"{v:>{w},.0f}" if v is not None else f"{'unread':>{w}}")
+                for d in sorted(set().union(*(set(s) for s in ser.values()))):
+                    a = (ser[a_m].get(d) or (None,))[0]
+                    b, bsrc = ser[b_m].get(d) or (None, "")
+                    g = (ser["circulating_supply_tokendetails"].get(d) or (None,))[0]
+                    burn = (ser["hyperevm_zero_address_balance"].get(d) or (None,))[0]
+                    pw = parts.get(d) or {}
+                    gap = (b / a - 1) * 100 if a and b is not None else None
+                    rows_out[d] = {"a": a, "b": b, "gross": g, "burn": burn, "parts": pw, "gap": gap}
+                    print(f"  {d:<10} {fmt(a)} {fmt(b)} {fmt(b - a if a is not None and b is not None else None, 13)} "
+                          + (f"{gap:>+7.2f}%" if gap is not None else f"{'—':>8}") + f" {fmt(g)} "
+                          + " ".join(fmt((pw.get(lab) or (None,))[0], 16) for lab in labels)
+                          + f" {fmt(burn, 11)}  {_HL_LEG_SHORT.get(bsrc, bsrc[:40] or '—')}")
+                av = sorted({round(v[0]) for v in ser[a_m].values()})
+                if av:
+                    since = con.execute("SELECT min(substr(date, 1, 10)) FROM metrics WHERE project = 'Hyperliquid' "
+                                        "AND metric = ? AND round(value) = ?", (a_m, av[-1])).fetchone()[0] \
+                        if len(av) == 1 else None
+                    print(f"\n  a ({a_m}) took {len(av)} distinct value(s) over the window"
+                          + (f" — {av[0]:,} on every stored day, the same figure since {since}: CoinGecko's count is "
+                             f"static, so b - a moves with Hyperliquid's figure alone" if len(av) == 1 else ""))
+                if ser["excluded_wallets_tokens_replay"]:
+                    d = max(ser["excluded_wallets_tokens_replay"])
+                    print(f"  excluded_wallets_tokens_replay (the two wallets replayed from their ledgers) on {d}: "
+                          f"{ser['excluded_wallets_tokens_replay'][d][0]:,.2f}")
+                if not parts:
+                    print("  the run log holds no per-wallet line in the window: the per-wallet columns are unread "
+                          "(excluded_wallets_tokens holds their sum)")
+                # THE VERDICT AS THE BUILD COMPUTES IT, on every common day the store holds (not only the window)
+                import build_workbook as bw                    # noqa: PLC0415
+                full = {m: pd.read_sql("SELECT date, value FROM metrics WHERE project = 'Hyperliquid' AND metric = ? "
+                                       "ORDER BY date", con, params=(m,)) for m in (a_m, b_m)}
+                res = bw.handover_overlap({("Hyperliquid", m): g for m, g in full.items()}, "Hyperliquid", ov)
+                print(f"\n  {res.get('text', '')}")
+                pre = [d for d, r in rows_out.items() if d < "2026-10-11" and r["gap"] is not None]
+                if pre:
+                    print("  Days before 2026-10-11 hold b on its gross leg (the Foundation and Grants wallets still "
+                          "inside it, decision A1 applies from 2026-10-11): their gap is that step, not CoinGecko's.")
+        finally:
+            con.close()
+    if not live:
+        return 0
+    # ===== LIVE NOW (api.hyperliquid.xyz info + the HyperEVM RPC; read-only, no key) =====
+    url = (p.get("node_api") or {}).get("endpoint") or "https://api.hyperliquid.xyz/info"
+    print(f"\n  LIVE NOW ({_now_utc()}), {url}:")
+    td = None
+    try:
+        meta = _hl_live(url, {"type": "spotMeta"})
+        tid = next(t["tokenId"] for t in meta.get("tokens") or () if t.get("name") == "HYPE")
+        td = _hl_live(url, {"type": "tokenDetails", "tokenId": tid})
+    except Exception as e:  # noqa: BLE001
+        print(f"    tokenDetails unread — {str(e)[:160]}")
+    gross = float(td["circulatingSupply"]) if td and td.get("circulatingSupply") is not None else None
+    if td:
+        print(f"    tokenDetails: totalSupply {float(td['totalSupply']):,.2f}, circulatingSupply {gross:,.2f}, "
+              f"futureEmissions {float(td.get('futureEmissions') or 0):,.2f}")
+        print("    ALREADY OUT of circulatingSupply (tokenDetails.nonCirculatingUserBalances, Hyperliquid's own list):")
+        for addr, bal in td.get("nonCirculatingUserBalances") or ():
+            print(f"      {addr}  {float(bal):,.2f}")
+    wparts = {}
+    for w in excl:
+        got = _hl_live_wallet(url, w["address"])
+        wparts[w["label"]] = got[0] if got else None
+        print(f"    {w['address']}  {w['label']}: " + (f"{got[0]:,.2f} (spot {got[1]:,.2f} + staked {got[2]:,.2f})"
+                                                    if got else "unread"))
+    burn = None
+    evm = next((r for r in (p.get("node_api") or {}).get("extra_reads") or ()
+                if r.get("shape") == "evm_native_balance" and r.get("subtract_from_supply")), None)
+    for ep in (evm or {}).get("endpoints") or ():
+        try:
+            j = _hl_live(ep, {"jsonrpc": "2.0", "id": 1, "method": "eth_getBalance", "params": [evm["address"], "latest"]})
+            burn = int(j["result"], 16) / 1e18
+            break
+        except Exception:  # noqa: BLE001
+            continue
+    print(f"    HyperEVM burn {evm['address'] if evm else '?'}: " + (f"{burn:,.2f}" if burn is not None else "unread"))
+    a_day = max((d for d, r in rows_out.items() if r["a"] is not None), default=None)
+    a_now = rows_out[a_day]["a"] if a_day else None
+    net = (gross - sum(wparts.values()) - burn) if gross is not None and burn is not None \
+        and all(v is not None for v in wparts.values()) else None
+    print(f"    b now = {gross:,.2f} - the declared wallets - the burn = " if gross is not None else "    b now = ",
+          end="")
+    print(f"{net:,.2f}" if net is not None else "unformed (an input is unread)")
+    if a_now is None:
+        print("    a (CoinGecko) is not in the store here: the attribution below needs it — unformed")
+        return 0
+    print(f"    a = the store's CoinGecko circulating on {a_day}: {a_now:,.2f}"
+          + (f"; b / a - 1 = {(net / a_now - 1) * 100:+.2f}%" if net is not None else ""))
+    att = hl_attribution(gross, a_now, wparts, burn)
+    if att:
+        print(f"    WHY tokenDetails' gross ({gross:,.2f}) exceeds CoinGecko ({a_now:,.2f}) by {gross - a_now:,.2f}:")
+        for lab, v in att:
+            print(f"      {lab:<64} " + (f"{v:>16,.2f}  ({v / a_now * 100:+.2f}% of a)" if v is not None
+                                         else f"{'unread':>16}"))
+    return 0
+
+
 def env_keys():
     """ROUND G3 item 13 (Jake 2026-10-18): each key .env can hold — PRESENT or ABSENT, never its value — what its
     absence disables and the tiers it affects (config.ENV_KEYS). Also validates ALCHEMY_API_KEY's shape. Returns 0."""
@@ -14105,7 +14330,7 @@ CHECKS = (
     morpho_incentives, settlement_sources, hyperevm_etherscan, maple_ssf_inflows, aethir_pages,
     geod_stake_recipient, geod_stake_wallets, maple_ssf_lp_test, maple_drips, plume_archive, settlement_rebuild_coverage,
     near_settlement_routes,
-    env_keys, aero_migration, near_wallet_inflow_days, worldmobile_probe, stale_series, mcap_inputs, na_reasons, missing_triage, gap_routes, spec_coverage,
+    env_keys, aero_migration, near_wallet_inflow_days, worldmobile_probe, stale_series, mcap_inputs, hl_circulating_overlap, na_reasons, missing_triage, gap_routes, spec_coverage,
     stored_but_unshown, review_triage, wiring, settlement_legs, total_supply_rows, flow_stock_days, morning_reads, wiring_complete, chainlink_staking_funding,
     aethir_mint_path,
     near_activity_break,
