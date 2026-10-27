@@ -11326,7 +11326,14 @@ def flow_statements(groups: dict, asof) -> list[dict]:
             start, end = _flow_window(asof, k)
             o, c = _flow_at(circ, start), _flow_at(circ, end)
             exp, why = o, []
+            unm = config.FLOW_UNMEASURED_RETURNS.get(name)
             for lab, m, sign in legs:
+                if m is None and lab == "− returned to issuer-side wallets" and unm and \
+                        pd.Timestamp(unm["from"]) <= end and pd.Timestamp(unm["to"]) > start:
+                    # D6-4: a flow INTO an issuer-side wallet happened and no series carries it — n/a, never a claimed 0
+                    leg_vals[lab].append(None)
+                    why.append("named: " + unm["why"])
+                    continue
                 if m is None:
                     leg_vals[lab].append(0.0)
                     continue
@@ -11383,7 +11390,10 @@ def flow_statements(groups: dict, asof) -> list[dict]:
                  "releases = the falls of the non-circulating wallets (unlock_release_tokens)" if rel_m else
                  "no issuer-wallet release series")
         rows = [("Opening circulating", tok["open"], "tokens", "circulating_supply_used (start of the quarter)", ""),
-                *[(lab, leg_vals[lab], "tokens", m or "— (none on this project: 0)", "") for lab, m, _s in legs],
+                *[(lab, leg_vals[lab], "tokens",
+                   m or ("— NOT MEASURED where n/a: " + config.FLOW_UNMEASURED_RETURNS[name]["why"]
+                         if lab == "− returned to issuer-side wallets" and name in config.FLOW_UNMEASURED_RETURNS
+                         else "— (none on this project: 0)"), "") for lab, m, _s in legs],
                 ("Expected closing (opening + minted + released − returned − burned)", tok["expected"], "tokens",
                  "opening + minted + released − returned − burned", ""),
                 ("Closing circulating", tok["close"], "tokens", "circulating_supply_used (end of the quarter)", ""),

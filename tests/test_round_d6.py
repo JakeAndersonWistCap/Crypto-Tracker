@@ -143,3 +143,22 @@ def test_3_maple_fields_are_read_from_the_pages_they_moved_to(monkeypatch, tmp_p
     assert "different quantity, not used" in msgs                         # the tile: gone, said why
     assert "ssf_net_outflow_tokens: not stored (SPEC D5-3c)" in msgs and "ssf_net_outflow_tokens: no astro" not in msgs
     assert sorted(set(asked)) == sorted(pages)                             # each page fetched once
+
+
+# ================================================================================================== 4
+def test_4_skys_endowment_purchase_is_named_on_the_flows_tab_never_a_claimed_zero(tmp_path, monkeypatch):
+    sys.path.insert(0, str(ROOT / "tests"))
+    from test_trajectory import _built
+    wb, _rows = _built(tmp_path, monkeypatch, "Sky")
+    ws = wb["Flows"]
+    rows = [[c.value for c in r] for r in ws.iter_rows() if r[0].value == "Sky"]
+    ret = next(r for r in rows if r[2] == "− returned to issuer-side wallets")
+    status = next(r for r in rows if r[1] == "Token flow" and r[2] == "Status")
+    hdr = next([c.value for c in r] for r in ws.iter_rows() if r[0].value == "Project")
+    assert "NOT MEASURED where n/a" in str(ret[hdr.index("Series")])
+    # the quarter that holds 2025-08-27..12-01 reads n/a and its status names the purchase; a later one still reads 0
+    qs = [hdr.index(q) for q in ("Q0", "Q-1", "Q-2", "Q-3", "Q-4")]
+    vals = [ret[i] for i in qs]
+    assert any(v in (None, "n/a") or str(v).startswith("n/a") for v in vals), vals
+    assert ret[qs[0]] in (0, 0.0)
+    assert any("SKY Frontier Foundation" in str(status[i]) for i in qs)

@@ -32946,3 +32946,17 @@ PROJECT_BY_NAME["Maple"]["transparency_page"]["pages"] = {
 PROJECT_BY_NAME["Maple"]["transparency_page"]["holdings_gone"] = (
     "the tile is gone (D6-3, read 2026-10-27): /transparency/financials shows 'SYRUP 127.15M held by the DAO and the SSF', "
     "a different quantity, not used; the DAO Safe 0xd6d4… is its own series (treasury_holding_tokens_chain)")
+
+
+# D6-4 (Jake's D6 item 4; SPEC §19 D6-4): A FLOW INTO AN ISSUER-SIDE WALLET THAT NO SERIES CARRIES. The Flows tab's
+# "− returned to issuer-side wallets" read a claimed 0 for Sky. The SKY Frontier Foundation (SKY_ENDOWMENTS — subtracted
+# from circulating, G18-3c) received SKY BOUGHT ON MARKET: Safe 0x7e09E1C3… made 3,511 CoW trades 2025-08-27..12-01
+# (43.81M USDS → 642.74M SKY), 611.92M forwarded directly to 0xca5183FB…, the rest via 0xF0E22BA1… (D5-3b). It leaves
+# circulating and is NOT holder value (endowment-funded, §4; Sky's buyback is the flapper's alone). In a quarter overlapping
+# the span the line reads n/a and the residual names this cause. A measured line would classify each endowment inflow by
+# sender (the Pause Proxy's 1,977M on 2025-08-25 and SFF's 500M back to it are issuer-internal) — proposed, not built.
+FLOW_UNMEASURED_RETURNS = {
+    "Sky": {"from": "2025-08-27", "to": "2025-12-01",
+            "why": "SKY bought on market into the SKY Frontier Foundation (issuer-side endowment): 642.74M SKY "
+                   "2025-08-27..12-01 (611.92M direct) — leaves circulating, no series (SPEC D6-4)"},
+}
