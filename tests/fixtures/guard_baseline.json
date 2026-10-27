@@ -2862,7 +2862,6 @@
    "A3 | BUYBACK AS % OF SUPPLY (annualised, implied)": 0.0,
    "A3 | CIRCULATING RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) \u00f7 circulating \u2014 primary": 0.0045245287413494305,
    "A3 | FDV RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) \u00f7 FDV supply (the total supply FDV uses) \u2014 always read with the rate to its left": 0.0034354666352518527,
-   "A3 | Net absorption Q0 (tokens) = RETIRED buyback (burned + held) \u2212 emissions": -58087576.12977486,
    "A3 | PROTOCOL STAKING YIELD (tokens) \u2014 primary: tokens paid to stakers per year \u00f7 reward-bearing stake (real + virtual); dollars paid are converted at each PAYMENT DAY's price (Aerodrome, Sky \u2014 Jake's price convention 2026-10-09) over the mean stake in the same window": 0.1203459044595958,
    "CP | BUSINESS 1 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 154739057236.8333,
    "CP | BUSINESS 2 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 1.0,
