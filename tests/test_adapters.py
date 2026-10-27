@@ -7444,12 +7444,16 @@ def test_morphos_held_out_days_come_off_the_thirty_day_coverage():
 
     DISCLOSED, NOT WITHHELD: a 21-day total IS the honest 21-day total once the header says so.
     """
+    # D6-1: a day with no row is a hole wherever it falls, so the series is DAILY up to the declared hole (Morpho's
+    # fees are) — the only absent days are the nine the source did not report
+    days = [d for d in pd.date_range("2026-08-01", "2026-09-22")
+            if not pd.Timestamp("2026-09-12") <= d <= pd.Timestamp("2026-09-20")]   # 09-12..09-20 ABSENT
     rows = ([("2021-06-01", "Morpho", "fees_usd", 500_000.0, "defillama", 1)]
-            + [(f"2026-09-{d:02d}", "Morpho", "fees_usd", 600_000.0, "defillama", 1)
-               for d in list(range(1, 12)) + list(range(21, 23))])   # 09-12..09-20 ABSENT
+            + [(str(d.date()), "Morpho", "fees_usd", 600_000.0, "defillama", 1) for d in days])
     got = _aggregate_rows(rows, "2026-09-23")[("Morpho", "fees_usd")]
 
     assert "COVERS 21 OF 30 DAYS" in got["note"], got["note"]
+    assert "9 day(s) in this window" in got["note"], "the absent count is the hole's days without a row"
     # ** AND THE REASON IS THE SOURCE, NOT THE SERIES' AGE. ** A series running since 2021 that
     # said "its history does not span the full window" would be stating something false, and it
     # sends the reader to the wrong question.
@@ -7460,7 +7464,7 @@ def test_morphos_held_out_days_come_off_the_thirty_day_coverage():
     assert got["confidence"] == "AMBER", got["confidence"]
     assert "covers only 21 of the 30 days" in got["why_amber"], got["why_amber"]
     # The figure is DISCLOSED, not blanked — it is a true 21-day sum.
-    assert got["now"] == 600_000.0 * 13, got["now"]
+    assert got["now"] == 600_000.0 * 20, got["now"]   # 08-25..09-11 and 09-21..22 hold a row
     print("morpho coverage ok:", got["note"][:110])
 
 

@@ -4962,8 +4962,12 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                         lost = (sum(1 for d_ in pd.date_range(h0, h1) if d_ in cov_set) if cov_set
                                 else int((h1 - h0).days) + 1)
                         row["covered_days"] = max(int(row["covered_days"]) - lost, 0)
+                        # the note counts the hole's days the source did NOT report (no row) — not the days
+                        # subtracted here, which are 0 when every hole day is already off as an interior hole
+                        absent = (sum(1 for d_ in pd.date_range(h0, h1) if d_ not in cov_set) if cov_set
+                                  else int((h1 - h0).days) + 1)
                         row["hole_note"] = (
-                            f"{lost} day(s) in this window ({h0.date()}..{h1.date()}) are "
+                            f"{absent} day(s) in this window ({h0.date()}..{h1.date()}) are "
                             f"ABSENT because the source did not report them, not because the "
                             f"figure was low. {hole.get('do_not', '')}".strip())
                 row["now_covered_days"] = row["covered_days"]
