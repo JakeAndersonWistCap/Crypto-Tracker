@@ -939,21 +939,28 @@ def _write_a3(sh: Sheet, data: Data, A: Audit, projects, keys, headline_cells, b
             traj_of[c] = m.group(1) if m else ""
     axis_label = {"CAPTURE": "(e) More: capture", "ALIGNMENT": "(e) More: supply and dilution",
                   "BUSINESS": "(e) More: business", "CONTEXT": "(e) More: context"}
+    buckets: dict = {k: [] for k in axis_label}             # (e) in four contiguous groups, audit order within each
     for h, c in sorted(audit_cols.items(), key=lambda kv: kv[1]):
         if c in used or h.startswith("Detail — ") or c in traj_of:
             continue
         axis = str(A.wb[tab].cell(3, c).value or "CONTEXT")
+        axis = axis if axis in axis_label else "CONTEXT"
+        lab = axis_label[axis]
         fmt = reader_format(A.wb[tab].cell(5, c).number_format)
         is_text = A.wb[tab].cell(5, c).number_format == "@" or "status" in h.lower() or h.endswith("?")
-        add(Col(short_header(h), h, TEXT_FMT if is_text else fmt, axis_label.get(axis, "(e) More"), f"{tab}, {h}", 1,
-                13, audit=(tab, h)), ("text" if is_text else "audit", c))
+        buckets[axis].append((Col(short_header(h), h, TEXT_FMT if is_text else fmt, lab, f"{tab}, {h}", 1, 13,
+                                  audit=(tab, h)), ("text" if is_text else "audit", c)))
         nxt = c + 1
         if nxt in traj_of:
             tid = traj_of[nxt]
-            add(Col(TREND_SHORT.get(tid, "Quarter change")[:MAX_HEADER], f"The quarter-on-quarter change of the "
-                    f"column to the left: (latest quarter − the quarter before) ÷ |the quarter before| (Trajectory, "
-                    f"{tid}); ▲ up from +1%, ► within ±1%, ▼ down.", FMT_PCT, axis_label.get(axis, "(e) More"),
-                    f"Trajectory tab, {tid}", 1, 11, audit=(tab, A.header(tab, nxt))), ("trend", tid))
+            buckets[axis].append((Col(TREND_SHORT.get(tid, "Quarter change")[:MAX_HEADER], f"The quarter-on-quarter "
+                                      f"change of the column to the left: (latest quarter − the quarter before) ÷ "
+                                      f"|the quarter before| (Trajectory, {tid}); ▲ up from +1%, ► within ±1%, ▼ down.",
+                                      FMT_PCT, lab, f"Trajectory tab, {tid}", 1, 11, audit=(tab, A.header(tab, nxt))),
+                                  ("trend", tid)))
+    for axis in axis_label:
+        for col, how in buckets[axis]:
+            add(col, how)
     sh.cols = cols
     ws.cell(1, 1, "A3 Revenue Buyback — ranked by retired buyback ÷ emissions").font = F_TITLE
     ws.cell(2, 1, "Blocks: (a) rank key · (b) valuation · (c) trajectory · (d) drivers · (e) more, collapsed (click "

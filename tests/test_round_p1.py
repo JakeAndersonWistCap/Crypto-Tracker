@@ -299,3 +299,17 @@ def test_p1_1_libreoffice_agrees_with_every_stored_reader_value(built, tmp_path)
     shutil.copy(built["reader"], tmp_path / "reader.xlsx")
     out = recalc_check.check(tmp_path / "reader.xlsx", 300)
     assert out.get("formulas", 0) > 100 and out["mismatches"] == 0 and out["errors"] == 0, json.dumps(out)[:800]
+
+
+def test_p1_8_a3_blocks_in_order_and_the_rest_in_four_collapsed_groups(built):
+    from openpyxl.utils import get_column_letter
+    ws = openpyxl.load_workbook(built["reader"])["A3 Revenue Buyback"]
+    labels = [ws.cell(3, c).value for c in range(1, ws.max_column + 1) if ws.cell(3, c).value]
+    assert labels[:4] == ["(a) Rank key", "(b) Valuation", "(c) Trajectory", "(d) Drivers"]
+    assert labels[4:] == ["(e) More: capture", "(e) More: supply and dilution", "(e) More: business",
+                          "(e) More: context"][:len(labels) - 4] and len(labels) == len(set(labels))
+    e0 = next(c for c in range(1, ws.max_column + 1) if str(ws.cell(3, c).value or "").startswith("(e)"))
+    for c in range(1, ws.max_column + 1):
+        hidden = ws.column_dimensions[get_column_letter(c)].hidden
+        assert hidden == (c >= e0), (c, ws.cell(4, c).value)
+    assert not any(str(ws.cell(4, c).value).startswith("Detail") for c in range(1, ws.max_column + 1))
