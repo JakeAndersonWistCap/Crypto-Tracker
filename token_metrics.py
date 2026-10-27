@@ -139,6 +139,13 @@ def parse_args(argv=None) -> argparse.Namespace:
                     help="--seed ccip_value: re-read ONLY these UTC days (G9 K2 — the days refused for more than 10%% "
                          "of their token-moving messages unpriced): one walk down to the oldest, nothing else closed, "
                          "their remembered no-price answers asked again")
+    ap.add_argument("--plume-native-from", default=None, metavar="YYYY-MM-DD",
+                    help="--seed plume_settlement only (SPEC D5-1d): read Plume's native-PLUME leg from this day "
+                         "instead of the configured native_from (2026-04-01) — the Points Season 2 days. This "
+                         "invocation only; the daily run keeps the configured window")
+    ap.add_argument("--plume-native-cap", type=int, default=None, metavar="PAGES",
+                    help="--seed plume_settlement only (SPEC D5-1d): the native leg's pages-a-day cap for this "
+                         "invocation (configured 400; the farmed days need ~600-850). A day refused below it is retried")
     return ap.parse_args(argv)
 
 
@@ -475,14 +482,38 @@ def seed_near_bigquery(st, log) -> int:
     return 0
 
 
-def seed_plume_settlement(st, log) -> int:
+def plume_seed_projects(native_from=None, native_cap=None) -> list[dict]:
+    """The projects the Plume settlement seed reads, with D5-1d's native-leg overrides applied to COPIES of their
+    settlement_rebuild spec (config is never changed: the daily run keeps its window)."""
+    pl = [p for p in config.PROJECTS if (p.get("settlement_rebuild") or {}).get("engine", "blockscout") == "blockscout"]
+    if native_from is None and native_cap is None:
+        return pl
+    out = []
+    for p in pl:
+        if not p.get("settlement_rebuild"):
+            out.append(p)                       # no rebuild declared: PlumeSettlement.run skips it, as before
+            continue
+        spec = dict(p["settlement_rebuild"])
+        if native_from is not None:
+            spec["native_from"] = str(native_from)
+        if native_cap is not None:
+            spec["native_max_pages_per_day"] = int(native_cap)
+        out.append({**p, "settlement_rebuild": spec})
+    return out
+
+
+def seed_plume_settlement(st, log, native_from=None, native_cap=None) -> int:
     """Plume's settlement-volume rebuild, the first year in one sitting (Jake, 2026-10-01): every
     ERC-20 transfer page back a year and each day's native transfers, no time budget, progress
-    cached (an interrupted seed resumes). Records no gaps."""
+    cached (an interrupted seed resumes). Records no gaps. D5-1d: --plume-native-from / --plume-native-cap widen the
+    native leg for this invocation only (plume_seed_projects)."""
     from fetch import Heartbeat
     from fetch.plume_settlement import PlumeSettlement
     from fetch.validate import validate_frame
-    pl = [p for p in config.PROJECTS if (p.get("settlement_rebuild") or {}).get("engine", "blockscout") == "blockscout"]
+    pl = plume_seed_projects(native_from, native_cap)
+    if native_from is not None or native_cap is not None:
+        log.info("--seed plume_settlement: native leg from %s, cap %s pages a day (this invocation only — SPEC D5-1d)",
+                 native_from or "(configured)", native_cap or "(configured)")
     run_id = fetch.new_run_id()
     out = fetch.FetchOutput()
     t0 = time.monotonic()
@@ -1121,7 +1152,9 @@ def _main(args, log) -> int:
     if args.seed:
         rc = {"nearblocks": seed_nearblocks, "geodnet": seed_geodnet,
               "plume_staking": seed_plume_staking, "hl_candles": seed_hl_candles,
-              "plume_settlement": seed_plume_settlement, "near_bigquery": seed_near_bigquery,
+              "plume_settlement": lambda st_, log_: seed_plume_settlement(st_, log_, args.plume_native_from,
+                                                                          args.plume_native_cap),
+              "near_bigquery": seed_near_bigquery,
               "chainlink_fees": seed_chainlink_fees, "pendle_gauges": seed_pendle_gauges,
               "aero_epochs": seed_aero_epochs, "burn_history": seed_burn_history,
               "hyperevm_burn": lambda st_, log_: seed_hyperevm_burn(st_, log_, args.seed_days),

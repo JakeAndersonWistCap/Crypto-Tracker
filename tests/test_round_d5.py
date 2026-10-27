@@ -202,3 +202,28 @@ def test_2a_ethstore_check_runs_only_by_name_and_never_shows_the_key(monkeypatch
     assert "2026-09-15" in out and "+0.00%" in out
     assert len(calls) == 2 and all(h == {"apikey": "SECRETKEY123"} for _, h in calls)
     assert not any("SECRETKEY123" in u for u, _ in calls) and "SECRETKEY123" not in out
+
+
+# ================================================================================================== 1d
+def test_1d_the_plume_seed_widens_the_native_leg_for_that_invocation_only():
+    import token_metrics as tm
+    args = tm.parse_args(["--seed", "plume_settlement", "--plume-native-from", "2025-10-27",
+                          "--plume-native-cap", "1200"])
+    assert (args.plume_native_from, args.plume_native_cap) == ("2025-10-27", 1200)
+    before = dict(config.PROJECT_BY_NAME["Plume"]["settlement_rebuild"])
+    pl = tm.plume_seed_projects(args.plume_native_from, args.plume_native_cap)
+    spec = next(p for p in pl if p["name"] == "Plume")["settlement_rebuild"]
+    assert spec["native_from"] == "2025-10-27" and spec["native_max_pages_per_day"] == 1200
+    # config untouched: the daily run keeps 2026-04-01 / 400
+    assert config.PROJECT_BY_NAME["Plume"]["settlement_rebuild"] == before
+    assert before["native_from"] == "2026-04-01" and before["native_max_pages_per_day"] == 400
+    plain = tm.plume_seed_projects()
+    assert next(p for p in plain if p["name"] == "Plume")["settlement_rebuild"] is \
+        config.PROJECT_BY_NAME["Plume"]["settlement_rebuild"]
+
+
+# ================================================================================================== 3b
+def test_3b_the_sky_frontier_foundations_500m_is_a_gift_not_a_grant():
+    text = (ROOT / "config.py").read_text(encoding="utf-8")
+    assert "500M grant" not in text
+    assert "500M SKY unconditional transfer (gift) to the Pause Proxy" in text

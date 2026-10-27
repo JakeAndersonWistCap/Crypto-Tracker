@@ -23851,7 +23851,8 @@ REWARD_FUNDING = {
                  "F0: MCD_VEST_SKY ids 1-2, DssVestMintable — yanked by the 2025-05-29 executive (cast 2025-06-02)"),
                 ("2025-06-02", "2026-03-01", "treasury",
                  "F1-F3: USDS->SKY treasury vests 4-7, 9 ('switched from minting new tokens to transferring tokens "
-                 "from the PauseProxy', exec 2025-05-29) and LSSKY->SKY vest 8 (Sky Frontier Foundation's 500M grant, "
+                 "from the PauseProxy', exec 2025-05-29) and LSSKY->SKY vest 8 (funded by the Sky Frontier Foundation's "
+                 "500M SKY unconditional transfer (gift) to the Pause Proxy, 2025-10-31 / 11-03 — SPEC D5-3b; "
                  "exec 2025-10-30; not re-sized to buybacks until 2026-02-26)"),
                 ("2026-03-02", "2026-03-13", "treasury",
                  "F4: vest 10 was SIZED from the prior 90 days' buybacks (forum t/27721) — research reads it revenue; "
