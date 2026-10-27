@@ -1,0 +1,15 @@
+{
+  "launched": true,
+  "verified": "2026-10-27",
+  "source_url": "https://github.com/Dromos-Labs/metadex-public/blob/8b506b450aaa9d4a9f1a77e264f2d9dd508e9ddf/deployment-addresses/root-base.json",
+  "addresses": {
+    "minter": "0x59268A34ba897e82368feE39839FFC661D4f9C97",
+    "voting_escrow": "0xBF7977E1521e9a3032bf7243Ee4712f311f13915",
+    "token": "0x3f5bF3EdAc59d650D8fDf9657a71F2f904A3a4Ee",
+    "migration": "0x22a2F7340a3fB4C7C389D91eE954766B12476721"
+  },
+  "velo_conversion": 0.044,
+  "voting_rewards_factory": "0x8fbAaC4dbF170687ce6c3078f29556d97d197110",
+  "deploy_block": 52880070,
+  "_note": "Addresses from Dromos-Labs/metadex-public @8b506b45 (root-base.json, migration-base.json, gaugestack-base.json). Verified on Base 2026-10-27 at block 53,165,286: token name Aero / symbol AERO, totalSupply 2,129,347,490; sAERO.VOTER() = Voter 0x49d7d4f1...; token.MIGRATION() = migration; migration V2_TOKEN / V2_ESCROW = legacy AERO / veAERO, V3_TOKEN = token; reserve balanceOf = remaining() 922,713,511; factory first code at block 52,880,070 (2026-10-21 02:24 UTC), 288 VotingRewardsCreated since. chain_tokens / bridge_escrows not yet filled (non-Base launch chains)."
+}
