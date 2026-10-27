@@ -23779,6 +23779,13 @@ REVIEW_ANSWERED = [
      "decision": "ACCEPT",
      "why": "VRF fees read from the coordinators' own fee events (chainlink_fees, PARTIAL: Base not covered); a week of "
             "2,096.88 against 12,885.13 is fewer paid requests, an on-chain count, not a read fault"},
+    # D6-2: Morpho's "+54% on 2026-10-22" — CoinGecko's MORPHO trading volume (the 10-22 point is the 24h of 10-21) against
+    # the same weekday a week before; every exchange read rose too (10-21 vs 10-14, their own daily candles)
+    {"project": "Morpho", "metric": "volume_usd", "reason": "change_threshold", "date": "2026-10-22", "decision": "ACCEPT",
+     "why": "CoinGecko's own daily trading volume of MORPHO, 33.76M (the 24h of 10-21) against 22.10M a week before "
+            "(+52.8% on CoinGecko's figures read 2026-10-27; +54% at the run). The exchanges' own candles, 10-21 vs 10-14 "
+            "UTC: Coinbase MORPHO-USD $1.25M vs $0.76M (+64%), OKX MORPHO-USDT 1.15M vs 0.49M USDT (+137%), Upbit "
+            "KRW-MORPHO KRW 755M vs 321M (+136%): market activity, not a read (SPEC D6-2)"},
     *[{"project": p_, "metric": "volume_usd", "reason": "change_threshold", "date": "2026-10-18", "decision": "ACCEPT",
        "why": f"CoinGecko's own daily trading volume, Sunday against Saturday ({v}); a market figure, not a read"}
       for p_, v in (("Near", "544.2M vs 1,090.1M"), ("World Mobile", "119,756 vs 67,182"))],

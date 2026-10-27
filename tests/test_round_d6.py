@@ -89,3 +89,12 @@ def test_1_a_q0_with_a_hole_is_annualised_over_the_days_covered_and_names_them(m
 def test_1_a_declared_source_hole_is_never_subtracted_twice():
     src = (ROOT / "build_workbook.py").read_text(encoding="utf-8")
     assert "lost = (sum(1 for d_ in pd.date_range(h0, h1) if d_ in cov_set) if cov_set" in src
+
+
+# ================================================================================================== 2
+def test_2_morphos_10_22_volume_flag_is_answered_with_the_exchange_evidence():
+    a = config.review_answered({"project": "Morpho", "metric": "volume_usd", "reason": "change_threshold",
+                                "date": "2026-10-22"})
+    assert a and a["decision"] == "ACCEPT" and "Coinbase" in a["why"] and "SPEC D6-2" in a["why"]
+    assert config.review_answered({"project": "Morpho", "metric": "volume_usd", "reason": "change_threshold",
+                                   "date": "2026-10-23"}) is None          # that day only
