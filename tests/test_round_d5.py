@@ -54,3 +54,52 @@ def test_0_a_restated_quarter_is_logged_before_the_store_takes_the_new_figure(tm
     # another source's rows are never compared or logged
     assert tm.restatement_lines(st, _frame("Fluid", "revenue_usd", q4, [1.0] * len(q4), source="other")) == []
     st.close()
+
+
+# ================================================================================================== 1a
+MONTHLY = "aethir_page:protocol/demand-metric.monthlyNetworkRevenue.earning"
+WEEKLY = "aethir_page:protocol/demand-metric.weeklyNetworkRevenue.amount"
+
+
+def _aethir_groups():
+    months = [("2026-04-01", 3_000_000.0), ("2026-05-01", 3_100_000.0), ("2026-06-01", 3_000_000.0)]
+    mon = pd.DataFrame({"date": pd.to_datetime([d for d, _ in months]), "project": "Aethir",
+                        "metric": "customer_revenue_monthly_usd", "value": [v for _, v in months], "tier": 3,
+                        "source": MONTHLY})
+    weeks = pd.date_range("2026-06-15", periods=4, freq="7D")
+    wk = pd.DataFrame({"date": weeks, "project": "Aethir", "metric": "customer_revenue_usd", "value": 700_000.0,
+                       "tier": 3, "source": WEEKLY})
+    return {("Aethir", "customer_revenue_monthly_usd"): mon, ("Aethir", "customer_revenue_usd"): wk}
+
+
+def test_1a_the_months_before_the_weekly_series_are_spread_over_their_days():
+    import build_workbook as bw
+    groups = _aethir_groups()
+    bw._history_prepend_views(groups)
+    g = groups[("Aethir", "customer_revenue_usd")]
+    g = g.assign(date=pd.to_datetime(g["date"]))
+    spread = g[g["source"].str.contains(bw.MONTH_SPREAD_TAG, regex=False)]
+    assert spread["date"].min() == pd.Timestamp("2026-04-01") and spread["date"].max() == pd.Timestamp("2026-06-14")
+    assert len(spread) == 30 + 31 + 14                      # every day, one row each; none on/after the first week
+    assert abs(spread[spread["date"].dt.month == 4]["value"].sum() - 3_000_000) < 1e-6
+    assert abs(spread[spread["date"].dt.month == 5]["value"].sum() - 3_100_000) < 1e-6
+    assert abs(spread[spread["date"].dt.month == 6]["value"].sum() - 3_000_000 * 14 / 30) < 1e-6
+    assert (g[g["source"] == WEEKLY]["value"] == 700_000.0).all() and (g["source"] == WEEKLY).sum() == 4
+    # one declared handover, monthly then weekly: the guard reads both points as the declared pair
+    decl = config.declared_handover("Aethir", "customer_revenue_usd")
+    assert decl["ordered_points"] == (MONTHLY, WEEKLY)
+    from fetch.base import _measuring_point
+    assert set(g["source"].map(_measuring_point)) == {MONTHLY, WEEKLY}
+    # per day: a spread row is one day; a weekly row is still spread over its seven days
+    pdays = bw._per_day(g)
+    assert abs(pdays[pd.Timestamp("2026-05-10")] - 3_100_000 / 31) < 1e-6
+    assert abs(pdays[pd.Timestamp("2026-06-16")] - 100_000) < 1e-6
+
+
+def test_1a_no_monthly_rows_means_no_history_and_the_weekly_series_is_untouched():
+    import build_workbook as bw
+    groups = _aethir_groups()
+    groups.pop(("Aethir", "customer_revenue_monthly_usd"))
+    before = groups[("Aethir", "customer_revenue_usd")].copy()
+    bw._history_prepend_views(groups)
+    pd.testing.assert_frame_equal(groups[("Aethir", "customer_revenue_usd")], before)

@@ -24052,13 +24052,28 @@ HISTORY_PREPEND = {
     ("Hyperliquid", "staked_noncirculating_tokens"): {
         "from": "staked_noncirculating_tokens_replay", "live_point": "hypercore_info:delegatorSummary",
         "proof": "the same delegatorSummary amounts the live read sums; replayed staked = live delegated to 1e-8"},
+    # D5-1a (Jake's D5 item 1a): Aethir's monthlyNetworkRevenue IS the weekly series' quantity — the weekly rows spread
+    # daily against the complete months: Jul 2026 −0.95%, Aug +0.81%, Sep +0.21% (D1-3's "another basis" was wrong). The
+    # days before the first weekly row read each complete month spread evenly over its days (build_workbook
+    # _history_prepend_views; June 2026 gives June ÷ 30 to 06-01..06-14)
+    ("Aethir", "customer_revenue_usd"): {
+        "from": "customer_revenue_monthly_usd", "spread": "monthly",
+        "points": ("aethir_page:protocol/demand-metric.monthlyNetworkRevenue.earning",
+                   "aethir_page:protocol/demand-metric.weeklyNetworkRevenue.amount"),
+        "proof": "the weekly rows spread daily vs the complete months: Jul 2026 −0.95%, Aug +0.81%, Sep +0.21% "
+                 "(read 2026-10-27)",
+        "why": "Aethir's own monthly network revenue, each complete month spread evenly over its days, before the "
+               "first weekly row (SPEC D5-1a)",
+        "composition_change": "none: the same network revenue on the same page, monthly then weekly",
+        "declared": "2026-10-27"},
 }
 for (_n, _m), _h in HISTORY_PREPEND.items():
     PROJECT_BY_NAME[_n].setdefault("series_handover", {}).setdefault(_m, {
-        "ordered_points": ("hypercore_info:ledger_replay", _h["live_point"]),
-        "why": f"the wallets' replayed ledgers before the first live read ({_h['proof']})",
-        "composition_change": "none: the same wallets, the same balances, end of day vs a read during the day",
-        "declared": "2026-10-13"})
+        "ordered_points": _h.get("points") or ("hypercore_info:ledger_replay", _h["live_point"]),
+        "why": _h.get("why") or f"the wallets' replayed ledgers before the first live read ({_h['proof']})",
+        "composition_change": _h.get("composition_change")
+                              or "none: the same wallets, the same balances, end of day vs a read during the day",
+        "declared": _h.get("declared") or "2026-10-13"})
 
 # THE TOKEN-FLOW LEGS WHERE A PROJECT'S SUPPLY ENTERS CIRCULATING BY NAMED, FULLY MEASURED LEGS (fix round 3): replace the
 # pool-release leg of a pre-minted token on the Flows tab. (label, metric)

@@ -916,6 +916,13 @@ def _per_day(g) -> pd.Series:
     """A flow as its amount PER DAY on every day it covers, by its observed cadence: a weekly row (dated the week's
     first day, _age_in_days) spread over its seven days, a monthly row over its month, a daily row as it is. G13 6:
     Aethir's revenue is weekly, its (b) daily — a sum over the days both "hold" would set a week against a day."""
+    # D5-1a: a month spread over its days (the history before a weekly series) is already one row per day
+    spread = (g["source"].astype(str).str.contains(MONTH_SPREAD_TAG, regex=False)
+              if g is not None and not g.empty and "source" in g else None)
+    if spread is not None and spread.any():
+        rest = _per_day(g[~spread]) if (~spread).any() else pd.Series(dtype=float)
+        out = pd.concat([_daily(g[spread]), rest])
+        return out[~out.index.duplicated(keep="last")].sort_index()
     s = _daily(g)
     cad = _observed_cadence(g)
     if s.empty or cad == "daily":
@@ -2017,6 +2024,8 @@ def _history_prepend_views(groups: dict) -> None:
             continue
         cols = (live if live is not None and not live.empty else src).columns
         first = pd.to_datetime(live["date"]).min().normalize() if live is not None and not live.empty else None
+        if h.get("spread") == "monthly":
+            src = _month_spread(src)
         lead = src.assign(date=pd.to_datetime(src["date"]).dt.normalize())
         if first is not None:
             lead = lead[lead["date"] < first]
@@ -2025,6 +2034,21 @@ def _history_prepend_views(groups: dict) -> None:
         lead = lead.assign(metric=metric)
         groups[(name, metric)] = (pd.concat([_as_stored(lead, cols), live], ignore_index=True)
                                   if live is not None and not live.empty else _as_stored(lead, cols))
+
+
+MONTH_SPREAD_TAG = "spread evenly over each month's days"
+
+
+def _month_spread(src: pd.DataFrame) -> pd.DataFrame:
+    """D5-1a: each monthly row (one complete month, dated in it) as its value ÷ the month's days on every day of the
+    month, its source tagged MONTH_SPREAD_TAG — daily rows (_per_day reads them as one day each)."""
+    rows = []
+    for r in src.assign(date=pd.to_datetime(src["date"]).dt.normalize()).drop_duplicates("date", keep="last") \
+            .to_dict("records"):
+        days = pd.date_range(r["date"].to_period("M").start_time, r["date"].to_period("M").end_time.normalize())
+        rows += [{**r, "date": d, "value": float(r["value"]) / len(days),
+                  "source": f"{r['source']}[{MONTH_SPREAD_TAG} — before the weekly series (SPEC D5-1a)]"} for d in days]
+    return pd.DataFrame(rows, columns=src.columns)
 
 
 def _hl_model_views(groups: dict) -> None:
