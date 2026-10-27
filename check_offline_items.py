@@ -4723,6 +4723,9 @@ class _NearPacer:
 
 
 NEAR_PACER = _NearPacer(NEAR_RPC_PACE)
+# P2a D4 (near_lockups_at_block): a read pinned at a PAST block goes to the archival endpoints for every call — set only
+# for the duration of that read, then restored
+_NEAR_URLS_OVERRIDE: tuple = ()
 
 
 def _near_post(params: dict, method: str = "query", urls: tuple | None = None, attempts: int | None = None):
@@ -4730,7 +4733,7 @@ def _near_post(params: dict, method: str = "query", urls: tuple | None = None, a
     asks for another answer (it stops at the first usable one, so a good answer costs one call). HTTP 429 / 5xx and
     network errors yield {"_transient": why} (the endpoint cools; the next attempt goes where the pacer allows); a 200
     — an error object included — is that endpoint's answer, and each endpoint answers at most once."""
-    urls = tuple(urls or NEAR_RPC_LIVE)
+    urls = tuple(urls or _NEAR_URLS_OVERRIDE or NEAR_RPC_LIVE)
     answered = set()
     for _ in range(int(attempts or NEAR_RPC_ATTEMPTS)):
         left = [u for u in urls if u not in answered]
@@ -4786,7 +4789,7 @@ def _near_view(account: str, method: str, args: dict | None = None, block_id: in
 NEAR_LOCKUP_LIST_URL = "https://api.nearblocks.io/v3/accounts/lockup.near/subaccounts"
 
 
-def near_lockup_accounts(say=print, pace: float = 1.0) -> tuple[list, str]:
+def near_lockup_accounts(say=print, pace: float = 1.0, refresh: bool = False) -> tuple[list, str]:
     """([live *.lockup.near], how) — the lockup factory's sub-accounts from NearBlocks' free API (Jake's run on ab3c7fe
     2026-10-11: "Do not use BigQuery for this" — the receipt_actions list dry-ran at 700.3 GB). Every *.lockup.near is a
     sub-account of lockup.near; /v3/accounts/lockup.near/subaccounts pages them 100 at a time (cursor `next`), each with
@@ -4800,7 +4803,8 @@ def near_lockup_accounts(say=print, pace: float = 1.0) -> tuple[list, str]:
     root = LogCache().root
     root.mkdir(parents=True, exist_ok=True)
     done, part = root / "near-lockups.txt", root / "near-lockups.partial.json"
-    if done.exists() and _t.time() - done.stat().st_mtime < 86400:
+    heights = root / "near-lockups-heights.json"     # P2a D4: {account: [created height, deleted height or 0]}
+    if done.exists() and _t.time() - done.stat().st_mtime < 86400 and not refresh:
         accts = [ln.strip() for ln in done.read_text(encoding="utf-8").splitlines() if ln.strip()]
         return accts, f"the list cached {_t.strftime('%Y-%m-%d %H:%M', _t.gmtime(done.stat().st_mtime))} UTC"
     st = json.loads(part.read_text()) if part.exists() else {"next": None, "live": [], "deleted": 0, "pages": 0,
@@ -4832,6 +4836,11 @@ def near_lockup_accounts(say=print, pace: float = 1.0) -> tuple[list, str]:
             if ct:
                 lo, hi = st.setdefault("created", [None, None])
                 st["created"] = [min(lo or ct, ct), max(hi or ct, ct)]
+            if str(a.get("account_id", "")).endswith(".lockup.near"):
+                hgt = lambda k: int((((a.get(k) or {}).get("block") or {}).get("block_height")) or 0)  # noqa: E731
+                gone = bool((a.get("deleted") or {}).get("transaction_hash"))
+                st.setdefault("heights", {})[a["account_id"]] = [hgt("created"),
+                                                                 (hgt("deleted") or -1) if gone else 0]
             if (a.get("deleted") or {}).get("transaction_hash"):
                 st["deleted"] += 1
             elif str(a.get("account_id", "")).endswith(".lockup.near"):
@@ -4848,6 +4857,7 @@ def near_lockup_accounts(say=print, pace: float = 1.0) -> tuple[list, str]:
         _t.sleep(pace)
     accts = sorted(set(st["live"]))
     done.write_text("\n".join(accts) + "\n", encoding="utf-8")
+    heights.write_text(json.dumps(st.get("heights") or {}), encoding="utf-8")
     part.unlink(missing_ok=True)
     lo, hi = st.get("created") or [None, None]
     span = (f", created {_t.strftime('%Y-%m-%d', _t.gmtime(lo))} .. {_t.strftime('%Y-%m-%d', _t.gmtime(hi))}"
@@ -5113,7 +5123,7 @@ def near_lockups_buggy_recompute(block_id: int | None = 219_544_718, workers: in
 
 
 def near_lockups(limit: int | None = None, resume: bool = True, workers: int = 4, cache_path=None,
-                 route: str | None = None):
+                 route: str | None = None, block_id: int | None = None, accounts: list | None = None):
     """NEAR LOCKUPS, FROM THE CONTRACTS' OWN VIEW METHODS (follow-up to 0eda6ce). The list: every live *.lockup.near —
     the lockup factory's sub-accounts from NearBlocks' free API (near_lockup_accounts; Jake's run on ab3c7fe 2026-10-11:
     no BigQuery), or a file NEAR_LOCKUPS_FILE (one account per line). Per lockup, at ONE block (near/core-contracts
@@ -5139,7 +5149,10 @@ def near_lockups(limit: int | None = None, resume: bool = True, workers: int = 4
     import time as _t                                      # noqa: PLC0415
     head("NEAR — lockup contracts: unvested vs vested-but-locked vs released-not-withdrawn (contracts' own getters)")
     path = os.environ.get("NEAR_LOCKUPS_FILE")
-    if path:
+    if accounts is not None:                               # P2a D4: the lockups alive at a past block, chosen by the caller
+        accounts = sorted(set(accounts))
+        print(f"  {len(accounts):,} lockup account(s) given by the caller")
+    elif path:
         with open(path, encoding="utf-8") as fh:
             accounts = sorted({ln.strip() for ln in fh if ln.strip().endswith(".lockup.near")})
         print(f"  {len(accounts):,} lockup account(s) from the file")
@@ -5157,7 +5170,11 @@ def near_lockups(limit: int | None = None, resume: bool = True, workers: int = 4
     from pathlib import Path as _P                         # noqa: PLC0415
     cache_f = _P(cache_path) if cache_path else _lockup_cache_path()
     cache = _lockup_cache_load(cache_f) if resume else None
-    if cache and not _lockup_pin_live(cache):
+    # P2a D4: A READ PINNED AT A NAMED PAST BLOCK (near_lockups_at_block, archival endpoints) resumes only at that block;
+    # its pin does not age out (an archival node keeps the block)
+    if cache and block_id and int(cache.get("height") or 0) != int(block_id):
+        cache = None
+    if cache and not block_id and not _lockup_pin_live(cache):
         print(f"  a cached read at block {cache['height']:,} (pinned {cache['pinned_at']}) can no longer be resumed — "
               f"older than {NEAR_LOCKUP_PIN_MAX_H} h or no longer served; a new pin starts")
         cache = None
@@ -5168,7 +5185,7 @@ def near_lockups(limit: int | None = None, resume: bool = True, workers: int = 4
               f"lockup(s) already read there; reading the rest at the same block")
     else:
         hdr, whys = {}, []
-        for _u, j in _near_post({"finality": "final"}, method="block"):
+        for _u, j in _near_post({"block_id": int(block_id)} if block_id else {"finality": "final"}, method="block"):
             hdr = (j.get("result") or {}).get("header") or {}
             if hdr.get("height"):
                 break
@@ -5236,7 +5253,7 @@ def near_lockups(limit: int | None = None, resume: bool = True, workers: int = 4
         _lockup_cache_save(cache_f, cache)
     # D4-1b: the throughput this run measured, for the next ETA (a read of 200+ lockups only)
     took = _t.time() - t0
-    if n_done >= 200 and took > 0:
+    if n_done >= 200 and took > 0 and not block_id:        # an archival read's pace is not the weekly read's
         _lockup_throughput_save({"calls_per_s": (NEAR_PACER.stats["calls"] - calls0) / took, "measured": _now_utc()[:10],
                                  "how": f"{n_done:,} lockups by the {route} route in {took / 3600:.1f} h"})
     tot = {"balance": 0, "locked": 0, "unvested": 0, "owners": 0}
@@ -5263,7 +5280,12 @@ def near_lockups(limit: int | None = None, resume: bool = True, workers: int = 4
         if r.get("buggy"):
             buggy["n"] += 1
             buggy["balance"] += int(r["balance"])
-            buggy["locked"] += int(r["rpc_locked"])
+            # P2a D4 (found re-reading at the manual block): the STATE route never reads the RPC's get_locked_amount, so a
+            # buggy lockup read that way has no RPC figure — counted apart, never summed as 0 (it crashed the totals)
+            if r.get("rpc_locked") is None:
+                buggy["rpc_unread"] = buggy.get("rpc_unread", 0) + 1
+            else:
+                buggy["locked"] += int(r["rpc_locked"])
             buggy["recomputed"] += int(r["locked"])
     n_err = sum(1 for a in accounts if a not in cache["results"]) + n_fault
     cache["complete"] = n_err - n_fault == 0
@@ -5282,17 +5304,119 @@ def near_lockups(limit: int | None = None, resume: bool = True, workers: int = 4
     print(f"    of which STILL UNVESTED                    {n(tot['unvested'])}")
     print(f"    of which VESTED, still lockup-locked       {n(tot['locked'] - tot['unvested'])}")
     print(f"  RELEASED, not withdrawn (owners' balance)    {n(tot['owners'])}")
-    print(f"  buggy-code lockups: {buggy['n']:,}, balance {n(buggy['balance'])}, RPC locked {n(buggy['locked'])} "
-          f"(known to be off) -> RECOMPUTED {n(buggy['recomputed'])} (lakehouse lockup.rs; the totals above use it)")
+    rpc_txt = (f"RPC locked {n(buggy['locked'])} (known to be off)" if not buggy.get("rpc_unread") else
+               f"RPC locked {n(buggy['locked'])} over the {buggy['n'] - buggy['rpc_unread']:,} read by the getters "
+               f"(known to be off; {buggy['rpc_unread']:,} read by the state route, where the RPC figure is not read)")
+    print(f"  buggy-code lockups: {buggy['n']:,}, balance {n(buggy['balance'])}, {rpc_txt} "
+          f"-> RECOMPUTED {n(buggy['recomputed'])} (lakehouse lockup.rs; the totals above use it)")
     print("  UNDER JAKE'S RULE (clarified 2026-10-12) everything NOT YET TRANSFERABLE — LOCKED, i.e. unvested + "
           "lockup-locked — comes out of circulating; released-not-withdrawn stays in. PASTE BACK the totals.")
     return {"height": height, "accounts": len(accounts), "read": n_read, "zero": n_zero, "unreadable": n_err,
             "errors": dict(errs), "pinned_at": cache["pinned_at"], "block_ts": block_ts,
-            "buggy_rpc_locked": buggy["locked"] / yocto, "buggy_recomputed": buggy["recomputed"] / yocto,
+            "buggy_rpc_locked": None if buggy.get("rpc_unread") else buggy["locked"] / yocto,
+            "buggy_recomputed": buggy["recomputed"] / yocto,
             "balance": tot["balance"] / yocto, "locked": tot["locked"] / yocto, "unvested": tot["unvested"] / yocto,
             "owners": tot["owners"] / yocto, "buggy": buggy["n"], "route": cache.get("route"),
             "faults": [(a, (int(r["account_amount"]) / yocto if r.get("account_amount") is not None else None))
                        for a, r in faults]}
+
+
+def near_lockups_at_block(block_id: int | None = None, workers: int = 4, limit: int | None = None):
+    """P2a D4 (Jake 2026-10-27): THE OVERLAP OF NEAR'S LOCKUP HANDOVER. near_lockup_locked_tokens and
+    near_lockup_unvested_tokens hand over from Jake's hand-entered read (manual_overrides.csv, 2026-10-11, block
+    219,544,718) to near_lockups_weekly (near_rpc:lockups, from 2026-10-26). The two legs never share a day, so the
+    workbook's overlap check reads UNCHECKED. This re-reads EVERY lockup BY THE WEEKLY ROUTE AT THE MANUAL READ'S BLOCK
+    on the archival RPC (fetch.archive.near_archival_endpoints) and prints both legs at that one block, with the gap
+    against the handover's declared tolerance. ONE common block: the stored check needs ≥ 3 common days, which a single
+    hand-entered read can never give, so this is the evidence, printed, not a stored row. Resumable at the block
+    (LogCache root near-lockups-at-<block>.json). THE LIST IS THE LOCKUPS ALIVE AT THE BLOCK: NearBlocks' created /
+    deleted heights for every *.lockup.near (near_lockup_accounts writes them) — one deleted since is included, one
+    created since is not; one with no height is counted, never placed by guess. Aggregates only; no account named."""
+    import pandas as pd                                    # noqa: PLC0415
+    import config                                          # noqa: PLC0415
+    from fetch.archive import near_archival_endpoints     # noqa: PLC0415
+    from fetch.logcache import LogCache                    # noqa: PLC0415
+    decl = config.declared_handover("Near", "near_lockup_locked_tokens") or {}
+    block = int(block_id or decl.get("manual_block") or 219_544_718)
+    head(f"NEAR — the lockup handover's overlap: the weekly route re-read at the manual read's block {block:,}")
+    manual = {}
+    try:
+        df = pd.read_csv(os.path.join(os.path.dirname(os.path.abspath(__file__)), "manual_overrides.csv"),
+                         dtype=str, comment="#").fillna("")
+        for m in ("near_lockup_locked_tokens", "near_lockup_unvested_tokens"):
+            hit = df[(df["project"].str.strip() == "Near") & (df["metric"].str.strip() == m)]
+            if not hit.empty:
+                manual[m] = (hit["date"].iloc[-1], float(hit["value"].iloc[-1]))
+    except (OSError, ValueError, KeyError) as e:
+        print(f"  manual_overrides.csv unreadable — {e}")
+    # THE LOCKUPS ALIVE AT THE BLOCK, from NearBlocks' own created / deleted heights: created at or before it and not
+    # deleted by then. A lockup deleted at an unknown height cannot be placed and is counted, never guessed.
+    import json as _json                                   # noqa: PLC0415
+    hf = LogCache().root / "near-lockups-heights.json"
+    try:
+        heights = _json.loads(hf.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        heights = {}
+    if not heights:
+        _accs, how = near_lockup_accounts(refresh=True)
+        print(f"  {how}")
+        try:
+            heights = _json.loads(hf.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            heights = {}
+    if not heights:
+        print("  no lockup list with created / deleted heights — nothing read")
+        return 1
+    alive = [a for a, (c, d) in heights.items() if c and c <= block and (d == 0 or d > block)]
+    unplaced = [a for a, (c, d) in heights.items() if not c or d == -1]
+    print(f"  lockups alive at block {block:,}: {len(alive):,} (created at or before it, not deleted by then; "
+          f"{sum(1 for _a, (c, d) in heights.items() if d > block):,} of them deleted since)"
+          + (f"; {len(unplaced):,} with no created / deleted height — NOT PLACED, left out and named by count"
+             if unplaced else ""))
+    global _NEAR_URLS_OVERRIDE
+    prev = _NEAR_URLS_OVERRIDE
+    _NEAR_URLS_OVERRIDE = tuple(near_archival_endpoints())
+    print(f"  endpoints: {', '.join(urlparse(u).netloc for u in _NEAR_URLS_OVERRIDE)} (archival; host only)")
+    try:
+        got = near_lockups(limit=limit, workers=workers, block_id=block, accounts=alive,
+                           cache_path=LogCache().root / f"near-lockups-at-{block}.json")
+    finally:
+        _NEAR_URLS_OVERRIDE = prev
+    if not got:
+        print("  no list or no block — nothing compared")
+        return 1
+    if limit:
+        print(f"  limit {limit}: a partial list — nothing compared")
+        return 0
+    if read_failures_near(got):
+        print(f"  {read_failures_near(got):,} lockup(s) not yet read at block {block:,} — NO COMPARISON (never a partial "
+              f"total). Re-run the same command: it resumes at the block")
+        return 1
+    tol = float(((decl.get("overlap") or {}).get("tolerance_pct")) or 2.0)
+    print(f"\n  OVERLAP AT BLOCK {block:,} (one common block; the handover's tolerance ±{tol:g}%):")
+    for m, k in (("near_lockup_locked_tokens", "locked"), ("near_lockup_unvested_tokens", "unvested")):
+        if m not in manual:
+            print(f"    {m}: no manual row on file — nothing to compare")
+            continue
+        d, mv = manual[m]
+        rv = float(got[k])
+        gap = (rv / mv - 1.0) * 100.0 if mv else float("nan")
+        print(f"    {m}: manual ({d}) {mv:,.0f} NEAR vs the weekly route {rv:,.0f} NEAR at the same block — "
+              f"{gap:+.3f}% ({'WITHIN' if abs(gap) <= tol else 'OUTSIDE'} ±{tol:g}%)")
+    print(f"  lockups alive at the block: {got['accounts']:,} (Jake's 2026-10-11 read listed 1,960 live then); read "
+          f"{got['read']:,}, zero {got['zero']:,}, own getter failing {len(got.get('faults') or ())}"
+          + (f"; {len(unplaced):,} not placed (no height)" if unplaced else ""))
+    print("  PASTE BACK the OVERLAP lines.")
+    return 0
+
+
+def read_failures_near(got: dict) -> int:
+    """Lockups that could not be READ at the pin (a getter failing inside the contract is not one) — as
+    near_lockups_weekly.read_failures."""
+    errs = got.get("errors") or {}
+    if not errs:
+        return int(got.get("unreadable") or 0)
+    return sum(n for why, n in errs.items() if _NEAR_CONTRACT_FAULT not in why)
 
 
 NEAR_LOCKUP_PIN_MAX_H = 48
@@ -11763,6 +11887,92 @@ def chainlink_noncirc_transfers(days: int = 90):
           "the VERIFIED FINDING credibility records automatically (a1_fees_issuance n/a).")
 
 
+_ETH_BLOCKS: dict = {}
+
+
+def _eth_block_at(ts: int) -> int | None:
+    """First Ethereum block at or after UNIX time `ts`, by binary search on block timestamps (no explorer key needed);
+    cached per timestamp for the run."""
+    if ts in _ETH_BLOCKS:
+        return _ETH_BLOCKS[ts]
+    for url in _rpcs_for("ethereum"):
+        try:
+            hi = int(rpc(url, "eth_blockNumber")["result"], 16)
+
+            def t(n):
+                return int(rpc(url, "eth_getBlockByNumber", [hex(n), False])["result"]["timestamp"], 16)
+            lo = max(hi - 3_000_000, 1)
+            if t(lo) > ts or t(hi) < ts:
+                continue
+            while lo < hi:
+                mid = (lo + hi) // 2
+                if t(mid) < ts:
+                    lo = mid + 1
+                else:
+                    hi = mid
+            _ETH_BLOCKS[ts] = lo
+            return lo
+        except Exception:  # noqa: BLE001
+            continue
+    return None
+
+
+def chainlink_noncirc_set_overlap(days: int = 10):
+    """P2a D4 (Jake 2026-10-27): THE OVERLAP OF CHAINLINK'S WALLET-SET HANDOVER. noncirculating_holding_tokens summed the
+    27 wallets (config._CL_NC: 24 Etherscan labels + 3 from the 2022 blog) until 2026-10-25 and all 33 that
+    chain.link/circulating-supply lists from 2026-10-26 (D2-4a). One row a day, so the stored series never holds both
+    sets on one day and the workbook's overlap check reads UNCHECKED. This reads BOTH SETS AT THE SAME BLOCK — the first
+    block of each of the last `days` UTC days (archive balanceOf; drpc / tenderly serve past state) — and prints the
+    27-set, the 6 added wallets, the 33-set and the gap (33 ÷ 27 − 1) against the handover's declared tolerance. Reads
+    only; nothing stored."""
+    import time as _t                                      # noqa: PLC0415
+    import config                                          # noqa: PLC0415
+    decl = config.declared_handover("Chainlink", "noncirculating_holding_tokens") or {}
+    tol = float(((decl.get("overlap") or {}).get("tolerance_pct")) or 2.0)
+    link = config.PROJECT_BY_NAME["Chainlink"]["contracts"]["token"]["address"]
+    prior = [w.lower() for w in config._CL_NC]
+    full = [c["address"].lower() for c in config.PROJECT_BY_NAME["Chainlink"]["contracts"].values()
+            if c.get("metric_override") == "noncirculating_holding_tokens" and c.get("chain") == "ethereum"]
+    added = [w for w in full if w not in prior]
+    head(f"CHAINLINK — the wallet-set handover's overlap: {len(prior)} wallets vs {len(full)} at the same block, "
+         f"last {days} days")
+    if set(prior) - set(full):
+        print(f"  NOT A NESTED SET: {len(set(prior) - set(full))} wallet(s) of the earlier set are not in the current one")
+        return 1
+    print(f"  earlier set {len(prior)}, added {len(added)}, current {len(full)}; tolerance ±{tol:g}% (the handover's)")
+    sel = SEL_BALANCE_OF
+    today0 = int(_t.time()) // 86400 * 86400
+    worst = 0.0
+    for k in range(days - 1, -1, -1):
+        ts = today0 - k * 86400
+        blk = _eth_block_at(ts)
+        if blk is None:
+            print(f"  {_t.strftime('%Y-%m-%d', _t.gmtime(ts))}: no block found — skipped (a hole, not a zero)")
+            continue
+        sums = {"prior": 0, "added": 0}
+        bad = ""
+        for grp, ws in (("prior", prior), ("added", added)):
+            for w in ws:
+                r, err = eth_call(link, sel + w[2:].rjust(64, "0"), hex(blk))
+                if r is None:
+                    bad = f"balanceOf({w}) unreadable — {str(err)[:120]} (needs an archive endpoint)"
+                    break
+                sums[grp] += int(r, 16)
+            if bad:
+                break
+        day = _t.strftime('%Y-%m-%d', _t.gmtime(ts))
+        if bad:
+            print(f"  {day} block {blk:,}: {bad} — skipped (a hole, not a zero)")
+            continue
+        a, add = sums["prior"], sums["added"]
+        gap = add / a * 100.0 if a else float("nan")
+        worst = max(worst, abs(gap))
+        print(f"  {day} block {blk:,}: {len(prior)} wallets {a / 1e18:,.6f}  + {len(added)} added {add / 1e18:,.6f}  = "
+              f"{len(full)} wallets {(a + add) / 1e18:,.6f} LINK  ({gap:+.6f}%)")
+    print(f"  WORST GAP {worst:.6f}% — {'WITHIN' if worst <= tol else 'OUTSIDE'} ±{tol:g}%. PASTE BACK the lines above.")
+    return 0
+
+
 def chainlink_release_steps():
     """CHAINLINK pool_release_tokens (Jake's run 2026-10-09 ~10:15: ours −400,000 over Q0 while the 27 wallets held
     251,900,000.10 at both ends, with no transfer). Every stored day of noncirculating_holding_tokens: the sum, how many
@@ -14385,7 +14595,7 @@ CHECKS = (
     chainlink_reward_rates, pendle_spendle_fees, archive_probe, coinmetrics_community,
     hl_af_fills_depth, etherfi_safe_owners, etherfi_sethfi_topups, etherfi_topup_safe, etherfi_cex_test, near_protocol_v87, aethir_pin_keys,
     robots_and_terms, ultrasound_history, hyperliquid_history_routes, blockworks_filings, maple_dao_vs_ssf, aethir_reward_distributors, etherfi_yield_reconcile, maple_ssf_candidates,
-    aethir_distributor_match, fluid_igp137_wallet, fluid_igp137_custody, aethir_arr_formula, near_lockups, near_lockups_buggy_recompute,
+    aethir_distributor_match, fluid_igp137_wallet, fluid_igp137_custody, aethir_arr_formula, near_lockups, near_lockups_at_block, near_lockups_buggy_recompute,
     aerodrome_bribe_scan, morpho_interest_listed_vs_all, aerodrome_foundation_q0, aerodrome_foundation_lock_split,
     near_bq_backfill_status,
     morpho_merkl_campaigns, etherfi_sender_trace,
@@ -14393,7 +14603,7 @@ CHECKS = (
     etherfi_vault_archive, etherfi_contract_ids, etherfi_accountant, fluid_vesting_recipients, maple_ssf_partial,
     aerodrome_managed_venfts, pendle_epoch_revenues, maple_ssf_trail, fluid_avocado_owners, hl_pool_release_compare,
     pendle_spendle_rewards_onchain, maple_buyback_inflows, maple_syrup_mints, etherfi_withdrawal_fees, aerodrome_voter_rewards, aerodrome_epochs_q0, aerodrome_epoch_rewards, pendle_gauge_reconcile,
-    sky_farm_rates, plume_supply_read, chainlink_noncirc_transfers, chainlink_release_steps, aerodrome_price_q0, pendle_epoch_table, pendle_emissions_q0, price_basis_before_after, pendle_virtual_rebuild,
+    sky_farm_rates, plume_supply_read, chainlink_noncirc_transfers, chainlink_noncirc_set_overlap, chainlink_release_steps, aerodrome_price_q0, pendle_epoch_table, pendle_emissions_q0, price_basis_before_after, pendle_virtual_rebuild,
     plume_sources, aethir_dashboard_xhr, maple_ssf_history, blockworks_geodnet,
     morpho_incentives, settlement_sources, hyperevm_etherscan, maple_ssf_inflows, aethir_pages,
     geod_stake_recipient, geod_stake_wallets, maple_ssf_lp_test, maple_drips, plume_archive, settlement_rebuild_coverage,

@@ -14322,7 +14322,9 @@ def test_maple_page_run_stores_holdings_and_complete_months_only(monkeypatch, tm
     out = FetchOutput()
     mt.MapleTransparency(get=lambda url: html).run([config.PROJECT_BY_NAME["Maple"]], None, out)
     df = out.frame()
-    assert df[df.metric == "treasury_holding_tokens"]["value"].tolist() == [79_210_000]
+    # P2a D5a (Jake 2026-10-27): the tile is HANDED OVER to the DAO Safe on chain — still parsed, never stored
+    assert mt.parse(html)["holdings_syrup"] == 79_210_000
+    assert not (df.metric == "treasury_holding_tokens").any()
     # measured rows only: a month between two visible rows is a MEASURED ZERO (newest-first table),
     # which from October 2026 includes September in this fixture
     measured = df[~df["source"].str.contains(r"\[zero")]
@@ -14338,7 +14340,10 @@ def test_maple_page_run_stores_holdings_and_complete_months_only(monkeypatch, tm
     monkeypatch.setattr(scrape, "robots_verdict", lambda url: (False, "a Disallow rule"))
     out = FetchOutput()
     mt.MapleTransparency(get=lambda url: html).run([config.PROJECT_BY_NAME["Maple"]], None, out)
-    assert out.frame().empty and {g["metric"] for g in out.gaps} >= {"treasury_holding_tokens"}
+    # every page series gaps; the handed-over holding does not (the page is no longer its source — P2a D5a)
+    gapped = {g["metric"] for g in out.gaps}
+    assert out.frame().empty and gapped >= {"actual_buyback_tokens", "ssf_holdings_tokens"}
+    assert "treasury_holding_tokens" not in gapped
 
 
 class _NearBlocksHttp:
@@ -26417,9 +26422,10 @@ def test_log_scan_counts_mints_only_where_declared():
     from fetch import logscan
     src = inspect.getsource(logscan)
     assert '(frm in MINT_SENDERS and not spec.get("count_mints"))' in src
-    # two declare it, both Sky's: the USDS farm (2026-10-07) and SKY minted to the Pause Proxy (G17-1d)
+    # three declare it: Sky's USDS farm (2026-10-07), SKY minted to the Pause Proxy (G17-1d), and every SYRUP into Maple's
+    # SSF Safe (P2a D5b: the Safe's in − out counts every transfer, a mint included)
     assert sorted(s["key"] for p in config.PROJECTS for s in p.get("log_scans") or [] if s.get("count_mints")) == \
-        ["sky_issuer_mints", "usds_farm_rewards"]
+        ["sky_issuer_mints", "ssf_safe_in", "usds_farm_rewards"]
 
 
 def test_maple_staking_ended_so_nothing_is_locked_and_the_vault_balance_is_shown_apart():

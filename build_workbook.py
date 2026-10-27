@@ -715,6 +715,98 @@ def _handover_cut_views(groups: dict) -> None:
 
 
 HANDOVER_CUT: dict = {}
+HANDOVER_CONTINUED: dict = {}   # (project, metric) -> what the declared continuation added, last build (P2a D5a)
+
+
+def _handover_continuation_views(groups: dict) -> None:
+    """A DECLARED LATER LEG FROM ANOTHER STORED SERIES (P2a D5a, config.HANDOVER_CONTINUATION — Maple's page tile is gone,
+    treasury_holding_tokens hands over to the DAO Safe on chain): the rows of `from_metric` dated AFTER the last row of
+    `after_point` in the series join it under the declared `source` (its markers, PARTIAL included, kept). Read time
+    only; a day with no row in `from_metric` stays a hole. Runs BEFORE the declared cut, which then drops any row of an
+    earlier leg dated on or after the continuation's first day. What was added, and from when, is recorded."""
+    from fetch.base import _measuring_point                        # noqa: PLC0415
+    HANDOVER_CONTINUED.clear()
+    scoped = {p["name"] for p in scoped_projects()}
+    for (name, metric), spec in (getattr(config, "HANDOVER_CONTINUATION", {}) or {}).items():
+        if name not in scoped:
+            continue
+        g, src = groups.get((name, metric)), groups.get((name, spec["from_metric"]))
+        if g is None or g.empty or src is None or src.empty:
+            continue
+        mp = g["source"].astype(str).map(_measuring_point)
+        lead = g[mp == _measuring_point(spec["after_point"])]
+        if lead.empty:
+            continue                      # the leg it follows was never stored: nothing is handed over
+        last = pd.to_datetime(lead["date"]).max()
+        add = src[pd.to_datetime(src["date"]) > last].copy()
+        if add.empty:
+            continue
+        markers = [m for m in config.SOURCE_MARKERS if m != "archive"]
+        add["source"] = [next((config.mark_source(spec["source"], m) for m in markers
+                               if f":{m}" in str(s)), spec["source"]) for s in add["source"].astype(str)]
+        add["metric"] = metric
+        first = pd.to_datetime(add["date"]).min()
+        groups[(name, metric)] = pd.concat([g, _as_stored(add, g.columns)], ignore_index=True)
+        HANDOVER_CONTINUED[(name, metric)] = (
+            f"HANDED OVER from {(first.date())}: {spec['after_point']}'s last stored row is {last.date()}; from the next "
+            f"day the series reads {spec['from_metric']} ({len(add)} row(s) to {pd.to_datetime(add['date']).max().date()})"
+            f" — {spec.get('decided', 'declared in config.HANDOVER_CONTINUATION')}")
+
+
+MONTHLY_FLOW_FORMED: dict = {}   # (project, metric) -> months formed / holes, last build (P2a D5b)
+
+
+def _monthly_flow_views(groups: dict) -> None:
+    """A MONTHLY FLOW FROM DAILY LOG SCANS (P2a D5b, config.MONTHLY_FLOW_VIEWS — Maple's SSF Safe: in − out, and the
+    buyback route's inflow on its own). A calendar month is formed only when EVERY day of it is held by EVERY leg (the
+    scans store each covered day, zeros included, so a missing day is a HOLE and the month is not formed — never summed
+    as if it were 0); its row is dated to the month's last day; signed sum(plus) − sum(minus). Read time only."""
+    MONTHLY_FLOW_FORMED.clear()
+    scoped = {p["name"] for p in scoped_projects()}
+    for (name, metric), spec in (getattr(config, "MONTHLY_FLOW_VIEWS", {}) or {}).items():
+        if name not in scoped:
+            continue
+        legs = [(m, 1.0) for m in spec.get("plus") or ()] + [(m, -1.0) for m in spec.get("minus") or ()]
+        series, cols = [], None
+        for m, sign in legs:
+            d = _daily(groups.get((name, m)))
+            if d.empty:
+                series = None
+                break
+            cols = groups[(name, m)].columns
+            if config.scanned_from_genesis(name, m):
+                # A SCAN READ FROM THE CHAIN'S START (config.scanned_from_genesis) stores from the holder's first
+                # Transfer: the days before it in that month are observed zeros (every block was read), not holes
+                first = d.index.min()
+                lead = pd.date_range(first.to_period("M").start_time.normalize(), first - pd.Timedelta(days=1), freq="D")
+                d = pd.concat([pd.Series(0.0, index=lead), d]).sort_index() if len(lead) else d
+            series.append(sign * d.astype(float))
+        if not series:
+            continue
+        days = series[0].index
+        for s_ in series[1:]:
+            days = days.intersection(s_.index)
+        if days.empty:
+            continue
+        held = pd.Series(1, index=days)
+        rows, holes = [], []
+        for per in sorted(set(days.to_period("M"))):
+            want = pd.date_range(per.start_time.normalize(), per.end_time.normalize(), freq="D")
+            missing = want.difference(held.index)
+            if len(missing):
+                if missing.min() < days.max():   # a day missing before the newest held day is a HOLE; after it,
+                    holes.append(f"{per} ({len(missing)} day(s) not held)")   # the month is not over yet
+                continue
+            rows.append((want[-1], float(sum(s_.reindex(want).sum() for s_ in series))))
+        MONTHLY_FLOW_FORMED[(name, metric)] = {"months": len(rows), "holes": holes}
+        if not rows:
+            continue
+        src = (f"derived:monthly_flow[{spec.get('label', metric)}: "
+               + " − ".join(filter(None, (" + ".join(spec.get("plus") or ()), " + ".join(spec.get("minus") or ()))))
+               + "; complete months only]")
+        view = pd.DataFrame({"date": [d for d, _ in rows], "project": name, "metric": metric,
+                             "value": [v for _, v in rows], "tier": 2, "source": src})
+        groups[(name, metric)] = _as_stored(view, cols)
 
 
 def handover_refusal(project: str, metric: str, points, spans: dict, edges: dict | None = None) -> str | None:
@@ -1090,21 +1182,38 @@ def handover_overlap(groups: dict, project: str, spec: dict) -> dict:
     """A DECLARED HANDOVER'S OVERLAP CHECK (G11 B8 / C1): the two legs, each stored as its own series (spec["a"] — the
     earlier point, spec["b"] — the later), compared on every day both hold. {"common_days", "latest", "a", "b", "gap",
     "worst_gap", "passed", "text"}. passed: at least min_days common days, every one within tolerance_pct. No common day
-    is said, never passed: the seam is then unchecked."""
-    def daily(m):
+    is said, never passed: the seam is then unchecked.
+
+    ONE LEG OF A STITCHED SERIES (P2a D4/D5, Jake 2026-10-27): spec["a_point"] / spec["b_point"] restrict a side to the
+    rows of ONE measuring point (fetch.base._measuring_point; a summed point matches by its component SET, so the order
+    the wallets were read in does not matter) — Maple's page tile is a leg of treasury_holding_tokens, compared with the
+    chain series on the days both were stored. Nothing else changes: the same tolerance, the same minimum days."""
+    from fetch.base import _measuring_point                        # noqa: PLC0415
+
+    def daily(m, point=None):
         g = groups.get((project, m))
         if g is None or g.empty:
             return pd.Series(dtype=float)
+        if point:
+            want = _measuring_point(point)
+            mp = g["source"].astype(str).map(_measuring_point)
+            same = mp.map(lambda x: x == want or ("sum(" in x and "sum(" in want
+                                                  and sum_components(x) == sum_components(want)))
+            g = g[same.astype(bool)]
+            if g.empty:
+                return pd.Series(dtype=float)
         return (g.assign(d=pd.to_datetime(g["date"]).dt.normalize()).drop_duplicates("d", keep="last")
                 .set_index("d")["value"].astype(float))
-    a, b = daily(spec["a"]), daily(spec["b"])
+    a, b = daily(spec["a"], spec.get("a_point")), daily(spec["b"], spec.get("b_point"))
     tol, need = float(spec.get("tolerance_pct", 2.0)), int(spec.get("min_days", 3))
     common = a.index.intersection(b.index)
     common = common[a[common] != 0]
     out = {"a_metric": spec["a"], "b_metric": spec["b"], "common_days": int(len(common)), "tolerance_pct": tol,
            "min_days": need, "passed": False}
+    la = spec["a"] + (f" [{spec['a_label']}]" if spec.get("a_label") else "")
+    lb = spec["b"] + (f" [{spec['b_label']}]" if spec.get("b_label") else "")
     if not len(common):
-        out["text"] = (f"OVERLAP CHECK: {spec['a']} and {spec['b']} share no stored day — the seam is UNCHECKED"
+        out["text"] = (f"OVERLAP CHECK: {la} and {lb} share no stored day — the seam is UNCHECKED"
                        + (f" ({spec['why_none']})" if spec.get("why_none") else ""))
         return out
     gap = (b[common] / a[common] - 1.0) * 100.0
@@ -1112,7 +1221,7 @@ def handover_overlap(groups: dict, project: str, spec: dict) -> dict:
     out.update(latest=str(last.date()), a=float(a[last]), b=float(b[last]), gap=float(gap[last]),
                worst_gap=float(gap[worst]), worst_day=str(worst.date()))
     out["passed"] = len(common) >= need and float(gap.abs().max()) <= tol
-    out["text"] = (f"OVERLAP CHECK {'PASSED' if out['passed'] else 'NOT PASSED'}: {spec['b']} vs {spec['a']} on "
+    out["text"] = (f"OVERLAP CHECK {'PASSED' if out['passed'] else 'NOT PASSED'}: {lb} vs {la} on "
                    f"{len(common)} common day(s) — {last.date()}: {b[last]:,.6g} vs {a[last]:,.6g} ({gap[last]:+.2f}%); "
                    f"worst {gap[worst]:+.2f}% on {worst.date()}; tolerance ±{tol:g}% over ≥{need} days"
                    + ("" if out["passed"] else f" — {spec.get('if_not_passed', 'a CHANGE OF BASIS at the seam, not a flow')}"))
@@ -1231,6 +1340,11 @@ def confidence_for(project: str, metric: str, row: dict, asof: pd.Timestamp) -> 
         why.append(f"{row['modelled']} — not a measurement; shown, excluded from any scoring")
     if (project, metric) in HANDOVER_CUT:
         why.append(HANDOVER_CUT[(project, metric)])
+    if (MONTHLY_FLOW_FORMED.get((project, metric)) or {}).get("holes"):
+        why.append("months NOT FORMED (a day not held is a hole, never a zero): "
+                   + "; ".join(MONTHLY_FLOW_FORMED[(project, metric)]["holes"]))
+    if (project, metric) in HANDOVER_CONTINUED:
+        why.append(HANDOVER_CONTINUED[(project, metric)])     # P2a D5a: the declared next leg, and from when
     if (project, metric) in LOCKUP_AGE_AMBER:
         why.append(LOCKUP_AGE_AMBER[(project, metric)])      # D3-1: a lockup read 11-30 days old
     ho = HANDOVER_OVERLAP.get((project, metric))
@@ -4629,6 +4743,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _EARLY_BLOCKS.clear()
     _retired_series_views(groups)     # D5-3c: a series whose stored figures measure nothing it claims — dropped, said why
     _provisional_views(groups)        # G15 5: yesterday read before 16:00 UTC is stored, not used
+    _handover_continuation_views(groups)   # P2a D5a: a declared later leg read from another stored series (Maple)
     _handover_cut_views(groups)       # G11 C1: a declared cut — the earlier leg's rows after the later leg starts dropped
     _partial_sum_views(groups)    # FIRST: nothing downstream may read a partial sum
     _epoch_primary_views(groups, asof)   # D4-5: Pendle's own epoch figures, spread; DefiLlama only where none
@@ -4706,6 +4821,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _revenue_from_fees_views(groups)    # G9 N: Plume's revenue = the fees its RewardDistributor receives
     _holder_value_views(groups)   # Phase 2: revenue-funded holder value, credited vs recorded (LITMUS A)
     _settlement_views(groups)
+    _monthly_flow_views(groups)       # P2a D5b: complete-month flows from daily log scans (Maple's SSF Safe)
     _handover_overlap_checks(groups)  # G11 B8 / C1: each declared handover's two legs compared on their common days
     _daily_twin_views(groups, asof)   # G11 D3: a "daily" series that IS its monthly twin in every window is dropped
     _LAST_GROUPS.clear()

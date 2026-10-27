@@ -21871,6 +21871,9 @@ def series_granularity(project_name: str, metric: str) -> str:
     declared = (p.get("manual_granularity") or {}).get(metric)
     if declared:
         return declared
+    # P2a D5(b): a read-time MONTHLY flow built from daily log scans (MONTHLY_FLOW_VIEWS), one row per complete month
+    if (project_name, metric) in (globals().get("MONTHLY_FLOW_VIEWS") or {}):
+        return "monthly"
     return "daily"
 
 
@@ -33233,3 +33236,181 @@ MCAP_BASIS_NOTE = {
         "own figure was first stored (2026-09-30) the figure is CoinGecko's: a period spanning that date is a change "
         "of basis, not a flow."),
 }
+
+# ======================================================================================================================
+# P2a D4 / D5 (Jake 2026-10-27): MEASURING-POINT HANDOVERS DECLARED (SPEC §1 rule 10), EACH WITH ITS OVERLAP CHECK
+# (build_workbook.handover_overlap — the same tolerance and minimum days as every other declared handover; a_point /
+# b_point restrict a side to one leg of a stitched series). A declaration names the legs and their order; it does NOT
+# assert they agree — the overlap check says whether they do, on the cell, every build.
+# ======================================================================================================================
+
+# ----- D4(a) NEAR'S LOCKUPS: Jake's hand-entered read (manual_overrides.csv, 2026-10-11, block 219,544,718) -> the
+# weekly read (near_lockups_weekly.py, source near_rpc:lockups@<block>; first stored 2026-10-26 at block 221,748,149,
+# SPEC D4-1). Both are check_offline_items.near_lockups over every live *.lockup.near at ONE block with the contracts'
+# own getters (core-contracts@1b0436c9). The legs never share a day (one weekly read, one manual row), so the stored
+# check is UNCHECKED; check_offline_items near_lockups_at_block re-reads the weekly route AT THE MANUAL READ'S BLOCK
+# (archival RPC) and prints both.
+NEAR_LOCKUP_MANUAL_BLOCK = 219_544_718
+_NEAR_LOCKUP_OVERLAP_HOW = (
+    "one hand-entered read (2026-10-11) and weekly reads from 2026-10-26: never one day — run `python "
+    "check_offline_items.py near_lockups_at_block` (re-reads every lockup by the weekly route AT block 219,544,718 on "
+    "NEAR's archival RPC, ~2.4 calls a lockup, resumable) and paste back its OVERLAP lines")
+for _m, _cc in (
+        ("near_lockup_locked_tokens",
+         "none: the same definition on both legs — LOCKED = every lockup's get_locked_amount with the buggy-code "
+         "lockups RECOMPUTED as NEAR's lakehouse does (Jake 2026-10-12, decision 8; the manual row's note and "
+         "check_offline_items._read_lockup) — the numeric agreement is UNVERIFIED until the overlap read"),
+        ("near_lockup_unvested_tokens",
+         "a POSSIBLE STEP at the seam, size NOT ESTABLISHED: the manual row caps each lockup's unvested at its RPC "
+         "locked and does NOT recompute the buggy-code lockups (its own note); the weekly route caps at the "
+         "RECOMPUTED locked (check_offline_items.near_lockups) — the overlap read at block 219,544,718 measures it")):
+    PROJECT_BY_NAME["Near"].setdefault("series_handover", {})[_m] = {
+        "ordered_points": ("manual", "near_rpc:lockups"),
+        "why": "Jake's first weekly read entered by hand (manual_overrides.csv, 2026-10-11, block 219,544,718) until "
+               "near_lockups_weekly stored its own (near_rpc:lockups, first 2026-10-26 at block 221,748,149)",
+        "composition_change": _cc,
+        "declared": "2026-10-27", "valid_from": "2026-10-26", "manual_block": NEAR_LOCKUP_MANUAL_BLOCK,
+        "overlap": {"a": _m, "a_point": "manual", "a_label": "manual read, block 219,544,718",
+                    "b": _m, "b_point": "near_rpc:lockups", "b_label": "weekly read",
+                    "tolerance_pct": 2.0, "min_days": 3, "why_none": _NEAR_LOCKUP_OVERLAP_HOW,
+                    "if_not_passed": "the two reads disagree at a common block — a CHANGE OF BASIS at the seam, not a "
+                                     "release"}}
+
+# ----- D4(b) CHAINLINK'S NON-CIRCULATING SUM: the wallet set GREW (D2-4a, Jake 2026-10-26): 27 wallets (24 Etherscan
+# labels + 3 from the 2022 blog, _CL_NC) through 2026-10-25, all 33 chain.link/circulating-supply lists from 2026-10-26.
+# The existing mechanism for a set that only grows is `nested_sums` (G11 C1, Ether.fi): every later set contains every
+# earlier one and no two are in use on the same day — checked on every build. Feeds "discretionary supply" and
+# "discretionary ÷ circulating" (DISCRETIONARY_SUPPLY). One row a day, so the stored series never holds both sets on one
+# day: check_offline_items chainlink_noncirc_set_overlap reads both at the same block, day by day.
+_CL_NC_KEYS_ALL = tuple(k for k, c in PROJECT_BY_NAME["Chainlink"]["contracts"].items()
+                        if c.get("metric_override") == _NC and c.get("chain") == "ethereum")
+_CL_NC_KEYS_27 = tuple(k for k in _CL_NC_KEYS_ALL if PROJECT_BY_NAME["Chainlink"]["contracts"][k]["address"] in _CL_NC)
+CHAINLINK_NONCIRC_POINTS = {
+    "27": "chain:sum(" + "+".join(f"ethereum:{k}" for k in _CL_NC_KEYS_27) + ")",
+    "33": "chain:sum(" + "+".join(f"ethereum:{k}" for k in _CL_NC_KEYS_ALL) + ")",
+}
+PROJECT_BY_NAME["Chainlink"].setdefault("series_handover", {})["noncirculating_holding_tokens"] = {
+    "nested_sums": True,
+    "why": "the non-circulating wallet set grew: 27 wallets to 2026-10-25, the 33 chain.link/circulating-supply lists "
+           "from 2026-10-26 (D2-4a) — the 27 are all among the 33",
+    "composition_change": "wallets ADDED to the set (6, noncirc_cl_page_1..6), none removed: the series steps by the 6 "
+                          "wallets' balance at the seam — 29.472266 LINK at the first block of every day 2026-10-18.."
+                          "10-27 (check_offline_items chainlink_noncirc_set_overlap, read 2026-10-27), +0.000013% of "
+                          "the 27 wallets' 233,150,000.10 — a change of composition, not a release",
+    "declared": "2026-10-27", "valid_from": "2026-10-26",
+    "overlap": {"a": "noncirculating_holding_tokens", "a_point": CHAINLINK_NONCIRC_POINTS["27"], "a_label": "27 wallets",
+                "b": "noncirculating_holding_tokens", "b_point": CHAINLINK_NONCIRC_POINTS["33"], "b_label": "33 wallets",
+                "tolerance_pct": 2.0, "min_days": 3,
+                "why_none": "one row a day, so the two sets are never stored on the same day — run `python "
+                            "check_offline_items.py chainlink_noncirc_set_overlap` (both sets at each day's first "
+                            "block); read 2026-10-27 over 2026-10-18..10-27: the 33 = the 27 + 29.472266 LINK every day, "
+                            "+0.000013%, within ±2%",
+                "if_not_passed": "a CHANGE OF COMPOSITION at the seam (wallets added), not a release"}}
+
+# ----- D5(a) MAPLE'S TREASURY HOLDING: the page's "SYRUP Holdings" tile is GONE (D6-3, read 2026-10-27), so
+# treasury_holding_tokens hands over to the DAO Safe read on chain (treasury_holding_tokens_chain: daoMultisig
+# 0xd6d4Bcde…, contracts.treasury) from the day after the tile's last stored row. NOT the "127.15M held by the DAO and
+# the SSF" figure /transparency/financials now shows: a different quantity (D6-3), never this series. The page tile and
+# the DAO Safe are DIFFERENT QUANTITIES (the tile followed the SSF, ~78M; the Safe ~23-42M): the overlap check compares
+# them on every day both were stored and says so — the seam is a CHANGE OF QUANTITY, a SERIES BREAK on the Trajectory,
+# never a flow. Third leg: the chain series' own rows, re-labelled at read time (build_workbook._handover_continuation_views).
+_MAPLE_TH = PROJECT_BY_NAME["Maple"]["series_handover"]["treasury_holding_tokens"]
+_MAPLE_TH.update({
+    "ordered_points": ("chain:ethereum:treasury", "maple_page", "derived:=treasury_holding_tokens_chain"),
+    "why": "the daoMultisig chain read until Maple's transparency page became primary (2026-09-24); the page's SYRUP "
+           "Holdings tile until it disappeared (D6-3: gone on 2026-10-27's read); then the DAO Safe 0xd6d4… on chain "
+           "again (treasury_holding_tokens_chain) from the day after the tile's last stored row (P2a D5, Jake "
+           "2026-10-27). The chain archive backfill's rows inside the page's span stay cut at read time",
+    "composition_change": "a DIFFERENT quantity at each seam: the page's SYRUP Holdings followed the Syrup Strategic "
+                          "Fund (~78M), the chain reads one address, the DAO Safe 0xd6d4… (~23-42M) — see the overlap "
+                          "check; '127.15M held by the DAO and the SSF' is another quantity again and is not used",
+    "declared": "2026-10-27",
+    "valid_from": "the day after the page tile's last stored row (build_workbook.HANDOVER_CONTINUED names it)",
+    "overlap": {"a": "treasury_holding_tokens", "a_point": "maple_page", "a_label": "the page's SYRUP Holdings tile",
+                "b": "treasury_holding_tokens_chain", "b_label": "DAO Safe 0xd6d4… on chain",
+                "tolerance_pct": 2.0, "min_days": 3,
+                "if_not_passed": "a CHANGE OF QUANTITY at the seam (the page tile followed the Strategic Fund, the "
+                                 "chain reads the DAO Safe), not a flow — no trend reads across it"}})
+# A LATER LEG BUILT FROM ANOTHER STORED SERIES (read time): rows of `from_metric` dated after the last row of
+# `after_point` in the series join it as `source` (markers such as PARTIAL kept). Nothing is written to the store.
+HANDOVER_CONTINUATION = {
+    ("Maple", "treasury_holding_tokens"): {
+        "from_metric": "treasury_holding_tokens_chain", "after_point": "maple_page",
+        "source": "derived:=treasury_holding_tokens_chain",
+        "decided": "Jake 2026-10-27 (P2a D5a): the tile is gone; the DAO Safe on chain is the declared next leg"},
+}
+PROJECT_BY_NAME["Maple"]["transparency_page"]["holdings_handed_over"] = (
+    "not read (P2a D5a, Jake 2026-10-27): treasury_holding_tokens is handed over to the DAO Safe on chain "
+    "(treasury_holding_tokens_chain), a declared handover")
+
+# ----- D5(b) MAPLE'S SSF, ON CHAIN: the monthly net Transfer flow (in − out) of Safe 0x58BE00490D6a5D298d61f24226d2397983Ee39A1
+# — the wallet the SSF chart equals through 2025-10-28 (D5-3c / D6-3; contracts.noncirc_ssf_safe) — with the inflows from
+# the BUYBACK ROUTE shown on their own. ssf_net_outflow_tokens stays retired (D5-3c): this is NOT the SSF's outflow.
+# WHAT IT MEASURES: SYRUP crossing the Safe's own boundary, every Transfer, reconciled to balanceOf to the wei
+# (fetch/logscan.py). ITS LIMIT: from 2025-10-29 Maple's SSF also counts SYRUP that is not in this Safe — the delivery
+# wallet 0x99f03ca0… and exchange / custodian routes, off-chain from here (D5-3c: gap to 0x58BE + 0x99f0 4.25M on
+# 10-29 → 28.39M on 2026-07-31). The Safe's outflows from 2025-10-29 (12M, 10M, 5.5M) all went TO 0x99f03ca0…, which
+# Maple's chart still counts: they are moves inside the SSF as Maple defines it, NOT releases. Nothing here is the SSF
+# after 2025-10-28, and nothing is inferred about the SYRUP beyond the Safe.
+# THE BUYBACK ROUTE: the Binance withdrawals delivered to 0x99f03ca02b232dc124b62b8cf40b2bfd21eae9ca (D5-3c: matched
+# Maple's Token Buybacks table to the token, about a month after the month dated). An inflow INTO the Safe from that
+# wallet is a buyback delivered to the SSF Safe; any other inflow is not called one.
+MAPLE_SSF_SAFE = "0x58BE00490D6a5D298d61f24226d2397983Ee39A1"
+MAPLE_BUYBACK_DELIVERY = "0x99f03ca02b232dc124b62b8cf40b2bfd21eae9ca"
+_SSF_SRC = ["SPEC §19 D5-3c / D6-3 (traced on chain 2026-10-27): through 2025-10-28 the SSF chart equals Safe 0x58BE to "
+            "the token; Maple's docs: SYRUP 'was minted to a segregated wallet — the Syrup Strategic Fund (SSF)'",
+            "contracts.noncirc_ssf_safe (Safe 3-of-5, three owners sign the DAO multisig; Jake 2026-10-12, decision 1)"]
+_SYRUP = PROJECT_BY_NAME["Maple"]["contracts"]["token"]["address"]
+for _key, _metric, _way, _extra in (
+        ("ssf_safe_in", "ssf_safe_inflow_tokens", "in", {"count_mints": True}),
+        ("ssf_safe_out", "ssf_safe_outflow_tokens", "out", {}),
+        ("ssf_safe_buyback_in", "ssf_safe_buyback_inflow_tokens", "in",
+         {"count_from": [MAPLE_BUYBACK_DELIVERY],
+          "sender_labels": {MAPLE_BUYBACK_DELIVERY: "buyback delivery wallet (D5-3c)"}})):
+    PROJECT_BY_NAME["Maple"]["log_scans"].append({
+        "key": _key, "metric": _metric, "chain": "ethereum", "token": _SYRUP, "holders": [MAPLE_SSF_SAFE],
+        "direction": _way, "store": True, "attribution": "dedicated_wallet",
+        "attribution_sources": _SSF_SRC + (["the buyback route: SPEC D5-3c (Binance withdrawals delivered to "
+                                            "0x99f03ca0… matched Maple's Token Buybacks table to the token)"]
+                                           if _key == "ssf_safe_buyback_in" else []),
+        "wired_on": "2026-10-27", "own_tier": scan_tier("Maple", {}), **_extra})   # G6 0a: Maple's own tier
+_SSF_LIMIT = ("the Safe ONLY — the SSF as Maple counts it through 2025-10-28; from 2025-10-29 the SSF also holds SYRUP "
+              "outside this Safe (0x99f03ca0… and exchange / custodian routes), so a flow here is NOT the SSF's (D5-3c)")
+METRICS.update({
+    "ssf_safe_inflow_tokens": {
+        "label": f"SYRUP INTO Safe 0x58BE (the SSF's wallet) per day — every Transfer in, mints included; {_SSF_LIMIT}",
+        "kind": "flow", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9,
+        "only_projects": ("Maple",)},
+    "ssf_safe_outflow_tokens": {
+        "label": f"SYRUP OUT of Safe 0x58BE (the SSF's wallet) per day — every Transfer out; {_SSF_LIMIT}",
+        "kind": "flow", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9,
+        "only_projects": ("Maple",)},
+    "ssf_safe_buyback_inflow_tokens": {
+        "label": "SYRUP INTO Safe 0x58BE from the BUYBACK ROUTE (delivery wallet 0x99f03ca0…) per day — buybacks "
+                 "delivered to the SSF's wallet, inside ssf_safe_inflow_tokens",
+        "kind": "flow", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9,
+        "only_projects": ("Maple",)},
+    "ssf_safe_net_flow_monthly_tokens": {
+        "label": f"Safe 0x58BE NET Transfer flow per complete month (in − out, SIGNED: + into the Safe; buybacks "
+                 f"included, shown alone in ssf_safe_buyback_inflow_monthly_tokens) — {_SSF_LIMIT}",
+        "kind": "flow", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": -1e9, "sanity_max": 1e9,
+        "only_projects": ("Maple",), "view_only": True},
+    "ssf_safe_buyback_inflow_monthly_tokens": {
+        "label": "Safe 0x58BE: SYRUP in from the BUYBACK ROUTE per complete month (the buyback component of the net "
+                 "flow; 0 = no transfer from 0x99f03ca0… that month, observed)",
+        "kind": "flow", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9,
+        "only_projects": ("Maple",), "view_only": True},
+})
+# A month is formed only when every day of it is held by every leg (the scans zero-fill the days they covered, so a day
+# with no row is a HOLE, never a zero); dated to the month's last day; the current month is never formed.
+MONTHLY_FLOW_VIEWS = {
+    ("Maple", "ssf_safe_net_flow_monthly_tokens"): {"plus": ("ssf_safe_inflow_tokens",),
+                                                    "minus": ("ssf_safe_outflow_tokens",),
+                                                    "label": "in − out, Safe 0x58BE"},
+    ("Maple", "ssf_safe_buyback_inflow_monthly_tokens"): {"plus": ("ssf_safe_buyback_inflow_tokens",), "minus": (),
+                                                          "label": "in from the buyback route, Safe 0x58BE"},
+}
+PROJECT_BY_NAME["Maple"]["metric_labels"]["treasury_holding_tokens"] = (
+    "SYRUP held — Maple's page tile (SYRUP Holdings, ±5,000) from 2026-09-24 until it disappeared; from the next day the "
+    "DAO Safe 0xd6d4… on chain (treasury_holding_tokens_chain) — a declared handover (P2a D5a) to a DIFFERENT quantity: "
+    "the tile followed the Strategic Fund")

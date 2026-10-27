@@ -445,7 +445,9 @@ class MapleTransparency:
                 self._project(p["name"], spec, window_days, out)
 
     def _gap_all(self, name, spec, out, reason, suggestion):
-        for metric in spec["metrics"]:
+        for metric, v in spec["metrics"].items():
+            if v.get("field") == "holdings_syrup" and spec.get("holdings_handed_over"):
+                continue                  # P2a D5a: handed over to the chain read — the page is not its source
             out.gap(name, metric, reason=reason, tiers_attempted="3", suggestion=suggestion)
 
     def _project(self, name: str, spec: dict, window_days, out):
@@ -483,7 +485,12 @@ class MapleTransparency:
         metrics = spec["metrics"]
 
         m = next((k for k, v in metrics.items() if v["field"] == "holdings_syrup"), None)
-        if m:
+        if m and spec.get("holdings_handed_over"):
+            # P2a D5a: a DECLARED HANDOVER — the series reads the DAO Safe on chain; the page is not read for it, so a
+            # tile that reappeared (or the DAO + SSF figure) can never become a fourth leg
+            out.skipped(SOURCE, name, f"{m}: {spec['holdings_handed_over']}"
+                        + (f" — {spec['holdings_gone']}" if spec.get("holdings_gone") else ""), TIER)
+        elif m:
             if got["holdings_syrup"] is None:
                 out.fail(SOURCE, name, f"{m}: 'SYRUP Holdings' not found on {url}"
                                        + (f" — {spec['holdings_gone']}" if spec.get("holdings_gone") else ""), TIER)
