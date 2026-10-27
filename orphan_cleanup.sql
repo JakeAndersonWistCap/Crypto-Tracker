@@ -5073,3 +5073,55 @@ SELECT l.date, l.value AS locked_tokens, l.source, s.value AS stsyrup_legacy_tok
 -- DELETE FROM metrics
 --  WHERE project = 'Maple' AND metric = 'locked_tokens' AND source LIKE 'chain:ethereum:stsyrup%';
 
+-- ========================================================================================
+-- DC. HYPERLIQUID pool_release_tokens: WHY EACH DAY HAS A RELEASE OR A HOLE (look only)  2026-10-27T17:30Z
+--     Round P2a D1 (2026-10-27): BURN / ISSUANCE reads BLOCKED (SPEC section 1 rule 9) because the release covers 15 of 90
+--     days. The release is a read-time view (build_workbook._onchain_release_views, release_first_party): d(first-party
+--     circulating) + the Fund's buyback + the HyperEVM priority burn, formed ONLY on a day whose reading AND the
+--     previous calendar day's reading are both stored on the same measuring point. One missing reading therefore costs
+--     two release days (its own and the next). DC1 names, for every day from the first circulating row, the reading,
+--     the day before's, the hypercore_info tier's run-log lines and the verdict; DC2 lists the tier's failure lines.
+--     Sources are compared as stored. Nothing is changed. Run: python run_sql.py DC
+-- ========================================================================================
+-- DC1. EACH DAY: ITS READING, THE DAY BEFORE, THE TIER'S RUN LOG, THE VERDICT.
+WITH RECURSIVE span(day) AS (
+    SELECT MIN(date) FROM metrics WHERE project = 'Hyperliquid' AND metric = 'circulating_supply_first_party'
+    UNION ALL
+    SELECT date(day, '+1 day') FROM span
+     WHERE day < (SELECT MAX(date) FROM metrics WHERE project = 'Hyperliquid')
+),
+c AS (SELECT date, source, fetched_at FROM metrics
+       WHERE project = 'Hyperliquid' AND metric = 'circulating_supply_first_party'),
+t AS (SELECT date FROM metrics WHERE project = 'Hyperliquid' AND metric = 'circulating_supply_tokendetails'),
+r AS (SELECT substr(ts, 1, 10) AS day, COUNT(*) AS n,
+             SUM(message LIKE 'TIER TIMED OUT%') AS timeouts,
+             SUM(message LIKE '%circulating_supply_first_party NOT STORED%') AS not_stored
+        FROM run_log WHERE source = 'hypercore_info' GROUP BY substr(ts, 1, 10))
+SELECT s.day, c.source, c.fetched_at, p.source AS day_before_source,
+       (t.date IS NOT NULL) AS tokendetails_row, COALESCE(r.n, 0) AS hypercore_log_lines,
+       COALESCE(r.timeouts, 0) AS tier_timeouts, COALESCE(r.not_stored, 0) AS not_stored_lines,
+       CASE
+         WHEN c.date IS NULL AND COALESCE(r.n, 0) = 0
+           THEN 'HOLE: no hypercore_info line in the run log this day - no run reached the tier'
+         WHEN c.date IS NULL AND r.timeouts > 0
+           THEN 'HOLE: the tier timed out - its stock readings were dropped (fetch._drop_stocks)'
+         WHEN c.date IS NULL AND r.not_stored > 0
+           THEN 'HOLE: a declared wallet or the HyperEVM burn was unread - circulating NOT STORED'
+         WHEN c.date IS NULL THEN 'HOLE: no circulating row - read DC2'
+         WHEN p.date IS NULL THEN 'HOLE: no reading the day before - a multi-day change is not one day''s release'
+         WHEN p.source <> c.source THEN 'HOLE: basis change from the day before - not differenced'
+         ELSE 'release formed'
+       END AS verdict
+  FROM span s
+  LEFT JOIN c ON c.date = s.day
+  LEFT JOIN c p ON p.date = date(s.day, '-1 day')
+  LEFT JOIN t ON t.date = s.day
+  LEFT JOIN r ON r.day = s.day
+ ORDER BY s.day;
+
+-- DC2. THE hypercore_info TIER'S FAILURE LINES FROM THE FIRST CIRCULATING ROW ON (timeouts, unread wallets / burn).
+SELECT ts, status, substr(message, 1, 300) AS message
+  FROM run_log
+ WHERE source = 'hypercore_info' AND status <> 'ok'
+   AND ts >= (SELECT MIN(date) FROM metrics WHERE project = 'Hyperliquid' AND metric = 'circulating_supply_first_party')
+ ORDER BY ts;
