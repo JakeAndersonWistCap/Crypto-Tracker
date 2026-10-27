@@ -533,6 +533,24 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11dc. Round D7 — Pyth STOCK reads (store only), rule 9 on ratios (2026-10-27)
+
+What changes (SPEC §19 D7):
+- **Pyth's STOCK reads are stored, not shown** (D7-1). Every daily run reads 17 Pyth balances from the public Solana RPC
+  (about 20 calls, about 20 s) and stores them under project "Pyth" in metrics.db. No tab shows them. The run logs one
+  line: `PYTH STOCKS (store only): 17 STOCK line(s) stored, 0 not read — 20 RPC call(s), 0 HTTP 429(s), …`. A line
+  that does not read (an RPC refusal, a token account whose mint or owner is not the declared one) stores nothing and
+  logs `… : NOT STORED — <reason>`. `python token_metrics.py --seed pyth_stocks` reads them alone.
+- **A ratio of two flows over materially different spans is BLOCKED** (D7-2, SPEC §1 rule 9), with each leg's covered
+  days and holes named. On your 10-13 store: Hyperliquid's BURN ÷ ISSUANCE (0.0501x), Release ÷ burn, Revenue required
+  for crossover, Governance lever and RETIRED ÷ EMISSIONS; Aethir's two supplier-payout ratios; Maple's coverage ratio;
+  Morpho's Fees Δ30d. Sums (TOTAL DILUTION, Ethereum's yield parts) are unchanged. Read-time: nothing is fetched.
+- CCIP: R1 and R2 are not adopted (D7-3); the refused days stay refused. No change.
+
+**Pull this, then in PowerShell 5.1 at the repo root:**
+1. `python token_metrics.py` — the normal run. PASTE BACK the `PYTH STOCKS` line(s).
+
+
 ## 11db. Round D6 — covered days, the THORSwap hold, Maple's split page (2026-10-27)
 
 What changes on your store and workbook (SPEC §19 D6):
