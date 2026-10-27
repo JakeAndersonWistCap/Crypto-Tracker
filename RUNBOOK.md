@@ -533,6 +533,34 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11db. Round D6 — covered days, the THORSwap hold, Maple's split page (2026-10-27)
+
+What changes on your store and workbook (SPEC §19 D6):
+- **Covered days count only days holding a row** (D6-1). A window's coverage was first-to-last; a day with no row
+  inside it is now a HOLE, never a zero, and the row says so: `Q0 COVERS n OF 90 DAYS — holes (no row): …`. Rates are
+  annualised over the covered days. Expect Ethereum net issuance after burn ~0.81% → ~0.86% (hole 2026-09-29) and
+  Hyperliquid's burn-based rates ~4.04% → ~4.18% (holes 09-13, 09-19..20); every other project unchanged. Read-time:
+  nothing is fetched or stored.
+- **Near's DEX day with THORSwap's leg dropped to 0 is HELD** (D6-5). It is not stored until DefiLlama re-reads the
+  leg non-zero or the day is 7 days old; held days go on the provisional list (G16) with the reason. The first run
+  removes the four days stored before the rule, once:
+  `CLEAN-UP D6-5: applied once — n row(s) of Near / dex_volume_usd from defillama:dexs:near removed — …` then one
+  `CLEAN-UP D6-5: removed Near / dex_volume_usd <date> …` line per day; the DefiLlama read then logs
+  `dex_volume_usd: HELD n day(s) <dates> — THORSwap's leg reads 0 after a non-zero day …` while the leg stays 0.
+- **Maple's transparency page is split** (D6-3): holdings and revenue are read from /transparency/financials, the
+  buybacks from /transparency/syrup. Each page is cached on its own; a page that is gone leaves its series BLOCKED
+  with the reason (never filled).
+- **Sky's Flows tab**: "− returned to issuer-side wallets" reads n/a with a named cause (SFF's on-market SKY is an
+  endowment purchase, not measured as a return) instead of 0 (D6-4).
+- Morpho's 2026-10-22 volume jump is answered (CoinGecko MORPHO volume, real) and leaves the Review Queue (D6-2).
+- Fluid's Q4 revenue check reads BASIS DIFFERS — EXPLAINED, residual stated, still PARKED (D6-6). CCIP: report only,
+  no change (D6-8).
+
+**Pull this, then in PowerShell 5.1 at the repo root:**
+1. `python token_metrics.py` — the normal run. PASTE BACK every `CLEAN-UP D6-5` and `HELD` line, and every Maple
+   line (search the log for `Maple`).
+
+
 ## 11da. Round D5 — data collection, the 14 projects (2026-10-27)
 
 What changes on your store (SPEC §19 D5):
