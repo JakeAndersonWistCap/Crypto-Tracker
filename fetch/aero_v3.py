@@ -299,7 +299,7 @@ class AeroV3:
         out = []
         for i in range(0, len(calls), chunk):
             part = calls[i:i + chunk]
-            data = "0x82ad56cb" + encode(["(address,bool,bytes)[]"], [[
+            data = _keccak("aggregate3((address,bool,bytes)[])")[:10] + encode(["(address,bool,bytes)[]"], [[
                 (to, False, bytes.fromhex(self.calldata(name, *args)[2:])) for to, name, args in part]]).hex()
             res = self.rpc("eth_call", [{"to": MULTICALL3, "data": data}, hex(block)])
             if not res or res == "0x":
