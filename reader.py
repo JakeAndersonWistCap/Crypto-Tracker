@@ -836,7 +836,6 @@ WHAT_CHANGED = (("Price", "price_usd", "stock"), ("Market cap", "market_cap_usd"
 
 
 def _write_summary(sh: Sheet, ctx: Ctx, keys: dict) -> None:
-    A, data, config = ctx.A, ctx.data, ctx.config
     ws = sh.ws
     C = {k: Col(*v) for k, v in {
         "project": ("Project", "The project.", FMT_TOK, "", "", 0, 16),
@@ -1431,7 +1430,7 @@ FILL_MODELLED = PatternFill("solid", fgColor="FFE699")
 
 
 def _write_arch_tab(sh: Sheet, ctx: Ctx, spec: TabSpec) -> None:
-    A, data, config, bw = ctx.A, ctx.data, ctx.config, ctx.bw
+    A, data, config = ctx.A, ctx.data, ctx.config
     ws, tab = sh.ws, spec.tab
     pmap = {p["name"]: p for p in ctx.projects}
     names = [n for n in A.rows(tab) if n in pmap] if tab in A.wb.sheetnames else []
