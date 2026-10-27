@@ -494,7 +494,10 @@ class MapleTransparency:
                     out.add(tidy(pts, name, hm, f"{SOURCE}:island.{key}", TIER), SOURCE, name,
                             f"{hm} = the SSF chart's syrupHoldings, dataset {key}: {len(pts)} day(s) "
                             f"{pts[0][0].date()}..{pts[-1][0].date()}", TIER)
-                if rm:
+                retired = spec.get("ssf_release_retired") if rm else None     # D5-3c
+                if retired:
+                    out.skipped(SOURCE, name, f"{rm}: {retired}", TIER)
+                elif rm:
                     zeros_, _ = buyback_zero_months(got["buybacks"], list(got["buybacks"]["month"]), today())
                     rel, skipped = ssf_release(pts, got["buybacks"], today(), zeros_)
                     neg = [f"{d:%Y-%m} {v:,.0f}" for d, v in rel if v < 0]

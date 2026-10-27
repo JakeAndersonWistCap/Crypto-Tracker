@@ -10149,6 +10149,9 @@ PROJECTS = [
             # THE DESTINATION. The SSF HAS NO SEPARATE ADDRESS — Maple's own transparency page states
             # the Syrup Strategic Fund is "part of the Treasury". Searching for a standalone SSF
             # wallet is closed, not pending.
+            # CORRECTED (D5-3c, 2026-10-27): Maple's docs say the SSF SYRUP "was minted to a segregated wallet";
+            # through 2025-10-28 the SSF chart IS Safe 0x58BE00490D6a5D298d61f24226d2397983Ee39A1 to the token. After
+            # that it also counts SYRUP at exchange / custodian routes (SPEC §19 D5-3c). This slot is unchanged.
             # ============ REPLACED 2026-09-18 — 0xa946...FD0B19 (v2 protocol fee treasury) WAS WRONG. ==
             # The prior address, disputed since 2026-09-14, is gone from this slot entirely (not kept
             # as a second contracts entry — see its full history in OPEN_QUESTIONS' Maple record,
@@ -32895,3 +32898,27 @@ CREDIBILITY["Pendle"]["in_revenue"] = _c_in_py(
              "market (110,750 over those five epochs) — undecomposed, includes unrealized YT fees, Boros not excluded "
              "(C16)."},
     fmt=_C_USD)
+
+
+# D5-3c (Jake's D5 item 3c, traced on chain 2026-10-27; SPEC §19 D5-3c): MAPLE'S SSF "NET OUTFLOW" IS NOT AN OUTFLOW.
+# H(month start) − H(next month start) + the month's buyback assumed every buyback entered the SSF chart: before
+# 2025-10-29 the chart IS Safe 0x58BE00490D6a5D298d61f24226d2397983Ee39A1 (76,124,987.59, funded once) and no buyback
+# ever entered it; from 2025-10-29 the chart also counts SYRUP the delivery wallet 0x99f03ca0… sent to exchange /
+# custodian routes (price-sensitive inventory), and each buyback lands about a month after the month Maple dates it.
+# Every stored row goes (CLEAN-UP D5-3c), the reader stops storing it, and the A3 detail cell says why.
+PROJECT_BY_NAME["Maple"]["transparency_page"]["ssf_release_retired"] = (
+    "not stored (SPEC D5-3c): Maple's SSF chart is not a ledger of the fund's outflows — before 2025-10-29 it is Safe "
+    "0x58BE… alone, which no buyback entered; from 2025-10-29 it also counts SYRUP held at exchange / custodian routes, "
+    "whose token count moves with price, and buybacks land a month after the month they are dated")
+RETIRED_SERIES = {
+    ("Maple", "ssf_net_outflow_tokens"): (
+        "BLOCKED — NOT AN OUTFLOW (SPEC D5-3c): Maple's SSF chart counts SYRUP held at exchange / custodian routes from "
+        "2025-10-29 (its token count moves with price) and no buyback entered the SSF before that; buybacks land a "
+        "month after the month they are dated. A release cannot be measured from this chart"),
+}
+RUN_CLEANUPS = RUN_CLEANUPS + (
+    {"id": "D5-3c", "metric": "ssf_net_outflow_tokens", "every_row": True, "source": "maple_page:ssf_release",
+     "projects": ("Maple",),
+     "why": "Maple's SSF chart is not a ledger of the fund's outflows (SPEC D5-3c): buybacks never entered it before "
+            "2025-10-29 and it counts price-sensitive exchange-held SYRUP after"},
+)

@@ -227,3 +227,61 @@ def test_3b_the_sky_frontier_foundations_500m_is_a_gift_not_a_grant():
     text = (ROOT / "config.py").read_text(encoding="utf-8")
     assert "500M grant" not in text
     assert "500M SKY unconditional transfer (gift) to the Pause Proxy" in text
+
+
+# ================================================================================================== 3c
+def _maple_page():
+    import html as _html
+    import json
+
+    def enc(v):
+        if isinstance(v, dict):
+            return [0, {k: enc(x) for k, x in v.items()}]
+        if isinstance(v, list):
+            return [1, [enc(x) for x in v]]
+        return [0, v]
+    ms = lambda d: int(pd.Timestamp(d).timestamp() * 1000)  # noqa: E731
+    days = pd.date_range("2026-06-01", "2026-09-29")
+    rows = [{"ts": ms(d), "syrupHoldings": 80e6 - i * 1000, "liquidAssetsUsd": 4e6} for i, d in enumerate(days)]
+    top = {"datasets": enc({"1Y": rows})}
+    island = f'<astro-island uid="a" props="{_html.escape(json.dumps(top))}"></astro-island>'
+    cells = "".join(f"<tr><td>{m}</td><td>${u:,.2f}</td><td>{s:,.2f}</td><td>${p:.4f}</td></tr>"
+                    for m, u, s, p in (("Aug 2026", 147_098.00, 676_293.73, 0.2175),
+                                       ("Jul 2026", 136_768.00, 852_668.33, 0.1604)))
+    return f"<div>SYRUP Holdings</div><div>79.21M</div><p>Showing 1-2 of 2</p><table>{cells}</table>{island}"
+
+
+def test_3c_the_ssf_net_outflow_is_no_longer_stored_and_says_why(monkeypatch, tmp_path):
+    from fetch import maple_transparency as mt
+    from fetch import scrape
+    from fetch.base import FetchOutput
+    monkeypatch.setattr(scrape, "CACHE_DIR", tmp_path)
+    monkeypatch.setattr(scrape, "robots_verdict", lambda url: (True, "test"))
+    out = FetchOutput()
+    mt.MapleTransparency(get=lambda url: _maple_page()).run([config.PROJECT_BY_NAME["Maple"]], 30, out)
+    f = out.frame()
+    assert (f["metric"] == "ssf_holdings_tokens").any()                      # Maple's own figure: unchanged
+    assert not (f["metric"] == "ssf_net_outflow_tokens").any()
+    sk = [e for e in out.log if e.status == "skipped" and "ssf_net_outflow_tokens" in e.message]
+    assert sk and "SPEC D5-3c" in sk[0].message
+
+
+def test_3c_every_stored_row_goes_and_the_cell_is_blocked(tmp_path):
+    import logging
+
+    import build_workbook as bw
+    import store as sm
+    import token_metrics as tm
+    st = sm.Store(str(tmp_path / "m.db"))
+    st.upsert(_frame("Maple", "ssf_net_outflow_tokens", ["2025-09-30", "2025-11-30"], [900_326.4, -3_052_593.39],
+                     source="maple_page:ssf_release"))
+    st.upsert(_frame("Maple", "ssf_holdings_tokens", ["2025-09-30"], [76_124_987.59], source="maple_page:island.1Y"))
+    lines = tm.apply_run_cleanups(st, "r1", logging.getLogger("t"))
+    assert sum("CLEAN-UP D5-3c: removed Maple / ssf_net_outflow_tokens" in x for x in lines) == 2
+    left = st.conn.execute("SELECT metric FROM metrics WHERE project='Maple'").fetchall()
+    assert left == [("ssf_holdings_tokens",)]
+    st.close()
+    groups = {("Maple", "ssf_net_outflow_tokens"): _frame("Maple", "ssf_net_outflow_tokens", ["2025-09-30"], [1.0])}
+    bw._retired_series_views(groups)
+    assert ("Maple", "ssf_net_outflow_tokens") not in groups
+    assert bw._EARLY_BLOCKS[("Maple", "ssf_net_outflow_tokens")].startswith("BLOCKED — NOT AN OUTFLOW (SPEC D5-3c)")

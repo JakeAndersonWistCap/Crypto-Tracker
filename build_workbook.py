@@ -2067,6 +2067,14 @@ def _history_prepend_views(groups: dict) -> None:
                                   if live is not None and not live.empty else _as_stored(lead, cols))
 
 
+def _retired_series_views(groups: dict) -> None:
+    """config.RETIRED_SERIES (D5-3c): a series shown nowhere as a figure — any row still stored (before its clean-up
+    runs) is dropped at read time, and every cell that reads it says why (BLOCKED, kept through the build)."""
+    for (name, metric), why in config.RETIRED_SERIES.items():
+        groups.pop((name, metric), None)
+        _EARLY_BLOCKS[(name, metric)] = why
+
+
 MONTH_SPREAD_TAG = "spread evenly over each month's days"
 
 
@@ -4528,6 +4536,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     # G12 A1: every view's reads and writes are recorded — the wiring audit's dependency graph (wiring.py)
     groups = wiring.TrackingDict(groups)
     _EARLY_BLOCKS.clear()
+    _retired_series_views(groups)     # D5-3c: a series whose stored figures measure nothing it claims — dropped, said why
     _provisional_views(groups)        # G15 5: yesterday read before 16:00 UTC is stored, not used
     _handover_cut_views(groups)       # G11 C1: a declared cut — the earlier leg's rows after the later leg starts dropped
     _partial_sum_views(groups)    # FIRST: nothing downstream may read a partial sum
