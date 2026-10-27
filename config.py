@@ -21409,14 +21409,17 @@ def provisional_held() -> dict:
 def set_provisional_held(project_name: str, metric: str, days: list, why: str) -> None:
     """Record the days this read HELD for a series (an empty list clears it) — the provisional list reads them."""
     import json as _json
+    from fetch.logcache import file_lock as _file_lock
     p = _held_path()
-    try:
-        raw = _json.loads(p.read_text())
-    except (OSError, ValueError):
-        raw = {}
-    raw[f"{project_name}|{metric}"] = {"days": list(days), "why": why}
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(_json.dumps(raw, indent=1))
+    # P2a D3: two tiers write it at once (DefiLlama's held days, Merkl's PARTIAL days): read-modify-write under one lock
+    with _file_lock(p):
+        try:
+            raw = _json.loads(p.read_text())
+        except (OSError, ValueError):
+            raw = {}
+        raw[f"{project_name}|{metric}"] = {"days": list(days), "why": why}
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(_json.dumps(raw, indent=1))
 
 
 def provisional_series() -> dict:
@@ -31196,6 +31199,10 @@ METRICS["merkl_campaigns_plume_tokens"] = {
     "only_projects": ("Plume",)}
 OUTFLOW_CATEGORIES["Plume"]["b"] = ("merkl_campaigns_plume_tokens",)
 FLOW_LINE_EVIDENCE.pop(("Plume", "Incentives paid beside: supply side (b)"), None)
+# P2a D3: PLUME'S MERKL READ HAS ITS OWN TIER AND BUDGET (fetch TIER_ORDER "merkl_campaigns_plume"): in the shared tier
+# one 100 s read budget ran from the first project's start, so either project's read could spend the other's time
+# (measured live 2026-10-27 from an empty cache: Plume 67 s, then Morpho cut at 100 s; warm: Plume 7 s, Morpho 19 s)
+PROJECT_BY_NAME["Plume"]["merkl_campaigns"]["own_tier"] = "merkl_campaigns_plume"
 
 
 # ===== G9 N — PLUME REVENUE = THE FEES ITS REWARDDISTRIBUTOR RECEIVES (Jake's fallback, 2026-10-20). =====

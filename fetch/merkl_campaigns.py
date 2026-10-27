@@ -16,7 +16,9 @@ WHAT A DAY IS. Merkl pays a campaign's `amount` evenly over [startTimestamp, end
 live campaign's amount × (its seconds inside that UTC day) ÷ its duration. D2-3 (Jake 2026-10-26): the amount counted is
 what Merkl ALLOCATED TO USERS under the campaign — its allocated total less what it credited back to the creator
 (end-of-campaign leftovers, reallocations, cancellation refunds); allocated-but-unclaimed stays in. The per-day shape
-stays the schedule's (Merkl publishes no per-day allocation). Not a model and not claims (claims lag and are lumpy; Ethereum keeps its claims series, so Ethereum is NOT read here — the
+stays the schedule's (Merkl publishes no per-day allocation). P2a D3: the campaign list is read withComputeStatus (else
+Merkl sends no computedUntil); a running campaign still without one does not void its chain — it is named PARTIAL with
+its size and the days it runs on are HELD (not stored; on the provisional list) until a read gives it. Not a model and not claims (claims lag and are lumpy; Ethereum keeps its claims series, so Ethereum is NOT read here — the
 two would count the same MORPHO twice). Only the reward token declared for the chain is counted (address match, never
 the symbol alone); a campaign paying another token, or MORPHO at an undeclared address, is listed in the log, not
 counted. Complete UTC days only; the whole history is restated each run from the campaign list.
@@ -50,6 +52,17 @@ DAY = 86_400
 FINAL_AFTER_DAYS = 30
 REVERIFY_DAYS, REVERIFY_SPREAD = 28, 14
 READ_BUDGET_S = 100.0
+# P2a D3 (Jake's run on D4, 2026-10-27: Plume's and Morpho's series stored NOTHING — a running campaign on Ethereum
+# (0x09a36c8a…, Plume) and on Base (0x05f987b9…, Morpho) "had no computedUntil" and voided its chain). THE CAUSE: Merkl's
+# GET /v4/campaigns returns a campaign's compute status only when asked — its OpenAPI (api.merkl.xyz/docs/json, read
+# 2026-10-27): withComputeStatus "Include the campaign compute status (delay, computedUntil, status). Default: false".
+# Read 2026-10-27 without it, none of the 3,310 campaigns on chains 1 / 8453 / 98866 / 747474 / 42161 carried
+# campaignStatus; with it both campaigns carry computedUntil (status SUCCESS). The list is now read with it.
+WITH_COMPUTE_STATUS = {"withComputeStatus": "true"}
+# Plume's campaigns are read in their OWN tier, with their own budget (config: the spec's own_tier): one shared deadline
+# let whichever project read first spend the other's time (measured live 2026-10-27 from an empty cache: Plume, read
+# first, took 67 s of the 100 s and Morpho's read was cut). Both tiers share the cache file, merged under its file lock.
+DEFAULT_TIER = "merkl_campaigns"
 
 
 class ReadIncomplete(RuntimeError):
@@ -65,7 +78,7 @@ CANCELLED = "INVALID"                # Merkl's type for a cancelled campaign (do
 
 def daily_amounts(campaigns: list[dict], token_address: str, end_day: _dt.date, chain_id: int | None = None,
                   seen: set | None = None, refunds: dict | None = None,
-                  allocated: dict | None = None) -> tuple[dict, list]:
+                  allocated: dict | None = None, uncomputed: dict | None = None) -> tuple[dict, list]:
     """({date: tokens}, [skipped (campaignId, reason)]) for the campaigns paying `token_address` ON `chain_id` (their
     distributionChainId), complete days < end; a campaignId already in `seen` is skipped (and added when counted).
 
@@ -79,7 +92,10 @@ def daily_amounts(campaigns: list[dict], token_address: str, end_day: _dt.date, 
     until)} a root campaign counts what Merkl's engine allocated under it less what it credited back to its creator
     (Merkl's own /v4/rewards/total and /v4/users/{creator}/rewards/campaign/{id}), spread evenly over [start, until) —
     until = its end, or, while it runs, the engine's computedUntil (nothing is known past it). A root missing from
-    `allocated` is not counted and says so. Without `allocated` the amount is the schedule (as before D2)."""
+    `allocated` is not counted and says so. Without `allocated` the amount is the schedule (as before D2).
+
+    P2a D3: a running root campaign in `uncomputed` {campaignId: why} — Merkl gave no computedUntil for it — is not
+    counted (never as 0, no accrual guessed) and is listed PARTIAL with its reason; the caller holds its days."""
     tok = token_address.lower()
     per_day: dict = defaultdict(float)
     skipped = []
@@ -102,6 +118,9 @@ def daily_amounts(campaigns: list[dict], token_address: str, end_day: _dt.date, 
         start, end = int(c["startTimestamp"]), int(c["endTimestamp"])
         if end <= start:
             skipped.append((c.get("campaignId"), "zero duration"))
+            continue
+        if uncomputed and c.get("campaignId") in uncomputed:
+            skipped.append((c.get("campaignId"), f"PARTIAL: {uncomputed[c.get('campaignId')]}"))
             continue
         if seen is not None:
             seen.add(c.get("campaignId"))
@@ -157,8 +176,11 @@ class MerklCampaigns:
     TIER = TIER
 
     def __init__(self, http: Http | None = None, daily_checks=None, cache_path=None, budget_s: float | None = None,
-                 clock=None, **_ignored):
+                 clock=None, tier: str = DEFAULT_TIER, **_ignored):
         import time as _time
+        self.tier = tier                 # reads only the projects whose spec names this tier (own_tier; default ours)
+        self.uncomputed: dict = {}       # P2a D3: {campaignId: (chain id, campaign)} — running, no computedUntil
+        self._dirty: set = set()         # cache keys this instance wrote (merged into the file on save)
         self.http = http or Http(min_interval=0.5, retries=2)   # D2-3: two reads per campaign
         if daily_checks is None:
             from .logcache import DailyChecks
@@ -189,11 +211,21 @@ class MerklCampaigns:
         return self._cache
 
     def _save_cache(self) -> None:
+        """Write this instance's reads into the cache file, MERGED with what is there now: Plume's and Morpho's tiers
+        run at once and share the file, so neither may write back an older copy over the other's reads."""
         import json
-        from .logcache import atomic_write_text
+        from .logcache import atomic_write_text, file_lock
         f = self._cache_file()
-        f.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_text(f, json.dumps(self._cache or {}, separators=(",", ":")))
+        with file_lock(f):
+            try:
+                disk = json.loads(f.read_text())
+            except (OSError, ValueError):
+                disk = {}
+            mine = self._cache or {}
+            disk.update({k: mine[k] for k in self._dirty if k in mine})
+            f.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_text(f, json.dumps(disk, separators=(",", ":")))
+            self._cache = disk
 
     @staticmethod
     def _reverify_days(cid: str) -> int:
@@ -217,7 +249,7 @@ class MerklCampaigns:
         funded by at least nine creators), every campaign paying `token` (tokenAddress filter; matched by address)."""
         rows = []
         for page in range(100):
-            params = {"chainId": chain_id, "items": PAGE, "page": page}
+            params = {"chainId": chain_id, "items": PAGE, "page": page, **WITH_COMPUTE_STATUS}
             params.update({"creatorAddress": creator} if creator else {"tokenAddress": token})
             got = self.http.get(url, params=params)
             if not isinstance(got, list):
@@ -233,7 +265,8 @@ class MerklCampaigns:
         Merkl's GET /v4/rewards/total (what the engine allocated under the campaign) less GET /v4/users/{creator}/
         rewards/campaign/{id} (what it credited back to the creator: end_campaign leftovers, reallocations, cancelled
         refunds); allocated-but-unclaimed stays in. A running campaign's figure covers [start, computedUntil). Any read
-        that fails raises: nothing is stored rather than a campaign counted at its schedule."""
+        that fails raises: nothing is stored rather than a campaign counted at its schedule. P2a D3: a running campaign
+        with no computedUntil is not read and goes to self.uncomputed (its days are held, named PARTIAL)."""
         base = url.rsplit("/campaigns", 1)[0]
         out, running_until = {}, None
         for c in camps:
@@ -249,6 +282,16 @@ class MerklCampaigns:
                 self.stats["cached"] += 1
                 out[cid] = (max(0, int(hit["allocated"]) - int(hit["returned"])), int(c["endTimestamp"]))
                 continue
+            until = int(c["endTimestamp"])
+            if until > now:                                  # still running: known only to the engine's last pass
+                cu = (c.get("campaignStatus") or {}).get("computedUntil")
+                if cu is None:
+                    # P2a D3: ONE CAMPAIGN DOES NOT VOID ITS CHAIN. Its allocated total covers [start, an instant Merkl
+                    # has not given), so no day of it is known — not counted (never 0, no accrual guessed), named
+                    # PARTIAL with its size, and its days held (_project); the chain's other campaigns stand
+                    self.uncomputed[cid] = (int(chain_id), c)
+                    continue
+                until = min(until, int(cu))
             if self.deadline is not None and self.clock() >= self.deadline:
                 raise ReadIncomplete(f"the read budget ({self.budget_s:.0f}s) ran out with {self.stats['read']} "
                                      f"campaign(s) read this run and {self.stats['cached']} cached")
@@ -264,12 +307,7 @@ class MerklCampaigns:
             tot = self.http.get(f"{base}/rewards/total", params={"chainId": chain_id, "campaignId": cid})
             if not isinstance(tot, dict) or "amount" not in tot:
                 raise ValueError(f"chain {chain_id}: campaign {cid[:10]}…: no allocated total read")
-            until = int(c["endTimestamp"])
-            if until > now:                                  # still running: known only to the engine's last pass
-                cu = (c.get("campaignStatus") or {}).get("computedUntil")
-                if cu is None:
-                    raise ValueError(f"chain {chain_id}: running campaign {cid[:10]}…: no computedUntil")
-                until = min(until, int(cu))
+            if int(c["endTimestamp"]) > now:
                 running_until = until if running_until is None else min(running_until, until)
             out[cid] = (max(0, int(tot["amount"]) - returned), until)
             # D4-2b: every read kept, so a run cut short is continued next time; a FINAL campaign's re-read compared
@@ -281,6 +319,7 @@ class MerklCampaigns:
                 self.stats["reverified"] += 1
             self._cache[key] = {"allocated": str(int(tot["amount"])), "returned": str(int(returned)),
                                 "end": int(c["endTimestamp"]), "read_at": int(now)}
+            self._dirty.add(key)
             self.stats["read"] += 1
             if self.stats["read"] % 10 == 0:
                 self._save_cache()
@@ -289,8 +328,22 @@ class MerklCampaigns:
     def run(self, projects: list[dict], window_days, out):
         for p in projects:
             spec = p.get("merkl_campaigns")
-            if spec:
+            if spec and spec.get("own_tier", DEFAULT_TIER) == self.tier:
                 self._project(p["name"], spec, out)
+
+    @staticmethod
+    def partial_text(chain_name: str, c: dict) -> str:
+        """P2a D3: what a running campaign with no computedUntil is, from Merkl's own fields — its size and span."""
+        rt = c.get("rewardToken") or {}
+        amt = int(c.get("amount") or 0) / 10 ** int(rt.get("decimals") or 18)
+        st = c.get("campaignStatus")
+        fmt = "%Y-%m-%d %H:%M"
+        return (f"{chain_name} campaign {str(c.get('campaignId'))[:10]}… ({amt:,.3f} {rt.get('symbol') or '?'} over "
+                f"{_dt.datetime.fromtimestamp(int(c['startTimestamp']), _dt.timezone.utc):{fmt}}.."
+                f"{_dt.datetime.fromtimestamp(int(c['endTimestamp']), _dt.timezone.utc):{fmt}} UTC, "
+                f"{c.get('distributionType') or c.get('type') or 'type ?'}) is running and Merkl gives no computedUntil "
+                f"for it (campaignStatus {'absent' if st is None else 'without computedUntil'}) — its allocation is "
+                f"known to no day: not counted (never 0, no accrual guessed)")
 
     def _project(self, name: str, spec: dict, out) -> None:
         m, day = spec["metric"], str(today().date())
@@ -303,6 +356,7 @@ class MerklCampaigns:
         if self.deadline is None:
             self.deadline = self.clock() + self.budget_s
         self.stats = {"cached": 0, "read": 0, "reverified": 0, "changed": []}
+        self.uncomputed = {}
         t0, calls0 = self.clock(), int(self.http.stats.get("calls", 0)) if hasattr(self.http, "stats") else 0
         self._load_cache()
         try:
@@ -311,8 +365,10 @@ class MerklCampaigns:
                 alloc, until = self._allocations(spec["url"], camps, int(chain_id), chain["token"], now)
                 if until is not None:
                     known_until = until if known_until is None else min(known_until, until)
+                why = {cid: self.partial_text(chain["name"], c) for cid, (ch, c) in self.uncomputed.items()
+                       if ch == int(chain_id)}
                 per_day, skipped = daily_amounts(camps, chain["token"], today().date(), int(chain_id), seen,
-                                                 allocated=alloc)
+                                                 allocated=alloc, uncomputed=why)
                 for d, v in per_day.items():
                     total[d] += v
                 notes.append(f"{chain['name']}: {len(camps)} campaign(s), {len(skipped)} not counted"
@@ -334,7 +390,12 @@ class MerklCampaigns:
                      f"in {self.clock() - t0:.0f}s")
         if self.stats["changed"]:
             notes.append("CHANGED SINCE THE CACHED READ: " + "; ".join(self.stats["changed"][:5]))
-        self.daily.done(f"merkl_campaigns:{name}", day)
+        names = {int(k): v["name"] for k, v in spec["chains"].items()}
+        partial = [self.partial_text(names.get(ch, str(ch)), c) for ch, c in self.uncomputed.values()]
+        held_from = min((_dt.datetime.fromtimestamp(int(c["startTimestamp"]), _dt.timezone.utc).date()
+                         for _ch, c in self.uncomputed.values()), default=None)
+        if not partial:
+            self.daily.done(f"merkl_campaigns:{name}", day)      # P2a D3: with a day held, a later run today re-reads
         # EVERY DAY FROM THE FIRST CAMPAIGN TO YESTERDAY, a day with no live campaign as 0: the (b) category sums its
         # legs only on days every leg has a row, so a day left out would drop the Ethereum claims with it
         # D2-3: complete days only — a running campaign's allocation is known up to the engine's computedUntil, so the
@@ -346,6 +407,24 @@ class MerklCampaigns:
                 notes.append(f"ends {ku}: a running campaign is computed by Merkl only to "
                              f"{_dt.datetime.fromtimestamp(known_until, _dt.timezone.utc):%Y-%m-%d %H:%M} UTC")
                 last = ku
+        # P2a D3: A DAY A CAMPAIGN WITHOUT computedUntil RUNS ON IS PARTIAL — NOT STORED, HELD. Stored, it would read as
+        # complete wherever the series is summed (the outflow (b) view sums its legs per day and keeps no source marker:
+        # Plume's (b) would read low and its subsidy cover high). Held, every window reads the day as not covered; the
+        # days go on the provisional list with the campaign named and sized (config.provisional_series), and the next
+        # read that gets its computedUntil stores them (the whole history is restated each run).
+        held = []
+        if held_from is not None and held_from <= last:
+            d = held_from
+            while d <= last:
+                held.append(str(d))
+                d += _dt.timedelta(days=1)
+            notes.append(f"PARTIAL — HELD {held[0]}..{held[-1]} ({len(held)} day(s), not stored): "
+                         + "; ".join(partial))
+            last = held_from - _dt.timedelta(days=1)
+        elif partial:
+            notes.append("PARTIAL (no stored day affected): " + "; ".join(partial))
+        import config
+        config.set_provisional_held(name, m, held, ("PARTIAL — " + "; ".join(partial)) if held else "")
         if total:
             d = min(total)
             while d <= last:
@@ -354,6 +433,8 @@ class MerklCampaigns:
         if pts:
             out.add(tidy(pts, name, m, ROW_SOURCE, TIER), SOURCE, name,
                     f"{m}: {len(pts)} day(s) {pts[0][0].date()}..{pts[-1][0].date()} — {'; '.join(notes)}", TIER)
+        elif held:
+            out.fail(SOURCE, name, f"{m}: no complete day to store — {'; '.join(notes)}", TIER)
 
 
 def fill_cache(projects: list[dict] | None = None, http: Http | None = None, cache_path=None) -> dict:
@@ -369,6 +450,7 @@ def fill_cache(projects: list[dict] | None = None, http: Http | None = None, cac
         if not spec:
             continue
         m.stats = {"cached": 0, "read": 0, "reverified": 0, "changed": []}
+        m.uncomputed = {}
         for chain_id, chain in spec["chains"].items():
             camps = m._campaigns(spec["url"], spec.get("creator"), int(chain_id), chain["token"])
             m._allocations(spec["url"], camps, int(chain_id), chain["token"], now)

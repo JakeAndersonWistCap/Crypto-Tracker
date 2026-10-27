@@ -124,6 +124,9 @@ TIER_ORDER = [
     # Hyperliquid's issuer-side wallets replayed from their own ledgers, once a day (fix round 3, B1).
     ("hl_ledger", 1, lambda ctx: HLLedgerReplay()),
     ("merkl_campaigns", 1, lambda ctx: MerklCampaigns()),
+    # P2a D3: Plume's Merkl campaigns in their own tier and budget (config: its merkl_campaigns own_tier), so neither
+    # project's read can spend the other's
+    ("merkl_campaigns_plume", 1, lambda ctx: MerklCampaigns(tier="merkl_campaigns_plume")),
     # a project's own published statement, stored dated only while the page still carries it (D2-4e: GEODNET's filing)
     ("filing_statements", 1, lambda ctx: FilingStatements()),
     ("boros", 1, lambda ctx: BorosVolume()),
@@ -2053,6 +2056,8 @@ TIER_BUDGET_S = {
     # Base calls spaced 1 s (mainnet.base.org 429s bursts): ~60-85 s an Aerodrome epoch; a first read of 4 epochs
     # takes 2-4 runs, then one epoch a week
     "subsidy_targeting": 300,          # G9 A1: Pendle's nine-chain sample (90 s) first, then Aerodrome (150 s)
+    # P2a D3: each Merkl tier stops itself at 100 s (fetch.merkl_campaigns.READ_BUDGET_S), inside its own 120 s
+    "merkl_campaigns": 120, "merkl_campaigns_plume": 120,
 }
 DEFAULT_BUDGET_S = 120
 for _t in _l2_tiers():
