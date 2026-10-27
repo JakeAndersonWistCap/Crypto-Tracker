@@ -207,6 +207,9 @@ def test_f2_probe_writes_served_chains_and_never_prints_the_key(monkeypatch, tmp
 def test_f2_wire_probed_scans_opens_only_the_served_chains(monkeypatch):
     saved = {k: copy.deepcopy(config.PROJECT_BY_NAME[k]) for k in ("Pendle", "Fluid")}
     routes = copy.deepcopy(config.EXPLORER_LOG_ROUTES)
+    # wire_probed_scans also adds the Base scan's metric to Fluid's outflow (b): restored with everything else (left in
+    # place, every later build in the process read a probed one-week leg there — D7-2's same-span test refused it)
+    monkeypatch.setitem(config.OUTFLOW_CATEGORIES["Fluid"], "b", config.OUTFLOW_CATEGORIES["Fluid"]["b"])
     try:
         assert config.wire_probed_scans({"served": []}) == []
         wired = config.wire_probed_scans({"served": [8453, 999], "probed_on": "2026-10-15"})
