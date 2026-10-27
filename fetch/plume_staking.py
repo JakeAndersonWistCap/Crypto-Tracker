@@ -308,16 +308,22 @@ class PlumeStaking:
                       for r in res]
             full = len(res) >= int(pay["page_cap"])
             edge = max(blocks) if (full and blocks) else None
+            edge_day = None
             for r, b in zip(res, blocks):
-                if edge is not None and b == edge:
-                    continue                      # re-read with the next page, never counted twice
                 ts = int(str(r["timeStamp"]), 16) if str(r["timeStamp"]).startswith("0x") else int(r["timeStamp"])
                 day = str(pd.Timestamp(ts, unit="s").normalize().date())
+                if edge is not None and b == edge:
+                    edge_day = day
+                    continue                      # re-read with the next page, never counted twice
                 st["days"][day] = st["days"].get(day, 0.0) + int(str(r["data"]), 16) / 1e18
             if full:
                 st["next_block"] = edge
+                # D8 (P2a, 2026-10-27): the edge block's day is read only up to the edge — every day from it on is
+                # PARTIAL until a later page reaches past it (the fixture's 2025-08-03 read 384.81 of its 757.28)
+                st["covered_to"] = edge_day
                 continue
             st["next_block"] = (max(blocks) + 1) if blocks else st["next_block"]
+            st["covered_to"] = today_s            # read to "latest" today: every day before today is complete
             break
         if budget and stopped is None:
             daily.done(day_key, today_s)
@@ -326,16 +332,24 @@ class PlumeStaking:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(st))
         today_ = str(pd.Timestamp.now(tz="UTC").tz_localize(None).normalize().date())
-        pts = sorted((pd.Timestamp(d), v) for d, v in st["days"].items() if d < today_)
+        # A DAY IS STORED ONLY WHEN THE READ HAS PASSED IT (D8, P2a 2026-10-27): `covered_to` is the first day not read to
+        # its end — the edge block's day when the call budget ran out on a full page, or the day of the last read that
+        # reached "latest". A day on or after it is held in the state file and stored once a later read passes it.
+        # A state file written before this key existed falls back to today (the old rule) until its next read.
+        upto = min(today_, st.get("covered_to") or today_)
+        held = sorted(d for d in st["days"] if upto <= d < today_)
+        held_note = (f"; {len(held)} day(s) {held[0]}..{held[-1]} read only in part (the logs cursor stopped inside "
+                     f"{upto}) — HELD, not stored, until a later read passes them" if held else "")
+        pts = sorted((pd.Timestamp(d), v) for d, v in st["days"].items() if d < upto)
         if not pts:
             out.skipped(SOURCE, name, f"{pay['metric']}: no RewardDistributed(PLUME) events yet from treasury "
-                                      f"{treasury} ({calls} logs call(s))", TIER)
+                                      f"{treasury} ({calls} logs call(s)){held_note}", TIER)
             return
         frame = tidy(pts, name, pay["metric"], f"{SOURCE}:treasury.RewardDistributed[paid, PLUME]", TIER)
         out.add(frame, SOURCE, name, f"{pay['metric']} = PLUME paid to stakers by treasury {treasury} "
                                      f"(RewardDistributed, claims + restakes; PAID, not accrued): {len(pts)} day(s) "
                                      f"{pts[0][0].date()}..{pts[-1][0].date()}; unlocks are NOT in it (no vesting "
-                                     f"address is documented)", TIER)
+                                     f"address is documented){held_note}", TIER)
 
     # ===== THE PAYOUT BACKLOG BY RPC (Round G5 item 4, Jake 2026-10-19). =====
     def seed_payouts_rpc(self, name: str, spec: dict, out, say=print, chunk: int = 100_000, w3=None) -> dict:
@@ -387,6 +401,10 @@ class PlumeStaking:
                         raise
                     span = max(1, span // 2)
                     continue
+                try:                                  # D8: the day of the first unread block is not complete
+                    st["covered_to"] = str(pd.Timestamp(ts(blk), unit="s").normalize().date())
+                except Exception:  # noqa: BLE001 — the older covered_to stays, which is earlier, never later
+                    pass
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(json.dumps(st))
                 from .chain import redact_urls
@@ -406,8 +424,13 @@ class PlumeStaking:
             span = min(span * 2, 2_000_000) if len(logs) < 5_000 else span
             if n_events and n_events % 20_000 < len(logs):
                 say(f"plume payouts by RPC: {n_events:,} event(s) to block {hi:,} of {head:,}; state saved")
+        # D8 (P2a): read to `head`, so every day before head's own day is complete; head's day is held (state file)
+        st["covered_to"] = str(pd.Timestamp(ts(head), unit="s").normalize().date())
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(st))
         today_ = str(pd.Timestamp.now(tz="UTC").tz_localize(None).normalize().date())
-        pts = sorted((pd.Timestamp(d), v) for d, v in st["days"].items() if d < today_)
+        upto = min(today_, st["covered_to"])
+        pts = sorted((pd.Timestamp(d), v) for d, v in st["days"].items() if d < upto)
         if pts:
             from .base import tidy
             out.add(tidy(pts, name, pay["metric"], f"{SOURCE}:treasury.RewardDistributed[paid, PLUME]", TIER), SOURCE,
