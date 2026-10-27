@@ -33252,18 +33252,22 @@ MCAP_BASIS_NOTE = {
 # (archival RPC) and prints both.
 NEAR_LOCKUP_MANUAL_BLOCK = 219_544_718
 _NEAR_LOCKUP_OVERLAP_HOW = (
-    "one hand-entered read (2026-10-11) and weekly reads from 2026-10-26: never one day — run `python "
-    "check_offline_items.py near_lockups_at_block` (re-reads every lockup by the weekly route AT block 219,544,718 on "
-    "NEAR's archival RPC, ~2.4 calls a lockup, resumable) and paste back its OVERLAP lines")
+    "one hand-entered read (2026-10-11) and weekly reads from 2026-10-26: never one day. SHOWN at one block by `python "
+    "check_offline_items.py near_lockups_at_block` (the weekly route re-run AT block 219,544,718 on NEAR's archival RPC, "
+    "every lockup alive then — 1,960, 1,959 read, the one whose getter fails left out as on both legs), read 2026-10-27: "
+    "LOCKED 2,058,521.84 vs the manual 2,058,522 (whole NEAR), UNVESTED 1,999,720.89 vs 1,999,721 — both within 0.2 "
+    "NEAR, inside ±2%; one common block, so the stored check (≥ 3 common days) stays unchecked")
+_NEAR_SAME_AT_BLOCK = ("— and measured equal at block 219,544,718 (near_lockups_at_block, 2026-10-27: within 0.2 NEAR, "
+                       "the manual row being whole NEAR)")
 for _m, _cc in (
         ("near_lockup_locked_tokens",
          "none: the same definition on both legs — LOCKED = every lockup's get_locked_amount with the buggy-code "
          "lockups RECOMPUTED as NEAR's lakehouse does (Jake 2026-10-12, decision 8; the manual row's note and "
-         "check_offline_items._read_lockup) — the numeric agreement is UNVERIFIED until the overlap read"),
+         "check_offline_items._read_lockup) " + _NEAR_SAME_AT_BLOCK),
         ("near_lockup_unvested_tokens",
-         "a POSSIBLE STEP at the seam, size NOT ESTABLISHED: the manual row caps each lockup's unvested at its RPC "
-         "locked and does NOT recompute the buggy-code lockups (its own note); the weekly route caps at the "
-         "RECOMPUTED locked (check_offline_items.near_lockups) — the overlap read at block 219,544,718 measures it")):
+         "none: the manual row's note says it capped each lockup's unvested at its RPC locked without recomputing the "
+         "buggy-code lockups, the weekly route caps at the RECOMPUTED locked — a difference only where a buggy-code "
+         "lockup's unvested exceeds its recomputed locked " + _NEAR_SAME_AT_BLOCK)):
     PROJECT_BY_NAME["Near"].setdefault("series_handover", {})[_m] = {
         "ordered_points": ("manual", "near_rpc:lockups"),
         "why": "Jake's first weekly read entered by hand (manual_overrides.csv, 2026-10-11, block 219,544,718) until "

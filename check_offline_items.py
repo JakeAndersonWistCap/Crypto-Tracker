@@ -5401,8 +5401,8 @@ def near_lockups_at_block(block_id: int | None = None, workers: int = 4, limit: 
         d, mv = manual[m]
         rv = float(got[k])
         gap = (rv / mv - 1.0) * 100.0 if mv else float("nan")
-        print(f"    {m}: manual ({d}) {mv:,.0f} NEAR vs the weekly route {rv:,.0f} NEAR at the same block — "
-              f"{gap:+.3f}% ({'WITHIN' if abs(gap) <= tol else 'OUTSIDE'} ±{tol:g}%)")
+        print(f"    {m}: manual ({d}) {mv:,.0f} NEAR vs the weekly route {rv:,.2f} NEAR at the same block — "
+              f"{rv - mv:+,.2f} NEAR, {gap:+.3f}% ({'WITHIN' if abs(gap) <= tol else 'OUTSIDE'} ±{tol:g}%)")
     print(f"  lockups alive at the block: {got['accounts']:,} (Jake's 2026-10-11 read listed 1,960 live then); read "
           f"{got['read']:,}, zero {got['zero']:,}, own getter failing {len(got.get('faults') or ())}"
           + (f"; {len(unplaced):,} not placed (no height)" if unplaced else ""))

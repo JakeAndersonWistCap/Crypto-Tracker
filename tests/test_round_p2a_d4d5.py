@@ -56,8 +56,8 @@ def test_d4a_near_lockups_handover_is_declared_and_no_longer_blanks_the_series()
         ho = bw.handover_overlap({("Near", m): g}, "Near", decl["overlap"])
         assert not ho["passed"] and ho["common_days"] == 0
         assert "UNCHECKED" in ho["text"] and "check_offline_items.py near_lockups_at_block" in ho["text"]
-    # LOCKED: the same definition on both legs (declared "none: …") -> one series on the Trajectory; UNVESTED: the manual
-    # row's cap differs (its own note) -> a step, so a SERIES BREAK stays
+    # both legs measured equal at the manual read's block (near_lockups_at_block, 2026-10-27: within 0.2 NEAR) and
+    # declared "none: …" -> one series on the Trajectory, no SERIES BREAK
     g_l = pd.concat([_g("Near", "near_lockup_locked_tokens", ["2026-10-11"], [1], "manual"),
                      _g("Near", "near_lockup_locked_tokens", ["2026-10-26"], [1], "near_rpc:lockups@1")])
     g_u = pd.concat([_g("Near", "near_lockup_unvested_tokens", ["2026-10-11"], [1], "manual"),
@@ -65,8 +65,8 @@ def test_d4a_near_lockups_handover_is_declared_and_no_longer_blanks_the_series()
     since = pd.Timestamp("2026-01-01")
     assert trajectory._own_breaks("Near", "near_lockup_locked_tokens", {("Near", "near_lockup_locked_tokens"): g_l},
                                   since) == []
-    assert len(trajectory._own_breaks("Near", "near_lockup_unvested_tokens",
-                                      {("Near", "near_lockup_unvested_tokens"): g_u}, since)) == 1
+    assert trajectory._own_breaks("Near", "near_lockup_unvested_tokens",
+                                  {("Near", "near_lockup_unvested_tokens"): g_u}, since) == []
 
 
 def test_d4a_the_guard_reads_both_lockup_points_as_declared():
