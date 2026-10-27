@@ -13518,6 +13518,74 @@ def settlement_legs():
     return 0
 
 
+def plume_native_status(st: dict, today, seed_from: str = "2025-10-27", seed_to: str = "2026-03-31",
+                        seed_cap: int = 1200) -> dict:
+    """D9 (P2a, 2026-10-27): what the Plume settlement state file (fetch/plume_settlement, ONE file shared by the daily
+    run and `--seed plume_settlement`) holds for the two legs, kept apart. The ERC-20 leg's floor (route C's planned
+    floor, done_back) says nothing about the native leg: native PLUME is read DAY BY DAY into native.days, and the
+    daily run reads it only from config native_from (2026-04-01) at a 400-page cap. The seed window (D5-1d, `--seed
+    plume_settlement --plume-native-from 2025-10-27 --plume-native-cap 1200`) is the days from max(seed_from, the
+    365-day floor) to seed_to: each is HELD (read), REFUSED (native.capped: refused at that many pages — the seed
+    retries it only while that is below its cap) or NOT READ. Pure: no file, no network."""
+    import pandas as _pd                                  # noqa: PLC0415
+    today = _pd.Timestamp(today).normalize()
+    floor = today - _pd.Timedelta(days=365)
+    e, nat = st.get("erc20") or {}, st.get("native") or {}
+    plan = (st.get("logs") or {}).get("plan") or {}
+    lo = max(_pd.Timestamp(seed_from), floor)
+    days = [str(d.date()) for d in _pd.date_range(lo, _pd.Timestamp(seed_to))]
+    held = [d for d in days if d in (nat.get("days") or {})]
+    capped = nat.get("capped") or {}
+    retry = [d for d in days if d not in held and d in capped and int(capped[d]) < seed_cap]
+    refused = [d for d in days if d not in held and d in capped and int(capped[d]) >= seed_cap]
+    unread = [d for d in days if d not in held and d not in capped]
+    todo = retry + unread
+    return {"erc20_done_back": bool(e.get("done_back")), "erc20_plan_floor": plan.get("floor"),
+            "erc20_completed_on": (st.get("logs") or {}).get("completed_on"), "erc20_oldest": e.get("oldest"),
+            "daily_floor": str(floor.date()), "seed_window": (days[0], days[-1]) if days else None,
+            "days": len(days), "held": len(held), "retry": retry, "refused_at_cap": refused, "unread": unread,
+            "restart": bool(todo)}
+
+
+def plume_native_seed():
+    """D9 (P2a, Jake 2026-10-27): does the Plume native-transfers seed still need restarting? Reads the state file
+    <logcache>/plume-settlement.json only (the daily run and the seed share it) and prints the ERC-20 leg's floor and
+    the seed window's native days apart. Changes nothing; no network."""
+    import json                                           # noqa: PLC0415
+    import pandas as _pd                                  # noqa: PLC0415
+    import config                                         # noqa: PLC0415
+    from fetch.logcache import LogCache                   # noqa: PLC0415
+    head("PLUME — plume_native_seed: the ERC-20 leg's floor vs the native seed window 2025-10-27..2026-03-31 (D9)")
+    path = LogCache().root / "plume-settlement.json"
+    try:
+        st = json.loads(path.read_text())
+    except (OSError, ValueError) as ex:
+        print(f"  no readable state file at {path} ({type(ex).__name__}) — nothing has been read; run the seed line")
+        return 0
+    spec = config.PROJECT_BY_NAME["Plume"]["settlement_rebuild"]
+    s = plume_native_status(st, _pd.Timestamp.now("UTC").tz_localize(None))
+    print(f"  state file {path} (ONE file: the daily run and --seed plume_settlement both read and write it)")
+    print(f"  ERC-20 leg: done_back {s['erc20_done_back']}; route C planned floor {s['erc20_plan_floor']}, completed "
+          f"{s['erc20_completed_on']}; the daily floor today is {s['daily_floor']} (365 days back, moves daily)")
+    print(f"  native leg, daily run: from {spec.get('native_from')} at {spec['native_max_pages_per_day']} pages a day "
+          f"(config) — it never reads the seed window")
+    if not s["seed_window"]:
+        print("  the seed window is past the 365-day floor: nothing left to read")
+        return 0
+    print(f"  native leg, seed window {s['seed_window'][0]}..{s['seed_window'][1]} ({s['days']} days): {s['held']} held, "
+          f"{len(s['retry'])} refused below 1,200 pages (the seed retries them), {len(s['refused_at_cap'])} refused at "
+          f"1,200+ pages, {len(s['unread'])} not read")
+    for k in ("retry", "refused_at_cap", "unread"):
+        if s[k]:
+            print(f"    {k}: {s[k][0]}..{s[k][-1]}")
+    print("  -> " + ("RESTART: python token_metrics.py --seed plume_settlement --plume-native-from 2025-10-27 "
+                     "--plume-native-cap 1200 (resumable; not beside a daily run)" if s["restart"] else
+                     "NO RESTART NEEDED: every seed-window day is held"
+                     + (" or refused at 1,200+ pages (a higher cap is Jake's call)" if s["refused_at_cap"] else "")))
+    print("  PASTE BACK the lines above.")
+    return 0
+
+
 def review_triage():
     """ROUND G10 item 6 (Jake 2026-10-21: "Review Queue (20): for each item, fix it or write why it stays"): every OPEN row
     of the store's latest Review Queue (config.review_answered rows are listed apart), with the numbers a disposition
@@ -14334,7 +14402,7 @@ CHECKS = (
     stored_but_unshown, review_triage, wiring, settlement_legs, total_supply_rows, flow_stock_days, morning_reads, wiring_complete, chainlink_staking_funding,
     aethir_mint_path,
     near_activity_break,
-    plume_settlement_routes,
+    plume_settlement_routes, plume_native_seed,
     near_activity_cause, near_activity_signers, issuer_wallet_audit,
     diagnose_geodnet_burn,
     diagnose_net_holder_yield,
