@@ -397,22 +397,25 @@ def read_scoreboard(wb) -> dict:
 
 
 def scoreboard_verdict(board: dict) -> tuple:
-    """(reasons, notes) from a scoreboard: PASS when BROKEN and NOT WIRED are both 0."""
+    """(reasons, notes) from a scoreboard. BROKEN > 0 FAILS the line (a reference or check that disagrees). NOT WIRED
+    is the standing, declared count (a cell labelled 'not wired'): it is PRINTED with its projects, never a FAIL —
+    a check that is red every day tells Jake nothing (P2f-2)."""
     if "ALL" not in board:
         return ["the Coverage tab holds no scoreboard (no 'Project' header row with BROKEN and NOT WIRED)"], []
     n = {k: int(board["ALL"].get(k) or 0) for k in ("BROKEN", "NOT WIRED")}
     notes = [f"BROKEN {n['BROKEN']}, NOT WIRED {n['NOT WIRED']}"]
-    if not any(n.values()):
-        return [], notes
-    parts = []
+    named_by = {}
     for k in ("BROKEN", "NOT WIRED"):
         named = {p: int(b.get(k) or 0) for p, b in board.items() if p != "ALL" and int(b.get(k) or 0)}
         rest = n[k] - sum(named.values())
         if rest:
             named["(no project: SPEC list)"] = rest
-        if named:
-            parts.append(f"{k}: " + ", ".join(f"{p}: {v}" for p, v in named.items()))
-    return [f"({n['BROKEN']} BROKEN, {n['NOT WIRED']} NOT WIRED): " + " | ".join(parts)], notes
+        named_by[k] = named
+    if named_by["NOT WIRED"]:
+        notes.append("NOT WIRED (declared, informational): " + ", ".join(f"{p}: {v}" for p, v in named_by["NOT WIRED"].items()))
+    if n["BROKEN"]:
+        return [f"{n['BROKEN']} BROKEN: " + ", ".join(f"{p}: {v}" for p, v in named_by["BROKEN"].items())], notes
+    return [], notes
 
 
 def check_scoreboard(audit_wb) -> tuple:
@@ -479,7 +482,7 @@ def run_checks(reader_path, audit_path, store, asof, guard_mode) -> list:
     add("parked rows read 'parked'", on_reader(lambda: check_parked(rwb, r_asof)))
     add("comments open with a plain sentence", on_reader(lambda: check_comments(rwb)))
     add("guard: 0 violations", lambda: check_guard(guard_mode, store))
-    add("scoreboard: no BROKEN, no NOT WIRED", (lambda: [aerr]) if awb is None else (lambda: check_scoreboard(awb)))
+    add("scoreboard: no BROKEN (NOT WIRED listed)", (lambda: [aerr]) if awb is None else (lambda: check_scoreboard(awb)))
     add("as-of date is today", lambda: ([rerr] if rerr else []) + ([aerr] if aerr else [])
         or check_asof(r_asof, a_asof, today))
     return results

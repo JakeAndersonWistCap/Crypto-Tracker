@@ -65,8 +65,8 @@ def _summary_row(wb, name: str) -> int:
 # ============================================================================================ integration
 def test_integration_fixture_build_runs_every_check(built, capsys):
     """main() on the clean fixture build, the guard on the committed fixtures (--compare): eight checks PASS. The
-    ninth, the scoreboard, is a FINDING on this build (see the report): it FAILs with Ethereum's BROKEN reference and
-    the NOT WIRED list, and says so — the check is not weakened."""
+    ninth, the scoreboard, is a FINDING on this build (see the report): it FAILs on Ethereum's BROKEN reference (the
+    fixture store predates orphan_cleanup.sql); the standing NOT WIRED list is printed under it, informational."""
     code = fc.main(["--reader", str(built["reader"]), "--audit", str(built["audit"]), "--compare",
                     "--asof", built["asof"].isoformat()])
     out = capsys.readouterr().out
@@ -74,7 +74,8 @@ def test_integration_fixture_build_runs_every_check(built, capsys):
     assert len(lines) == 9, out
     fails = [ln for ln in lines if ln.startswith("FAIL")]
     assert len(fails) == 1 and fails[0].startswith("FAIL  scoreboard"), out
-    assert re.search(r"\(\d+ BROKEN, \d+ NOT WIRED\): BROKEN: Ethereum: 1", fails[0]), fails[0]
+    assert re.search(r"— 1 BROKEN: Ethereum: 1$", fails[0]), fails[0]
+    assert "NOT WIRED (declared, informational): " in out and "Sky: 5" in out
     assert "FRIDAY CHECK: 8 PASS, 1 FAIL" in out and code == 1
     assert "      ran on: " + str(fc.GUARD_BASELINE) in out        # the guard says what it ran on
     assert re.search(r"PASS  guard: 0 violations", out)
@@ -322,8 +323,12 @@ def test_scoreboard_pass_when_both_are_zero_and_fail_names_the_projects():
     ok = fc.check_scoreboard(_coverage_wb([("ALL", 9, 0, 0), ("Aave", 4, 0, 0), ("Sky", 5, 0, 0)]))
     assert ok == ([], ["BROKEN 0, NOT WIRED 0"])
     reasons, notes = fc.check_scoreboard(_coverage_wb([("ALL", 9, 3, 2), ("Aave", 4, 1, 0), ("Sky", 5, 1, 2)]))
-    assert reasons == ["(2 BROKEN, 3 NOT WIRED): BROKEN: Sky: 2 | NOT WIRED: Aave: 1, Sky: 1, (no project: SPEC list): 1"]
-    assert notes == ["BROKEN 2, NOT WIRED 3"]
+    assert reasons == ["2 BROKEN: Sky: 2"]
+    assert notes == ["BROKEN 2, NOT WIRED 3",
+                     "NOT WIRED (declared, informational): Aave: 1, Sky: 1, (no project: SPEC list): 1"]
+    # NOT WIRED alone is printed, never a FAIL
+    only = fc.check_scoreboard(_coverage_wb([("ALL", 9, 3, 0), ("Aave", 4, 3, 0)]))
+    assert only == ([], ["BROKEN 0, NOT WIRED 3", "NOT WIRED (declared, informational): Aave: 3"])
     assert fc.check_scoreboard(openpyxl.Workbook())[0]        # no Coverage tab: a FAIL, said
 
 
