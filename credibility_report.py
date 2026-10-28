@@ -280,10 +280,17 @@ def main(argv=None) -> int:
             print(f"  {a(r[0]):<12}| {a(r[2])[:28]:<28}| {a(r[3])[:58]:<58}| {fmt(r[4]):>14} | "
                   f"{fmt(r[6]):>14} {a(r[7] or '')[:10]:<10}| {gap:>8} | {tol:>7} | {a(r[10])}")
     # SANITY RULES (Jake's review of 97b29ae, item 17): every hit on the built numbers, by project
-    hits = [h for h in SANITY if not args.project or str(h[0]).lower() == args.project.lower()]
+    hits = [tuple(h) for h in SANITY if not args.project or str(h[0]).lower() == args.project.lower()]
+    # P2e-4: an accepted loss (config.REGRESSION_ALLOWLIST, the list measuring_guard reads) is listed apart, not counted
+    import config                                          # noqa: PLC0415
+    import sanity as _sanity                               # noqa: PLC0415
+    hits, answered = _sanity.split_answered(hits)
     print(f"\nSANITY RULES - {len(hits)} hit(s) on the built numbers (sanity.py)")
     for proj, rule, detail in hits:
         print(f"  {a(proj):<12} [{rule}] {a(detail)[:220]}")
+    for proj, _rule, detail in answered:
+        print("  " + a(config.accepted_loss_line(proj, _sanity.headline_of(detail),
+                                                config.regression_allowance(proj, detail))))
     # NEAR LIMIT (Jake, 2026-10-11): judged rows whose |gap| is at least 80% of their tolerance — still passing
     near = [r for r in rows if "NEAR LIMIT" in str(r[10] or "")]
     print(f"\nCREDIBILITY - NEAR LIMIT: {len(near)} judged row(s) with |gap| >= 80% of the tolerance (still PASS)")

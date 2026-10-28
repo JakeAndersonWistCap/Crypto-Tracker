@@ -1067,7 +1067,8 @@ def regression_rows(sanity_hits) -> list[dict]:
         # D2: an allowance tied to a declared gap lapses the moment the gap is closed (config.regression_allowance)
         allow = config.regression_allowance(proj, detail)
         status = "N/A BY DESIGN" if allow else "BROKEN"
-        why = (f"allow-listed ({allow['reason']}): {detail}" if allow else
+        why = (f"allow-listed ({allow['reason']}; accepted {allow.get('accepted') or 'date unknown'}): {detail}"
+               if allow else
                f"REGRESSION — {detail}; not on config.REGRESSION_ALLOWLIST")
         out.append({"Tab": "Regression guard", "Column": detail.split(":")[0][:120], "Key": "regression",
                     "Project": proj, "Value now": "", "Status": status, "Reason / route / error": why[:400],

@@ -226,7 +226,9 @@ def test_5_attribute_columns_are_not_headlines():
     import measuring_guard as mg
     assert es.is_attribute("Master | Archetypes (primary first)") and es.is_attribute("Master | Held")
     assert not es.is_attribute("Master | Price — spot ($)") and not es.is_attribute("A3 | Fees Q0 ($)")
-    assert "_es.is_attribute(head)" in inspect.getsource(mg.live_check)
+    # P2e-4: live_check's lost-headline loop is mg.lost_against_previous (fed directly by tests/test_round_p2e34.py)
+    assert "lost_against_previous(" in inspect.getsource(mg.live_check)
+    assert "_es.is_attribute(head)" in inspect.getsource(mg.lost_against_previous)
 
 
 # ================================================================================================== 6 subsidy cover

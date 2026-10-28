@@ -23800,40 +23800,46 @@ DIVERGENCE_EXCLUDED = ("GEODNET",)
 # THE REGRESSION GUARD'S ALLOW-LIST (fix round 2, T3): a headline that had a value last run and reads n/a / BLOCKED now
 # is BROKEN on the Coverage tab unless it is named here with the reason — a change made on purpose this round, with the
 # date it should clear by. `header` is matched inside the hit's text ("<tab> <header>: …").
+# P2e-4 (Jake 2026-10-28): ONE LIST, read by both measuring_guard and the build's sanity_hits.json. An accepted loss is
+# listed in both with its reason and `accepted` (the date it was accepted: the round / commit that added the entry),
+# never silent and never counted; a loss not on the list is a hit in both; past `until` an entry accepts nothing.
 REGRESSION_ALLOWLIST = [
     # RUN REVIEW D2 (Jake 2026-10-14): the subsidy covers BLOCKED on an incomplete incentive denominator (V1,
     # OUTFLOW_INCOMPLETE) are correct blocks, not regressions. Each holds ONLY WHILE the denominator is still declared
     # incomplete (while_outflow_incomplete — wiring the missing scans ends it by itself) and no later than `until`.
     *[{"project": _p, "match": ("SUBSIDY COVER",), "until": "2026-11-14", "while_outflow_incomplete": "b",
+       "accepted": "2026-10-14",
        "reason": f"subsidy cover BLOCKED on an incomplete incentive denominator — {_why}; re-check on wiring the "
                  f"missing scans (config.OUTFLOW_INCOMPLETE) or by 2026-11-14"}
       for _p, _why in (("Pendle", "six chains' gaugeControllers unscanned"),
                        ("Aethir", "Checker Node base schedule only"),
                        ("Fluid", "Base / Plasma distributors unscanned"))],
     {"project": "GEODNET", "match": ("unlock_release_tokens", "outflow_e", "outflow (e)"), "until": "2026-10-31",
+     "accepted": "2026-10-13",
      "reason": "G1/G2: the unlock leg (e) now reads the five non-mining wallets only; the Ecosystem wallet's own series "
                "(ecosystem_holding_tokens) starts with the next run — run archive_backfill.py --run --project GEODNET"},
-    {"project": "Near", "match": ("fees_total_usd",), "until": "2026-10-20",
+    {"project": "Near", "match": ("fees_total_usd",), "until": "2026-10-20", "accepted": "2026-10-13",
      "reason": "R1: gross payout now divides by gas + Intents fees; the Intents fees series is backfilled (455 days) on "
                "the next run (the old 12.98x divided gas-only fees)"},
     # ROUND 3 (Jake 2026-10-13): a leg added to a category or a ratio base, first read on the next run. Until its first
     # read the category / ratio reads BLOCKED with the leg named ("a missing leg is a gap, never a smaller outflow").
     {"project": "Morpho", "match": ("merkl_campaigns_non_ethereum_tokens",), "until": "2026-10-27",
+     "accepted": "2026-10-13",
      "reason": "R3 B3: (b) adds the Merkl campaigns paid off Ethereum (fetch/merkl_campaigns.py, first read next run)"},
     # ROUND G2 D1 (Jake 2026-10-18): Morpho's incentives on a claims basis on every chain. Until the Base and Katana claims
     # are first stored (Base: the Alchemy route; Katana: its RPC window), emissions_tokens and what reads it — A2's supply
     # trajectory, CP dilution, net holder yield, subsidy cover — read BLOCKED with the chain named.
     {"project": "Morpho", "match": ("emissions_tokens_claims_base", "emissions_tokens_claims_katana",
                                     "emissions_tokens_claims_arbitrum", "emissions_tokens_claims_ethereum"),
-     "until": "2026-11-01",
+     "until": "2026-11-01", "accepted": "2026-10-18",
      "reason": "G2-D1: (b) is CLAIMS on every chain; BLOCKED until each chain's Distributor claims are first stored"},
-    {"project": "Maple", "match": ("drips_rewards_tokens",), "until": "2026-10-27",
+    {"project": "Maple", "match": ("drips_rewards_tokens",), "until": "2026-10-27", "accepted": "2026-10-13",
      "reason": "R3 W4: (b) is Drips (SYRUP out of syrupDrip; log scan drips_out, full history on the next run)"},
     {"project": "Ether.fi", "match": ("cashback_paid_tokens", "cashback_unfunded_tokens", "programmatic_buyback_tokens"),
-     "until": "2026-10-27",
+     "until": "2026-10-27", "accepted": "2026-10-13",
      "reason": "R3 W3: (c) is the cashback the programme's purchases did not cover (log scan cashback_out_optimism on "
                "OP + programmatic_buyback_inflow, both read on the next run)"},
-    {"project": "Sky", "match": ("net_revenue_pre_distribution_usd",), "until": "2026-10-27",
+    {"project": "Sky", "match": ("net_revenue_pre_distribution_usd",), "until": "2026-10-27", "accepted": "2026-10-13",
      "reason": "R3 Q2: the payout-type ratios divide by revenue − expense BEFORE distributions (sky_accounting, stored "
                "from 2025-01 on the next run)"},
 ]
@@ -23845,8 +23851,11 @@ def regression_allowance(project: str, detail: str, on=None) -> dict | None:
     the Coverage regression guard and the Review Queue (G4 7b: the queue listed the allow-listed hits as open)."""
     import pandas as _pd
     day = _pd.Timestamp(on).normalize() if on is not None else _pd.Timestamp.today().normalize()
+    # P2e-4: the guard keys a headline "A4 | BURN ÷ ISSUANCE", sanity.lost_headlines writes "A4 BURN ÷ ISSUANCE: …" —
+    # one match for both spellings (the " | " separator is not part of the headline)
+    flat = str(detail).replace(" | ", " ")
     return next((a for a in REGRESSION_ALLOWLIST if a["project"] == project
-                 and any(x in detail for x in a.get("match") or (a.get("header", ""),))
+                 and any(x.replace(" | ", " ") in flat for x in a.get("match") or (a.get("header", ""),))
                  and (not a.get("until") or day <= _pd.Timestamp(a["until"]))
                  and (not a.get("while_outflow_incomplete")
                       or outflow_incomplete(project, [a["while_outflow_incomplete"]]))
@@ -23855,14 +23864,30 @@ def regression_allowance(project: str, detail: str, on=None) -> dict | None:
 
 # P2c-4 / P2c-9 (Jake 2026-10-28): ACCEPTED LOSSES the live guard (measuring_guard --newer) reads, each with its reason.
 REGRESSION_ALLOWLIST += [
-    {"project": "Aerodrome", "while_parked": True,
+    {"project": "Aerodrome", "while_parked": True, "accepted": "2026-10-28",
      "match": ("A3 | Net absorption Q0", "A3 | Net absorption incl. unlocks", "A3 | RETIREMENT ÷ DILUTION"),
      "reason": "parked (P2c-4): " + AERODROME_PARK_PLAIN + " The cell reads the code 'parked'; the allowance ends when "
                "config.aerodrome_park_reason gives no reason"},
-    {"project": "Hyperliquid", "match": ("A4 | BURN ÷ ISSUANCE",), "until": "2027-01-31",
+    {"project": "Hyperliquid", "match": ("A4 | BURN ÷ ISSUANCE",), "until": "2027-01-31", "accepted": "2026-10-28",
      "reason": "blocked by rule 9 (P2b-3, P2c-9): the pool release covers far fewer of the 90 days than the burn; no "
                "common-days ratio, 2026-10-12 not restated; Q0 clears without a backfill about 2027-01-01 (P2a-D1)"},
 ]
+
+
+def accepted_loss_line(project: str, headline: str, allowance: dict) -> str:
+    """P2e-4: how an accepted loss is printed, by the guard and by sanity — one wording for both outputs."""
+    return (f"ACCEPTED: {project} {headline} — {str(allowance.get('reason') or '').strip()} "
+            f"(accepted {allowance.get('accepted') or 'date unknown'})")
+
+
+def accepted_loss_record(project: str, rule: str, detail: str, allowance: dict, headline: str | None = None) -> dict:
+    """P2e-4: an accepted loss as sanity_hits.json carries it (under "accepted", never under "hits")."""
+    return {"project": project, "rule": rule, "detail": detail, "reason": allowance.get("reason", ""),
+            "accepted": allowance.get("accepted") or "unknown", "until": allowance.get("until") or "",
+            "while": ("parked" if allowance.get("while_parked") else
+                      f"outflow ({allowance['while_outflow_incomplete']}) declared incomplete"
+                      if allowance.get("while_outflow_incomplete") else ""),
+            "line": accepted_loss_line(project, headline or str(detail).split(":")[0], allowance)}
 
 
 # REVIEW QUEUE ROWS ANSWERED (G4 item 7b, Jake 2026-10-18: "accept, reject or fix each, with numbers; clear the resolved

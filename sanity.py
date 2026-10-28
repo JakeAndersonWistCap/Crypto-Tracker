@@ -296,9 +296,41 @@ def main(argv=None) -> int:
               f"({', '.join(f'{n}: {config.CREDIBILITY_PARKED[n]}' for n in sorted({h[0] for h in parked}))})")
         _print_hits(parked)
     if answered:
-        print(f"\nANSWERED — not open ({len(answered)}): config.REGRESSION_ALLOWLIST")
-        _print_hits(answered)
+        # P2e-4: the same ACCEPTED line as measuring_guard prints, from the same list
+        print(f"\nACCEPTED LOSSES — not open, not counted ({len(answered)}): config.REGRESSION_ALLOWLIST")
+        for p, _rule, detail in answered:
+            print("  " + config.accepted_loss_line(p, headline_of(detail), config.regression_allowance(p, detail)))
     return 1 if live else 0
+
+
+def hits_payload(workbook_name: str, built: str, found: list, on=None) -> dict:
+    """P2e-4: sanity_hits.json's body. `hits` holds the OPEN hits only; a headline_lost hit config.REGRESSION_ALLOWLIST
+    accepts (the list measuring_guard reads, `until` and the declared-gap / parked conditions in force on `on`) goes
+    under `accepted` with its reason and the date it was accepted — listed, never counted as a hit."""
+    open_, accepted = [], []
+    for h in found:
+        a = config.regression_allowance(h[0], h[2], on=on) if h[1] == "headline_lost" else None
+        if a is None:
+            open_.append(list(h))
+        else:
+            accepted.append(config.accepted_loss_record(h[0], h[1], h[2], a, headline=headline_of(h[2])))
+    return {"workbook": workbook_name, "built": built, "hits": open_, "accepted": accepted}
+
+
+def headline_of(detail: str) -> str:
+    """A lost_headlines detail ("A4 BURN ÷ ISSUANCE …: 1.5 in the previous run …") as the guard keys the headline
+    ("A4 | BURN ÷ ISSUANCE …") — so both outputs print the same ACCEPTED line."""
+    head = str(detail).split(":")[0]
+    return f"{head[:2]} | {head[3:]}" if len(head) > 3 and head[2] == " " else head
+
+
+def write_hits(path, workbook_name: str, built: str, found: list, on=None) -> dict:
+    """Write sanity_hits.json (hits_payload) to `path`; returns the body."""
+    import json
+    from pathlib import Path
+    body = hits_payload(workbook_name, built, found, on=on)
+    Path(path).write_text(json.dumps(body, indent=1, ensure_ascii=False), encoding="utf-8")
+    return body
 
 
 def with_build_hits(found: list, workbook_path) -> list:
@@ -317,7 +349,10 @@ def with_build_hits(found: list, workbook_path) -> list:
         print(f"({f.name} is for {body.get('workbook')!r}, not this workbook: the build-state rules are not shown)")
         return found
     seen = {tuple(h) for h in found}
-    return found + [tuple(h) for h in body.get("hits") or () if tuple(h) not in seen]
+    # P2e-4: the accepted losses come back as headline_lost hits; split_answered judges them again on today's list, so
+    # an entry past its `until` since the build is a hit again
+    acc = [(r.get("project"), r.get("rule"), r.get("detail")) for r in body.get("accepted") or ()]
+    return found + [tuple(h) for h in [*(body.get("hits") or ()), *acc] if tuple(h) not in seen]
 
 
 def split_answered(found: list) -> tuple[list, list]:
