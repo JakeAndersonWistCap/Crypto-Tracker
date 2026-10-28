@@ -248,5 +248,5 @@ def test_aerodrome_stays_parked():
     """P2b-1 builds the reader only: no primary source publishes Aerodrome's circulating on this basis, so the park,
     the MIGRATION WATCH and the named blocker stay as they are (Jake decides)."""
     assert config.AERODROME_MIGRATION_WATCH["built"] is None
-    assert [k for k, _w in config.AERODROME_MIGRATION["unpark_blockers"]] == ["filing_v3"]
+    assert [k for k, _w in config.AERODROME_MIGRATION["unpark_blockers"]] == ["primary_source"]      # P2c-3
     assert config.aerodrome_park_reason(config.aerodrome_migration_state(), "2026-10-28").startswith("PARKED")

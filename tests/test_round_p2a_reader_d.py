@@ -20,8 +20,10 @@ def test_d2_aerodrome_parked_while_the_config_gives_a_reason(monkeypatch):
     monkeypatch.setattr(config, "aerodrome_park_reason", fake)
     _reset()
     why = reader.parked_reason("Aerodrome")
-    assert why.startswith("PARKED — migration: no v3 rows held yet")
-    assert reader.AERO_PARKED_MIGRATION in why
+    assert why.startswith("PARKED — migration: ")
+    for word in ("now", "still", "fixed"):                          # P2c-3: a standalone statement
+        assert f" {word} " not in f" {why.lower()} "
+    assert why == config.AERODROME_PARK_PLAIN                   # P2c-3: one plain sentence on the reader
     assert seen["day"] == pd.Timestamp("2026-10-29")          # judged on the as-of day, not the wall clock
 
 

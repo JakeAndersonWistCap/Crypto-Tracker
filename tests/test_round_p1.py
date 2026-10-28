@@ -575,3 +575,105 @@ def test_p2b_4_a1_interim_fees_over_issuance_beside_the_unchanged_rank_key(built
     assert any(defs.cell(rr, 1).value == "A1 Infrastructure" and defs.cell(rr, 3).value ==
                "Fees ÷ issuance, Q0 (interim)" and "INTERIM" in defs.cell(rr, 4).value
                for rr in range(4, defs.max_row + 1))
+
+
+# ================================================================================================== P2c
+VALUE_TABS = ("Summary", "A1 Infrastructure", "A2 Coordination", "A3 Revenue Buyback", "A4 Permanent Burn",
+              "Comparison", "Business")
+
+
+def test_p2c_7_every_value_cell_comment_opens_with_a_plain_sentence(built):
+    r = openpyxl.load_workbook(built["reader"])
+    bad = []
+    for tab in VALUE_TABS:
+        ws = r[tab]
+        for rr in _rows_of(ws).values():
+            for c in range(3, ws.max_column + 1):
+                cell = ws.cell(rr, c)
+                if cell.comment is None:
+                    continue
+                t = cell.comment.text.strip()
+                if t.startswith("Working:") or ("Working:" in t and not t.split("Working:")[0].strip()):
+                    bad.append(f"{tab}!{cell.coordinate}")
+    assert not bad, bad[:20]
+    # A2's Trajectory cells (block (c)) say what, for whom and over which quarter before the reference
+    ws = r["A2 Coordination"]
+    rows = _rows_of(ws)
+    c = ws.cell(rows["Aethir"], _col_of(ws, next(ws.cell(4, j).value for j in range(1, ws.max_column + 1)
+                                                if str(ws.cell(4, j).value or "").endswith("latest quarter"))))
+    head = c.comment.text.split("\n\n")[0]
+    assert "for Aethir" in head and "90 days" in head and not head.startswith("Working:")
+
+
+def test_p2c_8_about_coverage_counts_equal_the_summary(built):
+    import xlcalc
+    wb = openpyxl.load_workbook(built["reader"])
+    X = xlcalc.Workbook(wb)
+    s, a = wb["Summary"], wb["About"]
+    top = next(rr for rr in range(1, a.max_row + 1) if str(a.cell(rr, 1).value or "").startswith("Honest coverage"))
+    heads = [a.cell(top + 1, j).value for j in range(1, a.max_column + 1)]
+    assert heads[:5] == ["Archetype", "Projects", "Ranked", "Unranked", "Parked"]
+    rk = _col_of(s, "Rank in archetype")
+    kk = _col_of(s, "Archetype key")
+    sections = reader._summary_sections(s)
+    assert [x[0] for x in sections] == ["A1 Infrastructure", "A2 Coordination", "A3 Revenue Buyback",
+                                        "A4 Permanent Burn"]
+    totals = [0] * 4
+    for i, (label, lo, hi) in enumerate(sections):
+        ranks = [X.value("Summary", rr, rk) for rr in range(lo, hi + 1)]
+        keys = [X.value("Summary", rr, kk) for rr in range(lo, hi + 1)]
+        want = [hi - lo + 1, sum(isinstance(v, float) and v > 0 for v in ranks), ranks.count("unranked"),
+                ranks.count("parked")]
+        got = [X.value("About", top + 2 + i, j) for j in range(2, 6)]
+        assert a.cell(top + 2 + i, 1).value == label and got == [float(x) for x in want], (label, got, want)
+        assert want[0] == want[1] + want[2] + want[3], label
+        by_code = [X.value("About", top + 2 + i, j) for j in range(6, 6 + len(reader.COVERAGE_CODES))]
+        assert by_code == [float(sum(1 for k, rv in zip(keys, ranks) if rv == "unranked" and k == code))
+                           for code, _w in reader.COVERAGE_CODES]
+        totals = [t + w for t, w in zip(totals, want)]
+    assert [X.value("About", top + 2 + len(sections), j) for j in range(2, 6)] == [float(t) for t in totals]
+    # the text is fixed: a formula in every figure cell, never a typed number
+    for rr in range(top + 2, top + 3 + len(sections)):
+        for j in range(2, len(heads) + 1):
+            assert str(a.cell(rr, j).value).startswith("="), a.cell(rr, j).coordinate
+
+
+def test_p2c_3_4_aerodrome_park_statement_audit_only_and_parked_headlines(built):
+    r = openpyxl.load_workbook(built["reader"])
+    audit = openpyxl.load_workbook(built["audit"], read_only=True)
+    if not reader.parked_reason("Aerodrome"):
+        pytest.skip("Aerodrome is not parked on this build")
+    # the audit file carries the full statement with its figures, on Aerodrome's Notes
+    ws = audit["A3 Revenue Buyback"]
+    hdr = {c.value: c.column for c in next(ws.iter_rows(min_row=4, max_row=4))}
+    note = next(row[hdr["Notes"] - 1].value for row in ws.iter_rows(min_row=5) if row[0].value == "Aerodrome")
+    assert note.startswith("PARKED — migration:") and "497.7M" in note and "~1,150M" in note
+    # the reader says it in one plain sentence, without the audit figures
+    a3 = r["A3 Revenue Buyback"]
+    rows = _rows_of(a3)
+    name_comment = a3.cell(rows["Aerodrome"], 1).comment.text
+    assert config.AERODROME_PARK_PLAIN in name_comment and "497.7M" not in name_comment and "1,150M" not in name_comment
+    # P2c-4: the three A3 cells are a number (the 10-13 fixture predates the migration) or the code 'parked'
+    for head in ("Net absorption, 90 days (tokens)", "Net absorption incl. unlocks", "Retired ÷ (emissions + unlocks)"):
+        v = a3.cell(rows["Aerodrome"], _col_of(a3, head)).value
+        assert (isinstance(v, str) and v.startswith("=")) or v == "parked", (head, v)
+
+
+def test_p2c_4_a_parked_headline_without_a_number_reads_parked(monkeypatch):
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "A3 Revenue Buyback"
+    sh = reader.Sheet(ws)
+    col = reader.Col("Net absorption", "Net absorption Q0 (tokens).", reader.FMT_TOK)
+    sh.cols += [reader.Col("Project", "The project.", reader.FMT_TOK), col]
+    ws.cell(5, 1, "Aerodrome")
+    ref = reader.put_code(sh, 5, col, "n/a", "n/a — no emissions row after the cutover")
+    src = reader.Src("A3 Revenue Buyback", "AB7", "n/a", None, "n/a", None, "",
+                     "Net absorption Q0 (tokens) = RETIRED buyback (burned + held) − emissions")
+    ctx = reader.Ctx(None, None, None, {}, [], None, config, None,
+                     {("A3 Revenue Buyback", "Aerodrome", src.header): {}}, {"A3 Revenue Buyback": sh})
+    monkeypatch.setattr(reader, "parked_reason", lambda n: config.AERODROME_PARK_PLAIN if n == "Aerodrome" else "")
+    ctx.record(src, "A3 Revenue Buyback", ref, "Aerodrome")
+    assert ws[ref].value == "parked"
+    assert ws[ref].comment.text.startswith(config.AERODROME_PARK_PLAIN) and "no emissions row" in ws[ref].comment.text
+    assert config.regression_allowance("Aerodrome", "A3 | " + src.header, on="2026-10-28")

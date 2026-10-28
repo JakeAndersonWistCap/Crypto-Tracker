@@ -226,7 +226,9 @@ def test_park_reason_names_every_open_condition(monkeypatch):
     st = config.aerodrome_migration_state()
     day = pd.Timestamp("2026-10-27")
     why = config.aerodrome_park_reason(st, day)
-    assert why.startswith("PARKED — migration: ") and "no v3 rows held yet" in why and "filing wallets'" in why
+    # P2c-3: the one open condition is the primary source; the filing-wallet gap is traced (P2b-1)
+    assert why.startswith("PARKED — migration: ") and "no primary source publishes" in why and "traced" in why
+    assert "no v3 rows held yet" not in why
     assert "Aerodrome" in config.DETAIL_PARKED                     # stays parked
     monkeypatch.setitem(config.AERODROME_MIGRATION_WATCH, "built", "2026-10-28")
     monkeypatch.setitem(config.AERODROME_MIGRATION, "unpark_blockers", ())

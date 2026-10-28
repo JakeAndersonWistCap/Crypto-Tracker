@@ -19178,20 +19178,24 @@ PROJECT_BY_NAME["Aerodrome"].setdefault("metric_labels", {})["emission_rate_curr
 # returns a reason; the reader shows "PARKED — migration" then. The switch file must be complete, v3 rows must be held
 # (AERODROME_MIGRATION_WATCH built set to the first v3 day), and every open blocker below closed.
 AERODROME_MIGRATION["unpark_blockers"] = (
-    ("filing_v3", "the filing wallets' holdings on the NEW token have no reader: from 2026-10-20 their legacy managed "
-                  "veAERO locks (444.3M) moved to the new token through the migration, so circulating = total - "
-                  "noncirculating_holding_tokens - filing_managed_lock_tokens no longer subtracts them (the legacy read "
-                  "holds 2.85M), and Aerodrome's unlocks (e) have no day after 2026-10-19 (config.UNLOCK_LEGACY_CUT). On "
-                  "2026-10-27 the Team / Public Goods / Flight School wallets own 25 / 26 / 5 sAERO NFTs whose "
-                  "staked().amount reads 0 (the Velodrome Foundation airdrop wallet's 4 hold 29,343,635.27): where "
-                  "their stake sits is not established"),
+    # P2c-3 (Jake 2026-10-28): the filing-wallet gap is traced (P2b-1); what stays open is the primary source.
+    ("primary_source",
+     "the filing-wallet gap is traced to the block: at Base block 53,174,900 the filing wallets' 497.7M of locked AERO "
+     "sits in sAERO they migrated to themselves, in six Aero Relay vaults whose principal they hold, and in the "
+     "Velodrome airdrop wallet's own sAERO (P2b-1; read by aero_v3 filing_locks). The remaining blocker: no primary "
+     "source publishes Aerodrome's circulating supply on this file's basis (locked tokens circulating, team and "
+     "foundation holdings out). Aerodrome's site gives '~1.01B to ~1.07B' with no definition; the nearest reading of "
+     "that basis here (total less permanent locks) is ~1,150M, which does not tie"),
 )
+# The reader's one plain sentence for the same state (P2c-3: no figures, no "now", "still" or "fixed").
+AERODROME_PARK_PLAIN = ("PARKED — migration: no primary source publishes Aerodrome's circulating supply on this "
+                        "file's basis, so its figures are shown but not ranked or charted.")
 
 
 def aerodrome_park_reason(state: dict | None = None, day=None) -> str:
     """'' when Aerodrome may leave DETAIL_PARKED, else "PARKED — migration: <every reason>" (P2a D2). Tests, in order:
-    the switch file (launched + fetch.validate._migration_switch_missing), v3 rows held (AERODROME_MIGRATION_WATCH
-    built), and AERODROME_MIGRATION unpark_blockers."""
+    the switch file (launched + fetch.validate._migration_switch_missing) and AERODROME_MIGRATION unpark_blockers. P2c-3:
+    the v3 rows are read (aero_v3, P2b-1), so MIGRATION WATCH `built` is no longer a park condition."""
     import pandas as _pd
     from fetch.validate import _migration_switch_missing          # noqa: PLC0415 — config is imported by fetch
     st = aerodrome_migration_state() if state is None else state
@@ -19201,8 +19205,6 @@ def aerodrome_park_reason(state: dict | None = None, day=None) -> str:
         why.append(f"{AERODROME_MIGRATION['switch_file']} is not launched")
     else:
         why += [f"{AERODROME_MIGRATION['switch_file']}: {x}" for x in _migration_switch_missing(st, d)]
-    if not AERODROME_MIGRATION_WATCH.get("built"):
-        why.append("no v3 rows held yet (MIGRATION WATCH built = None)")
     why += [w for _k, w in AERODROME_MIGRATION.get("unpark_blockers") or ()]
     return ("PARKED — migration: " + "; ".join(why)) if why else ""
 # Chainlink's own post (blog.chain.link/sustainably-growing-chainlink, 2022; read via the mirror
@@ -23816,7 +23818,20 @@ def regression_allowance(project: str, detail: str, on=None) -> dict | None:
                  and any(x in detail for x in a.get("match") or (a.get("header", ""),))
                  and (not a.get("until") or day <= _pd.Timestamp(a["until"]))
                  and (not a.get("while_outflow_incomplete")
-                      or outflow_incomplete(project, [a["while_outflow_incomplete"]]))), None)
+                      or outflow_incomplete(project, [a["while_outflow_incomplete"]]))
+                 and (not a.get("while_parked") or bool(aerodrome_park_reason(day=day)))), None)
+
+
+# P2c-4 / P2c-9 (Jake 2026-10-28): ACCEPTED LOSSES the live guard (measuring_guard --newer) reads, each with its reason.
+REGRESSION_ALLOWLIST += [
+    {"project": "Aerodrome", "while_parked": True,
+     "match": ("A3 | Net absorption Q0", "A3 | Net absorption incl. unlocks", "A3 | RETIREMENT ÷ DILUTION"),
+     "reason": "parked (P2c-4): " + AERODROME_PARK_PLAIN + " The cell reads the code 'parked'; the allowance ends when "
+               "config.aerodrome_park_reason gives no reason"},
+    {"project": "Hyperliquid", "match": ("A4 | BURN ÷ ISSUANCE",), "until": "2027-01-31",
+     "reason": "blocked by rule 9 (P2b-3, P2c-9): the pool release covers far fewer of the 90 days than the burn; no "
+               "common-days ratio, 2026-10-12 not restated; Q0 clears without a backfill about 2027-01-01 (P2a-D1)"},
+]
 
 
 # REVIEW QUEUE ROWS ANSWERED (G4 item 7b, Jake 2026-10-18: "accept, reject or fix each, with numbers; clear the resolved

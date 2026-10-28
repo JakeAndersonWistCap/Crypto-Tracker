@@ -82,7 +82,6 @@ ARCHETYPE_KEYS = {
 # PARKED (P2a A8): shown greyed, outside the ranks, numbers visible; left out of the charts
 READER_PARKED = {"World Mobile": "PARKED — no further work on World Mobile until Jake reopens it (parked 2026-09-29); "
                                  "its row is shown with its numbers, outside the ranks and the charts."}
-AERO_PARKED_MIGRATION = "Its figures are shown, outside the ranks and the charts, until the migration completes."
 _AERO_PARK: dict = {}                       # this build's Aerodrome park reason (build_reader resets it with the as-of day)
 
 # STATE OF THE LAST BUILD — read by measuring_guard and the tests
@@ -93,7 +92,8 @@ COLUMN_MAP: list = []
 
 def parked_reason(name: str) -> str:
     """Why a project is parked on the reader, or ''. Aerodrome is parked while config.aerodrome_park_reason gives a
-    reason on the as-of day (P2a D2: switch file incomplete, no v3 rows held, or a named unpark blocker)."""
+    reason on the as-of day (P2a D2). P2c-3: the reader says it in one plain sentence (config.AERODROME_PARK_PLAIN);
+    the full statement, with its figures, is on the audit file (Notes)."""
     if name in READER_PARKED:
         return READER_PARKED[name]
     if name == "Aerodrome":
@@ -101,7 +101,7 @@ def parked_reason(name: str) -> str:
             import config                                      # noqa: PLC0415
             fn = getattr(config, "aerodrome_park_reason", None)
             why = fn(day=_AERO_PARK.get("day")) if fn is not None else ""
-            _AERO_PARK["why"] = f"{why}. {AERO_PARKED_MIGRATION}" if why else ""
+            _AERO_PARK["why"] = config.AERODROME_PARK_PLAIN if why else ""
         return _AERO_PARK["why"]
     return ""
 
@@ -224,6 +224,13 @@ def code_of(text: str) -> str:
 
 _ROUND_TAG = re.compile(r"\s*\((?:[^()]*?\b(?:Round [A-Z]\d*\w*|[GDP]\d{1,2}(?:[- ]?\d+[a-z]?)*|config\.?\s?\w*|"
                         r"decision \d+ on \w+)\b[^()]*)\)")
+
+
+def audit_notes(text) -> str:
+    """An audit Notes / flags cell for the reader: the park statement line the audit file carries (P2c-3,
+    build_workbook._with_park_note) is dropped — the reader gives its own one-sentence park reason."""
+    lines = [x for x in str(text or "").split("\n") if not x.startswith("PARKED — migration:")]
+    return plain("\n".join(lines))
 
 
 def plain(text: str) -> str:
@@ -560,8 +567,33 @@ def _idx(sh: Sheet, col: Col) -> int:
     return sh.cols.index(col) + 1
 
 
+_LEAD: dict = {}                            # this build's as-of day for lead sentences (build_reader sets it)
+_PERIOD_WORDS = re.compile(r"\b(days?|quarters?|year|annuali[sz]ed|selected period|period chosen|spot|latest|"
+                           r"trailing|month|week|as of)\b", re.I)
+
+
+def lead_sentence(col: Col, project: str) -> str:
+    """P2c-7: one plain sentence before a cell's working reference — what the number is (the column's definition, its
+    first sentence, which carries the basis), for which project, and its period (said by the definition, else the
+    as-of day)."""
+    d = plain(col.definition).strip() or col.header
+    first = re.split(r"(?<=[.;])\s", d, maxsplit=1)[0].rstrip(".; ")
+    if len(first) > 240:
+        first = first[:237].rstrip() + "…"
+    asof = _LEAD.get("asof")
+    period = "" if _PERIOD_WORDS.search(first) or asof is None else f", as of {asof:%Y-%m-%d}"
+    return f"{col.header} for {project}: {first}{period}."
+
+
+def _with_lead(comment: str, col: Col, project: str) -> str:
+    """A comment that is only the working reference gets the lead sentence first (P2c-7)."""
+    return f"{lead_sentence(col, project)}\n\n{comment.strip()}" if comment.strip().startswith("Working:") \
+        else comment
+
+
 def put_number(sh: Sheet, data: Data, row: int, col: Col, project: str, field_id: str, value: float,
                fill: PatternFill | None = None, comment: str = "", zero_label: str = "") -> str:
+    comment = _with_lead(comment, col, project)
     ref = data.put(project, field_id, float(value))
     c = sh.ws.cell(row, _idx(sh, col), f"={ref}")
     c.number_format, c.font = (_zero_format(col.fmt, zero_label) if zero_label and float(value) == 0 else col.fmt), F_BODY
@@ -585,7 +617,12 @@ def put_formula(sh: Sheet, row: int, col: Col, formula: str, fill: PatternFill |
     return c.coordinate
 
 
+def _row_project(sh: Sheet, row: int) -> str:
+    return str(sh.ws.cell(row, 1).value or "this project")
+
+
 def put_code(sh: Sheet, row: int, col: Col, code: str, reason: str, fill: PatternFill | None = None) -> str:
+    reason = _with_lead(reason or "", col, _row_project(sh, row)) or reason
     c = sh.ws.cell(row, _idx(sh, col), code)
     c.font = Font(name=FONT, size=9, italic=True, color=CODES[code])
     c.alignment = Alignment(horizontal="right")
@@ -597,6 +634,7 @@ def put_code(sh: Sheet, row: int, col: Col, code: str, reason: str, fill: Patter
 
 
 def put_text(sh: Sheet, row: int, col: Col, text: str, comment: str = "", bold: bool = False) -> str:
+    comment = _with_lead(comment, col, _row_project(sh, row)) if comment and col.header != "Project" else comment
     c = sh.ws.cell(row, _idx(sh, col), text)
     c.font = F_BOLD if bold else F_BODY
     c.number_format = TEXT_FMT                     # a descriptor, never a value cell (P1-2)
@@ -699,6 +737,7 @@ def build_reader(wb, path, *, asof, groups: dict, headline_cells: list, projects
     asof = pd.Timestamp(asof).normalize()
     _AERO_PARK.clear()
     _AERO_PARK["day"] = asof
+    _LEAD["asof"] = asof
     A = Audit(wb)
     out = Workbook()
     ws_about = out.active
@@ -715,7 +754,7 @@ def build_reader(wb, path, *, asof, groups: dict, headline_cells: list, projects
     ser = SeriesSheet(ws_ser, asof)
     sheets = {t: Sheet(wss[t]) for t in tabs}
     ctx = Ctx(A, data, ser, groups, projects, asof, config, bw, {(h["sheet"], h["project"], h["header"]): h
-                                                                  for h in headline_cells})
+                                                                  for h in headline_cells}, sheets)
     keys = _archetype_keys(A, groups, projects, config, bw)
     _write_summary(sheets[SUMMARY], ctx, keys)
     for spec in tab_specs(bw):
@@ -740,6 +779,10 @@ def build_reader(wb, path, *, asof, groups: dict, headline_cells: list, projects
     return dict(STATS)
 
 
+# P2c-4: the A3 cells a parked project shows as the code "parked" where they hold no number, headline or not
+PARKED_CODE_HEADERS = ("Net absorption Q0", "Net absorption incl. unlocks", "RETIREMENT ÷ DILUTION")
+
+
 @dataclass
 class Ctx:
     A: Audit
@@ -751,14 +794,27 @@ class Ctx:
     config: object
     bw: object
     headlines: dict
+    sheets: dict = None                     # reader tab -> Sheet (P2c-4: a parked headline's code is rewritten)
 
     def p(self, name: str) -> dict:
         return next(p for p in self.projects if p["name"] == name)
 
     def record(self, src: Src | None, sheet: str, cell: str, project: str) -> None:
-        """A headline shown on the reader is read there by the guard (P1-9)."""
-        if src is not None and cell and (src.sheet, project, src.header) in self.headlines:
-            HEADLINE_LOCATIONS[(src.sheet, project, src.header)] = (sheet, cell)
+        """A headline shown on the reader is read there by the guard (P1-9). P2c-4: a PARKED project's headline that
+        holds no number reads the code "parked" (not n/a or blocked), the one-line park reason first in its comment."""
+        if src is not None and cell and ((src.sheet, project, src.header) in self.headlines
+                                         or src.header.startswith(PARKED_CODE_HEADERS)):
+            if (src.sheet, project, src.header) in self.headlines:
+                HEADLINE_LOCATIONS[(src.sheet, project, src.header)] = (sheet, cell)
+            sh = (self.sheets or {}).get(sheet)
+            why = parked_reason(project)
+            if sh is not None and why:
+                c = sh.ws[cell]
+                if isinstance(c.value, str) and not c.value.startswith("="):
+                    under = c.comment.text if c.comment else ""
+                    c.value = "parked"
+                    c.font = Font(name=FONT, size=9, italic=True, color=CODES["parked"])
+                    c.comment = _comment(f"{why}\n\nBehind it: {under}" if under else why)
 
 
 def _blank_unexplained(sheets: dict) -> list:
@@ -1607,7 +1663,7 @@ def _write_arch_tab(sh: Sheet, ctx: Ctx, spec: TabSpec) -> None:
         parked = bool(parked_reason(name))
         sh.value_rows.append(row)
         r_a = A.row(tab, name)
-        notes = [plain(A.at(tab, r_a, c).text) for c in (note_c, flag_c) if c]
+        notes = [audit_notes(A.at(tab, r_a, c).text) for c in (note_c, flag_c) if c]
         if parked:
             notes.insert(0, parked_reason(name))
         put_text(sh, row, cols[0], name, "\n\n".join(n for n in notes if n), bold=True)
@@ -1648,7 +1704,8 @@ def _write_arch_tab(sh: Sheet, ctx: Ctx, spec: TabSpec) -> None:
             elif kind == "text":
                 src = A.at(tab, r_a, h[1])
                 put_text(sh, row, col, plain(src.text)[:120] if src.text else "—",
-                         _code_reason(src) if src.text and len(plain(src.text)) > 120 else f"Working: {src.where}.")
+                         _code_reason(src) if src.text and len(plain(src.text)) > 120
+                         else _with_lead(f"Working: {src.where}.", col, name))
             elif kind == "rank":
                 if parked:
                     put_code(sh, row, col, "parked", parked_reason(name))
@@ -1905,7 +1962,8 @@ def _write_business(sh: Sheet, ctx: Ctx) -> None:
         _period_formula_cell(sh, ctx, row, C["price"], name, "price_usd", "stock", "price")
         ut = A.cell(CP_TAB, "Business 1 — series, unit, source", name)
         put_text(sh, row, C["unit"], _unit_text(config, ut.text) if ut is not None and ut.text else "—",
-                 (plain(ut.text) + f"\n\nWorking: {ut.where}.") if ut is not None else "No CP row.")
+                 ((plain(ut.text) or f"No unit of demand is declared for {name} on the audit file's CP tab "
+                   "(Business 1).") + f"\n\nWorking: {ut.where}.") if ut is not None else "No CP row.")
         uv = A.cell(CP_TAB, "BUSINESS 1 — core usage", name)
         put_src(sh, data, row, C["unit_v"], p, uv)
         if isinstance(rv, (int, float)) and uv is not None and uv.num:
@@ -2209,6 +2267,70 @@ def _write_about(ws, asof, sheets: dict, projects: list) -> None:
         c.font = f
         c.alignment = Alignment(wrap_text=True, vertical="top")
     ws.column_dimensions["A"].width = 120
+    if SUMMARY in sheets:
+        _write_coverage(ws, len(lines) + 2, sheets[SUMMARY].ws)
+
+
+COVERAGE_CODES = (("blocked", "a rule refused the key: unequal coverage of its two legs, a stale input or a basis "
+                               "change; the key cell's comment names the rule"),
+                  ("n/a", "the key has no value: a leg has no reading, the history is too short, or a ratio over 0"),
+                  ("not wired", "no route to one of the key's inputs yet"),
+                  ("by design", "the key does not apply to the project (for example a fixed supply that emits "
+                                "nothing)"))
+
+
+def _summary_sections(ws) -> list:
+    """[(archetype label, first row, last row)] of the Summary tab's project rows, by its section header rows."""
+    out, cur = [], None
+    for r in range(5, ws.max_row + 1):
+        a, b = ws.cell(r, 1).value, ws.cell(r, 2).value
+        if a and b is None and re.match(r"A[1-4] ", str(a)):
+            cur = [str(a).split(" — ")[0], None, None]
+            out.append(cur)
+        elif a and b is not None and cur is not None:
+            cur[1] = cur[1] or r
+            cur[2] = r
+    return [tuple(x) for x in out if x[1]]
+
+
+def _write_coverage(ws, top: int, sws) -> None:
+    """P2c-8: the honest-coverage block — per archetype, how many projects are ranked, unranked (by the key's code) and
+    parked, as live formulas on the Summary tab. Its text is fixed; only its figures move."""
+    hdr = {sws.cell(4, c).value: c for c in range(1, sws.max_column + 1)}
+    kL, rL = get_column_letter(hdr["Archetype key"]), get_column_letter(hdr["Rank in archetype"])
+    ws.cell(top, 1, "Honest coverage — counted from the Summary tab (the figures follow the data)").font = F_BOLD
+    heads = ("Archetype", "Projects", "Ranked", "Unranked", "Parked") + tuple(f"Unranked: {c}" for c, _ in
+                                                                           COVERAGE_CODES)
+    for j, h in enumerate(heads, start=1):
+        c = ws.cell(top + 1, j, h)
+        c.font, c.fill = F_HEAD, FILL_HEAD
+    r = top + 2
+    first = r
+    for label, a, b in _summary_sections(sws):
+        rng = lambda L: f"Summary!${L}${a}:${L}${b}"                     # noqa: E731
+        ws.cell(r, 1, label).font = F_BODY
+        forms = [f"=COUNTA({rng('A')})", f'=COUNTIF({rng(rL)},">0")', f'=COUNTIF({rng(rL)},"unranked")',
+                 f'=COUNTIF({rng(rL)},"parked")']
+        forms += [f'=COUNTIFS({rng(rL)},"unranked",{rng(kL)},"{code}")' for code, _ in COVERAGE_CODES]
+        for j, f in enumerate(forms, start=2):
+            c = ws.cell(r, j, f)
+            c.number_format, c.font = "0", F_BODY
+        r += 1
+    ws.cell(r, 1, "All archetypes").font = F_BOLD
+    for j in range(2, len(heads) + 1):
+        L = get_column_letter(j)
+        c = ws.cell(r, j, "=" + "+".join(f"{L}{i}" for i in range(first, r)) if r > first else "=0")
+        c.number_format, c.font = "0", F_BOLD
+    r += 2
+    ws.cell(r, 1, "Why a project is unranked, by the code in its key cell").font = F_BOLD
+    for code, why in COVERAGE_CODES:
+        r += 1
+        ws.cell(r, 1, f"{code} — {why}.").font = F_BODY
+    r += 1
+    ws.cell(r, 1, "parked — the project is parked: its row is greyed, its numbers shown, outside the ranks; the reason "
+                  "is listed under Parked projects above.").font = F_BODY
+    for j in range(2, len(heads) + 1):
+        ws.column_dimensions[get_column_letter(j)].width = 12
 
 
 # ---------------------------------------------------------------------------------------------- the column map

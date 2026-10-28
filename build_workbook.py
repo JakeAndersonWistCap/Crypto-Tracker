@@ -12117,6 +12117,20 @@ DIVERGENCE_ROWS: list = []      # the last build's divergence rows
 TRAJECTORY_ROWS: list = []      # the last build's trajectory rows (write_trajectory)
 
 
+PARK_NOTE_PREFIX = "PARKED — migration:"
+
+
+def _with_park_note(p: dict, asof) -> dict:
+    """P2c-3: Aerodrome's park statement (config.aerodrome_park_reason, with its figures) as the first line of its Notes
+    on the audit file, while it is parked. The reader drops that line (reader.audit_notes) and says it in one sentence."""
+    if p.get("name") != "Aerodrome":
+        return p
+    why = config.aerodrome_park_reason(day=asof)
+    if not why:
+        return p
+    return dict(p, notes="\n".join(x for x in (why, p.get("notes", "")) if x))
+
+
 def build_workbook(store, path: Path | str, run_id: str | None = None,
                    asof: pd.Timestamp | None = None, only: list[str] | None = None, previous="auto",
                    reader_path: Path | str | None = None) -> Path:
@@ -12182,6 +12196,8 @@ def build_workbook(store, path: Path | str, run_id: str | None = None,
             fetch_status = fetch_status[fetch_status["project"].isin(keep)]
     overrides_n = int(long["is_manual"].sum()) if not long.empty else 0
     asof = asof or pd.Timestamp.now('UTC').tz_localize(None).normalize()
+    # P2c-3: a parked project's full statement heads its Notes on every audit tab (the reader shows one plain sentence)
+    _SCOPE = [_with_park_note(p, asof) for p in _SCOPE]
     # THE CONTINUITY GUARD (Phase 1 review 2026-10-12, item 1): the previous run's snapshot — read automatically only for
     # the real store (ROOT/metrics.db), so a build of a fixture never compares with the machine's snapshots; a caller
     # may pass (date, values) itself
