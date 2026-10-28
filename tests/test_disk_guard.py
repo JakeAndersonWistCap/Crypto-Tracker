@@ -86,6 +86,7 @@ def _tree(root: Path):
     (root / "tests" / "_scratch").mkdir(parents=True)
     (root / "__pycache__").mkdir()
     (root / "metrics.db").write_text("store")
+    (root / "metrics.db.credibility.pkl").write_text("cache")
     (root / "metrics.db.bak-p2e").write_text("backup")
     (root / ".cache").mkdir()
     (root / "data").mkdir()
@@ -97,7 +98,7 @@ def test_the_safe_set_keeps_the_store_the_cache_data_and_the_newest_three_snapsh
     _tree(tmp_path)
     names = {str(p.relative_to(tmp_path)).replace("\\", "/") for p, _ in dg.safe_to_delete(tmp_path)}
     assert names == {"snapshots/snapshot_2026-10-20.csv", "snapshots/snapshot_2026-10-21.csv",
-                     "logs/run_2026-08-01.log", "tests/_scratch", "__pycache__"}
+                     "logs/run_2026-08-01.log", "tests/_scratch", "__pycache__", "metrics.db.credibility.pkl"}
     mine = {str(p.relative_to(tmp_path)) for p, _ in dg.yours_to_decide(tmp_path)}
     assert mine == {"metrics.db.bak-p2e", ".cache"}                      # listed for Jake, never in the safe set
 

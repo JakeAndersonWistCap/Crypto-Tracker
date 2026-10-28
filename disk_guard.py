@@ -111,6 +111,8 @@ def safe_to_delete(root: Path = ROOT, now: float | None = None) -> list[tuple[Pa
         rel = d.relative_to(root).parts
         if ".claude" not in rel and ".git" not in rel:
             out.append((d, "Python bytecode, rebuilt on import"))
+    for f in root.glob("*.credibility.pkl"):
+        out.append((f, "credibility evaluation cache (12 h), re-evaluated on a miss; no stored data"))
     snaps = sorted((root / "snapshots").glob("snapshot_*.csv")) if (root / "snapshots").is_dir() else []
     for f in snaps[:-KEEP_SNAPSHOTS] if len(snaps) > KEEP_SNAPSHOTS else []:
         out.append((f, f"old daily theory snapshot (the newest {KEEP_SNAPSHOTS} are kept: the guard reads the previous)"))
@@ -154,7 +156,7 @@ def list_report(root: Path = ROOT, say=print) -> int:
         say(f"  {_fmt(_size(p)):>10}  {p.relative_to(root)}  - {why}")
     if not mine:
         say("  (nothing)")
-    say("NEVER: metrics.db, metrics.db.credibility.pkl, data\\, manual_*.csv, the newest 3 snapshots")
+    say("NEVER: metrics.db, data\\, manual_*.csv, the newest 3 snapshots")
     return total
 
 
