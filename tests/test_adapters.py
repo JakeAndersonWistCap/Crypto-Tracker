@@ -26792,7 +26792,9 @@ def test_circulating_policy_project_figure_first_with_the_onchain_set_as_cross_c
     mc = g[("GEODNET", "market_cap_usd")].set_index("date")["value"]
     assert mc[pd.Timestamp("2026-10-07")] == _pytest.approx(0.10 * 516.36e6), "the on-chain set, no burn adjustment"
     assert mc[pd.Timestamp("2026-10-08")] == _pytest.approx(0.10 * 516.48e6)
-    assert mc[pd.Timestamp("2026-10-06")] == _pytest.approx(0.10 * (462_360_759.0 - 30e6)), "CoinGecko, netted"
+    # P2d-3b (Jake, 2026-10-28): an on-chain route takes no CoinGecko once it has any on-chain day — the day before
+    # the on-chain span is a hole, not CoinGecko's figure
+    assert pd.Timestamp("2026-10-06") not in mc.dropna().index
     # 3. the credibility row: GEODNET's figure against our partial on-chain set (5%)
     spec = cred.circulating_input("GEODNET")     # the set primary; judged by the bridge reconciliation (probes15)
     assert spec["ours"]["metric"] == "circulating_supply_onchain"

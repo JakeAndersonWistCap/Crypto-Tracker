@@ -11784,8 +11784,10 @@ def flow_statements(groups: dict, asof) -> list[dict]:
             if o is None or c is None:
                 tok["residual"].append(None)
                 tok["pct"].append(None)
+                # P2d-3b: an on-chain route has no CoinGecko days before it, so a quarter can be n/a — a named
+                # unmeasured flow in it is still named, never dropped
                 tok["status"].append("n/a — circulating not stored within 3 days of the quarter's "
-                                     + ("start" if o is None else "end"))
+                                     + ("start" if o is None else "end") + "".join("; " + w for w in why))
                 continue
             res = c - exp
             pct = res / o if o else None
