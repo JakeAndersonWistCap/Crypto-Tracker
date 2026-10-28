@@ -4672,30 +4672,70 @@ NEAR_RPC_LIVE = ("https://rpc.mainnet.fastnear.com", "https://rpc.mainnet.near.o
 # the pacer adapts instead of assuming one. Thread-safe: near_lockups reads several lockups at once.
 NEAR_RPC_PACE = {"https://rpc.mainnet.fastnear.com": 0.25, "https://rpc.mainnet.near.org": 1.0}
 NEAR_RPC_ATTEMPTS = 8
+# P2f-3 (behaviour-neutral for every figure: these change only WHEN a call is made, never what is asked or kept):
+#  * Retry-After is read as delta-seconds OR an HTTP-date (RFC 9110); a non-finite, negative or unparseable value falls
+#    back to the ladder, and one longer than NEAR_RETRY_AFTER_MAX_S is capped (float("inf") used to park an endpoint for
+#    good);
+#  * the production pacer adds jitter (NEAR_COOL_JITTER, only ever LATER than the server asked) so the workers do not
+#    wake on the same tick;
+#  * a 429 / 5xx / network error SLOWS THAT ENDPOINT'S SPACING for every thread (x1.5, at most NEAR_GAP_MAX_S a call; one
+#    slow-down per spacing window, so four calls in flight on one 429 burst count once) and NEAR_GAP_FAST_AFTER clean
+#    calls in a row speed it x0.9 back towards its base — the pattern fetch/archive.py NearArchive already uses, which
+#    this pacer lacked (it kept firing at the base rate the moment each cool-down ended);
+#  * one success no longer wipes the cool-down ladder: it resets after NEAR_STRIKE_RESET_OKS clean calls in a row.
+NEAR_RETRY_AFTER_MAX_S = 600.0
+NEAR_COOL_JITTER = 0.25
+NEAR_GAP_SLOW, NEAR_GAP_FAST, NEAR_GAP_FAST_AFTER, NEAR_GAP_MAX_S = 1.5, 0.9, 25, 15.0
+NEAR_STRIKE_RESET_OKS = 5
+
+
+def retry_after_seconds(value, now: float | None = None) -> float | None:
+    """A Retry-After header as seconds to wait: delta-seconds or an HTTP-date; None when absent, negative, not finite or
+    unparseable (the caller then uses its ladder). Capped at NEAR_RETRY_AFTER_MAX_S."""
+    import math                                            # noqa: PLC0415
+    if value is None or str(value).strip() == "":
+        return None
+    try:
+        secs = float(value)
+    except (TypeError, ValueError):
+        try:
+            from email.utils import parsedate_to_datetime  # noqa: PLC0415
+            secs = parsedate_to_datetime(str(value)).timestamp() - (time.time() if now is None else now)
+        except (TypeError, ValueError, IndexError, OverflowError):
+            return None
+    if not math.isfinite(secs) or secs < 0:
+        return None
+    return min(secs, NEAR_RETRY_AFTER_MAX_S)
 
 
 class _NearPacer:
-    def __init__(self, pace: dict, default: float = 0.25):
+    def __init__(self, pace: dict, default: float = 0.25, jitter: float = 0.0, rng=None, clock=None, sleep=None):
+        import random                                      # noqa: PLC0415
         import threading                                   # noqa: PLC0415
         self.lock = threading.Lock()
         self.pace, self.default = dict(pace), default
+        self.jitter, self.rng = float(jitter), rng or random.random
+        self.clock, self.sleep = clock or time.monotonic, sleep or time.sleep
         self.next_ok: dict = {}
         self.strikes: dict = {}
-        self.stats = {"calls": 0, "throttled": 0, "cooled_s": 0.0}
+        self.clean: dict = {}                              # consecutive clean calls (strike reset, speed-up)
+        self.mult: dict = {}                               # spacing multiplier per endpoint (1.0 = the base pace)
+        self.slowed_until: dict = {}
+        self.stats = {"calls": 0, "throttled": 0, "cooled_s": 0.0, "slowdowns": 0}
 
     def _gap(self, url: str) -> float:
-        return self.pace.get(url, self.default)
+        base = self.pace.get(url, self.default)
+        return min(base * self.mult.get(url, 1.0), max(base, NEAR_GAP_MAX_S))
 
     def pick(self, urls) -> str:
         with self.lock:
             return min(urls, key=lambda u: self.next_ok.get(u, 0.0))
 
     def wait_turn(self, url: str, sleep=None) -> None:
-        import time as _t                                  # noqa: PLC0415
-        sleep = sleep or _t.sleep
+        sleep = sleep or self.sleep
         while True:
             with self.lock:
-                now = _t.monotonic()
+                now = self.clock()
                 at = self.next_ok.get(url, 0.0)
                 if now >= at:
                     self.next_ok[url] = now + self._gap(url)
@@ -4705,24 +4745,36 @@ class _NearPacer:
             sleep(min(wait, 5.0))
 
     def throttled(self, url: str, retry_after=None) -> float:
-        import time as _t                                  # noqa: PLC0415
         with self.lock:
+            now = self.clock()
             self.strikes[url] = self.strikes.get(url, 0) + 1
-            try:
-                cool = float(retry_after)
-            except (TypeError, ValueError):
+            self.clean[url] = 0
+            cool = retry_after_seconds(retry_after)
+            if cool is None:
                 cool = min(60.0, 5.0 * 2 ** (self.strikes[url] - 1))
-            self.next_ok[url] = max(self.next_ok.get(url, 0.0), _t.monotonic() + cool)
+            if self.jitter > 0:
+                cool += cool * self.jitter * self.rng()          # only ever later than the server asked
+            self.next_ok[url] = max(self.next_ok.get(url, 0.0), now + cool)
+            if now >= self.slowed_until.get(url, 0.0):          # one slow-down per burst of 429s, not one per call
+                base = self.pace.get(url, self.default)
+                top = max(1.0, NEAR_GAP_MAX_S / base) if base > 0 else 1.0     # the gap never passes NEAR_GAP_MAX_S
+                self.mult[url] = min(self.mult.get(url, 1.0) * NEAR_GAP_SLOW, top)
+                self.slowed_until[url] = now + cool + self._gap(url)
+                self.stats["slowdowns"] += 1
             self.stats["throttled"] += 1
             self.stats["cooled_s"] += cool
             return cool
 
     def ok(self, url: str) -> None:
         with self.lock:
-            self.strikes[url] = 0
+            self.clean[url] = self.clean.get(url, 0) + 1
+            if self.clean[url] >= NEAR_STRIKE_RESET_OKS:
+                self.strikes[url] = 0
+            if self.clean[url] % NEAR_GAP_FAST_AFTER == 0 and self.mult.get(url, 1.0) > 1.0:
+                self.mult[url] = max(1.0, self.mult[url] * NEAR_GAP_FAST)
 
 
-NEAR_PACER = _NearPacer(NEAR_RPC_PACE)
+NEAR_PACER = _NearPacer(NEAR_RPC_PACE, jitter=NEAR_COOL_JITTER)
 # P2a D4 (near_lockups_at_block): a read pinned at a PAST block goes to the archival endpoints for every call — set only
 # for the duration of that read, then restored
 _NEAR_URLS_OVERRIDE: tuple = ()
@@ -5185,11 +5237,14 @@ def near_lockups(limit: int | None = None, resume: bool = True, workers: int = 4
               f"lockup(s) already read there; reading the rest at the same block")
     else:
         hdr, whys = {}, []
-        for _u, j in _near_post({"block_id": int(block_id)} if block_id else {"finality": "final"}, method="block"):
-            hdr = (j.get("result") or {}).get("header") or {}
+        for _try in range(NEAR_LOCKUP_PIN_TRIES):          # P2f-3: a 429 storm at the start must not end the run
+            for _u, j in _near_post({"block_id": int(block_id)} if block_id else {"finality": "final"}, method="block"):
+                hdr = (j.get("result") or {}).get("header") or {}
+                if hdr.get("height"):
+                    break
+                whys.append(j.get("_transient") or "no header")
             if hdr.get("height"):
                 break
-            whys.append(j.get("_transient") or "no header")
         if not hdr.get("height"):
             print(f"  no endpoint gave the final block ({whys}) — nothing read")
             return None
@@ -5213,14 +5268,27 @@ def near_lockups(limit: int | None = None, resume: bool = True, workers: int = 4
     t0 = _t.time()
     calls0 = NEAR_PACER.stats["calls"]
     import progress                                       # noqa: PLC0415
-    n_done = 0
+    n_done = n_all = 0
+    # P2f-3: A LOCKUP THAT COULD NOT BE READ (its call used up NEAR_RPC_ATTEMPTS under 429s) is tried again LAST in the same
+    # run — up to NEAR_LOCKUP_SWEEPS sweeps in all, stopping at a sweep that reads nothing new — at the SAME block, through
+    # the same pacer (whose cool-downs are the pause). Nothing already read is read again; the errors counted are the LAST
+    # sweep's, so one lockup is never counted once per sweep. Same calls, same block, same figures; only fewer manual reruns.
+    pool = ThreadPoolExecutor(max_workers=max(1, int(workers)))
     try:
-        with ThreadPoolExecutor(max_workers=max(1, int(workers))) as pool:
-            futs = {pool.submit(_read_one, acc, height, block_ts, route, _validate_this(acc)): acc for acc in todo}
+        for sweep in range(max(1, int(NEAR_LOCKUP_SWEEPS))):
+            batch = [a for a in todo if a not in cache["results"]]
+            if not batch:
+                break
+            if sweep:
+                print(f"  sweep {sweep + 1}: {len(batch):,} lockup(s) not read yet are tried again at block {height:,} "
+                      f"(pacer {NEAR_PACER.stats})", flush=True)
+            errs, n_done, before = {}, 0, len(cache["results"])
+            futs = {pool.submit(_read_one, acc, height, block_ts, route, _validate_this(acc)): acc for acc in batch}
             for fut in as_completed(futs):
                 acc = futs[fut]
                 n_done += 1
-                progress.tick("lockups read", n_done, len(todo))
+                n_all += 1
+                progress.tick("lockups read", n_done, len(batch))
                 try:
                     res, why = fut.result()
                 except Exception as e:  # noqa: BLE001 — one lockup's surprise is that lockup's failure, not the run's
@@ -5231,13 +5299,18 @@ def near_lockups(limit: int | None = None, resume: bool = True, workers: int = 4
                     errs[why[:60]] = errs.get(why[:60], 0) + 1
                 if n_done % 25 == 0:
                     _lockup_cache_save(cache_f, cache)
-                if n_done % 100 == 0 or n_done == len(todo):    # kept in the daily log as printed (D2-8a)
+                if n_done % 100 == 0 or n_done == len(batch):    # kept in the daily log as printed (D2-8a)
                     el = _t.time() - t0
-                    print(f"    … {n_done:,}/{len(todo):,} lockups at block {height:,} ({el / 60:,.1f} min; ~"
-                          f"{el / n_done * (len(todo) - n_done) / 60:,.0f} min left; pacer {NEAR_PACER.stats})",
+                    print(f"    … {n_done:,}/{len(batch):,} lockups at block {height:,} ({el / 60:,.1f} min; ~"
+                          f"{el / n_done * (len(batch) - n_done) / 60:,.0f} min left; pacer {NEAR_PACER.stats})",
                           flush=True)
+            _lockup_cache_save(cache_f, cache)
+            if len(cache["results"]) == before:             # a sweep that read nothing new: more sweeps would only wait
+                break
     finally:
+        pool.shutdown(wait=True, cancel_futures=True)       # an interrupt leaves no queue of reads behind it
         _lockup_cache_save(cache_f, cache)
+    n_done = n_all
     yocto = 10 ** 24
     # D4-1c: A STATE-ROUTE FIGURE THAT DISAGREES WITH THE GETTERS ON ANY CHECKED LOCKUP condemns the route for this pin:
     # every state-route result is dropped and the read goes on by the getters (nothing stored until it is complete)
@@ -5420,6 +5493,8 @@ def read_failures_near(got: dict) -> int:
 
 
 NEAR_LOCKUP_PIN_MAX_H = 48
+NEAR_LOCKUP_PIN_TRIES = 4      # P2f-3: tries (each up to NEAR_RPC_ATTEMPTS calls) to fetch / confirm the pinned block
+NEAR_LOCKUP_SWEEPS = 3        # P2f-3: the read, then up to two more sweeps over the lockups still unread (same block)
 # D4-1c: "state" = view_account + view_state, the getters' figures computed from the contract's own state exactly as
 # getters.rs computes them (2 calls a lockup); "getters" = the contracts' view methods (~7.8 calls a lockup measured on
 # Jake's run of 2026-10-26: 15,183 calls for 1,955 lockups). One lockup in NEAR_LOCKUP_CHECK_EVERY is ALSO read by its
@@ -5582,8 +5657,18 @@ def _lockup_pin_live(cache: dict, now=None) -> bool:
         return False
     if age_h > NEAR_LOCKUP_PIN_MAX_H:
         return False
-    got = _near_post({"block_id": int(cache["height"])}, method="block")
-    return any((j.get("result") or {}).get("header") for _u, j in got)
+    # P2f-3: only an ANSWER that has no such block ends the pin. A 429 / 5xx / reset on every attempt says nothing about
+    # the block, and treating it as "not served" threw away every lockup already read (a new pin starts from nothing);
+    # after NEAR_LOCKUP_PIN_TRIES throttled tries the pin is kept — if it really is gone, each read then fails loudly.
+    for _try in range(NEAR_LOCKUP_PIN_TRIES):
+        answered = False
+        for _u, j in _near_post({"block_id": int(cache["height"])}, method="block"):
+            if (j.get("result") or {}).get("header"):
+                return True
+            answered = answered or "_transient" not in j
+        if answered:
+            return False
+    return True
 
 
 def _fault(acc: str, height: int, why: str) -> dict:
