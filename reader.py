@@ -7,9 +7,9 @@ shows (each value cell is a formula on it), and a hidden `_series` sheet holding
 read, so a growth or price change follows the period selector — any period, custom included — and recalculates.
 
 Cell rules (P1-2): a value cell holds a number, or one short code — n/a, blocked, not wired, by design, parked (and
-"unranked" in a rank column) — in the code's colour with the reason in its comment. Headers are at most 35 characters,
-plain English; the full definition is the header's comment and a Definitions row. Confidence is the fill of the audit
-cell each number comes from. Every number's comment names its audit cell.
+"unranked" or "secondary" in a rank column) — in the code's colour with the reason in its comment. Headers are at
+most 35 characters, plain English; the full definition is the header's comment and a Definitions row. Confidence is
+the fill of the audit cell each number comes from. Every number's comment names its audit cell.
 
 Nothing is lost (P1-9): reader_column_map.csv names every audit column's place in the reader (or "audit only"), and
 HEADLINE_LOCATIONS maps every headline the reader shows to its new cell (measuring_guard reads them there).
@@ -51,7 +51,7 @@ TEXT_FMT = "@"
 
 # THE CODES (P1-2): the cell's text, its colour; the reason goes in the comment
 CODES = {"n/a": "808080", "blocked": "C00000", "not wired": "C65911", "by design": "44546A", "parked": "7F7F7F",
-         "unranked": "595959"}
+         "unranked": "595959", "secondary": "2F5597"}
 PERIODS = (("1D", 1), ("7D", 7), ("30D", 30), ("90D", 90), ("6M", 182), ("1Y", 365), ("3Y", 1095), ("custom", None))
 DEFAULT_PERIOD = "90D"
 DEFAULT_CUSTOM_DAYS = 60
@@ -726,6 +726,13 @@ def _rank_rows(keys: dict) -> list:
     return out + [(p, None, None) for p in rest]
 
 
+def _arch_ranking(keys: dict, arch: int) -> list:
+    """P2e-1: THE ranking of archetype `arch` — [(project, rank or None, key or None)] over the projects whose PRIMARY
+    archetype it is, parked ones left out, by _rank_rows. Summary and the archetype tab both show it, so a project's
+    rank is the same on both."""
+    return _rank_rows({n: k[1] for n, k in keys.items() if k[0] == arch and not parked_reason(n)})
+
+
 def build_reader(wb, path, *, asof, groups: dict, headline_cells: list, projects: list,
                  previous: dict | None = None) -> dict:
     """Write the reader workbook at `path` from the built (audit) workbook `wb`. Returns its STATS."""
@@ -756,6 +763,7 @@ def build_reader(wb, path, *, asof, groups: dict, headline_cells: list, projects
     ctx = Ctx(A, data, ser, groups, projects, asof, config, bw, {(h["sheet"], h["project"], h["header"]): h
                                                                   for h in headline_cells}, sheets)
     keys = _archetype_keys(A, groups, projects, config, bw)
+    ctx.keys = keys
     _write_summary(sheets[SUMMARY], ctx, keys)
     for spec in tab_specs(bw):
         _write_arch_tab(sheets[spec.tab], ctx, spec)
@@ -795,6 +803,7 @@ class Ctx:
     bw: object
     headlines: dict
     sheets: dict = None                     # reader tab -> Sheet (P2c-4: a parked headline's code is rewritten)
+    keys: dict = None                       # _archetype_keys (P2e-1: the archetype tabs rank by the same keys)
 
     def p(self, name: str) -> dict:
         return next(p for p in self.projects if p["name"] == name)
@@ -806,15 +815,24 @@ class Ctx:
                                          or src.header.startswith(PARKED_CODE_HEADERS)):
             if (src.sheet, project, src.header) in self.headlines:
                 HEADLINE_LOCATIONS[(src.sheet, project, src.header)] = (sheet, cell)
-            sh = (self.sheets or {}).get(sheet)
-            why = parked_reason(project)
-            if sh is not None and why:
-                c = sh.ws[cell]
-                if isinstance(c.value, str) and not c.value.startswith("="):
-                    under = c.comment.text if c.comment else ""
-                    c.value = "parked"
-                    c.font = Font(name=FONT, size=9, italic=True, color=CODES["parked"])
-                    c.comment = _comment(f"{why}\n\nBehind it: {under}" if under else why)
+            park_cell((self.sheets or {}).get(sheet), cell, project)
+
+
+def park_cell(sh: Sheet | None, cell: str, project: str) -> None:
+    """P2c-4 / P2e-5: ONE code for a parked row's state — a PARKED project's code cell is rewritten to "parked", the
+    one-line park reason first in its comment and the underlying state kept after it ("Behind it: blocked — …"). A
+    number is left as it is: a parked project's figures are shown, outside the ranks."""
+    why = parked_reason(project)
+    if sh is None or not why or not cell:
+        return
+    c = sh.ws[cell]
+    if not isinstance(c.value, str) or c.value.startswith("=") or c.value == "parked":
+        return
+    code, under = c.value, (c.comment.text if c.comment else "").strip()
+    under = under if under.startswith(code) else f"{code} — {under}" if under else code
+    c.value = "parked"
+    c.font = Font(name=FONT, size=9, italic=True, color=CODES["parked"])
+    c.comment = _comment(f"{why}\n\nBehind it: {under}"[:2400])
 
 
 def _blank_unexplained(sheets: dict) -> list:
@@ -968,9 +986,8 @@ def _write_summary(sh: Sheet, ctx: Ctx, keys: dict) -> None:
         for c in range(2, len(sh.cols) + 1):
             ws.cell(row, c).fill = FILL_GROUP
         row += 1
-        members = [p for p in by_arch[arch] if not parked_reason(p["name"])]
         parked = [p for p in by_arch[arch] if parked_reason(p["name"])]
-        for name, rank, _kv in _rank_rows({p["name"]: keys[p["name"]][1] for p in members}):
+        for name, rank, _kv in _arch_ranking(keys, arch):
             _summary_row(sh, ctx, C, row, ctx.p(name), rank, keys[name])
             row += 1
         for p in sorted(parked, key=lambda q: q["name"]):
@@ -1066,8 +1083,9 @@ def _summary_row(sh, ctx: Ctx, C, row, p, rank, key, parked: bool = False) -> No
     else:
         put_code(sh, row, C["key"], "n/a", f"No measured {ARCHETYPE_KEYS.get(arch, ('key',))[0].lower()}"
                  + (f": {kwhy}" if kwhy else "") + ".")
-    if parked:
-        put_code(sh, row, C["rank"], "parked", parked_reason(name))
+    if parked:                              # P2e-5: one code on a parked row — the key's code reads "parked" too
+        park_cell(sh, f"{C['key'].letter}{row}", name)
+        put_code(sh, row, C["rank"], "parked", _parked_rank_note(name))
     elif rank is not None:
         put_number(sh, data, row, C["rank"], name, "rank", rank, None,
                    f"{rank} in {ARCHETYPE_NAMES.get(arch, '')} by {ARCHETYPE_KEYS.get(arch, ('',))[0].lower()}.\n\n"
@@ -1168,6 +1186,21 @@ def _what_changed(sh, ctx: Ctx, row: int, col: Col, p: dict) -> None:
 
 
 # ---------------------------------------------------------------------------------------------- archetype tabs
+def _parked_rank_note(name: str) -> str:
+    return (f"{parked_reason(name)}\n\nBehind it: not ranked — a parked project is outside the ranks; its key cell "
+            "says what the key reads.")
+
+
+def _secondary_note(name: str, keys: dict) -> str:
+    """P2e-1: the rank cell of a SECONDARY member of an archetype tab — where the project is ranked."""
+    arch = keys.get(name, (0,))[0]
+    where = ARCHETYPE_NAMES.get(arch, "no archetype")
+    there = next((rk for n, rk, _v in _arch_ranking(keys, arch) if n == name), None) if arch else None
+    return (f"Primary archetype: {where} — ranked there; shown here for comparison, not ranked.\n\nWorking: its rank "
+            f"there (Summary and the {where} tab): " + (f"{there}." if there is not None else "unranked (no measured "
+                                                       "key)."))
+
+
 @dataclass
 class TabSpec:
     tab: str                                # reader tab (= the audit tab of the same name)
@@ -1524,9 +1557,11 @@ def _write_arch_tab(sh: Sheet, ctx: Ctx, spec: TabSpec) -> None:
         kh = A.header(tab, kc) if kc else spec.key[1]
         add(Col(spec.key_header, ARCHETYPE_KEYS[spec.arch][1], FMT_X, "(a) Rank key", f"{tab}, {kh}", 0, 12,
                 audit=(tab, kh), family="buyback" if spec.arch == 3 else ""), ("audit", kc))
-    add(Col(spec.rank_header, "Position on this tab by the rank key, higher first. No measured key reads 'unranked' and "
-            "sorts last; a parked project reads 'parked' and is outside the ranks.", FMT_RANK, "(a) Rank key",
-            "computed", 0, 9), ("rank",))
+    add(Col(spec.rank_header, "Position by the rank key, higher first, among the projects whose PRIMARY archetype this "
+            "is — the same rank as Summary. No measured key reads 'unranked' and sorts last; a project whose primary "
+            "archetype is another reads 'secondary' (its key shown for comparison, ranked under its primary) and sorts "
+            "below; a parked project reads 'parked' and is outside the ranks.", FMT_RANK, "(a) Rank key",
+            "computed (the ranking Summary shows)", 0, 9), ("rank",))
     for extra in spec.a_extra:
         if extra[0] == "dilution":
             dc, dn = audit_col(extra[1]), audit_col(extra[2])
@@ -1654,9 +1689,17 @@ def _write_arch_tab(sh: Sheet, ctx: Ctx, spec: TabSpec) -> None:
             kc = how[2][1]
             r = A.row(tab, n)
             keyvals[n] = A.at(tab, r, kc).num if (r and kc) else None
-    order = _rank_rows(keyvals) + [(n, None, None) for n in sorted(n for n in names if parked_reason(n))]
+    # P2e-1: rank ONLY the projects whose primary archetype this is, by the ranking Summary shows; a secondary member
+    # keeps its key (code "secondary" in the rank column) and sorts below the primaries; parked last
+    keys = ctx.keys if ctx.keys is not None else _archetype_keys(A, ctx.groups, ctx.projects, config, ctx.bw)
+    primary = [x for x in _arch_ranking(keys, spec.arch) if x[0] in keyvals]
+    secondary = [(n, None, v) for n, _rk, v in _rank_rows({n: v for n, v in keyvals.items()
+                                                           if keys.get(n, (None,))[0] != spec.arch})]
+    order = primary + secondary + [(n, None, None) for n in sorted(n for n in names if parked_reason(n))]
+    is_secondary = {n for n, _rk, _v in secondary}
     trend_cols, period_cols = [], []
-    ranked = sum(1 for _n, rk, _v in order if rk is not None)
+    held = sum(1 for v in keyvals.values() if v is not None)            # projects on this tab holding the rank key
+    ranked = sum(1 for _n, rk, _v in primary if rk is not None)
     for i, (name, rank, kv) in enumerate(order):
         row = 5 + i
         p = pmap[name]
@@ -1680,7 +1723,7 @@ def _write_arch_tab(sh: Sheet, ctx: Ctx, spec: TabSpec) -> None:
             elif kind == "interim":
                 src = A.at(tab, r_a, h[1]) if h[1] else None
                 cell = put_src(sh, data, row, col, p, src, extra=(
-                    f"INTERIM — not the rank key and not ranked. {ranked} of {len(names)} projects on this tab hold the "
+                    f"INTERIM — not the rank key and not ranked. {held} of {len(names)} projects on this tab hold the "
                     f"rank key ({spec.key_header.lower()}) on this build; this column is shown until more do. The rank "
                     "key changes only on Jake's go-ahead."))
                 ctx.record(src, tab, cell, name)
@@ -1708,11 +1751,15 @@ def _write_arch_tab(sh: Sheet, ctx: Ctx, spec: TabSpec) -> None:
                          else _with_lead(f"Working: {src.where}.", col, name))
             elif kind == "rank":
                 if parked:
-                    put_code(sh, row, col, "parked", parked_reason(name))
+                    put_code(sh, row, col, "parked", _parked_rank_note(name))
+                elif name in is_secondary:
+                    put_code(sh, row, col, "secondary", _secondary_note(name, keys))
                 elif rank is not None:
                     put_number(sh, data, row, col, name, f"rank|{tab}", rank, None,
-                               f"{rank} of {ranked} ranked on this tab by {spec.key_header.lower()}.\n\nWorking: "
-                               "computed here from the rank key column.")
+                               f"{rank} of {ranked} ranked in {ARCHETYPE_NAMES[spec.arch]} by "
+                               f"{spec.key_header.lower()} — the projects whose primary archetype this is; the same "
+                               "rank as Summary.\n\nWorking: computed from the archetype key (the ranking Summary "
+                               "shows).")
                 else:
                     put_code(sh, row, col, "unranked", f"Unranked, sorted last: no measured {spec.key_header.lower()} "
                              "— the key cell's comment says why.")
@@ -1762,7 +1809,10 @@ def _write_arch_tab(sh: Sheet, ctx: Ctx, spec: TabSpec) -> None:
                     trend_cols.append(j + 1)
                 else:
                     put_code(sh, row, col, k2, why)
-        if parked:
+        if parked:                          # P2e-5: one code on a parked row — the rank block reads "parked"
+            for col in cols:
+                if col.block == "(a) Rank key":
+                    park_cell(sh, f"{col.letter}{row}", name)
             grey_row(sh, row)
     last = 4 + len(order)
     for c in sorted(set(trend_cols)):
@@ -2189,8 +2239,12 @@ def _write_definitions(ws, sheets: dict) -> None:
                       ("by design", "chased and closed, or suppressed on purpose, or the column does not apply to "
                        "the project — not missing data"),
                       ("parked", "the project is parked: shown greyed with its numbers, outside the ranks and the "
-                       "charts"),
-                      ("unranked", "in a rank column: the project has no measured key, so it sorts last")):
+                       "charts; every rank and key cell of its row that holds no number reads 'parked', the "
+                       "underlying state in the comment"),
+                      ("unranked", "in a rank column: the project has no measured key, so it sorts last"),
+                      ("secondary", "in a rank column of an archetype tab: the archetype is not the project's primary "
+                       "one — its key is shown for comparison, its rank is under its primary archetype (on Summary "
+                       "and that tab)")):
         r += 1
         c = ws.cell(r, 1, code)
         c.font = Font(name=FONT, size=10, italic=True, color=CODES[code])
@@ -2239,7 +2293,9 @@ def _write_about(ws, asof, sheets: dict, projects: list) -> None:
          "· no fill: computed here from the cells it names.", F_BODY),
         ("A word in place of a number: n/a (no value), blocked (a rule refused it), not wired (no route yet), by design "
          "(closed on purpose, or the column does not apply), parked (see below); 'unranked' in a rank column means no "
-         "measured key. A missing figure is never shown as 0; a real 0 says why beside it.", F_BODY),
+         "measured key; 'secondary' in an archetype tab's rank column means the project is ranked under its primary "
+         "archetype (Summary and that tab show the same rank) and is shown there for comparison, below the ranked "
+         "projects. A missing figure is never shown as 0; a real 0 says why beside it.", F_BODY),
         ("Comments: hover a header for its definition; hover a number for its source cell in the audit file.", F_BODY),
         ("Formats: $m and $bn for dollars; % for shares and rates; 0.0x for ratios (1.0x is the crossover). 'Last 90 "
          "days' is the trailing window to the as-of date.", F_BODY),
@@ -2329,6 +2385,9 @@ def _write_coverage(ws, top: int, sws) -> None:
     r += 1
     ws.cell(r, 1, "parked — the project is parked: its row is greyed, its numbers shown, outside the ranks; the reason "
                   "is listed under Parked projects above.").font = F_BODY
+    r += 1
+    ws.cell(r, 1, "secondary — not counted here: each project is counted once, under its primary archetype; on an "
+                  "archetype tab that is not its primary one its rank cell reads 'secondary'.").font = F_BODY
     for j in range(2, len(heads) + 1):
         ws.column_dimensions[get_column_letter(j)].width = 12
 
