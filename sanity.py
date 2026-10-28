@@ -355,9 +355,10 @@ def with_build_hits(found: list, workbook_path) -> list:
     return found + [tuple(h) for h in [*(body.get("hits") or ()), *acc] if tuple(h) not in seen]
 
 
-def split_answered(found: list) -> tuple[list, list]:
-    """(open hits, headline_lost hits config.REGRESSION_ALLOWLIST answers) — the Review Queue's split."""
-    ans = [h for h in found if h[1] == "headline_lost" and config.regression_allowance(h[0], h[2]) is not None]
+def split_answered(found: list, on=None) -> tuple[list, list]:
+    """(open hits, headline_lost hits config.REGRESSION_ALLOWLIST answers on `on`, default today) — the Review Queue's
+    split."""
+    ans = [h for h in found if h[1] == "headline_lost" and config.regression_allowance(h[0], h[2], on=on) is not None]
     return [h for h in found if h not in ans], ans
 
 

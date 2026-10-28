@@ -230,7 +230,7 @@ def test_p2e4_sanity_hits_json_carries_the_accepted_loss_apart(tmp_path):
     assert acc["line"] == f"ACCEPTED: Hyperliquid {HL} — {hl['reason']} (accepted 2026-10-28)"
     # sanity.py --workbook reads the file back: the accepted loss is answered, not open
     found = sanity.with_build_hits([], tmp_path / "wb.xlsx")
-    open_, answered = sanity.split_answered(found)
+    open_, answered = sanity.split_answered(found, on=ON)   # judged on the test's day, not the clock's
     assert [h[0] for h in answered] == ["Hyperliquid"] and {h[0] for h in open_} == {"Pendle", "Chainlink"}
 
 
