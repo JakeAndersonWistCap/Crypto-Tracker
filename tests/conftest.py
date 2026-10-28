@@ -56,6 +56,18 @@ def dumps_20261009(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_pending_restatement():
+    """P2b-2 / P2c-5: a build declares a restatement's pending seam for ITSELF (config.RESTATEMENT_ACTIVE, refilled by
+    every build from what its store holds). A fixture build in one test left Chainlink's declared in the next
+    (test_d4b_chainlink_wallet_set_growth_is_a_declared_nested_handover failed after test_round_g11 in one process);
+    each test starts with none, as a fresh build does."""
+    import config
+    getattr(config, "RESTATEMENT_ACTIVE", {}).clear()
+    yield
+    getattr(config, "RESTATEMENT_ACTIVE", {}).clear()
+
+
+@pytest.fixture(autouse=True)
 def _no_cached_values(monkeypatch):
     """Round G11 A1: a build writes every formula's calculated value into the file (workbook_values, ~1 min on a full
     build). Tests skip it; the test of A1 itself sets TOKEN_METRICS_STORE_VALUES=1."""

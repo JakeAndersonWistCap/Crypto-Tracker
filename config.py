@@ -33599,3 +33599,86 @@ SERIES_BREAK_NOTES = {
     for _m in ("filing_managed_lock_tokens", "circulating_supply_onchain", "circulating_supply_used", "market_cap_usd")}
 for (_n, _m), _b in SERIES_BREAK_NOTES.items():
     SOURCE_RECLASSIFICATIONS[(_n, _m)] = tuple(SOURCE_RECLASSIFICATIONS.get((_n, _m), ())) + ((_b["break"], _b["text"]),)
+
+# ===== P2c-5 (Jake 2026-10-28; SPEC §19 P2c-5): THREE MORE WALLET-SET HISTORIES RESTATED ON THE CURRENT SET. =====
+# Jake's live guard (`measuring_guard.py --newer metrics.db`, 2026-10-27) found two or more wallet-set bases, with no
+# declared handover, in Ether.fi noncirculating_holding_tokens and in Maple's and Pendle's insider_stake_shares. Each is
+# restated on its CURRENT wallet set by the P2b-2 route above (one machinery, declared per series here): CLEAN-UP P2c-5x
+# (once, the daily run, every row logged) removes each row dated before the current set's first live day on another set;
+# `archive_backfill.py --run --project <name>` re-reads each such day at its first block on the whole current set (whole
+# or nothing; a day not re-read is a named HOLE, never the earlier set's sum, never 0). Until the clean-up has run the
+# earlier-set rows keep a declared nested_sums seam for that build (the SERIES BREAK on each date the set grew, the days
+# named NOT YET RESTATED). Every series here is a plain ERC-20 balanceOf sum at a block (fetch.archive.archivable: True),
+# and every change was an ADDITION (each earlier set is a subset of the current one; nothing was removed — the config at
+# 359cc1f / b2578e1 / 5053b20 / 4555346 compared) — so a restatement is possible for all three; no series break instead.
+#   * Ether.fi noncirculating_holding_tokens (ETHFI held): 8 wallets (filing + Jake's probes, 2026-10-07) to 2026-10-13;
+#     10 from 2026-10-14 (E1: Treasury 0x5f0E7A42…, 0xD022d6bb… from ether.fi's allocations page); 12 from 2026-10-26
+#     (D2-4b: the filing's Q18 Foundation wallets 0xe67a6CCc…, 0xbe2cfe1a…).
+#   * Maple insider_stake_shares (stSYRUP SHARES held — a share-token sum, the numerator of the insider share of the
+#     stake; the ratio is formed at read time over stsyrup_legacy_tokens, unchanged): 8 issuer-side wallets (W6,
+#     2026-10-13) to 2026-10-25; 9 from 2026-10-26 (D2-4c: the DAO multisig 0xd6d4Bcde…).
+#   * Pendle insider_stake_shares (sPENDLE SHARES held; ratio over locked_tokens_shares, unchanged): 3 issuer multisigs
+#     (W6, 2026-10-13) to 2026-10-25; 6 from 2026-10-26 (D2-4c: network.treasury 0x8270400d…, devMultisig 0xE6F0489E…,
+#     the timelockController 0x68d8D192…). sPENDLE 0x99999999… has code from block 24,237,456 (2026-01-15 03:34 UTC, read
+#     2026-10-28): the archive dates the series from 2026-01-16 (the first day whose first block has code), so earlier
+#     span days are before the series, not holes.
+# Ether.fi insider_stake_shares keeps its own static nested_sums declaration (G11 C1) — not part of P2c-5.
+def _current_sum_point(project: str, metric: str, chain: str = "ethereum") -> str:
+    """The summed measuring point the chain reader writes for this series today: every contract serving the metric on
+    the chain, in config order (compared by component SET, so the order never matters)."""
+    keys = [k for k, c in PROJECT_BY_NAME[project]["contracts"].items()
+            if c.get("metric_override") == metric and c.get("chain") == chain]
+    return "chain:sum(" + "+".join(f"{chain}:{k}" for k in keys) + ")"
+
+
+def _pending_nested(why: str, change: str, seams: tuple) -> dict:
+    """The nested_sums seam a restatement declares for a build while earlier-set rows remain (no overlap spec: one row a
+    day, so two sets are never stored on one day; the added wallets' read history is on the SPEC row)."""
+    return {"nested_sums": True, "why": why, "composition_change": change, "declared": "2026-10-28",
+            "valid_from": seams[-1]}
+
+
+_EF_NC_SEAMS = ("2026-10-14", "2026-10-26")
+_INSIDER_SEAMS = ("2026-10-26",)
+for (_n, _m, _id, _label, _old, _seams, _why, _from) in (
+        ("Ether.fi", "noncirculating_holding_tokens", "P2c-5a",
+         "the 12 non-circulating wallets (filing 8 + allocations-page Treasury 2 + filing Q18 Foundation 2)",
+         "an earlier wallet set (8 wallets to 2026-10-13, 10 from 2026-10-14)", _EF_NC_SEAMS,
+         "the non-circulating wallet set grew: 8 wallets to 2026-10-13, 10 from 2026-10-14 (E1: Treasury 0x5f0E7A42…, "
+         "0xD022d6bb…), 12 from 2026-10-26 (D2-4b: Q18 Foundation 0xe67a6CCc…, 0xbe2cfe1a…) — each set contains the last",
+         None),
+        ("Maple", "insider_stake_shares", "P2c-5b",
+         "the 9 issuer-side wallets' stSYRUP shares (8 non-circulating + the DAO multisig)",
+         "the 8-wallet set (to 2026-10-25)", _INSIDER_SEAMS,
+         "the issuer-side wallet set grew: 8 wallets to 2026-10-25, 9 from 2026-10-26 (D2-4c: DAO multisig 0xd6d4Bcde…)",
+         None),
+        ("Pendle", "insider_stake_shares", "P2c-5c",
+         "the 6 issuer-side wallets' sPENDLE shares (3 multisigs + treasury, devMultisig, timelock)",
+         "the 3-wallet set (to 2026-10-25)", _INSIDER_SEAMS,
+         "the issuer-side wallet set grew: 3 multisigs to 2026-10-25, 6 from 2026-10-26 (D2-4c: network.treasury "
+         "0x8270400d…, devMultisig 0xE6F0489E…, timelockController 0x68d8D192…)",
+         "2026-01-16")):
+    SERIES_RESTATEMENTS[(_n, _m)] = {
+        "id": _id,
+        "point": _current_sum_point(_n, _m),
+        "point_label": _label,
+        "superseded_label": _old,
+        "before": _seams[-1],            # the current set's first live day; every earlier day is restated
+        "seams": _seams,                 # every date the set grew — the SERIES BREAK(s) while earlier-set rows remain
+        "series_from": _from,            # the series' first possible day (its share token's first day with code)
+        "pending_handover": _pending_nested(_why, "wallets ADDED to the set, none removed — a change of composition at "
+                                                  "each seam, not a flow", _seams),
+        "refill": f"python archive_backfill.py --run --project {_n}",
+        "decided": "Jake 2026-10-28 (P2c-5): history restated on the CURRENT wallet set; the break only while "
+                   "earlier-set rows remain",
+    }
+    RUN_CLEANUPS = RUN_CLEANUPS + (
+        {"id": _id, "metric": _m, "once": True, "superseded_by": "restatement", "projects": (_n,),
+         "why": f"{_old}, restated on {_label} (SPEC P2c-5): every day before {_seams[-1]} is re-read at its first block "
+                f"by `python archive_backfill.py --run --project {_n}`; a day not yet re-read is a hole"},)
+
+
+def restatement_seams(project: str, metric: str) -> tuple:
+    """The dates a restated series' wallet set grew (its SERIES BREAK(s) while earlier-set rows remain)."""
+    r = restatement(project, metric) or {}
+    return tuple(r.get("seams") or ((r["before"],) if r.get("before") else ()))

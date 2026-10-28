@@ -731,7 +731,8 @@ def _named_day_ranges(days, most: int = 6) -> str:
 
 
 def _series_restatement_views(groups: dict, asof) -> None:
-    """A DECLARED RESTATEMENT (config.SERIES_RESTATEMENTS, P2b-2 — Chainlink's non-circulating sum on the 33-wallet set):
+    """A DECLARED RESTATEMENT (config.SERIES_RESTATEMENTS, P2b-2 — Chainlink's non-circulating sum on the 33-wallet set;
+    P2c-5 — Ether.fi's on the 12-wallet set, Maple's and Pendle's insider stake shares on the 9- and 6-wallet sets):
     the history before the current point's first day is re-read on that point (the clean-up, then the archive). Nothing
     in the series is changed here; what the store holds decides what is said:
       * rows on a superseded point remain (the clean-up has not run): the pending handover is declared for this build
@@ -753,9 +754,11 @@ def _series_restatement_views(groups: dict, asof) -> None:
         before = pd.Timestamp(r["before"])
         if old.any():
             config.RESTATEMENT_ACTIVE[(proj, metric)] = r["pending_handover"]
+            # P2c-5: a set that grew more than once (Ether.fi 8 -> 10 -> 12) names every seam
+            seams = ", ".join(config.restatement_seams(proj, metric))
             RESTATEMENT_STATUS[(proj, metric)] = (
                 f"NOT YET RESTATED ({r['id']}): {int(old.sum())} day(s) still hold {r['superseded_label']}, not "
-                f"{r['point_label']} — {_named_day_ranges(dates[old])}. The declared seam (SERIES BREAK {before.date()}) "
+                f"{r['point_label']} — {_named_day_ranges(dates[old])}. The declared seam (SERIES BREAK {seams}) "
                 f"stands until the daily run's CLEAN-UP {r['id']} removes them and `{r['refill']}` re-reads each day")
             continue
         cur = _measuring_point(r["point"])
@@ -764,6 +767,10 @@ def _series_restatement_views(groups: dict, asof) -> None:
         if asof is None:
             continue
         start = (pd.Timestamp(asof).normalize() - pd.Timedelta(days=int(config.TRAJECTORY["history_days"])))
+        if r.get("series_from"):
+            # P2c-5: a day before the series can exist (its share token had no code: sPENDLE from 2026-01-16) is before
+            # the series, not a hole — the archive's own start rule
+            start = max(start, pd.Timestamp(r["series_from"]))
         span = pd.date_range(start, min(before - pd.Timedelta(days=1), pd.Timestamp(asof).normalize()), freq="D")
         holes = [d for d in span if d not in held]
         if holes:
