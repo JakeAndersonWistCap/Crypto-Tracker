@@ -147,6 +147,9 @@ def audit(wb, trajectory_rows: list[dict] | None = None, flows_rows: list[dict] 
                 val = X.value(tab, r, c) if isinstance(raw, str) and raw.startswith("=") else raw
                 val = xlcalc.display(val) if hasattr(xlcalc, "display") else val
                 status, why = classify(raw, val, _fill(cell))
+                if str(h) == "Notes" and str(val or "").startswith("PARKED — migration:"):
+                    # P2c-3: the park statement heading a Notes cell is free text, not the cell's status
+                    status, why = ("VERIFIED" if _fill(cell) == _GREEN else "LIVE-UNVERIFIED"), ""
                 if status == "LIVE-UNVERIFIED" and not why and cell.comment is not None:
                     # WHY IT IS NOT GREEN, from the cell's own band note (Round G5 item 1: 15 cells lost VERIFIED and
                     # Coverage said nothing; the band's reason was in the cell comment all along)
