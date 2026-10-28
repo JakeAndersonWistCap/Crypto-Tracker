@@ -28550,6 +28550,7 @@ TRAJECTORY = {
         "circulating_supply": ("Supply", 0), "a3_circ_retirement": ("Supply", 1), "a3_fdv_retirement": ("Supply", 1),
         "a3_actual_buyback_pct": ("Supply", 1), "a3_buyback_locked": ("Supply", 1), "a3_net_absorption": ("Supply", 1),
         "a3_retire_vs_dilution": ("Supply", 1), "a3_retire_vs_dilution_now": ("Supply", 1),
+        "a3_retire_vs_emissions": ("Supply", 1),          # A3's rank key (P2e-2: the key's own trajectory row)
         "a3_implied_buyback_pct": ("Valuation", 1), "fees_fdv_annualised": ("Valuation", 1),
         "market_cap": ("Market", 1),
         # A4

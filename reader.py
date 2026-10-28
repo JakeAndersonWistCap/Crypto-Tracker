@@ -473,15 +473,20 @@ def price_change(s: pd.Series, days: int, asof: pd.Timestamp) -> tuple[float | N
     return float(s.loc[end]) / p0 - 1, f"{then.date()} to {end.date()}"
 
 
-def settlement_key(groups: dict, project: str) -> tuple[float | None, str]:
-    """A1's key (P1-6): (S365 ÷ circulating, now) ÷ (the same a year earlier) − 1."""
+def settlement_key(groups: dict, project: str, back_days: int = 0) -> tuple[float | None, str]:
+    """A1's key (P1-6): (S365 ÷ circulating, now) ÷ (the same a year earlier) − 1. back_days > 0 (P2e-2, the key's
+    trajectory): the same 1-year change measured `back_days` before the series' last date — the one formula, its end
+    moved back; a day the series does not hold reads n/a with the reason."""
     s = _series(groups, project, "settlement_volume_365d_usd")
     c = _series(groups, project, "circulating_supply_used")
     if s.empty:
         return None, "no trailing-365-day settlement volume series"
     if c.empty:
         return None, "no circulating supply series"
-    end = s.index.max()
+    end = s.index.max() - pd.Timedelta(days=back_days)
+    if end not in s.index:
+        return None, (f"no trailing-365-day settlement volume on {end.date()} (the quarter's end); held from "
+                      f"{s.index.min().date()}")
     then = end - pd.Timedelta(days=365)
     if then not in s.index:
         return None, (f"needs the trailing-365-day settlement volume on {then.date()} (two years of history); held "
@@ -493,6 +498,45 @@ def settlement_key(groups: dict, project: str) -> tuple[float | None, str]:
     if b == 0:
         return None, f"settlement volume 0 on {then.date()}"
     return (float(s.loc[end]) / cn) / b - 1, f"{then.date()} to {end.date()}"
+
+
+A1_KEY_METRICS = ("settlement_volume_365d_usd", "circulating_supply_used")
+
+
+def settlement_key_trajectory(groups: dict, project: str, asof, period_days: int = 90, n: int = 4) -> dict:
+    """A1's key over the last n quarters (P2e-2), shaped as a Trajectory row for _quarter_change: quarter k is
+    settlement_key with its end moved k × period_days back from the series' last date — the key's own function, so
+    the latest quarter IS the key cell. "why" holds each quarter's reason; a change of measuring point of either
+    series inside the span the compared values read (a year before the earlier quarter's end, to now) is the row's
+    series break; a quarter reading a MODELLED stored point is MODELLED."""
+    import config                                          # noqa: PLC0415
+    import trajectory                                      # noqa: PLC0415
+    qs = [settlement_key(groups, project, back_days=k * period_days) for k in range(n)]
+    span = 365 + 2 * period_days
+    since = pd.Timestamp(asof) - pd.Timedelta(days=span)
+    found = trajectory.basis_breaks(project, A1_KEY_METRICS, groups, since)
+    brk = "; ".join(f"SERIES BREAK {d.date()} — {m}: {str(a)[:60]} -> {str(b)[:60]}" for d, m, a, b in found)
+    s = _series(groups, project, A1_KEY_METRICS[0])
+    modelled = []
+    if not s.empty:
+        for k in range(n):
+            end = s.index.max() - pd.Timedelta(days=k * period_days)
+            for day in (end, end - pd.Timedelta(days=365)):
+                for m in A1_KEY_METRICS:
+                    g = groups.get((project, m)) if groups else None
+                    if g is None or g.empty or "source" not in g:
+                        continue
+                    d = pd.to_datetime(g["date"]).dt.normalize()
+                    # the stored point the formula reads: settlement on that day, circulating as of it
+                    at = d[d <= day].max() if m == "circulating_supply_used" else day
+                    rows = g[d == at]
+                    if not rows.empty and rows["source"].astype(str).map(config.is_modelled).any():
+                        modelled.append(trajectory.LABELS[k])
+    return {"vals": [v for v, _w in qs], "why": [w for _v, w in qs], "row": None, "break": brk,
+            "modelled": ", ".join(dict.fromkeys(modelled)), "trend": "", "t12m": None, "t12m_prev": None,
+            "span_days": span, "where": (f"Working: computed here — the key's own function on the stored "
+                                         f"{project}|settlement_volume_365d_usd and {project}|circulating_supply_used "
+                                         f"rows, its end moved back a quarter at a time.")}
 
 
 # ============================================================================================ writing cells
@@ -1178,7 +1222,8 @@ class TabSpec:
     rank_header: str
     a_extra: tuple = ()                     # (kind, ...) columns beside the key
     valuation: tuple = ()                   # (sheet or None, header prefix, short, family)
-    traj: tuple = ()                        # (trajectory id, label stem, fmt, definition)
+    traj: tuple = ()                        # (trajectory id, label stem, fmt, definition) — a series after the key's
+    key_traj: tuple = ()                    # the KEY's own quarters (P2e-2): (trajectory id | "@a1key", stem, fmt, def)
     drivers: tuple = ()                     # (sheet or None, header prefix, short, family) | ("@growth", metric, short, kind)
     blocks_note: str = ""
 
@@ -1197,7 +1242,11 @@ def tab_specs(bw) -> list:
                            (None, "NRR HEADROOM (settlement)", "NRR headroom (settlement)", ""),
                            (None, "NRR ON TRADING THROUGHPUT", "NRR on trading throughput", ""),
                            (M, "Fees ÷ FDV (annualised)", "Fees ÷ FDV, a year", "")),
-                traj=("a1_fees_issuance", "Fees ÷ issuance", FMT_X, "FEES ÷ ISSUANCE (x)"),
+                key_traj=("@a1key", "Settlement/token 1-yr chg", FMT_PCT,
+                          "SETTLEMENT PER TOKEN, 1-YEAR CHANGE — the rank key: (trailing-365-day settlement volume ÷ "
+                          "circulating supply) at the quarter's end ÷ the same a year earlier − 1"),
+                traj=("a1_fees_issuance", "Fees ÷ issuance", FMT_X,
+                      "FEES ÷ ISSUANCE (x) — fees ÷ gross issuance (tokens at the 90-day average price), not the rank key"),
                 drivers=((None, "Settlement volume, trailing 365d", "Settlement volume, 365 days", ""),
                          (None, "Fees Q0 ($)", "Fees, last 90 days", ""),
                          ("@growth", "@fees", "Fees growth, selected period", "flow"),
@@ -1220,8 +1269,12 @@ def tab_specs(bw) -> list:
                 valuation=((None, "Market cap ($)", "Market cap", ""), (M, "FDV ($)", "FDV", ""),
                            (None, "Free float market cap ($, spot)", "Free float market cap", ""),
                            (None, "FREE FLOAT ÷ ARR (x)", "Free float ÷ ARR (x)", "")),
-                traj=("a2_rev_per_token", "Revenue ÷ emission", FMT_USD,
-                      "CUSTOMER REVENUE PER TOKEN EMITTED ($/token)"),
+                key_traj=("a2_rev_vs_emissions_value", "Revenue ÷ emissions (x)", FMT_X,
+                          "CUSTOMER REVENUE ÷ EMISSIONS VALUE (x) — the rank key: customer revenue $ ÷ emissions $ (tokens "
+                          "emitted × the quarter's 90-day average price), each per covered day"),
+                traj=("a2_rev_per_token", "$ per token emitted", FMT_USD,
+                      "CUSTOMER REVENUE PER TOKEN EMITTED ($/token) — customer revenue $ ÷ tokens emitted, not the rank "
+                      "key"),
                 drivers=((None, "Customer revenue Q0 ($)", "Customer revenue, 90 days", ""),
                          ("@growth", "customer_revenue_usd", "Customer revenue growth, period", "flow"),
                          (None, "Emissions to suppliers Q0 (tokens)", "Emissions, 90 days (tokens)", ""),
@@ -1241,7 +1294,14 @@ def tab_specs(bw) -> list:
                 valuation=((None, "Price — spot ($)", "Price", ""), (None, "Market cap ($)", "Market cap", ""),
                            (None, "FDV ($)", "FDV", ""), (None, "Circulating supply", "Circulating supply", ""),
                            (CP_TAB, "HOLDER VALUE YIELD", "Holder value yield", "buyback")),
-                traj=("a3_retire_vs_dilution", "Retired ÷ dilution", FMT_X, "RETIREMENT ÷ DILUTION (x)"),
+                key_traj=(bw.A3_KEY_TRAJECTORY_ID, "Retired ÷ emissions (x)", FMT_X,
+                          "RETIRED ÷ EMISSIONS (x) — the rank key: retired buyback (burned + held) ÷ emissions, unlocks "
+                          "excluded, each per covered day; where an emission rate in force is declared (Sky), that rate: "
+                          "its latest value in the latest quarter, its mean over an earlier quarter (the Trajectory "
+                          "tab's rule for a stock)"),
+                traj=("a3_retire_vs_dilution", "Retired ÷ (emis + unlocks)", FMT_X,
+                      "RETIREMENT ÷ DILUTION (x) — retired buyback ÷ (emissions + unlocks), each per covered day, not "
+                      "the rank key"),
                 drivers=((None, "Base for the implied buyback ($)", "Revenue base, last 90 days", ""),
                          ("@growth", "@revenue", "Revenue growth, selected period", "flow"),
                          (None, "Actual buyback Q0 ($)", "Actual buyback, last 90 days", "buyback"),
@@ -1257,7 +1317,12 @@ def tab_specs(bw) -> list:
                 valuation=((None, "Market cap ($)", "Market cap", ""), (M, "FDV ($)", "FDV", ""),
                            (None, "PERMANENT BURN YIELD", "Permanent burn yield", ""),
                            (M, "Fees ÷ FDV (annualised)", "Fees ÷ FDV, a year", "")),
-                traj=("a4_net_change", "Net supply change", FMT_TOK, "NET SUPPLY CHANGE (tokens)"),
+                key_traj=("a4_crossover", "Burn ÷ issuance (x)", FMT_X,
+                          "BURN ÷ ISSUANCE (x) — the rank key: burn ÷ issuance (burn ÷ pool release where the supply is "
+                          "pre-minted), each per covered day"),
+                traj=("a4_net_change", "Net supply change (tokens)", FMT_TOK,
+                      "NET SUPPLY CHANGE (tokens) — self-reported where published, else issuance (pool release where "
+                      "pre-minted) − burn, over the quarter; not the rank key"),
                 drivers=((None, "GROSS BURN Q0 (tokens)", "Gross burn, 90 days (tokens)", ""),
                          ("@growth", "@burn", "Burn growth, selected period", "flow"),
                          ("@issuance", "", "Issuance or release, 90 days", ""),
@@ -1271,7 +1336,19 @@ def tab_specs(bw) -> list:
     ]
 
 
-A3_TRAJECTORY_ID = "a3_retire_vs_dilution"
+A3_TRAJECTORY_ID = "a3_retire_vs_emissions"           # the A3 key's own trajectory row (P2e-2)
+# block (c)'s quarter labels (P2e-2: short, so a series' exact name fits a 35-character header beside them)
+TRAJ_LABELS = ("latest", "−1 qtr", "−2 qtrs", "−3 qtrs")
+KEY_CHANGE_HEADER = "Key: change vs previous quarter"
+
+
+def _traj_header(stem: str, label: str, short_label: str = "") -> str:
+    """'<series>, <label>' — never cut: a header that would pass MAX_HEADER takes the short label, else fails."""
+    h = f"{stem}, {label}"
+    if len(h) > MAX_HEADER and short_label:
+        h = f"{stem}, {short_label}"
+    assert len(h) <= MAX_HEADER, h
+    return h
 # the short header of every (e) column (≤35 characters); a column not listed gets an automatic short header
 E_SHORT = {
     "FDV RETIREMENT RATE (tokens)": "Retirement rate, % of FDV supply",
@@ -1426,7 +1503,8 @@ def short_header(audit_header: str) -> str:
 
 
 def _trajectory(A: Audit) -> dict:
-    """{key "tab|project|id": {"vals": [Q0, Q-1, Q-2, Q-3], "row", "break", "modelled", "trend", "t12m", "t12m_prev"}}"""
+    """{key "tab|project|id": {"vals": [Q0, Q-1, Q-2, Q-3], "raw" (each quarter as it reads, text included), "why" (the
+    row's "Why n/a"), "row", "break", "modelled", "trend", "t12m", "t12m_prev"}}"""
     import sanity                                          # noqa: PLC0415
     if "Trajectory" not in A.wb.sheetnames:
         return {}
@@ -1434,26 +1512,37 @@ def _trajectory(A: Audit) -> dict:
     hdr = {ws.cell(4, c).value: c for c in range(1, ws.max_column + 1)}
     qc = [hdr.get(q) for q in ("Q0", "Q-1", "Q-2", "Q-3")]
 
-    def num(r, c):
+    def raw(r, c):
         if c is None:
             return None
         try:
-            v = sanity.stated_number(A.X.value("Trajectory", r, c))
+            return A.X.value("Trajectory", r, c)
+        except Exception as e:  # noqa: BLE001 — an unevaluable quarter is no number, said in its reason
+            return f"#ERROR {type(e).__name__}"
+
+    def num(v):
+        try:
+            n = sanity.stated_number(v)
         except Exception:  # noqa: BLE001
-            v = None
-        return None if v is None else float(v)
+            n = None
+        return None if n is None else float(n)
+
+    def text(r, h):
+        return str(ws.cell(r, hdr[h]).value or "") if hdr.get(h) else ""
 
     out = {}
     for r in range(5, ws.max_row + 1):
         k = ws.cell(r, 2).value
         if isinstance(k, str) and k.count("|") == 2 and None not in qc:
-            out[k] = {"vals": [num(r, c) for c in qc], "row": r,
-                      "break": str(ws.cell(r, hdr.get("Series break (basis change)", 0) or 1).value or "")
-                      if hdr.get("Series break (basis change)") else "",
-                      "modelled": str(ws.cell(r, hdr.get("MODELLED quarters (excluded from any scoring)", 0)).value or "")
-                      if hdr.get("MODELLED quarters (excluded from any scoring)") else "",
-                      "trend": str(ws.cell(r, hdr.get("Trend", 0)).value or "") if hdr.get("Trend") else "",
-                      "t12m": num(r, hdr.get("T12M")), "t12m_prev": num(r, hdr.get("T12M a quarter earlier (Q-1..Q-4)"))}
+            qs = [raw(r, c) for c in qc]
+            out[k] = {"vals": [num(v) for v in qs], "row": r,
+                      # P2e-2: what a quarter the key cannot form reads (its own text), and the row's "Why n/a"
+                      "raw": ["" if v is None else str(v) for v in qs], "why": text(r, "Why n/a"),
+                      "break": text(r, "Series break (basis change)"),
+                      "modelled": text(r, "MODELLED quarters (excluded from any scoring)"),
+                      "trend": text(r, "Trend"),
+                      "t12m": num(raw(r, hdr.get("T12M"))),
+                      "t12m_prev": num(raw(r, hdr.get("T12M a quarter earlier (Q-1..Q-4)")))}
     return out
 
 
@@ -1464,9 +1553,13 @@ def _quarter_change(t: dict | None, asof: pd.Timestamp) -> tuple[str, object, st
     if not t:
         return "n/a", None, "No row on the Trajectory tab."
     vals, row = t["vals"], t["row"]
-    where = f"Working: audit file, Trajectory row {row}."
-    dates = [pd.Timestamp(d) for d in re.findall(r"\b(20\d\d-\d\d-\d\d)\b", t["break"])]
-    inside = [d for d in dates if asof - pd.Timedelta(days=180) < d <= asof]
+    # a series built here, not on the Trajectory tab (A1's key, P2e-2), says its own working and the span its two
+    # compared values read (a 1-year change reads a year before each quarter's end)
+    where = t.get("where") or f"Working: audit file, Trajectory row {row}."
+    if t.get("where") and (vals[0] is None or vals[1] is None):
+        return "n/a", None, f"No change: a quarter has no value (its cell says why).\n\n{where}"
+    dates =[pd.Timestamp(d) for d in re.findall(r"\b(20\d\d-\d\d-\d\d)\b", t["break"])]
+    inside = [d for d in dates if asof - pd.Timedelta(days=int(t.get("span_days") or 180)) < d <= asof]
     if inside:
         return "blocked", None, (f"Blocked: the two quarters compared straddle a series break (a change of measuring "
                                  f"point) on {', '.join(str(d.date()) for d in inside)} — a change across it is not a "
@@ -1481,7 +1574,7 @@ def _quarter_change(t: dict | None, asof: pd.Timestamp) -> tuple[str, object, st
     q0, q1 = vals[0], vals[1]
     if q0 is None or q1 is None or q1 == 0:
         return "n/a", None, ("No change: " + ("the quarter before is 0" if q1 == 0 else
-                                             "a quarter has no value on the Trajectory tab") + f".\n\n{where}")
+                                             "a quarter has no value (its cell says why)") + f".\n\n{where}")
     mod = [q for q in ("Q0", "Q-1") if re.search(rf"(?<![\w-]){re.escape(q)}(?![\d])", t["modelled"])]
     note = (f" MODELLED: {', '.join(mod)} is modelled, not measured — the change is shown, not scored." if mod else "")
     return ("modelled" if mod else "ok"), (q0 - q1) / abs(q1), (f"Latest quarter {q0:,.6g} against {q1:,.6g}.{note}"
@@ -1489,6 +1582,48 @@ def _quarter_change(t: dict | None, asof: pd.Timestamp) -> tuple[str, object, st
 
 
 FILL_MODELLED = PatternFill("solid", fgColor="FFE699")
+
+
+def _put_key_quarter(sh: Sheet, data: Data, row: int, col: Col, name: str, tab: str, tid: str, i: int,
+                     t: dict | None, key_cell, pdays: int) -> str:
+    """One quarter of THE KEY ITSELF (P2e-2, block (c)): its number from the key's own trajectory (the latest quarter IS
+    the key cell — the same formula, unshifted); a quarter the key cannot form reads the key's own code and reason —
+    the key cell's own where the quarter reads as the key cell does, never a substitute series, never 0 for unknown."""
+    q = ("Q0", "Q-1", "Q-2", "Q-3")[i]
+    span = "the latest quarter" if i == 0 else f"the quarter ending {i * pdays} days before the latest"
+    if t is None:
+        return put_code(sh, row, col, "n/a", f"No trajectory row for the key ({tid}) — the key's quarters are not "
+                                             "formed for this project.")
+    v = t["vals"][i]
+    a1 = tid == "@a1key"
+    if v is not None:
+        mod = bool(re.search(rf"(?<![\w-]){re.escape(q)}(?![\d])", t["modelled"]))
+        why = (f"{ARCHETYPE_KEYS[1][1]}\n\n{t['why'][i]}." if a1 else "")
+        return put_number(sh, data, row, col, name, f"keytraj|{tab}|{tid}|{i}", v, FILL_MODELLED if mod else None,
+                          "\n\n".join(x for x in (("MODELLED, not measured." if mod else ""), why,
+                                                  t["where"] if a1 else f"Working: audit file, Trajectory row "
+                                                  f"{t['row']}, {q}.") if x))
+    kv = key_cell.value
+    said = (t["why"][i] if a1 else plain(t["raw"][i])) or ""
+    said = "" if said.startswith("#") else said                # an Excel error (NA() past the history) says nothing
+    # the quarter reads as the key cell reads — the latest quarter; or an earlier one the Trajectory tab declares n/a in
+    # every quarter by the cell's own declaration (or, for A1, with the very same reason): the key's own code and reason
+    same = i == 0 or (a1 and said == t["why"][0]) or (
+        not a1 and t["raw"][i] == t["raw"][0] and str(t.get("why") or "").startswith("n/a in every quarter"))
+    if same and isinstance(kv, str) and kv in CODES:
+        reason = key_cell.comment.text if key_cell.comment is not None else ""
+        return put_code(sh, row, col, kv, (f"As the key cell reads, for {span}: " if i else "The key cell itself: ")
+                        + reason)
+    if a1:
+        return put_code(sh, row, col, "n/a", f"No measured key for {span}: {said}.\n\n{t['where']}")
+    head = (said if said not in ("", "n/a") else
+            "n/a (no figure: an input is not held, or is 0, in that quarter's window)" if said else
+            "no value (a window it reads has no counterpart this far back)")
+    why = plain(t.get("why") or "")
+    return put_code(sh, row, col, code_of(said) if said else "n/a",
+                    f"The key cannot be formed for {span} — its own formula, shifted, reads: {head}."
+                    + (f"\n\nThe Trajectory row says: {why}." if why else "")
+                    + f"\n\nWorking: audit file, Trajectory row {t['row']}, {q}.")
 
 
 def _write_arch_tab(sh: Sheet, ctx: Ctx, spec: TabSpec) -> None:
@@ -1559,17 +1694,29 @@ def _write_arch_tab(sh: Sheet, ctx: Ctx, spec: TabSpec) -> None:
             fmt = reader_format(A.wb[sheet].cell(5, c).number_format)
             add(Col(short, h, fmt, "(b) Valuation", f"{sheet}, {h}", 0, 12, audit=(sheet, h), family=fam),
                 ("other", (sheet, prefix)))
-    # (c) the last four quarters and the change
-    tid, stem, tfmt, tdef = spec.traj
-    labels = ("latest quarter", "1 quarter back", "2 quarters back", "3 quarters back")
-    for i, lab in enumerate(labels):
-        add(Col(f"{stem}, {lab}"[:MAX_HEADER], f"{tdef} for the 90 days ending {i * 90} days before the as-of date "
-                "(Trajectory tab, the same formula on each shifted quarter).", tfmt, "(c) Trajectory",
-                f"Trajectory tab, {tid}", 0, 11), ("traj", tid, i))
-    add(Col("Change vs previous quarter", "(latest quarter − the quarter before) ÷ |the quarter before|; ▲ up from "
-            "+1%, ► within ±1%, ▼ down. A change across a series break reads 'blocked'; a lumpy series is compared "
-            "on a trailing-12-month basis; a MODELLED quarter is said so.", FMT_PCT, "(c) Trajectory",
-            "computed from the Trajectory tab", 0, 11), ("trend", tid))
+    # (c) the last four quarters and the change — THE KEY ITSELF FIRST (P2e-2: the same formula and basis as the key
+    # cell, its latest quarter IS the key cell), then the tab's other series, each header saying what it is
+    pdays = int(config.TRAJECTORY["period_days"])
+    for is_key, (tid, stem, tfmt, tdef) in ((True, spec.key_traj), (False, spec.traj)):
+        a1 = tid == "@a1key"
+        for i, lab in enumerate(TRAJ_LABELS):
+            when = (f"measured at the settlement series' last date{f' minus {i * pdays} days' if i else ''} (the key's "
+                    "own function, its end moved back)" if a1 else
+                    f"for the {pdays} days ending {i * pdays} days before the as-of date (Trajectory tab, the same "
+                    "formula on each shifted quarter)")
+            add(Col(_traj_header(stem, lab), f"{tdef}, {when}." + (" A quarter the key cannot form reads the key's own "
+                                                                  "code and reason." if is_key else ""),
+                    tfmt, "(c) Trajectory", "computed from the stored trailing-365-day settlement volume and "
+                    "circulating supply" if a1 else f"Trajectory tab, {tid}", 0, 11),
+                ("keytraj" if is_key else "traj", tid, i))
+        kt = None if a1 or not is_key or how[2][1] is None else A.header(tab, how[2][1] + 1)
+        add(Col(KEY_CHANGE_HEADER if is_key else _traj_header(stem, "qtr change", "change"),
+                ("The rank key's " if is_key else f"{stem}: its ") + "quarter-on-quarter change: (latest quarter − the "
+                "quarter before) ÷ |the quarter before|; ▲ up from +1%, ► within ±1%, ▼ down. A change across a series "
+                "break reads 'blocked'; a lumpy series is compared on a trailing-12-month basis; a MODELLED quarter is "
+                "said so.", FMT_PCT, "(c) Trajectory", "computed from the key's quarters" if a1 else
+                f"computed from the Trajectory tab, {tid}", 0, 11,
+                audit=(tab, kt) if kt and kt.startswith(f"Trend — {tid} ") else None), ("trend", tid))
     # (d) drivers
     for d in spec.drivers:
         if d[0] == "@growth":
@@ -1639,11 +1786,17 @@ def _write_arch_tab(sh: Sheet, ctx: Ctx, spec: TabSpec) -> None:
             add(col, h)
     sh.cols = cols
     ws.cell(1, 1, spec.title).font = F_TITLE
-    ws.cell(2, 1, "Blocks: (a) rank key · (b) valuation · (c) the last four quarters · (d) drivers · (e) more, "
+    ws.cell(2, 1, "Blocks: (a) rank key · (b) valuation · (c) the last four quarters, the key first · (d) drivers · "
+            "(e) more, "
             "collapsed (click + above the columns). Growth columns follow the period chosen on Summary (B2). "
             "Hover a header for its definition, a cell for its source.").font = F_SUB
     write_headers(sh)
     traj = _trajectory(A)
+    a1traj = ({n: settlement_key_trajectory(ctx.groups, n, ctx.asof, pdays) for n in names}
+              if spec.key_traj and spec.key_traj[0] == "@a1key" else {})
+
+    def tget(name, tid):
+        return a1traj.get(name) if tid == "@a1key" else traj.get(f"{tab[:2]}|{name}|{tid}")
     keyvals = {}
     for n in names:
         if parked_reason(n):
@@ -1739,6 +1892,9 @@ def _write_arch_tab(sh: Sheet, ctx: Ctx, spec: TabSpec) -> None:
                           }.get(h[1], h[1])
                 _period_formula_cell(sh, ctx, row, col, name, metric, h[2], col.header.split(",")[0].lower())
                 period_cols.append(j + 1)
+            elif kind == "keytraj":
+                _put_key_quarter(sh, data, row, col, name, tab, h[1], h[2], tget(name, h[1]),
+                                 sh.ws.cell(row, _idx(sh, cols[2])), pdays)
             elif kind == "traj":
                 t = traj.get(f"{tab[:2]}|{name}|{h[1]}")
                 v = t["vals"][h[2]] if t else None
@@ -1750,11 +1906,14 @@ def _write_arch_tab(sh: Sheet, ctx: Ctx, spec: TabSpec) -> None:
                                ("MODELLED, not measured.\n\n" if mod else "")
                                + f"Working: audit file, Trajectory row {t['row']}.")
                 else:
-                    put_code(sh, row, col, "n/a", "No value for this quarter on the Trajectory tab"
-                             + (f" (row {t['row']}): " + plain(t["break"] or "a quarter not held") if t else
+                    said = plain(t["raw"][h[2]]) if t else ""
+                    said = "" if said.startswith("#") else said
+                    put_code(sh, row, col, code_of(said) if said else "n/a",
+                             "No value for this quarter on the Trajectory tab"
+                             + (f" (row {t['row']}): " + (said or plain(t["break"] or "a quarter not held")) if t else
                                 " (no row).") + ".")
             elif kind == "trend":
-                t = traj.get(f"{tab[:2]}|{name}|{h[1]}")
+                t = tget(name, h[1])
                 k2, v, why = _quarter_change(t, ctx.asof)
                 if k2 in ("ok", "modelled", "t12m"):
                     put_number(sh, data, row, col, name, f"qchg|{tab}|{h[1]}", v,
