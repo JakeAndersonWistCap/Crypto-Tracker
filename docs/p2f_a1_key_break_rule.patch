@@ -1,0 +1,183 @@
+diff --git a/reader.py b/reader.py
+index 7120748..7878fce 100644
+--- a/reader.py
++++ b/reader.py
+@@ -473,6 +473,15 @@ def price_change(s: pd.Series, days: int, asof: pd.Timestamp) -> tuple[float | N
+     return float(s.loc[end]) / p0 - 1, f"{then.date()} to {end.date()}"
+ 
+ 
++def a1_key_breaks(groups: dict, project: str, then, end) -> list:
++    """[(date, metric, before, after)] — every change of measuring point of the key's inputs (and the series they read,
++    trajectory.basis_breaks) after `then`, the day the earlier value is read, up to `end`. A declared handover the
++    machinery recognises is not in it. P2f-5b; a1_break_check.py prints the same list for a store."""
++    import trajectory                                      # noqa: PLC0415
++    since = pd.Timestamp(then) + pd.Timedelta(days=1)
++    return [b for b in trajectory.basis_breaks(project, A1_KEY_METRICS, groups, since) if b[0] <= pd.Timestamp(end)]
++
++
+ def settlement_key(groups: dict, project: str, back_days: int = 0) -> tuple[float | None, str]:
+     """A1's key (P1-6): (S365 ÷ circulating, now) ÷ (the same a year earlier) − 1. back_days > 0 (P2e-2, the key's
+     trajectory): the same 1-year change measured `back_days` before the series' last date — the one formula, its end
+@@ -494,6 +503,11 @@ def settlement_key(groups: dict, project: str, back_days: int = 0) -> tuple[floa
+     cn, ct = c.asof(end), c.asof(then)
+     if pd.isna(cn) or pd.isna(ct) or ct <= 0 or cn <= 0:
+         return None, f"no circulating supply on {then.date()} or {end.date()}"
++    brk = a1_key_breaks(groups, project, then, end)
++    if brk:                                                # P2f-5b, SPEC §1 rule 10: a change of measuring point
++        return None, ("blocked — a change of measuring point inside the key's one-year span ("
++                      f"{then.date()} to {end.date()}): " + "; ".join(
++                          f"{d.date()} {m}: {str(a)[:60]} -> {str(b)[:60]}" for d, m, a, b in brk))
+     b = float(s.loc[then]) / ct
+     if b == 0:
+         return None, f"settlement volume 0 on {then.date()}"
+@@ -1187,7 +1201,8 @@ def _summary_row(sh, ctx: Ctx, C, row, p, rank, key, parked: bool = False) -> No
+     elif ksrc is not None:
+         put_src(sh, data, row, C["key"], p, ksrc, f"No measured key: {kwhy}" if kwhy else "No measured key.")
+     else:
+-        put_code(sh, row, C["key"], "n/a", f"No measured {ARCHETYPE_KEYS.get(arch, ('key',))[0].lower()}"
++        put_code(sh, row, C["key"], code_of(kwhy) if arch == 1 else "n/a",
++                 f"No measured {ARCHETYPE_KEYS.get(arch, ('key',))[0].lower()}"
+                  + (f": {kwhy}" if kwhy else "") + ".")
+     if parked:                              # P2e-5: one code on a parked row — the key's code reads "parked" too
+         park_cell(sh, f"{C['key'].letter}{row}", name)
+@@ -1710,7 +1725,7 @@ def _put_key_quarter(sh: Sheet, data: Data, row: int, col: Col, name: str, tab:
+         return put_code(sh, row, col, kv, (f"As the key cell reads, for {span}: " if i else "The key cell itself: ")
+                         + reason)
+     if a1:
+-        return put_code(sh, row, col, "n/a", f"No measured key for {span}: {said}.\n\n{t['where']}")
++        return put_code(sh, row, col, code_of(said), f"No measured key for {span}: {said}.\n\n{t['where']}")
+     head = (said if said not in ("", "n/a") else
+             "n/a (no figure: an input is not held, or is 0, in that quarter's window)" if said else
+             "no value (a window it reads has no counterpart this far back)")
+@@ -1949,7 +1964,7 @@ def _write_arch_tab(sh: Sheet, ctx: Ctx, spec: TabSpec) -> None:
+                                f"Working: audit file, Data rows {name}|settlement_volume_365d_usd and "
+                                f"{name}|circulating_supply_used.")
+                 else:
+-                    put_code(sh, row, col, "n/a", f"No measured key: {why}.")
++                    put_code(sh, row, col, code_of(why), f"No measured key: {why}.")
+             elif kind == "inverse":
+                 src = A.at(tab, r_a, h[1])
+                 if src.num is not None and src.num != 0:
+diff --git a/tests/test_a1_key_break_rule.py b/tests/test_a1_key_break_rule.py
+new file mode 100644
+index 0000000..67aea21
+--- /dev/null
++++ b/tests/test_a1_key_break_rule.py
+@@ -0,0 +1,103 @@
++"""P2f-5b (PROPOSED, docs/p2f_a1_key_break_rule.patch — not merged): the A1 key cell blocks when a change of measuring
++point of either input falls inside its one-year span (SPEC §1 rule 10). Fakes, no build; and the committed dumps: the
++rule changes no cell of the fixture build (every A1 key is n/a there already), and a1_break_check.py says what
++reader.settlement_key does."""
++from __future__ import annotations
++
++import sys
++from pathlib import Path
++
++import pandas as pd
++import pytest
++
++ROOT = Path(__file__).resolve().parents[1]
++sys.path.insert(0, str(ROOT))
++sys.path.insert(0, str(ROOT / "tests"))
++
++import a1_break_check as abc  # noqa: E402
++import config  # noqa: E402
++import reader  # noqa: E402
++
++END = pd.Timestamp("2026-10-12")
++SETTLE, CIRC = "settlement_volume_365d_usd", "circulating_supply_used"
++
++
++def _groups(settle_src=None, circ_src=None, days: int = 365 + 30):
++    idx = pd.date_range(end=END, periods=days)
++
++    def frame(srcs, default, base):
++        src = [default] * len(idx)
++        for since, s in sorted((srcs or {}).items()):
++            src = [s if d >= pd.Timestamp(since) else x for d, x in zip(idx, src)]
++        return pd.DataFrame({"date": idx, "value": [base * (1 + 0.001) ** i for i in range(len(idx))], "source": src})
++    return {("X", SETTLE): frame(settle_src, "artemis:x", 1e9), ("X", CIRC): frame(circ_src, "chain:x", 1e6)}
++
++
++def test_a_change_inside_the_span_blocks_the_key_with_its_date_and_sources():
++    g = _groups(settle_src={"2026-06-01": "artemis:y"})
++    v, why = reader.settlement_key(g, "X")
++    assert v is None and why.startswith("blocked — ")
++    assert "2026-06-01" in why and "artemis:x" in why and "artemis:y" in why and "2025-10-12 to 2026-10-12" in why
++    assert reader.code_of(why) == "blocked"
++
++
++def test_a_circulating_change_inside_the_span_blocks_too():
++    v, why = reader.settlement_key(_groups(circ_src={"2026-03-15": "chain:z"}), "X")
++    assert v is None and "circulating_supply_used" in why and reader.code_of(why) == "blocked"
++
++
++def test_a_change_before_the_span_does_not_block_and_the_number_is_unchanged():
++    g = _groups(settle_src={"2025-09-20": "artemis:y"}, days=365 + 90)
++    v, why = reader.settlement_key(g, "X")
++    s, c = (g[(("X", m))].set_index("date")["value"] for m in (SETTLE, CIRC))
++    e, b = END, END - pd.Timedelta(days=365)
++    assert v == pytest.approx((s[e] / c[e]) / (s[b] / c[b]) - 1) and why == f"{b.date()} to {e.date()}"
++
++
++def test_the_day_the_earlier_value_is_read_is_not_in_the_span():
++    then = END - pd.Timedelta(days=365)
++    assert reader.settlement_key(_groups(settle_src={str(then.date()): "artemis:y"}), "X")[0] is not None
++    assert reader.settlement_key(_groups(settle_src={str((then + pd.Timedelta(days=1)).date()): "artemis:y"}), "X")[0] is None
++
++
++def test_each_quarter_is_judged_on_its_own_span():
++    g = _groups(settle_src={"2026-06-01": "artemis:y"}, days=365 + 3 * 90 + 10)
++    t = reader.settlement_key_trajectory(g, "X", pd.Timestamp("2026-10-13"), 90)
++    assert [v is None for v in t["vals"]] == [True, True, False, False]   # Q-2 ends 2026-04-15, before the change
++    assert t["why"][0].startswith("blocked — ") and "blocked" not in t["why"][2]
++
++
++def test_a_declared_handover_the_machinery_recognises_does_not_block(monkeypatch):
++    monkeypatch.setitem(config.PROJECT_BY_NAME, "X", {"name": "X", "series_handover": {
++        SETTLE: {"ordered_points": ("artemis:x", "artemis:y"), "why": "test", "composition_change": "none: same quantity"}}})
++    assert reader.settlement_key(_groups(settle_src={"2026-06-01": "artemis:y"}), "X")[0] is not None
++
++
++def test_a_key_that_cannot_form_says_its_own_reason_first():
++    g = _groups(settle_src={"2026-06-01": "artemis:y"}, days=200)         # one year of history is not held
++    v, why = reader.settlement_key(g, "X")
++    assert v is None and "two years of history" in why and not why.startswith("blocked")
++
++
++def test_the_script_and_the_rule_agree():
++    for kw in ({"settle_src": {"2026-06-01": "artemis:y"}}, {"circ_src": {"2026-03-15": "chain:z"}}, {}):
++        g = _groups(**kw)
++        blocked = reader.settlement_key(g, "X")[0] is None
++        assert (abc.check_project(g, "X")["verdict"] == "WOULD BLOCK") == blocked
++
++
++def test_the_fixture_build_changes_no_a1_key_cell_because_none_forms_there():
++    """On the committed dumps no A1 project holds two years of trailing-365-day settlement, so every A1 key is n/a
++    with its own reason before and after; the rule blocks nothing a fixture build shows."""
++    from real_dump import load, to_store
++    import tempfile
++    with tempfile.TemporaryDirectory() as d:
++        db = Path(d) / "metrics.db"
++        to_store(load("Ethereum"), db)
++        con = abc.open_readonly(str(db))
++        try:
++            groups, _asof = abc.read_groups(con)
++        finally:
++            con.close()
++    v, why = reader.settlement_key(groups, "Ethereum")
++    assert v is None and not why.startswith("blocked")
+diff --git a/tests/test_round_p2e2.py b/tests/test_round_p2e2.py
+index 36bd58e..e42c783 100644
+--- a/tests/test_round_p2e2.py
++++ b/tests/test_round_p2e2.py
+@@ -208,4 +208,8 @@ def test_a1_a_change_of_measuring_point_inside_the_span_blocks_the_change():
+     s.loc[s["date"] >= pd.Timestamp("2026-06-01"), "source"] = "artemis:y"   # a new measuring point, undeclared
+     t = reader.settlement_key_trajectory(g, "X", pd.Timestamp("2026-10-13"), 90)
+     assert "2026-06-01" in t["break"]
+-    assert reader._quarter_change(t, pd.Timestamp("2026-10-13"))[0] == "blocked"
++    # P2f-5b: the key itself blocks in a quarter whose one-year span holds the change (Q0, Q-1); the quarter ending
++    # before it (Q-2) is unaffected, and no change is formed from a quarter that holds no value
++    assert t["vals"][0] is None and t["vals"][1] is None and t["vals"][2] is not None
++    assert t["why"][0].startswith("blocked — ") and "2026-06-01" in t["why"][0]
++    assert reader._quarter_change(t, pd.Timestamp("2026-10-13"))[0] == "n/a"
