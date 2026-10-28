@@ -11984,8 +11984,9 @@ def chainlink_noncirc_restatement(db: str = "metrics.db"):
 
 def series_restatements(db: str = "metrics.db"):
     """P2c-5 (Jake 2026-10-28): EVERY DECLARED WALLET-SET RESTATEMENT (config.SERIES_RESTATEMENTS — Chainlink P2b-2;
-    Ether.fi noncirculating_holding_tokens P2c-5a; Maple P2c-5b and Pendle P2c-5c insider_stake_shares), one block each,
-    as chainlink_noncirc_restatement: NOT YET RESTATED / INCOMPLETE / RESTATED. Reads metrics.db only (look only)."""
+    Ether.fi noncirculating_holding_tokens P2c-5a; Maple P2c-5b, Pendle P2c-5c and Ether.fi P2d-5 insider_stake_shares),
+    one block each, as chainlink_noncirc_restatement: NOT YET RESTATED / INCOMPLETE / RESTATED. Reads metrics.db only
+    (look only)."""
     import config                                          # noqa: PLC0415
     rc = 0
     for (proj, metric) in config.SERIES_RESTATEMENTS:

@@ -31626,12 +31626,9 @@ for _m in ("holders_revenue_usd", "holders_revenue_usd_defillama"):
                "(the parent stopped reporting holders revenue; the services sum is the same scope)",
         "composition_change": "the same scope, summed from the service adapters — no common day to compare them on",
         "declared": "2026-10-21"}
-PROJECT_BY_NAME["Ether.fi"]["series_handover"]["insider_stake_shares"] = {
-    "nested_sums": True,
-    "why": "the issuer-side wallet set grew (E1, 2026-10-14: the two ether.fi Treasury wallets added) — each later sum "
-           "contains every earlier wallet; every wallet read 0 sETHFI",
-    "composition_change": "wallets added to the set, none removed",
-    "declared": "2026-10-21"}
+# Ether.fi insider_stake_shares: the static nested_sums declaration G11 C1 made here (the set grew 8 -> 10 on
+# 2026-10-14) is WITHDRAWN by P2d-5 (Jake's 2026-10-28 backfill): the series is restated on its current 13-wallet set
+# (config.SERIES_RESTATEMENTS, below), and the seam is declared only while earlier-set rows remain.
 PROJECT_BY_NAME["Aethir"].setdefault("series_handover", {})["price_usd_llama"] = {
     "ordered_points": ("defillama_coins:arbitrum:0xc87b37a581ec3257b734886d9d3a581f5a9d056c",
                        "defillama_coins:ethereum:0xbe0ed4138121ecfc5c0e56b40517da27e6c5226b"),
@@ -33656,7 +33653,7 @@ for (_n, _m), _b in SERIES_BREAK_NOTES.items():
 #     the timelockController 0x68d8D192…). sPENDLE 0x99999999… has code from block 24,237,456 (2026-01-15 03:34 UTC, read
 #     2026-10-28): the archive dates the series from 2026-01-16 (the first day whose first block has code), so earlier
 #     span days are before the series, not holes.
-# Ether.fi insider_stake_shares keeps its own static nested_sums declaration (G11 C1) — not part of P2c-5.
+# Ether.fi insider_stake_shares (not part of P2c-5) is restated the same way by P2d-5, below.
 def _current_sum_point(project: str, metric: str, chain: str = "ethereum") -> str:
     """The summed measuring point the chain reader writes for this series today: every contract serving the metric on
     the chain, in config order (compared by component SET, so the order never matters)."""
@@ -33718,13 +33715,64 @@ def restatement_seams(project: str, metric: str) -> tuple:
     return tuple(r.get("seams") or ((r["before"],) if r.get("before") else ()))
 
 
+# ===== P2d-5 (Jake's backfill 2026-10-28; SPEC §19 P2d-5): ETHER.FI insider_stake_shares RESTATED ON ITS CURRENT SET. =====
+# `archive_backfill.py --run --project Ether.fi …` left the series at 453 days: "REFUSED … the stored row before
+# 2026-10-24 (2026-10-23) was read from" the 10-wallet sum — the archive reads the CURRENT 13-wallet set and never
+# writes beside a row on another one (fetch.archive.neighbours_agree). The series is restated by the P2b-2 / P2c-5 route,
+# declared here as those are; G11 C1's static nested_sums declaration is withdrawn (above).
+# THE WALLET SETS (the config at every commit since W6 compared, 2026-10-28; the measuring point names contract keys,
+# so 4555346 -> e741944's checksum-case change of 0xe67a6CCc… is not a change of set):
+#   *  8 wallets from W6 (359cc1f, 2026-10-13): one insider_stake_<key> per Ethereum noncirc_* wallet then on file;
+#   * 10 from 2026-10-14 (b2578e1, E1: the Treasury wallets 0x5f0E7A42…, 0xD022d6bb… joined the non-circulating set and
+#     so the insider check);
+#   * 13 from 2026-10-26 (4555346, D2-4b: the filing's Q18 Foundation wallets 0xe67a6CCc…, 0xbe2cfe1a… and the ether.fi
+#     TREASURY 0x0c83EAe1… from Deployed.s.sol).
+# ADDITIONS ONLY (8 ⊂ 10 ⊂ 13), every component an sETHFI balanceOf at a block (fetch.archive.archivable: True), so a
+# restatement is possible: no series break instead. The definition is unchanged — a sum of sETHFI SHARES, the numerator
+# of the insider share of the stake, divided at read time by locked_tokens (sETHFI totalSupply, shares over shares).
+# The 13-set's first live day is 2026-10-26 (4555346, 18:03 UTC). The refusal named 2026-10-24 because that day was the
+# hole the archive tried and the stored row before it is checked first — it does not date the 13-set; any row on
+# another set dated on or after 10-26 on Jake's store is removed by the every-run pass (P2d-1) all the same.
+# THE ADDED WALLETS' HISTORY (read 2026-10-28, Claude Code): balanceOf on sETHFI 0x86B5780b… is 0 for all three at
+# Ethereum block 26,292,639 (ethereum-rpc.publicnode.com), and Blockscout lists NO sETHFI transfer in or out of any of
+# the 13 wallets ever (eth.blockscout.com /api/v2/addresses/<w>/token-transfers?token=0x86B5…; a holder with transfers
+# checked as the control) — so 0 shares on every day of the span, before and after: the restated values are the stored
+# ones (0), the Insider-share cells stay NOT WIRED. Not an archive re-read: a projection from the transfer record.
+_EF_IS_SEAMS = ("2026-10-14", "2026-10-26")
+SERIES_RESTATEMENTS[("Ether.fi", "insider_stake_shares")] = {
+    "id": "P2d-5",
+    "repeat_id": "P2d-5b",
+    "point": _current_sum_point("Ether.fi", "insider_stake_shares"),
+    "point_label": "the 13 issuer-side wallets' sETHFI shares (12 non-circulating + the ether.fi TREASURY)",
+    "superseded_label": "an earlier wallet set (8 wallets to 2026-10-13, 10 from 2026-10-14)",
+    "before": _EF_IS_SEAMS[-1],
+    "seams": _EF_IS_SEAMS,
+    "series_from": None,
+    "pending_handover": _pending_nested(
+        "the issuer-side wallet set grew: 8 wallets to 2026-10-13, 10 from 2026-10-14 (E1: Treasury 0x5f0E7A42…, "
+        "0xD022d6bb…), 13 from 2026-10-26 (D2-4b: Q18 Foundation 0xe67a6CCc…, 0xbe2cfe1a…; TREASURY 0x0c83EAe1…) — "
+        "each set contains the last",
+        "wallets ADDED to the set, none removed — a change of composition at each seam, not a flow", _EF_IS_SEAMS),
+    "refill": "python archive_backfill.py --run --project Ether.fi",
+    "decided": "Jake 2026-10-28 (P2d-5): history restated on the CURRENT 13-wallet set; the break only while "
+               "earlier-set rows remain",
+}
+RUN_CLEANUPS = RUN_CLEANUPS + (
+    {"id": "P2d-5", "metric": "insider_stake_shares", "once": True, "superseded_by": "restatement",
+     "projects": ("Ether.fi",),
+     "why": "an earlier wallet set (8 wallets to 2026-10-13, 10 from 2026-10-14), restated on the 13 issuer-side wallets "
+            "(SPEC P2d-5): every day before 2026-10-26 is re-read at its first block by `python archive_backfill.py "
+            "--run --project Ether.fi`; a day not yet re-read is a hole"},)
+
+
 # ===== P2d-1 (Jake 2026-10-28 run): THE SECOND, IDEMPOTENT RESTATEMENT PASS. The once-only clean-ups remove the rows
 # dated before the current set's first day; a row on another set ON OR AFTER that day (Jake's Chainlink 2026-10-26) was
 # left, and the archive refuses to write beside it. This pass runs on EVERY run and removes any row of the series on
 # another set, whatever its date (config.restatement_superseded) — each logged; a store with none removes nothing.
 def restatement_repeat_id(r: dict) -> str:
-    """The every-run pass's clean-up id for a declared restatement (P2b-2 -> P2b-2b, P2c-5a -> P2c-5a2)."""
-    return f"{r['id']}{'b' if r['id'] == 'P2b-2' else '2'}"
+    """The every-run pass's clean-up id for a declared restatement (P2b-2 -> P2b-2b, P2c-5a -> P2c-5a2; a declared
+    `repeat_id` where the entry names one: P2d-5 -> P2d-5b)."""
+    return r.get("repeat_id") or f"{r['id']}{'b' if r['id'] == 'P2b-2' else '2'}"
 
 
 RUN_CLEANUPS = RUN_CLEANUPS + tuple(
