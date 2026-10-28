@@ -33131,6 +33131,35 @@ CREDIBILITY["Pendle"]["in_revenue"] = _c_in_py(
     fmt=_C_USD)
 
 
+# P2c-6 (Jake 2026-10-28; SPEC P2c-6): A Δ COMPARISON THAT CROSSES A DECLARED COMPOSITION-CHANGE STITCH IS MADE ON ONE
+# BASIS, where a series of that one basis holds BOTH windows. Pendle's Fees Δ6m / Δ9m read "n/a — SERIES BREAK" on
+# Jake's store: the D4-5 handover (DefiLlama -> Pendle's epoch spread -> DefiLlama for the epoch in progress) steps the
+# headline fees series at Pendle's first stored epoch (2026-04-21 there), inside Q-2 / Q-3. DefiLlama's pendle-v2 daily
+# fees are NOT replaced by the epoch figure: the fetch stores them under fees_usd_defillama for every day DefiLlama
+# serves (fetch/llama.py defillama_metric_as; fetch.base.window keeps the whole history, DEFILLAMA_REREAD_METRICS), and
+# the epoch-primary fees_usd is a read-time view over them (build_workbook._epoch_primary_views). So the Δ columns
+# (build_workbook._trajectory) compare `metric` — that one series, both windows — through the same rules as any flow Δ
+# (per-covered-day rates, rule 9 same span, BLOCKED under a week); every row of both windows must be of `basis`
+# (trajectory.basis_of), and a window with no row of it is "n/a" with the reason, never a number. Only where the
+# comparison crosses such a stitch: otherwise the Δ is on the headline series as before. The headline (Fees Q0) and
+# every definition are unchanged; the cell comment names the source and says the basis differs from the headline's.
+COMPARISON_BASIS = {
+    ("Pendle", "fees_usd"): {
+        "metric": "fees_usd_defillama", "basis": "defillama",
+        "source": "DefiLlama pendle-v2 daily fees",
+        "headline_basis": "Pendle's own per-epoch fees (pool fee + realized YT fee + PT-looping fee), spread evenly "
+                          "over each complete epoch (D4-5)",
+        "reason": "P2c-6 (Jake 2026-10-28): the D4-5 handover steps the headline fees series at Pendle's first stored "
+                  "epoch; DefiLlama's daily fees are stored for every day, so both windows are compared on that one "
+                  "basis"},
+}
+
+
+def comparison_basis(project: str, metric: str) -> dict | None:
+    """P2c-6: the declared one-basis series a Δ comparison crossing a declared composition-change stitch reads, or None."""
+    return COMPARISON_BASIS.get((project, metric))
+
+
 # D5-3c (Jake's D5 item 3c, traced on chain 2026-10-27; SPEC §19 D5-3c): MAPLE'S SSF "NET OUTFLOW" IS NOT AN OUTFLOW.
 # H(month start) − H(next month start) + the month's buyback assumed every buyback entered the SSF chart: before
 # 2025-10-29 the chart IS Safe 0x58BE00490D6a5D298d61f24226d2397983Ee39A1 (76,124,987.59, funded once) and no buyback

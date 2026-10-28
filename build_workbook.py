@@ -9302,6 +9302,13 @@ def _write_table(ws, R: Refs, projects: list[dict], specs: list[tuple], data_by_
                     c.number_format = _suffix_fmt(c.number_format, suffix)
                 prior = c.comment.text if c.comment else ""
                 c.comment = Comment((prior + "\n\n" if prior else "") + note, "token_metrics")
+            # P2c-6: a note the column computes per project (a Δ compared on a declared one basis names its source),
+            # opening the comment
+            nf = meta.get("note_fn")
+            cnote = nf(p) if nf else ""
+            if cnote:
+                prior = c.comment.text if c.comment else ""
+                c.comment = Comment(cnote + ("\n\n" + prior if prior else ""), "token_metrics")
         fc = ws.cell(row=r, column=len(specs) + 1, value=_flags(data_by_key, p["name"], flag_metrics))
         fc.font = Font(name=FONT, size=9, color="C00000")
         r += 1
@@ -9347,10 +9354,111 @@ def _stitch_breaks(name: str, metric: str) -> list[tuple[str, str]]:
     return out
 
 
+def _comparison_lo(b: str) -> str | None:
+    """The first day a Δ comparison against window `b` reads (m1: twice the short window back from Q0's end)."""
+    lo = _WINDOWS.get(b, (None,))[0] if b in _WINDOWS else None
+    end = _WINDOWS.get("q0", (None, None))[1]
+    if b == "m1" and end:
+        lo = str((pd.Timestamp(end) - pd.Timedelta(days=2 * GLOBALS["short_days"])).date())
+    return lo
+
+
+def _in_comparison(day: str, b: str) -> bool:
+    lo, end = _comparison_lo(b), _WINDOWS.get("q0", (None, None))[1]
+    return bool(lo and end and lo <= day <= end)
+
+
+def _window_span(w: str) -> tuple[pd.Timestamp, pd.Timestamp] | None:
+    """(first, last) day of a Δ window as aggregate() sums it — (start, end]: now / m1 the short windows ending at Q0's
+    end, else _WINDOWS."""
+    end = _WINDOWS.get("q0", (None, None))[1]
+    if w in ("now", "m1") and end:
+        k, e = int(GLOBALS["short_days"]), pd.Timestamp(end)
+        e = e - pd.Timedelta(days=k) if w == "m1" else e
+        return e - pd.Timedelta(days=k - 1), e
+    if w in _WINDOWS:
+        return pd.Timestamp(_WINDOWS[w][0]) + pd.Timedelta(days=1), pd.Timestamp(_WINDOWS[w][1])
+    return None
+
+
+def _every_stitch(name: str, metric: str) -> list[tuple[str, str]]:
+    """[(day, why)] — EVERY day this build's series steps from one leg of a declared composition-change handover to
+    another (_stitch_breaks names the first only; Pendle's D4-5 handover steps again at the epoch in progress, whose
+    DefiLlama days sit inside Q0 and the 'now' window). Read only for a series declaring a one-basis comparison
+    (config.COMPARISON_BASIS, P2c-6)."""
+    out = []
+    for m in dict.fromkeys((metric, metric.replace("_usd", "_tokens"))):
+        decl = config.declared_handover(name, m) or {}
+        cc = str(decl.get("composition_change", "none")).strip().lower()
+        g = _LAST_GROUPS.get((name, m))
+        if not decl or cc.startswith("none") or len(tuple(decl.get("ordered_points") or ())) < 2 or g is None \
+                or g.empty:
+            continue
+        s = (g.assign(date=pd.to_datetime(g["date"]).dt.normalize()).sort_values("date")
+             .drop_duplicates("date", keep="last"))
+        legs = s["source"].astype(str).map(lambda x: trajectory.basis_of(m, x)).tolist()
+        for day, prev, now in zip(s["date"].iloc[1:], legs, legs[1:]):
+            if now != prev:
+                out.append((str(day.date()), f"{m}: {decl['composition_change']}"))
+    return out
+
+
+def _one_basis_comparison(name: str, mm: str, a: str, b: str) -> tuple[dict, str, str, str] | None:
+    """P2c-6 (config.COMPARISON_BASIS): (declaration, stitch day, stitch why, problem) where the Δ of `mm` between windows
+    a and b crosses a DECLARED composition-change stitch (_every_stitch) and the series declares a one-basis
+    comparison; problem is "" when the declared series holds rows of its one basis in both windows, else the reason it
+    cannot be formed. None where no declared stitch is inside the comparison, or no comparison basis is declared, or a
+    source reclassification of `mm` is inside it too (that stays "n/a — SERIES BREAK")."""
+    cb = config.comparison_basis(name, mm)
+    if not cb or _SHIFT["k"]:
+        return None
+    if any(_in_comparison(day, b) for day, _w in config.SOURCE_RECLASSIFICATIONS.get((name, mm), ())):
+        return None
+    hit = next(((day, why) for day, why in _every_stitch(name, mm) if _in_comparison(day, b)), None)
+    if hit is None:
+        return None
+    cm, problems = cb["metric"], []
+    for day, _why in (*config.SOURCE_RECLASSIFICATIONS.get((name, cm), ()), *_stitch_breaks(name, cm)):
+        if _in_comparison(day, b):
+            problems.append(f"{cm} itself has a SERIES BREAK {day} inside this comparison")
+    g = _LAST_GROUPS.get((name, cm))
+    for w in (a, b):
+        span = _window_span(w)
+        rows = None
+        if g is not None and not g.empty and span:
+            d = pd.to_datetime(g["date"]).dt.normalize()
+            rows = g[(d >= span[0]) & (d <= span[1])]
+        if rows is None or rows.empty:
+            problems.append(f"no {cm} row in {w.upper()}")
+            continue
+        bases = sorted({trajectory.basis_of(cm, s) for s in rows["source"].astype(str).unique()})
+        if bases != [cb["basis"]]:
+            problems.append(f"{cm} in {w.upper()} is not one basis ({', '.join(bases)}; declared {cb['basis']})")
+    return cb, hit[0], hit[1], "; ".join(problems)
+
+
+def _one_basis_note(name: str, mm: str, a: str, b: str) -> str:
+    """The cell comment of a Δ compared on a declared one basis (P2c-6): it names the source and says the basis differs
+    from the headline's; where the comparison cannot be formed, why. '' otherwise."""
+    got = _one_basis_comparison(name, mm, a, b)
+    if got is None:
+        return ""
+    cb, day, _why, problem = got
+    if problem:
+        return (f"Not compared: the headline {mm} series steps at the declared handover ({day}, inside this comparison) "
+                f"and the one-basis comparison on {cb['source']} ({cb['metric']}) cannot be formed — {problem}. "
+                f"{cb['reason']}.")
+    return (f"Compared on ONE basis: {cb['source']}, both windows ({cb['metric']}; {a.upper()} vs {b.upper()}, per "
+            f"covered day). This basis differs from the headline {mm} figure ({cb['headline_basis']}), whose series "
+            f"steps at the declared handover on {day}, inside this comparison. {cb['reason']}.")
+
+
 def _trajectory(R: Refs, metric: str, label: str, fmt=FMT_PCT):
     """Δ30d, Δ3m, Δ6m, Δ9m columns for a metric (now vs prior 30d; Q0 vs Q1/Q2/Q3).
 
-    `metric` may be a function of the project name (A4's burn is per project)."""
+    `metric` may be a function of the project name (A4's burn is per project). P2c-6: a comparison that crosses a
+    declared composition-change stitch is made on the series' declared one basis (config.COMPARISON_BASIS) where that
+    series holds both windows — the same per-covered-day rates and coverage rules — and the cell comment says so."""
     m = metric if callable(metric) else (lambda _n: metric)  # noqa: E731
 
     def d(a: str, b: str):
@@ -9358,26 +9466,37 @@ def _trajectory(R: Refs, metric: str, label: str, fmt=FMT_PCT):
         # (2026-09-29): a Q0 the series covered 42 days of against a full Q1 read as a -53% fall.
         def cell(r, p):
             mm = m(p["name"])
+            # P2c-6: ONE BASIS ACROSS A DECLARED STITCH (Pendle's fees: DefiLlama pendle-v2 daily, both windows)
+            one = _one_basis_comparison(p["name"], mm, a, b)
+            if one is not None:
+                cb, day, why, problem = one
+                if problem:
+                    # the reason first; the handover's own wording is on the comment
+                    return (f"n/a — SERIES BREAK {day} (declared handover of {why.split(':')[0]}, inside this "
+                            f"comparison); not formed on {cb['source']}: {problem}")[:250]
+                cm = cb["metric"]
+                return _coverage_guard(R, r, [(f"{a.upper()} {cb['source']}", cm, a),
+                                              (f"{b.upper()} {cb['source']}", cm, b)],
+                                       f"{_flow_rate(R, r, cm, a)}/{_flow_rate(R, r, cm, b)}-1")
             # A DECLARED RECLASSIFICATION INSIDE THE COMPARISON IS NOT A CHANGE (fix round 2, R4: Plume's chain TVL
             # Δ9m read −96% across DefiLlama's moves of RWA out of Plume Mainnet's chain TVL). The trajectory already
             # marks the SERIES BREAK; the Δ columns now say it instead of a number
             for day, why in (*config.SOURCE_RECLASSIFICATIONS.get((p["name"], mm), ()), *_stitch_breaks(p["name"], mm)):
-                lo = _WINDOWS.get(b, (None,))[0] if b in _WINDOWS else None
-                end = _WINDOWS.get("q0", (None, None))[1]
-                if b == "m1" and end:
-                    lo = str((pd.Timestamp(end) - pd.Timedelta(days=2 * GLOBALS["short_days"])).date())
-                if lo and end and lo <= day <= end:
+                if _in_comparison(day, b):
                     return f"n/a — SERIES BREAK {day}: {why[:120]} (inside this comparison)"
             if (config.METRICS.get(mm) or {}).get("kind") != "flow":
                 return delta(R.D(r, mm, a), R.D(r, mm, b))
             return _coverage_guard(R, r, [(a.upper(), mm, a), (b.upper(), mm, b)],
                                    f"{_flow_rate(R, r, mm, a)}/{_flow_rate(R, r, mm, b)}-1")
         return cell
+
+    def note(a: str, b: str):
+        return lambda p: _one_basis_note(p["name"], m(p["name"]), a, b)
     return [
-        (f"{label} Δ30d", d("now", "m1"), fmt, "calc"),
-        (f"{label} Δ3m", d("q0", "q1"), fmt, "calc"),
-        (f"{label} Δ6m", d("q0", "q2"), fmt, "calc"),
-        (f"{label} Δ9m", d("q0", "q3"), fmt, "calc"),
+        (f"{label} Δ30d", d("now", "m1"), fmt, "calc", False, {"note_fn": note("now", "m1")}),
+        (f"{label} Δ3m", d("q0", "q1"), fmt, "calc", False, {"note_fn": note("q0", "q1")}),
+        (f"{label} Δ6m", d("q0", "q2"), fmt, "calc", False, {"note_fn": note("q0", "q2")}),
+        (f"{label} Δ9m", d("q0", "q3"), fmt, "calc", False, {"note_fn": note("q0", "q3")}),
     ]
 
 
