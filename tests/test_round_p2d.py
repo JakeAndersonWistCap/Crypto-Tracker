@@ -122,11 +122,12 @@ def test_jakes_store_ends_restated_after_the_cleanup_and_the_backfill(tmp_path, 
 
 
 @pytest.mark.parametrize("proj", ["Chainlink", "Ether.fi", "Maple", "Uniswap"])
-def test_an_on_chain_route_takes_no_coingecko_once_it_has_an_on_chain_day(proj):
+def test_an_on_chain_route_takes_no_coingecko_once_it_has_an_on_chain_day(proj, monkeypatch):
     """P2d-3b (Jake 2026-10-28): on-chain only, no handover; CoinGecko only where the project has no on-chain figure."""
     import build_workbook as bw
     import credibility
     import measuring_guard as mg
+    monkeypatch.setattr(bw, "_SCOPE", list(bw.PROJECTS))   # never depend on another test's build(only=...) scope
     p = config.PROJECT_BY_NAME[proj]
     assert bw.chosen_circulating_metric(p) == "circulating_supply_onchain"
     assert config.declared_handover(proj, "circulating_supply_used") is None
