@@ -732,7 +732,8 @@ def _named_day_ranges(days, most: int = 6) -> str:
 
 def _series_restatement_views(groups: dict, asof) -> None:
     """A DECLARED RESTATEMENT (config.SERIES_RESTATEMENTS, P2b-2 — Chainlink's non-circulating sum on the 33-wallet set;
-    P2c-5 — Ether.fi's on the 12-wallet set, Maple's and Pendle's insider stake shares on the 9- and 6-wallet sets):
+    P2c-5 — Ether.fi's on the 12-wallet set, Maple's and Pendle's insider stake shares on the 9- and 6-wallet sets;
+    P2d-5 — Ether.fi's insider stake shares on the 13-wallet set):
     the history before the current point's first day is re-read on that point (the clean-up, then the archive). Nothing
     in the series is changed here; what the store holds decides what is said:
       * rows on a superseded point remain (the clean-up has not run): the pending handover is declared for this build

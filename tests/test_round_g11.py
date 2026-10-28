@@ -220,7 +220,11 @@ def test_c1_declared_points_are_measuring_points_and_block_tags_are_not_points()
     assert bw.handover_refusal("Ethereum", "total_supply_protocol", list(spans), spans) is None
 
 
-def test_c1_a_grown_wallet_set_is_one_series():
+def test_c1_a_grown_wallet_set_is_one_series(monkeypatch):
+    # P2d-5: the static declaration is withdrawn — the same nested_sums seam is declared for a build only while
+    # earlier-set rows remain (build_workbook._series_restatement_views installs it, as here)
+    monkeypatch.setitem(config.RESTATEMENT_ACTIVE, ("Ether.fi", "insider_stake_shares"),
+                        config.restatement("Ether.fi", "insider_stake_shares")["pending_handover"])
     a, b = "chain:sum(ethereum:w1+ethereum:w2)", "chain:sum(ethereum:w1+ethereum:w2+ethereum:w3)"
     spans = {a: (pd.Timestamp("2026-10-01"), pd.Timestamp("2026-10-13")),
              b: (pd.Timestamp("2026-10-14"), pd.Timestamp("2026-10-20"))}

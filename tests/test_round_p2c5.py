@@ -88,8 +88,9 @@ def test_each_series_is_declared_on_its_current_set_and_the_sets_only_grew():
         assert c[0]["projects"] == (proj,) and c[0]["metric"] == m
     assert config.restatement_seams(EF, NC) == ("2026-10-14", "2026-10-26")
     assert config.restatement(PD, IS)["series_from"] == "2026-01-16"
-    # Ether.fi's insider series keeps its own static declaration; it is not restated here
-    assert config.restatement(EF, IS) is None and config.declared_handover(EF, IS)["nested_sums"]
+    # Ether.fi's insider series is not part of P2c-5: it is restated by P2d-5 (tests/test_round_p2d5.py), with no
+    # static declaration left
+    assert config.restatement(EF, IS)["id"] == "P2d-5" and config.declared_handover(EF, IS) is None
 
 
 def test_which_rows_are_superseded():
@@ -103,7 +104,7 @@ def test_which_rows_are_superseded():
     assert not config.restatement_superseded(MP, IS, "2026-10-25", P["mp9"] + ":archive")
     assert config.restatement_superseded(PD, IS, "2026-03-01", P["pd3"] + ":archive")
     assert not config.restatement_superseded(PD, IS, "2026-03-01", P["pd6"] + ":archive")
-    assert not config.restatement_superseded(EF, IS, "2026-10-20", P["ef8"])     # not declared
+    assert not config.restatement_superseded("Sky", IS, "2026-10-20", P["ef8"])   # not declared
 
 
 # ============================================================================================ the clean-up
@@ -123,7 +124,7 @@ def test_the_cleanups_remove_every_superseded_row_once_and_log_each(tmp_path, mo
         _g(MP, IS, ["2026-10-26"], 0.0, P["mp9"]),
         _g(PD, IS, ["2026-10-25"], 0.0, P["pd3"]),
         _g(PD, IS, ["2026-10-26"], 0.0, P["pd6"]),
-        _g(EF, IS, ["2026-10-20"], 0.0, P["ef10"].replace("noncirc_", "insider_stake_noncirc_")),   # untouched
+        _g(EF, IS, ["2026-10-20"], 0.0, P["ef10"].replace("noncirc_", "insider_stake_noncirc_")),   # P2d-5's, not run
     ]))
     lines = tm.apply_run_cleanups(st, "run1", logging.getLogger("t"))
 
