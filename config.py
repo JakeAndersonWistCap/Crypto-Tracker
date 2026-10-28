@@ -33735,27 +33735,12 @@ RUN_CLEANUPS = RUN_CLEANUPS + tuple(
             f"{_r['point_label']} (SPEC P2d-1)"}
     for (_n, _m), _r in SERIES_RESTATEMENTS.items())
 
-# ===== P2d-3 (Jake 2026-10-28): CHAINLINK'S CIRCULATING USED — ONE BASIS AT A TIME. CoinGecko's circulating stood in on
-# every day the on-chain figure could not form, so the 453 days CLEAN-UP P2b-2 emptied read CoinGecko between on-chain
-# days (live guard BASIS 'circulating_supply' beside 'circulating_supply_onchain'). CoinGecko now stands in only BEFORE
-# the first on-chain day; after it a day without the on-chain figure is a HOLE (SPEC §1 rule 9), and the seam is a
-# declared handover with an overlap check, as Hyperliquid's (G11 B8).
-CIRCULATING_ONCHAIN["Chainlink"]["coingecko_only_before_own"] = (
-    "CoinGecko's circulating stands in only before Chainlink's first on-chain day; after it a missing on-chain day is a "
-    "hole, never CoinGecko (SPEC P2d-3)")
-PROJECT_BY_NAME["Chainlink"].setdefault("series_handover", {})["circulating_supply_used"] = {
-    "ordered_points": ("derived:circulating_used[circulating_supply]",
-                       "derived:circulating_used[circulating_supply_onchain]"),
-    "why": "CoinGecko's circulating before Chainlink's first on-chain day (total − the non-circulating wallets); the "
-           "on-chain figure from it — never CoinGecko inside the on-chain span (P2d-3)",
-    "composition_change": "CoinGecko's count vs the on-chain total less the declared non-circulating wallets: a "
-                          "different basis — see the overlap check",
-    "declared": "2026-10-28",
-    "overlap": {"a": "circulating_supply", "b": "circulating_supply_onchain", "tolerance_pct": 2.0, "min_days": 3,
-                "if_not_passed": "a CHANGE OF BASIS at the seam (CoinGecko counts the non-circulating wallets "
-                                 "differently), not a flow — a window spanning it is a series break"}}
-
-
-def coingecko_only_before_own(project_name: str) -> str:
-    """Why CoinGecko's circulating may stand in only before the project's first own day, else '' (P2d-3)."""
-    return str((CIRCULATING_ONCHAIN.get(project_name) or {}).get("coingecko_only_before_own") or "")
+# ===== P2d-3b (Jake 2026-10-28): ON-CHAIN CIRCULATING ROUTES TAKE NO COINGECKO ONCE THE ON-CHAIN FIGURE EXISTS. CoinGecko's
+# circulating stood in on every day a project's on-chain figure could not form, so a series mixed the two (live guard
+# BASIS on Chainlink and Ether.fi: 'circulating_supply' beside 'circulating_supply_onchain'). For every project whose
+# circulating route is circulating_supply_onchain, a day without the on-chain figure (past the 3-day carry-forward) is a
+# HOLE, before or inside the on-chain span; CoinGecko is used only where the project has no on-chain figure at all. No
+# handover is declared (P2d-3's Chainlink handover is withdrawn). First-party routes are not on-chain and are unchanged.
+def circulating_onchain_only(project_name: str, chosen_metric: str) -> bool:
+    """Whether CoinGecko may NOT stand in for a day without the project's on-chain circulating (P2d-3b)."""
+    return chosen_metric == "circulating_supply_onchain"

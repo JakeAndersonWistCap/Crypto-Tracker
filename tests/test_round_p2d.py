@@ -121,32 +121,36 @@ def test_jakes_store_ends_restated_after_the_cleanup_and_the_backfill(tmp_path, 
     assert "-> RESTATED: every day" in out and "BLOCKED" not in out and "!!" not in out
 
 
-def test_chainlink_circulating_used_is_coingecko_only_before_the_first_on_chain_day():
+@pytest.mark.parametrize("proj", ["Chainlink", "Ether.fi", "Maple", "Uniswap"])
+def test_an_on_chain_route_takes_no_coingecko_once_it_has_an_on_chain_day(proj):
+    """P2d-3b (Jake 2026-10-28): on-chain only, no handover; CoinGecko only where the project has no on-chain figure."""
     import build_workbook as bw
+    import credibility
     import measuring_guard as mg
-    assert config.coingecko_only_before_own("Chainlink")
-    days = pd.date_range("2026-10-20", "2026-10-28", freq="D")
+    p = config.PROJECT_BY_NAME[proj]
+    assert bw.chosen_circulating_metric(p) == "circulating_supply_onchain"
+    assert config.declared_handover(proj, "circulating_supply_used") is None
+    lim = credibility.now_max_age(proj, "circulating_supply_onchain")
+    days = pd.date_range("2026-10-01", "2026-10-28", freq="D")
+    gap_end = pd.Timestamp("2026-10-12") + pd.Timedelta(days=lim + 2)
+    on = [d for d in days if d == pd.Timestamp("2026-10-12") or d > gap_end]
 
     def g(metric, ds, v, src):
-        return pd.DataFrame({"date": ds, "project": CL, "metric": metric, "value": float(v), "tier": 1,
+        return pd.DataFrame({"date": ds, "project": proj, "metric": metric, "value": float(v), "tier": 1,
                              "source": src})
-    import credibility
-    lim = credibility.now_max_age(CL, "circulating_supply_onchain")         # the carry-forward age limit (days)
-    days = pd.date_range("2026-10-10", "2026-10-28", freq="D")
-    gap_end = pd.Timestamp("2026-10-12") + pd.Timedelta(days=lim + 2)       # a gap longer than the carry-forward
-    on = [d for d in days if d == pd.Timestamp("2026-10-12") or d > gap_end]
-    groups = {(CL, "price_usd"): g("price_usd", days, 15.0, "coingecko"),
-              (CL, "circulating_supply"): g("circulating_supply", days, 680e6, "coingecko"),
-              (CL, "circulating_supply_onchain"): g("circulating_supply_onchain", on, 700e6, "derived:onchain")}
+    base = {(proj, "price_usd"): g("price_usd", days, 15.0, "coingecko"),
+            (proj, "circulating_supply"): g("circulating_supply", days, 680e6, "coingecko")}
+    groups = {**base, (proj, "circulating_supply_onchain"): g("circulating_supply_onchain", on, 700e6, "x")}
     bw._market_cap_views(groups)
-    u = groups[(CL, "circulating_supply_used")].set_index("date")
-    # CoinGecko before the first on-chain day; the on-chain figure after (carried at most `lim` days); past the
-    # carry-forward a day without the on-chain figure is a HOLE — never CoinGecko inside the on-chain span
-    assert set(u.loc[u.index < "2026-10-12", "source"]) == {"derived:circulating_used[circulating_supply]"}
-    assert set(u.loc[u.index >= "2026-10-12", "source"]) == {"derived:circulating_used[circulating_supply_onchain]"}
-    assert gap_end not in u.index
-    # the guard: the two bases are a declared handover, not a BASIS violation
-    import json
-    base = json.loads((ROOT / "tests" / "fixtures" / "guard_baseline.json").read_text(encoding="utf-8"))
-    assert mg.live_basis_violations({"Chainlink|circulating_supply_used": ["circulating_supply",
-                                                                            "circulating_supply_onchain"]}, base) == []
+    u = groups[(proj, "circulating_supply_used")].set_index("date")
+    assert set(u["source"]) == {"derived:circulating_used[circulating_supply_onchain]"}   # never CoinGecko
+    assert u.index.min() == pd.Timestamp("2026-10-12")          # days before the on-chain span are holes
+    assert gap_end not in u.index                               # a gap past the carry-forward is a hole
+    bases = sorted({s.split("[")[1].rstrip("]") for s in u["source"]})
+    baseline = __import__("json").loads((ROOT / "tests" / "fixtures" / "guard_baseline.json").read_text("utf-8"))
+    assert mg.live_basis_violations({f"{proj}|circulating_supply_used": bases}, baseline) == []
+    # a project with no on-chain figure at all keeps CoinGecko
+    groups = dict(base)
+    bw._market_cap_views(groups)
+    u = groups[(proj, "circulating_supply_used")]
+    assert set(u["source"]) == {"derived:circulating_used[circulating_supply]"} and len(u) == len(days)
