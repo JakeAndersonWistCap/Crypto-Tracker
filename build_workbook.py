@@ -1287,8 +1287,57 @@ def handover_overlap(groups: dict, project: str, spec: dict) -> dict:
     return out
 
 
+def handover_reference_check(groups: dict, project: str, spec: dict) -> dict:
+    """A DECLARED HANDOVER CHECKED AGAINST ONE REFERENCE (P2c-1, Aerodrome fdv_usd): each leg's supply basis at the
+    cutover — the last row of the earlier point before spec["cutover"], the first row of the later point from it, both
+    from the build's spec["metric"] series — and each of the declared same-block reads (spec["block_reads"]), against
+    spec["reference"]["value"], within tolerance_pct (the repo's ±2%, as handover_overlap). Same shape as
+    handover_overlap: {"passed", "text", "legs": [...]}. A leg with no stored row is UNCHECKED, never passed; a leg
+    outside the tolerance is NOT PASSED with its gap, absolute and %, in the text (never hidden)."""
+    from fetch.base import _measuring_point                        # noqa: PLC0415
+    ref, tol = spec["reference"], float(spec.get("tolerance_pct", 2.0))
+    cut = pd.Timestamp(spec["cutover"])
+    rv = float(ref["value"])
+
+    def judge(label, value):
+        if value is None:
+            return {"leg": label, "value": None, "gap": None, "gap_pct": None, "passed": False,
+                    "text": f"{label}: no stored row — UNCHECKED"}
+        gap = float(value) - rv
+        pct = gap / rv * 100.0
+        ok = abs(pct) <= tol
+        return {"leg": label, "value": float(value), "gap": gap, "gap_pct": pct, "passed": ok,
+                "text": f"{label} {float(value):,.0f}, gap {gap:+,.0f} ({pct:+.2f}%) "
+                        + ("within" if ok else "OUTSIDE") + f" ±{tol:g}%"}
+    g = groups.get((project, spec["metric"]))
+    legs = []
+    for i, (name, point) in enumerate(spec["legs"]):
+        val, day = None, None
+        if g is not None and not g.empty:
+            d = g.assign(_d=pd.to_datetime(g["date"]).dt.normalize(),
+                         _p=g["source"].astype(str).map(_measuring_point))
+            d = d[d["_p"] == _measuring_point(point)].sort_values("_d")
+            d = d[d["_d"] < cut] if i == 0 else d[d["_d"] >= cut]
+            if not d.empty:
+                row = d.iloc[-1] if i == 0 else d.iloc[0]
+                val, day = float(row["value"]), row["_d"].date()
+        legs.append(judge(f"{name} leg ({point}{', ' + str(day) if day else ''})", val))
+    reads = [judge(f"{name} at block {r['block']:,}", r.get(name)) for r in spec.get("block_reads") or ()
+             for name, _pt in spec["legs"]]
+    passed = all(x["passed"] for x in legs + reads)
+    text = (f"REFERENCE CHECK {'PASSED' if passed else 'NOT PASSED'}: each leg's {spec['metric']} at the "
+            f"{cut.date()} cutover vs {ref['what']} {rv:,.2f} at Base block {int(ref['block']):,} ({ref['given']}; "
+            f"read {ref['read_on']}) — " + "; ".join(x["text"] for x in legs)
+            + (" | the same at one block (read " + ref["read_on"] + "): " + "; ".join(x["text"] for x in reads)
+               if reads else "")
+            + ("" if passed else f" — {spec.get('if_not_passed', 'a CHANGE OF BASIS at the seam, not a flow')}"))
+    return {"passed": passed, "text": text, "legs": legs, "block_reads": reads, "tolerance_pct": tol,
+            "reference": rv}
+
+
 def _handover_overlap_checks(groups: dict) -> None:
-    """Every declared series_handover with an "overlap" spec, checked on this build's groups (G11 B8 / C1)."""
+    """Every declared series_handover with an "overlap" spec, checked on this build's groups (G11 B8 / C1); and every
+    one with a "reference_check" (P2c-1) whose series reaches its cutover in this build."""
     HANDOVER_OVERLAP.clear()
     for p in scoped_projects():
         # P2b-2: a restatement's pending handover is declared for the build that found the superseded rows
@@ -1296,6 +1345,24 @@ def _handover_overlap_checks(groups: dict) -> None:
         for metric, decl in {**active, **(p.get("series_handover") or {})}.items():
             if isinstance(decl, dict) and decl.get("overlap"):
                 HANDOVER_OVERLAP[(p["name"], metric)] = handover_overlap(groups, p["name"], decl["overlap"])
+            if isinstance(decl, dict) and decl.get("reference_check"):
+                g = groups.get((p["name"], metric))
+                rc = decl["reference_check"]
+                if g is not None and not g.empty and pd.to_datetime(g["date"]).max() >= pd.Timestamp(rc["cutover"]):
+                    HANDOVER_OVERLAP[(p["name"], metric)] = handover_reference_check(groups, p["name"], rc)
+
+
+SERIES_BREAK_NOTED: dict = {}   # (project, metric) -> the declared break's text, when the series holds its day (P2c-2)
+
+
+def _series_break_notes(groups: dict) -> None:
+    """P2c-2: a declared break whose named day is in this build's series (config.SERIES_BREAK_NOTES) — its text travels
+    on the Data row note and the audit cell comment (aggregate / confidence_for)."""
+    SERIES_BREAK_NOTED.clear()
+    for (proj, metric), b in (getattr(config, "SERIES_BREAK_NOTES", {}) or {}).items():
+        g = groups.get((proj, metric))
+        if g is not None and not g.empty and (pd.to_datetime(g["date"]).dt.normalize() == pd.Timestamp(b["day"])).any():
+            SERIES_BREAK_NOTED[(proj, metric)] = f"DECLARED SERIES BREAK {b['break']}: {b['text']}"
 
 
 def confidence_for(project: str, metric: str, row: dict, asof: pd.Timestamp) -> tuple[str, str]:
@@ -1403,6 +1470,8 @@ def confidence_for(project: str, metric: str, row: dict, asof: pd.Timestamp) -> 
         why.append(RESTATEMENT_STATUS[(project, metric)])     # P2b-2: days still on the superseded set, or holes
     if (project, metric) in HANDOVER_CUT:
         why.append(HANDOVER_CUT[(project, metric)])
+    if (project, metric) in SERIES_BREAK_NOTED:
+        why.append(SERIES_BREAK_NOTED[(project, metric)])    # P2c-2: a named day off its series' basis, not smoothed
     if (MONTHLY_FLOW_FORMED.get((project, metric)) or {}).get("holes"):
         why.append("months NOT FORMED (a day not held is a hole, never a zero): "
                    + "; ".join(MONTHLY_FLOW_FORMED[(project, metric)]["holes"]))
@@ -4887,6 +4956,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _settlement_views(groups)
     _monthly_flow_views(groups)       # P2a D5b: complete-month flows from daily log scans (Maple's SSF Safe)
     _handover_overlap_checks(groups)  # G11 B8 / C1: each declared handover's two legs compared on their common days
+    _series_break_notes(groups)       # P2c-2: a declared break's named day held by the series -> its note on the cell
     _daily_twin_views(groups, asof)   # G11 D3: a "daily" series that IS its monthly twin in every window is dropped
     _LAST_GROUPS.clear()
     _subsidy_common_views(groups, asof)   # G13 6: subsidy cover over the days every leg covers once (b) is complete
@@ -5344,6 +5414,9 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                     + " — this series' latest day often reads low when first read ("
                     + config.provisional_series().get((name, metric), "listed") + "); not in any window or change "
                       "flag until a later run re-reads it")
+            # P2c-2: a declared series break whose named day this series holds (Aerodrome 2026-10-21), said on the row
+            if (name, metric) in SERIES_BREAK_NOTED:
+                row["note"] = (row["note"] + " | " if row["note"] else "") + SERIES_BREAK_NOTED[(name, metric)]
             # ================ ALL SEVEN WITHHELD CASES, HANDLED IN ONE PLACE ================
             # A config change guards the WRITE path and cannot touch what is already stored, and
             # aggregate() consults the Gap Report only when the store has NO rows for a key
@@ -11916,16 +11989,25 @@ def write_trajectory(wb, data_by_key: dict, asof=None) -> list[dict]:
                                 + (f" (+{len(found) - 1} earlier: " + ", ".join(  # G13 8: each earlier stitch named
                                     f"{x[0].date()} {x[1]}" for x in found[-4:-1]) + ("…" if len(found) > 4 else "")
                                     + ")" if len(found) > 1 else ""))
+                    # P2c-2: a declared break with a cell note (config.SERIES_BREAK_NOTES — Aerodrome's 2026-10-21) is
+                    # named in full, whichever break is the latest: its text says what the day before it reads
+                    named = dict.fromkeys(
+                        config.SERIES_BREAK_NOTES[(spec["project"]["name"], x[1])]["text"] for x in found
+                        if (spec["project"]["name"], x[1]) in config.SERIES_BREAK_NOTES
+                        and str(x[0].date()) == config.SERIES_BREAK_NOTES[(spec["project"]["name"], x[1])]["break"])
+                    brk_text += "".join(f" · DECLARED: {t}" for t in named)
                     why.append(f"{brk_text}; statistics over the {n_clean} quarter(s) wholly after it — restate the "
                                f"history on the current basis to lift it (RUNBOOK 11bp)")
+                    # the basis rule: no QoQ, growth or direction across the break (ef6dc86). P2b-2 (0e7fc8b) had moved
+                    # these two lines under its restatement test, so a break left the statistics spanning it
+                    qs = list(qs[:n_clean]) + [None] * (len(qs) - n_clean)
+                    step_at = n_clean            # the quarter that holds the break
         # P2b-2: a declared restatement not yet complete says what it lacks — the days still on the superseded set (the
         # break above is its seam), or the days not yet re-read (holes)
         if asof is not None and not w["independent"]:
             for m in sorted(trajectory.referenced_metrics(w["q0_formula"])):
                 if (spec["project"]["name"], m) in RESTATEMENT_STATUS:
                     why.append(f"{m}: {RESTATEMENT_STATUS[(spec['project']['name'], m)]}")
-                    qs = list(qs[:n_clean]) + [None] * (len(qs) - n_clean)
-                    step_at = n_clean            # the quarter that holds the break
         # MODELLED QUARTERS (Jake 2026-10-12, Phase 1 follow-up item 2): shown, and excluded from any scoring
         modelled = ([] if asof is None or w["independent"] else
                     trajectory.modelled_quarters(spec["project"]["name"], trajectory.referenced_metrics(w["q0_formula"]),

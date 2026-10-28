@@ -226,16 +226,7 @@ def live_check(db_path: str, baseline: dict) -> tuple[list[str], dict]:
             v = head_value(hc)
             if sanity.stated_number(v) is None and MPC in str(v or ""):
                 mpc.append([hc["project"], f"{hc['sheet'][:2]} | {hc['header']}", str(v)[:200]])
-    bad = []
-    for key, now in sorted(bases.items()):
-        if len(now) < 2:
-            continue
-        proj, metric = key.split("|", 1)
-        was = {b for b in (baseline.get("bases") or {}).get(key) or () if not str(b).startswith("probe:")}
-        new = set(now) - was - _declared(proj, metric)
-        if new and not _nested_growth(proj, metric, set(now) | was):
-            bad.append(f"BASIS {proj} {metric}: {sorted(new)} beside {sorted(set(now) - new)} with no declared handover "
-                       f"or component")
+    bad = live_basis_violations(bases, baseline)
     # LOST HEADLINES against the PREVIOUS RUN'S SNAPSHOT (export_snapshot, written at the end of every run) — the fixture
     # baseline's headlines are built with probe rows (a probed BUSINESS slot reads 1), so they are no "before" for a
     # live store
@@ -253,6 +244,22 @@ def live_check(db_path: str, baseline: dict) -> tuple[list[str], dict]:
         bad.append(f"HEADLINE BLANKED BY {MPC} {proj} {head}: {text}")
     return bad, {"asof": str(asof.date()), "bases": bases, "headlines": heads, "mpc_headlines": mpc,
                  "previous": prev_date, "scope": scope}
+
+
+def live_basis_violations(bases: dict, baseline: dict) -> list[str]:
+    """live_check's BASIS check (G10 5d), on its own so it can be fed bases directly (P2c-1): per series holding more
+    than one basis, a basis outside the fixture baseline's real bases and the declared handover points / components."""
+    bad = []
+    for key, now in sorted(bases.items()):
+        if len(now) < 2:
+            continue
+        proj, metric = key.split("|", 1)
+        was = {b for b in (baseline.get("bases") or {}).get(key) or () if not str(b).startswith("probe:")}
+        new = set(now) - was - _declared(proj, metric)
+        if new and not _nested_growth(proj, metric, set(now) | was):
+            bad.append(f"BASIS {proj} {metric}: {sorted(new)} beside {sorted(set(now) - new)} with no declared handover "
+                       f"or component")
+    return bad
 
 
 def _nested_growth(project: str, metric: str, bases: set) -> bool:

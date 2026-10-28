@@ -24,5 +24,15 @@
     "robinhood": "GAP - no AERO token published (leaf-robinhood.json); not verified on-chain: no Robinhood RPC in config.DEFAULT_RPC."
   },
   "_note": "Addresses from Dromos-Labs/metadex-public @8b506b45 (root-base.json, migration-base.json, gaugestack-base.json). Verified on Base 2026-10-27 at block 53,165,286: token name Aero / symbol AERO, totalSupply 2,129,347,490; sAERO.VOTER() = Voter 0x49d7d4f1...; token.MIGRATION() = migration; migration V2_TOKEN / V2_ESCROW = legacy AERO / veAERO, V3_TOKEN = token; reserve balanceOf = remaining() 922,713,511; factory first code at block 52,880,070 (2026-10-21 02:24 UTC), 288 VotingRewardsCreated since. chain_tokens / bridge_escrows: EMPTY BY THE SOURCE, not unfilled - Dromos-Labs' deployment files publish no AERO token and no bridge escrow on Ethereum, OP, Arc, Ink, Robinhood or Arbitrum (each chain's named gap in chain_tokens_gaps); total_supply is the Base token's, read once (aero_v3.supply_once).",
-  "_relay_factory_registry": "P2b-1, read 2026-10-27: RelayFactoryRegistry from Dromos-Labs/metadex-public @8b506b45 deployment-addresses/relayfactoryregistry-base.json (relaystack-base.json names the same registry and relayFactory 0xA972232e6C1860586E1d66aC690d30Dab843049d; app.aero.xyz/docs/security lists both). At Base block 53,174,900: relayFactories() = [0xA972232e...], allRelaysLength() = 9. aero_v3 enumerates every Relay from it for the filing wallets' Relay principal (filing_managed_lock_tokens)."
+  "series_handover": {
+    "fdv_usd": {
+      "declared": "2026-10-22",
+      "ordered_points": ["chain:base:token", "aero_v3:supply_once"],
+      "composition_change": "step",
+      "reference": {"what": "new AERO totalSupply() on Base", "token": "0x3f5bF3EdAc59d650D8fDf9657a71F2f904A3a4Ee", "block": 53165286, "value": 2129347490.610605},
+      "tolerance_pct": 2.0,
+      "_note": "P2c-1 (2026-10-28): fdv_usd = price x total_supply hands over from the legacy AERO totalSupply() on Base (chain:base:token, to 2026-10-21) to each AERO once across both tokens (aero_v3:supply_once, from 2026-10-22). The same declaration is config.py PROJECT_BY_NAME['Aerodrome']['series_handover']['fdv_usd'] (what the build and measuring_guard read; tests/test_round_p2c.py checks the two agree). A STEP, not dilution: at the cutover block 52,918,950 the legacy total 2,002,379,493.92 is 117.0M (the Velodrome allocation the new token pre-mints) below the v3 total 2,119,379,492.92; against the reference 2,129,347,490.61 (new AERO totalSupply at block 53,165,286, read 2026-10-28) the legacy leg is -5.96% (outside +/-2%) and the v3 leg -0.47% (within)."
+    }
+  },
+  "_relay_factory_registry":"P2b-1, read 2026-10-27: RelayFactoryRegistry from Dromos-Labs/metadex-public @8b506b45 deployment-addresses/relayfactoryregistry-base.json (relaystack-base.json names the same registry and relayFactory 0xA972232e6C1860586E1d66aC690d30Dab843049d; app.aero.xyz/docs/security lists both). At Base block 53,174,900: relayFactories() = [0xA972232e...], allRelaysLength() = 9. aero_v3 enumerates every Relay from it for the filing wallets' Relay principal (filing_managed_lock_tokens)."
 }

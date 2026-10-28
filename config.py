@@ -33525,3 +33525,77 @@ def _sum_set(point: str) -> frozenset:
     if body.startswith("sum(") and body.endswith(")"):
         return frozenset(x for x in body[4:-1].split("+") if x)
     return frozenset([body])
+
+
+# ======================================================================================================================
+# P2c-1 (2026-10-28): AERODROME fdv_usd ACROSS THE MIGRATION — a DECLARED HANDOVER, legacy -> v3, dated 2026-10-22.
+# Jake's live guard (`measuring_guard.py --newer metrics.db`): "BASIS: Aerodrome fdv_usd (aero_v3:supply_once beside
+# chain:base:token, no declared handover)". fdv_usd = price x total_supply (build_workbook._fdv_views); its bracket names
+# the total's measuring point (trajectory.BRACKET_BASIS), so the legacy days read chain:base:token and the v3 days
+# aero_v3:supply_once. total_supply itself is declared (G2-D5: coingecko -> chain:base:token -> aero_v3:supply_once) and
+# is not flagged. The points below are the fdv_usd bracket forms: fetch.base._measuring_point reads each as
+# derived:price_x_total_supply (handover_refusal's legs, exactly as GLOBAL_SERIES_HANDOVER fdv_usd declared them), and
+# trajectory.basis_of as the total's point (the guard's bases); CoinGecko's own FDV stays the first leg.
+# THE REFERENCE CHECK (build_workbook.handover_reference_check): each leg's SUPPLY BASIS at the cutover against on-chain
+# new-AERO totalSupply() at Base block 53,165,286 (Jake's 2,129,347,490), within the repo's handover tolerance ±2%.
+# Read by Claude Code on 2026-10-28 (base-rpc.publicnode.com; the cutover block through mainnet.base.org):
+#   block 53,165,286 (2026-10-27 16:51:59 UTC): new totalSupply 2,129,347,490.610605 (the reference, confirmed);
+#     reserve balanceOf(migration 0x22a2…6721) = remaining() 922,713,511.511236; previewConversion(132032) basis =
+#     converted 1,087,286,489.488764 (ratio 1); legacy AERO totalSupply 2,006,874,384.808616, legacy balanceOf(migration)
+#     0 -> supply_once total = (new − reserve) + (old − old held) x ratio = 2,126,221,874.419221;
+#   block 52,918,950 (2026-10-22 00:00:47 UTC, the cutover): new 2,127,000,000, reserve 1,978,643,404.069170, old held
+#     31,356,596.930830, legacy 2,002,379,493.920913 -> supply_once 2,119,379,492.920913.
+# THE LEGS DIFFER BY 117.0M AT ONE BLOCK (116,999,999.00 at the cutover): the new token pre-mints the Velodrome
+# allocation (VELODROME_MIGRATION(), VELO 2.66B x 0.044), which the legacy totalSupply never held. So the legacy leg is
+# −5.96% (cutover) / −5.75% (block 53,165,286) from the reference — OUTSIDE ±2% — and the v3 leg −0.47% / −0.15%,
+# within. composition_change is a STEP: FDV steps +5.84% at 2026-10-22 with no dilution behind it, a SERIES BREAK on the
+# Trajectory (trajectory._own_breaks: a declared handover that is not "none" breaks at every change of basis).
+AERO_FDV_REFERENCE = {
+    "what": "new AERO totalSupply() on Base", "token": "0x3f5bF3EdAc59d650D8fDf9657a71F2f904A3a4Ee",
+    "block": 53_165_286, "block_time": "2026-10-27 16:51:59 UTC", "value": 2_129_347_490.610605,
+    "given": "Jake: 2,129,347,490", "read_on": "2026-10-28", "rpc_host": "base-rpc.publicnode.com"}
+AERO_FDV_POINTS = {"legacy": "chain:base:token", "v3": "aero_v3:supply_once"}
+PROJECT_BY_NAME["Aerodrome"].setdefault("series_handover", {})["fdv_usd"] = {
+    "ordered_points": ("coingecko", f"derived:price_x_total_supply[{AERO_FDV_POINTS['legacy']}]",
+                       f"derived:price_x_total_supply[{AERO_FDV_POINTS['v3']}]"),
+    "why": "price x total_supply across the Aero migration (2026-10-22 00:00 UTC): the legacy AERO totalSupply() on Base "
+           "to 2026-10-21, then each AERO once across both tokens (aero_v3.supply_once) — round P2c-1; CoinGecko's own "
+           "FDV before our first total_supply reading (as GLOBAL_SERIES_HANDOVER fdv_usd)",
+    "composition_change": "a STEP at 2026-10-22, not dilution: the legacy total (old AERO totalSupply) leaves out the "
+                          "Velodrome allocation the new token pre-mints (117.0M = 5.84% of the legacy total at the "
+                          "cutover block 52,918,950); the v3 total = (new − migration reserve) + (old − old held) x "
+                          "ratio counts it. See the reference check on the cell",
+    "declared": AERODROME_MIGRATION["cutover_utc"],
+    "reference_check": {
+        "metric": "total_supply", "cutover": AERODROME_MIGRATION["cutover_utc"], "tolerance_pct": 2.0,
+        "reference": AERO_FDV_REFERENCE,
+        "legs": (("legacy", AERO_FDV_POINTS["legacy"]), ("v3", AERO_FDV_POINTS["v3"])),
+        # the same two quantities read on-chain at ONE block each (Claude Code, 2026-10-28), checked by the same rule
+        "block_reads": (
+            {"block": 52_918_950, "block_time": "2026-10-22 00:00:47 UTC", "legacy": 2_002_379_493.920913,
+             "v3": 2_119_379_492.920913},
+            {"block": 53_165_286, "block_time": "2026-10-27 16:51:59 UTC", "legacy": 2_006_874_384.808616,
+             "v3": 2_126_221_874.419221}),
+        "if_not_passed": "the legs are DIFFERENT supply bases (the legacy total leaves out the Velodrome allocation): "
+                         "a STEP at 2026-10-22 — a SERIES BREAK, not dilution"},
+}
+
+
+# ======================================================================================================================
+# P2c-2 (2026-10-28): AERODROME 2026-10-21 — NOT SMOOTHED, NOT RESTATED: A DECLARED SERIES BREAK AT THE CUTOVER.
+# SPEC P2b-1 (result): on 2026-10-21 the filing wallets' stake sat in NORMAL veNFTs (withdrawn from their managed NFTs,
+# not yet migrated), which the legacy managed read (weights on managed NFTs) does not count — filing_managed_lock_tokens
+# reads ~218.8M low that day, so circulating_supply_onchain (total − non-circulating − filing locks), the
+# circulating_supply_used that is it, and market_cap_usd (price x it) read ~218.8M high. The break is the existing
+# SOURCE_RECLASSIFICATIONS mechanism (trajectory._own_breaks: no QoQ, growth or direction across it; a Δ column reads
+# "n/a — SERIES BREAK"); SERIES_BREAK_NOTES says where its text must also surface: the Data row note and the audit cell
+# comment of each series that holds the named day (build_workbook._series_break_notes), and the Trajectory break text.
+AERO_1021_WHY = ("2026-10-21: circulating reads ~218.8M HIGH (filing locks ~218.8M low) — the filing wallets' stake "
+                 "sat in normal veNFTs between leaving their managed NFTs and the v3 cutover, which the legacy managed "
+                 "read (weights on managed NFTs) does not count (SPEC P2b-1 result). Not smoothed, not restated: a "
+                 "SERIES BREAK at the 2026-10-22 cutover — no trend, growth or ratio window reads across it")
+SERIES_BREAK_NOTES = {
+    ("Aerodrome", _m): {"break": AERODROME_MIGRATION["cutover_utc"], "day": "2026-10-21", "text": AERO_1021_WHY}
+    for _m in ("filing_managed_lock_tokens", "circulating_supply_onchain", "circulating_supply_used", "market_cap_usd")}
+for (_n, _m), _b in SERIES_BREAK_NOTES.items():
+    SOURCE_RECLASSIFICATIONS[(_n, _m)] = tuple(SOURCE_RECLASSIFICATIONS.get((_n, _m), ())) + ((_b["break"], _b["text"]),)
