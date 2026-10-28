@@ -534,6 +534,159 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11dh. Friday pre-mortem — if X, do Y
+
+Each entry is read from the code at 3f73b51: SYMPTOM (the message text as printed; the `<time> WARNING <logger>:` prefix is
+left off), CAUSE, FIX (one command, PowerShell 5.1, repo root), WORKBOOK. `UNVERIFIED:` = the code does not show it. Paste a
+host, never anything after a host's `/v2/` (the logs print the host only; a key-bearing URL is cut to its host or `/v2/***`).
+
+### 1a. A run starts while a long backfill (or another run) is writing metrics.db
+- **SYMPTOM** Run vs run: `RUN LOCK: waiting for pid <n>, token_metrics run started <date> <time> UTC (token_metrics.py) to finish before this token_metrics run starts (waited <n>s of 1800s)` once a minute, then
+  `RUN LOCKED — metrics.db is in use by <that>. Waited <n>s; this token_metrics run did NOT run (exit 75). Run it again when that one has finished …`. Run vs backfill: NO line.
+- **CAUSE** Only token_metrics.py takes `runlock.RunLock` (`metrics.db.lock`; a run, `--seed`, `--no-fetch`). archive_backfill.py (line 86) and check_offline_items.py take none, so nothing waits or refuses. Both
+  write the one store; store.py:267 opens sqlite with its default 5 s busy wait and no code catches `sqlite3.OperationalError`. UNVERIFIED: that a collision raises "database is locked" (sqlite's text, not in the
+  repo). The run's CLEAN-UP deletes restated rows; the backfill read the store once at its start.
+- **FIX** `Get-CimInstance Win32_Process -Filter "Name like 'python%'" | Select-Object ProcessId, CommandLine` — start the run only when no `archive_backfill.py` is listed (its last line is `ALCHEMY USAGE this run:
+  …`). After exit 75: `python token_metrics.py`.
+-
+- **WORKBOOK** Exit 75 writes nothing: yesterday's token_metrics.xlsx and token_metrics_audit.xlsx stand. daily_run.ps1 logs `token_metrics did NOT run: another run holds metrics.db (RUN LOCKED - see the line
+  above)`, toasts "run skipped", runs the rest.
+
+### 1b. The weekly Near lockups read overlaps the daily run, or a second lockups read starts
+- **SYMPTOM** `NEAR lockups: another lockup read (PID <n>) has held the lock since <YYYY-MM-DD HH:MM> UTC — nothing read by this copy` (exit 0). A resume: `NEAR lockups: an unfinished read pinned at block <n>
+  (<time>; <n> lockup(s) read there) — resuming it at the same block`.
+- **CAUSE** Lock file `.cache\logscan\near-lockups.lock` (near_lockups_weekly.py `take_lock`); taken over if its PID is gone or it is older than LOCK_MAX_H = 6 h (line 44) — but the Sunday task may run 8 h
+  (register_lockup_task.ps1 `-LimitHours 8`), so from hour 6 the daily fallback (step 2b) can start a second live read. Nothing is stored until every lockup is read (one upsert at the end), so no partial total.
+  `check_offline_items.py near_lockups_at_block` takes no lock and stores nothing; its pacer is per process, so beside the weekly read it doubles the calls to the NEAR endpoints.
+- **FIX** `Get-Content .cache\logscan\near-lockups.lock` (PID, since); when that read is gone: `python near_lockups_weekly.py --force` (resumes at the pinned block while it is under 48 h old).
+-
+- **WORKBOOK** Near's lockup cells keep the last stored read, dated; the cell turns AMBER at 11–30 days old (LOCKUP_AGE_AMBER).
+
+### 2. The laptop sleeps (or the run is stopped) mid-run
+- **SYMPTOM** The log stops with no `daily run FINAL:` line; the `[heartbeat] token_metrics run — …` lines (one a minute) leave a gap. Next daily run, in the OLD log: `[reconciled <ts>] === <step> : KILLED - no exit
+  code (started <ts>; stopped from outside - Task Scheduler stop or time limit, battery, sleep or shutdown; the log does not say which)` and `daily run FINAL: KILLED during <step> - steps that ran: …; not run: …`;
+  in the new log `PREVIOUS RUN: the previous run (started <ts>) was KILLED during <step>; FINAL lines appended to <log>`.
+- **CAUSE** A suspended process is not killed; calls in flight can time out on wake (60 s read timeout) → `TIER TIMED OUT`, and daily_run.ps1 reruns token_metrics ONCE after 15 min on `NETWORK-WIDE TROUBLE`. The
+  task (register_task.ps1): `-WakeToRun`, `-StartWhenAvailable` (runs after a missed time), `-MultipleInstances IgnoreNew`, 6 h cap. LOST: this run's fetch — rows are upserted once, after every tier
+  (token_metrics.py:1342), and the "read today" marks only after that (1320, 1351), so the rerun reads it all again. KEPT: stored days, the archive's written days, a Near lockups read at its pin (48 h), NEAR
+  BigQuery series. daily_run resumes no step: it starts at step 1. UNVERIFIED: that Jake's laptop honours wake timers (`powercfg /waketimers`; register_task.ps1 says many need AC power).
+- **FIX** `python token_metrics.py` (to close the killed log first: `powershell -ExecutionPolicy Bypass -File windows\daily_run.ps1 -Reconcile`; the next daily_run.ps1 start does it anyway).
+-
+- **WORKBOOK** Killed before the build: both files are yesterday's, as-of dates unchanged. Killed inside `wb.save`: see entry 6.
+
+### 3. A clean-up runs twice
+- **SYMPTOM** First run, once-only (P2b-2, P2c-5a, P2c-5b, P2c-5c, P2d-5): `CLEAN-UP P2b-2: applied once — <n> row(s) of Chainlink / noncirculating_holding_tokens from every point but <point> dated before 2026-10-26
+  removed — <why>` (WARNING if n > 0, else INFO), then one `CLEAN-UP P2b-2: removed <project> / <metric> <date> from <source> (<value>) — <why>` per row. Second run: NO line. Every-run passes (P2b-2b, P2c-5a2,
+  P2c-5b2, P2c-5c2, P2d-5b, `repeat: True`): `CLEAN-UP <id>: <n> row(s) of <project> / <metric> on another set (<source>, …) removed — <why>` only when such a row exists, else silent.
+- **CAUSE** A once-only clean-up is skipped while `fetch_status` holds source `cleanup:<id>:<metric>` for the project (token_metrics.py:1093); the marker is written whether or not rows were found (1149).
+  `--no-fetch` never runs clean-ups (it returns at 1236–1247, before `apply_run_cleanups` at 1250). The archive writes only the current set, so a repeat pass finds nothing.
+- **FIX** Nothing to fix. To see it: `python check_offline_items.py series_restatements` → `CLEAN-UP <id> RUN <timestamp>` or `CLEAN-UP <id> NOT RUN on this store`.
+-
+- **WORKBOOK** Unchanged by the second run. Days the first run removed stay holes until the refill (entry 4).
+
+### 4. An archive refill stops part-way (budget, Ctrl-C, crash)
+- **SYMPTOM** Budget: `budget spent at <date>; <n> day(s) still have something to read, at <x>s a day (this run) ~<n> min: about <n> more run(s) at this budget (<n> min), or one with --budget-min <n>. Re-run to
+  continue — stored days are skipped` (or `rate-limited past the budget at <date> (…); re-run to continue`), then the `RAN <n>s. Days stored in the last <N>, before -> after:` table. Ctrl-C or crash: a traceback and
+  no `RAN` table; each `archive <date>: <n> row(s)` line was already stored. Also `NOT WRITTEN <project>/<metric>: <n> day(s) — …`.
+- **CAUSE** Rows are written day by day, newest first, never over a stored key (fetch/archive.py `_write_new`); the block-time caches are saved every 10 days and at a normal end only. A re-run skips every stored
+  (day, series).
+- **FIX** `python archive_backfill.py --run --project Chainlink --project Ether.fi --project Maple --project Pendle --budget-min 180` (the same line; repeat until `python check_offline_items.py series_restatements`
+  ends every block `-> RESTATED`).
+-
+- **WORKBOOK** Showable; cells keep their numbers. Hover: `RESTATEMENT <id> INCOMPLETE: <n> day(s) of <a>..<b> hold no row on <point> — HOLES (never the earlier set's sum, never 0): <ranges>; ... re-reads them
+  (resumable)`. While old-set rows remain: `NOT YET RESTATED (<id>): <n> day(s) still hold <old set>, not <point> — <ranges>. The declared seam (SERIES BREAK <dates>) stands until …`, and the Trajectory reads
+  `SERIES BREAK <date> — …` with no QoQ or growth across it. Check verdicts: `-> NOT YET RESTATED`, `-> RESTATEMENT INCOMPLETE`, `-> RESTATED: every day <a>..<b> on <point>`.
+
+### 5a. RPC / Alchemy throttling, a 429 storm
+- **SYMPTOM** `RETRY <host>: HTTP 429 (attempt <n> of <n>)` (HTTP tier); `RETRY <host>: HTTP 429 on <method> (attempt <n> of 5), waiting <n>s` (chain tier); `HTTP 429 from <host>: the server asks for a <n>s wait
+  (~<x>h) — longer than the 65s this tool waits, so NOT waited; retried on the next run. …`; at the end `RPC LATENCY <host>: … <n> HTTP 429 …`, `CHAIN TIER RETRIES: …`, `ALCHEMY PACING: …`, `ALCHEMY USAGE this run:
+  … month <YYYY-MM>: ~<n> CU of the Free plan's … (<p>%)` (WARN from 80%, a FAILED line from 95%). A tier out of time: `TIER TIMED OUT after <n>s — abandoned … CAUSE: THROTTLED — <evidence>`. Archive: `pace <chain>:
+  <x>s/call at the end (<n> call(s), <n> x 429, <n>s waited) — saved`.
+- **CAUSE** The server's rate limit. A Retry-After up to 65 s is waited (TOKEN_METRICS_MAX_RETRY_WAIT); a longer one fails the call.
+- **FIX** Wait out the window, then `python token_metrics.py` (one project: add `--project <Name>`). A THROTTLED timeout is listed under "TIMED OUT, NOT THE NETWORK", not as `NETWORK-WIDE TROUBLE`; the banner says a
+  rerun alone does not fix it.
+-
+- **WORKBOOK** A 429 that ends a read is `FAILED <source> / <project>: …` (counted FAILED). SKIPPED is only a read skipped by design or a robots.txt rule obeyed; a throttled tier is never SKIPPED. Showable: last
+  stored values stand, labelled stale (entry 7). A rerun is safe (the store only upserts; an abandoned tier's "read today" marks are dropped, so it reads again) but spends CU.
+
+### 5b. A Near lockups read ends incomplete (HTTP 429 on the NEAR endpoints)
+- **SYMPTOM** `… <n>/<N> lockups at block <h> (<n> min; ~<n> min left; pacer {'calls': …, 'throttled': …, 'cooled_s': …})`, then `NEAR lockups: <n> of <N> lockup(s) not yet read at block <h> — NOTHING STORED (never
+  a partial total). Progress is kept at that block: a rerun (python near_lockups_weekly.py --force) before <date time> UTC reads only the rest …` (exit 1).
+- **CAUSE** The pacer cools an endpoint on a 429 (Retry-After, else 5 s doubling to 60 s) and moves to the other; progress is saved every 25 lockups.
+- **FIX** `python near_lockups_weekly.py --force`
+-
+- **WORKBOOK** Near's lockup cells stay on the last stored read (entry 1b); a pin older than 48 h starts the read over.
+
+### 6. Disk full
+- **SYMPTOM** UNVERIFIED: no code catches it, so the run ends in a Python traceback: sqlite3 "database or disk is full" while storing, or `OSError: [Errno 28]` while saving a workbook (sqlite's and Python's texts,
+  not in the repo). The build runs AFTER the store write (token_metrics.py:1342, then `build_workbook`).
+- **CAUSE** `wb.save(path)` (build_workbook.py:12600) writes the target file directly, no temp file: a failed save can leave a truncated token_metrics_audit.xlsx or token_metrics.xlsx. The previous workbooks are NOT
+  guaranteed to survive. Rows already committed to metrics.db stay (sqlite rolls a failed commit back: sqlite's behaviour, not repo code).
+- **FIX** `Get-PSDrive C` (Free). See the disk check. Safe, regenerated: both workbooks and their side files (`Remove-Item token_metrics.xlsx, token_metrics_audit.xlsx`, then `python token_metrics.py --no-fetch`),
+  every `__pycache__`, `metrics.db.credibility.pkl` (a cache keyed by the store; a miss is rebuilt). NOT regenerated, leave: metrics.db, `.cache\` (pinned lockup reads, log scans, pace: hours to rebuild), `logs\`,
+  `snapshots\` (the guard's "previous snapshot"), `metrics.db.bak-*`.
+-
+- **WORKBOOK** A truncated xlsx will not open: delete it and rebuild as above. Check the store first: `python -c "import sqlite3; print(sqlite3.connect('metrics.db').execute('PRAGMA integrity_check').fetchone())"` →
+  `('ok',)`.
+
+### 7. A failed tier leaves a headline blank
+- **SYMPTOM** `FAILED <source> / <project>: <message>`; `tier <t> <source> <n>s <n> rows <n> FAILED <n> WARN <n> SKIPPED-by-design`; `run summary: <n> rows | <n> FAILED | <n> WARN | <n> SKIPPED-by-design | <n>
+  review items | <n> gaps | …`; `<n> FAILED — real fetch failures; see the Run Log tab`; `    WARN  tier …`; `    SKIPPED  tier …`; a tier cut off: `TIER TIMED OUT after <n>s — … CAUSE:
+  NETWORK|THROTTLED|CODE|UNCLASSIFIED — …`. The tier is the `tier <t> <source>` column and the first words of the FAILED line.
+- **CAUSE** The tier stored nothing today. A stock stands on its last stored value within `credibility.now_max_age`: prices, market cap, FDV 2 days; other daily stocks 3; weekly/monthly their own staleness.
+  Circulating on an on-chain route takes no CoinGecko past the 3-day carry-forward: those days are holes (config.py, P2d-3b).
+- **FIX** `python token_metrics.py --project <Name>` (CAUSE: CODE does not clear on a rerun: paste the TIER TIMED OUT line back).
+-
+- **WORKBOOK** Showable. Chain-read stock: `STALE — last read <date>, not read on <day> (the chain read did not answer); the last stored value stands`; otherwise `stale — no fresh value in <n> days`; the Credibility
+  row is CHECK (STALE) past the age limit. Run Log tab: "Fetch failures (this run) — last known values carried forward and marked stale". Coverage code `MISSING [A — NO SUCH FLOW | B — ACCEPTED LIMIT | C — NEEDS
+  HISTORY | D — ROUTE NOT FILLED | E — NO SOURCE]`; flagged cells say "flagged to the Review Queue". UNVERIFIED: which MISSING letter a given failed tier gets.
+
+### 8. ADC / BigQuery re-authentication (NEAR)
+- **SYMPTOM** ``BIGQUERY CHECK: FAILED - the login expired ("Reauthentication is needed": run `gcloud auth application-default login`)`` then `FIX: gcloud auth application-default login; gcloud auth
+  application-default set-quota-project near-data-510309` (adc_check.py). Scheduled: `NEAR BigQuery skipped — log in: gcloud auth application-default login`. In the run: `NOT READ — Application Default Credentials
+  need re-authentication ("Reauthentication is needed"): …` and `ACTION NEEDED — NEAR BigQuery: Google login expired (your org forces re-auth about daily). Paste:` with the two gcloud lines.
+- **CAUSE** The user ADC expired; the check never waits for a login (90 s, then exit 9).
+- **FIX** `gcloud auth application-default login; gcloud auth application-default set-quota-project near-data-510309`
+-
+- **WORKBOOK** Showable. The Run Log opens with a red ACTION NEEDED line and the two commands; Gap Report row `[open] NEAR BigQuery login` (P2). NEAR's BigQuery series keep their last stored day (aging as in entry
+  7) and top up from it on the next good run.
+
+### 9. `measuring_guard.py --newer metrics.db` prints a violation after a partial refill
+- **SYMPTOM** `MEASURING-POINT GUARD ON THE LIVE STORE — <n> violation(s)`, lines `HEADLINE LOST <project> <headline>: <v> in the <date> snapshot, no value on the live store` or `BASIS <project> <metric>: […] beside
+  […] with no declared handover or component`, then `VERDICT: <n> VIOLATION(S) — each line above` (exit 1). `ACCEPTED: …` lines are accepted losses, not violations.
+- **CAUSE** A hole can blank a headline the last snapshot held (HEADLINE LOST). UNVERIFIED: which line a given partial refill prints on Jake's store.
+- **FIX** Finish the refill (entry 4), then `python measuring_guard.py --newer metrics.db` (builds on a copy; writes nothing).
+- **WORKBOOK** Unaffected; as entry 4.
+
+### 10. `-> BLOCKED` on another set
+- **SYMPTOM** `!! <date> is stored on the <n>-wallet set, not <point> — the archive REFUSES to write the days beside it`, then `-> BLOCKED: <n> row(s) on another set on or after <date> (<ranges>) stop the backfill —
+  re-running it cannot succeed. Fix: …`; the backfill prints `REFUSED <project>/<metric>: the stored row before <date> (<date>) was read from …, not …`.
+- **CAUSE** A row on an earlier set dated on or after the current set's first day; the archive never writes beside one.
+- **FIX** `python token_metrics.py` (the every-run CLEAN-UP removes each row, logged), then the refill of entry 4.
+- **WORKBOOK** As entry 4 (NOT YET RESTATED hover, SERIES BREAK) until the rows are gone.
+
+### 11. `token_metrics.py` aborts at start with an old schema
+- **SYMPTOM** NOT FOUND in the code; UNVERIFIED that any such abort exists. The only aborts at start: `<problem> Fix .env (RUNBOOK 11cd) and run again.` (exit 2) and `unknown project name(s): … Names are exact.
+  Valid: …`.
+- **CAUSE** `Store()` runs CREATE TABLE IF NOT EXISTS and `_migrate` (store.py:253) adds missing columns: an old metrics.db is upgraded in place.
+- **FIX** `python token_metrics.py --help`.
+- **WORKBOOK** Nothing is written before an abort; yesterday's files stand.
+
+### 12. A second `python token_metrics.py` the same day
+- **SYMPTOM** While the first runs: entry 1a. After it ends: no refusal and no "already ran" line; "one run a day" is a comment (token_metrics.py:1235), not a guard. Once-a-day reads log as skipped, e.g.
+  `circulating_supply already read today` (counted SKIPPED-by-design).
+- **CAUSE** The same keys are upserted; a flow is differenced from the last EARLIER-dated row, so it recomputes the same value.
+- **FIX** For a rebuild only: `python token_metrics.py --no-fetch` (fetches nothing, applies no clean-up).
+- **WORKBOOK** Rebuilt, same as-of date; no clean-up fires again (entry 3).
+
+### Friday order of operations
+1. `Copy-Item metrics.db metrics.db.bak-fri`, then `python token_metrics.py`. Paste every `CLEAN-UP` line and the `run summary:` line.
+2. `python check_offline_items.py series_restatements`. Paste every line: five blocks, each `->` verdict, any `!!`.
+3. `python archive_backfill.py --run --project Chainlink --project Ether.fi --project Maple --project Pendle --budget-min 180`, with nothing else running. Paste its last lines.
+4. Repeat 3 until every block of 2 ends `-> RESTATED`; run `python check_offline_items.py series_restatements` again and paste it.
+5. `python token_metrics.py --no-fetch`, then `python measuring_guard.py --newer metrics.db`. Paste the guard in full (VERDICT, ACCEPTED lines).
+
+
 ## 11dg. Round P2e — fine-tune (2026-10-29)
 
 What changes (SPEC §19 P2e; no definition changes):
