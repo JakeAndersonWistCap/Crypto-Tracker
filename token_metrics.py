@@ -1104,6 +1104,10 @@ def apply_run_cleanups(st, run_id: str, log) -> list[str]:
                 if c.get("dates"):              # D6-5: once, on exactly these days
                     q = (q[0] + f" AND substr(date, 1, 10) IN ({','.join('?' * len(c['dates']))})",
                          q[1] + tuple(c["dates"]))
+            elif c.get("repeat") and c.get("superseded_by") == "restatement":
+                # P2d-1: EVERY RUN, any row of the series on another set, whatever its date (filtered below by
+                # config.restatement_superseded) — the rows the once-only pass left beside the current set
+                q = ("FROM metrics WHERE project=? AND metric=?", (proj, c["metric"]))
             elif c.get("orphan_delta_of"):
                 # G15 2: a differenced row dated a day its stock holds no reading
                 q = ("FROM metrics WHERE project=? AND metric=? AND source LIKE '%:delta%' AND substr(date, 1, 10) "
@@ -1143,6 +1147,11 @@ def apply_run_cleanups(st, run_id: str, log) -> list[str]:
                 if rows:
                     lines.append(done)
                 st.record_fetch(run_id, mark, proj, len(rows), "ok", done)
+            if restating and c.get("repeat") and rows:
+                done = (f"CLEAN-UP {c['id']}: {len(rows)} row(s) of {proj} / {c['metric']} on another set "
+                        f"({_short_source(rows[0][2])}{', …' if len(rows) > 1 else ''}) removed — {c['why']}")
+                log.warning("%s", done)
+                lines.append(done)
             if not rows:
                 continue
             if restating:

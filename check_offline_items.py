@@ -12036,20 +12036,27 @@ def _restatement_status(project: str, metric: str, db: str = "metrics.db") -> in
         if comps == cur and "PARTIAL" not in src:
             on_cur.add(day)
         if config.restatement_superseded(project, metric, d, src):
-            old.append(day)
-        elif comps != cur and day >= before:
-            late.append(day)
+            if day >= before:
+                late.append((day, n, src))             # P2d-2: beside the current set — the archive refuses next to it
+            else:
+                old.append(day)
     print(f"  span {start.date()}..{today0.date()} ({config.TRAJECTORY['history_days']} days); restated before "
           f"{before.date()} (set grew {', '.join(config.restatement_seams(project, metric))}); CLEAN-UP {r['id']} "
           f"{'RUN ' + str(mark[0])[:19] if mark else 'NOT RUN on this store'}")
     for (what, how), ds in sorted(groups.items(), key=lambda kv: min(kv[1])):
         print(f"  {what:<32} {how:<22} {len(ds):>4} day(s)  {min(ds).date()}..{max(ds).date()}")
-    if late:
-        print(f"  !! {len(late)} day(s) ON OR AFTER {before.date()} hold another set ({bw._named_day_ranges(late)}) — not "
-              f"removed by the clean-up; PASTE BACK this line (the declared first day of the current set is too early)")
+    for day, n, src in late:
+        print(f"  !! {day.date()} is stored on the {n}-wallet set, not {r['point_label']} — the archive REFUSES to write "
+              f"the days beside it")
     span = pd.date_range(start, before - pd.Timedelta(days=1), freq="D")
     holes = [d for d in span if d not in on_cur]
-    if old:
+    if late:
+        rid = config.restatement_repeat_id(r)
+        print(f"  -> BLOCKED: {len(late)} row(s) on another set on or after {before.date()} "
+              f"({bw._named_day_ranges([d for d, _n, _s in late])}) stop the backfill — re-running it cannot succeed. "
+              f"Fix: `python token_metrics.py` (CLEAN-UP {rid} removes them, each logged), then `{r['refill']}`. "
+              f"PASTE BACK the lines above.")
+    elif old:
         print(f"  -> NOT YET RESTATED: {len(old)} day(s) before {before.date()} on another set ({bw._named_day_ranges(old)}) — "
               f"the daily run's CLEAN-UP {r['id']} removes them, then `{r['refill']}`. PASTE BACK the lines above.")
     elif holes:

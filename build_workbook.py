@@ -3175,6 +3175,8 @@ def _market_cap_views(groups: dict) -> None:
         own, fallback = daily(chosen), daily("circulating_supply")
         if config.no_coingecko_fallback(name) and chosen != "circulating_supply":
             fallback = fallback.iloc[0:0]            # another basis, never a stand-in (Phase 1 review, item 2)
+        elif config.coingecko_only_before_own(name) and chosen != "circulating_supply" and not own.empty:
+            fallback = fallback[fallback.index < own.index.min()]   # P2d-3: a hole inside the own span, never CoinGecko
         # A HAND-ENTERED MONTHLY FIGURE HOLDS UNTIL IT IS STALE (GEODNET's own circulating, 2026-10-07): carried
         # forward up to 45 days, the AMBER threshold of a monthly manual series.
         if chosen != "circulating_supply" and not own.empty and config.series_granularity(name, chosen) == "monthly":

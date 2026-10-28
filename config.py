@@ -33539,14 +33539,19 @@ def restatement(project: str, metric: str) -> dict | None:
 
 
 def restatement_superseded(project: str, metric: str, date, source: str) -> bool:
-    """Is this stored row one the declared restatement replaces? — dated before the current point's first day and read
-    from any other point (the earlier wallet set, or a PARTIAL sum of it). A sum is compared by its component SET, so the
-    order the wallets were read in does not matter."""
+    """Is this stored row one the declared restatement replaces? — read from any point but the current one (the earlier
+    wallet set, or a PARTIAL sum of it), WHATEVER ITS DATE (P2d-1: Jake's store held its 2026-10-26 row on the 27-wallet
+    set, after the declared first day, and the archive refused every earlier day beside it). A sum is compared by its
+    component SET, so the order the wallets were read in does not matter."""
     r = restatement(project, metric)
-    if not r or str(date)[:10] >= r["before"]:
+    if not r:
         return False
     from fetch.base import _measuring_point                        # noqa: PLC0415
-    return _sum_set(_measuring_point(str(source))) != _sum_set(_measuring_point(r["point"]))
+    if _sum_set(_measuring_point(str(source))) == _sum_set(_measuring_point(r["point"])):
+        return False
+    # a PARTIAL sum on or after the current set's first day is a partial read OF the current set (a component refused
+    # that day), not another set — never removed by the every-run pass
+    return not ("PARTIAL" in str(source) and str(date)[:10] >= r["before"])
 
 
 def _sum_set(point: str) -> frozenset:
@@ -33711,3 +33716,46 @@ def restatement_seams(project: str, metric: str) -> tuple:
     """The dates a restated series' wallet set grew (its SERIES BREAK(s) while earlier-set rows remain)."""
     r = restatement(project, metric) or {}
     return tuple(r.get("seams") or ((r["before"],) if r.get("before") else ()))
+
+
+# ===== P2d-1 (Jake 2026-10-28 run): THE SECOND, IDEMPOTENT RESTATEMENT PASS. The once-only clean-ups remove the rows
+# dated before the current set's first day; a row on another set ON OR AFTER that day (Jake's Chainlink 2026-10-26) was
+# left, and the archive refuses to write beside it. This pass runs on EVERY run and removes any row of the series on
+# another set, whatever its date (config.restatement_superseded) — each logged; a store with none removes nothing.
+def restatement_repeat_id(r: dict) -> str:
+    """The every-run pass's clean-up id for a declared restatement (P2b-2 -> P2b-2b, P2c-5a -> P2c-5a2)."""
+    return f"{r['id']}{'b' if r['id'] == 'P2b-2' else '2'}"
+
+
+RUN_CLEANUPS = RUN_CLEANUPS + tuple(
+    {"id": restatement_repeat_id(_r), "metric": _m, "superseded_by": "restatement",
+     "repeat": True, "projects": (_n,),
+     "why": f"a row on {_r.get('superseded_label') or 'an earlier wallet set'} left after the once-only clean-up (any "
+            f"date): the archive refuses to write beside it — removed so `{_r['refill']}` re-reads that day on "
+            f"{_r['point_label']} (SPEC P2d-1)"}
+    for (_n, _m), _r in SERIES_RESTATEMENTS.items())
+
+# ===== P2d-3 (Jake 2026-10-28): CHAINLINK'S CIRCULATING USED — ONE BASIS AT A TIME. CoinGecko's circulating stood in on
+# every day the on-chain figure could not form, so the 453 days CLEAN-UP P2b-2 emptied read CoinGecko between on-chain
+# days (live guard BASIS 'circulating_supply' beside 'circulating_supply_onchain'). CoinGecko now stands in only BEFORE
+# the first on-chain day; after it a day without the on-chain figure is a HOLE (SPEC §1 rule 9), and the seam is a
+# declared handover with an overlap check, as Hyperliquid's (G11 B8).
+CIRCULATING_ONCHAIN["Chainlink"]["coingecko_only_before_own"] = (
+    "CoinGecko's circulating stands in only before Chainlink's first on-chain day; after it a missing on-chain day is a "
+    "hole, never CoinGecko (SPEC P2d-3)")
+PROJECT_BY_NAME["Chainlink"].setdefault("series_handover", {})["circulating_supply_used"] = {
+    "ordered_points": ("derived:circulating_used[circulating_supply]",
+                       "derived:circulating_used[circulating_supply_onchain]"),
+    "why": "CoinGecko's circulating before Chainlink's first on-chain day (total − the non-circulating wallets); the "
+           "on-chain figure from it — never CoinGecko inside the on-chain span (P2d-3)",
+    "composition_change": "CoinGecko's count vs the on-chain total less the declared non-circulating wallets: a "
+                          "different basis — see the overlap check",
+    "declared": "2026-10-28",
+    "overlap": {"a": "circulating_supply", "b": "circulating_supply_onchain", "tolerance_pct": 2.0, "min_days": 3,
+                "if_not_passed": "a CHANGE OF BASIS at the seam (CoinGecko counts the non-circulating wallets "
+                                 "differently), not a flow — a window spanning it is a series break"}}
+
+
+def coingecko_only_before_own(project_name: str) -> str:
+    """Why CoinGecko's circulating may stand in only before the project's first own day, else '' (P2d-3)."""
+    return str((CIRCULATING_ONCHAIN.get(project_name) or {}).get("coingecko_only_before_own") or "")

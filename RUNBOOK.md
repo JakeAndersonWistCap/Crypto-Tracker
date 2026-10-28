@@ -555,31 +555,41 @@ What changes (SPEC §19 P2c):
 - **Ether.fi non-circulating** rises about 0.75M ETHFI (+0.4%) once restated; Treasury payouts of Aug–Oct 2025 become
   releases. Maple and Pendle: unchanged values.
 
-**Pull this, then in PowerShell 5.1 at the repo root (the long steps are last):**
+**The Chainlink restatement on your store (P2d).** Your 2026-10-28 run's CLEAN-UP P2b-2 removed the 466 rows before
+2026-10-26 but left the 2026-10-26 row on the 27-wallet set, and the archive refused every day beside it. Now a row on
+another set is removed whatever its date by an every-run pass (CLEAN-UP P2b-2b; and P2c-5a2/b2/c2 for Ether.fi, Maple
+and Pendle), each row logged; the archive then re-reads 2026-10-26 on all 33 like any other day. The check says
+`-> BLOCKED` (naming the row and the fix) while such a row is left. Chainlink's circulating used is CoinGecko only before
+its first on-chain day — after it a missing on-chain day is a hole (a declared handover, as Hyperliquid's).
+
+The daily run also applies the P2c-5 clean-ups (Ether.fi, Maple, Pendle) for the first time, so the archive line
+refills all four projects, not Chainlink alone; without them those three series would stay holes.
+
+**Pull this, then in PowerShell 5.1 at the repo root (the backfill, the long step, is last):**
 ```
 git pull
-Copy-Item metrics.db metrics.db.bak-p2c
-python check_offline_items.py series_restatements
+Copy-Item metrics.db metrics.db.bak-p2d
 python token_metrics.py
-python measuring_guard.py --newer metrics.db
-python archive_backfill.py --run --project Chainlink --project Ether.fi --project Maple --project Pendle --budget-min 120
 python check_offline_items.py series_restatements
 python token_metrics.py --no-fetch
 python measuring_guard.py --newer metrics.db
-python recalc_check.py token_metrics.xlsx
-python recalc_check.py token_metrics_audit.xlsx 1800
+python archive_backfill.py --run --project Chainlink --project Ether.fi --project Maple --project Pendle --budget-min 180
 ```
-The archive line takes one to two hours; if its last line reads "budget spent at …", run it again (stored days are
-skipped) until every block of the check prints `-> RESTATED`.
+When the backfill ends, run the check, the rebuild and the guard again:
+```
+python check_offline_items.py series_restatements
+python token_metrics.py --no-fetch
+python measuring_guard.py --newer metrics.db
+```
+If the backfill's last line reads "budget spent at …", run it again (stored days are skipped) until every block of the
+check prints `-> RESTATED`. Before the backfill the check reads `-> RESTATEMENT INCOMPLETE` (holes, the backfill fills
+them); `-> BLOCKED` means a row on another set is still stored — paste that line back.
 
 PASTE BACK:
+- from the daily run: every `CLEAN-UP P2b-2b`, `CLEAN-UP P2c-5a/b/c` and `CLEAN-UP P2c-5a2/b2/c2` line;
 - both `series_restatements` outputs, every line, with each `->` verdict and any `!!` line;
-- from the daily run: each `CLEAN-UP P2b-2` / `CLEAN-UP P2c-5a/b/c: applied once — N row(s)` line with the first and
-  last `removed` line of each, and the `aero_v3 / Aerodrome: filing_managed_lock_tokens at Base block …` line;
-- BOTH guard outputs, in full (the first is before the archive refill, the second after it);
-- the archive's final lines (budget spent / pace / NOT WRITTEN);
-- each recalc's `"formulas"`, `"mismatches"` and `"errors"`;
-- from the audit file: Aerodrome's FDV cell comment, and Master's Pendle Fees Δ6m and Δ9m with the hover text of Δ6m.
+- both guard outputs, in full;
+- the backfill's final lines (budget spent / pace / REFUSED / NOT WRITTEN).
 
 
 ## 11de. Round P2b — Jake's answers on P2a (2026-10-27)

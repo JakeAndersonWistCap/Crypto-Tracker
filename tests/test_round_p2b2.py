@@ -58,7 +58,7 @@ def test_the_handover_is_no_longer_static_and_the_restatement_is_declared():
     assert config.restatement_superseded(CL, NC, "2026-10-20", _p("27"))
     assert config.restatement_superseded(CL, NC, "2026-10-20", _p("27") + ":PARTIAL")
     assert not config.restatement_superseded(CL, NC, "2026-10-20", reordered + ":archive")
-    assert not config.restatement_superseded(CL, NC, "2026-10-26", _p("27"))
+    assert config.restatement_superseded(CL, NC, "2026-10-26", _p("27"))      # P2d-1: another set, whatever its date
     assert not config.restatement_superseded("Aerodrome", NC, "2026-10-20", _p("27"))
 
 

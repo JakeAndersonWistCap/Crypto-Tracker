@@ -98,7 +98,7 @@ def test_which_rows_are_superseded():
     assert config.restatement_superseded(EF, NC, "2026-10-20", P["ef10"])
     assert config.restatement_superseded(EF, NC, "2026-10-20", P["ef10"] + ":PARTIAL")
     assert not config.restatement_superseded(EF, NC, "2026-10-20", rev + ":archive")
-    assert not config.restatement_superseded(EF, NC, "2026-10-26", P["ef10"])
+    assert config.restatement_superseded(EF, NC, "2026-10-26", P["ef10"])     # P2d-1: another set, whatever its date
     assert config.restatement_superseded(MP, IS, "2026-10-25", P["mp8"])
     assert not config.restatement_superseded(MP, IS, "2026-10-25", P["mp9"] + ":archive")
     assert config.restatement_superseded(PD, IS, "2026-03-01", P["pd3"] + ":archive")
@@ -382,4 +382,6 @@ def test_the_status_check_reports_each_series(tmp_path, monkeypatch, capsys):
     # a store whose earlier set ran past the declared first day says so
     st.upsert(_g(MP, IS, ["2026-10-27"], 0.0, P["mp8"]))
     coi.series_restatements(str(tmp_path / "s.db"))
-    assert "!! 1 day(s) ON OR AFTER 2026-10-26 hold another set (2026-10-27)" in capsys.readouterr().out
+    out = capsys.readouterr().out                       # P2d-2: it blocks the archive — the check says so and why
+    assert "!! 2026-10-27 is stored on the 8-wallet set" in out
+    assert "-> BLOCKED: 1 row(s) on another set on or after 2026-10-26 (2026-10-27)" in out and "CLEAN-UP P2c-5b2" in out
