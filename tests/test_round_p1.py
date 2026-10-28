@@ -600,7 +600,7 @@ def test_p2c_7_every_value_cell_comment_opens_with_a_plain_sentence(built):
     ws = r["A2 Coordination"]
     rows = _rows_of(ws)
     c = ws.cell(rows["Aethir"], _col_of(ws, next(ws.cell(4, j).value for j in range(1, ws.max_column + 1)
-                                                if str(ws.cell(4, j).value or "").endswith("latest quarter"))))
+                                                if str(ws.cell(4, j).value or "").endswith(", latest"))))
     head = c.comment.text.split("\n\n")[0]
     assert "for Aethir" in head and "90 days" in head and not head.startswith("Working:")
 

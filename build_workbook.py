@@ -7409,7 +7409,13 @@ def _retire_vs_emissions_col(R: Refs) -> tuple:
         expr = f"{_flow_rate(R, r, 'retired_buyback_tokens', p=p)}/({'+'.join(parts)})"
         return _coverage_guard(R, r, legs + [(m, m, "q0") for m in ems], expr) if cr else \
             _absorption_guard(R, r, p, legs, expr)
-    return (RETIRE_VS_EMISSIONS_HEAD, build, FMT_X, "calc", False, {"metric": "retired_buyback_tokens"})
+    # P2e-2: the key's own trajectory row (Q0 = this cell; Q-1..Q-4 the same builder shifted) — the reader's A3 tab
+    # shows the key's last four quarters from it
+    return (RETIRE_VS_EMISSIONS_HEAD, build, FMT_X, "calc", False,
+            {"metric": "retired_buyback_tokens", "trajectory_id": A3_KEY_TRAJECTORY_ID})
+
+
+A3_KEY_TRAJECTORY_ID = "a3_retire_vs_emissions"
 
 
 EXTRA_SNAPSHOT_HEADERS = (UNLOCK_HEAD, UNLOCK_PCT_HEAD, TOTAL_DILUTION_HEAD, NET_ABS_UNLOCK_HEAD, RETIRE_VS_DILUTION_HEAD,
