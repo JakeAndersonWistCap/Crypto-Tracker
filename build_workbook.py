@@ -12544,10 +12544,11 @@ def build_workbook(store, path: Path | str, run_id: str | None = None,
     # THE BUILD'S HITS BESIDE THE WORKBOOK (Round G7 item 7): `sanity.py --workbook` re-evaluates the workbook alone and
     # cannot see the rules that need the build's state (headline_lost, headline_starved) — it printed 0 while the Review
     # Queue said 5. It reads this file, so both count the same open hits.
+    # P2e-4: an accepted loss (config.REGRESSION_ALLOWLIST, the list measuring_guard reads) is carried under "accepted"
+    # with its reason and date, not under "hits"
     try:
-        Path(path).with_name("sanity_hits.json").write_text(__import__("json").dumps(
-            {"workbook": Path(path).name, "built": str(asof)[:10],
-             "hits": [list(h) for h in SANITY_HITS]}, indent=1), encoding="utf-8")
+        import sanity                                      # noqa: PLC0415
+        sanity.write_hits(Path(path).with_name("sanity_hits.json"), Path(path).name, str(asof)[:10], SANITY_HITS)
     except OSError:
         pass
     # THE COVERAGE AUDIT (alignment round 2026-10-13, D1): every column against SPEC.md, as a tab and a CSV beside the
@@ -12665,7 +12666,8 @@ def _write_sanity(ws, found: list) -> None:
         for i, ((proj, rule, detail), a) in enumerate(answered, start=1):
             ws.cell(row=r + i, column=1, value=proj).font = F_SUB
             ws.cell(row=r + i, column=2, value=f"{rule} — ANSWERED").font = F_SUB
-            ws.cell(row=r + i, column=3, value=f"{detail[:200]} || allow-listed until {a.get('until', '-')}: "
+            ws.cell(row=r + i, column=3, value=f"{detail[:200]} || allow-listed until {a.get('until', '-')} "
+                                               f"(accepted {a.get('accepted') or 'date unknown'}): "
                                                f"{a['reason']}"[:600]).font = F_SUB
 
 

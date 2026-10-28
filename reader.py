@@ -872,6 +872,59 @@ def _revenue_metric(config, name: str) -> str:
     return config.revenue_headline_metric(name)
 
 
+# P2e-3 (Jake 2026-10-28): Summary's revenue column reads revenue_headline_metric — PROTOCOL revenue on every row
+# (revenue_usd, or the sum of the protocol revenue streams), never customer revenue; the header says so
+REV_HEADER = "Protocol revenue, annualised"
+_DATA_Q0 = ("Q0 (flow: trailing 90d sum, or 3 complete months for a monthly series — see Q0 basis · stock: 90d "
+            "avg)")
+# the source field a stored source string reads (fetch/llama.py: dailyRevenue -> revenue_usd)
+_SOURCE_FIELD = {("defillama", "revenue_usd"): "DefiLlama {slug}: dailyRevenue (its 'Revenue' line)",
+                 ("defillama:near-intents", "intents_revenue_usd"): "DefiLlama near-intents: dailyRevenue",
+                 ("maple_page:island.ALL.revenueUsd", "revenue_usd"): "Maple's own page (island.ALL.revenueUsd)"}
+
+
+def _series_name(ctx, p: dict, metric: str) -> str:
+    """'<label>' from <source> — the stored series a revenue cell reads, as the audit file's Data row names it."""
+    A, name = ctx.A, p["name"]
+    key = f"{name}|{metric}"
+    label = A.data_field(key, "Label") or metric
+    src = str(A.data_field(key, "Source (of latest point)") or "").strip()
+    where = _SOURCE_FIELD.get((src, metric), src or "no stored row").format(
+        slug=p.get("defillama_fees_slug") or name.lower())
+    return f"{name}|{metric} '{str(label).split(' — ')[0]}' from {where}"
+
+
+def revenue_series_note(ctx, p: dict, metric: str, value) -> str:
+    """P2e-3: the exact series the protocol-revenue cell reads (each leg where it sums several) and, where it reads 0,
+    what the source reports — the stored rows' own count — and the reason ONLY where the project's record (its fee
+    split, with its source and date) gives one; otherwise that no reason is published. Never inferred."""
+    config, A, name = ctx.config, ctx.A, p["name"]
+    legs = list((getattr(config, "REVENUE_TOTAL", {}) or {}).get(name) or ()) if metric == "revenue_total_usd" else []
+    parts = [(f"Series: {name}|{metric} = the sum of " + "; ".join(_series_name(ctx, p, m) for m in legs) + ".")
+             if legs else f"Series: {_series_name(ctx, p, metric)}."]
+    if value == 0:
+        held = []
+        for m in legs or [metric]:
+            k = f"{name}|{m}"
+            d = A.data_field(k, "Q0: days of the 90 the series existed for")
+            ev = A.data_field(k, "Q0: days with a non-zero value (events)")
+            held.append(f"{m}: a stored row on {int(d) if isinstance(d, (int, float)) else '?'} of the 90 days, "
+                        f"{int(ev) if isinstance(ev, (int, float)) else '?'} of them non-zero")
+        parts.append(f"It reads 0 because the source reports 0 — a measured 0, not a missing figure ({'; '.join(held)}).")
+        fs = p.get("fee_split") or {}
+        if str(fs.get("status") or "").lower() == "off" and fs.get("note"):
+            parts.append(f"The reason, from {name}'s own record (fee split, source {fs.get('source_url', '?')}, read "
+                         f"{fs.get('source_date', '?')}): \"{str(fs['note']).split(' See ')[0].strip()}\"")
+        else:
+            parts.append("The source publishes no reason for the 0.")
+        if "customer_revenue_usd" in config.metrics_for_project(p):
+            cr = A.data_field(f"{name}|customer_revenue_usd", _DATA_Q0)
+            parts.append("Customer revenue (what users pay — the A2 tab's figure) is a different series and is not "
+                         "counted here" + (f": {cr:,.0f} over the last 90 days." if isinstance(cr, (int, float))
+                                           else "."))
+    return " ".join(parts)
+
+
 def _tvl_metric(p: dict) -> str:
     return "tvl_usd" if _primary(p) == 1 else "protocol_tvl_usd"
 
@@ -907,9 +960,13 @@ def _write_summary(sh: Sheet, ctx: Ctx, keys: dict) -> None:
                  "Master, Market cap ($)", 0, 12),
         "fdv": ("FDV", "Fully diluted value: price × the total supply FDV uses.", FMT_USD, "Size", "Master, FDV ($)",
                 0, 12),
-        "rev": ("Revenue, annualised", "Revenue over the last 90 days × 365 ÷ the days the series covers (the series "
-                "Master's revenue column reads).", FMT_USD, "Business", "Master, Revenue Q0 ($) and Data coverage",
-                0, 13),
+        # P2e-3: the column is PROTOCOL revenue on every row (revenue_usd — DefiLlama dailyRevenue, Maple's own
+        # page — or the sum of the protocol revenue streams for NEAR and Hyperliquid), never customer revenue
+        "rev": (REV_HEADER, "Protocol revenue (what the protocol keeps — DefiLlama's 'Revenue', or the project's own "
+                "revenue figure where it publishes one; all revenue streams where a project has more than one) over "
+                "the last 90 days × 365 ÷ the days the series covers. Not customer revenue (what users pay, e.g. a "
+                "lending protocol's borrower interest — the A2 tab's figure). Each cell's comment names its series.",
+                FMT_USD, "Business", "Master, Revenue Q0 ($) and Data coverage", 0, 13),
         "growth": ("Revenue growth, selected period", "Revenue over the selected period (cell B2) to the series' last "
                    "complete day ÷ revenue over the same number of days before it − 1. n/a where the history is "
                    "shorter or a day is missing.", FMT_PCT, "Business", "computed from the stored daily revenue series",
@@ -1035,16 +1092,21 @@ def _summary_row(sh, ctx: Ctx, C, row, p, rank, key, parked: bool = False) -> No
         ref_d = data.put(name, "rev_q0_days", float(days))
         data.put(name, "rev_ann", rq.num * 365 / float(days))
         put_formula(sh, row, C["rev"], f"={ref_q}*365/{ref_d}", rq.fill,
-                    f"Revenue over the last 90 days {rq.num:,.0f} × 365 ÷ {int(days)} covered days.\n\nWorking: "
-                    f"{rq.where}; Data {name}|{metric}.")
+                    f"Protocol revenue over the last 90 days {rq.num:,.0f} × 365 ÷ {int(days)} covered days.\n\n"
+                    f"{revenue_series_note(ctx, p, metric, rq.num)}\n\nWorking: {rq.where}; Data {name}|{metric}.")
         nums += 1
         greens += _green(rq.fill)
     elif rq is not None and rq.num is None and not str(rq.text or "").strip():
         code, why = blank_reason(p, rq, C["rev"])
-        put_code(sh, row, C["rev"], code, f"{why}\n\nWorking: {rq.where} (empty).")
+        put_code(sh, row, C["rev"], code, f"{why}\n\n{revenue_series_note(ctx, p, metric, None)}\n\nWorking: "
+                 f"{rq.where} (empty).")
     else:
+        # a figure with no covered day is unknown, never 0 (P2e-3: 0 is not n/a, unknown is never 0)
+        no_days = rq is not None and rq.num is not None
         put_code(sh, row, C["rev"], code_of(rq.text if rq else ""),
-                 _code_reason(rq, "" if rq is not None and rq.num is not None else "no revenue figure"),
+                 _code_reason(rq, ("no day of the last 90 is covered by the series (no covered-days count on its "
+                                   "Data row)" if no_days else "no revenue figure") + ". "
+                              + revenue_series_note(ctx, p, metric, None)),
                  rq.fill if rq else None)
     _period_formula_cell(sh, ctx, row, C["growth"], name, metric, "flow", "revenue")
     _period_formula_cell(sh, ctx, row, C["price"], name, "price_usd", "stock", "price")
@@ -1818,7 +1880,7 @@ COMPARISON_COLS = (
     ("fees_fdv", "Fees ÷ FDV, a year", ("Master", "Fees ÷ FDV (annualised)"), FMT_PCT,
      "Fees over the last 90 days, annualised, ÷ fully diluted value.", ""),
     ("rev_mcap", "Revenue ÷ market cap, a year", "@rev_mcap", FMT_PCT,
-     "Revenue, annualised (Summary's figure) ÷ market cap.", ""),
+     "Protocol revenue, annualised (Summary's figure) ÷ market cap.", ""),
     ("lock", "Lock rate, % of circulating", (CP_TAB, "Holding demand — lock rate"), FMT_PCT,
      "Tokens staked or locked inside the circulating supply ÷ circulating supply.", "staking"),
     ("stake_tbill", "Staking yield minus T-bill", "@stake_tbill", FMT_PCT,
@@ -1897,9 +1959,10 @@ def _write_business(sh: Sheet, ctx: Ctx) -> None:
         "arch": ("Primary archetype", "The archetype the project is ranked under on Summary.", TEXT_FMT, "", "", 0, 16),
         "fees": ("Fees, last 90 days", "Fees over the last 90 days (Master's fees column).", FMT_USD, "Income",
                  "Master, Fees Q0 ($)", 0, 12),
-        "rev": ("Revenue, last 90 days", "Revenue over the last 90 days on the project's own revenue basis.", FMT_USD,
+        "rev": ("Protocol revenue, last 90 days", "Protocol revenue over the last 90 days (the series Summary's "
+                "protocol revenue reads; its comment names it).", FMT_USD,
                 "Income", "Master, Revenue Q0 ($)", 0, 12),
-        "rev_ann": ("Revenue, annualised", "Revenue over the last 90 days × 365 ÷ the days the series covers (as on "
+        "rev_ann": (REV_HEADER, "Protocol revenue over the last 90 days × 365 ÷ the days the series covers (as on "
                     "Summary).", FMT_USD, "Income", "Master, Revenue Q0 and Data coverage", 0, 12),
         "growth": ("Revenue growth, selected period", "Revenue over the selected period ÷ the same number of days before "
                    "− 1, every day held.", FMT_PCT, "Income", "computed from the stored daily revenue series", 0, 12),

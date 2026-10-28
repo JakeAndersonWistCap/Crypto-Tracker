@@ -12,7 +12,8 @@ series-break and measuring-point rules read) and every headline cell that holds 
   - a series whose set of bases gained a basis that is neither a declared handover point (config series_handover
     ordered_points) nor a declared component (config.DECLARED_COMPONENTS);
   - a headline that held a value before and holds none after (config.REGRESSION_ALLOWLIST answers it, as the build's
-    own continuity guard does);
+    own continuity guard does — and an answered loss is PRINTED, "ACCEPTED: <project> <headline> — <reason> (accepted
+    <date>)", never silent, never counted: P2e-4, the same list sanity_hits.json carries under "accepted");
   - a headline whose text names measuring_point_changed, even one blank in the baseline too (G9 C3) — no allowance.
 "Before" is the baseline committed beside the tests (tests/fixtures/guard_baseline.json), written by the last accepted
 code; "after" is the code under test. A legitimate change of basis is declared in config, then the baseline rewritten:
@@ -232,18 +233,34 @@ def live_check(db_path: str, baseline: dict) -> tuple[list[str], dict]:
     # live store
     import export_snapshot as _es
     prev_date, prev = _es.load_previous(asof - pd.Timedelta(days=1))
+    lost, accepted = lost_against_previous(prev, heads, scope, prev_date)
+    bad.extend(lost)
+    for proj, head, text in mpc:
+        bad.append(f"HEADLINE BLANKED BY {MPC} {proj} {head}: {text}")
+    return bad, {"asof": str(asof.date()), "bases": bases, "headlines": heads, "mpc_headlines": mpc,
+                 "previous": prev_date, "scope": scope, "accepted": accepted}
+
+
+def lost_against_previous(prev: dict | None, heads: dict, scope=None, prev_date: str = "",
+                          on=None) -> tuple[list[str], list[str]]:
+    """live_check's LOST-HEADLINE check, on its own so it can be fed directly (P2e-4): (violations, ACCEPTED lines).
+    A headline the previous snapshot held as a value and the live build does not is a violation — unless
+    config.REGRESSION_ALLOWLIST accepts it, when it is PRINTED as an accepted loss, never silent, never counted."""
+    import config
+    import export_snapshot as _es
+    bad, accepted = [], []
     for proj, cells in (prev or {}).items():
         if scope and proj not in scope:
             continue                                      # outside the run's scope: not this run's headline
         for head, v in cells.items():
-            if not isinstance(v, float) or head in (heads.get(proj) or {}) or config.regression_allowance(proj, head) \
-                    or _es.is_attribute(head):
+            if not isinstance(v, float) or head in (heads.get(proj) or {}) or _es.is_attribute(head):
                 continue                                  # G13 5: an attribute (identity / notes) is not a headline
+            allow = config.regression_allowance(proj, head, on=on)
+            if allow:
+                accepted.append(config.accepted_loss_line(proj, head, allow))
+                continue
             bad.append(f"HEADLINE LOST {proj} {head}: {v:,.6g} in the {prev_date} snapshot, no value on the live store")
-    for proj, head, text in mpc:
-        bad.append(f"HEADLINE BLANKED BY {MPC} {proj} {head}: {text}")
-    return bad, {"asof": str(asof.date()), "bases": bases, "headlines": heads, "mpc_headlines": mpc,
-                 "previous": prev_date, "scope": scope}
+    return bad, accepted
 
 
 def live_basis_violations(bases: dict, baseline: dict) -> list[str]:
@@ -296,8 +313,9 @@ def _declared(project: str, metric: str) -> set:
     return out
 
 
-def compare(before: dict, after: dict) -> list[str]:
-    """Every undeclared new basis of an existing series, and every headline lost."""
+def compare(before: dict, after: dict, accepted: list | None = None, on=None) -> list[str]:
+    """Every undeclared new basis of an existing series, and every headline lost. A lost headline
+    config.REGRESSION_ALLOWLIST accepts is not a violation: its ACCEPTED line goes to `accepted` (P2e-4)."""
     import config
     bad = []
     for key, now in after["bases"].items():
@@ -312,7 +330,10 @@ def compare(before: dict, after: dict) -> list[str]:
         for head, v in cells.items():
             if head in (after["headlines"].get(proj) or {}):
                 continue
-            if config.regression_allowance(proj, head):
+            allow = config.regression_allowance(proj, head, on=on)
+            if allow:
+                if accepted is not None:
+                    accepted.append(config.accepted_loss_line(proj, head, allow))
                 continue
             bad.append(f"HEADLINE LOST {proj} {head}: {v:,.6g} before, no value after")
     # G9 C3: a headline blanked by a change of measuring point fails whatever the baseline held — blank before too
@@ -348,6 +369,7 @@ def main(argv=None) -> int:
         print(f"MEASURING-POINT GUARD ON THE LIVE STORE — {len(bad)} violation(s)")
         for b in bad:
             print("  " + b)
+        print_accepted(snap.get("accepted") or [])
         print("VERDICT: " + ("OK — no undeclared basis, no lost headline" if not bad else
                              f"{len(bad)} VIOLATION(S) — each line above"))
         return 1 if bad else 0
@@ -360,15 +382,34 @@ def main(argv=None) -> int:
               f"{sum(len(v) for v in snap['headlines'].values())} headlines with a value, "
               f"{sum(len(v) for v in snap['probed'].values())} probed series")
         return 0
-    bad = compare(base, snap)
+    accepted: list = []
+    bad = compare(base, snap, accepted)
     print(f"MEASURING-POINT GUARD — {len(bad)} violation(s)")
     for b in bad:
         print("  " + b)
-    lost = snap.get("sanity_lost") or []
-    print(f"SANITY lost_headlines on the same build — {len(lost)} hit(s)")
-    for p, _rule, msg in lost:
+    print_accepted(accepted)
+    # P2e-4: sanity's own lost-headline rule on the same build, split by the same list (sanity.hits_payload — the body
+    # of sanity_hits.json): open hits counted, accepted losses listed apart
+    body = sanity_split(snap.get("sanity_lost") or [])
+    print(f"SANITY lost_headlines on the same build — {len(body['hits'])} hit(s), {len(body['accepted'])} accepted")
+    for p, _rule, msg in body["hits"]:
         print(f"  {p}: {msg[:200]}")
+    for r in body["accepted"]:
+        print(f"  {r['line']}")
     return 1 if bad else 0
+
+
+def sanity_split(lost: list) -> dict:
+    """sanity's lost-headline hits as sanity_hits.json carries them: {"hits": open, "accepted": records}."""
+    import sanity
+    return sanity.hits_payload("", "", [tuple(h) for h in lost])
+
+
+def print_accepted(lines: list) -> None:
+    """P2e-4: every accepted loss, one line each — listed, not counted as a violation."""
+    print(f"ACCEPTED LOSSES (config.REGRESSION_ALLOWLIST) — {len(lines)}, listed, not counted")
+    for line in lines:
+        print("  " + line)
 
 
 if __name__ == "__main__":
