@@ -2032,7 +2032,7 @@ def _write_arch_tab(sh: Sheet, ctx: Ctx, spec: TabSpec) -> None:
                     put_code(sh, row, col, k2, why)
         if parked:                          # P2e-5: one code on a parked row — the rank block reads "parked"
             for col, h in zip(cols, how):   # and so do the key's own quarters (P2e-2) and their change
-                if col.block == "(a) Rank key" or h[0] == "keytraj" or col.header == KEY_CHANGE_HEADER:
+                if col.block == "(a) Rank key" or (h or ("",))[0] == "keytraj" or col.header == KEY_CHANGE_HEADER:
                     park_cell(sh, f"{col.letter}{row}", name)
             grey_row(sh, row)
     last = 4 + len(order)
