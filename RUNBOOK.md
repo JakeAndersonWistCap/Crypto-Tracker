@@ -549,18 +549,37 @@ What changes (SPEC §19 P2b):
   from ~2,036.6M to ~1,538.9M (overstated by ~497.7M, not ~441M). Aerodrome STAYS PARKED: no primary source publishes
   circulating on this basis to tie to. Days from 2026-10-22 to your first run with this change have no v3 filing row
   and stay holes; 2026-10-21 still reads ~218.8M high (not fixed).
-- Chainlink's 33-wallet history (P2b-2): in progress, not in this pull.
+- **Chainlink's non-circulating history on the 33 wallets** (P2b-2). The daily run removes, once, every Chainlink
+  noncirculating_holding_tokens row before 2026-10-26 on the 27-wallet set (CLEAN-UP P2b-2, one log line per row);
+  `archive_backfill.py` then re-reads each of those days at its first block on all 33 wallets. Until the store holds
+  no 27-wallet row the 10-26 break stays and the cell names the days still on the 27 set; a day not yet re-read is a
+  named hole, never the 27-wallet sum. The 6 added wallets held only ~29.47 LINK over the whole span, so the values
+  barely move (+29.47 LINK); the break goes.
 
 **Pull this, then in PowerShell 5.1 at the repo root:**
 ```
 git pull
-python token_metrics.py --project Aerodrome
+Copy-Item metrics.db metrics.db.bak-p2b2
+python check_offline_items.py chainlink_noncirc_restatement
+python token_metrics.py
+python measuring_guard.py --newer metrics.db
+python archive_backfill.py --run --project Chainlink --budget-min 90
+python check_offline_items.py chainlink_noncirc_restatement
 python token_metrics.py --no-fetch
 ```
-PASTE BACK the Run Log line `aero_v3 / Aerodrome: filing_managed_lock_tokens at Base block …` (expect about 500.5M:
-Relay principal ~468.3M from 9 Relays of 1 factory, sAERO stakes ~29.3M, legacy ~2.85M) — or the line that says it
-could not be read (the day then reads n/a, never 0). Look at A1 Infrastructure: the interim column is the third,
-after "Rank in A1"; hover a cell for its audit cell.
+The archive line takes about 70 minutes; if its last line reads "budget spent at …", run it again (stored days are
+skipped) until the check prints `-> RESTATED`.
+
+PASTE BACK:
+- both `chainlink_noncirc_restatement` outputs, every line, with the `->` verdict;
+- from the daily run: the `CLEAN-UP P2b-2: applied once — N row(s)` line with the first and last
+  `CLEAN-UP P2b-2: removed` lines, and the Run Log line `aero_v3 / Aerodrome: filing_managed_lock_tokens at Base
+  block …` (expect about 500.5M: Relay principal ~468.3M from 9 Relays of 1 factory, sAERO stakes ~29.3M, legacy
+  ~2.85M) — or the line saying it could not be read (the day then reads n/a, never 0);
+- the guard's VERDICT;
+- the archive's final lines (budget spent / pace / NOT WRITTEN).
+
+Look at A1 Infrastructure: the interim column is the third, after "Rank in A1"; hover a cell for its audit cell.
 
 
 ## 11dd. Round P2a — the Charlie build (2026-10-29)
