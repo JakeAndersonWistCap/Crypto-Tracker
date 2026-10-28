@@ -932,6 +932,7 @@ Every row's group and direction are declared (Jake's Phase 1 review 2026-10-12, 
 | Supply | `a3_net_absorption` | +1 |
 | Supply | `a3_retire_vs_dilution` | +1 |
 | Supply | `a3_retire_vs_dilution_now` | +1 |
+| Supply | `a3_retire_vs_emissions` | +1 |
 | Supply | `a4_burn_yield` | +1 |
 | Supply | `a4_crossover` | +1 |
 | Supply | `a4_net_change` | -1 |
