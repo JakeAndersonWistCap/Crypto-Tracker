@@ -534,6 +534,54 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11df. Round P2c — the build round (2026-10-28)
+
+What changes (SPEC §19 P2c):
+- **Your guard's 10 violations are answered** (tests/test_round_p2c0.py feeds each to the guard's own checks):
+  Aerodrome fdv_usd — a declared legacy → v3 handover at 2026-10-22; Ether.fi non-circulating, Maple and Pendle insider
+  stake shares — restated on the current wallet set (CLEAN-UP P2c-5a/b/c, then the archive); Aerodrome's three A3
+  headlines — the code "parked", an accepted loss while parked; Hyperliquid A4 burn ÷ issuance — blocked, an accepted
+  loss (no common-days ratio); Pendle Fees Δ6m / Δ9m — compared on DefiLlama's daily fees in both windows.
+- **Aerodrome FDV**: the audit FDV cell is AMBER "REFERENCE CHECK NOT PASSED": the legacy total is 5.75% below new AERO's
+  totalSupply 2,129,347,490 (block 53,165,286) — it leaves out the 117.0M Velodrome allocation; the v3 leg is within
+  2%. The Trajectory shows a SERIES BREAK at 2026-10-22 (a +5.84% step, not dilution).
+- **Aerodrome 2026-10-21** reads ~218.8M high on circulating and market cap: a declared SERIES BREAK at 2026-10-22,
+  named in the cells, the Data notes and the Trajectory. Not smoothed or restated.
+- **Aerodrome parked**: the audit Notes carry the full statement (497.7M traced; ~1,150M against the site's "~1.01B to
+  ~1.07B"); the reader says it in one sentence.
+- **Trajectory**: no quarter-on-quarter, growth or direction across a series break (a regression since P2b-2, fixed).
+- **Reader**: every comment opens with a plain sentence before its working; About has an honest-coverage block counted
+  from the Summary.
+- **Ether.fi non-circulating** rises about 0.75M ETHFI (+0.4%) once restated; Treasury payouts of Aug–Oct 2025 become
+  releases. Maple and Pendle: unchanged values.
+
+**Pull this, then in PowerShell 5.1 at the repo root (the long steps are last):**
+```
+git pull
+Copy-Item metrics.db metrics.db.bak-p2c
+python check_offline_items.py series_restatements
+python token_metrics.py
+python measuring_guard.py --newer metrics.db
+python archive_backfill.py --run --project Chainlink --project Ether.fi --project Maple --project Pendle --budget-min 120
+python check_offline_items.py series_restatements
+python token_metrics.py --no-fetch
+python measuring_guard.py --newer metrics.db
+python recalc_check.py token_metrics.xlsx
+python recalc_check.py token_metrics_audit.xlsx 1800
+```
+The archive line takes one to two hours; if its last line reads "budget spent at …", run it again (stored days are
+skipped) until every block of the check prints `-> RESTATED`.
+
+PASTE BACK:
+- both `series_restatements` outputs, every line, with each `->` verdict and any `!!` line;
+- from the daily run: each `CLEAN-UP P2b-2` / `CLEAN-UP P2c-5a/b/c: applied once — N row(s)` line with the first and
+  last `removed` line of each, and the `aero_v3 / Aerodrome: filing_managed_lock_tokens at Base block …` line;
+- BOTH guard outputs, in full (the first is before the archive refill, the second after it);
+- the archive's final lines (budget spent / pace / NOT WRITTEN);
+- each recalc's `"formulas"`, `"mismatches"` and `"errors"`;
+- from the audit file: Aerodrome's FDV cell comment, and Master's Pendle Fees Δ6m and Δ9m with the hover text of Δ6m.
+
+
 ## 11de. Round P2b — Jake's answers on P2a (2026-10-27)
 
 What changes (SPEC §19 P2b):
