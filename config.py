@@ -20378,7 +20378,7 @@ ARCHIVE_SERIES_START = {
     # is now dated (sanity.min_from), the year before the burn is real history and is backfilled,
     # and the 100M step is a DATED ONE-OFF kept out of every rate (one_off_flows).
     #
-    # P2d-4 (Jake's backfill 2026-10-28: 170 days NOT WRITTEN, 2025-07-30..2026-01-15). FROM THE DATA, read live
+    # P2d-6 (Jake's backfill 2026-10-28: 170 days NOT WRITTEN, 2025-07-30..2026-01-15). FROM THE DATA, read live
     # 2026-10-28 on a public Ethereum archive RPC: sPENDLE (0x999999999991E178…, EIP-1967 proxy) has NO CODE through
     # block 24,237,455 and code from 24,237,456 (2026-01-15 03:34:59 UTC); cooldownDuration() answers 0 there and
     # 1,209,600 s (14 d) from block 24,237,468 (03:37:23 UTC). The implementation slot holds 0xa98d1483… at deployment
@@ -20398,7 +20398,7 @@ ARCHIVE_SERIES_START = {
 
 
 def series_absent_before(project_name: str, metric: str, window_start=None) -> str | None:
-    """P2d-4: "not available before <date> (<why>)" for a series whose declared start (ARCHIVE_SERIES_START, with an
+    """P2d-6: "not available before <date> (<why>)" for a series whose declared start (ARCHIVE_SERIES_START, with an
     `absent` reason) falls after `window_start` (a date; None = always) — the days before are a pre-deployment absence,
     named with the date, never a hole to fill. None otherwise."""
     s = ARCHIVE_SERIES_START.get((project_name, metric)) or {}

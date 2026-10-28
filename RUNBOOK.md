@@ -559,8 +559,23 @@ What changes (SPEC §19 P2c):
 2026-10-26 but left the 2026-10-26 row on the 27-wallet set, and the archive refused every day beside it. Now a row on
 another set is removed whatever its date by an every-run pass (CLEAN-UP P2b-2b; and P2c-5a2/b2/c2 for Ether.fi, Maple
 and Pendle), each row logged; the archive then re-reads 2026-10-26 on all 33 like any other day. The check says
-`-> BLOCKED` (naming the row and the fix) while such a row is left. Chainlink's circulating used is CoinGecko only before
-its first on-chain day — after it a missing on-chain day is a hole (a declared handover, as Hyperliquid's).
+`-> BLOCKED` (naming the row and the fix) while such a row is left.
+
+**Circulating on an on-chain route is on-chain only (P2d-3b).** Chainlink, Ether.fi, Sky and every project whose
+circulating route is the on-chain figure take no CoinGecko once the store holds any on-chain day: days before the
+on-chain span are holes, not CoinGecko's figure (no handover; P2d-3's Chainlink handover is withdrawn). Hyperliquid is
+unchanged (its handover, AMBER as agreed). A Flows quarter left n/a by this still names its unmeasured flow.
+
+**Ether.fi insider stake shares (P2d-5).** Your backfill refused it ("the stored row before 2026-10-24 (2026-10-23) was
+read from" the 10-wallet sum). It is restated on the 13-wallet set like the P2c-5 series: the daily run applies
+CLEAN-UP P2d-5 (once) and P2d-5b (every run), removing every 8- and 10-wallet row, each logged; the archive line (it
+already has `--project Ether.fi`) refills it, about 30 min more (estimated). Values do not change: none of the 13 wallets
+has ever held sETHFI (Blockscout transfer index; balanceOf 0 today).
+
+**Pendle cooldown_days (P2d-6).** The 170 NOT WRITTEN days (2025-07-30..2026-01-15) were before sPENDLE existed
+(deployed at block 24,237,456, 2026-01-15). The archive no longer reads them; it prints one line, `COMPLETE FROM
+2026-01-16: Pendle/cooldown_days — not available before 2026-01-16 (…)`, and the cell note says the same. A NOT WRITTEN
+for Pendle/cooldown_days after 2026-01-16 is still a real failure — paste it back.
 
 The daily run also applies the P2c-5 clean-ups (Ether.fi, Maple, Pendle) for the first time, so the archive line
 refills all four projects, not Chainlink alone; without them those three series would stay holes.
@@ -586,10 +601,13 @@ check prints `-> RESTATED`. Before the backfill the check reads `-> RESTATEMENT 
 them); `-> BLOCKED` means a row on another set is still stored — paste that line back.
 
 PASTE BACK:
-- from the daily run: every `CLEAN-UP P2b-2b`, `CLEAN-UP P2c-5a/b/c` and `CLEAN-UP P2c-5a2/b2/c2` line;
+- from the daily run: every `CLEAN-UP P2b-2b`, `CLEAN-UP P2c-5a/b/c`, `CLEAN-UP P2c-5a2/b2/c2`, `CLEAN-UP P2d-5` and
+  `CLEAN-UP P2d-5b` line;
 - both `series_restatements` outputs, every line, with each `->` verdict and any `!!` line;
 - both guard outputs, in full;
-- the backfill's final lines (budget spent / pace / REFUSED / NOT WRITTEN).
+- the backfill's final lines (budget spent / pace / REFUSED / NOT WRITTEN) and its `Pendle/cooldown_days` line.
+  `series_restatements` now prints five blocks (the fifth: Ether.fi insider_stake_shares, P2d-5); each should end
+  `-> RESTATED`.
 
 
 ## 11de. Round P2b — Jake's answers on P2a (2026-10-27)

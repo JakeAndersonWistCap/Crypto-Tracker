@@ -200,7 +200,7 @@ HOLDER_ARGUMENT_KINDS = {"burn_address_balance", "buyback_fund_balance", "treasu
 
 
 def address_is_called(spec: dict) -> bool:
-    """Is spec["address"] the contract the read CALLS (not a holder passed as an argument)? P2d-4 (Jake's backfill
+    """Is spec["address"] the contract the read CALLS (not a holder passed as an argument)? P2d-6 (Jake's backfill
     2026-10-28): P2b-2 stopped dating series starts off a holder that is never meant to have code — right for an EOA
     wallet, wrong for sPENDLE.cooldownDuration(), which is CALLED on that address: its 170 days before sPENDLE existed
     (deployed at block 24,237,456, 2026-01-15) read NOT WRITTEN instead of before deployment."""

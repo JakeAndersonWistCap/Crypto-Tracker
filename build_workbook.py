@@ -5427,7 +5427,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
             # P2c-2: a declared series break whose named day this series holds (Aerodrome 2026-10-21), said on the row
             if (name, metric) in SERIES_BREAK_NOTED:
                 row["note"] = (row["note"] + " | " if row["note"] else "") + SERIES_BREAK_NOTED[(name, metric)]
-            # P2d-4: A DECLARED SERIES START INSIDE THE HISTORY WINDOW (config.ARCHIVE_SERIES_START with `absent`: Pendle
+            # P2d-6: A DECLARED SERIES START INSIDE THE HISTORY WINDOW (config.ARCHIVE_SERIES_START with `absent`: Pendle
             # cooldown_days, sPENDLE deployed 2026-01-15) — the days before are a pre-deployment absence, named with the
             # date FIRST (so every n/a window cell of the row carries it), never a hole to fill
             pre = config.series_absent_before(

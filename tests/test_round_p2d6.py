@@ -1,4 +1,4 @@
-"""ROUND P2d-4 (Jake's backfill 2026-10-28): Pendle cooldown_days logged 170 days NOT WRITTEN, one FAILED line a day.
+"""ROUND P2d-6 (Jake's backfill 2026-10-28): Pendle cooldown_days logged 170 days NOT WRITTEN, one FAILED line a day.
 
 Read live (2026-10-28, public Ethereum archive RPC): sPENDLE has no code through block 24,237,455 and code from
 24,237,456 (2026-01-15 03:34:59 UTC); cooldownDuration() answers 1,209,600 s from block 24,237,468; the implementation

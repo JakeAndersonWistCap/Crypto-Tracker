@@ -47,7 +47,7 @@ log = logging.getLogger("token_metrics.fetch.archive")
 ARCHIVE_DAYS = int(config.TRAJECTORY["history_days"])     # five quarters for the trajectory (2026-10-12; was 365)
 DEFAULT_BUDGET_S = 20 * 60
 NOT_ARCHIVABLE_KINDS = {"burn_transfer_logs"}
-# Kinds read by ChainReader.raw_call (a governance parameter: a plain call on spec["address"]). P2d-4: only these take the
+# Kinds read by ChainReader.raw_call (a governance parameter: a plain call on spec["address"]). P2d-6: only these take the
 # "not available before" rule for an empty return (ArchiveBackfill._absent_before), and only these can be probed.
 RAW_CALL_KINDS = {"cooldown_duration"}
 
@@ -526,7 +526,7 @@ def _start_from_codeless_holder(name: str, why: str) -> bool:
     bits = why.split(" ")
     spec = ((config.PROJECT_BY_NAME.get(name) or {}).get("contracts") or {}).get(bits[0])
     if (not spec or len(bits) < 2 or " has no code at block " not in why or holder_should_have_code(spec)
-            or address_is_called(spec)):     # P2d-4: a CALLED contract's empty code dates its deployment (sPENDLE)
+            or address_is_called(spec)):     # P2d-6: a CALLED contract's empty code dates its deployment (sPENDLE)
         return False
     return bits[1].rstrip(".").lower() == str(spec.get("address") or "")[:10].lower()   # the holder, not its token
 
@@ -577,7 +577,7 @@ class ArchiveBackfill:
             # EVERY block, so its empty code is no deployment date. Read here, one rate-limited day recorded the whole
             # series as starting the day after and never retried the restatement. Only an address that should carry
             # code (fetch.chain.holder_should_have_code) or the token read through it can date a series' start.
-            # P2d-4 (Jake's backfill 2026-10-28): that rule is about HOLDERS. An address the read CALLS (sPENDLE for
+            # P2d-6 (Jake's backfill 2026-10-28): that rule is about HOLDERS. An address the read CALLS (sPENDLE for
             # cooldownDuration(); fetch.chain.address_is_called) dates its series by its code, as before P2b-2 — skipped,
             # Pendle/cooldown_days read 170 days NOT WRITTEN before sPENDLE's deployment (block 24,237,456, 2026-01-15).
             from .chain import address_is_called, holder_should_have_code
@@ -601,7 +601,7 @@ class ArchiveBackfill:
 
     def _absent_before(self, p: dict, metric: str, d: pd.Timestamp, msgs: list[str], stored: pd.DataFrame | None,
                        oldest: pd.Timestamp, probe) -> tuple[str, str, str] | None:
-        """P2d-4: a CALL (cooldownDuration(), through raw_call) that answers EMPTY ("0x" — no data; not a revert, not an
+        """P2d-6: a CALL (cooldownDuration(), through raw_call) that answers EMPTY ("0x" — no data; not a revert, not an
         RPC error) on the day just before the series' FIRST answered day is "not available before" that day: the
         function is not in the contract version of that block. (begin, why, report line), else None.
 
@@ -724,7 +724,7 @@ class ArchiveBackfill:
                     want[name] = ms
             return want
         def probe(spec, day):
-            """P2d-4: one raw call at `day`'s first block — "value", "empty" (0x) or "error"; the pinned block restored."""
+            """P2d-6: one raw call at `day`'s first block — "value", "empty" (0x) or "error"; the pinned block restored."""
             from .chain import is_empty_return
             c = spec["chain"]
             keep = self.reader.at_block.get(c)
@@ -862,7 +862,7 @@ class ArchiveBackfill:
             self.report.append(f"NOT WRITTEN {name}/{m}: {f['days']} day(s) — {f['first'][:200]}")
         for (name, m), s0 in sorted(starts.items()):
             if name in targets and m in targets[name]:
-                # P2d-4: a declared start with its absence reason says "not available before <date> (...)" — one line
+                # P2d-6: a declared start with its absence reason says "not available before <date> (...)" — one line
                 dec = config.ARCHIVE_SERIES_START.get((name, m)) or {}
                 why = (config.series_absent_before(name, m) if dec.get("from") == s0["from"] else None) \
                     or s0.get("why", "")
