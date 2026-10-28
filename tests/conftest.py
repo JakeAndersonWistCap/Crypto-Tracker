@@ -2,6 +2,18 @@
 import pytest
 
 
+def pytest_collection_finish(session):
+    """P2f-4: the full suite stops before it starts, in one line, when the disk is too full for it (it ran at 1.7 GB
+    free in the P2e round and died half-way with OSError 28). A targeted run needs far less. See disk_guard.py."""
+    import tempfile
+    import disk_guard
+    n = len(session.items)
+    msg = disk_guard.check([disk_guard.ROOT, tempfile.gettempdir()], disk_guard.suite_need_gb(n),
+                           f"full suite, {n} tests" if n >= disk_guard.SUITE_MIN_TESTS else f"{n} tests")
+    if msg:
+        pytest.exit(msg, returncode=disk_guard.EXIT_DISK)
+
+
 @pytest.fixture(autouse=True)
 def _nearblocks_fake_clock(monkeypatch):
     """fetch/nearblocks.py paces calls to the free plan's 6 credits a minute with real sleeps.

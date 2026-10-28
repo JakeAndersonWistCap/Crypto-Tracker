@@ -75,6 +75,10 @@ def _main(argv=None) -> int:
     ap.add_argument("--near", action="store_true", help="also NEAR's archival header supply and staked NEAR (validators by epoch_id)")
     ap.add_argument("--no-solana", action="store_true")
     a = ap.parse_args(argv)
+    if a.run:                  # P2f-4: stop early, in one line, when the disk is too full to write the days
+        import disk_guard
+        if disk_guard.guard_or_code("archive_backfill --run", a.db):
+            return disk_guard.EXIT_DISK
     import logging
     # PROGRESS and RETRY lines (Jake, 2026-10-01) are log records; without a handler they were never shown.
     # ON STDOUT (Round G 1.11): PowerShell 5.1 turns every stderr line under 2>&1 into a NativeCommandError

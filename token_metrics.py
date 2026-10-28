@@ -1008,6 +1008,11 @@ def main(argv=None) -> int:
     # ON STDOUT (Round G 1.11): PowerShell 5.1 turns every stderr line under 2>&1 into a NativeCommandError
     logging.basicConfig(level=logging.INFO, stream=sys.stdout, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     log = logging.getLogger("token_metrics")
+    # P2f-4: stop early, in one line, when the disk is too full to write the store and the workbooks (exit 74)
+    import disk_guard
+    if disk_guard.guard_or_code("token_metrics " + ("--no-fetch build" if args.no_fetch else "run"),
+                                store_mod.DB_PATH, say=log.error):
+        return disk_guard.EXIT_DISK
     # A HEARTBEAT LINE AT LEAST ONCE A MINUTE for the whole run, seeds and --no-fetch included (Jake's run
     # 2026-10-11: piped output showed nothing for 40+ minutes): the step, n/N, elapsed, ETA (progress.tick)
     import progress
