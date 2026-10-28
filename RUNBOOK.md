@@ -534,6 +534,49 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11dg. Round P2e — fine-tune (2026-10-29)
+
+What changes (SPEC §19 P2e; no definition changes):
+- **Ranks agree.** Each archetype tab ranks only the projects whose primary archetype it is, the same as Summary.
+  A project shown on another tab reads "secondary" in the rank column (hover: its primary archetype and its rank
+  there) and sorts below the ranked rows. About and Definitions list the code "secondary".
+- **The trajectory block opens with the key.** On each archetype tab, block (c) starts with the rank key itself for the
+  latest quarter and 1, 2, 3 quarters back, plus "Key: change vs previous quarter", by the key cell's own formula — the
+  latest quarter IS the key cell. A quarter the key cannot form reads the key's code and reason. The earlier series
+  follow, each named ("$ per token emitted", "Retired ÷ (emis + unlocks)", "Net supply change (tokens)", "Fees ÷
+  issuance"). The audit A3 tab gains a Trend column beside the key, so later A3 columns move right by one.
+- **Summary "Protocol revenue, annualised"** (was "Revenue, annualised"; the same figure). Hover a cell for its series.
+  Morpho's 0 is DefiLlama's reported 0 on every covered day (fee switch off, docs.morpho.org); customer revenue is the
+  A2 tab's figure, not counted here.
+- **Accepted losses are listed, not hidden.** The guard prints `ACCEPTED LOSSES (config.REGRESSION_ALLOWLIST) — N,
+  listed, not counted`, then one `ACCEPTED: <project> <headline> — <reason> (accepted <date>)` line each; they are not
+  violations. sanity_hits.json has `hits` (open) and `accepted`. Expect Hyperliquid A4 burn ÷ issuance and the three
+  Aerodrome A3 cells as ACCEPTED. An entry past its `until` date (or Aerodrome once unparked) is a hit again in both.
+- **A parked row has one code.** Every rank and key cell of a parked row (Aerodrome, World Mobile) that holds no number
+  reads "parked"; the comment keeps what was behind it ("Behind it: blocked — …").
+
+This round touches no stored row. The CLEAN-UP and BACKFILL below are P2d-5's (Ether.fi insider stake shares, pushed in
+7dd93de after your 17:28 run): the fetching run applies CLEAN-UP P2d-5 / P2d-5b (not `--no-fetch`), the archive refills
+Ether.fi on the 13 wallets (about 30 min, estimated). Skip those two lines if you already ran §11df's block on 7dd93de.
+
+**Pull this, then in PowerShell 5.1 at the repo root:**
+```
+git pull
+Copy-Item metrics.db metrics.db.bak-p2e
+python token_metrics.py
+python archive_backfill.py --run --project Ether.fi --budget-min 60
+python check_offline_items.py series_restatements
+python token_metrics.py --no-fetch
+python measuring_guard.py --newer metrics.db
+```
+
+PASTE BACK:
+- every `CLEAN-UP P2d-5` and `CLEAN-UP P2d-5b` line from the daily run;
+- the backfill's final lines;
+- the `series_restatements` output (five blocks, each should end `-> RESTATED`);
+- the guard output in full, with its VERDICT and every ACCEPTED line.
+
+
 ## 11df. Round P2c — the build round (2026-10-28)
 
 What changes (SPEC §19 P2c):

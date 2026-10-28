@@ -143,6 +143,14 @@ def test_p2e_1_a_secondary_member_reads_secondary_and_names_its_primary(built):
     assert "secondary" in [c.value for c in wb["Definitions"]["A"]]
 
 
+def _is_key_traj(ws, c) -> bool:
+    """A key-quarter column: in (c) Trajectory, before the key's change column."""
+    if _block_of(ws, c) != "(c) Trajectory":
+        return False
+    hdrs = [str(ws.cell(4, k).value or "") for k in range(c, ws.max_column + 1)]
+    return reader.KEY_CHANGE_HEADER in hdrs and str(ws.cell(4, c).value) != reader.KEY_CHANGE_HEADER
+
+
 def test_p2e_5_a_parked_row_reads_parked_in_every_rank_and_key_cell(built):
     wb = openpyxl.load_workbook(built["reader"])
     parked = [n for n in _rows(wb["Summary"]) if reader.parked_reason(n)]
@@ -153,8 +161,11 @@ def test_p2e_5_a_parked_row_reads_parked_in_every_rank_and_key_cell(built):
         rows = _rows(ws)
         rc = _rank_col(ws)
         # Summary: the key and the rank; a tab: its whole (a) block (key, rank and the figures beside the key)
+        # P2e-2: the key's own quarters and their change (the first (c) Trajectory columns) are key-derived too
         block = [rc - 1, rc] if tab == "Summary" else [c for c in range(3, ws.max_column + 1)
-                                                        if _block_of(ws, c) == "(a) Rank key"]
+                                                        if _block_of(ws, c) == "(a) Rank key"
+                                                        or str(ws.cell(4, c).value or "") == reader.KEY_CHANGE_HEADER
+                                                        or _is_key_traj(ws, c)]
         assert len(block) >= 2, (tab, block)
         for n in parked:
             if n not in rows:
