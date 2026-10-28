@@ -192,6 +192,30 @@ def holder_should_have_code(spec: dict) -> bool:
     return spec.get("kind") in HOLDER_MUST_HAVE_CODE
 
 
+# Kinds whose `address` is an ARGUMENT of the read (balanceOf(address) on the same-chain token; the owner a Lockstake
+# engine is asked about), not the contract the call is made on — the same split Chain.run makes (`holder, read_address
+# = spec["address"], under["address"]`). Every other kind CALLS spec["address"] (totalSupply, cooldownDuration, a
+# pool's principal): with no code there, nothing can answer.
+HOLDER_ARGUMENT_KINDS = {"burn_address_balance", "buyback_fund_balance", "treasury_holding", "lockstake_owner_ink"}
+
+
+def address_is_called(spec: dict) -> bool:
+    """Is spec["address"] the contract the read CALLS (not a holder passed as an argument)? P2d-4 (Jake's backfill
+    2026-10-28): P2b-2 stopped dating series starts off a holder that is never meant to have code — right for an EOA
+    wallet, wrong for sPENDLE.cooldownDuration(), which is CALLED on that address: its 170 days before sPENDLE existed
+    (deployed at block 24,237,456, 2026-01-15) read NOT WRITTEN instead of before deployment."""
+    return spec.get("kind") not in HOLDER_ARGUMENT_KINDS and spec.get("read_method") != "escrow_balance_of"
+
+
+# A call that SUCCEEDED with no return data (eth_call "0x"), as web3 reports it — not a revert, not an RPC error.
+EMPTY_RETURN_SIGNS = ("return data: b''", 'return data: b""')
+
+
+def is_empty_return(message: str) -> bool:
+    low = str(message or "").lower()
+    return any(s in low for s in EMPTY_RETURN_SIGNS)
+
+
 # Kinds whose read method must be EXPLICITLY established before anything is read. A vote escrow
 # can be a fungible ERC-20 (totalSupply is the staked amount) or an NFT position (totalSupply is a
 # COUNT OF POSITIONS, wrong by orders of magnitude and entirely plausible-looking). Assuming

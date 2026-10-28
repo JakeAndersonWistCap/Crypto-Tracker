@@ -47,6 +47,9 @@ log = logging.getLogger("token_metrics.fetch.archive")
 ARCHIVE_DAYS = int(config.TRAJECTORY["history_days"])     # five quarters for the trajectory (2026-10-12; was 365)
 DEFAULT_BUDGET_S = 20 * 60
 NOT_ARCHIVABLE_KINDS = {"burn_transfer_logs"}
+# Kinds read by ChainReader.raw_call (a governance parameter: a plain call on spec["address"]). P2d-4: only these take the
+# "not available before" rule for an empty return (ArchiveBackfill._absent_before), and only these can be probed.
+RAW_CALL_KINDS = {"cooldown_duration"}
 
 
 WEEK_S = 7 * 86_400
@@ -519,10 +522,11 @@ def series_starts() -> dict:
 def _start_from_codeless_holder(name: str, why: str) -> bool:
     """A recorded start whose reason is the empty code of a holder that is never meant to have code (P2b-2: before the
     fix in _undeployed, an EOA wallet's "no code at block N" ended a series' history after one failed day)."""
-    from .chain import holder_should_have_code
+    from .chain import address_is_called, holder_should_have_code
     bits = why.split(" ")
     spec = ((config.PROJECT_BY_NAME.get(name) or {}).get("contracts") or {}).get(bits[0])
-    if not spec or len(bits) < 2 or " has no code at block " not in why or holder_should_have_code(spec):
+    if (not spec or len(bits) < 2 or " has no code at block " not in why or holder_should_have_code(spec)
+            or address_is_called(spec)):     # P2d-4: a CALLED contract's empty code dates its deployment (sPENDLE)
         return False
     return bits[1].rstrip(".").lower() == str(spec.get("address") or "")[:10].lower()   # the holder, not its token
 
@@ -573,8 +577,11 @@ class ArchiveBackfill:
             # EVERY block, so its empty code is no deployment date. Read here, one rate-limited day recorded the whole
             # series as starting the day after and never retried the restatement. Only an address that should carry
             # code (fetch.chain.holder_should_have_code) or the token read through it can date a series' start.
-            from .chain import holder_should_have_code
-            addrs = (([spec["address"]] if holder_should_have_code(spec) else [])
+            # P2d-4 (Jake's backfill 2026-10-28): that rule is about HOLDERS. An address the read CALLS (sPENDLE for
+            # cooldownDuration(); fetch.chain.address_is_called) dates its series by its code, as before P2b-2 — skipped,
+            # Pendle/cooldown_days read 170 days NOT WRITTEN before sPENDLE's deployment (block 24,237,456, 2026-01-15).
+            from .chain import address_is_called, holder_should_have_code
+            addrs = (([spec["address"]] if (holder_should_have_code(spec) or address_is_called(spec)) else [])
                      + ([und] if isinstance(und, str) and und.startswith("0x") else []))
             for a in addrs:
                 try:
@@ -591,6 +598,50 @@ class ArchiveBackfill:
                         pass
                     return f"{key} {a[:10]}... has no code at block {blk:,}{dep}"
         return None
+
+    def _absent_before(self, p: dict, metric: str, d: pd.Timestamp, msgs: list[str], stored: pd.DataFrame | None,
+                       oldest: pd.Timestamp, probe) -> tuple[str, str, str] | None:
+        """P2d-4: a CALL (cooldownDuration(), through raw_call) that answers EMPTY ("0x" — no data; not a revert, not an
+        RPC error) on the day just before the series' FIRST answered day is "not available before" that day: the
+        function is not in the contract version of that block. (begin, why, report line), else None.
+
+        STRICT, all of:
+          * every failure message of the metric-day is an empty return (fetch.chain.is_empty_return) on a raw-call kind;
+          * the series' earliest stored row is exactly the next day — the first day the call answered, from the data;
+          * the oldest day the run would read (`oldest`, the window's first or the series' start) ALSO answers empty
+            (`probe`, one read at that day's first block): absence before a version is monotone, so an answer there
+            means this empty day is a hole INSIDE the history, not before it.
+        Otherwise None and the day stays a failure, logged as before: an empty return on or after the first answered
+        day, a revert, an RPC error, a probe that answers or errs. Nothing is written for the days before — never 0."""
+        from .chain import is_empty_return
+        specs = serving_contracts(p, metric)
+        msgs = [x for x in msgs if not str(x).startswith("every component was refused")]   # Chain's summary of them
+        if (not msgs or not all(is_empty_return(x) for x in msgs) or weekly(p, metric) or not specs
+                or any(s["kind"] not in RAW_CALL_KINDS for _, s in specs)):
+            return None
+        if stored is None or stored.empty:
+            return None
+        first = pd.Timestamp(stored["date"].min()).normalize()
+        if first != stored_date(p, metric, d) + pd.Timedelta(days=1):
+            return None
+        key, spec = specs[0]
+        call = spec.get("call") or "cooldownDuration"
+        what = spec.get("expected_symbol") or key
+        blk = getattr(self.reader, "at_block", {}).get(spec["chain"])
+        at = f" at block {blk:,}" if isinstance(blk, int) else ""
+        checked = ""
+        if oldest < d:
+            got = [probe(s, oldest) for _, s in specs]
+            if any(g != "empty" for g in got):
+                return None
+            checked = f"; {oldest.date()} answered 0x too"
+        begin = str(first.date())
+        why = (f"{key} {call}() returned empty data (0x){at} on {d.date()}{checked}, the day before its first answer "
+               f"{begin} — absent before the {what} version that has it")
+        line = (f"not available before {begin} — {call}() returns empty before the {what} version that has it "
+                f"(a pre-deployment absence, not a failure); {d.date()}{at} answered 0x{checked}; earlier days not "
+                f"retried")
+        return begin, why, line
 
     def targets(self, archive_chains: set[str]) -> tuple[dict, list[tuple[str, str, str]]]:
         """({project: {metric}}, [(project, metric, why not)])."""
@@ -672,6 +723,22 @@ class ArchiveBackfill:
                 if ms:
                     want[name] = ms
             return want
+        def probe(spec, day):
+            """P2d-4: one raw call at `day`'s first block — "value", "empty" (0x) or "error"; the pinned block restored."""
+            from .chain import is_empty_return
+            c = spec["chain"]
+            keep = self.reader.at_block.get(c)
+            try:
+                self.reader.at_block[c] = clocks[c].at(day, heads[c])
+                self.reader.raw_call(c, spec["address"], spec.get("call") or "cooldownDuration")
+                return "value"
+            except Exception as e:  # noqa: BLE001 — classified, never swallowed into a value
+                return "empty" if is_empty_return(f"{e}") else "error"
+            finally:
+                if keep is None:
+                    self.reader.at_block.pop(c, None)
+                else:
+                    self.reader.at_block[c] = keep
         read_days, read_s = 0, 0.0
         for i, d in enumerate(days):
             prog.tick()
@@ -727,8 +794,18 @@ class ArchiveBackfill:
                         record_series_start(name, m, str(begin.date()),
                                             f"{undeployed} — not deployed before {begin.date()}")
                         starts[(name, m)] = {"from": str(begin.date())}
-                        self.report.append(f"{name}/{m}: {undeployed}; the series starts "
-                                           f"{begin.date()} — COMPLETE from there, earlier days not retried")
+                        self.report.append(f"{name}/{m}: not available before {begin.date()} — {undeployed}; the "
+                                           f"series starts {begin.date()} (a pre-deployment absence, not a failure) — "
+                                           f"COMPLETE from there, earlier days not retried")
+                        continue
+                    s0 = starts.get((name, m))
+                    oldest = max(days[-1], pd.Timestamp(s0["from"])) if s0 else days[-1]
+                    absent = self._absent_before(p, m, d, msgs, stored.get((name, m)), oldest, probe)
+                    if absent:
+                        begin, why, line = absent
+                        record_series_start(name, m, begin, why)
+                        starts[(name, m)] = {"from": begin, "why": why}
+                        self.report.append(f"{name}/{m}: {line}")
                         continue
                     f = failures.setdefault((name, m), {"days": 0, "first": ""})
                     f["days"] += 1
@@ -785,7 +862,11 @@ class ArchiveBackfill:
             self.report.append(f"NOT WRITTEN {name}/{m}: {f['days']} day(s) — {f['first'][:200]}")
         for (name, m), s0 in sorted(starts.items()):
             if name in targets and m in targets[name]:
-                self.report.append(f"COMPLETE FROM {s0['from']}: {name}/{m} — {s0.get('why', '')}".rstrip(" —"))
+                # P2d-4: a declared start with its absence reason says "not available before <date> (...)" — one line
+                dec = config.ARCHIVE_SERIES_START.get((name, m)) or {}
+                why = (config.series_absent_before(name, m) if dec.get("from") == s0["from"] else None) \
+                    or s0.get("why", "")
+                self.report.append(f"COMPLETE FROM {s0['from']}: {name}/{m} — {why}".rstrip(" —"))
         return {"written": written, "flows": flows, "refused": refused, "skipped": skipped,
                 "seconds": round(time.monotonic() - start), "report": self.report,
                 "served_by": {k: sorted({self.hosts.get(s["chain"], "solana" if s["chain"] == "solana" else "?")
