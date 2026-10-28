@@ -167,6 +167,7 @@ def test_p2e_5_a_parked_row_reads_parked_in_every_rank_and_key_cell(built):
                                                         or str(ws.cell(4, c).value or "") == reader.KEY_CHANGE_HEADER
                                                         or _is_key_traj(ws, c)]
         assert len(block) >= 2, (tab, block)
+        kq = set() if tab == "Summary" else {c for c in block if _block_of(ws, c) == "(c) Trajectory"}
         for n in parked:
             if n not in rows:
                 continue
@@ -176,7 +177,9 @@ def test_p2e_5_a_parked_row_reads_parked_in_every_rank_and_key_cell(built):
                 if isinstance(v, str) and v.startswith("="):
                     continue                              # a number: parked figures are shown, not ranked
                 assert v == "parked", (tab, n, ws.cell(4, c).value, v)
-                assert cell.comment.text.startswith(reader.parked_reason(n)), (tab, n, ws.cell(4, c).value)
+                lead_ok = (cell.comment.text.startswith(reader.parked_reason(n)) if c not in kq else
+                           reader.parked_reason(n) in cell.comment.text)   # a key quarter keeps its lead sentence
+                assert lead_ok, (tab, n, ws.cell(4, c).value)
                 assert "Behind it: " in cell.comment.text, (tab, n, ws.cell(4, c).value)
                 checked += 1
     assert checked >= 4, checked
