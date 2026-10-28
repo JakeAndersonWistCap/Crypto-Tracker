@@ -723,7 +723,9 @@ python archive_backfill.py --run --project Ether.fi --budget-min 60
 python check_offline_items.py series_restatements
 python token_metrics.py --no-fetch
 python measuring_guard.py --newer metrics.db
+python friday_check.py
 ```
+Prints PASS/FAIL per line and exits 1 on any FAIL; paste it back.
 
 PASTE BACK:
 - every `CLEAN-UP P2d-5` and `CLEAN-UP P2d-5b` line from the daily run;
