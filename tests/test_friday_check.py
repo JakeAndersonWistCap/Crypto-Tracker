@@ -332,6 +332,18 @@ def test_scoreboard_pass_when_both_are_zero_and_fail_names_the_projects():
     assert fc.check_scoreboard(openpyxl.Workbook())[0]        # no Coverage tab: a FAIL, said
 
 
+def test_scoreboard_counts_on_parked_projects_are_printed_never_failed():
+    """P2g-4: a parked project's BROKEN and NOT WIRED are information; another project's BROKEN still fails."""
+    board = fc.read_scoreboard(_coverage_wb([("ALL", 9, 3, 2), ("Aerodrome", 4, 3, 1), ("Sky", 5, 0, 1)]))
+    reasons, notes = fc.scoreboard_verdict(board, parked={"Aerodrome"})
+    assert reasons == ["1 BROKEN: Sky: 1"]
+    assert "BROKEN on parked projects (informational, not judged): Aerodrome: 1" in notes
+    assert "NOT WIRED on parked projects (informational, not judged): Aerodrome: 3" in notes
+    only = fc.scoreboard_verdict(fc.read_scoreboard(_coverage_wb([("ALL", 4, 3, 1), ("Aerodrome", 4, 3, 1)])),
+                                 parked={"Aerodrome"})
+    assert only[0] == []                                              # nothing but a parked project: no FAIL
+
+
 def test_asof_equals_today_and_says_both_dates():
     d = date(2026, 10, 30)
     assert fc.check_asof(d, d, d) == []

@@ -23868,6 +23868,11 @@ REGRESSION_ALLOWLIST += [
      "match": ("A3 | Net absorption Q0", "A3 | Net absorption incl. unlocks", "A3 | RETIREMENT ÷ DILUTION"),
      "reason": "parked (P2c-4): " + AERODROME_PARK_PLAIN + " The cell reads the code 'parked'; the allowance ends when "
                "config.aerodrome_park_reason gives no reason"},
+    {"project": "Aerodrome", "while_parked": True, "accepted": "2026-10-29",
+     "match": ("CP | NET HOLDER YIELD = holder value yield − dilution (outflows a+b+c+d+e at each day's price, "
+               "annualised) ÷ market cap",),
+     "reason": "parked (P2g-1): " + AERODROME_PARK_PLAIN + " The headline is a function of the parked circulating "
+               "figure; the allowance ends when config.aerodrome_park_reason gives no reason"},
     {"project": "Hyperliquid", "match": ("A4 | BURN ÷ ISSUANCE",), "until": "2027-01-31", "accepted": "2026-10-28",
      "reason": "blocked by rule 9 (P2b-3, P2c-9): the pool release covers far fewer of the 90 days than the burn; no "
                "common-days ratio, 2026-10-12 not restated; Q0 clears without a backfill about 2027-01-01 (P2a-D1)"},

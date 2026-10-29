@@ -396,30 +396,47 @@ def read_scoreboard(wb) -> dict:
     return board
 
 
-def scoreboard_verdict(board: dict) -> tuple:
-    """(reasons, notes) from a scoreboard. BROKEN > 0 FAILS the line (a reference or check that disagrees). NOT WIRED
-    is the standing, declared count (a cell labelled 'not wired'): it is PRINTED with its projects, never a FAIL —
-    a check that is red every day tells Jake nothing (P2f-2)."""
+def scoreboard_verdict(board: dict, parked=()) -> tuple:
+    """(reasons, notes) from a scoreboard. BROKEN > 0 on a project that is not parked FAILS the line (a reference or
+    check that disagrees). NOT WIRED is the standing, declared count: PRINTED with its projects, never a FAIL. A
+    parked project's BROKEN and NOT WIRED are printed too, as information (P2g-4): its row is shown, not judged."""
     if "ALL" not in board:
         return ["the Coverage tab holds no scoreboard (no 'Project' header row with BROKEN and NOT WIRED)"], []
+    parked = set(parked)
     n = {k: int(board["ALL"].get(k) or 0) for k in ("BROKEN", "NOT WIRED")}
     notes = [f"BROKEN {n['BROKEN']}, NOT WIRED {n['NOT WIRED']}"]
-    named_by = {}
+    named_by, parked_by = {}, {}
     for k in ("BROKEN", "NOT WIRED"):
-        named = {p: int(b.get(k) or 0) for p, b in board.items() if p != "ALL" and int(b.get(k) or 0)}
-        rest = n[k] - sum(named.values())
+        every = {p: int(b.get(k) or 0) for p, b in board.items() if p != "ALL" and int(b.get(k) or 0)}
+        named = {p: v for p, v in every.items() if p not in parked}
+        parked_by[k] = {p: v for p, v in every.items() if p in parked}
+        rest = n[k] - sum(every.values())
         if rest:
             named["(no project: SPEC list)"] = rest
         named_by[k] = named
     if named_by["NOT WIRED"]:
         notes.append("NOT WIRED (declared, informational): " + ", ".join(f"{p}: {v}" for p, v in named_by["NOT WIRED"].items()))
-    if n["BROKEN"]:
-        return [f"{n['BROKEN']} BROKEN: " + ", ".join(f"{p}: {v}" for p, v in named_by["BROKEN"].items())], notes
+    for k in ("BROKEN", "NOT WIRED"):
+        if parked_by[k]:
+            notes.append(f"{k} on parked projects (informational, not judged): "
+                         + ", ".join(f"{p}: {v}" for p, v in parked_by[k].items()))
+    if named_by["BROKEN"]:
+        return [f"{sum(named_by['BROKEN'].values())} BROKEN: "
+                + ", ".join(f"{p}: {v}" for p, v in named_by["BROKEN"].items())], notes
     return [], notes
 
 
-def check_scoreboard(audit_wb) -> tuple:
-    return scoreboard_verdict(read_scoreboard(audit_wb))
+def parked_projects(names, asof=None) -> set:
+    """The projects among `names` that the reader shows parked (judged on the build's day, in-process only)."""
+    import reader                                                         # noqa: PLC0415
+    if asof is not None and hasattr(reader, "_AERO_PARK"):
+        reader._AERO_PARK["day"] = asof
+    return {n for n in names if n != "ALL" and reader.parked_reason(n)}
+
+
+def check_scoreboard(audit_wb, asof=None) -> tuple:
+    board = read_scoreboard(audit_wb)
+    return scoreboard_verdict(board, parked_projects(board, asof))
 
 
 # ======================================================================================================== 9 as-of

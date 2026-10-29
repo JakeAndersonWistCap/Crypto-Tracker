@@ -243,3 +243,12 @@ def test_p2e4_an_expired_entry_is_a_hit_in_both(monkeypatch):
     assert bad == [f"HEADLINE LOST Hyperliquid {HL}: 1.5 before, no value after"] and accepted == []
     body = sanity.hits_payload("wb.xlsx", ON, _hits()[:1], on=ON)
     assert body["accepted"] == [] and body["hits"][0][0] == "Hyperliquid"
+
+
+def test_p2g_aerodrome_net_holder_yield_is_an_accepted_loss_while_parked():
+    """P2g-1: the live store's guard listed Aerodrome's CP net holder yield as lost while the project is parked."""
+    head = "CP | NET HOLDER YIELD = holder value yield − dilution (outflows a+b+c+d+e at each day's price, annualised) ÷ market cap"
+    a = config.regression_allowance("Aerodrome", head, on=ON)
+    assert a and a["accepted"] == "2026-10-29" and "parked" in a["reason"]
+    assert config.regression_allowance("Aerodrome", head.replace("CP |", "CP"), on=ON)      # sanity's spelling
+    assert config.regression_allowance("Sky", head, on=ON) is None                          # only Aerodrome
