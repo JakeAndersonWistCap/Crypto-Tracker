@@ -723,14 +723,28 @@ def test_b_the_flag_writes_the_edition_with_highlights_first_and_no_second_audit
     assert sorted(p.name for p in flagged["dir"].glob("*.xlsx")) == sorted(["audit.xlsx", "reader.xlsx", edition.name])
     wb = openpyxl.load_workbook(edition)
     normal = openpyxl.load_workbook(flagged["dir"] / "reader.xlsx")
-    assert wb.sheetnames[0] == "Highlights" and wb.sheetnames[1:] == normal.sheetnames
+    # the same tabs as the normal reader plus Highlights first; with the look applied the spec's order (P2g-4) follows:
+    # Highlights, Summary, A1-A4, Comparison, Business, Charts, About, Definitions, then the hidden data sheets
+    assert wb.sheetnames[0] == "Highlights" and sorted(wb.sheetnames[1:]) == sorted(normal.sheetnames)
+    visible = [n for n in wb.sheetnames if wb[n].sheet_state == "visible"]
+    assert visible == ["Highlights", "Summary", "A1 Infrastructure", "A2 Coordination", "A3 Revenue Buyback",
+                       "A4 Permanent Burn", "Comparison", "Business", "Charts", "About", "Definitions"], visible
     assert wb["Highlights"].sheet_properties.tabColor.rgb.endswith("1F8A8A")
     # charts are made, not round-tripped: the Charts tab of the edition holds them
     assert len(wb["Charts"]._charts) == len(normal["Charts"]._charts) > 0
     # the edition's existing tabs are the normal reader's, cell for cell
     a, _ = _cells(flagged["dir"] / "reader.xlsx")
     b, _ = _cells(edition)
-    assert {k: v for k, v in b.items() if k[0] != "Highlights"} == a
+    import charlie_look
+    b = {k: v for k, v in b.items() if k[0] != "Highlights"}
+    assert b.keys() - {k for k in b if k[1] == "#dims"} == a.keys() - {k for k in a if k[1] == "#dims"}
+    for k, v in a.items():
+        if k[1] == "#dims":
+            continue                                    # styling adds empty styled cells (bands): values are compared
+        w = b[k]
+        # value and comment identical; the number format identical except the look's one declared change
+        assert (w[0], w[2]) == (v[0], v[2]), k
+        assert w[1] == v[1] or (v[1] == reader.FMT_TOK and w[1] == charlie_look.TOKEN_FMT), (k, v[1], w[1])
     last = flagged["last"]
     assert last["cards"] == ["C5", "C7", "C8"], last["cards"]        # the fixture holds other numbers than Jake's store
     why = {o.split(" ")[0] for o in last["omitted"]}
