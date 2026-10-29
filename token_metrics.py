@@ -89,6 +89,9 @@ def parse_args(argv=None) -> argparse.Namespace:
                "named in it) and rebuild the workbook.")
     ap.add_argument("--no-fetch", action="store_true",
                     help="rebuild the workbook from the store without fetching anything")
+    ap.add_argument("--edition", choices=["charlie"], default=None,
+                    help="also write an edition of the reader beside the normal files: 'charlie' writes "
+                         "token_metrics_charlie.xlsx (reader only, a Highlights first tab); nothing else changes")
     ap.add_argument("--project", action="append", default=[], metavar="NAME",
                     help="fetch only this project; repeatable. Exact name, as in config.")
     scope = ap.add_mutually_exclusive_group()
@@ -1245,8 +1248,10 @@ def _main(args, log) -> int:
         scope = render_scope(args, log)
         log.info("--no-fetch: rebuilding %s from the store, fetching nothing (%d project(s))",
                  WORKBOOK.name, len(scope))
-        build_workbook(st, AUDIT_WORKBOOK, only=[p["name"] for p in scope], reader_path=WORKBOOK)
+        build_workbook(st, AUDIT_WORKBOOK, only=[p["name"] for p in scope], reader_path=WORKBOOK,
+                       edition=args.edition)
         log.info("wrote %s and %s%s", WORKBOOK, AUDIT_WORKBOOK, _reader_note())
+        _edition_report(args)
         st.close()
         return 0
 
@@ -1436,7 +1441,8 @@ def _main(args, log) -> int:
     # drawn from the store — Jake's `--project Ether.fi` run wrote a one-project workbook ("1 project(s) rendered of
     # 30"). Each cell's as-of date and freshness marking say which values this run touched.
     rendered = render_scope(args, log)
-    build_workbook(st, AUDIT_WORKBOOK, run_id=run_id, only=[p["name"] for p in rendered], reader_path=WORKBOOK)
+    build_workbook(st, AUDIT_WORKBOOK, run_id=run_id, only=[p["name"] for p in rendered], reader_path=WORKBOOK,
+                   edition=args.edition)
     log.info("wrote %s (the reader) and %s (every working column) — %d project(s) fetched, %d rendered from the "
              "store%s%s", WORKBOOK, AUDIT_WORKBOOK.name, len(projects), len(rendered),
              "" if len(rendered) == len(config.PROJECTS)
@@ -1445,8 +1451,18 @@ def _main(args, log) -> int:
     import build_workbook as _bw                           # noqa: PLC0415
     for line in _bw.SCOREBOARD_LINES:
         log.info("%s", line)
+    _edition_report(args)
     st.close()
     return 0
+
+
+def _edition_report(args) -> None:
+    """P2g: the Charlie edition's file and its rendered cards with their displayed values, at the end of the run (so
+    they can be read in PowerShell)."""
+    if not getattr(args, "edition", None):
+        return
+    import charlie_edition                                 # noqa: PLC0415
+    charlie_edition.print_report(charlie_edition.edition_path(WORKBOOK))
 
 
 def _reader_note() -> str:

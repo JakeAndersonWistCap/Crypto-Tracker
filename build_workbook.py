@@ -12359,7 +12359,7 @@ def _with_park_note(p: dict, asof) -> dict:
 
 def build_workbook(store, path: Path | str, run_id: str | None = None,
                    asof: pd.Timestamp | None = None, only: list[str] | None = None, previous="auto",
-                   reader_path: Path | str | None = None) -> Path:
+                   reader_path: Path | str | None = None, edition: str | None = None) -> Path:
     """Render the workbook. `only` narrows it to those project names; None renders every project. `reader_path`
     (P1, the daily run): the full workbook at `path` is the AUDIT file, and the reader (reader.py) is written there.
 
@@ -12613,7 +12613,31 @@ def build_workbook(store, path: Path | str, run_id: str | None = None,
     READER_STATS.clear()
     if reader_path:
         write_reader(wb, reader_path, path, asof)
+        if edition:                                        # P2g: the Charlie edition, a second reader build beside it
+            write_edition(wb, reader_path, asof, edition)
     return path
+
+
+def write_edition(wb, reader_path, asof, edition) -> Path:
+    """P2g: build the reader a SECOND time (fresh workbook, same inputs) with the edition's tabs added, saved beside
+    the reader as token_metrics_charlie.xlsx. The normal reader is already written and is not touched; the reader's
+    module state (headline locations, column map, stats) is put back as the normal build left it. A failure raises:
+    the run says so, and no stale edition file is left looking current."""
+    import charlie_edition                                 # noqa: PLC0415
+    import reader                                          # noqa: PLC0415
+    out = charlie_edition.edition_path(reader_path)
+    out.unlink(missing_ok=True)
+    saved = (dict(reader.HEADLINE_LOCATIONS), list(reader.COLUMN_MAP), dict(reader.STATS))
+    try:
+        reader.build_reader(wb, out, asof=asof, groups=_LAST_GROUPS, headline_cells=list(_HEADLINE_CELLS),
+                            projects=scoped_projects(), previous=dict(PREVIOUS_SNAPSHOT), edition=edition)
+    finally:
+        reader.HEADLINE_LOCATIONS.clear()
+        reader.HEADLINE_LOCATIONS.update(saved[0])
+        reader.COLUMN_MAP[:] = saved[1]
+        reader.STATS.clear()
+        reader.STATS.update(saved[2])
+    return out
 
 
 def write_reader(wb, reader_path, audit_path, asof) -> dict:
