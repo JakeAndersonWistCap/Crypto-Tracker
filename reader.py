@@ -778,8 +778,9 @@ def _arch_ranking(keys: dict, arch: int) -> list:
 
 
 def build_reader(wb, path, *, asof, groups: dict, headline_cells: list, projects: list,
-                 previous: dict | None = None) -> dict:
-    """Write the reader workbook at `path` from the built (audit) workbook `wb`. Returns its STATS."""
+                 previous: dict | None = None, edition: str | None = None) -> dict:
+    """Write the reader workbook at `path` from the built (audit) workbook `wb`. Returns its STATS. `edition` (P2g,
+    "charlie"): add that edition's tabs to the workbook before it is saved; None (the daily run) adds nothing."""
     import build_workbook as bw                            # noqa: PLC0415
     import config                                          # noqa: PLC0415
     HEADLINE_LOCATIONS.clear()
@@ -817,6 +818,9 @@ def build_reader(wb, path, *, asof, groups: dict, headline_cells: list, projects
     _write_definitions(ws_def, sheets)
     _write_about(ws_about, asof, sheets, projects)
     blanks = _blank_unexplained(sheets)
+    if edition:                                            # P2g: additive, after every tab is written
+        import charlie_edition                             # noqa: PLC0415
+        charlie_edition.apply_edition(out, ctx, edition)
     out.save(path)
     import workbook_values                                 # noqa: PLC0415
     vals = workbook_values.store_values(path, out)
