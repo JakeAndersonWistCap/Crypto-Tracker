@@ -426,17 +426,9 @@ def scoreboard_verdict(board: dict, parked=()) -> tuple:
     return [], notes
 
 
-def parked_projects(names, asof=None) -> set:
-    """The projects among `names` that the reader shows parked (judged on the build's day, in-process only)."""
-    import reader                                                         # noqa: PLC0415
-    if asof is not None and hasattr(reader, "_AERO_PARK"):
-        reader._AERO_PARK["day"] = asof
-    return {n for n in names if n != "ALL" and reader.parked_reason(n)}
-
-
 def check_scoreboard(audit_wb, asof=None) -> tuple:
     board = read_scoreboard(audit_wb)
-    return scoreboard_verdict(board, parked_projects(board, asof))
+    return scoreboard_verdict(board, parked_projects([n for n in board if n != "ALL"], asof))
 
 
 # ======================================================================================================== 9 as-of
