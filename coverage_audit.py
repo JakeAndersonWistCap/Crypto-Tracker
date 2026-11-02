@@ -1054,7 +1054,7 @@ def reference_rows(wb, X, groups: dict, audited: list[dict], flows_rows: list[di
     return rows
 
 
-def regression_rows(sanity_hits) -> list[dict]:
+def regression_rows(sanity_hits, on=None) -> list[dict]:
     """T3 (fix round 2): a headline that read a value in the previous run and reads n/a / BLOCKED / text now
     (sanity.lost_headlines, "headline_lost") is BROKEN — unless config.REGRESSION_ALLOWLIST names it (its project and
     a `match` substring of the hit: the header or the reason it is now n/a), with its reason and clear-by date; then
@@ -1065,7 +1065,7 @@ def regression_rows(sanity_hits) -> list[dict]:
         if rule != "headline_lost":
             continue
         # D2: an allowance tied to a declared gap lapses the moment the gap is closed (config.regression_allowance)
-        allow = config.regression_allowance(proj, detail)
+        allow = config.regression_allowance(proj, detail, on=on)     # on=None: today (a test pins its own day)
         status = "N/A BY DESIGN" if allow else "BROKEN"
         why = (f"allow-listed ({allow['reason']}; accepted {allow.get('accepted') or 'date unknown'}): {detail}"
                if allow else

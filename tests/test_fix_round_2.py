@@ -279,7 +279,7 @@ def test_a_lost_headline_is_broken_unless_allow_listed():
             ("GEODNET", "headline_lost", "CP Dilution (e) unlocks (annualised): 0.1 in the previous run, now n/a — "
                                          "outflow_e_tokens (q0): no rows stored"),
             ("Chainlink", "fdv_below_mcap", "not a regression")]
-    rows = ca.regression_rows(hits)
+    rows = ca.regression_rows(hits, on="2026-10-14")      # judged while GEODNET's allowance ran (until 2026-10-31)
     assert [r["Status"] for r in rows] == ["BROKEN", "N/A BY DESIGN"]
     assert "allow-listed" in rows[1]["Reason / route / error"]
 
