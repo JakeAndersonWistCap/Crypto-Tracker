@@ -72,6 +72,51 @@ def constant_price_tvl(j: dict) -> tuple[list, str]:
                      f"({datetime.fromtimestamp(cover[1], tz=timezone.utc).date()}) is in tokens so priced"
                      if cover else ""))
 
+def window_start_price_tvl(j: dict) -> tuple[list, list, str]:
+    """P3-3c: the TVL change at START-OF-WINDOW prices, for every window that ends on the latest day E.
+
+    For a window starting on day S: Σ_t amount_t(E) × price_t(S) ÷ Σ_t amount_t(S) × price_t(S) — both days' token
+    amounts at S's prices, so a price move cancels and only the amounts count. price_t(S) = tokensInUsd ÷ tokens on S;
+    a token with no price on S (no USD value, or no amount) is EXCLUDED from both sides, never valued at 0.
+    Returns (ratio rows [(S, R(S))], coverage rows [(S, C(S))], note):
+      R(S) = Σ_{t priced on S} amount_t(E) × price_t(S) ÷ Σ_{t priced on S} tokensInUsd_t(S)   (change = R − 1)
+      C(S) = the share of the latest day's TVL (tokensInUsd on E) held in tokens priced on S.
+    A day with no priced TVL has no row (unknown, never 0). Every row is relative to E: the whole history is rewritten
+    by each read and carries E in its source, so a reader can take one basket only."""
+    amts, usds = j.get("tokens") or [], j.get("tokensInUsd") or []
+    if not amts or not usds:
+        return [], [], "no tokens / tokensInUsd in the response"
+    # ONE ROW A UTC DAY, the day's last (DefiLlama appends an intraday row for today, e.g. 08:09:47 beside 00:00)
+    a_by = {int(r["date"]) // 86_400 * 86_400: r.get("tokens") or {}
+            for r in sorted(amts, key=lambda r: r.get("date") or 0) if r.get("date") is not None}
+    u_by = {int(r["date"]) // 86_400 * 86_400: r.get("tokens") or {}
+            for r in sorted(usds, key=lambda r: r.get("date") or 0) if r.get("date") is not None}
+    both = sorted(set(a_by) & set(u_by))
+    if not both:
+        return [], [], "tokens and tokensInUsd share no day"
+    e = both[-1]
+    a_e = {t: float(a) for t, a in a_by[e].items() if a is not None}
+    u_e = {t: float(u) for t, u in u_by[e].items() if u is not None and u > 0}
+    tvl_e = sum(u_e.values())
+    if tvl_e <= 0:
+        return [], [], f"no priced TVL on the latest day {datetime.fromtimestamp(e, tz=timezone.utc).date()}"
+    ratio, cover = [], []
+    for d in both:
+        a_d, u_d = a_by[d], u_by[d]
+        px = {t: float(u_d[t]) / float(a) for t, a in a_d.items()
+              if a is not None and float(a) > 0 and u_d.get(t) is not None and float(u_d[t]) > 0}
+        v = sum(float(u_d[t]) for t in px)
+        if v <= 0:
+            continue
+        x = sum(a_e.get(t, 0.0) * p for t, p in px.items())
+        when = datetime.fromtimestamp(d, tz=timezone.utc)
+        ratio.append((when, x / v))
+        cover.append((when, sum(u for t, u in u_e.items() if t in px) / tvl_e))
+    e_day = datetime.fromtimestamp(e, tz=timezone.utc).date()
+    return ratio, cover, (f"{len(ratio)} start day(s) against the basket of {e_day} ({len(a_e)} token(s), TVL "
+                          f"{tvl_e:,.0f})")
+
+
 def _sum_children(per: dict) -> tuple[list, list]:
     """[(day, sum)] over named children's {day: value}: a child counts from its first day (before it, it was not
     listed); a day inside a child's span that it does not report is refused, never filled with 0. And the refused."""
@@ -85,6 +130,68 @@ def _sum_children(per: dict) -> tuple[list, list]:
             continue
         rows.append((d, sum(per[k][d] for k in live)))
     return rows, refused
+
+
+def _day_map(rows) -> dict:
+    """{UTC day: value} from [(datetime|ts, value)] — a repeated day is an error, never added (Morpho 2026-09-23)."""
+    out = {}
+    for d, v in rows:
+        if v is None:
+            continue
+        ts = pd.Timestamp(int(d), unit="s") if isinstance(d, (int, float)) else pd.Timestamp(d)
+        day = (ts.tz_convert(None) if ts.tzinfo is not None else ts).normalize()
+        if day in out:
+            raise ValueError(f"two points on {day.date()} ({out[day]} and {v}) — not a daily series")
+        out[day] = float(v)
+    return out
+
+
+def children_reconcile(parent: dict, children: dict, split_on=None, tol: float = 0.02, recent_days: int = 30,
+                       min_days: int = 14) -> dict:
+    """P3-3a: does a DefiLlama parent still carry its children, and if a split is declared, may the history be restated?
+
+    parent: {day: value} (the parent slug's own chart); children: {slug: {day: value}}. Σ children per day by
+    _sum_children (a child counts from its first day; a day a live child misses is refused, never a 0).
+      carries   — over the last `recent_days` days both hold, Σ parent and Σ children agree within `tol`.
+      overlap   — the days BEFORE `split_on` (every common day when no split is declared) both hold: their count,
+                  Σ parent, Σ children and |Σ children − Σ parent| ÷ Σ parent.
+      verdict   — "carries" (no split declared and the parent carries them); "split" (no split declared, the parent no
+                  longer carries them — a human dates it); with a split declared: "restate" when the overlap has at
+                  least `min_days` days and reconciles within `tol` (the children's sum replaces the whole history),
+                  else "break" (the parent's history is kept to the split, the children's sum from it: rule 10).
+    """
+    rows, refused = _sum_children(children) if children and all(children.values()) else ([], [])
+    kids = dict(rows)
+    common = sorted(set(parent) & set(kids))
+    if not common:
+        return {"verdict": "no_overlap", "carries": False, "children_rows": rows, "refused": refused,
+                "recent": None, "overlap": {"days": 0, "parent_sum": 0.0, "children_sum": 0.0, "pct_diff": None,
+                                            "first": None, "last": None}}
+    end = common[-1]
+    rec = [d for d in common if (end - d).days < recent_days]
+    rp, rc = sum(parent[d] for d in rec), sum(kids[d] for d in rec)
+    carries = abs(rc - rp) <= tol * max(abs(rp), abs(rc)) if (rp or rc) else True
+    split = pd.Timestamp(split_on).normalize() if split_on else None
+    ov = [d for d in common if split is None or d < split]
+    op, oc = sum(parent[d] for d in ov), sum(kids[d] for d in ov)
+    pct = (abs(oc - op) / abs(op)) if op else (0.0 if not oc else None)
+    if split is None:
+        verdict = "carries" if carries else "split"
+    else:
+        verdict = "restate" if (len(ov) >= min_days and pct is not None and pct <= tol) else "break"
+    return {"verdict": verdict, "carries": carries, "children_rows": rows, "refused": refused,
+            "recent": {"days": len(rec), "parent_sum": rp, "children_sum": rc},
+            "overlap": {"days": len(ov), "parent_sum": op, "children_sum": oc, "pct_diff": pct,
+                        "first": ov[0] if ov else None, "last": ov[-1] if ov else None}}
+
+
+def reconcile_text(r: dict, tol: float = 0.02) -> str:
+    o, rc = r["overlap"], r.get("recent") or {}
+    pct = "n/a" if o["pct_diff"] is None else f"{o['pct_diff']:.3%}"
+    span = f"{o['first'].date()}..{o['last'].date()}" if o["first"] is not None else "no common day"
+    return (f"overlap {o['days']} day(s) {span}: parent {o['parent_sum']:,.2f} vs Σ children {o['children_sum']:,.2f} "
+            f"({pct}, tolerance {tol:.0%}); last {rc.get('days', 0)} common day(s): parent "
+            f"{rc.get('parent_sum', 0):,.2f} vs Σ children {rc.get('children_sum', 0):,.2f}")
 
 
 def _handover_ok(old: dict, new: dict, ho: dict) -> tuple[bool, str]:
@@ -316,7 +423,7 @@ class DefiLlama:
             return
         parent_recent = recent
 
-        child_30d, child_rows, failed = 0.0, [], []
+        child_30d, child_rows, failed, child_charts = 0.0, [], [], {}
         for kid in kids:
             try:
                 k = self._summary(kid, "dailyFees")
@@ -326,6 +433,7 @@ class DefiLlama:
             v = float(k.get("total30d") or 0.0)
             child_30d += v
             chart = self._chart(k)
+            child_charts[kid] = chart
             child_rows.append((kid, v, chart[-1][0].date().isoformat() if chart else None))
         if failed:
             # SKIPPED, NOT FAILED, and that distinction is the first fix here. A child listing
@@ -347,6 +455,23 @@ class DefiLlama:
         totals_agree = abs(parent_30d - child_30d) <= max(parent_30d, child_30d) * 0.01
         if not totals_agree:
             return
+        # P3-3a: A PARENT WHOSE DAILY CHART IS STILL ITS CHILDREN'S SUM HAS NOT BEEN RESTRUCTURED. Chainlink's
+        # `chainlink-staking` child reports one lump a week (Thursdays, ~$1.07m); on a day whose chart ends before
+        # that week's lump is indexed, the last 7 days hold none, the recent level reads ~1/30 of the total and this
+        # check reported a restructure (Jake's Gap Report, P2) while the parent still equals Σ children on every day.
+        # The children's own daily charts settle it before any row is written.
+        if not failed and child_charts and all(child_charts.values()):
+            try:
+                pmap = _day_map(pchart)
+                kmap = dict(_sum_children({k: _day_map(c) for k, c in child_charts.items()})[0])
+                rec = [d for d in pmap if (max(pmap) - d).days < RESTRUCTURE_RECENT_DAYS and d in kmap]
+                ps, ks = sum(pmap[d] for d in rec), sum(kmap[d] for d in rec)
+                if rec and abs(ps - ks) <= 0.02 * max(abs(ps), abs(ks), 1.0):
+                    log.info("%s: %r's recent level is low but its daily chart still equals Σ children on %d recent "
+                             "day(s) (%.2f vs %.2f) — lumpy children, not a restructure", name, slug, len(rec), ps, ks)
+                    return
+            except ValueError as e:
+                log.info("%s: restructure check: children's daily charts not comparable (%s)", name, e)
 
         listing = "; ".join(f"{k} 30d={v:,.0f}"
                             + (f", last point {d}" if d else ", NO DAILY POINTS")
@@ -422,8 +547,13 @@ class DefiLlama:
                     self.daily.set(absent_key, "")
                 # Plume (G7 item 10): DefiLlama's chain-gas fees are a cross-check beside our own explorer read
                 fm = (project.get("defillama_metric_as") or {}).get("fees_usd", "fees_usd")
-                out.add(window(tidy(rows, name, fm, SOURCE, TIER), window_days), SOURCE,
-                        name, f"{slug}:dailyFees" + (f" -> {fm}" if fm != "fees_usd" else ""), TIER)
+                route = project.get("defillama_children_route") or {}
+                parts = (self._children_route(project, slug, fm, rows, window_days, out)
+                         if route.get("metric", "fees_usd") == fm and route.get("children") else
+                         [(rows, SOURCE, window_days, "")])
+                for prow, psrc, pwd, pnote in parts:
+                    out.add(window(tidy(prow, name, fm, psrc, TIER), pwd), SOURCE,
+                            name, f"{slug}:dailyFees" + (f" -> {fm}" if fm != "fees_usd" else "") + pnote, TIER)
             except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
                 out.fail(SOURCE, name, f"{slug}:dailyFees: {e}", TIER)
                 if d:                       # declared absent: remembered, and its revenue legs not tried
@@ -482,6 +612,62 @@ class DefiLlama:
                         SOURCE, name, f"{c['metric']} = {c['slug']}:{c.get('data_type', 'dailyFees')}", TIER)
             except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
                 out.fail(SOURCE, name, f"{c['metric']}: {c['slug']}: {e}", TIER)
+
+    def _children_route(self, project: dict, slug: str, metric: str, rows: list, window_days, out) -> list:
+        """P3-3a: a parent slug whose fees are its children's (config defillama_children_route — Chainlink). Every run
+        reads the children (memoised; one is often a component slug already read) and checks the parent still carries
+        them. [(rows, source, window_days, note)] to store:
+          carries          the parent, as before (logged with the numbers);
+          split (undated)  the parent, as before, and a P2 [data] row: a human dates the split (split_on);
+          restate          split dated, overlap reconciles within tolerance: Σ children over the WHOLE history, under
+                           defillama:sum(<children>) — one measuring point, the parent's rows replaced day for day;
+          break            split dated, overlap does not reconcile: the parent's history kept before the split, Σ
+                           children from it — two measuring points, a SERIES BREAK (rule 10), and a P2 row says so.
+        A child that does not answer: the parent is stored as before and the check is said not made."""
+        spec, name = project["defillama_children_route"], project["name"]
+        tol, kids = float(spec.get("tolerance", 0.02)), list(spec["children"])
+        keep = [(rows, SOURCE, window_days, "")]
+        try:
+            parent = _day_map(rows)
+            per = {k: _day_map(self._summary_chart(k, spec.get("data_type", "dailyFees"))) for k in kids}
+        except Exception as e:  # noqa: BLE001 — the parent stays the series; the check is said not made
+            out.skipped(SOURCE, name, f"{metric}: children check NOT MADE — {e}; {slug!r} stored as before", TIER)
+            return keep
+        r = children_reconcile(parent, per, spec.get("split_on"), tol, int(spec.get("recent_days", 30)),
+                               int(spec.get("min_days", 14)))
+        text, v = reconcile_text(r, tol), r["verdict"]
+        src_sum = f"{SOURCE}:sum({'+'.join(kids)})"
+        if v == "carries":
+            log.info("%s: %s: %r still carries its children (%s) — %s", name, metric, slug, ", ".join(kids), text)
+            out.log.append(LogEntry(SOURCE, name, 0, "ok", f"{metric}: {slug!r} carries its children "
+                                    f"({', '.join(kids)}) — {text}", TIER))
+            return keep
+        if v in ("split", "no_overlap"):
+            out.gap(name, f"[data] {metric} — DefiLlama's {slug!r} no longer carries its children",
+                    reason=f"{slug!r} vs Σ({', '.join(kids)}): {text}. The parent is stored as before until the split "
+                           f"is dated.",
+                    tiers_attempted="1",
+                    suggestion="Date the split (config defillama_children_route.split_on, from the daily charts): "
+                               f"the overlap then decides — within {tol:.0%} the children's sum restates the history, "
+                               "otherwise the parent's history is kept and the switch is a series break (rule 10).")
+            return keep
+        if v == "restate":
+            log.info("%s: %s RESTATED on Σ(%s) — %s", name, metric, ", ".join(kids), text)
+            return [(r["children_rows"], src_sum, None,
+                     f" — RESTATED on Σ({', '.join(kids)}) (split {spec['split_on']}; {text})")]
+        split = pd.Timestamp(spec["split_on"]).normalize()
+        before = [(d, x) for d, x in parent.items() if d < split]
+        after = [(d, x) for d, x in r["children_rows"] if d >= split]
+        out.gap(name, f"[data] {metric} — SERIES BREAK on {split.date()}: DefiLlama's {slug!r} stopped carrying its "
+                      f"children",
+                reason=f"{text}. The overlap does not reconcile within {tol:.0%}, so the parent's history is KEPT "
+                       f"before {split.date()} and Σ({', '.join(kids)}) is stored from it: two measuring points, a "
+                       f"series break (rule 10) — no window spans it.",
+                tiers_attempted="1",
+                suggestion="Nothing to restate. If the children's earlier history is later shown to be the same "
+                           "measure, declare a series_handover instead.")
+        return [(before, SOURCE, window_days, f" — before the split {split.date()}"),
+                (after, src_sum, None, f" — Σ({', '.join(kids)}) from {split.date()} (SERIES BREAK)")]
 
     def _sum_slugs(self, project: dict, spec: dict, window_days, out) -> None:
         """One metric = the SUM of a parent's service adapters (Chainlink's customer revenue,
@@ -944,6 +1130,26 @@ class DefiLlama:
                 out.add(window(tidy(rows, name, "protocol_tvl_constant_price_usd", f"{SOURCE}:tokens_at_latest_prices",
                                     TIER), window_days), SOURCE, name,
                         f"{slug}:protocol_tvl_constant_price_usd — {note}", TIER)
+        self._window_start_price_tvl(project, slug, j, out)
+
+    def _window_start_price_tvl(self, project: dict, slug: str, j: dict, out) -> None:
+        """P3-3c: the start-of-window constant-price ratio and its price coverage (window_start_price_tvl), the WHOLE
+        history each read (every row is relative to the latest day, whose date the source carries in brackets)."""
+        import config                                      # noqa: PLC0415
+        name, have = project["name"], config.metrics_for_project(project)
+        if not {"protocol_tvl_cp_window_ratio", "protocol_tvl_cp_window_coverage"} <= set(have):
+            return
+        try:
+            ratio, cover, note = window_start_price_tvl(j)
+        except Exception as e:  # noqa: BLE001 — the rest of the project's TVL stands
+            out.fail(SOURCE, name, f"{slug}:protocol_tvl_cp_window_ratio: {e}", TIER)
+            return
+        if not ratio:
+            out.skipped(SOURCE, name, f"{slug}:protocol_tvl_cp_window_ratio: nothing stored — {note}", TIER)
+            return
+        src = f"{SOURCE}:tokens_at_window_start[basket {ratio[-1][0].date()}]"
+        for metric, rows in (("protocol_tvl_cp_window_ratio", ratio), ("protocol_tvl_cp_window_coverage", cover)):
+            out.add(tidy(rows, name, metric, src, TIER), SOURCE, name, f"{slug}:{metric} — {note}", TIER)
 
     def _protocols_listing(self) -> list:
         """/protocols — every listing with its `slug`, `name` and `parentProtocol`. Memoised for the run."""
