@@ -33894,6 +33894,17 @@ SERIES_BREAK_NOTES = {
 for (_n, _m), _b in SERIES_BREAK_NOTES.items():
     SOURCE_RECLASSIFICATIONS[(_n, _m)] = tuple(SOURCE_RECLASSIFICATIONS.get((_n, _m), ())) + ((_b["break"], _b["text"]),)
 
+# ===== P3-A2 (Jake's addendum A2): THE BAD-PRINT GUARD FOR STOCK SERIES. =====
+# A stored day of a STOCK series (METRICS kind "stock") whose value differs by more than `jump` from BOTH neighbours (the
+# previous and the next stored day, each at most `max_gap_days` away — a daily value), where the two neighbours agree
+# within `agree`, is a one-day bad print: it is left out of every read (windows, end points, charts, the reader's
+# _series) and named "one-day print excluded: <date> <value>" on the Data row and on the reader cells that read the
+# series (build_workbook._bad_print_views). Never excluded: a series' first or last day (one neighbour); two consecutive
+# outliers (their neighbours do not agree); a day whose neighbours disagree; a declared series break / reclassification
+# day, or either side of a basis seam — a declared handover's, a manual reading among a provider's days (a basis change
+# is not a bad print; the measuring-point rules own it). FLOWS ARE NEVER TOUCHED — a one-day spike in a flow is activity.
+BAD_PRINT_GUARD = {"jump": 0.25, "agree": 0.05, "max_gap_days": 7}
+
 # ===== P2c-5 (Jake 2026-10-28; SPEC §19 P2c-5): THREE MORE WALLET-SET HISTORIES RESTATED ON THE CURRENT SET. =====
 # Jake's live guard (`measuring_guard.py --newer metrics.db`, 2026-10-27) found two or more wallet-set bases, with no
 # declared handover, in Ether.fi noncirculating_holding_tokens and in Maple's and Pendle's insider_stake_shares. Each is
