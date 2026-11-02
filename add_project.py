@@ -34,7 +34,10 @@ PACE_S = 0.5
 TIMEOUT_S = 25
 COINGECKO = "https://api.coingecko.com/api/v3"
 LLAMA = "https://api.llama.fi"
-SEL = {"decimals": "0x313ce567", "totalSupply": "0x18160ddd", "balanceOf": "0x70a08231"}
+# the four-byte selectors are the ones check_offline_items keccak-checks (tests/test_adapters.py: no hand-written selector
+# outside it)
+from check_offline_items import SEL_BALANCE_OF, SEL_DECIMALS, SEL_TOTAL_SUPPLY  # noqa: E402
+SEL = {"decimals": SEL_DECIMALS, "totalSupply": SEL_TOTAL_SUPPLY, "balanceOf": SEL_BALANCE_OF}
 STATE_DIR = ROOT / ".cache" / "add_project"
 A1_HISTORY_DAYS = 730            # "2 years where A1 needs it" (P3-7); other archetypes: the run's own history_days
 

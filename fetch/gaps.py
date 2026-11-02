@@ -1074,6 +1074,18 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
               "the latest day's prices is computed from them — fetch/llama.py constant_price_tvl)",
               "Check the Run Log's defillama line for {name}; the protocol's own TVL row (protocol_tvl_usd) uses the "
               "same response."),
+          # P3-3c (2026-11-02): the start-of-window constant-price ratio and its price coverage, from the same response
+          "protocol_tvl_cp_window_ratio": (
+              "DefiLlama /protocol/{slug} returned no `tokens` / `tokensInUsd` for this protocol this run (the TVL "
+              "change at start-of-window prices is computed from them — fetch/llama.py window_start_price_tvl)",
+              "Check the Run Log's defillama line for {name} (protocol_tvl_cp_window_ratio); the protocol's own TVL row "
+              "(protocol_tvl_usd) uses the same response."),
+          "protocol_tvl_cp_window_coverage": (
+              "DefiLlama /protocol/{slug} returned no `tokens` / `tokensInUsd` for this protocol this run (the share of "
+              "the latest day's TVL priced on each start day is computed from them — fetch/llama.py "
+              "window_start_price_tvl)",
+              "Check the Run Log's defillama line for {name} (protocol_tvl_cp_window_ratio); the protocol's own TVL row "
+              "(protocol_tvl_usd) uses the same response."),
           "staker_yield_community_pool": (
               "the RewardVault read (fetch/reward_vault.py) stored no community-pool rate this run — it needs "
               "getRewardBuckets() and CommunityStakingPool.getTotalPrincipal() at the same block",
