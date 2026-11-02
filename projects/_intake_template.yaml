@@ -1,0 +1,102 @@
+# =====================================================================================================================
+# PROJECT INTAKE TEMPLATE (P3-7). Copy to projects/<slug>.yaml (lower case, no spaces: aave.yaml, ether_fi.yaml) and
+# fill it. Files starting with "_" are never loaded, so this template is never a project.
+#
+# THE ONE RULE: every field is   { value: ..., source: ... }
+#   source  = the http(s) URL of the PRIMARY source you read the value from (the project's docs, its governance post,
+#             its contract on a block explorer, its own repo), or
+#           = the literal  "TODO: <what is needed>"  when you do not have one yet. Say WHAT is needed, in words a
+#             colleague can act on ("TODO: the buyback contract address — not yet published by the AFC").
+# A TODO field's value is NEVER used (an unsourced number is not a datum). On the workbook every figure that field
+# feeds reads the code "not wired" with your TODO sentence as its reason.
+#
+# status: draft    validated by `python add_project.py <slug> --probe`, NOT in the workbook (safe to commit half-done)
+# status: active   loaded into config.PROJECTS beside config.py's projects, and into every build. A name that
+#                  config.py already declares is refused with a clear error.
+#
+# Then:  python add_project.py <slug> --probe       read-only network checks + a coverage forecast per reader column
+#        python add_project.py <slug> --backfill    history into the store (active projects only; takes the run lock)
+# =====================================================================================================================
+status: draft
+as_of: 2026-11-02                 # the day you read the sources (YYYY-MM-DD)
+
+name:   {value: Example, source: "TODO: the project's own name as its docs write it"}
+symbol: {value: EXM,     source: "TODO: the ticker from the token contract's symbol()"}
+
+# The CoinGecko coin id (the last part of https://www.coingecko.com/en/coins/<id>). Feeds price, market cap, volume.
+coingecko_id: {value: null, source: "TODO: the CoinGecko coin id, checked against the token contract on its page"}
+
+# DefiLlama slugs (https://defillama.com/protocol/<slug>). Today config reads fees, revenue AND holders revenue from ONE
+# slug, so revenue_slug and holders_revenue_slug must equal fees_slug (or stay TODO); a different slug is refused.
+defillama:
+  fees_slug:            {value: null, source: "TODO: the DefiLlama fees slug"}
+  revenue_slug:         {value: null, source: "TODO: the DefiLlama revenue slug (same as fees_slug)"}
+  holders_revenue_slug: {value: null, source: "TODO: the DefiLlama holders-revenue slug (same as fees_slug)"}
+  tvl_slug:             {value: null, source: "TODO: the DefiLlama protocol (TVL) slug"}
+
+# One entry per chain the token lives on. The FIRST chain is the one whose totalSupply() is the project's total supply;
+# the others are probed (decimals, totalSupply) and recorded. `chain` is a name from config.DEFAULT_RPC
+# (ethereum, base, arbitrum, optimism, bsc, polygon, unichain).
+chains:
+  - chain:          {value: ethereum, source: "TODO: the token's home chain (docs / explorer)"}
+    token_contract: {value: null,     source: "TODO: the token contract address, verified on the chain's block explorer"}
+    decimals:       {value: 18,       source: "TODO: decimals() read on the contract (explorer 'Read contract')"}
+
+max_supply: {value: null, source: "TODO: the cap from the token contract or the project's tokenomics page"}
+
+# Wallets whose tokens are NOT circulating (treasury, ecosystem reserve, team/investor vesting, foundation). One entry
+# per wallet: `key` a short lower_snake id, `chain` one of the chains above, a label saying what the wallet is.
+noncirculating_wallets:
+  - key: treasury
+    chain: ethereum
+    label:   {value: "DAO treasury", source: "TODO: the page that names this wallet's role"}
+    address: {value: null,           source: "TODO: the wallet address from the project's own docs or governance"}
+
+# Dated unlocks still to come (cliffs, vesting), or value: [] with a source saying none remain.
+#   value: [{date: 2027-01-01, tokens: 1000000, bucket: team}]
+unlock_schedule: {value: null, source: "TODO: the vesting / unlock schedule from the project's tokenomics page"}
+
+# How new tokens reach holders. model: minted | distributed_from_premint | vesting_complete | none.
+emission:
+  mechanism:      {value: null, source: "TODO: one sentence — who emits, to whom, from where (mint or reserve)"}
+  model:          {value: null, source: "TODO: minted / distributed_from_premint / vesting_complete / none"}
+  tokens_per_day: {value: null, source: "TODO: the current rate (governance post or contract parameter)"}
+  from:           {value: null, source: "TODO: the date that rate took effect"}
+
+# The buyback. destination: burn | hold | distribute | none. revenue_share: the fraction of protocol revenue that funds
+# it (0-1), from the governance post that set it.
+buyback:
+  chain: ethereum
+  address:       {value: null, source: "TODO: the wallet / contract that receives the bought tokens"}
+  destination:   {value: null, source: "TODO: burn, hold or distribute — from the governance post"}
+  revenue_share: {value: null, source: "TODO: the share of revenue that funds buybacks — from the governance post"}
+  status:        {value: null, source: "TODO: active / paused / ended, with the post that says so"}
+
+# Staking or lock contract (a fungible receipt token whose totalSupply() is the staked amount, or a vote escrow).
+staking:
+  chain: ethereum
+  contract:    {value: null, source: "TODO: the staking / lock contract address, verified on the explorer"}
+  symbol:      {value: null, source: "TODO: the receipt token symbol()"}
+  mechanism:   {value: null, source: "TODO: one sentence — what is staked, the cooldown, what stakers earn"}
+  read_method: {value: null, source: "TODO: erc20_total_supply (fungible receipt) or escrow_balance_of (NFT escrow)"}
+
+# Team / investor / insider wallets (recorded; config's insider-stake audit is not driven from YAML yet).
+insider_wallets:
+  - key: team_vesting
+    chain: ethereum
+    label:   {value: "Team vesting contract", source: "TODO: the page that names it"}
+    address: {value: null, source: "TODO: the address from the project's own disclosure"}
+
+# A1 Infrastructure, A2 Coordination, A3 Revenue Buyback, A4 Permanent Burn (config.ARCHETYPE_NAMES). The primary
+# archetype ranks the project on Summary; each secondary adds its tab. A one-line `reason` on each.
+archetypes:
+  primary:   {value: 3, reason: "TODO: one line — why this archetype", source: "TODO: the mechanism's primary source"}
+  secondary: []
+  #  - {value: 4, reason: "one line", source: "https://..."}
+
+# What a customer buys from the protocol, in its own unit (loans outstanding, transactions, settlement volume ...).
+# `metric` names a config.METRICS series when one exists.
+unit_of_demand: {value: null, metric: null, source: "TODO: the unit of demand and the page that reports it"}
+
+# For an A1 chain only: is the project a blockchain (true) or a protocol on one (false)?
+# is_chain: {value: false, source: "https://..."}
