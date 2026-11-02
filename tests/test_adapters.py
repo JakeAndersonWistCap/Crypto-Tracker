@@ -14721,7 +14721,8 @@ def test_hyperliquid_future_emissions_is_its_own_series_never_pool_release():
 
 def test_valuation_config_chainlink_manual_routes_and_the_two_yields_stay_apart():
     c = config.PROJECT_BY_NAME["Chainlink"]
-    assert c["archetypes"] == [1, 2, 3], "the note's archetype-2 list names Chainlink"
+    # P3-2d (DEFINITION R4, Jake 2026-11-02): A2 is PRIMARY (was [1, 2, 3]); A1 and A3 stay as secondary
+    assert c["archetypes"] == [2, 1, 3], "the note's archetype-2 list names Chainlink"
     # customer_revenue_usd RESOLVED 2026-09-28: DefiLlama's adapter books the fee aggregator's
     # receipts (consumer spend) as fees, so it is restated as a labelled FLOOR
     assert "supply_units" in c["manual_quarterly"] and "customer_revenue_usd_blocked" not in c
@@ -20239,7 +20240,7 @@ def test_onchain_circulating_excludes_only_documented_sourced_addresses_and_revi
 
 def test_tokens_primary_retirement_zero_and_burn_only_presentation():
     """L: A3's retirement pair is in TOKENS (USD alongside); Aerodrome's is a structural 0 with its
-    reason; Uniswap's A4 reads 'no issuance — burn only' and net change = −burn, blocked if any
+    reason; Uniswap's A4 crossover reads burn ÷ releases (P3-2c) and net change = −burn, blocked if any
     issuance is measured."""
     import build_workbook as bw
     R = bw.Refs(100, 10, ["2026-09"])
@@ -20263,7 +20264,10 @@ def test_tokens_primary_retirement_zero_and_burn_only_presentation():
     a4 = {h: fn for h, fn, *_ in bw._a4_headline(R, burn, {})}
     uni = config.PROJECT_BY_NAME["Uniswap"]
     cross = a4["BURN ÷ ISSUANCE (x) — crossover, on the basis to the left"](5, uni)
-    assert '"no issuance — burn only"' in cross and "BLOCKED — issuance declared zero" in cross
+    # P3-2c (DEFINITION R3, Jake 2026-11-02): was '"no issuance — burn only"' — the crossover now divides by Uniswap's
+    # releases into circulating (config.A4_RELEASE_ISSUANCE); the declared-zero check still blocks a measured mint
+    assert '"no issuance — burn only"' not in cross and '|unlock_release_tokens"' in cross
+    assert "BLOCKED — issuance declared zero" in cross
     net = next(fn for h, fn in a4.items() if h.startswith("NET SUPPLY CHANGE Q0"))(5, uni)
     assert '-INDEX(' in net and '|gross_burn_tokens"' in net
     assert config.issuance_declared_zero("Uniswap")["decided_by"] == "Jake"

@@ -5422,7 +5422,10 @@ PROJECTS = [
         # archetype-2 metrics this brings in each carry a reason below: customer_revenue_usd is
         # blocked (customer_revenue_usd_blocked), supply_units is manual quarterly, and
         # utilisation_pct is not applicable.
-        "archetypes": [1, 2, 3], "archetypes_held": [],
+        # ===== PRIMARY ARCHETYPE A2 — DEFINITION R4 (Jake 2026-11-02, SPEC P3-2d). It was [1, 2, 3]. =====
+        # Chainlink is ranked as a coordination token (A2: customer revenue ÷ emissions value); its A1 and A3
+        # columns stay, as secondary members of those tabs (reader code "secondary", P2e-1).
+        "archetypes": [2, 1, 3], "archetypes_held": [],
         "manual_quarterly": ["supply_units"],
         # ===== A2 CUSTOMER REVENUE = EVERY SERVICE, ALL CHAINS. Jake, 2026-09-30 (F). =====
         # Everything customers pay the network: the five DefiLlama service adapters, summed per
@@ -20587,6 +20590,32 @@ def issuance_basis(project_name: str) -> str:
     return "gross_issuance_tokens"
 
 
+# ===== A4: ISSUANCE = RELEASES INTO CIRCULATING FOR A PRE-MINTED SUPPLY — DEFINITION R3 (Jake 2026-11-02, SPEC P3-2c). =====
+# Burn ÷ issuance read "no issuance — burn only" for Uniswap: UNI mints nothing (issuance_declared_zero), so the ratio had
+# no denominator. For a pre-minted supply the issuance is what is RELEASED into circulating — the basis Hyperliquid and
+# GEODNET already use (issuance_basis = pool_release_tokens, "burn ÷ release where pre-minted"). Uniswap's circulating is
+# total − 0x…dEaD − the Timelock − the docs' wallets (CIRCULATING_ONCHAIN), so the release into circulating is the fall
+# of that non-circulating set: unlock_release_tokens (build_workbook._unlock_views — the Timelock's falls, outflow (d),
+# plus the vesting contracts' and the airdrop merkle distributor's, outflow (e); the 100M treasury burn of 2025-12-27 is
+# taken out, a burn and not a release). P3-2a: (d) and (e) are disjoint wallets and different tokens, so both are
+# releases and both count (the whole set's falls). Only the A4 crossover (and its Trajectory row) reads this; net supply
+# change stays −burn (nothing is minted) and the declared-zero check still blocks a positive measured issuance.
+A4_RELEASE_ISSUANCE = {
+    "Uniswap": {"metric": "unlock_release_tokens", "decided_by": "Jake", "decided_on": "2026-11-02",
+                "spec": "SPEC P3-2c (DEFINITION R3, A4)",
+                "basis": "releases into circulating = the falls of the governance Timelock 0x1a9C8182… (outflow (d): "
+                         "the UNIfication growth budget, 5M UNI a quarter) + the four treasury vesting contracts and "
+                         "the airdrop merkle distributor 0x090D4613… (outflow (e)); the 100M treasury burn taken out"},
+}
+
+
+def crossover_issuance_metric(project_name: str) -> str:
+    """The issuance series A4's BURN ÷ ISSUANCE divides by: the declared release into circulating for a pre-minted
+    supply with nothing minted (A4_RELEASE_ISSUANCE: Uniswap), else issuance_basis."""
+    spec = A4_RELEASE_ISSUANCE.get(project_name)
+    return spec["metric"] if spec else issuance_basis(project_name)
+
+
 def lock_partial_reason(project_name: str, metric: str = "locked_tokens") -> str | None:
     """The partial_reason of any live contract feeding `metric` that is declared partial."""
     p = PROJECT_BY_NAME.get(project_name) or {}
@@ -28812,6 +28841,40 @@ OUTFLOW_CATEGORIES = {
                           "programme's market purchases is dilution (CASHBACK_FUNDING, FR2 S2); Season 5 was paid in KING "
                           "(not ETHFI); Triple Dip has no identified distributor; the Sep-2025 membership drops are "
                           "finished. Issuer-wallet releases are unlocks (e)"},
+}
+
+
+# ===== DO TWO OUTFLOW LEGS COUNT THE SAME TOKENS? (SPEC P3-2a, Jake 2026-11-02) — RECORD; nothing reads it but the tests.
+# Uniswap's (d) grants (~$182m a year on Jake's 10-29 store) and (e) releases (~$320m a year) were checked against the
+# source. Verdict: SEPARATE — different wallets, different tokens, each counted once; no definition changed.
+OUTFLOW_LEG_CHECKS = {
+    "Uniswap": {
+        "legs": ("d", "e"), "checked_on": "2026-11-02", "by": "Claude Code (P3-2a)", "changed": "nothing",
+        "verdict": "SEPARATE — (d) and (e) are disjoint wallet sets and no token moved from one into the other inside any "
+                   "window the workbook reads; both are releases into circulating (P3-2c counts both, once each)",
+        "evidence": (
+            "(d) growth_budget_release_tokens = the falls of treasury_holding_tokens, the governance Timelock "
+            "0x1a9C8182C09F50C8318d769245beA52c32BE35BC alone (UNLOCK_RELEASE_SUBSETS): the UNIfication growth budget, "
+            "20M UNI a year claimed 5M a quarter through UNIVesting 0xCa046A83… to Uniswap Labs' recipient 0xaBA63748… "
+            "(proposals/93; claims 2026-01-05, 04-10, 07-14, 10-01) — on the fixture its only falls are those 5M claims "
+            "(and the 100M burn of 2025-12-27, taken out). (e) unlock_release_vesting_tokens = the falls of "
+            "noncirculating_holding_tokens: the four treasury vesting contracts (0x4750c438…, 0xe3953D9d…, 0x4b4e140D…, "
+            "0x3D30B1aB…) and the 2020 airdrop merkle distributor 0x090D4613473dEE047c3f2706764f49E0821D256e. THE ONE "
+            "PATH TO A DOUBLE COUNT is a vesting contract's claim INTO the Timelock (a fall in (e), later a fall in (d)): "
+            "every vesting contract's UNI went to the Timelock and the last such transfer is 2024-12-25 (0x3D30B1aB… -> "
+            "Timelock 16,776,071.76 UNI; eth.blockscout.com token-transfers, read 2026-11-02); all four hold 0 UNI "
+            "(balanceOf at block 26,172,387 = 2026-10-11 and at 2026-11-01) — before every window the workbook reads. "
+            "The merkle distributor's falls are airdrop CLAIMS of 400 UNI each to the claimants' own addresses, not the "
+            "Timelock: its balance read 12,497,965.69 (block 26,172,387, 2026-10-11), 12,009,352.51 (26,244,387, 10-21), "
+            "9,188,518.79 (26,266,000, 10-25), 3,160,341.31 (26,287,587, 10-28), 241,005.30 (2026-11-02) — ~11M UNI "
+            "claimed 10-21..10-29, which is (e)'s ~$320m a year on Jake's 10-29 store; the Timelock held "
+            "262,247,996.31 throughout (no fall after the 2026-10-01 claim). On the fixture (d) + (e) equals the whole "
+            "set's release (unlock_release_tokens) on every day (tests/test_round_p3_2.py)."),
+        "source": ("config.UNLOCK_RELEASE_SUBSETS['Uniswap']; config._NONCIRC_WALLETS_FIRST_PARTY['Uniswap'] (Uniswap/docs "
+                   "content/ecosystem/governance/technical-reference.mdx 'Miscellaneous Addresses'); "
+                   "https://vote.uniswapfoundation.org/proposals/93 ; UNI balanceOf via eth.drpc.org (archive) and "
+                   "https://eth.blockscout.com/api/v2/addresses/<wallet>/token-transfers (UNI), read 2026-11-02"),
+    },
 }
 
 

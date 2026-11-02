@@ -71,10 +71,13 @@ ARCHETYPE_KEYS = {
     3: ("Retired ÷ emissions (x)",
         "RETIRED BUYBACK ÷ EMISSIONS (x) — tokens bought back and burned or held, per covered day, ÷ tokens emitted per "
         "covered day, unlocks EXCLUDED, at the emission rate in force (Sky's scheduled rate where declared, else the "
-        "last 90 days' measured rate). Higher is better; 1.0x is the crossover."),
+        "last 90 days' measured rate). WHERE EMISSIONS ARE 0 (Maple, Ether.fi) the key is retired ÷ (emissions + "
+        "unlocks), its cell AMBER with the caveat (P3-2b). Ties are broken by net holder yield. Higher is better; 1.0x "
+        "is the crossover."),
     4: ("Burn ÷ issuance (x)",
         "BURN ÷ ISSUANCE (x) — tokens burned ÷ tokens issued over the last 90 days, each per covered day; for a "
-        "pre-minted supply, burn ÷ pool release, so the direction matches — the RECIPROCAL of the audit file's "
+        "pre-minted supply, burn ÷ pool release (Uniswap, which mints nothing: burn ÷ its releases into circulating, "
+        "P3-2c), so the direction matches — the RECIPROCAL of the audit file's "
         "'Release ÷ burn (x)'. The last 90 days' measured issuance is the rate in force (no A4 project declares a "
         "scheduled rate). Higher is better; 1.0x is the crossover."),
 }
@@ -761,20 +764,62 @@ def _primary(p: dict) -> int:
     return int(a[0]) if a else 0
 
 
-def _rank_rows(keys: dict) -> list:
+_TIEBREAK: dict = {}                        # P3-2b: {project: net holder yield} for this build (build_reader fills it)
+
+
+def _tb_value(tb: dict, name: str):
+    t = tb.get(name)
+    return float(t) if isinstance(t, (int, float)) and not isinstance(t, bool) and t == t else None
+
+
+def _rank_rows(keys: dict, tiebreak: dict | None = None) -> list:
     """[(project, rank or None, key or None)] — measured keys high to low, then the unmeasured by name, UNRANKED
-    (P2a A1)."""
-    have = sorted((k for k in keys.items() if k[1] is not None), key=lambda kv: -kv[1])
+    (P2a A1). P3-2b (DEFINITION R3, Jake 2026-11-02): a TIE on the key is broken by net holder yield, higher first (a
+    project with no net holder yield after those with one; otherwise the order as listed). `tiebreak` defaults to this
+    build's net holder yields (_TIEBREAK), so Summary and every archetype tab rank by the same order."""
+    tb = _TIEBREAK if tiebreak is None else tiebreak
+
+    def order(kv):
+        t = _tb_value(tb, kv[0])
+        return (-kv[1], t is None, -(t or 0.0))
+    have = sorted((k for k in keys.items() if k[1] is not None), key=order)
     rest = sorted(k for k, v in keys.items() if v is None)
     out = [(p, i + 1, v) for i, (p, v) in enumerate(have)]
     return out + [(p, None, None) for p in rest]
 
 
-def _arch_ranking(keys: dict, arch: int) -> list:
+def _arch_ranking(keys: dict, arch: int, tiebreak: dict | None = None) -> list:
     """P2e-1: THE ranking of archetype `arch` — [(project, rank or None, key or None)] over the projects whose PRIMARY
     archetype it is, parked ones left out, by _rank_rows. Summary and the archetype tab both show it, so a project's
-    rank is the same on both."""
-    return _rank_rows({n: k[1] for n, k in keys.items() if k[0] == arch and not parked_reason(n)})
+    rank is the same on both (a tie on the key broken by net holder yield, P3-2b)."""
+    return _rank_rows({n: k[1] for n, k in keys.items() if k[0] == arch and not parked_reason(n)}, tiebreak)
+
+
+def _tie_note(name: str, ranking: list, tiebreak: dict | None = None) -> str:
+    """' Tied on the key with …; broken by net holder yield …' where `name` shares its key with another ranked project
+    of `ranking` (_arch_ranking's rows), else ''."""
+    tb = _TIEBREAK if tiebreak is None else tiebreak
+    mine = next((v for n, rk, v in ranking if n == name and rk is not None), None)
+    if mine is None:
+        return ""
+    tied = [n for n, rk, v in ranking if rk is not None and v == mine and n != name]
+    if not tied:
+        return ""
+
+    def fmt(n):
+        t = _tb_value(tb, n)
+        return f"{n} {t:+.2%}" if t is not None else f"{n} no net holder yield"
+    return (f" Tied on the key ({mine:,.4g}) with {', '.join(tied)}; the tie is broken by net holder yield, higher first "
+            f"(DEFINITION R3, P3-2b): {'; '.join(fmt(n) for n in [name, *tied])}.")
+
+
+def _net_holder_yields(A, projects) -> dict:
+    """{project: NET HOLDER YIELD} — the CP tab's number (Summary's net holder yield column), None where it is not one."""
+    out = {}
+    for p in projects:
+        src = A.cell(CP_TAB, SUMMARY_SOURCES["nhy"][1], p["name"])
+        out[p["name"]] = src.num if src is not None else None
+    return out
 
 
 def build_reader(wb, path, *, asof, groups: dict, headline_cells: list, projects: list,
@@ -809,6 +854,8 @@ def build_reader(wb, path, *, asof, groups: dict, headline_cells: list, projects
                                                                   for h in headline_cells}, sheets)
     keys = _archetype_keys(A, groups, projects, config, bw)
     ctx.keys = keys
+    _TIEBREAK.clear()                                      # P3-2b: ties on a key are broken by net holder yield
+    _TIEBREAK.update(_net_holder_yields(A, projects))
     _write_summary(sheets[SUMMARY], ctx, keys)
     for spec in tab_specs(bw):
         _write_arch_tab(sheets[spec.tab], ctx, spec)
@@ -1198,7 +1245,8 @@ def _summary_row(sh, ctx: Ctx, C, row, p, rank, key, parked: bool = False) -> No
         put_code(sh, row, C["rank"], "parked", _parked_rank_note(name))
     elif rank is not None:
         put_number(sh, data, row, C["rank"], name, "rank", rank, None,
-                   f"{rank} in {ARCHETYPE_NAMES.get(arch, '')} by {ARCHETYPE_KEYS.get(arch, ('',))[0].lower()}.\n\n"
+                   f"{rank} in {ARCHETYPE_NAMES.get(arch, '')} by {ARCHETYPE_KEYS.get(arch, ('',))[0].lower()}."
+                   f"{_tie_note(name, _arch_ranking(ctx.keys or {}, arch))}\n\n"
                    "Working: computed here from the archetype key column.")
     else:
         put_code(sh, row, C["rank"], "unranked",
@@ -1397,7 +1445,8 @@ def tab_specs(bw) -> list:
                           "RETIRED ÷ EMISSIONS (x) — the rank key: retired buyback (burned + held) ÷ emissions, unlocks "
                           "excluded, each per covered day; where an emission rate in force is declared (Sky), that rate: "
                           "its latest value in the latest quarter, its mean over an earlier quarter (the Trajectory "
-                          "tab's rule for a stock)"),
+                          "tab's rule for a stock); a quarter whose emissions are 0 reads retired ÷ (emissions + "
+                          "unlocks) (P3-2b)"),
                 traj=("a3_retire_vs_dilution", "Retired ÷ (emis + unlocks)", FMT_X,
                       "RETIREMENT ÷ DILUTION (x) — retired buyback ÷ (emissions + unlocks), each per covered day, not "
                       "the rank key"),
@@ -1418,7 +1467,7 @@ def tab_specs(bw) -> list:
                            (M, "Fees ÷ FDV (annualised)", "Fees ÷ FDV, a year", "")),
                 key_traj=("a4_crossover", "Burn ÷ issuance (x)", FMT_X,
                           "BURN ÷ ISSUANCE (x) — the rank key: burn ÷ issuance (burn ÷ pool release where the supply is "
-                          "pre-minted), each per covered day"),
+                          "pre-minted; Uniswap: burn ÷ releases into circulating, P3-2c), each per covered day"),
                 traj=("a4_net_change", "Net supply change (tokens)", FMT_TOK,
                       "NET SUPPLY CHANGE (tokens) — self-reported where published, else issuance (pool release where "
                       "pre-minted) − burn, over the quarter; not the rank key"),
@@ -1977,8 +2026,8 @@ def _write_arch_tab(sh: Sheet, ctx: Ctx, spec: TabSpec) -> None:
                     put_number(sh, data, row, col, name, f"rank|{tab}", rank, None,
                                f"{rank} of {ranked} ranked in {ARCHETYPE_NAMES[spec.arch]} by "
                                f"{spec.key_header.lower()} — the projects whose primary archetype this is; the same "
-                               "rank as Summary.\n\nWorking: computed from the archetype key (the ranking Summary "
-                               "shows).")
+                               f"rank as Summary.{_tie_note(name, primary)}\n\nWorking: computed from the archetype "
+                               "key (the ranking Summary shows).")
                 else:
                     put_code(sh, row, col, "unranked", f"Unranked, sorted last: no measured {spec.key_header.lower()} "
                              "— the key cell's comment says why.")

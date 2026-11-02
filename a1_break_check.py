@@ -161,14 +161,17 @@ def declared_note(project: str, metric: str, day: pd.Timestamp, before: str, aft
     decl = config.declared_handover(project, metric)
     if decl:
         cc = str(decl.get("composition_change", "none")).strip()
+        import trajectory                               # noqa: PLC0415
         pts = tuple(decl.get("ordered_points") or ())
+        # P3-2e: the points normalised as trajectory._own_breaks (and build_workbook, the guard) normalise them
+        norm = {trajectory.basis_of(metric, x) for x in pts}
         if not cc.lower().startswith("none"):
             state = "its composition_change declares a STEP (it does not start 'none'): reported by design"
-        elif before in pts and after in pts:
-            state = "both stored bases are among its ordered_points: recognised, not a break"
+        elif before in norm and after in norm:
+            state = "both stored bases are among its ordered_points (normalised): recognised, not a break"
         else:
             state = (f"NOT RECOGNISED: the stored bases ('{before[:60]}', '{after[:60]}') are not both among its "
-                     "ordered_points as written")
+                     "ordered_points (normalised)")
         out.append(f"declared handover on file ({decl.get('declared') or decl.get('declared_on') or 'undated'}): "
                    f"{' -> '.join(str(x) for x in pts)}; composition_change: {cc[:150]} -- {state}")
     note = config.SERIES_BREAK_NOTES.get((project, metric))

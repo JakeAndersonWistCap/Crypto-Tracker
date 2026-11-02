@@ -134,7 +134,7 @@ def test_p2e_1_a_secondary_member_reads_secondary_and_names_its_primary(built):
                 kinds.append(0)
         assert kinds == sorted(kinds), (tab, kinds)       # primaries, then secondaries, then parked
     assert seen > 0
-    # Chainlink (primary A1) is a secondary member of A3 on the fixture build
+    # Chainlink (primary A2 since P3-2d; A1 before) is a secondary member of A3 on the fixture build
     a3 = wb[reader.A3_TAB]
     assert a3.cell(_rows(a3)["Chainlink"], _rank_col(a3)).value == "secondary"
     # About and Definitions list the code
