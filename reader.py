@@ -2183,6 +2183,13 @@ def _write_business(sh: Sheet, ctx: Ctx) -> None:
                 "Master, TVL ($)", 0, 12),
         "tvl_g": ("TVL change, selected period", "TVL on the last day held ÷ TVL the selected number of days before − "
                   "1, nominal (US dollars).", FMT_PCT, "Assets", "computed from the stored daily TVL series", 0, 12),
+        "tvl_sw": (TVL_SW_HEADER, "For a protocol: the change of its TVL over the selected period with every token "
+                   "valued at the price it had on the FIRST day of the window — Σ amount at the end × start price ÷ Σ "
+                   "amount at the start × start price − 1 (DefiLlama's token amounts and USD values), so a price move "
+                   "cancels and only deposits and withdrawals count. A token with no price on the start day is left "
+                   f"out; under {TVL_CP_COVERAGE_FLOOR:.0%} of the TVL priced the cell is n/a. For a chain: 'by "
+                   "design'.", FMT_PCT, "Assets", "computed from the stored start-of-window price ratio and its "
+                   "coverage", 0, 13),
         "tvl_cp": ("TVL change at constant prices", "For a protocol: the change of its TVL at CONSTANT PRICES (each "
                    "token's quantity at fixed prices, DefiLlama's token quantities), so a rising token price cannot "
                    "pass for growth. For a chain: 'by design' — chains stay in US dollars and the price change is the "
@@ -2207,7 +2214,7 @@ def _write_business(sh: Sheet, ctx: Ctx) -> None:
             "prices; chains stay in US dollars beside their price change.").font = F_SUB
     write_headers(sh)
     order = sorted(ctx.projects, key=lambda p: (bool(parked_reason(p["name"])), _primary(p), p["name"]))
-    period_cols = [C["growth"], C["tvl_g"], C["tvl_cp"], C["price"]]
+    period_cols = [C["growth"], C["tvl_g"], C["tvl_sw"], C["tvl_cp"], C["price"]]
     for i, p in enumerate(order):
         row, name = 5 + i, p["name"]
         sh.value_rows.append(row)
@@ -2227,6 +2234,7 @@ def _write_business(sh: Sheet, ctx: Ctx) -> None:
             put_src(sh, data, row, C["rev_ann"], p, s, "No annualised revenue: the 90-day revenue is not a number")
         _period_formula_cell(sh, ctx, row, C["growth"], name, _revenue_metric(config, name), "flow", "revenue")
         _period_formula_cell(sh, ctx, row, C["tvl_g"], name, _tvl_metric(p), "stock", "TVL")
+        _window_start_tvl_cell(sh, ctx, row, C["tvl_sw"], p)
         if _primary(p) == 1:
             put_code(sh, row, C["tvl_cp"], "by design", "A chain: its figures stay in US dollars (no constant-price "
                      "basis is built for a chain's TVL); the price change beside it is the price-effect line.")
@@ -2254,6 +2262,76 @@ def _write_business(sh: Sheet, ctx: Ctx) -> None:
     last = 4 + len(order)
     for col in period_cols:
         code_style(ws, f"{col.letter}5:{col.letter}{last}")
+
+
+# P3-3c (Jake 2026-11-02): TVL change at START-OF-WINDOW prices — config METRICS protocol_tvl_cp_window_ratio / _coverage
+TVL_SW_HEADER = "TVL change, start-of-window prices"
+TVL_CP_COVERAGE_FLOOR = 0.90                # the share of the latest TVL that must be in tokens priced on the start day
+TVL_SW_METRICS = ("protocol_tvl_cp_window_ratio", "protocol_tvl_cp_window_coverage")
+
+
+def _latest_basket(groups: dict, project: str, metric: str) -> pd.Series:
+    """The stored daily series, ONE basket only: the rows whose source names the same latest day as the newest row (every
+    row is relative to that day; a row left over from an earlier read is another basket and is not mixed in)."""
+    g = groups.get((project, metric)) if groups else None
+    if g is None or getattr(g, "empty", True):
+        return pd.Series(dtype=float, index=pd.DatetimeIndex([]))
+    g = g.assign(date=pd.to_datetime(g["date"]).dt.normalize()).sort_values("date")
+    g = g[g["source"].astype(str) == str(g["source"].iloc[-1])]
+    return pd.to_numeric(g.groupby("date")["value"].last(), errors="coerce").dropna().sort_index()
+
+
+def window_start_change(ratio: pd.Series, cover: pd.Series, days: int, floor: float = TVL_CP_COVERAGE_FLOOR):
+    """(change, coverage, why) for the window of `days` ending on the ratio's last day — what the cell's formula computes,
+    for the comment and the tests. change None (n/a) when the start day is not held or its coverage is under `floor`."""
+    if ratio.empty:
+        return None, None, "no start-of-window series held"
+    end = ratio.index.max()
+    start = end - pd.Timedelta(days=days)
+    if start not in ratio.index or start not in cover.index:
+        return None, None, f"the start day {start.date()} is not held"
+    c = float(cover.loc[start])
+    if c < floor:
+        return None, c, f"only {c:.1%} of the TVL is in tokens priced on {start.date()} (floor {floor:.0%})"
+    return float(ratio.loc[start]) - 1.0, c, f"{start.date()}..{end.date()}, {c:.1%} of the TVL priced"
+
+
+def _window_start_tvl_cell(sh: Sheet, ctx: Ctx, row: int, col: Col, p: dict) -> str:
+    """P3-3c: the TVL change at start-of-window prices over the selected period, a formula on _series (the ratio and its
+    coverage on the start day E − N); n/a under the coverage floor, with the coverage at each listed period."""
+    name, config = p["name"], ctx.config
+    if _primary(p) == 1:
+        return put_code(sh, row, col, "by design", "A chain: its figures stay in US dollars (no constant-price basis is "
+                        "built for a chain's TVL); the price change beside it is the price-effect line.")
+    if not set(TVL_SW_METRICS) <= set(config.metrics_for_project(p)):
+        return put_code(sh, row, col, "not wired", f"No start-of-window price series is wired for {name} (DefiLlama's "
+                        "token breakdown is read for Maple, Morpho, Pendle and Fluid).")
+    r, c = (_latest_basket(ctx.groups, name, m) for m in TVL_SW_METRICS)
+    Lr = ctx.ser.add(f"{name}|{TVL_SW_METRICS[0]}", r) if not r.empty else None
+    Lc = ctx.ser.add(f"{name}|{TVL_SW_METRICS[1]}", c) if not c.empty else None
+    if Lr is None or Lc is None:
+        return put_code(sh, row, col, "n/a", f"No start-of-window price series is held for {name} yet — it is written "
+                        "by the DefiLlama TVL read (fetch/llama.py window_start_price_tvl).")
+    D, N = ctx.ser.dates, DAYS_REF
+    at = lambda L: f"INDEX({ctx.ser.vals(L)},MATCH({ctx.ser.end(Lr)}-{N},{D},0))"  # noqa: E731
+    f = (f'=IFERROR(IF(AND(ISNUMBER({at(Lr)}),ISNUMBER({at(Lc)})),IF({at(Lc)}<{TVL_CP_COVERAGE_FLOOR},"n/a",'
+         f'{at(Lr)}-1),"n/a"),"n/a")')
+    per = []
+    for lab, d in PERIODS:
+        if d is None:
+            continue
+        v, cv, why = window_start_change(r, c, d)
+        per.append(f"{lab}: " + (f"{v:+.1%} ({why})" if v is not None else f"n/a — {why}"))
+    g = ctx.groups.get((name, TVL_SW_METRICS[0]))
+    src = str(g.sort_values("date")["source"].iloc[-1]) if g is not None and not g.empty else ""
+    return put_formula(sh, row, col, f, None,
+                       f"TVL change over the selected period (cell B2 on Summary; N days) at START-OF-WINDOW prices: "
+                       f"Σ token amount on the last day held × each token's price N days earlier ÷ the TVL N days "
+                       f"earlier in the same tokens − 1. A price move cancels; deposits and withdrawals count. A token "
+                       f"with no price on the start day is left out of both sides; when the tokens so priced hold "
+                       f"under {TVL_CP_COVERAGE_FLOOR:.0%} of the latest TVL the cell is n/a.\n\nBy period: "
+                       + "; ".join(per) + f".\n\nWorking: the stored series {name}|{TVL_SW_METRICS[0]} and "
+                       f"|{TVL_SW_METRICS[1]} ({src}), held {r.index.min().date()}..{r.index.max().date()}.")
 
 
 def _unit_text(config, text: str) -> str:

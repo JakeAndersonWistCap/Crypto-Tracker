@@ -5463,6 +5463,31 @@ PROJECTS = [
              "source_url": "https://github.com/DefiLlama/dimension-adapters/blob/cba11af0499577116edc354f2664e0e542754087/fees/chainlink-requests.ts",
              "read_on": "2026-10-05"},
         ),
+        # ===== P3-3a (Jake 2026-11-02): DOES THE `chainlink` PARENT STILL CARRY ITS CHILDREN? YES — READ LIVE 2026-11-02.
+        # /summary/fees/chainlink answers id parent#chainlink with childProtocols Chainlink Requests (2623,
+        # `chainlink-requests`) and Chainlink Staking (3905, `chainlink-staking`, the fee aggregator; weekly ~$1.07m on
+        # Thursdays from 2025-08-07). Parent = requests + staking on EVERY one of 1,057 days 2023-08-07..2026-11-02:
+        # 80,661,885 vs 80,661,885 (0.000%); last 30 days 4,453,481 vs 4,453,481. Nothing is restated, nothing breaks.
+        # THE GAP REPORT'S P2 ROW WAS THE GENERIC CHECK FOOLED BY A WEEKLY LUMP: on a day whose chart ends before
+        # that Thursday's lump is indexed, the last 7 days hold none (36,709 against the 1,036,780 the 30-day total
+        # implies, simulated on 2026-10-29) — fetch/llama.check_restructure now compares the children's own dailies
+        # first. EVERY RUN re-checks (fetch/llama._children_route; chainlink-requests is already read as a component, so
+        # one extra call): carries → the parent as before; stops carrying → a P2 row asking for split_on; split_on dated
+        # → the overlap (days before it both hold) decides: within `tolerance` the children's sum restates the whole
+        # history (defillama:sum(...)); otherwise the parent's history is kept and the switch is a SERIES BREAK (rule 10).
+        # A FINDING FOR JAKE, NOT CHANGED HERE (a definition): fees_usd IS the parent, so it already holds
+        # chainlink-requests — and customer_revenue_components adds customer_revenue_requests_usd on top of it
+        # (fixture 2026-10-08: fees_usd 1,078,886 = requests 3,544 + staking 1,075,342). The aggregator core alone is
+        # `chainlink-staking`.
+        "defillama_children_route": {
+            "metric": "fees_usd", "children": ("chainlink-requests", "chainlink-staking"), "data_type": "dailyFees",
+            "tolerance": 0.02, "recent_days": 30, "min_days": 14,
+            "split_on": None,
+            "checked_on": "2026-11-02",
+            "live_finding": "carries: 1,057 days 2023-08-07..2026-11-02, parent 80,661,885 vs Σ children 80,661,885 "
+                            "(0.000%); last 30 days 4,453,481 vs 4,453,481",
+            "source_url": "https://api.llama.fi/summary/fees/chainlink?dataType=dailyFees",
+        },
         "customer_revenue_components": {
             "metric": "customer_revenue_usd",
             "core": "fees_usd",
@@ -12691,7 +12716,11 @@ PROJECTS = [
                     "token": "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984",
                     "from": "0x1a9C8182C09F50C8318d769245beA52c32BE35BC",
                     "to": "0x000000000000000000000000000000000000dEaD", "block": 24106378,
-                    "explorer": "https://eth.blockscout.com/api/v2/transactions/"}},
+                    "explorer": "https://eth.blockscout.com/api/v2/transactions/",
+                    # P3-3b: re-verified 2026-11-02 on eth.blockscout.com (keyless): status ok at block 24,106,378,
+                    # 2025-12-27T20:33:11Z, ONE UNI Transfer of exactly 100,000,000 from the Timelock to 0x…dEaD
+                    # (token_metrics.uni_retro_burn_row on the live answers)
+                    "timestamp_utc": "2025-12-27 20:33:11 UTC", "verified_on": "2026-11-02"}},
         ],
         "burn_read_method": "transfer",
         # The UNI-burn threshold required to call release() is a GOVERNANCE-SETTABLE parameter, not a
@@ -19427,6 +19456,25 @@ METRICS["protocol_tvl_constant_price_usd"] = {
     "kind": "stock", "unit": "usd", "archetypes": [], "tiers": [1],
     "only_projects": ("Maple", "Morpho", "Aerodrome", "Pendle", "Fluid"), "sanity_min": 0.0,
     "business": True, "source_kind": "aggregator (DefiLlama /protocol, free)", "onchain_replacement": ""}
+# ===== P3-3c (Jake 2026-11-02): TVL CHANGE AT START-OF-WINDOW PRICES. =====
+# The Business column "TVL change, start-of-window prices": for a window S..E (E = the latest day held),
+# Σ amount(E) × price(S) ÷ Σ amount(S) × price(S) − 1 — the price move cancels, the amount move counts. One stored row
+# per day per series is enough because every window the reader can select ends on E: R(S) = Σ_{priced on S} amount(E) ×
+# price(S) ÷ Σ_{priced on S} tokensInUsd(S), and C(S) = the share of E's TVL in tokens priced on S. That is TWO rows a
+# day; the alternative — every token's amount (and price) every day — is tokens × days (Pendle carries 40+ tokens a day).
+# The whole history is re-stored each read (it is relative to E, named in the source as [basket <E>]). A token with no
+# price on S is excluded from both sides; below the coverage floor the cell is n/a with the coverage
+# (reader.TVL_CP_COVERAGE_FLOOR, 90% of E's TVL by value). Aerodrome (parked, a sum of children) is not wired.
+for _m, _lab, _lo, _hi in (
+        ("protocol_tvl_cp_window_ratio",
+         "TVL at start-of-window prices, latest day ÷ that day (x) — Σ latest token amounts × the day's prices ÷ the "
+         "day's TVL in the same tokens (DefiLlama tokens / tokensInUsd); the change from that day = this − 1", 0.0, 1e12),
+        ("protocol_tvl_cp_window_coverage",
+         "Share of the latest day's TVL in tokens priced on that day (the start-of-window price coverage, 0-1)",
+         0.0, 1.0)):
+    METRICS[_m] = {"label": _lab, "kind": "stock", "unit": "ratio", "archetypes": [], "tiers": [1],
+                   "only_projects": ("Maple", "Morpho", "Pendle", "Fluid"), "sanity_min": _lo, "sanity_max": _hi,
+                   "business": True, "source_kind": "aggregator (DefiLlama /protocol, free)", "onchain_replacement": ""}
 
 
 # ===== CHAINLINK'S STAKING FUNDING, OUT OF (e) PER TRANSFER (round 3 B2, Jake 2026-10-13; was C20, NOT WIRED). =====
@@ -29390,6 +29438,33 @@ def one_off_events(project_name: str) -> list[dict]:
                     "funding": f.get("funding", "treasury" if "treasury" in f["what"].lower() else "not stated"),
                     "what": f["what"], "source": f["source_url"], "in_series": f["metric"]})
     return out
+
+
+def one_off_event_note(project_name: str, source: str) -> str | None:
+    """P3-3b (Jake 2026-11-02: Uniswap's A4 one-off cell read "STALE — last successful fetch never"): a stored or viewed
+    one_off_burn_tokens row is a DECLARED STATIC EVENT, not a series a fetch keeps current — its note names the source
+    (the transaction, its block and the governance page), or None when the source is no declared event of the project.
+    Matched by the tx hash (`--seed uni_retro_burn`'s row, source "tx:<hash> …") or by the event's own label (the
+    read-time view from the differenced burn row, source "one_off:<what> (<url>)")."""
+    s = str(source or "")
+    for f in (PROJECT_BY_NAME.get(project_name) or {}).get("one_off_flows") or ():
+        tx = f.get("tx") or {}
+        by_tx = bool(tx.get("hash")) and s.lower().startswith(f"tx:{tx['hash']}".lower())
+        by_view = s.startswith(f"one_off:{f['what']}")
+        if not (by_tx or by_view):
+            continue
+        on_chain = (f"tx {tx['hash']}, block {int(tx['block']):,}"
+                    + (f", {tx['timestamp_utc']}" if tx.get("timestamp_utc") else "")
+                    + f", {tx.get('from', '?')} → {tx.get('to', '?')}"
+                    + (f" (verified on-chain {tx['verified_on']}, {tx.get('explorer', '').split('/api/')[0]})"
+                       if tx.get("verified_on") else "")) if tx.get("hash") else "no transaction declared"
+        how = ("stored from the transaction itself (`python token_metrics.py --seed uni_retro_burn`)" if by_tx else
+               "dated by the differenced burn row it was moved out of; `python token_metrics.py --seed "
+               "uni_retro_burn` stores it from the transaction itself")
+        return (f"DECLARED STATIC EVENT — {f['tokens']:,.0f} tokens on {f.get('landed') or f['window'][0]}: "
+                f"{f['what']}. Source: {on_chain}; governance {f['source_url']}. It is {how}. A one-off happens once: "
+                f"no recurring fetch, never stale; out of every rate (one_off_flows).")
+    return None
 
 
 def one_off_events_text(project_name: str) -> str:

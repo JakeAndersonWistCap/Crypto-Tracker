@@ -5343,6 +5343,11 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                 row["note"] = latest.get("source_note", "") or ""
             elif base_source == "schedule":
                 row["status"] = "ok"
+            elif base_source in ("tx", "one_off") and config.one_off_event_note(name, str(latest["source"])):
+                # P3-3b: A DECLARED STATIC EVENT IS NEVER STALE (Uniswap's 100M burn read "last successful fetch never":
+                # 'tx' / 'one_off' is no adapter, and an event that happened once has nothing newer to fetch)
+                row["status"] = "ok"
+                row["note"] = config.one_off_event_note(name, str(latest["source"]))
             elif _age_in_days(latest["date"], asof, granularity) > _stale_limit(name, metric, stale_days, g):
                 # THE THRESHOLD FOLLOWS THE CADENCE. A monthly series cannot have a point from
                 # this week — the incomplete current month is dropped by design — so judging it
@@ -9225,6 +9230,9 @@ def _write_table(ws, R: Refs, projects: list[dict], specs: list[tuple], data_by_
                     elif st["status"] == "stale":
                         c.fill = FILL_STALE
                         c.comment = Comment(f"STALE — {st['note']}", "token_metrics")
+                    elif str(st.get("note") or "").startswith("DECLARED STATIC EVENT"):
+                        # P3-3b: the event's value with its source (transaction, block, governance page)
+                        c.comment = Comment(str(st["note"]).split(" | ")[0], "token_metrics")
                     # A review flag was reaching the Data tab and stopping there, so a figure the
                     # validator would not accept silently still rendered as a plain number on the
                     # tab people actually read. A flagged ZERO is the worst case of that: it looks
