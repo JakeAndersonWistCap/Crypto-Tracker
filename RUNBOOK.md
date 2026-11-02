@@ -534,6 +534,14 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11dj. Done check (P3-5)
+
+`python done_check.py` (add `--verbose` for every blocker; `--reader`, `--audit`, `--asof YYYY-MM-DD` as in friday_check)
+is read-only and prints one line per project, `<project> | READY / NOT READY / PARKED | <tab>: <header> — <code>: <reason>`
+(at most 5 blockers, then "and N more"), then `DONE CHECK: <r> READY, <n> NOT READY, <p> PARKED`. Exit code 1 when any
+project is NOT READY, else 0. `python done_check.py --help` says what counts as an allowed code and as a clear-by date.
+
+
 ## 11dh. Friday pre-mortem — if X, do Y
 
 Each entry is read from the code at 3f73b51: SYMPTOM (the message text as printed; the `<time> WARNING <logger>:` prefix is

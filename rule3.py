@@ -176,4 +176,6 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
+    import progress                                    # stdout line-buffered when piped (tests/test_progress.py)
+    progress.line_buffered()
     sys.exit(main())
