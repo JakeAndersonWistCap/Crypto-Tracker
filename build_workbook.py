@@ -3057,6 +3057,106 @@ def _without_provisional(long: pd.DataFrame) -> pd.DataFrame:
     return long[[k not in held for k in keys]]
 
 
+# ===== P3-A2 (Jake's addendum A2): THE BAD-PRINT GUARD FOR STOCK SERIES (config.BAD_PRINT_GUARD). =====
+BAD_PRINTS: dict = {}      # (project, metric) -> [(day "YYYY-MM-DD", value, previous, next)] left out of this build
+_BUILD_LOG = __import__("logging").getLogger("build_workbook")
+
+
+def bad_prints(s: pd.Series, protected=frozenset(), rule: dict | None = None) -> list[tuple]:
+    """[(day, value, previous, next)] — the one-day bad prints of a daily STOCK series `s` (date index, one value a
+    day): a value more than rule["jump"] off BOTH neighbouring stored days (each at most rule["max_gap_days"] away),
+    which agree with each other within rule["agree"]. The first and last day (one neighbour) are never one; two
+    consecutive outliers are not (each one's neighbours disagree); a `protected` day (a declared break) is not."""
+    rule = rule or config.BAD_PRINT_GUARD
+    jump, agree, gap = float(rule["jump"]), float(rule["agree"]), int(rule["max_gap_days"])
+    s = pd.to_numeric(s, errors="coerce").dropna().sort_index()
+    days, vals = list(s.index), [float(v) for v in s.to_numpy()]
+    prot = {pd.Timestamp(d).normalize() for d in protected}
+    out = []
+    for i in range(1, len(vals) - 1):
+        a, v, b = vals[i - 1], vals[i], vals[i + 1]
+        d = pd.Timestamp(days[i]).normalize()
+        if d in prot or (d - pd.Timestamp(days[i - 1])).days > gap or (pd.Timestamp(days[i + 1]) - d).days > gap:
+            continue
+        scale = max(abs(a), abs(b))
+        if scale == 0 or abs(a - b) > agree * scale or a == 0 or b == 0:
+            continue                                   # the neighbours disagree (or read 0): nothing to judge against
+        if abs(v - a) > jump * abs(a) and abs(v - b) > jump * abs(b):
+            out.append((d, v, a, b))
+    return out
+
+
+def _bad_print_protected(project: str, metric: str, g: pd.DataFrame) -> set:
+    """The DECLARED break days of a series, never a bad print (a basis change is not one): the named day and cutover of
+    config.SERIES_BREAK_NOTES, each config.SOURCE_RECLASSIFICATIONS day, config.SERIES_BREAKS' two days, and both
+    sides of every basis seam (trajectory.basis_of changes between two stored days) — a declared handover's, or one the
+    measuring-point rules judge (an undeclared seam blanks the series there; a manual reading among a provider's days
+    is a different basis). A day is judged only against neighbours on its own basis."""
+    out = set()
+
+    def add(day) -> None:
+        with contextlib.suppress(TypeError, ValueError):
+            out.add(pd.Timestamp(str(day)[:10]).normalize())
+    b = (getattr(config, "SERIES_BREAK_NOTES", {}) or {}).get((project, metric)) or {}
+    for k in ("day", "break"):
+        if b.get(k):
+            add(b[k])
+    for day, _why in (getattr(config, "SOURCE_RECLASSIFICATIONS", {}) or {}).get((project, metric), ()):
+        add(day)
+    for day in ((getattr(config, "SERIES_BREAKS", {}) or {}).get((project, metric)) or {}).get("between") or ():
+        add(day)
+    if "source" in g:
+        x = g.assign(_d=pd.to_datetime(g["date"]).dt.normalize()).sort_values("_d", kind="stable")
+        basis = x.groupby("_d")["source"].last().astype(str).map(lambda src: trajectory.basis_of(metric, src))
+        days = list(basis.index)
+        for prev, day, b0, b1 in zip(days, days[1:], basis.tolist(), basis.tolist()[1:]):
+            if b0 != b1:
+                out.update((prev, day))
+    return out
+
+
+def print_value(v: float) -> str:
+    return f"{v:,.0f}" if abs(v) >= 1000 else f"{v:.6g}"
+
+
+def bad_print_text(items) -> str:
+    """'one-day print excluded: <date> <value>' for each excluded print, joined by '; '."""
+    return "; ".join(f"one-day print excluded: {d} {print_value(v)}" for d, v, *_ in items)
+
+
+def _bad_print_views(groups: dict) -> None:
+    """P3-A2 (config.BAD_PRINT_GUARD): each STORED stock series' one-day bad prints (bad_prints) are dropped before any
+    view or window reads it — the audit's windows and end points, the derived series, the reader's _series and charts
+    all read the series without them — recorded in BAD_PRINTS and logged one line each. Flows are never touched."""
+    BAD_PRINTS.clear()
+    for key in list(groups.keys()):
+        p, m = key
+        if (METRICS.get(m) or {}).get("kind") != "stock":
+            continue
+        g = dict.get(groups, key)                      # UNTRACKED, as _provisional_views: it trims its own rows only
+        if g is None or g.empty or len(g) < 3:
+            continue
+        d = pd.to_datetime(g["date"]).dt.normalize()
+        s = pd.to_numeric(g["value"], errors="coerce").groupby(d).last().dropna().sort_index()
+        found = bad_prints(s, _bad_print_protected(p, m, g))
+        if not found:
+            continue
+        BAD_PRINTS[key] = [(str(day.date()), v, a, b) for day, v, a, b in found]
+        for day, v, a, b in found:
+            _BUILD_LOG.info("bad-print guard (P3-A2): %s %s %s %s excluded (previous day %s, next day %s)",
+                            p, m, day.date(), print_value(v), print_value(a), print_value(b))
+        groups[key] = g[~d.isin({day for day, *_ in found})]
+
+
+def _without_bad_prints(long: pd.DataFrame) -> pd.DataFrame:
+    """The store frame less the one-day prints _bad_print_views left out (P3-A2), for a read of the store itself."""
+    if long is None or long.empty or not BAD_PRINTS:
+        return long
+    out = {(p, m, d) for (p, m), rows in BAD_PRINTS.items() for d, *_ in rows}
+    keys = zip(long["project"], long["metric"], pd.to_datetime(long["date"]).dt.strftime("%Y-%m-%d"))
+    return long[[k not in out for k in keys]]
+
+
 def _partial_sum_views(groups: dict) -> None:
     """A SUMMED METRIC NEVER READS A PARTIAL DAY (Jake, 2026-10-05). Before that date
     fetch/llama.py _sum_slugs stored a day on which an active service had no point, flagged
@@ -4912,6 +5012,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _handover_continuation_views(groups)   # P2a D5a: a declared later leg read from another stored series (Maple)
     _handover_cut_views(groups)       # G11 C1: a declared cut — the earlier leg's rows after the later leg starts dropped
     _partial_sum_views(groups)    # FIRST: nothing downstream may read a partial sum
+    _bad_print_views(groups)      # P3-A2: a stored stock's one-day bad print, before any view or window reads it
     _epoch_primary_views(groups, asof)   # D4-5: Pendle's own epoch figures, spread; DefiLlama only where none
     _same_basis_views(groups)     # one basis read by several routes is one measuring point (config.SAME_BASIS)
     _epoch_paid_views(groups, asof)  # round 3 B4: a weekly row dated by the flip that paid it (config.EPOCH_PAID_AT)
@@ -5455,6 +5556,9 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
             # P2c-2: a declared series break whose named day this series holds (Aerodrome 2026-10-21), said on the row
             if (name, metric) in SERIES_BREAK_NOTED:
                 row["note"] = (row["note"] + " | " if row["note"] else "") + SERIES_BREAK_NOTED[(name, metric)]
+            # P3-A2: a stock's one-day bad print, left out of every read, named on the row with its date and value
+            if (name, metric) in BAD_PRINTS:
+                row["note"] = (row["note"] + " | " if row["note"] else "") + bad_print_text(BAD_PRINTS[(name, metric)])
             # P2d-6: A DECLARED SERIES START INSIDE THE HISTORY WINDOW (config.ARCHIVE_SERIES_START with `absent`: Pendle
             # cooldown_days, sPENDLE deployed 2026-01-15) — the days before are a pre-deployment absence, named with the
             # date FIRST (so every n/a window cell of the row carries it), never a hole to fill
@@ -12617,7 +12721,7 @@ def build_workbook(store, path: Path | str, run_id: str | None = None,
     wiring.reset()
     data = aggregate(long, fetch_status, asof, gaps=gaps, review=review)
     data_by_key = wiring.TrackingDict({r["key"]: r for r in data.to_dict("records")})
-    months, monthly = monthly_table(long, asof)
+    months, monthly = monthly_table(_without_bad_prints(long), asof)   # P3-A2: the excluded prints off it too
     R = Refs(len(data), len(monthly), months)
 
     wb = Workbook()
@@ -12659,7 +12763,8 @@ def build_workbook(store, path: Path | str, run_id: str | None = None,
         FLOWS_ROWS[:] = flow_statements(_LAST_GROUPS, asof)          # alignment C11: the Flows tab
         write_flows(wb, FLOWS_ROWS)
     with wiring.phase("cross"):
-        CREDIBILITY_ROWS[:] = write_credibility(ws_cred, R, data_by_key, _without_provisional(long), asof)
+        CREDIBILITY_ROWS[:] = write_credibility(ws_cred, R, data_by_key,
+                                                   _without_provisional(_without_bad_prints(long)), asof)
     write_charts(ws_ch, {"a3": a3, "a4": a4, "a1": a1, "a2": a2, "ws_a3": ws_a3, "ws_a4": ws_a4, "ws_a1": ws_a1, "ws_a2": ws_a2})
     gap_end = write_gap_report(ws_gap, gaps, run_id) or (len(gaps) + 8 if gaps is not None else 8)
     _write_manual_quarterly(ws_gap, gap_end + 2, long)
