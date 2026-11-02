@@ -4094,9 +4094,19 @@ def _holder_value_views(groups: dict) -> None:
     for p in scoped_projects():
         name = p["name"]
         spec = config.HOLDER_VALUE.get(name) or {}
-        act = _daily(groups.get((name, "actual_buyback_usd")))
+        # A BUYBACK ROUTE OF 'none' IS NEVER CREDITED, WHATEVER IS STORED (P3-1c): Ethereum's EIP-1559 burn re-labelled
+        # as a buyback (:as-buyback rows, last 2026-09-27) kept feeding holder value — stale — after its route became
+        # 'none' on 2026-09-28; the buyback columns already read n/a for it (_data_rows)
+        act = (pd.Series(dtype=float) if config.buyback_route(name)["route"] == "none"
+               else _daily(groups.get((name, "actual_buyback_usd"))))
         extra = [_daily(groups.get((name, m))) for m in spec.get("distributed_extra", ())]
-        if act.empty and not any(not e.empty for e in extra):
+        # P3-1c (R2): a protocol whose revenue IS its fee burn credits the burn a day x that day's price (Ethereum)
+        bc = spec.get("burn_credited") or {}
+        burn_usd = pd.Series(dtype=float)
+        if bc:
+            tok, px = _daily(groups.get((name, bc["metric"]))), _daily(groups.get((name, "price_usd")))
+            burn_usd = (tok * px.reindex(tok.index)).dropna() * float(bc.get("share_of_revenue", 1.0))
+        if act.empty and not any(not e.empty for e in extra) and burn_usd.empty:
             continue
         # the whole buyback $ = retired (burned + held) + distributed: the funding decides whether it is credited
         credit, other = {}, {}
@@ -4111,6 +4121,8 @@ def _holder_value_views(groups: dict) -> None:
         for e in extra:
             for d, v in e.items():
                 credit[d] = credit.get(d, 0.0) + float(v)
+        for d, v in burn_usd.items():
+            credit[d] = credit.get(d, 0.0) + float(v)
         for m in spec.get("illiquid_less", ()):
             for d, v in _daily(groups.get((name, m))).items():
                 if d in credit:
@@ -4126,9 +4138,20 @@ def _holder_value_views(groups: dict) -> None:
         cols = next(g for g in (groups.get((name, m)) for m in ("actual_buyback_usd", "fees_usd", "price_usd"))
                     if g is not None and not g.empty).columns
 
+        burn_src = {}
+        if bc:
+            gb = groups.get((name, bc["metric"]))
+            if gb is not None and not gb.empty:
+                gb = gb.assign(date=pd.to_datetime(gb["date"]).dt.normalize()).drop_duplicates("date", keep="last")
+                burn_src = dict(zip(gb["date"], gb["source"].astype(str)))
+
         def src_for(d, base):
             if bribe_from is not None and d >= bribe_from and base == "derived:holder_value[revenue-funded]":
                 return "derived:holder_value_with_liquid_bribes[revenue-funded + liquid bribes]"
+            if bc and base == "derived:holder_value[revenue-funded]" and d in burn_usd.index:
+                # the burn's own leg on the row (its handover is declared on the burn series)
+                leg = trajectory.basis_of(bc["metric"], burn_src.get(d, ""))
+                return f"derived:holder_value[revenue-funded: fee burn ({bc['metric']}: {leg}) x price]"
             return base
         series = [("holder_value_revenue_usd", credit, "derived:holder_value[revenue-funded]"),
                   ("holder_value_other_usd", other, "derived:holder_value[treasury/emissions-funded]")]
@@ -7109,6 +7132,14 @@ def _stake_inside(R: Refs, r, p: dict, metric: str = "locked_tokens", col: str =
     return base
 
 
+def _lock_inside(R: Refs, r, p: dict) -> str:
+    """The lock rate's numerator: the displayed lock inside circulating — the MEASURED 0 where nothing is locked by
+    design (config free_float_lock_zero: Morpho, Maple, Uniswap, Fluid; P3-1b R1), the one figure _ff_lock uses."""
+    if p.get("free_float_lock_zero"):
+        return "0"
+    return _stake_inside(R, r, p, config.lock_display_metric(p["name"]))
+
+
 def _circ(R: Refs, r, p: dict) -> str:
     """circulating_supply "now" — NET of any burn the provider has not netted, where declared.
 
@@ -9735,6 +9766,29 @@ def _cp_float_reason(p: dict) -> str | None:
     return None if p["name"] in config.CP_STAKE_METRIC else _free_float_reason(p)
 
 
+def _lock_zero_note(p: dict) -> str:
+    """P3-1b (R1): the comment on a cell whose staked/locked input is the MEASURED 0 of config free_float_lock_zero —
+    it names the absent mechanism and its source; '' elsewhere."""
+    why = p.get("free_float_lock_zero")
+    return (f"Staked / locked = 0 — a measured zero (SPEC rule 3), not a missing figure: {why}. Tradeable float = "
+            "circulating.") if why else ""
+
+
+def _holder_value_note(p: dict) -> str:
+    """P3-1b / P3-1c: the comment on the holder value cells where the credited value is a declared mechanism — a
+    MEASURED 0 (no payout mechanism exists, its source named) or the fee burn credited (Ethereum); '' elsewhere."""
+    name = p["name"]
+    if config.holder_value_absent(name):
+        return (f"Holder value = 0 — a measured zero (SPEC rule 3), not a missing figure: {config.holder_value_absent(name)}"
+                ". Net holder yield = 0 − dilution.")
+    bc = (config.HOLDER_VALUE.get(name) or {}).get("burn_credited")
+    if bc:
+        return (f"Holder value = the fee burn ({bc['metric']} a day x that day's price; "
+                f"{bc.get('share_of_revenue', 1.0):.0%} of protocol revenue — definition R2, Jake 2026-11-02): "
+                f"{bc['why']}.")
+    return ""
+
+
 def _cp_float(R: Refs, r, p: dict) -> str:
     c, lk = _circ(R, r, p), _cp_lock(R, r, p)
     return f"IF(AND(ISNUMBER({c}),ISNUMBER({lk})),{c}-{lk},{NA})"
@@ -9861,9 +9915,16 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         v = R.D(r, "holder_value_revenue_usd", "q0")
         return f"IF(AND(ISNUMBER({v}),ISNUMBER({mc(r)})),{_annualise(R, r, p, 'holder_value_revenue_usd', v)}/{mc(r)},{NA})"
 
+    def no_hv(p):
+        """Why there is no holder value figure. P3-1a: a project whose route was set to 'none' because a real mechanism
+        is NOT MEASURED (PancakeSwap's product burn) says so — "no programme" would read as an absent mechanism."""
+        if p["name"] in config.BUYBACK_ROUTE_OVERRIDE:
+            return ("n/a — " + config.buyback_route(p["name"])["reason"])[:240]
+        return "n/a — no buyback programme and no declared payout to holders"
+
     def hvy(r, p):
         if not hv_has(p):
-            return "n/a — no buyback programme and no declared payout to holders"
+            return no_hv(p)
         return _coverage_guard(R, r, [("holder value", "holder_value_revenue_usd", "q0")], hvy_expr(r, p))
 
     def hv_fees_only(r, p):
@@ -9882,7 +9943,8 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
 
     def nhy(r, p):
         if not hv_has(p):
-            return "n/a — no holder value yield"
+            return ("n/a — no holder value yield: " + no_hv(p)[6:])[:240] \
+                if p["name"] in config.BUYBACK_ROUTE_OVERRIDE else "n/a — no holder value yield"
         cats = _cp_cats(p)
         dil = "+".join(ann(r, p, f"outflow_{c}_usd") for c in cats) or "0"
         legs = [("holder value", "holder_value_revenue_usd", "q0")] + \
@@ -9900,6 +9962,11 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
 
     def funding_text(p):
         h = config.HOLDER_VALUE.get(p["name"]) or {}
+        if config.holder_value_absent(p["name"]):
+            return "none — 0 credited: " + config.holder_value_absent(p["name"])
+        if h.get("burn_credited"):
+            return (f"revenue — the fee burn credited ({h['burn_credited']['metric']} x that day's price, "
+                    f"{h['burn_credited'].get('share_of_revenue', 1.0):.0%} of revenue): {h['burn_credited']['why']}")
         parts = [f"{a}..{b or 'now'}: {f} — {w}" for a, b, f, w in h.get("funding") or ()]
         if h.get("distributed_extra"):
             parts.append(f"credited payout to holders: {'+'.join(h['distributed_extra'])} ({h.get('extra_why', '')})")
@@ -9943,6 +10010,11 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
             rv = base_fn(p)
             if why_same and rv in ("fees_usd", "fees_total_usd"):
                 return why_same
+            if config.holder_value_absent(p["name"]):
+                # P3-1b (R1): nothing is paid out — 0 of whatever revenue there is; with no revenue the ratio is 0 ÷ 0
+                q = R.D(r, rv, "q0")
+                return (f'=IF(AND(ISNUMBER({q}),{q}>0),0,"n/a — 0 ÷ 0: {rv} is 0 or not stored in this window, so '
+                        f'there is no ratio (the holder value beside it is a measured 0)")')
             hv = ("holder_value_fees_only_usd" if "holder_value_fees_only_usd" in config.metrics_for_project(p)
                   else "holder_value_revenue_usd")
             return _coverage_guard(R, r, [("holder value", hv, "q0"), ("revenue", rv, "q0")],
@@ -10020,6 +10092,10 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         holder value over Q0 (distributed = credited − retired: what was paid out rather than burned or held)."""
         if not hv_has(p):
             return ""
+        hvs = config.HOLDER_VALUE.get(p["name"]) or {}
+        if hvs.get("burn_credited") and not hvs.get("distributed_extra") and \
+                config.buyback_route(p["name"])["route"] == "none":
+            return "=0"      # P3-1c: the credited value is the fee burn — nothing is distributed, nothing leaks
         spec = config.INSIDER_LOCK.get(p["name"])
         if not spec and p["name"] in config.INSIDER_SHARE_MONITOR:
             cr, rt = R.D(r, "holder_value_revenue_usd", "q0"), R.D(r, "retired_buyback_usd", "q0")
@@ -10077,6 +10153,8 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
     def non_stakers(r, p):
         if not hv_has(p):
             return "n/a — no holder value"
+        if config.holder_value_absent(p["name"]):
+            return "no — nothing reaches holders: " + config.holder_value_absent(p["name"])[:180]
         ret = R.D(r, "retired_buyback_tokens", "q0")
         bm = config.a1_burn_metric(p["name"])
         burn = R.D(r, bm, "q0") if bm in config.metrics_for_project(p) else "0"
@@ -10132,14 +10210,14 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
          "pull", False, {"metric": "circulating_supply_used"}),
         ("Staked / locked inside circulating (tokens)",
          lambda r, p: _cp_float_reason(p) or calc(_cp_lock(R, r, p)), FMT_NUM, "calc", False,
-         {"metric_fn": lambda n: config.CP_STAKE_METRIC.get(n, "locked_tokens")}),
+         {"metric_fn": lambda n: config.CP_STAKE_METRIC.get(n, "locked_tokens"), "note_fn": lambda p: _lock_zero_note(p)}),
         (CP_FLOAT_HEAD, lambda r, p: _cp_float_reason(p) or calc(flt(r, p)), FMT_NUM, "calc", True,
          {"metric_fn": lambda n: config.CP_STAKE_METRIC.get(n, "locked_tokens"),
           "partial_fn": lambda p: config.lock_partial_reason(p["name"]),
           "partial_direction": "the lock figure is incomplete, so TRADEABLE FLOAT READS HIGH.",
-          "partial_fmt": '#,##0" PARTIAL↑";(#,##0)" PARTIAL↑"'}),
+          "partial_fmt": '#,##0" PARTIAL↑";(#,##0)" PARTIAL↑"', "note_fn": lambda p: _lock_zero_note(p)}),
         ("Tradeable float ÷ circulating", lambda r, p: _cp_float_reason(p) or calc(f"({flt(r, p)})/({circ(r, p)})"),
-         FMT_PCT, "calc"),
+         FMT_PCT, "calc", False, {"note_fn": lambda p: _lock_zero_note(p)}),
         # ---- EVERY RETIREMENT AND DILUTION RATE ON BOTH BASES (item 1) ----
         *rates,
         # ---- THE FIVE OUTFLOW CATEGORIES IN $ (amendment 3) ----
@@ -10151,12 +10229,12 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
          {"metric": "outflow_b_usd", "fmt_fn": _subsidy_dates_fmt}),
         (CP_SUBSIDY_BC_HEAD, subsidy(("b", "c")), FMT_X, "calc"),
         # ---- HOLDER VALUE (item 3, LITMUS A) ----
-        (CP_HVY_HEAD, hvy, FMT_PCT, "calc", True, {"metric": "holder_value_revenue_usd"}),
+        (CP_HVY_HEAD, hvy, FMT_PCT, "calc", True, {"metric": "holder_value_revenue_usd", "note_fn": lambda p: _holder_value_note(p)}),
         ("Holder value yield — fees only (where liquid bribes are credited: Aerodrome, decision 4)", hv_fees_only,
          FMT_PCT, "calc"),
         ("Holder value RECORDED, NOT CREDITED (treasury / emissions-funded) ÷ market cap", hv_other, FMT_PCT, "calc"),
         ("Holder value funding by period (config HOLDER_VALUE)", lambda r, p: funding_text(p), FMT_TEXT, "text"),
-        (CP_NHY_HEAD, nhy, FMT_PCT, "calc", True, {"metric": "holder_value_revenue_usd"}),
+        (CP_NHY_HEAD, nhy, FMT_PCT, "calc", True, {"metric": "holder_value_revenue_usd", "note_fn": lambda p: _holder_value_note(p)}),
         *_tbill_cols(R, [("Holder value yield", hvy), ("Net holder yield", nhy),
                          ("Staker yield — validator", lambda r, p: vyield(r, p)),
                          ("Staker yield — protocol, tokens", lambda r, p: tyield(r, p))]),
@@ -10171,10 +10249,10 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         ("Payout currency per yield", attr("payout_currency"), FMT_TEXT, "text"),
         # ---- PAYOUT RATIO (item 3) ----
         ("Payout ratio — gross = credited holder value ÷ fees", payout(lambda p: config.fees_headline_metric(p["name"])),
-         FMT_PCT, "calc"),
+         FMT_PCT, "calc", False, {"note_fn": lambda p: _holder_value_note(p)}),
         ("Payout ratio — the project's own net basis = credited holder value ÷ revenue (config revenue basis)",
          payout(lambda p: config.revenue_ratio_base_metric(p["name"]), "n/a — the project's net basis is gross fees (as left)"),
-         FMT_PCT, "calc"),
+         FMT_PCT, "calc", False, {"note_fn": lambda p: _holder_value_note(p)}),
         # ---- ATTRIBUTES (amendments 2 and 5: never penalties) ----
         ("Destination durability (burn / held-timelocked / held-discretionary)", attr("destination"), FMT_TEXT, "text"),
         ("Mechanism certainty + dated log of changes", attr("certainty"), FMT_TEXT, "text"),
@@ -10202,8 +10280,8 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
                             "not established"), FMT_PCT, "calc"),
         # ---- DEMAND (LITMUS B; lock rate on the demand side, amendment 5) ----
         ("Holding demand — lock rate = locked ÷ circulating",
-         lambda r, p: calc(f"({_stake_inside(R, r, p, config.lock_display_metric(p['name']))})/({circ(r, p)})"),
-         FMT_PCT, "calc"),
+         lambda r, p: calc(f"({_lock_inside(R, r, p)})/({circ(r, p)})"),
+         FMT_PCT, "calc", False, {"note_fn": lambda p: _lock_zero_note(p)}),
         ("Holding demand — components and caps (cap utilisation where read)",
          lambda r, p: "; ".join(x for x in [caps_text(p), config.phase2_attribute_text(p["name"], "holding_demand")
                                             if p["name"] in config.PHASE2_ATTRIBUTES else ""] if x), FMT_TEXT, "text"),
@@ -10688,14 +10766,14 @@ def write_a3(ws, R: Refs, data_by_key: dict):
         # and note that a blanket flip here would have blanked this column for the other 26
         # projects, since ve_locked_supply_tokens is only_projects Aerodrome.
         ("Tokens locked (ve)",
-         lambda r, p: pull(R.D(r, config.lock_display_metric(p["name"]), "now")),
-         FMT_NUM, "pull", False, {"metric_fn": config.lock_display_metric}),
+         lambda r, p: "=0" if p.get("free_float_lock_zero") else pull(R.D(r, config.lock_display_metric(p["name"]), "now")),
+         FMT_NUM, "pull", False, {"metric_fn": config.lock_display_metric, "note_fn": lambda p: _lock_zero_note(p)}),
         # The lock rate divides the SAME figure the row above displays. Leaving this on
         # locked_tokens would have put a ratio on the sheet whose numerator was not the number
         # printed directly above it.
         ("Lock rate = locked inside circulating ÷ circulating (stake held by wallets outside circulating excluded)",
-         lambda r, p: calc(f"({_stake_inside(R, r, p, config.lock_display_metric(p['name']))})/({circ(r, p)})"),
-         FMT_PCT, "calc"),
+         lambda r, p: calc(f"({_lock_inside(R, r, p)})/({circ(r, p)})"),
+         FMT_PCT, "calc", False, {"note_fn": lambda p: _lock_zero_note(p)}),
         ("Tokens locked — cross-check (protocol dashboard)", lambda r, p: pull(R.D(r, "locked_tokens_dashboard", "now")),
          FMT_NUM, "pull", False, {"metric": "locked_tokens_dashboard"}),
         # The divergence is meaningless without the cross-check, so it inherits the cross-check's

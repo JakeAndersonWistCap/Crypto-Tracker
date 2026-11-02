@@ -12400,6 +12400,15 @@ PROJECTS = [
     },
     {
         "name": "Uniswap", "symbol": "UNI",
+        # P3-1b, DEFINITION R1 (Jake 2026-11-02): NOTHING IS LOCKED, SO STAKED/LOCKED = 0 — the practice Morpho and
+        # Maple follow (free_float_lock_zero): tradeable float = circulating, and dilution % of float and lock rate are
+        # numbers. UNI has no staking, escrow or ve contract: the token (0x1f9840a8…, Uni.sol) only DELEGATES votes —
+        # delegation moves no tokens and locks none — and the fee mechanism (UNIfication, proposal 93, gov.uniswap.org/
+        # t/25881) burns UNI through the Firepit; it stakes nothing (this entry's notes: "no distribution leg, no
+        # staking yield").
+        "free_float_lock_zero": "no UNI staking or lock mechanism exists — the UNI token (0x1f9840a8…, Uni.sol) only "
+                                "delegates votes, which moves and locks no tokens, and the fee switch burns UNI "
+                                "through the Firepit (gov.uniswap.org/t/25881, proposal 93) — nothing is locked",
         # THE BURN IS FUNDED BY THE FEES IT RELEASES, BOOKED ON A DIFFERENT DAY AND PRICE (Jake's sanity run
         # 2026-10-11: buyback Q0 $33.0M = 111% of revenue Q0 $29.7M; RUNBOOK 11bj item 14). Claiming TokenJar fees
         # requires burning UNI through the Firepit; DefiLlama books the fees on the L2 Released day at that day's price,
@@ -17157,6 +17166,14 @@ PROJECTS = [
         # declared_zero.emissions_tokens RETIRED 2026-09-30 (Jake): emissions are measured —
         # see emissions_model and log_scans.merkle_rewards_out.
         "name": "Fluid", "symbol": "FLUID",
+        # P3-1b, DEFINITION R1 (Jake 2026-11-02): NOTHING IS LOCKED, SO STAKED/LOCKED = 0 — the practice Morpho and
+        # Maple follow (free_float_lock_zero): tradeable float = circulating, and dilution % of float and lock rate are
+        # numbers. The source is this entry's own record: fluid_token_staking_checked (2026-09-23) and
+        # not_applicable.locked_tokens. REOPEN with not_applicable.locked_tokens if FLUID staking ships.
+        "free_float_lock_zero": "FLUID staking is not deployed — no FLUID-token staking or lock contract exists in "
+                                "Instadapp/fluid-contracts-public (checked 2026-09-23; the only staking there stakes "
+                                "fToken lending receipts: contracts/periphery/resolvers/stakingRewards/SPEC.md) — "
+                                "nothing is locked",
         # ===== THE BUYBACK CONTRACTS ARE IN FLUID'S OWN REPOSITORY. Found 2026-09-23. =====
         # Instadapp/fluid-contracts-public, contracts/periphery/buyback/SPEC.md: "Rebalancer-driven
         # FLUID buyback via an owned DSA; swaps protocol revenue -> FLUID and forwards to
@@ -29180,7 +29197,44 @@ HOLDER_VALUE = {
     # trend or holder value reads it (Jake 2026-10-12 evening, decision 5); the Firepit burn from 2025-12-28 is revenue.
     "Sky": {"distributed_extra": ("staking_rewards_usds_usd",),
             "extra_why": "USDS paid to SKY stakers (staking_rewards_usds_usd)"},
+    # P3-1b, DEFINITION R1 (Jake 2026-11-02): NO PAYOUT MECHANISM -> HOLDER VALUE IS A MEASURED 0 (SPEC rule 3), so net
+    # holder yield is a number. `none` names the absent mechanism; it holds only while the project's own fee_split
+    # record says so (share_to_buyback 0.0 with a source, no buyback route) — holder_value_absent() checks it on every
+    # build, so a project that gains a programme reads unknown (a code), never a stale 0. The 0 is filled by the same
+    # path as an ended programme's (DECLARED_ZERO on holder_value_revenue_usd, below).
+    "Morpho": {"none": "the MORPHO fee switch is OFF — no buyback, burn or distribution to MORPHO holders exists "
+                       "(fee_split status 'off', share_to_buyback 0.0, docs.morpho.org, read 2026-09-14)"},
+    "Aethir": {"none": "no revenue-to-ATH mechanism exists — compute is paid to GPU providers directly; no fee "
+                       "distribution, buy-and-burn or revenue sharing (fee_split share_to_buyback 0.0, "
+                       "docs.aethir.com/aethir-tokenomics/token-overview, read 2026-09-14)"},
+    "Plume": {"none": "no payout to PLUME holders exists — revenue sharing is 'being explored', not live, and PLUME is "
+                      "not burned (fee_split share_to_buyback 0.0, docs.plume.org, read 2026-09-14; "
+                      "not_applicable.gross_burn_tokens)"},
+    # P3-1c, DEFINITION R2 (Jake 2026-11-02): ETHEREUM'S PROTOCOL REVENUE IS ITS FEE BURN, CREDITED AS HOLDER VALUE
+    # (payout ratio 1.0 of revenue). EIP-1559 destroys the base fee (eips.ethereum.org/EIPS/eip-1559: "the base fee is
+    # always burned"), and the protocol revenue Summary shows (DefiLlama revenue_usd) IS that burn — so holder value =
+    # the burn a day x that day's price. Read from the PRIMARY burn series gross_burn_tokens (Etherscan ethsupply2
+    # BurntFees, daily change, from 2026-09-29; before it DefiLlama burned-fee revenue / price — the declared handover on
+    # Ethereum's series_handover.gross_burn_tokens). It REPLACES the stopped route: the EIP-1559 burn re-labelled as a
+    # buyback (actual_buyback_*, derived:defillama_burned_fee_revenue/price:as-buyback), last stored 2026-09-27, which
+    # fed holder value after the route was set to 'none' (BUYBACK_ROUTE_OVERRIDE, 2026-09-28) — stale since. A buyback
+    # route of 'none' is never credited, whatever is stored (build_workbook._holder_value_views).
+    "Ethereum": {"burn_credited": {"metric": "gross_burn_tokens", "share_of_revenue": 1.0,
+                                   "why": "the EIP-1559 base-fee burn — Ethereum's protocol revenue — retired from "
+                                          "supply (eips.ethereum.org/EIPS/eip-1559)"}},
 }
+
+
+def holder_value_absent(project_name: str) -> str | None:
+    """P3-1b (R1): the absent payout mechanism's text where HOLDER_VALUE declares `none` AND the project's own record
+    agrees (fee_split share_to_buyback 0.0 with a source_url, no buyback route) — else None (unknown stays a code)."""
+    h = HOLDER_VALUE.get(project_name) or {}
+    if not h.get("none"):
+        return None
+    fs = (PROJECT_BY_NAME.get(project_name) or {}).get("fee_split") or {}
+    if fs.get("share_to_buyback") != 0.0 or not fs.get("source_url") or buyback_route(project_name)["route"] != "none":
+        return None
+    return h["none"]
 
 
 for _n, _h in HOLDER_VALUE.items():
@@ -29932,6 +29986,12 @@ DECLARED_ZERO[("Sky", "sky_stage2_burn_tokens")] = {
     "record_date": PROJECT_BY_NAME["Sky"]["fee_split_v2"]["first_burn_date"],
     "why": "no Stage 2 burn before the first stored row: Stage 2 went on-chain 2026-08-17, first burn 2026-09-14 "
            "(config Sky fee_split_v2.first_burn_date, Sky's own account x.com/SkyEcosystem/status/2099488996099227965)"}
+# P3-1b (R1, Jake 2026-11-02): NO PAYOUT MECHANISM -> credited holder value reads 0 on every day (HOLDER_VALUE `none`,
+# checked against the project's fee_split by holder_value_absent) — the same fill as an ended programme's.
+for _n in HOLDER_VALUE:
+    if holder_value_absent(_n):
+        DECLARED_ZERO[(_n, "holder_value_revenue_usd")] = {
+            "since": "2000-01-01", "why": "no payout mechanism: " + holder_value_absent(_n)}
 
 
 # =====================================================================================================================

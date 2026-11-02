@@ -382,10 +382,16 @@ def test_p2a_a2_a_blank_audit_cell_reads_a_code_with_its_reason(built):
     r = openpyxl.load_workbook(built["reader"])
     ws = r["Summary"]
     rows, pc = _rows_of(ws), _col_of(ws, "Payout ratio")
-    for name in ("Ethereum", "Plume", "Morpho", "Aethir"):
+    # P3-1 (R1 / R2, Jake 2026-11-02): Plume, Morpho and Aethir now credit a MEASURED 0 (no payout mechanism) and
+    # Ethereum its fee burn, so their payout cells are no longer empty audit cells — projects with no holder value
+    # declared at all keep the by-design code
+    seen = 0
+    for name in ("Bitcoin", "Zcash", "Bittensor", "Virtuals", "peaq"):
         if name in rows:
             c = ws.cell(rows[name], pc)
             assert c.value == "by design" and "no revenue-funded value to holders" in c.comment.text, (name, c.value)
+            seen += 1
+    assert seen >= 1
 
 
 def test_p2a_a3_a_payout_above_one_says_what_funds_the_excess(built):
@@ -398,6 +404,10 @@ def test_p2a_a3_a_payout_above_one_says_what_funds_the_excess(built):
     for name, rr in _rows_of(ws).items():
         v = X.value("Summary", rr, pc)
         if isinstance(v, float) and v > 1:
+            if (config.HOLDER_VALUE.get(name) or {}).get("burn_credited"):
+                # P3-1c (R2): the fee burn IS the revenue — 1.0 by definition; the cell says so, not "Above 1.0x"
+                assert "by definition" in ws.cell(rr, pc).comment.text, name
+                continue
             assert "Above 1.0x" in ws.cell(rr, pc).comment.text and "gross fees" in ws.cell(rr, pc).comment.text, name
             seen += 1
     assert seen >= 1
