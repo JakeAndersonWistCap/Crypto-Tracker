@@ -100,7 +100,9 @@ def test_b1_the_retro_burn_is_matched_to_the_treasury_fall_not_released():
     assert abs(rel.sum() - 5e6) < 1 and not bw._ONE_OFF_UNMATCHED
 
 
-def test_b2_maple_mints_are_configured_issuance_is_derived_and_the_release_leg_is_named():
+def test_b2_maple_mints_are_configured_issuance_is_derived_and_the_release_leg_is_named(monkeypatch):
+    import build_workbook as bw
+    monkeypatch.setattr(bw, "_SCOPE", list(bw.PROJECTS))   # never depend on another test's build(only=...) scope
     src = (config.ISSUER_MINTS["Maple"]).get("source", "")
     assert not config.orphaned_contract_keys("Maple", src)
     assert config.FLOW_RELEASE_LEGS["Maple"][0][1] == "unlock_release_tokens"
@@ -129,6 +131,8 @@ def test_b4_plume_release_leg_is_the_insider_unlocks():
 
 
 def test_b5_the_rebuild_names_the_days_a_leg_lacks_and_the_365d_sum_says_where_it_stops(monkeypatch):
+    import build_workbook as bw
+    monkeypatch.setattr(bw, "_SCOPE", list(bw.PROJECTS))   # never depend on another test's build(only=...) scope
     spec = config.SETTLEMENT_REBUILD["ethereum_rebuild"]
     days = _days("2026-08-20", "2026-09-25")
     # G15 3: an interior NFT hole is rebuilt on DEX + P2P (flagged), so the leg that lacks a day here is DEX
