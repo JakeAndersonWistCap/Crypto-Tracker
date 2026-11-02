@@ -1,0 +1,71 @@
+# PILOT (P3-7): Aave from primary sources, read 2026-11-02. DRAFT — not loaded into any build.
+# Aave is ALREADY a full project in config.py (PROJECTS, "Aave"): a YAML never replaces or extends a config.py entry,
+# so this file stays `status: draft` (setting it active is refused with a clear error until the config.py entry is
+# removed in a deliberate migration). It is the worked example of the template and the probe's input.
+status: draft
+as_of: 2026-11-02
+
+name:   {value: Aave, source: "https://aave.com/docs/ecosystem/governance"}
+symbol: {value: AAVE, source: "https://etherscan.io/token/0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9"}
+
+coingecko_id: {value: aave, source: "https://www.coingecko.com/en/coins/aave"}
+
+# config.py's Aave entry reads the same slug for all four (defillama_fees_slug / defillama_protocol "aave").
+defillama:
+  fees_slug:            {value: aave, source: "https://defillama.com/protocol/aave"}
+  revenue_slug:         {value: aave, source: "https://defillama.com/protocol/aave"}
+  holders_revenue_slug: {value: aave, source: "https://defillama.com/protocol/aave"}
+  tvl_slug:             {value: aave, source: "https://defillama.com/protocol/aave"}
+
+chains:
+  - chain:          {value: ethereum, source: "https://github.com/bgd-labs/aave-address-book/blob/main/src/AaveV3Ethereum.sol"}
+    # AaveV3EthereumAssets.AAVE_UNDERLYING (address book L288)
+    token_contract: {value: "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9", source: "https://github.com/bgd-labs/aave-address-book/blob/main/src/AaveV3Ethereum.sol"}
+    # decimals() = 18, read on chain 2026-11-02 (ethereum-rpc.publicnode.com, eth_call 0x313ce567)
+    decimals:       {value: 18, source: "https://etherscan.io/token/0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9#readProxyContract"}
+
+# 13,000,000 (MIGRATION_AMOUNT, to the LEND migrator) + 3,000,000 (DISTRIBUTION_AMOUNT, to the ecosystem reserve),
+# minted once in initialize() (AaveToken.sol L26-29, L83-84); no other mint path.
+max_supply: {value: 16000000, source: "https://github.com/aave/aave-token/blob/master/contracts/token/AaveToken.sol"}
+
+noncirculating_wallets:
+  - key: ecosystem_reserve
+    chain: ethereum
+    label:   {value: "Aave Ecosystem Reserve — the DAO's AAVE reserve; pays Safety Module rewards by allowance (AIP 25550) and receives bought AAVE (ARFC 21248)", source: "https://github.com/bgd-labs/aave-address-book/blob/main/src/MiscEthereum.sol"}
+    address: {value: "0x25F2226B597E8F9514B3F68F00f494cF4f286491", source: "https://github.com/bgd-labs/aave-address-book/blob/main/src/MiscEthereum.sol"}
+  - key: collector
+    chain: ethereum
+    label:   {value: "Aave DAO Collector (V3 Ethereum treasury) — the collector holdings the AFC manages (ARFC 21248)", source: "https://github.com/bgd-labs/aave-address-book/blob/main/src/AaveV3Ethereum.sol"}
+    address: {value: "0x464C71f6c2F760DdA6093dCB91C24c39e5d6e18c", source: "https://github.com/bgd-labs/aave-address-book/blob/main/src/AaveV3Ethereum.sol"}
+
+unlock_schedule: {value: null, source: "TODO: a primary statement that no AAVE vesting or unlock remains (all 16M were minted at initialize() in 2020 to the LEND migrator and the ecosystem reserve; no team or investor vesting contract is named in Aave's docs or the address book)"}
+
+emission:
+  mechanism:      {value: "stkAAVE (Safety Module) rewards paid out of the Ecosystem Reserve through an ERC20 allowance — a distribution of pre-minted AAVE, not a mint", source: "https://governance.aave.com/t/direct-to-aip-safety-module-august-2026-allowance-update/25550"}
+  model:          {value: distributed_from_premint, source: "https://github.com/aave/aave-token/blob/master/contracts/token/AaveToken.sol"}
+  tokens_per_day: {value: 150, source: "https://governance.aave.com/t/direct-to-aip-safety-module-august-2026-allowance-update/25550"}
+  from:           {value: null, source: "TODO: the AIP that set stkAAVE emissionPerSecond to 150 AAVE/day (AIP 25550 calls the rate 'unchanged'; the setting post is probably ARFC stkAAVE emissions update, governance.aave.com/t/24945 — not read)"}
+
+# Aavenomics Part One: the AFC buys AAVE on secondary markets "and distribute[s] them to the ecosystem reserve" at
+# $1M/week — a fixed budget, not a share of revenue. Paused since 2026-04-19 (ARFC 24686).
+buyback:
+  chain: ethereum
+  address:       {value: "0x22740deBa78d5a0c24C58C740e3715ec29de1bFa", source: "https://github.com/bgd-labs/aave-address-book/blob/main/src/MiscEthereum.sol"}
+  destination:   {value: hold, source: "https://governance.aave.com/t/arfc-aavenomics-implementation-part-one/21248"}
+  revenue_share: {value: null, source: "TODO: Aavenomics Part One sets a fixed budget ($1M/week for six months, then quarterly budgets by TokenLogic), not a revenue share; a share needs the Aavenomics 3.0 / Aave Will Win post that sets one (governance.aave.com/t/24055 is a TEMP CHECK)"}
+  status:        {value: paused, source: "https://governance.aave.com/t/arfc-pause-aave-buybacks/24686"}
+
+staking:
+  chain: ethereum
+  contract:    {value: "0x4da27a545c0c5B758a6BA100e3a049001de870f5", source: "https://github.com/bgd-labs/aave-address-book/blob/main/src/AaveSafetyModule.sol"}
+  symbol:      {value: stkAAVE, source: "https://github.com/bgd-labs/aave-address-book/blob/main/src/AaveSafetyModule.sol"}
+  mechanism:   {value: "AAVE staked in the legacy Safety Module (20-day cooldown, 2-day window); Umbrella (aTokens, GHO) gradually replaces it and stkAAVE stays active with slashing disabled once Umbrella reaches scale", source: "https://aave.com/docs/aave-v3/umbrella"}
+  read_method: {value: null, source: "TODO: whether stkAAVE totalSupply() is AAVE or shares (StakedTokenV3 has an exchange rate after a slashing) — read previewRedeem / getExchangeRate on 0x4da27a54… before treating totalSupply as staked AAVE"}
+
+insider_wallets: {value: [], source: "TODO: a primary statement on team / investor AAVE (none is named in the address book or the docs; the 2020 distribution went to the LEND migrator and the ecosystem reserve)"}
+
+archetypes:
+  primary: {value: 3, reason: "the DAO buys AAVE on the market with protocol cash (Aavenomics buy-and-distribute), paused since 2026-04-19", source: "https://governance.aave.com/t/arfc-aavenomics-implementation-part-one/21248"}
+  secondary: []
+
+unit_of_demand: {value: "active loans — borrowed USD across Aave markets", metric: borrowed_usd_llama, source: "https://app.aave.com/markets/"}
