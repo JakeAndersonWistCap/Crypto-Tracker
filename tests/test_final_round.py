@@ -214,20 +214,21 @@ def test_morpho_dao_legacy_and_base_wired_ratios_on_the_issuer_rule():
 
 
 class _MorphoHttp:
-    """Liquidations shaped as blue-api answered on 2026-10-11 (two listed, one unlisted, one unpriced)."""
+    """Liquidations shaped as blue-api answered on 2026-10-11 (two listed, one unlisted, one unpriced); price{usd} since
+    P3-A5 (blue-api renamed priceUsd)."""
     def post(self, endpoint, json_body=None):
         return {"data": {"marketTransactions": {"pageInfo": {"countTotal": 4}, "items": [
             {"market": {"marketId": "0xa", "listed": True, "lltv": "860000000000000000",
-                        "collateralAsset": {"decimals": 18, "priceUsd": 2525.2035}},
+                        "collateralAsset": {"decimals": 18, "price": {"usd": 2525.2035, "timestamp": 1760140800}}},
              "data": {"seizedAssets": "17513662030281839"}},
             {"market": {"marketId": "0xb", "listed": True, "lltv": "915000000000000000",
-                        "collateralAsset": {"decimals": 18, "priceUsd": None}},
+                        "collateralAsset": {"decimals": 18, "price": None}},
              "data": {"seizedAssets": "381729245213535400"}},
             {"market": {"marketId": "0xc", "listed": False, "lltv": "770000000000000000",
-                        "collateralAsset": {"decimals": 18, "priceUsd": 1.07}},
+                        "collateralAsset": {"decimals": 18, "price": {"usd": 1.07, "timestamp": 1760140800}}},
              "data": {"seizedAssets": "342115356157564416"}},
             {"market": {"marketId": "0xd", "listed": True, "lltv": "945000000000000000",
-                        "collateralAsset": {"decimals": 6, "priceUsd": 1.0}},
+                        "collateralAsset": {"decimals": 6, "price": {"usd": 1.0, "timestamp": 1760140800}}},
              "data": {"seizedAssets": "1000000000"}}]}}}
 
 

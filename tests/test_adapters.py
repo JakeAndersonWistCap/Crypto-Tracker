@@ -16463,7 +16463,7 @@ def test_a_monthly_series_q0_is_three_complete_calendar_months():
                        review=pd.DataFrame()).set_index(["project", "metric"])
     m = out.loc[("Maple", "actual_buyback_usd")]
     assert m["q0"] == 658_866.0, m["q0"]
-    assert m["q0_basis"] == "3 complete months Jun 2026–Aug 2026"
+    assert m["q0_basis"] == "3 months to 2026-08-31 (3 complete months Jun 2026–Aug 2026)"  # P3-A1 label
     assert pd.isna(m["q1"]), "Mar-May 2026 hold no row"
     assert m["y1"] == sum(months.values()), "Y1 = the 12 complete months Sep 2025-Aug 2026"
     c = out.loc[("Chainlink", "actual_buyback_usd")]
@@ -18205,7 +18205,7 @@ def test_geodnet_burn_windows_are_complete_months_until_the_summed_leg_covers_th
 
     b = bw.aggregate(frame(base), pd.DataFrame(), pd.Timestamp("2026-09-29")).set_index("key").loc["GEODNET|gross_burn_tokens"]
     assert b["status"] == "ok" and b["q0"] == 9.1e6 and b["q0_covered_days"] == 92, (b["status"], b["q0"])
-    assert b["q0_basis"].startswith("3 complete months Jun 2026–Aug 2026") and "covers 1 day(s)" in b["q0_basis"]
+    assert b["q0_basis"].startswith("3 months to 2026-08-31 (3 complete months Jun 2026–Aug 2026)") and "covers 1 day(s)" in b["q0_basis"]
     assert b["now"] == 3.0e6 and b["m1"] == 3.1e6 and b["y1"] == 9.1e6
 
     # October: Dune's September row lands; the Polygon-only September days give way to it

@@ -904,6 +904,9 @@
   "Ethereum|beacon_chain_eth": [
    "validatorqueue:staked_amount"
   ],
+  "Ethereum|beacon_chain_eth_primary": [
+   "probe:beacon_chain_eth_primary"
+  ],
   "Ethereum|beacon_validators_eth": [
    "probe:beacon_validators_eth"
   ],
@@ -1183,6 +1186,12 @@
   ],
   "Fluid|protocol_tvl_constant_price_usd": [
    "probe:protocol_tvl_constant_price_usd"
+  ],
+  "Fluid|protocol_tvl_cp_window_coverage": [
+   "probe:protocol_tvl_cp_window_coverage"
+  ],
+  "Fluid|protocol_tvl_cp_window_ratio": [
+   "probe:protocol_tvl_cp_window_ratio"
   ],
   "Fluid|protocol_tvl_usd": [
    "defillama"
@@ -1757,6 +1766,12 @@
   "Maple|protocol_tvl_constant_price_usd": [
    "probe:protocol_tvl_constant_price_usd"
   ],
+  "Maple|protocol_tvl_cp_window_coverage": [
+   "probe:protocol_tvl_cp_window_coverage"
+  ],
+  "Maple|protocol_tvl_cp_window_ratio": [
+   "probe:protocol_tvl_cp_window_ratio"
+  ],
   "Maple|protocol_tvl_usd": [
    "defillama"
   ],
@@ -1914,6 +1929,12 @@
   ],
   "Morpho|protocol_tvl_constant_price_usd": [
    "probe:protocol_tvl_constant_price_usd"
+  ],
+  "Morpho|protocol_tvl_cp_window_coverage": [
+   "probe:protocol_tvl_cp_window_coverage"
+  ],
+  "Morpho|protocol_tvl_cp_window_ratio": [
+   "probe:protocol_tvl_cp_window_ratio"
   ],
   "Morpho|protocol_tvl_usd": [
    "defillama"
@@ -2408,6 +2429,12 @@
   ],
   "Pendle|protocol_tvl_constant_price_usd": [
    "probe:protocol_tvl_constant_price_usd"
+  ],
+  "Pendle|protocol_tvl_cp_window_coverage": [
+   "probe:protocol_tvl_cp_window_coverage"
+  ],
+  "Pendle|protocol_tvl_cp_window_ratio": [
+   "probe:protocol_tvl_cp_window_ratio"
   ],
   "Pendle|protocol_tvl_usd": [
    "defillama"
@@ -3209,9 +3236,10 @@
    "CP | TRADEABLE FLOAT = circulating \u2212 staked/locked \u2212 protocol/treasury-held (tokens) \u2014 protocol/treasury-held is already out of circulating by the convention, so this is A2's free float": 99825846.9169401
   },
   "Maple": {
-   "A3 | Actual buyback as % of supply (annualised) \u2014 RETIRED (burned + held) only": 0.007796447050298428,
-   "A3 | CIRCULATING RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) \u00f7 circulating \u2014 primary": 0.007796447050298428,
-   "A3 | FDV RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) \u00f7 FDV supply (the total supply FDV uses) \u2014 always read with the rate to its left": 0.007236365241052941,
+   "A3 | Actual buyback as % of supply (annualised) \u2014 RETIRED (burned + held) only": 0.01369530048099579,
+   "A3 | CIRCULATING RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) \u00f7 circulating \u2014 primary": 0.01369530048099579,
+   "A3 | FDV RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) \u00f7 FDV supply (the total supply FDV uses) \u2014 always read with the rate to its left": 0.01271145635019225,
+   "A3 | Net absorption Q0 (tokens) = RETIRED buyback (burned + held) \u2212 emissions": 4029134.43,
    "CP | BUSINESS 1 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 1829451273.0,
    "CP | BUSINESS 2 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 2844949290.0,
    "CP | BUSINESS 3 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 1.0,
@@ -3302,6 +3330,7 @@
    "CP | TRADEABLE FLOAT = circulating \u2212 staked/locked \u2212 protocol/treasury-held (tokens) \u2014 protocol/treasury-held is already out of circulating by the convention, so this is A2's free float": 5918249556.286961
   },
   "Uniswap": {
+   "A4 | BURN \u00f7 ISSUANCE (x) \u2014 crossover, on the basis to the left": 1.106079219507561,
    "A4 | GROSS BURN Q0 (tokens)": 5594001.24623929,
    "A4 | GROSS ISSUANCE Q0 (tokens)": 0.0,
    "A4 | NET SUPPLY CHANGE Q0 (tokens) \u2014 self-reported where published, else issuance \u2212 burn, on the basis to the left": -5594001.24623929,
@@ -3369,6 +3398,7 @@
    "programmatic_buyback_tokens"
   ],
   "Ethereum": [
+   "beacon_chain_eth_primary",
    "beacon_validators_eth",
    "nft_volume_usd",
    "p2p_transfer_volume_usd",
@@ -3379,7 +3409,9 @@
    "actual_buyback_usd",
    "emissions_tokens_base",
    "emissions_tokens_plasma",
-   "protocol_tvl_constant_price_usd"
+   "protocol_tvl_constant_price_usd",
+   "protocol_tvl_cp_window_coverage",
+   "protocol_tvl_cp_window_ratio"
   ],
   "GEODNET": [
    "circulating_supply_third_party",
@@ -3408,6 +3440,8 @@
    "insider_stake_shares",
    "max_supply",
    "protocol_tvl_constant_price_usd",
+   "protocol_tvl_cp_window_coverage",
+   "protocol_tvl_cp_window_ratio",
    "ssf_safe_buyback_inflow_tokens",
    "ssf_safe_inflow_tokens",
    "ssf_safe_outflow_tokens"
@@ -3417,7 +3451,9 @@
    "emissions_tokens_claims_base",
    "emissions_tokens_claims_ethereum",
    "emissions_tokens_claims_katana",
-   "protocol_tvl_constant_price_usd"
+   "protocol_tvl_constant_price_usd",
+   "protocol_tvl_cp_window_coverage",
+   "protocol_tvl_cp_window_ratio"
   ],
   "Near": [
    "actual_buyback_tokens",
@@ -3463,6 +3499,8 @@
    "pendle_epoch_revenue_usd",
    "pendle_pt_looping_fees_usd",
    "protocol_tvl_constant_price_usd",
+   "protocol_tvl_cp_window_coverage",
+   "protocol_tvl_cp_window_ratio",
    "revenue_usd_defillama",
    "subsidy_emissions_to_covered_share",
    "subsidy_emissions_usd",

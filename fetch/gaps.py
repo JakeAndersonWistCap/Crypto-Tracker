@@ -696,6 +696,12 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                 f"Read the etherscan_supply lines in the Run Log for {name}: 'refused' quotes "
                 f"Etherscan's message (a rate limit, the key, or a plan); or run "
                 f"check_offline_items.py etherscan_ethsupply2.")
+    if metric == (project.get("staked_eth_primary") or {}).get("metric"):
+        return ("ETH staked from the beacon chain's own state (P3-A3: beaconcha.in epoch eligibleether with "
+                "BEACONCHAIN_API_KEY, else a public beacon node's validator_inclusion) stored nothing this run",
+                f"Read the beacon_api line in the Run Log for {name}: it names the refusal (a 401 is the key; a "
+                f"404 is the node's missing state). Without the key only today is read and the 7-day overlap "
+                f"with validatorqueue cannot form.")
     se = project.get("staked_eth") or {}
     if metric == se.get("metric"):
         return ("ETH staked (beaconcha.in finalized votedether, via validatorqueue.com's GitHub history) is "
@@ -1434,6 +1440,8 @@ def served_by(source: str, project: dict) -> set[str] | None:
              | {es[k] for k in ("consensus_metric", "consensus_flow") if es.get(k)}) if es else set()
     elif source == "validatorqueue":
         m = {(project.get("staked_eth") or {}).get("metric")} - {None}
+    elif source == "beacon_api":                       # P3-A3: the beacon chain's own staked ETH
+        m = {(project.get("staked_eth_primary") or {}).get("metric")} - {None}
     elif source == "growthepie":
         m = set((project.get("growthepie") or {}).get("metrics") or {})
     elif source == "blockscout_stats":
