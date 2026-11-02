@@ -724,11 +724,13 @@ def test_b_the_flag_writes_the_edition_with_highlights_first_and_no_second_audit
     wb = openpyxl.load_workbook(edition)
     normal = openpyxl.load_workbook(flagged["dir"] / "reader.xlsx")
     # the same tabs as the normal reader plus Highlights first; with the look applied the spec's order (P2g-4) follows:
-    # Highlights, Summary, A1-A4, Comparison, Business, Charts, About, Definitions, then the hidden data sheets
+    # Highlights, Summary, A1-A4, Comparison, Business, Project notes (P3-6), Charts, About, Definitions, then the hidden
+    # data sheets
     assert wb.sheetnames[0] == "Highlights" and sorted(wb.sheetnames[1:]) == sorted(normal.sheetnames)
     visible = [n for n in wb.sheetnames if wb[n].sheet_state == "visible"]
     assert visible == ["Highlights", "Summary", "A1 Infrastructure", "A2 Coordination", "A3 Revenue Buyback",
-                       "A4 Permanent Burn", "Comparison", "Business", "Charts", "About", "Definitions"], visible
+                       "A4 Permanent Burn", "Comparison", "Business", "Project notes", "Charts", "About",
+                       "Definitions"], visible
     assert wb["Highlights"].sheet_properties.tabColor.rgb.endswith("1F8A8A")
     # charts are made, not round-tripped: the Charts tab of the edition holds them
     assert len(wb["Charts"]._charts) == len(normal["Charts"]._charts) > 0
