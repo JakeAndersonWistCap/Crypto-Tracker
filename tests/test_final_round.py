@@ -49,10 +49,11 @@ def _cell(wb, value, tab, project, header_prefix):
 
 
 # ----------------------------------------------------------------------------------------------- E: sanity hits
-def test_zero_split_reads_none_not_active():
+def test_zero_split_reads_none_not_active(monkeypatch):
     """Jake's sanity run: Bitcoin, Zcash and Maple read burn 'active (declared; no burn series measured)' — a 0% split
     is no burn (decision A6 for Maple)."""
     import build_workbook as bw
+    monkeypatch.setattr(bw, "_SCOPE", list(bw.PROJECTS))   # never depend on another test's build(only=...) scope
     st = bw.derived_statuses(None)
     for n in ("Bitcoin", "Zcash", "Maple"):
         assert st[n]["burn"] == "none (declared: 0% of fees burned)", (n, st[n])

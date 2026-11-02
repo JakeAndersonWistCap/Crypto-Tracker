@@ -1001,7 +1001,7 @@ Basis: issuance is consensus rewards to validators (security)
 | the project's revenue basis | **NO SERIES** |
 | bought back ($, every funding source) | **NO SERIES** |
 | paid to holders, not bought | **NO SERIES** |
-| holder value CREDITED (revenue-funded) | **NO SERIES** |
+| holder value CREDITED (revenue-funded) | `holder_value_revenue_usd` |
 
 Funding: revenue (the default: the programme documented base)
 
@@ -1061,7 +1061,7 @@ PENDING: the Merkl WPLUME series for (b) (merkl /v4/creators/plume/distributed/o
 | the project's revenue basis | `revenue_usd` |
 | bought back ($, every funding source) | **NO SERIES** |
 | paid to holders, not bought | **NO SERIES** |
-| holder value CREDITED (revenue-funded) | **NO SERIES** |
+| holder value CREDITED (revenue-funded) | `holder_value_revenue_usd` |
 
 Funding: revenue (the default: the programme documented base)
 
@@ -1145,7 +1145,7 @@ Basis: checker and edge node rewards pay the compute / infrastructure SUPPLY sid
 | the project's revenue basis | **NO SERIES** |
 | bought back ($, every funding source) | **NO SERIES** |
 | paid to holders, not bought | **NO SERIES** |
-| holder value CREDITED (revenue-funded) | **NO SERIES** |
+| holder value CREDITED (revenue-funded) | `holder_value_revenue_usd` |
 
 Funding: revenue (the default: the programme documented base)
 
@@ -1203,7 +1203,7 @@ PENDING: unsplit between (b) and (c): the claims sit in (b), the historical ~98%
 | the project's revenue basis | **NO SERIES** |
 | bought back ($, every funding source) | **NO SERIES** |
 | paid to holders, not bought | **NO SERIES** |
-| holder value CREDITED (revenue-funded) | **NO SERIES** |
+| holder value CREDITED (revenue-funded) | `holder_value_revenue_usd` |
 
 Funding: revenue (the default: the programme documented base)
 
@@ -1422,7 +1422,7 @@ Funding: 2025-05-09..2025-11-03 treasury: April 2025 withdrawal-fee buyback (pai
 | Plume | 1 | `circulating_supply_first_party` | CoinGecko first | none | `gross_burn_tokens` | `gross_issuance_tokens` | `emissions_tokens` | — |
 | Injective | 1, 4 | `circulating_supply` | CoinGecko first | burn | `gross_burn_tokens` | `gross_issuance_tokens` | `emissions_tokens` | — |
 | Zcash | 1 | `circulating_supply` | CoinGecko first | none | `gross_burn_tokens` | `gross_issuance_tokens` | `emissions_tokens` | — |
-| Chainlink | 1, 2, 3 | `circulating_supply_onchain` | on-chain first | treasury_inflow | `gross_burn_tokens` | `pool_release_tokens` | `emissions_tokens` | `noncirculating_holding_tokens` |
+| Chainlink | 2, 1, 3 | `circulating_supply_onchain` | on-chain first | treasury_inflow | `gross_burn_tokens` | `pool_release_tokens` | `emissions_tokens` | `noncirculating_holding_tokens` |
 | World Mobile | 2, 3 | `circulating_supply` | CoinGecko first | distribute | `gross_burn_tokens` | `gross_issuance_tokens` | `emissions_tokens` | — |
 | GEODNET | 2, 3, 4 | `circulating_supply_onchain` | on-chain first | burn | `gross_burn_tokens` | `pool_release_tokens` | `emissions_tokens` | `noncirculating_holding_tokens` + `ecosystem_holding_tokens` |
 | peaq | 2 | `circulating_supply` | CoinGecko first | none | `gross_burn_tokens` | `gross_issuance_tokens` | `emissions_tokens` | — |
