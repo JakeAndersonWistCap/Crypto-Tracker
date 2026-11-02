@@ -119,7 +119,10 @@ def test_cp_ethereum_float_takes_the_beacon_stake_and_a4_additions_evaluate(tmp_
     circ, stake = _get(o, "Circulating supply (tokens)"), _data(wb, X, "Ethereum|beacon_chain_eth", "now")
     assert _get(o, "TRADEABLE FLOAT") == pytest.approx(circ - stake)
     assert _get(o, "Whole-token yield — validator") == pytest.approx(_get(o, "Staker yield — validator") * stake / circ)
-    assert str(_get(o, "HOLDER VALUE YIELD")).startswith("n/a")      # a fee-market burn is not holder value
+    # P3-1c, DEFINITION R2 (Jake 2026-11-02): Ethereum's protocol revenue is its fee burn and IS holder value (was:
+    # "n/a — a fee-market burn is not holder value")
+    hvy = _get(o, "HOLDER VALUE YIELD")
+    assert isinstance(hvy, float) and hvy > 0, hvy
     a4 = _row(wb, X, "A4 Permanent Burn", "Ethereum")
     fees, iss = _rate(wb, X, "Ethereum|fees_usd"), _rate(wb, X, "Ethereum|gross_issuance_tokens")
     burn = _rate(wb, X, f"Ethereum|{config.a4_burn_metric('Ethereum')}")

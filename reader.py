@@ -696,6 +696,9 @@ def blank_reason(p: dict, src: Src | None, col: Col) -> tuple[str, str]:
     if parked_reason(name):
         return "n/a", parked_reason(name)
     if h.startswith("Payout ratio") or col.header.startswith("Payout ratio"):
+        if "holder_value_revenue_usd" not in config.metrics_for_project(p) and name in config.BUYBACK_ROUTE_OVERRIDE:
+            # P3-1a: a mechanism that exists but is not measured is unknown — never "returns no value" by design
+            return "n/a", f"No credited holder value to divide: {config.buyback_route(name)['reason']}"
         if "holder_value_revenue_usd" not in config.metrics_for_project(p):
             return "by design", (f"{name} returns no revenue-funded value to holders — no buyback, revenue-funded burn "
                                  "or distribution is credited — so there is no payout to divide by revenue.")
@@ -1251,6 +1254,16 @@ def _premint_note(p: dict, src: Src | None) -> str:
 
 def _payout_note(p: dict, net: Src | None, gross: Src | None) -> str:
     """Above 1.0x: what funds the excess (P2a A3) — said from the gross payout on fees."""
+    import config                                          # noqa: PLC0415
+    bc = (config.HOLDER_VALUE.get(p["name"]) or {}).get("burn_credited")
+    if bc and net is not None and net.num is not None:
+        # P3-1c (R2): the credited value IS the revenue (the fee burn) — 1.0 by definition; the ratio is the burn as
+        # measured (on chain) over the revenue figure (an aggregator's), and its distance from 1.0 is their difference
+        return (f"The fee burn is {p['name']}'s protocol revenue and is credited in full (payout ratio "
+                f"{bc.get('share_of_revenue', 1.0):.1f} by definition). This cell measures it: the burn as stored "
+                f"({bc['metric']} a day x that day's price) ÷ the revenue series ({net.num:.2f}x) — the two are the same "
+                f"burn from two sources, so the distance from 1.0 is their difference (day boundaries; the burn "
+                f"series' declared handover between its legs), not a payout above or below revenue.")
     if net is None or net.num is None or net.num <= 1.0:
         return ""
     g = gross.num if gross is not None else None
