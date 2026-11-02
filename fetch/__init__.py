@@ -1829,6 +1829,33 @@ def registry_reasons() -> dict:
     return reasons
 
 
+def derive_written(out: FetchOutput, projects: list[dict], ctx: dict) -> None:
+    """THE WRITE-TIME DERIVATIONS, in their one order, over `out`'s frame — fetch_all's own step, and the step the
+    catch-up replays for each caught-up day (fetch.archive.derive_caught_up, P3-4 A4) with that day's stored rows as
+    the frame and the store's values before that day as the priors. ctx: prior_values, prior_delta, prior_dates,
+    stored_long."""
+    _derive_chain_burn(out, projects, ctx.get("stored_long"))
+    _derive_curve_issuance(out, projects)
+    # PRIOR VALUE AND PRIOR DATE FROM THE SAME QUERY (2026-09-29): prior_values is the newest
+    # row of ANY date, today's included, while prior_dates is the last EARLIER day — so a second
+    # run the same day differenced against this morning's reading under yesterday's date, and the
+    # upsert replaced the day's issuance with a few hours of it. Both now come from values_before.
+    _derive_observed_minting(out, projects, ctx["prior_delta"], ctx["prior_dates"])
+    # AFTER the derivations, so a restatement copies the settled series rather than one that is
+    # about to be superseded, and BEFORE the checks, so the restated column is validated too.
+    _restate_metrics(out, projects)
+    _derive_issuance(out, projects, ctx["prior_delta"], ctx["prior_dates"], ctx.get("stored_long"))
+    # AFTER issuance, so both lock figures are certainly in the frame by now.
+    _derive_lock_ratio(out, projects, ctx["prior_values"], ctx.get("prior_delta") or {},
+                       ctx.get("prior_dates") or {})
+    _derive_lock_duration(out, projects)
+    _derive_pool_release(out, projects, ctx.get("prior_delta") or {},
+                         ctx.get("prior_dates") or {})
+    # AFTER the burn derivation above, so a burn-destination buyback re-labels the deduped burn
+    # rather than a figure that is about to be superseded.
+    _derive_buyback(out, projects, ctx.get("stored_long"))
+
+
 def fetch_all(projects: list[dict], window_days: int | None, *,
               prior_values: dict | None = None,
               prior_values_for_delta: dict | None = None,
@@ -1926,26 +1953,7 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
     # BEFORE the issuance derivation, not after. Both chains burn at the protocol level, so
     # issuance is d(total_supply) + burn — and without the burn in the frame first, _derive_issuance
     # gaps them for want of a figure that is one division away.
-    _derive_chain_burn(out, projects, ctx.get("stored_long"))
-    _derive_curve_issuance(out, projects)
-    # PRIOR VALUE AND PRIOR DATE FROM THE SAME QUERY (2026-09-29): prior_values is the newest
-    # row of ANY date, today's included, while prior_dates is the last EARLIER day — so a second
-    # run the same day differenced against this morning's reading under yesterday's date, and the
-    # upsert replaced the day's issuance with a few hours of it. Both now come from values_before.
-    _derive_observed_minting(out, projects, ctx["prior_delta"], ctx["prior_dates"])
-    # AFTER the derivations, so a restatement copies the settled series rather than one that is
-    # about to be superseded, and BEFORE the checks, so the restated column is validated too.
-    _restate_metrics(out, projects)
-    _derive_issuance(out, projects, ctx["prior_delta"], ctx["prior_dates"], ctx.get("stored_long"))
-    # AFTER issuance, so both lock figures are certainly in the frame by now.
-    _derive_lock_ratio(out, projects, ctx["prior_values"], ctx.get("prior_delta") or {},
-                       ctx.get("prior_dates") or {})
-    _derive_lock_duration(out, projects)
-    _derive_pool_release(out, projects, ctx.get("prior_delta") or {},
-                         ctx.get("prior_dates") or {})
-    # AFTER the burn derivation above, so a burn-destination buyback re-labels the deduped burn
-    # rather than a figure that is about to be superseded.
-    _derive_buyback(out, projects, ctx.get("stored_long"))
+    derive_written(out, projects, ctx)
     # AFTER every write-time derivation: the same formulas over the FULL span of the stored
     # inputs, so a backfilled input (a year of prices, of header supply) reaches the series
     # derived from it. See fetch/history_derive.py.

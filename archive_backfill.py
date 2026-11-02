@@ -16,6 +16,11 @@ WHAT IT WRITES: only (date, project, metric) keys that hold nothing — never an
 source strings identical to the live reads plus the `archive` marker, then the flows of
 cumulative stocks (burn deltas) for the new dates. Rows whose stored neighbours were read from a
 different measuring point are refused and listed. See fetch/archive.py.
+
+ONE WRITER (P3-4): --run takes token_metrics.py's lock on the store (runlock.RunLock, `metrics.db.lock`): it waits for a
+running token_metrics.py (and a run waits for it), then exits 75 with the same RUN LOCKED line. The daily run's own
+catch-up (token_metrics.py, fetch.archive.catch_up) fills the days missed since each series' last stored day; this
+script remains the way to fill a whole year.
 """
 from __future__ import annotations
 
@@ -38,14 +43,9 @@ def scoped(names: list[str]) -> list[dict]:
 
 
 def solana_providers(projects: list[dict]) -> dict:
-    """(project, key) -> SolanaAccountHistory for every SPL TOKEN ACCOUNT read (GEODNET's burn)."""
-    out = {}
-    for p in projects:
-        for key, spec in (p.get("contracts") or {}).items():
-            if spec["kind"] == "spl_token_account":
-                out[(p["name"], key)] = ar.SolanaAccountHistory(account=spec["address"],
-                                                                decimals=int(spec.get("decimals", 9)))
-    return out
+    """(project, key) -> SolanaAccountHistory for every SPL TOKEN ACCOUNT read (GEODNET's burn) — fetch.archive's,
+    shared with the daily run's catch-up (P3-4)."""
+    return ar.solana_providers(projects)
 
 
 def coverage(store, projects: list[dict], metrics_by_project: dict) -> dict:
@@ -68,14 +68,17 @@ def main(argv=None) -> int:
 
 def _main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[1])
-    ap.add_argument("--db", default="metrics.db")
+    ap.add_argument("--db", default=None, help="the store (default: token_metrics.py's, TOKEN_METRICS_DB or metrics.db)")
     ap.add_argument("--project", action="append", default=[])
     ap.add_argument("--run", action="store_true")
     ap.add_argument("--budget-min", type=float, default=ar.DEFAULT_BUDGET_S / 60)
     ap.add_argument("--near", action="store_true", help="also NEAR's archival header supply and staked NEAR (validators by epoch_id)")
     ap.add_argument("--no-solana", action="store_true")
     a = ap.parse_args(argv)
-    if a.run:                  # P2f-4: stop early, in one line, when the disk is too full to write the days
+    if a.db is None:           # P3-4: the same store, so the same lock file, as token_metrics.py
+        import store as store_mod
+        a.db = str(store_mod.DB_PATH)
+    if a.run:                 # P2f-4: stop early, in one line, when the disk is too full to write the days
         import disk_guard
         if disk_guard.guard_or_code("archive_backfill --run", a.db):
             return disk_guard.EXIT_DISK
@@ -83,8 +86,24 @@ def _main(argv=None) -> int:
     # PROGRESS and RETRY lines (Jake, 2026-10-01) are log records; without a handler they were never shown.
     # ON STDOUT (Round G 1.11): PowerShell 5.1 turns every stderr line under 2>&1 into a NativeCommandError
     logging.basicConfig(level=logging.INFO, stream=sys.stdout, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    if not a.run:
+        return _work(a)        # the PLAN reads nothing from the network and writes no row: it takes no lock
+    # P3-4: ONE WRITER ON metrics.db — the SAME lock as token_metrics.py (runlock.RunLock on the store path,
+    # `<db>.lock`): a backfill waits for a run (and a run for a backfill) up to TOKEN_METRICS_LOCK_WAIT seconds, saying
+    # once a minute what it waits for, then exits 75 with the same plain message. (RUNBOOK 11dh 1a: it took none.)
+    from runlock import EXIT_LOCKED, RunLock, RunLocked
+    log = logging.getLogger("archive_backfill")
+    try:
+        with RunLock(a.db, "archive_backfill --run", say=log.warning):
+            return _work(a)
+    except RunLocked as e:
+        log.error("%s", e.code)
+        return EXIT_LOCKED
+
+
+def _work(a) -> int:
     import store as store_mod
-    ar.load_env()          # the keyed <CHAIN>_RPC_URL entries live in .env
+    ar.load_env()         # the keyed <CHAIN>_RPC_URL entries live in .env
     from fetch.base import install_redaction
     install_redaction()    # after .env: no key in any print or log line
     st = store_mod.Store(a.db)

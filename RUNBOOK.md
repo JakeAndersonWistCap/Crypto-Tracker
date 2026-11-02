@@ -534,6 +534,98 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11di. Round P3-4 — Catch-up (2026-11-02)
+
+Days missed between runs (laptop off, a run skipped) no longer wait for a hand-run backfill. Every `python token_metrics.py`
+first reads, for each DAILY on-chain series the archive can read at a past block, the days since that series' last stored
+day up to yesterday, each at that day's first block. It uses the same reads, source strings (`archive` marker), refusals and
+"not before" starts as `archive_backfill.py`. Then today's tiers run. It runs inside the run's lock.
+
+Covered: 73 series on 14 projects (Ethereum, BSC, Base, Polygon; GEODNET's Solana burn account). Not covered:
+- Aerodrome and World Mobile (parked).
+- Weekly epoch reads.
+- Event-log reads (Sky's burn).
+- By-design exclusions (OriginTrail and Aave `total_supply`).
+- A series with nothing stored yet.
+- NEAR's archival supply and stake (`archive_backfill.py --run --near`).
+- Chainlink's reward-vault rate.
+
+The log lines (INFO; WARNING when a hole or a missing endpoint is named):
+- `CATCH-UP <project>/<metric>: <n> day(s) filled (<days>), <n> left (<days>) — archive read at each day's first block via
+  <host>`. It can end with any of these:
+  - `; <n> <flow> row(s) differenced from it`: the burn or flow for those days, from the stock.
+  - `; HOLE(S) <days> — the archive could not read them: <first error> (never 0, never carried; tried on <k> of 3 runs)`
+  - `; given up after 3 runs: <days> — left to archive_backfill.py`
+  - `; not reached this run (budget): <days> — the next run continues`
+  - `; NOT READ: no endpoint serves archive state on <chain> — the next run tries again`
+- A series with no missed day prints nothing.
+- `CATCH-UP: day budget spent at <date> …` or `CATCH-UP: budget spent at <date> …`: the rest goes on the next run.
+- `CATCH-UP: STRADDLED <project>/<flow> …`: today's delta already covers a day the catch-up filled later. The stock is per
+  day, and the burn stays in that one multi-day row (never counted twice). For per-day rows, run the printed
+  `python rederive.py …` command.
+- Summary, always: `CATCH-UP: <k> of <n> daily on-chain series had missed days — <n> day(s) filled, <n> left, <n> hole(s)
+  named; <n> day(s) read in <s>s (budget <m> min, <d> day(s) a run)`. When nothing is missed:
+  `CATCH-UP: <n> daily on-chain series checked — none has a missed day since its last stored day; nothing read`.
+
+Run it alone, with nothing else fetched, no clean-up and no workbook build:
+```
+python token_metrics.py --catch-up
+python token_metrics.py --no-fetch --edition charlie
+```
+The second line rebuilds the workbooks afterwards.
+
+Budget:
+- 10 minutes and 7 days a run, oldest day first.
+- Change it for one run with `--budget-min <m>` and `--catch-up-days <n>`.
+- Change it for good with `TOKEN_METRICS_CATCH_UP_MIN` and `TOKEN_METRICS_CATCH_UP_DAYS` in .env. `--budget-min 0` turns it off.
+
+A longer gap fills over several runs. The days still owed are kept in `.cache\logscan\catch-up-pending.json`. If that file
+is deleted, nothing stored is lost; the owed days become ordinary holes for `archive_backfill.py --run`.
+
+The lock: `archive_backfill.py --run` now takes the same lock as token_metrics.py. Each one waits for the other, then exits
+75 with the same `RUN LOCKED — …` line. This replaces §11dh 1a's "Run vs backfill: NO line". The plan (no `--run`) takes
+no lock. `windows\daily_run.ps1` is unchanged: the catch-up runs inside `token_metrics.py`.
+
+### A4 — prices first, then what is derived from the caught-up days
+
+The catch-up now runs in three steps, in this order, under the same lock and budget:
+1. **CoinGecko's daily series** (`price_usd`, `market_cap_usd`, `volume_usd`, `circulating_supply_implied`): the days
+   missed since each series' last stored day, from CoinGecko's `market_chart` — the read the daily run already makes, with
+   the same source string. One call per project, at most `--catch-up-days` days per series, oldest first. Without this
+   step the P2P legs (Ethereum's and NEAR's `p2p_transfer_volume_usd`, valued at the stored same-day price) waited a run
+   for their price, and `--catch-up` alone never read a price.
+2. The on-chain days, as above.
+3. **The derived series for every caught-up day**: the run's own derivations, replayed day by day (issuance, burns,
+   buybacks valued at the day's price, the declared zero/schedule rows of that day), then the history derivations, then
+   the P2P legs valued at the stored price. Only empty keys on caught-up days are written. A day inside a stored multi-day
+   row is never derived again. A day is replayed on 3 runs, because an input such as Sky's event-log burn can land later.
+   The days are kept in `.cache\logscan\catch-up-derive-pending.json`.
+
+Nothing is owed by series that the daily run re-reads in full: DefiLlama fees/revenue/TVL/RWA share, Hyperliquid candles,
+Boros, the Pendle maturity read, and DefiLlama's price history (which only covers days before CoinGecko's first price).
+growthepie, Blockscout, NearBlocks, logscan and Dune read from their own last stored day on the next plain run.
+
+A series whose newest stored row came from another source is not filled from CoinGecko (rule 10). The line says
+`NOT FILLED: … would change the series' basis (rule 10)`.
+
+New log lines:
+- `CATCH-UP <project>/<metric>: <n> day(s) filled (<days>), <n> left (<days>) — CoinGecko market_chart for <id>, the series'
+  own read (coingecko)`, with the same `; HOLE(S) …`, `; given up after 3 runs …` and `; not reached this run (budget) …`
+  endings as the on-chain lines. A day CoinGecko does not serve stays a named hole.
+- `CATCH-UP <project>/<metric>: <n> day(s) derived (<days>) — <source>, the run's own derivation replayed over the
+  caught-up days`.
+- `CATCH-UP: STRADDLED <project>/<metric>: <days> lie inside the stored multi-day row dated <date> …` and
+  `CATCH-UP <project>/<metric>: <days> NOT derived — <why>` (a declared handover kept in order).
+- The summary line gains `; API: <k> of <n> daily API series had missed days — <n> day(s) filled, <n> left, <n> hole(s)
+  named (CoinGecko market_chart)` (or `; API: <n> daily API series checked — none has a missed day`) and
+  `; derived: <n> row(s) stored over <k> series for the caught-up days`.
+
+Jake's store (2026-11-02): `python token_metrics.py --catch-up` fills the prices for 2026-10-30..11-01. It then stores, for
+those days, Ethereum's P2P leg (on the days whose BigQuery answer is cached; the week 10-26..11-01 is read on the next
+plain run's weekly turn and valued then), Uniswap's issuance (d(total_supply_gross)) and Sky's declared-zero issuance.
+Then `python token_metrics.py --no-fetch --edition charlie`.
+
+
 ## 11dh. Friday pre-mortem — if X, do Y
 
 Each entry is read from the code at 3f73b51: SYMPTOM (the message text as printed; the `<time> WARNING <logger>:` prefix is
