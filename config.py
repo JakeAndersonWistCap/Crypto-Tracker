@@ -1331,8 +1331,10 @@ ENV_KEYS = (
     ("BLOCKSCOUT_API_KEY", "Blockscout log scans and stats (the chains Blockscout serves)",
      ("explorer", "explorer_l2:<chain>", "chainlink_fees", "blockscout_stats")),
     ("NEARBLOCKS_API_KEY", "NEAR's daily transactions and active accounts (NearBlocks v3)", ("nearblocks",)),
-    ("BEACONCHAIN_API_KEY", "nothing today: beaconcha.in is no longer read (Ethereum issuance is ultrasound.money's)",
-     ()),
+    ("BEACONCHAIN_API_KEY", "P3-A3: Ethereum's staked ETH over the days a public beacon node cannot serve (beaconcha.in "
+                            "epoch eligibleether) — the 7-day overlap with validatorqueue before the handover; without "
+                            "it the beacon node's today-only figure is stored and the handover waits",
+     ("beacon_api",)),
     ("ARTEMIS_API_KEY", "nothing today: Artemis is read from Jake's CSV exports (artemis_csv); the API is not wired",
      ("artemis_csv",)),
     ("DUNE_API_KEY", "tier 4 backfill from Dune (tiers 1-3 run without it)", ("dune",)),
@@ -10918,10 +10920,14 @@ PROJECTS = [
                 "days": 7,
                 "query": ("query($skip:Int!,$w:MarketTransactionFilters){ "
                           "marketTransactions(first:500, skip:$skip, where:$w){ pageInfo{countTotal} "
-                          "items{ timestamp market{ marketId listed lltv collateralAsset{ decimals priceUsd } } "
+                          "items{ timestamp market{ marketId listed lltv collateralAsset{ decimals price{ usd } } } "
                           "data{ ... on MarketTransactionLiquidationData { seizedAssets } } } } }"),
                 "lif_source": "https://docs.morpho.org/learn/concepts/liquidation/ (LIF = min(1.15, 1/(0.3 LLTV + 0.7)))",
                 "spec_date": "2026-10-11",
+                # P3-9 A5 (SPEC P3-A5): blue-api renamed Asset.priceUsd -> Asset.price, now an AssetPrice object
+                # {usd, timestamp}; the 2026-11-02 run failed with 'Cannot query field "priceUsd" on type "Asset". Did
+                # you mean "price"?'. Read live 2026-11-02 (unauthenticated): price{ usd timestamp }, null when unpriced.
+                "price_field": "price.usd",
             },
             # ** A TRIPWIRE ON THE MEANING, NOT A FILTER ON THE VALUE. ** Nothing is rescaled,
             # clipped or dropped by this band; it only decides whether the unconfirmed-run
@@ -34066,3 +34072,80 @@ RUN_CLEANUPS = RUN_CLEANUPS + tuple(
 def circulating_onchain_only(project_name: str, chosen_metric: str) -> bool:
     """Whether CoinGecko may NOT stand in for a day without the project's on-chain circulating (P2d-3b)."""
     return chosen_metric == "circulating_supply_onchain"
+
+
+# ===== P3-A3 (Jake's 2026-11-02 run): ETHEREUM'S STAKED ETH — validatorqueue.com's GitHub history stopped at 2026-10-25.
+# Re-routed to a PRIMARY source, the beacon chain's own state: staked ETH = Σ effective balance of the ACTIVE validators
+# (fetch/staked_eth.BeaconStakedEth), stored as beacon_chain_eth_primary beside the stored validatorqueue series. The
+# validator yield needs nothing new: VALIDATOR_YIELD["Ethereum"] divides the existing consensus + execution rewards by
+# beacon_chain_eth (stake_metric), which reads the new series once handed over.
+# THE SWITCH IS A DECLARED HANDOVER (rule 10), made ONLY after a 7-DAY OVERLAP CHECK against the stored validatorqueue days
+# (HANDOVER_CONTINUATION requires_overlap): until it passes, beacon_chain_eth keeps its validatorqueue rows (stale from
+# 2026-10-25) and the cell says why. The overlap days (2026-10-19..10-25) can only be read by beaconcha.in's epoch
+# endpoint WITH BEACONCHAIN_API_KEY: the public beacon node keeps no past state (2026-11-02: epoch − 1 answered 404).
+METRICS["beacon_chain_eth_primary"] = {
+    "label": "ETH staked — Σ effective balance of ACTIVE validators, the beacon chain's own state (P3-A3: beaconcha.in "
+             "epoch eligibleether with BEACONCHAIN_API_KEY, else a public beacon node's validator_inclusion at the "
+             "finalized epoch) — beacon_chain_eth's declared next leg after a 7-day overlap",
+    "kind": "stock", "unit": "tokens", "archetypes": [1], "tiers": [1], "sanity_min": 1e7, "sanity_max": 7e7,
+    "only_projects": ("Ethereum",)}
+PROJECT_BY_NAME["Ethereum"]["staked_eth_primary"] = {
+    "metric": "beacon_chain_eth_primary",
+    "history_days": 21,      # the first read with the key: back past validatorqueue's last 7 days (10-19..10-25)
+    "beaconchain": {"base": "https://beaconcha.in", "path": "/api/v1/epoch/{epoch}", "field": "eligibleether",
+                    "key_env": "BEACONCHAIN_API_KEY"},
+    "beacon_api": {"base": "https://ethereum-beacon-api.publicnode.com",
+                   "finalized_header": "/eth/v1/beacon/headers/finalized",
+                   "path": "/lighthouse/validator_inclusion/{epoch}/global", "field": "current_epoch_active_gwei",
+                   "read": "2026-11-02: epoch 486,497 current_epoch_active_gwei 44,233,406 ETH (Lighthouse v8.3.1); "
+                           "the epoch before answered 404 (no past state)"},
+    "decided": "SPEC P3-A3, phase P3-9 (2026-11-02)",
+}
+_VQ_POINT = "validatorqueue:staked_amount"
+_BEACON_POINT = "beacon_api:validator_inclusion.current_epoch_active_gwei"
+PROJECT_BY_NAME["Ethereum"].setdefault("series_handover", {})["beacon_chain_eth"] = {
+    "ordered_points": (_VQ_POINT, "derived:=beacon_chain_eth_primary"),
+    "why": "validatorqueue.com's GitHub history (beaconcha.in votedether) stopped at 2026-10-25; from the day after its "
+           "last stored row the series reads the beacon chain's own state (beacon_chain_eth_primary) — only once the "
+           "7-day overlap check has passed (SPEC P3-A3)",
+    "composition_change": "validatorqueue's figure is the stake that ATTESTED in the finalized epoch (votedether); the "
+                          "primary source is the stake ELIGIBLE — Σ effective balance of active validators (~1% more: "
+                          "participation). The overlap check states the gap; within ±2% over 7 days the seam is the same "
+                          "stock, outside it the handover is not made",
+    "declared": "2026-11-02",
+    "valid_from": "the day after validatorqueue's last stored row, once the overlap check has PASSED",
+    "overlap": {"a": "beacon_chain_eth", "a_point": _VQ_POINT, "a_label": "validatorqueue (beaconcha.in votedether)",
+                "b": "beacon_chain_eth_primary", "b_label": "beacon chain: active validators' effective balance",
+                "tolerance_pct": 2.0, "min_days": 7, "check_once_stored": True,
+                "why_none": "validatorqueue stopped at 2026-10-25 and the public beacon node keeps no past state — the "
+                            "overlap days are read by beaconcha.in with BEACONCHAIN_API_KEY",
+                "if_not_passed": "the handover is NOT made: beacon_chain_eth keeps validatorqueue's rows (stale) until "
+                                 "7 common days agree within ±2%"},
+}
+HANDOVER_CONTINUATION[("Ethereum", "beacon_chain_eth")] = {
+    "from_metric": "beacon_chain_eth_primary", "after_point": _VQ_POINT,
+    "source": "derived:=beacon_chain_eth_primary", "requires_overlap": True,
+    "decided": "SPEC P3-A3 (phase P3-9): validatorqueue stopped at 2026-10-25; the beacon chain's own state is the "
+               "declared next leg, switched only after the 7-day overlap check"}
+SAME_BASIS[("Ethereum", "beacon_chain_eth_primary")] = {
+    "canonical": _BEACON_POINT,
+    "members": ("beaconchain:epoch.eligibleether",),
+    "why": "one quantity, two hosts: beaconcha.in's eligibleether is the same Σ effective balance of active validators "
+           "a beacon node's validator_inclusion current_epoch_active_gwei gives (P3-A3)"}
+SOURCE_REGISTER["ethereum-beacon-api.publicnode.com"] = {
+    "used_for": "beacon_chain_eth_primary — Σ effective balance of active validators at the finalized epoch "
+                "(Lighthouse /lighthouse/validator_inclusion/{epoch}/global current_epoch_active_gwei), P3-A3",
+    "paths": ["/eth/v1/beacon/headers/finalized", "/lighthouse/validator_inclusion/{epoch}/global"],
+    "robots": "an API host (beacon node REST); two requests a day, 2 s apart",
+    "terms": {"url": "https://www.publicnode.com/terms",
+              "status": "NOT READ from here — Jake to read before any public use"},
+    "licence": "public RPC, keyless; the figure is the chain's own state",
+    "key": "none",
+}
+SOURCE_REGISTER["beaconcha.in"] = dict(
+    SOURCE_REGISTER["beaconcha.in"],
+    used_for="P3-A3 ONLY, with BEACONCHAIN_API_KEY: /api/v1/epoch/{epoch} eligibleether for the days a beacon node "
+             "cannot serve (the 7-day overlap with validatorqueue); keyless it answers 401 (2026-11-02)",
+    paths=["/api/v1/epoch/{epoch}"],
+    key="BEACONCHAIN_API_KEY (optional; read only by fetch/staked_eth.BeaconStakedEth)",
+    status="DROPPED")      # as a series of its own; P3-A3 reads it only to make the overlap

@@ -62,7 +62,7 @@ from .mev_relays import MevRelays
 from .browser_capture import BrowserCapture
 from .chainlink_fees import ChainlinkFees
 from .xref import CrossRefs
-from .staked_eth import StakedEth
+from .staked_eth import BeaconStakedEth, StakedEth
 from .treasury import TreasuryBills
 from .sky_msc import SkyMsc
 from .fluid_buybacks import FluidBuybacks
@@ -168,6 +168,9 @@ TIER_ORDER = [
     ("xref", 1, lambda ctx: CrossRefs()),
     # ETH staked (beaconcha.in votedether via validatorqueue.com's GitHub history), 2026-10-05.
     ("validatorqueue", 1, lambda ctx: StakedEth()),
+    # P3-A3 (2026-11-02): validatorqueue stopped at 2026-10-25 — the beacon chain's own state (beaconcha.in with
+    # BEACONCHAIN_API_KEY for the overlap days, else a public beacon node, today only); switched after a 7-day overlap.
+    ("beacon_api", 1, lambda ctx: BeaconStakedEth()),
     # The 3-month US T-bill, the risk-free benchmark (Phase 3, 2026-10-12 night): Treasury's own daily bill rates, FRED
     # DTB3 the cross-check; stored under the pseudo-project Macro.
     ("treasury_bills", 1, lambda ctx: TreasuryBills()),
@@ -2038,7 +2041,7 @@ def stored_fresh(last_dates: dict | None, asof=None) -> set:
 # with a third window of slack (nearblocks_daily_calls(), tested).
 TIER_BUDGET_S = {
     "schedule:config": 15, "defillama": 150, "defillama_tvl": 150, "defillama_rwa_share": 150, "morpho_api": 60, "growthepie": 60,
-    "nearblocks": 180, "coingecko": 240, "price_history": 120, "hypercore_info": 60, "chainlink_fees": 180, "xref": 90, "validatorqueue": 30, "treasury_bills": 60, "sky_ssr": 120, "sky_msc": 60, "fluid_buybacks": 60, "geodnet_feed": 60, "pendle_latent": 60, "wm_supply": 60, "near_issuance": 120, "business": 900, "share_vault": 60,
+    "nearblocks": 180, "coingecko": 240, "price_history": 120, "hypercore_info": 60, "chainlink_fees": 180, "xref": 90, "validatorqueue": 30, "beacon_api": 60, "treasury_bills": 60, "sky_ssr": 120, "sky_msc": 60, "fluid_buybacks": 60, "geodnet_feed": 60, "pendle_latent": 60, "wm_supply": 60, "near_issuance": 120, "business": 900, "share_vault": 60,
     "chain": 240, "tron_node": 60, "near_rpc": 90, "explorer": 300, "balance_flow": 150, "maple_page": 60,
     "explorer_gauge": 300,
     # the L2 chain tiers (explorer_l2:<chain>, G3 item 1) take config.L2_TIER_BUDGET_S, set below

@@ -633,6 +633,41 @@ is read-only and prints one line per project, `<project> | READY / NOT READY / P
 project is NOT READY, else 0. `python done_check.py --help` says what counts as an allowed code and as a clear-by date.
 
 
+## 11dk. Phase P3-9 — monthly windows, Ethereum's staked ETH, Morpho's price field, concentration (2026-11-02)
+
+**A1 Monthly series (SPEC P3-A1).** A series flagged monthly (`config.series_granularity` — Maple's page tables, Sky's
+accounting, GEODNET's feed, Aethir's monthly lists — and a read-time split of one, e.g. Maple's retired buyback) is
+windowed on its LAST COMPLETE PUBLISHED months: Q0 = its latest 3 published months, the Data tab's "Q0 basis" reads
+`3 months to <month end> (3 complete months <first>–<last>) — the latest 3 published months`; Q-1.. are the 3 months
+before each. A month the source has not published yet is publication lag, not a hole. The series is STALE only when its
+newest month ends more than 45 days before the build date. Rule 9: where a cell sets a monthly series against another
+flow (a coverage guard), the other flow is read over the SAME calendar months — its row `<project>|<metric>@<YYYY-MM>`
+at the end of the Data tab. Nothing to run: the next build applies it.
+
+**A3 Ethereum's staked ETH (SPEC P3-A3).** validatorqueue.com stopped at 2026-10-25. The new adapter `beacon_api`
+(fetch/staked_eth.py) stores `beacon_chain_eth_primary` = Σ effective balance of active validators, from:
+- beaconcha.in `/api/v1/epoch/{epoch}` `eligibleether` when `BEACONCHAIN_API_KEY` is in .env (21 days on the first read,
+  3 after; the key goes in a header, never in a URL or the log);
+- else a public beacon node (ethereum-beacon-api.publicnode.com, Lighthouse) at the finalized epoch — TODAY only.
+`beacon_chain_eth` switches to it only after the 7-day overlap check against the stored validatorqueue days passes
+(±2%, ≥7 common days; declared handover, rule 10). Until then the cell is AMBER with `NOT HANDED OVER … OVERLAP CHECK …`
+and the series stays on validatorqueue (stale). The overlap days 2026-10-19..10-25 can only be read with the key (the
+public node keeps no past state). Jake: confirm the key works (it showed a zero allowance in October), then
+```
+python token_metrics.py
+python token_metrics.py --no-fetch --edition charlie
+```
+The Run Log's `beacon_api` line says which route answered; the cell's comment says whether the overlap passed.
+
+**A5 Morpho.** The liquidation query asks for `collateralAsset{ decimals price{ usd } }` (blue-api renamed `priceUsd`;
+`price` is an object `{usd, timestamp}`, null when unpriced). Nothing to run.
+
+**A6 Concentration (SPEC P3-A6).** A daily flow whose Now (30 days) or Q0 (90 days) window has 2 or fewer days carrying
+more than 30% of its sum (absolute values where a day is negative, said) reads AMBER with
+`CONCENTRATED — Q0 (trailing 90 days to <date>): x% of this window from <date> and <date>` in its comment. The value
+never changes. Monthly and weekly series are not judged by days.
+
+
 ## 11dh. Friday pre-mortem — if X, do Y
 
 Each entry is read from the code at 3f73b51: SYMPTOM (the message text as printed; the `<time> WARNING <logger>:` prefix is

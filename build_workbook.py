@@ -268,33 +268,51 @@ def _latest_complete_month(s: pd.Series, asof: pd.Timestamp) -> tuple[float | No
     return float(finished[finished.index.to_period("M") == month].sum()), str(month)
 
 
-def _month_block(s: pd.Series, asof: pd.Timestamp, first_back: int, n: int) -> tuple[float | None, str]:
+def _published_last(s: pd.Series, asof: pd.Timestamp) -> pd.Period:
+    """P3-A1 (Jake's 2026-11-02 run): THE LAST COMPLETE PUBLISHED MONTH a monthly series' windows end on — its newest
+    month held, never the current (incomplete) month. A month after it that the source has not published yet is
+    PUBLICATION LAG, not a hole: Maple's October buyback is not on the page on 2 November, and anchoring Q0 on asof's
+    month made Aug-Oct a 62-day block (two A3 net absorption headlines and 9 cells lost). Whether the series has
+    stopped is staleness (_age_in_days: more than 45 days past its newest month's end), never a short window."""
+    current = asof.to_period("M") - 1
+    if s is None or s.empty:
+        return current
+    return min(s.index.to_period("M").max(), current)
+
+
+def _month_block(s: pd.Series, asof: pd.Timestamp, first_back: int, n: int,
+                 last: pd.Period | None = None) -> tuple[float | None, str]:
     """Sum over n COMPLETE calendar months, the newest being `first_back` months before the last
-    complete one. Added 2026-09-28 (Jake).
+    complete one (`last`; default the month before asof's — a monthly series passes its last PUBLISHED month,
+    _published_last, P3-A1). Added 2026-09-28 (Jake).
 
     A MONTHLY SERIES' Q0 IS THREE COMPLETE MONTHS, NOT 90 DAYS. The day window (asof-90, asof]
     dropped Maple's June buyback, dated 30 June, by one day on 28 September — an artefact of where
-    the boundary fell, not a property of the data. Calendar months are counted from asof's month
+    the boundary fell, not a property of the data. Calendar months are counted back from the anchor month
     (the current month is never complete), and a row counts by the month it is IN, so month-start
     (Dune) and month-end (Maple) dating give the same answer. None when no row falls in the block.
+    Labelled "<n> months to <month end> (<n> complete months <first>–<last>)" (P3-A1).
     """
-    last = asof.to_period("M") - 1 - first_back
+    last = (asof.to_period("M") - 1 if last is None else last) - first_back
     months = {last - k for k in range(n)}
     if s.empty:
         return None, ""
     w = s[s.index.to_period("M").isin(months)]
     first = min(months)
-    label = f"{n} complete months {first.strftime('%b %Y')}–{last.strftime('%b %Y')}"
+    label = (f"{n} months to {last.end_time.date()} "
+             f"({n} complete months {first.strftime('%b %Y')}–{last.strftime('%b %Y')})")
     return (float(w.sum()) if len(w) else None), label
 
 
-def _month_coverage(row: dict, s: pd.Series, asof: pd.Timestamp, windows=("now", "m1", "q0", "q1", "q2", "q3", "q4")) -> None:
+def _month_coverage(row: dict, s: pd.Series, asof: pd.Timestamp, windows=("now", "m1", "q0", "q1", "q2", "q3", "q4"),
+                    last: pd.Period | None = None) -> None:
     """Covered days of a COMPLETE-MONTHS window: the days of the months in it that hold a row.
 
     Sky's net_protocol_surplus_usd holds July and August only, so its Q0 block (Jun-Aug) covers
-    62 days, not 92 — and a ratio against a trailing-90-day buyback divides by those 62.
+    62 days, not 92 — and a ratio against a trailing-90-day buyback divides by those 62. `last`: the block's newest
+    month (P3-A1: a monthly series' last published month), default the month before asof's.
     """
-    last = asof.to_period("M") - 1
+    last = asof.to_period("M") - 1 if last is None else last
     have = set(s.index.to_period("M"))
     blocks = {"now": [last], "m1": [last - 1]}
     for i, q in enumerate(QUARTERS):
@@ -367,6 +385,54 @@ def _stale_limit(name: str, metric: str, default: int, g=None) -> int:
     lim = config.stale_after_days(name, metric, default)
     seen = config.STALE_AFTER_DAYS_BY_GRANULARITY.get(_observed_cadence(g)) or 0
     return max(int(lim), int(seen))
+
+
+CONCENTRATION: dict = {}        # (project, metric) -> the concentration caveat of its windows (P3-A6), set per build
+CONCENTRATION_DAYS, CONCENTRATION_SHARE = 2, 0.30
+
+
+def concentration(s: pd.Series, start: pd.Timestamp, end: pd.Timestamp, window: str = "") -> str:
+    """P3-A6 (DEFINITION, SPEC P3-A6): a FLOW window (start, end] — the window's own days, the same bounds _window_sum
+    sums — where CONCENTRATION_DAYS (2) or fewer days supply more than CONCENTRATION_SHARE (30%) of the flow:
+    "<window>: x% of this window from <dates>", else "". Each day's rows summed; a window holding a negative day is
+    measured on absolute values, and says so. It never changes a value: it turns the row AMBER (confidence_for) and its
+    cells carry the text. Known on Jake's store: Ethereum fees/revenue 2026-10-29..10-30; Morpho emissions."""
+    w = s[(s.index > start) & (s.index <= end)]
+    if w.empty:
+        return ""
+    by_day = w.groupby(pd.DatetimeIndex(w.index).normalize()).sum().astype(float)
+    neg = bool((by_day < 0).any())
+    a = by_day.abs()
+    total = float(a.sum())
+    if total <= 0:
+        return ""
+    top = a.sort_values(ascending=False, kind="mergesort").iloc[:CONCENTRATION_DAYS]
+    share = float(top.sum()) / total
+    if share <= CONCENTRATION_SHARE:
+        return ""
+    dates = " and ".join(str(d.date()) for d in sorted(top.index))
+    return ((f"{window}: " if window else "") + f"{share:.1%} of this window from {dates}"
+            + (" (absolute values: the window holds negative days)" if neg else ""))
+
+
+MONTHLY_ANCHOR: dict = {}       # (project, metric) -> a monthly flow's last published month (P3-A1), set per build
+MONTH_WINDOW_ROWS: dict = {}    # "<project>|<metric>@<YYYY-MM>" -> a daily flow's Data row over calendar months (P3-A1)
+_SPLIT_INPUT = re.compile(r"derived:([a-z0-9_]+) x ")
+
+
+def _effective_granularity(name: str, metric: str, g=None) -> str:
+    """config.series_granularity — and, for a read-time view that only splits a MONTHLY series (P3-A1: Maple's
+    retired / burned / held / distributed buyback, `derived:actual_buyback_tokens x <share>`), its input's: the view holds
+    the input's month rows, so it is windowed on the same published months (the flag is the input's, never a new one)."""
+    gran = config.series_granularity(name, metric)
+    if gran != "daily" or g is None or getattr(g, "empty", True) or "source" not in g:
+        return gran
+    srcs = g["source"].astype(str)
+    srcs = srcs[~srcs.str.startswith("declared:zero")]
+    ins = {(_SPLIT_INPUT.match(x) or [None, None])[1] for x in srcs.unique()}
+    if srcs.empty or None in ins:
+        return gran
+    return "monthly" if all(config.series_granularity(name, i) == "monthly" for i in ins) else gran
 
 
 def _age_in_days(latest: pd.Timestamp, asof: pd.Timestamp, granularity: str) -> int:
@@ -783,6 +849,7 @@ def _series_restatement_views(groups: dict, asof) -> None:
 
 HANDOVER_CUT: dict = {}
 HANDOVER_CONTINUED: dict = {}   # (project, metric) -> what the declared continuation added, last build (P2a D5a)
+HANDOVER_HELD: dict = {}        # (project, metric) -> a continuation held back: its overlap check not passed (P3-A3)
 
 
 def _handover_continuation_views(groups: dict) -> None:
@@ -793,6 +860,7 @@ def _handover_continuation_views(groups: dict) -> None:
     earlier leg dated on or after the continuation's first day. What was added, and from when, is recorded."""
     from fetch.base import _measuring_point                        # noqa: PLC0415
     HANDOVER_CONTINUED.clear()
+    HANDOVER_HELD.clear()
     scoped = {p["name"] for p in scoped_projects()}
     for (name, metric), spec in (getattr(config, "HANDOVER_CONTINUATION", {}) or {}).items():
         if name not in scoped:
@@ -808,6 +876,16 @@ def _handover_continuation_views(groups: dict) -> None:
         add = src[pd.to_datetime(src["date"]) > last].copy()
         if add.empty:
             continue
+        # P3-A3: A HANDOVER MADE ONLY AFTER ITS OVERLAP CHECK (Ethereum's staked ETH, validatorqueue -> the beacon chain):
+        # until the declared overlap passes, the series keeps its earlier leg and the cell says why (never switched blind)
+        if spec.get("requires_overlap"):
+            ov = ((config.PROJECT_BY_NAME.get(name) or {}).get("series_handover") or {}).get(metric, {}).get("overlap")
+            chk = handover_overlap(groups, name, ov) if ov else {"passed": False, "text": "no overlap spec declared"}
+            if not chk["passed"]:
+                HANDOVER_HELD[(name, metric)] = (
+                    f"NOT HANDED OVER to {spec['from_metric']} ({len(add)} row(s) from {pd.to_datetime(add['date']).min().date()} "
+                    f"held back): {chk['text']}")
+                continue
         markers = [m for m in config.SOURCE_MARKERS if m != "archive"]
         add["source"] = [next((config.mark_source(spec["source"], m) for m in markers
                                if f":{m}" in str(s)), spec["source"]) for s in add["source"].astype(str)]
@@ -1352,7 +1430,11 @@ def _handover_overlap_checks(groups: dict) -> None:
         active = {m: d for (n, m), d in config.RESTATEMENT_ACTIVE.items() if n == p["name"]}
         for metric, decl in {**active, **(p.get("series_handover") or {})}.items():
             if isinstance(decl, dict) and decl.get("overlap"):
-                HANDOVER_OVERLAP[(p["name"], metric)] = handover_overlap(groups, p["name"], decl["overlap"])
+                ov = decl["overlap"]
+                gb = groups.get((p["name"], ov["b"]))
+                if ov.get("check_once_stored") and (gb is None or gb.empty):
+                    continue        # P3-A3: the later leg not stored yet — nothing to check, nothing to say
+                HANDOVER_OVERLAP[(p["name"], metric)] = handover_overlap(groups, p["name"], ov)
             if isinstance(decl, dict) and decl.get("reference_check"):
                 g = groups.get((p["name"], metric))
                 rc = decl["reference_check"]
@@ -1485,6 +1567,8 @@ def confidence_for(project: str, metric: str, row: dict, asof: pd.Timestamp) -> 
                    + "; ".join(MONTHLY_FLOW_FORMED[(project, metric)]["holes"]))
     if (project, metric) in HANDOVER_CONTINUED:
         why.append(HANDOVER_CONTINUED[(project, metric)])     # P2a D5a: the declared next leg, and from when
+    if (project, metric) in HANDOVER_HELD:
+        why.append(HANDOVER_HELD[(project, metric)])          # P3-A3: the next leg held back until its overlap passes
     if (project, metric) in LOCKUP_AGE_AMBER:
         why.append(LOCKUP_AGE_AMBER[(project, metric)])      # D3-1: a lockup read 11-30 days old
     ho = HANDOVER_OVERLAP.get((project, metric))
@@ -1508,6 +1592,8 @@ def confidence_for(project: str, metric: str, row: dict, asof: pd.Timestamp) -> 
                    f"{covered}-day total, not a low {window}-day one")
     if row.get("q0_dense_note"):
         why.append(row["q0_dense_note"])      # G9 K3: the Q0 days a dense daily series does not hold, named
+    if row.get("concentration_note"):
+        why.append(f"CONCENTRATED — {row['concentration_note']}")     # P3-A6: confidence only, never the value
     if row["status"] == "review":
         why.append("flagged to the Review Queue")
     if row["status"] == "stale":
@@ -5097,6 +5183,10 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _LAST_GROUPS.update(groups)       # the views, for Credibility rows that read them (credibility.VIEWS_LONG)
     COVERED_SETS.clear()
     COVERED_SETS.update(_covered_day_sets(groups))   # D6-1: the days each daily flow's rows cover
+    MONTHLY_ANCHOR.clear()
+    MONTH_WINDOW_ROWS.clear()
+    _FLOW_SERIES.clear()
+    CONCENTRATION.clear()
     WINDOW_HOLES.clear()
     # The latest value of every series, keyed the same way — so a flow can be checked against the
     # stock it was differenced from without depending on the order METRICS happens to iterate in.
@@ -5243,9 +5333,16 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
             row["latest_date"] = latest["date"].strftime("%Y-%m-%d")
             row["first_date"] = g["date"].min().strftime("%Y-%m-%d")
             row["n_points"] = int(len(g))
-            granularity = config.series_granularity(name, metric)
+            granularity = _effective_granularity(name, metric, g)
             row["granularity"] = granularity
+            if m["kind"] == "flow":
+                _FLOW_SERIES[(name, metric)] = (s, g)     # P3-A1: a flow over another series' calendar months
             if m["kind"] == "flow" and granularity == "monthly":
+                # P3-A1: EVERY WINDOW ENDS ON THE LAST COMPLETE PUBLISHED MONTH (_published_last), not on asof's month:
+                # a month the source has not published yet is publication lag, never a hole; staleness says when the
+                # series has stopped (more than 45 days past its newest month's end)
+                last_pub = _published_last(s, asof)
+                MONTHLY_ANCHOR[(name, metric)] = last_pub
                 # A MONTHLY SERIES CANNOT FILL A 30-DAY WINDOW. Reporting the latest COMPLETE
                 # month, named, beats reporting whatever happened to land inside 30 days — which
                 # for GEODNET's buyback was NOTHING at all while 41 good monthly rows sat in the
@@ -5259,13 +5356,14 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                     row["period_label"] = this_month
                 # Q0..Q4 AND Y1 IN COMPLETE CALENDAR MONTHS (2026-09-28) — see _month_block.
                 for i, q in enumerate(QUARTERS):
-                    row[q], label = _month_block(s, asof, 3 * i, 3)
+                    row[q], label = _month_block(s, asof, 3 * i, 3, last=last_pub)
                     if q == "q0":
-                        row["q0_basis"] = label
-                row["y1"], _ = _month_block(s, asof, 0, 12)
-                _month_coverage(row, s, asof)
+                        row["q0_basis"] = label + (" — the latest 3 published months" if last_pub < asof.to_period("M") - 1
+                                                   else "")
+                row["y1"], _ = _month_block(s, asof, 0, 12, last=last_pub)
+                _month_coverage(row, s, asof, last=last_pub)
                 # EVENTS in the Q0 block: months with a non-zero total (events x cadence, 2026-09-29)
-                last_m = asof.to_period("M") - 1
+                last_m = last_pub
                 for i, q in enumerate(QUARTERS):
                     qm = s[s.index.to_period("M").isin({last_m - 3 * i - k for k in range(3)})]
                     row[f"{q}_events"] = int((qm.groupby(qm.index.to_period("M")).sum() > 0).sum())
@@ -5278,6 +5376,14 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                     row[q] = _window_sum(s, lo_q, hi_q)
                     row[f"{q}_events"] = int(((s.index > lo_q) & (s.index <= hi_q) & (s > 0)).sum())
                 row["y1"] = _window_sum(s, asof - pd.Timedelta(days=365), asof)
+                # P3-A6: TWO DAYS OR FEWER CARRYING MORE THAN 30% OF A WINDOW'S FLOW, named (confidence only)
+                if granularity == "daily" and _observed_cadence(g) == "daily":
+                    conc = [c for c in (concentration(s, asof - pd.Timedelta(days=short), asof,
+                                                      f"Now (trailing {short} days to {asof.date()})"),
+                                        concentration(s, asof - pd.Timedelta(days=period), asof,
+                                                      f"Q0 (trailing {period} days to {asof.date()})")) if c]
+                    if conc:
+                        row["concentration_note"] = CONCENTRATION[(name, metric)] = " | ".join(conc)
                 # HOW MUCH OF THE WINDOW THE SERIES WAS ACTUALLY ALIVE FOR. Only on non-monthly
                 # flows: a monthly series reports a named month above and is not pretending to be
                 # a 30-day sum, so "covers 30 of 30" would be answering a question nobody asked.
@@ -5689,7 +5795,72 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
         for row in rows:
             if row["project"] == mw["project"] and row["metric"] in mw["label_metrics"]:
                 row["note"] = mw["label"] + (f" | {row['note']}" if row.get("note") else "")
+    _month_window_rows(rows, asof)        # P3-A1 rule 9: each flow over its project's monthly series' own months
     return pd.DataFrame(rows, columns=DATA_COLS)
+
+
+_FLOW_SERIES: dict = {}       # (project, metric) -> (s, g) of every flow aggregate() windowed, set per build (P3-A1)
+
+
+def month_window_metric(metric: str, anchor) -> str:
+    """The Data key suffix of `metric` summed over the 3-month blocks ending on `anchor` (P3-A1 rule 9)."""
+    return f"{metric}@{anchor}"
+
+
+def _month_window_rows(rows: list, asof: pd.Timestamp) -> None:
+    """P3-A1, RULE 9 OVER THE MONTHLY SERIES' OWN WINDOW: for every project holding a monthly flow, each of its other
+    flows summed over the SAME calendar months — Q0 = the 3 months ending on that monthly series' last published month,
+    Q-1.. the 3 before, Y1 the 12 — as Data rows keyed `<project>|<metric>@<YYYY-MM>` (MONTH_WINDOW_ROWS; written after
+    aggregate()'s rows, so no existing row moves). _coverage_guard reads a daily leg from them where it is set against a
+    monthly leg. The same _month_block / _month_coverage as a monthly series' own windows, never a parallel sum; the
+    covered days of a daily series are the days of the block its rows cover (D6-1's holes off). A withheld row stays
+    withheld: its windows are None here too."""
+    by_key = {r["key"]: r for r in rows}
+    anchors: dict = {}
+    for (name, metric), last in MONTHLY_ANCHOR.items():
+        anchors.setdefault(name, set()).add(last)
+    for (name, metric), (s, g) in _FLOW_SERIES.items():
+        parent = by_key.get(f"{name}|{metric}")
+        if parent is None or name not in anchors:
+            continue
+        own = MONTHLY_ANCHOR.get((name, metric))
+        for last in sorted(anchors[name]):
+            if last == own:
+                continue                       # a monthly series already windows on its own months
+            row = dict(parent)
+            row["key"] = f"{name}|{month_window_metric(metric, last)}"
+            row["metric"] = month_window_metric(metric, last)
+            withheld = parent.get("q0") is None and parent.get("status") not in ("ok", "review", "stale", "manual")
+            diff_first = _differenced_first(g)
+            dense = (name, metric) in config.DENSE_DAILY_FLOWS
+            # D6-1's holes exactly where the series' own window takes them off (a daily-observed, non-dense series not
+            # scanned from genesis) — a month-end-dated derived series is not a daily one with holes between its rows
+            cov_set = (COVERED_SETS.get((name, metric))
+                       if own is None and not dense and not config.scanned_from_genesis(name, metric)
+                       and _observed_cadence(g) == "daily" else None)
+            for i, q in enumerate(QUARTERS):
+                v, label = _month_block(s, asof, 3 * i, 3, last=last)
+                row[q] = None if withheld else v
+                months = [last - 3 * i - k for k in range(3)]
+                if own is None:
+                    lo, hi = months[-1].start_time - pd.Timedelta(days=1), months[0].end_time.normalize()
+                    cov, _ = _window_coverage(s, lo, hi, diff_first)
+                    if dense:
+                        cov = _dense_days(s, lo, hi)
+                    elif cov_set:
+                        cov = max(cov - len(_interior_holes(cov_set, lo, hi, s.index.min())), 0)
+                    row[f"{q}_covered_days"] = cov
+                else:
+                    have = set(s.index.to_period("M"))
+                    row[f"{q}_covered_days"] = sum(mm.days_in_month for mm in months if mm in have)
+                qm = s[s.index.to_period("M").isin(set(months))]
+                row[f"{q}_events"] = int((qm.groupby(qm.index.to_period("M")).sum() > 0).sum()) if own is not None \
+                    else int((qm > 0).sum())
+                if q == "q0":
+                    row["q0_basis"] = f"{label} — rule 9: the monthly series' own window (P3-A1)"
+            row["y1"] = None if withheld else _month_block(s, asof, 0, 12, last=last)[0]
+            row["label"] = f"{parent.get('label', '')} — over calendar months to {last.end_time.date()} (rule 9)"
+            MONTH_WINDOW_ROWS[row["key"]] = row
 
 
 def _macro_rows(groups: dict, asof: pd.Timestamp) -> list[dict]:
@@ -6890,6 +7061,7 @@ def _coverage_guard(R: Refs, r: int, legs: list[tuple[str, str, str]], expr: str
             same_span = False
     if same_span is None:
         same_span = len(legs) >= 2
+    legs, expr = _monthly_window_legs(legs, expr)
     conds, parts = [], []
     for lab, m, w in legs:
         c, n = R.D(r, m, _COV[w]), _nominal(w)
@@ -6908,6 +7080,33 @@ def _coverage_guard(R: Refs, r: int, legs: list[tuple[str, str, str]], expr: str
     if bare:            # nested inside gated()/circular_gated(), which supply the IFERROR and "="
         return f"IF(OR({','.join(conds)}),{msg},{expr})"
     return f"=IF(OR({','.join(conds)}),{msg},IFERROR({expr},{NA}))"
+
+
+def _monthly_window_legs(legs: list, expr: str) -> tuple[list, str]:
+    """P3-A1, RULE 9 OVER THE MONTHLY SERIES' OWN WINDOW: where a guard sets a MONTHLY leg (MONTHLY_ANCHOR — its windows
+    end on its last published month) against another flow, every other flow leg is read over the SAME calendar months
+    (its MONTH_WINDOW_ROWS row, `<metric>@<YYYY-MM>`): in the expression and in the coverage test. Maple's net absorption
+    = retired buyback (Jun-Aug, the latest published) − emissions summed over Jun-Aug, never over the trailing 90 days.
+    Two monthly legs published to different months are both read to the EARLIER one. Nothing changes where no leg is
+    monthly, outside a project's row, or where the row over those months was not formed."""
+    name = _PROJECT["name"]
+    if not name or len(legs) < 2:
+        return legs, expr
+    alias = {m: config.metric_alias(name, m) for _, m, _ in legs}
+    own = {m: MONTHLY_ANCHOR.get((name, alias[m])) for _, m, _ in legs}
+    anchors = [a for a in own.values() if a is not None]
+    if not anchors:
+        return legs, expr
+    last = min(anchors)
+    out = []
+    for lab, m, w in legs:
+        mw = month_window_metric(alias[m], last)
+        if own[m] != last and f"{name}|{mw}" in MONTH_WINDOW_ROWS and w in _COV:
+            expr = expr.replace(f'&"|{alias[m]}",', f'&"|{mw}",')
+            out.append((lab, mw, w))
+        else:
+            out.append((lab, m, w))
+    return out, expr
 
 
 def _holes_text(metric: str, w: str) -> str:
@@ -12722,7 +12921,10 @@ def build_workbook(store, path: Path | str, run_id: str | None = None,
     data = aggregate(long, fetch_status, asof, gaps=gaps, review=review)
     data_by_key = wiring.TrackingDict({r["key"]: r for r in data.to_dict("records")})
     months, monthly = monthly_table(_without_bad_prints(long), asof)   # P3-A2: the excluded prints off it too
-    R = Refs(len(data), len(monthly), months)
+    # P3-A1: the flows over their project's monthly series' own months, AFTER every aggregate() row (none moves)
+    data_sheet = (pd.concat([data, pd.DataFrame(list(MONTH_WINDOW_ROWS.values()), columns=DATA_COLS)],
+                            ignore_index=True) if MONTH_WINDOW_ROWS else data)
+    R = Refs(len(data_sheet), len(monthly), months)
 
     wb = Workbook()
     ws_master = wb.active
@@ -12743,7 +12945,7 @@ def build_workbook(store, path: Path | str, run_id: str | None = None,
     ws_mon = wb.create_sheet("Monthly")
 
     write_config(ws_cfg, asof, silence=buyback_silence(data), statuses=derived_statuses(data, buyback_silence(data)))
-    write_data(ws_data, data, asof)
+    write_data(ws_data, data_sheet, asof)
     write_monthly(ws_mon, months, monthly)
     _HEADLINE_CELLS.clear()
     _TAB_CELLS.clear()

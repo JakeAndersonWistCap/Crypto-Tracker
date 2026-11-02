@@ -1791,6 +1791,15 @@ class DefiLlama:
 # to primary until it fetches on a live run — this book has been burned by the other order. The
 # adapter runs, reports exactly what came back, and refuses to store until somebody flips the
 # flag on the strength of a run that worked.
+def _collateral_usd(asset: dict):
+    """The collateral's USD price from blue-api's Asset (P3-A5): `price` is an AssetPrice object {usd, timestamp} since
+    blue-api renamed `priceUsd` (2026-11-02 error: 'Cannot query field "priceUsd" on type "Asset". Did you mean
+    "price"?'). None when Morpho gives no price (price: null) — never 0."""
+    p = (asset or {}).get("price")
+    usd = p.get("usd") if isinstance(p, dict) else None
+    return None if usd is None else float(usd)
+
+
 class MorphoBlueApi:
     """Per-market supply and borrow, summed, from Morpho's own GraphQL API."""
 
@@ -1956,8 +1965,8 @@ class MorphoBlueApi:
         of the in_interest_day gap, $443,550 of $454,331 over 2026-10-04..10). DefiLlama's fees count them (dimension-
         adapters fees/morpho: bonus = seized - seized / LIF, LIF = min(1.15, 1 / (0.3 x LLTV + 0.7))), our API reference
         did not. Each of the last `days` complete UTC days is read (marketTransactions, type Liquidation) and stored at
-        its date — re-read every run, so a missed day fills itself. Priced at the collateral's priceUsd as Morpho's API
-        gives it at the read (a day or a week stale: noted); a listed liquidation with no price is counted and said."""
+        its date — re-read every run, so a missed day fills itself. Priced at the collateral's price{usd} (P3-A5:
+        was priceUsd) as Morpho's API gives it at the read (a day or a week stale: noted); a listed liquidation with no price is counted and said."""
         spec = api["liquidations"]
         metric, days = spec["metric"], int(spec.get("days", 7))
         end = pd.Timestamp(when).normalize()
@@ -1984,13 +1993,14 @@ class MorphoBlueApi:
                         if seized is None or m.get("lltv") is None:
                             raise ValueError(f"liquidation in {str(m.get('marketId'))[:18]} carries no seizedAssets/lltv")
                         n += 1
-                        if ca.get("priceUsd") is None:
+                        usd = _collateral_usd(ca)
+                        if usd is None:
                             unpriced += 1
                             continue
                         lltv = int(m["lltv"]) / 1e18
                         lif = min(1.15, 1.0 / (0.3 * lltv + 0.7))
                         tok = int(seized) / 10 ** int(ca.get("decimals") or 18)
-                        bonus += tok * (1.0 - 1.0 / lif) * float(ca["priceUsd"])
+                        bonus += tok * (1.0 - 1.0 / lif) * usd
                     total = (node.get("pageInfo") or {}).get("countTotal")
                     skip += len(items)
                     if not items or (total is not None and skip >= int(total)):
@@ -2001,7 +2011,7 @@ class MorphoBlueApi:
             out.add(point(name, metric, bonus, f"{self.SOURCE}:marketTransactions.Liquidation", self.TIER, d0),
                     self.SOURCE, name,
                     f"{metric} {d0.date()} = ${bonus:,.0f} from {n} listed-market liquidation(s) (seized x (1 - 1/LIF) "
-                    f"x the collateral's priceUsd now)" + (f"; {unpriced} with no collateral price left out"
+                    f"x the collateral's price.usd now)" + (f"; {unpriced} with no collateral price left out"
                                                          if unpriced else ""), self.TIER)
 
     def _interest(self, api: dict, ids: list, name: str, when, out) -> None:

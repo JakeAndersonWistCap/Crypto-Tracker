@@ -350,7 +350,7 @@ def classify(p: dict, metric: str, row: dict, first: str | None, asof: pd.Timest
     why_wait = (f" — FORWARD-ONLY: {fwd}" if fwd else
                 " — NOT FORWARD-ONLY: its inputs have history, so a backfill should fill it "
                 "(history_audit.py names the route)")
-    if kind == "flow" and str(row.get("q0_basis") or "").startswith("3 complete months"):
+    if kind == "flow" and "3 complete months" in str(row.get("q0_basis") or ""):
         cov = row.get("q0_covered_days")
         if cov is not None and not pd.isna(cov) and cov < 89:
             last = asof.to_period("M") - 1
