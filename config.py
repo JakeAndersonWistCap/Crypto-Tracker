@@ -18726,6 +18726,9 @@ PROJECTS = [
     },
 ]
 
+# P3-7: projects added by YAML (projects/*.yaml, `status: active` only; drafts and _files are not loaded) — see
+# project_intake.py. Appended here, before every later pass over PROJECTS; with no active YAML this adds nothing.
+PROJECTS.extend(__import__("project_intake").active_projects(PROJECTS, globals()))
 PROJECT_BY_NAME = {p["name"]: p for p in PROJECTS}
 
 
