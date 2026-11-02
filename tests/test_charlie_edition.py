@@ -3,7 +3,7 @@
 Two kinds of test. The SYNTHETIC ones build a small reader-shaped workbook (the tabs, header rows and project rows the
 cards quote, with numbers chosen to meet each condition) and run charlie_highlights on it in a second. The FIXTURE ones
 build the committed real dumps (fixtures/real_*.json) twice - without and with the flag - and compare. The fixture build
-holds other numbers than Jake's live store, so on it only some cards render (C5, C7 and C8); the fixture integration
+holds other numbers than Jake's live store, so on it only some cards render (C5, C7, C8, C9); the fixture integration
 tests lower the floor to 3 (charlie_edition.MIN_CARDS) and say so. The production floor stays 5.
 """
 from __future__ import annotations
@@ -24,7 +24,7 @@ import charlie_edition  # noqa: E402
 import charlie_highlights as H  # noqa: E402
 import reader  # noqa: E402
 
-FIXTURE_CARDS = 3          # C5, C7, C8 render on the committed dumps (the others need Jake's live numbers)
+FIXTURE_CARDS = 4          # C5, C7, C8, C9 render on the committed dumps (the others need Jake's live numbers)
 
 
 # ======================================================================================================= conditions
@@ -286,9 +286,9 @@ def run(over=None, drop=(), min_cards=5, wb=None):
     return wb, res
 
 
-def test_synthetic_all_eight_cards_render_in_order_and_the_tab_is_first():
+def test_synthetic_all_nine_cards_render_in_order_and_the_tab_is_first():
     wb, res = run()
-    assert res["cards"] == ["C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8"], res["omitted"]
+    assert res["cards"] == ["C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8", "C9"], res["omitted"]
     assert wb.sheetnames[0] == "Highlights" and wb.sheetnames[1] == "About"
     ws = wb["Highlights"]
     assert ws.sheet_properties.tabColor.rgb.endswith("1F8A8A")
@@ -302,7 +302,8 @@ def test_synthetic_all_eight_cards_render_in_order_and_the_tab_is_first():
     assert ws["A2"].value.startswith("=LEFT(About!A2,") and ws["A3"].value.startswith("=LEFT(About!A5,")
     assert ws["A4"].value == "=About!A8"
     text = "\n".join(res["lines"])
-    for needle in ("GEODNET", "Morpho", "Sky", "Hyperliquid", "Uniswap", "Fluid", "Near", "Dilution league"):
+    for needle in ("GEODNET", "Morpho", "Sky", "Hyperliquid", "Uniswap", "Fluid", "Near", "Dilution league",
+                   "Fairness league"):
         assert needle in text
     last = [c.value for row in ws.iter_rows() for c in row if c.value is not None][-1]
     assert last == "Confidence is shown by cell fill throughout; hover any number for its source." == H.FOOTER
@@ -323,7 +324,7 @@ def test_synthetic_the_printed_card_shows_label_and_the_value_as_displayed():
 
 def test_synthetic_a_failed_card_is_omitted_and_the_rest_reflow():
     wb, res = run(over={"GEODNET": {"key": 0.98}}, min_cards=5)
-    assert res["cards"] == ["C2", "C3", "C4", "C5", "C6", "C7", "C8"]
+    assert res["cards"] == ["C2", "C3", "C4", "C5", "C6", "C7", "C8", "C9"]
     assert any(o.startswith("C1 GEODNET") for o in res["omitted"])
     ws = wb["Highlights"]
     heads = [c.value for row in ws.iter_rows() for c in row if isinstance(c.value, str) and " — " in c.value
@@ -371,25 +372,220 @@ def test_synthetic_conditional_clauses_follow_the_quoted_cells():
     assert not any("is locked" in ln for ln in d["lines"])
 
 
+# ============================================================== P3-8: caveat clauses shown only when the cells bear them out
+def _said(res, cid: str, what: str = "Caveat") -> str:
+    """The Reading or Caveat line of card `cid` as printed."""
+    lines = res["lines"]
+    i = next(k for k, ln in enumerate(lines) if f"[{cid}]" in ln)
+    j = next((k for k in range(i + 1, len(lines)) if lines[k].strip().startswith("[")), len(lines))
+    return next((ln.strip() for ln in lines[i:j] if ln.strip().startswith(f"{what}:")), "")
+
+
+def _no_typed_number_or_forbidden_word(s: str) -> None:
+    assert not re.search(r"\d", re.sub(r"\bA[1-4]\b", "", s)), s
+    assert not H.FORBIDDEN.search(s), s
+
+
+def test_p3_8_net_holder_yield_negative_clause_only_for_a_number_below_zero():
+    neg = "net holder yield is negative"
+    # C1
+    assert neg in H.c1_caveat(-0.045).lower()
+    for v in (0.0, 0.02, "blocked", "n/a", None):
+        assert neg not in H.c1_caveat(v).lower(), v
+    # C5 (its A4 clause: only when the A4 key reads n/a)
+    assert H.c5_caveat("n/a", -0.011) == "The A4 key is n/a (nothing issued to divide by) and net holder yield is negative."
+    assert H.c5_caveat(1.106, -0.011) == "Net holder yield is negative."
+    assert H.c5_caveat("n/a", 0.0) == "The A4 key is n/a (nothing issued to divide by)."
+    alone = H.c5_caveat(1.106, "blocked")
+    assert neg not in alone.lower() and "A4 key is n/a" not in alone and alone.endswith(".")
+    # C4
+    assert neg in H.c4_caveat(1.02, 1.01, 1.75, 2.57, -0.03, None).lower()
+    for v in (0.0, 0.01, "blocked", None):
+        assert neg not in H.c4_caveat(1.02, 1.01, 1.75, 2.57, v, None).lower(), v
+    for s in (H.c1_caveat(-1), H.c1_caveat(1), alone, H.c4_caveat(1, 1, 1, 1, 1, None)):
+        _no_typed_number_or_forbidden_word(s)
+
+
+def test_p3_8_narrowed_over_three_quarters_only_when_strictly_falling_over_the_four_quarters():
+    assert H.narrowed(0.9, 1.0, 1.5, 2.0)
+    assert not H.narrowed(1.02, 1.01, 1.75, 2.57)                     # Jake's 10-29 numbers: the latest rose
+    assert not H.narrowed(1.0, 1.0, 1.5, 2.0)                         # equal is not narrower
+    assert not H.narrowed(0.9, 1.0, 2.0, 1.5)
+    assert not H.narrowed(0.9, "blocked", 1.5, 2.0)
+    s = H.c4_caveat(0.9, 1.0, 1.5, 2.0, -0.03, "blocked", "BLOCKED — unequal coverage: burn ...")
+    assert s == ("The key has narrowed over three quarters, net holder yield is negative, and the A4 crossover is "
+                 "blocked for lack of same-span coverage.")
+    s = H.c4_caveat(1.02, 1.01, 1.75, 2.57, -0.03, "blocked", "BLOCKED — unequal coverage")
+    assert "narrowed" not in s and s == ("Net holder yield is negative and the A4 crossover is blocked for lack of "
+                                         "same-span coverage.")
+    assert "same-span" not in H.c4_caveat(0.9, 1.0, 1.5, 2.0, 0.01, "blocked", "BLOCKED — no rows stored")
+    assert "A4" not in H.c4_caveat(0.9, 1.0, 1.5, 2.0, 0.01, 1.2, "")              # a number: no blocked clause
+    _no_typed_number_or_forbidden_word(H.c4_caveat(1.02, 1.01, 1.75, 2.57, 0.01, 1.2, ""))
+
+
+def test_p3_8_c6_revenue_grew_and_subsidy_cover_high_are_two_clauses_each_only_when_true():
+    assert H.HIGH_COVER == 2.0
+    base = "Retired ÷ emissions fell to zero over four quarters"
+    assert H.c6_reading(0.3, 56.4, False) == base + " while revenue grew and subsidy cover is high."
+    assert H.c6_reading(-0.048, 56.4, False) == base + " while subsidy cover is high."
+    assert H.c6_reading(0.0, 2.0, False) == base + " while subsidy cover is high."          # 0 is not growth; 2.0x is high
+    assert H.c6_reading(0.3, 1.99, False) == base + " while revenue grew."
+    assert H.c6_reading("n/a", "blocked", False) == base + "."
+    assert H.c6_reading("n/a", "blocked", True) == base + ", and net holder yield is second best in the set."
+    for g in (0.3, -1, "n/a"):
+        for c in (56.4, 1.0, "blocked"):
+            _no_typed_number_or_forbidden_word(H.c6_reading(g, c, True))
+
+
+def test_p3_8_the_clauses_follow_the_quoted_cells_on_the_synthetic_reader():
+    _, a = run()
+    assert "negative" in _said(a, "C1") and "negative" in _said(a, "C4") and "negative" in _said(a, "C5")
+    assert "narrowed" not in _said(a, "C4")                          # 1.02 > 1.01: not strictly falling
+    assert "revenue grew and subsidy cover is high" in _said(a, "C6", "Reading")
+    _, b = run(over={"GEODNET": {"nhy": 0.0}, "Hyperliquid": {"nhy": 0.01}, "Uniswap": {"nhy": "blocked"},
+                     "Fluid": {"gro": -0.05, "cover": 1.5}, "_q": {"Hyperliquid": [1.5, 2.0, 2.5]}})
+    assert "negative" not in _said(b, "C1") and "negative" not in _said(b, "C4") and "negative" not in _said(b, "C5")
+    assert _said(b, "C4") == "Caveat: The key has narrowed over three quarters."
+    assert _said(b, "C5") == "Caveat: The A4 key is n/a (nothing issued to divide by)."
+    r6 = _said(b, "C6", "Reading")
+    assert "revenue grew" not in r6 and "subsidy cover" not in r6
+    _, c = run(over={"Fluid": {"gro": -0.05}})
+    assert "while subsidy cover is high" in _said(c, "C6", "Reading") and "revenue grew" not in _said(c, "C6", "Reading")
+    # the A4 clauses read the A4 tab: Uniswap's key a number -> no n/a clause; Hyperliquid's blocked -> its clause
+    wb = make_reader()
+    a4 = wb[reader.A4_TAB]
+    a4["C5"] = 1.106
+    from openpyxl.comments import Comment
+    a4.append(["Hyperliquid", "HYP", "blocked", 0.01])
+    a4.cell(a4.max_row, 3).comment = Comment("BLOCKED — unequal coverage: burn covers 87 days", "t")
+    _, d = run(wb=wb)
+    assert _said(d, "C5") == "Caveat: Net holder yield is negative."
+    assert _said(d, "C4") == ("Caveat: Net holder yield is negative and the A4 crossover is blocked for lack of "
+                              "same-span coverage.")
+    for res in (a, b, c, d):
+        for ln in res["lines"]:
+            if ln.strip().startswith(("Reading:", "Caveat:")):
+                _no_typed_number_or_forbidden_word(ln)
+
+
+def test_p3_8_c2_reads_a_holder_value_yield_of_zero_and_shows_net_holder_yield_as_a_chip():
+    assert H.c2_caveat(0.0).startswith("Holder value yield is zero: no revenue reaches the token")
+    assert "n/a" not in H.c2_caveat(0.0)
+    assert "no measured value" in H.c2_caveat("n/a") and "zero" not in H.c2_caveat("n/a")
+    assert "zero" not in H.c2_caveat(0.01) and "reaches the token" in H.c2_caveat(0.01)
+    assert "none of that revenue reaches the token" in H.c2_reading(5e6, 0.0)
+    assert "none of that revenue" not in H.c2_reading(5e6, 0.01)
+    for v in (0.0, "n/a", 0.01):
+        _no_typed_number_or_forbidden_word(H.c2_caveat(v))
+        _no_typed_number_or_forbidden_word(H.c2_reading(5e6, v))
+    wb, res = run(over={"Morpho": {"rev": 4e6}})                     # Morpho's holder value yield is a measured 0
+    assert _said(res, "C2").startswith("Caveat: Holder value yield is zero: no revenue reaches the token")
+    assert "holder value yield is a measured zero" in _said(res, "C2", "Reading")
+    i = next(k for k, ln in enumerate(res["lines"]) if "[C2]" in ln)
+    assert "Net holder yield: -2.0%" in [ln.strip() for ln in res["lines"][i:i + 8]]
+    ws = wb["Highlights"]
+    cm = wb[reader.COMPARISON]
+    row = next(r for r in range(5, cm.max_row + 1) if cm.cell(r, 1).value == "Morpho")
+    league = next(c.row for r in ws.iter_rows() for c in r if c.value == "Dilution league")   # the table cards follow
+    chip = [c for r in ws.iter_rows(max_row=league - 1) for c in r if c.value == f"=Comparison!F{row}"]
+    assert len(chip) == 1 and chip[0].number_format == cm.cell(row, 6).number_format == reader.FMT_PCT
+    # five chips: four in the first row of the card, the fifth first in the row below (rows of four, as built); C2 is
+    # the right-hand card of the first pair
+    assert ws.cell(chip[0].row - 1, chip[0].column).value == "Net holder yield" and chip[0].column == H.RIGHT0
+    first = [c for r in ws.iter_rows() for c in r if c.column >= H.RIGHT0 and isinstance(c.value, str)
+             and c.value.startswith("=") and c.row == chip[0].row - 2]
+    assert len(first) == 4                                           # the band above holds the other four chips
+    _, res2 = run(over={"Morpho": {"hvy": 0.01}})
+    assert "zero" not in _said(res2, "C2")
+
+
+def _c9_rows(wb):
+    ws = wb["Highlights"]
+    X = H.xlcalc.Workbook(wb)
+    top = next(c.row for r in ws.iter_rows() for c in r if c.value == "Fairness league")
+    out = []
+    for c0 in (1, 10):
+        r = top + 2
+        while isinstance(ws.cell(r, c0).value, str) and ws.cell(r, c0).value.startswith("=Comparison!A"):
+            out.append((X.value("Highlights", r, c0), X.value("Highlights", r, c0 + 5), ws.cell(r, c0 + 5)))
+            r += 1
+    return top, out
+
+
+def test_p3_8_c9_lists_every_numeric_net_holder_yield_sorted_as_formulas_parked_left_out():
+    vals = {"A": -0.01, "B": 0.03, "C": "blocked", "D": -0.2, "E": None}
+    ranked, codes = H.c9_rank(vals)
+    assert ranked == [("B", 0.03), ("A", -0.01), ("D", -0.2)] and codes == [("C", "blocked"), ("E", None)]
+    assert H.c9_rank({"A": 1.0, "B": 2.0, "C": "n/a"}) is None                       # fewer than three numbers
+    wb, res = run()
+    top, rows = _c9_rows(wb)
+    names = [n for n, _, _ in rows]
+    vals = [v for _, v, _ in rows]
+    assert vals == sorted(vals, reverse=True) and len(rows) == 11
+    assert names[0] == "Sky" and names[-1] == "Aethir" and "World Mobile" not in names     # parked: 0.9 would top it
+    cm = wb[reader.COMPARISON]
+    for name, v, cell in rows:
+        assert cell.value.startswith("=Comparison!F") and cell.number_format == reader.FMT_PCT
+        assert cm[cell.value.split("!")[1]].value == v and cm.cell(cm[cell.value.split("!")[1]].row, 1).value == name
+    assert _said(res, "C9", "Reading").startswith("Reading: Net holder yield ranks what holders receive")
+    assert _said(res, "C9") == ("Caveat: Every project in the set has a number here; parked projects are in the "
+                                "coverage block only.")
+    assert "World Mobile" not in "\n".join(res["lines"])
+
+
+def test_p3_8_c9_caveat_names_a_few_codes_and_counts_many_by_formula():
+    few = {n: {"nhy": "blocked"} for n in ("Aethir", "Plume")}
+    few["Morpho"] = {"nhy": "n/a"}
+    _, res = run(over=few)
+    assert _said(res, "C9") == ("Caveat: Morpho (n/a), Aethir (blocked), and Plume (blocked) show a code instead of a "
+                                "number; see Comparison.")
+    assert H.c9_caveat([("Aethir", "blocked")])[0] == "Aethir (blocked) shows a code instead of a number; see Comparison."
+    many = {n: {"nhy": "blocked"} for n in ("Aethir", "Plume", "Morpho", "Ethereum", "Pendle", "Near")}
+    wb, res = run(over=many)
+    assert _said(res, "C9") == "Caveat: 6 projects show a code instead of a number; see Comparison."
+    ws = wb["Highlights"]
+    cell = next(c for r in ws.iter_rows() for c in r if isinstance(c.value, str) and c.value.startswith('="Caveat: "'))
+    assert "COUNTA(" in cell.value and cell.value.count("Comparison!F") == 6 and "World Mobile" not in cell.value
+    assert H.xlcalc.Workbook(wb).value("Highlights", cell.row, cell.column) == \
+        "Caveat: 6 projects show a code instead of a number; see Comparison."
+    assert not H.FORBIDDEN.search(cell.value) and not re.search(r"\d", cell.value.split("COUNTA(")[0])
+    _, rows = _c9_rows(wb)
+    assert [n for n, _, _ in rows] == ["Sky", "Fluid", "Uniswap", "Hyperliquid", "GEODNET"]
+
+
+def test_p3_8_c9_is_omitted_with_fewer_than_three_numbers_and_listed():
+    over = {n: {"nhy": "n/a"} for n in BASE if n not in ("Sky", "Fluid", "World Mobile")}
+    _, res = run(over=over, min_cards=1)
+    assert "C9" not in res["cards"]
+    o = next(o for o in res["omitted"] if o.startswith("C9"))
+    assert "fewer than 3" in o and "numeric=2" in o                     # World Mobile's 0.9 (parked) is not counted
+    assert any("omitted - C9 Fairness league" in ln for ln in res["lines"])
+
+
 def test_synthetic_card_conditions_decide_each_card():
     cases = {"C1": {"GEODNET": {"key": 0.5}}, "C2": {"Morpho": {"key": 9.0}}, "C3": {"Sky": {"nhy": -0.1}},
              "C4": {"Hyperliquid": {"key": 0.5}}, "C5": {"Uniswap": {"gro": 0.4}}, "C6": {"Fluid": {"key": 0.2}},
-             "C7": {"Hyperliquid": {"gro": 2.0}}}
+             "C7": {"Hyperliquid": {"gro": 2.0}},
+             # C9: two numeric Net holder yields left (Sky, Fluid), the rest codes - C3 still renders (Sky is highest)
+             "C9": {n: {"nhy": "blocked"} for n in BASE if n not in ("Sky", "Fluid", "World Mobile")}}
     for cid, over in cases.items():
         _, res = run(over=over, min_cards=1)
         assert cid not in res["cards"], (cid, res["cards"])
         assert any(o.startswith(cid) for o in res["omitted"]), (cid, res["omitted"])
-        assert len(res["cards"]) == 7, (cid, res["cards"], res["omitted"])
+        assert len(res["cards"]) == 8, (cid, res["cards"], res["omitted"])
 
 
 def test_synthetic_fewer_than_five_cards_raises_listing_each_failed_condition_with_values():
-    over = {"GEODNET": {"key": 0.5}, "Morpho": {"key": 9.0}, "Sky": {"nhy": -0.1}, "Hyperliquid": {"key": 0.5}}
+    over = {n: {"nhy": "n/a"} for n in BASE if n not in ("Sky", "Fluid")}      # C9: two numeric values, omitted
+    over.update({"GEODNET": {"key": 0.5, "nhy": "n/a"}, "Morpho": {"key": 9.0, "nhy": "n/a"}, "Sky": {"nhy": -0.1},
+                 "Hyperliquid": {"key": 0.5, "nhy": "n/a"}})
     with pytest.raises(H.HighlightsError) as e:
         run(over=over)                                                   # 4 render: C5, C6, C7, C8 -> short of 5
     msg = str(e.value)
-    assert "only 4 of 8" in msg and "5 are needed" in msg
-    for cid in ("C1 GEODNET", "C2 Morpho", "C3", "C4 Hyperliquid"):
+    assert "only 4 of 9" in msg and "5 are needed" in msg
+    for cid in ("C1 GEODNET", "C2 Morpho", "C3", "C4 Hyperliquid", "C9 Fairness league"):
         assert cid in msg, msg
+    assert "numeric=2" in msg
     assert "key=0.5" in msg and "needs key >= 1.0" in msg and "needs the Summary" not in msg
     assert "Cards that did: C5, C6, C7, C8" in msg
     run(over=over, min_cards=4)                                          # the floor is a parameter; 4 render
@@ -481,7 +677,7 @@ def test_synthetic_each_chip_carries_a_comment_naming_its_source_and_the_card_a_
     assert all(c.comment is None for c, s, k in cards if re.search(r"!A\d+$", c.value))            # project names
     assert any("Source: A2 Coordination, GEODNET" in c.comment.text for c in commented)
     links = [c.hyperlink for row in ws.iter_rows() for c in row if c.hyperlink is not None]
-    assert len(links) == 8 and all(h.location and "!A" in h.location for h in links)
+    assert len(links) == 9 and all(h.location and "!A" in h.location for h in links)
     assert {h.display for h in links} >= {"Open A2 Coordination", "Open A3 Revenue Buyback", "Open Summary",
                                           "Open Comparison"}
     assert all(h.display == f"Open {h.location.split('!')[0].strip(chr(39))}" for h in links)
@@ -748,7 +944,7 @@ def test_b_the_flag_writes_the_edition_with_highlights_first_and_no_second_audit
         assert (w[0], w[2]) == (v[0], v[2]), k
         assert w[1] == v[1] or (v[1] == reader.FMT_TOK and w[1] == charlie_look.TOKEN_FMT), (k, v[1], w[1])
     last = flagged["last"]
-    assert last["cards"] == ["C5", "C7", "C8"], last["cards"]        # the fixture holds other numbers than Jake's store
+    assert last["cards"] == ["C5", "C7", "C8", "C9"], last["cards"]        # the fixture holds other numbers than Jake's store
     why = {o.split(" ")[0] for o in last["omitted"]}
     assert why == {"C1", "C2", "C3", "C4", "C6"}, last["omitted"]
 
@@ -793,6 +989,6 @@ def test_d_the_production_floor_of_five_fails_on_the_fixture_numbers_and_lists_t
     with pytest.raises(H.HighlightsError) as e:
         H.add_highlights(wb, None)                                          # min_cards = 5
     msg = str(e.value)
-    assert "only 3 of 8" in msg and "5 are needed" in msg
+    assert "only 4 of 9" in msg and "5 are needed" in msg
     for cid in ("C1 GEODNET", "C2 Morpho", "C3", "C4 Hyperliquid", "C6 Fluid"):
         assert cid in msg, msg
