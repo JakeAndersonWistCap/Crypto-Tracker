@@ -2,9 +2,10 @@
 
 build_workbook writes the full workbook — every tab, every working column — which the daily run saves as
 token_metrics_audit.xlsx. This module derives token_metrics.xlsx from the same build, in memory: About, Summary, the
-four archetype tabs, Comparison, Business, Charts, Definitions, a hidden `_data` sheet holding every number the reader
-shows (each value cell is a formula on it), and a hidden `_series` sheet holding the daily series the period columns
-read, so a growth or price change follows the period selector — any period, custom included — and recalculates.
+four archetype tabs, Comparison, Business, Project notes (P3-6: the columns of one project's own mechanism), Charts,
+Definitions, a hidden `_data` sheet holding every number the reader shows (each value cell is a formula on it), and a
+hidden `_series` sheet holding the daily series the period columns read, so a growth or price change follows the
+period selector — any period, custom included — and recalculates.
 
 Cell rules (P1-2): a value cell holds a number, or one short code — n/a, blocked, not wired, by design, parked (and
 "unranked" or "secondary" in a rank column) — in the code's colour with the reason in its comment. Headers are at
@@ -18,6 +19,7 @@ from __future__ import annotations
 
 import csv
 import re
+from copy import copy
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -35,6 +37,7 @@ SERIES_SHEET = "_series"
 ABOUT, SUMMARY, DEFS = "About", "Summary", "Definitions"
 A1_TAB, A2_TAB, A3_TAB, A4_TAB = "A1 Infrastructure", "A2 Coordination", "A3 Revenue Buyback", "A4 Permanent Burn"
 COMPARISON, BUSINESS, CHARTS = "Comparison", "Business", "Charts"
+NOTES = "Project notes"                    # P3-6: after Business, before Charts
 CP_TAB = "CP Comparability"
 AUDIT_NAME = "token_metrics_audit.xlsx"
 READER_NAME = "token_metrics.xlsx"
@@ -844,6 +847,7 @@ def build_reader(wb, path, *, asof, groups: dict, headline_cells: list, projects
     ws_about.title = ABOUT
     tabs = [SUMMARY, A1_TAB, A2_TAB, A3_TAB, A4_TAB, COMPARISON, BUSINESS]
     wss = {t: out.create_sheet(t) for t in tabs}
+    ws_notes = out.create_sheet(NOTES)                     # P3-6: after Business, before Charts
     ws_charts = out.create_sheet(CHARTS)
     ws_def = out.create_sheet(DEFS)
     ws_data = out.create_sheet(DATA_SHEET)
@@ -857,6 +861,7 @@ def build_reader(wb, path, *, asof, groups: dict, headline_cells: list, projects
                                                                   for h in headline_cells}, sheets)
     keys = _archetype_keys(A, groups, projects, config, bw)
     ctx.keys = keys
+    ctx.notes = []
     _TIEBREAK.clear()                                      # P3-2b: ties on a key are broken by net holder yield
     _TIEBREAK.update(_net_holder_yields(A, projects))
     _write_summary(sheets[SUMMARY], ctx, keys)
@@ -864,10 +869,12 @@ def build_reader(wb, path, *, asof, groups: dict, headline_cells: list, projects
         _write_arch_tab(sheets[spec.tab], ctx, spec)
     _write_comparison(sheets[COMPARISON], ctx, keys)
     _write_business(sheets[BUSINESS], ctx)
+    sheets[NOTES] = _write_project_notes(ws_notes, ctx)
     chart_notes = _write_charts(ws_charts, ctx, keys)
     _write_definitions(ws_def, sheets)
     _write_about(ws_about, asof, sheets, projects)
-    blanks = _blank_unexplained(sheets)
+    blanks = (_blank_unexplained({k: v for k, v in sheets.items() if k != NOTES})
+              + _notes_blanks(sheets[NOTES]))
     if edition:                                            # P2g: additive, after every tab is written
         import charlie_edition                             # noqa: PLC0415
         charlie_edition.apply_edition(out, ctx, edition)
@@ -902,6 +909,7 @@ class Ctx:
     headlines: dict
     sheets: dict = None                     # reader tab -> Sheet (P2c-4: a parked headline's code is rewritten)
     keys: dict = None                       # _archetype_keys (P2e-1: the archetype tabs rank by the same keys)
+    notes: list = None                      # P3-6: the cells lifted off the archetype tabs for Project notes
 
     def p(self, name: str) -> dict:
         return next(p for p in self.projects if p["name"] == name)
@@ -1497,6 +1505,65 @@ def tab_specs(bw) -> list:
     ]
 
 
+# P3-6 (Jake 2026-11-02, "scale before adding"): the archetype-tab columns that measure ONE project's own mechanism —
+# at most one project holds a number in each — move to the Project notes tab, one block per project. Keys, ranks, the (c)
+# Trajectory block and generic columns (price, market cap, FDV, circulating, revenue/fees/TVL, emissions, unlocks,
+# generic yields) stay, even where sparse. docs/p3_6_project_notes_columns.md lists the same rows with the columns kept.
+# (reader tab, reader header, owning project, why it belongs to that project)
+PROJECT_NOTE_COLUMNS = (
+    (A1_TAB, "Consensus part of yield", "Ethereum", "Ethereum's validator yield split: the beacon chain (consensus "
+     "layer) part"),
+    (A1_TAB, "Execution part of yield", "Ethereum", "Ethereum's validator yield split: the execution layer (priority "
+     "fees and MEV) part"),
+    (A1_TAB, "Issuance ÷ protocol maximum", "Ethereum", "Ethereum's own issuance curve (166.32·√staked, "
+     "consensus-specs)"),
+    (A1_TAB, "Sky Savings Rate", "Sky", "Sky's own savings rate (sUSDS ssr()); one macro series, shown once under Sky"),
+    (A1_TAB, "NRR on settlement, full year", "Plume", "Plume's incentive season (Points Season 2) left in the NRR; "
+     "formed for Plume only"),
+    (A2_TAB, "Reserve inflow ÷ aggregator", "Chainlink", "The LINK Reserve's inflow against Chainlink's fee "
+     "aggregator"),
+    (A2_TAB, "Of which checker-node rewards", "Aethir", "Aethir's reward split: checker-node rewards"),
+    (A2_TAB, "Of which cloud host rewards", "Aethir", "Aethir's reward split: cloud host rewards"),
+    (A2_TAB, "Of which edge rewards", "Aethir", "Aethir's reward split: edge rewards"),
+    (A2_TAB, "Emissions earned, % a year", "Aethir", "Aethir's rewards earned and still vesting (a metric formed for "
+     "Aethir only); released emissions stay"),
+    (A2_TAB, "Of which aggregator payments", "Chainlink", "Chainlink's revenue split: fee aggregator payments"),
+    (A2_TAB, "Of which Direct Requests", "Chainlink", "Chainlink's revenue split: Direct Requests"),
+    (A2_TAB, "Of which CCIP fees", "Chainlink", "Chainlink's revenue split: CCIP fees"),
+    (A2_TAB, "Of which VRF payments", "Chainlink", "Chainlink's revenue split: VRF payments"),
+    (A2_TAB, "Of which Automation premium", "Chainlink", "Chainlink's revenue split: Automation premium"),
+    (A2_TAB, "Publisher Conviction ($)", "OriginTrail", "OriginTrail's Publisher Conviction (pre-purchased demand)"),
+    (A3_TAB, "Implied purchases, both legs ($)", "Sky", "Sky's two-leg buyback split (buy and burn)"),
+    (A3_TAB, "Implied burn ($)", "Sky", "Sky's two-leg buyback split: the burn leg"),
+    (A3_TAB, "Implied burn (tokens)", "Sky", "Sky's two-leg buyback split: the burn leg in tokens"),
+    (A3_TAB, "Implied minus actual burn (tokens)", "Sky", "Sky's burn leg against the chain"),
+    (A3_TAB, "Of which bought on-chain, 90 days", "Ether.fi", "Ether.fi's top-up Safe: the share bought on DEXs"),
+    (A3_TAB, "Of which bought on-chain, all time", "Ether.fi", "Ether.fi's top-up Safe: the share bought on DEXs, "
+     "all time"),
+    (A3_TAB, "Voter APR on voting power", "Aerodrome", "Aerodrome's veAERO voter APR"),
+    (A3_TAB, "Share paid to virtual balances", "Pendle", "Pendle's legacy vePENDLE boosts (virtual sPENDLE)"),
+    (A3_TAB, "Sky Savings Rate", "Sky", "Sky's own savings rate (sUSDS ssr())"),
+    (A3_TAB, "Still in old vePENDLE (tokens)", "Pendle", "Pendle's vePENDLE to sPENDLE migration"),
+    (A3_TAB, "sPENDLE + old vePENDLE (tokens)", "Pendle", "Pendle's vePENDLE to sPENDLE migration"),
+    (A3_TAB, "Umbrella staked (Aave, $)", "Aave", "Aave's Umbrella risk cover (not AAVE supply)"),
+)
+NOTE_OWNER = {(t, h): o for t, h, o, _w in PROJECT_NOTE_COLUMNS}
+
+
+def _note_cols(tab: str, cols: list, how: list) -> list:
+    """P3-6: the columns of archetype tab `tab` that move to Project notes (PROJECT_NOTE_COLUMNS), in tab order, each
+    with its owner — a quarter-change column right of a moved column moves with it."""
+    out = []
+    for i, (col, h) in enumerate(zip(cols, how)):
+        owner = NOTE_OWNER.get((tab, col.header))
+        if owner is None and i and h and h[0] == "trend" and col.block.startswith("(e)") and out \
+                and out[-1][0] is cols[i - 1]:
+            owner = out[-1][1]
+        if owner is not None:
+            out.append((col, owner))
+    return out
+
+
 A3_TRAJECTORY_ID = "a3_retire_vs_emissions"           # the A3 key's own trajectory row (P2e-2)
 # block (c)'s quarter labels (P2e-2: short, so a series' exact name fits a 35-character header beside them)
 TRAJ_LABELS = ("latest", "−1 qtr", "−2 qtrs", "−3 qtrs")
@@ -1947,7 +2014,12 @@ def _write_arch_tab(sh: Sheet, ctx: Ctx, spec: TabSpec) -> None:
     for axis in axis_label:
         for col, h in buckets[axis]:
             add(col, h)
-    sh.cols = cols
+    # P3-6: a column that belongs to one project's mechanism is written exactly as before (the same writers, in the same
+    # order, so `_data` and every formula are unchanged) but placed at the right of the tab, then lifted out to the
+    # Project notes tab (_lift_notes) — the columns that stay keep their letters
+    moved = _note_cols(tab, cols, how)
+    moved_ids = {id(c) for c, _o in moved}
+    sh.cols = [c for c in cols if id(c) not in moved_ids] + [c for c, _o in moved]
     ws.cell(1, 1, spec.title).font = F_TITLE
     ws.cell(2, 1, "Blocks: (a) rank key · (b) valuation · (c) the last four quarters, the key first · (d) drivers · "
             "(e) more, "
@@ -2066,7 +2138,7 @@ def _write_arch_tab(sh: Sheet, ctx: Ctx, spec: TabSpec) -> None:
                           "@burn": config.a4_burn_metric(name), "@issuance": config.issuance_basis(name)
                           }.get(h[1], h[1])
                 _period_formula_cell(sh, ctx, row, col, name, metric, h[2], col.header.split(",")[0].lower())
-                period_cols.append(j + 1)
+                period_cols.append(_idx(sh, col))
             elif kind == "keytraj":
                 _put_key_quarter(sh, data, row, col, name, tab, h[1], h[2], tget(name, h[1]),
                                  sh.ws.cell(row, _idx(sh, cols[2])), pdays)
@@ -2093,7 +2165,7 @@ def _write_arch_tab(sh: Sheet, ctx: Ctx, spec: TabSpec) -> None:
                 if k2 in ("ok", "modelled", "t12m"):
                     put_number(sh, data, row, col, name, f"qchg|{tab}|{h[1]}", v,
                                FILL_MODELLED if k2 == "modelled" else None, why)
-                    trend_cols.append(j + 1)
+                    trend_cols.append(_idx(sh, col))
                 else:
                     put_code(sh, row, col, k2, why)
         if parked:                          # P2e-5: one code on a parked row — the rank block reads "parked"
@@ -2101,14 +2173,64 @@ def _write_arch_tab(sh: Sheet, ctx: Ctx, spec: TabSpec) -> None:
                 if col.block == "(a) Rank key" or (h or ("",))[0] == "keytraj" or col.header == KEY_CHANGE_HEADER:
                     park_cell(sh, f"{col.letter}{row}", name)
             grey_row(sh, row)
+    kept = len(sh.cols) - len(moved)
+    if moved:
+        _lift_notes(sh, ctx, tab, moved, kept, set(trend_cols), set(period_cols))
     last = 4 + len(order)
-    for c in sorted(set(trend_cols)):
+    for c in sorted(c for c in set(trend_cols) if c <= kept):
         L = get_column_letter(c)
         icon_arrows(ws, f"{L}5:{L}{last}")
-    for c in sorted(set(period_cols)):
+    for c in sorted(c for c in set(period_cols) if c <= kept):
         L = get_column_letter(c)
         code_style(ws, f"{L}5:{L}{last}")
     ws.sheet_properties.outlinePr.summaryRight = False
+
+
+def _cell_count(sh: Sheet, v, sign: int) -> None:
+    """Count a value cell as the writers count it: a formula or number, a code, else a text."""
+    if isinstance(v, (int, float)) or (isinstance(v, str) and v.startswith("=")):
+        sh.numbers += sign
+    elif isinstance(v, str) and v in CODES:
+        sh.codes += sign
+    elif v is not None:
+        sh.texts += sign
+
+
+def _lift_notes(sh: Sheet, ctx, tab: str, moved: list, kept: int, trend_cols: set, period_cols: set) -> None:
+    """P3-6: lift the moved columns (the last len(moved) of the tab, written as every other column) off the archetype
+    tab. The owning project's cell — value or formula, number format, font, fill, alignment, comment — is kept for the
+    Project notes tab (ctx.notes); a headline read there follows it; the other rows' cells go with the column."""
+    ws = sh.ws
+    rows = {ws.cell(r, 1).value: r for r in sh.value_rows}
+    lifted = {}
+    for k, (col, owner) in enumerate(moved):
+        ci = kept + 1 + k
+        r = rows.get(owner)
+        snap = None
+        if r is not None:
+            c = ws.cell(r, ci)
+            snap = {"value": c.value, "number_format": c.number_format, "font": copy(c.font), "fill": copy(c.fill),
+                    "alignment": copy(c.alignment),
+                    "comment": (c.comment.text, c.comment.width, c.comment.height) if c.comment else None}
+        cf = "arrows" if ci in trend_cols else "code_style" if ci in period_cols else ""
+        entry = {"tab": tab, "col": col, "owner": owner, "cell": snap, "cf": cf, "headlines": [],
+                 "coord": f"{get_column_letter(ci)}{r}" if r is not None else None}
+        ctx.notes.append(entry)
+        lifted[get_column_letter(ci)] = entry
+        for r2 in sh.value_rows:
+            _cell_count(sh, ws.cell(r2, ci).value, -1)
+    for key, (s, cell) in list(HEADLINE_LOCATIONS.items()):
+        e = lifted.get(re.match(r"[A-Z]+", cell).group(0)) if s == tab else None
+        if e is None:
+            continue
+        del HEADLINE_LOCATIONS[key]                        # read on the audit file — or at its Project notes cell
+        if cell == e["coord"]:
+            e["headlines"].append(key)
+    ws.delete_cols(kept + 1, len(moved))
+    for L in lifted:
+        if L in ws.column_dimensions:
+            del ws.column_dimensions[L]
+    sh.cols = sh.cols[:kept]
 
 
 TREND_SHORT = {
@@ -2324,6 +2446,120 @@ def _write_business(sh: Sheet, ctx: Ctx) -> None:
     last = 4 + len(order)
     for col in period_cols:
         code_style(ws, f"{col.letter}5:{col.letter}{last}")
+
+
+NOTES_HEADERS = (("Project and column", "A project's name (its block), then each column that belongs to that project's "
+                  "own mechanism — the column's header on the archetype tab it came from. Hover a column's name for "
+                  "its full definition and source.", 36),
+                 ("Value", "The project's cell, moved from the archetype tab unchanged: the same formula on the same "
+                  "source, number format, fill (confidence) and comment — or the same code with its reason.", 16),
+                 ("Definition", "What the column measures (the first sentence of its definition) and the tab it was "
+                  "on.", 90))
+
+
+def _short_definition(col: Col, tabs: list) -> str:
+    d = plain(col.definition).strip() or col.header
+    first = re.split(r"(?<=[.;])\s(?=[A-Z])", d, maxsplit=1)[0].rstrip(".; ")       # not inside "(incl. vesting"
+    if len(first) > 200:
+        first = first[:197].rstrip() + "…"
+    return f"{first}. Moved from {' and '.join(tabs)}."
+
+
+def _write_project_notes(ws, ctx: Ctx) -> Sheet:
+    """P3-6: the Project notes tab — one block per project: a project row, then one row per column that belongs to that
+    project's own mechanism (PROJECT_NOTE_COLUMNS): label | value | short definition. The value is the cell the archetype
+    tab wrote (_lift_notes), unchanged. A column on two tabs with one source (the Sky Savings Rate) is one row; both
+    audit columns map to it. Returns the tab's Sheet: its cols are the moved columns, each `letter` its value cell."""
+    sh = Sheet(ws)
+    pmap = {p["name"]: p for p in ctx.projects}
+    blocks: dict = {}
+    for e in ctx.notes or []:
+        blocks.setdefault(e["owner"], {}).setdefault(e["col"].header, []).append(e)
+    ws.cell(1, 1, "Project notes — the columns that belong to one project's own mechanism").font = F_TITLE
+    ws.cell(2, 1, "One block per project. Each value is the project's cell from its archetype tab, moved here unchanged "
+            "(the same formula, format, fill and comment). Hover a name for its definition, a value for its "
+            "source.").font = F_SUB
+    for i, (h, d, w) in enumerate(NOTES_HEADERS, start=1):
+        assert len(h) <= MAX_HEADER, h
+        c = ws.cell(4, i, h)
+        c.font, c.fill = F_HEAD, FILL_HEAD
+        c.alignment = Alignment(wrap_text=True, vertical="top")
+        c.comment = _comment(d)
+        ws.column_dimensions[get_column_letter(i)].width = w
+    ws.row_dimensions[4].height = 30
+    ws.freeze_panes = "B5"
+    order = sorted(blocks, key=lambda n: (bool(parked_reason(n)), _primary(pmap[n]) if n in pmap else 9, n))
+    r = 5
+    for name in order:
+        p = pmap.get(name, {})
+        why = parked_reason(name)
+        a = ws.cell(r, 1, name)
+        a.font = F_BOLD
+        if why:
+            a.comment = _comment(why)
+        b = ws.cell(r, 2, p.get("symbol") or "—")
+        b.font, b.number_format = F_BOLD, TEXT_FMT
+        c = ws.cell(r, 3, f"Primary archetype: {ARCHETYPE_NAMES.get(_primary(p), 'none')}"
+                    + (" — parked: shown with its numbers, outside the ranks" if why else ""))
+        c.font, c.number_format = F_BOLD, TEXT_FMT
+        sh.texts += 3
+        sh.value_rows.append(r)
+        r += 1
+        for header, es in blocks[name].items():
+            src = next((e for e in es if e["cell"] is not None), None)
+            col = (src or es[0])["col"]
+            lab = ws.cell(r, 1, header)
+            lab.font, lab.number_format = F_BODY, TEXT_FMT
+            lab.alignment = Alignment(indent=1)
+            lab.comment = _comment((plain(col.definition) + (f"\n\nSource: {col.source}." if col.source else ""))[:2400])
+            v = ws.cell(r, 2)
+            if src is not None:
+                s = src["cell"]
+                v.value, v.number_format = s["value"], s["number_format"]
+                v.font, v.fill, v.alignment = copy(s["font"]), copy(s["fill"]), copy(s["alignment"])
+                if s["comment"]:
+                    v.comment = _comment(s["comment"][0], s["comment"][1], s["comment"][2])
+                _cell_count(sh, v.value, 1)
+                if src["cf"] == "arrows":
+                    icon_arrows(ws, f"B{r}:B{r}")
+                elif src["cf"] == "code_style":
+                    code_style(ws, f"B{r}:B{r}")
+            else:
+                v.value = "n/a"
+                v.font = Font(name=FONT, size=9, italic=True, color=CODES["n/a"])
+                v.alignment = Alignment(horizontal="right")
+                v.comment = _comment(f"{header} for {name}: no row for {name} on {', '.join(e['tab'] for e in es)}, "
+                                     "so the column holds no cell for it.")
+                sh.codes += 1
+            d = ws.cell(r, 3, _short_definition(col, list(dict.fromkeys(e["tab"] for e in es))))
+            d.font, d.number_format = F_BODY, TEXT_FMT
+            d.alignment = Alignment(wrap_text=True, vertical="top")
+            for e in es:
+                e["col"].letter = f"B{r}"
+                e["row"] = r
+                sh.cols.append(e["col"])
+                for key in e["headlines"]:
+                    HEADLINE_LOCATIONS[key] = (NOTES, f"B{r}")
+            sh.value_rows.append(r)
+            r += 1
+    if not order:
+        ws.cell(5, 1, "No column on this build belongs to one project only.").font = F_BODY
+    return sh
+
+
+def _notes_blanks(sh: Sheet) -> list:
+    """Project notes: every project and column row holds its label, its value (a number, a formula, a text or a code
+    with its reason) and its definition — no blank cell."""
+    out = []
+    for r in sh.value_rows:
+        for c in (1, 2, 3):
+            cell = sh.ws.cell(r, c)
+            v = cell.value
+            if v is None or (isinstance(v, str) and not v.strip()):
+                out.append(f"{NOTES}!{cell.coordinate} ({sh.ws.cell(r, 1).value})")
+            elif isinstance(v, str) and v in CODES and not (cell.comment and cell.comment.text.strip()):
+                out.append(f"{NOTES}!{cell.coordinate} ({sh.ws.cell(r, 1).value}): code without a reason")
+    return out
 
 
 # P3-3c (Jake 2026-11-02): TVL change at START-OF-WINDOW prices — config METRICS protocol_tvl_cp_window_ratio / _coverage
@@ -2584,8 +2820,12 @@ def _write_definitions(ws, sheets: dict) -> None:
         c = ws.cell(3, i, h)
         c.font, c.fill = F_HEAD, FILL_HEAD
     r = 4
+    seen = set()
     for name, sh in sheets.items():
         for col in sh.cols:
+            if (name, col.letter) in seen:              # P3-6: one Project notes row for a column on two tabs
+                continue
+            seen.add((name, col.letter))
             fmt = {FMT_USD: "$ ($m / $bn)", FMT_PCT: "%", FMT_X: "x", FMT_TOK: "number", FMT_RANK: "rank",
                    FMT_PRICE: "$", TEXT_FMT: "text"}.get(col.fmt, col.fmt)
             for i, v in enumerate((name, col.letter, col.header, plain(col.definition), fmt, col.source), start=1):
@@ -2629,6 +2869,9 @@ def _write_about(ws, asof, sheets: dict, projects: list) -> None:
         A4_TAB: "the permanent-burn tokens: burn against issuance (or against release for a pre-minted supply).",
         COMPARISON: "every project on the figures that mean the same for each, sorted by net holder yield.",
         BUSINESS: "fees, revenue, TVL and each project's own unit of demand, with growth over the selected period.",
+        NOTES: "the columns that belong to one project's own mechanism (Chainlink's revenue split, Aethir's reward "
+               "split, vePENDLE, Umbrella, the Sky Savings Rate …), one block per project, each cell as it was on its "
+               "archetype tab.",
         CHARTS: "four charts on the same numbers: the keys against 1.0x, holder value against dilution, revenue "
                 "against market cap, net supply change.",
         DEFS: "every column's full definition and where its numbers come from.",
@@ -2780,8 +3023,10 @@ def _write_column_map(path: Path, A: Audit, sheets: dict) -> None:
                 hits = placed.get((sheet, c))
                 if hits:
                     for rt, rl, rh in hits:
-                        rows.append((AUDIT_NAME, sheet, L, h, READER_NAME, rt, rl, rh, "moved (also kept "
-                                     "on the audit file)"))
+                        rows.append((AUDIT_NAME, sheet, L, h, READER_NAME, rt, rl, rh,
+                                     "moved to Project notes, its project's block — one project's own mechanism, "
+                                     "P3-6 (also kept on the audit file)" if rt == NOTES else
+                                     "moved (also kept on the audit file)"))
                     continue
                 if h.startswith("Detail — "):
                     why = "audit file; a detail line (to Project View)"

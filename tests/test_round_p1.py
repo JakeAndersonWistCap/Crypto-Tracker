@@ -57,7 +57,8 @@ def built(tmp_path_factory):
 def test_p1_1_two_files_the_reader_tabs_in_order_and_the_audit_file_whole(built):
     r = openpyxl.load_workbook(built["reader"])
     assert r.sheetnames == ["About", "Summary", "A1 Infrastructure", "A2 Coordination", "A3 Revenue Buyback",
-                            "A4 Permanent Burn", "Comparison", "Business", "Charts", "Definitions", "_data", "_series"]
+                            "A4 Permanent Burn", "Comparison", "Business", "Project notes", "Charts", "Definitions",
+                            "_data", "_series"]
     assert r["_data"].sheet_state == "hidden"
     a = openpyxl.load_workbook(built["audit"], read_only=True)
     for tab in ("Master", "A1 Infrastructure", "A2 Coordination", "A3 Revenue Buyback", "A4 Permanent Burn",
@@ -352,7 +353,8 @@ def _col_of(ws, header):
 def test_p2a_tabs_in_order_and_nothing_blank(built):
     r = openpyxl.load_workbook(built["reader"])
     assert r.sheetnames == ["About", "Summary", "A1 Infrastructure", "A2 Coordination", "A3 Revenue Buyback",
-                            "A4 Permanent Burn", "Comparison", "Business", "Charts", "Definitions", "_data", "_series"]
+                            "A4 Permanent Burn", "Comparison", "Business", "Project notes", "Charts", "Definitions",
+                            "_data", "_series"]
     assert r["_data"].sheet_state == r["_series"].sheet_state == "hidden"
     assert built["stats"]["blank_unexplained"] == 0, built["stats"]["blank_cells"]
     for tab in ("Summary", "A1 Infrastructure", "A2 Coordination", "A3 Revenue Buyback", "A4 Permanent Burn",
