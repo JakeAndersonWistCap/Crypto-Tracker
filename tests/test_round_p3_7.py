@@ -244,6 +244,7 @@ if dummy in config.PROJECT_BY_NAME:
     st = sm.Store(str(db))
     from fetch import gaps, registry_reasons
     rows = gaps.detect([config.PROJECT_BY_NAME[dummy]], st.load_long(), set(), registry_reasons(), [])
+    rows = [r for r in rows if r["project"] == dummy]     # detect also re-emits every project's open questions
     run, ts = con.execute("SELECT run_id, ts FROM gap_report ORDER BY ts DESC, rowid DESC LIMIT 1").fetchone()
     st.close()
     # the dummy's rows join the latest run's report (as a run would write them), so every other row stays the report
