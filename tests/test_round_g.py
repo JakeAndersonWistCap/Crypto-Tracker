@@ -872,12 +872,16 @@ def test_g2_7_alchemy_errors_never_carry_the_key(monkeypatch):
 
 def test_g2_7_the_alchemy_probe_opens_the_transfer_route_and_wires_the_base_scans(monkeypatch):
     import copy
-    saved = {n: copy.deepcopy(config.PROJECT_BY_NAME[n].get("log_scans")) for n in ("Fluid", "Pendle")}
+    saved = {n: copy.deepcopy(config.PROJECT_BY_NAME[n].get("log_scans")) for n in ("Fluid", "Pendle", "Morpho")}
     em, fb = config.PROJECT_BY_NAME["Pendle"].get("emissions_from_metric"), config.OUTFLOW_CATEGORIES["Fluid"]["b"]
     routes, troutes = copy.deepcopy(config.EXPLORER_LOG_ROUTES), copy.deepcopy(config.EXPLORER_TRANSFER_ROUTES)
     try:
         wired = config.wire_probed_scans({"served": [], "alchemy": {"probed_on": "2026-10-18", "served": [8453]}})
-        assert set(wired) == {"gauge_pendle_out_base", "merkle_rewards_out_base"}
+        # G2-D1b added Morpho's Base claims scan to the same probe list; already wired keys are left alone, so a
+        # suite run where an earlier test wired it sees only the other two
+        already = {sp.get("key") for sp in saved["Morpho"] or ()}
+        assert set(wired) == {"gauge_pendle_out_base", "merkle_rewards_out_base"} | (
+            set() if "merkl_morpho_out_base" in already else {"merkl_morpho_out_base"})
         assert config.EXPLORER_TRANSFER_ROUTES[8453] == ["alchemy"] and config.EXPLORER_LOG_ROUTES.get(8453) == []
         sp = next(s for s in config.PROJECT_BY_NAME["Fluid"]["log_scans"] if s["key"] == "merkle_rewards_out_base")
         assert "Alchemy Transfers API chain 8453" in sp["route"] and sp["wired_on"] == "2026-10-18"
