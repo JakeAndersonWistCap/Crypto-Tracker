@@ -354,6 +354,7 @@ class SeriesSheet:
         self.last = self.FIRST + SERIES_YEARS_BACK
         self.cols: dict = {}
         self.meta: dict = {}
+        self.subs: dict = {}                # column -> [(excluded day serial, the kept day read instead)] (P3-A2)
         ws.cell(1, 1, "days in the selected period")
         ws.cell(1, 2, _days_formula())
         ws.cell(2, 1, "series")
@@ -367,8 +368,10 @@ class SeriesSheet:
     def dates(self) -> str:
         return f"{SERIES_SHEET}!$A${self.FIRST}:$A${self.last}"
 
-    def add(self, key: str, s: pd.Series, complete_only: bool = False) -> str | None:
-        """The series' column letter (written once per key), or None when nothing is held in the window."""
+    def add(self, key: str, s: pd.Series, complete_only: bool = False, excluded=()) -> str | None:
+        """The series' column letter (written once per key), or None when nothing is held in the window. `excluded`
+        (P3-A2, stocks): the [(day, value, ...)] one-day prints the build left out of `s` — not written; a period end
+        point on one reads the nearest kept day before it (end_point_subs)."""
         if key in self.cols:
             return self.cols[key]
         s = s[(s.index >= self.start) & (s.index <= self.asof)]
@@ -386,8 +389,11 @@ class SeriesSheet:
         for d, v in s.items():
             ws.cell(self.FIRST + (pd.Timestamp(d).normalize() - self.start).days, c, float(v))
         full = pd.date_range(s.index.min(), s.index.max())
+        ex = [(pd.Timestamp(d).normalize(), float(v)) for d, v, *_ in excluded
+              if s.index.min() <= pd.Timestamp(d).normalize() <= s.index.max()]
+        self.subs[L] = end_point_subs(s, [d for d, _v in ex])
         self.meta[key] = {"first": s.index.min(), "last": s.index.max(), "n": len(s),
-                          "holes": len(full) - len(s.index.normalize().unique())}
+                          "holes": len(full) - len(s.index.normalize().unique()) - len(ex), "excluded": ex}
         return L
 
     def vals(self, L: str) -> str:
@@ -406,10 +412,14 @@ class SeriesSheet:
         return f'IF({held}<2*{N},"n/a",IF({prev}=0,"n/a",{cur}/{prev}-1))'
 
     def stock_change(self, L: str) -> str:
-        """value on the last day held ÷ value N days earlier − 1 (both days held), else n/a."""
+        """value on the last day held ÷ value N days earlier − 1 (both days held), else n/a. P3-A2: where N days earlier
+        is a one-day print the build excluded, the nearest kept day before it is the end point (self.subs)."""
         D, V, E, N = self.dates, self.vals(L), self.end(L), DAYS_REF
         now = f"INDEX({V},MATCH({E},{D},0))"
-        then = f"INDEX({V},MATCH({E}-{N},{D},0))"
+        day = f"{E}-{N}"
+        for x, k in reversed(self.subs.get(L) or ()):
+            day = f"IF({E}-{N}={x},{k},{day})"
+        then = f"INDEX({V},MATCH({day},{D},0))"
         return f'IFERROR(IF(AND(ISNUMBER({now}),ISNUMBER({then})),IF({then}=0,"n/a",{now}/{then}-1),"n/a"),"n/a")'
 
     def describe(self, key: str) -> str:
@@ -417,7 +427,20 @@ class SeriesSheet:
         if not m:
             return "no daily series held"
         holes = f", {m['holes']:,} day(s) with no row" if m["holes"] else ""
-        return f"held {m['first'].date()}..{m['last'].date()} ({m['n']:,} days{holes})"
+        ex = f", {len(m['excluded']):,} one-day print(s) excluded" if m.get("excluded") else ""
+        return f"held {m['first'].date()}..{m['last'].date()} ({m['n']:,} days{holes}{ex})"
+
+
+def end_point_subs(s: pd.Series, excluded) -> list[tuple[int, int]]:
+    """[(serial of an excluded day, serial of the nearest kept day before it)] (P3-A2): a period's end point on a one-day
+    print the build excluded reads the nearest kept day on or before it — the audit's at-or-before rule for a stock's
+    value at a date (build_workbook._at_or_before). None before it: no substitute (the change reads n/a)."""
+    out = []
+    for d in sorted(excluded):
+        before = s[s.index < d]
+        if len(before):
+            out.append((excel_serial(d), excel_serial(before.index.max())))
+    return out
 
 
 def _days_formula() -> str:
@@ -459,12 +482,17 @@ def revenue_growth(s: pd.Series, days: int, asof: pd.Timestamp) -> tuple[float |
     return a / b - 1, f"{w1[0].date()}..{end.date()} against {w0[0].date()}..{w0[-1].date()}"
 
 
-def price_change(s: pd.Series, days: int, asof: pd.Timestamp) -> tuple[float | None, str]:
+def price_change(s: pd.Series, days: int, asof: pd.Timestamp, excluded=()) -> tuple[float | None, str]:
+    """(value on the last day held ÷ value `days` earlier − 1, why not) — SeriesSheet.stock_change in Python. `excluded`
+    (P3-A2): the one-day prints the build left out of `s`; an end point on one reads the nearest kept day before it."""
     s = s[s.index <= asof.normalize()]
     if s.empty:
         return None, "no price series"
     end = s.index.max()
     then = end - pd.Timedelta(days=days)
+    if then not in s.index and then in {pd.Timestamp(d).normalize() for d, *_ in excluded}:
+        before = s[s.index < then]
+        then = before.index.max() if len(before) else then
     if then not in s.index:
         return None, f"no price on {then.date()}; the series is held from {s.index.min().date()}"
     p0 = float(s.loc[then])
@@ -919,8 +947,7 @@ def _archetype_keys(A: Audit, groups, projects, config, bw) -> dict:
 def _period_formula_cell(sh: Sheet, ctx: Ctx, row: int, col: Col, name: str, metric: str, kind: str, label: str,
                          fill=None, extra: str = "") -> str:
     """A selected-period growth (flow) or change (stock) of the stored daily series, as a formula on _series."""
-    s = _series(ctx.groups, name, metric)
-    L = ctx.ser.add(f"{name}|{metric}", s, complete_only=(kind == "flow"))
+    L = _held_series(ctx, name, metric, kind)
     drow = ctx.A.data_row(f"{name}|{metric}")
     where = f"audit file, Data!A{drow} ({name}|{metric})" if drow else f"the stored series {name}|{metric}"
     if L is None:
@@ -933,8 +960,28 @@ def _period_formula_cell(sh: Sheet, ctx: Ctx, row: int, col: Col, name: str, met
     return put_formula(sh, row, col, "=" + body, fill,
                        f"{label[:1].upper()}{label[1:]}, change over the selected period (cell B2 on Summary; N days): "
                        f"{how}. n/a when the history is shorter or a day is missing. The series is "
-                       f"{ctx.ser.describe(f'{name}|{metric}')}." + (f"\n\n{extra}" if extra else "")
-                       + f"\n\nWorking: {where}.")
+                       f"{ctx.ser.describe(f'{name}|{metric}')}." + _excluded_note(ctx, name, metric, kind)
+                       + (f"\n\n{extra}" if extra else "") + f"\n\nWorking: {where}.")
+
+
+def _held_series(ctx: Ctx, name: str, metric: str, kind: str) -> str | None:
+    """The `_series` column of a stored daily series (SeriesSheet.add), a stock's excluded one-day prints with it."""
+    ex = (getattr(ctx.bw, "BAD_PRINTS", {}) or {}).get((name, metric), ()) if kind == "stock" else ()
+    return ctx.ser.add(f"{name}|{metric}", _series(ctx.groups, name, metric), complete_only=(kind == "flow"),
+                       excluded=ex)
+
+
+def _excluded_items(ctx: Ctx, name: str, metric: str, kind: str) -> str:
+    """P3-A2: the one-day prints of this stock the build excluded on the days `_series` holds — any of them a period
+    could have read — each 'one-day print excluded: <date> <value>'; '' when none (and for every flow)."""
+    ex = (ctx.ser.meta.get(f"{name}|{metric}") or {}).get("excluded") or [] if kind == "stock" else []
+    return ctx.bw.bad_print_text([(str(d.date()), v) for d, v in ex]) if ex else ""
+
+
+def _excluded_note(ctx: Ctx, name: str, metric: str, kind: str) -> str:
+    items = _excluded_items(ctx, name, metric, kind)
+    return (f"\n\n{items}. (A value more than 25% off both neighbouring stored days, which agree within 5%, is read by "
+            "nothing; a period starting on it reads the nearest kept day before it.)") if items else ""
 
 
 def _revenue_metric(config, name: str) -> str:
@@ -1286,14 +1333,14 @@ def _what_changed(sh, ctx: Ctx, row: int, col: Col, p: dict) -> None:
     for label, metric, kind in WHAT_CHANGED:
         m = {"@revenue": _revenue_metric(config, name), "@fees": config.fees_headline_metric(name),
              "@tvl": _tvl_metric(p)}.get(metric, metric)
-        s = _series(ctx.groups, name, m)
-        L = ctx.ser.add(f"{name}|{m}", s, complete_only=(kind == "flow"))
+        L = _held_series(ctx, name, m, kind)
         if L is None:
             continue
         body = ctx.ser.flow_growth(L) if kind == "flow" else ctx.ser.stock_change(L)
         ref = data.put(name, f"chg|{label}", "=" + body)
         parts.append(f'IF(ISNUMBER({ref}),IF(ABS({ref})>{MOVE_THRESHOLD},"{label} "&TEXT({ref},"+0%;-0%")&" · ",""),"")')
-        used.append(f"{label} ({name}|{m})")
+        ex = _excluded_items(ctx, name, m, kind)
+        used.append(f"{label} ({name}|{m})" + (f" [{ex}]" if ex else ""))
     if not parts:
         put_text(sh, row, col, "no daily series held", "No daily series is held for this project.")
         return
