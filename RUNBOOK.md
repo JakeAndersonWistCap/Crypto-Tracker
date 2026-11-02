@@ -625,6 +625,13 @@ those days, Ethereum's P2P leg (on the days whose BigQuery answer is cached; the
 plain run's weekly turn and valued then), Uniswap's issuance (d(total_supply_gross)) and Sky's declared-zero issuance.
 Then `python token_metrics.py --no-fetch --edition charlie`.
 
+## 11dj. Done check (P3-5)
+
+`python done_check.py` (add `--verbose` for every blocker; `--reader`, `--audit`, `--asof YYYY-MM-DD` as in friday_check)
+is read-only and prints one line per project, `<project> | READY / NOT READY / PARKED | <tab>: <header> — <code>: <reason>`
+(at most 5 blockers, then "and N more"), then `DONE CHECK: <r> READY, <n> NOT READY, <p> PARKED`. Exit code 1 when any
+project is NOT READY, else 0. `python done_check.py --help` says what counts as an allowed code and as a clear-by date.
+
 
 ## 11dh. Friday pre-mortem — if X, do Y
 
