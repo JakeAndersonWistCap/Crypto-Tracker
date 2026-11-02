@@ -1,8 +1,8 @@
 """charlie_highlights.py - THE "HIGHLIGHTS" FIRST TAB OF THE CHARLIE EDITION (P2g-3, Jake 2026-10-29).
 
 docs/charlie_edition_spec.md section 2. `add_highlights(wb, ctx)` adds one sheet to the reader workbook being built:
-a title, the as-of line and two lines copied from About, up to eight cards (C1..C8), a coverage block and one closing
-line. Additive only: nothing on any existing tab is read for anything but its values, and nothing there is written.
+a title, the as-of line and two lines copied from About, up to nine cards (C1..C9; C9 "Fairness league" added in P3-8),
+a coverage block and one closing line. Additive only: nothing on any existing tab is read for anything but its values, and nothing there is written.
 
   * Every number on the tab is a FORMULA pointing at the reader cell it quotes. The cell is found at build time by tab +
     project row + header text (Lookup.ref), never by a typed address; it carries the source cell's number format, its
@@ -12,8 +12,11 @@ line. Additive only: nothing on any existing tab is read for anything but its va
     every failed condition with its values. The condition functions (c1_holds ... c8_split) are plain functions of
     numbers, unit-tested on their own.
   * Parked projects (reader.parked_reason) are in no card and no mini-table; they are listed in the coverage block only.
-  * Text is fixed. Where a sentence adds a clause, the clause's condition is evaluated here from the quoted cells.
-    No number is typed into any sentence, and no word refers to an earlier build (FORBIDDEN, scanned by the tests).
+  * Text is fixed. Where a sentence adds a clause, the clause's condition is evaluated here from the quoted cells
+    (P3-8: every clause that states a fact about a cell - "net holder yield is negative", "narrowed over three
+    quarters", "revenue grew", "subsidy cover is high", "the A4 key is n/a / blocked" - is shown only when true).
+    No number is typed into any sentence (C9's count of projects with a code is a COUNTA formula on their cells), and
+    no word refers to an earlier build (FORBIDDEN, scanned by the tests).
   * Fill is never used for decoration: font colour, borders and bars only.
 """
 from __future__ import annotations
@@ -139,6 +142,131 @@ def c8_split(values: dict):
         return None
     asc = sorted(vals, key=lambda t: t[1])
     return asc[:3], sorted(vals, key=lambda t: -t[1])[:3]
+
+
+C9_MIN = 3                  # C9 renders when at least this many non-parked projects have a numeric Net holder yield
+C9_NAME_CODES = 5           # up to this many projects with a code are named in C9's caveat; more are counted
+
+
+def c9_rank(values: dict):
+    """C9: ([(project, value)] highest first, [(project, code)] in row order) over the projects given (already
+    non-parked); None when fewer than C9_MIN have a number. Equal values keep row order."""
+    nums = [(n, num(v)) for n, v in values.items()]
+    ranked = sorted([(n, v) for n, v in nums if v is not None], key=lambda t: -t[1])
+    if len(ranked) < C9_MIN:
+        return None
+    codes = [(n, values[n]) for n, v in nums if v is None]
+    return ranked, codes
+
+
+# =============================================================================================== conditional clauses
+# P3-8: a clause that states a fact about a quoted cell is shown only when the cell bears it out at build time.
+HIGH_COVER = 2.0            # "subsidy cover is high": Comparison Subsidy cover (x) at or above 2.0x
+
+
+def is_negative(v) -> bool:
+    """A number below 0 (a code, blank or error is not)."""
+    n = num(v)
+    return n is not None and n < 0
+
+
+def narrowed(latest, q1, q2, q3) -> bool:
+    """The key fell in every quarter shown: latest < -1q < -2q < -3q, all numbers."""
+    k, a, b, c = num(latest), num(q1), num(q2), num(q3)
+    return None not in (k, a, b, c) and k < a < b < c
+
+
+def join_clauses(clauses: list, cap: bool = True) -> str:
+    """'a', 'a and b', 'a, b, and c' - the first letter capitalised unless `cap` is False; '' for none."""
+    cl = [c for c in clauses if c]
+    if not cl:
+        return ""
+    s = cl[0] if len(cl) == 1 else (" and ".join(cl) if len(cl) == 2 else ", ".join(cl[:-1]) + ", and " + cl[-1])
+    return s[0].upper() + s[1:] if cap else s
+
+
+def c1_caveat(nhy) -> str:
+    """C1's caveat: the negative net holder yield only when the Comparison cell is a number below 0."""
+    if is_negative(nhy):
+        return "Net holder yield is negative: dilution exceeds what reaches holders."
+    return "The key sets customer revenue against emissions; what reaches holders is the holder value yield."
+
+
+def c2_reading(rev, hvy) -> str:
+    """C2's reading: 'none of that revenue reaches the token' only when protocol revenue or holder value yield is a
+    measured zero."""
+    s = "The business earns far more than it pays out in tokens"
+    if num(rev) == 0.0:
+        s += ("; none of that revenue reaches the token yet (protocol revenue is a measured value; see the cell "
+              "comment)")
+    elif num(hvy) == 0.0:
+        s += "; none of that revenue reaches the token yet (holder value yield is a measured zero; see the cell comment)"
+    return s + "."
+
+
+def c2_caveat(hvy) -> str:
+    """C2's caveat, read from Morpho's Comparison Holder value yield: a measured zero, a code, or a positive number."""
+    h = num(hvy)
+    if h == 0.0:
+        return ("Holder value yield is zero: no revenue reaches the token, so net holder yield is the dilution alone; "
+                "this is value created, not yet captured.")
+    if h is None:
+        return ("Holder value yield has no measured value until revenue reaches the token; this is value created, not "
+                "yet captured.")
+    return "Part of the revenue reaches the token as holder value; net holder yield sets it against dilution."
+
+
+def c4_caveat(key, q1, q2, q3, nhy, a4_key, a4_comment: str = "") -> str:
+    """C4's caveat from its clauses, each shown only when true: the A3 key fell in every quarter shown; Net holder yield
+    is a number below 0; the A4 key reads 'blocked' (with the coverage reason when its comment gives it)."""
+    cl = []
+    if narrowed(key, q1, q2, q3):
+        cl.append("the key has narrowed over three quarters")
+    if is_negative(nhy):
+        cl.append("net holder yield is negative")
+    if isinstance(a4_key, str) and a4_key.strip().lower() == "blocked":
+        cl.append("the A4 crossover is blocked for lack of same-span coverage"
+                  if "coverage" in (a4_comment or "").lower() else "the A4 crossover is blocked (see its cell comment)")
+    s = join_clauses(cl)
+    return s + "." if s else "The key counts tokens retired against tokens emitted; hover each number for its source."
+
+
+def c5_caveat(a4_key, nhy) -> str:
+    """C5's caveat: 'the A4 key is n/a' only when Uniswap's A4 key cell reads n/a; 'net holder yield is negative' only
+    when the Comparison cell is a number below 0."""
+    cl = []
+    if isinstance(a4_key, str) and a4_key.strip().lower() == "n/a":
+        cl.append("the A4 key is n/a (nothing issued to divide by)")
+    if is_negative(nhy):
+        cl.append("net holder yield is negative")
+    s = join_clauses(cl)
+    return s + "." if s else "Revenue growth is measured over the selected period; hover each number for its source."
+
+
+def c6_reading(growth, cover, second_best: bool) -> str:
+    """C6's reading: 'revenue grew' only when Summary revenue growth is above 0, 'subsidy cover is high' only when
+    Subsidy cover (x) is at least HIGH_COVER, 'net holder yield is second best' only when it is."""
+    s = "Retired ÷ emissions fell to zero over four quarters"
+    g, c = num(growth), num(cover)
+    cl = (["revenue grew"] if g is not None and g > 0 else []) + \
+         (["subsidy cover is high"] if c is not None and c >= HIGH_COVER else [])
+    if cl:
+        s += " while " + " and ".join(cl)
+    if second_best:
+        s += ", and net holder yield is second best in the set"
+    return s + "."
+
+
+def c9_caveat(codes: list) -> tuple:
+    """C9's caveat as (text, how many are counted): every project has a number; up to C9_NAME_CODES projects with a code
+    named with their code; more counted (the count is a formula on the tab, never typed: the int is returned for it)."""
+    if not codes:
+        return "Every project in the set has a number here; parked projects are in the coverage block only.", 0
+    if len(codes) <= C9_NAME_CODES:
+        named = [f"{n} ({c})" for n, c in codes]
+        verb = "shows" if len(named) == 1 else "show"
+        return join_clauses(named, cap=False) + f" {verb} a code instead of a number; see Comparison.", 0
+    return "projects show a code instead of a number; see Comparison.", len(codes)
 
 
 # ================================================================================================= number display
@@ -343,7 +471,8 @@ class Card:
     link_tab: str
     link_row: int
     facts: dict = field(default_factory=dict)       # the condition's values, for the report
-    table: dict | None = None                       # C8: {"low": [(name, ref)], "high": [...], "header": str, "ref_header"}
+    table: dict | None = None                       # C8: {"low": [ref], "high": [ref], "header"}; C9: {"rows": [ref], ...}
+    caveat_count: list | None = None                # C9: the Refs whose codes the caveat counts (a COUNTA formula)
 
 
 _STEMS: dict = {}
@@ -378,17 +507,29 @@ def _chips(refs) -> list:
     return [Chip(r.header, r) for r in refs]
 
 
+def _try(L: Lookup, tab: str, project: str, header: str):
+    """The Ref, or None when the tab, row or header is not on the reader (a clause that needs it is then not shown)."""
+    try:
+        return L.ref(tab, project, header)
+    except Missing:
+        return None
+
+
+def _val(ref):
+    return None if ref is None else ref.value
+
+
 def card_c1(L: Lookup) -> Card:
     p, tab = "GEODNET", reader.A2_TAB
     k = _key_chips(L, tab, p)
     hvy = L.ref(reader.COMPARISON, p, "Holder value yield")
+    nhy = _val(_try(L, reader.COMPARISON, p, "Net holder yield"))
     v = [r.value for r in k]
     if not c1_holds(*v):
         _fail("C1", p, "needs key >= 1.0 and key > -1q > -2q > -3q", key=v[0], q1=v[1], q2=v[2], q3=v[3])
     return Card("C1", p, f"{p} — Customer revenue exceeds the emissions that pay for it", _chips(k + [hvy]),
-                "The key has risen every quarter shown and sits above the crossover.",
-                "Net holder yield is negative: dilution exceeds what reaches holders.", tab, k[0].row,
-                {"key": v[0], "-1q": v[1], "-2q": v[2], "-3q": v[3]})
+                "The key has risen every quarter shown and sits above the crossover.", c1_caveat(nhy), tab, k[0].row,
+                {"key": v[0], "-1q": v[1], "-2q": v[2], "-3q": v[3], "net holder yield negative": is_negative(nhy)})
 
 
 def card_c2(L: Lookup) -> Card:
@@ -396,15 +537,14 @@ def card_c2(L: Lookup) -> Card:
     k = _key_chips(L, tab, p)
     rev = L.ref(reader.SUMMARY, p, "Protocol revenue, annualised")
     tvl = L.ref(reader.BUSINESS, p, "TVL change, selected period")
+    nhy = L.ref(reader.COMPARISON, p, "Net holder yield")
+    hvy = _val(_try(L, reader.COMPARISON, p, "Holder value yield"))
     if not c2_holds(k[0].value, k[3].value):
         _fail("C2", p, "needs key >= 10 and key >= 1.3 x its value three quarters back", key=k[0].value,
               q3=k[3].value)
     return Card("C2", p, f"{p} — Customer revenue is many times the emissions that pay for it",
-                _chips([k[0], k[3], rev, tvl]),
-                "The business earns far more than it pays out in tokens; none of that revenue reaches the token yet "
-                "(protocol revenue is a measured value; see the cell comment).",
-                "Holder yield is n/a until revenue reaches the token; this is value created, not yet captured.",
-                tab, k[0].row, {"key": k[0].value, "-3q": k[3].value})
+                _chips([k[0], k[3], rev, tvl, nhy]), c2_reading(rev.value, hvy), c2_caveat(hvy),
+                tab, k[0].row, {"key": k[0].value, "-3q": k[3].value, "holder value yield": hvy})
 
 
 def card_c3(L: Lookup) -> Card:
@@ -447,10 +587,14 @@ def card_c4(L: Lookup) -> Card:
     reading = "Ranked first in A3, at the break-even line between retired and emitted tokens"
     if is_largest(p, L.column(S, "Protocol revenue, annualised")):
         reading += ", on the largest revenue base in the set"
+    v = [r.value for r in k]
+    nhy = _val(_try(L, reader.COMPARISON, p, "Net holder yield"))
+    a4 = _try(L, reader.A4_TAB, p, key_headers(reader.A4_TAB)[0]) if L.has(reader.A4_TAB) else None
+    a4_comment = a4.cell.comment.text if a4 is not None and a4.cell.comment else ""
     return Card("C4", p, f"{p} — Buyback retires as many tokens as the protocol emits",
-                _chips(k + [rev, gro]), reading + ".",
-                "The key has narrowed over three quarters, net holder yield is negative, and the A4 crossover is "
-                "blocked for lack of same-span coverage.", tab, k[0].row, {"rank": rank.value, "key": k[0].value})
+                _chips(k + [rev, gro]), reading + ".", c4_caveat(*v, nhy, _val(a4), a4_comment), tab, k[0].row,
+                {"rank": rank.value, "key": k[0].value, "narrowed": narrowed(*v),
+                 "net holder yield negative": is_negative(nhy), "A4 key": _val(a4)})
 
 
 def card_c5(L: Lookup) -> Card:
@@ -461,11 +605,13 @@ def card_c5(L: Lookup) -> Card:
     net = L.ref(S, p, "Net supply change, % a year")
     if not c5_holds(gro.value, net.value):
         _fail("C5", p, "needs revenue growth > 0.5 and net supply change < 0", growth=gro.value, net_supply=net.value)
+    a4 = _val(_try(L, reader.A4_TAB, p, key_headers(reader.A4_TAB)[0]))
+    nhy = _val(_try(L, reader.COMPARISON, p, "Net holder yield"))
     return Card("C5", p, f"{p} — Protocol revenue has scaled and supply is shrinking",
                 _chips([rev, gro, burn, net]),
-                "Revenue is wired to the token and the circulating supply is falling.",
-                "The A4 key is n/a (nothing issued to divide by) and net holder yield is negative.", S, rev.row,
-                {"growth": gro.value, "net supply change": net.value})
+                "Revenue is wired to the token and the circulating supply is falling.", c5_caveat(a4, nhy), S, rev.row,
+                {"growth": gro.value, "net supply change": net.value, "A4 key": a4,
+                 "net holder yield negative": is_negative(nhy)})
 
 
 def card_c6(L: Lookup) -> Card:
@@ -478,12 +624,12 @@ def card_c6(L: Lookup) -> Card:
     if not c6_holds(v[0], v[1:]):
         _fail("C6", p, "needs the latest key = 0 and the largest earlier quarter > 0", latest=v[0], q1=v[1], q2=v[2],
               q3=v[3])
-    reading = "Retired ÷ emissions fell to zero over four quarters while revenue grew and subsidy cover is high"
-    if is_second_best(p, L.column(C, "Net holder yield")):
-        reading += ", and net holder yield is second best in the set"
-    return Card("C6", p, f"{p} — The tracker shows the buyback pause", _chips(k + [cover, nhy]), reading + ".",
+    growth = _val(_try(L, reader.SUMMARY, p, "Revenue growth, selected period"))
+    reading = c6_reading(growth, cover.value, is_second_best(p, L.column(C, "Net holder yield")))
+    return Card("C6", p, f"{p} — The tracker shows the buyback pause", _chips(k + [cover, nhy]), reading,
                 "A pause is a policy choice; the key does not judge intent.", tab, k[0].row,
-                {"latest": v[0], "-1q": v[1], "-2q": v[2], "-3q": v[3]})
+                {"latest": v[0], "-1q": v[1], "-2q": v[2], "-3q": v[3], "revenue growth": growth,
+                 "subsidy cover": cover.value})
 
 
 def card_c7(L: Lookup) -> Card:
@@ -513,11 +659,29 @@ def card_c8(L: Lookup) -> Card:
                  "header": head})
 
 
-CARD_BUILDERS = (card_c1, card_c2, card_c3, card_c4, card_c5, card_c6, card_c7, card_c8)
+def card_c9(L: Lookup) -> Card:
+    C, head = reader.COMPARISON, "Net holder yield"
+    vals = L.column(C, head)
+    ranked = c9_rank(vals)
+    if ranked is None:
+        n = sum(1 for v in vals.values() if num(v) is not None)
+        raise Omit(f"C9 Fairness league: condition not met - fewer than {C9_MIN} non-parked projects have a numeric "
+                   f"{head} [numeric={n}]")
+    rows, codes = ranked
+    caveat, count = c9_caveat(codes)
+    return Card("C9", "Fairness league", "Fairness league", [],
+                "Net holder yield ranks what holders receive against what dilution takes, for every project in the "
+                "set that has a number.", caveat, C, L.rows(C)[rows[0][0]],
+                {"ranked": len(rows), "with a code": len(codes)},
+                {"rows": [L.ref(C, n, head) for n, _ in rows], "header": head},
+                [L.ref(C, n, head) for n, _ in codes] if count else None)
+
+
+CARD_BUILDERS = (card_c1, card_c2, card_c3, card_c4, card_c5, card_c6, card_c7, card_c8, card_c9)
 
 
 def build_cards(L: Lookup):
-    """([Card], [omitted reasons]) in order C1..C8. A tab, row or header a card quotes being absent omits that card."""
+    """([Card], [omitted reasons]) in order C1..C9. A tab, row or header a card quotes being absent omits that card."""
     cards, omitted = [], []
     for fn in CARD_BUILDERS:
         try:
@@ -632,32 +796,50 @@ def _write_table_card(ws, row: int, card: Card, sink: list) -> int:
     _put(ws, row, LEFT0, last, card.headline, _font(12, bold=True, color=NAVY), Alignment(vertical="center"), 20)
     for c in range(LEFT0, last + 1):
         _border(ws.cell(row, c), bottom=_TEAL)
-    halves = (("Lowest: " + t["header"], t["low"], LEFT0), ("Highest: " + t["header"], t["high"], RIGHT0))
+    if "rows" in t:                                     # C9: one ranked list, read down the left half then the right
+        refs = t["rows"]
+        k = math.ceil(len(refs) / 2)
+        halves = ((t["header"] + ", highest first", refs[:k], LEFT0), (t["header"] + ", continued", refs[k:], RIGHT0))
+    else:
+        halves = (("Lowest: " + t["header"], t["low"], LEFT0), ("Highest: " + t["header"], t["high"], RIGHT0))
     for title, refs, c0 in halves:
         _put(ws, row + 1, c0, c0 + CARD_W - 1, title, _font(8, color=GREY), Alignment(vertical="bottom"), 20)
         for i, ref in enumerate(refs):
-            r = row + 2 + i
-            n = _put(ws, r, c0, c0 + 4, f"={quote_sheet(ref.tab)}!A{ref.row}", _font(11, bold=True, color=NAVY),
-                     Alignment(vertical="center"), 20)
-            n.number_format = "General"
-            sink.append((n, f"{card.cid} {ref.project} (name)"))
-            v = _put(ws, r, c0 + 5, c0 + 6, ref.formula, _font(14, bold=True, color=NAVY),
-                     Alignment(horizontal="center", vertical="center"), 22)
-            v.number_format = ref.fmt
-            sink.append((v, f"{card.cid} {ref.project}"))
-            if ref.cell.fill is not None and ref.cell.fill.fill_type == "solid":
-                for c in (c0 + 5, c0 + 6):
-                    ws.cell(r, c).fill = PatternFill("solid", fgColor=ref.cell.fill.fgColor.rgb)
-            v.comment = Comment(f"Source: {ref.tab}, {ref.project} — {ref.header}. Hover the same cell on that "
-                                "tab for its working.", "Highlights", width=300, height=80)
-            for c in range(c0, c0 + 7):
-                _border(ws.cell(r, c), bottom=_THIN)
-    r = row + 5
+            _table_row(ws, row + 2 + i, c0, ref, card, sink)
+    r = row + 2 + max(len(h[1]) for h in halves)
     _put(ws, r, LEFT0, last, f"Reading: {card.reading}", _font(10), None, 17)
+    if card.caveat:
+        r += 1
+        if card.caveat_count:                           # a count is a formula on the cells it counts, never typed
+            args = ",".join(f"{quote_sheet(x.tab)}!{x.coord}" for x in card.caveat_count)
+            cell = _put(ws, r, LEFT0, last, f'="Caveat: "&COUNTA({args})&" {card.caveat}"', _font(10), None, 17)
+            card.facts["_caveat_cell"] = cell
+        else:
+            _put(ws, r, LEFT0, last, f"Caveat: {card.caveat}", _font(10), None,
+                 14 * _lines(f"Caveat: {card.caveat}", 100) + 3)
     _link(ws, r + 1, LEFT0, card.link_tab, card.link_row, last)
     _outline(ws, row, LEFT0, r + 1, last)
     ws.row_dimensions[r + 2].height = 10
     return r + 3
+
+
+def _table_row(ws, r: int, c0: int, ref: Ref, card: Card, sink: list) -> None:
+    """One project | value row of a table card: the name and the value are formulas on the source tab."""
+    n = _put(ws, r, c0, c0 + 4, f"={quote_sheet(ref.tab)}!A{ref.row}", _font(11, bold=True, color=NAVY),
+             Alignment(vertical="center"), 20)
+    n.number_format = "General"
+    sink.append((n, f"{card.cid} {ref.project} (name)"))
+    v = _put(ws, r, c0 + 5, c0 + 6, ref.formula, _font(14, bold=True, color=NAVY),
+             Alignment(horizontal="center", vertical="center"), 22)
+    v.number_format = ref.fmt
+    sink.append((v, f"{card.cid} {ref.project}"))
+    if ref.cell.fill is not None and ref.cell.fill.fill_type == "solid":
+        for c in (c0 + 5, c0 + 6):
+            ws.cell(r, c).fill = PatternFill("solid", fgColor=ref.cell.fill.fgColor.rgb)
+    v.comment = Comment(f"Source: {ref.tab}, {ref.project} — {ref.header}. Hover the same cell on that "
+                        "tab for its working.", "Highlights", width=300, height=80)
+    for c in range(c0, c0 + 7):
+        _border(ws.cell(r, c), bottom=_THIN)
 
 
 def _find_about(wb, pred) -> int | None:
@@ -874,6 +1056,12 @@ def add_highlights(wb, ctx=None, min_cards: int = MIN_CARDS, parked=None) -> dic
         row = _write_table_card(ws, row, card, chip_cells)
     _write_coverage(ws, wb, L, row)
     shown = {c.coordinate: (v, s) for c, v, s in verify(wb, chip_cells)}
+    X = None
+    for card in cards:                                  # a counted caveat is printed as the tab renders it
+        cell = card.facts.pop("_caveat_cell", None)
+        if cell is not None:
+            X = X or xlcalc.Workbook(wb)
+            card.caveat = str(X.value(SHEET, cell.row, cell.column)).removeprefix("Caveat: ")
     lines = report_lines(cards, omitted, ws, shown)
     return {"cards": [c.cid for c in cards], "omitted": omitted, "lines": lines, "shown": shown, "sheet": ws}
 
@@ -890,7 +1078,10 @@ def report_lines(cards: list, omitted: list, ws, shown: dict) -> list:
         out.append(f"  [{c.cid}] {c.headline}")
         for chip in c.chips:
             out.append(f"      {chip.label}: {disp(chip.ref)}")
-        if c.table:
+        if c.table and "rows" in c.table:
+            out.append(f"      {c.table['header']}, highest first: " + "; ".join(
+                f"{ws.parent[r.tab].cell(r.row, 1).value} {disp(r)}" for r in c.table["rows"]))
+        elif c.table:
             for title, refs in (("lowest", c.table["low"]), ("highest", c.table["high"])):
                 out.append(f"      {title} {c.table['header']}: " + "; ".join(
                     f"{ws.parent[r.tab].cell(r.row, 1).value} {disp(r)}" for r in refs))
