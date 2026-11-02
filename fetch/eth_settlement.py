@@ -166,6 +166,21 @@ class EthP2PBigQuery(NearBigQuery):
         self._save(st)
         self._value_eth(p2p, st, e, out, name, spec["legs"]["p2p"])
 
+    def value_only(self, projects: list[dict], out, days: set | None = None) -> None:
+        """THE VALUATION STEP ALONE (P3-4 A4, the catch-up): the cached days ('YYYY-MM-DD' in `days` only, when given)
+        valued at the store's same-day Ethereum price_usd exactly as run() ends (self._value_eth) — no BigQuery client,
+        no query, no weekly turn. The prices it asks DefiLlama for are cached in the whole state, as in run()."""
+        spec = _spec()
+        name = spec["project"]
+        if not any(p["name"] == name for p in projects):
+            return
+        st = self._load()
+        e = st.setdefault("eth_p2p", {"days": {}, "prices": {}})
+        e.setdefault("prices", {})
+        view = e if days is None else {"days": {k: v for k, v in e.get("days", {}).items() if k in days},
+                                       "prices": e["prices"]}
+        self._value_eth(spec["p2p"], st, view, out, name, spec["legs"]["p2p"])
+
     ROUTINE_SECONDS = 240           # inside the tier's 300 s: a routine turn starts no piece after this
 
     def _turn(self, client, bq, p2p, st, e, out, name, now, unbounded: bool = False) -> bool:

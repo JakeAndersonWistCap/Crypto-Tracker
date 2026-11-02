@@ -1029,15 +1029,372 @@ def _ranges(days) -> str:
     return ", ".join(str(r[0].date()) if len(r) == 1 else f"{r[0].date()}..{r[-1].strftime('%m-%d')}" for r in out)
 
 
+# ---------------------------------------------------------------------------------------------
+# P3-4 A4: THE DAILY API SERIES, AND WHAT IS DERIVED FROM THE CAUGHT-UP DAYS (Jake, 2026-11-02)
+# ---------------------------------------------------------------------------------------------
+# WHICH API SERIES OWE A CATCH-UP, AND WHICH DO NOT (read from the adapters, 2026-11-02):
+#   CoinGecko market_chart (price_usd, market_cap_usd, volume_usd, circulating_supply_implied) — INCREMENTAL: a routine
+#     run asks only for the days since the newest stored price (+ OVERLAP_DAYS). Its own read fills a missed day, but
+#     inside the tiers, after the stored-price readers have started: Ethereum's and NEAR's P2P legs value each day at
+#     the price STORED before the run (stored_long), so a missed day waited a run for its price, and `--catch-up`
+#     alone left the price hole and everything valued at it. CAUGHT UP HERE, through the adapter's own helper
+#     (CoinGecko.market_chart), before the on-chain days.
+#   Re-read in full each run — owe nothing: DefiLlama fees / revenue / TVL / RWA share (the whole daily history is
+#     downloaded and the trailing window kept: fetch/llama.py), Hyperliquid candles (hl_candles), Boros volume, the
+#     Pendle maturity read (it restates its last days), DefiLlama coins price history (price_history: only the days
+#     BEFORE CoinGecko's first price — never inside the CoinGecko leg, rule 10).
+#   Incremental from their own last stored day, nothing derived from them before the tiers — owe nothing: growthepie,
+#     Blockscout stats, NearBlocks, the logscan event-log reads (Sky's burn), Dune (a backfill, refreshed by its own
+#     rule). The next plain run's read starts at the series' last stored day, so no day is skipped.
+# A day CoinGecko does not serve stays a NAMED HOLE (never 0, never carried), retried on CATCH_UP_TRIES runs. A series
+# whose newest stored row is not CoinGecko's own (another measuring point) is NOT filled from CoinGecko: that would be
+# a basis change (rule 10) — the line says so.
+API_CATCH_UP_LEDGER = "catch-up-api-pending.json"
+# THE DERIVATIONS FOR THE CAUGHT-UP DAYS: fetch.derive_written (the run's write-time derivations, in their order) for
+# each caught-up day with that day's stored rows as the frame and the store's values BEFORE that day as the priors,
+# then fetch.history_derive.derive_from_history once, then the P2P legs' valuation at the stored same-day price. Only
+# rows dated on a caught-up day whose key holds nothing are written (never an overwrite), and never a day inside a
+# stored multi-day row's span (it already counts that day). A day is replayed on CATCH_UP_TRIES runs, because an input
+# can land later (Sky's burn is an event-log read the tiers fill after the catch-up).
+DERIVE_LEDGER = "catch-up-derive-pending.json"
+
+
+def api_series(p: dict) -> dict:
+    """{metric: source} — the daily API series of `p` the catch-up can read for a past day, with the source the series
+    is read from: CoinGecko's market_chart for a project with a coingecko_id."""
+    from .coingecko import HISTORY_METRICS
+    return dict(HISTORY_METRICS) if p.get("coingecko_id") else {}
+
+
+def api_catch_up_gaps(store, projects: list[dict], ledger: dict | None = None) -> tuple[dict, dict, list, set]:
+    """({(project, metric): [owed days]}, {(project, metric): why not filled}, [(project, metric, why not covered)],
+    {series checked}) for the daily API series (api_series). Owed: every day after the series' last stored day (or the
+    ledger's older owed day) to yesterday with no row, inside CoinGecko's free 365 days, not given up."""
+    from .coingecko import FREE_MAX_DAYS, SOURCE as CG
+    ledger = _read_json(API_CATCH_UP_LEDGER) if ledger is None else ledger
+    end = today()
+    yesterday, window = end - pd.Timedelta(days=1), end - pd.Timedelta(days=FREE_MAX_DAYS - 1)
+    parked = catch_up_parked()
+    try:
+        absent = store.known_absent()
+    except Exception:  # noqa: BLE001 — a store without the fetch_status history
+        absent = set()
+    gaps, refused, excluded, checked = {}, {}, [], set()
+    for p in projects:
+        name = p["name"]
+        for m, src in sorted(api_series(p).items()):
+            if name in parked:
+                excluded.append((name, m, f"parked — {parked[name]}"))
+                continue
+            if (CG, name) in absent:
+                excluded.append((name, m, "CoinGecko KNOWN ABSENT for this coin id"))
+                continue
+            row = store.conn.execute("SELECT substr(date,1,10), source FROM metrics WHERE project=? AND metric=? "
+                                     "ORDER BY date DESC LIMIT 1", (name, m)).fetchone()
+            if row is None:
+                excluded.append((name, m, "nothing stored yet — the daily run seeds it"))
+                continue
+            checked.add((name, m))
+            ent = ledger.get(f"{name}|{m}") or {}
+            frm = pd.Timestamp(row[0]) + pd.Timedelta(days=1)
+            if ent.get("from"):
+                frm = min(frm, pd.Timestamp(ent["from"]))
+            frm = max(frm, window)
+            if frm > yesterday:
+                continue
+            given = {d for d, k in (ent.get("tries") or {}).items() if int(k) >= CATCH_UP_TRIES}
+            have = {d for (d,) in store.conn.execute(
+                "SELECT DISTINCT substr(date,1,10) FROM metrics WHERE project=? AND metric=? AND substr(date,1,10)>=?",
+                (name, m, str(frm.date())))}
+            owed = [str(d.date()) for d in pd.date_range(frm, yesterday)
+                    if str(d.date()) not in have and str(d.date()) not in given]
+            if not owed:
+                continue
+            gaps[(name, m)] = owed
+            mp, want = _measuring_point(str(row[1])), _measuring_point(src)
+            if mp != want:
+                refused[(name, m)] = (f"its newest stored row ({row[0]}) was read from {mp}, not {want} — a past day "
+                                      f"from {want} would change the series' basis (rule 10); left to the daily run")
+    return gaps, refused, excluded, checked
+
+
+def api_catch_up(store, projects: list[dict], deadline: float | None = None, max_days: int | None = None,
+                 api=None) -> dict:
+    """Fill the daily API series' owed days (api_catch_up_gaps) from the series' own read — CoinGecko.market_chart, one
+    call per project, paced by the adapter (2 s with a key, 6 s without) — oldest first, at most `max_days` days per
+    series, nothing read after `deadline`. Writes only keys that hold nothing, at the source string the daily run
+    writes, refused where the day's stored neighbours or a declared handover say another measuring point. Returns
+    {"lines", "gaps", "filled", "left", "holes", "checked", "excluded", "warn"}."""
+    from .coingecko import FREE_MAX_DAYS
+    ledger = _read_json(API_CATCH_UP_LEDGER)
+    gaps, basis, excluded, checked = api_catch_up_gaps(store, projects, ledger)
+    lines: list[tuple[str, str]] = []
+    res = {"lines": lines, "gaps": gaps, "filled": {}, "left": {}, "holes": {}, "checked": checked,
+           "excluded": excluded, "warn": False}
+
+    def save_ledger(entries: dict) -> None:
+        keep = {k: v for k, v in ledger.items() if tuple(k.split("|", 1)) not in checked}
+        keep.update(entries)
+        if keep or ledger:
+            _write_json(API_CATCH_UP_LEDGER, keep)
+
+    if not gaps:
+        save_ledger({})
+        return res
+    by_name = {p["name"]: p for p in projects}
+    if api is None:
+        from .coingecko import CoinGecko
+        api = CoinGecko()
+    max_days = CATCH_UP_DAYS if max_days is None else int(max_days)
+    entries = {}
+    for name in sorted({n for n, _ in gaps}):
+        p, series = by_name[name], api_series(by_name[name])
+        mine = {m: days for (n, m), days in gaps.items() if n == name}
+        todo = {m: days[:max_days] for m, days in mine.items() if (name, m) not in basis}
+        served, err, late = {}, None, False
+        if todo:
+            if deadline is not None and time.monotonic() >= deadline:
+                late = True
+            else:
+                first = pd.Timestamp(min(min(v) for v in todo.values()))
+                try:
+                    for _what, f in api.market_chart(p["coingecko_id"], name,
+                                                     min(FREE_MAX_DAYS, (today() - first).days + 1)):
+                        for r in f.itertuples(index=False):
+                            served[(r.metric, str(pd.Timestamp(r.date).date()))] = r
+                except Exception as e:  # noqa: BLE001 — one coin failing leaves the others; the days stay owed
+                    err = f"the market_chart read failed: {type(e).__name__}: {redact(e)}"[:200]
+        for m, days in sorted(mine.items()):
+            stored = pd.read_sql_query("SELECT date, source FROM metrics WHERE project=? AND metric=? ORDER BY date",
+                                       store.conn, params=(name, m))
+            stored["date"] = pd.to_datetime(stored["date"]).dt.normalize()
+            keep, why = [], {}
+            for d in ([] if late else todo.get(m, [])):
+                r = served.get((m, d))
+                if r is None:
+                    why[d] = err or "CoinGecko's market_chart served no point for the day"
+                    continue
+                lo, hi = config.sanity_bounds(name, m, r.date)
+                if (lo is not None and r.value < lo) or (hi is not None and r.value > hi):
+                    why[d] = f"{r.value:,.4f} is outside the declared bound [{lo}, {hi}]"
+                    continue
+                ok, bad = neighbours_agree(stored, pd.Timestamp(d), r.source)
+                bad = bad if not ok else breaks_handover_order(name, m, stored, d, r.source)
+                if bad:
+                    why[d] = bad
+                    continue
+                keep.append(r)
+            if keep:
+                _write_new(store, pd.DataFrame(keep)[LONG_COLUMNS])
+            have = {d for (d,) in store.conn.execute(
+                "SELECT DISTINCT substr(date,1,10) FROM metrics WHERE project=? AND metric=? AND substr(date,1,10)>=?",
+                (name, m, min(days)))}
+            filled = [d for d in days if d in have]
+            left = [d for d in days if d not in have]
+            holes = [d for d in left if d in why]
+            tries = {d: k for d, k in ((ledger.get(f"{name}|{m}") or {}).get("tries") or {}).items() if d not in filled}
+            for d in holes:
+                tries[d] = int(tries.get(d, 0)) + 1
+            given = [d for d in holes if tries[d] >= CATCH_UP_TRIES]
+            owed = [d for d in left if d not in given] if (name, m) not in basis else []
+            if owed:
+                entries[f"{name}|{m}"] = {"from": min(owed), "tries": {d: k for d, k in tries.items() if d >= min(owed)}}
+            res["filled"][(name, m)], res["left"][(name, m)], res["holes"][(name, m)] = filled, left, holes
+            txt = (f"CATCH-UP {name}/{m}: {len(filled)} day(s) filled" + (f" ({_ranges(filled)})" if filled else "")
+                   + f", {len(left)} left" + (f" ({_ranges(left)})" if left else "")
+                   + f" — CoinGecko market_chart for {p['coingecko_id']}, the series' own read ({series[m]})")
+            if (name, m) in basis:
+                txt += f"; NOT FILLED: {basis[(name, m)]}"
+            if holes:
+                first_why = why[holes[0]]
+                txt += (f"; HOLE(S) {_ranges(holes)} — {first_why} (never 0, never carried; tried on "
+                        f"{max(tries[d] for d in holes)} of {CATCH_UP_TRIES} runs)")
+            if given:
+                txt += f"; given up after {CATCH_UP_TRIES} runs: {_ranges(given)} — a named hole: CoinGecko serves no price"
+            rest = [d for d in left if d not in holes and (name, m) not in basis]
+            if rest:
+                txt += f"; not reached this run (budget): {_ranges(rest)} — the next run continues"
+            warn = bool(holes) or (name, m) in basis
+            res["warn"] = res["warn"] or warn
+            lines.append(("warning" if warn else "info", txt))
+    save_ledger(entries)
+    return res
+
+
+def default_valuers() -> list:
+    """The stored-price valuations replayed for caught-up days: Ethereum's and NEAR's P2P legs (each value_only())."""
+    from .eth_settlement import EthP2PBigQuery
+    from .near_bigquery import NearBigQuery
+    return [lambda sl: EthP2PBigQuery(stored_long=sl), lambda sl: NearBigQuery(stored_long=sl)]
+
+
+def derive_caught_up(store, projects: list[dict], days_by_name: dict, valuers=None) -> dict:
+    """The series derived from the caught-up days, by the run's own code (see DERIVE_LEDGER above): {"lines",
+    "written": {(project, metric): [days]}, "warn"}. Days owed from earlier runs (the ledger) are replayed too."""
+    from . import derive_written
+    from .history_derive import derive_from_history
+    from .validate import _span_days
+    ledger = _read_json(DERIVE_LEDGER)
+    by = {p["name"]: p for p in projects}
+    want: dict = {}
+    for n, ds in (days_by_name or {}).items():
+        if n in by and ds:
+            want.setdefault(n, set()).update(str(d)[:10] for d in ds)
+    for n, ent in ledger.items():
+        if n in by:
+            want.setdefault(n, set()).update(ent)
+    res = {"lines": [], "written": {}, "warn": False}
+    if not want:
+        return res
+    long = store.load_long()
+    long = long[~long["is_manual"]] if "is_manual" in long else long
+    long = long.assign(date=pd.to_datetime(long["date"]).dt.normalize())
+    have = set(zip(long["date"].dt.strftime("%Y-%m-%d"), long["project"], long["metric"]))
+    spans: dict = {}
+    for r in long[long["source"].astype(str).str.contains("span=", regex=False)].itertuples(index=False):
+        k = _span_days(r.source)
+        if k > 1:
+            spans.setdefault((r.project, r.metric), []).append((r.date - pd.Timedelta(days=k), r.date))
+    written: dict = {}
+    sources: dict = {}
+    straddled: dict = {}
+    refused: dict = {}
+
+    def write(frame: pd.DataFrame) -> None:
+        nonlocal long
+        if frame is None or frame.empty:
+            return
+        f = frame.assign(date=pd.to_datetime(frame["date"]).dt.normalize())
+        f = f.assign(d=f["date"].dt.strftime("%Y-%m-%d"))
+        f = f[[p in want and d in want[p] and (d, p, m) not in have
+               for d, p, m in zip(f["d"], f["project"], f["metric"])]]
+        f = f.drop_duplicates(subset=["d", "project", "metric"], keep="last")
+        rows = []
+        for r in f.itertuples(index=False):
+            hit = next((e for s, e in spans.get((r.project, r.metric), ()) if s < r.date < e), None)
+            if hit is not None:
+                straddled.setdefault((r.project, r.metric), {}).setdefault(str(hit.date()), []).append(r.d)
+                continue
+            # a DECLARED handover's legs stay in order (the archive's own guard): never an earlier leg's row dated
+            # inside a later leg (Sky's issuance: d(supply) before 2026-10-06, the declared schedule from it)
+            g = long[(long["project"] == r.project) & (long["metric"] == r.metric)]
+            why = breaks_handover_order(r.project, r.metric, g, r.date, str(r.source))
+            if why:
+                refused.setdefault((r.project, r.metric), []).append((r.d, why))
+                continue
+            rows.append(r)
+        if not rows:
+            return
+        new = pd.DataFrame(rows)[LONG_COLUMNS]
+        _write_new(store, new)
+        for r in rows:
+            have.add((r.d, r.project, r.metric))
+            written.setdefault((r.project, r.metric), []).append(r.d)
+            sources.setdefault((r.project, r.metric), str(r.source))
+        long = pd.concat([long, new.assign(is_manual=False)], ignore_index=True)
+
+    # 1. the write-time derivations, day by day, oldest first (each day differenced against the store before it), on
+    # that day's stored rows plus the config declarations for that day (the schedule tier: a declared zero is written
+    # for the run's own day only, so a missed day held none) — as fetch_all has the tiers' rows in the frame
+    from .schedule import Schedule
+    for d in sorted(set().union(*want.values())):
+        names = sorted(n for n in want if d in want[n])
+        try:
+            sched = FetchOutput()
+            Schedule(asof=d).run([by[n] for n in names], None, sched)
+            sf = sched.frame()
+            sf = sf[pd.to_datetime(sf["date"]).dt.normalize() == pd.Timestamp(d)] if not sf.empty else sf
+            write(sf)
+        except Exception as e:  # noqa: BLE001
+            res["lines"].append(("warning", f"CATCH-UP: declarations for {d} not written — {type(e).__name__}: "
+                                            f"{redact(e)[:200]}"))
+            res["warn"] = True
+        frame = long[(long["project"].isin(names)) & (long["date"] == pd.Timestamp(d))]
+        if frame.empty:
+            continue
+        before = store.values_before(d)
+        prior = {k: v[0] for k, v in before.items()}
+        out = FetchOutput()
+        out.frames.append(frame[LONG_COLUMNS].reset_index(drop=True))
+        try:
+            derive_written(out, [by[n] for n in names],
+                           {"prior_values": prior, "prior_delta": prior,
+                            "prior_dates": {k: v[1] for k, v in before.items()}, "stored_long": long})
+        except Exception as e:  # noqa: BLE001 — a derivation failing never stops the catch-up
+            res["lines"].append(("warning", f"CATCH-UP: derivations for {d} not run — {type(e).__name__}: "
+                                            f"{redact(e)[:200]}"))
+            res["warn"] = True
+            continue
+        write(out.frame())
+    # 2. the history derivations over the store as it now stands (fetch_all's next step), quietly: their own lines are
+    # the daily run's
+    hd = logging.getLogger("token_metrics.fetch.history_derive")
+    level = hd.level
+    hd.setLevel(logging.WARNING)
+    try:
+        out = FetchOutput()
+        derive_from_history(out, projects, long)
+        write(out.frame())
+    except Exception as e:  # noqa: BLE001
+        res["lines"].append(("warning", f"CATCH-UP: history derivations not run — {type(e).__name__}: "
+                                        f"{redact(e)[:200]}"))
+        res["warn"] = True
+    finally:
+        hd.setLevel(level)
+    # 3. the P2P legs, valued at the stored same-day price, for the caught-up days that now hold one
+    px = long[long["metric"] == "price_usd"]
+    priced = {d for n, ds in want.items() for d in ds
+              if ((px["project"] == n) & (px["date"] == pd.Timestamp(d))).any()}
+    if priced:
+        for make in (default_valuers() if valuers is None else valuers):
+            out = FetchOutput()
+            try:
+                make(long).value_only([by[n] for n in sorted(want)], out, days=priced)
+            except Exception as e:  # noqa: BLE001
+                res["lines"].append(("warning", f"CATCH-UP: a P2P valuation not run — {type(e).__name__}: "
+                                                f"{redact(e)[:200]}"))
+                res["warn"] = True
+                continue
+            write(out.frame())
+    for (n, m), ds in sorted(written.items()):
+        res["lines"].append(("info", f"CATCH-UP {n}/{m}: {len(ds)} day(s) derived ({_ranges(ds)}) — "
+                                     f"{_measuring_point(sources[(n, m)])}, the run's own derivation replayed over the "
+                                     f"caught-up days"))
+    for (n, m), bad in sorted(refused.items()):
+        res["lines"].append(("info", f"CATCH-UP {n}/{m}: {_ranges({d for d, _ in bad})} NOT derived — {bad[0][1]}"))
+    for (n, m), hits in sorted(straddled.items()):
+        for e, ds in sorted(hits.items()):
+            res["lines"].append(("info", f"CATCH-UP: STRADDLED {n}/{m}: {_ranges(ds)} lie inside the stored multi-day "
+                                         f"row dated {e}, which already counts them — not derived again (never twice)"))
+    res["written"] = {k: sorted(v) for k, v in written.items()}
+    # THE LEDGER: each day is replayed on CATCH_UP_TRIES runs (an input can land after the catch-up)
+    keep = {n: v for n, v in ledger.items() if n not in by}
+    for n, ds in want.items():
+        runs = {d: int((ledger.get(n) or {}).get(d, 0)) + 1 for d in ds}
+        runs = {d: k for d, k in runs.items() if k < CATCH_UP_TRIES}
+        if runs:
+            keep[n] = runs
+    if keep or ledger:
+        _write_json(DERIVE_LEDGER, keep)
+    return res
+
+
 def catch_up(store, projects: list[dict], budget_s: float | None = None, max_days: int | None = None, reader=None,
-             solana: dict | None = None, archive_chains: set | None = None, resolve=None) -> dict:
-    """Fill every owed day (catch_up_gaps) by ArchiveBackfill.run, within the budgets. The caller holds the store's
-    RunLock (token_metrics.py) — this takes none. Returns {"lines": [(level, text)], "gaps", "filled", "left", "holes",
-    "result"}: one line per series that had owed days, then the summary line ("info" or "warning")."""
+             solana: dict | None = None, archive_chains: set | None = None, resolve=None, api=None,
+             derive: bool = True, valuers=None) -> dict:
+    """Fill every owed day, within the budgets: FIRST the daily API series (api_catch_up: CoinGecko's market_chart, the
+    series' own read — P3-4 A4), THEN the daily on-chain series (catch_up_gaps, by ArchiveBackfill.run), THEN the
+    series derived from them for the caught-up days (derive_caught_up: the run's own derivations, replayed). The caller
+    holds the store's RunLock (token_metrics.py) — this takes none. Returns {"lines": [(level, text)], "gaps",
+    "filled", "left", "holes", "result", "api", "derived"}: one line per series that had owed days (API, then
+    on-chain), one per derived series stored, then the summary line ("info" or "warning")."""
     t0 = time.monotonic()
     dflt_min, dflt_days = catch_up_defaults()
     budget_s = dflt_min * 60 if budget_s is None else float(budget_s)
     max_days = dflt_days if max_days is None else int(max_days)
+    # A4: THE API SERIES FIRST, so whatever reads a stored price (Ethereum's and NEAR's P2P legs, a burn or buyback
+    # valued at the day's price) finds the missed days' prices when the on-chain days and the derivations are done
+    api_res = api_catch_up(store, projects, deadline=t0 + budget_s, max_days=max_days, api=api)
     ledger = _read_json(CATCH_UP_LEDGER)
     gaps, excluded, checked = catch_up_gaps(store, projects, ledger)
     by_name = {p["name"]: p for p in projects}
@@ -1047,8 +1404,33 @@ def catch_up(store, projects: list[dict], budget_s: float | None = None, max_day
              else "nothing stored yet" if why.startswith("nothing stored") else "not archivable or by design")
         kinds[k] += 1
     notcov = ", ".join(f"{k} {v}" for k, v in kinds.items() if v)
-    lines: list[tuple[str, str]] = []
-    out = {"lines": lines, "gaps": gaps, "filled": {}, "left": {}, "holes": {}, "excluded": excluded, "result": None}
+    lines: list[tuple[str, str]] = list(api_res["lines"])
+    out = {"lines": lines, "gaps": gaps, "filled": {}, "left": {}, "holes": {}, "excluded": excluded, "result": None,
+           "api": api_res, "derived": {}}
+
+    def finish(level: str, summary: str) -> dict:
+        """The derivations for every day caught up (API or on-chain, this run or owed from an earlier one), then the one
+        summary line, extended with the API part and the derived rows."""
+        days: dict = {}
+        for part in (api_res["filled"], out["filled"]):
+            for (n, _m), ds in part.items():
+                days.setdefault(n, set()).update(ds)
+        der = derive_caught_up(store, projects, days, valuers=valuers) if derive else \
+            {"lines": [], "written": {}, "warn": False}
+        out["derived"] = der["written"]
+        lines.extend(der["lines"])
+        a = api_res
+        if a["checked"]:
+            summary += (f"; API: {len(a['gaps'])} of {len(a['checked'])} daily API series had missed days — "
+                        f"{sum(map(len, a['filled'].values()))} day(s) filled, "
+                        f"{sum(map(len, a['left'].values()))} left, {sum(map(len, a['holes'].values()))} hole(s) "
+                        f"named (CoinGecko market_chart)" if a["gaps"] else
+                        f"; API: {len(a['checked'])} daily API series checked — none has a missed day")
+        if der["written"]:
+            summary += (f"; derived: {sum(map(len, der['written'].values()))} row(s) stored over "
+                        f"{len(der['written'])} series for the caught-up days")
+        lines.append(("warning" if a["warn"] or der["warn"] else level, summary))
+        return out
 
     def save_ledger(entries: dict) -> None:
         keep = {k: v for k, v in ledger.items() if tuple(k.split("|", 1)) not in checked}   # other scopes' entries
@@ -1058,17 +1440,17 @@ def catch_up(store, projects: list[dict], budget_s: float | None = None, max_day
 
     if not gaps:
         save_ledger({})
-        lines.append(("info", f"CATCH-UP: {len(checked)} daily on-chain series checked — none has a missed day since "
-                              f"its last stored day; nothing read" + (f" (not covered: {notcov})" if notcov else "")))
-        return out
+        return finish("info", f"CATCH-UP: {len(checked)} daily on-chain series checked — none has a missed day since "
+                              f"its last stored day; nothing read" + (f" (not covered: {notcov})" if notcov else ""))
 
     need = {s["chain"] for (n, m) in gaps for _, s in serving_contracts(by_name[n], m)} - {"solana"}
     if solana is None:
         solana = solana_providers([by_name[n] for n in sorted({n for n, _ in gaps})],
                                   {(n, k) for (n, m) in gaps for k, s in serving_contracts(by_name[n], m)
                                    if s["kind"] == "spl_token_account"})
-    bf = ArchiveBackfill(store, [by_name[n] for n in sorted({n for n, _ in gaps})], budget_s=budget_s,
-                         reader=reader, solana=solana)
+    # the time the API part left: one budget for the whole catch-up
+    bf = ArchiveBackfill(store, [by_name[n] for n in sorted({n for n, _ in gaps})],
+                         budget_s=max(0.0, budget_s - (time.monotonic() - t0)), reader=reader, solana=solana)
     if archive_chains is None:
         # THE BACKFILL'S RESOLVER: the endpoint that serves old state, per chain (hosts only in any line)
         archive_chains = set()
@@ -1139,12 +1521,11 @@ def catch_up(store, projects: list[dict], budget_s: float | None = None, max_day
                 or ": not available before " in x:
             lines.append(("info", f"CATCH-UP: {x}"))
     secs = round(time.monotonic() - t0)
-    lines.append(("warning" if n_holes or no_endpoint else "info",
+    return finish("warning" if n_holes or no_endpoint else "info",
                   f"CATCH-UP: {len(gaps)} of {len(checked)} daily on-chain series had missed days — {n_fill} day(s) "
                   f"filled, {n_left} left, {n_holes} hole(s) named; {res.get('read_days', 0)} day(s) read in {secs}s "
                   f"(budget {budget_s / 60:g} min, {max_days} day(s) a run)"
-                  + (f" (not covered: {notcov})" if notcov else "")))
-    return out
+                  + (f" (not covered: {notcov})" if notcov else ""))
 
 
 # ---------------------------------------------------------------------------------------------

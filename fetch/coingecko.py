@@ -34,6 +34,10 @@ SOURCE = "coingecko"
 TIER = 1
 log = logging.getLogger("token_metrics.fetch.coingecko")
 API = "https://api.coingecko.com/api/v3"
+IMPLIED_SOURCE = "coingecko:mcap/price"
+# THE DAILY SERIES market_chart serves for a past day (P3-4 A4: what the catch-up may fill, and from where)
+HISTORY_METRICS = {"price_usd": SOURCE, "market_cap_usd": SOURCE, "volume_usd": SOURCE,
+                   "circulating_supply_implied": IMPLIED_SOURCE}
 
 
 class CoinGecko:
@@ -102,6 +106,28 @@ class CoinGecko:
                     found[r["id"]] = r
         return found
 
+    def market_chart(self, cid: str, name: str, days) -> list[tuple[str, pd.DataFrame]]:
+        """THE HISTORY READ: /coins/{id}/market_chart over the last `days` days, daily points at 00:00 UTC, as
+        [(what, frame)] — price, market cap, volume and the implied supply (market cap / price, its own source). The
+        daily run and the catch-up (fetch.archive.api_catch_up, P3-4 A4) both read through this one helper, so a missed
+        day is filled from the very read, source string and measuring point the series always uses."""
+        j = self.http.get(f"{API}/coins/{cid}/market_chart",
+                          params={"vs_currency": "usd", "days": str(days), "interval": "daily"},
+                          headers=self.headers)
+        prices = tidy(self._ms_rows(j.get("prices", [])), name, "price_usd", SOURCE, TIER)
+        mcaps = tidy(self._ms_rows(j.get("market_caps", [])), name, "market_cap_usd", SOURCE, TIER)
+        vols = tidy(self._ms_rows(j.get("total_volumes", [])), name, "volume_usd", SOURCE, TIER)
+        got = [("price", prices), ("market cap", mcaps), ("volume", vols)]
+        m = prices.merge(mcaps, on="date", suffixes=("_p", "_m"))
+        m = m[m["value_p"] > 0]
+        if not m.empty:
+            implied = pd.DataFrame({"date": m["date"], "project": name,
+                                    "metric": "circulating_supply_implied",
+                                    "value": m["value_m"] / m["value_p"],
+                                    "source": IMPLIED_SOURCE, "tier": TIER})
+            got.append(("implied supply", implied[LONG_COLUMNS]))
+        return got
+
     def run(self, projects: list[dict], window_days, out):
         from .base import BACKFILL, BACKFILL_DAYS, OVERLAP_DAYS
         markets = self._markets(projects)
@@ -135,23 +161,8 @@ class CoinGecko:
                             TIER)
                 continue
             try:
-                j = self.http.get(f"{API}/coins/{cid}/market_chart",
-                                  params={"vs_currency": "usd", "days": days, "interval": "daily"},
-                                  headers=self.headers)
-                prices = tidy(self._ms_rows(j.get("prices", [])), name, "price_usd", SOURCE, TIER)
-                mcaps = tidy(self._ms_rows(j.get("market_caps", [])), name, "market_cap_usd", SOURCE, TIER)
-                vols = tidy(self._ms_rows(j.get("total_volumes", [])), name, "volume_usd", SOURCE, TIER)
-                out.add(prices, SOURCE, name, f"{cid}:price", TIER)
-                out.add(mcaps, SOURCE, name, f"{cid}:market cap", TIER)
-                out.add(vols, SOURCE, name, f"{cid}:volume", TIER)
-                m = prices.merge(mcaps, on="date", suffixes=("_p", "_m"))
-                m = m[m["value_p"] > 0]
-                if not m.empty:
-                    implied = pd.DataFrame({"date": m["date"], "project": name,
-                                            "metric": "circulating_supply_implied",
-                                            "value": m["value_m"] / m["value_p"],
-                                            "source": "coingecko:mcap/price", "tier": TIER})
-                    out.add(implied[LONG_COLUMNS], SOURCE, name, f"{cid}:implied supply", TIER)
+                for what, f in self.market_chart(cid, name, days):
+                    out.add(f, SOURCE, name, f"{cid}:{what}", TIER)
             except Exception as e:  # noqa: BLE001
                 out.fail(SOURCE, name, f"{cid}:market_chart: {e}", TIER)
             try:

@@ -586,6 +586,45 @@ The lock: `archive_backfill.py --run` now takes the same lock as token_metrics.p
 75 with the same `RUN LOCKED — …` line. This replaces §11dh 1a's "Run vs backfill: NO line". The plan (no `--run`) takes
 no lock. `windows\daily_run.ps1` is unchanged: the catch-up runs inside `token_metrics.py`.
 
+### A4 — prices first, then what is derived from the caught-up days
+
+The catch-up now runs in three steps, in this order, under the same lock and budget:
+1. **CoinGecko's daily series** (`price_usd`, `market_cap_usd`, `volume_usd`, `circulating_supply_implied`): the days
+   missed since each series' last stored day, from CoinGecko's `market_chart` — the read the daily run already makes, with
+   the same source string. One call per project, at most `--catch-up-days` days per series, oldest first. Without this
+   step the P2P legs (Ethereum's and NEAR's `p2p_transfer_volume_usd`, valued at the stored same-day price) waited a run
+   for their price, and `--catch-up` alone never read a price.
+2. The on-chain days, as above.
+3. **The derived series for every caught-up day**: the run's own derivations, replayed day by day (issuance, burns,
+   buybacks valued at the day's price, the declared zero/schedule rows of that day), then the history derivations, then
+   the P2P legs valued at the stored price. Only empty keys on caught-up days are written. A day inside a stored multi-day
+   row is never derived again. A day is replayed on 3 runs, because an input such as Sky's event-log burn can land later.
+   The days are kept in `.cache\logscan\catch-up-derive-pending.json`.
+
+Nothing is owed by series that the daily run re-reads in full: DefiLlama fees/revenue/TVL/RWA share, Hyperliquid candles,
+Boros, the Pendle maturity read, and DefiLlama's price history (which only covers days before CoinGecko's first price).
+growthepie, Blockscout, NearBlocks, logscan and Dune read from their own last stored day on the next plain run.
+
+A series whose newest stored row came from another source is not filled from CoinGecko (rule 10). The line says
+`NOT FILLED: … would change the series' basis (rule 10)`.
+
+New log lines:
+- `CATCH-UP <project>/<metric>: <n> day(s) filled (<days>), <n> left (<days>) — CoinGecko market_chart for <id>, the series'
+  own read (coingecko)`, with the same `; HOLE(S) …`, `; given up after 3 runs …` and `; not reached this run (budget) …`
+  endings as the on-chain lines. A day CoinGecko does not serve stays a named hole.
+- `CATCH-UP <project>/<metric>: <n> day(s) derived (<days>) — <source>, the run's own derivation replayed over the
+  caught-up days`.
+- `CATCH-UP: STRADDLED <project>/<metric>: <days> lie inside the stored multi-day row dated <date> …` and
+  `CATCH-UP <project>/<metric>: <days> NOT derived — <why>` (a declared handover kept in order).
+- The summary line gains `; API: <k> of <n> daily API series had missed days — <n> day(s) filled, <n> left, <n> hole(s)
+  named (CoinGecko market_chart)` (or `; API: <n> daily API series checked — none has a missed day`) and
+  `; derived: <n> row(s) stored over <k> series for the caught-up days`.
+
+Jake's store (2026-11-02): `python token_metrics.py --catch-up` fills the prices for 2026-10-30..11-01. It then stores, for
+those days, Ethereum's P2P leg (on the days whose BigQuery answer is cached; the week 10-26..11-01 is read on the next
+plain run's weekly turn and valued then), Uniswap's issuance (d(total_supply_gross)) and Sky's declared-zero issuance.
+Then `python token_metrics.py --no-fetch --edition charlie`.
+
 
 ## 11dh. Friday pre-mortem — if X, do Y
 

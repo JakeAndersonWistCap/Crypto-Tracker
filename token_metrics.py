@@ -21,6 +21,9 @@ FOUR FLAGS, ALL NARROWING, NONE CHANGING WHAT A FIGURE MEANS:
 CATCH-UP (P3-4): before today's tiers, every run reads the days missed since each daily on-chain series' last stored
 day at each day's first block (fetch.archive.catch_up — the archive backfill's own reads), budgeted (--budget-min,
 --catch-up-days) and resumable. `--catch-up` runs only that: no tiers, no clean-up, no workbook build.
+A4: FIRST the daily API series that are not re-read in full each run (CoinGecko's price / market cap / volume, through
+the adapter's own market_chart read), THEN the on-chain days, THEN the series derived from the caught-up days (the
+run's own derivations replayed for each day, and the P2P legs valued at the stored same-day price).
 
 A NARROWED RUN STILL BUILDS THE WHOLE WORKBOOK. The store holds every project's history and the
 workbook is built from the store, so the projects that were not fetched render from what they
@@ -156,8 +159,10 @@ def parse_args(argv=None) -> argparse.Namespace:
     # P3-4 CATCH-UP: the days missed since each daily on-chain series' last stored day, read at each day's first block
     # (fetch.archive.catch_up) inside this run's lock, BEFORE today's tiers. The definitions are the archive's own.
     ap.add_argument("--catch-up", action="store_true",
-                    help="run ONLY the catch-up: for every daily on-chain series the archive can read at a past block, "
-                         "the days missed since its last stored day (to yesterday) are read at each day's first block, "
+                    help="run ONLY the catch-up: CoinGecko's daily price / market cap / volume for the days missed "
+                         "since each series' last stored day (its own market_chart read), then for every daily on-chain "
+                         "series the archive can read at a past block the missed days at each day's first block, then the "
+                         "series derived from those days; "
                          "within the budget; nothing else is fetched, no clean-up runs and the workbook is NOT rebuilt "
                          "(rebuild with --no-fetch). A plain run does the same catch-up first, before today's tiers")
     ap.add_argument("--budget-min", type=float, default=None, metavar="MIN",
@@ -1076,10 +1081,13 @@ def run_catch_up(st, projects: list[dict], args, log, run_id: str | None = None)
         return None
     for level, line in res["lines"]:
         (log.warning if level == "warning" else log.info)("%s", line)
-    if run_id and res["gaps"]:
+    # A4: the API series (CoinGecko) and the derived rows count too
+    api = res.get("api") or {}
+    if run_id and (res["gaps"] or api.get("gaps") or res.get("derived")):
         summary = res["lines"][-1]
-        st.record_fetch(run_id, "catch_up", None, sum(len(v) for v in res["filled"].values()),
-                        "warn" if summary[0] == "warning" else "ok", summary[1], 2)
+        n = sum(len(v) for part in (res["filled"], api.get("filled") or {}, res.get("derived") or {})
+                for v in part.values())
+        st.record_fetch(run_id, "catch_up", None, n, "warn" if summary[0] == "warning" else "ok", summary[1], 2)
     return res
 
 

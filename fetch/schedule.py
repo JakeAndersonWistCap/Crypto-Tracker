@@ -18,8 +18,14 @@ TIER = 1
 
 
 class Schedule:
+    def __init__(self, asof=None):
+        # THE DAY THE DECLARATIONS ARE WRITTEN FOR (P3-4 A4): today in the daily run; a caught-up day when the catch-up
+        # replays the run for the days it filled (fetch.archive.derive_caught_up) — a declared zero is written for
+        # `now` only, so a day the run missed held none
+        self.asof = asof
+
     def run(self, projects: list[dict], window_days, out):
-        now = today()
+        now = pd.Timestamp(self.asof).normalize() if self.asof is not None else today()
         for p in projects:
             # ===== A DECLARED ZERO IS A FIGURE, NOT AN EMPTY CELL. Added 2026-09-22. =====
             # Fluid's emissions_tokens gapped with "THE EMISSION HAS FINISHED" — an ANSWER

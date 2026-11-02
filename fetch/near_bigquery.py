@@ -327,6 +327,26 @@ class NearBigQuery:
             if spec:
                 self._project(p["name"], spec, out, unbounded)
 
+    def value_only(self, projects: list[dict], out, days: set | None = None) -> None:
+        """THE VALUATION STEP ALONE (P3-4 A4, the catch-up): the days already held in the state ('YYYY-MM-DD' in `days`
+        only, when given), valued at the store's same-day price_usd exactly as run() ends (self._value) — no BigQuery
+        client, no query. Used once the catch-up has stored the prices of missed days, so the days waiting on a price
+        are valued without waiting for the next run. The state saved is always the whole state."""
+        for p in projects:
+            spec = p.get("near_bigquery")
+            if not spec:
+                continue
+            st = self._load()
+            st.setdefault("days", {})
+            st.setdefault("prices", {})
+            view = st if days is None else {**st, "days": {k: v for k, v in st["days"].items() if k in days}}
+            save = self._save
+            self._save = lambda _view, _st=st, _save=save: _save(_st)     # never the filtered view
+            try:
+                self._value(spec, view, out, p["name"])
+            finally:
+                self._save = save
+
     def _project(self, name: str, spec: dict, out, unbounded: bool) -> None:
         # SKIPPED BY THE DAILY RUN (Jake 2026-10-12 evening, item 16): its BigQuery check failed on a scheduled run, so
         # no query is attempted; every series resumes from its own last stored day on the next good run
