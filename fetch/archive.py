@@ -557,6 +557,13 @@ class ArchiveBackfill:
         self.solana = solana or {}
         self.hosts: dict[str, str] = {}      # chain -> host serving archive state (resolver)
         self.report: list[str] = []
+        # P3-4 CATCH-UP (catch_up below): {(project, metric): {"YYYY-MM-DD", ...}} — read ONLY these days of ONLY these
+        # series, OLDEST FIRST (a part-filled gap stays contiguous from the last stored day, so its flows difference day
+        # by day), at most `max_days` distinct days a run. None: the backfill as before (every series, every day of the
+        # window, newest first, the time budget only). The reads, the skip of stored days, the refusals and the series
+        # starts are the backfill's own — the same code path.
+        self.only: dict | None = None
+        self.max_days: int | None = None
 
     def _undeployed(self, p: dict, metric: str) -> str | None:
         """A component contract with NO CODE at the pinned block: "<key> 0x... has no code at block N
@@ -668,6 +675,11 @@ class ArchiveBackfill:
         stored = {k: g.sort_values("date") for k, g in long.groupby(["project", "metric"])}
         end = today()
         days = [end - pd.Timedelta(days=i) for i in range(1, self.days + 1)]      # newest first
+        if self.only is not None:
+            targets = {n: {m for m in ms if (n, m) in self.only} for n, ms in targets.items()}
+            targets = {n: ms for n, ms in targets.items() if ms}
+            days = sorted({pd.Timestamp(d) for ds in self.only.values() for d in ds} & set(days))   # P3-4: oldest first
+        first_day = min(days) if days else end - pd.Timedelta(days=1)
 
         starts = series_starts()
 
@@ -675,6 +687,8 @@ class ArchiveBackfill:
             s0 = starts.get((name, m))
             if s0 and d < pd.Timestamp(s0["from"]):
                 return False                      # before the series exists: complete, not missing
+            if self.only is not None and str(d.date()) not in self.only.get((name, m), ()):
+                return False                      # P3-4: not one of the catch-up's days for this series
             g = stored.get((name, m))
             return g is None or not (g["date"] == d).any()
         failures: dict = {}
@@ -699,7 +713,7 @@ class ArchiveBackfill:
         # Solana histories first: their daily balances are components of the sums.
         sol_daily = {}
         for key, hist in self.solana.items():
-            done, note = hist.fill(int(pd.Timestamp(days[-1]).tz_localize("UTC").timestamp()), deadline)
+            done, note = hist.fill(int(pd.Timestamp(first_day).tz_localize("UTC").timestamp()), deadline)
             self.report.append(f"solana {key[0]}/{key[1]}: {note}" + ("" if done else " — INCOMPLETE; "
                                "its sums wait for the next run"))
             if done:
@@ -761,6 +775,12 @@ class ArchiveBackfill:
             want = wanted(d)
             if not want:
                 continue
+            if self.max_days is not None and read_days >= self.max_days:
+                # P3-4: A DAY BUDGET PER RUN — a long gap is filled over several runs; the next run continues here
+                left = sum(1 for dd in days[i:] if wanted(dd))
+                self.report.append(f"day budget spent at {d.date()} ({self.max_days} day(s) a run); {left} day(s) "
+                                   f"still to read — the next run continues (stored days are skipped)")
+                break
             t_day = time.monotonic()
             for c in chains:
                 self.reader.at_block[c] = clocks[c].at(d, heads[c])
@@ -799,7 +819,7 @@ class ArchiveBackfill:
                                            f"COMPLETE from there, earlier days not retried")
                         continue
                     s0 = starts.get((name, m))
-                    oldest = max(days[-1], pd.Timestamp(s0["from"])) if s0 else days[-1]
+                    oldest = max(first_day, pd.Timestamp(s0["from"])) if s0 else first_day
                     absent = self._absent_before(p, m, d, msgs, stored.get((name, m)), oldest, probe)
                     if absent:
                         begin, why, line = absent
@@ -807,8 +827,9 @@ class ArchiveBackfill:
                         starts[(name, m)] = {"from": begin, "why": why}
                         self.report.append(f"{name}/{m}: {line}")
                         continue
-                    f = failures.setdefault((name, m), {"days": 0, "first": ""})
+                    f = failures.setdefault((name, m), {"days": 0, "first": "", "dates": []})
                     f["days"] += 1
+                    f["dates"].append(str(d.date()))
                     f["first"] = f["first"] or (msgs[0] if msgs else "no row and no error from the read")
             keep = []
             for r in frame.itertuples(index=False):
@@ -867,11 +888,263 @@ class ArchiveBackfill:
                 why = (config.series_absent_before(name, m) if dec.get("from") == s0["from"] else None) \
                     or s0.get("why", "")
                 self.report.append(f"COMPLETE FROM {s0['from']}: {name}/{m} — {why}".rstrip(" —"))
-        return {"written": written, "flows": flows, "refused": refused, "skipped": skipped,
+        return {"written": written, "flows": flows, "refused": refused, "skipped": skipped, "failures": failures,
+                "read_days": read_days,
                 "seconds": round(time.monotonic() - start), "report": self.report,
                 "served_by": {k: sorted({self.hosts.get(s["chain"], "solana" if s["chain"] == "solana" else "?")
                                          for _, s in serving_contracts(config.PROJECT_BY_NAME[k[0]], k[1])})
                               for k in written}}
+
+
+# ---------------------------------------------------------------------------------------------
+# P3-4 CATCH-UP: the days missed between daily runs, filled by the backfill's own reads (Jake, 2026-11-02)
+# ---------------------------------------------------------------------------------------------
+# WHAT. For every DAILY on-chain series the archive can read at a past block (targets() + archivable(), the backfill's
+# own test; weekly epoch reads, parked projects and by-design exclusions are left out), the days after the series' LAST
+# STORED DAY up to yesterday are read at each day's first block by ArchiveBackfill.run — the same contracts, sums,
+# source strings (`archive` marker), refusals, series starts ("not before" rules) and flows. Never a different
+# measuring point, never an overwrite; a day the archive cannot read stays a named hole (never 0, never carried).
+#
+# WHEN. token_metrics.py runs it inside its RunLock BEFORE today's tiers (so today's delta differences yesterday's
+# reading, not a multi-day lump the per-day fill could no longer split); `token_metrics.py --catch-up` runs it alone.
+#
+# BUDGETED AND RESUMABLE. A time budget (minutes) and a day budget (distinct days a run), oldest day first. The days
+# still owed are kept in `.cache/logscan/catch-up-pending.json` (per series: the oldest owed day, and how many runs
+# each unreadable day has been tried), because once today's row lands they are no longer "after the last stored day".
+# A stored day is skipped by the archive's own check. A day tried on CATCH_UP_TRIES runs is left to archive_backfill.py
+# (named in the log). Deleting the file loses nothing stored: the days still owed become ordinary holes the backfill
+# fills.
+CATCH_UP_BUDGET_MIN = 10.0     # minutes a run: TOKEN_METRICS_CATCH_UP_MIN or --budget-min; 0 turns the catch-up off
+CATCH_UP_DAYS = 7              # distinct days read a run: TOKEN_METRICS_CATCH_UP_DAYS or --catch-up-days
+CATCH_UP_TRIES = 3             # runs an unreadable day is retried before it is left to archive_backfill.py
+CATCH_UP_LEDGER = "catch-up-pending.json"
+
+
+def catch_up_defaults() -> tuple[float, int]:
+    """(budget minutes, days a run) from the environment, else the defaults."""
+    import os
+
+    def num(name, default, cast):
+        try:
+            return cast(os.environ.get(name, "").strip() or default)
+        except ValueError:
+            return default
+    return (num("TOKEN_METRICS_CATCH_UP_MIN", CATCH_UP_BUDGET_MIN, float),
+            num("TOKEN_METRICS_CATCH_UP_DAYS", CATCH_UP_DAYS, int))
+
+
+def catch_up_parked() -> dict:
+    """{project: why} — parked projects (config.DETAIL_PARKED, config.CREDIBILITY_PARKED) are never touched."""
+    out: dict = {}
+    for d in (getattr(config, "DETAIL_PARKED", None) or {}, getattr(config, "CREDIBILITY_PARKED", None) or {}):
+        out.update(d)
+    return out
+
+
+def solana_keys(projects: list[dict]) -> set:
+    """(project, contract key) of every SPL TOKEN ACCOUNT read — the components SolanaAccountHistory serves."""
+    return {(p["name"], k) for p in projects for k, s in (p.get("contracts") or {}).items()
+            if s["kind"] == "spl_token_account"}
+
+
+def solana_providers(projects: list[dict], keys: set | None = None) -> dict:
+    """(project, key) -> SolanaAccountHistory for every SPL TOKEN ACCOUNT read (GEODNET's burn), or only `keys`."""
+    out = {}
+    for p in projects:
+        for key, spec in (p.get("contracts") or {}).items():
+            if spec["kind"] == "spl_token_account" and (keys is None or (p["name"], key) in keys):
+                out[(p["name"], key)] = SolanaAccountHistory(account=spec["address"],
+                                                             decimals=int(spec.get("decimals", 9)))
+    return out
+
+
+def catch_up_gaps(store, projects: list[dict], ledger: dict | None = None) -> tuple[dict, list, set]:
+    """({(project, metric): [owed days, oldest first]}, [(project, metric, why not covered)], {series checked}).
+
+    Owed: every day from the day after the series' last stored day (or the ledger's older owed day) to yesterday with no
+    row — not before the series' start (config.ARCHIVE_SERIES_START / a recorded start), not before the archive window,
+    not a day given up after CATCH_UP_TRIES runs."""
+    ledger = _read_json(CATCH_UP_LEDGER) if ledger is None else ledger
+    end = today()
+    yesterday, window = end - pd.Timedelta(days=1), end - pd.Timedelta(days=ARCHIVE_DAYS)
+    starts, parked, sk = series_starts(), catch_up_parked(), solana_keys(projects)
+    gaps, excluded, checked = {}, [], set()
+    for p in projects:
+        name = p["name"]
+        for m in sorted(state_metrics(p)):
+            if name in parked:
+                excluded.append((name, m, f"parked — {parked[name]}"))
+                continue
+            why = config.archive_not_by_design(name, m)
+            if why:
+                excluded.append((name, m, why))
+                continue
+            if weekly(p, m):
+                excluded.append((name, m, "a weekly epoch read, not a daily series — archive_backfill.py fills epochs"))
+                continue
+            # every chain assumed served here; the endpoint is resolved (and a chain without one named) at read time
+            ok, why = archivable(p, m, {s["chain"] for _, s in serving_contracts(p, m)}, sk)
+            if not ok:
+                excluded.append((name, m, why))
+                continue
+            last = store.conn.execute("SELECT MAX(substr(date,1,10)) FROM metrics WHERE project=? AND metric=?",
+                                      (name, m)).fetchone()[0]
+            if last is None:
+                excluded.append((name, m, "nothing stored yet — a first history is archive_backfill.py's job"))
+                continue
+            checked.add((name, m))
+            ent = ledger.get(f"{name}|{m}") or {}
+            frm = pd.Timestamp(last) + pd.Timedelta(days=1)
+            if ent.get("from"):
+                frm = min(frm, pd.Timestamp(ent["from"]))
+            s0 = starts.get((name, m))
+            if s0:
+                frm = max(frm, pd.Timestamp(s0["from"]))
+            frm = max(frm, window)
+            if frm > yesterday:
+                continue
+            given = {d for d, k in (ent.get("tries") or {}).items() if int(k) >= CATCH_UP_TRIES}
+            have = {d for (d,) in store.conn.execute(
+                "SELECT DISTINCT substr(date,1,10) FROM metrics WHERE project=? AND metric=? AND substr(date,1,10)>=?",
+                (name, m, str(frm.date())))}
+            owed = [str(d.date()) for d in pd.date_range(frm, yesterday)
+                    if str(d.date()) not in have and str(d.date()) not in given]
+            if owed:
+                gaps[(name, m)] = owed
+    return gaps, excluded, checked
+
+
+def _ranges(days) -> str:
+    """'2026-10-30..11-01, 2026-11-03' — consecutive days folded into one range."""
+    out, run = [], []
+    for d in sorted(pd.Timestamp(x) for x in days):
+        if run and d - run[-1] == pd.Timedelta(days=1):
+            run.append(d)
+            continue
+        if run:
+            out.append(run)
+        run = [d]
+    if run:
+        out.append(run)
+    return ", ".join(str(r[0].date()) if len(r) == 1 else f"{r[0].date()}..{r[-1].strftime('%m-%d')}" for r in out)
+
+
+def catch_up(store, projects: list[dict], budget_s: float | None = None, max_days: int | None = None, reader=None,
+             solana: dict | None = None, archive_chains: set | None = None, resolve=None) -> dict:
+    """Fill every owed day (catch_up_gaps) by ArchiveBackfill.run, within the budgets. The caller holds the store's
+    RunLock (token_metrics.py) — this takes none. Returns {"lines": [(level, text)], "gaps", "filled", "left", "holes",
+    "result"}: one line per series that had owed days, then the summary line ("info" or "warning")."""
+    t0 = time.monotonic()
+    dflt_min, dflt_days = catch_up_defaults()
+    budget_s = dflt_min * 60 if budget_s is None else float(budget_s)
+    max_days = dflt_days if max_days is None else int(max_days)
+    ledger = _read_json(CATCH_UP_LEDGER)
+    gaps, excluded, checked = catch_up_gaps(store, projects, ledger)
+    by_name = {p["name"]: p for p in projects}
+    kinds = {"parked": 0, "weekly": 0, "not archivable or by design": 0, "nothing stored yet": 0}
+    for _, _, why in excluded:
+        k = ("parked" if why.startswith("parked") else "weekly" if why.startswith("a weekly epoch")
+             else "nothing stored yet" if why.startswith("nothing stored") else "not archivable or by design")
+        kinds[k] += 1
+    notcov = ", ".join(f"{k} {v}" for k, v in kinds.items() if v)
+    lines: list[tuple[str, str]] = []
+    out = {"lines": lines, "gaps": gaps, "filled": {}, "left": {}, "holes": {}, "excluded": excluded, "result": None}
+
+    def save_ledger(entries: dict) -> None:
+        keep = {k: v for k, v in ledger.items() if tuple(k.split("|", 1)) not in checked}   # other scopes' entries
+        keep.update(entries)
+        if keep or ledger:
+            _write_json(CATCH_UP_LEDGER, keep)
+
+    if not gaps:
+        save_ledger({})
+        lines.append(("info", f"CATCH-UP: {len(checked)} daily on-chain series checked — none has a missed day since "
+                              f"its last stored day; nothing read" + (f" (not covered: {notcov})" if notcov else "")))
+        return out
+
+    need = {s["chain"] for (n, m) in gaps for _, s in serving_contracts(by_name[n], m)} - {"solana"}
+    if solana is None:
+        solana = solana_providers([by_name[n] for n in sorted({n for n, _ in gaps})],
+                                  {(n, k) for (n, m) in gaps for k, s in serving_contracts(by_name[n], m)
+                                   if s["kind"] == "spl_token_account"})
+    bf = ArchiveBackfill(store, [by_name[n] for n in sorted({n for n, _ in gaps})], budget_s=budget_s,
+                         reader=reader, solana=solana)
+    if archive_chains is None:
+        # THE BACKFILL'S RESOLVER: the endpoint that serves old state, per chain (hosts only in any line)
+        archive_chains = set()
+        for c in sorted(need):
+            w3, host = (resolve or resolve_archive)(c)
+            if w3 is not None:
+                if hasattr(bf.reader, "_w3"):
+                    bf.reader._w3[c] = w3
+                bf.hosts[c] = host
+                archive_chains.add(c)
+    no_endpoint = {}
+    only = {}
+    for (n, m), days in gaps.items():
+        miss = sorted({s["chain"] for _, s in serving_contracts(by_name[n], m)} - {"solana"} - set(archive_chains))
+        if miss:
+            no_endpoint[(n, m)] = miss
+        else:
+            only[(n, m)] = set(days)
+    bf.only, bf.max_days = only, max_days
+    res = bf.run(set(archive_chains)) if only else {"written": {}, "flows": {}, "refused": {}, "failures": {},
+                                                     "report": [], "read_days": 0, "served_by": {}}
+    out["result"] = res
+
+    entries, n_fill, n_left, n_holes = {}, 0, 0, 0
+    starts = series_starts()                  # a start found by this run ("not before") makes earlier days not owed
+    for (n, m), days in sorted(gaps.items()):
+        have = {d for (d,) in store.conn.execute(
+            "SELECT DISTINCT substr(date,1,10) FROM metrics WHERE project=? AND metric=? AND substr(date,1,10)>=?",
+            (n, m, min(days)))}
+        s0 = (starts.get((n, m)) or {}).get("from")
+        filled = [d for d in days if d in have]
+        left = [d for d in days if d not in have and not (s0 and d < s0)]
+        fail = (res["failures"].get((n, m)) or {})
+        refused = res["refused"].get((n, m))
+        holes = [d for d in left if d in set(fail.get("dates") or ())] or (left if refused else [])
+        tries = dict((ledger.get(f"{n}|{m}") or {}).get("tries") or {})
+        tries = {d: k for d, k in tries.items() if d not in filled}
+        for d in holes:
+            tries[d] = int(tries.get(d, 0)) + 1
+        given = [d for d in holes if tries[d] >= CATCH_UP_TRIES]
+        owed = [d for d in left if d not in given]
+        if owed:
+            entries[f"{n}|{m}"] = {"from": min(owed), "tries": {d: k for d, k in tries.items() if d >= min(owed)}}
+        out["filled"][(n, m)], out["left"][(n, m)], out["holes"][(n, m)] = filled, left, holes
+        n_fill, n_left, n_holes = n_fill + len(filled), n_left + len(left), n_holes + len(holes)
+        via = ", ".join(sorted({bf.hosts.get(s["chain"], s["chain"]) for _, s in serving_contracts(by_name[n], m)}))
+        txt = (f"CATCH-UP {n}/{m}: {len(filled)} day(s) filled" + (f" ({_ranges(filled)})" if filled else "")
+               + f", {len(left)} left" + (f" ({_ranges(left)})" if left else "")
+               + f" — archive read at each day's first block via {via}")
+        flow = config.cumulative_flow_for(n, m)
+        if flow and res["flows"].get((n, flow)):
+            txt += f"; {res['flows'][(n, flow)]} {flow} row(s) differenced from it"
+        if (n, m) in no_endpoint:
+            txt += f"; NOT READ: no endpoint serves archive state on {', '.join(no_endpoint[(n, m)])} — the next run tries again"
+        if holes:
+            why = redact(refused or fail.get("first") or "no row and no error from the read")[:200]
+            txt += (f"; HOLE(S) {_ranges(holes)} — the archive could not read them: {why} (never 0, never carried; "
+                    f"tried on {max(tries[d] for d in holes)} of {CATCH_UP_TRIES} runs)")
+        if given:
+            txt += f"; given up after {CATCH_UP_TRIES} runs: {_ranges(given)} — left to archive_backfill.py"
+        rest = [d for d in left if d not in holes and (n, m) not in no_endpoint]
+        if rest:
+            txt += f"; not reached this run (budget): {_ranges(rest)} — the next run continues"
+        lines.append(("warning" if holes or (n, m) in no_endpoint else "info", txt))
+    save_ledger(entries)
+    for x in res["report"]:
+        if x.startswith(("budget spent", "day budget spent", "rate-limited", "STRADDLED", "solana ")) \
+                or ": not available before " in x:
+            lines.append(("info", f"CATCH-UP: {x}"))
+    secs = round(time.monotonic() - t0)
+    lines.append(("warning" if n_holes or no_endpoint else "info",
+                  f"CATCH-UP: {len(gaps)} of {len(checked)} daily on-chain series had missed days — {n_fill} day(s) "
+                  f"filled, {n_left} left, {n_holes} hole(s) named; {res.get('read_days', 0)} day(s) read in {secs}s "
+                  f"(budget {budget_s / 60:g} min, {max_days} day(s) a run)"
+                  + (f" (not covered: {notcov})" if notcov else "")))
+    return out
 
 
 # ---------------------------------------------------------------------------------------------

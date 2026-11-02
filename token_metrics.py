@@ -18,6 +18,10 @@ FOUR FLAGS, ALL NARROWING, NONE CHANGING WHAT A FIGURE MEANS:
                           when that file exists; --all restores the full 30.
     --all                 every project, whatever portfolio.txt says.
 
+CATCH-UP (P3-4): before today's tiers, every run reads the days missed since each daily on-chain series' last stored
+day at each day's first block (fetch.archive.catch_up — the archive backfill's own reads), budgeted (--budget-min,
+--catch-up-days) and resumable. `--catch-up` runs only that: no tiers, no clean-up, no workbook build.
+
 A NARROWED RUN STILL BUILDS THE WHOLE WORKBOOK. The store holds every project's history and the
 workbook is built from the store, so the projects that were not fetched render from what they
 already have and go stale in the ordinary way. Nothing is blanked for having been skipped, and
@@ -149,7 +153,23 @@ def parse_args(argv=None) -> argparse.Namespace:
     ap.add_argument("--plume-native-cap", type=int, default=None, metavar="PAGES",
                     help="--seed plume_settlement only (SPEC D5-1d): the native leg's pages-a-day cap for this "
                          "invocation (configured 400; the farmed days need ~600-850). A day refused below it is retried")
-    return ap.parse_args(argv)
+    # P3-4 CATCH-UP: the days missed since each daily on-chain series' last stored day, read at each day's first block
+    # (fetch.archive.catch_up) inside this run's lock, BEFORE today's tiers. The definitions are the archive's own.
+    ap.add_argument("--catch-up", action="store_true",
+                    help="run ONLY the catch-up: for every daily on-chain series the archive can read at a past block, "
+                         "the days missed since its last stored day (to yesterday) are read at each day's first block, "
+                         "within the budget; nothing else is fetched, no clean-up runs and the workbook is NOT rebuilt "
+                         "(rebuild with --no-fetch). A plain run does the same catch-up first, before today's tiers")
+    ap.add_argument("--budget-min", type=float, default=None, metavar="MIN",
+                    help="the catch-up's time budget in minutes, this run (default TOKEN_METRICS_CATCH_UP_MIN, else "
+                         "10; 0 turns the catch-up off). What is not read continues on the next run")
+    ap.add_argument("--catch-up-days", type=int, default=None, metavar="N",
+                    help="the catch-up's day budget: at most N distinct days read this run, oldest first (default "
+                         "TOKEN_METRICS_CATCH_UP_DAYS, else 7); a longer gap is filled over several runs")
+    args = ap.parse_args(argv)
+    if args.catch_up and (args.no_fetch or args.seed):
+        ap.error("--catch-up runs alone: not with --no-fetch or --seed")
+    return args
 
 
 def seed_nearblocks(st, log) -> int:
@@ -1013,13 +1033,15 @@ def main(argv=None) -> int:
     log = logging.getLogger("token_metrics")
     # P2f-4: stop early, in one line, when the disk is too full to write the store and the workbooks (exit 74)
     import disk_guard
-    if disk_guard.guard_or_code("token_metrics " + ("--no-fetch build" if args.no_fetch else "run"),
+    if disk_guard.guard_or_code("token_metrics " + ("--no-fetch build" if args.no_fetch
+                                                    else "--catch-up" if args.catch_up else "run"),
                                 store_mod.DB_PATH, say=log.error):
         return disk_guard.EXIT_DISK
     # A HEARTBEAT LINE AT LEAST ONCE A MINUTE for the whole run, seeds and --no-fetch included (Jake's run
     # 2026-10-11: piped output showed nothing for 40+ minutes): the step, n/N, elapsed, ETA (progress.tick)
     import progress
-    what = f"--seed {args.seed}" if args.seed else "--no-fetch build" if args.no_fetch else "run"
+    what = (f"--seed {args.seed}" if args.seed else "--no-fetch build" if args.no_fetch
+            else "--catch-up" if args.catch_up else "run")
     # ONE WRITER ON metrics.db (Round G 1.8): a second run waits for the first, then exits 75 with a plain message
     from runlock import RunLock, RunLocked
     try:
@@ -1029,6 +1051,36 @@ def main(argv=None) -> int:
     except RunLocked as e:
         log.error("%s", e.code)
         return 75
+
+
+def run_catch_up(st, projects: list[dict], args, log, run_id: str | None = None):
+    """P3-4: fetch.archive.catch_up inside THIS process's RunLock (it takes none itself — RunLock is not re-entrant and a
+    second take in one process would wait on itself), logged one line per series that had missed days plus a summary.
+    Never stops the run: an error is one WARNING line and today's tiers run as usual. Returns its result, or None."""
+    from fetch import archive as ar
+    budget_min, days = ar.catch_up_defaults()
+    budget_min = budget_min if getattr(args, "budget_min", None) is None else args.budget_min
+    days = days if getattr(args, "catch_up_days", None) is None else args.catch_up_days
+    if budget_min <= 0 or days <= 0:
+        log.info("CATCH-UP: off (budget %g min, %d day(s) a run)", budget_min, days)
+        return None
+    try:
+        ar.load_env()
+        res = ar.catch_up(st, projects, budget_s=budget_min * 60, max_days=days)
+    except Exception as e:  # noqa: BLE001 — the catch-up never stops a run
+        from fetch.base import redact
+        line = f"CATCH-UP: not run — {type(e).__name__}: {redact(e)[:300]}; today's tiers run as usual"
+        log.warning("%s", line)
+        if run_id:
+            st.record_fetch(run_id, "catch_up", None, 0, "warn", line, 2)
+        return None
+    for level, line in res["lines"]:
+        (log.warning if level == "warning" else log.info)("%s", line)
+    if run_id and res["gaps"]:
+        summary = res["lines"][-1]
+        st.record_fetch(run_id, "catch_up", None, sum(len(v) for v in res["filled"].values()),
+                        "warn" if summary[0] == "warning" else "ok", summary[1], 2)
+    return res
 
 
 def _mark_stored(frame):
@@ -1255,6 +1307,17 @@ def _main(args, log) -> int:
         st.close()
         return 0
 
+    # ===== CATCH-UP ONLY (P3-4). ===== The days missed since each daily on-chain series' last stored day, nothing
+    # else: no tier, no clean-up, no workbook (rebuild with --no-fetch; Jake's order is --catch-up, then
+    # --no-fetch --edition charlie).
+    if args.catch_up:
+        from fetch import alchemy_usage
+        alchemy_usage.reset()
+        run_catch_up(st, resolve_scope(args, log), args, log)
+        st.close()
+        _alchemy_report(log, "--catch-up")
+        return 0
+
     projects = resolve_scope(args, log)
     run_id = fetch.new_run_id()
     apply_run_cleanups(st, run_id, log)     # G14 1: declared one-offs (config.RUN_CLEANUPS), each row logged
@@ -1271,6 +1334,11 @@ def _main(args, log) -> int:
     log.info("%s", config.env_keys_line())
     from fetch import alchemy_usage
     alchemy_usage.reset()
+    # P3-4 CATCH-UP, BEFORE TODAY'S TIERS: the days missed since each daily on-chain series' last stored day, read at
+    # each day's first block (budgeted, resumable), so today's deltas difference yesterday's reading and the days
+    # between runs are not left as holes. After the clean-ups (no old-set row stands beside a day it writes) and inside
+    # this run's lock. Its Alchemy calls count in this run's usage line.
+    run_catch_up(st, projects, args, log, run_id)
     first_run = st.is_empty()
     window = None if first_run else REFETCH_WINDOW_DAYS
     log.info("run %s — %s", run_id, "FIRST RUN: full backfill" if first_run else f"incremental, trailing {window}d re-fetch")

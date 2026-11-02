@@ -534,6 +534,59 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11di. Round P3-4 — Catch-up (2026-11-02)
+
+Days missed between runs (laptop off, a run skipped) no longer wait for a hand-run backfill. Every `python token_metrics.py`
+first reads, for each DAILY on-chain series the archive can read at a past block, the days since that series' last stored
+day up to yesterday, each at that day's first block. It uses the same reads, source strings (`archive` marker), refusals and
+"not before" starts as `archive_backfill.py`. Then today's tiers run. It runs inside the run's lock.
+
+Covered: 73 series on 14 projects (Ethereum, BSC, Base, Polygon; GEODNET's Solana burn account). Not covered:
+- Aerodrome and World Mobile (parked).
+- Weekly epoch reads.
+- Event-log reads (Sky's burn).
+- By-design exclusions (OriginTrail and Aave `total_supply`).
+- A series with nothing stored yet.
+- NEAR's archival supply and stake (`archive_backfill.py --run --near`).
+- Chainlink's reward-vault rate.
+
+The log lines (INFO; WARNING when a hole or a missing endpoint is named):
+- `CATCH-UP <project>/<metric>: <n> day(s) filled (<days>), <n> left (<days>) — archive read at each day's first block via
+  <host>`. It can end with any of these:
+  - `; <n> <flow> row(s) differenced from it`: the burn or flow for those days, from the stock.
+  - `; HOLE(S) <days> — the archive could not read them: <first error> (never 0, never carried; tried on <k> of 3 runs)`
+  - `; given up after 3 runs: <days> — left to archive_backfill.py`
+  - `; not reached this run (budget): <days> — the next run continues`
+  - `; NOT READ: no endpoint serves archive state on <chain> — the next run tries again`
+- A series with no missed day prints nothing.
+- `CATCH-UP: day budget spent at <date> …` or `CATCH-UP: budget spent at <date> …`: the rest goes on the next run.
+- `CATCH-UP: STRADDLED <project>/<flow> …`: today's delta already covers a day the catch-up filled later. The stock is per
+  day, and the burn stays in that one multi-day row (never counted twice). For per-day rows, run the printed
+  `python rederive.py …` command.
+- Summary, always: `CATCH-UP: <k> of <n> daily on-chain series had missed days — <n> day(s) filled, <n> left, <n> hole(s)
+  named; <n> day(s) read in <s>s (budget <m> min, <d> day(s) a run)`. When nothing is missed:
+  `CATCH-UP: <n> daily on-chain series checked — none has a missed day since its last stored day; nothing read`.
+
+Run it alone, with nothing else fetched, no clean-up and no workbook build:
+```
+python token_metrics.py --catch-up
+python token_metrics.py --no-fetch --edition charlie
+```
+The second line rebuilds the workbooks afterwards.
+
+Budget:
+- 10 minutes and 7 days a run, oldest day first.
+- Change it for one run with `--budget-min <m>` and `--catch-up-days <n>`.
+- Change it for good with `TOKEN_METRICS_CATCH_UP_MIN` and `TOKEN_METRICS_CATCH_UP_DAYS` in .env. `--budget-min 0` turns it off.
+
+A longer gap fills over several runs. The days still owed are kept in `.cache\logscan\catch-up-pending.json`. If that file
+is deleted, nothing stored is lost; the owed days become ordinary holes for `archive_backfill.py --run`.
+
+The lock: `archive_backfill.py --run` now takes the same lock as token_metrics.py. Each one waits for the other, then exits
+75 with the same `RUN LOCKED — …` line. This replaces §11dh 1a's "Run vs backfill: NO line". The plan (no `--run`) takes
+no lock. `windows\daily_run.ps1` is unchanged: the catch-up runs inside `token_metrics.py`.
+
+
 ## 11dh. Friday pre-mortem — if X, do Y
 
 Each entry is read from the code at 3f73b51: SYMPTOM (the message text as printed; the `<time> WARNING <logger>:` prefix is
