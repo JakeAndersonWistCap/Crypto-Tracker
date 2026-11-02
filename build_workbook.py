@@ -7063,7 +7063,7 @@ def _a4_window_caveat(p: dict, data_by_key: dict) -> str:
         return isinstance(v, (int, float)) and v == v
 
     parts, until = [], []
-    iss = data_by_key.get(f"{name}|{config.issuance_basis(name)}") or {}
+    iss = data_by_key.get(f"{name}|{config.crossover_issuance_metric(name)}") or {}   # the crossover's denominator
     c = iss.get("q0_covered_days")
     # THE MIRROR CASE, checked first: a schedule past its declared end OVERSTATES what is issued
     # now (the true rate is zero) for as long as the window still reaches back into it. When it
@@ -7199,13 +7199,11 @@ def _a4_headline(R: Refs, burn, data_by_key: dict | None = None) -> list[tuple]:
          lambda r, p: calc(f"{_annualise(R, r, p, config.a4_burn_metric(p['name']), burn(r, p))}/({circ(r, p)})"), FMT_PCT, "calc", True, {"metric_fn": config.a4_burn_metric}),
         ("Issuance basis for the crossover",
          lambda r, p: ("pool_release_tokens — supply pre-minted" if config.issuance_basis(p["name"]) == "pool_release_tokens"
+                       else f"{config.crossover_issuance_metric(p['name'])} — supply pre-minted: releases into "
+                            f"circulating (P3-2c)" if p["name"] in config.A4_RELEASE_ISSUANCE
                        else "gross_issuance_tokens"), FMT_TEXT, "text"),
         ("BURN ÷ ISSUANCE (x) — crossover, on the basis to the left",
-         lambda r, p: _zero_issuance(R, r, p, '"no issuance — burn only"') or _coverage_guard(
-             R, r, [("burn", config.a4_burn_metric(p["name"]), "q0"),
-                    ("issuance", config.issuance_basis(p["name"]), "q0")],
-             f"{_flow_rate(R, r, config.a4_burn_metric(p['name']), p=p)}/"
-             f"{_flow_rate(R, r, config.issuance_basis(p['name']), p=p)}"), FMT_X, "calc", True),
+         lambda r, p: _a4_crossover(R, r, p), FMT_X, "calc", True),
         # RIGHT BESIDE THE TWO FIGURES IT QUALIFIES. Empty where the window is full and the burn
         # is a stream; otherwise it says, with numbers, why the pair is not yet a rate.
         ("Q0 WINDOW CAVEAT — read before the yield and crossover",
@@ -7221,6 +7219,20 @@ def _a4_headline(R: Refs, burn, data_by_key: dict | None = None) -> list[tuple]:
              R, r, p, f"-{_annualise(R, r, p, config.a4_net_burn_metric(p['name']), R.D(r, config.a4_net_burn_metric(p['name']), 'q0'))}/({circ(r, p)})")
          or _net_annual_pct(R, r, p, circ(r, p), bm=config.a4_net_burn_metric(p["name"])), FMT_PCT, "calc", True),
     ]
+
+
+def _a4_crossover(R: Refs, r: int, p: dict) -> str:
+    """A4's key, BURN ÷ ISSUANCE per covered day on config.crossover_issuance_metric. A pre-minted supply with nothing
+    minted divides by its release into circulating (config.A4_RELEASE_ISSUANCE, P3-2c: Uniswap) — the declared-zero
+    check (_zero_issuance) still blocks a positive measured mint; any other declared-zero project reads "no issuance —
+    burn only" as before."""
+    bm, im = config.a4_burn_metric(p["name"]), config.crossover_issuance_metric(p["name"])
+    legs = [("burn", bm, "q0"), ("release" if p["name"] in config.A4_RELEASE_ISSUANCE else "issuance", im, "q0")]
+    expr = f"{_flow_rate(R, r, bm, p=p)}/{_flow_rate(R, r, im, p=p)}"
+    if p["name"] in config.A4_RELEASE_ISSUANCE:
+        g = _coverage_guard(R, r, legs, expr, bare=True)
+        return _zero_issuance(R, r, p, g) or f"=IFERROR({g},{NA})"
+    return _zero_issuance(R, r, p, '"no issuance — burn only"') or _coverage_guard(R, r, legs, expr)
 
 
 def _zero_issuance(R: Refs, r: int, p: dict, expr: str) -> str | None:
@@ -7421,29 +7433,93 @@ RETIRE_VS_EMISSIONS_HEAD = ("RETIRED ÷ EMISSIONS (x) = RETIRED buyback ÷ emiss
                             "rate IN FORCE — A3's rank key (P1-6)")
 
 
-def _retire_vs_emissions_col(R: Refs) -> tuple:
+def a3_emissions_declared_zero(name: str) -> str | None:
+    """Why this project's A3 emissions are 0 BY DECLARATION — or None (P3-2b): every absorption emissions series is
+    declared not applicable (config.not_applicable_reason: Ether.fi, 'ETHFI IS NOT EMITTED'), so nothing is emitted. A
+    series that is merely missing is unknown, never 0 — it returns None."""
+    ems = config.absorption_emission_metrics(name)
+    whys = [config.not_applicable_reason(name, m) for m in ems]
+    if ems and all(whys) and not any(m in config.metrics_for_project(config.PROJECT_BY_NAME.get(name) or {})
+                                     for m in ems):
+        return "; ".join(str(w) for w in whys)
+    return None
+
+
+A3_KEY_FALLBACK_TEXT = ("FALLBACK KEY (DEFINITION R3, Jake 2026-11-02, SPEC P3-2b): emissions are 0, so retired ÷ "
+                        "emissions has no denominator — this key is RETIRED buyback ÷ (emissions + unlocks), the "
+                        "RETIREMENT ÷ DILUTION basis, so it ranks beside keys on the emissions-only basis")
+
+
+def _a3_emissions_zero_in(name: str, data_by_key: dict, window: str) -> bool:
+    """Every absorption emissions series of `name` holds a MEASURED 0 in `window` (q0..q4) — never a missing value."""
+    vals = [(data_by_key.get(f"{name}|{config.metric_alias(name, m)}") or {}).get(window)
+            for m in config.absorption_emission_metrics(name)]
+    return bool(vals) and all(isinstance(v, (int, float)) and v == v and v == 0 for v in vals)
+
+
+def _a3_fallback_applies(p: dict, data_by_key: dict, window: str) -> str | None:
+    """'declared' / 'measured' where A3's key reads the fallback in `window` (P3-2b), else None: the project has a
+    non-circulating wallet set (an unlock series to add), no emission rate in force is declared, and its emissions are
+    0 there — 0 by declaration (Ether.fi) or a measured 0 on every absorption emissions series (Maple)."""
+    name = p["name"]
+    if _retirement_zero(p) or not config.unlock_stock_metrics(name) or config.CURRENT_EMISSION_RATE.get(name):
+        return None
+    if a3_emissions_declared_zero(name):
+        return "declared"
+    return "measured" if _a3_emissions_zero_in(name, data_by_key, window) else None
+
+
+def a3_key_fallback(p: dict, data_by_key: dict) -> str | None:
+    """The AMBER caveat on A3's key cell when its Q0 reads the fallback (P3-2b) — or None."""
+    name = p["name"]
+    how = _a3_fallback_applies(p, data_by_key, "q0")
+    if not how:
+        return None
+    ems = config.absorption_emission_metrics(name)
+    why = (f"emissions are 0 by declaration ({str(a3_emissions_declared_zero(name))[:160]})" if how == "declared" else
+           "emissions are 0 in Q0 (" + ", ".join(f"{m} Q0 = 0" for m in ems) + ", measured)")
+    return (f"{A3_KEY_FALLBACK_TEXT}. {name}: {why}; unlocks = unlock_release_tokens (the falls of the non-circulating "
+            "wallets). A quarter whose emissions are not 0 reads retired ÷ emissions as before.")
+
+
+def _retire_vs_emissions_col(R: Refs, data_by_key: dict | None = None) -> tuple:
     """A3'S RANK KEY (P1-6, Jake 2026-10-27): retired buyback tokens (burned + held) per covered day ÷ the tab's
     absorption emissions per covered day — unlocks excluded — with the emission rate IN FORCE in place of the series it
     replaces where one is declared (config.CURRENT_EMISSION_RATE: Sky); elsewhere the last 90 days' measured rate is the
-    rate in force. A structural 0 retirement reads 0; a project with no emissions series says so."""
+    rate in force. A structural 0 retirement reads 0; a project with no emissions series says so.
+    DEFINITION R3 (P3-2b, Jake 2026-11-02): WHEN EMISSIONS ARE 0 the key is retired ÷ (emissions + unlocks) — the
+    RETIREMENT ÷ DILUTION basis, the unlocks' coverage guarded too. Decided per quarter from the window this builder
+    writes (the trajectory row re-runs it k quarters back, so its latest quarter is the key): 0 by declaration (Ether.fi:
+    emissions_tokens not applicable, not emitted) or a MEASURED 0 on every emissions series in that window (Maple) —
+    a missing emissions value is unknown and keeps the plain key. A quarter with emissions writes the formula exactly as
+    before. The key cell carries an AMBER caveat naming the fallback (a3_key_fallback)."""
     def build(r, p):
         if _retirement_zero(p):
             return "=0"
         name = p["name"]
         cr = config.CURRENT_EMISSION_RATE.get(name)
         ems = [m for m in config.absorption_emission_metrics(name) if not cr or m != cr["replaces"]]
+        legs = [("buyback", "retired_buyback_tokens", "q0")]
+        how = _a3_fallback_applies(p, data_by_key or {}, f"q{_SHIFT['k']}")
+        if how:
+            unl = "unlock_release_tokens"
+            den = "+".join(([] if how == "declared" else [_flow_rate(R, r, m, p=p) for m in ems])
+                           + [_flow_rate(R, r, unl, p=p)])
+            return _coverage_guard(R, r, legs + ([] if how == "declared" else [(m, m, "q0") for m in ems])
+                                   + [("unlocks", unl, "q0")],
+                                   f"{_flow_rate(R, r, 'retired_buyback_tokens', p=p)}/({den})")
         parts = ([f"({R.D(r, cr['metric'], 'now')}/{G('days_per_year')})"] if cr else []) + \
             [_flow_rate(R, r, m, p=p) for m in ems]
         if not parts:
             return "n/a — no emissions series to divide by"
-        legs = [("buyback", "retired_buyback_tokens", "q0")]
         expr = f"{_flow_rate(R, r, 'retired_buyback_tokens', p=p)}/({'+'.join(parts)})"
         return _coverage_guard(R, r, legs + [(m, m, "q0") for m in ems], expr) if cr else \
             _absorption_guard(R, r, p, legs, expr)
     # P2e-2: the key's own trajectory row (Q0 = this cell; Q-1..Q-4 the same builder shifted) — the reader's A3 tab
     # shows the key's last four quarters from it
     return (RETIRE_VS_EMISSIONS_HEAD, build, FMT_X, "calc", False,
-            {"metric": "retired_buyback_tokens", "trajectory_id": A3_KEY_TRAJECTORY_ID})
+            {"metric": "retired_buyback_tokens", "trajectory_id": A3_KEY_TRAJECTORY_ID,
+             "amber_fn": lambda p: a3_key_fallback(p, data_by_key or {})})
 
 
 A3_KEY_TRAJECTORY_ID = "a3_retire_vs_emissions"
@@ -9349,6 +9425,18 @@ def _write_table(ws, R: Refs, projects: list[dict], specs: list[tuple], data_by_
                     c.number_format = _suffix_fmt(c.number_format, suffix)
                 prior = c.comment.text if c.comment else ""
                 c.comment = Comment((prior + "\n\n" if prior else "") + note, "token_metrics")
+            # P3-2b: an AMBER caveat the column computes per project (A3's key on its emissions-0 fallback) — the fill
+            # says "a real number with a caveat", the comment opens with the caveat
+            af = meta.get("amber_fn")
+            amber = af(p) if af else None
+            if amber:
+                # a worse state already on the cell (stale, review, manual, red) keeps its own fill
+                if not (c.fill and c.fill.fill_type and str(c.fill.fgColor.rgb)[-6:] in {
+                        str(f.fgColor.rgb)[-6:] for f in (FILL_STALE, FILL_REVIEW, FILL_MANUAL, FILL_RED)}):
+                    c.fill = FILL_AMBER
+                prior = c.comment.text if c.comment else ""
+                c.comment = Comment(f"AMBER — a real number, qualified: {amber}" + ("\n\n" + prior if prior else ""),
+                                    "token_metrics")
             # P2c-6: a note the column computes per project (a Δ compared on a declared one basis names its source),
             # opening the comment
             nf = meta.get("note_fn")
@@ -10723,7 +10811,7 @@ def write_a3(ws, R: Refs, data_by_key: dict):
         *_unlock_cols(R, absorption=True),
         _retire_vs_dilution_col(R),
         *_current_rate_cols(R),
-        _retire_vs_emissions_col(R),
+        _retire_vs_emissions_col(R, data_by_key),
         # ===== DOCUMENTED ALLOCATION LEGS, ONE ROW EACH, NEVER COLLAPSED. =====
         # Blank for every project that declares none, which is all of them but Sky. The legs
         # carry their own effect on supply, because a single "implied buyback" figure is right

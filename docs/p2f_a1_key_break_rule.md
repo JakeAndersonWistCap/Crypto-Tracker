@@ -1,5 +1,11 @@
 # P2f-5b — the A1 key blocks on a change of measuring point inside its one-year span (PROPOSED, not merged)
 
+> **P3-2e (2026-11-02):** the `trajectory._own_breaks` normalisation described below IS NOW MADE (ordered_points through
+> `trajectory.basis_of`, as build_workbook and the guard do; `a1_break_check.declared_note` says "(normalised)"). On the
+> fixture Ethereum's 2026-09-29 `total_supply_protocol` handover is now a recognised declared handover and its verdict
+> reads **OK**; Near (2026-10-11) and Plume (2026-01-01) still read WOULD BLOCK. The rule itself (the .patch) is still NOT
+> merged. The text below is the P2f-5 record as written.
+
 Status: **do not merge.** Jake's condition (SPEC P2f-5b): if Ethereum's A1 key would block, the rule is not merged and the
 break's date and source are reported. On the committed fixture dumps (Jake's 10-13 store) it **would block**. Nothing in
 `reader.py` changed on this branch; the rule is a patch to apply later (or never).

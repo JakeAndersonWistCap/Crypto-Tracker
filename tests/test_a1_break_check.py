@@ -94,9 +94,19 @@ def test_a_declared_handover_that_steps_still_blocks_and_says_why(monkeypatch):
     assert "declares a STEP" in "\n".join(abc.render(r))
 
 
-def test_a_mismatched_declaration_is_named_not_recognised(monkeypatch):
+def test_a_bracketed_declared_point_is_recognised_normalised(monkeypatch):
+    # P3-2e (was: "NOT RECOGNISED", WOULD BLOCK): trajectory._own_breaks normalises ordered_points the way
+    # build_workbook and the guard do, so a point written with a bracket is its stripped basis
     monkeypatch.setitem(config.PROJECT_BY_NAME, "X", {"name": "X", "series_handover": {
         SETTLE: {"ordered_points": ("artemis:x[note]", "artemis:y"), "why": "test", "composition_change": "none"}}})
+    r = abc.check_project(_groups(settle_src={"2026-06-01": "artemis:y"}), "X")
+    assert r["verdict"] == "OK" and not r["breaks"]
+    assert "(normalised): recognised, not a break" in "\n".join(abc.render(r))
+
+
+def test_a_mismatched_declaration_is_named_not_recognised(monkeypatch):
+    monkeypatch.setitem(config.PROJECT_BY_NAME, "X", {"name": "X", "series_handover": {
+        SETTLE: {"ordered_points": ("artemis:w[note]", "artemis:y"), "why": "test", "composition_change": "none"}}})
     r = abc.check_project(_groups(settle_src={"2026-06-01": "artemis:y"}), "X")
     assert r["verdict"] == "WOULD BLOCK" and "NOT RECOGNISED" in "\n".join(abc.render(r))
 
@@ -126,9 +136,12 @@ def test_script_on_the_ethereum_dump_is_read_only_offline_and_reports_the_2026_0
     assert rc == 0
     assert _digest(db) == before and sorted(p.name for p in tmp_path.iterdir()) == names      # nothing written
     assert "=== Ethereum (primary A1) ===" in out
-    assert "verdict (proposed rule): WOULD BLOCK" in out
-    assert "2026-09-29  total_supply_protocol" in out
+    # P3-2e (was: WOULD BLOCK on the 2026-09-29 break): the declared handover is recognised once its bracketed point
+    # is normalised — listed as a declared change that does not block
+    assert "verdict (proposed rule): OK" in out and "WOULD BLOCK" not in out.split("SUMMARY")[0]
+    assert "treats as a DECLARED handover (do not block):\n      2026-09-29  total_supply_protocol" in out
     assert "ultrasound:supply-over-time[next-day 00:00Z]" in out and "etherscan:ethsupply2.supply" in out
+    assert "(normalised): recognised, not a break" in out
 
 
 def test_a_missing_store_is_said_and_exits_0(tmp_path, capsys):

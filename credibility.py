@@ -2266,7 +2266,10 @@ def by_design_na(name: str, hid: str) -> str | None:
         return "issuance is measured as pool release (pre-minted supply) — see the Pool release row"
     if hid == "a4_pool_release" and basis != "pool_release_tokens":
         return "supply is minted, not pre-minted — issuance is on the Gross issuance row"
-    if hid in ("a4_crossover", "a4_gross_issuance") and p.get("issuance_declared_zero"):
+    if hid == "a4_gross_issuance" and p.get("issuance_declared_zero"):
+        return "no issuance — burn only (issuance_declared_zero)"
+    # P3-2c: a crossover on the release basis (config.A4_RELEASE_ISSUANCE: Uniswap) holds a figure by design
+    if hid == "a4_crossover" and p.get("issuance_declared_zero") and name not in config.A4_RELEASE_ISSUANCE:
         return "no issuance — burn only (issuance_declared_zero)"
     # CP (Phase 2): n/a where the figure has nothing to read by design
     if hid == "cp_float" and "locked_tokens" not in config.metrics_for_project(p) and not p.get("free_float_lock_zero") \
@@ -2759,6 +2762,13 @@ def build_rows(headline_cells: list[dict], rows: dict, long, asof, projects=None
                             "source": spec.get("source", "its input rows (below)"), "mode": "derived",
                             "verdict": None, "inputs": tuple(spec["inputs"]), "note": spec.get("why", "")})
                 continue
+            if spec is None and hc["id"] == "a4_crossover" and name in config.A4_RELEASE_ISSUANCE:
+                # P3-2c: burn ÷ releases into circulating — the declared-zero issuance row would pass for the release
+                # leg it no longer reads, so the figure is judged as it is: its release leg has no reference
+                spec = {"verdict": "UNVERIFIABLE",
+                        "why": f"burn ÷ releases into circulating (P3-2c, config.A4_RELEASE_ISSUANCE): the release leg "
+                               f"({config.crossover_issuance_metric(name)}) has no independent reference wired; the burn "
+                               "leg is judged on its own row."}
             if spec is None and hc["id"] in DERIVED_INPUTS:
                 out.append({"project": name, "tab": hc["sheet"], "cell": hc["cell"], "id": hc["id"],
                             "what": hc["header"], "ours": {"cell": f"'{hc['sheet']}'!{hc['cell']}"},

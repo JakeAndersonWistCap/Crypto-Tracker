@@ -428,7 +428,12 @@ def _own_breaks(project: str, metric: str, groups: dict, since) -> list[tuple]:
     # a declared handover is one series unless its composition_change says the quantity steps (Ether.fi's total)
     cc = str(decl.get("composition_change", "none")).strip().lower()
     benign = bool(decl) and cc.startswith("none")
-    pts = set(decl.get("ordered_points") or ())
+    # P3-2e: the declared points on the SAME basis as the stored sources they are compared with — normalised the way
+    # build_workbook (fetch.base._measuring_point over ordered_points) and the guard (measuring_guard._declared:
+    # basis_of over them) normalise them. Compared as written, a point carrying a bracket
+    # ("ultrasound:supply-over-time[next-day 00:00Z]") never matched its stripped basis, so Ethereum's declared
+    # 2026-09-29 total_supply_protocol handover read as an undeclared break.
+    pts = {basis_of(metric, x) for x in (decl.get("ordered_points") or ())}
     out, prev = [], None
     for d, src in zip(g["date"], g["source"].astype(str)):
         b = basis_of(metric, src)
