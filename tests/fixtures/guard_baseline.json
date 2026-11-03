@@ -568,7 +568,7 @@
    "defillama:chainlink-requests"
   ],
   "Chainlink|customer_revenue_usd": [
-   "derived:sum(fees_usd + customer_revenue_requests_usd + customer_revenue_ccip_legacy_usd + customer_revenue_vrf_usd + customer_revenue_automation_premium_usd)"
+   "derived:sum(fees_usd + customer_revenue_ccip_legacy_usd + customer_revenue_vrf_usd + customer_revenue_automation_premium_usd)"
   ],
   "Chainlink|customer_revenue_vrf_usd": [
    "chainlink_fees:vrf"
@@ -3119,12 +3119,12 @@
    "A1 | NET ISSUANCE AFTER BURN, annualised % of circulating (+ is net inflation; fee-market burns included)": 0.0,
    "A1 | TOTAL YIELD \u2014 stakers = validator staking yield \u2212 net inflation \u2212 issuer releases (annual; rewards and foundation releases paid from issuer reserves count)": -0.05497477705226458,
    "A1 | VALIDATOR STAKING YIELD (annual) \u2014 securing the chain, NOT a protocol revenue share": 0.04765737890131668,
-   "A2 | CUSTOMER REVENUE PER TOKEN EMITTED ($/token) \u2014 key ratio": 31.87184485518141,
-   "A2 | Customer revenue Q0 ($)": 15914110.05090114,
-   "A2 | Customer revenue \u00f7 emissions value (x)": 2.916691904290982,
+   "A2 | CUSTOMER REVENUE PER TOKEN EMITTED ($/token) \u2014 key ratio": 30.50100851581356,
+   "A2 | Customer revenue Q0 ($)": 15229630.05090114,
+   "A2 | Customer revenue \u00f7 emissions value (x)": 2.791242396384881,
    "A2 | Emissions to suppliers Q0 (tokens)": 499315.6224,
    "A2 | FREE FLOAT = circulating \u2212 locked (tokens)": 718120127.2729971,
-   "A2 | FREE FLOAT \u00f7 ARR (x) = free float market cap \u00f7 ARR (the project's own where published, else customer revenue annualised) \u2014 headline": 143.7469498685792,
+   "A2 | FREE FLOAT \u00f7 ARR (x) = free float market cap \u00f7 ARR (the project's own where published, else customer revenue annualised) \u2014 headline": 150.2075081301519,
    "A2 | SUPPLY TRAJECTORY = emissions (annualised) \u00f7 free float \u2014 annual dilution %": 0.00281986560394816,
    "A3 | Actual buyback as % of supply (annualised) \u2014 RETIRED (burned + held) only": 0.007478969697521126,
    "A3 | Buyback to LOCKED supply (destination = hold) \u2014 reduces effective float": 6204681.792609468,
@@ -3133,7 +3133,7 @@
    "A3 | Net absorption Q0 (tokens) = RETIRED buyback (burned + held) \u2212 emissions": 903412.8587503182,
    "CP | BUSINESS 1 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 559569.3333333333,
    "CP | BUSINESS 2 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 5688843.284665178,
-   "CP | BUSINESS 3 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 64540557.42865462,
+   "CP | BUSINESS 3 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 61764610.76198795,
    "CP | BUSINESS 4 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 365.0,
    "CP | HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) \u00f7 market cap \u2014 treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": 0.005930254280097274,
    "CP | NET HOLDER YIELD = holder value yield \u2212 dilution (outflows a+b+c+d+e at each day's price, annualised) \u00f7 market cap": -0.09538229350914537,
