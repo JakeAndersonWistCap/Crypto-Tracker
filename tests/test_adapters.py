@@ -219,6 +219,30 @@ def test_every_check_is_reachable_from_main_and_prints_its_section(capsys, monke
     monkeypatch.setattr(coi, "requests", _Dead(), raising=False)
     monkeypatch.setattr(sys, "argv", ["check_offline_items.py"])
 
+    # ** AND NO NETWORK MEANS NONE AT ALL (P5-0 d1, 2026-11-03). ** The stubs above cover this module's own
+    # `requests` and RPC lists, but checks reach the network through other modules too: the gate's profile of this
+    # test showed 47 real HTTPS connections, a real headless browser (fetch/browser_capture) loading dashboards for
+    # 202 s, and the issuer-wallet audit's CoinGecko retries sleeping 20+40+60+80 s - 8 minutes, and a result that
+    # depended on what the network answered. No socket connects, no browser starts, and a back-off is recorded
+    # instead of waited: every check takes its unreachable path at once, which is what this test is about.
+    import socket
+    import time as _time
+    from fetch import browser_capture as _bc
+
+    def _no_socket(*a, **k):
+        raise OSError("no network in tests")
+
+    def _no_browser(*a, **k):
+        raise RuntimeError("no browser in tests")
+    monkeypatch.setattr(socket.socket, "connect", _no_socket)
+    monkeypatch.setattr(socket.socket, "connect_ex", lambda *a, **k: 111)       # ECONNREFUSED
+    monkeypatch.setattr(socket, "create_connection", _no_socket)
+    monkeypatch.setattr(_bc, "capture", _no_browser)
+    from fetch import scrape as _scrape
+    naps = []
+    monkeypatch.setattr(_time, "sleep", naps.append)
+    monkeypatch.setattr(_scrape, "_robots_sleep", naps.append)    # bound to time.sleep at import
+
     rc = coi.main()
     out = capsys.readouterr().out
     assert rc == 0, "one unreachable check must never stop the rest"
