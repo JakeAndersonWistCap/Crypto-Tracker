@@ -1588,7 +1588,7 @@ Phases are built and pushed in order; each phase is pushed only after its own te
 
 ### P4 — decided fixes only (Jake, 2026-11-03), old → new
 
-One commit per phase, in order Q1..Q8; each phase is gated on its own tests, tests/test_adapters.py and the measuring-point guard, and pushed only after they pass. metrics.db is never touched by the build of this round. Parked projects are not changed except Q2. A phase that needs a definition not written here stops and is reported. Q9 is reports only (no change).
+One commit per phase, in order Q1..Q8; each phase is gated on its own tests, tests/test_adapters.py and the measuring-point guard, and pushed only after they pass. metrics.db is never touched by the build of this round. Parked projects are not changed except Q2. A phase that needs a definition not written here stops and is reported. Q9 is reports only (no change). OWN-CHECK RULE (Jake 2026-11-03, after the full gate; from now on): any phase that adds a metric to config, or adds or changes a workbook column, runs tests/test_adapters.py and tests/test_alignment.py as part of its own checks (beside its own tests, the guard and ruff).
 
 | Item | Area | Old | New |
 |---|---|---|---|
