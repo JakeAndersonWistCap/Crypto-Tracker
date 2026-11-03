@@ -5,8 +5,10 @@
 Runs, on a clean snapshot of REV (git archive, so the working tree can keep changing while it runs):
 
     1. collect   pytest --collect-only: the test ids, written to <out>/collected.txt (the same tests must run)
-    2. tests     the whole of tests/, with --durations=0; with --workers N > 1 through pytest-xdist
-                 (-n N --dist loadfile: every test file stays on one worker, so a module's fixtures are built once)
+    2. tests     the whole of tests/, with --durations=0 and --junitxml (every test id with its outcome); with
+                 --workers N > 1 through pytest-xdist, -n N --dist loadgroup: conftest makes every test file one
+                 group (a file never splits across workers, so its module fixtures are built once) and the eight
+                 files sharing the build of the 15 dumps one group (tests/shared_build.py, so it is built once)
     3. guard     python measuring_guard.py --compare tests/fixtures/guard_baseline.json (the fixture guard; the
                  live-store guard is Jake's own step, `python measuring_guard.py --newer metrics.db`)
     4. ruff      ruff check --select F,E9: the total must not exceed --ruff-max (81, the P4 count)
@@ -176,11 +178,26 @@ def guard_violations(output: str) -> int | None:
     return int(m.group(1)) if m else None
 
 
-def tests_command(workers: int, python: str = sys.executable) -> list[str]:
+def tests_command(workers: int, python: str = sys.executable, junit: str | None = None) -> list[str]:
     cmd = [python, "-m", "pytest", "-q", "-rf", "--durations=0", "-p", "no:cacheprovider"]
+    if junit:
+        cmd += [f"--junitxml={junit}"]
     if workers > 1:
-        cmd += ["-n", str(workers), "--dist", "loadfile"]
+        cmd += ["-n", str(workers), "--dist", "loadgroup"]
     return cmd + ["tests"]
+
+
+def junit_outcomes(path: Path) -> dict[str, str]:
+    """{test id: passed / failed / error / skipped} from a junit xml file."""
+    import xml.etree.ElementTree as ET
+    out = {}
+    for tc in ET.parse(path).getroot().iter("testcase"):
+        mod = tc.get("classname", "").replace(".", "/")
+        tid = f"{mod}.py::{tc.get('name')}" if mod else tc.get("name")
+        kids = {c.tag for c in tc}
+        out[tid] = ("failed" if "failure" in kids else "error" if "error" in kids else
+                    "skipped" if "skipped" in kids else "passed")
+    return out
 
 
 def durations(output: str) -> list[tuple[float, str, str]]:
@@ -271,10 +288,21 @@ def main(argv=None) -> int:
         (out / "collected.txt").write_text("\n".join(ids) + "\n", encoding="utf-8")
         r["tests"] = len(ids)
         rows.append(r)
-        r = run_step("tests", tests_command(a.workers), work, out, sampler, a.workers, env)
+        r = run_step("tests", tests_command(a.workers, junit=str(out / "junit.xml")), work, out, sampler,
+                     a.workers, env)
         text = (out / "tests.txt").read_text(encoding="utf-8")
         summ = [x for x in text.splitlines() if re.search(r"\d+ (passed|failed)", x)]
         r["summary"] = summ[-1] if summ else "no summary line"
+        # THE SAME TESTS RAN: every collected id has an outcome, and nothing ran that was not collected
+        try:
+            got = junit_outcomes(out / "junit.xml")
+        except (OSError, Exception):  # noqa: BLE001 - a missing or broken file is a failed comparison
+            got = {}
+        (out / "outcomes.txt").write_text("".join(f"{v}\t{k}\n" for k, v in sorted(got.items())),
+                                          encoding="utf-8")
+        r["ran"] = len(got)
+        r["same_tests"] = len(got) == len(ids)
+        r["not_passed"] = sorted(k for k, v in got.items() if v != "passed")
         rows.append(r)
         r = run_step("guard", [sys.executable, "measuring_guard.py", "--compare", "tests/fixtures/guard_baseline.json"],
                      work, out, sampler, 1, env)
@@ -289,12 +317,16 @@ def main(argv=None) -> int:
     total = round(time.time() - t_start)
     by = {r["step"]: r for r in rows}
     ok = (by.get("collect", {}).get("exit") == 0 and by.get("tests", {}).get("exit") == 0
+          and by.get("tests", {}).get("same_tests") is True
           and by.get("guard", {}).get("exit") == 0 and by.get("guard", {}).get("violations") == 0
           and by.get("ruff", {}).get("ruff_total", 10 ** 9) <= a.ruff_max)
     durs = durations((out / "tests.txt").read_text(encoding="utf-8")) if (out / "tests.txt").exists() else []
     lines = [head, *(fmt_row(r) for r in rows),
              f"total {total} s ({total // 3600} h {total % 3600 // 60:02d} min {total % 60:02d} s)",
              f"tests: {by.get('tests', {}).get('summary', '-')}",
+             f"same tests: collected {by.get('collect', {}).get('tests')}, ran {by.get('tests', {}).get('ran')}"
+             f" -> {'yes' if by.get('tests', {}).get('same_tests') else 'NO'}",
+             *(f"  not passed: {t}" for t in by.get("tests", {}).get("not_passed", [])[:50]),
              f"guard violations: {by.get('guard', {}).get('violations')}",
              f"ruff F,E9: {by.get('ruff', {}).get('ruff_total')} (max {a.ruff_max})",
              f"GATE {'PASSED' if ok else 'FAILED'}", "", "slowest 40:",

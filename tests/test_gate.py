@@ -63,9 +63,38 @@ def test_ruff_guard_and_durations_are_read_from_their_outputs():
 
 def test_the_tests_step_runs_every_test_file_and_keeps_a_file_on_one_worker():
     assert gate.tests_command(1, "py")[-1] == "tests" and "-n" not in gate.tests_command(1, "py")
-    c = gate.tests_command(3, "py")
-    assert c[c.index("-n") + 1] == "3" and c[c.index("--dist") + 1] == "loadfile" and c[-1] == "tests"
-    assert "--durations=0" in c
+    c = gate.tests_command(3, "py", junit="j.xml")
+    assert c[c.index("-n") + 1] == "3" and c[c.index("--dist") + 1] == "loadgroup" and c[-1] == "tests"
+    assert "--durations=0" in c and "--junitxml=j.xml" in c
+
+
+def test_every_test_file_is_one_xdist_group_and_the_shared_build_files_are_one():
+    """loadgroup keeps a group on one worker: conftest groups by file, and the eight shared-build files together."""
+    import conftest
+
+    class _Item:
+        def __init__(self, f):
+            self.fspath, self.marks = f, []
+
+        def add_marker(self, m):
+            self.marks.append(m)
+    items = [_Item(f"/x/tests/{n}") for n in ("test_round_p1.py", "test_round_p4_q5.py", "test_adapters.py",
+                                              "test_adapters.py")]
+    conftest.pytest_collection_modifyitems(None, None, items)
+    groups = [i.marks[0].kwargs["name"] for i in items]
+    assert groups == [conftest.SHARED_PLAIN_BUILD_GROUP, conftest.SHARED_PLAIN_BUILD_GROUP, "test_adapters.py",
+                      "test_adapters.py"]
+
+
+def test_outcomes_are_read_per_test_id_from_junit(tmp_path):
+    (tmp_path / "j.xml").write_text(
+        '<testsuites><testsuite><testcase classname="tests.test_a" name="test_ok"/>'
+        '<testcase classname="tests.test_a" name="test_bad[x]"><failure message="m"/></testcase>'
+        '<testcase classname="tests.test_b" name="test_err"><error message="e"/></testcase>'
+        '</testsuite></testsuites>')
+    assert gate.junit_outcomes(tmp_path / "j.xml") == {"tests/test_a.py::test_ok": "passed",
+                                                       "tests/test_a.py::test_bad[x]": "failed",
+                                                       "tests/test_b.py::test_err": "error"}
 
 
 def test_the_gate_refuses_more_than_three_workers_and_less_than_ten_gb(monkeypatch, tmp_path, capsys):

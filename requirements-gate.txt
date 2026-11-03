@@ -1,0 +1,5 @@
+# The gate's own tools (gate.py, own_checks.py) - NOT needed to fetch or build. P5-0 b (2026-11-03).
+# Install into the Python that runs the tests:  python -m pip install -r requirements-gate.txt
+pytest==9.1.1
+pytest-xdist==3.8.0
+ruff==0.16.8
