@@ -659,6 +659,22 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                 "Check that the 'explorer' adapter ran (a --sources filter excludes it) and that "
                 "ETHERSCAN_API_KEY / BLOCKSCOUT_API_KEY are in .env.")
     node_api = project.get("node_api") or {}
+    # P4-Q7 FIX (Jake 2026-11-03): THE tokenDetails COMPONENT SERIES (evidence, no headline) are captured daily FROM NOW ON
+    # — every other address listed in tokenDetails.nonCirculatingUserBalances, and the Foundation / Community Grants
+    # wallets read in the same run. No source serves a past day (tokenDetails and the wallet reads return today's value
+    # only), so the days before the capture began STAY GAPS — never filled, never 0.
+    for r in node_api.get("extra_reads") or []:
+        listed = {str(m): str(a) for a, m in (r.get("noncirc_listed_metrics") or {}).items()}
+        walls = {str(w["metric"]): w for w in (r.get("exclude_wallets") or []) if w.get("metric")}
+        if metric in listed or metric in walls:
+            what = (f"the balance listed for {listed[metric]} in tokenDetails.nonCirculatingUserBalances"
+                    if metric in listed else
+                    f"the {walls[metric].get('label', metric)} wallet read beside tokenDetails (spot + staked)")
+            return (f"captured daily from tokenDetails from now on (P4-Q7, 2026-11-03): {what}; no past-day source — "
+                    f"tokenDetails and the wallet reads serve today's value only, so the days before the capture "
+                    f"began stay gaps",
+                    "Nothing to backfill. A day the run missed stays a gap; read the hypercore_info lines in the Run "
+                    "Log for that day ('listed but not stored', or a FAIL line naming the address).")
     # A SECOND FIELD FROM A RESPONSE ALREADY FETCHED — say which, so nobody hunts for a source.
     se = project.get("spendle_epochs") or {}
     if se and metric in (se.get("metric"), se.get("apr_metric"), se.get("epoch_apr_metric")):

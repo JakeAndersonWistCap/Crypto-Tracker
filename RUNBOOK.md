@@ -536,9 +536,14 @@ or stop it and start again on the new code. Don't run both at once: they write t
 
 ## 11ds. P4-Q7 interim — Hyperliquid A4 allowance and daily capture (2026-11-03)
 
-- **The allowance (no action).** Hyperliquid's `A4 | BURN ÷ ISSUANCE` accepted loss now expires **2026-12-15** (was
-  2027-01-31). It is an INTERIM allowance for the rest of P4 only, not the answer: removing it is a P5 item. From
-  2026-12-16 the guard and the Review Queue count the loss as open again.
+- **The allowance (no action).** Hyperliquid's `A4 | BURN ÷ ISSUANCE` accepted loss now expires **2027-01-05**
+  (P4-Q7 fix; it was 2026-12-15, and before that 2027-01-31). The stored locked_tokens start on 2026-09-22 with about
+  11 days missing, so 90 clean days cannot exist before the end of December, and the earlier date would have failed
+  the guard with no way to pass. It is an INTERIM allowance, not the answer: removing it is a P5 item, sooner if a
+  measured history source is found. From 2027-01-06 the guard and the Review Queue count the loss as open again.
+- **The Gap Report (no action).** The five new series below read "captured daily from tokenDetails from now on; no
+  past-day source" in the Gap Report. The days before the capture began stay gaps: nothing can fill them, and they
+  are never 0.
 - **The daily capture.** The daily run already stored total supply (`total_supply_gross`), `future_emissions_tokens`
   and its fall (`emissions_tokens`), the fall in total supply (`core_burn_tokens`), circulating
   (`circulating_supply_tokendetails`, `circulating_supply_first_party`), the team wallet (`team_wallet_tokens`), the

@@ -24075,10 +24075,11 @@ REGRESSION_ALLOWLIST += [
      "match": ("Fees ÷ FDV (annualised)",),
      "reason": "parked (P4-Q2): no further World Mobile work until Jake reopens it (parked 2026-09-29); Fees ÷ FDV "
                "divides by the parked FDV; the allowance ends when World Mobile leaves config.CREDIBILITY_PARKED"},
-    # P4-Q7 (Jake 2026-11-03): INTERIM for the rest of P4 only, expiring 2026-12-15 (was 2027-01-31) — not accepted as
+    # P4-Q7 (Jake 2026-11-03): INTERIM, expiring 2027-01-05 (P4-Q7 fix; was 2026-12-15, before that 2027-01-31: with
+    # locked_tokens stored from 2026-09-22 and ~11 days missing, 90 clean days cannot exist before the end of December) — not accepted as
     # the answer; removing it is a P5 item (SPEC "P4-Q7 (decision, Jake 2026-11-03)").
-    {"project": "Hyperliquid", "match": ("A4 | BURN ÷ ISSUANCE",), "until": "2026-12-15", "accepted": "2026-10-28",
-     "reason": "INTERIM allowance for the rest of P4 only (P4-Q7, Jake 2026-11-03; not accepted as the answer — its "
+    {"project": "Hyperliquid", "match": ("A4 | BURN ÷ ISSUANCE",), "until": "2027-01-05", "accepted": "2026-10-28",
+     "reason": "INTERIM allowance to 2027-01-05 (P4-Q7 and its fix, Jake 2026-11-03; not accepted as the answer — its "
                "removal is a P5 item): blocked by rule 9 (P2b-3, P2c-9): the pool release covers far fewer of the 90 "
                "days than the burn; no common-days ratio, 2026-10-12 not restated; the release history cannot be "
                "rebuilt (two legs have no address ledger; tokenDetails serves today's value only)"},

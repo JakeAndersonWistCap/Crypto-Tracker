@@ -1,6 +1,6 @@
 """P4-Q7 interim (Jake 2026-11-03), SPEC row "P4-Q7 (decision, Jake 2026-11-03)".
 
-(1) Hyperliquid's A4 BURN ÷ ISSUANCE allowance is INTERIM for the rest of P4: it expires 2026-12-15 (was 2027-01-31).
+(1) Hyperliquid's A4 BURN ÷ ISSUANCE allowance is INTERIM: it expires 2027-01-05 (P4-Q7 fix; was 2026-12-15, before that 2027-01-31).
 (2) Every tokenDetails component is captured daily as its own stored series: the Hyper Foundation and Community Grants
 wallets each on its own (beside their sum, excluded_wallets_tokens), and every address listed in
 nonCirculatingUserBalances other than the team wallet (the Assistance Fund as listed, 0x0, 0xdEaD). An unnamed listed
@@ -81,23 +81,23 @@ def _vals(out) -> dict:
 
 
 # ===================================================================================== (1) the interim allowance
-def test_the_hyperliquid_a4_allowance_is_interim_to_2026_12_15():
+def test_the_hyperliquid_a4_allowance_is_interim_to_2027_01_05():
     (a,) = [x for x in config.REGRESSION_ALLOWLIST if x["project"] == "Hyperliquid"]
-    assert a["match"] == ("A4 | BURN ÷ ISSUANCE",) and a["until"] == "2026-12-15" and a["accepted"] == "2026-10-28"
+    assert a["match"] == ("A4 | BURN ÷ ISSUANCE",) and a["until"] == "2027-01-05" and a["accepted"] == "2026-10-28"
     assert "INTERIM" in a["reason"] and "P5" in a["reason"] and "not accepted as the answer" in a["reason"]
-    assert config.regression_allowance("Hyperliquid", HL, on="2026-12-15") is a
-    assert config.regression_allowance("Hyperliquid", HL, on="2026-12-16") is None
+    assert config.regression_allowance("Hyperliquid", HL, on="2027-01-05") is a
+    assert config.regression_allowance("Hyperliquid", HL, on="2027-01-06") is None
 
 
 def test_after_the_expiry_the_guard_counts_the_loss():
     import measuring_guard as mg
     accepted: list = []
     bad = mg.compare({"headlines": {"Hyperliquid": {HL: 1.5}}, "bases": {}}, {"headlines": {}, "bases": {}}, accepted,
-                     on="2026-12-16")
+                     on="2027-01-06")
     assert bad == [f"HEADLINE LOST Hyperliquid {HL}: 1.5 before, no value after"] and accepted == []
     accepted = []
     assert mg.compare({"headlines": {"Hyperliquid": {HL: 1.5}}, "bases": {}}, {"headlines": {}, "bases": {}}, accepted,
-                      on="2026-12-15") == [] and len(accepted) == 1
+                      on="2027-01-05") == [] and len(accepted) == 1
 
 
 # ===================================================================================== (2) the daily capture
@@ -211,7 +211,7 @@ def test_the_runbook_section_is_at_the_top_of_the_11d_run():
     heads = re.findall(r"^## (11d\w*)\.", text, re.M)
     assert heads[0] == "11ds"
     sec = text[text.index("## 11ds."):text.index("## 11dr.")]
-    assert "2026-12-15" in sec and "mode=ro" in sec and "hole" in sec
+    assert "2027-01-05" in sec and "mode=ro" in sec and "hole" in sec
     for m in NEW:
         assert m in sec
 
@@ -243,3 +243,24 @@ def test_the_runbook_live_store_check_is_read_only_and_counts_missing_days(tmp_p
     empty.mkdir()
     r = subprocess.run([sys.executable, "-c", code], cwd=empty, capture_output=True, text=True, timeout=60)
     assert r.returncode != 0 and not (empty / "metrics.db").exists()
+
+
+# ===================================================================================== (4) the P4-Q7 fix: gap reasons
+def test_the_five_new_series_have_a_specific_gap_reason_and_no_past_day_source():
+    """P4-Q7 fix (Jake 2026-11-03, after the full gate): a day with no row is a gap (never 0, never filled), and its
+    reason names the capture — never the generic "no source configured for this metric"."""
+    from fetch import gaps
+    hl = config.PROJECT_BY_NAME["Hyperliquid"]
+    frame = pd.DataFrame(columns=["project", "metric", "date", "value"])
+    rows = {g["metric"]: g for g in gaps.detect([hl], frame, set(), {}, []) if g["project"] == "Hyperliquid"}
+    for m in NEW:
+        assert m in rows, f"{m}: a missing day must stay a gap"
+        why = rows[m]["reason"]
+        assert why != "no source configured for this metric"
+        assert why.startswith("captured daily from tokenDetails from now on") and "no past-day source" in why, why
+        assert "Nothing to backfill" in rows[m]["suggestion"]
+    assert "0xfefefefefefefefefefefefefefefefefefefefe" in rows["af_noncirc_listed_tokens"]["reason"]
+    assert "Hyper Foundation" in rows["foundation_wallet_tokens"]["reason"]
+    # a stored day covers the series: it leaves the Gap Report
+    have = pd.DataFrame([{"project": "Hyperliquid", "metric": m, "date": DAY, "value": 1.0} for m in NEW])
+    assert not [g for g in gaps.detect([hl], have, set(), {}, []) if g["metric"] in NEW]
