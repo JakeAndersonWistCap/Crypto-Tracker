@@ -26,6 +26,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tests"))
 
 import reader  # noqa: E402
+import reader_look  # noqa: E402
 
 DOC = ROOT / "docs" / "p3_6_project_notes_columns.md"
 ARCH = (reader.A1_TAB, reader.A2_TAB, reader.A3_TAB, reader.A4_TAB)
@@ -174,7 +175,17 @@ def test_each_moved_column_left_its_tab_and_sits_on_project_notes_unchanged(befo
                                                             if h == head and o == owner and owner in _rows(rb[t]))
         c = _headers(rb[src_tab]).index(head) + 1
         want = rb[src_tab].cell(_rows(rb[src_tab])[owner], c)
-        assert _cell(got) == _cell(want), (tab, head, owner)
+        # P4-Q8: the reader carries the look, which styles the archetype tabs (zebra fill on alternate project rows, a
+        # code grey italic centred, P2g-4) but not Project notes (not one of its data tabs). Value, number format and
+        # comment are the moved cell's own; its fill is the source's own fill (the zebra is the look's, on that tab);
+        # a code keeps its P1 colour, anything else its font and alignment.
+        g, w = _cell(got), _cell(want)
+        assert g[:3] == w[:3], (tab, head, owner)
+        assert g[3] == (None if str(w[3])[-6:] == reader_look.ZEBRA else w[3]), (tab, head, owner)
+        if isinstance(want.value, str) and want.value in reader.CODES:
+            assert got.font.color.rgb.endswith(reader.CODES[got.value]), (tab, head, owner)
+        else:
+            assert g[4:] == w[4:], (tab, head, owner)
         assert got_v.value == vb[src_tab].cell(want.row, c).value, (tab, head, owner)
         # the label carries the column's definition; the third cell a short one naming the tab it came from
         assert notes.cell(r, 1).comment.text == rb[src_tab].cell(4, c).comment.text
