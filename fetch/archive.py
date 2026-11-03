@@ -1568,15 +1568,20 @@ def scan_holes(store, projects: list[dict], archive_series: set) -> dict:
         groups.setdefault((n, m), []).append((d, str(s)))
     out = {}
     for (n, m), rows in groups.items():
-        rows = [(d, s) for d, s in rows if not s.startswith("declared:zero")] or rows
+        measured = [d for d, s in rows if not s.startswith("declared:zero")] or [d for d, _ in rows]
         if config.series_granularity(n, m) != "daily" or config.scanned_from_genesis(n, m) \
-                or not _observed_daily([d for d, _ in rows]):
+                or not _observed_daily(measured):
             continue
         frm = lo
         s0 = starts.get((n, m))
         if s0:
             frm = max(frm, pd.Timestamp(s0["from"]))
-        days = owed_days(n, m, rows, frm, yesterday)
+        # a DECLARED source hole (config.declared_source_hole: the source itself never reported those days — Morpho's
+        # fees) is not read again every run; the build names it already
+        dh = config.declared_source_hole(n, m) or {}
+        skip = ({str(x.date()) for x in pd.date_range(dh["from"], dh["to"])} if dh.get("from") and dh.get("to")
+                else set())
+        days = owed_days(n, m, rows, frm, yesterday, skip)
         if days:
             src = rows[-1][1]
             out[(n, m)] = {"route": hole_route(n, m, src, archive_series, by[n]), "source": _measuring_point(src),
@@ -1742,7 +1747,8 @@ def tier_fill_line(store, owed: dict) -> tuple[str, str] | None:
             f"from their own history, {left} left" + (f" — not served: {'; '.join(worst[:8])}"
                                                       + (f" and {len(worst) - 8} more" if len(worst) > 8 else "")
                                                       + " (never 0, never carried)" if worst else ""))
-    return ("warning" if left else "info", line)
+    # INFO: a day the source does not serve is named here every run until it is (a hole, never 0) — not a run failure
+    return ("info", line)
 
 
 def default_replays() -> dict:

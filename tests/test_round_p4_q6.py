@@ -277,6 +277,41 @@ def test_a_page_scrape_hole_is_named_not_recoverable_in_the_log_and_the_cell_com
     assert ar.not_recoverable("scrape:x.org") == "scrape keeps no history" and ar.not_recoverable("defillama") == ""
 
 
+# ============================================================================================ today's tiers read back
+def test_an_api_hole_a_tier_reads_back_is_handed_to_todays_tier_and_reported_after_it(world, monkeypatch):
+    st, p, _ = world
+    from fetch import archive as ar
+    from fetch import base
+    n, m = "Fluid", "tvl_usd"
+    hole = ["2026-09-01"]                                  # older than the routine 30-day re-read
+    full = _days(120)
+    st.upsert(_rows(n, m, [d for d in full if str(d.date()) not in hole], lambda d: 5.0, "defillama", 1))
+    res = _catch_up(st, [p, config.PROJECT_BY_NAME[n]], Reader())
+    assert res["tier_owed"] == {(n, m): hole}
+    assert any(t == (f"CATCH-UP {n}/{m}: 1 day(s) owed (2026-09-01) — read back by today's defillama tier from its own "
+                     f"history (defillama); only the owed days are kept (never an overwrite)") for _, t in res["lines"])
+    assert "1 left (1 to today's tiers)" in res["lines"][-1][1]
+    res_alone = _catch_up(st, [p, config.PROJECT_BY_NAME[n]], Reader(), tiers=False)
+    assert any("read back by the next plain run's defillama tier" in t for _, t in res_alone["lines"])
+    # today's tier: the whole history comes back; window() keeps the routine 30 days and the owed day only
+    monkeypatch.setattr(base, "today", lambda: TODAY)
+    base.set_catch_up_owed(res["tier_owed"])
+    try:
+        got = base.window(_rows(n, m, full, lambda d: 6.0, "defillama", 1), 30)
+    finally:
+        base.set_catch_up_owed({})
+    assert set(got["date"].dt.strftime("%Y-%m-%d")) == set(hole) | {str(d.date()) for d in full[-30:]}
+    st.upsert(got[got["date"].dt.strftime("%Y-%m-%d").isin(hole)])
+    assert ar.tier_fill_line(st, res["tier_owed"]) == (
+        "info", f"CATCH-UP (today's tiers): 1 of 1 owed day(s) read back over 1 API series from their own history, 0 left")
+    # a DECLARED source hole (the source never reported it) is not owed again every run
+    st.conn.execute("DELETE FROM metrics WHERE project=? AND metric=? AND substr(date,1,10)='2026-09-01'", (n, m))
+    st.conn.commit()
+    monkeypatch.setattr(config, "declared_source_hole",
+                        lambda a, b: {"from": "2026-08-31", "to": "2026-09-02"} if (a, b) == (n, m) else None)
+    assert (n, m) not in ar.scan_holes(st, [config.PROJECT_BY_NAME[n]], set())
+
+
 # ============================================================================================ budgets, resumable
 def test_the_budgets_stop_and_the_next_run_resumes_newest_first(world):
     st, p, tmp = world
