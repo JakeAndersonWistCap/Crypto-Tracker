@@ -49,7 +49,9 @@ MIN_FREE_GB = 10.0          # Jake: >= 10 GB free before a gate starts
 MAX_WORKERS = 3             # Jake: at most 3 workers
 RUFF_MAX = 81               # the P4 count of ruff --select F,E9; the gate fails above it
 CONTENTION_MARGIN = 1.5     # mean load above the step's own processes by more than this = CONTENDED
-TEST_MARKERS = ("pytest", "measuring_guard.py")
+# pytest, the guard, and pytest-xdist's workers (execnet starts them as `python -c "import sys;exec(eval(...))"`,
+# with no "pytest" in their command line)
+TEST_MARKERS = ("pytest", "measuring_guard.py", "exec(eval(sys.stdin.readline()))")
 EXIT_LOW_MEMORY = 3
 
 
@@ -239,9 +241,11 @@ def run_step(name: str, cmd: list[str], cwd: Path, out: Path, sampler: Sampler, 
             rc = subprocess.run(cmd, cwd=cwd, stdout=fh, stderr=subprocess.STDOUT, env=env, timeout=timeout).returncode
         except subprocess.TimeoutExpired:
             rc = "timeout"
-    t1 = time.time()
-    sampler.samples.append(sampler.sample())
-    return {"step": name, "start": start, "seconds": round(t1 - t0), "exit": rc, "procs": procs,
+    end = sampler.sample()                  # the step's closing sample counts in its own window
+    sampler.samples.append(end)
+    t1 = end["t"]
+    return {"step": name, "start": start, "seconds": round(t1 - t0), "exit": rc, "procs": procs,  # ruff exits 1
+            # whenever any violation exists; the gate judges ruff on its total (--ruff-max), not on this exit
             **summarize(sampler.samples, t0, t1, procs)}
 
 
@@ -346,4 +350,6 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
+    import progress  # noqa: E402
+    progress.line_buffered()
     sys.exit(main())

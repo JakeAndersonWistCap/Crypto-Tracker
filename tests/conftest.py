@@ -121,3 +121,29 @@ def _shared_build_master_unchanged():
     import shared_build
     bad = shared_build.verify_unchanged()
     assert not bad, "\n".join(bad)
+
+
+_PROCESS_DEFAULTS: dict = {}
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _each_file_starts_as_a_fresh_process():
+    """P5-0 b (2026-11-03): under xdist a worker runs test files in an order no group ever did, and three pieces of
+    process state leak from one file into the next (the audit run found them; each file passed alone):
+      - sys.modules["recalc"] = None, left by measuring_guard.build and a1_break_check.read_groups (they keep the
+        build's LibreOffice step out of their own process); a later LibreOffice test then cannot import recalc;
+      - build_workbook._SCOPE, narrowed by any build with only=[...] (a script builds once, so the build never
+        widens it again); a later unit test of aggregate() then sees one project;
+      - store.DB_PATH, pointed at a temporary store by measuring_guard.build.
+    Each test FILE now starts with all three as a fresh process has them. Nothing a file sets for its own tests is
+    touched until the next file starts."""
+    import sys as _sys
+    if "recalc" in _sys.modules and _sys.modules["recalc"] is None:
+        del _sys.modules["recalc"]
+    if "build_workbook" in _sys.modules:
+        bw = _sys.modules["build_workbook"]
+        bw._SCOPE = list(bw.PROJECTS)
+    import store as _store
+    _PROCESS_DEFAULTS.setdefault("DB_PATH", _store.DB_PATH)
+    _store.DB_PATH = _PROCESS_DEFAULTS["DB_PATH"]
+    yield

@@ -20,10 +20,11 @@ def test_the_gate_s_own_tree_is_not_foreign_and_only_python_test_processes_are()
              20: (1, "python3 -m pytest tests/test_adapters.py", 700),          # another run: foreign
              21: (1, "/usr/bin/python3 measuring_guard.py --newer m.db", 600),  # another guard: foreign
              22: (1, "grep pytest", 1),                                       # a shell looking for it: not a test
-             23: (1, "python3 token_metrics.py", 400)}                        # not a test process
+             23: (1, "python3 token_metrics.py", 400),                       # not a test process
+             24: (20, "/usr/bin/python3 -u -c import sys;exec(eval(sys.stdin.readline()))", 900)}  # its xdist worker
     own = gate.descendants(table, 10)
     assert own == {10, 11, 12}
-    assert [p for p, _c in gate.foreign_test_processes(table, own)] == [20, 21]
+    assert [p for p, _c in gate.foreign_test_processes(table, own)] == [20, 21, 24]
 
 
 def _s(t, load, foreign=(), rss=None):

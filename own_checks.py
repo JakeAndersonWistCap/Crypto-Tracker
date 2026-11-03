@@ -159,4 +159,6 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
+    import progress  # noqa: E402
+    progress.line_buffered()
     sys.exit(main())
