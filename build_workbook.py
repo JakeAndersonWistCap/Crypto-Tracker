@@ -5432,8 +5432,14 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                     row["q0_covered_days"] = max(int(row["q0_covered_days"] or 0) - len(h_q), 0)
                     WINDOW_HOLES[(name, metric, "now")], WINDOW_HOLES[(name, metric, "q0")] = h_w, h_q
                     if h_q:
+                        # P4-Q6: a page scrape keeps no history — the catch-up cannot read its missed days back; they
+                        # are named so in the comment. The annualisation over the covered days is unchanged (D6-1).
+                        from fetch.archive import not_recoverable           # noqa: PLC0415
+                        nr = not_recoverable(latest["source"])
                         row["q0_dense_note"] = (f"Q0 COVERS {row['q0_covered_days']} OF {period} DAYS — holes (no row): "
-                                                f"{_day_ranges(h_q)}; the Q0 sum is annualised over the "
+                                                f"{_day_ranges(h_q)}"
+                                                + (f" — not recoverable ({nr})" if nr else "")
+                                                + f"; the Q0 sum is annualised over the "
                                                 f"{row['q0_covered_days']} day(s) covered (SPEC D6-1)")
                 row["q0_events"] = int(((s.index > q_start) & (s.index <= asof) & (s > 0)).sum())
                 # ** A SCHEDULE THAT HAS ENDED STILL FILLS THE WINDOW BEHIND IT. Added 2026-09-25. **

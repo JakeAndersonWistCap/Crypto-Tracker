@@ -93,7 +93,11 @@ class GrowThePie:
             yday = today().normalize() - pd.Timedelta(days=1)
             mets = list((spec.get("metrics") or {}))
             held = [self.last_dates.get((name, m)) for m in mets]
-            if mets and all(d is not None and not pd.isna(d) and pd.Timestamp(d).normalize() >= yday for d in held):
+            # P4-Q6: a series with owed days (an interior hole the catch-up found) downloads the document anyway —
+            # window() keeps those days
+            from .base import catch_up_owed
+            if mets and all(d is not None and not pd.isna(d) and pd.Timestamp(d).normalize() >= yday for d in held) \
+                    and not any(catch_up_owed(name, m) for m in mets):
                 for m in mets:
                     out.mark_current(SOURCE, name, m, f"{m}: stored through {yday.date()} — growthepie's "
                                                       f"full-history document not re-downloaded", TIER)

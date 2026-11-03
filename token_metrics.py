@@ -21,6 +21,8 @@ FOUR FLAGS, ALL NARROWING, NONE CHANGING WHAT A FIGURE MEANS:
 CATCH-UP (P3-4): before today's tiers, every run reads the days missed since each daily on-chain series' last stored
 day at each day's first block (fetch.archive.catch_up — the archive backfill's own reads), budgeted (--budget-min,
 --catch-up-days) and resumable. `--catch-up` runs only that: no tiers, no clean-up, no workbook build.
+P4-Q6: the missed days are EVERY missing day in the cells' longest window (450 days to yesterday), not only those after
+the last stored day, newest first; an API series' owed days its own tier can read back are kept by today's tiers.
 A4: FIRST the daily API series that are not re-read in full each run (CoinGecko's price / market cap / volume, through
 the adapter's own market_chart read), THEN the on-chain days, THEN the series derived from the caught-up days (the
 run's own derivations replayed for each day, and the P2P legs valued at the stored same-day price).
@@ -159,17 +161,18 @@ def parse_args(argv=None) -> argparse.Namespace:
     # P3-4 CATCH-UP: the days missed since each daily on-chain series' last stored day, read at each day's first block
     # (fetch.archive.catch_up) inside this run's lock, BEFORE today's tiers. The definitions are the archive's own.
     ap.add_argument("--catch-up", action="store_true",
-                    help="run ONLY the catch-up: CoinGecko's daily price / market cap / volume for the days missed "
-                         "since each series' last stored day (its own market_chart read), then for every daily on-chain "
-                         "series the archive can read at a past block the missed days at each day's first block, then the "
-                         "series derived from those days; "
+                    help="run ONLY the catch-up: every daily series is scanned for missing days ANYWHERE in the cells' "
+                         "longest window (450 days to yesterday; P4-Q6), newest first: CoinGecko's daily price / market "
+                         "cap / volume by its own market_chart read, then every daily on-chain series the archive can "
+                         "read at a past block (and NEAR's supply and stake) at each day's first block, then the series "
+                         "derived from those days; a page scrape's days are named not recoverable; "
                          "within the budget; nothing else is fetched, no clean-up runs and the workbook is NOT rebuilt "
                          "(rebuild with --no-fetch). A plain run does the same catch-up first, before today's tiers")
     ap.add_argument("--budget-min", type=float, default=None, metavar="MIN",
                     help="the catch-up's time budget in minutes, this run (default TOKEN_METRICS_CATCH_UP_MIN, else "
                          "10; 0 turns the catch-up off). What is not read continues on the next run")
     ap.add_argument("--catch-up-days", type=int, default=None, metavar="N",
-                    help="the catch-up's day budget: at most N distinct days read this run, oldest first (default "
+                    help="the catch-up's day budget: at most N distinct days read this run, newest first (default "
                          "TOKEN_METRICS_CATCH_UP_DAYS, else 7); a longer gap is filled over several runs")
     args = ap.parse_args(argv)
     if args.catch_up and (args.no_fetch or args.seed):
@@ -1071,7 +1074,10 @@ def run_catch_up(st, projects: list[dict], args, log, run_id: str | None = None)
         return None
     try:
         ar.load_env()
-        res = ar.catch_up(st, projects, budget_s=budget_min * 60, max_days=days)
+        # P4-Q6: every daily series' missing days in the cells' longest window; `tiers` says whether today's tiers run
+        # after it (a plain run) or not (--catch-up alone) — the days only a tier reads back wait for the next plain run
+        res = ar.catch_up(st, projects, budget_s=budget_min * 60, max_days=days,
+                          tiers=not getattr(args, "catch_up", False))
     except Exception as e:  # noqa: BLE001 — the catch-up never stops a run
         from fetch.base import redact
         line = f"CATCH-UP: not run — {type(e).__name__}: {redact(e)[:300]}; today's tiers run as usual"
@@ -1083,7 +1089,7 @@ def run_catch_up(st, projects: list[dict], args, log, run_id: str | None = None)
         (log.warning if level == "warning" else log.info)("%s", line)
     # A4: the API series (CoinGecko) and the derived rows count too
     api = res.get("api") or {}
-    if run_id and (res["gaps"] or api.get("gaps") or res.get("derived")):
+    if run_id and (res["gaps"] or api.get("gaps") or res.get("derived") or res.get("scan")):
         summary = res["lines"][-1]
         n = sum(len(v) for part in (res["filled"], api.get("filled") or {}, res.get("derived") or {})
                 for v in part.values())
@@ -1346,7 +1352,10 @@ def _main(args, log) -> int:
     # each day's first block (budgeted, resumable), so today's deltas difference yesterday's reading and the days
     # between runs are not left as holes. After the clean-ups (no old-set row stands beside a day it writes) and inside
     # this run's lock. Its Alchemy calls count in this run's usage line.
-    run_catch_up(st, projects, args, log, run_id)
+    caught = run_catch_up(st, projects, args, log, run_id)
+    # P4-Q6: the API series' owed days a tier reads back from its own history (window() keeps them this run)
+    tier_owed = dict((caught or {}).get("tier_owed") or {})
+    fetch.base.set_catch_up_owed(tier_owed)
     first_run = st.is_empty()
     window = None if first_run else REFETCH_WINDOW_DAYS
     log.info("run %s — %s", run_id, "FIRST RUN: full backfill" if first_run else f"incremental, trailing {window}d re-fetch")
@@ -1421,12 +1430,23 @@ def _main(args, log) -> int:
         stored_long=st.load_long(),
     )
 
+    fetch.base.set_catch_up_owed({})
+    if tier_owed:
+        # P4-Q6: the read-back days are written only where no row is held (never an overwrite)
+        from fetch import archive as _ar
+        out.frames = [_ar.tier_fill_guard(st, out.frame(), tier_owed, window, backfill)]
     # D5-0: what the source restated, said before it overwrites the stored days (the store then follows the source)
     for proj, line in restatement_lines(st, out.frame()):
         log.warning("%s", line)
         st.record_fetch(run_id, "restated:defillama", proj, 0, "ok", line)
     written = st.upsert(out.frame())
     log.info("upserted %d rows", written)
+    if tier_owed:
+        from fetch import archive as _ar
+        tl = _ar.tier_fill_line(st, tier_owed)
+        if tl:
+            (log.warning if tl[0] == "warning" else log.info)("%s", tl[1])
+            st.record_fetch(run_id, "catch_up", None, 0, "warn" if tl[0] == "warning" else "ok", tl[1], 2)
     # D7-1: Pyth's STOCK reads, store only — never a reason to stop the run
     try:
         read_pyth_stocks(st, log, run_id)

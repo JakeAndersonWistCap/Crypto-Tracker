@@ -338,7 +338,9 @@ class NearBlocks:
             # ONCE A DAY (2026-09-28). txn-stats and address-stats are DAILY aggregates and today
             # is never stored, so once yesterday is in the store there is nothing newer to get.
             last = self.last_dates.get((name, metric))
-            if last is not None and pd.Timestamp(last).normalize() >= yesterday:
+            from .base import catch_up_owed
+            # P4-Q6: a series with owed days (an interior hole the catch-up found) is read anyway; window() keeps them
+            if last is not None and pd.Timestamp(last).normalize() >= yesterday and not catch_up_owed(name, metric):
                 out.mark_current(SOURCE, name, metric,
                                  f"{metric}: NOT re-fetched — yesterday ({yesterday.date()}) is "
                                  f"already stored and {m['path']} is a daily aggregate; the next "

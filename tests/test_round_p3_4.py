@@ -179,8 +179,11 @@ def test_a_second_catch_up_reads_nothing(world):
     r2 = Reader()
     res = _catch_up(st, p, r2)
     assert r2.reads == [] and res["gaps"] == {}
+    # P4-Q6: the whole 450-day window is checked (was "since its last stored day"), and every daily series is counted
     assert [t for _, t in res["lines"]] == [
-        "CATCH-UP: 2 daily on-chain series checked — none has a missed day since its last stored day; nothing read"]
+        "CATCH-UP: 2 daily on-chain series checked — none has a missed day in the 450 days 2025-08-06..2026-10-29; "
+        "nothing read; HOLES in the 450 days 2025-08-06..2026-10-29 (every daily series): 0 found over 0 series — "
+        "0 filled, 0 left, 0 not recoverable (no history)"]
 
 
 # ============================================================================================ a day the chain refuses
@@ -207,11 +210,18 @@ def test_a_day_the_chain_refuses_stays_a_named_hole_retried_then_left_to_the_bac
     r = Reader(refuse={HOLE[1]})
     res = _catch_up(st, p, r)
     assert r.reads == [] and not res["gaps"]
-    assert ar.CATCH_UP_LEDGER and not (tmp / "cache" / ar.CATCH_UP_LEDGER).read_text().strip("{} \n")
+    # P4-Q6: the given-up day STAYS in the ledger (was: the ledger emptied) — the full-window scan would read it again
+    import json
+    assert json.loads((tmp / "cache" / ar.CATCH_UP_LEDGER).read_text()) == {f"{PC}|{BAL}": {"tries": {HOLE[1]: 3}}}
+    r = Reader(refuse={HOLE[1]})
+    assert not _catch_up(st, p, r)["gaps"] and r.reads == []
 
 
 # ============================================================================================ budgets
-def test_the_day_budget_fills_a_long_gap_over_several_runs_oldest_first(world):
+def test_the_day_budget_fills_a_long_gap_over_several_runs_newest_first(world):
+    """P4-Q6: NEWEST first (was oldest first) — the cells' Q0 window fills first; no flow is differenced across a day
+    still owed, so the gap's flows land day by day (the old run's 10-28 -> 10-30 [span=2d] lump no longer arises; the
+    STRADDLED guard is tested in test_round_p4_q6 on an interior hole the live delta already spans)."""
     st, p, _ = world
     from fetch import archive as ar
     # a 7-day gap: drop the burn leg's 4 days before the hole
@@ -223,31 +233,30 @@ def test_the_day_budget_fills_a_long_gap_over_several_runs_oldest_first(world):
     gap = more + HOLE
     r = Reader()
     res = _catch_up(st, p, r, max_days=3)
-    assert sorted({d for d, _ in r.reads}) == gap[:3]                       # oldest first, 3 days a run
+    assert sorted({d for d, _ in r.reads}) == gap[4:]                       # newest first, 3 days a run
     assert any(t.startswith("CATCH-UP: day budget spent at 2026-10-26 (3 day(s) a run); 4 day(s) still to read")
                for _, t in res["lines"]), res["lines"]
     line = res["lines"][0][1]
-    assert "3 day(s) filled (2026-10-23..10-25), 4 left (2026-10-26..10-29)" in line
-    assert "not reached this run (budget): 2026-10-26..10-29 — the next run continues" in line
-    # today's tier lands: the owed days are no longer "after the last stored day" — the ledger keeps them owed
+    assert "3 day(s) filled (2026-10-27..10-29), 4 left (2026-10-23..10-26)" in line
+    assert "not reached this run (budget): 2026-10-23..10-26 — the next run continues" in line
+    # no lump across the days still owed: 10-27's flow waits for 10-26
+    assert _val(st, PC, BURN, "2026-10-27") is None and _val(st, PC, BURN, "2026-10-28")[0] == 24.0
+    # today's tier lands (yesterday was filled first: today's delta is one day)
     st.upsert(_rows(BAL, [TODAY], lambda d: 1_000_000.0 + first_block(d), "chain:bsc:burn_dead"))
     r = Reader()
     _catch_up(st, p, r, max_days=3)
-    assert sorted({d for d, _ in r.reads}) == gap[3:6]
+    assert sorted({d for d, _ in r.reads}) == gap[1:4]
     r = Reader()
     res = _catch_up(st, p, r, max_days=3)
-    assert sorted({d for d, _ in r.reads}) == gap[6:]
+    assert sorted({d for d, _ in r.reads}) == gap[:1]
     assert set(gap) <= set(_days(st, BAL))                     # the stock: every owed day, at its first block
     r = Reader()
     assert not _catch_up(st, p, r, max_days=3)["gaps"] and r.reads == []
-    # THE FLOW: per day where the stock's consecutive readings landed together; where today's delta had already
-    # differenced across the owed days (here 10-28 -> 10-30, [span=2d]) the day inside it is NOT differenced again —
-    # named STRADDLED with the rederive command (the backfill's own guard): never the same burn twice
-    assert any(t.startswith("CATCH-UP: STRADDLED PancakeSwap/gross_burn_tokens: 1 backfilled day(s)") and
-               "python rederive.py PancakeSwap gross_burn_tokens" in t for _, t in res["lines"]), res["lines"]
+    # THE FLOW: every day its own 24 blocks, today's one day — nothing straddled, nothing twice
+    assert not any("STRADDLED" in t for _, t in res["lines"]), res["lines"]
     flows = dict(st.conn.execute("SELECT substr(date,1,10), value FROM metrics WHERE project=? AND metric=? AND "
                                  "date>=?", (PC, BURN, gap[0])).fetchall())
-    assert set(gap) - set(flows) == {HOLE[2]} and flows[str(TODAY.date())] == 48.0
+    assert set(flows) == set(gap) | {str(TODAY.date())} and set(flows.values()) == {24.0}
     assert sum(flows.values()) == first_block(TODAY) - first_block(pd.Timestamp(gap[0]) - pd.Timedelta(days=1))
     assert ar.catch_up_defaults() == (10.0, 7)
 
@@ -273,7 +282,8 @@ def test_scope_every_daily_archivable_series_parked_and_weekly_left_out(tmp_path
              "source": "x"} for p in projects for m in ar.state_metrics(p)]
     st.upsert(pd.DataFrame(rows))
     gaps, excluded, checked = ar.catch_up_gaps(st, projects)
-    assert set(gaps) == checked and all(v[0] == "2026-10-21" and v[-1] == str(Y.date()) for v in gaps.values())
+    # P4-Q6: newest first (was oldest first)
+    assert set(gaps) == checked and all(v[-1] == "2026-10-21" and v[0] == str(Y.date()) for v in gaps.values())
     assert not {n for n, _ in checked} & {"Aerodrome", "World Mobile"}                 # parked: never touched
     assert all(not ar.weekly(config.PROJECT_BY_NAME[n], m) for n, m in checked)
     why = {(n, m): w for n, m, w in excluded}
@@ -556,12 +566,12 @@ def test_a4_budgets_the_time_budget_and_the_day_budget_resume_on_the_next_run(et
     # today's tier lands meanwhile: the ledger keeps the days owed though they are no longer after the last stored day
     st.upsert(pd.DataFrame({"date": [TODAY], "project": ETH, "metric": PX, "value": [price(TODAY)], "tier": 1,
                             "source": "coingecko"}))
-    # the day budget: 2 days a series a run, oldest first; the third on the next run
+    # the day budget: 2 days a series a run, NEWEST first (P4-Q6; was oldest first); the third on the next run
     res = ar_catch_up(st, projects, Reader(), api=_coingecko(), valuers=[_eth_valuer(tmp)], max_days=2)
-    assert [d for d in HOLE if _val(st, ETH, PX, d)] == HOLE[:2]
+    assert [d for d in HOLE if _val(st, ETH, PX, d)] == HOLE[1:]
     line = next(t for _, t in res["lines"] if t.startswith(f"CATCH-UP {ETH}/{PX}:"))
-    assert "2 day(s) filled (2026-10-27..10-28), 1 left (2026-10-29)" in line
-    assert "not reached this run (budget): 2026-10-29 — the next run continues" in line
+    assert "2 day(s) filled (2026-10-28..10-29), 1 left (2026-10-27)" in line
+    assert "not reached this run (budget): 2026-10-27 — the next run continues" in line
     ar_catch_up(st, projects, Reader(), api=_coingecko(), valuers=[_eth_valuer(tmp)], max_days=2)
     assert [d for d in HOLE if _val(st, ETH, PX, d)] == HOLE
     assert [d for d in HOLE if _val(st, ETH, P2P, d)] == HOLE
