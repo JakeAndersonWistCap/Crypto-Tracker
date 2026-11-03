@@ -534,6 +534,18 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11dr. Round P4-Q1 / Q2 — Chainlink Requests counted once; World Mobile's accepted losses (2026-11-03)
+
+- **Q1 (no action).** Chainlink's customer revenue = the DefiLlama `chainlink` parent (`fees_usd`, which already holds
+  Direct Requests) + CCIP 1.2/1.5 + VRF v2.5 + Automation premium. Direct Requests are no longer added on top; they still
+  show in the A2 revenue split (Project notes, "Of which Direct Requests", a part of the aggregator figure). A day is now
+  summed without a Direct Requests row. The guard baseline records the new basis of `customer_revenue_usd`. Expect the
+  A2 key to fall about 4% (fixture 2.917x -> 2.791x; Jake's store about 2.66x -> 2.55x).
+- **Q2 (no action).** `python measuring_guard.py --newer metrics.db` prints World Mobile's Master FDV and Fees / FDV as
+  `ACCEPTED: World Mobile ... parked (P4-Q2)` lines, not violations, while World Mobile is parked
+  (config.CREDIBILITY_PARKED). When Jake reopens World Mobile, take it out of CREDIBILITY_PARKED: the two allowances end
+  by themselves and any loss is a violation again.
+
 ## 11dk. Phase P3-9 — monthly windows, Ethereum's staked ETH, Morpho's price field, concentration (2026-11-02)
 
 **A1 Monthly series (SPEC P3-A1).** A series flagged monthly (`config.series_granularity` — Maple's page tables, Sky's

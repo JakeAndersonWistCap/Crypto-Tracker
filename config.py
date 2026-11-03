@@ -23966,7 +23966,16 @@ def regression_allowance(project: str, detail: str, on=None) -> dict | None:
                  and (not a.get("until") or day <= _pd.Timestamp(a["until"]))
                  and (not a.get("while_outflow_incomplete")
                       or outflow_incomplete(project, [a["while_outflow_incomplete"]]))
-                 and (not a.get("while_parked") or bool(aerodrome_park_reason(day=day)))), None)
+                 and (not a.get("while_parked") or project_parked(project, day=day))), None)
+
+
+def project_parked(project: str, day=None) -> bool:
+    """P4-Q2: is this project parked on `day` — the condition a `while_parked` allowance holds under. Aerodrome while
+    config.aerodrome_park_reason gives a reason (the migration); World Mobile while Jake keeps it parked
+    (CREDIBILITY_PARKED, parked 2026-09-29 / 2026-10-05); any other project is not parked."""
+    if project == "Aerodrome":
+        return bool(aerodrome_park_reason(day=day))
+    return project in CREDIBILITY_PARKED
 
 
 # P2c-4 / P2c-9 (Jake 2026-10-28): ACCEPTED LOSSES the live guard (measuring_guard --newer) reads, each with its reason.
@@ -23980,6 +23989,16 @@ REGRESSION_ALLOWLIST += [
                "annualised) ÷ market cap",),
      "reason": "parked (P2g-1): " + AERODROME_PARK_PLAIN + " The headline is a function of the parked circulating "
                "figure; the allowance ends when config.aerodrome_park_reason gives no reason"},
+    # P4-Q2 (Jake 2026-11-03): WORLD MOBILE IS PARKED — its two lost headlines are accepted losses while it stays parked
+    # (the same form as Aerodrome's; config.project_parked). The headlines read the parked FDV, which no work refreshes.
+    {"project": "World Mobile", "while_parked": True, "accepted": "2026-11-03",
+     "match": ("Master | FDV ($)",),
+     "reason": "parked (P4-Q2): no further World Mobile work until Jake reopens it (parked 2026-09-29); Master FDV is "
+               "not refreshed while parked; the allowance ends when World Mobile leaves config.CREDIBILITY_PARKED"},
+    {"project": "World Mobile", "while_parked": True, "accepted": "2026-11-03",
+     "match": ("Fees ÷ FDV (annualised)",),
+     "reason": "parked (P4-Q2): no further World Mobile work until Jake reopens it (parked 2026-09-29); Fees ÷ FDV "
+               "divides by the parked FDV; the allowance ends when World Mobile leaves config.CREDIBILITY_PARKED"},
     {"project": "Hyperliquid", "match": ("A4 | BURN ÷ ISSUANCE",), "until": "2027-01-31", "accepted": "2026-10-28",
      "reason": "blocked by rule 9 (P2b-3, P2c-9): the pool release covers far fewer of the 90 days than the burn; no "
                "common-days ratio, 2026-10-12 not restated; Q0 clears without a backfill about 2027-01-01 (P2a-D1)"},
