@@ -1,4 +1,4 @@
-"""Charlie edition - the LOOK (docs/charlie_edition_spec.md section 3, SPEC.md P2g-4).
+"""reader_look.py - the reader's LOOK (docs/highlights_spec.md section 3, SPEC.md P2g-4; every reader, P4-Q8).
 
 `apply_look(wb)` restyles the openpyxl READER workbook in place. STYLING ONLY: no cell value, formula, comment, rank,
 code, number format (bar the token-count format) or tab structure changes. A cell FILL keeps its one meaning -
@@ -189,7 +189,7 @@ def _token_format(ws) -> int:
 
 
 def apply_look(wb) -> dict:
-    """Apply the Charlie look to the reader workbook in place; returns what it styled."""
+    """Apply the look to the reader workbook in place; returns what it styled."""
     out = {"data_tabs": [], "codes_styled": 0, "bands": 0, "sign_columns": [], "bar_columns": [],
            "bar_columns_missing": [], "token_format_cells": 0, "tab_order": [], "highlights": False}
     visible = [ws for ws in wb._sheets if ws.sheet_state == "visible"]

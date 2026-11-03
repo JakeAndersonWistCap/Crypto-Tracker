@@ -21,6 +21,7 @@ sys.path.insert(0, str(ROOT / "tests"))
 
 import config  # noqa: E402
 import reader  # noqa: E402
+import reader_look  # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -125,7 +126,8 @@ def test_p2e_1_a_secondary_member_reads_secondary_and_names_its_primary(built):
                 c = ws.cell(r, rc)
                 assert c.comment.text.startswith(f"Primary archetype: {reader.ARCHETYPE_NAMES[prim[n]]} — ranked "
                                                  "there; shown here for comparison, not ranked."), (tab, n)
-                assert c.font.color.rgb.endswith(reader.CODES["secondary"])
+                # P4-Q8: the reader carries the look - a code is grey italic (P2g-4), not its P1 colour
+                assert c.font.color.rgb.endswith(reader_look.GREY) and c.font.i
                 # the key value is kept: the key cell is the audit number or the key's own code, never "secondary"
                 assert ws.cell(r, rc - 1).value != "secondary"
                 kinds.append(1)

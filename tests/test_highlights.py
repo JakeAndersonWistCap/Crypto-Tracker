@@ -1,10 +1,10 @@
-"""P2g (Jake 2026-10-29): the Charlie edition - `--edition charlie`, the Highlights first tab. Plain asserts, no network.
+"""P2g (Jake 2026-10-29) and P4-Q8 (2026-11-03): the Highlights first tab of the reader. Plain asserts, no network.
 
 Two kinds of test. The SYNTHETIC ones build a small reader-shaped workbook (the tabs, header rows and project rows the
-cards quote, with numbers chosen to meet each condition) and run charlie_highlights on it in a second. The FIXTURE ones
-build the committed real dumps (fixtures/real_*.json) twice - without and with the flag - and compare. The fixture build
-holds other numbers than Jake's live store, so on it only some cards render (C5, C7, C8, C9); the fixture integration
-tests lower the floor to 3 (charlie_edition.MIN_CARDS) and say so. The production floor stays 5.
+cards quote, with numbers chosen to meet each condition) and run highlights.add_highlights on it in a second. The FIXTURE
+ones build the committed real dumps (fixtures/real_*.json) once, the reader with its Highlights tab and look. The fixture
+build holds other numbers than Jake's live store, so on it only some cards render (C5, C7, C8, C9); the fixture
+integration tests lower the floor to FIXTURE_CARDS (reader_layout.MIN_CARDS) and say so. The production floor stays 5.
 """
 from __future__ import annotations
 
@@ -20,8 +20,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tests"))
 
-import charlie_edition  # noqa: E402
-import charlie_highlights as H  # noqa: E402
+import highlights as H  # noqa: E402
+import reader_layout  # noqa: E402
 import reader  # noqa: E402
 
 FIXTURE_CARDS = 4          # C5, C7, C8, C9 render on the committed dumps (the others need Jake's live numbers)
@@ -242,7 +242,7 @@ def make_reader(over: dict | None = None, drop: tuple = ()) -> openpyxl.Workbook
                     "PARKED — no further work on World Mobile; its row is shown with its numbers.\n\nBehind it: x",
                     "t")
 
-    import charlie_highlights as ch
+    import highlights as ch
     head_a2, early_a2 = ch.key_headers(reader.A2_TAB)
     head_a3, early_a3 = ch.key_headers(reader.A3_TAB)
     q = {"GEODNET": [0.86, 0.79, 0.73], "Morpho": [18.0, 16.0, 14.25], "Fluid": [0.0, 0.65, 1.23],
@@ -575,20 +575,38 @@ def test_synthetic_card_conditions_decide_each_card():
         assert len(res["cards"]) == 8, (cid, res["cards"], res["omitted"])
 
 
-def test_synthetic_fewer_than_five_cards_raises_listing_each_failed_condition_with_values():
+def test_synthetic_fewer_than_five_cards_writes_the_floor_statement_listing_each_failed_condition_with_values():
+    """P4-Q8: below the floor the tab is still written - no card, only the statement (the refusal's text)."""
     over = {n: {"nhy": "n/a"} for n in BASE if n not in ("Sky", "Fluid")}      # C9: two numeric values, omitted
     over.update({"GEODNET": {"key": 0.5, "nhy": "n/a"}, "Morpho": {"key": 9.0, "nhy": "n/a"}, "Sky": {"nhy": -0.1},
                  "Hyperliquid": {"key": 0.5, "nhy": "n/a"}})
-    with pytest.raises(H.HighlightsError) as e:
-        run(over=over)                                                   # 4 render: C5, C6, C7, C8 -> short of 5
-    msg = str(e.value)
+    wb, res = run(over=over)                                             # 4 render: C5, C6, C7, C8 -> short of 5
+    assert res["floor_met"] is False and res["cards"] == []
+    assert res["rendered"] == ["C5", "C6", "C7", "C8"]
+    msg = "\n".join(H.floor_lines([_card(c) for c in res["rendered"]], res["omitted"], 5))
     assert "only 4 of 9" in msg and "5 are needed" in msg
     for cid in ("C1 GEODNET", "C2 Morpho", "C3", "C4 Hyperliquid", "C9 Fairness league"):
         assert cid in msg, msg
     assert "numeric=2" in msg
     assert "key=0.5" in msg and "needs key >= 1.0" in msg and "needs the Summary" not in msg
     assert "Cards that did: C5, C6, C7, C8" in msg
-    run(over=over, min_cards=4)                                          # the floor is a parameter; 4 render
+    ws = wb["Highlights"]
+    assert wb.sheetnames[0] == "Highlights"
+    text = [c.value for row in ws.iter_rows() for c in row if c.value is not None]
+    assert text[0] == H.TITLE and text[1] == H.FLOOR_NOTE
+    assert text[2:] == [ln.strip() for ln in msg.split("\n")]                 # the statement, line by line
+    assert not any(isinstance(v, str) and v.startswith("=") for v in text)   # no chip, no formula: no card
+    assert all(not H.FORBIDDEN.search(v) for v in text)
+    assert any("FLOOR NOT MET" in ln for ln in res["lines"])
+    assert all(ln in res["lines"] for ln in msg.split("\n"))                 # the run's report prints the same text
+    _, res4 = run(over=over, min_cards=4)                                # the floor is a parameter; 4 render
+    assert res4["floor_met"] is True and res4["cards"] == ["C5", "C6", "C7", "C8"]
+
+
+def _card(cid):
+    """A stand-in card with only its id (floor_lines reads .cid)."""
+    import types
+    return types.SimpleNamespace(cid=cid)
 
 
 def test_synthetic_a_missing_cell_omits_its_card_with_the_reason():
@@ -800,30 +818,27 @@ def test_synthetic_a_code_in_a_chip_is_shown_as_the_code_not_as_a_number():
 
 
 # ================================================================================================= the hooks
-def test_the_flag_is_in_the_command_line_and_defaults_to_none():
-    import token_metrics as tm
-    assert tm.parse_args(["--no-fetch"]).edition is None
-    assert tm.parse_args(["--no-fetch", "--edition", "charlie"]).edition == "charlie"
-    with pytest.raises(SystemExit):
-        tm.parse_args(["--edition", "dave"])
-
-
-def test_the_look_is_called_when_charlie_look_exists_and_skipped_with_a_line_when_it_does_not(monkeypatch):
+def test_apply_layout_adds_highlights_first_then_the_look(monkeypatch):
     import types
     wb = make_reader()
     monkeypatch.setattr(reader, "parked_reason", lambda n: "parked" if n in PARKED else "")
-    monkeypatch.setitem(sys.modules, "charlie_look", None)                 # import raises ImportError
-    out = charlie_edition.apply_edition(wb, None, "charlie")
-    assert "not present" in out["look"] and wb.sheetnames[0] == "Highlights"
-    assert any("not present" in ln for ln in charlie_edition.report_lines("x"))
     calls = []
     fake = types.SimpleNamespace(apply_look=lambda w: calls.append(w.sheetnames[0]))
-    monkeypatch.setitem(sys.modules, "charlie_look", fake)
-    wb2 = make_reader()
-    out2 = charlie_edition.apply_edition(wb2, None, "charlie")
-    assert calls == ["Highlights"] and "applied" in out2["look"]       # called after the tab is added
-    with pytest.raises(ValueError):
-        charlie_edition.apply_edition(make_reader(), None, "dave")
+    monkeypatch.setitem(sys.modules, "reader_look", fake)
+    out = reader_layout.apply_layout(wb, None)
+    assert calls == ["Highlights"] and "applied" in out["look"]       # called after the tab is added
+    assert out["floor_met"] is True and out["cards"] == out["rendered"]
+    assert any("applied" in ln for ln in reader_layout.report_lines("x"))
+
+
+def test_apply_layout_below_the_floor_keeps_the_tab_with_the_statement(monkeypatch):
+    wb = make_reader(over={"Uniswap": {"gro": 0.1}})                     # C5 fails: eight cards render
+    monkeypatch.setattr(reader, "parked_reason", lambda n: "parked" if n in PARKED else "")
+    monkeypatch.setattr(reader_layout, "MIN_CARDS", 9)
+    out = reader_layout.apply_layout(wb, None)
+    assert out["floor_met"] is False and out["cards"] == [] and "C5" not in out["rendered"]
+    assert wb.sheetnames[0] == "Highlights" and wb["Highlights"]["A3"].value == H.FLOOR_NOTE
+    assert any("FLOOR NOT MET" in ln for ln in reader_layout.report_lines("x"))
 
 
 def test_a_second_highlights_sheet_is_refused():
@@ -832,9 +847,9 @@ def test_a_second_highlights_sheet_is_refused():
         H.add_highlights(wb, None, parked=lambda n: False)
 
 
-# ============================================================================================ the fixture builds
-def _build(d: Path, edition):
-    """The reader (and, with `edition`, the edition) built on the committed real dumps, as test_round_p1 builds it."""
+# ============================================================================================ the fixture build
+def _build(d: Path, min_cards: int):
+    """The reader built on the committed real dumps, as test_round_p1 builds it, with the card floor at `min_cards`."""
     import build_workbook as bw
     import config
     import measuring_guard as mg
@@ -850,108 +865,38 @@ def _build(d: Path, edition):
         mp.setattr(sm, "DB_PATH", str(db))
         mp.setitem(sys.modules, "recalc", None)
         mp.setenv("TOKEN_METRICS_STORE_VALUES", "0")
-        mp.setattr(charlie_edition, "MIN_CARDS", FIXTURE_CARDS)
-        mp.delitem(sys.modules, "charlie_look", raising=False)
+        mp.setattr(reader_layout, "MIN_CARDS", min_cards)
         st = sm.Store(str(db))
         try:
-            bw.build_workbook(st, d / "audit.xlsx", asof=pd.Timestamp(max(asofs)), reader_path=d / "reader.xlsx",
-                              edition=edition)
+            bw.build_workbook(st, d / "audit.xlsx", asof=pd.Timestamp(max(asofs)), reader_path=d / "reader.xlsx")
         finally:
             st.close()
     assert "error" not in bw.READER_STATS, bw.READER_STATS
     getattr(config, "RESTATEMENT_ACTIVE", {}).clear()
-    return {"dir": d, "stats": dict(bw.READER_STATS), "locations": dict(reader.HEADLINE_LOCATIONS),
-            "column_map": len(reader.COLUMN_MAP), "last": dict(charlie_edition.LAST)}
+    return {"dir": d, "stats": dict(bw.READER_STATS), "last": dict(reader_layout.LAST)}
 
 
 @pytest.fixture(scope="module")
-def plain(tmp_path_factory):
-    d = tmp_path_factory.mktemp("charlie_plain")
-    charlie_edition.LAST.clear()
-    return _build(d, None)
+def built(tmp_path_factory):
+    return _build(tmp_path_factory.mktemp("highlights"), FIXTURE_CARDS)
 
 
-@pytest.fixture(scope="module")
-def flagged(tmp_path_factory):
-    d = tmp_path_factory.mktemp("charlie_flag")
-    return _build(d, "charlie")
-
-
-def _cells(path: Path, data_only: bool = False) -> dict:
-    wb = openpyxl.load_workbook(path, data_only=data_only)
-    out = {}
-    for ws in wb.worksheets:
-        for row in ws.iter_rows():
-            for c in row:
-                if c.value is not None or c.comment is not None:
-                    out[(ws.title, c.coordinate)] = (c.value, c.number_format, c.comment.text if c.comment else None)
-        out[(ws.title, "#dims")] = (ws.max_row, ws.max_column, ws.sheet_state)
-    return out, wb.sheetnames
-
-
-def test_a_invariance_the_flag_changes_nothing_on_the_normal_files(plain, flagged):
-    """With and without --edition: every cell value / formula / number format / comment of every reader tab is
-    identical, the normal reader has no Highlights tab, and the audit file's tabs are the same."""
-    a, names_a = _cells(plain["dir"] / "reader.xlsx")
-    b, names_b = _cells(flagged["dir"] / "reader.xlsx")
-    assert names_a == names_b and "Highlights" not in names_b
-    assert a.keys() == b.keys()
-    diff = [k for k in a if a[k] != b[k]]
-    assert not diff, diff[:10]
-    av, _ = _cells(plain["dir"] / "reader.xlsx", data_only=True)
-    bv, _ = _cells(flagged["dir"] / "reader.xlsx", data_only=True)
-    assert [k for k in av if av[k] != bv[k]] == []
-    assert len(a) > 20000
-    # the reader's module state and stats are the normal build's, not the edition's second build's
-    assert plain["locations"] == flagged["locations"] and plain["column_map"] == flagged["column_map"]
-    assert plain["stats"]["tabs"] == flagged["stats"]["tabs"] and "Highlights" not in flagged["stats"]["tabs"]
-    assert plain["stats"]["numbers"] == flagged["stats"]["numbers"]
-    pa = openpyxl.load_workbook(plain["dir"] / "audit.xlsx", read_only=True).sheetnames
-    pb = openpyxl.load_workbook(flagged["dir"] / "audit.xlsx", read_only=True).sheetnames
-    assert pa == pb
-    assert (plain["dir"] / "reader_column_map.csv").read_bytes() == (flagged["dir"] / "reader_column_map.csv").read_bytes()
-
-
-def test_b_the_flag_writes_the_edition_with_highlights_first_and_no_second_audit_file(plain, flagged):
-    assert not (plain["dir"] / charlie_edition.CHARLIE_NAME).exists()
-    edition = flagged["dir"] / charlie_edition.CHARLIE_NAME
-    assert edition.exists()
-    assert sorted(p.name for p in flagged["dir"].glob("*.xlsx")) == sorted(["audit.xlsx", "reader.xlsx", edition.name])
-    wb = openpyxl.load_workbook(edition)
-    normal = openpyxl.load_workbook(flagged["dir"] / "reader.xlsx")
-    # the same tabs as the normal reader plus Highlights first; with the look applied the spec's order (P2g-4) follows:
-    # Highlights, Summary, A1-A4, Comparison, Business, Project notes (P3-6), Charts, About, Definitions, then the hidden
-    # data sheets
-    assert wb.sheetnames[0] == "Highlights" and sorted(wb.sheetnames[1:]) == sorted(normal.sheetnames)
-    visible = [n for n in wb.sheetnames if wb[n].sheet_state == "visible"]
-    assert visible == ["Highlights", "Summary", "A1 Infrastructure", "A2 Coordination", "A3 Revenue Buyback",
-                       "A4 Permanent Burn", "Comparison", "Business", "Project notes", "Charts", "About",
-                       "Definitions"], visible
+def test_b_the_reader_has_highlights_first_and_the_fixture_cards(built):
+    wb = openpyxl.load_workbook(built["dir"] / "reader.xlsx")
+    assert sorted(p.name for p in built["dir"].glob("*.xlsx")) == ["audit.xlsx", "reader.xlsx"]
+    assert wb.sheetnames[0] == "Highlights"
     assert wb["Highlights"].sheet_properties.tabColor.rgb.endswith("1F8A8A")
-    # charts are made, not round-tripped: the Charts tab of the edition holds them
-    assert len(wb["Charts"]._charts) == len(normal["Charts"]._charts) > 0
-    # the edition's existing tabs are the normal reader's, cell for cell
-    a, _ = _cells(flagged["dir"] / "reader.xlsx")
-    b, _ = _cells(edition)
-    import charlie_look
-    b = {k: v for k, v in b.items() if k[0] != "Highlights"}
-    assert b.keys() - {k for k in b if k[1] == "#dims"} == a.keys() - {k for k in a if k[1] == "#dims"}
-    for k, v in a.items():
-        if k[1] == "#dims":
-            continue                                    # styling adds empty styled cells (bands): values are compared
-        w = b[k]
-        # value and comment identical; the number format identical except the look's one declared change
-        assert (w[0], w[2]) == (v[0], v[2]), k
-        assert w[1] == v[1] or (v[1] == reader.FMT_TOK and w[1] == charlie_look.TOKEN_FMT), (k, v[1], w[1])
-    last = flagged["last"]
+    assert len(wb["Charts"]._charts) > 0
+    last = built["last"]
+    assert last["floor_met"] is True
     assert last["cards"] == ["C5", "C7", "C8", "C9"], last["cards"]        # the fixture holds other numbers than Jake's store
     why = {o.split(" ")[0] for o in last["omitted"]}
     assert why == {"C1", "C2", "C3", "C4", "C6"}, last["omitted"]
 
 
-def test_fixture_cards_every_number_is_a_formula_and_the_text_is_clean(flagged):
-    edition = flagged["dir"] / charlie_edition.CHARLIE_NAME
-    wb = openpyxl.load_workbook(edition)
+def test_fixture_cards_every_number_is_a_formula_and_the_text_is_clean(built):
+    path = built["dir"] / "reader.xlsx"
+    wb = openpyxl.load_workbook(path)
     ws = wb["Highlights"]
     refs = _refs(ws)
     assert len(refs) >= 16
@@ -965,7 +910,7 @@ def test_fixture_cards_every_number_is_a_formula_and_the_text_is_clean(flagged):
     for s in strings:
         assert not H.FORBIDDEN.search(s), s
     # the cached values are in the file and none is an error
-    wv = openpyxl.load_workbook(edition, data_only=True)["Highlights"]
+    wv = openpyxl.load_workbook(path, data_only=True)["Highlights"]
     for c, sheet, coord in refs:
         v = wv[c.coordinate].value
         assert v is not None and v != "" and not (isinstance(v, str) and v.startswith("#")), (c.coordinate, v)
@@ -984,11 +929,12 @@ def test_fixture_cards_every_number_is_a_formula_and_the_text_is_clean(flagged):
     assert {"Aerodrome", "World Mobile"} <= listed
 
 
-def test_d_the_production_floor_of_five_fails_on_the_fixture_numbers_and_lists_the_conditions(flagged):
-    wb = openpyxl.load_workbook(flagged["dir"] / "reader.xlsx")            # the normal reader: no Highlights yet
-    with pytest.raises(H.HighlightsError) as e:
-        H.add_highlights(wb, None)                                          # min_cards = 5
-    msg = str(e.value)
+def test_d_the_production_floor_of_five_is_not_met_on_the_fixture_numbers_and_lists_the_conditions(built):
+    wb = openpyxl.load_workbook(built["dir"] / "reader.xlsx")
+    wb.remove(wb["Highlights"])                                             # the reader without its Highlights tab
+    res = H.add_highlights(wb, None)                                        # min_cards = 5
+    assert res["floor_met"] is False and res["cards"] == [] and res["rendered"] == ["C5", "C7", "C8", "C9"]
+    msg = "\n".join(res["lines"])
     assert "only 4 of 9" in msg and "5 are needed" in msg
     for cid in ("C1 GEODNET", "C2 Morpho", "C3", "C4 Hyperliquid", "C6 Fluid"):
         assert cid in msg, msg

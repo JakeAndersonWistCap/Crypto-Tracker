@@ -228,7 +228,7 @@ All in the repo root:
 
 | Path | What it is | Keep it? |
 |---|---|---|
-| `token_metrics.xlsx` | THE READER (P1): About, Summary, the archetype tabs, Definitions. **Rebuilt every run.** | Disposable. Never edit it expecting changes to survive. |
+| `token_metrics.xlsx` | THE READER (P1; one workbook since P4-Q8): Highlights first, Summary, the archetype tabs, Comparison, Business, Project notes, Charts, About, Definitions, in the reader's look. **Rebuilt every run.** | Disposable. Never edit it expecting changes to survive. |
 | `token_metrics_audit.xlsx` | The full workbook: every tab and working column, the checks and the Run Log. **Rebuilt every run.** | Disposable. |
 | `reader_column_map.csv` | Where every Master / A3 column lives now (reader or audit file). | Disposable. |
 | `metrics.db` | SQLite store, the full history. **This is the durable artefact.** | Back this up. Losing it means re-backfilling. |
@@ -593,7 +593,7 @@ the next run. A 401/403/429 stops the read at once, with the status and no key. 
 in 30 days. The backfill needs about 455 of them and each later day needs 1, so put the key in `.env` and run:
 ```
 python token_metrics.py            # repeat until the beacon_api line says every day of the 455-day window is held
-python token_metrics.py --no-fetch --edition charlie
+python token_metrics.py --no-fetch
 ```
 Without a key nothing is stored and the `beacon_api` line says so. The keyless public-node route from P3-9 is
 withdrawn because it read Σ effective balance of active validators, a different quantity. Its stored rows, and any
@@ -724,9 +724,42 @@ Jake's store (expected): the next plain run fills the 2026-10-28..11-02 holes in
 Morpho, Near, Pendle, Ether.fi, Fluid and Sky, newest first, 7 days a run. GEODNET emissions then cover 90 of 90 days.
 ```
 python token_metrics.py
-python token_metrics.py --no-fetch --edition charlie
+python token_metrics.py --no-fetch
 ```
 A longer backlog fills over the following runs. Each run's summary line says how many days are left.
+## 11dq. P4-Q8 One workbook (2026-11-03)
+
+**What changes (SPEC P4-Q8).** `token_metrics.xlsx` is the one reader: the Highlights tab first, then Summary, A1-A4,
+Comparison, Business, Project notes, Charts, About, Definitions, in the reader's look (Calibri 10, navy headers, bands,
+sign colours in font, data bars, token counts as 1.2m / 3.4bn). It is built once a run; there is no second reader file
+and no `--edition` flag. `token_metrics_audit.xlsx` is unchanged cell for cell, and `friday_check.py` runs as before.
+The code: `highlights.py` (the tab), `reader_look.py` (the look), `reader_layout.py` (both, called by
+`reader.build_reader` just before the save); the spec is `docs/highlights_spec.md`.
+
+**The card floor.** At least 5 of the 9 cards must render. When fewer do, the reader is still written: its Highlights
+tab shows no card, only `No highlight cards are shown: too few cards met their conditions (the floor is not met).`, then
+`Highlights: only <n> of 9 cards render, 5 are needed. Cards that did not render:`, one line per card with its unmet
+condition and values, and `Cards that did: …`. The end of the run prints the same lines and the warning
+`HIGHLIGHTS FLOOR NOT MET: <n> of 9 card(s) rendered (<ids>), 5 needed - token_metrics.xlsx is written; …`.
+When the floor is met, the end of the run prints each card with its chip values as displayed.
+
+**An old command line.** `python token_metrics.py --no-fetch --edition <anything>` stops at once (exit 2) with
+`--edition was removed (P4-Q8, one workbook): … Run the same command without --edition, e.g. python token_metrics.py
+--no-fetch`. `windows\daily_run.ps1` and the scheduled tasks never passed it: nothing to change there.
+
+**Run it (PowerShell 5.1, repo root):**
+```
+git pull
+python token_metrics.py --no-fetch
+python friday_check.py
+python recalc_check.py token_metrics.xlsx
+```
+The edition copy the removed flag wrote for the October walkthrough is no longer written or updated, so it would sit
+there going stale: delete that file from the repo root by hand. `token_metrics.xlsx` and `token_metrics_audit.xlsx` are
+the only workbooks a run writes.
+PASTE BACK: the `wrote …token_metrics.xlsx` line (its tab list starts `Highlights, Summary`), the `HIGHLIGHTS` block at
+the end of the run (or the `HIGHLIGHTS FLOOR NOT MET` warning), the `FRIDAY CHECK:` line, and the recalc's `"mismatches"`
+and `"errors"`.
 
 
 ## 11dk. Phase P3-9 — monthly windows, Ethereum's staked ETH, Morpho's price field, concentration (2026-11-02)
@@ -751,7 +784,7 @@ and the series stays on validatorqueue (stale). The overlap days 2026-10-19..10-
 public node keeps no past state). Jake: confirm the key works (it showed a zero allowance in October), then
 ```
 python token_metrics.py
-python token_metrics.py --no-fetch --edition charlie
+python token_metrics.py --no-fetch
 ```
 The Run Log's `beacon_api` line says which route answered; the cell's comment says whether the overlap passed.
 
@@ -808,7 +841,7 @@ The log lines (INFO; WARNING when a hole or a missing endpoint is named):
 Run it alone, with nothing else fetched, no clean-up and no workbook build:
 ```
 python token_metrics.py --catch-up
-python token_metrics.py --no-fetch --edition charlie
+python token_metrics.py --no-fetch
 ```
 The second line rebuilds the workbooks afterwards.
 
@@ -861,7 +894,7 @@ New log lines:
 Jake's store (2026-11-02): `python token_metrics.py --catch-up` fills the prices for 2026-10-30..11-01. It then stores, for
 those days, Ethereum's P2P leg (on the days whose BigQuery answer is cached; the week 10-26..11-01 is read on the next
 plain run's weekly turn and valued then), Uniswap's issuance (d(total_supply_gross)) and Sky's declared-zero issuance.
-Then `python token_metrics.py --no-fetch --edition charlie`.
+Then `python token_metrics.py --no-fetch`.
 
 
 
@@ -1189,7 +1222,7 @@ PASTE BACK:
 Look at A1 Infrastructure: the interim column is the third, after "Rank in A1"; hover a cell for its audit cell.
 
 
-## 11dd. Round P2a — the Charlie build (2026-10-29)
+## 11dd. Round P2a — the walkthrough build (2026-10-29)
 
 What changes (SPEC §19 P2a):
 - **The reader is complete.** `token_metrics.xlsx` has About, Summary, A1 Infrastructure, A2 Coordination, A3 Revenue

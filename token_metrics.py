@@ -91,6 +91,16 @@ REFETCH_WINDOW_DAYS = 30
 SEED_WINDOW_DAYS = 365     # --seed nearblocks reads a year
 
 
+class _RemovedEdition(argparse.Action):
+    """P4-Q8: `--edition` is gone - the one reader, token_metrics.xlsx, carries the Highlights tab and the look. An old
+    command line that still passes it stops with this message (argparse's usage line, exit 2), never runs half-read."""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        parser.error("--edition was removed (P4-Q8, one workbook): token_metrics.xlsx now has the Highlights tab first "
+                     "and the look, and no second reader file is written. Run the same command without --edition, "
+                     "e.g. python token_metrics.py --no-fetch")
+
+
 def parse_args(argv=None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(
         description="Fetch supply/demand metrics and rebuild token_metrics.xlsx.",
@@ -98,9 +108,8 @@ def parse_args(argv=None) -> argparse.Namespace:
                "named in it) and rebuild the workbook.")
     ap.add_argument("--no-fetch", action="store_true",
                     help="rebuild the workbook from the store without fetching anything")
-    ap.add_argument("--edition", choices=["charlie"], default=None,
-                    help="also write an edition of the reader beside the normal files: 'charlie' writes "
-                         "token_metrics_charlie.xlsx (reader only, a Highlights first tab); nothing else changes")
+    ap.add_argument("--edition", nargs="*", action=_RemovedEdition, default=argparse.SUPPRESS,   # P4-Q8: removed
+                    help=argparse.SUPPRESS)
     ap.add_argument("--project", action="append", default=[], metavar="NAME",
                     help="fetch only this project; repeatable. Exact name, as in config.")
     scope = ap.add_mutually_exclusive_group()
@@ -1314,16 +1323,15 @@ def _main(args, log) -> int:
         scope = render_scope(args, log)
         log.info("--no-fetch: rebuilding %s from the store, fetching nothing (%d project(s))",
                  WORKBOOK.name, len(scope))
-        build_workbook(st, AUDIT_WORKBOOK, only=[p["name"] for p in scope], reader_path=WORKBOOK,
-                       edition=args.edition)
+        build_workbook(st, AUDIT_WORKBOOK, only=[p["name"] for p in scope], reader_path=WORKBOOK)
         log.info("wrote %s and %s%s", WORKBOOK, AUDIT_WORKBOOK, _reader_note())
-        _edition_report(args)
+        _highlights_report(log)
         st.close()
         return 0
 
     # ===== CATCH-UP ONLY (P3-4). ===== The days missed since each daily on-chain series' last stored day, nothing
     # else: no tier, no clean-up, no workbook (rebuild with --no-fetch; Jake's order is --catch-up, then
-    # --no-fetch --edition charlie).
+    # --no-fetch).
     if args.catch_up:
         from fetch import alchemy_usage
         alchemy_usage.reset()
@@ -1537,8 +1545,7 @@ def _main(args, log) -> int:
     # drawn from the store — Jake's `--project Ether.fi` run wrote a one-project workbook ("1 project(s) rendered of
     # 30"). Each cell's as-of date and freshness marking say which values this run touched.
     rendered = render_scope(args, log)
-    build_workbook(st, AUDIT_WORKBOOK, run_id=run_id, only=[p["name"] for p in rendered], reader_path=WORKBOOK,
-                   edition=args.edition)
+    build_workbook(st, AUDIT_WORKBOOK, run_id=run_id, only=[p["name"] for p in rendered], reader_path=WORKBOOK)
     log.info("wrote %s (the reader) and %s (every working column) — %d project(s) fetched, %d rendered from the "
              "store%s%s", WORKBOOK, AUDIT_WORKBOOK.name, len(projects), len(rendered),
              "" if len(rendered) == len(config.PROJECTS)
@@ -1547,18 +1554,25 @@ def _main(args, log) -> int:
     import build_workbook as _bw                           # noqa: PLC0415
     for line in _bw.SCOREBOARD_LINES:
         log.info("%s", line)
-    _edition_report(args)
+    _highlights_report(log)
     st.close()
     return 0
 
 
-def _edition_report(args) -> None:
-    """P2g: the Charlie edition's file and its rendered cards with their displayed values, at the end of the run (so
-    they can be read in PowerShell)."""
-    if not getattr(args, "edition", None):
+def _highlights_report(log) -> None:
+    """P2g / P4-Q8: the reader's Highlights cards with their displayed values, at the end of the run (so they can be
+    read in PowerShell) - or, when fewer than reader_layout.MIN_CARDS render, a warning that the floor was not met and
+    the tab shows the statement instead of cards."""
+    import reader_layout                                   # noqa: PLC0415
+    last = reader_layout.LAST
+    if not last:
         return
-    import charlie_edition                                 # noqa: PLC0415
-    charlie_edition.print_report(charlie_edition.edition_path(WORKBOOK))
+    reader_layout.print_report(WORKBOOK)
+    if not last.get("floor_met", True):
+        log.warning("HIGHLIGHTS FLOOR NOT MET: %d of 9 card(s) rendered (%s), %d needed - %s is written; its "
+                    "Highlights tab shows no card, only the statement and each unmet condition",
+                    len(last.get("rendered", [])), ", ".join(last.get("rendered", [])) or "none",
+                    reader_layout.MIN_CARDS, WORKBOOK.name)
 
 
 def _reader_note() -> str:

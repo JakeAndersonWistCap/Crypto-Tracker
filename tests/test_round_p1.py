@@ -22,8 +22,13 @@ sys.path.insert(0, str(ROOT / "tests"))
 
 import config  # noqa: E402
 import reader  # noqa: E402
+import reader_look  # noqa: E402
 
 CODES = set(reader.CODES)
+# P4-Q8: the one reader - Highlights first, then the tabs in the look's order (About after Charts), hidden sheets last
+READER_TABS = ["Highlights", "Summary", "A1 Infrastructure", "A2 Coordination", "A3 Revenue Buyback",
+               "A4 Permanent Burn", "Comparison", "Business", "Project notes", "Charts", "About", "Definitions",
+               "_data", "_series"]
 
 
 @pytest.fixture(scope="module")
@@ -56,9 +61,7 @@ def built(tmp_path_factory):
 # ================================================================================================== P1-1 / P1-3
 def test_p1_1_two_files_the_reader_tabs_in_order_and_the_audit_file_whole(built):
     r = openpyxl.load_workbook(built["reader"])
-    assert r.sheetnames == ["About", "Summary", "A1 Infrastructure", "A2 Coordination", "A3 Revenue Buyback",
-                            "A4 Permanent Burn", "Comparison", "Business", "Project notes", "Charts", "Definitions",
-                            "_data", "_series"]
+    assert r.sheetnames == READER_TABS
     assert r["_data"].sheet_state == "hidden"
     a = openpyxl.load_workbook(built["audit"], read_only=True)
     for tab in ("Master", "A1 Infrastructure", "A2 Coordination", "A3 Revenue Buyback", "A4 Permanent Burn",
@@ -125,7 +128,9 @@ def test_p1_2_a_value_cell_is_a_number_or_one_short_code(built):
                 continue
             assert v in CODES, (tab, c.coordinate, h, v)
             assert c.comment is not None and c.comment.text, (tab, c.coordinate)
-            assert c.font.color.rgb.endswith(reader.CODES[v]), (tab, c.coordinate)
+            # P4-Q8: the reader carries the look - a code is grey italic centred (P2g-4), not its P1 colour
+            assert c.font.color.rgb.endswith(reader_look.GREY) and c.font.i, (tab, c.coordinate)
+            assert c.alignment.horizontal == "center", (tab, c.coordinate)
 
 
 def test_p1_2_codes_and_plain_words():
@@ -346,7 +351,7 @@ def test_p1_8_a3_blocks_in_order_and_the_rest_in_four_collapsed_groups(built):
     assert not any(str(ws.cell(4, c).value).startswith("Detail") for c in range(1, ws.max_column + 1))
 
 
-# ================================================================================================== P2a (the Charlie build)
+# ============================================================================================= P2a (the walkthrough build)
 def _rows_of(ws):
     return {ws.cell(r, 1).value: r for r in range(5, ws.max_row + 1) if ws.cell(r, 2).value is not None}
 
@@ -357,9 +362,7 @@ def _col_of(ws, header):
 
 def test_p2a_tabs_in_order_and_nothing_blank(built):
     r = openpyxl.load_workbook(built["reader"])
-    assert r.sheetnames == ["About", "Summary", "A1 Infrastructure", "A2 Coordination", "A3 Revenue Buyback",
-                            "A4 Permanent Burn", "Comparison", "Business", "Project notes", "Charts", "Definitions",
-                            "_data", "_series"]
+    assert r.sheetnames == READER_TABS
     assert r["_data"].sheet_state == r["_series"].sheet_state == "hidden"
     assert built["stats"]["blank_unexplained"] == 0, built["stats"]["blank_cells"]
     for tab in ("Summary", "A1 Infrastructure", "A2 Coordination", "A3 Revenue Buyback", "A4 Permanent Burn",
