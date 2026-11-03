@@ -228,7 +228,8 @@ def c4_caveat(key, q1, q2, q3, nhy, a4_key, a4_comment: str = "") -> str:
         cl.append("the A4 crossover is blocked for lack of same-span coverage"
                   if "coverage" in (a4_comment or "").lower() else "the A4 crossover is blocked (see its cell comment)")
     s = join_clauses(cl)
-    return s + "." if s else "The key counts tokens retired against tokens emitted; hover each number for its source."
+    return s + "." if s else ("The key counts tokens burned against tokens emitted and unlocked; hover each number for "
+                              "its source.")
 
 
 def c5_caveat(a4_key, nhy) -> str:
@@ -246,7 +247,7 @@ def c5_caveat(a4_key, nhy) -> str:
 def c6_reading(growth, cover, second_best: bool) -> str:
     """C6's reading: 'revenue grew' only when Summary revenue growth is above 0, 'subsidy cover is high' only when
     Subsidy cover (x) is at least HIGH_COVER, 'net holder yield is second best' only when it is."""
-    s = "Retired ÷ emissions fell to zero over four quarters"
+    s = "Burned ÷ (emissions + unlocks) fell to zero over four quarters"
     g, c = num(growth), num(cover)
     cl = (["revenue grew"] if g is not None and g > 0 else []) + \
          (["subsidy cover is high"] if c is not None and c >= HIGH_COVER else [])
@@ -563,7 +564,7 @@ def card_c3(L: Lookup) -> Card:
         reading += "; most of the circulating supply is locked"
     reading += "."
     if p == "Sky":
-        caveat = ("The buyback retires well below the amount emitted, and revenue growth is flat over the selected "
+        caveat = ("The buyback burns well below the amount emitted, and revenue growth is flat over the selected "
                   "period.")
     else:
         caveat = ("Net holder yield is the measured holder value yield less the measured dilution; hover each number "
@@ -584,14 +585,14 @@ def card_c4(L: Lookup) -> Card:
     if not c4_holds(rank.value, in_a3, k[0].value):
         _fail("C4", p, "needs Summary rank in archetype 1 (in A3) and the A3 key >= 0.9", rank=rank.value,
               in_A3=in_a3, key=k[0].value)
-    reading = "Ranked first in A3, at the break-even line between retired and emitted tokens"
+    reading = "Ranked first in A3, at the break-even line between burned and new (emitted + unlocked) tokens"
     if is_largest(p, L.column(S, "Protocol revenue, annualised")):
         reading += ", on the largest revenue base in the set"
     v = [r.value for r in k]
     nhy = _val(_try(L, reader.COMPARISON, p, "Net holder yield"))
     a4 = _try(L, reader.A4_TAB, p, key_headers(reader.A4_TAB)[0]) if L.has(reader.A4_TAB) else None
     a4_comment = a4.cell.comment.text if a4 is not None and a4.cell.comment else ""
-    return Card("C4", p, f"{p} — Buyback retires as many tokens as the protocol emits",
+    return Card("C4", p, f"{p} — Buyback burns as many tokens as the protocol emits and unlocks",
                 _chips(k + [rev, gro]), reading + ".", c4_caveat(*v, nhy, _val(a4), a4_comment), tab, k[0].row,
                 {"rank": rank.value, "key": k[0].value, "narrowed": narrowed(*v),
                  "net holder yield negative": is_negative(nhy), "A4 key": _val(a4)})

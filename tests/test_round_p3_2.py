@@ -2,9 +2,8 @@
 
 P3-2a  Uniswap's outflow (d) grants and (e) releases: checked against the source — SEPARATE wallets and different tokens
        (config.OUTFLOW_LEG_CHECKS), so nothing is counted twice and nothing changes.
-P3-2b  A3's key when emissions are 0: retired ÷ (emissions + unlocks), AMBER with the caveat (Maple, Ether.fi); ties on
-       the key are broken by net holder yield in the ranking helper Summary and the tabs share; the key's own Trajectory
-       row uses the same fallback, so its latest quarter is the key.
+P3-2b  Ties on the key are broken by net holder yield in the ranking helper Summary and the tabs share. (Its A3 fallback
+       key, retired ÷ (emissions + unlocks) when emissions are 0, is retired by P4-Q5a: tests/test_round_p4_q5.py.)
 P3-2c  Uniswap's A4 key on the release basis (issuance = releases into circulating, config.A4_RELEASE_ISSUANCE).
 P3-2d  Chainlink's primary archetype is A2; its A1 and A3 columns stay as "secondary".
 P3-2e  trajectory._own_breaks normalises a declared handover's ordered_points (Ethereum's 2026-09-29 handover is declared).
@@ -141,84 +140,9 @@ def test_p3_2a_on_the_fixture_no_token_is_in_both_legs(built):
 
 
 # ============================================================================================== P3-2b
-def test_p3_2b_zero_emission_fallback_key_is_retired_over_emissions_plus_unlocks_and_amber(built):
-    import build_workbook as bw
-    a, XA = built["audit"], built["XA"]
-    for name in ("Maple", "Ether.fi"):
-        key = _audit_cell(a, A3, bw.RETIRE_VS_EMISSIONS_HEAD, name)
-        v = XA.value(A3, key.row, key.column)
-        assert isinstance(v, float), (name, v)
-        assert "|unlock_release_tokens" in str(key.value), name
-        assert str(key.fill.fgColor.rgb)[-6:] == str(bw.FILL_AMBER.fgColor.rgb)[-6:], name
-        text = key.comment.text
-        assert text.startswith("AMBER — a real number, qualified: FALLBACK KEY") and "emissions + unlocks" in text
-        assert ("by declaration" if name == "Ether.fi" else "emissions_tokens Q0 = 0, measured") in text, text
-    # Maple: the fallback IS the RETIREMENT ÷ DILUTION basis (same legs, same window)
-    k = _audit_cell(a, A3, bw.RETIRE_VS_EMISSIONS_HEAD, "Maple")
-    dil = _audit_cell(a, A3, bw.RETIRE_VS_DILUTION_HEAD, "Maple")
-    assert XA.value(A3, k.row, k.column) == pytest.approx(XA.value(A3, dil.row, dil.column), rel=1e-12)
-    # projects with emissions keep the plain key: no unlock leg, no AMBER caveat
-    for name in ("Sky", "Pendle", "Fluid"):
-        c = _audit_cell(a, A3, bw.RETIRE_VS_EMISSIONS_HEAD, name)
-        assert "|unlock_release_tokens" not in str(c.value), name
-        assert not (c.comment and "FALLBACK KEY" in c.comment.text), name
-    # the reader: a ranked key, AMBER, the caveat on the cell
-    r, XR = built["reader"], built["XR"]
-    ws = r[reader.A3_TAB]
-    rows, kc = _reader_rows(ws), _reader_col(ws, lambda h: h == "Retired ÷ emissions (x)")
-    rc = _reader_col(ws, lambda h: h.startswith("Rank in"))
-    for name in ("Maple", "Ether.fi"):
-        cell = ws.cell(rows[name], kc)
-        assert isinstance(XR.value(ws.title, rows[name], kc), float)
-        assert str(cell.fill.fgColor.rgb)[-6:] == str(bw.FILL_AMBER.fgColor.rgb)[-6:]
-        assert "FALLBACK KEY" in cell.comment.text
-        assert isinstance(XR.value(ws.title, rows[name], rc), float), name
-
-
-def test_p3_2b_the_fallback_is_decided_per_quarter_and_unknown_is_never_0():
-    """The key's builder (the one its Trajectory row re-runs k quarters back) takes the fallback only in a window whose
-    emissions are a MEASURED 0; a quarter with emissions writes the plain key; a missing value is unknown, never 0."""
-    import build_workbook as bw
-    R = bw.Refs(100, 10, ["2026-09"])
-    maple = config.PROJECT_BY_NAME["Maple"]
-    dbk = {"Maple|emissions_tokens": {"q0": 0.0, "q1": 2_500_000.0, "q2": None}}
-    _head, build, *_rest, meta = bw._retire_vs_emissions_col(R, dbk)
-    assert "|unlock_release_tokens" in build(5, maple)
-    with bw.shifted(1):
-        assert "|unlock_release_tokens" not in build(5, maple)        # emissions in Q-1: retired ÷ emissions
-    with bw.shifted(2):
-        assert "|unlock_release_tokens" not in build(5, maple)        # unknown in Q-2: never read as 0
-    assert "FALLBACK KEY" in meta["amber_fn"](maple)
-    assert bw._retire_vs_emissions_col(R, {"Maple|emissions_tokens": {"q0": None}})[-1]["amber_fn"](maple) is None
-    # 0 by declaration (Ether.fi: ETHFI is not emitted) — retired ÷ unlocks, every quarter
-    efi = config.PROJECT_BY_NAME["Ether.fi"]
-    assert "NOT EMITTED" in bw.a3_emissions_declared_zero("Ether.fi")
-    f = bw._retire_vs_emissions_col(R, {})[1](5, efi)
-    assert "|unlock_release_tokens" in f and "|emissions_tokens" not in f
-    # no unlock set (Sky) or a declared rate in force: the plain key, as before
-    assert bw._a3_fallback_applies(config.PROJECT_BY_NAME["Sky"], {"Sky|emissions_tokens": {"q0": 0.0}}, "q0") is None
-
-
-def test_p3_2b_key_equals_its_trajectory_latest_quarter(built):
-    """The A3 key cell and the key's own Trajectory row (a3_retire_vs_emissions, the same builder) agree in Q0, on the
-    audit file and on the reader, for the fallback projects too."""
-    import build_workbook as bw
-    a, XA = built["audit"], built["XA"]
-    t = a["Trajectory"]
-    q0 = trajectory.COL["Q0"]
-    for name in ("Maple", "Ether.fi", "Sky", "Pendle"):
-        key = _audit_cell(a, A3, bw.RETIRE_VS_EMISSIONS_HEAD, name)
-        row = next(r for r in range(5, t.max_row + 1)
-                   if t.cell(r, 2).value == f"A3|{name}|{bw.A3_KEY_TRAJECTORY_ID}")
-        assert XA.value("Trajectory", row, q0) == XA.value(A3, key.row, key.column), name
-    ws, XR = built["reader"][reader.A3_TAB], built["XR"]
-    rows = _reader_rows(ws)
-    kc = _reader_col(ws, lambda h: h == "Retired ÷ emissions (x)")
-    lc = _reader_col(ws, lambda h: h == "Retired ÷ emissions (x), latest")
-    for name in ("Maple", "Ether.fi"):
-        assert XR.value(ws.title, rows[name], lc) == XR.value(ws.title, rows[name], kc), name
-
-
+# The emissions-0 fallback key (retired ÷ (emissions + unlocks), AMBER) is RETIRED by P4-Q5a, with the emissions-only key
+# it fell back from: A3's key is burned ÷ (emissions + unlocks) for every project (tests/test_round_p4_q5.py, which also
+# holds the key = its trajectory's latest quarter check). The tie-break below stands.
 def test_p3_2b_a_tie_on_the_key_is_broken_by_net_holder_yield(monkeypatch):
     """Synthetic: the shared helper (Summary and every tab rank through it) breaks a tie by net holder yield, higher
     first; a project with none after those with one; untied keys rank as before."""

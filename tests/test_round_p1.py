@@ -237,15 +237,18 @@ def test_p1_6_each_group_is_ranked_by_its_key_and_the_unmeasured_rank_last(built
         assert all(x[1] == "unranked" and "Unranked" in x[2] for x in g[first_text:])
 
 
-def test_p1_6_the_a3_key_is_the_dilution_ratio_without_its_unlock_leg(built):
+def test_p1_6_the_a3_key_is_the_dilution_ratio_on_the_burned_buyback(built):
+    """P4-Q5a (was: the key is the dilution ratio without its unlock leg, P1-6): the key is BURNED ÷ (emissions +
+    unlocks), so it never exceeds RETIREMENT ÷ DILUTION (retired = burned + held over the same denominator, at the rate
+    in force where declared) and equals it where everything bought is burned."""
     import build_workbook as bw
     import xlcalc
     a = openpyxl.load_workbook(built["audit"])
     X = xlcalc.Workbook(a)
     ws = a["A3 Revenue Buyback"]
     hdr = {ws.cell(4, c).value: c for c in range(1, ws.max_column + 1)}
-    kc, dc, nc = hdr[bw.RETIRE_VS_EMISSIONS_HEAD], hdr[bw.RETIRE_VS_DILUTION_HEAD], hdr[bw.RETIRE_VS_DILUTION_NOW_HEAD]
-    checked = 0
+    kc, dc, nc = hdr[bw.A3_KEY_HEAD], hdr[bw.RETIRE_VS_DILUTION_HEAD], hdr[bw.RETIRE_VS_DILUTION_NOW_HEAD]
+    checked = equal = 0
     for rr in range(5, ws.max_row + 1):
         name = ws.cell(rr, 1).value
         if name not in config.PROJECT_BY_NAME:
@@ -254,12 +257,13 @@ def test_p1_6_the_a3_key_is_the_dilution_ratio_without_its_unlock_leg(built):
         ref = X.value("A3 Revenue Buyback", rr, nc if name in config.CURRENT_EMISSION_RATE else dc)
         if not isinstance(k, float) or not isinstance(ref, float):
             continue
-        if config.unlock_stock_metrics(name):
-            assert k >= ref - 1e-12, (name, k, ref)        # unlocks only add to the denominator the key drops
-        else:
+        assert k <= ref * (1 + 1e-9) + 1e-12, (name, k, ref)        # held buybacks only add to the retired side
+        rows = config.BUYBACK_DESTINATION_SHARES.get(name) or []
+        if rows and all(r.get("burn", 0.0) == 1.0 for r in rows):
             assert k == pytest.approx(ref, rel=1e-9), name
+            equal += 1
         checked += 1
-    assert checked >= 3
+    assert checked >= 3 and equal >= 1
 
 
 # ================================================================================================== P1-9
@@ -300,8 +304,9 @@ def test_p1_9_the_column_map_names_every_master_and_a3_column(built):
         heads = [c.value for c in next(ws.iter_rows(min_row=4, max_row=4)) if isinstance(c.value, str)]
         mapped = {x["audit_header"] for x in rows if x["audit_tab"] == tab}
         assert set(heads) <= mapped, set(heads) - mapped
-    key = [x for x in rows if x["audit_header"] == bw.RETIRE_VS_EMISSIONS_HEAD]
-    assert key and key[0]["reader_tab"] == "A3 Revenue Buyback" and key[0]["reader_header"] == "Retired ÷ emissions (x)"
+    key = [x for x in rows if x["audit_header"] == bw.A3_KEY_HEAD]
+    assert key and key[0]["reader_tab"] == "A3 Revenue Buyback" and \
+        key[0]["reader_header"] == "Burned ÷ (emissions + unlocks) (x)"
     others = {x["audit_tab"] for x in rows if x["audit_column"] == "(all)"}
     assert {"Data", "Run Log", "Coverage", "Credibility"} <= others
 
@@ -474,7 +479,7 @@ def test_p2a_b_archetype_tabs_are_built_like_a3_with_their_keys(built):
     r = openpyxl.load_workbook(built["reader"])
     defs = {(row[0].value, row[2].value) for row in r["Definitions"].iter_rows(min_row=4) if row[0].value}
     keys = {"A1 Infrastructure": "Settlement per token, 1-yr change", "A2 Coordination": "Customer revenue ÷ emissions (x)",
-            "A3 Revenue Buyback": "Retired ÷ emissions (x)", "A4 Permanent Burn": "Burn ÷ issuance (x)"}
+            "A3 Revenue Buyback": "Burned ÷ (emissions + unlocks) (x)", "A4 Permanent Burn": "Burn ÷ issuance (x)"}
     for tab, key in keys.items():
         ws = r[tab]
         labels = [ws.cell(3, c).value for c in range(1, ws.max_column + 1) if ws.cell(3, c).value]

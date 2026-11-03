@@ -41,6 +41,7 @@ def concepts() -> dict[str, dict]:
 # (identity, notes, flags, deltas, cross-checks, components) are in SUPPORT below — real columns, not headlines.
 COLUMN_MAP: tuple[tuple[str, str, str], ...] = (
     # ---- identity / support ----
+    ("*", "Held buyback inside circulating", "float"),         # P4-Q5b: before "Held" (identity), first match wins
     ("*", "Project", "identity"), ("*", "Symbol", "identity"), ("*", "Archetypes", "identity"), ("*", "Held", "identity"),
     ("*", "Materiality", "identity"), ("*", "Notes", "notes"), ("*", "Data flags", "notes"),
     ("*", "Latest data date", "notes"), ("*", "Trend — ", "trend"),
@@ -99,7 +100,8 @@ COLUMN_MAP: tuple[tuple[str, str, str], ...] = (
     ("*", "PENDLE still in the OLD", "stake_inside"), ("*", "sPENDLE + old vePENDLE", "cross_check"),
     ("*", "Umbrella staked", "notes"), ("*", "CIRCULATING RETIREMENT RATE", "retirement"),
     ("*", "Circulating retirement rate", "retirement"), ("*", "Retirement rate", "retirement"),
-    ("*", "RETIREMENT ÷ DILUTION", "retirement"), ("*", "RETIRED ÷ EMISSIONS", "retirement"),
+    ("*", "RETIREMENT ÷ DILUTION", "retirement"), ("*", "BURNED ÷ (EMISSIONS + UNLOCKS)", "retirement"),
+    ("*", "BUYING PRESSURE ON FLOAT", "actual_buyback"),
     ("*", "Buyback status", "capture_status"),
     ("*", "Burn status", "capture_status"), ("*", "Programmed?", "capture_status"), ("*", "Buyback destination", "capture_status"),
     ("*", "Destination split", "capture_status"), ("*", "Share applied to this window", "implied_buyback"),

@@ -7,7 +7,8 @@ Per project that is NOT PARKED (reader.parked_reason empty; a parked project is 
 Summary and Comparison cell, the primary archetype's key and the rank must be a NUMBER, or a CODE (the cell's text, one
 of reader.CODES; its reason is the cell's comment) whose reason is one of:
 
-    by design   structural: the code is 'by design', or the reason says "by design" / "structural"
+    by design   structural: the code is 'by design', or the reason says "by design" / "structural"; A3's key code
+                'no new supply' (P4-Q5a: emissions + unlocks a measured 0 with a burn — the definition's own code)
     history     the reason says the history is too short (needs history, valid from, short of the window ...) AND
                 carries a clear-by date
     blocked     the code is 'blocked' (or the reason says BLOCKED) AND the reason carries a clear-by date
@@ -139,6 +140,8 @@ def classify(code: str, reason: str, asof: date, accepted: bool = False) -> tupl
         return True, "accepted", "on the allowlist"
     if rule3.is_suspect(reason):
         return False, "rule-3", "rule-3 suspect"
+    if code == "no new supply":                     # P4-Q5a: A3's key by its definition (ranked first), not missing
+        return True, "by design", "no new supply (A3's key by definition, ranked first)"
     if code == "by design" or _BY_DESIGN.search(reason or ""):
         return True, "by design", "structural"
     if code == "blocked" or _BLOCKED.search(reason or ""):

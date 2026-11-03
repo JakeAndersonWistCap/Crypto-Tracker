@@ -5,9 +5,9 @@ emitted while the key is customer revenue $ ÷ emissions $; A3 retired ÷ (emiss
 ÷ emissions; A4 net supply change while the key is burn ÷ issuance; A1 fees ÷ issuance while the key is settlement per
 token, 1-year change). Now its first columns are THE KEY ITSELF for the latest quarter and 1, 2, 3 quarters back, plus
 the change vs the previous quarter — the key's own formula (A2/A4: the key cell's existing Trajectory row; A3: its new
-row a3_retire_vs_emissions; A1: reader.settlement_key with its end moved back). A quarter the key cannot form reads
-the key's own code and reason. The other series follow, each header saying what it is. Built once on the committed
-real dumps (fixtures/real_*.json). No network.
+row a3_burned_vs_new_supply since P4-Q5a; A1: reader.settlement_key with its end moved back). A quarter the key cannot
+form reads the key's own code and reason. The other series follow, each header saying what it is. Built once on the
+committed real dumps (fixtures/real_*.json). No network.
 """
 from __future__ import annotations
 
@@ -27,10 +27,10 @@ import reader  # noqa: E402
 
 TABS = ("A1 Infrastructure", "A2 Coordination", "A3 Revenue Buyback", "A4 Permanent Burn")
 KEY_STEM = {"A1 Infrastructure": "Settlement/token 1-yr chg", "A2 Coordination": "Revenue ÷ emissions (x)",
-            "A3 Revenue Buyback": "Retired ÷ emissions (x)", "A4 Permanent Burn": "Burn ÷ issuance (x)"}
+            "A3 Revenue Buyback": "Burned ÷ (emis + unlocks)", "A4 Permanent Burn": "Burn ÷ issuance (x)"}
 OTHER_STEM = {"A1 Infrastructure": "Fees ÷ issuance", "A2 Coordination": "$ per token emitted",
               "A3 Revenue Buyback": "Retired ÷ (emis + unlocks)", "A4 Permanent Burn": "Net supply change (tokens)"}
-KEY_ID = {"A2 Coordination": "a2_rev_vs_emissions_value", "A3 Revenue Buyback": "a3_retire_vs_emissions",
+KEY_ID = {"A2 Coordination": "a2_rev_vs_emissions_value", "A3 Revenue Buyback": "a3_burned_vs_new_supply",
           "A4 Permanent Burn": "a4_crossover"}
 
 
@@ -122,20 +122,20 @@ def test_the_latest_quarter_is_the_key_cell(built, tab):
 
 def test_each_key_has_its_own_trajectory_row_and_q0_is_the_key_cell(built):
     """A2 and A4 read the key cell's existing Trajectory row (its Q0 PASSes against the cell); A3's key has its own row
-    now (a3_retire_vs_emissions), with a trend cell beside the key on the audit A3 tab."""
+    now (a3_burned_vs_new_supply, P4-Q5a), with a trend cell beside the key on the audit A3 tab."""
     rows = {(t["tab"], t["project"], t["hid"]): t for t in built["traj"]}
     for tab, hid in KEY_ID.items():
         mine = [t for (tb, _p, hd), t in rows.items() if tb == tab[:2] and hd == hid]
         assert mine, (tab, hid)
         assert all(t["verdict"].startswith("PASS") for t in mine), [(t["key"], t["verdict"]) for t in mine
                                                                    if not t["verdict"].startswith("PASS")]
-        assert all(str(t["header"]).startswith(("Customer revenue ÷ emissions value", "RETIRED ÷ EMISSIONS",
+        assert all(str(t["header"]).startswith(("Customer revenue ÷ emissions value", "BURNED ÷ (EMISSIONS + UNLOCKS)",
                                                 "BURN ÷ ISSUANCE")) for t in mine)
     a = openpyxl.load_workbook(built["audit"], read_only=True)
     ws = a["A3 Revenue Buyback"]
     hdr = next(r for r in ws.iter_rows(min_row=1, max_row=12, values_only=True) if r and r[0] == "Project")
-    i = next(j for j, v in enumerate(hdr) if str(v or "").startswith("RETIRED ÷ EMISSIONS"))
-    assert str(hdr[i + 1]).startswith("Trend — a3_retire_vs_emissions ")
+    i = next(j for j, v in enumerate(hdr) if str(v or "").startswith("BURNED ÷ (EMISSIONS + UNLOCKS)"))
+    assert str(hdr[i + 1]).startswith("Trend — a3_burned_vs_new_supply ")
 
 
 def test_quarters_the_key_cannot_form_read_its_code_and_reason_never_zero(built):

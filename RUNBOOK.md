@@ -611,6 +611,39 @@ effective. If the check fails, the series stays on validatorqueue (STALE) and th
 staked ETH ÷ circulating. It uses the same `beacon_chain_eth` that CP's staked column, the tradeable float and A1's
 staking rate read. Staked ETH counts as locked because the exit queue makes it a lock (Jake 2026-11-03), and the cell
 comment says so. `locked_tokens` stays not applicable, because Ethereum has no lock contract. Expect about 36%.
+## 11dn. P4-Q5 A3 rules (2026-11-03)
+
+**Q5a The A3 key.** A3 is ranked by **BURNED ÷ (EMISSIONS + UNLOCKS) (x)** (audit A3 tab, `build_workbook._a3_key_col`;
+reader "Burned ÷ (emissions + unlocks) (x)"): the burned buyback (`buyback_burned_tokens` — each day's buyback × its
+declared burn share, config.BUYBACK_DESTINATION_SHARES) per covered day ÷ (the absorption emissions + the unlock releases
+of the non-circulating wallets, each per covered day), with Sky's emission rate in force in place of its measured
+emissions. A held or distributed buyback is not in the numerator. A project with no non-circulating wallet set (Sky) has
+no unlock leg; Ether.fi has no emissions leg (not emitted, by declaration). Emissions + unlocks a MEASURED 0 with a burn
+above 0 reads the code `no new supply` and ranks first (ties by net holder yield); 0 burned over 0 is n/a; a leg not
+measured over the window is n/a or BLOCKED, never 0. The emissions-only key (retired ÷ emissions) and the P3-2b fallback
+(and its AMBER caveat) are gone. The key's own Trajectory row is `a3_burned_vs_new_supply` (was
+`a3_retire_vs_emissions`); its latest quarter is the key.
+
+**Q5b Held buybacks.** A buyback held in a treasury is not burned. While held it is out of the tradeable float (CP
+`TRADEABLE FLOAT`, so every "÷ tradeable float" rate, Summary's dilution in tokens and the new buying-pressure column):
+config.HELD_BUYBACK_FLOAT — Maple: `ssf_holdings_tokens` (the SYRUP Strategic Fund, inside circulating) and NEAR:
+`buyback_fund_balance` (the three Intents revenue wallets, inside circulating) are subtracted on the day, so a fall in
+the held balance returns to float; Sky (Pause Proxy), Chainlink (Reserve) and Fluid (treasury) hold theirs in wallets
+circulating already subtracts, so nothing is subtracted twice. A day the held stock is not stored, the float is n/a. The
+CP tab shows the subtracted stock in "Held buyback inside circulating (tokens)". Aerodrome (parked) is unchanged.
+
+**Q5c Buying pressure on float, % a year** (audit A3 and CP tabs; reader A3 tab and Comparison): every market buyback,
+any destination (`actual_buyback_tokens`), annualised over its covered days (Maple: by events, 12 a year) ÷ tradeable
+float. 0 where no buyback mechanism exists (Morpho), n/a where none is measured.
+
+**Q5d Holder value yield** is unchanged. Without the credit for held buybacks it would read, on the fixture (as of
+2026-10-13): Maple 0.405% → 0 (its whole credit is the SSF buyback, $283,866 over Q0); Sky 2.384% → 2.112% (of the
+$10,475,498 credited over Q0, $1,193,648 is buybacks dated before 2026-08-17, all held at the Pause Proxy). On a store:
+HVY × (1 − H ÷ C), where C = Data `<project>|holder_value_revenue_usd` Q0 and H = the Q0 sum of `actual_buyback_usd`
+× the day's hold share (config.buyback_destination_shares) on revenue-funded days (config.holder_funding).
+
+Nothing to run beyond the build: `python token_metrics.py --no-fetch` rebuilds both workbooks. `done_check.py` accepts
+`no new supply` as by design.
 
 
 ## 11dk. Phase P3-9 — monthly windows, Ethereum's staked ETH, Morpho's price field, concentration (2026-11-02)

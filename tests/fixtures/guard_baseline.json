@@ -3245,7 +3245,7 @@
    "CP | BUSINESS 3 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 1.0,
    "CP | HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) \u00f7 market cap \u2014 treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": 0.004052722989745836,
    "CP | MARKET SHARE vs its category (now; a shifted quarter: that quarter's mean) \u2014 peer set beside": 0.06723516914939225,
-   "CP | TRADEABLE FLOAT = circulating \u2212 staked/locked \u2212 protocol/treasury-held (tokens) \u2014 protocol/treasury-held is already out of circulating by the convention, so this is A2's free float": 1176793290.688585
+   "CP | TRADEABLE FLOAT = circulating \u2212 staked/locked \u2212 protocol/treasury-held (tokens) \u2014 protocol/treasury-held is already out of circulating by the convention, so this is A2's free float": 1099133150.5063858
   },
   "Morpho": {
    "A2 | Customer revenue Q0 ($)": 55126707.58,
@@ -3281,7 +3281,7 @@
    "CP | MARKET SHARE vs its category (now; a shifted quarter: that quarter's mean) \u2014 peer set beside": 0.002709601691214772,
    "CP | MARKET SHARE, SECOND BASIS \u2014 chain fees vs 13 chains (now; a shifted quarter: that quarter's mean)": 0.01056035766466835,
    "CP | NET HOLDER YIELD = holder value yield \u2212 dilution (outflows a+b+c+d+e at each day's price, annualised) \u00f7 market cap": -0.009758420053442662,
-   "CP | TRADEABLE FLOAT = circulating \u2212 staked/locked \u2212 protocol/treasury-held (tokens) \u2014 protocol/treasury-held is already out of circulating by the convention, so this is A2's free float": 714289505.7662529
+   "CP | TRADEABLE FLOAT = circulating \u2212 staked/locked \u2212 protocol/treasury-held (tokens) \u2014 protocol/treasury-held is already out of circulating by the convention, so this is A2's free float": 710435121.3758836
   },
   "Pendle": {
    "A3 | Actual buyback as % of supply (annualised) \u2014 RETIRED (burned + held) only": 0.0,
