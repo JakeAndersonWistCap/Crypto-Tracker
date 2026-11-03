@@ -174,7 +174,7 @@ def test_no_caller_passes_the_flag_and_build_workbook_takes_no_edition():
     assert "edition" not in inspect.signature(reader.build_reader).parameters
     assert not hasattr(bw, "write_edition")
     for ps1 in (ROOT / "windows").glob("*.ps1"):
-        assert "--edition" not in ps1.read_text(encoding="ascii"), ps1
+        assert "--edition" not in ps1.read_text(encoding="utf-8", errors="replace"), ps1
 
 
 # ============================================================================================ the audit file
