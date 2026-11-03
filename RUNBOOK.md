@@ -534,6 +534,24 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11dt. P5-0 — the gate and a phase's own checks (2026-11-03)
+
+These run in the build sandbox, not on Jake's machine (they need pytest; requirements-gate.txt).
+
+- **The full gate:** `python gate.py --rev <commit> --out <dir> --workers 3`. It snapshots the commit (git archive),
+  collects the test ids, runs every test with pytest-xdist (`-n 3 --dist loadgroup`), the fixture guard and ruff,
+  and passes only when every collected test ran and passed, the guard has 0 violations and ruff F,E9 is at most 81.
+  `<dir>/times.txt` is the report table: per step the time, the 1-minute load average (min/mean/max), the lowest
+  free memory, peak memory per process, and CONTENDED when another test process shared the machine. It does not
+  start below 10 GB free, and never runs more than 3 workers.
+- **A phase's own checks:** `python own_checks.py --base <the commit the phase started from>` (add `--dry-run` to
+  see the selection only). It prints every test file it selected and why, and every file it left to the gate.
+- **The shared build of the 15 dumps** (tests/shared_build.py): eight test files share one build per process. To
+  prove a test does not read the modules' live state, run it with `TOKEN_METRICS_SHARED_BUILD_STALE=1`: a different
+  build runs after every shared-build call. A test that wrote into the shared master copy fails the run at the end.
+- **A test that fails only under xdist** is fixed (its own temporary paths, no shared global left behind), never
+  skipped or moved out of the gate.
+
 ## 11ds. P4-Q7 interim — Hyperliquid A4 allowance and daily capture (2026-11-03)
 
 - **The allowance (no action).** Hyperliquid's `A4 | BURN ÷ ISSUANCE` accepted loss now expires **2027-01-05**
