@@ -4608,6 +4608,12 @@ def _unlock_release_view(groups: dict, name: str, metric: str, legs: tuple) -> N
                 g = g[~gone]
             if g.empty:
                 return
+        # P4-Q3 (config.RELEASE_WHOLE_SET_ONLY): a PARTIAL sum (a wallet of the set not read that day) is a HOLE for
+        # the release — never differenced, so an unread wallet is never a 0 and never a "release" of its balance
+        if (name, m) in config.RELEASE_WHOLE_SET_ONLY:
+            g = g[~g["source"].astype(str).str.contains("PARTIAL", regex=False)]
+            if g.empty:
+                return
         v, mp = g["value"].astype(float), g["source"].astype(str).map(_measuring_point)
         gap = v.index.to_series().diff().dt.days
         ok = (mp == mp.shift(1)) & (gap <= config.unlock_max_gap_days(m))

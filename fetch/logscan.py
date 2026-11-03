@@ -986,6 +986,27 @@ class LogScan:
             for a, ts, h, k in top)) if top else ""
         return " OUTSIDE THE EVENT, BY THE PAIR'S OWN LOGS — " + "; ".join(parts) + largest + "."
 
+    def _labels_since_cursor(self, streams: list, counted: list, direction: str, labels: dict, scale: int,
+                             to_block: int) -> str:
+        """P4-Q3: THE LABELS — where this run's new transfers went (out) or came from (in): the counted transfers in
+        the blocks this run read after each stream's cursor (the last block a run read successfully), by counterparty,
+        each labelled from config (`destination_labels`). Read once per run for every labels-only scan sharing the
+        pinned block."""
+        asked = self.__dict__.get("_labels_asked") or {}
+        froms = [int(asked[sid]) for sid, *_rest in streams if sid in asked]
+        if not froms:
+            return f" LABELS: no block after the cursor to read (cursor at block {to_block:,})."
+        lo = min(froms)
+        side = 2 if direction == "out" else 1
+        party = defaultdict(int)
+        for e in counted:
+            if int(e["blockNumber"]) >= lo:
+                party[topic_address(e["topics"][side])] += _amount(e)
+        tab = "; ".join(f"{a} {v / scale:,.2f} [{labels.get(a, 'UNLABELLED')}]"
+                        for a, v in sorted(party.items(), key=lambda kv: -kv[1])) or "none"
+        return (f" LABELS ({'destinations' if direction == 'out' else 'senders'} of the transfers in blocks "
+                f"{lo:,}..{to_block:,}, read after the cursor): {tab}.")
+
     @staticmethod
     def _since_note(spec: dict, counted: list, labels: dict, scale: int) -> str:
         """Counted transfers ON OR AFTER spec["report_since"], by sender with first/last date — the window a
@@ -1093,18 +1114,31 @@ class LogScan:
             return
 
         # 1. PIN THE UPPER BLOCK. Everything below is read at or before it.
-        try:
-            # FALLS THROUGH THE ENDPOINT LIST (ChainReader.block_number): Jake's run 2026-10-06 lost every
-            # Ethereum scan to one public endpoint's -32046 while the keyed one answered elsewhere.
-            head = (int(self.reader.block_number(chain)) if hasattr(self.reader, "block_number")
-                    else int(self.reader.web3(chain).eth.block_number))
-        except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
-            out.fail(SOURCE, name, f"{key}: no RPC answered eth_blockNumber on {chain}: {e}", TIER)
-            out.gap(name, metric, reason=f"the {key} scan needs a pinned block from a {chain} RPC "
-                                         f"and none answered: {e}",
-                    tiers_attempted="2", suggestion=f"Check the {chain} RPC endpoints.")
-            return
-        to_block = head - CONFIRMATIONS
+        # P4-Q3: a LABELS-ONLY scan (config log_scans `labels_only`: Chainlink's noncirc_out / noncirc_in) shares one
+        # pinned block per chain with the other labels-only scans of this run — the same holders' streams are then read
+        # once, and the next scan finds nothing after the cursor to ask for
+        labels_only = bool(spec.get("labels_only"))
+        pins = self.__dict__.setdefault("_labels_pins", {})
+        if labels_only and chain in pins:
+            to_block = int(pins[chain])
+        else:
+            try:
+                # FALLS THROUGH THE ENDPOINT LIST (ChainReader.block_number): Jake's run 2026-10-06 lost every
+                # Ethereum scan to one public endpoint's -32046 while the keyed one answered elsewhere.
+                head = (int(self.reader.block_number(chain)) if hasattr(self.reader, "block_number")
+                        else int(self.reader.web3(chain).eth.block_number))
+            except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
+                out.fail(SOURCE, name, f"{key}: no RPC answered eth_blockNumber on {chain}: {e}", TIER)
+                out.gap(name, metric, reason=f"the {key} scan needs a pinned block from a {chain} RPC "
+                                             f"and none answered: {e}",
+                        tiers_attempted="2", suggestion=f"Check the {chain} RPC endpoints.")
+                return
+            to_block = head - CONFIRMATIONS
+            if labels_only:
+                pins[chain] = to_block
+        labels_note = (" LABELS ONLY (P4-Q3): this scan names where the tokens released from the wallets went; the "
+                       "release figure is the falls of their summed balanceOf and does not read it — a stop here "
+                       "leaves it unchanged." if labels_only else "")
 
         # 2. BOTH DIRECTIONS FOR EVERY HOLDER — reconciliation needs both even when one counts.
         # INCREMENTAL (2026-09-28, fetch/logcache.py): each stream's events already read are
@@ -1114,6 +1148,7 @@ class LogScan:
         ins, outs, served, requests, refused = {}, {}, set(), 0, []
         self._chain_now = chain
         streams, fetched_new = [], 0     # (sid, cached state, new events, holder, direction)
+        asked_from: list[int] = []       # the first block each stream asked for (after its cursor; P4-Q3 names it)
         # ONE 120s budget for the whole scan, both providers included (config.EXPLORER_SCAN_BUDGET_S).
         budget = getattr(self.explorer, "start_budget", None)
         if budget and not self.unbounded:
@@ -1134,6 +1169,9 @@ class LogScan:
                         # G18-8: a route without timestamps dates each page as it arrives (the explorer's checkpoint
                         # and a timed-out partial are then dated, so the partial is cached)
                         self.explorer.date_events = lambda evs, _c=chain: self._date_undated(_c, evs)
+                        asked_from.append(start)
+                        if labels_only:          # the run's read of this stream (shared by the labels-only scans)
+                            self.__dict__.setdefault("_labels_asked", {})[sid] = start
                         try:
                             new, meta = self.explorer.get_logs(chain_id, token, topics, start, to_block)
                         except ExplorerTimeout as e:
@@ -1161,9 +1199,9 @@ class LogScan:
             if self._window_scan(p, spec, chain, chain_id, token, holders, to_block,
                                  f"seeding: {e}", out):
                 return
-            out.fail(SOURCE, name, f"{key}: {e}" + (f" — {seeded}" if seeded else ""), TIER)
+            out.fail(SOURCE, name, f"{key}: {e}" + (f" — {seeded}" if seeded else "") + labels_note, TIER)
             out.gap(name, metric,
-                    reason=str(e) + (f". SEEDING, RESUMABLE: {seeded}" if seeded else ""),
+                    reason=str(e) + (f". SEEDING, RESUMABLE: {seeded}" if seeded else "") + labels_note,
                     tiers_attempted="2",
                     suggestion=("The first run reads full history and may need several runs "
                                 "inside the budget; each resumes where the last stopped "
@@ -1177,10 +1215,10 @@ class LogScan:
             if self._window_scan(p, spec, chain, chain_id, token, holders, to_block,
                                  f"refused: {e}", out):
                 return
-            out.fail(SOURCE, name, f"{key}: no explorer served the scan — {e}", TIER)
+            out.fail(SOURCE, name, f"{key}: no explorer served the scan — {e}" + labels_note, TIER)
             out.gap(name, metric,
                     reason=f"the {key} Transfer-event scan was REFUSED by every explorer routed "
-                           f"for {chain}: {e}. Not replaced by a balance read.",
+                           f"for {chain}: {e}. Not replaced by a balance read." + labels_note,
                     tiers_attempted="2",
                     suggestion="Read the explorer's own message above. If it says logs are not "
                                "served free on this chain, correct EXPLORER_LOG_ROUTES — the "
@@ -1237,9 +1275,18 @@ class LogScan:
                 net = sum(_amount(e) for e in ins[h]) - sum(_amount(e) for e in outs[h])
                 how_net = "full history"
             try:
-                bal = self._balance_at(chain, chain_id, token, h, to_block)
+                # P4-Q3: the labels-only scans of one run share their pinned block, so each holder's balanceOf there is
+                # read once (the same integer for both directions)
+                bkey = (chain, token.lower(), h.lower(), int(to_block))
+                memo = self.__dict__.setdefault("_labels_balances", {})
+                if labels_only and bkey in memo:
+                    bal = memo[bkey]
+                else:
+                    bal = self._balance_at(chain, chain_id, token, h, to_block)
+                    if labels_only:
+                        memo[bkey] = bal
             except Exception as e:  # noqa: BLE001
-                out.fail(SOURCE, name, f"{key}: balanceOf({h}) at block {to_block} failed: {e}", TIER)
+                out.fail(SOURCE, name, f"{key}: balanceOf({h}) at block {to_block} failed: {e}" + labels_note, TIER)
                 out.gap(name, metric,
                         reason=f"the {key} scan could not be RECONCILED: balanceOf({h}) at block "
                                f"{to_block:,} did not answer ({e}), and an unreconciled scan is "
@@ -1253,7 +1300,9 @@ class LogScan:
                 recon[rkey] = {"block": int(to_block), "net": str(net), "key": key, "n_in": len(ins[h]),
                                "n_out": len(outs[h])}
             rtrace, rstatus = [], None
-            if net != bal and hasattr(self.reader, "dated_logs"):
+            # P4-Q3: a labels-only scan never re-reads history from the chain — it reads only after its cursor; an
+            # unreconciled scan stores nothing and is cut back to its last proven block (below)
+            if net != bal and hasattr(self.reader, "dated_logs") and not labels_only:
                 # THE FULL HISTORY, REPAIRED FROM THE CHAIN (run review D1) — before falling back to the window
                 try:
                     ins[h], outs[h], rstatus, rtrace = self._repair_history(spec, chain, chain_id, token, h, ins[h],
@@ -1457,7 +1506,8 @@ class LogScan:
         # LABELLED where config names the sender (2026-09-28): an excluded inflow is recorded as
         # "other inflow, not counted" with what it is, not left as a bare address.
         labels = {a.lower(): l for a, l in {**(spec.get("not_counted_labels") or {}),
-                                            **(spec.get("sender_labels") or {})}.items()}
+                                            **(spec.get("sender_labels") or {}),
+                                            **(spec.get("destination_labels") or {})}.items()}
         u_table = ", ".join(f"{a} {v / scale:,.2f}" + (f" [{labels[a]}]" if a in labels else "")
                             for a, v in sorted(uncounted.items(), key=lambda kv: -kv[1])[:8]) or "none"
         by_party = defaultdict(int)
@@ -1501,7 +1551,9 @@ class LogScan:
                       f"another token out." if swap else "")
                    + (f" {poisoned} zero-value lookalike (address-poisoning) transfer(s) ignored." if poisoned else "")
                    + (f" {empty} log(s) carried EMPTY data ('0x') — read as no value." if empty else "")
-                   + rq_note + self._since_note(spec, counted, labels, scale))
+                   + rq_note + self._since_note(spec, counted, labels, scale)
+                   + (self._labels_since_cursor(streams, counted, direction, labels, scale, to_block)
+                      + labels_note if labels_only else ""))
         out.log.append(LogEntry(SOURCE, name, 0, "ok", summary, TIER))
         log.info("%s/%s", name, summary)
 
