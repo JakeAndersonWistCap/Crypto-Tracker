@@ -407,10 +407,12 @@ class HyperCoreInfo:
                     continue
                 out.add(point(name, w["metric"], v, f"{SOURCE}:tokenDetails.nonCirculatingUserBalances", TIER, when),
                         SOURCE, name, f"{w['metric']}={v:,.2f} ({w['label']}, nonCirculatingUserBalances)", TIER)
+            self._noncirc_listed(name, read, by_addr, out, when)
         else:
             out.log.append(LogEntry(SOURCE, name, 0, "ok",
                                     "tokenDetails carried no nonCirculatingUserBalances list: the "
                                     "excluded set is not on this run's log", TIER))
+            self._noncirc_listed(name, read, None, out, when)
         # B4 (2026-09-28): THE FALL IN totalSupply IS EVERY BURN OUTSIDE THE ASSISTANCE FUND.
         # Differenced on the negation, as for the reward reserve below; a rise is refused.
         fall = read.get("supply_fall_metric")
@@ -462,6 +464,36 @@ class HyperCoreInfo:
                                     f"tokenDetails.totalSupply - CoinGecko total_supply = "
                                     f"{total - provider:,.4f} (unexplained; not reconciled — see "
                                     f"config supply_reference_note)", TIER))
+
+    @staticmethod
+    def _noncirc_listed(name: str, read: dict, by_addr: dict | None, out, when) -> None:
+        """P4-Q7 (Jake 2026-11-03): EVERY ADDRESS IN tokenDetails.nonCirculatingUserBalances OTHER THAN THE TEAM WALLET,
+        stored daily as its own stock (config noncirc_listed_metrics {address: metric}; evidence series, no headline).
+        A named address missing from the list this run (or no list at all) is a FAIL line and nothing is stored for it —
+        a hole, never 0. A listed address that neither the map nor unlock_wallets names is logged "listed but not
+        stored" — never silently dropped."""
+        mapped = {str(a).lower(): m for a, m in (read.get("noncirc_listed_metrics") or {}).items()}
+        if not mapped:
+            return
+        src = f"{SOURCE}:tokenDetails.nonCirculatingUserBalances"
+        for addr, metric in mapped.items():
+            v = None if by_addr is None else by_addr.get(addr)
+            if v is None:
+                why = ("tokenDetails carried no nonCirculatingUserBalances list" if by_addr is None
+                       else "listed with no number" if addr in by_addr
+                       else "is not in nonCirculatingUserBalances this run")
+                out.fail(SOURCE, name, f"{metric}: {addr} {why} — NOT STORED (a hole, never 0)", TIER)
+                continue
+            out.add(point(name, metric, v, src, TIER, when), SOURCE, name,
+                    f"{metric}={v:,.2f} ({addr}, nonCirculatingUserBalances)", TIER)
+        if by_addr is None:
+            return
+        stored = set(mapped) | {str(w["address"]).lower() for w in read.get("unlock_wallets") or []}
+        for addr, v in by_addr.items():
+            if addr not in stored:
+                out.warn(SOURCE, name, f"nonCirculatingUserBalances: {addr} "
+                                       f"{'(no number)' if v is None else f'{v:,.2f}'} listed but not stored — no metric "
+                                       f"names it (config noncirc_listed_metrics)", TIER)
 
     def wallet_hype(self, endpoint: str, address: str) -> tuple[float, str]:
         """(HYPE held, detail) for one address: spot (spotClearinghouseState 'HYPE' total) + staked
@@ -524,6 +556,11 @@ class HyperCoreInfo:
                 return
             held += v
             parts.append(f"{w['label']} {v:,.2f} ({how})")
+            # P4-Q7 (Jake 2026-11-03): each wallet stored on its own beside the sum — the very value the sum adds
+            # (evidence series; the sum and circulating are unchanged)
+            if w.get("metric"):
+                out.add(point(name, w["metric"], v, f"{SOURCE}:exclude_wallets", TIER, when), SOURCE, name,
+                        f"{w['metric']}={v:,.2f}: {w['label']} ({how}) — a part of excluded_wallets_tokens", TIER)
         out.add(point(name, "excluded_wallets_tokens", held, f"{SOURCE}:exclude_wallets", TIER, when),
                 SOURCE, name, f"excluded_wallets_tokens={held:,.2f}: " + "; ".join(parts), TIER)
         # THE HYPEREVM BURN LEAVES CIRCULATING TOO (Round G2, D2 — Jake 2026-10-18): tokenDetails counts the HyperEVM
