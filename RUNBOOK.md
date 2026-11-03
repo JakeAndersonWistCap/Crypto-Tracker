@@ -644,6 +644,89 @@ HVY × (1 − H ÷ C), where C = Data `<project>|holder_value_revenue_usd` Q0 an
 
 Nothing to run beyond the build: `python token_metrics.py --no-fetch` rebuilds both workbooks. `done_check.py` accepts
 `no new supply` as by design.
+## 11do. P4-Q6 Always-backfill catch-up (2026-11-03)
+
+The P3-4 catch-up (§11di) filled only the days after a series' last stored day. A day missed in the middle of a series
+stayed a hole. Now every plain `python token_metrics.py` (no flag) does this first, inside the run's lock:
+- It scans **every daily series** for missing days **anywhere** in the window the cells read.
+- It fills each missing day by that series' own route (below).
+- It recomputes the series derived from the filled days.
+- Then today's tiers run.
+
+`python token_metrics.py --catch-up` still runs the catch-up alone.
+
+**The window: 450 days, `[today − 450, yesterday]`.**
+- The longest window any cell reads is the trajectory's Q-4: Q0..Q-4 are five 90-day blocks, so Q-4 is the 90 days
+  ending 360 days back.
+- Y1 is 365 days. It is never shifted to a year back, so nothing reads 730 days.
+- W = max(400, 5 × 90, 365) = 450 (`fetch.archive.catch_up_window_days`).
+
+**What is not a hole:**
+- A day before a series exists: before its first stored day, its declared start (`ARCHIVE_SERIES_START`), or a recorded
+  "not before" start.
+- A day already inside a stored multi-day row (`[span=Nd]`, the STRADDLED guard).
+- A day in a declared handover's earlier leg.
+- A day of a declared source hole (`config.declared_source_hole`: the source itself never reported it, e.g. Morpho's fees).
+
+A row is never overwritten.
+
+**Order: newest first.** The headline cells read the Q0 window (and the Now window inside it). A 400-day backlog read
+oldest first would take about 57 runs (7 days a run) to reach those days. Newest first fills Q0 in the first runs, then
+works back through Q1..Q-4. A burn or other cumulative flow is not differenced across a day that is still owed, so
+filling from the new end never stores a multi-day lump. The flow is differenced once that day is filled or given up.
+
+**Routes**, chosen by the measuring point of the series' newest row:
+
+| Route | Series | How the day comes back |
+|---|---|---|
+| archive | daily on-chain state reads (Ethereum, BSC, Base, Polygon; GEODNET's Solana burn account) | archive read at the day's first block (as P3-4) |
+| NEAR archive | NEAR `total_supply_protocol`, `locked_tokens` | NEAR's archival RPC at the day's first block, the stake by that day's epoch (`archive_backfill.py --near`'s read) |
+| CoinGecko | price, market cap, volume, implied circulating | `market_chart` over the range back to the oldest missed day (365 days at most) |
+| replay | `balance_flow` (GEODNET's mining-wallet release = its emissions) | the adapter's own read for that project; only the missed days are written |
+| today's tiers | DefiLlama, growthepie, NearBlocks, Blockscout stats, Dune | the tier reads them back from its own history this run (see below) |
+| full re-read | Hyperliquid candles, Boros, Pendle maturity, DefiLlama price history | nothing extra: re-read in full every run |
+| derived | `derived:`, `derive_history`, `schedule:config`, `declared:`, a stock's `:delta` | recomputed for the filled days |
+| not recoverable | page scrapes: `scrape`, `aethir_page`, `browser_capture`, `maple_page` | named, never filled |
+| no past-day read | any other source (logscan event reads, other point reads) | named as a hole in the log |
+
+How today's tiers read their days back:
+- `fetch.base.window()` keeps the owed days beside the routine 30.
+- growthepie and NearBlocks no longer skip their read while a day is owed.
+- Blockscout's range widens to the oldest owed day, keeping only the owed days before the routine 30.
+- A row dated on such a day whose key is already held is dropped before the store write (`fetch.archive.tier_fill_guard`).
+
+**Not recoverable.** The cell comment of a flow whose Q0 window holds such a day reads:
+
+`Q0 COVERS n OF 90 DAYS — holes (no row): <days> — not recoverable (<source> keeps no history); the Q0 sum is annualised over the n day(s) covered (SPEC D6-1)`
+
+This is the AMBER comment, the same note as before with the reason added. The annualisation rule is unchanged.
+
+**Budget and resume.** The same budgets as before: 10 minutes and 7 days a run, `--budget-min`, `--catch-up-days`,
+`TOKEN_METRICS_CATCH_UP_MIN`, `TOKEN_METRICS_CATCH_UP_DAYS`. The ledgers `.cache\logscan\catch-up-pending.json` and
+`catch-up-api-pending.json` now also keep a day after it is given up (tried on 3 runs). Without that, the full-window scan
+would read the day again every run. `archive_backfill.py --run` (and `--near`) still fills given-up days.
+
+**Log lines (new):**
+- `CATCH-UP <project>/<metric>: <n> day(s) not recoverable (<days>) — not recoverable (<source> keeps no history: …)`
+- `CATCH-UP <project>/<metric>: <n> day(s) owed (<days>) — read back by today's <source> tier from its own history …`.
+  With `--catch-up` alone the line says "the next plain run's" instead of "today's".
+- `CATCH-UP <project>/<metric>: <n> day(s) missing (<days>) — derived (…): recomputed for the days its inputs are caught up`
+- `CATCH-UP <project>/<metric>: <n> day(s) missing (<days>) — no past-day read is wired for <source>; a named hole …`
+- `CATCH-UP <project>/<metric>: <n> day(s) filled (…), <n> left (…) — NEAR archive read at each day's first block via <host>`
+- `CATCH-UP <project>/<metric>: … — balance_flow's own read, the series' own source (…)`
+- After today's tiers: `CATCH-UP (today's tiers): <n> of <m> owed day(s) read back over <k> API series from their own history, <l> left`
+- The summary line ends with
+  `; HOLES in the 450 days <from>..<yesterday> (every daily series): <found> found over <k> series — <filled> filled, <left> left, <nr> not recoverable (no history)`.
+  When nothing is missing it reads `… none has a missed day in the 450 days <from>..<yesterday>; nothing read`. P3-4's
+  wording was "since its last stored day".
+
+Jake's store (expected): the next plain run fills the 2026-10-28..11-02 holes in GEODNET, Chainlink, Uniswap, Maple,
+Morpho, Near, Pendle, Ether.fi, Fluid and Sky, newest first, 7 days a run. GEODNET emissions then cover 90 of 90 days.
+```
+python token_metrics.py
+python token_metrics.py --no-fetch --edition charlie
+```
+A longer backlog fills over the following runs. Each run's summary line says how many days are left.
 
 
 ## 11dk. Phase P3-9 — monthly windows, Ethereum's staked ETH, Morpho's price field, concentration (2026-11-02)

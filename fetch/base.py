@@ -1140,7 +1140,31 @@ def window(df: pd.DataFrame, window_days: int | None) -> pd.DataFrame:
         key = (df["project"].iloc[0], df["metric"].iloc[0])
         if key in BACKFILL:
             window_days = max(window_days, BACKFILL_DAYS)
-    return df[df["date"] >= today() - pd.Timedelta(days=window_days)]
+    keep = df["date"] >= today() - pd.Timedelta(days=window_days)
+    owed = (catch_up_owed(df["project"].iloc[0], df["metric"].iloc[0])
+            if CATCH_UP_OWED and {"project", "metric"} <= set(df.columns) else frozenset())
+    if owed:
+        # P4-Q6: the routine window, plus the series' owed days (keys with no row: never an overwrite)
+        keep = keep | pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d").isin(owed)
+    return df[keep]
+
+
+# P4-Q6 ALWAYS-BACKFILL CATCH-UP (Jake, 2026-11-03): {(project, metric): {"YYYY-MM-DD", ...}} — a daily API series' MISSING
+# days inside the cells' longest window (fetch.archive.catch_up_window_days) that its own tier reads back (the call
+# returns the history and window() trims it, or the adapter asks for a date range). window() keeps those days beside the
+# routine window, so today's tier fills them; they hold no row, so nothing stored is overwritten. Set per run by
+# token_metrics (set_catch_up_owed) from the catch-up's scan; empty otherwise.
+CATCH_UP_OWED: dict = {}
+
+
+def set_catch_up_owed(owed) -> None:
+    CATCH_UP_OWED.clear()
+    CATCH_UP_OWED.update({k: frozenset(str(d)[:10] for d in v) for k, v in (owed or {}).items() if v})
+
+
+def catch_up_owed(project: str, metric: str) -> frozenset:
+    """The owed days today's tier reads back for this series (P4-Q6), else an empty set."""
+    return CATCH_UP_OWED.get((project, metric)) or frozenset()
 
 
 def derive_flow_from_cumulative(cumulative_value: float, prior_cumulative: float | None,

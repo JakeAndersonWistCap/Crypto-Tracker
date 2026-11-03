@@ -94,6 +94,13 @@ class BlockscoutStats:
             have = self.last_dates.get((name, metric))
             ever = getattr(self.daily, "ever", lambda k: True)(key)
             days = 30 if (have is not None and ever) else int(spec.get("days", 365))
+            # P4-Q6: an interior hole older than the routine 30 days (the catch-up's owed days) widens the range to it;
+            # of the days before the routine 30, only the owed ones (no row stored) are kept — never an overwrite
+            from .base import catch_up_owed
+            owed = catch_up_owed(name, metric) if days == 30 else frozenset()
+            routine_from = today() - pd.Timedelta(days=days)
+            if owed:
+                days = max(days, (today() - pd.Timestamp(min(owed))).days)
             start = (today() - pd.Timedelta(days=days)).date()
             params = {"from": str(start), "to": day, "resolution": "DAY"}
             label = chart
@@ -108,7 +115,8 @@ class BlockscoutStats:
                 out.fail(SOURCE, name, f"{metric}: {chart}: {pts}. NOTHING STORED.", TIER)
                 continue
             self.daily.done(key, day)
-            pts = [(d, v) for d, v in pts if d.normalize() < today()]
+            pts = [(d, v) for d, v in pts if d.normalize() < today()
+                   and (not owed or d.normalize() >= routine_from or str(d.date()) in owed)]
             if not pts:
                 out.fail(SOURCE, name, f"{metric}: {label} returned no complete day from {start}", TIER)
                 continue
