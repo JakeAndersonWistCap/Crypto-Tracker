@@ -673,7 +673,13 @@ $10,475,498 credited over Q0, $1,193,648 is buybacks dated before 2026-08-17, al
 HVY × (1 − H ÷ C), where C = Data `<project>|holder_value_revenue_usd` Q0 and H = the Q0 sum of `actual_buyback_usd`
 × the day's hold share (config.buyback_destination_shares) on revenue-funded days (config.holder_funding).
 
-Nothing to run beyond the build: `python token_metrics.py --no-fetch` rebuilds both workbooks. `done_check.py` accepts
+**Q5 fix (after the full gate, 2026-11-03).** The key column maps to its own SPEC concept `a3_key` (section 4), which
+declares every series the key reads for any A3 project: `buyback_burned_tokens`, `emissions_tokens`,
+`gross_issuance_tokens`, `emissions_rate_current_annual_tokens` (Sky) and `unlock_release_tokens`. It used to map to
+`retirement` (retired ÷ supply), so the Coverage tab scored it MATCHES-SPEC = no. On a build, the Coverage tab's row for
+the key now reads MATCHES-SPEC = yes for every A3 project. `retirement` keeps its own inputs.
+
+Nothing to run beyond the build: `python token_metrics.py --no-fetch` rebuilds the workbook. `done_check.py` accepts
 `no new supply` as by design.
 ## 11do. P4-Q6 Always-backfill catch-up (2026-11-03)
 

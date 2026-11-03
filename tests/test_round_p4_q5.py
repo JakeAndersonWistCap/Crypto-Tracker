@@ -386,3 +386,29 @@ def test_fixture_reader_columns_definitions_and_map(built):
     assert key and key[0]["reader_header"] == reader.ARCHETYPE_KEYS[3][0]
     bp = {(x["reader_tab"], x["audit_tab"]) for x in rows if x["reader_header"] == reader.BUYING_PRESSURE_SHORT}
     assert {(reader.A3_TAB, A3), (reader.COMPARISON, CP)} <= bp
+
+
+# ===================================================================================== P4-Q5 fix: the key's own concept
+def test_the_a3_key_column_maps_to_its_own_concept_with_every_input_it_reads():
+    """P4-Q5 fix (Jake 2026-11-03, after the full gate): the A3 key column maps to the SPEC concept a3_key — not to
+    retirement (retired ÷ supply) — and a3_key declares every series the key reads for EVERY A3 project
+    (build_workbook.a3_key_legs), so the Coverage audit's MATCHES-SPEC holds for each, not only Aerodrome. The check
+    itself is unchanged, and retirement keeps its own inputs."""
+    import coverage_audit as ca
+    import spec
+    cs = spec.concepts()
+    assert spec.concept_for("A3 Revenue Buyback", bw.A3_KEY_HEAD) == "a3_key"
+    assert spec.concept_for("A3", bw.A3_KEY_HEAD) == "a3_key"
+    key = cs["a3_key"]
+    assert key["axis"] == "CAPTURE" and key["dir"] == 1 and key["unit"] == "x" and key["tabs"] == ("A3",)
+    ins = set(key["inputs"])
+    a3 = [p for p in config.PROJECTS if 3 in (p.get("archetypes") or [])]
+    assert len(a3) >= 10
+    for p in a3:
+        lg = bw.a3_key_legs(p["name"])
+        reads = {lg["burn"], *lg["emissions"], *lg["unlocks"]} | ({lg["rate"]} if lg["rate"] else set())
+        assert reads <= ins, (p["name"], sorted(reads - ins))
+        assert ca._matches(reads, ins), p["name"]
+    # the old concept is not loosened: it still declares only the retired-buyback inputs
+    assert "buyback_burned_tokens" not in cs["retirement"]["inputs"]
+    assert "retired_buyback_tokens" in cs["retirement"]["inputs"]
