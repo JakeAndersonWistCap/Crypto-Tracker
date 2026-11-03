@@ -189,13 +189,18 @@ def tests_command(workers: int, python: str = sys.executable, junit: str | None 
     return cmd + ["tests"]
 
 
+_GROUP_SUFFIX = re.compile(r"@(?:shared_plain_build|test_\w+\.py)$")
+
+
 def junit_outcomes(path: Path) -> dict[str, str]:
-    """{test id: passed / failed / error / skipped} from a junit xml file."""
+    """{test id: passed / failed / error / skipped} from a junit xml file. Under --dist loadgroup xdist appends
+    '@<group>' to every test id; it is removed so the ids compare with the collected ones."""
     import xml.etree.ElementTree as ET
     out = {}
     for tc in ET.parse(path).getroot().iter("testcase"):
         mod = tc.get("classname", "").replace(".", "/")
-        tid = f"{mod}.py::{tc.get('name')}" if mod else tc.get("name")
+        name = _GROUP_SUFFIX.sub("", tc.get("name") or "")
+        tid = f"{mod}.py::{name}" if mod else name
         kids = {c.tag for c in tc}
         out[tid] = ("failed" if "failure" in kids else "error" if "error" in kids else
                     "skipped" if "skipped" in kids else "passed")
@@ -305,7 +310,9 @@ def main(argv=None) -> int:
         (out / "outcomes.txt").write_text("".join(f"{v}\t{k}\n" for k, v in sorted(got.items())),
                                           encoding="utf-8")
         r["ran"] = len(got)
-        r["same_tests"] = len(got) == len(ids)
+        r["same_tests"] = set(got) == set(ids)
+        r["missing"] = sorted(set(ids) - set(got))[:50]
+        r["unexpected"] = sorted(set(got) - set(ids))[:50]
         r["not_passed"] = sorted(k for k, v in got.items() if v != "passed")
         rows.append(r)
         r = run_step("guard", [sys.executable, "measuring_guard.py", "--compare", "tests/fixtures/guard_baseline.json"],
@@ -331,6 +338,8 @@ def main(argv=None) -> int:
              f"same tests: collected {by.get('collect', {}).get('tests')}, ran {by.get('tests', {}).get('ran')}"
              f" -> {'yes' if by.get('tests', {}).get('same_tests') else 'NO'}",
              *(f"  not passed: {t}" for t in by.get("tests", {}).get("not_passed", [])[:50]),
+             *(f"  collected but no outcome: {t}" for t in by.get("tests", {}).get("missing", [])),
+             *(f"  outcome but not collected: {t}" for t in by.get("tests", {}).get("unexpected", [])),
              f"guard violations: {by.get('guard', {}).get('violations')}",
              f"ruff F,E9: {by.get('ruff', {}).get('ruff_total')} (max {a.ruff_max})",
              f"GATE {'PASSED' if ok else 'FAILED'}", "", "slowest 40:",

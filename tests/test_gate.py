@@ -89,8 +89,8 @@ def test_every_test_file_is_one_xdist_group_and_the_shared_build_files_are_one()
 
 def test_outcomes_are_read_per_test_id_from_junit(tmp_path):
     (tmp_path / "j.xml").write_text(
-        '<testsuites><testsuite><testcase classname="tests.test_a" name="test_ok"/>'
-        '<testcase classname="tests.test_a" name="test_bad[x]"><failure message="m"/></testcase>'
+        '<testsuites><testsuite><testcase classname="tests.test_a" name="test_ok@test_a.py"/>'
+        '<testcase classname="tests.test_a" name="test_bad[x]@shared_plain_build"><failure message="m"/></testcase>'
         '<testcase classname="tests.test_b" name="test_err"><error message="e"/></testcase>'
         '</testsuite></testsuites>')
     assert gate.junit_outcomes(tmp_path / "j.xml") == {"tests/test_a.py::test_ok": "passed",

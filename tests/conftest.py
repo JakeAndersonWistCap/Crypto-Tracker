@@ -101,6 +101,7 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "xdist_group(name): run every test of the group on one xdist worker")
 
 
+@pytest.hookimpl(tryfirst=True)       # before xdist's own hook, which reads the mark to group the tests
 def pytest_collection_modifyitems(session, config, items):
     import pathlib
     for item in items:
