@@ -444,15 +444,32 @@ ENTRIES = {
                 "covered day)", window="Q0 / now", unit="x",
         inputs=["retired_buyback_tokens", "emissions_rate_current_annual_tokens", "unlock_release_tokens"],
         decided=[(J, "2026-10-12", "decision 2 on 6f8c86c")]),
-    "RETIRED ÷ EMISSIONS (x)": dict(
-        what="A3's rank key: retired buyback against emissions alone (unlocks excluded), at the emission rate in force; "
-             "1.0 is the crossover.",
-        formula="retired_buyback_tokens per covered day ÷ (the tab's absorption emissions per covered day, with the "
-                "declared rate in force ÷ 365 in place of the leg it replaces — Sky); a structural 0 retirement reads "
-                "0; BLOCKED where a side covers under a week",
+    "BURNED ÷ (EMISSIONS + UNLOCKS) (x)": dict(
+        what="A3's rank key: the BURNED buyback against new supply (emissions + unlocks), at the emission rate in "
+             "force; 1.0 is the crossover. A held or distributed buyback is not burned and is not counted.",
+        formula="buyback_burned_tokens per covered day ÷ (the tab's absorption emissions, with the declared rate in "
+                "force ÷ 365 in place of the leg it replaces — Sky; none where emissions are 0 by declaration — + "
+                "unlock_release_tokens where the project has a non-circulating wallet set, each per covered day); "
+                "emissions + unlocks a measured 0 with a burn above 0 reads 'no new supply' and ranks first; 0 ÷ 0 is "
+                "n/a; a structural 0 retirement reads 0; BLOCKED where a side covers under a week or the sides' spans "
+                "differ",
         window="Q0 / now", unit="x",
-        inputs=["retired_buyback_tokens", "emissions_tokens", "emissions_rate_current_annual_tokens"],
-        decided=[(J, "2026-10-27", "P1 Stage 1: the archetype rank keys, higher is better")]),
+        inputs=["buyback_burned_tokens", "emissions_tokens", "emissions_rate_current_annual_tokens",
+                "unlock_release_tokens"],
+        decided=[(J, "2026-11-03", "P4-Q5a: replaces retired ÷ emissions (P1-6) and its P3-2b fallback")]),
+    "BUYING PRESSURE ON FLOAT, % a year": dict(
+        what="Every market buyback a year, whatever its destination (burned, held, distributed), ÷ the tradeable float.",
+        formula="actual_buyback_tokens annualised over its covered days ÷ tradeable float (circulating − staked / "
+                "locked − a held buyback inside circulating, P4-Q5b); 0 where no buyback mechanism exists; n/a where "
+                "no buyback is measured",
+        window="Q0 → year / now", unit="%", inputs=["actual_buyback_tokens", "circulating_supply_used"],
+        decided=[(J, "2026-11-03", "P4-Q5c")]),
+    "Held buyback inside circulating (tokens)": dict(
+        what="A buyback held in a treasury inside the circulating figure — out of the tradeable float while held.",
+        formula="config.HELD_BUYBACK_FLOAT: the held stock now (Maple ssf_holdings_tokens, NEAR buyback_fund_balance); 0 "
+                "where the held stock is already out of circulating (Sky, Chainlink, Fluid)",
+        window="now", unit="tokens", inputs=["ssf_holdings_tokens", "buyback_fund_balance"],
+        decided=[(J, "2026-11-03", "P4-Q5b")]),
     "RETIREMENT ÷ DILUTION (x)": dict(
         what="Retired buyback against dilution as a ratio: 1.0 is the crossover where buybacks absorb what emissions "
              "and unlocks add.",

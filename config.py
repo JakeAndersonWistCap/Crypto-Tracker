@@ -19812,6 +19812,47 @@ def buyback_destination_shares(project_name: str, date=None) -> dict | None:
                       f"2026-10-10 round", "verified": False, "from": None}
 
 
+# ===== HELD BUYBACKS ARE NOT RETIRED: OUT OF THE TRADEABLE FLOAT WHILE HELD (SPEC P4-Q5b, Jake 2026-11-03). =====
+# A buyback held in a treasury is not burned, so A3's key does not count it (P4-Q5a). While it is held it is subtracted
+# from the tradeable float, as locked tokens are; it returns to float when it moves out — the float reads the held
+# STOCK on the day, so a fall in the held balance raises the float by that fall. Per project with a held destination:
+#   subtract   the held stock sits INSIDE the circulating figure in use: the float subtracts `held` (a measured stock;
+#              a day it is not measured the float is n/a, never the circulating figure — unknown is never 0)
+#   outside    the held stock is ALREADY out of circulating (CIRCULATING_ONCHAIN subtracts `leg`), so the float already
+#              leaves it out and a fall in it already raises circulating; subtracting it again would count it twice
+# Aerodrome (parked; its held AERO is max-locked veAERO, inside locked_tokens) is not listed: no change while parked.
+HELD_BUYBACK_FLOAT = {
+    "Maple": {"how": "subtract", "held": "ssf_holdings_tokens",
+              "why": "the SYRUP Strategic Fund (MIP-019: bought SYRUP is held, not sold; its mandate includes token "
+                     "liquidity, so it can return to float). Circulating subtracts only the DAO Safe "
+                     "(treasury_holding_tokens_chain) and the registry wallets, so the Fund is inside circulating. "
+                     "Stock: Maple's own SSF chart (ssf_holdings_tokens, /transparency/financials) — from 2025-10-29 it "
+                     "also counts SYRUP the Fund holds at exchange / custodian routes (SPEC D5-3c)"},
+    "Near": {"how": "subtract", "held": "buyback_fund_balance",
+             "why": "the three NEAR Intents revenue wallets (fefundsadmin + buybacks.multisignature + 1csfundsadmin), "
+                    "destination hold (on-chain, 2026-10-07). NEAR's circulating subtracts only the lockups, lockup.near "
+                    "and contributors.near, so the wallets are inside circulating. Stock: buyback_fund_balance"},
+    "Sky": {"how": "outside", "leg": "treasury_holding_tokens",
+            "why": "the held share (all purchases before 2026-08-17) sits at the MCD Pause Proxy, the governance "
+                   "treasury, which circulating already subtracts (treasury_holding_tokens)"},
+    "Chainlink": {"how": "outside", "leg": "buyback_fund_balance",
+                  "why": "the Chainlink Reserve, which circulating already subtracts (buyback_fund_balance)"},
+    "Fluid": {"how": "outside", "leg": "treasury_holding_tokens",
+              "why": "the treasury (0x2884…4d09), which circulating already subtracts (treasury_holding_tokens)"},
+}
+
+
+def held_buyback_float(project_name: str) -> dict | None:
+    """HELD_BUYBACK_FLOAT[project] (P4-Q5b), or None where no held buyback is declared."""
+    return HELD_BUYBACK_FLOAT.get(project_name)
+
+
+def held_buyback_float_metric(project_name: str) -> str | None:
+    """The held stock the tradeable float subtracts (P4-Q5b) — only where it sits inside circulating; else None."""
+    h = HELD_BUYBACK_FLOAT.get(project_name) or {}
+    return h.get("held") if h.get("how") == "subtract" else None
+
+
 def buyback_route(project_name: str) -> dict:
     """How actual_buyback_tokens is measured for this project — {route, metric, reason}.
 
@@ -28683,7 +28724,7 @@ TRAJECTORY = {
         "circulating_supply": ("Supply", 0), "a3_circ_retirement": ("Supply", 1), "a3_fdv_retirement": ("Supply", 1),
         "a3_actual_buyback_pct": ("Supply", 1), "a3_buyback_locked": ("Supply", 1), "a3_net_absorption": ("Supply", 1),
         "a3_retire_vs_dilution": ("Supply", 1), "a3_retire_vs_dilution_now": ("Supply", 1),
-        "a3_retire_vs_emissions": ("Supply", 1),          # A3's rank key (P2e-2: the key's own trajectory row)
+        "a3_burned_vs_new_supply": ("Supply", 1),         # A3's rank key (P4-Q5a; P2e-2: the key's own trajectory row)
         "a3_implied_buyback_pct": ("Valuation", 1), "fees_fdv_annualised": ("Valuation", 1),
         "market_cap": ("Market", 1),
         # A4

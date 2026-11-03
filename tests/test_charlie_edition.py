@@ -353,7 +353,7 @@ def test_synthetic_card_three_is_about_the_highest_project_whoever_it_is_and_say
     r2 = next(c.value for row in wb2["Highlights"].iter_rows() for c in row if isinstance(c.value, str)
               and c.value.startswith("Reading: Measured returns"))
     assert "the only project in the set where that holds" in r2 and "most of the circulating supply is locked" in r2
-    assert any(isinstance(c.value, str) and c.value.startswith("Caveat: The buyback retires well below")
+    assert any(isinstance(c.value, str) and c.value.startswith("Caveat: The buyback burns well below")
                for row in wb2["Highlights"].iter_rows() for c in row)
 
 
@@ -425,7 +425,7 @@ def test_p3_8_narrowed_over_three_quarters_only_when_strictly_falling_over_the_f
 
 def test_p3_8_c6_revenue_grew_and_subsidy_cover_high_are_two_clauses_each_only_when_true():
     assert H.HIGH_COVER == 2.0
-    base = "Retired ÷ emissions fell to zero over four quarters"
+    base = "Burned ÷ (emissions + unlocks) fell to zero over four quarters"
     assert H.c6_reading(0.3, 56.4, False) == base + " while revenue grew and subsidy cover is high."
     assert H.c6_reading(-0.048, 56.4, False) == base + " while subsidy cover is high."
     assert H.c6_reading(0.0, 2.0, False) == base + " while subsidy cover is high."          # 0 is not growth; 2.0x is high

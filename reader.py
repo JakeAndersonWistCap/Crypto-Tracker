@@ -54,7 +54,9 @@ TEXT_FMT = "@"
 
 # THE CODES (P1-2): the cell's text, its colour; the reason goes in the comment
 CODES = {"n/a": "808080", "blocked": "C00000", "not wired": "C65911", "by design": "44546A", "parked": "7F7F7F",
-         "unranked": "595959", "secondary": "2F5597"}
+         "unranked": "595959", "secondary": "2F5597", "no new supply": "375623"}
+NO_NEW_SUPPLY = "no new supply"            # P4-Q5a: A3's key where emissions + unlocks are a measured 0, burn above 0
+NO_NEW_SUPPLY_KEY = float("inf")           # ... which ranks it first (_rank_rows sorts the key high to low)
 PERIODS = (("1D", 1), ("7D", 7), ("30D", 30), ("90D", 90), ("6M", 182), ("1Y", 365), ("3Y", 1095), ("custom", None))
 DEFAULT_PERIOD = "90D"
 DEFAULT_CUSTOM_DAYS = 60
@@ -71,12 +73,13 @@ ARCHETYPE_KEYS = {
     2: ("Customer revenue ÷ emissions (x)",
         "CUSTOMER REVENUE ÷ EMISSIONS $ (x) — customer revenue over the last 90 days ÷ the tokens emitted to suppliers "
         "over the same days at their 90-day average price (A2's column). Higher is better; 1.0x is the crossover."),
-    3: ("Retired ÷ emissions (x)",
-        "RETIRED BUYBACK ÷ EMISSIONS (x) — tokens bought back and burned or held, per covered day, ÷ tokens emitted per "
-        "covered day, unlocks EXCLUDED, at the emission rate in force (Sky's scheduled rate where declared, else the "
-        "last 90 days' measured rate). WHERE EMISSIONS ARE 0 (Maple, Ether.fi) the key is retired ÷ (emissions + "
-        "unlocks), its cell AMBER with the caveat (P3-2b). Ties are broken by net holder yield. Higher is better; 1.0x "
-        "is the crossover."),
+    3: ("Burned ÷ (emissions + unlocks) (x)",
+        "BURNED BUYBACK ÷ (EMISSIONS + UNLOCKS) (x) — tokens bought back and BURNED, per covered day, ÷ (tokens emitted "
+        "+ tokens unlocked from the non-circulating wallets) per covered day, at the emission rate in force (Sky's "
+        "scheduled rate where declared, else the last 90 days' measured rate). A buyback held in a treasury or paid "
+        "out to stakers is not burned and is not counted (a held buyback leaves the tradeable float while held "
+        "instead). Where emissions + unlocks are a measured 0 and the burn is above 0 the key reads 'no new supply' "
+        "and ranks first. Ties are broken by net holder yield. Higher is better; 1.0x is the crossover."),
     4: ("Burn ÷ issuance (x)",
         "BURN ÷ ISSUANCE (x) — tokens burned ÷ tokens issued over the last 90 days, each per covered day; for a "
         "pre-minted supply, burn ÷ pool release (Uniswap, which mints nothing: burn ÷ its releases into circulating, "
@@ -218,6 +221,8 @@ class Audit:
 def code_of(text: str) -> str:
     """One of the codes for a cell that holds no number (P1-2)."""
     t = str(text or "").strip().lower()
+    if t == NO_NEW_SUPPLY:
+        return NO_NEW_SUPPLY
     if t.startswith("blocked") or "blocked —" in t or "cannot form" in t:
         return "blocked"
     if "not wired" in t or "unwired" in t or "route not filled" in t or "route pending" in t:
@@ -806,11 +811,26 @@ def _tb_value(tb: dict, name: str):
     return float(t) if isinstance(t, (int, float)) and not isinstance(t, bool) and t == t else None
 
 
+def key_number(src: Src | None) -> float | None:
+    """The rank key an audit key cell holds: its number; NO_NEW_SUPPLY_KEY (above every number) for A3's code 'no new
+    supply' (P4-Q5a: emissions + unlocks a measured 0, burn above 0 — it ranks first); else None (unranked)."""
+    if src is None:
+        return None
+    if src.num is not None:
+        return src.num
+    return NO_NEW_SUPPLY_KEY if code_of(src.text) == NO_NEW_SUPPLY else None
+
+
+def _fmt_key(v) -> str:
+    return NO_NEW_SUPPLY if v == NO_NEW_SUPPLY_KEY else f"{v:,.4g}"
+
+
 def _rank_rows(keys: dict, tiebreak: dict | None = None) -> list:
     """[(project, rank or None, key or None)] — measured keys high to low, then the unmeasured by name, UNRANKED
     (P2a A1). P3-2b (DEFINITION R3, Jake 2026-11-02): a TIE on the key is broken by net holder yield, higher first (a
     project with no net holder yield after those with one; otherwise the order as listed). `tiebreak` defaults to this
-    build's net holder yields (_TIEBREAK), so Summary and every archetype tab rank by the same order."""
+    build's net holder yields (_TIEBREAK), so Summary and every archetype tab rank by the same order. A3's 'no new
+    supply' (NO_NEW_SUPPLY_KEY, P4-Q5a) is above every number, so it ranks first; several tie, broken the same way."""
     tb = _TIEBREAK if tiebreak is None else tiebreak
 
     def order(kv):
@@ -843,8 +863,8 @@ def _tie_note(name: str, ranking: list, tiebreak: dict | None = None) -> str:
     def fmt(n):
         t = _tb_value(tb, n)
         return f"{n} {t:+.2%}" if t is not None else f"{n} no net holder yield"
-    return (f" Tied on the key ({mine:,.4g}) with {', '.join(tied)}; the tie is broken by net holder yield, higher first "
-            f"(DEFINITION R3, P3-2b): {'; '.join(fmt(n) for n in [name, *tied])}.")
+    return (f" Tied on the key ({_fmt_key(mine)}) with {', '.join(tied)}; the tie is broken by net holder yield, higher "
+            f"first (DEFINITION R3, P3-2b): {'; '.join(fmt(n) for n in [name, *tied])}.")
 
 
 def _net_holder_yields(A, projects) -> dict:
@@ -991,10 +1011,10 @@ def _archetype_keys(A: Audit, groups, projects, config, bw) -> dict:
             out[n] = (arch, v, None, why)
             continue
         sheet, head = {2: (A2_TAB, "Customer revenue ÷ emissions value (x)"),
-                       3: (A3_TAB, bw.RETIRE_VS_EMISSIONS_HEAD),
+                       3: (A3_TAB, bw.A3_KEY_HEAD),
                        4: (A4_TAB, "BURN ÷ ISSUANCE (x)")}.get(arch, (None, None))
         src = A.cell(sheet, head, n) if sheet else None
-        out[n] = (arch, src.num if src is not None else None, src,
+        out[n] = (arch, key_number(src), src,
                   "" if src is not None else f"{n} has no row on {sheet}" if sheet else "no archetype declared")
     return out
 
@@ -1286,8 +1306,9 @@ def _summary_row(sh, ctx: Ctx, C, row, p, rank, key, parked: bool = False) -> No
         if ksrc is not None:
             cell = put_src(sh, data, row, C["key"], p, ksrc)
             ctx.record(ksrc, SUMMARY, cell, name)
-            nums += 1
-            greens += _green(ksrc.fill)
+            if ksrc.num is not None:                       # 'no new supply' (P4-Q5a) is a code, ranked first
+                nums += 1
+                greens += _green(ksrc.fill)
         else:
             put_number(sh, data, row, C["key"], name, "key", kv, None, f"{ARCHETYPE_KEYS[arch][1]}\n\n{kwhy}.\n\n"
                        f"Working: audit file, Data rows {name}|settlement_volume_365d_usd and "
@@ -1503,18 +1524,19 @@ def tab_specs(bw) -> list:
                          (None, "Unlock dilution, annualised % of free float", "Unlocks, % of free float a year", ""),
                          (None, "TOTAL DILUTION = emissions + unlocks", "Total dilution, % of float a year", ""),
                          (None, "PUBLISHED UNLOCK SCHEDULE", "Published unlocks, next 12 months", ""))),
-        TabSpec(A3_TAB, 3, "A3 Revenue Buyback — ranked by retired buyback ÷ emissions", ("audit",
-                bw.RETIRE_VS_EMISSIONS_HEAD), "Retired ÷ emissions (x)", "Rank in A3",
+        TabSpec(A3_TAB, 3, "A3 Revenue Buyback — ranked by burned buyback ÷ (emissions + unlocks)", ("audit",
+                bw.A3_KEY_HEAD), ARCHETYPE_KEYS[3][0], "Rank in A3",
                 a_extra=(("dilution", bw.RETIRE_VS_DILUTION_HEAD, bw.RETIRE_VS_DILUTION_NOW_HEAD),),
                 valuation=((None, "Price — spot ($)", "Price", ""), (None, "Market cap ($)", "Market cap", ""),
                            (None, "FDV ($)", "FDV", ""), (None, "Circulating supply", "Circulating supply", ""),
-                           (CP_TAB, "HOLDER VALUE YIELD", "Holder value yield", "buyback")),
-                key_traj=(bw.A3_KEY_TRAJECTORY_ID, "Retired ÷ emissions (x)", FMT_X,
-                          "RETIRED ÷ EMISSIONS (x) — the rank key: retired buyback (burned + held) ÷ emissions, unlocks "
-                          "excluded, each per covered day; where an emission rate in force is declared (Sky), that rate: "
-                          "its latest value in the latest quarter, its mean over an earlier quarter (the Trajectory "
-                          "tab's rule for a stock); a quarter whose emissions are 0 reads retired ÷ (emissions + "
-                          "unlocks) (P3-2b)"),
+                           (CP_TAB, "HOLDER VALUE YIELD", "Holder value yield", "buyback"),
+                           (None, "BUYING PRESSURE ON FLOAT", BUYING_PRESSURE_SHORT, "buyback")),
+                key_traj=(bw.A3_KEY_TRAJECTORY_ID, "Burned ÷ (emis + unlocks)", FMT_X,
+                          "BURNED ÷ (EMISSIONS + UNLOCKS) (x) — the rank key: burned buyback ÷ (emissions + unlocks), "
+                          "each per covered day (a held or distributed buyback is not burned); where an emission rate "
+                          "in force is declared (Sky), that rate: its latest value in the latest quarter, its mean over "
+                          "an earlier quarter (the Trajectory tab's rule for a stock); a quarter whose emissions + "
+                          "unlocks are a measured 0 with a burn reads 'no new supply' (P4-Q5a)"),
                 traj=("a3_retire_vs_dilution", "Retired ÷ (emis + unlocks)", FMT_X,
                       "RETIREMENT ÷ DILUTION (x) — retired buyback ÷ (emissions + unlocks), each per covered day, not "
                       "the rank key"),
@@ -1611,7 +1633,7 @@ def _note_cols(tab: str, cols: list, how: list) -> list:
     return out
 
 
-A3_TRAJECTORY_ID = "a3_retire_vs_emissions"           # the A3 key's own trajectory row (P2e-2)
+A3_TRAJECTORY_ID = "a3_burned_vs_new_supply"          # the A3 key's own trajectory row (P2e-2, P4-Q5a)
 # block (c)'s quarter labels (P2e-2: short, so a series' exact name fits a 35-character header beside them)
 TRAJ_LABELS = ("latest", "−1 qtr", "−2 qtrs", "−3 qtrs")
 KEY_CHANGE_HEADER = "Key: change vs previous quarter"
@@ -1942,8 +1964,9 @@ def _write_arch_tab(sh: Sheet, ctx: Ctx, spec: TabSpec) -> None:
     for extra in spec.a_extra:
         if extra[0] == "dilution":
             dc, dn = audit_col(extra[1]), audit_col(extra[2])
-            add(Col("Retired ÷ (emissions + unlocks)", "The same retirement against emissions AND unlocks (at the rate "
-                    "in force where one is declared) — the unlock-inclusive figure beside the key.", FMT_X,
+            add(Col("Retired ÷ (emissions + unlocks)", "Retired buyback (burned + HELD) against emissions AND unlocks "
+                    "(at the rate in force where one is declared) — beside the key, which counts the burned buyback "
+                    "only (P4-Q5a).", FMT_X,
                     "(a) Rank key", f"{tab}, RETIREMENT ÷ DILUTION (at the rate in force where declared)", 0, 13,
                     audit=(tab, extra[1]), family="buyback"), ("dilution", dc, dn))
         elif extra[0] == "interim":
@@ -2088,7 +2111,7 @@ def _write_arch_tab(sh: Sheet, ctx: Ctx, spec: TabSpec) -> None:
         else:
             kc = how[2][1]
             r = A.row(tab, n)
-            keyvals[n] = A.at(tab, r, kc).num if (r and kc) else None
+            keyvals[n] = key_number(A.at(tab, r, kc)) if (r and kc) else None
     # P2e-1: rank ONLY the projects whose primary archetype this is, by the ranking Summary shows; a secondary member
     # keeps its key (code "secondary" in the rank column) and sorts below the primaries; parked last
     keys = ctx.keys if ctx.keys is not None else _archetype_keys(A, ctx.groups, ctx.projects, config, ctx.bw)
@@ -2299,14 +2322,11 @@ def _src_header(A: Audit, sheet: str, prefix: str) -> str:
     return A.header(sheet, c) if c else prefix
 
 
-def _a3_key_value(A: Audit, tab, key_c, name):
-    if key_c is None:
-        return None
-    r = A.row(tab, name)
-    return A.at(tab, r, key_c).num if r else None
-
-
 # ---------------------------------------------------------------------------------------------- Comparison
+BUYING_PRESSURE_SHORT = "Buying pressure on float, % a year"     # P4-Q5c: the A3 tab and Comparison
+BUYING_PRESSURE_DEF = ("Every market buyback a year, whatever its destination (burned, held in a treasury or paid out to "
+                       "stakers), in tokens, ÷ the tradeable float. A held buyback is already out of the float while "
+                       "held.")
 COMPARISON_COLS = (
     # (key, header, source (sheet, prefix) | "@...", format, definition, family)
     ("hvy", "Holder value yield", (CP_TAB, "HOLDER VALUE YIELD"), FMT_PCT,
@@ -2317,6 +2337,7 @@ COMPARISON_COLS = (
      "Holder value yield − every outflow a year at each day's price ÷ market cap. The sort key of this tab.", ""),
     ("payout", "Payout ratio", (CP_TAB, "Payout ratio — the project's own net basis"), FMT_PCT,
      "Credited holder value ÷ revenue on the project's own revenue basis.", "buyback"),
+    ("buy_press", BUYING_PRESSURE_SHORT, (CP_TAB, "BUYING PRESSURE ON FLOAT"), FMT_PCT, BUYING_PRESSURE_DEF, "buyback"),
     ("subsidy", "Subsidy cover (x)", (CP_TAB, "SUBSIDY COVER"), FMT_X,
      "Revenue ÷ the $ of supply-side incentives, per covered day: above 1.0x the business pays for its incentives.", ""),
     ("leak", "Leakage (ii)", (CP_TAB, "LEAKAGE (ii)"), FMT_PCT,
@@ -2344,7 +2365,7 @@ def _write_comparison(sh: Sheet, ctx: Ctx, keys: dict) -> None:
                 is_text=True)]
     spec = {}
     for k, h, src, fmt, d, fam in COMPARISON_COLS:
-        col = Col(h, d, fmt, "Holders" if k in ("hvy", "dil", "nhy", "payout") else "Subsidy and value"
+        col = Col(h, d, fmt, "Holders" if k in ("hvy", "dil", "nhy", "payout", "buy_press") else "Subsidy and value"
                   if k in ("subsidy", "leak", "fees_fdv", "rev_mcap") else "Holding", (
                       f"{src[0]}, {_src_header(A, src[0], src[1])}" if isinstance(src, tuple) else "computed"), 0, 12,
                   audit=(src[0], _src_header(A, src[0], src[1])) if isinstance(src, tuple) else None, family=fam)
@@ -2722,6 +2743,9 @@ def _write_charts(ws, ctx: Ctx, keys: dict) -> dict:
             if kv is None:
                 out1.append(f"{p['name']} (no measured key)")
                 continue
+            if kv == NO_NEW_SUPPLY_KEY:                     # P4-Q5a: a code, not a ratio — ranked first, not plotted
+                out1.append(f"{p['name']} (no new supply — ranked first)")
+                continue
             rows1.append((f"A{arch} · {p['name']}", kv, 1.0))
     r1 = table(start, "chart 1: archetype key", ["project", "key (x)", "crossover"], rows1)
     a1_rows = [(p["name"], keys[p["name"]][1]) for p in live if keys[p["name"]][0] == 1 and keys[p["name"]][1] is not None]
@@ -2897,7 +2921,9 @@ def _write_definitions(ws, sheets: dict) -> None:
                       ("unranked", "in a rank column: the project has no measured key, so it sorts last"),
                       ("secondary", "in a rank column of an archetype tab: the archetype is not the project's primary "
                        "one — its key is shown for comparison, its rank is under its primary archetype (on Summary "
-                       "and that tab)")):
+                       "and that tab)"),
+                      (NO_NEW_SUPPLY, "in A3's key column: emissions + unlocks are a measured 0 and tokens were "
+                       "burned, so the ratio has no denominator — it ranks first (ties by net holder yield)")):
         r += 1
         c = ws.cell(r, 1, code)
         c.font = Font(name=FONT, size=10, italic=True, color=CODES[code])
