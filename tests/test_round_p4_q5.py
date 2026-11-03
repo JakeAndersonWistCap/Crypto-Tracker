@@ -412,3 +412,35 @@ def test_the_a3_key_column_maps_to_its_own_concept_with_every_input_it_reads():
     # the old concept is not loosened: it still declares only the retired-buyback inputs
     assert "buyback_burned_tokens" not in cs["retirement"]["inputs"]
     assert "retired_buyback_tokens" in cs["retirement"]["inputs"]
+
+
+def test_the_held_buyback_column_maps_to_float_and_reads_only_listed_inputs():
+    """P4-Q5 fix 2 (Jake 2026-11-03, after the own checks): the column "Held buyback inside circulating" maps to the SPEC
+    concept float (no separate held-buyback concept), and float declares the held stock it reads — Maple's
+    ssf_holdings_tokens and Near's buyback_fund_balance — so the Coverage audit's MATCHES-SPEC holds. Where the held stock
+    is already outside circulating (Sky, Chainlink, Fluid) the float does not read it, so it is not subtracted twice."""
+    import coverage_audit as ca
+    import spec
+    assert spec.concept_for(CP, bw.HELD_BUYBACK_HEAD) == "float"
+    assert spec.concept_for("*", bw.HELD_BUYBACK_HEAD) == "float"
+    flt = spec.concepts()["float"]
+    ins = set(flt["inputs"])
+    # the original inputs stay; the held stocks are added, nothing else
+    assert ins == {"circulating_supply_used", "locked_tokens", "staked_noncirculating_tokens",
+                   "ssf_holdings_tokens", "buyback_fund_balance", "buyback_held_tokens"}
+    assert "held" in flt["definition"] and "held_buyback_inside" in flt["formula"]
+    for n, held in (("Maple", "ssf_holdings_tokens"), ("Near", "buyback_fund_balance")):
+        assert config.held_buyback_float(n)["how"] == "subtract"
+        assert config.held_buyback_float_metric(n) == held
+        reads = {held}                                   # the column's metric_fn: held_buyback_float_metric(n)
+        assert reads <= ins and ca._matches(reads, ins), n
+        R = FakeRefs({})
+        bw._cp_float(R, 5, P[n])
+        assert held in {m for m, _c in R.cells}, n      # the float subtracts the held stock once
+    for n in ("Sky", "Chainlink", "Fluid"):
+        h = config.held_buyback_float(n)
+        assert h["how"] == "outside" and config.held_buyback_float_metric(n) is None, n
+        assert h["leg"] in (config.CIRCULATING_ONCHAIN[n].get("subtract") or ()), n
+        R = FakeRefs({})
+        bw._cp_float(R, 5, P[n])
+        assert h["leg"] not in {m for m, _c in R.cells}, n   # already out of circulating: not subtracted twice

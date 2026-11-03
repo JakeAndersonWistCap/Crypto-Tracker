@@ -204,6 +204,10 @@ def test_flow_statements_mark_every_residual_beyond_half_a_percent(built):
 
 def test_coverage_audit_has_no_unexplained_blank_no_broken_cell_and_matches_spec(built):
     import coverage_audit as ca
+    # P4-Q5 fix 2 (Jake 2026-11-03): collect EVERY failing row across ALL projects first, then assert once with the full
+    # list — a failure on one project no longer hides the next. The rule is unchanged: no unlisted BROKEN, no
+    # BLANK-UNEXPLAINED, no MATCHES-SPEC = no, and both counts are 0, on every project.
+    failures = []
     for project, b in built.items():
         rows = b["coverage"]
         assert rows and b["csv"], project
@@ -211,10 +215,18 @@ def test_coverage_audit_has_no_unexplained_blank_no_broken_cell_and_matches_spec
         c = ca.counts(rows)
         known = {(t, col) for p, t, col in KNOWN_REFERENCE_BROKEN if p == project}
         is_known = lambda r: any(r["Tab"] == t and r["Column"].startswith(col) for t, col in known)  # noqa: E731
-        bad = [(r["Tab"], r["Column"][:60], r["Status"], r["Reason / route / error"][:80], r["MATCHES-SPEC"][:100])
-               for r in rows if (r["Status"] in ("BROKEN", "BLANK-UNEXPLAINED") and not is_known(r))
-               or r["MATCHES-SPEC"].startswith("no")]
-        assert not bad and c["BLANK-UNEXPLAINED"] == 0 and c["MATCHES-SPEC = no"] == 0, (project, bad)
+        failures += [(project, r["Tab"], r["Column"][:60], r["Status"], r["Reason / route / error"][:80],
+                      r["MATCHES-SPEC"][:100])
+                     for r in rows if (r["Status"] in ("BROKEN", "BLANK-UNEXPLAINED") and not is_known(r))
+                     or r["MATCHES-SPEC"].startswith("no")]
+        if c["BLANK-UNEXPLAINED"] or c["MATCHES-SPEC = no"]:
+            failures.append((project, "counts", f"BLANK-UNEXPLAINED={c['BLANK-UNEXPLAINED']}",
+                             f"MATCHES-SPEC = no={c['MATCHES-SPEC = no']}", "", ""))
+    assert not failures, f"{len(failures)} failing row(s) across all projects:\n" + "\n".join(map(repr, failures))
+    for project, b in built.items():
+        rows = b["coverage"]
+        c = ca.counts(rows)
+        known = {(t, col) for p, t, col in KNOWN_REFERENCE_BROKEN if p == project}
         # every listed reference is still BROKEN (a fixed one comes off the list) and names its cause
         for t, col in known:
             hit = [r for r in rows if r["Tab"] == t and r["Column"].startswith(col)]
