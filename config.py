@@ -34172,3 +34172,57 @@ SOURCE_REGISTER["beaconcha.in"] = dict(
     paths=["/api/v1/epoch/{epoch}"],
     key="BEACONCHAIN_API_KEY (optional; read only by fetch/staked_eth.BeaconStakedEth)",
     status="DROPPED")      # as a series of its own; P3-A3 reads it only to make the overlap
+
+
+# ===== P4-Q3 (Jake 2026-11-03; SPEC P4-Q3): CHAINLINK'S RELEASES ARE THE BALANCE FALLS; THE TRANSFER SCAN LABELS. =====
+# unlock_release_tokens = the daily fall in Σ balanceOf of the 33 non-circulating wallets (noncirculating_holding_tokens,
+# the chain read at each day's first block, restated on the 33-wallet set by P2b-2) — build_workbook._unlock_release_view,
+# the method every other project uses: a fall is a release, a rise releases 0 (it is issuer_return_tokens, never netted),
+# a step across a change of wallet set is never differenced. A day on which any of the 33 was not read is a HOLE (no
+# release from it; RELEASE_WHOLE_SET_ONLY below: a PARTIAL sum is never differenced), never 0. The archive backfill
+# (`archive_backfill.py --run --project Chainlink`) writes whole days only, on the same measuring point, so it fills the
+# history as before. The staking-funded part of a release stays out of (e) as decided in round 3 B2
+# (STAKING_FUNDING_SPLIT): unlock_release_tokens + staking_funding_release_tokens = the balance falls, day by day.
+# THE EXPLORER TRANSFER SCAN (log_scans noncirc_out / noncirc_in) LABELS DESTINATIONS ONLY: where the released LINK went
+# (its counterparty table, labelled from config). It feeds no headline (no reserve is held for it), reads only the blocks
+# after its last successful block (fetch/logcache.py's per-stream cursor; the two scans share one pinned block and the
+# balanceOf reads, so the second asks the explorer for nothing), never falls back to a history repair from the chain,
+# and a timeout or a refusal leaves the release figure exactly as the balances give it.
+CHAINLINK_RELEASE_Q3 = {
+    "release": "unlock_release_tokens",
+    "stock": "noncirculating_holding_tokens",
+    "wallets": 33,
+    "scan_keys": ("noncirc_out", "noncirc_in"),
+    "decided": "Jake 2026-11-03 (SPEC P4-Q3)",
+}
+# (project, leg) whose PARTIAL rows (a wallet not read that day) are holes for the release view: never differenced
+RELEASE_WHOLE_SET_ONLY = {("Chainlink", "noncirculating_holding_tokens")}
+_CL_NC_ALL = [PROJECT_BY_NAME["Chainlink"]["contracts"][k]["address"] for k in _CL_NC_KEYS_ALL]
+_CL_DEST_LABELS = {PROJECT_BY_NAME["Chainlink"]["contracts"][k]["address"].lower(): f"Chainlink {k} (config contracts)"
+                   for k in ("reserve", "staking_community", "staking_node_operator", "staking_reward_vault")}
+_CL_DEST_LABELS.update({
+    CL_STAKING_PATH["lump_wallet"].lower(): "staking/payments path, first hop (CL_STAKING_PATH lump_wallet)",
+    CL_STAKING_PATH["forwarder"].lower(): "staking/payments path forwarder (CL_STAKING_PATH)",
+    CL_STAKING_PATH["funder"].lower(): "RewardVault funder (CL_STAKING_PATH)",
+    **{a.lower(): "staking hop (CL_STAKING_PATH)" for a in CL_STAKING_PATH["staking_hops"]},
+    **{a.lower(): "forwarder destination, not staking (CL_STAKING_PATH)" for a in CL_STAKING_PATH["not_staking"]},
+})
+for _sp in PROJECT_BY_NAME["Chainlink"]["log_scans"]:
+    if _sp["key"] in CHAINLINK_RELEASE_Q3["scan_keys"]:
+        _sp.update({
+            "holders": list(_CL_NC_ALL),          # the whole set: a hop between any two of the 33 is internal
+            "labels_only": True, "headline": False,
+            "destination_labels": dict(_CL_DEST_LABELS),
+            "attribution_sources": ["the 33 non-circulating wallets chain.link/circulating-supply lists (D2-4a; "
+                                    "config._NONCIRC_WALLETS_FIRST_PARTY)"],
+            "role": "LABELS DESTINATIONS ONLY (P4-Q3): where the LINK released from the 33 wallets went; the release "
+                    "figure is the falls of their summed balanceOf and never reads this scan"})
+HEADLINE_SCAN_METRICS = tuple(m for m in HEADLINE_SCAN_METRICS
+                              if m not in ("noncirc_inflow_scan_tokens", "noncirc_outflow_scan_tokens"))
+METRICS["noncirc_outflow_scan_tokens"]["label"] = (
+    "LINK leaving the 33 non-circulating wallets per day — Transfer events OUT (log_scans.noncirc_out), reconciled to "
+    "balanceOf to the wei; hops between the wallets are internal. LABELS ONLY (P4-Q3): names where released LINK went; "
+    "the release is the falls of the wallets' balanceOf")
+METRICS["noncirc_inflow_scan_tokens"]["label"] = (
+    "LINK coming INTO the 33 non-circulating wallets per day — Transfer events IN (log_scans.noncirc_in), reconciled "
+    "to balanceOf to the wei; LABELS ONLY (P4-Q3): tokens returned to the wallets show here, by sender")

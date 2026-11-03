@@ -545,6 +545,34 @@ or stop it and start again on the new code. Don't run both at once: they write t
   `ACCEPTED: World Mobile ... parked (P4-Q2)` lines, not violations, while World Mobile is parked
   (config.CREDIBILITY_PARKED). When Jake reopens World Mobile, take it out of CREDIBILITY_PARKED: the two allowances end
   by themselves and any loss is a violation again.
+## 11dl. P4-Q3 Chainlink releases (2026-11-03)
+
+**The release (SPEC P4-Q3).** Chainlink's `unlock_release_tokens` is the daily fall in Σ balanceOf of the 33
+non-circulating wallets chain.link/circulating-supply lists (`noncirculating_holding_tokens`, read at each day's first
+block) — the same view every other project uses (`build_workbook._unlock_release_view`): a fall is a release, a rise
+releases 0 and shows as `issuer_return_tokens`, a step where the wallet set changes is never differenced. A day on which
+any of the 33 was not read is a HOLE: a PARTIAL sum is never differenced (`config.RELEASE_WHOLE_SET_ONLY`), and the fall
+across a hole of up to 3 days is spread over the days it spans. Round 3 B2 stands: the part of a release that went on
+to fund staking rewards is counted once, in (a) — `unlock_release_tokens + staking_funding_release_tokens` = the falls.
+Holes in the history are filled as before:
+```
+python archive_backfill.py --run --project Chainlink
+```
+
+**The scan labels only.** `noncirc_out` / `noncirc_in` (tier `explorer_noncirc@Chainlink`) now read all 33 wallets (a
+hop between two of them is internal), hold no headline reserve, and never re-read history from the chain. Each run asks
+the explorer only for the blocks after each stream's cursor (the last block a run read successfully; first run after
+this change: the 6 added wallets are read once from block 0 — 12 small requests); the two scans share one pinned block
+and the balanceOf reads, so `noncirc_in` asks for nothing new. The Run Log line ends with
+`LABELS (destinations of the transfers in blocks A..B, read after the cursor): <address> <LINK> [<label>]` — labels
+from config (the Reserve, the staking pools and vault, the staking/payments path wallets); `UNLABELLED` otherwise. A
+timeout or refusal line ends `LABELS ONLY (P4-Q3) … a stop here leaves it unchanged`: the release cells do not move.
+
+**What to check after the next run.** No `TIMED OUT` line for `explorer_noncirc@Chainlink`; the Data tab's
+`Chainlink|unlock_release_tokens` Q0 equals the falls of `Chainlink|noncirculating_holding_tokens` over Q0. Live read
+(eth.drpc.org, block 26,333,692, 2026-11-03 10:31 UTC): the 33 wallets hold 233,150,029.58 LINK (the 27: 233,150,000.10
+— equal to the committed fixture's 2026-10-13 stored value, 233,150,000.10284975; the 6: 29.47), so no release since 2026-10-13.
+
 
 ## 11dk. Phase P3-9 — monthly windows, Ethereum's staked ETH, Morpho's price field, concentration (2026-11-02)
 
