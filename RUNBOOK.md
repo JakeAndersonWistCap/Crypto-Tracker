@@ -534,6 +534,47 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11dm. P4-Q4 Ethereum staked ETH (2026-11-03)
+
+**Route (SPEC P4-Q4).** Ethereum's staked ETH now comes from beaconcha.in's v2 epoch endpoint, adapter `beacon_api`
+(fetch/staked_eth.py). It sends one POST per day, for the day's first epoch (the first epoch starting at or after
+00:00 UTC, `ceil((day start − 1606824023) / 384)`), with the body `{"chain": "mainnet", "epoch": {"number": N}}` and
+`BEACONCHAIN_API_KEY` in the `Authorization: Bearer` header. The key never goes in the URL, the body or the log. It
+stores two series:
+- `beacon_chain_eth_primary` = `total_validator_balance` (wei ÷ 1e18 = ETH): the actual balances of all validators.
+- `beacon_validators_count` = `validators_count`: active validators. This is a new metric, with a sanity band of
+  1e4..3e6.
+
+A missing field, another epoch than the one asked for, or an epoch that is not finalized yet refuses that day. The run
+log names the day, nothing is stored for it, and it is never stored as 0.
+
+**Backfill.** The adapter reads the whole window the cells read: 455 days, five quarters. It works newest first, at
+one request a second, and stops 10 s before its tier budget (`beacon_api` is now 180 s, about 165 days a run). The
+store is the state, so a day that already holds both series is never asked again, and a run that stopped resumes on
+the next run. A 401/403/429 stops the read at once, with the status and no key. A Free Trial key allows 1,000 requests
+in 30 days. The backfill needs about 455 of them and each later day needs 1, so put the key in `.env` and run:
+```
+python token_metrics.py            # repeat until the beacon_api line says every day of the 455-day window is held
+python token_metrics.py --no-fetch --edition charlie
+```
+Without a key nothing is stored and the `beacon_api` line says so. The keyless public-node route from P3-9 is
+withdrawn because it read Σ effective balance of active validators, a different quantity. Its stored rows, and any
+v1 `eligibleether` rows, are removed by the run's clean-ups P4-Q4a/b. Each removed row is logged.
+
+**Handover (rule 10).** `beacon_chain_eth` reads the new series from the day after validatorqueue's last row
+(2026-10-25), but only once the overlap check passes. The check compares 2026-10-19..10-25 only: all 7 days must be
+within ±2% (the tolerance is not widened). The cell comment gives each day's gap and the mean gap. Expect a small
+definition gap: validatorqueue is the effective balance that attested (votedether), and the new series is the actual
+balance of all validators. On 2026-11-03 the finalized state read +0.55% against attesting and +0.36% against active
+effective. If the check fails, the series stays on validatorqueue (STALE) and the cell says
+`NOT HANDED OVER … OVERLAP CHECK NOT PASSED … per day …`.
+
+**Lock rate.** Ethereum's lock rate (CP "Holding demand — lock rate", the reader's "Lock rate, % of circulating") is
+staked ETH ÷ circulating. It uses the same `beacon_chain_eth` that CP's staked column, the tradeable float and A1's
+staking rate read. Staked ETH counts as locked because the exit queue makes it a lock (Jake 2026-11-03), and the cell
+comment says so. `locked_tokens` stays not applicable, because Ethereum has no lock contract. Expect about 36%.
+
+
 ## 11dk. Phase P3-9 — monthly windows, Ethereum's staked ETH, Morpho's price field, concentration (2026-11-02)
 
 **A1 Monthly series (SPEC P3-A1).** A series flagged monthly (`config.series_granularity` — Maple's page tables, Sky's
