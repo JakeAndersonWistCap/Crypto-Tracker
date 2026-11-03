@@ -534,6 +534,32 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11ds. P4-Q7 interim — Hyperliquid A4 allowance and daily capture (2026-11-03)
+
+- **The allowance (no action).** Hyperliquid's `A4 | BURN ÷ ISSUANCE` accepted loss now expires **2026-12-15** (was
+  2027-01-31). It is an INTERIM allowance for the rest of P4 only, not the answer: removing it is a P5 item. From
+  2026-12-16 the guard and the Review Queue count the loss as open again.
+- **The daily capture.** The daily run already stored total supply (`total_supply_gross`), `future_emissions_tokens`
+  and its fall (`emissions_tokens`), the fall in total supply (`core_burn_tokens`), circulating
+  (`circulating_supply_tokendetails`, `circulating_supply_first_party`), the team wallet (`team_wallet_tokens`), the
+  Foundation + Grants sum (`excluded_wallets_tokens`) and the Assistance Fund (`burn_address_balance`, read from
+  spotClearinghouseState). New from this run, each as its own stock: `foundation_wallet_tokens`, `grants_wallet_tokens`
+  (the two parts of the sum), and the addresses listed in nonCirculatingUserBalances: `af_noncirc_listed_tokens` (the
+  Fund as listed), `zero_address_noncirc_tokens` (0x0), `dead_address_noncirc_tokens` (0xdEaD). They are evidence
+  series: they feed no headline and change no existing value.
+- **A day the run doesn't read is lost.** tokenDetails serves today's value only, with no history, so a missed day
+  stays a hole. A listed address that no metric names shows on the Run Log as "listed but not stored". A named address
+  missing from the list is a FAILED line, and nothing is stored for it that day.
+- **Check the live store (read-only).** From the repo folder, this prints each Hyperliquid tokenDetails series's
+  stored-day count and the days missing in the 60 days to yesterday (UTC). It opens metrics.db read-only and changes
+  nothing:
+
+  ```
+  python -c "import sqlite3,datetime as d;c=sqlite3.connect('file:metrics.db?mode=ro',uri=True);t=d.datetime.now(d.timezone.utc).date();w=[(t-d.timedelta(days=i)).isoformat() for i in range(1,61)];q='SELECT DISTINCT substr(date,1,10) FROM metrics WHERE project=? AND metric=?';[print(f'{m}: {len(s)} stored days; missing {len([x for x in w if x not in s])} of the last 60:',' '.join(sorted(x for x in w if x not in s))) for m in 'total_supply_gross future_emissions_tokens emissions_tokens core_burn_tokens circulating_supply_tokendetails circulating_supply_first_party team_wallet_tokens excluded_wallets_tokens foundation_wallet_tokens grants_wallet_tokens af_noncirc_listed_tokens zero_address_noncirc_tokens dead_address_noncirc_tokens burn_address_balance'.split() for s in [{r[0] for r in c.execute(q,('Hyperliquid',m))}]]"
+  ```
+
+  The five new series read 0 stored days and 60 missing until the first daily run on this code.
+
 ## 11dr. Round P4-Q1 / Q2 — Chainlink Requests counted once; World Mobile's accepted losses (2026-11-03)
 
 - **Q1 (no action).** Chainlink's customer revenue = the DefiLlama `chainlink` parent (`fees_usd`, which already holds

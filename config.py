@@ -259,6 +259,24 @@ METRICS = {
     "excluded_wallets_tokens": {"label": "HYPE held by the declared non-circulating wallets tokenDetails counts as circulating (Hyper Foundation, Community Grants): spot + staked",
                                 "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [1],
                                 "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Hyperliquid",)},
+    # P4-Q7 (Jake 2026-11-03): EVERY tokenDetails COMPONENT CAPTURED DAILY AS ITS OWN STORED SERIES. STORE / EVIDENCE
+    # series only: they feed no headline and change no existing value (config.NOT_SHOWN gives each its reason).
+    # tokenDetails serves today's value only, so a day the run does not read is a hole that cannot be recovered.
+    "foundation_wallet_tokens": {"label": "HYPE held by the Hyper Foundation wallet 0xd57ecca4… (spot + staked) — its own part of excluded_wallets_tokens (P4-Q7, evidence)",
+                                 "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [1],
+                                 "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Hyperliquid",)},
+    "grants_wallet_tokens": {"label": "HYPE held by the Community Grants wallet 0xa20fcfa0… (spot + staked) — its own part of excluded_wallets_tokens (P4-Q7, evidence)",
+                             "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [1],
+                             "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Hyperliquid",)},
+    "af_noncirc_listed_tokens": {"label": "Assistance Fund 0xfefe…fefe balance AS LISTED in tokenDetails.nonCirculatingUserBalances (P4-Q7, evidence; burn_address_balance reads spotClearinghouseState)",
+                                 "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [1],
+                                 "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Hyperliquid",)},
+    "zero_address_noncirc_tokens": {"label": "HYPE at 0x0000…0000 as listed in tokenDetails.nonCirculatingUserBalances (P4-Q7, evidence)",
+                                    "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [1],
+                                    "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Hyperliquid",)},
+    "dead_address_noncirc_tokens": {"label": "HYPE at 0x0000…dEaD as listed in tokenDetails.nonCirculatingUserBalances (P4-Q7, evidence)",
+                                    "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [1],
+                                    "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Hyperliquid",)},
     # GEODNET (2026-10-07 afternoon): a third party's figure (Blockworks 462M), used only while the project publishes
     # none and our on-chain set is unresolved (CIRCULATING_ONCHAIN ratios_use "third_party_reference").
     "circulating_supply_third_party": {"label": "Circulating supply — a THIRD PARTY's published figure (GEODNET: Blockworks 462M, static), used where the project publishes none and our set is unresolved",
@@ -12289,10 +12307,13 @@ PROJECTS = [
                 "exclude_wallets": [
                     {"address": "0xd57ecca444a9acb7208d286be439de12dd09de5d", "label": "Hyper Foundation (genesis 60,000,000)",
                      "source_url": "https://api.hyperliquid.xyz/info {type: tokenDetails} genesis.userBalances",
-                     "source_date": "2026-10-11", "read_2026_10_11": 60_551_988.64},
+                     "source_date": "2026-10-11", "read_2026_10_11": 60_551_988.64,
+                     # P4-Q7: stored on its own beside the sum (the same per-wallet value the sum adds)
+                     "metric": "foundation_wallet_tokens"},
                     {"address": "0xa20fcfa0507fe762011962cc581b95bbbc3bbdba", "label": "Community Grants (genesis 3,000,000)",
                      "source_url": "https://api.hyperliquid.xyz/info {type: tokenDetails} genesis.userBalances",
-                     "source_date": "2026-10-11", "read_2026_10_11": 2_973_731.99},
+                     "source_date": "2026-10-11", "read_2026_10_11": 2_973_731.99,
+                     "metric": "grants_wallet_tokens"},
                 ],
                 "exclude_wallets_decided": "Jake 2026-10-11 (decision A1 on 5b87610)",
                 # item 23 (Jake's run on 3500042): the stake held by exclude_wallets + unlock_wallets, stored as
@@ -12308,6 +12329,16 @@ PROJECTS = [
                      "source_url": "https://api.hyperliquid.xyz/info {type: tokenDetails} nonCirculatingUserBalances",
                      "source_date": "2026-10-11"},
                 ],
+                # P4-Q7 (Jake 2026-11-03): EVERY OTHER ADDRESS LISTED IN nonCirculatingUserBalances, stored daily as its own
+                # stock {address: metric} (evidence; feeds no headline). An address listed but not named here (nor in
+                # unlock_wallets) is logged "listed but not stored" — never silently dropped; a named address missing
+                # from the list this run is a FAIL line and nothing is stored for it (a hole, never 0). Listed in 2026-10:
+                # the team wallet, the Assistance Fund (~48.0M), 0x0 (1,673.79), 0xdead (2.72).
+                "noncirc_listed_metrics": {
+                    "0xfefefefefefefefefefefefefefefefefefefefe": "af_noncirc_listed_tokens",
+                    "0x0000000000000000000000000000000000000000": "zero_address_noncirc_tokens",
+                    "0x000000000000000000000000000000000000dEaD": "dead_address_noncirc_tokens",
+                },
                 "token_id_from_meta": True,
                 "token_id_key": "tokenId",
                 # api.hyperliquid.xyz returns 000 from the build environment (2026-09-23), so the
@@ -24044,9 +24075,13 @@ REGRESSION_ALLOWLIST += [
      "match": ("Fees ÷ FDV (annualised)",),
      "reason": "parked (P4-Q2): no further World Mobile work until Jake reopens it (parked 2026-09-29); Fees ÷ FDV "
                "divides by the parked FDV; the allowance ends when World Mobile leaves config.CREDIBILITY_PARKED"},
-    {"project": "Hyperliquid", "match": ("A4 | BURN ÷ ISSUANCE",), "until": "2027-01-31", "accepted": "2026-10-28",
-     "reason": "blocked by rule 9 (P2b-3, P2c-9): the pool release covers far fewer of the 90 days than the burn; no "
-               "common-days ratio, 2026-10-12 not restated; Q0 clears without a backfill about 2027-01-01 (P2a-D1)"},
+    # P4-Q7 (Jake 2026-11-03): INTERIM for the rest of P4 only, expiring 2026-12-15 (was 2027-01-31) — not accepted as
+    # the answer; removing it is a P5 item (SPEC "P4-Q7 (decision, Jake 2026-11-03)").
+    {"project": "Hyperliquid", "match": ("A4 | BURN ÷ ISSUANCE",), "until": "2026-12-15", "accepted": "2026-10-28",
+     "reason": "INTERIM allowance for the rest of P4 only (P4-Q7, Jake 2026-11-03; not accepted as the answer — its "
+               "removal is a P5 item): blocked by rule 9 (P2b-3, P2c-9): the pool release covers far fewer of the 90 "
+               "days than the burn; no common-days ratio, 2026-10-12 not restated; the release history cannot be "
+               "rebuilt (two legs have no address ledger; tokenDetails serves today's value only)"},
 ]
 
 
@@ -32564,6 +32599,23 @@ NOT_SHOWN.update({
         "every window, G13 1c): a monthly twin is dropped at read time (build_workbook.daily_twin) and the monthly "
         "series stays the Credibility reference for actual_buyback_usd",
 })
+# P4-Q7 (Jake 2026-11-03): the tokenDetails components captured daily as their own STORE / EVIDENCE series — stored so a
+# history exists (tokenDetails serves today's value only), feeding no headline and changing no existing value.
+P4_Q7_EVIDENCE_SERIES: dict = {
+    "foundation_wallet_tokens": "the Hyper Foundation wallet on its own — a part of excluded_wallets_tokens (the sum "
+                                "circulating_supply_first_party subtracts)",
+    "grants_wallet_tokens": "the Community Grants wallet on its own — a part of excluded_wallets_tokens (the sum "
+                            "circulating_supply_first_party subtracts)",
+    "af_noncirc_listed_tokens": "the Assistance Fund as tokenDetails.nonCirculatingUserBalances lists it — the burn is "
+                                "read from spotClearinghouseState (burn_address_balance)",
+    "zero_address_noncirc_tokens": "0x0's balance as tokenDetails.nonCirculatingUserBalances lists it (already outside "
+                                   "circulatingSupply)",
+    "dead_address_noncirc_tokens": "0xdEaD's balance as tokenDetails.nonCirculatingUserBalances lists it (already "
+                                   "outside circulatingSupply)",
+}
+NOT_SHOWN.update({("Hyperliquid", _m): f"P4-Q7 evidence series (Jake 2026-11-03): {_why}; captured daily so a history "
+                                       f"exists for the P5 A4 decision — feeds no headline"
+                  for _m, _why in P4_Q7_EVIDENCE_SERIES.items()})
 DETAIL_COLUMNS.extend([
     {"tab": "A2", "after": "Detail — Compute service fees, cumulative",
      "header": "Detail — Onchain compute PURCHASES, cumulative (ATH, latest; Aethir's demand page 'Onchain Compute "

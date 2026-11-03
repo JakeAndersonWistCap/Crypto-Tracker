@@ -226,7 +226,7 @@ def test_p2e4_sanity_hits_json_carries_the_accepted_loss_apart(tmp_path):
     (acc,) = body["accepted"]
     hl = config.regression_allowance("Hyperliquid", HL, on=ON)
     assert acc["project"] == "Hyperliquid" and acc["rule"] == "headline_lost"
-    assert acc["reason"] == hl["reason"] and acc["accepted"] == "2026-10-28" and acc["until"] == "2027-01-31"
+    assert acc["reason"] == hl["reason"] and acc["accepted"] == "2026-10-28" and acc["until"] == "2026-12-15"  # P4-Q7
     assert acc["line"] == f"ACCEPTED: Hyperliquid {HL} — {hl['reason']} (accepted 2026-10-28)"
     # sanity.py --workbook reads the file back: the accepted loss is answered, not open
     found = sanity.with_build_hits([], tmp_path / "wb.xlsx")
