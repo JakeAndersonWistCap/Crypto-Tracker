@@ -24,6 +24,7 @@ sys.path.insert(0, str(ROOT / "tests"))
 import build_workbook as bw  # noqa: E402
 import config  # noqa: E402
 import reader  # noqa: E402
+from shared_build import plain_build  # noqa: E402
 
 
 def _daily(values, start="2026-06-01") -> pd.Series:
@@ -180,28 +181,10 @@ def test_a2_a_missing_start_day_still_reads_na_in_the_workbook():
 # ============================================================================================ the fixture build
 @pytest.fixture(scope="module")
 def built(tmp_path_factory):
-    """The build on the committed real dumps (as test_round_p2e_ranks)."""
-    import measuring_guard as mg
-    import store as sm
-    from real_dump import to_store
-    d = tmp_path_factory.mktemp("p3a2")
-    db = d / "metrics.db"
-    asofs = []
-    for pl in mg._payloads():
-        to_store(pl, db)
-        asofs.append(pl["meta"]["asof"])
-    with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(sm, "DB_PATH", str(db))
-        mp.setitem(sys.modules, "recalc", None)
-        mp.setenv("TOKEN_METRICS_STORE_VALUES", "1")
-        st = sm.Store(str(db))
-        try:
-            bw.build_workbook(st, d / "audit.xlsx", asof=pd.Timestamp(max(asofs)), reader_path=d / "reader.xlsx")
-        finally:
-            st.close()
-    assert "error" not in bw.READER_STATS, bw.READER_STATS
-    return {"audit": d / "audit.xlsx", "reader": d / "reader.xlsx", "prints": dict(bw.BAD_PRINTS),
-            "groups": dict(bw._LAST_GROUPS)}
+    """The build on the committed real dumps (the shared plain build, tests/shared_build.py)."""
+    rec = plain_build(tmp_path_factory, "p3a2")
+    assert "error" not in rec["stats"], rec["stats"]
+    return {"audit": rec["audit"], "reader": rec["reader"], "prints": rec["bad_prints"], "groups": rec["groups"]}
 
 
 def test_a2_fixture_the_known_prints_are_excluded_and_read_by_nothing(built):

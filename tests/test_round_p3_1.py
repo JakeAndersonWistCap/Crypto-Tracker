@@ -25,36 +25,19 @@ sys.path.insert(0, str(ROOT / "tests"))
 import config  # noqa: E402
 import reader  # noqa: E402
 import rule3  # noqa: E402
+from shared_build import plain_build  # noqa: E402
 
 
 @pytest.fixture(scope="module")
 def built(tmp_path_factory):
-    """The reader and the audit file built on the committed real dumps (the build test_round_p2e_ranks makes)."""
-    import build_workbook as bw
-    import measuring_guard as mg
-    import store as sm
+    """The reader and the audit file built on the committed real dumps (the shared plain build, tests/shared_build.py)."""
     import xlcalc
-    from real_dump import to_store
-    d = tmp_path_factory.mktemp("p3_1")
-    db = d / "metrics.db"
-    asofs = []
-    for pl in mg._payloads():
-        to_store(pl, db)
-        asofs.append(pl["meta"]["asof"])
-    with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(sm, "DB_PATH", str(db))
-        mp.setitem(sys.modules, "recalc", None)
-        mp.setenv("TOKEN_METRICS_STORE_VALUES", "1")
-        st = sm.Store(str(db))
-        try:
-            bw.build_workbook(st, d / "audit.xlsx", asof=pd.Timestamp(max(asofs)), reader_path=d / "reader.xlsx")
-        finally:
-            st.close()
-    assert "error" not in bw.READER_STATS, bw.READER_STATS
-    assert bw.READER_STATS.get("blank_unexplained") == 0, bw.READER_STATS.get("blank_cells")
-    rwb, awb = openpyxl.load_workbook(d / "reader.xlsx"), openpyxl.load_workbook(d / "audit.xlsx")
+    rec = plain_build(tmp_path_factory, "p3_1")
+    assert "error" not in rec["stats"], rec["stats"]
+    assert rec["stats"].get("blank_unexplained") == 0, rec["stats"].get("blank_cells")
+    rwb, awb = openpyxl.load_workbook(rec["reader"]), openpyxl.load_workbook(rec["audit"])
     return {"reader": rwb, "audit": awb, "RX": xlcalc.Workbook(rwb), "AX": xlcalc.Workbook(awb),
-            "reader_path": d / "reader.xlsx", "audit_path": d / "audit.xlsx"}
+            "reader_path": rec["reader"], "audit_path": rec["audit"]}
 
 
 def _cell(built, book: str, tab: str, project: str, header: str):

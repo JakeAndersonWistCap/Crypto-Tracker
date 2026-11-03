@@ -24,6 +24,7 @@ import config  # noqa: E402
 import measuring_guard as mg  # noqa: E402
 import reader  # noqa: E402
 import sanity  # noqa: E402
+from shared_build import plain_build  # noqa: E402
 
 ON = "2026-10-28"
 HL = "A4 | BURN ÷ ISSUANCE (x) — crossover, on the basis to the left"
@@ -33,29 +34,11 @@ NOT_LISTED = ("Pendle", "Master | Fees Δ6m")
 
 @pytest.fixture(scope="module")
 def built(tmp_path_factory):
-    """The fixture build (fixtures/real_*.json), as tests/test_round_p1.py builds it: the audit file and the reader."""
-    import pandas as pd
-
-    import build_workbook as bw
-    import store as sm
-    from real_dump import to_store
-    d = tmp_path_factory.mktemp("p2e")
-    db = d / "metrics.db"
-    asofs = []
-    for pl in mg._payloads():
-        to_store(pl, db)
-        asofs.append(pl["meta"]["asof"])
-    with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(sm, "DB_PATH", str(db))
-        mp.setitem(sys.modules, "recalc", None)
-        mp.setenv("TOKEN_METRICS_STORE_VALUES", "1")
-        st = sm.Store(str(db))
-        try:
-            bw.build_workbook(st, d / "audit.xlsx", asof=pd.Timestamp(max(asofs)), reader_path=d / "reader.xlsx")
-        finally:
-            st.close()
-    assert "error" not in bw.READER_STATS, bw.READER_STATS
-    return {"audit": d / "audit.xlsx", "reader": d / "reader.xlsx"}
+    """The fixture build (fixtures/real_*.json): the audit file and the reader (the shared plain build,
+    tests/shared_build.py)."""
+    rec = plain_build(tmp_path_factory, "p2e34")
+    assert "error" not in rec["stats"], rec["stats"]
+    return {"audit": rec["audit"], "reader": rec["reader"]}
 
 
 # ============================================================================================== P2e-3 Summary revenue

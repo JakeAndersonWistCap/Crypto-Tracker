@@ -23,6 +23,7 @@ sys.path.insert(0, str(ROOT / "tests"))
 import config  # noqa: E402
 import reader  # noqa: E402
 import reader_look  # noqa: E402
+from shared_build import plain_build  # noqa: E402
 
 CODES = set(reader.CODES)
 # P4-Q8: the one reader - Highlights first, then the tabs in the look's order (About after Charts), hidden sheets last
@@ -33,29 +34,11 @@ READER_TABS = ["Highlights", "Summary", "A1 Infrastructure", "A2 Coordination", 
 
 @pytest.fixture(scope="module")
 def built(tmp_path_factory):
-    import build_workbook as bw
-    import measuring_guard as mg
-    import store as sm
-    from real_dump import to_store
-    d = tmp_path_factory.mktemp("p1")
-    db = d / "metrics.db"
-    asofs = []
-    for pl in mg._payloads():
-        to_store(pl, db)
-        asofs.append(pl["meta"]["asof"])
-    with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(sm, "DB_PATH", str(db))
-        mp.setitem(sys.modules, "recalc", None)
-        mp.setenv("TOKEN_METRICS_STORE_VALUES", "1")
-        st = sm.Store(str(db))
-        try:
-            bw.build_workbook(st, d / "audit.xlsx", asof=pd.Timestamp(max(asofs)), reader_path=d / "reader.xlsx")
-        finally:
-            st.close()
-    assert "error" not in bw.READER_STATS, bw.READER_STATS
-    return {"dir": d, "audit": d / "audit.xlsx", "reader": d / "reader.xlsx", "stats": dict(bw.READER_STATS),
-            "headlines": list(bw._HEADLINE_CELLS), "locations": dict(reader.HEADLINE_LOCATIONS),
-            "asof": pd.Timestamp(max(asofs))}
+    """The shared plain build of the 15 real dumps (tests/shared_build.py)."""
+    rec = plain_build(tmp_path_factory, "p1")
+    assert "error" not in rec["stats"], rec["stats"]
+    return {"dir": rec["dir"], "audit": rec["audit"], "reader": rec["reader"], "stats": rec["stats"],
+            "headlines": rec["headlines"], "locations": rec["locations"], "asof": rec["asof"]}
 
 
 # ================================================================================================== P1-1 / P1-3

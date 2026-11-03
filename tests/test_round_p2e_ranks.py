@@ -22,34 +22,16 @@ sys.path.insert(0, str(ROOT / "tests"))
 import config  # noqa: E402
 import reader  # noqa: E402
 import reader_look  # noqa: E402
+from shared_build import plain_build  # noqa: E402
 
 
 @pytest.fixture(scope="module")
 def built(tmp_path_factory):
-    """The reader built on the committed real dumps (the build test_round_p1 makes)."""
-    import build_workbook as bw
-    import measuring_guard as mg
-    import pandas as pd
-    import store as sm
-    from real_dump import to_store
-    d = tmp_path_factory.mktemp("p2e")
-    db = d / "metrics.db"
-    asofs = []
-    for pl in mg._payloads():
-        to_store(pl, db)
-        asofs.append(pl["meta"]["asof"])
-    with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(sm, "DB_PATH", str(db))
-        mp.setitem(sys.modules, "recalc", None)
-        mp.setenv("TOKEN_METRICS_STORE_VALUES", "1")
-        st = sm.Store(str(db))
-        try:
-            bw.build_workbook(st, d / "audit.xlsx", asof=pd.Timestamp(max(asofs)), reader_path=d / "reader.xlsx")
-        finally:
-            st.close()
-    assert "error" not in bw.READER_STATS, bw.READER_STATS
-    assert bw.READER_STATS.get("blank_unexplained") == 0, bw.READER_STATS.get("blank_cells")
-    return {"reader": d / "reader.xlsx"}
+    """The reader built on the committed real dumps (the shared plain build, tests/shared_build.py)."""
+    rec = plain_build(tmp_path_factory, "p2e_ranks")
+    assert "error" not in rec["stats"], rec["stats"]
+    assert rec["stats"].get("blank_unexplained") == 0, rec["stats"].get("blank_cells")
+    return {"reader": rec["reader"]}
 
 
 TABS = {1: reader.A1_TAB, 2: reader.A2_TAB, 3: reader.A3_TAB, 4: reader.A4_TAB}

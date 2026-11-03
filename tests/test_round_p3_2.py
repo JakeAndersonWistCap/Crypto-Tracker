@@ -26,6 +26,7 @@ sys.path.insert(0, str(ROOT / "tests"))
 import config  # noqa: E402
 import reader  # noqa: E402
 import trajectory  # noqa: E402
+from shared_build import plain_build  # noqa: E402
 
 A3, A4, CP = "A3 Revenue Buyback", "A4 Permanent Burn", "CP Comparability"
 TABS = {1: reader.A1_TAB, 2: reader.A2_TAB, 3: reader.A3_TAB, 4: reader.A4_TAB}
@@ -33,32 +34,15 @@ TABS = {1: reader.A1_TAB, 2: reader.A2_TAB, 3: reader.A3_TAB, 4: reader.A4_TAB}
 
 @pytest.fixture(scope="module")
 def built(tmp_path_factory):
-    """Both workbooks built on the committed real dumps, and the read-time groups the build used."""
-    import build_workbook as bw
-    import measuring_guard as mg
-    import store as sm
-    from real_dump import to_store
-    d = tmp_path_factory.mktemp("p3_2")
-    db = d / "metrics.db"
-    asofs = []
-    for pl in mg._payloads():
-        to_store(pl, db)
-        asofs.append(pl["meta"]["asof"])
-    with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(sm, "DB_PATH", str(db))
-        mp.setitem(sys.modules, "recalc", None)
-        mp.setenv("TOKEN_METRICS_STORE_VALUES", "1")
-        st = sm.Store(str(db))
-        try:
-            bw.build_workbook(st, d / "audit.xlsx", asof=pd.Timestamp(max(asofs)), reader_path=d / "reader.xlsx")
-        finally:
-            st.close()
-    assert "error" not in bw.READER_STATS, bw.READER_STATS
-    assert bw.READER_STATS.get("blank_unexplained") == 0, bw.READER_STATS.get("blank_cells")
+    """Both workbooks built on the committed real dumps, and the read-time groups the build used (the shared plain
+    build, tests/shared_build.py)."""
     import xlcalc
-    a, r = openpyxl.load_workbook(d / "audit.xlsx"), openpyxl.load_workbook(d / "reader.xlsx")
+    rec = plain_build(tmp_path_factory, "p3_2")
+    assert "error" not in rec["stats"], rec["stats"]
+    assert rec["stats"].get("blank_unexplained") == 0, rec["stats"].get("blank_cells")
+    a, r = openpyxl.load_workbook(rec["audit"]), openpyxl.load_workbook(rec["reader"])
     return {"audit": a, "reader": r, "XA": xlcalc.Workbook(a), "XR": xlcalc.Workbook(r),
-            "groups": dict(bw._LAST_GROUPS), "asof": pd.Timestamp(max(asofs))}
+            "groups": rec["groups"], "asof": rec["asof"]}
 
 
 def _audit_cell(wb, sheet: str, head: str, project: str):

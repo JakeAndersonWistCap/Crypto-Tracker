@@ -84,3 +84,40 @@ def _no_cached_values(monkeypatch):
     """Round G11 A1: a build writes every formula's calculated value into the file (workbook_values, ~1 min on a full
     build). Tests skip it; the test of A1 itself sets TOKEN_METRICS_STORE_VALUES=1."""
     monkeypatch.setenv("TOKEN_METRICS_STORE_VALUES", "0")
+
+
+# ============================================================================== P5-0 a / b (Jake 2026-11-03)
+# The files that share ONE build of the 15 real dumps (tests/shared_build.py). They are one xdist group, so a gate
+# run builds it once; every other test file is a group of its own (a file never splits across workers, so its
+# module fixtures are built once). tests/test_shared_build.py checks this list against the files that use it.
+SHARED_PLAIN_BUILD_FILES = (
+    "test_round_p1.py", "test_round_p2e2.py", "test_round_p2e34.py", "test_round_p2e_ranks.py",
+    "test_round_p3_1.py", "test_round_p3_2.py", "test_round_p3_a2.py", "test_round_p4_q5.py",
+)
+SHARED_PLAIN_BUILD_GROUP = "shared_plain_build"
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "xdist_group(name): run every test of the group on one xdist worker")
+
+
+def pytest_collection_modifyitems(session, config, items):
+    import pathlib
+    for item in items:
+        name = pathlib.Path(str(item.fspath)).name
+        group = SHARED_PLAIN_BUILD_GROUP if name in SHARED_PLAIN_BUILD_FILES else name
+        item.add_marker(pytest.mark.xdist_group(name=group))
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _shared_build_master_unchanged():
+    """P5-0 a: a test that wrote into the shared build's master copy fails the run (checked once, at the end)."""
+    yield
+    import pathlib
+    import sys as _sys
+    here = str(pathlib.Path(__file__).resolve().parent)
+    if here not in _sys.path:
+        _sys.path.insert(0, here)
+    import shared_build
+    bad = shared_build.verify_unchanged()
+    assert not bad, "\n".join(bad)

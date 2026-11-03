@@ -31,6 +31,7 @@ import config  # noqa: E402
 import reader  # noqa: E402
 import trajectory  # noqa: E402
 import xlcalc  # noqa: E402
+from shared_build import plain_build  # noqa: E402
 
 A3, CP = "A3 Revenue Buyback", "CP Comparability"
 P = config.PROJECT_BY_NAME
@@ -238,28 +239,12 @@ BEFORE_HVY = {"Maple": 0.0040527229897458356, "Sky": 0.02383699954852378, "Hyper
 
 @pytest.fixture(scope="module")
 def built(tmp_path_factory):
-    import measuring_guard as mg
-    import store as sm
-    from real_dump import to_store
-    d = tmp_path_factory.mktemp("p4_q5")
-    db = d / "metrics.db"
-    asofs = []
-    for pl in mg._payloads():
-        to_store(pl, db)
-        asofs.append(pl["meta"]["asof"])
-    with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(sm, "DB_PATH", str(db))
-        mp.setitem(sys.modules, "recalc", None)
-        mp.setenv("TOKEN_METRICS_STORE_VALUES", "1")
-        st = sm.Store(str(db))
-        try:
-            bw.build_workbook(st, d / "audit.xlsx", asof=pd.Timestamp(max(asofs)), reader_path=d / "reader.xlsx")
-        finally:
-            st.close()
-    assert "error" not in bw.READER_STATS, bw.READER_STATS
-    assert bw.READER_STATS.get("blank_unexplained") == 0, bw.READER_STATS.get("blank_cells")
-    a, r = openpyxl.load_workbook(d / "audit.xlsx"), openpyxl.load_workbook(d / "reader.xlsx")
-    return {"dir": d, "audit": a, "reader": r, "XA": xlcalc.Workbook(a), "XR": xlcalc.Workbook(r)}
+    """The shared plain build of the 15 real dumps (tests/shared_build.py)."""
+    rec = plain_build(tmp_path_factory, "p4_q5")
+    assert "error" not in rec["stats"], rec["stats"]
+    assert rec["stats"].get("blank_unexplained") == 0, rec["stats"].get("blank_cells")
+    a, r = openpyxl.load_workbook(rec["audit"]), openpyxl.load_workbook(rec["reader"])
+    return {"dir": rec["dir"], "audit": a, "reader": r, "XA": xlcalc.Workbook(a), "XR": xlcalc.Workbook(r)}
 
 
 def _rows(ws, first=5) -> dict:

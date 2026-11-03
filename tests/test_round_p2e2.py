@@ -24,6 +24,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tests"))
 
 import reader  # noqa: E402
+from shared_build import plain_build  # noqa: E402
 
 TABS = ("A1 Infrastructure", "A2 Coordination", "A3 Revenue Buyback", "A4 Permanent Burn")
 KEY_STEM = {"A1 Infrastructure": "Settlement/token 1-yr chg", "A2 Coordination": "Revenue ÷ emissions (x)",
@@ -36,28 +37,10 @@ KEY_ID = {"A2 Coordination": "a2_rev_vs_emissions_value", "A3 Revenue Buyback": 
 
 @pytest.fixture(scope="module")
 def built(tmp_path_factory):
-    import build_workbook as bw
-    import measuring_guard as mg
-    import store as sm
-    from real_dump import to_store
-    d = tmp_path_factory.mktemp("p2e2")
-    db = d / "metrics.db"
-    asofs = []
-    for pl in mg._payloads():
-        to_store(pl, db)
-        asofs.append(pl["meta"]["asof"])
-    with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(sm, "DB_PATH", str(db))
-        mp.setitem(sys.modules, "recalc", None)
-        mp.setenv("TOKEN_METRICS_STORE_VALUES", "1")
-        st = sm.Store(str(db))
-        try:
-            bw.build_workbook(st, d / "audit.xlsx", asof=pd.Timestamp(max(asofs)), reader_path=d / "reader.xlsx")
-        finally:
-            st.close()
-    assert "error" not in bw.READER_STATS, bw.READER_STATS
-    return {"reader": openpyxl.load_workbook(d / "reader.xlsx"), "audit": d / "audit.xlsx",
-            "traj": list(bw.TRAJECTORY_ROWS)}
+    """The shared plain build of the 15 real dumps (tests/shared_build.py)."""
+    rec = plain_build(tmp_path_factory, "p2e2")
+    assert "error" not in rec["stats"], rec["stats"]
+    return {"reader": openpyxl.load_workbook(rec["reader"]), "audit": rec["audit"], "traj": rec["trajectory"]}
 
 
 def _value(wb, cell):
