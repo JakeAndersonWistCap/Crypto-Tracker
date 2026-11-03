@@ -941,7 +941,7 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
     if metric == comp.get("metric") or own:
         return ("customer revenue is summed only on days the aggregator core and every line that bypasses it hold "
                 "a row; at least one leg has none stored yet",
-                "See the legs' own Gap Report rows (fees_usd, customer_revenue_requests_usd and the fee-line scan).")
+                "See the legs' own Gap Report rows (fees_usd and the fee-line scan; Direct Requests sit inside fees_usd, P4-Q1).")
     # ASXN'S HYPERSCREENER, IN THE BROWSER (Jake, probes6 2026-10-02).
     if any(metric in {pin.get("metric"), pin.get("flow_metric"), *(pin.get("metric_by_unit") or {}).values()}
            for pg in (project.get("browser_capture") or {}).get("pages") or ()

@@ -26,8 +26,8 @@ format, fill (confidence) and comment, or the same code with its reason. The aud
 | A2 Coordination | Of which cloud host rewards | Aethir | Aethir's reward split: cloud host rewards |
 | A2 Coordination | Of which edge rewards | Aethir | Aethir's reward split: edge rewards |
 | A2 Coordination | Emissions earned, % a year | Aethir | Aethir's rewards earned and still vesting (a metric formed for Aethir only); released emissions stay |
-| A2 Coordination | Of which aggregator payments | Chainlink | Chainlink's revenue split: fee aggregator payments |
-| A2 Coordination | Of which Direct Requests | Chainlink | Chainlink's revenue split: Direct Requests |
+| A2 Coordination | Of which aggregator payments | Chainlink | Chainlink's revenue split: fee aggregator payments, Direct Requests included |
+| A2 Coordination | Of which Direct Requests | Chainlink | Chainlink's revenue split: Direct Requests, a part of the aggregator figure (not added again) |
 | A2 Coordination | Of which CCIP fees | Chainlink | Chainlink's revenue split: CCIP fees |
 | A2 Coordination | Of which VRF payments | Chainlink | Chainlink's revenue split: VRF payments |
 | A2 Coordination | Of which Automation premium | Chainlink | Chainlink's revenue split: Automation premium |

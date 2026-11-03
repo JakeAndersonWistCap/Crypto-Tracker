@@ -1574,8 +1574,10 @@ PROJECT_NOTE_COLUMNS = (
     (A2_TAB, "Of which edge rewards", "Aethir", "Aethir's reward split: edge rewards"),
     (A2_TAB, "Emissions earned, % a year", "Aethir", "Aethir's rewards earned and still vesting (a metric formed for "
      "Aethir only); released emissions stay"),
-    (A2_TAB, "Of which aggregator payments", "Chainlink", "Chainlink's revenue split: fee aggregator payments"),
-    (A2_TAB, "Of which Direct Requests", "Chainlink", "Chainlink's revenue split: Direct Requests"),
+    (A2_TAB, "Of which aggregator payments", "Chainlink", "Chainlink's revenue split: fee aggregator payments, Direct "
+     "Requests included"),
+    (A2_TAB, "Of which Direct Requests", "Chainlink", "Chainlink's revenue split: Direct Requests, a part of the "
+     "aggregator figure (not added again)"),
     (A2_TAB, "Of which CCIP fees", "Chainlink", "Chainlink's revenue split: CCIP fees"),
     (A2_TAB, "Of which VRF payments", "Chainlink", "Chainlink's revenue split: VRF payments"),
     (A2_TAB, "Of which Automation premium", "Chainlink", "Chainlink's revenue split: Automation premium"),

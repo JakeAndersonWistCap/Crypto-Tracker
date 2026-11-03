@@ -23764,9 +23764,10 @@ def test_explorer_calls_share_one_pacer_per_host_across_instances(monkeypatch):
 
 
 def test_chainlink_customer_revenue_is_the_aggregator_core_plus_the_lines_that_bypass_it():
-    """Jake, 2026-10-05: customer_revenue_usd = fees_usd (aggregator core) + requests + CCIP 1.2/1.5 + VRF
-    v2.5 + Automation v2.3 premium, summed only on days every leg holds; the stored DefiLlama listing
-    sum is not read; CCIP 2.0 fees are never a leg."""
+    """Jake, 2026-10-05: customer_revenue_usd = fees_usd (aggregator core) + CCIP 1.2/1.5 + VRF v2.5 + Automation
+    v2.3 premium, summed only on days every summed leg holds; the stored DefiLlama listing sum is not read; CCIP 2.0
+    fees are never a leg. P4-Q1 (Jake 2026-11-03): Direct Requests sit inside the DefiLlama parent (fees_usd), so they
+    are counted once — never added on top (was: core + requests + three lines = 1500 here)."""
     import build_workbook as bw
     legs = ["fees_usd", "customer_revenue_requests_usd", "customer_revenue_ccip_legacy_usd",
             "customer_revenue_vrf_usd", "customer_revenue_automation_premium_usd"]
@@ -23781,7 +23782,7 @@ def test_chainlink_customer_revenue_is_the_aggregator_core_plus_the_lines_that_b
     bw._customer_revenue_views(g)
     s = g[("Chainlink", "customer_revenue_usd")].set_index("date")["value"]
     assert list(s.index) == [pd.Timestamp("2026-10-02"), pd.Timestamp("2026-10-03")]
-    assert (s == 1500.0).all(), "core + four lines, never ccip_v2, never the retired listing sum"
+    assert (s == 1300.0).all(), "core + three lines (Requests inside the core), never ccip_v2, never the listing sum"
     assert "ccip_v2" not in str(config.PROJECT_BY_NAME["Chainlink"]["customer_revenue_components"]["plus"])
 
 
@@ -24279,7 +24280,7 @@ def test_a_partial_fee_line_makes_a_partial_customer_revenue_day():
     assert ":PARTIAL" not in v.loc[pd.Timestamp("2026-10-02"), "source"]
     s = v.loc[pd.Timestamp("2026-10-03"), "source"]
     assert ":PARTIAL" in s and "customer_revenue_vrf_usd partial" in s
-    assert v["value"].tolist() == [50.0, 50.0]
+    assert v["value"].tolist() == [40.0, 40.0]           # P4-Q1: Requests are inside the core (was 50)
     assert set(config.PROJECT_BY_NAME["Chainlink"]["chainlink_fee_lines"]["optional_chains"]) == {"base", "optimism"}
 
 

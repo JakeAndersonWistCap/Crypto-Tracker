@@ -5480,10 +5480,9 @@ PROJECTS = [
         # one extra call): carries → the parent as before; stops carrying → a P2 row asking for split_on; split_on dated
         # → the overlap (days before it both hold) decides: within `tolerance` the children's sum restates the whole
         # history (defillama:sum(...)); otherwise the parent's history is kept and the switch is a SERIES BREAK (rule 10).
-        # A FINDING FOR JAKE, NOT CHANGED HERE (a definition): fees_usd IS the parent, so it already holds
-        # chainlink-requests — and customer_revenue_components adds customer_revenue_requests_usd on top of it
-        # (fixture 2026-10-08: fees_usd 1,078,886 = requests 3,544 + staking 1,075,342). The aggregator core alone is
-        # `chainlink-staking`.
+        # THE FINDING (P3-3a): fees_usd IS the parent, so it already holds chainlink-requests (fixture 2026-10-08:
+        # fees_usd 1,078,886 = requests 3,544 + staking 1,075,342). DECIDED P4-Q1 (Jake 2026-11-03): Requests are
+        # counted once — inside the core — and no longer added on top (customer_revenue_components below).
         "defillama_children_route": {
             "metric": "fees_usd", "children": ("chainlink-requests", "chainlink-staking"), "data_type": "dailyFees",
             "tolerance": 0.02, "recent_days": 30, "min_days": 14,
@@ -5493,10 +5492,15 @@ PROJECTS = [
                             "(0.000%); last 30 days 4,453,481 vs 4,453,481",
             "source_url": "https://api.llama.fi/summary/fees/chainlink?dataType=dailyFees",
         },
+        # P4-Q1 (Jake 2026-11-03): DIRECT REQUESTS COUNTED ONCE. fees_usd is the DefiLlama `chainlink` parent, which
+        # already holds `chainlink-requests` (P3-3a, read live 2026-11-02), so Requests are NOT added again as a PLUS
+        # line. customer_revenue_requests_usd stays stored and is shown as a part of the core (core_includes), never
+        # summed on top of it.
         "customer_revenue_components": {
             "metric": "customer_revenue_usd",
             "core": "fees_usd",
-            "plus": ("customer_revenue_requests_usd", "customer_revenue_ccip_legacy_usd",
+            "core_includes": ("customer_revenue_requests_usd",),
+            "plus": ("customer_revenue_ccip_legacy_usd",
                      "customer_revenue_vrf_usd", "customer_revenue_automation_premium_usd"),
             "not_measured": "Data Streams (billed off-chain since ~2026-01), SVR (Chainlink's share of "
                             "recaptured OEV: no public on-chain trail), Data Feeds outside Payment "

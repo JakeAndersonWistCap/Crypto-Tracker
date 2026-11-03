@@ -1986,14 +1986,22 @@ def _emissions_basis(p: dict, data_by_key: dict) -> str:
             + "; ".join(f"{lab} {d}" for lab, d in have))
 
 
-_REVENUE_LEG_LABELS = ("payments collected at the fee aggregator (core)", "Direct Requests",
+_REVENUE_LEG_LABELS = ("payments collected at the fee aggregator, Direct Requests included (core: the DefiLlama "
+                       "parent)", "Direct Requests (inside the core, not added again)",
                        "CCIP 1.2/1.5 fees (gross)", "VRF v2.5 payments", "Automation v2.3 premium")
 
 
 def _revenue_legs(p: dict) -> list:
-    """[core, *plus] metrics of a project's customer_revenue_components, in _REVENUE_LEG_LABELS order."""
+    """[core, *core_includes, *plus] metrics of a project's customer_revenue_components, in _REVENUE_LEG_LABELS order
+    — the split as SHOWN. P4-Q1: a core_includes leg is a part of the core (Chainlink's Direct Requests sit inside the
+    DefiLlama parent), shown beside it and never summed on top (_summed_revenue_legs)."""
     spec = p.get("customer_revenue_components") or {}
-    return [spec["core"], *spec["plus"]] if spec else []
+    return [spec["core"], *(spec.get("core_includes") or ()), *spec["plus"]] if spec else []
+
+
+def _summed_revenue_legs(spec: dict) -> tuple:
+    """The legs customer revenue SUMS: the core and the lines that bypass it — never a core_includes leg (P4-Q1)."""
+    return (spec["core"], *spec["plus"])
 
 
 # Aethir (Jake, 2026-10-06): the ecosystem page's three supplier legs; the compute-rewards add-on is retired
@@ -3269,7 +3277,7 @@ def _customer_revenue_views(groups: dict) -> None:
         spec = p.get("customer_revenue_components")
         if not spec:
             continue
-        name, legs = p["name"], (spec["core"], *spec["plus"])
+        name, legs = p["name"], _summed_revenue_legs(spec)
         series, sources = [], []
         for m in legs:
             g = groups.get((name, m))

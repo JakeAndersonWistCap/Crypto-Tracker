@@ -9945,7 +9945,7 @@ def chainlink_revenue_coverage():
     if long is None:
         return
     spec = config.PROJECT_BY_NAME["Chainlink"]["customer_revenue_components"]
-    comps = (spec["core"], *spec["plus"])
+    comps = (spec["core"], *spec["plus"])                  # the SUMMED legs: core_includes is inside the core (P4-Q1)
     end = asof - pd.Timedelta(days=1)
     days = pd.date_range(end - pd.Timedelta(days=364), end)
     have = {}
