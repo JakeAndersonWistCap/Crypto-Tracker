@@ -1,4 +1,4 @@
-"""Charlie edition LOOK (P2g-4): charlie_look.apply_look restyles the reader workbook and nothing else.
+"""The reader's LOOK (P2g-4; every reader since P4-Q8): reader_look.apply_look restyles the reader, nothing else.
 
 Hand-made workbook with the reader's tab names and header layout (row 3 bands, row 4 headers, project rows from 5),
 so no network and no store build.
@@ -18,7 +18,7 @@ from openpyxl.styles import Font, PatternFill
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-import charlie_look as cl  # noqa: E402
+import reader_look as cl  # noqa: E402
 import reader  # noqa: E402
 
 GREEN = PatternFill("solid", fgColor="C6E0B4")

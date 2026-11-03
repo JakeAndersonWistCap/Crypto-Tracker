@@ -1,6 +1,6 @@
-"""charlie_highlights.py - THE "HIGHLIGHTS" FIRST TAB OF THE CHARLIE EDITION (P2g-3, Jake 2026-10-29).
+"""highlights.py - THE "HIGHLIGHTS" FIRST TAB OF THE READER (P2g-3, Jake 2026-10-29; in the one reader, P4-Q8).
 
-docs/charlie_edition_spec.md section 2. `add_highlights(wb, ctx)` adds one sheet to the reader workbook being built:
+docs/highlights_spec.md section 2. `add_highlights(wb, ctx)` adds one sheet to the reader workbook being built:
 a title, the as-of line and two lines copied from About, up to nine cards (C1..C9; C9 "Fairness league" added in P3-8),
 a coverage block and one closing line. Additive only: nothing on any existing tab is read for anything but its values, and nothing there is written.
 
@@ -8,8 +8,9 @@ a coverage block and one closing line. Additive only: nothing on any existing ta
     project row + header text (Lookup.ref), never by a typed address; it carries the source cell's number format, its
     confidence fill (the one fill meaning, copied, never added) and a comment naming the source.
   * A card has a build-time condition, evaluated on the SAME cell values its chips quote (xlcalc). A card whose
-    condition fails is omitted and the others reflow; fewer than `min_cards` rendered raises HighlightsError listing
-    every failed condition with its values. The condition functions (c1_holds ... c8_split) are plain functions of
+    condition fails is omitted and the others reflow. Fewer than `min_cards` rendered (P4-Q8): the tab holds NO cards,
+    only the statement that the floor was not met, how many rendered and every failed condition with its values
+    (floor_lines) - the reader is still written. The condition functions (c1_holds ... c8_split) are plain functions of
     numbers, unit-tested on their own.
   * Parked projects (reader.parked_reason) are in no card and no mini-table; they are listed in the coverage block only.
   * Text is fixed. Where a sentence adds a clause, the clause's condition is evaluated here from the quoted cells
@@ -38,6 +39,7 @@ import xlcalc
 SHEET = "Highlights"
 TITLE = "Token metrics — highlights"
 FOOTER = "Confidence is shown by cell fill throughout; hover any number for its source."
+FLOOR_NOTE = "No highlight cards are shown: too few cards met their conditions (the floor is not met)."
 FONT = "Calibri"
 NAVY, TEAL, GREY, RULE = "14213D", "1F8A8A", "595959", "BFBFBF"
 MIN_CARDS = 5
@@ -1029,18 +1031,45 @@ def verify(wb, chips: list) -> list:
 
 
 # ==================================================================================================== the entry point
+def floor_lines(cards: list, omitted: list, min_cards: int) -> list:
+    """The statement when fewer than `min_cards` cards render: the floor, how many rendered, each unmet condition."""
+    return ([f"Highlights: only {len(cards)} of {len(CARD_BUILDERS)} cards render, {min_cards} are needed. "
+             "Cards that did not render:"]
+            + [f"  {o}" for o in omitted]
+            + ["Cards that did: " + (", ".join(c.cid for c in cards) or "none")])
+
+
+def _write_floor(ws, lines: list) -> None:
+    """The floor-not-met tab: the title, a one-line statement, then floor_lines - no card, no chip."""
+    _put(ws, 1, LEFT0, LAST_COL, TITLE, _font(18, bold=True, color=NAVY), Alignment(vertical="center"), 30)
+    _put(ws, 3, LEFT0, LAST_COL, FLOOR_NOTE, _font(11, bold=True, color=NAVY), Alignment(vertical="center"), 18)
+    for r, text in enumerate(lines, start=5):
+        sub = text.startswith("  ")                                     # one unmet condition
+        _put(ws, r, LEFT0, LAST_COL, text.strip(), _font(10, color=GREY if sub else "000000"),
+             Alignment(wrap_text=True, vertical="top", indent=2 if sub else 0), 14 * _lines(text, 150) + 3)
+
+
 def add_highlights(wb, ctx=None, min_cards: int = MIN_CARDS, parked=None) -> dict:
     """Add the Highlights sheet, first, to the reader workbook `wb`. `ctx` is reader.Ctx (not needed: everything is read
-    from the finished tabs). Returns {"cards": [...], "omitted": [...], "lines": [printable lines]}; raises
-    HighlightsError when fewer than `min_cards` render or a chip is an error or blank."""
+    from the finished tabs). Returns {"cards": [shown on the tab], "rendered": [conditions met], "omitted": [...],
+    "floor_met": bool, "lines": [printable lines]}. Fewer than `min_cards` rendered: the tab holds the floor statement
+    and no card (P4-Q8). Raises HighlightsError when a chip is an error or blank."""
     L = Lookup(wb, parked)
     cards, omitted = build_cards(L)
-    if len(cards) < min_cards:
-        raise HighlightsError(f"Highlights: only {len(cards)} of {len(CARD_BUILDERS)} cards render, {min_cards} are "
-                              "needed. Cards that did not render:\n  " + "\n  ".join(omitted)
-                              + "\nCards that did: " + (", ".join(c.cid for c in cards) or "none"))
     if SHEET in wb.sheetnames:
         raise HighlightsError("the workbook already has a Highlights sheet")
+    if len(cards) < min_cards:
+        floor = floor_lines(cards, omitted, min_cards)
+        ws = wb.create_sheet(SHEET, 0)
+        _page(ws)
+        for w in wb.worksheets:
+            w.sheet_view.tabSelected = False
+        ws.sheet_view.tabSelected = True
+        wb.active = 0
+        _write_floor(ws, floor)
+        lines = ["", "HIGHLIGHTS (the reader's first tab): FLOOR NOT MET - no card is shown; the tab says so", *floor]
+        return {"cards": [], "rendered": [c.cid for c in cards], "omitted": omitted, "floor_met": False,
+                "lines": lines, "shown": {}, "sheet": ws}
     ws = wb.create_sheet(SHEET, 0)
     _page(ws)
     for w in wb.worksheets:
@@ -1063,12 +1092,13 @@ def add_highlights(wb, ctx=None, min_cards: int = MIN_CARDS, parked=None) -> dic
             X = X or xlcalc.Workbook(wb)
             card.caveat = str(X.value(SHEET, cell.row, cell.column)).removeprefix("Caveat: ")
     lines = report_lines(cards, omitted, ws, shown)
-    return {"cards": [c.cid for c in cards], "omitted": omitted, "lines": lines, "shown": shown, "sheet": ws}
+    return {"cards": [c.cid for c in cards], "rendered": [c.cid for c in cards], "omitted": omitted, "floor_met": True,
+            "lines": lines, "shown": shown, "sheet": ws}
 
 
 def report_lines(cards: list, omitted: list, ws, shown: dict) -> list:
     """The rendered cards as text: headline, each chip 'label: value as displayed', Reading, Caveat; then the omissions."""
-    out = ["", "HIGHLIGHTS (the Charlie edition's first tab): %d card(s) rendered" % len(cards)]
+    out = ["", "HIGHLIGHTS (the reader's first tab): %d card(s) rendered" % len(cards)]
 
     def disp(ref: Ref) -> str:
         return format_value(ref.value, ref.fmt)

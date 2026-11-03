@@ -280,7 +280,7 @@ def test_the_audit_file_is_unchanged_cell_for_cell(before, after):
     assert not diffs, diffs[:20]
 
 
-# ================================================================================================ map, guard, Charlie
+# =========================================================================================== map, guard, the look
 def test_the_column_map_sends_moved_columns_to_project_notes(after):
     ra = openpyxl.load_workbook(after["reader"])
     blocks = notes_blocks(ra[reader.NOTES])
@@ -311,10 +311,10 @@ def test_the_guard_reports_no_violation_and_the_same_headlines(before, after):
         assert ra[sheet][cell].value is not None, (key, sheet, cell)
 
 
-def test_the_charlie_look_places_project_notes_after_business(after):
-    import charlie_look
-    wb = openpyxl.load_workbook(after["reader"])
-    charlie_look.apply_look(wb)
+def test_the_reader_look_places_project_notes_after_business(after):
+    import reader_look
+    wb = openpyxl.load_workbook(after["reader"])                     # P4-Q8: the look is on the reader itself
     vis = [n for n in wb.sheetnames if wb[n].sheet_state == "visible"]
-    assert vis == ["Summary", *ARCH, "Comparison", "Business", "Project notes", "Charts", "About", "Definitions"]
-    assert wb[reader.NOTES].sheet_properties.tabColor.rgb[-6:] == charlie_look.TAB_COLOURS[reader.BUSINESS]
+    assert vis == ["Highlights", "Summary", *ARCH, "Comparison", "Business", "Project notes", "Charts", "About",
+                   "Definitions"]
+    assert wb[reader.NOTES].sheet_properties.tabColor.rgb[-6:] == reader_look.TAB_COLOURS[reader.BUSINESS]

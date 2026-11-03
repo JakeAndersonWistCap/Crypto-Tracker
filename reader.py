@@ -1,4 +1,4 @@
-"""reader.py — THE READER WORKBOOK (Round P1, Jake 2026-10-27; Round P2a, the Charlie build, Jake 2026-10-27).
+"""reader.py — THE READER WORKBOOK (Round P1, Jake 2026-10-27; Round P2a, the walkthrough build, Jake 2026-10-27).
 
 build_workbook writes the full workbook — every tab, every working column — which the daily run saves as
 token_metrics_audit.xlsx. This module derives token_metrics.xlsx from the same build, in memory: About, Summary, the
@@ -857,9 +857,9 @@ def _net_holder_yields(A, projects) -> dict:
 
 
 def build_reader(wb, path, *, asof, groups: dict, headline_cells: list, projects: list,
-                 previous: dict | None = None, edition: str | None = None) -> dict:
-    """Write the reader workbook at `path` from the built (audit) workbook `wb`. Returns its STATS. `edition` (P2g,
-    "charlie"): add that edition's tabs to the workbook before it is saved; None (the daily run) adds nothing."""
+                 previous: dict | None = None) -> dict:
+    """Write the reader workbook at `path` from the built (audit) workbook `wb`. Returns its STATS. Before it is saved
+    the Highlights tab is added first and the look applied (reader_layout, P4-Q8: one reader file)."""
     import build_workbook as bw                            # noqa: PLC0415
     import config                                          # noqa: PLC0415
     HEADLINE_LOCATIONS.clear()
@@ -903,9 +903,8 @@ def build_reader(wb, path, *, asof, groups: dict, headline_cells: list, projects
     _write_about(ws_about, asof, sheets, projects)
     blanks = (_blank_unexplained({k: v for k, v in sheets.items() if k != NOTES})
               + _notes_blanks(sheets[NOTES]))
-    if edition:                                            # P2g: additive, after every tab is written
-        import charlie_edition                             # noqa: PLC0415
-        charlie_edition.apply_edition(out, ctx, edition)
+    import reader_layout                                   # noqa: PLC0415 — P4-Q8: Highlights first, then the look
+    reader_layout.apply_layout(out, ctx)
     out.save(path)
     import workbook_values                                 # noqa: PLC0415
     vals = workbook_values.store_values(path, out)

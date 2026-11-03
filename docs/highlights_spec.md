@@ -1,12 +1,14 @@
-# Charlie edition of the reader workbook — build specification (Jake, 2026-10-29; SPEC.md P2g)
+# The reader's Highlights tab and look — build specification (Jake, 2026-10-29, SPEC.md P2g; one workbook, P4-Q8)
 
-A "Charlie edition" of the READER workbook for a walkthrough with the fund manager on 2026-10-30. Additive only. Small
-budget: small steps, reuse existing helpers in reader.py / build_workbook.py, no refactor.
+Written 2026-10-29 as an edition copy of the READER workbook for a walkthrough with the fund manager on 2026-10-30.
+Since P4-Q8 (Jake, 2026-11-03) this layout IS the reader: token_metrics.xlsx is built once with the Highlights tab first
+and the look applied (highlights.py, reader_look.py, reader_layout.py). Additive only. Small budget: small steps, reuse
+existing helpers in reader.py / build_workbook.py, no refactor.
 
 ## HARD RULES
-- No change to any definition, formula, data, rank, code or existing tab of the normal build. With the flag absent,
-  normal outputs are identical to today. A test proves it (compare reader cell values with and without the flag on the
-  fixture build).
+- No change to any definition, formula, data, rank or code of the reader's tabs, and none to the audit file. A test
+  proves it (tests/test_round_p4_q8.py: the audit file cell for cell, and the reader's tabs value for value, against the
+  build without the layout).
 - Cell fills mean confidence only (green/amber/red), as About says. Use font colour, bars and borders for everything else.
 - Text on the new tab reads as a fresh standalone page: no "still", "now", "newly", "improved since", no reference to
   earlier builds.
@@ -14,17 +16,19 @@ budget: small steps, reuse existing helpers in reader.py / build_workbook.py, no
   row + header text (never hard-coded addresses), with the source cell's number format. No number is typed into a sentence.
 - Parked projects (Aerodrome, World Mobile) never appear in a card or a mini-table; they appear only in the coverage block.
 
-## 1. FLAG
-`python token_metrics.py --no-fetch --edition charlie` writes, in addition to the normal files,
-`token_metrics_charlie.xlsx` (reader only, no audit file). Without the flag, nothing changes.
+## 1. ONE WORKBOOK (P4-Q8)
+Every run (`python token_metrics.py`, `python token_metrics.py --no-fetch`) writes token_metrics.xlsx with this layout and
+token_metrics_audit.xlsx as before. There is no flag and no second reader file; `--edition` stops with a message.
 
 ## 2. NEW FIRST TAB "Highlights" (teal tab colour), A4 landscape, fit to one page wide, gridlines off, zoom 90%
 Top: title "Token metrics — highlights"; as-of date (same as About); one line copied from the first sentence of About's
 "What this file measures"; one line copied from About's "Fill is confidence ..." sentence.
 Then cards in two columns. A card = bold navy headline; up to 4 chips (small label above, large value below); one
 "Reading" sentence; one "Caveat" sentence; an internal hyperlink "Open <tab>". Each card has a build-time condition.
-A card whose condition fails is omitted and the others reflow. At least 5 cards must render, otherwise the build fails
-with a clear message listing the failed conditions.
+A card whose condition fails is omitted and the others reflow. At least 5 cards must render (reader_layout.MIN_CARDS).
+When fewer do (P4-Q8), the reader is still written and the tab holds NO card: only the title, the line "No highlight cards
+are shown: too few cards met their conditions (the floor is not met).", how many rendered and each failed condition with
+its values; the end of the run prints the same text and a HIGHLIGHTS FLOOR NOT MET warning.
 
 Cards (chips are [tab: header]):
 
@@ -81,7 +85,7 @@ Bottom "Coverage" block: copy About's honest-coverage table (as formulas referen
 project with its code and the reason from its Summary key-cell comment. Final line: "Confidence is shown by cell fill
 throughout; hover any number for its source."
 
-## 3. LOOK (edition only)
+## 3. LOOK (every reader since P4-Q8)
 - Calibri 10; title 18 bold navy #14213D; column headers bold white on navy, wrapped, row height 32; group bands (Size,
   Business, Rank, Holders, Supply) in two alternating blues; thin light-grey borders; zebra #F7F8FA on data rows.
 - Freeze panes under the header row and after the Token column on Summary, A1-A4, Comparison, Business. Gridlines off.
@@ -91,13 +95,13 @@ throughout; hover any number for its source."
 - Data bars (light teal) on Comparison: Holder value yield, Total dilution % of float; diverging bar on Net holder yield.
   No data bars on mixed-unit columns.
 - Codes (n/a, blocked, by design, parked, unranked, secondary): grey italic, centred. Existing parked-row treatment kept.
-- Tab order: Highlights, Summary, A1-A4, Comparison, Business, Charts, About, Definitions. Tab colours: Highlights teal;
+- Tab order: Highlights, Summary, A1-A4, Comparison, Business, Project notes (P3-6), Charts, About, Definitions. Tab colours: Highlights teal;
   Summary navy; A1-A4 mid-blue; Comparison and Business slate; Charts, About, Definitions light grey.
 - Token counts >= 1e6 shown as 1.2m / 3.4bn, same convention as dollars without the $. All other number formats unchanged.
 Use whichever library the existing reader uses; add no new libraries.
 
 ## 5. VERIFY
 Run the new tests, tests/test_progress.py and the guard tests first; then the full suite once at the end. Recalculate the
-Charlie edition in LibreOffice and report formulas, mismatches and errors. Fail the build if any Highlights chip evaluates
+reader in LibreOffice and report formulas, mismatches and errors. Fail the build if any Highlights chip evaluates
 to an error or blank. At the end of the build, print the rendered cards and their chip values (as displayed) so they can
 be read in PowerShell.
