@@ -556,6 +556,7 @@ stayed a hole. Now every plain `python token_metrics.py` (no flag) does this fir
   "not before" start.
 - A day already inside a stored multi-day row (`[span=Nd]`, the STRADDLED guard).
 - A day in a declared handover's earlier leg.
+- A day of a declared source hole (`config.declared_source_hole`: the source itself never reported it, e.g. Morpho's fees).
 
 A row is never overwritten.
 
