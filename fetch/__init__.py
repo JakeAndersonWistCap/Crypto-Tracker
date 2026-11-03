@@ -168,9 +168,11 @@ TIER_ORDER = [
     ("xref", 1, lambda ctx: CrossRefs()),
     # ETH staked (beaconcha.in votedether via validatorqueue.com's GitHub history), 2026-10-05.
     ("validatorqueue", 1, lambda ctx: StakedEth()),
-    # P3-A3 (2026-11-02): validatorqueue stopped at 2026-10-25 — the beacon chain's own state (beaconcha.in with
-    # BEACONCHAIN_API_KEY for the overlap days, else a public beacon node, today only); switched after a 7-day overlap.
-    ("beacon_api", 1, lambda ctx: BeaconStakedEth()),
+    # P3-A3 (2026-11-02): validatorqueue stopped at 2026-10-25. P4-Q4 (Jake 2026-11-03): staked ETH and the validator
+    # count from beaconcha.in's v2 epoch endpoint (BEACONCHAIN_API_KEY, a bearer header), each day's first epoch, the
+    # window backfilled newest first under the tier's budget — the store is the state (stored_long), so a stopped
+    # backfill resumes; switched after the overlap check on validatorqueue's last week.
+    ("beacon_api", 1, lambda ctx: BeaconStakedEth(stored_long=ctx.get("stored_long"))),
     # The 3-month US T-bill, the risk-free benchmark (Phase 3, 2026-10-12 night): Treasury's own daily bill rates, FRED
     # DTB3 the cross-check; stored under the pseudo-project Macro.
     ("treasury_bills", 1, lambda ctx: TreasuryBills()),
@@ -2039,9 +2041,11 @@ def stored_fresh(last_dates: dict | None, asof=None) -> set:
 # paths, three revenue-wallet balances, two Foundation balances) on a free plan of 6 credits a minute — the 7th waits
 # ~54s for the window, so 60s cut it with 5 of 9 read and Near's series gapped. 180s = two pacing windows + requests,
 # with a third window of slack (nearblocks_daily_calls(), tested).
+# BEACON_API 60 -> 180 (P4-Q4, 2026-11-03): beaconcha.in's v2 epoch backfill reads one epoch a second (the Free Trial /
+# Hobbyist rate): ~165 days a run, stopped 10 s before the budget so what was read is stored; the next run resumes.
 TIER_BUDGET_S = {
     "schedule:config": 15, "defillama": 150, "defillama_tvl": 150, "defillama_rwa_share": 150, "morpho_api": 60, "growthepie": 60,
-    "nearblocks": 180, "coingecko": 240, "price_history": 120, "hypercore_info": 60, "chainlink_fees": 180, "xref": 90, "validatorqueue": 30, "beacon_api": 60, "treasury_bills": 60, "sky_ssr": 120, "sky_msc": 60, "fluid_buybacks": 60, "geodnet_feed": 60, "pendle_latent": 60, "wm_supply": 60, "near_issuance": 120, "business": 900, "share_vault": 60,
+    "nearblocks": 180, "coingecko": 240, "price_history": 120, "hypercore_info": 60, "chainlink_fees": 180, "xref": 90, "validatorqueue": 30, "beacon_api": 180, "treasury_bills": 60, "sky_ssr": 120, "sky_msc": 60, "fluid_buybacks": 60, "geodnet_feed": 60, "pendle_latent": 60, "wm_supply": 60, "near_issuance": 120, "business": 900, "share_vault": 60,
     "chain": 240, "tron_node": 60, "near_rpc": 90, "explorer": 300, "balance_flow": 150, "maple_page": 60,
     "explorer_gauge": 300,
     # the L2 chain tiers (explorer_l2:<chain>, G3 item 1) take config.L2_TIER_BUDGET_S, set below

@@ -4,7 +4,7 @@ A1 MONTHLY SERIES WINDOWING: a monthly series is windowed on its LAST COMPLETE P
 "3 months to <month end>"; an unpublished month is publication lag, never a hole; STALE only more than 45 days past
 the newest month's end; rule 9 sets a daily leg against a monthly one over the monthly series' own months.
 A3 ETHEREUM VALIDATOR SOURCE: staked ETH from the beacon chain's own state, handed over from validatorqueue only after a
-7-day overlap check (fake beacon answers).
+7-day overlap check (fake beacon answers; since P4-Q4 the route is beaconcha.in v2's epoch endpoint).
 A5 MORPHO API: the liquidation query asks for price{ usd } (blue-api renamed priceUsd).
 A6 CONCENTRATION CAVEAT: 2 or fewer days carrying more than 30% of a flow window turn the row AMBER with
 "x% of this window from <dates>" — never the value.
@@ -177,25 +177,20 @@ def test_a6_monthly_series_are_not_judged_by_days():
 
 # ============================================================================================ A3 validator source
 class _BeaconHttp:
-    """beaconcha.in epoch answers (eligibleether, gwei) and a Lighthouse node's finalized header + validator_inclusion."""
-    def __init__(self, eligible_eth=44_100_000.0, active_eth=44_233_406.0, fail_beaconchain=False):
-        self.eligible, self.active, self.fail = eligible_eth, active_eth, fail_beaconchain
+    """beaconcha.in v2 epoch answers (POST, total_validator_balance in wei, validators_count) — P4-Q4 replaced P3-A3's
+    v1 eligibleether / keyless Lighthouse routes."""
+    def __init__(self, staked_eth=44_100_000, fail_beaconchain=False):
+        self.staked, self.fail = staked_eth, fail_beaconchain
         self.calls = []
 
-    def get(self, url, params=None, headers=None, deadline=None):
-        self.calls.append((url, dict(headers or {})))
-        if "beaconcha.in" in url:
-            if self.fail:
-                raise RuntimeError("HTTP 401")
-            ep = int(url.rsplit("/", 1)[1])
-            return {"status": "OK", "data": {"epoch": ep, "eligibleether": int(self.eligible * 1e9),
-                                             "votedether": int(self.eligible * 0.99 * 1e9)}}
-        if url.endswith("/headers/finalized"):
-            return {"data": {"header": {"message": {"slot": "15567904"}}}}
-        if "validator_inclusion" in url:
-            return {"data": {"current_epoch_active_gwei": int(self.active * 1e9),
-                             "previous_epoch_target_attesting_gwei": 44071377000000000}}
-        raise AssertionError(url)
+    def post(self, url, json_body=None, headers=None, deadline=None):
+        self.calls.append((url, dict(headers or {}), json_body))
+        if self.fail:
+            raise RuntimeError("HTTP 401")
+        from fetch import staked_eth as se
+        ep = json_body["epoch"]["number"]
+        return {"data": {"epoch": ep, "timestamp": se.GENESIS_UNIX + ep * se.EPOCH_SECONDS, "validators_count": 950_000,
+                         "total_validator_balance": str(self.staked * 10**18), "finality": "finalized"}}
 
 
 class _Daily:
@@ -212,19 +207,16 @@ class _Daily:
         pass
 
 
-def test_a3_keyless_reads_the_beacon_node_today_only(monkeypatch):
+def test_a3_keyless_stores_nothing_and_says_so(monkeypatch):
+    """P4-Q4: the keyless beacon-node route is withdrawn (another quantity) — no key, no call, nothing stored, said."""
     from fetch.base import FetchOutput
     from fetch import staked_eth as se
     monkeypatch.setattr(se, "today", lambda: pd.Timestamp("2026-11-02 12:00"))
     a = se.BeaconStakedEth(http=_BeaconHttp(), daily=_Daily(), key="")
     out = FetchOutput()
     a.run([config.PROJECT_BY_NAME["Ethereum"]], 30, out)
-    f = out.frame()
-    assert len(f) == 1 and f["metric"].iloc[0] == "beacon_chain_eth_primary"
-    assert f["value"].iloc[0] == pytest.approx(44_233_406.0)
-    assert f["source"].iloc[0] == "beacon_api:validator_inclusion.current_epoch_active_gwei"
-    assert pd.Timestamp(f["date"].iloc[0]) == se.day_of_epoch(15567904 // 32)
-    assert not any("beaconcha.in" in u for u, _ in a.http.calls), "no key: beaconcha.in is never called"
+    assert out.frame().empty and not a.http.calls, "no key: nothing is called, nothing stored"
+    assert any("no BEACONCHAIN_API_KEY" in e.message for e in out.log)
 
 
 def test_a3_with_the_key_reads_each_days_first_epoch_and_never_puts_the_key_in_a_url(monkeypatch):
@@ -234,22 +226,23 @@ def test_a3_with_the_key_reads_each_days_first_epoch_and_never_puts_the_key_in_a
     a = se.BeaconStakedEth(http=_BeaconHttp(), daily=_Daily(ever=False), key="SECRETKEY123")
     out = FetchOutput()
     a.run([config.PROJECT_BY_NAME["Ethereum"]], 30, out)
-    f = out.frame().sort_values("date")
-    assert len(f) == 21 and pd.Timestamp(f["date"].min()) == pd.Timestamp("2026-10-12")
-    assert set(f["source"]) == {"beaconchain:epoch.eligibleether"}
-    urls = [u for u, _ in a.http.calls]
-    assert all("SECRETKEY123" not in u for u in urls) and all(h.get("apikey") == "SECRETKEY123"
-                                                               for u, h in a.http.calls if "beaconcha.in" in u)
+    f = out.frame()
+    st = f[f["metric"] == "beacon_chain_eth_primary"].sort_values("date")
+    assert len(st) == 455 and pd.Timestamp(st["date"].max()) == pd.Timestamp("2026-11-02")
+    assert set(st["source"]) == {"beaconchain:v2_epoch.total_validator_balance"}
+    assert all("SECRETKEY123" not in u and "SECRETKEY123" not in str(b) for u, _, b in a.http.calls)
+    assert all(h.get("Authorization") == "Bearer SECRETKEY123" for _, h, _ in a.http.calls)
     assert all("SECRETKEY123" not in e.message for e in out.log)
     assert se.day_of_epoch(se.epoch_at(pd.Timestamp("2026-10-19"))) == pd.Timestamp("2026-10-19")
-    # a refused key falls back to the beacon node, and says why
+    # a refused key stores nothing (no keyless fallback any more), and says why without the key
     b = se.BeaconStakedEth(http=_BeaconHttp(fail_beaconchain=True), daily=_Daily(), key="SECRETKEY123")
     out2 = FetchOutput()
     b.run([config.PROJECT_BY_NAME["Ethereum"]], 30, out2)
-    assert len(out2.frame()) == 1 and "HTTP 401" not in out2.frame()["source"].iloc[0]
+    assert out2.frame().empty and len(b.http.calls) == 1
+    assert any("HTTP 401" in e.message for e in out2.log) and all("SECRETKEY123" not in e.message for e in out2.log)
 
 
-def _eth_rows(vq_days, vq_val, prim_days, prim_val, prim_src="beaconchain:epoch.eligibleether"):
+def _eth_rows(vq_days, vq_val, prim_days, prim_val, prim_src="beaconchain:v2_epoch.total_validator_balance"):
     rows = [_row("Ethereum", "beacon_chain_eth", d, vq_val, "validatorqueue:staked_amount", 1) for d in vq_days]
     rows += [_row("Ethereum", "beacon_chain_eth_primary", d, prim_val, prim_src, 1) for d in prim_days]
     return rows
@@ -272,12 +265,11 @@ def test_a3_handover_made_after_a_7_day_overlap_within_2_percent():
 @pytest.mark.parametrize("prim_days,prim_val,why", [
     (pd.date_range("2026-10-20", "2026-11-01"), 44_100_000.0, "6 common day(s)"),          # one day short of 7
     (pd.date_range("2026-10-19", "2026-11-01"), 46_000_000.0, "+5.26%"),                     # 7 days, outside ±2%
-    (pd.date_range("2026-11-02", "2026-11-02"), 44_233_406.0, "share no stored day"),        # keyless: today only
+    (pd.date_range("2026-11-02", "2026-11-02"), 44_233_406.0, "share no stored day"),        # no overlap day read
 ])
 def test_a3_handover_not_made_when_the_overlap_fails(prim_days, prim_val, why):
     vq = pd.date_range("2026-10-01", "2026-10-25")
-    by = _agg(_eth_rows(vq, 43_700_000.0, prim_days, prim_val,
-                        "beacon_api:validator_inclusion.current_epoch_active_gwei"), "2026-11-02")
+    by = _agg(_eth_rows(vq, 43_700_000.0, prim_days, prim_val), "2026-11-02")
     r = by["Ethereum|beacon_chain_eth"]
     assert r["latest_date"] == "2026-10-25" and r["source"] == "validatorqueue:staked_amount"   # never switched blind
     held = bw.HANDOVER_HELD[("Ethereum", "beacon_chain_eth")]

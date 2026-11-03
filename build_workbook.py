@@ -1353,12 +1353,18 @@ def handover_overlap(groups: dict, project: str, spec: dict) -> dict:
     tol, need = float(spec.get("tolerance_pct", 2.0)), int(spec.get("min_days", 3))
     common = a.index.intersection(b.index)
     common = common[a[common] != 0]
+    # P4-Q4: A DECLARED OVERLAP WEEK (spec["days"] = (first, last)) — the check compares on those days only (Ethereum:
+    # validatorqueue's last week, 2026-10-19..10-25), never on whatever else both series happen to hold
+    span = spec.get("days")
+    if span:
+        common = common[(common >= pd.Timestamp(span[0])) & (common <= pd.Timestamp(span[1]))]
     out = {"a_metric": spec["a"], "b_metric": spec["b"], "common_days": int(len(common)), "tolerance_pct": tol,
            "min_days": need, "passed": False}
     la = spec["a"] + (f" [{spec['a_label']}]" if spec.get("a_label") else "")
     lb = spec["b"] + (f" [{spec['b_label']}]" if spec.get("b_label") else "")
+    on = f" on {pd.Timestamp(span[0]).date()}..{pd.Timestamp(span[1]).date()}" if span else ""
     if not len(common):
-        out["text"] = (f"OVERLAP CHECK: {la} and {lb} share no stored day — the seam is UNCHECKED"
+        out["text"] = (f"OVERLAP CHECK: {la} and {lb} share no stored day{on} — the seam is UNCHECKED"
                        + (f" ({spec['why_none']})" if spec.get("why_none") else ""))
         return out
     gap = (b[common] / a[common] - 1.0) * 100.0
@@ -1366,9 +1372,16 @@ def handover_overlap(groups: dict, project: str, spec: dict) -> dict:
     out.update(latest=str(last.date()), a=float(a[last]), b=float(b[last]), gap=float(gap[last]),
                worst_gap=float(gap[worst]), worst_day=str(worst.date()))
     out["passed"] = len(common) >= need and float(gap.abs().max()) <= tol
+    per_day = ""
+    if span:                      # P4-Q4: the gap on every day of the declared week, and its mean, said
+        out["mean_gap"] = float(gap.mean())
+        out["per_day"] = {str(d.date()): float(gap[d]) for d in common}
+        per_day = (f"; mean gap {gap.mean():+.2f}% — per day "
+                   + ", ".join(f"{d.strftime('%m-%d')} {gap[d]:+.2f}%" for d in common))
     out["text"] = (f"OVERLAP CHECK {'PASSED' if out['passed'] else 'NOT PASSED'}: {lb} vs {la} on "
-                   f"{len(common)} common day(s) — {last.date()}: {b[last]:,.6g} vs {a[last]:,.6g} ({gap[last]:+.2f}%); "
-                   f"worst {gap[worst]:+.2f}% on {worst.date()}; tolerance ±{tol:g}% over ≥{need} days"
+                   f"{len(common)} common day(s){on} — {last.date()}: {b[last]:,.6g} vs {a[last]:,.6g} "
+                   f"({gap[last]:+.2f}%); worst {gap[worst]:+.2f}% on {worst.date()}{per_day}; "
+                   f"tolerance ±{tol:g}% over ≥{need} days"
                    + ("" if out["passed"] else f" — {spec.get('if_not_passed', 'a CHANGE OF BASIS at the seam, not a flow')}"))
     return out
 
@@ -7456,10 +7469,20 @@ def _stake_inside(R: Refs, r, p: dict, metric: str = "locked_tokens", col: str =
 
 def _lock_inside(R: Refs, r, p: dict) -> str:
     """The lock rate's numerator: the displayed lock inside circulating — the MEASURED 0 where nothing is locked by
-    design (config free_float_lock_zero: Morpho, Maple, Uniswap, Fluid; P3-1b R1), the one figure _ff_lock uses."""
+    design (config free_float_lock_zero: Morpho, Maple, Uniswap, Fluid; P3-1b R1), the one figure _ff_lock uses.
+    P4-Q4 (Jake 2026-11-03): where STAKE COUNTS AS LOCKED (config.STAKE_COUNTS_AS_LOCKED — Ethereum: the exit queue makes
+    staked ETH a lock), the declared stake series CP's staked column, the tradeable float and the A1 staking rate read
+    (_cp_lock): one computation (rule 1), never locked_tokens' n/a beside a staked figure."""
     if p.get("free_float_lock_zero"):
         return "0"
+    if p["name"] in config.STAKE_COUNTS_AS_LOCKED and config.CP_STAKE_METRIC.get(p["name"]):
+        return _cp_lock(R, r, p)
     return _stake_inside(R, r, p, config.lock_display_metric(p["name"]))
+
+
+def _lock_note(p: dict) -> str:
+    """The lock-rate cell's comment: the measured-zero note (P3-1b R1), or why staked tokens count as locked (P4-Q4)."""
+    return _lock_zero_note(p) or config.STAKE_COUNTS_AS_LOCKED.get(p["name"], "")
 
 
 def _circ(R: Refs, r, p: dict) -> str:
@@ -10694,7 +10717,7 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         # ---- DEMAND (LITMUS B; lock rate on the demand side, amendment 5) ----
         ("Holding demand — lock rate = locked ÷ circulating",
          lambda r, p: calc(f"({_lock_inside(R, r, p)})/({circ(r, p)})"),
-         FMT_PCT, "calc", False, {"note_fn": lambda p: _lock_zero_note(p)}),
+         FMT_PCT, "calc", False, {"note_fn": lambda p: _lock_note(p)}),
         ("Holding demand — components and caps (cap utilisation where read)",
          lambda r, p: "; ".join(x for x in [caps_text(p), config.phase2_attribute_text(p["name"], "holding_demand")
                                             if p["name"] in config.PHASE2_ATTRIBUTES else ""] if x), FMT_TEXT, "text"),
@@ -11186,7 +11209,7 @@ def write_a3(ws, R: Refs, data_by_key: dict):
         # printed directly above it.
         ("Lock rate = locked inside circulating ÷ circulating (stake held by wallets outside circulating excluded)",
          lambda r, p: calc(f"({_lock_inside(R, r, p)})/({circ(r, p)})"),
-         FMT_PCT, "calc", False, {"note_fn": lambda p: _lock_zero_note(p)}),
+         FMT_PCT, "calc", False, {"note_fn": lambda p: _lock_note(p)}),
         ("Tokens locked — cross-check (protocol dashboard)", lambda r, p: pull(R.D(r, "locked_tokens_dashboard", "now")),
          FMT_NUM, "pull", False, {"metric": "locked_tokens_dashboard"}),
         # The divergence is meaningless without the cross-check, so it inherits the cross-check's

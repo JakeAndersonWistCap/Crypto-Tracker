@@ -22,6 +22,7 @@ stores a year, later reads a week.
 from __future__ import annotations
 
 import logging
+import re
 
 import pandas as pd
 
@@ -104,22 +105,44 @@ class StakedEth:
 
 
 # ===== P3-A3 (Jake's 2026-11-02 run): validatorqueue's history stopped at 2026-10-25. =====
-# ETH staked is re-routed to the BEACON CHAIN ITSELF — staked ETH = Σ effective balance of the ACTIVE validators — and
-# stored as its own series (config Ethereum["staked_eth_primary"]["metric"]) beside the stored validatorqueue one. The
-# switch is a DECLARED HANDOVER (config series_handover["beacon_chain_eth"], rule 10): beacon_chain_eth reads the new
-# series only after the 7-day OVERLAP CHECK against the stored validatorqueue days passes
-# (build_workbook._handover_continuation_views, requires_overlap). Two routes, one quantity:
-#   1. beaconcha.in /api/v1/epoch/{epoch} `eligibleether` (gwei) — with BEACONCHAIN_API_KEY only; reads each day's first
-#      epoch back over `history_days`, so the overlap days (validatorqueue's last 7) can be read.
-#   2. a public beacon node (Lighthouse) /lighthouse/validator_inclusion/{epoch}/global `current_epoch_active_gwei` at the
-#      finalized epoch — keyless, but the node keeps no past state: TODAY only, so it cannot make the overlap by itself.
-# Never a carried value, never a 0 for an unread day; a refused answer stores nothing and says why.
+# ===== P4-Q4 (Jake 2026-11-03, SPEC "P4-Q4"): THE ROUTE IS beaconcha.in's v2 EPOCH ENDPOINT. =====
+# ETH staked is read from beaconcha.in's v2 API and stored as its own series (config Ethereum["staked_eth_primary"]
+# ["metric"], beacon_chain_eth_primary) beside the stored validatorqueue one; the validator count beside it
+# (["count_metric"]). The switch is a DECLARED HANDOVER (config series_handover["beacon_chain_eth"], rule 10):
+# beacon_chain_eth reads the new series only after the OVERLAP CHECK on validatorqueue's last week (2026-10-19..10-25)
+# passes (build_workbook._handover_continuation_views, requires_overlap).
+#
+#     POST https://beaconcha.in/api/v2/ethereum/epoch          Authorization: Bearer <BEACONCHAIN_API_KEY>
+#     body {"chain": "mainnet", "epoch": {"number": <the day's first epoch>}}
+#     -> {"data": {"epoch", "timestamp", "validators_count", "total_validator_balance" (wei, a decimal string),
+#                  "finality": "finalized" | "not_finalized", ...}}
+#
+# Read from docs.beaconcha.in (api-reference/ethereum/epoch/overview, OpenAPI "External Service API" 1.0.3) on
+# 2026-11-03: total_validator_balance = "Sum of the actual balances (in wei) of all validators at this epoch";
+# validators_count = "Number of active validators participating in consensus during this epoch"; the epoch is chosen
+# by {"number": n} or {"view": "latest" | "finalized"}; the key is an HTTP bearer token. Keyless, the endpoint answers
+# 401 to a well-formed body (checked 2026-11-03), so no live keyed answer was read from here.
+#
+# ONE DAY = THE DAY'S FIRST EPOCH: the first epoch starting at or after 00:00 UTC, ceil((day_start - genesis) / 384).
+# The whole window the cells read (history_days, five quarters) is backfilled by epoch number, NEWEST FIRST, under the
+# tier's time budget; the store is the state — a day already holding both series is not asked again, so a run stopped by
+# the budget resumes where it stopped. STRICT: a missing or malformed field, another epoch than the one asked, or an
+# epoch not yet finalized is a REFUSAL for that day (said, nothing stored) — never a 0, never a carried value.
+#
+# THE KEYLESS BEACON-NODE ROUTE (P3-A3) IS WITHDRAWN: it read Σ EFFECTIVE balance of ACTIVE validators
+# (current_epoch_active_gwei), a different quantity from total_validator_balance (Σ ACTUAL balances of all validators);
+# storing it under the same series would mix two definitions (rule 1). Its stored rows are removed by the run
+# (config.RUN_CLEANUPS "P4-Q4"). Without the key nothing is stored and the run says so.
 GENESIS_UNIX = 1606824023          # beacon chain genesis (mainnet), seconds
 EPOCH_SECONDS = 32 * 12
+POINT = "beaconchain:v2_epoch.total_validator_balance"
+COUNT_POINT = "beaconchain:v2_epoch.validators_count"
+STOP_BEFORE_S = 10.0               # stop this long before the tier's budget, so what was read is stored
+_WEI = re.compile(r"^(0|[1-9][0-9]*)$")
 
 
 def epoch_at(day: pd.Timestamp) -> int:
-    """The first epoch starting at or after 00:00 UTC of `day` (its first epoch)."""
+    """The first epoch starting at or after 00:00 UTC of `day` (its first epoch): ceil((day start − genesis) / 384)."""
     ts = int(pd.Timestamp(day).normalize().timestamp())
     return max(0, -(-(ts - GENESIS_UNIX) // EPOCH_SECONDS))
 
@@ -128,99 +151,156 @@ def day_of_epoch(epoch: int) -> pd.Timestamp:
     return pd.Timestamp(GENESIS_UNIX + int(epoch) * EPOCH_SECONDS, unit="s").normalize()
 
 
-def gwei_to_eth(v) -> float | None:
-    try:
-        x = float(v) / 1e9
-    except (TypeError, ValueError):
+def wei_to_eth(raw) -> float | None:
+    """A wei amount (the API's decimal string, or an int) in ETH; None for anything else (a float, a negative, a
+    blank) — never 0 for an unreadable figure."""
+    if isinstance(raw, bool) or raw is None:
         return None
-    return x if x > 0 else None
+    s = str(raw) if isinstance(raw, (int, str)) else None
+    if s is None or not _WEI.match(s):
+        return None
+    wei = int(s)
+    return wei / 1e18 if wei > 0 else None
+
+
+def parse_epoch(body, epoch: int) -> tuple[float, int] | str:
+    """(staked ETH, validators_count) from a v2 epoch answer for `epoch`, or why the answer is refused."""
+    if not isinstance(body, dict) or not isinstance(body.get("data"), dict):
+        return f"no data object in the answer ({type(body).__name__})"
+    d = body["data"]
+    got = d.get("epoch")
+    if isinstance(got, bool) or not isinstance(got, int) or got != int(epoch):
+        return f"answered epoch {got!r} for epoch {epoch}"
+    if d.get("finality") != "finalized":
+        return f"epoch {epoch} is not finalized yet (finality {d.get('finality')!r}) — read on a later run"
+    ts = d.get("timestamp")
+    if isinstance(ts, bool) or not isinstance(ts, int) or ts != GENESIS_UNIX + int(epoch) * EPOCH_SECONDS:
+        return f"epoch {epoch}: timestamp {ts!r} is not the epoch's start"
+    if "total_validator_balance" not in d:
+        return f"epoch {epoch}: no total_validator_balance in the answer"
+    eth = wei_to_eth(d["total_validator_balance"])
+    if eth is None:
+        return f"epoch {epoch}: total_validator_balance {str(d['total_validator_balance'])[:40]!r} is not a wei amount"
+    n = d.get("validators_count")
+    if isinstance(n, bool) or not isinstance(n, int) or n <= 0:
+        return f"epoch {epoch}: validators_count {n!r} is missing or not a positive integer"
+    return eth, n
 
 
 class BeaconStakedEth:
-    """ETH staked from a PRIMARY source (P3-A3): beaconcha.in with the key, else the public beacon API (today only)."""
+    """ETH staked and the validator count, one row a day at the day's first epoch, from beaconcha.in v2 (P4-Q4)."""
     SOURCE = "beacon_api"
     TIER = TIER
 
-    def __init__(self, http: Http | None = None, daily=None, key: str | None = None, **_ignored):
+    def __init__(self, http: Http | None = None, daily=None, key: str | None = None, stored_long=None,
+                 deadline_s: float | None = None, **_ignored):
         import os
-        self.http = http or Http(min_interval=2.0, retries=1)     # public endpoints: paced, one retry
+        # 1 request a second: beaconcha.in's Free Trial / Hobbyist rate (docs.beaconcha.in/api/overview, 2026-11-03)
+        self.http = http or Http(min_interval=1.0, retries=1)
         if daily is None:
             from .logcache import DailyChecks
             daily = DailyChecks()
         self.daily = daily
         self.key = (os.environ.get("BEACONCHAIN_API_KEY", "") if key is None else key).strip()
+        self.stored = stored_long
+        self.deadline_s = deadline_s          # None: the tier's budget less STOP_BEFORE_S
+
+    def _scrub(self, text) -> str:
+        s = str(text)
+        return s.replace(self.key, "***") if self.key else s
+
+    def stored_days(self, name: str, metric: str, count_metric: str) -> set:
+        """The days already holding BOTH series from this route (the backfill's state is the store)."""
+        df = self.stored
+        if df is None or getattr(df, "empty", True):
+            return set()
+        from .base import _measuring_point
+        df = df[(df["project"] == name) & df["metric"].isin([metric, count_metric])]
+        if df.empty:
+            return set()
+        mp = df["source"].astype(str).map(_measuring_point)
+        df = df[mp.isin([_measuring_point(POINT), _measuring_point(COUNT_POINT)])]
+        days = df.assign(d=pd.to_datetime(df["date"]).dt.normalize()).groupby("d")["metric"].nunique()
+        return set(days[days >= 2].index)
+
+    def window(self, spec: dict) -> list[pd.Timestamp]:
+        """Every day of the window the cells read, newest first (today included: its first epoch is minutes old)."""
+        end = today().normalize()
+        return [end - pd.Timedelta(days=k) for k in range(int(spec.get("history_days", 455)))]
 
     def run(self, projects: list[dict], window_days, out):
+        import time as _time
         for p in projects:
             spec = p.get("staked_eth_primary")
             if not spec:
                 continue
-            name, metric = p["name"], spec["metric"]
+            name, metric, cmetric = p["name"], spec["metric"], spec["count_metric"]
             day = str(today().date())
-            dkey = "staked_eth:beacon_primary"
+            dkey = "staked_eth:beaconchain_v2"
             if not self.daily.due(dkey, day):
-                out.mark_current(self.SOURCE, name, metric, f"{metric}: read today already", TIER)
+                out.mark_current(self.SOURCE, name, metric, f"{metric}: every day of the window read today already",
+                                 TIER)
                 continue
-            first = not self.daily.ever(dkey)
-            rows, why = ([], "")
-            if self.key:
-                rows, why = self.beaconchain_days(spec, int(spec.get("history_days", 21)) if first else 3)
-            if not rows:
-                one, why2 = self.beacon_api_today(spec)
-                rows, why = (one, why) if one else ([], "; ".join(x for x in (why, why2) if x))
-            if not rows:
-                out.fail(self.SOURCE, name, f"{metric}: NOTHING STORED — {why}"
-                         + ("" if self.key else " (no BEACONCHAIN_API_KEY: the overlap days cannot be read)"), TIER)
+            if not self.key:
+                out.fail(self.SOURCE, name, f"{metric}, {cmetric}: NOTHING STORED — no BEACONCHAIN_API_KEY in the "
+                                            f"environment; beaconcha.in's v2 epoch endpoint needs it (keyless it "
+                                            f"answers 401). The handover from validatorqueue waits for these days",
+                         TIER)
                 continue
-            for src, items in _by_source(rows).items():
-                out.add(tidy(items, name, metric, src, TIER), self.SOURCE, name,
-                        f"{metric}: {len(items)} day(s) {items[0][0].date()}..{items[-1][0].date()}, latest "
-                        f"{items[-1][1]:,.0f} ETH — Σ effective balance of active validators ({src.split(':')[0]})"
-                        + (f"; {why}" if why else ""), TIER)
-            self.daily.done(dkey, day)
+            have = self.stored_days(name, metric, cmetric)
+            todo = [d for d in self.window(spec) if d not in have]
+            if not todo:
+                out.mark_current(self.SOURCE, name, metric, f"{metric}: every day of the {spec.get('history_days', 455)}"
+                                                            f"-day window is held", TIER)
+                self.daily.done(dkey, day)
+                continue
+            if self.deadline_s is not None:
+                deadline = _time.monotonic() + self.deadline_s
+            else:
+                from . import _budget                                  # noqa: PLC0415
+                deadline = _time.monotonic() + _budget(self.SOURCE) - STOP_BEFORE_S
+            staked, counts, refused, stopped = [], [], [], ""
+            for d in todo:
+                if _time.monotonic() >= deadline:
+                    stopped = "the tier's time budget"
+                    break
+                ep = epoch_at(d)
+                try:
+                    body = self.request(spec, ep)
+                except Exception as e:  # noqa: BLE001 — a refused key, a plan, a rate limit: stop, never hammer
+                    st = getattr(e, "status", None)
+                    stopped = self._scrub(f"epoch {ep} ({d.date()}): {type(e).__name__}"
+                                          + (f" HTTP {st}" if st else "") + f": {str(e)[:160]}")
+                    break
+                got = parse_epoch(body, ep)
+                if isinstance(got, str):
+                    refused.append(f"{d.date()}: {self._scrub(got)}")
+                    continue
+                if day_of_epoch(ep) != d:
+                    refused.append(f"{d.date()}: epoch {ep} starts on {day_of_epoch(ep).date()}")
+                    continue
+                staked.append((d, got[0]))
+                counts.append((d, got[1]))
+            left = len(todo) - len(staked) - len(refused)
+            tail = (f"; {len(refused)} day(s) REFUSED (nothing stored for them): " + "; ".join(refused[:4])
+                    if refused else "") + (f"; STOPPED at {stopped} — {left} day(s) left, the next run resumes"
+                                           if stopped else "")
+            if staked:
+                staked.sort()
+                counts.sort()
+                out.add(tidy(staked, name, metric, POINT, TIER), self.SOURCE, name,
+                        f"{metric}: {len(staked)} day(s) {staked[0][0].date()}..{staked[-1][0].date()}, latest "
+                        f"{staked[-1][1]:,.0f} ETH — beaconcha.in v2 epoch total_validator_balance (wei → ETH) at "
+                        f"each day's first epoch; {len(have)} day(s) already held" + tail, TIER)
+                out.add(tidy(counts, name, cmetric, COUNT_POINT, TIER), self.SOURCE, name,
+                        f"{cmetric}: {len(counts)} day(s), latest {counts[-1][1]:,} validators", TIER)
+            else:
+                out.fail(self.SOURCE, name, f"{metric}, {cmetric}: NOTHING STORED this run" + (tail or ""), TIER)
+            if not stopped:
+                self.daily.done(dkey, day)
 
-    def beaconchain_days(self, spec: dict, days: int) -> tuple[list, str]:
-        """[(day, ETH, source)] from beaconcha.in's epoch endpoint at each day's first epoch, oldest first, the last
-        `days` complete days and today's finalized epoch excluded. The key goes in a header, never into a URL or log."""
+    def request(self, spec: dict, epoch: int):
+        """One POST for one epoch. The key goes in the Authorization header only — never in the URL, body or log."""
         bc = spec["beaconchain"]
-        end = today().normalize()
-        out, errs = [], []
-        for k in range(days, 0, -1):
-            d = end - pd.Timedelta(days=k)
-            ep = epoch_at(d)
-            try:
-                body = self.http.get(bc["base"] + bc["path"].format(epoch=ep), headers={"apikey": self.key})
-            except Exception as e:  # noqa: BLE001
-                errs.append(f"beaconcha.in epoch {ep}: {type(e).__name__}")
-                break                                   # a refused key or a rate limit: stop, never hammer
-            v = gwei_to_eth(((body or {}).get("data") or {}).get(bc["field"])) if isinstance(body, dict) else None
-            if v is None:
-                errs.append(f"beaconcha.in epoch {ep}: no {bc['field']} in the answer")
-                continue
-            out.append((d, v, f"beaconchain:epoch.{bc['field']}"))
-        return out, "; ".join(errs[:3])
-
-    def beacon_api_today(self, spec: dict) -> tuple[list, str]:
-        """[(day, ETH, source)] for the finalized epoch's day from a public beacon node (Lighthouse), or why not."""
-        ba = spec["beacon_api"]
-        try:
-            hdr = self.http.get(ba["base"] + ba["finalized_header"])
-            slot = int(hdr["data"]["header"]["message"]["slot"])
-        except Exception as e:  # noqa: BLE001
-            return [], f"beacon API finalized header: {type(e).__name__}: {str(e)[:120]}"
-        ep = slot // 32
-        try:
-            body = self.http.get(ba["base"] + ba["path"].format(epoch=ep))
-        except Exception as e:  # noqa: BLE001
-            return [], f"beacon API validator_inclusion epoch {ep}: {type(e).__name__}: {str(e)[:120]}"
-        v = gwei_to_eth(((body or {}).get("data") or {}).get(ba["field"])) if isinstance(body, dict) else None
-        if v is None:
-            return [], f"beacon API epoch {ep}: no {ba['field']} in the answer"
-        return [(day_of_epoch(ep), v, f"beacon_api:validator_inclusion.{ba['field']}")], ""
-
-
-def _by_source(rows: list) -> dict:
-    out: dict = {}
-    for d, v, src in sorted(rows):
-        out.setdefault(src, []).append((d, v))
-    return out
+        return self.http.post(bc["url"], json_body={"chain": bc.get("chain", "mainnet"), "epoch": {"number": int(epoch)}},
+                              headers={"Authorization": f"Bearer {self.key}"})
