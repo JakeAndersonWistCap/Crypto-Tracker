@@ -162,6 +162,9 @@ def test_the_spec_row_records_the_accepted_span_fix_moves():
                  "NET HOLDER YIELD", "0.17% → 0.03%"):
         assert move in row, move
     assert "3.423%" not in row, "the as-of-today dump values are gone (CORRECTED)"
+    # round 1C item 0a: the A3 key is named, with Jake's values from his store
+    assert "THE A3 KEY 'BURNED ÷ (EMISSIONS + UNLOCKS)' 0.3872 → 0.3743" in row
+    assert "'RETIREMENT ÷ DILUTION' 0.3872 → 0.3743" in row and "A3 'FDV retirement rate (tokens)'" in row
 
 
 def test_the_holder_value_yield_spread_over_the_tbill_carries_the_span_fix_flag():
