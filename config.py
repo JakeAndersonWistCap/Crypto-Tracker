@@ -24282,8 +24282,14 @@ REVIEW_ANSWERED = [
 
 
 def review_answered(row: dict, on=None) -> dict | None:
-    """The REVIEW_ANSWERED entry for a Review Queue row, or None (open)."""
+    """The REVIEW_ANSWERED entry for a Review Queue row, or None (open). P5-1.6: a row RESOLVED in the store
+    (review_resolutions, read by store.review_queue) is answered too: {"decision": "ACCEPT", "resolution": ..., "why":
+    the resolution's note} — a resolved flag no longer flags its series and is never counted as open work."""
     import pandas as _pd
+    res = row.get("resolution")
+    if res is not None and not (isinstance(res, float) and res != res) and str(res).strip():
+        return {"project": row.get("project"), "metric": row.get("metric"), "reason": row.get("reason"),
+                "decision": "ACCEPT", "resolution": str(res), "why": f"{res}: {row.get('resolution_note') or ''}"}
     day = _pd.Timestamp(on).normalize() if on is not None else _pd.Timestamp.today().normalize()
     d = str(row.get("date") or "")[:10]
     for a in REVIEW_ANSWERED:
