@@ -242,33 +242,35 @@ def test_a3_with_the_key_reads_each_days_first_epoch_and_never_puts_the_key_in_a
     assert any("HTTP 401" in e.message for e in out2.log) and all("SECRETKEY123" not in e.message for e in out2.log)
 
 
-def _eth_rows(vq_days, vq_val, prim_days, prim_val, prim_src="beaconchain:v2_epoch.total_validator_balance"):
+def _eth_rows(vq_days, vq_val, prim_days, prim_val, prim_src=None):
+    # P5-1.12: the next leg's rows are the BigQuery rebuild's; the overlap is its 455 days at ±1%
+    prim_src = prim_src or config.STAKED_REBUILD_POINT + "[test]"
     rows = [_row("Ethereum", "beacon_chain_eth", d, vq_val, "validatorqueue:staked_amount", 1) for d in vq_days]
     rows += [_row("Ethereum", "beacon_chain_eth_primary", d, prim_val, prim_src, 1) for d in prim_days]
     return rows
 
 
-def test_a3_handover_made_after_a_7_day_overlap_within_2_percent():
-    vq = pd.date_range("2026-10-01", "2026-10-25")
-    prim = pd.date_range("2026-10-19", "2026-11-01")                    # 7 common days: 10-19..10-25
+def test_a3_handover_made_after_the_455_day_overlap_within_1_percent():
+    vq = pd.date_range("2025-07-01", "2026-10-25")
+    prim = pd.date_range("2025-07-28", "2026-11-01")                    # 455 common days: 2025-07-28..2026-10-25
     by = _agg(_eth_rows(vq, 43_700_000.0, prim, 44_100_000.0), "2026-11-02")
     r = by["Ethereum|beacon_chain_eth"]
     assert r["latest_date"] == "2026-11-01" and r["now"] == pytest.approx(44_100_000.0)
     assert r["source"] == "derived:=beacon_chain_eth_primary"
     assert ("Ethereum", "beacon_chain_eth") in bw.HANDOVER_CONTINUED
     ho = bw.HANDOVER_OVERLAP[("Ethereum", "beacon_chain_eth")]
-    assert ho["passed"] and ho["common_days"] == 7 and "OVERLAP CHECK PASSED" in ho["text"]
+    assert ho["passed"] and ho["common_days"] == 455 and "OVERLAP CHECK PASSED" in ho["text"]
     assert config.declared_handover("Ethereum", "beacon_chain_eth")["ordered_points"][-1] == \
         "derived:=beacon_chain_eth_primary"
 
 
 @pytest.mark.parametrize("prim_days,prim_val,why", [
-    (pd.date_range("2026-10-20", "2026-11-01"), 44_100_000.0, "6 common day(s)"),          # one day short of 7
-    (pd.date_range("2026-10-19", "2026-11-01"), 46_000_000.0, "+5.26%"),                     # 7 days, outside ±2%
+    (pd.date_range("2025-07-29", "2026-11-01"), 44_100_000.0, "454 common day(s)"),        # one day short of 455
+    (pd.date_range("2025-07-28", "2026-11-01"), 46_000_000.0, "+5.26%"),                     # 455 days, outside ±1%
     (pd.date_range("2026-11-02", "2026-11-02"), 44_233_406.0, "share no stored day"),        # no overlap day read
 ])
 def test_a3_handover_not_made_when_the_overlap_fails(prim_days, prim_val, why):
-    vq = pd.date_range("2026-10-01", "2026-10-25")
+    vq = pd.date_range("2025-07-01", "2026-10-25")
     by = _agg(_eth_rows(vq, 43_700_000.0, prim_days, prim_val), "2026-11-02")
     r = by["Ethereum|beacon_chain_eth"]
     assert r["latest_date"] == "2026-10-25" and r["source"] == "validatorqueue:staked_amount"   # never switched blind

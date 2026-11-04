@@ -62,7 +62,7 @@ from .mev_relays import MevRelays
 from .browser_capture import BrowserCapture
 from .chainlink_fees import ChainlinkFees
 from .xref import CrossRefs
-from .staked_eth import BeaconStakedEth, StakedEth
+from .staked_eth import BeaconNodeStakedEth, BeaconStakedEth, StakedEth  # noqa: F401
 from .treasury import TreasuryBills
 from .sky_msc import SkyMsc
 from .fluid_buybacks import FluidBuybacks
@@ -172,7 +172,10 @@ TIER_ORDER = [
     # count from beaconcha.in's v2 epoch endpoint (BEACONCHAIN_API_KEY, a bearer header), each day's first epoch, the
     # window backfilled newest first under the tier's budget — the store is the state (stored_long), so a stopped
     # backfill resumes; switched after the overlap check on validatorqueue's last week.
-    ("beacon_api", 1, lambda ctx: BeaconStakedEth(stored_long=ctx.get("stored_long"))),
+    # P5-1.12 (Jake 2026-11-04): beaconcha.in's free-trial quota is spent (HTTP 429, a 2,300,523 s wait) — it is in a
+    # declared cooldown (config.HOST_COOLDOWN) and BeaconStakedEth is no longer a tier. Staked ETH is read once a day from
+    # a free public beacon node (Σ actual balances at the finalized state); past days come from staked_eth_rebuild.py.
+    ("beacon_api", 1, lambda ctx: BeaconNodeStakedEth()),
     # The 3-month US T-bill, the risk-free benchmark (Phase 3, 2026-10-12 night): Treasury's own daily bill rates, FRED
     # DTB3 the cross-check; stored under the pseudo-project Macro.
     ("treasury_bills", 1, lambda ctx: TreasuryBills()),

@@ -22,6 +22,7 @@ stores a year, later reads a week.
 from __future__ import annotations
 
 import logging
+import math
 import re
 
 import pandas as pd
@@ -304,3 +305,215 @@ class BeaconStakedEth:
         bc = spec["beaconchain"]
         return self.http.post(bc["url"], json_body={"chain": bc.get("chain", "mainnet"), "epoch": {"number": int(epoch)}},
                               headers={"Authorization": f"Bearer {self.key}"})
+
+
+# ===== P5-1.12 (Jake 2026-11-04): STOP RELYING ON beaconcha.in — A FREE PUBLIC BEACON NODE, ONCE A DAY. =====
+# beaconcha.in's free-trial quota is spent (HTTP 429, a 2,300,523 s wait); it is in a declared cooldown
+# (config.HOST_COOLDOWN, fetch.base.host_cooldown) and BeaconStakedEth above is no longer registered as a tier.
+# beacon_chain_eth_primary is read from a public beacon node with the standard Beacon API, keyless:
+#
+#     GET <node>/eth/v1/beacon/headers/finalized                       -> the finalized slot (read before and after)
+#     GET <node>/eth/v1/beacon/states/finalized/validator_balances      -> {"finalized": true, "data": [{index, balance}]}
+#
+# Σ balance (gwei -> ETH) = Σ ACTUAL balances of ALL validators at the finalized state: the quantity P4-Q4 chose
+# (beaconcha.in's total_validator_balance), so the series keeps one definition. The answer is ~88 MB of JSON (~7 MB
+# compressed); it is summed WHILE STREAMING, never held. The finalized slot is read before and after: if it moved, the
+# sum may straddle two states — read once more, else refused. The row is dated the UTC day of the finalized slot and
+# carries the slot. The node serves no past state (HTTP 403), so a missed day is not read back from here: the
+# BigQuery rebuild (staked_eth_rebuild.py) fills the days before the first node row.
+_BAL = re.compile(rb'"balance"\s*:\s*"(\d+)"')
+_AMT = re.compile(rb'"amount"\s*:\s*"(\d+)"')
+
+
+def sum_field_stream(chunks, field: bytes = b"balance") -> tuple[int, int, int]:
+    """(Σ gwei, entries, non-zero entries) of every "<field>":"<digits>" in a JSON byte stream given in chunks of any
+    size — a match split across two chunks is counted once (the tail of each chunk is carried into the next)."""
+    pat = _BAL if field == b"balance" else _AMT if field == b"amount" else \
+        re.compile(rb'"' + re.escape(field) + rb'"\s*:\s*"(\d+)"')
+    total = n = nz = 0
+    carry = b""
+    for chunk in chunks:
+        if not chunk:
+            continue
+        buf = carry + chunk
+        cut = buf.rfind(b"}")              # every complete entry ends at a "}": match up to the last one
+        if cut < 0:
+            carry = buf
+            continue
+        for m in pat.finditer(buf, 0, cut + 1):
+            v = int(m.group(1))
+            total, n, nz = total + v, n + 1, nz + (v > 0)
+        carry = buf[cut + 1:]
+    for m in pat.finditer(carry):
+        v = int(m.group(1))
+        total, n, nz = total + v, n + 1, nz + (v > 0)
+    return total, n, nz
+
+
+def slot_time(slot: int) -> pd.Timestamp:
+    return pd.Timestamp(GENESIS_UNIX + int(slot) * 12, unit="s")
+
+
+class BeaconNodeStakedEth:
+    """ETH staked (Σ actual balances of all validators at the finalized state) from a public beacon node (P5-1.12)."""
+    SOURCE = "beacon_api"
+    TIER = TIER
+
+    def __init__(self, session=None, daily=None, **_ignored):
+        self.session = session              # tests inject a stub; the run uses a requests.Session
+        if daily is None:
+            from .logcache import DailyChecks
+            daily = DailyChecks()
+        self.daily = daily
+
+    def _sess(self):
+        if self.session is None:
+            import requests
+            from .base import USER_AGENT
+            self.session = requests.Session()
+            self.session.headers.update({"User-Agent": USER_AGENT, "Accept-Encoding": "gzip, deflate"})
+        return self.session
+
+    def _get(self, url: str, stream: bool = False):
+        from .base import CONNECT_TIMEOUT_S, READ_TIMEOUT_S, host_cooldown, mask_url
+        import urllib.parse
+        host = urllib.parse.urlsplit(url).netloc
+        cool = host_cooldown(host)
+        if cool:
+            raise RuntimeError(cool)
+        r = self._sess().get(url, stream=stream, timeout=(CONNECT_TIMEOUT_S, READ_TIMEOUT_S))
+        if r.status_code != 200:
+            raise RuntimeError(f"HTTP {r.status_code} from {mask_url(url)}")
+        return r
+
+    def finalized_slot(self, node: str) -> int:
+        body = self._get(f"{node}/eth/v1/beacon/headers/finalized").json()
+        slot = ((((body or {}).get("data") or {}).get("header") or {}).get("message") or {}).get("slot")
+        if not (isinstance(slot, str) and slot.isdigit()):
+            raise RuntimeError(f"no finalized slot in the header answer ({str(body)[:80]})")
+        return int(slot)
+
+    def read(self, node: str, state: str = "finalized", field: str = "balance",
+             path: str = "validator_balances") -> tuple[int, int, int, int]:
+        """(slot, Σ gwei, entries, non-zero) at the finalized state, the slot unchanged across the read (one retry)."""
+        for _attempt in range(2):
+            s0 = self.finalized_slot(node)
+            r = self._get(f"{node}/eth/v1/beacon/states/{state}/{path}", stream=True)
+            it = iter(r.iter_content(chunk_size=1 << 16))
+            head = b""
+            for chunk in it:                       # the first bytes carry "finalized": checked before summing
+                head += chunk
+                if len(head) >= 200:
+                    break
+            if b'"finalized":true' not in head[:400].replace(b" ", b""):
+                raise RuntimeError(f"the {path} answer does not say finalized: {head[:80]!r}")
+            total, n, nz = sum_field_stream(_chain([head], it), field.encode())
+            if self.finalized_slot(node) == s0:
+                return s0, total, n, nz
+        raise RuntimeError("the finalized slot moved during the read twice — refused (the sum may straddle two states)")
+
+    def run(self, projects: list[dict], window_days, out):
+        for p in projects:
+            spec = p.get("staked_eth_node")
+            if not spec:
+                continue
+            name, metric = p["name"], spec["metric"]
+            day = str(today().date())
+            dkey = "staked_eth:beacon_node"
+            if not self.daily.due(dkey, day):
+                out.mark_current(self.SOURCE, name, metric, f"{metric}: read today already", TIER)
+                continue
+            errs = []
+            for node in spec["endpoints"]:
+                from .base import mask_url
+                try:
+                    slot, gwei, n, nz = self.read(node, spec.get("state", "finalized"))
+                except Exception as e:  # noqa: BLE001 — one endpoint's failure is said, the next is tried
+                    errs.append(f"{mask_url(node)}: {type(e).__name__}: {str(e)[:160]}")
+                    continue
+                eth = gwei / 1e9
+                lo, hi = config.METRICS[metric]["sanity_min"], config.METRICS[metric]["sanity_max"]
+                if n < int(spec.get("min_entries", 100_000)) or not (lo <= eth <= hi):
+                    errs.append(f"{mask_url(node)}: refused — {n:,} entries, Σ {eth:,.0f} ETH (band {lo:,.0f}.."
+                                f"{hi:,.0f} ETH, at least {int(spec.get('min_entries', 100_000)):,} entries)")
+                    continue
+                when = slot_time(slot)
+                src = f"{spec['point']}[finalized slot {slot}, {when:%H:%M} UTC; {nz:,} of {n:,} non-zero]"
+                out.add(tidy([(when.normalize(), eth)], name, metric, src, TIER), self.SOURCE, name,
+                        f"{metric}: {eth:,.0f} ETH — Σ actual balances of all validators at finalized slot {slot} "
+                        f"({when:%Y-%m-%d %H:%M} UTC), {n:,} entries ({nz:,} non-zero), public beacon node "
+                        f"{mask_url(node)}", TIER)
+                self.daily.done(dkey, day)
+                break
+            else:
+                out.fail(self.SOURCE, name, f"{metric}: NOTHING STORED — " + "; ".join(errs), TIER)
+
+
+def _chain(*its):
+    for it in its:
+        yield from it
+
+
+# ===== THE REBUILD (P5-1.12): the days before the first node row, from BigQuery's execution-layer data. =====
+# L (the lock: Σ validator balances + pending deposits) is what the execution layer sees; rolled BACK from a live node
+# read: L(start of day d) = L(start of day d+1) − deposits(d) + withdrawals(d) − rewards(d). B = L − Q, Q the deposit
+# queue simulated forward from Electra at the spec churn. Pure functions — staked_eth_rebuild.py feeds them the
+# query's rows and the anchor; the tests feed them stubs.
+def cl_reward_eth(stake_eth: float, days: float = 1.0, base_reward_factor: int = 64, epochs_per_day: int = 225) -> float:
+    """The consensus layer's maximum issuance over `days` at total active stake B (ETH): each epoch Σ base rewards =
+    B x BASE_REWARD_FACTOR ÷ sqrt(B x 1e9) ETH (altair get_base_reward_per_increment x the increments; the weights sum to
+    WEIGHT_DENOMINATOR, so full participation pays exactly this). An upper bound: missed duties are not paid."""
+    if stake_eth <= 0:
+        return 0.0
+    return epochs_per_day * days * stake_eth * base_reward_factor / math.sqrt(stake_eth * 1e9)
+
+
+def simulate_queue(deposits: dict, start_day, end_day, churn_per_day: float, q0: float = 0.0) -> dict:
+    """{day: deposit queue (ETH) at the START of day} from start_day to end_day inclusive: each day the queue takes the
+    day's deposits and releases at most churn_per_day (electra process_pending_deposits at
+    MAX_PER_EPOCH_ACTIVATION_EXIT_CHURN_LIMIT a epoch). q0 at the start of start_day."""
+    out, q = {}, float(q0)
+    for d in pd.date_range(pd.Timestamp(start_day), pd.Timestamp(end_day)):
+        out[d] = q
+        q = max(0.0, q + float(deposits.get(d, 0.0)) - churn_per_day)
+    return out
+
+
+def roll_back(anchor_lock: float, anchor_time: pd.Timestamp, flows: dict, partial: tuple, first_day,
+              base_reward_factor: int = 64, epochs_per_day: int = 225, queue: dict | None = None) -> dict:
+    """{day: L at 00:00 UTC of day} for first_day..the anchor's day, rolled back from the anchor's L.
+    flows = {day: (deposits ETH, withdrawals ETH)} for whole days before the anchor's day; partial = (deposits,
+    withdrawals) from 00:00 of the anchor's day to the anchor. Rewards use the balance B = L − queue (queue: {day: Q})."""
+    A = pd.Timestamp(anchor_time)
+    day_a = A.normalize()
+    frac = (A - day_a).total_seconds() / 86400.0
+    q = queue or {}
+    b_a = anchor_lock - q.get(day_a, 0.0)
+    lock = anchor_lock - partial[0] + partial[1] - cl_reward_eth(b_a, frac, base_reward_factor, epochs_per_day)
+    out = {day_a: lock}
+    d = day_a - pd.Timedelta(days=1)
+    while d >= pd.Timestamp(first_day):
+        if d not in flows:
+            raise KeyError(f"no flow row for {d.date()} — the rebuild needs every day (a hole is never 0)")
+        dep, wd = flows[d]
+        b = lock - q.get(d + pd.Timedelta(days=1), 0.0)
+        lock = lock - dep + wd - cl_reward_eth(b, 1.0, base_reward_factor, epochs_per_day)
+        out[d] = lock
+        d -= pd.Timedelta(days=1)
+    return out
+
+
+def overlap_test(rebuilt: dict, stored: dict, first, last, tol_pct: float, min_days: int) -> dict:
+    """Every stored day in [first, last] against the rebuild: passed only when at least min_days days are compared and
+    EVERY one is within ±tol_pct (Jake 2026-11-04: "agrees within ±1% on the overlap"). Missing rebuild days fail."""
+    days = [d for d in sorted(stored) if pd.Timestamp(first) <= d <= pd.Timestamp(last)]
+    gaps = {d: (rebuilt[d] / stored[d] - 1.0) * 100.0 for d in days if d in rebuilt and stored[d]}
+    missing = [d for d in days if d not in rebuilt]
+    worst = max(gaps, key=lambda d: abs(gaps[d])) if gaps else None
+    out = {"compared": len(gaps), "missing": [str(d.date()) for d in missing], "tolerance_pct": tol_pct,
+           "min_days": min_days, "worst_day": str(worst.date()) if worst is not None else None,
+           "worst_gap": gaps[worst] if worst is not None else None,
+           "mean_gap": (sum(gaps.values()) / len(gaps)) if gaps else None,
+           "outside": [str(d.date()) for d in gaps if abs(gaps[d]) > tol_pct]}
+    out["passed"] = (not missing and len(gaps) >= min_days and not out["outside"])
+    return out

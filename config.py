@@ -1350,11 +1350,10 @@ ENV_KEYS = (
     ("BLOCKSCOUT_API_KEY", "Blockscout log scans and stats (the chains Blockscout serves)",
      ("explorer", "explorer_l2:<chain>", "chainlink_fees", "blockscout_stats")),
     ("NEARBLOCKS_API_KEY", "NEAR's daily transactions and active accounts (NearBlocks v3)", ("nearblocks",)),
-    ("BEACONCHAIN_API_KEY", "P4-Q4: Ethereum's staked ETH and validator count (beaconcha.in v2 epoch "
-                            "total_validator_balance / validators_count, a bearer header), the window backfilled and "
-                            "validatorqueue's last week read for the overlap check; without it nothing is stored and "
-                            "the handover waits",
-     ("beacon_api",)),
+    ("BEACONCHAIN_API_KEY", "nothing today: P5-1.12 (2026-11-04) retired beaconcha.in's v2 epoch route — staked ETH "
+                            "is read from a keyless public beacon node; beaconcha.in is in a declared cooldown "
+                            "(config.HOST_COOLDOWN) and is not called",
+     ("check_offline_items ethstore_check",)),
     ("ARTEMIS_API_KEY", "nothing today: Artemis is read from Jake's CSV exports (artemis_csv); the API is not wired",
      ("artemis_csv",)),
     ("DUNE_API_KEY", "tier 4 backfill from Dune (tiers 1-3 run without it)", ("dune",)),
@@ -34320,6 +34319,114 @@ SOURCE_REGISTER["beaconcha.in"] = dict(
     key="BEACONCHAIN_API_KEY (an Authorization: Bearer header; read only by fetch/staked_eth.BeaconStakedEth and the "
         "by-name check_offline_items ethstore_check)",
     status="DROPPED")      # the 2026-10-01 drop of its other uses stands; P4-Q4 reads staked ETH from it
+
+
+# ===== P5-1.12 (Jake 2026-11-04): STOP RELYING ON beaconcha.in. =====
+# Jake's live run 2026-11-04: beaconcha.in answered HTTP 429 asking for a 2,300,523 s wait (~26.6 days); the free-trial
+# quota (1,000 requests / 30 days) is spent; nothing was stored. beaconcha.in is NOT CALLED AGAIN before the wait has
+# passed: HOST_COOLDOWN declares the wait (counted from the END of 2026-11-04 UTC, the latest the 429 can have come, so
+# the declared end is never early), and fetch.base records any later 429's Retry-After for a host listed here and
+# refuses every call to it until then — on every run, before a request is made (fetch.base.host_cooldown).
+HOST_COOLDOWN = {
+    "beaconcha.in": {"until": "2026-12-01T15:02:02Z", "retry_after_s": 2_300_523,
+                     "why": "HTTP 429 on Jake's run of 2026-11-04 asking a 2,300,523 s wait (free-trial quota spent); "
+                            "counted from 2026-11-04T23:59:59Z (SPEC P5-1.12)"},
+}
+# THE GOING-FORWARD SOURCE: a public beacon node, keyless — the standard Beacon API
+#     GET /eth/v1/beacon/states/finalized/validator_balances  -> {"finalized": true, "data": [{"index", "balance"}...]}
+# summed (gwei -> ETH): Σ ACTUAL balances of ALL validators at the finalized state — the quantity P4-Q4 chose
+# (beaconcha.in's total_validator_balance is the same sum), so beacon_chain_eth_primary keeps ONE definition.
+# One request a day: ~7.4 MB compressed (88 MB of JSON, 2,398,411 entries on 2026-11-04), summed while streaming.
+# The node serves the head / finalized state only — a past slot answers HTTP 403 (checked 2026-11-04 for 2026-10-26,
+# 11-03 and 11-04 00:00) — so a missed day cannot be read back from it: the BigQuery rebuild below fills past days.
+# Checked from the sandbox 2026-11-04 10:12 UTC: finalized, 2,398,411 entries (817,868 non-zero), Σ 44,434,909 ETH.
+BEACON_NODE_POINT = "beacon_node:validator_balances.sum"
+STAKED_REBUILD_POINT = "bigquery_eth:staked_rebuild"
+PROJECT_BY_NAME["Ethereum"]["staked_eth_node"] = {
+    "metric": "beacon_chain_eth_primary",
+    "endpoints": ("https://ethereum-beacon-api.publicnode.com",),
+    "state": "finalized",
+    "point": BEACON_NODE_POINT,
+    "min_entries": 100_000,          # a registry this small is a truncated answer, not a reading
+    "decided": "SPEC P5-1.12 (Jake 2026-11-04): beaconcha.in replaced by a free public beacon node",
+}
+PROJECT_BY_NAME["Ethereum"]["staked_eth_primary"]["retired"] = (
+    "P5-1.12 (Jake 2026-11-04): beaconcha.in's v2 epoch route is no longer read (free-trial quota spent, HTTP 429 with "
+    "a 2,300,523 s wait; config.HOST_COOLDOWN). beacon_chain_eth_primary is read from a public beacon node "
+    "(staked_eth_node) and its past days rebuilt from BigQuery (staked_eth_rebuild)")
+# THE MISSING DAYS FROM 2026-10-26 (and the test): staked_eth_rebuild.py on Jake's machine (BigQuery runs on his ADC).
+#   L = Σ validator balances + pending deposits (the LOCK: every deposited, not withdrawn, ETH and its rewards) is what
+#   the execution layer sees: L(day before) = L(day) − deposits + withdrawals − consensus rewards. Anchored on a LIVE
+#   beacon-node read (balances and pending deposits at the same finalized state), rolled back day by day with
+#     deposits     DepositEvent logs of 0x00000000219ab540356cBB839Cbe05303d7705Fa (EIP-6110: the logs the consensus
+#                  layer itself parses), amount = the 8-byte little-endian gwei field;
+#     withdrawals  blocks.withdrawals amounts (EIP-4895, gwei) — partial (reward skims) and full exits alike;
+#     rewards      the consensus-layer issuance, spec maximum: each epoch Σ base rewards = B x 64 ÷ sqrt(B x 1e9) ETH
+#                  (BASE_REWARD_FACTOR 64, EFFECTIVE_BALANCE_INCREMENT 1 ETH; altair beacon-chain.md get_base_reward*),
+#                  225 epochs a day — an upper bound (full participation), checked against the measured Eth2Staking
+#                  deltas where stored; ~0.3% of the stake over 455 days per 10% of error.
+#   B = L − Q, Q the deposit queue simulated from Electra (2025-05-07, the queue empty at the fork: EIP-6110) at the
+#   spec churn of 256 ETH an epoch (MAX_PER_EPOCH_ACTIVATION_EXIT_CHURN_LIMIT, electra beacon-chain.md), 57,600 ETH a
+#   day; the simulated queue at the anchor is printed against the measured one.
+# ADOPTED ONLY IF every one of the 455 days 2025-07-28..2026-10-25 agrees with validatorqueue's stored row within ±1%
+# (Jake: "use it only if it agrees within ±1% on the overlap"); otherwise nothing is stored and the disagreement is
+# printed. Rows are written for the overlap days (the build re-checks the same overlap from the store) and from
+# 2026-10-26 to the day before the first beacon-node row — never on a day the node holds.
+PROJECT_BY_NAME["Ethereum"]["staked_eth_rebuild"] = {
+    "metric": "beacon_chain_eth_primary", "point": STAKED_REBUILD_POINT,
+    "deposit_contract": "0x00000000219ab540356cbb839cbe05303d7705fa",
+    "deposit_topic": "0x649bbc62d0e31342afea4e5cd82d4049e7e1ee912fc0889aa790803be39038c5",
+    "electra_day": "2025-05-07", "churn_eth_per_epoch": 256.0, "epochs_per_day": 225,
+    "base_reward_factor": 64,
+    "overlap": ("2025-07-28", "2026-10-25"), "tolerance_pct": 1.0, "min_days": 455,
+    "allowed_dataset": "bigquery-public-data.crypto_ethereum", "max_bytes_per_query": 200 * 10 ** 9,
+    "sql": "sql/ethereum/bigquery_staked_flows_daily.sql",
+    "decided": "SPEC P5-1.12 (Jake 2026-11-04)",
+}
+PROJECT_BY_NAME["Ethereum"].setdefault("series_handover", {})["beacon_chain_eth_primary"] = {
+    "ordered_points": (STAKED_REBUILD_POINT, BEACON_NODE_POINT),
+    "cut": True,
+    "why": "the beacon node serves today's finalized state only: the days before its first read are rebuilt from "
+           "BigQuery (deposits − withdrawals + consensus rewards, rolled back from a live node read), adopted only "
+           "after the ±1% overlap with validatorqueue's 455 stored days (SPEC P5-1.12)",
+    "composition_change": "none — one quantity, Σ actual balances of all validators; the rebuild is anchored on the "
+                          "node's own reading",
+    "declared": "2026-11-04",
+}
+# THE HANDOVER OF beacon_chain_eth (validatorqueue -> beacon_chain_eth_primary) is re-declared: its overlap is the
+# rebuild's 455 days at ±1% (Jake 2026-11-04), not beaconcha.in's last week at ±2% (P4-Q4) — narrower, never wider.
+PROJECT_BY_NAME["Ethereum"]["series_handover"]["beacon_chain_eth"]["overlap"].update({
+    "b_point": STAKED_REBUILD_POINT,
+    "b_label": "BigQuery rebuild (deposits − withdrawals + consensus rewards, anchored on a beacon-node read)",
+    "days": ("2025-07-28", "2026-10-25"), "tolerance_pct": 1.0, "min_days": 455,
+    "why_none": "the overlap days are written by staked_eth_rebuild.py --apply, only once its own ±1% test passed",
+    "if_not_passed": "the handover is NOT made: beacon_chain_eth keeps validatorqueue's rows (stale from 2026-10-25) "
+                     "until all 455 days 2025-07-28..2026-10-25 agree within ±1%"})
+PROJECT_BY_NAME["Ethereum"]["series_handover"]["beacon_chain_eth"]["why"] = (
+    "validatorqueue.com's GitHub history (beaconcha.in votedether) stopped at 2026-10-25; from the day after its last "
+    "stored row the series reads beacon_chain_eth_primary — the BigQuery rebuild, then the public beacon node — only "
+    "once the rebuild agrees with validatorqueue within ±1% on all 455 days 2025-07-28..2026-10-25 (SPEC P5-1.12)")
+HANDOVER_CONTINUATION[("Ethereum", "beacon_chain_eth")]["decided"] = (
+    "SPEC P3-A3 / P4-Q4 / P5-1.12: validatorqueue stopped at 2026-10-25; beacon_chain_eth_primary (the BigQuery "
+    "rebuild, then a public beacon node) is the declared next leg, switched only after the ±1% overlap on 455 days")
+SOURCE_REGISTER["ethereum-beacon-api.publicnode.com"] = {
+    "used_for": "beacon_chain_eth_primary — Σ actual balances of all validators at the finalized state, once a day "
+                "(fetch/staked_eth.BeaconNodeStakedEth); the anchor of staked_eth_rebuild.py (balances + pending "
+                "deposits)",
+    "paths": ["/eth/v1/beacon/states/finalized/validator_balances", "/eth/v1/beacon/states/finalized/pending_deposits",
+              "/eth/v1/beacon/headers/finalized"],
+    "robots": "an API endpoint, one read a day (plus two small header reads)",
+    "terms": {"url": "https://www.publicnode.com/terms",
+              "status": "read 2026-11-04: no fee, no key; \"you are hereby granted a non-exclusive, limited, "
+                        "non-transferable, freely revocable license to access and use the Service\"; the site: "
+                        "\"Fastest, free-est, and privacy first RPC endpoints\"; the Ethereum page lists the Beacon "
+                        "API among its public endpoints. No published rate limit found. CAVEAT for Jake: the terms "
+                        "also bar \"data mining, robots, scraping, or similar data gathering or extraction methods\" "
+                        "— boilerplate written for the website; one API call a day is the endpoint's intended use, "
+                        "but it is Jake's call"},
+    "licence": "chain data (public consensus state)",
+    "key": "none",
+}
 
 
 # ===== P4-Q3 (Jake 2026-11-03; SPEC P4-Q3): CHAINLINK'S RELEASES ARE THE BALANCE FALLS; THE TRANSFER SCAN LABELS. =====

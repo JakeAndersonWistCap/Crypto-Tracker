@@ -219,43 +219,48 @@ def _agg(rows, asof):
                                               gaps=pd.DataFrame(), review=pd.DataFrame()).to_dict("records")}
 
 
-VQ = pd.date_range("2025-08-01", "2026-10-25")
+# P5-1.12 (Jake 2026-11-04) re-declared the overlap: the BigQuery rebuild's 455 days 2025-07-28..2026-10-25 at ±1%
+# (beaconcha.in's last week at ±2% is withdrawn with the route); the next leg's rows carry the rebuild's point
+VQ = pd.date_range("2025-07-20", "2026-10-25")
 
 
-def _eth(prim_val, prim_days=pd.date_range("2025-08-05", "2026-11-03"), vq_val=43_700_000.0):
+def _eth(prim_val, prim_days=pd.date_range("2025-07-20", "2026-11-03"), vq_val=43_700_000.0):
     vq = [_row("Ethereum", "beacon_chain_eth", d, vq_val, "validatorqueue:staked_amount") for d in VQ]
     pv = prim_val if callable(prim_val) else (lambda d: prim_val)
-    prim = [_row("Ethereum", "beacon_chain_eth_primary", d, pv(d), se.POINT) for d in prim_days]
+    prim = [_row("Ethereum", "beacon_chain_eth_primary", d, pv(d), config.STAKED_REBUILD_POINT + "[test]")
+            for d in prim_days]
     return vq + prim
 
 
 def test_overlap_week_is_declared_and_the_tolerance_is_not_widened():
+    # P5-1.12: narrower than P4-Q4's ±2% on 7 days — ±1% on all 455 days — never wider
     ov = ETH["series_handover"]["beacon_chain_eth"]["overlap"]
-    assert ov["days"] == ("2026-10-19", "2026-10-25") and ov["tolerance_pct"] == 2.0 and ov["min_days"] == 7
+    assert ov["days"] == ("2025-07-28", "2026-10-25") and ov["tolerance_pct"] == 1.0 and ov["min_days"] == 455
     assert config.HANDOVER_CONTINUATION[("Ethereum", "beacon_chain_eth")]["requires_overlap"] is True
 
 
-def test_handover_passes_on_the_7_day_overlap_within_tolerance_and_stale_clears():
-    # a year of primary rows; only validatorqueue's last week is compared — a day outside it at +5% does not count
-    val = lambda d: 44_100_000.0 * (1.05 if d < pd.Timestamp("2026-10-01") else 1.0) + (d.day * 1_000)  # noqa: E731
+def test_handover_passes_on_the_455_day_overlap_within_tolerance_and_stale_clears():
+    # only the declared 455 days are compared — a day before them at +5% does not count
+    val = lambda d: 44_000_000.0 * (1.05 if d < pd.Timestamp("2025-07-28") else 1.0) + (d.day * 1_000)  # noqa: E731
     by = _agg(_eth(val), "2026-11-03")
     r = by["Ethereum|beacon_chain_eth"]
     ho = bw.HANDOVER_OVERLAP[("Ethereum", "beacon_chain_eth")]
-    assert ho["passed"] and ho["common_days"] == 7 and set(ho["per_day"]) == {f"2026-10-{d}" for d in range(19, 26)}
-    exp = [((44_100_000.0 + d * 1_000) / 43_700_000.0 - 1) * 100 for d in range(19, 26)]
-    assert ho["mean_gap"] == pytest.approx(sum(exp) / 7)
-    assert "on 2026-10-19..2026-10-25" in ho["text"] and f"mean gap {sum(exp) / 7:+.2f}%" in ho["text"]
-    assert "10-19 +" in ho["text"] and "10-25 +" in ho["text"]
+    days = pd.date_range("2025-07-28", "2026-10-25")
+    assert ho["passed"] and ho["common_days"] == 455 and len(ho["per_day"]) == 455
+    exp = [((44_000_000.0 + d.day * 1_000) / 43_700_000.0 - 1) * 100 for d in days]
+    assert ho["mean_gap"] == pytest.approx(sum(exp) / 455)
+    assert "on 2025-07-28..2026-10-25" in ho["text"] and f"mean gap {sum(exp) / 455:+.2f}%" in ho["text"]
+    assert "worst days 2025-07-31 +" in ho["text"]
     assert r["source"] == "derived:=beacon_chain_eth_primary" and r["latest_date"] == "2026-11-03"
-    assert r["now"] == pytest.approx(44_100_000.0 + 3_000) and r["status"] != "stale"      # STALE clears
+    assert r["now"] == pytest.approx(44_000_000.0 + 3_000) and r["status"] != "stale"      # STALE clears
     assert ("Ethereum", "beacon_chain_eth") in bw.HANDOVER_CONTINUED
     assert ("Ethereum", "beacon_chain_eth") not in bw.HANDOVER_HELD
 
 
 @pytest.mark.parametrize("prim_days,prim_val,why", [
-    (pd.date_range("2026-10-20", "2026-11-03"), 44_100_000.0, "6 common day(s)"),       # one overlap day missing
-    (pd.date_range("2025-08-05", "2026-11-03"), 44_700_000.0, "+2.29%"),                # all 7 days, outside ±2%
-    (pd.date_range("2026-10-26", "2026-11-03"), 44_100_000.0, "share no stored day on 2026-10-19..2026-10-25"),
+    (pd.date_range("2025-07-29", "2026-11-03"), 44_100_000.0, "454 common day(s)"),     # one overlap day missing
+    (pd.date_range("2025-07-20", "2026-11-03"), 44_700_000.0, "+2.29%"),                # all 455 days, outside ±1%
+    (pd.date_range("2026-10-26", "2026-11-03"), 44_100_000.0, "share no stored day on 2025-07-28..2026-10-25"),
 ])
 def test_handover_is_held_outside_the_overlap_and_the_cell_says_so(prim_days, prim_val, why):
     r = _agg(_eth(prim_val, prim_days), "2026-11-03")["Ethereum|beacon_chain_eth"]
@@ -269,7 +274,8 @@ def test_a_one_day_spike_inside_the_week_holds_it():
     val = lambda d: 46_000_000.0 if d == pd.Timestamp("2026-10-22") else 44_000_000.0  # noqa: E731
     _agg(_eth(val), "2026-11-03")
     ho = bw.HANDOVER_OVERLAP[("Ethereum", "beacon_chain_eth")]
-    assert not ho["passed"] and ho["worst_day"] == "2026-10-22" and "10-22 +5.26%" in ho["text"]
+    assert not ho["passed"] and ho["worst_day"] == "2026-10-22" and "2026-10-22 +5.26%" in ho["text"]
+    assert "1 day(s) outside ±1%" in ho["text"]
 
 
 # ================================================================================================ withdrawn routes

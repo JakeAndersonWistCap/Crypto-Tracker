@@ -1378,7 +1378,7 @@ def handover_overlap(groups: dict, project: str, spec: dict) -> dict:
     # P4-Q4: A DECLARED OVERLAP WEEK (spec["days"] = (first, last)) — the check compares on those days only (Ethereum:
     # validatorqueue's last week, 2026-10-19..10-25), never on whatever else both series happen to hold
     span = spec.get("days")
-    if span:
+    if span and len(common):              # an empty side has no days to window (P5-1.12: a leg filtered by its point)
         common = common[(common >= pd.Timestamp(span[0])) & (common <= pd.Timestamp(span[1]))]
     out = {"a_metric": spec["a"], "b_metric": spec["b"], "common_days": int(len(common)), "tolerance_pct": tol,
            "min_days": need, "passed": False}
@@ -1398,8 +1398,15 @@ def handover_overlap(groups: dict, project: str, spec: dict) -> dict:
     if span:                      # P4-Q4: the gap on every day of the declared week, and its mean, said
         out["mean_gap"] = float(gap.mean())
         out["per_day"] = {str(d.date()): float(gap[d]) for d in common}
-        per_day = (f"; mean gap {gap.mean():+.2f}% — per day "
-                   + ", ".join(f"{d.strftime('%m-%d')} {gap[d]:+.2f}%" for d in common))
+        if len(common) <= 14:
+            per_day = (f"; mean gap {gap.mean():+.2f}% — per day "
+                       + ", ".join(f"{d.strftime('%m-%d')} {gap[d]:+.2f}%" for d in common))
+        else:                     # P5-1.12: a long overlap (455 days) names its worst days and every day outside
+            outside = [d for d in common if abs(gap[d]) > tol]
+            worst5 = sorted(common, key=lambda d: -abs(gap[d]))[:5]
+            per_day = (f"; mean gap {gap.mean():+.2f}% — worst days "
+                       + ", ".join(f"{d.strftime('%Y-%m-%d')} {gap[d]:+.2f}%" for d in worst5)
+                       + (f"; {len(outside)} day(s) outside ±{tol:g}%" if outside else ""))
     out["text"] = (f"OVERLAP CHECK {'PASSED' if out['passed'] else 'NOT PASSED'}: {lb} vs {la} on "
                    f"{len(common)} common day(s){on} — {last.date()}: {b[last]:,.6g} vs {a[last]:,.6g} "
                    f"({gap[last]:+.2f}%); worst {gap[worst]:+.2f}% on {worst.date()}{per_day}; "

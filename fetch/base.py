@@ -665,6 +665,77 @@ def _host_ok(host: str) -> None:
         _HOST_TIMEOUTS[host] = 0
 
 
+# ===== A HOST IN A DECLARED COOLDOWN IS NOT CALLED (P5-1.12, Jake 2026-11-04). =====
+# beaconcha.in answered HTTP 429 asking a 2,300,523 s wait (its free-trial quota spent). For a host listed in
+# config.HOST_COOLDOWN no request is made before the later of (a) the declared end and (b) the end of the longest
+# Retry-After it has since asked (recorded in <logcache>/host-cooldown.json by a refused 429) — checked on every call
+# of every run, before anything is sent. Other hosts are unchanged (a long Retry-After is not waited; the next run
+# tries again).
+COOLDOWN_FILE = "host-cooldown.json"
+
+
+def _cooldown_path():
+    from pathlib import Path
+    return Path(os.environ.get("TOKEN_METRICS_LOGCACHE", ".cache/logscan")) / COOLDOWN_FILE
+
+
+def _cooldown_declared() -> dict:
+    try:
+        import config
+    except ImportError:              # pragma: no cover - config is always importable in the tool
+        return {}
+    return dict(getattr(config, "HOST_COOLDOWN", {}) or {})
+
+
+def _cooldown_recorded() -> dict:
+    import json
+    try:
+        return json.loads(_cooldown_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def host_cooldown(host: str, now: datetime | None = None) -> str | None:
+    """Why `host` may not be called now (its cooldown's end and reason), or None. Only hosts in config.HOST_COOLDOWN."""
+    decl = _cooldown_declared()
+    if host not in decl:
+        return None
+    now = now or datetime.now(timezone.utc)
+    ends = []
+    for src, e in (("declared", decl.get(host)), ("recorded", _cooldown_recorded().get(host))):
+        try:
+            until = pd.Timestamp((e or {})["until"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        until = until.tz_localize("UTC") if until.tzinfo is None else until.tz_convert("UTC")
+        ends.append((until, src, (e or {}).get("why", "")))
+    live = [x for x in ends if x[0] > pd.Timestamp(now)]
+    if not live:
+        return None
+    until, src, why = max(live)
+    return (f"{host} is in a cooldown until {until.strftime('%Y-%m-%dT%H:%M:%SZ')} ({src}: {why or 'its Retry-After'})"
+            f" — NOT CALLED")
+
+
+def record_cooldown(host: str, retry_after_s: float, now: datetime | None = None) -> None:
+    """Keep a refused 429's Retry-After for a host in config.HOST_COOLDOWN (the longest end wins); others are ignored."""
+    import json
+    if host not in _cooldown_declared() or not retry_after_s or retry_after_s <= 0:
+        return
+    now = now or datetime.now(timezone.utc)
+    until = pd.Timestamp(now) + pd.Timedelta(seconds=float(retry_after_s))
+    rec = _cooldown_recorded()
+    old = (rec.get(host) or {}).get("until")
+    if old and pd.Timestamp(old) >= until:
+        return
+    rec[host] = {"until": until.strftime("%Y-%m-%dT%H:%M:%SZ"), "retry_after_s": float(retry_after_s),
+                 "recorded": pd.Timestamp(now).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                 "why": f"HTTP 429 asking {float(retry_after_s):,.0f} s"}
+    path = _cooldown_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(rec, indent=1), encoding="utf-8")
+
+
 def sleep(seconds: float, what: str) -> None:
     """time.sleep, registered so the heartbeat can name it."""
     check_abandoned()
@@ -902,6 +973,9 @@ class Http:
             self.stats["waited_s"] += seconds
             sleep(seconds, f"sleeping {seconds:.0f}s before retrying {host} ({why})")
 
+        cool = host_cooldown(host)
+        if cool:                              # P5-1.12: a declared cooldown — nothing is sent
+            raise RateLimited(f"HTTP not sent to {host}: {cool}")
         wait = time.monotonic() - self._last
         if wait < self.min_interval:
             nap(self.min_interval - wait, "rate spacing")
@@ -950,6 +1024,7 @@ class Http:
                             asked = None
                     if r.status_code == 429 and asked is not None and asked > self.max_retry_wait:
                         seen = {k: r.headers.get(k) for k in _RATE_HEADERS if r.headers.get(k)}
+                        record_cooldown(host, asked)          # P5-1.12: honoured on every later call and run
                         raise RateLimited(
                             f"HTTP 429 from {host}: the server asks for a {asked:,.0f}s wait "
                             f"(~{asked / 3600:.1f}h) — longer than the {self.max_retry_wait:.0f}s "
