@@ -16066,6 +16066,8 @@ def test_a_retry_after_longer_than_the_cap_fails_at_once_instead_of_sleeping(mon
 
     naps = []
     monkeypatch.setattr(base.time, "sleep", lambda s: naps.append(s))
+    # the generic Retry-After cap; beaconcha.in's declared cooldown (P5-1.12, test_round_p5_1_12) is set aside here
+    monkeypatch.setattr(config, "HOST_COOLDOWN", {})
 
     class R:
         status_code = 429

@@ -197,6 +197,13 @@ def test_2a_ethstore_check_runs_only_by_name_and_never_shows_the_key(monkeypatch
         return R(int(url.rsplit("/", 1)[1]))
     monkeypatch.setattr(coi.requests.Session, "get", get)
     monkeypatch.setattr(coi, "_RUN_BY_NAME", True)
+    # P5-1.12: while beaconcha.in's declared cooldown lasts, nothing is called and it says so
+    monkeypatch.setenv("TOKEN_METRICS_LOGCACHE", str(tmp_path / "cache"))
+    coi.ethstore_check()
+    held = capsys.readouterr().out
+    assert calls == [] and "NOT CALLED" in held and "SECRETKEY123" not in held
+    import config
+    monkeypatch.setattr(config, "HOST_COOLDOWN", {})            # after the wait: the keyed calls as before
     coi.ethstore_check()
     out = capsys.readouterr().out
     assert "2026-09-15" in out and "+0.00%" in out

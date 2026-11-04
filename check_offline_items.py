@@ -1195,6 +1195,11 @@ def ethstore_check():
     import config                                         # noqa: PLC0415
     import store as store_mod                             # noqa: PLC0415
     import build_workbook as bw                           # noqa: PLC0415
+    from fetch.base import host_cooldown, record_cooldown, retry_after
+    cool = host_cooldown("beaconcha.in")
+    if cool:                                   # P5-1.12: no call to beaconcha.in before its declared wait has passed
+        print(f"  {cool} (config.HOST_COOLDOWN; SPEC P5-1.12) — nothing compared.")
+        return
     key = os.environ.get("BEACONCHAIN_API_KEY", "").strip()
     if not key:
         print("  NO BEACONCHAIN_API_KEY in .env — nothing to compare.")
@@ -1227,6 +1232,8 @@ def ethstore_check():
                 except Exception as e:  # noqa: BLE001
                     print(f"  beaconcha.in UNREACHABLE — {type(e).__name__}")
                     return
+                if r.status_code == 429:
+                    record_cooldown("beaconcha.in", retry_after(r.headers.get("Retry-After")) or 0)
                 if r.status_code != 200:
                     print(f"  beaconcha.in HTTP {r.status_code} on ETH.STORE day {idx} — stopping (no retry; "
                           f"rate-limit headers: {', '.join(k for k in r.headers if 'ratelimit' in k.lower())})")

@@ -534,6 +534,60 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11ec. P5-1.12 — Ethereum's staked ETH without beaconcha.in (2026-11-04)
+
+- **beaconcha.in is not called (no action).** Its free-trial quota is spent: it answered HTTP 429 with a 2,300,523 s
+  wait. `config.HOST_COOLDOWN` keeps it closed until **2026-12-01 15:02:02 UTC**. That is the wait counted from the
+  end of 2026-11-04, so it never reopens early. Every run checks this before any request. A later 429 with a longer
+  Retry-After is recorded in `.cache\logscan\host-cooldown.json` and honoured the same way. `python
+  check_offline_items.py ethstore_check` obeys it too. The beacon_api tier no longer uses beaconcha.in at all.
+- **Going forward (no action).** The daily run reads staked ETH once a day from a free public beacon node,
+  `ethereum-beacon-api.publicnode.com`. No key is needed.
+  - **What it reads.** `/eth/v1/beacon/states/finalized/validator_balances`, summed while it downloads (about 7 MB):
+    the actual balances of all validators at the finalized state. P4-Q4 chose this quantity.
+  - **Where it goes.** It is stored as `beacon_chain_eth_primary`, source
+    `beacon_node:validator_balances.sum[finalized slot N, HH:MM UTC; ...]`.
+  - **Free?** publicnode's terms, read 2026-11-04, grant "a non-exclusive, limited, non-transferable, freely revocable
+    license to access and use the Service". They name no fee, and no rate limit is published. The terms also bar
+    "data mining, robots, scraping": boilerplate for the website, but your call.
+  - **Its limit.** The node serves the current state only. A past slot answers HTTP 403, so a missed day cannot be
+    read back from it.
+- **The missing days from 2026-10-26: run the rebuild (BigQuery, your login).** From the repo folder:
+
+  ```
+  python staked_eth_rebuild.py
+  ```
+
+  This is a test only and stores nothing. It reads the node live: the balances and pending deposits at one finalized
+  slot. It then runs one BigQuery query (dry run first; NEAR's quota project and monthly budget; capped at 200 GB): the
+  deposits and withdrawals per UTC day from 2025-05-07. It rolls the stake back day by day and compares it with every
+  stored validatorqueue day from 2025-07-28 to 2026-10-25. The lines to read:
+  - `ANCHOR:` the slot, Σ balances and pending deposits (expected about 44.4M ETH and about 1.0M ETH).
+  - `BIGQUERY: dry run N GB`. If it says NOT RUN (over the cap, or past the month's budget), nothing happens.
+  - `QUEUE: simulated X vs measured Y`: the spec deposit-queue simulation against the node's own pending deposits.
+  - `REWARD MODEL:` the spec-maximum consensus rewards against the stored Eth2Staking deltas (expect the model a few
+    percent above).
+  - `OVERLAP TEST PASSED` or `NOT PASSED: N day(s) compared ... mean gap, worst gap`, and every day outside ±1%.
+
+  Only if it says PASSED, store the days:
+
+  ```
+  python staked_eth_rebuild.py --apply
+  ```
+
+  This writes the 455 overlap days and every day from 2026-10-26 to the day before the first beacon-node row. The next
+  build re-checks the same overlap from the store, and beacon_chain_eth then reads validatorqueue to 2026-10-25, the
+  rebuild, then the node. If it says NOT PASSED, nothing is stored. Paste the output. beacon_chain_eth keeps
+  validatorqueue's rows (stale from 2026-10-25), and the cell says why.
+- **Check the live store (read-only).** From the repo folder:
+
+  ```
+  python -c "import sqlite3;c=sqlite3.connect('file:metrics.db?mode=ro',uri=True);[print(r) for r in c.execute(\"SELECT substr(source,1,instr(source||'[','[')-1) p, MIN(date), MAX(date), COUNT(*) FROM metrics WHERE project='Ethereum' AND metric IN ('beacon_chain_eth','beacon_chain_eth_primary') GROUP BY metric, p ORDER BY 2\")]"
+  ```
+
+  Expected before the rebuild: `('validatorqueue:staked_amount', <first>, '2026-10-25', n)`, and once the daily run
+  has read the node, `('beacon_node:validator_balances.sum', '2026-11-0x', ..., 1 or more)`. After `--apply` there is
+  also `('bigquery_eth:staked_rebuild', '2025-07-28', <the day before the first node row>, 455 + the backfilled days)`.
 ## 11eb. P5-1.11 — the catch-up fills every hole that has a past-day source (2026-11-04)
 
 Your run of 2026-11-04 found 5,471 holes in 450 days and filled none; today's tiers read back 4 of 460 owed days.
