@@ -534,6 +534,29 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11dz. P5 round 1, items 7-8 — Uniswap (2026-11-04)
+
+**7. Uniswap's airdrop distributor is a one-off in outflow (e) (SPEC P5-1.7).** The outflow from the 2020 merkle
+distributor 0x090D…256e is genuine claims by 30,202 addresses: a real release into circulating, counted as dilution (e).
+Net holder yield is unchanged. The CP tab's NET HOLDER YIELD and Outflow (e) cells for Uniswap carry a note that starts
+`ONE-OFF (outflow (e)` and gives the distributor's latest read balance, so the window's claims cannot repeat at that
+scale. The reader's Project notes add two text rows to Uniswap's block: the one-off note, and net holder yield WITHOUT
+the distributor (NHY + Outflow (e) $ ÷ market cap, from the CP cells). That figure is text and never a ranked cell; when
+an input is missing it says which one and gives no figure.
+The distributor's own balance is stored from the next run as `noncirc_merkle_distributor_tokens` (a declared
+component of `noncirculating_holding_tokens`). Until then the note says its own balance is not stored yet and gives
+the set's latest read; the four vesting contracts in that set held 0 UNI on 2026-11-03.
+Nothing to run beyond the normal daily run. To check: in token_metrics.xlsx, Project notes, Uniswap block, the rows
+`One-off in outflow (e): …` and `Net holder yield without the distributor …`.
+
+**8. Uniswap's buying pressure on float is by design (SPEC P5-1.8).** Uniswap's protocol buys no UNI on the market:
+protocol fees leave the TokenJar only against UNI burned through the Firepit, and that burn is on A4 and in holder value.
+The column (P4-Q5c) now reads `by design` for Uniswap (config.BUYING_PRESSURE_BY_DESIGN, the reason in the cell's
+comment), never 0 and never n/a, and `done_check.py` accepts it. Only Uniswap has the code; every other project keeps its
+figure, its measured 0 or its n/a reason. To add another project, Jake decides and its line goes in
+BUYING_PRESSURE_BY_DESIGN with the mechanism and source.
+
+
 ## 11dy. P5-1.6 Review queue — resolving rows (2026-11-04)
 
 **What changed in the check (fetch/validate.py).** change_threshold compares a new row with the store's newest row of

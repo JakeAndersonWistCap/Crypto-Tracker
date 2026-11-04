@@ -10577,6 +10577,42 @@ def _holder_value_note(p: dict) -> str:
     return ""
 
 
+def one_off_holder_balance(name: str) -> dict | None:
+    """P5-1.7: the one-off holder's LATEST stored balance (config.ONE_OFF_DILUTION_NOTES): its own per-wallet series
+    where stored, else the set it belongs to — {"value", "date", "own": bool, "metric"}; None when neither is stored."""
+    spec = config.ONE_OFF_DILUTION_NOTES.get(name)
+    if not spec:
+        return None
+    for metric, own in ((spec["component"], True), (spec["set_metric"], False)):
+        s = _daily(_LAST_GROUPS.get((name, metric)))
+        s = s.dropna() if not s.empty else s
+        if not s.empty:
+            return {"value": float(s.iloc[-1]), "date": s.index[-1].date(), "own": own, "metric": metric}
+    return None
+
+
+def one_off_dilution_note(p: dict) -> str:
+    """P5-1.7 (Jake 2026-11-04): the ONE-OFF note on the dilution cells a declared one-off sits in (Uniswap: NET HOLDER
+    YIELD and Outflow (e)): what the release was, that it stays counted, the holder's latest balance and why the window's
+    release cannot repeat at that scale. '' for a project without one."""
+    spec = config.ONE_OFF_DILUTION_NOTES.get(p["name"])
+    if not spec:
+        return ""
+    bal = one_off_holder_balance(p["name"])
+    if bal is None:
+        now = (f"its balance is not stored ({spec['component']} and {spec['set_metric']} both hold no row), so how much "
+               "is left cannot be stated")
+    elif bal["own"]:
+        now = f"it now holds {bal['value']:,.0f} UNI (latest read {bal['date']})"
+    else:
+        now = (f"its own balance is not stored yet ({spec['component']}, from the next run); the set it belongs to "
+               f"({spec['set_metric']}: it and {spec['rest_of_set']}) holds {bal['value']:,.0f} UNI "
+               f"(latest read {bal['date']})")
+    return (f"ONE-OFF (outflow ({spec['category']}), {spec['decided']}): {spec['what']}. The holder is {spec['holder']}; "
+            f"{now} — so this window's claims cannot repeat at that scale. Net holder yield is unchanged; the figure "
+            "without the distributor is a note in Project notes only.")
+
+
 def _cp_float(R: Refs, r, p: dict) -> str:
     """TRADEABLE FLOAT = circulating − staked / locked inside it − a held buyback inside it (P4-Q5b: a buyback held in a
     treasury leaves the float while held, as locked tokens do, and returns when the held stock falls — the stock on the
@@ -10612,14 +10648,17 @@ def _buying_pressure_col(R: Refs) -> tuple:
     or distributed (actual_buyback_tokens, the measured buyback) — annualised over its covered days, ÷ the tradeable
     float (_cp_float: a held buyback is already out of it, P4-Q5b). One builder for the A3 tab and the CP tab
     (Comparison reads CP). No buyback series: a measured 0 where no buyback mechanism exists (config.holder_value_absent,
-    the same declared zero holder value reads; or no token is bought at all, _retirement_zero), else n/a with the
-    reason — unknown is never 0."""
+    the same declared zero holder value reads; or no token is bought at all, _retirement_zero), a by-design code where
+    Jake recorded that the protocol buys nothing on the market (config.BUYING_PRESSURE_BY_DESIGN, P5-1.8: Uniswap),
+    else n/a with the reason — unknown is never 0."""
     def build(r, p):
         name = p["name"]
         route = config.buyback_route(name)
         if route["route"] == "none" or "actual_buyback_tokens" not in config.metrics_for_project(p):
             if config.holder_value_absent(name) or _retirement_zero(p):
                 return "=0"
+            if name in config.BUYING_PRESSURE_BY_DESIGN:          # P5-1.8: no market buyback by design — a code, not 0
+                return config.BUYING_PRESSURE_BY_DESIGN[name][:240]
             return ("n/a — no market buyback is measured for this project"
                     + (f": {route.get('reason')}" if route.get("reason") else ""))[:240]
         why = _cp_float_reason(p)
@@ -10716,7 +10755,9 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         outflow_usd.append((f"Outflow ({c}) {nm} — $ a year (each day's tokens x that day's price, annualised)",
                             lambda r, p, c=c: "" if not config.outflow_metrics(p["name"], c) else _coverage_guard(
                                 R, r, [(f"outflow {c}", f"outflow_{c}_usd", "q0")], ann(r, p, f"outflow_{c}_usd")),
-                            FMT_USD, "calc"))
+                            FMT_USD, "calc", False,
+                            {"note_fn": lambda p, c=c: one_off_dilution_note(p) if (
+                                config.ONE_OFF_DILUTION_NOTES.get(p["name"]) or {}).get("category") == c else ""}))
     outflow_usd.append(("Outflow categories — basis and what has no series yet (config OUTFLOW_CATEGORIES)",
                         lambda r, p: "; ".join(x for x in [
                             ", ".join(f"({c}) {'+'.join(config.outflow_metrics(p['name'], c))}"
@@ -11089,7 +11130,8 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
          FMT_PCT, "calc"),
         ("Holder value RECORDED, NOT CREDITED (treasury / emissions-funded) ÷ market cap", hv_other, FMT_PCT, "calc"),
         ("Holder value funding by period (config HOLDER_VALUE)", lambda r, p: funding_text(p), FMT_TEXT, "text"),
-        (CP_NHY_HEAD, nhy, FMT_PCT, "calc", True, {"metric": "holder_value_revenue_usd", "note_fn": lambda p: _holder_value_note(p)}),
+        (CP_NHY_HEAD, nhy, FMT_PCT, "calc", True, {"metric": "holder_value_revenue_usd", "note_fn": lambda p: "\n\n".join(
+            x for x in (_holder_value_note(p), one_off_dilution_note(p)) if x)}),
         *_tbill_cols(R, [("Holder value yield", hvy), ("Net holder yield", nhy),
                          ("Staker yield — validator", lambda r, p: vyield(r, p)),
                          ("Staker yield — protocol, tokens", lambda r, p: tyield(r, p))]),
