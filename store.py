@@ -213,8 +213,9 @@ def attach_resolutions(review: pd.DataFrame, conn: sqlite3.Connection) -> pd.Dat
         hit = ((review["project"] == r["project"]) & (review["metric"] == r["metric"])
                & (review["reason"] == r["reason"])
                & (review["date"].astype(str).str[:10] == str(r["date"] or "")[:10]))
-        if r.get("run_id"):
-            hit &= review["run_id"] == r["run_id"]
+        rid = r.get("run_id")
+        if rid is not None and not (isinstance(rid, float) and pd.isna(rid)) and str(rid).strip():
+            hit &= review["run_id"] == rid
         review.loc[hit, "resolution"] = r["resolution"]
         review.loc[hit, "resolution_note"] = r["note"]
     return review

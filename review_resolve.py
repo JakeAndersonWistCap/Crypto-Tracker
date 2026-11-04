@@ -63,7 +63,8 @@ def open_counts(rows: pd.DataFrame) -> Counter:
 def _prior_row(con: sqlite3.Connection, r: dict):
     """(date, value, source) of the stored row the flag compared against, or None when it cannot be found."""
     d = str(r.get("date") or "")[:10]
-    if r.get("prior_date"):
+    pd_ = r.get("prior_date")
+    if pd_ is not None and not (isinstance(pd_, float) and pd.isna(pd_)) and str(pd_).strip():
         got = con.execute("SELECT date, value, source FROM metrics WHERE project=? AND metric=? AND substr(date,1,10)=?",
                           (r["project"], r["metric"], str(r["prior_date"])[:10])).fetchone()
         return got
@@ -89,7 +90,9 @@ def rejudge(con: sqlite3.Connection, r: dict) -> tuple[bool, str]:
         return False, "already compared per day when it was flagged: the move is real on that basis; stays open"
     prior = _prior_row(con, r)
     if prior is None:
-        return False, "the prior row is not in the store any more (cannot prove an artefact); stays open"
+        return False, ("the prior value is not in the store any more, so this cannot be proven an artefact (if it was "
+                       "a same-day re-run, the morning's row for the same date was overwritten by the later run); stays "
+                       "open - a person can close it with --resolve")
     p_date, p_value, p_source = prior
     d = str(r.get("date") or "")[:10]
     if str(p_date)[:10] == d:
@@ -140,10 +143,12 @@ def main(argv=None) -> int:
         con = _read_only(a.store)
         rows = open_rows(review_rows(con, a.all_runs))
         print(f"OPEN Review Queue rows ({'every run' if a.all_runs else 'latest review run'}): {len(rows)}")
+        def _s(v):
+            return "" if v is None or (isinstance(v, float) and pd.isna(v)) else str(v)
         for r in rows.to_dict("records"):
-            print(f"  {r['project']} | {r['metric']} | {str(r.get('date') or '')[:10]} | {r['reason']} | "
-                  f"{r.get('value')} vs {r.get('prior_value')} ({str(r.get('prior_date') or '')[:10]}) | "
-                  f"{str(r.get('basis') or '')[:120]}")
+            print(f"  {r['project']} | {r['metric']} | {_s(r.get('date'))[:10]} | {r['reason']} | "
+                  f"{_s(r.get('value'))} vs {_s(r.get('prior_value'))} ({_s(r.get('prior_date'))[:10]}) | "
+                  f"{_s(r.get('basis'))[:120]}")
         _print_counts("by series", open_counts(review_rows(con, a.all_runs)))
         return 0
 
