@@ -26,6 +26,8 @@ Writes nothing to the store and leaves token_metrics.xlsx alone. Output is ASCII
                    top-ups alone (sethfi_topup_tokens)
     p5_1_13_spans  2026-11-04: a rederived delta across missed reads counts every day since its stock's previous
                    read (covered days); before = one day a row
+    p5_1c_b1_one_offs  2026-11-04: one-off releases and burns stay in every rate and trend (Uniswap's 100M burn of
+                   2025-12-27 stays in gross_burn_tokens); before = moved out of the series at read time
 
     --cells all    every numeric cell on the A1-A4, CP and Master tabs, not only the A1-A4 headlines
 """
@@ -65,6 +67,9 @@ BEFORE = {
     # P5-1.13 (2026-11-04): a rederived delta across missed reads counts every day since its stock's previous read;
     # before = one day a row
     "p5_1_13_spans": lambda: [(config.REDERIVED_SPAN_FROM_STOCK, "on", False)],
+    # P5-1C.B1 (2026-11-04): one-off releases and burns stay in every rate and trend (Uniswap's 100M burn of 2025-12-27
+    # no longer moved out of gross_burn_tokens); before = the one-off moved out of the series at read time
+    "p5_1c_b1_one_offs": lambda: [(config.ONE_OFFS_IN_RATES, "on", False)],
 }
 ALL_CELL_TABS = ("A1", "A2", "A3", "A4", "CP", "Master")   # --cells all: every numeric cell on these tabs
 

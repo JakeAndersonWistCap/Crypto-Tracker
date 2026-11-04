@@ -165,10 +165,10 @@ def test_holder_funding_periods_are_dated_and_sourced():
     assert f("Ether.fi", "2025-06-01")[0] == "treasury"
     assert f("Ether.fi", "2025-12-01")[0] == "treasury"
     assert f("Ether.fi", "2026-09-02")[0] == "not a purchase"
-    # Uniswap's 100M treasury burn is moved out of the burn series (one_off_flows) before any holder value reads it
-    # (decision 5 of 2026-10-12 evening), so no funding period is needed for it
+    # Uniswap's 100M treasury burn: P5-1C.B1 keeps it in the burn series and the buyback copy; its own funding
+    # (one_off_flows, treasury) records it as holder value not credited — no dated funding period is needed for the day
     assert f("Uniswap", "2025-12-28")[0] == "revenue"
-    assert set(config.METRICS["holder_value_other_usd"]["only_projects"]) == {"Aerodrome", "Ether.fi"}
+    assert set(config.METRICS["holder_value_other_usd"]["only_projects"]) == {"Aerodrome", "Ether.fi", "Uniswap"}
     # no outflow metric for a category nobody holds, and no gap row on a project without the category
     # alignment round C1: Uniswap's growth budget is (d) — the only project holding a (d) series
     assert config.METRICS["outflow_d_tokens"]["only_projects"] == ("Uniswap",)

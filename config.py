@@ -673,7 +673,10 @@ METRICS = {
     # Read-time only (build_workbook._one_off_views): the differenced row that carries a declared
     # one-off (a project's `one_off_flows`) has the one-off moved here, so burn yield, crossover,
     # A3 and A4 annualisation never see it. Shown on its own row, dated where the data puts it.
-    "one_off_burn_tokens": {"label": "One-off burn (dated; EXCLUDED from every rate)", "kind": "flow", "unit": "tokens",
+    # P5-1C.B1 (Jake 2026-11-04): the one-off now STAYS in its series and in every rate (config.ONE_OFFS_IN_RATES); this
+    # row is its dated display.
+    "one_off_burn_tokens": {"label": "One-off burn (dated display; counted in every rate like a recurring burn, "
+                                     "P5-1C.B1)", "kind": "flow", "unit": "tokens",
                             "archetypes": [4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e15,
                             "requires_flag": "one_off_flows", "view_only": True},
     # ETHER.FI sETHFI TOP-UPS (Jake's run 2026-10-06 15:33): ETHFI added to the vault in a transaction that mints
@@ -19385,6 +19388,10 @@ METRICS["noncirc_merkle_distributor_tokens"] = {
 # P5-1.7: ONE-OFF NOTES — a dilution leg whose window held a one-off that cannot repeat at that scale. The cells and
 # net holder yield are unchanged (the release is real); the note says why it will not recur and what net holder yield
 # reads without it — in Project notes only, never in a ranked cell (reader._project_text_notes).
+# P5-1C.B1 (Jake 2026-11-04): it STAYS in dilution, net holder yield and the A4 key (burn ÷ releases into circulating).
+# `from` / `to` date the one-off (the claims, P4-Q9 trace) so every rate whose window holds them says "of which one-off:
+# x%" (build_workbook.ONE_OFF_SHARES): the one-off a day is the holder's own falls (`component`) where stored, else the
+# category's whole outflow on those days (the rest of the set held 0: `rest_of_set`). `carriers`: the series it sits in.
 ONE_OFF_DILUTION_NOTES = {
     "Uniswap": {
         "category": "e",
@@ -19397,6 +19404,8 @@ ONE_OFF_DILUTION_NOTES = {
         "rest_of_set": "the four treasury vesting contracts, which held 0 UNI (read on-chain 2026-11-03; their last UNI "
                        "movement was in 2022) — so outflow (e) is the distributor's claims",
         "decided": "Jake 2026-11-04 (P5-1.7)",
+        "from": "2026-10-11", "to": "2026-11-02", "tokens": 12_257_360,
+        "carriers": ("outflow_e_tokens", "unlock_release_vesting_tokens", "unlock_release_tokens"),
     },
 }
 # ===== P5-1.8 (Jake 2026-11-04): BUYING PRESSURE ON FLOAT WHERE THE PROTOCOL BUYS NOTHING ON THE MARKET. =====
@@ -29763,9 +29772,30 @@ INSIDER_SHARE_ROUTES = {
 
 
 # ONE-OFF BURN EVENTS (Jake 2026-10-12 evening, decisions 3 and 5): dated burns that are not a mechanism — shown as their
-# own event row (CP and A4), never in a rate, trend or holder value. A one-off inside a stored burn series is moved out
-# of it at read time by the project's `one_off_flows` (Uniswap's 100M); one with no burn series is a record only
-# (Ether.fi: archetype 3, no burn series). Each with its funding source.
+# own event row (CP and A4). P5-1C.B1 (Jake 2026-11-04) REVERSED "never in a rate, trend or holder value": see
+# ONE_OFFS_IN_RATES below — a one-off inside a stored burn series (Uniswap's 100M, the project's `one_off_flows`) now
+# STAYS in it and counts in every rate and trend like a recurring burn; the event row is a display. One with no burn
+# series is a record only (Ether.fi: archetype 3, no burn series — the ETHFI it burned were counted when BOUGHT, in its
+# buyback series, so the burn adds nothing to a rate a second time). Each with its funding source.
+#
+# ===== P5-1C.B1 (Jake 2026-11-04): ONE-OFFS STAY IN THE RUN RATES. =====
+# "One-off releases AND one-off burns stay in the run rates and count toward every supply/demand figure and trend, the
+# same as recurring flows." So `one_off_flows` no longer moves the one-off out of its series (build_workbook.
+# _one_off_views keeps the series whole and only DATES the event, for the display row and the share note). The funding
+# rule still applies as to any recurring flow: a TREASURY-funded one-off copied into a burn-route buyback is recorded,
+# never credited, as holder value (build_workbook._holder_value_views); the circulating flow statement still keeps a
+# burn FROM AN ISSUER-SIDE WALLET out of "− burned" (it never circulated: the identity, not a rate). Beside every rate a
+# one-off sits in, the cell's comment says "of which one-off: x%" (build_workbook.ONE_OFF_SHARES). `on` False restores
+# the old exclusion (headline_diff.py --only p5_1c_b1_one_offs measures the move).
+ONE_OFFS_IN_RATES = {"on": True, "decided": "Jake 2026-11-04 (P5-1C.B1)",
+                     "why": "one-off releases and one-off burns count toward every supply/demand figure and trend, the "
+                            "same as recurring flows; the share that is one-off is shown beside each affected rate"}
+
+
+def one_offs_in_rates() -> bool:
+    return bool(ONE_OFFS_IN_RATES.get("on"))
+
+
 ONE_OFF_BURN_EVENTS = {
     "Ether.fi": [{"from": "2025-08-08", "to": "2025-09-19", "tokens": 1_464_000, "funding": "treasury",
                   "what": "ETHFI bought by the April 2025 withdrawal-fee buyback, burned from the buyback wallet "
@@ -29814,18 +29844,23 @@ def one_off_event_note(project_name: str, source: str) -> str | None:
                     + (f" (verified on-chain {tx['verified_on']}, {tx.get('explorer', '').split('/api/')[0]})"
                        if tx.get("verified_on") else "")) if tx.get("hash") else "no transaction declared"
         how = ("stored from the transaction itself (`python token_metrics.py --seed uni_retro_burn`)" if by_tx else
-               "dated by the differenced burn row it was moved out of; `python token_metrics.py --seed "
-               "uni_retro_burn` stores it from the transaction itself")
+               ("dated by the differenced burn row it sits in" if one_offs_in_rates() else
+                "dated by the differenced burn row it was moved out of")
+               + "; `python token_metrics.py --seed uni_retro_burn` stores it from the transaction itself")
+        rule = ("counted in every rate and trend like a recurring burn (P5-1C.B1, Jake 2026-11-04) — this row is the "
+                "dated display" if one_offs_in_rates() else "out of every rate (one_off_flows)")
         return (f"DECLARED STATIC EVENT — {f['tokens']:,.0f} tokens on {f.get('landed') or f['window'][0]}: "
                 f"{f['what']}. Source: {on_chain}; governance {f['source_url']}. It is {how}. A one-off happens once: "
-                f"no recurring fetch, never stale; out of every rate (one_off_flows).")
+                f"no recurring fetch, never stale; {rule}.")
     return None
 
 
 def one_off_events_text(project_name: str) -> str:
     ev = one_off_events(project_name)
     return "; ".join(f"{e['from']}..{e['to']}: {e['tokens']:,.0f} tokens — {e['what']} (funding: {e['funding']}; "
-                     + (f"moved out of {e['in_series']} at read time" if e.get("in_series") else "a record, no series")
+                     + (((f"in {e['in_series']}, counted in every rate and trend" if one_offs_in_rates()
+                          else f"moved out of {e['in_series']} at read time")) if e.get("in_series")
+                        else "a record, no series")
                      + ")" for e in ev)
 
 
@@ -29941,7 +29976,10 @@ METRICS["holder_value_other_usd"] = {
     "kind": "flow", "unit": "usd", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e11,
     "view_only": True,
     "only_projects": tuple(n for n, h in HOLDER_VALUE.items()
-                           if any(f[2] != "revenue" for f in h.get("funding") or ()))}
+                           if any(f[2] != "revenue" for f in h.get("funding") or ()))
+    # P5-1C.B1: a treasury-funded one-off kept in a burn-route buyback is recorded here, never credited (Uniswap's 100M)
+    + tuple(p["name"] for p in PROJECTS if p["name"] not in HOLDER_VALUE
+            and any(f.get("funding", "treasury") != "revenue" for f in p.get("one_off_flows") or ()))}
 
 
 # =====================================================================================================================

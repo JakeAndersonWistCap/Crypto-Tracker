@@ -2295,6 +2295,12 @@ def _burn_total_views(groups: dict) -> None:
 _ONE_OFF_REMOVED: dict = {}
 _ONE_OFF_BLOCKS: dict = {}
 _ONE_OFF_UNMATCHED: dict = {}     # (project, release metric) -> one-off tokens no stored fall matched (G11 B1)
+# P5-1C.B1: (project, flow metric) -> [(day, tokens, funding, what)] — a one-off KEPT in its series (config.
+# ONE_OFFS_IN_RATES), dated on the row it sits in; read by the holder-value funding split and the share notes
+_ONE_OFF_IN_SERIES: dict = {}
+# P5-1C.B1: (project, metric, Data window) -> (one-off part, window total, what) for every window a one-off sits in —
+# the "of which one-off: x%" note beside each rate that reads it (_one_off_share_note)
+ONE_OFF_SHARES: dict = {}
 UNLOCK_LEGACY_DROPPED: dict = {}  # (project, release metric, leg) -> legacy rows past config.UNLOCK_LEGACY_CUT (P2a D2)
 
 
@@ -2305,9 +2311,13 @@ def _one_off_views(groups: dict) -> None:
     is at least `tokens` has `tokens` moved to one_off_burn_tokens, dated as that row. What remains
     on the row is that interval's ongoing burn. No such row: the one-off predates the differenced
     series, nothing moves. Two or more: BLOCKED — a second event that size is a finding.
+
+    P5-1C.B1 (Jake 2026-11-04, config.ONE_OFFS_IN_RATES on): the one-off STAYS in the series and every rate — the row
+    is only dated (_ONE_OFF_IN_SERIES) and shown on one_off_burn_tokens; nothing moves and nothing is blocked.
     """
     _ONE_OFF_REMOVED.clear()
     _ONE_OFF_BLOCKS.clear()
+    _ONE_OFF_IN_SERIES.clear()
     for p in scoped_projects():
         name = p["name"]
         for spec in p.get("one_off_flows") or ():
@@ -2319,6 +2329,23 @@ def _one_off_views(groups: dict) -> None:
             delta = g["source"].astype(str).str.contains(":delta", na=False)
             hit = g[delta & (g["date"] >= lo) & (g["date"] <= hi) & (g["value"].astype(float) >= spec["tokens"])]
             if hit.empty:
+                continue
+            if config.one_offs_in_rates():
+                # P5-1C.B1 (Jake 2026-11-04): the one-off STAYS in the series and in every rate; it is only DATED here,
+                # for its display row and the "of which one-off" share (the row nearest its declared landing day when
+                # more than one row could hold it — nothing is taken out, so nothing is blocked)
+                landed = pd.Timestamp(spec.get("landed") or spec["window"][0])
+                i = (hit["date"] - landed).abs().sort_values(kind="stable").index[0]
+                day = pd.Timestamp(g.loc[i, "date"]).normalize()
+                _ONE_OFF_IN_SERIES.setdefault(key, []).append(
+                    (day, float(spec["tokens"]), spec.get("funding", "treasury"), spec["what"]))
+                held = groups.get((name, "one_off_burn_tokens"))
+                if held is None or held.empty or not held["source"].astype(str).str.startswith("tx:").any():
+                    one = g.loc[[i]].copy()
+                    one["metric"] = "one_off_burn_tokens"
+                    one["value"] = float(spec["tokens"])
+                    one["source"] = f"one_off:{spec['what']} ({spec['source_url']})"
+                    groups[(name, "one_off_burn_tokens")] = _as_stored(one, g.columns)
                 continue
             if len(hit) > 1:
                 _ONE_OFF_BLOCKS[key] = (
@@ -2342,6 +2369,118 @@ def _one_off_views(groups: dict) -> None:
                 one["source"] = f"one_off:{spec['what']} ({spec['source_url']})"
                 groups[(name, "one_off_burn_tokens")] = _as_stored(one, g.columns)
             _ONE_OFF_REMOVED[key] = _ONE_OFF_REMOVED.get(key, 0.0) + float(spec["tokens"])
+
+
+_ONE_OFF_HV_RECORDED: dict = {}   # P5-1C.B1: (project, day) -> holder-value $ of a one-off recorded, not credited
+
+
+def _one_off_parts(groups: dict, name: str) -> dict:
+    """P5-1C.B1: {metric: {day: (one-off part, what)}} — the part of each series' day that is a declared one-off, for
+    every series the one-off sits in (a one-off is in the rate like any flow; this only measures its share):
+    a burn KEPT in its series (_ONE_OFF_IN_SERIES) in the burn series every rate reads and the buyback that copies it
+    (tokens, and $ by that day's own $ ÷ tokens); a declared one-off RELEASE (config.ONE_OFF_DILUTION_NOTES with
+    `from`/`to`) in its carriers — the holder's own falls where its per-wallet series is stored, else the category's
+    whole outflow on those days (the rest of its set held 0, the note's `rest_of_set`), never more than the carrier's
+    day; and the holder value a treasury-funded one-off was recorded as (_ONE_OFF_HV_RECORDED)."""
+    out: dict = {}
+
+    def put(metric, day, part, what):
+        if part > 0:
+            out.setdefault(metric, {})[day] = (float(part), what)
+
+    def usd_twin(tok_metric, day, part, what):
+        um = tok_metric[:-len("_tokens")] + "_usd" if tok_metric.endswith("_tokens") else None
+        t, u = _daily(groups.get((name, tok_metric))), _daily(groups.get((name, um))) if um else pd.Series(dtype=float)
+        if um and day in u.index and day in t.index and float(t[day]) > 0:
+            put(um, day, float(u[day]) * min(1.0, part / float(t[day])), what)
+
+    for (n_, m), evs in _ONE_OFF_IN_SERIES.items():
+        if n_ != name:
+            continue
+        carriers = dict.fromkeys((m, config.a1_burn_metric(name), config.a4_burn_metric(name),
+                                  config.a4_net_burn_metric(name), "actual_buyback_tokens", "buyback_burned_tokens"))
+        for day, tok, _funding, what in evs:
+            for c in carriers:
+                s = _daily(groups.get((name, c)))
+                if day in s.index and float(s[day]) >= tok * 0.999:
+                    put(c, day, tok, what)
+                    usd_twin(c, day, tok, what)
+    for (n_, day), v in _ONE_OFF_HV_RECORDED.items():
+        if n_ == name:
+            put("holder_value_other_usd", day, v, next(
+                (w for (nn, _m), evs in _ONE_OFF_IN_SERIES.items() if nn == name for d_, _t, _f, w in evs if d_ == day),
+                "a declared one-off"))
+    spec = config.ONE_OFF_DILUTION_NOTES.get(name) or {}
+    if spec.get("from"):
+        lo, hi = pd.Timestamp(spec["from"]), pd.Timestamp(spec["to"])
+        comp = _daily(groups.get((name, spec["component"])))
+        if len(comp) > 1:
+            falls = (-comp.diff()).clip(lower=0.0).dropna()
+        else:
+            falls = _daily(groups.get((name, f"outflow_{spec['category']}_tokens")))
+        falls = falls[(falls.index >= lo) & (falls.index <= hi)]
+        what = f"{spec['holder'].split(' 0x')[0]} — {spec['what'].split(' — ')[0]}"
+        for c in spec.get("carriers") or ():
+            s = _daily(groups.get((name, c)))
+            for day, v in falls.items():
+                if day in s.index and float(v) > 0:
+                    part = min(float(v), max(0.0, float(s[day])))
+                    put(c, day, part, what)
+                    usd_twin(c, day, part, what)
+    return out
+
+
+def _one_off_shares(groups: dict, asof) -> None:
+    """P5-1C.B1: ONE_OFF_SHARES[(project, metric, window)] = (one-off part, the window's total, what) for every Data
+    window (now, m1, Q0..Q4, Y1 — the bounds aggregate sums over) a one-off sits in. Read by _one_off_share_note."""
+    ONE_OFF_SHARES.clear()
+    asof = pd.Timestamp(asof).normalize()
+    short, period = GLOBALS["short_days"], GLOBALS["period_days"]
+    bounds = {"now": (asof - pd.Timedelta(days=short), asof),
+              "m1": (asof - pd.Timedelta(days=2 * short), asof - pd.Timedelta(days=short)),
+              "y1": (asof - pd.Timedelta(days=365), asof),
+              **{q: (asof - pd.Timedelta(days=period * (i + 1)), asof - pd.Timedelta(days=period * i))
+                 for i, q in enumerate(QUARTERS)}}
+    for p in scoped_projects():
+        name = p["name"]
+        for metric, parts in _one_off_parts(groups, name).items():
+            s = _daily(groups.get((name, metric)))
+            for col, (lo, hi) in bounds.items():
+                inside = {d: v for d, v in parts.items() if lo < d <= hi}
+                tot = _window_sum(s, lo, hi)
+                if not inside or not tot:
+                    continue
+                ONE_OFF_SHARES[(name, metric, col)] = (sum(v for v, _w in inside.values()), float(tot),
+                                                       "; ".join(dict.fromkeys(w for _v, w in inside.values())))
+
+
+_DATA_REF = re.compile(r'INDEX\(Data!\$([A-Z]+)\$\d+:\$[A-Z]+\$\d+,MATCH\(\$A\d+&"\|([^"]+)"')
+
+
+def _one_off_share_note(name: str, formula) -> str:
+    """P5-1C.B1 (Jake 2026-11-04): "of which one-off: x%" for every series window this cell reads that holds a declared
+    one-off — the one-off is IN the rate (config.ONE_OFFS_IN_RATES); this says how much of the series it is. A NOTE on
+    the rate's own cell, not a column: it appears only where a window holds a one-off (2 projects on the dumps), sits on
+    the very cell it qualifies on every tab and in the reader (which carries the audit cell's comment), and moves no
+    column letter. '' where the cell reads no such window."""
+    if not ONE_OFF_SHARES or not isinstance(formula, str) or "Data!" not in formula:
+        return ""
+    col_of = {v: k for k, v in DC.items()}
+    seen, lines = set(), []
+    for letter, metric in _DATA_REF.findall(formula):
+        win = col_of.get(letter)
+        key = (name, metric, win)
+        if key in seen or key not in ONE_OFF_SHARES:
+            continue
+        seen.add(key)
+        part, tot, what = ONE_OFF_SHARES[key]
+        unit = "$" if metric.endswith("_usd") else "tokens"
+        lines.append(f"of which one-off: {part / tot:.0%} — {metric} {win.upper()}: {part:,.0f} of {tot:,.0f} {unit} "
+                     f"({what})")
+    if not lines:
+        return ""
+    return ("ONE-OFF IN THIS RATE (P5-1C.B1, Jake 2026-11-04: one-offs count like recurring flows) — "
+            + "; ".join(lines) + ".")
 
 
 def _relabel_views(groups: dict) -> None:
@@ -4602,6 +4741,7 @@ def _holder_value_views(groups: dict) -> None:
     epoch's bribes less its illiquid part join the credited figure (source derived:holder_value_with_liquid_bribes — a
     declared handover); `illiquid_less` takes the illiquid fee leg out (the illiquid-token rule). The same figure
     without the bribes is holder_value_fees_only_usd."""
+    _ONE_OFF_HV_RECORDED.clear()
     for p in scoped_projects():
         name = p["name"]
         spec = config.HOLDER_VALUE.get(name) or {}
@@ -4621,13 +4761,26 @@ def _holder_value_views(groups: dict) -> None:
             continue
         # the whole buyback $ = retired (burned + held) + distributed: the funding decides whether it is credited
         credit, other = {}, {}
+        # P5-1C.B1: a one-off KEPT in a burn series a burn-route buyback copies is funded as declared, like any recurring
+        # flow — its part of that day's buyback $ (its tokens ÷ the day's buyback tokens) is recorded, never credited,
+        # where it was not revenue-funded (Uniswap's 100M treasury burn on 2025-12-28)
+        bt = _daily(groups.get((name, "actual_buyback_tokens")))
+        for (n_, _m), evs in _ONE_OFF_IN_SERIES.items():
+            for day, tok, funding, _what in (evs if n_ == name else ()):
+                if funding == "revenue" or day not in act.index or day not in bt.index or float(bt[day]) < tok * 0.999:
+                    continue
+                part = float(act[day]) * min(1.0, tok / float(bt[day]))
+                other[day] = other.get(day, 0.0) + part
+                _ONE_OFF_HV_RECORDED[(name, day)] = part
+                act = act.copy()
+                act[day] = float(act[day]) - part
         for d, v in act.items():
             if config.holder_funding(name, d)[0] == "revenue":
                 credit[d] = float(v)
             else:
                 # 0 CREDITED, NOT n/a (fix round 2, R2: Ether.fi's HVY went from 0 to n/a once its Q0 top-ups were
                 # recorded as treasury-funded — a day with a buyback that is not revenue-funded credits 0)
-                other[d] = float(v)
+                other[d] = other.get(d, 0.0) + float(v)
                 credit.setdefault(d, 0.0)
         for e in extra:
             for d, v in e.items():
@@ -5533,6 +5686,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _LAST_GROUPS.clear()
     _subsidy_common_views(groups, asof)   # G13 6: subsidy cover over the days every leg covers once (b) is complete
     _LAST_GROUPS.update(groups)       # the views, for Credibility rows that read them (credibility.VIEWS_LONG)
+    _one_off_shares(groups, asof)     # P5-1C.B1: the share of each window that is a declared one-off (cell notes)
     COVERED_SETS.clear()
     MEASURED_VS_MODELLED.clear()
     COVERED_SETS.update(_covered_day_sets(groups))   # D6-1: the days each daily flow's rows cover
@@ -5669,7 +5823,15 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                 deltas = g[g["source"].astype(str).str.contains(":delta", na=False)].sort_values("date")
                 if cumulative and not deltas.empty:
                     row["cumulative_ref"] = cumulative
-                    row["max_single_delta"] = float(deltas["value"].max())
+                    # P5-1C.B1: a DECLARED, DATED one-off kept in the series (_ONE_OFF_IN_SERIES: its tokens on the one
+                    # row it sits in) is the known cause of that row's size — the check reads the row without it, so it
+                    # still catches any OTHER step (a second event that size, a measuring-point step) as before
+                    vals = deltas.set_index(pd.to_datetime(deltas["date"]).dt.normalize())["value"].astype(float)
+                    for day, tok, _f, _w in _ONE_OFF_IN_SERIES.get((name, metric), ()):
+                        if day in vals.index:
+                            vals = vals.copy()
+                            vals.loc[day] = vals.loc[day] - tok
+                    row["max_single_delta"] = float(vals.max())
                 # THE TELESCOPING IDENTITY. Consecutive differences of one stock must sum to the
                 # stock's move across the same span — every intermediate reading cancels. The
                 # start point is the last stock reading STRICTLY BEFORE the first delta, because
@@ -7915,12 +8077,59 @@ def _a4_headline(R: Refs, burn, data_by_key: dict | None = None) -> list[tuple]:
         ("NET SUPPLY CHANGE Q0 (tokens) — self-reported where published, else issuance − burn, on the basis to the left",
          lambda r, p: _zero_issuance(R, r, p, f"-{R.D(r, config.a4_net_burn_metric(p['name']), 'q0')}")
          or _net_guarded(R, r, p, _basis_iss(R, p), burn, bm=config.a4_net_burn_metric(p["name"])),
-         FMT_NUM, "calc", True),
+         FMT_NUM, "calc", True, {"flag_fn": _premint_net_flag}),
         ("NET SUPPLY CHANGE, annualised % of circulating (signed; + is net inflation)",
          lambda r, p: _zero_issuance(
              R, r, p, f"-{_annualise(R, r, p, config.a4_net_burn_metric(p['name']), R.D(r, config.a4_net_burn_metric(p['name']), 'q0'))}/({circ(r, p)})")
-         or _net_annual_pct(R, r, p, circ(r, p), bm=config.a4_net_burn_metric(p["name"])), FMT_PCT, "calc", True),
+         or _net_annual_pct(R, r, p, circ(r, p), bm=config.a4_net_burn_metric(p["name"])), FMT_PCT, "calc", True,
+         {"flag_fn": _premint_net_flag}),
     ]
+
+
+# ===== P5-1C.B2 (Jake 2026-11-04): A PRE-MINTED SUPPLY'S NET SUPPLY CHANGE IS BURN ONLY — SAID ON THE CELL. =====
+# GEODNET's NET SUPPLY CHANGE read −9.365M (gross burn only) beside a "Derived net supply change (issuance − burn)" of
+# +2.33M on Jake's store (dumps: −9.805M vs +1.98M). Both are right on their own definitions, and the cells did not say
+# which: the net supply change is MINT − BURN (accuracy pass on 1e702bb, item 9; SPEC P2a-A5; Summary's definition
+# "releases from the pre-minted pools appear under dilution, not here"; Total Yield adds the releases beside it, so a
+# release inside it would count twice) — on a pre-minted supply that is −burn. The change in CIRCULATING supply is
+# release − burn: A4's derived column and its Q1–Q3 history read it (G10-1a, the declared release basis). Fix: RELABEL,
+# not redefine — every pre-minted project's net cells say "burn only" in the number and name the circulating figure in
+# the comment; the release-basis cells say "release − burn". No number moves.
+def _premint_net_flag(p: dict) -> tuple[str, str] | None:
+    """(in-cell suffix, comment) on a NET SUPPLY CHANGE / NET ISSUANCE AFTER BURN cell of a pre-minted supply (P5-1C.B2):
+    the figure is mint − burn = −burn, not the circulating change. A FIXED supply that mints nothing by declaration
+    (Uniswap: issuance_declared_zero + FIXED_SUPPLY_EXTRA) is the same case; Sky (declared zero, not a fixed supply) is
+    not. None everywhere else."""
+    name = p["name"]
+    if not (_premint(p) or (config.issuance_declared_zero(name) and config.fixed_supply_reason(name))):
+        return None
+    rel = config.crossover_issuance_metric(name) if name in config.A4_RELEASE_ISSUANCE else "pool_release_tokens"
+    where = ("A4 'Derived net supply change' and its Q1–Q3 columns" if _a4_iss_metric(name) == "pool_release_tokens"
+             else "A4's key divides the burn by that release" if name in config.A4_RELEASE_ISSUANCE
+             else "the issuer releases line")
+    mint = config.ISSUER_MINTS.get(name)
+    return (" burn only",
+            f"BURN ONLY (P5-1C.B2, Jake 2026-11-04) — {name} is a pre-minted supply (nothing is minted into circulation), "
+            "so the net supply change "
+            f"is mint − burn = −burn ({config.a4_net_burn_metric(name)} / {config.a1_burn_metric(name)}): the definition "
+            "of this column (accuracy pass item 9, SPEC P2a-A5). It is NOT the change in circulating supply: that is "
+            f"release − burn ({rel} − burn; {where}); the release is dilution (CP outflows; Total Yield adds it beside "
+            "this figure, so it is never counted twice)."
+            + (f" Tokens MINTED to an issuer-side wallet ({mint.get('kind', 'mint')} route, config.ISSUER_MINTS: "
+               f"{mint.get('wallet', 'the treasury')}) are not in it either — they are not circulating until released, "
+               "and the release is the dilution leg." if mint else ""))
+
+
+def _premint_circ_flag(p: dict) -> tuple[str, str] | None:
+    """(suffix, comment) on a A4 cell that reads the RELEASE basis on a pre-minted supply (the derived net and its Q1–Q3
+    history, _a4_iss_metric = pool_release_tokens): it is the circulating change, not the net supply change."""
+    if _a4_iss_metric(p["name"]) != "pool_release_tokens":
+        return None
+    return (" release − burn",
+            "RELEASE − BURN = the change in CIRCULATING supply (P5-1C.B2, Jake 2026-11-04): on a pre-minted supply this "
+            "column reads the pool release (what entered circulation from the pre-mint, G10-1a) minus the burn. It is "
+            "not the NET SUPPLY CHANGE headline, which is mint − burn = −burn (burn only) by definition; the release is "
+            "dilution.")
 
 
 def _a4_crossover(R: Refs, r: int, p: dict) -> str:
@@ -10131,6 +10340,11 @@ def _write_table(ws, R: Refs, projects: list[dict], specs: list[tuple], data_by_
             if cnote:
                 prior = c.comment.text if c.comment else ""
                 c.comment = Comment(cnote + ("\n\n" + prior if prior else ""), "token_metrics")
+            # P5-1C.B1: a rate whose window holds a declared one-off says how much of it is one-off, on the cell itself
+            onote = _one_off_share_note(p["name"], v) if kind in ("calc", "pull") else ""
+            if onote:
+                prior = c.comment.text if c.comment else ""
+                c.comment = Comment(onote + ("\n\n" + prior if prior else ""), "token_metrics")
         fc = ws.cell(row=r, column=len(specs) + 1, value=_flags(data_by_key, p["name"], flag_metrics))
         fc.font = Font(name=FONT, size=9, color="C00000")
         r += 1
@@ -10409,11 +10623,11 @@ def write_master(ws, R: Refs, data_by_key: dict):
         ("NET SUPPLY CHANGE Q0 (tokens) = issuance − burn",
          lambda r, p: _zero_issuance(R, r, p, f"-{R.D(r, config.a1_burn_metric(p['name']), 'q0')}")
          or _net_guarded(R, r, p, _basis_iss(R, p), lambda r_, p_, w="q0": R.D(r_, config.a1_burn_metric(p_["name"]), w)),
-         FMT_NUM, "calc", True),
+         FMT_NUM, "calc", True, {"flag_fn": _premint_net_flag}),
         # ONE EXPRESSION (_net_inflation, A4's headline and A1's net issuance %): Master shows the same figure whether or
         # not the project has an A4 row (Phase 2 amendment 1 took the fee-burn chains off A4)
         ("Net supply change, annualised % of circulating",
-         lambda r, p: _net_inflation(R, r, p), FMT_PCT, "calc", True),
+         lambda r, p: _net_inflation(R, r, p), FMT_PCT, "calc", True, {"flag_fn": _premint_net_flag}),
         ("Issuer releases Q0 (tokens) — pre-minted supply released into circulation, NOT issuance",
          lambda r, p: pull(R.D(r, "pool_release_tokens", "q0")) if _premint(p) else "", FMT_NUM, "pull", False,
          {"metric_fn": lambda n: "pool_release_tokens" if config.issuance_basis(n) == "pool_release_tokens" else None}),
@@ -11203,7 +11417,8 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
          lambda r, p: pull(R.D(r, "subsidy_emissions_to_covered_share", "now")) if p.get("subsidy_targeting") else "",
          FMT_PCT, "pull", False,
          {"metric_fn": lambda n: "subsidy_emissions_to_covered_share" if n in ("Aerodrome", "Pendle") else None}),
-        ("ONE-OFF BURN EVENTS — dated, each with its funding; never in a rate, trend or holder value",
+        ("ONE-OFF BURN EVENTS — dated, each with its funding; counted in every rate and trend like a recurring burn "
+         "(P5-1C.B1); a treasury-funded one is recorded, never credited, as holder value",
          lambda r, p: config.one_off_events_text(p["name"]), FMT_TEXT, "text"),
         ("Attributes NOT established (research of 2026-10-12)", attr("unverified"), FMT_TEXT, "text"),
         # ---- PHASE 4: THE BUSINESS EACH PROJECT IS JUDGED ON; PHASE 3: ITS MARKET SHARE (overnight 2026-10-12) ----
@@ -11393,7 +11608,8 @@ def _a4_phase2_cols(R: Refs) -> list[tuple]:
          FMT_PCT, "calc"),
         ("Burn split Q0 (tokens): every burn − the A4 burn", split, FMT_NUM, "calc"),
         ("Burn split — by source", lambda r, p: split_text(p), FMT_TEXT, "text"),
-        ("One-off burn Q0..Y1 (tokens) — the event row, out of every rate and trend (one_off_burn_tokens, trailing 365d)",
+        ("One-off burn Q0..Y1 (tokens) — the event row, a display: the burn is counted in every rate and trend (P5-1C.B1; "
+         "one_off_burn_tokens, trailing 365d)",
          lambda r, p: pull(R.D(r, "one_off_burn_tokens", "y1")) if "one_off_burn_tokens" in config.metrics_for_project(p)
          else "", FMT_NUM, "pull", False, {"metric": "one_off_burn_tokens"}),
         ("One-off burn events", lambda r, p: config.one_off_events_text(p["name"]), FMT_TEXT, "text"),
@@ -11458,7 +11674,8 @@ def write_a4(ws, R: Refs, data_by_key: dict):
             x for x in ["net mint" if p.get("self_reported_net_mint") else "",
                         "burn" if p.get("self_reported_burn") else ""] if x), FMT_TEXT, "text"),
         ("Derived net supply change (issuance − burn), for comparison",
-         lambda r, p: _guarded_net(R, r, p, _a4_iss_metric(p["name"]), config.a1_burn_metric(p["name"])), FMT_NUM, "calc"),
+         lambda r, p: _guarded_net(R, r, p, _a4_iss_metric(p["name"]), config.a1_burn_metric(p["name"])), FMT_NUM, "calc",
+         False, {"flag_fn": _premint_circ_flag}),
         # D1-3: nothing issued and nothing self-reported (Hyperliquid: pre-minted) — n/a, never a history wait
         ("Self-reported − derived (a gap here means one of the two is wrong)",
          lambda r, p: (_no_issuance_text(p).replace("no issuance to divide by", "nothing issued and nothing self-reported")
@@ -11466,7 +11683,8 @@ def write_a4(ws, R: Refs, data_by_key: dict):
              R, r, p, "gross_issuance_tokens", config.a1_burn_metric(p["name"]),
                                    total=f"{R.D(r, 'net_mint_monthly', 'q0')}-({iss(r)}-{burn(r, p)})"), FMT_NUM, "calc"),
         ("Net supply change ($ at avg price)",
-         lambda r, p: _price_net(_net_guarded(R, r, p, _basis_iss(R, p), burn), price(r)), FMT_USD, "calc"),
+         lambda r, p: _price_net(_net_guarded(R, r, p, _basis_iss(R, p), burn), price(r)), FMT_USD, "calc", False,
+         {"flag_fn": _premint_net_flag}),
         ("Burn as share of fees (measured)",
          lambda r, p: _coverage_guard(R, r, [("burn", config.a4_burn_metric(p["name"]), "q0"), ("fees", "fees_usd", "q0")],
                                       f"{_flow_rate(R, r, config.a4_burn_metric(p['name']), p=p)}*{price(r)}/{_flow_rate(R, r, 'fees_usd')}"),
@@ -11485,9 +11703,12 @@ def write_a4(ws, R: Refs, data_by_key: dict):
          if p.get("supply_is_partial") else "", FMT_TEXT, "text"),
         ("Cross-check: Δ implied circulating supply Q0 vs Q1 (CoinGecko mcap ÷ price)",
          lambda r, p: calc(f"{R.D(r, 'circulating_supply_implied', 'q0')}-{R.D(r, 'circulating_supply_implied', 'q1')}"), FMT_NUM, "calc"),
-        ("Net supply change Q1 (tokens, −3m window)", lambda r, p: _guarded_net(R, r, p, _a4_iss_metric(p["name"]), config.a1_burn_metric(p["name"]), "q1"), FMT_NUM, "calc"),
-        ("Net supply change Q2 (−6m window)", lambda r, p: _guarded_net(R, r, p, _a4_iss_metric(p["name"]), config.a1_burn_metric(p["name"]), "q2"), FMT_NUM, "calc"),
-        ("Net supply change Q3 (−9m window)", lambda r, p: _guarded_net(R, r, p, _a4_iss_metric(p["name"]), config.a1_burn_metric(p["name"]), "q3"), FMT_NUM, "calc"),
+        ("Net supply change Q1 (tokens, −3m window)", lambda r, p: _guarded_net(R, r, p, _a4_iss_metric(p["name"]), config.a1_burn_metric(p["name"]), "q1"), FMT_NUM, "calc", False,
+         {"flag_fn": _premint_circ_flag}),
+        ("Net supply change Q2 (−6m window)", lambda r, p: _guarded_net(R, r, p, _a4_iss_metric(p["name"]), config.a1_burn_metric(p["name"]), "q2"), FMT_NUM, "calc", False,
+         {"flag_fn": _premint_circ_flag}),
+        ("Net supply change Q3 (−9m window)", lambda r, p: _guarded_net(R, r, p, _a4_iss_metric(p["name"]), config.a1_burn_metric(p["name"]), "q3"), FMT_NUM, "calc", False,
+         {"flag_fn": _premint_circ_flag}),
         *_trajectory(R, config.a4_burn_metric, "Burn"),
         *_trajectory(R, _a4_iss_metric, "Issuance"),
         # FOOTNOTES FIRST: burned SKY that is deliberately NOT in any burn column above
@@ -11799,9 +12020,9 @@ def write_a1(ws, R: Refs, data_by_key: dict, months: list[str]):
         ("NET ISSUANCE AFTER BURN Q0 (tokens) — issuance − every burn, on the basis A4 uses",
          lambda r, p: _zero_issuance(R, r, p, f"-{R.D(r, config.a1_burn_metric(p['name']), 'q0')}")
          or _net_guarded(R, r, p, _basis_iss(R, p), lambda r_, p_, w="q0": R.D(r_, config.a1_burn_metric(p_["name"]), w)),
-         FMT_NUM, "calc", True),
+         FMT_NUM, "calc", True, {"flag_fn": _premint_net_flag}),
         ("NET ISSUANCE AFTER BURN, annualised % of circulating (+ is net inflation; fee-market burns included)",
-         lambda r, p: _net_inflation(R, r, p), FMT_PCT, "calc", True),
+         lambda r, p: _net_inflation(R, r, p), FMT_PCT, "calc", True, {"flag_fn": _premint_net_flag}),
         # ISSUER RELEASES ON THEIR OWN LINE (accuracy pass item 9): a pre-minted supply mints nothing; what its issuer
         # wallets release into circulation is here, never inside net issuance (Total Yield subtracts it explicitly)
         ("Issuer releases Q0 (tokens) — pre-minted supply released into circulation, NOT issuance",
@@ -12789,6 +13010,13 @@ def flow_statements(groups: dict, asof) -> list[dict]:
                     leg_vals[lab].append(0.0)
                     continue
                 v, n = _flow_sum(d(m), start, end)
+                if lab == "− burned" and v is not None:
+                    # P5-1C.B1: a one-off KEPT in the burn series that left an ISSUER-SIDE wallet (Uniswap's 100M from
+                    # the Timelock) never circulated — out of this leg (it is the memo line below), so the circulating
+                    # identity still balances; every rate keeps it
+                    issuer_side = {f["what"] for f in p.get("one_off_flows") or () if f.get("from_stock")}
+                    v -= sum(t for day, t, _f, w in _ONE_OFF_IN_SERIES.get((name, m), ())
+                             if start < day <= end and w in issuer_side)
                 leg_vals[lab].append(v if v is not None else None)
                 if n < period:
                     why.append(f"{m} covers {n}/{period} days")
@@ -12872,6 +13100,8 @@ def flow_statements(groups: dict, asof) -> list[dict]:
                     [_flow_sum(d("one_off_burn_tokens"), *_flow_window(asof, k))[0] or 0.0 for k in range(5)], "tokens",
                     "one_off_burn_tokens",
                     "; ".join(f"{f['what']}, landed {f.get('landed')}" for f in p.get("one_off_flows") or ())
+                    + ("; P5-1C.B1: it stays in the burn series and every rate — taken out of '− burned' on this "
+                       "circulating statement only" if config.one_offs_in_rates() else "")
                     + ("; NOT MATCHED to a stored fall: "
                        + ", ".join(f"{m} {v:,.0f}" for (n_, m), v in _ONE_OFF_UNMATCHED.items() if n_ == name)
                        if any(n_ == name for n_, _m in _ONE_OFF_UNMATCHED) else ""))]
@@ -13090,6 +13320,9 @@ def write_trajectory(wb, data_by_key: dict, asof=None) -> list[dict]:
         for q, f in enumerate(forms):
             c = ws.cell(row=r, column=trajectory.COL[trajectory.LABELS[q]], value=f)
             _style(c, "calc", spec["fmt"])
+            onote = _one_off_share_note(p["name"], f)      # P5-1C.B1: the quarter a one-off sits in says its share
+            if onote:
+                c.comment = Comment(onote, "token_metrics")
         written.append({"row": r, "key": k, "spec": spec, "independent": independent, "q0_formula": forms[0]})
     _set_widths(ws, {"A": 14, "B": 34, "E": 48, **{get_column_letter(trajectory.COL[h]): 14 for h in trajectory.LABELS}})
     ws.freeze_panes = ws.cell(row=first, column=3)

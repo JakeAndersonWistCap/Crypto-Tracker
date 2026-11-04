@@ -19052,10 +19052,11 @@ def test_uniswap_one_off_burn_is_dated_shown_apart_and_kept_out_of_every_rate(tm
     assert burn["status"] not in bw.WITHHELD_STATUSES, burn["note"]
     assert abs(burn["q0"] - 89 * 45_000.0) < 1e-6                 # (06-30, 09-28], last reading 09-27
     ongoing = (bal[-1] - bal[0]) - 100_000_000                     # the stray days, then the programme
-    assert abs(burn["y1"] - ongoing) < 1e-3, "the 100M is in no window"
+    # P5-1C.B1 (Jake 2026-11-04): the one-off STAYS in every rate and trend — the event row is its dated display
+    assert abs(burn["y1"] - (ongoing + 100_000_000)) < 1e-3, "the 100M counts in the year like any burn"
     assert abs(uni.loc["one_off_burn_tokens", "y1"] - 100_000_000) < 1e-6, "shown on its own row"
     assert uni.loc["one_off_burn_tokens", "latest_date"] == "2025-12-28"
-    assert abs(uni.loc["actual_buyback_tokens", "y1"] - ongoing) < 1e-3, "the buyback copy excludes it too"
+    assert abs(uni.loc["actual_buyback_tokens", "y1"] - (ongoing + 100_000_000)) < 1e-3, "the buyback copy keeps it"
     assert burn["status"] != "unreconciled_flow", "the reconciliation adds the one-off back"
 
     # (a) the archive never differences a day inside a stored multi-day delta
