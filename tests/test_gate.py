@@ -117,8 +117,21 @@ def test_the_runbook_section_for_the_gate_is_at_the_top_of_the_11d_run():
     import re
     text = (Path(__file__).resolve().parent.parent / "RUNBOOK.md").read_text(encoding="utf-8")
     heads = re.findall(r"^## (11d\w*)\.", text, re.M)
-    assert heads[0] == "11dt" and heads[1] == "11ds"
+    # newest first: 11dt sits directly above its predecessor 11ds (P5-1.6 put 11du above it)
+    assert "11dt" in heads and heads.index("11dt") + 1 == heads.index("11ds")
     sec = text[text.index("## 11dt."):text.index("## 11ds.")]
     for m in ("gate.py", "own_checks.py", "TOKEN_METRICS_SHARED_BUILD_STALE", "No fixed cap", "NETWORK BLOCKED IN TESTS",
               "never", "skipped"):
+        assert m in sec, m
+
+
+def test_the_review_queue_runbook_section_is_at_the_top_of_the_11d_run():
+    """P5-1.6: 11du (resolving Review Queue rows) is the newest section, directly above 11dt."""
+    import re
+    text = (Path(__file__).resolve().parent.parent / "RUNBOOK.md").read_text(encoding="utf-8")
+    heads = re.findall(r"^## (11d\w*)\.", text, re.M)
+    assert heads[0] == "11du" and heads[1] == "11dt"
+    sec = text[text.index("## 11du."):text.index("## 11dt.")]
+    for m in ("review_resolve.py --list", "review_resolve.py --rejudge", "--rejudge --apply", "RESOLVED-ARTEFACT",
+              "Per day on both sides", "SAME date", "Never a bulk accept"):
         assert m in sec, m
