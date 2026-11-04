@@ -210,8 +210,8 @@ def test_the_runbook_section_is_at_the_top_of_the_11d_run():
     text = (ROOT / "RUNBOOK.md").read_text(encoding="utf-8")
     heads = re.findall(r"^## (11d\w*)\.", text, re.M)
     # newest first: 11ds sits directly above its predecessor 11dr (P5-0 put 11dt above it; tests/test_gate.py
-    # checks that one is at the top)
-    assert heads.index("11ds") + 1 == heads.index("11dr") and heads.index("11ds") <= 1
+    # checks that one; P5 round 1 put 11du above both: the newest section first)
+    assert heads.index("11ds") + 1 == heads.index("11dr") and heads[0] == max(heads)
     sec = text[text.index("## 11ds."):text.index("## 11dr.")]
     assert "2027-01-05" in sec and "mode=ro" in sec and "hole" in sec
     for m in NEW:

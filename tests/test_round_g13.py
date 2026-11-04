@@ -45,7 +45,10 @@ def test_1a_the_settlement_and_stake_views_read_back_what_they_back_fill():
     assert 'rebuilt = _daily(groups[(name, "settlement_rebuilt_usd")])' in src
     assert src.index('rebuilt = _daily(groups[(name, "settlement_rebuilt_usd")])') < src.index("after = rebuilt[")
     hl = inspect.getsource(bw._hl_model_views)
-    assert 'stk = _daily(groups[(name, spec["stake_modelled"])])' in hl
+    # P5-1.4 (Jake 2026-11-04): the stake model is its own row only and feeds nothing — it is never read back into
+    # locked_tokens (no back-fill, so nothing to read back), and locked_tokens is never written by the model
+    assert 'groups[(name, spec["stake_modelled"])] = ' in hl
+    assert 'groups[(name, spec["stake"])] =' not in hl and 'groups[(name, spec["stake_modelled"])])' not in hl
     # the graph sees the read: a view reading r and writing w gives the INPUT edge r -> w
     wiring.reset()
     g = wiring.TrackingDict({("Ethereum", "settlement_rebuilt_usd"): 1})
