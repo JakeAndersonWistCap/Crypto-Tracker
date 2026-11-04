@@ -124,6 +124,9 @@ class NearBigQuery:
         self._prices = prices                        # tests inject {(day, coin): (price, decimals)}
         self.cache_file = cache_file
         self.csv_dir = csv_dir
+        # P5-1.9 (Jake 2026-11-04): the byte counters exist from the start, so a dry run or a single query made outside
+        # run() (settlement_extend.py dry-run / cex-sweep / backfill) can print the QUOTA line and bill a job
+        self._run_bytes = self._backfill_bytes = 0
 
     # --- state ---------------------------------------------------------------------------------
     def _path(self) -> Path:

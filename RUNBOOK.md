@@ -661,7 +661,7 @@ CoinGecko, unless CoinGecko's market_chart misses a day; that day is then named 
 Nothing Artemis is removed yet, and there is no purge script and no fallback until Jake confirms. Jake's decisions
 (SPEC P5-1.9): the BigQuery definition IS the series — there is no ±1% test against Artemis; the extension reaches back
 to 2024-11-04 (A1's key needs 730 days on one definition); the exchange double count is sized first and not
-subtracted. Do not run any BigQuery query (steps 4 and 5) until Jake says so. Run these from the repo folder.
+subtracted. Step 4's one-week query is approved (Jake 2026-11-04, 'Go'); do not run the backfill (step 5) and do not set extend_approved until Jake says so. Run these from the repo folder.
 
 1. **Reference only (read-only, no BigQuery):**
 
@@ -673,33 +673,39 @@ subtracted. Do not run any BigQuery query (steps 4 and 5) until Jake says so. Ru
    rebuild / CSV - 1 = +6.8%`-ish, the three legs' totals, the daily and weekly gaps, and writes
    `data\ethereum\settlement_overlap.json`. It decides nothing. PASTE BACK the legs line.
 
-2. **The extension's cost (BigQuery dry runs: no data read, no quota):**
+2. **Hypothesis (b) and the weekly gaps (read-only, no BigQuery):**
+
+   ```
+   python settlement_extend.py explain
+   ```
+
+   The overlap's totals as P2P alone, P2P + NFT and as built against Artemis; the daily fit of (Artemis − P2P) on DEX
+   (slope about 1 if Artemis holds a DEX leg our P2P lacks, about 0 if not); then one line a week: Artemis, P2P, DEX,
+   NFT, the gap as built and without DEX, the ETH close, and the P2P leg's token mix. PASTE BACK the whole output.
+
+3. **The extension's cost (BigQuery dry runs: no data read, no quota):**
 
    ```
    python settlement_extend.py dry-run --from 2024-11-04
    ```
 
-   82 weekly pieces, 2024-11-04..2024-11-10 through 2026-05-25..2026-05-31, one line each, then `TOTAL … GB` and the
-   month's quota line. The estimate on file is about 13 GB a week (about 1,070 GB); the dry runs replace it. PASTE BACK
-   the TOTAL line.
+   82 weekly pieces, 2024-11-04..2024-11-10 through 2026-05-25..2026-05-31, then `TOTAL … GB` and the month's quota
+   line (it crashed before 2026-11-04; fixed). Jake's per-piece figures sum to about 777 GB.
 
-3. **The exchange double count's cost (one dry run: no data read, no quota):**
+4. **One week, one query: hypothesis (a) and the exchange double count (Jake: go):**
 
    ```
    python settlement_extend.py cex-sweep
+   python settlement_extend.py cex-sweep --apply
    ```
 
-   The newest Monday..Sunday week whose seven P2P days are stored (or `--week <a Monday>`), the number of published
-   proof-of-reserves wallets and exchanges (research/cex_por/ethereum_por_wallets.json, each list cited), and
-   `dry run: … GB` (about one weekly piece). PASTE BACK the output.
-
-4. **Only when Jake says so — the one-week query:** `python settlement_extend.py cex-sweep --apply` runs that week
-   under the shared monthly budget (held if it does not fit) and prints the dollars INTO the listed wallets as a share
-   of the week's stored P2P, split by sender (the same exchange, another listed exchange, an unlisted account) and by
-   exchange, and `DOUBLE COUNT BOUNDS: low x% .. high y%` (low = the same exchange's own moves; high = those plus
-   every unlisted sender — OKX's list is unlabelled, so a sweep can fall in either); written to
-   `data\ethereum\cex_sweep_<week>.json`. Four exchanges' lists only (Binance, OKX, CoinEx, Bitfinex; SPEC P5-1.9
-   names the rest and why), so it understates. Nothing is subtracted; Jake decides.
+   The first line is the dry run alone (`dry run: … GB`). `--apply` runs it on the newest full Monday..Sunday week
+   (or `--week <a Monday>`) under the shared monthly budget, and REFUSES a dry run over 25 GB (`--max-gb`). It prints
+   the query's P2P against the stored leg (they must agree), the P2P leg by how it was made (direct / inside a
+   one-token contract call / inside a multi-token contract call, against the week's DEX leg), the dollars into the
+   published exchange wallets with the low and high bounds, and the week's rebuild as built and without each
+   correction; written to `data\ethereum\p2p_week_split_<week>.json`. Four exchanges' lists only (SPEC P5-1.9), so the
+   double count is understated. Nothing is subtracted; Jake decides.
 
 5. **Only after Jake declares his budget decision** (config `extend_approved`): `python settlement_extend.py backfill`
    prints the plan; `--apply` reads the pieces under the shared monthly budget (a piece that does not fit waits for the

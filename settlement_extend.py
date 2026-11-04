@@ -36,7 +36,8 @@ ROOT = Path(__file__).resolve().parent
 RESULT = ROOT / "data" / "ethereum" / "settlement_overlap.json"
 SWEEP_DIR = ROOT / "data" / "ethereum"
 POR_LISTS = ROOT / "research" / "cex_por" / "ethereum_por_wallets.json"
-CEX_SQL = "bigquery_p2p_cex_week.sql"
+CEX_SQL = "bigquery_p2p_week_split.sql"
+MAX_GB = 25.0                      # cex-sweep --apply refuses a dry run above this (Jake: ~10 GB expected)
 OVERLAP = ("2026-05-28", "2026-08-25")
 EXTEND_FROM = "2024-11-04"         # Jake 2026-11-04: A1's key needs 730 days on one definition
 
@@ -234,6 +235,9 @@ def value_sweep(rows: list[dict], eth_px: pd.Series, prices: dict, tokens: tuple
 def sweep_summary(valued: list[dict], p2p_week: float) -> dict:
     by = {}
     for r in valued:
+        if not r.get("to_exchange", r.get("exchange")):
+            continue
+        r = {**r, "exchange": r.get("to_exchange", r.get("exchange"))}
         k = (r["exchange"], r["sender"])
         by[k] = by.get(k, 0.0) + r["usd"]
     legs = {s: sum(v for (_e, s2), v in by.items() if s2 == s) for s in ("same_exchange", "other_exchange", "unlisted")}
@@ -251,20 +255,63 @@ def sweep_summary(valued: list[dict], p2p_week: float) -> dict:
             "by_exchange": {f"{e} / {s}": v for (e, s), v in sorted(by.items(), key=lambda kv: -kv[1])}}
 
 
-def cmd_cex_sweep(week: str | None, apply: bool, db: Path) -> int:
+def split_summary(valued: list[dict], legs: dict) -> dict:
+    """Hypothesis (a): the P2P leg by how each transfer was made, and the rebuild for the week with and without each
+    correction. legs: the week's STORED dex / nft / p2p (and artemis where the week is in the CSV's span)."""
+    by = {c: 0.0 for c in ("direct", "contract_call_single_token", "contract_call_multi_token")}
+    tok = {}
+    for r in valued:
+        by[r["call_class"]] = by.get(r["call_class"], 0.0) + r["usd"]
+        k = (r["token"], r["call_class"])
+        tok[k] = tok.get(k, 0.0) + r["usd"]
+    p2p_q = sum(by.values())
+    dex, nft, p2p = legs.get("dex"), legs.get("nft"), legs.get("p2p")
+    multi = by["contract_call_multi_token"]
+    out = {"p2p_by_call_class_usd": by, "p2p_query_usd": p2p_q,
+           "p2p_query_vs_stored": (p2p_q / p2p - 1) if p2p else None,
+           "by_token_and_class_usd": {f"{t} / {c}": v for (t, c), v in sorted(tok.items(), key=lambda kv: -kv[1])},
+           "multi_token_vs_dex": (multi / dex) if dex else None}
+    if None not in (dex, nft, p2p):
+        cex = sweep_summary(valued, p2p)["double_count_bounds"]
+        base = dex + nft + p2p
+        out["rebuild_week_usd"] = {
+            "as built (DEX + NFT + P2P)": base,
+            "(a) without the multi-token contract-call P2P": base - multi,
+            "(b) without the DEX leg (P2P + NFT)": nft + p2p,
+            "exchange double count removed, low": base - cex["low_usd"],
+            "exchange double count removed, high": base - cex["high_usd"],
+            "(a) + exchange low": base - multi - cex["low_usd"],
+            "(a) + exchange high": base - multi - cex["high_usd"]}
+        if legs.get("artemis"):
+            out["vs_artemis"] = {k: v / legs["artemis"] - 1 for k, v in out["rebuild_week_usd"].items()}
+    return out
+
+
+def cmd_cex_sweep(week: str | None, apply: bool, db: Path, max_gb: float = MAX_GB) -> int:
+    """ONE WEEK, ONE QUERY (Jake 2026-11-04): every P2P transfer of the week, split by how it was made (hypothesis (a))
+    and by whether it went into a wallet an exchange publishes (the double count). Dry run first; --apply runs it only
+    when the dry run is at most max_gb."""
     addrs, names, lists, dropped = por_wallets()
     con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
     try:
         p2p, eth_px = _stored_days(con, "p2p_transfer_volume_usd"), _stored_days(con, "price_usd")
+        dex_s, nft_s = _stored_days(con, "dex_volume_usd"), _stored_days(con, "nft_volume_usd")
+        art = _series(con, "settlement_volume_usd", "artemis")
     finally:
         con.close()
     a, b = sweep_week(p2p, week)
     days = pd.date_range(a, b)
-    lacking = [str(d.date()) for d in days if d not in p2p.index]
+    lacking = {k: [str(d.date()) for d in days if d not in s.index] for k, s in (("p2p", p2p), ("dex", dex_s),
+                                                                                ("nft", nft_s))}
+    lacking = {k: v for k, v in lacking.items() if v}
+    legs = {k: (float(s.reindex(days).sum()) if k not in lacking else None)
+            for k, s in (("dex", dex_s), ("nft", nft_s), ("p2p", p2p))}
+    if all(d in art.index for d in days):
+        legs["artemis"] = float(art.reindex(days).sum())
     exs = sorted(set(names))
-    print(f"EXCHANGE DOUBLE COUNT, week {a.date()}..{b.date()}: {len(addrs)} published proof-of-reserves wallet(s) of "
-          f"{len(exs)} exchange(s) ({', '.join(exs)})" + (f"; {len(dropped)} address(es) listed by two exchanges "
-                                                          f"dropped: {', '.join(dropped)}" if dropped else ""))
+    print(f"P2P WEEK SPLIT {a.date()}..{b.date()} (DEX hypothesis (a) + exchange double count): {len(addrs)} published "
+          f"proof-of-reserves wallet(s) of {len(exs)} exchange(s) ({', '.join(exs)})"
+          + (f"; {len(dropped)} address(es) listed by two exchanges dropped: {', '.join(dropped)}" if dropped else ""))
     r, spec, bq, out, now = _p2p_reader()
     client, why = r._client(bq)
     if client is None:
@@ -279,65 +326,170 @@ def cmd_cex_sweep(week: str | None, apply: bool, db: Path) -> int:
     if not apply:
         print("  nothing read (add --apply to run this one query under the shared monthly budget)")
         return 0
+    if est > max_gb * 1e9:
+        print(f"  REFUSED - the dry run is {est / 1e9:,.1f} GB, above the {max_gb:,.0f} GB this run allows "
+              f"(--max-gb). Nothing read.")
+        return 3
     st = r._load()
-    rows = r._run(client, "cex-sweep", sql, params, bq, st, out, "Ethereum", backfill=True)
+    rows = r._run(client, "p2p-week-split", sql, params, bq, st, out, "Ethereum", backfill=True)
     for ev in getattr(out, "log", []):
         print(f"  {ev.status}: {ev.message}")
     if rows is None:
         return 2
     e = (st.get("eth_p2p") or {})
     prices = dict(e.get("prices") or {})
+    weth = {t[1] for t in spec["p2p"]["tokens"] if t[0] == "WETH"}
     for d in days:
         key = str(d.date())
-        stables = sorted({str(x["token"]).lower() for x in rows if str(x["day"])[:10] == key} - {"eth"}
-                         - {t[1] for t in spec["p2p"]["tokens"] if t[0] == "WETH"})
+        stables = sorted({str(x["token"]).lower() for x in rows if str(x["day"])[:10] == key} - {"eth"} - weth)
         if stables and not all(f"ethereum:{t}" in (prices.get(key) or {}) for t in stables):
             prices[key] = {c: list(v) for c, v in r._price(spec["p2p"], d, [f"ethereum:{t}" for t in stables]).items()}
     valued, why = value_sweep(rows, eth_px, prices, spec["p2p"]["tokens"])
-    res = sweep_summary(valued, float(p2p.reindex(days).sum()))
-    res.update({"week": f"{a.date()}..{b.date()}", "p2p_days_lacking": lacking, "rows_not_valued": why,
-                "dry_run_bytes": est, "dropped_addresses": dropped, "subtracted": False,
+    res = sweep_summary(valued, legs["p2p"] or 0.0)
+    res.update(split_summary(valued, legs))
+    res.update({"week": f"{a.date()}..{b.date()}", "stored_legs_usd": legs, "legs_lacking_days": lacking,
+                "rows_not_valued": why, "dry_run_bytes": est, "dropped_addresses": dropped, "subtracted": False,
                 "lists": {k: {f: v.get(f) for f in ("page_url", "data_url", "read_on")} | {
                     "n_eth": len(v.get("eth_addresses") or ())} for k, v in lists.items()}})
     SWEEP_DIR.mkdir(parents=True, exist_ok=True)
-    path = SWEEP_DIR / f"cex_sweep_{a.date()}.json"
+    path = SWEEP_DIR / f"p2p_week_split_{a.date()}.json"
     path.write_text(json.dumps(res, indent=1, default=str))
+    B = lambda x: f"${x / 1e9:,.2f}B" if x is not None else "n/a"      # noqa: E731
+    pc = lambda x: f"{x:+.1%}" if x is not None else "n/a"             # noqa: E731
+    print(f"  P2P from the query {B(res['p2p_query_usd'])} vs stored {B(legs['p2p'])} ({pc(res['p2p_query_vs_stored'])}"
+          f" - the query must reproduce the stored leg)")
+    print("  (a) HOW THE P2P LEG WAS MADE:")
+    for c, v in res["p2p_by_call_class_usd"].items():
+        print(f"    {c:<28} {B(v)}" + (f"  {v / res['p2p_query_usd']:.1%} of P2P" if res["p2p_query_usd"] else ""))
+    print(f"    multi-token contract calls / the week's DEX leg {B(legs['dex'])} = "
+          + (f"{res['multi_token_vs_dex']:.2f}" if res["multi_token_vs_dex"] is not None else "n/a"))
+    for k, v in list(res["by_token_and_class_usd"].items())[:10]:
+        print(f"      {k:<52} {B(v)}")
     sh = res["share_of_p2p"]
-    print(f"  INTO LISTED WALLETS ${res['into_listed_wallets_usd'] / 1e9:,.2f}B of the week's stored P2P "
-          f"${res['p2p_week_usd'] / 1e9:,.2f}B = " + (f"{sh:.1%}" if sh is not None else "n/a")
-          + " (NOT subtracted)")
+    print(f"  EXCHANGE DOUBLE COUNT: into listed wallets {B(res['into_listed_wallets_usd'])} = "
+          + (f"{sh:.1%}" if sh is not None else "n/a") + " of the week's P2P (NOT subtracted)")
     bd = res["double_count_bounds"]
     if bd["low_share"] is not None:
-        print(f"  DOUBLE COUNT BOUNDS: low {bd['low_share']:.1%} (same exchange's own moves) .. high {bd['high_share']:.1%}"
-              f" (+ every unlisted sender) of the week's P2P - NOT subtracted")
+        print(f"    bounds: low {bd['low_share']:.1%} (same exchange's own moves) .. high {bd['high_share']:.1%} "
+              f"(+ every unlisted sender)")
     for s, v in res["by_sender"].items():
-        print(f"    from {s:<15} ${v['usd'] / 1e9:,.2f}B" + (f"  {v['share_of_p2p']:.1%}" if v["share_of_p2p"] is not None
-                                                            else ""))
-    for k, v in list(res["by_exchange"].items())[:12]:
-        print(f"    {k:<32} ${v / 1e9:,.2f}B")
-    if lacking:
-        print(f"  the week's stored P2P lacks {len(lacking)} day(s): {', '.join(lacking)} - the share is not formed "
-              f"on a full week")
+        print(f"    from {s:<15} {B(v['usd'])}")
+    for k, v in list(res["by_exchange"].items())[:8]:
+        print(f"    {k:<32} {B(v)}")
+    if "rebuild_week_usd" in res:
+        print("  THE WEEK'S REBUILD, WITH AND WITHOUT EACH CORRECTION" + (" (vs Artemis's CSV)" if "vs_artemis" in res
+                                                                         else ""))
+        for k, v in res["rebuild_week_usd"].items():
+            print(f"    {k:<50} {B(v)}" + (f"  {pc(res['vs_artemis'][k])}" if "vs_artemis" in res else ""))
+    for k, v in lacking.items():
+        print(f"  the week's stored {k} lacks {len(v)} day(s): {', '.join(v)}")
     if why:
         print(f"  {len(why)} row(s) not valued (not counted): {'; '.join(why[:6])}")
     print(f"  written to {path.relative_to(ROOT) if path.is_relative_to(ROOT) else path}")
     return 0
 
+def _fit(y: pd.Series, x: pd.Series) -> dict:
+    """Least squares y = c + s x on the common days: slope, intercept, R^2 (reported, never a test)."""
+    d = pd.concat([y.rename("y"), x.rename("x")], axis=1).dropna()
+    if len(d) < 3 or d["x"].var() == 0:
+        return {"n": len(d)}
+    s = d["x"].cov(d["y"]) / d["x"].var()
+    c = d["y"].mean() - s * d["x"].mean()
+    r2 = d["x"].corr(d["y"]) ** 2
+    return {"n": len(d), "slope": float(s), "intercept": float(c), "r2": float(r2)}
+
+
+def p2p_by_token(st: dict, eth_px: pd.Series, tokens: tuple, days) -> pd.DataFrame:
+    """The P2P cache's per-token amounts valued as the leg is valued: one column per token symbol, a row per day held."""
+    sym = {t[1]: t[0] for t in tokens}
+    e = st.get("eth_p2p") or {}
+    rows = []
+    for d in days:
+        key = str(d.date())
+        held = (e.get("days") or {}).get(key)
+        if not held:
+            continue
+        for k, amt in held.items():
+            kk = str(k).lower()
+            addr = "ETH" if kk == "eth" else next((a for a, s in sym.items() if kk in (a, s.lower())), kk)
+            rows.append({"day": key, "token": addr, "amount": amt})
+    valued, _why = value_sweep(rows, eth_px, e.get("prices") or {}, tokens)
+    if not valued:
+        return pd.DataFrame()
+    df = pd.DataFrame(valued)
+    df["sym"] = [("ETH" if t == "ETH" else sym.get(t, t)) for t in df["token"]]
+    return df.pivot_table(index=pd.to_datetime(df["day"]), columns="sym", values="usd", aggfunc="sum").sort_index()
+
+
+def cmd_explain(db: Path, st: dict | None = None) -> int:
+    """READ-ONLY, NO BIGQUERY (Jake 2026-11-04): hypothesis (b) and the weekly gaps on the overlap. Per week: Artemis's
+    CSV, the three stored legs, the gap with and without the DEX leg, the P2P leg by token (the P2P cache, valued as the
+    leg is) and the ETH close. Per day: how well P2P alone, and P2P + DEX, track the CSV."""
+    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    try:
+        dex, nft, p2p = (_series(con, m) for m in ("dex_volume_usd", "nft_volume_usd", "p2p_transfer_volume_usd"))
+        art, eth_px = _series(con, "settlement_volume_usd", "artemis"), _stored_days(con, "price_usd")
+    finally:
+        con.close()
+    days = pd.date_range(*OVERLAP)
+    f = pd.concat([art.rename("artemis"), p2p.rename("p2p"), dex.rename("dex"), nft.rename("nft")], axis=1) \
+        .reindex(days).dropna()
+    print(f"EXPLAIN {OVERLAP[0]}..{OVERLAP[1]} (read-only; decides nothing): {len(f)} of {len(days)} days hold all four")
+    if f.empty:
+        return 0
+    tot = f.sum()
+    for label, num in (("P2P alone", tot["p2p"]), ("P2P + NFT (hypothesis (b): no DEX)", tot["p2p"] + tot["nft"]),
+                       ("DEX + NFT + P2P (as built)", tot["p2p"] + tot["dex"] + tot["nft"])):
+        print(f"  {label:<40} ${num / 1e9:,.2f}B vs Artemis ${tot['artemis'] / 1e9:,.2f}B = {num / tot['artemis'] - 1:+.2%}")
+    fb = _fit(f["artemis"] - f["p2p"], f["dex"])
+    if "slope" in fb:
+        print(f"  daily (Artemis - P2P) on DEX: slope {fb['slope']:.2f}, R^2 {fb['r2']:.2f} over {fb['n']} days "
+              f"(about 1 if Artemis holds a DEX leg our P2P lacks; about 0 if not)")
+    for lab, x in (("P2P alone", f["p2p"]), ("P2P + DEX + NFT", f["p2p"] + f["dex"] + f["nft"])):
+        r = _fit(f["artemis"], x)
+        if "r2" in r:
+            print(f"  daily Artemis on {lab}: R^2 {r['r2']:.3f}, slope {r['slope']:.2f}")
+    if st is None:
+        from fetch.eth_settlement import EthP2PBigQuery
+        st = EthP2PBigQuery()._load()
+    from fetch.eth_settlement import _spec
+    toks = _spec()["p2p"]["tokens"]
+    bt = p2p_by_token(st, eth_px, toks, f.index)
+    w = f.groupby(f.index.to_period("W")).sum()
+    wbt = bt.groupby(bt.index.to_period("W")).sum() if not bt.empty else pd.DataFrame()
+    wpx = eth_px.reindex(f.index).groupby(f.index.to_period("W")).mean()
+    cols = list(wbt.columns) if not wbt.empty else []
+    print("  WEEK        Artemis    P2P      DEX    NFT  built-Art  (P2P+NFT)-Art  ETH close  P2P mix: "
+          + " ".join(f"{c:>5}" for c in cols))
+    for k, r in w.iterrows():
+        built = (r["p2p"] + r["dex"] + r["nft"]) / r["artemis"] - 1
+        nodex = (r["p2p"] + r["nft"]) / r["artemis"] - 1
+        mix = ""
+        if k in getattr(wbt, "index", []):
+            s = wbt.loc[k].sum()
+            mix = " ".join(f"{wbt.loc[k, c] / s:5.1%}" for c in cols)
+        print(f"  {str(k)[:10]}  {r['artemis'] / 1e9:7.1f}B {r['p2p'] / 1e9:7.1f}B {r['dex'] / 1e9:6.1f}B "
+              f"{r['nft'] / 1e9:5.2f}B  {built:+8.1%}  {nodex:+12.1%}  {wpx.get(k, float('nan')):9,.0f}  {mix}")
+    return 0
+
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("mode", choices=("validate", "dry-run", "cex-sweep", "backfill"))
+    ap.add_argument("mode", choices=("validate", "explain", "dry-run", "cex-sweep", "backfill"))
     ap.add_argument("--week", default=None, help="cex-sweep: the Monday of the week (default: the newest full week)")
     ap.add_argument("--from", dest="frm", default=EXTEND_FROM)
     ap.add_argument("--db", default=str(ROOT / "metrics.db"))
     ap.add_argument("--apply", action="store_true")
+    ap.add_argument("--max-gb", type=float, default=MAX_GB, help="cex-sweep --apply: refuse a dry run above this")
     a = ap.parse_args(argv)
     if a.mode == "validate":
         return cmd_validate(Path(a.db))
+    if a.mode == "explain":
+        return cmd_explain(Path(a.db))
     if a.mode == "dry-run":
         return cmd_dry_run(a.frm)
     if a.mode == "cex-sweep":
-        return cmd_cex_sweep(a.week, a.apply, Path(a.db))
+        return cmd_cex_sweep(a.week, a.apply, Path(a.db), a.max_gb)
     return cmd_backfill(a.frm, a.apply)
 
 

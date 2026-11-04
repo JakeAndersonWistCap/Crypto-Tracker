@@ -2596,8 +2596,10 @@ def _fit_stats(pred: list, obs: list) -> dict:
 
 
 def _read_interval_fit(rows: list, stock, stake: pd.Series) -> dict:
-    """FOR JAKE'S DECISION, NOT THE PASS TEST (P5-1.5 finding): the same calibrate-on-half / test-on-half, with each
-    row's model over the time between the two stock reads it is the fall of (their fetched_at), not over calendar days.
+    """FOR JAKE'S DECISION, NOT THE PASS TEST (P5-1.5 finding; Jake 2026-11-04: rerun on this basis, verdict unchanged
+    until he confirms): the same calibrate-on-the-first-half / test-on-the-second-half, with each row's model over the
+    time between the two stock reads it is the fall of (their fetched_at), not over calendar days. Returns k, the
+    rows each half used (first and last date, count), the fit and whether the pass marks are met on this basis.
     {} when the reads carry no fetch times."""
     if stock is None or stock.empty or "fetched_at" not in stock.columns:
         return {}
@@ -2608,12 +2610,20 @@ def _read_interval_fit(rows: list, stock, stake: pd.Series) -> dict:
     for d, v, days in rows:
         d0 = days[0] - pd.Timedelta(days=1)
         if d in t.index and d0 in t.index:
-            rr.append((v, float((stake[days] ** 0.5).mean()) * (t[d] - t[d0]).total_seconds() / 86400.0 / 365.0))
+            hours = (t[d] - t[d0]).total_seconds() / 3600.0
+            rr.append((d, v, float((stake[days] ** 0.5).mean()) * hours / 24.0 / 365.0, hours))
     if len(rr) < int(config.OPTION_C_PASS["min_rows"]):
         return {}
     half = len(rr) // 2
-    k = sum(v for v, _x in rr[:half]) / sum(x for _v, x in rr[:half])
-    return {"k": k, **_fit_stats([k * x for _v, x in rr[half:]], [v for v, _x in rr[half:]])}
+    cal, test = rr[:half], rr[half:]
+    k = sum(v for _d, v, _x, _h in cal) / sum(x for _d, _v, x, _h in cal)
+    fit = _fit_stats([k * x for _d, _v, x, _h in test], [v for _d, v, _x, _h in test])
+    lim = config.OPTION_C_PASS
+    meets = fit.get("rows", 0) > 0 and fit["mae"] <= lim["mae"] and fit["worst"] <= lim["worst"] \
+        and abs(fit["bias"]) <= lim["bias"]
+    return {"k": k, **fit, "meets_pass_marks": meets,
+            "calibrated_on": (cal[0][0], cal[-1][0], len(cal)), "tested_on": (test[0][0], test[-1][0], len(test)),
+            "interval_hours": (min(h for *_r, h in rr), max(h for *_r, h in rr))}
 
 
 def hl_option_c(a: pd.Series, stake: pd.Series, emissions, stock=None) -> dict:
@@ -2656,8 +2666,14 @@ def hl_option_c(a: pd.Series, stake: pd.Series, emissions, stock=None) -> dict:
     ri = _read_interval_fit(rows, stock, stake)
     if ri:
         out["read_interval_form"] = ri
-        out["why"] += (f" [FOR JAKE, not the pass test: over each row's read-to-read interval (fetch times) instead of "
-                       f"calendar days, k = {ri['k']:.2f}, " + _fit_text(ri) + "]")
+        c0, c1, cn = ri["calibrated_on"]
+        t0, t1, tn = ri["tested_on"]
+        out["why"] += (f" [FOR JAKE, not the pass test: over each row's read-to-read interval (fetch times, "
+                       f"{ri['interval_hours'][0]:.1f}-{ri['interval_hours'][1]:.1f} h a row) instead of calendar days, "
+                       f"k = {ri['k']:.2f}, calibrated on {cn} row(s) {c0:%Y-%m-%d}..{c1:%Y-%m-%d}, tested on {tn} "
+                       f"{t0:%Y-%m-%d}..{t1:%Y-%m-%d}: " + _fit_text(ri) + (" - MEETS the pass marks on this basis"
+                       if ri["meets_pass_marks"] else " - does NOT meet the pass marks on this basis")
+                       + "; the a-based form is tested on calendar days only; verdict unchanged until Jake confirms]")
     return out
 
 
@@ -8378,8 +8394,11 @@ def _tbill_cols(R: Refs, yields: list[tuple]) -> list[tuple]:
                 return ""
             return calc(f"({f[1:]})-({tb()})")
         return build
+    def note(label):
+        return lambda p: (config.SPAN_FIX_SPREAD_NOTE.get(p["name"], "") if label == "Holder value yield" else "")
     return [(TBILL_HEAD, lambda r, p: pull(tb()), FMT_PCT, "pull"),
-            *[(f"Spread over the 3-month T-bill: {label}", spread(fn), FMT_PCT, "calc") for label, fn in yields],
+            *[(f"Spread over the 3-month T-bill: {label}", spread(fn), FMT_PCT, "calc", False, {"note_fn": note(label)})
+              for label, fn in yields],
             (SSR_HEAD, lambda r, p: pull(R.X("sky_savings_rate", "now")), FMT_PCT, "pull")]
 
 

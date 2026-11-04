@@ -29446,6 +29446,13 @@ def outflow_metrics(project_name: str, cat: str) -> tuple:
 # covered-day count takes that span (build_workbook._covered_day_sets). The switch exists for headline_diff.py's
 # before/after ("p5_1_13_spans"); it is on.
 REDERIVED_SPAN_FROM_STOCK = {"on": True}
+# P5-1.13 (Jake 2026-11-04): the span fix (Hyperliquid covered days 87 -> 90) moved holder value yield 3.3% lower; on
+# Jake's 11-04 store its spread over the 3-month T-bill went 0.17% -> 0.03% - flagged on that cell.
+SPAN_FIX_SPREAD_NOTE = {
+    "Hyperliquid": ("SPAN FIX (P5-1.13, accepted by Jake 2026-11-04): a rederived Assistance Fund row now counts every day "
+                    "since the previous reading - covered days 87 -> 90 - so holder value yield is 3.3% lower; on Jake's "
+                    "2026-11-04 store this spread over the T-bill went 0.17% -> 0.03%: holder value yield now sits about "
+                    "level with the risk-free rate.")}
 
 # P5-1.13 (Jake 2026-11-04): WHY A PAYOUT RATIO CAN READ ABOVE 1 WHERE THE EXCESS IS REAL — the note on both payout cells.
 # Measured on the 2026-10-13 dumps after the span fix (Hyperliquid's untagged 3-day row). Ethereum's day-late BurntFees

@@ -153,3 +153,14 @@ def test_the_spec_row_records_the_accepted_span_fix_moves():
     for move in ("CP holder value yield 3.423% → 3.309%", "CP payout ratio net 1.146 → 1.108",
                  "Master net supply change −3.589% → −3.470%", "A4 PERMANENT BURN YIELD 3.447% → 3.332%"):
         assert move in row, move
+
+
+def test_the_holder_value_yield_spread_over_the_tbill_carries_the_span_fix_flag():
+    """Jake 2026-11-04: flag the HVY spread over the T-bill, 0.17% -> 0.03% on his store, in the cell note."""
+    f = lambda r, p: "=1"                                                      # noqa: E731
+    cols = bw._tbill_cols(None, [("Holder value yield", f), ("Net holder yield", f)])
+    hvy, nhy = cols[1], cols[2]
+    assert hvy[0] == "Spread over the 3-month T-bill: Holder value yield"
+    note = hvy[5]["note_fn"]({"name": "Hyperliquid"})
+    assert "0.17% -> 0.03%" in note and "87 -> 90" in note
+    assert hvy[5]["note_fn"]({"name": "Ethereum"}) == "" and nhy[5]["note_fn"]({"name": "Hyperliquid"}) == ""

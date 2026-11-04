@@ -304,6 +304,13 @@ def test_the_read_interval_figures_are_reported_beside_the_pass_test_and_never_d
     assert not oc["passed"], "the calendar-day test decides"
     assert oc["read_interval_form"]["mae"] < 0.001 and "FOR JAKE, not the pass test" in oc["why"]
     assert "read_interval_form" not in bw.hl_option_c(a, stake, em)
+    ri = oc["read_interval_form"]
+    assert ri["meets_pass_marks"] and ri["interval_hours"] == (12.0, 36.0)
+    assert ri["calibrated_on"][2] == 6 and ri["tested_on"][2] == 6, "first half calibrates, second half tests"
+    assert ri["calibrated_on"][1] < ri["tested_on"][0]
+    assert "MEETS the pass marks on this basis" in oc["why"] and "verdict unchanged until Jake confirms" in oc["why"]
+    assert config.OPTION_C_PASS["mae"] == 0.05 and config.OPTION_C_PASS["worst"] == 0.15 \
+        and config.OPTION_C_PASS["bias"] == 0.02, "the same thresholds on both bases"
 
 
 def test_the_catch_up_line_for_an_endpoint_hole_names_the_endpoint():
