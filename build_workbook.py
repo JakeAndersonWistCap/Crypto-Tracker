@@ -10131,6 +10131,14 @@ def _write_table(ws, R: Refs, projects: list[dict], specs: list[tuple], data_by_
             if cnote:
                 prior = c.comment.text if c.comment else ""
                 c.comment = Comment(cnote + ("\n\n" + prior if prior else ""), "token_metrics")
+            # P5-1C.C5 (Jake 2026-11-04): a figure that is, or is built on, a customer revenue declared in
+            # config.NUMERATOR_LABEL says what that revenue is ON the number (Morpho: gross borrower interest)
+            lab = config.numerator_label(p["name"], head)
+            if lab:
+                if c.number_format != FMT_TEXT:
+                    c.number_format = _suffix_fmt(c.number_format, lab[0])
+                prior = c.comment.text if c.comment else ""
+                c.comment = Comment((prior + "\n\n" if prior else "") + lab[1], "token_metrics")
         fc = ws.cell(row=r, column=len(specs) + 1, value=_flags(data_by_key, p["name"], flag_metrics))
         fc.font = Font(name=FONT, size=9, color="C00000")
         r += 1

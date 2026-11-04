@@ -748,6 +748,18 @@ def blank_reason(p: dict, src: Src | None, col: Col) -> tuple[str, str]:
                          "is formed for other projects on its tab).")
 
 
+def numerator_label_cell(sh: Sheet, coord: str, project: str, audit_header: str) -> None:
+    """P5-1C.C5 (Jake 2026-11-04): a number copied from an audit figure that is, or is built on, a customer revenue
+    declared in config.NUMERATOR_LABEL shows what that revenue is beside the number (Morpho: gross borrower interest);
+    the audit cell's comment, copied into this one, says why."""
+    import config                                          # noqa: PLC0415
+    lab = config.numerator_label(project, audit_header)
+    if lab:
+        c = sh.ws[coord]
+        lit = '"' + lab[0].replace('"', "'") + '"'
+        c.number_format = ";".join(sec + lit for sec in (c.number_format or "General").split(";"))
+
+
 def put_src(sh: Sheet, data: Data, row: int, col: Col, p: dict, src: Src | None, why: str = "",
             extra: str = "") -> str:
     """An audit cell's number as a formula on `_data` (its fill, its comment), or its code. A BLANK audit cell gets a
@@ -761,8 +773,10 @@ def put_src(sh: Sheet, data: Data, row: int, col: Col, p: dict, src: Src | None,
         zl = status_note(p, col.family) if col.family else ""
         lines = [f"{zl[:1].upper()}{zl[1:]}: the figure is 0 because the programme {zl}."] if zl and src.num == 0 else []
         lines += [x for x in (extra, note) if x]
-        return put_number(sh, data, row, col, name, f"{src.sheet}|{src.coord}", src.num, src.fill,
-                          "\n\n".join(lines + [f"Working: {src.where}."]), zero_label=zl if src.num == 0 else "")
+        coord = put_number(sh, data, row, col, name, f"{src.sheet}|{src.coord}", src.num, src.fill,
+                           "\n\n".join(lines + [f"Working: {src.where}."]), zero_label=zl if src.num == 0 else "")
+        numerator_label_cell(sh, coord, name, src.header)
+        return coord
     if src is None:
         code, reason = blank_reason(p, None, col)
         return put_code(sh, row, col, code, why or reason)
@@ -2340,7 +2354,10 @@ COMPARISON_COLS = (
      "Credited holder value ÷ revenue on the project's own revenue basis.", "buyback"),
     ("buy_press", BUYING_PRESSURE_SHORT, (CP_TAB, "BUYING PRESSURE ON FLOAT"), FMT_PCT, BUYING_PRESSURE_DEF, "buyback"),
     ("subsidy", "Subsidy cover (x)", (CP_TAB, "SUBSIDY COVER"), FMT_X,
-     "Revenue ÷ the $ of supply-side incentives, per covered day: above 1.0x the business pays for its incentives.", ""),
+     "Revenue ÷ the $ of supply-side incentives, per covered day: above 1.0x the business pays for its incentives. "
+     "Each day's incentive tokens are valued at that day's price — so for an A2 project it is NOT Summary's rank key "
+     "(customer revenue ÷ emissions at the 90-day average price); a cell's comment gives both and why they differ.",
+     ""),
     ("leak", "Leakage (ii)", (CP_TAB, "LEAKAGE (ii)"), FMT_PCT,
      "Incentive spend not returned as revenue = max(0, 1 − subsidy cover). A proposed definition.", ""),
     ("fees_fdv", "Fees ÷ FDV, a year", ("Master", "Fees ÷ FDV (annualised)"), FMT_PCT,
@@ -2355,6 +2372,33 @@ COMPARISON_COLS = (
     ("insider", "Insider share of stake", (CP_TAB, "Insider share of staked / locked supply"), FMT_PCT,
      "Insider-held tokens' share of the staked or locked supply.", ""),
 )
+
+
+A2_KEY_HEAD = "Customer revenue ÷ emissions value (x)"
+
+
+def subsidy_vs_key_note(config, name: str, sub: Src | None, key: Src | None) -> str:
+    """P5-1C.C5 (Jake 2026-11-04: Morpho read 17.60 here and 16.95 as its A2 key on Summary): why an A2 project's subsidy
+    cover is not its rank key, with both figures. Same numerator (customer revenue per covered day). Where (b) is the
+    key's own emissions_tokens the tokens are the same too and only the PRICE differs — the key values them at the 90-day
+    average price, subsidy cover each day's tokens at that day's price — so their ratio is the average price over the
+    payment-weighted price. '' where either figure is not a number."""
+    if sub is None or key is None or sub.num is None or key.num is None or not key.num:
+        return ""
+    b = tuple(config.outflow_metrics(name, "b"))
+    s = (f"NOT THE A2 RANK KEY: {name}'s key on Summary reads {key.num:,.2f}x (customer revenue ÷ emissions $); this "
+         f"column reads {sub.num:,.2f}x. Same numerator (customer revenue, per covered day). ")
+    if b == ("emissions_tokens",):
+        r = sub.num / key.num
+        s += ("Same tokens (emissions_tokens, outflow (b)); only the PRICE differs: the key values the tokens at the "
+              "90-day AVERAGE price, this column values each day's tokens at THAT DAY's price (outflow (b) $). "
+              f"{sub.num:,.2f} ÷ {key.num:,.2f} = {r:.3f}: the tokens were paid on days whose price averaged "
+              f"{abs(1 - 1 / r):.1%} {'below' if r > 1 else 'above'} the 90-day mean (on the same covered days; a "
+              "day with tokens but no price is in the key and not in this column).")
+    else:
+        s += (f"Different tokens: the key divides by emissions_tokens at the 90-day average price, this column by "
+              f"outflow (b) = {', '.join(b) or 'none'} at each day's price.")
+    return s
 
 
 def _write_comparison(sh: Sheet, ctx: Ctx, keys: dict) -> None:
@@ -2393,7 +2437,8 @@ def _write_comparison(sh: Sheet, ctx: Ctx, keys: dict) -> None:
         for k, (col, src) in spec.items():
             if isinstance(src, tuple):
                 s = A.cell(src[0], src[1], name)
-                extra = _payout_note(p, s, A.cell(CP_TAB, "Payout ratio — gross", name)) if k == "payout" else ""
+                extra = _payout_note(p, s, A.cell(CP_TAB, "Payout ratio — gross", name)) if k == "payout" else \
+                    subsidy_vs_key_note(ctx.config, name, s, A.cell(A2_TAB, A2_KEY_HEAD, name)) if k == "subsidy" else ""
                 cell = put_src(sh, data, row, col, p, s, extra=extra)
                 ctx.record(s, COMPARISON, cell, name)
             elif src == "@rev_mcap":

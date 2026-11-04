@@ -32700,6 +32700,86 @@ for _m, _l in (("subsidy_cover_num_usd", "Subsidy cover's numerator ($) on the d
                    "only_projects": tuple(sorted({n for n, _c in SUBSIDY_COMPLETE_FROM}))}
 
 
+# ===== P5-1C.C5 (Jake 2026-11-04): WHAT A PROJECT'S CUSTOMER REVENUE IS, SAID ON EVERY FIGURE BUILT ON IT. =====
+# Morpho's customer_revenue_usd IS fees_usd (metric_restatement): DefiLlama's Morpho Blue dailyFees — the interest
+# borrowers pay, all of it to lenders (Morpho takes no cut), with the window's liquidation bonuses (decision A7). It is
+# GROSS BORROWER INTEREST, not revenue to the protocol or its token, so every figure that is it, or is built on it, says
+# so on the number (build_workbook._write_table and reader.put_src read numerator_label). WHERE IT COMES FROM: DefiLlama
+# only. THE ROUTE THAT WOULD REPLACE IT (researched 2026-11-04, not built): Morpho Blue's own AccrueInterest(id,
+# prevBorrowRate, interest, feeShares) event (singleton 0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb on Ethereum; one
+# per touched market, `interest` = the gross interest accrued since the last touch, in the loan token) x the loan asset's
+# price, summed over every chain Morpho Blue runs on. Read for 2026-10-12 on Ethereum (Blockscout logs, blocks
+# 26,172,658..26,179,841, 3,774 events, 201 markets; prices from blue-api.morpho.org): $346,851 against DefiLlama's
+# Ethereum $340,243 (+1.9%) — once ONE unlisted market (0x0f9563442d64…) is left out, which accrued a nominal $369.3M
+# that day (an artefact a build must exclude). Morpho itself publishes no interest / fees total: its API gives each
+# market's rate and balances (the 10% reference check, listed markets only).
+NUMERATOR_LABEL = {
+    "Morpho": {"metric": "customer_revenue_usd", "label": "gross borrower interest",
+               "note": "GROSS BORROWER INTEREST: Morpho's customer revenue is DefiLlama's Morpho Blue fees (the same "
+                       "series as fees_usd) — the interest borrowers pay, all of it to lenders (Morpho takes no cut), "
+                       "with the window's liquidation bonuses. It is not revenue to the protocol or to MORPHO holders. "
+                       "Source: DefiLlama only; the on-chain route (Morpho Blue AccrueInterest events) is named in "
+                       "config.NUMERATOR_LABEL, not built (P5-1C.C5, 2026-11-04).",
+               "decided_by": "Jake 2026-11-04 (label only; the basis is unchanged)"},
+}
+# The headers (prefixes) whose figure IS customer revenue ("figure") or is built on it ("ratio"): the A2 tab, the CP
+# subsidy-cover columns, and the reader columns that copy them.
+NUMERATOR_LABEL_HEADS = {
+    "Customer revenue Q0 ($)": "figure", "Supplier earnings from customers ($)": "figure",
+    "Customer revenue Δ": "figure", "Customer revenue, 90 days": "figure",
+    "CUSTOMER REVENUE PER TOKEN EMITTED": "ratio", "Customer revenue ÷ emissions value (x)": "ratio",
+    "Customer share of supplier earnings": "ratio", "Revenue per supply unit Q0 ($)": "ratio",
+    "Rev ÷ emission at Q": "ratio", "FREE FLOAT ÷ ARR": "ratio",
+    "SUBSIDY COVER = revenue ÷": "ratio", "Subsidy cover incl. demand-side": "ratio",
+    "Subsidy cover — revenue basis": "ratio", "LEAKAGE (ii)": "ratio",
+}
+
+
+def numerator_label(project: str, header: str) -> tuple[str, str] | None:
+    """(in-cell suffix, comment) for a figure of `project` under `header` that is, or is built on, a customer revenue
+    declared in NUMERATOR_LABEL — else None."""
+    d = NUMERATOR_LABEL.get(project)
+    role = next((r for h, r in NUMERATOR_LABEL_HEADS.items() if str(header or "").startswith(h)), None) if d else None
+    if role is None:
+        return None
+    suffix = f" {d['label']}" if role == "figure" else f" (revenue = {d['label']})"
+    return suffix, d["note"]
+
+
+# ===== P5-1C.C5 (Jake 2026-11-04): MORPHO'S CLAIMS, SPLIT BY REWARD DATE — RESEARCH RECORD and morpho_claims.py. =====
+# Read live 2026-11-04 (Blockscout's getLogs, keyless; Ethereum blocks 25,699,362..26,343,858 = 2026-08-07..11-04) and
+# reconciled to the token's own Transfer logs out of each distributor to the wei:
+#   Merkl Distributor 0x3Ef3D8bA… : 1,739 Claimed(user, MORPHO, amount), 57,563.49 MORPHO (914 claimers)
+#   Morpho URD 0x330eefa8…        : 1,392 Claimed, 1,000,459.94 MORPHO (1,392 claimers)
+# THE URD'S LAST ROOT: its 39 RootSet events end on 2025-08-11 07:42 UTC (block 23,116,386; the last PendingRootSet
+# 2025-08-04) — every URD claim since pays rewards committed on or before that day, i.e. dated 12+ months before the
+# window (Morpho's docs: the URD carries pre-July-2025 programmes). A RootSet inside a window makes the URD claims after
+# it undetermined, never in-window by default.
+# MERKL'S PROGRAMMED AMOUNT (api.merkl.xyz/v4/campaigns?tokenAddress=<chain's MORPHO>, each campaign prorated to its
+# overlap with the window, distributionChainId = the chain): Ethereum 44,397.6 over 18 campaigns — 17,092.9 over the 15
+# computed on Ethereum (Jake's "about 17,161 over 15") + 27,125.7 over the DAO multisig's 2 campaigns computed on chain
+# 5042 and paid on Ethereum + 179.0 over 1 computed on Base; Base 701,189.5 (29); Katana 13,149.4 (9); Arbitrum 0.
+# Merkl's claims are not dated by its root (the tree updates every few hours): of the 57,563 claimed, at most the
+# window's programmed 44,398 can be the window's own rewards, so at least 13,166 is earlier rewards claimed late.
+MORPHO_CLAIMS_SPLIT = {
+    "window": ("2026-08-07", "2026-11-04"), "blocks": (25_699_362, 26_343_858), "read_on": "2026-11-04",
+    "distributors": {"merkl": "0x3Ef3D8bA38EBe18DB133cEc108f4D14CE00Dd9Ae",
+                     "urd": "0x330eefa8a787552DC5cAd3C3cA644844B1E61Ddb"},
+    "token": "0x58D97B57BB95320F9a05dC918Aef65434969c2B2",
+    "topics": {"Claimed": "0xf7a40077ff7a04c7e61f6f26fb13774259ddf1b6bce9ecf26a8276cdd3992683",
+               "RootSet": "0x901232fc92ac16700a7d4b60706cbd27dec177bc85c9c2dbd2e2871d63b22a23"},
+    "claimed": {"merkl": 57_563.49, "urd": 1_000_459.94},
+    "n_claims": {"merkl": 1_739, "urd": 1_392},
+    "urd_last_root": {"day": "2025-08-11", "block": 23_116_386},
+    "programmed": {"ethereum": 44_397.6, "ethereum_computed_on_ethereum": 17_092.9, "base": 701_189.5,
+                   "katana": 13_149.4, "arbitrum": 0.0},
+    "sources": ["https://eth.blockscout.com/api?module=logs&action=getLogs (Claimed / RootSet / Transfer, read "
+                "2026-11-04)", "https://api.merkl.xyz/v4/campaigns?tokenAddress=<MORPHO on each chain> (read "
+                "2026-11-04)"],
+    "sql": "bigquery_morpho_claims.sql",
+}
+
+
 # ===== G13 8 (Jake's call, agreed 2026-10-21): HYPERLIQUID'S BURN TRENDS BREAK AT THE BUYBACK'S STITCH. =====
 # The Assistance Fund's burn IS its buyback (validator vote 2025-12-27), stitched from the same DefiLlama leg (holders
 # revenue ÷ price, a revenue model) before the first live Fund read. A trend across that stitch compares two bases, as
