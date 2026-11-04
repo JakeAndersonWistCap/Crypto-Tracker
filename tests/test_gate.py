@@ -104,3 +104,13 @@ def test_the_gate_refuses_more_than_three_workers_and_less_than_ten_gb(monkeypat
     assert gate.main(["--out", str(tmp_path / "g"), "--workers", "3"]) == gate.EXIT_LOW_MEMORY
     assert "below the 10 GB rule" in capsys.readouterr().out
     assert not (tmp_path / "g").exists(), "nothing ran"
+
+
+def test_the_runbook_section_for_the_gate_is_at_the_top_of_the_11d_run():
+    import re
+    text = (Path(__file__).resolve().parent.parent / "RUNBOOK.md").read_text(encoding="utf-8")
+    heads = re.findall(r"^## (11d\w*)\.", text, re.M)
+    assert heads[0] == "11dt" and heads[1] == "11ds"
+    sec = text[text.index("## 11dt."):text.index("## 11ds.")]
+    for m in ("gate.py", "own_checks.py", "TOKEN_METRICS_SHARED_BUILD_STALE", "10 GB", "never", "skipped"):
+        assert m in sec, m

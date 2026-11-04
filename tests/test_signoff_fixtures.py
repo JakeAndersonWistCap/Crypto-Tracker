@@ -1187,6 +1187,9 @@ def test_foundation_buy_and_lock_is_the_lock_stock_change_net_of_rebase_claims(m
     buyback declaring no basis): actual_buyback_tokens = d(locked) + min(d(claimable), 0) on consecutive days: a rebase
     claim (claimable -> lock) nets to 0, accrual is not a buy, a gap day is not differenced across, and a lock leaving
     the wallets is kept negative, under the same source. USD = tokens x the same-day price."""
+    import build_workbook as _bw
+    import config as _config
+    monkeypatch.setattr(_bw, "_SCOPE", list(_config.PROJECTS))   # P5-0 b: never another test's build scope
     import build_workbook as bw
     import config
     fb = config.PROJECT_BY_NAME["Aerodrome"]["foundation_buyback"]
@@ -1418,6 +1421,9 @@ def test_aerodrome_buyback_is_one_measuring_point_with_a_negative_day_and_the_sp
     """3: a negative day no longer adds a '[NEGATIVE …]' source (which stripped to a trailing space and read as a second
     measuring point, blanking the series as BUG); the buyback row reports, and the retired split equals it (held).
     On the retired stock-change basis (2026-10-11, B replaced it)."""
+    import build_workbook as _bw
+    import config as _config
+    monkeypatch.setattr(_bw, "_SCOPE", list(_config.PROJECTS))   # P5-0 b: never another test's build scope
     import build_workbook as bw
     import config
     monkeypatch.setitem(config.PROJECT_BY_NAME["Aerodrome"]["foundation_buyback"], "basis", None)
@@ -1433,6 +1439,9 @@ def test_aerodrome_buyback_is_one_measuring_point_with_a_negative_day_and_the_sp
 def test_the_buyback_split_inherits_a_withheld_parent(monkeypatch):
     """3: E14 0.97% and AH14 -2.076M were computed while the Q0 buyback read n/a — the split rows now inherit the
     parent's withholding (status, blank windows, the reason)."""
+    import build_workbook as _bw
+    import config as _config
+    monkeypatch.setattr(_bw, "_SCOPE", list(_config.PROJECTS))   # P5-0 b: never another test's build scope
     import build_workbook as bw
     import config
     monkeypatch.setitem(config.PROJECT_BY_NAME["Aerodrome"]["foundation_buyback"], "basis", None)   # the stock basis
@@ -1446,9 +1455,12 @@ def test_the_buyback_split_inherits_a_withheld_parent(monkeypatch):
         assert "inherits actual_buyback_tokens's: forced for the test" in a.loc[m, "note"]
 
 
-def test_aethir_arr_for_ratios_is_three_months_x4_and_the_tile_is_kept_apart():
+def test_aethir_arr_for_ratios_is_three_months_x4_and_the_tile_is_kept_apart(monkeypatch):
     """7: arr_usd = the last 3 complete months of monthlyNetworkRevenue x 4, dated the day after the third month; rows
     stored as arr_usd before the decision (the tile) are read as arr_tile_usd."""
+    import build_workbook as _bw
+    import config as _config
+    monkeypatch.setattr(_bw, "_SCOPE", list(_config.PROJECTS))   # P5-0 b: never another test's build scope
     import build_workbook as bw
     base = {"project": "Aethir", "tier": 3, "fetched_at": "x", "is_manual": 0, "entered_on": None, "source_note": None}
     monthly = pd.DataFrame([{**base, "date": pd.Timestamp(d), "metric": "customer_revenue_monthly_usd", "value": v,
