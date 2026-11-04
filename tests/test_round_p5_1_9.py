@@ -136,3 +136,14 @@ def test_the_runbook_orders_validate_before_the_dry_run_and_the_backfill():
     i, j, k = (sec.index(c) for c in ("settlement_extend.py validate", "settlement_extend.py dry-run --from 2025-05-01",
                                       "settlement_extend.py backfill --from 2025-05-01"))
     assert i < j < k and "Nothing Artemis is removed yet" in sec and "PASTE BACK" in sec
+
+
+def test_no_fallback_until_jake_chooses_the_test():
+    """Jake 2026-11-04 (after the round-1 report): no fallback to 2026-05-28 yet; validate decides nothing until the
+    +6.8% is explained. The SPEC row and RUNBOOK 11ea say so; the A1 key's 730-day need is on the row."""
+    spec = (ROOT / "SPEC.md").read_text(encoding="utf-8")
+    row = next(ln for ln in spec.splitlines() if ln.startswith("| P5-1.9 |"))
+    assert "NO FALLBACK to 2026-05-28 yet" in row and "2024-11-04" in row and "NOT MEASURED" in row
+    text = (ROOT / "RUNBOOK.md").read_text(encoding="utf-8")
+    sec = text[text.index("## 11ea."):text.index("## 11dz.")]
+    assert "No fallback to 2026-05-28 yet" in sec

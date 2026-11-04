@@ -689,8 +689,9 @@ the repo folder, in this order.
    for the month's reset. Then `python token_metrics.py` stores the days. Without a PASS it prints `REFUSED` and reads
    nothing.
 
-4. **If step 1 is NOT PASSED:** nothing more runs. The fallback (the rebuild from 2026-05-28 for the uncovered period
-   only) and its headline list are in the report (SPEC P5-1.9). No allowlist entry is added until you approve one.
+4. **If step 1 is NOT PASSED:** nothing more runs. No fallback to 2026-05-28 yet (Jake 2026-11-04): step 1's verdict
+   decides nothing until the +6.8% is explained and Jake has chosen the test (SPEC P5-1.9). No allowlist entry is added
+   until you approve one.
 
 ## 11dz. P5 round 1, items 7-8 — Uniswap (2026-11-04)
 

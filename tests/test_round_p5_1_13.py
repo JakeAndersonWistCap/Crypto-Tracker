@@ -142,3 +142,14 @@ def test_headline_diff_can_show_the_span_fix_on_every_numeric_cell():
     got = hd._all_cells(xlcalc.Workbook(wb), wb)
     assert got[("Hyperliquid", "CP Capture", "Holder value yield")] == 0.038
     assert not any(k[1] == "Data" for k in got), "only the A1-A4, CP and Master tabs"
+
+
+def test_the_spec_row_records_the_accepted_span_fix_moves():
+    """Jake 2026-11-04: the 20 Hyperliquid cells the span fix moves (87 -> 90 covered days, -3.3%) are accepted and
+    recorded, old -> new, in P5-1.13."""
+    text = (ROOT / "SPEC.md").read_text(encoding="utf-8")
+    row = next(ln for ln in text.splitlines() if ln.startswith("| P5-1.13 |"))
+    assert "ACCEPTED by Jake 2026-11-04" in row and "(20 cells)" in row
+    for move in ("CP holder value yield 3.423% → 3.309%", "CP payout ratio net 1.146 → 1.108",
+                 "Master net supply change −3.589% → −3.470%", "A4 PERMANENT BURN YIELD 3.447% → 3.332%"):
+        assert move in row, move
