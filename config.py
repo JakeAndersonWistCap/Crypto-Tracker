@@ -19399,6 +19399,16 @@ ONE_OFF_DILUTION_NOTES = {
         "decided": "Jake 2026-11-04 (P5-1.7)",
     },
 }
+# ===== P5-1.8 (Jake 2026-11-04): BUYING PRESSURE ON FLOAT WHERE THE PROTOCOL BUYS NOTHING ON THE MARKET. =====
+# The column (P4-Q5c) read "n/a — no market buyback is measured" for Uniswap: code n/a, no allowed reason. Uniswap has no
+# market buyback: protocol fees leave the TokenJar only against UNI someone burns through the Firepit (burn_split above),
+# so the cell is a BY-DESIGN code — text, never 0 and never a number a rank reads. Uniswap only (Jake's item); every other
+# project's n/a reason is unchanged and listed in the round report.
+BUYING_PRESSURE_BY_DESIGN = {
+    "Uniswap": ("by design — Uniswap's protocol buys no UNI on the market: protocol fees are released from the TokenJar "
+                "only against UNI burned through the Firepit (proposal 93), so that burn is on A4 and in holder value, "
+                "not a market buyback"),
+}
 # ===== MORPHO: THE DAO'S LEGACY MORPHO AND ITS MORPHO ON BASE (Jake 2026-10-11, decision A5 on 5b87610). =====
 # The new token's 1B totalSupply already holds every unmigrated legacy MORPHO (the Wrapper's new-token balance) and
 # every MORPHO bridged to Base (Base's MORPHO: remoteToken() = the new token, bridge() = the OP standard bridge, so

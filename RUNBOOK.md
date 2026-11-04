@@ -617,6 +617,13 @@ the set's latest read; the four vesting contracts in that set held 0 UNI on 2026
 Nothing to run beyond the normal daily run. To check: in token_metrics.xlsx, Project notes, Uniswap block, the rows
 `One-off in outflow (e): …` and `Net holder yield without the distributor …`.
 
+**8. Uniswap's buying pressure on float is by design (SPEC P5-1.8).** Uniswap's protocol buys no UNI on the market:
+protocol fees leave the TokenJar only against UNI burned through the Firepit, and that burn is on A4 and in holder value.
+The column (P4-Q5c) now reads `by design` for Uniswap (config.BUYING_PRESSURE_BY_DESIGN, the reason in the cell's
+comment), never 0 and never n/a, and `done_check.py` accepts it. Only Uniswap has the code; every other project keeps its
+figure, its measured 0 or its n/a reason. To add another project, Jake decides and its line goes in
+BUYING_PRESSURE_BY_DESIGN with the mechanism and source.
+
 
 ## 11dl. P4-Q3 Chainlink releases (2026-11-03)
 

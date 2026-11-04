@@ -4,6 +4,7 @@
    holder yield without the distributor is TEXT in Project notes only.
 8: buying pressure on float reads a by-design code where the protocol buys nothing on the market."""
 import sys
+from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -14,7 +15,9 @@ sys.path.insert(0, str(ROOT))
 
 import build_workbook as bw  # noqa: E402
 import config  # noqa: E402
+import done_check  # noqa: E402
 import reader  # noqa: E402
+import rule3  # noqa: E402
 
 UNI = config.PROJECT_BY_NAME["Uniswap"]
 
@@ -84,3 +87,25 @@ def test_a_missing_input_is_named_never_estimated():
     assert t.startswith("Not worked out: net holder yield") and "%" not in t
     t = reader._project_text_notes(_ctx(-0.01, 1.0, 0.0))["Uniswap"][1][1]
     assert "a market cap above 0" in t
+
+
+# ================================================================================================== 8
+def _bp_cell(p):
+    head, build, *_ = bw._buying_pressure_col(None)
+    assert head == bw.BUYING_PRESSURE_HEAD
+    return build(5, p)
+
+
+def test_uniswap_buying_pressure_is_a_by_design_code():
+    t = _bp_cell(UNI)
+    assert t == config.BUYING_PRESSURE_BY_DESIGN["Uniswap"] and not t.startswith(("=", "n/a"))
+    assert "buys no UNI on the market" in t and "Firepit" in t
+    assert reader.code_of(t) == "by design"
+    assert not rule3.is_suspect(t)
+    assert done_check.classify(reader.code_of(t), t, date(2026, 11, 4)) == (True, "by design", "structural")
+
+
+def test_only_uniswap_is_given_the_code():
+    assert set(config.BUYING_PRESSURE_BY_DESIGN) == {"Uniswap"}
+    eth = _bp_cell(config.PROJECT_BY_NAME["Ethereum"])
+    assert eth.startswith("n/a — no market buyback is measured"), "every other project's reason is unchanged"

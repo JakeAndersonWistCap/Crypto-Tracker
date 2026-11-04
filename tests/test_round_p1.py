@@ -702,3 +702,21 @@ def test_p5_1_7_uniswap_one_off_note_on_the_cells_and_in_project_notes(built):
     assert isinstance(v, str) and v.endswith("stays the one with the claims counted.") and "%" in v, v
     owner = max(i for i in range(5, labels[reader.TEXT_NOTE_ONE_OFF]) if pn.cell(i, 1).value == "Uniswap")
     assert owner < labels[reader.TEXT_NOTE_NHY_WITHOUT], "the rows sit in Uniswap's block"
+
+
+# ================================================================================================== P5-1.8
+def test_p5_1_8_uniswap_buying_pressure_reads_by_design(built):
+    """Uniswap buys no UNI on the market: the buying-pressure cell is a by-design code (never 0, never n/a), on the
+    CP tab and on the reader's Comparison tab; the done check accepts it."""
+    import build_workbook as bw
+    a = openpyxl.load_workbook(built["audit"])
+    ws = a["CP Comparability"]
+    c = next(c for c in range(1, ws.max_column + 1) if str(ws.cell(4, c).value or "") == bw.BUYING_PRESSURE_HEAD)
+    row = next(r for r in range(5, ws.max_row + 1) if ws.cell(r, 1).value == "Uniswap")
+    assert ws.cell(row, c).value == config.BUYING_PRESSURE_BY_DESIGN["Uniswap"]
+    r = openpyxl.load_workbook(built["reader"])
+    cmp_ = r["Comparison"]
+    cc, rr = _col_of(cmp_, "Buying pressure on float, % a year"), _rows_of(cmp_)["Uniswap"]
+    cell = cmp_.cell(rr, cc)
+    assert cell.value == "by design", cell.value
+    assert "buys no UNI on the market" in cell.comment.text

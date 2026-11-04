@@ -10280,14 +10280,17 @@ def _buying_pressure_col(R: Refs) -> tuple:
     or distributed (actual_buyback_tokens, the measured buyback) — annualised over its covered days, ÷ the tradeable
     float (_cp_float: a held buyback is already out of it, P4-Q5b). One builder for the A3 tab and the CP tab
     (Comparison reads CP). No buyback series: a measured 0 where no buyback mechanism exists (config.holder_value_absent,
-    the same declared zero holder value reads; or no token is bought at all, _retirement_zero), else n/a with the
-    reason — unknown is never 0."""
+    the same declared zero holder value reads; or no token is bought at all, _retirement_zero), a by-design code where
+    Jake recorded that the protocol buys nothing on the market (config.BUYING_PRESSURE_BY_DESIGN, P5-1.8: Uniswap),
+    else n/a with the reason — unknown is never 0."""
     def build(r, p):
         name = p["name"]
         route = config.buyback_route(name)
         if route["route"] == "none" or "actual_buyback_tokens" not in config.metrics_for_project(p):
             if config.holder_value_absent(name) or _retirement_zero(p):
                 return "=0"
+            if name in config.BUYING_PRESSURE_BY_DESIGN:          # P5-1.8: no market buyback by design — a code, not 0
+                return config.BUYING_PRESSURE_BY_DESIGN[name][:240]
             return ("n/a — no market buyback is measured for this project"
                     + (f": {route.get('reason')}" if route.get("reason") else ""))[:240]
         why = _cp_float_reason(p)
