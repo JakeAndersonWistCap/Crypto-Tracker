@@ -180,6 +180,34 @@ def read_at(w3, address: str, block: int) -> tuple[dict, int]:
     return decode_buckets(raw.hex()), int(w3.eth.get_block(block)["timestamp"])
 
 
+def rows_at(project: dict, w3, block: int, day) -> list:
+    """P5-1.11, THE CATCH-UP'S PAST-DAY READ: every series the live run stores from the vault, read again at `block`
+    (the day's first block, through an archive endpoint) and dated `day` — the same calls, arithmetic and source strings
+    as run(), marked :archive (a past-block read; the measuring point is unchanged). [(metric, value, source)]."""
+    import config
+    spec = project["reward_vault_rates"]
+    addr = w3.to_checksum_address(spec["address"])
+    buckets, ts = read_at(w3, addr, block)
+    active = {b: v for b, v in buckets.items() if v[1] > ts}
+    annual = sum(v[0] for v in active.values()) * SECONDS_PER_YEAR / JUELS
+    src = f"{SOURCE}:getRewardBuckets"
+    ends = min(v[1] for v in active.values()) if active else max(v[1] for v in buckets.values())
+    out = [("reward_emission_rate_annual", annual, config.mark_source(src, "archive")),
+           ("emissions_tokens", annual / 365.25, config.mark_source(f"{src}:rate_x_time", "archive")),
+           ("reward_rate_ends_unix", float(ends), config.mark_source(src, "archive"))]
+    if spec.get("community_pool"):
+        cp = w3.to_checksum_address(spec["community_pool"])
+        ctv = decode_string(w3.eth.call({"to": cp, "data": SEL_TYPE_AND_VERSION}, block).hex())
+        if not ctv.startswith("CommunityStakingPool"):
+            raise ValueError(f"typeAndVersion() at block {block:,} is {ctv!r}, not a CommunityStakingPool")
+        principal = int(w3.eth.call({"to": cp, "data": SEL_TOTAL_PRINCIPAL}, block).hex(), 16)
+        rate = community_rate(buckets, principal, ts)
+        if rate is not None:
+            out.append(("staker_yield_community_pool", rate,
+                        config.mark_source(f"{SOURCE}:communityBase/principal", "archive")))
+    return out
+
+
 def history_rows(project: dict, w3, day_blocks, days: int, have: set, head: int,
                  deadline: float | None = None) -> tuple[list, str]:
     """Past days' emissions_tokens and reward_emission_rate_annual from getRewardBuckets at each

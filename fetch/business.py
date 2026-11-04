@@ -238,9 +238,19 @@ class Business:
         n = int(config.TRAJECTORY["history_days"]) if not self.daily.ever(key) else 30
         return today().normalize() - pd.Timedelta(days=n)
 
+    @staticmethod
+    def _owed(key: str, *metrics: str) -> set:
+        """P5-1.11: the days the catch-up asked this run to read back for the key's series (fetch.base.catch_up_owed) —
+        kept beside the routine 30-day span. Before, the span alone decided, so a business or market-share day older
+        than 30 days was never served by the read-back (Jake's run 2026-11-04: 4 of 460 owed days served)."""
+        from .base import catch_up_owed
+        _src, name, metric = key.split(":", 2)
+        return {pd.Timestamp(d) for m in (metrics or (metric,)) for d in catch_up_owed(name, m)}
+
     def _keep(self, s: dict, key: str) -> list[tuple]:
         lo, hi = self._span_start(key), last_complete()
-        return [(d, v) for d, v in sorted(s.items()) if lo <= d <= hi]
+        owed = self._owed(key)
+        return [(d, v) for d, v in sorted(s.items()) if (lo <= d or d in owed) and d <= hi]
 
     # ------------------------------------------------------------------ run
     def run(self, projects: list[dict], window_days, out):
@@ -418,7 +428,9 @@ class Business:
             out.fail(SOURCE, name, f"{metric}: NOTHING STORED — {e}", TIER)
             return
         lo, hi = self._span_start(key), last_complete()
-        rows = [(d, own[d] / total[d]) for d in sorted(set(own) & set(total)) if lo <= d <= hi and total[d] > 0]
+        owed = self._owed(key, metric, denominator)          # P5-1.11: the catch-up's owed days, beside the span
+        rows = [(d, own[d] / total[d]) for d in sorted(set(own) & set(total))
+                if (lo <= d or d in owed) and d <= hi and total[d] > 0]
         if not rows:
             out.fail(SOURCE, name, f"{metric}: no day where the project and every peer reported", TIER)
             return

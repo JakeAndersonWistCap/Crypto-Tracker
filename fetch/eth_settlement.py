@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from .base import Http, tidy, today
+from .base import Http, catch_up_owed, tidy, today
 from .near_bigquery import NearBigQuery, ReauthNeeded, is_reauth
 
 log = logging.getLogger("token_metrics.fetch.eth_settlement")
@@ -139,7 +139,11 @@ class EthP2PBigQuery(NearBigQuery):
         self._import_eth_csv(e, out, name, p2p)
         now = today()
         last = e.get("turn_on")
-        if last and (now - pd.Timestamp(last)).days < int(p2p["cadence_days"]):
+        # P5-1.11: the days the catch-up asked to read back (a dated query reads any past day) are read this run, beside
+        # the weekly turn — a missed day no longer waits for its week to be complete and the weekly cadence to come round
+        owed = self.owed_pieces(self.held_days(e), catch_up_owed(name, spec["legs"]["p2p"]), now)
+        weekly_due = not (last and (now - pd.Timestamp(last)).days < int(p2p["cadence_days"]))
+        if not weekly_due and not owed:
             out.mark_current(SOURCE, name, spec["legs"]["p2p"], f"{spec['legs']['p2p']}: weekly — last turn {last}",
                              TIER)
         elif os.environ.get(SKIP_ENV) == "1":
@@ -157,7 +161,8 @@ class EthP2PBigQuery(NearBigQuery):
                 try:
                     # a turn that left pieces unread (the routine run's time, or a piece held for the budget) is not a
                     # weekly turn done: the next run continues it rather than waiting a week (G9 F2)
-                    if self._turn(client, bq, p2p, st, e, out, name, now, unbounded=unbounded):
+                    if self._turn(client, bq, p2p, st, e, out, name, now, unbounded=unbounded,
+                                  weekly=weekly_due, owed=owed) and weekly_due:
                         e["turn_on"] = str(now.date())
                 except ReauthNeeded as ex:
                     out.fail(SOURCE, name, f"{spec['legs']['p2p']}: ADC re-authentication needed — {str(ex)[:120]}",
@@ -183,8 +188,23 @@ class EthP2PBigQuery(NearBigQuery):
 
     ROUTINE_SECONDS = 240           # inside the tier's 300 s: a routine turn starts no piece after this
 
-    def _turn(self, client, bq, p2p, st, e, out, name, now, unbounded: bool = False) -> bool:
-        """True when every piece due is read."""
+    @staticmethod
+    def owed_pieces(held: set, owed, now: pd.Timestamp) -> list[tuple[pd.Timestamp, pd.Timestamp]]:
+        """P5-1.11: the catch-up's owed days ('YYYY-MM-DD') not held and before today, as consecutive (first, last)
+        ranges, oldest first — each one dated query."""
+        days = sorted(pd.Timestamp(d) for d in (owed or ()) if str(d)[:10] not in held
+                      and pd.Timestamp(d) < now.normalize())
+        out: list = []
+        for d in days:
+            if out and d - out[-1][1] == pd.Timedelta(days=1):
+                out[-1] = (out[-1][0], d)
+            else:
+                out.append((d, d))
+        return out
+
+    def _turn(self, client, bq, p2p, st, e, out, name, now, unbounded: bool = False, weekly: bool = True,
+              owed=None) -> bool:
+        """True when every piece due is read. weekly=False (P5-1.11): only the catch-up's owed pieces."""
         import time
         t0 = time.monotonic()
         sql = (SQL / p2p["sql"]).read_text()
@@ -209,7 +229,7 @@ class EthP2PBigQuery(NearBigQuery):
                                       "ethereum_rebuild.p2p.approved, Jake's decision on the logged bytes)", TIER)
             return True
         todo = []
-        if not e.get("validation_done"):
+        if weekly and not e.get("validation_done"):
             todo.append(("validation window", val, True))
         # G9 F2/F3: EVERY UNHELD WEEK, NOT ONLY THE LATEST. With no cursor, weeks(None, now) gave only the last complete
         # week, so after the validation window (07-27..08-25) the 48 days to 10-18 were never asked (Jake's G8 build:
@@ -218,7 +238,12 @@ class EthP2PBigQuery(NearBigQuery):
         # top-up reserve (near_bigquery._run): its dry run is printed, and a piece that does not fit is held and resumes
         # after the month's reset — never past the budget.
         held = self.held_days(e)
-        todo += [(f"week {a.date()}..{b.date()}", (a, b), True) for a, b in self.pieces(held, p2p, now)]
+        if weekly:
+            todo += [(f"week {a.date()}..{b.date()}", (a, b), True) for a, b in self.pieces(held, p2p, now)]
+        # P5-1.11: the catch-up's owed days not inside a piece already due — one dated query per run of days
+        covered = {str(d.date()) for _w, (a, b), _v in todo for d in pd.date_range(a, b)}
+        todo += [(f"owed {a.date()}..{b.date()}", (a, b), True) for a, b in (owed or ())
+                 if not {str(d.date()) for d in pd.date_range(a, b)} <= covered]
         if todo:
             out.skipped(SOURCE, name, f"Ethereum P2P pieces to read ({len(todo)}): " + "; ".join(
                 f"{w}" for w, _r, _v in todo[:12]) + (" …" if len(todo) > 12 else ""), TIER)
@@ -239,7 +264,7 @@ class EthP2PBigQuery(NearBigQuery):
                 e["days"].setdefault(str(pd.Timestamp(r["day"]).date()), {})[str(r["token"])] = str(r["amount"])
             if what == "validation window":
                 e["validation_done"] = True
-            else:
+            elif what.startswith("week"):              # an owed piece (P5-1.11) is not the weekly cursor
                 e["through"] = max(str(b.date()), str(e.get("through") or ""))
             self._save(st)
         return True

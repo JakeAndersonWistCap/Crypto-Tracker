@@ -1551,7 +1551,12 @@ class DefiLlama:
         # 402, paid), but /protocols — ONE call — carries each protocol's CURRENT TVL per chain (chainTvls), so today's sum
         # needs no per-protocol call: every portfolio chain gets a fresh read EVERY run. The per-protocol history build
         # runs only for a chain with no stored history yet.
-        need_history = {c: n for c, n in wanted.items() if not self._stored(n, "rwa_defillama_usd")}
+        # P5-1.11: a chain with days the catch-up asked to read back (fetch.base.catch_up_owed) also gets the history
+        # build — today's one-call sum cannot serve a past day (Jake's run 2026-11-04: rwa_defillama_usd holes were
+        # never read back once any history was stored); window() keeps the owed days, never an overwrite
+        from .base import catch_up_owed
+        need_history = {c: n for c, n in wanted.items()
+                        if not self._stored(n, "rwa_defillama_usd") or catch_up_owed(n, "rwa_defillama_usd")}
         today_rows = {}
         try:
             protocols = self.http.get(f"{API}/protocols")
