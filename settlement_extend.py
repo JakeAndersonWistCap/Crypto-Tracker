@@ -175,7 +175,8 @@ def cmd_backfill(frm: str, apply: bool) -> int:
 def por_wallets(path: Path | None = None) -> tuple[list[str], list[str], dict, list[str]]:
     """(addresses, exchange names, the lists, addresses dropped). Every address lower-cased, once; an address two
     exchanges both list is dropped and named (it cannot be given to one of them)."""
-    lists = json.loads(Path(path or POR_LISTS).read_text(encoding="utf-8"))
+    lists = {k: v for k, v in json.loads(Path(path or POR_LISTS).read_text(encoding="utf-8")).items()
+             if not k.startswith("_")}
     owner: dict[str, set] = {}
     for ex, v in lists.items():
         for a in v.get("eth_addresses") or ():
@@ -237,8 +238,15 @@ def sweep_summary(valued: list[dict], p2p_week: float) -> dict:
         by[k] = by.get(k, 0.0) + r["usd"]
     legs = {s: sum(v for (_e, s2), v in by.items() if s2 == s) for s in ("same_exchange", "other_exchange", "unlisted")}
     tot = sum(legs.values())
+    # The double count's BOUNDS: a list of hot/cold wallets puts a deposit-address sweep under "unlisted"; a list that
+    # holds deposit addresses (OKX's is unlabelled) puts it under "same_exchange". So: low = the same exchange's
+    # internal moves only; high = those plus every unlisted sender (which also holds users sending straight to a
+    # listed wallet, and users depositing into a listed deposit address). Neither is subtracted.
+    low, high = legs["same_exchange"], legs["same_exchange"] + legs["unlisted"]
+    share = (lambda x: x / p2p_week if p2p_week else None)
     return {"p2p_week_usd": p2p_week, "into_listed_wallets_usd": tot,
-            "share_of_p2p": tot / p2p_week if p2p_week else None,
+            "share_of_p2p": share(tot),
+            "double_count_bounds": {"low_usd": low, "low_share": share(low), "high_usd": high, "high_share": share(high)},
             "by_sender": {s: {"usd": v, "share_of_p2p": v / p2p_week if p2p_week else None} for s, v in legs.items()},
             "by_exchange": {f"{e} / {s}": v for (e, s), v in sorted(by.items(), key=lambda kv: -kv[1])}}
 
@@ -298,6 +306,10 @@ def cmd_cex_sweep(week: str | None, apply: bool, db: Path) -> int:
     print(f"  INTO LISTED WALLETS ${res['into_listed_wallets_usd'] / 1e9:,.2f}B of the week's stored P2P "
           f"${res['p2p_week_usd'] / 1e9:,.2f}B = " + (f"{sh:.1%}" if sh is not None else "n/a")
           + " (NOT subtracted)")
+    bd = res["double_count_bounds"]
+    if bd["low_share"] is not None:
+        print(f"  DOUBLE COUNT BOUNDS: low {bd['low_share']:.1%} (same exchange's own moves) .. high {bd['high_share']:.1%}"
+              f" (+ every unlisted sender) of the week's P2P - NOT subtracted")
     for s, v in res["by_sender"].items():
         print(f"    from {s:<15} ${v['usd'] / 1e9:,.2f}B" + (f"  {v['share_of_p2p']:.1%}" if v["share_of_p2p"] is not None
                                                             else ""))

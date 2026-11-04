@@ -212,6 +212,8 @@ def test_rows_are_valued_as_the_p2p_leg_and_an_unpriced_row_is_named_never_zero(
     assert s["by_sender"]["unlisted"]["share_of_p2p"] == pytest.approx(0.008)
     assert s["by_sender"]["same_exchange"]["usd"] == pytest.approx(4000.0)
     assert s["by_exchange"]["A / unlisted"] == pytest.approx(8000.0)
+    assert s["double_count_bounds"]["low_usd"] == pytest.approx(4000.0)
+    assert s["double_count_bounds"]["high_share"] == pytest.approx(0.012)
 
 
 def _sweep_store(tmp_path):
@@ -282,3 +284,18 @@ def test_the_sweep_sql_applies_the_daily_p2p_rules_exactly():
         assert rule in daily and rule in week, rule
     for leg in ("'same_exchange'", "'other_exchange'", "'unlisted'"):
         assert leg in week
+
+
+def test_the_committed_lists_are_each_cited_and_only_the_exchanges_own():
+    lists = json.loads(se.POR_LISTS.read_text(encoding="utf-8"))
+    assert "Third-party" in lists["_about"]
+    addrs, names, got, dropped = se.por_wallets()
+    with_list = {k for k, v in got.items() if v["eth_addresses"]}
+    assert with_list == {"binance", "okx", "coinex", "bitfinex"}
+    for k, v in got.items():
+        assert v["page_url"] and v["read_on"] == "2026-11-04" and v["what_the_list_says_they_are"], k
+        if v["eth_addresses"]:
+            assert v["data_url"] and v["list_kind"], k
+            assert all(len(a) == 42 and a == a.lower() and a.startswith("0x") for a in v["eth_addresses"]), k
+    assert len(addrs) == 50 + 17383 + 7 + 4 and not dropped
+    assert "UNLABELLED" in got["okx"]["list_kind"], "why the double count is given as bounds"

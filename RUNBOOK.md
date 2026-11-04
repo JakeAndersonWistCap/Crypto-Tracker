@@ -696,7 +696,10 @@ subtracted. Do not run any BigQuery query (steps 4 and 5) until Jake says so. Ru
 4. **Only when Jake says so — the one-week query:** `python settlement_extend.py cex-sweep --apply` runs that week
    under the shared monthly budget (held if it does not fit) and prints the dollars INTO the listed wallets as a share
    of the week's stored P2P, split by sender (the same exchange, another listed exchange, an unlisted account) and by
-   exchange; written to `data\ethereum\cex_sweep_<week>.json`. Nothing is subtracted; Jake decides.
+   exchange, and `DOUBLE COUNT BOUNDS: low x% .. high y%` (low = the same exchange's own moves; high = those plus
+   every unlisted sender — OKX's list is unlabelled, so a sweep can fall in either); written to
+   `data\ethereum\cex_sweep_<week>.json`. Four exchanges' lists only (Binance, OKX, CoinEx, Bitfinex; SPEC P5-1.9
+   names the rest and why), so it understates. Nothing is subtracted; Jake decides.
 
 5. **Only after Jake declares his budget decision** (config `extend_approved`): `python settlement_extend.py backfill`
    prints the plan; `--apply` reads the pieces under the shared monthly budget (a piece that does not fit waits for the
