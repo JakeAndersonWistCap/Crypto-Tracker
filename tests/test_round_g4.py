@@ -151,6 +151,11 @@ def test_g4_1e_with_blockscout_and_katana_blocked_every_other_series_lands(local
     try:
         real = ch.rpc_endpoints
         monkeypatch.setattr(ch, "rpc_endpoints", lambda c: [url] if c == "katana" else real(c))
+        # P5-1.1c (no network in tests): Optimism's head block answered by the test, not a public RPC — the scan then
+        # reaches the hanging explorer, which is what this test is about
+        real_bn = ch.ChainReader.block_number
+        monkeypatch.setattr(ch.ChainReader, "block_number",
+                            lambda self, c: 140_000_000 if c == "optimism" else real_bn(self, c))
         monkeypatch.setenv("TOKEN_METRICS_RPC_READ_TIMEOUT", "0.3")
         monkeypatch.setenv("TOKEN_METRICS_LOGCACHE", str(tmp_path / "logscan"))
         monkeypatch.setenv("TOKEN_METRICS_DAILY_CHECKS", "always")

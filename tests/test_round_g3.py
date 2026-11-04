@@ -388,6 +388,9 @@ def test_g3_4_a_full_history_series_has_its_own_daily_mark(tmp_path, monkeypatch
     # the read reaches the last complete day: a shorter read is stored and NOT marked (G5 item 4, test_round_g5)
     b._series = lambda name, spec, key: (seen.append(key) or ([(pd.Timestamp("2025-01-01"), 1.0),
                                                                 (pd.Timestamp(last_complete()), 1.0)], "s", "d"))
+    # P5-1.1c (no network in tests): NEAR's market-share reads are not this test's subject — answered here, not by
+    # api.llama.fi
+    b._share = lambda *a, **k: None
     near = config.PROJECT_BY_NAME["Near"]
     out = FetchOutput()
     b.run([near], None, out)
