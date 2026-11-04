@@ -30977,6 +30977,10 @@ SETTLEMENT_REBUILD["ethereum_rebuild"] = {
         # printed; a piece that does not fit the month is held and resumes after the reset (October: 690.3 of 900 GB
         # used, NEAR's reserve 33.2 GB, NEAR's March backfill held).
         "validation_extend_from": "2026-05-28", "max_bytes_per_query": 60_000_000_000,
+        # P5-1.9 (Jake 2026-11-04): the extension back to 2024-11-04 (settlement_extend.py backfill --apply) waits on
+        # Jake's BigQuery budget decision. None = not declared: the backfill refuses. Declared as
+        # {"by": "Jake, <date>", "monthly_budget": "<his decision>"}.
+        "extend_approved": None,
         "price_api": "https://coins.llama.fi", "csv_dir": "data/ethereum",
         # (symbol, address, decimals) — decimals are checked against DefiLlama's answer before a day is valued
         "tokens": (("USDT", "0xdac17f958d2ee523a2206206994597c13d831ec7", 6),

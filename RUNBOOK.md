@@ -656,42 +656,52 @@ python -c "import sqlite3;c=sqlite3.connect('file:metrics.db?mode=ro',uri=True);
 Before the next run: no project (or 0). After it: 13 for each project whose circulating supply is read from
 CoinGecko, unless CoinGecko's market_chart misses a day; that day is then named in the CATCH-UP line.
 
-## 11ea. P5 round 1, item 9 — Ethereum settlement without Artemis, steps 1-2 (2026-11-04)
+## 11ea. P5 round 1, item 9 — Ethereum settlement without Artemis (2026-11-04)
 
-Nothing Artemis is removed yet. Your order is extend, validate, and only after a PASS remove and purge. Run these from
-the repo folder, in this order.
+Nothing Artemis is removed yet, and there is no purge script and no fallback until Jake confirms. Jake's decisions
+(SPEC P5-1.9): the BigQuery definition IS the series — there is no ±1% test against Artemis; the extension reaches back
+to 2024-11-04 (A1's key needs 730 days on one definition); the exchange double count is sized first and not
+subtracted. Do not run any BigQuery query (steps 4 and 5) until Jake says so. Run these from the repo folder.
 
-1. **Validate first (read-only, no BigQuery, no quota).** The overlap with the CSV is already stored, so this decides
-   whether the extension can be used at all:
+1. **Reference only (read-only, no BigQuery):**
 
    ```
    python settlement_extend.py validate
    ```
 
-   It prints `SETTLEMENT OVERLAP 2026-05-28..2026-08-25: PASS` or `NOT PASSED`, the rebuild and CSV totals, each leg,
-   the daily and weekly gaps and any missing days, and writes `data\ethereum\settlement_overlap.json`.
-   - The rule was fixed before any number was seen: all 90 days held, and Σ rebuild ÷ Σ CSV − 1 within ±1%.
-   - Expected: NOT PASSED. Your G9 run measured +6.8% on this overlap.
-   - PASTE BACK the whole output.
+   Prints `SETTLEMENT OVERLAP 2026-05-28..2026-08-25 (REFERENCE ONLY - decides nothing): 90 of 90 days hold both;
+   rebuild / CSV - 1 = +6.8%`-ish, the three legs' totals, the daily and weekly gaps, and writes
+   `data\ethereum\settlement_overlap.json`. It decides nothing. PASTE BACK the legs line.
 
 2. **The extension's cost (BigQuery dry runs: no data read, no quota):**
 
    ```
-   python settlement_extend.py dry-run --from 2025-05-01
+   python settlement_extend.py dry-run --from 2024-11-04
    ```
 
-   One line per weekly piece from 2025-05-01 to the stored history (2026-05-28), then `TOTAL … GB` and this month's
-   quota line. The earlier estimate from table sizes was about 13 GB a week, about 730 GB in all; the dry runs replace
-   it. PASTE BACK the TOTAL line.
+   82 weekly pieces, 2024-11-04..2024-11-10 through 2026-05-25..2026-05-31, one line each, then `TOTAL … GB` and the
+   month's quota line. The estimate on file is about 13 GB a week (about 1,070 GB); the dry runs replace it. PASTE BACK
+   the TOTAL line.
 
-3. **Only if step 1 printed PASS**, the backfill: `python settlement_extend.py backfill --from 2025-05-01` prints the
-   plan; add `--apply` to read. Each piece runs under the shared monthly budget, and a piece that does not fit waits
-   for the month's reset. Then `python token_metrics.py` stores the days. Without a PASS it prints `REFUSED` and reads
+3. **The exchange double count's cost (one dry run: no data read, no quota):**
+
+   ```
+   python settlement_extend.py cex-sweep
+   ```
+
+   The newest Monday..Sunday week whose seven P2P days are stored (or `--week <a Monday>`), the number of published
+   proof-of-reserves wallets and exchanges (research/cex_por/ethereum_por_wallets.json, each list cited), and
+   `dry run: … GB` (about one weekly piece). PASTE BACK the output.
+
+4. **Only when Jake says so — the one-week query:** `python settlement_extend.py cex-sweep --apply` runs that week
+   under the shared monthly budget (held if it does not fit) and prints the dollars INTO the listed wallets as a share
+   of the week's stored P2P, split by sender (the same exchange, another listed exchange, an unlisted account) and by
+   exchange; written to `data\ethereum\cex_sweep_<week>.json`. Nothing is subtracted; Jake decides.
+
+5. **Only after Jake declares his budget decision** (config `extend_approved`): `python settlement_extend.py backfill`
+   prints the plan; `--apply` reads the pieces under the shared monthly budget (a piece that does not fit waits for the
+   month's reset), then `python token_metrics.py` stores the days. Until then `--apply` prints `REFUSED` and reads
    nothing.
-
-4. **If step 1 is NOT PASSED:** nothing more runs. No fallback to 2026-05-28 yet (Jake 2026-11-04): step 1's verdict
-   decides nothing until the +6.8% is explained and Jake has chosen the test (SPEC P5-1.9). No allowlist entry is added
-   until you approve one.
 
 ## 11dz. P5 round 1, items 7-8 — Uniswap (2026-11-04)
 
