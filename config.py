@@ -19372,6 +19372,33 @@ for _name, _rows in _NONCIRC_WALLETS_FIRST_PARTY.items():
             _addr, _chain, "treasury_holding", _sym, _url, verified=_date, purpose=_why,
             provenance=f"first-party wallet list (full sweep, Jake 2026-10-07): {_url}", holder_has_code=False,
             metric_override=_NC)
+# P5-1.7 (Jake 2026-11-04): UNISWAP'S AIRDROP DISTRIBUTOR ON ITS OWN. The same balanceOf that feeds Uniswap's
+# noncirculating_holding_tokens sum is ALSO stored per wallet (fetch/chain component_metric, as Pendle's three wallets,
+# Round G 2.8), so the one-off note reads the distributor's own latest balance rather than the (e) set's sum.
+PROJECT_BY_NAME["Uniswap"]["contracts"]["noncirc_merkle_distributor"]["component_metric"] = \
+    "noncirc_merkle_distributor_tokens"
+METRICS["noncirc_merkle_distributor_tokens"] = {
+    "label": "UNI still in Uniswap's 2020 airdrop merkle distributor 0x090D…256e (one component of "
+             "noncirculating_holding_tokens; its falls are the airdrop claims in outflow (e))",
+    "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1.5e8,
+    "only_projects": ("Uniswap",)}
+# P5-1.7: ONE-OFF NOTES — a dilution leg whose window held a one-off that cannot repeat at that scale. The cells and
+# net holder yield are unchanged (the release is real); the note says why it will not recur and what net holder yield
+# reads without it — in Project notes only, never in a ranked cell (reader._project_text_notes).
+ONE_OFF_DILUTION_NOTES = {
+    "Uniswap": {
+        "category": "e",
+        "holder": "the 2020 airdrop merkle distributor 0x090D4613473dEE047c3f2706764f49E0821D256e",
+        "component": "noncirc_merkle_distributor_tokens",
+        "set_metric": "noncirculating_holding_tokens",
+        "what": "genuine 2020-airdrop claims by 30,202 eligible addresses (12,257,360 UNI paid 2026-10-11..11-02, each "
+                "with the contract's own Claimed event; P4-Q9 trace) — a real release into circulating, counted as "
+                "dilution (e)",
+        "rest_of_set": "the four treasury vesting contracts, which held 0 UNI (read on-chain 2026-11-03; their last UNI "
+                       "movement was in 2022) — so outflow (e) is the distributor's claims",
+        "decided": "Jake 2026-11-04 (P5-1.7)",
+    },
+}
 # ===== MORPHO: THE DAO'S LEGACY MORPHO AND ITS MORPHO ON BASE (Jake 2026-10-11, decision A5 on 5b87610). =====
 # The new token's 1B totalSupply already holds every unmigrated legacy MORPHO (the Wrapper's new-token balance) and
 # every MORPHO bridged to Base (Base's MORPHO: remoteToken() = the new token, bridge() = the OP standard bridge, so

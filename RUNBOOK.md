@@ -602,6 +602,22 @@ These run in the build sandbox, not on Jake's machine (they need pytest; require
   `ACCEPTED: World Mobile ... parked (P4-Q2)` lines, not violations, while World Mobile is parked
   (config.CREDIBILITY_PARKED). When Jake reopens World Mobile, take it out of CREDIBILITY_PARKED: the two allowances end
   by themselves and any loss is a violation again.
+## 11du. P5 round 1 — Uniswap (2026-11-04)
+
+**7. Uniswap's airdrop distributor is a one-off in outflow (e) (SPEC P5-1.7).** The outflow from the 2020 merkle
+distributor 0x090D…256e is genuine claims by 30,202 addresses: a real release into circulating, counted as dilution (e).
+Net holder yield is unchanged. The CP tab's NET HOLDER YIELD and Outflow (e) cells for Uniswap carry a note that starts
+`ONE-OFF (outflow (e)` and gives the distributor's latest read balance, so the window's claims cannot repeat at that
+scale. The reader's Project notes add two text rows to Uniswap's block: the one-off note, and net holder yield WITHOUT
+the distributor (NHY + Outflow (e) $ ÷ market cap, from the CP cells). That figure is text and never a ranked cell; when
+an input is missing it says which one and gives no figure.
+The distributor's own balance is stored from the next run as `noncirc_merkle_distributor_tokens` (a declared
+component of `noncirculating_holding_tokens`). Until then the note says its own balance is not stored yet and gives
+the set's latest read; the four vesting contracts in that set held 0 UNI on 2026-11-03.
+Nothing to run beyond the normal daily run. To check: in token_metrics.xlsx, Project notes, Uniswap block, the rows
+`One-off in outflow (e): …` and `Net holder yield without the distributor …`.
+
+
 ## 11dl. P4-Q3 Chainlink releases (2026-11-03)
 
 **The release (SPEC P4-Q3).** Chainlink's `unlock_release_tokens` is the daily fall in Σ balanceOf of the 33

@@ -680,3 +680,25 @@ def test_p2c_4_a_parked_headline_without_a_number_reads_parked(monkeypatch):
     assert ws[ref].value == "parked"
     assert ws[ref].comment.text.startswith(config.AERODROME_PARK_PLAIN) and "no emissions row" in ws[ref].comment.text
     assert config.regression_allowance("Aerodrome", "A3 | " + src.header, on="2026-10-28")
+
+
+# ================================================================================================== P5-1.7
+def test_p5_1_7_uniswap_one_off_note_on_the_cells_and_in_project_notes(built):
+    """The distributor's claims stay in dilution (e) and net holder yield; the CP cells carry the ONE-OFF note; Project
+    notes holds the note and net holder yield without the distributor as TEXT (never a number a rank reads)."""
+    a = openpyxl.load_workbook(built["audit"])
+    ws = a["CP Comparability"]
+    heads = {str(ws.cell(4, c).value or ""): c for c in range(1, ws.max_column + 1)}
+    row = next(r for r in range(5, ws.max_row + 1) if ws.cell(r, 1).value == "Uniswap")
+    for prefix in ("NET HOLDER YIELD", "Outflow (e)"):
+        c = next(c for h, c in heads.items() if h.startswith(prefix))
+        cm = ws.cell(row, c).comment
+        assert cm and "ONE-OFF (outflow (e)" in cm.text and "cannot repeat at that scale" in cm.text, prefix
+    r = openpyxl.load_workbook(built["reader"])
+    pn = r["Project notes"]
+    labels = {pn.cell(i, 1).value: i for i in range(5, pn.max_row + 1)}
+    assert reader.TEXT_NOTE_ONE_OFF in labels and reader.TEXT_NOTE_NHY_WITHOUT in labels
+    v = pn.cell(labels[reader.TEXT_NOTE_NHY_WITHOUT], 2).value
+    assert isinstance(v, str) and v.endswith("stays the one with the claims counted.") and "%" in v, v
+    owner = max(i for i in range(5, labels[reader.TEXT_NOTE_ONE_OFF]) if pn.cell(i, 1).value == "Uniswap")
+    assert owner < labels[reader.TEXT_NOTE_NHY_WITHOUT], "the rows sit in Uniswap's block"

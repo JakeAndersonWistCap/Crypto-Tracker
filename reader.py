@@ -2534,6 +2534,52 @@ def _short_definition(col: Col, tabs: list) -> str:
     return f"{first}. Moved from {' and '.join(tabs)}."
 
 
+TEXT_NOTE_ONE_OFF = "One-off in outflow (e): the airdrop distributor's claims"
+TEXT_NOTE_NHY_WITHOUT = "Net holder yield without the distributor (a note, never ranked)"
+
+
+def _pct_text(x: float) -> str:
+    return f"{x * 100:,.2f}%".replace("-", "−")
+
+
+def _project_text_notes(ctx: Ctx) -> dict:
+    """P5-1.7 (Jake 2026-11-04): Project notes rows that are TEXT a project's one-off needs — {project: [(label, text,
+    definition)]}. For a declared one-off (config.ONE_OFF_DILUTION_NOTES): the note the CP cells carry, and net holder
+    yield WITHOUT the one-off holder, worked out from the same CP cells (NET HOLDER YIELD + Outflow (x) $ a year ÷ Market
+    cap) and written as text — so it is never a number a rank or a total can read. An input that is not a number is
+    named instead."""
+    out: dict = {}
+    names = {p["name"] for p in ctx.projects}
+    for name, spec in ctx.config.ONE_OFF_DILUTION_NOTES.items():
+        if name not in names:
+            continue
+        p = ctx.p(name)
+        c = spec["category"]
+        note = ctx.bw.one_off_dilution_note(p)
+        nhy = ctx.A.cell(CP_TAB, "NET HOLDER YIELD", name)
+        eusd = ctx.A.cell(CP_TAB, f"Outflow ({c})", name)
+        mcap = ctx.A.cell(CP_TAB, "Market cap ($)", name)
+        missing = [lab for lab, src in (("net holder yield", nhy), (f"Outflow ({c}) $ a year", eusd),
+                                         ("market cap", mcap)) if src is None or src.num is None]
+        if mcap is not None and mcap.num is not None and mcap.num <= 0:
+            missing.append("a market cap above 0")
+        if missing:
+            nhy_text = ("Not worked out: " + ", ".join(missing) + " is not a number on the CP tab for "
+                        f"{name} this build (CP Comparability) — no estimate is given.")
+        else:
+            without = nhy.num + eusd.num / mcap.num
+            nhy_text = (f"{_pct_text(without)} — net holder yield {_pct_text(nhy.num)} with the outflow ({c}) of "
+                        f"${eusd.num:,.0f} a year added back over market cap ${mcap.num:,.0f} (CP Comparability). "
+                        "The ranked net holder yield stays the one with the claims counted.")
+        out[name] = [(TEXT_NOTE_ONE_OFF, note,
+                      "A one-off release in a dilution leg: still counted as dilution; why the window's amount cannot "
+                      "repeat at that scale (P5-1.7)."),
+                     (TEXT_NOTE_NHY_WITHOUT, nhy_text,
+                      f"Net holder yield with outflow ({c}) left out: net holder yield + outflow ({c}) $ a year ÷ market "
+                      "cap, from the CP tab's own cells. A note only — never in a ranked or numeric cell (P5-1.7).")]
+    return out
+
+
 def _write_project_notes(ws, ctx: Ctx) -> Sheet:
     """P3-6: the Project notes tab — one block per project: a project row, then one row per column that belongs to that
     project's own mechanism (PROJECT_NOTE_COLUMNS): label | value | short definition. The value is the cell the archetype
@@ -2544,6 +2590,9 @@ def _write_project_notes(ws, ctx: Ctx) -> Sheet:
     blocks: dict = {}
     for e in ctx.notes or []:
         blocks.setdefault(e["owner"], {}).setdefault(e["col"].header, []).append(e)
+    texts = _project_text_notes(ctx)
+    for name in texts:
+        blocks.setdefault(name, {})
     ws.cell(1, 1, "Project notes — the columns that belong to one project's own mechanism").font = F_TITLE
     ws.cell(2, 1, "One block per project. Each value is the project's cell from its archetype tab, moved here unchanged "
             "(the same formula, format, fill and comment). Hover a name for its definition, a value for its "
@@ -2609,6 +2658,19 @@ def _write_project_notes(ws, ctx: Ctx) -> Sheet:
                 sh.cols.append(e["col"])
                 for key in e["headlines"]:
                     HEADLINE_LOCATIONS[key] = (NOTES, f"B{r}")
+            sh.value_rows.append(r)
+            r += 1
+        for label, text, definition in texts.get(name, ()):
+            lab = ws.cell(r, 1, label)
+            lab.font, lab.number_format = F_BODY, TEXT_FMT
+            lab.alignment = Alignment(indent=1)
+            v = ws.cell(r, 2, text)
+            v.font, v.number_format = F_BODY, TEXT_FMT
+            v.alignment = Alignment(wrap_text=True, vertical="top")
+            d = ws.cell(r, 3, definition)
+            d.font, d.number_format = F_BODY, TEXT_FMT
+            d.alignment = Alignment(wrap_text=True, vertical="top")
+            sh.texts += 3
             sh.value_rows.append(r)
             r += 1
     if not order:
