@@ -534,6 +534,74 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11eb. P5-1.11 — the catch-up fills every hole that has a past-day source (2026-11-04)
+
+Your run of 2026-11-04 found 5,471 holes in 450 days and filled none; today's tiers read back 4 of 460 owed days.
+These were the causes, and what the run does now. Nothing below changes a stored value; every write goes to a day
+with no row, at the series' own measuring point.
+
+- **Retired series were counted as holes.** Ether.fi's three Dune 8683038 series (lock_rate_pct,
+  locked_tokens_dashboard, staker_count) were retired on 2026-09-24, so their days since then can never fill. They
+  are now counted apart: "RETIRED, not counted as holes", and the summary says "N day(s) of M RETIRED series not
+  counted". config.RETIRED_SERIES is treated the same way.
+- **CoinGecko circulating supply.** A missed day is now market cap ÷ price from market_chart, the same CoinGecko
+  read that fills price and market cap. CoinGecko itself defines market cap as price × circulating supply. The
+  row's source reads `coingecko[past day: market cap ÷ price from market_chart — P5-1.11]`. Its measuring point is
+  unchanged. It is written only beside rows read from CoinGecko.
+- **CoinGecko FDV, total supply and max supply have no past-day read.** CoinGecko's API reference (read 2026-11-04)
+  says /coins/{id}/history carries only price, market cap and volume, and the supply-chart endpoints are
+  Enterprise-only. Those days are named "not recoverable", never carried.
+- **Contract reads at a past block.** Two contract reads are now read again at each missed day's first block,
+  through the archive endpoint the catch-up already uses:
+  - Chainlink's RewardVault: reward_rate_ends_unix, staker_yield_community_pool, reward_emission_rate_annual and
+    emissions_tokens;
+  - Ether.fi's accountant getRate() and sETHFI share price.
+
+  The rows carry the same source as the live read, plus `:archive`. With no archive endpoint, the line says so and
+  the days stay owed.
+- **Ethereum's Etherscan supply fields have no past-day read.** These are total_supply_protocol,
+  burn_cumulative_tokens and consensus_rewards_cumulative. ethsupply2 takes no date, and native ETH supply is not
+  contract state, so they are named not recoverable.
+- **DefiLlama: why 456 of 460 were not served.**
+  - The business and market-share reads kept their own 30-day span and ignored the owed days.
+  - The RWA read fetched only today's value once any history was stored.
+  - The rest were the retired Dune series above, plus days DefiLlama had not published yet. The business reads
+    store only up to the day before yesterday.
+
+  Both reads now keep the owed days.
+- **Coinbase candles and DefiLlama coin prices** asked for only the last 7 days. They now widen the one request to
+  the owed days and keep only the owed days and the routine week.
+- **BigQuery (Ethereum P2P).** Owed days are read by a dated query of their own on the next run. They no longer wait
+  for the weekly turn and a complete Monday..Sunday week. These owed pieces do not move the weekly cursor.
+- **Per source.** The catch-up writes one line, "CATCH-UP BY SOURCE (holes found / filled / left / not recoverable)",
+  with series and day counts per source. The tiers' read-back line ends with "BY SOURCE (owed / read back / left)".
+
+Still holes, by design. These sources keep no history. The counts are from the 15 committed dumps (2026-10-13);
+your store's counts will be larger:
+- Aethir's dashboard page: 15 series, 1,461 days, mostly the four locked_tokens_* series;
+- CoinGecko FDV, total and max supply: 37 series, 297 days;
+- the Hyperliquid browser capture (ASXN): 11 series, 131 days;
+- Hyperliquid tokenDetails and validatorSummaries: 3 series, 15 days;
+- Etherscan ethsupply2: 3 series, 9 days;
+- Maple's page and the Pendle scrape: 2 series and 6 days each.
+
+Still unwired, so their missing days are named holes:
+- the NEAR BigQuery series;
+- Pendle's lastEpochApr;
+- the Morpho API, Sky accounting, Chainlink fee scans, MEV relays, Lido APR, the CCIP API, ultrasound,
+  plume_settlement and explorer inflow-date series;
+- beaconcha.in validatorqueue (P5-1.12).
+
+Check the live store (read-only, from the repo folder). This counts each project's stored circulating supply on
+CoinGecko's 13 missed days:
+
+```
+python -c "import sqlite3;c=sqlite3.connect('file:metrics.db?mode=ro',uri=True);d=('2026-09-13','2026-09-19','2026-09-20','2026-09-26','2026-09-27','2026-10-02','2026-10-03','2026-10-04','2026-10-17','2026-10-24','2026-10-30','2026-10-31','2026-11-01');[print(p,n) for p,n in c.execute('SELECT project,COUNT(DISTINCT substr(date,1,10)) FROM metrics WHERE metric=? AND substr(date,1,10) IN (%s) GROUP BY project'%','.join('?'*len(d)),('circulating_supply',)+d)]"
+```
+
+Before the next run: no project (or 0). After it: 13 for each project whose circulating supply is read from
+CoinGecko, unless CoinGecko's market_chart misses a day; that day is then named in the CATCH-UP line.
+
 ## 11ea. P5 round 1, item 9 — Ethereum settlement without Artemis, steps 1-2 (2026-11-04)
 
 Nothing Artemis is removed yet. Your order is extend, validate, and only after a PASS remove and purge. Run these from

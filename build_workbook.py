@@ -2650,7 +2650,7 @@ def _read_interval_fit(rows: list, stock, stake: pd.Series) -> dict:
 def hl_option_c(a: pd.Series, stake: pd.Series, emissions, stock=None) -> dict:
     """P5-1.5 (Jake 2026-11-04): the staking-reward term R = k x sqrt(stake) / 365. k is CALIBRATED on the earlier half
     of the MEASURED rows (a measured emissions row whose every span day has a measured stake read) and TESTED on the
-    later half; the a-based form k² ÷ (365 x a) — what fills the days without a stake read — is tested on the same rows
+    later half; the a-based form k^2 / (365 x a) - what fills the days without a stake read - is tested on the same rows
     where the reference yield exists. Pass marks config.OPTION_C_PASS. Returns the figures either way."""
     lim = config.OPTION_C_PASS
     rows = []
@@ -2681,7 +2681,7 @@ def hl_option_c(a: pd.Series, stake: pd.Series, emissions, stock=None) -> dict:
         fails.append("the a-based form that fills the days without a stake read cannot be tested: no test row has the "
                      "Grants wallet's reference yield on every day of its span")
     elif not ok(af):
-        fails.append("k² ÷ (365 x a): " + _fit_text(af))
+        fails.append("k^2 / (365 x a): " + _fit_text(af))
     out["passed"] = not fails
     out["why"] = "; ".join(fails) if fails else "passed: " + _fit_text(sq) + "; a-based form " + _fit_text(af)
     ri = _read_interval_fit(rows, stock, stake)
@@ -2705,8 +2705,8 @@ def option_c_text(name: str) -> str:
     if not oc:
         return ""
     lim = oc["limits"]
-    head = (f"OPTION C (P5-1.5) {'PASSED' if oc['passed'] else 'NOT PASSED'} — staking reward = k x sqrt(stake) ÷ 365; "
-            f"pass: mean abs error ≤ {lim['mae']:.0%}, no row beyond {lim['worst']:.0%}, bias within ±{lim['bias']:.0%}")
+    head = (f"OPTION C (P5-1.5) {'PASSED' if oc['passed'] else 'NOT PASSED'} - staking reward = k x sqrt(stake) / 365; "
+            f"pass: mean abs error <= {lim['mae']:.0%}, no row beyond {lim['worst']:.0%}, bias within +-{lim['bias']:.0%}")
     if "k" not in oc:
         return f"{head}. {oc['why']}"
     c0, c1, cn = oc["calibrated_on"]

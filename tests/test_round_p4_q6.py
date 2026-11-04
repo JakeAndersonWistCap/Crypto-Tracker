@@ -303,7 +303,8 @@ def test_an_api_hole_a_tier_reads_back_is_handed_to_todays_tier_and_reported_aft
     assert set(got["date"].dt.strftime("%Y-%m-%d")) == set(hole) | {str(d.date()) for d in full[-30:]}
     st.upsert(got[got["date"].dt.strftime("%Y-%m-%d").isin(hole)])
     assert ar.tier_fill_line(st, res["tier_owed"]) == (
-        "info", "CATCH-UP (today's tiers): 1 of 1 owed day(s) read back over 1 API series from their own history, 0 left")
+        "info", "CATCH-UP (today's tiers): 1 of 1 owed day(s) read back over 1 API series from their own history, 0 left"
+                "; BY SOURCE (owed / read back / left): defillama 1 series: 1 found, 1 filled, 0 left")
     # a DECLARED source hole (the source never reported it) is not owed again every run
     st.conn.execute("DELETE FROM metrics WHERE project=? AND metric=? AND substr(date,1,10)='2026-09-01'", (n, m))
     st.conn.commit()

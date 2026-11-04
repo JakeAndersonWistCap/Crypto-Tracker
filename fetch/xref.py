@@ -36,15 +36,21 @@ import logging
 import pandas as pd
 
 import config
-from .base import Http, tidy, today
+from .base import Http, catch_up_owed, tidy, today
 
 log = logging.getLogger("token_metrics.fetch.xref")
+
+
+def owed_days(name: str, metric: str) -> set:
+    """P5-1.11: the catch-up's owed days for the series as day Timestamps (fetch.base.catch_up_owed)."""
+    return {pd.Timestamp(d) for d in catch_up_owed(name, metric)}
 
 SOURCE = "xref"
 TIER = 1
 COINBASE = "https://api.exchange.coinbase.com/products/{product}/candles"
 LLAMA_CHART = "https://coins.llama.fi/chart/{keys}"
 LLAMA_MAX_POINTS = 500          # coins.llama.fi refuses a chart request over 500 points (coins x days), HTTP 400
+COINBASE_MAX_CANDLES = 300      # Coinbase Exchange serves up to 300 candles per request
 LIDO_SMA = "https://eth-api.lido.fi/v1/protocol/steth/apr/sma"
 
 
@@ -107,6 +113,12 @@ class CrossRefs:
         if backfill:
             days = max(days, hist)
         end = today().normalize() + pd.Timedelta(days=1)
+        routine_start = end - pd.Timedelta(days=days)
+        # P5-1.11: the catch-up's owed days (fetch.base.catch_up_owed) widen the one request — Coinbase serves up to
+        # 300 daily candles per request — and only the routine days and the owed days are kept (never an overwrite)
+        owed = owed_days(name, "price_usd_coinbase")
+        if owed and not backfill:
+            days = min(COINBASE_MAX_CANDLES, max(days, (end - min(owed)).days))
         start = end - pd.Timedelta(days=days)
         try:
             body = self.http.get(url, params={"granularity": 86400, "start": start.isoformat(),
@@ -123,6 +135,8 @@ class CrossRefs:
         if isinstance(rows, str):
             out.fail(SOURCE, name, f"price_usd_coinbase: {product}: {rows}", TIER)
             return
+        if owed and not backfill:
+            rows = [(d, v) for d, v in rows if d >= routine_start or d in owed]
         frame = tidy(rows, name, "price_usd_coinbase", f"coinbase_exchange:{product}:open", TIER)
         listed = ""
         if backfill and rows:
@@ -196,6 +210,13 @@ class CrossRefs:
         history = not self.daily.ever(hist_key)
         if history:
             days = int(config.TRAJECTORY["history_days"])
+        routine_start = today().normalize() - pd.Timedelta(days=days)
+        # P5-1.11: the catch-up's owed days widen the read (bounded by the five-quarter window); only the routine days
+        # and each coin's owed days are kept (never an overwrite)
+        owed = {p["name"]: owed_days(p["name"], "price_usd_llama") for p in projects}
+        if not history and any(owed.values()):
+            first = min(min(v) for v in owed.values() if v)
+            days = min(int(config.TRAJECTORY["history_days"]), max(days, (today().normalize() - first).days + 1))
         start = int((today().normalize() - pd.Timedelta(days=days)).timestamp())
         # BATCHED UNDER THE 500-POINT CAP (fix round 2, R7: every coin in one URL for the 456-day history answered HTTP
         # 400 "Requested 6840 data points exceeds the maximum of 500" for all 15 projects — the cross-check was blind):
@@ -225,6 +246,8 @@ class CrossRefs:
             if k in failed:
                 continue
             rows = self.parse_chart((coins.get(k) or {}).get("prices") or [])
+            if not history and any(owed.values()):
+                rows = [(d, v) for d, v in rows if d >= routine_start or d in owed.get(p["name"], set())]
             if not rows:
                 out.fail(SOURCE, p["name"], f"price_usd_llama: no 00:00 point for {k}", TIER)
                 continue

@@ -137,6 +137,26 @@ class SharePrice:
         out.add(tidy(rows, name, metric, f"{SOURCE}:accountant.getRate", TIER), SOURCE, name, msg, TIER)
         self.daily.done(key, day)
 
+    @classmethod
+    def rows_at(cls, project: dict, w3, block: int, day) -> list:
+        """P5-1.11, THE CATCH-UP'S PAST-DAY READ: the accountant's getRate() and the vault's share price at `block` (the
+        day's first block, through an archive endpoint), dated `day` — the same calls and source strings as the live
+        reads, marked :archive (a past-block read; the measuring point is unchanged). [(metric, value, source)]."""
+        import config
+        out = []
+        spec = project.get("accountant_rate")
+        if spec:
+            teller, vault = w3.to_checksum_address(spec["teller"]), w3.to_checksum_address(spec["vault"])
+            acc, dec = cls.accountant(w3, teller, vault)
+            out.append((spec["metric"], int(acc.functions.getRate().call(block_identifier=block)) / 10 ** dec,
+                        config.mark_source(f"{SOURCE}:accountant.getRate", "archive")))
+        spec = project.get("share_price_onchain")
+        if spec:
+            vault, asset = w3.to_checksum_address(spec["vault"]), w3.to_checksum_address(spec["asset"])
+            px, how = cls.price(w3, vault, asset, block)
+            out.append((spec["metric"], px, config.mark_source(f"{SOURCE}:{spec['vault'][:10]}.{how}", "archive")))
+        return out
+
     def run(self, projects: list[dict], window_days, out):
         for p in projects:
             if p.get("accountant_rate"):
