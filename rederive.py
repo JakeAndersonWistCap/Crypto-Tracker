@@ -55,6 +55,7 @@ import pathlib
 import sqlite3
 import sys
 from dataclasses import dataclass, field
+from datetime import date as date_cls
 
 import config
 from fetch.base import _measuring_point
@@ -149,9 +150,12 @@ def rederive_flow_from_stock(conn: sqlite3.Connection, project: str, flow_metric
         return plan
 
     for (d0, v0, s0, _), (d1, v1, s1, t1) in zip(stock, stock[1:]):
+        # P5-1.13: a pair N days apart holds N days of flow on one date — tagged [span=Nd] as the live rows are, so a
+        # window counts its days (an untagged 3-day row read as one day and raised Hyperliquid's payout ratio)
+        gap = (date_cls.fromisoformat(str(d1)[:10]) - date_cls.fromisoformat(str(d0)[:10])).days
+        src1 = config.mark_source(config.mark_source(s1, "delta"), REDERIVED)
         pair = Pair(date=d1, prior_date=d0, value=None, prior_value=v0, stock_value=v1,
-                    source=config.mark_source(config.mark_source(s1, "delta"), REDERIVED),
-                    tier=t1)
+                    source=src1 + (f"[span={gap}d]" if gap > 1 else ""), tier=t1)
         if _measuring_point(s0) != _measuring_point(s1):
             pair.refusal = (f"the measuring point CHANGED — {d0} read {_measuring_point(s0)!r} "
                             f"and {d1} read {_measuring_point(s1)!r}. Differencing across that "

@@ -534,6 +534,65 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11dx. P5 round 1, items 13-15 — payout ratio above 1, NEAR (e), the daily task (2026-11-04)
+
+- **Payout ratio above 1 (P5-1.13).** There were two counting errors, now fixed:
+  - Etherscan's ethsupply2 figures are the previous UTC day's close. Each burn and consensus-reward delta is now
+    dated on the day it measures, D − 1; its source says `[dated −1d …]`. Where the DefiLlama-derived leg held that
+    day, the measured row stands, so 2026-09-29 is no longer counted twice.
+  - A rebuilt (`:rederived`) delta across missed reads now counts every day since the stock's previous read.
+    Hyperliquid's 09-21 Assistance Fund row holds 09-19..09-21.
+
+  Over 90 days on the 2026-10-13 dumps: Ethereum 1.057 → 1.004, Hyperliquid 1.130 → 1.092, Uniswap 1.081 (no change).
+  What is left is real, and the note on both payout cells (CP) says why:
+  - Ethereum: valuation. Burned ETH × the day's close, against DefiLlama's dollars at burn time.
+  - Hyperliquid: the Assistance Fund receives about 93% of DefiLlama's fees, while DefiLlama's revenue is about 81%.
+  - Uniswap: timing. Claim burns arrive in lumps.
+- **Check Ethereum's handover days on the live store (read-only).** Expected:
+  - 09-27..09-29 read `derived:defillama_burned_fee_revenue/price`;
+  - 09-30 onward read `etherscan:ethsupply2.BurntFees:delta`;
+  - the 09-30 value is close to the 09-29 value (the same day's burn, stored a day late).
+
+  ```
+  python -c "import sqlite3;c=sqlite3.connect('file:metrics.db?mode=ro',uri=True);[print(r) for r in c.execute(\"SELECT date, round(value,2), source FROM metrics WHERE project='Ethereum' AND metric='gross_burn_tokens' AND date BETWEEN '2026-09-27' AND '2026-10-02' ORDER BY date\")]"
+  ```
+
+  After a build on this code, CP "Payout ratio — the project's own net basis" reads about 1.00 for Ethereum.
+  Hyperliquid and Uniswap may stay above 1, with the note saying why.
+- **NEAR dilution (e) (P5-1.14).** A fall in the Foundation accounts' balance under 0.01 NEAR is the accounts' own
+  fees, not a release, and is stored as 0. The release row's source counts the days read 0. On the dump that was
+  five days of 0.0002-0.0011 NEAR. One of them came from a hand-entered 171059.131 on 2026-10-11, against a read of
+  171059.13121036976. To list the falls under the floor on the live store (read-only; expected: a handful, each under
+  0.01):
+
+  ```
+  python -c "import sqlite3;c=sqlite3.connect('file:metrics.db?mode=ro',uri=True);r=c.execute(\"SELECT date,value,source FROM metrics WHERE project='Near' AND metric='near_foundation_accounts_tokens' ORDER BY date\").fetchall();[print(b[0],round(a[1]-b[1],6),b[2][:60]) for a,b in zip(r,r[1:]) if 0<a[1]-b[1]<0.01]"
+  ```
+
+- **The daily task (P5-1.15). Run it yourself; nothing here sets it up.** In PowerShell, from the repo folder:
+
+  ```
+  powershell -ExecutionPolicy Bypass -File windows\register_task.ps1 -At 17:20
+  ```
+
+  This registers (or replaces) the task "Crypto-Tracker daily". It runs `windows\daily_run.ps1 -Scheduled` (the
+  normal fetch and build) every day at 17:20 local, as you, while you are logged on. It wakes the laptop, runs as
+  soon as possible after a missed time, is stopped after 6 hours, and never starts a second copy.
+
+  Why 17:20: it is after 16:00 UTC all year in the UK, so yesterday's figures are read final, not "provisional, not
+  used" (G15 5). The laptop is also likelier to be on then than at 06:30 at a weekend, and the dump's missing days
+  are mostly weekends.
+
+  To check it ran:
+  - `Get-ScheduledTaskInfo -TaskName "Crypto-Tracker daily" | Select-Object LastRunTime, LastTaskResult, NextRunTime`
+    — LastTaskResult 0 is success; NextRunTime is the next day at 17:20.
+  - `Test-Path ("logs\run_" + (Get-Date -Format yyyy-MM-dd) + ".log")` — True after today's run.
+
+  To remove it: `Unregister-ScheduledTask -TaskName "Crypto-Tracker daily" -Confirm:$false`.
+
+  A day the laptop stays off is still a permanent hole in a no-history source (pages, scrapes, tokenDetails). Only a
+  collector that runs in the cloud closes that (round 2, item 16: proposed then, not built).
+
 ## 11du. P5 round 1 — Hyperliquid: span-aware ratio, measured 09-26..09-28, measured vs modelled, option C, permanent holes (2026-11-04)
 
 - **The observed/model ratio (P5-1.2, no action).** The published-formula row (emissions_modelled_tokens) now compares
