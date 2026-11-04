@@ -784,6 +784,11 @@ python review_resolve.py --rejudge --apply         # records the RESOLVED-ARTEFA
 
     Expected: only Hyperliquid cells and any series with a rederived multi-day row move. Every move goes in the
     direction of more covered days, so a lower per-day rate.
+    Fixed 2026-11-04: the headers now come from each tab's "Project" row, so a column is never dropped or mislabelled
+    (before, your store showed 25 moves and the dumps 20). On your store expect the 21 the dumps show (SPEC P5-1.13)
+    plus net holder yield and its T-bill spread (both by the holder value yield's change in points; the HVY spread
+    0.17% → 0.03%) and the two burn cells your store unblocks. PASTE BACK the list. For the test dumps add
+    `--asof 2026-10-13`.
 - **Check Ethereum's burn rows on the live store (read-only).** Expected: from the first Etherscan day (09-29), one
   `etherscan:ethsupply2.BurntFees:delta` row a day, and no `derived:defillama_burned_fee_revenue/price` row on the same
   day. Section CQ removed the doubled 09-29.

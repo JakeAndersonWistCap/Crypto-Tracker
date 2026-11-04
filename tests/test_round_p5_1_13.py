@@ -152,14 +152,16 @@ def test_headline_diff_can_show_the_span_fix_on_every_numeric_cell():
 
 
 def test_the_spec_row_records_the_accepted_span_fix_moves():
-    """Jake 2026-11-04: the 20 Hyperliquid cells the span fix moves (87 -> 90 covered days, -3.3%) are accepted and
-    recorded, old -> new, in P5-1.13."""
+    """Jake 2026-11-04: the Hyperliquid cells the span fix moves (87 -> 90 covered days, -3.3%) are accepted and
+    recorded, old -> new, in P5-1.13 - corrected to the 10-13 build (21 on the dumps), with the five more on his store."""
     text = (ROOT / "SPEC.md").read_text(encoding="utf-8")
     row = next(ln for ln in text.splitlines() if ln.startswith("| P5-1.13 |"))
-    assert "ACCEPTED by Jake 2026-11-04" in row and "(20 cells)" in row
-    for move in ("CP holder value yield 3.423% → 3.309%", "CP payout ratio net 1.146 → 1.108",
-                 "Master net supply change −3.589% → −3.470%", "A4 PERMANENT BURN YIELD 3.447% → 3.332%"):
+    assert "ACCEPTED by Jake 2026-11-04" in row and "21 cells move" in row and "THE FIVE MORE ON JAKE'S 11-04 STORE" in row
+    for move in ("CP HOLDER VALUE YIELD 3.945% → 3.814%", "CP payout ratio net 1.130 → 1.092",
+                 "Master net supply change −4.339% → −4.195%", "A4 PERMANENT BURN YIELD 4.181% → 4.041%",
+                 "NET HOLDER YIELD", "0.17% → 0.03%"):
         assert move in row, move
+    assert "3.423%" not in row, "the as-of-today dump values are gone (CORRECTED)"
 
 
 def test_the_holder_value_yield_spread_over_the_tbill_carries_the_span_fix_flag():
