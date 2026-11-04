@@ -135,12 +135,19 @@ def test_headline_diff_can_show_the_span_fix_on_every_numeric_cell():
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "CP Capture"
-    ws["A1"], ws["B1"], ws["C1"] = "Project", "Holder value yield", "Note"
-    ws["A2"], ws["B2"], ws["C2"] = "Hyperliquid", 0.038, "text"
+    ws["A1"] = "a title"
+    ws["A4"], ws["B4"], ws["C4"], ws["D4"], ws["E4"] = "Project", "Holder value yield", "Note", "Spread", "Spread"
+    ws["A5"], ws["B5"], ws["C5"], ws["D5"], ws["E5"] = "Ethereum", "n/a - no buyback", "text", "n/a - x", "n/a - x"
+    ws["A6"], ws["B6"], ws["C6"], ws["D6"], ws["E6"] = "Hyperliquid", 0.038, "text", 0.0017, 0.0003
     ws2 = wb.create_sheet("Data")
     ws2["A2"], ws2["B2"] = "Hyperliquid", 1.0
     got = hd._all_cells(xlcalc.Workbook(wb), wb)
     assert got[("Hyperliquid", "CP Capture", "Holder value yield")] == 0.038
+    # Jake 2026-11-04 (25 moves on his store, 20 here): a data row's text was read as a header and two columns that
+    # shared it overwrote each other. Headers come from the "Project" row; a header used twice keeps its column.
+    assert got[("Hyperliquid", "CP Capture", "Spread [D]")] == 0.0017
+    assert got[("Hyperliquid", "CP Capture", "Spread [E]")] == 0.0003
+    assert not any("n/a" in k[2] for k in got), "no data text is ever a header"
     assert not any(k[1] == "Data" for k in got), "only the A1-A4, CP and Master tabs"
 
 
@@ -164,3 +171,29 @@ def test_the_holder_value_yield_spread_over_the_tbill_carries_the_span_fix_flag(
     note = hvy[5]["note_fn"]({"name": "Hyperliquid"})
     assert "0.17% -> 0.03%" in note and "87 -> 90" in note
     assert hvy[5]["note_fn"]({"name": "Ethereum"}) == "" and nhy[5]["note_fn"]({"name": "Hyperliquid"}) == ""
+
+
+def test_headline_diff_builds_as_of_the_day_asked(tmp_path, monkeypatch):
+    """The test dumps stop at 2026-10-13: built as of today their Q0 was the 90 days to the run date and the T-bill read
+    stale (Jake's 25 moves vs 20 here). --asof passes the day to both builds."""
+    import headline_diff as hd
+    import openpyxl
+    got = []
+
+    def fake_build(st, path, asof=None):
+        got.append(asof)
+        wb = openpyxl.Workbook()
+        wb.save(path)
+
+    class S:
+        DB_PATH = str(tmp_path / "x.db")
+
+        class Store:
+            def __init__(self, p):
+                pass
+
+            def close(self):
+                pass
+    hd._headlines(S, fake_build, [], tmp_path / "a.xlsx", True, pd.Timestamp("2026-10-13"))
+    hd._headlines(S, fake_build, [], tmp_path / "b.xlsx", True)
+    assert got == [pd.Timestamp("2026-10-13"), None]

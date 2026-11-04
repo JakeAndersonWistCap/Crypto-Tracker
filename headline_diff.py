@@ -70,25 +70,33 @@ ALL_CELL_TABS = ("A1", "A2", "A3", "A4", "CP", "Master")   # --cells all: every 
 
 
 def _all_cells(X, wb) -> dict:
-    """{(project, sheet, header): value} for every cell on ALL_CELL_TABS whose row names a project (column A) and whose
-    column has a header in the first six rows — evaluated (xlcalc)."""
+    """{(project, sheet, header): value} for every cell on ALL_CELL_TABS whose row names a project (column A), under the
+    tab's header row - the row whose column A reads "Project" (Jake 2026-11-04: rows 1-6 were read as headers before, so
+    a data row's text could replace a header and columns sharing that text overwrote each other). A header used twice
+    keeps its column letter. Evaluated (xlcalc)."""
     import xlcalc
+    from openpyxl.utils import get_column_letter
     out = {}
     for ws in wb.worksheets:
         if not ws.title.startswith(ALL_CELL_TABS):
             continue
-        heads = {}
-        for r in range(1, 7):
-            for c in range(1, ws.max_column + 1):
-                v = ws.cell(r, c).value
-                if isinstance(v, str) and v.strip() and not v.startswith("="):
-                    heads[c] = v.strip()
-        for r in range(2, ws.max_row + 1):
+        hr = next((r for r in range(1, min(ws.max_row, 12) + 1)
+                   if str(ws.cell(r, 1).value or "").strip().lower() == "project"), None)
+        if hr is None:
+            continue
+        heads, seen = {}, {}
+        for c in range(2, ws.max_column + 1):
+            v = ws.cell(hr, c).value
+            if isinstance(v, str) and v.strip() and not v.startswith("="):
+                seen[v.strip()] = seen.get(v.strip(), 0) + 1
+                heads[c] = v.strip()
+        heads = {c: (h if seen[h] == 1 else f"{h} [{get_column_letter(c)}]") for c, h in heads.items()}
+        for r in range(hr + 1, ws.max_row + 1):
             proj = ws.cell(r, 1).value
             if not isinstance(proj, str) or not proj.strip() or proj.startswith("="):
                 continue
-            for c in range(2, ws.max_column + 1):
-                if c not in heads or ws.cell(r, c).value is None:
+            for c in heads:
+                if ws.cell(r, c).value is None:
                     continue
                 try:
                     v = xlcalc.display(X.value(ws.title, r, c))
@@ -98,14 +106,14 @@ def _all_cells(X, wb) -> dict:
     return out
 
 
-def _headlines(store_mod, build_workbook, cells_ref, path: Path, all_cells: bool = False) -> dict:
+def _headlines(store_mod, build_workbook, cells_ref, path: Path, all_cells: bool = False, asof=None) -> dict:
     import openpyxl
     from openpyxl.utils.cell import column_index_from_string, coordinate_from_string
 
     import xlcalc
     st = store_mod.Store(store_mod.DB_PATH)
     try:
-        build_workbook(st, path)
+        build_workbook(st, path, **({"asof": asof} if asof is not None else {}))
     finally:
         st.close()
     cells = copy.deepcopy(list(cells_ref))
@@ -127,6 +135,7 @@ def main(argv=None) -> int:
     ap.add_argument("--threshold", type=float, default=10.0, help="percent (default 10)")
     ap.add_argument("--cells", choices=("headlines", "all"), default="headlines",
                     help="all = every numeric cell on A1-A4, CP and Master")
+    ap.add_argument("--asof", default=None, help="build as of this day (default: today; the test dumps: 2026-10-13)")
     args = ap.parse_args(argv)
     import store as store_mod
     from build_workbook import _HEADLINE_CELLS, build_workbook
@@ -135,6 +144,8 @@ def main(argv=None) -> int:
         print(f"no {store_mod.DB_PATH} — run token_metrics.py first")
         return 1
     which = args.only or sorted(BEFORE)
+    import pandas as pd                                # noqa: PLC0415
+    asof = pd.Timestamp(args.asof) if args.asof else None   # a store that stops earlier (the test dumps: their asof)
     changes = [c for k in which for c in BEFORE[k]()]
     saved = [(d, k, d.get(k, KeyError)) for d, k, _v in changes]
     with tempfile.TemporaryDirectory() as tmp:
@@ -145,14 +156,15 @@ def main(argv=None) -> int:
                 d[k] = v
         try:
             before = _headlines(store_mod, build_workbook, _HEADLINE_CELLS, Path(tmp) / "before.xlsx",
-                                args.cells == "all")
+                                args.cells == "all", asof)
         finally:
             for d, k, v in saved:
                 if v is KeyError:
                     d.pop(k, None)
                 else:
                     d[k] = v
-        after = _headlines(store_mod, build_workbook, _HEADLINE_CELLS, Path(tmp) / "after.xlsx", args.cells == "all")
+        after = _headlines(store_mod, build_workbook, _HEADLINE_CELLS, Path(tmp) / "after.xlsx", args.cells == "all",
+                           asof)
     moved = []
     for key, v1 in after.items():
         v0 = before.get(key)
@@ -164,7 +176,8 @@ def main(argv=None) -> int:
                 moved.append((key, v0, v1, rel))
         elif v0 != v1 and (isinstance(v0, (int, float)) or isinstance(v1, (int, float))):
             moved.append((key, v0, v1, None))
-    print(f"HEADLINES MOVING BEYOND {args.threshold:g}% — changes: {', '.join(which)}")
+    print(f"HEADLINES MOVING BEYOND {args.threshold:g}% — changes: {', '.join(which)}"
+          + (f" — built as of {asof.date()}" if asof is not None else ""))
     for (proj, sheet, head), v0, v1, rel in sorted(moved, key=lambda m: (m[0][0], m[0][1])):
         pct = f"{rel * 100:+.1f}%" if rel is not None and rel != float("inf") else "(new / gone)"
         print(f"  {a(proj):<11} {a(sheet):<4} {a(head)[:70]:<70} {fmt(v0):>14} -> {fmt(v1):>14}  {pct}")
