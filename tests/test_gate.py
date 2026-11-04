@@ -113,11 +113,12 @@ def test_memory_and_workers_are_measured_not_limited():
     assert r["mem_min_gb"] == 2.0, "low memory is recorded, not refused"
 
 
-def test_the_runbook_section_for_the_gate_is_at_the_top_of_the_11d_run():
+def test_the_runbook_section_for_the_gate_is_in_the_newest_first_11d_run():
     import re
     text = (Path(__file__).resolve().parent.parent / "RUNBOOK.md").read_text(encoding="utf-8")
     heads = re.findall(r"^## (11d\w*)\.", text, re.M)
-    assert heads[0] == "11dt" and heads[1] == "11ds"
+    assert heads[0] == max(heads), "the newest section comes first"
+    assert "11dt" in heads and heads.index("11ds") == heads.index("11dt") + 1
     sec = text[text.index("## 11dt."):text.index("## 11ds.")]
     for m in ("gate.py", "own_checks.py", "TOKEN_METRICS_SHARED_BUILD_STALE", "No fixed cap", "NETWORK BLOCKED IN TESTS",
               "never", "skipped"):

@@ -1209,6 +1209,7 @@ METRICS = {
                                        "kind": "flow", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Aerodrome",)},
     # UNLOCK DILUTION (Jake 2026-10-11, decision A2): releases from the non-circulating wallets, a build-time view
     # (build_workbook._unlock_views). KEPT OUT OF emissions_tokens (Jake 2026-09-24).
+    "issuance_option_c_tokens":   {"label": "Hyperliquid A3/A4 issuance under option C (P5-1.5): the issuer replay (unlock_release_tokens) + the staking reward (emissions_tokens: measured where measured, else k x sqrt(stake) ÷ 365 from measured inputs) — read only when option C's test passed", "kind": "flow", "unit": "tokens", "archetypes": [3, 4], "tiers": [1], "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Hyperliquid",), "view_only": True},
     "unlock_release_tokens":      {"label": "Unlock dilution — tokens RELEASED from the non-circulating wallets (the fall in their stock; a rise releases 0). Not emissions.",
                                    "kind": "flow", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [1],
                                    "sanity_min": 0, "sanity_max": 1e12, "view_only": True},
@@ -20763,9 +20764,26 @@ A4_RELEASE_ISSUANCE = {
 }
 
 
+# P5-1.5 (Jake 2026-11-04): OPTION C — Hyperliquid's issuance is the issuer replay + the staking reward, in A3's key and
+# A4's denominator alike; A4 reads it only when the staking-reward term's test passed in THIS build (OPTION_C_STATE,
+# set by build_workbook._hl_model_views every build). Until then A4 keeps pool_release_tokens (and its allowance).
+OPTION_C_ISSUANCE = {
+    "Hyperliquid": {"metric": "issuance_option_c_tokens", "legs": ("emissions_tokens", "unlock_release_tokens"),
+                    "decided_by": "Jake", "decided_on": "2026-11-04", "spec": "SPEC P5-1.5"},
+}
+OPTION_C_STATE: dict = {}       # {project: True when option C passed in this build}
+
+
+def option_c_active(project_name: str) -> bool:
+    return bool(OPTION_C_STATE.get(project_name)) and project_name in OPTION_C_ISSUANCE
+
+
 def crossover_issuance_metric(project_name: str) -> str:
-    """The issuance series A4's BURN ÷ ISSUANCE divides by: the declared release into circulating for a pre-minted
-    supply with nothing minted (A4_RELEASE_ISSUANCE: Uniswap), else issuance_basis."""
+    """The issuance series A4's BURN ÷ ISSUANCE divides by: option C's issuance where its test passed in this build
+    (P5-1.5: Hyperliquid), the declared release into circulating for a pre-minted supply with nothing minted
+    (A4_RELEASE_ISSUANCE: Uniswap), else issuance_basis."""
+    if option_c_active(project_name):
+        return OPTION_C_ISSUANCE[project_name]["metric"]
     spec = A4_RELEASE_ISSUANCE.get(project_name)
     return spec["metric"] if spec else issuance_basis(project_name)
 
@@ -24042,7 +24060,8 @@ def regression_allowance(project: str, detail: str, on=None) -> dict | None:
                  and (not a.get("until") or day <= _pd.Timestamp(a["until"]))
                  and (not a.get("while_outflow_incomplete")
                       or outflow_incomplete(project, [a["while_outflow_incomplete"]]))
-                 and (not a.get("while_parked") or project_parked(project, day=day))), None)
+                 and (not a.get("while_parked") or project_parked(project, day=day))
+                 and (not a.get("while_option_c_fails") or not option_c_active(project))), None)
 
 
 def project_parked(project: str, day=None) -> bool:
@@ -24078,7 +24097,10 @@ REGRESSION_ALLOWLIST += [
     # P4-Q7 (Jake 2026-11-03): INTERIM, expiring 2027-01-05 (P4-Q7 fix; was 2026-12-15, before that 2027-01-31: with
     # locked_tokens stored from 2026-09-22 and ~11 days missing, 90 clean days cannot exist before the end of December) — not accepted as
     # the answer; removing it is a P5 item (SPEC "P4-Q7 (decision, Jake 2026-11-03)").
+    # P5-1.5: it holds only while option C FAILS (while_option_c_fails); when the staking-reward term's test passes,
+    # A4 reads option C's issuance and the allowance lapses
     {"project": "Hyperliquid", "match": ("A4 | BURN ÷ ISSUANCE",), "until": "2027-01-05", "accepted": "2026-10-28",
+     "while_option_c_fails": True,
      "reason": "INTERIM allowance to 2027-01-05 (P4-Q7 and its fix, Jake 2026-11-03; not accepted as the answer — its "
                "removal is a P5 item): blocked by rule 9 (P2b-3, P2c-9): the pool release covers far fewer of the 90 "
                "days than the burn; no common-days ratio, 2026-10-12 not restated; the release history cannot be "
@@ -24575,6 +24597,19 @@ ISSUANCE_FROM_TOTAL_SUPPLY = {
 # 0.02% of the measured per-minute fall today; +0.8% over the reserve's whole life. Prepended to emissions_tokens and
 # locked_tokens before their first stored rows under MODELLED sources; futureEmissions modelled backward as its own
 # series.
+# P5-1.3 (Jake 2026-11-04): BEFORE A FLOW'S FIRST STORED ROW, its value is the fall of the stored stock between
+# consecutive stored reads — the same measuring point and arithmetic as the live rows (fetch.base derive_flow_from_
+# cumulative), so MEASURED, not modelled. Hyperliquid: futureEmissions is stored from 2026-09-25, emissions_tokens from
+# 2026-09-29; the days between were the MODELLED leg. Reads N days apart give one row tagged [span=Nd].
+FLOW_FROM_STORED_STOCK = {
+    ("Hyperliquid", "emissions_tokens"): {"stock": "future_emissions_tokens", "direction": "fall",
+                                          "source": "hypercore_info:tokenDetails.futureEmissions:delta"},
+}
+
+# P5-1.5 (Jake 2026-11-04): option C's pass marks for the staking-reward term (k calibrated on half the measured rows,
+# tested on the other half): mean absolute error, the worst single row, and the bias Σ model ÷ Σ observed − 1.
+OPTION_C_PASS = {"mae": 0.05, "worst": 0.15, "bias": 0.02, "min_rows": 4}
+
 HL_REWARD_MODEL = {
     "Hyperliquid": {"ref_yield": "hl_reference_yield_gross", "stake": "locked_tokens", "emissions": "emissions_tokens",
                     "future": "future_emissions_tokens", "future_modelled": "future_emissions_modelled_tokens",
@@ -24582,8 +24617,9 @@ HL_REWARD_MODEL = {
 }
 # (replaces the 2026-09-30 handover from the published-formula leg, which was never prepended: it read ~2x the observed
 # fall; the formula stays shown on its own row, emissions_modelled_tokens)
-for _m, _live in (("emissions_tokens", "hypercore_info:tokenDetails.futureEmissions"),
-                  ("locked_tokens", "hypercore_info:validatorSummaries")):
+# P5-1.4: locked_tokens has no modelled leg any more (the stake model is its own row, locked_tokens_modelled) — only the
+# rewards keep the declared handover from the MODELLED leg to the measured reads
+for _m, _live in (("emissions_tokens", "hypercore_info:tokenDetails.futureEmissions"),):
     PROJECT_BY_NAME["Hyperliquid"].setdefault("series_handover", {})[_m] = ({
         "ordered_points": ("modelled:hl_reference_yield", _live),
         "why": "the MODELLED leg (reference yield, k calibrated on the stored reads) before the first stored read — "

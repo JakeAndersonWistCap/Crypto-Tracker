@@ -534,6 +534,41 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11du. P5 round 1 — Hyperliquid: span-aware ratio, measured 09-26..09-28, measured vs modelled, option C, permanent holes (2026-11-04)
+
+- **The observed/model ratio (P5-1.2, no action).** The published-formula row (emissions_modelled_tokens) now compares
+  each observed emissions row with the model summed over the row's own span, so a `[span=4d]` row counts four days.
+  Its source tag reads `observed/model=<ratio> over N row(s) covering Md`. Expected on the live store: about 0.978 (Jake's
+  span-aware check), not 1.304.
+- **2026-09-26..09-28 measured (P5-1.3, no action).** Before the first stored emissions row, emissions_tokens is the
+  fall between consecutive stored futureEmissions reads, dated the later read. On the live store that is one row on
+  2026-09-28 tagged `[span=3d][from the stored reads, P5-1.3]`. It is MEASURED, so the modelled leg now ends before it.
+- **Measured vs modelled (P5-1.4).** The audit file has a new tab "Measured vs modelled", and `measured_vs_modelled.csv`
+  is written beside it. For every series that mixes the two, they list the MEASURED and MODELLED days as counts and
+  date ranges. The Data tab has two new columns, `q0_measured_days` and `q0_modelled_days`, and covered = measured +
+  modelled. The Q0 note starts "Q0 COVERS n OF 90 DAYS: x MEASURED, y MODELLED (ranges)". locked_tokens is
+  measured only. The stake model is its own row, `locked_tokens_modelled`, and feeds nothing.
+- **Option C (P5-1.5).** Every build prints one line in the build log and the Run Log:
+  `Hyperliquid: OPTION C (P5-1.5) PASSED | NOT PASSED — … k = …, calibrated on N measured row(s) …, tested on M row(s)
+  …: mean abs error …, worst row …, bias …`. The pass marks are 5% / 15% / ±2%.
+  - PASSED: A4 divides the burn by `issuance_option_c_tokens`; both cells are AMBER, MODELLED and ranked; the A4
+    allowance lapses.
+  - NOT PASSED: nothing changes and the allowance holds to 2027-01-05.
+  - The bracket "FOR JAKE, not the pass test" gives the same test measured over each row's read-to-read interval
+    instead of calendar days. It never decides the result.
+- **Permanently missing days (P5-1.10).** tokenDetails and validatorSummaries answer today's value only, so a day
+  with no run can never be read back. The catch-up names such days "not recoverable" instead of re-reading them. A
+  stock hole stays a hole (never filled). A flow across a hole is one `[span=Nd]` row. The model fills nothing
+  after a series' first stored read. To list the missing days per series on the live store, from its first stored
+  day to yesterday (UTC), run this from the repo folder. It is read-only:
+
+  ```
+  python -c "import sqlite3,datetime as d;c=sqlite3.connect('file:metrics.db?mode=ro',uri=True);y=d.datetime.now(d.timezone.utc).date()-d.timedelta(days=1);q='SELECT DISTINCT substr(date,1,10) FROM metrics WHERE project=? AND metric=? ORDER BY 1';[print(f'{m}: first {s[0] if s else None}, {len(s)} stored, MISSING {len(h)}:',' '.join(h)) for m in 'total_supply_gross future_emissions_tokens circulating_supply_tokendetails locked_tokens foundation_wallet_tokens grants_wallet_tokens af_noncirc_listed_tokens zero_address_noncirc_tokens dead_address_noncirc_tokens'.split() for s in [[r[0] for r in c.execute(q,('Hyperliquid',m))]] for h in [[x for x in ((d.date.fromisoformat(s[0])+d.timedelta(days=i)).isoformat() for i in range(((y-d.date.fromisoformat(s[0])).days+1) if s else 0)) if x not in set(s)]]]"
+  ```
+
+  Every day the query lists is permanently missing. Days before a series' first stored day are not listed: they
+  are before capture began (P4-Q7).
+
 ## 11dt. P5-0 — the gate and a phase's own checks (2026-11-03)
 
 These run in the build sandbox, not on Jake's machine (they need pytest; requirements-gate.txt).

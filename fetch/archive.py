@@ -1518,8 +1518,37 @@ NEAR_ARCHIVE_METRICS = ("total_supply_protocol", "locked_tokens")
 DERIVED_PREFIXES = ("derived", "derive_history", "schedule", "declared")
 
 
+# P5-1.10 (Jake 2026-11-04): endpoints that answer TODAY's value only, by measuring point — a day no run read is
+# permanently missing (there is nothing to read it back from). Hyperliquid's tokenDetails (total supply, futureEmissions,
+# circulating and the P4-Q7 components) and validatorSummaries (total stake).
+NO_HISTORY_POINTS = {
+    "hypercore_info:tokenDetails": "Hyperliquid's tokenDetails answers today's value only (no history endpoint): a day "
+                                   "with no run is permanently missing",
+    "hypercore_info:validatorSummaries": "Hyperliquid's validatorSummaries answers today's stake only (no history "
+                                         "endpoint): a day with no run is permanently missing",
+}
+
+
+def _no_history_point(source) -> str:
+    mp = _measuring_point(str(source or ""))
+    return next((why for k, why in NO_HISTORY_POINTS.items() if mp == k or mp.startswith(k + ".")), "")
+
+
+def _no_history_why(src) -> str:
+    """The catch-up's line for a not-recoverable hole: the endpoint's own sentence (NO_HISTORY_POINTS) or the page's."""
+    why = _no_history_point(src)
+    if why:
+        return why
+    head = str(src).split(":")[0]
+    return f"{not_recoverable(src)}: {NO_HISTORY_SOURCES.get(head, head)} shows today's figure only"
+
+
 def not_recoverable(source) -> str:
-    """'<source> keeps no history' for a series read from a page scrape (NO_HISTORY_SOURCES), else ''."""
+    """'<source> keeps no history' for a series read from a page scrape (NO_HISTORY_SOURCES) or an endpoint that answers
+    today's value only (NO_HISTORY_POINTS, P5-1.10), else ''."""
+    why = _no_history_point(source)
+    if why:
+        return why
     head = _measuring_point(str(source or "")).split(":")[0]
     return f"{head} keeps no history" if head in NO_HISTORY_SOURCES else ""
 
@@ -1530,6 +1559,8 @@ def hole_route(name: str, metric: str, source: str, archive_series: set, p: dict
     head = _measuring_point(src).split(":")[0]
     if (name, metric) in archive_series:
         return "archive"
+    if _no_history_point(src):
+        return "not_recoverable"                     # P5-1.10: today-only endpoint (a :delta flow of one included)
     if head == "near_rpc" and metric in NEAR_ARCHIVE_METRICS:
         return "near_archive"
     if head == "coingecko" and p is not None and metric in api_series(p):
@@ -1886,8 +1917,7 @@ def catch_up(store, projects: list[dict], budget_s: float | None = None, max_day
                 out["not_recoverable"][(n, m)] = rest
                 if rest:
                     lines.append(("info", f"CATCH-UP {n}/{m}: {len(rest)} day(s) not recoverable ({_ranges(rest)}) — "
-                                          f"not recoverable ({not_recoverable(src)}: {NO_HISTORY_SOURCES[src.split(':')[0]]}"
-                                          f" shows today's figure only); named in the cell comment, its windows "
+                                          f"not recoverable ({_no_history_why(src)}); named in the cell comment, its windows "
                                           f"annualised over their covered days"))
                 continue
             left += len(rest)

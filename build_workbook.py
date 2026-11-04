@@ -113,7 +113,9 @@ DATA_COLS = ["key", "project", "metric", "label", "kind", "unit", "source", "tie
              "q3_covered_days", "first_date",
              # TRAJECTORY (theory layer, Phase 1, 2026-10-12): a fifth quarter and each quarter's events, so every
              # headline can be re-computed over Q-1..Q-4 by the same formula (build_workbook.ShiftRefs)
-             "q4", "q4_covered_days", "q1_events", "q2_events", "q3_events", "q4_events"]
+             "q4", "q4_covered_days", "q1_events", "q2_events", "q3_events", "q4_events",
+             # P5-1.4 (Jake 2026-11-04): Q0's covered days split — a MODELLED day is never counted as measured
+             "q0_measured_days", "q0_modelled_days"]
 DATA_HEAD = ["Key (project|metric)", "Project", "Metric", "Label", "Kind", "Unit", "Source (of latest point)", "Tier", "Latest date",
              "Now (flow: trailing 30d sum · stock: latest)", "Prior 30d (flow: 30d ending -30d · stock: value at -30d)",
              "Q0 (flow: trailing 90d sum, or 3 complete months for a monthly series — see Q0 basis · stock: 90d avg)", "Q1 (90d ending -90d)", "Q2 (90d ending -180d)", "Q3 (90d ending -270d)",
@@ -135,12 +137,14 @@ DATA_HEAD = ["Key (project|metric)", "Project", "Metric", "Label", "Kind", "Unit
              # history counts), which is what the completeness report measures history from.
              "First date held",
              "Q4 (90d ending -360d; flow: sum · stock: avg)", "Q4: days covered",
-             "Q1: days with a non-zero value (events)", "Q2: events", "Q3: events", "Q4: events"]
+             "Q1: days with a non-zero value (events)", "Q2: events", "Q3: events", "Q4: events",
+             "Q0: MEASURED days of the covered days", "Q0: MODELLED days of the covered days (never counted as measured)"]
 DC = {name: get_column_letter(i + 1) for i, name in enumerate(DATA_COLS)}
 # Appended day-count columns that formulas READ as numbers (see write_data).
 NUMERIC_APPENDED = ("q0_covered_days", "q0_events", "q0_pre_end_days", "silent_days",
                     "now_covered_days", "m1_covered_days", "q1_covered_days", "q2_covered_days",
-                    "q3_covered_days", "q4_covered_days", "q1_events", "q2_events", "q3_events", "q4_events")
+                    "q3_covered_days", "q4_covered_days", "q1_events", "q2_events", "q3_events", "q4_events",
+                    "q0_measured_days", "q0_modelled_days")
 
 # Config table layout
 CFG_COLS = [
@@ -456,6 +460,8 @@ def _age_in_days(latest: pd.Timestamp, asof: pd.Timestamp, granularity: str) -> 
 
 
 COVERED_SETS: dict = {}       # (project, metric) -> the days a daily flow's rows cover (D6-1), set per build
+# P5-1.4: (project, metric) -> {"measured": days, "modelled": days} for every series holding both, set per build
+MEASURED_VS_MODELLED: dict = {}
 WINDOW_HOLES: dict = {}       # (project, metric, window) -> its interior days with no row (D6-1), named by D7-2's BLOCKED
 
 
@@ -575,6 +581,22 @@ def _dense_missing(s: pd.Series, start: pd.Timestamp, end: pd.Timestamp) -> list
     lo = max(start + pd.Timedelta(days=1), min(idx))
     hi = end.normalize() - pd.Timedelta(days=1) if end.normalize() not in idx else end.normalize()
     return [d for d in pd.date_range(lo, hi) if d not in idx] if hi >= lo else []
+
+
+def _day_classes(g) -> dict:
+    """P5-1.4: {"measured": days, "modelled": days} a series' rows cover — a MODELLED source covers its own day; a
+    measured row covers its own day and, tagged [span=Nd], the N days ending on it."""
+    from fetch.validate import _span_days                  # noqa: PLC0415
+    out = {"measured": set(), "modelled": set()}
+    if g is None or g.empty:
+        return out
+    for d, src in zip(pd.to_datetime(g["date"]).dt.normalize(), g["source"].astype(str)):
+        if config.is_modelled(src):
+            out["modelled"].add(d)
+        else:
+            out["measured"].update(pd.date_range(end=d, periods=int(_span_days(src) or 1), freq="D"))
+    out["modelled"] -= out["measured"]
+    return out
 
 
 def _day_ranges(days: list[pd.Timestamp]) -> str:
@@ -2529,56 +2551,195 @@ def _month_spread(src: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=src.columns)
 
 
+OPTION_C: dict = {}        # P5-1.5: {project: the staking-reward term's calibration and test}, filled every build
+HL_MODEL_PARAMS: dict = {}  # P5-1.4: {project: {"k", "a", "stake", "tag"}} — the measured inputs every modelled value rests on
+
+
+def _measured_rows(g) -> list:
+    """[(date, value, span days)] of the MEASURED rows of a flow group (a MODELLED source is skipped)."""
+    from fetch.validate import _span_days                  # noqa: PLC0415
+    if g is None or g.empty:
+        return []
+    g = g.assign(date=pd.to_datetime(g["date"]).dt.normalize()).drop_duplicates("date", keep="last").sort_values("date")
+    return [(d, float(v), int(_span_days(str(src)) or 1)) for d, v, src in zip(g["date"], g["value"], g["source"])
+            if not config.is_modelled(src)]
+
+
+def _fit_stats(pred: list, obs: list) -> dict:
+    """Per row error = model ÷ observed − 1; mean absolute error, the worst row and the bias Σ model ÷ Σ observed − 1."""
+    errs = [p_ / o - 1.0 for p_, o in zip(pred, obs) if o > 0]
+    if not errs:
+        return {"rows": 0}
+    return {"rows": len(errs), "mae": sum(abs(e) for e in errs) / len(errs), "worst": max(abs(e) for e in errs),
+            "bias": sum(pred) / sum(obs) - 1.0}
+
+
+def _read_interval_fit(rows: list, stock, stake: pd.Series) -> dict:
+    """FOR JAKE'S DECISION, NOT THE PASS TEST (P5-1.5 finding): the same calibrate-on-half / test-on-half, with each
+    row's model over the time between the two stock reads it is the fall of (their fetched_at), not over calendar days.
+    {} when the reads carry no fetch times."""
+    if stock is None or stock.empty or "fetched_at" not in stock.columns:
+        return {}
+    t = stock.assign(date=pd.to_datetime(stock["date"]).dt.normalize(),
+                     ts=pd.to_datetime(stock["fetched_at"], errors="coerce", utc=True)).dropna(subset=["ts"])
+    t = t.sort_values("date").drop_duplicates("date", keep="last").set_index("date")["ts"]
+    rr = []
+    for d, v, days in rows:
+        d0 = days[0] - pd.Timedelta(days=1)
+        if d in t.index and d0 in t.index:
+            rr.append((v, float((stake[days] ** 0.5).mean()) * (t[d] - t[d0]).total_seconds() / 86400.0 / 365.0))
+    if len(rr) < int(config.OPTION_C_PASS["min_rows"]):
+        return {}
+    half = len(rr) // 2
+    k = sum(v for v, _x in rr[:half]) / sum(x for _v, x in rr[:half])
+    return {"k": k, **_fit_stats([k * x for _v, x in rr[half:]], [v for v, _x in rr[half:]])}
+
+
+def hl_option_c(a: pd.Series, stake: pd.Series, emissions, stock=None) -> dict:
+    """P5-1.5 (Jake 2026-11-04): the staking-reward term R = k x sqrt(stake) / 365. k is CALIBRATED on the earlier half
+    of the MEASURED rows (a measured emissions row whose every span day has a measured stake read) and TESTED on the
+    later half; the a-based form k² ÷ (365 x a) — what fills the days without a stake read — is tested on the same rows
+    where the reference yield exists. Pass marks config.OPTION_C_PASS. Returns the figures either way."""
+    lim = config.OPTION_C_PASS
+    rows = []
+    for d, v, n in _measured_rows(emissions):
+        days = pd.date_range(end=d, periods=n, freq="D")
+        if v > 0 and all(x in stake.index for x in days):
+            rows.append((d, v, days))
+    out = {"passed": False, "rows": len(rows), "limits": dict(lim)}
+    if len(rows) < int(lim["min_rows"]):
+        out["why"] = (f"only {len(rows)} measured emissions row(s) have a measured stake read on every day of their "
+                      f"span; at least {lim['min_rows']} are needed (half to calibrate, half to test)")
+        return out
+    half = len(rows) // 2
+    cal, test = rows[:half], rows[half:]
+    root = lambda days: float((stake[days] ** 0.5).sum()) / 365.0    # noqa: E731
+    k = sum(v for _d, v, _x in cal) / sum(root(days) for _d, _v, days in cal)
+    sq = _fit_stats([k * root(days) for _d, _v, days in test], [v for _d, v, _x in test])
+    a_rows = [(v, days) for _d, v, days in test if all(x in a.index for x in days)]
+    af = _fit_stats([float((k * k / (365.0 * a[days])).sum()) for _v, days in a_rows], [v for v, _x in a_rows])
+    ok = lambda st: st.get("rows", 0) > 0 and st["mae"] <= lim["mae"] and st["worst"] <= lim["worst"] \
+        and abs(st["bias"]) <= lim["bias"]                            # noqa: E731
+    out.update({"k": k, "calibrated_on": (cal[0][0], cal[-1][0], len(cal)), "tested_on": (test[0][0], test[-1][0],
+                len(test)), "sqrt_form": sq, "a_form": af})
+    fails = []
+    if not ok(sq):
+        fails.append("k x sqrt(stake): " + _fit_text(sq))
+    if not af.get("rows"):
+        fails.append("the a-based form that fills the days without a stake read cannot be tested: no test row has the "
+                     "Grants wallet's reference yield on every day of its span")
+    elif not ok(af):
+        fails.append("k² ÷ (365 x a): " + _fit_text(af))
+    out["passed"] = not fails
+    out["why"] = "; ".join(fails) if fails else "passed: " + _fit_text(sq) + "; a-based form " + _fit_text(af)
+    ri = _read_interval_fit(rows, stock, stake)
+    if ri:
+        out["read_interval_form"] = ri
+        out["why"] += (f" [FOR JAKE, not the pass test: over each row's read-to-read interval (fetch times) instead of "
+                       f"calendar days, k = {ri['k']:.2f}, " + _fit_text(ri) + "]")
+    return out
+
+
+def _fit_text(st: dict) -> str:
+    if not st.get("rows"):
+        return "no row"
+    return (f"mean abs error {st['mae']:.1%}, worst row {st['worst']:.1%}, bias {st['bias']:+.1%} over "
+            f"{st['rows']} test row(s)")
+
+
+def option_c_text(name: str) -> str:
+    """The calibration and test of the staking-reward term, as one line (cell comments, the Run Log)."""
+    oc = OPTION_C.get(name)
+    if not oc:
+        return ""
+    lim = oc["limits"]
+    head = (f"OPTION C (P5-1.5) {'PASSED' if oc['passed'] else 'NOT PASSED'} — staking reward = k x sqrt(stake) ÷ 365; "
+            f"pass: mean abs error ≤ {lim['mae']:.0%}, no row beyond {lim['worst']:.0%}, bias within ±{lim['bias']:.0%}")
+    if "k" not in oc:
+        return f"{head}. {oc['why']}"
+    c0, c1, cn = oc["calibrated_on"]
+    t0, t1, tn = oc["tested_on"]
+    return (f"{head}. k = {oc['k']:.2f}, calibrated on {cn} measured row(s) {c0:%Y-%m-%d}..{c1:%Y-%m-%d}, tested on "
+            f"{tn} row(s) {t0:%Y-%m-%d}..{t1:%Y-%m-%d}: {oc['why']}")
+
+
+def hl_model_rewards(params: dict, days) -> pd.Series:
+    """P5-1.4: the modelled reward on each day, from MEASURED inputs only — k x sqrt(S) ÷ 365 where a stake read S
+    exists, else k² ÷ (365 x a) from the Grants wallet's measured gross rate a (the stake that rate implies). A day with
+    neither has no value."""
+    k, a, st = params["k"], params["a"], params["stake"]
+    out = {}
+    for d in days:
+        if d in st.index and st[d] > 0:
+            out[d] = k * float(st[d]) ** 0.5 / 365.0
+        elif d in a.index and a[d] > 0:
+            out[d] = k * k / (365.0 * float(a[d]))
+    return pd.Series(out, dtype=float).sort_index()
+
+
 def _hl_model_views(groups: dict) -> None:
-    """THE MODELLED REWARDS HISTORY (config.HL_REWARD_MODEL; fix round 3, B1). rate = k ÷ sqrt(stake); with the
-    reference wallet's gross rate a(D): rewards(D) = k² ÷ (365 · a(D)), stake(D) = (k ÷ a(D))². k = the median of
-    a · sqrt(S) over the days a stored validatorSummaries read S and a both exist. Prepended to the rewards and stake
-    series before their first stored rows (MODELLED source: excluded from any scoring), and the reserve modelled
-    backward from its first stored read as its own series."""
+    """THE MODELLED REWARDS HISTORY (config.HL_REWARD_MODEL; fix round 3, B1; P5-1.4 / P5-1.5). rate = k ÷ sqrt(stake).
+    k: option C's (calibrated and tested on the MEASURED rows) where it passes, else the median of a x sqrt(S) over the
+    days a stored validatorSummaries read S and the reference wallet's gross rate a both exist (as before). Every
+    modelled value is computed from measured inputs (hl_model_rewards): the rewards before emissions_tokens' first
+    measured row (prepended, MODELLED source: labelled on every row, counted apart as modelled days) and the reserve
+    backward from its first stored read. The stake model is its own row only (locked_tokens_modelled): locked_tokens is
+    MEASURED only, so no ratio divides a model by a model (P5-1.4: modelled yield = a ÷ 365 was circular)."""
+    OPTION_C.clear()
+    HL_MODEL_PARAMS.clear()
+    config.OPTION_C_STATE.clear()
     for p in scoped_projects():
         name = p["name"]
         spec = config.HL_REWARD_MODEL.get(name)
         if not spec:
             continue
         a = _daily(groups.get((name, spec["ref_yield"])))
+        a = a[a > 0] if not a.empty else a
         stake = _daily(groups.get((name, spec["stake"])))
-        if a.empty or stake.empty:
-            continue
-        a = a[a > 0]
-        both = a.index.intersection(stake.index)
-        if both.empty:
+        stake = stake[stake > 0] if not stake.empty else stake
+        oc = hl_option_c(a, stake, groups.get((name, spec["emissions"])), groups.get((name, spec["future"])))
+        OPTION_C[name] = oc
+        config.OPTION_C_STATE[name] = bool(oc["passed"])
+        print(f"  {name}: {option_c_text(name)}")
+        both = a.index.intersection(stake.index) if not a.empty and not stake.empty else pd.DatetimeIndex([])
+        if oc["passed"]:
+            k, how = oc["k"], f"option C: calibrated on {oc['calibrated_on'][2]} measured row(s), test passed"
+        elif len(both):
+            k, how = float((a[both] * stake[both] ** 0.5).median()), f"median a x sqrt(stake) on {len(both)} day(s)"
+        else:
             _VIEW_BLOCKS[(name, f"{spec['emissions']}:modelled_history")] = (
-                "not modelled: no day holds both the reference yield and a stored stake read to calibrate k")
+                "not modelled: option C did not pass (" + oc["why"] + ") and no day holds both the reference yield and "
+                "a stored stake read to calibrate k")
             continue
-        k = float((a[both] * stake[both] ** 0.5).median())
-        rew, stk = k * k / (365.0 * a), (k / a) ** 2
+        if a.empty:
+            continue
+        params = {"k": k, "a": a, "stake": stake}
+        tag = f"{spec['source']}[k={k:.3f}, {how}]"
+        params["tag"] = tag
+        HL_MODEL_PARAMS[name] = params
         cols = next(g.columns for (n_, _m), g in groups.items() if n_ == name and g is not None and not g.empty)
-        tag = f"{spec['source']}[k={k:.3f} on {len(both)} day(s)]"
-        # the stake model whole, under its own name; locked_tokens' MODELLED leg is read back from it (G13 1a: the
-        # back-fill's dependency is the code's own — locked_tokens_modelled is an INPUT of locked_tokens)
+        # the stake model, its own row only (feeds nothing — P5-1.4)
+        stk = (k / a) ** 2
         groups[(name, spec["stake_modelled"])] = _as_stored(pd.DataFrame(
             {"date": stk.index, "project": name, "metric": spec["stake_modelled"], "value": stk.values, "tier": 1,
              "source": tag}), cols)
-        stk = _daily(groups[(name, spec["stake_modelled"])])
-        for metric, model in ((spec["emissions"], rew), (spec["stake"], stk)):
-            g = groups.get((name, metric))
-            first = pd.to_datetime(g["date"]).min().normalize() if g is not None and not g.empty else None
-            lead = model[model.index < first] if first is not None else model
-            if lead.empty:
-                continue
-            view = _as_stored(pd.DataFrame({"date": lead.index, "project": name, "metric": metric,
+        g = groups.get((name, spec["emissions"]))
+        first = pd.to_datetime(g["date"]).min().normalize() if g is not None and not g.empty else None
+        cand = a.index.union(stake.index)
+        lead = hl_model_rewards(params, [d for d in cand if first is None or d < first])
+        if not lead.empty:
+            view = _as_stored(pd.DataFrame({"date": lead.index, "project": name, "metric": spec["emissions"],
                                             "value": lead.values, "tier": 1, "source": tag}), cols)
-            groups[(name, metric)] = pd.concat([view, g], ignore_index=True) if first is not None else view
-
+            groups[(name, spec["emissions"])] = pd.concat([view, g], ignore_index=True) if first is not None else view
         fe = _daily(groups.get((name, spec["future"])))
         if fe.empty:
             continue
         first_fe, fe0 = fe.index.min(), float(fe.iloc[0])
-        em = _daily(groups.get((name, spec["emissions"])))
-        days = em[em.index <= first_fe].sort_index(ascending=False)
-        # FE at the close of D = FE(first read) + the rewards paid after D up to the first read
+        # FE at the close of D = FE(first read) + the rewards paid after D up to the first read, each from measured
+        # inputs (hl_model_rewards), never read back from another modelled series
+        rew = hl_model_rewards(params, sorted(d for d in cand if d <= first_fe))
         vals, run = {}, 0.0
-        for d, v in days.items():
+        for d, v in rew.sort_index(ascending=False).items():
             vals[d - pd.Timedelta(days=1)] = fe0 + run + float(v)
             run += float(v)
         if vals:
@@ -2986,6 +3147,59 @@ def _history_leg_views(groups: dict) -> None:
 MODEL_INVERSE_SQRT = "model:inverse_sqrt(locked_tokens)"
 
 
+def _flow_from_stored_stock_views(groups: dict) -> None:
+    """P5-1.3 (config.FLOW_FROM_STORED_STOCK): before a flow's first stored row, the fall (or rise) of the stored stock
+    between consecutive stored reads, dated the later read, tagged [span=Nd] where the reads are N days apart — the live
+    rows' own measuring point and arithmetic, so MEASURED. A move against the declared direction is refused (no
+    negative flow), as for the live rows; nothing after the first stored flow row is touched."""
+    for (name, flow), spec in config.FLOW_FROM_STORED_STOCK.items():
+        if name not in {p["name"] for p in scoped_projects()}:
+            continue
+        st = _daily(groups.get((name, spec["stock"])))
+        if len(st) < 2:
+            continue
+        g = groups.get((name, flow))
+        first = pd.to_datetime(g["date"]).min().normalize() if g is not None and not g.empty else None
+        rows = []
+        for (d0, v0), (d1, v1) in zip(st.items(), list(st.items())[1:]):
+            if first is not None and d1 >= first:
+                break
+            v = (v0 - v1) if spec["direction"] == "fall" else (v1 - v0)
+            if v < 0:
+                continue
+            n = int((d1 - d0).days)
+            rows.append({"date": d1, "project": name, "metric": flow, "value": float(v), "tier": 1,
+                         "source": spec["source"] + (f"[span={n}d]" if n > 1 else "")
+                         + "[from the stored reads, P5-1.3]"})
+        if not rows:
+            continue
+        cols = g.columns if g is not None and not g.empty else _view_cols(groups, name)
+        view = _as_stored(pd.DataFrame(rows), cols)
+        groups[(name, flow)] = view if g is None or g.empty else \
+            pd.concat([view, g], ignore_index=True).sort_values("date")
+
+
+def span_aware_ratio(obs, model: pd.Series) -> tuple:
+    """(Σ observed ÷ Σ model, the rows used, the days they cover) — P5-1.2: each observed row against the model summed
+    over its OWN span (a row tagged [span=Nd] holds N days on one date, fetch.validate._span_days), as Ethereum's
+    issuance check does; a row is used only when every day of its span has a model value. (None, [], 0) when none."""
+    from fetch.validate import _span_days                  # noqa: PLC0415
+    if obs is None or obs.empty or model is None or model.empty:
+        return None, [], 0
+    o = obs.assign(date=pd.to_datetime(obs["date"]).dt.normalize()).drop_duplicates("date", keep="last")
+    num = den = 0.0
+    used, days_n = [], 0
+    for d, v, src in zip(o["date"], o["value"].astype(float), o["source"].astype(str)):
+        days = pd.date_range(end=d, periods=int(_span_days(src) or 1), freq="D")
+        if all(x in model.index for x in days):
+            num, den = num + float(v), den + float(model[days].sum())
+            used.append(d)
+            days_n += len(days)
+    if not used or den <= 0:
+        return None, [], 0
+    return num / den, used, days_n
+
+
 def _emissions_model_views(groups: dict) -> None:
     """Hyperliquid (Jake, 2026-09-30): staking rewards per day from the published formula,
     rate_at x sqrt(at_staked / S) x S / 365, over the stake history (config `reward_formula`).
@@ -3007,11 +3221,12 @@ def _emissions_model_views(groups: dict) -> None:
         obs = groups.get((name, spec["observed_metric"]))
         o = pd.Series(dtype=float) if obs is None or obs.empty else \
             obs.drop_duplicates("date", keep="last").set_index("date")["value"].astype(float)
-        common = model.index.intersection(o.index)
-        ratio = float(o[common].sum() / model[common].sum()) if len(common) and model[common].sum() else None
-        agrees = (ratio is not None and len(common) >= int(spec["min_shared_days"])
+        ratio, rows_used, days_used = span_aware_ratio(obs, model)
+        common = pd.DatetimeIndex(rows_used)
+        agrees = (ratio is not None and days_used >= int(spec["min_shared_days"])
                   and abs(ratio - 1) <= float(spec["agree_within"]))
-        tag = (f"{MODEL_INVERSE_SQRT}[observed/model={ratio:.2f} over {len(common)}d]" if ratio is not None
+        tag = (f"{MODEL_INVERSE_SQRT}[observed/model={ratio:.3f} over {len(rows_used)} row(s) covering {days_used}d, "
+               f"each row against the model over its own span]" if ratio is not None
                else f"{MODEL_INVERSE_SQRT}[no shared day with {spec['observed_metric']}]")
         view = pd.DataFrame({"date": model.index, "project": name, "metric": spec["metric"],
                              "value": model.values, "source": tag, "tier": 1})
@@ -3961,17 +4176,69 @@ def _stake_prorata_views(groups: dict) -> None:
             missing = [spec[k] for k, s_ in (("emissions", e), ("staked", st), ("outside", out)) if s_.empty]
             _VIEW_BLOCKS[(name, spec["metric"])] = "BLOCKED — no rows stored for " + ", ".join(missing)
             continue
-        df = pd.concat([e.rename("e"), st.rename("s"), out.rename("o")], axis=1).dropna()
+        # P5-1.4: a MODELLED reward day is never multiplied out of the modelled series — its (a) is computed from the
+        # measured inputs the model rests on (hl_model_rewards): R x (S − I) ÷ S with a measured stake read S, else
+        # k² ÷ (365 x a) − I x a ÷ 365 (the stake the Grants wallet's measured rate a implies); I = the replayed stake
+        eg = groups.get((name, spec["emissions"]))
+        modelled_days = set() if eg is None or eg.empty else set(
+            pd.to_datetime(eg.loc[eg["source"].map(config.is_modelled), "date"]).dt.normalize())
+        e_meas = e[[d not in modelled_days for d in e.index]] if modelled_days else e
+        df = pd.concat([e_meas.rename("e"), st.rename("s"), out.rename("o")], axis=1).dropna()
         df = df[df["s"] > 0]
         v = (df["e"] * (df["s"] - df["o"]).clip(lower=0.0) / df["s"])
-        if v.empty:
+        params = HL_MODEL_PARAMS.get(name)
+        mv = pd.Series(dtype=float)
+        if params and modelled_days:
+            k, a = params["k"], params["a"]
+            vals = {}
+            for d in sorted(modelled_days):
+                if d not in out.index:
+                    continue
+                i_ = float(out[d])
+                if d in st.index and st[d] > 0:
+                    r_ = k * float(st[d]) ** 0.5 / 365.0
+                    vals[d] = max(r_ * (float(st[d]) - i_) / float(st[d]), 0.0)
+                elif d in a.index and a[d] > 0:
+                    vals[d] = max(k * k / (365.0 * float(a[d])) - i_ * float(a[d]) / 365.0, 0.0)
+            mv = pd.Series(vals, dtype=float)
+        if v.empty and mv.empty:
             _VIEW_BLOCKS[(name, spec["metric"])] = "BLOCKED — emissions, total stake and outside stake share no day"
             continue
         cols = next(g for g in (groups.get((name, spec[k])) for k in ("emissions", "staked")) if g is not None).columns
-        groups[(name, spec["metric"])] = _as_stored(pd.DataFrame(
+        parts = [pd.DataFrame(
             {"date": v.index, "project": name, "metric": spec["metric"], "value": v.values, "tier": 2,
              "source": f"derived:stake_prorata[{spec['emissions']}x({spec['staked']}-{spec['outside']})/"
-                       f"{spec['staked']}]"}), cols)
+                       f"{spec['staked']}]"})]
+        if not mv.empty:
+            parts.append(pd.DataFrame(
+                {"date": mv.index, "project": name, "metric": spec["metric"], "value": mv.values, "tier": 1,
+                 "source": f"{params['tag']}[outflow (a) from measured inputs: R x (S − I) ÷ S, or k² ÷ (365a) − "
+                           f"I x a ÷ 365 without a stake read — P5-1.4]"}))
+        groups[(name, spec["metric"])] = _as_stored(pd.concat(parts, ignore_index=True).sort_values("date"), cols)
+
+
+def _option_c_issuance_views(groups: dict) -> None:
+    """P5-1.5 (config.OPTION_C_ISSUANCE): where option C passed in this build, issuance = the issuer replay + the staking
+    reward, per day on the days both legs hold a row. A day whose staking reward is MODELLED keeps the MODELLED source
+    (labelled, counted as a modelled day); a measured day reads derived:option_c_issuance."""
+    for name, spec in config.OPTION_C_ISSUANCE.items():
+        if not config.option_c_active(name) or name not in {p["name"] for p in scoped_projects()}:
+            continue
+        e_g, u_g = (groups.get((name, m)) for m in spec["legs"])
+        e, u = _daily(e_g), _daily(u_g)
+        if e.empty or u.empty:
+            _VIEW_BLOCKS[(name, spec["metric"])] = "BLOCKED — no rows for " + ", ".join(
+                m for m, x in zip(spec["legs"], (e, u)) if x.empty)
+            continue
+        mod = set(pd.to_datetime(e_g.loc[e_g["source"].map(config.is_modelled), "date"]).dt.normalize())
+        both = e.index.intersection(u.index)
+        tag = (HL_MODEL_PARAMS.get(name) or {}).get("tag", "")
+        rows = [{"date": d, "project": name, "metric": spec["metric"], "value": float(e[d] + u[d]), "tier": 1,
+                 "source": (f"{tag}[issuance = modelled staking reward + {spec['legs'][1]}, option C (P5-1.5)]"
+                            if d in mod and tag else
+                            f"derived:option_c_issuance[{spec['legs'][0]} + {spec['legs'][1]}, P5-1.5]")}
+                for d in both]
+        groups[(name, spec["metric"])] = _as_stored(pd.DataFrame(rows), e_g.columns)
 
 
 def _cashback_funding_views(groups: dict) -> None:
@@ -5164,6 +5431,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     # THE HISTORY LEGS FIRST (2026-09-30): Ethereum's first-party issuance view keeps its
     # declared ETH.Store leg (history_prefix) only if the leg is already in the group.
     _history_leg_views(groups)
+    _flow_from_stored_stock_views(groups)   # P5-1.3: measured from the stored stock before the flow's first row
     _emissions_model_views(groups)
     _hl_model_views(groups)           # fix round 3 B1: Hyperliquid's MODELLED rewards / stake / reserve history
     _onchain_release_views(groups)    # BEFORE the issuance views that read pool_release_tokens
@@ -5189,6 +5457,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _unlock_views(groups)         # releases from the non-circulating wallets (Jake 2026-10-11, A2)
     _revenue_total_views(groups)  # alignment C10: NEAR's revenue = gas + Intents fee switch
     _stake_prorata_views(groups)  # alignment C1: Hyperliquid's (a) = rewards to circulating stake only
+    _option_c_issuance_views(groups)   # P5-1.5: issuer replay + staking reward, where option C passed
     _cashback_funding_views(groups)  # round 3 W3: the cashback its market purchases did not cover — (c)
     EVIDENCE_RESULTS.clear()
     _evidence_views(groups, usd=False)  # G9 N: published / aggregator / mechanism figures in tokens (config.EVIDENCE_LADDER)
@@ -5209,6 +5478,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _subsidy_common_views(groups, asof)   # G13 6: subsidy cover over the days every leg covers once (b) is complete
     _LAST_GROUPS.update(groups)       # the views, for Credibility rows that read them (credibility.VIEWS_LONG)
     COVERED_SETS.clear()
+    MEASURED_VS_MODELLED.clear()
     COVERED_SETS.update(_covered_day_sets(groups))   # D6-1: the days each daily flow's rows cover
     MONTHLY_ANCHOR.clear()
     MONTH_WINDOW_ROWS.clear()
@@ -5469,6 +5739,19 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                                                 + f"; the Q0 sum is annualised over the "
                                                 f"{row['q0_covered_days']} day(s) covered (SPEC D6-1)")
                 row["q0_events"] = int(((s.index > q_start) & (s.index <= asof) & (s > 0)).sum())
+                # P5-1.4 (Jake 2026-11-04): NEVER A MODELLED DAY COUNTED AS MEASURED — Q0's covered days split in two
+                mc = _day_classes(g)
+                cov_n = int(row["q0_covered_days"] or 0) if row["q0_covered_days"] is not None else None
+                if cov_n is not None:
+                    qm = {d for d in mc["modelled"] if q_start < d <= asof}
+                    row["q0_modelled_days"] = min(len(qm), cov_n)
+                    row["q0_measured_days"] = cov_n - row["q0_modelled_days"]
+                    if qm:
+                        split = (f"Q0 COVERS {cov_n} OF {period} DAYS: {row['q0_measured_days']} MEASURED, "
+                                 f"{row['q0_modelled_days']} MODELLED ({_day_ranges(sorted(qm))}) — P5-1.4")
+                        row["q0_dense_note"] = split + (f" | {row['q0_dense_note']}" if row.get("q0_dense_note") else "")
+                if mc["modelled"] and mc["measured"]:
+                    MEASURED_VS_MODELLED[(name, metric)] = mc
                 # ** A SCHEDULE THAT HAS ENDED STILL FILLS THE WINDOW BEHIND IT. Added 2026-09-25. **
                 # The mirror of a part-filled window: after the declared end the true rate is zero,
                 # but Q0 keeps summing the stream's last days until they age out. The end date is
@@ -5661,7 +5944,9 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                     row["note"] = ((row["note"] + " | " if row["note"] else "")
                                    + f"MODELLED leg {md.min().date()}..{md.max().date()} ({len(mod)} day(s)) — "
                                    f"{config.MODELLED_POINTS[_measuring_point(str(mod['source'].iloc[0]))]}; "
-                                   f"excluded from any scoring")
+                                   + (f"option C passed — ranked as a narrow exception for Hyperliquid's "
+                                      f"staking-reward term (P5-1.5). {option_c_text(name)}"
+                                      if config.option_c_active(name) else "excluded from any scoring"))
                     # G11 D1 (Jake's 10-21 run: World Mobile's whitepaper-curve emissions read GREEN): a modelled leg
                     # is never graded like a measurement
                     row["modelled"] = f"MODELLED leg {md.min().date()}..{md.max().date()} ({len(mod)} day(s))"
@@ -7549,7 +7834,11 @@ def _a4_headline(R: Refs, burn, data_by_key: dict | None = None) -> list[tuple]:
         ("PERMANENT BURN YIELD = burn as % of supply (annualised, tokens)",
          lambda r, p: calc(f"{_annualise(R, r, p, config.a4_burn_metric(p['name']), burn(r, p))}/({circ(r, p)})"), FMT_PCT, "calc", True, {"metric_fn": config.a4_burn_metric}),
         ("Issuance basis for the crossover",
-         lambda r, p: ("pool_release_tokens — supply pre-minted" if config.issuance_basis(p["name"]) == "pool_release_tokens"
+         lambda r, p: (f"{config.crossover_issuance_metric(p['name'])} — option C (P5-1.5): issuer replay + staking "
+                       f"reward. {option_c_text(p['name'])}" if config.option_c_active(p["name"])
+                       else (f"pool_release_tokens — supply pre-minted. {option_c_text(p['name'])}"
+                             if p["name"] in config.OPTION_C_ISSUANCE and OPTION_C.get(p["name"]) else None)
+                       or "pool_release_tokens — supply pre-minted" if config.issuance_basis(p["name"]) == "pool_release_tokens"
                        else f"{config.crossover_issuance_metric(p['name'])} — supply pre-minted: releases into "
                             f"circulating (P3-2c)" if p["name"] in config.A4_RELEASE_ISSUANCE
                        else "gross_issuance_tokens"), FMT_TEXT, "text"),
@@ -7829,7 +8118,8 @@ def a3_key_note(p: dict) -> str:
           "no unlock leg: no non-circulating wallet set is declared for this project (config.unlock_stock_metrics)")
     return (f"A3 KEY (P4-Q5a, Jake 2026-11-03): {burn} ÷ ({em}; {un}), each per covered day. A held buyback is not "
             f"burned (P4-Q5b): it leaves the tradeable float while held instead. Emissions + unlocks a measured 0 with "
-            f"a burn above 0 reads '{A3_NO_NEW_SUPPLY}' and ranks first.")
+            f"a burn above 0 reads '{A3_NO_NEW_SUPPLY}' and ranks first."
+            + (f" {option_c_text(name)}" if OPTION_C.get(name) else ""))
 
 
 def _a3_key_col(R: Refs, data_by_key: dict | None = None) -> tuple:
@@ -11838,6 +12128,44 @@ def write_credibility(ws, R: Refs, data_by_key: dict, long: pd.DataFrame, asof) 
     return rows
 
 
+MVM_HEAD = ["Project", "Metric", "Class", "Days", "First", "Last", "Days (ranges)"]
+
+
+def measured_vs_modelled_rows() -> list:
+    """P5-1.4: one row per class (MEASURED / MODELLED) of every series that holds both, with its days as date ranges."""
+    out = []
+    for (name, metric), mc in sorted(MEASURED_VS_MODELLED.items()):
+        for cls in ("measured", "modelled"):
+            days = sorted(mc[cls])
+            if days:
+                out.append([name, metric, cls.upper(), len(days), days[0].date().isoformat(),
+                            days[-1].date().isoformat(), _day_ranges(days)])
+    return out
+
+
+def write_measured_vs_modelled(ws, csv_path) -> None:
+    """The audit tab "Measured vs modelled" (and the same rows as a CSV beside the audit file): which days of each mixed
+    series are measured and which are modelled (P5-1.4, Jake 2026-11-04: a modelled day is never presented as
+    measured)."""
+    import csv as _csv                                      # noqa: PLC0415
+    rows = measured_vs_modelled_rows()
+    ws.cell(1, 1, value="MEASURED vs MODELLED — every series that mixes the two, day by day (P5-1.4). A MODELLED day "
+                        "is labelled on its row and counted apart: covered days = measured + modelled.")
+    for j, h in enumerate(MVM_HEAD, start=1):
+        ws.cell(3, j, value=h)
+    for i, r in enumerate(rows or [["(none)", "", "", 0, "", "", "no series in this build mixes measured and "
+                                                              "modelled days"]], start=4):
+        for j, v in enumerate(r, start=1):
+            ws.cell(i, j, value=v)
+    try:
+        with open(csv_path, "w", newline="", encoding="utf-8") as f:
+            w = _csv.writer(f)
+            w.writerow(MVM_HEAD)
+            w.writerows(rows)
+    except OSError:
+        pass
+
+
 def write_gap_report(ws, gaps: pd.DataFrame, run_id: str | None):
     """The to-do list. Every metric no tier could resolve, with the reason and the fix.
 
@@ -13164,9 +13492,11 @@ def build_workbook(store, path: Path | str, run_id: str | None = None,
         SCOREBOARD_LINES[:] = scoreboard_lines(board, coverage_audit.board_delta(board, prev_board))
         SCOREBOARD_LINES.extend(wiring_lines(WIRING))
         SCOREBOARD_LINES.extend(lost_verified_lines(LOST_VERIFIED))
+        SCOREBOARD_LINES.extend(option_c_text(n) for n in OPTION_C)        # P5-1.5: the test's figures, every build
         _write_runlog_scoreboard(ws_log, SCOREBOARD_LINES)
     except Exception as e:  # noqa: BLE001
         wb.create_sheet("Coverage").cell(1, 1, value=f"COVERAGE AUDIT NOT RUN: {type(e).__name__}: {str(e)[:300]}")
+    write_measured_vs_modelled(wb.create_sheet("Measured vs modelled"), Path(path).with_name("measured_vs_modelled.csv"))
     wb.save(path)
     # THE FILE CARRIES ITS VALUES (Round G11 A1, Jake 2026-10-21): openpyxl writes formulas with empty caches, so a
     # reader that does not recalculate (data_only, the guard, Credibility CONTINUITY) saw blanks. Every formula is
