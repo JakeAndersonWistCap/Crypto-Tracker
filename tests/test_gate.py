@@ -123,3 +123,15 @@ def test_the_runbook_section_for_the_gate_is_in_the_newest_first_11d_run():
     for m in ("gate.py", "own_checks.py", "TOKEN_METRICS_SHARED_BUILD_STALE", "No fixed cap", "NETWORK BLOCKED IN TESTS",
               "never", "skipped"):
         assert m in sec, m
+
+
+def test_the_review_queue_runbook_section_is_at_the_top_of_the_11d_run():
+    """P5-1.6: 11dy (resolving Review Queue rows) is in the 11d run, directly above 11dx (merged after P5-1.13..15)."""
+    import re
+    text = (Path(__file__).resolve().parent.parent / "RUNBOOK.md").read_text(encoding="utf-8")
+    heads = re.findall(r"^## (11d\w*)\.", text, re.M)
+    assert heads.index("11dy") + 1 == heads.index("11dx")
+    sec = text[text.index("## 11dy."):text.index("## 11dx.")]
+    for m in ("review_resolve.py --list", "review_resolve.py --rejudge", "--rejudge --apply", "RESOLVED-ARTEFACT",
+              "Per day on both sides", "SAME date", "Never a bulk accept"):
+        assert m in sec, m

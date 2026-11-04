@@ -12508,14 +12508,15 @@ def write_review_queue(ws, review: pd.DataFrame, run_id: str | None):
     last_open = r - 1
     if answered:
         r += 1
-        ws.cell(row=r, column=1, value=f"ANSWERED — not open ({len(answered)}): decided in config.REVIEW_ANSWERED, "
-                                       f"with the numbers; listed so the decision is on the sheet, never counted as "
-                                       f"open work").font = F_SUB
+        ws.cell(row=r, column=1, value=f"ANSWERED — not open ({len(answered)}): decided in config.REVIEW_ANSWERED or "
+                                       f"resolved in the store (review_resolve.py), with the numbers; listed so the "
+                                       f"decision is on the sheet, never counted as open work").font = F_SUB
         r += 1
         for row, a in answered:
             vals = [row["project"], row["metric"], row.get("date") or "", row.get("prior_date") or "",
                     row.get("value"), row.get("prior_value"), "", row.get("reason") or "",
-                    f"ANSWERED: {a['decision']}", str(row.get("source") or ""), row.get("tier"), a["why"]]
+                    a.get("resolution") or f"ANSWERED: {a['decision']}", str(row.get("source") or ""),
+                    row.get("tier"), a["why"]]
             for j, v in enumerate(vals, start=1):
                 if isinstance(v, float) and pd.isna(v):
                     v = None

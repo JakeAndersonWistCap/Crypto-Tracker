@@ -173,9 +173,52 @@ CREATE TABLE IF NOT EXISTS gap_report (
     priority        INTEGER,
     priority_label  TEXT
 );
+
+-- A REVIEW QUEUE ROW CAN BE RESOLVED (P5-1.6). review_queue stays append-only; a decision about one of its rows is a
+-- row here, matched on (project, metric, date, reason) and the run that raised it (run_id NULL = every run).
+-- resolution: RESOLVED-ARTEFACT (review_resolve.py --rejudge proved the flag came from comparing a [span=Nd] row or a
+-- same-date re-read, and the per-day move is within the threshold) or RESOLVED-ACCEPTED (a person's decision).
+CREATE TABLE IF NOT EXISTS review_resolutions (
+    project      TEXT NOT NULL,
+    metric       TEXT NOT NULL,
+    date         TEXT,
+    reason       TEXT NOT NULL,
+    run_id       TEXT,
+    resolution   TEXT NOT NULL,
+    note         TEXT NOT NULL,
+    resolved_on  TEXT NOT NULL,
+    resolved_by  TEXT NOT NULL
+);
 """
 
 LONG_COLUMNS = ["date", "project", "metric", "value", "source", "tier"]
+
+REVIEW_RESOLUTIONS = ("RESOLVED-ARTEFACT", "RESOLVED-ACCEPTED")
+
+
+def attach_resolutions(review: pd.DataFrame, conn: sqlite3.Connection) -> pd.DataFrame:
+    """The review rows with `resolution` and `resolution_note` from review_resolutions (P5-1.6): a resolution matches a
+    row on project, metric, date (first 10 characters), reason, and its run (or every run when its run_id is NULL);
+    the newest one wins. A store without the table (older, opened read-only) resolves nothing."""
+    review = review.copy()
+    review["resolution"] = pd.Series([None] * len(review), index=review.index, dtype=object)
+    review["resolution_note"] = pd.Series([None] * len(review), index=review.index, dtype=object)
+    if review.empty:
+        return review
+    try:
+        res = pd.read_sql_query("SELECT * FROM review_resolutions ORDER BY resolved_on, rowid", conn)
+    except Exception:                                  # noqa: BLE001 — no table yet: nothing resolved
+        return review
+    for r in res.to_dict("records"):
+        hit = ((review["project"] == r["project"]) & (review["metric"] == r["metric"])
+               & (review["reason"] == r["reason"])
+               & (review["date"].astype(str).str[:10] == str(r["date"] or "")[:10]))
+        rid = r.get("run_id")
+        if rid is not None and not (isinstance(rid, float) and pd.isna(rid)) and str(rid).strip():
+            hit &= review["run_id"] == rid
+        review.loc[hit, "resolution"] = r["resolution"]
+        review.loc[hit, "resolution_note"] = r["note"]
+    return review
 
 
 def morning_reads_frame(conn: sqlite3.Connection, providers) -> pd.DataFrame:
@@ -299,6 +342,17 @@ class Store:
                  ON m.project=t.project AND m.metric=t.metric AND m.date=t.d"""
         ).fetchall()
         return {(p, k): float(v) for p, k, v in rows if v is not None}
+
+    def latest_rows(self) -> dict[tuple[str, str], tuple]:
+        """All (project, metric) -> (value, date, source) of the newest stored row: the row latest_values() reads its
+        number from (P5-1.6). The change check needs its DATE (a same-date prior is a re-read, not a change) and its
+        SOURCE (a [span=Nd] row holds N days and is compared per day)."""
+        rows = self.conn.execute(
+            """SELECT m.project, m.metric, m.value, m.date, m.source FROM metrics m
+               JOIN (SELECT project, metric, MAX(date) AS d FROM metrics GROUP BY project, metric) t
+                 ON m.project=t.project AND m.metric=t.metric AND m.date=t.d"""
+        ).fetchall()
+        return {(p, k): (float(v), d, s) for p, k, v, d, s in rows if v is not None}
 
     def first_dates(self) -> dict[tuple[str, str], str]:
         """All (project, metric) -> OLDEST stored DATE. For the history-depth backfill."""
@@ -608,13 +662,30 @@ class Store:
 
         Same contract and same fix as gap_report above: rebuilt per run, so the union across runs
         is every flag ever raised, including every one already dealt with.
+
+        P5-1.6: each row carries its resolution (columns `resolution`, `resolution_note`; empty while it is open) from
+        review_resolutions — config.review_answered reads them, so a resolved row is answered wherever it is counted.
         """
         run_id = run_id or self.latest_run_id("review_queue")
         if run_id is None:
-            return pd.read_sql_query("SELECT * FROM review_queue WHERE 0", self.conn)
-        return pd.read_sql_query(
+            return attach_resolutions(pd.read_sql_query("SELECT * FROM review_queue WHERE 0", self.conn), self.conn)
+        return attach_resolutions(pd.read_sql_query(
             "SELECT * FROM review_queue WHERE run_id=? ORDER BY project, metric",
-            self.conn, params=(run_id,))
+            self.conn, params=(run_id,)), self.conn)
+
+    def resolve_review(self, project: str, metric: str, date: str | None, reason: str, resolution: str, note: str,
+                       resolved_by: str, run_id: str | None = None) -> None:
+        """Record a decision about a Review Queue row (P5-1.6). Never touches review_queue itself."""
+        if resolution not in REVIEW_RESOLUTIONS:
+            raise ValueError(f"resolution must be one of {', '.join(REVIEW_RESOLUTIONS)}: {resolution!r}")
+        if not str(note or "").strip():
+            raise ValueError("a resolution needs a note: what was decided and why")
+        self.conn.execute(
+            "INSERT INTO review_resolutions(project, metric, date, reason, run_id, resolution, note, resolved_on, "
+            "resolved_by) VALUES (?,?,?,?,?,?,?,?,?)",
+            (project, metric, (str(date)[:10] if date else None), reason, run_id, resolution, note, utcnow(),
+             resolved_by))
+        self.conn.commit()
 
     def staging(self, run_id: str | None = None) -> pd.DataFrame:
         if run_id:

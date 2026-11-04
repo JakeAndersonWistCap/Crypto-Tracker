@@ -13998,12 +13998,16 @@ def review_triage():
     if not run:
         print("  the review queue is empty")
         return 0
-    rows = [dict(zip(("project", "metric", "date", "prior_date", "value", "prior_value", "reason", "action", "source"), r))
-            for r in con.execute("SELECT project, metric, date, prior_date, value, prior_value, reason, action, source "
-                                 "FROM review_queue WHERE run_id=? ORDER BY project, metric", (run[0],))]
+    rows = [dict(zip(("project", "metric", "date", "prior_date", "value", "prior_value", "reason", "action", "source",
+                      "run_id"), r))
+            for r in con.execute("SELECT project, metric, date, prior_date, value, prior_value, reason, action, source, "
+                                 "run_id FROM review_queue WHERE run_id=? ORDER BY project, metric", (run[0],))]
+    # P5-1.6: a row resolved in the store (review_resolutions) is answered too
+    if rows:
+        rows = _store.attach_resolutions(_pd.DataFrame(rows), con).to_dict("records")
     opened = [r for r in rows if not config.review_answered(r)]
-    print(f"  run {run[0]}: {len(rows)} row(s), {len(rows) - len(opened)} answered in config.REVIEW_ANSWERED, "
-          f"{len(opened)} open")
+    print(f"  run {run[0]}: {len(rows)} row(s), {len(rows) - len(opened)} answered in config.REVIEW_ANSWERED or "
+          f"resolved (review_resolve.py), {len(opened)} open")
     rules = {"anchor_unconfirmed": "STAYS — the page's anchor was inferred, never eyeballed (sources.yaml "
                                    "needs_first_run_check); compare the value with the page once and set "
                                    "first_run_confirmed",

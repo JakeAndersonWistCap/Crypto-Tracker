@@ -534,6 +534,37 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11dy. P5-1.6 Review queue — resolving rows (2026-11-04)
+
+**What changed in the check (fetch/validate.py).** change_threshold compares a new row with the store's newest row of
+the series. It now knows that row's DATE and SOURCE (store.latest_rows):
+- **Per day on both sides.** When the two rows cover different numbers of days (`[span=Nd]` in the source), both are
+  divided by their own span first. Example from the live store: a daily 19,547 against a 4-day row of 114,570 is
+  19,547 against 28,642.5 a day, -31.8%: under the 50% threshold, not flagged (the old raw comparison read -83%).
+- **No same-date comparison.** A prior row for the SAME date as the new row (a second run on one day re-reads the day)
+  is not compared at all.
+Thresholds, bounds, lumpy series and the weekday/window comparisons are unchanged.
+
+**Resolving a row (review_resolve.py, table review_resolutions).** review_queue stays as written; a decision about one
+of its rows is recorded beside it. A resolved row is ANSWERED wherever a row's status is read: the Review Queue tab
+lists it under ANSWERED with its resolution and note, and it leaves the open count and the series' review flag.
+- `--list`: the open rows of the latest review run (read-only).
+- `--rejudge`: re-judges every OPEN change_threshold row already stored under the new rule. It resolves
+  (RESOLVED-ARTEFACT, with the numbers in the note) ONLY a row it proves was an artefact: its prior row is for the same
+  date, or the spans differ and the per-day move is within the threshold. Everything else stays open: a real move,
+  a window or same-weekday comparison, equal spans, or a prior value the store no longer holds (a same-day re-run's
+  morning row is overwritten by the later run, so that case cannot be proven; resolve it by hand if you check it).
+  Dry run by default; it prints the open counts BEFORE and AFTER. `--apply` records the resolutions.
+- `--resolve PROJECT METRIC DATE --note "..."`: a person's decision (RESOLVED-ACCEPTED), for every run's row of that
+  date. Never a bulk accept.
+
+PowerShell (from the repo folder; each line prints, the third writes):
+
+```powershell
+python review_resolve.py --list                    # the open rows of the latest review run (read-only)
+python review_resolve.py --rejudge                 # DRY RUN: each open change_threshold row RESOLVED-ARTEFACT or OPEN, with the numbers; BEFORE / AFTER counts
+python review_resolve.py --rejudge --apply         # records the RESOLVED-ARTEFACT rows only; then rebuild: python token_metrics.py --no-fetch
+```
 ## 11dx. P5 round 1, items 13-15 — payout ratio above 1, NEAR (e), the daily task (2026-11-04)
 
 - **Payout ratio above 1 (P5-1.13).** There were two counting errors, now fixed:

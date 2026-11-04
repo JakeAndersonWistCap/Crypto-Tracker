@@ -45,8 +45,13 @@ def _span_days(source) -> int:
     return int(m.group(1)) if m else 1
 
 
-def validate_frame(df: pd.DataFrame, prior_values: dict[tuple[str, str], float], out) -> pd.DataFrame:
+def validate_frame(df: pd.DataFrame, prior_values: dict[tuple[str, str], float], out,
+                   prior_meta: dict[tuple[str, str], tuple] | None = None) -> pd.DataFrame:
     """Return the frame with out-of-bounds rows removed, recording every judgement on `out`.
+
+    prior_meta (P5-1.6) maps (project, metric) -> (value, date, source) of the stored row prior_values came from
+    (store.latest_rows): the change check then knows the prior row's DATE (a same-date prior is a re-read, never
+    compared) and its SPAN (a [span=Nd] prior is compared per day). Without it the prior counts as one day, as before.
 
     prior_values maps (project, metric) -> last stored value, used for the change check. Only
     the newest row per (project, metric) is change-checked: a backfill legitimately walks a
@@ -158,11 +163,19 @@ def validate_frame(df: pd.DataFrame, prior_values: dict[tuple[str, str], float],
             prior = prior_values.get((project, metric))
 
         prior_date = None
+        prior_src_stored = None            # the stored prior row's source, when the prior is that row (P5-1.6)
         basis = ("the previous stored value of this series, whatever date it carries — the store "
                  "holds one number per series and this run did not bring a comparable earlier one")
         if len(complete) >= 2 and prior is not None and complete.iloc[-2]["value"] == prior:
             prior_date = complete.iloc[-2]["date"]
             basis = "the previous complete observation in this run's own series"
+        elif prior is not None and (project, metric) in (prior_meta or {}):
+            # THE STORED PRIOR'S OWN DATE AND SOURCE (P5-1.6): the number in prior_values is the store's newest row,
+            # so its date says whether this is a day-on-day comparison at all and its source says how many days it holds
+            m_value, m_date, m_source = prior_meta[(project, metric)]
+            if m_value is not None and float(m_value) == float(prior):
+                prior_date, prior_src_stored = m_date, m_source
+                basis = f"the previous stored row of this series, dated {str(m_date)[:10]}"
 
         # (c) A DAILY FLOW HAS A WEEK IN IT. Run 20260921T204341Z raised twelve change_threshold
         # flags and every one was a 40-60% drop. 2026-09-20 was a Sunday. Protocol fees, revenue
@@ -262,6 +275,10 @@ def validate_frame(df: pd.DataFrame, prior_values: dict[tuple[str, str], float],
 
         if prior is None or prior == 0:
             continue
+        # ** A SAME-DATE PRIOR IS A RE-READ, NOT A CHANGE (P5-1.6). ** A second run on one day compares the day's row
+        # with that morning's row for the SAME date: a re-read of one day (more hours in it), never a day-on-day move.
+        if window_basis is None and prior_date is not None and str(prior_date)[:10] == str(row["date"])[:10]:
+            continue
         threshold = config.change_threshold_pct(project, metric) / 100.0
 
         # ** PER DAY, WHERE THE TWO SIDES COVER DIFFERENT NUMBERS OF DAYS. ** Only for a
@@ -273,7 +290,7 @@ def validate_frame(df: pd.DataFrame, prior_values: dict[tuple[str, str], float],
             prior_src = None
             if prior_date is not None:
                 match = complete[complete["date"].astype(str).str[:10] == str(prior_date)[:10]]
-                prior_src = match["source"].iloc[-1] if not match.empty else None
+                prior_src = match["source"].iloc[-1] if not match.empty else prior_src_stored
             prior_span = _span_days(prior_src)
             if cur_span != prior_span:
                 value, prior = value / cur_span, prior / prior_span
