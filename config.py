@@ -24482,6 +24482,10 @@ FDV_TOTAL_NET: dict = {}   # Round G2 D2: Hyperliquid's total_supply is itself t
 # 2025-07-15 (455 days back), so "Σ since launch" was Σ since 2025-07-15 (−3.68% on the 31.4B reference, Dune quoted).
 FULL_HISTORY_SERIES = {
     ("Near", "near_intents_volume_usd"): "references intents_cumulative_volume is since launch (2026-09-22, 31.4B)",
+    # P5-1.9 (Jake 2026-11-04): the settlement rebuild's DEX and NFT legs back to 2025-05-01 and before (the 365-day
+    # window and the year before it) - DefiLlama returns the whole chart; the store keeps it, never trimmed
+    ("Ethereum", "dex_volume_usd"): "settlement rebuild leg, extended back to 2025-05-01 (P5-1.9)",
+    ("Ethereum", "nft_volume_usd"): "settlement rebuild leg, extended back to 2025-05-01 (P5-1.9)",
 }
 
 # D5-0 (Jake's D5 rule: a wrong stored number is fixed first): DefiLlama restates days long past the trailing 30-day

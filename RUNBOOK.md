@@ -534,6 +534,42 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11ea. P5 round 1, item 9 — Ethereum settlement without Artemis, steps 1-2 (2026-11-04)
+
+Nothing Artemis is removed yet. Your order is extend, validate, and only after a PASS remove and purge. Run these from
+the repo folder, in this order.
+
+1. **Validate first (read-only, no BigQuery, no quota).** The overlap with the CSV is already stored, so this decides
+   whether the extension can be used at all:
+
+   ```
+   python settlement_extend.py validate
+   ```
+
+   It prints `SETTLEMENT OVERLAP 2026-05-28..2026-08-25: PASS` or `NOT PASSED`, the rebuild and CSV totals, each leg,
+   the daily and weekly gaps and any missing days, and writes `data\ethereum\settlement_overlap.json`.
+   - The rule was fixed before any number was seen: all 90 days held, and Σ rebuild ÷ Σ CSV − 1 within ±1%.
+   - Expected: NOT PASSED. Your G9 run measured +6.8% on this overlap.
+   - PASTE BACK the whole output.
+
+2. **The extension's cost (BigQuery dry runs: no data read, no quota):**
+
+   ```
+   python settlement_extend.py dry-run --from 2025-05-01
+   ```
+
+   One line per weekly piece from 2025-05-01 to the stored history (2026-05-28), then `TOTAL … GB` and this month's
+   quota line. The earlier estimate from table sizes was about 13 GB a week, about 730 GB in all; the dry runs replace
+   it. PASTE BACK the TOTAL line.
+
+3. **Only if step 1 printed PASS**, the backfill: `python settlement_extend.py backfill --from 2025-05-01` prints the
+   plan; add `--apply` to read. Each piece runs under the shared monthly budget, and a piece that does not fit waits
+   for the month's reset. Then `python token_metrics.py` stores the days. Without a PASS it prints `REFUSED` and reads
+   nothing.
+
+4. **If step 1 is NOT PASSED:** nothing more runs. The fallback (the rebuild from 2026-05-28 for the uncovered period
+   only) and its headline list are in the report (SPEC P5-1.9). No allowlist entry is added until you approve one.
+
 ## 11dz. P5 round 1, items 7-8 — Uniswap (2026-11-04)
 
 **7. Uniswap's airdrop distributor is a one-off in outflow (e) (SPEC P5-1.7).** The outflow from the 2020 merkle
