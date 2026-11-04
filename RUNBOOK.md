@@ -748,29 +748,30 @@ python review_resolve.py --rejudge --apply         # records the RESOLVED-ARTEFA
 ```
 ## 11dx. P5 round 1, items 13-15 — payout ratio above 1, NEAR (e), the daily task (2026-11-04)
 
-- **Payout ratio above 1 (P5-1.13).** There were two counting errors, now fixed:
-  - Etherscan's ethsupply2 figures are the previous UTC day's close. Each burn and consensus-reward delta is now
-    dated on the day it measures, D − 1; its source says `[dated −1d …]`. Where the DefiLlama-derived leg held that
-    day, the measured row stands, so 2026-09-29 is no longer counted twice.
-  - A rebuilt (`:rederived`) delta across missed reads now counts every day since the stock's previous read.
-    Hyperliquid's 09-21 Assistance Fund row holds 09-19..09-21.
+- **Payout ratio above 1 (P5-1.13).** One counting error was found and fixed. A rebuilt (`:rederived`) delta across
+  missed reads now counts every day since its stock's previous read: Hyperliquid's 09-21 Assistance Fund row holds
+  09-19..09-21. Ethereum's day-late Etherscan burn was already fixed at the source on 2026-10-14 (E5, and
+  orphan_cleanup section CQ for the stored rows), so the build moves nothing again.
+  - Real excesses get a note on both payout cells (CP):
+    - Ethereum: valuation. Burned ETH × the day's close, against DefiLlama's dollars at burn time.
+    - Hyperliquid: the Assistance Fund receives about 93% of DefiLlama's fees; DefiLlama's revenue is about 81% of them.
+    - Uniswap: timing. Firepit claims burn in lumps.
+  - What moves on your store, old → new, every numeric cell on A1-A4, CP and Master (read-only builds, nothing written):
 
-  Over 90 days on the 2026-10-13 dumps: Ethereum 1.057 → 1.004, Hyperliquid 1.130 → 1.092, Uniswap 1.081 (no change).
-  What is left is real, and the note on both payout cells (CP) says why:
-  - Ethereum: valuation. Burned ETH × the day's close, against DefiLlama's dollars at burn time.
-  - Hyperliquid: the Assistance Fund receives about 93% of DefiLlama's fees, while DefiLlama's revenue is about 81%.
-  - Uniswap: timing. Claim burns arrive in lumps.
-- **Check Ethereum's handover days on the live store (read-only).** Expected:
-  - 09-27..09-29 read `derived:defillama_burned_fee_revenue/price`;
-  - 09-30 onward read `etherscan:ethsupply2.BurntFees:delta`;
-  - the 09-30 value is close to the 09-29 value (the same day's burn, stored a day late).
+    ```
+    python headline_diff.py --only p5_1_13_spans --threshold 0 --cells all
+    ```
+
+    Expected: only Hyperliquid cells and any series with a rederived multi-day row move. Every move goes in the
+    direction of more covered days, so a lower per-day rate.
+- **Check Ethereum's burn rows on the live store (read-only).** Expected: from the first Etherscan day (09-29), one
+  `etherscan:ethsupply2.BurntFees:delta` row a day, and no `derived:defillama_burned_fee_revenue/price` row on the same
+  day. Section CQ removed the doubled 09-29.
 
   ```
   python -c "import sqlite3;c=sqlite3.connect('file:metrics.db?mode=ro',uri=True);[print(r) for r in c.execute(\"SELECT date, round(value,2), source FROM metrics WHERE project='Ethereum' AND metric='gross_burn_tokens' AND date BETWEEN '2026-09-27' AND '2026-10-02' ORDER BY date\")]"
   ```
 
-  After a build on this code, CP "Payout ratio — the project's own net basis" reads about 1.00 for Ethereum.
-  Hyperliquid and Uniswap may stay above 1, with the note saying why.
 - **NEAR dilution (e) (P5-1.14).** A fall in the Foundation accounts' balance under 0.01 NEAR is the accounts' own
   fees, not a release, and is stored as 0. The release row's source counts the days read 0. On the dump that was
   five days of 0.0002-0.0011 NEAR. One of them came from a hand-entered 171059.131 on 2026-10-11, against a read of

@@ -29442,30 +29442,18 @@ def outflow_metrics(project_name: str, cat: str) -> tuple:
 # period — revenue / treasury / emissions; only revenue-funded value is CREDITED to holder value yield, the rest is
 # recorded beside it. `distributed_extra`: payouts to holders that are not bought tokens (Aerodrome's voter fees, Sky's
 # USDS to SKY stakers). Default for a buyback programme not listed: revenue (its fee_split names revenue as the base).
-# P5-1.13 (Jake 2026-11-04, payout ratio above 1): ETHERSCAN'S ethsupply2 FIGURES ARE THE PREVIOUS UTC DAY'S CLOSE. A
-# delta dated D (read anywhere from 11:45 to 21:41 UTC) equals DefiLlama's burned fees for D − 1: on the 2026-10-13 dump
-# the correlation is 1.000 against D − 1 (median error 1.6%, 10 days) and 0.295 against D (median error 33.7%, 9 days).
-# Etherscan's API docs ("stats" module, ethsupply2) do not state the update time — this is measured, not documented.
-# Dated as read, the first measured delta (09-30) repeated 09-29, which the DefiLlama-derived leg already held: one
-# day counted twice in holder value (Ethereum's payout ratio 1.057 on the dump; 1.0006 without it). The build dates
-# each delta of these measuring points on the day it measures (build_workbook._dated_day_late_views); where an earlier
-# declared leg of the series holds that day, the measured row stands and the earlier one is dropped (named).
-# The stocks (cumulative and supply reads) are left as read: a stock's one-day label lag counts nothing twice.
-DATED_DAY_LATE = {
-    "etherscan:ethsupply2.BurntFees": "Etherscan ethsupply2 is the previous UTC day's close (measured 2026-11-04 on "
-                                      "the 10-13 dump: corr 1.000 with DefiLlama's D − 1, 0.295 with D)",
-    "etherscan:ethsupply2.Eth2Staking": "Etherscan ethsupply2 is the previous UTC day's close (the same endpoint and "
-                                        "snapshot as BurntFees)",
-}
+# P5-1.13: a rederived delta (rederive.py) across missed reads covers every day since its stock's previous read — the
+# covered-day count takes that span (build_workbook._covered_day_sets). The switch exists for headline_diff.py's
+# before/after ("p5_1_13_spans"); it is on.
+REDERIVED_SPAN_FROM_STOCK = {"on": True}
 
 # P5-1.13 (Jake 2026-11-04): WHY A PAYOUT RATIO CAN READ ABOVE 1 WHERE THE EXCESS IS REAL — the note on both payout cells.
-# Measured on the 2026-10-13 dumps after the counting fixes (Ethereum's day-late deltas, P5-1.13; Hyperliquid's untagged
-# 3-day row). Ethereum's 1.057 there was a day counted twice (fixed: 1.004 after); what is left is valuation.
+# Measured on the 2026-10-13 dumps after the span fix (Hyperliquid's untagged 3-day row). Ethereum's day-late BurntFees
+# deltas were already re-dated at the source by E5 / orphan_cleanup CQ (2026-10-14; the dumps predate it).
 PAYOUT_ABOVE_ONE = {
-    "Ethereum": "Can read slightly above 1 — real, valuation (1.004 on the 2026-10-13 dump, after the fix). The burn IS "
-                "Ethereum's revenue; holder value is the ETH burned (Etherscan BurntFees, dated on the day it measures) x "
-                "that day's closing price, while DefiLlama values each burn at the price when it happened. Before the "
-                "fix one day was counted twice at the 2026-09-29 handover (1.057).",
+    "Ethereum": "Can read slightly above 1 — real, valuation. The burn IS Ethereum's revenue; holder value is the ETH "
+                "burned (Etherscan BurntFees, dated on the day it measures since E5 / orphan_cleanup CQ, 2026-10-14) x "
+                "that day's closing price, while DefiLlama values each burn at the price when it happened.",
     "Hyperliquid": "Can read above 1 — real, not a counting error. Holder value is the Assistance Fund's measured HYPE "
                    "inflow x the day's price; the revenue base is DefiLlama's revenue, which its methodology defines as "
                    "'99% of fees … excluding builders fees'. Over 2026-09-18..10-12 the Fund received $62.2M = 92.8% of "

@@ -201,9 +201,13 @@ def test_project_notes_tab_shape_and_no_blank_cell_without_a_code(after):
     assert [ws.cell(4, c).value for c in (1, 2, 3)] == ["Project and column", "Value", "Definition"]
     assert all(len(str(ws.cell(4, c).value)) <= reader.MAX_HEADER for c in (1, 2, 3))
     blocks = notes_blocks(ws)
-    owners = {o for _t, _h, o, _w in reader.PROJECT_NOTE_COLUMNS}
+    # P5-1.7: a declared one-off (config.ONE_OFF_DILUTION_NOTES: Uniswap's distributor) adds its project's two text rows
+    import config
+    one_off = set(config.ONE_OFF_DILUTION_NOTES)
+    owners = {o for _t, _h, o, _w in reader.PROJECT_NOTE_COLUMNS} | one_off
     assert set(blocks) == owners
-    assert sum(len(v) for v in blocks.values()) == len({(o, h) for _t, h, o, _w in reader.PROJECT_NOTE_COLUMNS})
+    assert sum(len(v) for v in blocks.values()) == len({(o, h) for _t, h, o, _w in reader.PROJECT_NOTE_COLUMNS}) \
+        + 2 * len(one_off)
     for r in range(5, ws.max_row + 1):
         if ws.cell(r, 1).value is None:
             continue

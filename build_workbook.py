@@ -513,7 +513,8 @@ def _covered_day_sets(groups: dict) -> dict:
             n = _span_days(src)
             if n == 1 and (src.startswith("derived:d_") or src.startswith("derived:d(")):
                 n = _stock_span(name, src, day)
-            elif n == 1 and ":rederived" in src and "[span=" not in src and _delta_stock(name, metric):
+            elif n == 1 and ":rederived" in src and "[span=" not in src and config.REDERIVED_SPAN_FROM_STOCK["on"] \
+                    and _delta_stock(name, metric):
                 # P5-1.13: a delta stored WITHOUT its span (rederive.py's rows: Hyperliquid's 09-21 Assistance Fund row
                 # holds 09-19..09-21, no read on 09-19 or 09-20) covers every day since its stock's previous reading
                 n = _stock_span(name, f"derived:d_{_delta_stock(name, metric)}", day)
@@ -782,45 +783,6 @@ def sum_components(point: str) -> frozenset:
     if m:
         return frozenset(x for x in m.group(1).split("+") if x)
     return frozenset([str(point).split(":", 1)[1] if ":" in str(point) else str(point)])
-
-
-DATED_DAY_LATE_LOG: dict = {}   # (project, metric) -> what _dated_day_late_views moved and dropped, last build
-
-
-def _dated_day_late_views(groups: dict) -> None:
-    """P5-1.13 (config.DATED_DAY_LATE): a flow delta of a measuring point whose reading is the PREVIOUS UTC day's close
-    is dated on the day it measures (its date − 1), its span kept; where an earlier declared leg of the same series
-    (series_handover ordered_points) holds that day, the measured row stands and the earlier row is dropped — one day is
-    never counted twice. Recorded in DATED_DAY_LATE_LOG."""
-    from fetch.base import _measuring_point                        # noqa: PLC0415
-    DATED_DAY_LATE_LOG.clear()
-    late = config.DATED_DAY_LATE
-    for (name, metric), g in list(groups.items()):
-        if g is None or g.empty or (METRICS.get(metric) or {}).get("kind") != "flow":
-            continue
-        src = g["source"].astype(str)
-        mp = src.map(_measuring_point)
-        hit = mp.isin(late) & src.str.contains(":delta", regex=False)
-        if not hit.any():
-            continue
-        g = g.copy()
-        g["date"] = pd.to_datetime(g["date"])
-        g.loc[hit, "date"] = g.loc[hit, "date"] - pd.Timedelta(days=1)
-        g.loc[hit, "source"] = src[hit] + "[dated −1d: the previous UTC day's close, P5-1.13]"
-        decl = ((config.PROJECT_BY_NAME.get(name) or {}).get("series_handover") or {}).get(metric) or {}
-        order = [_measuring_point(x) for x in decl.get("ordered_points") or ()] if isinstance(decl, dict) else []
-        mine = set(mp[hit])
-        earlier = [x for x in order[:min((order.index(m) for m in mine if m in order), default=0)]]
-        held = set(g.loc[hit, "date"].dt.normalize())
-        drop = mp.isin(earlier) & g["date"].dt.normalize().isin(held) & ~hit
-        if drop.any():
-            g = g[~drop]
-        DATED_DAY_LATE_LOG[(name, metric)] = (f"{int(hit.sum())} delta row(s) of {', '.join(sorted(mine))} dated one day "
-                                              f"earlier (the day they measure)"
-                                              + (f"; {int(drop.sum())} row(s) of the earlier leg on a day the measured "
-                                                 f"leg now holds dropped ({', '.join(sorted(set(mp[drop])))})"
-                                                 if drop.any() else ""))
-        groups[(name, metric)] = g
 
 
 def _handover_cut_views(groups: dict) -> None:
@@ -5468,7 +5430,6 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _provisional_views(groups)        # G15 5: yesterday read before 16:00 UTC is stored, not used
     _series_restatement_views(groups, asof)  # P2b-2: a declared restatement — its pending seam, or its holes, named
     _handover_continuation_views(groups)   # P2a D5a: a declared later leg read from another stored series (Maple)
-    _dated_day_late_views(groups)     # P5-1.13: an Etherscan ethsupply2 delta dated on the day it measures (D − 1)
     _handover_cut_views(groups)       # G11 C1: a declared cut — the earlier leg's rows after the later leg starts dropped
     _partial_sum_views(groups)    # FIRST: nothing downstream may read a partial sum
     _bad_print_views(groups)      # P3-A2: a stored stock's one-day bad print, before any view or window reads it

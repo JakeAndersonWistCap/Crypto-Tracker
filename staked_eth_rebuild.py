@@ -249,4 +249,6 @@ def main(argv=None, reader=None, bq_rows=None) -> int:
 
 
 if __name__ == "__main__":
+    import progress  # noqa: E402 - stdout line-buffered when piped (the entry-point rule)
+    progress.line_buffered()
     sys.exit(main())

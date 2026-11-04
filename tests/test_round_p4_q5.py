@@ -233,7 +233,9 @@ def test_buying_pressure_is_every_market_buyback_annualised_over_tradeable_float
 
 
 # ============================================================================================== the fixture build
-BEFORE_HVY = {"Maple": 0.0040527229897458356, "Sky": 0.02383699954852378, "Hyperliquid": 0.03945259923265727,
+# P5-1.13 (Jake 2026-11-04, approved): Hyperliquid 0.03945259923265727 -> 0.038137512591568695 — its holder value's
+# rederived 3-day Assistance Fund row (09-21) now counts 3 covered days, Q0 87 -> 90 days (a correction, SPEC P5-1.13)
+BEFORE_HVY = {"Maple": 0.0040527229897458356, "Sky": 0.02383699954852378, "Hyperliquid": 0.038137512591568695,
               "Pendle": 0.00842358798583249, "Chainlink": 0.005930254280097274, "Near": 0.002255183232935747}
 
 

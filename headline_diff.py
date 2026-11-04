@@ -24,6 +24,10 @@ Writes nothing to the store and leaves token_metrics.xlsx alone. Output is ASCII
                    sign reversed: it is what switching Chainlink to on-chain would do
     etherfi_yield  2026-10-06: Ether.fi's token-yield numerator = the reconciled share-price total; before = the
                    top-ups alone (sethfi_topup_tokens)
+    p5_1_13_spans  2026-11-04: a rederived delta across missed reads counts every day since its stock's previous
+                   read (covered days); before = one day a row
+
+    --cells all    every numeric cell on the A1-A4, CP and Master tabs, not only the A1-A4 headlines
 """
 from __future__ import annotations
 
@@ -58,10 +62,43 @@ BEFORE = {
     # a PREVIEW, not a change: BEFORE = Chainlink on-chain primary, AFTER = CoinGecko as configured
     "chainlink_onchain_preview": lambda: [(config.CIRCULATING_ONCHAIN["Chainlink"], "ratios_use", "onchain")],
     "etherfi_yield": lambda: [(config.PROTOCOL_YIELD["Ether.fi"]["token_yield"], "tokens", "sethfi_topup_tokens")],
+    # P5-1.13 (2026-11-04): a rederived delta across missed reads counts every day since its stock's previous read;
+    # before = one day a row
+    "p5_1_13_spans": lambda: [(config.REDERIVED_SPAN_FROM_STOCK, "on", False)],
 }
+ALL_CELL_TABS = ("A1", "A2", "A3", "A4", "CP", "Master")   # --cells all: every numeric cell on these tabs
 
 
-def _headlines(store_mod, build_workbook, cells_ref, path: Path) -> dict:
+def _all_cells(X, wb) -> dict:
+    """{(project, sheet, header): value} for every cell on ALL_CELL_TABS whose row names a project (column A) and whose
+    column has a header in the first six rows — evaluated (xlcalc)."""
+    import xlcalc
+    out = {}
+    for ws in wb.worksheets:
+        if not ws.title.startswith(ALL_CELL_TABS):
+            continue
+        heads = {}
+        for r in range(1, 7):
+            for c in range(1, ws.max_column + 1):
+                v = ws.cell(r, c).value
+                if isinstance(v, str) and v.strip() and not v.startswith("="):
+                    heads[c] = v.strip()
+        for r in range(2, ws.max_row + 1):
+            proj = ws.cell(r, 1).value
+            if not isinstance(proj, str) or not proj.strip() or proj.startswith("="):
+                continue
+            for c in range(2, ws.max_column + 1):
+                if c not in heads or ws.cell(r, c).value is None:
+                    continue
+                try:
+                    v = xlcalc.display(X.value(ws.title, r, c))
+                except Exception:  # noqa: BLE001 - a cell xlcalc cannot evaluate is left out, never guessed
+                    continue
+                out[(proj.strip(), ws.title, heads[c])] = v
+    return out
+
+
+def _headlines(store_mod, build_workbook, cells_ref, path: Path, all_cells: bool = False) -> dict:
     import openpyxl
     from openpyxl.utils.cell import column_index_from_string, coordinate_from_string
 
@@ -72,7 +109,10 @@ def _headlines(store_mod, build_workbook, cells_ref, path: Path) -> dict:
     finally:
         st.close()
     cells = copy.deepcopy(list(cells_ref))
-    X = xlcalc.Workbook(openpyxl.load_workbook(path))
+    wb = openpyxl.load_workbook(path)
+    X = xlcalc.Workbook(wb)
+    if all_cells:
+        return _all_cells(X, wb)
     out = {}
     for hc in cells:
         col, row = coordinate_from_string(hc["cell"])
@@ -85,6 +125,8 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--only", choices=sorted(BEFORE), action="append")
     ap.add_argument("--threshold", type=float, default=10.0, help="percent (default 10)")
+    ap.add_argument("--cells", choices=("headlines", "all"), default="headlines",
+                    help="all = every numeric cell on A1-A4, CP and Master")
     args = ap.parse_args(argv)
     import store as store_mod
     from build_workbook import _HEADLINE_CELLS, build_workbook
@@ -102,14 +144,15 @@ def main(argv=None) -> int:
             else:
                 d[k] = v
         try:
-            before = _headlines(store_mod, build_workbook, _HEADLINE_CELLS, Path(tmp) / "before.xlsx")
+            before = _headlines(store_mod, build_workbook, _HEADLINE_CELLS, Path(tmp) / "before.xlsx",
+                                args.cells == "all")
         finally:
             for d, k, v in saved:
                 if v is KeyError:
                     d.pop(k, None)
                 else:
                     d[k] = v
-        after = _headlines(store_mod, build_workbook, _HEADLINE_CELLS, Path(tmp) / "after.xlsx")
+        after = _headlines(store_mod, build_workbook, _HEADLINE_CELLS, Path(tmp) / "after.xlsx", args.cells == "all")
     moved = []
     for key, v1 in after.items():
         v0 = before.get(key)
@@ -117,7 +160,7 @@ def main(argv=None) -> int:
             if v0 == v1:
                 continue
             rel = (v1 - v0) / abs(v0) if v0 else float("inf")
-            if abs(rel) * 100 > args.threshold:
+            if abs(rel) * 100 > args.threshold or (args.threshold == 0 and v0 != v1):
                 moved.append((key, v0, v1, rel))
         elif v0 != v1 and (isinstance(v0, (int, float)) or isinstance(v1, (int, float))):
             moved.append((key, v0, v1, None))

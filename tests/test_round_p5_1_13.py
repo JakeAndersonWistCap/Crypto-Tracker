@@ -1,11 +1,9 @@
 """P5-1.13 (Jake 2026-11-04): payout ratio above 1 — Ethereum 1.002, Hyperliquid 1.068, Uniswap 1.105 on the live store.
 
-Two counting errors, fixed:
-  * Etherscan's ethsupply2 figures are the previous UTC day's close; its deltas were dated a day late, so the first
-    measured burn (09-30) repeated 09-29, which the DefiLlama-derived leg held: one day counted twice (Ethereum 1.057 on
-    the 10-13 dump, 1.004 after);
-  * a delta rebuilt by rederive.py across missed reads carried no [span=Nd]: Hyperliquid's 09-21 Assistance Fund row
-    holds three days and counted as one (covered days 87 instead of 90).
+One counting error, fixed: a delta rebuilt by rederive.py across missed reads carried no [span=Nd] — Hyperliquid's 09-21
+Assistance Fund row holds three days and counted as one (covered days 87 instead of 90). Ethereum's day-late Etherscan
+BurntFees deltas were ALREADY re-dated at the source by E5 / orphan_cleanup CQ (2026-10-14): the build must not move
+them again (a second shift was tried in this round and withdrawn after the gate — test_e5 caught it).
 What is real gets a note on both payout cells (config.PAYOUT_ABOVE_ONE).
 """
 import sqlite3
@@ -29,31 +27,14 @@ def _f(project, metric, rows):
                           "source": s, "tier": 1} for d, v, s in rows], columns=COLS)
 
 
-def test_an_ethsupply2_delta_is_dated_on_the_day_it_measures_and_the_handover_day_is_counted_once():
-    derived = "derived:defillama_burned_fee_revenue/price"
-    es = "etherscan:ethsupply2.BurntFees:delta"
-    groups = {("Ethereum", "gross_burn_tokens"): _f("Ethereum", "gross_burn_tokens", [
-        ("2026-09-28", 240.7, derived), ("2026-09-29", 229.7, derived),
-        ("2026-09-30", 230.8, es), ("2026-10-01", 68.4, es), ("2026-10-05", 233.1, es + "[span=4d]")]),
-        ("Ethereum", "burn_cumulative_tokens"): _f("Ethereum", "burn_cumulative_tokens", [
-            ("2026-09-30", 100.0, "etherscan:ethsupply2.BurntFees")])}
-    bw._dated_day_late_views(groups)
-    g = groups[("Ethereum", "gross_burn_tokens")].sort_values("date")
-    got = [(d.strftime("%m-%d"), v) for d, v in zip(g["date"], g["value"])]
-    assert got == [("09-28", 240.7), ("09-29", 230.8), ("09-30", 68.4), ("10-04", 233.1)], got
-    assert "[span=4d]" in g["source"].iloc[-1] and "dated −1d" in g["source"].iloc[-1]
-    from fetch.validate import _span_days
-    assert _span_days(g["source"].iloc[-1]) == 4, "the span survives the re-dating"
-    from fetch.base import _measuring_point
-    assert _measuring_point(g["source"].iloc[1]) == _measuring_point(es), "same measuring point"
-    # the stock is left as read
-    assert groups[("Ethereum", "burn_cumulative_tokens")]["date"].iloc[0] == pd.Timestamp("2026-09-30")
-    assert "1 row(s) of the earlier leg" in bw.DATED_DAY_LATE_LOG[("Ethereum", "gross_burn_tokens")]
-
-
-def test_the_lag_is_on_the_record_for_both_ethsupply2_flows():
-    assert set(config.DATED_DAY_LATE) == {"etherscan:ethsupply2.BurntFees", "etherscan:ethsupply2.Eth2Staking"}
-    assert "corr 1.000" in config.DATED_DAY_LATE["etherscan:ethsupply2.BurntFees"]
+def test_the_build_never_re_dates_ethsupply2_rows_the_fetch_and_cq_already_date():
+    """E5 / CQ date BurntFees to the day it measures at the source and in the store; a build-time shift would move every
+    burn row a second day (the P5 round 1 gate: burn_30d BROKEN on a CQ store). The rows come out as stored."""
+    import inspect
+    assert not hasattr(bw, "_dated_day_late_views") and not hasattr(config, "DATED_DAY_LATE")
+    assert "_dated_day_late" not in inspect.getsource(bw.aggregate)
+    import fetch.etherscan_supply as es
+    assert "burn_day = (pd.Timestamp(when) - pd.Timedelta(days=1)).normalize()" in inspect.getsource(es)
 
 
 def test_a_rederived_delta_across_missed_reads_covers_every_day_since_the_previous_reading(monkeypatch):
@@ -69,6 +50,10 @@ def test_a_rederived_delta_across_missed_reads_covers_every_day_since_the_previo
                                 ("Hyperliquid", "gross_burn_tokens"): flow})
     days = sorted(d.strftime("%m-%d") for d in cov[("Hyperliquid", "gross_burn_tokens")])
     assert days == ["09-18", "09-19", "09-20", "09-21", "09-22"], days
+    monkeypatch.setitem(config.REDERIVED_SPAN_FROM_STOCK, "on", False)       # headline_diff's BEFORE: one day a row
+    cov = bw._covered_day_sets({("Hyperliquid", "burn_address_balance"): stock,
+                                ("Hyperliquid", "gross_burn_tokens"): flow})
+    assert sorted(d.strftime("%m-%d") for d in cov[("Hyperliquid", "gross_burn_tokens")]) == ["09-18", "09-21", "09-22"]
 
 
 def test_rederive_tags_the_span_of_a_pair_read_days_apart(tmp_path):
@@ -137,3 +122,23 @@ def test_the_runbook_gives_the_daily_task_command_check_and_removal_and_the_read
     assert sec.count("mode=ro") == 2, "both store checks are read-only"
     reg = (ROOT / "windows" / "register_task.ps1").read_text(encoding="utf-8")
     assert reg.isascii() and '[string]$At = "06:30"' in reg and '"Crypto-Tracker daily"' in reg
+
+
+def test_headline_diff_can_show_the_span_fix_on_every_numeric_cell():
+    """Jake 2026-11-04: every cell that moves because of the span fix, old -> new, on his store — headline_diff.py
+    --only p5_1_13_spans --cells all (read-only builds)."""
+    import headline_diff as hd
+    assert hd.BEFORE["p5_1_13_spans"]() == [(config.REDERIVED_SPAN_FROM_STOCK, "on", False)]
+    assert hd.ALL_CELL_TABS == ("A1", "A2", "A3", "A4", "CP", "Master")
+    import openpyxl
+    import xlcalc
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "CP Capture"
+    ws["A1"], ws["B1"], ws["C1"] = "Project", "Holder value yield", "Note"
+    ws["A2"], ws["B2"], ws["C2"] = "Hyperliquid", 0.038, "text"
+    ws2 = wb.create_sheet("Data")
+    ws2["A2"], ws2["B2"] = "Hyperliquid", 1.0
+    got = hd._all_cells(xlcalc.Workbook(wb), wb)
+    assert got[("Hyperliquid", "CP Capture", "Holder value yield")] == 0.038
+    assert not any(k[1] == "Data" for k in got), "only the A1-A4, CP and Master tabs"

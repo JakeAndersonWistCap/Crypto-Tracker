@@ -276,8 +276,10 @@ def test_2_hyperliquids_burn_over_issuance_is_blocked_with_both_legs_holes_on_th
     row = next(r for r in range(2, ws.max_row + 1) if "Hyperliquid" in (ws.cell(r, 1).value, ws.cell(r, 2).value))
     v = X.value("A4 Permanent Burn", row, col)
     assert isinstance(v, str) and v.startswith("BLOCKED — unequal coverage"), v
-    assert "gross_burn_tokens, q0) covers 87 days" in v and "pool_release_tokens, q0) covers 7 days" in v, v
-    assert "holes: 2026-09-13, 2026-09-19..09-20" in v and "holes: 2026-10-02..10-05, 2026-10-12" in v, v
+    # P5-1.13: the burn's rederived rows across missed reads count every day since the previous read — 90 days, no holes
+    # (was 87, with 2026-09-13 and 09-19..09-20 read as holes)
+    assert "gross_burn_tokens, q0) covers 90 days" in v and "pool_release_tokens, q0) covers 7 days" in v, v
+    assert "holes: 2026-09-13" not in v and "holes: 2026-10-02..10-05, 2026-10-12" in v, v
 
 
 # ============================================================================================ 3 CCIP: a record
