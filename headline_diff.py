@@ -26,6 +26,8 @@ Writes nothing to the store and leaves token_metrics.xlsx alone. Output is ASCII
                    top-ups alone (sethfi_topup_tokens)
     p5_1_13_spans  2026-11-04: a rederived delta across missed reads counts every day since its stock's previous
                    read (covered days); before = one day a row
+    p5_1c_supply_rebuild  2026-11-04: CoinGecko's total / max supply and FDV hole days rebuilt (on-chain legs, a
+                   declared max, price x CoinGecko's basis) are used; before = dropped (the holes)
 
     --cells all    every numeric cell on the A1-A4, CP and Master tabs, not only the A1-A4 headlines
 """
@@ -65,6 +67,9 @@ BEFORE = {
     # P5-1.13 (2026-11-04): a rederived delta across missed reads counts every day since its stock's previous read;
     # before = one day a row
     "p5_1_13_spans": lambda: [(config.REDERIVED_SPAN_FROM_STOCK, "on", False)],
+    # P5-1C.A3 (2026-11-04): CoinGecko's supply / FDV hole days rebuilt by the catch-up (supply_rebuild:*) are used;
+    # before = they are dropped (the holes they were). Needs a store the catch-up has rebuilt days in
+    "p5_1c_supply_rebuild": lambda: [(config.SUPPLY_REBUILD_ON, "on", False)],
 }
 ALL_CELL_TABS = ("A1", "A2", "A3", "A4", "CP", "Master")   # --cells all: every numeric cell on these tabs
 

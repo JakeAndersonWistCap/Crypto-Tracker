@@ -84,7 +84,9 @@ def test_coingecko_routes_circulating_by_market_cap_over_price_and_names_the_res
     p = config.PROJECT_BY_NAME["Uniswap"]
     assert ar.hole_route("Uniswap", "circulating_supply", "coingecko", set(), p) == "market_chart"
     for m in ("fdv_usd", "total_supply_coingecko", "max_supply", "total_supply"):
-        assert ar.hole_route("Uniswap", m, "coingecko", set(), p) == "not_recoverable", m
+        # P5-1C.A3: Uniswap's CoinGecko total (net of the 0xdead balance) is now rebuilt from the chain; the rest stay
+        assert ar.hole_route("Uniswap", m, "coingecko", set(), p) == (
+            "supply_rebuild" if m == "total_supply" else "not_recoverable"), m
         assert "Enterprise-only" in ar.not_recoverable("coingecko", m)
     assert ar.not_recoverable("coingecko", "price_usd") == ""
     assert "circulating_supply" in ar.api_series(p)

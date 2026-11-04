@@ -1586,11 +1586,13 @@ def _no_history_point(source, metric: str = "") -> str:
     return next((why for k, why in NO_HISTORY_POINTS.items() if mp == k or mp.startswith(k + ".")), "")
 
 
-def _no_history_why(src, metric: str = "") -> str:
-    """The catch-up's line for a not-recoverable hole: the endpoint's own sentence (NO_HISTORY_POINTS) or the page's."""
+def _no_history_why(src, metric: str = "", name: str = "") -> str:
+    """The catch-up's line for a not-recoverable hole: the endpoint's own sentence (NO_HISTORY_POINTS) or the page's;
+    for CoinGecko's supply / FDV, why no rebuild exists for the project either (P5-1C.A3)."""
     why = _no_history_point(src, metric)
     if why:
-        return why
+        nr = (getattr(config, "SUPPLY_REBUILD_NOT_RECOVERABLE", {}) or {}).get((name, metric))
+        return f"{why}; and no rebuild: {nr}" if nr else why
     head = str(src).split(":")[0]
     return f"{not_recoverable(src)}: {NO_HISTORY_SOURCES.get(head, head)} shows today's figure only"
 
@@ -1615,6 +1617,8 @@ def hole_route(name: str, metric: str, source: str, archive_series: set, p: dict
         return "archive"
     if head in CONTRACT_REPLAY_SOURCES and metric in CONTRACT_REPLAY_SOURCES[head]:
         return "contract_archive"                    # P5-1.11: the contract read again at the day's first block
+    if head == "coingecko" and metric in COINGECKO_NO_HISTORY_METRICS and config.supply_rebuild_kind(name, metric):
+        return "supply_rebuild"                      # P5-1C.A3: rebuilt from the chain / a fixed constant
     if _no_history_point(src, metric):
         return "not_recoverable"                     # P5-1.10: today-only endpoint (a :delta flow of one included)
     if head == "near_rpc" and metric in NEAR_ARCHIVE_METRICS:
@@ -1990,6 +1994,164 @@ def contract_catch_up(store, projects: list[dict], scan: dict, deadline: float |
     return res
 
 
+# ---------------------------------------------------------------------------------------------
+# P5-1C.A3 (Jake 2026-11-04): COINGECKO'S TOTAL / MAX SUPPLY AND FDV, REBUILT FOR A DAY COINGECKO HAS NO ROW
+# ---------------------------------------------------------------------------------------------
+# config.SUPPLY_REBUILD declares, per project, the same-quantity total (stored on-chain legs: each a contract or NEAR
+# block-header read at the day's first block, a missed day of a leg filled by the archive route earlier in the same
+# catch-up), the max supply a contract or the project's own source fixes, and CoinGecko's FDV basis. The rebuilt row is
+# its own measuring point (supply_rebuild:<what>), written only on an owed day, and only while the declared check
+# (config.SUPPLY_REBUILD_TOL, stated before any overlap was measured) passes on CoinGecko's own stored days.
+def _daily(rows: pd.DataFrame) -> pd.Series:
+    if rows is None or rows.empty:
+        return pd.Series(dtype=float)
+    g = rows.assign(date=pd.to_datetime(rows["date"]).dt.normalize()).sort_values("date")
+    return g.drop_duplicates("date", keep="last").set_index("date")["value"].astype(float)
+
+
+def _coingecko_own(rows: pd.DataFrame) -> pd.DataFrame:
+    """CoinGecko's own rows of a series (its measuring point), the rebuilt days left out."""
+    if rows is None or rows.empty:
+        return rows
+    mp = rows["source"].astype(str).map(_measuring_point)
+    return rows[mp.str.split(":").str[0] == "coingecko"]
+
+
+def supply_rebuild_values(name: str, metric: str, series: dict) -> pd.Series:
+    """The rebuilt value per day where every input is held ON that day ({metric: rows} in `series`): the total formula,
+    the declared max (every day of `series['__days__']`), or price x CoinGecko's FDV basis. Never carried, never 0."""
+    spec = config.SUPPLY_REBUILD.get(name) or {}
+    kind = config.supply_rebuild_kind(name, metric)
+
+    def total() -> pd.Series:
+        t = _daily(series.get(spec.get("total")))
+        for leg in spec.get("less") or ():
+            t = (t - _daily(series.get(leg))).dropna()
+        return t.dropna()
+    if kind == "total":
+        return total()
+    if kind == "max":
+        days = series.get("__days__")
+        return pd.Series(float(spec["max"]), index=pd.DatetimeIndex(days if days is not None else []))
+    if kind == "fdv":
+        # THE PRICE CLOSING THE DAY (Jake: "at the block closing each missing day"): market_chart's 00:00 UTC point of
+        # the NEXT day, stored as price_usd dated d+1 (for yesterday: today's read) — SUPPLY_HISTORY's next-day rule
+        px = _daily(series.get("price_usd"))
+        px.index = px.index - pd.Timedelta(days=1)
+        if spec.get("fdv_basis") == "max":
+            return (px * float(spec["max"])).dropna()
+        return (px * total()).dropna()
+    return pd.Series(dtype=float)
+
+
+def supply_rebuild_inputs(name: str, metric: str) -> tuple:
+    """The stored series a rebuild reads (beside CoinGecko's own series)."""
+    spec = config.SUPPLY_REBUILD.get(name) or {}
+    kind = config.supply_rebuild_kind(name, metric)
+    legs = (spec.get("total"), *(spec.get("less") or ()))
+    if kind == "total":
+        return legs
+    if kind == "fdv":
+        return ("price_usd",) if spec.get("fdv_basis") == "max" else ("price_usd", *legs)
+    return ()
+
+
+def supply_rebuild_check(name: str, metric: str, cg: pd.Series, rebuilt: pd.Series) -> tuple[bool, str]:
+    """(passes, how) — the declared same-quantity check (config.SUPPLY_REBUILD_TOL) of the rebuild against CoinGecko's
+    OWN stored days: the most recent `min_days` common days, median and worst |rebuilt / CoinGecko − 1| within the
+    declared bounds. Fewer common days than `min_days` fails (unchecked is never passed)."""
+    kind = config.supply_rebuild_kind(name, metric)
+    tol = config.SUPPLY_REBUILD_TOL.get(kind) or {}
+    common = cg.index.intersection(rebuilt.index).sort_values()
+    if kind != "max":
+        common = common[-int(tol.get("min_days") or 1):]
+    if len(common) < int(tol.get("min_days") or 1):
+        return False, (f"{len(common)} common day(s) with CoinGecko's own, fewer than the "
+                       f"{int(tol.get('min_days') or 1)} the check needs")
+    dev = (rebuilt[common] / cg[common].replace(0, float("nan")) - 1).abs()
+    if dev.isna().any():
+        return False, "CoinGecko's figure is 0 on a common day"
+    med, worst = float(dev.median()), float(dev.max())
+    how = (f"median |diff| {med:.4%}, worst {worst:.4%} over {len(common)} common day(s) "
+           f"{common.min().date()}..{common.max().date()}")
+    bad = [f"median > {tol['median']:.2%}" for _ in [0] if tol.get("median") is not None and not med <= tol["median"]]
+    bad += [f"worst > {tol['worst']:.4%}" for _ in [0] if tol.get("worst") is not None and not worst <= tol["worst"]]
+    return (not bad), how + (f" — FAILED ({', '.join(bad)})" if bad else "")
+
+
+def supply_rebuild_source(name: str, metric: str, how: str) -> str:
+    """The rebuilt row's source: its own measuring point (supply_rebuild:<what>) and, in the bracket, what was read and
+    the check that let it stand in for CoinGecko's figure."""
+    spec = config.SUPPLY_REBUILD.get(name) or {}
+    kind = config.supply_rebuild_kind(name, metric)
+    formula = "-".join(x for x in (spec.get("total"), *(spec.get("less") or ())) if x)
+    if kind == "total":
+        what, label = formula, f"rebuilt day of CoinGecko's total: {spec.get('label')}"
+    elif kind == "max":
+        what, label = "declared_max", f"rebuilt day of CoinGecko's max supply: {float(spec['max']):,.0f} — {spec['max_cite']}"
+    else:
+        basis = "max_supply" if spec.get("fdv_basis") == "max" else formula
+        what = f"price_usd_x_{basis}"
+        label = ("rebuilt day of CoinGecko's FDV: the day's price_usd (00:00 UTC) x "
+                 + (f"the declared max {float(spec['max']):,.0f}" if basis == "max_supply" else spec.get("label")))
+    txt = f"{label}; check vs CoinGecko's stored days: {how} — P5-1C.A3".replace("[", "(").replace("]", ")")
+    return f"{config.SUPPLY_REBUILD_POINT}:{what}[{txt}]"
+
+
+def supply_rebuild_catch_up(store, projects: list[dict], scan: dict) -> dict:
+    """P5-1C.A3, THE supply_rebuild ROUTE: each owed day of CoinGecko's total / max supply or FDV rebuilt from the stored
+    on-chain legs, the declared max or price x CoinGecko's basis — when the declared check passes on CoinGecko's own
+    days. Only owed keys are written (never an overwrite), inside the declared bound. A failed check writes nothing and
+    names the series NOT RECOVERABLE with the measured reason. {"lines", "filled", "left", "unrebuildable"}."""
+    res = {"lines": [], "filled": {}, "left": {}, "unrebuildable": {}}
+    want = {k: v for k, v in scan.items() if v["route"] == "supply_rebuild"}
+    names = {p["name"] for p in projects}
+    for (n, m), v in sorted(want.items()):
+        if n not in names:
+            continue
+        own = _coingecko_own(pd.read_sql_query(
+            "SELECT date, value, source FROM metrics WHERE project=? AND metric=?", store.conn, params=(n, m)))
+        series = {x: pd.read_sql_query("SELECT date, value, source FROM metrics WHERE project=? AND metric=?",
+                                       store.conn, params=(n, x)) for x in supply_rebuild_inputs(n, m) if x}
+        cg = _daily(own)
+        owed = sorted(v["days"], reverse=True)
+        series["__days__"] = pd.to_datetime(sorted(set(map(str, cg.index.date)) | set(owed)))
+        rebuilt = supply_rebuild_values(n, m, series)
+        ok, how = supply_rebuild_check(n, m, cg, rebuilt)
+        if not ok:
+            res["unrebuildable"][(n, m)] = f"the declared rebuild does not measure CoinGecko's figure: {how}"
+            res["left"][(n, m)] = owed
+            continue
+        src = supply_rebuild_source(n, m, how)
+        rows, why = [], {}
+        for d in owed:
+            day = pd.Timestamp(d)
+            if day not in rebuilt.index:
+                why[d] = "an input is not stored for the day: " + ", ".join(
+                    x for x in supply_rebuild_inputs(n, m) if x and day not in _daily(series.get(x)).index)
+                continue
+            val = float(rebuilt[day])
+            lo, hi = config.sanity_bounds(n, m, day)
+            if (lo is not None and val < lo) or (hi is not None and val > hi):
+                why[d] = f"{val:,.4f} is outside the declared bound [{lo}, {hi}]"
+                continue
+            rows.append({"date": day, "project": n, "metric": m, "value": val, "source": src, "tier": 2})
+        if rows:
+            _write_new(store, pd.DataFrame(rows)[LONG_COLUMNS])
+        have = {d for d, _ in _series_rows(store, n, m)}
+        filled, left = [d for d in owed if d in have], [d for d in owed if d not in have]
+        res["filled"][(n, m)], res["left"][(n, m)] = filled, left
+        txt = (f"CATCH-UP {n}/{m}: {len(filled)} day(s) rebuilt" + (f" ({_ranges(filled)})" if filled else "")
+               + f", {len(left)} left" + (f" ({_ranges(left)})" if left else "")
+               + f" — {src.split('[')[0]} (P5-1C.A3; check vs CoinGecko's stored days: {how})")
+        if left:
+            d0 = next((d for d in left if d in why), None)
+            txt += (f"; NOT REBUILT {_ranges([d for d in left if d in why])} — {why[d0]}" if d0 else "") + \
+                   " (never 0, never carried; the next run tries again)"
+        res["lines"].append(("info" if not left else "warning", txt))
+    return res
+
+
 def catch_up(store, projects: list[dict], budget_s: float | None = None, max_days: int | None = None, reader=None,
              solana: dict | None = None, archive_chains: set | None = None, resolve=None, api=None,
              derive: bool = True, valuers=None, near=None, replays: dict | None = None, tiers: bool = True,
@@ -2015,6 +2177,7 @@ def catch_up(store, projects: list[dict], budget_s: float | None = None, max_day
     near_res = {"lines": [], "gaps": {}, "filled": {}, "left": {}, "holes": {}, "entries": {}, "checked": set()}
     replay_res = {"lines": [], "filled": {}, "left": {}}
     contract_res = {"lines": [], "filled": {}, "left": {}}
+    supply_res = {"lines": [], "filled": {}, "left": {}, "unrebuildable": {}}
     kinds = {"parked": 0, "weekly": 0, "not archivable or by design": 0, "nothing stored yet": 0}
     for _, _, why in excluded:
         k = ("parked" if why.startswith("parked") else "weekly" if why.startswith("a weekly epoch")
@@ -2025,12 +2188,12 @@ def catch_up(store, projects: list[dict], budget_s: float | None = None, max_day
     out = {"lines": lines, "gaps": gaps, "filled": {}, "left": {}, "holes": {}, "excluded": excluded, "result": None,
            "api": api_res, "derived": {}, "scan": scan, "near": near_res, "replay": replay_res, "tier_owed": {},
            "holes_found": {}, "holes_filled": {}, "holes_left": {}, "not_recoverable": {}, "retired": {},
-           "by_source": {}, "contract": contract_res}
+           "by_source": {}, "contract": contract_res, "supply": supply_res}
 
     def other_routes() -> None:
         """P4-Q6: NEAR's archive and the replay adapters, inside what is left of the one budget; P5-1.11: the contract
         point reads at each owed day's first block."""
-        nonlocal near_res, replay_res, contract_res
+        nonlocal near_res, replay_res, contract_res, supply_res
         left_s = max(0.0, budget_s - (time.monotonic() - t0))
         near_res = near_catch_up(store, projects, ledger, t0 + budget_s if left_s else time.monotonic(), max_days,
                                  near=near)
@@ -2043,6 +2206,10 @@ def catch_up(store, projects: list[dict], budget_s: float | None = None, max_day
                                          resolve=contract_resolve, day_blocks=day_blocks)
         lines.extend(contract_res["lines"])
         out["contract"] = contract_res
+        # P5-1C.A3: LAST, so the on-chain legs (archive, NEAR) and the day's price (market_chart) are filled first
+        supply_res = supply_rebuild_catch_up(store, projects, scan)
+        lines.extend(supply_res["lines"])
+        out["supply"] = supply_res
 
     def tally() -> str:
         """P4-Q6: every scanned series' missing days, after the fills — found / filled / left / not recoverable — with a
@@ -2054,6 +2221,10 @@ def catch_up(store, projects: list[dict], budget_s: float | None = None, max_day
         retired_n = 0
         for (n, m), v in sorted(scan.items()):
             route, src = v["route"], v["source"]
+            # P5-1C.A3: a declared rebuild whose check failed on CoinGecko's own days is not recoverable — measured why
+            nr_why = supply_res["unrebuildable"].get((n, m)) if route == "supply_rebuild" else None
+            if nr_why:
+                route = "not_recoverable"
             if route == "retired":
                 # P5-1.11: no adapter reads it any more (a retired query or series) — its missing days are not holes
                 retired_n += len(v["days"])
@@ -2096,8 +2267,9 @@ def catch_up(store, projects: list[dict], budget_s: float | None = None, max_day
                 out["not_recoverable"][(n, m)] = rest
                 if rest:
                     lines.append(("info", f"CATCH-UP {n}/{m}: {len(rest)} day(s) not recoverable ({_ranges(rest)}) — "
-                                          f"not recoverable ({_no_history_why(src, m)}); named in the cell comment, its "
-                                          f"windows annualised over their covered days"))
+                                          f"not recoverable ({_no_history_why(src, m, n)}"
+                                          + (f"; {nr_why}" if nr_why else "") + "); named in the cell comment, its "
+                                          "windows annualised over their covered days"))
                 continue
             left += len(rest)
             out["holes_left"][(n, m)] = rest
@@ -2274,6 +2446,11 @@ def catch_up(store, projects: list[dict], budget_s: float | None = None, max_day
     if cr["filled"] or cr["left"]:
         head += (f"; contract reads at past blocks: {sum(map(len, cr['filled'].values()))} day(s) filled, "
                  f"{sum(map(len, cr['left'].values()))} left")
+    sr = supply_res
+    if sr["filled"] or sr["left"]:
+        head += (f"; CoinGecko supply / FDV rebuilt (P5-1C.A3): {sum(map(len, sr['filled'].values()))} day(s), "
+                 f"{sum(len(v) for k, v in sr['left'].items() if k not in sr['unrebuildable'])} left, "
+                 f"{len(sr['unrebuildable'])} series failed the declared check")
     warn = n_holes or no_endpoint or any(nr["holes"].values()) or any(rp["left"].values())
     return finish("warning" if warn else "info", head)
 
