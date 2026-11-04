@@ -300,6 +300,17 @@ class Store:
         ).fetchall()
         return {(p, k): float(v) for p, k, v in rows if v is not None}
 
+    def latest_rows(self) -> dict[tuple[str, str], tuple]:
+        """All (project, metric) -> (value, date, source) of the newest stored row: the row latest_values() reads its
+        number from (P5-1.6). The change check needs its DATE (a same-date prior is a re-read, not a change) and its
+        SOURCE (a [span=Nd] row holds N days and is compared per day)."""
+        rows = self.conn.execute(
+            """SELECT m.project, m.metric, m.value, m.date, m.source FROM metrics m
+               JOIN (SELECT project, metric, MAX(date) AS d FROM metrics GROUP BY project, metric) t
+                 ON m.project=t.project AND m.metric=t.metric AND m.date=t.d"""
+        ).fetchall()
+        return {(p, k): (float(v), d, s) for p, k, v, d, s in rows if v is not None}
+
     def first_dates(self) -> dict[tuple[str, str], str]:
         """All (project, metric) -> OLDEST stored DATE. For the history-depth backfill."""
         rows = self.conn.execute(

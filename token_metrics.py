@@ -1383,6 +1383,9 @@ def _main(args, log) -> int:
 
     # The change-threshold check compares against the newest figure of any date.
     prior_values = st.latest_values()
+    # P5-1.6: and the date and source of each of those rows, so a [span=Nd] prior is compared per day and a same-date
+    # prior (a second run today) is not compared at all
+    prior_meta = st.latest_rows()
     # DIFFERENCING is different: its inputs must come from an EARLIER DAY. Two runs on one day
     # write to the same (date, project, metric) key, so a same-day prior makes the second run
     # overwrite the first's correct flow with a dust delta — which is exactly what happened to
@@ -1428,6 +1431,7 @@ def _main(args, log) -> int:
         prior_values_for_delta=prior_values_for_delta,
         prior_dates=prior_dates,
         prior_sources=prior_sources,
+        prior_meta=prior_meta,
         has_history=has_history,
         last_dates=st.last_dates(),
         known_absent=absent,

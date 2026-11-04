@@ -1866,6 +1866,7 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
               prior_values_for_delta: dict | None = None,
               prior_dates: dict | None = None,
               prior_sources: dict | None = None,
+              prior_meta: dict | None = None,
               has_history: set | None = None,
               known_absent: set | None = None,
               last_dates: dict | None = None,
@@ -1898,6 +1899,7 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
            "prior_delta": prior_values_for_delta if prior_values_for_delta is not None else (prior_values or {}),
            "prior_dates": prior_dates or {},
            "prior_sources": prior_sources or {},
+           "prior_meta": prior_meta or {},          # P5-1.6: (value, date, source) of the row prior_values came from
            "has_history": has_history or set(),
            "known_absent": known_absent or set(),
            "last_dates": last_dates or {},
@@ -1938,7 +1940,7 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
             out.timed_out[name] = (tier, TIER_BUDGET_S.get(name, DEFAULT_BUDGET_S))
         # validate each tier's own output, so a rejection names the tier that produced it
         for i in range(before, len(out.frames)):
-            out.frames[i] = validate_frame(out.frames[i], ctx["prior_values"], out)
+            out.frames[i] = validate_frame(out.frames[i], ctx["prior_values"], out, ctx.get("prior_meta"))
         # ROWS COUNTED BY TIER, from what survived validation (Jake's run 2026-09-30 17:21:
         # artemis_csv read "0 rows" while storing 1,061 — the summary looked its rows up by the log
         # entries' source name, "artemis", not by the tier's own name). Failures and skips likewise.
