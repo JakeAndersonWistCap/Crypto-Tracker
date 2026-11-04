@@ -156,25 +156,26 @@ def test_the_spec_row_records_the_accepted_span_fix_moves():
     recorded, old -> new, in P5-1.13 - corrected to the 10-13 build (21 on the dumps), with the five more on his store."""
     text = (ROOT / "SPEC.md").read_text(encoding="utf-8")
     row = next(ln for ln in text.splitlines() if ln.startswith("| P5-1.13 |"))
-    assert "ACCEPTED by Jake 2026-11-04" in row and "21 cells move" in row and "THE FIVE MORE ON JAKE'S 11-04 STORE" in row
+    assert "ACCEPTED by Jake 2026-11-04" in row and "21 cells move" in row and "JAKE'S 11-04 STORE, his run of the fixed diff" in row
     for move in ("CP HOLDER VALUE YIELD 3.945% → 3.814%", "CP payout ratio net 1.130 → 1.092",
                  "Master net supply change −4.339% → −4.195%", "A4 PERMANENT BURN YIELD 4.181% → 4.041%",
-                 "NET HOLDER YIELD", "0.17% → 0.03%"):
+                 "CP NET HOLDER YIELD −5.045% → −5.193%", "holder value yield 0.31% → 0.16%", "— 26 cells"):
         assert move in row, move
     assert "3.423%" not in row, "the as-of-today dump values are gone (CORRECTED)"
-    # round 1C item 0a: the A3 key is named, with Jake's values from his store
-    assert "THE A3 KEY 'BURNED ÷ (EMISSIONS + UNLOCKS)' 0.3872 → 0.3743" in row
-    assert "'RETIREMENT ÷ DILUTION' 0.3872 → 0.3743" in row and "A3 'FDV retirement rate (tokens)'" in row
+    # round 1C item 0a / decision 5: the A3 key is named, with Jake's values from his run of the fixed diff
+    assert "THE A3 KEY 'BURNED ÷ (EMISSIONS + UNLOCKS)' 0.3897 → 0.3767" in row
+    assert "'RETIREMENT ÷ DILUTION' 0.3897 → 0.3767" in row and "A3 FDV RETIREMENT RATE (tokens) 1.160% → 1.121%" in row
 
 
 def test_the_holder_value_yield_spread_over_the_tbill_carries_the_span_fix_flag():
-    """Jake 2026-11-04: flag the HVY spread over the T-bill, 0.17% -> 0.03% on his store, in the cell note."""
+    """Jake 2026-11-04: flag the HVY spread over the T-bill in the cell note - 0.31% -> 0.16% on his store (his run of
+    the fixed diff; his earlier 0.17% -> 0.03% came from before the fix)."""
     f = lambda r, p: "=1"                                                      # noqa: E731
     cols = bw._tbill_cols(None, [("Holder value yield", f), ("Net holder yield", f)])
     hvy, nhy = cols[1], cols[2]
     assert hvy[0] == "Spread over the 3-month T-bill: Holder value yield"
     note = hvy[5]["note_fn"]({"name": "Hyperliquid"})
-    assert "0.17% -> 0.03%" in note and "87 -> 90" in note
+    assert "0.31% -> 0.16%" in note and "87 -> 90" in note
     assert hvy[5]["note_fn"]({"name": "Ethereum"}) == "" and nhy[5]["note_fn"]({"name": "Hyperliquid"}) == ""
 
 
