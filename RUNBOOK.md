@@ -538,12 +538,20 @@ or stop it and start again on the new code. Don't run both at once: they write t
 
 These run in the build sandbox, not on Jake's machine (they need pytest; requirements-gate.txt).
 
-- **The full gate:** `python gate.py --rev <commit> --out <dir> --workers 3`. It snapshots the commit (git archive),
-  collects the test ids, runs every test with pytest-xdist (`-n 3 --dist loadgroup`), the fixture guard and ruff,
+- **The full gate:** `python gate.py --rev <commit> --out <dir> --workers N` (default: the CPU count). It snapshots the commit (git archive),
+  collects the test ids, runs every test with pytest-xdist (`-n N --dist loadgroup`), the fixture guard and ruff,
   and passes only when every collected test ran and passed, the guard has 0 violations and ruff F,E9 is at most 81.
   `<dir>/times.txt` is the report table: per step the time, the 1-minute load average (min/mean/max), the lowest
-  free memory, peak memory per process, and CONTENDED when another test process shared the machine. It does not
-  start below 10 GB free, and never runs more than 3 workers.
+  free memory, peak memory per process, and CONTENDED when another test process shared the machine. No fixed cap
+  on workers or memory (P5-1.1a, 2026-11-04): both are recorded as measurements. A run killed by memory is not a
+  pass; rerun it.
+- **Which tests share a worker** (P5-1.1a): a test file stays on one worker only when it defines a fixture wider
+  than one test (module, class, package or session scope) or shares the build of the 15 dumps; every other file's
+  tests (test_adapters.py among them) are spread one by one.
+- **No network in tests** (P5-1.1c): conftest refuses every real connection (anything but a loopback server the test
+  started itself; never the agent proxy) and every Playwright browser for the whole test process. A test during which
+  one was attempted fails with "NETWORK BLOCKED IN TESTS" (or "BROWSER BLOCKED IN TESTS") and the address, even when
+  the code under test caught the refusal. Fix it at the cause: stub the network in that test.
 - **A phase's own checks:** `python own_checks.py --base <the commit the phase started from>` (add `--dry-run` to
   see the selection only). It prints every test file it selected and why, and every file it left to the gate.
 - **The shared build of the 15 dumps** (tests/shared_build.py): eight test files share one build per process. To

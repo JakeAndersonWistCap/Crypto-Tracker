@@ -25734,29 +25734,50 @@ def test_etherfi_token_yield_numerator_is_the_reconciled_share_price_total():
     assert "sethfi_reward_tokens_reconciled" in config.metrics_for_project(config.PROJECT_BY_NAME["Ether.fi"])
 
 
-def test_headline_diff_and_manual_form_make_run_on_a_store(tmp_path, monkeypatch, capsys):
-    """headline_diff.py builds BEFORE (previous decision restored in memory, then put back) and AFTER; manual_form.py
-    make writes one line per open manual-reading row with its page, tile and the headline rows it clears."""
-    import csv
-    import headline_diff as hd
-    import manual_form as mf
+def _headline_diff_store(tmp_path, monkeypatch):
+    """An empty store and manual-references file of the test's own (the headline_diff / manual_form tests)."""
     import manual_refs as mr
     import store as sm
     db = tmp_path / "m.db"
     sm.Store(db).close()
     monkeypatch.setattr(sm, "DB_PATH", str(db))
     monkeypatch.setattr(mr, "STORE", tmp_path / "manual_references.csv")
+
+
+# headline_diff.py builds BEFORE (previous decision restored in memory, then put back) and AFTER. One test per decision
+# (P5-1.1b: they were one 6-minute test; split, they run on different workers; the assertions are unchanged).
+def test_headline_diff_runs_on_a_store_circulating(tmp_path, monkeypatch, capsys):
+    import headline_diff as hd
+    _headline_diff_store(tmp_path, monkeypatch)
     assert hd.main(["--only", "circulating"]) == 0
     out = capsys.readouterr().out
     assert "HEADLINES MOVING BEYOND 10%" in out
     assert config.CIRCULATING_ONCHAIN["Aerodrome"]["ratios_use"] == "onchain", "the decision is restored"  # probes16
+
+
+def test_headline_diff_runs_on_a_store_circulating_policy(tmp_path, monkeypatch, capsys):
+    import headline_diff as hd
+    _headline_diff_store(tmp_path, monkeypatch)
     assert hd.main(["--only", "circulating_policy"]) == 0
     assert "HEADLINES MOVING BEYOND 10%" in capsys.readouterr().out
     assert config.CIRCULATING_ONCHAIN["GEODNET"]["ratios_use"] == "onchain"
     assert config.CIRCULATING_ONCHAIN["Sky"]["ratios_use"] == "onchain"
+
+
+def test_headline_diff_runs_on_a_store_geodnet_onchain(tmp_path, monkeypatch, capsys):
+    import headline_diff as hd
+    _headline_diff_store(tmp_path, monkeypatch)
     assert hd.main(["--only", "geodnet_onchain"]) == 0
     assert config.CIRCULATING_ONCHAIN["GEODNET"]["status"] == "established", "restored after the BEFORE build"
     assert config.CIRCULATING_ONCHAIN["Pendle"]["status"] == "established"
+
+
+def test_manual_form_make_runs_on_a_store(tmp_path, monkeypatch):
+    """manual_form.py make writes one line per open manual-reading row with its page, tile and the headline rows it
+    clears."""
+    import csv
+    import manual_form as mf
+    _headline_diff_store(tmp_path, monkeypatch)
     form = tmp_path / "form.csv"
     assert mf.main(["make", "--out", str(form)]) == 0
     lines = list(csv.DictReader(open(form)))

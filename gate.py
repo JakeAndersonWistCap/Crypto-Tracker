@@ -1,6 +1,6 @@
 """gate.py - the one full gate on a commit (P5-0, Jake 2026-11-03).
 
-    python gate.py --rev HEAD --out <dir> [--workers 3]
+    python gate.py --rev HEAD --out <dir> [--workers N]   (default: the machine's CPU count)
 
 Runs, on a clean snapshot of REV (git archive, so the working tree can keep changing while it runs):
 
@@ -23,7 +23,7 @@ not the tests, and nothing had recorded it. Every step now records, sampled ever
 A step is marked CONTENDED when another test process ran during it, or when its mean load exceeds the processes
 the step itself runs by more than 1.5. A contended step's time is not a measure of the tests.
 
-MEMORY (Jake's rule): the gate does not start with less than 10 GB free, and never runs more than 3 workers.
+MEMORY AND WORKERS (P5-1.1a, Jake 2026-11-04): no fixed caps. Free memory, load and peak memory per process are recorded per step as a measurement; the default worker count is the machine's CPU count.
 
 Output: <out>/times.txt (one line per step, the table the report repeats), <out>/gate.json (the same and the
 samples), <out>/<step>.txt (each step's full output). Exit 0 = the gate passed.
@@ -45,14 +45,13 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-MIN_FREE_GB = 10.0          # Jake: >= 10 GB free before a gate starts
-MAX_WORKERS = 3             # Jake: at most 3 workers
+# P5-1.1a (Jake 2026-11-04): no fixed caps on workers or memory - load and memory are recorded per step as a
+# measurement, not a limit. A run killed by memory counts as not passed and is rerun.
 RUFF_MAX = 81               # the P4 count of ruff --select F,E9; the gate fails above it
 CONTENTION_MARGIN = 1.5     # mean load above the step's own processes by more than this = CONTENDED
 # pytest, the guard, and pytest-xdist's workers (execnet starts them as `python -c "import sys;exec(eval(...))"`,
 # with no "pytest" in their command line)
 TEST_MARKERS = ("pytest", "measuring_guard.py", "exec(eval(sys.stdin.readline()))")
-EXIT_LOW_MEMORY = 3
 
 
 # ---------------------------------------------------------------------------------------------------- machine state
@@ -266,17 +265,14 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--rev", default="HEAD")
     ap.add_argument("--out", required=True)
-    ap.add_argument("--workers", type=int, default=1)
+    ap.add_argument("--workers", type=int, default=os.cpu_count() or 1)
     ap.add_argument("--sample", type=float, default=15.0, help="seconds between samples")
     ap.add_argument("--ruff-max", type=int, default=RUFF_MAX)
     a = ap.parse_args(argv)
-    if not 1 <= a.workers <= MAX_WORKERS:
-        print(f"gate: --workers must be 1..{MAX_WORKERS}")
+    if a.workers < 1:
+        print("gate: --workers must be at least 1")
         return 2
     free = mem_available_gb()
-    if free is not None and free < MIN_FREE_GB:
-        print(f"gate: {free:.1f} GB free, below the {MIN_FREE_GB:.0f} GB rule - not started")
-        return EXIT_LOW_MEMORY
     out = Path(a.out).resolve()
     if out.exists():
         shutil.rmtree(out)

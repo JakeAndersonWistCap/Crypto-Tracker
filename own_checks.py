@@ -1,6 +1,6 @@
 """own_checks.py - a phase's own checks, chosen from its diff (P5-0 c, Jake 2026-11-03).
 
-    python own_checks.py --base <commit> [--workers 3] [--dry-run]
+    python own_checks.py --base <commit> [--workers N] [--dry-run]   (default: the machine's CPU count)
 
 Compares the working tree with <base> (the commit the phase started from) and runs:
 
@@ -127,11 +127,11 @@ def select(changed: list[str], names: dict[str, set[str]], tests: dict[str, str]
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--base", required=True, help="the commit the phase started from")
-    ap.add_argument("--workers", type=int, default=3)
+    ap.add_argument("--workers", type=int, default=__import__("os").cpu_count() or 1)
     ap.add_argument("--dry-run", action="store_true", help="print the selection only")
     a = ap.parse_args(argv)
-    if not 1 <= a.workers <= 3:
-        print("own_checks: --workers must be 1..3")
+    if a.workers < 1:
+        print("own_checks: --workers must be at least 1")
         return 2
     changed = changed_files(a.base)
     names = names_from_diff(_git("diff", "-U0", a.base))

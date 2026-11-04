@@ -98,12 +98,19 @@ def test_outcomes_are_read_per_test_id_from_junit(tmp_path):
                                                        "tests/test_b.py::test_err": "error"}
 
 
-def test_the_gate_refuses_more_than_three_workers_and_less_than_ten_gb(monkeypatch, tmp_path, capsys):
-    assert gate.main(["--out", str(tmp_path / "g"), "--workers", "4"]) == 2
-    monkeypatch.setattr(gate, "mem_available_gb", lambda *a: 9.5)
-    assert gate.main(["--out", str(tmp_path / "g"), "--workers", "3"]) == gate.EXIT_LOW_MEMORY
-    assert "below the 10 GB rule" in capsys.readouterr().out
-    assert not (tmp_path / "g").exists(), "nothing ran"
+def test_memory_and_workers_are_measured_not_limited():
+    """P5-1.1a (Jake 2026-11-04): no fixed caps - the gate defaults to the machine's CPU count and never refuses on free
+    memory; load and memory stay in every step's record."""
+    import os
+    import inspect
+    src = inspect.getsource(gate.main)
+    assert "MIN_FREE_GB" not in src and "MAX_WORKERS" not in src and "below the" not in src
+    assert gate.main.__module__ == "gate"
+    ap_default = [ln for ln in inspect.getsource(gate.main).splitlines() if '"--workers"' in ln][0]
+    assert "os.cpu_count()" in ap_default
+    assert os.cpu_count() and os.cpu_count() >= 1
+    r = gate.summarize([{"t": 1, "load1": 1.0, "mem_gb": 2.0, "foreign": [], "own_rss_kb": {}, "own_cmd": {}}], 0, 9, 4)
+    assert r["mem_min_gb"] == 2.0, "low memory is recorded, not refused"
 
 
 def test_the_runbook_section_for_the_gate_is_at_the_top_of_the_11d_run():
@@ -112,5 +119,6 @@ def test_the_runbook_section_for_the_gate_is_at_the_top_of_the_11d_run():
     heads = re.findall(r"^## (11d\w*)\.", text, re.M)
     assert heads[0] == "11dt" and heads[1] == "11ds"
     sec = text[text.index("## 11dt."):text.index("## 11ds.")]
-    for m in ("gate.py", "own_checks.py", "TOKEN_METRICS_SHARED_BUILD_STALE", "10 GB", "never", "skipped"):
+    for m in ("gate.py", "own_checks.py", "TOKEN_METRICS_SHARED_BUILD_STALE", "No fixed cap", "NETWORK BLOCKED IN TESTS",
+              "never", "skipped"):
         assert m in sec, m

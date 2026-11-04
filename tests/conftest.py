@@ -99,15 +99,125 @@ SHARED_PLAIN_BUILD_GROUP = "shared_plain_build"
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "xdist_group(name): run every test of the group on one xdist worker")
+    _install_network_block()
+
+
+_WIDE_SCOPE = None
+
+
+def needs_one_worker(path) -> bool:
+    """P5-1.1a: a file stays on one worker only when a fixture it defines outlives a single test (module, class,
+    package or session scope): splitting it would build that fixture on every worker that runs one of its tests."""
+    import re as _re
+    global _WIDE_SCOPE
+    if _WIDE_SCOPE is None:
+        _WIDE_SCOPE = _re.compile(r"""scope\s*=\s*["'](module|class|package|session)["']""")
+    try:
+        return bool(_WIDE_SCOPE.search(open(path, encoding="utf-8").read()))
+    except OSError:
+        return True
 
 
 @pytest.hookimpl(tryfirst=True)       # before xdist's own hook, which reads the mark to group the tests
 def pytest_collection_modifyitems(session, config, items):
     import pathlib
+    seen: dict = {}
     for item in items:
-        name = pathlib.Path(str(item.fspath)).name
-        group = SHARED_PLAIN_BUILD_GROUP if name in SHARED_PLAIN_BUILD_FILES else name
-        item.add_marker(pytest.mark.xdist_group(name=group))
+        path = pathlib.Path(str(item.fspath))
+        name = path.name
+        if name in SHARED_PLAIN_BUILD_FILES:
+            item.add_marker(pytest.mark.xdist_group(name=SHARED_PLAIN_BUILD_GROUP))
+        elif seen.setdefault(name, needs_one_worker(path)):
+            item.add_marker(pytest.mark.xdist_group(name=name))
+        # otherwise no group: under --dist loadgroup the file's tests are distributed one by one
+
+
+# ================================================================================ P5-1.1c: no network in tests
+NETWORK_ATTEMPTS: list = []        # (test id, what) for every refused attempt in this process
+
+
+def _proxy_ports() -> set:
+    import os as _os
+    import urllib.parse as _up
+    ports = set()
+    for k in ("HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "https_proxy", "http_proxy", "all_proxy"):
+        v = _os.environ.get(k) or ""
+        try:
+            if v and _up.urlsplit(v).port:
+                ports.add(_up.urlsplit(v).port)
+        except ValueError:
+            pass
+    return ports
+
+
+def _current_test() -> str:
+    import os as _os
+    return (_os.environ.get("PYTEST_CURRENT_TEST") or "(outside a test)").split(" ")[0]
+
+
+def _network_allowed(sock, address, proxy_ports) -> bool:
+    import socket as _socket
+    if sock.family not in (_socket.AF_INET, _socket.AF_INET6):
+        return True                                   # Unix sockets: LibreOffice, local IPC
+    try:
+        host, port = address[0], int(address[1])
+    except (TypeError, IndexError, ValueError):
+        return False
+    loopback = host in ("localhost", "::1") or str(host).startswith("127.")
+    return loopback and port not in proxy_ports      # a server the test started itself; never the proxy
+
+
+def _install_network_block():
+    """Refuse every real connection and every browser for the whole test process, and record each attempt."""
+    import socket as _socket
+    if getattr(_socket.socket.connect, "_test_block", False):
+        return
+    proxy_ports = _proxy_ports()
+    real_connect, real_connect_ex = _socket.socket.connect, _socket.socket.connect_ex
+
+    def refuse(what):
+        NETWORK_ATTEMPTS.append((_current_test(), what))
+        return ConnectionRefusedError(f"NETWORK BLOCKED IN TESTS: {_current_test()} tried {what}; stub the network "
+                                      f"in the test (tests/conftest.py, P5-1.1c)")
+
+    def connect(self, address):
+        if not _network_allowed(self, address, proxy_ports):
+            raise refuse(f"connect {address!r}")
+        return real_connect(self, address)
+
+    def connect_ex(self, address):
+        if not _network_allowed(self, address, proxy_ports):
+            refuse(f"connect_ex {address!r}")
+            return 111                                 # ECONNREFUSED
+        return real_connect_ex(self, address)
+    connect._test_block = connect_ex._test_block = True
+    _socket.socket.connect, _socket.socket.connect_ex = connect, connect_ex
+    try:
+        import playwright.sync_api as _pw
+    except Exception:  # noqa: BLE001 - no Playwright installed: nothing to block
+        return
+
+    def no_browser(*a, **k):
+        NETWORK_ATTEMPTS.append((_current_test(), "start a Playwright browser"))
+        raise RuntimeError(f"BROWSER BLOCKED IN TESTS: {_current_test()} tried to start a browser; stub "
+                           f"fetch.browser_capture / playwright in the test (tests/conftest.py, P5-1.1c)")
+    _pw.sync_playwright = no_browser
+
+
+_NETWORK_CHECKED = [0]             # attempts up to this index were already reported by a test
+
+
+@pytest.fixture(autouse=True)
+def _no_network_was_attempted():
+    """P5-1.1c: a test during which a real connection or a browser was attempted fails, with every attempt listed,
+    even when the code under test caught the refusal and carried on. Everything since the previous test's check
+    counts, so an attempt inside a module fixture's setup fails the first test that set it up."""
+    yield
+    mine = NETWORK_ATTEMPTS[_NETWORK_CHECKED[0]:]
+    _NETWORK_CHECKED[0] = len(NETWORK_ATTEMPTS)
+    if mine:
+        pytest.fail("NETWORK BLOCKED IN TESTS - this test (or its module fixture) tried the network "
+                    f"{len(mine)} time(s): " + "; ".join(sorted({w for _t, w in mine}))[:1500], pytrace=False)
 
 
 @pytest.fixture(autouse=True, scope="session")
@@ -121,6 +231,8 @@ def _shared_build_master_unchanged():
         _sys.path.insert(0, here)
     import shared_build
     bad = shared_build.verify_unchanged()
+    late = NETWORK_ATTEMPTS[_NETWORK_CHECKED[0]:]         # a module fixture's teardown, after its last test
+    bad += [f"NETWORK BLOCKED IN TESTS after the last test checked: {t}: {w}" for t, w in late]
     assert not bad, "\n".join(bad)
 
 
