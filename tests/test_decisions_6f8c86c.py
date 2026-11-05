@@ -181,7 +181,8 @@ def test_total_yield_is_validator_yield_less_net_inflation_on_the_real_dump(tmp_
     from test_final_round import _build, _cell
     wb, value = _build(tmp_path, monkeypatch, "Ethereum")
     vy = _cell(wb, value, "A1", "Ethereum", "VALIDATOR STAKING YIELD")
-    ni = _cell(wb, value, "Master", "Ethereum", "Net supply change, annualised % of circulating")
+    # PR1.S8: net inflation is Master's issuance − burn component (the net supply change is the circulating change)
+    ni = _cell(wb, value, "Master", "Ethereum", "Issuance − burn, annualised % of circulating")
     st = _cell(wb, value, "A1", "Ethereum", "TOTAL YIELD — stakers")
     nh = _cell(wb, value, "A1", "Ethereum", "Total yield — non-stakers")
     assert isinstance(vy, float)

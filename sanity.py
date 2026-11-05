@@ -154,8 +154,10 @@ def hits(wb, value) -> list[tuple[str, str, str]]:
                 found.append((p, "status_contradicts", f"{what} status '{st}' but {flow:,.0f} measured in Q0"))
             elif low.startswith("active") and (flow == 0 or "no " + what + " series measured" in low):
                 found.append((p, "status_contradicts", f"{what} status '{st}' but no {what} measured in the window"))
-        net = mv(p, "NET SUPPLY CHANGE Q0 (tokens) = issuance − burn")
-        ann = _num(mv(p, "Net supply change, annualised % of circulating"))
+        # PR1.S8: the issuance − burn COMPONENT carries the equal-coverage guard (Master's net supply change is now the
+        # circulating change, closing − opening, one series)
+        net = mv(p, "Issuance − burn Q0 (tokens) — a component of the supply change, NOT the net supply change")
+        ann = _num(mv(p, "Issuance − burn, annualised % of circulating — a component, NOT the net supply change"))
         if isinstance(net, str) and net.startswith("BLOCKED") and ann is not None:
             found.append((p, "mixed_windows", f"net supply change is {net[:90]}, yet its annualised % reads {ann:.3%}"))
     # CP (Phase 2, 2026-10-12): float is a part of circulating; discretionary supply a part of total supply

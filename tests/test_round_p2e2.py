@@ -30,7 +30,7 @@ TABS = ("A1 Infrastructure", "A2 Coordination", "A3 Revenue Buyback", "A4 Perman
 KEY_STEM = {"A1 Infrastructure": "Settlement/token 1-yr chg", "A2 Coordination": "Revenue ÷ emissions (x)",
             "A3 Revenue Buyback": "Burned ÷ (emis + unlocks)", "A4 Permanent Burn": "Burn ÷ issuance (x)"}
 OTHER_STEM = {"A1 Infrastructure": "Fees ÷ issuance", "A2 Coordination": "$ per token emitted",
-              "A3 Revenue Buyback": "Retired ÷ (emis + unlocks)", "A4 Permanent Burn": "Net supply change (tokens)"}
+              "A3 Revenue Buyback": "Retired ÷ (emis + unlocks)", "A4 Permanent Burn": "Issuance − burn (tokens)"}   # PR1.S8: A4's figure is mint − burn
 KEY_ID = {"A2 Coordination": "a2_rev_vs_emissions_value", "A3 Revenue Buyback": "a3_burned_vs_new_supply",
           "A4 Permanent Burn": "a4_crossover"}
 
