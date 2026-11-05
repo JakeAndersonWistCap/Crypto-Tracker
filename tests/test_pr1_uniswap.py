@@ -229,6 +229,7 @@ def test_u3_the_monthly_tab_says_the_one_off_share_of_its_month(monkeypatch):
                              "2025-11": 1.0, "2025-12": 100_000_026.0}])
     wb = openpyxl.Workbook()
     bw.write_monthly(wb.active, ["2025-11", "2025-12"], monthly)
+    assert wb.active.freeze_panes == "E2"
     dec, nov = wb.active.cell(2, 6), wb.active.cell(2, 5)
     assert dec.value == 100_000_026.0, "the month keeps the one-off, like the daily series and Q-3"
     assert dec.comment and "of which one-off: 100%" in dec.comment.text and "UNIfication" in dec.comment.text

@@ -7452,6 +7452,7 @@ def write_monthly(ws, months: list[str], monthly: pd.DataFrame):
                 if note:
                     c.comment = Comment(note, "token_metrics")
     _set_widths(ws, {"A": 34, "B": 36, "C": 6, "D": 7, **{get_column_letter(j): 13 for j in range(5, 5 + len(months))}})
+    ws.freeze_panes = "E2"
 
 
 def _one_off_month_note(key: str, month: str, total: float) -> str:
@@ -7467,7 +7468,6 @@ def _one_off_month_note(key: str, month: str, total: float) -> str:
     return (f"ONE-OFF IN THIS MONTH (PR1.U3; P5-1C.B1, Jake 2026-11-04: one-offs count like recurring flows) — of which "
             f"one-off: {_share_pct(part / total)} — {metric} {month}: {part:,.0f} of {total:,.0f} {unit} ({what}). The same "
             f"one-off is in the daily series, its quarter, Y1 and every trailing figure; each says its share.")
-    ws.freeze_panes = "E2"
 
 
 # ---------------------------------------------------------------------------------------
