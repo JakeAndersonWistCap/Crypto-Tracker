@@ -31,7 +31,8 @@ def test_numerator_label_names_gross_borrower_interest_for_morphos_customer_reve
     assert "GROSS BORROWER INTEREST" in fig[1] and "DefiLlama" in fig[1]
     for head in ("Customer revenue ÷ emissions value (x)", "CUSTOMER REVENUE PER TOKEN EMITTED ($/token) — key ratio",
                  bw.CP_SUBSIDY_HEAD, bw.CP_SUBSIDY_BC_HEAD, "FREE FLOAT ÷ ARR (x) = free float market cap ÷ ARR",
-                 "Rev ÷ emission at Q1 (−3m, $/token)", "LEAKAGE (ii) — incentive spend not returned as revenue"):
+                 "Rev ÷ emission at Q1 (−3m, $/token)", "LEAKAGE (ii) — incentive spend not returned as revenue",
+                 "Customer revenue Δ30d"):
         assert config.numerator_label("Morpho", head)[0] == " (revenue = gross borrower interest)", head
     assert config.numerator_label("Morpho", "Fees Q0 ($)") is None
     assert config.numerator_label("Morpho", "Emissions to suppliers Q0 (tokens)") is None

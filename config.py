@@ -32726,7 +32726,7 @@ NUMERATOR_LABEL = {
 # subsidy-cover columns, and the reader columns that copy them.
 NUMERATOR_LABEL_HEADS = {
     "Customer revenue Q0 ($)": "figure", "Supplier earnings from customers ($)": "figure",
-    "Customer revenue Δ": "figure", "Customer revenue, 90 days": "figure",
+    "Customer revenue Δ": "ratio", "Customer revenue, 90 days": "figure",
     "CUSTOMER REVENUE PER TOKEN EMITTED": "ratio", "Customer revenue ÷ emissions value (x)": "ratio",
     "Customer share of supplier earnings": "ratio", "Revenue per supply unit Q0 ($)": "ratio",
     "Rev ÷ emission at Q": "ratio", "FREE FLOAT ÷ ARR": "ratio",
