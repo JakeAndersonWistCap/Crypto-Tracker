@@ -1882,13 +1882,16 @@ def _quarter_change(t: dict | None, asof: pd.Timestamp) -> tuple[str, object, st
         return "blocked", None, (f"Blocked: the two quarters compared straddle a series break (a change of measuring "
                                  f"point) on {', '.join(str(d.date()) for d in inside)} — a change across it is not a "
                                  f"change of the business. {plain(t['break'])}\n\n{where}")
-    if "rolling T12M" in t["trend"]:
-        a, b = t["t12m"], t["t12m_prev"]
-        if a is None or b is None or b == 0:
-            return "n/a", None, ("A lumpy series, read on a trailing-12-month basis: no T12M change "
-                                 "(a T12M figure is missing or the earlier one is 0).\n\n" + where)
-        return "t12m", (a - b) / abs(b), (f"A lumpy series, so the change is read on a TRAILING-12-MONTH basis: T12M "
-                                          f"{a:,.6g} against {b:,.6g} a quarter earlier.\n\n{where}")
+    # PR1.S5: the quarter before is a launch or partial quarter — a change from it is no percentage (its label instead)
+    blk = re.search(r"QoQ: n/a — ([^;]+)", t.get("why") or "")
+    if blk:
+        return "n/a", None, (f"No change: the quarter before is not a full quarter on this basis — {blk.group(1)}."
+                             f"\n\n{where}")
+    # PR1.S3 (Jake 2026-11-05): THE SAME BASIS AS THE QUARTERS SHOWN, for a lumpy series too — the latest quarter against
+    # the one before. It read the rolling 12-month change silently (Morpho +5.5% where its latest / −1 qtr gave −30.2%;
+    # Uniswap A4 +21% where they gave −57%); the trailing-12-month reading stays on the Trend column, said there.
+    lumpy = ("\n\nA lumpy series: one quarter against the next swings with the timing of its events — the Trend "
+             "column reads its direction on a trailing-12-month basis." if "rolling T12M" in t["trend"] else "")
     q0, q1 = vals[0], vals[1]
     if q0 is None or q1 is None or q1 == 0:
         return "n/a", None, ("No change: " + ("the quarter before is 0" if q1 == 0 else
@@ -1896,7 +1899,7 @@ def _quarter_change(t: dict | None, asof: pd.Timestamp) -> tuple[str, object, st
     mod = [q for q in ("Q0", "Q-1") if re.search(rf"(?<![\w-]){re.escape(q)}(?![\d])", t["modelled"])]
     note = (f" MODELLED: {', '.join(mod)} is modelled, not measured — the change is shown, not scored." if mod else "")
     return ("modelled" if mod else "ok"), (q0 - q1) / abs(q1), (f"Latest quarter {q0:,.6g} against {q1:,.6g}.{note}"
-                                                                 f"\n\n{where}")
+                                                                 f"{lumpy}\n\n{where}")
 
 
 FILL_MODELLED = PatternFill("solid", fgColor="FFE699")
@@ -2034,8 +2037,9 @@ def _write_arch_tab(sh: Sheet, ctx: Ctx, spec: TabSpec) -> None:
         add(Col(KEY_CHANGE_HEADER if is_key else _traj_header(stem, "qtr change", "change"),
                 ("The rank key's " if is_key else f"{stem}: its ") + "quarter-on-quarter change: (latest quarter − the "
                 "quarter before) ÷ |the quarter before|; ▲ up from +1%, ► within ±1%, ▼ down. A change across a series "
-                "break reads 'blocked'; a lumpy series is compared on a trailing-12-month basis; a MODELLED quarter is "
-                "said so.", FMT_PCT, "(c) Trajectory", "computed from the key's quarters" if a1 else
+                "break reads 'blocked'; a change from a launch or partial quarter reads n/a with its label; a lumpy "
+                "series is compared on the same quarters (its Trend reads the trailing 12 months); a MODELLED quarter "
+                "is said so.", FMT_PCT, "(c) Trajectory", "computed from the key's quarters" if a1 else
                 f"computed from the Trajectory tab, {tid}", 0, 11,
                 audit=(tab, kt) if kt and kt.startswith(f"Trend — {tid} ") else None), ("trend", tid))
     # (d) drivers

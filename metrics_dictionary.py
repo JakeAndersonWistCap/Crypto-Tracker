@@ -244,7 +244,7 @@ ENTRIES = {
     "BUSINESS 1 — core usage": dict(
         what="The first usage / customer series the project's business is judged on (config.BUSINESS_SLOTS): DEX "
              "volume, loans outstanding, USDS supply, CCIP messages, stations, intents volume, L2 activity, TVL …",
-        formula="a STOCK reads its latest value (a shifted quarter: that quarter's mean); a FLOW its Q0 total ÷ covered "
+        formula="a STOCK reads its latest value (a shifted quarter: its reading at that quarter's end); a FLOW its Q0 total ÷ covered "
                 "days × 365, BLOCKED below the minimum coverage. The column to its left names the series, its unit, its "
                 "source kind (DASHBOARD where it is an aggregator's reconstruction) and what an on-chain replacement "
                 "would need", window="now / Q0", unit="per series ($, count, tokens)",

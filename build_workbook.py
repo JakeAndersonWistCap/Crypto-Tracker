@@ -115,7 +115,13 @@ DATA_COLS = ["key", "project", "metric", "label", "kind", "unit", "source", "tie
              # headline can be re-computed over Q-1..Q-4 by the same formula (build_workbook.ShiftRefs)
              "q4", "q4_covered_days", "q1_events", "q2_events", "q3_events", "q4_events",
              # P5-1.4 (Jake 2026-11-04): Q0's covered days split — a MODELLED day is never counted as measured
-             "q0_measured_days", "q0_modelled_days"]
+             "q0_measured_days", "q0_modelled_days",
+             # PR1.S1 (Jake 2026-11-05): Q0's days after the series' last row (the read lag) — not covered, not annualised
+             "q0_lag_days",
+             # PR1.S2 (Jake 2026-11-05): a STOCK's reading at each earlier quarter's end — what a shifted "now" reads, so
+             # a trend compares today's value with the value k quarters ago, never with a 90-day average
+             "q1_end", "q2_end", "q3_end", "q4_end"]
+QUARTER_ENDS = ("q1_end", "q2_end", "q3_end", "q4_end")
 DATA_HEAD = ["Key (project|metric)", "Project", "Metric", "Label", "Kind", "Unit", "Source (of latest point)", "Tier", "Latest date",
              "Now (flow: trailing 30d sum · stock: latest)", "Prior 30d (flow: 30d ending -30d · stock: value at -30d)",
              "Q0 (flow: trailing 90d sum, or 3 complete months for a monthly series — see Q0 basis · stock: 90d avg)", "Q1 (90d ending -90d)", "Q2 (90d ending -180d)", "Q3 (90d ending -270d)",
@@ -138,13 +144,16 @@ DATA_HEAD = ["Key (project|metric)", "Project", "Metric", "Label", "Kind", "Unit
              "First date held",
              "Q4 (90d ending -360d; flow: sum · stock: avg)", "Q4: days covered",
              "Q1: days with a non-zero value (events)", "Q2: events", "Q3: events", "Q4: events",
-             "Q0: MEASURED days of the covered days", "Q0: MODELLED days of the covered days (never counted as measured)"]
+             "Q0: MEASURED days of the covered days", "Q0: MODELLED days of the covered days (never counted as measured)",
+             "Q0: days after the last row (read lag; not covered, not annualised over)",
+             "Stock: reading at Q1's end (-90d)", "Stock: reading at Q2's end (-180d)",
+             "Stock: reading at Q3's end (-270d)", "Stock: reading at Q4's end (-360d)"]
 DC = {name: get_column_letter(i + 1) for i, name in enumerate(DATA_COLS)}
 # Appended day-count columns that formulas READ as numbers (see write_data).
 NUMERIC_APPENDED = ("q0_covered_days", "q0_events", "q0_pre_end_days", "silent_days",
                     "now_covered_days", "m1_covered_days", "q1_covered_days", "q2_covered_days",
                     "q3_covered_days", "q4_covered_days", "q1_events", "q2_events", "q3_events", "q4_events",
-                    "q0_measured_days", "q0_modelled_days")
+                    "q0_measured_days", "q0_modelled_days", "q0_lag_days")
 
 # Config table layout
 CFG_COLS = [
@@ -246,6 +255,21 @@ def _window_mean(s: pd.Series, start: pd.Timestamp, end: pd.Timestamp) -> float 
 def _at_or_before(s: pd.Series, when: pd.Timestamp) -> float | None:
     w = s[s.index <= when]
     return float(w.iloc[-1]) if len(w) else None
+
+
+def _quarter_end_readings(s: pd.Series, asof: pd.Timestamp, period: int, limit: int) -> dict:
+    """PR1.S2 (Jake 2026-11-05): a STOCK's reading at each earlier quarter's end (asof − k x period, k = 1..4) — the
+    latest row on or before it, no older than `limit` days (the series' staleness threshold): an older reading is a
+    hole, never carried. Q0's "now" is the latest reading; a shifted "now" reads these, so price, market cap, FDV,
+    circulating, float and TVL compare a reading with a reading (Hyperliquid's TVL read +77.1% today against Q-1's
+    90-day average where the readings gave +32.2%)."""
+    out = {}
+    for k in range(1, len(QUARTERS)):
+        end = asof - pd.Timedelta(days=period * k)
+        w = s[s.index <= end]
+        ok = len(w) and (end - pd.Timestamp(w.index[-1])).days <= int(limit)
+        out[f"q{k}_end"] = float(w.iloc[-1]) if ok else None
+    return out
 
 
 def _latest_complete_month(s: pd.Series, asof: pd.Timestamp) -> tuple[float | None, str]:
@@ -629,8 +653,15 @@ def _day_ranges(days: list[pd.Timestamp]) -> str:
 
 
 def _window_coverage(s: pd.Series, start: pd.Timestamp, end: pd.Timestamp,
-                     differenced: bool = False) -> tuple[int, int]:
+                     differenced: bool = False, last=None) -> tuple[int, int]:
     """(days the series actually covers inside the window, days the window asks for).
+
+    PR1.S1 (Jake 2026-11-05) — `last`, the series' last covered day: EVERY FLOW IS ANNUALISED OVER ITS COVERED DAYS.
+    Q0 held 89 values (the as-of day not yet read) and was multiplied by 365/90 for every project but Maple, whose
+    flows read calendar months: the numerator covered 89 days, the denominator 90. With `last` given (a daily-observed
+    flow, aggregate()), the window's covered days run from the first row's own day to `last` — the days after the last
+    row are not covered (they are the lag allowance: _lag_days, which the COVERS note and confidence still read as the
+    span the series was alive for). Without `last`, the span rule below, unchanged.
 
     A TRAILING-30-DAY SUM OVER A SERIES TEN DAYS OLD IS A TEN-DAY SUM, and until 2026-09-21 it was
     printed under a 30-day header with nothing to say so. Hyperliquid's 155,971 was roughly a
@@ -651,6 +682,15 @@ def _window_coverage(s: pd.Series, start: pd.Timestamp, end: pd.Timestamp,
     span = max(int((end - start).days), 0)
     if s.empty:
         return 0, span
+    if last is not None:
+        # each row covers its own day (a differenced row the interval ending on its date: one day too), so the first
+        # row's day is in and the count runs to the last covered day — k daily rows cover k days
+        hi = min(end, pd.Timestamp(last).normalize())
+        lo = max(start, pd.Timestamp(s.index.min()).normalize() - pd.Timedelta(days=1))
+        days = int((hi - lo).days)
+        if days <= 0:
+            days = 1 if ((s.index > start) & (s.index <= end)).any() else 0
+        return min(max(days, 0), span), span
     # A DIFFERENCED FLOW'S FIRST ROW COVERS THE DAY BEFORE ITS DATE (Jake's run 2026-10-06: Ethereum's issuance
     # read 20,876 against the curve's 18,070, +15.5% — seven daily Eth2Staking steps summed over "6" covered
     # days, because k daily deltas dated D1..asof were counted asof - D1 = k - 1 days). ONLY when the series
@@ -668,6 +708,14 @@ def _window_coverage(s: pd.Series, start: pd.Timestamp, end: pd.Timestamp,
     if days == 0 and ((s.index > start) & (s.index <= end)).any():
         days = 1
     return min(days, span), span
+
+
+def _lag_days(last, start: pd.Timestamp, end: pd.Timestamp) -> int:
+    """PR1.S1: the window's days after the series' last covered day — not covered (never annualised over), but the
+    ordinary read lag the COVERS note and confidence allow (a stopped series is staleness's to report)."""
+    if last is None:
+        return 0
+    return max(int((end - max(pd.Timestamp(last).normalize(), start)).days), 0)
 
 
 # =========================================================================================
@@ -1643,7 +1691,9 @@ def confidence_for(project: str, metric: str, row: dict, asof: pd.Timestamp) -> 
     # is most likely to act on. Point count does not catch it: eight points over ten days is a
     # densely sampled series that still covers a third of the window.
     covered, window = row.get("covered_days"), row.get("window_days")
-    if window and covered is not None and covered < window:
+    # PR1.S1: the days after the last row are the read lag — not covered, not a short history (staleness reports a stop)
+    lag = int(row.get("lag_days") or 0)
+    if window and covered is not None and covered + lag < window:
         why.append(f"covers only {covered} of the {window} days in the window — the figure is a "
                    f"{covered}-day total, not a low {window}-day one")
     if row.get("q0_dense_note"):
@@ -5956,14 +6006,22 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                          if config.scanned_from_genesis(name, metric) and not s.empty else _after_leg_gap(g, s))
                 if len(s_cov) < len(s) and not s_cov.empty:     # the current leg: its own first row decides
                     diff_first = _differenced_first(g[pd.to_datetime(g["date"]).dt.normalize() >= s_cov.index.min()])
-                row["covered_days"], row["window_days"] = _window_coverage(s_cov, w_start, asof, diff_first)
+                # PR1.S1: A DAILY-OBSERVED FLOW COVERS ITS ROWS' DAYS, NO MORE — the as-of day not yet read (and any day
+                # after the last row) is not covered, so the window is annualised over the days its sum holds. Not for a
+                # scan read from genesis (its days are the scanned range) or a period-dated (weekly / epoch) series.
+                last_cov = (pd.Timestamp(s_cov.index.max()).normalize()
+                            if not s_cov.empty and _observed_cadence(g) == "daily"
+                            and not config.scanned_from_genesis(name, metric) else None)
+                row["covered_days"], row["window_days"] = _window_coverage(s_cov, w_start, asof, diff_first, last_cov)
+                row["lag_days"] = _lag_days(last_cov, w_start, asof)
                 dense = (name, metric) in config.DENSE_DAILY_FLOWS
                 # THE SAME TWO QUESTIONS FOR THE Q0 WINDOW, which A4's headline annualises
                 # (x days_per_year / period_days). A Q0 sum over a series that began 42 days ago
                 # is a 42-day sum; a Q0 holding ONE discrete burn is an event, not a rate. Both
                 # are what A4's window caveat reads (_a4_window_caveat). Added 2026-09-25.
                 q_start = asof - pd.Timedelta(days=period)
-                row["q0_covered_days"], _ = _window_coverage(s_cov, q_start, asof, diff_first)
+                row["q0_covered_days"], _ = _window_coverage(s_cov, q_start, asof, diff_first, last_cov)
+                row["q0_lag_days"] = _lag_days(last_cov, q_start, asof)
                 if dense:
                     # G9 F1: A SERIES WITH ONE ROW PER DAY BY CONSTRUCTION COUNTS ITS DAYS, NOT ITS SPAN. Ethereum's P2P
                     # leg read GREEN with 37 days held of the 85 since its first (a 48-day hole the span ignores):
@@ -6067,14 +6125,14 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                             f"figure was low. {hole.get('do_not', '')}".strip())
                 row["now_covered_days"] = row["covered_days"]
                 row["m1_covered_days"], _ = _window_coverage(s_cov, asof - pd.Timedelta(days=2 * short),
-                                                             asof - pd.Timedelta(days=short))
+                                                             asof - pd.Timedelta(days=short), last=last_cov)
                 if cov_set:                                  # D6-1: the same holes off every window
                     h_m = WINDOW_HOLES[(name, metric, "m1")] = _interior_holes(
                         cov_set, asof - pd.Timedelta(days=2 * short), asof - pd.Timedelta(days=short), first_cov)
                     row["m1_covered_days"] = max(int(row["m1_covered_days"] or 0) - len(h_m), 0)
                 for i, q in enumerate(QUARTERS[1:], start=1):
                     lo_q, hi_q = asof - pd.Timedelta(days=period * (i + 1)), asof - pd.Timedelta(days=period * i)
-                    row[f"{q}_covered_days"], _ = _window_coverage(s, lo_q, hi_q)
+                    row[f"{q}_covered_days"], _ = _window_coverage(s, lo_q, hi_q, last=last_cov)
                     if cov_set:
                         h_i = WINDOW_HOLES[(name, metric, q)] = _interior_holes(cov_set, lo_q, hi_q, s.index.min())
                         row[f"{q}_covered_days"] = max(int(row[f"{q}_covered_days"] or 0) - len(h_i), 0)
@@ -6093,6 +6151,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                 for i, q in enumerate(QUARTERS):
                     row[q] = _window_mean(s, asof - pd.Timedelta(days=period * (i + 1)), asof - pd.Timedelta(days=period * i))
                 row["y1"] = _window_mean(s, asof - pd.Timedelta(days=365), asof)
+                row.update(_quarter_end_readings(s, asof, period, _stale_limit(name, metric, stale_days, g)))
             # ===== LAST NON-ZERO, AND IS THE PROGRAM SILENT? Added 2026-09-28. =====
             # A series of zeros is a measured "nothing happened", and it says nothing about WHEN
             # something last did. For a flow the last non-zero day comes from the stored series
@@ -6278,7 +6337,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                                f"({row['period_label']}), not a trailing 30-day sum"
                                + (f" | {row['note']}" if row["note"] else ""))
             covered, window = row["covered_days"], row["window_days"]
-            if window and covered is not None and covered < window:
+            if window and covered is not None and covered + int(row.get("lag_days") or 0) < window:
                 # TWO REASONS A WINDOW IS SHORT, AND THEY SEND THE READER TO DIFFERENT PLACES. A
                 # series that has not existed long enough is nobody's fault and needs no action;
                 # a source that stopped reporting for nine days is a fact about the upstream
@@ -6310,7 +6369,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
                 row["status"] = "n/a"
                 row["note"] = (f"{config.buyback_route(name)['reason']} {len(g)} stored row(s) "
                                f"predate this and are not shown — orphan_cleanup.sql section AO.")
-                for col in ("now", "m1", *QUARTERS, "y1"):
+                for col in ("now", "m1", *QUARTERS, "y1", *QUARTER_ENDS):
                     row[col] = None
                 row["confidence"], row["why_amber"] = confidence_for(name, metric, row, asof)
                 rows.append(row)
@@ -6319,7 +6378,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
             if supp.get("renders_as") == "n/a":
                 row["status"] = "n/a"
                 row["note"] = supp.get("na_reason") or supp.get("why", "")
-                for col in ("now", "m1", *QUARTERS, "y1"):
+                for col in ("now", "m1", *QUARTERS, "y1", *QUARTER_ENDS):
                     row[col] = None
                 row["confidence"], row["why_amber"] = confidence_for(name, metric, row, asof)
                 rows.append(row)
@@ -6328,12 +6387,12 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
             if na_note and (not withheld or withheld[0] == "blocked"):
                 row["status"] = "n/a"
                 row["note"] = f"{na_note} {len(g)} stored row(s) are not shown (orphan_cleanup.sql lists them for review)."
-                for col in ("now", "m1", *QUARTERS, "y1"):
+                for col in ("now", "m1", *QUARTERS, "y1", *QUARTER_ENDS):
                     row[col] = None
             elif withheld:
                 row["status"], reason = withheld
                 row["note"] = f"NOT REPORTED — {reason}" + (f" | {row['note']}" if row["note"] else "")
-                for col in ("now", "m1", *QUARTERS, "y1"):
+                for col in ("now", "m1", *QUARTERS, "y1", *QUARTER_ENDS):
                     row[col] = None
                 held[(name, metric)] = withheld
             # A DECLARED ZERO NEVER CLAIMS HISTORY BEFORE ITS `since` (alignment round B10): with no stored row before
@@ -6368,7 +6427,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
             status, reason = held[(row["project"], parent)]
             row["status"] = status
             row["note"] = f"NOT REPORTED — inherits {parent}'s: {reason}"
-            for col in ("now", "m1", *QUARTERS, "y1"):
+            for col in ("now", "m1", *QUARTERS, "y1", *QUARTER_ENDS):
                 row[col] = None
             row["confidence"], row["why_amber"] = confidence_for(row["project"], row["metric"], row, asof)
     # MIGRATION WATCH (Jake, 2026-10-11): from label_from until the RUNBOOK plan is built, the watched rows say so
@@ -6473,6 +6532,7 @@ def _macro_rows(groups: dict, asof: pd.Timestamp) -> list[dict]:
                 row["note"] = f"latest {last.date()} is more than 7 days before {asof.date()}"
             for i, q in enumerate(QUARTERS):
                 row[q] = _window_mean(s, asof - pd.Timedelta(days=period * (i + 1)), asof - pd.Timedelta(days=period * i))
+            row.update(_quarter_end_readings(s, asof, period, 7))     # PR1.S2: the reading at each quarter's end
         out.append(row)
     return out
 
@@ -6539,7 +6599,9 @@ def _shift_col(metric: str, col: str, k: int) -> str | None:
         j = int(m.group(1)) + k
         return f"q{j}{m.group(2) or ''}" if f"q{j}" in QUARTERS else None
     if col == "now":
-        return f"q{k}" if (METRICS.get(metric) or {}).get("kind") == "stock" and f"q{k}" in QUARTERS else None
+        # PR1.S2 (Jake 2026-11-05): a STOCK's "now" k quarters back is its READING at that quarter's end (q<k>_end), not
+        # the quarter's 90-day mean — today's reading against a reading, like with like
+        return f"q{k}_end" if (METRICS.get(metric) or {}).get("kind") == "stock" and f"q{k}_end" in QUARTER_ENDS else None
     if col in _SHIFT_NA:
         return None
     return col
@@ -6594,7 +6656,7 @@ class Refs:
 
     def X(self, metric: str, col: str = "now") -> str:
         """A GLOBAL series' Data cell (config.MACRO_PROJECT, e.g. the 3-month T-bill): the same on every row; a shifted
-        quarter (the trajectory engine) takes that quarter's mean."""
+        quarter (the trajectory engine) takes its reading at that quarter's end (PR1.S2)."""
         if _SHIFT["k"]:
             col = _shift_col(metric, col, _SHIFT["k"])
             if col is None:
@@ -7288,7 +7350,7 @@ def write_data(ws, data: pd.DataFrame, asof: pd.Timestamp):
     _header(ws, 1, DATA_HEAD)
     ws["A1"].comment = Comment(f"Raw window aggregates of the store as of {asof.date()} (UTC). Literals — source data. "
                                "Missing = 'n/a'. Yellow = manual override. Orange = stale.", "token_metrics")
-    num_cols = ["now", "m1", *QUARTERS, "y1"]
+    num_cols = ["now", "m1", *QUARTERS, "y1", *QUARTER_ENDS]
     for i, row in enumerate(data.itertuples(index=False), start=2):
         fmt = UNIT_FMT.get(row.unit, FMT_NUM)
         if row.metric == "price_usd":
@@ -7296,6 +7358,8 @@ def write_data(ws, data: pd.DataFrame, asof: pd.Timestamp):
         for j, col in enumerate(DATA_COLS, start=1):
             v = getattr(row, col)
             c = ws.cell(row=i, column=j)
+            if col in QUARTER_ENDS and row.kind != "stock":
+                continue                       # PR1.S2: a quarter-end reading is a stock's; a flow's cell stays empty
             if col in num_cols:
                 if v is None or (isinstance(v, float) and pd.isna(v)):
                     # NO BARE n/a (alignment round, SPEC.md rule 2): every pull of a missing Data value carries the
@@ -7565,13 +7629,18 @@ def _widths(specs: list[tuple]) -> dict:
     return out
 
 
-def _lumpy(project_name: str) -> bool:
+def _lumpy(project_name: str, metric: str | None = None) -> bool:
     """A flow that arrives in DISCRETE events on a declared cadence longer than a day.
 
     config.PROGRAM_CADENCE: Sky's monthly Stage 2 burn, Maple monthly, Ether.fi weekly/monthly,
     Pendle biweekly. GEODNET's daily burn and every undeclared flow are CONTINUOUS.
+    PR1.S1 (Jake 2026-11-05): with `metric`, only THE PROGRAMME'S OWN SERIES (and its $ twin) is discrete — Sky's, Ether.fi's
+    and Pendle's daily fees and revenue were annualised x365/90 over 89 covered days because their project declares a
+    programme on another series.
     """
-    cad = config.program_cadence(project_name)
+    cad = config.program_cadence(project_name) if metric is None else (
+        config.program_cadence(project_name, metric)
+        or (config.program_cadence(project_name, metric.replace("_usd", "_tokens")) if metric.endswith("_usd") else None))
     return bool(cad) and max(d for _, d in cad["cadences"]) > 1
 
 
@@ -7747,7 +7816,7 @@ def _annualise(R: Refs, r: int, p: dict, metric: str, total: str) -> str:
         cov = R.D(r, metric, "q0_covered_days")
         return (f"IF(AND(ISNUMBER({cov}),{cov}>0),({total})*{G('days_per_year')}/{cov},"
                 f"({total})*12/3)")
-    if _lumpy(p["name"]):
+    if _lumpy(p["name"], metric):
         return f"({total})*{ANN}"
     # q0_covered_days ABOVE the period is a complete-months Q0 (92 days for Jun-Aug; see
     # _months_until_live), divided by its own days rather than by 90.
@@ -7971,7 +8040,8 @@ def _a4_window_caveat(p: dict, data_by_key: dict) -> str:
                    f"{int(pre)} pre-expiry day(s); annualised figure reflects a schedule that no "
                    f"longer applies, not current issuance. Clears once the full {period}-day "
                    f"window is entirely post-expiry.")
-    elif num(c) and 0 < c < period and num(iss.get("q0")):
+    elif num(c) and 0 < c and c + (iss.get("q0_lag_days") if num(iss.get("q0_lag_days")) else 0) < period \
+            and num(iss.get("q0")):
         shown, true = iss["q0"] * ann / period, iss["q0"] / c * ann
         parts.append(f"ISSUANCE covers {int(c)} of {period} days, so annualised as if full it reads "
                      f"{shown:,.0f}/yr against a {true:,.0f}/yr run-rate ({period / c:.2f}x low)")
@@ -8632,8 +8702,8 @@ def _total_yield_cols(R: Refs, vyield) -> list[tuple]:
             *_tbill_cols(R, [("Total yield — stakers", stakers), ("Total yield — non-stakers", holders)])]
 
 
-TBILL_HEAD = ("3-MONTH T-BILL — risk-free benchmark (US Treasury 13-week coupon equivalent; the quarter's mean on a "
-              "shifted quarter)")
+TBILL_HEAD = ("3-MONTH T-BILL — risk-free benchmark (US Treasury 13-week coupon equivalent; the reading at the "
+              "quarter's end on a shifted quarter)")
 
 
 def _tbill_cols(R: Refs, yields: list[tuple]) -> list[tuple]:
@@ -11507,9 +11577,9 @@ def _holding_cell(p: dict, kind: str):
     return f"={v!r}" if v is not None else f"n/a — {why}"
 
 
-MARKET_SHARE_HEAD = "MARKET SHARE vs its category (now; a shifted quarter: that quarter's mean) — peer set beside"
-MARKET_SHARE_2_HEAD = ("MARKET SHARE, SECOND BASIS — chain fees vs 13 chains (now; a shifted quarter: that quarter's "
-                       "mean)")
+MARKET_SHARE_HEAD = "MARKET SHARE vs its category (now; a shifted quarter: the reading at its end) — peer set beside"
+MARKET_SHARE_2_HEAD = ("MARKET SHARE, SECOND BASIS — chain fees vs 13 chains (now; a shifted quarter: the reading at "
+                       "its end)")
 BUSINESS_HEAD = "BUSINESS {i} — core usage (a stock: now; a flow: Q0 annualised over its covered days)"
 
 
@@ -13447,10 +13517,9 @@ def write_trajectory(wb, data_by_key: dict, asof=None) -> list[dict]:
                                                  _LAST_GROUPS, asof, int(config.TRAJECTORY["period_days"]), len(qs)))
         if modelled:
             why.append(f"MODELLED in {', '.join(modelled)} (config.MODELLED_POINTS) — shown, excluded from any scoring")
-        q = trajectory.qoq(qs[0], qs[1])
         # THE GROWTH RULES (item 4): >= 3 quarters, all > 0, one regime — else NEW since / STEP CHANGE at, never a rate
         # THE YOUNGEST INPUT'S FIRST DAY (review of the ef6dc86 run, item 10): a part-quarter at the start is no base
-        starts_in = None
+        starts_in, start_label = None, ""
         if asof is not None and not w["independent"]:
             firsts = [(data_by_key.get(f"{spec['project']['name']}|{m}") or {}).get("first_date")
                       for m in trajectory.referenced_metrics(w["q0_formula"])]
@@ -13471,6 +13540,9 @@ def write_trajectory(wb, data_by_key: dict, asof=None) -> list[dict]:
                     covs = [float(c) for c in covs if isinstance(c, (int, float)) and c == c]
                     if covs and min(covs) < 0.9 * int(config.TRAJECTORY["period_days"]):
                         starts_in = oldest
+                        # PR1.S5: a quarter only partly held reads "partial quarter", never a percentage
+                        start_label = (f"partial quarter ({trajectory.LABELS[oldest]}: {min(covs):.0f} of "
+                                       f"{int(config.TRAJECTORY['period_days'])} days covered)")
         # A SHORT HISTORY SAYS WHICH KIND IT IS (Round G 2.2): fewer than five quarters with a value -> the youngest input
         # and FORWARD-ONLY (the source keeps none) / SOURCE-LIMITED (no route) / BUG (a route exists, not yet run)
         if asof is not None and not w["independent"] and sum(1 for v in qs if trajectory._num(v) is not None) < len(qs):
@@ -13487,8 +13559,32 @@ def write_trajectory(wb, data_by_key: dict, asof=None) -> list[dict]:
                 why.append(f"n/a in every quarter by the cell's own declaration (nothing to backfill) — {q0t[:200]}")
             elif hc := _history_class(spec["project"], trajectory.referenced_metrics(w["q0_formula"]), data_by_key):
                 why.append(hc)
-        g, n_g, g_label, why_g = trajectory.growth_rule(qs, step_at, starts_in)
-        imp, n_imp = trajectory.improved(qs, d)
+        # PR1.S5 / U6 (Jake 2026-11-05): A SERIES THAT STARTS AT A DECLARED LAUNCH (config.SERIES_LAUNCH — Uniswap's fee
+        # switch 2025-12-30) takes no statistic from a quarter wholly before it, and the quarter holding it is no growth
+        # base: "NEW since Q-k (<what> <date>)". After the short-history reason above, which reads the quarters as held.
+        if asof is not None and not w["independent"]:
+            las = [x for x in (config.series_launch(spec["project"]["name"], m)
+                               for m in sorted(trajectory.referenced_metrics(w["q0_formula"]))) if x]
+            if las:
+                la = max(las, key=lambda x: x["date"])
+                k_l, part = trajectory.launch_quarter(la["date"], asof, int(config.TRAJECTORY["period_days"]), len(qs))
+                if k_l is not None:
+                    if k_l + 1 < len(qs):
+                        qs = list(qs[:k_l + 1]) + [None] * (len(qs) - k_l - 1)
+                        why.append(f"LAUNCH {la['date']} ({la['what']}; config.SERIES_LAUNCH): no statistic from the "
+                                   f"quarter(s) before {trajectory.LABELS[k_l]}")
+                    if part:
+                        starts_in, start_label = k_l, f"NEW since {trajectory.LABELS[k_l]} ({la['what']} {la['date']})"
+        g, n_g, g_label, why_g, cut = trajectory.growth_base(qs, step_at, starts_in, start_label)
+        # PR1.S5: no comparison reaches a launch or partial quarter — it is no "improved" quarter, and a QoQ from it reads
+        # the label, never a percentage
+        imp, n_imp = trajectory.improved(qs, d, cut)
+        q, qoq_label = trajectory.qoq(qs[0], qs[1]), ""
+        if cut is not None and cut <= 1:
+            q = None
+            qoq_label = (g_label if g_label.startswith(("NEW", "partial")) else start_label
+                         or f"{trajectory.LABELS[cut]} is part-held")
+            why.append(f"QoQ: n/a — {qoq_label}")
         tr = trajectory.trough(qs, d)
         t, t_basis = trajectory.t12m(qs, trajectory.t12m_basis(spec["header"], spec["fmt"]))
         # LUMPY FLOWS (decision 8): direction and growth from the rolling T12M, never a single quarter
@@ -13541,7 +13637,7 @@ def write_trajectory(wb, data_by_key: dict, asof=None) -> list[dict]:
                     "trend": (f"SERIES BREAK {brk[0].date()} · " if brk_text else "")
                              + (f"MODELLED {', '.join(modelled)} · " if modelled else "")
                              + (trajectory.lumpy_trend_text(t, t_prev, chg, g, d, g_label) if lumpy else
-                                trajectory.trend_text(q, g, imp, n_imp, d, g_label)),
+                                trajectory.trend_text(q, g, imp, n_imp, d, g_label, qoq_label)),
                     "T12M_prev": t_prev, "direction_basis": dir_basis, "growth_label": g_label,
                     "group": trajectory.group(spec["hid"]),
                     "series_break": brk_text,

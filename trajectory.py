@@ -4,7 +4,7 @@ trajectory.py — every headline over five consecutive trailing 90-day blocks (t
 THE SAME FORMULA, SHIFTED. A headline cell is a formula over the Data tab's window columns (q0, q0_covered_days,
 q0_events, a stock's "now"). Re-running the cell's own builder while build_workbook.Refs maps each reference k quarters
 back (q0 -> qk, q1 -> q(k+1), q0_covered_days -> qk_covered_days, q0_events -> qk_events, the window's split share and
-status -> the earlier window's, a STOCK's "now" -> its mean over quarter k) gives that headline as it would have read
+status -> the earlier window's, a STOCK's "now" -> its reading at quarter k's end, q<k>_end — PR1.S2) gives that headline as it would have read
 k quarters ago — never a re-implementation that could drift from the cell. A reference with no shifted counterpart (a
 flow's trailing-30-day "now", m1, y1, a quarter past Q-4) becomes NA(), so the shifted cell reads n/a rather than a
 number from the wrong window. Q0 is the unshifted formula, so it IS the headline (the Trajectory tab checks that).
@@ -180,8 +180,20 @@ def partial_start_quarter(first_date, asof, period_days: int, n: int, slack_days
 
 
 def growth_rule(values: list, step_at: int | None = None,
-                starts_in: int | None = None) -> tuple[float | None, int, str, str]:
-    """THE GROWTH RULES (Jake's Phase 1 review 2026-10-12, item 4) over the newest four quarters (values[0] = Q0):
+                starts_in: int | None = None, start_label: str = "") -> tuple[float | None, int, str, str]:
+    """(annual growth, quarters used, label, why) — growth_base without the comparison cut."""
+    return growth_base(values, step_at, starts_in, start_label)[:4]
+
+
+def growth_base(values: list, step_at: int | None = None, starts_in: int | None = None,
+                start_label: str = "") -> tuple[float | None, int, str, str, int | None]:
+    """PR1.S5 (Jake 2026-11-05): growth_rule's figures and THE COMPARISON CUT — the first quarter index no comparison may
+    reach (QoQ, quarters improved): a launch or partial quarter (`starts_in`) and every quarter before it; a mechanism
+    that starts from 0 (its first quarter, part-held); a new regime (the quarter before it). None: no cut.
+    `start_label` names a partial start quarter ("NEW since Q-3 (fee switch 2025-12-30)", "partial quarter (Q-3) …")
+    instead of the default "NEW since Q-x".
+
+    THE GROWTH RULES (Jake's Phase 1 review 2026-10-12, item 4) over the newest four quarters (values[0] = Q0):
     (annual growth, quarters used, label, why). A growth figure needs >= min_quarters quarters, all > 0, in ONE regime:
       * a break of basis or mechanism inside the window (`step_at` = the quarter holding it) -> "STEP CHANGE at Q-x";
       * a mechanism that starts inside the window (the oldest quarters READ 0 or less; an empty quarter is history
@@ -191,22 +203,23 @@ def growth_rule(values: list, step_at: int | None = None,
     rule = config.TRAJECTORY["growth"]
     q = [_num(v) for v in values[:4]]
     if step_at is not None and step_at < 4:
-        return None, 0, f"STEP CHANGE at {LABELS[step_at]}", "a break of basis inside the window"
+        return None, 0, f"STEP CHANGE at {LABELS[step_at]}", "a break of basis inside the window", None
     alive = [i for i, v in enumerate(q) if v is not None and v > 0]
     # A PARTIAL FIRST QUARTER (Jake's review of the ef6dc86 run, item 10: NEAR's retired tokens read +971%/yr — the
     # Intents buyback began 2026-03-19, inside Q-2): where the series begins INSIDE its oldest quarter with a value
     # (`starts_in`, the youngest input's first stored day), that quarter is a part-quarter, not a growth base
     if (starts_in is not None and alive and starts_in == max(alive) and starts_in < 4
             and len(alive) >= rule["min_quarters"]):
-        return (None, len(alive), f"NEW since {LABELS[starts_in]}",
-                f"the series begins inside {LABELS[starts_in]} — a part-quarter is not a growth base")
+        return (None, len(alive), start_label or f"NEW since {LABELS[starts_in]}",
+                f"the series begins inside {LABELS[starts_in]} — a part-quarter is not a growth base", starts_in)
     if alive and q[0] is not None and q[0] > 0:
         oldest = max(alive)
         # A MECHANISM THAT STARTS: the older quarters READ 0 (or less) — not empty. An empty quarter is history we do
         # not hold (the gap report's business), never evidence that the series is new.
         older = q[oldest + 1:4]
         if oldest < 3 and older and all(v is not None and v <= 0 for v in older):
-            return None, len(alive), f"NEW since {LABELS[oldest]}", "the mechanism starts inside the window (0 before)"
+            return (None, len(alive), f"NEW since {LABELS[oldest]}", "the mechanism starts inside the window (0 before)",
+                    oldest)
         # ONE REGIME, BOTH WAYS (alignment round 2026-10-13, B13: Chainlink CCIP read −84%/yr where the legacy
         # product was being replaced — a fall of more than 10x is a regime change as much as a rise is): walking back
         # from Q0, the regime ends at the first quarter outside [new_share x Q0, Q0 ÷ new_share]
@@ -223,20 +236,30 @@ def growth_rule(values: list, step_at: int | None = None,
             side = "below" if q[out] < lo else "above"
             bound = f"{rule['new_share']:.0%} of Q0" if side == "below" else f"{1 / rule['new_share']:.0f}x Q0"
             return (None, len(alive), f"NEW since {LABELS[k]}",
-                    f"{LABELS[out]} is {side} {bound} — a new regime, not a growth rate")
+                    f"{LABELS[out]} is {side} {bound} — a new regime, not a growth rate", k + 1)
     pts = [v for v in q if v is not None]
+    # a part-held start quarter too young for the label (fewer quarters than a growth needs) still bars its comparisons
+    cut = starts_in if starts_in is not None and starts_in < 4 else None
     if len(pts) < rule["min_quarters"]:
-        return None, len(pts), "", f"{len(pts)} quarter(s) with a value — growth needs {rule['min_quarters']}"
+        return None, len(pts), "", f"{len(pts)} quarter(s) with a value — growth needs {rule['min_quarters']}", cut
     if any(v <= 0 for v in pts):
-        return None, len(pts), "", "a quarter at or below 0 — log growth is undefined"
+        return None, len(pts), "", "a quarter at or below 0 — log growth is undefined", cut
+    if cut is not None:
+        # PR1.S5: a growth whose base quarter is part-held is no percentage, whatever the quarters' values
+        return (None, len(pts), start_label or f"NEW since {LABELS[cut]}",
+                f"{LABELS[cut]} is part-held — not a growth base", cut)
     g, n, why = loglinear_growth(values)
-    return g, n, "", why
+    return g, n, "", why, None
 
 
-def improved(values: list, d: int | None) -> tuple[int | None, int]:
-    """(quarters improved, comparisons made) over Q0 vs Q-1 .. Q-3 vs Q-4, direction-aware; strictly better counts."""
+def improved(values: list, d: int | None, cut: int | None = None) -> tuple[int | None, int]:
+    """(quarters improved, comparisons made) over Q0 vs Q-1 .. Q-3 vs Q-4, direction-aware; strictly better counts.
+    PR1.S5: `cut` (growth_base) — no comparison reaches that quarter or an older one (a launch or partial quarter is no
+    "improved" quarter)."""
     if not d:
         return None, 0
+    if cut is not None:
+        values = list(values[:cut]) + [None] * max(len(values) - cut, 0)
     n = k = 0
     for newer, older in zip(values[:4], values[1:5]):
         a, b = _num(newer), _num(older)
@@ -291,17 +314,40 @@ def arrow(q, d: int | None) -> str:
     return "▲" if good > 0 else "▼" if good < 0 else "→"
 
 
-def trend_text(q, g, imp, n, d: int | None, label: str = "") -> str:
+def qoq_text(q, qoq_label: str = "") -> str:
+    """'QoQ +x%' — or, where the quarter before is a launch or partial quarter (PR1.S5), 'QoQ n/a — <label>'."""
+    if qoq_label:
+        return f"QoQ n/a — {qoq_label}"
+    return f"QoQ {q:+.1%}" if q is not None else "QoQ n/a"
+
+
+def trend_text(q, g, imp, n, d: int | None, label: str = "", qoq_label: str = "") -> str:
     """THE ARROW FOLLOWS THE 4-QUARTER DIRECTION (Jake's Phase 1 review 2026-10-12, item 5), with quarters improved;
     QoQ is secondary text. A growth label (NEW / STEP CHANGE) stands in for the rate and carries no arrow."""
     if d is None:
-        return "direction not declared · " + (f"QoQ {q:+.1%}" if q is not None else "QoQ n/a")
+        return "direction not declared · " + qoq_text(q, qoq_label)
     parts = [arrow(None if label else g, d)]
     parts.append(label or (f"{g:+.0%}/yr (4Q)" if g is not None else "4Q n/a"))
     if imp is not None:
         parts.append(f"{imp}/{n} improved")
-    parts.append(f"QoQ {q:+.1%}" if q is not None else "QoQ n/a")
+    parts.append(qoq_text(q, qoq_label))
     return " · ".join(parts)
+
+
+def launch_quarter(launch_date, asof, period_days: int, n: int) -> tuple[int | None, bool]:
+    """PR1.S5: (index of the quarter holding the launch day, whether that quarter is only part after it) — quarter k is
+    the period_days ending asof − k x period_days; the launch day is the first day after it. (None, False) where the
+    launch is after asof or before the oldest quarter (every quarter is after it)."""
+    import pandas as pd
+    if launch_date is None or asof is None:
+        return None, False
+    d, a = pd.Timestamp(launch_date).normalize(), pd.Timestamp(asof).normalize()
+    for k in range(n):
+        end = a - pd.Timedelta(days=period_days * k)
+        start = end - pd.Timedelta(days=period_days)          # exclusive: the quarter's first day is start + 1
+        if start < d <= end:
+            return k, d > start + pd.Timedelta(days=1)
+    return None, False
 
 
 # ----------------------------------------------------------------------------------------------- lumpy flows

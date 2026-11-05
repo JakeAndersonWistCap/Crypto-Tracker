@@ -75,7 +75,7 @@ def test_the_shift_maps_each_window_reference():
     assert bw._shift_col("revenue_usd", "q1_covered_days", 3) == "q4_covered_days"
     assert bw._shift_col("revenue_usd", "q0_events", 1) == "q1_events"
     assert bw._shift_col("revenue_usd", "q2", 3) is None                       # past Q-4
-    assert bw._shift_col("price_usd", "now", 2) == "q2"                        # a stock's now -> the quarter's mean
+    assert bw._shift_col("price_usd", "now", 2) == "q2_end"                    # PR1.S2: a stock's now -> its reading at the quarter's end
     assert bw._shift_col("revenue_usd", "now", 2) is None                      # a flow's trailing 30 days has no shift
     assert bw._shift_col("revenue_usd", "y1", 1) is None
     assert bw._shift_col("revenue_usd", "latest_date", 1) == "latest_date"
