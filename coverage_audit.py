@@ -246,6 +246,10 @@ def audit(wb, trajectory_rows: list[dict] | None = None, flows_rows: list[dict] 
                      "MATCHES-SPEC": "yes — re-runs the column's own builder k quarters back"})
     if groups is not None:
         rows.extend(reference_rows(wb, X, groups, rows, flows_rows))
+    # PR1.S6: ONE VERDICT PER CELL — the Credibility tab's verdict and the aggregator rule, after the references graded
+    # the headline rows and before the later rules (no-value statuses, the evidence ladder, MODELLED) apply as before
+    one_verdict(rows, credibility_verdicts(wb, X), groups,
+                (windows or {}).get("q0", (None, None))[1], wb=wb)
     rows.extend(regression_rows(sanity_hits or ()))
     for item, route in not_wired():
         # A NAMED BLOCKER IS NOT "NOT WIRED" (Round G8 item 4, Jake's standing rule): an item ends a round wired, or
@@ -276,6 +280,118 @@ def audit(wb, trajectory_rows: list[dict] | None = None, flows_rows: list[dict] 
 
 
 _HOLDS = ("VERIFIED", "VERIFIED (derived)", "LIVE-UNVERIFIED", "MODELLED")
+
+
+# ===== PR1.S6 (Jake 2026-11-05): ONE VERDICT PER CELL. =====
+# Coverage read VERIFIED (a green band) on 61 headline cells the Credibility tab judged UNVERIFIABLE, DOCUMENTED
+# LIMITATION or CHECK (81 with VERIFIED (derived)), on the 15 dumps of 2026-10-13. Now a cell the Credibility tab
+# judges is VERIFIED only where that tab PASSES it (PASS / VERIFIED FINDING); a Credibility CHECK is a Coverage CHECK;
+# any other verdict (UNVERIFIABLE, DOCUMENTED LIMITATION, MATURING, FRESH-only, N/A) leaves it LIVE-UNVERIFIED with the
+# verdict as its reason. And a figure read ONLY from an aggregator (config.is_aggregator_source: DefiLlama, CoinGecko,
+# Token Terminal, Artemis, growthepie — every Data series the formula reads, through its declared inputs) is never
+# VERIFIED, unless a PRIMARY independent reference graded it (references.py: "independent reference …").
+CRED_PASSES = ("PASS", "VERIFIED FINDING")
+
+
+def credibility_verdicts(wb, X) -> dict:
+    """{"<tab>!<cell>": (verdict, note)} — the Credibility tab's verdict on each headline cell it judges, evaluated."""
+    import xlcalc                                           # noqa: PLC0415
+    if "Credibility" not in wb.sheetnames:
+        return {}
+    ws = wb["Credibility"]
+    hr = next((r for r in range(1, 80) if ws.cell(r, 1).value == "Project" and ws.cell(r, 2).value == "Tab"), None)
+    if hr is None:
+        return {}
+    out = {}
+    for r in range(hr + 1, ws.max_row + 1):
+        tab, cell = ws.cell(r, 2).value, ws.cell(r, 3).value
+        if not tab or not cell:
+            continue
+        raw = ws.cell(r, 11).value
+        try:
+            v = X.value("Credibility", r, 11) if isinstance(raw, str) and raw.startswith("=") else raw
+        except Exception as e:  # noqa: BLE001 — a verdict that cannot be worked out passes nothing
+            v = f"CHECK (verdict not evaluated: {type(e).__name__})"
+        out[f"{tab}!{cell}"] = (str(xlcalc.display(v) or ""), " ".join(str(ws.cell(r, 12).value or "").split()))
+    return out
+
+
+def _source_prefix(source: str) -> str:
+    return str(source or "").split(":")[0].split("[")[0].strip().lower()
+
+
+def aggregator_only(groups: dict | None, project: str, metric: str, asof=None, _seen=None) -> list[str]:
+    """The aggregator classes a series is read from when EVERY row in its Q0 window (its last row when none) comes from
+    an aggregator — directly, or through its declared inputs (a view / derived series: trajectory._inputs); [] when
+    any part of it is read elsewhere, or it cannot be told (nothing stored)."""
+    import pandas as pd                                     # noqa: PLC0415
+    import config                                           # noqa: PLC0415
+    import trajectory                                       # noqa: PLC0415
+    _seen = set() if _seen is None else _seen
+    if not groups or (project, metric) in _seen:
+        return []
+    _seen.add((project, metric))
+    g = groups.get((project, metric))
+    if g is None or g.empty:
+        return []
+    d = pd.to_datetime(g["date"])
+    w = g[d > pd.Timestamp(asof) - pd.Timedelta(days=90)] if asof is not None else g
+    if w.empty:
+        w = g[d == d.max()]
+    classes = set()
+    for src in w["source"].astype(str).unique():
+        if config.is_aggregator_source(src):
+            classes.add(_source_prefix(src))
+            continue
+        ins = [m for m in trajectory._inputs(project, metric, groups) if m != metric]
+        sub = [aggregator_only(groups, project, m, asof, _seen) for m in ins]
+        if not ins or not all(sub):
+            return []
+        classes |= {c for x in sub for c in x}
+    return sorted(classes)
+
+
+def one_verdict(rows: list[dict], verdicts: dict, groups: dict | None = None, asof=None, wb=None) -> dict:
+    """PR1.S6: the Coverage status of every A-tab / Master / CP cell agrees with the Credibility verdict on it, and an
+    aggregator-only figure is not VERIFIED. Returns the counts moved, {"<old> -> <new> (<why>)": n}."""
+    moved: dict = {}
+
+    def move(r, new, why, tag):
+        k = f"{r['Status']} -> {new} ({tag})"
+        moved[k] = moved.get(k, 0) + 1
+        r["Status"], r["Reason / route / error"] = new, why[:1200]
+    for r in rows:
+        if r.get("Tab") not in TABS or r["Status"] not in ("VERIFIED", "VERIFIED (derived)", "LIVE-UNVERIFIED"):
+            continue
+        v, note = verdicts.get(r.get("_addr") or "", ("", ""))
+        if v.startswith("CHECK"):
+            move(r, "CHECK", f"Credibility: {v} — one verdict per cell (PR1.S6) | {note}", "Credibility CHECK")
+            continue
+        if r["Status"] == "LIVE-UNVERIFIED":
+            continue
+        if v and not v.startswith(CRED_PASSES):
+            move(r, "LIVE-UNVERIFIED", f"Credibility: {v} — VERIFIED needs the Credibility tab to pass it; one verdict "
+                                       f"per cell (PR1.S6) | {note}", f"Credibility {v.split(' (')[0]}")
+            continue
+        if str(r.get("Reason / route / error") or "").startswith("independent reference"):
+            continue                 # a PRIMARY reference within tolerance graded it (references.py)
+        # every Data series it reads, following references to other tabs' cells (a Master reference to an A-tab cell)
+        reads = sorted(_refs(wb, r.get("_raw"))) if wb is not None else \
+            [m for _c, m in _DATA_REF.findall(str(r.get("_raw") or ""))]
+        if not reads:
+            continue
+        aggs = {m: aggregator_only(groups, r["Project"], m, asof) for m in dict.fromkeys(reads)}
+        if all(aggs.values()):
+            move(r, "LIVE-UNVERIFIED", "AGGREGATOR ONLY (PR1.S6): every series it reads comes from an aggregator — "
+                 + "; ".join(f"{m}: {', '.join(c)}" for m, c in aggs.items())
+                 + " — a figure sourced only from an aggregator is not VERIFIED"
+                 + (f" (Credibility: {v})" if v else ""), "aggregator only")
+    ONE_VERDICT_MOVED.clear()
+    ONE_VERDICT_MOVED.update(moved)
+    return moved
+
+
+ONE_VERDICT_MOVED: dict = {}         # the last build's PR1.S6 moves, {"<old> -> <new> (<why>)": n}
 
 # ===== G9 M — A FIGURE BUILT ON A MODELLED LEG READS "MODELLED", NEVER MEASURED OR VERIFIED (Jake 2026-10-20). =====
 # config.MODELLED_POINTS (Hyperliquid's reference-yield history and published formula, Ethereum's consensus formula):

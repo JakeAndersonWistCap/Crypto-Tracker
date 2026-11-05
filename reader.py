@@ -741,9 +741,24 @@ def blank_reason(p: dict, src: Src | None, col: Col) -> tuple[str, str]:
         if "holder_value_revenue_usd" not in config.metrics_for_project(p):
             return "by design", (f"{name} returns no revenue-funded value to holders — no buyback, revenue-funded burn "
                                  "or distribution is credited — so there is no payout to divide by revenue.")
+    if ("TOTAL DILUTION" in h or col.header.startswith("Total dilution")) and "outflows" not in h \
+            and not config.unlock_stock_metrics(name):
+        # PR1.S9 (Jake 2026-11-05: Sky's A3 / A4 cells said "no outflow has a series" beside 183M of emissions): the
+        # A-tab's total dilution is emissions + unlocks, and it is left empty where no unlock leg is measured
+        return "n/a", (f"Not formed on this tab: its total dilution is emissions + unlocks, and no non-circulating "
+                       f"wallet set is declared for {name}, so the unlock leg is not measured here — unknown, not zero. "
+                       "The emissions alone are this tab's emissions column; every outflow together (security "
+                       "emissions, incentives, grants, unlocks) is Summary's total dilution.")
     if "TOTAL DILUTION" in h or col.header.startswith("Total dilution"):
         return "n/a", (f"No outflow (security emissions, incentives, grants or unlocks) has a series for {name}, so "
                        "total dilution is not formed.")
+    if h.startswith("Emissions — the rate IN FORCE") and name not in config.CURRENT_EMISSION_RATE \
+            and any(m in config.metrics_for_project(p) for m in config.absorption_emission_metrics(name)):
+        # PR1.S9: "does not apply" beside measured emissions was false — no SCHEDULED rate is declared, so the rate in
+        # force is the measured one
+        return "n/a", (f"No scheduled emission rate is declared for {name} (this column shows a declared schedule "
+                       "only): the rate in force is the measured one — this tab's emissions over the last 90 days, "
+                       "annualised, the rate the A3 key uses.")
     return "by design", (f"'{col.header}' does not apply to {name}: the audit cell is empty by construction (the column "
                          "is formed for other projects on its tab).")
 
@@ -1019,19 +1034,46 @@ def _blank_unexplained(sheets: dict) -> list:
     return out
 
 
+FLOWS_BLOCK = "FLOWS BLOCK"
+
+
+def flow_blocks_of(wb, bw) -> dict:
+    """PR1.S12: {project: why} — the projects the audit file's Flows tab blocks (bw.flow_blocks over its Token flow
+    lines, read back from the tab, so the reader follows the file it is built from)."""
+    if bw.FLOWS_SHEET not in wb.sheetnames:
+        return {}
+    ws = wb[bw.FLOWS_SHEET]
+    hr = next((r for r in range(1, 10) if ws.cell(r, 1).value == "Project" and ws.cell(r, 2).value == "Statement"),
+              None)
+    if hr is None:
+        return {}
+    heads = [ws.cell(hr, c).value for c in range(1, ws.max_column + 1)]
+    rows = [{h: ws.cell(r, c).value for c, h in enumerate(heads, start=1) if h}
+            for r in range(hr + 1, ws.max_row + 1) if ws.cell(r, 1).value]
+    return bw.flow_blocks(rows)
+
+
 def _archetype_keys(A: Audit, groups, projects, config, bw) -> dict:
-    """{project: (primary archetype, key number or None, Src or None, why)} (P1-6)."""
+    """{project: (primary archetype, key number or None, Src or None, why)} (P1-6). PR1.S12: a project the Flows tab
+    blocks (an unexplained Q0 token-flow residual beyond tolerance) has no RANKED key: its key cell still shows what the
+    key reads, its rank reads "unranked" with the block."""
     out = {}
+    blocks = flow_blocks_of(A.wb, bw)
     for p in projects:
         n, arch = p["name"], _primary(p)
         if arch == 1:
             v, why = settlement_key(groups, n)
+            if n in blocks:
+                v, why = None, (f"key {v:+.1%} measured, not ranked — " if v is not None else "") + blocks[n]
             out[n] = (arch, v, None, why)
             continue
         sheet, head = {2: (A2_TAB, "Customer revenue ÷ emissions value (x)"),
                        3: (A3_TAB, bw.A3_KEY_HEAD),
                        4: (A4_TAB, "BURN ÷ ISSUANCE (x)")}.get(arch, (None, None))
         src = A.cell(sheet, head, n) if sheet else None
+        if n in blocks:
+            out[n] = (arch, None, src, blocks[n])
+            continue
         out[n] = (arch, key_number(src), src,
                   "" if src is not None else f"{n} has no row on {sheet}" if sheet else "no archetype declared")
     return out
@@ -1334,7 +1376,8 @@ def _summary_row(sh, ctx: Ctx, C, row, p, rank, key, parked: bool = False) -> No
                        f"{name}|circulating_supply_used.")
             nums += 1
     elif ksrc is not None:
-        put_src(sh, data, row, C["key"], p, ksrc, f"No measured key: {kwhy}" if kwhy else "No measured key.")
+        put_src(sh, data, row, C["key"], p, ksrc, f"No measured key: {kwhy}" if kwhy else "No measured key.",
+                extra=kwhy if kwhy.startswith(FLOWS_BLOCK) else "")
     else:
         put_code(sh, row, C["key"], "n/a", f"No measured {ARCHETYPE_KEYS.get(arch, ('key',))[0].lower()}"
                  + (f": {kwhy}" if kwhy else "") + ".")
@@ -1353,9 +1396,10 @@ def _summary_row(sh, ctx: Ctx, C, row, p, rank, key, parked: bool = False) -> No
                    "Working: computed here from the archetype key column.")
     else:
         put_code(sh, row, C["rank"], "unranked",
-                 f"Unranked, sorted last in its group: no measured {ARCHETYPE_KEYS.get(arch, ('key',))[0].lower()}"
-                 + (f" — {kwhy}" if kwhy else "") + (f" — {plain(ksrc.text)}" if ksrc is not None and ksrc.text
-                                                     else "") + ".")
+                 (f"Unranked, sorted last in its group — {kwhy}" if FLOWS_BLOCK in kwhy else
+                  f"Unranked, sorted last in its group: no measured {ARCHETYPE_KEYS.get(arch, ('key',))[0].lower()}"
+                  + (f" — {kwhy}" if kwhy else "") + (f" — {plain(ksrc.text)}" if ksrc is not None and ksrc.text
+                                                      else "") + "."))
     number("hvy", srcs["hvy"])
     number("dil", srcs["dil"])
     d, f = srcs["dil"], srcs["float"]
@@ -1374,9 +1418,12 @@ def _summary_row(sh, ctx: Ctx, C, row, p, rank, key, parked: bool = False) -> No
             put_code(sh, row, C["dil_tok"], code_of(bad.text if bad else ""),
                      _code_reason(bad, "no total dilution or no tradeable float"), bad.fill if bad else None)
     number("nhy", srcs["nhy"])
-    nsc_note = _premint_note(p, srcs["nsc_pct"])
-    number("nsc_pct", srcs["nsc_pct"], nsc_note)
-    number("nsc_tok", srcs["nsc_tok"], _premint_note(p, srcs["nsc_tok"]))
+    for k in ("nsc_pct", "nsc_tok"):
+        why = nsc_not_carried(p, srcs[k], srcs["dil"])
+        if why:                     # PR1.S9: unknown, never "by design" beside a supply that moves
+            ctx.record(srcs[k], SUMMARY, put_code(sh, row, C[k], "n/a", why), name)
+        else:
+            number(k, srcs[k], _premint_note(p, srcs[k]))
     number("payout", srcs["payout"], _payout_note(p, srcs["payout"], srcs["payout_gross"]))
     if nums:
         put_number(sh, data, row, C["conf"], name, "confidence", greens / nums, None,
@@ -1385,6 +1432,27 @@ def _summary_row(sh, ctx: Ctx, C, row, p, rank, key, parked: bool = False) -> No
     else:
         put_code(sh, row, C["conf"], "n/a", "No number on this row.")
     _what_changed(sh, ctx, row, C["changed"], p)
+
+
+NOT_CARRIED = "not applicable to this project's archetypes"
+
+
+def nsc_not_carried(p: dict, src: Src | None, dil: Src | None) -> str:
+    """PR1.S9 (Jake 2026-11-05: Pendle, Morpho and Ether.fi read "by design" for the net supply change while their
+    supply moves): a net supply change that is empty because gross issuance is NOT CARRIED for the project's archetypes
+    (Data: "not applicable to this project's archetypes" — the archetype library, not a declaration that it cannot
+    exist) is unknown, said so with what does move. '' where the cell is anything else."""
+    if src is None or src.num is not None or NOT_CARRIED not in str(src.text or ""):
+        return ""
+    name = p["name"]
+    arch = ", ".join(f"A{a}" for a in (p.get("archetypes") or [])) or "none"
+    moves = (f"total dilution reads {dil.num:.2%} of float a year (this row)" if dil is not None and dil.num
+             else "its archetype tab's emissions and unlocks columns show what enters circulation")
+    return (f"Not measured for {name}: the net supply change is issuance − burn, and gross issuance is not carried for "
+            f"{name}'s archetypes ({arch}) — so the figure is unknown here, not zero. Its supply does move: {moves}. "
+            f"Which basis it should read (the pre-minted −burn, as Uniswap, or a measured issuance) is a decision for "
+            f"{name}'s own round.\n\nWorking: {src.where} (it reads gross_issuance_tokens, outside {name}'s archetypes' "
+            f"metrics).")
 
 
 def _mcap_basis_note(config, name: str) -> str:
@@ -2059,10 +2127,12 @@ def _write_arch_tab(sh: Sheet, ctx: Ctx, spec: TabSpec) -> None:
             continue
         if d[0] == "@issuance":
             ci, cr = audit_col("GROSS ISSUANCE Q0 (tokens)"), audit_col("Pool release Q0 (tokens)")
+            cu = audit_col("UNLOCK DILUTION Q0 (tokens)")
             add(Col(d[2], "GROSS ISSUANCE over the last 90 days, or — for a pre-minted supply — the POOL RELEASE "
-                    "(released from pre-minted pools, not minted), on the basis the key uses.", FMT_TOK, "(d) Drivers",
-                    f"{tab}, GROSS ISSUANCE Q0 or Pool release Q0", 0, 13,
-                    audit=(tab, A.header(tab, ci)) if ci else None), ("issuance", ci, cr))
+                    "(released from pre-minted pools, not minted), or the RELEASES INTO CIRCULATING where the key "
+                    "divides by them (Uniswap): always on the basis the key uses.", FMT_TOK, "(d) Drivers",
+                    f"{tab}, GROSS ISSUANCE Q0, Pool release Q0 or UNLOCK DILUTION Q0", 0, 13,
+                    audit=(tab, A.header(tab, ci)) if ci else None), ("issuance", ci, cr, cu))
             continue
         sheet, prefix, short, fam = d
         if sheet is None:
@@ -2215,6 +2285,8 @@ def _write_arch_tab(sh: Sheet, ctx: Ctx, spec: TabSpec) -> None:
                                f"{spec.key_header.lower()} — the projects whose primary archetype this is; the same "
                                f"rank as Summary.{_tie_note(name, primary)}\n\nWorking: computed from the archetype "
                                "key (the ranking Summary shows).")
+                elif FLOWS_BLOCK in str((keys.get(name) or (0, 0, 0, ""))[3]):
+                    put_code(sh, row, col, "unranked", f"Unranked, sorted last — {keys[name][3]}")
                 else:
                     put_code(sh, row, col, "unranked", f"Unranked, sorted last: no measured {spec.key_header.lower()} "
                              "— the key cell's comment says why.")
@@ -2229,15 +2301,19 @@ def _write_arch_tab(sh: Sheet, ctx: Ctx, spec: TabSpec) -> None:
                                if col.header == "Payout ratio" else "")
                 ctx.record(src, tab, cell, name)
             elif kind == "issuance":
-                basis = config.issuance_basis(name)
-                c_use = h[2] if basis == "pool_release_tokens" and h[2] else h[1]
+                # PR1.S9 (Jake 2026-11-05, U2: Uniswap read 0 here while its key divides by a 17.30M release): the
+                # series the key divides by (config.crossover_issuance_metric)
+                basis = config.crossover_issuance_metric(name)
+                c_use = {"pool_release_tokens": h[2], "unlock_release_tokens": h[3]}.get(basis) or h[1]
                 src = A.at(tab, r_a, c_use) if c_use else None
-                put_src(sh, data, row, col, p, src, extra=("A pre-minted supply: the pool release is shown (released "
-                                                           "from pre-minted pools, not minted)."
-                                                           if c_use == h[2] else ""))
+                put_src(sh, data, row, col, p, src, extra=(
+                    "A pre-minted supply: the pool release is shown (released from pre-minted pools, not minted)."
+                    if c_use == h[2] else
+                    "A pre-minted supply that mints nothing: the releases into circulating the key divides by are shown "
+                    "(unlock_release_tokens, not minted)." if c_use == h[3] and c_use != h[1] else ""))
             elif kind == "growth":
                 metric = {"@fees": config.fees_headline_metric(name), "@revenue": _revenue_metric(config, name),
-                          "@burn": config.a4_burn_metric(name), "@issuance": config.issuance_basis(name)
+                          "@burn": config.a4_burn_metric(name), "@issuance": config.crossover_issuance_metric(name)
                           }.get(h[1], h[1])
                 _period_formula_cell(sh, ctx, row, col, name, metric, h[2], col.header.split(",")[0].lower())
                 period_cols.append(_idx(sh, col))

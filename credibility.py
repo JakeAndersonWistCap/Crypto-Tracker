@@ -1388,6 +1388,83 @@ def _common_day(p, long, a, b, asof):
     return d, float(sa.loc[d]), float(sb.loc[d])
 
 
+# ===== PR1.S7 (Jake 2026-11-05): A PRICE CROSS-CHECK AT THE INSTANT OF THE PRICE USED. =====
+# Our price row for a day is CoinGecko's 00:00 UTC point when it was read after the day closed, and the run's SPOT at
+# its fetch time when read during the day (Uniswap's 2026-10-13 row: 16:22 UTC — +9.01% against Coinbase's 00:00 open
+# of that day; Jake's store: 18:42 against 00:00, false gaps up to 13%). A reference is compared only at the SAME
+# instant: the 00:00 references (Coinbase's daily OPEN, DefiLlama's 00:00 point) against a 00:00 row; a spot against
+# a reference read AT its fetch time (price_usd_coinbase_at: the open of the 1-minute candle holding it;
+# price_usd_llama_at: DefiLlama's historical price within its 600-second search width — fetch/xref.py), each stamped
+# "@<UTC instant>" in its source. The headline's own price (the latest row: the price every "now" figure uses) is
+# checked at its instant where such a reference is stored; otherwise the latest completed 00:00 day, said so.
+AT_REFS = {"price_usd_coinbase": "price_usd_coinbase_at", "price_usd_llama": "price_usd_llama_at"}
+AT_WINDOW_S = {"price_usd_coinbase_at": 60, "price_usd_llama_at": 600}
+_AT = re.compile(r"@(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?Z?)")
+
+
+def price_instants(long, p, metric="price_usd") -> dict:
+    """{day: the UTC instant our row for that day measures} — 00:00 of the day for a row read after the day closed
+    (CoinGecko's daily point), the fetch time for a row read during its own day (the run's spot)."""
+    if long is None or "fetched_at" not in long or long.empty:
+        return {}
+    g = long[(long.project == p) & (long.metric == metric)]
+    out = {}
+    for d, f in zip(pd.to_datetime(g["date"]).dt.normalize(),
+                    pd.to_datetime(g["fetched_at"], errors="coerce", utc=True).dt.tz_localize(None)):
+        out[d] = f if (f is not pd.NaT and f == f and f.normalize() == d) else d
+    return out
+
+
+def _ref_instants(long, p, metric) -> dict:
+    """{day: (value, instant)} of an "_at" reference — its instant from the "@<UTC>" stamp in its source."""
+    if long is None or long.empty:
+        return {}
+    g = long[(long.project == p) & (long.metric == metric)]
+    out = {}
+    for d, v, src in zip(pd.to_datetime(g["date"]).dt.normalize(), g["value"], g["source"].astype(str)):
+        m = _AT.search(src)
+        if m:
+            out[d] = (float(v), pd.Timestamp(m.group(1).rstrip("Z")))
+    return out
+
+
+def same_instant(long, p, day, ref, metric="price_usd"):
+    """(our value, the reference's value, the instant) on `day` when both measure the same instant, else None."""
+    ours = _series(long, p, metric)
+    inst = price_instants(long, p, metric).get(day)
+    if inst is None or day not in ours.index:
+        return None
+    if inst == day:                                       # a 00:00 row: the daily 00:00 reference
+        rs = _series(long, p, ref)
+        return (float(ours.loc[day]), float(rs.loc[day]), day) if day in rs.index else None
+    at = AT_REFS.get(ref)
+    hit = _ref_instants(long, p, at).get(day) if at else None
+    if hit and abs((hit[1] - inst).total_seconds()) <= AT_WINDOW_S[at]:
+        return float(ours.loc[day]), hit[0], inst
+    return None
+
+
+def _price_at_use(p, rows, long, asof, metric="price_usd", ref="price_usd_coinbase", side="ours", **_):
+    """THE PRICE USED, CHECKED AT ITS OWN INSTANT (PR1.S7): our latest price row (the price every "now" figure uses)
+    against the reference read at the same instant; where no reference was read at that instant, the latest completed
+    day both hold at 00:00 (_common_day_value), said so."""
+    ours = _series(long, p, metric)
+    ours = ours[ours.index <= asof.normalize()] if not ours.empty else ours
+    if not ours.empty:
+        d = ours.index[-1]
+        hit = same_instant(long, p, d, ref, metric)
+        if hit:
+            ts = hit[2].strftime("%Y-%m-%d %H:%M UTC")
+            return ((hit[0] if side == "ours" else hit[1]), str(d.date()),
+                    f"{metric if side == 'ours' else AT_REFS.get(ref, ref)} at {ts} — the price used, at its instant")
+    v, d2, how = _common_day_value(p, rows, long, asof, metric=metric, ref=ref, side=side)
+    if v is not None and not ours.empty and price_instants(long, p, metric).get(ours.index[-1]) != ours.index[-1]:
+        inst = price_instants(long, p, metric)[ours.index[-1]]
+        how += (f" — the price used ({ours.index[-1].date()} at {inst:%H:%M} UTC, a spot) has no reference read at "
+                f"its instant ({AT_REFS.get(ref, ref)}), so the latest completed day at 00:00 is compared")
+    return v, d2, how
+
+
 def _common_day_value(p, rows, long, asof, metric="price_usd", ref="price_usd_coinbase", side="ours", **_):
     d, va, vb = _common_day(p, long, metric, ref, asof)
     if d is None:
@@ -2048,7 +2125,11 @@ def _price_basis_gap(p, rows, long, asof, flow="holders_revenue_usd", stake="vot
     # THE HEADLINE'S BASIS IS THE PAYMENT-DAY PRICE (Jake's price convention, 2026-10-09): what is compared with today's
     # price is the payment-weighted Q0 price ($ paid / tokens at each day's price), from each source.
     ep = _payday_epochs(p)
-    pa, pb = payday_yield(fl, a_all, stk, lo, hi, 365.25, ep), payday_yield(fl, b_all, stk, lo, hi, 365.25, ep)
+    # PR1.S7: the two sources are compared on the same instants — a spot row of ours (read during its day) is not
+    # Coinbase's 00:00 open, so that day is left out of the comparison (it stays in the headline's own basis)
+    inst = price_instants(long, p, price)
+    a_cmp = a_all[[inst.get(d, d) == d for d in a_all.index]] if len(a_all) else a_all
+    pa, pb = payday_yield(fl, a_cmp, stk, lo, hi, 365.25, ep), payday_yield(fl, b_all, stk, lo, hi, 365.25, ep)
     if pa is None:
         return 0.0, None, how + f". No priced {flow} day or no {stake} in Q0"
     confirmed = pb is not None and abs(pb["p_eff"] / pa["p_eff"] - 1) <= agree
@@ -2078,6 +2159,9 @@ def _price_overlap(p, rows, long, asof, flow="holders_revenue_usd", price="price
     lo, hi = _q0(asof)
     fl, a, b = _series(long, p, flow), _series(long, p, price), _series(long, p, second)
     days = [d for d in fl.index if lo < d <= hi and d in a.index and d in b.index and a.loc[d] and b.loc[d]]
+    # PR1.S7: a day whose row of ours is a spot (read during the day) is not the reference's 00:00 instant — left out
+    inst = price_instants(long, p, price)
+    days = [d for d in days if inst.get(d, d) == d]
     q0_paid = [d for d in fl.index if lo < d <= hi]
     if len(days) < int(min_days):
         return None, None, (f"{second} and {price} overlap on {len(days)} of the {len(q0_paid)} Q0 payment days — "
@@ -2115,7 +2199,7 @@ FORMULAS = {"sum_months": _sum_months, "free_float_now": _free_float_now, "windo
             "value_on": _value_on, "epoch_apr": _epoch_apr, "published_epoch_aprs": _published_epoch_aprs, "epoch_reproduction": _epoch_reproduction, "epoch_mean_check": _epoch_mean_check, "epochs_first_party": _epochs_first_party, "aero_epoch_revenue": _aero_epoch_revenue, "pendle_epoch_revenue": _pendle_epoch_revenue, "pendle_basis_vs_defillama": _pendle_basis_vs_defillama, "aero_rebase_apr": _aero_rebase_apr, "aero_epoch_pending": _aero_epoch_pending, "aero_bribe_outliers": _aero_bribe_outliers, "aero_fee_leg": _aero_fee_leg, "price_basis_gap": _price_basis_gap, "price_overlap": _price_overlap,
             "aero_epoch_apr": _aero_epoch_apr, "q0_net_flow": _q0_net_flow,
             "negative_release": _negative_release, "sum_month": _sum_month, "last30_annualised": _last30_annualised,
-            "common_day_value": _common_day_value, "months_match": _months_match,
+            "common_day_value": _common_day_value, "months_match": _months_match, "price_at_use": _price_at_use,
             "hl_reward_active": _hl_reward_active, "base_reward_ceiling": _base_reward_ceiling,
             "rate_on_stake": _rate_on_stake, "reward_rate_apr": _reward_rate_apr, "trailing_token_yield": _trailing_token_yield,
             "sum_since": _sum_since, "schedule_month": _schedule_month, "months_scaled": _months_scaled, "rise_vs_flow": _rise_vs_flow,
@@ -2547,18 +2631,20 @@ def price_inputs(name: str) -> dict:
     out = {}
     product = (config.CREDIBILITY_XREF.get("coinbase_product") or {}).get(name)
     if product:
-        out["in_price"] = {"what": f"Price vs Coinbase {product} (00:00 UTC, latest completed day both hold)",
-                           "ours": {"py": "common_day_value", "args": {"metric": "price_usd", "ref": "price_usd_coinbase",
-                                                                      "side": "ours"}}, "fmt": fmt,
-                           "ref": {"formula": "common_day_value", "tol": 2.0,
+        out["in_price"] = {"what": f"Price vs Coinbase {product} (at the instant of the price used; else 00:00 UTC of "
+                                   f"the latest completed day both hold)",
+                           "ours": {"py": "price_at_use", "args": {"metric": "price_usd", "ref": "price_usd_coinbase",
+                                                                   "side": "ours"}}, "fmt": fmt,
+                           "ref": {"formula": "price_at_use", "tol": 2.0,
                                    "args": {"metric": "price_usd", "ref": "price_usd_coinbase", "side": "ref"},
                                    "source": f"Coinbase Exchange {product}: the daily candle's OPEN = the price at 00:00 "
                                              f"UTC, the instant CoinGecko's daily point is stamped"}}
     out["in_price_llama"] = {
-        "what": f"Price vs DefiLlama {key} (00:00 UTC, latest completed day both hold)",
-        "ours": {"py": "common_day_value", "args": {"metric": "price_usd", "ref": "price_usd_llama", "side": "ours"}},
+        "what": f"Price vs DefiLlama {key} (at the instant of the price used; else 00:00 UTC of the latest completed "
+                f"day both hold)",
+        "ours": {"py": "price_at_use", "args": {"metric": "price_usd", "ref": "price_usd_llama", "side": "ours"}},
         "fmt": fmt,
-        "ref": {"formula": "common_day_value", "tol": 2.0, "same_source": not indep,
+        "ref": {"formula": "price_at_use", "tol": 2.0, "same_source": not indep,
                 # a native coin's DefiLlama price is CoinGecko's relayed (sign-off round 2026-10-07): where Coinbase
                 # lists it the exchange price is the independent check (in_price) and this row is a third reading;
                 # where it does not (HYPE), the relay agreeing is recorded as a documented limitation

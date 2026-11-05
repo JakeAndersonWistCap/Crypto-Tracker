@@ -20,6 +20,13 @@ so build_workbook.write_credibility can set them beside our figure. None of them
                        A point more than 10 minutes from 00:00 is dropped (searchWidth 600 s). Where no
                        address is on file (native coins) the key is coingecko:<id> — CoinGecko's own price
                        relayed, so that row is FRESH-only, never a PASS.
+  price_usd_coinbase_at / price_usd_llama_at   (PR1.S7, Jake 2026-11-05) THE REFERENCE AT THE INSTANT OF OUR SPOT:
+                       a price_usd row read during its own day is the run's spot at its fetch time (18:42 UTC, say),
+                       not a 00:00 point, and compared with a daily OPEN it showed false gaps up to 13%. For each such
+                       row of the last week, the reference read AT that instant: the OPEN of Coinbase's 1-minute
+                       candle holding it (granularity=60) and DefiLlama's historical price within 600 s
+                       (coins.llama.fi/prices/historical/<unix>/<key>?searchWidth=600), stamped "@<UTC instant>" in
+                       the source (credibility.same_instant matches on it). Read once per instant.
   staking_apr_lido     Lido's stETH APR, 7-day simple moving average, as a FRACTION:
                          GET https://eth-api.lido.fi/v1/protocol/steth/apr/sma
                          -> {"data": {"aprs": [{"timeUnix", "apr"}, ...], "smaApr": <percent>}, "meta": {...}}
@@ -52,14 +59,17 @@ LLAMA_CHART = "https://coins.llama.fi/chart/{keys}"
 LLAMA_MAX_POINTS = 500          # coins.llama.fi refuses a chart request over 500 points (coins x days), HTTP 400
 COINBASE_MAX_CANDLES = 300      # Coinbase Exchange serves up to 300 candles per request
 LIDO_SMA = "https://eth-api.lido.fi/v1/protocol/steth/apr/sma"
+LLAMA_HIST = "https://coins.llama.fi/prices/historical/{ts}/{key}"
+AT_DAYS = 7                     # PR1.S7: the spots of the last week are read at their instant
 
 
 class CrossRefs:
     SOURCE = SOURCE
     TIER = TIER
 
-    def __init__(self, http: Http | None = None, daily=None, robots=None, **_ignored):
+    def __init__(self, http: Http | None = None, daily=None, robots=None, stored_long=None, **_ignored):
         self.http = http or Http(min_interval=1.0, retries=2)
+        self.stored_long = stored_long
         if daily is None:
             from .logcache import DailyChecks
             daily = DailyChecks()
@@ -83,6 +93,86 @@ class CrossRefs:
                 self._lido(p, day, out)
         if mine:
             self._llama(mine, spec, day, out)
+            self._at_spot(mine, spec, out)
+
+    # ------------------------------------------------------------------ PR1.S7: the reference at our spot's instant
+    def spot_instants(self, name: str) -> list[tuple]:
+        """[(day, UTC instant)] of our price_usd rows of the last AT_DAYS read DURING their own day (a spot), that hold
+        no reference at that instant yet."""
+        sl = self.stored_long
+        if sl is None or getattr(sl, "empty", True) or "fetched_at" not in sl:
+            return []
+        g = sl[(sl["project"] == name) & (sl["metric"] == "price_usd")]
+        have = sl[(sl["project"] == name) & sl["metric"].isin(("price_usd_coinbase_at", "price_usd_llama_at"))]
+        done = {(str(d)[:10], m) for d, m, src in zip(have["date"], have["metric"], have["source"].astype(str))
+                if "@" in src}
+        lo = today().normalize() - pd.Timedelta(days=AT_DAYS)
+        out = []
+        for d, f in zip(pd.to_datetime(g["date"]).dt.normalize(),
+                        pd.to_datetime(g["fetched_at"], errors="coerce", utc=True).dt.tz_localize(None)):
+            if f is pd.NaT or f != f or f.normalize() != d or d < lo:
+                continue
+            if (str(d.date()), "price_usd_coinbase_at") in done and (str(d.date()), "price_usd_llama_at") in done:
+                continue
+            out.append((d, f))
+        return sorted(out)
+
+    def _at_spot(self, projects: list[dict], spec: dict, out) -> None:
+        for p in projects:
+            name = p["name"]
+            for d, inst in self.spot_instants(name):
+                product = (spec.get("coinbase_product") or {}).get(name)
+                if product:
+                    self._coinbase_at(p, product, d, inst, out)
+                self._llama_at(p, d, inst, out)
+
+    def _coinbase_at(self, p: dict, product: str, day, inst, out) -> None:
+        name = p["name"]
+        url = COINBASE.format(product=product)
+        ok, why = self.robots(url)
+        if not ok:
+            out.fail(SOURCE, name, f"price_usd_coinbase_at: robots.txt disallows {url} ({why})", TIER)
+            return
+        minute = inst.floor("min")
+        try:
+            body = self.http.get(url, params={"granularity": 60, "start": minute.isoformat(),
+                                              "end": (minute + pd.Timedelta(seconds=60)).isoformat()})
+        except Exception as e:  # noqa: BLE001
+            out.fail(SOURCE, name, f"price_usd_coinbase_at: {product} at {minute}: {e}", TIER)
+            return
+        t0 = int(minute.timestamp())
+        hit = [c for c in body if isinstance(c, (list, tuple)) and len(c) >= 6 and int(c[0]) == t0] \
+            if isinstance(body, list) else []
+        if not hit:
+            out.fail(SOURCE, name, f"price_usd_coinbase_at: no 1-minute candle of {product} at {minute} UTC", TIER)
+            return
+        stamp = minute.strftime("%Y-%m-%dT%H:%M:%SZ")
+        frame = tidy([(day, float(hit[0][3]))], name, "price_usd_coinbase_at", f"coinbase_exchange:{product}:open@{stamp}",
+                     TIER)
+        out.add(frame, SOURCE, name, f"price_usd_coinbase_at: {product} 1-minute OPEN at {stamp} (our spot's instant)",
+                TIER)
+
+    def _llama_at(self, p: dict, day, inst, out) -> None:
+        name = p["name"]
+        key = self.llama_key(p)[0]
+        ts = int(inst.timestamp())
+        url = LLAMA_HIST.format(ts=ts, key=key)
+        ok, why = self.robots(url)
+        if not ok:
+            out.fail(SOURCE, name, f"price_usd_llama_at: robots.txt disallows coins.llama.fi ({why})", TIER)
+            return
+        try:
+            body = self.http.get(url, params={"searchWidth": 600})
+        except Exception as e:  # noqa: BLE001
+            out.fail(SOURCE, name, f"price_usd_llama_at: {key} at {inst}: {e}", TIER)
+            return
+        c = ((body or {}).get("coins") or {}).get(key) if isinstance(body, dict) else None
+        if not isinstance(c, dict) or c.get("price") is None or abs(int(c.get("timestamp") or 0) - ts) > 600:
+            out.fail(SOURCE, name, f"price_usd_llama_at: no DefiLlama price for {key} within 600 s of {inst} UTC", TIER)
+            return
+        stamp = pd.Timestamp(int(c["timestamp"]), unit="s").strftime("%Y-%m-%dT%H:%M:%SZ")
+        frame = tidy([(day, float(c["price"]))], name, "price_usd_llama_at", f"defillama_coins:{key}@{stamp}", TIER)
+        out.add(frame, SOURCE, name, f"price_usd_llama_at: {key} at {stamp} (our spot's instant)", TIER)
 
     # ------------------------------------------------------------------ Coinbase candles
     def _coinbase(self, p: dict, spec: dict, day: str, out) -> None:

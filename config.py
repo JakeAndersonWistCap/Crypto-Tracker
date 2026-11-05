@@ -782,6 +782,21 @@ METRICS = {
                            "only_projects": ("Ethereum", "Chainlink", "Hyperliquid", "Near", "Plume", "Aethir", "Maple",
                                              "Morpho", "Aerodrome", "Ether.fi", "Fluid", "Sky", "Uniswap", "GEODNET",
                                              "Pendle")},
+    # PR1.S7: the references AT THE INSTANT OF OUR SPOT (a price_usd row read during its own day), "@<UTC>" in source
+    "price_usd_coinbase_at": {"label": "Price — Coinbase Exchange 1-minute OPEN at the instant of our spot price_usd row, "
+                                       "CREDIBILITY reference only",
+                              "kind": "stock", "unit": "usd", "archetypes": [1, 2, 3, 4], "tiers": [1],
+                              "sanity_min": 0, "sanity_max": 1e7, "view_only": True,
+                              "only_projects": ("Ethereum", "Chainlink", "Hyperliquid", "Near", "Plume", "Aethir",
+                                                "Maple", "Morpho", "Aerodrome", "Ether.fi", "Fluid", "Sky", "Uniswap",
+                                                "GEODNET", "Pendle")},
+    "price_usd_llama_at": {"label": "Price — DefiLlama coins API (historical, within 600 s) at the instant of our spot "
+                                    "price_usd row, CREDIBILITY reference only",
+                           "kind": "stock", "unit": "usd", "archetypes": [1, 2, 3, 4], "tiers": [1],
+                           "sanity_min": 0, "sanity_max": 1e7, "view_only": True,
+                           "only_projects": ("Ethereum", "Chainlink", "Hyperliquid", "Near", "Plume", "Aethir", "Maple",
+                                             "Morpho", "Aerodrome", "Ether.fi", "Fluid", "Sky", "Uniswap", "GEODNET",
+                                             "Pendle")},
     "price_usd_llama": {"label": "Price — DefiLlama coins API at 00:00 UTC for the token's verified address, CREDIBILITY "
                                  "reference only", "kind": "stock", "unit": "usd", "archetypes": [1, 2, 3, 4], "tiers": [1],
                         "sanity_min": 0, "sanity_max": 1e7, "view_only": True,
@@ -30518,6 +30533,24 @@ SOURCE_RECLASSIFICATIONS = {
         ("2026-07-30", "DefiLlama reclassification: $11.5M -> $6.8M in a day"),
     ),
 }
+
+# PR1.S6 (Jake 2026-11-05): A FIGURE SOURCED ONLY FROM AN AGGREGATOR IS NOT VERIFIED. The source classes that are
+# aggregators (a stored row's source string starts with one of them): their figure is a secondary reading of others'
+# data — the evidence ladder's step 3 (EVIDENCE_STEPS "AGGREGATOR"). coverage_audit.one_verdict reads it.
+AGGREGATOR_SOURCES = ("defillama", "defillama_coins", "coingecko", "tokenterminal", "token_terminal", "artemis",
+                      "growthepie")
+
+
+def is_aggregator_source(source: str) -> bool:
+    """True when a stored row's source names an aggregator (AGGREGATOR_SOURCES) as its measuring point."""
+    return str(source or "").split(":")[0].split("[")[0].strip().lower() in AGGREGATOR_SOURCES
+
+
+# PR1.S12 (Jake 2026-11-05): A Q0 TOKEN-FLOW RESIDUAL IS EXPLAINED only by a quantified declaration — {project:
+# {"amount_tokens": the flow no series carries in Q0, "why": what it is, "source": where the amount was read, "read_on"}};
+# it explains the residual when the residual less the amount is within ±0.5% of opening (build_workbook.flow_blocks).
+# Until then the project's statement cells are not green and it is not ranked. None is declared.
+FLOW_RESIDUAL_EXPLAINED: dict = {}
 
 # DECLARED ZEROS (Jake's alignment round, SPEC.md rule 3 / B10): a programme that has ENDED reads 0 after its end, not
 # n/a. build_workbook._declared_zero_views fills each day from `since` to the build date that has no stored row with a
