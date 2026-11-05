@@ -375,7 +375,10 @@ def basis_of(metric: str, source: str) -> str:
     if metric in BRACKET_BASIS:
         m = re.search(r"\[([^\]]*)\]", src)
         return _DATE.sub("", m.group(1)).strip() if m else src
-    return _measuring_point(src)
+    mp = _measuring_point(src)
+    # P5-1C.A3: a REBUILT hole day of CoinGecko's supply / FDV is one basis with CoinGecko's own (declared, checked on
+    # every build by build_workbook._supply_rebuild_views, which drops the rebuilt days when the check fails)
+    return "coingecko" if config.is_supply_rebuild_point(mp) else mp
 
 
 def _inputs(project: str, metric: str, groups: dict) -> tuple:

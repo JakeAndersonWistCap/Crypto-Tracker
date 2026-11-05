@@ -1429,6 +1429,10 @@ DEFAULT_RPC = {
     "polygon": [
         "https://polygon-bor-rpc.publicnode.com",
         "https://polygon-rpc.com",
+        # P5-1C.A3 (read 2026-11-04): publicnode answers 403 and polygon-rpc.com 401 to a past-block eth_call; these
+        # two served GEOD totalSupply() at the head and ~1, 30, 60 and 400 days back (keyless)
+        "https://polygon.drpc.org",
+        "https://polygon.gateway.tenderly.co",
     ],
     "unichain": [
         "https://mainnet.unichain.org",
@@ -24526,6 +24530,147 @@ FDV_SHORT_REASON = {
                    "history exists to read back",
     "World Mobile": "SOURCE-LIMITED: the Solana leg of the total (spl_mint) has no daily history provider",
 }
+
+
+# ===== P5-1C.A3 (Jake 2026-11-04): COINGECKO'S SUPPLY AND FDV HOLES REBUILT WHERE A CONTRACT (OR A DOC) FIXES THEM =====
+# CoinGecko serves no past day of total / max supply or FDV (fetch.archive.COINGECKO_NO_HISTORY_WHY), so a day no run
+# read was "not recoverable" (495 holes on Jake's 11-04 run). A missed day is REBUILT (fetch.archive.supply_rebuild_
+# catch_up) as a DIFFERENT MEASURING POINT, `supply_rebuild:<what>[<label>]`, and only on a day CoinGecko has no row:
+#   total   the declared same-quantity formula over STORED on-chain series of that day (`total` − Σ `less`): each leg
+#           is a contract (or NEAR block-header) read at the day's first block — the archive route fills a missed day
+#           of the leg first, in the same catch-up (the convention of every archive row in the store);
+#   max     a constant the token contract or the project's own primary source fixes (`max`, `max_cite`) — never one
+#           invented, never CoinGecko's own figure;
+#   fdv     that day's price_usd (CoinGecko market_chart, 00:00 UTC) x CoinGecko's FDV BASIS for the project: max
+#           supply where CoinGecko reports one (its methodology: FDV = price x max supply, else x total supply), else
+#           the total formula above (`fdv_basis`). MEASURED where the two differ, on the dumps' days to 2026-10-12:
+#           CoinGecko's FDV ÷ the closing price tracks its TOTAL, not its max, for Ether.fi, GEODNET and Hyperliquid
+#           (median 2.7%, 4.7%, 4.3% from price x max) — their basis is declared "total" from that measurement. The WORKBOOK's FDV is unchanged — price x the total supply we use
+#           (build_workbook._fdv_views) — and a rebuilt CoinGecko FDV day is never its fallback: it lands in
+#           fdv_usd_coingecko (the cross-check) only.
+# THE HANDOVER (Rule 10), DECLARED BEFORE ANY OVERLAP WAS MEASURED: a series is rebuilt only while the rebuild measures
+# CoinGecko's quantity on CoinGecko's own stored days — checked on every catch-up (nothing is written when it fails)
+# and again on every build (build_workbook._supply_rebuild_views drops the rebuilt days when it fails):
+SUPPLY_REBUILD_TOL = {
+    # the same-quantity rule FDV history already uses (FDV_HISTORY_TOL, Round G 2.2), plus a worst-day bound
+    "total": {"median": FDV_HISTORY_TOL, "worst": 2 * FDV_HISTORY_TOL, "min_days": FDV_HISTORY_MIN_OVERLAP},
+    # a constant either is CoinGecko's figure on every stored day or it is not
+    "max": {"worst": 1e-9, "min_days": FDV_HISTORY_MIN_OVERLAP},
+    # the day's price is market_chart's 00:00 UTC point and CoinGecko's FDV its read-time price: the intraday move
+    "fdv": {"median": 0.02, "worst": None, "min_days": FDV_HISTORY_MIN_OVERLAP},
+}
+SUPPLY_REBUILD_POINT = "supply_rebuild"      # the measuring point's head; it stands in for "coingecko" on its days only
+SUPPLY_REBUILD_ON = {"on": True}             # headline_diff --only p5_1c_supply_rebuild: off = the rebuilt days unused
+_CHAIN_TOTAL = "the token's totalSupply() — the stored on-chain total_supply"
+SUPPLY_REBUILD = {
+    "Aerodrome": {"total_metric": "total_supply_coingecko", "total": "total_supply", "less": (),
+                  "label": "AERO.totalSupply() on Base (chain:base:token)", "fdv_basis": "total"},
+    "Aethir": {"total_metric": "total_supply_coingecko", "total": "total_supply", "less": (),
+               "label": "ATH.totalSupply() on Ethereum (chain:ethereum:token_supply_ethereum)",
+               "max": 42_000_000_000.0,
+               "max_cite": "ATH 0xbe0Ed4138121EcFC5c0E56B40517da27E6c5226B MAX_SUPPLY() = 42,000,000,000 (eth_call, "
+                           "eth.drpc.org, read 2026-11-04); docs.aethir.com token-overview 'Total Supply 42,000,000,000'",
+               "fdv_basis": "max"},
+    "Chainlink": {"total_metric": "total_supply_coingecko", "total": "total_supply", "less": (),
+                  "label": "LINK.totalSupply() on Ethereum (chain:ethereum:token)", "max": 1_000_000_000.0,
+                  "max_cite": "LINK 0x514910771AF9Ca656af840dff83E8264EcF986CA: not a proxy, no mint function in its "
+                              "runtime code, totalSupply() 1,000,000,000 — all minted at genesis (read 2026-11-04)",
+                  "fdv_basis": "max"},
+    "Ether.fi": {"total_metric": "total_supply_coingecko", "total": "total_supply", "less": (),
+                 "label": "ETHFI.totalSupply() on Ethereum (chain:ethereum:token)", "max": 1_000_000_000.0,
+                 "max_cite": "ETHFI 0xFe0c30065B384F05761f15d0CC899D4F9F9Cc0eB: not a proxy, no mint function in its "
+                             "runtime code; totalSupply() 1,000,000,000 at blocks 19,500,000-22,000,000 (minted at "
+                             "construction; burns since, 998,535,999 on 2026-11-04)",
+                 # MEASURED, not CoinGecko's stated rule: its FDV tracks its own total (965.35M), not the max — below
+                 "fdv_basis": "total"},
+    "Fluid": {"total_metric": "total_supply_coingecko", "total": "total_supply", "less": (),
+              "label": "FLUID.totalSupply() on Ethereum (chain:ethereum:token)", "fdv_basis": "max"},
+    "GEODNET": {"total_metric": "total_supply_coingecko", "total": "total_supply_gross",
+                "less": ("burn_address_balance",),
+                "label": "GEOD.totalSupply() on Polygon − the burn balances (Polygon 0xdead + the Solana burn account)",
+                "max": 1_000_000_000.0,
+                "max_cite": "GEOD 0xAC0F66379A6d7801D7726d5a943356A172549Adb on Polygon cap() = 1,000,000,000 "
+                            "(eth_call, polygon.drpc.org, read 2026-11-04)",
+                "fdv_basis": "total"},
+    "Hyperliquid": {"max": 1_000_000_000.0,
+                    "max_cite": "Hyperliquid's own info API tokenDetails (HYPE 0x0d01dc56dcaaca66ad901c959b4011ec) "
+                                "maxSupply '1000000000.0' (read 2026-11-04)",
+                    "fdv_basis": "total"},
+    "Maple": {"total_metric": "total_supply_coingecko", "total": "total_supply", "less": (),
+              "label": "SYRUP.totalSupply() on Ethereum (chain:ethereum:token)", "fdv_basis": "total"},
+    "Morpho": {"total_metric": "total_supply_coingecko", "total": "total_supply", "less": (),
+               "label": "MORPHO.totalSupply() on Ethereum (chain:ethereum:token)", "max": 1_000_000_000.0,
+               "max_cite": "docs.morpho.org/learn/governance/morpho-token: 'The MORPHO token has a maximum supply of "
+                           "1,000,000,000 MORPHO.' (read 2026-11-04) — the docs' cap: the token is an upgradeable "
+                           "proxy whose owner can mint",
+               "fdv_basis": "max"},
+    "Near": {"total_metric": "total_supply", "total": "total_supply_protocol", "less": (),
+             "label": "NEAR block header total_supply (near_rpc, archival)", "fdv_basis": "total"},
+    "Pendle": {"total_metric": "total_supply_coingecko", "total": "total_supply", "less": (),
+               "label": "PENDLE.totalSupply() on Ethereum (chain:ethereum:token)", "fdv_basis": "total"},
+    "Plume": {"total_metric": "total_supply", "total": "total_supply_protocol", "less": (),
+              "label": "PLUME.totalSupply() on Ethereum (chain:ethereum:token_ethereum)", "max": 10_000_000_000.0,
+              "max_cite": "Plume's own supply API supply.plume.org/supply 'total' 10,000,000,000 (read 2026-11-04) and "
+                          "its stated tokenomics (docs.plume.org, vesting_schedule) — Plume's declaration: the ERC-20 "
+                          "is UUPS-upgradeable with a MINTER_ROLE mint and no max-supply check",
+              "fdv_basis": "max"},
+    "Sky": {"total_metric": "total_supply_coingecko", "total": "total_supply", "less": (),
+            "label": "SKY.totalSupply() on Ethereum (chain:ethereum:token)", "fdv_basis": "max"},
+    "Uniswap": {"total_metric": "total_supply", "total": "total_supply_gross", "less": ("burn_address_balance",),
+                "label": "UNI.totalSupply() − the 0xdead balance (CoinGecko's total is net of burn)",
+                "fdv_basis": "max"},
+}
+# NOT RECOVERABLE, with the reason (the catch-up names it; never 0, never carried):
+SUPPLY_REBUILD_NOT_RECOVERABLE = {
+    ("Ethereum", "total_supply"): "native ETH supply is not contract state, and no keyless RPC answers it at a past "
+                                  "block (ultrasound.money's supply-over-time is a third-party series — the declared "
+                                  "older leg before 2026-09-11 — and is not used inside CoinGecko's range)",
+    ("Ethereum", "fdv_usd"): "CoinGecko's FDV for ETH is price x its total supply, which has no past-block read (above)",
+    ("Hyperliquid", "fdv_usd"): "CoinGecko's FDV for HYPE is on its total (FDV ÷ the closing price sat 2.0-6.0% under "
+                                "the 1,000,000,000 max on each of the 9 dump days 2026-10-01..10-12 with a closing price, near its 955,307,079 total), "
+                                "and that total has no past-day read (above)",
+    ("Hyperliquid", "total_supply_coingecko"): "HYPE is native to HyperCore: tokenDetails answers today's total only and "
+                                               "no contract holds the supply at a past block",
+    ("Hyperliquid", "total_supply"): "HYPE is native to HyperCore: tokenDetails answers today's total only and no "
+                                     "contract holds the supply at a past block",
+    ("Fluid", "max_supply"): "FLUID 0x6f40d4A6237C257fff2dB00FA0510DeEECd303eb (delegator -> 0x31de…8773) is mintable: "
+                             "mintCap() 2 (% a year), mintingAllowedAfter 2024-01-01 (read on-chain 2026-11-04); no "
+                             "Fluid source fixing a maximum was read — CoinGecko's 100,000,000 is its own",
+    ("Sky", "max_supply"): "SKY 0x56072C95FAA701256059aa122697B133aDEd9279 mints through its wards (rely / mint in its "
+                           "runtime code, read 2026-11-04); no Sky source fixing a maximum was found — CoinGecko's "
+                           "23,462,665,147 is its own",
+    ("Uniswap", "max_supply"): "UNI 0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984 is mintable up to mintCap() 2% a year "
+                               "(Uniswap 'Introducing UNI', 2020-09-16: perpetual 2% inflation after four years) — "
+                               "no fixed maximum; CoinGecko's 1,000,000,000 is its own",
+}
+for (_n, _m) in (("Fluid", "fdv_usd"), ("Sky", "fdv_usd"), ("Uniswap", "fdv_usd")):
+    SUPPLY_REBUILD_NOT_RECOVERABLE[(_n, _m)] = ("CoinGecko's FDV is on its max supply, and no primary source fixes "
+                                                "one: " + SUPPLY_REBUILD_NOT_RECOVERABLE[(_n, "max_supply")])
+
+
+def supply_rebuild_metrics(project_name: str) -> dict:
+    """{metric: kind ("total" | "max" | "fdv")} that P5-1C.A3 rebuilds for this project (SUPPLY_REBUILD)."""
+    s = SUPPLY_REBUILD.get(project_name) or {}
+    out = {}
+    if s.get("total") and s.get("total_metric"):
+        out[s["total_metric"]] = "total"
+    if s.get("max") is not None:
+        out["max_supply"] = "max"
+    basis = s.get("fdv_basis")
+    if (basis == "max" and s.get("max") is not None) or (basis == "total" and s.get("total")):
+        out["fdv_usd"] = "fdv"
+    return {m: k for m, k in out.items() if (project_name, m) not in SUPPLY_REBUILD_NOT_RECOVERABLE}
+
+
+def supply_rebuild_kind(project_name: str, metric: str) -> str:
+    """'total' | 'max' | 'fdv' for a declared rebuild — fdv_usd_coingecko (the build's name for CoinGecko's FDV) is
+    fdv_usd's — else ''."""
+    m = "fdv_usd" if metric == "fdv_usd_coingecko" else metric
+    return supply_rebuild_metrics(project_name).get(m, "")
+
+
+def is_supply_rebuild_point(point: str) -> bool:
+    return str(point or "").split(":", 1)[0] == SUPPLY_REBUILD_POINT
 
 
 # SUPPLY HISTORY BEFORE THE FIRST-PARTY READ (fix round 2, H1 / H3 / S12): Ethereum's total_supply_protocol (Etherscan

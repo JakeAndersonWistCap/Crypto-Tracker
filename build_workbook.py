@@ -3788,6 +3788,46 @@ def _total_supply_history_views(groups: dict) -> None:
                                                               ignore_index=True).sort_values("date"), tot.columns)
 
 
+SUPPLY_REBUILD_NOTE: dict = {}    # (project, metric) -> the declared check's note, last build (P5-1C.A3)
+
+
+def hole_fill_point(name: str, metric: str, point: str) -> str:
+    """P5-1C.A3: a REBUILT day's point (supply_rebuild:<what>) on a series with a declared rebuild stands in for
+    CoinGecko's ("coingecko") — the declared handover of a hole day, its check run by _supply_rebuild_views. Any other
+    point is returned as it is."""
+    if config.is_supply_rebuild_point(point) and config.supply_rebuild_kind(name, metric):
+        return "coingecko"
+    return point
+
+
+def _supply_rebuild_views(groups: dict) -> None:
+    """P5-1C.A3 (Jake 2026-11-04): a day of CoinGecko's total / max supply or FDV that the catch-up REBUILT (its own
+    measuring point, supply_rebuild:<what>, config.SUPPLY_REBUILD) is used only while the declared check passes on
+    CoinGecko's own stored days, re-run here on every build (fetch.archive.supply_rebuild_check, the tolerance stated in
+    config.SUPPLY_REBUILD_TOL). A failed check — or config.SUPPLY_REBUILD_ON off — drops the rebuilt days: they read as
+    the holes they were, and the note says why."""
+    from fetch.archive import (_coingecko_own, _daily, supply_rebuild_check,  # noqa: PLC0415
+                               supply_rebuild_inputs, supply_rebuild_values)
+    SUPPLY_REBUILD_NOTE.clear()
+    for (name, metric), g in list(groups.items()):
+        if g is None or g.empty:
+            continue
+        reb = g["source"].astype(str).map(_measuring_point).map(config.is_supply_rebuild_point)
+        if not reb.any():
+            continue
+        ok, how = False, "P5-1C.A3 rebuild switched off (config.SUPPLY_REBUILD_ON)"
+        if config.SUPPLY_REBUILD_ON["on"] and config.supply_rebuild_kind(name, metric):
+            cg = _daily(_coingecko_own(g[~reb]))
+            series = {x: groups.get((name, x)) for x in supply_rebuild_inputs(name, metric) if x}
+            series["__days__"] = pd.to_datetime(sorted({*cg.index, *pd.to_datetime(g["date"]).dt.normalize()}))
+            ok, how = supply_rebuild_check(name, metric, cg, supply_rebuild_values(name, metric, series))
+        elif config.SUPPLY_REBUILD_ON["on"]:
+            how = "no rebuild is declared for this series (config.SUPPLY_REBUILD)"
+        SUPPLY_REBUILD_NOTE[(name, metric)] = ("rebuilt days used — " if ok else "rebuilt days NOT used — ") + how
+        if not ok:
+            groups[(name, metric)] = g[~reb].reset_index(drop=True)
+
+
 def _fdv_views(groups: dict) -> None:
     """FDV = PRICE x THE TOTAL SUPPLY WE USE, where total supply is on-chain first (config.TOTAL_SUPPLY_ONCHAIN_FIRST;
     Ether.fi, Jake's review of 97b29ae item 6: CoinGecko's FDV $700.3M rested on its 965.35M total — below the
@@ -3833,7 +3873,8 @@ def _fdv_views(groups: dict) -> None:
         # inside the bracket survived the annotation stripper as a second point). The value reads now; a change of the
         # total's basis is a SERIES BREAK on the trend only (trajectory.BRACKET_BASIS reads this bracket)
         from fetch.base import _measuring_point          # noqa: PLC0415
-        src = {d: _measuring_point(v) for d, v in src.items()}
+        # P5-1C.A3: a rebuilt day of CoinGecko's total stands in for CoinGecko's point on that day (declared, checked)
+        src = {d: hole_fill_point(name, "total_supply", _measuring_point(v)) for d, v in src.items()}
         # ===== THE 2026-09-11 HANDOVER, DECLARED AND CHECKED (Round G9 C1, Jake: Master FDV blank for Ethereum, Uniswap,
         # Near and Plume since G6 — "MEASURING POINT CHANGED … total before 2026-09-11"). G7's history leg did extend
         # the total, but (a) Uniswap / Plume: its note was appended OUTSIDE the bracket, so the value's measuring point
@@ -3861,7 +3902,9 @@ def _fdv_views(groups: dict) -> None:
             groups[(name, "fdv_usd_coingecko")] = _as_stored(cg.assign(metric="fdv_usd_coingecko"), cols)
             # a day with no total of ours keeps CoinGecko's FDV (the series never loses a day it had)
             cgd = cg.assign(date=pd.to_datetime(cg["date"]).dt.normalize())
-            rest = cgd[~cgd["date"].isin(both)]
+            # P5-1C.A3: never a REBUILT CoinGecko FDV day (price x its max) — that is CoinGecko's basis, not the FDV's
+            rest = cgd[~cgd["date"].isin(both)
+                       & ~cgd["source"].astype(str).map(_measuring_point).map(config.is_supply_rebuild_point)]
             if not rest.empty:
                 view = pd.concat([view, rest.assign(metric="fdv_usd")[view.columns.intersection(rest.columns)]],
                                  ignore_index=True).sort_values("date")
@@ -5444,6 +5487,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _EARLY_BLOCKS.clear()
     _retired_series_views(groups)     # D5-3c: a series whose stored figures measure nothing it claims — dropped, said why
     _provisional_views(groups)        # G15 5: yesterday read before 16:00 UTC is stored, not used
+    _supply_rebuild_views(groups)     # P5-1C.A3: CoinGecko's rebuilt supply / FDV days, only while the check passes
     _series_restatement_views(groups, asof)  # P2b-2: a declared restatement — its pending seam, or its holes, named
     _handover_continuation_views(groups)   # P2a D5a: a declared later leg read from another stored series (Maple)
     _handover_cut_views(groups)       # G11 C1: a declared cut — the earlier leg's rows after the later leg starts dropped
@@ -5651,6 +5695,8 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
             # a DECLARED ZERO after a programme ended (config.DECLARED_ZERO) is the same series, not another point
             g_pts = g[~g["source"].astype(str).str.startswith("declared:zero")]
             mps, row["method_change"] = method_points(g_pts if not g_pts.empty else g)
+            # P5-1C.A3: a rebuilt hole day stands in for CoinGecko's point (declared; checked by _supply_rebuild_views)
+            mps = mps.map(lambda p_: hole_fill_point(name, metric, p_))
             row["measuring_points"] = tuple(sorted(set(mps)))
             # WHEN each measuring point was in use. A declared handover is accepted only if the
             # stored dates show no overlap, so the spans have to travel with the row.
