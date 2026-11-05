@@ -6560,16 +6560,27 @@ def migration_watch_on(asof, groups: dict | None = None) -> bool:
     return pd.Timestamp(asof).normalize() >= pd.Timestamp(mw["label_from"])
 
 
-def monthly_table(long: pd.DataFrame, asof: pd.Timestamp) -> tuple[list[str], pd.DataFrame]:
+def monthly_table(long: pd.DataFrame, asof: pd.Timestamp, groups: dict | None = None) -> tuple[list[str], pd.DataFrame]:
+    """The Monthly tab: each project's series summed (flow) or averaged (stock) per calendar month.
+
+    PR1.S4 (Jake 2026-11-05): THE HEADLINE SERIES, NOT THE RAW ONE — with `groups` (aggregate()'s groups after every
+    read-time view, _LAST_GROUPS), each (project, metric) reads the series its A-tab cells read (config.metric_alias
+    included): Pendle's, NEAR's, Hyperliquid's and Aethir's revenue / emissions read raw or partial stored series here.
+    AND NEVER THE AS-OF DAY: its row is not complete (the covered-day rule, PR1.S1), so the current month runs to the
+    day before. Without `groups`, the raw rows of `long` (callers outside a build)."""
     n = GLOBALS["months_in_monthly_sheet"]
     end = asof.to_period("M")
     months = [str(end - i) for i in range(n - 1, -1, -1)]
     rows = []
-    groups = {k: g for k, g in long.groupby(["project", "metric"])} if not long.empty else {}
+    if groups is None:
+        groups = {k: g for k, g in long.groupby(["project", "metric"])} if not long.empty else {}
     for p in scoped_projects():
         for metric in MONTHLY_METRICS:
             m = METRICS[metric]
-            g = groups.get((p["name"], metric))
+            g = groups.get((p["name"], config.metric_alias(p["name"], metric)))
+            if g is not None and not g.empty:
+                g = g.assign(date=pd.to_datetime(g["date"]))
+                g = g[g["date"].dt.normalize() < asof.normalize()]
             row = {"key": f"{p['name']}|{metric}",
                "label": f"{p['name']} — {config.metric_label(p['name'], metric)}",
                "kind": m["kind"], "unit": config.metric_unit(p["name"], metric)}
@@ -13828,7 +13839,8 @@ def build_workbook(store, path: Path | str, run_id: str | None = None,
     wiring.reset()
     data = aggregate(long, fetch_status, asof, gaps=gaps, review=review)
     data_by_key = wiring.TrackingDict({r["key"]: r for r in data.to_dict("records")})
-    months, monthly = monthly_table(_without_bad_prints(long), asof)   # P3-A2: the excluded prints off it too
+    # P3-A2: the excluded prints off it too (_bad_print_views); PR1.S4: the headline series, after every read-time view
+    months, monthly = monthly_table(_without_bad_prints(long), asof, groups=_LAST_GROUPS)
     # P3-A1: the flows over their project's monthly series' own months, AFTER every aggregate() row (none moves)
     data_sheet = (pd.concat([data, pd.DataFrame(list(MONTH_WINDOW_ROWS.values()), columns=DATA_COLS)],
                             ignore_index=True) if MONTH_WINDOW_ROWS else data)
