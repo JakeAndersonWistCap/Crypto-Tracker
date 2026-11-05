@@ -92,7 +92,7 @@ def _no_cached_values(monkeypatch):
 # module fixtures are built once). tests/test_shared_build.py checks this list against the files that use it.
 SHARED_PLAIN_BUILD_FILES = (
     "test_round_p1.py", "test_round_p2e2.py", "test_round_p2e34.py", "test_round_p2e_ranks.py",
-    "test_round_p3_1.py", "test_round_p3_2.py", "test_round_p3_a2.py", "test_round_p4_q5.py",
+    "test_round_p3_1.py", "test_round_p3_2.py", "test_round_p3_a2.py", "test_round_p4_q5.py", "test_round_p5_1c_flows.py",
 )
 SHARED_PLAIN_BUILD_GROUP = "shared_plain_build"
 

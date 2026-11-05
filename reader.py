@@ -1383,8 +1383,14 @@ def _mcap_basis_note(config, name: str) -> str:
 
 
 def _premint_note(p: dict, src: Src | None) -> str:
-    if src is None or src.num is None or src.num != 0 or not is_premint(p, src):
+    if src is None or src.num is None or not is_premint(p, src):
         return ""
+    if src.num != 0:
+        # P5-1C.B2 (Jake 2026-11-04: GEODNET's −9.365M read as a circulating change beside a derived +2.33M): on a
+        # pre-minted supply the figure is mint − burn = BURN ONLY — said, with where the circulating change is
+        return ("BURN ONLY — a pre-minted supply: no new tokens are minted, so the net supply change is minus the burn. "
+                "It is not the change in circulating supply (release − burn: the audit file's A4 'Derived net supply "
+                "change'); releases from the pre-minted pools appear under dilution (total dilution), not here.")
     return ("A pre-minted supply: no new tokens are minted, so the net supply change is 0. Releases from the "
             "pre-minted pools appear under dilution (total dilution), not under issuance.")
 

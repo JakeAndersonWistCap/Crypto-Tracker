@@ -10153,7 +10153,10 @@ def _spot_uniswap(spot, rows, asof, long=None):
     inside = bool(w[0]) and pd.Timestamp(w[1]) > start
     spot.info(f"ours: UNI to 0x…dEaD (on-chain, archive reads), window {start.date()}..{asof.date()} — Q0 "
               f"{_num(q0, 'UNI')} over {cov:.0f} covered day(s) = {_num(q0 * 365 / cov if q0 else None, 'UNI')}/yr; "
-              f"one-off window {w[0]}..{w[1]} is {'INSIDE (removed by the one-off view)' if inside else 'outside'} it")
+              f"one-off window {w[0]}..{w[1]} is "
+              + (("INSIDE (kept in the series since P5-1C.B1 — this comparison then includes it)"
+                  if config.one_offs_in_rates() else "INSIDE (removed by the one-off view)") if inside else "outside")
+              + " it")
     fees, why = _polite("https://api.llama.fi/summary/fees/uniswap", params={"dataType": "dailyHoldersRevenue"})
     t0 = int(start.timestamp())
     px, why_p = _polite(f"https://coins.llama.fi/chart/coingecko:uniswap", params={"start": t0, "span": 92, "period": "1d"})

@@ -336,6 +336,8 @@ def test_4c_uniswap_burn_is_stored_from_the_transaction_on_its_block_day():
 def test_4c_the_stored_tx_row_dates_the_one_off_and_the_rate_still_excludes_it(monkeypatch):
     import build_workbook as bw
     uni = config.PROJECT_BY_NAME["Uniswap"]
+    # P5-1C.B1 (Jake 2026-11-04): one-offs now stay in every rate; the old exclusion is the switch's OFF position
+    monkeypatch.setitem(config.ONE_OFFS_IN_RATES, "on", False)
     d = ["2025-12-26", "2025-12-27", "2025-12-28"]
     gross = _rows("Uniswap", "gross_burn_tokens", d, [5.0, 6.0, 100_000_007.0], "chain:burn:delta")
     held = _rows("Uniswap", "one_off_burn_tokens", ["2025-12-27"], 100_000_000.0, "tx:0x091f (block 24106378)", 1)

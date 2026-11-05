@@ -28,6 +28,8 @@ Writes nothing to the store and leaves token_metrics.xlsx alone. Output is ASCII
                    read (covered days); before = one day a row
     p5_1c_supply_rebuild  2026-11-04: CoinGecko's total / max supply and FDV hole days rebuilt (on-chain legs, a
                    declared max, price x CoinGecko's basis) are used; before = dropped (the holes)
+    p5_1c_b1_one_offs  2026-11-04: one-off releases and burns stay in every rate and trend (Uniswap's 100M burn of
+                   2025-12-27 stays in gross_burn_tokens); before = moved out of the series at read time
 
     --cells all    every numeric cell on the A1-A4, CP and Master tabs, not only the A1-A4 headlines
 """
@@ -70,6 +72,9 @@ BEFORE = {
     # P5-1C.A3 (2026-11-04): CoinGecko's supply / FDV hole days rebuilt by the catch-up (supply_rebuild:*) are used;
     # before = they are dropped (the holes they were). Needs a store the catch-up has rebuilt days in
     "p5_1c_supply_rebuild": lambda: [(config.SUPPLY_REBUILD_ON, "on", False)],
+    # P5-1C.B1 (2026-11-04): one-off releases and burns stay in every rate and trend (Uniswap's 100M burn of 2025-12-27
+    # no longer moved out of gross_burn_tokens); before = the one-off moved out of the series at read time
+    "p5_1c_b1_one_offs": lambda: [(config.ONE_OFFS_IN_RATES, "on", False)],
 }
 ALL_CELL_TABS = ("A1", "A2", "A3", "A4", "CP", "Master")   # --cells all: every numeric cell on these tabs
 
