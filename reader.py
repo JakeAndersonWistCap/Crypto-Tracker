@@ -835,6 +835,11 @@ def key_number(src: Src | None) -> float | None:
     return NO_NEW_SUPPLY_KEY if code_of(src.text) == NO_NEW_SUPPLY else None
 
 
+def key_format(arch: int) -> str:
+    """PR1.S11: the number format of an archetype's key — A1's is a 1-year change (%), A2-A4's a ratio (x)."""
+    return FMT_PCT if arch == 1 else FMT_X
+
+
 def _fmt_key(v) -> str:
     return NO_NEW_SUPPLY if v == NO_NEW_SUPPLY_KEY else f"{v:,.4g}"
 
@@ -1175,7 +1180,8 @@ def _write_summary(sh: Sheet, ctx: Ctx, keys: dict) -> None:
                    "complete day ÷ revenue over the same number of days before it − 1. n/a where the history is "
                    "shorter or a day is missing.", FMT_PCT, "Business", "computed from the stored daily revenue series",
                    0, 13),
-        "key": ("Archetype key", "The primary archetype's ranking key, higher is better — see Definitions: "
+        "key": ("Archetype key", "The primary archetype's ranking key, higher is better, each in its own unit (A1's "
+                "is a 1-year change, in %; A2–A4's are ratios, in x) — see Definitions: "
                 + " · ".join(f"A{a}: {k[0]}" for a, k in ARCHETYPE_KEYS.items()), FMT_X, "Rank", "A-tab key columns",
                 0, 12),
         "rank": ("Rank in archetype", "Position within the primary archetype by its key. A project with no measured "
@@ -1196,8 +1202,8 @@ def _write_summary(sh: Sheet, ctx: Ctx, keys: dict) -> None:
                     "Master, Net supply change, annualised % of circulating", 0, 11),
         "nsc_tok": ("Net supply change, 90 days", "Issuance − burn over the last 90 days, in tokens.", FMT_TOK,
                     "Supply", "Master, NET SUPPLY CHANGE Q0 (tokens)", 0, 14),
-        "payout": ("Payout ratio", "Credited holder value ÷ revenue on the project's own revenue basis. Above 1.0x the "
-                   "comment says what funds the excess.", FMT_PCT, "Holders",
+        "payout": ("Payout ratio", "Credited holder value ÷ revenue on the project's own revenue basis, in x (1.0x = "
+                   "the whole revenue credited). Above 1.0x the comment says what funds the excess.", FMT_X, "Holders",
                    "CP Comparability, Payout ratio (net basis)", 0, 10),
         "price": ("Price change, selected period", "Price on the last day held ÷ price the selected number of days "
                   "before − 1.", FMT_PCT, "Market", "computed from the stored daily price series", 0, 12),
@@ -1332,6 +1338,11 @@ def _summary_row(sh, ctx: Ctx, C, row, p, rank, key, parked: bool = False) -> No
     else:
         put_code(sh, row, C["key"], "n/a", f"No measured {ARCHETYPE_KEYS.get(arch, ('key',))[0].lower()}"
                  + (f": {kwhy}" if kwhy else "") + ".")
+    # PR1.S11 (Jake 2026-11-05: Ethereum's A1 key −0.135 read "-0.1x"): each key in its own unit — A1's is a 1-year
+    # change (%), A2-A4's a ratio (x)
+    kc = sh.ws.cell(row, _idx(sh, C["key"]))
+    if kc.number_format == C["key"].fmt:
+        kc.number_format = key_format(arch)
     if parked:                              # P2e-5: one code on a parked row — the key's code reads "parked" too
         park_cell(sh, f"{C['key'].letter}{row}", name)
         put_code(sh, row, C["rank"], "parked", _parked_rank_note(name))
@@ -1403,7 +1414,7 @@ def _payout_note(p: dict, net: Src | None, gross: Src | None) -> str:
         # P3-1c (R2): the credited value IS the revenue (the fee burn) — 1.0 by definition; the ratio is the burn as
         # measured (on chain) over the revenue figure (an aggregator's), and its distance from 1.0 is their difference
         return (f"The fee burn is {p['name']}'s protocol revenue and is credited in full (payout ratio "
-                f"{bc.get('share_of_revenue', 1.0):.1f} by definition). This cell measures it: the burn as stored "
+                f"{bc.get('share_of_revenue', 1.0):.1f}x by definition). This cell measures it: the burn as stored "
                 f"({bc['metric']} a day x that day's price) ÷ the revenue series ({net.num:.2f}x) — the two are the same "
                 f"burn from two sources, so the distance from 1.0 is their difference (day boundaries; the burn "
                 f"series' declared handover between its legs), not a payout above or below revenue.")
@@ -2356,8 +2367,9 @@ COMPARISON_COLS = (
      FMT_PCT, "Every outflow a year (security emissions, incentives, grants, unlocks) ÷ the tradeable float.", ""),
     ("nhy", "Net holder yield", (CP_TAB, "NET HOLDER YIELD"), FMT_PCT,
      "Holder value yield − every outflow a year at each day's price ÷ market cap. The sort key of this tab.", ""),
-    ("payout", "Payout ratio", (CP_TAB, "Payout ratio — the project's own net basis"), FMT_PCT,
-     "Credited holder value ÷ revenue on the project's own revenue basis.", "buyback"),
+    ("payout", "Payout ratio", (CP_TAB, "Payout ratio — the project's own net basis"), FMT_X,
+     "Credited holder value ÷ revenue on the project's own revenue basis, in x (1.0x = the whole revenue credited).",
+     "buyback"),
     ("buy_press", BUYING_PRESSURE_SHORT, (CP_TAB, "BUYING PRESSURE ON FLOAT"), FMT_PCT, BUYING_PRESSURE_DEF, "buyback"),
     ("subsidy", "Subsidy cover (x)", (CP_TAB, "SUBSIDY COVER"), FMT_X,
      "Revenue ÷ the $ of supply-side incentives, per covered day: above 1.0x the business pays for its incentives. "

@@ -93,6 +93,7 @@ def _no_cached_values(monkeypatch):
 SHARED_PLAIN_BUILD_FILES = (
     "test_round_p1.py", "test_round_p2e2.py", "test_round_p2e34.py", "test_round_p2e_ranks.py",
     "test_round_p3_1.py", "test_round_p3_2.py", "test_round_p3_a2.py", "test_round_p4_q5.py", "test_round_p5_1c_flows.py",
+    "test_pr1_status.py",
 )
 SHARED_PLAIN_BUILD_GROUP = "shared_plain_build"
 

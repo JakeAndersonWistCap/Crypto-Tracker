@@ -11400,11 +11400,12 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         ("Lock terms per yield — lock / unstake / liquid wrapper", attr("lock_terms"), FMT_TEXT, "text"),
         ("Payout currency per yield", attr("payout_currency"), FMT_TEXT, "text"),
         # ---- PAYOUT RATIO (item 3) ----
+        # PR1.S11: a ratio, in x like every note about it (1.0x = the whole base credited) — it was a %
         ("Payout ratio — gross = credited holder value ÷ fees", payout(lambda p: config.fees_headline_metric(p["name"])),
-         FMT_PCT, "calc", False, {"note_fn": lambda p: _payout_note(p)}),
+         FMT_X, "calc", False, {"note_fn": lambda p: _payout_note(p)}),
         ("Payout ratio — the project's own net basis = credited holder value ÷ revenue (config revenue basis)",
          payout(lambda p: config.revenue_ratio_base_metric(p["name"]), "n/a — the project's net basis is gross fees (as left)"),
-         FMT_PCT, "calc", False, {"note_fn": lambda p: _payout_note(p)}),
+         FMT_X, "calc", False, {"note_fn": lambda p: _payout_note(p)}),
         # ---- ATTRIBUTES (amendments 2 and 5: never penalties) ----
         ("Destination durability (burn / held-timelocked / held-discretionary)", attr("destination"), FMT_TEXT, "text"),
         ("Mechanism certainty + dated log of changes", attr("certainty"), FMT_TEXT, "text"),
