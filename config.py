@@ -34850,3 +34850,135 @@ STAKE_COUNTS_AS_LOCKED = {
                 "(beacon_chain_eth) that CP's staked column, the tradeable float and the A1 staking rate read — one "
                 "figure.",
 }
+
+
+# =====================================================================================================================
+# PROJECT ROUND 1 — UNISWAP (Jake 2026-11-05: U3, U4, U5, U8, U9). SPEC rows PR1.U3..PR1.U9.
+# =====================================================================================================================
+# U5. TOTAL SUPPLY IS NET OF BURNED TOKENS — THE STANDARD FOR EVERY PROJECT (Jake 2026-11-05). Each project moves to it
+# in its own round; TOTAL_SUPPLY_NET lists the projects already on it (Hyperliquid G2-D2, GEODNET G2-L3, Uniswap PR1.U5).
+# UNISWAP: total supply = UNI.totalSupply() − the 0x…dEaD balance (Uni.sol has no _burn: a burn is a transfer to 0x…dEaD,
+# which totalSupply still counts), our own on-chain figure, not CoinGecko's. Read live 2026-11-05 at block 26,348,366
+# (2026-11-05 11:34:47 UTC, ethereum-rpc.publicnode.com, keyless eth_call on 0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984):
+# totalSupply() 1,000,000,000.000000; balanceOf(0x…dEaD) 113,781,581.213803 -> 886,218,418.786197 (CoinGecko at 11:47:55
+# UTC: 886,234,418.79 — 16,000 UNI more, four 4,000-UNI Firepit releases it has not yet subtracted). The measuring point
+# changes from CoinGecko to derived:total_supply_gross-burn_address_balance — a DECLARED HANDOVER (series_handover below);
+# CoinGecko's total stays beside it as total_supply_coingecko (the cross-check and the like-for-like circulating row).
+TOTAL_SUPPLY_NET_STANDARD = {
+    "rule": "total supply is net of burned tokens: the token's own total less every balance that is burned",
+    "decided": "Jake 2026-11-05 (PR1.U5)",
+    "on": ("Hyperliquid", "GEODNET", "Uniswap"),
+    "rollout": "each later project moves to it in its own round, as a declared handover",
+}
+TOTAL_SUPPLY_NET["Uniswap"] = {
+    "total": "total_supply_gross", "less": ("burn_address_balance",),
+    "label": "UNI.totalSupply() − the 0x…dEaD balance (net of burned UNI)",
+    "decided": "Jake 2026-11-05 (PR1.U5)",
+    "read_live": {"block": 26_348_366, "utc": "2026-11-05 11:34:47", "rpc": "ethereum-rpc.publicnode.com",
+                  "total_supply": 1_000_000_000.0, "dead_balance": 113_781_581.213803, "net": 886_218_418.786197},
+}
+TOTAL_SUPPLY_ONCHAIN_FIRST["Uniswap"] = {"decided_by": "Jake", "decided_on": "2026-11-05",
+                                         "why": TOTAL_SUPPLY_NET["Uniswap"]["label"], "view": True}
+PROJECT_BY_NAME["Uniswap"].setdefault("series_handover", {})["total_supply"] = {
+    "ordered_points": ("coingecko", "derived:total_supply_gross-burn_address_balance"),
+    "why": "CoinGecko's total supply, then ours: UNI.totalSupply() − the 0x…dEaD balance (PR1.U5)",
+    "composition_change": "none in quantity — CoinGecko's total IS net of the 0x…dEaD balance (confirmed 2026-09-21: "
+                          "contract − CoinGecko = the burn balance within read timing); the total is ours from the "
+                          "first day both legs are held, CoinGecko's moves to total_supply_coingecko",
+    "declared": "2026-11-05"}
+METRICS["total_supply_coingecko"]["only_projects"] = tuple(TOTAL_SUPPLY_ONCHAIN_FIRST)
+# P5-1C.A3 rebuilds CoinGecko's own total where it has a hole; with total_supply ours, CoinGecko's total is the series
+# total_supply_coingecko (GEODNET's arrangement) — the rebuild is unchanged in what it computes, only where it is kept
+SUPPLY_REBUILD["Uniswap"]["total_metric"] = "total_supply_coingecko"
+
+# U5. COINGECKO'S CIRCULATING BASIS FOR UNI — the cross-check's difference explained (the cell notes and the Review row).
+# PRIMARY SOURCE: CoinGecko's own API reference, /coins/{id}/supply_breakdown (docs.coingecko.com/reference/
+# coins-id-supply-breakdown, read 2026-11-05), whose worked example IS uniswap: total_supply 894,182,420.0329479,
+# circulating 622,047,561.5538775, non_circulating_wallets = ONE wallet, 0x1a9C8182…35BC "UNI Timelock" 272,134,858.4790704
+# (last_updated 2026-06-15). Our stored reads that day: Timelock 272,134,858.4790704 (to the decimal) and 0x…dEaD
+# 105,817,579.967052 -> 1,000,000,000 − 105,817,579.97 = 894,182,420.03: CoinGecko's documented basis is net total − the
+# Timelock. The same docs: a wallet whose balance update is flagged an anomaly makes circulating "fall back to the last
+# known-good balance until manually reviewed". The endpoint itself is paid (keyless call: error 10005, PRO only).
+# OURS excludes, beside the Timelock, the wallets Uniswap's own docs name (the airdrop merkle distributor 0x090D…256e and
+# the four treasury vesting contracts) — the like-for-like row adds them back.
+COINGECKO_CIRC_BASIS = {
+    "Uniswap": {
+        "basis": "CoinGecko's circulating = its total supply (net of the 0x…dEaD balance) − ONE non-circulating wallet, "
+                 "the UNI Timelock 0x1a9C8182…35BC (CoinGecko API reference, /coins/{id}/supply_breakdown, its uniswap "
+                 "example of 2026-06-15: 894,182,420.03 − 272,134,858.48 = 622,047,561.55 — our stored Timelock read "
+                 "that day is 272,134,858.4790704, to the decimal)",
+        "ours": "ours also excludes the wallets Uniswap's docs name (the airdrop merkle distributor and the four treasury "
+                "vesting contracts); like-for-like they are added back",
+        "live": {"block": 26_348_366, "utc": "2026-11-05 11:34:47", "timelock": 262_247_996.305835,
+                 "distributor": 219_165.087661, "vesting": 0.0, "net_total": 886_218_418.786197,
+                 "ours": 623_751_257.392701,
+                 "coingecko_utc": "2026-11-05 11:47:55", "coingecko_total": 886_234_418.786197,
+                 "coingecko_circulating": 609_723_895.879829},
+        "gap": "on 2026-11-05 CoinGecko's figure implies 276,510,522.91 UNI non-circulating (886,234,418.79 − "
+               "609,723,895.88) against the Timelock's 262,247,996.31 on chain at block 26,348,366: it takes "
+               "14,262,526.60 UNI more out than the one wallet it documents holds — like-for-like ours (its own total − "
+               "the Timelock, 623,986,422.48) reads +2.34%. Its market-cap history (market_chart, re-read 2026-11-05) "
+               "steps +16,965,988 on 2026-10-06 (590,654,209 on 10-05 -> 607,620,197) with no on-chain move of that size (the Timelock held "
+               "262,247,996 from 10-02), and restates its own past figures (10-13: 607,400,197 now vs 624,569,960 read "
+               "that day). On the 10-13 dumps CoinGecko still matched its basis exactly (624,898,422 = total − "
+               "Timelock, 0.000%); from 10-06 its own history no longer does. The +2.3–2.9% (Jake's store +2.89%; CoinGecko's "
+               "606,581,896 on 11-02) is CoinGecko's figure leaving its documented basis — an extra exclusion "
+               "no document of CoinGecko's or Uniswap's names (the breakdown that would name it is paid) — not a "
+               "difference in ours, which is reproducible from three balanceOf reads",
+        "read_on": "2026-11-05",
+    },
+}
+
+
+def coingecko_circ_basis_note(project_name: str) -> str:
+    """PR1.U5: the cell note explaining OUR circulating against CoinGecko's (its documented basis, and what is left)."""
+    b = COINGECKO_CIRC_BASIS.get(project_name)
+    if not b:
+        return ""
+    return (f"COINGECKO'S BASIS (PR1.U5, read {b['read_on']}): {b['basis']}; {b['ours']}. WHY THEY DIFFER: {b['gap']}.")
+
+
+# U9. UNISWAP'S TWO OPEN REVIEW QUEUE ROWS (Jake's store, 2026-11-05) — each answered with its numbers.
+REVIEW_ANSWERED.extend([
+    # r44 (U4): the Dexs category denominator +87% day-on-day — DefiLlama's own figures, a Sunday -> Monday rise
+    {"project": "Uniswap", "metric": "market_share_category_usd", "reason": "change_threshold", "date": "2026-11-02",
+     "decision": "ACCEPT",
+     "why": "DefiLlama's own Dexs total (api.llama.fi/overview/dexs, 1,060 protocols, re-read 2026-11-05 — unrevised): "
+            "4,114,604,308 on Sunday 11-01 -> 7,693,669,883 on Monday 11-02 (+87.0%), then 6,871,706,514 (11-03) and "
+            "9,550,489,274 (11-04); the rise is spread (Curve DEX +726.5M, Uniswap V3 +539.8M, Uniswap V4 +287.7M), a "
+            "weekday's volume, not a misread. Uniswap's share that day 25.36% (1,951,206,934 ÷ 7,693,669,883). The "
+            "headline no longer reads one day: it is the 90-day mean (PR1.U4, config.MARKET_SHARE_MEAN), 30.26% to "
+            "11-02 (30-day 30.27%, 60-day 31.56%)"},
+    # U5: ours vs CoinGecko beyond the 2% tolerance — CoinGecko's figure has left its own documented basis
+    {"project": "Uniswap", "metric": "circulating_supply", "reason": "onchain_vs_coingecko", "until": "2026-11-30",
+     "decision": "ACCEPT",
+     "why": "ours stands: total − 0x…dEaD − the Timelock − the docs' distributor / vesting wallets, three balanceOf reads "
+            "(block 26,348,366, 2026-11-05: 623,751,257). CoinGecko documents its basis as total − the UNI Timelock "
+            "only (its supply_breakdown reference, uniswap example, matched to the decimal by our 2026-06-15 reads); "
+            "its 609,723,896 on 2026-11-05 takes 14,262,527 UNI more out than the Timelock holds (like-for-like "
+            "+2.34%; Jake's store +2.89%), unexplained by any wallet it or Uniswap documents (config.COINGECKO_CIRC_BASIS). "
+            "The tolerance is unchanged; re-check by 11-30 — a CoinGecko figure back on its basis passes on its own"},
+])
+
+# U4. MARKET SHARE ON THE 90-DAY MEAN (Jake 2026-11-05). Uniswap's CP market share (DC12, 25.4%) read ONE day, 11-02,
+# whose Dexs denominator rose +87% on the day (Review Queue r44). The headline is now the 90-day mean of the daily shares
+# — the Q0 basis (Data's Q0 of a stock: the mean of the days held in the trailing 90 days); the 30- and 60-day means
+# stand beside it (market_share_mean30_pct / market_share_mean60_pct: the mean of the daily shares held in the N days to
+# each day, build_workbook._market_share_mean_views). The trajectory's past quarters already read each quarter's mean.
+# Uniswap only in this round: every other project's headline still reads its latest day until it moves in its own round.
+MARKET_SHARE_MEAN = {
+    "Uniswap": {"headline": "q0", "means": (30, 60), "decided": "Jake 2026-11-05 (PR1.U4)",
+                "why": "a DEX-volume share read on one day moves with that day's category total (11-02: Dexs +87.0% "
+                       "day-on-day, Uniswap 25.36%); the 90-day mean is the Q0 basis"},
+}
+for _n_ in (30, 60):
+    METRICS[f"market_share_mean{_n_}_pct"] = {
+        "label": f"Market share, {_n_}-day mean — the mean of the daily market_share_pct held in the {_n_} days to each "
+                 f"day (PR1.U4)",
+        "kind": "stock", "unit": "fraction", "archetypes": [], "tiers": [1], "sanity_min": 0.0, "sanity_max": 1.0,
+        "view_only": True, "only_projects": tuple(MARKET_SHARE_MEAN)}
+
+
+def market_share_window(project_name: str) -> str:
+    """PR1.U4: the Data window the MARKET SHARE headline reads — 'q0' (the 90-day mean) where declared, else 'now'."""
+    return (MARKET_SHARE_MEAN.get(project_name) or {}).get("headline", "now")

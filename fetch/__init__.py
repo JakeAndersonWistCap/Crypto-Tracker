@@ -1647,6 +1647,33 @@ def _derive_issuance(out: FetchOutput, projects: list[dict], prior_values: dict,
         # over a window with ~8M of expected issuance, which tripped the 10x guard.
         smetric = p.get("issuance_supply_metric") or "total_supply"
         now = supply.get(name) if smetric == "total_supply" else alt_supply.get((name, smetric))
+        # PR1.U5: where total_supply is our own READ-TIME net view (config.TOTAL_SUPPLY_NET — Uniswap) no fetch writes a
+        # total_supply row, so the gross route (d(total_supply_gross), the contract's own totalSupply) runs on its own:
+        # the same figure as below, without CoinGecko's total (whose net+burn cross-check is retired for Uniswap)
+        if now is None and name in config.TOTAL_SUPPLY_NET and rule == "add_burn" and gross.get(name) is not None:
+            g_now = gross[name]
+            g_prior = prior_values.get((name, "total_supply_gross"))
+            g_prior_date = prior_dates.get((name, "total_supply_gross"))
+            if g_prior is None or (g_prior_date and str(g_prior_date)[:10] >= str(g_now[1])[:10]):
+                out.gap(name, "gross_issuance_tokens",
+                        reason="cannot be derived yet: it is the CHANGE in total_supply_gross and the store holds no "
+                               "earlier-dated reading of it",
+                        tiers_attempted="1, 2", suggestion="It resolves itself on the next run on a later day.")
+                continue
+            g_delta = g_now[0] - g_prior
+            if g_delta < 0:
+                out.review_item(name, "gross_issuance_tokens", "negative_derived_issuance", "rejected",
+                                value=float(g_delta), prior_value=float(g_prior), date=g_now[1],
+                                source="derived:d_supply_gross", tier=2)
+                out.gap(name, "gross_issuance_tokens",
+                        reason=(f"the gross-supply delta came out NEGATIVE ({g_delta:,.4f}) and was rejected. A "
+                                f"contract's totalSupply cannot fall on a transfer burn, so this is a read fault."),
+                        tiers_attempted="1, 2", suggestion="Check the two total_supply_gross readings in the store.")
+                continue
+            out.add(point(name, "gross_issuance_tokens", float(g_delta), "derived:d_supply_gross", 2, g_now[1]),
+                    SOURCE_DERIVED, name, f"gross_issuance_tokens={g_delta:,.4f} from d(total_supply_gross) (total "
+                                          f"supply is the net read-time view, PR1.U5)", 2)
+            continue
         if now is None:
             continue                       # no supply read this run; the metric's own gap covers it
         value, when = now

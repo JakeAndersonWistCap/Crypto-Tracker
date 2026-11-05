@@ -5125,3 +5125,31 @@ SELECT ts, status, substr(message, 1, 300) AS message
  WHERE source = 'hypercore_info' AND status <> 'ok'
    AND ts >= (SELECT MIN(date) FROM metrics WHERE project = 'Hyperliquid' AND metric = 'circulating_supply_first_party')
  ORDER BY ts;
+
+-- ========================================================================================
+-- DD. UNISWAP: OUR TOTAL SUPPLY NET OF THE BURNED UNI (PR1.U5)  2026-11-05T13:00Z
+--     Jake 2026-11-05 (U5): total supply = UNI.totalSupply() − the 0x…dEaD balance, a read-time view
+--     (config.TOTAL_SUPPLY_NET["Uniswap"]), not CoinGecko's. The build already reads it so (CoinGecko's stored total_supply
+--     rows are moved to total_supply_coingecko at read time); this makes the store say the same, as CU did for
+--     Hyperliquid and GEODNET: CoinGecko's stored total_supply rows (values untouched, rebuilt days included) move to
+--     total_supply_coingecko; a row whose day already holds a total_supply_coingecko row is removed instead.
+--     Run: python run_sql.py DD (look), then python run_sql.py --delete DD.
+-- ========================================================================================
+-- DD1. THE COINGECKO TOTALS THAT MOVE.
+SELECT project, source, COUNT(*) AS rows, MIN(date) AS first, MAX(date) AS last, MIN(value) AS min_value,
+       MAX(value) AS max_value
+  FROM metrics
+ WHERE metric = 'total_supply' AND project = 'Uniswap'
+   AND (source LIKE 'coingecko%' OR source LIKE 'supply_rebuild%')
+ GROUP BY project, source;
+
+-- DD2. THE MOVE.
+-- UPDATE OR IGNORE metrics
+--    SET metric = 'total_supply_coingecko'
+--  WHERE metric = 'total_supply' AND project = 'Uniswap'
+--    AND (source LIKE 'coingecko%' OR source LIKE 'supply_rebuild%');
+-- DELETE FROM metrics
+--  WHERE metric = 'total_supply' AND project = 'Uniswap'
+--    AND (source LIKE 'coingecko%' OR source LIKE 'supply_rebuild%')
+--    AND EXISTS (SELECT 1 FROM metrics c WHERE c.project = metrics.project AND c.date = metrics.date
+--                AND c.metric = 'total_supply_coingecko');

@@ -2301,6 +2301,8 @@ _ONE_OFF_IN_SERIES: dict = {}
 # P5-1C.B1: (project, metric, Data window) -> (one-off part, window total, what) for every window a one-off sits in —
 # the "of which one-off: x%" note beside each rate that reads it (_one_off_share_note)
 ONE_OFF_SHARES: dict = {}
+# PR1.U3: (project, metric, "YYYY-MM") -> (one-off part, what) — the Monthly tab's month that holds a declared one-off
+ONE_OFF_MONTHS: dict = {}
 UNLOCK_LEGACY_DROPPED: dict = {}  # (project, release metric, leg) -> legacy rows past config.UNLOCK_LEGACY_CUT (P2a D2)
 
 
@@ -2398,7 +2400,8 @@ def _one_off_parts(groups: dict, name: str) -> dict:
         if n_ != name:
             continue
         carriers = dict.fromkeys((m, config.a1_burn_metric(name), config.a4_burn_metric(name),
-                                  config.a4_net_burn_metric(name), "actual_buyback_tokens", "buyback_burned_tokens"))
+                                  config.a4_net_burn_metric(name), "actual_buyback_tokens", "buyback_burned_tokens",
+                                  "retired_buyback_tokens"))   # PR1.U3: the Flows 'retired' line reads it
         for day, tok, _funding, what in evs:
             for c in carriers:
                 s = _daily(groups.get((name, c)))
@@ -2434,6 +2437,7 @@ def _one_off_shares(groups: dict, asof) -> None:
     """P5-1C.B1: ONE_OFF_SHARES[(project, metric, window)] = (one-off part, the window's total, what) for every Data
     window (now, m1, Q0..Q4, Y1 — the bounds aggregate sums over) a one-off sits in. Read by _one_off_share_note."""
     ONE_OFF_SHARES.clear()
+    ONE_OFF_MONTHS.clear()
     asof = pd.Timestamp(asof).normalize()
     short, period = GLOBALS["short_days"], GLOBALS["period_days"]
     bounds = {"now": (asof - pd.Timedelta(days=short), asof),
@@ -2445,6 +2449,10 @@ def _one_off_shares(groups: dict, asof) -> None:
         name = p["name"]
         for metric, parts in _one_off_parts(groups, name).items():
             s = _daily(groups.get((name, metric)))
+            for d, (v, w) in parts.items():         # PR1.U3: by calendar month, for the Monthly tab's note
+                k = (name, metric, pd.Timestamp(d).strftime("%Y-%m"))
+                prev = ONE_OFF_MONTHS.get(k, (0.0, ""))
+                ONE_OFF_MONTHS[k] = (prev[0] + v, "; ".join(x for x in dict.fromkeys((prev[1], w)) if x))
             for col, (lo, hi) in bounds.items():
                 inside = {d: v for d, v in parts.items() if lo < d <= hi}
                 tot = _window_sum(s, lo, hi)
@@ -2452,6 +2460,11 @@ def _one_off_shares(groups: dict, asof) -> None:
                     continue
                 ONE_OFF_SHARES[(name, metric, col)] = (sum(v for v, _w in inside.values()), float(tot),
                                                        "; ".join(dict.fromkeys(w for _v, w in inside.values())))
+
+
+def _share_pct(x: float) -> str:
+    """PR1.U8: a one-off share as a percentage — two decimals under 1%, so a small real share never reads "0%"."""
+    return f"{x:.2%}" if x and abs(x) < 0.01 else f"{x:.0%}"
 
 
 _DATA_REF = re.compile(r'INDEX\(Data!\$([A-Z]+)\$\d+:\$[A-Z]+\$\d+,MATCH\(\$A\d+&"\|([^"]+)"')
@@ -2475,12 +2488,57 @@ def _one_off_share_note(name: str, formula) -> str:
         seen.add(key)
         part, tot, what = ONE_OFF_SHARES[key]
         unit = "$" if metric.endswith("_usd") else "tokens"
-        lines.append(f"of which one-off: {part / tot:.0%} — {metric} {win.upper()}: {part:,.0f} of {tot:,.0f} {unit} "
+        lines.append(f"of which one-off: {_share_pct(part / tot)} — {metric} {win.upper()}: {part:,.0f} of {tot:,.0f} {unit} "
                      f"({what})")
     if not lines:
         return ""
     return ("ONE-OFF IN THIS RATE (P5-1C.B1, Jake 2026-11-04: one-offs count like recurring flows) — "
             + "; ".join(lines) + ".")
+
+
+MARKET_SHARE_MEAN_NOTE: dict = {}   # PR1.U4: project -> (latest day, its share, its category total, {N: mean})
+
+
+def _market_share_mean_views(groups: dict) -> None:
+    """PR1.U4 (Jake 2026-11-05): market_share_mean<N>_pct = the mean of the daily market_share_pct held in the N days to
+    each day held ((d − N, d], the convention of Data's stock windows), for N in config.MARKET_SHARE_MEAN[project]
+    ["means"]. Only days the share is stored; a day with no share is a hole, never 0. The latest day's share and its
+    category total are kept for the headline's note (the one-day reading the 90-day mean replaced)."""
+    MARKET_SHARE_MEAN_NOTE.clear()
+    for p in scoped_projects():
+        name = p["name"]
+        spec = config.MARKET_SHARE_MEAN.get(name)
+        g = groups.get((name, "market_share_pct"))
+        if not spec or g is None or g.empty:
+            continue
+        s = _daily(g).sort_index()
+        means = {}
+        for n in spec.get("means") or ():
+            r = s.rolling(f"{int(n)}D").mean()
+            groups[(name, f"market_share_mean{n}_pct")] = _as_stored(pd.DataFrame({
+                "date": r.index, "project": name, "metric": f"market_share_mean{n}_pct", "value": r.values,
+                "tier": 1, "source": f"derived:market_share_pct[mean of the days held in the {n} days to each day]"}),
+                g.columns)
+            means[n] = float(r.iloc[-1])
+        cat = _daily(groups.get((name, "market_share_category_usd")))
+        last = s.index.max()
+        MARKET_SHARE_MEAN_NOTE[name] = (last, float(s.iloc[-1]), float(cat[last]) if last in cat.index else None, means)
+
+
+def _market_share_mean_flag(p: dict) -> tuple[str, str] | None:
+    """PR1.U4: (' 90d mean', note) on a MARKET SHARE headline that reads the 90-day mean (config.MARKET_SHARE_MEAN)."""
+    name = p["name"]
+    if config.market_share_window(name) != "q0":
+        return None
+    last = MARKET_SHARE_MEAN_NOTE.get(name)
+    day = (f" The latest single day, {last[0].date()}, reads {last[1]:.2%}"
+           + (f" of a {last[2]:,.0f} category total" if last[2] is not None else "")
+           + "; the 30- and 60-day means are the two columns beside." if last else "")
+    return (" 90d mean",
+            "90-DAY MEAN (PR1.U4, Jake 2026-11-05): the mean of the daily shares held in the trailing 90 days — the Q0 "
+            "basis (Data Q0 of market_share_pct) — not one day: a DEX-volume share read on one day moves with that "
+            "day's category total (11-02 on Jake's store: Dexs +87.0% day-on-day, 25.36%; Review Queue r44)." + day
+            + " A shifted quarter reads that quarter's mean, as before.")
 
 
 def _relabel_views(groups: dict) -> None:
@@ -5730,6 +5788,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _LAST_GROUPS.clear()
     _subsidy_common_views(groups, asof)   # G13 6: subsidy cover over the days every leg covers once (b) is complete
     _LAST_GROUPS.update(groups)       # the views, for Credibility rows that read them (credibility.VIEWS_LONG)
+    _market_share_mean_views(groups)  # PR1.U4: market share's 30- / 60-day means (config.MARKET_SHARE_MEAN)
     _one_off_shares(groups, asof)     # P5-1C.B1: the share of each window that is a declared one-off (cell notes)
     COVERED_SETS.clear()
     MEASURED_VS_MODELLED.clear()
@@ -7309,6 +7368,13 @@ def write_data(ws, data: pd.DataFrame, asof: pd.Timestamp):
                 else:
                     c.value = float(v)
                     _style(c, "input", fmt)
+                    # PR1.U3: a Data window that holds a declared one-off says its share, as the rates that read it do
+                    got = ONE_OFF_SHARES.get((row.project, row.metric, col))
+                    if got and got[1]:
+                        c.comment = Comment(
+                            f"ONE-OFF IN THIS WINDOW (PR1.U3; counted, P5-1C.B1) — of which one-off: "
+                            f"{_share_pct(got[0] / got[1])}: {got[0]:,.0f} of {got[1]:,.0f} "
+                            f"{'$' if row.metric.endswith('_usd') else 'tokens'} ({got[2]}).", "token_metrics")
                 if row.status == "manual":
                     c.fill = FILL_MANUAL
                     if col == "now":
@@ -7382,7 +7448,25 @@ def write_monthly(ws, months: list[str], monthly: pd.DataFrame):
             else:
                 c.value = float(v)
                 _style(c, "input", fmt)
+                note = _one_off_month_note(row["key"], mo, float(v))
+                if note:
+                    c.comment = Comment(note, "token_metrics")
     _set_widths(ws, {"A": 34, "B": 36, "C": 6, "D": 7, **{get_column_letter(j): 13 for j in range(5, 5 + len(months))}})
+
+
+def _one_off_month_note(key: str, month: str, total: float) -> str:
+    """PR1.U3 (Jake 2026-11-05): the Monthly tab's month that holds a declared one-off says how much of it is one-off,
+    as every rate does (P5-1C.B1) — the month total includes it, like the daily series, Q-3, Y1 and every trailing
+    figure. '' where the month holds none."""
+    name, _, metric = str(key).partition("|")
+    got = ONE_OFF_MONTHS.get((name, metric, month))
+    if not got or not total:
+        return ""
+    part, what = got
+    unit = "$" if metric.endswith("_usd") else "tokens"
+    return (f"ONE-OFF IN THIS MONTH (PR1.U3; P5-1C.B1, Jake 2026-11-04: one-offs count like recurring flows) — of which "
+            f"one-off: {_share_pct(part / total)} — {metric} {month}: {part:,.0f} of {total:,.0f} {unit} ({what}). The same "
+            f"one-off is in the daily series, its quarter, Y1 and every trailing figure; each says its share.")
     ws.freeze_panes = "E2"
 
 
@@ -10646,7 +10730,8 @@ def write_master(ws, R: Refs, data_by_key: dict):
          lambda r, p: _mcap_date_note(data_by_key, p["name"]), FMT_TEXT, "text"),
         # THE SUPPLY ACTUALLY USED (item 9, 2026-10-11): the figure market cap multiplies; CoinGecko's beside it
         ("Circulating supply (used)", lambda r, p: pull(_circ(R, r, p)), FMT_NUM, "pull", False, {"metric": "circulating_supply_used"}),
-        ("Circulating supply — CoinGecko (cross-check)", lambda r, p: pull(R.D(r, "circulating_supply", "now")), FMT_NUM, "pull", False, {"metric": "circulating_supply"}),
+        ("Circulating supply — CoinGecko (cross-check)", lambda r, p: pull(R.D(r, "circulating_supply", "now")), FMT_NUM, "pull", False,
+         {"metric": "circulating_supply", "note_fn": lambda p: config.coingecko_circ_basis_note(p["name"])}),   # PR1.U5
         ("Market cap — CoinGecko ($, cross-check: price x CoinGecko's circulating)",
          lambda r, p: pull(R.D(r, "market_cap_usd_coingecko", "now")), FMT_USD, "pull", False,
          {"metric": "market_cap_usd_coingecko"}),
@@ -11353,7 +11438,8 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         ("Max supply (tokens)", lambda r, p: pull(R.D(r, "max_supply", "now")), FMT_NUM, "pull", False, {"metric": "max_supply"}),
         ("Total supply (tokens)", lambda r, p: pull(R.D(r, "total_supply", "now")), FMT_NUM, "pull", False, {"metric": "total_supply"}),
         ("Circulating supply (tokens) — our convention, the figure in use", lambda r, p: pull(circ(r, p)), FMT_NUM,
-         "pull", False, {"metric": "circulating_supply_used"}),
+         "pull", False, {"metric": "circulating_supply_used",
+                         "note_fn": lambda p: config.coingecko_circ_basis_note(p["name"])}),   # PR1.U5
         ("Staked / locked inside circulating (tokens)",
          lambda r, p: _cp_float_reason(p) or calc(_cp_lock(R, r, p)), FMT_NUM, "calc", False,
          {"metric_fn": lambda n: config.CP_STAKE_METRIC.get(n, "locked_tokens"), "note_fn": lambda p: _lock_zero_note(p)}),
@@ -11481,8 +11567,17 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
          "text"),
         (MARKET_SHARE_HEAD, lambda r, p: "" if p["name"] not in config.MARKET_SHARE else (
             "n/a — " + config.MARKET_SHARE[p["name"]]["na"] if "na" in config.MARKET_SHARE[p["name"]]
-            else calc(R.D(r, "market_share_pct", "now"))), FMT_PCT, "calc", True,   # a share WE derive
-         {"metric_fn": lambda n: "market_share_pct" if "na" not in (config.MARKET_SHARE.get(n) or {"na": 1}) else None}),
+            # PR1.U4: the 90-day mean (Data Q0) where config.MARKET_SHARE_MEAN declares it, else the latest day
+            else calc(R.D(r, "market_share_pct", config.market_share_window(p["name"])))), FMT_PCT, "calc", True,
+         {"metric_fn": lambda n: "market_share_pct" if "na" not in (config.MARKET_SHARE.get(n) or {"na": 1}) else None,
+          "flag_fn": _market_share_mean_flag}),
+        *[(f"Market share, {n}-day mean — the daily shares held in the {n} days to the latest day (where the headline "
+           f"is the 90-day mean, config.MARKET_SHARE_MEAN)",
+           (lambda n: lambda r, p: calc(R.D(r, f"market_share_mean{n}_pct", "now"))
+            if n in (config.MARKET_SHARE_MEAN.get(p["name"]) or {}).get("means", ()) else "")(n), FMT_PCT, "calc",
+           False, {"metric_fn": (lambda n: lambda nm: f"market_share_mean{n}_pct"
+                                 if n in (config.MARKET_SHARE_MEAN.get(nm) or {}).get("means", ()) else None)(n)})
+          for n in (30, 60)],
         ("Market share, second basis — basis and peer set (config.MARKET_SHARE_2)",
          lambda r, p: (config.MARKET_SHARE_2.get(p["name"]) or {}).get("basis", ""), FMT_TEXT, "text"),
         (MARKET_SHARE_2_HEAD, lambda r, p: calc(R.D(r, "market_share_2_pct", "now"))
@@ -13296,6 +13391,28 @@ def _no_such_flow(row: dict, have: set | None = None) -> dict:
             "Note": f"0 — no such flow: {ev['evidence']} ({ev['source']}, read {ev['read_on']})"[:400]}
 
 
+def _flows_one_off_note(row: dict) -> str:
+    """PR1.U3 (Jake 2026-11-05): a Flows line whose quarter holds a declared one-off says so — "of which one-off: x%"
+    where the line carries it (the value flow's retired / bought / recorded lines, a release leg), "out of this line"
+    where the circulating identity keeps it out (an issuer-side burn under '− burned': it never circulated; its memo
+    line shows it). Every rate keeps it either way (P5-1C.B1). '' where no quarter of the line holds one."""
+    name, metric = row.get("Project"), str(row.get("Series") or "")
+    out = []
+    for k, lab in enumerate(trajectory.LABELS):
+        got = ONE_OFF_SHARES.get((name, metric, f"q{k}"))
+        v = row.get(lab)
+        if not got or not isinstance(v, (int, float)):
+            continue
+        part, tot, what = got
+        unit = "$" if row.get("Unit") == "usd" else "tokens"
+        if float(v) < part * 0.999:
+            out.append(f"{lab}: the one-off ({part:,.0f} {unit}, {what}) is OUT of this line — it never circulated "
+                       f"(memo line); every rate keeps it")
+        elif v:
+            out.append(f"{lab}: of which one-off {_share_pct(part / float(v))} ({part:,.0f} of {float(v):,.0f} {unit}; {what})")
+    return ("ONE-OFF (PR1.U3): " + "; ".join(out)) if out else ""
+
+
 def write_flows(wb, rows: list[dict]) -> None:
     ws = wb.create_sheet(FLOWS_SHEET, index=wb.sheetnames.index("CP Comparability") + 1)
     _title(ws, "Flows — token-flow and value-flow statements per project per quarter",
@@ -13307,6 +13424,9 @@ def write_flows(wb, rows: list[dict]) -> None:
     hr = 4
     _header(ws, hr, FLOWS_HEAD)
     for i, row in enumerate(rows, start=hr + 1):
+        onote = _flows_one_off_note(row)
+        if onote:
+            row = {**row, "Note": "; ".join(x for x in (row.get("Note"), onote) if x)}
         for j, h in enumerate(FLOWS_HEAD, start=1):
             v = row.get(h)
             if v is None and h in trajectory.LABELS:

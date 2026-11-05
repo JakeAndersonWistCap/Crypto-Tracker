@@ -2676,7 +2676,9 @@ def circulating_input(name: str) -> dict:
                         "tol": 2.0, "source": "CoinGecko circulating_supply, the same day — compared with ours plus the "
                                               "wallets it still counts; a gap left beyond tolerance is a real "
                                               "disagreement",
-                        "note": "The definitional gap (those wallets) is reported on its own row, in_circ_gap."}}
+                        "note": " ".join(x for x in ("The definitional gap (those wallets) is reported on its own "
+                                                     "row, in_circ_gap.", config.coingecko_circ_basis_note(name))
+                                         if x)}}
     if spec.get("reference") == "bridge_reconciliation" and ours_m == "circulating_supply_onchain":
         # GEODNET (Jake's probes15, root A): the reconciliation is the judge; the static aggregator figure is its own
         # "N/A (recorded, stale)" row (in_circ_static)
