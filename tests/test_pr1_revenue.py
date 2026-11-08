@@ -48,8 +48,10 @@ def test_s13_every_project_declares_which_line_its_existing_revenue_cell_is():
         assert line in LINES and len(why) > 40, p["name"]
     assert config.revenue_tier("Aerodrome")[0] == "holder_revenue", "all of Aerodrome's revenue is paid to voters"
     assert config.revenue_tier("Uniswap")[0] == "revenue"
-    with pytest.raises(KeyError):
-        config.revenue_tier("No Such Project")                 # never a silent default
+    assert config.revenue_tier("No Such Project") is None       # never a silent default ...
+    assert config.revenue_tier_label("No Such Project", "Revenue Q0 ($)") is None   # ... so the gate names its cells
+    assert config.not_yet_split_text("No Such Project").startswith("not yet split") and \
+        "has not been declared" in config.not_yet_split_text("No Such Project")
 
 
 def test_s13_labels_say_the_line_and_never_substitute():

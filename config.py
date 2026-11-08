@@ -35057,10 +35057,11 @@ UNISWAP_REVENUE_EVIDENCE = {
 }
 
 
-def revenue_tier(project_name: str) -> tuple[str, str]:
+def revenue_tier(project_name: str) -> tuple[str, str] | None:
     """(line, why) of the project's existing headline revenue cell (REVENUE_TIER) — never a default: a project with no
-    declaration raises, so the gate catches it."""
-    return REVENUE_TIER[project_name]
+    declaration (a new or dummy project) gets None, so its revenue cells carry no line label and the gate fails on
+    any that holds a number."""
+    return REVENUE_TIER.get(project_name)
 
 
 def revenue_split(project_name: str) -> dict | None:
@@ -35086,6 +35087,8 @@ def revenue_tier_label(project_name: str, header: str) -> tuple[str, str] | None
     if role is None:
         return None
     if role == "@existing":
+        if revenue_tier(project_name) is None:
+            return None                                # undeclared: no label, so the gate names it
         line, why = revenue_tier(project_name)
         split = revenue_split(project_name)
         state = (f"the three lines are populated ({split['round']}; CP and the reader show all three)" if split
@@ -35105,6 +35108,9 @@ def revenue_tier_label(project_name: str, header: str) -> tuple[str, str] | None
 
 def not_yet_split_text(project_name: str) -> str:
     """The text a new line's cell reads until the project's round (PR1.S13)."""
+    if revenue_tier(project_name) is None:
+        return (f"{NOT_YET_SPLIT} — {project_name}'s three revenue lines come in its own round, and which line its "
+                "existing revenue cell is has not been declared (config.REVENUE_TIER)")
     line, why = revenue_tier(project_name)
     return (f"{NOT_YET_SPLIT} — {project_name}'s three revenue lines come in its own round; its existing revenue cell "
             f"(Master 'Revenue Q0 ($)', {revenue_headline_metric(project_name)}) is {REVENUE_LINE_DEFS[line][0]}: "
