@@ -440,7 +440,8 @@ def test_p2a_a6_a_quarter_change_inherits_the_state_of_what_it_compares():
     assert reader._quarter_change(dict(t, **{"break": "SERIES BREAK 2026-10-12 — x"}), asof)[0] == "blocked"
     assert reader._quarter_change(dict(t, **{"break": "SERIES BREAK 2025-01-12 — x"}), asof)[0] == "ok"
     k, v, why = reader._quarter_change(dict(t, trend="▲ · T12M +17% (rolling T12M)", t12m=12.0, t12m_prev=10.0), asof)
-    assert k == "t12m" and v == pytest.approx(0.2) and "TRAILING-12-MONTH" in why
+    # PR1.S3 (Jake 2026-11-05): a lumpy series' change is read on the quarters shown (latest vs −1 qtr), the T12M named
+    assert k == "ok" and v == pytest.approx(1.0) and "trailing-12-month" in why
     k, v, why = reader._quarter_change(dict(t, modelled="Q-1"), asof)
     assert k == "modelled" and "MODELLED" in why
 
