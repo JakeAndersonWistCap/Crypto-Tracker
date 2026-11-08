@@ -1883,7 +1883,8 @@ def _quarter_change(t: dict | None, asof: pd.Timestamp) -> tuple[str, object, st
                                  f"point) on {', '.join(str(d.date()) for d in inside)} — a change across it is not a "
                                  f"change of the business. {plain(t['break'])}\n\n{where}")
     # PR1.S5: the quarter before is a launch or partial quarter — a change from it is no percentage (its label instead)
-    blk = re.search(r"QoQ: n/a — ([^;]+)", t.get("why") or "")
+    why_t = t.get("why")                                   # A1's key carries a reason per quarter (a list): no label
+    blk = re.search(r"QoQ: n/a — ([^;]+)", why_t) if isinstance(why_t, str) else None
     if blk:
         return "n/a", None, (f"No change: the quarter before is not a full quarter on this basis — {blk.group(1)}."
                              f"\n\n{where}")
