@@ -20780,6 +20780,38 @@ MECHANISM_START = {
         "why": "the first Stage 2 buy-and-burn — the 2026-09-10 monthly settlement spell, executed "
                "2026-09-13 (2,860,943.76 SKY)"},
 }
+# ===== PR1.S5 / U6 — A SERIES THAT STARTS AT A LAUNCH: NO GROWTH FROM BEFORE IT (Jake 2026-11-05). =====
+# Uniswap's revenue "+1019%/yr", burn "+877%/yr" and holder value yield (cp_hvy) "+889%/yr" were 4-quarter growths
+# counted from before the fee switch. On the Trajectory a row reading any series listed here takes no statistic from a
+# quarter wholly before the launch, and the quarter holding it (only part of it after the launch) is no growth base:
+# the row reads "NEW since Q-k (<what> <date>)", never a percentage, and no comparison with it counts as improved.
+# NOT A MEASURING POINT AND NOT A HISTORY BOUNDARY: the stored rows before the launch stay, shown in their quarters
+# (the completeness report reads MECHANISM_START, not this). Fees run continuously, so fees_usd is not listed.
+SERIES_LAUNCH = {
+    "Uniswap": {
+        "date": "2025-12-30",
+        "what": "fee switch",
+        "metrics": ("revenue_usd", "holders_revenue_usd", "gross_burn_tokens", "actual_buyback_tokens",
+                    "actual_buyback_usd", "retired_buyback_tokens", "retired_buyback_usd", "burn_revenue_funded",
+                    "holder_value_revenue_usd"),
+        "declared_by": "Jake, 2026-11-05 (PR1 U6): the fee switch went live 2025-12-30",
+        "evidence": "proposal 93 (UNIfication) executed 2025-12-27 20:33 UTC (fee_switch_executions); the mainnet "
+                    "TokenJar's first non-zero stored balance (buyback_fund_balance) is 2025-12-30; DefiLlama's "
+                    "revenue_usd reads its first non-zero day 2025-12-29 in the 2026-10-13 dumps. Every date falls in "
+                    "the same trailing quarter on both as-of dates checked (2026-10-13, 2026-11-05)."},
+}
+
+
+def series_launch(project_name: str, metric: str) -> dict | None:
+    """PR1.S5: {"date", "what"} where `metric` of the project starts at a declared launch (SERIES_LAUNCH), or where its
+    mechanism start is declared (MECHANISM_START: Sky's Stage 2 burn); None otherwise."""
+    d = SERIES_LAUNCH.get(project_name) or {}
+    if metric in d.get("metrics", ()):
+        return {"date": d["date"], "what": d["what"]}
+    ms = MECHANISM_START.get((project_name, metric))
+    return {"date": ms["from"], "what": "mechanism start"} if ms else None
+
+
 PROTOCOL_YIELD_NOT_APPLICABLE = {
     "Aethir": "no revenue-to-token route — ATH pays GPU providers directly, and staking rewards are "
               "emissions, not a revenue share",
@@ -30296,7 +30328,7 @@ BUSINESS_SERIES = {
          "onchain_replacement": "CCIPSendRequested / CCIPMessageSent on every OnRamp (v1.2-v2.0), every chain"}],
 }
 # Which series each project is judged on, in slot order (existing series included). A project with fewer slots than
-# BUSINESS_SLOT_COUNT leaves the rest blank. Stocks read 'now' (a shifted quarter: that quarter's mean); flows the Q0
+# BUSINESS_SLOT_COUNT leaves the rest blank. Stocks read 'now' (a shifted quarter: the reading at its end); flows the Q0
 # total annualised over its covered days.
 BUSINESS_SLOT_COUNT = 4
 BUSINESS_SLOTS = {

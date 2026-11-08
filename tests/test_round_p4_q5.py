@@ -235,8 +235,12 @@ def test_buying_pressure_is_every_market_buyback_annualised_over_tradeable_float
 # ============================================================================================== the fixture build
 # P5-1.13 (Jake 2026-11-04, approved): Hyperliquid 0.03945259923265727 -> 0.038137512591568695 — its holder value's
 # rederived 3-day Assistance Fund row (09-21) now counts 3 covered days, Q0 87 -> 90 days (a correction, SPEC P5-1.13)
-BEFORE_HVY = {"Maple": 0.0040527229897458356, "Sky": 0.02383699954852378, "Hyperliquid": 0.038137512591568695,
-              "Pendle": 0.00842358798583249, "Chainlink": 0.005930254280097274, "Near": 0.002255183232935747}
+# PR1.S1 (Jake 2026-11-05): a daily flow is annualised over the days its rows cover — Sky, Chainlink and Near read their
+# holder value over 89 days (was x365/90 over 89 values: 0.02383699954852378, 0.005930254280097274, 0.002255183232935747);
+# Pendle's holder value (its epoch distributions, read to 2026-09-21) over its 68 covered days, no longer x365/90 for the
+# project's programme (was 0.00842358798583249)
+BEFORE_HVY = {"Maple": 0.0040527229897458356, "Sky": 0.02410483100412517, "Hyperliquid": 0.038137512591568695,
+              "Pendle": 0.01114886645183712, "Chainlink": 0.005996886350660165, "Near": 0.0022805223703844632}
 
 
 @pytest.fixture(scope="module")
@@ -279,12 +283,19 @@ def test_fixture_keys_and_ranks(built):
     cov = _data(built, "Sky|buyback_burned_tokens", "Q0: days of the 90")
     assert val["Sky"] == pytest.approx((burned / cov) / (rate / 365.0), rel=1e-9)
     assert round(val["Sky"], 2) == 0.13
-    for n in ("Maple", "Fluid", "Pendle", "Ether.fi"):
+    for n in ("Maple", "Fluid", "Ether.fi"):
         assert val[n] == 0.0, (n, val[n])
+    # PR1.S1: Pendle's burned buyback (its epoch distributions, read to 2026-09-21) covers 68 days against emissions over
+    # 90 — the two sides of the ratio cover different days, so it is BLOCKED (rule 9), never a 0 over unequal spans
+    assert isinstance(val["Pendle"], str) and val["Pendle"].startswith("BLOCKED — unequal coverage")
+    assert "buyback_burned_tokens, q0) covers 68 days" in val["Pendle"]
     assert isinstance(val["Hyperliquid"], str) and val["Hyperliquid"].startswith("BLOCKED — unequal coverage")
+    # PR1.S1 (Jake 2026-11-05): each leg a rate over the days its rows cover (the days after a leg's last row are not
+    # covered); the ratio of the 90-day sums was 0.6250996672617004
+    def rate(m):
+        return _data(built, f"GEODNET|{m}", q0) / _data(built, f"GEODNET|{m}", "Q0: days of the 90")
     assert val["GEODNET"] == pytest.approx(
-        _data(built, "GEODNET|buyback_burned_tokens", q0)
-        / (_data(built, "GEODNET|emissions_tokens", q0) + _data(built, "GEODNET|unlock_release_tokens", q0)), rel=1e-9)
+        rate("buyback_burned_tokens") / (rate("emissions_tokens") + rate("unlock_release_tokens")), rel=1e-9)
     # the key cell says what it divides (a note per project)
     assert "BURNED buyback = buyback_burned_tokens" in ws.cell(rows["Maple"], kc).comment.text
     # ranks: Summary and the A3 tab agree; Sky first; the zeros ordered by net holder yield (numbers first, high to low)
@@ -295,12 +306,12 @@ def test_fixture_keys_and_ranks(built):
     rank = {n: XR.value("Summary", srows[n], sr) for n in a3}
     assert rank["Sky"] == 1.0
     zeros = sorted((n for n in a3 if XR.value("Summary", srows[n], sk) == 0.0), key=lambda n: rank[n])
-    assert set(zeros) >= {"Maple", "Fluid", "Pendle", "Ether.fi"}
+    assert set(zeros) >= {"Maple", "Fluid", "Ether.fi"}
     assert [rank[n] for n in zeros] == [2.0 + i for i in range(len(zeros))]
     nhy = [XR.value("Summary", srows[n], sn) for n in zeros]
     nums = [v for v in nhy if isinstance(v, float)]
     assert nums == sorted(nums, reverse=True) and nhy[:len(nums)] == nums
-    assert rank["Hyperliquid"] == "unranked"
+    assert rank["Hyperliquid"] == "unranked" and rank["Pendle"] == "unranked"      # PR1.S1: Pendle's key BLOCKED
     trows, tr = _rows(t), _col(t, lambda h: h == "Rank in A3")
     for n in a3:
         assert XR.value(t.title, trows[n], tr) == rank[n], n

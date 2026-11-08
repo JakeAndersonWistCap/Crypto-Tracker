@@ -7476,7 +7476,8 @@ def test_morphos_held_out_days_come_off_the_thirty_day_coverage():
             + [(str(d.date()), "Morpho", "fees_usd", 600_000.0, "defillama", 1) for d in days])
     got = _aggregate_rows(rows, "2026-09-23")[("Morpho", "fees_usd")]
 
-    assert "COVERS 21 OF 30 DAYS" in got["note"], got["note"]
+    # PR1.S1 (Jake 2026-11-05): the as-of day (09-23) holds no row — not covered: 20 days, the 20 values the sum holds
+    assert "COVERS 20 OF 30 DAYS" in got["note"], got["note"]
     assert "9 day(s) in this window" in got["note"], "the absent count is the hole's days without a row"
     # ** AND THE REASON IS THE SOURCE, NOT THE SERIES' AGE. ** A series running since 2021 that
     # said "its history does not span the full window" would be stating something false, and it
@@ -7486,7 +7487,7 @@ def test_morphos_held_out_days_come_off_the_thirty_day_coverage():
     assert "history does not span" not in got["note"], "that is the OTHER reason, and it is wrong here"
     assert "do NOT interpolate" in got["note"], "the config instruction travels to the cell"
     assert got["confidence"] == "AMBER", got["confidence"]
-    assert "covers only 21 of the 30 days" in got["why_amber"], got["why_amber"]
+    assert "covers only 20 of the 30 days" in got["why_amber"], got["why_amber"]
     # The figure is DISCLOSED, not blanked — it is a true 21-day sum.
     assert got["now"] == 600_000.0 * 20, got["now"]   # 08-25..09-11 and 09-21..22 hold a row
     print("morpho coverage ok:", got["note"][:110])
@@ -15330,10 +15331,11 @@ def test_issuance_stream_expiry_caveat_fires_after_the_declared_end_and_clears_9
         by = {r["key"]: r for r in o.to_dict("records")}
         return by["Sky|gross_issuance_tokens"], bw._a4_window_caveat(sky, by)
 
-    # 2026-11-10: the stream's LAST issuing day — not expired; the window is still one day short.
+    # 2026-11-10: the stream's LAST issuing day — not expired. PR1.S1 (Jake 2026-11-05): its 90 daily rows 08-13..11-10
+    # cover all 90 days of the window (k rows cover k days; the first row's day counts) — it read "covers 89 of 90 days"
     row, cav = at("2026-11-10")
     assert row["schedule_end"] == "2026-11-10" and not (row["q0_pre_end_days"] == row["q0_pre_end_days"])
-    assert "STREAM ENDED" not in cav and "ISSUANCE covers 89 of 90 days" in cav, cav
+    assert row["q0_covered_days"] == 90 and cav == "", cav
     # 2026-11-11: the first day with no issuance. Fires, with the exact wording, and the
     # run-rate clause (which assumes a running stream) does not.
     row, cav = at("2026-11-11")
