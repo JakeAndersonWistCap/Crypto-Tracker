@@ -7078,11 +7078,35 @@ def supply_additive(project: dict) -> bool:
     return bool(project.get("buyback_is_supply_additive"))
 
 
+def emissions_absent(name: str, metric: str) -> str | None:
+    """PR1.S9 (Jake 2026-11-05: Ether.fi's total dilution, retirement ÷ dilution and net absorption read "by design" —
+    'emissions not applicable' — beside 11.7M of unlocks; Uniswap's A4 total dilution likewise): why an absorption
+    emissions series is 0 BY DECLARATION — it is not carried for the project AND the project declares it cannot exist
+    (config not_applicable: 'ETHFI IS NOT EMITTED') or a fixed supply (config.fixed_supply_reason: UNI mints nothing).
+    Such a leg is 0 in every emissions + unlocks sum, never an n/a that hides the unlocks. A series that is merely
+    missing is unknown, never 0: None."""
+    p = config.PROJECT_BY_NAME.get(name) or {}
+    if not p or metric in config.metrics_for_project(p):
+        return None
+    why = config.not_applicable_reason(name, metric)
+    if why:
+        return str(why)
+    fs = config.fixed_supply_reason(name)
+    return f"fixed supply: {fs}" if fs else None
+
+
+def live_emission_metrics(name: str) -> list:
+    """The absorption emissions series that are not 0 by declaration (emissions_absent)."""
+    return [m for m in config.absorption_emission_metrics(name) if not emissions_absent(name, m)]
+
+
 def _absorption_emissions(R, r: int, p: dict, w: str = "q0") -> str:
     """The emissions net absorption subtracts: config.absorption_emission_metrics (Aerodrome, Jake 2026-10-11 decision
     A3: the Minter's gauge emissions AND the RewardsDistributor rebase, consistent with Pendle's gauge emissions),
-    else emissions_tokens."""
-    ms = config.absorption_emission_metrics(p["name"])
+    else emissions_tokens. A leg 0 by declaration (emissions_absent, PR1.S9) is 0."""
+    ms = live_emission_metrics(p["name"])
+    if not ms:
+        return "0"
     return "(" + "+".join(R.D(r, m, w) for m in ms) + ")" if len(ms) > 1 else R.D(r, ms[0], w)
 
 
@@ -7098,8 +7122,8 @@ def _absorption_guard(R, r: int, p: dict, legs: list, expr: str, same_span: bool
                       bare: bool = False) -> str:
     """_coverage_guard over `legs` plus one leg per absorption emissions metric. same_span compares the first two legs
     (the buyback / revenue side against the first emissions series), as before; every leg must still cover a week."""
-    ems = [("emissions" if len(config.absorption_emission_metrics(p["name"])) == 1 else
-            m.replace("_tokens", "").replace("_", " "), m, "q0") for m in config.absorption_emission_metrics(p["name"])]
+    live = live_emission_metrics(p["name"])          # PR1.S9: a leg 0 by declaration has no coverage to guard
+    ems = [("emissions" if len(live) == 1 else m.replace("_tokens", "").replace("_", " "), m, "q0") for m in live]
     return _coverage_guard(R, r, list(legs) + ems, expr, same_span=same_span, bare=bare)
 
 
@@ -8562,7 +8586,7 @@ def _unlock_cols(R: Refs, absorption: bool = False) -> list[tuple]:
         return _annualise(R, r, p, "unlock_release_tokens", unl(r))
 
     def ann_em(r, p):
-        return "+".join(_annualise(R, r, p, m, R.D(r, m, "q0")) for m in config.absorption_emission_metrics(p["name"]))
+        return "+".join(_annualise(R, r, p, m, R.D(r, m, "q0")) for m in live_emission_metrics(p["name"])) or "0"
 
     def ff_cell(fn):
         def build(r, p):
@@ -8607,8 +8631,10 @@ def _retire_vs_dilution_col(R: Refs) -> tuple:
         if _retirement_zero(p):
             return "=0"
         name = p["name"]
-        ems = list(config.absorption_emission_metrics(name))
+        ems = live_emission_metrics(name)                   # PR1.S9: a leg 0 by declaration is not in the sum
         unl = ["unlock_release_tokens"] if config.unlock_stock_metrics(name) else []
+        if not ems + unl:
+            return f"n/a — nothing is emitted or unlocked: {emissions_absent(name, 'emissions_tokens') or ''}"[:240]
         den = "+".join(_flow_rate(R, r, m, p=p) for m in ems + unl)
         legs = [("buyback", "retired_buyback_tokens", "q0")] + [("unlocks", m, "q0") for m in unl]
         return _absorption_guard(R, r, p, legs, f"{_flow_rate(R, r, 'retired_buyback_tokens', p=p)}/({den})")
@@ -11721,11 +11747,12 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         ("Lock terms per yield — lock / unstake / liquid wrapper", attr("lock_terms"), FMT_TEXT, "text"),
         ("Payout currency per yield", attr("payout_currency"), FMT_TEXT, "text"),
         # ---- PAYOUT RATIO (item 3) ----
+        # PR1.S11: a ratio, in x like every note about it (1.0x = the whole base credited) — it was a %
         ("Payout ratio — gross = credited holder value ÷ fees", payout(lambda p: config.fees_headline_metric(p["name"])),
-         FMT_PCT, "calc", False, {"note_fn": lambda p: _payout_note(p)}),
+         FMT_X, "calc", False, {"note_fn": lambda p: _payout_note(p)}),
         ("Payout ratio — the project's own net basis = credited holder value ÷ revenue (config revenue basis)",
          payout(lambda p: config.revenue_ratio_base_metric(p["name"]), "n/a — the project's net basis is gross fees (as left)"),
-         FMT_PCT, "calc", False, {"note_fn": lambda p: _payout_note(p)}),
+         FMT_X, "calc", False, {"note_fn": lambda p: _payout_note(p)}),
         # ---- THE THREE REVENUE LINES (PR1.S13, Jake 2026-11-05; config.REVENUE_LINE_DEFS / REVENUE_SPLIT) ----
         *_revenue_line_cols(R),
         # ---- ATTRIBUTES (amendments 2 and 5: never penalties) ----
@@ -11943,7 +11970,12 @@ def _a4_phase2_cols(R: Refs) -> list[tuple]:
         return config.a4_burn_metric(p["name"])
 
     def iss_m(p):
-        return config.issuance_basis(p["name"])
+        # PR1.S9 (Jake 2026-11-05, U2): on the basis the key divides by (config.crossover_issuance_metric — Uniswap's
+        # releases into circulating, P3-2c), never "no issuance" beside a key that divides by a 17.30M release
+        return config.crossover_issuance_metric(p["name"])
+
+    def no_issuance(p):
+        return p.get("issuance_declared_zero") and p["name"] not in config.A4_RELEASE_ISSUANCE
 
     def cum(r, p):
         if "burn_address_balance" not in config.metrics_for_project(p):
@@ -11955,14 +11987,14 @@ def _a4_phase2_cols(R: Refs) -> list[tuple]:
         return [("burn", a4b(p), "q0"), ("issuance", iss_m(p), "q0"), ("fees", "fees_usd", "q0")]
 
     def required(r, p):
-        if p.get("issuance_declared_zero"):
+        if no_issuance(p):
             return "n/a — no issuance: burn needs no revenue to exceed it"
         return _coverage_guard(R, r, legs(p),
                                f"{_flow_rate(R, r, 'fees_usd')}*{_flow_rate(R, r, iss_m(p))}"
                                f"/{_flow_rate(R, r, a4b(p), p=p)}*{G('days_per_year')}")
 
     def lever(r, p):
-        if p.get("issuance_declared_zero"):
+        if no_issuance(p):
             return "n/a — no issuance"
         px = R.D(r, "price_usd", "q0")
         return _coverage_guard(R, r, [("issuance", iss_m(p), "q0"), ("fees", "fees_usd", "q0")],
@@ -13679,6 +13711,99 @@ def write_flows(wb, rows: list[dict]) -> None:
         ws.column_dimensions[col].width = w
 
 
+# ===== PR1.S12 (Jake 2026-11-05): THE FLOWS RECONCILIATION BLOCKS. =====
+# A project whose Q0 token-flow residual is beyond ±FLOW_RESIDUAL_LIMIT of opening, and not explained by a quantified
+# declaration (config.FLOW_RESIDUAL_EXPLAINED: the amount, its source, the quarter — it explains the residual only when
+# the residual less that amount is within the limit), cannot show a cell that reads the statement's series as GREEN
+# (each such cell goes AMBER, the block said in its comment), cannot count those series as VERIFIED inputs, and is not
+# ranked (reader: the key reads, the rank is "unranked" with the block). A CHECK on coverage alone (a leg short of the
+# quarter with the residual inside the limit) does not block: the statement still balances.
+FLOW_BLOCKS: dict = {}            # {project: why} for this build
+FLOW_BLOCKED_SERIES: set = set()  # {(project, metric)} — the series a blocked project's statement reads
+FLOW_BLOCKED_CELLS: list = []     # [(project, "tab!cell", header)] taken off green
+
+
+def flow_blocks(rows: list[dict], explained: dict | None = None) -> dict:
+    """{project: why} — the projects whose Q0 token-flow residual is beyond the limit and unexplained (PR1.S12)."""
+    explained = config.FLOW_RESIDUAL_EXPLAINED if explained is None else explained
+    tok = {}
+    for f in rows or ():
+        if f.get("Statement") == "Token flow":
+            tok.setdefault(f["Project"], {})[f["Line"]] = f
+    out = {}
+    for name, lines in tok.items():
+        pct = (lines.get("Residual ÷ opening") or {}).get("Q0")
+        res = (lines.get("Residual (closing − expected)") or {}).get("Q0")
+        opening = (lines.get("Opening circulating") or {}).get("Q0")
+        if not isinstance(pct, (int, float)) or abs(pct) <= FLOW_RESIDUAL_LIMIT:
+            continue
+        ex = explained.get(name)
+        if ex and isinstance(res, (int, float)) and opening and \
+                abs(res - float(ex["amount_tokens"])) <= FLOW_RESIDUAL_LIMIT * abs(opening):
+            continue
+        st = str((lines.get("Status") or {}).get("Q0") or "")
+        out[name] = (f"FLOWS BLOCK (PR1.S12): the Q0 token-flow residual is {pct:+.2%} of opening, beyond "
+                     f"±{FLOW_RESIDUAL_LIMIT:.1%}, and no quantified explanation is declared (config "
+                     f"FLOW_RESIDUAL_EXPLAINED) — not green, not ranked until it is. Flows tab: {st[:300]}")
+    return out
+
+
+def flow_block_series(name: str, rows: list[dict], groups: dict) -> set:
+    """The series a project's token-flow statement reads: every metric named on its Token flow lines, the circulating
+    series' own inputs, and the outflow categories built on a leg."""
+    names = set()
+    for f in rows or ():
+        if f.get("Project") == name and f.get("Statement") == "Token flow":
+            names |= set(re.findall(r"[a-z][a-z0-9_]+", str(f.get("Series") or "")))
+    ms = {m for m in names if m in config.METRICS}
+    if "circulating_supply_used" in ms:
+        ms |= set(trajectory._inputs(name, "circulating_supply_used", groups or {}))
+    for c in "abcde":
+        legs = set(config.outflow_metrics(name, c) or ())
+        if legs & ms:
+            ms |= {f"outflow_{c}_tokens", f"outflow_{c}_usd"}
+    return ms
+
+
+def block_flow_greens(wb, blocks: dict, rows: list[dict], groups: dict) -> list:
+    """Every GREEN cell of a blocked project on Master, A1-A4 and CP that reads its statement's series goes AMBER, the
+    block in its comment (PR1.S12). Returns [(project, "tab!cell", header)]."""
+    import coverage_audit                                  # noqa: PLC0415
+    FLOW_BLOCKED_SERIES.clear()
+    out = []
+    if not blocks:
+        return out
+    series = {n: flow_block_series(n, rows, groups) for n in blocks}
+    for n, ms in series.items():
+        FLOW_BLOCKED_SERIES.update((n, m) for m in ms)
+    green = str(FILL_GREEN.fgColor.rgb)[-6:]
+    for tab in coverage_audit.TABS:
+        if tab not in wb.sheetnames:
+            continue
+        ws = wb[tab]
+        hr = coverage_audit._header_row(ws)
+        if hr is None:
+            continue
+        for r in range(hr + 1, ws.max_row + 1):
+            name = ws.cell(r, 1).value
+            if not name or not isinstance(name, str):
+                break
+            if name not in blocks:
+                continue
+            for c in range(2, ws.max_column + 1):
+                cell = ws.cell(r, c)
+                raw = cell.value
+                if not (isinstance(raw, str) and raw.startswith("=")) or coverage_audit._fill(cell) != green:
+                    continue
+                if not (coverage_audit._refs(wb, raw) & series[name]):
+                    continue
+                cell.fill = PatternFill("solid", fgColor=FILL_AMBER.fgColor.rgb)
+                old = cell.comment.text if cell.comment is not None else ""
+                cell.comment = Comment(f"{blocks[name]}\n\n{old}".strip()[:30000], "build")
+                out.append((name, f"{tab}!{cell.coordinate}", str(ws.cell(hr, c).value or "")[:80]))
+    return out
+
+
 def write_trajectory(wb, data_by_key: dict, asof=None) -> list[dict]:
     """THE TRAJECTORY TAB (theory layer, Phase 1, 2026-10-12; trajectory.py). One row per registered headline: Q0..Q-4
     as live formulas (the cell's own builder under shifted(k)), then the derived columns, computed here with xlcalc and
@@ -14160,6 +14285,11 @@ def build_workbook(store, path: Path | str, run_id: str | None = None,
     with wiring.phase("shown"):
         FLOWS_ROWS[:] = flow_statements(_LAST_GROUPS, asof)          # alignment C11: the Flows tab
         write_flows(wb, FLOWS_ROWS)
+    # PR1.S12: an unexplained Q0 residual beyond tolerance takes the project's statement cells off green (and, in the
+    # reader, out of the ranks) — before Coverage reads the fills
+    FLOW_BLOCKS.clear()
+    FLOW_BLOCKS.update(flow_blocks(FLOWS_ROWS))
+    FLOW_BLOCKED_CELLS[:] = block_flow_greens(wb, FLOW_BLOCKS, FLOWS_ROWS, _LAST_GROUPS)
     with wiring.phase("cross"):
         CREDIBILITY_ROWS[:] = write_credibility(ws_cred, R, data_by_key,
                                                    _without_provisional(_without_bad_prints(long)), asof)
@@ -14244,7 +14374,9 @@ def build_workbook(store, path: Path | str, run_id: str | None = None,
             if k not in _cache:
                 row = data_by_key.get(k)
                 try:
-                    _cache[k] = bool(row) and confidence_for(project, metric, row, asof)[0] == "GREEN"
+                    # PR1.S12: a series a blocked token-flow statement reads is not a VERIFIED input
+                    _cache[k] = bool(row) and confidence_for(project, metric, row, asof)[0] == "GREEN" \
+                        and (project, metric) not in FLOW_BLOCKED_SERIES
                 except Exception:  # noqa: BLE001 — an input that cannot be judged is not verified
                     _cache[k] = False
             return _cache[k]

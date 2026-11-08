@@ -165,7 +165,7 @@ TIER_ORDER = [
     ("mev_relays", 1, lambda ctx: MevRelays()),
     # Chainlink's customer-fee lines that bypass the fee aggregator, from each contract's events (2026-10-05).
     ("chainlink_fees", 2, lambda ctx: ChainlinkFees()),
-    ("xref", 1, lambda ctx: CrossRefs()),
+    ("xref", 1, lambda ctx: CrossRefs(stored_long=ctx.get("stored_long"))),
     # ETH staked (beaconcha.in votedether via validatorqueue.com's GitHub history), 2026-10-05.
     ("validatorqueue", 1, lambda ctx: StakedEth()),
     # P3-A3 (2026-11-02): validatorqueue stopped at 2026-10-25. P4-Q4 (Jake 2026-11-03): staked ETH and the validator
