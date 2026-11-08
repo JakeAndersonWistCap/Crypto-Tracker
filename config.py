@@ -19131,6 +19131,11 @@ def archive_not_by_design(project_name: str, metric: str) -> str:
     """Why a state metric is not backfilled at past blocks BY DESIGN, else '' — the on-chain-first totals are
     (decision 6 on 6f8c86c)."""
     if metric == "total_supply" and project_name in TOTAL_SUPPLY_ONCHAIN_FIRST:
+        if TOTAL_SUPPLY_ONCHAIN_FIRST[project_name].get("view"):
+            # PR1.U5: a read-time NET total (TOTAL_SUPPLY_NET) is formed from its legs, each archived as its own metric
+            return ("BY DESIGN — total_supply is a read-time view (config.TOTAL_SUPPLY_NET): the token's total less the "
+                    "burned balances, each leg read at past blocks as its own metric (total_supply_gross, "
+                    "burn_address_balance); nothing to backfill under total_supply itself")
         return ""
     return ARCHIVE_NOT_BY_DESIGN.get(metric, "")
 
