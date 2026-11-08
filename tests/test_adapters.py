@@ -7476,7 +7476,8 @@ def test_morphos_held_out_days_come_off_the_thirty_day_coverage():
             + [(str(d.date()), "Morpho", "fees_usd", 600_000.0, "defillama", 1) for d in days])
     got = _aggregate_rows(rows, "2026-09-23")[("Morpho", "fees_usd")]
 
-    assert "COVERS 21 OF 30 DAYS" in got["note"], got["note"]
+    # PR1.S1 (Jake 2026-11-05): the as-of day (09-23) holds no row — not covered: 20 days, the 20 values the sum holds
+    assert "COVERS 20 OF 30 DAYS" in got["note"], got["note"]
     assert "9 day(s) in this window" in got["note"], "the absent count is the hole's days without a row"
     # ** AND THE REASON IS THE SOURCE, NOT THE SERIES' AGE. ** A series running since 2021 that
     # said "its history does not span the full window" would be stating something false, and it
@@ -7486,7 +7487,7 @@ def test_morphos_held_out_days_come_off_the_thirty_day_coverage():
     assert "history does not span" not in got["note"], "that is the OTHER reason, and it is wrong here"
     assert "do NOT interpolate" in got["note"], "the config instruction travels to the cell"
     assert got["confidence"] == "AMBER", got["confidence"]
-    assert "covers only 21 of the 30 days" in got["why_amber"], got["why_amber"]
+    assert "covers only 20 of the 30 days" in got["why_amber"], got["why_amber"]
     # The figure is DISCLOSED, not blanked — it is a true 21-day sum.
     assert got["now"] == 600_000.0 * 20, got["now"]   # 08-25..09-11 and 09-21..22 hold a row
     print("morpho coverage ok:", got["note"][:110])
