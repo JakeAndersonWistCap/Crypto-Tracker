@@ -789,21 +789,31 @@ _DATA_NOW, _DATA_M1 = "Now (flow: trailing 30d sum · stock: latest)", "Prior 30
 _DATA_NOW_DAYS, _DATA_M1_DAYS = "Now: days of the 30 the series covered", "Prior 30d: days covered"
 
 
+_DATA_LAG = "Q0: days after the last row (read lag; not covered, not annualised over)"
+
+
 def _thirty_day_change(sh: Sheet, ctx, row: int, col: Col, p: dict, metric: str, label: str) -> None:
-    """PR1.U1: a flow's latest 30 days ÷ the 30 before − 1, from the audit Data row (both windows complete)."""
+    """PR1.U1: a flow's latest 30 days against the 30 before, from the audit Data row. PR1.S1: each window is a rate over
+    the days it covered (numerator and denominator over the same kind of days); the latest window may lack only the read
+    lag (the days after the last row, the same for both windows' end), never a hole."""
     A, data, name = ctx.A, ctx.data, p["name"]
     key = f"{name}|{metric}"
     now, m1 = A.data_field(key, _DATA_NOW), A.data_field(key, _DATA_M1)
     dn, dm = A.data_field(key, _DATA_NOW_DAYS), A.data_field(key, _DATA_M1_DAYS)
-    if not all(isinstance(x, (int, float)) for x in (now, m1, dn, dm)) or dn < 30 or dm < 30 or not m1:
+    lag = A.data_field(key, _DATA_LAG)
+    lag = lag if isinstance(lag, (int, float)) else 0
+    if (not all(isinstance(x, (int, float)) for x in (now, m1, dn, dm)) or dn <= 0 or dn + lag < 30 or dm < 30
+            or not m1):
         put_code(sh, row, col, "n/a", f"No complete pair of 30-day windows for {key}: latest {now!r} over {dn!r} of 30 "
-                 f"days, prior {m1!r} over {dm!r} of 30 days (a missing day is never 0).\n\nWorking: audit file, Data "
-                 f"{key}.")
+                 f"days ({lag!r} day(s) of read lag allowed), prior {m1!r} over {dm!r} of 30 days (a missing day is "
+                 f"never 0).\n\nWorking: audit file, Data {key}.")
         return
     rn, rp = data.put(name, f"{label}30|now", float(now)), data.put(name, f"{label}30|prior", float(m1))
-    put_formula(sh, row, col, f"={rn}/{rp}-1", None, f"{label.capitalize()} over the latest 30 days {now:,.0f} ÷ the "
-                f"prior 30 days {m1:,.0f} − 1 (both windows complete).\n\nWorking: audit file, Data {key} ('Now' and "
-                "'Prior 30d').")
+    cn, cp = data.put(name, f"{label}30|now_days", float(dn)), data.put(name, f"{label}30|prior_days", float(dm))
+    put_formula(sh, row, col, f"=({rn}/{cn})/({rp}/{cp})-1", None, f"{label.capitalize()} per covered day over the "
+                f"latest 30 days ({now:,.0f} over {dn:,.0f} days) ÷ per covered day over the prior 30 ({m1:,.0f} over "
+                f"{dm:,.0f} days) − 1 (PR1.S1: the latest window lacks only the {lag:,.0f}-day read lag).\n\nWorking: "
+                "audit file, Data {key} ('Now', 'Prior 30d' and their covered days).".replace("{key}", key))
 
 
 def _tier_suffix(sh: Sheet, coord: str, tl) -> None:
