@@ -534,6 +534,59 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11ed. Project round 1 — Uniswap, plus the shared fixes (2026-11-08)
+
+**Read-only checks first** (PowerShell 5.1, from the repo folder; nothing here writes to `metrics.db`):
+
+```
+git log --oneline -1
+#   expect: the round's last commit (the gate's head)
+python -c "import config; print(config.series_launch('Uniswap','revenue_usd'))"
+#   expect: {'date': '2025-12-30', 'what': 'fee switch'}
+python -c "import config; print(config.revenue_tier('Uniswap')[0], config.revenue_tier('Aerodrome')[0])"
+#   expect: revenue holder_revenue
+python -c "import config; print(sorted(config.FROZEN_PROJECTS), config.FROZEN_MOVES)"
+#   expect: ['Uniswap'] {'Uniswap': {}}
+python -c "import config; print(config.FLOW_RESIDUAL_EXPLAINED)"
+#   expect: {}   (Plume and Hyperliquid stay blocked from the ranks until a quantified explanation is declared)
+python review_resolve.py --list
+#   expect: no Uniswap market_share_category_usd 2026-11-02 row and no Uniswap circulating_supply onchain_vs_coingecko row
+$b = '{"jsonrpc":"2.0","id":1,"method":"eth_call","params":[{"to":"0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984","data":"0x70a08231000000000000000000000000000000000000000000000000000000000000dead"},"finalized"]}'
+(Invoke-RestMethod -Uri https://ethereum-rpc.publicnode.com -Method Post -Body $b -ContentType 'application/json').result
+#   expect: the 0x...dEaD UNI balance in wei, about 113.8M UNI (113,781,581.21 at block 26,348,366) and rising 4,000 at a time
+python run_sql.py DD
+#   expect: Uniswap | coingecko | N rows | first..last  (the CoinGecko total_supply rows the next step renames)
+```
+
+**The one store change (PR1.U5): CoinGecko's Uniswap total moves aside.** It is renamed `total_supply_coingecko`; the
+workbook's `total_supply` becomes `UNI.totalSupply() - balanceOf(0x...dEaD)` (a declared handover):
+
+```
+python run_sql.py --delete DD        # type: DELETE DD
+```
+
+**Then the normal daily run and build.** What to look at:
+
+- **Summary / Master "Net supply change"** is the change in circulating supply (closing - opening). Uniswap's should be
+  positive on your store (circulating rose 612.2M -> 623.7M), so the Highlights card C5 ("supply is shrinking") does
+  NOT appear for Uniswap. Issuance - burn sits beside it as a component, labelled "burn only".
+- **CP / Comparison / Business:** FEES, REVENUE, HOLDER REVENUE and HOLDER SHARE. Uniswap has numbers; every other
+  project reads "not yet split". Every revenue cell says which line it is (" · revenue").
+- **CP MARKET SHARE** reads "xx.x% 90d mean" for Uniswap, with the 30- and 60-day means beside it (about 30.3% / 31.6%
+  / 30.3% to 11-02 on your store). Other projects still read their latest day.
+- **Trajectory / Trend:** Uniswap revenue, burn and cp_hvy read "NEW since Q-3 (fee switch 2025-12-30)", not a %/yr.
+- **Flows, Uniswap:** token flow Q0 "OK"; the value statement Q0 reads "EXPLAINED — timing (config.VALUE_TIMING)" with
+  its token figures, or "CHECK" if the token gap is beyond the bridge's bound on your data — tell me if it does.
+- **Coverage:** the verified share drops (on the test data 14% -> 9%): aggregator-only figures and cells the Credibility
+  tab does not pass are no longer VERIFIED.
+
+**The freeze.** Uniswap's cells are frozen on the 15-dump test build. If a later change moves one, the gate fails until
+the move is declared in `config.FROZEN_MOVES` and the baseline rewritten:
+
+```
+python project_freeze.py --compare Uniswap     # read-only; expect: "Uniswap: N cells, 0 undeclared move(s)"
+```
+
 ## 11ec. P5-1.12 — Ethereum's staked ETH without beaconcha.in (2026-11-04)
 
 - **beaconcha.in is not called (no action).** Its free-trial quota is spent: it answered HTTP 429 with a 2,300,523 s
