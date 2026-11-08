@@ -79,7 +79,8 @@ def _chainlink(st, cg_total=1e9, px=lambda d: 10.0 + d.day / 10):
 def test_the_declared_rebuilds_per_project_and_the_named_not_recoverable_ones():
     m = config.supply_rebuild_metrics
     assert m("Chainlink") == {"total_supply_coingecko": "total", "max_supply": "max", "fdv_usd": "fdv"}
-    assert m("Uniswap") == {"total_supply": "total"}, "UNI is mintable (2% a year): no max, so no max-basis FDV"
+    # PR1.U5: Uniswap's total_supply is ours (net view); CoinGecko's total, rebuilt, is kept as total_supply_coingecko
+    assert m("Uniswap") == {"total_supply_coingecko": "total"}, "UNI is mintable (2% a year): no max, so no max-basis FDV"
     assert m("Hyperliquid") == {"max_supply": "max"}, "native HYPE: tokenDetails' maxSupply only"
     assert m("Ethereum") == {}, "native ETH: no past-block read"
     assert m("Fluid") == {"total_supply_coingecko": "total"} and m("Sky") == {"total_supply_coingecko": "total"}

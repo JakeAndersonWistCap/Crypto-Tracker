@@ -27182,8 +27182,11 @@ def test_onchain_circulating_is_compared_with_coingecko_like_for_like_and_the_ga
     assert cred.circulating_input("Ether.fi")["ours"] == {"py": "now_combo", "args": {
         "metrics": ("circulating_supply_onchain", "noncirculating_holding_tokens", "total_supply_coingecko"),
         "minus": ("total_supply",)}}
-    assert cred.circulating_input("Uniswap")["ours"] == {"py": "now_sum", "args": {
-        "metrics": ("circulating_supply_onchain", "noncirculating_holding_tokens")}}
+    # PR1.U5: Uniswap's total is ours (net of 0x…dEaD) and CoinGecko's sits beside it, so like-for-like is on CoinGecko's
+    # own total, as Ether.fi's
+    assert cred.circulating_input("Uniswap")["ours"] == {"py": "now_combo", "args": {
+        "metrics": ("circulating_supply_onchain", "noncirculating_holding_tokens", "total_supply_coingecko"),
+        "minus": ("total_supply",)}}
     rows = {"Ether.fi|circulating_supply_onchain": {"now": 797_210_000.0, "latest_date": "2026-10-07"},
             "Ether.fi|noncirculating_holding_tokens": {"now": 168_140_000.0, "latest_date": "2026-10-07"}}
     v, d, how = cred.FORMULAS["now_sum"]("Ether.fi", rows, pd.DataFrame(), pd.Timestamp("2026-10-08"),

@@ -19119,6 +19119,8 @@ def total_supply_chain_backfill_label(project_name: str, metric: str, day) -> st
     """The label for an archive read of an on-chain-first total dated before its declared handover, else ''."""
     if metric != "total_supply" or project_name not in TOTAL_SUPPLY_ONCHAIN_FIRST:
         return ""
+    if TOTAL_SUPPLY_ONCHAIN_FIRST[project_name].get("view"):
+        return ""          # PR1.U5: a read-time NET total (TOTAL_SUPPLY_NET) is never a chain read of total_supply
     decl = ((PROJECT_BY_NAME.get(project_name) or {}).get("series_handover") or {}).get("total_supply") or {}
     since = decl.get("declared") or TOTAL_SUPPLY_ONCHAIN_FIRST[project_name].get("decided_on")
     import pandas as _pd
@@ -34885,6 +34887,17 @@ PROJECT_BY_NAME["Uniswap"].setdefault("series_handover", {})["total_supply"] = {
     "composition_change": "none in quantity — CoinGecko's total IS net of the 0x…dEaD balance (confirmed 2026-09-21: "
                           "contract − CoinGecko = the burn balance within read timing); the total is ours from the "
                           "first day both legs are held, CoinGecko's moves to total_supply_coingecko",
+    "declared": "2026-11-05"}
+# FDV = price x total_supply, its bracket naming the total's measuring point: the same handover, declared on FDV too
+# (the guard read "BASIS Uniswap fdv_usd: derived:total_supply_gross-burn_address_balance added to coingecko")
+PROJECT_BY_NAME["Uniswap"]["series_handover"]["fdv_usd"] = {
+    "ordered_points": ("coingecko", "derived:price_x_total_supply[coingecko]",
+                       "derived:price_x_total_supply[derived:total_supply_gross-burn_address_balance]"),
+    "why": "price x total_supply across PR1.U5: CoinGecko's total (net of the 0x…dEaD balance) before, ours — "
+           "UNI.totalSupply() − the 0x…dEaD balance — after; CoinGecko's own FDV before our first total (as "
+           "GLOBAL_SERIES_HANDOVER fdv_usd)",
+    "composition_change": "none in quantity: both totals are net of the burned UNI; read timing only (10-13 dumps: "
+                          "887,146,418.79 vs 887,142,418.79, one 4,000-UNI release)",
     "declared": "2026-11-05"}
 METRICS["total_supply_coingecko"]["only_projects"] = tuple(TOTAL_SUPPLY_ONCHAIN_FIRST)
 # P5-1C.A3 rebuilds CoinGecko's own total where it has a hole; with total_supply ours, CoinGecko's total is the series
