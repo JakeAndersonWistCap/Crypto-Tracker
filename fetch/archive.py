@@ -1124,7 +1124,9 @@ def catch_up_gaps(store, projects: list[dict], ledger: dict | None = None) -> tu
 def _ranges(days) -> str:
     """'2026-10-30..11-01, 2026-11-03' — consecutive days folded into one range."""
     out, run = [], []
-    for d in sorted(pd.Timestamp(x) for x in days):
+    # each day once (PR1 gate: after U5 Uniswap's issuance reads two legs, so a straddled day came in twice and printed
+    # "2026-10-27, 2026-10-27..10-28, …")
+    for d in sorted({pd.Timestamp(x).normalize() for x in days}):
         if run and d - run[-1] == pd.Timedelta(days=1):
             run.append(d)
             continue

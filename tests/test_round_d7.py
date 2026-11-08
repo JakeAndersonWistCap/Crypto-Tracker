@@ -278,7 +278,8 @@ def test_2_hyperliquids_burn_over_issuance_is_blocked_with_both_legs_holes_on_th
     assert isinstance(v, str) and v.startswith("BLOCKED — unequal coverage"), v
     # P5-1.13: the burn's rederived rows across missed reads count every day since the previous read — 90 days, no holes
     # (was 87, with 2026-09-13 and 09-19..09-20 read as holes)
-    assert "gross_burn_tokens, q0) covers 90 days" in v and "pool_release_tokens, q0) covers 7 days" in v, v
+    # PR1.S1: k daily rows cover k days (the release's first row's own day is in) — 8, was 7 (trends report: 7 -> 8)
+    assert "gross_burn_tokens, q0) covers 90 days" in v and "pool_release_tokens, q0) covers 8 days" in v, v
     assert "holes: 2026-09-13" not in v and "holes: 2026-10-02..10-05, 2026-10-12" in v, v
 
 

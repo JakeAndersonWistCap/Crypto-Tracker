@@ -80,7 +80,8 @@ def test_p2e3_morphos_zero_is_the_sources_zero_with_the_series_and_the_reason(bu
     text = ws.cell(r, c).comment.text
     assert "Morpho|revenue_usd 'Protocol revenue' from DefiLlama morpho: dailyRevenue" in text, text
     assert "reads 0 because the source reports 0 — a measured 0" in text, text
-    assert "a stored row on 90 of the 90 days, 0 of them non-zero" in text, text
+    # PR1.S1: the as-of day is read lag, not a stored day — 89 rows in the 90-day window (was "90 of the 90")
+    assert "a stored row on 89 of the 90 days, 0 of them non-zero" in text, text
     # the reason only from Morpho's own record, with its source and date
     fs = config.PROJECT_BY_NAME["Morpho"]["fee_split"]
     assert "FEE SWITCH IS OFF" in text and fs["source_url"] in text and fs["source_date"] in text, text

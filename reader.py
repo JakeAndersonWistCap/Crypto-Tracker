@@ -1567,11 +1567,14 @@ def _payout_note(p: dict, net: Src | None, gross: Src | None) -> str:
                 f"series' declared handover between its legs), not a payout above or below revenue.")
     if net is None or net.num is None or net.num <= 1.0:
         return ""
-    if p["name"] in (getattr(config, "PAYOUT_ABOVE_ONE", {}) or {}):
-        # PR1.U10 (Uniswap: "the excess is paid out of fees the revenue basis does not count" beside the declared
-        # timing explanation): the declared reason is the audit cell's comment, carried — no generic guess beside it
-        return ""
     g = gross.num if gross is not None else None
+    if p["name"] in (getattr(config, "VALUE_TIMING", {}) or {}) and g is not None:
+        # PR1.U10 (Uniswap read "the excess is paid out of fees the revenue basis does not count", false: PR1.U7): the
+        # P2a-A3 line with its true reason — the same tokens valued twice (config.VALUE_TIMING); other projects unchanged
+        return (f"Above 1.0x: credited holder value is {net.num:.2f}x revenue on the project's own revenue basis and "
+                f"{g:.2f}x gross fees — nothing is paid from outside revenue: revenue and holder value are the same "
+                f"tokens, valued at release and at landing (config.VALUE_TIMING; the Flows value statement shows it in "
+                f"tokens). Working: {gross.where}.")
     if g is not None and g <= 1.0:
         return (f"Above 1.0x: credited holder value is {net.num:.2f}x revenue on the project's own revenue basis but "
                 f"{g:.2f}x gross fees — the excess over revenue is paid out of fees the revenue basis does not count "

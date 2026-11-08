@@ -129,7 +129,10 @@ def test_reader_texts_follow_s8_and_the_declared_payout_reason():
     assert reader._premint_note(uni, src) == ""                                     # never said twice
     net = reader.Src(sheet="CP Comparability", coord="BM27", value=1.07, num=1.07)
     gross = reader.Src(sheet="CP Comparability", coord="BL27", value=0.08, num=0.08)
-    assert reader._payout_note(uni, net, gross) == ""                               # the declared timing reason only
+    un = reader._payout_note(uni, net, gross)                                        # P2a-A3's line, the true reason
+    assert un.startswith("Above 1.0x") and "gross fees" in un and "same tokens" in un and "not count" not in un
+    hl = config.PROJECT_BY_NAME["Hyperliquid"]                                       # not in VALUE_TIMING: P2a-A3 stays
+    assert reader._payout_note(hl, net, gross).startswith("Above 1.0x")
     t = {"notes": ["", "", "", "x\n\nONE-OFF IN THIS RATE — of which one-off: 99.76% — gross_burn_tokens Q3"]}
     assert reader._one_off_of(t, 3).startswith("ONE-OFF IN THIS RATE") and reader._one_off_of(t, 0) == ""
 
@@ -151,3 +154,11 @@ def test_a_line_fed_only_by_declared_one_offs_is_zero_in_other_quarters(monkeypa
     assert not (config.HOLDER_VALUE.get("Uniswap") or {}).get("funding"), "Uniswap declares no other funding period"
     src = open(bw.__file__, encoding="utf-8").read()
     assert 'vrows["other"] = [0.0 if v is None else v for v in vrows["other"]]' in src
+
+
+def test_a_straddled_day_is_named_once():
+    """PR1 gate: after U5 Uniswap's issuance reads two legs, a straddled day came in twice ('2026-10-27, 2026-10-27..10-28')."""
+    from fetch import archive as ar
+    days = [pd.Timestamp("2026-10-27"), pd.Timestamp("2026-10-27"), pd.Timestamp("2026-10-28"),
+            pd.Timestamp("2026-10-28"), pd.Timestamp("2026-10-29")]
+    assert ar._ranges(days) == "2026-10-27..10-29"
