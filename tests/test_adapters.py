@@ -15331,10 +15331,11 @@ def test_issuance_stream_expiry_caveat_fires_after_the_declared_end_and_clears_9
         by = {r["key"]: r for r in o.to_dict("records")}
         return by["Sky|gross_issuance_tokens"], bw._a4_window_caveat(sky, by)
 
-    # 2026-11-10: the stream's LAST issuing day — not expired; the window is still one day short.
+    # 2026-11-10: the stream's LAST issuing day — not expired. PR1.S1 (Jake 2026-11-05): its 90 daily rows 08-13..11-10
+    # cover all 90 days of the window (k rows cover k days; the first row's day counts) — it read "covers 89 of 90 days"
     row, cav = at("2026-11-10")
     assert row["schedule_end"] == "2026-11-10" and not (row["q0_pre_end_days"] == row["q0_pre_end_days"])
-    assert "STREAM ENDED" not in cav and "ISSUANCE covers 89 of 90 days" in cav, cav
+    assert row["q0_covered_days"] == 90 and cav == "", cav
     # 2026-11-11: the first day with no issuance. Fires, with the exact wording, and the
     # run-rate clause (which assumes a running stream) does not.
     row, cav = at("2026-11-11")
