@@ -234,6 +234,7 @@ def test_s9_net_supply_not_carried_is_unknown_never_by_design():
     why = reader.nsc_not_carried(p, src, dil)
     assert "unknown here, not zero" in why and "5.00%" in why and "not applicable" not in why
     assert reader.nsc_not_carried(p, reader.Src("Master", "X1", num=1.0), dil) == ""
+    assert "Whether it moves is not measured" in reader.nsc_not_carried(p, src, None), "never claims a move unmeasured"
 
 
 def test_s9_gate_no_code_contradicts_a_number_on_the_built_reader(built):
@@ -260,6 +261,8 @@ def test_s9_uniswap_a4_reads_the_release_the_key_divides_by(built):
     release = XA.value("A4 Permanent Burn", ra, ca)
     assert isinstance(release, float) and release > 0
     assert X.value(ws.title, r, _col(ws, "Issuance or release, 90 days")) == pytest.approx(release)
+    # its own unlock column stays on the tab (read for the issuance column, never consumed)
+    assert X.value(ws.title, r, _col(ws, "UNLOCK DILUTION last 90 days")) == pytest.approx(release)
     for h in ("Revenue needed for crossover", "Governance lever"):
         assert isinstance(X.value(ws.title, r, _col(ws, h)), float), h
 

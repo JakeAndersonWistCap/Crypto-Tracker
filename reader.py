@@ -1446,10 +1446,11 @@ def nsc_not_carried(p: dict, src: Src | None, dil: Src | None) -> str:
         return ""
     name = p["name"]
     arch = ", ".join(f"A{a}" for a in (p.get("archetypes") or [])) or "none"
-    moves = (f"total dilution reads {dil.num:.2%} of float a year (this row)" if dil is not None and dil.num
-             else "its archetype tab's emissions and unlocks columns show what enters circulation")
+    moves = (f" Its supply does move: total dilution reads {dil.num:.2%} of float a year (this row)."
+             if dil is not None and dil.num else
+             " Whether it moves is not measured here either (no total dilution figure on this row).")
     return (f"Not measured for {name}: the net supply change is issuance − burn, and gross issuance is not carried for "
-            f"{name}'s archetypes ({arch}) — so the figure is unknown here, not zero. Its supply does move: {moves}. "
+            f"{name}'s archetypes ({arch}) — so the figure is unknown here, not zero.{moves} "
             f"Which basis it should read (the pre-minted −burn, as Uniswap, or a measured issuance) is a decision for "
             f"{name}'s own round.\n\nWorking: {src.where} (it reads gross_issuance_tokens, outside {name}'s archetypes' "
             f"metrics).")
@@ -2127,7 +2128,7 @@ def _write_arch_tab(sh: Sheet, ctx: Ctx, spec: TabSpec) -> None:
             continue
         if d[0] == "@issuance":
             ci, cr = audit_col("GROSS ISSUANCE Q0 (tokens)"), audit_col("Pool release Q0 (tokens)")
-            cu = audit_col("UNLOCK DILUTION Q0 (tokens)")
+            cu = A.col(tab, "UNLOCK DILUTION Q0 (tokens)")     # read, not consumed: its own column stays
             add(Col(d[2], "GROSS ISSUANCE over the last 90 days, or — for a pre-minted supply — the POOL RELEASE "
                     "(released from pre-minted pools, not minted), or the RELEASES INTO CIRCULATING where the key "
                     "divides by them (Uniswap): always on the basis the key uses.", FMT_TOK, "(d) Drivers",
