@@ -119,8 +119,6 @@ def _build(out_dir: str) -> tuple[Path, Path]:
 
 
 def main(argv=None) -> int:
-    import progress
-    progress.line_buffered()
     import argparse
     import config
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -149,4 +147,6 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
+    import progress
+    progress.line_buffered()
     sys.exit(main())
