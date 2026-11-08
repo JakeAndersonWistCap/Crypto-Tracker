@@ -290,9 +290,12 @@ def test_fixture_keys_and_ranks(built):
     assert isinstance(val["Pendle"], str) and val["Pendle"].startswith("BLOCKED — unequal coverage")
     assert "buyback_burned_tokens, q0) covers 68 days" in val["Pendle"]
     assert isinstance(val["Hyperliquid"], str) and val["Hyperliquid"].startswith("BLOCKED — unequal coverage")
+    # PR1.S1 (Jake 2026-11-05): each leg a rate over the days its rows cover (the days after a leg's last row are not
+    # covered); the ratio of the 90-day sums was 0.6250996672617004
+    def rate(m):
+        return _data(built, f"GEODNET|{m}", q0) / _data(built, f"GEODNET|{m}", "Q0: days of the 90")
     assert val["GEODNET"] == pytest.approx(
-        _data(built, "GEODNET|buyback_burned_tokens", q0)
-        / (_data(built, "GEODNET|emissions_tokens", q0) + _data(built, "GEODNET|unlock_release_tokens", q0)), rel=1e-9)
+        rate("buyback_burned_tokens") / (rate("emissions_tokens") + rate("unlock_release_tokens")), rel=1e-9)
     # the key cell says what it divides (a note per project)
     assert "BURNED buyback = buyback_burned_tokens" in ws.cell(rows["Maple"], kc).comment.text
     # ranks: Summary and the A3 tab agree; Sky first; the zeros ordered by net holder yield (numbers first, high to low)
