@@ -173,7 +173,8 @@ def test_total_supply_on_chain_first_for_the_eight_and_aethir_since_14_oct():
     import config
     # G2-D2 / L3 (Jake 2026-10-18): Hyperliquid and GEODNET join, as net views (config.TOTAL_SUPPLY_NET)
     assert set(config.TOTAL_SUPPLY_ONCHAIN_FIRST) == {"Ether.fi", "Aerodrome", "Chainlink", "Fluid", "Maple", "Morpho",
-                                                      "Pendle", "Sky", "Aethir", "Hyperliquid", "GEODNET"}
+                                                      "Pendle", "Sky", "Aethir", "Hyperliquid", "GEODNET",
+                                                      "Uniswap"}   # PR1.U5: net of burned UNI
     assert config.TOTAL_SUPPLY_ONCHAIN_FIRST["Aethir"]["decided_on"] == "2026-10-14"
     for n in config.TOTAL_SUPPLY_ONCHAIN_FIRST:
         assert config.declared_handover(n, "total_supply")["ordered_points"][0] == "coingecko"

@@ -277,10 +277,12 @@ ENTRIES = {
                 "Aerodrome); perp open interest ÷ Derivatives (Hyperliquid); borrowed ÷ 11 lenders (Maple, Morpho, "
                 "Fluid); Ethereum TVL ÷ 9 ETH LST/LRT peers (Ether.fi); TVL ÷ 4 yield-tokenization peers (Pendle); "
                 "USDS + DAI ÷ USD stablecoins (Sky); chain TVL ÷ all chains (Ethereum, NEAR). A day a launched peer "
-                "did not report is dropped, never read as 0", window="now", unit="%",
+                "did not report is dropped, never read as 0. Uniswap: the 90-day MEAN of the daily shares (the Q0 basis), its 30- "
+                "and 60-day means beside (config.MARKET_SHARE_MEAN)", window="now; Uniswap: Q0 (90-day mean)", unit="%",
         excludes="Chainlink, Plume, Aethir, GEODNET: n/a with the reason (no free comparable basis)",
         inputs=["market_share_pct", "market_share_category_usd"],
-        decided=[(J, "2026-10-12", "overnight review of ab5f2a9, Phase 3")]),
+        decided=[(J, "2026-10-12", "overnight review of ab5f2a9, Phase 3"),
+                 (J, "2026-11-05", "PR1.U4: Uniswap's headline is the 90-day mean, not one day")]),
     "NET ISSUANCE AFTER BURN Q0 (tokens)": dict(
         what="Issuance less every burn over Q0 — the supply's net change (+ inflation).",
         formula="the A4 net-change expression on every burn: common days where declared, self-reported net mint where "

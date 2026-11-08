@@ -141,6 +141,12 @@ def check(out, h: pd.DataFrame, projects: list[dict]) -> None:
             basis = f" (ours + {' + '.join(counts)}, the wallets CoinGecko counts"
             if name in config.TOTAL_SUPPLY_ONCHAIN_FIRST:
                 cg_tot, our_tot = _daily(h, name, "total_supply_coingecko"), _daily(h, name, spec.get("total") or "total_supply")
+                net = config.TOTAL_SUPPLY_NET.get(name)
+                if net and (spec.get("total") or "total_supply") == net["total"]:
+                    # PR1.U5: CoinGecko's total is NET of the burned balances (Uniswap), so ours is put on the same net
+                    # total before the swap — never CoinGecko's net total less the burn a second time
+                    for m in net["less"]:
+                        our_tot = (our_tot - _daily(h, name, m)).dropna()
                 if not cg_tot.empty and not our_tot.empty:
                     ours = (ours - our_tot + cg_tot).dropna()
                     basis += f", on CoinGecko's own total (− {spec.get('total') or 'total_supply'} + total_supply_coingecko)"
