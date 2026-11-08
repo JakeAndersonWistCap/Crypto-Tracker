@@ -81,6 +81,19 @@ def test_s13_uniswap_states_every_route_and_the_other_recipients():
     assert "HOLDER SHARE" in config.PAYOUT_ABOVE_ONE["Uniswap"]
 
 
+def test_u7_the_burn_trace_and_the_jar_sample_add_up_and_the_proxy_is_declared():
+    """U7: the traced burn is the one-off + the 4,000-UNI mainnet releases + the 2,000-UNI bridged burns (+ dust); the
+    revenue line is DefiLlama's RELEASE value, declared as a proxy, with the TokenJar inflow sample beside it."""
+    bt = config.UNISWAP_REVENUE_EVIDENCE["burn_trace"]
+    assert bt["tokens"] == pytest.approx(bt["one_off"] + 4000 * bt["releases_4000"] + 2000 * bt["bridged_2000"], abs=10)
+    assert abs(bt["q0_traced"] - bt["q0_stored"]) / bt["q0_stored"] < 0.01
+    jar = config.UNISWAP_REVENUE_EVIDENCE["token_jar_inflows"]
+    assert jar["priced_usd"] > 0 and jar["lp_transfers"] > 0 and jar["defillama_ethereum_release_value_usd"] > 0
+    route = config.revenue_split("Uniswap")["revenue"]["route"]
+    assert "RELEASED" in route and "PROXY" in route and "SECONDARY" in route
+    assert "DECLARED PROXY" in config.revenue_tier("Uniswap")[1]
+
+
 def test_s13_the_definitions_tab_writes_the_three_lines_and_the_net_supply_change():
     wb = openpyxl.Workbook()
     ws = wb.active

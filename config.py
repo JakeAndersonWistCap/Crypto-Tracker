@@ -34930,8 +34930,14 @@ REVENUE_TIER.update({
     "Aerodrome": ("holder_revenue", "DefiLlama's Aerodrome 'Revenue' = the trading fees of staked LPs, ALL paid to "
                                     "veAERO voters (HOLDER_VALUE: 'revenue_usd: staked-LP fees, routed to voters') — "
                                     "it is what reaches holders, i.e. the HOLDER REVENUE line, not the revenue line"),
-    "Uniswap": ("revenue", "DefiLlama's revenue_usd = the protocol fee (fees × the protocol's share per version, tier "
-                           "and chain from each activation) — fees minus what LPs keep (REVENUE_SPLIT['Uniswap'])"),
+    "Uniswap": ("revenue", "REVENUE BY A DECLARED PROXY: DefiLlama's revenue_usd is the value RELEASED from the "
+                           "TokenJars against UNI burns (its adapter dexs/uniswap-v3.ts: Released events on each chain's "
+                           "Firepit × threshold() UNI × the UNI price; dailyRevenue = dailyHoldersRevenue). Every protocol "
+                           "fee leaves the jars only that way, so over a window in which the jars' holdings do not change "
+                           "it equals the protocol take (fees − what LPs keep); the mainnet jar held ~$0.1M priced "
+                           "(2026-11-05) and one day of its inflows sits beside DefiLlama's figure in "
+                           "UNISWAP_REVENUE_EVIDENCE. Measured as released, it is also the holder revenue at release "
+                           "(REVENUE_SPLIT['Uniswap'])"),
 })
 
 # THE THREE LINES WHERE A PROJECT'S ROUND HAS POPULATED THEM. Each line: the metric, its route (said in the cell note),
@@ -34945,22 +34951,32 @@ REVENUE_SPLIT = {
                           "swap fees on chain needs every pool's Swap events on every chain and is not built; what IS "
                           "read on chain is the protocol's share of them (revenue) and the burn (holder revenue)"},
         "revenue": {"metric": "revenue_usd", "primary": False,
-                    "route": "DefiLlama 'uniswap' dailyRevenue: fees × the protocol share per version / tier / chain "
-                             "from each activation (v2 1/6 of 0.30%; v3 1/4 in the 0.01%/0.05% tiers, 1/6 in 0.30%/1%; "
-                             "v4 per pool) — computed by DefiLlama from swaps, not read from the TokenJars: SECONDARY. "
+                    "route": "DefiLlama 'uniswap' dailyRevenue = the value RELEASED from the TokenJars against UNI "
+                             "burns (its adapter dexs/uniswap-v3.ts, read 2026-11-08: Released events on each chain's "
+                             "Firepit × threshold() × the UNI price) — a PROXY for the protocol take (fees − what LPs "
+                             "keep: v2 1/6 of 0.30%; v3 1/4 in the 0.01%/0.05% tiers, 1/6 in 0.30%/1%; v4 per pool), "
+                             "equal to it over any window in which the jars' holdings do not change: SECONDARY. The "
+                             "PRIMARY route — TokenJar inflows — is sampled, not built: mainnet 2026-10-12 $101,157 "
+                             "priced (51 tokens) + 284 UNI-V2 LP-token transfers unvalued, against DefiLlama's Ethereum "
+                             "release value that day $118,939 (UNISWAP_REVENUE_EVIDENCE.token_jar_inflows). "
                              "ON CHAIN (UNISWAP_REVENUE_EVIDENCE): before #93 (block 24,106,378, 2025-12-27 20:33 UTC) "
                              "the contracts collected NOTHING — v2 feeTo = 0x0, v3 Factory owner = the Timelock, "
                              "feeProtocol 0 and protocolFees 0 on the four largest v3 pools — so the protocol take "
                              "before the switch is a measured 0, as DefiLlama books it; after it v2 feeTo = the TokenJar "
-                             "and the v3 pools' feeProtocol is set (1/4, 1/6). TokenJar inflows are not summed "
-                             "(880k+ transfers on mainnet alone, LP tokens among them, and a jar per L2)"},
+                             "and the v3 pools' feeProtocol is set (1/4, 1/6). A full TokenJar inflow series is not "
+                             "built (880k+ transfers on mainnet alone, 167 LP-token kinds in one day, and a jar per "
+                             "L2)"},
         "holder_revenue": {"metric": "holder_value_revenue_usd", "primary": True,
                            "route": "ON CHAIN: UNI burned = the rise of 0x…dEaD's UNI balance (gross_burn_tokens, "
                                     "chain:ethereum:burn_dead:delta — Firepit releases on mainnet, 4,000 UNI each, and "
                                     "the OP-stack firepits' bridged burns landing there) x the day's price; the 2025-12-27 "
                                     "100M treasury burn is recorded, never credited (HOLDER_VALUE / one_off_flows)"},
-        "holder_share": {"route": "holder revenue ÷ revenue per covered day (= CP's payout ratio on the net basis); "
-                                  "PAYOUT_ABOVE_ONE['Uniswap'] says why it can read above 1 (burn timing)"},
+        "holder_share": {"route": "holder revenue ÷ revenue per covered day (= CP's payout ratio on the net basis). "
+                                  "Both lines measure THE SAME burns at two points — revenue (DefiLlama) at the L2 "
+                                  "release at that day's price, holder revenue at the UNI's landing at 0x…dEaD on "
+                                  "mainnet (after the OP-stack bridge's ~7 days) at that day's price — so the share is "
+                                  "1 by mechanism (100% of protocol fees reach holders) and its distance from 1 is "
+                                  "timing and price; PAYOUT_ABOVE_ONE['Uniswap']"},
         "other_recipients": (
             "LIQUIDITY PROVIDERS: fees − revenue (the cost of delivering the fees; CP's supplier payout). UNISWAP LABS' "
             "INTERFACE FEE is paid by users of Labs' app to Labs, a company, not to the protocol's contracts: it is in "
@@ -34968,9 +34984,10 @@ REVENUE_SPLIT = {
             "$4.5M (2025-10), $3.3M (2025-11), $1.9M (2025-12), then ~$0 from 2026-01 ($66k in January, $1 over "
             "2026-07-16..10-13; read 2026-11-05). Why it fell to ~0 (Labs switching the fee off around UNIfication) is "
             "NOT verified from a primary source here — only that DefiLlama's series did"),
-        "crosscheck": "DefiLlama's holdersRevenue for 'uniswap' equals its revenue on every day (it books the whole "
-                      "protocol fee as reaching holders, on the L2 release day at that day's price); ours is the UNI as "
-                      "it lands at 0xdead after the bridge delay, so the two differ by timing (PAYOUT_ABOVE_ONE)",
+        "crosscheck": "DefiLlama's holdersRevenue for 'uniswap' equals its revenue on every day (the same release "
+                      "count × threshold × price); ours is the UNI as it lands at 0xdead after the bridge delay, so the "
+                      "two differ by timing (PAYOUT_ABOVE_ONE). On the dumps' Q0: holder revenue $32.21M vs DefiLlama "
+                      "revenue = holders revenue $29.80M (1.081); fees $400.9M (DefiLlama only)",
     },
 }
 
@@ -35007,6 +35024,30 @@ UNISWAP_REVENUE_EVIDENCE = {
                                      "next to ~$4M+ burned a month, so over a quarter the released value ≈ the "
                                      "protocol fees that arrived. Summing the inflows themselves (880k transfers, LP "
                                      "tokens among them, plus a jar per L2) is NOT done: no keyless route at that size"},
+    # THE BURN, TRACED (Blockscout tokentx: every UNI Transfer into 0x…dEaD, blocks 24,106,370..26,180,000, read
+    # 2026-11-08): 4,883 transfers, 112,774,004.59 UNI = the 100,000,000 treasury one-off (tx 0x091f0083…, 2025-12-27)
+    # + 12,774,004.59 from Firepit releases (1,527 of 4,000 UNI — mainnet — and 3,333 of 2,000 — the OP-stack firepits'
+    # bridged burns; 13 dust). Dated the day after (gross_burn_tokens is 0xdead's balance rise at the first block of the
+    # day), it matches the stored series EXACTLY on every day 2025-12-28..2026-09-13; from 2026-09-14 the stored rows are
+    # live reads at fetch time (not the first block), so day boundaries move and three days are spans. Over the dumps'
+    # Q0 (2026-07-16..10-13): traced 5,560,001.25 UNI vs stored 5,594,001.25 — 34,000 UNI (0.6%) apart, the traced
+    # window ending at block 26,180,000 (10-13 00:00 UTC) and the stored 10-13 read at its fetch time.
+    "burn_trace": {"read_on": "2026-11-08", "blocks": (24_106_370, 26_180_000), "transfers": 4_883,
+                   "tokens": 112_774_004.59, "one_off": 100_000_000, "releases_4000": 1_527, "bridged_2000": 3_333,
+                   "matches_stored_exactly": ("2025-12-28", "2026-09-13"),
+                   "q0_traced": 5_560_001.25, "q0_stored": 5_594_001.25,
+                   "source": "https://eth.blockscout.com/api?module=account&action=tokentx (address 0x…dEaD, "
+                             "contractaddress UNI)"},
+    # TOKENJAR INFLOWS, SAMPLED (Blockscout tokentx on the jar, every transfer TO it; priced with DefiLlama's coins API at
+    # the window's midpoint, confidence >= 0.9 — a price source only; UNI-V2 LP tokens counted, not valued).
+    "token_jar_inflows": {"read_on": "2026-11-08", "window": ("2026-10-12", "2026-10-12"),
+                          "blocks": (26_172_658, 26_179_841), "transfers_in": 2_889, "token_kinds": 219,
+                          "priced_usd": 101_157, "priced_kinds": 51, "lp_kinds": 167, "lp_transfers": 284,
+                          "top": "WETH $31,560, USDT $16,769, USDC $16,605, WBTC $6,363",
+                          "defillama_ethereum_release_value_usd": 118_939,
+                          "reading": "the same order of size: what arrives in the mainnet jar in a day (before the LP "
+                                     "tokens, unvalued) against what DefiLlama books as released on Ethereum that day. "
+                                     "Mainnet only; the L2 jars are not read"},
     "defillama_live": {"read_on": "2026-11-05", "window": ("2026-07-16", "2026-10-13"),
                        "fees_usd": 411_847_601, "revenue_usd": 30_441_934, "holders_revenue_usd": 30_441_934,
                        "supply_side_usd": 381_405_691, "uniswap_labs_fees_usd": 1,
