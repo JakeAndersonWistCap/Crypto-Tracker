@@ -105,7 +105,8 @@ def test_b1_the_share_note_names_the_one_off_beside_the_rate(monkeypatch):
     f = (f'=IFERROR(INDEX(Data!${bw.DC["q0"]}$2:${bw.DC["q0"]}$900,MATCH($A5&"|gross_burn_tokens",Data!$A$2:$A$900,0))'
          f'/INDEX(Data!${bw.DC["q1"]}$2:${bw.DC["q1"]}$900,MATCH($A5&"|gross_burn_tokens",Data!$A$2:$A$900,0)),"n/a")')
     note = bw._one_off_share_note("Uniswap", f)
-    assert note.startswith("ONE-OFF IN THIS RATE") and "of which one-off: 100% — gross_burn_tokens Q0" in note
+    # PR1.U10: a share above 99% and short of all reads two decimals (100,000,000 of 100,000,026 is not "100%")
+    assert note.startswith("ONE-OFF IN THIS RATE") and "of which one-off: 100.00% — gross_burn_tokens Q0" in note
     assert "Q1" not in note
     assert bw._one_off_share_note("Sky", f) == "" and bw._one_off_share_note("Uniswap", "=1+1") == ""
 
@@ -150,7 +151,9 @@ def test_b2_premint_net_cells_are_relabelled_burn_only():
     geod, hl, maple = (config.PROJECT_BY_NAME[n] for n in ("GEODNET", "Hyperliquid", "Maple"))
     for p in (geod, hl, maple, config.PROJECT_BY_NAME["Chainlink"], config.PROJECT_BY_NAME["Aethir"], UNI):
         suffix, note = bw._premint_net_flag(p)
-        assert suffix == " burn only" and "NOT the change in circulating supply" in note, p["name"]
+        # PR1.U10: the note says what the figure is NOT in S8's words — the net supply change (the circulating change)
+        assert suffix == " burn only" and "NOT the net supply change, which is the change in circulating supply" in note, \
+            p["name"]
     assert "Derived net supply change" in bw._premint_net_flag(geod)[1]
     assert "ISSUER_MINTS" in bw._premint_net_flag(maple)[1], "Maple's mint to its treasury is named"
     for n in ("Ethereum", "Near", "Sky", "Aerodrome"):
@@ -165,7 +168,7 @@ def test_b2_the_reader_says_burn_only_on_a_nonzero_premint_net():
                      header="NET SUPPLY CHANGE Q0 (tokens) = issuance − burn")
     geod = config.PROJECT_BY_NAME["GEODNET"]
     assert reader._premint_note(geod, src).startswith("BURN ONLY")
-    assert "net supply change is 0" in reader._premint_note(geod, dataclasses.replace(src, value=0.0, num=0.0))
+    assert "issuance − burn is 0" in reader._premint_note(geod, dataclasses.replace(src, value=0.0, num=0.0))
     assert reader._premint_note(config.PROJECT_BY_NAME["Ethereum"], src) == ""
 
 

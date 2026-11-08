@@ -2351,6 +2351,7 @@ _ONE_OFF_IN_SERIES: dict = {}
 # P5-1C.B1: (project, metric, Data window) -> (one-off part, window total, what) for every window a one-off sits in —
 # the "of which one-off: x%" note beside each rate that reads it (_one_off_share_note)
 ONE_OFF_SHARES: dict = {}
+_ONE_OFF_CTX: dict = {}     # PR1.U10: the groups and window bounds _one_off_shares read (for a rate's other legs)
 # PR1.U3: (project, metric, "YYYY-MM") -> (one-off part, what) — the Monthly tab's month that holds a declared one-off
 ONE_OFF_MONTHS: dict = {}
 UNLOCK_LEGACY_DROPPED: dict = {}  # (project, release metric, leg) -> legacy rows past config.UNLOCK_LEGACY_CUT (P2a D2)
@@ -2495,6 +2496,8 @@ def _one_off_shares(groups: dict, asof) -> None:
               "y1": (asof - pd.Timedelta(days=365), asof),
               **{q: (asof - pd.Timedelta(days=period * (i + 1)), asof - pd.Timedelta(days=period * i))
                  for i, q in enumerate(QUARTERS)}}
+    _ONE_OFF_CTX.clear()
+    _ONE_OFF_CTX.update(groups=groups, bounds=bounds)
     for p in scoped_projects():
         name = p["name"]
         for metric, parts in _one_off_parts(groups, name).items():
@@ -2512,9 +2515,28 @@ def _one_off_shares(groups: dict, asof) -> None:
                                                        "; ".join(dict.fromkeys(w for _v, w in inside.values())))
 
 
+def _rate_legs(name: str, formula: str, win: str, metric: str, col_of: dict) -> dict:
+    """PR1.U10: the flow series a rate's formula sums in window `win`, in the one-off metric's unit, with their window
+    totals ({metric: total}); stocks (the denominator) and coverage columns are not legs."""
+    groups, bounds = _ONE_OFF_CTX.get("groups") or {}, _ONE_OFF_CTX.get("bounds") or {}
+    if win not in bounds:
+        return {}
+    unit = "_usd" if metric.endswith("_usd") else "_tokens"
+    out = {}
+    for letter, m in _DATA_REF.findall(formula):
+        if col_of.get(letter) != win or m in out or not m.endswith(unit) or \
+                (config.METRICS.get(m) or {}).get("kind") == "stock":
+            continue
+        tot = _window_sum(_daily(groups.get((name, m))), *bounds[win]) if groups.get((name, m)) is not None else None
+        if tot:
+            out[m] = float(tot)
+    return out
+
+
 def _share_pct(x: float) -> str:
     """PR1.U8: a one-off share as a percentage — two decimals under 1%, so a small real share never reads "0%"."""
-    return f"{x:.2%}" if x and abs(x) < 0.01 else f"{x:.0%}"
+    # PR1.U10: and above 99% short of 100% (Uniswap Q-3: 100,000,000 of 100,244,003 read "100%") — never all when not
+    return f"{x:.2%}" if x and (abs(x) < 0.01 or 0.99 <= abs(x) < 1.0) else f"{x:.0%}"
 
 
 _DATA_REF = re.compile(r'INDEX\(Data!\$([A-Z]+)\$\d+:\$[A-Z]+\$\d+,MATCH\(\$A\d+&"\|([^"]+)"')
@@ -2538,6 +2560,15 @@ def _one_off_share_note(name: str, formula) -> str:
         seen.add(key)
         part, tot, what = ONE_OFF_SHARES[key]
         unit = "$" if metric.endswith("_usd") else "tokens"
+        legs = _rate_legs(name, formula, win, metric, col_of)
+        if len(legs) > 1:
+            # PR1.U10 (Uniswap: total dilution read "of which one-off: 23%" — 13,303 of the (e) leg's 57,505, while the
+            # rate adds the (d) leg's 5.0M): the share is of everything the rate sums in that window, the leg beside it
+            all_ = sum(legs.values())
+            lines.append(f"of which one-off: {_share_pct(part / all_)} of the rate — {part:,.0f} of {all_:,.0f} {unit} "
+                         f"summed over {win.upper()} ({' + '.join(f'{m} {v:,.0f}' for m, v in legs.items())}); "
+                         f"{_share_pct(part / tot)} of {metric} alone ({what})")
+            continue
         lines.append(f"of which one-off: {_share_pct(part / tot)} — {metric} {win.upper()}: {part:,.0f} of {tot:,.0f} {unit} "
                      f"({what})")
     if not lines:
@@ -8386,11 +8417,11 @@ def _premint_net_flag(p: dict) -> tuple[str, str] | None:
     mint = config.ISSUER_MINTS.get(name)
     return (" burn only",
             f"BURN ONLY (P5-1C.B2, Jake 2026-11-04) — {name} is a pre-minted supply (nothing is minted into circulation), "
-            "so the net supply change "
+            "so issuance − burn "
             f"is mint − burn = −burn ({config.a4_net_burn_metric(name)} / {config.a1_burn_metric(name)}): the definition "
-            "of this column (accuracy pass item 9, SPEC P2a-A5). It is NOT the change in circulating supply: that is "
-            f"release − burn ({rel} − burn; {where}); the release is dilution (CP outflows; Total Yield adds it beside "
-            "this figure, so it is never counted twice)."
+            "of this column (accuracy pass item 9, SPEC P2a-A5). It is NOT the net supply change, which is the change "
+            f"in circulating supply (PR1.S8: Master / Summary 'Net supply change'; release − burn: {rel} − burn; {where}); "
+            "the release is dilution (CP outflows; Total Yield adds it beside this figure, so it is never counted twice)."
             + (f" Tokens MINTED to an issuer-side wallet ({mint.get('kind', 'mint')} route, config.ISSUER_MINTS: "
                f"{mint.get('wallet', 'the treasury')}) are not in it either — they are not circulating until released, "
                "and the release is the dilution leg." if mint else ""))
@@ -13351,6 +13382,67 @@ def _flow_sum(s: pd.Series, start, end):
     return (float(w.sum()) if not w.empty else None), int(w.index.nunique()) if not w.empty else 0
 
 
+def _flow_days(g, s: pd.Series, start, end, k: int) -> tuple[int, int]:
+    """PR1.U10 (Uniswap Q0 read "CHECK — gross_burn_tokens covers 87/90 days" with a residual of exactly 0): the days a
+    leg covers in (start, end] and the read lag after its last row. A DIFFERENCED stock (a ':delta' / 'derived:d_'
+    source: each row is the change since the reading before it) covers the days between its rows — the row after a
+    missing day carries the whole gap — so it covers from the window's start (or the day before its first row) to its
+    last row; any other flow covers the days it has a row (a missing day is a hole). In the latest quarter (k = 0) the
+    days after the last row are the read lag (PR1.S1), not a hole; in an earlier quarter there is no lag."""
+    w = s[(s.index > start) & (s.index <= end)] if not s.empty else s
+    if w.empty:
+        return 0, 0
+    last = pd.Timestamp(w.index.max()).normalize()
+    lag = max(int((pd.Timestamp(end).normalize() - last).days), 0) if k == 0 else 0
+    srcs = g["source"].astype(str) if g is not None and not g.empty and "source" in g else pd.Series(dtype=str)
+    differenced = not srcs.empty and bool(srcs.map(lambda x: x.startswith("derived:d_") or ":delta" in x).all())
+    if not differenced:
+        return int(w.index.nunique()), lag
+    first = pd.Timestamp(s.index.min()).normalize() - pd.Timedelta(days=1)
+    lo = max(pd.Timestamp(start).normalize(), first)
+    return max(int((last - lo).days), 0), lag
+
+
+def _value_timing(groups: dict, name: str, start, end, usd_gap: float) -> str | None:
+    """PR1.U10: 'EXPLAINED — timing …' where config.VALUE_TIMING declares that revenue and holder revenue are the same
+    tokens valued at two points and the TOKEN gaps (the quarter; since the declared start) are within the bound the
+    mechanism allows (lag_days of releases ÷ the window's days). None (the CHECK stands) otherwise."""
+    spec = config.VALUE_TIMING.get(name)
+    if not spec:
+        return None
+    burn, rev, px = (_daily(groups.get((name, spec[k]))) for k in ("burn", "revenue", "price"))
+    if burn.empty or rev.empty or px.empty:
+        return None
+    rev_t = (rev / px.reindex(rev.index)).dropna()
+    issuer_side = {f["what"] for f in (config.PROJECT_BY_NAME.get(name) or {}).get("one_off_flows") or ()
+                   if f.get("from_stock")}
+
+    def burned(lo, hi):
+        v = _flow_sum(burn, lo, hi)[0]
+        if v is None:
+            return None
+        return v - sum(t for day, t, _f, w in _ONE_OFF_IN_SERIES.get((name, spec["burn"]), ())
+                       if lo < day <= hi and w in issuer_side)
+
+    lag = int(spec["lag_days"])
+    since = pd.Timestamp(spec["since"])
+    end_ = pd.Timestamp(end)
+    q_b, q_r = burned(start, end), _flow_sum(rev_t, pd.Timestamp(start) - pd.Timedelta(days=lag),
+                                              end_ - pd.Timedelta(days=lag))[0]
+    a_b, a_r = burned(since, end), _flow_sum(rev_t, since, end_)[0]
+    if not all(x for x in (q_b, q_r, a_b, a_r)) or end_ <= since:
+        return None
+    q_days, a_days = max((end_ - pd.Timestamp(start)).days, 1), max((end_ - since).days, 1)
+    qg, ag = q_b / q_r - 1, a_b / a_r - 1
+    if abs(qg) > lag / q_days or abs(ag) > lag / a_days:
+        return None
+    return (f"EXPLAINED — timing (config.VALUE_TIMING): holder value credited exceeds revenue by {usd_gap:.1%} in $, "
+            f"but in tokens the quarter burned {q_b:,.0f} against {q_r:,.0f} released {lag} days earlier ({qg:+.1%}, "
+            f"within the {lag / q_days:.1%} the bridge can hold in flight) and since {since.date()} {a_b:,.0f} against "
+            f"{a_r:,.0f} ({ag:+.1%}, within {lag / a_days:.1%}): the same tokens, valued at release and at landing — "
+            f"{spec['why']}")
+
+
 def _flow_at(s: pd.Series, day, slack: int = 3):
     """The stock's value on the last stored day at or before `day`, within `slack` days — else None."""
     if s.empty:
@@ -13437,7 +13529,9 @@ def flow_statements(groups: dict, asof) -> list[dict]:
                              if start < day <= end and w in issuer_side)
                 leg_vals[lab].append(v if v is not None else None)
                 if n < period:
-                    why.append(f"{m} covers {n}/{period} days")
+                    n_eff, lag = _flow_days(groups.get((name, m)), d(m), start, end, k)
+                    if n_eff + lag < period:
+                        why.append(f"{m} covers {n_eff}/{period} days" + (f" (+{lag} day(s) of read lag)" if lag else ""))
                 if exp is not None:
                     exp = exp + sign * (v or 0.0)
             tok["open"].append(o)
@@ -13559,8 +13653,9 @@ def flow_statements(groups: dict, asof) -> list[dict]:
             if r_ is None:
                 pass
             elif cr_fees is not None and r_ > 0 and cr_fees > r_ * (1 + FLOW_RESIDUAL_LIMIT):
-                stat.append(f"CHECK — holder value credited exceeds revenue by {cr_fees / r_ - 1:.1%} (paid from "
-                            f"outside the quarter's revenue, or a timing gap)")
+                tex = _value_timing(groups, name, *_flow_window(asof, k), cr_fees / r_ - 1)
+                stat.append(tex or f"CHECK — holder value credited exceeds revenue by {cr_fees / r_ - 1:.1%} (paid "
+                                   f"from outside the quarter's revenue, or a timing gap)")
             elif cr is not None and r_ <= 0 < cr:
                 stat.append("CHECK — holder value credited with no revenue in the quarter")
             else:

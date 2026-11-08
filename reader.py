@@ -1540,14 +1540,17 @@ def _mcap_basis_note(config, name: str) -> str:
 def _premint_note(p: dict, src: Src | None) -> str:
     if src is None or src.num is None or not is_premint(p, src):
         return ""
+    if "BURN ONLY" in str(src.comment or ""):
+        return ""           # PR1.U10: the audit cell's own comment says it (and is carried) — never said twice
     if src.num != 0:
         # P5-1C.B2 (Jake 2026-11-04: GEODNET's −9.365M read as a circulating change beside a derived +2.33M): on a
         # pre-minted supply the figure is mint − burn = BURN ONLY — said, with where the circulating change is
-        return ("BURN ONLY — a pre-minted supply: no new tokens are minted, so the net supply change is minus the burn. "
-                "It is not the change in circulating supply (release − burn: the audit file's A4 'Derived net supply "
+        return ("BURN ONLY — a pre-minted supply: no new tokens are minted, so issuance − burn is minus the burn. It is "
+                "not the net supply change, which is the change in circulating supply (PR1.S8: Summary 'Net supply "
                 "change'); releases from the pre-minted pools appear under dilution (total dilution), not here.")
-    return ("A pre-minted supply: no new tokens are minted, so the net supply change is 0. Releases from the "
-            "pre-minted pools appear under dilution (total dilution), not under issuance.")
+    return ("A pre-minted supply: no new tokens are minted, so issuance − burn is 0. Releases from the pre-minted pools "
+            "appear under dilution (total dilution), and the net supply change (the change in circulating supply, "
+            "PR1.S8) is on Summary.")
 
 
 def _payout_note(p: dict, net: Src | None, gross: Src | None) -> str:
@@ -1563,6 +1566,10 @@ def _payout_note(p: dict, net: Src | None, gross: Src | None) -> str:
                 f"burn from two sources, so the distance from 1.0 is their difference (day boundaries; the burn "
                 f"series' declared handover between its legs), not a payout above or below revenue.")
     if net is None or net.num is None or net.num <= 1.0:
+        return ""
+    if p["name"] in (getattr(config, "PAYOUT_ABOVE_ONE", {}) or {}):
+        # PR1.U10 (Uniswap: "the excess is paid out of fees the revenue basis does not count" beside the declared
+        # timing explanation): the declared reason is the audit cell's comment, carried — no generic guess beside it
         return ""
     g = gross.num if gross is not None else None
     if g is not None and g <= 1.0:
@@ -1733,9 +1740,9 @@ def tab_specs(bw) -> list:
                           "BURN ÷ ISSUANCE (x) — the rank key: burn ÷ issuance (burn ÷ pool release where the supply is "
                           "pre-minted; Uniswap: burn ÷ releases into circulating, P3-2c), each per covered day"),
                 traj=("a4_net_change", "Issuance − burn (tokens)", FMT_TOK,
-                      "ISSUANCE − BURN (tokens; A4's 'net supply change', PR1.S8: not the change in circulating "
-                      "supply) — self-reported where published, else issuance (pool release where pre-minted) − burn, "
-                      "over the quarter; not the rank key"),
+                      "ISSUANCE − BURN (tokens) over the quarter: self-reported where published, else issuance (pool "
+                      "release where pre-minted) − burn; not the net supply change (PR1.S8: that is the change in "
+                      "circulating supply, on Summary) and not the rank key"),
                 drivers=((None, "GROSS BURN Q0 (tokens)", "Gross burn, 90 days (tokens)", ""),
                          ("@growth", "@burn", "Burn growth, selected period", "flow"),
                          ("@issuance", "", "Issuance or release, 90 days", ""),
@@ -2018,8 +2025,17 @@ def _trajectory(A: Audit) -> dict:
                       "modelled": text(r, "MODELLED quarters (excluded from any scoring)"),
                       "trend": text(r, "Trend"),
                       "t12m": num(raw(r, hdr.get("T12M"))),
-                      "t12m_prev": num(raw(r, hdr.get("T12M a quarter earlier (Q-1..Q-4)")))}
+                      "t12m_prev": num(raw(r, hdr.get("T12M a quarter earlier (Q-1..Q-4)"))),
+                      # PR1.U10: each quarter cell's own comment, for its "of which one-off" note (U3)
+                      "notes": [(ws.cell(r, c).comment.text if ws.cell(r, c).comment is not None else "") for c in qc]}
     return out
+
+
+def _one_off_of(t: dict | None, i: int) -> str:
+    """PR1.U10: the Trajectory quarter cell's "ONE-OFF IN THIS RATE" paragraph (P5-1C.B1 / PR1.U3), '' when none."""
+    notes = (t or {}).get("notes") or []
+    txt = notes[i] if i < len(notes) else ""
+    return next((plain(x) for x in str(txt or "").split("\n\n") if "ONE-OFF IN THIS RATE" in x), "")
 
 
 def _quarter_change(t: dict | None, asof: pd.Timestamp) -> tuple[str, object, str]:
@@ -2080,7 +2096,7 @@ def _put_key_quarter(sh: Sheet, data: Data, row: int, col: Col, name: str, tab: 
         mod = bool(re.search(rf"(?<![\w-]){re.escape(q)}(?![\d])", t["modelled"]))
         why = (f"{ARCHETYPE_KEYS[1][1]}\n\n{t['why'][i]}." if a1 else "")
         return put_number(sh, data, row, col, name, f"keytraj|{tab}|{tid}|{i}", v, FILL_MODELLED if mod else None,
-                          "\n\n".join(x for x in (("MODELLED, not measured." if mod else ""), why,
+                          "\n\n".join(x for x in (("MODELLED, not measured." if mod else ""), why, _one_off_of(t, i),
                                                   t["where"] if a1 else f"Working: audit file, Trajectory row "
                                                   f"{t['row']}, {q}.") if x))
     kv = key_cell.value
@@ -2410,9 +2426,10 @@ def _write_arch_tab(sh: Sheet, ctx: Ctx, spec: TabSpec) -> None:
                 if v is not None:
                     q = ("Q0", "Q-1", "Q-2", "Q-3")[h[2]]
                     mod = bool(t and re.search(rf"(?<![\w-]){re.escape(q)}(?![\d])", t["modelled"]))
+                    oo = _one_off_of(t, h[2])
                     put_number(sh, data, row, col, name, f"traj|{tab}|{h[1]}|{h[2]}", v,
                                FILL_MODELLED if mod else None,
-                               ("MODELLED, not measured.\n\n" if mod else "")
+                               ("MODELLED, not measured.\n\n" if mod else "") + (f"{oo}\n\n" if oo else "")
                                + f"Working: audit file, Trajectory row {t['row']}.")
                 else:
                     said = plain(t["raw"][h[2]]) if t else ""

@@ -232,7 +232,8 @@ def test_u3_the_monthly_tab_says_the_one_off_share_of_its_month(monkeypatch):
     assert wb.active.freeze_panes == "E2"
     dec, nov = wb.active.cell(2, 6), wb.active.cell(2, 5)
     assert dec.value == 100_000_026.0, "the month keeps the one-off, like the daily series and Q-3"
-    assert dec.comment and "of which one-off: 100%" in dec.comment.text and "UNIfication" in dec.comment.text
+    # PR1.U10: 100,000,000 of 100,000,026 reads 100.00% (two decimals above 99%: not all, never rounded to "100%")
+    assert dec.comment and "of which one-off: 100.00%" in dec.comment.text and "UNIfication" in dec.comment.text
     assert nov.comment is None
 
 
@@ -243,7 +244,7 @@ def test_u3_a_flows_line_says_where_the_one_off_is(monkeypatch):
     note = bw._flows_one_off_note(burned)
     assert "OUT of this line" in note and "Q0" in note, "the identity keeps an issuer-side burn out of '− burned'"
     carried = {**burned, "Line": "→ retired", "Q0": 100_000_026.0}
-    assert "of which one-off 100%" in bw._flows_one_off_note(carried)
+    assert "of which one-off 100.00%" in bw._flows_one_off_note(carried)          # PR1.U10: two decimals above 99%
     assert bw._flows_one_off_note({**burned, "Series": "fees_usd"}) == ""
 
 
@@ -258,7 +259,7 @@ def test_u3_a_data_window_holding_the_one_off_carries_its_share(monkeypatch):
     bw.write_data(wb.active, data, pd.Timestamp("2026-01-10"))
     q0 = wb.active.cell(2, bw.DATA_COLS.index("q0") + 1)
     q1 = wb.active.cell(2, bw.DATA_COLS.index("q1") + 1)
-    assert q0.comment and "of which one-off: 100%" in q0.comment.text
+    assert q0.comment and "of which one-off: 100.00%" in q0.comment.text         # PR1.U10: two decimals above 99%
     assert q1.comment is None
 
 

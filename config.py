@@ -29674,6 +29674,23 @@ SPAN_FIX_SPREAD_NOTE = {
 # P5-1.13 (Jake 2026-11-04): WHY A PAYOUT RATIO CAN READ ABOVE 1 WHERE THE EXCESS IS REAL — the note on both payout cells.
 # Measured on the 2026-10-13 dumps after the span fix (Hyperliquid's untagged 3-day row). Ethereum's day-late BurntFees
 # deltas were already re-dated at the source by E5 / orphan_cleanup CQ (2026-10-14; the dumps predate it).
+# PR1.U10 (Jake 2026-11-05, DONE MEANS: no CHECK status): THE FLOWS VALUE STATEMENT'S "holder value credited exceeds
+# revenue" CHECK, EXPLAINED IN TOKENS WHERE THE TWO LINES ARE THE SAME TOKENS AT TWO POINTS. Uniswap's revenue (DefiLlama)
+# is each Firepit release x threshold UNI x the release day's price; its holder revenue is the same UNI landing at
+# 0x…dEaD (after the OP-stack bridge, ~7 days for L2 releases) x the landing day's price (PR1.U7). So the $ gap is price
+# between release and landing, and the TOKEN gap can be at most the releases still in flight: `lag_days` of releases
+# out of the window (lag ÷ window days). The build measures both token gaps (the quarter, and since `since`) and reads
+# EXPLAINED only when each is within that bound — otherwise the CHECK stands. The bound is the mechanism's, declared
+# here before the measurement (on the dumps: Q0 +2.4% against 7.8%; since the switch −0.9% against 2.4%).
+VALUE_TIMING = {
+    "Uniswap": {"burn": "gross_burn_tokens", "revenue": "revenue_usd", "price": "price_usd", "lag_days": 7,
+                "since": "2025-12-29",
+                "why": "revenue = Firepit releases x threshold UNI x the release day's price; holder revenue = the same "
+                       "UNI landing at 0x…dEaD (L2 releases after the ~7-day OP-stack bridge) x the landing day's price "
+                       "(PR1.U7, PAYOUT_ABOVE_ONE)"},
+}
+
+
 PAYOUT_ABOVE_ONE = {
     "Ethereum": "Can read slightly above 1 — real, valuation. The burn IS Ethereum's revenue; holder value is the ETH "
                 "burned (Etherscan BurntFees, dated on the day it measures since E5 / orphan_cleanup CQ, 2026-10-14) x "
