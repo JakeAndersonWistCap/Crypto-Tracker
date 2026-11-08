@@ -3942,6 +3942,46 @@ def _market_cap_views(groups: dict) -> None:
         groups[(name, "circulating_supply_used")] = _as_stored(used, cols)
 
 
+# PR1.S8: the days a project's circulating change is NOT dated (a hole or a basis change), for the cells' reasons
+CIRC_CHANGE_GAPS: dict = {}
+
+
+def _circulating_change_views(groups: dict, asof=None) -> None:
+    """PR1.S8 (Jake 2026-11-05, config.NET_SUPPLY_CIRC): circulating_change_tokens = circulating_supply_used minus the
+    previous day's, ONLY where both days are held and on the same basis (the source names the leg) — so its Q0 sum is
+    closing − opening circulating. A day after a hole, or the day the basis changes, gets no row (a hole, never 0):
+    a change across two different measures is not a change in supply. The undated days are kept in CIRC_CHANGE_GAPS."""
+    CIRC_CHANGE_GAPS.clear()
+    for p in scoped_projects():
+        name = p["name"]
+        g = groups.get((name, "circulating_supply_used"))
+        if g is None or g.empty:
+            continue
+        s = g.assign(date=pd.to_datetime(g["date"]).dt.normalize()).sort_values("date").drop_duplicates("date",
+                                                                                                         keep="last")
+        d, v, src = list(s["date"]), [float(x) for x in s["value"]], [str(x) for x in s["source"]]
+        rows, gaps = [], []
+        for i in range(1, len(s)):
+            if (d[i] - d[i - 1]).days != 1:
+                gaps.append((d[i], f"no circulating reading on the {(d[i] - d[i - 1]).days - 1} day(s) before"))
+            elif src[i] != src[i - 1]:
+                gaps.append((d[i], f"the basis changes ({src[i - 1]} → {src[i]})"))
+            else:
+                rows.append((d[i], v[i] - v[i - 1], src[i]))
+        if asof is not None:                      # the Q0 window's undated days: the reason on the cell
+            lo = pd.Timestamp(asof).normalize() - pd.Timedelta(days=int(config.NET_SUPPLY_CIRC["window_days"]) - 1)
+            gaps = [(x, why) for x, why in gaps if lo <= x <= pd.Timestamp(asof).normalize()]
+            if not d or d[0] > lo - pd.Timedelta(days=1):
+                gaps.insert(0, (lo, f"no circulating reading on {(lo - pd.Timedelta(days=1)).date()} (the opening)"))
+        CIRC_CHANGE_GAPS[name] = gaps
+        if rows:
+            view = pd.DataFrame({"date": [r[0] for r in rows], "project": name, "metric": "circulating_change_tokens",
+                                 "value": [r[1] for r in rows], "tier": 1,
+                                 "source": [f"derived:d_circulating_used[{r[2].split('[', 1)[-1].rstrip(']')}]"
+                                            for r in rows]})
+            groups[(name, "circulating_change_tokens")] = _as_stored(view, g.columns)
+
+
 def _history_class(p: dict, metrics, data_by_key: dict) -> str:
     """'HISTORY <CLASS>: <metric> from <first date> — <reason>' for the youngest input of a trajectory row (Round G 2.2).
     CLASS is FORWARD-ONLY (the source keeps no history), SOURCE-LIMITED (no route to earlier days) or BUG (a route exists
@@ -5809,7 +5849,8 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _cg_plus_staked_views(groups)
     _near_lockup_views(groups)    # BEFORE market cap: NEAR's circulating under Jake's lockup rule
     _market_cap_views(groups)     # AFTER the on-chain circulating it may use; BEFORE NRR reads it
-    _fdv_views(groups)            # price x the total supply used, where total supply is on-chain first
+    _circulating_change_views(groups, asof)   # PR1.S8: net supply change = closing − opening circulating
+    _fdv_views(groups)           # price x the total supply used, where total supply is on-chain first
     _total_supply_history_views(groups)   # Round G7 2e: the declared older leg before total_supply's first row
     _reward_funding_views(groups)  # fix round 2 S1: a reward split by what funds it (mint / treasury / revenue)
     _treasury_split_views(groups)       # G9 L3: NEAR's (a) = the epoch mint less the treasury's 1/10 (line m)
@@ -8288,12 +8329,12 @@ def _a4_headline(R: Refs, burn, data_by_key: dict | None = None) -> list[tuple]:
         ("NET SUPPLY CHANGE Q0 (tokens) — self-reported where published, else issuance − burn, on the basis to the left",
          lambda r, p: _zero_issuance(R, r, p, f"-{R.D(r, config.a4_net_burn_metric(p['name']), 'q0')}")
          or _net_guarded(R, r, p, _basis_iss(R, p), burn, bm=config.a4_net_burn_metric(p["name"])),
-         FMT_NUM, "calc", True, {"flag_fn": _premint_net_flag}),
+         FMT_NUM, "calc", True, {"flag_fn": _a4_net_head_flag}),
         ("NET SUPPLY CHANGE, annualised % of circulating (signed; + is net inflation)",
          lambda r, p: _zero_issuance(
              R, r, p, f"-{_annualise(R, r, p, config.a4_net_burn_metric(p['name']), R.D(r, config.a4_net_burn_metric(p['name']), 'q0'))}/({circ(r, p)})")
          or _net_annual_pct(R, r, p, circ(r, p), bm=config.a4_net_burn_metric(p["name"])), FMT_PCT, "calc", True,
-         {"flag_fn": _premint_net_flag}),
+         {"flag_fn": _a4_net_head_flag}),
     ]
 
 
@@ -8341,6 +8382,65 @@ def _premint_circ_flag(p: dict) -> tuple[str, str] | None:
             "column reads the pool release (what entered circulation from the pre-mint, G10-1a) minus the burn. It is "
             "not the NET SUPPLY CHANGE headline, which is mint − burn = −burn (burn only) by definition; the release is "
             "dilution.")
+
+
+# ===== PR1.S8 (Jake 2026-11-05, config.NET_SUPPLY_CIRC): NET SUPPLY CHANGE = CLOSING − OPENING CIRCULATING. =====
+MASTER_NSC_HEAD = "NET SUPPLY CHANGE Q0 (tokens) = closing − opening circulating supply"
+MASTER_NSC_PCT_HEAD = "Net supply change, annualised % of circulating"
+MASTER_MINT_BURN_HEAD = "Issuance − burn Q0 (tokens) — a component of the supply change, NOT the net supply change"
+MASTER_MINT_BURN_PCT_HEAD = "Issuance − burn, annualised % of circulating — a component, NOT the net supply change"
+
+
+def _circ_change_gap_text(p: dict) -> str:
+    """Why the circulating change over Q0 is not measured on one basis (CIRC_CHANGE_GAPS), for the n/a text."""
+    gaps = CIRC_CHANGE_GAPS.get(p["name"])
+    if gaps is None:
+        return "no circulating supply series is held, so closing − opening circulating is not measured"
+    if not gaps:
+        return "the circulating change does not cover every day of the window"
+    shown = "; ".join(f"{x.date()}: {why}" for x, why in gaps[:3]) + (f"; +{len(gaps) - 3} more" if len(gaps) > 3 else "")
+    return ("closing − opening circulating is not measured on one basis over the window (" + shown + ")").replace('"',
+                                                                                                             "'")
+
+
+def _net_supply_circ(R: Refs, r: int, p: dict, pct: bool = False) -> str:
+    """PR1.S8: Master's NET SUPPLY CHANGE — the Q0 sum of circulating_change_tokens (= closing − opening circulating)
+    when every day of the window is dated on one basis; as % a year: × 365 ÷ the window ÷ circulating now. Else the
+    reason (a hole or a basis change is never a 0)."""
+    m, n = config.NET_SUPPLY_CIRC["metric"], int(config.NET_SUPPLY_CIRC["window_days"])
+    q, cov = R.D(r, m, "q0"), R.D(r, m, "q0_covered_days")
+    why = ("the circulating change does not cover every day of that quarter on one basis" if _SHIFT["k"]
+           else _circ_change_gap_text(p))
+    val = f"{q}*365/{n}/({_circ(R, r, p)})" if pct else q
+    return f'=IFERROR(IF(AND(ISNUMBER({cov}),{cov}={n}),{val},"n/a — {why}"),"n/a — {why}")'
+
+
+def _net_supply_circ_note(p: dict) -> str:
+    return ("NET SUPPLY CHANGE = the change in CIRCULATING supply (PR1.S8, Jake 2026-11-05): closing − opening "
+            "circulating_supply_used over the 90 days (the sum of its day-on-day changes on one basis, "
+            "circulating_change_tokens). It includes every release into circulation (unlocks, grants, emissions) and "
+            "every burn; issuance − burn is beside it as a component (cross_tab: A1 / A4), and Total Yield reads that "
+            "component with the releases added, so nothing is counted twice.")
+
+
+def _a4_net_kind_flag(p: dict) -> tuple[str, str] | None:
+    """PR1.S8: an A4 cell titled 'net supply change' that is NOT the circulating change says what it is on the number —
+    release − burn (the circulating change on a pre-minted supply, P5-1C.B2), burn only (nothing minted), else
+    issuance − burn."""
+    return _premint_circ_flag(p) or _premint_net_flag(p) or (
+        " issuance − burn",
+        "ISSUANCE − BURN (PR1.S8, Jake 2026-11-05): this A4 figure is mint − burn on the basis to the left, NOT the "
+        "change in circulating supply — releases from non-circulating wallets and changes in what is staked or held "
+        "are not in it. The net supply change (closing − opening circulating) is Master's NET SUPPLY CHANGE.")
+
+
+def _a4_net_head_flag(p: dict) -> tuple[str, str] | None:
+    """PR1.S8: A4's NET SUPPLY CHANGE headline (mint − burn on its basis) — burn only, else issuance − burn."""
+    return _premint_net_flag(p) or (
+        " issuance − burn",
+        "ISSUANCE − BURN (PR1.S8, Jake 2026-11-05): A4's figure is mint − burn on the basis to the left, NOT the "
+        "change in circulating supply. The net supply change (closing − opening circulating) is Master's NET SUPPLY "
+        "CHANGE.")
 
 
 def _a4_crossover(R: Refs, r: int, p: dict) -> str:
@@ -8723,8 +8823,9 @@ def _eth_yield_columns(R: Refs) -> list[tuple]:
 
 
 def _net_inflation(R: Refs, r: int, p: dict) -> str:
-    """Net supply change, annualised, as a fraction of circulating — A4's headline, which Master's 'Net supply change,
-    annualised % of circulating' shows (cross-tab linked): the same expression for Total Yield (decision 9)."""
+    """Issuance − burn, annualised, as a fraction of circulating — A4's headline, which Master's issuance − burn
+    COMPONENT shows (cross-tab linked; PR1.S8 made Master's net supply change the circulating change): the same
+    expression for Total Yield (decision 9)."""
     circ = _circ(R, r, p)
     bm = config.a1_burn_metric(p["name"])
     return (_zero_issuance(R, r, p, f"-{_annualise(R, r, p, bm, R.D(r, bm, 'q0'))}/({circ})")
@@ -8763,7 +8864,7 @@ def _total_yield_dilution(R: Refs, r: int, p: dict) -> str | None:
 
 def _total_yield_cols(R: Refs, vyield) -> list[tuple]:
     """TOTAL YIELD (Jake 2026-10-12, decision 9 on 6f8c86c; A1): a staker earns the validator yield and is diluted by net
-    inflation; a non-staker is only diluted. Net inflation = Master's 'Net supply change, annualised % of circulating'
+    inflation; a non-staker is only diluted. Net inflation = Master's issuance − burn component (annualised % of circulating)
     (_net_inflation) PLUS the issuer releases not inside it (staking rewards and foundation releases paid from issuer
     reserves — item 17 overnight, config.TOTAL_YIELD_RELEASES). The 3-month T-bill benchmark (Phase 3) sits on the
     stakers' figure."""
@@ -10559,6 +10660,12 @@ def _write_table(ws, R: Refs, projects: list[dict], specs: list[tuple], data_by_
                     c.number_format = _suffix_fmt(c.number_format, lab[0])
                 prior = c.comment.text if c.comment else ""
                 c.comment = Comment((prior + "\n\n" if prior else "") + lab[1], "token_metrics")
+            # PR1.S13 (Jake 2026-11-05): a headline revenue cell says which of the three revenue lines it is, on the number
+            tl = config.revenue_tier_label(p["name"], head)
+            if tl and c.number_format != FMT_TEXT and not (isinstance(c.value, str) and not c.value.startswith("=")):
+                c.number_format = _suffix_fmt(c.number_format, tl[0])
+                prior = c.comment.text if c.comment else ""
+                c.comment = Comment(tl[1] + ("\n\n" + prior if prior else ""), "token_metrics")
             # P5-1C.B1: a rate whose window holds a declared one-off says how much of it is one-off, on the cell itself
             onote = _one_off_share_note(p["name"], v) if kind in ("calc", "pull") else ""
             if onote:
@@ -10840,14 +10947,19 @@ def write_master(ws, R: Refs, data_by_key: dict):
         ("Gross burn Q0 (tokens)", lambda r, p: pull(R.D(r, config.a1_burn_metric(p["name"]), "q0")), FMT_NUM, "pull", False, {"metric_fn": config.a1_burn_metric}),
         ("Gross issuance Q0 (tokens)", lambda r, p: _fixed_supply_text(p) or pull(R.D(r, "gross_issuance_tokens", "q0")),
          FMT_NUM, "pull", False, {"metric": "gross_issuance_tokens"}),
-        ("NET SUPPLY CHANGE Q0 (tokens) = issuance − burn",
+        # PR1.S8 (Jake 2026-11-05): THE NET SUPPLY CHANGE IS THE CHANGE IN CIRCULATING SUPPLY (config.NET_SUPPLY_CIRC)
+        (MASTER_NSC_HEAD, lambda r, p: _net_supply_circ(R, r, p), FMT_NUM, "calc", True,
+         {"metric": "circulating_change_tokens", "note_fn": _net_supply_circ_note}),
+        (MASTER_NSC_PCT_HEAD, lambda r, p: _net_supply_circ(R, r, p, pct=True), FMT_PCT, "calc", True,
+         {"metric": "circulating_change_tokens", "note_fn": _net_supply_circ_note}),
+        (MASTER_MINT_BURN_HEAD,
          lambda r, p: _zero_issuance(R, r, p, f"-{R.D(r, config.a1_burn_metric(p['name']), 'q0')}")
          or _net_guarded(R, r, p, _basis_iss(R, p), lambda r_, p_, w="q0": R.D(r_, config.a1_burn_metric(p_["name"]), w)),
-         FMT_NUM, "calc", True, {"flag_fn": _premint_net_flag}),
+         FMT_NUM, "calc", False, {"flag_fn": _premint_net_flag}),
         # ONE EXPRESSION (_net_inflation, A4's headline and A1's net issuance %): Master shows the same figure whether or
         # not the project has an A4 row (Phase 2 amendment 1 took the fee-burn chains off A4)
-        ("Net supply change, annualised % of circulating",
-         lambda r, p: _net_inflation(R, r, p), FMT_PCT, "calc", True, {"flag_fn": _premint_net_flag}),
+        (MASTER_MINT_BURN_PCT_HEAD,
+         lambda r, p: _net_inflation(R, r, p), FMT_PCT, "calc", False, {"flag_fn": _premint_net_flag}),
         ("Issuer releases Q0 (tokens) — pre-minted supply released into circulation, NOT issuance",
          lambda r, p: pull(R.D(r, "pool_release_tokens", "q0")) if _premint(p) else "", FMT_NUM, "pull", False,
          {"metric_fn": lambda n: "pool_release_tokens" if config.issuance_basis(n) == "pool_release_tokens" else None}),
@@ -10919,6 +11031,48 @@ def _assert_master_refs(ws) -> None:
                     bad.append(f"{name} | {h}: Master reads {got[:120]} — the A-tab cell is {want}")
     if bad:
         raise CrossTabMismatch("Master disagrees with the A-tabs by construction:\n  " + "\n  ".join(bad))
+
+
+# ===== PR1.S13 (Jake 2026-11-05): THE THREE REVENUE LINES AND THE HOLDER SHARE, ON CP. =====
+CP_FEES_LINE_HEAD = "FEES Q0 ($) — S13 line 1: all fees paid by users of the protocol"
+CP_REV_LINE_HEAD = "REVENUE Q0 ($) — S13 line 2, THE HEADLINE: fees − the cost of delivering them"
+CP_HREV_LINE_HEAD = "HOLDER REVENUE Q0 ($) — S13 line 3: the part of revenue reaching token holders"
+CP_HSHARE_HEAD = "HOLDER SHARE = holder revenue ÷ revenue, per covered day (S13)"
+
+
+def _revenue_line_cols(R: Refs) -> list[tuple]:
+    """CP's three revenue lines and the holder share (config.REVENUE_SPLIT): numbers where the project's round has
+    populated them (Uniswap), else 'not yet split' with what its existing revenue cell is (config.not_yet_split_text)."""
+    def line(role):
+        def build(r, p):
+            split = config.revenue_split(p["name"])
+            if not split:
+                return config.not_yet_split_text(p["name"])
+            return pull(R.D(r, split[role]["metric"], "q0"))
+        return build
+
+    def share(r, p):
+        split = config.revenue_split(p["name"])
+        if not split:
+            return config.not_yet_split_text(p["name"])
+        hv, rv = split["holder_revenue"]["metric"], split["revenue"]["metric"]
+        return _coverage_guard(R, r, [("holder revenue", hv, "q0"), ("revenue", rv, "q0")],
+                               f"{_flow_rate(R, r, hv)}/{_flow_rate(R, r, rv)}")
+
+    def share_note(p):
+        split = config.revenue_split(p["name"])
+        if not split:
+            return ""
+        above = (config.PAYOUT_ABOVE_ONE.get(p["name"]) or "")
+        return (f"HOLDER SHARE (PR1.S13) = holder revenue ÷ revenue: {split['holder_share']['route']}."
+                + (f" {above}" if above else ""))
+
+    def mf(role):
+        return lambda n: (config.revenue_split(n) or {}).get(role, {}).get("metric")
+    return [(CP_FEES_LINE_HEAD, line("fees"), FMT_USD, "pull", False, {"metric_fn": mf("fees")}),
+            (CP_REV_LINE_HEAD, line("revenue"), FMT_USD, "pull", False, {"metric_fn": mf("revenue")}),
+            (CP_HREV_LINE_HEAD, line("holder_revenue"), FMT_USD, "pull", False, {"metric_fn": mf("holder_revenue")}),
+            (CP_HSHARE_HEAD, share, FMT_PCT, "calc", False, {"note_fn": share_note})]
 
 
 # ===== CP — THE COMPARABILITY LAYER (Jake 2026-10-12, Phase 2: A3/A4 items 1, 3-5, amendments 1-5, LITMUS A-E) =====
@@ -11572,6 +11726,8 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         ("Payout ratio — the project's own net basis = credited holder value ÷ revenue (config revenue basis)",
          payout(lambda p: config.revenue_ratio_base_metric(p["name"]), "n/a — the project's net basis is gross fees (as left)"),
          FMT_PCT, "calc", False, {"note_fn": lambda p: _payout_note(p)}),
+        # ---- THE THREE REVENUE LINES (PR1.S13, Jake 2026-11-05; config.REVENUE_LINE_DEFS / REVENUE_SPLIT) ----
+        *_revenue_line_cols(R),
         # ---- ATTRIBUTES (amendments 2 and 5: never penalties) ----
         ("Destination durability (burn / held-timelocked / held-discretionary)", attr("destination"), FMT_TEXT, "text"),
         ("Mechanism certainty + dated log of changes", attr("certainty"), FMT_TEXT, "text"),
@@ -11905,7 +12061,7 @@ def write_a4(ws, R: Refs, data_by_key: dict):
                         "burn" if p.get("self_reported_burn") else ""] if x), FMT_TEXT, "text"),
         ("Derived net supply change (issuance − burn), for comparison",
          lambda r, p: _guarded_net(R, r, p, _a4_iss_metric(p["name"]), config.a1_burn_metric(p["name"])), FMT_NUM, "calc",
-         False, {"flag_fn": _premint_circ_flag}),
+         False, {"flag_fn": _a4_net_kind_flag}),
         # D1-3: nothing issued and nothing self-reported (Hyperliquid: pre-minted) — n/a, never a history wait
         ("Self-reported − derived (a gap here means one of the two is wrong)",
          lambda r, p: (_no_issuance_text(p).replace("no issuance to divide by", "nothing issued and nothing self-reported")
@@ -11914,7 +12070,7 @@ def write_a4(ws, R: Refs, data_by_key: dict):
                                    total=f"{R.D(r, 'net_mint_monthly', 'q0')}-({iss(r)}-{burn(r, p)})"), FMT_NUM, "calc"),
         ("Net supply change ($ at avg price)",
          lambda r, p: _price_net(_net_guarded(R, r, p, _basis_iss(R, p), burn), price(r)), FMT_USD, "calc", False,
-         {"flag_fn": _premint_net_flag}),
+         {"flag_fn": _a4_net_head_flag}),
         ("Burn as share of fees (measured)",
          lambda r, p: _coverage_guard(R, r, [("burn", config.a4_burn_metric(p["name"]), "q0"), ("fees", "fees_usd", "q0")],
                                       f"{_flow_rate(R, r, config.a4_burn_metric(p['name']), p=p)}*{price(r)}/{_flow_rate(R, r, 'fees_usd')}"),
@@ -11934,11 +12090,11 @@ def write_a4(ws, R: Refs, data_by_key: dict):
         ("Cross-check: Δ implied circulating supply Q0 vs Q1 (CoinGecko mcap ÷ price)",
          lambda r, p: calc(f"{R.D(r, 'circulating_supply_implied', 'q0')}-{R.D(r, 'circulating_supply_implied', 'q1')}"), FMT_NUM, "calc"),
         ("Net supply change Q1 (tokens, −3m window)", lambda r, p: _guarded_net(R, r, p, _a4_iss_metric(p["name"]), config.a1_burn_metric(p["name"]), "q1"), FMT_NUM, "calc", False,
-         {"flag_fn": _premint_circ_flag}),
+         {"flag_fn": _a4_net_kind_flag}),
         ("Net supply change Q2 (−6m window)", lambda r, p: _guarded_net(R, r, p, _a4_iss_metric(p["name"]), config.a1_burn_metric(p["name"]), "q2"), FMT_NUM, "calc", False,
-         {"flag_fn": _premint_circ_flag}),
+         {"flag_fn": _a4_net_kind_flag}),
         ("Net supply change Q3 (−9m window)", lambda r, p: _guarded_net(R, r, p, _a4_iss_metric(p["name"]), config.a1_burn_metric(p["name"]), "q3"), FMT_NUM, "calc", False,
-         {"flag_fn": _premint_circ_flag}),
+         {"flag_fn": _a4_net_kind_flag}),
         *_trajectory(R, config.a4_burn_metric, "Burn"),
         *_trajectory(R, _a4_iss_metric, "Issuance"),
         # FOOTNOTES FIRST: burned SKY that is deliberately NOT in any burn column above

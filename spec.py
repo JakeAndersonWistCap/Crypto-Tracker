@@ -122,6 +122,9 @@ COLUMN_MAP: tuple[tuple[str, str, str], ...] = (
     ("*", "Cumulative burn", "gross_burn"), ("*", "Burn split", "gross_burn"), ("*", "Burn rate", "gross_burn"),
     ("*", "GROSS BURN", "gross_burn"), ("*", "Gross burn", "gross_burn"), ("*", "Actual − implied burn", "implied_buyback"),
     ("*", "One-off burn", "gross_burn"), ("*", "ONE-OFF BURN", "gross_burn"),
+    # PR1.S13 (Jake 2026-11-05): the three revenue lines and the holder share on CP — before the generic prefixes
+    ("*", "FEES Q0 ($) — S13", "fees"), ("*", "REVENUE Q0 ($) — S13", "revenue"),
+    ("*", "HOLDER REVENUE Q0 ($) — S13", "holder_revenue"), ("*", "HOLDER SHARE = holder revenue", "payout_ratio"),
     ("*", "HOLDER VALUE YIELD", "hvy"), ("*", "Holder value", "hvy"), ("*", "NET HOLDER YIELD", "nhy"),
     ("*", "Payout ratio", "payout_ratio"), ("*", "Payout currency", "lock_terms"),
     ("*", "Destination durability", "lock_terms"), ("*", "Mechanism certainty", "capture_status"),
@@ -131,6 +134,11 @@ COLUMN_MAP: tuple[tuple[str, str, str], ...] = (
     ("*", "Issuer releases", "issuer_releases"), ("*", "Pool release", "issuer_releases"),
     ("*", "GROSS ISSUANCE", "gross_issuance"), ("*", "Gross issuance", "gross_issuance"),
     ("*", "Issuance as % of supply", "gross_issuance"), ("*", "NET ISSUANCE", "net_issuance"),
+    # PR1.S8 (Jake 2026-11-05): Master's net supply change is closing − opening circulating (concept net_supply_change);
+    # the issuance − burn beside it, and A4's mint − burn cells, stay net_issuance
+    ("Master", "NET SUPPLY CHANGE Q0 (tokens) = closing", "net_supply_change"),
+    ("Master", "Net supply change, annualised % of circulating", "net_supply_change"),
+    ("*", "Issuance − burn", "net_issuance"),
     ("*", "NET SUPPLY CHANGE", "net_issuance"), ("*", "Net supply change", "net_issuance"),
     ("*", "Net mint Q0", "net_issuance"), ("*", "Self-reported", "net_issuance"), ("*", "Derived net supply", "net_issuance"),
     ("*", "Cross-check: Δ implied circulating", "cross_check"),

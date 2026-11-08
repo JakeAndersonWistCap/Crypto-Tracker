@@ -171,6 +171,8 @@ manual). `inputs` are the config.METRICS series the concept may read (the Covera
 | sell_rate | Sell rate by recipient cohort | Phase 5 | — | % | ALIGNMENT | -1 | — | — | — | LATER C18 | |
 | exchange_balances | Exchange balances | paid labelled-wallet source — Jake's decision | — | tokens | CONTEXT | 0 | — | — | — | NOT WIRED C18 | |
 | quadrant | Proven / Building / Fading / Failing | axis level × trajectory per row | — | text | — | 0 | — | — | — | LATER C19 | |
+| net_supply_change | Net supply change | the change in CIRCULATING supply: closing − opening circulating over Q0 (annualised: × 365 ÷ 90 ÷ circulating now); n/a with the undated days on a hole or a basis change (PR1.S8, Jake 2026-11-05) | Σ circulating_change_tokens over Q0 | tokens | ALIGNMENT | -1 | 4Q log-linear | Master | 2 | BUILT PR1.S8 | circulating_change_tokens,circulating_supply_used |
+| holder_revenue | Holder revenue Q0 | the part of revenue that reaches token holders in the period (burns, buybacks, distributions to stakers or lockers); 'not yet split' until each project's round (PR1.S13, Jake 2026-11-05) | Σ holder_value_revenue_usd over Q0 (Uniswap; config.REVENUE_SPLIT) | $ | CAPTURE | 1 | 4Q log-linear | CP | 2 | BUILT PR1.S13 (Uniswap) | holder_value_revenue_usd |
 <!-- /SPEC:CONCEPTS -->
 
 ---------------------------------------------------------------------------------------------------------------------

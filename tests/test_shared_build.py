@@ -118,7 +118,8 @@ def test_the_files_that_share_the_build_are_declared_and_none_still_builds_the_p
     users = sorted(p.name for p in TESTS.glob("test_*.py")
                    if p.name != "test_shared_build.py" and "plain_build(" in p.read_text(encoding="utf-8"))
     assert users == sorted(conftest.SHARED_PLAIN_BUILD_FILES)
-    assert len(users) == 9          # P5-1C.B1 (merged in project round 1, S10): test_round_p5_1c_flows.py shares the build
+    # P5-1C.B1 (merged in project round 1, S10): test_round_p5_1c_flows.py shares the build; PR1 revenue: test_pr1_revenue.py
+    assert len(users) == 10
     for n in users:
         src = (TESTS / n).read_text(encoding="utf-8")
         assert "bw.build_workbook(st, d / \"audit.xlsx\"" not in src, f"{n} still builds the plain recipe itself"

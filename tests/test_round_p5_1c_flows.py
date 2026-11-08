@@ -193,7 +193,8 @@ def test_dumps_geodnet_net_is_burn_only_and_the_derived_is_release_minus_burn(bu
     der = _cell(a4, "GEODNET", "Derived net supply change")
     assert der.number_format.endswith('" release − burn"') and "CIRCULATING" in der.comment.text
     assert _cell(a4, "GEODNET", "Net supply change Q1").number_format.endswith('" release − burn"')
-    m = _cell(wb["Master"], "GEODNET", "NET SUPPLY CHANGE Q0")
+    # PR1.S8: Master's NET SUPPLY CHANGE is now closing − opening circulating; the mint − burn is its component column
+    m = _cell(wb["Master"], "GEODNET", "Issuance − burn Q0")
     assert m.number_format.endswith('" burn only"')
     assert "burn only" not in _cell(a4, "Sky", "NET SUPPLY CHANGE Q0").number_format
 

@@ -420,14 +420,16 @@ def test_p2a_a4_a_status_driven_zero_keeps_its_zero_and_shows_the_status(built):
 
 
 def test_p2a_a5_a_pre_minted_zero_net_supply_change_says_releases_are_dilution(built):
+    """PR1.S8 (Jake 2026-11-05) moved this pin: Summary's net supply change is the change in CIRCULATING supply (releases
+    included), so a pre-minted supply no longer reads a mint − burn 0 there; every number says what it is."""
     import xlcalc
     r = openpyxl.load_workbook(built["reader"])
     X = xlcalc.Workbook(r)
     ws = r["Summary"]
     nc, seen = _col_of(ws, "Net supply change, % a year"), 0
     for name, rr in _rows_of(ws).items():
-        if X.value("Summary", rr, nc) == 0.0 and reader.is_premint(config.PROJECT_BY_NAME[name]):
-            assert "appear under dilution" in ws.cell(rr, nc).comment.text, name
+        if isinstance(X.value("Summary", rr, nc), float) and reader.is_premint(config.PROJECT_BY_NAME[name]):
+            assert "change in CIRCULATING supply" in ws.cell(rr, nc).comment.text, name
             seen += 1
     assert seen >= 3
 

@@ -13,9 +13,10 @@ def _no_portfolio(monkeypatch, tmp_path):
     import config
     monkeypatch.setattr(config, "PORTFOLIO_FILE", str(tmp_path / "no_portfolio.txt"))
 
+# PR1.S8: the mixed-window rule reads Master's issuance − burn COMPONENT (the net supply change is the circulating change)
 HEADS = ["Project", "Price — spot ($)", "Market cap ($)", "Circulating supply (used)", "FDV ($)", "Revenue Q0 ($)",
          "Actual buyback Q0 ($) — observed", "Buyback status", "Burn status", "Gross burn Q0 (tokens)",
-         "NET SUPPLY CHANGE Q0 (tokens) = issuance − burn", "Net supply change, annualised % of circulating"]
+         "Issuance − burn Q0 (tokens) — a component of the supply change, NOT the net supply change", "Issuance − burn, annualised % of circulating — a component, NOT the net supply change"]
 
 
 def _wb(rows: list, totals: dict):
@@ -40,13 +41,13 @@ def test_every_rule_fires_on_its_case_and_a_clean_row_passes():
     clean = {"Project": "Clean", "Price — spot ($)": 2.0, "Market cap ($)": 200.0, "Circulating supply (used)": 100.0,
              "FDV ($)": 400.0, "Revenue Q0 ($)": 10.0, "Actual buyback Q0 ($) — observed": 10.2,
              "Buyback status": "active (measured Q0)", "Burn status": "n/a", "Gross burn Q0 (tokens)": None,
-             "NET SUPPLY CHANGE Q0 (tokens) = issuance − burn": 5.0,
-             "Net supply change, annualised % of circulating": 0.01}
+             "Issuance − burn Q0 (tokens) — a component of the supply change, NOT the net supply change": 5.0,
+             "Issuance − burn, annualised % of circulating — a component, NOT the net supply change": 0.01}
     bad = {**clean, "Project": "Bad", "FDV ($)": 150.0, "Circulating supply (used)": 120.0,
            "Actual buyback Q0 ($) — observed": 33.0, "Revenue Q0 ($)": 29.7, "Burn status": "unconfirmed",
            "Gross burn Q0 (tokens)": 5.886e6,
-           "NET SUPPLY CHANGE Q0 (tokens) = issuance − burn": "BLOCKED — unequal coverage: issuance covers 12 days",
-           "Net supply change, annualised % of circulating": 0.0087}
+           "Issuance − burn Q0 (tokens) — a component of the supply change, NOT the net supply change": "BLOCKED — unequal coverage: issuance covers 12 days",
+           "Issuance − burn, annualised % of circulating — a component, NOT the net supply change": 0.0087}
     wb = _wb([clean, bad], {"Clean": 1000.0, "Bad": 110.0})
     got = sanity.hits(wb, lambda s, r, c: wb[s].cell(r, c).value)
     rules = sorted(rule for p, rule, _d in got if p == "Bad")

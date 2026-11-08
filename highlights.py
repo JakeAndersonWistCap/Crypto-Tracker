@@ -246,6 +246,16 @@ def c5_caveat(a4_key, nhy) -> str:
     return s + "." if s else "Revenue growth is measured over the selected period; hover each number for its source."
 
 
+def c5_caveat_formula(caveat: str, r30, b30) -> str | None:
+    """PR1.U1 (Jake 2026-11-05): C5's caveat with the latest 30 days against the prior 30 — revenue and the burn — as a
+    formula on the Business cells (no number is typed). None where either is not a number (the plain caveat stands)."""
+    if r30 is None or b30 is None or num(r30.value) is None or num(b30.value) is None:
+        return None
+    base = caveat.replace('"', "'")
+    return (f'="Caveat: {base} Over the latest 30 days, revenue "&TEXT({quote_sheet(r30.tab)}!{r30.coord},"+0%;-0%")'
+            f'&" and the burn "&TEXT({quote_sheet(b30.tab)}!{b30.coord},"+0%;-0%")&" against the 30 days before."')
+
+
 def c6_reading(growth, cover, second_best: bool) -> str:
     """C6's reading: 'revenue grew' only when Summary revenue growth is above 0, 'subsidy cover is high' only when
     Subsidy cover (x) is at least HIGH_COVER, 'net holder yield is second best' only when it is."""
@@ -476,6 +486,7 @@ class Card:
     facts: dict = field(default_factory=dict)       # the condition's values, for the report
     table: dict | None = None                       # C8: {"low": [ref], "high": [ref], "header"}; C9: {"rows": [ref], ...}
     caveat_count: list | None = None                # C9: the Refs whose codes the caveat counts (a COUNTA formula)
+    caveat_formula: str | None = None               # C5 (PR1.U1): the caveat as a formula on the cells it quotes
 
 
 _STEMS: dict = {}
@@ -610,11 +621,17 @@ def card_c5(L: Lookup) -> Card:
         _fail("C5", p, "needs revenue growth > 0.5 and net supply change < 0", growth=gro.value, net_supply=net.value)
     a4 = _val(_try(L, reader.A4_TAB, p, key_headers(reader.A4_TAB)[0]))
     nhy = _val(_try(L, reader.COMPARISON, p, "Net holder yield"))
-    return Card("C5", p, f"{p} — Protocol revenue has scaled and supply is shrinking",
+    # PR1.U1 (Jake 2026-11-05): the latest 30 days against the prior 30, quoted by formula from Business
+    r30 = _try(L, reader.BUSINESS, p, reader.REV30_HEADER)
+    b30 = _try(L, reader.BUSINESS, p, reader.BURN30_HEADER)
+    caveat = c5_caveat(a4, nhy)
+    card = Card("C5", p, f"{p} — Protocol revenue has scaled and supply is shrinking",
                 _chips([rev, gro, burn, net]),
-                "Revenue is wired to the token and the circulating supply is falling.", c5_caveat(a4, nhy), S, rev.row,
+                "Revenue is wired to the token and the circulating supply is falling.", caveat, S, rev.row,
                 {"growth": gro.value, "net supply change": net.value, "A4 key": a4,
-                 "net holder yield negative": is_negative(nhy)})
+                 "net holder yield negative": is_negative(nhy), "revenue 30d": _val(r30), "burn 30d": _val(b30)})
+    card.caveat_formula = c5_caveat_formula(caveat, r30, b30)
+    return card
 
 
 def card_c6(L: Lookup) -> Card:
@@ -785,6 +802,10 @@ def _write_pair(ws, row: int, pair: list, sink: list) -> int:
             for k, chip in enumerate(chunk):
                 sink.append((_chip(ws, r_bands[b][0], r_bands[b][1], c0 + 2 * k, chip), f"{card.cid} {card.project}"))
         for r, label, text in ((r_read, "Reading", card.reading), (r_cav, "Caveat", card.caveat)):
+            if label == "Caveat" and card.caveat_formula:   # a number in a sentence is a formula on its cell (PR1.U1)
+                card.facts["_caveat_cell"] = _put(ws, r, c0, c0 + CARD_W - 1, card.caveat_formula, _font(10), None,
+                                                  14 * _lines(f"{label}: {text}", 100) + 17)
+                continue
             _put(ws, r, c0, c0 + CARD_W - 1, f"{label}: {text}", _font(10), None, 14 * _lines(f"{label}: {text}", 100) + 3)
         _link(ws, r_link, c0, card.link_tab, card.link_row)
         _outline(ws, r_head, c0, r_link, c0 + CARD_W - 1)
@@ -1087,7 +1108,7 @@ def add_highlights(wb, ctx=None, min_cards: int = MIN_CARDS, parked=None) -> dic
     _write_coverage(ws, wb, L, row)
     shown = {c.coordinate: (v, s) for c, v, s in verify(wb, chip_cells)}
     X = None
-    for card in cards:                                  # a counted caveat is printed as the tab renders it
+    for card in cards:                                  # a counted / formula caveat is printed as the tab renders it
         cell = card.facts.pop("_caveat_cell", None)
         if cell is not None:
             X = X or xlcalc.Workbook(wb)

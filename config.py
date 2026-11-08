@@ -433,6 +433,13 @@ METRICS = {
                                          "first, CoinGecko's fallback; the basis in the source)",
                                 "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [1],
                                 "sanity_min": 0, "sanity_max": 1e15, "view_only": True},
+    # PR1.S8 (Jake 2026-11-05): NET SUPPLY CHANGE MEANS THE CHANGE IN CIRCULATING SUPPLY. The day-on-day change of
+    # circulating_supply_used on consecutive days on ONE basis (build_workbook._circulating_change_views): its Q0 sum is
+    # closing − opening circulating. A hole or a basis change dates no change (never 0); Master's net supply cells read it.
+    "circulating_change_tokens": {"label": "Change in circulating supply per day (tokens) — circulating_supply_used "
+                                           "minus the day before, same basis, consecutive days only (PR1.S8)",
+                                  "kind": "flow", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [1],
+                                  "sanity_min": -1e15, "sanity_max": 1e15, "view_only": True},
     "circulating_supply_cg_plus_staked": {"label": "Circulating supply — CoinGecko's figure (which excludes staked tokens) + the staked amount, added back once",
                                           "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [1],
                                           "sanity_min": 0, "sanity_max": 1e15, "view_only": True,
@@ -29083,7 +29090,8 @@ TRAJECTORY = {
         "master_fees_issuance_q0_issuance_at_90d_avg_price": ("Fundamentals", 1),
         "master_tvl_chain_for_a1_names_protocol_otherwise": ("Fundamentals", 1),
         "master_circulating_supply_used": ("Supply", 0), "master_circulating_supply_coingecko_cross_check": ("Supply", 0),
-        "master_net_supply_change_q0_tokens_issuance_burn": ("Supply", -1),
+        # PR1.S8: the net supply change is closing − opening circulating (the id follows the header)
+        "master_net_supply_change_q0_tokens_closing_opening_circulating_supp": ("Supply", -1),
         "master_net_supply_change_annualised_of_circulating": ("Supply", -1),
         "master_fees_fdv_annualised": ("Valuation", 1),
         "master_buyback_of_supply_annualised_implied_split_as_at_this_window": ("Valuation", 1),
@@ -29114,7 +29122,8 @@ TRAJECTORY = {
         "TVL ($) — chain for A1 names, protocol otherwise",
         "Implied buyback Q0 ($) = revenue × the split that applied to this window",
         "Actual buyback Q0 ($) — observed", "Gross burn Q0 (tokens)", "Gross issuance Q0 (tokens)",
-        "NET SUPPLY CHANGE Q0 (tokens) = issuance − burn", "Net supply change, annualised % of circulating",
+        "NET SUPPLY CHANGE Q0 (tokens) = closing − opening circulating supply",
+        "Net supply change, annualised % of circulating",
         "Fees ÷ issuance ($, Q0; issuance at 90d avg price)", "Fees ÷ FDV (annualised)",
         "Buyback % of supply (annualised, implied, split as at this window)",
     ),
@@ -29660,7 +29669,9 @@ PAYOUT_ABOVE_ONE = {
                    "DefiLlama's fees, against revenue of $54.4M = 81.2% of them (ratio 1.14). Valuing at the average of "
                    "the day's and the prior close gives 1.142, so price timing is not the cause. Which flows into the "
                    "Fund DefiLlama's revenue leaves out is not verified from a primary source.",
-    "Uniswap": "Can read above 1 — real, timing. Holder value is the UNI burned (Firepit claims) x the day's price; a "
+    # PR1.U7 (Jake 2026-11-05): the payout ratio IS the holder share = holder revenue ÷ revenue (REVENUE_SPLIT)
+    "Uniswap": "Can read above 1 — real, timing. The payout ratio is the HOLDER SHARE: holder revenue ÷ revenue (PR1.S13). "
+               "Holder revenue is the UNI burned (Firepit claims) x the day's price; a "
                "claim burns UNI to release fees that built up before it, so burns arrive in lumps: by month the ratio "
                "ran 0.73-1.30 (Dec 2025-Oct 2026), 1.018 over Nov 2025-Oct 2026, and Q0 to 2026-10-12 caught "
                "September's large claims (1.071).",
@@ -35032,3 +35043,257 @@ for _n_ in (30, 60):
 def market_share_window(project_name: str) -> str:
     """PR1.U4: the Data window the MARKET SHARE headline reads — 'q0' (the 90-day mean) where declared, else 'now'."""
     return (MARKET_SHARE_MEAN.get(project_name) or {}).get("headline", "now")
+
+
+# ===== PR1.S8 (Jake 2026-11-05): NET SUPPLY CHANGE = THE CHANGE IN CIRCULATING SUPPLY, EVERYWHERE. =====
+# "Net supply change means change in circulating supply everywhere; where a cell is burn-only, label it so." Master's
+# NET SUPPLY CHANGE (tokens and % a year) — and so Summary's, the Charts tab's and the Highlights card's — is closing −
+# opening circulating_supply_used over Q0 (the sum of circulating_change_tokens, built only on consecutive days on one
+# basis, so a hole or a basis change leaves the cell n/a with the reason, never a 0). Issuance − burn stays on Master
+# beside it as a COMPONENT (cross_tab links it to A1 / A4) and Total Yield keeps reading it with the releases beside it,
+# so nothing is counted twice. Every A4 cell titled "net supply change" that is not the circulating change says what it
+# is on the number: " burn only" (P5-1C.B2, nothing minted), " release − burn" (the circulating change on a pre-minted
+# supply) or " issuance − burn". THE GATE (tests/test_pr1_revenue.py), tolerance DECLARED BEFORE MEASURING: on every
+# project, Master's net supply change (tokens) equals closing − opening circulating read from the store, within
+# max(abs_tokens, rel x opening circulating); a project whose window has a hole or a basis change reads a code.
+NET_SUPPLY_CIRC = {"decided_by": "Jake", "decided_on": "2026-11-05", "metric": "circulating_change_tokens",
+                   "stock": "circulating_supply_used", "window_days": 90,
+                   "tolerance": {"abs_tokens": 1.0, "rel_of_opening": 1e-6},
+                   "why_tolerance": "the cell is the telescoped sum of the day-on-day changes of the same stored series, "
+                                    "so the only difference is floating-point rounding in the workbook's sum"}
+
+
+# ===== PR1.S13 (Jake 2026-11-05, his decision): THREE REVENUE LINES, DEFINED ONCE AND USED EVERYWHERE. =====
+# REVENUE is the headline line for cross-project comparison (a governance vote can change how much reaches holders).
+# All three lines and the holder share are shown on the reader tabs (Summary, Business, Comparison) and on CP. Uniswap is
+# populated (PR1.U7, REVENUE_SPLIT below); every other project reads "not yet split" in the new lines until its own
+# round, and its EXISTING revenue cell says which of the three it currently is (REVENUE_TIER) — never silently one for
+# another. The gate (tests/test_pr1_revenue.py) fails on a headline revenue cell with no line label.
+REVENUE_LINE_DEFS = {
+    "fees": ("FEES", "All fees paid by users of the protocol in the period."),
+    "revenue": ("REVENUE", "Fees minus the cost of delivering them (payments to liquidity providers, suppliers or "
+                           "validators). Not operating expenses. The headline line for cross-project comparison."),
+    "holder_revenue": ("HOLDER REVENUE", "The part of revenue that reaches token holders in the period (burns, "
+                                         "buybacks, distributions to stakers or lockers)."),
+    "holder_share": ("HOLDER SHARE", "Holder revenue ÷ revenue."),
+}
+REVENUE_LINES_DECIDED = {"by": "Jake", "on": "2026-11-05", "item": "S13"}
+# The in-cell words that say which line a number is (carried onto the reader by reader.carried_suffix)
+REVENUE_TIER_SUFFIX = {"fees": " · fees", "revenue": " · revenue", "holder_revenue": " · holder revenue"}
+NOT_YET_SPLIT = "not yet split"
+
+# WHICH OF THE THREE EACH PROJECT'S EXISTING REVENUE CELL IS (revenue_headline_metric: Master 'Revenue Q0 ($)', Summary's
+# and Business' protocol revenue). DefiLlama's 'Revenue' is fees − supply-side revenue (its methodology) — Jake's REVENUE
+# line — so a DefiLlama revenue series is REVENUE unless the project's own record says it is something else. The reason
+# is the record it rests on; "not checked against the project's own payouts" is said where nothing more was checked.
+_DL_REV = ("DefiLlama's 'Revenue' line = fees − supply-side revenue (its methodology), i.e. fees minus what is paid to "
+           "liquidity providers / suppliers / validators; not yet checked against the project's own payouts (its own "
+           "round)")
+REVENUE_TIER = {n: ("revenue", _DL_REV) for n in (
+    "Bitcoin", "Solana", "Tron", "Canton", "Plume", "Injective", "Zcash", "Chainlink", "World Mobile", "peaq", "Render",
+    "Bittensor", "OriginTrail", "Aethir", "Venice AI", "Virtuals", "Morpho", "PancakeSwap", "Pendle", "Fluid", "Aave",
+    "Ether.fi")}
+REVENUE_TIER.update({
+    "Ethereum": ("revenue", "DefiLlama's revenue = the burned base fee: fees minus the priority fees paid to "
+                            "validators (the cost of delivering them). EIP-1559 burns all of it, so here it is ALSO the "
+                            "holder revenue (HOLDER_VALUE burn_credited) — shown as revenue, the line it is"),
+    "Near": ("revenue", "revenue_total_usd = DefiLlama's NEAR revenue (gas less the validators' share) + the NEAR "
+                        "Intents fee switch's captured share (REVENUE_TOTAL): fees minus their delivery cost"),
+    "Hyperliquid": ("revenue", "revenue_total_usd = DefiLlama's revenue ('99% of fees … excluding builders fees': fees "
+                               "minus what builders are paid) + the AQAv2 reserve yield (REVENUE_TOTAL); all of it goes "
+                               "to the Assistance Fund, so it is close to the holder revenue, but it is the revenue line"),
+    "GEODNET": ("revenue", "DefiLlama's GEODNET fees and revenue are ONE series, derived from the on-chain burn ÷ 0.8 "
+                           "(the declared 80% burn share; see GEODNET's metric notes): the revenue line, inferred from "
+                           "the holder revenue, not measured independently"),
+    "Maple": ("revenue", "Maple's own page (island.ALL.revenueUsd): what Maple keeps after lenders are paid"),
+    "Sky": ("revenue", "DefiLlama's Sky revenue: interest earned less the savings rate paid out, before Sky's own "
+                       "expenses and distributions (Block Analitica's 'revenue' is the reference) — not yet checked "
+                       "against the definition line by line (its own round)"),
+    "Aerodrome": ("holder_revenue", "DefiLlama's Aerodrome 'Revenue' = the trading fees of staked LPs, ALL paid to "
+                                    "veAERO voters (HOLDER_VALUE: 'revenue_usd: staked-LP fees, routed to voters') — "
+                                    "it is what reaches holders, i.e. the HOLDER REVENUE line, not the revenue line"),
+    "Uniswap": ("revenue", "REVENUE BY A DECLARED PROXY: DefiLlama's revenue_usd is the value RELEASED from the "
+                           "TokenJars against UNI burns (its adapter dexs/uniswap-v3.ts: Released events on each chain's "
+                           "Firepit × threshold() UNI × the UNI price; dailyRevenue = dailyHoldersRevenue). Every protocol "
+                           "fee leaves the jars only that way, so over a window in which the jars' holdings do not change "
+                           "it equals the protocol take (fees − what LPs keep); the mainnet jar held ~$0.1M priced "
+                           "(2026-11-05) and one day of its inflows sits beside DefiLlama's figure in "
+                           "UNISWAP_REVENUE_EVIDENCE. Measured as released, it is also the holder revenue at release "
+                           "(REVENUE_SPLIT['Uniswap'])"),
+})
+
+# THE THREE LINES WHERE A PROJECT'S ROUND HAS POPULATED THEM. Each line: the metric, its route (said in the cell note),
+# primary (on chain / the project's own) or secondary (an aggregator's only).
+REVENUE_SPLIT = {
+    "Uniswap": {
+        "round": "PR1.U7 (Jake 2026-11-05)",
+        "fees": {"metric": "fees_usd", "primary": False,
+                 "route": "DefiLlama 'uniswap' parent dailyFees: swap fees on every version (v1–v4) and every chain "
+                          "DefiLlama covers — the deployments the workbook covers. SECONDARY (aggregator only): summing "
+                          "swap fees on chain needs every pool's Swap events on every chain and is not built; what IS "
+                          "read on chain is the protocol's share of them (revenue) and the burn (holder revenue)"},
+        "revenue": {"metric": "revenue_usd", "primary": False,
+                    "route": "DefiLlama 'uniswap' dailyRevenue = the value RELEASED from the TokenJars against UNI "
+                             "burns (its adapter dexs/uniswap-v3.ts, read 2026-11-08: Released events on each chain's "
+                             "Firepit × threshold() × the UNI price) — a PROXY for the protocol take (fees − what LPs "
+                             "keep: v2 1/6 of 0.30%; v3 1/4 in the 0.01%/0.05% tiers, 1/6 in 0.30%/1%; v4 per pool), "
+                             "equal to it over any window in which the jars' holdings do not change: SECONDARY. The "
+                             "PRIMARY route — TokenJar inflows — is sampled, not built: mainnet 2026-10-12 $101,157 "
+                             "priced (51 tokens) + 284 UNI-V2 LP-token transfers unvalued, against DefiLlama's Ethereum "
+                             "release value that day $118,939 (UNISWAP_REVENUE_EVIDENCE.token_jar_inflows). "
+                             "ON CHAIN (UNISWAP_REVENUE_EVIDENCE): before #93 (block 24,106,378, 2025-12-27 20:33 UTC) "
+                             "the contracts collected NOTHING — v2 feeTo = 0x0, v3 Factory owner = the Timelock, "
+                             "feeProtocol 0 and protocolFees 0 on the four largest v3 pools — so the protocol take "
+                             "before the switch is a measured 0, as DefiLlama books it; after it v2 feeTo = the TokenJar "
+                             "and the v3 pools' feeProtocol is set (1/4, 1/6). A full TokenJar inflow series is not "
+                             "built (880k+ transfers on mainnet alone, 167 LP-token kinds in one day, and a jar per "
+                             "L2)"},
+        "holder_revenue": {"metric": "holder_value_revenue_usd", "primary": True,
+                           "route": "ON CHAIN: UNI burned = the rise of 0x…dEaD's UNI balance (gross_burn_tokens, "
+                                    "chain:ethereum:burn_dead:delta — Firepit releases on mainnet, 4,000 UNI each, and "
+                                    "the OP-stack firepits' bridged burns landing there) x the day's price; the 2025-12-27 "
+                                    "100M treasury burn is recorded, never credited (HOLDER_VALUE / one_off_flows)"},
+        "holder_share": {"route": "holder revenue ÷ revenue per covered day (= CP's payout ratio on the net basis). "
+                                  "Both lines measure THE SAME burns at two points — revenue (DefiLlama) at the L2 "
+                                  "release at that day's price, holder revenue at the UNI's landing at 0x…dEaD on "
+                                  "mainnet (after the OP-stack bridge's ~7 days) at that day's price — so the share is "
+                                  "1 by mechanism (100% of protocol fees reach holders) and its distance from 1 is "
+                                  "timing and price; PAYOUT_ABOVE_ONE['Uniswap']"},
+        "other_recipients": (
+            "LIQUIDITY PROVIDERS: fees − revenue (the cost of delivering the fees; CP's supplier payout). UNISWAP LABS' "
+            "INTERFACE FEE is paid by users of Labs' app to Labs, a company, not to the protocol's contracts: it is in "
+            "NONE of the three lines. Shown, not decided silently: DefiLlama 'uniswap-labs' fees were $4.4M (2025-09), "
+            "$4.5M (2025-10), $3.3M (2025-11), $1.9M (2025-12), then ~$0 from 2026-01 ($66k in January, $1 over "
+            "2026-07-16..10-13; read 2026-11-05). Why it fell to ~0 (Labs switching the fee off around UNIfication) is "
+            "NOT verified from a primary source here — only that DefiLlama's series did"),
+        "crosscheck": "DefiLlama's holdersRevenue for 'uniswap' equals its revenue on every day (the same release "
+                      "count × threshold × price); ours is the UNI as it lands at 0xdead after the bridge delay, so the "
+                      "two differ by timing (PAYOUT_ABOVE_ONE). On the dumps' Q0: holder revenue $32.21M vs DefiLlama "
+                      "revenue = holders revenue $29.80M (1.081); fees $400.9M (DefiLlama only)",
+    },
+}
+
+
+# PR1.U7: WHAT WAS READ ON CHAIN FOR UNISWAP'S LINES (keyless: eth.drpc.org archive eth_call, eth.blockscout.com; read
+# 2026-11-05). Contracts: v2 Factory 0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f (feeTo()), v3 Factory
+# 0x1F98431c8aD98523631AE4a59f267346ea31F984 (owner()), v3 pools USDC/WETH 0.05% 0x88e6A0c2…5640, USDC/WETH 0.30%
+# 0x8ad599c3…e6D8, WETH/USDT 0.30% 0x4e68Ccd3…Fa36, WETH/USDT 0.05% 0x11b815ef…97F6 (slot0().feeProtocol,
+# protocolFees()); TokenJar 0xf38521f1…5f85 (Blockscout token balances).
+UNISWAP_REVENUE_EVIDENCE = {
+    "read_on": "2026-11-05",
+    "pre_switch": {"blocks": (23_913_000, 24_106_377), "block": 24_106_377,
+                   "utc": ("2025-11-30 17:34:23", "2025-12-27 20:32:59"),
+                   "v2_feeTo": "0x0000000000000000000000000000000000000000",
+                   "v3_factory_owner": "0x1a9C8182C09F50C8318d769245beA52c32BE35BC (the governance Timelock)",
+                   "v3_feeProtocol_top4_pools": 0, "v3_protocolFees_top4_pools": 0,
+                   "reading": "the protocol take before UNIfication was 0: no v2 protocol fee was minted (feeTo unset), "
+                              "no v3 pool had a protocol fee set and none had accrued any — the contracts collected "
+                              "nothing, as DefiLlama books it (revenue 0 every day to 2025-12-27)"},
+    "post_switch": {"block": 24_106_379, "utc": "2025-12-27 20:33:23",
+                    "v2_feeTo": "0xf38521f130fcCF29dB1961597bc5d2B60F995f85 (TokenJar)",
+                    "v3_factory_owner": "0x5E74C9f42EEd283bFf3744fBD1889d398d40867d (V3FeeAdapter)",
+                    "now": {"block": 26_348_445, "utc": "2026-11-05 11:50:35",
+                            "v3_factory_owner": "0xf2371551fe3937db7c750f4dfabe5c2fffdcbf5a (the fee adapter #94 "
+                                                "installed; not traced further here)",
+                            "v3_feeProtocol": {"USDC/WETH 0.05%": "68 = 4|4 (1/4 each side)",
+                                               "USDC/WETH 0.30%": "102 = 6|6 (1/6)",
+                                               "WETH/USDT 0.30%": "102 = 6|6 (1/6)",
+                                               "WETH/USDT 0.05%": "68 = 4|4 (1/4)"}}},
+    "token_jar_mainnet": {"priced_holdings_usd": 98_575, "of_which": "TRU $97,865 (16.6M TRU at Blockscout's price — an "
+                                                                    "illiquid token; the rest ~$710)",
+                          "transfers_in": 880_438, "read_on": "2026-11-05",
+                          "reading": "fees are released about as fast as they arrive: what sits in the jar is small "
+                                     "next to ~$4M+ burned a month, so over a quarter the released value ≈ the "
+                                     "protocol fees that arrived. Summing the inflows themselves (880k transfers, LP "
+                                     "tokens among them, plus a jar per L2) is NOT done: no keyless route at that size"},
+    # THE BURN, TRACED (Blockscout tokentx: every UNI Transfer into 0x…dEaD, blocks 24,106,370..26,180,000, read
+    # 2026-11-08): 4,883 transfers, 112,774,004.59 UNI = the 100,000,000 treasury one-off (tx 0x091f0083…, 2025-12-27)
+    # + 12,774,004.59 from Firepit releases (1,527 of 4,000 UNI — mainnet — and 3,333 of 2,000 — the OP-stack firepits'
+    # bridged burns; 13 dust). Dated the day after (gross_burn_tokens is 0xdead's balance rise at the first block of the
+    # day), it matches the stored series EXACTLY on every day 2025-12-28..2026-09-13; from 2026-09-14 the stored rows are
+    # live reads at fetch time (not the first block), so day boundaries move and three days are spans. Over the dumps'
+    # Q0 (2026-07-16..10-13): traced 5,560,001.25 UNI vs stored 5,594,001.25 — 34,000 UNI (0.6%) apart, the traced
+    # window ending at block 26,180,000 (10-13 00:00 UTC) and the stored 10-13 read at its fetch time.
+    "burn_trace": {"read_on": "2026-11-08", "blocks": (24_106_370, 26_180_000), "transfers": 4_883,
+                   "tokens": 112_774_004.59, "one_off": 100_000_000, "releases_4000": 1_527, "bridged_2000": 3_333,
+                   "matches_stored_exactly": ("2025-12-28", "2026-09-13"),
+                   "q0_traced": 5_560_001.25, "q0_stored": 5_594_001.25,
+                   "source": "https://eth.blockscout.com/api?module=account&action=tokentx (address 0x…dEaD, "
+                             "contractaddress UNI)"},
+    # TOKENJAR INFLOWS, SAMPLED (Blockscout tokentx on the jar, every transfer TO it; priced with DefiLlama's coins API at
+    # the window's midpoint, confidence >= 0.9 — a price source only; UNI-V2 LP tokens counted, not valued).
+    "token_jar_inflows": {"read_on": "2026-11-08", "window": ("2026-10-12", "2026-10-12"),
+                          "blocks": (26_172_658, 26_179_841), "transfers_in": 2_889, "token_kinds": 219,
+                          "priced_usd": 101_157, "priced_kinds": 51, "lp_kinds": 167, "lp_transfers": 284,
+                          "top": "WETH $31,560, USDT $16,769, USDC $16,605, WBTC $6,363",
+                          "defillama_ethereum_release_value_usd": 118_939,
+                          "reading": "the same order of size: what arrives in the mainnet jar in a day (before the LP "
+                                     "tokens, unvalued) against what DefiLlama books as released on Ethereum that day. "
+                                     "Mainnet only; the L2 jars are not read"},
+    "defillama_live": {"read_on": "2026-11-05", "window": ("2026-07-16", "2026-10-13"),
+                       "fees_usd": 411_847_601, "revenue_usd": 30_441_934, "holders_revenue_usd": 30_441_934,
+                       "supply_side_usd": 381_405_691, "uniswap_labs_fees_usd": 1,
+                       "note": "the dumps' Q0 to 2026-10-13 (89 days held, to 10-12) is fees $400.9M and revenue "
+                               "$29.8M: DefiLlama's figures for the window have moved since (+2.7% / +2.2% read "
+                               "2026-11-05, the 10-13 day included)"},
+}
+
+
+def revenue_tier(project_name: str) -> tuple[str, str] | None:
+    """(line, why) of the project's existing headline revenue cell (REVENUE_TIER) — never a default: a project with no
+    declaration (a new or dummy project) gets None, so its revenue cells carry no line label and the gate fails on
+    any that holds a number."""
+    return REVENUE_TIER.get(project_name)
+
+
+def revenue_split(project_name: str) -> dict | None:
+    """The populated three lines (REVENUE_SPLIT), or None while the project is 'not yet split'."""
+    return REVENUE_SPLIT.get(project_name)
+
+
+# THE HEADLINE REVENUE CELLS (header prefixes, audit and reader): "revenue" cells read the existing revenue series
+# (revenue_headline_metric) and say which line it is; the three line columns say their own line.
+REVENUE_TIER_HEADS = {
+    "Revenue Q0 ($)": "@existing",                               # Master (and the A-tabs' copies of it)
+    "Protocol revenue, annualised": "@existing",                 # reader Summary / Business
+    "Protocol revenue, last 90 days": "@existing",               # reader Business
+    "FEES Q0 ($) — S13": "fees", "REVENUE Q0 ($) — S13": "revenue", "HOLDER REVENUE Q0 ($) — S13": "holder_revenue",
+    "Fees (S13), 90 days": "fees", "Revenue (S13), 90 days": "revenue", "Holder revenue (S13), 90 days": "holder_revenue",
+}
+
+
+def revenue_tier_label(project_name: str, header: str) -> tuple[str, str] | None:
+    """(in-cell suffix, comment) for a headline revenue cell of `project_name` under `header` (REVENUE_TIER_HEADS) —
+    which of the three lines the number is (PR1.S13) — else None."""
+    role = next((r for h, r in REVENUE_TIER_HEADS.items() if str(header or "").startswith(h)), None)
+    if role is None:
+        return None
+    if role == "@existing":
+        if revenue_tier(project_name) is None:
+            return None                                # undeclared: no label, so the gate names it
+        line, why = revenue_tier(project_name)
+        split = revenue_split(project_name)
+        state = (f"the three lines are populated ({split['round']}; CP and the reader show all three)" if split
+                 else f"the three lines are {NOT_YET_SPLIT} for {project_name} (its own round)")
+        note = (f"REVENUE LINE: {REVENUE_LINE_DEFS[line][0]} (PR1.S13, Jake 2026-11-05). This cell is "
+                f"{revenue_headline_metric(project_name)}: {why}. {REVENUE_LINE_DEFS[line][0]} = "
+                f"{REVENUE_LINE_DEFS[line][1]} Here {state}.")
+        return REVENUE_TIER_SUFFIX[line], note
+    split = revenue_split(project_name)
+    if not split:
+        return None                                    # a 'not yet split' text, not a number
+    leg = split[role]
+    return (REVENUE_TIER_SUFFIX[role],
+            f"REVENUE LINE: {REVENUE_LINE_DEFS[role][0]} (PR1.S13) = {REVENUE_LINE_DEFS[role][1]} Route "
+            f"({'PRIMARY' if leg.get('primary') else 'SECONDARY — aggregator only'}): {leg['route']}.")
+
+
+def not_yet_split_text(project_name: str) -> str:
+    """The text a new line's cell reads until the project's round (PR1.S13)."""
+    if revenue_tier(project_name) is None:
+        return (f"{NOT_YET_SPLIT} — {project_name}'s three revenue lines come in its own round, and which line its "
+                "existing revenue cell is has not been declared (config.REVENUE_TIER)")
+    line, why = revenue_tier(project_name)
+    return (f"{NOT_YET_SPLIT} — {project_name}'s three revenue lines come in its own round; its existing revenue cell "
+            f"(Master 'Revenue Q0 ($)', {revenue_headline_metric(project_name)}) is {REVENUE_LINE_DEFS[line][0]}: "
+            f"{why}").replace('"', "'")

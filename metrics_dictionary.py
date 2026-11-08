@@ -163,13 +163,25 @@ ENTRIES = {
         unit="tokens", inputs=["gross_issuance_tokens", "pool_release_tokens"],
         decided=[(J, "2026-10-12", "Phase 2 amendment 1: also a headline on A1, judged there")]),
     "NET SUPPLY CHANGE Q0 (tokens)": dict(
-        what="Issuance minus burn over Q0 (A4's figure).",
-        formula="self-reported net mint where published, else issuance − burn on the A4 basis; BLOCKED on unequal "
-                "coverage", window="Q0", unit="tokens",
-        inputs=["gross_issuance_tokens", "gross_burn_tokens", "net_mint_monthly"]),
+        what="The change in circulating supply over Q0: closing − opening circulating supply.",
+        formula="Q0 sum of circulating_change_tokens (circulating_supply_used − the day before, consecutive days on one "
+                "basis); n/a with the undated days where a day is missing or the basis changes", window="Q0",
+        unit="tokens", inputs=["circulating_supply_used", "circulating_change_tokens"],
+        decided=[(J, "2026-11-05", "PR1.S8: net supply change means change in circulating supply everywhere")]),
     "Net supply change, annualised % of circulating": dict(
-        what="Net inflation rate (+) or deflation (−) per year, of circulating.",
-        formula="(issuance annualised − burn annualised) ÷ circulating used; BLOCKED with the net total when the two "
+        what="The circulating supply's growth (+) or shrinkage (−) per year, of circulating.",
+        formula="(closing − opening circulating over Q0) × 365 ÷ 90 ÷ circulating used now", window="Q0 → year",
+        unit="%", inputs=["circulating_change_tokens", "circulating_supply_used"],
+        decided=[(J, "2026-11-05", "PR1.S8: the change in circulating supply, not issuance − burn")]),
+    "Issuance − burn Q0 (tokens)": dict(
+        what="Issuance minus burn over Q0 — a COMPONENT of the supply change (A1 / A4's figure), not the net supply "
+             "change.",
+        formula="self-reported net mint where published, else issuance − burn on the A4 basis; BLOCKED on unequal "
+                "coverage; 'burn only' where nothing is minted", window="Q0", unit="tokens",
+        inputs=["gross_issuance_tokens", "gross_burn_tokens", "net_mint_monthly"]),
+    "Issuance − burn, annualised % of circulating": dict(
+        what="Issuance − burn per year, of circulating — the component Total Yield reads (with the releases beside it).",
+        formula="(issuance annualised − burn annualised) ÷ circulating used; BLOCKED with the total when the two "
                 "sides' coverage differs", window="Q0 → year", unit="%",
         decided=[(J, "2026-10-11", "the same equal-coverage guard as the net total (sanity run, mixed_windows)")]),
     "Fees ÷ issuance": dict(

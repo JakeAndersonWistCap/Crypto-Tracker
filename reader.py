@@ -54,7 +54,8 @@ TEXT_FMT = "@"
 
 # THE CODES (P1-2): the cell's text, its colour; the reason goes in the comment
 CODES = {"n/a": "808080", "blocked": "C00000", "not wired": "C65911", "by design": "44546A", "parked": "7F7F7F",
-         "unranked": "595959", "secondary": "2F5597", "no new supply": "375623"}
+         "unranked": "595959", "secondary": "2F5597", "no new supply": "375623",
+         "not yet split": "806000"}                 # PR1.S13: a project's three revenue lines before its own round
 NO_NEW_SUPPLY = "no new supply"            # P4-Q5a: A3's key where emissions + unlocks are a measured 0, burn above 0
 NO_NEW_SUPPLY_KEY = float("inf")           # ... which ranks it first (_rank_rows sorts the key high to low)
 PERIODS = (("1D", 1), ("7D", 7), ("30D", 30), ("90D", 90), ("6M", 182), ("1Y", 365), ("3Y", 1095), ("custom", None))
@@ -223,6 +224,8 @@ def code_of(text: str) -> str:
     t = str(text or "").strip().lower()
     if t == NO_NEW_SUPPLY:
         return NO_NEW_SUPPLY
+    if t.startswith("not yet split"):
+        return "not yet split"
     if t.startswith("blocked") or "blocked —" in t or "cannot form" in t:
         return "blocked"
     if "not wired" in t or "unwired" in t or "route not filled" in t or "route pending" in t:
@@ -760,6 +763,56 @@ def numerator_label_cell(sh: Sheet, coord: str, project: str, audit_header: str)
         c.number_format = ";".join(sec + lit for sec in (c.number_format or "General").split(";"))
 
 
+# PR1.S8 / PR1.S13 (Jake 2026-11-05): the words an audit number carries about WHAT it is — the net-supply kind (" burn
+# only", " issuance − burn", " release − burn") and the revenue line (config.REVENUE_TIER_SUFFIX) — are carried onto the
+# reader's copy of the number, never dropped by the reader's own format
+_AUDIT_WB: dict = {}
+CARRIED_SUFFIXES = (" burn only", " issuance − burn", " release − burn")
+
+
+def carried_suffix(src: Src | None) -> str:
+    """The declared kind / line suffix the audit cell's number format ends with ('' when none)."""
+    import config                                          # noqa: PLC0415
+    wb = _AUDIT_WB.get("wb")
+    if src is None or wb is None or src.sheet not in wb.sheetnames:
+        return ""
+    fmt = str(wb[src.sheet][src.coord].number_format or "").split(";")[0]
+    for suf in CARRIED_SUFFIXES + tuple(config.REVENUE_TIER_SUFFIX.values()):
+        if fmt.endswith('"' + suf.replace('"', "'") + '"'):
+            return suf
+    return ""
+
+
+REV30_HEADER = "Revenue change, 30d vs prior 30d"
+BURN30_HEADER = "Burn change, 30d vs prior 30d"
+_DATA_NOW, _DATA_M1 = "Now (flow: trailing 30d sum · stock: latest)", "Prior 30d (flow: 30d ending -30d · stock: value at -30d)"
+_DATA_NOW_DAYS, _DATA_M1_DAYS = "Now: days of the 30 the series covered", "Prior 30d: days covered"
+
+
+def _thirty_day_change(sh: Sheet, ctx, row: int, col: Col, p: dict, metric: str, label: str) -> None:
+    """PR1.U1: a flow's latest 30 days ÷ the 30 before − 1, from the audit Data row (both windows complete)."""
+    A, data, name = ctx.A, ctx.data, p["name"]
+    key = f"{name}|{metric}"
+    now, m1 = A.data_field(key, _DATA_NOW), A.data_field(key, _DATA_M1)
+    dn, dm = A.data_field(key, _DATA_NOW_DAYS), A.data_field(key, _DATA_M1_DAYS)
+    if not all(isinstance(x, (int, float)) for x in (now, m1, dn, dm)) or dn < 30 or dm < 30 or not m1:
+        put_code(sh, row, col, "n/a", f"No complete pair of 30-day windows for {key}: latest {now!r} over {dn!r} of 30 "
+                 f"days, prior {m1!r} over {dm!r} of 30 days (a missing day is never 0).\n\nWorking: audit file, Data "
+                 f"{key}.")
+        return
+    rn, rp = data.put(name, f"{label}30|now", float(now)), data.put(name, f"{label}30|prior", float(m1))
+    put_formula(sh, row, col, f"={rn}/{rp}-1", None, f"{label.capitalize()} over the latest 30 days {now:,.0f} ÷ the "
+                f"prior 30 days {m1:,.0f} − 1 (both windows complete).\n\nWorking: audit file, Data {key} ('Now' and "
+                "'Prior 30d').")
+
+
+def _tier_suffix(sh: Sheet, coord: str, tl) -> None:
+    """PR1.S13: the revenue line's words on a number the reader computes itself (config.revenue_tier_label)."""
+    if tl:
+        lit = '"' + tl[0].replace('"', "'") + '"'
+        sh.ws[coord].number_format = ";".join(sec + lit for sec in (sh.ws[coord].number_format or "General").split(";"))
+
+
 def put_src(sh: Sheet, data: Data, row: int, col: Col, p: dict, src: Src | None, why: str = "",
             extra: str = "") -> str:
     """An audit cell's number as a formula on `_data` (its fill, its comment), or its code. A BLANK audit cell gets a
@@ -776,6 +829,11 @@ def put_src(sh: Sheet, data: Data, row: int, col: Col, p: dict, src: Src | None,
         coord = put_number(sh, data, row, col, name, f"{src.sheet}|{src.coord}", src.num, src.fill,
                            "\n\n".join(lines + [f"Working: {src.where}."]), zero_label=zl if src.num == 0 else "")
         numerator_label_cell(sh, coord, name, src.header)
+        suf = carried_suffix(src)
+        if suf and suf not in str(sh.ws[coord].number_format):
+            lit = '"' + suf.replace('"', "'") + '"'
+            sh.ws[coord].number_format = ";".join(sec + lit for sec in (sh.ws[coord].number_format or "General")
+                                                  .split(";"))
         return coord
     if src is None:
         code, reason = blank_reason(p, None, col)
@@ -904,6 +962,7 @@ def build_reader(wb, path, *, asof, groups: dict, headline_cells: list, projects
     _AERO_PARK["day"] = asof
     _LEAD["asof"] = asof
     A = Audit(wb)
+    _AUDIT_WB["wb"] = wb
     out = Workbook()
     ws_about = out.active
     ws_about.title = ABOUT
@@ -1190,12 +1249,15 @@ def _write_summary(sh: Sheet, ctx: Ctx, keys: dict) -> None:
                     FMT_TOK, "Holders", "computed: CP total dilution × CP tradeable float", 0, 13),
         "nhy": ("Net holder yield", "Holder value yield − every outflow a year at each day's price ÷ market cap.",
                 FMT_PCT, "Holders", "CP Comparability, NET HOLDER YIELD", 0, 11),
-        "nsc_pct": ("Net supply change, % a year", "Issuance − burn, annualised, % of circulating supply (+ is "
-                    "net inflation). For a pre-minted supply nothing is issued: releases from the pre-minted pools "
-                    "appear under dilution, not here.", FMT_PCT, "Supply",
-                    "Master, Net supply change, annualised % of circulating", 0, 11),
-        "nsc_tok": ("Net supply change, 90 days", "Issuance − burn over the last 90 days, in tokens.", FMT_TOK,
-                    "Supply", "Master, NET SUPPLY CHANGE Q0 (tokens)", 0, 14),
+        # PR1.S8 (Jake 2026-11-05): the net supply change IS the change in circulating supply, everywhere
+        "nsc_pct": ("Net supply change, % a year", "The change in circulating supply over the last 90 days (closing − "
+                    "opening circulating), × 365 ÷ 90, % of circulating supply now (+ is a growing circulating "
+                    "supply). It counts every release into circulation (unlocks, grants, emissions) and every burn; "
+                    "n/a where the circulating supply has a missing day or changes basis in the window.", FMT_PCT,
+                    "Supply", "Master, Net supply change, annualised % of circulating", 0, 11),
+        "nsc_tok": ("Net supply change, 90 days", "Closing − opening circulating supply over the last 90 days, in "
+                    "tokens.", FMT_TOK, "Supply", "Master, NET SUPPLY CHANGE Q0 (tokens) = closing − opening "
+                    "circulating supply", 0, 14),
         "payout": ("Payout ratio", "Credited holder value ÷ revenue on the project's own revenue basis. Above 1.0x the "
                    "comment says what funds the excess.", FMT_PCT, "Holders",
                    "CP Comparability, Payout ratio (net basis)", 0, 10),
@@ -1294,9 +1356,13 @@ def _summary_row(sh, ctx: Ctx, C, row, p, rank, key, parked: bool = False) -> No
         ref_q = data.put(name, "rev_q0", rq.num)
         ref_d = data.put(name, "rev_q0_days", float(days))
         data.put(name, "rev_ann", rq.num * 365 / float(days))
-        put_formula(sh, row, C["rev"], f"={ref_q}*365/{ref_d}", rq.fill,
-                    f"Protocol revenue over the last 90 days {rq.num:,.0f} × 365 ÷ {int(days)} covered days.\n\n"
-                    f"{revenue_series_note(ctx, p, metric, rq.num)}\n\nWorking: {rq.where}; Data {name}|{metric}.")
+        tl = config.revenue_tier_label(name, "Revenue Q0 ($)")          # PR1.S13: which revenue line it is
+        coord = put_formula(sh, row, C["rev"], f"={ref_q}*365/{ref_d}", rq.fill,
+                            (f"{tl[1]}\n\n" if tl else "") +
+                            f"Protocol revenue over the last 90 days {rq.num:,.0f} × 365 ÷ {int(days)} covered days."
+                            f"\n\n{revenue_series_note(ctx, p, metric, rq.num)}\n\nWorking: {rq.where}; Data "
+                            f"{name}|{metric}.")
+        _tier_suffix(sh, coord, tl)
         nums += 1
         greens += _green(rq.fill)
     elif rq is not None and rq.num is None and not str(rq.text or "").strip():
@@ -1363,9 +1429,9 @@ def _summary_row(sh, ctx: Ctx, C, row, p, rank, key, parked: bool = False) -> No
             put_code(sh, row, C["dil_tok"], code_of(bad.text if bad else ""),
                      _code_reason(bad, "no total dilution or no tradeable float"), bad.fill if bad else None)
     number("nhy", srcs["nhy"])
-    nsc_note = _premint_note(p, srcs["nsc_pct"])
-    number("nsc_pct", srcs["nsc_pct"], nsc_note)
-    number("nsc_tok", srcs["nsc_tok"], _premint_note(p, srcs["nsc_tok"]))
+    # PR1.S8: Master's net supply change is the circulating change (no burn-only note: it is not the mint − burn)
+    number("nsc_pct", srcs["nsc_pct"])
+    number("nsc_tok", srcs["nsc_tok"])
     number("payout", srcs["payout"], _payout_note(p, srcs["payout"], srcs["payout_gross"]))
     if nums:
         put_number(sh, data, row, C["conf"], name, "confidence", greens / nums, None,
@@ -1577,9 +1643,10 @@ def tab_specs(bw) -> list:
                 key_traj=("a4_crossover", "Burn ÷ issuance (x)", FMT_X,
                           "BURN ÷ ISSUANCE (x) — the rank key: burn ÷ issuance (burn ÷ pool release where the supply is "
                           "pre-minted; Uniswap: burn ÷ releases into circulating, P3-2c), each per covered day"),
-                traj=("a4_net_change", "Net supply change (tokens)", FMT_TOK,
-                      "NET SUPPLY CHANGE (tokens) — self-reported where published, else issuance (pool release where "
-                      "pre-minted) − burn, over the quarter; not the rank key"),
+                traj=("a4_net_change", "Issuance − burn (tokens)", FMT_TOK,
+                      "ISSUANCE − BURN (tokens; A4's 'net supply change', PR1.S8: not the change in circulating "
+                      "supply) — self-reported where published, else issuance (pool release where pre-minted) − burn, "
+                      "over the quarter; not the rank key"),
                 drivers=((None, "GROSS BURN Q0 (tokens)", "Gross burn, 90 days (tokens)", ""),
                          ("@growth", "@burn", "Burn growth, selected period", "flow"),
                          ("@issuance", "", "Issuance or release, 90 days", ""),
@@ -1782,8 +1849,10 @@ E_SHORT = {
     "Issuance basis for the crossover": "Issuance basis",
     "Release ÷ burn (x)": "Burn ÷ release (x), inverse shown",
     "Q0 WINDOW CAVEAT": "90-day window caveat",
-    "NET SUPPLY CHANGE Q0 (tokens)": "Net supply change, 90 days",
-    "NET SUPPLY CHANGE, annualised % of circulating": "Net supply change, % a year",
+    # PR1.S8 (Jake 2026-11-05): A4's figures are issuance − burn on its basis, NOT the net supply change (which is the
+    # circulating change, Summary's) — named for what they are; the number carries " burn only" / " issuance − burn"
+    "NET SUPPLY CHANGE Q0 (tokens)": "Issuance − burn, 90 days",
+    "NET SUPPLY CHANGE, annualised % of circulating": "Issuance − burn, % a year",
     "Burn execution": "Burn execution",
     "Burn status": "Burn status",
     "Documented share of fees burned": "Documented share of fees burned",
@@ -1794,7 +1863,7 @@ E_SHORT = {
     "Self-reported figure preferred?": "Self-reported figure preferred?",
     "Derived net supply change": "Derived net supply change",
     "Self-reported − derived": "Self-reported minus derived",
-    "Net supply change ($ at avg price)": "Net supply change ($)",
+    "Net supply change ($ at avg price)": "Issuance − burn ($)",
     "Cumulative burn ÷ max supply": "Cumulative burn ÷ max supply",
     "Burn split Q0 (tokens)": "Burn split (tokens)",
     "Burn split — by source": "Burn split by source",
@@ -2375,6 +2444,18 @@ COMPARISON_COLS = (
      "Fees over the last 90 days, annualised, ÷ fully diluted value.", ""),
     ("rev_mcap", "Revenue ÷ market cap, a year", "@rev_mcap", FMT_PCT,
      "Protocol revenue, annualised (Summary's figure) ÷ market cap.", ""),
+    # PR1.S13 (Jake 2026-11-05): the three revenue lines and the holder share (config.REVENUE_LINE_DEFS), from CP
+    ("rl_fees", "Fees (S13), 90 days", (CP_TAB, "FEES Q0 ($) — S13"), FMT_USD,
+     "FEES: all fees paid by users of the protocol over the last 90 days. 'not yet split' until the project's own "
+     "round.", ""),
+    ("rl_rev", "Revenue (S13), 90 days", (CP_TAB, "REVENUE Q0 ($) — S13"), FMT_USD,
+     "REVENUE, the headline line: fees minus the cost of delivering them (payments to liquidity providers, suppliers "
+     "or validators; not operating expenses), last 90 days. 'not yet split' until the project's own round.", ""),
+    ("rl_hrev", "Holder revenue (S13), 90 days", (CP_TAB, "HOLDER REVENUE Q0 ($) — S13"), FMT_USD,
+     "HOLDER REVENUE: the part of revenue that reaches token holders (burns, buybacks, distributions to stakers or "
+     "lockers), last 90 days. 'not yet split' until the project's own round.", ""),
+    ("rl_share", "Holder share (S13)", (CP_TAB, "HOLDER SHARE = holder revenue"), FMT_PCT,
+     "HOLDER SHARE: holder revenue ÷ revenue, per covered day. 'not yet split' until the project's own round.", ""),
     ("lock", "Lock rate, % of circulating", (CP_TAB, "Holding demand — lock rate"), FMT_PCT,
      "Tokens staked or locked inside the circulating supply ÷ circulating supply.", "staking"),
     ("stake_tbill", "Staking yield minus T-bill", "@stake_tbill", FMT_PCT,
@@ -2422,7 +2503,8 @@ def _write_comparison(sh: Sheet, ctx: Ctx, keys: dict) -> None:
     spec = {}
     for k, h, src, fmt, d, fam in COMPARISON_COLS:
         col = Col(h, d, fmt, "Holders" if k in ("hvy", "dil", "nhy", "payout", "buy_press") else "Subsidy and value"
-                  if k in ("subsidy", "leak", "fees_fdv", "rev_mcap") else "Holding", (
+                  if k in ("subsidy", "leak", "fees_fdv", "rev_mcap") else "Revenue lines" if k.startswith("rl_")
+                  else "Holding", (
                       f"{src[0]}, {_src_header(A, src[0], src[1])}" if isinstance(src, tuple) else "computed"), 0, 12,
                   audit=(src[0], _src_header(A, src[0], src[1])) if isinstance(src, tuple) else None, family=fam)
         cols.append(col)
@@ -2486,6 +2568,19 @@ def _write_business(sh: Sheet, ctx: Ctx) -> None:
                 "Income", "Master, Revenue Q0 ($)", 0, 12),
         "rev_ann": (REV_HEADER, "Protocol revenue over the last 90 days × 365 ÷ the days the series covers (as on "
                     "Summary).", FMT_USD, "Income", "Master, Revenue Q0 and Data coverage", 0, 12),
+        # PR1.U1 (Jake 2026-11-05): the latest 30 days against the prior 30 — what the Highlights caveat quotes
+        "rev30": (REV30_HEADER, "Protocol revenue over the latest 30 days ÷ the 30 days before − 1, each window "
+                  "complete (30 of 30 days held), else n/a.", FMT_PCT, "Income",
+                  "audit file, Data: the revenue series' 'Now' (30-day sum) and 'Prior 30d'", 0, 12),
+        "burn30": (BURN30_HEADER, "Tokens burned over the latest 30 days ÷ the 30 days before − 1 (the A1 / A4 burn "
+                   "series), each window complete, else n/a; 'by design' where nothing is burned.", FMT_PCT, "Income",
+                   "audit file, Data: the burn series' 'Now' (30-day sum) and 'Prior 30d'", 0, 12),
+        # PR1.S13 (Jake 2026-11-05): the third revenue line and the holder share beside fees and revenue
+        "hrev": ("Holder revenue (S13), 90 days", "HOLDER REVENUE: the part of revenue that reaches token holders "
+                 "(burns, buybacks, distributions to stakers or lockers) over the last 90 days. 'not yet split' until "
+                 "the project's own round.", FMT_USD, "Income", "CP Comparability, HOLDER REVENUE Q0 ($) — S13", 0, 12),
+        "hshare": ("Holder share (S13)", "HOLDER SHARE: holder revenue ÷ revenue, per covered day. 'not yet split' "
+                   "until the project's own round.", FMT_PCT, "Income", "CP Comparability, HOLDER SHARE", 0, 10),
         "growth": ("Revenue growth, selected period", "Revenue over the selected period ÷ the same number of days before "
                    "− 1, every day held.", FMT_PCT, "Income", "computed from the stored daily revenue series", 0, 12),
         "tvl": ("TVL", "Chain TVL for an A1 chain, protocol TVL otherwise (Master's TVL column).", FMT_USD, "Assets",
@@ -2533,11 +2628,25 @@ def _write_business(sh: Sheet, ctx: Ctx) -> None:
             s = A.cell("Master", head, name)
             cell = put_src(sh, data, row, C[k], p, s)
             ctx.record(s, BUSINESS, cell, name)
+        for k, head in (("hrev", "HOLDER REVENUE Q0 ($) — S13"), ("hshare", "HOLDER SHARE = holder revenue")):
+            s = A.cell(CP_TAB, head, name)                # PR1.S13: the third line and the holder share, from CP
+            cell = put_src(sh, data, row, C[k], p, s)
+            ctx.record(s, BUSINESS, cell, name)
+        _thirty_day_change(sh, ctx, row, C["rev30"], p, _revenue_metric(config, name), "revenue")
+        bm = config.a1_burn_metric(name)
+        if bm in config.metrics_for_project(p):
+            _thirty_day_change(sh, ctx, row, C["burn30"], p, bm, "burn")
+        else:
+            put_code(sh, row, C["burn30"], "by design", f"No burn series applies to {name} ({bm} is not one of its "
+                     "metrics).")
         rv = data.value(name, "rev_ann")
         if isinstance(rv, (int, float)):
-            put_formula(sh, row, C["rev_ann"], f"={data.ref(name, 'rev_ann')}", None,
-                        f"Revenue over the last 90 days × 365 ÷ covered days = {rv:,.0f} (as on Summary).\n\nWorking: "
-                        "audit file, Master, Revenue Q0 ($) and its Data coverage.")
+            tl = config.revenue_tier_label(name, "Revenue Q0 ($)")      # PR1.S13: which revenue line it is
+            coord = put_formula(sh, row, C["rev_ann"], f"={data.ref(name, 'rev_ann')}", None,
+                                (f"{tl[1]}\n\n" if tl else "") + f"Revenue over the last 90 days × 365 ÷ covered days "
+                                f"= {rv:,.0f} (as on Summary).\n\nWorking: audit file, Master, Revenue Q0 ($) and its "
+                                "Data coverage.")
+            _tier_suffix(sh, coord, tl)
         else:
             s = A.cell("Master", "Revenue Q0 ($)", name)
             put_src(sh, data, row, C["rev_ann"], p, s, "No annualised revenue: the 90-day revenue is not a number")
@@ -3042,11 +3151,46 @@ def _write_definitions(ws, sheets: dict) -> None:
                        "one — its key is shown for comparison, its rank is under its primary archetype (on Summary "
                        "and that tab)"),
                       (NO_NEW_SUPPLY, "in A3's key column: emissions + unlocks are a measured 0 and tokens were "
-                       "burned, so the ratio has no denominator — it ranks first (ties by net holder yield)")):
+                       "burned, so the ratio has no denominator — it ranks first (ties by net holder yield)"),
+                      ("not yet split", "in a revenue-line column (fees, revenue, holder revenue, holder share): the "
+                       "project's three lines are populated in its own round; until then the comment says which of "
+                       "the three its existing revenue cell is")):
         r += 1
         c = ws.cell(r, 1, code)
         c.font = Font(name=FONT, size=10, italic=True, color=CODES[code])
         ws.cell(r, 3, why).font = F_BODY
+    _write_revenue_line_defs(ws, r + 2)
+
+
+def _write_revenue_line_defs(ws, r: int) -> int:
+    """PR1.S13 / PR1.S8 (Jake 2026-11-05): the three revenue lines, the holder share and the net supply change, defined
+    once (config.REVENUE_LINE_DEFS, config.NET_SUPPLY_CIRC) — the words every revenue and supply cell is labelled by."""
+    import config                                          # noqa: PLC0415
+    ws.cell(r, 1, "The three revenue lines (decided by Jake, 2026-11-05) — every revenue figure says which it is").font = \
+        F_BOLD
+    for key in ("fees", "revenue", "holder_revenue", "holder_share"):
+        name, text = config.REVENUE_LINE_DEFS[key]
+        r += 1
+        ws.cell(r, 1, name).font = F_BOLD
+        suf = config.REVENUE_TIER_SUFFIX.get(key, "")
+        ws.cell(r, 3, text + (f" On a number: '{suf.strip()}'." if suf else "")).font = F_BODY
+        ws.cell(r, 3).alignment = Alignment(wrap_text=True, vertical="top")
+    r += 1
+    ws.cell(r, 3, "REVENUE is the headline line for cross-project comparison, because a governance vote can change how "
+            "much reaches holders. Populated for: " + ", ".join(sorted(config.REVENUE_SPLIT)) + ". Every other project "
+            "reads 'not yet split' in the new lines until its own round; its existing revenue cell says which of the "
+            "three it is. One line is never shown in place of another.").font = F_BODY
+    ws.cell(r, 3).alignment = Alignment(wrap_text=True, vertical="top")
+    r += 2
+    ws.cell(r, 1, "Net supply change (decided by Jake, 2026-11-05)").font = F_BOLD
+    r += 1
+    ws.cell(r, 3, "NET SUPPLY CHANGE means the change in CIRCULATING supply: closing − opening circulating supply over "
+            "the window (90 days), and as % a year that × 365 ÷ 90 ÷ circulating now. It counts every release into "
+            "circulation and every burn. A figure that is not the circulating change says so on the number: "
+            "'burn only' (nothing is minted, so mint − burn is minus the burn), 'issuance − burn' (mint − burn, a "
+            "component) or 'release − burn' (the circulating change on a pre-minted supply).").font = F_BODY
+    ws.cell(r, 3).alignment = Alignment(wrap_text=True, vertical="top")
+    return r
 
 
 def _write_about(ws, asof, sheets: dict, projects: list) -> None:
