@@ -2516,15 +2516,17 @@ def _one_off_shares(groups: dict, asof) -> None:
 
 
 def _rate_legs(name: str, formula: str, win: str, metric: str, col_of: dict) -> dict:
-    """PR1.U10: the flow series a rate's formula sums in window `win`, in the one-off metric's unit, with their window
-    totals ({metric: total}); stocks (the denominator) and coverage columns are not legs."""
+    """PR1.U10: the flow series a rate's formula sums in window `win` — the one-off metric's own family (outflow_d +
+    outflow_e …), in its unit — with their window totals ({metric: total}); the other side of a ratio (burn ÷ release),
+    stocks (the denominator) and coverage columns are not legs."""
     groups, bounds = _ONE_OFF_CTX.get("groups") or {}, _ONE_OFF_CTX.get("bounds") or {}
     if win not in bounds:
         return {}
     unit = "_usd" if metric.endswith("_usd") else "_tokens"
+    fam = metric.split("_")[0] + "_"         # outflow_d / outflow_e … are summed; a ratio's other side never is
     out = {}
     for letter, m in _DATA_REF.findall(formula):
-        if col_of.get(letter) != win or m in out or not m.endswith(unit) or \
+        if col_of.get(letter) != win or m in out or not m.endswith(unit) or not m.startswith(fam) or \
                 (config.METRICS.get(m) or {}).get("kind") == "stock":
             continue
         tot = _window_sum(_daily(groups.get((name, m))), *bounds[win]) if groups.get((name, m)) is not None else None
@@ -2565,8 +2567,8 @@ def _one_off_share_note(name: str, formula) -> str:
             # PR1.U10 (Uniswap: total dilution read "of which one-off: 23%" — 13,303 of the (e) leg's 57,505, while the
             # rate adds the (d) leg's 5.0M): the share is of everything the rate sums in that window, the leg beside it
             all_ = sum(legs.values())
-            lines.append(f"of which one-off: {_share_pct(part / all_)} of the rate — {part:,.0f} of {all_:,.0f} {unit} "
-                         f"summed over {win.upper()} ({' + '.join(f'{m} {v:,.0f}' for m, v in legs.items())}); "
+            lines.append(f"of which one-off: {_share_pct(part / all_)} of the legs this rate sums — {part:,.0f} of "
+                         f"{all_:,.0f} {unit} over {win.upper()} ({' + '.join(f'{m} {v:,.0f}' for m, v in legs.items())}); "
                          f"{_share_pct(part / tot)} of {metric} alone ({what})")
             continue
         lines.append(f"of which one-off: {_share_pct(part / tot)} — {metric} {win.upper()}: {part:,.0f} of {tot:,.0f} {unit} "
@@ -13636,6 +13638,10 @@ def flow_statements(groups: dict, asof) -> list[dict]:
                   "credited_fees": "holder_value_fees_only_usd", "rbase": rb}
         for key_, m in series.items():
             vrows[key_] = [(_flow_sum(d(m), *_flow_window(asof, k))[0] if m in have else None) for k in range(5)]
+        if not hv.get("funding") and any(n_ == name for (n_, _d) in _ONE_OFF_HV_RECORDED):
+            # PR1.U10 (Uniswap Q0 read MISSING): fed only by DECLARED one-offs (no treasury- / emissions-funded period
+            # in config.HOLDER_VALUE), the line is 0 in a quarter no declared one-off landed in — never unknown
+            vrows["other"] = [0.0 if v is None else v for v in vrows["other"]]
         extra = [[_flow_sum(d(m), *_flow_window(asof, k))[0] for k in range(5)] for m in hv.get("distributed_extra") or ()]
         sup, dist, kept, stat = [], [], [], []
         for k in range(5):

@@ -272,7 +272,9 @@ G6_ROUTES = {
     ('Morpho', 'g6_merkl_arc_campaign'): ('recorded', 'recorded only: Arc campaign is paid on Ethereum (distributionChainId 1) — it lands in the Ethereum claims (merkl_morpho_out), not merkl_campaigns_non_ethereum_tokens'),
     ('Uniswap', 'g6_uni_total_supply_gross'): ('last', 'total_supply_gross'),
     ('Uniswap', 'g6_dead_balance'): ('last', 'burn_address_balance'),
-    ('Uniswap', 'g6_retro_burn_100m'): ('on_day', 'one_off_burn_tokens'),
+    # PR1.U10: the burn landed 2025-12-27 20:33 UTC (tx 0x091f0083…, block 24,106,378); the series is the 0x…dEaD
+    # balance's day-on-day change, so the next day's read carries it (row dated 2025-12-28) — the two days are summed
+    ('Uniswap', 'g6_retro_burn_100m'): ('sum_period', 'one_off_burn_tokens', '2025-12-27', '2025-12-28'),
     ('Uniswap', 'g6_record_day_burn_june'): ('recorded', "recorded only: 'a day in June 2026' — no date to compare a daily row against"),
     ('GEODNET', 'g6_total_supply_gross_filing'): ('last', 'total_supply_gross'),
     ('GEODNET', 'g6_burn_polygon_2026_09'): ('recorded', "GEODNET feed (Polygon leg): compared as the two-chain monthly sum (row 'gross_burn_2026_09_feed'); per-chain burn has no metric"),
