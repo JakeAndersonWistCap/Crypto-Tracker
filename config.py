@@ -29682,6 +29682,17 @@ SPAN_FIX_SPREAD_NOTE = {
 # out of the window (lag ÷ window days). The build measures both token gaps (the quarter, and since `since`) and reads
 # EXPLAINED only when each is within that bound — otherwise the CHECK stands. The bound is the mechanism's, declared
 # here before the measurement (on the dumps: Q0 +2.4% against 7.8%; since the switch −0.9% against 2.4%).
+# PR1 FREEZE (Jake 2026-11-05: "When done, freeze Uniswap's cells as a baseline snapshot: from then on the gate fails if
+# any Uniswap cell moves without a declared reason"). project_freeze.py holds the mechanism; tests/test_pr1_freeze.py is
+# the gate. A move is declared in FROZEN_MOVES[project][cell key] = {"to": the value it now reads, "why": ..., "date":
+# ...}, then the baseline is rewritten (python project_freeze.py --write <project>); the declaration stays as the record.
+FROZEN_PROJECTS = {
+    "Uniswap": {"baseline": "tests/fixtures/frozen_uniswap.json", "since": "2026-11-08",
+                "why": "project round 1 done (Jake 2026-11-05, DONE MEANS)"},
+}
+FROZEN_MOVES: dict = {"Uniswap": {}}
+
+
 VALUE_TIMING = {
     "Uniswap": {"burn": "gross_burn_tokens", "revenue": "revenue_usd", "price": "price_usd", "lag_days": 7,
                 "since": "2025-12-29",

@@ -95,6 +95,7 @@ SHARED_PLAIN_BUILD_FILES = (
     "test_round_p3_1.py", "test_round_p3_2.py", "test_round_p3_a2.py", "test_round_p4_q5.py", "test_round_p5_1c_flows.py",
     "test_pr1_revenue.py",
     "test_pr1_status.py",
+    "test_pr1_freeze.py",
 )
 SHARED_PLAIN_BUILD_GROUP = "shared_plain_build"
 
