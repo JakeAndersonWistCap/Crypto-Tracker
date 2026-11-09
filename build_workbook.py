@@ -864,6 +864,106 @@ def _handover_cut_views(groups: dict) -> None:
                 groups[(p["name"], metric)] = g[keep]
 
 
+def _tokenjar_revenue_views(groups: dict) -> None:
+    """THE REVENUE LINE FROM THE TOKENJARS (PR1B.9, Jake 2026-11-09; config.TOKENJAR_REVENUE). DefiLlama's stored
+    revenue_usd (the value RELEASED) is kept beside it as revenue_usd_defillama, always. Where the jar inflows are
+    stored (tokenjar_inflow_usd), revenue_usd becomes DefiLlama's rows dated BEFORE the first jar day, then the jar
+    rows — the declared handover (series_handover revenue_usd): the legs never overlap, a day after the jar's last row
+    is a hole (never filled from the other leg). The state for the cell notes is set on config.TOKENJAR_NOTE (the
+    window figures are added by _tokenjar_window_notes, once the windows are known)."""
+    config.TOKENJAR_NOTE.clear()
+    scoped = {p["name"] for p in scoped_projects()}
+    for name, spec in (getattr(config, "TOKENJAR_REVENUE", {}) or {}).items():
+        if name not in scoped:
+            continue
+        line, kept = spec["line"], spec["kept_as"]
+        dl, jar = groups.get((name, line)), groups.get((name, spec["jar_metric"]))
+        if dl is not None and not dl.empty:
+            groups[(name, kept)] = dl.assign(metric=kept)
+        if jar is None or jar.empty:
+            continue
+        jd = jar.assign(date=pd.to_datetime(jar["date"]).dt.normalize())
+        first, last = jd["date"].min(), jd["date"].max()
+        parts = [jd.assign(metric=line)]
+        if dl is not None and not dl.empty:
+            dd = dl.assign(date=pd.to_datetime(dl["date"]).dt.normalize())
+            parts.insert(0, dd[dd["date"] < first].assign(metric=line))
+        view = pd.concat(parts, ignore_index=True).sort_values("date")
+        groups[(name, line)] = _as_stored(view, (dl if dl is not None else jar).columns)
+        config.TOKENJAR_NOTE[name] = {"handed_over": True, "first": str(first.date()), "last": str(last.date()),
+                                      "days": int(jd["date"].nunique()), "text": ""}
+
+
+def tokenjar_overlap(groups: dict, name: str) -> dict | None:
+    """The declared handover's overlap check (PR1B.9): the jar inflows and DefiLlama's released value compared as SUMS
+    over every day both hold (a release is a 4,000-UNI lot: a day-by-day ratio measures lot timing), with the change in
+    the jars' undistributed balance over that span where both ends are read — inflows − releases = that change."""
+    spec = (getattr(config, "TOKENJAR_REVENUE", {}) or {}).get(name)
+    if not spec:
+        return None
+    a, b = _daily(groups.get((name, spec["kept_as"]))), _daily(groups.get((name, spec["jar_metric"])))
+    if b.empty:
+        return None
+    common = a.index.intersection(b.index)
+    out = {"a_metric": spec["kept_as"], "b_metric": spec["jar_metric"], "common_days": int(len(common)),
+           "passed": False, "min_days": 3}
+    if not len(common):
+        out["text"] = (f"OVERLAP CHECK: {spec['kept_as']} (released, DefiLlama) and {spec['jar_metric']} (accrued, the "
+                       "jars) share no stored day — the seam is UNCHECKED")
+        return out
+    sa, sb = float(a[common].sum()), float(b[common].sum())
+    bal = _daily(groups.get((name, spec["balance_metric"])))
+    lo, hi = common.min(), common.max()
+    b0 = bal[bal.index <= lo - pd.Timedelta(days=1)]
+    b1 = bal[bal.index <= hi]
+    btxt = (f"; the jars' undistributed balance {b0.index[-1].date()} ${float(b0.iloc[-1]):,.0f} -> "
+            f"{b1.index[-1].date()} ${float(b1.iloc[-1]):,.0f} (inflows − releases = its change)"
+            if len(b0) and len(b1) else "; the jars' balance is not read at both ends of the overlap")
+    out.update(a=sa, b=sb, gap=(sb / sa - 1) * 100 if sa else None, latest=str(hi.date()),
+               passed=len(common) >= out["min_days"])
+    out["text"] = (f"OVERLAP CHECK (sums, {len(common)} common day(s) {lo.date()}..{hi.date()}): accrued (the jars) "
+                   f"${sb:,.0f} vs released (DefiLlama) ${sa:,.0f}"
+                   + (f" ({(sb / sa - 1):+.1%})" if sa else "") + btxt
+                   + ". Day by day they differ by the release lots (4,000 UNI on mainnet, 2,000 on the OP-stack "
+                     "firepits), never compared per day")
+    return out
+
+
+def _tokenjar_window_notes(groups: dict) -> None:
+    """The Q0 figures the Uniswap revenue cells say (PR1B.9): jar days held, the unpriced share of the transfers in, the
+    jars' undistributed balance at the window's start and end, and the overlap check."""
+    q0 = _WINDOWS.get("q0")
+    for name, st in list(config.TOKENJAR_NOTE.items()):
+        spec = config.TOKENJAR_REVENUE[name]
+        bits = [f"the jar inflows are stored {st['first']}..{st['last']} ({st['days']} day(s)); before "
+                f"{st['first']} DefiLlama's released value (declared handover)"]
+        if q0:
+            lo, hi = pd.Timestamp(q0[0]), pd.Timestamp(q0[1])
+            n, held = _flow_sum(_daily(groups.get((name, spec["count_metric"]))), lo, hi)
+            u, _ = _flow_sum(_daily(groups.get((name, spec["unpriced_metric"]))), lo, hi)
+            if n:
+                one, _ = _flow_sum(_daily(groups.get((name, spec["one_side_metric"]))), lo, hi)
+                bits.append(f"Q0: {held} day(s) of jar inflows; {int(u or 0):,} of {int(n):,} transfers in "
+                            f"({(u or 0) / n:.1%}) had no price — counted, named on each day's row, excluded "
+                            f"(never valued at 0)"
+                            + (f"; of them the UNI-V2 LP tokens with one reserve priced hold ${one:,.0f} of that "
+                               f"reserve (a size, not counted)" if one else ""))
+            bal = _daily(groups.get((name, spec["balance_metric"])))
+            o, c = bal[bal.index <= lo], bal[bal.index <= hi]
+            if len(o) and len(c):
+                st["balance"] = (str(o.index[-1].date()), float(o.iloc[-1]), str(c.index[-1].date()), float(c.iloc[-1]))
+                bits.append(f"the jars' UNDISTRIBUTED balance (accrued, not yet released) ${float(o.iloc[-1]):,.0f} at "
+                            f"{o.index[-1].date()}'s close (the window's start) -> ${float(c.iloc[-1]):,.0f} at "
+                            f"{c.index[-1].date()}'s close (its end)")
+            else:
+                bits.append("the jars' undistributed balance is not read at the window's "
+                            + ("start" if len(c) else "start or end") + " (tokenjar_balance_usd)")
+        ov = tokenjar_overlap(groups, name)
+        if ov:
+            bits.append(ov["text"])
+        st["text"] = "; ".join(bits)
+
+
 RESTATEMENT_STATUS: dict = {}   # (project, metric) -> what a declared restatement still lacks, last build (P2b-2)
 
 
@@ -1544,6 +1644,11 @@ def _handover_overlap_checks(groups: dict) -> None:
                 rc = decl["reference_check"]
                 if g is not None and not g.empty and pd.to_datetime(g["date"]).max() >= pd.Timestamp(rc["cutover"]):
                     HANDOVER_OVERLAP[(p["name"], metric)] = handover_reference_check(groups, p["name"], rc)
+        # PR1B.9: the TokenJar handover's overlap, as sums (tokenjar_overlap)
+        if p["name"] in config.TOKENJAR_NOTE:
+            ov = tokenjar_overlap(groups, p["name"])
+            if ov:
+                HANDOVER_OVERLAP[(p["name"], config.TOKENJAR_REVENUE[p["name"]]["line"])] = ov
 
 
 SERIES_BREAK_NOTED: dict = {}   # (project, metric) -> the declared break's text, when the series holds its day (P2c-2)
@@ -5825,6 +5930,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _series_restatement_views(groups, asof)  # P2b-2: a declared restatement — its pending seam, or its holes, named
     _handover_continuation_views(groups)   # P2a D5a: a declared later leg read from another stored series (Maple)
     _handover_cut_views(groups)       # G11 C1: a declared cut — the earlier leg's rows after the later leg starts dropped
+    _tokenjar_revenue_views(groups)   # PR1B.9: Uniswap's revenue = the TokenJar inflows from their first stored day
     _partial_sum_views(groups)    # FIRST: nothing downstream may read a partial sum
     _bad_print_views(groups)      # P3-A2: a stored stock's one-day bad print, before any view or window reads it
     _epoch_primary_views(groups, asof)   # D4-5: Pendle's own epoch figures, spread; DefiLlama only where none
@@ -5907,6 +6013,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _settlement_views(groups)
     _monthly_flow_views(groups)       # P2a D5b: complete-month flows from daily log scans (Maple's SSF Safe)
     _handover_overlap_checks(groups)  # G11 B8 / C1: each declared handover's two legs compared on their common days
+    _tokenjar_window_notes(groups)    # PR1B.9: the jar handover's Q0 figures (unpriced share, balance start / end)
     _series_break_notes(groups)       # P2c-2: a declared break's named day held by the series -> its note on the cell
     _daily_twin_views(groups, asof)   # G11 D3: a "daily" series that IS its monthly twin in every window is dropped
     _LAST_GROUPS.clear()
@@ -13412,7 +13519,10 @@ def _value_timing(groups: dict, name: str, start, end, usd_gap: float) -> str | 
     spec = config.VALUE_TIMING.get(name)
     if not spec:
         return None
-    burn, rev, px = (_daily(groups.get((name, spec[k]))) for k in ("burn", "revenue", "price"))
+    # PR1B.9: after the TokenJar handover revenue is ACCRUED — the token test reads the RELEASED series it was made for
+    handed = name in config.TOKENJAR_NOTE and spec.get("released")
+    burn, px = (_daily(groups.get((name, spec[k]))) for k in ("burn", "price"))
+    rev = _daily(groups.get((name, spec["released"] if handed else spec["revenue"])))
     if burn.empty or rev.empty or px.empty:
         return None
     rev_t = (rev / px.reindex(rev.index)).dropna()
@@ -13438,11 +13548,26 @@ def _value_timing(groups: dict, name: str, start, end, usd_gap: float) -> str | 
     qg, ag = q_b / q_r - 1, a_b / a_r - 1
     if abs(qg) > lag / q_days or abs(ag) > lag / a_days:
         return None
+    bridge = ""
+    if handed:
+        acc = _flow_sum(_daily(groups.get((name, spec["revenue"]))), start, end_)[0]
+        rel = _flow_sum(rev, start, end_)[0]
+        bal = _daily(groups.get((name, spec["balance"])))
+        b0, b1 = _flow_at(bal, pd.Timestamp(start)), _flow_at(bal, end_)
+        if None in (acc, rel, b0, b1) or not acc:
+            return None
+        resid = (acc - rel) - (b1 - b0)
+        if abs(resid) > float(spec["release_margin"]) * acc:
+            return None
+        bridge = (f" ACCRUED vs RELEASED: the jars took in ${acc:,.0f} and DefiLlama books ${rel:,.0f} released "
+                  f"({acc - rel:+,.0f}); the jars' undistributed balance moved ${b0:,.0f} -> ${b1:,.0f} "
+                  f"({b1 - b0:+,.0f}), leaving {resid:+,.0f} ({resid / acc:+.1%} of the accrual, within the declared "
+                  f"{float(spec['release_margin']):.0%} release margin).")
     return (f"EXPLAINED — timing (config.VALUE_TIMING): holder value credited exceeds revenue by {usd_gap:.1%} in $, "
             f"but in tokens the quarter burned {q_b:,.0f} against {q_r:,.0f} released {lag} days earlier ({qg:+.1%}, "
             f"within the {lag / q_days:.1%} the bridge can hold in flight) and since {since.date()} {a_b:,.0f} against "
             f"{a_r:,.0f} ({ag:+.1%}, within {lag / a_days:.1%}): the same tokens, valued at release and at landing — "
-            f"{spec['why']}")
+            f"{spec['why']}" + bridge)
 
 
 def _flow_at(s: pd.Series, day, slack: int = 3):

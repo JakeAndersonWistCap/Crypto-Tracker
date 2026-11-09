@@ -39,6 +39,7 @@ from .filing_statements import FilingStatements
 from .boros import BorosVolume
 from .pendle_maturity import PendleMaturity
 from .ccip_value import CcipValue
+from .tokenjar import TokenJarInflows
 from .subsidy_targeting import SubsidyTargeting
 from .hypercore import HyperCoreInfo
 from .growthepie import GrowThePie
@@ -134,6 +135,9 @@ TIER_ORDER = [
     ("pendle_maturity", 1, lambda ctx: PendleMaturity()),
     # Chainlink CCIP token value by day (Round G8 4b): walks the message list to the last closed day, stops at 300 s
     ("ccip_value", 1, lambda ctx: CcipValue()),
+    # Uniswap's revenue = the TokenJar inflows on every fee-switch chain (PR1B.9): newest day first, resumes from
+    # .cache/tokenjar/state.json, stops itself at its budget_s (240 s); --seed tokenjar reads without a budget
+    ("tokenjar", 2, lambda ctx: TokenJarInflows()),
     # each pool's emissions against its own fees per epoch (Round G8 4a): Aerodrome weekly, Pendle per sPENDLE epoch
     ("subsidy_targeting", 2, lambda ctx: SubsidyTargeting()),
     ("hypercore_info", 1, lambda ctx: HyperCoreInfo(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"],
@@ -2100,6 +2104,7 @@ TIER_BUDGET_S = {
     "boros": 480,
     "pendle_maturity": 150,
     "ccip_value": 330,
+    "tokenjar": 300,                   # PR1B.9: the adapter stops itself at 240 s (config TOKENJAR_INFLOWS budget_s)
     # Base calls spaced 1 s (mainnet.base.org 429s bursts): ~60-85 s an Aerodrome epoch; a first read of 4 epochs
     # takes 2-4 runs, then one epoch a week
     "subsidy_targeting": 300,          # G9 A1: Pendle's nine-chain sample (90 s) first, then Aerodrome (150 s)
