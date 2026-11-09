@@ -2200,6 +2200,9 @@ def orphaned_contract_keys(project_name: str, source: str) -> list[str]:
     # mints, source chain:ethereum:recapitalization_module_mints) are written from config, not from a contract key
     configured = {str(m.get("source") or "").split(":")[-1] for m in (globals().get("ISSUER_MINTS", {}).get(project_name),)
                   if isinstance(m, dict) and m.get("source")}
+    # PR1B.9: the TokenJar reads name the configured jar table (TOKENJAR_INFLOWS), not one contract key
+    if project_name in (globals().get("TOKENJAR_INFLOWS") or {}):
+        configured |= set(TOKENJAR_SOURCE_KEYS)
     missing = []
     for piece in pieces:
         bits = piece.split(":")
@@ -29698,7 +29701,13 @@ VALUE_TIMING = {
                 "since": "2025-12-29",
                 "why": "revenue = Firepit releases x threshold UNI x the release day's price; holder revenue = the same "
                        "UNI landing at 0x…dEaD (L2 releases after the ~7-day OP-stack bridge) x the landing day's price "
-                       "(PR1.U7, PAYOUT_ABOVE_ONE)"},
+                       "(PR1.U7, PAYOUT_ABOVE_ONE)",
+                # PR1B.9: once revenue is the jar inflows (ACCRUED), the token test reads the RELEASED series it was
+                # written for (revenue_usd_defillama), and the accrued − released gap must equal the jars' measured
+                # balance change (inflows − releases) within release_margin of the accrual — the searchers' margin (a
+                # release pays threshold UNI for assets worth more; not measured), declared 2026-11-09 before any
+                # store was read (one live day, 2026-10-12: accrued $120,289 vs released $118,939, +1.1%)
+                "released": "revenue_usd_defillama", "balance": "tokenjar_balance_usd", "release_margin": 0.02},
 }
 
 
@@ -35303,13 +35312,27 @@ UNISWAP_REVENUE_EVIDENCE = {
 def revenue_tier(project_name: str) -> tuple[str, str] | None:
     """(line, why) of the project's existing headline revenue cell (REVENUE_TIER) — never a default: a project with no
     declaration (a new or dummy project) gets None, so its revenue cells carry no line label and the gate fails on
-    any that holds a number."""
+    any that holds a number. PR1B.9: where THIS build handed the line over to the TokenJar inflows
+    (TOKENJAR_NOTE), the after-handover words (REVENUE_TIER_JAR) and the build's own figures."""
+    st = (globals().get("TOKENJAR_NOTE") or {}).get(project_name)
+    if st and st.get("handed_over") and project_name in (globals().get("REVENUE_TIER_JAR") or {}):
+        line, why = REVENUE_TIER_JAR[project_name]
+        return line, why + (f". THIS BUILD: {st['text']}" if st.get("text") else "")
     return REVENUE_TIER.get(project_name)
 
 
 def revenue_split(project_name: str) -> dict | None:
-    """The populated three lines (REVENUE_SPLIT), or None while the project is 'not yet split'."""
-    return REVENUE_SPLIT.get(project_name)
+    """The populated three lines (REVENUE_SPLIT), or None while the project is 'not yet split'. PR1B.9: where THIS
+    build handed revenue over to the TokenJar inflows (TOKENJAR_NOTE), the after-handover legs (after_jar_handover)."""
+    s = REVENUE_SPLIT.get(project_name)
+    st = (globals().get("TOKENJAR_NOTE") or {}).get(project_name)
+    if s and st and st.get("handed_over") and s.get("after_jar_handover"):
+        aj = s["after_jar_handover"]
+        rev = {**s["revenue"], **aj["revenue"]}
+        if st.get("text"):
+            rev["route"] = rev["route"] + ". THIS BUILD: " + st["text"]
+        s = {**s, "revenue": rev, "holder_share": {**s["holder_share"], **aj["holder_share"]}}
+    return s
 
 
 # THE HEADLINE REVENUE CELLS (header prefixes, audit and reader): "revenue" cells read the existing revenue series
@@ -35358,3 +35381,274 @@ def not_yet_split_text(project_name: str) -> str:
     return (f"{NOT_YET_SPLIT} — {project_name}'s three revenue lines come in its own round; its existing revenue cell "
             f"(Master 'Revenue Q0 ($)', {revenue_headline_metric(project_name)}) is {REVENUE_LINE_DEFS[line][0]}: "
             f"{why}").replace('"', "'")
+
+
+# ===== PR1B.9 (Jake 2026-11-09, item 9: "REVENUE FROM THE TOKENJARS — build it"). =====
+# WHICH CHAINS' FEE SWITCHES ARE LIVE, DECODED FROM THE PROPOSALS THEMSELVES: GovernorBravo 0x408ED635…24C3 getActions(id)
+# read 2026-11-09 over ethereum-rpc.publicnode.com (eth_call, latest) and decoded (each bridge call's payload to its L2
+# call: OP-stack L1CrossDomainMessenger.sendMessage -> CrossChainAccount.forward, OptimismPortal.depositTransaction,
+# Arbitrum Inbox.createRetryableTicket, Uniswap's Wormhole sender 0xf5f44962…615a, Polygon FxRoot.sendMessageToChild).
+# Execution UTC = fee_switch_executions (ProposalExecuted, read 2026-10-19). Every TokenJar / Releaser address matches
+# Uniswap's own deployments page (docs.uniswap.org/contracts/protocol-fee/deployments, read 2026-11-09; Arc from
+# Uniswap/protocol-fees .records/Arc.json, read 2026-11-09), and each v2 factory's feeTo() was read = the jar on
+# 2026-11-09 (latest) — except Unichain's v2 factory (feeTo 0x0: its jar is fed otherwise) and Celo's #95 factory.
+UNISWAP_FEE_SWITCH_CHAINS = {
+    "read_on": "2026-11-09", "governor": "0x408ED6354d4973f66138C91495F2f2FCbd8724C3",
+    "proposals": {
+        "#93": {"executed": "2025-12-27 20:33:11", "block": 24_106_378, "chains": ("ethereum",),
+                "actions": "UNI.transfer(0x…dEaD, 100M); v3 Factory 0x1F98…F984 setOwner(V3FeeAdapter 0x5E74…867d); v2 "
+                           "Factory 0x5C69…aA6f setFeeTo(TokenJar 0xf385…5f85); setFeeToSetter(Timelock); UNI approve "
+                           "(vesting 0xCa04…e1D2, 20M); three Agreement Anchor registrations"},
+        "#94": {"executed": "2026-03-06 07:19:59", "chains": ("optimism", "base", "arbitrum"),
+                "actions": "OP: v3 Factory setOwner(V3OpenFeeAdapter 0xec23…3Be4), v2 Factory 0x0c3c…74bF setFeeTo"
+                           "(0xb132…5EE3); Base: v3 0x3312…fDfD setOwner(0xaBEA…3bE1), v2 0x8909…8Ec6 setFeeTo"
+                           "(0x9bD2…168c); Arbitrum (retryable): v3 setOwner(0xFF7a…0699), v2 0xf1D7…bCF9 setFeeTo"
+                           "(0x95E3…A263); mainnet V3FeeAdapter.setFactoryOwner(V3OpenFeeAdapter 0xf237…bf5a); Celo "
+                           "(Wormhole, chain 14): ownership to the CrossChainAccount 0x044a…6B7 only — no fee switch "
+                           "(it did not execute: #96's 'configuration error')"},
+        "#95": {"executed": "2026-03-07 14:36:23", "chains": ("soneium", "xlayer", "worldchain", "zora"),
+                "actions": "Soneium (portal 0x88e5…AE92): v3 0x42ae…E717 setOwner(0x47Cf…09CF), v2 0x97Fe…28CE setFeeTo"
+                           "(0x85ae…29e9); X Layer (portal 0x6405…9993): v3 0x4B2a…6804 setOwner(0x6A88…D7D7), v2 "
+                           "0xDf38…7E95 setFeeTo(0x8Dd8…a754); Celo (messenger 0x1AC1…bb95): v3 0xAfE2…cDEc setOwner"
+                           "(0xB995…fc48), v2 0x79a5…F03f setFeeTo(0x190c…bb6B) — that factory's feeTo reads 0x0 "
+                           "(2026-11-09); World Chain: v3 0x7a50…a25a setOwner(0x1CE9…6201), v2 0x5C69…aA6f setFeeTo"
+                           "(0xbDb8…4918); Zora: v3 0x7145…2Cbb setOwner(0xbfc4…3B95), v2 0x0F79…eE3C setFeeTo"
+                           "(0x4753…73C2)"},
+        "#96": {"executed": "2026-06-01 04:21:59", "chains": ("bsc", "polygon", "celo"),
+                "actions": "Celo fix (Wormhole 14): v2 0x114a…04c7 setFeeTo(0x190c…bb6B) — feeTo reads the jar "
+                           "2026-11-09 — and v3 setOwner(0xB995…fc48); BNB (Wormhole 4): v2 0x8909…8Ec6 setFeeTo"
+                           "(0xc6Ae…f70A), v3 0xdB1d…61F7 setOwner(0x3F07…2910); Polygon (FxRoot -> 0x8a1b…2374): v2 "
+                           "0x9e5A…799C setFeeTo(0xc6Ae…f70A), v3 0x1F98…F984 setOwner(0x3F07…2910)"},
+        "#99": {"executed": "2026-07-27 07:16:59", "chains": ("robinhood",),
+                "actions": "Robinhood (inbox 0x1a07…7a2d): v2 0x8BCe…937F setFeeTo(0x2aC0…82F8), v3 0x1f7d…2EFa "
+                           "setOwner(0x05C4…AA25)"},
+        "#100": {"executed": "2026-07-27 07:31:11", "chains": ("ethereum", "arbitrum", "base", "bsc", "polygon",
+                                                               "optimism", "robinhood"),
+                 "actions": "v4 PoolManager.setProtocolFeeController(V4FeeAdapter) on each — v4 fees, paid in the "
+                            "pool's currencies, the NATIVE COIN included (PoolManager -> jar, an internal transaction)"},
+        "#102": {"executed": "2026-10-05 13:11:23", "chains": ("arc",),
+                 "actions": "Arc (Wormhole chain 71, NTT): TokenJar 0xfd39…9233, Releaser 0xe1Ad…6a16, V3OpenFeeAdapter, "
+                            "V4FeeAdapter (records/Arc.json)"},
+        "unichain": {"executed": "with #93 (UNIfication)", "chains": ("unichain",),
+                     "actions": "the Unichain TokenJar 0xD576…40b5 (docs) is set by no proposal action and its v2 "
+                                "factory's feeTo reads 0x0 (2026-11-09): read from #93's day, whatever arrives"},
+    },
+}
+
+_TJ_LLAMA_ETH = "coingecko:ethereum"
+_TENDERLY = "https://{}.gateway.tenderly.co"
+
+
+def _tj(jar, releaser, v2, from_day, proposal, llama, logs, state, native=None, native_from=None, native_coin=None,
+        **kw):
+    return {"jar": jar, "releaser": releaser, "v2_factory": v2, "from_day": from_day, "proposal": proposal,
+            "llama": llama, "logs": logs, "state_rpc": state, "native": native or [], "native_from": native_from,
+            "native_coin": native_coin or _TJ_LLAMA_ETH, **kw}
+
+
+def _tj_bs(url):
+    return {"kind": "blockscout", "url": url}
+
+
+def _tj_rpc(url, span, **kw):
+    return {"kind": "rpc", "url": url, "span": span, **kw}
+
+
+# THE FETCHER'S CHAIN TABLE (fetch/tokenjar.py). Routes were each called live on 2026-11-09 from the build machine:
+#   logs  — tenderly gateways (keyless) answered a whole day's topic-only eth_getLogs on Ethereum (7,200 blocks, 2,568
+#           logs, 0.6 s), Arbitrum (345,600), Robinhood (833,976), Polygon (57,600), OP / Unichain / Celo / Soneium /
+#           Arc; on Base and BNB they cap at 1,000 blocks without a key (Base ~432,000 blocks a day: ~430 calls).
+#           Blockscout instances (keyless getLogs by topic) served Ethereum, OP, World Chain, Unichain, Celo, Soneium;
+#           base / arbitrum / polygon / robinhoodchain / Arc's explorer answered a Cloudflare challenge (HTTP 403) here —
+#           kept as a fallback for Jake's machine. rpc.zora.energy served 100,000-block ranges. Alchemy's Transfers API
+#           is tried first on Base and BNB when .env has an Alchemy key (not verifiable here: no key).
+#   state — archive eth_call / eth_getBalance at a past block: tenderly on every chain it serves (Arbitrum 20M blocks
+#           back); arb1 / Robinhood's own RPC serve no archive state. <CHAIN>_RPC_URL (Alchemy) is tried first.
+#   native— Blockscout txlistinternal + txlist (eth.blockscout.com: 121 v4 PoolManager inflows, 70.33 ETH, blocks
+#           26,300,000..26,376,000). Read only from each chain's first v4 fee day (#100; Arc #102; Unichain its own).
+TOKENJAR_INFLOWS = {"Uniswap": {
+    "metric": "tokenjar_inflow_usd", "count_metric": "tokenjar_inflow_transfers",
+    "unpriced_metric": "tokenjar_unpriced_transfers", "balance_metric": "tokenjar_balance_usd",
+    "one_side_metric": "tokenjar_lp_one_side_usd",
+    "decided": "Jake 2026-11-09 (PR1B.9)",
+    "budget_s": 240, "min_confidence": 0.9, "balance_window_days": 90,
+    "why_min_confidence": "DefiLlama's own 'confidence' on a coin price (0-1); round 1's sample (2026-10-12) priced at "
+                          ">= 0.9 — a thinly traded token's low-confidence quote is not taken as its value",
+    "chains": {
+        "ethereum": _tj("0xf38521f130fcCF29dB1961597bc5d2B60F995f85", "0x0D5Cd355e2aBEB8fb1552F56c965B867346d6721",
+                        "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f", "2025-12-27", "#93", "ethereum",
+                        [_tj_rpc(_TENDERLY.format("mainnet"), 1_000_000), _tj_bs("https://eth.blockscout.com/api")],
+                        [_TENDERLY.format("mainnet"), "https://eth.drpc.org"],
+                        native=[_tj_bs("https://eth.blockscout.com/api")], native_from="2026-07-27",
+                        from_block=24_106_378, chain_id=1),
+        "optimism": _tj("0xb13285DF724ea75f3f1E9912010B7e491dCd5EE3", "0x94460443Ca27FFC1baeCa61165fde18346C91AbD",
+                        "0x0c3c1c532F1e39EdF36BE9Fe0bE1410313E074Bf", "2026-03-06", "#94", "optimism",
+                        [_tj_rpc(_TENDERLY.format("optimism"), 100_000), _tj_bs("https://optimism.blockscout.com/api"),
+                         _tj_rpc("https://mainnet.optimism.io", 10_000)],
+                        [_TENDERLY.format("optimism"), "https://mainnet.optimism.io"],
+                        native=[_tj_bs("https://optimism.blockscout.com/api")], native_from="2026-07-27",
+                        chain_id=10),
+        "base": _tj("0x9bD25e67bF390437C8fAF480AC735a27BcF6168c", "0xFf77c0ED0B6b13A20446969107E5867abc46f53a",
+                    "0x8909Dc15e40173Ff4699343b6eB8132c65e18eC6", "2026-03-06", "#94", "base",
+                    [{"kind": "alchemy_transfers"}, _tj_bs("https://base.blockscout.com/api"),
+                     _tj_rpc(_TENDERLY.format("base"), 1_000)],
+                    [_TENDERLY.format("base"), "https://mainnet.base.org"],
+                    native=[_tj_bs("https://base.blockscout.com/api")], native_from="2026-07-27",
+                    chain_id=8453, pro_paid_only=True),
+        "arbitrum": _tj("0x95E337C5B155385945D407f5396387D0c2a3A263", "0xB8018422bcE25D82E70cB98FdA96a4f502D89427",
+                        "0xf1D7CC64Fb4452F05c498126312eBE29f30Fbcf9", "2026-03-06", "#94", "arbitrum",
+                        [_tj_rpc(_TENDERLY.format("arbitrum"), 1_000_000),
+                         _tj_rpc("https://arb1.arbitrum.io/rpc", 30_000), _tj_bs("https://arbitrum.blockscout.com/api")],
+                        [_TENDERLY.format("arbitrum")],
+                        native=[_tj_bs("https://arbitrum.blockscout.com/api")], native_from="2026-07-27",
+                        chain_id=42161),
+        "soneium": _tj("0x85aeb792b94a9d79741002FC871423Ec5dAD29e9", "0xc9CC50A75cE2a5f88fa77B43e3b050480c731b6e",
+                       "0x97FeBbC2AdBD5644ba22736E962564B23F5828CE", "2026-03-07", "#95", "soneium",
+                       [_tj_rpc(_TENDERLY.format("soneium"), 100_000), _tj_bs("https://soneium.blockscout.com/api")],
+                       [_TENDERLY.format("soneium"), "https://rpc.soneium.org"]),
+        "worldchain": _tj("0xbDb82c2dE7D8748A3e499e771604ef8ef8544918", "0x455e844D286631566cF98D6cb2996149734618C6",
+                          "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f", "2026-03-07", "#95", "wc",
+                          [_tj_bs("https://worldchain-mainnet.explorer.alchemy.com/api")],
+                          ["https://worldchain-mainnet.g.alchemy.com/public"]),
+        "zora": _tj("0x4753C137002D802f45302b118E265c41140e73C2", "0x2f98eD4D04e633169FbC941BFCc54E785853b143",
+                    "0x0F797dC7efaEA995bB916f268D919d0a1950eE3C", "2026-03-07", "#95", "zora",
+                    [_tj_rpc("https://rpc.zora.energy", 100_000)], ["https://rpc.zora.energy"]),
+        "xlayer": _tj("0x8Dd8B6D56e4a4A158EDbBfE7f2f703B8FFC1a754", "0xe122E231cb52aea99690963Fd73E91e33E97468f",
+                      "0xDf38F24fE153761634Be942F9d859f3DBA857E95", "2026-03-07", "#95", "xlayer", [],
+                      ["https://rpc.xlayer.tech"], native_coin="coingecko:okb",
+                      not_read="no keyless log route serves more than 100 blocks a call (rpc.xlayer.tech, "
+                               "xlayerrpc.okx.com: 'block range greater than 100 max'; ~864 calls a day; OKLink needs a "
+                               "key; no tenderly gateway)",
+                      evidence_nil="read 2026-11-09 at block 75,450,951 (rpc.xlayer.tech): the jar holds 0 USDT, 0 "
+                                   "USDC, 0 WETH, 0 WOKB, 0 USD₮0 and 0 OKB, and DefiLlama books $0 released from X "
+                                   "Layer's Firepit 0xe122…468f (2026-08-11..11-09) — nothing released, so nothing that "
+                                   "arrived in those tokens has left: their inflow since the switch is 0"),
+        "celo": _tj("0x190c22c5085640D1cB60CeC88a4F736Acb59bb6B", "0x2758FbaA228D7d3c41dD139F47dab1a27bF9bc25",
+                    "0x114a43DF6C5F54EbB8A9D70Cd1951D3dd68004C7", "2026-06-01", "#96 (fix of #94/#95)", "celo",
+                    [_tj_rpc(_TENDERLY.format("celo"), 100_000), _tj_bs("https://celo.blockscout.com/api"),
+                     _tj_rpc("https://forno.celo.org", 5_000)],
+                    [_TENDERLY.format("celo"), "https://forno.celo.org"], native_coin="coingecko:celo"),
+        "bsc": _tj("0xc6Ae6373CEcc9e595A6C8b9fe581925a8c84f70A", "0xa59FfbB55D91Fc32b44A06F0b9cc6036a4afbcE2",
+                   "0x8909Dc15e40173Ff4699343b6eB8132c65e18eC6", "2026-06-01", "#96", "bsc",
+                   [{"kind": "alchemy_transfers"}, _tj_rpc(_TENDERLY.format("bnb"), 1_000)],
+                   [_TENDERLY.format("bnb")], native_from="2026-07-27", native_coin="coingecko:binancecoin"),
+        "polygon": _tj("0xc6Ae6373CEcc9e595A6C8b9fe581925a8c84f70A", "0xa59FfbB55D91Fc32b44A06F0b9cc6036a4afbcE2",
+                       "0x9e5A52f57b3038F1B8EeE45F28b3C1967e22799C", "2026-06-01", "#96", "polygon",
+                       [_tj_rpc(_TENDERLY.format("polygon"), 60_000), _tj_bs("https://polygon.blockscout.com/api")],
+                       [_TENDERLY.format("polygon")], native=[_tj_bs("https://polygon.blockscout.com/api")],
+                       native_from="2026-07-27", native_coin="coingecko:polygon-ecosystem-token",
+                       chain_id=137, pro_paid_only=True),
+        "robinhood": _tj("0x2aC03e14Cfe755426DaAEe0a4994184Ce81482F8", "0x7a8f74C2585F84c781F951B7f2FF21337D5b630b",
+                         "0x8BCEaA40B9aCDFaEdF85adF4FF01f5Ad6517937F", "2026-07-27", "#99", "robinhood",
+                         [_tj_rpc(_TENDERLY.format("robinhood-chain"), 1_000_000),
+                          _tj_rpc("https://rpc.mainnet.chain.robinhood.com", 10_000),
+                          _tj_bs("https://robinhoodchain.blockscout.com/api")],
+                         [_TENDERLY.format("robinhood-chain")],
+                         native=[_tj_bs("https://robinhoodchain.blockscout.com/api")], native_from="2026-07-27",
+                         chain_id=4663),
+        "unichain": _tj("0xD576BDF6b560079a4c204f7644e556DbB19140b5", "0xe0A780E9105aC10Ee304448224Eb4A2b11A77eeB",
+                        "0x1F98400000000000000000000000000000000002", "2025-12-27", "#93 (Unichain)", "unichain",
+                        [_tj_rpc(_TENDERLY.format("unichain"), 100_000), _tj_bs("https://unichain.blockscout.com/api")],
+                        [_TENDERLY.format("unichain"), "https://mainnet.unichain.org"],
+                        native=[_tj_bs("https://unichain.blockscout.com/api")], native_from="2025-12-27",
+                        chain_id=130),
+        "arc": _tj("0xfd39ac616e630e9db03EFB2c9a4Fe63eDB949233", "0xe1Adf3f130Abf616a7aB04AEeBf8D0470F6B6a16", None,
+                   "2026-10-05", "#102", "arc",
+                   [_tj_rpc(_TENDERLY.format("arc"), 200_000), _tj_rpc("https://rpc.mainnet.arc.io", 1_000)],
+                   [_TENDERLY.format("arc"), "https://rpc.mainnet.arc.io"],
+                   native=[_tj_bs("https://explorer.arc.io/api")], native_from="2026-10-05",
+                   native_coin="coingecko:usd-coin"),
+    },
+}}
+
+METRICS["tokenjar_inflow_usd"] = {
+    "label": "Uniswap TokenJar inflows per day ($) — every ERC-20 / native-coin transfer INTO each chain's TokenJar "
+             "(the protocol fee as it accrues), at the day's DefiLlama price; UNI-V2 LP tokens at reserves ÷ supply. "
+             "Uniswap's REVENUE line (PR1B.9)",
+    "kind": "flow", "unit": "usd", "archetypes": [], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9,
+    "only_projects": ("Uniswap",), "source_kind": "on chain (TokenJar transfers in) priced by DefiLlama coins"}
+METRICS["tokenjar_inflow_transfers"] = {
+    "label": "Uniswap TokenJar transfers in per day (ERC-20 + native)", "kind": "flow", "unit": "count",
+    "archetypes": [], "tiers": [2], "sanity_min": 0, "sanity_max": 1e7, "only_projects": ("Uniswap",)}
+METRICS["tokenjar_unpriced_transfers"] = {
+    "label": "Uniswap TokenJar transfers in per day with no price (counted, named on the day, excluded from the $)",
+    "kind": "flow", "unit": "count", "archetypes": [], "tiers": [2], "sanity_min": 0, "sanity_max": 1e7,
+    "only_projects": ("Uniswap",)}
+METRICS["tokenjar_lp_one_side_usd"] = {
+    "label": "Uniswap TokenJar: UNI-V2 LP tokens in with one reserve token unpriced — the priced reserve's share alone "
+             "($ per day; a SIZE of what is excluded, never added to the inflow)",
+    "kind": "flow", "unit": "usd", "archetypes": [], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9,
+    "only_projects": ("Uniswap",)}
+METRICS["tokenjar_balance_usd"] = {
+    "label": "Uniswap TokenJars' undistributed balance ($) at a day's closing block — fees accrued, not yet released",
+    "kind": "stock", "unit": "usd", "archetypes": [], "tiers": [2], "sanity_min": 0, "sanity_max": 1e10,
+    "only_projects": ("Uniswap",)}
+# DefiLlama's revenue beside the project's own (Maple, Pendle): Uniswap's is the value RELEASED from the TokenJars
+# (Firepit Released × threshold × UNI price), the cross-check of the jar inflows after the PR1B.9 handover
+METRICS["revenue_usd_defillama"]["only_projects"] = tuple(dict.fromkeys(
+    tuple(METRICS["revenue_usd_defillama"].get("only_projects") or ()) + ("Uniswap",)))
+
+# THE REVENUE LINE HANDS OVER (Rule 10): revenue_usd = DefiLlama's released value up to the day before the first day the
+# jar inflows are stored, the jar inflows from that day (build_workbook._tokenjar_revenue_views, read time; the stored
+# DefiLlama rows stay, beside it as revenue_usd_defillama for the Credibility cross-check). The overlap check compares
+# the two over every day both hold — as SUMS: a release is a 4,000-UNI lot (2,000 on the OP-stack firepits), so a
+# day-by-day ratio measures lot timing, not a different quantity; over a span they differ by the change in what the
+# jars hold (inflows − releases = Δ undistributed balance), which is said beside it.
+_TJ_ROUTE = ("ON CHAIN (PR1B.9, Jake 2026-11-09): revenue_usd is the TokenJar INFLOWS — every ERC-20 and native-coin "
+             "transfer into each chain's TokenJar where the fee switch is live (Ethereum and Unichain #93; OP, Base, "
+             "Arbitrum #94; Soneium, World Chain, Zora #95 — X Layer declared nil; BNB, Polygon, Celo #96; Robinhood #99; "
+             "Arc #102; config.UNISWAP_FEE_SWITCH_CHAINS), at the day's DefiLlama price (a price source only), UNI-V2 LP "
+             "tokens at reserves ÷ supply (tokenjar_inflow_usd, config.TOKENJAR_INFLOWS): the protocol fee AS IT "
+             "ACCRUES, i.e. fees minus what LPs keep. DefiLlama's released value (Firepit Released × threshold × the UNI "
+             "price) is the earlier leg (declared handover, series_handover revenue_usd) and stays beside it as "
+             "revenue_usd_defillama, the Credibility cross-check")
+REVENUE_TIER_JAR = {"Uniswap": ("revenue", _TJ_ROUTE)}
+REVENUE_SPLIT["Uniswap"]["after_jar_handover"] = {
+    "revenue": {"primary": True, "route": _TJ_ROUTE},
+    "holder_share": {"route": "holder revenue (the UNI burned, at its landing on 0x…dEaD, x that day's price) ÷ ACCRUED "
+                              "revenue (the TokenJar inflows, PR1B.9): the share of what accrued that reached holders. "
+                              "Not 1 by mechanism: it moves with (i) the change in the jars' undistributed balance "
+                              "(accrued, not yet released — said on the revenue cell), (ii) the release terms (a release "
+                              "burns threshold() UNI for everything the jar holds of the assets named, so the UNI burned "
+                              "and the assets released differ by the searcher's margin) and (iii) timing — the OP-stack "
+                              "bridge (~7 days) and the price between accrual and landing"}}
+TOKENJAR_SOURCE_KEYS = ("tokenjar_inflow", "tokenjar_balance")   # chain:tokenjars:<key> (fetch/tokenjar.py SRC / SRC_BAL)
+# The build's handover state per project (build_workbook._tokenjar_revenue_views / _tokenjar_window_notes) — read by
+# revenue_split / revenue_tier so a cell's words say which leg its number is on THIS build (none: DefiLlama's alone)
+TOKENJAR_NOTE: dict = {}
+TOKENJAR_REVENUE = {"Uniswap": {"jar_metric": "tokenjar_inflow_usd", "line": "revenue_usd",
+                                "kept_as": "revenue_usd_defillama", "balance_metric": "tokenjar_balance_usd",
+                                "count_metric": "tokenjar_inflow_transfers",
+                                "unpriced_metric": "tokenjar_unpriced_transfers",
+                                "one_side_metric": "tokenjar_lp_one_side_usd",
+                                "decided": "Jake 2026-11-09 (PR1B.9)"}}
+PROJECT_BY_NAME["Uniswap"].setdefault("series_handover", {})["revenue_usd"] = {
+    "ordered_points": ("defillama", "chain:tokenjars:tokenjar_inflow"),
+    "why": "DefiLlama's released value (Firepit Released × threshold × price), then the TokenJar inflows on chain "
+           "(PR1B.9) — the fee as it accrues rather than as it is released",
+    "composition_change": "accrued (TokenJar inflows, every chain live that day) after the seam vs released "
+                          "(DefiLlama) before it: over a span they differ by the change in the jars' undistributed "
+                          "balance; before the switch (2025-12-27) both are 0 (UNISWAP_REVENUE_EVIDENCE pre_switch)",
+    "declared": "2026-11-09"}
+
+
+# THE CREDIBILITY CROSS-CHECK AFTER THE HANDOVER (PR1B.9): once the jar inflows are in Q0 (any stored in the last 90
+# days), ours (revenue_usd: accrued) is set beside DefiLlama's released value over the same Q0 (revenue_usd_defillama),
+# ±5% — declared 2026-11-09 before any store was read: over a quarter the two differ by the change in the jars'
+# undistributed balance and the release margin (one live day, 2026-10-12: accrued $120,289 vs released $118,939).
+# Before (the dumps: no jar row) the row is what it was — DefiLlama is the only aggregate (UNVERIFIABLE).
+CREDIBILITY.setdefault("Uniswap", {})["in_revenue"] = _c_in(
+    "Revenue Q0 — accrued (the TokenJar inflows, PR1B.9) vs released (DefiLlama)", "revenue_usd", "q0",
+    {"verdict_when": {"py": "window_sum", "args": {"metric": "tokenjar_inflow_transfers", "days": 90},
+     "positive": {"metric": "revenue_usd_defillama", "window": "q0", "tol": 5.0,
+                  "source": "DefiLlama 'uniswap' dailyRevenue (Firepit Released × threshold × the UNI price), kept "
+                            "as revenue_usd_defillama",
+                  "note": "ACCRUED vs RELEASED: the jars' inflows against the value DefiLlama books released; over "
+                          "a quarter they differ by the change in the jars' undistributed balance (on the revenue "
+                          "cell) and the searchers' release margin. The days before the jar's first stored day "
+                          "are DefiLlama's on both sides (the declared handover)."},
+     "otherwise": {"verdict": "UNVERIFIABLE",
+                   "why": "no TokenJar inflow is stored in Q0 yet, so revenue is DefiLlama's released value — the "
+                          "only free aggregate (Token Terminal is paid).",
+                   "resolve": "token_metrics.py --seed tokenjar (the jar inflows, PR1B.9)"}}},
+    fmt=_C_USD)

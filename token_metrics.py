@@ -122,7 +122,7 @@ def parse_args(argv=None) -> argparse.Namespace:
                              "near_bigquery", "chainlink_fees", "pendle_gauges", "aero_epochs",
                              "aero_buyback", "aero_managed_locks", "burn_history", "hyperevm_burn", "katana_claims",
                              "morpho_base_claims", "plume_payouts", "pendle_berachain", "eth_p2p_validation",
-                             "uni_retro_burn", "ccip_value", "aero_subsidy", "pyth_stocks"],
+                             "uni_retro_burn", "ccip_value", "aero_subsidy", "pyth_stocks", "tokenjar"],
                     help="one-off: run only this source with NO time budget, to finish a first "
                          "read that routine runs (60s) take many runs to complete. Stores what it "
                          "reads; records no gaps and does not rebuild the workbook. plume_settlement: a "
@@ -151,7 +151,9 @@ def parse_args(argv=None) -> argparse.Namespace:
                          "eth_p2p_validation: the Ethereum P2P leg's validation window on BigQuery (dry run first, Jake's "
                          "approval in config), then the rebuild-vs-Artemis validation printed. aero_subsidy: "
                          "Aerodrome's subsidy targeting for the last 65 complete epochs (five quarters), no time budget, "
-                         "resumable — each epoch's table is kept as it completes.")
+                         "resumable — each epoch's table is kept as it completes. tokenjar (PR1B.9): Uniswap's TokenJar "
+                         "inflows on every fee-switch chain back to each chain's switch day, no time budget, resumable "
+                         "(.cache/tokenjar/state.json is saved after every chain-day).")
     ap.add_argument("--seed-days", type=int, default=None,
                     help="--seed mev_relays: seed this many days back instead of the configured year "
                          "(e.g. 90 first; a later full seed resumes from the days already held). --seed hyperevm_burn: "
@@ -725,6 +727,29 @@ def seed_ccip_value(st, log, dates: str | None = None) -> int:
         log.info("--seed ccip_value: %s — %s", e.status, e.message)
     log.info("--seed ccip_value: AFTER (%.0fs) — %d row(s) stored", time.monotonic() - t0, written)
     return 0
+
+
+def seed_tokenjar(st, log) -> int:
+    """PR1B.9 (Jake 2026-11-09): Uniswap's TokenJar inflows back to each chain's fee-switch day with NO time budget —
+    newest day first, every chain-day saved to .cache/tokenjar/state.json as it is read, so a stop resumes. Stores
+    tokenjar_inflow_usd (+ its transfer counts) for every day all live chains are read, and the jars' balance at
+    yesterday's close and 90 days before. Records no gaps."""
+    from fetch import Heartbeat
+    from fetch.tokenjar import TokenJarInflows
+    from fetch.validate import validate_frame
+    p = config.PROJECT_BY_NAME["Uniswap"]
+    run_id = fetch.new_run_id()
+    out = fetch.FetchOutput()
+    t0 = time.monotonic()
+    with Heartbeat():
+        TokenJarInflows().run([p], None, out, unbounded=True)
+    prior = st.latest_values()
+    written = sum(st.upsert(f) for f in (validate_frame(f, prior, out) for f in out.frames) if f is not None and not f.empty)
+    for e in out.log:
+        st.record_fetch(run_id, e.source, e.project, e.rows, e.status, e.message, e.tier)
+        log.info("--seed tokenjar: %s — %s", e.status, e.message)
+    log.info("--seed tokenjar: AFTER (%.0fs) — %d row(s) stored", time.monotonic() - t0, written)
+    return 0 if written else 1
 
 
 def seed_aero_subsidy(st, log) -> int:
@@ -1305,7 +1330,7 @@ def _main(args, log) -> int:
               "ccip_value": lambda st_, log_: seed_ccip_value(st_, log_, args.dates), "aero_subsidy": seed_aero_subsidy,
               "aero_buyback": seed_aero_buyback, "aero_managed_locks": seed_aero_managed_locks,
               "mev_relays": lambda st_, log_: seed_mev_relays(st_, log_, args.seed_days),
-              "pyth_stocks": seed_pyth_stocks}[args.seed](st, log)
+              "pyth_stocks": seed_pyth_stocks, "tokenjar": seed_tokenjar}[args.seed](st, log)
         st.close()
         # SEEDS COUNT TOO (Round G4 item 6): the run's Alchemy usage and the month's total include every seed
         _alchemy_report(log, f"--seed {args.seed}")
