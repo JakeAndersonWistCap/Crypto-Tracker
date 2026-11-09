@@ -468,3 +468,16 @@ def test_value_timing_reads_the_released_series_after_the_handover(uni_only, mon
     groups[("Uniswap", "tokenjar_balance_usd")] = _rows("tokenjar_balance_usd", ["2026-08-10", "2026-11-08"],
                                                         [390_000.0, 100_000.0], "chain:tokenjars:tokenjar_balance[x]", 2)
     assert bw._value_timing(groups, "Uniswap", start, end, 0.05) is None
+
+
+def test_credibility_sets_accrued_beside_released_once_the_jar_is_in_q0():
+    import credibility
+    spec = config.CREDIBILITY["Uniswap"]["in_revenue"]
+    assert spec["ours"] == {"metric": "revenue_usd", "window": "q0"}
+    rows = {"Uniswap|revenue_usd_defillama": {"q0": 27_000_000.0, "latest_date": "2026-11-08"}}
+    jar = _rows("tokenjar_inflow_transfers", pd.date_range("2026-10-11", "2026-11-08"), 100.0, "chain:tokenjars:x")
+    r = credibility.reference("Uniswap", spec["ref"], rows, jar, ASOF)
+    assert r["value"] == 27_000_000.0 and r["tol"] == 5.0 and r["mode"] == "independent" and r["verdict"] is None
+    # the dumps (no jar row): DefiLlama is the only aggregate, as before
+    r0 = credibility.reference("Uniswap", spec["ref"], rows, jar.iloc[0:0], ASOF)
+    assert r0["verdict"] == "UNVERIFIABLE" and "--seed tokenjar" in r0["note"]

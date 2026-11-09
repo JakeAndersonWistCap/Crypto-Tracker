@@ -35577,11 +35577,10 @@ METRICS["tokenjar_balance_usd"] = {
     "label": "Uniswap TokenJars' undistributed balance ($) at a day's closing block — fees accrued, not yet released",
     "kind": "stock", "unit": "usd", "archetypes": [], "tiers": [2], "sanity_min": 0, "sanity_max": 1e10,
     "only_projects": ("Uniswap",)}
-METRICS["revenue_usd_defillama"] = {
-    "label": "Uniswap revenue as DefiLlama books it ($) — the value RELEASED from the TokenJars (Firepit Released × "
-             "threshold × UNI price); the cross-check of the jar inflows after the PR1B.9 handover",
-    "kind": "flow", "unit": "usd", "archetypes": [], "tiers": [1], "sanity_min": 0, "sanity_max": 1e11,
-    "only_projects": ("Uniswap",)}
+# DefiLlama's revenue beside the project's own (Maple, Pendle): Uniswap's is the value RELEASED from the TokenJars
+# (Firepit Released × threshold × UNI price), the cross-check of the jar inflows after the PR1B.9 handover
+METRICS["revenue_usd_defillama"]["only_projects"] = tuple(dict.fromkeys(
+    tuple(METRICS["revenue_usd_defillama"].get("only_projects") or ()) + ("Uniswap",)))
 
 # THE REVENUE LINE HANDS OVER (Rule 10): revenue_usd = DefiLlama's released value up to the day before the first day the
 # jar inflows are stored, the jar inflows from that day (build_workbook._tokenjar_revenue_views, read time; the stored
@@ -35625,3 +35624,25 @@ PROJECT_BY_NAME["Uniswap"].setdefault("series_handover", {})["revenue_usd"] = {
                           "(DefiLlama) before it: over a span they differ by the change in the jars' undistributed "
                           "balance; before the switch (2025-12-27) both are 0 (UNISWAP_REVENUE_EVIDENCE pre_switch)",
     "declared": "2026-11-09"}
+
+
+# THE CREDIBILITY CROSS-CHECK AFTER THE HANDOVER (PR1B.9): once the jar inflows are in Q0 (any stored in the last 90
+# days), ours (revenue_usd: accrued) is set beside DefiLlama's released value over the same Q0 (revenue_usd_defillama),
+# ±5% — declared 2026-11-09 before any store was read: over a quarter the two differ by the change in the jars'
+# undistributed balance and the release margin (one live day, 2026-10-12: accrued $120,289 vs released $118,939).
+# Before (the dumps: no jar row) the row is what it was — DefiLlama is the only aggregate (UNVERIFIABLE).
+CREDIBILITY.setdefault("Uniswap", {})["in_revenue"] = _c_in(
+    "Revenue Q0 — accrued (the TokenJar inflows, PR1B.9) vs released (DefiLlama)", "revenue_usd", "q0",
+    {"verdict_when": {"py": "window_sum", "args": {"metric": "tokenjar_inflow_transfers", "days": 90},
+     "positive": {"metric": "revenue_usd_defillama", "window": "q0", "tol": 5.0,
+                  "source": "DefiLlama 'uniswap' dailyRevenue (Firepit Released × threshold × the UNI price), kept "
+                            "as revenue_usd_defillama",
+                  "note": "ACCRUED vs RELEASED: the jars' inflows against the value DefiLlama books released; over "
+                          "a quarter they differ by the change in the jars' undistributed balance (on the revenue "
+                          "cell) and the searchers' release margin. The days before the jar's first stored day "
+                          "are DefiLlama's on both sides (the declared handover)."},
+     "otherwise": {"verdict": "UNVERIFIABLE",
+                   "why": "no TokenJar inflow is stored in Q0 yet, so revenue is DefiLlama's released value — the "
+                          "only free aggregate (Token Terminal is paid).",
+                   "resolve": "token_metrics.py --seed tokenjar (the jar inflows, PR1B.9)"}}},
+    fmt=_C_USD)
