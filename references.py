@@ -75,6 +75,7 @@ def within(ours: float, ref: float, kind: str, tol: float) -> bool:
 #   ("sum_days", metric, days)           sum over the `days` ending at the reference date
 #   ("sum_since", metric, start)         sum from `start` to the reference date (+ SAMPLE_LAG_DAYS)
 #   ("sum_period", metric, start, end)   sum over [start, end]
+#   ("event_period", metric, start, end) a dated event's own series summed over [start, end], however it is stamped
 #   ("mean_period_x", metric, start, end, n)   mean over [start, end] x n (a campaign total vs a daily series, D1-2)
 #   ("on_day", metric)                   the value dated on the reference date
 #   ("event", metric, days, sign)        a single-day move of the stock equal to the reference, within ±days
@@ -272,9 +273,10 @@ G6_ROUTES = {
     ('Morpho', 'g6_merkl_arc_campaign'): ('recorded', 'recorded only: Arc campaign is paid on Ethereum (distributionChainId 1) — it lands in the Ethereum claims (merkl_morpho_out), not merkl_campaigns_non_ethereum_tokens'),
     ('Uniswap', 'g6_uni_total_supply_gross'): ('last', 'total_supply_gross'),
     ('Uniswap', 'g6_dead_balance'): ('last', 'burn_address_balance'),
-    # PR1.U10: the burn landed 2025-12-27 20:33 UTC (tx 0x091f0083…, block 24,106,378); the series is the 0x…dEaD
-    # balance's day-on-day change, so the next day's read carries it (row dated 2025-12-28) — the two days are summed
-    ('Uniswap', 'g6_retro_burn_100m'): ('sum_period', 'one_off_burn_tokens', '2025-12-27', '2025-12-28'),
+    # PR1.U10: the burn landed 2025-12-27 20:33 UTC (tx 0x091f0083…, block 24,106,378). PR1B.7: read as an EVENT in
+    # 2025-12-27..12-28 whichever day it is stamped — the tx's block day (`--seed uni_retro_burn`, Jake's store), the
+    # differenced 0x…dEaD row of 12-28 (read-date stamping, the dumps) or of 12-27 (block-time stamping, PR1B.2)
+    ('Uniswap', 'g6_retro_burn_100m'): ('event_period', 'one_off_burn_tokens', '2025-12-27', '2025-12-28'),
     ('Uniswap', 'g6_record_day_burn_june'): ('recorded', "recorded only: 'a day in June 2026' — no date to compare a daily row against"),
     ('GEODNET', 'g6_total_supply_gross_filing'): ('last', 'total_supply_gross'),
     ('GEODNET', 'g6_burn_polygon_2026_09'): ('recorded', "GEODNET feed (Polygon leg): compared as the two-chain monthly sum (row 'gross_burn_2026_09_feed'); per-chain burn has no metric"),
@@ -575,6 +577,18 @@ def _our_value(route: tuple, groups: dict, project: str, at: pd.Timestamp, ref: 
             return None, metric, f"{metric} ends {s.date.max():%Y-%m-%d}, before the period's end {s1:%Y-%m-%d}"
         x = s[(s.date >= s0) & (s.date <= s1)]
         return float(x.value.sum()), f"Σ {metric} {s0:%Y-%m-%d}..{s1:%Y-%m-%d}", ""
+    if kind == "event_period":
+        # PR1B.7 (Jake 2026-11-09: the 100M burn read NOT WIRED on his store — one_off_burn_tokens ends 2025-12-27, the
+        # tx's block day, and sum_period refused "ends before the period's end 2025-12-28"): a DATED EVENT's own series
+        # holds a row on the event's day only, so a series ending inside [start, end] is complete, not short. The event
+        # is read whichever day in the window it is stamped (the tx's block day, or the differenced balance row — the
+        # next day before PR1B.2, the same day by block time after); two rows are summed (a second event is a finding)
+        s0, s1 = pd.Timestamp(route[2]), pd.Timestamp(route[3])
+        x = s[(s.date >= s0) & (s.date <= s1)]
+        if x.empty:
+            return None, metric, f"{metric}: no row {s0:%Y-%m-%d}..{s1:%Y-%m-%d} (the event is not stored)"
+        days = ", ".join(f"{d:%Y-%m-%d}" for d in x.date)
+        return float(x.value.sum()), f"Σ {metric} {s0:%Y-%m-%d}..{s1:%Y-%m-%d} (the event, stamped {days})", ""
     if kind == "mean_period_x":
         # D1-2: a campaign TOTAL (Merkl's amount, paid 18:00 -> 18:00 UTC) against our daily series: the days wholly
         # inside the campaign, averaged, times its length — never a UTC-day sum, which takes in the neighbouring
@@ -740,7 +754,7 @@ def _window_rows(route: tuple, groups: dict, project: str, at) -> "pd.DataFrame 
     if g is None or getattr(g, "empty", True):
         return None
     d = pd.to_datetime(g["date"]).dt.normalize()
-    if route[0] in ("mean_period_x", "sum_period") and len(route) >= 4:
+    if route[0] in ("mean_period_x", "sum_period", "event_period") and len(route) >= 4:
         return g[(d >= pd.Timestamp(route[2])) & (d <= pd.Timestamp(route[3]))]
     return g[d <= at]
 

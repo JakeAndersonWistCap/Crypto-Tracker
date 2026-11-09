@@ -1285,7 +1285,7 @@ PENDING: where the budget goes after Labs' recipient (all 20M moved on, 17M on 2
 | paid to holders, not bought | **NO SERIES** |
 | holder value CREDITED (revenue-funded) | `holder_value_revenue_usd` |
 
-Funding: revenue (the default: the programme documented base)
+Funding: none before 2025-12-27 (0 credited: before the fee switch executed on chain (proposal 93, 2025-12-27 20:33:11 UTC, block 24,106,378) no protocol fee existed to fund a burn: UNI sent to 0x…dEaD before it (0.0014 UNI on 2025-10-22 and 11-03) is a stray transfer, not revenue-funded holder value); from 2025-12-27: revenue (the default: the programme documented base)
 
 ### Aerodrome
 

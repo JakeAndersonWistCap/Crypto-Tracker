@@ -364,7 +364,7 @@ def _months_until_live(row: dict, name: str, metric: str, g: pd.DataFrame, s: pd
     legs = config.handover_monthly_leg(name, metric)
     if not legs or g is None or g.empty:
         return
-    pts = g["source"].astype(str).map(_measuring_point)
+    pts = g["source"].astype(str).map(_measuring_point).map(config.strip_point_markers)   # PR1B.2: by composition
     live = g.loc[pts == legs[1], "date"]
     live_days = int((asof - live.min()).days) + 1 if len(live) else 0
     why = (f"the full live read ({legs[1]}) covers {live_days} day(s), so this window is complete "
@@ -2051,7 +2051,7 @@ def _monthly_leg_views(groups: dict) -> None:
         legs = config.handover_monthly_leg(name, metric)
         if not legs or g.empty:
             continue
-        pts = g["source"].astype(str).map(_measuring_point)
+        pts = g["source"].astype(str).map(_measuring_point).map(config.strip_point_markers)   # PR1B.2
         # MONTHLY ROWS NEVER SHARE DATES WITH THE DAILY SERIES (Jake, 2026-10-05, generalised). A
         # monthly row whose month starts on or after the daily series' first day is the CROSS-CHECK
         # (config.monthly_crosscheck_metric), not the series: the daily rows hold that month.
@@ -5117,8 +5117,13 @@ def _holder_value_views(groups: dict) -> None:
                 act = act.copy()
                 act[day] = float(act[day]) - part
         for d, v in act.items():
-            if config.holder_funding(name, d)[0] == "revenue":
+            fund_d = config.holder_funding(name, d)[0]
+            if fund_d == "revenue":
                 credit[d] = float(v)
+            elif fund_d == "none":
+                # PR1B.6: before the mechanism's execution (config.HOLDER_VALUE_CREDIT_FROM) a burn is no holder value at
+                # all — 0 credited, and not recorded as treasury / emissions-funded either
+                credit.setdefault(d, 0.0)
             else:
                 # 0 CREDITED, NOT n/a (fix round 2, R2: Ether.fi's HVY went from 0 to n/a once its Q0 top-ups were
                 # recorded as treasury-funded — a day with a buyback that is not revenue-funded credits 0)
@@ -5169,6 +5174,38 @@ def _holder_value_views(groups: dict) -> None:
                 groups[(name, metric)] = _as_stored(pd.DataFrame(
                     {"date": s_.index, "project": name, "metric": metric, "value": s_.values, "tier": 2,
                      "source": [src_for(d, src) for d in s_.index]}), cols)
+
+
+def _gross_burn_day_priced_usd_views(groups: dict) -> None:
+    """PR1B.3 (Jake 2026-11-09): ONE PRICING BASIS FOR $ BURN. gross_burn_day_priced_usd = each day's A4 burn (config.a4_burn_metric)
+    x that day's price_usd; fees_base_day_priced_tokens = each day's fee base (_burn_fee_base) ÷ that day's price — what every $
+    burn figure on A4 reads (the gross burn $, the burn share of fees, the implied burn and actual − implied), on the
+    basis holder revenue and the payout ratios already use. A day without a price is left out (_usd_daily), never valued
+    at another day's; a derived row covers what its inputs' rows cover (COVERED_SETS via the view graph)."""
+    for p in scoped_projects():
+        if 4 not in p.get("archetypes", ()):
+            continue
+        name = p["name"]
+        px = _daily(groups.get((name, "price_usd")))
+        if px.empty:
+            continue
+        px = px[px > 0]
+        bm = config.a4_burn_metric(name)
+        g = groups.get((name, bm))
+        usd = _usd_daily(_daily(g), px)
+        if not usd.empty:
+            groups[(name, "gross_burn_day_priced_usd")] = _as_stored(pd.DataFrame(
+                {"date": usd.index, "project": name, "metric": "gross_burn_day_priced_usd", "value": usd.values, "tier": 2,
+                 "source": f"derived:{bm}*price_usd[that day's price]"}), g.columns)
+        base_m = _burn_fee_base(p)
+        gb = groups.get((name, base_m))
+        base = _daily(gb)
+        both = base.index.intersection(px.index)
+        if len(both):
+            tok = (base[both] / px[both]).sort_index()
+            groups[(name, "fees_base_day_priced_tokens")] = _as_stored(pd.DataFrame(
+                {"date": tok.index, "project": name, "metric": "fees_base_day_priced_tokens", "value": tok.values, "tier": 2,
+                 "source": f"derived:{base_m}/price_usd[that day's price]"}), gb.columns)
 
 
 def _reward_funding_views(groups: dict) -> None:
@@ -6023,6 +6060,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _pendle_rate_check(groups)          # G9 N: each Pendle gauge chain's log scan against its sampled rates
     _revenue_from_fees_views(groups)    # G9 N: Plume's revenue = the fees its RewardDistributor receives
     _holder_value_views(groups)   # Phase 2: revenue-funded holder value, credited vs recorded (LITMUS A)
+    _gross_burn_day_priced_usd_views(groups)    # PR1B.3: $ burn = each day's burn x that day's price, the holder-value basis
     _settlement_views(groups)
     _monthly_flow_views(groups)       # P2a D5b: complete-month flows from daily log scans (Maple's SSF Safe)
     _handover_overlap_checks(groups)  # G11 B8 / C1: each declared handover's two legs compared on their common days
@@ -7065,6 +7103,25 @@ def telescoping(project: str, metric: str, parent: str, series, stock) -> dict:
             f"is not in the store, the rows that produced them have been deleted or were written "
             f"under another name.")}
     st = stock.sort_values("date")
+    # PR1B.2: A FLOW STAMPED BY BLOCK TIME (`utc-day`: dated d, the stock's first-block reading of d+1 minus that of its
+    # first covered day) telescopes from the reading ON its first covered day to the reading the day AFTER its last row;
+    # a read-date leg before it (the declared handover's earlier leg) telescopes as before, and the two moves add up
+    utc = deltas["source"].astype(str).map(
+        lambda s: "utc-day" in config.strip_source_annotations(s).split(":"))
+    if utc.any():
+        day = _telescope_day_leg(metric, parent, deltas[utc], st)
+        if (~utc).sum() == 0 or day.get("flow_recon_blocked"):
+            if not day.get("flow_recon_blocked"):
+                day["flow_accounted"] += _ONE_OFF_REMOVED.get((project, metric), 0.0)
+                day["flow_residual"] = day["flow_stock_move"] - day["flow_accounted"]
+            return day
+        old = telescoping(project, metric, parent, deltas[~utc], stock)
+        if old.get("flow_recon_blocked"):
+            return old
+        moved = old["flow_stock_move"] + day["flow_stock_move"]
+        accounted = old["flow_accounted"] + day["flow_accounted"]
+        return {**day, "flow_stock_move": moved, "flow_accounted": accounted, "flow_residual": moved - accounted,
+                "flow_span": (old["flow_span"][0], day["flow_span"][1])}
     # OVER THE DATES BOTH HOLD (G14 2, Jake's 10-22 run: GEODNET's and Hyperliquid's burn flows ran to 10-22 while the
     # stock's tier timed out at 10-21 — "THE FLOWS DO NOT SUM", −105,000 and −22,648, 9 BROKEN cells). A flow row dated
     # after the stock's last reading is not unaccounted for: the reading it telescopes to is not stored yet. The check
@@ -7103,6 +7160,39 @@ def telescoping(project: str, metric: str, parent: str, series, stock) -> dict:
             "flow_recon_blocked": None,
             "flow_recon_waiting": (f"{len(waiting)} {metric} row(s) after {pd.Timestamp(end):%Y-%m-%d} wait for the "
                                    f"{parent} reading they telescope to; reconciled over the dates both hold"
+                                   if len(waiting) else None)}
+
+
+def _telescope_day_leg(metric: str, parent: str, deltas: pd.DataFrame, st: pd.DataFrame) -> dict:
+    """PR1B.2: the telescoping identity for flows stamped by block time — a row dated d with [span=N] is the stock's
+    first-block reading of d + 1 minus that of d − N + 1, so the rows sum to the reading the day after the last row minus
+    the reading on the first row's first covered day. Rows whose closing reading is not stored yet wait (G14 2)."""
+    from fetch.validate import _span_days               # noqa: PLC0415
+    sd = (st.assign(d=pd.to_datetime(st["date"]).dt.normalize()).drop_duplicates("d", keep="last")
+          .set_index("d")["value"].astype(float))
+    dd = deltas.assign(d=pd.to_datetime(deltas["date"]).dt.normalize()).sort_values("d")
+    closes = dd["d"] + pd.Timedelta(days=1)
+    held = closes.isin(sd.index)
+    if not held.any():
+        return {"flow_recon_blocked": (
+            f"no {parent} reading on the day after any {metric} row stamped by block time (first "
+            f"{pd.Timestamp(dd['d'].iloc[0]):%Y-%m-%d}) — the first-block readings they close on are not stored.")}
+    last_i = held[held].index[-1]
+    last = dd.loc[last_i, "d"]
+    rows = dd[dd["d"] <= last]
+    waiting = dd[dd["d"] > last]
+    f0 = rows["d"].iloc[0] - pd.Timedelta(days=_span_days(rows["source"].iloc[0]) - 1)
+    if f0 not in sd.index:
+        return {"flow_recon_blocked": (
+            f"NO FIRST-BLOCK READING OF {parent} ON {f0:%Y-%m-%d}, the first day the earliest {metric} row stamped by "
+            f"block time covers — the reading it was differenced from is not in the store now.")}
+    end = last + pd.Timedelta(days=1)
+    moved = float(sd[end]) - float(sd[f0])
+    return {"flow_stock_move": moved, "flow_accounted": float(rows["value"].astype(float).sum()),
+            "flow_residual": moved - float(rows["value"].astype(float).sum()),
+            "flow_span": (f0.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")), "flow_recon_blocked": None,
+            "flow_recon_waiting": (f"{len(waiting)} {metric} row(s) after {last:%Y-%m-%d} wait for the {parent} "
+                                   f"first-block reading they close on; reconciled over the dates both hold"
                                    if len(waiting) else None)}
 
 
@@ -11617,6 +11707,12 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
             parts.append(f"credited payout to holders: {'+'.join(h['distributed_extra'])} ({h.get('extra_why', '')})")
         if not parts and hv_has(p):
             parts.append("revenue (default: the programme's documented base)")
+        cf = config.HOLDER_VALUE_CREDIT_FROM.get(p["name"])
+        if cf and parts:
+            # PR1B.6: nothing is credited before the mechanism's execution on chain
+            parts.insert(0, f"..{(pd.Timestamp(cf['date']) - pd.Timedelta(days=1)).date()}: none, 0 credited — "
+                            f"{cf['why']}")
+            parts[1] = parts[1].replace("revenue (default", f"{cf['date']}..now: revenue (default", 1)
         return "; ".join(parts)
 
     vyield = next(s for s in _a1_headline(R) if s[0].startswith("VALIDATOR STAKING YIELD"))[1]
@@ -12194,7 +12290,7 @@ def write_a4(ws, R: Refs, data_by_key: dict):
     _title(ws, "A4 — Permanent Burn", "Gross burn, gross issuance and NET supply change side by side. Where the protocol publishes net mint itself "
                                        "that SELF-REPORTED figure is used and the derived one is shown beside it for comparison; a gap between them means one is wrong. "
                                        "Otherwise net = issuance − burn (positive = net inflation). "
-                                       "Q0 = trailing comparison window; $ conversions at 90-day average price. Implied burn = fees × documented share (suppressed when unconfirmed). "
+                                       "Q0 = trailing comparison window; $ BURN at each day's price (each day's burn × that day's price, the holder-value basis — PR1B.3); issuance and net $ at the 90-day average price. Implied burn = fees × documented share ÷ each day's price (suppressed when unconfirmed). "
                                        "PancakeSwap is the disclosure template: publishes net mint monthly.")
     ann = ANN
     price = lambda r: R.D(r, "price_usd", "q0")  # noqa: E731
@@ -12218,7 +12314,11 @@ def write_a4(ws, R: Refs, data_by_key: dict):
         _fees_q0_col(R),
         ("Price — 90d average ($)", lambda r, p: pull(price(r)), FMT_USD4, "pull", False, {"metric": "price_usd"}),
         ("GROSS BURN Q0 (tokens)", lambda r, p: pull(burn(r, p)), FMT_NUM, "pull", True, {"metric_fn": config.a4_burn_metric}),
-        ("Gross burn Q0 ($ at avg price)", lambda r, p: calc(f"{burn(r, p)}*{price(r)}"), FMT_USD, "calc"),
+        # PR1B.3 (Jake 2026-11-09): ONE PRICING BASIS FOR $ BURN — each day's burn x that day's price, summed
+        # (gross_burn_day_priced_usd, _gross_burn_day_priced_usd_views): the basis holder revenue and the payout ratios use. It was the window's
+        # tokens x the 90-day average price ($36.90M against holder revenue's $35.17M on Jake's store)
+        ("Gross burn Q0 ($, each day's burn × that day's price)", lambda r, p: pull(R.D(r, "gross_burn_day_priced_usd", "q0")),
+         FMT_USD, "pull", False, {"metric": "gross_burn_day_priced_usd"}),
         ("GROSS ISSUANCE Q0 (tokens)", lambda r, p: _fixed_supply_text(p) or pull(iss(r)), FMT_NUM, "pull", True,
          {"metric": "gross_issuance_tokens"}),
         ("Gross issuance Q0 ($ at avg price)", lambda r, p: _fixed_supply_text(p) or calc(f"{iss(r)}*{price(r)}"),
@@ -12256,19 +12356,23 @@ def write_a4(ws, R: Refs, data_by_key: dict):
         ("Net supply change ($ at avg price)",
          lambda r, p: _price_net(_net_guarded(R, r, p, _basis_iss(R, p), burn), price(r)), FMT_USD, "calc", False,
          {"flag_fn": _a4_net_head_flag}),
+        # PR1B.3: the burn's $ at each day's price per covered day ÷ fees per covered day (was tokens x the 90-day average
+        # price: 9.31% against the gross payout's 8.87% on Jake's store — the same burns valued twice)
         ("Burn as share of fees (measured)",
-         lambda r, p: _coverage_guard(R, r, [("burn", config.a4_burn_metric(p["name"]), "q0"), ("fees", "fees_usd", "q0")],
-                                      f"{_flow_rate(R, r, config.a4_burn_metric(p['name']), p=p)}*{price(r)}/{_flow_rate(R, r, 'fees_usd')}"),
+         lambda r, p: _coverage_guard(R, r, [("burn $", "gross_burn_day_priced_usd", "q0"), ("fees", "fees_usd", "q0")],
+                                      f"{_flow_rate(R, r, 'gross_burn_day_priced_usd', p=p)}/{_flow_rate(R, r, 'fees_usd')}"),
          FMT_PCT, "calc"),
         ("Issuance as % of supply (annualised)", lambda r, p: calc(f"{_annualise(R, r, p, _a4_iss_metric(p['name']), R.D(r, _a4_iss_metric(p['name']), 'q0'))}/{R.D(r, 'circulating_supply', 'now')}"), FMT_PCT, "calc"),
         *_a4_phase2_cols(R),
         # THE BASE THE SHARE IS OF (Uniswap, G6 2026-10-19): config burn_split.fee_base_metric — Uniswap's documented
         # share is 100% of PROTOCOL fees (revenue_usd), not of LP fees; fees_usd everywhere else.
-        ("Implied burn Q0 (tokens) = fees × documented share ÷ avg price",
-         lambda r, p: gated(R.C(r, "Burn split status"), f"{R.D(r, _burn_fee_base(p), 'q0')}*{R.C(r, 'Share of fees burned')}/{price(r)}", R.C(r, 'Share of fees burned'), kind="burn"), FMT_NUM, "calc", False, {"gate": "burn_split"}),
+        # PR1B.3: the fee base converted to tokens at EACH DAY'S price (fees_base_day_priced_tokens), x the documented share — the
+        # one pricing basis; it was the window's $ ÷ the 90-day average price
+        ("Implied burn Q0 (tokens) = fees × documented share ÷ each day's price",
+         lambda r, p: gated(R.C(r, "Burn split status"), f"{R.D(r, 'fees_base_day_priced_tokens', 'q0')}*{R.C(r, 'Share of fees burned')}", R.C(r, 'Share of fees burned'), kind="burn"), FMT_NUM, "calc", False, {"gate": "burn_split"}),
         ("Actual − implied burn (tokens)", lambda r, p: circular_gated(p, gated(R.C(r, "Burn split status"), _coverage_guard(
-            R, r, [("burn", config.a4_burn_metric(p["name"]), "q0"), ("fees", _burn_fee_base(p), "q0")],
-            f"{burn(r, p)}-{R.D(r, _burn_fee_base(p), 'q0')}*{R.C(r, 'Share of fees burned')}/{price(r)}", same_span=True, bare=True),
+            R, r, [("burn", config.a4_burn_metric(p["name"]), "q0"), ("fees", "fees_base_day_priced_tokens", "q0")],
+            f"{burn(r, p)}-{R.D(r, 'fees_base_day_priced_tokens', 'q0')}*{R.C(r, 'Share of fees burned')}", same_span=True, bare=True),
             R.C(r, 'Share of fees burned'))), FMT_NUM, "calc", False, {"gate": "burn_split"}),
         ("Supply figure complete?", lambda r, p: ("PARTIAL — " + (p.get("supply_partial_reason", "")[:90]))
          if p.get("supply_is_partial") else "", FMT_TEXT, "text"),
@@ -14228,7 +14332,7 @@ def write_trajectory(wb, data_by_key: dict, asof=None) -> list[dict]:
             elif hc := _history_class(spec["project"], trajectory.referenced_metrics(w["q0_formula"]), data_by_key):
                 why.append(hc)
         # PR1.S5 / U6 (Jake 2026-11-05): A SERIES THAT STARTS AT A DECLARED LAUNCH (config.SERIES_LAUNCH — Uniswap's fee
-        # switch 2025-12-30) takes no statistic from a quarter wholly before it, and the quarter holding it is no growth
+        # switch executed 2025-12-27, PR1B.7) takes no statistic from a quarter wholly before it, and the quarter holding it is no growth
         # base: "NEW since Q-k (<what> <date>)". After the short-history reason above, which reads the quarters as held.
         if asof is not None and not w["independent"]:
             las = [x for x in (config.series_launch(spec["project"]["name"], m)

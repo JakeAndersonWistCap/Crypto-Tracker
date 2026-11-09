@@ -2906,7 +2906,20 @@ class Chain:
                         suggestion="Add the remaining components to contracts in config.py, or rely on the "
                                    "self-reported figure. The sheet labels this figure partial either way.")
 
-            out.add(point(name, metric, total, src, TIER, when), SOURCE, name, detail, TIER)
+            # PR1B.2 (Jake 2026-11-09): A DAY-BOUNDARY STOCK IS STORED AT EACH DAY'S FIRST BLOCK ONLY (config.DAY_BOUNDARY_FLOWS)
+            # — the catch-up reads it, today's included, before this tier (fetch.archive.catch_up), and its flow is the
+            # change between first blocks, dated by block time (fetch.archive.derive_day_flows). This read at the run's
+            # own block is not stored and not differenced (it was: a read-to-read delta dated at the read); it still
+            # feeds the run-time flags below.
+            day_boundary = config.day_boundary_stock(name, metric)
+            if day_boundary:
+                out.skipped(SOURCE, name,
+                            f"{metric}={total:,.4f} read at the run's block — NOT STORED (PR1B.2): the stored reading is "
+                            f"the balance at the first block of each UTC day (the catch-up's archive read), and "
+                            f"{config.cumulative_flow_for(name, metric)} is the change between first blocks, dated by "
+                            f"block time; today's burns are stored tomorrow", tier=TIER)
+            else:
+                out.add(point(name, metric, total, src, TIER, when), SOURCE, name, detail, TIER)
             # PER-WALLET ROWS (Round G 2.8): a component whose contract names a `component_metric` is ALSO stored on its
             # own — the same read, nothing more — so a reference to one wallet's balance has a row to compare with
             # (Pendle's governance / team / ecosystem wallets: the store kept only their sum)
@@ -2923,7 +2936,7 @@ class Chain:
             if metric == "burn_address_balance" and total == 0.0:
                 self._flag_burn_address_never_received(project, components, out, when)
 
-            flow_metric = config.cumulative_flow_for(name, metric)
+            flow_metric = None if day_boundary else config.cumulative_flow_for(name, metric)
             if flow_metric:
                 flow = derive_flow_from_cumulative(total, self.prior_delta.get((name, metric)), name,
                                                    flow_metric, config.mark_source(src, "delta"), TIER, when,

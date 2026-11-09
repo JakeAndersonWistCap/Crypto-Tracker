@@ -57,6 +57,8 @@ import sys
 from dataclasses import dataclass, field
 from datetime import date as date_cls
 
+import pandas as pd
+
 import config
 from fetch.base import _measuring_point
 
@@ -122,6 +124,13 @@ def rederive_flow_from_stock(conn: sqlite3.Connection, project: str, flow_metric
     """
     stock_metric = stock_metric or config.stock_for_flow(project, flow_metric)
     plan = Plan(project=project, flow_metric=flow_metric, stock_metric=stock_metric or "")
+    if stock_metric and config.day_boundary_stock(project, stock_metric):
+        # PR1B.2: this flow is stamped by block time (config.DAY_BOUNDARY_FLOWS) — a read-to-read rebuild dated at the
+        # later read would put back exactly what Jake asked to be gone
+        plan.blocked = (f"{project}/{stock_metric} is a DAY-BOUNDARY stock (PR1B.2): its flow is the change between the "
+                        f"first blocks of consecutive UTC days, dated by block time. Rebuild it with "
+                        f"`python rederive.py {project} {flow_metric} --day-boundary` (preview), then --apply.")
+        return plan
     if not stock_metric:
         plan.blocked = (f"config declares no cumulative that {project}/{flow_metric} is "
                         f"differenced from, so there is nothing to rebuild it from. If it is "
@@ -261,6 +270,61 @@ def _print_plan(plan: Plan, conn: sqlite3.Connection) -> None:
     print()
 
 
+def print_day_boundary_plan(project: str, stock: str, plan: dict, window: tuple | None = None) -> None:
+    """PR1B.2: the restatement plan — every restated reading, the old and new flow totals (and over `window`)."""
+    flow = config.cumulative_flow_for(project, stock)
+    print(f"\n  {project} / {flow}  <-  {stock}  (PR1B.2: stamped by block time, from first-block readings)")
+    if plan.get("blocked"):
+        print(f"  BLOCKED: {plan['blocked']}\n")
+        return
+    print(f"  {len(plan['restated'])} mid-day reading(s) restated to the first block of their UTC day:")
+    for d, (ov, _os, nv, ns) in plan["restated"].items():
+        print(f"    {d}  {ov:,.4f} (mid-day) -> {nv:,.4f}  {ns}")
+    if plan["unread"]:
+        print(f"  NOT READ (kept mid-day, no flow differenced across them): {', '.join(plan['unread'])}")
+    old = [(d, v) for d, m, v, _s in plan["old"] if m == flow]
+    new = plan["new"]
+    new = new[new["metric"] == flow] if not new.empty else new
+    print(f"  read-date rows replaced: {len(plan['old'])} ({len(old)} of {flow}), total {sum(v for _, v in old):,.4f}")
+    print(f"  utc-day rows written:    {len(new)}, total {float(new['value'].sum()) if len(new) else 0.0:,.4f}"
+          + (f", {pd.Timestamp(new['date'].min()).date()}..{pd.Timestamp(new['date'].max()).date()}" if len(new) else ""))
+    if window and len(new):
+        lo, hi = (pd.Timestamp(x) for x in window)
+        w_new = new[(pd.to_datetime(new["date"]) >= lo) & (pd.to_datetime(new["date"]) <= hi)]
+        w_old = [v for d, v in old if lo <= pd.Timestamp(d) <= hi]
+        print(f"  window {lo.date()}..{hi.date()}: read-date {sum(w_old):,.4f} ({len(w_old)} rows) -> utc-day "
+              f"{float(w_new['value'].sum()):,.4f} ({len(w_new)} rows)")
+    for x in plan["report"]:
+        print(f"  {x}")
+    print()
+
+
+def _day_boundary_main(args, db) -> int:
+    import store as store_mod
+    from fetch import archive as ar
+    stock = args.stock or config.stock_for_flow(args.project, args.flow_metric)
+    st = store_mod.Store(db)
+    try:
+        plan = ar.day_boundary_restatement(st, args.project, stock, since=args.since, budget_s=args.budget_min * 60)
+        print_day_boundary_plan(args.project, stock, plan, tuple(args.window.split(",")) if args.window else None)
+        if not args.apply:
+            print("  LOOKED ONLY — nothing was written. Re-run with --apply to replace.\n")
+            return 0
+        if plan.get("blocked"):
+            print("  nothing to apply.\n")
+            return 1
+        typed = input(f"  type REPLACE to restate {len(plan['restated'])} reading(s) and swap {len(plan['old'])} "
+                      f"read-date row(s) for {len(plan['new'])} utc-day row(s): ")
+        if typed.strip() != "REPLACE":
+            print("  not confirmed — nothing was written.\n")
+            return 1
+        n, deleted, written = ar.apply_day_boundary_restatement(st, args.project, stock, plan)
+        print(f"  restated {n} reading(s); {deleted} row(s) deleted, {written} written, one transaction.\n")
+        return 0
+    finally:
+        st.close()
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("project")
@@ -270,12 +334,21 @@ def main(argv=None) -> int:
     ap.add_argument("--db", default=str(DEFAULT_DB))
     ap.add_argument("--apply", action="store_true",
                     help="replace the stored differenced rows, after showing them and asking")
+    ap.add_argument("--day-boundary", action="store_true",
+                    help="PR1B.2: restate a day-boundary stock's mid-day readings to the first block of their UTC day "
+                         "(archive reads) and rebuild its flow stamped by block time")
+    ap.add_argument("--since", default=None, help="--day-boundary: restate readings from this date (YYYY-MM-DD) only")
+    ap.add_argument("--budget-min", type=float, default=60.0, help="--day-boundary: archive read budget, minutes")
+    ap.add_argument("--window", default=None,
+                    help="--day-boundary: FROM,TO (YYYY-MM-DD) — also print both totals over this window")
     args = ap.parse_args(argv)
 
     db = pathlib.Path(args.db)
     if not db.exists():
         print(f"no such database: {db}", file=sys.stderr)
         return 2
+    if args.day_boundary:
+        return _day_boundary_main(args, db)
     conn = sqlite3.connect(db)
     try:
         plan = rederive_flow_from_stock(conn, args.project, args.flow_metric, args.stock)

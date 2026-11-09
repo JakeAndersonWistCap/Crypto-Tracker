@@ -1952,7 +1952,9 @@ def handover_monthly_leg(project_name: str, metric: str) -> tuple[str, str] | No
     q = ((PROJECT_BY_NAME.get(project_name) or {}).get("dune_queries") or {}).get(origin) or {}
     if q.get("granularity") != "monthly" or f"dune:{q.get('query_id')}" != pts[0]:
         return None
-    return pts[0], pts[-1]
+    # PR1B.2: the full-COMPOSITION leg, whatever its day boundary (GEODNET's sum and its utc-day restamping are one
+    # composition; callers compare strip_point_markers of each row's point)
+    return pts[0], strip_point_markers(pts[-1])
 
 
 def monthly_crosscheck_metric(project_name: str, metric: str) -> str | None:
@@ -2008,7 +2010,15 @@ SOURCE_MARKERS = ("PARTIAL", "delta", "recurring-only", "rederived", "as-buyback
                   "lp-withdrawal-removed",
                   # a past day's value read now from an on-chain RECORD that keeps it (Round G 2.3: DssVest.awards(id)
                   # keeps bgn / fin / tot after a vest ends or is yanked) — the same measuring point as the live read
-                  "record")
+                  "record",
+                  # PR1B.2 (Jake 2026-11-09): a differenced flow STAMPED BY BLOCK TIME — the stock's balance at the first
+                  # block of UTC day d+1 minus its balance at the first block of day d, dated d (DAY_BOUNDARY_FLOWS).
+                  # NOT a contract key, but a DIFFERENT MEASURING POINT from the read-to-read delta dated at the read:
+                  # kept by fetch.base._measuring_point (POINT_MARKERS), so the change is a declared handover
+                  "utc-day")
+# Registered markers that are PART OF THE MEASURING POINT (fetch.base._measuring_point keeps them; every contract-key
+# parser still skips them). PR1B.2: "utc-day" — the same address, a different day boundary for the flow.
+POINT_MARKERS = ("utc-day",)
 
 # A bracketed ANNOTATION appended to a contract key: "minter[tail@21bps]". Unlike the markers
 # above it is not its own colon-delimited piece — it is glued to the key — so every parser that
@@ -2533,7 +2543,9 @@ def events_per_year(project_name: str, metric: str) -> float | None:
     if not c.get("annualise_by_events") or len(c["cadences"]) != 1:
         return None
     m = c["metric"]
-    if metric not in (m, m.replace("_tokens", "_usd")):
+    # PR1B.3: the A4 burn's day-priced $ (gross_burn_day_priced_usd) is that burn's usd twin, annualised the same way
+    twin = ("gross_burn_day_priced_usd",) if m == a4_burn_metric(project_name) else ()
+    if metric not in (m, m.replace("_tokens", "_usd"), *twin):
         return None
     label, days = c["cadences"][0]
     if int(days) <= 1:
@@ -12570,7 +12582,9 @@ PROJECTS = [
                       "2026-10-19",
         },
         "fee_switch_dates": {
-            "ethereum": "2025-12-28",
+            # PR1B.7 (Jake 2026-11-09): mainnet aligned to the on-chain execution (#93 above, block 24,106,378,
+            # 2025-12-27 20:33:11 UTC); it read 2025-12-28, the first day whose first block came after it
+            "ethereum": "2025-12-27",
             "optimism": "2026-03-08",
             "arbitrum": "2026-03-08",
             "base": "2026-03-08",
@@ -12785,7 +12799,7 @@ PROJECTS = [
         # block the series (a second event this size is a finding, not a one-off).
         # DATED BY THE DATA: the archive refused every first-block reading 2025-09-29..12-27 under
         # the old 100M floor and stored 2025-12-28 above it, so the burn landed on 2025-12-27 UTC
-        # (fee_switch_dates: mainnet 2025-12-28). The window is wide because the burn_split note
+        # (fee_switch_dates: mainnet 2025-12-27, the execution). The window is wide because the burn_split note
         # says "Jan 2026" — the data, not the note, picks the row.
         "one_off_flows": [
             {"metric": "gross_burn_tokens", "tokens": 100_000_000, "window": ("2025-12-01", "2026-01-31"),
@@ -20814,16 +20828,24 @@ MECHANISM_START = {
 # (the completeness report reads MECHANISM_START, not this). Fees run continuously, so fees_usd is not listed.
 SERIES_LAUNCH = {
     "Uniswap": {
-        "date": "2025-12-30",
-        "what": "fee switch",
+        # PR1B.7 (Jake 2026-11-09): the launch is the fee switch's EXECUTION ON CHAIN — proposal 93 executed 2025-12-27
+        # 20:33:11 UTC in block 24,106,378 (fee_switch_executions; the same block set v2 feeTo to the TokenJar and
+        # burned the 100M treasury UNI). Round 1 (U6) had 2025-12-30, the TokenJar's first non-zero stored balance.
+        "date": "2025-12-27",
+        "what": "fee switch executed",
+        "executed_utc": "2025-12-27 20:33:11", "block": 24_106_378,
+        "defillama_first_revenue": "2025-12-29",
         "metrics": ("revenue_usd", "holders_revenue_usd", "gross_burn_tokens", "actual_buyback_tokens",
                     "actual_buyback_usd", "retired_buyback_tokens", "retired_buyback_usd", "burn_revenue_funded",
                     "holder_value_revenue_usd"),
-        "declared_by": "Jake, 2026-11-05 (PR1 U6): the fee switch went live 2025-12-30",
-        "evidence": "proposal 93 (UNIfication) executed 2025-12-27 20:33 UTC (fee_switch_executions); the mainnet "
-                    "TokenJar's first non-zero stored balance (buyback_fund_balance) is 2025-12-30; DefiLlama's "
-                    "revenue_usd reads its first non-zero day 2025-12-29 in the 2026-10-13 dumps. Every date falls in "
-                    "the same trailing quarter on both as-of dates checked (2026-10-13, 2026-11-05)."},
+        "declared_by": "Jake, 2026-11-05 (PR1 U6: 2025-12-30); corrected by Jake 2026-11-09 (PR1B.7): the fee switch "
+                       "executed on chain 2025-12-27",
+        "evidence": "proposal 93 (UNIfication) executed 2025-12-27 20:33:11 UTC, block 24,106,378 (Uniswap Governor "
+                    "0x408ED635…24C3 ProposalExecuted, fee_switch_executions; UNISWAP_REVENUE_EVIDENCE.post_switch: v2 "
+                    "feeTo = the TokenJar at block 24,106,379); DefiLlama's revenue_usd reads its first non-zero day "
+                    "2025-12-29 in the 2026-10-13 dumps; the mainnet TokenJar's first non-zero stored balance "
+                    "(buyback_fund_balance) is 2025-12-30. Every date falls in the same trailing quarter on both as-of "
+                    "dates checked (2026-10-13, 2026-11-05)."},
 }
 
 
@@ -21161,6 +21183,107 @@ def cumulative_flow_for(project_name: str, metric: str) -> str | None:
     if own is not None:
         return own or None
     return CUMULATIVE_FLOW.get(metric)
+
+
+# ===== PR1B.2 — A BALANCE-DELTA FLOW IS STAMPED BY BLOCK TIME (Jake 2026-11-09). =====
+# Jake's store, Uniswap: the 0x…dEaD deltas were read-to-read differences stamped at the READ's date — stored 11-08 =
+# 12,000 = the 11-07 burn on chain; stored 11-09 = 36,000 = 11-08's 18,000 + 11-09's first 07:50 (18,000). Each stored day
+# is now the burn OF THAT UTC DAY: the stock's balance at the first block of day d+1 minus its balance at the first block
+# of day d, dated d, and the incomplete as-of day is neither stored nor counted (as for every other daily flow).
+#   * THE STOCK IS READ AT EACH DAY'S FIRST BLOCK. Every stored row of a stock below is the balance at the first block of
+#     its UTC date (the archive route's read, `archive` marker); the catch-up reads it for every owed day, TODAY's
+#     included, before the tiers (fetch.archive.catch_up). The live tier's read at its own block is not stored for these
+#     stocks (its run-time flags still read it): a day the archive cannot read is a named hole, never a mid-day reading.
+#   * THE FLOW (fetch.archive.derive_flows): between two consecutive first-block readings d0 < d1, dated d1 − 1
+#     ([span=Nd] where d1 − d0 = N > 1), source marked `utc-day` — a new measuring point, declared below as the last
+#     leg of each flow's handover (Rule 10; the build's overlap check refuses legs that overlap). A pair with a mid-day
+#     reading at either end is never differenced.
+#   * HISTORY (rederive.py --day-boundary): every stored mid-day reading of the stock is restated to the first block of
+#     its day (archive read), and the whole flow re-derived on the utc-day basis, so the series is like-for-like back to
+#     its first reading (preview by default, --apply writes). Until it runs, the old leg stays before the new one.
+# THE SERIES ON THE ROUTE (chain:*:delta, fetch.chain + fetch.archive): {(project, stock): the stock's measuring point}.
+# Their flows: gross_burn_tokens (and its copies: actual_buyback_tokens as-buyback — Uniswap, GEODNET — and Venice AI's
+# burn_revenue_funded). NOT on it, said so: Sky's burn_address_balance / governance_burn_balance / other_burn_balance are
+# LOG-SCAN cumulatives (chain:ethereum:burn_logs, kind burn_transfer_logs — no state to read at a past block; the scan's
+# own block days would date them; Sky's round); Ethereum (etherscan ethsupply2 deltas) and Hyperliquid (HyperCore API
+# deltas) are other routes with no block-time state read (their rounds); Chainlink's Reserve declares no flow.
+DAY_BOUNDARY_FLOW = {"on": True, "decided_by": "Jake", "decided_on": "2026-11-09", "spec": "PR1B.2",
+                     "marker": "utc-day"}
+DAY_BOUNDARY_FLOWS = {
+    ("Uniswap", "burn_address_balance"): "chain:ethereum:burn_dead",
+    ("GEODNET", "burn_address_balance"): "chain:sum(polygon:burn_polygon+solana:burn_solana_token_account)",
+    ("PancakeSwap", "burn_address_balance"): "chain:bsc:burn_dead",
+    ("Venice AI", "burn_address_balance"): "chain:base:burn_zero",
+}
+
+
+# THE BASIS, READ ON CHAIN (2026-11-09, keyless): UNI.balanceOf(0x…dEaD) by archive eth_call on eth.drpc.org at the first
+# block of each UTC day — the block from eth.blockscout.com getblocknobytime (closest=after), each checked: block − 1 is
+# before 00:00 UTC, the block at or after it. The window's burn is the difference of its two ends: Jake's 5,430,001 UNI
+# for 2026-08-12..11-08, and his 11-07 = 12,000 / 11-08 = 18,000.
+DAY_BOUNDARY_EVIDENCE = {
+    "Uniswap": {
+        "read_on": "2026-11-09", "rpc": "eth.drpc.org (archive eth_call)", "blocks_from": "eth.blockscout.com",
+        "call": "UNI 0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984 balanceOf(0x000000000000000000000000000000000000dEaD)",
+        "first_block_reads": {
+            "2026-08-12": {"block": 25_735_201, "block_ts": 1_786_492_811, "prev_ts": 1_786_492_799,
+                           "balance": 108_443_579.9671},
+            "2026-11-07": {"block": 26_359_254, "block_ts": 1_794_009_611, "prev_ts": 1_794_009_599,
+                           "balance": 113_843_581.2138},
+            "2026-11-08": {"block": 26_366_424, "block_ts": 1_794_096_011, "prev_ts": 1_794_095_999,
+                           "balance": 113_855_581.2138},
+            "2026-11-09": {"block": 26_373_603, "block_ts": 1_794_182_411, "prev_ts": 1_794_182_399,
+                           "balance": 113_873_581.2138}},
+        "reading": "2026-08-12..11-08 burned 113,873,581.2138 − 108,443,579.9671 = 5,430,001.2467 UNI (Jake's expected "
+                   "5,430,001); 11-07 = 12,000, 11-08 = 18,000 — the rows a block-time stamping stores"},
+}
+
+
+def day_boundary_stock(project_name: str, stock: str) -> bool:
+    """PR1B.2: is this stock read at each UTC day's first block, its flow stamped by block time (DAY_BOUNDARY_FLOWS)?"""
+    return bool(DAY_BOUNDARY_FLOW["on"]) and (project_name, stock) in DAY_BOUNDARY_FLOWS \
+        and bool(cumulative_flow_for(project_name, stock))
+
+
+def day_boundary_flow_metrics(project_name: str) -> tuple:
+    """The flows stamped by block time for this project: each day-boundary stock's flow, and burn_revenue_funded where
+    the flow is also the recurring programme (burn_composition.flow_is_recurring_only)."""
+    out = []
+    for (n, stock) in DAY_BOUNDARY_FLOWS:
+        if n == project_name and day_boundary_stock(n, stock):
+            f = cumulative_flow_for(n, stock)
+            out.append(f)
+            comp = (PROJECT_BY_NAME.get(n) or {}).get("burn_composition") or {}
+            if comp.get("flow_is_recurring_only") and f == "gross_burn_tokens":
+                out.append("burn_revenue_funded")
+    return tuple(out)
+
+
+def strip_point_markers(point: str) -> str:
+    """A measuring point without its POINT_MARKERS (PR1B.2): the same address and composition, whatever the day
+    boundary — for the checks about WHAT is read (a handover's full-composition leg), not WHEN it is stamped."""
+    return ":".join(p for p in str(point or "").split(":") if p not in POINT_MARKERS)
+
+
+for (_n, _stock), _pt in DAY_BOUNDARY_FLOWS.items():
+    if not day_boundary_stock(_n, _stock):
+        continue
+    for _f in day_boundary_flow_metrics(_n):
+        _h = PROJECT_BY_NAME[_n].setdefault("series_handover", {}).get(_f)
+        _pts = tuple(_h["ordered_points"]) if _h else (_pt,)
+        _new = dict(_h or {})
+        _new.update({
+            "ordered_points": _pts + (f"{_pt}:{DAY_BOUNDARY_FLOW['marker']}",),
+            "why": ((_h or {}).get("why", "") + " THEN (PR1B.2, Jake 2026-11-09): " if _h else "PR1B.2 (Jake 2026-11-09): ")
+                   + f"the change of {_stock} between the first blocks of consecutive UTC days, dated the earlier day "
+                     f"(block time), after the read-to-read delta dated at the read; rederive.py --day-boundary "
+                     f"restates the history onto it",
+            "composition_change": (_h or {}).get("composition_change")
+                                  or "none: the same address and the same burns; only the day boundary moves (the read's "
+                                     "time of day -> 00:00 UTC) and each row is dated the day its burns happened",
+            "day_boundary_declared": "2026-11-09"})
+        _new.setdefault("declared", "2026-11-09")
+        PROJECT_BY_NAME[_n]["series_handover"][_f] = _new
 
 SERIES_GRANULARITIES = ("daily", "weekly", "monthly")
 
@@ -29853,9 +29976,28 @@ for _n, _h in HOLDER_VALUE.items():
             "declared": _h["bribes"]["from"]}
 
 
+# PR1B.6 (Jake 2026-11-09: Flows Q-4 read "CHECK — holder value credited with no revenue in the quarter" over a 0.0014 UNI
+# burn — stray transfers to 0x…dEaD on 2025-10-22 and 11-03, $0.0x — two months before the fee switch existed): a burn
+# dated BEFORE the payout mechanism's execution is not revenue-funded and is never holder value — 0 credited, and not
+# recorded as treasury- or emissions-funded value either (it was funded by no programme). Dated by the UTC day of the
+# burn (block time, PR1B.2): the execution day itself is creditable — Uniswap's 2025-12-27 burns are the 100M treasury
+# one-off alone (block 24,106,378, recorded, never credited: one_off_flows), traced on chain (UNISWAP_REVENUE_EVIDENCE).
+HOLDER_VALUE_CREDIT_FROM = {
+    "Uniswap": {"date": SERIES_LAUNCH["Uniswap"]["date"], "block": SERIES_LAUNCH["Uniswap"]["block"],
+                "why": "before the fee switch executed on chain (proposal 93, 2025-12-27 20:33:11 UTC, block "
+                       "24,106,378) no protocol fee existed to fund a burn: UNI sent to 0x…dEaD before it (0.0014 UNI "
+                       "on 2025-10-22 and 11-03) is a stray transfer, not revenue-funded holder value",
+                "declared_by": "Jake, 2026-11-09 (PR1B.6)"},
+}
+
+
 def holder_funding(project_name: str, day) -> tuple[str, str]:
-    """(funding, why) of a buyback on `day`: the dated HOLDER_VALUE period it falls in, else revenue."""
+    """(funding, why) of a buyback on `day`: 'none' before the mechanism's declared execution (HOLDER_VALUE_CREDIT_FROM,
+    PR1B.6 — never holder value), else the dated HOLDER_VALUE period it falls in, else revenue."""
     import pandas as _pd
+    cf = HOLDER_VALUE_CREDIT_FROM.get(project_name)
+    if cf and _pd.Timestamp(day) < _pd.Timestamp(cf["date"]):
+        return "none", cf["why"]
     for start, end, funding, why in (HOLDER_VALUE.get(project_name) or {}).get("funding") or ():
         if _pd.Timestamp(start) <= _pd.Timestamp(day) and (end is None or _pd.Timestamp(day) <= _pd.Timestamp(end)):
             return funding, why
@@ -30227,6 +30369,21 @@ METRICS["holder_value_other_usd"] = {
     # P5-1C.B1: a treasury-funded one-off kept in a burn-route buyback is recorded here, never credited (Uniswap's 100M)
     + tuple(p["name"] for p in PROJECTS if p["name"] not in HOLDER_VALUE
             and any(f.get("funding", "treasury") != "revenue" for f in p.get("one_off_flows") or ()))}
+
+# PR1B.3 (Jake 2026-11-09): ONE PRICING BASIS FOR $ BURN — each day's burn x that day's price, summed. A4 valued the
+# window's burn at the 90-day average price ($36.90M, burn share of fees 9.31% on his store) while holder revenue / the
+# payout ratios valued each day at its own price ($35.17M, payout gross 8.87%): two figures for one concept. Every $ burn
+# figure on A4 now reads these day-priced series (build_workbook._gross_burn_day_priced_usd_views); holder value was already on it.
+METRICS["gross_burn_day_priced_usd"] = {
+    "label": "The A4 burn ($): each day's burn (config.a4_burn_metric) x that day's price_usd — the one $ burn basis "
+             "(PR1B.3; a day without a price is left out, never valued at another day's)",
+    "kind": "flow", "unit": "usd", "archetypes": [4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e13,
+    "view_only": True, "only_projects": tuple(p["name"] for p in PROJECTS if 4 in p.get("archetypes", ()))}
+METRICS["fees_base_day_priced_tokens"] = {
+    "label": "The fee base a documented burn share is a share of (burn_split.fee_base_metric, else fees_usd), each day "
+             "÷ that day's price_usd, in tokens — the implied burn's basis (PR1B.3)",
+    "kind": "flow", "unit": "tokens", "archetypes": [4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e16,
+    "view_only": True, "only_projects": tuple(p["name"] for p in PROJECTS if 4 in p.get("archetypes", ()))}
 
 
 # =====================================================================================================================

@@ -1955,7 +1955,7 @@ E_SHORT = {
     "Burn execution": "Burn execution",
     "Burn status": "Burn status",
     "Documented share of fees burned": "Documented share of fees burned",
-    "Gross burn Q0 ($ at avg price)": "Gross burn, 90 days ($)",
+    "Gross burn Q0 ($": "Gross burn, 90 days ($)",      # PR1B.3: each day's burn × that day's price
     "GROSS ISSUANCE Q0 (tokens)": "Gross issuance, 90 days (tokens)",
     "Pool release Q0 (tokens)": "Pool release, 90 days (tokens)",
     "Net mint Q0 (SELF-REPORTED by the protocol)": "Net mint, self-reported",

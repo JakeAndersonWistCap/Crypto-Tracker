@@ -1340,11 +1340,41 @@ def _measuring_point(source: str) -> str:
     src = config.strip_source_annotations(source)
     # A BLOCK TAG SAYS WHEN, NOT WHAT (G11 C1, Jake's 10-21 run: Pendle's latent_supply_tokens hidden as a change of
     # measuring point — "claimLiquidityEmissions()@<block>" is one call read at a new block every day)
-    parts = [_BLOCK_TAG.sub("", p) for p in src.split(":") if p not in config.SOURCE_MARKERS]
+    # A POINT MARKER STAYS (PR1B.2: "utc-day" — a flow stamped by block time is a new measuring point, declared)
+    parts = [_BLOCK_TAG.sub("", p) for p in src.split(":")
+             if p not in config.SOURCE_MARKERS or p in config.POINT_MARKERS]
     return ":".join(parts)
 
 
 _BLOCK_TAG = re.compile(r"@\d+$")
+
+
+def derive_day_flow(v0: float, d0, s0: str, v1: float, d1, s1: str, project: str, metric: str, tier: int = 2,
+                    stock_metric: str | None = None, out=None) -> pd.DataFrame:
+    """PR1B.2 (Jake 2026-11-09): a cumulative stock's flow STAMPED BY BLOCK TIME. v0, v1 are the stock's balances at the
+    first blocks of UTC days d0 < d1 (first-block readings: the `archive` marker); the flow is v1 − v0, the burns of days
+    d0 .. d1 − 1, dated d1 − 1 ([span=Nd] where N = d1 − d0 > 1), source `<s1>:delta:utc-day`. Refused (empty, the
+    reason said) exactly as derive_flow_from_cumulative refuses: no interval, a change of measuring point, a fall."""
+    a, b = pd.Timestamp(str(d0)[:10]), pd.Timestamp(str(d1)[:10])
+    if b <= a:
+        _no_flow(out, project, metric, stock_metric, f"the readings are dated {a.date()} and {b.date()}: no interval")
+        return pd.DataFrame(columns=LONG_COLUMNS)
+    if _measuring_point(s0) != _measuring_point(s1):
+        _no_flow(out, project, metric, stock_metric,
+                 f"the measuring point CHANGED between {a.date()} ({_measuring_point(s0)!r}) and {b.date()} "
+                 f"({_measuring_point(s1)!r}) — differencing across it reports the change of address as a flow")
+        return pd.DataFrame(columns=LONG_COLUMNS)
+    if float(v1) < float(v0):
+        _no_flow(out, project, metric, stock_metric,
+                 f"the cumulative figure FELL from {float(v0):,.4f} ({a.date()}) to {float(v1):,.4f} ({b.date()}): a "
+                 f"flow derived from it would be negative, which this metric cannot be")
+        return pd.DataFrame(columns=LONG_COLUMNS)
+    import config
+    span = int((b - a).days)
+    src = config.mark_source(config.mark_source(str(s1), "delta"), "utc-day")
+    if span > 1:
+        src = f"{src}[span={span}d]"
+    return point(project, metric, float(v1) - float(v0), src, tier, b - pd.Timedelta(days=1))
 
 
 def _no_flow(out, project: str, metric: str, stock_metric: str | None, why: str):
