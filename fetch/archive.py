@@ -458,6 +458,8 @@ def derive_flows(store, project: str, stock: str, straddled: list | None = None,
     flow = config.cumulative_flow_for(project, stock)
     if not flow:
         return 0
+    if config.day_boundary_stock(project, stock):
+        return derive_day_flows(store, project, stock, straddled, owed)
     from .validate import _span_days
     rows = store.conn.execute("SELECT date, value, source FROM metrics WHERE project=? AND metric=? "
                               "ORDER BY date", (project, stock)).fetchall()
@@ -491,6 +493,200 @@ def derive_flows(store, project: str, stock: str, straddled: list | None = None,
         if not f.empty:
             frames.append(f)
     return _write_new(store, pd.concat(frames)) if frames else 0
+
+
+def first_block_reading(source: str) -> bool:
+    """PR1B.2: is this stock row the balance at the FIRST BLOCK of its UTC date — read by the archive route (`archive`
+    marker, ArchiveBackfill.run pins each day's first block)? A live read at the run's own block is not."""
+    return "archive" in config.strip_source_annotations(str(source or "")).split(":")
+
+
+DAY_FLOW_REPORT: dict = {}   # (project, flow) -> the mid-day stock readings no utc-day flow was differenced across
+
+
+def derive_day_flows(store, project: str, stock: str, straddled: list | None = None, owed=None,
+                     write: bool = True) -> int | pd.DataFrame:
+    """PR1B.2 (Jake 2026-11-09): the flow of a DAY-BOUNDARY stock (config.DAY_BOUNDARY_FLOWS), stamped by block time.
+    Between consecutive FIRST-BLOCK readings d0 < d1 of the stock (first_block_reading), the flow v1 − v0 is the burns
+    of days d0 .. d1 − 1, dated d1 − 1 ([span=Nd] where N > 1) — fetch.base.derive_day_flow. The as-of day's own reading
+    (today's first block) only closes yesterday: today is never stored. A stored mid-day reading (the live read before
+    PR1B.2) is not a day boundary and is never differenced: rederive.py --day-boundary restates it.
+    Never an overwrite; never a row whose days a stored row already holds (STRADDLED); never across a day still owed by
+    the catch-up (P4-Q6); never interleaving the flow's declared handover. write=False returns the frame unwritten."""
+    flow = config.cumulative_flow_for(project, stock)
+    from .base import derive_day_flow
+    from .validate import _span_days
+    rows = store.conn.execute("SELECT date, value, source FROM metrics WHERE project=? AND metric=? "
+                              "ORDER BY date", (project, stock)).fetchall()
+    held = store.conn.execute("SELECT date, source FROM metrics WHERE project=? AND metric=?",
+                              (project, flow)).fetchall()
+    have = {str(d)[:10] for d, _ in held}
+    cover = set()
+    for d, s in held:
+        e = pd.Timestamp(str(d)[:10])
+        cover.update(str((e - pd.Timedelta(days=i)).date()) for i in range(_span_days(s)))
+    held_df = pd.DataFrame(held, columns=["date", "source"])
+    owed = sorted(str(d)[:10] for d in (owed or ()))
+    # the stock's CURRENT point only (config.DAY_BOUNDARY_FLOWS): an earlier declared leg (GEODNET's Polygon-only
+    # readings) is never restamped onto a point it was not read from
+    point_now = config.DAY_BOUNDARY_FLOWS.get((project, stock))
+    on_point = [(d, v, s) for d, v, s in rows if point_now is None or _measuring_point(str(s)) == point_now]
+    bounds = [(str(d)[:10], float(v), str(s)) for d, v, s in on_point if v is not None and first_block_reading(s)]
+    DAY_FLOW_REPORT[(project, flow)] = [str(d)[:10] for d, _v, s in on_point if not first_block_reading(s)]
+    out, frames = FetchOutput(), []
+    comp = (config.PROJECT_BY_NAME.get(project) or {}).get("burn_composition") or {}
+    for (d0, v0, s0), (d1, v1, s1) in zip(bounds, bounds[1:]):
+        stamp = str((pd.Timestamp(d1) - pd.Timedelta(days=1)).date())
+        if stamp in have:
+            continue
+        if owed and any(d0 < d < d1 for d in owed):
+            continue                       # P4-Q6: a day still owed between the two readings — wait for it
+        days = {str(x.date()) for x in pd.date_range(d0, stamp)}
+        if days & cover:
+            if straddled is not None:
+                straddled.append(f"{project}/{flow} {d0}..{stamp} holds day(s) a stored row already covers "
+                                 f"({', '.join(sorted(days & cover)[:3])})")
+            continue
+        src = config.mark_source(config.mark_source(s1, "delta"), "utc-day")
+        if breaks_handover_order(project, flow, held_df, stamp, src):
+            continue
+        f = derive_day_flow(v0, d0, s0, v1, d1, s1, project, flow, 2, stock_metric=stock, out=out)
+        if f.empty:
+            continue
+        frames.append(f)
+        if comp.get("flow_is_recurring_only") and flow == "gross_burn_tokens":
+            # the flow is also the recurring programme (as on the live path): its copy under its own name
+            c = f.copy()
+            c["metric"] = "burn_revenue_funded"
+            c["source"] = c["source"].astype(str).map(lambda x: x.replace(":utc-day", ":recurring-only:utc-day", 1))
+            frames.append(c)
+    frame = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=LONG_COLUMNS)
+    if not write:
+        return frame
+    return _write_new(store, frame) if frames else 0
+
+
+def _old_day_flow_rows(conn, project: str, stock: str) -> list[tuple]:
+    """(date, metric, value, source) of every stored row PR1B.2's restatement replaces for a day-boundary stock: the
+    read-date (`:delta`, not `utc-day`) rows of its flows read from its current point, and the stored as-buyback copies
+    of them — never a monthly / Dune leg, never an earlier declared leg's rows."""
+    point = config.DAY_BOUNDARY_FLOWS.get((project, stock))
+    flows = set(config.day_boundary_flow_metrics(project)) | {"actual_buyback_tokens"}
+    out = []
+    for d, m, v, s in conn.execute(
+            "SELECT date, metric, value, source FROM metrics WHERE project=? AND metric IN (%s) AND source LIKE '%%:delta%%'"
+            % ",".join("?" * len(flows)), (project, *sorted(flows))).fetchall():
+        parts = config.strip_source_annotations(str(s)).split(":")
+        if "utc-day" in parts or config.strip_point_markers(_measuring_point(str(s))) != point:
+            continue
+        if m == "actual_buyback_tokens" and "as-buyback" not in parts:
+            continue                     # a measured buyback is never touched
+        out.append((str(d)[:10], m, float(v), str(s)))
+    return out
+
+
+def day_boundary_restatement(store, project: str, stock: str, reader=None, solana: dict | None = None,
+                             archive_chains: set | None = None, resolve=None, since: str | None = None,
+                             budget_s: float = 60 * 60, days: int | None = None) -> dict:
+    """PR1B.2 (Jake 2026-11-09): the plan that puts a day-boundary stock's stored history on the block-time basis —
+    rederive.py --day-boundary shows it, --apply writes it (apply_day_boundary_restatement). READS ONLY THE STORE.
+      1. every stored MID-DAY reading of the stock (a live read before PR1B.2, no `archive` marker) on its current point,
+         from `since`, is read again at the FIRST BLOCK of its UTC day — the archive route's own read (ArchiveBackfill
+         on a scratch copy of the store, the same contracts, sums, refusals; marked `archive`); a day the archive cannot
+         read keeps its mid-day row and is named (no flow is differenced across a mid-day reading);
+      2. the flow is re-derived on the utc-day basis from the first-block readings (derive_day_flows), replacing every
+         read-date `:delta` row of the stock's flows (and their stored as-buyback copies) read from the current point.
+    Returns {"restated": {day: (old value, old source, new value, new source)}, "unread": [days], "old": [rows],
+    "new": DataFrame, "report": [lines], "blocked": str|None}."""
+    import shutil
+    import tempfile
+    import store as store_mod
+    if not config.day_boundary_stock(project, stock):
+        return {"blocked": f"{project}/{stock} is not a day-boundary stock (config.DAY_BOUNDARY_FLOWS)", "restated": {},
+                "unread": [], "old": [], "new": pd.DataFrame(columns=LONG_COLUMNS), "report": []}
+    p = config.PROJECT_BY_NAME[project]
+    point = config.DAY_BOUNDARY_FLOWS[(project, stock)]
+    rows = store.conn.execute("SELECT date, value, source FROM metrics WHERE project=? AND metric=? ORDER BY date",
+                              (project, stock)).fetchall()
+    mid = {str(d)[:10]: (float(v), str(s)) for d, v, s in rows
+           if _measuring_point(str(s)) == point and not first_block_reading(s) and (not since or str(d)[:10] >= since)}
+    tmp = Path(tempfile.mkdtemp(prefix="day_boundary_"))
+    try:
+        scratch = store_mod.Store(tmp / "metrics.db")
+        store.conn.commit()
+        store.conn.backup(scratch.conn)
+        if mid:
+            scratch.conn.executemany("DELETE FROM metrics WHERE project=? AND metric=? AND substr(date, 1, 10)=?",
+                                     [(project, stock, d) for d in mid])
+            scratch.conn.commit()
+        report = []
+        if mid:
+            end = today()
+            back = max(int((end - pd.Timestamp(min(mid))).days) + 1, 1)
+            bf = ArchiveBackfill(scratch, [p], budget_s=budget_s, reader=reader, solana=solana,
+                                 days=max(days or 0, back))
+            if archive_chains is None:
+                archive_chains = set()
+                for c in sorted({s["chain"] for _, s in serving_contracts(p, stock)} - {"solana"}):
+                    w3, host = (resolve or resolve_archive)(c)
+                    if w3 is not None:
+                        if hasattr(bf.reader, "_w3"):
+                            bf.reader._w3[c] = w3
+                        bf.hosts[c] = host
+                        archive_chains.add(c)
+            if solana is None:
+                bf.solana = solana_providers([p], {(project, k) for k, s in serving_contracts(p, stock)
+                                                   if s["kind"] == "spl_token_account"})
+            bf.only = {(project, stock): set(mid)}
+            res = bf.run(set(archive_chains))
+            report += [x for x in res["report"] if not x.startswith("pace ")]
+        got = {str(d)[:10]: (float(v), str(s)) for d, v, s in scratch.conn.execute(
+            "SELECT date, value, source FROM metrics WHERE project=? AND metric=?", (project, stock)).fetchall()
+            if str(d)[:10] in mid}
+        restated = {d: (*mid[d], *got[d]) for d in sorted(got)}
+        unread = sorted(set(mid) - set(got))
+        # the unread days keep their mid-day reading (never a hole made by the restatement)
+        if unread:
+            scratch.upsert(pd.DataFrame([{"date": pd.Timestamp(d), "project": project, "metric": stock,
+                                          "value": mid[d][0], "source": mid[d][1], "tier": 2} for d in unread]))
+        old = _old_day_flow_rows(scratch.conn, project, stock)
+        if old:
+            scratch.conn.executemany("DELETE FROM metrics WHERE date LIKE ? AND project=? AND metric=? AND source=?",
+                                     [(d + "%", project, m, s) for d, m, _v, s in old])
+            scratch.conn.commit()
+        new = derive_day_flows(scratch, project, stock, write=False)
+        scratch.close()
+        return {"blocked": None, "restated": restated, "unread": unread, "old": old, "new": new, "report": report}
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def apply_day_boundary_restatement(store, project: str, stock: str, plan: dict) -> tuple[int, int, int]:
+    """Write a day_boundary_restatement plan in ONE transaction: the restated stock rows replace the mid-day ones (same
+    key), the read-date flow rows go, the utc-day rows land — or nothing changes. (stock rows, deleted, written)."""
+    if plan.get("blocked"):
+        raise ValueError(f"refusing to apply a blocked plan: {plan['blocked']}")
+    from store import utcnow
+    now = utcnow()
+    with store.conn:
+        for d, (_ov, _os, nv, ns) in plan["restated"].items():
+            store.conn.execute("UPDATE metrics SET value=?, source=?, fetched_at=? WHERE project=? AND metric=? AND "
+                               "substr(date, 1, 10)=?", (nv, ns, now, project, stock, d))
+        deleted = 0
+        for d, m, _v, s in plan["old"]:
+            deleted += store.conn.execute("DELETE FROM metrics WHERE substr(date, 1, 10)=? AND project=? AND metric=? "
+                                          "AND source=?", (d, project, m, s)).rowcount
+        new = plan["new"]
+        written = 0
+        for r in new.itertuples(index=False):
+            store.conn.execute(
+                """INSERT INTO metrics(date, project, metric, value, source, tier, fetched_at) VALUES (?,?,?,?,?,?,?)
+                   ON CONFLICT(date, project, metric) DO UPDATE SET value=excluded.value, source=excluded.source,
+                   tier=excluded.tier, fetched_at=excluded.fetched_at""",
+                (pd.Timestamp(r.date).strftime("%Y-%m-%d"), project, r.metric, float(r.value), str(r.source),
+                 int(r.tier) if pd.notna(r.tier) else 2, now))
+            written += 1
+    return len(plan["restated"]), deleted, written
 
 
 def _state(name: str) -> Path:
@@ -673,8 +869,9 @@ class ArchiveBackfill:
                     f"STRADDLED {name}/{flow}: {len(straddled) - k} "
                     f"backfilled day(s) lie inside a stored multi-day delta and were NOT differenced "
                     f"(the burns are already in that delta), e.g. {straddled[k]}. For per-day rows: "
-                    f"python rederive.py {name} {flow} (preview), "
-                    f"then --apply")
+                    f"python rederive.py {name} {flow}"
+                    + (" --day-boundary" if config.day_boundary_stock(name, m) else "")   # PR1B.2
+                    + " (preview), then --apply")
         return flows
 
     def targets(self, archive_chains: set[str]) -> tuple[dict, list[tuple[str, str, str]]]:
@@ -702,6 +899,9 @@ class ArchiveBackfill:
         stored = {k: g.sort_values("date") for k, g in long.groupby(["project", "metric"])}
         end = today()
         days = [end - pd.Timedelta(days=i) for i in range(1, self.days + 1)]      # newest first
+        # PR1B.2: a day-boundary stock is read at TODAY's first block too (it closes yesterday's flow); no other series is
+        if any(config.day_boundary_stock(n, m) for n, ms in targets.items() for m in ms):
+            days = [end] + days
         if self.only is not None:
             targets = {n: {m for m in ms if (n, m) in self.only} for n, ms in targets.items()}
             targets = {n: ms for n, ms in targets.items() if ms}
@@ -718,6 +918,8 @@ class ArchiveBackfill:
                 return False                      # before the series exists: complete, not missing
             if self.only is not None and str(d.date()) not in self.only.get((name, m), ()):
                 return False                      # P3-4: not one of the catch-up's days for this series
+            if d >= end and not config.day_boundary_stock(name, m):
+                return False                      # PR1B.2: today is read only for a day-boundary stock
             g = stored.get((name, m))
             return g is None or not (g["date"] == d).any()
         failures: dict = {}
@@ -1115,7 +1317,9 @@ def catch_up_gaps(store, projects: list[dict], ledger: dict | None = None) -> tu
             if s0:
                 frm = max(frm, pd.Timestamp(s0["from"]))
             given = {d for d, k in _ledger_tries(ent, window).items() if k >= CATCH_UP_TRIES}
-            owed = owed_days(name, m, rows, frm, yesterday, given)
+            # PR1B.2: a day-boundary stock owes TODAY too — its first block closes yesterday's flow (config.DAY_BOUNDARY_FLOWS)
+            last = yesterday + pd.Timedelta(days=1) if config.day_boundary_stock(name, m) else yesterday
+            owed = owed_days(name, m, rows, frm, last, given)
             if owed:
                 gaps[(name, m)] = owed
     return gaps, excluded, checked

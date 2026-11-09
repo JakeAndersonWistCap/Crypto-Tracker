@@ -3,6 +3,7 @@ $ burn), 6 (no holder value credited before the fee switch's execution) and 7 (t
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 import config
 import references
@@ -180,6 +181,248 @@ def test_3_every_a4_dollar_burn_cell_reads_the_day_priced_series():
     assert config.events_per_year("Sky", "a4_burn_usd") == config.events_per_year("Sky", "sky_stage2_burn_tokens")
     import reader
     assert reader.short_header("Gross burn Q0 ($, each day's burn × that day's price)") == "Gross burn, 90 days ($)"
+
+
+# ================================================================================================== item 2
+# A LIVE-SHAPED FIXTURE (Jake's store, 2026-11-09): hourly blocks; 0x…dEaD holds X + the burns landed by each block.
+# Burns: 10,000 at 12:00 every day to 11-06; 12,000 at 11-07 15:00; 18,000 at 11-08 10:00; 18,000 at 11-09 05:00.
+# The live read runs at 07:50 (the latest block is 07:00's). Read-date stamping stored 11-08 = 12,000 (the 11-07 burn)
+# and 11-09 = 36,000 (11-08's 18,000 + 11-09's first 18,000).
+UNI, BAL, BURN, TSG = "Uniswap", "burn_address_balance", "gross_burn_tokens", "total_supply_gross"
+TODAY2 = pd.Timestamp("2026-11-09")
+T0 = int((TODAY2 - pd.Timedelta(days=40)).tz_localize("UTC").timestamp())
+X = 113_000_000.0
+BURNS = [(pd.Timestamp(d) + pd.Timedelta(hours=12), 10_000.0) for d in pd.date_range("2026-10-15", "2026-11-06")] + [
+    (pd.Timestamp("2026-11-07 15:00"), 12_000.0), (pd.Timestamp("2026-11-08 10:00"), 18_000.0),
+    (pd.Timestamp("2026-11-09 05:00"), 18_000.0)]
+LIVE_BLOCK = int((TODAY2 + pd.Timedelta(hours=7)).tz_localize("UTC").timestamp() - T0) // 3600
+
+
+def _blk_time(n) -> pd.Timestamp:
+    return pd.Timestamp(T0 + int(n) * 3600, unit="s")
+
+
+def _first_block(day) -> int:
+    return int((pd.Timestamp(day).tz_localize("UTC").timestamp() - T0) // 3600)
+
+
+def _dead(t: pd.Timestamp) -> float:
+    return X + sum(v for when, v in BURNS if when <= t)
+
+
+class _Eth:
+    block_number = LIVE_BLOCK
+
+    def get_block(self, n):
+        return {"timestamp": T0 + int(n) * 3600}
+
+    def get_balance(self, a, block_identifier=None):
+        return 0
+
+    def get_code(self, a, block_identifier=None):
+        return b"\x60"
+
+
+class _Reader:
+    """The fake Ethereum: UNI totalSupply 1bn; 0x…dEaD's balance at a block is X + every burn landed by it."""
+
+    def __init__(self):
+        self.at_block, self.reads = {}, []
+
+    def web3(self, chain):
+        return type("W", (), {"eth": _Eth()})()
+
+    def checksum(self, a):
+        return a
+
+    def symbol_matches(self, chain, address, expected):
+        return True, expected
+
+    def has_code(self, chain, a):
+        return True
+
+    def scaled(self, chain, address, call, *args, **kw):
+        blk = self.at_block.get(chain, LIVE_BLOCK)
+        self.reads.append((str(_blk_time(blk)), call))
+        if not args:
+            return 1e9
+        return _dead(_blk_time(blk))
+
+
+def _rows2(metric, days, value, source):
+    return pd.DataFrame({"date": pd.to_datetime(days), "project": UNI, "metric": metric,
+                         "value": [float(value(pd.Timestamp(d))) for d in days], "tier": 2, "source": source})
+
+
+@pytest.fixture
+def jake(tmp_path, monkeypatch):
+    """Jake's store on 2026-11-09 07:50, read-date stamped: mid-day reads 10-20..11-06 (12:30), first-block reads 11-07 and
+    11-08 (the catch-up's), the live read 11-09 07:50; the deltas between consecutive readings dated at the later."""
+    import store as sm
+    from fetch import archive as ar
+    monkeypatch.setenv("TOKEN_METRICS_LOGCACHE", str(tmp_path / "cache"))
+    monkeypatch.setattr(ar, "today", lambda: TODAY2)
+    p = dict(config.PROJECT_BY_NAME[UNI])
+    p["contracts"] = {k: v for k, v in p["contracts"].items() if k in ("token", "burn_dead")}
+    monkeypatch.setitem(config.PROJECT_BY_NAME, UNI, p)
+    mid = list(pd.date_range("2026-10-20", "2026-11-06"))
+    reads = ([(d, _dead(d + pd.Timedelta(hours=12, minutes=30)), "chain:ethereum:burn_dead") for d in mid]
+             + [(pd.Timestamp(d), _dead(pd.Timestamp(d)), "chain:ethereum:burn_dead:archive")
+                for d in ("2026-11-07", "2026-11-08")]
+             + [(TODAY2, _dead(TODAY2 + pd.Timedelta(hours=7, minutes=50)), "chain:ethereum:burn_dead")])
+    stock = pd.DataFrame({"date": [d for d, _, _ in reads], "project": UNI, "metric": BAL,
+                          "value": [v for _, v, _ in reads], "tier": 2, "source": [s for _, _, s in reads]})
+    flows = pd.DataFrame({"date": [d for d, _, _ in reads[1:]], "project": UNI, "metric": BURN,
+                          "value": [b[1] - a[1] for a, b in zip(reads, reads[1:])], "tier": 2,
+                          "source": [s + ":delta" for _, _, s in reads[1:]]})
+    st = sm.Store(tmp_path / "metrics.db")
+    st.upsert(pd.concat([stock, flows]))
+    return st, p
+
+
+def _held2(st, metric):
+    return dict(st.conn.execute("SELECT substr(date,1,10), value FROM metrics WHERE project=? AND metric=? ORDER BY date",
+                                (UNI, metric)).fetchall())
+
+
+def test_2_the_fixture_reproduces_jakes_read_date_rows(jake):
+    st, _p = jake
+    held = _held2(st, BURN)
+    assert held["2026-11-08"] == 12_000.0 and held["2026-11-09"] == 36_000.0          # Jake's two stored days
+
+
+def test_2_the_route_lists_every_series_and_the_flow_is_a_new_declared_point():
+    assert config.day_boundary_stock("Uniswap", BAL) and config.day_boundary_stock("GEODNET", BAL)
+    assert config.day_boundary_stock("PancakeSwap", BAL) and config.day_boundary_stock("Venice AI", BAL)
+    assert not config.day_boundary_stock("Sky", BAL) and not config.day_boundary_stock("Hyperliquid", BAL)
+    assert config.day_boundary_flow_metrics("Venice AI") == ("gross_burn_tokens", "burn_revenue_funded")
+    from fetch.base import _measuring_point
+    assert _measuring_point("chain:ethereum:burn_dead:archive:delta:utc-day[span=2d]") == "chain:ethereum:burn_dead:utc-day"
+    assert _measuring_point("chain:ethereum:burn_dead:archive:delta") == "chain:ethereum:burn_dead"
+    new_src = "chain:ethereum:burn_dead:archive:delta:utc-day[span=2d]"
+    assert config.withdrawn_contract_keys("Uniswap", BURN, new_src) == []           # never read as a contract key
+    assert config.orphaned_contract_keys("Uniswap", new_src) == []
+    assert config.withdrawn_contract_keys("GEODNET", BURN, config.GEODNET_BURN_SUM_POINT + ":archive:delta:utc-day") == []
+    h = config.declared_handover("Uniswap", BURN)
+    assert h["ordered_points"] == ("chain:ethereum:burn_dead", "chain:ethereum:burn_dead:utc-day")
+    g = config.declared_handover("GEODNET", BURN)["ordered_points"]
+    assert g[-1] == config.GEODNET_BURN_SUM_POINT + ":utc-day" and g[:3] == (
+        "dune:8683175", "chain:polygon:burn_polygon", config.GEODNET_BURN_SUM_POINT)
+    # GEODNET's full-composition leg is the sum, whatever its day boundary (its monthly-window rule is unchanged)
+    assert config.handover_monthly_leg("GEODNET", BURN) == ("dune:8683175", config.GEODNET_BURN_SUM_POINT)
+    assert config.declared_handover("Uniswap", "actual_buyback_tokens")["ordered_points"][-1].endswith(":utc-day")
+
+
+def test_2_derive_day_flow_dates_the_burn_by_block_time_and_refuses_as_before():
+    from fetch.base import derive_day_flow
+    s = "chain:ethereum:burn_dead:archive"
+    f = derive_day_flow(100.0, "2026-11-07", s, 112.0, "2026-11-08", s, UNI, BURN)
+    assert str(f["date"].iloc[0])[:10] == "2026-11-07" and f["value"].iloc[0] == 12.0
+    assert f["source"].iloc[0] == "chain:ethereum:burn_dead:archive:delta:utc-day"
+    f = derive_day_flow(100.0, "2026-11-05", s, 130.0, "2026-11-08", s, UNI, BURN)
+    assert str(f["date"].iloc[0])[:10] == "2026-11-07" and f["source"].iloc[0].endswith(":utc-day[span=3d]")
+    assert derive_day_flow(100.0, "2026-11-07", s, 90.0, "2026-11-08", s, UNI, BURN).empty          # a fall
+    assert derive_day_flow(100.0, "2026-11-07", "chain:ethereum:fire_pit", 112.0, "2026-11-08", s, UNI, BURN).empty
+    assert derive_day_flow(100.0, "2026-11-08", s, 112.0, "2026-11-08", s, UNI, BURN).empty         # no interval
+
+
+def test_2_the_restatement_puts_jakes_store_on_block_time(jake):
+    """rederive.py --day-boundary: every mid-day reading is read again at its day's first block; the flow is re-derived
+    from first block to first block, dated the day the burns happened — 11-07 = 12,000, 11-08 = 18,000, and the as-of day
+    11-09 neither stored nor counted."""
+    st, _p = jake
+    from fetch import archive as ar
+    r = _Reader()
+    plan = ar.day_boundary_restatement(st, UNI, BAL, reader=r, solana={}, archive_chains={"ethereum"})
+    assert not plan["blocked"] and not plan["unread"]
+    assert set(plan["restated"]) == {str(d.date()) for d in pd.date_range("2026-10-20", "2026-11-06")} | {"2026-11-09"}
+    assert plan["restated"]["2026-11-09"][2] == _dead(TODAY2) == X + sum(v for w, v in BURNS if w < TODAY2)
+    assert {s for *_x, s in plan["restated"].values()} == {"chain:ethereum:burn_dead:archive"}
+    assert len(plan["old"]) == 20 and not st.conn.execute(               # the plan only reads the store
+        "SELECT 1 FROM metrics WHERE source LIKE '%utc-day%'").fetchall()
+    n, deleted, written = ar.apply_day_boundary_restatement(st, UNI, BAL, plan)
+    assert (n, deleted) == (19, 20)
+    held = _held2(st, BURN)
+    assert held["2026-11-07"] == 12_000.0 and held["2026-11-08"] == 18_000.0 and "2026-11-09" not in held
+    assert all(held[str(d.date())] == 10_000.0 for d in pd.date_range("2026-10-20", "2026-11-06"))
+    assert {s for (s,) in st.conn.execute("SELECT DISTINCT source FROM metrics WHERE metric=?", (BURN,))} == {
+        "chain:ethereum:burn_dead:archive:delta:utc-day"}
+    # every stock reading is now the first block of its day, and the flows telescope onto them exactly
+    import build_workbook as bw
+    long = pd.read_sql("SELECT date, project, metric, value, source FROM metrics", st.conn)
+    long["date"] = pd.to_datetime(long["date"])
+    g = {m: x.sort_values("date") for m, x in long.groupby("metric")}
+    t = bw.telescoping(UNI, BURN, BAL, g[BURN], g[BAL])
+    assert t["flow_recon_blocked"] is None and abs(t["flow_residual"]) < 1e-6
+    assert t["flow_span"] == ("2026-10-20", "2026-11-09")
+    # a second plan finds nothing to restate and nothing new
+    plan2 = ar.day_boundary_restatement(st, UNI, BAL, reader=_Reader(), solana={}, archive_chains={"ethereum"})
+    assert not plan2["restated"] and not plan2["old"] and plan2["new"].empty
+
+
+def test_2_the_revenue_window_sum_is_the_first_block_difference():
+    """Jake's expected Uniswap burn on the revenue window 2026-08-12..11-08 (5,430,001 UNI) is the 0x…dEaD balance at the
+    first block of 11-09 minus that at the first block of 08-12: read 2026-11-09 from eth.drpc.org (archive eth_call,
+    UNI.balanceOf(0x…dEaD)); first blocks from eth.blockscout.com getblocknobytime, each checked (block − 1 < 00:00 UTC)."""
+    reads = config.DAY_BOUNDARY_EVIDENCE["Uniswap"]["first_block_reads"]
+    assert reads["2026-11-09"]["block"] == 26_373_603 and reads["2026-08-12"]["block"] == 25_735_201
+    burned = reads["2026-11-09"]["balance"] - reads["2026-08-12"]["balance"]
+    assert round(burned) == 5_430_001
+    assert reads["2026-11-08"]["balance"] - reads["2026-11-07"]["balance"] == 12_000.0            # the 11-07 burn
+    assert reads["2026-11-09"]["balance"] - reads["2026-11-08"]["balance"] == 18_000.0            # the 11-08 burn
+
+
+def test_2_the_catch_up_reads_todays_first_block_and_stores_yesterday_never_today(tmp_path, monkeypatch):
+    """Steady state after PR1B.2: first-block readings to 11-08 and their flows to 11-07; on 11-09 the catch-up reads
+    today's first block (the only series that reads today) and differences 11-08 = 18,000; 11-09 is not stored."""
+    import store as sm
+    from fetch import archive as ar
+    monkeypatch.setenv("TOKEN_METRICS_LOGCACHE", str(tmp_path / "cache"))
+    monkeypatch.setattr(ar, "today", lambda: TODAY2)
+    p = dict(config.PROJECT_BY_NAME[UNI])
+    p["contracts"] = {k: v for k, v in p["contracts"].items() if k in ("token", "burn_dead")}
+    monkeypatch.setitem(config.PROJECT_BY_NAME, UNI, p)
+    days = list(pd.date_range("2026-10-30", "2026-11-08"))
+    st = sm.Store(tmp_path / "metrics.db")
+    st.upsert(pd.concat([
+        _rows2(BAL, days, _dead, "chain:ethereum:burn_dead:archive"),
+        _rows2(BURN, days[:-1], lambda d: _dead(d + pd.Timedelta(days=1)) - _dead(d),
+               "chain:ethereum:burn_dead:archive:delta:utc-day"),
+        _rows2(TSG, days + [TODAY2], lambda d: 1e9, "chain:ethereum:token")]))
+    gaps, _x, _c = ar.catch_up_gaps(st, [p])
+    assert gaps == {(UNI, BAL): ["2026-11-09"]}                 # today, for the day-boundary stock only
+    r = _Reader()
+    ar.catch_up(st, [p], reader=r, archive_chains={"ethereum"}, budget_s=120, max_days=7, valuers=[])
+    assert {(d[:10], c) for d, c in r.reads} == {("2026-11-09", "balanceOf")}
+    assert _held2(st, BAL)["2026-11-09"] == _dead(TODAY2)
+    held = _held2(st, BURN)
+    assert held["2026-11-08"] == 18_000.0 and held["2026-11-07"] == 12_000.0 and "2026-11-09" not in held
+
+
+def test_2_the_live_tier_stores_neither_the_mid_day_reading_nor_a_delta(monkeypatch):
+    from fetch.base import FetchOutput
+    from fetch.chain import Chain
+    p = dict(config.PROJECT_BY_NAME[UNI])
+    p["contracts"] = {k: v for k, v in p["contracts"].items() if k in ("token", "burn_dead")}
+    monkeypatch.setitem(config.PROJECT_BY_NAME, UNI, p)
+    ch = Chain(prior_values={(UNI, BAL): X}, prior_dates={(UNI, BAL): "2026-11-08"},
+               prior_sources={(UNI, BAL): "chain:ethereum:burn_dead:archive"}, prior_delta={(UNI, BAL): X})
+    ch.reader = _Reader()
+    out = FetchOutput()
+    ch.run([p], None, out)
+    f = out.frame()
+    assert BAL not in set(f["metric"]) and BURN not in set(f["metric"])
+    assert any("NOT STORED (PR1B.2)" in str(getattr(e, "message", "")) for e in out.log)
+
+
+def test_2_the_handover_is_accepted_in_order_and_refused_when_the_legs_overlap():
+    import build_workbook as bw
+    old, new = "chain:ethereum:burn_dead", "chain:ethereum:burn_dead:utc-day"
+    spans = {old: (pd.Timestamp("2026-08-01"), pd.Timestamp("2026-11-09")),
+             new: (pd.Timestamp("2026-11-10"), pd.Timestamp("2026-11-20"))}
+    assert bw.handover_refusal(UNI, BURN, (old, new), spans) is None
+    spans[new] = (pd.Timestamp("2026-11-08"), pd.Timestamp("2026-11-20"))
+    assert "OVERLAP" in bw.handover_refusal(UNI, BURN, (old, new), spans)
 
 
 def test_6_the_metrics_doc_names_the_credit_start():

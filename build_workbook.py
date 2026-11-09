@@ -364,7 +364,7 @@ def _months_until_live(row: dict, name: str, metric: str, g: pd.DataFrame, s: pd
     legs = config.handover_monthly_leg(name, metric)
     if not legs or g is None or g.empty:
         return
-    pts = g["source"].astype(str).map(_measuring_point)
+    pts = g["source"].astype(str).map(_measuring_point).map(config.strip_point_markers)   # PR1B.2: by composition
     live = g.loc[pts == legs[1], "date"]
     live_days = int((asof - live.min()).days) + 1 if len(live) else 0
     why = (f"the full live read ({legs[1]}) covers {live_days} day(s), so this window is complete "
@@ -1933,7 +1933,7 @@ def _monthly_leg_views(groups: dict) -> None:
         legs = config.handover_monthly_leg(name, metric)
         if not legs or g.empty:
             continue
-        pts = g["source"].astype(str).map(_measuring_point)
+        pts = g["source"].astype(str).map(_measuring_point).map(config.strip_point_markers)   # PR1B.2
         # MONTHLY ROWS NEVER SHARE DATES WITH THE DAILY SERIES (Jake, 2026-10-05, generalised). A
         # monthly row whose month starts on or after the daily series' first day is the CROSS-CHECK
         # (config.monthly_crosscheck_metric), not the series: the daily rows hold that month.
@@ -6983,6 +6983,25 @@ def telescoping(project: str, metric: str, parent: str, series, stock) -> dict:
             f"is not in the store, the rows that produced them have been deleted or were written "
             f"under another name.")}
     st = stock.sort_values("date")
+    # PR1B.2: A FLOW STAMPED BY BLOCK TIME (`utc-day`: dated d, the stock's first-block reading of d+1 minus that of its
+    # first covered day) telescopes from the reading ON its first covered day to the reading the day AFTER its last row;
+    # a read-date leg before it (the declared handover's earlier leg) telescopes as before, and the two moves add up
+    utc = deltas["source"].astype(str).map(
+        lambda s: "utc-day" in config.strip_source_annotations(s).split(":"))
+    if utc.any():
+        day = _telescope_day_leg(metric, parent, deltas[utc], st)
+        if (~utc).sum() == 0 or day.get("flow_recon_blocked"):
+            if not day.get("flow_recon_blocked"):
+                day["flow_accounted"] += _ONE_OFF_REMOVED.get((project, metric), 0.0)
+                day["flow_residual"] = day["flow_stock_move"] - day["flow_accounted"]
+            return day
+        old = telescoping(project, metric, parent, deltas[~utc], stock)
+        if old.get("flow_recon_blocked"):
+            return old
+        moved = old["flow_stock_move"] + day["flow_stock_move"]
+        accounted = old["flow_accounted"] + day["flow_accounted"]
+        return {**day, "flow_stock_move": moved, "flow_accounted": accounted, "flow_residual": moved - accounted,
+                "flow_span": (old["flow_span"][0], day["flow_span"][1])}
     # OVER THE DATES BOTH HOLD (G14 2, Jake's 10-22 run: GEODNET's and Hyperliquid's burn flows ran to 10-22 while the
     # stock's tier timed out at 10-21 — "THE FLOWS DO NOT SUM", −105,000 and −22,648, 9 BROKEN cells). A flow row dated
     # after the stock's last reading is not unaccounted for: the reading it telescopes to is not stored yet. The check
@@ -7021,6 +7040,39 @@ def telescoping(project: str, metric: str, parent: str, series, stock) -> dict:
             "flow_recon_blocked": None,
             "flow_recon_waiting": (f"{len(waiting)} {metric} row(s) after {pd.Timestamp(end):%Y-%m-%d} wait for the "
                                    f"{parent} reading they telescope to; reconciled over the dates both hold"
+                                   if len(waiting) else None)}
+
+
+def _telescope_day_leg(metric: str, parent: str, deltas: pd.DataFrame, st: pd.DataFrame) -> dict:
+    """PR1B.2: the telescoping identity for flows stamped by block time — a row dated d with [span=N] is the stock's
+    first-block reading of d + 1 minus that of d − N + 1, so the rows sum to the reading the day after the last row minus
+    the reading on the first row's first covered day. Rows whose closing reading is not stored yet wait (G14 2)."""
+    from fetch.validate import _span_days               # noqa: PLC0415
+    sd = (st.assign(d=pd.to_datetime(st["date"]).dt.normalize()).drop_duplicates("d", keep="last")
+          .set_index("d")["value"].astype(float))
+    dd = deltas.assign(d=pd.to_datetime(deltas["date"]).dt.normalize()).sort_values("d")
+    closes = dd["d"] + pd.Timedelta(days=1)
+    held = closes.isin(sd.index)
+    if not held.any():
+        return {"flow_recon_blocked": (
+            f"no {parent} reading on the day after any {metric} row stamped by block time (first "
+            f"{pd.Timestamp(dd['d'].iloc[0]):%Y-%m-%d}) — the first-block readings they close on are not stored.")}
+    last_i = held[held].index[-1]
+    last = dd.loc[last_i, "d"]
+    rows = dd[dd["d"] <= last]
+    waiting = dd[dd["d"] > last]
+    f0 = rows["d"].iloc[0] - pd.Timedelta(days=_span_days(rows["source"].iloc[0]) - 1)
+    if f0 not in sd.index:
+        return {"flow_recon_blocked": (
+            f"NO FIRST-BLOCK READING OF {parent} ON {f0:%Y-%m-%d}, the first day the earliest {metric} row stamped by "
+            f"block time covers — the reading it was differenced from is not in the store now.")}
+    end = last + pd.Timedelta(days=1)
+    moved = float(sd[end]) - float(sd[f0])
+    return {"flow_stock_move": moved, "flow_accounted": float(rows["value"].astype(float).sum()),
+            "flow_residual": moved - float(rows["value"].astype(float).sum()),
+            "flow_span": (f0.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")), "flow_recon_blocked": None,
+            "flow_recon_waiting": (f"{len(waiting)} {metric} row(s) after {last:%Y-%m-%d} wait for the {parent} "
+                                   f"first-block reading they close on; reconciled over the dates both hold"
                                    if len(waiting) else None)}
 
 

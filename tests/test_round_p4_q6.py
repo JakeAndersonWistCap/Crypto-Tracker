@@ -23,6 +23,15 @@ sys.path.insert(0, str(ROOT))
 
 import config  # noqa: E402
 
+
+@pytest.fixture(autouse=True)
+def _read_date_stamping(monkeypatch):
+    """PR1B.2 (Jake 2026-11-09): PancakeSwap's burn stock became a DAY-BOUNDARY stock (config.DAY_BOUNDARY_FLOWS). These
+    tests pin the catch-up's generic mechanics on a daily archivable stock with a read-date flow, which every other daily
+    series still is: they run with the day-boundary rule off (the rule is tested in tests/test_pr1b_burn.py)."""
+    monkeypatch.setitem(config.DAY_BOUNDARY_FLOW, "on", False)
+
+
 PC, BAL, BURN, TSG = "PancakeSwap", "burn_address_balance", "gross_burn_tokens", "total_supply_gross"
 ETH, PX, MC, VOL = "Ethereum", "price_usd", "market_cap_usd", "volume_usd"
 GEO, REL = "GEODNET", "pool_release_tokens"

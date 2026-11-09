@@ -1952,7 +1952,9 @@ def handover_monthly_leg(project_name: str, metric: str) -> tuple[str, str] | No
     q = ((PROJECT_BY_NAME.get(project_name) or {}).get("dune_queries") or {}).get(origin) or {}
     if q.get("granularity") != "monthly" or f"dune:{q.get('query_id')}" != pts[0]:
         return None
-    return pts[0], pts[-1]
+    # PR1B.2: the full-COMPOSITION leg, whatever its day boundary (GEODNET's sum and its utc-day restamping are one
+    # composition; callers compare strip_point_markers of each row's point)
+    return pts[0], strip_point_markers(pts[-1])
 
 
 def monthly_crosscheck_metric(project_name: str, metric: str) -> str | None:
@@ -2008,7 +2010,15 @@ SOURCE_MARKERS = ("PARTIAL", "delta", "recurring-only", "rederived", "as-buyback
                   "lp-withdrawal-removed",
                   # a past day's value read now from an on-chain RECORD that keeps it (Round G 2.3: DssVest.awards(id)
                   # keeps bgn / fin / tot after a vest ends or is yanked) — the same measuring point as the live read
-                  "record")
+                  "record",
+                  # PR1B.2 (Jake 2026-11-09): a differenced flow STAMPED BY BLOCK TIME — the stock's balance at the first
+                  # block of UTC day d+1 minus its balance at the first block of day d, dated d (DAY_BOUNDARY_FLOWS).
+                  # NOT a contract key, but a DIFFERENT MEASURING POINT from the read-to-read delta dated at the read:
+                  # kept by fetch.base._measuring_point (POINT_MARKERS), so the change is a declared handover
+                  "utc-day")
+# Registered markers that are PART OF THE MEASURING POINT (fetch.base._measuring_point keeps them; every contract-key
+# parser still skips them). PR1B.2: "utc-day" — the same address, a different day boundary for the flow.
+POINT_MARKERS = ("utc-day",)
 
 # A bracketed ANNOTATION appended to a contract key: "minter[tail@21bps]". Unlike the markers
 # above it is not its own colon-delimited piece — it is glued to the key — so every parser that
@@ -21170,6 +21180,107 @@ def cumulative_flow_for(project_name: str, metric: str) -> str | None:
     if own is not None:
         return own or None
     return CUMULATIVE_FLOW.get(metric)
+
+
+# ===== PR1B.2 — A BALANCE-DELTA FLOW IS STAMPED BY BLOCK TIME (Jake 2026-11-09). =====
+# Jake's store, Uniswap: the 0x…dEaD deltas were read-to-read differences stamped at the READ's date — stored 11-08 =
+# 12,000 = the 11-07 burn on chain; stored 11-09 = 36,000 = 11-08's 18,000 + 11-09's first 07:50 (18,000). Each stored day
+# is now the burn OF THAT UTC DAY: the stock's balance at the first block of day d+1 minus its balance at the first block
+# of day d, dated d, and the incomplete as-of day is neither stored nor counted (as for every other daily flow).
+#   * THE STOCK IS READ AT EACH DAY'S FIRST BLOCK. Every stored row of a stock below is the balance at the first block of
+#     its UTC date (the archive route's read, `archive` marker); the catch-up reads it for every owed day, TODAY's
+#     included, before the tiers (fetch.archive.catch_up). The live tier's read at its own block is not stored for these
+#     stocks (its run-time flags still read it): a day the archive cannot read is a named hole, never a mid-day reading.
+#   * THE FLOW (fetch.archive.derive_flows): between two consecutive first-block readings d0 < d1, dated d1 − 1
+#     ([span=Nd] where d1 − d0 = N > 1), source marked `utc-day` — a new measuring point, declared below as the last
+#     leg of each flow's handover (Rule 10; the build's overlap check refuses legs that overlap). A pair with a mid-day
+#     reading at either end is never differenced.
+#   * HISTORY (rederive.py --day-boundary): every stored mid-day reading of the stock is restated to the first block of
+#     its day (archive read), and the whole flow re-derived on the utc-day basis, so the series is like-for-like back to
+#     its first reading (preview by default, --apply writes). Until it runs, the old leg stays before the new one.
+# THE SERIES ON THE ROUTE (chain:*:delta, fetch.chain + fetch.archive): {(project, stock): the stock's measuring point}.
+# Their flows: gross_burn_tokens (and its copies: actual_buyback_tokens as-buyback — Uniswap, GEODNET — and Venice AI's
+# burn_revenue_funded). NOT on it, said so: Sky's burn_address_balance / governance_burn_balance / other_burn_balance are
+# LOG-SCAN cumulatives (chain:ethereum:burn_logs, kind burn_transfer_logs — no state to read at a past block; the scan's
+# own block days would date them; Sky's round); Ethereum (etherscan ethsupply2 deltas) and Hyperliquid (HyperCore API
+# deltas) are other routes with no block-time state read (their rounds); Chainlink's Reserve declares no flow.
+DAY_BOUNDARY_FLOW = {"on": True, "decided_by": "Jake", "decided_on": "2026-11-09", "spec": "PR1B.2",
+                     "marker": "utc-day"}
+DAY_BOUNDARY_FLOWS = {
+    ("Uniswap", "burn_address_balance"): "chain:ethereum:burn_dead",
+    ("GEODNET", "burn_address_balance"): "chain:sum(polygon:burn_polygon+solana:burn_solana_token_account)",
+    ("PancakeSwap", "burn_address_balance"): "chain:bsc:burn_dead",
+    ("Venice AI", "burn_address_balance"): "chain:base:burn_zero",
+}
+
+
+# THE BASIS, READ ON CHAIN (2026-11-09, keyless): UNI.balanceOf(0x…dEaD) by archive eth_call on eth.drpc.org at the first
+# block of each UTC day — the block from eth.blockscout.com getblocknobytime (closest=after), each checked: block − 1 is
+# before 00:00 UTC, the block at or after it. The window's burn is the difference of its two ends: Jake's 5,430,001 UNI
+# for 2026-08-12..11-08, and his 11-07 = 12,000 / 11-08 = 18,000.
+DAY_BOUNDARY_EVIDENCE = {
+    "Uniswap": {
+        "read_on": "2026-11-09", "rpc": "eth.drpc.org (archive eth_call)", "blocks_from": "eth.blockscout.com",
+        "call": "UNI 0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984 balanceOf(0x000000000000000000000000000000000000dEaD)",
+        "first_block_reads": {
+            "2026-08-12": {"block": 25_735_201, "block_ts": 1_786_492_811, "prev_ts": 1_786_492_799,
+                           "balance": 108_443_579.9671},
+            "2026-11-07": {"block": 26_359_254, "block_ts": 1_794_009_611, "prev_ts": 1_794_009_599,
+                           "balance": 113_843_581.2138},
+            "2026-11-08": {"block": 26_366_424, "block_ts": 1_794_096_011, "prev_ts": 1_794_095_999,
+                           "balance": 113_855_581.2138},
+            "2026-11-09": {"block": 26_373_603, "block_ts": 1_794_182_411, "prev_ts": 1_794_182_399,
+                           "balance": 113_873_581.2138}},
+        "reading": "2026-08-12..11-08 burned 113,873,581.2138 − 108,443,579.9671 = 5,430,001.2467 UNI (Jake's expected "
+                   "5,430,001); 11-07 = 12,000, 11-08 = 18,000 — the rows a block-time stamping stores"},
+}
+
+
+def day_boundary_stock(project_name: str, stock: str) -> bool:
+    """PR1B.2: is this stock read at each UTC day's first block, its flow stamped by block time (DAY_BOUNDARY_FLOWS)?"""
+    return bool(DAY_BOUNDARY_FLOW["on"]) and (project_name, stock) in DAY_BOUNDARY_FLOWS \
+        and bool(cumulative_flow_for(project_name, stock))
+
+
+def day_boundary_flow_metrics(project_name: str) -> tuple:
+    """The flows stamped by block time for this project: each day-boundary stock's flow, and burn_revenue_funded where
+    the flow is also the recurring programme (burn_composition.flow_is_recurring_only)."""
+    out = []
+    for (n, stock) in DAY_BOUNDARY_FLOWS:
+        if n == project_name and day_boundary_stock(n, stock):
+            f = cumulative_flow_for(n, stock)
+            out.append(f)
+            comp = (PROJECT_BY_NAME.get(n) or {}).get("burn_composition") or {}
+            if comp.get("flow_is_recurring_only") and f == "gross_burn_tokens":
+                out.append("burn_revenue_funded")
+    return tuple(out)
+
+
+def strip_point_markers(point: str) -> str:
+    """A measuring point without its POINT_MARKERS (PR1B.2): the same address and composition, whatever the day
+    boundary — for the checks about WHAT is read (a handover's full-composition leg), not WHEN it is stamped."""
+    return ":".join(p for p in str(point or "").split(":") if p not in POINT_MARKERS)
+
+
+for (_n, _stock), _pt in DAY_BOUNDARY_FLOWS.items():
+    if not day_boundary_stock(_n, _stock):
+        continue
+    for _f in day_boundary_flow_metrics(_n):
+        _h = PROJECT_BY_NAME[_n].setdefault("series_handover", {}).get(_f)
+        _pts = tuple(_h["ordered_points"]) if _h else (_pt,)
+        _new = dict(_h or {})
+        _new.update({
+            "ordered_points": _pts + (f"{_pt}:{DAY_BOUNDARY_FLOW['marker']}",),
+            "why": ((_h or {}).get("why", "") + " THEN (PR1B.2, Jake 2026-11-09): " if _h else "PR1B.2 (Jake 2026-11-09): ")
+                   + f"the change of {_stock} between the first blocks of consecutive UTC days, dated the earlier day "
+                     f"(block time), after the read-to-read delta dated at the read; rederive.py --day-boundary "
+                     f"restates the history onto it",
+            "composition_change": (_h or {}).get("composition_change")
+                                  or "none: the same address and the same burns; only the day boundary moves (the read's "
+                                     "time of day -> 00:00 UTC) and each row is dated the day its burns happened",
+            "day_boundary_declared": "2026-11-09"})
+        _new.setdefault("declared", "2026-11-09")
+        PROJECT_BY_NAME[_n]["series_handover"][_f] = _new
 
 SERIES_GRANULARITIES = ("daily", "weekly", "monthly")
 
