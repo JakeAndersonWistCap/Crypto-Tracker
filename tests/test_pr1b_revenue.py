@@ -286,6 +286,41 @@ def test_a_native_route_that_fails_marks_the_day_partial_and_names_the_chain(mon
     assert f.cst("eth")["days"]["2026-11-08"]["native"] is None
 
 
+def test_a_native_leg_that_did_not_answer_is_asked_again_and_lifts_the_partial(monkeypatch, tmp_path):
+    b = _day_block("2026-11-08") + 5
+    native = [{"blockNumber": str(b), "to": JAR, "from": SENDER, "value": str(2 * 10 ** 18), "isError": "0",
+               "hash": "0xn", "index": "1"}]
+    chains = {"eth": _cs("eth", "2026-11-08", native_from="2026-11-08")}
+    eth = Chain({b: [_log(TOK_A, 10 ** 18)]})
+    f, out, fr = _run(monkeypatch, tmp_path, chains, {"eth": eth}, FakeHttp(native=native, native_fails=True))
+    assert fr[fr.metric == "tokenjar_inflow_usd"].iloc[0]["source"].endswith(":PARTIAL")
+    n_logs = eth.calls.count("eth_getLogs")
+    f, out, fr = _run(monkeypatch, tmp_path, chains, {"eth": eth}, FakeHttp(native=native))
+    row = fr[fr.metric == "tokenjar_inflow_usd"].iloc[0]
+    assert row["value"] == pytest.approx(2.0 + 6000.0) and not row["source"].endswith(":PARTIAL")
+    assert eth.calls.count("eth_getLogs") == n_logs              # only the native leg was asked again
+    assert fr[fr.metric == "tokenjar_inflow_transfers"].iloc[0]["value"] == 2
+
+
+def test_blockscout_key_goes_to_the_pro_api_first_and_never_into_a_message(monkeypatch, tmp_path):
+    monkeypatch.setenv(config.EXPLORERS["blockscout"]["key_env"], "SECRETKEY123")
+    cs = _cs("eth", "2026-11-08", chain_id=1)
+    routes = tj.TokenJarInflows._bs_routes(cs, cs["native"])
+    assert routes[0]["url"] == "https://api.blockscout.com/1/api" and routes[0]["key"] and not routes[1].get("key")
+    assert len(tj.TokenJarInflows._bs_routes({**cs, "pro_paid_only": True}, cs["native"])) == 1
+    f = tj.TokenJarInflows(http=None, rpc_post=lambda u, p: None, root=tmp_path, env_rpcs={})
+    f._deadline = f.clock() + 100
+    asked = []
+
+    def get(url, params):
+        asked.append((url, dict(params)))
+        raise RuntimeError(f"HTTP 500 from {url}?apikey={params.get('apikey')}")
+    f._get = get
+    nat, why = f.native("eth", cs, 1, 2)
+    assert nat is None and asked[0][1]["apikey"] == "SECRETKEY123" and "apikey" not in asked[1][1]
+    assert "SECRETKEY123" not in why and "***" in why
+
+
 def test_a_chain_whose_logs_fail_holds_back_the_total_and_resumes(monkeypatch, tmp_path):
     good, bad = Chain({_day_block("2026-11-08"): [_log(TOK_A, 10 ** 18)]}), Chain({}, fail_logs=True)
     chains = {"eth": _cs("eth", "2026-11-08"), "l2": _cs("l2", "2026-11-08")}

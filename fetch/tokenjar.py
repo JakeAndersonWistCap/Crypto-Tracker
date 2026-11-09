@@ -66,6 +66,7 @@ ROOT = Path(__file__).resolve().parent.parent
 SRC = "chain:tokenjars:tokenjar_inflow"          # the stored measuring point — keep it stable (config series_handover)
 SRC_BAL = "chain:tokenjars:tokenjar_balance"
 COINS_PER_CALL = 60
+NATIVE_TRIES = 6           # runs a day's native leg is asked before it stays NOT READ (named, PARTIAL)
 MULTICALL_CHUNK = 300
 SEL = {"factory": "c45a0155", "token0": "0dfe1681", "token1": "d21220a7", "getReserves": "0902f1ac",
        "totalSupply": "18160ddd", "symbol": "95d89b41", "balanceOf": "70a08231", "aggregate3": "82ad56cb"}
@@ -473,24 +474,44 @@ class TokenJarInflows:
         if cs.get("native_not_read"):
             return None, cs["native_not_read"]
         errs = []
-        for r in cs.get("native") or ():
+        for r in self._bs_routes(cs, cs.get("native") or ()):
             try:
                 if r["kind"] == "blockscout":
                     rows = []
                     for action in ("txlistinternal", "txlist"):
                         rows += self._bs_txs(r, action, cs["jar"], b0, b1)
-                    return native_from_txs(rows, cs["jar"]), _host(r["url"])
+                    return native_from_txs(rows, cs["jar"]), _host(r["url"]) + (" (keyed)" if r.get("key") else "")
             except Exception as e:  # noqa: BLE001
-                errs.append(f"{_host(r.get('url', ''))}: {str(e)[:120]}")
+                errs.append(f"{_host(r.get('url', ''))}: {_scrub(str(e))[:120]}")
         return None, ("no native-coin route answered (" + ("; ".join(errs[-2:]) or "none declared") + ")")
+
+    @staticmethod
+    def _bs_routes(cs: dict, routes) -> list:
+        """The declared Blockscout routes, each preceded by Blockscout's PRO API with BLOCKSCOUT_API_KEY when .env has
+        it and the chain id is declared (config.EXPLORERS['blockscout'], the repo's key handling; the keyless
+        instances allow ~10 calls per ~8 minutes — eth.blockscout.com's x-ratelimit headers, 2026-11-09). The key
+        travels as a parameter and never reaches a message (_scrub)."""
+        import os                                                       # noqa: PLC0415
+        key = os.environ.get(config.EXPLORERS["blockscout"]["key_env"], "").strip()
+        pro = config.EXPLORERS["blockscout"].get("pro_api")
+        out = []
+        for r in routes:
+            if r.get("kind") == "blockscout" and key and pro and cs.get("chain_id") and not cs.get("pro_paid_only"):
+                out.append({**r, "url": pro.format(chain_id=int(cs["chain_id"])), "key": True})
+            out.append(r)
+        return out
 
     def _bs_txs(self, r: dict, action: str, jar: str, b0: int, b1: int) -> list:
         out, size = [], int(r.get("page", 1000))
         for page in range(1, 1000):
             if self._left() <= 0:
                 raise RouteFailed("time budget reached inside the day")
-            j = self._get(r["url"], {"module": "account", "action": action, "address": jar, "startblock": b0,
-                                     "endblock": b1, "page": page, "offset": size, "sort": "asc"})
+            q = {"module": "account", "action": action, "address": jar, "startblock": b0,
+                 "endblock": b1, "page": page, "offset": size, "sort": "asc"}
+            if r.get("key"):
+                import os                                               # noqa: PLC0415
+                q["apikey"] = os.environ.get(config.EXPLORERS["blockscout"]["key_env"], "").strip()
+            j = self._get(r["url"], q)
             if not isinstance(j, dict):
                 raise RouteFailed("a non-JSON answer")
             res = j.get("result")
@@ -611,6 +632,26 @@ class TokenJarInflows:
                 "native": None if nat is None else [str(nat[0]), nat[1]], "native_route": nroute,
                 "native_usd": v["by_token"].get(NATIVE, 0.0)}
 
+    def retry_native(self, chain: str, cs: dict, day: str, rec: dict) -> None:
+        """Ask a day's native leg again (it did not answer when the day was read): on an answer the coin is priced and
+        added to the day — its stored row is replaced, PARTIAL lifted — else the try is counted."""
+        nat, nroute = self.native(chain, cs, int(rec["b0"]), int(rec["b1"]))
+        rec["native_tries"] = int(rec.get("native_tries") or 1) + 1
+        if nat is None:
+            rec["native_route"] = nroute
+            return
+        rec["native"], rec["native_route"] = [str(nat[0]), nat[1]], nroute
+        if nat[1]:
+            self.ask_prices(day, [self.coin(chain, cs, NATIVE)])
+            p = self.price_fn(day, chain, cs)(NATIVE)
+            rec["transfers"] = int(rec["transfers"]) + nat[1]
+            if p is None:
+                rec["unpriced_transfers"] = int(rec["unpriced_transfers"]) + nat[1]
+                rec["unpriced"] = (rec.get("unpriced") or []) + [[NATIVE, "native", nat[1]]]
+            else:
+                v = nat[0] / 1e18 * float(p[0])
+                rec["usd"], rec["native_usd"] = float(rec["usd"]) + v, v
+
     # ------------------------------------------------------------------ balances (the stock)
     def read_balance(self, chain: str, cs: dict, day: str) -> dict:
         """The jar's holdings at the day's closing block: balanceOf of every token SEEN ARRIVING in the days read, plus
@@ -648,6 +689,8 @@ class TokenJarInflows:
 
     def _project(self, name: str, spec: dict, out, unbounded: bool) -> None:
         self.spec = spec
+        if unbounded and self.bs_http is not self.http:
+            self.bs_http.max_retry_wait = 600.0       # a seed waits out a keyless Blockscout window (x-ratelimit-reset)
         self._deadline = self.clock() + (float("inf") if unbounded else float(spec["budget_s"]))
         st = self._load(spec["state_path"])
         self.st = st if st.get("version") == 1 else {"version": 1, "chains": {}, "balances": {}}
@@ -664,6 +707,10 @@ class TokenJarInflows:
                         continue
                     rec = self.cst(chain)["days"].get(day)
                     if rec and rec.get("stage") == "read":
+                        if rec.get("native") is None and cs.get("native") and \
+                                int(rec.get("native_tries") or 1) < NATIVE_TRIES and chain not in failed and self._left() > 0:
+                            self.retry_native(chain, cs, day, rec)
+                            self._save()
                         continue
                     if chain in failed or self._left() <= 0:
                         continue
@@ -796,6 +843,13 @@ class TokenJarInflows:
             out.add(pd.concat(frames, ignore_index=True), SOURCE, name, msg, TIER)
         else:
             out.warn(SOURCE, name, "nothing stored — " + msg, TIER)
+
+
+def _scrub(text: str) -> str:
+    """A message with the Blockscout key masked (it travels as a query parameter)."""
+    import os                                                           # noqa: PLC0415
+    k = os.environ.get(config.EXPLORERS["blockscout"]["key_env"], "").strip()
+    return str(text).replace(k, "***") if k else str(text)
 
 
 def _clean(text: str) -> str:
