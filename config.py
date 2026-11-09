@@ -24437,6 +24437,8 @@ def accepted_loss_record(project: str, rule: str, detail: str, allowance: dict, 
 # measuring_guard (--compare and --newer), sanity.lost_headlines and the Credibility continuity row (one rule).
 _MS_OLD = "MARKET SHARE vs its category (now; a shifted quarter: that quarter's mean) — peer set beside"
 _MS_NEW = "MARKET SHARE vs its category (now; a shifted quarter: the reading at its end) — peer set beside"
+# PR1B.10b: the first basis on the 90-day mean (build_workbook.MARKET_SHARE_HEAD — the test checks they agree)
+_MS_90 = "MARKET SHARE vs its category (90-day mean; a shifted quarter: that quarter's mean) — peer set beside"
 _MS2_OLD = "MARKET SHARE, SECOND BASIS — chain fees vs 13 chains (now; a shifted quarter: that quarter's mean)"
 _MS2_NEW = "MARKET SHARE, SECOND BASIS — chain fees vs 13 chains (now; a shifted quarter: the reading at its end)"
 HEADLINE_RENAMES: list[dict] = [
@@ -24465,6 +24467,57 @@ HEADLINE_RENAMES: list[dict] = [
      "date": "2026-11-05",
      "why": "header renamed (PR1.S2) and Uniswap's value is the 90-day mean of the daily shares (config."
             "MARKET_SHARE_MEAN), was the latest day's share (PR1.U4)"},
+    # ---- ROUND 1B (Jake 2026-11-09) ----
+    # PR1B.10b: the first market-share basis is the 90-day mean of the daily shares for every project (was the latest
+    # day) — a change of quantity; for Uniswap it already was (PR1.U4), so its hop is a rename
+    {"from": f"CP | {_MS_NEW}", "to": f"CP | {_MS_90}", "kind": "change", "ref": "PR1B.10b", "date": "2026-11-09",
+     "why": "the first basis reads the 90-day mean of the daily shares (was the latest day's share; a shifted quarter "
+            "reads that quarter's mean)"},
+    {"project": "Uniswap", "from": f"CP | {_MS_NEW}", "to": f"CP | {_MS_90}", "kind": "rename", "ref": "PR1B.10b",
+     "date": "2026-11-09", "why": "header text only for Uniswap: its share was already the 90-day mean (PR1.U4)"},
+    # PR1B.8 (labels): A4's issuance − burn columns are named for what they are (not the net supply change, which is
+    # Master's circulating change, PR1.S8); the values are unchanged
+    *({"from": f"A4 | {a}", "to": f"A4 | {b}", "kind": "rename", "ref": "PR1B.8", "date": "2026-11-09",
+       "why": "header text only: issuance − burn on the basis to the left, named so (PR1.S8: the net supply change is "
+              "the circulating change on Master)"} for a, b in (
+        ("NET SUPPLY CHANGE Q0 (tokens) — self-reported where published, else issuance − burn, on the basis to the left",
+         "ISSUANCE − BURN Q0 (tokens) — self-reported net mint where published, else issuance − burn, on the basis to "
+         "the left (the cell says 'burn only' where nothing is minted)"),
+        ("NET SUPPLY CHANGE, annualised % of circulating (signed; + is net inflation)",
+         "ISSUANCE − BURN, annualised % of circulating (signed; + is net inflation; the cell says 'burn only' where "
+         "nothing is minted)"),
+        ("Net supply change Q1 (tokens, −3m window)", "Issuance − burn Q1 (tokens, −3m window)"),
+        ("Net supply change Q2 (−6m window)", "Issuance − burn Q2 (−6m window)"),
+        ("Net supply change Q3 (−9m window)", "Issuance − burn Q3 (−9m window)"),
+        ("Derived net supply change (issuance − burn), for comparison", "Derived issuance − burn, for comparison"),
+        ("Documented share of fees burned (config)",
+         "Documented share burned (config) — of protocol revenue where the burn base is declared (burn_split."
+         "fee_base_metric), else of fees; the cell names its base"),
+        ("Revenue required for crossover ($ fees a year) = fees × issuance ÷ burn, per covered day — at the measured "
+         "burn share",
+         "Fees required for crossover ($ a year) = fees × issuance ÷ burn, per covered day — at the measured burn "
+         "share"))),
+    # PR1B.3 (burn): every $ burn / issuance / emissions figure at EACH DAY'S price — the value moves (a change)
+    *({"from": a, "to": b, "kind": "change", "ref": ref, "date": "2026-11-09",
+       "why": "each day's tokens x that day's price, summed (was the window's tokens x the 90-day average price): one "
+              "$ figure per concept"} for a, b, ref in (
+        ("A4 | Gross burn Q0 ($ at avg price)", "A4 | Gross burn Q0 ($, each day's burn × that day's price)", "PR1B.3"),
+        ("A4 | Gross issuance Q0 ($ at avg price)",
+         "A4 | Gross issuance Q0 ($, each day's issuance × that day's price)", "PR1B.3"),
+        ("A1 | Gross issuance Q0 ($ at avg price)",
+         "A1 | Gross issuance Q0 ($, each day's issuance × that day's price)", "PR1B.3"),
+        ("A4 | Net supply change ($ at avg price)",
+         "A4 | Issuance − burn ($, each day's issuance − burn × that day's price)", "PR1B.3/PR1B.8"),
+        ("A4 | Implied burn Q0 (tokens) = fees × documented share ÷ avg price",
+         "A4 | Implied burn Q0 (tokens) = burn base × documented share ÷ each day's price — the base is protocol "
+         "revenue where declared (burn_split.fee_base_metric), else fees", "PR1B.3/PR1B.8"),
+        ("A4 | Governance lever = burn share of fees that reaches crossover with no growth (issuance $ ÷ fees)",
+         "A4 | Governance lever = burn share of fees that reaches crossover with no growth (issuance $ at each day's "
+         "price ÷ fees)", "PR1B.3"),
+        ("Master | Fees ÷ issuance ($, Q0; issuance at 90d avg price)",
+         "Master | Fees ÷ issuance ($, Q0; issuance at each day's price)", "PR1B.3"),
+        ("A2 | Emissions Q0 ($ at avg price)", "A2 | Emissions Q0 ($, each day's emissions × that day's price)",
+         "PR1B.3"))),
 ]
 
 

@@ -278,6 +278,30 @@ def test_3_the_a1_key_the_lever_and_emissions_read_the_day_priced_series(monkeyp
         assert config.METRICS[m]["view_only"]
 
 
+def test_3_round_1b_header_renames_are_declared_onto_todays_headers():
+    """Lead 2026-11-09: each renamed A4 / A1 / A2 / Master / CP header (PR1B.3 day-priced $, PR1B.8 labels, PR1B.10b the
+    90-day-mean market share) is a HEADLINE_RENAMES entry whose end is a header the code writes today; a re-priced $ is a
+    change, a relabel a rename; the guard follows the chain from the round-1 headers."""
+    import re
+    import build_workbook as bw
+    src = open(bw.__file__, encoding="utf-8").read()
+    joined = re.sub(r'"\s*\n\s*"', "", src)                       # adjacent string literals as one
+    ours = [e for e in config.HEADLINE_RENAMES if e.get("date") == "2026-11-09"]
+    assert len(ours) == 18
+    assert config._MS_90 == bw.MARKET_SHARE_HEAD
+    for e in ours:
+        tab, head = e["to"].split(" | ", 1)
+        assert head in joined or head == bw.MARKET_SHARE_HEAD, head
+        assert e["from"].split(" | ", 1)[1] not in joined, e["from"]
+        assert e["kind"] == ("change" if e["ref"].startswith("PR1B.3") or (e["ref"] == "PR1B.10b"
+                                                                          and not e.get("project")) else "rename"), e
+    s = config.headline_successor("Uniswap", "A4 | Net supply change ($ at avg price)")
+    assert s["kind"] == "change" and s["to"].startswith("A4 | Issuance − burn ($, each day's")
+    assert config.headline_successor("Pendle", f"CP | {config._MS_OLD}")["to"] == f"CP | {config._MS_90}"
+    assert config.headline_successor("Uniswap", "A4 | NET SUPPLY CHANGE, annualised % of circulating (signed; + is "
+                                                "net inflation)")["kind"] == "rename"
+
+
 def test_3_a_weekly_row_takes_its_own_weeks_prices():
     import build_workbook as bw
     px = pd.Series([2.0, 4.0, 9.0], index=pd.to_datetime(["2026-07-02", "2026-07-08", "2026-07-09"]))
