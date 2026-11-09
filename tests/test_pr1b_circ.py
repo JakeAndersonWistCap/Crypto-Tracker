@@ -257,3 +257,132 @@ def test_item5_declared_reason_needs_its_match_source_and_date(monkeypatch):
                         [dict(e, read_on="") for e in config.DECLARED_NA_REASONS["Uniswap"]])
     assert config.declared_na_reason("Uniswap", t) is None, "no read date: declares nothing"
     assert len(dc.judge_suspects(hits, "Uniswap", [])) == 1, "undeclared: a rule-3 suspect blocker as before"
+
+
+# ============================================================ item 4: circulating vs CoinGecko — the wallet set found
+
+BASIS = json.loads((ROOT / "tests" / "fixtures" / "pr1b_uniswap_coingecko_basis.json").read_text(encoding="utf-8"))
+SET = ("uniswap_foundation", "aera_vault", "labs_growth_recipient")
+
+
+def _repro(d):
+    """CoinGecko's basis reproduced from the day's balances: net total − Timelock − the three wallets."""
+    return 1e9 - d["dead"] - d["timelock"] - sum(d[k] for k in SET)
+
+
+def test_item4_coingecko_excess_is_three_wallets_day_by_day():
+    """CoinGecko's implied non-circulating − the Timelock, every day 09-11..11-09, is the UF + the Aera vault + Labs'
+    growth recipient. CoinGecko's restated history (before 11-03) stamps a day with its END (the next day's first
+    block); its live points (11-03 on) with its START — every day matches one of the two within 30,000 UNI."""
+    days = BASIS["days"]
+    assert len(days) == 60 and days[0]["date"] == "2026-09-11" and days[-1]["date"] == "2026-11-09"
+    for i, d in enumerate(days):
+        start = _repro(d) - d["coingecko_circulating"]
+        end = _repro(days[i + 1]) - d["coingecko_circulating"] if i + 1 < len(days) else start
+        assert min(abs(start), abs(end)) <= 30_001, (d["date"], start, end)
+        if d["date"] >= "2026-11-03":
+            assert abs(start) <= 8_001, (d["date"], start)
+        # without the three, the gap is millions on every day — the Timelock alone is not CoinGecko's basis
+        assert abs(_repro(d) + sum(d[k] for k in SET) - d["coingecko_circulating"]) > 14_000_000
+
+
+def test_item4_jakes_two_readings_to_the_token_and_the_175m_step():
+    by = {d["date"]: d for d in BASIS["days"]}
+    # Jake's 11-05 reading (11:47 UTC) is the state after the UF's 00:10 transfer, before its 11-06 inflow: 11-06's
+    # first block; his 11-09 reading: 11-09's
+    for day, at in (("2026-11-05", "2026-11-06"), ("2026-11-09", "2026-11-09")):
+        got = sum(by[at][k] for k in SET)
+        assert round(got) == BASIS["sources"]["jake"][day], (day, got)
+    step = sum(by["2026-11-07"][k] for k in SET) - sum(by["2026-11-06"][k] for k in SET)
+    assert round(step, 2) == 1_750_000.00, "the +1.75M: the UF's inflow of 2026-11-06 19:40"
+
+
+def test_item4_the_three_wallets_are_stored_beside_ours_not_out_of_it():
+    p = config.PROJECT_BY_NAME["Uniswap"]
+    keys = [k for k, c in p["contracts"].items() if c.get("metric_override") == "coingecko_excluded_holdings_tokens"]
+    addrs = {p["contracts"][k]["address"].lower() for k in keys}
+    assert addrs == {BASIS["wallets"][k].lower() for k in SET}
+    assert "coingecko_excluded_holdings_tokens" in config.metrics_for_project(p)
+    spec = config.circulating_onchain("Uniswap")
+    assert "coingecko_excluded_holdings_tokens" not in spec["subtract"], "ours is unchanged (Jake's decision)"
+    assert config.coingecko_excludes_holdings("Uniswap", "2026-10-13") == ()
+    assert config.coingecko_excludes_holdings("Uniswap", "2026-11-09") == ("coingecko_excluded_holdings_tokens",)
+
+
+def _live_rows(upto="2026-11-09", with_set=True):
+    """Live-shaped rows (Jake's store as of 11-09): the day's balances and CoinGecko's figure, 10-14..upto. CoinGecko's
+    LIVE figure was total − Timelock on 10-13 (the dumps, to the token) and on the new basis by 11-02 (Jake's +2.89%):
+    modelled as total − Timelock before coingecko_excludes_from, its published point from it (VERIFIED ONLY ON THIS
+    FIXTURE: the switch day itself is in Jake's store)."""
+    frm = config.coingecko_excludes_from("Uniswap")
+    out = []
+    for d in BASIS["days"]:
+        if not ("2026-10-14" <= d["date"] <= upto):
+            continue
+        cg = d["coingecko_circulating"] if d["date"] >= frm else 1e9 - d["dead"] - d["timelock"]
+        vals = {"total_supply_gross": 1e9, "burn_address_balance": d["dead"], "treasury_holding_tokens": d["timelock"],
+                "noncirculating_holding_tokens": d["merkle_distributor"],
+                "circulating_supply": cg, "total_supply": 1e9 - d["dead"],
+                "total_supply_coingecko": 1e9 - d["dead"]}
+        if with_set:
+            vals["coingecko_excluded_holdings_tokens"] = sum(d[k] for k in SET)
+        src = {"circulating_supply": "coingecko", "total_supply_coingecko": "coingecko"}
+        out += [{"date": d["date"], "metric": m, "value": v, "source": src.get(m, f"chain:ethereum:{m}"), "tier": 2,
+                 "fetched_at": f"{d['date']}T12:00:00Z"} for m, v in vals.items()]
+    return out
+
+
+class _Out:
+    def __init__(self):
+        self.items, self.log = [], []
+
+    def review_item(self, *a, **k):
+        self.items.append((a, k))
+
+
+def _review(rows):
+    import pandas as pd
+
+    from fetch import circulating as fc
+    h = pd.DataFrame(rows).assign(project="Uniswap")
+    o = _Out()
+    fc.check(o, h, [config.PROJECT_BY_NAME["Uniswap"]])
+    return [x for x in o.items if x[0][2] == "onchain_vs_coingecko"]
+
+
+def test_item4_review_queue_judges_like_for_like_on_the_live_shape():
+    assert _review(_live_rows()) == [], "11-09: ours + distributor − the three = CoinGecko (within the 2%)"
+    bad = _review(_live_rows(with_set=False))
+    assert bad == [], "a day after the switch without the three stored is no comparison, never ours un-adjusted"
+    # the switch is dated: on 10-13-shaped data (CoinGecko still total − Timelock) nothing is taken out
+    assert _review(_live_rows(upto="2026-10-20")) == []
+
+
+def test_item4_credibility_in_circ_passes_like_for_like_on_the_live_shape(tmp_path, monkeypatch):
+    from real_dump import evaluate_real, load
+    pl = load("Uniswap")
+    pl = dict(pl, metrics=pl["metrics"] + _live_rows(), meta=dict(pl["meta"], asof="2026-11-09"))
+    o = evaluate_real(tmp_path, monkeypatch, "Uniswap", payload=pl, asof="2026-11-09")
+    v = o["in_circ"]
+    assert str(v["verdict"]).startswith("PASS"), v
+    assert abs(v["ours"] / v["ref"] - 1) < 0.001, v
+    # THE FIVE CELLS THAT READ in_circ (Jake: "drives Uniswap's 5 CHECK cells") no longer read CHECK from it
+    for k in DEPENDANTS:
+        assert not str(o[k]["verdict"]).startswith("CHECK"), (k, o[k])
+    # the three not stored on the as-of day: no like-for-like figure — never ours un-adjusted (unknown is not 0)
+    pl2 = dict(pl, metrics=load("Uniswap")["metrics"] + _live_rows(with_set=False))
+    (tmp_path / "b").mkdir()
+    o2 = evaluate_real(tmp_path / "b", monkeypatch, "Uniswap", payload=pl2, asof="2026-11-09")
+    v2 = o2["in_circ"]
+    assert not str(v2["verdict"]).startswith("PASS") and v2["ours"] in (None, ""), v2
+    assert all(str(o2[k]["verdict"]).startswith("CHECK") for k in DEPENDANTS)
+
+
+DEPENDANTS = ("a4_burn_yield", "a4_net_change_pct", "cp_float", "cp_hvy", "cp_nhy")
+
+
+def test_item4_the_dumps_as_of_1013_are_judged_as_before(tmp_path, monkeypatch):
+    """Before coingecko_excludes_from CoinGecko counted the three: nothing is taken out (the dumps: PASS, 0.000%)."""
+    from real_dump import evaluate_real
+    v = evaluate_real(tmp_path, monkeypatch, "Uniswap")["in_circ"]
+    assert str(v["verdict"]).startswith("PASS") and abs(v["ours"] / v["ref"] - 1) < 1e-4, v

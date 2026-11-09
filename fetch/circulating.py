@@ -150,6 +150,16 @@ def check(out, h: pd.DataFrame, projects: list[dict]) -> None:
                 if not cg_tot.empty and not our_tot.empty:
                     ours = (ours - our_tot + cg_tot).dropna()
                     basis += f", on CoinGecko's own total (− {spec.get('total') or 'total_supply'} + total_supply_coingecko)"
+            # PR1B.4: the wallets ours counts and CoinGecko EXCLUDES (Uniswap's UF / Aera vault / Labs' growth
+            # recipient), out of ours from the declared day CoinGecko's figure is on that basis; a day after it without
+            # the leg stored is no comparison (dropped), never ours un-adjusted
+            frm = config.coingecko_excludes_from(name)
+            for m in config.coingecko_excludes_holdings(name):
+                ex = _daily(h, name, m).reindex(ours.index)
+                if frm:
+                    ex = ex.where(ours.index >= pd.Timestamp(frm), 0.0)
+                ours = (ours - ex).dropna()
+                basis += f" − {m}" + (f" from {frm}" if frm else "")
             basis += ")"
         cg = _daily(h, name, "circulating_supply")
         both = pd.concat([ours.rename("ours"), cg.rename("cg")], axis=1).dropna()
