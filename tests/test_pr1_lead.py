@@ -73,7 +73,7 @@ def test_one_off_share_is_of_everything_the_rate_sums(monkeypatch):
     f = (f'=(INDEX(Data!${L}$2:${L}$99,MATCH($A5&"|outflow_d_tokens",Data!$A$2:$A$99,0))'
          f'+INDEX(Data!${L}$2:${L}$99,MATCH($A5&"|outflow_e_tokens",Data!$A$2:$A$99,0)))/2')
     note = bw._one_off_share_note("P", f)
-    assert "0.26% of the legs this rate sums" in note and "5,057,505" in note and "23% of outflow_e_tokens alone" in note
+    assert "0.26% of the legs this rate sums" in note and "5,057,505" in note and "23.1% of outflow_e_tokens alone" in note  # PR1B.1: one decimal between 1% and 99%
     # a ratio's other side is never a leg: burn ÷ release keeps the burn's own share
     groups[("P", "gross_burn_tokens")] = _frame(["2026-10-01"], [100.0])
     monkeypatch.setattr(bw, "ONE_OFF_SHARES", {("P", "gross_burn_tokens", "q0"): (90.0, 100.0, "treasury")})

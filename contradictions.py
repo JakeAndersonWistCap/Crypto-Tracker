@@ -37,7 +37,7 @@ FAMILIES = {
     "release": r"(Issuance or release|Issuer releases)",
     # the A4 crossover columns are computed over the release the key divides by: they deny it when they say
     # "no issuance"
-    "release_derived": r"(Revenue needed for crossover|Governance lever)",
+    "release_derived": r"(Fees needed for crossover|Governance lever)",
     # A3's retirement ÷ (emissions + unlocks) and net absorption (retired − emissions [− unlocks]) carry the dilution leg
     "unlock_derived": r"Net absorption incl\. unlocks",
     "dilution_derived": r"(Retired ÷ \(emissions \+ unlocks\)|Net absorption)",

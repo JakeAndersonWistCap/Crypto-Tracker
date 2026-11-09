@@ -332,9 +332,8 @@ def test_business_and_market_share_headlines_on_the_real_aerodrome_dump(tmp_path
     assert _get(o, "BUSINESS 1 — core usage") == pytest.approx(q0 / 90 * 365, rel=1e-9)
     assert "protocol_dex_volume_usd" in _get(o, "Business 1 — series") and "on-chain replacement" in \
         _get(o, "Business 1 — series")
-    share = [r for r in rows if r["project"] == "Aerodrome" and r["metric"] == "market_share_pct"
-             and r["date"] <= "2026-10-09"][-1]
-    assert _get(o, "MARKET SHARE vs its category") == pytest.approx(share["value"])
+    # PR1B.10b (Jake 2026-11-09): the headline is the 90-day mean of the daily shares (Data Q0), as Uniswap's (PR1.U4)
+    assert _get(o, "MARKET SHARE vs its category") == pytest.approx(_data(wb, X, "Aerodrome|market_share_pct", "q0"))
     assert "Dexs" in _get(o, "Market share — basis")
     ids = {r["hid"] for r in traj if r["project"] == "Aerodrome"} if traj and "project" in traj[0] else \
         {r["hid"] for r in traj}

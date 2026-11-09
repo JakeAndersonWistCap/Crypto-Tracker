@@ -181,7 +181,8 @@ def test_p1_5_the_selector_drives_the_period_columns_live_custom_included(built)
                 assert got == pytest.approx(want, rel=1e-9), (period, name, got, want)
                 seen += 1
             g = X.value("Summary", rr, gcol)
-            assert isinstance(g, float) or g == "n/a", (period, name, g)
+            # PR1B.10a: a window carried by a few days reads "lumpy" (config.LUMPY_SHARE)
+            assert isinstance(g, float) or g in ("n/a", "lumpy"), (period, name, g)
     assert seen > 0
 
 

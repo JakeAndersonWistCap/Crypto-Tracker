@@ -43,10 +43,10 @@ MASTER_SOURCES = {
     # issuance − burn COMPONENT beside it is the A-tab reference
     "Issuance − burn Q0 (tokens) — a component of the supply change, NOT the net supply change": [
         ("A1", "NET ISSUANCE AFTER BURN Q0 (tokens) — issuance − every burn, on the basis A4 uses"),
-        ("A4", "NET SUPPLY CHANGE Q0 (tokens) — self-reported where published, else issuance − burn, on the basis to the left")],
+        ("A4", "ISSUANCE − BURN Q0 (tokens) — self-reported net mint where published, else issuance − burn, on the basis to the left (the cell says 'burn only' where nothing is minted)")],
     "Issuance − burn, annualised % of circulating — a component, NOT the net supply change": [
         ("A1", "NET ISSUANCE AFTER BURN, annualised % of circulating (+ is net inflation; fee-market burns included)"),
-        ("A4", "NET SUPPLY CHANGE, annualised % of circulating (signed; + is net inflation)")],
+        ("A4", "ISSUANCE − BURN, annualised % of circulating (signed; + is net inflation; the cell says 'burn only' where nothing is minted)")],
     "Fees ÷ issuance ($, Q0; issuance at each day's price)": [("A1", "FEES ÷ ISSUANCE (x) — key ratio")],
     "Fees ÷ FDV (annualised)": [("A3", "Fees ÷ FDV (annualised)")],
     "Buyback % of supply (annualised, implied, split as at this window)": [

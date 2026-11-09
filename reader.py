@@ -55,7 +55,8 @@ TEXT_FMT = "@"
 # THE CODES (P1-2): the cell's text, its colour; the reason goes in the comment
 CODES = {"n/a": "808080", "blocked": "C00000", "not wired": "C65911", "by design": "44546A", "parked": "7F7F7F",
          "unranked": "595959", "secondary": "2F5597", "no new supply": "375623",
-         "not yet split": "806000"}                 # PR1.S13: a project's three revenue lines before its own round
+         "not yet split": "806000",                 # PR1.S13: a project's three revenue lines before its own round
+         "lumpy": "7030A0"}                         # PR1B.10a: a change whose window is carried by a few days
 NO_NEW_SUPPLY = "no new supply"            # P4-Q5a: A3's key where emissions + unlocks are a measured 0, burn above 0
 NO_NEW_SUPPLY_KEY = float("inf")           # ... which ranks it first (_rank_rows sorts the key high to low)
 PERIODS = (("1D", 1), ("7D", 7), ("30D", 30), ("90D", 90), ("6M", 182), ("1Y", 365), ("3Y", 1095), ("custom", None))
@@ -1161,6 +1162,9 @@ def _period_formula_cell(sh: Sheet, ctx: Ctx, row: int, col: Col, name: str, met
            "both windows must hold a row" if kind == "flow" else
            "the value on the last day held ÷ the value N days earlier − 1; both days must hold a row")
     body = ctx.ser.flow_growth(L) if kind == "flow" else ctx.ser.stock_change(L)
+    if kind == "flow":                                  # PR1B.10a: a lumpy window at a fixed period reads "lumpy"
+        body, lnote = period_lumpy_formula(ctx, name, metric, body)
+        extra = "\n\n".join(x for x in (lnote, extra) if x)
     return put_formula(sh, row, col, "=" + body, fill,
                        f"{label[:1].upper()}{label[1:]}, change over the selected period (cell B2 on Summary; N days): "
                        f"{how}. n/a when the history is shorter or a day is missing. The series is "
@@ -1481,8 +1485,10 @@ def _summary_row(sh, ctx: Ctx, C, row, p, rank, key, parked: bool = False) -> No
     d, f = srcs["dil"], srcs["float"]
     if d is not None and d.num is not None and f is not None and f.num is not None:
         rd, rf = data.put(name, "dil_pct", d.num), data.put(name, "float", f.num)
+        oo = _one_off_para(d.comment)           # PR1B.1: the dilution's one-off, on the same figure in tokens
         put_formula(sh, row, C["dil_tok"], f"={rd}*{rf}", d.fill,
-                    f"{d.num:.2%} × tradeable float {f.num:,.0f}.\n\nWorking: {d.where}; {f.where}.")
+                    f"{d.num:.2%} × tradeable float {f.num:,.0f}." + (f"\n\n{oo}" if oo else "")
+                    + f"\n\nWorking: {d.where}; {f.where}.")
         nums += 1
         greens += _green(d.fill)
     else:
@@ -1752,7 +1758,7 @@ def tab_specs(bw) -> list:
                          ("@growth", "@issuance", "Issuance growth, selected period", "flow"),
                          (None, "Fees Q0 ($)", "Fees, last 90 days", ""),
                          (None, "Burn as share of fees (measured)", "Burn share of fees", ""),
-                         (None, "Revenue required for crossover", "Revenue needed for crossover", ""),
+                         (None, "Fees required for crossover", "Fees needed for crossover", ""),
                          (None, "Governance lever", "Governance lever", ""),
                          (None, "Treasury governance could redeploy (tokens)", "Treasury governance can redeploy",
                           ""))),
@@ -1950,19 +1956,19 @@ E_SHORT = {
     "Q0 WINDOW CAVEAT": "90-day window caveat",
     # PR1.S8 (Jake 2026-11-05): A4's figures are issuance − burn on its basis, NOT the net supply change (which is the
     # circulating change, Summary's) — named for what they are; the number carries " burn only" / " issuance − burn"
-    "NET SUPPLY CHANGE Q0 (tokens)": "Issuance − burn, 90 days",
-    "NET SUPPLY CHANGE, annualised % of circulating": "Issuance − burn, % a year",
+    "ISSUANCE − BURN Q0 (tokens)": "Issuance − burn, 90 days",
+    "ISSUANCE − BURN, annualised % of circulating": "Issuance − burn, % a year",
     "Burn execution": "Burn execution",
     "Burn status": "Burn status",
-    "Documented share of fees burned": "Documented share of fees burned",
+    "Documented share burned (config)": "Share burned, of revenue or fees",
     "Gross burn Q0 ($": "Gross burn, 90 days ($)",      # PR1B.3: each day's burn × that day's price
     "GROSS ISSUANCE Q0 (tokens)": "Gross issuance, 90 days (tokens)",
     "Pool release Q0 (tokens)": "Pool release, 90 days (tokens)",
     "Net mint Q0 (SELF-REPORTED by the protocol)": "Net mint, self-reported",
     "Self-reported figure preferred?": "Self-reported figure preferred?",
-    "Derived net supply change": "Derived net supply change",
+    "Derived issuance − burn": "Derived issuance − burn",
     "Self-reported − derived": "Self-reported minus derived",
-    "Net supply change ($": "Issuance − burn ($)",      # PR1B.3: each day at that day's price
+    "Issuance − burn ($": "Issuance − burn ($)",      # PR1B.3: each day at that day's price
     "Cumulative burn ÷ max supply": "Cumulative burn ÷ max supply",
     "Burn split Q0 (tokens)": "Burn split (tokens)",
     "Burn split — by source": "Burn split by source",
@@ -1976,7 +1982,7 @@ E_SHORT = {
 # audit columns the reader shows elsewhere or by another route (P2a B): fixed-window changes (the selector drives
 # every growth column) and the quarter columns (block (c) shows the four quarters)
 _FIXED_WINDOW = re.compile(r"Δ(30d|3m|6m|9m)$")
-_QUARTER_COL = re.compile(r"^(Fees ÷ issuance at|Rev ÷ emission at|Net supply change) Q[123]\b")
+_QUARTER_COL = re.compile(r"^(Fees ÷ issuance at|Rev ÷ emission at|Net supply change|Issuance − burn) Q[123]\b")
 
 
 def short_header(audit_header: str) -> str:
@@ -2034,6 +2040,93 @@ def _trajectory(A: Audit) -> dict:
     return out
 
 
+PP_FORMAT = '+0.0" pp";-0.0" pp";0.0" pp"'      # PR1B.10c: a change in percentage points (the value is x100)
+
+
+def period_lumpy_formula(ctx, name: str, metric: str, body: str) -> tuple[str, str]:
+    """PR1B.10a (config.LUMPY_SHARE): a selected-period growth of a flow whose window — at a FIXED period (PERIODS) — is
+    carried by a few days reads "lumpy" at that period: (the formula wrapped in IF(<days>=N,"lumpy",…) for each such N,
+    the note naming each period, its share, days and the % it would read). ('' note: the formula unchanged.)"""
+    bw = getattr(ctx, "bw", None)
+    s = _series(ctx.groups, name, metric)
+    s = s[s.index < pd.Timestamp(ctx.asof).normalize()]
+    if bw is None or s.empty or not hasattr(bw, "_lumpy_window"):
+        return body, ""
+    end = s.index.max()
+    hits = []
+    for lab, n in PERIODS:
+        if not n or n < 2:
+            continue
+        w1 = (end - pd.Timedelta(days=n), end)
+        w0 = (end - pd.Timedelta(days=2 * n), end - pd.Timedelta(days=n))
+        got = [g for g in (bw._lumpy_window(s, *w1), bw._lumpy_window(s, *w0)) if g]
+        if not got:
+            continue
+        sh_, k, days, _tot, _n = max(got, key=lambda g: g[0])
+        a, b = float(s[(s.index > w1[0]) & (s.index <= w1[1])].sum()), float(s[(s.index > w0[0]) & (s.index <= w0[1])].sum())
+        would = f"{a / b - 1:+.1%}" if b else "n/a (the earlier window is 0)"
+        hits.append((n, f"{lab}: lumpy ({sh_:.1%} of the window on {k} day{'s' if k > 1 else ''}: {days}) — the growth "
+                        f"would read {would}"))
+    if not hits:
+        return body, ""
+    at = ",".join(f"{DAYS_REF}={n}" for n, _t in hits)        # a number only: an n/a the formula reads stands
+    body = f'IF(AND(OR({at}),ISNUMBER({body})),"lumpy",{body})'
+    spec = ctx.config.LUMPY_SHARE
+    return body, (f"LUMPY (PR1B.10a, config.LUMPY_SHARE: {float(spec['share']):.0%} or more of a window on "
+                  f"{int(spec['days'])} days or fewer, declared {spec['declared']}) — at these periods the cell reads "
+                  f"'lumpy', not a %: " + "; ".join(t for _n, t in hits) + ".")
+
+
+def _one_off_para(text: str) -> str:
+    """PR1B.1: the "ONE-OFF IN THIS RATE" paragraph of an audit comment ('' when none) — for a reader cell computed from
+    an audit cell that carries it (Summary's dilution in tokens a year, a key's quarter change)."""
+    return next((plain(x) for x in str(text or "").split("\n\n") if "ONE-OFF IN THIS RATE" in x), "")
+
+
+def period_one_off_note(ctx, name: str, metric: str, days: int | None = None) -> str:
+    """PR1B.1 (Jake 2026-11-09: issuance growth of the release said nothing of the 2020 claims): a selected-period growth
+    whose series holds a declared one-off says, at the default period (DEFAULT_PERIOD), how much of each window it is and
+    what the growth reads without it — computed exactly as the cell's formula (SeriesSheet.flow_growth: the N days to
+    the last complete day held against the N days before, every day held). Other periods read it where their windows
+    hold its days, said with its dates. '' where the series holds no one-off."""
+    bw = getattr(ctx, "bw", None)
+    try:
+        parts = (bw._one_off_parts(ctx.groups, name) if bw is not None else {}).get(metric) or {}
+    except Exception:  # noqa: BLE001 — no parts readable: no note (the cell's own formula stands)
+        parts = {}
+    if not parts:
+        return ""
+    n = int(days or dict(PERIODS)[DEFAULT_PERIOD])
+    s = _series(ctx.groups, name, metric)
+    s = s[s.index < pd.Timestamp(ctx.asof).normalize()]
+    days_ = sorted(pd.Timestamp(d) for d in parts)
+    what = "; ".join(dict.fromkeys(w for _v, w in parts.values()))
+    span = f"{days_[0].date()}..{days_[-1].date()}"
+    tot_part = sum(v for v, _w in parts.values())
+    head = (f"ONE-OFF IN THIS RATE (P5-1C.B1; PR1B.1) — the series holds a declared one-off: {tot_part:,.0f} on "
+            f"{span} ({what}); a period reads it where its windows hold those days.")
+    if s.empty:
+        return head
+    end = s.index.max()
+    w1 = pd.date_range(end - pd.Timedelta(days=n - 1), end)
+    w0 = pd.date_range(w1[0] - pd.Timedelta(days=n), w1[0] - pd.Timedelta(days=1))
+    p1 = sum(v for d, (v, _w) in parts.items() if pd.Timestamp(d) in w1)
+    p0 = sum(v for d, (v, _w) in parts.items() if pd.Timestamp(d) in w0)
+    if not p1 and not p0:
+        return head + f" At the default {DEFAULT_PERIOD} period neither window holds it."
+    a, b = float(s.reindex(w1).sum()), float(s.reindex(w0).sum())
+    bits = []
+    if p1 and a:
+        bits.append(f"of which one-off: {p1 / a:.1%} of the latest {n} days ({p1:,.0f} of {a:,.0f})")
+    if p0 and b:
+        bits.append(f"{p0 / b:.1%} of the {n} days before ({p0:,.0f} of {b:,.0f})")
+    out = head + f" At the default {DEFAULT_PERIOD} period: " + "; ".join(bits) + "."
+    if s.reindex(w0.append(w1)).notna().all() and b and (b - p0):
+        out += (f" Without the one-off the growth reads {(a - p1) / (b - p0) - 1:+.1%} (with it: {a / b - 1:+.1%}, "
+                "the one-off kept — values unchanged).")
+    return out
+
+
 def _one_off_of(t: dict | None, i: int) -> str:
     """PR1.U10: the Trajectory quarter cell's "ONE-OFF IN THIS RATE" paragraph (P5-1C.B1 / PR1.U3), '' when none."""
     notes = (t or {}).get("notes") or []
@@ -2065,6 +2158,12 @@ def _quarter_change(t: dict | None, asof: pd.Timestamp) -> tuple[str, object, st
     if blk:
         return "n/a", None, (f"No change: the quarter before is not a full quarter on this basis — {blk.group(1)}."
                              f"\n\n{where}")
+    # PR1B.10a (config.LUMPY_SHARE): the Trajectory tab read the window as lumpy — the code, the % in the comment
+    lum = re.search(r"QoQ: (lumpy \([^)]*\)) — would read ([^;]+); (LUMPY[^;]*(?:;[^;]*)?)", why_t) \
+        if isinstance(why_t, str) else None
+    if lum:
+        return "lumpy", None, (f"{lum.group(1)}: the latest quarter against the one before would read "
+                               f"{lum.group(2).strip()}. {lum.group(3).strip()}\n\n{where}")
     # PR1.S3 (Jake 2026-11-05): THE SAME BASIS AS THE QUARTERS SHOWN, for a lumpy series too — the latest quarter against
     # the one before. It read the rolling 12-month change silently (Morpho +5.5% where its latest / −1 qtr gave −30.2%;
     # Uniswap A4 +21% where they gave −57%); the trailing-12-month reading stays on the Trend column, said there.
@@ -2076,6 +2175,11 @@ def _quarter_change(t: dict | None, asof: pd.Timestamp) -> tuple[str, object, st
                                              "a quarter has no value (its cell says why)") + f".\n\n{where}")
     mod = [q for q in ("Q0", "Q-1") if re.search(rf"(?<![\w-]){re.escape(q)}(?![\d])", t["modelled"])]
     note = (f" MODELLED: {', '.join(mod)} is modelled, not measured — the change is shown, not scored." if mod else "")
+    # PR1B.10c (config.QOQ_IN_PP): a yield or ratio that can be negative changes in percentage points
+    if isinstance(why_t, str) and "QoQ in pp:" in why_t:
+        return ("modelled" if mod else "pp"), (q0 - q1) * 100, (
+            f"Latest quarter {q0:.2%} against {q1:.2%}: {(q0 - q1) * 100:+.2f} percentage points (a yield or ratio "
+            f"that can be negative changes in pp, not %, config.QOQ_IN_PP).{note}{lumpy}\n\n{where}")
     return ("modelled" if mod else "ok"), (q0 - q1) / abs(q1), (f"Latest quarter {q0:,.6g} against {q1:,.6g}.{note}"
                                                                  f"{lumpy}\n\n{where}")
 
@@ -2345,7 +2449,7 @@ def _write_arch_tab(sh: Sheet, ctx: Ctx, spec: TabSpec) -> None:
             kind = h[0]
             if kind == "audit":
                 src = A.at(tab, r_a, h[1]) if h[1] else None
-                extra = _premint_note(p, src) if src is not None and "NET SUPPLY CHANGE" in src.header.upper() else ""
+                extra = _premint_note(p, src) if src is not None and "ISSUANCE − BURN" in src.header.upper() else ""
                 cell = put_src(sh, data, row, col, p, src, extra=extra)
                 ctx.record(src, tab, cell, name)
             elif kind == "interim":
@@ -2418,7 +2522,8 @@ def _write_arch_tab(sh: Sheet, ctx: Ctx, spec: TabSpec) -> None:
                 metric = {"@fees": config.fees_headline_metric(name), "@revenue": _revenue_metric(config, name),
                           "@burn": config.a4_burn_metric(name), "@issuance": config.crossover_issuance_metric(name)
                           }.get(h[1], h[1])
-                _period_formula_cell(sh, ctx, row, col, name, metric, h[2], col.header.split(",")[0].lower())
+                _period_formula_cell(sh, ctx, row, col, name, metric, h[2], col.header.split(",")[0].lower(),
+                                     extra=period_one_off_note(ctx, name, metric) if h[2] == "flow" else "")
                 period_cols.append(_idx(sh, col))
             elif kind == "keytraj":
                 _put_key_quarter(sh, data, row, col, name, tab, h[1], h[2], tget(name, h[1]),
@@ -2444,9 +2549,16 @@ def _write_arch_tab(sh: Sheet, ctx: Ctx, spec: TabSpec) -> None:
             elif kind == "trend":
                 t = tget(name, h[1])
                 k2, v, why = _quarter_change(t, ctx.asof)
-                if k2 in ("ok", "modelled", "t12m"):
+                # PR1B.1: a change that reads a quarter holding a one-off says so (each quarter's own note)
+                oo = [f"{q}: " + x.split(" — ", 1)[-1].replace("this cell reads", "that quarter reads")
+                      for q, x in (("Q0", _one_off_of(t, 0)), ("Q-1", _one_off_of(t, 1))) if x]
+                if oo:
+                    why = "\n\n".join((why, "The change reads quarters that hold a one-off: " + " | ".join(oo)))
+                if k2 in ("ok", "modelled", "t12m", "pp"):
                     put_number(sh, data, row, col, name, f"qchg|{tab}|{h[1]}", v,
                                FILL_MODELLED if k2 == "modelled" else None, why)
+                    if k2 == "pp" or "QoQ in pp:" in str((t or {}).get("why") or ""):
+                        sh.ws.cell(row, _idx(sh, col)).number_format = PP_FORMAT     # PR1B.10c
                     trend_cols.append(_idx(sh, col))
                 else:
                     put_code(sh, row, col, k2, why)
@@ -2777,6 +2889,8 @@ def _write_business(sh: Sheet, ctx: Ctx) -> None:
         elif "protocol_tvl_constant_price_usd" in config.metrics_for_project(p):
             _period_formula_cell(sh, ctx, row, C["tvl_cp"], name, "protocol_tvl_constant_price_usd", "stock",
                                  "TVL at constant prices")
+        elif name in getattr(config, "TVL_BREAKDOWN_UNPUBLISHED", {}):      # PR1B.11: a source limit, dated
+            put_code(sh, row, C["tvl_cp"], "n/a", f"No constant-price TVL: {config.TVL_BREAKDOWN_UNPUBLISHED[name]}.")
         else:
             put_code(sh, row, C["tvl_cp"], "not wired", f"No constant-price TVL series is wired for {name}.")
         _period_formula_cell(sh, ctx, row, C["price"], name, "price_usd", "stock", "price")
@@ -3015,6 +3129,8 @@ def _window_start_tvl_cell(sh: Sheet, ctx: Ctx, row: int, col: Col, p: dict) -> 
     if _primary(p) == 1:
         return put_code(sh, row, col, "by design", "A chain: its figures stay in US dollars (no constant-price basis is "
                         "built for a chain's TVL); the price change beside it is the price-effect line.")
+    if name in getattr(config, "TVL_BREAKDOWN_UNPUBLISHED", {}):        # PR1B.11: a source limit, dated
+        return put_code(sh, row, col, "n/a", f"No start-of-window price TVL: {config.TVL_BREAKDOWN_UNPUBLISHED[name]}.")
     if not set(TVL_SW_METRICS) <= set(config.metrics_for_project(p)):
         return put_code(sh, row, col, "not wired", f"No start-of-window price series is wired for {name} (DefiLlama's "
                         "token breakdown is read for Maple, Morpho, Pendle and Fluid).")
