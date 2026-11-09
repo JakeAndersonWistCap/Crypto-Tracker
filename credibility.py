@@ -2795,6 +2795,10 @@ def continuity_row(name: str, headline_cells: list[dict], previous: dict | None,
     fewer is a CHECK naming the count; the note lists every cell with its previous value. Zero tolerance."""
     prev = (previous or {}).get(name) or {}
     held = [(hc, prev.get(f"{hc['sheet'][:2]} | {hc['header']}")) for hc in headline_cells if hc["project"] == name]
+    # PR1B.12: a headline the previous run held under an OLDER declared name (config.HEADLINE_RENAMES) is held there
+    held = [(hc, v if isinstance(v, float) else
+             (config.headline_predecessor_value(name, f"{hc['sheet'][:2]} | {hc['header']}", prev) or (0, None))[1])
+            for hc, v in held]
     held = [(hc, v) for hc, v in held if isinstance(v, float)]
     if not held:
         return None

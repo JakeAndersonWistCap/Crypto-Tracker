@@ -200,9 +200,17 @@ def lost_headlines(wb, previous: dict, headline_cells: list, prev_date: str = ""
     X = xlcalc.Workbook(wb)
     out = []
     for hc in headline_cells:
-        was = ((previous or {}).get(hc["project"]) or {}).get(f"{hc['sheet'][:2]} | {hc['header']}")
+        prev = (previous or {}).get(hc["project"]) or {}
+        was = prev.get(f"{hc['sheet'][:2]} | {hc['header']}")
+        renamed = ""
         if not isinstance(was, float):
-            continue
+            # PR1B.12: a headline the previous run held under an OLDER declared name (config.HEADLINE_RENAMES) is read
+            # there — a renamed header no longer hides a lost value
+            pre = config.headline_predecessor_value(hc["project"], f"{hc['sheet'][:2]} | {hc['header']}", prev)
+            if pre is None:
+                continue
+            old, was, succ = pre
+            renamed = f" (as '{old.split(' | ', 1)[-1][:60]}', declared {succ['kind']} {succ['ref']})"
         cell = wb[hc["sheet"]][hc["cell"]]
         try:
             now = X.value(hc["sheet"], cell.row, cell.column)
@@ -210,7 +218,8 @@ def lost_headlines(wb, previous: dict, headline_cells: list, prev_date: str = ""
             now = f"unevaluable ({type(e).__name__})"
         if stated_number(now) is None:
             out.append((hc["project"], "headline_lost",
-                        f"{hc['sheet'][:2]} {hc['header'][:70]}: {was:,.6g} in the previous run ({prev_date}), now "
+                        f"{hc['sheet'][:2]} {hc['header'][:70]}: {was:,.6g} in the previous run ({prev_date})"
+                        f"{renamed}, now "
                         f"{str(xlcalc.display(now) if not isinstance(now, str) else now)[:400]}"))
             # the whole reason, not 80 characters of it (G5 item 7: three Morpho hits were cut before the chain name
             # REGRESSION_ALLOWLIST matches on, so the allow-listed losses read as open)

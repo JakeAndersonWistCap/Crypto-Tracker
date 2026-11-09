@@ -233,16 +233,17 @@ def live_check(db_path: str, baseline: dict) -> tuple[list[str], dict]:
     # live store
     import export_snapshot as _es
     prev_date, prev = _es.load_previous(asof - pd.Timedelta(days=1))
-    lost, accepted = lost_against_previous(prev, heads, scope, prev_date)
+    declared: list = []
+    lost, accepted = lost_against_previous(prev, heads, scope, prev_date, declared=declared)
     bad.extend(lost)
     for proj, head, text in mpc:
         bad.append(f"HEADLINE BLANKED BY {MPC} {proj} {head}: {text}")
     return bad, {"asof": str(asof.date()), "bases": bases, "headlines": heads, "mpc_headlines": mpc,
-                 "previous": prev_date, "scope": scope, "accepted": accepted}
+                 "previous": prev_date, "scope": scope, "accepted": accepted, "declared": declared}
 
 
 def lost_against_previous(prev: dict | None, heads: dict, scope=None, prev_date: str = "",
-                          on=None) -> tuple[list[str], list[str]]:
+                          on=None, declared: list | None = None) -> tuple[list[str], list[str]]:
     """live_check's LOST-HEADLINE check, on its own so it can be fed directly (P2e-4): (violations, ACCEPTED lines).
     A headline the previous snapshot held as a value and the live build does not is a violation — unless
     config.REGRESSION_ALLOWLIST accepts it, when it is PRINTED as an accepted loss, never silent, never counted."""
@@ -255,11 +256,15 @@ def lost_against_previous(prev: dict | None, heads: dict, scope=None, prev_date:
         for head, v in cells.items():
             if not isinstance(v, float) or head in (heads.get(proj) or {}) or _es.is_attribute(head):
                 continue                                  # G13 5: an attribute (identity / notes) is not a headline
+            succ = renamed(proj, head, v, heads.get(proj) or {}, declared)
+            if succ is True:
+                continue                                  # PR1B.12: a declared rename / change, read at its new key
             allow = config.regression_allowance(proj, head, on=on)
             if allow:
                 accepted.append(config.accepted_loss_line(proj, head, allow))
                 continue
-            bad.append(f"HEADLINE LOST {proj} {head}: {v:,.6g} in the {prev_date} snapshot, no value on the live store")
+            bad.append(f"HEADLINE LOST {proj} {head}: {v:,.6g} in the {prev_date} snapshot, no value on the live store"
+                       + lost_suffix(succ))
     return bad, accepted
 
 
@@ -313,9 +318,11 @@ def _declared(project: str, metric: str) -> set:
     return out
 
 
-def compare(before: dict, after: dict, accepted: list | None = None, on=None) -> list[str]:
+def compare(before: dict, after: dict, accepted: list | None = None, on=None, declared: list | None = None) -> list[str]:
     """Every undeclared new basis of an existing series, and every headline lost. A lost headline
-    config.REGRESSION_ALLOWLIST accepts is not a violation: its ACCEPTED line goes to `accepted` (P2e-4)."""
+    config.REGRESSION_ALLOWLIST accepts is not a violation: its ACCEPTED line goes to `accepted` (P2e-4). A headline
+    whose key has a declared successor (config.HEADLINE_RENAMES) holding a value is not lost: its RENAMED / CHANGE OF
+    QUANTITY line goes to `declared` (PR1B.12)."""
     import config
     bad = []
     for key, now in after["bases"].items():
@@ -330,16 +337,49 @@ def compare(before: dict, after: dict, accepted: list | None = None, on=None) ->
         for head, v in cells.items():
             if head in (after["headlines"].get(proj) or {}):
                 continue
+            succ = renamed(proj, head, v, after["headlines"].get(proj) or {}, declared)
+            if succ is True:
+                continue                                  # PR1B.12: a declared rename / change, read at its new key
             allow = config.regression_allowance(proj, head, on=on)
             if allow:
                 if accepted is not None:
                     accepted.append(config.accepted_loss_line(proj, head, allow))
                 continue
-            bad.append(f"HEADLINE LOST {proj} {head}: {v:,.6g} before, no value after")
+            bad.append(f"HEADLINE LOST {proj} {head}: {v:,.6g} before, no value after" + lost_suffix(succ))
     # G9 C3: a headline blanked by a change of measuring point fails whatever the baseline held — blank before too
     for proj, head, text in after.get("mpc_headlines") or ():
         bad.append(f"HEADLINE BLANKED BY {MPC} {proj} {head}: {text}")
     return bad
+
+
+def renamed(project: str, head: str, was: float, now: dict, declared: list | None):
+    """PR1B.12: a headline key absent now, read through config.HEADLINE_RENAMES. True when its declared successor holds
+    a value now (the RENAMED / CHANGE OF QUANTITY line appended to `declared`: listed, never counted); the successor
+    record when one is declared but reads no value (still a HEADLINE LOST, said so); None when nothing is declared."""
+    import config
+    succ = config.headline_successor(project, head)
+    if succ is None or not isinstance(now.get(succ["to"]), float):
+        return succ
+    if declared is not None:
+        sq = succ.get("same_quantity_at")
+        declared.append(config.declared_rename_line(project, head, was, succ, now[succ["to"]],
+                                                    now.get(sq) if sq else None))
+    return True
+
+
+def lost_suffix(succ) -> str:
+    """The HEADLINE LOST line's tail when the lost key has a declared successor that reads no value either."""
+    if not isinstance(succ, dict):
+        return ""
+    return (f" (declared {'renamed' if succ['kind'] == 'rename' else 'changed'} to {succ['to']} ({succ['ref']}, "
+            f"{succ['date']}): no value there either)")
+
+
+def print_declared(lines: list) -> None:
+    """PR1B.12: every declared rename / change of quantity the comparison crossed — listed, not counted."""
+    print(f"DECLARED RENAMES / CHANGES OF QUANTITY (config.HEADLINE_RENAMES) — {len(lines)}, listed, not counted")
+    for line in lines:
+        print("  " + line)
 
 
 def main(argv=None) -> int:
@@ -370,6 +410,7 @@ def main(argv=None) -> int:
         for b in bad:
             print("  " + b)
         print_accepted(snap.get("accepted") or [])
+        print_declared(snap.get("declared") or [])
         print("VERDICT: " + ("OK — no undeclared basis, no lost headline" if not bad else
                              f"{len(bad)} VIOLATION(S) — each line above"))
         return 1 if bad else 0
@@ -383,11 +424,13 @@ def main(argv=None) -> int:
               f"{sum(len(v) for v in snap['probed'].values())} probed series")
         return 0
     accepted: list = []
-    bad = compare(base, snap, accepted)
+    declared: list = []
+    bad = compare(base, snap, accepted, declared=declared)
     print(f"MEASURING-POINT GUARD — {len(bad)} violation(s)")
     for b in bad:
         print("  " + b)
     print_accepted(accepted)
+    print_declared(declared)
     # P2e-4: sanity's own lost-headline rule on the same build, split by the same list (sanity.hits_payload — the body
     # of sanity_hits.json): open hits counted, accepted losses listed apart
     body = sanity_split(snap.get("sanity_lost") or [])

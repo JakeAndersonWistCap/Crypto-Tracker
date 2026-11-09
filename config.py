@@ -24234,6 +24234,158 @@ def accepted_loss_record(project: str, rule: str, detail: str, allowance: dict, 
             "line": accepted_loss_line(project, headline or str(detail).split(":")[0], allowance)}
 
 
+# DECLARED HEADLINE RENAMES AND CHANGES OF QUANTITY (PR1B.12, Jake 2026-11-09: "The live guard flags Uniswap's renamed
+# headers (net supply change, market share) as HEADLINE LOST: declare the renames so the guard reads them"). The guard
+# keys a headline by its header text ("<tab> | <header>", tab = the sheet's first two characters or "Master"), so a
+# header whose text changes reads as a headline lost under the old text. Each entry declares one old key's successor:
+#   from / to         the old and the new key, "<tab> | <header>" exactly as the guard and the snapshot key them;
+#   kind              "rename" — the same quantity under a new header (the guard compares the two values like for like);
+#                     "change" — a DIFFERENT quantity now heads the column (a declared change of measuring point, Rule
+#                     10): reported as a declared change with both values, never as HEADLINE LOST;
+#   same_quantity_at  (a change) the key where the OLD quantity reads now, if it is kept — compared like for like;
+#   project           (optional) the entry holds for this project only, and wins over an entry for every project;
+#   ref, date, why    the SPEC row, the day it was declared, the reason.
+# Renames chain (A -> B in one round, B -> C in the next: an old snapshot's A is read at C). A declared successor that
+# reads no value is still a HEADLINE LOST — the declaration answers the change of name, never a lost value. Read by
+# measuring_guard (--compare and --newer), sanity.lost_headlines and the Credibility continuity row (one rule).
+_MS_OLD = "MARKET SHARE vs its category (now; a shifted quarter: that quarter's mean) — peer set beside"
+_MS_NEW = "MARKET SHARE vs its category (now; a shifted quarter: the reading at its end) — peer set beside"
+_MS2_OLD = "MARKET SHARE, SECOND BASIS — chain fees vs 13 chains (now; a shifted quarter: that quarter's mean)"
+_MS2_NEW = "MARKET SHARE, SECOND BASIS — chain fees vs 13 chains (now; a shifted quarter: the reading at its end)"
+HEADLINE_RENAMES: list[dict] = [
+    # PR1.S8 (Jake 2026-11-05): Master's net supply change became the change in CIRCULATING supply. The old column
+    # (issuance − burn) is a different quantity from the new one: a declared CHANGE, not a rename. The old quantity is
+    # kept beside it as a labelled component (Master "Issuance − burn Q0 (tokens) — a component …"), where the guard
+    # compares it like for like. (Master's "Net supply change, annualised % of circulating" kept its header and changed
+    # quantity the same way: no key moved, so nothing reads lost; said here so the record is whole.)
+    {"from": "Master | NET SUPPLY CHANGE Q0 (tokens) = issuance − burn",
+     "to": "Master | NET SUPPLY CHANGE Q0 (tokens) = closing − opening circulating supply",
+     "kind": "change",
+     "same_quantity_at": "Master | Issuance − burn Q0 (tokens) — a component of the supply change, NOT the net supply "
+                         "change",
+     "ref": "PR1.S8", "date": "2026-11-05",
+     "why": "net supply change = closing − opening circulating supply over Q0 (was issuance − burn, now a labelled "
+            "component beside it)"},
+    # PR1.S2 (Jake 2026-11-05): a shifted quarter's stock reads the reading at the quarter's end — the market-share
+    # headers say so (the headline Q0 value is unchanged by S2: a rename)
+    {"from": f"CP | {_MS_OLD}", "to": f"CP | {_MS_NEW}", "kind": "rename", "ref": "PR1.S2", "date": "2026-11-05",
+     "why": "header text only: a shifted quarter reads the reading at its end (the Q0 headline is the same quantity)"},
+    {"from": f"CP | {_MS2_OLD}", "to": f"CP | {_MS2_NEW}", "kind": "rename", "ref": "PR1.S2", "date": "2026-11-05",
+     "why": "header text only: a shifted quarter reads the reading at its end (the Q0 headline is the same quantity)"},
+    # PR1.U4 (Jake 2026-11-05): Uniswap's market share headline reads the 90-day mean of the daily shares (was the
+    # latest day, 2026-11-02 25.36% on a +87% category denominator jump) — for Uniswap the S2 rename is also a change
+    {"project": "Uniswap", "from": f"CP | {_MS_OLD}", "to": f"CP | {_MS_NEW}", "kind": "change", "ref": "PR1.S2/U4",
+     "date": "2026-11-05",
+     "why": "header renamed (PR1.S2) and Uniswap's value is the 90-day mean of the daily shares (config."
+            "MARKET_SHARE_MEAN), was the latest day's share (PR1.U4)"},
+]
+
+
+def _rename_entry(project: str, key: str) -> dict | None:
+    """The HEADLINE_RENAMES entry for `key` — the project's own entry first, then one for every project."""
+    hits = [e for e in HEADLINE_RENAMES if e["from"] == key and e.get("project") in (None, project)]
+    return next((e for e in hits if e.get("project") == project), hits[0] if hits else None)
+
+
+def headline_successor(project: str, key: str) -> dict | None:
+    """PR1B.12: the declared successor of a headline key, renames followed in chain — {"to": the newest key, "kind":
+    "change" if any hop changed the quantity else "rename", "same_quantity_at": where the old quantity reads now (a
+    change's, if kept), "hops": the entries}, or None when nothing is declared for `key`."""
+    hops, seen, k = [], {key}, key
+    while (e := _rename_entry(project, k)) is not None and e["to"] not in seen:
+        hops.append(e)
+        k = e["to"]
+        seen.add(k)
+    if not hops:
+        return None
+    change = [e for e in hops if e.get("kind") == "change"]
+    # the old quantity's place now: the one change's same_quantity_at, followed through its own later renames (two
+    # changes in a chain: no single place holds the oldest quantity)
+    sq = change[0].get("same_quantity_at") if len(change) == 1 else None
+    if sq and (s := headline_successor(project, sq)) is not None:
+        sq = s["to"] if s["kind"] == "rename" else None
+    return {"from": key, "to": k, "kind": "change" if change else "rename", "hops": hops,
+            "same_quantity_at": sq,
+            "ref": "+".join(e.get("ref", "?") for e in hops), "date": max(e.get("date", "") for e in hops),
+            "why": "; ".join(e.get("why", "") for e in hops)}
+
+
+def headline_predecessor_value(project: str, key: str, previous: dict) -> tuple[str, float, dict] | None:
+    """PR1B.12: (old key, its value, the successor record) for a headline `key` a previous snapshot held under an OLDER
+    declared name (HEADLINE_RENAMES, followed in chain), when `previous` (that project's {key: value}) holds no value
+    under `key` itself; else None."""
+    for old, v in (previous or {}).items():
+        if old == key or not isinstance(v, float):
+            continue
+        s = headline_successor(project, old)
+        if s and s["to"] == key:
+            return old, v, s
+    return None
+
+
+def declared_rename_line(project: str, old: str, was: float, succ: dict, now: float | None,
+                         old_quantity_now: float | None = None) -> str:
+    """PR1B.12: how the guard prints a declared rename / change of quantity (listed, never counted)."""
+    def f(v):
+        return f"{v:,.0f}" if abs(v) >= 1000 else f"{v:.6g}"
+    tag = "RENAMED" if succ["kind"] == "rename" else "CHANGE OF QUANTITY"
+    line = (f"{tag} (declared {succ['ref']}, {succ['date']}): {project} {old} -> {succ['to']}: {f(was)} before, "
+            f"{f(now)} after" + (" (like for like)" if succ["kind"] == "rename" else " (a different quantity)"))
+    if succ["kind"] == "change" and succ.get("same_quantity_at"):
+        line += (f"; the old quantity reads {f(old_quantity_now)} at {succ['same_quantity_at']} (like for like)"
+                 if old_quantity_now is not None else
+                 f"; the old quantity's declared place {succ['same_quantity_at']} reads no value")
+    return line + f" — {succ['why']}"
+
+
+# DECLARED n/a REASONS (PR1B.5, Jake 2026-11-09: "SUBSIDY COVER, LEAKAGE (ii), UNIFORMITY: give one true reason.
+# Comparison says 'no (b) series on file', Flows says (b) is 'included in (d)'."). A code cell whose quantity does not
+# exist for the project reads ONE reason, the same on CP, the reader and Flows; done_check accepts a code whose reason
+# carries a declared `match` for that project (class "declared"), and rule-3's sweep does not count it (the decision is
+# here, with its source). Per project: [{"cols": CP header prefixes, "text": the cell's text, "match": the substring
+# done_check finds in the reader's comment / the audit text, "source", "read_on", "decided"}].
+DECLARED_NA_REASONS: dict = {
+    "Uniswap": [
+        # (b) is not a separate flow: every UNI incentive is treasury-funded, and every fall of the Timelock is (d)
+        # (growth_budget_release_tokens; FLOW_LINE_EVIDENCE ('Uniswap', 'Incentives paid beside: supply side (b)')
+        # included_in (d)). The UNIfication proposal names incentives among the budget's uses and publishes no split;
+        # neither the Uniswap Foundation's financials (its own treasury, FY2025 the last) nor the forum carry a
+        # growth-budget report by use (gov.uniswap.org search, read 2026-11-09).
+        {"cols": ("SUBSIDY COVER", "Subsidy cover incl. demand-side", "LEAKAGE (ii)"),
+         "text": "n/a — any UNI liquidity incentives are paid from the growth budget, held whole in (d); no published "
+                 "split (UNIfication proposal, gov.uniswap.org/t/unification-proposal/25881, posted 2025-11-10: a 20M "
+                 "UNI a year growth budget from the treasury funds Uniswap Labs' growth work — 'strategic partnerships, "
+                 "grants, and incentives' — with no split by use; no budget report by use on the forum, none in the "
+                 "Uniswap Foundation's FY2025 financials, gov.uniswap.org/t/26068, 2026-03-31; read 2026-11-09)",
+         "match": "held whole in (d); no published split",
+         "source": "https://gov.uniswap.org/t/unification-proposal/25881 ; "
+                   "https://gov.uniswap.org/t/uniswap-foundation-summary-fy-2025-financials/26068 ; "
+                   "https://gov.uniswap.org/search.json?q=growth%20budget",
+         "read_on": "2026-11-09", "decided": "Jake 2026-11-09 (PR1B.5: the code when no split is published)"},
+        # UNI has no staking: protocol fees burn UNI (UNIfication), nothing is paid to holders who lock it
+        {"cols": ("UNIFORMITY",),
+         "text": "n/a — no staker yield exists (no UNI staking)",
+         "match": "no staker yield exists (no UNI staking)",
+         "source": "https://gov.uniswap.org/t/unification-proposal/25881 (fees burn UNI; no staking)",
+         "read_on": "2026-11-09", "decided": "Jake 2026-11-09 (PR1B.5)"},
+    ],
+}
+
+
+def declared_na_text(project: str, header: str) -> str | None:
+    """PR1B.5: the declared n/a text of a CP column (by header prefix) for the project, or None."""
+    return next((e["text"] for e in DECLARED_NA_REASONS.get(project, ())
+                 if any(str(header).startswith(c) for c in e["cols"])), None)
+
+
+def declared_na(project: str, reason) -> dict | None:
+    """PR1B.5: the DECLARED_NA_REASONS entry whose `match` the reason text carries (done_check), or None. An entry
+    without a source and a read date declares nothing."""
+    t = str(reason or "")
+    return next((e for e in DECLARED_NA_REASONS.get(project, ())
+                 if e.get("match") and e["match"] in t and e.get("source") and e.get("read_on")), None)
+
+
 # REVIEW QUEUE ROWS ANSWERED (G4 item 7b, Jake 2026-10-18: "accept, reject or fix each, with numbers; clear the resolved
 # rows"). A validation row matching an entry (project, metric, reason; `date` = that row's date only, else every date
 # up to `until`) is written under "ANSWERED — not open" on the Review Queue with the decision, never counted as open
