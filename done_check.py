@@ -13,6 +13,8 @@ of reader.CODES; its reason is the cell's comment) whose reason is one of:
                 carries a clear-by date
     blocked     the code is 'blocked' (or the reason says BLOCKED) AND the reason carries a clear-by date
     accepted    the cell is on the allowlist (config.regression_allowance: REGRESSION_ALLOWLIST, not past `until`)
+    declared    the reason carries a declared n/a reason of the project (config.DECLARED_NA_REASONS: the quantity does
+                not exist for it, decided with a source and a read date — PR1B.5); a rule-3 suspect so declared too
 
 A CLEAR-BY DATE is a date found in the reason text that is on or after the as-of day: an ISO date (YYYY-MM-DD), or a
 month written out ("about January 2027", "by Jan 2027" — read as that month's last day; the build writes ISO dates,
@@ -235,6 +237,9 @@ def judge_cell(project, tab, header, cell, value, asof, awb, is_rank=False, key_
         return out                                                        # a descriptor (token, archetype, status)
     reason = comment + (f"\n\n{key_reason}" if is_rank and key_reason else "")
     acc = allowance(project, tab, header, reason, awb, asof)
+    import config                                                         # noqa: PLC0415
+    if config.declared_na_reason(project, reason):
+        return out                     # PR1B.5: a declared reason (config.DECLARED_NA_REASONS, with its source)
     ok, cls, why = classify(code, reason, asof, accepted=acc is not None)
     if code == "unranked" and not ok and cls != "rule-3":                  # an unranked primary without a date
         cls, why = "unranked", (why if why.startswith("unranked") else f"unranked, {why}")
@@ -383,6 +388,7 @@ def judge_suspects(hits: list, project: str, already: list) -> list:
     """rule3.suspects hits of this project as blockers, ONE per reason: the other cells with the same reason are listed
     under it (--verbose). A cell already judged a rule-3 blocker (Summary, Comparison) takes the cells with its reason.
     A suspect whose code is 0 is a measured zero — a number, rule 3 obeyed — and is not a blocker."""
+    import config                                                         # noqa: PLC0415
     seen = {(b.tab, b.header) for b in already}
     by_reason = {}
     for b in already:
@@ -392,6 +398,8 @@ def judge_suspects(hits: list, project: str, already: list) -> list:
     for h in hits:
         if h["project"] != project or str(h["code"]).strip() == "0":
             continue
+        if config.declared_na_reason(project, h["reason"]):
+            continue                   # PR1B.5: a declared reason (config.DECLARED_NA_REASONS), decided with its source
         kind, tab = h["tab"].split(":", 1)
         key = (tab if kind == "reader" else f"audit {tab}", h["header"] or "(no header)")
         if key in seen:

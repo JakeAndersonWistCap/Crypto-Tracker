@@ -181,3 +181,79 @@ def test_sanity_and_continuity_read_a_value_held_under_an_older_declared_name():
     row = credibility.continuity_row("Pendle", hcs, prev, "2026-11-08")
     assert row is not None and row["value"] == 1.0 and "was 0.25" in row["note"]
     assert credibility.continuity_row("Pendle", hcs, {"Pendle": {"CP | undeclared": 0.25}}) is None
+
+
+# ============================================================ item 5: one true reason (subsidy cover, leakage (ii), uniformity)
+
+@pytest.fixture(scope="module")
+def built(tmp_path_factory):
+    sys.path.insert(0, str(ROOT / "tests"))
+    from shared_build import plain_build
+    rec = plain_build(tmp_path_factory, "pr1b_circ")
+    import openpyxl
+    rec["awb"] = openpyxl.load_workbook(rec["audit"])
+    rec["rwb"] = openpyxl.load_workbook(rec["reader"])
+    return rec
+
+
+def _row_cells(ws, project):
+    hr = next(r for r in range(1, 15) if ws.cell(r, 1).value == "Project")
+    r = next(r for r in range(hr + 1, ws.max_row + 1) if ws.cell(r, 1).value == project)
+    return {str(ws.cell(hr, c).value or ""): ws.cell(r, c) for c in range(2, ws.max_column + 1)}
+
+
+SUBSIDY_HEADS = ("SUBSIDY COVER", "Subsidy cover incl. demand-side", "LEAKAGE (ii)")
+
+
+def test_item5_cp_reads_one_true_reason(built):
+    cp = next(ws for ws in built["awb"].worksheets if ws.title.startswith("CP"))
+    u = _row_cells(cp, "Uniswap")
+    decl = config.declared_na_text("Uniswap", "SUBSIDY COVER")
+    assert decl.startswith("n/a — any UNI liquidity incentives are paid from the growth budget, held whole in (d); "
+                           "no published split (") and "read 2026-11-09" in decl
+    for pre in SUBSIDY_HEADS:
+        cell = next(c for h, c in u.items() if h.startswith(pre))
+        assert cell.value == decl, (pre, cell.value)
+    uni = next(c for h, c in u.items() if h.startswith("UNIFORMITY"))
+    assert uni.value == "n/a — no staker yield exists (no UNI staking)"
+    # every other project keeps its own reason (no declaration)
+    c = _row_cells(cp, "Chainlink")
+    assert str(next(v for h, v in c.items() if h.startswith("SUBSIDY COVER")).value).startswith(
+        "n/a — no supply-side incentive (b) series on file")
+
+
+def test_item5_flows_and_comparison_say_the_same(built):
+    """Flows' (b) line says 'included in (d)' (FLOW_LINE_EVIDENCE); the Comparison codes now say the same."""
+    ev = config.FLOW_LINE_EVIDENCE[("Uniswap", "Incentives paid beside: supply side (b)")]
+    assert ev["verdict"] == "included_in" and "(d)" in ev["line"]
+    cmp_ = built["rwb"]["Comparison"]
+    hdr = {str(cmp_.cell(4, c).value): c for c in range(1, cmp_.max_column + 1)}
+    r = next(r for r in range(5, cmp_.max_row + 1) if cmp_.cell(r, 1).value == "Uniswap")
+    for h in ("Subsidy cover (x)", "Leakage (ii)"):
+        cell = cmp_.cell(r, hdr[h])
+        assert cell.value == "n/a" and "held whole in (d); no published split" in cell.comment.text, h
+        assert "no supply-side incentive (b) series on file" not in cell.comment.text
+
+
+def test_item5_done_check_accepts_the_declared_reasons(built):
+    from datetime import date
+
+    import done_check as dc
+    res = {p: bl for p, _st, bl, _w in dc.check(built["rwb"], built["awb"], date(2026, 10, 13))}
+    bad = [b.line() for b in res["Uniswap"]
+           if any(x in (b.header + b.why) for x in ("ubsidy", "eakage", "NIFORMITY", "staker yield"))]
+    assert not bad, bad
+
+
+def test_item5_declared_reason_needs_its_match_source_and_date(monkeypatch):
+    import done_check as dc
+    t = config.declared_na_text("Uniswap", "UNIFORMITY")
+    assert config.declared_na_reason("Uniswap", f"{t}\n\nWorking: audit file, CP!X5.")
+    assert config.declared_na_reason("Pendle", t) is None, "a declaration is the project's own"
+    hits = [{"tab": "audit:CP Comparability", "project": "Uniswap", "header": "UNIFORMITY", "code": "n/a",
+             "reason": t}]
+    assert dc.judge_suspects(hits, "Uniswap", []) == []
+    monkeypatch.setitem(config.DECLARED_NA_REASONS, "Uniswap",
+                        [dict(e, read_on="") for e in config.DECLARED_NA_REASONS["Uniswap"]])
+    assert config.declared_na_reason("Uniswap", t) is None, "no read date: declares nothing"
+    assert len(dc.judge_suspects(hits, "Uniswap", [])) == 1, "undeclared: a rule-3 suspect blocker as before"

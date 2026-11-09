@@ -24378,7 +24378,7 @@ def declared_na_text(project: str, header: str) -> str | None:
                  if any(str(header).startswith(c) for c in e["cols"])), None)
 
 
-def declared_na(project: str, reason) -> dict | None:
+def declared_na_reason(project: str, reason) -> dict | None:
     """PR1B.5: the DECLARED_NA_REASONS entry whose `match` the reason text carries (done_check), or None. An entry
     without a source and a read date declares nothing."""
     t = str(reason or "")
