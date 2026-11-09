@@ -260,7 +260,7 @@ def test_3_the_a1_key_the_lever_and_emissions_read_the_day_priced_series(monkeyp
     monkeypatch.setattr(bw, "_flow_rate", lambda R, r, m, w="q0", **kw: f"rate[{m}|{w}]")
     sky = config.PROJECT_BY_NAME["Sky"]
     for w in ("q0", "q1", "q3"):
-        assert bw._fees_issuance_day(_R, 3, sky, w) == (f"=IF(ISNUMBER(D[gross_issuance_tokens]),rate[fees_usd|{w}]/"
+        assert bw._fees_issuance_day(_R, 3, sky, w) == (f"=IF(ISNUMBER(D[fees_usd]*D[gross_issuance_tokens]),rate[fees_usd|{w}]/"
                                                         f"rate[gross_issuance_day_priced_usd|{w}],{bw.NA})")
     a1 = inspect.getsource(bw.write_a1)
     assert a1.count("_fees_issuance_day(R, r, p, ") == 4 and "*{price(r, 'q" not in a1

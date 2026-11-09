@@ -8780,7 +8780,7 @@ def _fees_issuance_day(R, r: int, p: dict, w: str) -> str:
         return _no_issuance_text(p)
     return _coverage_guard(R, r, [("fees", "fees_usd", w), ("issuance", "gross_issuance_tokens", w),
                                   ("issuance $", "gross_issuance_day_priced_usd", w)],
-                           f"IF(ISNUMBER({R.D(r, 'gross_issuance_tokens', w)}),{_flow_rate(R, r, 'fees_usd', w)}/"
+                           f"IF(ISNUMBER({R.D(r, 'fees_usd', w)}*{R.D(r, 'gross_issuance_tokens', w)}),{_flow_rate(R, r, 'fees_usd', w)}/"
                            f"{_flow_rate(R, r, 'gross_issuance_day_priced_usd', w)},{NA})")
 
 
