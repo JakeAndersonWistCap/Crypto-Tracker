@@ -8780,7 +8780,8 @@ def _fees_issuance_day(R, r: int, p: dict, w: str) -> str:
         return _no_issuance_text(p)
     return _coverage_guard(R, r, [("fees", "fees_usd", w), ("issuance", "gross_issuance_tokens", w),
                                   ("issuance $", "gross_issuance_day_priced_usd", w)],
-                           f"{_flow_rate(R, r, 'fees_usd', w)}/{_flow_rate(R, r, 'gross_issuance_day_priced_usd', w)}")
+                           f"IF(ISNUMBER({R.D(r, 'gross_issuance_tokens', w)}),{_flow_rate(R, r, 'fees_usd', w)}/"
+                           f"{_flow_rate(R, r, 'gross_issuance_day_priced_usd', w)},{NA})")
 
 
 def _circ_change_gap_text(p: dict) -> str:
@@ -12377,7 +12378,8 @@ def _a4_phase2_cols(R: Refs) -> list[tuple]:
         # the issuance rate x the 90-day average price
         usd = day_priced_metric(p["name"], iss_m(p))
         return _coverage_guard(R, r, [("issuance", iss_m(p), "q0"), ("issuance $", usd, "q0"), ("fees", "fees_usd", "q0")],
-                               f"{_flow_rate(R, r, usd)}/{_flow_rate(R, r, 'fees_usd')}")
+                               f"IF(ISNUMBER({R.D(r, iss_m(p), 'q0')}),{_flow_rate(R, r, usd)}/{_flow_rate(R, r, 'fees_usd')},"
+                               f"{NA})")   # an n/a names the issuance series, not its $ view
 
     def split(r, p):
         a1, a4 = config.a1_burn_metric(p["name"]), a4b(p)
