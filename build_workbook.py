@@ -7288,8 +7288,8 @@ def _burn_base_flag(p: dict) -> tuple[str, str] | None:
     if base == "fees_usd":
         return (" of fees", "BURN BASE: the documented share is a share of FEES (fees_usd).")
     return (" of revenue", f"BURN BASE: the documented share is a share of PROTOCOL REVENUE ({base}, config burn_split."
-                           f"fee_base_metric), not of all fees — the implied burn beside it is {base} × this share ÷ "
-                           f"the 90-day average price.")
+                           f"fee_base_metric), not of all fees — the implied burn beside it is {base} × this share, "
+                           f"each day's $ ÷ that day's price (PR1B.3).")
 
 
 IMPLIED_ACTUAL_ON = {"buyback": "'Actual buyback Q0 ($) — observed' (A3)", "burn": "'GROSS BURN Q0 (tokens)' (A4)"}
@@ -9026,6 +9026,25 @@ def _fees_issuance_day(R, r: int, p: dict, w: str) -> str:
                                   ("issuance $", "gross_issuance_day_priced_usd", w)],
                            f"IF(ISNUMBER({R.D(r, 'fees_usd', w)}*{R.D(r, 'gross_issuance_tokens', w)}),{_flow_rate(R, r, 'fees_usd', w)}/"
                            f"{_flow_rate(R, r, 'gross_issuance_day_priced_usd', w)},{NA})")
+
+
+# PR1B.3 (lead 2026-11-09): A2's key, the emissions-side twin of A1's fees ÷ issuance — customer revenue ÷ emissions $,
+# the emissions $ at each day's price (was the tokens x the 90-day average price). The header is unchanged.
+A2_KEY_HEAD = "Customer revenue ÷ emissions value (x)"
+
+
+def _rev_emissions_value_day(R, r: int, w: str = "q0", share: bool = False) -> str:
+    """PR1B.3 (lead 2026-11-09): A2's CUSTOMER REVENUE ÷ EMISSIONS $ per covered day — the emissions $ is each day's
+    emissions x that day's price (emissions_day_priced_usd, the Emissions Q0 $ column's series; a weekly or monthly row
+    at its own period's mean price), never the tokens x the window's average price. `share`: customer revenue ÷
+    (customer revenue + emissions $), the customer share of supplier earnings, on the same legs. Guarded on customer
+    revenue, the emission tokens (their n/a names the missing series) and the $ series."""
+    rev, usd = _flow_rate(R, r, "customer_revenue_usd", w), _flow_rate(R, r, "emissions_day_priced_usd", w)
+    den = f"({rev}+{usd})" if share else usd
+    return _coverage_guard(R, r, [("customer revenue", "customer_revenue_usd", w), ("emissions", "emissions_tokens", w),
+                                  ("emissions $", "emissions_day_priced_usd", w)],
+                           f"IF(ISNUMBER({R.D(r, 'customer_revenue_usd', w)}*{R.D(r, 'emissions_tokens', w)}),"
+                           f"{rev}/{den},{NA})")
 
 
 def _circ_change_gap_text(p: dict) -> str:
@@ -13134,7 +13153,7 @@ def write_a1(ws, R: Refs, data_by_key: dict, months: list[str]):
 def write_a2(ws, R: Refs, data_by_key: dict, months: list[str]):
     projects = [p for p in scoped_projects() if 2 in p["archetypes"]]
     _title(ws, "A2 — Coordination Mechanism", "Demand: physical/resource supply units, utilisation, end-user revenue ($). Supply: emissions to suppliers; split between supplier earnings from emissions vs actual customer payment. "
-                                               "Key ratio: customer revenue per unit of emission, tracked over time. Most inputs come from Dune queries or manual overrides — see Data flags.")
+                                               "Key ratio: customer revenue per unit of emission, tracked over time; every emissions $ is each day's emissions × that day's price (PR1B.3). Most inputs come from Dune queries or manual overrides — see Data flags.")
     price = lambda r, w="q0": R.D(r, "price_usd", w)  # noqa: E731
     rev = lambda r, w="q0": R.D(r, "customer_revenue_usd", w)  # noqa: E731
     emi = lambda r, w="q0": R.D(r, "emissions_tokens", w)  # noqa: E731
@@ -13183,12 +13202,15 @@ def write_a2(ws, R: Refs, data_by_key: dict, months: list[str]):
           "note_fn": lambda p: day_price_note(p["name"], "emissions_day_priced_usd")}),
         ("CUSTOMER REVENUE PER TOKEN EMITTED ($/token) — key ratio", lambda r, p: _coverage_guard(R, r, [("customer revenue", "customer_revenue_usd", "q0"), ("emissions", "emissions_tokens", "q0")],
                                       f"{_flow_rate(R, r, 'customer_revenue_usd', 'q0')}/{_flow_rate(R, r, 'emissions_tokens', 'q0')}"), FMT_USD4, "calc", True),
-        ("Customer revenue ÷ emissions value (x)", lambda r, p: _coverage_guard(R, r, [("customer revenue", "customer_revenue_usd", "q0"), ("emissions", "emissions_tokens", "q0")],
-                                      f"{_flow_rate(R, r, 'customer_revenue_usd', 'q0')}/({_flow_rate(R, r, 'emissions_tokens', 'q0')}*{price(r)})"), FMT_X, "calc", True),
-        ("Supplier earnings from emissions ($)", lambda r, p: calc(f"{emi(r)}*{price(r)}"), FMT_USD, "calc"),
+        # PR1B.3 (lead 2026-11-09): the key's emissions $ is the Emissions Q0 $ column's series (each day's emissions x
+        # that day's price) — was the window's tokens x the 90-day average price; one emissions $ figure on the tab
+        (A2_KEY_HEAD, lambda r, p: _rev_emissions_value_day(R, r), FMT_X, "calc", True,
+         {"note_fn": lambda p: day_price_note(p["name"], "emissions_day_priced_usd")}),
+        ("Supplier earnings from emissions ($, each day's emissions × that day's price)",
+         lambda r, p: _day_priced_cell(R, r, "emissions_tokens", "emissions_day_priced_usd"), FMT_USD, "calc"),
         ("Supplier earnings from customers ($)", lambda r, p: pull(rev(r)), FMT_USD, "pull"),
-        ("Customer share of supplier earnings", lambda r, p: _coverage_guard(R, r, [("customer revenue", "customer_revenue_usd", "q0"), ("emissions", "emissions_tokens", "q0")],
-                                      f"{_flow_rate(R, r, 'customer_revenue_usd', 'q0')}/({_flow_rate(R, r, 'customer_revenue_usd', 'q0')}+{_flow_rate(R, r, 'emissions_tokens', 'q0')}*{price(r)})"), FMT_PCT, "calc"),
+        ("Customer share of supplier earnings", lambda r, p: _rev_emissions_value_day(R, r, share=True), FMT_PCT,
+         "calc"),
         ("Revenue per supply unit Q0 ($)", lambda r, p: calc(f"{rev(r)}/{R.D(r, 'supply_units', 'now')}"), FMT_USD, "calc"),
         ("Publisher Conviction ($, OriginTrail)", lambda r, p: pull(R.D(r, "publisher_conviction_usd", "now")), FMT_USD, "pull", False, {"metric": "publisher_conviction_usd"}),
         ("Staked tokens (float metric, not demand)", lambda r, p: pull(R.D(r, "locked_tokens", "now")), FMT_NUM, "pull", False, {"metric": "locked_tokens"}),

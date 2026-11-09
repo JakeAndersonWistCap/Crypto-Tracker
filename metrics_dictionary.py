@@ -55,10 +55,11 @@ CONVENTIONS = [
                                "Jake's convention (e.g. Hyperliquid Foundation + Grants out; NEAR total − lockups "
                                "LOCKED), wherever one exists; our on-chain set is the cross-check, CoinGecko only where "
                                "the project publishes nothing (Jake 2026-10-07; wording 2026-10-12)."),
-    ("Price", "Market cap, FDV and the supply ratios use the spot price (price_usd 'now'); fee ÷ issuance and implied "
-              "buyback tokens use the Q0 average price; protocol staking yield converts each payment at its payment "
-              "day's price (Jake 2026-10-09); every $ burn, gross issuance $, A4's issuance − burn $ and governance "
-              "lever, A1's fees ÷ issuance and A2's emissions $ are each "
+    ("Price", "Market cap, FDV and the supply ratios use the spot price (price_usd 'now'); a $ figure put into tokens "
+              "(implied buyback tokens) uses the Q0 average price; protocol staking yield converts each payment at its "
+              "payment day's price (Jake 2026-10-09); every $ burn, gross issuance $, A4's issuance − burn $ and "
+              "governance lever, A1's fees ÷ issuance, A2's emissions $ and its customer revenue ÷ emissions value are "
+              "each "
               "day's tokens × that day's price, the holder-value basis — a day without a price left out and named "
               "(PR1B.3, Jake 2026-11-09)."),
     ("Statuses", "Buyback / burn status labels are DERIVED FROM THE DATA (Jake's review of 97b29ae, item 13): halted "
@@ -365,8 +366,8 @@ ENTRIES = {
         what="Customer revenue per token emitted.", formula="customer revenue per day ÷ emissions per day",
         window="Q0", unit="$/token", inputs=["customer_revenue_usd", "emissions_tokens"]),
     "Customer revenue ÷ emissions value (x)": dict(
-        what="Customer revenue ÷ the dollar value of emissions.", formula="revenue per day ÷ (emissions per day × "
-                                                                          "Q0 average price)",
+        what="Customer revenue ÷ the dollar value of emissions.",
+        formula="revenue per day ÷ emissions $ per day (each day's emissions × that day's price; PR1B.3)",
         window="Q0", unit="x", inputs=["customer_revenue_usd", "emissions_tokens", "price_usd"]),
     # ------------------------------------------------------------------ A3
     "CIRCULATING RETIREMENT RATE (tokens)": dict(
