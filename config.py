@@ -30601,8 +30601,8 @@ METRICS["fees_base_day_priced_tokens"] = {
 METRICS["gross_issuance_day_priced_usd"] = {
     "label": "Gross issuance ($): each day's gross_issuance_tokens x that day's price_usd (a row spanning days at the "
              "mean price of its own days; a day without a price left out and named) — PR1B.3",
-    "kind": "flow", "unit": "usd", "archetypes": [1, 4], "tiers": [2], "sanity_min": -1e13, "sanity_max": 1e13,
-    "view_only": True}
+    "kind": "flow", "unit": "usd", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": -1e13, "sanity_max": 1e13,
+    "view_only": True}   # every archetype: Master's fees ÷ issuance $ reads it on every row
 METRICS["pool_release_day_priced_usd"] = {
     "label": "Pool release ($): each day's pool_release_tokens x that day's price_usd — the issuance leg of A4's "
              "issuance − burn $ where the supply is pre-minted (PR1B.3)",

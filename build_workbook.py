@@ -5236,8 +5236,6 @@ def _gross_burn_day_priced_usd_views(groups: dict, asof=None) -> None:
     DAY_PRICE_LEFT_OUT.clear()
     for p in scoped_projects():
         arch = set(p.get("archetypes", ()))
-        if not arch & {1, 2, 4}:
-            continue
         name = p["name"]
         px = _daily(groups.get((name, "price_usd")))
         if px.empty:
@@ -5246,8 +5244,8 @@ def _gross_burn_day_priced_usd_views(groups: dict, asof=None) -> None:
         # PR1B.3 follow-up (lead 2026-11-09): issuance $ and the net change's legs on the same basis as the burn $ —
         # gross issuance (A1, A4), the issuance basis the net counts (a release where pre-minted) and the burn it counts
         legs = {config.a4_burn_metric(name): "gross_burn_day_priced_usd"} if 4 in arch else {}
-        if arch & {1, 4}:
-            legs.setdefault("gross_issuance_tokens", "gross_issuance_day_priced_usd")
+        # every project: Master's copy of A1's key (fees ÷ issuance $) is on every row
+        legs.setdefault("gross_issuance_tokens", "gross_issuance_day_priced_usd")
         if 4 in arch:
             # the crossover's issuance (A4 "Governance lever": Uniswap's releases, a pre-minted release, option C)
             for m in (config.issuance_basis(name), config.a1_burn_metric(name),
