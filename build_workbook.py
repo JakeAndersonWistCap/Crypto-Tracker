@@ -13570,6 +13570,15 @@ def _value_timing(groups: dict, name: str, start, end, usd_gap: float) -> str | 
             f"{spec['why']}" + bridge)
 
 
+def _tokenjar_flows_note(name: str) -> str:
+    """PR1B.9: the Flows revenue line's words where THIS build handed revenue over to the TokenJar inflows."""
+    st = config.TOKENJAR_NOTE.get(name)
+    if not st:
+        return ""
+    return (f"ACCRUED: the TokenJar inflows from {st['first']} (PR1B.9), DefiLlama's released value before "
+            f"(declared handover); the jars' undistributed balance is the memo line below")
+
+
 def _flow_at(s: pd.Series, day, slack: int = 3):
     """The stock's value on the last stored day at or before `day`, within `slack` days — else None."""
     if s.empty:
@@ -13794,7 +13803,15 @@ def flow_statements(groups: dict, asof) -> list[dict]:
         vlines = [("Fees paid by customers", vrows["fees"], "usd", config.fees_headline_metric(name), ""),
                   ("→ to suppliers (fees − revenue)", sup, "usd", f"fees_usd − {rb}",
                    "n/a: the revenue basis is gross fees" if rb == "fees_usd" else ""),
-                  ("Revenue (every stream)", vrows["revenue"], "usd", rev_m, ""),
+                  ("Revenue (every stream)", vrows["revenue"], "usd", rev_m, _tokenjar_flows_note(name)),
+                  # PR1B.9: the TokenJars' UNDISTRIBUTED balance at each quarter's end — a stock (the quarter's start is
+                  # the quarter before's end); only where it is stored
+                  *([("memo: TokenJars' undistributed balance at the quarter's end (accrued, not yet released)",
+                      [_flow_at(d(_tj_bal), _flow_window(asof, k)[1]) for k in range(5)], "usd", _tj_bal,
+                      "a STOCK read at the day's closing block (each jar's balanceOf + native coin, the day's prices); "
+                      "its change over a quarter = accrued (revenue) − released; Q0's start is Q-1's end")]
+                    if (_tj_bal := (config.TOKENJAR_REVENUE.get(name) or {}).get("balance_metric")) and
+                    (name, _tj_bal) in groups else []),
                   ("→ retired (bought, burned + held)", vrows["retired"], "usd", "retired_buyback_usd", ""),
                   ("→ distributed to holders", dist, "usd",
                    "actual − retired buyback" + ("".join(f" + {m}" for m in hv.get("distributed_extra") or ())), ""),

@@ -505,6 +505,24 @@ def test_value_timing_reads_the_released_series_after_the_handover(uni_only, mon
     assert bw._value_timing(groups, "Uniswap", start, end, 0.05) is None
 
 
+def test_flows_carries_the_jar_balance_at_each_quarter_end_and_the_accrued_words(uni_only, monkeypatch):
+    groups = _live_groups()
+    bw._tokenjar_revenue_views(groups)
+    monkeypatch.setitem(bw.GLOBALS, "period_days", 90)
+    rows = bw.flow_statements(groups, pd.Timestamp("2026-11-08"))
+    memo = [r for r in rows if r["Project"] == "Uniswap" and r["Line"].startswith("memo: TokenJars' undistributed")]
+    assert len(memo) == 1 and memo[0]["Series"] == "tokenjar_balance_usd"
+    vals = [memo[0][lab] for lab in bw.trajectory.LABELS]
+    assert vals[0] == 390_000.0 and vals[1] == 100_000.0 and vals[2] is None     # Q0's end, Q-1's end (= Q0's start)
+    rev = next(r for r in rows if r["Project"] == "Uniswap" and r["Line"] == "Revenue (every stream)")
+    assert "ACCRUED: the TokenJar inflows from 2026-10-11" in rev["Note"]
+    # the dumps' shape (no balance stored): no memo line, no words
+    config.TOKENJAR_NOTE.clear()
+    g2 = {k: v for k, v in _live_groups().items() if k[1] == "revenue_usd"}
+    rows2 = bw.flow_statements(g2, pd.Timestamp("2026-11-08"))
+    assert not [r for r in rows2 if r["Line"].startswith("memo: TokenJars'")]
+
+
 def test_credibility_sets_accrued_beside_released_once_the_jar_is_in_q0():
     import credibility
     spec = config.CREDIBILITY["Uniswap"]["in_revenue"]
