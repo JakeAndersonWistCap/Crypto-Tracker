@@ -124,6 +124,12 @@ def qoq(q0, q1):
     return (a - b) / abs(b)
 
 
+def qoq_pp(q0, q1):
+    """PR1B.10c: the change of a yield or ratio that can be negative — the difference (a fraction: 0.012 = 1.2 pp)."""
+    a, b = _num(q0), _num(q1)
+    return None if a is None or b is None else a - b
+
+
 def loglinear_growth(values: list) -> tuple[float | None, int, str]:
     """(annual growth, quarters used, why None) from the newest four quarters (values[0] = Q0). Log-linear: ln(v) on
     the quarter index over the quarters that hold a value; every one must be > 0 (a log of 0 or a negative is
@@ -314,23 +320,26 @@ def arrow(q, d: int | None) -> str:
     return "▲" if good > 0 else "▼" if good < 0 else "→"
 
 
-def qoq_text(q, qoq_label: str = "") -> str:
-    """'QoQ +x%' — or, where the quarter before is a launch or partial quarter (PR1.S5), 'QoQ n/a — <label>'."""
+def qoq_text(q, qoq_label: str = "", pp: bool = False) -> str:
+    """'QoQ +x%' — or, where the quarter before is a launch or partial quarter (PR1.S5), 'QoQ n/a — <label>'; a lumpy
+    window (PR1B.10a) 'QoQ lumpy (…)'; a yield that can be negative (PR1B.10c) 'QoQ +x.x pp'."""
     if qoq_label:
-        return f"QoQ n/a — {qoq_label}"
-    return f"QoQ {q:+.1%}" if q is not None else "QoQ n/a"
+        return f"QoQ {qoq_label}" if qoq_label.startswith("lumpy") else f"QoQ n/a — {qoq_label}"
+    if q is None:
+        return "QoQ n/a"
+    return f"QoQ {q * 100:+.1f} pp" if pp else f"QoQ {q:+.1%}"
 
 
-def trend_text(q, g, imp, n, d: int | None, label: str = "", qoq_label: str = "") -> str:
+def trend_text(q, g, imp, n, d: int | None, label: str = "", qoq_label: str = "", pp: bool = False) -> str:
     """THE ARROW FOLLOWS THE 4-QUARTER DIRECTION (Jake's Phase 1 review 2026-10-12, item 5), with quarters improved;
     QoQ is secondary text. A growth label (NEW / STEP CHANGE) stands in for the rate and carries no arrow."""
     if d is None:
-        return "direction not declared · " + qoq_text(q, qoq_label)
+        return "direction not declared · " + qoq_text(q, qoq_label, pp)
     parts = [arrow(None if label else g, d)]
     parts.append(label or (f"{g:+.0%}/yr (4Q)" if g is not None else "4Q n/a"))
     if imp is not None:
         parts.append(f"{imp}/{n} improved")
-    parts.append(qoq_text(q, qoq_label))
+    parts.append(qoq_text(q, qoq_label, pp))
     return " · ".join(parts)
 
 

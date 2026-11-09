@@ -205,7 +205,7 @@ def test_s9_the_detector_finds_a_code_that_denies_a_non_zero_quantity():
         "Summary": {(4, 2): "Total dilution, % of float", (4, 3): "Net supply change, % a year", (5, 1): "X",
                     (5, 2): 0.11, (5, 3): "by design", (6, 1): "Y", (6, 2): "blocked", (6, 3): "by design"},
         "A4 Permanent Burn": {(4, 2): "Burn ÷ issuance (x)", (4, 3): "Issuance or release, 90 days",
-                              (4, 4): "Revenue needed for crossover", (4, 5): "Total dilution, % of float a year",
+                              (4, 4): "Fees needed for crossover", (4, 5): "Total dilution, % of float a year",
                               (5, 1): "X", (5, 2): 1.1, (5, 3): 0, (5, 4): "n/a", (5, 5): "by design"}},
         {("A4 Permanent Burn", 5, 4): "n/a — no issuance: burn needs no revenue to exceed it"})
     found = {(x["project"], x["sheet"], x["cell"]) for x in contradictions.find(wb)}
@@ -263,7 +263,7 @@ def test_s9_uniswap_a4_reads_the_release_the_key_divides_by(built):
     assert X.value(ws.title, r, _col(ws, "Issuance or release, 90 days")) == pytest.approx(release)
     # its own unlock column stays on the tab (read for the issuance column, never consumed)
     assert X.value(ws.title, r, _col(ws, "UNLOCK DILUTION last 90 days")) == pytest.approx(release)
-    for h in ("Revenue needed for crossover", "Governance lever"):
+    for h in ("Fees needed for crossover", "Governance lever"):
         assert isinstance(X.value(ws.title, r, _col(ws, h)), float), h
 
 

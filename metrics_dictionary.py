@@ -289,9 +289,11 @@ ENTRIES = {
                 "Aerodrome); perp open interest ÷ Derivatives (Hyperliquid); borrowed ÷ 11 lenders (Maple, Morpho, "
                 "Fluid); Ethereum TVL ÷ 9 ETH LST/LRT peers (Ether.fi); TVL ÷ 4 yield-tokenization peers (Pendle); "
                 "USDS + DAI ÷ USD stablecoins (Sky); chain TVL ÷ all chains (Ethereum, NEAR). A day a launched peer "
-                "did not report is dropped, never read as 0. Uniswap: the 90-day MEAN of the daily shares (the Q0 basis), its 30- "
-                "and 60-day means beside (config.MARKET_SHARE_MEAN)", window="now; Uniswap: Q0 (90-day mean)", unit="%",
-        excludes="Chainlink, Plume, Aethir, GEODNET: n/a with the reason (no free comparable basis)",
+                "did not report is dropped, never read as 0. The headline is the 90-day MEAN of the daily shares (the Q0 basis; "
+                "a shifted quarter reads that quarter's mean), its 30- and 60-day means beside, for every project with a "
+                "share (config.MARKET_SHARE_MEAN; Uniswap PR1.U4, every project PR1B.10b)", window="Q0 (90-day mean)",
+        unit="%",
+        excludes="Chainlink, Aethir, GEODNET: n/a with the reason (no free comparable basis)",
         inputs=["market_share_pct", "market_share_category_usd"],
         decided=[(J, "2026-10-12", "overnight review of ab5f2a9, Phase 3"),
                  (J, "2026-11-05", "PR1.U4: Uniswap's headline is the 90-day mean, not one day")]),
@@ -306,7 +308,7 @@ ENTRIES = {
         decided=[(J, "2026-10-12", "Phase 2 amendment 1")]),
     "TOTAL YIELD — stakers": dict(
         what="What a staker earns in real terms: the validator staking yield less the dilution of net inflation.",
-        formula="validator staking yield − net inflation, where net inflation is A4's 'NET SUPPLY CHANGE, annualised % "
+        formula="validator staking yield − net inflation, where net inflation is A4's 'ISSUANCE − BURN, annualised % "
                 "of circulating' (the figure Master shows): issuance (or pool release) − burn, each annualised over its "
                 "covered days, ÷ circulating; burn only where issuance is declared zero",
         window="Q0 / the chain's own rate", unit="%",
@@ -408,10 +410,10 @@ ENTRIES = {
         window="Q0", unit="x", inputs=["gross_burn_tokens", "gross_issuance_tokens", "pool_release_tokens"]),
     "Q0 WINDOW CAVEAT": dict(what="Why the yield and crossover beside it are not yet a rate, with numbers.",
                              formula="text", window="Q0", unit="text"),
-    "NET SUPPLY CHANGE Q0 (tokens) — self-reported": dict(
-        what="Issuance minus burn over Q0.", formula="self-reported net mint where published, else issuance − burn; "
+    "ISSUANCE − BURN Q0 (tokens) — self-reported": dict(
+        what="Issuance minus burn over Q0 (burn only where nothing is minted) — a component, NOT the net supply change.", formula="self-reported net mint where published, else issuance − burn; "
                                                      "BLOCKED on unequal coverage", window="Q0", unit="tokens"),
-    "NET SUPPLY CHANGE, annualised % of circulating": dict(
+    "ISSUANCE − BURN, annualised % of circulating": dict(
         what="Net inflation (+) or deflation (−) per year, % of circulating.",
         formula="each side annualised over its covered days, difference ÷ circulating; BLOCKED with the total on "
                 "unequal coverage", window="Q0 → year", unit="%",

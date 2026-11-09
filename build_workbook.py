@@ -85,6 +85,7 @@ FMT_USD4 = '$#,##0.0000;($#,##0.0000);-'
 FMT_NUM = '#,##0;(#,##0);-'
 FMT_NUM2 = '#,##0.00;(#,##0.00);-'
 FMT_PCT = '0.0%;(0.0%);-'
+FMT_PP = '+0.0" pp";-0.0" pp";0.0" pp"'      # PR1B.10c: a change in percentage points (the value is x100)
 # How many staged rows per field reach the sheet. The table keeps all of them.
 STAGING_ROWS_PER_FIELD = 30
 FMT_X = '0.00"x";(0.00"x");-'
@@ -2596,6 +2597,60 @@ def _one_off_share_note(name: str, formula) -> str:
 ONE_OFF_MARK = "ONE-OFF IN THIS RATE"
 
 
+def _lumpy_window(s: pd.Series, lo, hi) -> tuple[float, int, str, float, int] | None:
+    """PR1B.10a: (share, n days, the days, window total, rows) where the n (<= config.LUMPY_SHARE['days']) largest days of
+    the flow `s` in (lo, hi] carry at least config.LUMPY_SHARE['share'] of the window's total, else None."""
+    spec = config.LUMPY_SHARE
+    w = s[(s.index > lo) & (s.index <= hi)]
+    tot = float(w.abs().sum())          # a signed flow (a net change) by its size
+    if w.empty or tot <= 0:
+        return None
+    top = w.abs().sort_values(ascending=False, kind="stable")
+    for k in range(1, int(spec["days"]) + 1):
+        share = float(top.iloc[:k].sum()) / tot
+        if share >= float(spec["share"]):
+            days = ", ".join(f"{pd.Timestamp(d).date()} {v:,.0f}" for d, v in top.iloc[:k].items())
+            return share, k, days, tot, len(w)
+    return None
+
+
+def _lumpy_of(name: str, metrics, wins) -> tuple[str, str] | None:
+    """PR1B.10a: (code, note) where a window `wins` of a daily flow in `metrics` is lumpy (config.LUMPY_SHARE) — the
+    code "lumpy (x% of the window on n days)"; the note names the series, window, days and amounts. None otherwise."""
+    groups, bounds = _ONE_OFF_CTX.get("groups") or {}, _ONE_OFF_CTX.get("bounds") or {}
+    best = None
+    for m in sorted(set(metrics or ())):
+        md = METRICS.get(m) or {}
+        if md.get("kind") != "flow" or md.get("granularity") == "monthly" or groups.get((name, m)) is None:
+            continue
+        s = _daily(groups.get((name, m)))
+        for w in wins:
+            if w not in bounds:
+                continue
+            got = _lumpy_window(s, *bounds[w])
+            if got and (best is None or got[0] > best[0]):
+                best = (*got, m, w)
+    if best is None:
+        return None
+    share, k, days, tot, n, m, w = best
+    spec = config.LUMPY_SHARE
+    code = f"lumpy ({share:.1%} of the window on {k} day{'s' if k > 1 else ''})"
+    return code, (f"LUMPY (PR1B.10a, config.LUMPY_SHARE: {float(spec['share']):.0%} or more of a window's flow on "
+                  f"{int(spec['days'])} days or fewer, declared {spec['declared']}): {m} {w.upper()} — {share:.1%} of its "
+                  f"{tot:,.0f} on {days} ({n} days held). The change is not read as a rate: {spec['why']}.")
+
+
+def _lumpy_rate(name: str, metric: str, w: str) -> float | None:
+    """A flow's window total per held day (S1: k rows = k days), for the % a lumpy change would have read."""
+    groups, bounds = _ONE_OFF_CTX.get("groups") or {}, _ONE_OFF_CTX.get("bounds") or {}
+    if w not in bounds or groups.get((name, metric)) is None:
+        return None
+    s = _daily(groups.get((name, metric)))
+    lo, hi = bounds[w]
+    x = s[(s.index > lo) & (s.index <= hi)]
+    return float(x.sum()) / len(x) if len(x) else None
+
+
 def _divides_by(formula: str, letter: str, metric: str) -> bool:
     """PR1B.1: True where the formula reads Data!<letter> of `metric` inside the right operand of a division — the one-off
     sits in what the rate DIVIDES BY (the A4 key: burn ÷ release). A guard (IF(ISNUMBER(…))) is not a division."""
@@ -2749,11 +2804,11 @@ def _market_share_mean_flag(p: dict) -> tuple[str, str] | None:
     day = (f" The latest single day, {last[0].date()}, reads {last[1]:.2%}"
            + (f" of a {last[2]:,.0f} category total" if last[2] is not None else "")
            + "; the 30- and 60-day means are the two columns beside." if last else "")
+    spec = config.MARKET_SHARE_MEAN.get(name) or {}
     return (" 90d mean",
-            "90-DAY MEAN (PR1.U4, Jake 2026-11-05): the mean of the daily shares held in the trailing 90 days — the Q0 "
-            "basis (Data Q0 of market_share_pct) — not one day: a DEX-volume share read on one day moves with that "
-            "day's category total (11-02 on Jake's store: Dexs +87.0% day-on-day, 25.36%; Review Queue r44)." + day
-            + " A shifted quarter reads that quarter's mean, as before.")
+            f"90-DAY MEAN ({spec.get('decided', 'PR1.U4')}): the mean of the daily shares held in the trailing 90 days "
+            f"— the Q0 basis (Data Q0 of market_share_pct) — not one day: {spec.get('why', '')}." + day
+            + " A shifted quarter reads that quarter's mean (Data Q-k of market_share_pct), like with like.")
 
 
 def _relabel_views(groups: dict) -> None:
@@ -6977,6 +7032,20 @@ def _burn_fee_base(p: dict) -> str:
     return (p.get("burn_split") or {}).get("fee_base_metric") or "fees_usd"
 
 
+def _burn_base_flag(p: dict) -> tuple[str, str] | None:
+    """PR1B.8 (Jake 2026-11-09: "Documented share of fees burned" read 100% for Uniswap, whose share is of PROTOCOL
+    REVENUE): the documented share names its base on the cell — " of revenue" where burn_split.fee_base_metric is a
+    revenue series, " of fees" otherwise."""
+    if not (p.get("burn_split") or {}).get("share_of_fees_burned"):
+        return None
+    base = _burn_fee_base(p)
+    if base == "fees_usd":
+        return (" of fees", "BURN BASE: the documented share is a share of FEES (fees_usd).")
+    return (" of revenue", f"BURN BASE: the documented share is a share of PROTOCOL REVENUE ({base}, config burn_split."
+                           f"fee_base_metric), not of all fees — the implied burn beside it is {base} × this share ÷ "
+                           f"the 90-day average price.")
+
+
 IMPLIED_ACTUAL_ON = {"buyback": "'Actual buyback Q0 ($) — observed' (A3)", "burn": "'GROSS BURN Q0 (tokens)' (A4)"}
 
 
@@ -7984,9 +8053,41 @@ def _nominal(w: str) -> str:
     return G("short_days") if w in ("now", "m1") else G("period_days")
 
 
+def _payout_live(name: str) -> str:
+    """PR1B.8 (Jake 2026-11-09: "Q0 to 2026-10-12 … 1.071" quoted the dumps): holder revenue ÷ revenue by complete
+    calendar month on THIS build's stored days (config.revenue_split's two lines, from config.VALUE_TIMING's `since`;
+    a month counts only where both lines hold every day), the range and the ratio over those months."""
+    split = config.revenue_split(name)
+    if not split:
+        return ""
+    h = _daily(_LAST_GROUPS.get((name, split["holder_revenue"]["metric"])))
+    rv = _daily(_LAST_GROUPS.get((name, split["revenue"]["metric"])))
+    both = pd.concat([h.rename("h"), rv.rename("r")], axis=1).dropna()
+    since = (config.VALUE_TIMING.get(name) or {}).get("since")
+    if since:
+        both = both[both.index >= pd.Timestamp(since)]
+    if both.empty:
+        return "No complete month holds both lines on this build."
+    m = both.groupby(both.index.to_period("M")).agg(h=("h", "sum"), r=("r", "sum"), n=("h", "size"))
+    m = m[(m["n"] == [p_.days_in_month for p_ in m.index]) & (m["r"] > 0)]
+    if m.empty:
+        return "No complete month holds both lines on this build."
+    ratio = m["h"] / m["r"]
+    first, last = m.index[0].strftime("%b %Y"), m.index[-1].strftime("%b %Y")
+    return (f"On this build's stored days, by complete month ({first}–{last}, {len(m)} months) the ratio ran "
+            f"{ratio.min():.2f}–{ratio.max():.2f}, {m['h'].sum() / m['r'].sum():.3f} over those months; this cell "
+            f"reads its own window.")
+
+
+def _payout_above(name: str) -> str:
+    """config.PAYOUT_ABOVE_ONE's text with its {live} figures computed on this build (_payout_live)."""
+    above = config.PAYOUT_ABOVE_ONE.get(name) or ""
+    return above.replace("{live}", _payout_live(name)) if "{live}" in above else above
+
+
 def _payout_note(p: dict) -> str:
     """The payout cells' note: the holder value note, and why the ratio can read above 1 where that is real (P5-1.13)."""
-    above = config.PAYOUT_ABOVE_ONE.get(p["name"])
+    above = _payout_above(p["name"])
     return "\n\n".join(x for x in (_holder_value_note(p), f"PAYOUT ABOVE 1 (P5-1.13): {above}" if above else "") if x)
 
 
@@ -8515,11 +8616,13 @@ def _a4_headline(R: Refs, burn, data_by_key: dict | None = None) -> list[tuple]:
          lambda r, p: _a4_window_caveat(p, data_by_key or {}), FMT_TEXT, "text", True),
         # A1 CHAINS' FEE BURNS STAY OFF A4 (T-c; G7 decision 0c, Jake 2026-10-19): the A4 net reads config.a4_net_burn_metric
         # — Hyperliquid's every burn WITHOUT the HyperEVM gas burn, which is A1 only
-        ("NET SUPPLY CHANGE Q0 (tokens) — self-reported where published, else issuance − burn, on the basis to the left",
+        ("ISSUANCE − BURN Q0 (tokens) — self-reported net mint where published, else issuance − burn, on t"
+         "he basis to the left (the cell says 'burn only' where nothing is minted)",
          lambda r, p: _zero_issuance(R, r, p, f"-{R.D(r, config.a4_net_burn_metric(p['name']), 'q0')}")
          or _net_guarded(R, r, p, _basis_iss(R, p), burn, bm=config.a4_net_burn_metric(p["name"])),
          FMT_NUM, "calc", True, {"flag_fn": _a4_net_head_flag}),
-        ("NET SUPPLY CHANGE, annualised % of circulating (signed; + is net inflation)",
+        ("ISSUANCE − BURN, annualised % of circulating (signed; + is net inflation; the cell says "
+         "'burn only' where nothing is minted)",
          lambda r, p: _zero_issuance(
              R, r, p, f"-{_annualise(R, r, p, config.a4_net_burn_metric(p['name']), R.D(r, config.a4_net_burn_metric(p['name']), 'q0'))}/({circ(r, p)})")
          or _net_annual_pct(R, r, p, circ(r, p), bm=config.a4_net_burn_metric(p["name"])), FMT_PCT, "calc", True,
@@ -8545,7 +8648,7 @@ def _premint_net_flag(p: dict) -> tuple[str, str] | None:
     if not (_premint(p) or (config.issuance_declared_zero(name) and config.fixed_supply_reason(name))):
         return None
     rel = config.crossover_issuance_metric(name) if name in config.A4_RELEASE_ISSUANCE else "pool_release_tokens"
-    where = ("A4 'Derived net supply change' and its Q1–Q3 columns" if _a4_iss_metric(name) == "pool_release_tokens"
+    where = ("A4 'Derived issuance − burn' and its Q1–Q3 columns" if _a4_iss_metric(name) == "pool_release_tokens"
              else "A4's key divides the burn by that release" if name in config.A4_RELEASE_ISSUANCE
              else "the issuer releases line")
     mint = config.ISSUER_MINTS.get(name)
@@ -8569,7 +8672,7 @@ def _premint_circ_flag(p: dict) -> tuple[str, str] | None:
     return (" release − burn",
             "RELEASE − BURN = the change in CIRCULATING supply (P5-1C.B2, Jake 2026-11-04): on a pre-minted supply this "
             "column reads the pool release (what entered circulation from the pre-mint, G10-1a) minus the burn. It is "
-            "not the NET SUPPLY CHANGE headline, which is mint − burn = −burn (burn only) by definition; the release is "
+            "not A4's ISSUANCE − BURN headline, which is mint − burn = −burn (burn only) by definition; the release is "
             "dilution.")
 
 
@@ -10477,8 +10580,8 @@ HEADLINE_IDS = (
     ("A3", "Buyback to LOCKED supply", "a3_buyback_locked"),
     ("A4", "PERMANENT BURN YIELD", "a4_burn_yield"),
     ("A4", "BURN ÷ ISSUANCE", "a4_crossover"),
-    ("A4", "NET SUPPLY CHANGE Q0", "a4_net_change"),
-    ("A4", "NET SUPPLY CHANGE, annualised", "a4_net_change_pct"),
+    ("A4", "ISSUANCE − BURN Q0", "a4_net_change"),
+    ("A4", "ISSUANCE − BURN, annualised", "a4_net_change_pct"),
     ("A4", "GROSS BURN Q0", "a4_gross_burn"),
     ("A4", "GROSS ISSUANCE Q0", "a4_gross_issuance"),
     ("A4", "Pool release Q0", "a4_pool_release"),
@@ -11039,12 +11142,25 @@ def _trajectory(R: Refs, metric: str, label: str, fmt=FMT_PCT):
                     return f"n/a — SERIES BREAK {day}: {why[:120]} (inside this comparison)"
             if (config.METRICS.get(mm) or {}).get("kind") != "flow":
                 return delta(R.D(r, mm, a), R.D(r, mm, b))
+            lum = _lumpy_of(p["name"], [mm], (a, b))           # PR1B.10a: a lumpy window reads the code, not a %
+            if lum:
+                return lum[0]
             return _coverage_guard(R, r, [(a.upper(), mm, a), (b.upper(), mm, b)],
                                    f"{_flow_rate(R, r, mm, a)}/{_flow_rate(R, r, mm, b)}-1")
         return cell
 
     def note(a: str, b: str):
-        return lambda p: _one_basis_note(p["name"], m(p["name"]), a, b)
+        def build(p):
+            mm = m(p["name"])
+            lum = (_lumpy_of(p["name"], [mm], (a, b)) if (config.METRICS.get(mm) or {}).get("kind") == "flow"
+                   and _one_basis_comparison(p["name"], mm, a, b) is None else None)
+            if lum:
+                ra, rb = _lumpy_rate(p["name"], mm, a), _lumpy_rate(p["name"], mm, b)
+                would = (f" As a rate it would read {ra / rb - 1:+.1%} ({a.upper()} vs {b.upper()} per held day)."
+                         if ra is not None and rb else "")
+                return lum[1] + would
+            return _one_basis_note(p["name"], mm, a, b)
+        return build
     return [
         (f"{label} Δ30d", d("now", "m1"), fmt, "calc", False, {"note_fn": note("now", "m1")}),
         (f"{label} Δ3m", d("q0", "q1"), fmt, "calc", False, {"note_fn": note("q0", "q1")}),
@@ -11254,7 +11370,7 @@ def _revenue_line_cols(R: Refs) -> list[tuple]:
         split = config.revenue_split(p["name"])
         if not split:
             return ""
-        above = (config.PAYOUT_ABOVE_ONE.get(p["name"]) or "")
+        above = _payout_above(p["name"])
         return (f"HOLDER SHARE (PR1.S13) = holder revenue ÷ revenue: {split['holder_share']['route']}."
                 + (f" {above}" if above else ""))
 
@@ -12031,7 +12147,8 @@ def _holding_cell(p: dict, kind: str):
     return f"={v!r}" if v is not None else f"n/a — {why}"
 
 
-MARKET_SHARE_HEAD = "MARKET SHARE vs its category (now; a shifted quarter: the reading at its end) — peer set beside"
+MARKET_SHARE_HEAD = ("MARKET SHARE vs its category (90-day mean; a shifted quarter: that quarter's mean) — peer "
+                     "set beside")
 MARKET_SHARE_2_HEAD = ("MARKET SHARE, SECOND BASIS — chain fees vs 13 chains (now; a shifted quarter: the reading at "
                        "its end)")
 BUSINESS_HEAD = "BUSINESS {i} — core usage (a stock: now; a flow: Q0 annualised over its covered days)"
@@ -12185,7 +12302,7 @@ def _a4_phase2_cols(R: Refs) -> list[tuple]:
         return calc(f"({t})*{R.D(r, 'price_usd', 'now')}" if usd else t)
     return [
         ("Cumulative burn ÷ max supply", cum, FMT_PCT, "calc"),
-        ("Revenue required for crossover ($ fees a year) = fees × issuance ÷ burn, per covered day — at the measured "
+        ("Fees required for crossover ($ a year) = fees × issuance ÷ burn, per covered day — at the measured "
          "burn share", required, FMT_USD, "calc"),
         ("Governance lever = burn share of fees that reaches crossover with no growth (issuance $ ÷ fees)", lever,
          FMT_PCT, "calc"),
@@ -12203,10 +12320,10 @@ def _a4_phase2_cols(R: Refs) -> list[tuple]:
 
 def write_a4(ws, R: Refs, data_by_key: dict):
     projects = [p for p in scoped_projects() if 4 in p["archetypes"]]
-    _title(ws, "A4 — Permanent Burn", "Gross burn, gross issuance and NET supply change side by side. Where the protocol publishes net mint itself "
+    _title(ws, "A4 — Permanent Burn", "Gross burn, gross issuance and ISSUANCE − BURN side by side (burn only where nothing is minted; the net supply change, the change in circulating supply, is on Master). Where the protocol publishes net mint itself "
                                        "that SELF-REPORTED figure is used and the derived one is shown beside it for comparison; a gap between them means one is wrong. "
                                        "Otherwise net = issuance − burn (positive = net inflation). "
-                                       "Q0 = trailing comparison window; $ conversions at 90-day average price. Implied burn = fees × documented share (suppressed when unconfirmed). "
+                                       "Q0 = trailing comparison window; $ conversions at 90-day average price. Implied burn = the burn base (protocol revenue where declared, else fees) × documented share (suppressed when unconfirmed). "
                                        "PancakeSwap is the disclosure template: publishes net mint monthly.")
     ann = ANN
     price = lambda r: R.D(r, "price_usd", "q0")  # noqa: E731
@@ -12226,7 +12343,10 @@ def write_a4(ws, R: Refs, data_by_key: dict):
         *_unlock_cols(R),
         ("Burn execution", lambda r, p: pull(R.C(r, "Burn execution")), FMT_TEXT, "pull"),
         ("Burn status", lambda r, p: pull(R.C(r, "Burn status")), FMT_TEXT, "pull", False, {"status_fill": "burn_split"}),
-        ("Documented share of fees burned (config)", lambda r, p: pull(R.C(r, "Share of fees burned")), FMT_PCT, "pull", False, {"gate": "burn_split"}),
+        ("Documented share burned (config) — of protocol revenue where the burn base is declared (burn_split."
+         "fee_base_metric), else of fees; the cell names its base",
+         lambda r, p: pull(R.C(r, "Share of fees burned")), FMT_PCT, "pull", False,
+         {"gate": "burn_split", "flag_fn": _burn_base_flag}),
         _fees_q0_col(R),
         ("Price — 90d average ($)", lambda r, p: pull(price(r)), FMT_USD4, "pull", False, {"metric": "price_usd"}),
         ("GROSS BURN Q0 (tokens)", lambda r, p: pull(burn(r, p)), FMT_NUM, "pull", True, {"metric_fn": config.a4_burn_metric}),
@@ -12256,7 +12376,7 @@ def write_a4(ws, R: Refs, data_by_key: dict):
         ("Self-reported figure preferred?", lambda r, p: ", ".join(
             x for x in ["net mint" if p.get("self_reported_net_mint") else "",
                         "burn" if p.get("self_reported_burn") else ""] if x), FMT_TEXT, "text"),
-        ("Derived net supply change (issuance − burn), for comparison",
+        ("Derived issuance − burn, for comparison",
          lambda r, p: _guarded_net(R, r, p, _a4_iss_metric(p["name"]), config.a1_burn_metric(p["name"])), FMT_NUM, "calc",
          False, {"flag_fn": _a4_net_kind_flag}),
         # D1-3: nothing issued and nothing self-reported (Hyperliquid: pre-minted) — n/a, never a history wait
@@ -12265,7 +12385,7 @@ def write_a4(ws, R: Refs, data_by_key: dict):
                        if not p.get("self_reported_net_mint") else "") or _guarded_net(
              R, r, p, "gross_issuance_tokens", config.a1_burn_metric(p["name"]),
                                    total=f"{R.D(r, 'net_mint_monthly', 'q0')}-({iss(r)}-{burn(r, p)})"), FMT_NUM, "calc"),
-        ("Net supply change ($ at avg price)",
+        ("Issuance − burn ($ at avg price)",
          lambda r, p: _price_net(_net_guarded(R, r, p, _basis_iss(R, p), burn), price(r)), FMT_USD, "calc", False,
          {"flag_fn": _a4_net_head_flag}),
         ("Burn as share of fees (measured)",
@@ -12276,7 +12396,8 @@ def write_a4(ws, R: Refs, data_by_key: dict):
         *_a4_phase2_cols(R),
         # THE BASE THE SHARE IS OF (Uniswap, G6 2026-10-19): config burn_split.fee_base_metric — Uniswap's documented
         # share is 100% of PROTOCOL fees (revenue_usd), not of LP fees; fees_usd everywhere else.
-        ("Implied burn Q0 (tokens) = fees × documented share ÷ avg price",
+        ("Implied burn Q0 (tokens) = burn base × documented share ÷ avg price — the base is protocol revenue where "
+         "declared (burn_split.fee_base_metric), else fees",
          lambda r, p: gated(R.C(r, "Burn split status"), f"{R.D(r, _burn_fee_base(p), 'q0')}*{R.C(r, 'Share of fees burned')}/{price(r)}", R.C(r, 'Share of fees burned'), kind="burn"), FMT_NUM, "calc", False, {"gate": "burn_split"}),
         ("Actual − implied burn (tokens)", lambda r, p: circular_gated(p, gated(R.C(r, "Burn split status"), _coverage_guard(
             R, r, [("burn", config.a4_burn_metric(p["name"]), "q0"), ("fees", _burn_fee_base(p), "q0")],
@@ -12286,11 +12407,11 @@ def write_a4(ws, R: Refs, data_by_key: dict):
          if p.get("supply_is_partial") else "", FMT_TEXT, "text"),
         ("Cross-check: Δ implied circulating supply Q0 vs Q1 (CoinGecko mcap ÷ price)",
          lambda r, p: calc(f"{R.D(r, 'circulating_supply_implied', 'q0')}-{R.D(r, 'circulating_supply_implied', 'q1')}"), FMT_NUM, "calc"),
-        ("Net supply change Q1 (tokens, −3m window)", lambda r, p: _guarded_net(R, r, p, _a4_iss_metric(p["name"]), config.a1_burn_metric(p["name"]), "q1"), FMT_NUM, "calc", False,
+        ("Issuance − burn Q1 (tokens, −3m window)", lambda r, p: _guarded_net(R, r, p, _a4_iss_metric(p["name"]), config.a1_burn_metric(p["name"]), "q1"), FMT_NUM, "calc", False,
          {"flag_fn": _a4_net_kind_flag}),
-        ("Net supply change Q2 (−6m window)", lambda r, p: _guarded_net(R, r, p, _a4_iss_metric(p["name"]), config.a1_burn_metric(p["name"]), "q2"), FMT_NUM, "calc", False,
+        ("Issuance − burn Q2 (−6m window)", lambda r, p: _guarded_net(R, r, p, _a4_iss_metric(p["name"]), config.a1_burn_metric(p["name"]), "q2"), FMT_NUM, "calc", False,
          {"flag_fn": _a4_net_kind_flag}),
-        ("Net supply change Q3 (−9m window)", lambda r, p: _guarded_net(R, r, p, _a4_iss_metric(p["name"]), config.a1_burn_metric(p["name"]), "q3"), FMT_NUM, "calc", False,
+        ("Issuance − burn Q3 (−9m window)", lambda r, p: _guarded_net(R, r, p, _a4_iss_metric(p["name"]), config.a1_burn_metric(p["name"]), "q3"), FMT_NUM, "calc", False,
          {"flag_fn": _a4_net_kind_flag}),
         *_trajectory(R, config.a4_burn_metric, "Burn"),
         *_trajectory(R, _a4_iss_metric, "Issuance"),
@@ -12303,7 +12424,7 @@ def write_a4(ws, R: Refs, data_by_key: dict):
     specs = _with_details("A4", specs, R)
     end = _write_table(ws, R, projects, specs, data_by_key,
                        ["fees_usd", "price_usd", "gross_burn_tokens", "sky_stage2_burn_tokens", "gross_issuance_tokens", "pool_release_tokens", "circulating_supply"],
-                       key_cols=_key_cols(specs, "PERMANENT BURN YIELD", "BURN ÷ ISSUANCE", "NET SUPPLY CHANGE",
+                       key_cols=_key_cols(specs, "PERMANENT BURN YIELD", "BURN ÷ ISSUANCE", "ISSUANCE − BURN",
                                           "GROSS BURN Q0", "GROSS ISSUANCE Q0", "Pool release Q0"))
     _confidence_tally(ws, end + 2, scoped_projects(), specs, data_by_key)
     _set_widths(ws, _widths(specs))
@@ -14224,12 +14345,25 @@ def write_trajectory(wb, data_by_key: dict, asof=None) -> list[dict]:
         # PR1.S5: no comparison reaches a launch or partial quarter — it is no "improved" quarter, and a QoQ from it reads
         # the label, never a percentage
         imp, n_imp = trajectory.improved(qs, d, cut)
-        q, qoq_label = trajectory.qoq(qs[0], qs[1]), ""
+        # PR1B.10c (config.QOQ_IN_PP): a yield or ratio that can be negative changes in percentage points
+        pp = config.qoq_in_pp(spec["header"], "%" in str(spec["fmt"]))
+        q, qoq_label = (trajectory.qoq_pp(qs[0], qs[1]) if pp else trajectory.qoq(qs[0], qs[1])), ""
         if cut is not None and cut <= 1:
             q = None
             qoq_label = (g_label if g_label.startswith(("NEW", "partial")) else start_label
                          or f"{trajectory.LABELS[cut]} is part-held")
             why.append(f"QoQ: n/a — {qoq_label}")
+        elif pp and q is not None:
+            why.append(f"QoQ in pp: {qs[0]:.2%} − {qs[1]:.2%} = {q * 100:+.2f} pp (config.QOQ_IN_PP)")
+        # PR1B.10a (config.LUMPY_SHARE): a QoQ whose Q0 or Q-1 window is carried by a few days reads "lumpy (…)"
+        # — a row that IS one flow series (a ratio or yield of several legs keeps its change: each leg is lumpy or not
+        # on its own row; the share of everything a rate sums is the one-off note's business, PR1.U10)
+        flows = sorted(m_ for m_ in trajectory.referenced_metrics(w["q0_formula"])
+                       if (METRICS.get(m_) or {}).get("kind") == "flow") if not w["independent"] else []
+        lum = (None if q is None or len(flows) != 1 else _lumpy_of(spec["project"]["name"], flows, ("q0", "q1")))
+        if lum:
+            why.append(f"QoQ: {lum[0]} — would read {trajectory.qoq_text(q, pp=pp)[4:]}; {lum[1]}")
+            q, qoq_label = None, lum[0]
         tr = trajectory.trough(qs, d)
         t, t_basis = trajectory.t12m(qs, trajectory.t12m_basis(spec["header"], spec["fmt"]))
         # LUMPY FLOWS (decision 8): direction and growth from the rolling T12M, never a single quarter
@@ -14282,7 +14416,7 @@ def write_trajectory(wb, data_by_key: dict, asof=None) -> list[dict]:
                     "trend": (f"SERIES BREAK {brk[0].date()} · " if brk_text else "")
                              + (f"MODELLED {', '.join(modelled)} · " if modelled else "")
                              + (trajectory.lumpy_trend_text(t, t_prev, chg, g, d, g_label) if lumpy else
-                                trajectory.trend_text(q, g, imp, n_imp, d, g_label, qoq_label)),
+                                trajectory.trend_text(q, g, imp, n_imp, d, g_label, qoq_label, pp=pp)),
                     "T12M_prev": t_prev, "direction_basis": dir_basis, "growth_label": g_label,
                     "group": trajectory.group(spec["hid"]),
                     "series_break": brk_text,
@@ -14303,8 +14437,15 @@ def write_trajectory(wb, data_by_key: dict, asof=None) -> list[dict]:
                "4Q growth — standard error (annual; SPEC §12 item 14)":
                    (g_se if g is not None and g_se is not None else ("n/a — " + (g_se_why or "no growth figure")
                                                                     if g is None or g_se is None else ""))}
+        if lum:
+            put["QoQ"] = lum[0]                              # PR1B.10a: the code, the % in "Why n/a"
+        elif pp and q is not None:
+            put["QoQ"] = q * 100                             # PR1B.10c: percentage points, shown "+1.2 pp"
         for h, v in put.items():
             c = ws.cell(row=r, column=trajectory.COL[h], value=v)
+            if h == "QoQ" and pp and isinstance(v, float) and not lum:
+                _style(c, "calc", FMT_PP)
+                continue
             fmt = (FMT_PCT if h in ("QoQ", "4Q growth (annual, log-linear)",
                                     "4Q growth — standard error (annual; SPEC §12 item 14)") and isinstance(v, float) else
                    spec["fmt"] if h in ("T12M", "Target", "T12M a quarter earlier (Q-1..Q-4)") else "0.0" if h == "Years to benchmark" else FMT_TEXT)

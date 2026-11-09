@@ -12647,8 +12647,9 @@ PROJECTS = [
                        "source_url": "https://gov.uniswap.org/t/25881", "source_date": "2026-10-19", "status": "active",
                        "note": "100% of PROTOCOL fees (DefiLlama revenue_usd, by version and chain from each activation) "
                                "are released only against UNI burned through the Firepit (4,000 UNI a release on mainnet). "
-                               "Implied burn = protocol fees ÷ avg price; actual = UNI to 0xdead less the 2025-12-27 100M "
-                               "one-off. Was 'unconfirmed' (no single share of LP fees exists: the cut is per version/tier)."},
+                               "Implied burn = protocol fees ÷ avg price; actual = UNI to 0xdead, the 2025-12-27 100M "
+                               "treasury burn counted in its window like any burn (P5-1C.B1, its share said on the "
+                               "cell). Was 'unconfirmed' (no single share of LP fees exists: the cut is per version/tier)."},
         "issuance_schedule": None,
         "contracts": {
             "token": _contract("0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984", "ethereum", "erc20_total_supply", "UNI",
@@ -19622,6 +19623,24 @@ for _m, _lab, _lo, _hi in (
     METRICS[_m] = {"label": _lab, "kind": "stock", "unit": "ratio", "archetypes": [], "tiers": [1],
                    "only_projects": ("Maple", "Morpho", "Pendle", "Fluid"), "sanity_min": _lo, "sanity_max": _hi,
                    "business": True, "source_kind": "aggregator (DefiLlama /protocol, free)", "onchain_replacement": ""}
+
+
+# ===== PR1B.11 (Jake 2026-11-09): WHERE DEFILLAMA PUBLISHES NO TOKEN BREAKDOWN, THE CONSTANT-PRICE TVL CELLS SAY SO. =====
+# Business "TVL change, start-of-window prices" and "TVL change at constant prices" read "not wired" for Uniswap. The
+# route the four wired protocols use (DefiLlama /protocol/<slug> `tokens` / `tokensInUsd`) does not exist for Uniswap:
+# read 2026-11-09 (api.llama.fi, keyless) — /protocol/uniswap (the parent, isParentProtocol, TVL $3,381,391,770) returns
+# EMPTY tokens and tokensInUsd, top level and on every chain; its children uniswap-v3 ($1,471,668,175, 0 of 44 chains)
+# and uniswap-v4 ($1,084,536,751, 0 of 22 chains) publish none either; only uniswap-v2 does ($821,881,368, 17 of 17
+# chains, 2,380 days, 520 tokens on the latest day) — 24.3% of the TVL, under the 90% price-coverage floor
+# (reader.TVL_CP_COVERAGE_FLOOR). So the cells read n/a with this reason — a SOURCE limit, not a missing route of ours.
+# The primary route (each V3 / V4 pool's token balances on every chain, valued at one date's prices) is not built.
+TVL_BREAKDOWN_UNPUBLISHED = {
+    "Uniswap": ("DefiLlama publishes no token breakdown for Uniswap's TVL (read 2026-11-09, api.llama.fi): "
+                "/protocol/uniswap (the parent, $3.381bn) returns empty tokens / tokensInUsd on every chain, as do "
+                "uniswap-v3 ($1.472bn, 0 of 44 chains) and uniswap-v4 ($1.085bn, 0 of 22); only uniswap-v2 publishes "
+                "one ($0.822bn, 24.3% of the TVL — under the 90% price-coverage floor). The primary route, each V3 / "
+                "V4 pool's token balances valued at one date's prices, is not built"),
+}
 
 
 # ===== CHAINLINK'S STAKING FUNDING, OUT OF (e) PER TRANSFER (round 3 B2, Jake 2026-10-13; was C20, NOT WIRED). =====
@@ -29715,9 +29734,10 @@ PAYOUT_ABOVE_ONE = {
     # PR1.U7 (Jake 2026-11-05): the payout ratio IS the holder share = holder revenue ÷ revenue (REVENUE_SPLIT)
     "Uniswap": "Can read above 1 — real, timing. The payout ratio is the HOLDER SHARE: holder revenue ÷ revenue (PR1.S13). "
                "Holder revenue is the UNI burned (Firepit claims) x the day's price; a "
-               "claim burns UNI to release fees that built up before it, so burns arrive in lumps: by month the ratio "
-               "ran 0.73-1.30 (Dec 2025-Oct 2026), 1.018 over Nov 2025-Oct 2026, and Q0 to 2026-10-12 caught "
-               "September's large claims (1.071).",
+               "claim burns UNI to release fees that built up before it, so burns arrive in lumps. "
+               # PR1B.8 (Jake 2026-11-09): the monthly figures are computed on each build from the stored series
+               # (build_workbook._payout_live), never quoted from the 10-13 dumps
+               "{live}",
 }
 
 # P5-1.14 (Jake 2026-11-04: NEAR dilution (e) read 1.243e-12, a structural zero): A FALL BELOW A DECLARED FEE FLOOR IS
@@ -35093,12 +35113,46 @@ MARKET_SHARE_MEAN = {
                 "why": "a DEX-volume share read on one day moves with that day's category total (11-02: Dexs +87.0% "
                        "day-on-day, Uniswap 25.36%); the 90-day mean is the Q0 basis"},
 }
+# PR1B.10b (Jake 2026-11-09, "yes"): EVERY PROJECT with a market share reads the 90-day mean, its 30- and 60-day means
+# beside — one basis down the CP column (it was mixed: Uniswap the mean, the rest their latest day). A project whose
+# share is n/a by design (MARKET_SHARE `na`) has no share to average.
+for _n_, _v_ in MARKET_SHARE.items():
+    if "na" not in _v_:
+        MARKET_SHARE_MEAN.setdefault(_n_, {
+            "headline": "q0", "means": (30, 60), "decided": "Jake 2026-11-09 (PR1B.10b: every project)",
+            "why": "a share read on one day moves with that day's category total; the 90-day mean is the Q0 basis, "
+                   "one basis for every project's market share"})
 for _n_ in (30, 60):
     METRICS[f"market_share_mean{_n_}_pct"] = {
         "label": f"Market share, {_n_}-day mean — the mean of the daily market_share_pct held in the {_n_} days to each "
                  f"day (PR1.U4)",
         "kind": "stock", "unit": "fraction", "archetypes": [], "tiers": [1], "sanity_min": 0.0, "sanity_max": 1.0,
         "view_only": True, "only_projects": tuple(MARKET_SHARE_MEAN)}
+
+
+# ===== PR1B.10a (Jake 2026-11-09, "yes"): A LUMPY WINDOW READS "lumpy", NOT A PERCENTAGE. =====
+# Uniswap's issuance growth of the release read +59,044% (99.2% of the window on two days, PR1.U10): a change whose
+# window is carried by a few days measures the timing of those days, not a trend. DECLARED BEFORE MEASURING: where the
+# `days` largest days of a flow's window (or fewer) carry at least `share` of that window's total, a growth / change cell
+# that compares it (the A-tab Δ columns, the Trajectory QoQ, the reader's quarter changes and its selected-period
+# growth at each fixed period) reads the code "lumpy (x% of the window on n days)" in place of the %; the % it would
+# have read, the days and their amounts are in the comment. Shared: every project, every flow (daily rows only).
+LUMPY_SHARE = {"share": 0.80, "days": 2, "declared": "2026-11-09, before measuring (PR1B.10a; Jake: yes)",
+               "why": "a change whose window is mostly one or two days measures when those days fell, not a trend"}
+# ===== PR1B.10c (Jake 2026-11-09): A CHANGE OF A YIELD OR RATIO THAT CAN BE NEGATIVE IS IN PERCENTAGE POINTS. =====
+# Net holder yield's trend read "QoQ −1039.4%" — a relative change of a figure that crosses or sits near 0 is no
+# measure. Every Trajectory row (and the reader's quarter change) whose headline starts with one of these and is a
+# percentage reads its quarter-on-quarter change as the difference, in percentage points ("QoQ −1.2 pp").
+QOQ_IN_PP = {"heads": ("NET HOLDER YIELD", "ISSUANCE − BURN, annualised", "NET ISSUANCE AFTER BURN, annualised",
+                       "Net supply change, annualised", "Issuance − burn, annualised", "Net absorption",
+                       "Spread over", "TOTAL YIELD", "Staking yield minus"),
+             "decided": "Jake 2026-11-09 (PR1B.10c)",
+             "why": "a yield or ratio that can be negative has no meaningful relative change near or across 0"}
+
+
+def qoq_in_pp(header: str, is_pct: bool) -> bool:
+    """PR1B.10c: True where a row's quarter-on-quarter change reads in percentage points (QOQ_IN_PP)."""
+    return bool(is_pct) and str(header or "").startswith(QOQ_IN_PP["heads"])
 
 
 def market_share_window(project_name: str) -> str:

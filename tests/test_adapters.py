@@ -14821,7 +14821,7 @@ def test_archetype_tabs_open_on_the_valuation_headlines():
     # moved, not duplicated
     for gone in ("Burn as % of supply (annualised)", "Burn ÷ issuance (x)"):
         assert gone not in a4
-    assert sum(1 for h in a4 if h and h.startswith("NET SUPPLY CHANGE Q0")) == 1
+    assert sum(1 for h in a4 if h and h.startswith("ISSUANCE − BURN Q0")) == 1
     # both retirement rates share ONE gate
     ws = wb["A3 Revenue Buyback"]
     f5, f6 = ws.cell(5, 5).value, ws.cell(5, 6).value
@@ -15166,7 +15166,7 @@ def test_a4_headline_reads_the_stage2_flow_for_sky_and_gross_burn_for_everyone_e
     # (Uniswap issues nothing since 2026-09-30 and renders burn-only, so Ethereum is "everyone else")
     sky, uni = config.PROJECT_BY_NAME["Sky"], config.PROJECT_BY_NAME["Ethereum"]
     for head, fn, *rest in specs:
-        if head.startswith(("PERMANENT BURN YIELD", "BURN ÷ ISSUANCE", "NET SUPPLY CHANGE")):
+        if head.startswith(("PERMANENT BURN YIELD", "BURN ÷ ISSUANCE", "ISSUANCE − BURN")):
             s, u = fn(5, sky), fn(5, uni)
             if head.startswith("BURN ÷ ISSUANCE"):
                 # Sky issues nothing since 2026-10-05 (rewards are released treasury SKY): burn-only,
@@ -15174,7 +15174,7 @@ def test_a4_headline_reads_the_stage2_flow_for_sky_and_gross_burn_for_everyone_e
                 assert "no issuance — burn only" in s and "BLOCKED" in s, (head, s)
                 continue
             assert '|sky_stage2_burn_tokens"' in s and '|gross_burn_tokens"' not in s, (head, s)
-            if head.startswith("NET SUPPLY CHANGE"):
+            if head.startswith("ISSUANCE − BURN"):
                 # Ethereum's net change reads the common-days view (overnight 2026-10-06, A5)
                 assert "net_supply_change_tokens" in u and "sky_stage2" not in u, (head, u)
                 continue
@@ -18270,13 +18270,13 @@ def test_ratios_of_flows_divide_rates_over_each_sides_own_covered_days_or_block(
     assert f"D[{bm}:q0])/IF(ISNUMBER(D[{bm}:q0_covered_days])" in f, "a rate, not a window sum"
     # ETHEREUM's net change (overnight 2026-10-06, A5) is issuance - burn over the days BOTH hold
     # (net_supply_change_tokens): equal spans by construction. The span guard is checked on NEAR.
-    nk = "NET SUPPLY CHANGE Q0 (tokens) — self-reported where published, else issuance − burn, on the basis to the left"
+    nk = "ISSUANCE − BURN Q0 (tokens) — self-reported net mint where published, else issuance − burn, on the basis to the left (the cell says 'burn only' where nothing is minted)"
     assert "D[net_supply_change_tokens:q0]" in heads[nk][1](5, eth)
     near = config.PROJECT_BY_NAME["Near"]
     bm, im = config.a4_burn_metric("Near"), config.issuance_basis("Near")
     net = heads[nk][1](5, near)
     assert "ABS(" in net and "BLOCKED" in net, "a difference of sums blocks on unequal spans"
-    pct = heads["NET SUPPLY CHANGE, annualised % of circulating (signed; + is net inflation)"][1](5, near)
+    pct = heads["ISSUANCE − BURN, annualised % of circulating (signed; + is net inflation; the cell says 'burn only' where nothing is minted)"][1](5, near)
     assert "BLOCKED" in pct and f"/D[{im}:q0_covered_days]" in pct and f"/D[{bm}:q0_covered_days]" in pct, \
         "each side annualised over its own covered days, not the difference x365/90"
 
@@ -20297,7 +20297,7 @@ def test_tokens_primary_retirement_zero_and_burn_only_presentation():
     # releases into circulating (config.A4_RELEASE_ISSUANCE); the declared-zero check still blocks a measured mint
     assert '"no issuance — burn only"' not in cross and '|unlock_release_tokens"' in cross
     assert "BLOCKED — issuance declared zero" in cross
-    net = next(fn for h, fn in a4.items() if h.startswith("NET SUPPLY CHANGE Q0"))(5, uni)
+    net = next(fn for h, fn in a4.items() if h.startswith("ISSUANCE − BURN Q0"))(5, uni)
     assert '-INDEX(' in net and '|gross_burn_tokens"' in net
     assert config.issuance_declared_zero("Uniswap")["decided_by"] == "Jake"
 

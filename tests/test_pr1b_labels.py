@@ -124,6 +124,7 @@ def live(tmp_path_factory):
             bw.build_workbook(st, d / "audit.xlsx", asof=LIVE_ASOF, only=["Uniswap"], reader_path=d / "reader.xlsx")
         finally:
             st.close()
+    assert "error" not in bw.READER_STATS, bw.READER_STATS
     return {"audit": openpyxl.load_workbook(d / "audit.xlsx"), "audit_v": openpyxl.load_workbook(d / "audit.xlsx",
                                                                                                     data_only=True),
             "reader": openpyxl.load_workbook(d / "reader.xlsx"),
@@ -206,7 +207,7 @@ def test_1_every_reader_cell_reading_the_release_carries_the_note(live, sheet, h
 
 def test_1_issuance_growth_says_what_it_reads_without_the_claims(live):
     n = _note(_cell(live["reader"], "A4 Permanent Burn", "Issuance growth, selected period"))
-    assert "Without the one-off this cell reads +0.9% (shown: +245.3%" in n, n
+    assert "Without the one-off the growth reads +0.9% (with it: +245.3%" in n, n
 
 
 def test_1_a_component_stored_after_the_claims_still_dates_them(monkeypatch):
@@ -246,3 +247,87 @@ def test_1_a_one_off_in_the_denominator_is_named_so():
          'INDEX(Data!$L$2:$L$9,MATCH($A5&"|unlock_release_tokens",Data!$A$2:$A$9,0)))')
     assert bw._divides_by(f, "L", "unlock_release_tokens")
     assert not bw._divides_by(f, "L", "gross_burn_tokens")
+
+
+# ============================================================================================================ item 8
+def test_8_a4_issuance_minus_burn_is_named_so_on_audit_and_credibility(live):
+    ws = live["audit"]["A4 Permanent Burn"]
+    heads = [ws.cell(4, c).value for c in range(1, ws.max_column + 1)]
+    assert not any(str(h).startswith(("NET SUPPLY CHANGE", "Net supply change", "Derived net supply")) for h in heads)
+    assert any(str(h).startswith("ISSUANCE − BURN Q0 (tokens)") for h in heads)
+    assert any(str(h).startswith("ISSUANCE − BURN, annualised % of circulating") for h in heads)
+    net = _cell(live["audit"], "A4 Permanent Burn", "ISSUANCE − BURN Q0 (tokens)")
+    assert net.number_format.endswith('" burn only"'), "Uniswap's cell says burn only, as the reader has it"
+    cred = live["audit"]["Credibility"]
+    quoted = [str(cred.cell(r, 4).value) for r in range(1, cred.max_row + 1) if cred.cell(r, 1).value == "Uniswap"
+              and cred.cell(r, 2).value == "A4 Permanent Burn"]
+    assert any(q.startswith("ISSUANCE − BURN") for q in quoted) and not any("NET SUPPLY CHANGE" in q for q in quoted)
+
+
+def test_8_burn_share_is_of_protocol_revenue_and_crossover_needs_fees(live):
+    share = _cell(live["audit"], "A4 Permanent Burn", "Documented share burned (config)")
+    assert share.number_format.endswith('" of revenue"') and "PROTOCOL REVENUE" in _note(share)
+    assert _cell(live["audit"], "A4 Permanent Burn", "Implied burn Q0 (tokens) = burn base × documented share")
+    assert _cell(live["audit"], "A4 Permanent Burn", "Fees required for crossover ($ a year) = fees × issuance")
+    assert _cell(live["reader"], "A4 Permanent Burn", "Fees needed for crossover")
+    assert _cell(live["reader"], "A4 Permanent Burn", "Share burned, of revenue or fees")
+
+
+def test_8_market_share_header_says_what_a_shifted_quarter_reads():
+    assert bw.MARKET_SHARE_HEAD.startswith("MARKET SHARE vs its category (90-day mean; a shifted quarter: that "
+                                           "quarter's mean)")
+    with bw.shifted(1):
+        assert bw._shift_col("market_share_pct", config.market_share_window("Uniswap"), 1) == "q1"
+
+
+def test_8_no_payout_note_quotes_the_dumps(live):
+    for head in ("Payout ratio", "HOLDER SHARE = holder revenue"):
+        n = _note(_cell(live["audit"], "CP Comparability", head))
+        assert "1.071" not in n and "2026-10-12" not in n and "{live}" not in n, n
+        assert "On this build's stored days, by complete month" in n, n
+    assert "{live}" in config.PAYOUT_ABOVE_ONE["Uniswap"] and "1.071" not in config.PAYOUT_ABOVE_ONE["Uniswap"]
+
+
+# ============================================================================================================ item 10
+def test_10a_the_threshold_is_declared_and_a_lumpy_window_reads_the_code(live):
+    assert config.LUMPY_SHARE["share"] == 0.80 and config.LUMPY_SHARE["days"] == 2 and "before measuring" in \
+        config.LUMPY_SHARE["declared"]
+    s = pd.Series([1.0] * 88 + [500.0, 500.0], index=pd.date_range("2026-01-01", periods=90))
+    share, k, _days, tot, n = bw._lumpy_window(s, pd.Timestamp("2025-12-31"), pd.Timestamp("2026-03-31"))
+    assert k == 2 and share == pytest.approx(1000 / 1088) and n == 90
+    assert bw._lumpy_window(pd.Series([1.0] * 90, index=s.index), pd.Timestamp("2025-12-31"),
+                            pd.Timestamp("2026-03-31")) is None
+    c = _cell(live["audit"], "A4 Permanent Burn", "Burn Δ9m")       # Q-3 holds the 100M treasury burn
+    assert c.value == "lumpy (98.9% of the window on 1 day)" and "As a rate it would read" in _note(c), _note(c)
+    g = _cell(live["reader"], "A4 Permanent Burn", "Issuance growth, selected period")
+    assert '_series!$B$1=90,"lumpy"' in g.value and "LUMPY (PR1B.10a" in _note(g)
+    assert _cell(live["reader_v"], "A4 Permanent Burn", "Issuance growth, selected period").value == "lumpy"
+
+
+def test_10b_every_project_with_a_share_reads_the_90_day_mean():
+    for name, v in config.MARKET_SHARE.items():
+        assert config.market_share_window(name) == ("now" if "na" in v else "q0"), name
+        if "na" not in v:
+            assert config.MARKET_SHARE_MEAN[name]["means"] == (30, 60)
+
+
+def test_10c_a_yield_that_can_be_negative_changes_in_percentage_points(live):
+    import trajectory
+    assert config.qoq_in_pp("NET HOLDER YIELD = holder value yield − dilution", True)
+    assert not config.qoq_in_pp("NET HOLDER YIELD", False) and not config.qoq_in_pp("Fees Q0 ($)", True)
+    assert trajectory.qoq_text(-0.0798, pp=True) == "QoQ -8.0 pp"
+    ws = live["audit_v"]["Trajectory"]
+    row = next(r for r in range(2, ws.max_row + 1) if ws.cell(r, 1).value == "Uniswap"
+               and str(ws.cell(r, 5).value).startswith("NET HOLDER YIELD"))
+    assert "QoQ -8.0 pp" in ws.cell(row, trajectory.COL["Trend"]).value
+    assert live["audit"]["Trajectory"].cell(row, trajectory.COL["QoQ"]).number_format == bw.FMT_PP
+    pct = _cell(live["reader"], "A4 Permanent Burn", "Issuance − burn, % a year")
+    qc = pct.parent.cell(pct.row, pct.column + 1)                          # its "Quarter change"
+    assert qc.number_format == '+0.0" pp";-0.0" pp";0.0" pp"' and "percentage points" in _note(qc)
+
+
+# ============================================================================================================ item 11
+def test_11_uniswap_constant_price_tvl_cells_give_the_dated_source_limit(live):
+    for head in ("TVL change, start-of-window prices", "TVL change at constant prices"):
+        c = _cell(live["reader"], "Business", head)
+        assert c.value == "n/a" and "read 2026-11-09" in _note(c) and "uniswap-v3" in _note(c), _note(c)

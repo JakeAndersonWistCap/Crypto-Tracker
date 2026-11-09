@@ -154,7 +154,7 @@ def test_b2_premint_net_cells_are_relabelled_burn_only():
         # PR1.U10: the note says what the figure is NOT in S8's words — the net supply change (the circulating change)
         assert suffix == " burn only" and "NOT the net supply change, which is the change in circulating supply" in note, \
             p["name"]
-    assert "Derived net supply change" in bw._premint_net_flag(geod)[1]
+    assert "Derived issuance − burn" in bw._premint_net_flag(geod)[1]
     assert "ISSUER_MINTS" in bw._premint_net_flag(maple)[1], "Maple's mint to its treasury is named"
     for n in ("Ethereum", "Near", "Sky", "Aerodrome"):
         assert bw._premint_net_flag(config.PROJECT_BY_NAME[n]) is None, n
@@ -191,15 +191,15 @@ def _cell(ws, project, head_prefix):
 def test_dumps_geodnet_net_is_burn_only_and_the_derived_is_release_minus_burn(built):
     wb = openpyxl.load_workbook(built["audit"])
     a4 = wb["A4 Permanent Burn"]
-    net = _cell(a4, "GEODNET", "NET SUPPLY CHANGE Q0")
+    net = _cell(a4, "GEODNET", "ISSUANCE − BURN Q0")
     assert net.number_format.endswith('" burn only"') and "BURN ONLY" in net.comment.text
-    der = _cell(a4, "GEODNET", "Derived net supply change")
+    der = _cell(a4, "GEODNET", "Derived issuance − burn")
     assert der.number_format.endswith('" release − burn"') and "CIRCULATING" in der.comment.text
-    assert _cell(a4, "GEODNET", "Net supply change Q1").number_format.endswith('" release − burn"')
+    assert _cell(a4, "GEODNET", "Issuance − burn Q1").number_format.endswith('" release − burn"')
     # PR1.S8: Master's NET SUPPLY CHANGE is now closing − opening circulating; the mint − burn is its component column
     m = _cell(wb["Master"], "GEODNET", "Issuance − burn Q0")
     assert m.number_format.endswith('" burn only"')
-    assert "burn only" not in _cell(a4, "Sky", "NET SUPPLY CHANGE Q0").number_format
+    assert "burn only" not in _cell(a4, "Sky", "ISSUANCE − BURN Q0").number_format
 
 
 def test_dumps_uniswap_one_off_is_in_y1_with_its_share_and_the_flow_statement_balances(built):
