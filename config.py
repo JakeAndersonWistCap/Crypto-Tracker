@@ -12567,7 +12567,9 @@ PROJECTS = [
                       "2026-10-19",
         },
         "fee_switch_dates": {
-            "ethereum": "2025-12-28",
+            # PR1B.7 (Jake 2026-11-09): mainnet aligned to the on-chain execution (#93 above, block 24,106,378,
+            # 2025-12-27 20:33:11 UTC); it read 2025-12-28, the first day whose first block came after it
+            "ethereum": "2025-12-27",
             "optimism": "2026-03-08",
             "arbitrum": "2026-03-08",
             "base": "2026-03-08",
@@ -12782,7 +12784,7 @@ PROJECTS = [
         # block the series (a second event this size is a finding, not a one-off).
         # DATED BY THE DATA: the archive refused every first-block reading 2025-09-29..12-27 under
         # the old 100M floor and stored 2025-12-28 above it, so the burn landed on 2025-12-27 UTC
-        # (fee_switch_dates: mainnet 2025-12-28). The window is wide because the burn_split note
+        # (fee_switch_dates: mainnet 2025-12-27, the execution). The window is wide because the burn_split note
         # says "Jan 2026" — the data, not the note, picks the row.
         "one_off_flows": [
             {"metric": "gross_burn_tokens", "tokens": 100_000_000, "window": ("2025-12-01", "2026-01-31"),
@@ -20811,16 +20813,24 @@ MECHANISM_START = {
 # (the completeness report reads MECHANISM_START, not this). Fees run continuously, so fees_usd is not listed.
 SERIES_LAUNCH = {
     "Uniswap": {
-        "date": "2025-12-30",
-        "what": "fee switch",
+        # PR1B.7 (Jake 2026-11-09): the launch is the fee switch's EXECUTION ON CHAIN — proposal 93 executed 2025-12-27
+        # 20:33:11 UTC in block 24,106,378 (fee_switch_executions; the same block set v2 feeTo to the TokenJar and
+        # burned the 100M treasury UNI). Round 1 (U6) had 2025-12-30, the TokenJar's first non-zero stored balance.
+        "date": "2025-12-27",
+        "what": "fee switch executed",
+        "executed_utc": "2025-12-27 20:33:11", "block": 24_106_378,
+        "defillama_first_revenue": "2025-12-29",
         "metrics": ("revenue_usd", "holders_revenue_usd", "gross_burn_tokens", "actual_buyback_tokens",
                     "actual_buyback_usd", "retired_buyback_tokens", "retired_buyback_usd", "burn_revenue_funded",
                     "holder_value_revenue_usd"),
-        "declared_by": "Jake, 2026-11-05 (PR1 U6): the fee switch went live 2025-12-30",
-        "evidence": "proposal 93 (UNIfication) executed 2025-12-27 20:33 UTC (fee_switch_executions); the mainnet "
-                    "TokenJar's first non-zero stored balance (buyback_fund_balance) is 2025-12-30; DefiLlama's "
-                    "revenue_usd reads its first non-zero day 2025-12-29 in the 2026-10-13 dumps. Every date falls in "
-                    "the same trailing quarter on both as-of dates checked (2026-10-13, 2026-11-05)."},
+        "declared_by": "Jake, 2026-11-05 (PR1 U6: 2025-12-30); corrected by Jake 2026-11-09 (PR1B.7): the fee switch "
+                       "executed on chain 2025-12-27",
+        "evidence": "proposal 93 (UNIfication) executed 2025-12-27 20:33:11 UTC, block 24,106,378 (Uniswap Governor "
+                    "0x408ED635…24C3 ProposalExecuted, fee_switch_executions; UNISWAP_REVENUE_EVIDENCE.post_switch: v2 "
+                    "feeTo = the TokenJar at block 24,106,379); DefiLlama's revenue_usd reads its first non-zero day "
+                    "2025-12-29 in the 2026-10-13 dumps; the mainnet TokenJar's first non-zero stored balance "
+                    "(buyback_fund_balance) is 2025-12-30. Every date falls in the same trailing quarter on both as-of "
+                    "dates checked (2026-10-13, 2026-11-05)."},
 }
 
 

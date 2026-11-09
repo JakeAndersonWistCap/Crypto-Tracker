@@ -14073,7 +14073,7 @@ def write_trajectory(wb, data_by_key: dict, asof=None) -> list[dict]:
             elif hc := _history_class(spec["project"], trajectory.referenced_metrics(w["q0_formula"]), data_by_key):
                 why.append(hc)
         # PR1.S5 / U6 (Jake 2026-11-05): A SERIES THAT STARTS AT A DECLARED LAUNCH (config.SERIES_LAUNCH — Uniswap's fee
-        # switch 2025-12-30) takes no statistic from a quarter wholly before it, and the quarter holding it is no growth
+        # switch executed 2025-12-27, PR1B.7) takes no statistic from a quarter wholly before it, and the quarter holding it is no growth
         # base: "NEW since Q-k (<what> <date>)". After the short-history reason above, which reads the quarters as held.
         if asof is not None and not w["independent"]:
             las = [x for x in (config.series_launch(spec["project"]["name"], m)

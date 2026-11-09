@@ -190,7 +190,7 @@ def growth_base(values: list, step_at: int | None = None, starts_in: int | None 
     """PR1.S5 (Jake 2026-11-05): growth_rule's figures and THE COMPARISON CUT — the first quarter index no comparison may
     reach (QoQ, quarters improved): a launch or partial quarter (`starts_in`) and every quarter before it; a mechanism
     that starts from 0 (its first quarter, part-held); a new regime (the quarter before it). None: no cut.
-    `start_label` names a partial start quarter ("NEW since Q-3 (fee switch 2025-12-30)", "partial quarter (Q-3) …")
+    `start_label` names a partial start quarter ("NEW since Q-3 (fee switch executed 2025-12-27)", "partial quarter (Q-3) …")
     instead of the default "NEW since Q-x".
 
     THE GROWTH RULES (Jake's Phase 1 review 2026-10-12, item 4) over the newest four quarters (values[0] = Q0):

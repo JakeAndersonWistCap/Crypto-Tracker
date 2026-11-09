@@ -118,7 +118,7 @@ def test_s4_the_monthly_tab_reads_the_headline_series_and_never_the_as_of_day():
 
 # ================================================================================================== S5 / U6
 def test_u6_uniswap_fee_switch_is_a_declared_launch_and_fees_are_not():
-    assert config.series_launch("Uniswap", "revenue_usd")["date"] == "2025-12-30"
+    assert config.series_launch("Uniswap", "revenue_usd")["date"] == "2025-12-27"   # PR1B.7: the execution on chain
     for m in ("holders_revenue_usd", "gross_burn_tokens", "holder_value_revenue_usd"):
         assert config.series_launch("Uniswap", m)
     assert config.series_launch("Uniswap", "fees_usd") is None
