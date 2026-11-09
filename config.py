@@ -29854,9 +29854,28 @@ for _n, _h in HOLDER_VALUE.items():
             "declared": _h["bribes"]["from"]}
 
 
+# PR1B.6 (Jake 2026-11-09: Flows Q-4 read "CHECK — holder value credited with no revenue in the quarter" over a 0.0014 UNI
+# burn — stray transfers to 0x…dEaD on 2025-10-22 and 11-03, $0.0x — two months before the fee switch existed): a burn
+# dated BEFORE the payout mechanism's execution is not revenue-funded and is never holder value — 0 credited, and not
+# recorded as treasury- or emissions-funded value either (it was funded by no programme). Dated by the UTC day of the
+# burn (block time, PR1B.2): the execution day itself is creditable — Uniswap's 2025-12-27 burns are the 100M treasury
+# one-off alone (block 24,106,378, recorded, never credited: one_off_flows), traced on chain (UNISWAP_REVENUE_EVIDENCE).
+HOLDER_VALUE_CREDIT_FROM = {
+    "Uniswap": {"date": SERIES_LAUNCH["Uniswap"]["date"], "block": SERIES_LAUNCH["Uniswap"]["block"],
+                "why": "before the fee switch executed on chain (proposal 93, 2025-12-27 20:33:11 UTC, block "
+                       "24,106,378) no protocol fee existed to fund a burn: UNI sent to 0x…dEaD before it (0.0014 UNI "
+                       "on 2025-10-22 and 11-03) is a stray transfer, not revenue-funded holder value",
+                "declared_by": "Jake, 2026-11-09 (PR1B.6)"},
+}
+
+
 def holder_funding(project_name: str, day) -> tuple[str, str]:
-    """(funding, why) of a buyback on `day`: the dated HOLDER_VALUE period it falls in, else revenue."""
+    """(funding, why) of a buyback on `day`: 'none' before the mechanism's declared execution (HOLDER_VALUE_CREDIT_FROM,
+    PR1B.6 — never holder value), else the dated HOLDER_VALUE period it falls in, else revenue."""
     import pandas as _pd
+    cf = HOLDER_VALUE_CREDIT_FROM.get(project_name)
+    if cf and _pd.Timestamp(day) < _pd.Timestamp(cf["date"]):
+        return "none", cf["why"]
     for start, end, funding, why in (HOLDER_VALUE.get(project_name) or {}).get("funding") or ():
         if _pd.Timestamp(start) <= _pd.Timestamp(day) and (end is None or _pd.Timestamp(day) <= _pd.Timestamp(end)):
             return funding, why

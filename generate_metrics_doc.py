@@ -212,7 +212,11 @@ def flow_statements() -> list[str]:
         L.append(f"| holder value CREDITED (revenue-funded) | "
                  f"{ser(n, ['holder_value_revenue_usd'] if 'holder_value_revenue_usd' in ms_of[n] else [])} |")
         fund = "; ".join(f"{a}..{b or 'now'} {f}: {w}" for a, b, f, w in hv.get("funding") or ())
-        L += ["", f"Funding: {fund or 'revenue (the default: the programme documented base)'}", ""]
+        fund = fund or 'revenue (the default: the programme documented base)'
+        cf = config.HOLDER_VALUE_CREDIT_FROM.get(n)
+        if cf:                                   # PR1B.6: nothing credited before the mechanism's execution
+            fund = f"none before {cf['date']} (0 credited: {cf['why']}); from {cf['date']}: {fund}"
+        L += ["", f"Funding: {fund}", ""]
     return L
 
 

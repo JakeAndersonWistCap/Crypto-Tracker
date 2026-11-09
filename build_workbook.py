@@ -4999,8 +4999,13 @@ def _holder_value_views(groups: dict) -> None:
                 act = act.copy()
                 act[day] = float(act[day]) - part
         for d, v in act.items():
-            if config.holder_funding(name, d)[0] == "revenue":
+            fund_d = config.holder_funding(name, d)[0]
+            if fund_d == "revenue":
                 credit[d] = float(v)
+            elif fund_d == "none":
+                # PR1B.6: before the mechanism's execution (config.HOLDER_VALUE_CREDIT_FROM) a burn is no holder value at
+                # all — 0 credited, and not recorded as treasury / emissions-funded either
+                credit.setdefault(d, 0.0)
             else:
                 # 0 CREDITED, NOT n/a (fix round 2, R2: Ether.fi's HVY went from 0 to n/a once its Q0 top-ups were
                 # recorded as treasury-funded — a day with a buyback that is not revenue-funded credits 0)
@@ -11497,6 +11502,12 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
             parts.append(f"credited payout to holders: {'+'.join(h['distributed_extra'])} ({h.get('extra_why', '')})")
         if not parts and hv_has(p):
             parts.append("revenue (default: the programme's documented base)")
+        cf = config.HOLDER_VALUE_CREDIT_FROM.get(p["name"])
+        if cf and parts:
+            # PR1B.6: nothing is credited before the mechanism's execution on chain
+            parts.insert(0, f"..{(pd.Timestamp(cf['date']) - pd.Timedelta(days=1)).date()}: none, 0 credited — "
+                            f"{cf['why']}")
+            parts[1] = parts[1].replace("revenue (default", f"{cf['date']}..now: revenue (default", 1)
         return "; ".join(parts)
 
     vyield = next(s for s in _a1_headline(R) if s[0].startswith("VALIDATOR STAKING YIELD"))[1]
