@@ -175,7 +175,7 @@ def test_3_every_a4_dollar_burn_cell_reads_the_day_priced_series():
     import build_workbook as bw
     src = inspect.getsource(bw.write_a4)
     assert "(\"Gross burn Q0 ($, each day's burn × that day's price)\"" in src
-    assert "R.D(r, \"gross_burn_day_priced_usd\", \"q0\")" in src and "_flow_rate(R, r, 'gross_burn_day_priced_usd', p=p)" in src
+    assert "_day_priced_cell(R, r, config.a4_burn_metric(p[\"name\"]), \"gross_burn_day_priced_usd\")" in src and "_flow_rate(R, r, 'gross_burn_day_priced_usd', p=p)" in src
     assert src.count("fees_base_day_priced_tokens") >= 3
     assert "{burn(r, p)}*{price(r)}" not in src and "Share of fees burned')}/{price(r)}" not in src
     assert config.events_per_year("Sky", "gross_burn_day_priced_usd") == config.events_per_year("Sky", "sky_stage2_burn_tokens")

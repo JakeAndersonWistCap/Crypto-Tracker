@@ -7874,6 +7874,12 @@ def day_priced_metric(name: str, tok_metric: str) -> str:
     return DAY_PRICED_USD.get(tok_metric) or f"{tok_metric.removesuffix('_tokens')}_day_priced_usd"
 
 
+def _day_priced_cell(R, r: int, tok_metric: str, usd_metric: str) -> str:
+    """A day-priced $ figure, read only where its token series holds a value — so an n/a names the token series that is
+    missing (gross_issuance_tokens), not the view built from it."""
+    return calc(f"IF(ISNUMBER({R.D(r, tok_metric, 'q0')}),{R.D(r, usd_metric, 'q0')},{NA})")
+
+
 def _net_usd_day_priced(R, r: int, p: dict) -> str:
     """PR1B.3 follow-up (lead 2026-11-09, Jake's "the day's price everywhere, one figure per concept"): A4's issuance −
     burn in $ = the day-priced issuance $ − the day-priced burn $ (each day's tokens x that day's price; the same burn $
@@ -12260,7 +12266,7 @@ def _issuance_usd_col(R: Refs) -> tuple:
     """PR1B.3 follow-up (lead 2026-11-09): GROSS ISSUANCE $ AT EACH DAY'S PRICE (A1 and A4) — gross_issuance_day_priced_usd,
     the basis of the gross burn $ beside it (was the window's tokens x the 90-day average price)."""
     return ("Gross issuance Q0 ($, each day's issuance × that day's price)",
-            lambda r, p: _fixed_supply_text(p) or pull(R.D(r, "gross_issuance_day_priced_usd", "q0")), FMT_USD, "pull",
+            lambda r, p: _fixed_supply_text(p) or _day_priced_cell(R, r, "gross_issuance_tokens", "gross_issuance_day_priced_usd"), FMT_USD, "calc",
             False, {"metric": "gross_issuance_day_priced_usd",
                     "note_fn": lambda p: day_price_note(p["name"], "gross_issuance_day_priced_usd")})
 
@@ -12297,8 +12303,8 @@ def write_a4(ws, R: Refs, data_by_key: dict):
         # PR1B.3 (Jake 2026-11-09): ONE PRICING BASIS FOR $ BURN — each day's burn x that day's price, summed
         # (gross_burn_day_priced_usd, _gross_burn_day_priced_usd_views): the basis holder revenue and the payout ratios use. It was the window's
         # tokens x the 90-day average price ($36.90M against holder revenue's $35.17M on Jake's store)
-        ("Gross burn Q0 ($, each day's burn × that day's price)", lambda r, p: pull(R.D(r, "gross_burn_day_priced_usd", "q0")),
-         FMT_USD, "pull", False, {"metric": "gross_burn_day_priced_usd",
+        ("Gross burn Q0 ($, each day's burn × that day's price)", lambda r, p: _day_priced_cell(R, r, config.a4_burn_metric(p["name"]), "gross_burn_day_priced_usd"),
+         FMT_USD, "calc", False, {"metric": "gross_burn_day_priced_usd",
                                   "note_fn": lambda p: day_price_note(p["name"], "gross_burn_day_priced_usd")}),
         ("GROSS ISSUANCE Q0 (tokens)", lambda r, p: _fixed_supply_text(p) or pull(iss(r)), FMT_NUM, "pull", True,
          {"metric": "gross_issuance_tokens"}),
