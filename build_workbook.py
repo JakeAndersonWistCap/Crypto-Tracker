@@ -5058,6 +5058,38 @@ def _holder_value_views(groups: dict) -> None:
                      "source": [src_for(d, src) for d in s_.index]}), cols)
 
 
+def _a4_burn_usd_views(groups: dict) -> None:
+    """PR1B.3 (Jake 2026-11-09): ONE PRICING BASIS FOR $ BURN. a4_burn_usd = each day's A4 burn (config.a4_burn_metric)
+    x that day's price_usd; a4_burn_base_tokens = each day's fee base (_burn_fee_base) ÷ that day's price — what every $
+    burn figure on A4 reads (the gross burn $, the burn share of fees, the implied burn and actual − implied), on the
+    basis holder revenue and the payout ratios already use. A day without a price is left out (_usd_daily), never valued
+    at another day's; a derived row covers what its inputs' rows cover (COVERED_SETS via the view graph)."""
+    for p in scoped_projects():
+        if 4 not in p.get("archetypes", ()):
+            continue
+        name = p["name"]
+        px = _daily(groups.get((name, "price_usd")))
+        if px.empty:
+            continue
+        px = px[px > 0]
+        bm = config.a4_burn_metric(name)
+        g = groups.get((name, bm))
+        usd = _usd_daily(_daily(g), px)
+        if not usd.empty:
+            groups[(name, "a4_burn_usd")] = _as_stored(pd.DataFrame(
+                {"date": usd.index, "project": name, "metric": "a4_burn_usd", "value": usd.values, "tier": 2,
+                 "source": f"derived:{bm}*price_usd[that day's price]"}), g.columns)
+        base_m = _burn_fee_base(p)
+        gb = groups.get((name, base_m))
+        base = _daily(gb)
+        both = base.index.intersection(px.index)
+        if len(both):
+            tok = (base[both] / px[both]).sort_index()
+            groups[(name, "a4_burn_base_tokens")] = _as_stored(pd.DataFrame(
+                {"date": tok.index, "project": name, "metric": "a4_burn_base_tokens", "value": tok.values, "tier": 2,
+                 "source": f"derived:{base_m}/price_usd[that day's price]"}), gb.columns)
+
+
 def _reward_funding_views(groups: dict) -> None:
     """config.REWARD_FUNDING: the reward series split per day by its funding period into one series per funding (every
     day in each, 0 where another funding pays), so a category reads the same days as the reward itself."""
@@ -5909,6 +5941,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _pendle_rate_check(groups)          # G9 N: each Pendle gauge chain's log scan against its sampled rates
     _revenue_from_fees_views(groups)    # G9 N: Plume's revenue = the fees its RewardDistributor receives
     _holder_value_views(groups)   # Phase 2: revenue-funded holder value, credited vs recorded (LITMUS A)
+    _a4_burn_usd_views(groups)    # PR1B.3: $ burn = each day's burn x that day's price, the holder-value basis
     _settlement_views(groups)
     _monthly_flow_views(groups)       # P2a D5b: complete-month flows from daily log scans (Maple's SSF Safe)
     _handover_overlap_checks(groups)  # G11 B8 / C1: each declared handover's two legs compared on their common days
@@ -12085,7 +12118,7 @@ def write_a4(ws, R: Refs, data_by_key: dict):
     _title(ws, "A4 — Permanent Burn", "Gross burn, gross issuance and NET supply change side by side. Where the protocol publishes net mint itself "
                                        "that SELF-REPORTED figure is used and the derived one is shown beside it for comparison; a gap between them means one is wrong. "
                                        "Otherwise net = issuance − burn (positive = net inflation). "
-                                       "Q0 = trailing comparison window; $ conversions at 90-day average price. Implied burn = fees × documented share (suppressed when unconfirmed). "
+                                       "Q0 = trailing comparison window; $ BURN at each day's price (each day's burn × that day's price, the holder-value basis — PR1B.3); issuance and net $ at the 90-day average price. Implied burn = fees × documented share ÷ each day's price (suppressed when unconfirmed). "
                                        "PancakeSwap is the disclosure template: publishes net mint monthly.")
     ann = ANN
     price = lambda r: R.D(r, "price_usd", "q0")  # noqa: E731
@@ -12109,7 +12142,11 @@ def write_a4(ws, R: Refs, data_by_key: dict):
         _fees_q0_col(R),
         ("Price — 90d average ($)", lambda r, p: pull(price(r)), FMT_USD4, "pull", False, {"metric": "price_usd"}),
         ("GROSS BURN Q0 (tokens)", lambda r, p: pull(burn(r, p)), FMT_NUM, "pull", True, {"metric_fn": config.a4_burn_metric}),
-        ("Gross burn Q0 ($ at avg price)", lambda r, p: calc(f"{burn(r, p)}*{price(r)}"), FMT_USD, "calc"),
+        # PR1B.3 (Jake 2026-11-09): ONE PRICING BASIS FOR $ BURN — each day's burn x that day's price, summed
+        # (a4_burn_usd, _a4_burn_usd_views): the basis holder revenue and the payout ratios use. It was the window's
+        # tokens x the 90-day average price ($36.90M against holder revenue's $35.17M on Jake's store)
+        ("Gross burn Q0 ($, each day's burn × that day's price)", lambda r, p: pull(R.D(r, "a4_burn_usd", "q0")),
+         FMT_USD, "pull", False, {"metric": "a4_burn_usd"}),
         ("GROSS ISSUANCE Q0 (tokens)", lambda r, p: _fixed_supply_text(p) or pull(iss(r)), FMT_NUM, "pull", True,
          {"metric": "gross_issuance_tokens"}),
         ("Gross issuance Q0 ($ at avg price)", lambda r, p: _fixed_supply_text(p) or calc(f"{iss(r)}*{price(r)}"),
@@ -12147,19 +12184,23 @@ def write_a4(ws, R: Refs, data_by_key: dict):
         ("Net supply change ($ at avg price)",
          lambda r, p: _price_net(_net_guarded(R, r, p, _basis_iss(R, p), burn), price(r)), FMT_USD, "calc", False,
          {"flag_fn": _a4_net_head_flag}),
+        # PR1B.3: the burn's $ at each day's price per covered day ÷ fees per covered day (was tokens x the 90-day average
+        # price: 9.31% against the gross payout's 8.87% on Jake's store — the same burns valued twice)
         ("Burn as share of fees (measured)",
-         lambda r, p: _coverage_guard(R, r, [("burn", config.a4_burn_metric(p["name"]), "q0"), ("fees", "fees_usd", "q0")],
-                                      f"{_flow_rate(R, r, config.a4_burn_metric(p['name']), p=p)}*{price(r)}/{_flow_rate(R, r, 'fees_usd')}"),
+         lambda r, p: _coverage_guard(R, r, [("burn $", "a4_burn_usd", "q0"), ("fees", "fees_usd", "q0")],
+                                      f"{_flow_rate(R, r, 'a4_burn_usd', p=p)}/{_flow_rate(R, r, 'fees_usd')}"),
          FMT_PCT, "calc"),
         ("Issuance as % of supply (annualised)", lambda r, p: calc(f"{_annualise(R, r, p, _a4_iss_metric(p['name']), R.D(r, _a4_iss_metric(p['name']), 'q0'))}/{R.D(r, 'circulating_supply', 'now')}"), FMT_PCT, "calc"),
         *_a4_phase2_cols(R),
         # THE BASE THE SHARE IS OF (Uniswap, G6 2026-10-19): config burn_split.fee_base_metric — Uniswap's documented
         # share is 100% of PROTOCOL fees (revenue_usd), not of LP fees; fees_usd everywhere else.
-        ("Implied burn Q0 (tokens) = fees × documented share ÷ avg price",
-         lambda r, p: gated(R.C(r, "Burn split status"), f"{R.D(r, _burn_fee_base(p), 'q0')}*{R.C(r, 'Share of fees burned')}/{price(r)}", R.C(r, 'Share of fees burned'), kind="burn"), FMT_NUM, "calc", False, {"gate": "burn_split"}),
+        # PR1B.3: the fee base converted to tokens at EACH DAY'S price (a4_burn_base_tokens), x the documented share — the
+        # one pricing basis; it was the window's $ ÷ the 90-day average price
+        ("Implied burn Q0 (tokens) = fees × documented share ÷ each day's price",
+         lambda r, p: gated(R.C(r, "Burn split status"), f"{R.D(r, 'a4_burn_base_tokens', 'q0')}*{R.C(r, 'Share of fees burned')}", R.C(r, 'Share of fees burned'), kind="burn"), FMT_NUM, "calc", False, {"gate": "burn_split"}),
         ("Actual − implied burn (tokens)", lambda r, p: circular_gated(p, gated(R.C(r, "Burn split status"), _coverage_guard(
-            R, r, [("burn", config.a4_burn_metric(p["name"]), "q0"), ("fees", _burn_fee_base(p), "q0")],
-            f"{burn(r, p)}-{R.D(r, _burn_fee_base(p), 'q0')}*{R.C(r, 'Share of fees burned')}/{price(r)}", same_span=True, bare=True),
+            R, r, [("burn", config.a4_burn_metric(p["name"]), "q0"), ("fees", "a4_burn_base_tokens", "q0")],
+            f"{burn(r, p)}-{R.D(r, 'a4_burn_base_tokens', 'q0')}*{R.C(r, 'Share of fees burned')}", same_span=True, bare=True),
             R.C(r, 'Share of fees burned'))), FMT_NUM, "calc", False, {"gate": "burn_split"}),
         ("Supply figure complete?", lambda r, p: ("PARTIAL — " + (p.get("supply_partial_reason", "")[:90]))
          if p.get("supply_is_partial") else "", FMT_TEXT, "text"),

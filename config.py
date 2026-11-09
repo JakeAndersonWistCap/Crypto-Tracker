@@ -2530,7 +2530,9 @@ def events_per_year(project_name: str, metric: str) -> float | None:
     if not c.get("annualise_by_events") or len(c["cadences"]) != 1:
         return None
     m = c["metric"]
-    if metric not in (m, m.replace("_tokens", "_usd")):
+    # PR1B.3: the A4 burn's day-priced $ (a4_burn_usd) is that burn's usd twin, annualised the same way
+    twin = ("a4_burn_usd",) if m == a4_burn_metric(project_name) else ()
+    if metric not in (m, m.replace("_tokens", "_usd"), *twin):
         return None
     label, days = c["cadences"][0]
     if int(days) <= 1:
@@ -30247,6 +30249,21 @@ METRICS["holder_value_other_usd"] = {
     # P5-1C.B1: a treasury-funded one-off kept in a burn-route buyback is recorded here, never credited (Uniswap's 100M)
     + tuple(p["name"] for p in PROJECTS if p["name"] not in HOLDER_VALUE
             and any(f.get("funding", "treasury") != "revenue" for f in p.get("one_off_flows") or ()))}
+
+# PR1B.3 (Jake 2026-11-09): ONE PRICING BASIS FOR $ BURN — each day's burn x that day's price, summed. A4 valued the
+# window's burn at the 90-day average price ($36.90M, burn share of fees 9.31% on his store) while holder revenue / the
+# payout ratios valued each day at its own price ($35.17M, payout gross 8.87%): two figures for one concept. Every $ burn
+# figure on A4 now reads these day-priced series (build_workbook._a4_burn_usd_views); holder value was already on it.
+METRICS["a4_burn_usd"] = {
+    "label": "The A4 burn ($): each day's burn (config.a4_burn_metric) x that day's price_usd — the one $ burn basis "
+             "(PR1B.3; a day without a price is left out, never valued at another day's)",
+    "kind": "flow", "unit": "usd", "archetypes": [4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e13,
+    "view_only": True, "only_projects": tuple(p["name"] for p in PROJECTS if 4 in p.get("archetypes", ()))}
+METRICS["a4_burn_base_tokens"] = {
+    "label": "The fee base a documented burn share is a share of (burn_split.fee_base_metric, else fees_usd), each day "
+             "÷ that day's price_usd, in tokens — the implied burn's basis (PR1B.3)",
+    "kind": "flow", "unit": "tokens", "archetypes": [4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e16,
+    "view_only": True, "only_projects": tuple(p["name"] for p in PROJECTS if 4 in p.get("archetypes", ()))}
 
 
 # =====================================================================================================================
