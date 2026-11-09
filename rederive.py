@@ -306,7 +306,7 @@ def _day_boundary_main(args, db) -> int:
     st = store_mod.Store(db)
     try:
         plan = ar.day_boundary_restatement(st, args.project, stock, since=args.since, budget_s=args.budget_min * 60)
-        print_day_boundary_plan(args.project, stock, plan)
+        print_day_boundary_plan(args.project, stock, plan, tuple(args.window.split(",")) if args.window else None)
         if not args.apply:
             print("  LOOKED ONLY — nothing was written. Re-run with --apply to replace.\n")
             return 0
@@ -339,6 +339,8 @@ def main(argv=None) -> int:
                          "(archive reads) and rebuild its flow stamped by block time")
     ap.add_argument("--since", default=None, help="--day-boundary: restate readings from this date (YYYY-MM-DD) only")
     ap.add_argument("--budget-min", type=float, default=60.0, help="--day-boundary: archive read budget, minutes")
+    ap.add_argument("--window", default=None,
+                    help="--day-boundary: FROM,TO (YYYY-MM-DD) — also print both totals over this window")
     args = ap.parse_args(argv)
 
     db = pathlib.Path(args.db)

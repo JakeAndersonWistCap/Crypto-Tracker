@@ -360,6 +360,24 @@ def test_2_the_restatement_puts_jakes_store_on_block_time(jake):
     assert not plan2["restated"] and not plan2["old"] and plan2["new"].empty
 
 
+def test_2_rederive_previews_the_plan_and_refuses_a_read_date_rebuild(jake, capsys):
+    st, _p = jake
+    import sqlite3
+    import rederive
+    from fetch import archive as ar
+    plan = ar.day_boundary_restatement(st, UNI, BAL, reader=_Reader(), solana={}, archive_chains={"ethereum"})
+    rederive.print_day_boundary_plan(UNI, BAL, plan, ("2026-10-21", "2026-11-08"))
+    out = capsys.readouterr().out
+    assert "19 mid-day reading(s) restated" in out and "2026-11-09" in out
+    # read-date rows dated 10-21..11-08: 17 x 10,000 + 0 (11-07: first block − mid-day 11-06 12:30) + 12,000 (the 11-07
+    # burn, on 11-08); utc-day: 17 x 10,000 + 12,000 (11-07) + 18,000 (11-08, which read-date put on 11-09)
+    assert "window 2026-10-21..2026-11-08: read-date 182,000.0000 (19 rows) -> utc-day 200,000.0000 (19 rows)" in out, out
+    conn = sqlite3.connect(st.path)
+    p2 = rederive.rederive_flow_from_stock(conn, UNI, BURN)
+    assert p2.blocked and "--day-boundary" in p2.blocked
+    conn.close()
+
+
 def test_2_the_revenue_window_sum_is_the_first_block_difference():
     """Jake's expected Uniswap burn on the revenue window 2026-08-12..11-08 (5,430,001 UNI) is the 0x…dEaD balance at the
     first block of 11-09 minus that at the first block of 08-12: read 2026-11-09 from eth.drpc.org (archive eth_call,
