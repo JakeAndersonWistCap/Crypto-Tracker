@@ -295,10 +295,11 @@ def test_c_business_column_header_and_formula_on_series(tmp_path):
     assert f.startswith("=IFERROR(") and "_series!" in f and f"<{reader.TVL_CP_COVERAGE_FLOOR}" in f
     assert "30D: +10.0%" in sh.ws[coord].comment.text
     assert "under 90% of the latest TVL" in sh.ws[coord].comment.text
-    # a chain reads "by design"; a project with no series wired reads "not wired"
+    # a chain reads "by design"; Uniswap, whose breakdown DefiLlama does not publish, n/a with the dated reason
+    # (PR1B.11, config.TVL_BREAKDOWN_UNPUBLISHED; was "not wired")
     c1 = reader._window_start_tvl_cell(sh, ctx, 6, col, config.PROJECT_BY_NAME["Ethereum"])
     c2 = reader._window_start_tvl_cell(sh, ctx, 7, col, config.PROJECT_BY_NAME["Uniswap"])
-    assert sh.ws[c1].value == "by design" and sh.ws[c2].value == "not wired"
+    assert sh.ws[c1].value == "by design" and sh.ws[c2].value == "n/a" and "read 2026-11-09" in sh.ws[c2].comment.text
 
 
 def test_c_metrics_declared_for_the_four_protocols_not_the_parked_one():

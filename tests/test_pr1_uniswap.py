@@ -178,7 +178,9 @@ def test_u4_the_30_and_60_day_means_are_the_daily_shares_held_in_the_window(monk
     assert (last, share, cat) == (pd.Timestamp("2026-11-02"), 0.2536, 7_693_669_883.0) and set(means) == {30, 60}
     suffix, note = bw._market_share_mean_flag(UNI)
     assert suffix == " 90d mean" and "Q0 basis" in note and "25.36%" in note and "+87.0%" in note
-    assert bw._market_share_mean_flag(config.PROJECT_BY_NAME["Aerodrome"]) is None
+    # PR1B.10b (Jake 2026-11-09): every project with a share reads the 90-day mean; a share n/a by design has none
+    assert bw._market_share_mean_flag(config.PROJECT_BY_NAME["Aerodrome"])[0] == " 90d mean"
+    assert bw._market_share_mean_flag(config.PROJECT_BY_NAME["Chainlink"]) is None
 
 
 def test_u4_a_hole_is_never_a_zero_in_the_mean(monkeypatch):
@@ -191,20 +193,21 @@ def test_u4_a_hole_is_never_a_zero_in_the_mean(monkeypatch):
 
 def test_u4_the_headline_reads_the_90_day_mean_for_uniswap_only_and_the_means_sit_beside():
     assert config.market_share_window("Uniswap") == "q0"
-    assert config.market_share_window("Aerodrome") == "now"
+    # PR1B.10b (Jake 2026-11-09): every project with a share is on the 90-day mean; a share n/a by design is not
+    assert config.market_share_window("Aerodrome") == "q0" and config.market_share_window("Chainlink") == "now"
     R = bw.Refs(50, 5, ["2026-10"])
     cols = {c[0]: c for c in bw._cp_cols(R, {})}
     head = cols[bw.MARKET_SHARE_HEAD]
     f_uni = head[1](7, UNI)
     f_aero = head[1](8, config.PROJECT_BY_NAME["Aerodrome"])
     assert f'Data!${bw.DC["q0"]}$' in f_uni and "market_share_pct" in f_uni
-    assert f'Data!${bw.DC["now"]}$' in f_aero
+    assert f'Data!${bw.DC["q0"]}$' in f_aero                                       # PR1B.10b
     assert head[5]["flag_fn"] is bw._market_share_mean_flag
     names = list(cols)
     i = names.index(bw.MARKET_SHARE_HEAD)
     assert names[i + 1].startswith("Market share, 30-day mean") and names[i + 2].startswith("Market share, 60-day mean")
     assert "market_share_mean30_pct" in cols[names[i + 1]][1](7, UNI)
-    assert cols[names[i + 1]][1](8, config.PROJECT_BY_NAME["Aerodrome"]) == ""
+    assert "market_share_mean30_pct" in cols[names[i + 1]][1](8, config.PROJECT_BY_NAME["Aerodrome"])  # PR1B.10b
 
 
 # ============================================================================================================ U9

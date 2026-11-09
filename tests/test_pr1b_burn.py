@@ -184,7 +184,7 @@ def test_3_every_a4_dollar_burn_cell_reads_the_day_priced_series():
 
 
 def test_3_issuance_and_net_dollars_are_day_priced_and_net_uses_the_burn_dollars_figure():
-    """Lead 2026-11-09: 'Gross issuance Q* ($ ...)' (A1, A4) and A4's 'Net supply change ($ ...)' were tokens x the 90-day
+    """Lead 2026-11-09: 'Gross issuance Q* ($ ...)' (A1, A4) and A4's 'Issuance − burn ($ ...)' (renamed by PR1B.8) were tokens x the 90-day
     average price; now each day's issuance x that day's price, and net $ = day-priced issuance $ − the SAME day-priced burn
     $ as the gross burn $ column — one $ burn figure."""
     import inspect
@@ -196,9 +196,9 @@ def test_3_issuance_and_net_dollars_are_day_priced_and_net_uses_the_burn_dollars
     a4, a1 = inspect.getsource(bw.write_a4), inspect.getsource(bw.write_a1)
     assert "_issuance_usd_col(R)" in a4 and "_issuance_usd_col(R)" in a1
     assert "{iss(r)}*{price(r)}" not in a4 + a1 and "_price_net(" not in a4
-    assert '"Net supply change ($, each day\'s issuance − burn × that day\'s price)"' in a4
+    assert '"Issuance − burn ($, each day\'s issuance − burn × that day\'s price)"' in a4
     assert reader.short_header("Gross issuance Q0 ($, each day's issuance × that day's price)") == "Gross issuance, 90 days ($)"
-    assert reader.short_header("Net supply change ($, each day's issuance − burn × that day's price)") == "Issuance − burn ($)"
+    assert reader.short_header("Issuance − burn ($, each day's issuance − burn × that day's price)") == "Issuance − burn ($)"
     # the net's legs: issuance basis and every burn, each day-priced; the burn leg IS the gross burn $ series
     assert bw.day_priced_metric("Uniswap", config.a1_burn_metric("Uniswap")) == "gross_burn_day_priced_usd"
     assert bw.day_priced_metric("Uniswap", config.issuance_basis("Uniswap")) == "gross_issuance_day_priced_usd"
