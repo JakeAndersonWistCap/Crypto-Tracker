@@ -183,6 +183,82 @@ def test_3_every_a4_dollar_burn_cell_reads_the_day_priced_series():
     assert reader.short_header("Gross burn Q0 ($, each day's burn × that day's price)") == "Gross burn, 90 days ($)"
 
 
+def test_3_issuance_and_net_dollars_are_day_priced_and_net_uses_the_burn_dollars_figure():
+    """Lead 2026-11-09: 'Gross issuance Q* ($ ...)' (A1, A4) and A4's 'Net supply change ($ ...)' were tokens x the 90-day
+    average price; now each day's issuance x that day's price, and net $ = day-priced issuance $ − the SAME day-priced burn
+    $ as the gross burn $ column — one $ burn figure."""
+    import inspect
+    import build_workbook as bw
+    import reader
+    col = bw._issuance_usd_col(type("R", (), {"D": staticmethod(lambda r, m, w: f"D[{m}|{w}]")})())
+    assert col[0] == "Gross issuance Q0 ($, each day's issuance × that day's price)"
+    assert "gross_issuance_day_priced_usd" in col[1](5, {"name": "Sky"})
+    a4, a1 = inspect.getsource(bw.write_a4), inspect.getsource(bw.write_a1)
+    assert "_issuance_usd_col(R)" in a4 and "_issuance_usd_col(R)" in a1
+    assert "{iss(r)}*{price(r)}" not in a4 + a1 and "_price_net(" not in a4
+    assert '"Net supply change ($, each day\'s issuance − burn × that day\'s price)"' in a4
+    assert reader.short_header("Gross issuance Q0 ($, each day's issuance × that day's price)") == "Gross issuance, 90 days ($)"
+    assert reader.short_header("Net supply change ($, each day's issuance − burn × that day's price)") == "Issuance − burn ($)"
+    # the net's legs: issuance basis and every burn, each day-priced; the burn leg IS the gross burn $ series
+    assert bw.day_priced_metric("Uniswap", config.a1_burn_metric("Uniswap")) == "gross_burn_day_priced_usd"
+    assert bw.day_priced_metric("Uniswap", config.issuance_basis("Uniswap")) == "gross_issuance_day_priced_usd"
+    assert bw.day_priced_metric("GEODNET", config.issuance_basis("GEODNET")) == "pool_release_day_priced_usd"
+    assert bw.day_priced_metric("Hyperliquid", config.a1_burn_metric("Hyperliquid")) == "total_burn_day_priced_usd"
+    for m in ("gross_issuance_day_priced_usd", "pool_release_day_priced_usd", "total_burn_day_priced_usd",
+              "net_mint_monthly_day_priced_usd"):
+        assert config.METRICS[m]["view_only"]
+
+
+class _R:
+    @staticmethod
+    def D(r, m, w):
+        return f"D[{m}]"
+
+    @staticmethod
+    def C(r, h):
+        return f"C[{h}]"
+
+
+def test_3_the_net_dollar_formula_differences_the_day_priced_legs(monkeypatch):
+    import build_workbook as bw
+    seen = {}
+    monkeypatch.setattr(bw, "_coverage_guard", lambda R, r, legs, expr, **kw: seen.setdefault("x", (legs, expr)) and
+                        "=" + expr)
+    f = bw._net_usd_day_priced(_R, 7, config.PROJECT_BY_NAME["Uniswap"])
+    assert f == "=D[gross_issuance_day_priced_usd]-D[gross_burn_day_priced_usd]", f
+    seen.clear()
+    g = bw._net_usd_day_priced(_R, 7, config.PROJECT_BY_NAME["GEODNET"])          # pre-minted: − burn $ only
+    assert g == "=-D[gross_burn_day_priced_usd]", g
+
+
+def test_3_a_day_without_a_price_is_left_out_and_named_in_the_cell():
+    import build_workbook as bw
+    days = ["2026-08-12", "2026-08-13", "2026-08-14"]
+    g = _uni_groups(days, [10.0, 20.0, 30.0], [5.0, 6.0, 7.0])
+    g[("Uniswap", "gross_issuance_tokens")] = _stored(days, [1.0, 2.0, 3.0], "gross_issuance_tokens")
+    g[("Uniswap", "price_usd")] = g[("Uniswap", "price_usd")].iloc[[0, 2]]
+    keep = bw._SCOPE
+    bw._SCOPE = [config.PROJECT_BY_NAME["Uniswap"]]
+    try:
+        bw._gross_burn_day_priced_usd_views(g, pd.Timestamp("2026-08-20"))
+    finally:
+        bw._SCOPE = keep
+    iss = g[("Uniswap", "gross_issuance_day_priced_usd")].set_index("date")["value"]
+    assert float(iss.sum()) == 1.0 * 5 + 3.0 * 7
+    note = bw.day_price_note("Uniswap", "gross_issuance_day_priced_usd")
+    assert note.startswith("LEFT OUT (PR1B.3): 1 day(s)") and "2026-08-13" in note and "never valued" in note
+    assert "2026-08-13" in bw.day_price_note("Uniswap", "gross_issuance_day_priced_usd", "gross_burn_day_priced_usd")
+
+
+def test_3_a_monthly_row_takes_its_own_months_prices():
+    import build_workbook as bw
+    px = pd.Series([2.0, 4.0], index=pd.to_datetime(["2026-07-10", "2026-07-20"]))
+    g = _stored(["2026-07-01", "2026-08-01"], [100.0, 50.0], "gross_burn_tokens", source="dune:8683175")
+    vals, srcs, left = bw._day_priced(g, px)
+    assert float(vals.iloc[0]) == 300.0 and "2 of 31 day(s) of its month" in srcs[0]
+    assert left == [pd.Timestamp("2026-08-01")]                                      # no price in August: named
+
+
 # ================================================================================================== item 2
 # A LIVE-SHAPED FIXTURE (Jake's store, 2026-11-09): hourly blocks; 0x…dEaD holds X + the burns landed by each block.
 # Burns: 10,000 at 12:00 every day to 11-06; 12,000 at 11-07 15:00; 18,000 at 11-08 10:00; 18,000 at 11-09 05:00.

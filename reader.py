@@ -1921,7 +1921,7 @@ E_SHORT = {
     "Staking rate = staked inside circulating": "Staking rate",
     "Resulting float": "Float after staking",
     "NET ISSUANCE AFTER BURN Q0 (tokens)": "Net issuance after burn (tokens)",
-    "Gross issuance Q0 ($ at avg price)": "Gross issuance, 90 days ($)",
+    "Gross issuance Q0 ($": "Gross issuance, 90 days ($)",      # PR1B.3: each day's issuance × that day's price
     "FEES ÷ ISSUANCE (x) — key ratio": "Fees ÷ issuance (x)",
     "FREE FLOAT = circulating − locked": "Free float (tokens)",
     "Materiality ": "Materiality",
@@ -1962,7 +1962,7 @@ E_SHORT = {
     "Self-reported figure preferred?": "Self-reported figure preferred?",
     "Derived net supply change": "Derived net supply change",
     "Self-reported − derived": "Self-reported minus derived",
-    "Net supply change ($ at avg price)": "Issuance − burn ($)",
+    "Net supply change ($": "Issuance − burn ($)",      # PR1B.3: each day at that day's price
     "Cumulative burn ÷ max supply": "Cumulative burn ÷ max supply",
     "Burn split Q0 (tokens)": "Burn split (tokens)",
     "Burn split — by source": "Burn split by source",

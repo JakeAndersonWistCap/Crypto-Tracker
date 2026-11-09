@@ -5058,27 +5058,91 @@ def _holder_value_views(groups: dict) -> None:
                      "source": [src_for(d, src) for d in s_.index]}), cols)
 
 
-def _gross_burn_day_priced_usd_views(groups: dict) -> None:
-    """PR1B.3 (Jake 2026-11-09): ONE PRICING BASIS FOR $ BURN. gross_burn_day_priced_usd = each day's A4 burn (config.a4_burn_metric)
-    x that day's price_usd; fees_base_day_priced_tokens = each day's fee base (_burn_fee_base) ÷ that day's price — what every $
-    burn figure on A4 reads (the gross burn $, the burn share of fees, the implied burn and actual − implied), on the
-    basis holder revenue and the payout ratios already use. A day without a price is left out (_usd_daily), never valued
-    at another day's; a derived row covers what its inputs' rows cover (COVERED_SETS via the view graph)."""
+# PR1B.3: the token series valued at each day's own price, by name (config.METRICS declares each)
+DAY_PRICED_USD = {"gross_issuance_tokens": "gross_issuance_day_priced_usd",
+                  "pool_release_tokens": "pool_release_day_priced_usd",
+                  "total_burn_tokens": "total_burn_day_priced_usd"}
+DAY_PRICE_LEFT_OUT: dict = {}   # (project, usd metric) -> [days with tokens and no price], per build
+
+
+def _day_priced(g, px: pd.Series, monthly: bool = False) -> tuple[pd.Series, list, list]:
+    """(each row's tokens x ITS OWN day's price, the price basis per row, [days left out]) — the rule the buyback $ and
+    holder value already use (_relabel_views), so $ burn has ONE figure: a daily row takes its own date's price (a
+    [span=Nd] row too, as actual_buyback_usd does); a MONTHLY row (a Dune month, a self-reported monthly net mint) takes
+    the mean price of its month's days. A row with no price on its day (or none in its month) is LEFT OUT (named), never
+    valued at another day's price."""
+    if g is None or g.empty:
+        return pd.Series(dtype=float), [], []
+    gg = (g.assign(date=pd.to_datetime(g["date"]).dt.normalize()).sort_values("date")
+          .drop_duplicates("date", keep="last"))
+    out, srcs, left = {}, [], []
+    for day, v, s in zip(gg["date"], gg["value"].astype(float), gg["source"].astype(str)):
+        days = pd.date_range(day, day + pd.offsets.MonthEnd(0)) if (monthly or s.startswith("dune:")) else [day]
+        have = [d for d in days if d in px.index]
+        if not have:
+            left.append(day)
+            continue
+        out[day] = v * float(px[have].mean())
+        srcs.append("that day's price" if len(days) == 1 else
+                    f"mean price of the {len(have)} of {len(days)} day(s) of its month")
+    return pd.Series(out, dtype=float).sort_index(), srcs, left
+
+
+def day_price_note(name: str, *usd_metrics: str) -> str:
+    """The Q0 window's days left out of day-priced $ series (tokens and no price that day), named — '' where none."""
+    left = sorted({d for m in usd_metrics for d in DAY_PRICE_LEFT_OUT.get((name, m), ())})
+    if not left:
+        return ""
+    return (f"LEFT OUT (PR1B.3): {len(left)} day(s) with tokens and no price_usd row — {_day_ranges(left)}; never valued "
+            f"at another day's price")
+
+
+def _gross_burn_day_priced_usd_views(groups: dict, asof=None) -> None:
+    """PR1B.3 (Jake 2026-11-09): ONE PRICING BASIS FOR $ — each day's tokens x that day's price_usd, summed:
+    gross_burn_day_priced_usd (the A4 burn, config.a4_burn_metric), gross_issuance_day_priced_usd (A1 and A4), the legs
+    A4's issuance − burn $ counts (pool_release_day_priced_usd where pre-minted, total_burn_day_priced_usd where every
+    burn differs from the A4 burn, net_mint_monthly_day_priced_usd for a self-reported monthly net mint — each month at
+    its own days' prices), and fees_base_day_priced_tokens = each day's fee base ÷ that day's price (the implied burn).
+    The basis holder revenue and the payout ratios already use. A row's price is that of the days it covers
+    (_day_priced); a row with no priced day is LEFT OUT and named in the cell (day_price_note: the Q0 window's days,
+    DAY_PRICE_LEFT_OUT), never valued at another day's price. A derived row covers what its inputs' rows cover."""
+    DAY_PRICE_LEFT_OUT.clear()
     for p in scoped_projects():
-        if 4 not in p.get("archetypes", ()):
+        arch = set(p.get("archetypes", ()))
+        if not arch & {1, 4}:
             continue
         name = p["name"]
         px = _daily(groups.get((name, "price_usd")))
         if px.empty:
             continue
         px = px[px > 0]
-        bm = config.a4_burn_metric(name)
-        g = groups.get((name, bm))
-        usd = _usd_daily(_daily(g), px)
-        if not usd.empty:
-            groups[(name, "gross_burn_day_priced_usd")] = _as_stored(pd.DataFrame(
-                {"date": usd.index, "project": name, "metric": "gross_burn_day_priced_usd", "value": usd.values, "tier": 2,
-                 "source": f"derived:{bm}*price_usd[that day's price]"}), g.columns)
+        # PR1B.3 follow-up (lead 2026-11-09): issuance $ and the net change's legs on the same basis as the burn $ —
+        # gross issuance (A1, A4), the issuance basis the net counts (a release where pre-minted) and the burn it counts
+        legs = {config.a4_burn_metric(name): "gross_burn_day_priced_usd"} if 4 in arch else {}
+        legs.setdefault("gross_issuance_tokens", "gross_issuance_day_priced_usd")
+        if 4 in arch:
+            for m in (config.issuance_basis(name), config.a1_burn_metric(name)):
+                legs.setdefault(m, day_priced_metric(name, m))
+            if p.get("self_reported_net_mint"):
+                legs["net_mint_monthly"] = "net_mint_monthly_day_priced_usd"   # a month's net mint x its month's prices
+        for tok_m, usd_m in legs.items():
+            if usd_m not in config.METRICS:
+                continue
+            g = groups.get((name, tok_m))
+            vals, srcs, left = _day_priced(g, px, monthly=(tok_m == "net_mint_monthly"
+                                                           or config.series_granularity(name, tok_m) == "monthly"))
+            if asof is not None:
+                lo = pd.Timestamp(asof) - pd.Timedelta(days=GLOBALS["period_days"])
+                left = [d for d in left if lo < d <= pd.Timestamp(asof)]
+            if left:
+                DAY_PRICE_LEFT_OUT[(name, usd_m)] = left
+            if vals.empty:
+                continue
+            groups[(name, usd_m)] = _as_stored(pd.DataFrame(
+                {"date": vals.index, "project": name, "metric": usd_m, "value": vals.values, "tier": 2,
+                 "source": [f"derived:{tok_m}*price_usd[{s}]" for s in srcs]}), g.columns)
+        if 4 not in arch:
+            continue
         base_m = _burn_fee_base(p)
         gb = groups.get((name, base_m))
         base = _daily(gb)
@@ -5941,7 +6005,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _pendle_rate_check(groups)          # G9 N: each Pendle gauge chain's log scan against its sampled rates
     _revenue_from_fees_views(groups)    # G9 N: Plume's revenue = the fees its RewardDistributor receives
     _holder_value_views(groups)   # Phase 2: revenue-funded holder value, credited vs recorded (LITMUS A)
-    _gross_burn_day_priced_usd_views(groups)    # PR1B.3: $ burn = each day's burn x that day's price, the holder-value basis
+    _gross_burn_day_priced_usd_views(groups, asof)    # PR1B.3: $ burn = each day's burn x that day's price, the holder-value basis
     _settlement_views(groups)
     _monthly_flow_views(groups)       # P2a D5b: complete-month flows from daily log scans (Maple's SSF Safe)
     _handover_overlap_checks(groups)  # G11 B8 / C1: each declared handover's two legs compared on their common days
@@ -7800,6 +7864,33 @@ def _net_guarded(R, r: int, p: dict, iss, burn, bm: str | None = None) -> str:
     if not p.get("self_reported_net_mint"):
         return guarded
     sr = R.D(r, "net_mint_monthly", "q0")
+    return f"=IF(ISNUMBER({sr}),{sr},{guarded[1:]})"
+
+
+def day_priced_metric(name: str, tok_metric: str) -> str:
+    """PR1B.3: the day-priced $ series of a token series (the A4 burn -> gross_burn_day_priced_usd)."""
+    if tok_metric == config.a4_burn_metric(name):
+        return "gross_burn_day_priced_usd"
+    return DAY_PRICED_USD.get(tok_metric) or f"{tok_metric.removesuffix('_tokens')}_day_priced_usd"
+
+
+def _net_usd_day_priced(R, r: int, p: dict) -> str:
+    """PR1B.3 follow-up (lead 2026-11-09, Jake's "the day's price everywhere, one figure per concept"): A4's issuance −
+    burn in $ = the day-priced issuance $ − the day-priced burn $ (each day's tokens x that day's price; the same burn $
+    as the gross burn $ column) — the same legs and guards as _net_guarded, never the 90-day average price."""
+    name = p["name"]
+    bm = day_priced_metric(name, config.a1_burn_metric(name))
+    im = day_priced_metric(name, config.issuance_basis(name))
+    if _premint(p):
+        guarded = ("=0" if _burns_nothing(p) else
+                   _coverage_guard(R, r, [("burn $", bm, "q0")], f"-{R.D(r, bm, 'q0')}", p=p))
+    elif _burns_nothing(p):
+        guarded = _coverage_guard(R, r, [("issuance $", im, "q0")], R.D(r, im, "q0"), p=p)
+    else:
+        guarded = _guarded_net(R, r, p, im, bm)
+    if not p.get("self_reported_net_mint"):
+        return guarded
+    sr = R.D(r, "net_mint_monthly_day_priced_usd", "q0")
     return f"=IF(ISNUMBER({sr}),{sr},{guarded[1:]})"
 
 
@@ -12165,12 +12256,21 @@ def _a4_phase2_cols(R: Refs) -> list[tuple]:
     ]
 
 
+def _issuance_usd_col(R: Refs) -> tuple:
+    """PR1B.3 follow-up (lead 2026-11-09): GROSS ISSUANCE $ AT EACH DAY'S PRICE (A1 and A4) — gross_issuance_day_priced_usd,
+    the basis of the gross burn $ beside it (was the window's tokens x the 90-day average price)."""
+    return ("Gross issuance Q0 ($, each day's issuance × that day's price)",
+            lambda r, p: _fixed_supply_text(p) or pull(R.D(r, "gross_issuance_day_priced_usd", "q0")), FMT_USD, "pull",
+            False, {"metric": "gross_issuance_day_priced_usd",
+                    "note_fn": lambda p: day_price_note(p["name"], "gross_issuance_day_priced_usd")})
+
+
 def write_a4(ws, R: Refs, data_by_key: dict):
     projects = [p for p in scoped_projects() if 4 in p["archetypes"]]
     _title(ws, "A4 — Permanent Burn", "Gross burn, gross issuance and NET supply change side by side. Where the protocol publishes net mint itself "
                                        "that SELF-REPORTED figure is used and the derived one is shown beside it for comparison; a gap between them means one is wrong. "
                                        "Otherwise net = issuance − burn (positive = net inflation). "
-                                       "Q0 = trailing comparison window; $ BURN at each day's price (each day's burn × that day's price, the holder-value basis — PR1B.3); issuance and net $ at the 90-day average price. Implied burn = fees × documented share ÷ each day's price (suppressed when unconfirmed). "
+                                       "Q0 = trailing comparison window; $ figures (burn, issuance, issuance − burn) at each day's price: each day's tokens × that day's price, the holder-value basis (PR1B.3); a day without a price is left out and named. Implied burn = fees × documented share ÷ each day's price (suppressed when unconfirmed). "
                                        "PancakeSwap is the disclosure template: publishes net mint monthly.")
     ann = ANN
     price = lambda r: R.D(r, "price_usd", "q0")  # noqa: E731
@@ -12198,11 +12298,11 @@ def write_a4(ws, R: Refs, data_by_key: dict):
         # (gross_burn_day_priced_usd, _gross_burn_day_priced_usd_views): the basis holder revenue and the payout ratios use. It was the window's
         # tokens x the 90-day average price ($36.90M against holder revenue's $35.17M on Jake's store)
         ("Gross burn Q0 ($, each day's burn × that day's price)", lambda r, p: pull(R.D(r, "gross_burn_day_priced_usd", "q0")),
-         FMT_USD, "pull", False, {"metric": "gross_burn_day_priced_usd"}),
+         FMT_USD, "pull", False, {"metric": "gross_burn_day_priced_usd",
+                                  "note_fn": lambda p: day_price_note(p["name"], "gross_burn_day_priced_usd")}),
         ("GROSS ISSUANCE Q0 (tokens)", lambda r, p: _fixed_supply_text(p) or pull(iss(r)), FMT_NUM, "pull", True,
          {"metric": "gross_issuance_tokens"}),
-        ("Gross issuance Q0 ($ at avg price)", lambda r, p: _fixed_supply_text(p) or calc(f"{iss(r)}*{price(r)}"),
-         FMT_USD, "calc"),
+        _issuance_usd_col(R),   # PR1B.3 follow-up: each day's issuance x that day's price
         # ===== POOL RELEASE, BESIDE BURN. Added 2026-09-24, for GEODNET. =====
         # GROSS ISSUANCE reads n/a here for any premint project whose issuance_derivation is
         # suppressed (GEODNET: all supply pre-minted, nothing is MINTED, so the quantity that
@@ -12233,9 +12333,13 @@ def write_a4(ws, R: Refs, data_by_key: dict):
                        if not p.get("self_reported_net_mint") else "") or _guarded_net(
              R, r, p, "gross_issuance_tokens", config.a1_burn_metric(p["name"]),
                                    total=f"{R.D(r, 'net_mint_monthly', 'q0')}-({iss(r)}-{burn(r, p)})"), FMT_NUM, "calc"),
-        ("Net supply change ($ at avg price)",
-         lambda r, p: _price_net(_net_guarded(R, r, p, _basis_iss(R, p), burn), price(r)), FMT_USD, "calc", False,
-         {"flag_fn": _a4_net_head_flag}),
+        # PR1B.3 follow-up (lead 2026-11-09): day-priced issuance $ − day-priced burn $ (the gross burn $ column's figure),
+        # never the 90-day average price — $ burn has one figure on the tab
+        ("Net supply change ($, each day's issuance − burn × that day's price)",
+         lambda r, p: _net_usd_day_priced(R, r, p), FMT_USD, "calc", False,
+         {"flag_fn": _a4_net_head_flag,
+          "note_fn": lambda p: day_price_note(p["name"], day_priced_metric(p["name"], config.issuance_basis(p["name"])),
+                                              day_priced_metric(p["name"], config.a1_burn_metric(p["name"])))}),
         # PR1B.3: the burn's $ at each day's price per covered day ÷ fees per covered day (was tokens x the 90-day average
         # price: 9.31% against the gross payout's 8.87% on Jake's store — the same burns valued twice)
         ("Burn as share of fees (measured)",
@@ -12546,8 +12650,7 @@ def write_a1(ws, R: Refs, data_by_key: dict, months: list[str]):
         ("Gross issuance Q0 (tokens)", lambda r, p: _fixed_supply_text(p) or pull(iss(r)), FMT_NUM, "pull", True,
          {"metric": "gross_issuance_tokens"}),
         ("Price — 90d average ($)", lambda r, p: pull(price(r)), FMT_USD4, "pull", False, {"metric": "price_usd"}),
-        ("Gross issuance Q0 ($ at avg price)", lambda r, p: _fixed_supply_text(p) or calc(f"{iss(r)}*{price(r)}"),
-         FMT_USD, "calc"),
+        _issuance_usd_col(R),   # PR1B.3 follow-up: each day's issuance x that day's price
         # G11 C7: ONE BASIS with A4 — a pre-minted token whose minted figure is declared n/a reads its release
         ("Issuance as % of supply (annualised)",
          lambda r, p: calc(f"{_annualise(R, r, p, _a4_iss_metric(p['name']), R.D(r, _a4_iss_metric(p['name']), 'q0'))}"
@@ -12740,11 +12843,11 @@ def write_charts(ws, sheets: dict):
     ch.width, ch.height = 28, 12
     ws.add_chart(ch, "A4")
 
-    # 2. Gross burn vs gross issuance — all A4 names, paired bars ($ at 90d avg price)
+    # 2. Gross burn vs gross issuance — all A4 names, paired bars ($ at each day's price, PR1B.3)
     ch = BarChart()
     ch.type = "col"
     ch.grouping = "clustered"
-    ch.title = "Gross burn vs gross issuance, Q0 ($ at 90d average price) — archetype 4"
+    ch.title = "Gross burn vs gross issuance, Q0 ($, each day at that day's price) — archetype 4"
     ch.y_axis.title = "$"
     ch.y_axis.numFmt = '$#,##0'
     cats = Reference(ws_a4, min_col=1, min_row=5, max_row=4 + len(a4p))
