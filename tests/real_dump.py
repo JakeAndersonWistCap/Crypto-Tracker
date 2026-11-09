@@ -16,7 +16,6 @@ import sys
 from pathlib import Path
 
 import pandas as pd
-import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "fixtures"
@@ -40,6 +39,9 @@ def dump_path(project: str, vintage: str | None = None) -> Path:
 def load(project: str, vintage: str | None = None) -> dict:
     p = dump_path(project, vintage)
     if not p.exists():
+        # PR1B.12 (Jake 2026-11-09): pytest only where a test skips — project_freeze / measuring_guard import this module
+        # on a machine without pytest
+        import pytest
         pytest.skip(f"{p.name} not on file yet — run `python dump_fixture.py --project {project}` and commit it")
     return json.loads(p.read_text(encoding="utf-8"))
 

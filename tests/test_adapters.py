@@ -3409,10 +3409,12 @@ def test_several_contracts_serving_one_metric_are_summed():
         # a treasury_holding holder must be a deployed contract — so it belongs in CODE. It was
         # the guard catching a stub that had not been updated, which is the guard working.
         TIMELOCK = "0x1a9C8182C09F50C8318d769245beA52c32BE35BC"
+        # PR1B.4 (2026-11-09): the proposal-82 AeraVaultV2 joined as one of the wallets CoinGecko excludes (a deployed
+        # contract, eth.blockscout.com is_contract true) — in CODE for the same reason
         CODE = {("ethereum", "0xf38521f130fcCF29dB1961597bc5d2B60F995f85"),
                 ("ethereum", "0x5E74C9f42EEd283bFf3744fBD1889d398d40867d"),
                 ("ethereum", "0x0D5Cd355e2aBEB8fb1552F56c965B867346d6721"),
-                ("ethereum", TIMELOCK)}
+                ("ethereum", TIMELOCK), ("ethereum", "0x7c8406384f7a5c147a6ADd16407803BE146147E4")}
         VALUES = {"0xf38521f130fcCF29dB1961597bc5d2B60F995f85": 3_000_000.0,
                   "0x5E74C9f42EEd283bFf3744fBD1889d398d40867d": 1_500_000.0,
                   "0x0D5Cd355e2aBEB8fb1552F56c965B867346d6721": 95_000_000.0,
@@ -27216,10 +27218,11 @@ def test_onchain_circulating_is_compared_with_coingecko_like_for_like_and_the_ga
         "metrics": ("circulating_supply_onchain", "noncirculating_holding_tokens", "total_supply_coingecko"),
         "minus": ("total_supply",)}}
     # PR1.U5: Uniswap's total is ours (net of 0x…dEaD) and CoinGecko's sits beside it, so like-for-like is on CoinGecko's
-    # own total, as Ether.fi's
+    # own total, as Ether.fi's; PR1B.4: less the three wallets CoinGecko excludes, from the day it does
     assert cred.circulating_input("Uniswap")["ours"] == {"py": "now_combo", "args": {
         "metrics": ("circulating_supply_onchain", "noncirculating_holding_tokens", "total_supply_coingecko"),
-        "minus": ("total_supply",)}}
+        "minus": ("total_supply",), "dated_minus": ("coingecko_excluded_holdings_tokens",),
+        "minus_from": "2026-11-02"}}
     rows = {"Ether.fi|circulating_supply_onchain": {"now": 797_210_000.0, "latest_date": "2026-10-07"},
             "Ether.fi|noncirculating_holding_tokens": {"now": 168_140_000.0, "latest_date": "2026-10-07"}}
     v, d, how = cred.FORMULAS["now_sum"]("Ether.fi", rows, pd.DataFrame(), pd.Timestamp("2026-10-08"),

@@ -1301,9 +1301,13 @@ def _bridge_reconciled(p, rows, long, asof, key="", **_):
                         f"filing lists our wallets (confirmed {spec['filing_confirms']})")
 
 
-def _now_combo(p, rows, long, asof, metrics=(), minus=(), **_):
+def _now_combo(p, rows, long, asof, metrics=(), minus=(), minus_from=None, dated_minus=(), **_):
     """The latest values of `metrics` summed, less those of `minus` (built rows first, as _now_sum) — CoinGecko put on
-    our basis (Aerodrome, Jake's probes16: CoinGecko + permanent locks − the filing wallets' managed locks)."""
+    our basis (Aerodrome, Jake's probes16: CoinGecko + permanent locks − the filing wallets' managed locks).
+    PR1B.4: `dated_minus` legs are taken out too, on and after `minus_from` (the first day the reference is on that
+    basis); before it they are not part of the comparison."""
+    if dated_minus and (not minus_from or asof is None or pd.Timestamp(asof).normalize() >= pd.Timestamp(minus_from)):
+        minus = (*minus, *dated_minus)
     a, da, ha = _now_sum(p, rows, long, asof, metrics=metrics)
     if a is None:
         return None, None, ha
@@ -2751,11 +2755,17 @@ def circulating_input(name: str) -> dict:
         # ON COINGECKO'S OWN TOTAL where ours is the chain read (Jake's run on e4e50b0, 2026-10-12 item 2: Ether.fi's
         # gap of 3.44% was exactly chain 998,535,999 vs CoinGecko 965,350,000): ours − our total + CoinGecko's total
         cg_total = name in config.TOTAL_SUPPLY_ONCHAIN_FIRST
+        # PR1B.4: the wallets ours counts and CoinGecko EXCLUDES, out of ours from the day CoinGecko is on that basis
+        excl, frm = config.coingecko_excludes_holdings(name), config.coingecko_excludes_from(name)
+        dated = {"dated_minus": excl, "minus_from": frm} if excl else {}
         return {"what": f"Circulating as CoinGecko counts it = OURS ({ours_m}) + {' + '.join(counts)} (documented "
                         f"wallets our convention excludes and CoinGecko counts)"
-                        + (", on CoinGecko's own total (− total_supply + total_supply_coingecko)" if cg_total else ""),
+                        + (", on CoinGecko's own total (− total_supply + total_supply_coingecko)" if cg_total else "")
+                        + (f" − {' − '.join(excl)} (wallets ours counts and CoinGecko excludes, from {frm})"
+                           if excl else ""),
                 "ours": ({"py": "now_combo", "args": {"metrics": (*a, "total_supply_coingecko"),
-                                                      "minus": ("total_supply",)}} if cg_total else
+                                                      "minus": ("total_supply",), **dated}} if cg_total else
+                         {"py": "now_combo", "args": {"metrics": a, **dated}} if excl else
                          {"py": "now_sum", "args": {"metrics": a}}),
                 "fmt": '#,##0;(#,##0);-',
                 "ref": {"metric": "circulating_supply", "window": "now",
@@ -2795,6 +2805,10 @@ def continuity_row(name: str, headline_cells: list[dict], previous: dict | None,
     fewer is a CHECK naming the count; the note lists every cell with its previous value. Zero tolerance."""
     prev = (previous or {}).get(name) or {}
     held = [(hc, prev.get(f"{hc['sheet'][:2]} | {hc['header']}")) for hc in headline_cells if hc["project"] == name]
+    # PR1B.12: a headline the previous run held under an OLDER declared name (config.HEADLINE_RENAMES) is held there
+    held = [(hc, v if isinstance(v, float) else
+             (config.headline_predecessor_value(name, f"{hc['sheet'][:2]} | {hc['header']}", prev) or (0, None))[1])
+            for hc, v in held]
     held = [(hc, v) for hc, v in held if isinstance(v, float)]
     if not held:
         return None

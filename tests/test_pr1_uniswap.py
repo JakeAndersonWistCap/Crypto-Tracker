@@ -83,15 +83,26 @@ def test_u5_the_coingecko_check_is_made_on_its_documented_basis_never_netting_th
     # CoinGecko back on its own basis (its total − the Timelock): no row
     on_basis = LIVE["total_supply_coingecko"] - LIVE["treasury_holding_tokens"]
     out = FetchOutput()
-    circulating.check(out, _circ_frame("Uniswap", {**LIVE, "circulating_supply": on_basis}), [UNI])
+    # (dated before PR1B.4's declared switch, 2026-11-02, when CoinGecko still counted the UF / Aera vault / Labs wallets)
+    circulating.check(out, _circ_frame("Uniswap", {**LIVE, "circulating_supply": on_basis}, day="2026-10-13"), [UNI])
     assert not [r for r in out.review if r["reason"] == "onchain_vs_coingecko"], \
         "like-for-like is CoinGecko's own total − the Timelock; the 0x…dEaD balance is not taken out a second time"
-    # CoinGecko's figure of 2026-11-05: +2.34% beyond the unchanged 2% tolerance — still raised, with the numbers
+    # PR1B.4 (Jake 2026-11-09): CoinGecko's figure of 2026-11-05 (+2.34% on total − Timelock) is its total − the
+    # Timelock − the UF's 11,564,112.20 − the Aera vault's 2,698,414.40: with those stored, like-for-like, no row
+    cg_set = {"coingecko_excluded_holdings_tokens": 11_564_112.20 + 2_698_414.40}
+    out = FetchOutput()
+    circulating.check(out, _circ_frame("Uniswap", {**LIVE, **cg_set, "circulating_supply": 609_723_895.879829}), [UNI])
+    assert not [r for r in out.review if r["reason"] == "onchain_vs_coingecko"]
+    # ... and CoinGecko back on total − Timelock after the declared switch is raised (ours like-for-like −2.3%)
+    out = FetchOutput()
+    circulating.check(out, _circ_frame("Uniswap", {**LIVE, **cg_set, "circulating_supply": on_basis}), [UNI])
+    hit = [r for r in out.review if r["reason"] == "onchain_vs_coingecko"]
+    assert hit and "-2.29%" in hit[0]["basis"] and "coingecko_excluded_holdings_tokens" in hit[0]["basis"]
+    assert hit[0]["value"] == pytest.approx(on_basis - cg_set["coingecko_excluded_holdings_tokens"], abs=1)
+    # without the three stored on that day there is no like-for-like figure: no comparison, never ours un-adjusted
     out = FetchOutput()
     circulating.check(out, _circ_frame("Uniswap", {**LIVE, "circulating_supply": 609_723_895.879829}), [UNI])
-    hit = [r for r in out.review if r["reason"] == "onchain_vs_coingecko"]
-    assert hit and "+2.34%" in hit[0]["basis"]
-    assert hit[0]["value"] == pytest.approx(on_basis, abs=1)
+    assert not [r for r in out.review if r["reason"] == "onchain_vs_coingecko"]
     assert config.CIRCULATING_TOLERANCE == 0.02
 
 

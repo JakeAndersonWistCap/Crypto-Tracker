@@ -19435,6 +19435,39 @@ METRICS["noncirc_merkle_distributor_tokens"] = {
              "noncirculating_holding_tokens; its falls are the airdrop claims in outflow (e))",
     "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1.5e8,
     "only_projects": ("Uniswap",)}
+# PR1B.4 (Jake 2026-11-09): THE WALLETS COINGECKO EXCLUDES BESIDE THE TIMELOCK. CoinGecko's implied non-circulating
+# (its own net total − its circulating) less the Timelock, matched day by day 2026-09-11..11-09 (60 days) against the
+# balanceOf of the top 200 UNI holders at each day's first block (eth.blockscout.com holders list + getblocknobytime;
+# archive eth_call on eth-mainnet.public.blastapi.io / rpc.mevblocker.io; read 2026-11-09): it is EXACTLY these three
+# wallets' sum — the Uniswap Foundation's wallet 0x5069A64B… (20,320,405 UNI from the Timelock on 2025-03-21, proposal
+# 83; the UF's FY2025 financials: "received UNI 20.3M", 15.1M held at year end), the Aera vault 0x7c840638… (7,588,532
+# UNI from the Timelock on 2025-03-21, proposal 82, "to support liquidity incentives") and Uniswap Labs' growth-budget
+# recipient 0xaBA63748… (UNIVesting's 5M claims, proposal 93). Every step of the excess is one of their moves: Labs −1M
+# 09-18, −1M 09-22, +5M 10-01 (the Timelock's claim), −17M 10-06; the UF −2,250,100 (11-04), −999,900 (11-05),
+# +1,750,000 (11-06 19:40, the exact +1.75M between Jake's 11-05 and 11-09 readings). Residual after the three: within
+# 30,000 UNI (0.005%) every day. Stored daily (balanceOf, as the Timelock) so the like-for-like reads CoinGecko's basis.
+_CG_EXCL = "coingecko_excluded_holdings_tokens"
+_CG_EXCL_SRC = "https://eth.blockscout.com/token/0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984?tab=holders"
+for _key, _addr, _code, _why in (
+        ("cg_excl_uniswap_foundation", "0x5069A64BC6616dEC1584eE0500B7813A9B680F7E", False,
+         "the Uniswap Foundation's wallet (20,320,405 UNI from the Timelock 2025-03-21, proposal 83) — CoinGecko "
+         "excludes it, ours counts it (PR1B.4)"),
+        ("cg_excl_aera_vault", "0x7c8406384f7a5c147a6ADd16407803BE146147E4", True,
+         "AeraVaultV2 funded by proposal 82 (7,588,532 UNI from the Timelock 2025-03-21, liquidity incentives) — "
+         "CoinGecko excludes it, ours counts it (PR1B.4)"),
+        ("cg_excl_labs_growth_recipient", "0xaBA63748c4b4DeF4a3319C3A29fE4829029D926F", False,
+         "Uniswap Labs' growth-budget recipient (UNIVesting's quarterly 5M claims, proposal 93) — CoinGecko excludes "
+         "it, ours counts it (PR1B.4)")):
+    PROJECT_BY_NAME["Uniswap"]["contracts"][_key] = _contract(
+        _addr, "ethereum", "treasury_holding", "UNI", _CG_EXCL_SRC, verified="2026-11-09", purpose=_why,
+        provenance="matched to CoinGecko's daily implied exclusion 2026-09-11..11-09 (PR1B.4, Jake 2026-11-09)",
+        holder_has_code=_code, metric_override=_CG_EXCL)
+METRICS[_CG_EXCL] = {
+    "label": "UNI in the three wallets CoinGecko excludes from circulating beside the Timelock — the Uniswap "
+             "Foundation 0x5069A64B…, the proposal-82 Aera vault 0x7c840638…, Labs' growth-budget recipient 0xaBA63748… "
+             "(PR1B.4: CoinGecko's like-for-like; NOT out of our circulating)",
+    "kind": "stock", "unit": "tokens", "archetypes": [4], "tiers": [2], "sanity_min": 0, "sanity_max": 1.5e8,
+    "only_projects": ("Uniswap",)}
 # P5-1.7: ONE-OFF NOTES — a dilution leg whose window held a one-off that cannot repeat at that scale. The cells and
 # net holder yield are unchanged (the release is real); the note says why it will not recur and what net holder yield
 # reads without it — in Project notes only, never in a ranked cell (reader._project_text_notes).
@@ -23661,6 +23694,15 @@ CIRCULATING_ONCHAIN = {
                 # LIKE-FOR-LIKE (Jake's run 2026-10-07 17:08: 612.57M vs CoinGecko 625.08M, -2.0%): CoinGecko excludes
                 # the Timelock only, so it still counts the docs' vesting contracts and airdrop distributor
                 "coingecko_counts": ("noncirculating_holding_tokens",),
+                # PR1B.4 (Jake 2026-11-09): CoinGecko's figure LEFT that basis between 2026-10-14 and 11-02 — on the
+                # 10-13 dumps it was total − Timelock to the token; by 11-02 it also excludes three wallets ours counts
+                # (coingecko_excluded_holdings_tokens: the UF, the proposal-82 Aera vault, Labs' growth recipient),
+                # matched day by day on its restated history 09-11..11-09 and to the token on Jake's 11-05 / 11-09
+                # readings. Like-for-like from `coingecko_excludes_from` those are taken out of ours as CoinGecko takes
+                # them out of its own; before it, not (CoinGecko counted them). OUR circulating is unchanged — whether
+                # these three belong out of ours is Jake's decision (PR1B.4 report).
+                "coingecko_excludes": ("coingecko_excluded_holdings_tokens",),
+                "coingecko_excludes_from": "2026-11-02",
                 "method": "total − 0x…dEaD − the governance Timelock 0x1a9C…: CoinGecko's own method (its "
                           "supply-breakdown docs name the 'UNI Timelock' as the non-circulating wallet), and it "
                           "reproduces CoinGecko's 623.2M of 890.5M (2026-09-02)",
@@ -24358,6 +24400,158 @@ def accepted_loss_record(project: str, rule: str, detail: str, allowance: dict, 
                       f"outflow ({allowance['while_outflow_incomplete']}) declared incomplete"
                       if allowance.get("while_outflow_incomplete") else ""),
             "line": accepted_loss_line(project, headline or str(detail).split(":")[0], allowance)}
+
+
+# DECLARED HEADLINE RENAMES AND CHANGES OF QUANTITY (PR1B.12, Jake 2026-11-09: "The live guard flags Uniswap's renamed
+# headers (net supply change, market share) as HEADLINE LOST: declare the renames so the guard reads them"). The guard
+# keys a headline by its header text ("<tab> | <header>", tab = the sheet's first two characters or "Master"), so a
+# header whose text changes reads as a headline lost under the old text. Each entry declares one old key's successor:
+#   from / to         the old and the new key, "<tab> | <header>" exactly as the guard and the snapshot key them;
+#   kind              "rename" — the same quantity under a new header (the guard compares the two values like for like);
+#                     "change" — a DIFFERENT quantity now heads the column (a declared change of measuring point, Rule
+#                     10): reported as a declared change with both values, never as HEADLINE LOST;
+#   same_quantity_at  (a change) the key where the OLD quantity reads now, if it is kept — compared like for like;
+#   project           (optional) the entry holds for this project only, and wins over an entry for every project;
+#   ref, date, why    the SPEC row, the day it was declared, the reason.
+# Renames chain (A -> B in one round, B -> C in the next: an old snapshot's A is read at C). A declared successor that
+# reads no value is still a HEADLINE LOST — the declaration answers the change of name, never a lost value. Read by
+# measuring_guard (--compare and --newer), sanity.lost_headlines and the Credibility continuity row (one rule).
+_MS_OLD = "MARKET SHARE vs its category (now; a shifted quarter: that quarter's mean) — peer set beside"
+_MS_NEW = "MARKET SHARE vs its category (now; a shifted quarter: the reading at its end) — peer set beside"
+_MS2_OLD = "MARKET SHARE, SECOND BASIS — chain fees vs 13 chains (now; a shifted quarter: that quarter's mean)"
+_MS2_NEW = "MARKET SHARE, SECOND BASIS — chain fees vs 13 chains (now; a shifted quarter: the reading at its end)"
+HEADLINE_RENAMES: list[dict] = [
+    # PR1.S8 (Jake 2026-11-05): Master's net supply change became the change in CIRCULATING supply. The old column
+    # (issuance − burn) is a different quantity from the new one: a declared CHANGE, not a rename. The old quantity is
+    # kept beside it as a labelled component (Master "Issuance − burn Q0 (tokens) — a component …"), where the guard
+    # compares it like for like. (Master's "Net supply change, annualised % of circulating" kept its header and changed
+    # quantity the same way: no key moved, so nothing reads lost; said here so the record is whole.)
+    {"from": "Master | NET SUPPLY CHANGE Q0 (tokens) = issuance − burn",
+     "to": "Master | NET SUPPLY CHANGE Q0 (tokens) = closing − opening circulating supply",
+     "kind": "change",
+     "same_quantity_at": "Master | Issuance − burn Q0 (tokens) — a component of the supply change, NOT the net supply "
+                         "change",
+     "ref": "PR1.S8", "date": "2026-11-05",
+     "why": "net supply change = closing − opening circulating supply over Q0 (was issuance − burn, now a labelled "
+            "component beside it)"},
+    # PR1.S2 (Jake 2026-11-05): a shifted quarter's stock reads the reading at the quarter's end — the market-share
+    # headers say so (the headline Q0 value is unchanged by S2: a rename)
+    {"from": f"CP | {_MS_OLD}", "to": f"CP | {_MS_NEW}", "kind": "rename", "ref": "PR1.S2", "date": "2026-11-05",
+     "why": "header text only: a shifted quarter reads the reading at its end (the Q0 headline is the same quantity)"},
+    {"from": f"CP | {_MS2_OLD}", "to": f"CP | {_MS2_NEW}", "kind": "rename", "ref": "PR1.S2", "date": "2026-11-05",
+     "why": "header text only: a shifted quarter reads the reading at its end (the Q0 headline is the same quantity)"},
+    # PR1.U4 (Jake 2026-11-05): Uniswap's market share headline reads the 90-day mean of the daily shares (was the
+    # latest day, 2026-11-02 25.36% on a +87% category denominator jump) — for Uniswap the S2 rename is also a change
+    {"project": "Uniswap", "from": f"CP | {_MS_OLD}", "to": f"CP | {_MS_NEW}", "kind": "change", "ref": "PR1.S2/U4",
+     "date": "2026-11-05",
+     "why": "header renamed (PR1.S2) and Uniswap's value is the 90-day mean of the daily shares (config."
+            "MARKET_SHARE_MEAN), was the latest day's share (PR1.U4)"},
+]
+
+
+def _rename_entry(project: str, key: str) -> dict | None:
+    """The HEADLINE_RENAMES entry for `key` — the project's own entry first, then one for every project."""
+    hits = [e for e in HEADLINE_RENAMES if e["from"] == key and e.get("project") in (None, project)]
+    return next((e for e in hits if e.get("project") == project), hits[0] if hits else None)
+
+
+def headline_successor(project: str, key: str) -> dict | None:
+    """PR1B.12: the declared successor of a headline key, renames followed in chain — {"to": the newest key, "kind":
+    "change" if any hop changed the quantity else "rename", "same_quantity_at": where the old quantity reads now (a
+    change's, if kept), "hops": the entries}, or None when nothing is declared for `key`."""
+    hops, seen, k = [], {key}, key
+    while (e := _rename_entry(project, k)) is not None and e["to"] not in seen:
+        hops.append(e)
+        k = e["to"]
+        seen.add(k)
+    if not hops:
+        return None
+    change = [e for e in hops if e.get("kind") == "change"]
+    # the old quantity's place now: the one change's same_quantity_at, followed through its own later renames (two
+    # changes in a chain: no single place holds the oldest quantity)
+    sq = change[0].get("same_quantity_at") if len(change) == 1 else None
+    if sq and (s := headline_successor(project, sq)) is not None:
+        sq = s["to"] if s["kind"] == "rename" else None
+    return {"from": key, "to": k, "kind": "change" if change else "rename", "hops": hops,
+            "same_quantity_at": sq,
+            "ref": "+".join(e.get("ref", "?") for e in hops), "date": max(e.get("date", "") for e in hops),
+            "why": "; ".join(e.get("why", "") for e in hops)}
+
+
+def headline_predecessor_value(project: str, key: str, previous: dict) -> tuple[str, float, dict] | None:
+    """PR1B.12: (old key, its value, the successor record) for a headline `key` a previous snapshot held under an OLDER
+    declared name (HEADLINE_RENAMES, followed in chain), when `previous` (that project's {key: value}) holds no value
+    under `key` itself; else None."""
+    for old, v in (previous or {}).items():
+        if old == key or not isinstance(v, float):
+            continue
+        s = headline_successor(project, old)
+        if s and s["to"] == key:
+            return old, v, s
+    return None
+
+
+def declared_rename_line(project: str, old: str, was: float, succ: dict, now: float | None,
+                         old_quantity_now: float | None = None) -> str:
+    """PR1B.12: how the guard prints a declared rename / change of quantity (listed, never counted)."""
+    def f(v):
+        return f"{v:,.0f}" if abs(v) >= 1000 else f"{v:.6g}"
+    tag = "RENAMED" if succ["kind"] == "rename" else "CHANGE OF QUANTITY"
+    line = (f"{tag} (declared {succ['ref']}, {succ['date']}): {project} {old} -> {succ['to']}: {f(was)} before, "
+            f"{f(now)} after" + (" (like for like)" if succ["kind"] == "rename" else " (a different quantity)"))
+    if succ["kind"] == "change" and succ.get("same_quantity_at"):
+        line += (f"; the old quantity reads {f(old_quantity_now)} at {succ['same_quantity_at']} (like for like)"
+                 if old_quantity_now is not None else
+                 f"; the old quantity's declared place {succ['same_quantity_at']} reads no value")
+    return line + f" — {succ['why']}"
+
+
+# DECLARED n/a REASONS (PR1B.5, Jake 2026-11-09: "SUBSIDY COVER, LEAKAGE (ii), UNIFORMITY: give one true reason.
+# Comparison says 'no (b) series on file', Flows says (b) is 'included in (d)'."). A code cell whose quantity does not
+# exist for the project reads ONE reason, the same on CP, the reader and Flows; done_check accepts a code whose reason
+# carries a declared `match` for that project (class "declared"), and rule-3's sweep does not count it (the decision is
+# here, with its source). Per project: [{"cols": CP header prefixes, "text": the cell's text, "match": the substring
+# done_check finds in the reader's comment / the audit text, "source", "read_on", "decided"}].
+DECLARED_NA_REASONS: dict = {
+    "Uniswap": [
+        # (b) is not a separate flow: every UNI incentive is treasury-funded, and every fall of the Timelock is (d)
+        # (growth_budget_release_tokens; FLOW_LINE_EVIDENCE ('Uniswap', 'Incentives paid beside: supply side (b)')
+        # included_in (d)). The UNIfication proposal names incentives among the budget's uses and publishes no split;
+        # neither the Uniswap Foundation's financials (its own treasury, FY2025 the last) nor the forum carry a
+        # growth-budget report by use (gov.uniswap.org search, read 2026-11-09).
+        {"cols": ("SUBSIDY COVER", "Subsidy cover incl. demand-side", "LEAKAGE (ii)"),
+         "text": "n/a — any UNI liquidity incentives are paid from the growth budget, held whole in (d); no published "
+                 "split (UNIfication proposal, gov.uniswap.org/t/unification-proposal/25881, posted 2025-11-10: a 20M "
+                 "UNI a year growth budget from the treasury funds Uniswap Labs' growth work — 'strategic partnerships, "
+                 "grants, and incentives' — with no split by use; no budget report by use on the forum, none in the "
+                 "Uniswap Foundation's FY2025 financials, gov.uniswap.org/t/26068, 2026-03-31; read 2026-11-09)",
+         "match": "held whole in (d); no published split",
+         "source": "https://gov.uniswap.org/t/unification-proposal/25881 ; "
+                   "https://gov.uniswap.org/t/uniswap-foundation-summary-fy-2025-financials/26068 ; "
+                   "https://gov.uniswap.org/search.json?q=growth%20budget",
+         "read_on": "2026-11-09", "decided": "Jake 2026-11-09 (PR1B.5: the code when no split is published)"},
+        # UNI has no staking: protocol fees burn UNI (UNIfication), nothing is paid to holders who lock it
+        {"cols": ("UNIFORMITY",),
+         "text": "n/a — no staker yield exists (no UNI staking)",
+         "match": "no staker yield exists (no UNI staking)",
+         "source": "https://gov.uniswap.org/t/unification-proposal/25881 (fees burn UNI; no staking)",
+         "read_on": "2026-11-09", "decided": "Jake 2026-11-09 (PR1B.5)"},
+    ],
+}
+
+
+def declared_na_text(project: str, header: str) -> str | None:
+    """PR1B.5: the declared n/a text of a CP column (by header prefix) for the project, or None."""
+    return next((e["text"] for e in DECLARED_NA_REASONS.get(project, ())
+                 if any(str(header).startswith(c) for c in e["cols"])), None)
+
+
+def declared_na_reason(project: str, reason) -> dict | None:
+    """PR1B.5: the DECLARED_NA_REASONS entry whose `match` the reason text carries (done_check), or None. An entry
+    without a source and a read date declares nothing."""
+    t = str(reason or "")
+    return next((e for e in DECLARED_NA_REASONS.get(project, ())
+                 if e.get("match") and e["match"] in t and e.get("source") and e.get("read_on")), None)
 
 
 # REVIEW QUEUE ROWS ANSWERED (G4 item 7b, Jake 2026-10-18: "accept, reject or fix each, with numbers; clear the resolved
@@ -25619,6 +25813,24 @@ def coingecko_counts_total(project_name: str) -> bool:
     """CoinGecko's circulating counts (almost) the whole supply (Sky): compare it with our on-chain TOTAL; our
     circulating is the stricter figure by exactly the subtracted balances."""
     return (CIRCULATING_ONCHAIN.get(project_name) or {}).get("coingecko_basis") == "total"
+
+
+def coingecko_excludes_holdings(project_name: str, day=None) -> tuple:
+    """PR1B.4: balances OURS COUNTS and CoinGecko EXCLUDES (Uniswap: the UF, the Aera vault, Labs' growth recipient),
+    taken out of ours in the like-for-like on and after `coingecko_excludes_from` (the first day CoinGecko's figure is
+    known on that basis); () for a day before it. With no `day`, every declared leg (the caller dates them itself)."""
+    spec = CIRCULATING_ONCHAIN.get(project_name) or {}
+    legs = tuple(spec.get("coingecko_excludes") or ())
+    if day is None or not legs:
+        return legs
+    import pandas as _pd
+    frm = spec.get("coingecko_excludes_from")
+    return legs if (not frm or _pd.Timestamp(day).normalize() >= _pd.Timestamp(frm)) else ()
+
+
+def coingecko_excludes_from(project_name: str) -> str | None:
+    """PR1B.4: the declared first day CoinGecko's figure excludes the coingecko_excludes legs."""
+    return (CIRCULATING_ONCHAIN.get(project_name) or {}).get("coingecko_excludes_from")
 
 
 def locked_excluded_metrics(project_name: str) -> tuple:
@@ -35209,11 +35421,18 @@ COINGECKO_CIRC_BASIS = {
                "steps +16,965,988 on 2026-10-06 (590,654,209 on 10-05 -> 607,620,197) with no on-chain move of that size (the Timelock held "
                "262,247,996 from 10-02), and restates its own past figures (10-13: 607,400,197 now vs 624,569,960 read "
                "that day). On the 10-13 dumps CoinGecko still matched its basis exactly (624,898,422 = total − "
-               "Timelock, 0.000%); from 10-06 its own history no longer does. The +2.3–2.9% (Jake's store +2.89%; CoinGecko's "
-               "606,581,896 on 11-02) is CoinGecko's figure leaving its documented basis — an extra exclusion "
-               "no document of CoinGecko's or Uniswap's names (the breakdown that would name it is paid) — not a "
-               "difference in ours, which is reproducible from three balanceOf reads",
-        "read_on": "2026-11-05",
+               "Timelock, 0.000%). THE EXTRA EXCLUSION IS FOUND (PR1B.4, read 2026-11-09): CoinGecko's implied "
+               "non-circulating less the Timelock, on each of the 60 days 2026-09-11..11-09 of its history, is the "
+               "sum of three wallets ours counts — the Uniswap Foundation 0x5069A64B… (proposal 83's 20.3M), the "
+               "proposal-82 Aera vault 0x7c840638… (2,698,414.40) and Labs' growth-budget recipient 0xaBA63748… "
+               "(UNIVesting's claims) — within 30,000 UNI (0.005%) every day, every step one of their moves (Labs −17M "
+               "on 10-06; the UF −2,250,100 on 11-04, −999,900 on 11-05, +1,750,000 on 11-06), and to the token on "
+               "Jake's readings: 14,262,526.60 = UF 11,564,112.20 + Aera 2,698,414.40 (11-05), 16,012,526.60 = "
+               "13,314,112.20 + 2,698,414.40 (11-09). The like-for-like (Credibility in_circ, the Review Queue's "
+               "onchain_vs_coingecko) takes them out of ours from 2026-11-02 (coingecko_excludes_from: CoinGecko's "
+               "live figure left total − Timelock between 10-14 and 11-02). Ours is unchanged (three balanceOf reads, "
+               "Uniswap's documented wallets); whether the three belong out of ours is Jake's decision",
+        "read_on": "2026-11-09",
     },
 }
 
@@ -35244,8 +35463,10 @@ REVIEW_ANSWERED.extend([
             "(block 26,348,366, 2026-11-05: 623,751,257). CoinGecko documents its basis as total − the UNI Timelock "
             "only (its supply_breakdown reference, uniswap example, matched to the decimal by our 2026-06-15 reads); "
             "its 609,723,896 on 2026-11-05 takes 14,262,527 UNI more out than the Timelock holds (like-for-like "
-            "+2.34%; Jake's store +2.89%), unexplained by any wallet it or Uniswap documents (config.COINGECKO_CIRC_BASIS). "
-            "The tolerance is unchanged; re-check by 11-30 — a CoinGecko figure back on its basis passes on its own"},
+            "+2.34%; Jake's store +2.89%). PR1B.4 (2026-11-09): the 14,262,527 is the Uniswap Foundation's wallet "
+            "11,564,112.20 + the proposal-82 Aera vault 2,698,414.40 (to the token; Labs' growth recipient held 0), "
+            "matched day by day 09-11..11-09 (config.COINGECKO_CIRC_BASIS); the like-for-like now takes those out "
+            "of ours from 2026-11-02 and the check reads them. The tolerance is unchanged; re-check by 11-30"},
 ])
 
 # U4. MARKET SHARE ON THE 90-DAY MEAN (Jake 2026-11-05). Uniswap's CP market share (DC12, 25.4%) read ONE day, 11-02,

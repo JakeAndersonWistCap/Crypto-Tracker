@@ -11616,6 +11616,10 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         def build(r, p):
             got = [c for c in cats if config.outflow_metrics(p["name"], c)]
             if "b" not in got:
+                # PR1B.5: a declared reason (config.DECLARED_NA_REASONS: where the incentives sit, with its source)
+                decl = config.declared_na_text(p["name"], "SUBSIDY COVER")
+                if decl:
+                    return decl
                 # NEVER A BLANK (alignment round C3): say what the project's outflows are instead
                 held = [c for c in config.OUTFLOW_CATEGORY_NAMES if config.outflow_metrics(p["name"], c)]
                 return ("n/a — no supply-side incentive (b) series on file; outflows held: "
@@ -11889,7 +11893,8 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
                 return (f'=IFERROR(IF(AND(ISNUMBER({y}),ISNUMBER({w}),({y})<>0),({w})/({y}),'
                         f'"n/a — the staker yield is not a number in this window"),'
                         f'"n/a — the staker yield is not a number in this window")')
-        return "n/a — no staker yield on this project (nothing is paid to stakers)"
+        return (config.declared_na_text(p["name"], "UNIFORMITY")       # PR1B.5: a declared reason, with its source
+                or "n/a — no staker yield on this project (nothing is paid to stakers)")
 
     def non_stakers(r, p):
         if not hv_has(p):
