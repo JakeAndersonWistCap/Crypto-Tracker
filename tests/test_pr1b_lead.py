@@ -35,3 +35,20 @@ def test_tokenjar_series_gaps_name_their_reader_and_the_kept_defillama_line_is_n
         why, fix = gaps._tier_note(p, m, {})
         assert "fetch/tokenjar.py" in why and "--seed tokenjar" in fix and "no source configured" not in why, (m, why)
     assert config.TOKENJAR_REVENUE["Uniswap"]["kept_as"] == "revenue_usd_defillama"
+
+
+def test_credibility_subsidy_row_reads_the_declared_reason_not_none_paid():
+    """PR1B.MERGE (after the gate): Uniswap's Credibility SUBSIDY COVER row said 'no supply-side incentives (outflow b)
+    are paid or on file' beside PR1B.5's reason (paid from the growth budget, held whole in (d))."""
+    import credibility
+    why = credibility.by_design_na("Uniswap", "cp_subsidy_cover")
+    assert why == config.declared_na_text("Uniswap", "SUBSIDY COVER") and "growth budget" in why
+    assert credibility.by_design_na("Aave", "cp_subsidy_cover") == \
+        "no supply-side incentives (outflow b) are paid or on file for this project"     # undeclared: unchanged
+
+
+def test_coingecko_note_names_the_move_behind_its_10_06_step():
+    """PR1B.MERGE: the note said the +16,965,988 step on 2026-10-06 had 'no on-chain move of that size'; PR1B.4 found it
+    (Labs' growth recipient −17M that day)."""
+    gap = config.COINGECKO_CIRC_BASIS["Uniswap"]["gap"]
+    assert "no on-chain move" not in gap and "Labs' growth recipient sending out 17M UNI that day" in gap

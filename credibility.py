@@ -2365,6 +2365,10 @@ def by_design_na(name: str, hid: str) -> str | None:
         return "no lock metric applies — tradeable float would be circulating passed off as float"
     if hid in ("cp_hvy", "cp_nhy") and "holder_value_revenue_usd" not in config.metrics_for_project(p):
         return "no buyback programme and no declared payout to holders"
+    # PR1B.5: a project with a declared reason (the quantity does not exist for it, with a source and a read date) reads
+    # that reason — Uniswap's incentives are paid from the growth budget, held whole in (d); "none paid" is false there
+    if hid == "cp_subsidy_cover" and config.declared_na_text(name, "SUBSIDY COVER"):
+        return config.declared_na_text(name, "SUBSIDY COVER")
     if hid == "cp_subsidy_cover" and not config.outflow_metrics(name, "b"):
         return "no supply-side incentives (outflow b) are paid or on file for this project"
     fs = p.get("fee_split") or {}
