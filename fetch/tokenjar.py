@@ -366,7 +366,16 @@ class TokenJarInflows:
         for r in cs.get("logs") or ():
             try:
                 if r["kind"] == "rpc":
-                    return self._rpc_logs(r, b0, b1, address, topics), _host(r["url"])
+                    ck = None
+                    if address is None:              # a day's jar read: its progress is kept, so a stop resumes
+                        ck = self.cst(chain).setdefault("open", {})
+                        if ck.get("key") != [b0, b1, r["url"]]:
+                            ck.clear()
+                            ck.update({"key": [b0, b1, r["url"]], "next": b0, "logs": []})
+                    got = self._rpc_logs(r, b0, b1, address, topics, ck)
+                    if ck is not None:
+                        ck.clear()
+                    return got, _host(r["url"])
                 if r["kind"] == "blockscout":
                     return self._bs_logs(r, b0, b1, address, topics), _host(r["url"])
                 if r["kind"] == "alchemy_transfers" and address is None:
@@ -380,12 +389,19 @@ class TokenJarInflows:
                 errs.append(f"{r.get('kind')} {_host(r.get('url', ''))}: {str(e)[:160]}")
         raise RouteFailed(f"{chain}: no log route answered blocks {b0:,}..{b1:,} ({'; '.join(errs[-3:]) or 'none declared'})")
 
-    def _rpc_logs(self, r: dict, b0: int, b1: int, address, topics) -> list:
+    def _rpc_logs(self, r: dict, b0: int, b1: int, address, topics, ck: dict | None = None) -> list:
+        """eth_getLogs over [b0, b1] in spans the endpoint serves. `ck`: the day's checkpoint ({next, logs}) — the
+        blocks read so far are kept in the state when the budget stops the read, and the next run continues there
+        (Base's tenderly route serves 1,000 blocks a call: ~430 calls a day)."""
         span, out, lo = int(r.get("span") or 10_000), [], b0
+        if ck is not None and ck.get("logs") is not None:
+            out, lo = list(ck["logs"]), int(ck.get("next") or b0)
         cap = int(r.get("result_cap") or 10_000)
         while lo <= b1:
             if self._left() <= 0:
-                raise RouteFailed("time budget reached inside the day")
+                if ck is not None:
+                    ck["next"], ck["logs"] = lo, [_slim(x) for x in out]
+                raise RouteFailed(f"time budget reached inside the day (block {lo:,} of {b1:,}; kept, resumes)")
             hi = min(lo + span - 1, b1)
             flt = {"fromBlock": hex(lo), "toBlock": hex(hi), "topics": topics}
             if address:
@@ -775,9 +791,9 @@ class TokenJarInflows:
         one_side = sum(float(r.get("lp_one_side_usd") or 0.0) for r in per.values())
         n = sum(int(r["transfers"]) for r in per.values())
         un = sum(int(r["unpriced_transfers"]) for r in per.values())
-        names = []
-        for c, r in per.items():
-            names += [f"{c}:{sym or a[:10]}×{k}" for a, sym, k in r.get("unpriced") or ()][:3]
+        top = sorted(((k, c, sym or a[:10]) for c, r in per.items() for a, sym, k in r.get("unpriced") or ()),
+                     reverse=True)
+        names = [f"{c}:{sym}×{k:,}" for k, c, sym in top]
         parts = "; ".join(f"{c} ${r['usd']:,.0f}" + (f" (LP ${r['lp_usd']:,.0f})" if r.get("lp_usd") else "")
                           for c, r in per.items() if r["usd"] or r["transfers"])
         quiet = [c for c, r in per.items() if not (r["usd"] or r["transfers"])]
@@ -843,6 +859,11 @@ class TokenJarInflows:
             out.add(pd.concat(frames, ignore_index=True), SOURCE, name, msg, TIER)
         else:
             out.warn(SOURCE, name, "nothing stored — " + msg, TIER)
+
+
+def _slim(lg: dict) -> dict:
+    """A log reduced to what inflows_from_logs reads (the checkpoint stays small)."""
+    return {k: lg.get(k) for k in ("address", "topics", "data", "transactionHash", "logIndex")}
 
 
 def _scrub(text: str) -> str:

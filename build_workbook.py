@@ -883,6 +883,19 @@ def _tokenjar_revenue_views(groups: dict) -> None:
         if jar is None or jar.empty:
             continue
         jd = jar.assign(date=pd.to_datetime(jar["date"]).dt.normalize())
+        # THE DECLARED LATER POINT (as HANDOVER_CONTINUATION writes its declared source): a jar row read from anywhere
+        # else (a probe row of the measuring guard, a hand-entered row) joins under the declared point, its own source
+        # kept inside the bracket and its markers kept — never a third, undeclared basis on revenue_usd
+        from fetch.base import _measuring_point                    # noqa: PLC0415
+        later = (config.declared_handover(name, line) or {}).get("ordered_points", (None, None))[-1]
+        if later:
+            jd["source"] = [s_ if _measuring_point(s_) == _measuring_point(later) else
+                            next((config.mark_source(f"{later}[read as {spec['jar_metric']}: "
+                                                     f"{str(s_).replace('[', '(').replace(']', ')')}]", m)
+                                  for m in config.SOURCE_MARKERS if str(s_).endswith(f":{m}")),
+                                 f"{later}[read as {spec['jar_metric']}: "
+                                 f"{str(s_).replace('[', '(').replace(']', ')')}]")
+                            for s_ in jd["source"].astype(str)]
         first, last = jd["date"].min(), jd["date"].max()
         parts = [jd.assign(metric=line)]
         if dl is not None and not dl.empty:

@@ -342,6 +342,39 @@ def test_rpc_log_route_halves_its_span_on_a_range_refusal(monkeypatch, tmp_path)
     assert fr[fr.metric == "tokenjar_inflow_usd"].iloc[0]["value"] == pytest.approx(2.0)
 
 
+def test_a_day_stopped_by_the_budget_resumes_at_the_block_it_reached(monkeypatch, tmp_path):
+    """Base's keyless route serves 1,000 blocks a call (~430 a day): a routine run's budget can stop inside a day."""
+    d8 = _day_block("2026-11-08")
+    eth = Chain({d8 + 50: [_log(TOK_A, 10 ** 18, tx="0x1")], d8 + 950: [_log(TOK_A, 10 ** 18, tx="0x2")]})
+    ticks = {"n": 0}
+    real = eth.__call__
+
+    def counting(url, payload):
+        if payload["method"] == "eth_getLogs":
+            ticks["n"] += 1
+        return real(url, payload)
+    chains = {"eth": _cs("eth", "2026-11-08", logs=[{"kind": "rpc", "url": "rpc://eth", "span": 100}])}
+    monkeypatch.setattr(tj, "today", lambda: pd.Timestamp("2026-11-09"))
+    spec = {**_spec(tmp_path, chains), "budget_s": 4}
+    monkeypatch.setitem(config.TOKENJAR_INFLOWS, "Uniswap", spec)
+    f = tj.TokenJarInflows(http=FakeHttp(), rpc_post=Router({"eth": counting}), root=tmp_path, env_rpcs={},
+                           clock=lambda: ticks["n"])
+    out = FetchOutput()
+    f.run([UNI], None, out)                                  # 4 calls of 100 blocks, then the budget stops it
+    ck = f.cst("eth")["open"]
+    assert ck["next"] == d8 + 400 and len(ck["logs"]) == 1 and "2026-11-08" not in f.cst("eth")["days"]
+    ticks["n"] = 0
+    spec["budget_s"] = 100
+    f2 = tj.TokenJarInflows(http=FakeHttp(), rpc_post=Router({"eth": counting}), root=tmp_path, env_rpcs={},
+                            clock=lambda: ticks["n"])
+    out2 = FetchOutput()
+    f2.run([UNI], None, out2)
+    assert ticks["n"] == 6                                    # blocks d8+400..d8+999 only
+    fr = pd.concat(out2.frames)
+    assert fr[fr.metric == "tokenjar_inflow_usd"].iloc[0]["value"] == pytest.approx(4.0)
+    assert f2.cst("eth")["open"] == {}
+
+
 def test_day_range_is_the_first_block_of_the_day_to_the_block_before_the_next(monkeypatch, tmp_path):
     chains = {"eth": _cs("eth", "2026-11-08")}
     f, _out, _fr = _run(monkeypatch, tmp_path, chains, {"eth": Chain({})}, FakeHttp())
@@ -440,6 +473,17 @@ def test_revenue_hands_over_to_the_jar_inflows_with_no_overlap_and_defillama_kep
     assert "OVERLAP" in bw.handover_refusal("Uniswap", "revenue_usd", set(bad), bad)
     st = config.TOKENJAR_NOTE["Uniswap"]
     assert st["handed_over"] and st["first"] == "2026-10-11" and st["days"] == 29
+
+
+def test_a_jar_row_from_elsewhere_joins_under_the_declared_point(uni_only):
+    """The measuring guard's probe rows (source probe:tokenjar_inflow_usd) must not put a third basis on revenue_usd."""
+    groups = _live_groups()
+    g = groups[("Uniswap", "tokenjar_inflow_usd")]
+    groups[("Uniswap", "tokenjar_inflow_usd")] = g.assign(source="probe:tokenjar_inflow_usd")
+    bw._tokenjar_revenue_views(groups)
+    pts = set(groups[("Uniswap", "revenue_usd")]["source"].map(_measuring_point))
+    assert pts == {"defillama", "chain:tokenjars:tokenjar_inflow"}
+    assert "read as tokenjar_inflow_usd: probe" in groups[("Uniswap", "revenue_usd")]["source"].iloc[-1]
 
 
 def test_without_jar_rows_revenue_stays_defillama_and_the_words_do_not_change(uni_only):
