@@ -12658,13 +12658,15 @@ PROJECTS = [
         # tier — v2 1/6 of 0.30%; v3 1/4 in the 0.01%/0.05% tiers, 1/6 in 0.30%/1%; v4 static/CCA pools on a curve (5bp
         # LP -> 1.25bp, 30 -> 5, 83.34 -> 10, 100 -> 10) and the aggregator-hook family 10bp default / 3bp stable pairs
         # (3bp / 1bp on Base) — gov.uniswap.org/t/25881 and /t/26162, proposals #93 and #100 — from each chain's
-        # activation (fee_switch_executions). The ACTUAL burn is gross_burn_tokens (0xdead's balance rise) with the
-        # 2025-12-27 100,000,000 one-off out (ONE_OFF_BURN_EVENTS, tx 0x091f0083…2c1e).
+        # activation (fee_switch_executions). The ACTUAL burn is gross_burn_tokens (0xdead's balance rise, each UTC day,
+        # PR1B.2) with the 2025-12-27 100,000,000 treasury burn counted in its window and its share said on the cell
+        # (ONE_OFF_BURN_EVENTS, tx 0x091f0083…2c1e; P5-1C.B1).
         "burn_split": {"share_of_fees_burned": 1.0, "fee_base_metric": "revenue_usd",
                        "source_url": "https://gov.uniswap.org/t/25881", "source_date": "2026-10-19", "status": "active",
-                       "note": "100% of PROTOCOL fees (DefiLlama revenue_usd, by version and chain from each activation) "
-                               "are released only against UNI burned through the Firepit (4,000 UNI a release on mainnet). "
-                               "Implied burn = protocol fees ÷ avg price; actual = UNI to 0xdead, the 2025-12-27 100M "
+                       "note": "100% of PROTOCOL fees (revenue_usd: the TokenJar inflows from their first stored day, DefiLlama's "
+                               "released value before — PR1B.9) are released only against UNI burned through the Firepit "
+                               "(4,000 UNI a release on mainnet). Implied burn = protocol revenue ÷ each day's price "
+                               "(PR1B.3); actual = UNI to 0xdead, the 2025-12-27 100M "
                                "treasury burn counted in its window like any burn (P5-1C.B1, its share said on the "
                                "cell). Was 'unconfirmed' (no single share of LP fees exists: the cut is per version/tier)."},
         "issuance_schedule": None,
@@ -30100,7 +30102,1007 @@ FROZEN_PROJECTS = {
     "Uniswap": {"baseline": "tests/fixtures/frozen_uniswap.json", "since": "2026-11-08",
                 "why": "project round 1 done (Jake 2026-11-05, DONE MEANS)"},
 }
-FROZEN_MOVES: dict = {"Uniswap": {}}
+# PR1B.FREEZE (lead 2026-11-09): every Uniswap cell project round 1B moved, with the value it now reads, the item and
+# the date (tests/test_pr1_freeze.py; project_freeze.py). 68 moves: 19 headers renamed away (the cell reads under its new
+# name, config.HEADLINE_RENAMES), 14 PR1B.3, 13 PR1B.8, 7 PR1B.7, 4 PR1B.10a, 4 PR1B.5, 3 PR1B.10c, 2 PR1B.11,
+# 1 PR1B.6, 1 PR1B.10b. The baseline was rewritten from the same build (project_freeze.py --write Uniswap).
+_FROZEN_MOVES_UNISWAP_1B = {'audit|A4 Permanent Burn|Actual − implied burn (tokens)': {'date': '2026-11-09',
+                                                            'to': 172984.757,
+                                                            'why': "PR1B.3: one pricing basis — each day's tokens × "
+                                                                   "that day's price (header renamed where it named "
+                                                                   'the old basis)'},
+ 'audit|A4 Permanent Burn|Burn as share of fees (measured)': {'date': '2026-11-09',
+                                                              'to': 0.0794651174,
+                                                              'why': "PR1B.3: one pricing basis — each day's tokens "
+                                                                     "× that day's price (header renamed where it "
+                                                                     'named the old basis)'},
+ 'audit|A4 Permanent Burn|Burn Δ9m': {'date': '2026-11-09',
+                                      'to': 'lumpy (99.8% of the window on 1 day)',
+                                      'why': 'PR1B.10a: lumpy (config.LUMPY_SHARE, declared before measuring)'},
+ 'audit|A4 Permanent Burn|Derived issuance − burn, for comparison': {'date': '2026-11-09',
+                                                                     'to': -5594001.25,
+                                                                     'why': 'PR1B.8: header renamed to what the '
+                                                                            'number is (value unchanged)'},
+ 'audit|A4 Permanent Burn|Derived net supply change (issuance − burn), for comparison': {'date': '2026-11-09',
+                                                                                         'to': '<absent>',
+                                                                                         'why': 'PR1B.3/PR1B.8/PR1B.10b: '
+                                                                                                'header renamed '
+                                                                                                '(declared in '
+                                                                                                'config.HEADLINE_RENAMES); '
+                                                                                                'the cell now reads '
+                                                                                                'under its new name'},
+ 'audit|A4 Permanent Burn|Documented share burned (config) — of protocol revenue where the burn base is declared (burn_split.fee_base_metric), else of fees; the cell names its base': {'date': '2026-11-09',
+                                                                                                                                                                                        'to': 1.0,
+                                                                                                                                                                                        'why': 'PR1B.8: '
+                                                                                                                                                                                               'header '
+                                                                                                                                                                                               'renamed '
+                                                                                                                                                                                               'to '
+                                                                                                                                                                                               'what '
+                                                                                                                                                                                               'the '
+                                                                                                                                                                                               'number '
+                                                                                                                                                                                               'is '
+                                                                                                                                                                                               '(value '
+                                                                                                                                                                                               'unchanged)'},
+ 'audit|A4 Permanent Burn|Documented share of fees burned (config)': {'date': '2026-11-09',
+                                                                      'to': '<absent>',
+                                                                      'why': 'PR1B.3/PR1B.8/PR1B.10b: header renamed '
+                                                                             '(declared in config.HEADLINE_RENAMES); '
+                                                                             'the cell now reads under its new name'},
+ 'audit|A4 Permanent Burn|Fees required for crossover ($ a year) = fees × issuance ÷ burn, per covered day — at the measured burn share': {'date': '2026-11-09',
+                                                                                                                                           'to': 1486371900.0,
+                                                                                                                                           'why': 'PR1B.8: '
+                                                                                                                                                  'header '
+                                                                                                                                                  'renamed '
+                                                                                                                                                  'to '
+                                                                                                                                                  'what '
+                                                                                                                                                  'the '
+                                                                                                                                                  'number '
+                                                                                                                                                  'is '
+                                                                                                                                                  '(value '
+                                                                                                                                                  'unchanged)'},
+ "audit|A4 Permanent Burn|Governance lever = burn share of fees that reaches crossover with no growth (issuance $ at each day's price ÷ fees)": {'date': '2026-11-09',
+                                                                                                                                                 'to': 0.111583097,
+                                                                                                                                                 'why': 'PR1B.3: '
+                                                                                                                                                        'one '
+                                                                                                                                                        'pricing '
+                                                                                                                                                        'basis '
+                                                                                                                                                        '— '
+                                                                                                                                                        'each '
+                                                                                                                                                        "day's "
+                                                                                                                                                        'tokens '
+                                                                                                                                                        '× '
+                                                                                                                                                        'that '
+                                                                                                                                                        "day's "
+                                                                                                                                                        'price '
+                                                                                                                                                        '(header '
+                                                                                                                                                        'renamed '
+                                                                                                                                                        'where '
+                                                                                                                                                        'it '
+                                                                                                                                                        'named '
+                                                                                                                                                        'the '
+                                                                                                                                                        'old '
+                                                                                                                                                        'basis)'},
+ 'audit|A4 Permanent Burn|Governance lever = burn share of fees that reaches crossover with no growth (issuance $ ÷ fees)': {'date': '2026-11-09',
+                                                                                                                             'to': '<absent>',
+                                                                                                                             'why': 'PR1B.3/PR1B.8/PR1B.10b: '
+                                                                                                                                    'header '
+                                                                                                                                    'renamed '
+                                                                                                                                    '(declared '
+                                                                                                                                    'in '
+                                                                                                                                    'config.HEADLINE_RENAMES); '
+                                                                                                                                    'the '
+                                                                                                                                    'cell '
+                                                                                                                                    'now '
+                                                                                                                                    'reads '
+                                                                                                                                    'under '
+                                                                                                                                    'its '
+                                                                                                                                    'new '
+                                                                                                                                    'name'},
+ 'audit|A4 Permanent Burn|Gross burn Q0 ($ at avg price)': {'date': '2026-11-09',
+                                                            'to': '<absent>',
+                                                            'why': 'PR1B.3/PR1B.8/PR1B.10b: header renamed (declared '
+                                                                   'in config.HEADLINE_RENAMES); the cell now reads '
+                                                                   'under its new name'},
+ "audit|A4 Permanent Burn|Gross burn Q0 ($, each day's burn × that day's price)": {'date': '2026-11-09',
+                                                                                   'to': 32213646.8,
+                                                                                   'why': 'PR1B.3: one pricing basis '
+                                                                                          "— each day's tokens × "
+                                                                                          "that day's price (header "
+                                                                                          'renamed where it named '
+                                                                                          'the old basis)'},
+ 'audit|A4 Permanent Burn|Gross issuance Q0 ($ at avg price)': {'date': '2026-11-09',
+                                                                'to': '<absent>',
+                                                                'why': 'PR1B.3/PR1B.8/PR1B.10b: header renamed '
+                                                                       '(declared in config.HEADLINE_RENAMES); the '
+                                                                       'cell now reads under its new name'},
+ "audit|A4 Permanent Burn|Gross issuance Q0 ($, each day's issuance × that day's price)": {'date': '2026-11-09',
+                                                                                           'to': '0 — fixed supply: '
+                                                                                                 '1,000,000,000 UNI; '
+                                                                                                 'the 2%/yr '
+                                                                                                 'inflation the '
+                                                                                                 'token allows has '
+                                                                                                 'never been '
+                                                                                                 'activated (no mint '
+                                                                                                 'since the cap)',
+                                                                                           'why': 'PR1B.3: one '
+                                                                                                  'pricing basis — '
+                                                                                                  "each day's tokens "
+                                                                                                  "× that day's "
+                                                                                                  'price (header '
+                                                                                                  'renamed where it '
+                                                                                                  'named the old '
+                                                                                                  'basis)'},
+ "audit|A4 Permanent Burn|ISSUANCE − BURN Q0 (tokens) — self-reported net mint where published, else issuance − burn, on the basis to the left (the cell says 'burn only' where nothing is minted)": {'date': '2026-11-09',
+                                                                                                                                                                                                      'to': -5594001.25,
+                                                                                                                                                                                                      'why': 'PR1B.8: '
+                                                                                                                                                                                                             'header '
+                                                                                                                                                                                                             'renamed '
+                                                                                                                                                                                                             'to '
+                                                                                                                                                                                                             'what '
+                                                                                                                                                                                                             'the '
+                                                                                                                                                                                                             'number '
+                                                                                                                                                                                                             'is '
+                                                                                                                                                                                                             '(value '
+                                                                                                                                                                                                             'unchanged)'},
+ "audit|A4 Permanent Burn|ISSUANCE − BURN, annualised % of circulating (signed; + is net inflation; the cell says 'burn only' where nothing is minted)": {'date': '2026-11-09',
+                                                                                                                                                          'to': -0.0370451033,
+                                                                                                                                                          'why': 'PR1B.8: '
+                                                                                                                                                                 'header '
+                                                                                                                                                                 'renamed '
+                                                                                                                                                                 'to '
+                                                                                                                                                                 'what '
+                                                                                                                                                                 'the '
+                                                                                                                                                                 'number '
+                                                                                                                                                                 'is '
+                                                                                                                                                                 '(value '
+                                                                                                                                                                 'unchanged)'},
+ "audit|A4 Permanent Burn|Implied burn Q0 (tokens) = burn base × documented share ÷ each day's price — the base is protocol revenue where declared (burn_split.fee_base_metric), else fees": {'date': '2026-11-09',
+                                                                                                                                                                                              'to': 5421016.49,
+                                                                                                                                                                                              'why': 'PR1B.3: '
+                                                                                                                                                                                                     'one '
+                                                                                                                                                                                                     'pricing '
+                                                                                                                                                                                                     'basis '
+                                                                                                                                                                                                     '— '
+                                                                                                                                                                                                     'each '
+                                                                                                                                                                                                     "day's "
+                                                                                                                                                                                                     'tokens '
+                                                                                                                                                                                                     '× '
+                                                                                                                                                                                                     'that '
+                                                                                                                                                                                                     "day's "
+                                                                                                                                                                                                     'price '
+                                                                                                                                                                                                     '(header '
+                                                                                                                                                                                                     'renamed '
+                                                                                                                                                                                                     'where '
+                                                                                                                                                                                                     'it '
+                                                                                                                                                                                                     'named '
+                                                                                                                                                                                                     'the '
+                                                                                                                                                                                                     'old '
+                                                                                                                                                                                                     'basis)'},
+ 'audit|A4 Permanent Burn|Implied burn Q0 (tokens) = fees × documented share ÷ avg price': {'date': '2026-11-09',
+                                                                                            'to': '<absent>',
+                                                                                            'why': 'PR1B.3/PR1B.8/PR1B.10b: '
+                                                                                                   'header renamed '
+                                                                                                   '(declared in '
+                                                                                                   'config.HEADLINE_RENAMES); '
+                                                                                                   'the cell now '
+                                                                                                   'reads under its '
+                                                                                                   'new name'},
+ "audit|A4 Permanent Burn|Issuance − burn ($, each day's issuance − burn × that day's price)": {'date': '2026-11-09',
+                                                                                                'to': -32213646.8,
+                                                                                                'why': 'PR1B.3: one '
+                                                                                                       'pricing '
+                                                                                                       'basis — each '
+                                                                                                       "day's tokens "
+                                                                                                       "× that day's "
+                                                                                                       'price '
+                                                                                                       '(header '
+                                                                                                       'renamed '
+                                                                                                       'where it '
+                                                                                                       'named the '
+                                                                                                       'old basis)'},
+ 'audit|A4 Permanent Burn|Issuance − burn Q1 (tokens, −3m window)': {'date': '2026-11-09',
+                                                                     'to': -4150000.0,
+                                                                     'why': 'PR1B.8: header renamed to what the '
+                                                                            'number is (value unchanged)'},
+ 'audit|A4 Permanent Burn|Issuance − burn Q2 (−6m window)': {'date': '2026-11-09',
+                                                             'to': -2820000.0,
+                                                             'why': 'PR1B.8: header renamed to what the number is '
+                                                                    '(value unchanged)'},
+ 'audit|A4 Permanent Burn|Issuance − burn Q3 (−9m window)': {'date': '2026-11-09',
+                                                             'to': -100244003.0,
+                                                             'why': 'PR1B.8: header renamed to what the number is '
+                                                                    '(value unchanged)'},
+ 'audit|A4 Permanent Burn|NET SUPPLY CHANGE Q0 (tokens) — self-reported where published, else issuance − burn, on the basis to the left': {'date': '2026-11-09',
+                                                                                                                                           'to': '<absent>',
+                                                                                                                                           'why': 'PR1B.3/PR1B.8/PR1B.10b: '
+                                                                                                                                                  'header '
+                                                                                                                                                  'renamed '
+                                                                                                                                                  '(declared '
+                                                                                                                                                  'in '
+                                                                                                                                                  'config.HEADLINE_RENAMES); '
+                                                                                                                                                  'the '
+                                                                                                                                                  'cell '
+                                                                                                                                                  'now '
+                                                                                                                                                  'reads '
+                                                                                                                                                  'under '
+                                                                                                                                                  'its '
+                                                                                                                                                  'new '
+                                                                                                                                                  'name'},
+ 'audit|A4 Permanent Burn|NET SUPPLY CHANGE, annualised % of circulating (signed; + is net inflation)': {'date': '2026-11-09',
+                                                                                                         'to': '<absent>',
+                                                                                                         'why': 'PR1B.3/PR1B.8/PR1B.10b: '
+                                                                                                                'header '
+                                                                                                                'renamed '
+                                                                                                                '(declared '
+                                                                                                                'in '
+                                                                                                                'config.HEADLINE_RENAMES); '
+                                                                                                                'the '
+                                                                                                                'cell '
+                                                                                                                'now '
+                                                                                                                'reads '
+                                                                                                                'under '
+                                                                                                                'its '
+                                                                                                                'new '
+                                                                                                                'name'},
+ 'audit|A4 Permanent Burn|Net supply change ($ at avg price)': {'date': '2026-11-09',
+                                                                'to': '<absent>',
+                                                                'why': 'PR1B.3/PR1B.8/PR1B.10b: header renamed '
+                                                                       '(declared in config.HEADLINE_RENAMES); the '
+                                                                       'cell now reads under its new name'},
+ 'audit|A4 Permanent Burn|Net supply change Q1 (tokens, −3m window)': {'date': '2026-11-09',
+                                                                       'to': '<absent>',
+                                                                       'why': 'PR1B.3/PR1B.8/PR1B.10b: header '
+                                                                              'renamed (declared in '
+                                                                              'config.HEADLINE_RENAMES); the cell '
+                                                                              'now reads under its new name'},
+ 'audit|A4 Permanent Burn|Net supply change Q2 (−6m window)': {'date': '2026-11-09',
+                                                               'to': '<absent>',
+                                                               'why': 'PR1B.3/PR1B.8/PR1B.10b: header renamed '
+                                                                      '(declared in config.HEADLINE_RENAMES); the '
+                                                                      'cell now reads under its new name'},
+ 'audit|A4 Permanent Burn|Net supply change Q3 (−9m window)': {'date': '2026-11-09',
+                                                               'to': '<absent>',
+                                                               'why': 'PR1B.3/PR1B.8/PR1B.10b: header renamed '
+                                                                      '(declared in config.HEADLINE_RENAMES); the '
+                                                                      'cell now reads under its new name'},
+ 'audit|A4 Permanent Burn|Notes': {'date': '2026-11-09',
+                                   'to': 'Archetype 4 only — no distribution leg, no staking yield. Implied and '
+                                         'actual burn diverge for reasons unrelated to revenue, because the burn is '
+                                         'holder-elected. MAINNET ONLY, BY EXPLICIT DECISION: the Unichain TokenJar '
+                                         'and Releaser were REMOVED 2026-09-14. OptimismBridgedResourceFirepit.sol '
+                                         'burns bridged UNI on L2 and then bridges to L1, where the UNI lands at '
+                                         '0xdead only after the 7-day OP Stack challenge period — so a Unichain burn '
+                                         'and its mainnet arrival are the SAME burn a week apart, and reading both '
+                                         'double-counts every one of them. burn_dead is therefore the WHOLE figure, '
+                                         'not a slice. The release() threshold is governance STORAGE '
+                                         '(ResourceManager.setThreshold), not a constant; the published 2000 UNI '
+                                         "figure is the OP-Stack bridged configuration, not mainnet's.; 100% of "
+                                         'PROTOCOL fees (revenue_usd: the TokenJar inflows from their first stored '
+                                         "day, DefiLlama's released value before — PR1B.9) are released only against "
+                                         'UNI burned through the Firepit (4,000 UNI a release on mainnet). Implied '
+                                         "burn = protocol revenue ÷ each day's price (PR1B.3); actual = UNI to "
+                                         '0xdead, the 2025-12-27 100M treasury burn counted in its window like any '
+                                         "burn (P5-1C.B1, its share said on the cell). Was 'unconfirmed' (no single "
+                                         'share of LP fees exists: the cut is per version/tier).',
+                                   'why': 'PR1B.8: Uniswap burn_split note corrected (the 100M is counted in the '
+                                          "burn, P5-1C.B1; implied burn at each day's price, PR1B.3; revenue from "
+                                          'the TokenJars, PR1B.9)'},
+ 'audit|A4 Permanent Burn|Revenue required for crossover ($ fees a year) = fees × issuance ÷ burn, per covered day — at the measured burn share': {'date': '2026-11-09',
+                                                                                                                                                   'to': '<absent>',
+                                                                                                                                                   'why': 'PR1B.3/PR1B.8/PR1B.10b: '
+                                                                                                                                                          'header '
+                                                                                                                                                          'renamed '
+                                                                                                                                                          '(declared '
+                                                                                                                                                          'in '
+                                                                                                                                                          'config.HEADLINE_RENAMES); '
+                                                                                                                                                          'the '
+                                                                                                                                                          'cell '
+                                                                                                                                                          'now '
+                                                                                                                                                          'reads '
+                                                                                                                                                          'under '
+                                                                                                                                                          'its '
+                                                                                                                                                          'new '
+                                                                                                                                                          'name'},
+ 'audit|A4 Permanent Burn|Trend — a4_burn_yield (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)': {'date': '2026-11-09',
+                                                                                                                    'to': '– '
+                                                                                                                          '· '
+                                                                                                                          'NEW '
+                                                                                                                          'since '
+                                                                                                                          'Q-3 '
+                                                                                                                          '(fee '
+                                                                                                                          'switch '
+                                                                                                                          'executed '
+                                                                                                                          '2025-12-27) '
+                                                                                                                          '· '
+                                                                                                                          '2/2 '
+                                                                                                                          'improved '
+                                                                                                                          '· '
+                                                                                                                          'QoQ '
+                                                                                                                          '+34.9%',
+                                                                                                                    'why': 'PR1B.7: '
+                                                                                                                           'NEW '
+                                                                                                                           'since '
+                                                                                                                           '… '
+                                                                                                                           '(fee '
+                                                                                                                           'switch '
+                                                                                                                           'executed '
+                                                                                                                           '2025-12-27, '
+                                                                                                                           'block '
+                                                                                                                           '24,106,378)'},
+ 'audit|A4 Permanent Burn|Trend — a4_crossover (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)': {'date': '2026-11-09',
+                                                                                                                   'to': '– '
+                                                                                                                         '· '
+                                                                                                                         'NEW '
+                                                                                                                         'since '
+                                                                                                                         'Q-3 '
+                                                                                                                         '(fee '
+                                                                                                                         'switch '
+                                                                                                                         'executed '
+                                                                                                                         '2025-12-27) '
+                                                                                                                         '(rolling '
+                                                                                                                         'T12M)',
+                                                                                                                   'why': 'PR1B.7: '
+                                                                                                                          'NEW '
+                                                                                                                          'since '
+                                                                                                                          '… '
+                                                                                                                          '(fee '
+                                                                                                                          'switch '
+                                                                                                                          'executed '
+                                                                                                                          '2025-12-27, '
+                                                                                                                          'block '
+                                                                                                                          '24,106,378)'},
+ 'audit|A4 Permanent Burn|Trend — a4_gross_burn (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)': {'date': '2026-11-09',
+                                                                                                                    'to': '– '
+                                                                                                                          '· '
+                                                                                                                          'NEW '
+                                                                                                                          'since '
+                                                                                                                          'Q-3 '
+                                                                                                                          '(fee '
+                                                                                                                          'switch '
+                                                                                                                          'executed '
+                                                                                                                          '2025-12-27) '
+                                                                                                                          '· '
+                                                                                                                          '2/2 '
+                                                                                                                          'improved '
+                                                                                                                          '· '
+                                                                                                                          'QoQ '
+                                                                                                                          '+34.8%',
+                                                                                                                    'why': 'PR1B.7: '
+                                                                                                                           'NEW '
+                                                                                                                           'since '
+                                                                                                                           '… '
+                                                                                                                           '(fee '
+                                                                                                                           'switch '
+                                                                                                                           'executed '
+                                                                                                                           '2025-12-27, '
+                                                                                                                           'block '
+                                                                                                                           '24,106,378)'},
+ 'audit|A4 Permanent Burn|Trend — a4_net_change_pct (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)': {'date': '2026-11-09',
+                                                                                                                        'to': '– '
+                                                                                                                              '· '
+                                                                                                                              '4Q '
+                                                                                                                              'n/a '
+                                                                                                                              '· '
+                                                                                                                              '2/2 '
+                                                                                                                              'improved '
+                                                                                                                              '· '
+                                                                                                                              'QoQ '
+                                                                                                                              '-1.0 '
+                                                                                                                              'pp',
+                                                                                                                        'why': 'PR1B.10c: '
+                                                                                                                               'QoQ '
+                                                                                                                               'of '
+                                                                                                                               'a '
+                                                                                                                               'yield/ratio '
+                                                                                                                               'that '
+                                                                                                                               'can '
+                                                                                                                               'be '
+                                                                                                                               'negative '
+                                                                                                                               'in '
+                                                                                                                               'pp'},
+ 'audit|CP Comparability|Holder value funding by period (config HOLDER_VALUE)': {'date': '2026-11-09',
+                                                                                 'to': '..2025-12-26: none, 0 '
+                                                                                       'credited — before the fee '
+                                                                                       'switch executed on chain '
+                                                                                       '(proposal 93, 2025-12-27 '
+                                                                                       '20:33:11 UTC, block '
+                                                                                       '24,106,378) no protocol fee '
+                                                                                       'existed to fund a burn: UNI '
+                                                                                       'sent to 0x…dEaD before it '
+                                                                                       '(0.0014 UNI on 2025-10-22 '
+                                                                                       'and 11-03) is a stray '
+                                                                                       'transfer, not revenue-funded '
+                                                                                       'holder value; '
+                                                                                       '2025-12-27..now: revenue '
+                                                                                       "(default: the programme's "
+                                                                                       'documented base)',
+                                                                                 'why': 'PR1B.6: no holder value '
+                                                                                        'credited before the fee '
+                                                                                        'switch executed '
+                                                                                        '(2025-12-27, block '
+                                                                                        '24,106,378)'},
+ 'audit|CP Comparability|LEAKAGE (ii) — incentive spend not returned as revenue = max(0, 1 − subsidy cover) (PROPOSED)': {'date': '2026-11-09',
+                                                                                                                          'to': 'n/a '
+                                                                                                                                '— '
+                                                                                                                                'any '
+                                                                                                                                'UNI '
+                                                                                                                                'liquidity '
+                                                                                                                                'incentives '
+                                                                                                                                'are '
+                                                                                                                                'paid '
+                                                                                                                                'from '
+                                                                                                                                'the '
+                                                                                                                                'growth '
+                                                                                                                                'budget, '
+                                                                                                                                'held '
+                                                                                                                                'whole '
+                                                                                                                                'in '
+                                                                                                                                '(d); '
+                                                                                                                                'no '
+                                                                                                                                'published '
+                                                                                                                                'split '
+                                                                                                                                '(UNIfication '
+                                                                                                                                'proposal, '
+                                                                                                                                'gov.uniswap.org/t/unification-proposal/25881, '
+                                                                                                                                'posted '
+                                                                                                                                '2025-11-10: '
+                                                                                                                                'a '
+                                                                                                                                '20M '
+                                                                                                                                'UNI '
+                                                                                                                                'a '
+                                                                                                                                'year '
+                                                                                                                                'growth '
+                                                                                                                                'budget '
+                                                                                                                                'from '
+                                                                                                                                'the '
+                                                                                                                                'treasury '
+                                                                                                                                'funds '
+                                                                                                                                'Uniswap '
+                                                                                                                                "Labs' "
+                                                                                                                                'growth '
+                                                                                                                                'work '
+                                                                                                                                '— '
+                                                                                                                                "'strategic "
+                                                                                                                                'partnerships, '
+                                                                                                                                'grants, '
+                                                                                                                                'and '
+                                                                                                                                "incentives' "
+                                                                                                                                '— '
+                                                                                                                                'with '
+                                                                                                                                'no '
+                                                                                                                                'split '
+                                                                                                                                'by '
+                                                                                                                                'use; '
+                                                                                                                                'no '
+                                                                                                                                'budget '
+                                                                                                                                'report '
+                                                                                                                                'by '
+                                                                                                                                'use '
+                                                                                                                                'on '
+                                                                                                                                'the '
+                                                                                                                                'forum, '
+                                                                                                                                'none '
+                                                                                                                                'in '
+                                                                                                                                'the '
+                                                                                                                                'Uniswap '
+                                                                                                                                "Foundation's "
+                                                                                                                                'FY2025 '
+                                                                                                                                'financials, '
+                                                                                                                                'gov.uniswap.org/t/26068, '
+                                                                                                                                '2026-03-31; '
+                                                                                                                                'read '
+                                                                                                                                '2026-11-09)',
+                                                                                                                          'why': 'PR1B.5: '
+                                                                                                                                 'one '
+                                                                                                                                 'true '
+                                                                                                                                 'reason '
+                                                                                                                                 '— '
+                                                                                                                                 'any '
+                                                                                                                                 'UNI '
+                                                                                                                                 'liquidity '
+                                                                                                                                 'incentives '
+                                                                                                                                 'are '
+                                                                                                                                 'paid '
+                                                                                                                                 'from '
+                                                                                                                                 'the '
+                                                                                                                                 'growth '
+                                                                                                                                 'budget, '
+                                                                                                                                 'held '
+                                                                                                                                 'whole '
+                                                                                                                                 'in '
+                                                                                                                                 '(d); '
+                                                                                                                                 'no '
+                                                                                                                                 'published '
+                                                                                                                                 'split'},
+ "audit|CP Comparability|MARKET SHARE vs its category (90-day mean; a shifted quarter: that quarter's mean) — peer set beside": {'date': '2026-11-09',
+                                                                                                                                 'to': 0.300354638,
+                                                                                                                                 'why': 'PR1B.10b: '
+                                                                                                                                        'header '
+                                                                                                                                        'renamed '
+                                                                                                                                        'to '
+                                                                                                                                        'the '
+                                                                                                                                        '90-day '
+                                                                                                                                        'mean; '
+                                                                                                                                        "Uniswap's "
+                                                                                                                                        'value '
+                                                                                                                                        'unchanged '
+                                                                                                                                        '(already '
+                                                                                                                                        'the '
+                                                                                                                                        '90-day '
+                                                                                                                                        'mean, '
+                                                                                                                                        'PR1.U4)'},
+ 'audit|CP Comparability|MARKET SHARE vs its category (now; a shifted quarter: the reading at its end) — peer set beside': {'date': '2026-11-09',
+                                                                                                                            'to': '<absent>',
+                                                                                                                            'why': 'PR1B.3/PR1B.8/PR1B.10b: '
+                                                                                                                                   'header '
+                                                                                                                                   'renamed '
+                                                                                                                                   '(declared '
+                                                                                                                                   'in '
+                                                                                                                                   'config.HEADLINE_RENAMES); '
+                                                                                                                                   'the '
+                                                                                                                                   'cell '
+                                                                                                                                   'now '
+                                                                                                                                   'reads '
+                                                                                                                                   'under '
+                                                                                                                                   'its '
+                                                                                                                                   'new '
+                                                                                                                                   'name'},
+ 'audit|CP Comparability|SUBSIDY COVER = revenue ÷ $ supply-side incentives (b), per covered day': {'date': '2026-11-09',
+                                                                                                    'to': 'n/a — any '
+                                                                                                          'UNI '
+                                                                                                          'liquidity '
+                                                                                                          'incentives '
+                                                                                                          'are paid '
+                                                                                                          'from the '
+                                                                                                          'growth '
+                                                                                                          'budget, '
+                                                                                                          'held '
+                                                                                                          'whole in '
+                                                                                                          '(d); no '
+                                                                                                          'published '
+                                                                                                          'split '
+                                                                                                          '(UNIfication '
+                                                                                                          'proposal, '
+                                                                                                          'gov.uniswap.org/t/unification-proposal/25881, '
+                                                                                                          'posted '
+                                                                                                          '2025-11-10: '
+                                                                                                          'a 20M UNI '
+                                                                                                          'a year '
+                                                                                                          'growth '
+                                                                                                          'budget '
+                                                                                                          'from the '
+                                                                                                          'treasury '
+                                                                                                          'funds '
+                                                                                                          'Uniswap '
+                                                                                                          "Labs' "
+                                                                                                          'growth '
+                                                                                                          'work — '
+                                                                                                          "'strategic "
+                                                                                                          'partnerships, '
+                                                                                                          'grants, '
+                                                                                                          'and '
+                                                                                                          "incentives' "
+                                                                                                          '— with no '
+                                                                                                          'split by '
+                                                                                                          'use; no '
+                                                                                                          'budget '
+                                                                                                          'report by '
+                                                                                                          'use on '
+                                                                                                          'the '
+                                                                                                          'forum, '
+                                                                                                          'none in '
+                                                                                                          'the '
+                                                                                                          'Uniswap '
+                                                                                                          "Foundation's "
+                                                                                                          'FY2025 '
+                                                                                                          'financials, '
+                                                                                                          'gov.uniswap.org/t/26068, '
+                                                                                                          '2026-03-31; '
+                                                                                                          'read '
+                                                                                                          '2026-11-09)',
+                                                                                                    'why': 'PR1B.5: '
+                                                                                                           'one true '
+                                                                                                           'reason — '
+                                                                                                           'any UNI '
+                                                                                                           'liquidity '
+                                                                                                           'incentives '
+                                                                                                           'are paid '
+                                                                                                           'from the '
+                                                                                                           'growth '
+                                                                                                           'budget, '
+                                                                                                           'held '
+                                                                                                           'whole in '
+                                                                                                           '(d); no '
+                                                                                                           'published '
+                                                                                                           'split'},
+ 'audit|CP Comparability|Subsidy cover incl. demand-side = revenue ÷ $ (b + c), per covered day': {'date': '2026-11-09',
+                                                                                                   'to': 'n/a — any '
+                                                                                                         'UNI '
+                                                                                                         'liquidity '
+                                                                                                         'incentives '
+                                                                                                         'are paid '
+                                                                                                         'from the '
+                                                                                                         'growth '
+                                                                                                         'budget, '
+                                                                                                         'held whole '
+                                                                                                         'in (d); no '
+                                                                                                         'published '
+                                                                                                         'split '
+                                                                                                         '(UNIfication '
+                                                                                                         'proposal, '
+                                                                                                         'gov.uniswap.org/t/unification-proposal/25881, '
+                                                                                                         'posted '
+                                                                                                         '2025-11-10: '
+                                                                                                         'a 20M UNI '
+                                                                                                         'a year '
+                                                                                                         'growth '
+                                                                                                         'budget '
+                                                                                                         'from the '
+                                                                                                         'treasury '
+                                                                                                         'funds '
+                                                                                                         'Uniswap '
+                                                                                                         "Labs' "
+                                                                                                         'growth '
+                                                                                                         'work — '
+                                                                                                         "'strategic "
+                                                                                                         'partnerships, '
+                                                                                                         'grants, '
+                                                                                                         'and '
+                                                                                                         "incentives' "
+                                                                                                         '— with no '
+                                                                                                         'split by '
+                                                                                                         'use; no '
+                                                                                                         'budget '
+                                                                                                         'report by '
+                                                                                                         'use on the '
+                                                                                                         'forum, '
+                                                                                                         'none in '
+                                                                                                         'the '
+                                                                                                         'Uniswap '
+                                                                                                         "Foundation's "
+                                                                                                         'FY2025 '
+                                                                                                         'financials, '
+                                                                                                         'gov.uniswap.org/t/26068, '
+                                                                                                         '2026-03-31; '
+                                                                                                         'read '
+                                                                                                         '2026-11-09)',
+                                                                                                   'why': 'PR1B.5: '
+                                                                                                          'one true '
+                                                                                                          'reason — '
+                                                                                                          'any UNI '
+                                                                                                          'liquidity '
+                                                                                                          'incentives '
+                                                                                                          'are paid '
+                                                                                                          'from the '
+                                                                                                          'growth '
+                                                                                                          'budget, '
+                                                                                                          'held '
+                                                                                                          'whole in '
+                                                                                                          '(d); no '
+                                                                                                          'published '
+                                                                                                          'split'},
+ 'audit|CP Comparability|Trend — cp_hvy (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)': {'date': '2026-11-09',
+                                                                                                            'to': '– '
+                                                                                                                  '· '
+                                                                                                                  'NEW '
+                                                                                                                  'since '
+                                                                                                                  'Q-3 '
+                                                                                                                  '(fee '
+                                                                                                                  'switch '
+                                                                                                                  'executed '
+                                                                                                                  '2025-12-27) '
+                                                                                                                  '· '
+                                                                                                                  '2/2 '
+                                                                                                                  'improved '
+                                                                                                                  '· '
+                                                                                                                  'QoQ '
+                                                                                                                  '+19.6%',
+                                                                                                            'why': 'PR1B.7: '
+                                                                                                                   'NEW '
+                                                                                                                   'since '
+                                                                                                                   '… '
+                                                                                                                   '(fee '
+                                                                                                                   'switch '
+                                                                                                                   'executed '
+                                                                                                                   '2025-12-27, '
+                                                                                                                   'block '
+                                                                                                                   '24,106,378)'},
+ 'audit|CP Comparability|Trend — cp_nhy (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)': {'date': '2026-11-09',
+                                                                                                            'to': '– '
+                                                                                                                  '· '
+                                                                                                                  '4Q '
+                                                                                                                  'n/a '
+                                                                                                                  '· '
+                                                                                                                  '1/2 '
+                                                                                                                  'improved '
+                                                                                                                  '· '
+                                                                                                                  'QoQ '
+                                                                                                                  '-0.2 '
+                                                                                                                  'pp',
+                                                                                                            'why': 'PR1B.10c: '
+                                                                                                                   'QoQ '
+                                                                                                                   'of '
+                                                                                                                   'a '
+                                                                                                                   'yield/ratio '
+                                                                                                                   'that '
+                                                                                                                   'can '
+                                                                                                                   'be '
+                                                                                                                   'negative '
+                                                                                                                   'in '
+                                                                                                                   'pp'},
+ 'audit|CP Comparability|UNIFORMITY = whole-token yield ÷ staker yield (1 = every holder alike) (PROPOSED)': {'date': '2026-11-09',
+                                                                                                              'to': 'n/a '
+                                                                                                                    '— '
+                                                                                                                    'no '
+                                                                                                                    'staker '
+                                                                                                                    'yield '
+                                                                                                                    'exists '
+                                                                                                                    '(no '
+                                                                                                                    'UNI '
+                                                                                                                    'staking)',
+                                                                                                              'why': 'PR1B.5: '
+                                                                                                                     'n/a '
+                                                                                                                     '— '
+                                                                                                                     'no '
+                                                                                                                     'staker '
+                                                                                                                     'yield '
+                                                                                                                     'exists '
+                                                                                                                     '(no '
+                                                                                                                     'UNI '
+                                                                                                                     'staking)'},
+ 'audit|Master|Fees ÷ issuance ($, Q0; issuance at 90d avg price)': {'date': '2026-11-09',
+                                                                     'to': '<absent>',
+                                                                     'why': 'PR1B.3/PR1B.8/PR1B.10b: header renamed '
+                                                                            '(declared in config.HEADLINE_RENAMES); '
+                                                                            'the cell now reads under its new name'},
+ "audit|Master|Fees ÷ issuance ($, Q0; issuance at each day's price)": {'date': '2026-11-09',
+                                                                        'to': 'n/a — no issuance to divide by: '
+                                                                              '1,000,000,000 UNI; the 2%/yr '
+                                                                              'inflation the token allows has never '
+                                                                              'been activated (no mint since the '
+                                                                              'cap)',
+                                                                        'why': 'PR1B.3: one pricing basis — each '
+                                                                               "day's tokens × that day's price "
+                                                                               '(header renamed where it named the '
+                                                                               'old basis)'},
+ 'audit|Master|Trend — master_actual_buyback_q0_observed (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)': {'date': '2026-11-09',
+                                                                                                                             'to': '– '
+                                                                                                                                   '· '
+                                                                                                                                   'NEW '
+                                                                                                                                   'since '
+                                                                                                                                   'Q-3 '
+                                                                                                                                   '(fee '
+                                                                                                                                   'switch '
+                                                                                                                                   'executed '
+                                                                                                                                   '2025-12-27) '
+                                                                                                                                   '· '
+                                                                                                                                   '2/2 '
+                                                                                                                                   'improved '
+                                                                                                                                   '· '
+                                                                                                                                   'QoQ '
+                                                                                                                                   '+147.5%',
+                                                                                                                             'why': 'PR1B.7: '
+                                                                                                                                    'NEW '
+                                                                                                                                    'since '
+                                                                                                                                    '… '
+                                                                                                                                    '(fee '
+                                                                                                                                    'switch '
+                                                                                                                                    'executed '
+                                                                                                                                    '2025-12-27, '
+                                                                                                                                    'block '
+                                                                                                                                    '24,106,378)'},
+ 'audit|Master|Trend — master_fees_issuance_q0_issuance_at_90d_avg_price (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)': {'date': '2026-11-09',
+                                                                                                                                             'to': '<absent>',
+                                                                                                                                             'why': 'PR1B.3/PR1B.8/PR1B.10b: '
+                                                                                                                                                    'header '
+                                                                                                                                                    'renamed '
+                                                                                                                                                    '(declared '
+                                                                                                                                                    'in '
+                                                                                                                                                    'config.HEADLINE_RENAMES); '
+                                                                                                                                                    'the '
+                                                                                                                                                    'cell '
+                                                                                                                                                    'now '
+                                                                                                                                                    'reads '
+                                                                                                                                                    'under '
+                                                                                                                                                    'its '
+                                                                                                                                                    'new '
+                                                                                                                                                    'name'},
+ 'audit|Master|Trend — master_fees_issuance_q0_issuance_at_each_day_s_price (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)': {'date': '2026-11-09',
+                                                                                                                                                'to': '– '
+                                                                                                                                                      '· '
+                                                                                                                                                      '4Q '
+                                                                                                                                                      'n/a '
+                                                                                                                                                      '· '
+                                                                                                                                                      'QoQ '
+                                                                                                                                                      'n/a',
+                                                                                                                                                'why': 'PR1B.3: '
+                                                                                                                                                       'the '
+                                                                                                                                                       'Master '
+                                                                                                                                                       'key '
+                                                                                                                                                       'renamed '
+                                                                                                                                                       'to '
+                                                                                                                                                       'issuance '
+                                                                                                                                                       'at '
+                                                                                                                                                       'each '
+                                                                                                                                                       "day's "
+                                                                                                                                                       'price '
+                                                                                                                                                       '(its '
+                                                                                                                                                       'trend '
+                                                                                                                                                       'row '
+                                                                                                                                                       'follows '
+                                                                                                                                                       'the '
+                                                                                                                                                       'header)'},
+ 'audit|Master|Trend — master_gross_burn_q0_tokens (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)': {'date': '2026-11-09',
+                                                                                                                       'to': '– '
+                                                                                                                             '· '
+                                                                                                                             'NEW '
+                                                                                                                             'since '
+                                                                                                                             'Q-3 '
+                                                                                                                             '(fee '
+                                                                                                                             'switch '
+                                                                                                                             'executed '
+                                                                                                                             '2025-12-27) '
+                                                                                                                             '· '
+                                                                                                                             '2/2 '
+                                                                                                                             'improved '
+                                                                                                                             '· '
+                                                                                                                             'QoQ '
+                                                                                                                             '+34.8%',
+                                                                                                                       'why': 'PR1B.7: '
+                                                                                                                              'NEW '
+                                                                                                                              'since '
+                                                                                                                              '… '
+                                                                                                                              '(fee '
+                                                                                                                              'switch '
+                                                                                                                              'executed '
+                                                                                                                              '2025-12-27, '
+                                                                                                                              'block '
+                                                                                                                              '24,106,378)'},
+ 'audit|Master|Trend — master_net_supply_change_annualised_of_circulating (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)': {'date': '2026-11-09',
+                                                                                                                                              'to': '– '
+                                                                                                                                                    '· '
+                                                                                                                                                    '4Q '
+                                                                                                                                                    'n/a '
+                                                                                                                                                    '· '
+                                                                                                                                                    '2/3 '
+                                                                                                                                                    'improved '
+                                                                                                                                                    '· '
+                                                                                                                                                    'QoQ '
+                                                                                                                                                    'lumpy '
+                                                                                                                                                    '(81.8% '
+                                                                                                                                                    'of '
+                                                                                                                                                    'the '
+                                                                                                                                                    'window '
+                                                                                                                                                    'on '
+                                                                                                                                                    '2 '
+                                                                                                                                                    'days)',
+                                                                                                                                              'why': 'PR1B.10a: '
+                                                                                                                                                     'lumpy '
+                                                                                                                                                     '(config.LUMPY_SHARE, '
+                                                                                                                                                     'declared '
+                                                                                                                                                     'before '
+                                                                                                                                                     'measuring)'},
+ 'audit|Master|Trend — master_net_supply_change_q0_tokens_closing_opening_circulating_supp (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)': {'date': '2026-11-09',
+                                                                                                                                                               'to': '– '
+                                                                                                                                                                     '· '
+                                                                                                                                                                     '4Q '
+                                                                                                                                                                     'n/a '
+                                                                                                                                                                     '· '
+                                                                                                                                                                     '2/3 '
+                                                                                                                                                                     'improved '
+                                                                                                                                                                     '· '
+                                                                                                                                                                     'QoQ '
+                                                                                                                                                                     'lumpy '
+                                                                                                                                                                     '(81.8% '
+                                                                                                                                                                     'of '
+                                                                                                                                                                     'the '
+                                                                                                                                                                     'window '
+                                                                                                                                                                     'on '
+                                                                                                                                                                     '2 '
+                                                                                                                                                                     'days)',
+                                                                                                                                                               'why': 'PR1B.10a: '
+                                                                                                                                                                      'lumpy '
+                                                                                                                                                                      '(config.LUMPY_SHARE, '
+                                                                                                                                                                      'declared '
+                                                                                                                                                                      'before '
+                                                                                                                                                                      'measuring)'},
+ 'audit|Master|Trend — master_revenue_q0 (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)': {'date': '2026-11-09',
+                                                                                                             'to': '– '
+                                                                                                                   '· '
+                                                                                                                   'NEW '
+                                                                                                                   'since '
+                                                                                                                   'Q-3 '
+                                                                                                                   '(fee '
+                                                                                                                   'switch '
+                                                                                                                   'executed '
+                                                                                                                   '2025-12-27) '
+                                                                                                                   '· '
+                                                                                                                   '2/2 '
+                                                                                                                   'improved '
+                                                                                                                   '· '
+                                                                                                                   'QoQ '
+                                                                                                                   '+126.1%',
+                                                                                                             'why': 'PR1B.7: '
+                                                                                                                    'NEW '
+                                                                                                                    'since '
+                                                                                                                    '… '
+                                                                                                                    '(fee '
+                                                                                                                    'switch '
+                                                                                                                    'executed '
+                                                                                                                    '2025-12-27, '
+                                                                                                                    'block '
+                                                                                                                    '24,106,378)'},
+ 'reader|A4 Permanent Burn|Actual minus implied burn (tokens)': {'date': '2026-11-09',
+                                                                 'to': 172984.757,
+                                                                 'why': "PR1B.3: one pricing basis — each day's "
+                                                                        "tokens × that day's price (header renamed "
+                                                                        'where it named the old basis)'},
+ 'reader|A4 Permanent Burn|Burn share of fees': {'date': '2026-11-09',
+                                                 'to': 0.0794651174,
+                                                 'why': "PR1B.3: one pricing basis — each day's tokens × that day's "
+                                                        'price (header renamed where it named the old basis)'},
+ 'reader|A4 Permanent Burn|Derived issuance − burn': {'date': '2026-11-09',
+                                                      'to': -5594001.25,
+                                                      'why': 'PR1B.8: header renamed to what the number is (value '
+                                                             'unchanged)'},
+ 'reader|A4 Permanent Burn|Derived net supply change': {'date': '2026-11-09',
+                                                        'to': '<absent>',
+                                                        'why': 'PR1B.3/PR1B.8/PR1B.10b: header renamed (declared in '
+                                                               'config.HEADLINE_RENAMES); the cell now reads under '
+                                                               'its new name'},
+ 'reader|A4 Permanent Burn|Documented share of fees burned': {'date': '2026-11-09',
+                                                              'to': '<absent>',
+                                                              'why': 'PR1B.3/PR1B.8/PR1B.10b: header renamed '
+                                                                     '(declared in config.HEADLINE_RENAMES); the '
+                                                                     'cell now reads under its new name'},
+ 'reader|A4 Permanent Burn|Fees needed for crossover': {'date': '2026-11-09',
+                                                        'to': 1486371900.0,
+                                                        'why': 'PR1B.8: header renamed to what the number is (value '
+                                                               'unchanged)'},
+ 'reader|A4 Permanent Burn|Governance lever': {'date': '2026-11-09',
+                                               'to': 0.111583097,
+                                               'why': "PR1B.3: one pricing basis — each day's tokens × that day's "
+                                                      'price (header renamed where it named the old basis)'},
+ 'reader|A4 Permanent Burn|Gross burn, 90 days ($)': {'date': '2026-11-09',
+                                                      'to': 32213646.8,
+                                                      'why': "PR1B.3: one pricing basis — each day's tokens × that "
+                                                             "day's price (header renamed where it named the old "
+                                                             'basis)'},
+ 'reader|A4 Permanent Burn|Implied burn, 90 days (tokens)': {'date': '2026-11-09',
+                                                             'to': 5421016.49,
+                                                             'why': "PR1B.3: one pricing basis — each day's tokens × "
+                                                                    "that day's price (header renamed where it named "
+                                                                    'the old basis)'},
+ 'reader|A4 Permanent Burn|Issuance growth, selected period': {'date': '2026-11-09',
+                                                               'to': 'lumpy',
+                                                               'why': 'PR1B.10a: lumpy (config.LUMPY_SHARE, declared '
+                                                                      'before measuring)'},
+ 'reader|A4 Permanent Burn|Issuance − burn ($)': {'date': '2026-11-09',
+                                                  'to': -32213646.8,
+                                                  'why': "PR1B.3: one pricing basis — each day's tokens × that day's "
+                                                         'price (header renamed where it named the old basis)'},
+ 'reader|A4 Permanent Burn|Quarter change [43]': {'date': '2026-11-09',
+                                                  'to': -0.959171832,
+                                                  'why': "PR1B.10c: the reader's quarter change of issuance − burn % "
+                                                         'in pp'},
+ 'reader|A4 Permanent Burn|Revenue needed for crossover': {'date': '2026-11-09',
+                                                           'to': '<absent>',
+                                                           'why': 'PR1B.3/PR1B.8/PR1B.10b: header renamed (declared '
+                                                                  'in config.HEADLINE_RENAMES); the cell now reads '
+                                                                  'under its new name'},
+ 'reader|A4 Permanent Burn|Share burned, of revenue or fees': {'date': '2026-11-09',
+                                                               'to': 1.0,
+                                                               'why': 'PR1B.8: header renamed to what the number is '
+                                                                      '(value unchanged)'},
+ 'reader|Business|TVL change at constant prices': {'date': '2026-11-09',
+                                                   'to': 'n/a',
+                                                   'why': 'PR1B.11: n/a — DefiLlama publishes no token breakdown for '
+                                                          'Uniswap (read 2026-11-09)'},
+ 'reader|Business|TVL change, start-of-window prices': {'date': '2026-11-09',
+                                                        'to': 'n/a',
+                                                        'why': 'PR1B.11: n/a — DefiLlama publishes no token '
+                                                               'breakdown for Uniswap (read 2026-11-09)'}}
+FROZEN_MOVES: dict = {"Uniswap": _FROZEN_MOVES_UNISWAP_1B}
 
 
 VALUE_TIMING = {

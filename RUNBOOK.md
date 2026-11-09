@@ -534,6 +534,125 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11ee. Project round 1B — Uniswap close-out (2026-11-09)
+
+**Read-only checks first** (PowerShell 5.1, from the repo folder; nothing here writes to `metrics.db`):
+
+```
+git log --oneline -1
+#   expect: the round's last commit (the gate's head)
+python -c "import config; print(config.series_launch('Uniswap','revenue_usd'))"
+#   expect: {'date': '2025-12-27', 'what': 'fee switch executed'}                          (item 7)
+python -c "import config; print(len(config.FROZEN_MOVES['Uniswap']), len(config.HEADLINE_RENAMES))"
+#   expect: 68 22
+python -c "import config; print(sorted(config.DAY_BOUNDARY_FLOWS))"
+#   expect: [('GEODNET', 'burn_address_balance'), ('PancakeSwap', 'burn_address_balance'), ('Uniswap', 'burn_address_balance'), ('Venice AI', 'burn_address_balance')]
+python token_metrics.py --help | Select-String tokenjar
+#   expect: the --seed choice that names tokenjar                                           (item 9)
+```
+
+**Item 2 (burn day-stamping) on the chain.** The burn between the first block of 2026-08-12 (25,735,201) and the first
+block of 2026-11-09 (26,373,603) is the 08-12..11-08 burn:
+
+```
+$u = 'https://eth.drpc.org'
+$d = '0x70a08231000000000000000000000000000000000000000000000000000000000000dead'
+foreach ($blk in '0x188b021','0x1926de3') {
+  $b = '{"jsonrpc":"2.0","id":1,"method":"eth_call","params":[{"to":"0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984","data":"' + $d + '"},"' + $blk + '"]}'
+  $r = (Invoke-RestMethod -Uri $u -Method Post -Body $b -ContentType 'application/json').result
+  [decimal]::Parse([System.Numerics.BigInteger]::Parse('0' + $r.Substring(2), 'AllowHexSpecifier').ToString()) / 1e18
+}
+#   expect: 108443579.9671...   then 113873581.2138...   (difference 5,430,001.2468 UNI; read here 2026-11-09)
+python rederive.py Uniswap gross_burn_tokens --day-boundary --window 2026-08-12,2026-11-08
+#   PREVIEW (reads the chain at past blocks, writes nothing). expect: "window 2026-08-12..2026-11-08: read-date ...
+#   -> utc-day 5,430,001.2467 (89 rows)"; the last utc-day row = yesterday; no row dated today; no "NOT READ" line
+python rederive.py GEODNET gross_burn_tokens --day-boundary
+#   PREVIEW. expect: restated days listed; Solana history "complete"; no "NOT READ" line
+```
+
+**Item 4 (CoinGecko's extra exclusion) on the chain.** At the first block of 2026-11-09 the three wallets CoinGecko
+leaves out hold exactly its excess over the Timelock (16,012,526.60 on your 11-09 reading):
+
+```
+foreach ($w in '5069a64bc6616dec1584ee0500b7813a9b680f7e','7c8406384f7a5c147a6add16407803be146147e4','aba63748c4b4def4a3319c3a29fe4829029d926f') {
+  $b = '{"jsonrpc":"2.0","id":1,"method":"eth_call","params":[{"to":"0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984","data":"0x70a08231000000000000000000000000' + $w + '"},"0x1926de3"]}'
+  $r = (Invoke-RestMethod -Uri 'https://eth.drpc.org' -Method Post -Body $b -ContentType 'application/json').result
+  [decimal]::Parse([System.Numerics.BigInteger]::Parse('0' + $r.Substring(2), 'AllowHexSpecifier').ToString()) / 1e18
+}
+#   expect: 13314112.2 (Uniswap Foundation)   2698414.4 (proposal-82 Aera vault)   0 (Labs' growth recipient)
+#   sum 16,012,526.60 = CoinGecko's implied non-circulating - Timelock on 11-09
+```
+And the day CoinGecko's live figure changed basis, from your store:
+```
+@'
+import sqlite3
+c = sqlite3.connect("file:metrics.db?mode=ro", uri=True)
+q = lambda m: dict(c.execute("SELECT substr(date,1,10), value FROM metrics WHERE project='Uniswap' AND metric=? AND date>='2026-10-01'", (m,)).fetchall())
+cg, g, dd, tl = q("circulating_supply"), q("total_supply_gross"), q("burn_address_balance"), q("treasury_holding_tokens")
+for d in sorted(cg):
+    if d in g and d in dd and d in tl: print(d, f"{g[d]-dd[d]-tl[d]-cg[d]:>16,.0f}")
+'@ | python -
+#   expect: about 0 (within 40,000) up to the switch day, then about 14.3M (11-05/11-06) and 16.0M from 11-07.
+#   If the first such day is not 2026-11-02, tell me: config CIRCULATING_ONCHAIN['Uniswap']['coingecko_excludes_from'].
+```
+
+**Item 1 (the claims' share) after the build** (reads the workbook only):
+```
+@'
+import openpyxl
+ws = openpyxl.load_workbook("token_metrics_audit.xlsx")["A4 Permanent Burn"]
+for row in ws.iter_rows():
+    if row[0].value == "Uniswap":
+        for c in row:
+            t = c.comment.text if c.comment else ""
+            if "of which one-off" in t and "it divides by" in t:
+                i = t.find("of which one-off"); print(t[i:i+110]); j = t.find("Without the one-off"); print(t[j:j+80]); break
+        break
+'@ | python -
+#   expect: "of which one-off: 70.8% of the unlock_release_tokens Q0 it divides by ..." and
+#           "Without the one-off this cell reads 1.08x ..."  (the key shows 0.317x, unchanged)
+```
+
+**The writes, in order** (each previews first; type the word asked):
+```
+python rederive.py Uniswap gross_burn_tokens --day-boundary --apply      # type REPLACE; one transaction
+python rederive.py GEODNET gross_burn_tokens --day-boundary --apply      # type REPLACE
+#   PancakeSwap / Venice AI: the same, only if your store holds their burn rows
+python token_metrics.py
+#   expect: "CATCH-UP Uniswap/burn_address_balance: 1 day(s) filled (<today>) ... 1 gross_burn_tokens row(s)
+#   differenced from it"; in the chain tier "... NOT STORED (PR1B.2)" (the live read is no longer stored); and today's
+#   coingecko_excluded_holdings_tokens stored
+python archive_backfill.py --run --project Uniswap --budget-min 30
+#   fills coingecko_excluded_holdings_tokens back to 2026-11-02 (item 4)
+python token_metrics.py --seed tokenjar
+#   item 9's backfill: resumable, Ctrl-C safe, re-run continues; keyless ~14-16 h. expect "--seed tokenjar: ok —
+#   tokenjar_inflow_usd: N day(s) 2025-12-27..<yesterday>"; a WARN names any chain-day not read (retried next run)
+python token_metrics.py --no-fetch
+```
+Until the two `--apply` steps run, your store holds the read-date burns and then the UTC-day burns, with ~16 hours of
+burns uncovered at the seam: run them before reading any burn trend.
+
+**What to look at after the build:**
+- **A4 Uniswap:** the key, dilution, release cells, issuance growth, governance lever and fees for crossover say "of
+  which one-off: x%" and "Without the one-off this cell reads …"; values unchanged.
+- **A4 / CP:** revenue window 08-12..11-08 burn 5,430,001 UNI, about $34.62M at each day's price; holder share about
+  1.060; "Gross burn Q0 ($, each day's …)" = CP holder revenue; burn share of fees = gross payout.
+- **Revenue (after the seed):** "REVENUE LINE: … ON CHAIN (PR1B.9) … THIS BUILD: the jar inflows are stored …", the
+  jars' undistributed balance at the window's start and end, the overlap with DefiLlama; Credibility in_revenue PASS
+  within ±5%. Native-coin inflows are PARTIAL (named) where Blockscout refuses keyless reads.
+- **Credibility:** Uniswap in_circ PASS once coingecko_excluded_holdings_tokens is stored for the as-of day; the five
+  dependants no longer CHECK. g6_retro_burn_100m graded.
+- **CP:** subsidy cover, leakage (ii) and uniformity read the declared reasons; `python done_check.py --verbose`
+  shows no Uniswap blocker on them.
+- **Flows Q-4:** "OK". **Trajectory:** "NEW since Q-3 (fee switch executed 2025-12-27)"; yields/ratios that can be
+  negative change in pp; a window mostly on one or two days reads "lumpy (x% of the window on n days)".
+- **Business:** Uniswap TVL change cells "n/a" with the dated DefiLlama reason.
+- `python measuring_guard.py --newer metrics.db` (on a copy): renamed headers listed under "DECLARED RENAMES /
+  CHANGES OF QUANTITY", no HEADLINE LOST for them; revenue_usd reads only defillama then
+  chain:tokenjars:tokenjar_inflow.
+- `python project_freeze.py --compare Uniswap` (read-only, ~6 min, no pytest needed): "Uniswap: 309 cells, 0
+  undeclared move(s)".
+
 ## 11ed. Project round 1 — Uniswap, plus the shared fixes (2026-11-08)
 
 **Read-only checks first** (PowerShell 5.1, from the repo folder; nothing here writes to `metrics.db`):
@@ -542,7 +661,7 @@ or stop it and start again on the new code. Don't run both at once: they write t
 git log --oneline -1
 #   expect: the round's last commit (the gate's head)
 python -c "import config; print(config.series_launch('Uniswap','revenue_usd'))"
-#   expect: {'date': '2025-12-30', 'what': 'fee switch'}
+#   expect: {'date': '2025-12-30', 'what': 'fee switch'}   (superseded by 11ee, PR1B.7: 2025-12-27 'fee switch executed')
 python -c "import config; print(config.revenue_tier('Uniswap')[0], config.revenue_tier('Aerodrome')[0])"
 #   expect: revenue holder_revenue
 python -c "import config; print(sorted(config.FROZEN_PROJECTS), config.FROZEN_MOVES)"
