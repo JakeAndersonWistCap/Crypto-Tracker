@@ -1666,7 +1666,7 @@ def tab_specs(bw) -> list:
                           "SETTLEMENT PER TOKEN, 1-YEAR CHANGE — the rank key: (trailing-365-day settlement volume ÷ "
                           "circulating supply) at the quarter's end ÷ the same a year earlier − 1"),
                 traj=("a1_fees_issuance", "Fees ÷ issuance", FMT_X,
-                      "FEES ÷ ISSUANCE (x) — fees ÷ gross issuance (tokens at the 90-day average price), not the rank key"),
+                      "FEES ÷ ISSUANCE (x) — fees ÷ gross issuance $ (each day's issuance × that day's price), not the rank key"),
                 drivers=((None, "Settlement volume, trailing 365d", "Settlement volume, 365 days", ""),
                          (None, "Fees Q0 ($)", "Fees, last 90 days", ""),
                          ("@growth", "@fees", "Fees growth, selected period", "flow"),
@@ -1698,7 +1698,7 @@ def tab_specs(bw) -> list:
                 drivers=((None, "Customer revenue Q0 ($)", "Customer revenue, 90 days", ""),
                          ("@growth", "customer_revenue_usd", "Customer revenue growth, period", "flow"),
                          (None, "Emissions to suppliers Q0 (tokens)", "Emissions, 90 days (tokens)", ""),
-                         (None, "Emissions Q0 ($ at avg price)", "Emissions, 90 days ($)", ""),
+                         (None, "Emissions Q0 ($", "Emissions, 90 days ($)", ""),   # PR1B.3: each day's price
                          ("@growth", "emissions_tokens", "Emissions growth, selected period", "flow"),
                          (None, "Supply units (nodes / hotspots / GPUs), latest", "Supply units", ""),
                          ("@growth", "supply_units", "Supply units, selected period", "stock"),

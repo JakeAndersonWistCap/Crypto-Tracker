@@ -29477,7 +29477,7 @@ TRAJECTORY = {
         "Actual buyback Q0 ($) — observed", "Gross burn Q0 (tokens)", "Gross issuance Q0 (tokens)",
         "NET SUPPLY CHANGE Q0 (tokens) = closing − opening circulating supply",
         "Net supply change, annualised % of circulating",
-        "Fees ÷ issuance ($, Q0; issuance at 90d avg price)", "Fees ÷ FDV (annualised)",
+        "Fees ÷ issuance ($, Q0; issuance at each day's price)", "Fees ÷ FDV (annualised)",
         "Buyback % of supply (annualised, implied, split as at this window)",
     ),
     # YEARS TO BENCHMARK at the trailing 4-quarter growth of the row's own series: ln(target / now) / ln(1 + g).
@@ -30619,6 +30619,23 @@ METRICS["net_mint_monthly_day_priced_usd"] = {
     "label": "Self-reported net mint ($): each month's net_mint_monthly x the mean price of that month's days (PR1B.3)",
     "kind": "flow", "unit": "usd", "archetypes": [4], "tiers": [2], "sanity_min": -1e13, "sanity_max": 1e13,
     "view_only": True, "only_projects": tuple(p["name"] for p in PROJECTS if p.get("self_reported_net_mint"))}
+# PR1B.3, second follow-up (lead 2026-11-09): the remaining issuance / emissions $ on the same basis — A1's key ratio
+# (fees ÷ issuance $), A4's governance lever (the crossover's issuance $) and A2's emissions $
+METRICS["unlock_release_day_priced_usd"] = {
+    "label": "Releases into circulating ($): each day's unlock_release_tokens x that day's price_usd — the issuance $ of "
+             "A4's governance lever where the crossover divides by releases (config.A4_RELEASE_ISSUANCE) — PR1B.3",
+    "kind": "flow", "unit": "usd", "archetypes": [4], "tiers": [2], "sanity_min": -1e13, "sanity_max": 1e13,
+    "view_only": True, "only_projects": tuple(A4_RELEASE_ISSUANCE)}
+METRICS["issuance_option_c_day_priced_usd"] = {
+    "label": "Option C issuance ($): each day's issuance_option_c_tokens x that day's price_usd — A4's governance lever "
+             "where option C passed (PR1B.3)",
+    "kind": "flow", "unit": "usd", "archetypes": [4], "tiers": [2], "sanity_min": -1e13, "sanity_max": 1e13,
+    "view_only": True, "only_projects": tuple(OPTION_C_ISSUANCE)}
+METRICS["emissions_day_priced_usd"] = {
+    "label": "Emissions ($): each day's emissions_tokens x that day's price_usd (a weekly or monthly row at the mean "
+             "price of its own period; a day without a price left out and named) — A2's emissions $ (PR1B.3)",
+    "kind": "flow", "unit": "usd", "archetypes": [2], "tiers": [2], "sanity_min": -1e13, "sanity_max": 1e13,
+    "view_only": True}
 
 
 # =====================================================================================================================

@@ -206,7 +206,8 @@ def _cfg_r1() -> int:
     return CFG_R0 + len(scoped_projects()) - 1
 
 MONTHLY_METRICS = ["fees_usd", "revenue_usd", "price_usd", "gross_issuance_tokens", "gross_burn_tokens",
-                   "customer_revenue_usd", "emissions_tokens", "actual_buyback_usd"]
+                   "customer_revenue_usd", "emissions_tokens", "actual_buyback_usd",
+                   "gross_issuance_day_priced_usd"]   # PR1B.3: A1's monthly fees ÷ issuance $ (each day's price)
 
 
 WINDOW_SHARE_COL = {"q0": "Share Q0 (trailing window)", "q1": "Share Q1 (-3m window)",
@@ -5179,30 +5180,38 @@ def _holder_value_views(groups: dict) -> None:
 # PR1B.3: the token series valued at each day's own price, by name (config.METRICS declares each)
 DAY_PRICED_USD = {"gross_issuance_tokens": "gross_issuance_day_priced_usd",
                   "pool_release_tokens": "pool_release_day_priced_usd",
-                  "total_burn_tokens": "total_burn_day_priced_usd"}
+                  "total_burn_tokens": "total_burn_day_priced_usd",
+                  "unlock_release_tokens": "unlock_release_day_priced_usd",
+                  "issuance_option_c_tokens": "issuance_option_c_day_priced_usd",
+                  "emissions_tokens": "emissions_day_priced_usd"}
 DAY_PRICE_LEFT_OUT: dict = {}   # (project, usd metric) -> [days with tokens and no price], per build
 
 
-def _day_priced(g, px: pd.Series, monthly: bool = False) -> tuple[pd.Series, list, list]:
+def _day_priced(g, px: pd.Series, monthly: bool = False, weekly: bool = False) -> tuple[pd.Series, list, list]:
     """(each row's tokens x ITS OWN day's price, the price basis per row, [days left out]) — the rule the buyback $ and
     holder value already use (_relabel_views), so $ burn has ONE figure: a daily row takes its own date's price (a
     [span=Nd] row too, as actual_buyback_usd does); a MONTHLY row (a Dune month, a self-reported monthly net mint) takes
-    the mean price of its month's days. A row with no price on its day (or none in its month) is LEFT OUT (named), never
-    valued at another day's price."""
+    the mean price of its month's days, a WEEKLY epoch row the mean of its week's seven days from its date. A row with no
+    price on its day (or none in its period) is LEFT OUT (named), never valued at another day's price."""
     if g is None or g.empty:
         return pd.Series(dtype=float), [], []
     gg = (g.assign(date=pd.to_datetime(g["date"]).dt.normalize()).sort_values("date")
           .drop_duplicates("date", keep="last"))
     out, srcs, left = {}, [], []
     for day, v, s in zip(gg["date"], gg["value"].astype(float), gg["source"].astype(str)):
-        days = pd.date_range(day, day + pd.offsets.MonthEnd(0)) if (monthly or s.startswith("dune:")) else [day]
+        if monthly or s.startswith("dune:"):
+            days, what = pd.date_range(day, day + pd.offsets.MonthEnd(0)), "its month"
+        elif weekly:
+            days, what = pd.date_range(day, day + pd.Timedelta(days=6)), "its week"
+        else:
+            days, what = [day], ""
         have = [d for d in days if d in px.index]
         if not have:
             left.append(day)
             continue
         out[day] = v * float(px[have].mean())
         srcs.append("that day's price" if len(days) == 1 else
-                    f"mean price of the {len(have)} of {len(days)} day(s) of its month")
+                    f"mean price of the {len(have)} of {len(days)} day(s) of {what}")
     return pd.Series(out, dtype=float).sort_index(), srcs, left
 
 
@@ -5227,7 +5236,7 @@ def _gross_burn_day_priced_usd_views(groups: dict, asof=None) -> None:
     DAY_PRICE_LEFT_OUT.clear()
     for p in scoped_projects():
         arch = set(p.get("archetypes", ()))
-        if not arch & {1, 4}:
+        if not arch & {1, 2, 4}:
             continue
         name = p["name"]
         px = _daily(groups.get((name, "price_usd")))
@@ -5237,18 +5246,26 @@ def _gross_burn_day_priced_usd_views(groups: dict, asof=None) -> None:
         # PR1B.3 follow-up (lead 2026-11-09): issuance $ and the net change's legs on the same basis as the burn $ —
         # gross issuance (A1, A4), the issuance basis the net counts (a release where pre-minted) and the burn it counts
         legs = {config.a4_burn_metric(name): "gross_burn_day_priced_usd"} if 4 in arch else {}
-        legs.setdefault("gross_issuance_tokens", "gross_issuance_day_priced_usd")
+        if arch & {1, 4}:
+            legs.setdefault("gross_issuance_tokens", "gross_issuance_day_priced_usd")
         if 4 in arch:
-            for m in (config.issuance_basis(name), config.a1_burn_metric(name)):
+            # the crossover's issuance (A4 "Governance lever": Uniswap's releases, a pre-minted release, option C)
+            for m in (config.issuance_basis(name), config.a1_burn_metric(name),
+                      config.crossover_issuance_metric(name)):
                 legs.setdefault(m, day_priced_metric(name, m))
             if p.get("self_reported_net_mint"):
                 legs["net_mint_monthly"] = "net_mint_monthly_day_priced_usd"   # a month's net mint x its month's prices
+        if 2 in arch:
+            legs.setdefault("emissions_tokens", "emissions_day_priced_usd")    # A2 "Emissions Q0 ($ ...)"
         for tok_m, usd_m in legs.items():
             if usd_m not in config.METRICS:
                 continue
-            g = groups.get((name, tok_m))
-            vals, srcs, left = _day_priced(g, px, monthly=(tok_m == "net_mint_monthly"
-                                                           or config.series_granularity(name, tok_m) == "monthly"))
+            g = groups.get((name, config.metric_alias(name, tok_m)))     # the series the A-tab cells read
+            # the DECLARED granularity only (a monthly series is stamped at its month's start, a weekly one at its epoch's
+            # start): a row's own date otherwise — an event row (Sky's spell burn) is priced on its day, as before
+            gran = config.series_granularity(name, tok_m)
+            vals, srcs, left = _day_priced(g, px, monthly=(tok_m == "net_mint_monthly" or gran == "monthly"),
+                                           weekly=gran == "weekly")
             if asof is not None:
                 lo = pd.Timestamp(asof) - pd.Timedelta(days=GLOBALS["period_days"])
                 left = [d for d in left if lo < d <= pd.Timestamp(asof)]
@@ -8753,6 +8770,19 @@ MASTER_NSC_HEAD = "NET SUPPLY CHANGE Q0 (tokens) = closing − opening circulati
 MASTER_NSC_PCT_HEAD = "Net supply change, annualised % of circulating"
 MASTER_MINT_BURN_HEAD = "Issuance − burn Q0 (tokens) — a component of the supply change, NOT the net supply change"
 MASTER_MINT_BURN_PCT_HEAD = "Issuance − burn, annualised % of circulating — a component, NOT the net supply change"
+# PR1B.3 (lead 2026-11-09): A1's key on Master, the issuance $ at each day's price (was "… at 90d avg price")
+MASTER_FEES_ISS_HEAD = "Fees ÷ issuance ($, Q0; issuance at each day's price)"
+
+
+def _fees_issuance_day(R, r: int, p: dict, w: str) -> str:
+    """PR1B.3 (lead 2026-11-09): FEES ÷ ISSUANCE $ per covered day — the issuance $ is each day's issuance x that day's
+    price (gross_issuance_day_priced_usd, the gross issuance $ column's series), never the tokens x the window's average
+    price. Guarded on fees, the issuance tokens (their n/a names the missing series) and the $ series."""
+    if _no_issuance_text(p):
+        return _no_issuance_text(p)
+    return _coverage_guard(R, r, [("fees", "fees_usd", w), ("issuance", "gross_issuance_tokens", w),
+                                  ("issuance $", "gross_issuance_day_priced_usd", w)],
+                           f"{_flow_rate(R, r, 'fees_usd', w)}/{_flow_rate(R, r, 'gross_issuance_day_priced_usd', w)}")
 
 
 def _circ_change_gap_text(p: dict) -> str:
@@ -11329,9 +11359,7 @@ def write_master(ws, R: Refs, data_by_key: dict):
         ("Issuer releases Q0 (tokens) — pre-minted supply released into circulation, NOT issuance",
          lambda r, p: pull(R.D(r, "pool_release_tokens", "q0")) if _premint(p) else "", FMT_NUM, "pull", False,
          {"metric_fn": lambda n: "pool_release_tokens" if config.issuance_basis(n) == "pool_release_tokens" else None}),
-        ("Fees ÷ issuance ($, Q0; issuance at 90d avg price)",
-         lambda r, p: _no_issuance_text(p) or _coverage_guard(R, r, [("fees", "fees_usd", "q0"), ("issuance", "gross_issuance_tokens", "q0")],
-                                      f"{_flow_rate(R, r, 'fees_usd')}/({_flow_rate(R, r, 'gross_issuance_tokens')}*{R.D(r, 'price_usd', 'q0')})"), FMT_X, "calc"),
+        (MASTER_FEES_ISS_HEAD, lambda r, p: _fees_issuance_day(R, r, p, "q0"), FMT_X, "calc"),   # PR1B.3: A1's key
         ("Fees ÷ FDV (annualised)", lambda r, p: calc(f"{_annualise(R, r, p, 'fees_usd', R.D(r, 'fees_usd', 'q0'))}/{R.D(r, 'fdv_usd', 'now')}"), FMT_PCT, "calc"),
         ("Buyback % of supply (annualised, implied, split as at this window)",
          lambda r, p: gated(R.C(r, WINDOW_STATUS_COL["q0"]), f"{_annualise(R, r, p, 'revenue_usd', R.D(r, 'revenue_usd', 'q0'))}*{R.C(r, WINDOW_SHARE_COL['q0'])}/{R.D(r, 'price_usd', 'q0')}/{R.D(r, 'circulating_supply', 'now')}", R.C(r, WINDOW_SHARE_COL["q0"])),
@@ -12347,9 +12375,11 @@ def _a4_phase2_cols(R: Refs) -> list[tuple]:
     def lever(r, p):
         if no_issuance(p):
             return "n/a — no issuance"
-        px = R.D(r, "price_usd", "q0")
-        return _coverage_guard(R, r, [("issuance", iss_m(p), "q0"), ("fees", "fees_usd", "q0")],
-                               f"{_flow_rate(R, r, iss_m(p))}*{px}/{_flow_rate(R, r, 'fees_usd')}")
+        # PR1B.3 (lead 2026-11-09): the issuance $ at each day's price (the crossover issuance's day-priced series), was
+        # the issuance rate x the 90-day average price
+        usd = day_priced_metric(p["name"], iss_m(p))
+        return _coverage_guard(R, r, [("issuance", iss_m(p), "q0"), ("issuance $", usd, "q0"), ("fees", "fees_usd", "q0")],
+                               f"{_flow_rate(R, r, usd)}/{_flow_rate(R, r, 'fees_usd')}")
 
     def split(r, p):
         a1, a4 = config.a1_burn_metric(p["name"]), a4b(p)
@@ -12373,7 +12403,7 @@ def _a4_phase2_cols(R: Refs) -> list[tuple]:
         ("Cumulative burn ÷ max supply", cum, FMT_PCT, "calc"),
         ("Revenue required for crossover ($ fees a year) = fees × issuance ÷ burn, per covered day — at the measured "
          "burn share", required, FMT_USD, "calc"),
-        ("Governance lever = burn share of fees that reaches crossover with no growth (issuance $ ÷ fees)", lever,
+        ("Governance lever = burn share of fees that reaches crossover with no growth (issuance $ at each day's price ÷ fees)", lever,
          FMT_PCT, "calc"),
         ("Burn split Q0 (tokens): every burn − the A4 burn", split, FMT_NUM, "calc"),
         ("Burn split — by source", lambda r, p: split_text(p), FMT_TEXT, "text"),
@@ -12754,7 +12784,7 @@ def write_a3(ws, R: Refs, data_by_key: dict):
 def write_a1(ws, R: Refs, data_by_key: dict, months: list[str]):
     projects = [p for p in scoped_projects() if 1 in p["archetypes"]]
     _title(ws, "A1 — Infrastructure", "Demand: transactions, fees, fee per tx, active addresses (low weight), stablecoin supply, TVL (primary), RWA on chain (both sources, divergence shown). "
-                                       "Supply: gross issuance, staking rate, float, net issuance after burn where an A4 block applies. Key ratio: fees ÷ issuance ($, issuance at 90d average price).")
+                                       "Supply: gross issuance, staking rate, float, net issuance after burn where an A4 block applies. Key ratio: fees ÷ issuance ($, each day's issuance × that day's price — PR1B.3).")
     ann = ANN
     price = lambda r, w="q0": R.D(r, "price_usd", w)  # noqa: E731
     iss = lambda r, w="q0": R.D(r, "gross_issuance_tokens", w)  # noqa: E731
@@ -12817,14 +12847,13 @@ def write_a1(ws, R: Refs, data_by_key: dict, months: list[str]):
         ("Issuer releases Q0 (tokens) — pre-minted supply released into circulation, NOT issuance",
          lambda r, p: pull(R.D(r, "pool_release_tokens", "q0")) if _premint(p) else "", FMT_NUM, "pull", False,
          {"metric_fn": lambda n: "pool_release_tokens" if config.issuance_basis(n) == "pool_release_tokens" else None}),
-        ("FEES ÷ ISSUANCE (x) — key ratio", lambda r, p: _no_issuance_text(p) or _coverage_guard(R, r, [("fees", "fees_usd", "q0"), ("issuance", "gross_issuance_tokens", "q0")],
-                                      f"{_flow_rate(R, r, 'fees_usd', 'q0')}/({_flow_rate(R, r, 'gross_issuance_tokens', 'q0')}*{price(r, 'q0')})"), FMT_X, "calc", True),
-        ("Fees ÷ issuance at Q1 (−3m window)", lambda r, p: _no_issuance_text(p) or _coverage_guard(R, r, [("fees", "fees_usd", "q1"), ("issuance", "gross_issuance_tokens", "q1")],
-                                      f"{_flow_rate(R, r, 'fees_usd', 'q1')}/({_flow_rate(R, r, 'gross_issuance_tokens', 'q1')}*{price(r, 'q1')})"), FMT_X, "calc"),
-        ("Fees ÷ issuance at Q2 (−6m)", lambda r, p: _no_issuance_text(p) or _coverage_guard(R, r, [("fees", "fees_usd", "q2"), ("issuance", "gross_issuance_tokens", "q2")],
-                                      f"{_flow_rate(R, r, 'fees_usd', 'q2')}/({_flow_rate(R, r, 'gross_issuance_tokens', 'q2')}*{price(r, 'q2')})"), FMT_X, "calc"),
-        ("Fees ÷ issuance at Q3 (−9m)", lambda r, p: _no_issuance_text(p) or _coverage_guard(R, r, [("fees", "fees_usd", "q3"), ("issuance", "gross_issuance_tokens", "q3")],
-                                      f"{_flow_rate(R, r, 'fees_usd', 'q3')}/({_flow_rate(R, r, 'gross_issuance_tokens', 'q3')}*{price(r, 'q3')})"), FMT_X, "calc"),
+        # PR1B.3 (lead 2026-11-09): the issuance $ the key divides by is each day's issuance x that day's price
+        # (gross_issuance_day_priced_usd, the gross issuance $ column's series) — was tokens x the window's average price
+        ("FEES ÷ ISSUANCE (x) — key ratio", lambda r, p: _fees_issuance_day(R, r, p, "q0"), FMT_X, "calc", True,
+         {"note_fn": lambda p: day_price_note(p["name"], "gross_issuance_day_priced_usd")}),
+        ("Fees ÷ issuance at Q1 (−3m window)", lambda r, p: _fees_issuance_day(R, r, p, "q1"), FMT_X, "calc"),
+        ("Fees ÷ issuance at Q2 (−6m)", lambda r, p: _fees_issuance_day(R, r, p, "q2"), FMT_X, "calc"),
+        ("Fees ÷ issuance at Q3 (−9m)", lambda r, p: _fees_issuance_day(R, r, p, "q3"), FMT_X, "calc"),
         *_trajectory(R, "tvl_usd", "TVL"),
         *_trajectory(R, "fees_usd", "Fees"),
         *_trajectory(R, "stablecoin_supply_usd", "Stablecoins"),
@@ -12836,8 +12865,8 @@ def write_a1(ws, R: Refs, data_by_key: dict, months: list[str]):
     _confidence_tally(ws, end + 2, projects, specs, data_by_key)
     _set_widths(ws, _widths(specs))
     # Monthly block for the time chart: fees ÷ issuance by month
-    block = _monthly_block(ws, R, projects, end + 9, months, "Fees ÷ issuance by month (x) — fees ÷ (issuance tokens × monthly average price)",
-                           lambda r, mc: calc(f"{R.M(r, 'fees_usd', mc)}/({R.M(r, 'gross_issuance_tokens', mc)}*{R.M(r, 'price_usd', mc)})"), FMT_X)
+    block = _monthly_block(ws, R, projects, end + 9, months, "Fees ÷ issuance by month (x) — fees ÷ issuance $ (each day's issuance × that day's price, summed over the month; PR1B.3)",
+                           lambda r, mc: calc(f"{R.M(r, 'fees_usd', mc)}/{R.M(r, 'gross_issuance_day_priced_usd', mc)}"), FMT_X)
     return projects, end, block
 
 
@@ -12885,7 +12914,12 @@ def write_a2(ws, R: Refs, data_by_key: dict, months: list[str]):
          lambda r, p: calc(f"{_annualise(R, r, p, 'emissions_earned_tokens', R.D(r, 'emissions_earned_tokens', 'q0'))}"
                            f"/({_circ(R, r, p)})"), FMT_PCT, "calc", False, {"metric": "emissions_earned_tokens"}),
         ("Price — 90d average ($)", lambda r, p: pull(price(r)), FMT_USD4, "pull", False, {"metric": "price_usd"}),
-        ("Emissions Q0 ($ at avg price)", lambda r, p: calc(f"{emi(r)}*{price(r)}"), FMT_USD, "calc"),
+        # PR1B.3 (lead 2026-11-09): each day's emissions x that day's price (emissions_day_priced_usd; a weekly or monthly
+        # row at its own period's mean price) — was the window's tokens x the 90-day average price
+        ("Emissions Q0 ($, each day's emissions × that day's price)",
+         lambda r, p: _day_priced_cell(R, r, "emissions_tokens", "emissions_day_priced_usd"), FMT_USD, "calc", False,
+         {"metric": "emissions_day_priced_usd",
+          "note_fn": lambda p: day_price_note(p["name"], "emissions_day_priced_usd")}),
         ("CUSTOMER REVENUE PER TOKEN EMITTED ($/token) — key ratio", lambda r, p: _coverage_guard(R, r, [("customer revenue", "customer_revenue_usd", "q0"), ("emissions", "emissions_tokens", "q0")],
                                       f"{_flow_rate(R, r, 'customer_revenue_usd', 'q0')}/{_flow_rate(R, r, 'emissions_tokens', 'q0')}"), FMT_USD4, "calc", True),
         ("Customer revenue ÷ emissions value (x)", lambda r, p: _coverage_guard(R, r, [("customer revenue", "customer_revenue_usd", "q0"), ("emissions", "emissions_tokens", "q0")],
