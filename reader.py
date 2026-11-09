@@ -1982,7 +1982,7 @@ E_SHORT = {
 # audit columns the reader shows elsewhere or by another route (P2a B): fixed-window changes (the selector drives
 # every growth column) and the quarter columns (block (c) shows the four quarters)
 _FIXED_WINDOW = re.compile(r"Δ(30d|3m|6m|9m)$")
-_QUARTER_COL = re.compile(r"^(Fees ÷ issuance at|Rev ÷ emission at|Net supply change) Q[123]\b")
+_QUARTER_COL = re.compile(r"^(Fees ÷ issuance at|Rev ÷ emission at|Net supply change|Issuance − burn) Q[123]\b")
 
 
 def short_header(audit_header: str) -> str:
@@ -2069,8 +2069,8 @@ def period_lumpy_formula(ctx, name: str, metric: str, body: str) -> tuple[str, s
                         f"would read {would}"))
     if not hits:
         return body, ""
-    for n, _t in hits:
-        body = f'IF({DAYS_REF}={n},"lumpy",{body})'
+    at = ",".join(f"{DAYS_REF}={n}" for n, _t in hits)        # a number only: an n/a the formula reads stands
+    body = f'IF(AND(OR({at}),ISNUMBER({body})),"lumpy",{body})'
     spec = ctx.config.LUMPY_SHARE
     return body, (f"LUMPY (PR1B.10a, config.LUMPY_SHARE: {float(spec['share']):.0%} or more of a window on "
                   f"{int(spec['days'])} days or fewer, declared {spec['declared']}) — at these periods the cell reads "

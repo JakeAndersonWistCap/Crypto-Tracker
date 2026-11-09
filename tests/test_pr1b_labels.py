@@ -298,9 +298,11 @@ def test_10a_the_threshold_is_declared_and_a_lumpy_window_reads_the_code(live):
     assert bw._lumpy_window(pd.Series([1.0] * 90, index=s.index), pd.Timestamp("2025-12-31"),
                             pd.Timestamp("2026-03-31")) is None
     c = _cell(live["audit"], "A4 Permanent Burn", "Burn Δ9m")       # Q-3 holds the 100M treasury burn
-    assert c.value == "lumpy (98.9% of the window on 1 day)" and "As a rate it would read" in _note(c), _note(c)
+    v = _cell(live["audit_v"], "A4 Permanent Burn", "Burn Δ9m").value
+    assert v == "lumpy (98.9% of the window on 1 day)" and "As a rate it would read" in _note(c), (v, _note(c))
+    assert c.value.startswith("=IF(ISNUMBER("), "the code replaces a number only: a BLOCKED / n/a text stands"
     g = _cell(live["reader"], "A4 Permanent Burn", "Issuance growth, selected period")
-    assert '_series!$B$1=90,"lumpy"' in g.value and "LUMPY (PR1B.10a" in _note(g)
+    assert '_series!$B$1=90' in g.value and '"lumpy"' in g.value and "LUMPY (PR1B.10a" in _note(g)
     assert _cell(live["reader_v"], "A4 Permanent Burn", "Issuance growth, selected period").value == "lumpy"
 
 

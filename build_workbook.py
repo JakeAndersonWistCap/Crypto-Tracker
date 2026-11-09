@@ -2621,7 +2621,9 @@ def _lumpy_of(name: str, metrics, wins) -> tuple[str, str] | None:
     best = None
     for m in sorted(set(metrics or ())):
         md = METRICS.get(m) or {}
-        if md.get("kind") != "flow" or md.get("granularity") == "monthly" or groups.get((name, m)) is None:
+        # a daily-observed flow only: a monthly or weekly series is compared month on month (its Data windows say so)
+        if md.get("kind") != "flow" or md.get("granularity") == "monthly" or groups.get((name, m)) is None \
+                or _observed_cadence(groups.get((name, m))) != "daily":
             continue
         s = _daily(groups.get((name, m)))
         for w in wins:
@@ -2638,6 +2640,13 @@ def _lumpy_of(name: str, metrics, wins) -> tuple[str, str] | None:
     return code, (f"LUMPY (PR1B.10a, config.LUMPY_SHARE: {float(spec['share']):.0%} or more of a window's flow on "
                   f"{int(spec['days'])} days or fewer, declared {spec['declared']}): {m} {w.upper()} — {share:.1%} of its "
                   f"{tot:,.0f} on {days} ({n} days held). The change is not read as a rate: {spec['why']}.")
+
+
+def _lumpy_wrap(formula: str, code: str) -> str:
+    """PR1B.10a: the code in place of the NUMBER the formula would read — a BLOCKED / n/a text it reads stands."""
+    if not isinstance(formula, str) or not formula.startswith("="):
+        return formula
+    return f'=IF(ISNUMBER({formula[1:]}),"{code}",{formula[1:]})'
 
 
 def _lumpy_rate(name: str, metric: str, w: str) -> float | None:
@@ -11142,11 +11151,10 @@ def _trajectory(R: Refs, metric: str, label: str, fmt=FMT_PCT):
                     return f"n/a — SERIES BREAK {day}: {why[:120]} (inside this comparison)"
             if (config.METRICS.get(mm) or {}).get("kind") != "flow":
                 return delta(R.D(r, mm, a), R.D(r, mm, b))
+            g = _coverage_guard(R, r, [(a.upper(), mm, a), (b.upper(), mm, b)],
+                                f"{_flow_rate(R, r, mm, a)}/{_flow_rate(R, r, mm, b)}-1")
             lum = _lumpy_of(p["name"], [mm], (a, b))           # PR1B.10a: a lumpy window reads the code, not a %
-            if lum:
-                return lum[0]
-            return _coverage_guard(R, r, [(a.upper(), mm, a), (b.upper(), mm, b)],
-                                   f"{_flow_rate(R, r, mm, a)}/{_flow_rate(R, r, mm, b)}-1")
+            return _lumpy_wrap(g, lum[0]) if lum else g
         return cell
 
     def note(a: str, b: str):
