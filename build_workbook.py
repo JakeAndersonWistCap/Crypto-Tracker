@@ -2468,10 +2468,14 @@ def _one_off_parts(groups: dict, name: str) -> dict:
     if spec.get("from"):
         lo, hi = pd.Timestamp(spec["from"]), pd.Timestamp(spec["to"])
         comp = _daily(groups.get((name, spec["component"])))
-        if len(comp) > 1:
-            falls = (-comp.diff()).clip(lower=0.0).dropna()
-        else:
-            falls = _daily(groups.get((name, f"outflow_{spec['category']}_tokens")))
+        # PR1B.1 (Jake's live store, 2026-11-09): the holder's own series was first stored 2026-11-05 (P5-1.7), after
+        # the claims 10-11..11-02 — its falls held none of them, so no window said "of which one-off". A day is read
+        # from the holder's own fall where the holder is stored that day and the day before, else from the category's
+        # whole outflow that day (the rest of the set held 0, `rest_of_set`) — never a day dropped for want of a series.
+        cat = _daily(groups.get((name, f"outflow_{spec['category']}_tokens")))
+        comp = comp.sort_index()
+        own = (-comp.diff()).clip(lower=0.0)[comp.index.to_series().diff().dt.days.eq(1).to_numpy()]
+        falls = pd.concat([own, cat[~cat.index.isin(own.index)]]).sort_index()
         falls = falls[(falls.index >= lo) & (falls.index <= hi)]
         what = f"{spec['holder'].split(' 0x')[0]} — {spec['what'].split(' — ')[0]}"
         for c in spec.get("carriers") or ():
@@ -2538,7 +2542,11 @@ def _rate_legs(name: str, formula: str, win: str, metric: str, col_of: dict) -> 
 def _share_pct(x: float) -> str:
     """PR1.U8: a one-off share as a percentage — two decimals under 1%, so a small real share never reads "0%"."""
     # PR1.U10: and above 99% short of 100% (Uniswap Q-3: 100,000,000 of 100,244,003 read "100%") — never all when not
-    return f"{x:.2%}" if x and (abs(x) < 0.01 or 0.99 <= abs(x) < 1.0) else f"{x:.0%}"
+    if x and (abs(x) < 0.01 or 0.99 <= abs(x) < 1.0):
+        return f"{x:.2%}"
+    # PR1B.1 (Jake 2026-11-09 quoted "70.8%"): one decimal between, a whole share keeps no ".0"
+    s = f"{x:.1%}"
+    return s[:-3] + "%" if s.endswith(".0%") else s
 
 
 _DATA_REF = re.compile(r'INDEX\(Data!\$([A-Z]+)\$\d+:\$[A-Z]+\$\d+,MATCH\(\$A\d+&"\|([^"]+)"')
@@ -2571,12 +2579,136 @@ def _one_off_share_note(name: str, formula) -> str:
                          f"{all_:,.0f} {unit} over {win.upper()} ({' + '.join(f'{m} {v:,.0f}' for m, v in legs.items())}); "
                          f"{_share_pct(part / tot)} of {metric} alone ({what})")
             continue
+        if _divides_by(formula, letter, metric):
+            # PR1B.1 (Jake 2026-11-09: the A4 key burn ÷ release, 0.317, said nothing of the 2020 claims that are 70.8%
+            # of the release it divides by): a one-off in the DENOMINATOR is named as such
+            lines.append(f"of which one-off: {_share_pct(part / tot)} of the {metric} {win.upper()} it divides by — "
+                         f"{part:,.0f} of {tot:,.0f} {unit} ({what})")
+            continue
         lines.append(f"of which one-off: {_share_pct(part / tot)} — {metric} {win.upper()}: {part:,.0f} of {tot:,.0f} {unit} "
                      f"({what})")
     if not lines:
         return ""
     return ("ONE-OFF IN THIS RATE (P5-1C.B1, Jake 2026-11-04: one-offs count like recurring flows) — "
             + "; ".join(lines) + ".")
+
+
+ONE_OFF_MARK = "ONE-OFF IN THIS RATE"
+
+
+def _divides_by(formula: str, letter: str, metric: str) -> bool:
+    """PR1B.1: True where the formula reads Data!<letter> of `metric` inside the right operand of a division — the one-off
+    sits in what the rate DIVIDES BY (the A4 key: burn ÷ release). A guard (IF(ISNUMBER(…))) is not a division."""
+    import xlcalc                                          # noqa: PLC0415
+    try:
+        ast = xlcalc.parse(formula)
+    except SyntaxError:
+        return False
+    tag = ("str", f"|{metric}")
+
+    def kids(node):
+        for x in node[1:]:
+            if isinstance(x, list):
+                yield from (y for y in x if isinstance(y, tuple))
+            elif isinstance(x, tuple):
+                yield x
+
+    def reads(node) -> bool:
+        if node[:2] == ("fn", "INDEX") and node[2] and node[2][0][:1] == ("ref",) and \
+                f"Data!${letter}$" in node[2][0][1] and _holds(node, tag):
+            return True
+        return any(reads(x) for x in kids(node))
+
+    def walk(node) -> bool:
+        if node[:2] == ("bin", "/") and reads(node[3]):
+            return True
+        return any(walk(x) for x in kids(node))
+    return walk(ast)
+
+
+def _holds(node, leaf) -> bool:
+    if node == leaf:
+        return True
+    if isinstance(node, list):
+        return any(_holds(x, leaf) for x in node)
+    return isinstance(node, tuple) and any(_holds(x, leaf) for x in node[1:])
+
+
+def _fmt_like(v: float, number_format: str) -> str:
+    """A value as its cell shows it: a percentage, a multiple (x) or a number."""
+    nf = str(number_format or "")
+    if "%" in nf:
+        return f"{v:.2%}"
+    if '"x"' in nf or nf.endswith("x"):
+        return f"{v:.3g}x"
+    return f"{v:,.0f}" if abs(v) >= 100 else f"{v:,.3f}"
+
+
+def _one_off_without(wb) -> int:
+    """PR1B.1 (Jake 2026-11-09): every cell that says "of which one-off" also says what it reads WITHOUT the one-off,
+    beside the share (A4 key 0.317 → 1.08 without; total dilution 11.26% → 3.3%; net holder yield −9.28% → −0.94% on
+    his store) — the cell's own formula evaluated (xlcalc) with each window the note names less its one-off part. The
+    value shown is unchanged. A cell whose formula is a bare reference to a noted cell carries that cell's note.
+    Returns the number of cells annotated."""
+    import xlcalc                                          # noqa: PLC0415
+    from openpyxl.utils import column_index_from_string    # noqa: PLC0415
+    if not ONE_OFF_SHARES or "Data" not in wb.sheetnames:
+        return 0
+    X, X2 = xlcalc.Workbook(wb), xlcalc.Workbook(wb)
+    ws_d = wb["Data"]
+    row_of = {ws_d.cell(r, 1).value: r for r in range(2, ws_d.max_row + 1)}
+    raw = X2._sheet("Data")
+    for (name, metric, win), (part, _tot, _what) in ONE_OFF_SHARES.items():
+        r, c = row_of.get(f"{name}|{metric}"), column_index_from_string(DC[win]) if win in DC else None
+        if r and c and isinstance(raw.get((r, c)), (int, float)) and not isinstance(raw.get((r, c)), bool):
+            raw[(r, c)] = float(raw[(r, c)]) - float(part)
+    done, noted = 0, {}
+    ref = re.compile(r"^='?([^'!]+)'?!\$?([A-Z]{1,3})\$?(\d+)$")
+    for ws in wb.worksheets:
+        if ws.title in ("Data", "Monthly", FLOWS_SHEET):
+            continue
+        for row in ws.iter_rows():
+            for c in row:
+                if c.comment is None or ONE_OFF_MARK not in c.comment.text or not isinstance(c.value, str) \
+                        or not c.value.startswith("="):
+                    continue
+                try:
+                    w, wo = X.value(ws.title, c.row, c.column), X2.value(ws.title, c.row, c.column)
+                except Exception:  # noqa: BLE001 — a cell that cannot be evaluated keeps its share note only
+                    continue
+                paras = c.comment.text.split("\n\n")
+                i = next(j for j, x in enumerate(paras) if ONE_OFF_MARK in x)
+                if isinstance(w, (int, float)) and isinstance(wo, (int, float)) and not isinstance(w, bool) \
+                        and abs(w - wo) > 1e-12 * max(1.0, abs(w)) and "Without the one-off" not in paras[i]:
+                    paras[i] += (f" Without the one-off this cell reads {_fmt_like(wo, c.number_format)} (shown: "
+                                 f"{_fmt_like(w, c.number_format)}, the one-off kept — values unchanged).")
+                    c.comment = Comment("\n\n".join(paras), "token_metrics")
+                    done += 1
+                noted[(ws.title, c.coordinate)] = paras[i]
+    # a Trend cell (Trajectory's QoQ / Trend text) whose latest two quarters hold a one-off says so, with each note
+    traj_of, tw = {}, wb["Trajectory"] if "Trajectory" in wb.sheetnames else None
+    if tw is not None:
+        kc = trajectory.COL["Key (tab|project|headline id)"]
+        for r in range(2, tw.max_row + 1):
+            got = [noted.get(("Trajectory", f"{get_column_letter(trajectory.COL[q])}{r}")) for q in ("Q0", "Q-1")]
+            got = [f"{q}: " + g.split(" — ", 1)[-1].replace("this cell reads", "that quarter reads")
+                   for q, g in zip(("Q0", "Q-1"), got) if g]
+            if got:
+                traj_of[str(tw.cell(r, kc).value)] = ("ONE-OFF IN THIS RATE — the change reads quarters that hold a "
+                                                      "one-off: " + " | ".join(got))
+    trend = re.compile(r'Trajectory!\$W\$\d+:\$W\$\d+,MATCH\("([^"]+)",Trajectory!')
+    for ws in wb.worksheets:                         # a bare reference to a noted cell carries its note
+        for row in ws.iter_rows():
+            for c in row:
+                m = ref.match(c.value) if isinstance(c.value, str) else None
+                got = noted.get((m.group(1), f"{m.group(2)}{m.group(3)}")) if m else None
+                t = trend.search(c.value) if isinstance(c.value, str) and not got else None
+                got = got or (traj_of.get(t.group(1)) if t else None)
+                if got and not (c.comment and ONE_OFF_MARK in c.comment.text):
+                    prior = c.comment.text if c.comment else ""
+                    c.comment = Comment(got + ("\n\n" + prior if prior else ""), "token_metrics")
+                    done += 1
+    return done
 
 
 MARKET_SHARE_MEAN_NOTE: dict = {}   # PR1.U4: project -> (latest day, its share, its category total, {N: mean})
@@ -14440,6 +14572,11 @@ def build_workbook(store, path: Path | str, run_id: str | None = None,
         WIRING[("(all)", "(wiring audit not run)")] = {"class": "ERROR", "why": f"{type(e).__name__}: {str(e)[:200]}",
                                                        "label": "", "latest": None, "latest_date": ""}
 
+    # PR1B.1: every "of which one-off" cell also says what it reads without the one-off (comments only, values unchanged)
+    try:
+        _one_off_without(wb)
+    except Exception as e:  # noqa: BLE001 — a note that cannot be formed is said on the Run Log, never a silent pass
+        print(f"  one-off 'without' notes not formed: {type(e).__name__}: {str(e)[:200]}")
     # SANITY RULES ON THE BUILT NUMBERS (Jake's review of 97b29ae, item 17 — permanent): evaluated in Python (xlcalc)
     # and written under the Review Queue; credibility_report prints them (SANITY_HITS)
     SANITY_HITS.clear()

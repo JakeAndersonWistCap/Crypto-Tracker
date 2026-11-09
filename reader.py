@@ -1481,8 +1481,10 @@ def _summary_row(sh, ctx: Ctx, C, row, p, rank, key, parked: bool = False) -> No
     d, f = srcs["dil"], srcs["float"]
     if d is not None and d.num is not None and f is not None and f.num is not None:
         rd, rf = data.put(name, "dil_pct", d.num), data.put(name, "float", f.num)
+        oo = _one_off_para(d.comment)           # PR1B.1: the dilution's one-off, on the same figure in tokens
         put_formula(sh, row, C["dil_tok"], f"={rd}*{rf}", d.fill,
-                    f"{d.num:.2%} × tradeable float {f.num:,.0f}.\n\nWorking: {d.where}; {f.where}.")
+                    f"{d.num:.2%} × tradeable float {f.num:,.0f}." + (f"\n\n{oo}" if oo else "")
+                    + f"\n\nWorking: {d.where}; {f.where}.")
         nums += 1
         greens += _green(d.fill)
     else:
@@ -2034,6 +2036,56 @@ def _trajectory(A: Audit) -> dict:
     return out
 
 
+def _one_off_para(text: str) -> str:
+    """PR1B.1: the "ONE-OFF IN THIS RATE" paragraph of an audit comment ('' when none) — for a reader cell computed from
+    an audit cell that carries it (Summary's dilution in tokens a year, a key's quarter change)."""
+    return next((plain(x) for x in str(text or "").split("\n\n") if "ONE-OFF IN THIS RATE" in x), "")
+
+
+def period_one_off_note(ctx, name: str, metric: str, days: int | None = None) -> str:
+    """PR1B.1 (Jake 2026-11-09: issuance growth of the release said nothing of the 2020 claims): a selected-period growth
+    whose series holds a declared one-off says, at the default period (DEFAULT_PERIOD), how much of each window it is and
+    what the growth reads without it — computed exactly as the cell's formula (SeriesSheet.flow_growth: the N days to
+    the last complete day held against the N days before, every day held). Other periods read it where their windows
+    hold its days, said with its dates. '' where the series holds no one-off."""
+    bw = getattr(ctx, "bw", None)
+    try:
+        parts = (bw._one_off_parts(ctx.groups, name) if bw is not None else {}).get(metric) or {}
+    except Exception:  # noqa: BLE001 — no parts readable: no note (the cell's own formula stands)
+        parts = {}
+    if not parts:
+        return ""
+    n = int(days or dict(PERIODS)[DEFAULT_PERIOD])
+    s = _series(ctx.groups, name, metric)
+    s = s[s.index < pd.Timestamp(ctx.asof).normalize()]
+    days_ = sorted(pd.Timestamp(d) for d in parts)
+    what = "; ".join(dict.fromkeys(w for _v, w in parts.values()))
+    span = f"{days_[0].date()}..{days_[-1].date()}"
+    tot_part = sum(v for v, _w in parts.values())
+    head = (f"ONE-OFF IN THIS RATE (P5-1C.B1; PR1B.1) — the series holds a declared one-off: {tot_part:,.0f} on "
+            f"{span} ({what}); a period reads it where its windows hold those days.")
+    if s.empty:
+        return head
+    end = s.index.max()
+    w1 = pd.date_range(end - pd.Timedelta(days=n - 1), end)
+    w0 = pd.date_range(w1[0] - pd.Timedelta(days=n), w1[0] - pd.Timedelta(days=1))
+    p1 = sum(v for d, (v, _w) in parts.items() if pd.Timestamp(d) in w1)
+    p0 = sum(v for d, (v, _w) in parts.items() if pd.Timestamp(d) in w0)
+    if not p1 and not p0:
+        return head + f" At the default {DEFAULT_PERIOD} period neither window holds it."
+    a, b = float(s.reindex(w1).sum()), float(s.reindex(w0).sum())
+    bits = []
+    if p1 and a:
+        bits.append(f"of which one-off: {p1 / a:.1%} of the latest {n} days ({p1:,.0f} of {a:,.0f})")
+    if p0 and b:
+        bits.append(f"{p0 / b:.1%} of the {n} days before ({p0:,.0f} of {b:,.0f})")
+    out = head + f" At the default {DEFAULT_PERIOD} period: " + "; ".join(bits) + "."
+    if s.reindex(w0.append(w1)).notna().all() and b and (b - p0):
+        out += (f" Without the one-off this cell reads {(a - p1) / (b - p0) - 1:+.1%} (shown: {a / b - 1:+.1%}, the "
+                "one-off kept — values unchanged).")
+    return out
+
+
 def _one_off_of(t: dict | None, i: int) -> str:
     """PR1.U10: the Trajectory quarter cell's "ONE-OFF IN THIS RATE" paragraph (P5-1C.B1 / PR1.U3), '' when none."""
     notes = (t or {}).get("notes") or []
@@ -2418,7 +2470,8 @@ def _write_arch_tab(sh: Sheet, ctx: Ctx, spec: TabSpec) -> None:
                 metric = {"@fees": config.fees_headline_metric(name), "@revenue": _revenue_metric(config, name),
                           "@burn": config.a4_burn_metric(name), "@issuance": config.crossover_issuance_metric(name)
                           }.get(h[1], h[1])
-                _period_formula_cell(sh, ctx, row, col, name, metric, h[2], col.header.split(",")[0].lower())
+                _period_formula_cell(sh, ctx, row, col, name, metric, h[2], col.header.split(",")[0].lower(),
+                                     extra=period_one_off_note(ctx, name, metric) if h[2] == "flow" else "")
                 period_cols.append(_idx(sh, col))
             elif kind == "keytraj":
                 _put_key_quarter(sh, data, row, col, name, tab, h[1], h[2], tget(name, h[1]),
@@ -2444,6 +2497,11 @@ def _write_arch_tab(sh: Sheet, ctx: Ctx, spec: TabSpec) -> None:
             elif kind == "trend":
                 t = tget(name, h[1])
                 k2, v, why = _quarter_change(t, ctx.asof)
+                # PR1B.1: a change that reads a quarter holding a one-off says so (each quarter's own note)
+                oo = [f"{q}: " + x.split(" — ", 1)[-1].replace("this cell reads", "that quarter reads")
+                      for q, x in (("Q0", _one_off_of(t, 0)), ("Q-1", _one_off_of(t, 1))) if x]
+                if oo:
+                    why = "\n\n".join((why, "The change reads quarters that hold a one-off: " + " | ".join(oo)))
                 if k2 in ("ok", "modelled", "t12m"):
                     put_number(sh, data, row, col, name, f"qchg|{tab}|{h[1]}", v,
                                FILL_MODELLED if k2 == "modelled" else None, why)
