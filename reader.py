@@ -74,7 +74,8 @@ ARCHETYPE_KEYS = {
         "series A1's NRR reads; it needs two years of history. Higher is better."),
     2: ("Customer revenue ÷ emissions (x)",
         "CUSTOMER REVENUE ÷ EMISSIONS $ (x) — customer revenue over the last 90 days ÷ the tokens emitted to suppliers "
-        "over the same days at their 90-day average price (A2's column). Higher is better; 1.0x is the crossover."),
+        "over the same days, each day's tokens at that day's price (A2's column). Higher is better; 1.0x is the "
+        "crossover."),
     3: ("Burned ÷ (emissions + unlocks) (x)",
         "BURNED BUYBACK ÷ (EMISSIONS + UNLOCKS) (x) — tokens bought back and BURNED, per covered day, ÷ (tokens emitted "
         "+ tokens unlocked from the non-circulating wallets) per covered day, at the emission rate in force (Sky's "
@@ -1697,7 +1698,7 @@ def tab_specs(bw) -> list:
                            (None, "FREE FLOAT ÷ ARR (x)", "Free float ÷ ARR (x)", "")),
                 key_traj=("a2_rev_vs_emissions_value", "Revenue ÷ emissions (x)", FMT_X,
                           "CUSTOMER REVENUE ÷ EMISSIONS VALUE (x) — the rank key: customer revenue $ ÷ emissions $ (tokens "
-                          "emitted × the quarter's 90-day average price), each per covered day"),
+                          "emitted each day × that day's price), each per covered day"),
                 traj=("a2_rev_per_token", "$ per token emitted", FMT_USD,
                       "CUSTOMER REVENUE PER TOKEN EMITTED ($/token) — customer revenue $ ÷ tokens emitted, not the rank "
                       "key"),
@@ -2665,8 +2666,9 @@ COMPARISON_COLS = (
     ("buy_press", BUYING_PRESSURE_SHORT, (CP_TAB, "BUYING PRESSURE ON FLOAT"), FMT_PCT, BUYING_PRESSURE_DEF, "buyback"),
     ("subsidy", "Subsidy cover (x)", (CP_TAB, "SUBSIDY COVER"), FMT_X,
      "Revenue ÷ the $ of supply-side incentives, per covered day: above 1.0x the business pays for its incentives. "
-     "Each day's incentive tokens are valued at that day's price — so for an A2 project it is NOT Summary's rank key "
-     "(customer revenue ÷ emissions at the 90-day average price); a cell's comment gives both and why they differ.",
+     "Each day's incentive tokens are valued at that day's price, as Summary's rank key for an A2 project values its "
+     "emissions (customer revenue ÷ emissions $ at each day's price) — but it is NOT Summary's rank key: the tokens or "
+     "the dating can differ; a cell's comment gives both and why they differ.",
      ""),
     ("leak", "Leakage (ii)", (CP_TAB, "LEAKAGE (ii)"), FMT_PCT,
      "Incentive spend not returned as revenue = max(0, 1 − subsidy cover). A proposed definition.", ""),
@@ -2701,10 +2703,11 @@ A2_KEY_HEAD = "Customer revenue ÷ emissions value (x)"
 
 def subsidy_vs_key_note(config, name: str, sub: Src | None, key: Src | None) -> str:
     """P5-1C.C5 (Jake 2026-11-04: Morpho read 17.60 here and 16.95 as its A2 key on Summary): why an A2 project's subsidy
-    cover is not its rank key, with both figures. Same numerator (customer revenue per covered day). Where (b) is the
-    key's own emissions_tokens the tokens are the same too and only the PRICE differs — the key values them at the 90-day
-    average price, subsidy cover each day's tokens at that day's price — so their ratio is the average price over the
-    payment-weighted price. '' where either figure is not a number."""
+    cover is not its rank key, with both figures. Same numerator (customer revenue per covered day). Since PR1B.3 (lead
+    2026-11-09) both value tokens at each day's price; where (b) is the key's own emissions_tokens the tokens are the
+    same too, and what is left is how a dated row meets its price: the key prices a weekly or monthly emissions row at
+    that period's mean price (emissions_day_priced_usd), this column at the row's own day's price (outflow (b) $), each
+    over its own covered days. '' where either figure is not a number."""
     if sub is None or key is None or sub.num is None or key.num is None or not key.num:
         return ""
     b = tuple(config.outflow_metrics(name, "b"))
@@ -2712,14 +2715,14 @@ def subsidy_vs_key_note(config, name: str, sub: Src | None, key: Src | None) -> 
          f"column reads {sub.num:,.2f}x. Same numerator (customer revenue, per covered day). ")
     if b == ("emissions_tokens",):
         r = sub.num / key.num
-        s += ("Same tokens (emissions_tokens, outflow (b)); only the PRICE differs: the key values the tokens at the "
-              "90-day AVERAGE price, this column values each day's tokens at THAT DAY's price (outflow (b) $). "
-              f"{sub.num:,.2f} ÷ {key.num:,.2f} = {r:.3f}: the tokens were paid on days whose price averaged "
-              f"{abs(1 - 1 / r):.1%} {'below' if r > 1 else 'above'} the 90-day mean (on the same covered days; a "
-              "day with tokens but no price is in the key and not in this column).")
+        s += ("Same tokens (emissions_tokens, outflow (b)) and both at each day's price (PR1B.3); "
+              f"{sub.num:,.2f} ÷ {key.num:,.2f} = {r:.3f}. What differs is how a dated row meets its price: the key "
+              "prices a weekly or monthly emissions row at THAT PERIOD's mean price (the Emissions Q0 $ column), this "
+              "column at the row's own day's price (outflow (b) $), each over its own covered days; a row with no "
+              "price is left out of both.")
     else:
-        s += (f"Different tokens: the key divides by emissions_tokens at the 90-day average price, this column by "
-              f"outflow (b) = {', '.join(b) or 'none'} at each day's price.")
+        s += (f"Different tokens: the key divides by emissions_tokens, this column by outflow (b) = "
+              f"{', '.join(b) or 'none'}; both at each day's price.")
     return s
 
 

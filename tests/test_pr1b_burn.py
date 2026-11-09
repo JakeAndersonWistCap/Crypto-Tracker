@@ -278,6 +278,30 @@ def test_3_the_a1_key_the_lever_and_emissions_read_the_day_priced_series(monkeyp
         assert config.METRICS[m]["view_only"]
 
 
+def test_3_the_a2_key_and_its_earnings_split_read_the_day_priced_emissions(monkeypatch):
+    """Lead 2026-11-09 (fourth follow-up): A2's key CUSTOMER REVENUE ÷ EMISSIONS VALUE (Q0; the Trajectory tab shifts
+    the same formula to Q1..Q3), the supplier earnings from emissions $ and the customer share of supplier earnings
+    divide by / show the Emissions Q0 $ column's series — one emissions $ figure on the tab, never x the 90-day price."""
+    import inspect
+    import build_workbook as bw
+    import reader
+    monkeypatch.setattr(bw, "_coverage_guard", lambda R, r, legs, expr, **kw: "=" + expr)
+    monkeypatch.setattr(bw, "_flow_rate", lambda R, r, m, w="q0", **kw: f"rate[{m}|{w}]")
+    for w in ("q0", "q2"):
+        key = bw._rev_emissions_value_day(_R, 3, w)
+        assert key == (f"=IF(ISNUMBER(D[customer_revenue_usd]*D[emissions_tokens]),rate[customer_revenue_usd|{w}]/"
+                       f"rate[emissions_day_priced_usd|{w}],{bw.NA})")
+    assert bw._rev_emissions_value_day(_R, 3, share=True).endswith(
+        f"rate[customer_revenue_usd|q0]/(rate[customer_revenue_usd|q0]+rate[emissions_day_priced_usd|q0]),{bw.NA})")
+    a2 = inspect.getsource(bw.write_a2)
+    assert "(A2_KEY_HEAD, lambda r, p: _rev_emissions_value_day(R, r), FMT_X, \"calc\", True," in a2
+    assert "_rev_emissions_value_day(R, r, share=True)" in a2 and a2.count("_day_priced_cell(R, r, \"emissions_tokens\"") == 2
+    assert "{price(r)}" not in a2 and "*{price(" not in a2                # no emissions x the 90-day price on A2
+    assert bw.A2_KEY_HEAD == reader.A2_KEY_HEAD == "Customer revenue ÷ emissions value (x)"   # header unchanged
+    assert bw.headline_id("A2 Coordination", bw.A2_KEY_HEAD) == "a2_rev_vs_emissions_value"
+    assert "90-day" not in reader.ARCHETYPE_KEYS[2][1]
+
+
 def test_3_round_1b_header_renames_are_declared_onto_todays_headers():
     """Lead 2026-11-09: each renamed A4 / A1 / A2 / Master / CP header (PR1B.3 day-priced $, PR1B.8 labels, PR1B.10b the
     90-day-mean market share) is a HEADLINE_RENAMES entry whose end is a header the code writes today; a re-priced $ is a

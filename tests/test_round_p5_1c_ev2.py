@@ -103,16 +103,16 @@ def test_comparison_says_why_subsidy_cover_17_60_is_not_the_a2_key_16_95():
     assert config.outflow_metrics("Morpho", "b") == ("emissions_tokens",)
     s = reader.subsidy_vs_key_note(config, "Morpho", _src(17.60), _src(16.95))
     assert "NOT THE A2 RANK KEY" in s and "16.95x" in s and "17.60x" in s
-    assert "only the PRICE differs" in s and "90-day AVERAGE price" in s and "THAT DAY's price" in s
-    assert "= 1.038" in s and "3.7% below the 90-day mean" in s      # 1 - 16.95/17.60 = 3.7%
-    assert "above the 90-day mean" in reader.subsidy_vs_key_note(config, "Morpho", _src(16.0), _src(16.95))
+    # PR1B.3 (lead 2026-11-09): the key's emissions $ is at each day's price too — what is left is the dating of a row
+    assert "both at each day's price (PR1B.3)" in s and "THAT PERIOD's mean price" in s and "= 1.038" in s
+    assert "90-day" not in s and "AVERAGE price" not in s
 
 
 def test_comparison_note_names_different_tokens_and_is_silent_without_two_numbers():
     b = config.outflow_metrics("Aethir", "b")
     assert b and b != ("emissions_tokens",)
     s = reader.subsidy_vs_key_note(config, "Aethir", _src(8.0), _src(9.0))
-    assert "Different tokens" in s and b[0] in s
+    assert "Different tokens" in s and b[0] in s and "90-day" not in s
     assert reader.subsidy_vs_key_note(config, "Morpho", _src(None), _src(16.95)) == ""
     assert reader.subsidy_vs_key_note(config, "Morpho", _src(17.6), None) == ""
     assert reader.subsidy_vs_key_note(config, "Morpho", _src(17.6), _src(0.0)) == ""
