@@ -57,7 +57,9 @@ CONVENTIONS = [
                                "the project publishes nothing (Jake 2026-10-07; wording 2026-10-12)."),
     ("Price", "Market cap, FDV and the supply ratios use the spot price (price_usd 'now'); fee ÷ issuance and implied "
               "buyback tokens use the Q0 average price; protocol staking yield converts each payment at its payment "
-              "day's price (Jake 2026-10-09)."),
+              "day's price (Jake 2026-10-09); every $ burn, gross issuance $ and A4's issuance − burn $ is each "
+              "day's tokens × that day's price, the holder-value basis — a day without a price left out and named "
+              "(PR1B.3, Jake 2026-11-09)."),
     ("Statuses", "Buyback / burn status labels are DERIVED FROM THE DATA (Jake's review of 97b29ae, item 13): halted "
                  "since / SILENT since / active (measured Q0) / none measured in Q0 / none (declared 0%) / "
                  "(declared; no series measured)."),

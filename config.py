@@ -30596,6 +30596,29 @@ METRICS["fees_base_day_priced_tokens"] = {
              "÷ that day's price_usd, in tokens — the implied burn's basis (PR1B.3)",
     "kind": "flow", "unit": "tokens", "archetypes": [4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e16,
     "view_only": True, "only_projects": tuple(p["name"] for p in PROJECTS if 4 in p.get("archetypes", ()))}
+# PR1B.3 follow-up (lead 2026-11-09): issuance $ and the legs of A4's issuance − burn $ on the same day-price basis, so
+# $ burn has one figure (the gross burn $ column's) wherever it appears
+METRICS["gross_issuance_day_priced_usd"] = {
+    "label": "Gross issuance ($): each day's gross_issuance_tokens x that day's price_usd (a row spanning days at the "
+             "mean price of its own days; a day without a price left out and named) — PR1B.3",
+    "kind": "flow", "unit": "usd", "archetypes": [1, 4], "tiers": [2], "sanity_min": -1e13, "sanity_max": 1e13,
+    "view_only": True}
+METRICS["pool_release_day_priced_usd"] = {
+    "label": "Pool release ($): each day's pool_release_tokens x that day's price_usd — the issuance leg of A4's "
+             "issuance − burn $ where the supply is pre-minted (PR1B.3)",
+    "kind": "flow", "unit": "usd", "archetypes": [4], "tiers": [2], "sanity_min": -1e13, "sanity_max": 1e13,
+    "view_only": True, "only_projects": tuple(p["name"] for p in PROJECTS if 4 in p.get("archetypes", ())
+                                              and issuance_basis(p["name"]) == "pool_release_tokens")}
+METRICS["total_burn_day_priced_usd"] = {
+    "label": "Every burn ($): each day's total_burn_tokens x that day's price_usd — the burn leg of A4's issuance − burn "
+             "$ where every burn differs from the A4 burn (PR1B.3)",
+    "kind": "flow", "unit": "usd", "archetypes": [4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e13,
+    "view_only": True, "only_projects": tuple(p["name"] for p in PROJECTS if 4 in p.get("archetypes", ())
+                                              and a1_burn_metric(p["name"]) == "total_burn_tokens")}
+METRICS["net_mint_monthly_day_priced_usd"] = {
+    "label": "Self-reported net mint ($): each month's net_mint_monthly x the mean price of that month's days (PR1B.3)",
+    "kind": "flow", "unit": "usd", "archetypes": [4], "tiers": [2], "sanity_min": -1e13, "sanity_max": 1e13,
+    "view_only": True, "only_projects": tuple(p["name"] for p in PROJECTS if p.get("self_reported_net_mint"))}
 
 
 # =====================================================================================================================
