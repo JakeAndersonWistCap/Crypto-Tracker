@@ -30,6 +30,34 @@ from fetch.dune import Dune  # noqa: E402
 from fetch.llama import DefiLlama  # noqa: E402
 from fetch.scrape import Scrape, extract_dom, extract_xhr  # noqa: E402
 from fetch.validate import validate_frame  # noqa: E402
+import pytest  # noqa: E402
+
+# PR1B.2 (Jake 2026-11-09): the burn stocks of Uniswap, GEODNET, PancakeSwap and Venice AI became DAY-BOUNDARY stocks
+# (config.DAY_BOUNDARY_FLOWS): the live tier no longer stores its read or a read-to-read delta for them — the catch-up
+# reads each day's first block and the flow is stamped by block time (tests/test_pr1b_burn.py). These tests pin the chain
+# adapter's generic mechanics (summing, verification, refusals, flags, the archive pass, handovers) on those stocks with
+# the live read-date route, which every other cumulative stock still has: they run with the day-boundary rule off.
+_READ_DATE_ROUTE_TESTS = {
+    "test_chain_reads_verified_and_derives_flow",
+    "test_a_zero_burn_from_a_balance_delta_is_flagged_not_reported_as_measured",
+    "test_a_single_observation_never_produces_a_zero_flow",
+    "test_uniswap_reads_the_burn_DESTINATION_not_the_contract_that_executes_the_burn",
+    "test_uniswap_burn_below_the_retroactive_burn_alone_is_rejected",
+    "test_an_assumed_mechanism_flags_the_figure_without_withdrawing_it",
+    "test_several_contracts_serving_one_metric_are_summed",
+    "test_dead_and_zero_addresses_are_accepted_as_holders_despite_having_no_code",
+    "test_archive_backfill_reads_state_at_each_days_first_block_and_never_overwrites",
+    "test_uniswap_one_off_burn_is_dated_shown_apart_and_kept_out_of_every_rate",
+    "test_geodnet_burn_is_the_polygon_plus_solana_sum_and_a_failed_solana_read_stores_nothing",
+    "test_the_switch_to_the_sum_stores_no_flow_and_the_handover_keeps_the_series",
+}
+
+
+@pytest.fixture(autouse=True)
+def _read_date_route(request, monkeypatch):
+    if request.node.name in _READ_DATE_ROUTE_TESTS:
+        monkeypatch.setitem(config.DAY_BOUNDARY_FLOW, "on", False)
+
 
 TS1, TS2 = 1756684800, 1756771200   # 2025-09-01, 2025-09-02 UTC
 
@@ -4052,7 +4080,9 @@ def test_a_declared_handover_is_accepted_but_an_overlap_or_a_third_source_still_
     DUNE, CHAIN = "dune:8683175", "chain:polygon:burn_polygon"
     decl = config.declared_handover("GEODNET", "gross_burn_tokens")
     # EXTENDED 2026-09-28 with a third leg, the Polygon + Solana sum (the Solana burn account).
-    assert decl and tuple(decl["ordered_points"]) == (DUNE, CHAIN, config.GEODNET_BURN_SUM_POINT), decl
+    # PR1B.2 (Jake 2026-11-09): a fourth, the same sum stamped by block time (utc-day)
+    assert decl and tuple(decl["ordered_points"]) == (DUNE, CHAIN, config.GEODNET_BURN_SUM_POINT,
+                                                      config.GEODNET_BURN_SUM_POINT + ":utc-day"), decl
     assert decl.get("composition_change"), \
         "the legs cover different chains — that has to be stated, not left for the reader to find"
 
@@ -4077,12 +4107,13 @@ def test_a_declared_handover_is_accepted_but_an_overlap_or_a_third_source_still_
     why = bw.handover_refusal("GEODNET", "gross_burn_tokens", tuple(third), third)
     assert why and "outside it" in why, why
 
-    # REFUSED — NOTHING DECLARED. The ordinary case stays exactly as it was.
+    # REFUSED — A POINT OUTSIDE THE DECLARATION (was: nothing declared, before PR1B.2 declared the utc-day leg).
     why = bw.handover_refusal("Uniswap", "gross_burn_tokens",
                               ("chain:ethereum:fire_pit", "chain:ethereum:burn_dead"),
                               spans(**{"chain:ethereum:fire_pit": ("2026-09-01", "2026-09-13"),
                                        "chain:ethereum:burn_dead": ("2026-09-14", "2026-09-21")}))
-    assert why == "no handover is declared for this series", why
+    # PR1B.2: Uniswap's burn now declares a handover (read-date -> utc-day), and the Firepit is outside it: still refused
+    assert why and "'chain:ethereum:fire_pit'] is outside it" in why, why
 
     # AND THE ACCEPTED CASE STILL DISCLOSES. Not blanked, not silently clean.
     row = {"status": "ok", "source": CHAIN, "n_points": 9, "measuring_points": (DUNE, CHAIN),
