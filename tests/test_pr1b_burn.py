@@ -141,44 +141,44 @@ def _views(groups, *fns):
 # ================================================================================================== item 3
 def test_3_burn_usd_is_each_days_burn_at_that_days_price_and_equals_holder_value():
     """Jake's store: A4 $36.90M (window tokens x the 90-day average price) vs holder revenue $35.17M (each day at its own
-    price). One basis: Σ(day's burn x day's price) — a4_burn_usd — equal to holder value on the same days."""
+    price). One basis: Σ(day's burn x day's price) — gross_burn_day_priced_usd — equal to holder value on the same days."""
     days = pd.date_range("2026-08-12", "2026-08-21").strftime("%Y-%m-%d").tolist()
     burn = [12_000.0, 18_000.0, 0.0, 40_000.0, 4_000.0, 22_000.0, 8_000.0, 16_000.0, 30_000.0, 10_000.0]
     price = [6.0, 6.5, 7.0, 8.0, 7.5, 6.8, 6.2, 6.9, 7.3, 7.1]
     revenue = [80_000.0] * len(days)
-    g = _views(_uni_groups(days, burn, price, revenue), "_relabel_views", "_holder_value_views", "_a4_burn_usd_views")
-    usd = g[("Uniswap", "a4_burn_usd")].set_index("date")["value"]
+    g = _views(_uni_groups(days, burn, price, revenue), "_relabel_views", "_holder_value_views", "_gross_burn_day_priced_usd_views")
+    usd = g[("Uniswap", "gross_burn_day_priced_usd")].set_index("date")["value"]
     want = sum(b * p for b, p in zip(burn, price))
     assert abs(float(usd.sum()) - want) < 1e-6
     avg = sum(burn) * (sum(price) / len(price))
     assert abs(avg - want) > 1.0                                          # the old basis is a different figure
     hv = g[("Uniswap", "holder_value_revenue_usd")].set_index("date")["value"]
     assert abs(float(hv.sum()) - want) < 1e-6                             # one figure per concept
-    base = g[("Uniswap", "a4_burn_base_tokens")].set_index("date")["value"]   # Uniswap's base: revenue_usd (burn_split)
+    base = g[("Uniswap", "fees_base_day_priced_tokens")].set_index("date")["value"]   # Uniswap's base: revenue_usd (burn_split)
     assert abs(float(base.sum()) - sum(r / p for r, p in zip(revenue, price))) < 1e-6
-    assert str(g[("Uniswap", "a4_burn_usd")]["source"].iloc[0]) == "derived:gross_burn_tokens*price_usd[that day's price]"
+    assert str(g[("Uniswap", "gross_burn_day_priced_usd")]["source"].iloc[0]) == "derived:gross_burn_tokens*price_usd[that day's price]"
 
 
 def test_3_a_day_without_a_price_is_left_out_never_valued_at_another_days():
     days = ["2026-08-12", "2026-08-13", "2026-08-14"]
     g = _uni_groups(days, [10.0, 20.0, 30.0], [5.0, 6.0, 7.0])
     g[("Uniswap", "price_usd")] = g[("Uniswap", "price_usd")].iloc[[0, 2]]
-    g = _views(g, "_a4_burn_usd_views")
-    usd = g[("Uniswap", "a4_burn_usd")].set_index("date")["value"]
+    g = _views(g, "_gross_burn_day_priced_usd_views")
+    usd = g[("Uniswap", "gross_burn_day_priced_usd")].set_index("date")["value"]
     assert list(usd.index.strftime("%Y-%m-%d")) == ["2026-08-12", "2026-08-14"] and float(usd.sum()) == 260.0
 
 
 def test_3_every_a4_dollar_burn_cell_reads_the_day_priced_series():
-    """The A4 gross burn $, burn share of fees, implied burn and actual − implied read a4_burn_usd / a4_burn_base_tokens;
+    """The A4 gross burn $, burn share of fees, implied burn and actual − implied read gross_burn_day_priced_usd / fees_base_day_priced_tokens;
     no burn is multiplied (or a fee base divided) by the 90-day average price any more."""
     import inspect
     import build_workbook as bw
     src = inspect.getsource(bw.write_a4)
     assert "(\"Gross burn Q0 ($, each day's burn × that day's price)\"" in src
-    assert "R.D(r, \"a4_burn_usd\", \"q0\")" in src and "_flow_rate(R, r, 'a4_burn_usd', p=p)" in src
-    assert src.count("a4_burn_base_tokens") >= 3
+    assert "R.D(r, \"gross_burn_day_priced_usd\", \"q0\")" in src and "_flow_rate(R, r, 'gross_burn_day_priced_usd', p=p)" in src
+    assert src.count("fees_base_day_priced_tokens") >= 3
     assert "{burn(r, p)}*{price(r)}" not in src and "Share of fees burned')}/{price(r)}" not in src
-    assert config.events_per_year("Sky", "a4_burn_usd") == config.events_per_year("Sky", "sky_stage2_burn_tokens")
+    assert config.events_per_year("Sky", "gross_burn_day_priced_usd") == config.events_per_year("Sky", "sky_stage2_burn_tokens")
     import reader
     assert reader.short_header("Gross burn Q0 ($, each day's burn × that day's price)") == "Gross burn, 90 days ($)"
 
