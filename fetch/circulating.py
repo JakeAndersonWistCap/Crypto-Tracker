@@ -155,9 +155,11 @@ def check(out, h: pd.DataFrame, projects: list[dict]) -> None:
             # the leg stored is no comparison (dropped), never ours un-adjusted
             frm = config.coingecko_excludes_from(name)
             for m in config.coingecko_excludes_holdings(name):
+                if ours.empty:
+                    break
                 ex = _daily(h, name, m).reindex(ours.index)
                 if frm:
-                    ex = ex.where(ours.index >= pd.Timestamp(frm), 0.0)
+                    ex = ex.where(pd.DatetimeIndex(ours.index) >= pd.Timestamp(frm), 0.0)
                 ours = (ours - ex).dropna()
                 basis += f" − {m}" + (f" from {frm}" if frm else "")
             basis += ")"
