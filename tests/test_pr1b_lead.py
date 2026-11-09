@@ -23,3 +23,15 @@ def test_every_round_1b_uniswap_move_is_declared_with_its_item_and_date():
         assert "to" in d, key
     renamed_away = [k for k, d in moves.items() if d["to"] == "<absent>"]
     assert len(renamed_away) == 19 and all("HEADLINE_RENAMES" in moves[k]["why"] for k in renamed_away)
+
+
+def test_tokenjar_series_gaps_name_their_reader_and_the_kept_defillama_line_is_no_gap():
+    """PR1B.GATE: the gate failed on test_adapters' gap test — PR1B.9's five tokenjar series read 'no source configured'
+    and Uniswap's revenue_usd_defillama (a read-time copy of DefiLlama's stored revenue_usd) was listed as a gap."""
+    from fetch import gaps
+    p = config.PROJECT_BY_NAME["Uniswap"]
+    for m in ("tokenjar_inflow_usd", "tokenjar_inflow_transfers", "tokenjar_unpriced_transfers",
+              "tokenjar_lp_one_side_usd", "tokenjar_balance_usd"):
+        why, fix = gaps._tier_note(p, m, {})
+        assert "fetch/tokenjar.py" in why and "--seed tokenjar" in fix and "no source configured" not in why, (m, why)
+    assert config.TOKENJAR_REVENUE["Uniswap"]["kept_as"] == "revenue_usd_defillama"

@@ -1194,6 +1194,14 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
             f"the subsidy-targeting reader (fetch/subsidy_targeting.py) has no complete UTC day with a rewardData sample "
             f"on {c} yet (sampled from 2026-10-20, forward only)",
             "Check the Run Log's subsidy_targeting line for {name}.")
+    # PR1B.9: the TokenJar reader's series (Uniswap's revenue line from 2026-11-09)
+    for m in ("tokenjar_inflow_usd", "tokenjar_inflow_transfers", "tokenjar_unpriced_transfers",
+              "tokenjar_lp_one_side_usd", "tokenjar_balance_usd"):
+        r3[m] = ("the TokenJar reader (fetch/tokenjar.py) has not closed this day on every chain where the fee switch "
+                 "is live (a chain-day not read, or the backfill has not reached it) — a day's total is stored only "
+                 "once every live chain is read",
+                 "Check the Run Log's tokenjar line for {name} (it names the chain-day not read); the history comes "
+                 "with python token_metrics.py --seed tokenjar.")
     if metric in r3:
         why, fix = r3[metric]
         return why, fix.format(name=name)
@@ -1304,6 +1312,9 @@ def detect(projects: list[dict], frame: pd.DataFrame, manual_keys: set[tuple[str
                 continue       # built at read time from another stored series; its gaps are that series'
             if (config.REVENUE_FROM_FEES.get(name) or {}).get("revenue") == metric:
                 continue       # G10 1: Plume's revenue is its stored fee series at read time — the fees' gaps are its
+            if (getattr(config, "TOKENJAR_REVENUE", {}).get(name) or {}).get("kept_as") == metric:
+                continue       # PR1B.9: Uniswap's revenue_usd_defillama is DefiLlama's stored revenue_usd kept beside the
+                               # jar line at read time — revenue_usd's gaps are its
 
             if (name, metric) in already_expired:
                 rows.append({

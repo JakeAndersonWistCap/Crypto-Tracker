@@ -5897,6 +5897,10 @@ def test_gap_detection_covers_every_applicable_metric():
             if (config.REVENUE_FROM_FEES.get(p["name"]) or {}).get("revenue") == m:
                 assert (p["name"], m) not in keys, f"{p['name']}/{m} is filled from the stored fees at read time"
                 continue
+            # PR1B.9: Uniswap's revenue_usd_defillama is DefiLlama's stored revenue_usd kept beside the jar line
+            if (config.TOKENJAR_REVENUE.get(p["name"]) or {}).get("kept_as") == m:
+                assert (p["name"], m) not in keys, f"{p['name']}/{m} is a read-time copy of revenue_usd"
+                continue
             # ONE GAP, NOT TWO: usd folds into the tokens row wherever tokens is itself a gap.
             if m == "actual_buyback_usd" and (p["name"], "actual_buyback_tokens") in keys:
                 assert (p["name"], m) not in keys, f"{p['name']}/{m} must fold into the tokens row"
