@@ -57,7 +57,8 @@ CONVENTIONS = [
                                "the project publishes nothing (Jake 2026-10-07; wording 2026-10-12)."),
     ("Price", "Market cap, FDV and the supply ratios use the spot price (price_usd 'now'); fee ÷ issuance and implied "
               "buyback tokens use the Q0 average price; protocol staking yield converts each payment at its payment "
-              "day's price (Jake 2026-10-09); every $ burn, gross issuance $ and A4's issuance − burn $ is each "
+              "day's price (Jake 2026-10-09); every $ burn, gross issuance $, A4's issuance − burn $ and governance "
+              "lever, A1's fees ÷ issuance and A2's emissions $ are each "
               "day's tokens × that day's price, the holder-value basis — a day without a price left out and named "
               "(PR1B.3, Jake 2026-11-09)."),
     ("Statuses", "Buyback / burn status labels are DERIVED FROM THE DATA (Jake's review of 97b29ae, item 13): halted "
@@ -188,7 +189,7 @@ ENTRIES = {
         decided=[(J, "2026-10-11", "the same equal-coverage guard as the net total (sanity run, mixed_windows)")]),
     "Fees ÷ issuance": dict(
         what="Fees per dollar of new issuance (A1's key ratio).",
-        formula="fees per day ÷ (issuance per day × Q0 average price)", window="Q0", unit="x",
+        formula="fees per day ÷ issuance $ per day (each day's issuance × that day's price; PR1B.3)", window="Q0", unit="x",
         inputs=["fees_usd", "gross_issuance_tokens", "price_usd"]),
     "Fees ÷ FDV (annualised)": dict(what="Annualised fees as % of FDV.", formula="fees_usd annualised ÷ fdv_usd now",
                                     window="Q0 → year", unit="%", inputs=["fees_usd", "fdv_usd"]),
@@ -338,8 +339,8 @@ ENTRIES = {
     "TVL — chain ($)": dict(what="Chain TVL, A1's primary demand metric.", formula="tvl_usd now", window="now",
                             unit="$", inputs=["tvl_usd"]),
     "FEES ÷ ISSUANCE (x) — key ratio": dict(
-        what="Fees per dollar of new issuance.", formula="fees per day ÷ (issuance per day × Q0 average price); "
-                                                         "BLOCKED on short coverage",
+        what="Fees per dollar of new issuance.", formula="fees per day ÷ issuance $ per day (each day's issuance × "
+                                                         "that day's price; PR1B.3); BLOCKED on short coverage",
         window="Q0", unit="x", inputs=["fees_usd", "gross_issuance_tokens", "price_usd"]),
     # ------------------------------------------------------------------ A2
     "FREE FLOAT = circulating − locked (tokens)": dict(

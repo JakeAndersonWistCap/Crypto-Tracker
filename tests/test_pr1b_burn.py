@@ -250,6 +250,66 @@ def test_3_a_day_without_a_price_is_left_out_and_named_in_the_cell():
     assert "2026-08-13" in bw.day_price_note("Uniswap", "gross_issuance_day_priced_usd", "gross_burn_day_priced_usd")
 
 
+def test_3_the_a1_key_the_lever_and_emissions_read_the_day_priced_series(monkeypatch):
+    """Lead 2026-11-09 (second follow-up): A1's key FEES ÷ ISSUANCE (Q0..Q3, Master's copy, the monthly block), A4's
+    governance lever and A2's emissions $ divide by / show the day-priced series — one issuance $ figure per tab."""
+    import inspect
+    import build_workbook as bw
+    import reader
+    monkeypatch.setattr(bw, "_coverage_guard", lambda R, r, legs, expr, **kw: "=" + expr)
+    monkeypatch.setattr(bw, "_flow_rate", lambda R, r, m, w="q0", **kw: f"rate[{m}|{w}]")
+    sky = config.PROJECT_BY_NAME["Sky"]
+    for w in ("q0", "q1", "q3"):
+        assert bw._fees_issuance_day(_R, 3, sky, w) == (f"=IF(ISNUMBER(D[fees_usd]*D[gross_issuance_tokens]),rate[fees_usd|{w}]/"
+                                                        f"rate[gross_issuance_day_priced_usd|{w}],{bw.NA})")
+    a1 = inspect.getsource(bw.write_a1)
+    assert a1.count("_fees_issuance_day(R, r, p, ") == 4 and "*{price(r, 'q" not in a1
+    assert "R.M(r, 'gross_issuance_day_priced_usd', mc)" in a1 and "gross_issuance_day_priced_usd" in bw.MONTHLY_METRICS
+    assert bw.MASTER_FEES_ISS_HEAD == "Fees ÷ issuance ($, Q0; issuance at each day's price)"
+    assert "_fees_issuance_day(R, r, p, \"q0\")" in inspect.getsource(bw.write_master)
+    a4 = inspect.getsource(bw._a4_phase2_cols)
+    assert "usd = day_priced_metric(p[\"name\"], iss_m(p))" in a4 and "price_usd" not in a4.split("def lever")[1][:600]
+    assert bw.day_priced_metric("Uniswap", config.crossover_issuance_metric("Uniswap")) == "unlock_release_day_priced_usd"
+    a2 = inspect.getsource(bw.write_a2)
+    assert "\"Emissions Q0 ($, each day's emissions × that day's price)\"" in a2
+    assert "_day_priced_cell(R, r, \"emissions_tokens\", \"emissions_day_priced_usd\")" in a2
+    assert reader.short_header("Emissions Q0 ($, each day's emissions × that day's price)").startswith("Emissions")
+    for m in ("unlock_release_day_priced_usd", "issuance_option_c_day_priced_usd", "emissions_day_priced_usd"):
+        assert config.METRICS[m]["view_only"]
+
+
+def test_3_round_1b_header_renames_are_declared_onto_todays_headers():
+    """Lead 2026-11-09: each renamed A4 / A1 / A2 / Master / CP header (PR1B.3 day-priced $, PR1B.8 labels, PR1B.10b the
+    90-day-mean market share) is a HEADLINE_RENAMES entry whose end is a header the code writes today; a re-priced $ is a
+    change, a relabel a rename; the guard follows the chain from the round-1 headers."""
+    import re
+    import build_workbook as bw
+    src = open(bw.__file__, encoding="utf-8").read()
+    joined = re.sub(r'"\s*\n\s*"', "", src)                       # adjacent string literals as one
+    ours = [e for e in config.HEADLINE_RENAMES if e.get("date") == "2026-11-09"]
+    assert len(ours) == 18
+    assert config._MS_90 == bw.MARKET_SHARE_HEAD
+    for e in ours:
+        tab, head = e["to"].split(" | ", 1)
+        assert head in joined or head == bw.MARKET_SHARE_HEAD, head
+        assert e["from"].split(" | ", 1)[1] not in joined, e["from"]
+        assert e["kind"] == ("change" if e["ref"].startswith("PR1B.3") or (e["ref"] == "PR1B.10b"
+                                                                          and not e.get("project")) else "rename"), e
+    s = config.headline_successor("Uniswap", "A4 | Net supply change ($ at avg price)")
+    assert s["kind"] == "change" and s["to"].startswith("A4 | Issuance − burn ($, each day's")
+    assert config.headline_successor("Pendle", f"CP | {config._MS_OLD}")["to"] == f"CP | {config._MS_90}"
+    assert config.headline_successor("Uniswap", "A4 | NET SUPPLY CHANGE, annualised % of circulating (signed; + is "
+                                                "net inflation)")["kind"] == "rename"
+
+
+def test_3_a_weekly_row_takes_its_own_weeks_prices():
+    import build_workbook as bw
+    px = pd.Series([2.0, 4.0, 9.0], index=pd.to_datetime(["2026-07-02", "2026-07-08", "2026-07-09"]))
+    g = _stored(["2026-07-02"], [100.0], "emissions_tokens")
+    vals, srcs, left = bw._day_priced(g, px, weekly=True)                 # 07-02..07-08: 2.0 and 4.0, not 07-09's
+    assert float(vals.iloc[0]) == 300.0 and "2 of 7 day(s) of its week" in srcs[0] and not left
+
+
 def test_3_a_monthly_row_takes_its_own_months_prices():
     import build_workbook as bw
     px = pd.Series([2.0, 4.0], index=pd.to_datetime(["2026-07-10", "2026-07-20"]))

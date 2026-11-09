@@ -131,7 +131,8 @@ def test_cp_ethereum_float_takes_the_beacon_stake_and_a4_additions_evaluate(tmp_
     fees, iss = _rate(wb, X, "Ethereum|fees_usd"), _rate(wb, X, "Ethereum|gross_issuance_tokens")
     burn = _rate(wb, X, f"Ethereum|{config.a4_burn_metric('Ethereum')}")
     assert _get(a4, "Fees required for crossover") == pytest.approx(fees * iss / burn * 365)
-    assert _get(a4, "Governance lever") == pytest.approx(iss * _data(wb, X, "Ethereum|price_usd", "q0") / fees)
+    # PR1B.3 (lead 2026-11-09): the lever's issuance $ is each day's issuance x that day's price (was x the Q0 average)
+    assert _get(a4, "Governance lever") == pytest.approx(_rate(wb, X, "Ethereum|gross_issuance_day_priced_usd") / fees)
     assert _get(a4, "Burn split Q0") in (None, "")                    # one burn series: nothing to split
 
 

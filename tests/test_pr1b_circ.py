@@ -16,6 +16,13 @@ MS_OLD, MS_NEW = f"CP | {config._MS_OLD}", f"CP | {config._MS_NEW}"
 NSC_OLD = "Master | NET SUPPLY CHANGE Q0 (tokens) = issuance − burn"
 
 
+@pytest.fixture
+def round_1_renames(monkeypatch):
+    """These tests pin ROUND 1's declared renames (MS_OLD -> MS_NEW, NSC_OLD): round 1B's own entries (PR1B.3, PR1B.8,
+    PR1B.10b, dated 2026-11-09; MS_NEW -> the 90-day-mean header) are set aside — tested in tests/test_pr1b_burn.py."""
+    monkeypatch.setattr(config, "HEADLINE_RENAMES", [e for e in config.HEADLINE_RENAMES if e.get("date") != "2026-11-09"])
+
+
 # ============================================================ item 12a: project_freeze --compare runs without pytest
 
 def _top_level_imports(path: Path) -> set:
@@ -77,11 +84,14 @@ def test_round_1_entries_name_todays_headers_and_old_ones():
         assert e["kind"] in ("rename", "change") and e.get("why") and e.get("ref") and e.get("date"), e
         assert e["from"] not in today, e["from"]
         if e["from"] in (NSC_OLD, MS_OLD, f"CP | {config._MS2_OLD}"):
-            assert e["to"] in today, e["to"]
+            # PR1B.10b (burn group, lead 2026-11-09): MS_OLD's round-1 successor was renamed again this round — the
+            # chain's END is today's header
+            end = config.headline_successor(e.get("project") or "Pendle", e["from"])["to"]
+            assert end in today, end
             assert e.get("same_quantity_at") in (None, *today)
 
 
-def test_successor_rename_change_project_override_and_chain(monkeypatch):
+def test_successor_rename_change_project_override_and_chain(monkeypatch, round_1_renames):
     s = config.headline_successor("Pendle", MS_OLD)
     assert (s["to"], s["kind"], s["ref"]) == (MS_NEW, "rename", "PR1.S2")
     u = config.headline_successor("Uniswap", MS_OLD)
@@ -106,7 +116,7 @@ def _snap(heads):
     return {"bases": {}, "headlines": heads}
 
 
-def test_compare_reads_a_declared_rename_like_for_like_and_a_change_as_a_change():
+def test_compare_reads_a_declared_rename_like_for_like_and_a_change_as_a_change(round_1_renames):
     before = _snap({"Pendle": {MS_OLD: 0.10},
                     "Uniswap": {MS_OLD: 0.2956, NSC_OLD: -5594001.2}})
     after = _snap({"Pendle": {MS_NEW: 0.10},
@@ -124,7 +134,7 @@ def test_compare_reads_a_declared_rename_like_for_like_and_a_change_as_a_change(
             and "the old quantity reads -5,594,001 at Master | Issuance − burn Q0" in text)
 
 
-def test_a_declared_successor_with_no_value_is_still_a_lost_headline():
+def test_a_declared_successor_with_no_value_is_still_a_lost_headline(round_1_renames):
     before = _snap({"Uniswap": {MS_OLD: 0.2956}})
     bad = mg.compare(before, _snap({"Uniswap": {}}), [], declared=[])
     assert len(bad) == 1 and bad[0].startswith(f"HEADLINE LOST Uniswap {MS_OLD}")
@@ -134,7 +144,7 @@ def test_a_declared_successor_with_no_value_is_still_a_lost_headline():
     assert bad == ["HEADLINE LOST Uniswap CP | OLD: 1 before, no value after"]
 
 
-def test_the_live_guard_reads_the_renames_too():
+def test_the_live_guard_reads_the_renames_too(round_1_renames):
     """Jake's live guard (--newer) compares the previous run's snapshot (old headers) with the live build."""
     prev = {"Uniswap": {NSC_OLD: -5594001.2, MS_OLD: 0.2956}}
     heads = {"Uniswap": {"Master | NET SUPPLY CHANGE Q0 (tokens) = closing − opening circulating supply": -649634.0,
@@ -148,7 +158,7 @@ def test_the_live_guard_reads_the_renames_too():
     assert len(bad) == 2 and all("no value there either" in b for b in bad)
 
 
-def test_round_1_renames_against_the_committed_guard_baseline():
+def test_round_1_renames_against_the_committed_guard_baseline(round_1_renames):
     """The committed baseline (today's headers) against the same headlines under round 1's OLD headers: no HEADLINE
     LOST, every market-share header listed as declared (12 projects' first basis, 2 second basis)."""
     base = json.loads((ROOT / "tests" / "fixtures" / "guard_baseline.json").read_text(encoding="utf-8"))
@@ -162,7 +172,7 @@ def test_round_1_renames_against_the_committed_guard_baseline():
     assert n >= 14 and len(declared) == n
 
 
-def test_sanity_and_continuity_read_a_value_held_under_an_older_declared_name():
+def test_sanity_and_continuity_read_a_value_held_under_an_older_declared_name(round_1_renames):
     import openpyxl
     import credibility
     import sanity

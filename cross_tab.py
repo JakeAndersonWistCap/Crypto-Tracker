@@ -47,7 +47,7 @@ MASTER_SOURCES = {
     "Issuance − burn, annualised % of circulating — a component, NOT the net supply change": [
         ("A1", "NET ISSUANCE AFTER BURN, annualised % of circulating (+ is net inflation; fee-market burns included)"),
         ("A4", "ISSUANCE − BURN, annualised % of circulating (signed; + is net inflation; the cell says 'burn only' where nothing is minted)")],
-    "Fees ÷ issuance ($, Q0; issuance at 90d avg price)": [("A1", "FEES ÷ ISSUANCE (x) — key ratio")],
+    "Fees ÷ issuance ($, Q0; issuance at each day's price)": [("A1", "FEES ÷ ISSUANCE (x) — key ratio")],
     "Fees ÷ FDV (annualised)": [("A3", "Fees ÷ FDV (annualised)")],
     "Buyback % of supply (annualised, implied, split as at this window)": [
         ("A3", "BUYBACK AS % OF SUPPLY (annualised, implied)")],
