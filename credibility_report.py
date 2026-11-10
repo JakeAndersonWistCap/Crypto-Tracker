@@ -193,7 +193,7 @@ def evaluate(project: str | None = None, libreoffice: bool = False, asof=None, n
 
 
 def signoff_block(only: str | None = None) -> list[str]:
-    """THE SIGN-OFF BLOCK, ONE FUNCTION FOR BOTH REPORTS (audit item 8): each project SIGNED OFF or OPEN from the
+    """THE SIGN-OFF BLOCK, ONE FUNCTION FOR BOTH REPORTS (audit item 8): each project NO OPEN CHECKS or OPEN from the
     Credibility verdicts — open = CHECK / FRESH-only / an uncoded row / UNVERIFIABLE or N/A with no reason (PR1C.3) — with every open
     row and its reason, from the shared evaluation, headed by the asof it was evaluated at."""
     import pandas as pd

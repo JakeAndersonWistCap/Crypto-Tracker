@@ -27645,7 +27645,7 @@ def test_signoff_categories_and_evidence_gated_helpers():
         assert not cred.signed(v), v
     rows = [{"project": "A", "id": "x"}, {"project": "A", "id": "y"}, {"project": "B", "id": "z"}]
     s = cred.signoff(rows, ["PASS", "CHECK", "MATURING (until 2026-10-17)"])
-    assert s["A"]["status"] == "OPEN" and s["A"]["open"][0][0] == "y" and s["B"]["status"] == "SIGNED OFF"
+    assert s["A"]["status"] == "OPEN" and s["A"]["open"][0][0] == "y" and s["B"]["status"] == "NO OPEN CHECKS"
     assert s["B"]["counts"] == {"MATURING": 1}
     for bad in (lambda: config._c_lim("why", "", "upgrade"), lambda: config._c_lim("why", "ev", ""),
                 lambda: config._c_find("why", ""), lambda: config._c_mat("why", "")):

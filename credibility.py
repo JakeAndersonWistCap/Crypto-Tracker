@@ -52,6 +52,9 @@ VERDICTS = ("PASS", "CHECK", "FRESH-only", "UNVERIFIABLE", "N/A")
 # refuse one without. Only the COUNTING changed (PR1C.3): no verdict and no cell value moved.
 SIGNED = ("PASS", "N/A", "UNVERIFIABLE", "DOCUMENTED LIMITATION", "MATURING", "VERIFIED FINDING")
 REASON_NEEDED = ("UNVERIFIABLE", "N/A")      # signed only with a stated reason (PR1C.3)
+# PR2.3 (Jake 2026-11-10): the status of a project with no open row is "NO OPEN CHECKS" — a label only, the counting
+# unchanged; only a project that has been through its own round and the live checks is signed off
+NO_OPEN = "NO OPEN CHECKS"
 
 
 def signed(verdict, note=None) -> bool:
@@ -64,7 +67,7 @@ def signed(verdict, note=None) -> bool:
 
 
 def signoff(rows: list, verdicts: list) -> dict:
-    """{project: {"status": "SIGNED OFF"|"OPEN", "open": [(id, verdict, note)], "counts": {category: n}}} from the
+    """{project: {"status": "NO OPEN CHECKS"|"OPEN", "open": [(id, verdict, note)], "counts": {category: n}}} from the
     built rows and their displayed verdicts (same order)."""
     out: dict = {}
     for r, v in zip(rows, verdicts):
@@ -76,7 +79,7 @@ def signoff(rows: list, verdicts: list) -> dict:
         if cat == "OPEN":
             d["open"].append((r["id"], v, note[:300]))
     for d in out.values():
-        d["status"] = "SIGNED OFF" if not d["open"] else "OPEN"
+        d["status"] = NO_OPEN if not d["open"] else "OPEN"
     return out
 
 DERIVED_WHY = ("a ratio we derive — no third party publishes it; its inputs are checked in this "

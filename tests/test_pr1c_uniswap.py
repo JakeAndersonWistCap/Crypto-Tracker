@@ -175,7 +175,7 @@ def test_3_unverifiable_or_na_with_a_reason_does_not_hold_sign_off_open():
             {"project": "U", "id": "b", "note": "by design"},
             {"project": "U", "id": "c", "note": ""}]
     s = cred.signoff(rows[:2], ["UNVERIFIABLE (inputs)", "N/A"])
-    assert s["U"]["status"] == "SIGNED OFF" and s["U"]["counts"] == {"UNVERIFIABLE": 1, "N/A": 1}
+    assert s["U"]["status"] == "NO OPEN CHECKS" and s["U"]["counts"] == {"UNVERIFIABLE": 1, "N/A": 1}
     s2 = cred.signoff(rows, ["PASS", "N/A", "UNVERIFIABLE"])                    # a row with no reason: OPEN
     assert s2["U"]["status"] == "OPEN" and [o[0] for o in s2["U"]["open"]] == ["c"]
     for v in ("CHECK (inputs)", "FRESH-only", "something uncoded", ""):         # still open, whatever the note

@@ -9451,7 +9451,9 @@ def a3_key_note(p: dict) -> str:
                                       + lg["emissions"]))
     un = ("unlocks = unlock_release_tokens (the falls of the non-circulating wallets)" if lg["unlocks"] else
           "no unlock leg: no non-circulating wallet set is declared for this project (config.unlock_stock_metrics)")
-    return (f"A3 KEY (P4-Q5a, Jake 2026-11-03): {burn} ÷ ({em}; {un}), each per covered day. A held buyback is not "
+    halt = config.buyback_halt_text(name)          # PR2.3: a halted programme's key is a measured 0, dated
+    return (halt + "\n\n" if halt else "") + (
+            f"A3 KEY (P4-Q5a, Jake 2026-11-03): {burn} ÷ ({em}; {un}), each per covered day. A held buyback is not "
             f"burned (P4-Q5b): it leaves the tradeable float while held instead. Emissions + unlocks a measured 0 with "
             f"a burn above 0 reads '{A3_NO_NEW_SUPPLY}' and ranks first."
             + (f" {option_c_text(name)}" if OPTION_C.get(name) else ""))
@@ -13499,8 +13501,10 @@ def write_credibility(ws, R: Refs, data_by_key: dict, long: pd.DataFrame, asof) 
            "rows: PASS only when every input passes · CHECK = it disagrees, or a reference exists "
            "but was not read (the note says how to resolve) · FRESH-only = the only reference re-reads our own "
            "source: current, not verified — never a PASS · UNVERIFIABLE = no independent source exists (the note "
-           f"says why). Our value is the headline cell itself. SIGN-OFF (PR1C.3): 0 CHECK, 0 FRESH-only, every row "
-           f"coded — an UNVERIFIABLE or N/A with its stated reason does not hold it open. Parked: {parked or 'none'}.")
+           f"says why). Our value is the headline cell itself. NO OPEN CHECKS (PR1C.3; the label PR2.3): 0 CHECK, 0 "
+           f"FRESH-only, every row coded — an UNVERIFIABLE or N/A with its stated reason does not hold it open. It is "
+           f"not a sign-off: only a project through its own round and the live checks is signed off. "
+           f"Parked: {parked or 'none'}.")
     s0 = 4
     # THE FINISH LINE (credibility.SIGNED; PR1C.3, Jake 2026-11-10): SIGNED OFF = 0 CHECK, 0 FRESH-only, every row
     # coded; an UNVERIFIABLE or N/A WITH a stated reason does not hold it open. OPEN = CHECK + FRESH-only + rows coded
@@ -13521,7 +13525,9 @@ def write_credibility(ws, R: Refs, data_by_key: dict, long: pd.DataFrame, asof) 
             ws.cell(row=r, column=j, value=f'=COUNTIFS({crit}{K},"{v}")')
         ws.cell(row=r, column=11, value=f"=C{r}+D{r}+(G{r}-B{r}-C{r}-D{r}-E{r}-F{r}-H{r}-I{r}-J{r})"
                                         f'+COUNTIFS({crit}{K},"UNVERIFIABLE*",{L},"")+COUNTIFS({crit}{K},"N/A*",{L},"")')
-        ws.cell(row=r, column=12, value=f'=IF(K{r}=0,"SIGNED OFF","OPEN")').font = F_BOLD
+        # PR2.3 (Jake 2026-11-10): a LABEL only — "NO OPEN CHECKS", not "SIGNED OFF": only a project that has been
+        # through its own round and the live checks is signed off; the counting is unchanged
+        ws.cell(row=r, column=12, value=f'=IF(K{r}=0,"NO OPEN CHECKS","OPEN")').font = F_BOLD
     _header(ws, d_head, CRED_HEAD)
 
     def text(v):                     # a note that starts with "=" must never become a formula
