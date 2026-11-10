@@ -534,6 +534,71 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11eh. Project round 2 — Fluid (2026-11-10)
+
+**Read-only checks first** (PowerShell 5.1, from the repo folder; nothing here writes to `metrics.db`):
+
+```
+# ITEM 3 - the buyback is still halted (Fluid's own API, and the buyback proxy on chain)
+Invoke-RestMethod https://api.fluid.io/v2/fluid-token/buybacks/stats | Where-Object { $_.id -in 'total-fluid-buyback','fluid-buyback-30d' } | ForEach-Object { "$($_.id) $($_.value)" }
+#   expect: total-fluid-buyback 4745304.885739369236502633
+#           fluid-buyback-30d 0
+(Invoke-RestMethod "https://api.fluid.io/v2/fluid-token/buybacks/charts?start=2026-03-21&end=2026-11-10").Count
+#   expect: 0          (no execution after 2026-03-20)
+(Invoke-RestMethod "https://eth.blockscout.com/api?module=logs&action=getLogs&address=0x9Afb8C1798B93a8E04a18553eE65bAFa41a012F1&fromBlock=25070000&toBlock=latest").message
+#   expect: No logs found          (the buyback proxy: nothing since about 2026-05-11)
+
+# ITEM 2 - what your store holds for the three lines (Q0 = the 90 days to yesterday)
+@'
+import sqlite3, datetime as dt
+c = sqlite3.connect("file:metrics.db?mode=ro", uri=True)
+hi = dt.date.today() - dt.timedelta(days=1); lo = hi - dt.timedelta(days=89)
+for m in ("fees_usd", "revenue_usd", "holders_revenue_usd", "actual_buyback_usd"):
+    s = c.execute("SELECT SUM(value), COUNT(*) FROM metrics WHERE project='Fluid' AND metric=? AND substr(date,1,10) BETWEEN ? AND ?", (m, str(lo), str(hi))).fetchone()
+    print(m, f"{(s[0] or 0):,.0f} over {s[1]} rows")
+print("last buyback > 0:", c.execute("SELECT MAX(substr(date,1,10)) FROM metrics WHERE project='Fluid' AND metric='actual_buyback_usd' AND value > 0").fetchone()[0])
+'@ | python -
+#   expect: fees_usd about $10M and revenue_usd about $1.5-1.8M over ~89 rows; holders_revenue_usd 0 (DefiLlama);
+#           actual_buyback_usd 0 over its rows; last buyback > 0: 2026-03-20
+
+# ITEM 1 - before the build: the Fluid cells done_check flags today (your current workbook)
+python done_check.py --verbose | Select-String "^Fluid" -Context 0,14
+#   expect (today, before this round's build): NOT READY with the rule-3 staking / buyback-fund / uniformity cells,
+#           leakage, and the four 'not yet split' S13 cells
+```
+
+**Then the normal run and build** (`python token_metrics.py`), and one read-only command per item:
+
+```
+python done_check.py --verbose | Select-String "^Fluid" -Context 0,6           # ITEM 1
+#   expect: Fluid | READY |   — or, if your LEAKAGE (ii) cell reads n/a, that one cell still flagged: its reason is not
+#   declared (it is not on the test data; send me its text)
+@'
+import openpyxl
+ws = openpyxl.load_workbook("token_metrics_audit.xlsx")["CP Comparability"]
+hr = next(r for r in range(1, 13) if ws.cell(r, 1).value == "Project")
+row = next(r for r in range(hr + 1, ws.max_row + 1) if ws.cell(r, 1).value == "Fluid")
+for c in range(1, ws.max_column + 1):
+    h = str(ws.cell(hr, c).value or "")
+    if "S13" in h: print(ws.cell(row, c).coordinate, h[:28], "|", (ws.cell(row, c).comment.text if ws.cell(row, c).comment else "")[:90])
+'@ | python -                                                                   # ITEM 2
+#   expect: BN/BO/BP/BQ FEES / REVENUE / HOLDER REVENUE / HOLDER SHARE, each comment "REVENUE LINE: ... Route
+#           (SECONDARY - aggregator only)" for fees and revenue, "(PRIMARY)" for holder revenue; the cells (after
+#           recalculation) fees ~$10M, revenue ~$1.5-1.8M, holder revenue 0, holder share 0
+@'
+import openpyxl
+ws = openpyxl.load_workbook("token_metrics_audit.xlsx")["A3 Revenue Buyback"]
+hr = next(r for r in range(1, 13) if ws.cell(r, 1).value == "Project")
+row = next(r for r in range(hr + 1, ws.max_row + 1) if ws.cell(r, 1).value == "Fluid")
+c = next(ws.cell(row, k) for k in range(1, ws.max_column + 1) if str(ws.cell(hr, k).value or "").startswith("BURNED"))
+print(c.coordinate, c.comment.text[:150])
+'@ | python -                                                                   # ITEM 3
+#   expect: BR.. 0, MEASURED — the buyback programme is HALTED: last execution 2026-03-20, halted by governance
+#           2026-05-11 (the post-mortem after the Resolv incident); still halted on 2026-11-10: ...
+```
+The Credibility tab's last column now reads "NO OPEN CHECKS" where it read "SIGNED OFF" (a label; the counts are as
+before).
+
 ## 11eg. Project round 1D — the FDV row judged by its inputs (2026-11-10)
 
 Read-only, after the normal run and build (reads `token_metrics_audit.xlsx` only, evaluates with the repo's xlcalc):
@@ -552,6 +617,7 @@ for r in range(20, ws.max_row + 1):
         print("FDV row:", xlcalc.display(X.value("Credibility", r, 11)))
 '@ | python -
 #   expect: {'PASS': ..., 'CHECK': 0.0, 'FRESH-only': 0.0, 'UNVERIFIABLE': ..., 'OPEN': 0.0, 'Sign-off': 'SIGNED OFF'}
+#           (from round 2 the label reads 'NO OPEN CHECKS', PR2.3)
 #           FDV row: PASS (inputs)
 ```
 If the FDV row reads CHECK (inputs), a leg failed on your store: the price vs Coinbase (in_price) or the total supply
