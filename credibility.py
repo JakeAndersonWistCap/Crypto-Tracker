@@ -2578,9 +2578,17 @@ def wiring_inputs(name: str, rows: dict) -> dict:
     wiring._strings(spec_p, named)
     out = {}
     if _has_number(rows, name, "fdv_usd_coingecko"):
+        # PR1D (Jake 2026-11-10): FDV = price x total supply, JUDGED BY ITS INPUTS like every derived row — the price on
+        # its independent route (Coinbase where a product is declared, else DefiLlama's for the token's address) and
+        # the total supply row; 'PASS (inputs)' when both pass. CoinGecko's FDV re-reads CoinGecko's price (a match
+        # was only ever FRESH-only), so it stays BESIDE the row as information, never the judge. `ref` is kept for a
+        # parked project's recorded row (CREDIBILITY_PARKED_RECORDED).
+        product = (config.CREDIBILITY_XREF.get("coinbase_product") or {}).get(name)
         out["in_fdv_coingecko"] = {
-            "what": "FDV ($) — ours (price x our total supply) vs CoinGecko's (price x CoinGecko's total)",
+            "what": "FDV ($) = price x our total supply — judged by its inputs (price, total supply); CoinGecko's FDV "
+                    "beside it as information",
             "ours": {"metric": "fdv_usd", "window": "now"}, "fmt": '$#,##0;($#,##0);-',
+            "inputs": ("in_price" if product else "in_price_llama", "in_total_supply_coingecko"),
             "ref": {"metric": "fdv_usd_coingecko", "window": "now", "tol": 1.0, "same_source": True,
                     "source": "CoinGecko fully_diluted_valuation (fdv_usd_coingecko)",
                     "note": "The price is CoinGecko's on both sides, so a match is FRESH-only; the supply leg is judged "
@@ -2989,6 +2997,17 @@ def build_rows(headline_cells: list[dict], rows: dict, long, asof, projects=None
                         if len(sr):
                             ours["fallback"] = float(sr.iloc[-1])
                             ours["latest_date"] = str(sr.index[-1].date())
+            if spec.get("inputs"):
+                # PR1D: an input row JUDGED BY ITS INPUTS (FDV = price x total supply): derived, like a headline's
+                # derived row; the reference read above (CoinGecko's FDV) is shown beside it as information only
+                out.append({"project": name, "tab": "input", "cell": cell, "id": iid, "what": spec["what"],
+                            "ours": ours, "fmt": spec.get("fmt"), "tol": None, "value": ref.get("value"),
+                            "date": ref.get("date"),
+                            "source": f"its input rows (below); beside, as information only: {ref.get('source') or '—'}",
+                            "mode": "derived", "verdict": None, "inputs": tuple(spec["inputs"]),
+                            "note": "CoinGecko's FDV is beside it for information — it re-reads CoinGecko's price, so it "
+                                    "never judges (PR1D)."})
+                continue
             ref_metric = spec["ref"].get("metric")
             if ref_metric and spec["ref"].get("window", "now") == "now" and ref.get("mode") not in ("static",):
                 ref = {**ref, "ref_max_age": now_max_age(name, ref_metric)}

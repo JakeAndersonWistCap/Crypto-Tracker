@@ -534,6 +534,29 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11eg. Project round 1D — the FDV row judged by its inputs (2026-11-10)
+
+Read-only, after the normal run and build (reads `token_metrics_audit.xlsx` only, evaluates with the repo's xlcalc):
+
+```
+@'
+import openpyxl, xlcalc
+wb = openpyxl.load_workbook("token_metrics_audit.xlsx")
+X, ws = xlcalc.Workbook(wb), wb["Credibility"]
+h = [ws.cell(4, c).value for c in range(1, 13)]
+for r in range(5, 40):
+    if ws.cell(r, 1).value == "Uniswap":
+        print({h[c - 1]: xlcalc.display(X.value("Credibility", r, c)) for c in (2, 3, 4, 5, 11, 12)})
+for r in range(20, ws.max_row + 1):
+    if ws.cell(r, 1).value == "Uniswap" and str(ws.cell(r, 4).value or "").startswith("FDV ($) = price"):
+        print("FDV row:", xlcalc.display(X.value("Credibility", r, 11)))
+'@ | python -
+#   expect: {'PASS': ..., 'CHECK': 0.0, 'FRESH-only': 0.0, 'UNVERIFIABLE': ..., 'OPEN': 0.0, 'Sign-off': 'SIGNED OFF'}
+#           FDV row: PASS (inputs)
+```
+If the FDV row reads CHECK (inputs), a leg failed on your store: the price vs Coinbase (in_price) or the total supply
+(in_total_supply_coingecko) row says which.
+
 ## 11ef. Project round 1C — Uniswap finish (2026-11-10)
 
 **Read-only checks first** (PowerShell 5.1, from the repo folder; nothing here writes to `metrics.db`):
