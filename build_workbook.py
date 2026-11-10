@@ -866,13 +866,71 @@ def _handover_cut_views(groups: dict) -> None:
                 groups[(p["name"], metric)] = g[keep]
 
 
-def _tokenjar_revenue_views(groups: dict) -> None:
-    """THE REVENUE LINE FROM THE TOKENJARS (PR1B.9, Jake 2026-11-09; config.TOKENJAR_REVENUE). DefiLlama's stored
-    revenue_usd (the value RELEASED) is kept beside it as revenue_usd_defillama, always. Where the jar inflows are
-    stored (tokenjar_inflow_usd), revenue_usd becomes DefiLlama's rows dated BEFORE the first jar day, then the jar
-    rows — the declared handover (series_handover revenue_usd): the legs never overlap, a day after the jar's last row
-    is a hole (never filled from the other leg). The state for the cell notes is set on config.TOKENJAR_NOTE (the
-    window figures are added by _tokenjar_window_notes, once the windows are known)."""
+def tokenjar_takeover(groups: dict, name: str, asof) -> tuple[bool, list[str]]:
+    """PR1C.2 (Jake 2026-11-10): whether the TokenJar inflows may TAKE OVER the revenue line on this build — every test
+    of config.TOKENJAR_TAKEOVER over the Q0 window (asof − 90 days, asof]: a jar row on every day (the as-of day alone
+    may be the read lag), ≥ min_priced_share of the transfers in priced, no row with a chain's native coin or a chain
+    NOT READ (PARTIAL), the jars' balance read on every chain (not PARTIAL) at the window's start and end. Returns
+    (passed, [one line per test, with its numbers])."""
+    t = (getattr(config, "TOKENJAR_TAKEOVER", {}) or {}).get(name)
+    spec = (getattr(config, "TOKENJAR_REVENUE", {}) or {}).get(name)
+    if not t or not spec:
+        return False, ["no takeover test declared (config.TOKENJAR_TAKEOVER)"]
+    asof = pd.Timestamp(asof).normalize()
+    lo = asof - pd.Timedelta(days=GLOBALS["period_days"])
+    need = pd.date_range(lo + pd.Timedelta(days=1), asof - pd.Timedelta(days=1))
+    out, ok = [], True
+
+    def rows(metric):
+        g = groups.get((name, metric))
+        if g is None or g.empty:
+            return pd.DataFrame(columns=["date", "value", "source"])
+        g = g.assign(date=pd.to_datetime(g["date"]).dt.normalize())
+        return g[(g["date"] > lo) & (g["date"] <= asof)]
+
+    jar = rows(spec["jar_metric"])
+    held = set(jar["date"])
+    miss = [d for d in need if d not in held]
+    if t.get("full_window"):
+        ok &= not miss
+        out.append(f"full Q0 window: {len(need) - len(miss)} of {len(need)} days held"
+                   + (f" (missing {_named_day_ranges(miss, 3)})" if miss else " — met"))
+    n = float(rows(spec["count_metric"])["value"].sum())
+    u = float(rows(spec["unpriced_metric"])["value"].sum())
+    share = (1 - u / n) if n else None
+    floor = float(t.get("min_priced_share", 1.0))
+    ok &= share is not None and share >= floor
+    out.append(f"priced: {share:.1%} of {int(n):,} transfers in (needs ≥{floor:.0%})" if share is not None
+               else f"priced: no transfer count stored in Q0 (needs ≥{floor:.0%})")
+    if t.get("native_every_chain"):
+        part = sorted(jar.loc[jar["source"].astype(str).str.contains(":PARTIAL", regex=False), "date"].unique())
+        ok &= not part
+        out.append("every chain's native coin read: " + (f"NOT on {len(part)} day(s) ({_named_day_ranges(part, 3)})"
+                                                         if part else "met"))
+    if t.get("balance_every_chain"):
+        bal = groups.get((name, spec["balance_metric"]))
+        bal = (bal.assign(date=pd.to_datetime(bal["date"]).dt.normalize()) if bal is not None and not bal.empty
+               else pd.DataFrame(columns=["date", "value", "source"]))
+        ends = []
+        for label, day in (("start", lo), ("end", asof)):
+            # the last balance at or before the window's start / end, within 3 days (as _flow_at, the window notes)
+            r = bal[(bal["date"] <= day) & (bal["date"] >= day - pd.Timedelta(days=3))].sort_values("date").tail(1)
+            if r.empty:
+                ends.append(f"{label} ({day.date()}): not read within 3 days")
+            elif r["source"].astype(str).str.contains(":PARTIAL", regex=False).any():
+                ends.append(f"{label} ({r['date'].iloc[0].date()}): PARTIAL (a chain not read)")
+        ok &= not ends
+        out.append("every chain's balance read at the window's start and end: " + ("; ".join(ends) or "met"))
+    return bool(ok), out
+
+
+def _tokenjar_revenue_views(groups: dict, asof=None) -> None:
+    """THE REVENUE LINE AND THE TOKENJARS (PR1B.9; PR1C.2, Jake 2026-11-10: "back to DefiLlama"). revenue_usd is
+    DefiLlama's dailyRevenue (secondary), kept also as revenue_usd_defillama; the jar inflows (tokenjar_inflow_usd) sit
+    BESIDE it as their own series and its cross-check, never spliced in, UNLESS this build passes every test of
+    config.TOKENJAR_TAKEOVER (tokenjar_takeover) — only then revenue_usd becomes DefiLlama's rows before the first jar
+    day, then the jar rows (the declared handover, series_handover revenue_usd). The state for the cell notes is set
+    on config.TOKENJAR_NOTE (the window figures are added by _tokenjar_window_notes, once the windows are known)."""
     config.TOKENJAR_NOTE.clear()
     scoped = {p["name"] for p in scoped_projects()}
     for name, spec in (getattr(config, "TOKENJAR_REVENUE", {}) or {}).items():
@@ -885,6 +943,12 @@ def _tokenjar_revenue_views(groups: dict) -> None:
         if jar is None or jar.empty:
             continue
         jd = jar.assign(date=pd.to_datetime(jar["date"]).dt.normalize())
+        passed, tests = tokenjar_takeover(groups, name, asof) if asof is not None else (False, ["no as-of day"])
+        if not passed:
+            config.TOKENJAR_NOTE[name] = {"handed_over": False, "first": str(jd["date"].min().date()),
+                                          "last": str(jd["date"].max().date()), "days": int(jd["date"].nunique()),
+                                          "takeover": tests, "text": ""}
+            continue
         # THE DECLARED LATER POINT (as HANDOVER_CONTINUATION writes its declared source): a jar row read from anywhere
         # else (a probe row of the measuring guard, a hand-entered row) joins under the declared point, its own source
         # kept inside the bracket and its markers kept — never a third, undeclared basis on revenue_usd
@@ -906,7 +970,7 @@ def _tokenjar_revenue_views(groups: dict) -> None:
         view = pd.concat(parts, ignore_index=True).sort_values("date")
         groups[(name, line)] = _as_stored(view, (dl if dl is not None else jar).columns)
         config.TOKENJAR_NOTE[name] = {"handed_over": True, "first": str(first.date()), "last": str(last.date()),
-                                      "days": int(jd["date"].nunique()), "text": ""}
+                                      "days": int(jd["date"].nunique()), "takeover": tests, "text": ""}
 
 
 def tokenjar_overlap(groups: dict, name: str) -> dict | None:
@@ -950,8 +1014,11 @@ def _tokenjar_window_notes(groups: dict) -> None:
     q0 = _WINDOWS.get("q0")
     for name, st in list(config.TOKENJAR_NOTE.items()):
         spec = config.TOKENJAR_REVENUE[name]
-        bits = [f"the jar inflows are stored {st['first']}..{st['last']} ({st['days']} day(s)); before "
-                f"{st['first']} DefiLlama's released value (declared handover)"]
+        bits = ([f"the jar inflows are stored {st['first']}..{st['last']} ({st['days']} day(s)); before "
+                 f"{st['first']} DefiLlama's released value (declared handover)"] if st.get("handed_over") else
+                [f"THE TOKENJAR INFLOWS SIT BESIDE THIS LINE (tokenjar_inflow_usd, its cross-check), NOT IN IT "
+                 f"(PR1C.2): stored {st['first']}..{st['last']} ({st['days']} day(s)); they take over only when "
+                 f"config.TOKENJAR_TAKEOVER passes — this build: " + "; ".join(st.get("takeover") or ())])
         if q0:
             lo, hi = pd.Timestamp(q0[0]), pd.Timestamp(q0[1])
             n, held = _flow_sum(_daily(groups.get((name, spec["count_metric"]))), lo, hi)
@@ -1660,7 +1727,7 @@ def _handover_overlap_checks(groups: dict) -> None:
                 if g is not None and not g.empty and pd.to_datetime(g["date"]).max() >= pd.Timestamp(rc["cutover"]):
                     HANDOVER_OVERLAP[(p["name"], metric)] = handover_reference_check(groups, p["name"], rc)
         # PR1B.9: the TokenJar handover's overlap, as sums (tokenjar_overlap)
-        if p["name"] in config.TOKENJAR_NOTE:
+        if (config.TOKENJAR_NOTE.get(p["name"]) or {}).get("handed_over"):     # PR1C.2: a seam only on takeover
             ov = tokenjar_overlap(groups, p["name"])
             if ov:
                 HANDOVER_OVERLAP[(p["name"], config.TOKENJAR_REVENUE[p["name"]]["line"])] = ov
@@ -2596,15 +2663,43 @@ def _one_off_parts(groups: dict, name: str) -> dict:
         comp = comp.sort_index()
         own = (-comp.diff()).clip(lower=0.0)[comp.index.to_series().diff().dt.days.eq(1).to_numpy()]
         falls = pd.concat([own, cat[~cat.index.isin(own.index)]]).sort_index()
-        falls = falls[(falls.index >= lo) & (falls.index <= hi)]
+        # PR1C.1: a holder read at a day's first block falls the day AFTER its claims, so the last claim day's fall is
+        # dated one day past `to` — read to `to` + 1 day; the declared total (`tokens`) caps what is placed
+        falls = falls[(falls.index >= lo) & (falls.index <= hi + pd.Timedelta(days=1))]
         what = f"{spec['holder'].split(' 0x')[0]} — {spec['what'].split(' — ')[0]}"
         for c in spec.get("carriers") or ():
-            s = _daily(groups.get((name, c)))
-            for day, v in falls.items():
-                if day in s.index and float(v) > 0:
-                    part = min(float(v), max(0.0, float(s[day])))
-                    put(c, day, part, what)
-                    usd_twin(c, day, part, what)
+            for day, part in _allocate_falls(falls, _daily(groups.get((name, c))), lo, hi,
+                                             cap=spec.get("tokens")).items():
+                put(c, day, part, what)
+                usd_twin(c, day, part, what)
+    return out
+
+
+def _allocate_falls(falls: pd.Series, carrier: pd.Series, lo, hi, cap=None) -> dict:
+    """PR1C.1 (Jake's live store, 2026-11-09: the notes counted 6,756,992 UNI one-off, 39%, where the claims are
+    12,257,360): the holder's falls are matched to the CARRIER's rows by a running remainder, not day by day. The
+    holder (the distributor, read at a day's first block by the catch-up) and the carrier (the falls of the whole
+    non-circulating set, read live and stamped at the read date) date the same claims up to a day apart, and a carrier
+    row after a missing day carries the days it spans; with claims as lumpy as these (5,095,200 on 10-27, 1,786,800
+    on 10-28) a same-day min(fall, carrier) kept about half. Each carrier row from the day before the window to the
+    first row after it takes min(the falls not yet placed, up to one day after the row; the row itself) — never more
+    than the holder's falls in total, never more than the declared one-off (`cap`), never more than any carrier row."""
+    out: dict = {}
+    if falls is None or falls.empty or carrier is None or carrier.empty:
+        return out
+    falls, carrier = falls.sort_index(), carrier.sort_index()
+    one = pd.Timedelta(days=1)
+    after = carrier.index[carrier.index > hi]
+    end = after[0] if len(after) else hi + one
+    placed = 0.0
+    for day, v in carrier[(carrier.index >= lo - one) & (carrier.index <= end)].items():
+        avail = float(falls[falls.index <= day + one].clip(lower=0.0).sum()) - placed
+        if cap is not None:
+            avail = min(avail, float(cap) - placed)
+        part = min(max(avail, 0.0), max(float(v), 0.0))
+        if part > 0:
+            out[day] = part
+            placed += part
     return out
 
 
@@ -6255,7 +6350,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _series_restatement_views(groups, asof)  # P2b-2: a declared restatement — its pending seam, or its holes, named
     _handover_continuation_views(groups)   # P2a D5a: a declared later leg read from another stored series (Maple)
     _handover_cut_views(groups)       # G11 C1: a declared cut — the earlier leg's rows after the later leg starts dropped
-    _tokenjar_revenue_views(groups)   # PR1B.9: Uniswap's revenue = the TokenJar inflows from their first stored day
+    _tokenjar_revenue_views(groups, asof)   # PR1C.2: the TokenJars beside DefiLlama's revenue; in it only on takeover
     _partial_sum_views(groups)    # FIRST: nothing downstream may read a partial sum
     _bad_print_views(groups)      # P3-A2: a stored stock's one-day bad print, before any view or window reads it
     _epoch_primary_views(groups, asof)   # D4-5: Pendle's own epoch figures, spread; DefiLlama only where none
@@ -13404,15 +13499,17 @@ def write_credibility(ws, R: Refs, data_by_key: dict, long: pd.DataFrame, asof) 
            "rows: PASS only when every input passes · CHECK = it disagrees, or a reference exists "
            "but was not read (the note says how to resolve) · FRESH-only = the only reference re-reads our own "
            "source: current, not verified — never a PASS · UNVERIFIABLE = no independent source exists (the note "
-           f"says why). Our value is the headline cell itself. Parked: {parked or 'none'}.")
+           f"says why). Our value is the headline cell itself. SIGN-OFF (PR1C.3): 0 CHECK, 0 FRESH-only, every row "
+           f"coded — an UNVERIFIABLE or N/A with its stated reason does not hold it open. Parked: {parked or 'none'}.")
     s0 = 4
-    # THE FINISH LINE (overnight sign-off round 2026-10-07): a project is SIGNED OFF when every row is PASS, N/A,
-    # DOCUMENTED LIMITATION, MATURING or VERIFIED FINDING (credibility.SIGNED); OPEN = the rest.
+    # THE FINISH LINE (credibility.SIGNED; PR1C.3, Jake 2026-11-10): SIGNED OFF = 0 CHECK, 0 FRESH-only, every row
+    # coded; an UNVERIFIABLE or N/A WITH a stated reason does not hold it open. OPEN = CHECK + FRESH-only + rows coded
+    # with none of the verdicts + UNVERIFIABLE / N/A whose note is empty.
     _header(ws, s0, ["Project", "PASS", "CHECK", "FRESH-only", "UNVERIFIABLE", "N/A (no figure by design)", "Rows",
                      "DOCUMENTED LIMITATION", "MATURING", "VERIFIED FINDING", "OPEN", "Sign-off"])
     d_head = s0 + len(projects) + 3
     d0, d1 = d_head + 1, d_head + max(len(rows), 1)
-    K, A = f"$K${d0}:$K${d1}", f"$A${d0}:$A${d1}"
+    K, A, L = f"$K${d0}:$K${d1}", f"$A${d0}:$A${d1}", f"$L${d0}:$L${d1}"
     for i, n in enumerate(projects + ["All"]):
         r = s0 + 1 + i
         ws.cell(row=r, column=1, value=n).font = F_BOLD if n == "All" else F_BASE
@@ -13422,7 +13519,8 @@ def write_credibility(ws, R: Refs, data_by_key: dict, long: pd.DataFrame, asof) 
         ws.cell(row=r, column=7, value=f"=COUNTIF({A},$A{r})" if n != "All" else f"=COUNTA({A})")
         for j, v in enumerate(("DOCUMENTED LIMITATION*", "MATURING*", "VERIFIED FINDING*"), start=8):
             ws.cell(row=r, column=j, value=f'=COUNTIFS({crit}{K},"{v}")')
-        ws.cell(row=r, column=11, value=f"=G{r}-B{r}-F{r}-H{r}-I{r}-J{r}")
+        ws.cell(row=r, column=11, value=f"=C{r}+D{r}+(G{r}-B{r}-C{r}-D{r}-E{r}-F{r}-H{r}-I{r}-J{r})"
+                                        f'+COUNTIFS({crit}{K},"UNVERIFIABLE*",{L},"")+COUNTIFS({crit}{K},"N/A*",{L},"")')
         ws.cell(row=r, column=12, value=f'=IF(K{r}=0,"SIGNED OFF","OPEN")').font = F_BOLD
     _header(ws, d_head, CRED_HEAD)
 
@@ -14068,7 +14166,7 @@ def _value_timing(groups: dict, name: str, start, end, usd_gap: float) -> str | 
     if not spec:
         return None
     # PR1B.9: after the TokenJar handover revenue is ACCRUED — the token test reads the RELEASED series it was made for
-    handed = name in config.TOKENJAR_NOTE and spec.get("released")
+    handed = (config.TOKENJAR_NOTE.get(name) or {}).get("handed_over") and spec.get("released")
     burn, px = (_daily(groups.get((name, spec[k]))) for k in ("burn", "price"))
     rev = _daily(groups.get((name, spec["released"] if handed else spec["revenue"])))
     if burn.empty or rev.empty or px.empty:
@@ -14121,7 +14219,7 @@ def _value_timing(groups: dict, name: str, start, end, usd_gap: float) -> str | 
 def _tokenjar_flows_note(name: str) -> str:
     """PR1B.9: the Flows revenue line's words where THIS build handed revenue over to the TokenJar inflows."""
     st = config.TOKENJAR_NOTE.get(name)
-    if not st:
+    if not st or not st.get("handed_over"):          # PR1C.2: beside the line, the Flows revenue is DefiLlama's
         return ""
     return (f"ACCRUED: the TokenJar inflows from {st['first']} (PR1B.9), DefiLlama's released value before "
             f"(declared handover); the jars' undistributed balance is the memo line below")

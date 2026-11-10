@@ -36710,7 +36710,9 @@ REVENUE_TIER.update({
     "Aerodrome": ("holder_revenue", "DefiLlama's Aerodrome 'Revenue' = the trading fees of staked LPs, ALL paid to "
                                     "veAERO voters (HOLDER_VALUE: 'revenue_usd: staked-LP fees, routed to voters') — "
                                     "it is what reaches holders, i.e. the HOLDER REVENUE line, not the revenue line"),
-    "Uniswap": ("revenue", "REVENUE BY A DECLARED PROXY: DefiLlama's revenue_usd is the value RELEASED from the "
+    "Uniswap": ("revenue", "SECONDARY — DefiLlama 'uniswap' dailyRevenue, an aggregator (PR1C.2; the TokenJar inflows "
+                           "sit beside it, tokenjar_inflow_usd, and take over only when config.TOKENJAR_TAKEOVER passes). "
+                           "REVENUE BY A DECLARED PROXY: DefiLlama's revenue_usd is the value RELEASED from the "
                            "TokenJars against UNI burns (its adapter dexs/uniswap-v3.ts: Released events on each chain's "
                            "Firepit × threshold() UNI × the UNI price; dailyRevenue = dailyHoldersRevenue). Every protocol "
                            "fee leaves the jars only that way, so over a window in which the jars' holdings do not change "
@@ -36846,7 +36848,10 @@ def revenue_tier(project_name: str) -> tuple[str, str] | None:
     if st and st.get("handed_over") and project_name in (globals().get("REVENUE_TIER_JAR") or {}):
         line, why = REVENUE_TIER_JAR[project_name]
         return line, why + (f". THIS BUILD: {st['text']}" if st.get("text") else "")
-    return REVENUE_TIER.get(project_name)
+    t = REVENUE_TIER.get(project_name)
+    if t and st and st.get("text"):          # PR1C.2: the jars beside the line — what they hold and the takeover test
+        return t[0], t[1] + f". THIS BUILD: {st['text']}"
+    return t
 
 
 def revenue_split(project_name: str) -> dict | None:
@@ -37150,6 +37155,22 @@ TOKENJAR_REVENUE = {"Uniswap": {"jar_metric": "tokenjar_inflow_usd", "line": "re
                                 "unpriced_metric": "tokenjar_unpriced_transfers",
                                 "one_side_metric": "tokenjar_lp_one_side_usd",
                                 "decided": "Jake 2026-11-09 (PR1B.9)"}}
+# PR1C.2 (Jake 2026-11-10: "back to DefiLlama"): revenue_usd IS DefiLlama's dailyRevenue, labelled SECONDARY; the
+# TokenJar inflows sit BESIDE it as their own series (tokenjar_inflow_usd) and its cross-check, never spliced into it —
+# Jake's store had them from 2026-11-05 only (4 days, 66.3% of transfers unpriced, native coin not read on 4 chains,
+# balances not read on 12 of 13), and the splice put a series break on 11-05. The jars TAKE OVER the line (the
+# declared handover below, PR1B.9) only on a build where EVERY test here passes over the Q0 window
+# (build_workbook.tokenjar_takeover); declared 2026-11-10, before any store passed it.
+TOKENJAR_TAKEOVER = {"Uniswap": {
+    "window": "q0",
+    "full_window": True,          # a jar row on every Q0 day (the as-of day alone may be the read lag)
+    "min_priced_share": 0.95,     # ≥95% of the Q0 transfers in priced (tokenjar_unpriced ÷ tokenjar_inflow_transfers)
+    "native_every_chain": True,   # no Q0 row with a chain's native coin NOT READ or a chain with no route (PARTIAL)
+    "balance_every_chain": True,  # the jars' balance read on every chain (not PARTIAL) at the window's start and end
+    "declared": "2026-11-10", "decided": "Jake 2026-11-10 (PR1C.2)",
+    "why": "the jars are the primary route to the protocol fee as it accrues, but a line with days missing, a third of "
+           "its transfers unvalued or a chain's leg unread would undercount it: DefiLlama's released value stays the "
+           "line until the jars measure the whole window"}}
 PROJECT_BY_NAME["Uniswap"].setdefault("series_handover", {})["revenue_usd"] = {
     "ordered_points": ("defillama", "chain:tokenjars:tokenjar_inflow"),
     "why": "DefiLlama's released value (Firepit Released × threshold × price), then the TokenJar inflows on chain "
@@ -37166,17 +37187,18 @@ PROJECT_BY_NAME["Uniswap"].setdefault("series_handover", {})["revenue_usd"] = {
 # undistributed balance and the release margin (one live day, 2026-10-12: accrued $120,289 vs released $118,939).
 # Before (the dumps: no jar row) the row is what it was — DefiLlama is the only aggregate (UNVERIFIABLE).
 CREDIBILITY.setdefault("Uniswap", {})["in_revenue"] = _c_in(
-    "Revenue Q0 — accrued (the TokenJar inflows, PR1B.9) vs released (DefiLlama)", "revenue_usd", "q0",
-    {"verdict_when": {"py": "window_sum", "args": {"metric": "tokenjar_inflow_transfers", "days": 90},
+    "Revenue Q0 — DefiLlama dailyRevenue (secondary) vs the TokenJar inflows beside it (PR1C.2)", "revenue_usd", "q0",
+    {"verdict_when": {"py": "tokenjar_taken_over", "args": {},
      "positive": {"metric": "revenue_usd_defillama", "window": "q0", "tol": 5.0,
                   "source": "DefiLlama 'uniswap' dailyRevenue (Firepit Released × threshold × the UNI price), kept "
                             "as revenue_usd_defillama",
-                  "note": "ACCRUED vs RELEASED: the jars' inflows against the value DefiLlama books released; over "
-                          "a quarter they differ by the change in the jars' undistributed balance (on the revenue "
-                          "cell) and the searchers' release margin. The days before the jar's first stored day "
-                          "are DefiLlama's on both sides (the declared handover)."},
+                  "note": "ACCRUED vs RELEASED (the jars took over, config.TOKENJAR_TAKEOVER passed): the jars' inflows "
+                          "against the value DefiLlama books released; over a quarter they differ by the change in the "
+                          "jars' undistributed balance (on the revenue cell) and the searchers' release margin."},
      "otherwise": {"verdict": "UNVERIFIABLE",
-                   "why": "no TokenJar inflow is stored in Q0 yet, so revenue is DefiLlama's released value — the "
-                          "only free aggregate (Token Terminal is paid).",
-                   "resolve": "token_metrics.py --seed tokenjar (the jar inflows, PR1B.9)"}}},
+                   "why": "revenue is DefiLlama's dailyRevenue — secondary, the only free aggregate (Token Terminal is "
+                          "paid); the TokenJar inflows are its primary cross-check and sit beside it "
+                          "(tokenjar_inflow_usd), not yet able to check a quarter.",
+                   "resolve": "token_metrics.py --seed tokenjar until config.TOKENJAR_TAKEOVER passes (the whole Q0 "
+                              "window, ≥95% of transfers priced, every chain's native coin and balance read)"}}},
     fmt=_C_USD)

@@ -37,22 +37,30 @@ import wiring
 
 VERDICTS = ("PASS", "CHECK", "FRESH-only", "UNVERIFIABLE", "N/A")
 
-# THE FINISH LINE (Jake, overnight sign-off round 2026-10-07): a project is SIGNED OFF when every row is one of
+# THE FINISH LINE (Jake, overnight sign-off round 2026-10-07; PR1C.3, Jake 2026-11-10): a project is SIGNED OFF when
+# its Credibility rows hold 0 CHECK, 0 FRESH-only (a re-read of our own source on a headline that has an independent
+# route — one with no independent route is coded UNVERIFIABLE with its reason) and every row is CODED:
 #   PASS                   independently confirmed within tolerance
-#   N/A                    does not apply by design
+#   N/A                    does not apply by design — WITH ITS STATED REASON
+#   UNVERIFIABLE           no independent source exists — WITH ITS STATED REASON (PR1C.3: it no longer holds sign-off
+#                          open; before, it did)
 #   DOCUMENTED LIMITATION  no free second source exists — the reason AND what would upgrade it are written down
 #   MATURING               fills by a stated date (a forward-only series)
 #   VERIFIED FINDING       our figure is confirmed and the gap is a real-world fact, with the evidence
-# Anything else (CHECK, FRESH-only, UNVERIFIABLE) is OPEN, with its reason. A row becomes a LIMITATION or FINDING
-# only with its evidence on the spec ("evidence", plus "upgrade" / "until") — config._c_lim / _c_find / _c_mat refuse
-# one without.
-SIGNED = ("PASS", "N/A", "DOCUMENTED LIMITATION", "MATURING", "VERIFIED FINDING")
+# OPEN: CHECK, FRESH-only, an uncoded row, and an UNVERIFIABLE or N/A with no reason. A row becomes a LIMITATION or
+# FINDING only with its evidence on the spec ("evidence", plus "upgrade" / "until") — config._c_lim / _c_find / _c_mat
+# refuse one without. Only the COUNTING changed (PR1C.3): no verdict and no cell value moved.
+SIGNED = ("PASS", "N/A", "UNVERIFIABLE", "DOCUMENTED LIMITATION", "MATURING", "VERIFIED FINDING")
+REASON_NEEDED = ("UNVERIFIABLE", "N/A")      # signed only with a stated reason (PR1C.3)
 
 
-def signed(verdict) -> bool:
-    """Whether a verdict (as displayed) counts towards sign-off."""
+def signed(verdict, note=None) -> bool:
+    """Whether a verdict (as displayed) counts towards sign-off. `note` is the row's reason: an UNVERIFIABLE or N/A
+    row with an empty one does not (PR1C.3); None = the caller has no note to give (the verdict alone is judged)."""
     v = str(verdict or "")
-    return any(v.startswith(s) for s in SIGNED)
+    if not any(v.startswith(s) for s in SIGNED):
+        return False
+    return not (note is not None and v.startswith(REASON_NEEDED) and not str(note).strip())
 
 
 def signoff(rows: list, verdicts: list) -> dict:
@@ -62,10 +70,11 @@ def signoff(rows: list, verdicts: list) -> dict:
     for r, v in zip(rows, verdicts):
         d = out.setdefault(r["project"], {"open": [], "counts": {}})
         v = str(v or "")
-        cat = next((s for s in SIGNED if v.startswith(s)), "OPEN")
+        note = r.get("note") or ""
+        cat = next((s for s in SIGNED if v.startswith(s)), "OPEN") if signed(v, note) else "OPEN"
         d["counts"][cat] = d["counts"].get(cat, 0) + 1
         if cat == "OPEN":
-            d["open"].append((r["id"], v, (r.get("note") or "")[:300]))
+            d["open"].append((r["id"], v, note[:300]))
     for d in out.values():
         d["status"] = "SIGNED OFF" if not d["open"] else "OPEN"
     return out
@@ -1603,6 +1612,18 @@ def _scans_q0(p, rows, long, asof, metrics=(), labels=(), require_all=False, **_
     return tot, str(max(b for _l, _v, _a, b in parts).date()), how
 
 
+def _tokenjar_taken_over(p, rows, long, asof, **_):
+    """PR1C.2: 1 where THIS build's TokenJar inflows passed config.TOKENJAR_TAKEOVER and took over the revenue line
+    (build_workbook.tokenjar_takeover, recorded on config.TOKENJAR_NOTE), else 0 — with the test's findings."""
+    st = (getattr(config, "TOKENJAR_NOTE", {}) or {}).get(p) or {}
+    tests = "; ".join(st.get("takeover") or ())
+    if not st:
+        return 0.0, None, "no TokenJar inflow is stored."
+    return (1.0 if st.get("handed_over") else 0.0), None, (
+        f"TokenJar inflows stored {st['first']}..{st['last']} ({st['days']} day(s)); the takeover test "
+        f"(config.TOKENJAR_TAKEOVER): {tests}.")
+
+
 def _window_sum(p, rows, long, asof, metric="", end="", days=30, times_price=False, **_):
     """A daily flow summed over the `days` days ending on `end` (a reading's own window — a figure read by hand on one
     date covers the days before it, not the build's), valued at the same-day price_usd when `times_price`. A day
@@ -2209,7 +2230,7 @@ FORMULAS = {"sum_months": _sum_months, "free_float_now": _free_float_now, "windo
             "sum_since": _sum_since, "schedule_month": _schedule_month, "months_scaled": _months_scaled, "rise_vs_flow": _rise_vs_flow,
             "product_on_common_day": _product_on_common_day, "now_sum": _now_sum,
             "log_price_growth": _log_price_growth, "bridge_reconciled": _bridge_reconciled,
-            "daily_delta_plus_flow": _daily_delta_plus_flow, "window_sum": _window_sum, "scans_q0": _scans_q0, "now_combo": _now_combo,
+            "daily_delta_plus_flow": _daily_delta_plus_flow, "window_sum": _window_sum, "tokenjar_taken_over": _tokenjar_taken_over, "scans_q0": _scans_q0, "now_combo": _now_combo,
             "epoch_span_sum": _epoch_span_sum, "trace_scanned": _trace_scanned, "trace_total": _trace_total,
             "scan_over_trace_span": _scan_over_trace_span}
 

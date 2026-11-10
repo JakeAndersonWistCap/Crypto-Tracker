@@ -27639,9 +27639,9 @@ def test_signoff_categories_and_evidence_gated_helpers():
     VERIFIED FINDING; each of the last three refuses to exist without its evidence."""
     import credibility as cred
     for v in ("PASS", "N/A (recorded)", "DOCUMENTED LIMITATION (first-party only)", "MATURING (until 2026-10-17)",
-              "VERIFIED FINDING", "VERIFIED FINDING (inputs)"):
-        assert cred.signed(v), v
-    for v in ("CHECK", "FRESH-only", "UNVERIFIABLE", "", None, "UNCHECKED"):
+              "VERIFIED FINDING", "VERIFIED FINDING (inputs)", "UNVERIFIABLE", "UNVERIFIABLE (inputs)"):
+        assert cred.signed(v), v          # PR1C.3 (Jake 2026-11-10): UNVERIFIABLE with its reason no longer holds open
+    for v in ("CHECK", "FRESH-only", "", None, "UNCHECKED"):
         assert not cred.signed(v), v
     rows = [{"project": "A", "id": "x"}, {"project": "A", "id": "y"}, {"project": "B", "id": "z"}]
     s = cred.signoff(rows, ["PASS", "CHECK", "MATURING (until 2026-10-17)"])

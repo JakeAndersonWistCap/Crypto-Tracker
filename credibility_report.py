@@ -194,7 +194,7 @@ def evaluate(project: str | None = None, libreoffice: bool = False, asof=None, n
 
 def signoff_block(only: str | None = None) -> list[str]:
     """THE SIGN-OFF BLOCK, ONE FUNCTION FOR BOTH REPORTS (audit item 8): each project SIGNED OFF or OPEN from the
-    Credibility verdicts — signed = PASS / N/A / DOCUMENTED LIMITATION / MATURING / VERIFIED FINDING — with every open
+    Credibility verdicts — open = CHECK / FRESH-only / an uncoded row / UNVERIFIABLE or N/A with no reason (PR1C.3) — with every open
     row and its reason, from the shared evaluation, headed by the asof it was evaluated at."""
     import pandas as pd
     import credibility
@@ -300,10 +300,11 @@ def main(argv=None) -> int:
         share = (f" = {abs(r[8]) / r[9]:.0%} of it" if isinstance(r[8], (int, float)) and isinstance(r[9], (int, float))
                  and r[9] else "")
         print(f"  {a(r[0]):<12} {a(r[3])[:70]:<70} gap {gap} vs tol +/-{tol}{share}")
-    print("\nCREDIBILITY - every OPEN row (not PASS / N/A / LIMITATION / MATURING / FINDING), with what would resolve it")
+    print("\nCREDIBILITY - every OPEN row (CHECK, FRESH-only, uncoded, or UNVERIFIABLE / N/A with no reason - PR1C.3), "
+          "with what would resolve it")
     for r in rows:
         v = a(r[10])
-        if not credibility.signed(v):
+        if not credibility.signed(v, a(r[11])):
             print(f"  [{v}] {a(r[0])} - {a(r[3])[:90]}\n      source: {a(r[5])[:160]}\n      {a(r[11])[:600]}")
     return 0
 

@@ -534,6 +534,78 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11ef. Project round 1C — Uniswap finish (2026-11-10)
+
+**Read-only checks first** (PowerShell 5.1, from the repo folder; nothing here writes to `metrics.db`):
+
+```
+git log --oneline -1
+#   expect: the round's last commit (the gate's head)
+python -c "import config; t=config.TOKENJAR_TAKEOVER['Uniswap']; print(t['min_priced_share'], t['full_window'], t['native_every_chain'], t['balance_every_chain'])"
+#   expect: 0.95 True True True
+python project_freeze.py --compare Uniswap
+#   expect: Uniswap: 309 cells, 0 undeclared move(s)
+```
+
+**Then the normal run and build** (`python token_metrics.py`), and one read-only command per item on the new
+`token_metrics_audit.xlsx` (each reads the workbook only):
+
+```
+# ITEM 1 - the claims' share on the A4 cells that read unlock_release_tokens Q0
+@'
+import openpyxl
+ws = openpyxl.load_workbook("token_metrics_audit.xlsx")["A4 Permanent Burn"]
+for row in ws.iter_rows():
+    if row[0].value == "Uniswap":
+        for c in row:
+            t = c.comment.text if c.comment else ""
+            if "unlock_release_tokens Q0" in t and "Without the one-off this cell reads" in t:
+                i, j = t.find("of which one-off:"), t.find("Without the one-off this cell reads")
+                print(c.coordinate, t[i:i + 24], "|", t[j + 20:t.find(" (shown", j)])
+        break
+'@ | python -
+#   expect: I7 of which one-off: 70.8% | this cell reads 1.08x      (the key; shown 0.317x)
+#           P7 / Q7 / R7 of which one-off: 70.8% | ... reads about 5.06M / about 3.3%   (shown 17,316,597 / 11.26%)
+
+# ITEM 2 - revenue is DefiLlama's, the jars beside it, no break
+@'
+import openpyxl
+wb = openpyxl.load_workbook("token_metrics_audit.xlsx")
+ws = wb["Master"]
+hr = next(r for r in range(1, 13) if ws.cell(r, 1).value == "Project")
+col = next(c for c in range(1, ws.max_column + 1) if str(ws.cell(hr, c).value or "").startswith("Revenue Q0 ($)"))
+row = next(r for r in range(hr + 1, ws.max_row + 1) if ws.cell(r, 1).value == "Uniswap")
+t = ws.cell(row, col).comment.text
+print(t[t.find("SECONDARY"):t.find("SECONDARY") + 52])
+j = t.find("this build: ")
+print(t[j:j + 330] if j >= 0 else "no TokenJar rows stored")
+tr = wb["Trajectory"]
+print("Uniswap revenue rows with a SERIES BREAK:", sum(1 for r in tr.iter_rows(values_only=True) if r and r[0] == "Uniswap"
+      and "revenue" in str(r[1] or "").lower() and any("SERIES BREAK" in str(v) for v in r if v)))
+'@ | python -
+#   expect: SECONDARY — DefiLlama 'uniswap' dailyRevenue, an agg
+#           this build: full Q0 window: 4 of 89 days held (missing ...); priced: 33.7% of N transfers in (needs >=95%);
+#           every chain's native coin read: NOT on n day(s) (...); every chain's balance read ...: start (...): not read
+#           within 3 days; end (...): PARTIAL (a chain not read)
+#           Uniswap revenue rows with a SERIES BREAK: 0
+
+# ITEM 3 - the sign-off counting (evaluates the Credibility summary with the repo's xlcalc)
+@'
+import openpyxl, xlcalc
+wb = openpyxl.load_workbook("token_metrics_audit.xlsx")
+X, ws = xlcalc.Workbook(wb), wb["Credibility"]
+h = [ws.cell(4, c).value for c in range(1, 13)]
+for r in range(5, 40):
+    if ws.cell(r, 1).value == "Uniswap":
+        print({h[c - 1]: xlcalc.display(X.value("Credibility", r, c)) for c in (2, 3, 4, 5, 6, 11, 12)})
+'@ | python -
+#   expect: CHECK 0.0, OPEN = the FRESH-only count (1.0: the FDV row), 'Sign-off': 'OPEN' — UNVERIFIABLE rows no
+#           longer counted open (on the dumps: PASS 10, CHECK 0, FRESH-only 1, UNVERIFIABLE 8, N/A 6, OPEN 1)
+```
+The one row still holding Uniswap open is FDV: FRESH-only (CoinGecko's FDV re-reads CoinGecko's price). It is a
+FRESH-only on a headline that has an independent route (price vs Coinbase, total supply on chain — both PASS), so under
+the rule it stays open; it was not changed this round.
+
 ## 11ee. Project round 1B — Uniswap close-out (2026-11-09)
 
 **Read-only checks first** (PowerShell 5.1, from the repo folder; nothing here writes to `metrics.db`):

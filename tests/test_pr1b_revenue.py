@@ -431,11 +431,12 @@ def _rows(metric, days, vals, source, tier=1):
                          "source": source, "tier": tier})
 
 
-def _live_groups():
+def _live_groups(jar_from="2026-10-11", balance=(100_000.0, 390_000.0)):
     """LIVE-SHAPED (Jake's store as of 2026-11-09): DefiLlama's released value 2026-07-01..11-08 ($300k a day), the jar
-    inflows from 2026-10-11 ($310k a day), the jars' balance read at 08-10 and 11-08."""
+    inflows from `jar_from` ($310k a day), the jars' balance read at 08-10 and 11-08. PR1C.2: from 10-11 the jars hold
+    29 of Q0's 89 days — BESIDE the line; _full_groups (from 08-12, the whole window) is the TAKEOVER case."""
     dl_days = pd.date_range("2026-07-01", "2026-11-08")
-    jar_days = pd.date_range("2026-10-11", "2026-11-08")
+    jar_days = pd.date_range(jar_from, "2026-11-08")
     jsrc = "chain:tokenjars:tokenjar_inflow[ethereum $1 | UNPRICED 2 of 100 transfers (2.0%)]"
     return {("Uniswap", "revenue_usd"): _rows("revenue_usd", dl_days, 300_000.0, "defillama"),
             ("Uniswap", "tokenjar_inflow_usd"): _rows("tokenjar_inflow_usd", jar_days, 310_000.0, jsrc, 2),
@@ -443,8 +444,14 @@ def _live_groups():
             ("Uniswap", "tokenjar_unpriced_transfers"): _rows("tokenjar_unpriced_transfers", jar_days, 2.0, jsrc, 2),
             ("Uniswap", "tokenjar_lp_one_side_usd"): _rows("tokenjar_lp_one_side_usd", jar_days, 5.0, jsrc, 2),
             ("Uniswap", "tokenjar_balance_usd"): _rows("tokenjar_balance_usd", ["2026-08-10", "2026-11-08"],
-                                                       [100_000.0, 390_000.0],
+                                                       list(balance),
                                                        "chain:tokenjars:tokenjar_balance[x]", 2)}
+
+
+def _full_groups():
+    """PR1C.2: the jars hold every Q0 day (08-12..11-08), 98% priced, no chain unread, the balance read at both ends —
+    config.TOKENJAR_TAKEOVER passes; accrued − released = 89 x 10k = the balance's change (100k -> 990k)."""
+    return _live_groups(jar_from="2026-08-12", balance=(100_000.0, 990_000.0))
 
 
 @pytest.fixture
@@ -455,13 +462,13 @@ def uni_only(monkeypatch):
 
 
 def test_revenue_hands_over_to_the_jar_inflows_with_no_overlap_and_defillama_kept_beside(uni_only):
-    groups = _live_groups()
-    bw._tokenjar_revenue_views(groups)
+    groups = _full_groups()                       # PR1C.2: only a build that passes TOKENJAR_TAKEOVER hands over
+    bw._tokenjar_revenue_views(groups, ASOF)
     rev = groups[("Uniswap", "revenue_usd")].assign(date=lambda d: pd.to_datetime(d["date"]))
     pts = rev["source"].map(_measuring_point)
     dl = rev[pts == "defillama"]
     jar = rev[pts == "chain:tokenjars:tokenjar_inflow"]
-    assert dl["date"].max() == pd.Timestamp("2026-10-10") and jar["date"].min() == pd.Timestamp("2026-10-11")
+    assert dl["date"].max() == pd.Timestamp("2026-08-11") and jar["date"].min() == pd.Timestamp("2026-08-12")
     assert rev["date"].is_unique and len(rev) == len(pd.date_range("2026-07-01", "2026-11-08"))
     kept = groups[("Uniswap", "revenue_usd_defillama")]
     assert len(kept) == len(pd.date_range("2026-07-01", "2026-11-08")) and set(kept["metric"]) == {"revenue_usd_defillama"}
@@ -472,15 +479,15 @@ def test_revenue_hands_over_to_the_jar_inflows_with_no_overlap_and_defillama_kep
     bad["defillama"] = (spans["defillama"][0], pd.Timestamp("2026-10-20"))
     assert "OVERLAP" in bw.handover_refusal("Uniswap", "revenue_usd", set(bad), bad)
     st = config.TOKENJAR_NOTE["Uniswap"]
-    assert st["handed_over"] and st["first"] == "2026-10-11" and st["days"] == 29
+    assert st["handed_over"] and st["first"] == "2026-08-12" and st["days"] == 89
 
 
 def test_a_jar_row_from_elsewhere_joins_under_the_declared_point(uni_only):
     """The measuring guard's probe rows (source probe:tokenjar_inflow_usd) must not put a third basis on revenue_usd."""
-    groups = _live_groups()
+    groups = _full_groups()
     g = groups[("Uniswap", "tokenjar_inflow_usd")]
     groups[("Uniswap", "tokenjar_inflow_usd")] = g.assign(source="probe:tokenjar_inflow_usd")
-    bw._tokenjar_revenue_views(groups)
+    bw._tokenjar_revenue_views(groups, ASOF)
     pts = set(groups[("Uniswap", "revenue_usd")]["source"].map(_measuring_point))
     assert pts == {"defillama", "chain:tokenjars:tokenjar_inflow"}
     assert "read as tokenjar_inflow_usd: probe" in groups[("Uniswap", "revenue_usd")]["source"].iloc[-1]
@@ -489,27 +496,37 @@ def test_a_jar_row_from_elsewhere_joins_under_the_declared_point(uni_only):
 def test_without_jar_rows_revenue_stays_defillama_and_the_words_do_not_change(uni_only):
     groups = {k: v for k, v in _live_groups().items() if k[1] == "revenue_usd"}
     before = groups[("Uniswap", "revenue_usd")].copy()
-    bw._tokenjar_revenue_views(groups)
+    bw._tokenjar_revenue_views(groups, ASOF)
     pd.testing.assert_frame_equal(groups[("Uniswap", "revenue_usd")], before)
     assert "Uniswap" not in config.TOKENJAR_NOTE
     assert config.revenue_split("Uniswap")["revenue"]["primary"] is False
-    assert config.revenue_tier("Uniswap")[1].startswith("REVENUE BY A DECLARED PROXY")
+    assert config.revenue_tier("Uniswap")[1].startswith("SECONDARY — DefiLlama 'uniswap' dailyRevenue")   # PR1C.2
 
 
 def test_the_q0_note_says_unpriced_share_balance_start_end_and_the_overlap_as_sums(uni_only, monkeypatch):
     groups = _live_groups()
     monkeypatch.setitem(bw._WINDOWS, "q0", ("2026-08-11", "2026-11-09"))
-    bw._tokenjar_revenue_views(groups)
+    bw._tokenjar_revenue_views(groups, ASOF)
     bw._tokenjar_window_notes(groups)
     t = config.TOKENJAR_NOTE["Uniswap"]["text"]
-    assert "stored 2026-10-11..2026-11-08 (29 day(s))" in t
+    # PR1C.2: 29 of 89 days — BESIDE the line, the takeover test said with its numbers; the line stays DefiLlama's
+    assert "SIT BESIDE THIS LINE" in t and "stored 2026-10-11..2026-11-08 (29 day(s))" in t
+    assert "full Q0 window: 29 of 89 days held (missing 2026-08-12..2026-10-10)" in t
+    assert "priced: 98.0% of 2,900 transfers in (needs ≥95%)" in t
+    assert config.revenue_split("Uniswap")["revenue"]["primary"] is False
+    assert "THIS BUILD: THE TOKENJAR INFLOWS SIT BESIDE" in config.revenue_tier("Uniswap")[1]
+    assert ("Uniswap", "revenue_usd") not in bw.HANDOVER_OVERLAP or not config.TOKENJAR_NOTE["Uniswap"]["handed_over"]
     assert "58 of 2,900 transfers in (2.0%) had no price" in t and "$145 of that reserve" in t
     assert "$100,000 at 2026-08-10's close (the window's start) -> $390,000 at 2026-11-08's close (its end)" in t
     # overlap as SUMS over the 29 common days: accrued 29 x 310k vs released 29 x 300k
     assert "accrued (the jars) $8,990,000 vs released (DefiLlama) $8,700,000 (+3.3%)" in t
     ov = bw.tokenjar_overlap(groups, "Uniswap")
     assert ov["common_days"] == 29 and ov["passed"]
-    # the words follow: revenue PRIMARY on chain, the build's figures appended; the holder share on accrued revenue
+    # the words follow ON TAKEOVER (PR1C.2): revenue PRIMARY on chain, the build's figures appended; holder share on accrued
+    config.TOKENJAR_NOTE.clear()
+    groups = _full_groups()
+    bw._tokenjar_revenue_views(groups, ASOF)
+    bw._tokenjar_window_notes(groups)
     split = config.revenue_split("Uniswap")
     assert split["revenue"]["primary"] is True and "TokenJar INFLOWS" in split["revenue"]["route"]
     assert "THIS BUILD: the jar inflows are stored" in split["revenue"]["route"]
@@ -525,8 +542,8 @@ def test_aggregate_on_the_live_shaped_fixture_reads_the_jar_leg_in_q0(uni_only):
         fetched_at="2026-11-09T00:00:00", is_manual=0, entered_on=None, source_note=None)
     data = bw.aggregate(long, pd.DataFrame(), ASOF)
     row = data[(data.project == "Uniswap") & (data.metric == "revenue_usd")].iloc[0]
-    # Q0 = (08-11, 11-09]: DefiLlama 08-12..10-10 (60 days x 300k) + the jar 10-11..11-08 (29 days x 310k)
-    assert row["q0"] == pytest.approx(60 * 300_000 + 29 * 310_000)
+    # PR1C.2: the jars hold 29 of Q0's 89 days — beside the line: Q0 is DefiLlama's 89 days, no break
+    assert row["q0"] == pytest.approx(89 * 300_000)
     assert row["status"] not in ("measuring_point_changed",)
     kept = data[(data.project == "Uniswap") & (data.metric == "revenue_usd_defillama")].iloc[0]
     assert kept["q0"] == pytest.approx(89 * 300_000)
@@ -534,32 +551,39 @@ def test_aggregate_on_the_live_shaped_fixture_reads_the_jar_leg_in_q0(uni_only):
 
 def test_value_timing_reads_the_released_series_after_the_handover(uni_only, monkeypatch):
     days = pd.date_range("2026-08-01", "2026-11-08")
-    groups = _live_groups()
+    groups = _full_groups()                       # PR1C.2: the accrued branch is read only after a takeover
     groups[("Uniswap", "price_usd")] = _rows("price_usd", days, 10.0, "coingecko")
     # burned 30,000 UNI a day = $300k = what DefiLlama books released (the same tokens)
     groups[("Uniswap", "gross_burn_tokens")] = _rows("gross_burn_tokens", days, 30_000.0, "chain:ethereum:burn_dead:delta")
-    bw._tokenjar_revenue_views(groups)
+    bw._tokenjar_revenue_views(groups, ASOF)
     start, end = pd.Timestamp("2026-08-10"), pd.Timestamp("2026-11-08")
-    # accrued − released = 29 x 10k = 290k = the balance change (100k -> 390k): explained within the declared margin
+    # accrued − released = 89 x 10k = 890k = the balance change (100k -> 990k): explained within the declared margin
     tex = bw._value_timing(groups, "Uniswap", start, end, 0.05)
     assert tex and tex.startswith("EXPLAINED — timing") and "ACCRUED vs RELEASED" in tex and "+0.0% of the accrual" in tex
-    # a balance that FELL 290k leaves 580k unexplained (2.1% of the 27.29M accrual, over the 2% margin): the CHECK stands
+    # a balance that FELL 890k leaves 1.78M unexplained (over the 2% margin): the CHECK stands
     groups[("Uniswap", "tokenjar_balance_usd")] = _rows("tokenjar_balance_usd", ["2026-08-10", "2026-11-08"],
-                                                        [390_000.0, 100_000.0], "chain:tokenjars:tokenjar_balance[x]", 2)
+                                                        [990_000.0, 100_000.0], "chain:tokenjars:tokenjar_balance[x]", 2)
     assert bw._value_timing(groups, "Uniswap", start, end, 0.05) is None
 
 
 def test_flows_carries_the_jar_balance_at_each_quarter_end_and_the_accrued_words(uni_only, monkeypatch):
-    groups = _live_groups()
-    bw._tokenjar_revenue_views(groups)
+    groups = _full_groups()
+    bw._tokenjar_revenue_views(groups, ASOF)
     monkeypatch.setitem(bw.GLOBALS, "period_days", 90)
     rows = bw.flow_statements(groups, pd.Timestamp("2026-11-08"))
     memo = [r for r in rows if r["Project"] == "Uniswap" and r["Line"].startswith("memo: TokenJars' undistributed")]
     assert len(memo) == 1 and memo[0]["Series"] == "tokenjar_balance_usd"
     vals = [memo[0][lab] for lab in bw.trajectory.LABELS]
-    assert vals[0] == 390_000.0 and vals[1] == 100_000.0 and vals[2] is None     # Q0's end, Q-1's end (= Q0's start)
+    assert vals[0] == 990_000.0 and vals[1] == 100_000.0 and vals[2] is None     # Q0's end, Q-1's end (= Q0's start)
     rev = next(r for r in rows if r["Project"] == "Uniswap" and r["Line"] == "Revenue (every stream)")
-    assert "ACCRUED: the TokenJar inflows from 2026-10-11" in rev["Note"]
+    assert "ACCRUED: the TokenJar inflows from 2026-08-12" in rev["Note"]
+    # PR1C.2: jars beside the line (29 of 89 days) — the revenue is DefiLlama's: no accrued words
+    config.TOKENJAR_NOTE.clear()
+    gb = _live_groups()
+    bw._tokenjar_revenue_views(gb, ASOF)
+    rows_b = bw.flow_statements(gb, pd.Timestamp("2026-11-08"))
+    rev_b = next(r for r in rows_b if r["Project"] == "Uniswap" and r["Line"] == "Revenue (every stream)")
+    assert "ACCRUED" not in str(rev_b["Note"])
     # the dumps' shape (no balance stored): no memo line, no words
     config.TOKENJAR_NOTE.clear()
     g2 = {k: v for k, v in _live_groups().items() if k[1] == "revenue_usd"}
@@ -567,14 +591,24 @@ def test_flows_carries_the_jar_balance_at_each_quarter_end_and_the_accrued_words
     assert not [r for r in rows2 if r["Line"].startswith("memo: TokenJars'")]
 
 
-def test_credibility_sets_accrued_beside_released_once_the_jar_is_in_q0():
+def test_credibility_sets_accrued_beside_released_once_the_jar_is_in_q0(monkeypatch):
+    """PR1C.2: accrued vs released only once the jars TOOK OVER (config.TOKENJAR_TAKEOVER); beside the line, revenue_usd
+    is DefiLlama's own figure — compared with itself it would PASS by construction — so the row stays UNVERIFIABLE."""
     import credibility
     spec = config.CREDIBILITY["Uniswap"]["in_revenue"]
     assert spec["ours"] == {"metric": "revenue_usd", "window": "q0"}
     rows = {"Uniswap|revenue_usd_defillama": {"q0": 27_000_000.0, "latest_date": "2026-11-08"}}
     jar = _rows("tokenjar_inflow_transfers", pd.date_range("2026-10-11", "2026-11-08"), 100.0, "chain:tokenjars:x")
+    monkeypatch.setattr(config, "TOKENJAR_NOTE", {"Uniswap": {"handed_over": True, "first": "2026-08-12",
+                                                              "last": "2026-11-08", "days": 89, "takeover": ["met"]}})
     r = credibility.reference("Uniswap", spec["ref"], rows, jar, ASOF)
     assert r["value"] == 27_000_000.0 and r["tol"] == 5.0 and r["mode"] == "independent" and r["verdict"] is None
+    monkeypatch.setattr(config, "TOKENJAR_NOTE", {"Uniswap": {"handed_over": False, "first": "2026-11-05",
+                                                              "last": "2026-11-08", "days": 4,
+                                                              "takeover": ["full Q0 window: 4 of 89 days held"]}})
+    rb = credibility.reference("Uniswap", spec["ref"], rows, jar, ASOF)
+    assert rb["verdict"] == "UNVERIFIABLE" and "4 of 89 days held" in rb["note"] and "TOKENJAR_TAKEOVER" in rb["note"]
     # the dumps (no jar row): DefiLlama is the only aggregate, as before
+    monkeypatch.setattr(config, "TOKENJAR_NOTE", {})
     r0 = credibility.reference("Uniswap", spec["ref"], rows, jar.iloc[0:0], ASOF)
     assert r0["verdict"] == "UNVERIFIABLE" and "--seed tokenjar" in r0["note"]
