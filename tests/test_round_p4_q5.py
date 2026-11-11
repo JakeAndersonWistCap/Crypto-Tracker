@@ -243,7 +243,9 @@ def test_buying_pressure_is_every_market_buyback_annualised_over_tradeable_float
 # holder value over 89 days (was x365/90 over 89 values: 0.02383699954852378, 0.005930254280097274, 0.002255183232935747);
 # Pendle's holder value (its epoch distributions, read to 2026-09-21) over its 68 covered days, no longer x365/90 for the
 # project's programme (was 0.00842358798583249)
-BEFORE_HVY = {"Maple": 0.0040527229897458356, "Sky": 0.02410483100412517, "Hyperliquid": 0.038137512591568695,
+# PR3B.3 (Jake 2026-11-11): Maple's holder value reads the buyback's own 3 published months (one flow, one window with
+# the A3 actual buyback: 658,866 on the dumps), was the trailing 90 days of month-end rows (283,866): 0.0040527229897458356
+BEFORE_HVY = {"Maple": 0.009202065513863445, "Sky": 0.02410483100412517, "Hyperliquid": 0.038137512591568695,
               "Pendle": 0.01114886645183712, "Chainlink": 0.005996886350660165, "Near": 0.0022805223703844632}
 
 

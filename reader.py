@@ -1195,7 +1195,9 @@ def _monthly_growth_cell(sh: Sheet, ctx: Ctx, row: int, col: Col, name: str, met
     if cur is None or prev is None or not prev:
         return put_code(sh, row, col, "n/a", f"{rule}: {'no' if cur is None else 'a'} {last} total and "
                         f"{'no' if prev is None else 'a zero'} {last - 1} total, so no change.\n\nWorking: {where}.")
-    return put_formula(sh, row, col, f"={float(cur)}/{float(prev)}-1", fill,
+    a = ctx.data.put(name, f"{metric}|month|{last}", float(cur))       # the two month totals on _data (P1-2)
+    b = ctx.data.put(name, f"{metric}|month|{last - 1}", float(prev))
+    return put_formula(sh, row, col, f"={a}/{b}-1", fill,
                        f"{label[:1].upper()}{label[1:]}: {rule}: {float(cur):,.0f} ÷ {float(prev):,.0f} − 1."
                        f"\n\nWorking: {where}.")
 
