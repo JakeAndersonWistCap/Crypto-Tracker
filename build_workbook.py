@@ -11959,11 +11959,26 @@ def _cp_float(R: Refs, r, p: dict) -> str:
     day is subtracted). The held leg is config.held_buyback_float_metric (Maple's SSF, NEAR's revenue wallets); a day it
     is not measured makes the float n/a, never the float without it."""
     c, lk = _circ(R, r, p), _cp_lock(R, r, p)
-    hm = config.held_buyback_float_metric(p["name"])
-    if hm:
-        h = R.D(r, hm, "now")
-        return f"IF(AND(ISNUMBER({c}),ISNUMBER({lk}),ISNUMBER({h})),{c}-{lk}-{h},{NA})"
+    h = _held_inside(R, r, p)
+    if h:
+        return f"IF(AND(ISNUMBER({c}),ISNUMBER({lk}),ISNUMBER({h})),{c}-{lk}-({h}),{NA})"
     return f"IF(AND(ISNUMBER({c}),ISNUMBER({lk})),{c}-{lk},{NA})"
+
+
+def _held_inside(R: Refs, r, p: dict) -> str | None:
+    """P4-Q5b: the held buyback INSIDE circulating, now — the held stock, less the part of it circulating already
+    subtracts (config.HELD_BUYBACK_FLOAT `less`; PR3.3, Maple: the Fund's chart counts its Safe 0x58BE…, which the
+    issuer rule already takes out of circulating — subtracting the whole chart took that Safe out twice). Not measured
+    -> NA, never the stock without the correction."""
+    h = config.held_buyback_float(p["name"]) or {}
+    hm = config.held_buyback_float_metric(p["name"])
+    if not hm:
+        return None
+    held = R.D(r, hm, "now")
+    if not h.get("less"):
+        return held
+    less = R.D(r, h["less"], "now")
+    return f"IF(AND(ISNUMBER({held}),ISNUMBER({less})),MAX(0,{held}-{less}),NA())"
 
 
 def _held_buyback_note(p: dict) -> str:
@@ -11972,8 +11987,10 @@ def _held_buyback_note(p: dict) -> str:
     if not h:
         return ""
     if h["how"] == "subtract":
-        return (f"Held buyback OUT of the tradeable float while held (P4-Q5b): {h['held']} on the day is subtracted — "
-                f"{h['why']}. A fall in the held balance returns those tokens to the float.")
+        less = (f", less {h['less']} (the part circulating already takes out: {h['less_why']})" if h.get("less")
+                else "")
+        return (f"Held buyback OUT of the tradeable float while held (P4-Q5b): {h['held']} on the day{less} is "
+                f"subtracted — {h['why']}. A fall in the held balance returns those tokens to the float.")
     return (f"Held buyback already out of circulating (P4-Q5b): {h['why']} — so the tradeable float already leaves it "
             "out, and a fall in it returns to float through circulating; it is not subtracted twice.")
 
@@ -12039,7 +12056,7 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         h = config.held_buyback_float(p["name"])
         if not h:
             return ""
-        return calc(R.D(r, h["held"], "now")) if h["how"] == "subtract" else "=0"
+        return calc(_held_inside(R, r, p)) if h["how"] == "subtract" else "=0"
 
     def ann(r, p, m):
         return _annualise(R, r, p, m, R.D(r, m, "q0"))

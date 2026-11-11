@@ -173,6 +173,10 @@ def test_4bc_share_token_checks_hold_the_approved_wallets_each_with_source_and_d
         assert len(new) == len(addrs), n
         assert all(c["verified"] == "2026-10-26" and c["source_url"].startswith("https://") for c in new), n
         mon = config.INSIDER_SHARE_MONITOR[n]
+        if n == "Maple":   # PR3.2 (Jake 2026-11-11): a DOCUMENTED LIMITATION with its evidence, no longer MISSING E
+            assert "the 9 issuer-side wallets on file hold 0 stSYRUP" in mon["not_wired"]
+            assert mon["not_wired"].startswith("n/a — DOCUMENTED LIMITATION") and len(mon["not_wired"]) <= 255
+            continue
         assert f"the {counts[n]} issuer-side wallets checked hold 0" in mon["not_wired"]
         assert mon["not_wired"].startswith("MISSING E — ") and len(mon["not_wired"]) <= 255
     # Ether.fi's Q18 wallets are non-circulating like the other five Q18 addresses; the admin Safes / timelocks of

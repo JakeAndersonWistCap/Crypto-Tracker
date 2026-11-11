@@ -181,10 +181,13 @@ def test_no_new_supply_ranks_first_and_ties_are_broken_by_net_holder_yield(monke
 def test_tradeable_float_leaves_out_the_held_buyback_and_takes_it_back_when_it_moves_out():
     maple = P["Maple"]
     assert config.held_buyback_float_metric("Maple") == "ssf_holdings_tokens"
-    vals = {("circulating_supply_used", "now"): 1_176_793_290.0, ("ssf_holdings_tokens", "now"): 78_035_331.0}
+    # PR3.3 (Jake 2026-11-11): the Fund's chart counts its Safe 0x58BE…, which circulating already subtracts — the
+    # float subtracts the chart LESS the Safe (it took the Safe out twice: 1,176,793,290 - 78,035,331)
+    vals = {("circulating_supply_used", "now"): 1_176_793_290.0, ("ssf_holdings_tokens", "now"): 78_035_331.0,
+            ("maple_ssf_safe_tokens", "now"): 48_624_987.59}
     R = FakeRefs(vals)
     f = "=" + bw._cp_float(R, 5, maple)
-    assert evaluate(f, vals, R) == pytest.approx(1_176_793_290.0 - 78_035_331.0)
+    assert evaluate(f, vals, R) == pytest.approx(1_176_793_290.0 - (78_035_331.0 - 48_624_987.59))
     out = {**vals, ("ssf_holdings_tokens", "now"): 70_035_331.0}            # 8M moved out of the Fund
     assert evaluate(f, out, R) - evaluate(f, vals, R) == pytest.approx(8_000_000.0)
     gone = {k: v for k, v in vals.items() if k[0] != "ssf_holdings_tokens"}
@@ -222,11 +225,12 @@ def test_buying_pressure_is_every_market_buyback_annualised_over_tradeable_float
     # annualised by events (12 a year)
     mv = {("actual_buyback_tokens", "q0"): 4_029_134.43, ("actual_buyback_tokens", "q0_events"): 3.0,
           **days("actual_buyback_tokens", 92.0), ("circulating_supply_used", "now"): 1_176_793_290.0,
-          ("ssf_holdings_tokens", "now"): 78_035_331.0}
+          ("ssf_holdings_tokens", "now"): 78_035_331.0, ("maple_ssf_safe_tokens", "now"): 48_624_987.59}
     R = FakeRefs(mv)
     v = evaluate(bw._buying_pressure_col(R)[1](5, P["Maple"]), mv, R)
     assert config.events_per_year("Maple", "actual_buyback_tokens") == 12.0
-    assert v == pytest.approx(4_029_134.43 / 3 * 12 / (1_176_793_290.0 - 78_035_331.0), rel=1e-12)
+    flt = 1_176_793_290.0 - (78_035_331.0 - 48_624_987.59)                  # PR3.3: the Fund's Safe out once
+    assert v == pytest.approx(4_029_134.43 / 3 * 12 / flt, rel=1e-12)
     # no buyback mechanism (Morpho: a declared, checked absence) is a measured 0; no buyback measured is a code
     assert bw._buying_pressure_col(FakeRefs({}))[1](5, P["Morpho"]) == "=0"
     assert bw._buying_pressure_col(FakeRefs({}))[1](5, P["Ethereum"]).startswith("n/a — no market buyback")
@@ -346,16 +350,20 @@ def test_fixture_float_buying_pressure_and_holder_value_unchanged(built):
     crow, fc = _rows(cp), _col(cp, lambda h: h == bw.CP_FLOAT_HEAD)
     cc = _col(cp, lambda h: h.startswith("Circulating supply (tokens)"))
     lc = _col(cp, lambda h: h.startswith("Staked / locked inside circulating"))
-    for n, held in (("Maple", "ssf_holdings_tokens"), ("Near", "buyback_fund_balance")):
+    for n, held in (("Near", "buyback_fund_balance"),):
         circ, lock = XA.value(CP, crow[n], cc), XA.value(CP, crow[n], lc)
         h = _data(built, f"{n}|{held}", "Now")
         assert XA.value(CP, crow[n], fc) == pytest.approx(circ - lock - h, rel=1e-12), n
         assert "out of the tradeable float while held" in cp.cell(crow[n], fc).comment.text.lower()
+    # PR3.3 (Jake 2026-11-11): Maple's float needs the Fund's Safe on the day (maple_ssf_safe_tokens, new — the dumps
+    # predate it): n/a naming it, never the old figure that took the Safe out twice
+    assert "maple_ssf_safe_tokens" in str(XA.value(CP, crow["Maple"], fc))
+    assert "less maple_ssf_safe_tokens" in cp.cell(crow["Maple"], fc).comment.text
     assert "already out of circulating" in cp.cell(crow["Sky"], fc).comment.text
     # buying pressure, same figure on A3 and CP (one builder): every buyback annualised ÷ the float
     pa, pc = _col(ws, lambda h: h == bw.BUYING_PRESSURE_HEAD), _col(cp, lambda h: h == bw.BUYING_PRESSURE_HEAD)
     arows = _rows(ws)
-    for n in ("Sky", "Hyperliquid", "Pendle", "Maple", "GEODNET"):
+    for n in ("Sky", "Hyperliquid", "Pendle", "GEODNET"):        # Maple: its float waits on the Safe's series (PR3.3)
         v = XA.value(A3, arows[n], pa)
         assert isinstance(v, float) and v == pytest.approx(XA.value(CP, crow[n], pc), rel=1e-12), n
     tot, cov = _data(built, "Sky|actual_buyback_tokens", "Q0 ("), _data(built, "Sky|actual_buyback_tokens", "Q0: days")

@@ -534,6 +534,55 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11ei. Project round 3 — Maple, plus freezing Fluid (2026-11-11)
+
+**Read-only checks first** (PowerShell 5.1, from the repo folder; nothing here writes to `metrics.db`):
+
+```
+# ITEM 0 - Fluid frozen (builds the 15 test dumps in a temp folder, about 6 minutes; no pytest needed)
+python project_freeze.py --compare Fluid
+#   expect: Fluid: 353 cells, 0 undeclared move(s)
+
+# ITEM 1 - what your store holds for Maple's three lines
+@'
+import sqlite3
+c = sqlite3.connect("file:metrics.db?mode=ro", uri=True)
+for m in ("fees_usd", "revenue_usd", "actual_buyback_usd"):
+    print(m, c.execute("SELECT substr(date,1,10), value, source FROM metrics WHERE project='Maple' AND metric=? ORDER BY date DESC LIMIT 3", (m,)).fetchall())
+'@ | python -
+#   expect: fees_usd daily DefiLlama rows (~$0.2-0.4M a day); revenue_usd monthly rows from maple_page (~$1.4-1.6M a
+#           month); actual_buyback_usd monthly rows from maple_page (e.g. 2026-08-31 147,098)
+
+# ITEMS 2 and 3 - on chain (SYRUP 0x643C…2d66, stSYRUP 0xc7E8…0B45): total supply, the DAO Safe, the Fund's Safe, and
+# the 9 issuer-side wallets' stSYRUP
+$rpc = 'https://eth.drpc.org'
+function Bal($tok, $addr) { $d = '0x70a08231000000000000000000000000' + $addr.Substring(2).ToLower()
+  $b = '{"jsonrpc":"2.0","id":1,"method":"eth_call","params":[{"to":"' + $tok + '","data":"' + $d + '"},"latest"]}'
+  $r = (Invoke-RestMethod -Uri $rpc -Method Post -Body $b -ContentType 'application/json').result
+  [decimal]::Parse([System.Numerics.BigInteger]::Parse('0' + $r.Substring(2), 'AllowHexSpecifier').ToString()) / 1e18 }
+$S = '0x643C4E15d7d62Ad0aBeC4a9BD4b001aA3Ef52d66'; $ST = '0xc7E8b36E0766D9B04c93De68A9D47dD11f260B45'
+"DAO Safe SYRUP  " + (Bal $S '0xd6d4Bcde6c816F17889f1Dd3000aF0261B03a196')   # expect: about 42,290,111 (2026-11-11)
+"Fund Safe SYRUP " + (Bal $S '0x58BE00490D6a5D298d61f24226d2397983Ee39A1')   # expect: about 48,624,988 (2026-11-11)
+'0xd6d4Bcde6c816F17889f1Dd3000aF0261B03a196','0xa9466EaBd096449d650D5AEB0dD3dA6F52FD0B19','0x9c9499edD0cd2dCBc3C9Dd5070bAf54777AD8F2C','0x509712F368255E92410893Ba2E488f40f7E986EA','0x5dfe0460f66fa06bFCbB3211e723556be6B3f69D','0x2eFFf88747EB5a3FF00d4d8d0f0800E306C0426b','0xCe1cE7c7F436DCc4E28Bc8bf86115514d3DC34E8','0x6b1A78C1943b03086F7Ee53360f9b0672bD60818','0x58BE00490D6a5D298d61f24226d2397983Ee39A1' | ForEach-Object { "stSYRUP " + $_.Substring(0,10) + " " + (Bal $ST $_) }
+#   expect: 0 for each of the 9                                                    (item 2)
+((Invoke-WebRequest https://maple.finance/transparency/syrup -UseBasicParsing).Content -replace '<[^>]+>',' ' -replace '\s+',' ') -match 'Circulating supply ([0-9.]+B) SYRUP Total supply ([0-9.]+B) SYRUP Held by Maple ([0-9.]+M)' | Out-Null; $Matches[0]
+#   expect: Circulating supply 1.14B SYRUP Total supply 1.27B SYRUP Held by Maple 124.8M      (item 3, Maple's own page)
+```
+
+**Then the normal run and build**, then the Fund Safe's history (the float needs it on the day; the archive fills the
+past days):
+
+```
+python token_metrics.py                                         # stores today's maple_ssf_safe_tokens
+python archive_backfill.py --run --project Maple --budget-min 30   # its history (the cp_float trend)
+```
+
+**What to look at** (CP, Maple row): TRADEABLE FLOAT about 1,144.4M (was 1,095.8M — the Fund's Safe was taken out
+twice); "Held buyback inside circulating" about 32.3M (was ~81M); the three revenue lines and holder share filled;
+Insider share and Leakage (i) read "n/a — DOCUMENTED LIMITATION: …". `python done_check.py --verbose | Select-String
+"^Maple"` expect `Maple | READY |` once the run above has stored the Fund Safe (before it, the float reads n/a naming
+maple_ssf_safe_tokens).
+
 ## 11eh. Project round 2 — Fluid (2026-11-10)
 
 **Read-only checks first** (PowerShell 5.1, from the repo folder; nothing here writes to `metrics.db`):

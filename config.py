@@ -37303,3 +37303,271 @@ REVENUE_SPLIT["Fluid"] = {
                         "while the buyback ran part of it bought FLUID held in the treasury (held, not burned)",
     "crosscheck": "DefiLlama's 'fluid' holdersRevenue ('Token buyback from the treasury') reads 0 over Q0 as ours does",
 }
+
+
+# =====================================================================================================================
+# PROJECT ROUND 3 — MAPLE (Jake 2026-11-11). Every source below read 2026-11-11, keyless, generic User-Agent.
+# =====================================================================================================================
+# PR3.3 THE TRADEABLE FLOAT TOOK THE FUND'S SAFE OUT TWICE. Decision 1 (Jake 2026-10-12) put the Fund's Safe 0x58BE…
+# among the wallets circulating subtracts (noncirc_ssf_safe); the float then subtracted Maple's whole SSF chart
+# (ssf_holdings_tokens), which COUNTS that Safe. Read 2026-11-11: maple.finance/transparency/syrup — 'Circulating supply
+# 1.14B SYRUP · Total supply 1.27B · Held by Maple 124.8M SYRUP (held by the DAO and the Syrup Strategic Fund)';
+# /transparency/financials — the SSF 'part of the Treasury', SYRUP Holdings 79.67M; on chain (eth.drpc.org, block
+# 26,391,252, 2026-11-11 11:02 UTC): the DAO Safe 0xd6d4… 42,290,111.33, the Fund's Safe 0x58BE… 48,624,987.59. DAO +
+# SSF chart = 121.96M ≈ Maple's 124.8M only if the chart includes the Safe (DAO + chart + Safe would be 170.6M). The
+# float now subtracts the Fund's holdings LESS the Safe (the part still inside circulating).
+METRICS["maple_ssf_safe_tokens"] = {
+    "label": "SYRUP in the Syrup Strategic Fund's Safe 0x58BE… (one component of noncirculating_holding_tokens; the part "
+             "of Maple's SSF chart circulating already subtracts — PR3.3)",
+    "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 3e8,
+    "only_projects": ("Maple",)}
+PROJECT_BY_NAME["Maple"]["contracts"]["noncirc_ssf_safe"]["component_metric"] = "maple_ssf_safe_tokens"
+HELD_BUYBACK_FLOAT["Maple"].update({
+    "less": "maple_ssf_safe_tokens",
+    "less_why": "the Fund's Safe 0x58BE…, which circulating subtracts since decision 1 (2026-10-12) and Maple's SSF chart "
+                "counts — subtracted once, not twice (PR3.3)",
+    "why": "the SYRUP Strategic Fund (MIP-019: bought SYRUP is held, not sold; its mandate includes token liquidity, so "
+           "it can return to float). Circulating subtracts the DAO Safe, the registry wallets and the Fund's Safe "
+           "0x58BE… (decision 1, 2026-10-12); the rest of the Fund — SYRUP it holds at exchange / custodian routes "
+           "since 2025-10-29 (SPEC D5-3c) — is inside circulating. Stock: Maple's own SSF chart (ssf_holdings_tokens, "
+           "/transparency/financials), which counts the Safe (DAO + chart ≈ Maple's 'Held by Maple', read 2026-11-11)"})
+
+# PR3.2 INSIDER SHARE OF STAKE AND LEAKAGE (i): no first-party list ties stSYRUP stakers to Maple — a DOCUMENTED
+# LIMITATION with its evidence (Jake 2026-11-11: accepted). Re-read 2026-11-11 (eth.drpc.org, block 26,391,252): the 9
+# issuer-side wallets hold 0 stSYRUP each (stSYRUP totalSupply 139,503,630.37); first read 2026-10-26 at block 26,278,435.
+_MAPLE_INSIDER_LIMIT = ("n/a — DOCUMENTED LIMITATION: no first-party list ties stSYRUP stakers to Maple; the 9 "
+                        "issuer-side wallets on file hold 0 stSYRUP (block 26,391,252, 2026-11-11) — see 'Insider "
+                        "share — what is divided'")
+assert len(_MAPLE_INSIDER_LIMIT) <= 250            # a string inside a cell formula (Excel's 255-character limit)
+INSIDER_SHARE_MONITOR["Maple"]["what"] = (
+    "stSYRUP shares held by Maple's issuer-side wallets ÷ stSYRUP totalSupply (shares over shares). Wallets checked (9, "
+    "maple-labs/address-registry MapleAddressRegistryETH.md and Maple's filing): dao_multisig, noncirc_governor_timelock, "
+    "noncirc_migrator, noncirc_operational_admin, noncirc_recapitalization_module, noncirc_security_admin, "
+    "noncirc_ssf_safe, noncirc_syrup_drip, noncirc_treasury_registry — 0 stSYRUP each at Ethereum block 26,391,252 "
+    "(2026-11-11) of 139,503,630 stSYRUP, and at block 26,278,435 (2026-10-26). DOCUMENTED LIMITATION (Jake 2026-11-11): "
+    "no first-party list ties another stSYRUP holder to Maple. Upgrade: such a list")
+INSIDER_SHARE_MONITOR["Maple"]["not_wired"] = _MAPLE_INSIDER_LIMIT
+DECLARED_NA_REASONS["Maple"] = [
+    {"cols": (), "match": "DOCUMENTED LIMITATION: no first-party list ties stSYRUP stakers to Maple",
+     "source": "https://github.com/maple-labs/address-registry/blob/main/MapleAddressRegistryETH.md ; eth_call "
+               "stSYRUP 0xc7E8b36E0766D9B04c93De68A9D47dD11f260B45 balanceOf x 9 wallets, block 26,391,252",
+     "read_on": "2026-11-11", "decided": "Jake 2026-11-11 (PR3.2: accepted as a limitation)",
+     "why": "the insider share of the (legacy) stSYRUP stake and leakage (i) need an issuer-wallet list; the wallets on "
+            "file hold none"},
+]
+
+# PR3.1 MAPLE'S THREE REVENUE LINES (S13). The holder line follows the existing config: the SYRUP buyback is credited
+# as revenue-funded (HOLDER_VALUE default; holder_funding 'revenue') and HELD (buyback_destination_shares: hold 1.0,
+# MIP-019 'held, not sold', verified); nothing is distributed since stSYRUP staking ended (staking_sunset, 2025-11).
+REVENUE_TIER["Maple"] = (
+    "revenue",
+    "PRIMARY (first-party, not on chain) — Maple's own transparency page (island.ALL.revenueUsd, /transparency/"
+    "financials): what Maple keeps after lenders are paid, i.e. fees − the lenders' interest. DefiLlama's dailyRevenue "
+    "is kept beside it as revenue_usd_defillama (a cross-check, Maple/DefiLlama 1.24-2.23x since 2025-10: "
+    "revenue_divergence)")
+REVENUE_SPLIT["Maple"] = {
+    "round": "PR3.1 (Jake 2026-11-11)",
+    "fees": {"metric": "fees_usd", "primary": False,
+             "route": "DefiLlama 'maple' dailyFees: interest and fees paid by Maple's borrowers (open-term and "
+                      "fixed-term loans, strategy performance fees, the OTC desk) on the deployments DefiLlama reads "
+                      "(Ethereum + off-chain; not Base, not the basic-strategy factory — revenue_divergence). SECONDARY "
+                      "(aggregator only): Maple publishes revenue, not gross fees"},
+    "revenue": {"metric": "revenue_usd", "primary": True,
+                "route": "Maple's own transparency page (island.ALL.revenueUsd, monthly): what Maple keeps after "
+                         "lenders are paid = fees − the cost of delivering them. PRIMARY in the sense of first-party "
+                         "(Maple's own figure), not rebuilt on chain"},
+    "holder_revenue": {"metric": "holder_value_revenue_usd", "primary": True,
+                       "route": "the SYRUP buyback, credited as revenue-funded and HELD (config: holder_funding "
+                                "'revenue'; destination hold 100%, MIP-019 'bought SYRUP is held, not sold') — Maple's "
+                                "own buyback table (transparency_page actual_buyback_usd, monthly); MIP-019 a flat 25% "
+                                "of net revenue to Oct 2025-Jul 2026, MIP-021 tiered 10/20/30% from 2026-08-01. Nothing "
+                                "is distributed: stSYRUP staking ended 2025-11 (staking_sunset). PRIMARY in the sense of "
+                                "first-party; on chain the treasury-inflow scan cannot yet tell purchases apart "
+                                "(buyback_route). OPEN, recorded not decided: whether the Fund sells SYRUP back "
+                                "(ssf_selling_question)"},
+    "holder_share": {"route": "holder revenue ÷ revenue per covered day (both Maple's monthly figures): the buyback's "
+                              "share of revenue — MIP-021's tier for the month's revenue"},
+    "other_recipients": "LENDERS: fees − revenue (the cost of delivering the fees). Delegates' fees are inside "
+                        "DefiLlama's fees and not in Maple's revenue",
+    "crosscheck": "DefiLlama's 'maple' holdersRevenue (applies the MIP-019/021 rate to its own revenue) is beside it as "
+                  "holders_revenue_usd",
+}
+
+
+# PR3.0 (Jake 2026-11-11): FLUID FROZEN after its own round (project round 2) — its 353 cells on the 15-dump build are
+# the baseline (tests/fixtures/frozen_fluid.json); round 2's 11 moves are declared here as the record.
+FROZEN_PROJECTS["Fluid"] = {"baseline": "tests/fixtures/frozen_fluid.json", "since": "2026-11-11",
+                            "why": "project round 2 done (Jake 2026-11-10/11): done_check READY on the live build"}
+FROZEN_MOVES["Fluid"] = {'audit|CP Comparability|FEES Q0 ($) — S13 line 1: all fees paid by users of the protocol': {'date': '2026-11-10',
+                                                                                             'to': 10481992.9,
+                                                                                             'why': "PR2.2: Fluid's "
+                                                                                                    'three revenue '
+                                                                                                    'lines (S13) '
+                                                                                                    'filled — fees '
+                                                                                                    'and revenue '
+                                                                                                    'DefiLlama '
+                                                                                                    '(secondary), '
+                                                                                                    'holder revenue '
+                                                                                                    'the buyback '
+                                                                                                    'credited while '
+                                                                                                    'it ran '
+                                                                                                    '(primary), a '
+                                                                                                    'measured 0 from '
+                                                                                                    '2026-03-21, '
+                                                                                                    'halted '
+                                                                                                    '2026-05-11'},
+ 'audit|CP Comparability|HOLDER REVENUE Q0 ($) — S13 line 3: the part of revenue reaching token holders': {'date': '2026-11-10',
+                                                                                                           'to': 0.0,
+                                                                                                           'why': 'PR2.2: '
+                                                                                                                  "Fluid's "
+                                                                                                                  'three '
+                                                                                                                  'revenue '
+                                                                                                                  'lines '
+                                                                                                                  '(S13) '
+                                                                                                                  'filled '
+                                                                                                                  '— '
+                                                                                                                  'fees '
+                                                                                                                  'and '
+                                                                                                                  'revenue '
+                                                                                                                  'DefiLlama '
+                                                                                                                  '(secondary), '
+                                                                                                                  'holder '
+                                                                                                                  'revenue '
+                                                                                                                  'the '
+                                                                                                                  'buyback '
+                                                                                                                  'credited '
+                                                                                                                  'while '
+                                                                                                                  'it '
+                                                                                                                  'ran '
+                                                                                                                  '(primary), '
+                                                                                                                  'a '
+                                                                                                                  'measured '
+                                                                                                                  '0 '
+                                                                                                                  'from '
+                                                                                                                  '2026-03-21, '
+                                                                                                                  'halted '
+                                                                                                                  '2026-05-11'},
+ 'audit|CP Comparability|HOLDER SHARE = holder revenue ÷ revenue, per covered day (S13)': {'date': '2026-11-10',
+                                                                                           'to': 0.0,
+                                                                                           'why': "PR2.2: Fluid's "
+                                                                                                  'three revenue '
+                                                                                                  'lines (S13) '
+                                                                                                  'filled — fees and '
+                                                                                                  'revenue DefiLlama '
+                                                                                                  '(secondary), '
+                                                                                                  'holder revenue '
+                                                                                                  'the buyback '
+                                                                                                  'credited while it '
+                                                                                                  'ran (primary), a '
+                                                                                                  'measured 0 from '
+                                                                                                  '2026-03-21, '
+                                                                                                  'halted '
+                                                                                                  '2026-05-11'},
+ 'audit|CP Comparability|REVENUE Q0 ($) — S13 line 2, THE HEADLINE: fees − the cost of delivering them': {'date': '2026-11-10',
+                                                                                                          'to': 1541847.9,
+                                                                                                          'why': 'PR2.2: '
+                                                                                                                 "Fluid's "
+                                                                                                                 'three '
+                                                                                                                 'revenue '
+                                                                                                                 'lines '
+                                                                                                                 '(S13) '
+                                                                                                                 'filled '
+                                                                                                                 '— '
+                                                                                                                 'fees '
+                                                                                                                 'and '
+                                                                                                                 'revenue '
+                                                                                                                 'DefiLlama '
+                                                                                                                 '(secondary), '
+                                                                                                                 'holder '
+                                                                                                                 'revenue '
+                                                                                                                 'the '
+                                                                                                                 'buyback '
+                                                                                                                 'credited '
+                                                                                                                 'while '
+                                                                                                                 'it '
+                                                                                                                 'ran '
+                                                                                                                 '(primary), '
+                                                                                                                 'a '
+                                                                                                                 'measured '
+                                                                                                                 '0 '
+                                                                                                                 'from '
+                                                                                                                 '2026-03-21, '
+                                                                                                                 'halted '
+                                                                                                                 '2026-05-11'},
+ 'audit|CP Comparability|UNIFORMITY = whole-token yield ÷ staker yield (1 = every holder alike) (PROPOSED)': {'date': '2026-11-10',
+                                                                                                              'to': 'n/a '
+                                                                                                                    '— '
+                                                                                                                    'no '
+                                                                                                                    'staker '
+                                                                                                                    'yield '
+                                                                                                                    'exists '
+                                                                                                                    '(FLUID '
+                                                                                                                    'staking '
+                                                                                                                    'is '
+                                                                                                                    'not '
+                                                                                                                    'deployed: '
+                                                                                                                    'no '
+                                                                                                                    'FLUID-token '
+                                                                                                                    'staking, '
+                                                                                                                    'lock '
+                                                                                                                    'or '
+                                                                                                                    'vote-escrow '
+                                                                                                                    'contract '
+                                                                                                                    'in '
+                                                                                                                    "Fluid's "
+                                                                                                                    'contract '
+                                                                                                                    'index, '
+                                                                                                                    'docs.fluid.io, '
+                                                                                                                    'read '
+                                                                                                                    '2026-11-10)',
+                                                                                                              'why': 'PR2.1: '
+                                                                                                                     'the '
+                                                                                                                     'declared '
+                                                                                                                     'reason '
+                                                                                                                     '— '
+                                                                                                                     'no '
+                                                                                                                     'staker '
+                                                                                                                     'yield '
+                                                                                                                     'exists '
+                                                                                                                     '(FLUID '
+                                                                                                                     'staking '
+                                                                                                                     'is '
+                                                                                                                     'not '
+                                                                                                                     'deployed; '
+                                                                                                                     'docs.fluid.io, '
+                                                                                                                     'read '
+                                                                                                                     '2026-11-10)'},
+ 'reader|Business|Holder revenue (S13), 90 days': {'date': '2026-11-10',
+                                                   'to': 0.0,
+                                                   'why': "PR2.2: Fluid's three revenue lines (S13) filled — fees "
+                                                          'and revenue DefiLlama (secondary), holder revenue the '
+                                                          'buyback credited while it ran (primary), a measured 0 '
+                                                          'from 2026-03-21, halted 2026-05-11'},
+ 'reader|Business|Holder share (S13)': {'date': '2026-11-10',
+                                        'to': 0.0,
+                                        'why': "PR2.2: Fluid's three revenue lines (S13) filled — fees and revenue "
+                                               'DefiLlama (secondary), holder revenue the buyback credited while it '
+                                               'ran (primary), a measured 0 from 2026-03-21, halted 2026-05-11'},
+ 'reader|Comparison|Fees (S13), 90 days': {'date': '2026-11-10',
+                                           'to': 10481992.9,
+                                           'why': "PR2.2: Fluid's three revenue lines (S13) filled — fees and "
+                                                  'revenue DefiLlama (secondary), holder revenue the buyback '
+                                                  'credited while it ran (primary), a measured 0 from 2026-03-21, '
+                                                  'halted 2026-05-11'},
+ 'reader|Comparison|Holder revenue (S13), 90 days': {'date': '2026-11-10',
+                                                     'to': 0.0,
+                                                     'why': "PR2.2: Fluid's three revenue lines (S13) filled — fees "
+                                                            'and revenue DefiLlama (secondary), holder revenue the '
+                                                            'buyback credited while it ran (primary), a measured 0 '
+                                                            'from 2026-03-21, halted 2026-05-11'},
+ 'reader|Comparison|Holder share (S13)': {'date': '2026-11-10',
+                                          'to': 0.0,
+                                          'why': "PR2.2: Fluid's three revenue lines (S13) filled — fees and revenue "
+                                                 'DefiLlama (secondary), holder revenue the buyback credited while '
+                                                 'it ran (primary), a measured 0 from 2026-03-21, halted 2026-05-11'},
+ 'reader|Comparison|Revenue (S13), 90 days': {'date': '2026-11-10',
+                                              'to': 1541847.9,
+                                              'why': "PR2.2: Fluid's three revenue lines (S13) filled — fees and "
+                                                     'revenue DefiLlama (secondary), holder revenue the buyback '
+                                                     'credited while it ran (primary), a measured 0 from 2026-03-21, '
+                                                     'halted 2026-05-11'}}
