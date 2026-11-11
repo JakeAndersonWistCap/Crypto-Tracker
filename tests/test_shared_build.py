@@ -120,7 +120,7 @@ def test_the_files_that_share_the_build_are_declared_and_none_still_builds_the_p
     assert users == sorted(conftest.SHARED_PLAIN_BUILD_FILES)
     # P5-1C.B1 (merged in project round 1, S10): test_round_p5_1c_flows.py shares the build; PR1: test_pr1_revenue.py and
     # test_pr1_status.py share it too; the Uniswap freeze gate (test_pr1_freeze.py) as well
-    assert len(users) == 13
+    assert len(users) == 14
     for n in users:
         src = (TESTS / n).read_text(encoding="utf-8")
         assert "bw.build_workbook(st, d / \"audit.xlsx\"" not in src, f"{n} still builds the plain recipe itself"

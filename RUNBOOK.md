@@ -534,6 +534,40 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11ej. Project round 3B — finish Maple, fix Fluid's freeze (2026-11-11)
+
+**Read-only checks first** (PowerShell 5.1, from the repo folder; nothing here writes to `metrics.db`):
+
+```
+git log --oneline -1                                       # expect: the round's last commit (the gate's head)
+python -c "import config; print(config.OUTFLOW_CATEGORIES['Fluid']['b'])"
+#   expect on your machine: ('emissions_tokens', 'emissions_tokens_arbitrum', 'emissions_tokens_base', 'emissions_tokens_plasma')
+#   (your explorer_routes.json wires the Base and Plasma scans; the frozen build now pins the same)
+```
+
+**One command per item** (after the normal run and build; the freeze compare builds the test dumps in a temp folder):
+
+```
+python project_freeze.py --compare Fluid                   # ITEM 1
+#   expect: Fluid: 353 cells, 0 undeclared move(s)
+python project_freeze.py --compare Uniswap                 # ITEM 1
+#   expect: Uniswap: 309 cells, 0 undeclared move(s)
+python done_check.py --verbose | Select-String "^Maple" -Context 0,8          # ITEM 2
+#   expect: Maple | READY |   — no UNIFORMITY, Subsidy cover, Leakage (ii) or Revenue growth line (the float needs
+#   maple_ssf_safe_tokens stored: the run after round 3 stores it)
+@'
+import openpyxl, xlcalc
+wb = openpyxl.load_workbook("token_metrics_audit.xlsx"); X = xlcalc.Workbook(wb)
+def cell(tab, head):
+    ws = wb[tab]; hr = next(r for r in range(1, 13) if ws.cell(r, 1).value == "Project")
+    row = next(r for r in range(hr + 1, ws.max_row + 1) if ws.cell(r, 1).value == "Maple")
+    c = next(c for c in range(1, ws.max_column + 1) if str(ws.cell(hr, c).value or "").startswith(head))
+    return X.value(tab, row, c)
+print("holder revenue Q0", cell("CP Comparability", "HOLDER REVENUE Q0"), "| A3 actual buyback Q0", cell("A3 Revenue Buyback", "Actual buyback Q0 ($)"))
+'@ | python -                                                                  # ITEM 3
+#   expect: the two figures EQUAL (the same 3 published months of Maple's buyback; this morning's A3 read $597,982)
+```
+
 ## 11ei. Project round 3 — Maple, plus freezing Fluid (2026-11-11)
 
 **Read-only checks first** (PowerShell 5.1, from the repo folder; nothing here writes to `metrics.db`):

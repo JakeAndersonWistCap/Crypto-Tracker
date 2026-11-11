@@ -109,6 +109,8 @@ def _build(out_dir: str) -> tuple[Path, Path]:
         asof = max(asof or pl["meta"]["asof"], pl["meta"]["asof"])
     sm.DB_PATH = db
     import build_workbook as bw
+    import config
+    config.pin_frozen_probe()        # PR3B.1: Fluid's L2 scans wired as Jake's probe wires them, on every machine
     st = sm.Store(db)
     audit, reader = Path(out_dir) / "audit.xlsx", Path(out_dir) / "reader.xlsx"
     try:

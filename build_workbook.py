@@ -459,6 +459,13 @@ def _effective_granularity(name: str, metric: str, g=None) -> str:
         return gran
     srcs = g["source"].astype(str)
     srcs = srcs[~srcs.str.startswith("declared:zero")]
+    # PR3B.3 (Jake 2026-11-11: Maple's holder revenue Q0 $461,214 beside its A3 actual buyback Q0 $597,982 — one flow on
+    # two windows): a HOLDER VALUE view fed by the buyback alone (no declared extra payout, no fee burn, no bribes) holds
+    # the buyback's own rows, so a MONTHLY buyback windows it on the same published months
+    if metric.startswith("holder_value") and not srcs.empty and srcs.str.startswith("derived:holder_value").all():
+        hv = config.HOLDER_VALUE.get(name) or {}
+        if not (hv.get("distributed_extra") or hv.get("burn_credited") or hv.get("bribes")):
+            return config.series_granularity(name, "actual_buyback_usd")
     ins = {(_SPLIT_INPUT.match(x) or [None, None])[1] for x in srcs.unique()}
     if srcs.empty or None in ins:
         return gran
@@ -12157,7 +12164,16 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
                         + f" (numerator {rv}, whole)")
             legs = [("revenue", rv, "q0")] + [(f"outflow {c}", f"outflow_{c}_usd", "q0") for c in got]
             den = "+".join(_flow_rate(R, r, f"outflow_{c}_usd") for c in got)
-            return _coverage_guard(R, r, legs, f"{_flow_rate(R, r, rv)}/({den})")
+            f = _coverage_guard(R, r, legs, f"{_flow_rate(R, r, rv)}/({den})")
+            # PR3B.2: a supply-side incentive programme that has ENDED (config.OUTFLOW_ENDED, with its source and date)
+            # makes (b) a MEASURED 0 — revenue ÷ 0 is no ratio, and the cell says why, dated
+            ended = [config.outflow_ended_text(p["name"], c) for c in got]
+            inner = _cp_inner(f) if isinstance(f, str) else None
+            if got and all(ended) and inner is not None:
+                zero = ",".join(f"ISNUMBER({R.D(r, f'outflow_{c}_usd', 'q0')}),{R.D(r, f'outflow_{c}_usd', 'q0')}=0"
+                                for c in got)
+                return f'=IF(AND({zero}),"{ended[0]}",{inner})'
+            return f
         return build
 
     def hv_has(p):

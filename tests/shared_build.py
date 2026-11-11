@@ -107,6 +107,12 @@ def _build(d: Path) -> dict:
         mp.setattr(sm, "DB_PATH", str(db))
         mp.setitem(sys.modules, "recalc", None)
         mp.setenv("TOKEN_METRICS_STORE_VALUES", "1")
+        # PR3B.1: Fluid's Base / Plasma claim scans wired as Jake's probe file wires them (project_freeze does the
+        # same), so the build is the same on every machine; restored after the build
+        import config
+        mp.setitem(config.OUTFLOW_CATEGORIES["Fluid"], "b", config.OUTFLOW_CATEGORIES["Fluid"]["b"])
+        mp.setitem(config.PROJECT_BY_NAME["Fluid"], "log_scans", list(config.PROJECT_BY_NAME["Fluid"].get("log_scans") or []))
+        config.pin_frozen_probe()
         st = sm.Store(str(db))
         try:
             bw.build_workbook(st, d / "audit.xlsx", asof=asof, reader_path=d / "reader.xlsx")

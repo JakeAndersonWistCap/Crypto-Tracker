@@ -29954,9 +29954,10 @@ def explorer_tier_budget(tier: str) -> int:
     return l2_tier_budget(tier) if base.startswith(L2_TIER_PREFIX) else EXPLORER_PROJECT_TIER_BUDGET_S
 
 
-def wire_probed_scans(state: dict | None = None) -> list:
+def wire_probed_scans(state: dict | None = None, projects=None, open_routes: bool = True) -> list:
     """Open the Etherscan route and wire the scan for every chain Jake's probe lists as served; returns the keys wired.
-    Idempotent (a key already wired is left alone)."""
+    Idempotent (a key already wired is left alone). `projects` limits it to those projects' scans; `open_routes=False`
+    wires the scans without touching the fetch routes (pin_frozen_probe)."""
     st = explorer_probe_state() if state is None else state
     served = {int(c) for c in (st.get("served") or ())}
     # ROUND G 2.7: the Alchemy Transfers API probe (check_offline_items.py alchemy_transfer_routes) — a chain it serves
@@ -29967,11 +29968,15 @@ def wire_probed_scans(state: dict | None = None) -> list:
     for cid, proj, chain, key, metric, tok, holders in EXPLORER_PROBED_SCANS:
         if cid not in served and cid not in alc_served:
             continue
-        if cid in served:
+        if projects is not None and proj not in projects:
+            continue
+        if not open_routes:
+            pass
+        elif cid in served:
             routes = EXPLORER_LOG_ROUTES.setdefault(cid, [])
             if "etherscan" not in routes:
                 routes.insert(0, "etherscan")
-        if cid in alc_served:
+        if open_routes and cid in alc_served:
             troutes = EXPLORER_TRANSFER_ROUTES.setdefault(cid, [])
             if "alchemy" not in troutes:
                 troutes.append("alchemy")
@@ -37571,3 +37576,657 @@ FROZEN_MOVES["Fluid"] = {'audit|CP Comparability|FEES Q0 ($) — S13 line 1: all
                                                      'revenue DefiLlama (secondary), holder revenue the buyback '
                                                      'credited while it ran (primary), a measured 0 from 2026-03-21, '
                                                      'halted 2026-05-11'}}
+
+
+# =====================================================================================================================
+# PROJECT ROUND 3B — FINISH MAPLE, FIX FLUID'S FREEZE (Jake 2026-11-11). Sources read 2026-11-11, keyless.
+# =====================================================================================================================
+# PR3B.2 A SUPPLY-SIDE INCENTIVE PROGRAMME THAT HAS ENDED: outflow (b) is a MEASURED 0 from then, and subsidy cover /
+# leakage (ii) read that dated reason (revenue ÷ 0 is no ratio). Each entry: the cell text (a string inside a formula,
+# at most 240 characters), its source and read date.
+OUTFLOW_ENDED = {
+    ("Maple", "b"): {
+        "text": "n/a — outflow (b) is a measured 0: Drips ended (phased out; the final claim window closed 2026-02-18, "
+                "docs.maple.finance drips-rewards; last syrupDrip payout 2026-02-18 on chain) — revenue ÷ 0 is no ratio",
+        "source": "https://docs.maple.finance/syrupusdc-usdt-usdg-for-lenders/drips-rewards ('The final claim for Drips "
+                  "accumulated during Q4 2025 will be open between January 18, 2026 and February 18, 2026'); "
+                  "eth.blockscout.com SYRUP transfers out of syrupDrip 0x509712F3…: the last 2026-02-18 11:41 UTC, "
+                  "block 24,483,486",
+        "read_on": "2026-11-11", "decided": "Jake 2026-11-11 (PR3B.2)"},
+}
+assert all(len(v["text"]) <= 240 for v in OUTFLOW_ENDED.values())
+
+
+def outflow_ended_text(project_name: str, category: str) -> str:
+    """PR3B.2: the dated reason a category's outflow is a measured 0 because its programme ended — '' if not declared."""
+    return (OUTFLOW_ENDED.get((project_name, category)) or {}).get("text", "")
+
+
+_MAPLE_STAKING_DOC = "https://docs.maple.finance/maple-for-token-holders/syrup-tokenomics/staking"
+DECLARED_NA_REASONS["Maple"] += [
+    {"cols": (), "match": "outflow (b) is a measured 0: Drips ended",
+     "source": OUTFLOW_ENDED[("Maple", "b")]["source"], "read_on": "2026-11-11",
+     "decided": "Jake 2026-11-11 (PR3B.2)", "why": "Drips (outflow (b)) ended; the last claims 2026-02-18"},
+    {"cols": ("UNIFORMITY",),
+     "text": "n/a — no staker yield exists: stSYRUP staking rewards were sunset with MIP-019 (2025-11); "
+             "docs.maple.finance staking page, read 2026-11-11",
+     "match": "no staker yield exists: stSYRUP staking rewards were sunset with MIP-019",
+     "source": _MAPLE_STAKING_DOC + " ('Staking rewards were sunset with MIP-019')", "read_on": "2026-11-11",
+     "decided": "Jake 2026-11-11 (PR3B.2)", "why": "no staker yield since stSYRUP rewards ended"},
+]
+
+
+# PR3B.1 (Jake 2026-11-11: project_freeze --compare Fluid read 0 undeclared here, 18 on Jake's machine). The 15-dump build
+# READ a machine-local file: explorer_routes.json (gitignored; Jake's etherscan_v2_routes probe) wires Fluid's Base and
+# Plasma claim scans into its outflow (b) at import. On Jake's machine (b) = Ethereum + Arbitrum + Base + Plasma, and the
+# dumps hold no Base / Plasma rows, so (b) and everything reading it is BLOCKED; without the file (this sandbox) (b) was
+# Ethereum + Arbitrum and read numbers. The FROZEN build pins the wiring Jake's live build runs — Fluid's L2 scans wired,
+# whatever this machine's file says — so the baseline is what the dumps truly produce under that code, on every machine.
+# Only Fluid's scans (the frozen projects' only probed legs); the fetch routes are untouched (a build reads no route).
+FROZEN_PROBE_PIN = {"served": [8453, 9745], "probed_on": "frozen-build pin (PR3B.1: as Jake's probe wires them)"}
+
+
+def pin_frozen_probe() -> list:
+    """PR3B.1: wire Fluid's Base and Plasma claim scans for a build of the dumps (project_freeze, the shared test build) —
+    idempotent, so a machine whose explorer_routes.json already wired them is unchanged."""
+    return wire_probed_scans(FROZEN_PROBE_PIN, projects={"Fluid"}, open_routes=False)
+
+
+# PR3B.1 (Jake 2026-11-11): Fluid's baseline rebuilt with its (b) wired as on Jake's machine — the 18 moves below.
+FROZEN_MOVES["Fluid"].update({'audit|CP Comparability|Dilution (b) supply-side incentives (annualised) ÷ circulating': {'date': '2026-11-11',
+                                                                                           'to': 'n/a — '
+                                                                                                 'outflow_b_tokens '
+                                                                                                 '(q0): BLOCKED — '
+                                                                                                 'BLOCKED — outflow '
+                                                                                                 '(b) is not formed: '
+                                                                                                 'emissions_tokens_base: '
+                                                                                                 'no rows stored; '
+                                                                                                 'emissions_tokens_plasma: '
+                                                                                                 'no rows stored',
+                                                                                           'why': 'PR3B.1: the '
+                                                                                                  'frozen build now '
+                                                                                                  "wires Fluid's "
+                                                                                                  'outflow (b) as '
+                                                                                                  "Jake's live build "
+                                                                                                  'does '
+                                                                                                  '(explorer_routes.json: '
+                                                                                                  'Base + Plasma '
+                                                                                                  'claim scans, '
+                                                                                                  'config.pin_frozen_probe); '
+                                                                                                  'the dumps hold no '
+                                                                                                  'emissions_tokens_base '
+                                                                                                  '/ _plasma rows, '
+                                                                                                  'so (b) and every '
+                                                                                                  'cell reading it '
+                                                                                                  'is BLOCKED (the '
+                                                                                                  'rank and '
+                                                                                                  'confidence '
+                                                                                                  'follow) — what '
+                                                                                                  'the dumps truly '
+                                                                                                  'produce under '
+                                                                                                  'that code'},
+ 'audit|CP Comparability|Dilution (b) supply-side incentives (annualised) ÷ tradeable float': {'date': '2026-11-11',
+                                                                                               'to': 'n/a — '
+                                                                                                     'outflow_b_tokens '
+                                                                                                     '(q0): BLOCKED '
+                                                                                                     '— BLOCKED — '
+                                                                                                     'outflow (b) is '
+                                                                                                     'not formed: '
+                                                                                                     'emissions_tokens_base: '
+                                                                                                     'no rows '
+                                                                                                     'stored; '
+                                                                                                     'emissions_tokens_plasma: '
+                                                                                                     'no rows stored',
+                                                                                               'why': 'PR3B.1: the '
+                                                                                                      'frozen build '
+                                                                                                      'now wires '
+                                                                                                      "Fluid's "
+                                                                                                      'outflow (b) '
+                                                                                                      "as Jake's "
+                                                                                                      'live build '
+                                                                                                      'does '
+                                                                                                      '(explorer_routes.json: '
+                                                                                                      'Base + Plasma '
+                                                                                                      'claim scans, '
+                                                                                                      'config.pin_frozen_probe); '
+                                                                                                      'the dumps '
+                                                                                                      'hold no '
+                                                                                                      'emissions_tokens_base '
+                                                                                                      '/ _plasma '
+                                                                                                      'rows, so (b) '
+                                                                                                      'and every '
+                                                                                                      'cell reading '
+                                                                                                      'it is BLOCKED '
+                                                                                                      '(the rank and '
+                                                                                                      'confidence '
+                                                                                                      'follow) — '
+                                                                                                      'what the '
+                                                                                                      'dumps truly '
+                                                                                                      'produce under '
+                                                                                                      'that code'},
+ "audit|CP Comparability|NET HOLDER YIELD = holder value yield − dilution (outflows a+b+c+d+e at each day's price, annualised) ÷ market cap": {'date': '2026-11-11',
+                                                                                                                                               'to': 'n/a '
+                                                                                                                                                     '— '
+                                                                                                                                                     'outflow '
+                                                                                                                                                     '(b) '
+                                                                                                                                                     '= '
+                                                                                                                                                     'emissions_tokens+emissions_tokens_arbitrum+emissions_tokens_base+emissions_tokens_plasma '
+                                                                                                                                                     'has '
+                                                                                                                                                     'no '
+                                                                                                                                                     'value '
+                                                                                                                                                     'in '
+                                                                                                                                                     'this '
+                                                                                                                                                     'window: '
+                                                                                                                                                     'BLOCKED '
+                                                                                                                                                     '— '
+                                                                                                                                                     'outflow '
+                                                                                                                                                     '(b) '
+                                                                                                                                                     'is '
+                                                                                                                                                     'not '
+                                                                                                                                                     'formed: '
+                                                                                                                                                     'emissions_tokens_base: '
+                                                                                                                                                     'no '
+                                                                                                                                                     'rows '
+                                                                                                                                                     'stored; '
+                                                                                                                                                     'emissions_tokens_plasma: '
+                                                                                                                                                     'no '
+                                                                                                                                                     'rows '
+                                                                                                                                                     'stored',
+                                                                                                                                               'why': 'PR3B.1: '
+                                                                                                                                                      'the '
+                                                                                                                                                      'frozen '
+                                                                                                                                                      'build '
+                                                                                                                                                      'now '
+                                                                                                                                                      'wires '
+                                                                                                                                                      "Fluid's "
+                                                                                                                                                      'outflow '
+                                                                                                                                                      '(b) '
+                                                                                                                                                      'as '
+                                                                                                                                                      "Jake's "
+                                                                                                                                                      'live '
+                                                                                                                                                      'build '
+                                                                                                                                                      'does '
+                                                                                                                                                      '(explorer_routes.json: '
+                                                                                                                                                      'Base '
+                                                                                                                                                      '+ '
+                                                                                                                                                      'Plasma '
+                                                                                                                                                      'claim '
+                                                                                                                                                      'scans, '
+                                                                                                                                                      'config.pin_frozen_probe); '
+                                                                                                                                                      'the '
+                                                                                                                                                      'dumps '
+                                                                                                                                                      'hold '
+                                                                                                                                                      'no '
+                                                                                                                                                      'emissions_tokens_base '
+                                                                                                                                                      '/ '
+                                                                                                                                                      '_plasma '
+                                                                                                                                                      'rows, '
+                                                                                                                                                      'so '
+                                                                                                                                                      '(b) '
+                                                                                                                                                      'and '
+                                                                                                                                                      'every '
+                                                                                                                                                      'cell '
+                                                                                                                                                      'reading '
+                                                                                                                                                      'it '
+                                                                                                                                                      'is '
+                                                                                                                                                      'BLOCKED '
+                                                                                                                                                      '(the '
+                                                                                                                                                      'rank '
+                                                                                                                                                      'and '
+                                                                                                                                                      'confidence '
+                                                                                                                                                      'follow) '
+                                                                                                                                                      '— '
+                                                                                                                                                      'what '
+                                                                                                                                                      'the '
+                                                                                                                                                      'dumps '
+                                                                                                                                                      'truly '
+                                                                                                                                                      'produce '
+                                                                                                                                                      'under '
+                                                                                                                                                      'that '
+                                                                                                                                                      'code'},
+ "audit|CP Comparability|Outflow (b) supply-side incentives — $ a year (each day's tokens x that day's price, annualised)": {'date': '2026-11-11',
+                                                                                                                             'to': 'n/a '
+                                                                                                                                   '— '
+                                                                                                                                   'outflow_b_usd '
+                                                                                                                                   '(q0): '
+                                                                                                                                   'BLOCKED '
+                                                                                                                                   '— '
+                                                                                                                                   'BLOCKED '
+                                                                                                                                   '— '
+                                                                                                                                   'outflow '
+                                                                                                                                   '(b) '
+                                                                                                                                   'is '
+                                                                                                                                   'not '
+                                                                                                                                   'formed: '
+                                                                                                                                   'emissions_tokens_base: '
+                                                                                                                                   'no '
+                                                                                                                                   'rows '
+                                                                                                                                   'stored; '
+                                                                                                                                   'emissions_tokens_plasma: '
+                                                                                                                                   'no '
+                                                                                                                                   'rows '
+                                                                                                                                   'stored',
+                                                                                                                             'why': 'PR3B.1: '
+                                                                                                                                    'the '
+                                                                                                                                    'frozen '
+                                                                                                                                    'build '
+                                                                                                                                    'now '
+                                                                                                                                    'wires '
+                                                                                                                                    "Fluid's "
+                                                                                                                                    'outflow '
+                                                                                                                                    '(b) '
+                                                                                                                                    'as '
+                                                                                                                                    "Jake's "
+                                                                                                                                    'live '
+                                                                                                                                    'build '
+                                                                                                                                    'does '
+                                                                                                                                    '(explorer_routes.json: '
+                                                                                                                                    'Base '
+                                                                                                                                    '+ '
+                                                                                                                                    'Plasma '
+                                                                                                                                    'claim '
+                                                                                                                                    'scans, '
+                                                                                                                                    'config.pin_frozen_probe); '
+                                                                                                                                    'the '
+                                                                                                                                    'dumps '
+                                                                                                                                    'hold '
+                                                                                                                                    'no '
+                                                                                                                                    'emissions_tokens_base '
+                                                                                                                                    '/ '
+                                                                                                                                    '_plasma '
+                                                                                                                                    'rows, '
+                                                                                                                                    'so '
+                                                                                                                                    '(b) '
+                                                                                                                                    'and '
+                                                                                                                                    'every '
+                                                                                                                                    'cell '
+                                                                                                                                    'reading '
+                                                                                                                                    'it '
+                                                                                                                                    'is '
+                                                                                                                                    'BLOCKED '
+                                                                                                                                    '(the '
+                                                                                                                                    'rank '
+                                                                                                                                    'and '
+                                                                                                                                    'confidence '
+                                                                                                                                    'follow) '
+                                                                                                                                    '— '
+                                                                                                                                    'what '
+                                                                                                                                    'the '
+                                                                                                                                    'dumps '
+                                                                                                                                    'truly '
+                                                                                                                                    'produce '
+                                                                                                                                    'under '
+                                                                                                                                    'that '
+                                                                                                                                    'code'},
+ 'audit|CP Comparability|Outflow categories — basis and what has no series yet (config OUTFLOW_CATEGORIES)': {'date': '2026-11-11',
+                                                                                                              'to': '(b) '
+                                                                                                                    'emissions_tokens+emissions_tokens_arbitrum+emissions_tokens_base+emissions_tokens_plasma, '
+                                                                                                                    '(e) '
+                                                                                                                    'unlock_release_tokens; '
+                                                                                                                    'FLUID '
+                                                                                                                    'rewards '
+                                                                                                                    'to '
+                                                                                                                    'lenders '
+                                                                                                                    '/ '
+                                                                                                                    'LPs, '
+                                                                                                                    'read '
+                                                                                                                    'from '
+                                                                                                                    'the '
+                                                                                                                    'Merkle '
+                                                                                                                    'claims '
+                                                                                                                    'already '
+                                                                                                                    'scanned '
+                                                                                                                    '(Ethereum '
+                                                                                                                    '+ '
+                                                                                                                    'Arbitrum; '
+                                                                                                                    'Base '
+                                                                                                                    '/ '
+                                                                                                                    'Plasma '
+                                                                                                                    'when '
+                                                                                                                    'wired); '
+                                                                                                                    'no '
+                                                                                                                    'FLUID '
+                                                                                                                    'rewards '
+                                                                                                                    'are '
+                                                                                                                    'live '
+                                                                                                                    'now '
+                                                                                                                    '(2026-10-12)',
+                                                                                                              'why': 'PR3B.1: '
+                                                                                                                     'the '
+                                                                                                                     'frozen '
+                                                                                                                     'build '
+                                                                                                                     'now '
+                                                                                                                     'wires '
+                                                                                                                     "Fluid's "
+                                                                                                                     'outflow '
+                                                                                                                     '(b) '
+                                                                                                                     'as '
+                                                                                                                     "Jake's "
+                                                                                                                     'live '
+                                                                                                                     'build '
+                                                                                                                     'does '
+                                                                                                                     '(explorer_routes.json: '
+                                                                                                                     'Base '
+                                                                                                                     '+ '
+                                                                                                                     'Plasma '
+                                                                                                                     'claim '
+                                                                                                                     'scans, '
+                                                                                                                     'config.pin_frozen_probe); '
+                                                                                                                     'the '
+                                                                                                                     'dumps '
+                                                                                                                     'hold '
+                                                                                                                     'no '
+                                                                                                                     'emissions_tokens_base '
+                                                                                                                     '/ '
+                                                                                                                     '_plasma '
+                                                                                                                     'rows, '
+                                                                                                                     'so '
+                                                                                                                     '(b) '
+                                                                                                                     'and '
+                                                                                                                     'every '
+                                                                                                                     'cell '
+                                                                                                                     'reading '
+                                                                                                                     'it '
+                                                                                                                     'is '
+                                                                                                                     'BLOCKED '
+                                                                                                                     '(the '
+                                                                                                                     'rank '
+                                                                                                                     'and '
+                                                                                                                     'confidence '
+                                                                                                                     'follow) '
+                                                                                                                     '— '
+                                                                                                                     'what '
+                                                                                                                     'the '
+                                                                                                                     'dumps '
+                                                                                                                     'truly '
+                                                                                                                     'produce '
+                                                                                                                     'under '
+                                                                                                                     'that '
+                                                                                                                     'code'},
+ 'audit|CP Comparability|Spread over the 3-month T-bill: Net holder yield': {'date': '2026-11-11',
+                                                                             'to': 'n/a — outflow_b_usd (q0): '
+                                                                                   'BLOCKED — BLOCKED — outflow (b) '
+                                                                                   'is not formed: '
+                                                                                   'emissions_tokens_base: no rows '
+                                                                                   'stored; emissions_tokens_plasma: '
+                                                                                   'no rows stored',
+                                                                             'why': 'PR3B.1: the frozen build now '
+                                                                                    "wires Fluid's outflow (b) as "
+                                                                                    "Jake's live build does "
+                                                                                    '(explorer_routes.json: Base + '
+                                                                                    'Plasma claim scans, '
+                                                                                    'config.pin_frozen_probe); the '
+                                                                                    'dumps hold no '
+                                                                                    'emissions_tokens_base / _plasma '
+                                                                                    'rows, so (b) and every cell '
+                                                                                    'reading it is BLOCKED (the rank '
+                                                                                    'and confidence follow) — what '
+                                                                                    'the dumps truly produce under '
+                                                                                    'that code'},
+ 'audit|CP Comparability|Supplier payout per $ of fees = (fees to suppliers + incentive $ to suppliers (b)) ÷ fees, per covered day (PROPOSED)': {'date': '2026-11-11',
+                                                                                                                                                  'to': 'n/a '
+                                                                                                                                                        '— '
+                                                                                                                                                        'outflow_b_usd '
+                                                                                                                                                        '(q0): '
+                                                                                                                                                        'BLOCKED '
+                                                                                                                                                        '— '
+                                                                                                                                                        'BLOCKED '
+                                                                                                                                                        '— '
+                                                                                                                                                        'outflow '
+                                                                                                                                                        '(b) '
+                                                                                                                                                        'is '
+                                                                                                                                                        'not '
+                                                                                                                                                        'formed: '
+                                                                                                                                                        'emissions_tokens_base: '
+                                                                                                                                                        'no '
+                                                                                                                                                        'rows '
+                                                                                                                                                        'stored; '
+                                                                                                                                                        'emissions_tokens_plasma: '
+                                                                                                                                                        'no '
+                                                                                                                                                        'rows '
+                                                                                                                                                        'stored',
+                                                                                                                                                  'why': 'PR3B.1: '
+                                                                                                                                                         'the '
+                                                                                                                                                         'frozen '
+                                                                                                                                                         'build '
+                                                                                                                                                         'now '
+                                                                                                                                                         'wires '
+                                                                                                                                                         "Fluid's "
+                                                                                                                                                         'outflow '
+                                                                                                                                                         '(b) '
+                                                                                                                                                         'as '
+                                                                                                                                                         "Jake's "
+                                                                                                                                                         'live '
+                                                                                                                                                         'build '
+                                                                                                                                                         'does '
+                                                                                                                                                         '(explorer_routes.json: '
+                                                                                                                                                         'Base '
+                                                                                                                                                         '+ '
+                                                                                                                                                         'Plasma '
+                                                                                                                                                         'claim '
+                                                                                                                                                         'scans, '
+                                                                                                                                                         'config.pin_frozen_probe); '
+                                                                                                                                                         'the '
+                                                                                                                                                         'dumps '
+                                                                                                                                                         'hold '
+                                                                                                                                                         'no '
+                                                                                                                                                         'emissions_tokens_base '
+                                                                                                                                                         '/ '
+                                                                                                                                                         '_plasma '
+                                                                                                                                                         'rows, '
+                                                                                                                                                         'so '
+                                                                                                                                                         '(b) '
+                                                                                                                                                         'and '
+                                                                                                                                                         'every '
+                                                                                                                                                         'cell '
+                                                                                                                                                         'reading '
+                                                                                                                                                         'it '
+                                                                                                                                                         'is '
+                                                                                                                                                         'BLOCKED '
+                                                                                                                                                         '(the '
+                                                                                                                                                         'rank '
+                                                                                                                                                         'and '
+                                                                                                                                                         'confidence '
+                                                                                                                                                         'follow) '
+                                                                                                                                                         '— '
+                                                                                                                                                         'what '
+                                                                                                                                                         'the '
+                                                                                                                                                         'dumps '
+                                                                                                                                                         'truly '
+                                                                                                                                                         'produce '
+                                                                                                                                                         'under '
+                                                                                                                                                         'that '
+                                                                                                                                                         'code'},
+ 'audit|CP Comparability|TOTAL DILUTION = outflows a+b+c+d+e (annualised) ÷ circulating': {'date': '2026-11-11',
+                                                                                           'to': 'n/a — '
+                                                                                                 'outflow_b_tokens '
+                                                                                                 '(q0): BLOCKED — '
+                                                                                                 'BLOCKED — outflow '
+                                                                                                 '(b) is not formed: '
+                                                                                                 'emissions_tokens_base: '
+                                                                                                 'no rows stored; '
+                                                                                                 'emissions_tokens_plasma: '
+                                                                                                 'no rows stored',
+                                                                                           'why': 'PR3B.1: the '
+                                                                                                  'frozen build now '
+                                                                                                  "wires Fluid's "
+                                                                                                  'outflow (b) as '
+                                                                                                  "Jake's live build "
+                                                                                                  'does '
+                                                                                                  '(explorer_routes.json: '
+                                                                                                  'Base + Plasma '
+                                                                                                  'claim scans, '
+                                                                                                  'config.pin_frozen_probe); '
+                                                                                                  'the dumps hold no '
+                                                                                                  'emissions_tokens_base '
+                                                                                                  '/ _plasma rows, '
+                                                                                                  'so (b) and every '
+                                                                                                  'cell reading it '
+                                                                                                  'is BLOCKED (the '
+                                                                                                  'rank and '
+                                                                                                  'confidence '
+                                                                                                  'follow) — what '
+                                                                                                  'the dumps truly '
+                                                                                                  'produce under '
+                                                                                                  'that code'},
+ 'audit|CP Comparability|TOTAL DILUTION = outflows a+b+c+d+e (annualised) ÷ tradeable float': {'date': '2026-11-11',
+                                                                                               'to': 'n/a — '
+                                                                                                     'outflow_b_tokens '
+                                                                                                     '(q0): BLOCKED '
+                                                                                                     '— BLOCKED — '
+                                                                                                     'outflow (b) is '
+                                                                                                     'not formed: '
+                                                                                                     'emissions_tokens_base: '
+                                                                                                     'no rows '
+                                                                                                     'stored; '
+                                                                                                     'emissions_tokens_plasma: '
+                                                                                                     'no rows stored',
+                                                                                               'why': 'PR3B.1: the '
+                                                                                                      'frozen build '
+                                                                                                      'now wires '
+                                                                                                      "Fluid's "
+                                                                                                      'outflow (b) '
+                                                                                                      "as Jake's "
+                                                                                                      'live build '
+                                                                                                      'does '
+                                                                                                      '(explorer_routes.json: '
+                                                                                                      'Base + Plasma '
+                                                                                                      'claim scans, '
+                                                                                                      'config.pin_frozen_probe); '
+                                                                                                      'the dumps '
+                                                                                                      'hold no '
+                                                                                                      'emissions_tokens_base '
+                                                                                                      '/ _plasma '
+                                                                                                      'rows, so (b) '
+                                                                                                      'and every '
+                                                                                                      'cell reading '
+                                                                                                      'it is BLOCKED '
+                                                                                                      '(the rank and '
+                                                                                                      'confidence '
+                                                                                                      'follow) — '
+                                                                                                      'what the '
+                                                                                                      'dumps truly '
+                                                                                                      'produce under '
+                                                                                                      'that code'},
+ 'audit|CP Comparability|Trend — cp_nhy (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)': {'date': '2026-11-11',
+                                                                                                            'to': '– '
+                                                                                                                  '· '
+                                                                                                                  '4Q '
+                                                                                                                  'n/a '
+                                                                                                                  '· '
+                                                                                                                  'QoQ '
+                                                                                                                  'n/a',
+                                                                                                            'why': 'PR3B.1: '
+                                                                                                                   'the '
+                                                                                                                   'frozen '
+                                                                                                                   'build '
+                                                                                                                   'now '
+                                                                                                                   'wires '
+                                                                                                                   "Fluid's "
+                                                                                                                   'outflow '
+                                                                                                                   '(b) '
+                                                                                                                   'as '
+                                                                                                                   "Jake's "
+                                                                                                                   'live '
+                                                                                                                   'build '
+                                                                                                                   'does '
+                                                                                                                   '(explorer_routes.json: '
+                                                                                                                   'Base '
+                                                                                                                   '+ '
+                                                                                                                   'Plasma '
+                                                                                                                   'claim '
+                                                                                                                   'scans, '
+                                                                                                                   'config.pin_frozen_probe); '
+                                                                                                                   'the '
+                                                                                                                   'dumps '
+                                                                                                                   'hold '
+                                                                                                                   'no '
+                                                                                                                   'emissions_tokens_base '
+                                                                                                                   '/ '
+                                                                                                                   '_plasma '
+                                                                                                                   'rows, '
+                                                                                                                   'so '
+                                                                                                                   '(b) '
+                                                                                                                   'and '
+                                                                                                                   'every '
+                                                                                                                   'cell '
+                                                                                                                   'reading '
+                                                                                                                   'it '
+                                                                                                                   'is '
+                                                                                                                   'BLOCKED '
+                                                                                                                   '(the '
+                                                                                                                   'rank '
+                                                                                                                   'and '
+                                                                                                                   'confidence '
+                                                                                                                   'follow) '
+                                                                                                                   '— '
+                                                                                                                   'what '
+                                                                                                                   'the '
+                                                                                                                   'dumps '
+                                                                                                                   'truly '
+                                                                                                                   'produce '
+                                                                                                                   'under '
+                                                                                                                   'that '
+                                                                                                                   'code'},
+ 'reader|A3 Revenue Buyback|Rank in A3': {'date': '2026-11-11',
+                                          'to': 3.0,
+                                          'why': "PR3B.1: the frozen build now wires Fluid's outflow (b) as Jake's "
+                                                 'live build does (explorer_routes.json: Base + Plasma claim scans, '
+                                                 'config.pin_frozen_probe); the dumps hold no emissions_tokens_base '
+                                                 '/ _plasma rows, so (b) and every cell reading it is BLOCKED (the '
+                                                 'rank and confidence follow) — what the dumps truly produce under '
+                                                 'that code'},
+ 'reader|Comparison|Net holder yield': {'date': '2026-11-11',
+                                        'to': 'blocked',
+                                        'why': "PR3B.1: the frozen build now wires Fluid's outflow (b) as Jake's "
+                                               'live build does (explorer_routes.json: Base + Plasma claim scans, '
+                                               'config.pin_frozen_probe); the dumps hold no emissions_tokens_base / '
+                                               '_plasma rows, so (b) and every cell reading it is BLOCKED (the rank '
+                                               'and confidence follow) — what the dumps truly produce under that '
+                                               'code'},
+ 'reader|Comparison|Total dilution, % of float': {'date': '2026-11-11',
+                                                  'to': 'blocked',
+                                                  'why': "PR3B.1: the frozen build now wires Fluid's outflow (b) as "
+                                                         "Jake's live build does (explorer_routes.json: Base + "
+                                                         'Plasma claim scans, config.pin_frozen_probe); the dumps '
+                                                         'hold no emissions_tokens_base / _plasma rows, so (b) and '
+                                                         'every cell reading it is BLOCKED (the rank and confidence '
+                                                         'follow) — what the dumps truly produce under that code'},
+ 'reader|Summary|Confidence (share green)': {'date': '2026-11-11',
+                                             'to': 0.625,
+                                             'why': "PR3B.1: the frozen build now wires Fluid's outflow (b) as "
+                                                    "Jake's live build does (explorer_routes.json: Base + Plasma "
+                                                    'claim scans, config.pin_frozen_probe); the dumps hold no '
+                                                    'emissions_tokens_base / _plasma rows, so (b) and every cell '
+                                                    'reading it is BLOCKED (the rank and confidence follow) — what '
+                                                    'the dumps truly produce under that code'},
+ 'reader|Summary|Net holder yield': {'date': '2026-11-11',
+                                     'to': 'blocked',
+                                     'why': "PR3B.1: the frozen build now wires Fluid's outflow (b) as Jake's live "
+                                            'build does (explorer_routes.json: Base + Plasma claim scans, '
+                                            'config.pin_frozen_probe); the dumps hold no emissions_tokens_base / '
+                                            '_plasma rows, so (b) and every cell reading it is BLOCKED (the rank and '
+                                            'confidence follow) — what the dumps truly produce under that code'},
+ 'reader|Summary|Rank in archetype': {'date': '2026-11-11',
+                                      'to': 3.0,
+                                      'why': "PR3B.1: the frozen build now wires Fluid's outflow (b) as Jake's live "
+                                             'build does (explorer_routes.json: Base + Plasma claim scans, '
+                                             'config.pin_frozen_probe); the dumps hold no emissions_tokens_base / '
+                                             '_plasma rows, so (b) and every cell reading it is BLOCKED (the rank '
+                                             'and confidence follow) — what the dumps truly produce under that code'},
+ 'reader|Summary|Total dilution, % of float': {'date': '2026-11-11',
+                                               'to': 'blocked',
+                                               'why': "PR3B.1: the frozen build now wires Fluid's outflow (b) as "
+                                                      "Jake's live build does (explorer_routes.json: Base + Plasma "
+                                                      'claim scans, config.pin_frozen_probe); the dumps hold no '
+                                                      'emissions_tokens_base / _plasma rows, so (b) and every cell '
+                                                      'reading it is BLOCKED (the rank and confidence follow) — what '
+                                                      'the dumps truly produce under that code'},
+ 'reader|Summary|Total dilution, tokens a year': {'date': '2026-11-11',
+                                                  'to': 'blocked',
+                                                  'why': "PR3B.1: the frozen build now wires Fluid's outflow (b) as "
+                                                         "Jake's live build does (explorer_routes.json: Base + "
+                                                         'Plasma claim scans, config.pin_frozen_probe); the dumps '
+                                                         'hold no emissions_tokens_base / _plasma rows, so (b) and '
+                                                         'every cell reading it is BLOCKED (the rank and confidence '
+                                                         'follow) — what the dumps truly produce under that code'}})

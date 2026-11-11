@@ -1159,6 +1159,9 @@ def _period_formula_cell(sh: Sheet, ctx: Ctx, row: int, col: Col, name: str, met
     if L is None:
         return put_code(sh, row, col, "n/a", f"No daily {label} series is held for {name}, so there is no change over "
                         f"the selected period.\n\nWorking: {where}.")
+    mon = _monthly_growth_cell(sh, ctx, row, col, name, metric, kind, label, fill, where)
+    if mon is not None:
+        return mon
     how = ("the sum over the last N days to the last day held ÷ the sum over the N days before − 1; every day of "
            "both windows must hold a row" if kind == "flow" else
            "the value on the last day held ÷ the value N days earlier − 1; both days must hold a row")
@@ -1171,6 +1174,30 @@ def _period_formula_cell(sh: Sheet, ctx: Ctx, row: int, col: Col, name: str, met
                        f"{how}. n/a when the history is shorter or a day is missing. The series is "
                        f"{ctx.ser.describe(f'{name}|{metric}')}." + _excluded_note(ctx, name, metric, kind)
                        + (f"\n\n{extra}" if extra else "") + f"\n\nWorking: {where}.")
+
+
+def _monthly_growth_cell(sh: Sheet, ctx: Ctx, row: int, col: Col, name: str, metric: str, kind: str, label: str,
+                         fill, where: str) -> str | None:
+    """PR3B.2 (Jake 2026-11-11): A MONTHLY FLOW (config.series_granularity 'monthly' — Maple's revenue from its own page)
+    has no N-day windows: its period growth is the LATEST COMPLETE PUBLISHED MONTH (build_workbook._published_last: never
+    the current, incomplete month; a month not yet published is publication lag) against the month before, whatever
+    period the selector holds. None for any other series (the N-day rule stands)."""
+    if kind != "flow" or ctx.config.series_granularity(name, metric) != "monthly":
+        return None
+    s = _series(ctx.groups, name, metric)
+    if s is None or s.empty:
+        return None
+    s = s.groupby(s.index.to_period("M")).sum()
+    last = ctx.bw._published_last(s.set_axis(s.index.to_timestamp()), ctx.asof)
+    cur, prev = s.get(last), s.get(last - 1)
+    rule = (f"A MONTHLY series ({name}'s {metric} is published once a month): the selector's N-day windows do not apply. "
+            f"Rule (PR3B.2): the latest complete published month against the month before — {last} vs {last - 1}")
+    if cur is None or prev is None or not prev:
+        return put_code(sh, row, col, "n/a", f"{rule}: {'no' if cur is None else 'a'} {last} total and "
+                        f"{'no' if prev is None else 'a zero'} {last - 1} total, so no change.\n\nWorking: {where}.")
+    return put_formula(sh, row, col, f"={float(cur)}/{float(prev)}-1", fill,
+                       f"{label[:1].upper()}{label[1:]}: {rule}: {float(cur):,.0f} ÷ {float(prev):,.0f} − 1."
+                       f"\n\nWorking: {where}.")
 
 
 def _held_series(ctx: Ctx, name: str, metric: str, kind: str) -> str | None:
