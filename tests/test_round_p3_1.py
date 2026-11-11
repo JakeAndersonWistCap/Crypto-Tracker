@@ -115,7 +115,12 @@ def test_r1_staked_is_zero_float_is_circulating_dilution_and_lock_rate_are_numbe
     flt, _ = _cell(built, "audit", CP, name, "TRADEABLE FLOAT")
     assert _num(circ) and _num(flt) and flt == pytest.approx(circ)
     dil, _ = _cell(built, "reader", reader.COMPARISON, name, "Total dilution, % of float")
-    assert _num(dil), dil
+    if name == "Fluid":
+        # PR3B.1: the dumps' build wires Fluid's Base / Plasma claim scans as Jake's probe does; the dumps hold no
+        # rows for them, so outflow (b) and the dilution it feeds read BLOCKED (live they are numbers)
+        assert dil == "blocked", dil
+    else:
+        assert _num(dil), dil
     lock, lcomment = _cell(built, "reader", reader.COMPARISON, name, "Lock rate, % of circulating")
     assert _num(lock) and lock == 0, lock
     assert words in lcomment, lcomment

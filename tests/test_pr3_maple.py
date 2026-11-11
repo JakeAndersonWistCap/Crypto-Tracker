@@ -17,8 +17,12 @@ def test_0_fluid_is_frozen_with_round_2s_moves_declared():
     base = json.loads(pf.baseline_path("Fluid").read_text(encoding="utf-8"))
     assert len(base) > 300
     moves = config.FROZEN_MOVES["Fluid"]
-    assert len(moves) == 11 and all(d["date"] == "2026-11-10" and d["why"].startswith("PR2.") for d in moves.values())
-    assert all(base[k] == pf._norm(d["to"]) for k, d in moves.items())          # the baseline holds round 2's values
+    # round 2's 11 moves; round 3B's 18 (PR3B.1: Base / Plasma (b) legs pinned, the dumps read BLOCKED) join them
+    pr2 = {k: d for k, d in moves.items() if d["why"].startswith("PR2.")}
+    assert len(pr2) == 11 and all(d["date"] == "2026-11-10" for d in pr2.values())
+    rest = {k: d for k, d in moves.items() if k not in pr2}
+    assert len(rest) == 18 and all(d["date"] == "2026-11-11" and d["why"].startswith("PR3B.1") for d in rest.values())
+    assert all(base[k] == pf._norm(d["to"]) for k, d in moves.items())          # the baseline holds every declared value
 
 
 def test_1_maples_three_revenue_lines_follow_the_existing_buyback_credit():
