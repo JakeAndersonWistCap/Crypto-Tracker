@@ -212,7 +212,8 @@ def test_morpho_dao_legacy_and_base_wired_ratios_on_the_issuer_rule():
     # out of the float (was: subtract the DAO + the entities, CoinGecko counting the entities)
     assert config.circulating_primary_metric("Morpho") == "circulating_supply_onchain"
     spec = config.circulating_onchain("Morpho")
-    assert spec["subtract"] == ("noncirculating_holding_tokens",)
+    # PR4C.1: the relocked MORPHO (modelled from the published schedule) is out too
+    assert spec["subtract"] == ("noncirculating_holding_tokens", "morpho_relocked_tokens")
     assert spec["subtract_when_complete"]["metric"] == "morpho_undistributed_tokens"
     assert config.coingecko_counts_holdings("Morpho") == ()
     assert config.float_released_held("Morpho")["from"] == "noncirculating_entities_tokens"

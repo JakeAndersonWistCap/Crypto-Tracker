@@ -14155,7 +14155,7 @@ def test_sky_burn_scan_goes_to_the_explorer_first_and_decodes_the_same(monkeypat
     print("sky scan ok: explorer first, same decode")
 
 
-def test_no_gap_text_starts_with_equals_and_the_writers_keep_it_literal_anyway():
+def test_no_gap_text_starts_with_equals_and_the_writers_keep_it_literal_anyway(monkeypatch):
     """PART D, 2026-09-24. GEODNET's and Sky's actual_buyback_tokens reasons were EMPTY in the
     workbook, and the reason path was never the cause: they were the only two that began with
     "= gross_burn_tokens", and openpyxl stores any string starting with "=" as a FORMULA. The
@@ -14180,6 +14180,9 @@ def test_no_gap_text_starts_with_equals_and_the_writers_keep_it_literal_anyway()
                        "reason": "= leading equals", "suggestion": "=also", "priority": 3,
                        "priority_label": "P3"}])
     ws2 = wb.create_sheet("Gap Report")
+    # no build's state in this process may answer the row (PR4C gate: a build run earlier on the same worker left GEODNET's
+    # series current in _LAST_GROUPS, and write_gap_report dropped the row as answered by the store — G11 A5b)
+    monkeypatch.setattr(bw, "_LAST_GROUPS", {})
     bw.write_gap_report(ws2, g, "run")
     assert ws2.cell(row=5, column=5).data_type == "s" and ws2.cell(row=5, column=6).data_type == "s"
     print("equals guard ok: no reason starts with '=', and the writers keep it literal")
