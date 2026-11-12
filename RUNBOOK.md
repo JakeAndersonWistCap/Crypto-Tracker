@@ -534,6 +534,79 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11ek. Project round 4 — Morpho, plus freezing Maple, the machine-local wiring, a circulating audit (2026-11-12)
+
+**Read-only checks first** (PowerShell 5.1, from the repo folder; nothing here writes to `metrics.db`):
+
+```
+git fetch origin claude/crypto-metrics-supply-demand-ovkg8g
+git rev-parse --short HEAD origin/claude/crypto-metrics-supply-demand-ovkg8g   # expect: the same id twice
+# ITEM 0b - what your explorer_routes.json serves, beside the frozen-build pin (chain ids only; no key is printed)
+python -c "import config; s=config.explorer_probe_state(); print('file etherscan', sorted(s.get('served') or []), 'alchemy', sorted((s.get('alchemy') or {}).get('served') or [])); print('pin', sorted(config.frozen_probe_chains())); print(config.frozen_probe_wiring())"
+#   expect: file etherscan [...9745...]  alchemy [10, 56, 8453, 80094]  (SPEC G3-10e)
+#           pin [10, 56, 8453, 9745, 80094]
+#           [('Pendle','bsc',...), ('Pendle','base',...), ('Pendle','berachain',...), ('Fluid','base',...),
+#            ('Fluid','plasma',...), ('Morpho','base',...)]
+#   if your file also lists 5000 (Mantle), 146 (Sonic) or 999 (HyperEVM), tell me: the pin then differs from your live wiring
+# ITEMS 1-3 - Morpho in your store (read-only)
+@'
+import sqlite3
+c = sqlite3.connect("file:metrics.db?mode=ro", uri=True)
+def last(m):
+    return c.execute("SELECT substr(date,1,10), value FROM metrics WHERE project='Morpho' AND metric=? ORDER BY date DESC LIMIT 1", (m,)).fetchone()
+def q0(m):
+    return c.execute("SELECT count(*), round(sum(value)) FROM metrics WHERE project='Morpho' AND metric=? AND date > date((SELECT max(date) FROM metrics WHERE project='Morpho' AND metric=?), '-90 day')", (m, m)).fetchone()
+for m in ("total_supply", "noncirculating_holding_tokens", "noncirculating_entities_tokens", "circulating_supply", "morpho_undistributed_tokens"):
+    print(m, last(m))
+for m in ("fees_usd", "revenue_usd", "holders_revenue_usd", "emissions_tokens_claims_ethereum", "emissions_tokens_claims_arbitrum", "emissions_tokens_claims_base", "emissions_tokens_claims_katana"):
+    print(m, q0(m))
+'@ | python -
+#   expect: total_supply ~999,999,999.8; noncirculating_holding_tokens ~283.7M (the DAO, after its 17.0M and 3.26M
+#           transfers of 11-06 / 11-11); noncirculating_entities_tokens ~144.5M; circulating_supply (CoinGecko) ~704.3M;
+#           morpho_undistributed_tokens None (stored from the next run)
+#           fees_usd ~$67.9M over 90 rows; revenue_usd 0; holders_revenue_usd 0;
+#           the four claims legs summing to ~1,590,835 (your A2 'Emissions to suppliers Q0')
+```
+
+**Then the normal run, and the history of the new leg** (Ethereum + Base balances at each day's first block):
+
+```
+python token_metrics.py                                             # stores today's morpho_undistributed_tokens
+python archive_backfill.py --run --project Morpho --budget-min 30   # its history; rerun until it reports nothing left
+```
+
+**One command per item** (after the run and the build):
+
+```
+python project_freeze.py --compare Maple                   # ITEM 0a
+#   expect: Maple: 360 cells, 0 undeclared move(s)
+python project_freeze.py --compare Fluid                   # ITEM 0b (the pin; also Uniswap: 309 cells, 0)
+#   expect: Fluid: 353 cells, 0 undeclared move(s)
+@'
+import openpyxl, xlcalc
+wb = openpyxl.load_workbook("token_metrics_audit.xlsx"); X = xlcalc.Workbook(wb)
+def cell(tab, head):
+    ws = wb[tab]; hr = next(r for r in range(1, 13) if ws.cell(r, 1).value == "Project")
+    row = next(r for r in range(hr + 1, ws.max_row + 1) if ws.cell(r, 1).value == "Morpho")
+    c = next(c for c in range(1, ws.max_column + 1) if str(ws.cell(hr, c).value or "").startswith(head))
+    return X.value(tab, row, c), (ws.cell(row, c).comment.text[:400] if ws.cell(row, c).comment else "")
+for h in ("Circulating supply (tokens)", "TRADEABLE FLOAT", "Emissions Q0 (tokens)", "FEES Q0", "REVENUE Q0", "HOLDER REVENUE Q0", "HOLDER SHARE"):
+    print(h, "|", cell("CP Comparability", h))
+print("A2 emissions", cell("A2 Coordination", "Emissions to suppliers Q0"))
+'@ | python -                                                                  # ITEMS 1, 2, 3
+#   ITEM 1: Circulating ~713.5M once the archive has filled the leg's history (713,537,459 on chain 2026-11-12) — the
+#           note says "in force"; until then ~716.3M (total − the DAO) and the note says PENDING with the days held.
+#           TRADEABLE FLOAT ~570.6M in force (713.5M − the released Association / Grants / Operative 142.9M);
+#           ~571.7M while PENDING (716.3M − the entities' 144.5M, Rewards Multisig included).
+#   ITEM 2: FEES ~$67.9M; REVENUE 0; HOLDER REVENUE 0; HOLDER SHARE "n/a — 0 ÷ 0 while the fee switch is off: ..."
+#   ITEM 3: Emissions Q0 = A2 Emissions to suppliers Q0 (both ~1,590,835 on 11-11; the window moves daily)
+python done_check.py --verbose | Select-String "^Morpho" -Context 0,8          # Morpho's line
+#   expect: no FEES / REVENUE / HOLDER REVENUE / HOLDER SHARE / payout / revenue growth / destination line. Still
+#   flagged: UNIFORMITY — Morpho's docs call MORPHO 'the Morpho Protocol's governance token' but no page read says
+#   'no staking', so no reason was invented (round 2's rule); BUSINESS 3 if your store lacks
+#   protocol_tvl_constant_price_usd (it is missing on the test dumps)
+```
+
 ## 11ej. Project round 3B — finish Maple, fix Fluid's freeze (2026-11-11)
 
 **Read-only checks first** (PowerShell 5.1, from the repo folder; nothing here writes to `metrics.db`):

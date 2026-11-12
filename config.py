@@ -38298,8 +38298,8 @@ def pin_frozen_probe() -> list:
 #   Rewards Multisig 1,262,955.98 + legacy 356,158.26; Merkl Distributor 292,212.66 (Ethereum) + 735,221.20 (Base);
 #   URD 47,504.78 + legacy 49,271.82  -> morpho_undistributed_tokens 2,743,324.70;
 #   Association Master 78,076,551.01 + legacy 11,612,960.64, Ops 330,975.49; Contributor Grants 41,492,742.20, Grants 2
-#   0 + legacy 11,395,242.34; Operative 1 177.19, Operative 2 0 + legacy 4,599.38 -> released, held 142,913,248.25.
-#   OLD 571,748,421.53 -> NEW 713,537,459.51 (CoinGecko 704.3M, Jake 2026-11-11: +1.31%). Total − the DAO alone
+#   0 + legacy 11,395,242.34; Operative 1 177.19, Operative 2 0 + legacy 4,599.38 -> released, held 142,913,248.26.
+#   OLD 571,748,421.52 -> NEW 713,537,459.32 (CoinGecko 704.3M, Jake 2026-11-11: +1.31%). Total − the DAO alone
 #   716,280,784.02. Gap named: the DAO sent 17,015,150.98 legacy MORPHO to Safe 0x2fE3f122… on 2026-11-11 00:35 UTC
 #   (tx 0x76666ed9…) and 3,264,486.30 to Safe 0x45B9Dc99… on 2026-11-06 (eth.blockscout.com token transfers, read
 #   2026-11-12) — released, so circulating; CoinGecko's figure is not dated to a block.
@@ -39456,3 +39456,8 @@ FROZEN_MOVES["Maple"] = {'audit|A3 Revenue Buyback|BUYING PRESSURE ON FLOAT, % a
                                                          "Fund's Safe 0x58BE… (maple_ssf_safe_tokens), which "
                                                          'circulating already takes out — on the dumps that series has '
                                                          'no rows, so every float-based cell reads n/a'}}
+# PR4.1: the entities' series keeps its wallets and its history; what it is for changed (Morpho's rows say so)
+METRICS["noncirculating_entities_tokens"]["label"] = (
+    "Morpho's issuer-side entities' MORPHO (Association, Labs, Contributor Grants, Rewards, Operative; new + legacy) — "
+    "RELEASED (PR4.1, Jake's rule 2026-11-12): in circulating and out of the floats, less the Rewards Multisig (not "
+    "released). Was out of circulating under an 'issuer rule' (2026-10-12) Jake never made")

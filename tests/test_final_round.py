@@ -207,11 +207,15 @@ def test_morpho_dao_legacy_and_base_wired_ratios_on_the_issuer_rule():
     assert (base["chain"], c[base["underlying"]]["chain"]) == ("base", "base")
     assert c["token_legacy"]["kind"] == c["token_base"]["kind"] == "bridged_representation"
     assert config._MORPHO_ORG.endswith("/learn/governance/organization/")
-    # Jake 2026-10-12 (decision 1 on 6f8c86c): the issuer rule — the on-chain set, issuer-held entities out
+    # PR4.1 (Jake 2026-11-12): there was no "issuer rule" — circulating takes out only what is NOT RELEASED (the DAO's
+    # holdings, and MORPHO not yet distributed once its history is held); the released entities are in circulating and
+    # out of the float (was: subtract the DAO + the entities, CoinGecko counting the entities)
     assert config.circulating_primary_metric("Morpho") == "circulating_supply_onchain"
     spec = config.circulating_onchain("Morpho")
-    assert spec["subtract"] == ("noncirculating_holding_tokens", "noncirculating_entities_tokens")
-    assert config.coingecko_counts_holdings("Morpho") == ("noncirculating_entities_tokens",)
+    assert spec["subtract"] == ("noncirculating_holding_tokens",)
+    assert spec["subtract_when_complete"]["metric"] == "morpho_undistributed_tokens"
+    assert config.coingecko_counts_holdings("Morpho") == ()
+    assert config.float_released_held("Morpho")["from"] == "noncirculating_entities_tokens"
 
 
 class _MorphoHttp:
