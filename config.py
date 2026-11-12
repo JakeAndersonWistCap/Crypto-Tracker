@@ -39486,7 +39486,7 @@ METRICS["noncirculating_entities_tokens"]["label"] = (
 _IGP137_TEXT = ("https://github.com/Instadapp/fluid-governance/blob/main/contracts/payloads/IGP137/description.md (read "
                 "2026-11-12)")
 METRICS["noncirculating_igp137_tokens"]["label"] = (
-    "FLUID in IGP-137's dedicated wallet 0xcabebc7f… (5M) — NOT RELEASED: IGP-137 'legally locked for at least 4 years "
+    "FLUID in IGP-137's dedicated wallet 0xcabebc7f…, a team-controlled Avocado wallet (5M) — NOT RELEASED: IGP-137 'legally locked for at least 4 years "
     "until 2030', held 'before distribution to the relevant custodial partners' (PR4B.1) — out of circulating; its own "
     "series because CoinGecko still COUNTS it (like-for-like)")
 PROJECT_BY_NAME["Fluid"]["contracts"]["noncirc_igp137_lock"]["purpose"] = (
