@@ -36561,9 +36561,11 @@ COINGECKO_CIRC_BASIS = {
 def coingecko_circ_basis_note(project_name: str) -> str:
     """PR1.U5: the cell note explaining OUR circulating against CoinGecko's (its documented basis, and what is left)."""
     b = COINGECKO_CIRC_BASIS.get(project_name)
+    rule = globals().get("circulating_rule_note", lambda _n: "")(project_name)     # PR4.1: a declared handover, where one is
     if not b:
-        return ""
-    return (f"COINGECKO'S BASIS (PR1.U5, read {b['read_on']}): {b['basis']}; {b['ours']}. WHY THEY DIFFER: {b['gap']}.")
+        return rule
+    return (f"COINGECKO'S BASIS (PR1.U5, read {b['read_on']}): {b['basis']}; {b['ours']}. WHY THEY DIFFER: {b['gap']}."
+            + (f" {rule}" if rule else ""))
 
 
 # U9. UNISWAP'S TWO OPEN REVIEW QUEUE ROWS (Jake's store, 2026-11-05) — each answered with its numbers.

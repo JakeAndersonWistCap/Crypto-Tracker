@@ -12554,8 +12554,7 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         ("Total supply (tokens)", lambda r, p: pull(R.D(r, "total_supply", "now")), FMT_NUM, "pull", False, {"metric": "total_supply"}),
         ("Circulating supply (tokens) — our convention, the figure in use", lambda r, p: pull(circ(r, p)), FMT_NUM,
          "pull", False, {"metric": "circulating_supply_used",
-                         "note_fn": lambda p: " ".join(x for x in (config.coingecko_circ_basis_note(p["name"]),
-                                                                   config.circulating_rule_note(p["name"])) if x)}),
+                         "note_fn": lambda p: config.coingecko_circ_basis_note(p["name"])}),   # PR1.U5, PR4.1
         ("Staked / locked inside circulating (tokens)",
          lambda r, p: _cp_float_reason(p) or calc(_cp_lock(R, r, p)), FMT_NUM, "calc", False,
          {"metric_fn": lambda n: config.CP_STAKE_METRIC.get(n, "locked_tokens"), "note_fn": lambda p: _lock_zero_note(p)}),

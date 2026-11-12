@@ -1168,13 +1168,9 @@ def _period_formula_cell(sh: Sheet, ctx: Ctx, row: int, col: Col, name: str, met
     body = ctx.ser.flow_growth(L) if kind == "flow" else ctx.ser.stock_change(L)
     zz = ctx.config.ZERO_FLOW_GROWTH_TEXT.get((name, metric)) if kind == "flow" else None
     if zz:
-        # PR4.2: both windows a MEASURED 0 (Morpho's revenue while the fee switch is off) — 0 ÷ 0 is no growth, said
-        # with its dated reason; a non-zero window reads as before
-        D, V, E, N = ctx.ser.dates, ctx.ser.vals(L), ctx.ser.end(L), DAYS_REF
-        cur = f'SUMIFS({V},{D},">"&({E}-{N}),{D},"<="&{E})'
-        prev = f'SUMIFS({V},{D},">"&({E}-2*{N}),{D},"<="&({E}-{N}))'
-        body = body.replace(f'IF({prev}=0,"n/a",', f'IF({prev}=0,IF({cur}=0,"{zz}","n/a"),', 1)
-        extra = "\n\n".join(x for x in (zz, extra) if x)
+        # PR4.2: both windows a MEASURED 0 (Morpho's revenue while the fee switch is off) — the cell keeps its code
+        # (n/a, a reader code), and its comment says why: 0 ÷ 0 is no growth (done_check reads the declared reason)
+        extra = "\n\n".join(x for x in (f"Where both windows read 0: {zz}", extra) if x)
     if kind == "flow":                                  # PR1B.10a: a lumpy window at a fixed period reads "lumpy"
         body, lnote = period_lumpy_formula(ctx, name, metric, body)
         extra = "\n\n".join(x for x in (lnote, extra) if x)
