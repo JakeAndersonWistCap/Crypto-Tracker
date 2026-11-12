@@ -4031,18 +4031,30 @@ def _subtract_when_complete(groups: dict, name: str, s: pd.Series, tag: str, swc
     start (0 before it, by evidence) through the series' last day — the whole series moves to the new basis in one
     build, never a series on two bases. Until then the old basis stands and swc["state"] says what is pending."""
     leg = _daily(groups.get((name, swc["metric"])))
-    start = pd.Timestamp(swc["zero_before"])
+    # PR4.1 (Morpho): a leg that is NOT 0 before any date (whole_series) must be held on every day of the series's history
+    # span (TRAJECTORY history_days back from its last day) — days before the span are dropped, never left on the old basis
+    if swc.get("whole_series"):
+        start = (max(s.index.min(), s.index.max() - pd.Timedelta(days=int(config.TRAJECTORY["history_days"])))
+                 if not s.empty else pd.Timestamp("1900-01-01"))
+    else:
+        start = pd.Timestamp(swc["zero_before"])
     need = s.index[s.index >= start]
     have = need.intersection(leg.index)
+    sym = swc.get("symbol", "SKY")
     if len(need) and len(have) == len(need):
+        swc["in_force"] = True
         swc["state"] = (f"in force: {swc['metric']} held on all {len(need)} day(s) from {start.date()}; "
-                        f"{leg.reindex(need).iloc[-1]:,.0f} SKY taken out on {need[-1].date()}")
-        out = s - leg.reindex(s.index).where(s.index >= start, 0.0)
+                        f"{leg.reindex(need).iloc[-1]:,.0f} {sym} taken out on {need[-1].date()}")
+        if swc.get("whole_series"):
+            out = (s[s.index >= start] - leg.reindex(need)).dropna()
+        else:
+            out = s - leg.reindex(s.index).where(s.index >= start, 0.0)
         return out, tag + f"[− {swc['metric']}]"
+    swc["in_force"] = False
     first = leg.index.min().date() if not leg.empty else None
     swc["state"] = (f"PENDING — {swc['metric']} held on {len(have)} of {len(need)} day(s) from {start.date()}"
                     + (f" (live reads from {first})" if first else "") + "; the subtraction switches on when every day "
-                    "is held — `python archive_backfill.py --run --project Sky` fills the history")
+                    f"is held — `python archive_backfill.py --run --project {name}` fills the history")
     return s, tag
 
 
@@ -4072,6 +4084,28 @@ def _circulating_views(groups: dict) -> None:
         view = pd.DataFrame({"date": s.index, "project": name, "metric": "circulating_supply_onchain",
                              "value": s.values, "source": tag, "tier": 2})
         groups[(name, "circulating_supply_onchain")] = _as_stored(view, parts[0].columns)
+        _released_held_view(groups, name, swc or {}, parts[0].columns)
+
+
+def _released_held_view(groups: dict, name: str, swc: dict, cols) -> None:
+    """PR4.1 (config.FLOAT_RELEASED_HELD): the released supply issuer-side wallets still hold — in circulating, out of the
+    floats — per day: the entities' stock, less the leg circulating already subtracts once it is in force (Morpho: the
+    Rewards Multisig is inside the entities' sum and not released). A day missing a leg is no value, never the other."""
+    fr = config.float_released_held(name)
+    if not fr:
+        return
+    ent = _daily(groups.get((name, fr["from"])))
+    if ent.empty:
+        return
+    less_m = fr.get("less_when_in_force") if swc.get("in_force") else None
+    if less_m:
+        ent = (ent - _daily(groups.get((name, less_m))).reindex(ent.index)).dropna()
+        src = f"derived:released_held[{fr['from']}-{less_m}]"
+    else:
+        src = f"derived:released_held[{fr['from']}]"
+    groups[(name, fr["metric"])] = _as_stored(pd.DataFrame(
+        {"date": ent.index, "project": name, "metric": fr["metric"], "value": ent.values, "tier": 2, "source": src}),
+        cols)
 
 
 PROVISIONAL: dict = {}      # (project, metric) -> [(day, read_at)] left out of this build (G15 5)
@@ -5809,6 +5843,7 @@ def _unlock_views(groups: dict) -> None:
     day (at most 3 days before), measured by the SAME wallet set (the source names the composition): a wallet added to
     the set is a change of measuring point, never an unlock (Aerodrome's filing wallets 2026-10-07: 4.9M -> 36.2M)."""
     _ONE_OFF_UNMATCHED.clear()
+    UNLOCK_LESS_MISSING.clear()
     UNLOCK_LEGACY_DROPPED.clear()
     UNLOCK_DUST_LOG.clear()
     for p in scoped_projects():
@@ -5821,6 +5856,7 @@ def _unlock_views(groups: dict) -> None:
                 _unlock_release_view(groups, name, metric, legs)
 
 
+UNLOCK_LESS_MISSING: dict = {}   # (project, metric) -> the required RELEASE_LESS leg with no rows (PR4.1), last build
 UNLOCK_DUST_LOG: dict = {}   # project -> days whose stock fall read 0 (unresolvable or under the fee floor), last build
 
 
@@ -5927,9 +5963,15 @@ def _unlock_release_view(groups: dict, name: str, metric: str, legs: tuple) -> N
     if metric == "unlock_release_tokens" and (sp := config.STAKING_FUNDING_SPLIT.get(name)):
         total, split_src = _staking_funding_split(groups, name, sp, total, cols)
     # A LEG COUNTED ELSEWHERE (config.RELEASE_LESS, round 3 W7): taken out on its day or the next stored day, never < 0
-    for m in (config.RELEASE_LESS.get(name) or ()) if metric == "unlock_release_tokens" else ():
+    less_legs, less_required = config.release_less(name) if metric == "unlock_release_tokens" else ((), False)
+    for m in less_legs:
         less = _daily(groups.get((name, m)))
         if less.empty:
+            if less_required:
+                # PR4.1: claims out of a distributor inside the set are (b); without them the release would count the
+                # claims twice — so no release series is built (the cell says BLOCKED), never a figure that is too high
+                UNLOCK_LESS_MISSING[(name, metric)] = m
+                return
             continue
         total = total.copy()
         for d, v in less[less > 0].items():
@@ -9265,7 +9307,12 @@ def _a2_headline(R: Refs) -> list[tuple]:
         own = R.D(r, "arr_usd", "now")
         return f"IF(ISNUMBER({own}),{own},{ann})"
     emi = lambda r: R.D(r, "emissions_tokens", "q0")  # noqa: E731
-    ff = lambda r, p: f"IF(AND(ISNUMBER({circ(r, p)}),ISNUMBER({lock(r, p)})),{circ(r, p)}-{lock(r, p)},{NA})"  # noqa: E731
+    def ff(r, p):
+        rh = _released_held(R, r, p)                 # PR4.1: released issuer-held supply leaves the free float
+        if rh:
+            return (f"IF(AND(ISNUMBER({circ(r, p)}),ISNUMBER({lock(r, p)}),ISNUMBER({rh})),"
+                    f"{circ(r, p)}-{lock(r, p)}-{rh},{NA})")
+        return f"IF(AND(ISNUMBER({circ(r, p)}),ISNUMBER({lock(r, p)})),{circ(r, p)}-{lock(r, p)},{NA})"
 
     def cell(expr_fn):
         def build(r, p):
@@ -11828,8 +11875,15 @@ def _revenue_line_cols(R: Refs) -> list[tuple]:
         if not split:
             return config.not_yet_split_text(p["name"])
         hv, rv = split["holder_revenue"]["metric"], split["revenue"]["metric"]
-        return _coverage_guard(R, r, [("holder revenue", hv, "q0"), ("revenue", rv, "q0")],
-                               f"{_flow_rate(R, r, hv)}/{_flow_rate(R, r, rv)}")
+        f = _coverage_guard(R, r, [("holder revenue", hv, "q0"), ("revenue", rv, "q0")],
+                            f"{_flow_rate(R, r, hv)}/{_flow_rate(R, r, rv)}")
+        zz = split["holder_share"].get("zero_over_zero_text")
+        inner = _cp_inner(f) if isinstance(f, str) else None
+        if zz and inner is not None:
+            # PR4.2: both lines a MEASURED 0 (Morpho's fee switch is off) — 0 ÷ 0 is no ratio, said with its reason
+            a, b = R.D(r, hv, "q0"), R.D(r, rv, "q0")
+            return f'=IF(AND(ISNUMBER({a}),ISNUMBER({b}),{a}=0,{b}=0),"{zz}",{inner})'
+        return f
 
     def share_note(p):
         split = config.revenue_split(p["name"])
@@ -11967,9 +12021,25 @@ def _cp_float(R: Refs, r, p: dict) -> str:
     is not measured makes the float n/a, never the float without it."""
     c, lk = _circ(R, r, p), _cp_lock(R, r, p)
     h = _held_inside(R, r, p)
+    rh = _released_held(R, r, p)
+    if rh:
+        h = f"{h}+{rh}" if h else rh
     if h:
         return f"IF(AND(ISNUMBER({c}),ISNUMBER({lk}),ISNUMBER({h})),{c}-{lk}-({h}),{NA})"
     return f"IF(AND(ISNUMBER({c}),ISNUMBER({lk})),{c}-{lk},{NA})"
+
+
+def _released_held(R: Refs, r, p: dict) -> str | None:
+    """PR4.1: the released supply issuer-side wallets hold inside circulating, now (config.FLOAT_RELEASED_HELD) — out of
+    the tradeable float and A2's free float; None where none is declared. Not measured -> the float is n/a."""
+    fr = config.float_released_held(p["name"])
+    return R.D(r, fr["metric"], "now") if fr else None
+
+
+def _released_held_note(p: dict) -> str:
+    fr = config.float_released_held(p["name"])
+    return (f"Released issuer-held supply OUT of the float (PR4.1, Jake's rule 2026-11-12): {fr['metric']} — "
+            f"{fr['why']}.") if fr else ""
 
 
 def _held_inside(R: Refs, r, p: dict) -> str | None:
@@ -12472,8 +12542,9 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         ("Price — spot ($)", lambda r, p: pull(R.D(r, "price_usd", "now")), FMT_USD4, "pull", False,
          {"metric": "price_usd"}),
         ("Emissions Q0 (tokens) — every incentive programme, as the A-tabs read it",
-         lambda r, p: _fixed_supply_text(p) or pull(R.D(r, "emissions_tokens", "q0")), FMT_NUM, "pull", False,
-         {"metric": "emissions_tokens"}),
+         lambda r, p: ((None if p["name"] in config.EMISSIONS_ARE_INCENTIVE_SPEND else _fixed_supply_text(p))
+                       or pull(R.D(r, "emissions_tokens", "q0"))), FMT_NUM, "pull", False,
+         {"metric": "emissions_tokens", "note_fn": lambda p: config.EMISSIONS_ARE_INCENTIVE_SPEND.get(p["name"], "")}),
         ("Unlocks Q0 (tokens) — releases from the non-circulating wallets",
          lambda r, p: (pull(R.D(r, "unlock_release_tokens", "q0")) if config.unlock_stock_metrics(p["name"])
                        else "n/a — no non-circulating wallet set on this project (config.unlock_stock_metrics)"),
@@ -12483,7 +12554,8 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         ("Total supply (tokens)", lambda r, p: pull(R.D(r, "total_supply", "now")), FMT_NUM, "pull", False, {"metric": "total_supply"}),
         ("Circulating supply (tokens) — our convention, the figure in use", lambda r, p: pull(circ(r, p)), FMT_NUM,
          "pull", False, {"metric": "circulating_supply_used",
-                         "note_fn": lambda p: config.coingecko_circ_basis_note(p["name"])}),   # PR1.U5
+                         "note_fn": lambda p: " ".join(x for x in (config.coingecko_circ_basis_note(p["name"]),
+                                                                   config.circulating_rule_note(p["name"])) if x)}),
         ("Staked / locked inside circulating (tokens)",
          lambda r, p: _cp_float_reason(p) or calc(_cp_lock(R, r, p)), FMT_NUM, "calc", False,
          {"metric_fn": lambda n: config.CP_STAKE_METRIC.get(n, "locked_tokens"), "note_fn": lambda p: _lock_zero_note(p)}),
@@ -12495,7 +12567,8 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
           "partial_fn": lambda p: config.lock_partial_reason(p["name"]),
           "partial_direction": "the lock figure is incomplete, so TRADEABLE FLOAT READS HIGH.",
           "partial_fmt": '#,##0" PARTIAL↑";(#,##0)" PARTIAL↑"',
-          "note_fn": lambda p: "\n\n".join(x for x in (_lock_zero_note(p), _held_buyback_note(p)) if x)}),
+          "note_fn": lambda p: "\n\n".join(x for x in (_lock_zero_note(p), _held_buyback_note(p),
+                                                       _released_held_note(p)) if x)}),
         ("Tradeable float ÷ circulating", lambda r, p: _cp_float_reason(p) or calc(f"({flt(r, p)})/({circ(r, p)})"),
          FMT_PCT, "calc", False, {"note_fn": lambda p: _lock_zero_note(p)}),
         _buying_pressure_col(R),

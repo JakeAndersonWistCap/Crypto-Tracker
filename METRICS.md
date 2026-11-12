@@ -1455,7 +1455,7 @@ Funding: 2025-05-09..2025-11-03 treasury: April 2025 withdrawal-fee buyback (pai
 | Venice AI | 2, 3, 4 | `circulating_supply` | CoinGecko first | burn | `gross_burn_tokens` | `gross_issuance_tokens` | `emissions_tokens` | — |
 | Virtuals | 2 | `circulating_supply` | CoinGecko first | none | `gross_burn_tokens` | `gross_issuance_tokens` | `emissions_tokens` | — |
 | Maple | 3 | `circulating_supply_onchain` | on-chain first | treasury_inflow | `gross_burn_tokens` | `pool_release_tokens` | `emissions_tokens` | `treasury_holding_tokens_chain` + `noncirculating_holding_tokens` |
-| Morpho | 2 | `circulating_supply_onchain` | on-chain first | none | `gross_burn_tokens` | `gross_issuance_tokens` | `emissions_tokens` | `noncirculating_holding_tokens` + `noncirculating_entities_tokens` |
+| Morpho | 2 | `circulating_supply_onchain` | on-chain first | none | `gross_burn_tokens` | `gross_issuance_tokens` | `emissions_tokens` | `noncirculating_holding_tokens` |
 | Hyperliquid | 3, 1, 4 | `circulating_supply_first_party` | on-chain first | burn | `gross_burn_tokens` | `pool_release_tokens` | `emissions_tokens` | `excluded_wallets_tokens` + `team_wallet_tokens` |
 | Uniswap | 4 | `circulating_supply_onchain` | on-chain first | burn | `gross_burn_tokens` | `gross_issuance_tokens` | `emissions_tokens` | `treasury_holding_tokens` + `noncirculating_holding_tokens` |
 | Aerodrome | 3 | `circulating_supply_onchain` | on-chain first | treasury_inflow | `gross_burn_tokens` | `gross_issuance_tokens` | `gross_issuance_tokens` + `emissions_tokens` | `noncirculating_holding_tokens` + `filing_managed_lock_tokens` |

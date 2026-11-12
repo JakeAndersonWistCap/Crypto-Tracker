@@ -37623,13 +37623,8 @@ DECLARED_NA_REASONS["Maple"] += [
 # Ethereum + Arbitrum and read numbers. The FROZEN build pins the wiring Jake's live build runs — Fluid's L2 scans wired,
 # whatever this machine's file says — so the baseline is what the dumps truly produce under that code, on every machine.
 # Only Fluid's scans (the frozen projects' only probed legs); the fetch routes are untouched (a build reads no route).
-FROZEN_PROBE_PIN = {"served": [8453, 9745], "probed_on": "frozen-build pin (PR3B.1: as Jake's probe wires them)"}
-
-
-def pin_frozen_probe() -> list:
-    """PR3B.1: wire Fluid's Base and Plasma claim scans for a build of the dumps (project_freeze, the shared test build) —
-    idempotent, so a machine whose explorer_routes.json already wired them is unchanged."""
-    return wire_probed_scans(FROZEN_PROBE_PIN, projects={"Fluid"}, open_routes=False)
+# PR4.0b extends the pin to every scan the file wires: FROZEN_PROBE_PIN and pin_frozen_probe are defined in round 4's
+# block below (they are only called after config has loaded).
 
 
 # PR3B.1 (Jake 2026-11-11): Fluid's baseline rebuilt with its (b) wired as on Jake's machine — the 18 moves below.
@@ -38230,3 +38225,1234 @@ FROZEN_MOVES["Fluid"].update({'audit|CP Comparability|Dilution (b) supply-side i
                                                          'hold no emissions_tokens_base / _plasma rows, so (b) and '
                                                          'every cell reading it is BLOCKED (the rank and confidence '
                                                          'follow) — what the dumps truly produce under that code'}})
+
+
+# =====================================================================================================================
+# PROJECT ROUND 4 — MORPHO, plus freezing Maple, the machine-local wiring and a circulating audit (Jake 2026-11-12).
+# Every source below read 2026-11-12, keyless, generic User-Agent.
+# =====================================================================================================================
+# PR4.0b EVERY SCAN explorer_routes.json WIRES, PINNED. config.wire_probed_scans reads the machine-local, gitignored file
+# at import and wires, for each chain it lists as served, the L2 scans of EXPLORER_PROBED_SCANS: Pendle's gauge
+# controllers (BNB 56, Base 8453, Mantle 5000, Sonic 146, Berachain 80094, HyperEVM 999 — each joins Pendle's emissions
+# sum), Fluid's distributors (Base 8453, Plasma 9745 — each joins Fluid's (b)), Morpho's Merkl claims (Base 8453 — already
+# a leg of its emissions sum). The frozen and shared test builds now carry EXACTLY the pin, whatever the local file says
+# (scans the file wires beyond it are taken out). The pin is Jake's probe as recorded: his Alchemy probe served BNB, Base,
+# Berachain and OP (SPEC G3-10e, 2026-10-18; his runs since show explorer_l2:berachain@Pendle and explorer_l2:base@Morpho
+# running), Plasma by Etherscan (PR3B.1: his build wires Fluid's Plasma leg, which Alchemy does not serve). Mantle, Sonic
+# and HyperEVM are not in it. `served` keeps 8453 under Etherscan as PR3B.1 pinned it (a build reads no route; the pin
+# says which chains are wired). RUNBOOK 11ek prints Jake's file beside the pin.
+FROZEN_PROBE_PIN = {"served": [8453, 9745],
+                    "alchemy": {"served": [56, 80094, 10], "probed_on": "frozen-build pin (PR4.0b)"},
+                    "probed_on": "frozen-build pin (PR3B.1 / PR4.0b: as Jake's probe wires them)"}
+
+
+def frozen_probe_chains() -> set:
+    """PR4.0b: the chain ids the pin wires (Etherscan + Alchemy)."""
+    return ({int(c) for c in FROZEN_PROBE_PIN.get("served") or ()}
+            | {int(c) for c in (FROZEN_PROBE_PIN.get("alchemy") or {}).get("served") or ()})
+
+
+def frozen_probe_wiring() -> list[tuple]:
+    """PR4.0b: (project, chain, scan key, metric) for every scan the pin wires."""
+    chains = frozen_probe_chains()
+    return [(proj, chain, key, metric) for cid, proj, chain, key, metric, _t, _h in EXPLORER_PROBED_SCANS if cid in chains]
+
+
+def pin_frozen_probe() -> list:
+    """PR3B.1 / PR4.0b: a build of the dumps (project_freeze, the shared test build) carries EXACTLY the pinned probe
+    wiring: a probed scan the pin does not list is taken out (its scan, its leg of Fluid's (b) or Pendle's emissions),
+    then the pin's are wired — idempotent, and the same on a machine with or without explorer_routes.json. No fetch route
+    is opened or closed."""
+    chains = frozen_probe_chains()
+    for cid, proj, _chain, key, metric, _tok, _holders in EXPLORER_PROBED_SCANS:
+        if cid in chains:
+            continue
+        p = PROJECT_BY_NAME[proj]
+        if any(sp.get("key") == key for sp in p.get("log_scans") or ()):
+            p["log_scans"] = [sp for sp in p["log_scans"] if sp.get("key") != key]
+        if proj == "Fluid" and metric in OUTFLOW_CATEGORIES["Fluid"]["b"]:
+            OUTFLOW_CATEGORIES["Fluid"]["b"] = tuple(m for m in OUTFLOW_CATEGORIES["Fluid"]["b"] if m != metric)
+        if proj == "Pendle" and metric in tuple(p.get("emissions_from_metric") or ()):
+            p["emissions_from_metric"] = tuple(m for m in p["emissions_from_metric"] if m != metric)
+    return wire_probed_scans(FROZEN_PROBE_PIN, open_routes=False)
+
+
+# PR4.1 MORPHO'S CIRCULATING UNDER JAKE'S RULE (restated 2026-11-12; his decision of 2026-11-04): every token RELEASED
+# per the project's docs is circulating, wherever it sits; only tokens not yet released are out. There was NO "issuer
+# rule" of 2026-10-12: the config's "decision 1 on 6f8c86c" citations recorded one Jake never made.
+# Morpho's docs (docs.morpho.org/learn/governance/morpho-token, read 2026-11-12; allocation as of 2024-11-07): Morpho
+# governance 35.4% "owned and controlled by governance"; Users & Launch Pools 4.9% "governance continues distributing as
+# rewards"; Morpho Association 6.3% "can be used to fund partnerships, contributors, and any other initiatives" — no lock
+# or vesting stated; Reserve for Contributors 5.8% "unallocated reserve for future contributors" — no lock or vesting
+# stated; transferability enabled 2024-11-21. Founders (to 2028-05-17) and Strategic Partners cohort 3 (to 2027-11-21)
+# still vest, but no vesting contract or holder wallet is on file for them (CIRCULATING_ONCHAIN 'missing').
+# NOT RELEASED (out of circulating): the DAO's holdings (new, legacy, Base: noncirculating_holding_tokens); the Rewards
+# Multisig 0xF057… (rewards not yet distributed — the creator of Morpho's Merkl campaigns); the unclaimed MORPHO in Merkl's
+# Distributor 0x3Ef3D8bA… (Ethereum, Base) and the Morpho URD 0x330eefa8… (new and legacy) — the last three are
+# morpho_undistributed_tokens. Not read: Merkl's Distributor on Arbitrum (6,392.24) and Katana (16,306.23) — no MORPHO
+# token on those chains is on file as a contract; named on the cell.
+# RELEASED, IN CIRCULATING AND OUT OF THE FLOAT: the Association Master / Ops Safes, the Contributor Grants Safes (seatbelt:
+# Morpho Labs), the Operative Safes — issuer_held_released_tokens = noncirculating_entities_tokens − the Rewards Multisig.
+# Read on chain 2026-11-12 (ethereum-rpc.publicnode.com block 26,397,927, 09:21 UTC; base-rpc.publicnode.com):
+#   total 999,999,999.80; DAO 578,871.10 + legacy 270,140,344.68 + Base 13,000,000.00 = 283,719,215.78;
+#   Rewards Multisig 1,262,955.98 + legacy 356,158.26; Merkl Distributor 292,212.66 (Ethereum) + 735,221.20 (Base);
+#   URD 47,504.78 + legacy 49,271.82  -> morpho_undistributed_tokens 2,743,324.70;
+#   Association Master 78,076,551.01 + legacy 11,612,960.64, Ops 330,975.49; Contributor Grants 41,492,742.20, Grants 2
+#   0 + legacy 11,395,242.34; Operative 1 177.19, Operative 2 0 + legacy 4,599.38 -> released, held 142,913,248.25.
+#   OLD 571,748,421.53 -> NEW 713,537,459.51 (CoinGecko 704.3M, Jake 2026-11-11: +1.31%). Total − the DAO alone
+#   716,280,784.02. Gap named: the DAO sent 17,015,150.98 legacy MORPHO to Safe 0x2fE3f122… on 2026-11-11 00:35 UTC
+#   (tx 0x76666ed9…) and 3,264,486.30 to Safe 0x45B9Dc99… on 2026-11-06 (eth.blockscout.com token transfers, read
+#   2026-11-12) — released, so circulating; CoinGecko's figure is not dated to a block.
+METRICS["morpho_undistributed_tokens"] = {
+    "label": "MORPHO not yet distributed (PR4.1): the Rewards Multisig 0xF057… (new + legacy) + unclaimed in Merkl's "
+             "Distributor 0x3Ef3D8bA… (Ethereum, Base) + the Morpho URD 0x330eefa8… (new + legacy) — out of circulating "
+             "(Jake's rule: undistributed / unclaimed is not released)",
+    "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [2], "sanity_min": 0, "sanity_max": 1e8,
+    "only_projects": ("Morpho",)}
+METRICS["issuer_held_released_tokens"] = {
+    "label": "Released supply an issuer-side wallet still holds (PR4.1) — in circulating by the rule, out of the "
+             "tradeable float and free float (Morpho: the Association / Contributor-Grants / Operative wallets)",
+    "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9,
+    "only_projects": ("Morpho",), "view_only": True}
+_MORPHO_DOCS_TOKEN = "https://docs.morpho.org/learn/governance/morpho-token/"
+_MERKL_DIST = "0x3Ef3D8bA38EBe18DB133cEc108f4D14CE00Dd9Ae"
+_MORPHO_URD = "0x330eefa8a787552DC5cAd3C3cA644844B1E61Ddb"
+for _key, _addr, _chain, _und, _code, _src, _why in (
+        ("undist_rewards_multisig", "0xF057afeEc22E220f47AD4220871364e9E828b2e9", "ethereum", None, False,
+         "https://docs.morpho.org/learn/governance/organization/",
+         "MORPHO Rewards Multisig — rewards not yet distributed (PR4.1: not released)"),
+        ("undist_rewards_multisig_legacy", "0xF057afeEc22E220f47AD4220871364e9E828b2e9", "ethereum", "token_legacy",
+         False, "https://docs.morpho.org/learn/governance/organization/",
+         "MORPHO Rewards Multisig — its LEGACY MORPHO (PR4.1: not released)"),
+        ("undist_merkl_distributor", _MERKL_DIST, "ethereum", None, True,
+         "https://github.com/morpho-org/merkl-morpho-recipe/blob/b53e90c4/src/lib/constants.ts (DISTRIBUTOR_ADDRESS)",
+         "Merkl's Distributor — MORPHO not yet claimed (PR4.1: unclaimed distributor balance)"),
+        ("undist_merkl_distributor_base", _MERKL_DIST, "base", "token_base", True,
+         "https://github.com/AngleProtocol/merkl-contracts/blob/ed53c694/scripts/Distributor.s.sol#L85 (one address "
+         "on every chain)", "Merkl's Distributor on Base — MORPHO not yet claimed (PR4.1)"),
+        ("undist_urd", _MORPHO_URD, "ethereum", None, True,
+         "Morpho docs (Universal Rewards Distributor), given by Jake 2026-10-07",
+         "Morpho URD — MORPHO not yet claimed (PR4.1: unclaimed distributor balance)"),
+        ("undist_urd_legacy", _MORPHO_URD, "ethereum", "token_legacy", True,
+         "Morpho docs (Universal Rewards Distributor), given by Jake 2026-10-07",
+         "Morpho URD — its LEGACY MORPHO not yet claimed (PR4.1)")):
+    PROJECT_BY_NAME["Morpho"]["contracts"][_key] = _contract(
+        _addr, _chain, "treasury_holding", "MORPHO", _src, verified="2026-11-12", purpose=_why,
+        provenance="Jake 2026-11-12 (PR4.1): not yet released — out of circulating",
+        holder_has_code=_code, metric_override="morpho_undistributed_tokens", underlying=_und)
+MORPHO_UNDISTRIBUTED_NOT_READ = ("Merkl's Distributor on Arbitrum (6,392.24 MORPHO) and Katana (16,306.23), read "
+                                 "2026-11-12 — no MORPHO token contract on those chains is on file, so they are "
+                                 "inside circulating (0.003%)")
+_MORPHO_ENTITIES_RELEASED = ("the Association Master / Ops Safes (0x6ABfd613…, 0x4d200893…), the Contributor Grants "
+                             "Safes (0x53051Ef9…, 0x1590e7F4… — seatbelt: Morpho Labs) and the Operative Safes "
+                             "(0xD81E0983…, 0xd2C7eF9f…), new and legacy MORPHO")
+CIRCULATING_ONCHAIN["Morpho"].update({
+    "subtract": ("noncirculating_holding_tokens",),
+    "coingecko_counts": (),
+    "subtract_when_complete": {
+        "metric": "morpho_undistributed_tokens", "whole_series": True, "unlock_legs": True, "symbol": "MORPHO",
+        "release_less": ("emissions_tokens_claims_ethereum", "emissions_tokens_claims_base"),
+        "why": "the Rewards Multisig and the unclaimed distributor balances are not released (PR4.1); subtracted once "
+               "held on every day of the series, so the whole series moves in one build"},
+    "decision": "ON-CHAIN, JAKE'S RULE (restated 2026-11-12; decision of 2026-11-04): circulating = every token "
+                "RELEASED per Morpho's docs. Out: the DAO's holdings (new, legacy, Base) and MORPHO not yet "
+                "distributed (the Rewards Multisig, unclaimed in Merkl's Distributor and the URD). In circulating and "
+                "out of the float: " + _MORPHO_ENTITIES_RELEASED + ". Was (to 2026-11-11): the same entities out of "
+                "circulating under an 'issuer rule' Jake never made",
+    "missing": "Merkl's Distributor on Arbitrum and Katana (no MORPHO token on file there); the Founders' and Strategic "
+               "Partners cohort 3 allocations still vest (docs) but no vesting contract or holder wallet is on file",
+    "handover": {"on": "2026-11-12", "decided": "Jake 2026-11-12 (PR4.1)",
+                 "from": "total − the DAO − the Association / Labs / Contributor-Grants / Rewards / Operative wallets",
+                 "to": "total − the DAO − MORPHO not yet distributed (Rewards Multisig, Merkl, URD)",
+                 "how": "the whole series is restated from stored legs (no series on two bases): the DAO leg is held "
+                        "on every day; the undistributed leg switches on when held on every day of the series"},
+})
+CIRCULATING_POLICY["Morpho"].update({
+    "now": "ON-CHAIN under Jake's release rule (PR4.1, 2026-11-12)",
+    "source": "our on-chain set: total − the DAO's holdings (new, legacy, Base) − MORPHO not yet distributed; CoinGecko "
+              "and TokenOps are cross-checks",
+    "definition": "total − what is not yet released (the DAO's allocation, undistributed rewards, unclaimed distributor "
+                  "balances); the released Association / Labs / Grants / Operative holdings are in circulating and out "
+                  "of the float",
+    "previous": "the 'issuer rule' (2026-10-12 to 2026-11-11; Jake never made it); CoinGecko's own count before"})
+DISCRETIONARY_SUPPLY["Morpho"] = (("noncirculating_holding_tokens", "noncirculating_entities_tokens"),
+                                  "the DAO's holdings and the Association / Labs / Grants / Rewards / Operative wallets "
+                                  "(no published release schedule)")
+# THE FLOAT TAKES THE RELEASED ISSUER-HELD SUPPLY (PR4.1: "foundation / treasury / held adjustments belong in FREE FLOAT,
+# never in circulating"): issuer_held_released_tokens per day, built with circulating (build_workbook._circulating_views)
+FLOAT_RELEASED_HELD = {
+    "Morpho": {"metric": "issuer_held_released_tokens", "from": "noncirculating_entities_tokens",
+               "less_when_in_force": "morpho_undistributed_tokens",
+               "why": "released per Morpho's docs, so circulating; held by " + _MORPHO_ENTITIES_RELEASED + " — out of "
+                      "the tradeable float and A2's free float while held (Jake's rule, PR4.1). The Rewards Multisig is "
+                      "not released (out of circulating), so it is not subtracted twice"},
+}
+
+
+def float_released_held(project_name: str) -> dict | None:
+    """PR4.1: the released issuer-held supply the floats subtract (FLOAT_RELEASED_HELD), else None."""
+    return FLOAT_RELEASED_HELD.get(project_name)
+
+
+def circulating_swc(project_name: str) -> dict:
+    """The circulating spec's subtract-when-complete leg ({} where none)."""
+    return (CIRCULATING_ONCHAIN.get(project_name) or {}).get("subtract_when_complete") or {}
+
+
+def release_less(project_name: str) -> tuple[tuple, bool]:
+    """(legs counted elsewhere taken out of the release, required): RELEASE_LESS, plus — PR4.1 — the claims out of a
+    distributor that is in the non-circulating set once its leg is in force (they are (b), never also (e)). Required:
+    a missing leg leaves the release unbuilt, never the claims counted twice."""
+    swc = circulating_swc(project_name)
+    if swc.get("unlock_legs") and swc.get("in_force") and swc.get("release_less"):
+        return tuple(RELEASE_LESS.get(project_name) or ()) + tuple(swc["release_less"]), True
+    return tuple(RELEASE_LESS.get(project_name) or ()), False
+
+
+_unlock_stock_metrics_pr4 = unlock_stock_metrics
+
+
+def unlock_stock_metrics(project_name: str) -> tuple:     # noqa: F811 — PR4.1 extends it with the switched-on leg
+    legs = _unlock_stock_metrics_pr4(project_name)
+    swc = circulating_swc(project_name)
+    if legs and swc.get("unlock_legs") and swc.get("in_force") and swc["metric"] not in legs:
+        legs = tuple(legs) + (swc["metric"],)
+    return legs
+
+
+# PR4.2 MORPHO'S THREE REVENUE LINES (S13). The fee switch is OFF: Morpho Blue 0xBBBBBbbB… feeRecipient() = 0x0 and owner()
+# = the DAO 0xcBa28b38… at Ethereum block 26,397,959 (2026-11-12; read again here — first read 2026-10-12, phase2
+# attributes); config fee_split status 'off', share_to_buyback 0.0; DefiLlama 'morpho' dailyRevenue and holdersRevenue
+# 0 on every stored day.
+_MORPHO_SWITCH_OFF = ("the fee switch is OFF: Morpho Blue 0xBBBBBbbB… feeRecipient() = 0x0, owner() = the DAO "
+                      "0xcBa28b38…, Ethereum block 26,397,959 (2026-11-12); DefiLlama 'morpho' dailyRevenue 0")
+_MORPHO_BLUE_READ = ("eth_call feeRecipient() / owner() on Morpho Blue 0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb, block "
+                     "26,397,959 ; https://docs.morpho.org/learn/governance/organization/ (the owner sets each market's "
+                     "fee, capped at 25%)")
+REVENUE_TIER["Morpho"] = (
+    "revenue",
+    "MEASURED 0 — revenue_usd (DefiLlama 'morpho' dailyRevenue, 0 on every stored day) while " + _MORPHO_SWITCH_OFF)
+REVENUE_SPLIT["Morpho"] = {
+    "round": "PR4.2 (Jake 2026-11-12)",
+    "fees": {"metric": "fees_usd", "primary": False,
+             "route": "DefiLlama 'morpho' dailyFees: the interest borrowers pay on Morpho markets (all of it goes to "
+                      "lenders and vault curators). SECONDARY (aggregator only): not summed on chain (the Morpho API's "
+                      "borrow interest, borrow_interest_usd_day_morpho_api, is beside it)"},
+    "revenue": {"metric": "revenue_usd", "primary": True,
+                "route": "a MEASURED 0 while " + _MORPHO_SWITCH_OFF + ". PRIMARY: the switch read on chain"},
+    "holder_revenue": {"metric": "holder_value_revenue_usd", "primary": True,
+                       "route": "the credited holder value (HOLDER_VALUE: none) — a MEASURED 0, the same reason: nothing reaches MORPHO holders — no fee, no buyback, no "
+                                "burn, no distribution (fee_split share_to_buyback 0.0; DefiLlama holdersRevenue 0)"},
+    "holder_share": {"route": "holder revenue ÷ revenue = 0 ÷ 0 while the fee switch is off: no ratio (a declared "
+                              "reason, never a number)",
+                     "zero_over_zero_text": "n/a — 0 ÷ 0 while the fee switch is off: holder revenue 0 and revenue 0 "
+                                            "(Morpho Blue feeRecipient() = 0x0, block 26,397,959, 2026-11-12) — no "
+                                            "ratio"},
+    "other_recipients": "LENDERS AND CURATORS: all of the fees (the borrowers' interest)",
+    "crosscheck": "DefiLlama's 'morpho' holdersRevenue reads 0 as ours does",
+}
+DECLARED_NA_REASONS["Morpho"] = [
+    {"cols": (), "match": "0 ÷ 0: revenue_usd is 0 or not stored in this window", "source": _MORPHO_BLUE_READ,
+     "read_on": "2026-11-12", "decided": "Jake 2026-11-12 (PR4.2)",
+     "why": "holder share and the net payout ratio are 0 ÷ 0 while the fee switch is off: no ratio"},
+    {"cols": (), "match": "0 ÷ 0 while the fee switch is off", "source": _MORPHO_BLUE_READ, "read_on": "2026-11-12",
+     "decided": "Jake 2026-11-12 (PR4.2)", "why": "holder share is 0 ÷ 0 while the fee switch is off"},
+]
+
+# PR4.3 EMISSIONS, ONE DEFINITION: MORPHO paid to suppliers from the pre-minted supply is incentive spend — outflow (b) —
+# whatever its origin. CP "Emissions Q0" read "0 — fixed supply" (the gross-issuance convention, rule 7) while A2 and (b)
+# read emissions_tokens: now it reads emissions_tokens too. Gross issuance stays 0 (nothing is minted).
+EMISSIONS_ARE_INCENTIVE_SPEND = {
+    "Morpho": ("MORPHO paid to suppliers out of the pre-minted supply is incentive spend, outflow (b), whatever its "
+               "origin (PR4.3, Jake 2026-11-12): emissions_tokens = the claims out of Merkl's Distributor 0x3Ef3D8bA… "
+               "(Ethereum, Arbitrum, Base, Katana) and the Morpho URD 0x330eefa8… — the same figure as A2 'Emissions to "
+               "suppliers Q0' and CP outflow (b). Nothing is minted: gross issuance stays 0"),
+}
+
+
+def circulating_rule_note(project_name: str) -> str:
+    """PR4.1: the circulating cell's note where the rule's handover is declared — what changed, when, and the state of
+    the leg that switches on when its history is held (this build)."""
+    spec = CIRCULATING_ONCHAIN.get(project_name) or {}
+    h = spec.get("handover")
+    if not h:
+        return ""
+    swc = spec.get("subtract_when_complete") or {}
+    state = swc.get("state") or "not built"
+    extra = f" Not read: {MORPHO_UNDISTRIBUTED_NOT_READ}." if project_name == "Morpho" else ""
+    return (f"CIRCULATING — DECLARED HANDOVER ({h['decided']}, from {h['on']}): was {h['from']}; now {h['to']}. "
+            f"{h['how']}. The undistributed leg this build: {state}.{extra}")
+# PR4.2: a flow whose both growth windows are a MEASURED 0 by a declared mechanism reads this reason, never a bare n/a
+ZERO_FLOW_GROWTH_TEXT = {
+    ("Morpho", "revenue_usd"): "n/a — 0 ÷ 0 while the fee switch is off: revenue 0 in both windows (Morpho Blue "
+                               "feeRecipient() = 0x0, block 26,397,959, 2026-11-12) — no growth",
+}
+DECLARED_NA_REASONS["Morpho"] += [
+    {"cols": (), "match": "No buyback; fee switch off", "source": _MORPHO_BLUE_READ, "read_on": "2026-11-12",
+     "decided": "Jake 2026-11-12 (PR4.2)",
+     "why": "no destination exists while the fee switch is off: nothing is bought, burned or distributed"},
+]
+
+
+# PR4.0a (Jake 2026-11-12): MAPLE FROZEN after its rounds (3 and 3B) — its 360 cells on the 15-dump build are the
+# baseline (tests/fixtures/frozen_maple.json); round 3's and 3B's 46 moves are declared below as the record (16 PR3.3,
+# 10 PR3.1, 3 PR3.2, 19 PR3B.3, 4 PR3B.2; a cell moved in both rounds names both).
+FROZEN_PROJECTS["Maple"] = {"baseline": "tests/fixtures/frozen_maple.json", "since": "2026-11-12",
+                            "why": "project rounds 3 and 3B done (Jake 2026-11-11/12): done_check READY on the live build"}
+FROZEN_MOVES["Maple"] = {'audit|A3 Revenue Buyback|BUYING PRESSURE ON FLOAT, % a year = all market buybacks (burned + held + distributed, tokens, annualised) ÷ tradeable float (P4-Q5c)': {'date': '2026-11-11',
+                                                                                                                                                                    'to': 'n/a '
+                                                                                                                                                                          '— '
+                                                                                                                                                                          'maple_ssf_safe_tokens '
+                                                                                                                                                                          '(now): '
+                                                                                                                                                                          'no '
+                                                                                                                                                                          'rows '
+                                                                                                                                                                          'stored',
+                                                                                                                                                                    'why': 'PR3.3: '
+                                                                                                                                                                           'the '
+                                                                                                                                                                           'tradeable '
+                                                                                                                                                                           'float '
+                                                                                                                                                                           'subtracts '
+                                                                                                                                                                           'the '
+                                                                                                                                                                           'SSF '
+                                                                                                                                                                           'chart '
+                                                                                                                                                                           'LESS '
+                                                                                                                                                                           'the '
+                                                                                                                                                                           "Fund's "
+                                                                                                                                                                           'Safe '
+                                                                                                                                                                           '0x58BE… '
+                                                                                                                                                                           '(maple_ssf_safe_tokens), '
+                                                                                                                                                                           'which '
+                                                                                                                                                                           'circulating '
+                                                                                                                                                                           'already '
+                                                                                                                                                                           'takes '
+                                                                                                                                                                           'out '
+                                                                                                                                                                           '— '
+                                                                                                                                                                           'on '
+                                                                                                                                                                           'the '
+                                                                                                                                                                           'dumps '
+                                                                                                                                                                           'that '
+                                                                                                                                                                           'series '
+                                                                                                                                                                           'has '
+                                                                                                                                                                           'no '
+                                                                                                                                                                           'rows, '
+                                                                                                                                                                           'so '
+                                                                                                                                                                           'every '
+                                                                                                                                                                           'float-based '
+                                                                                                                                                                           'cell '
+                                                                                                                                                                           'reads '
+                                                                                                                                                                           'n/a'},
+ 'audit|CP Comparability|BUYING PRESSURE ON FLOAT, % a year = all market buybacks (burned + held + distributed, tokens, annualised) ÷ tradeable float (P4-Q5c)': {'date': '2026-11-11',
+                                                                                                                                                                  'to': 'n/a '
+                                                                                                                                                                        '— '
+                                                                                                                                                                        'maple_ssf_safe_tokens '
+                                                                                                                                                                        '(now): '
+                                                                                                                                                                        'no '
+                                                                                                                                                                        'rows '
+                                                                                                                                                                        'stored',
+                                                                                                                                                                  'why': 'PR3.3: '
+                                                                                                                                                                         'the '
+                                                                                                                                                                         'tradeable '
+                                                                                                                                                                         'float '
+                                                                                                                                                                         'subtracts '
+                                                                                                                                                                         'the '
+                                                                                                                                                                         'SSF '
+                                                                                                                                                                         'chart '
+                                                                                                                                                                         'LESS '
+                                                                                                                                                                         'the '
+                                                                                                                                                                         "Fund's "
+                                                                                                                                                                         'Safe '
+                                                                                                                                                                         '0x58BE… '
+                                                                                                                                                                         '(maple_ssf_safe_tokens), '
+                                                                                                                                                                         'which '
+                                                                                                                                                                         'circulating '
+                                                                                                                                                                         'already '
+                                                                                                                                                                         'takes '
+                                                                                                                                                                         'out '
+                                                                                                                                                                         '— '
+                                                                                                                                                                         'on '
+                                                                                                                                                                         'the '
+                                                                                                                                                                         'dumps '
+                                                                                                                                                                         'that '
+                                                                                                                                                                         'series '
+                                                                                                                                                                         'has '
+                                                                                                                                                                         'no '
+                                                                                                                                                                         'rows, '
+                                                                                                                                                                         'so '
+                                                                                                                                                                         'every '
+                                                                                                                                                                         'float-based '
+                                                                                                                                                                         'cell '
+                                                                                                                                                                         'reads '
+                                                                                                                                                                         'n/a'},
+ 'audit|CP Comparability|Dilution (a) security emissions (annualised) ÷ tradeable float': {'date': '2026-11-11',
+                                                                                           'to': 'n/a — '
+                                                                                                 'maple_ssf_safe_tokens '
+                                                                                                 '(now): no rows '
+                                                                                                 'stored',
+                                                                                           'why': 'PR3.3: the '
+                                                                                                  'tradeable float '
+                                                                                                  'subtracts the SSF '
+                                                                                                  'chart LESS the '
+                                                                                                  "Fund's Safe 0x58BE… "
+                                                                                                  '(maple_ssf_safe_tokens), '
+                                                                                                  'which circulating '
+                                                                                                  'already takes out — '
+                                                                                                  'on the dumps that '
+                                                                                                  'series has no rows, '
+                                                                                                  'so every '
+                                                                                                  'float-based cell '
+                                                                                                  'reads n/a'},
+ 'audit|CP Comparability|Dilution (b) supply-side incentives (annualised) ÷ tradeable float': {'date': '2026-11-11',
+                                                                                               'to': 'n/a — '
+                                                                                                     'maple_ssf_safe_tokens '
+                                                                                                     '(now): no rows '
+                                                                                                     'stored',
+                                                                                               'why': 'PR3.3: the '
+                                                                                                      'tradeable float '
+                                                                                                      'subtracts the '
+                                                                                                      'SSF chart LESS '
+                                                                                                      "the Fund's Safe "
+                                                                                                      '0x58BE… '
+                                                                                                      '(maple_ssf_safe_tokens), '
+                                                                                                      'which '
+                                                                                                      'circulating '
+                                                                                                      'already takes '
+                                                                                                      'out — on the '
+                                                                                                      'dumps that '
+                                                                                                      'series has no '
+                                                                                                      'rows, so every '
+                                                                                                      'float-based '
+                                                                                                      'cell reads n/a'},
+ 'audit|CP Comparability|Dilution (e) unlocks (annualised) ÷ tradeable float': {'date': '2026-11-11',
+                                                                                'to': 'n/a — maple_ssf_safe_tokens '
+                                                                                      '(now): no rows stored',
+                                                                                'why': 'PR3.3: the tradeable float '
+                                                                                       'subtracts the SSF chart LESS '
+                                                                                       "the Fund's Safe 0x58BE… "
+                                                                                       '(maple_ssf_safe_tokens), which '
+                                                                                       'circulating already takes out '
+                                                                                       '— on the dumps that series has '
+                                                                                       'no rows, so every float-based '
+                                                                                       'cell reads n/a'},
+ 'audit|CP Comparability|FEES Q0 ($) — S13 line 1: all fees paid by users of the protocol': {'date': '2026-11-11',
+                                                                                             'to': 26322043.0,
+                                                                                             'why': "PR3.1: Maple's "
+                                                                                                    'three revenue '
+                                                                                                    'lines (S13) '
+                                                                                                    'filled — fees '
+                                                                                                    'DefiLlama '
+                                                                                                    '(secondary), '
+                                                                                                    "revenue Maple's "
+                                                                                                    'own page '
+                                                                                                    '(primary, '
+                                                                                                    'first-party), '
+                                                                                                    'holder revenue '
+                                                                                                    'the SYRUP buyback '
+                                                                                                    'credited and held '
+                                                                                                    '(Jake '
+                                                                                                    '2026-11-11)'},
+ 'audit|CP Comparability|HOLDER REVENUE Q0 ($) — S13 line 3: the part of revenue reaching token holders': {'date': '2026-11-11',
+                                                                                                           'to': 658866.0,
+                                                                                                           'why': 'PR3.1: '
+                                                                                                                  "Maple's "
+                                                                                                                  'three '
+                                                                                                                  'revenue '
+                                                                                                                  'lines '
+                                                                                                                  '(S13) '
+                                                                                                                  'filled '
+                                                                                                                  '— '
+                                                                                                                  'fees '
+                                                                                                                  'DefiLlama '
+                                                                                                                  '(secondary), '
+                                                                                                                  'revenue '
+                                                                                                                  "Maple's "
+                                                                                                                  'own '
+                                                                                                                  'page '
+                                                                                                                  '(primary, '
+                                                                                                                  'first-party), '
+                                                                                                                  'holder '
+                                                                                                                  'revenue '
+                                                                                                                  'the '
+                                                                                                                  'SYRUP '
+                                                                                                                  'buyback '
+                                                                                                                  'credited '
+                                                                                                                  'and '
+                                                                                                                  'held '
+                                                                                                                  '(Jake '
+                                                                                                                  '2026-11-11); '
+                                                                                                                  'then '
+                                                                                                                  'PR3B.3: '
+                                                                                                                  'holder '
+                                                                                                                  'revenue '
+                                                                                                                  '= '
+                                                                                                                  'the '
+                                                                                                                  'A3 '
+                                                                                                                  'buyback '
+                                                                                                                  'on '
+                                                                                                                  'one '
+                                                                                                                  'basis '
+                                                                                                                  '— a '
+                                                                                                                  'holder-value '
+                                                                                                                  'view '
+                                                                                                                  'fed '
+                                                                                                                  'by '
+                                                                                                                  'the '
+                                                                                                                  'buyback '
+                                                                                                                  'alone '
+                                                                                                                  'takes '
+                                                                                                                  'the '
+                                                                                                                  "buyback's "
+                                                                                                                  'MONTHLY '
+                                                                                                                  'windows '
+                                                                                                                  '(the '
+                                                                                                                  'same '
+                                                                                                                  '3 '
+                                                                                                                  'published '
+                                                                                                                  'months); '
+                                                                                                                  'holder '
+                                                                                                                  'share, '
+                                                                                                                  'holder '
+                                                                                                                  'value '
+                                                                                                                  'yield, '
+                                                                                                                  'payout '
+                                                                                                                  'and '
+                                                                                                                  'the '
+                                                                                                                  'A3 '
+                                                                                                                  'rank '
+                                                                                                                  'follow'},
+ 'audit|CP Comparability|HOLDER SHARE = holder revenue ÷ revenue, per covered day (S13)': {'date': '2026-11-11',
+                                                                                           'to': 0.159601889,
+                                                                                           'why': "PR3.1: Maple's "
+                                                                                                  'three revenue lines '
+                                                                                                  '(S13) filled — fees '
+                                                                                                  'DefiLlama '
+                                                                                                  '(secondary), '
+                                                                                                  "revenue Maple's own "
+                                                                                                  'page (primary, '
+                                                                                                  'first-party), '
+                                                                                                  'holder revenue the '
+                                                                                                  'SYRUP buyback '
+                                                                                                  'credited and held '
+                                                                                                  '(Jake 2026-11-11); '
+                                                                                                  'then PR3B.3: holder '
+                                                                                                  'revenue = the A3 '
+                                                                                                  'buyback on one '
+                                                                                                  'basis — a '
+                                                                                                  'holder-value view '
+                                                                                                  'fed by the buyback '
+                                                                                                  'alone takes the '
+                                                                                                  "buyback's MONTHLY "
+                                                                                                  'windows (the same 3 '
+                                                                                                  'published months); '
+                                                                                                  'holder share, '
+                                                                                                  'holder value yield, '
+                                                                                                  'payout and the A3 '
+                                                                                                  'rank follow'},
+ 'audit|CP Comparability|HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) ÷ market cap — treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance': {'date': '2026-11-11',
+                                                                                                                                                                                                                                                            'to': 0.00920206551,
+                                                                                                                                                                                                                                                            'why': 'PR3B.3: '
+                                                                                                                                                                                                                                                                   'holder '
+                                                                                                                                                                                                                                                                   'revenue '
+                                                                                                                                                                                                                                                                   '= '
+                                                                                                                                                                                                                                                                   'the '
+                                                                                                                                                                                                                                                                   'A3 '
+                                                                                                                                                                                                                                                                   'buyback '
+                                                                                                                                                                                                                                                                   'on '
+                                                                                                                                                                                                                                                                   'one '
+                                                                                                                                                                                                                                                                   'basis '
+                                                                                                                                                                                                                                                                   '— '
+                                                                                                                                                                                                                                                                   'a '
+                                                                                                                                                                                                                                                                   'holder-value '
+                                                                                                                                                                                                                                                                   'view '
+                                                                                                                                                                                                                                                                   'fed '
+                                                                                                                                                                                                                                                                   'by '
+                                                                                                                                                                                                                                                                   'the '
+                                                                                                                                                                                                                                                                   'buyback '
+                                                                                                                                                                                                                                                                   'alone '
+                                                                                                                                                                                                                                                                   'takes '
+                                                                                                                                                                                                                                                                   'the '
+                                                                                                                                                                                                                                                                   "buyback's "
+                                                                                                                                                                                                                                                                   'MONTHLY '
+                                                                                                                                                                                                                                                                   'windows '
+                                                                                                                                                                                                                                                                   '(the '
+                                                                                                                                                                                                                                                                   'same '
+                                                                                                                                                                                                                                                                   '3 '
+                                                                                                                                                                                                                                                                   'published '
+                                                                                                                                                                                                                                                                   'months); '
+                                                                                                                                                                                                                                                                   'holder '
+                                                                                                                                                                                                                                                                   'share, '
+                                                                                                                                                                                                                                                                   'holder '
+                                                                                                                                                                                                                                                                   'value '
+                                                                                                                                                                                                                                                                   'yield, '
+                                                                                                                                                                                                                                                                   'payout '
+                                                                                                                                                                                                                                                                   'and '
+                                                                                                                                                                                                                                                                   'the '
+                                                                                                                                                                                                                                                                   'A3 '
+                                                                                                                                                                                                                                                                   'rank '
+                                                                                                                                                                                                                                                                   'follow'},
+ 'audit|CP Comparability|Held buyback inside circulating (tokens) — out of the tradeable float while held (P4-Q5b)': {'date': '2026-11-11',
+                                                                                                                      'to': 'n/a '
+                                                                                                                            '— '
+                                                                                                                            'maple_ssf_safe_tokens '
+                                                                                                                            '(now): '
+                                                                                                                            'no '
+                                                                                                                            'rows '
+                                                                                                                            'stored',
+                                                                                                                      'why': 'PR3.3: '
+                                                                                                                             'the '
+                                                                                                                             'tradeable '
+                                                                                                                             'float '
+                                                                                                                             'subtracts '
+                                                                                                                             'the '
+                                                                                                                             'SSF '
+                                                                                                                             'chart '
+                                                                                                                             'LESS '
+                                                                                                                             'the '
+                                                                                                                             "Fund's "
+                                                                                                                             'Safe '
+                                                                                                                             '0x58BE… '
+                                                                                                                             '(maple_ssf_safe_tokens), '
+                                                                                                                             'which '
+                                                                                                                             'circulating '
+                                                                                                                             'already '
+                                                                                                                             'takes '
+                                                                                                                             'out '
+                                                                                                                             '— '
+                                                                                                                             'on '
+                                                                                                                             'the '
+                                                                                                                             'dumps '
+                                                                                                                             'that '
+                                                                                                                             'series '
+                                                                                                                             'has '
+                                                                                                                             'no '
+                                                                                                                             'rows, '
+                                                                                                                             'so '
+                                                                                                                             'every '
+                                                                                                                             'float-based '
+                                                                                                                             'cell '
+                                                                                                                             'reads '
+                                                                                                                             'n/a'},
+ 'audit|CP Comparability|Insider share of staked / locked supply': {'date': '2026-11-11',
+                                                                    'to': 'n/a — DOCUMENTED LIMITATION: no first-party '
+                                                                          'list ties stSYRUP stakers to Maple; the 9 '
+                                                                          'issuer-side wallets on file hold 0 stSYRUP '
+                                                                          '(block 26,391,252, 2026-11-11) — see '
+                                                                          "'Insider share — what is divided'",
+                                                                    'why': 'PR3.2: insider share of the stake and '
+                                                                           'leakage (i) are a DOCUMENTED LIMITATION — '
+                                                                           'no first-party list ties stSYRUP stakers '
+                                                                           'to Maple; the 9 issuer-side wallets hold 0 '
+                                                                           'stSYRUP (Jake 2026-11-11: accepted)'},
+ 'audit|CP Comparability|Insider share — what is divided': {'date': '2026-11-11',
+                                                            'to': "stSYRUP shares held by Maple's issuer-side wallets "
+                                                                  '÷ stSYRUP totalSupply (shares over shares). Wallets '
+                                                                  'checked (9, maple-labs/address-registry '
+                                                                  "MapleAddressRegistryETH.md and Maple's filing): "
+                                                                  'dao_multisig, noncirc_governor_timelock, '
+                                                                  'noncirc_migrator, noncirc_operational_admin, '
+                                                                  'noncirc_recapitalization_module, '
+                                                                  'noncirc_security_admin, noncirc_ssf_safe, '
+                                                                  'noncirc_syrup_drip, noncirc_treasury_registry — 0 '
+                                                                  'stSYRUP each at Ethereum block 26,391,252 '
+                                                                  '(2026-11-11) of 139,503,630 stSYRUP, and at block '
+                                                                  '26,278,435 (2026-10-26). DOCUMENTED LIMITATION '
+                                                                  '(Jake 2026-11-11): no first-party list ties another '
+                                                                  'stSYRUP holder to Maple. Upgrade: such a list',
+                                                            'why': 'PR3.2: insider share of the stake and leakage (i) '
+                                                                   'are a DOCUMENTED LIMITATION — no first-party list '
+                                                                   'ties stSYRUP stakers to Maple; the 9 issuer-side '
+                                                                   'wallets hold 0 stSYRUP (Jake 2026-11-11: '
+                                                                   'accepted)'},
+ 'audit|CP Comparability|Leakage (i) — insider share of distributed holder value = insider share of the stake x distributed ÷ credited holder value, Q0 (PROPOSED)': {'date': '2026-11-11',
+                                                                                                                                                                      'to': 'n/a '
+                                                                                                                                                                            '— '
+                                                                                                                                                                            'DOCUMENTED '
+                                                                                                                                                                            'LIMITATION: '
+                                                                                                                                                                            'no '
+                                                                                                                                                                            'first-party '
+                                                                                                                                                                            'list '
+                                                                                                                                                                            'ties '
+                                                                                                                                                                            'stSYRUP '
+                                                                                                                                                                            'stakers '
+                                                                                                                                                                            'to '
+                                                                                                                                                                            'Maple; '
+                                                                                                                                                                            'the '
+                                                                                                                                                                            '9 '
+                                                                                                                                                                            'issuer-side '
+                                                                                                                                                                            'wallets '
+                                                                                                                                                                            'on '
+                                                                                                                                                                            'file '
+                                                                                                                                                                            'hold '
+                                                                                                                                                                            '0 '
+                                                                                                                                                                            'stSYRUP '
+                                                                                                                                                                            '(block '
+                                                                                                                                                                            '26,391,252, '
+                                                                                                                                                                            '2026-11-11) '
+                                                                                                                                                                            '— '
+                                                                                                                                                                            'see '
+                                                                                                                                                                            "'Insider "
+                                                                                                                                                                            'share '
+                                                                                                                                                                            '— '
+                                                                                                                                                                            'what '
+                                                                                                                                                                            'is '
+                                                                                                                                                                            "divided'",
+                                                                                                                                                                      'why': 'PR3.2: '
+                                                                                                                                                                             'insider '
+                                                                                                                                                                             'share '
+                                                                                                                                                                             'of '
+                                                                                                                                                                             'the '
+                                                                                                                                                                             'stake '
+                                                                                                                                                                             'and '
+                                                                                                                                                                             'leakage '
+                                                                                                                                                                             '(i) '
+                                                                                                                                                                             'are '
+                                                                                                                                                                             'a '
+                                                                                                                                                                             'DOCUMENTED '
+                                                                                                                                                                             'LIMITATION '
+                                                                                                                                                                             '— '
+                                                                                                                                                                             'no '
+                                                                                                                                                                             'first-party '
+                                                                                                                                                                             'list '
+                                                                                                                                                                             'ties '
+                                                                                                                                                                             'stSYRUP '
+                                                                                                                                                                             'stakers '
+                                                                                                                                                                             'to '
+                                                                                                                                                                             'Maple; '
+                                                                                                                                                                             'the '
+                                                                                                                                                                             '9 '
+                                                                                                                                                                             'issuer-side '
+                                                                                                                                                                             'wallets '
+                                                                                                                                                                             'hold '
+                                                                                                                                                                             '0 '
+                                                                                                                                                                             'stSYRUP '
+                                                                                                                                                                             '(Jake '
+                                                                                                                                                                             '2026-11-11: '
+                                                                                                                                                                             'accepted)'},
+ 'audit|CP Comparability|Payout ratio — gross = credited holder value ÷ fees': {'date': '2026-11-11',
+                                                                                'to': 0.0245817253,
+                                                                                'why': 'PR3B.3: holder revenue = the '
+                                                                                       'A3 buyback on one basis — a '
+                                                                                       'holder-value view fed by the '
+                                                                                       'buyback alone takes the '
+                                                                                       "buyback's MONTHLY windows (the "
+                                                                                       'same 3 published months); '
+                                                                                       'holder share, holder value '
+                                                                                       'yield, payout and the A3 rank '
+                                                                                       'follow'},
+ "audit|CP Comparability|Payout ratio — the project's own net basis = credited holder value ÷ revenue (config revenue basis)": {'date': '2026-11-11',
+                                                                                                                                'to': 0.159601889,
+                                                                                                                                'why': 'PR3B.3: '
+                                                                                                                                       'holder '
+                                                                                                                                       'revenue '
+                                                                                                                                       '= '
+                                                                                                                                       'the '
+                                                                                                                                       'A3 '
+                                                                                                                                       'buyback '
+                                                                                                                                       'on '
+                                                                                                                                       'one '
+                                                                                                                                       'basis '
+                                                                                                                                       '— '
+                                                                                                                                       'a '
+                                                                                                                                       'holder-value '
+                                                                                                                                       'view '
+                                                                                                                                       'fed '
+                                                                                                                                       'by '
+                                                                                                                                       'the '
+                                                                                                                                       'buyback '
+                                                                                                                                       'alone '
+                                                                                                                                       'takes '
+                                                                                                                                       'the '
+                                                                                                                                       "buyback's "
+                                                                                                                                       'MONTHLY '
+                                                                                                                                       'windows '
+                                                                                                                                       '(the '
+                                                                                                                                       'same '
+                                                                                                                                       '3 '
+                                                                                                                                       'published '
+                                                                                                                                       'months); '
+                                                                                                                                       'holder '
+                                                                                                                                       'share, '
+                                                                                                                                       'holder '
+                                                                                                                                       'value '
+                                                                                                                                       'yield, '
+                                                                                                                                       'payout '
+                                                                                                                                       'and '
+                                                                                                                                       'the '
+                                                                                                                                       'A3 '
+                                                                                                                                       'rank '
+                                                                                                                                       'follow'},
+ 'audit|CP Comparability|REVENUE Q0 ($) — S13 line 2, THE HEADLINE: fees − the cost of delivering them': {'date': '2026-11-11',
+                                                                                                          'to': 4409243.55,
+                                                                                                          'why': 'PR3.1: '
+                                                                                                                 "Maple's "
+                                                                                                                 'three '
+                                                                                                                 'revenue '
+                                                                                                                 'lines '
+                                                                                                                 '(S13) '
+                                                                                                                 'filled '
+                                                                                                                 '— '
+                                                                                                                 'fees '
+                                                                                                                 'DefiLlama '
+                                                                                                                 '(secondary), '
+                                                                                                                 'revenue '
+                                                                                                                 "Maple's "
+                                                                                                                 'own '
+                                                                                                                 'page '
+                                                                                                                 '(primary, '
+                                                                                                                 'first-party), '
+                                                                                                                 'holder '
+                                                                                                                 'revenue '
+                                                                                                                 'the '
+                                                                                                                 'SYRUP '
+                                                                                                                 'buyback '
+                                                                                                                 'credited '
+                                                                                                                 'and '
+                                                                                                                 'held '
+                                                                                                                 '(Jake '
+                                                                                                                 '2026-11-11)'},
+ 'audit|CP Comparability|Retirement rate (RETIRED buyback tokens, burned + held, annualised) ÷ tradeable float': {'date': '2026-11-11',
+                                                                                                                  'to': 'n/a '
+                                                                                                                        '— '
+                                                                                                                        'maple_ssf_safe_tokens '
+                                                                                                                        '(now): '
+                                                                                                                        'no '
+                                                                                                                        'rows '
+                                                                                                                        'stored',
+                                                                                                                  'why': 'PR3.3: '
+                                                                                                                         'the '
+                                                                                                                         'tradeable '
+                                                                                                                         'float '
+                                                                                                                         'subtracts '
+                                                                                                                         'the '
+                                                                                                                         'SSF '
+                                                                                                                         'chart '
+                                                                                                                         'LESS '
+                                                                                                                         'the '
+                                                                                                                         "Fund's "
+                                                                                                                         'Safe '
+                                                                                                                         '0x58BE… '
+                                                                                                                         '(maple_ssf_safe_tokens), '
+                                                                                                                         'which '
+                                                                                                                         'circulating '
+                                                                                                                         'already '
+                                                                                                                         'takes '
+                                                                                                                         'out '
+                                                                                                                         '— '
+                                                                                                                         'on '
+                                                                                                                         'the '
+                                                                                                                         'dumps '
+                                                                                                                         'that '
+                                                                                                                         'series '
+                                                                                                                         'has '
+                                                                                                                         'no '
+                                                                                                                         'rows, '
+                                                                                                                         'so '
+                                                                                                                         'every '
+                                                                                                                         'float-based '
+                                                                                                                         'cell '
+                                                                                                                         'reads '
+                                                                                                                         'n/a'},
+ 'audit|CP Comparability|TOTAL DILUTION = outflows a+b+c+d+e (annualised) ÷ tradeable float': {'date': '2026-11-11',
+                                                                                               'to': 'n/a — '
+                                                                                                     'maple_ssf_safe_tokens '
+                                                                                                     '(now): no rows '
+                                                                                                     'stored',
+                                                                                               'why': 'PR3.3: the '
+                                                                                                      'tradeable float '
+                                                                                                      'subtracts the '
+                                                                                                      'SSF chart LESS '
+                                                                                                      "the Fund's Safe "
+                                                                                                      '0x58BE… '
+                                                                                                      '(maple_ssf_safe_tokens), '
+                                                                                                      'which '
+                                                                                                      'circulating '
+                                                                                                      'already takes '
+                                                                                                      'out — on the '
+                                                                                                      'dumps that '
+                                                                                                      'series has no '
+                                                                                                      'rows, so every '
+                                                                                                      'float-based '
+                                                                                                      'cell reads n/a'},
+ "audit|CP Comparability|TRADEABLE FLOAT = circulating − staked/locked − protocol/treasury-held (tokens) — protocol/treasury-held is already out of circulating by the convention, so this is A2's free float": {'date': '2026-11-11',
+                                                                                                                                                                                                                 'to': 'n/a '
+                                                                                                                                                                                                                       '— '
+                                                                                                                                                                                                                       'maple_ssf_safe_tokens '
+                                                                                                                                                                                                                       '(now): '
+                                                                                                                                                                                                                       'no '
+                                                                                                                                                                                                                       'rows '
+                                                                                                                                                                                                                       'stored',
+                                                                                                                                                                                                                 'why': 'PR3.3: '
+                                                                                                                                                                                                                        'the '
+                                                                                                                                                                                                                        'tradeable '
+                                                                                                                                                                                                                        'float '
+                                                                                                                                                                                                                        'subtracts '
+                                                                                                                                                                                                                        'the '
+                                                                                                                                                                                                                        'SSF '
+                                                                                                                                                                                                                        'chart '
+                                                                                                                                                                                                                        'LESS '
+                                                                                                                                                                                                                        'the '
+                                                                                                                                                                                                                        "Fund's "
+                                                                                                                                                                                                                        'Safe '
+                                                                                                                                                                                                                        '0x58BE… '
+                                                                                                                                                                                                                        '(maple_ssf_safe_tokens), '
+                                                                                                                                                                                                                        'which '
+                                                                                                                                                                                                                        'circulating '
+                                                                                                                                                                                                                        'already '
+                                                                                                                                                                                                                        'takes '
+                                                                                                                                                                                                                        'out '
+                                                                                                                                                                                                                        '— '
+                                                                                                                                                                                                                        'on '
+                                                                                                                                                                                                                        'the '
+                                                                                                                                                                                                                        'dumps '
+                                                                                                                                                                                                                        'that '
+                                                                                                                                                                                                                        'series '
+                                                                                                                                                                                                                        'has '
+                                                                                                                                                                                                                        'no '
+                                                                                                                                                                                                                        'rows, '
+                                                                                                                                                                                                                        'so '
+                                                                                                                                                                                                                        'every '
+                                                                                                                                                                                                                        'float-based '
+                                                                                                                                                                                                                        'cell '
+                                                                                                                                                                                                                        'reads '
+                                                                                                                                                                                                                        'n/a'},
+ 'audit|CP Comparability|Tradeable float ÷ circulating': {'date': '2026-11-11',
+                                                          'to': 'n/a — maple_ssf_safe_tokens (now): no rows stored',
+                                                          'why': 'PR3.3: the tradeable float subtracts the SSF chart '
+                                                                 "LESS the Fund's Safe 0x58BE… "
+                                                                 '(maple_ssf_safe_tokens), which circulating already '
+                                                                 'takes out — on the dumps that series has no rows, so '
+                                                                 'every float-based cell reads n/a'},
+ 'audit|CP Comparability|Trend — cp_float (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)': {'date': '2026-11-11',
+                                                                                                              'to': '– '
+                                                                                                                    '· '
+                                                                                                                    '4Q '
+                                                                                                                    'n/a '
+                                                                                                                    '· '
+                                                                                                                    'QoQ '
+                                                                                                                    'n/a',
+                                                                                                              'why': 'PR3.3: '
+                                                                                                                     'the '
+                                                                                                                     'tradeable '
+                                                                                                                     'float '
+                                                                                                                     'subtracts '
+                                                                                                                     'the '
+                                                                                                                     'SSF '
+                                                                                                                     'chart '
+                                                                                                                     'LESS '
+                                                                                                                     'the '
+                                                                                                                     "Fund's "
+                                                                                                                     'Safe '
+                                                                                                                     '0x58BE… '
+                                                                                                                     '(maple_ssf_safe_tokens), '
+                                                                                                                     'which '
+                                                                                                                     'circulating '
+                                                                                                                     'already '
+                                                                                                                     'takes '
+                                                                                                                     'out '
+                                                                                                                     '— '
+                                                                                                                     'on '
+                                                                                                                     'the '
+                                                                                                                     'dumps '
+                                                                                                                     'that '
+                                                                                                                     'series '
+                                                                                                                     'has '
+                                                                                                                     'no '
+                                                                                                                     'rows, '
+                                                                                                                     'so '
+                                                                                                                     'every '
+                                                                                                                     'float-based '
+                                                                                                                     'cell '
+                                                                                                                     'reads '
+                                                                                                                     'n/a'},
+ 'audit|CP Comparability|Trend — cp_hvy (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)': {'date': '2026-11-11',
+                                                                                                            'to': '– · '
+                                                                                                                  'T12M '
+                                                                                                                  'n/a '
+                                                                                                                  '· '
+                                                                                                                  'growth '
+                                                                                                                  'n/a',
+                                                                                                            'why': 'PR3B.3: '
+                                                                                                                   'holder '
+                                                                                                                   'revenue '
+                                                                                                                   '= '
+                                                                                                                   'the '
+                                                                                                                   'A3 '
+                                                                                                                   'buyback '
+                                                                                                                   'on '
+                                                                                                                   'one '
+                                                                                                                   'basis '
+                                                                                                                   '— '
+                                                                                                                   'a '
+                                                                                                                   'holder-value '
+                                                                                                                   'view '
+                                                                                                                   'fed '
+                                                                                                                   'by '
+                                                                                                                   'the '
+                                                                                                                   'buyback '
+                                                                                                                   'alone '
+                                                                                                                   'takes '
+                                                                                                                   'the '
+                                                                                                                   "buyback's "
+                                                                                                                   'MONTHLY '
+                                                                                                                   'windows '
+                                                                                                                   '(the '
+                                                                                                                   'same '
+                                                                                                                   '3 '
+                                                                                                                   'published '
+                                                                                                                   'months); '
+                                                                                                                   'holder '
+                                                                                                                   'share, '
+                                                                                                                   'holder '
+                                                                                                                   'value '
+                                                                                                                   'yield, '
+                                                                                                                   'payout '
+                                                                                                                   'and '
+                                                                                                                   'the '
+                                                                                                                   'A3 '
+                                                                                                                   'rank '
+                                                                                                                   'follow'},
+ 'audit|CP Comparability|Trend — cp_nhy (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)': {'date': '2026-11-11',
+                                                                                                            'to': '– · '
+                                                                                                                  'T12M '
+                                                                                                                  'n/a '
+                                                                                                                  '· '
+                                                                                                                  'growth '
+                                                                                                                  'n/a',
+                                                                                                            'why': 'PR3B.3: '
+                                                                                                                   'holder '
+                                                                                                                   'revenue '
+                                                                                                                   '= '
+                                                                                                                   'the '
+                                                                                                                   'A3 '
+                                                                                                                   'buyback '
+                                                                                                                   'on '
+                                                                                                                   'one '
+                                                                                                                   'basis '
+                                                                                                                   '— '
+                                                                                                                   'a '
+                                                                                                                   'holder-value '
+                                                                                                                   'view '
+                                                                                                                   'fed '
+                                                                                                                   'by '
+                                                                                                                   'the '
+                                                                                                                   'buyback '
+                                                                                                                   'alone '
+                                                                                                                   'takes '
+                                                                                                                   'the '
+                                                                                                                   "buyback's "
+                                                                                                                   'MONTHLY '
+                                                                                                                   'windows '
+                                                                                                                   '(the '
+                                                                                                                   'same '
+                                                                                                                   '3 '
+                                                                                                                   'published '
+                                                                                                                   'months); '
+                                                                                                                   'holder '
+                                                                                                                   'share, '
+                                                                                                                   'holder '
+                                                                                                                   'value '
+                                                                                                                   'yield, '
+                                                                                                                   'payout '
+                                                                                                                   'and '
+                                                                                                                   'the '
+                                                                                                                   'A3 '
+                                                                                                                   'rank '
+                                                                                                                   'follow'},
+ 'audit|CP Comparability|UNIFORMITY = whole-token yield ÷ staker yield (1 = every holder alike) (PROPOSED)': {'date': '2026-11-11',
+                                                                                                              'to': 'n/a '
+                                                                                                                    '— '
+                                                                                                                    'no '
+                                                                                                                    'staker '
+                                                                                                                    'yield '
+                                                                                                                    'exists: '
+                                                                                                                    'stSYRUP '
+                                                                                                                    'staking '
+                                                                                                                    'rewards '
+                                                                                                                    'were '
+                                                                                                                    'sunset '
+                                                                                                                    'with '
+                                                                                                                    'MIP-019 '
+                                                                                                                    '(2025-11); '
+                                                                                                                    'docs.maple.finance '
+                                                                                                                    'staking '
+                                                                                                                    'page, '
+                                                                                                                    'read '
+                                                                                                                    '2026-11-11',
+                                                                                                              'why': 'PR3B.2: '
+                                                                                                                     "Maple's "
+                                                                                                                     'n/a '
+                                                                                                                     'reasons '
+                                                                                                                     'declared '
+                                                                                                                     '— '
+                                                                                                                     'UNIFORMITY '
+                                                                                                                     '(stSYRUP '
+                                                                                                                     'staking '
+                                                                                                                     'rewards '
+                                                                                                                     'sunset '
+                                                                                                                     'with '
+                                                                                                                     'MIP-019) '
+                                                                                                                     'and '
+                                                                                                                     'revenue '
+                                                                                                                     'growth '
+                                                                                                                     'of '
+                                                                                                                     'a '
+                                                                                                                     'MONTHLY '
+                                                                                                                     'series '
+                                                                                                                     '(the '
+                                                                                                                     'latest '
+                                                                                                                     'complete '
+                                                                                                                     'month '
+                                                                                                                     'against '
+                                                                                                                     'the '
+                                                                                                                     'month '
+                                                                                                                     'before)'},
+ 'reader|A3 Revenue Buyback|Buying pressure on float, % a year': {'date': '2026-11-11',
+                                                                  'to': 'n/a',
+                                                                  'why': 'PR3.3: the tradeable float subtracts the SSF '
+                                                                         "chart LESS the Fund's Safe 0x58BE… "
+                                                                         '(maple_ssf_safe_tokens), which circulating '
+                                                                         'already takes out — on the dumps that series '
+                                                                         'has no rows, so every float-based cell reads '
+                                                                         'n/a'},
+ 'reader|A3 Revenue Buyback|Holder value yield': {'date': '2026-11-11',
+                                                  'to': 0.00920206551,
+                                                  'why': 'PR3B.3: holder revenue = the A3 buyback on one basis — a '
+                                                         'holder-value view fed by the buyback alone takes the '
+                                                         "buyback's MONTHLY windows (the same 3 published months); "
+                                                         'holder share, holder value yield, payout and the A3 rank '
+                                                         'follow'},
+ 'reader|A3 Revenue Buyback|Payout ratio': {'date': '2026-11-11',
+                                            'to': 0.159601889,
+                                            'why': 'PR3B.3: holder revenue = the A3 buyback on one basis — a '
+                                                   "holder-value view fed by the buyback alone takes the buyback's "
+                                                   'MONTHLY windows (the same 3 published months); holder share, '
+                                                   'holder value yield, payout and the A3 rank follow'},
+ 'reader|A3 Revenue Buyback|Rank in A3': {'date': '2026-11-11',
+                                          'to': 2.0,
+                                          'why': 'PR3B.3: holder revenue = the A3 buyback on one basis — a '
+                                                 "holder-value view fed by the buyback alone takes the buyback's "
+                                                 'MONTHLY windows (the same 3 published months); holder share, holder '
+                                                 'value yield, payout and the A3 rank follow'},
+ 'reader|A3 Revenue Buyback|Revenue growth, selected period': {'date': '2026-11-11',
+                                                               'to': 0.0677116779,
+                                                               'why': "PR3B.2: Maple's n/a reasons declared — "
+                                                                      'UNIFORMITY (stSYRUP staking rewards sunset with '
+                                                                      'MIP-019) and revenue growth of a MONTHLY series '
+                                                                      '(the latest complete month against the month '
+                                                                      'before)'},
+ 'reader|Business|Holder revenue (S13), 90 days': {'date': '2026-11-11',
+                                                   'to': 658866.0,
+                                                   'why': "PR3.1: Maple's three revenue lines (S13) filled — fees "
+                                                          "DefiLlama (secondary), revenue Maple's own page (primary, "
+                                                          'first-party), holder revenue the SYRUP buyback credited and '
+                                                          'held (Jake 2026-11-11); then PR3B.3: holder revenue = the '
+                                                          'A3 buyback on one basis — a holder-value view fed by the '
+                                                          "buyback alone takes the buyback's MONTHLY windows (the same "
+                                                          '3 published months); holder share, holder value yield, '
+                                                          'payout and the A3 rank follow'},
+ 'reader|Business|Holder share (S13)': {'date': '2026-11-11',
+                                        'to': 0.159601889,
+                                        'why': "PR3.1: Maple's three revenue lines (S13) filled — fees DefiLlama "
+                                               "(secondary), revenue Maple's own page (primary, first-party), holder "
+                                               'revenue the SYRUP buyback credited and held (Jake 2026-11-11); then '
+                                               'PR3B.3: holder revenue = the A3 buyback on one basis — a holder-value '
+                                               "view fed by the buyback alone takes the buyback's MONTHLY windows (the "
+                                               'same 3 published months); holder share, holder value yield, payout and '
+                                               'the A3 rank follow'},
+ 'reader|Business|Revenue growth, selected period': {'date': '2026-11-11',
+                                                     'to': 0.0677116779,
+                                                     'why': "PR3B.2: Maple's n/a reasons declared — UNIFORMITY "
+                                                            '(stSYRUP staking rewards sunset with MIP-019) and revenue '
+                                                            'growth of a MONTHLY series (the latest complete month '
+                                                            'against the month before)'},
+ 'reader|Comparison|Buying pressure on float, % a year': {'date': '2026-11-11',
+                                                          'to': 'n/a',
+                                                          'why': 'PR3.3: the tradeable float subtracts the SSF chart '
+                                                                 "LESS the Fund's Safe 0x58BE… "
+                                                                 '(maple_ssf_safe_tokens), which circulating already '
+                                                                 'takes out — on the dumps that series has no rows, so '
+                                                                 'every float-based cell reads n/a'},
+ 'reader|Comparison|Fees (S13), 90 days': {'date': '2026-11-11',
+                                           'to': 26322043.0,
+                                           'why': "PR3.1: Maple's three revenue lines (S13) filled — fees DefiLlama "
+                                                  "(secondary), revenue Maple's own page (primary, first-party), "
+                                                  'holder revenue the SYRUP buyback credited and held (Jake '
+                                                  '2026-11-11)'},
+ 'reader|Comparison|Holder revenue (S13), 90 days': {'date': '2026-11-11',
+                                                     'to': 658866.0,
+                                                     'why': "PR3.1: Maple's three revenue lines (S13) filled — fees "
+                                                            "DefiLlama (secondary), revenue Maple's own page (primary, "
+                                                            'first-party), holder revenue the SYRUP buyback credited '
+                                                            'and held (Jake 2026-11-11); then PR3B.3: holder revenue = '
+                                                            'the A3 buyback on one basis — a holder-value view fed by '
+                                                            "the buyback alone takes the buyback's MONTHLY windows "
+                                                            '(the same 3 published months); holder share, holder value '
+                                                            'yield, payout and the A3 rank follow'},
+ 'reader|Comparison|Holder share (S13)': {'date': '2026-11-11',
+                                          'to': 0.159601889,
+                                          'why': "PR3.1: Maple's three revenue lines (S13) filled — fees DefiLlama "
+                                                 "(secondary), revenue Maple's own page (primary, first-party), holder "
+                                                 'revenue the SYRUP buyback credited and held (Jake 2026-11-11); then '
+                                                 'PR3B.3: holder revenue = the A3 buyback on one basis — a '
+                                                 "holder-value view fed by the buyback alone takes the buyback's "
+                                                 'MONTHLY windows (the same 3 published months); holder share, holder '
+                                                 'value yield, payout and the A3 rank follow'},
+ 'reader|Comparison|Holder value yield': {'date': '2026-11-11',
+                                          'to': 0.00920206551,
+                                          'why': 'PR3B.3: holder revenue = the A3 buyback on one basis — a '
+                                                 "holder-value view fed by the buyback alone takes the buyback's "
+                                                 'MONTHLY windows (the same 3 published months); holder share, holder '
+                                                 'value yield, payout and the A3 rank follow'},
+ 'reader|Comparison|Payout ratio': {'date': '2026-11-11',
+                                    'to': 0.159601889,
+                                    'why': 'PR3B.3: holder revenue = the A3 buyback on one basis — a holder-value view '
+                                           "fed by the buyback alone takes the buyback's MONTHLY windows (the same 3 "
+                                           'published months); holder share, holder value yield, payout and the A3 '
+                                           'rank follow'},
+ 'reader|Comparison|Revenue (S13), 90 days': {'date': '2026-11-11',
+                                              'to': 4409243.55,
+                                              'why': "PR3.1: Maple's three revenue lines (S13) filled — fees DefiLlama "
+                                                     "(secondary), revenue Maple's own page (primary, first-party), "
+                                                     'holder revenue the SYRUP buyback credited and held (Jake '
+                                                     '2026-11-11)'},
+ 'reader|Comparison|Total dilution, % of float': {'date': '2026-11-11',
+                                                  'to': 'n/a',
+                                                  'why': 'PR3.3: the tradeable float subtracts the SSF chart LESS the '
+                                                         "Fund's Safe 0x58BE… (maple_ssf_safe_tokens), which "
+                                                         'circulating already takes out — on the dumps that series has '
+                                                         'no rows, so every float-based cell reads n/a'},
+ 'reader|Summary|Holder value yield': {'date': '2026-11-11',
+                                       'to': 0.00920206551,
+                                       'why': 'PR3B.3: holder revenue = the A3 buyback on one basis — a holder-value '
+                                              "view fed by the buyback alone takes the buyback's MONTHLY windows (the "
+                                              'same 3 published months); holder share, holder value yield, payout and '
+                                              'the A3 rank follow'},
+ 'reader|Summary|Payout ratio': {'date': '2026-11-11',
+                                 'to': 0.159601889,
+                                 'why': 'PR3B.3: holder revenue = the A3 buyback on one basis — a holder-value view '
+                                        "fed by the buyback alone takes the buyback's MONTHLY windows (the same 3 "
+                                        'published months); holder share, holder value yield, payout and the A3 rank '
+                                        'follow'},
+ 'reader|Summary|Rank in archetype': {'date': '2026-11-11',
+                                      'to': 2.0,
+                                      'why': 'PR3B.3: holder revenue = the A3 buyback on one basis — a holder-value '
+                                             "view fed by the buyback alone takes the buyback's MONTHLY windows (the "
+                                             'same 3 published months); holder share, holder value yield, payout and '
+                                             'the A3 rank follow'},
+ 'reader|Summary|Revenue growth, selected period': {'date': '2026-11-11',
+                                                    'to': 0.0677116779,
+                                                    'why': "PR3B.2: Maple's n/a reasons declared — UNIFORMITY (stSYRUP "
+                                                           'staking rewards sunset with MIP-019) and revenue growth of '
+                                                           'a MONTHLY series (the latest complete month against the '
+                                                           'month before)'},
+ 'reader|Summary|Total dilution, % of float': {'date': '2026-11-11',
+                                               'to': 'n/a',
+                                               'why': 'PR3.3: the tradeable float subtracts the SSF chart LESS the '
+                                                      "Fund's Safe 0x58BE… (maple_ssf_safe_tokens), which circulating "
+                                                      'already takes out — on the dumps that series has no rows, so '
+                                                      'every float-based cell reads n/a'},
+ 'reader|Summary|Total dilution, tokens a year': {'date': '2026-11-11',
+                                                  'to': 'n/a',
+                                                  'why': 'PR3.3: the tradeable float subtracts the SSF chart LESS the '
+                                                         "Fund's Safe 0x58BE… (maple_ssf_safe_tokens), which "
+                                                         'circulating already takes out — on the dumps that series has '
+                                                         'no rows, so every float-based cell reads n/a'}}

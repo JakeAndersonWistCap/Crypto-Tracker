@@ -107,11 +107,16 @@ def _build(d: Path) -> dict:
         mp.setattr(sm, "DB_PATH", str(db))
         mp.setitem(sys.modules, "recalc", None)
         mp.setenv("TOKEN_METRICS_STORE_VALUES", "1")
-        # PR3B.1: Fluid's Base / Plasma claim scans wired as Jake's probe file wires them (project_freeze does the
-        # same), so the build is the same on every machine; restored after the build
+        # PR3B.1 / PR4.0b: every scan explorer_routes.json can wire (Pendle's, Fluid's and Morpho's L2 scans) set to
+        # exactly the pinned probe (project_freeze does the same), so the build is the same on every machine; restored
+        # after the build
         import config
         mp.setitem(config.OUTFLOW_CATEGORIES["Fluid"], "b", config.OUTFLOW_CATEGORIES["Fluid"]["b"])
-        mp.setitem(config.PROJECT_BY_NAME["Fluid"], "log_scans", list(config.PROJECT_BY_NAME["Fluid"].get("log_scans") or []))
+        for _proj in sorted({row[1] for row in config.EXPLORER_PROBED_SCANS}):
+            _p = config.PROJECT_BY_NAME[_proj]
+            mp.setitem(_p, "log_scans", list(_p.get("log_scans") or []))
+            if "emissions_from_metric" in _p:
+                mp.setitem(_p, "emissions_from_metric", _p["emissions_from_metric"])
         config.pin_frozen_probe()
         st = sm.Store(str(db))
         try:

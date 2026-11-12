@@ -26,13 +26,18 @@ def test_1_the_frozen_build_wires_fluids_l2_scans_as_jakes_machine_does(monkeypa
     monkeypatch.setitem(config.PROJECT_BY_NAME["Fluid"], "log_scans",
                         [s for s in config.PROJECT_BY_NAME["Fluid"].get("log_scans") or ()
                          if not s["key"].startswith("merkle_rewards_out_")])
+    # PR4.0b: the pin now carries EVERY scan Jake's probe wires (Pendle's BNB / Base / Berachain gauges and Morpho's
+    # Base claims beside Fluid's two) — restored after the test; Fluid's two are as PR3B.1 pinned them
+    for proj in ("Pendle", "Morpho"):
+        monkeypatch.setitem(config.PROJECT_BY_NAME[proj], "log_scans", list(config.PROJECT_BY_NAME[proj].get("log_scans") or ()))
+    monkeypatch.setitem(config.PROJECT_BY_NAME["Pendle"], "emissions_from_metric",
+                        config.PROJECT_BY_NAME["Pendle"].get("emissions_from_metric"))
     routes = {k: list(v) for k, v in config.EXPLORER_LOG_ROUTES.items()}
-    pendle = len(config.PROJECT_BY_NAME["Pendle"].get("log_scans") or ())
-    assert sorted(config.pin_frozen_probe()) == ["merkle_rewards_out_base", "merkle_rewards_out_plasma"]
+    wired = config.pin_frozen_probe()
+    assert {"merkle_rewards_out_base", "merkle_rewards_out_plasma"} <= set(wired)
     assert config.OUTFLOW_CATEGORIES["Fluid"]["b"][-2:] == ("emissions_tokens_base", "emissions_tokens_plasma")
     assert config.pin_frozen_probe() == []                                     # idempotent
     assert {k: list(v) for k, v in config.EXPLORER_LOG_ROUTES.items()} == routes
-    assert len(config.PROJECT_BY_NAME["Pendle"].get("log_scans") or ()) == pendle
     assert "pin_frozen_probe()" in open(pf.__file__, encoding="utf-8").read()
 
 
