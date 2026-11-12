@@ -4026,11 +4026,22 @@ def _first_party_history_views(groups: dict) -> None:
                      "source": f"config:circulating_schedule[{config.CIRCULATING_SCHEDULE[name]['source']}]"}), cols)
 
 
+def _swc_leg(groups: dict, name: str, metric: str, swc: dict) -> pd.Series:
+    """A switched leg's daily series — PR4B (current_set_only): only rows read on the wallet set the config serves it from
+    now (config.current_set_point), so a day stored on an earlier set never counts as held."""
+    g = groups.get((name, metric))
+    if swc.get("current_set_only") and g is not None and not g.empty:
+        from fetch.base import _measuring_point                  # noqa: PLC0415
+        want = config.current_set_point(name, metric)
+        g = g[g["source"].astype(str).map(lambda x: config._sum_set(_measuring_point(x)) == want)]
+    return _daily(g)
+
+
 def _subtract_when_complete(groups: dict, name: str, s: pd.Series, tag: str, swc: dict) -> tuple[pd.Series, str]:
     """G18-3c (Sky's endowments): a leg taken out of circulating only once it is held for EVERY day from its declared
     start (0 before it, by evidence) through the series' last day — the whole series moves to the new basis in one
     build, never a series on two bases. Until then the old basis stands and swc["state"] says what is pending."""
-    leg = _daily(groups.get((name, swc["metric"])))
+    leg = _swc_leg(groups, name, swc["metric"], swc)
     # PR4.1 (Morpho): a leg that is NOT 0 before any date (whole_series) must be held on every day of the series's history
     # span (TRAJECTORY history_days back from its last day) — days before the span are dropped, never left on the old basis
     if swc.get("whole_series"):
@@ -4040,16 +4051,20 @@ def _subtract_when_complete(groups: dict, name: str, s: pd.Series, tag: str, swc
         start = pd.Timestamp(swc["zero_before"])
     need = s.index[s.index >= start]
     have = need.intersection(leg.index)
+    for extra in swc.get("also_need") or ():         # PR4B.3: a leg the float needs on the same days, else no switch
+        have = have.intersection(_swc_leg(groups, name, extra, swc).index)
     sym = swc.get("symbol", "SKY")
+    sign = 1.0 if swc.get("sign") == 1 else -1.0     # PR4B.2: +1 ADDS the leg back (Maple's Safe)
     if len(need) and len(have) == len(need):
         swc["in_force"] = True
         swc["state"] = (f"in force: {swc['metric']} held on all {len(need)} day(s) from {start.date()}; "
-                        f"{leg.reindex(need).iloc[-1]:,.0f} {sym} taken out on {need[-1].date()}")
+                        f"{leg.reindex(need).iloc[-1]:,.0f} {sym} {'added back' if sign > 0 else 'taken out'} on "
+                        f"{need[-1].date()}")
         if swc.get("whole_series"):
-            out = (s[s.index >= start] - leg.reindex(need)).dropna()
+            out = (s[s.index >= start] + sign * leg.reindex(need)).dropna()
         else:
             out = s - leg.reindex(s.index).where(s.index >= start, 0.0)
-        return out, tag + f"[− {swc['metric']}]"
+        return out, tag + f"[{'+' if sign > 0 else '−'} {swc['metric']}]"
     swc["in_force"] = False
     first = leg.index.min().date() if not leg.empty else None
     swc["state"] = (f"PENDING — {swc['metric']} held on {len(have)} of {len(need)} day(s) from {start.date()}"
@@ -4097,12 +4112,14 @@ def _released_held_view(groups: dict, name: str, swc: dict, cols) -> None:
     ent = _daily(groups.get((name, fr["from"])))
     if ent.empty:
         return
-    less_m = fr.get("less_when_in_force") if swc.get("in_force") else None
-    if less_m:
-        ent = (ent - _daily(groups.get((name, less_m))).reindex(ent.index)).dropna()
-        src = f"derived:released_held[{fr['from']}-{less_m}]"
+    if swc.get("in_force") and fr.get("in_force_metric"):
+        # PR4B.3: in force, the released entities' own series (read on its current wallet set)
+        ent = _swc_leg(groups, name, fr["in_force_metric"], swc)
+        src = f"derived:released_held[{fr['in_force_metric']}]"
     else:
         src = f"derived:released_held[{fr['from']}]"
+    if ent.empty:
+        return
     groups[(name, fr["metric"])] = _as_stored(pd.DataFrame(
         {"date": ent.index, "project": name, "metric": fr["metric"], "value": ent.values, "tier": 2, "source": src}),
         cols)
@@ -5877,9 +5894,13 @@ def _unlock_release_view(groups: dict, name: str, metric: str, legs: tuple) -> N
     diffs = []
     cut_note = ""
     for m in legs:
+        # PR4B.2: "-m" — a leg taken OFF the stock (Maple's Safe once circulating: its falls are not releases)
+        neg, m = m.startswith("-"), m.lstrip("-")
         g = groups.get((name, m))
         if g is None or g.empty:
             return
+        if neg:
+            g = g.assign(value=-g["value"].astype(float))
         g = (g.assign(date=pd.to_datetime(g["date"]).dt.normalize()).sort_values("date")
              .drop_duplicates("date", keep="last").set_index("date"))
         # P2a D2 (config.UNLOCK_LEGACY_CUT): a LEGACY read of a leg dated after its declared end measures a stock the
@@ -5971,6 +5992,10 @@ def _unlock_release_view(groups: dict, name: str, metric: str, legs: tuple) -> N
                 # PR4.1: claims out of a distributor inside the set are (b); without them the release would count the
                 # claims twice — so no release series is built (the cell says BLOCKED), never a figure that is too high
                 UNLOCK_LESS_MISSING[(name, metric)] = m
+                _VIEW_BLOCKS[(name, metric)] = (
+                    f"BLOCKED — {m} stored nothing: the claims out of a distributor inside the non-circulating set are "
+                    "outflow (b), so the release is formed only net of them (PR4.1) — never a figure that counts them "
+                    "twice. The next token_metrics.py run reads them")
                 return
             continue
         total = total.copy()
@@ -12052,7 +12077,7 @@ def _held_inside(R: Refs, r, p: dict) -> str | None:
     if not hm:
         return None
     held = R.D(r, hm, "now")
-    if not h.get("less"):
+    if not config.held_buyback_less_applies(p["name"]):     # PR4B.2: no `less` once the Safe is back in circulating
         return held
     less = R.D(r, h["less"], "now")
     return f"IF(AND(ISNUMBER({held}),ISNUMBER({less})),MAX(0,{held}-{less}),NA())"

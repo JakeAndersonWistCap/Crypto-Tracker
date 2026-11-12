@@ -534,6 +534,72 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11el. Project round 4B — circulating corrections for Fluid and Maple, Morpho's last checks (2026-11-12)
+
+**Read-only checks first** (PowerShell 5.1, from the repo folder; nothing here writes to `metrics.db`):
+
+```
+git fetch origin claude/crypto-metrics-supply-demand-ovkg8g
+git rev-parse --short HEAD origin/claude/crypto-metrics-supply-demand-ovkg8g   # expect: the same id twice
+@'
+import sqlite3
+c = sqlite3.connect("file:metrics.db?mode=ro", uri=True)
+def span(p, m):
+    return c.execute("SELECT count(DISTINCT substr(date,1,10)), min(substr(date,1,10)), max(substr(date,1,10)) FROM metrics WHERE project=? AND metric=?", (p, m)).fetchone()
+for p, m in (("Fluid", "noncirculating_igp137_tokens"), ("Fluid", "noncirculating_holding_tokens"),
+             ("Maple", "maple_ssf_safe_tokens"), ("Maple", "noncirculating_holding_tokens"),
+             ("Morpho", "noncirculating_holding_tokens"), ("Morpho", "morpho_undistributed_tokens"),
+             ("Morpho", "morpho_released_held_tokens")):
+    print(p, m, span(p, m))
+'@ | python -
+#   expect: Fluid igp137 rows to today, value 5,000,000 (not shown: unchanged, it stays out);
+#           Maple maple_ssf_safe_tokens: as many days as Maple's noncirculating_holding_tokens (round 3's archive filled
+#             them) — if fewer, the handover stays PENDING until `archive_backfill.py --project Maple` fills the rest;
+#           Morpho morpho_undistributed_tokens / morpho_released_held_tokens: (0, None, None) — stored from the next run
+```
+
+**Then the normal run and Morpho's (and, if short, Maple's) history:**
+
+```
+python token_metrics.py
+python archive_backfill.py --run --project Morpho --budget-min 30   # rerun until it reports nothing left
+python archive_backfill.py --run --project Maple --budget-min 30    # only if maple_ssf_safe_tokens was short above
+```
+
+**One command per item** (after the build):
+
+```
+@'
+import openpyxl, xlcalc
+wb = openpyxl.load_workbook("token_metrics_audit.xlsx"); X = xlcalc.Workbook(wb)
+def cell(name, head, tab="CP Comparability"):
+    ws = wb[tab]; hr = next(r for r in range(1, 13) if ws.cell(r, 1).value == "Project")
+    row = next(r for r in range(hr + 1, ws.max_row + 1) if ws.cell(r, 1).value == name)
+    c = next(c for c in range(1, ws.max_column + 1) if str(ws.cell(hr, c).value or "").startswith(head))
+    v = X.value(tab, row, c); n = ws.cell(row, c).comment.text if ws.cell(row, c).comment else ""
+    return v, n
+for n in ("Fluid", "Maple", "Morpho"):
+    v, note = cell(n, "Circulating supply (tokens)"); f, _ = cell(n, "TRADEABLE FLOAT")
+    print(n, "circulating", v, "| float", f, "| switch:", note[note.find("this build:"):][:120])
+print("Morpho UNIFORMITY", cell("Morpho", "UNIFORMITY")[0])
+'@ | python -                                                                  # ITEMS 1-4
+#   ITEM 1 Fluid: circulating ~77.98M, unchanged (IGP-137's 5M is legally locked until 2030 and not yet distributed;
+#          the Team Multisig's 0.58M is rewards funding) — the gap to CoinGecko's ~83.7M is those two + 0.13M unclaimed
+#   ITEM 2 Maple: circulating ~1,225.4M ("switch: in force … SYRUP added back"), float unchanged (~1,144.4M)
+#   ITEM 3 Morpho: circulating ~660.6M and float ~570.6M once both new legs are held on every day ("in force");
+#          until then ~716.3M / ~571.7M and "PENDING — … held on N of M day(s)". The note ends with the LIMITATION:
+#          ~112.2M of Founders' / Round 3 investors' MORPHO is unvested but cannot be read (no wallet disclosed)
+#   ITEM 4 Morpho UNIFORMITY: "n/a — no staker yield exists: no MORPHO staking exists (Morpho's Blockworks filing Q3(c): …)"
+python project_freeze.py --compare Fluid      # ITEM 1 / 5 — expect: Fluid: 353 cells, 0 undeclared move(s)
+python project_freeze.py --compare Maple      # ITEM 2 / 5 — expect: Maple: 360 cells, 0 undeclared move(s)
+python project_freeze.py --compare Uniswap    #              expect: Uniswap: 309 cells, 0 undeclared move(s)
+python done_check.py --verbose | Select-String "^(Fluid|Maple|Morpho)" -Context 0,6
+#   expect: Fluid READY; Maple READY; Morpho without UNIFORMITY (BUSINESS 3 only if your store lacks
+#   protocol_tvl_constant_price_usd)
+Select-String -Path config.py -Pattern "decision 1 on 6f8c86c" | Measure-Object | Select-Object -ExpandProperty Count   # ITEM 5
+#   expect: 1 (the PR4.1 comment that says the decision was never made)
+```
+
 ## 11ek. Project round 4 — Morpho, plus freezing Maple, the machine-local wiring, a circulating audit (2026-11-12)
 
 **Read-only checks first** (PowerShell 5.1, from the repo folder; nothing here writes to `metrics.db`):

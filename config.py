@@ -510,11 +510,11 @@ METRICS = {
                                                       "SKY staking rewards) — forward-looking rows use it",
                                              "kind": "stock", "unit": "tokens", "archetypes": [3, 4], "tiers": [2],
                                              "sanity_min": 0, "sanity_max": 1e11, "only_projects": ("Sky",)},
-    # MORPHO'S ISSUER-SIDE ENTITIES (Jake 2026-10-12, decision 1 on 6f8c86c): the Association / Labs / Contributor-Grants /
-    # Rewards / Operative wallets apart from the DAO's — CoinGecko counts them, the issuer rule does not
+    # MORPHO'S ISSUER-SIDE ENTITIES (wired 2026-10-12): the Association / Labs / Contributor-Grants / Rewards / Operative
+    # wallets apart from the DAO's (PR4.1 / PR4B.3 decide which part is released)
     "noncirculating_entities_tokens": {"label": "Morpho issuer-side entities' MORPHO (Association, Labs, Contributor "
-                                                "Grants, Rewards, Operative; new + legacy) — out of circulating by the "
-                                                "issuer rule, counted by CoinGecko",
+                                                "Grants, Rewards, Operative; new + legacy) — what is released is set "
+                                                "by PR4.1 / PR4B.3 (label below)",
                                        "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [2],
                                        "sanity_min": 0, "sanity_max": 1e9, "only_projects": ("Morpho",)},
     # CoinGecko's OWN total where the chain read wins the total (Jake's run on e4e50b0, 2026-10-12 item 2): the
@@ -19382,17 +19382,18 @@ _NONCIRC_WALLETS_FIRST_PARTY["Maple"] = [
     ("security_admin", "0x6b1A78C1943b03086F7Ee53360f9b0672bD60818", "ethereum", "SYRUP", _MAPLE_FILING,
      "2026-10-07", "Security Admin, 3-of-6 multisig (Maple's Blockworks filing)"),
 ]
-# MAPLE'S SAFE 0x58BE (Jake 2026-10-12 evening, decision 1): a Safe 3-of-5 that matched the Syrup Strategic Fund
+# MAPLE'S SAFE 0x58BE (wired 2026-10-12): a Safe 3-of-5 that matched the Syrup Strategic Fund
 # 2025-08-13..2025-10-28 (maple_ssf_partial, Jake 2026-10-07 20:57). Owners read 2026-10-12 (Safe getOwners /
 # getThreshold on Etherscan): three of the five (0x0f4430f1…, 0x588c6eb6…, 0x96481cb0…) also sign Maple's DAO multisig
-# 0xd6d4 ("Maple: DAO", 4-of-7), which alone meets the 3-of-5 threshold — Maple-controlled, so issuer-side under the
-# rule: out of circulating. 48,624,987.59 SYRUP on 2026-10-12; the rule's figure 1,172,793,290.68.
+# 0xd6d4 ("Maple: DAO", 4-of-7), which alone meets the 3-of-5 threshold — Maple-controlled. It holds the Strategic
+# Fund's bought-back SYRUP: a held buyback, so CIRCULATING under Jake's rule (PR4B.2) and out of the float. 48,624,987.59
+# SYRUP on 2026-10-12.
 _MAPLE_SSF_SAFE = ("https://etherscan.io/address/0x58BE00490D6a5D298d61f24226d2397983Ee39A1 (Safe getOwners / "
                    "getThreshold, read 2026-10-12: 3-of-5; three owners also sign Maple's DAO multisig 0xd6d4)")
 _NONCIRC_WALLETS_FIRST_PARTY["Maple"].append(
     ("ssf_safe", "0x58BE00490D6a5D298d61f24226d2397983Ee39A1", "ethereum", "SYRUP", _MAPLE_SSF_SAFE, "2026-10-12",
-     "Maple-controlled Safe 3-of-5 (matched the Syrup Strategic Fund 2025-08-13..10-28) — issuer-side (Jake 2026-10-12, "
-     "decision 1)"))
+     "Maple-controlled Safe 3-of-5 (matched the Syrup Strategic Fund 2025-08-13..10-28) — the Fund's held buyback "
+     "(circulating from PR4B.2)"))
 # THE BLOCKWORKS FILINGS' WALLET SECTIONS (Jake's probes14 + run 2026-10-07 18:11: "Labelled Unissued & Operational
 # Token Wallets", each project's own filing). Liquid balances here; AERO held as veAERO locks is read by
 # aerodrome_filing_wallets until a per-owner lock read is wired.
@@ -19547,7 +19548,7 @@ PROJECT_BY_NAME["Sky"]["mkr_backing"] = {
 # FORWARD-LOOKING ROWS USE THE RATE IN FORCE (decision 2): the emissions metric each one replaces
 CURRENT_EMISSION_RATE = {"Sky": {"replaces": "emissions_tokens", "metric": "emissions_rate_current_annual_tokens"}}
 
-# ===== MORPHO UNDER THE ISSUER RULE (Jake 2026-10-12, decision 1 on 6f8c86c; issuer-wallet audit RUNBOOK 11bn). =====
+# ===== MORPHO'S ISSUER-SIDE LEGACY BALANCES (wired 2026-10-12; issuer-wallet audit RUNBOOK 11bn). =====
 # Issuer-side LEGACY balances are issuer-held supply too: the Wrapper's new MORPHO backs every unwrapped legacy token, so
 # an issuer's legacy balance sits inside totalSupply uncounted by the new-token reads. The ~73.2M of legacy held by
 # everyone else stays circulating (they can unwrap). Read 2026-10-12: Association 11,635,954.89, Labs 11,408,640.44,
@@ -19565,7 +19566,7 @@ for _key, _addr, _src, _why in (
          "Operative SAFE 2 (Morpho's filing) — its LEGACY MORPHO (4,599.38 on 2026-10-12)")):
     PROJECT_BY_NAME["Morpho"]["contracts"][f"noncirc_{_key}"] = _contract(
         _addr, "ethereum", "treasury_holding", "MORPHO", _src, verified="2026-10-12", purpose=_why,
-        provenance="Jake 2026-10-12 (decision 1 on 6f8c86c): issuer-side legacy MORPHO is not circulating",
+        provenance="wired 2026-10-12: issuer-side legacy MORPHO (PR4.1 / PR4B.3 decide which part is released)",
         holder_has_code=False, metric_override=_NC, underlying="token_legacy")
 # THE ENTITIES COINGECKO COUNTS, APART (the like-for-like in_circ): CoinGecko excludes the DAO's holdings only; the
 # Association / Labs / Contributor-Grants / Rewards / Operative wallets are its circulating and our issuer-held.
@@ -23847,10 +23848,10 @@ CIRCULATING_ONCHAIN = {
                                                  "never added",
                                     "source": "etherfi_contract_ids, Jake 2026-10-07 20:57"},
                  "decided_by": "Claude Code 2026-10-06, pending Jake's review"},
-    # JAKE 2026-10-12 evening (decision 1): THE ISSUER RULE, with the Maple-controlled Safe 0x58BE out — on-chain primary.
+    # ON-CHAIN PRIMARY since 2026-10-12. PR4B.2 (Jake 2026-11-12): the Fund's Safe 0x58BE (a held buyback) is circulating.
     "Maple": {"status": "established", "ratios_use": "onchain", "total": "total_supply",
-              "decided_by": "Jake 2026-10-12 evening, decision 1: switch to the issuer rule with Safe 0x58BE out "
-                            "(1,172,793,290.68 on 2026-10-12; CoinGecko 1,167,271,959.18, +0.47%)",
+              "decided_by": "Jake 2026-10-12: on-chain primary (1,172,793,290.68 on 2026-10-12 with Safe 0x58BE out; "
+                            "CoinGecko 1,167,271,959.18, +0.47%); PR4B.2 adds the Safe back",
               "was": "partial (CoinGecko in use)",
               "subtract": ("treasury_holding_tokens_chain", "noncirculating_holding_tokens"),
               "method": "total − DAO multisig (the filing's Primary DAO address) − treasury − Migrator − syrupDrip "
@@ -23876,7 +23877,7 @@ CIRCULATING_ONCHAIN = {
                             "diverged": "2025-10-29: 27,500,000 SYRUP to 0x99f03ca02b232dc124b62b8cf40b2bfd21eae9ca (EOA)",
                             "owners": "0x43f0a714…, 0x0f4430f1…, 0x96481cb0…, 0xc4c93340…, 0x588c6eb6… (3-of-5)",
                             "source": "maple_ssf_partial, Jake 2026-10-07 20:57"},
-              # RESOLVED 2026-10-12 (decision 1): the Safe 0x58BE is Maple-controlled and subtracted. Still open, and
+              # RESOLVED 2026-10-12: the Safe 0x58BE is Maple-controlled (circulating from PR4B.2). Still open, and
               # counted as circulating (nothing unverified is subtracted): the EOA 0x99f03ca0… (27.5M received
               # 2025-10-29; controller unknown) and the Safe's two owners not on 0xd6d4.
               "missing": "the EOA 0x99f03ca0… that received 27.5M from the Safe on 2025-10-29 (controller unknown — "
@@ -23981,13 +23982,13 @@ CIRCULATING_ONCHAIN = {
     # (_NONCIRC_WALLETS_FIRST_PARTY). The set is PARTIAL — the initial-distribution VESTING contracts and the Morpho
     # Association allocation are not yet identified — so it is the cross-check; CoinGecko stays in use until the set
     # is complete (TokenOps remains the reference: Morpho was not found to designate it).
-    # JAKE 2026-10-12 (decision 1 on 6f8c86c): THE ISSUER RULE — circulating = total − every issuer-side holding (the DAO,
+    # 2026-10-12 TO 2026-11-11 (an 'issuer rule' Jake never made; PR4.1): circulating = total − every issuer-side holding (the DAO,
     # Association, Labs, Contributor Grants, Rewards and Operative wallets, on the new, legacy and Base tokens). Read
     # 2026-10-12: 547,252,377 (CoinGecko 700.47M counts the entities). Releases from these wallets are unlock dilution.
     "Morpho": {"status": "established", "ratios_use": "onchain", "total": "total_supply",
                "subtract": ("noncirculating_holding_tokens", "noncirculating_entities_tokens"),
                "coingecko_counts": ("noncirculating_entities_tokens",),
-               "decision": "ON-CHAIN, THE ISSUER RULE (Jake 2026-10-12, decision 1 on 6f8c86c): total − the DAO's "
+               "decision": "ON-CHAIN (2026-10-12 to 2026-11-11, superseded by PR4.1): total − the DAO's "
                            "holdings (new, legacy, Base) − the Association / Labs / Contributor-Grants / Rewards / "
                            "Operative wallets (new and legacy). The legacy held by everyone else (~73.2M in the Wrapper) "
                            "is circulating. CoinGecko is compared like-for-like: ours + the entities it counts",
@@ -24184,18 +24185,18 @@ CIRCULATING_POLICY = {
                   "staked": "included (staked LINK is not in the non-circulating list as far as seen)",
                   "add_back": None, "previous": "the same — unchanged",
                   "todo": "a dated reading of chain.link/circulating-supply makes it a first-party manual row"},
-    "Morpho": {"now": "ON-CHAIN under the issuer rule (Jake 2026-10-12, decision 1 on 6f8c86c)",
+    "Morpho": {"now": "ON-CHAIN (superseded by PR4.1 below)",
                "source": "our on-chain set: total − the DAO / Association / Labs / Grants / Rewards / Operative holdings "
                          "on the new, legacy and Base tokens; CoinGecko and TokenOps are cross-checks",
                "kind": "onchain",
-               "definition": "total − issuer-side holdings (issuer rule); non-issuer legacy in the Wrapper counts",
+               "definition": "total − issuer-side holdings; non-issuer legacy in the Wrapper counts (superseded by PR4.1)",
                "staked": "n/a", "add_back": None,
                "previous": "CoinGecko's own count (to 2026-10-12)"},
-    "Maple": {"now": "ON-CHAIN under the issuer rule (Jake 2026-10-12 evening, decision 1)",
+    "Maple": {"now": "ON-CHAIN (2026-10-12); see PR4B.2 below",
               "source": "our on-chain set: total − the DAO multisig − the registry treasury / Migrator / syrupDrip / "
                         "RecapitalizationModule / governor timelock − the filing's two admin multisigs − the "
                         "Maple-controlled Safe 0x58BE; CoinGecko the cross-check",
-              "kind": "onchain", "definition": "total − issuer-side holdings (issuer rule)", "staked": "included (Maple FAQ)",
+              "kind": "onchain", "definition": "total − what is not released (see PR4B.2)", "staked": "included (Maple FAQ)",
               "add_back": None, "previous": "CoinGecko's own count (to 2026-10-12)"},
     "Ether.fi": {"now": "ON-CHAIN (full sweep, Jake 2026-10-07): total - the treasury 0x0c83… - the wallets ether.fi's "
                         "Blockworks filing labels (two custodian origins, three treasuries, the operating top-up Safe) - "
@@ -31321,7 +31322,7 @@ DISCRETIONARY_SUPPLY = {
     "Fluid": (("treasury_holding_tokens",), "the treasury"),
     "Uniswap": (("treasury_holding_tokens",), "the governance treasury"),
     "Morpho": (("noncirculating_holding_tokens", "noncirculating_entities_tokens"),
-               "the DAO's holdings and the issuer-held entities (decision 1 on 6f8c86c)"),
+               "the DAO's holdings and the issuer-held entities (superseded by PR4.1 below)"),
     "Maple": (("treasury_holding_tokens_chain", "noncirculating_holding_tokens"), "the DAO multisig and the registry "
                                                                                  "treasury / reserves"),
     "Aerodrome": (("noncirculating_holding_tokens",), "the filing wallets' liquid AERO (their managed veNFT AERO is "
@@ -35825,7 +35826,7 @@ MAPLE_SSF_SAFE = "0x58BE00490D6a5D298d61f24226d2397983Ee39A1"
 MAPLE_BUYBACK_DELIVERY = "0x99f03ca02b232dc124b62b8cf40b2bfd21eae9ca"
 _SSF_SRC = ["SPEC §19 D5-3c / D6-3 (traced on chain 2026-10-27): through 2025-10-28 the SSF chart equals Safe 0x58BE to "
             "the token; Maple's docs: SYRUP 'was minted to a segregated wallet — the Syrup Strategic Fund (SSF)'",
-            "contracts.noncirc_ssf_safe (Safe 3-of-5, three owners sign the DAO multisig; Jake 2026-10-12, decision 1)"]
+            "contracts.noncirc_ssf_safe (Safe 3-of-5, three owners sign the DAO multisig; wired 2026-10-12)"]
 _SYRUP = PROJECT_BY_NAME["Maple"]["contracts"]["token"]["address"]
 for _key, _metric, _way, _extra in (
         ("ssf_safe_in", "ssf_safe_inflow_tokens", "in", {"count_mints": True}),
@@ -37331,11 +37332,11 @@ METRICS["maple_ssf_safe_tokens"] = {
 PROJECT_BY_NAME["Maple"]["contracts"]["noncirc_ssf_safe"]["component_metric"] = "maple_ssf_safe_tokens"
 HELD_BUYBACK_FLOAT["Maple"].update({
     "less": "maple_ssf_safe_tokens",
-    "less_why": "the Fund's Safe 0x58BE…, which circulating subtracts since decision 1 (2026-10-12) and Maple's SSF chart "
+    "less_why": "the Fund's Safe 0x58BE…, which circulating subtracted (2026-10-12 to PR4B.2) and Maple's SSF chart "
                 "counts — subtracted once, not twice (PR3.3)",
     "why": "the SYRUP Strategic Fund (MIP-019: bought SYRUP is held, not sold; its mandate includes token liquidity, so "
            "it can return to float). Circulating subtracts the DAO Safe, the registry wallets and the Fund's Safe "
-           "0x58BE… (decision 1, 2026-10-12); the rest of the Fund — SYRUP it holds at exchange / custodian routes "
+           "0x58BE… (from 2026-10-12; PR4B.2 adds it back); the rest of the Fund — SYRUP it holds at exchange / custodian routes "
            "since 2025-10-29 (SPEC D5-3c) — is inside circulating. Stock: Maple's own SSF chart (ssf_holdings_tokens, "
            "/transparency/financials), which counts the Safe (DAO + chart ≈ Maple's 'Held by Maple', read 2026-11-11)"})
 
@@ -38417,8 +38418,11 @@ _unlock_stock_metrics_pr4 = unlock_stock_metrics
 def unlock_stock_metrics(project_name: str) -> tuple:     # noqa: F811 — PR4.1 extends it with the switched-on leg
     legs = _unlock_stock_metrics_pr4(project_name)
     swc = circulating_swc(project_name)
-    if legs and swc.get("unlock_legs") and swc.get("in_force") and swc["metric"] not in legs:
-        legs = tuple(legs) + (swc["metric"],)
+    if legs and swc.get("unlock_legs") and swc.get("in_force"):
+        # PR4B.2: an ADDED leg (sign +1: Maple's Safe, now circulating) is taken off the stock the release reads ("-m")
+        leg = ("-" if swc.get("sign", -1) == 1 else "") + swc["metric"]
+        if leg not in legs:
+            legs = tuple(legs) + (leg,)
     return legs
 
 
@@ -38481,9 +38485,10 @@ def circulating_rule_note(project_name: str) -> str:
         return ""
     swc = spec.get("subtract_when_complete") or {}
     state = swc.get("state") or "not built"
-    extra = f" Not read: {MORPHO_UNDISTRIBUTED_NOT_READ}." if project_name == "Morpho" else ""
+    extra = (f" Not read: {MORPHO_UNDISTRIBUTED_NOT_READ}. {globals().get('MORPHO_VESTING_LIMITATION', '')}"
+             if project_name == "Morpho" else "")
     return (f"CIRCULATING — DECLARED HANDOVER ({h['decided']}, from {h['on']}): was {h['from']}; now {h['to']}. "
-            f"{h['how']}. The undistributed leg this build: {state}.{extra}")
+            f"{h['how']}. The switched leg this build: {state}.{extra}")
 # PR4.2: a flow whose both growth windows are a MEASURED 0 by a declared mechanism reads this reason, never a bare n/a
 ZERO_FLOW_GROWTH_TEXT = {
     ("Morpho", "revenue_usd"): "n/a — 0 ÷ 0 while the fee switch is off: revenue 0 in both windows (Morpho Blue "
@@ -39463,3 +39468,183 @@ METRICS["noncirculating_entities_tokens"]["label"] = (
     "Morpho's issuer-side entities' MORPHO (Association, Labs, Contributor Grants, Rewards, Operative; new + legacy) — "
     "RELEASED (PR4.1, Jake's rule 2026-11-12): in circulating and out of the floats, less the Rewards Multisig (not "
     "released). Was out of circulating under an 'issuer rule' (2026-10-12) Jake never made")
+
+
+# =====================================================================================================================
+# PROJECT ROUND 4B — CIRCULATING CORRECTIONS FOR FLUID AND MAPLE, MORPHO'S LAST CHECKS (Jake 2026-11-12). Every source
+# read 2026-11-12, keyless, generic User-Agent.
+# =====================================================================================================================
+# PR4B.1 FLUID — NOTHING MOVES INTO CIRCULATING. IGP-137's own text (Instadapp/fluid-governance main, contracts/payloads/
+# IGP137/description.md, read 2026-11-12): the 5,000,000 FLUID go to the Team Multisig "and subsequently moved into a
+# dedicated wallet before distribution to the relevant custodial partners"; "These tokens will be legally locked for at
+# least 4 years until 2030." Not yet distributed and locked to 2030: NOT a release — it stays out of circulating (the
+# round-4 audit's MOVE rested on our own "not a custodian or time-lock" label, which IGP-137's text contradicts; the
+# label is corrected). The Team Multisig 0x4F6F… receives treasury FLUID "for rewards funding" (IGP116: 500k; IGP118: 1M
+# "for ongoing rewards funding"; IGP131: 750k "for upcoming rewards") and funds the Merkle distributors: rewards not yet
+# distributed — NOT released, stays out. Fluid's circulating is unchanged (77,984,975 on chain 2026-11-12); CoinGecko (= total − the
+# treasury) counts both: the gap is IGP-137's 5,000,000 + the Team Multisig's 579,773 + the distributors' 132,248.
+_IGP137_TEXT = ("https://github.com/Instadapp/fluid-governance/blob/main/contracts/payloads/IGP137/description.md (read "
+                "2026-11-12)")
+METRICS["noncirculating_igp137_tokens"]["label"] = (
+    "FLUID in IGP-137's dedicated wallet 0xcabebc7f… (5M) — NOT RELEASED: IGP-137 'legally locked for at least 4 years "
+    "until 2030', held 'before distribution to the relevant custodial partners' (PR4B.1) — out of circulating; its own "
+    "series because CoinGecko still COUNTS it (like-for-like)")
+PROJECT_BY_NAME["Fluid"]["contracts"]["noncirc_igp137_lock"]["purpose"] = (
+    "IGP-137's dedicated wallet (an Avocado smart wallet): 5,000,000 FLUID from the Team Multisig (Treasury DSA -> Team "
+    "Multisig 2026-08-07 -> here 2026-08-14), 'legally locked for at least 4 years until 2030' and held 'before "
+    "distribution to the relevant custodial partners' (IGP-137) — not released")
+PROJECT_BY_NAME["Fluid"]["contracts"]["noncirc_igp137_lock"]["source_url"] = _IGP137_TEXT
+PROJECT_BY_NAME["Fluid"]["contracts"]["noncirc_team_multisig"]["purpose"] = (
+    "Fluid Team Multisig (IGP137 description.md) — receives treasury FLUID 'for rewards funding' (IGP116 / IGP118 / "
+    "IGP131) and funds the Merkle distributors: rewards not yet distributed (PR4B.1)")
+FLUID_IGP137_WATCH["why"] = ("IGP-137's dedicated wallet holding its 5,000,000 FLUID, legally locked until 2030 and to be "
+                             "distributed to custodial partners (IGP-137)")
+CIRCULATING_POLICY["Fluid"]["definition"] = (
+    "total − what is not released: the DAO treasury, the Team Multisigs' rewards funding not yet distributed, the "
+    "governance Timelock, the Foundation, IGP-137's 5M (legally locked until 2030, not yet distributed to custodians) and "
+    "the distributors' unclaimed rewards (Jake's rule, PR4B.1)")
+
+# PR4B.2 MAPLE — THE STRATEGIC FUND'S SAFE IS A HELD BUYBACK: RELEASED, SO CIRCULATING. Safe 0x58BE… (48,624,987.59 SYRUP at
+# block 26,391,252, 2026-11-11) goes back into circulating; the tradeable float keeps subtracting the Fund's holdings —
+# now the whole SSF chart (it no longer needs the Safe taken off it). A DECLARED HANDOVER: the leg is added only once it
+# is held on every day of the series (one build moves the whole series); until then circulating reads as before and the
+# cell says PENDING. Unlocks (e): the Safe's falls are no longer releases (the Safe is circulating) — taken out of the
+# stock the release reads, once in force. On chain 2026-11-11: total 1,267,875,000 − the DAO Safe 42,290,111 − syrupDrip
+# 166,610 = 1,225,418,278 (was 1,176,793,291); CoinGecko 1,167,271,959 (dumps, 2026-10-13): +4.98% — CoinGecko excludes
+# the Safe (48.6M) and ~9.7M more not traced.
+CIRCULATING_ONCHAIN["Maple"].update({
+    "subtract_when_complete": {
+        "metric": "maple_ssf_safe_tokens", "whole_series": True, "sign": 1, "unlock_legs": True, "symbol": "SYRUP",
+        "why": "the Syrup Strategic Fund's Safe holds bought-back SYRUP — a held buyback, released (Jake's rule); added "
+               "back once held on every day of the series"},
+    "handover": {"on": "2026-11-12", "decided": "Jake 2026-11-12 (PR4B.2)",
+                 "from": "total − the DAO Safe − the registry / admin wallets − the Fund's Safe 0x58BE…",
+                 "to": "the Fund's Safe 0x58BE… counted (a held buyback is released); the tradeable float subtracts "
+                       "the Fund's whole holdings",
+                 "how": "the whole series moves in one build once maple_ssf_safe_tokens is held on every day of it"},
+    "decided_by": "Jake 2026-10-12 (on-chain primary: total − the DAO multisig − the registry / admin wallets); PR4B.2 "
+                  "(Jake 2026-11-12): the Fund's Safe 0x58BE… is a held buyback, so circulating",
+})
+CIRCULATING_POLICY["Maple"].update({
+    "now": "ON-CHAIN under Jake's release rule (PR4B.2, 2026-11-12): the Fund's Safe 0x58BE… is circulating",
+    "source": "our on-chain set: total − the DAO multisig − the registry treasury / Migrator / syrupDrip / "
+              "RecapitalizationModule / governor timelock − the filing's two admin multisigs; CoinGecko the cross-check",
+    "definition": "total − what is not released (the DAO's holdings, the registry / admin wallets, undistributed Drips); "
+                  "the Strategic Fund's held buyback is circulating and out of the float",
+    "previous": "the Fund's Safe 0x58BE… out of circulating (2026-10-12 to 2026-11-11); CoinGecko's own count before"})
+HELD_BUYBACK_FLOAT["Maple"].update({
+    "less_until_in_force": True,
+    "less_why": "the Fund's Safe 0x58BE…, which circulating took out until PR4B.2 and Maple's SSF chart counts — "
+                "subtracted once, not twice (PR3.3); once the Safe is back in circulating (PR4B.2 in force) the whole "
+                "chart is subtracted",
+    "why": "the SYRUP Strategic Fund (MIP-019: bought SYRUP is held, not sold; its mandate includes token liquidity, so "
+           "it can return to float) — a held buyback: in circulating (Jake's rule), out of the float. Stock: Maple's own "
+           "SSF chart (ssf_holdings_tokens, /transparency/financials), which counts the Safe 0x58BE…"})
+PROJECT_BY_NAME["Maple"]["contracts"]["noncirc_ssf_safe"]["purpose"] = (
+    "Maple-controlled Safe 3-of-5 (matched the Syrup Strategic Fund 2025-08-13..10-28) — the Fund's held buyback: "
+    "circulating from PR4B.2 (Jake 2026-11-12); read on its own as maple_ssf_safe_tokens")
+
+
+def held_buyback_less_applies(project_name: str) -> bool:
+    """PR4B.2: the held-buyback float's `less` leg applies while circulating still takes that leg out (Maple: until the
+    Safe's handover is in force)."""
+    h = HELD_BUYBACK_FLOAT.get(project_name) or {}
+    if not h.get("less"):
+        return False
+    return not (h.get("less_until_in_force") and circulating_swc(project_name).get("in_force"))
+
+
+# PR4B.3 MORPHO'S VESTING: NOT READABLE ON CHAIN — A DATED LIMITATION. Morpho's Blockworks Token Transparency filing
+# (blockworks.com/token-transparency/filing/morpho, read 2026-11-12): Founders 15.20% "Subject to a relock agreement: a
+# 12-month cliff …", "expired 21 November 2025, with full vesting by 21 November 2027", "24-month daily linear vesting";
+# Investors Round 3 / Cohort 3 "two-year linear vest following a one-year lockup from 21 November 2024"; vesting
+# mechanism and wallets NOT disclosed (Section 11 lists 8 Safes, no vesting contract; only advisors' ~5M is named as a
+# "vesting smart contract", without an address). docs.morpho.org/learn/governance/morpho-token (read 2026-11-12):
+# Founders "agreed to relock", Cohort 3 6.7% "100% is vested by 21 November 2027". Unvested on 2026-11-12 (356 of 730
+# days elapsed): Founders 152M x 374/730 = 77.9M, Cohort 3 67M x 374/730 = 34.3M -> ~112.2M — inside our circulating
+# because no wallet holding it can be read.
+# THE SAME FILING CORRECTS ROUND 4: the Contributor Grants Safes are "Safe to distribute 7.9% of total Supply to MORPHO
+# contributors. Owned by the DAO", and "the contributors reserve that remains unvested and unallocated" holds 4.40% — NOT
+# released: back out of circulating (into the not-yet-released leg), out of the released-held float leg.
+MORPHO_VESTING_LIMITATION = (
+    "LIMITATION (2026-11-12): the Founders' 15.20% (relock agreement) and Investors Round 3 / Cohort 3 vest daily "
+    "2025-11-21..2027-11-21 (Morpho's Blockworks filing; docs) — ~112.2M unvested on 2026-11-12 — but no vesting contract "
+    "or wallet is disclosed, so it cannot be read and is inside this figure (CoinGecko counts it too)")
+_MORPHO_FILING = "https://blockworks.com/token-transparency/filing/morpho (read 2026-11-12)"
+for _key, _addr, _und, _why in (
+        ("undist_contributor_grants_safe", "0x53051Ef9E20cB8Ad9262b77754b1D95e7B79b281", None,
+         "Contributor Grants SAFE — the contributors' unvested / unallocated reserve (filing: 'Owned by the DAO')"),
+        ("undist_contributor_grants_safe_2", "0x1590e7F4c3E1B4493Abb462e34593aef3A9397Dd", None,
+         "Contributor Grants SAFE 2 — the contributors' unvested / unallocated reserve"),
+        ("undist_contributor_grants_2_legacy", "0x1590e7F4c3E1B4493Abb462e34593aef3A9397Dd", "token_legacy",
+         "Contributor Grants SAFE 2 — its LEGACY MORPHO (the same reserve)")):
+    PROJECT_BY_NAME["Morpho"]["contracts"][_key] = _contract(
+        _addr, "ethereum", "treasury_holding", "MORPHO", _MORPHO_FILING, verified="2026-11-12", purpose=_why,
+        provenance="Morpho's filing: 'the contributors reserve that remains unvested and unallocated' (PR4B.3)",
+        holder_has_code=False, metric_override="morpho_undistributed_tokens", underlying=_und)
+METRICS["morpho_undistributed_tokens"]["label"] = (
+    "MORPHO not yet released beyond the DAO's (PR4.1 / PR4B.3): the Rewards Multisig 0xF057… (new + legacy), unclaimed "
+    "in Merkl's Distributor 0x3Ef3D8bA… (Ethereum, Base) and the Morpho URD 0x330eefa8… (new + legacy), and the "
+    "Contributor Grants Safes 0x53051Ef9… / 0x1590e7F4… (the contributors' unvested / unallocated reserve, new + legacy)")
+METRICS["morpho_released_held_tokens"] = {
+    "label": "Released MORPHO the Morpho Association and the Operative Safes hold (PR4B.3): in circulating, out of the "
+             "floats — Association Master 0x6ABfd613… (new + legacy) and Ops 0x4d200893…, Operative 0xD81E0983… and "
+             "0xd2C7eF9f… (new + legacy)",
+    "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9,
+    "only_projects": ("Morpho",)}
+for _key, _addr, _und, _why in (
+        ("rel_association_master", "0x6ABfd6139c7C3CC270ee2Ce132E309F59cAaF6a2", None, "Morpho Association Master Safe"),
+        ("rel_association_master_legacy", "0x6ABfd6139c7C3CC270ee2Ce132E309F59cAaF6a2", "token_legacy",
+         "Morpho Association Master Safe — its LEGACY MORPHO"),
+        ("rel_association_ops", "0x4d2008931e86E97D676767c49A1089f5Dd90fd30", None, "Morpho Association Ops Safe"),
+        ("rel_operative_1", "0xD81E0983e8e133d34670728406d08637374e545D", None, "Operative SAFE (2-of-5)"),
+        ("rel_operative_2", "0xd2C7eF9f4d30C476C135449949f124A4D3f14526", None, "Operative SAFE (2-of-7)"),
+        ("rel_operative_2_legacy", "0xd2C7eF9f4d30C476C135449949f124A4D3f14526", "token_legacy",
+         "Operative SAFE (2-of-7) — its LEGACY MORPHO")):
+    PROJECT_BY_NAME["Morpho"]["contracts"][_key] = _contract(
+        _addr, "ethereum", "treasury_holding", "MORPHO", _MORPHO_FILING, verified="2026-11-12",
+        purpose=_why + " — released (no lock or vesting in Morpho's docs or filing): out of the floats (PR4B.3)",
+        provenance="Morpho's filing Section 11", holder_has_code=False, metric_override="morpho_released_held_tokens",
+        underlying=_und)
+CIRCULATING_ONCHAIN["Morpho"]["subtract_when_complete"].update({
+    "also_need": ("morpho_released_held_tokens",), "current_set_only": True,
+    "why": "the DAO's holdings aside, what Morpho has not released — undistributed rewards, unclaimed distributor "
+           "balances, the contributors' unvested / unallocated reserve — is subtracted once it (and the released "
+           "entities' own series, the float's leg) is held on every day of the series, read on the current wallet set"})
+CIRCULATING_ONCHAIN["Morpho"]["handover"]["to"] = (
+    "total − the DAO − MORPHO not yet released (Rewards Multisig, unclaimed Merkl / URD, the Contributor Grants "
+    "reserve); the Association / Operative holdings in circulating and out of the float")
+CIRCULATING_ONCHAIN["Morpho"]["decision"] = (
+    "ON-CHAIN, JAKE'S RULE (restated 2026-11-12; decision of 2026-11-04): circulating = every token RELEASED per Morpho's "
+    "docs and filing. Out: the DAO's holdings (new, legacy, Base) and MORPHO not yet released (the Rewards Multisig, "
+    "unclaimed in Merkl's Distributor and the URD, the Contributor Grants Safes' unvested / unallocated reserve). In "
+    "circulating and out of the float: the Association Master / Ops and Operative Safes. Founders' and Round 3 investors' "
+    "unvested MORPHO cannot be read (no wallet disclosed): " + MORPHO_VESTING_LIMITATION)
+FLOAT_RELEASED_HELD["Morpho"] = {
+    "metric": "issuer_held_released_tokens", "from": "noncirculating_entities_tokens",
+    "in_force_metric": "morpho_released_held_tokens",
+    "why": "released per Morpho's docs and filing, so circulating; held by the Association Master / Ops Safes "
+           "(0x6ABfd613…, 0x4d200893…) and the Operative Safes (0xD81E0983…, 0xd2C7eF9f…) — out of the tradeable float and "
+           "A2's free float while held (Jake's rule). Until the switch is in force circulating still excludes every "
+           "issuer-side entity, so the float subtracts their whole stock (noncirculating_entities_tokens)"}
+DECLARED_NA_REASONS["Morpho"] += [
+    {"cols": ("UNIFORMITY",),
+     "text": "n/a — no staker yield exists: no MORPHO staking exists (Morpho's Blockworks filing Q3(c): 'No locking or "
+             "staking mechanism currently exists for MORPHO'), read 2026-11-12",
+     "match": "no MORPHO staking exists", "source": _MORPHO_FILING + " Q3(c), Q16 ('there is no staking contract') ; "
+     "https://docs.morpho.org/learn/governance/morpho-token/ ('MORPHO is the Morpho Protocol's governance token')",
+     "read_on": "2026-11-12", "decided": "Jake 2026-11-12 (PR4B.4)",
+     "why": "no staker yield: nothing can be staked or locked"},
+]
+# the old issuer-rule wording on Morpho's series labels and the entity keys' provenance goes (PR4B.5 cleans Fluid / Maple)
+for _k in MORPHO_ENTITY_KEYS:
+    PROJECT_BY_NAME["Morpho"]["contracts"][_k]["provenance"] = (
+        "Morpho's filing Section 11 / docs.morpho.org organization (the entities' stock; PR4.1 / PR4B.3: the "
+        "Association / Operative part is released, the Rewards and Contributor Grants part is not)")
+
+
+def current_set_point(project_name: str, metric: str) -> frozenset:
+    """PR4B: the wallet set a contract-sum series is read on NOW ({chain:key} of every contract serving `metric`) — a
+    stored row on another set is not a day of the current series."""
+    return frozenset(f"{c['chain']}:{k}" for k, c in (PROJECT_BY_NAME.get(project_name) or {}).get("contracts", {}).items()
+                     if c.get("metric_override") == metric)

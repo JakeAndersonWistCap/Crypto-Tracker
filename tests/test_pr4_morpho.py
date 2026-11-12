@@ -84,9 +84,13 @@ def test_1_morphos_circulating_takes_out_only_what_is_not_released():
     assert spec["handover"]["on"] == "2026-11-12" and "issuer rule" not in spec["handover"]["to"]
     c = config.PROJECT_BY_NAME["Morpho"]["contracts"]
     undist = {k: v["address"] for k, v in c.items() if v.get("metric_override") == "morpho_undistributed_tokens"}
+    # PR4B.3: the Contributor Grants Safes hold the contributors' unvested / unallocated reserve (Morpho's filing) — not
+    # released, so they joined this leg
     assert set(undist) == {"undist_rewards_multisig", "undist_rewards_multisig_legacy", "undist_merkl_distributor",
-                           "undist_merkl_distributor_base", "undist_urd", "undist_urd_legacy"}
-    # the released entities stay one series — the float's, not circulating's
+                           "undist_merkl_distributor_base", "undist_urd", "undist_urd_legacy",
+                           "undist_contributor_grants_safe", "undist_contributor_grants_safe_2",
+                           "undist_contributor_grants_2_legacy"}
+    # the entities' stock is the float's leg while pending; in force, the released part's own series (PR4B.3)
     assert config.float_released_held("Morpho")["from"] == "noncirculating_entities_tokens"
     assert "decision 1 on 6f8c86c" not in config.DISCRETIONARY_SUPPLY["Morpho"][1]
     # no other project's circulating moved
@@ -174,6 +178,11 @@ def test_2_morphos_three_revenue_lines_and_holder_share_are_declared(morpho):
 
 
 # =================================================================================================== 3: one emissions
+def test_4b_morphos_uniformity_cell_reads_the_declared_reason(morpho):
+    """PR4B.4: 'no MORPHO staking exists' (Morpho's Blockworks filing Q3(c), read 2026-11-12) on the CP cell."""
+    assert _cell(morpho, "UNIFORMITY") == config.declared_na_text("Morpho", "UNIFORMITY")
+
+
 def test_3_cp_emissions_reads_the_same_figure_as_a2_and_outflow_b(morpho):
     """MORPHO paid to suppliers from the pre-mint is incentive spend (b): CP 'Emissions Q0' reads emissions_tokens, as A2
     and (b) do (on the dumps all three are BLOCKED: the Base / Arbitrum / Katana claims have no rows)."""
