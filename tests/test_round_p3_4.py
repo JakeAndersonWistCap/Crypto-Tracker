@@ -293,7 +293,10 @@ def test_scope_every_daily_archivable_series_parked_and_weekly_left_out(tmp_path
     st.upsert(pd.DataFrame(rows))
     gaps, excluded, checked = ar.catch_up_gaps(st, projects)
     # P4-Q6: newest first (was oldest first)
-    assert set(gaps) == checked and all(v[-1] == "2026-10-21" and v[0] == str(Y.date()) for v in gaps.values())
+    # PR4C.2: a switch leg (config.switch_legs) is owed from the window's start, every other series from its first row
+    assert set(gaps) == checked and all(v[0] == str(Y.date()) for v in gaps.values())
+    assert all(v[-1] == "2026-10-21" for k, v in gaps.items() if k not in config.switch_legs())
+    assert all(v[-1] == str(ar.catch_up_bounds()[0].date()) for k, v in gaps.items() if k in config.switch_legs())
     assert not {n for n, _ in checked} & {"Aerodrome", "World Mobile"}                 # parked: never touched
     assert all(not ar.weekly(config.PROJECT_BY_NAME[n], m) for n, m in checked)
     why = {(n, m): w for n, m, w in excluded}

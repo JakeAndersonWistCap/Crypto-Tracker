@@ -1514,7 +1514,10 @@ def served_by(source: str, project: dict) -> set[str] | None:
             m |= {"protocol_tvl_usd", "protocol_tvl_constant_price_usd"}
         if project.get("defillama_chain") and source == "defillama_tvl":
             m |= {"tvl_usd", "stablecoin_supply_usd", "rwa_defillama_usd"}
-    elif source == "chain":
+    elif source == "chain" or source.startswith("chain@"):
+        # PR4C.2: chain@<project> serves that project's contract reads only
+        if source.startswith("chain@") and source.split("@", 1)[1] != name:
+            return set()
         specs = list((project.get("contracts") or {}).values())
         m = ({spec.get("metric_override") or config.KIND_METRIC.get(spec.get("kind")) for spec in specs}
              | {spec.get("component_metric") for spec in specs}) - {None}

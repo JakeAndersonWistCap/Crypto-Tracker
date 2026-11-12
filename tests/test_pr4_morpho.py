@@ -57,18 +57,18 @@ def test_0b_the_frozen_build_carries_exactly_the_pinned_probe_whatever_the_local
     monkeypatch.setitem(config.OUTFLOW_CATEGORIES["Fluid"], "b", ("emissions_tokens", "emissions_tokens_arbitrum"))
     routes = {k: list(v) for k, v in config.EXPLORER_LOG_ROUTES.items()}
     troutes = {k: list(v) for k, v in config.EXPLORER_TRANSFER_ROUTES.items()}
-    # a machine whose file serves Mantle as well
-    assert config.wire_probed_scans({"served": [5000]}, open_routes=False) == ["gauge_pendle_out_mantle"]
+    # a machine whose file serves Sonic as well (PR4C.3: Mantle is in the pin now — Jake's file serves it)
+    assert config.wire_probed_scans({"served": [146]}, open_routes=False) == ["gauge_pendle_out_sonic"]
     wired = config.pin_frozen_probe()
     assert sorted(wired) == sorted(k for _p, _c, k, _m in config.frozen_probe_wiring())
     assert sorted((p, c) for p, c, _k, _m in config.frozen_probe_wiring()) == [
         ("Fluid", "base"), ("Fluid", "plasma"), ("Morpho", "base"), ("Pendle", "base"), ("Pendle", "berachain"),
-        ("Pendle", "bsc")]
+        ("Pendle", "bsc"), ("Pendle", "mantle")]
     keys = {s["key"] for s in config.PROJECT_BY_NAME["Pendle"]["log_scans"]}
-    assert "gauge_pendle_out_mantle" not in keys and {"gauge_pendle_out_bsc", "gauge_pendle_out_base",
-                                                       "gauge_pendle_out_berachain"} <= keys
+    assert "gauge_pendle_out_sonic" not in keys and {"gauge_pendle_out_bsc", "gauge_pendle_out_base",
+                                                      "gauge_pendle_out_berachain", "gauge_pendle_out_mantle"} <= keys
     em = config.PROJECT_BY_NAME["Pendle"]["emissions_from_metric"]
-    assert "emissions_tokens_gauge_mantle" not in em and "emissions_tokens_gauge_bsc" in em
+    assert "emissions_tokens_gauge_sonic" not in em and "emissions_tokens_gauge_mantle" in em
     assert config.OUTFLOW_CATEGORIES["Fluid"]["b"][-2:] == ("emissions_tokens_base", "emissions_tokens_plasma")
     assert "merkl_morpho_out_base" in {s["key"] for s in config.PROJECT_BY_NAME["Morpho"]["log_scans"]}
     assert config.pin_frozen_probe() == []                                        # idempotent
@@ -79,7 +79,8 @@ def test_0b_the_frozen_build_carries_exactly_the_pinned_probe_whatever_the_local
 # =============================================================================================== 1: Morpho circulating
 def test_1_morphos_circulating_takes_out_only_what_is_not_released():
     spec = config.CIRCULATING_ONCHAIN["Morpho"]
-    assert spec["subtract"] == ("noncirculating_holding_tokens",)
+    # PR4C.1: the relocked MORPHO (modelled from the schedule) is out too
+    assert spec["subtract"] == ("noncirculating_holding_tokens", "morpho_relocked_tokens")
     assert spec["subtract_when_complete"]["metric"] == "morpho_undistributed_tokens"
     assert spec["handover"]["on"] == "2026-11-12" and "issuer rule" not in spec["handover"]["to"]
     c = config.PROJECT_BY_NAME["Morpho"]["contracts"]
@@ -120,6 +121,8 @@ def test_1_the_undistributed_leg_switches_on_only_when_held_on_every_day():
 def test_1_unlocks_follow_the_set_circulating_subtracts_and_never_count_claims_twice(monkeypatch):
     swc = config.CIRCULATING_ONCHAIN["Morpho"]["subtract_when_complete"]
     monkeypatch.setitem(swc, "in_force", False)
+    # PR4C.1: the relocked stock is a leg of the release too (each day's vesting is an unlock); kept out of this check
+    monkeypatch.setitem(config.CIRCULATING_ONCHAIN["Morpho"], "subtract", ("noncirculating_holding_tokens",))
     assert config.unlock_stock_metrics("Morpho") == ("noncirculating_holding_tokens",)
     assert config.release_less("Morpho") == ((), False)
     monkeypatch.setitem(swc, "in_force", True)
@@ -145,13 +148,15 @@ def test_1_unlocks_follow_the_set_circulating_subtracts_and_never_count_claims_t
 
 def test_1_on_the_dumps_circulating_is_total_less_the_dao_pending_and_the_float_takes_the_entities(morpho):
     """The dumps hold no morpho_undistributed_tokens rows: the switch is PENDING (said on the cell) and circulating is
-    total − the DAO (696.0M at 2026-10-13); the released entities (148.7M) leave the float, which stays 547.25M."""
+    total − the DAO − the relocked MORPHO modelled for 2026-10-13 (PR4C.1: 121.2M) = 574.8M; the released entities
+    (148.7M) leave the float: 426.05M."""
     circ = _cell(morpho, "Circulating supply (tokens)")
     flt = _cell(morpho, "TRADEABLE FLOAT")
-    assert circ == pytest.approx(696_001_146.74, abs=1) and flt == pytest.approx(547_252_376.94, abs=1)
+    assert circ == pytest.approx(696_001_146.74 - 121_200_000, abs=1)
+    assert flt == pytest.approx(547_252_376.94 - 121_200_000, abs=1)
     assert _cell(morpho, "Tradeable float ÷ circulating") == pytest.approx(flt / circ, rel=1e-9)
-    assert morpho["reader|A2 Coordination|Free float (tokens)"] == pytest.approx(547_252_377, abs=1)
-    assert morpho["reader|A2 Coordination|Circulating supply"] == pytest.approx(696_001_147, abs=1)
+    assert morpho["reader|A2 Coordination|Free float (tokens)"] == pytest.approx(426_052_377, abs=1)
+    assert morpho["reader|A2 Coordination|Circulating supply"] == pytest.approx(574_801_147, abs=1)
     note = config.circulating_rule_note("Morpho")
     assert "DECLARED HANDOVER" in note and "PENDING" in note and "Arbitrum" in note
 

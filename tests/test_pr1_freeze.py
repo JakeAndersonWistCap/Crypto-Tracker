@@ -19,7 +19,11 @@ def built(tmp_path_factory):
 def test_gate_a_frozen_project_moves_only_by_declaration(built, project):
     base = json.loads(pf.baseline_path(project).read_text(encoding="utf-8"))
     now = pf.cells(built["audit"], built["reader"], project)
-    assert len(base) > 300, f"{project}'s baseline holds only {len(base)} cells"
+    # the baseline is whole: the cells the build writes for the project, any cell on one side only declared (PR4C.5 — was
+    # a floor of 300 cells, which Morpho, an A2 project with 285, cannot meet; the cell set itself is the stronger check)
+    one_side = set(base) ^ set(now)
+    assert len(base) > 250 and one_side <= set(config.FROZEN_MOVES.get(project, {})), (
+        f"{project}'s baseline holds {len(base)} cells, the build {len(now)}; undeclared on one side: {sorted(one_side)[:5]}")
     bad = pf.undeclared(base, now, config.FROZEN_MOVES.get(project, {}))
     assert not bad, (f"{len(bad)} {project} cell(s) moved without a declared reason (config.FROZEN_MOVES; then "
                      f"python project_freeze.py --write {project}):\n" + "\n".join(bad[:40]))

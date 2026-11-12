@@ -1175,7 +1175,7 @@ def catch_up_bounds() -> tuple[pd.Timestamp, pd.Timestamp]:
     return end - pd.Timedelta(days=catch_up_window_days()), end - pd.Timedelta(days=1)
 
 
-def owed_days(name: str, metric: str, rows, lo, yesterday=None, skip=()) -> list[str]:
+def owed_days(name: str, metric: str, rows, lo, yesterday=None, skip=(), from_window: bool = False) -> list[str]:
     """The days the series `rows` [(YYYY-MM-DD, source), ...] owes in [lo, yesterday], NEWEST FIRST: not before its first
     stored day, not held by a row or inside a stored multi-day row's span, not interleaving a declared handover's earlier
     leg, not in `skip` (given up)."""
@@ -1190,7 +1190,9 @@ def owed_days(name: str, metric: str, rows, lo, yesterday=None, skip=()) -> list
         if k > 1:
             e = pd.Timestamp(d)
             covered.update(str((e - pd.Timedelta(days=i)).date()) for i in range(1, k))
-    lo = max(pd.Timestamp(lo), pd.Timestamp(rows[0][0]))
+    # PR4C.2: a SWITCH LEG (config.switch_legs — a leg a circulating handover waits for on every day of the window) owes
+    # the window from its start, not from its first stored row: its history is what the switch needs
+    lo = pd.Timestamp(lo) if from_window else max(pd.Timestamp(lo), pd.Timestamp(rows[0][0]))
     if lo > yesterday:
         return []
     skip = set(skip or ())
@@ -1319,7 +1321,7 @@ def catch_up_gaps(store, projects: list[dict], ledger: dict | None = None) -> tu
             given = {d for d, k in _ledger_tries(ent, window).items() if k >= CATCH_UP_TRIES}
             # PR1B.2: a day-boundary stock owes TODAY too — its first block closes yesterday's flow (config.DAY_BOUNDARY_FLOWS)
             last = yesterday + pd.Timedelta(days=1) if config.day_boundary_stock(name, m) else yesterday
-            owed = owed_days(name, m, rows, frm, last, given)
+            owed = owed_days(name, m, rows, frm, last, given, from_window=(name, m) in config.switch_legs())
             if owed:
                 gaps[(name, m)] = owed
     return gaps, excluded, checked

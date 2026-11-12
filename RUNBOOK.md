@@ -534,6 +534,56 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11em. Project round 4C — finish Morpho, and the timeouts (2026-11-12)
+
+**Read-only checks first** (PowerShell 5.1, from the repo folder; nothing here writes to `metrics.db` or the probe file):
+
+```
+git fetch origin claude/crypto-metrics-supply-demand-ovkg8g
+git rev-parse --short HEAD origin/claude/crypto-metrics-supply-demand-ovkg8g   # expect: the same id twice
+python -c "import config; print(config.probe_report())"                         # ITEM 3
+#   expect: one line per chain id in your explorer_routes.json — "5000 mantle etherscan SERVED; alchemy refused (…)",
+#   "146 sonic … alchemy refused (…)", Base / BNB / Berachain / OP "alchemy SERVED", Plasma "etherscan SERVED" — no key and
+#   no full URL; the last line "PIN MATCH …". If it says "PIN DIFFERS …", paste it back: the pin follows your file.
+python -c "import config; print(round(config.relocked_on('2026-11-12')), round(config.relocked_on('2026-11-13')))"   # ITEM 1
+#   expect: 112200000 111900000   (219M x days left ÷ 730; 300,000 vest a day)
+```
+
+**Then the normal run** (the chain reads now run as chain@<project>, side by side):
+
+```
+python token_metrics.py
+#   expect (ITEM 2): no "TIER TIMED OUT" line for chain@Chainlink, chain@GEODNET, chain@Maple (or any chain@…) and none for
+#   explorer_l2:base@Morpho — its scan reads only the days after its newest stored row. The catch-up line names any day a
+#   balance read missed and fills it; Morpho's two new legs still need their first history once:
+python archive_backfill.py --run --project Morpho --budget-min 30   # rerun until it reports nothing left
+```
+
+**One command per item** (after the build):
+
+```
+@'
+import openpyxl, xlcalc
+wb = openpyxl.load_workbook("token_metrics_audit.xlsx"); X = xlcalc.Workbook(wb)
+ws = wb["CP Comparability"]; hr = next(r for r in range(1, 13) if ws.cell(r, 1).value == "Project")
+row = next(r for r in range(hr + 1, ws.max_row + 1) if ws.cell(r, 1).value == "Morpho")
+def col(h): return next(c for c in range(1, ws.max_column + 1) if str(ws.cell(hr, c).value or "").startswith(h))
+c = col("Circulating supply (tokens)"); note = ws.cell(row, c).comment.text if ws.cell(row, c).comment else ""
+print("circulating", X.value("CP Comparability", row, c), "| float", X.value("CP Comparability", row, col("TRADEABLE FLOAT")),
+      "| unlocks Q0", X.value("CP Comparability", row, col("Unlocks Q0")))
+print(note[note.find("this build:"):][:160]); print(note[note.find("RELOCK MODELLED"):][:200])
+'@ | python -                                                                  # ITEM 1
+#   expect, once the 4B switch is in force: circulating ~548.4M (660.6M − 112.2M relocked), float ~458.4M; until then
+#   ~604.1M (716.3M − 112.2M) and "PENDING". Unlocks Q0 includes ~27.0M of vesting (300,000 a day). Gap to CoinGecko
+#   704.4M: relocked 112.2M + Contributor Grants 52.9M + Rewards Multisig 1.6M + unclaimed 1.1M − 11.9M (CoinGecko below
+#   total − the DAO: the DAO's 11-06 / 11-11 releases)
+python project_freeze.py --compare Morpho     # ITEM 5 — expect: Morpho: 285 cells, 0 undeclared move(s)
+python project_freeze.py --compare Maple      #           expect: Maple: 360 cells, 0 undeclared move(s)
+python project_freeze.py --compare Fluid      #           expect: Fluid: 353 cells, 0 undeclared move(s)
+python project_freeze.py --compare Uniswap    #           expect: Uniswap: 309 cells, 0 undeclared move(s)
+# ITEM 4 is read-only: SPEC PR4C.4 lists the other projects' vesting tokens counted as circulating (Ether.fi's Team)
+```
+
 ## 11el. Project round 4B — circulating corrections for Fluid and Maple, Morpho's last checks (2026-11-12)
 
 **Read-only checks first** (PowerShell 5.1, from the repo folder; nothing here writes to `metrics.db`):

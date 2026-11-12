@@ -142,9 +142,7 @@ TIER_ORDER = [
     ("subsidy_targeting", 2, lambda ctx: SubsidyTargeting()),
     ("hypercore_info", 1, lambda ctx: HyperCoreInfo(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"],
                                                     prior_delta=ctx["prior_delta"])),
-    ("chain", 2, lambda ctx: Chain(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"],
-                                   prior_sources=ctx["prior_sources"],
-                                   prior_delta=ctx["prior_delta"])),
+    # "chain" — ONE TIER PER PROJECT (round 4C, item 2): inserted below as chain@<project>
     ("tron_node", 2, lambda ctx: TronNode(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"],
                                           prior_delta=ctx["prior_delta"])),
     ("near_rpc", 2, lambda ctx: NearNode(prior_values=ctx["prior_values"])),
@@ -239,6 +237,24 @@ def _l2_tiers() -> list[str]:
     return sorted(set(config.explorer_scan_tiers())
                   | {config.scan_tier(c[1], {"own_tier": config.l2_tier(c[2])}) for c in config.EXPLORER_PROBED_SCANS})
 
+
+def _chain_tiers() -> list[str]:
+    """PR4C.2 (Jake's run 2026-11-12: "tier chain TIMED OUT after 240s — CAUSE: CODE", every call at its usual speed): the
+    contract reads ran every project in ONE thread under one budget, and a cut-off dropped every stock it had read
+    (Chainlink, GEODNET, Maple). One tier per project with contracts — chain@<project>, each with the chain budget and its
+    own reader — so a slow project can only time out itself and the projects read side by side."""
+    import config                                                    # noqa: PLC0415
+    return [f"chain{config.PROJECT_TIER_SEP}{p['name']}" for p in config.PROJECTS if p.get("contracts")]
+
+
+def _chain_factory(tier: str):
+    only = tier.split("@", 1)[1]
+    return lambda ctx: Chain(prior_values=ctx["prior_values"], prior_dates=ctx["prior_dates"],
+                             prior_sources=ctx["prior_sources"], prior_delta=ctx["prior_delta"], only=only)
+
+
+_at_chain = next(i for i, t in enumerate(TIER_ORDER) if t[0] == "tron_node")
+TIER_ORDER[_at_chain:_at_chain] = [(t, 2, _chain_factory(t)) for t in _chain_tiers()]
 
 _at = next(i for i, t in enumerate(TIER_ORDER) if t[0] == "explorer_gauge") + 1
 TIER_ORDER[_at:_at] = [(t, 2, (lambda tier: (lambda ctx: LogScan(own_tier=tier, last_dates=ctx.get("last_dates"))))(t))
@@ -1948,7 +1964,7 @@ def fetch_all(projects: list[dict], window_days: int | None, *,
     host_stall_reset()
     out = FetchOutput()
     todo = [(name, tier, build) for name, tier, build in TIER_ORDER
-            if not sources or name in sources]
+            if not sources or name in sources or name.split("@", 1)[0] == "chain" and "chain" in sources]
     results = _dispatch(todo, projects, window_days, ctx)
     results = _recheck_robots(results, todo, projects, window_days, ctx)
     # THE CONNECTION CAPS' EFFECT, ONE LINE (Round G 1.1): how many calls waited for a slot and for how long
@@ -2115,6 +2131,8 @@ DEFAULT_BUDGET_S = 120
 for _t in _l2_tiers():
     import config as _config                                        # noqa: E402
     TIER_BUDGET_S[_t] = _config.explorer_tier_budget(_t)
+for _t in _chain_tiers():                                           # PR4C.2: each project's chain tier, the chain budget
+    TIER_BUDGET_S[_t] = TIER_BUDGET_S["chain"]
 
 
 def adapter_files() -> dict:

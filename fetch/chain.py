@@ -678,8 +678,12 @@ def _guarded_provider_class(HTTPProvider):
                 alchemy_usage.pace(url, method)
                 t0 = time.monotonic()
                 try:
-                    out = self._request_session_manager.make_post_request(
-                        self.endpoint_uri, request_data, **self.get_request_kwargs())
+                    # PR4C.2: the per-project chain tiers run side by side — every RPC post takes the run-wide
+                    # connection slots (MAX_CONN, MAX_CONN_PER_HOST per host), as the Http calls do
+                    from .base import connection_slot
+                    with connection_slot(rpc_host(url)):
+                        out = self._request_session_manager.make_post_request(
+                            self.endpoint_uri, request_data, **self.get_request_kwargs())
                 except requests.exceptions.Timeout as e:   # connect or read: NEVER retried here
                     _time_rpc(url, method, time.monotonic() - t0, "timeout")
                     BREAKER.timeout(self.chain, url, e)
@@ -1810,8 +1814,10 @@ class Chain:
 
     def __init__(self, prior_values: dict | None = None, prior_dates: dict | None = None,
                  prior_sources: dict | None = None, prior_delta: dict | None = None,
-                 backfill: dict | None = None):
+                 backfill: dict | None = None, only: str | None = None):
         self.reader = ChainReader()
+        # PR4C.2: the tier chain@<project> reads that project only (None: every project — archive mode, tests)
+        self.only = only
         # ===== ARCHIVE MODE (archive_backfill.py, 2026-09-29). =====
         # {"day": Timestamp, "metrics": {project: set(metrics)}, "solana": {(project, key): value}}.
         # The reader is pinned (reader.at_block) by the caller; here: date every row `day`, read
@@ -1991,6 +1997,10 @@ class Chain:
                          chain, e)
 
     def run(self, projects: list[dict], window_days, out):
+        if self.only is not None:
+            projects = [p for p in projects if p["name"] == self.only]
+            if not projects:
+                return
         when = self.backfill["day"] if self.backfill else today()
         self._prefetch(projects)
         for p in projects:

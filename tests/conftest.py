@@ -99,6 +99,7 @@ SHARED_PLAIN_BUILD_FILES = (
     "test_pr1b_circ.py",
     "test_pr3b_maple_fluid.py",
     "test_pr4_morpho.py",
+    "test_pr4c.py",
 )
 SHARED_PLAIN_BUILD_GROUP = "shared_plain_build"
 

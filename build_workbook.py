@@ -4045,7 +4045,10 @@ def _subtract_when_complete(groups: dict, name: str, s: pd.Series, tag: str, swc
     # PR4.1 (Morpho): a leg that is NOT 0 before any date (whole_series) must be held on every day of the series's history
     # span (TRAJECTORY history_days back from its last day) — days before the span are dropped, never left on the old basis
     if swc.get("whole_series"):
-        start = (max(s.index.min(), s.index.max() - pd.Timedelta(days=int(config.TRAJECTORY["history_days"])))
+        # PR4C.2: the span is the archive catch-up's window (fetch.archive.catch_up_window_days), so the daily run's own
+        # catch-up can hold every day the switch needs — a longer span would leave the switch PENDING for good
+        from fetch.archive import catch_up_window_days                   # noqa: PLC0415
+        start = (max(s.index.min(), s.index.max() - pd.Timedelta(days=catch_up_window_days() - 1))
                  if not s.empty else pd.Timestamp("1900-01-01"))
     else:
         start = pd.Timestamp(swc["zero_before"])
@@ -4071,6 +4074,21 @@ def _subtract_when_complete(groups: dict, name: str, s: pd.Series, tag: str, swc
                     + (f" (live reads from {first})" if first else "") + "; the subtraction switches on when every day "
                     f"is held — `python archive_backfill.py --run --project {name}` fills the history")
     return s, tag
+
+
+def _modelled_lock_views(groups: dict) -> None:
+    """PR4C.1 (config.MORPHO_RELOCK): the MODELLED still-locked balance of each day, over the days the on-chain total is
+    held — no wallet holds it that can be read, so the published schedule is the figure (labelled in its source)."""
+    spec = config.MORPHO_RELOCK
+    name = "Morpho"
+    tot = groups.get((name, (config.circulating_onchain(name) or {}).get("total", "total_supply")))
+    if tot is None or tot.empty or name not in {p["name"] for p in scoped_projects()}:
+        return
+    days = pd.to_datetime(tot["date"]).dt.normalize().drop_duplicates().sort_values()
+    view = pd.DataFrame({"date": days.values, "project": name, "metric": spec["metric"],
+                         "value": [config.relocked_on(d) for d in days], "tier": 2,
+                         "source": f"modelled:relock_schedule[{spec['start']}..{spec['end']}]"})
+    groups[(name, spec["metric"])] = _as_stored(view, tot.columns)
 
 
 def _circulating_views(groups: dict) -> None:
@@ -6478,6 +6496,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _first_party_history_views(groups)   # fix round 2, H1: Aethir's table / Plume's mirror before the first read
     _total_supply_net_views(groups)   # Round G2 D2/L3: total supply = our total net of what is burned (FDV reads it)
     _wm_total_supply_views(groups)    # Round G7 0a: World Mobile's total = option C, option B its own row
+    _modelled_lock_views(groups)  # PR4C.1: Morpho's relocked MORPHO, modelled, before circulating subtracts it
     _circulating_views(groups)
     _cg_plus_staked_views(groups)
     _near_lockup_views(groups)    # BEFORE market cap: NEAR's circulating under Jake's lockup rule

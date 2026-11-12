@@ -76,7 +76,9 @@ def test_3_morphos_contributor_reserve_is_not_released_and_the_float_leg_is_its_
     swc = config.circulating_swc("Morpho")
     assert swc["also_need"] == ("morpho_released_held_tokens",) and swc["current_set_only"] is True
     assert config.FLOAT_RELEASED_HELD["Morpho"]["in_force_metric"] == "morpho_released_held_tokens"
-    assert "LIMITATION (2026-11-12)" in config.MORPHO_VESTING_LIMITATION and "112.2M" in config.MORPHO_VESTING_LIMITATION
+    # PR4C.1: the limitation became the modelled relock (the note keeps its date and the 112.2M)
+    assert "RELOCK MODELLED (PR4C.1, read 2026-11-12)" in config.MORPHO_VESTING_LIMITATION
+    assert "112.2M" in config.MORPHO_VESTING_LIMITATION
 
 
 def test_3_a_day_read_on_an_earlier_wallet_set_is_not_held(monkeypatch):
@@ -111,7 +113,9 @@ def test_3_a_release_missing_its_claims_leg_says_blocked(monkeypatch):
     monkeypatch.setitem(swc, "in_force", True)
     days = pd.date_range("2026-01-01", periods=3)
     groups = {("Morpho", "noncirculating_holding_tokens"): _rows("Morpho", "noncirculating_holding_tokens", days, 10.0),
-              ("Morpho", "morpho_undistributed_tokens"): _rows("Morpho", "morpho_undistributed_tokens", days, 5.0)}
+              ("Morpho", "morpho_undistributed_tokens"): _rows("Morpho", "morpho_undistributed_tokens", days, 5.0),
+              # PR4C.1: the relocked stock is a leg of the release as well
+              ("Morpho", "morpho_relocked_tokens"): _rows("Morpho", "morpho_relocked_tokens", days, 100.0)}
     bw._VIEW_BLOCKS.pop(("Morpho", "unlock_release_tokens"), None)
     bw._unlock_release_view(groups, "Morpho", "unlock_release_tokens", config.unlock_stock_metrics("Morpho"))
     assert bw._VIEW_BLOCKS.pop(("Morpho", "unlock_release_tokens")).startswith(

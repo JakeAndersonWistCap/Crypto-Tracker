@@ -30011,7 +30011,11 @@ def wire_probed_scans(state: dict | None = None, projects=None, open_routes: boo
                       "own_tier": scan_tier(proj, {"own_tier": l2_tier(chain)}), "scan_budget_s": 140,
                       "window_days": 100,
                       "wired_on": (st.get("probed_on") if cid in served else alc.get("probed_on")) or "2026-10-14",
-                      "route": route})
+                      "route": route,
+                      # PR4C.2 (Jake's run 2026-11-12: explorer_l2:base@Morpho TIMED OUT dating 396,522 transfers): Morpho's
+                      # Base claims read only the days after the newest stored one — the 100-day window once, then
+                      # each run's new transfers (as Katana's)
+                      **({"incremental_after_seed": True} if proj == "Morpho" else {})})
         if proj == "Pendle":
             em = PROJECT_BY_NAME["Pendle"].get("emissions_from_metric") or ()
             if metric not in em:
@@ -39648,3 +39652,1141 @@ def current_set_point(project_name: str, metric: str) -> frozenset:
     stored row on another set is not a day of the current series."""
     return frozenset(f"{c['chain']}:{k}" for k, c in (PROJECT_BY_NAME.get(project_name) or {}).get("contracts", {}).items()
                      if c.get("metric_override") == metric)
+
+
+def switch_legs() -> set:
+    """PR4C.2: every (project, metric) a circulating switch (subtract_when_complete, whole_series) needs on every day of the
+    catch-up window — the leg and the legs it also needs. The daily catch-up owes them from the window's start."""
+    out = set()
+    for n, spec in CIRCULATING_ONCHAIN.items():
+        swc = spec.get("subtract_when_complete") or {}
+        if swc.get("whole_series"):
+            out |= {(n, m) for m in (swc["metric"], *(swc.get("also_need") or ()))}
+    return out
+
+
+# =====================================================================================================================
+# PROJECT ROUND 4C — FINISH MORPHO, AND THE TIMEOUTS (Jake 2026-11-12).
+# RULE CLARIFIED: tokens under a vesting schedule or relock agreement are NOT circulating until each tranche vests,
+# whether the lock is enforced on chain or by agreement. Voluntary staking and vote-locks by holders ARE circulating (off
+# free float only). Undistributed DAO / unallocated reserves are not circulating.
+# =====================================================================================================================
+# PR4C.1 MORPHO'S RELOCKED TOKENS, MODELLED FROM THE SCHEDULE. No vesting contract or holder wallet is disclosed
+# (Morpho's Blockworks filing Section 11; DefiLlama: "no vesting contract addresses are published"), so the still-locked
+# balance of each day is computed from the published schedule — MODELLED, labelled, with its sources:
+#   Founders 15.20% (152,000,000): "Subject to a relock agreement: a 12-month cliff …", the cliff "expired 21 November
+#     2025, with full vesting by 21 November 2027", "24-month daily linear vesting" (filing, read 2026-11-12; "Approximately
+#     20% vested as of April 2026" agrees: 145 of 730 days by 2026-04-15);
+#   Strategic Partners Cohort 3 6.7% (67,000,000): "2 year linear vest, following a 1 year lockup from 21 November 2024 …
+#     100% is vested by 21 November 2027" (docs.morpho.org/learn/governance/morpho-token, read 2026-11-12). The filing's
+#     Investors Round 3 reads 6.23% (62,300,000) for the same window — its cohorts disagree with its own total (27.5% vs
+#     25.52%); the docs' 6.7% is used and the 4.7M (2.4M still locked on 2026-11-12) named as the uncertainty.
+# locked(d) = allocation x min(1, (2027-11-21 − d) ÷ 730 days), floored at 0; before 2025-11-21 the whole allocation.
+# 2026-11-12: 374 / 730 left -> Founders 77,873,973 + Cohort 3 34,326,027 = 112,200,000. Subtracted from circulating
+# (a declared handover: the whole series restated — the model holds every day); each day's fall is a release, so it is
+# in unlocks (e) as an insider unlock. OVERLAP: none of the eight Safes the filing lists (Section 11: the DAO, Rewards,
+# Association Master / Ops, Contributor Grants x2, Operative x2) is a founder's or an investor's, and no relock holder is
+# named — so no wallet we already exclude can hold relocked tokens by the filing's own labels (unverifiable beyond that).
+MORPHO_RELOCK = {
+    "metric": "morpho_relocked_tokens", "start": "2025-11-21", "end": "2027-11-21",
+    "tranches": (("Founders (15.20%, relock agreement)", 152_000_000.0),
+                 ("Strategic Partners Cohort 3 / Investors Round 3 (6.7%)", 67_000_000.0)),
+    "source": "https://blockworks.com/token-transparency/filing/morpho (Founders: relock agreement, cliff expired "
+              "2025-11-21, 24-month daily linear to 2027-11-21) ; https://docs.morpho.org/learn/governance/morpho-token/ "
+              "(Cohort 3 6.7%, 2-year linear after a 1-year lockup from 2024-11-21) — both read 2026-11-12",
+    "uncertainty": "the filing's Investors Round 3 reads 6.23% (62.3M), not the docs' 6.7% (67.0M): 4.7M allocated, "
+                   "2.4M of it still locked on 2026-11-12",
+    "decided": "Jake 2026-11-12 (PR4C.1: tokens under a relock agreement are not circulating until vested)"}
+METRICS["morpho_relocked_tokens"] = {
+    "label": "MORPHO still locked under the relock / vesting agreements, MODELLED from the published schedule (Founders "
+             "152M + Cohort 3 67M, daily linear 2025-11-21..2027-11-21; Morpho's filing and docs, read 2026-11-12) — "
+             "no wallet is disclosed, so the balance is computed, not read (PR4C.1)",
+    "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [2], "sanity_min": 0, "sanity_max": 3e8,
+    "only_projects": ("Morpho",), "view_only": True}
+
+
+def relocked_on(day, spec: dict | None = None) -> float:
+    """PR4C.1: the tokens still locked on `day` under MORPHO_RELOCK's schedule (each tranche linear by day)."""
+    import pandas as _pd
+    spec = spec or MORPHO_RELOCK
+    d, s, e = _pd.Timestamp(day).normalize(), _pd.Timestamp(spec["start"]), _pd.Timestamp(spec["end"])
+    left = 1.0 if d <= s else max(0.0, min(1.0, (e - d).days / (e - s).days))
+    return sum(a for _, a in spec["tranches"]) * left
+
+
+CIRCULATING_ONCHAIN["Morpho"]["subtract"] = ("noncirculating_holding_tokens", "morpho_relocked_tokens")
+CIRCULATING_ONCHAIN["Morpho"]["handover"].update({
+    "decided": "Jake 2026-11-12 (PR4.1, PR4B.3, PR4C.1)",
+    "to": "total − the DAO − MORPHO still locked under the relock / vesting agreements (MODELLED from the schedule) − "
+          "MORPHO not yet released (Rewards Multisig, unclaimed Merkl / URD, the Contributor Grants reserve); the "
+          "Association / Operative holdings in circulating and out of the float",
+    "how": "the whole series is restated: the DAO leg is held and the relock model covers every day; the not-yet-released "
+           "leg switches on when it and the released entities' series are held on every day of the catch-up window"})
+MORPHO_VESTING_LIMITATION = (
+    "RELOCK MODELLED (PR4C.1, read 2026-11-12): no vesting contract or wallet is disclosed, so the Founders' 152M and "
+    "Cohort 3's 67M still locked (daily linear 2025-11-21..2027-11-21; 112.2M on 2026-11-12) are computed from the "
+    "schedule and subtracted. Uncertainty: " + MORPHO_RELOCK["uncertainty"])
+
+
+# PR4C.3 THE PIN, MATCHED TO JAKE'S FILE AS FAR AS IT IS KNOWN. His search of explorer_routes.json (2026-11-12): line 5 reads
+# "5000," — the probe writes json.dump(indent=1), so line 5 is the FIRST entry of the Etherscan "served" list (probe order
+# BSC, Base, Mantle, …: BNB and Base were refused, Mantle served) and more follow; lines 26-27 are the alchemy section's
+# refusals for 5000 and 146 ("EAPIs not enabled"). So Etherscan serves Mantle on his machine and his build wires Pendle's
+# Mantle gauge scan: the pin gains 5000. Whether Etherscan also serves Sonic 146, Berachain 80094 or HyperEVM 999 is not
+# known — `python -c "import config; print(config.probe_report())"` prints every chain id and says PIN MATCH or the exact
+# difference.
+FROZEN_PROBE_PIN["served"] = sorted(set(FROZEN_PROBE_PIN["served"]) | {5000})
+
+
+def probe_report(state: dict | None = None) -> str:
+    """PR4C.3: for every chain id explorer_routes.json names — Etherscan served / refused, Alchemy served / refused / not
+    tried, the scans it wires on this machine — and the pin beside it: 'PIN MATCH', or what differs. No API key and no
+    full URL is printed (any URL is reduced to its host, any long token masked)."""
+    import re as _re
+    st = explorer_probe_state() if state is None else state
+    alc = st.get("alchemy") or {}
+
+    def clean(msg) -> str:
+        t = _re.sub(r"https?://([^/\s]+)\S*", r"\1", str(msg))
+        return _re.sub(r"[A-Za-z0-9_\-]{24,}", "***", t)[:140]
+    names = {cid: ch for cid, _p, ch, *_ in EXPLORER_PROBED_SCANS}
+    names.update({v: k for k, v in CHAIN_IDS.items() if isinstance(v, int)})
+    es_served = {int(c) for c in st.get("served") or ()}
+    al_served = {int(c) for c in alc.get("served") or ()}
+    ids = (es_served | al_served | {int(c) for c in (st.get("refused") or {})}
+           | {int(c) for c in (alc.get("refused") or {})} | {int(c) for c in (alc.get("not_tried") or {})})
+    lines = [f"explorer_routes.json: etherscan probed {st.get('probed_on') or 'never'}, alchemy probed "
+             f"{alc.get('probed_on') or 'never'}"]
+    for cid in sorted(ids):
+        es = ("SERVED" if cid in es_served else
+              f"refused ({clean((st.get('refused') or {}).get(str(cid)))})" if str(cid) in (st.get("refused") or {})
+              else "—")
+        al = ("SERVED" if cid in al_served else
+              f"refused ({clean((alc.get('refused') or {}).get(str(cid)))})" if str(cid) in (alc.get("refused") or {})
+              else f"not tried ({clean((alc.get('not_tried') or {}).get(str(cid)))})"
+              if str(cid) in (alc.get("not_tried") or {}) else "—")
+        wired = [f"{p}:{k}" for c, p, _ch, k, *_ in EXPLORER_PROBED_SCANS if c == cid and (cid in es_served or cid in al_served)]
+        lines.append(f"  {cid:>6} {names.get(cid, '?'):<10} etherscan {es}; alchemy {al}; WIRED: {', '.join(wired) or 'none'}")
+    file_chains = {c for c, *_ in EXPLORER_PROBED_SCANS if c in es_served | al_served}
+    pin_chains = {c for c, *_ in EXPLORER_PROBED_SCANS if c in frozen_probe_chains()}
+    if file_chains == pin_chains:
+        lines.append(f"PIN MATCH: the frozen / test builds wire the same chains as this file ({sorted(pin_chains)})")
+    else:
+        lines.append(f"PIN DIFFERS: this file wires {sorted(file_chains)}; the pin wires {sorted(pin_chains)} — only in "
+                     f"the file {sorted(file_chains - pin_chains)}, only in the pin {sorted(pin_chains - file_chains)}")
+    return "\n".join(lines)
+
+
+# PR4C.5 (Jake 2026-11-12): MORPHO FROZEN after rounds 4, 4B and 4C — its 285 cells on the 15-dump build are the baseline
+# (tests/fixtures/frozen_morpho.json; its switch reads PENDING on the dumps, as expected). The 48 cells that differ from
+# the build before round 4 (87f2714) are declared below: 41 first moved by PR4, 1 by PR4B, 6 by PR4C alone (a cell moved in
+# more than one round names each).
+FROZEN_PROJECTS["Morpho"] = {"baseline": "tests/fixtures/frozen_morpho.json", "since": "2026-11-12",
+                             "why": "project rounds 4, 4B and 4C done (Jake 2026-11-12)"}
+FROZEN_MOVES["Morpho"] = {'audit|A2 Coordination|UNLOCK DILUTION Q0 (tokens) — released from the non-circulating wallets, NOT emissions': {'date': '2026-11-12',
+                                                                                                                  'to': 27000000.0,
+                                                                                                                  'why': 'PR4.1-4.3 '
+                                                                                                                         '(Jake '
+                                                                                                                         '2026-11-12): '
+                                                                                                                         "Morpho's "
+                                                                                                                         'circulating '
+                                                                                                                         'under '
+                                                                                                                         'the '
+                                                                                                                         'release '
+                                                                                                                         'rule '
+                                                                                                                         '(the '
+                                                                                                                         'DAO '
+                                                                                                                         'out; '
+                                                                                                                         'the '
+                                                                                                                         'released '
+                                                                                                                         'entities '
+                                                                                                                         'in '
+                                                                                                                         'circulating '
+                                                                                                                         'and '
+                                                                                                                         'out '
+                                                                                                                         'of '
+                                                                                                                         'the '
+                                                                                                                         'float), '
+                                                                                                                         'its '
+                                                                                                                         'three '
+                                                                                                                         'revenue '
+                                                                                                                         'lines, '
+                                                                                                                         'one '
+                                                                                                                         'emissions '
+                                                                                                                         'figure; '
+                                                                                                                         'then '
+                                                                                                                         'PR4C.1 '
+                                                                                                                         '(Jake '
+                                                                                                                         '2026-11-12): '
+                                                                                                                         "Morpho's "
+                                                                                                                         'relocked '
+                                                                                                                         'tokens '
+                                                                                                                         '(Founders '
+                                                                                                                         '152M '
+                                                                                                                         '+ '
+                                                                                                                         'Cohort '
+                                                                                                                         '3 '
+                                                                                                                         '67M, '
+                                                                                                                         'daily '
+                                                                                                                         'linear '
+                                                                                                                         '2025-11-21..2027-11-21) '
+                                                                                                                         'MODELLED '
+                                                                                                                         'from '
+                                                                                                                         'the '
+                                                                                                                         'schedule '
+                                                                                                                         'and '
+                                                                                                                         'out '
+                                                                                                                         'of '
+                                                                                                                         'circulating; '
+                                                                                                                         'each '
+                                                                                                                         "day's "
+                                                                                                                         'vesting '
+                                                                                                                         'an '
+                                                                                                                         'unlock '
+                                                                                                                         '(e)'},
+ 'audit|A2 Coordination|Unlock dilution, annualised % of free float': {'date': '2026-11-12',
+                                                                       'to': 0.190500664,
+                                                                       'why': "PR4.1-4.3 (Jake 2026-11-12): Morpho's "
+                                                                              'circulating under the release rule (the '
+                                                                              'DAO out; the released entities in '
+                                                                              'circulating and out of the float), its '
+                                                                              'three revenue lines, one emissions '
+                                                                              'figure; then PR4C.1 (Jake 2026-11-12): '
+                                                                              "Morpho's relocked tokens (Founders 152M "
+                                                                              '+ Cohort 3 67M, daily linear '
+                                                                              '2025-11-21..2027-11-21) MODELLED from '
+                                                                              'the schedule and out of circulating; '
+                                                                              "each day's vesting an unlock (e)"},
+ 'audit|CP Comparability|Circulating supply (tokens) — our convention, the figure in use': {'date': '2026-11-12',
+                                                                                            'to': 574801147.0,
+                                                                                            'why': 'PR4.1-4.3 (Jake '
+                                                                                                   '2026-11-12): '
+                                                                                                   "Morpho's "
+                                                                                                   'circulating under '
+                                                                                                   'the release rule '
+                                                                                                   '(the DAO out; the '
+                                                                                                   'released entities '
+                                                                                                   'in circulating and '
+                                                                                                   'out of the float), '
+                                                                                                   'its three revenue '
+                                                                                                   'lines, one '
+                                                                                                   'emissions figure; '
+                                                                                                   'then PR4C.1 (Jake '
+                                                                                                   '2026-11-12): '
+                                                                                                   "Morpho's relocked "
+                                                                                                   'tokens (Founders '
+                                                                                                   '152M + Cohort 3 '
+                                                                                                   '67M, daily linear '
+                                                                                                   '2025-11-21..2027-11-21) '
+                                                                                                   'MODELLED from the '
+                                                                                                   'schedule and out '
+                                                                                                   'of circulating; '
+                                                                                                   "each day's vesting "
+                                                                                                   'an unlock (e)'},
+ 'audit|CP Comparability|Dilution (e) unlocks (annualised) ÷ circulating': {'date': '2026-11-12',
+                                                                            'to': 0.190500664,
+                                                                            'why': 'PR4.1-4.3 (Jake 2026-11-12): '
+                                                                                   "Morpho's circulating under the "
+                                                                                   'release rule (the DAO out; the '
+                                                                                   'released entities in circulating '
+                                                                                   'and out of the float), its three '
+                                                                                   'revenue lines, one emissions '
+                                                                                   'figure; then PR4C.1 (Jake '
+                                                                                   "2026-11-12): Morpho's relocked "
+                                                                                   'tokens (Founders 152M + Cohort 3 '
+                                                                                   '67M, daily linear '
+                                                                                   '2025-11-21..2027-11-21) MODELLED '
+                                                                                   'from the schedule and out of '
+                                                                                   "circulating; each day's vesting an "
+                                                                                   'unlock (e)'},
+ 'audit|CP Comparability|Dilution (e) unlocks (annualised) ÷ tradeable float': {'date': '2026-11-12',
+                                                                                'to': 0.257010654,
+                                                                                'why': 'PR4.1-4.3 (Jake 2026-11-12): '
+                                                                                       "Morpho's circulating under the "
+                                                                                       'release rule (the DAO out; the '
+                                                                                       'released entities in '
+                                                                                       'circulating and out of the '
+                                                                                       'float), its three revenue '
+                                                                                       'lines, one emissions figure; '
+                                                                                       'then PR4C.1 (Jake 2026-11-12): '
+                                                                                       "Morpho's relocked tokens "
+                                                                                       '(Founders 152M + Cohort 3 67M, '
+                                                                                       'daily linear '
+                                                                                       '2025-11-21..2027-11-21) '
+                                                                                       'MODELLED from the schedule and '
+                                                                                       "out of circulating; each day's "
+                                                                                       'vesting an unlock (e)'},
+ 'audit|CP Comparability|Discretionary supply ÷ circulating': {'date': '2026-11-12',
+                                                               'to': 0.787659568,
+                                                               'why': "PR4.1-4.3 (Jake 2026-11-12): Morpho's "
+                                                                      'circulating under the release rule (the DAO '
+                                                                      'out; the released entities in circulating and '
+                                                                      'out of the float), its three revenue lines, one '
+                                                                      'emissions figure; then PR4C.1 (Jake '
+                                                                      "2026-11-12): Morpho's relocked tokens (Founders "
+                                                                      '152M + Cohort 3 67M, daily linear '
+                                                                      '2025-11-21..2027-11-21) MODELLED from the '
+                                                                      "schedule and out of circulating; each day's "
+                                                                      'vesting an unlock (e)'},
+ 'audit|CP Comparability|Discretionary supply — which wallets': {'date': '2026-11-12',
+                                                                 'to': "the DAO's holdings and the Association / Labs "
+                                                                       '/ Grants / Rewards / Operative wallets (no '
+                                                                       'published release schedule)',
+                                                                 'why': "PR4.1-4.3 (Jake 2026-11-12): Morpho's "
+                                                                        'circulating under the release rule (the DAO '
+                                                                        'out; the released entities in circulating and '
+                                                                        'out of the float), its three revenue lines, '
+                                                                        'one emissions figure'},
+ 'audit|CP Comparability|ETF / ETP holdings ÷ circulating': {'date': '2026-11-12',
+                                                             'to': 0.000931017109,
+                                                             'why': "PR4.1-4.3 (Jake 2026-11-12): Morpho's circulating "
+                                                                    'under the release rule (the DAO out; the released '
+                                                                    'entities in circulating and out of the float), '
+                                                                    'its three revenue lines, one emissions figure; '
+                                                                    "then PR4C.1 (Jake 2026-11-12): Morpho's relocked "
+                                                                    'tokens (Founders 152M + Cohort 3 67M, daily '
+                                                                    'linear 2025-11-21..2027-11-21) MODELLED from the '
+                                                                    "schedule and out of circulating; each day's "
+                                                                    'vesting an unlock (e)'},
+ 'audit|CP Comparability|Emissions Q0 (tokens) — every incentive programme, as the A-tabs read it': {'date': '2026-11-12',
+                                                                                                     'to': 'n/a — '
+                                                                                                           'Data: '
+                                                                                                           'BLOCKED — '
+                                                                                                           'BLOCKED — '
+                                                                                                           'the sum of '
+                                                                                                           'emissions_tokens_claims_ethereum, '
+                                                                                                           'emissions_tokens_claims_arbitrum, '
+                                                                                                           'emissions_tokens_claims_base, '
+                                                                                                           'emissions_tokens_claims_katana '
+                                                                                                           'is not '
+                                                                                                           'formed: '
+                                                                                                           'emissions_tokens_claims_ethereum, '
+                                                                                                           'emissions_tokens_cl',
+                                                                                                     'why': 'PR4.1-4.3 '
+                                                                                                            '(Jake '
+                                                                                                            '2026-11-12): '
+                                                                                                            "Morpho's "
+                                                                                                            'circulating '
+                                                                                                            'under the '
+                                                                                                            'release '
+                                                                                                            'rule (the '
+                                                                                                            'DAO out; '
+                                                                                                            'the '
+                                                                                                            'released '
+                                                                                                            'entities '
+                                                                                                            'in '
+                                                                                                            'circulating '
+                                                                                                            'and out '
+                                                                                                            'of the '
+                                                                                                            'float), '
+                                                                                                            'its three '
+                                                                                                            'revenue '
+                                                                                                            'lines, '
+                                                                                                            'one '
+                                                                                                            'emissions '
+                                                                                                            'figure'},
+ 'audit|CP Comparability|FEES Q0 ($) — S13 line 1: all fees paid by users of the protocol': {'date': '2026-11-12',
+                                                                                             'to': 55126707.6,
+                                                                                             'why': 'PR4.1-4.3 (Jake '
+                                                                                                    '2026-11-12): '
+                                                                                                    "Morpho's "
+                                                                                                    'circulating under '
+                                                                                                    'the release rule '
+                                                                                                    '(the DAO out; the '
+                                                                                                    'released entities '
+                                                                                                    'in circulating '
+                                                                                                    'and out of the '
+                                                                                                    'float), its three '
+                                                                                                    'revenue lines, '
+                                                                                                    'one emissions '
+                                                                                                    'figure'},
+ 'audit|CP Comparability|HOLDER REVENUE Q0 ($) — S13 line 3: the part of revenue reaching token holders': {'date': '2026-11-12',
+                                                                                                           'to': 0.0,
+                                                                                                           'why': 'PR4.1-4.3 '
+                                                                                                                  '(Jake '
+                                                                                                                  '2026-11-12): '
+                                                                                                                  "Morpho's "
+                                                                                                                  'circulating '
+                                                                                                                  'under '
+                                                                                                                  'the '
+                                                                                                                  'release '
+                                                                                                                  'rule '
+                                                                                                                  '(the '
+                                                                                                                  'DAO '
+                                                                                                                  'out; '
+                                                                                                                  'the '
+                                                                                                                  'released '
+                                                                                                                  'entities '
+                                                                                                                  'in '
+                                                                                                                  'circulating '
+                                                                                                                  'and '
+                                                                                                                  'out '
+                                                                                                                  'of '
+                                                                                                                  'the '
+                                                                                                                  'float), '
+                                                                                                                  'its '
+                                                                                                                  'three '
+                                                                                                                  'revenue '
+                                                                                                                  'lines, '
+                                                                                                                  'one '
+                                                                                                                  'emissions '
+                                                                                                                  'figure'},
+ 'audit|CP Comparability|HOLDER SHARE = holder revenue ÷ revenue, per covered day (S13)': {'date': '2026-11-12',
+                                                                                           'to': 'n/a — 0 ÷ 0 while '
+                                                                                                 'the fee switch is '
+                                                                                                 'off: holder revenue '
+                                                                                                 '0 and revenue 0 '
+                                                                                                 '(Morpho Blue '
+                                                                                                 'feeRecipient() = '
+                                                                                                 '0x0, block '
+                                                                                                 '26,397,959, '
+                                                                                                 '2026-11-12) — no '
+                                                                                                 'ratio',
+                                                                                           'why': 'PR4.1-4.3 (Jake '
+                                                                                                  '2026-11-12): '
+                                                                                                  "Morpho's "
+                                                                                                  'circulating under '
+                                                                                                  'the release rule '
+                                                                                                  '(the DAO out; the '
+                                                                                                  'released entities '
+                                                                                                  'in circulating and '
+                                                                                                  'out of the float), '
+                                                                                                  'its three revenue '
+                                                                                                  'lines, one '
+                                                                                                  'emissions figure'},
+ 'audit|CP Comparability|Market cap ($)': {'date': '2026-11-12',
+                                           'to': 1372468760.0,
+                                           'why': "PR4.1-4.3 (Jake 2026-11-12): Morpho's circulating under the release "
+                                                  'rule (the DAO out; the released entities in circulating and out of '
+                                                  'the float), its three revenue lines, one emissions figure; then '
+                                                  "PR4C.1 (Jake 2026-11-12): Morpho's relocked tokens (Founders 152M + "
+                                                  'Cohort 3 67M, daily linear 2025-11-21..2027-11-21) MODELLED from '
+                                                  "the schedule and out of circulating; each day's vesting an unlock "
+                                                  '(e)'},
+ "audit|CP Comparability|Outflow (e) unlocks — $ a year (each day's tokens x that day's price, annualised)": {'date': '2026-11-12',
+                                                                                                              'to': 250281194.0,
+                                                                                                              'why': 'PR4.1-4.3 '
+                                                                                                                     '(Jake '
+                                                                                                                     '2026-11-12): '
+                                                                                                                     "Morpho's "
+                                                                                                                     'circulating '
+                                                                                                                     'under '
+                                                                                                                     'the '
+                                                                                                                     'release '
+                                                                                                                     'rule '
+                                                                                                                     '(the '
+                                                                                                                     'DAO '
+                                                                                                                     'out; '
+                                                                                                                     'the '
+                                                                                                                     'released '
+                                                                                                                     'entities '
+                                                                                                                     'in '
+                                                                                                                     'circulating '
+                                                                                                                     'and '
+                                                                                                                     'out '
+                                                                                                                     'of '
+                                                                                                                     'the '
+                                                                                                                     'float), '
+                                                                                                                     'its '
+                                                                                                                     'three '
+                                                                                                                     'revenue '
+                                                                                                                     'lines, '
+                                                                                                                     'one '
+                                                                                                                     'emissions '
+                                                                                                                     'figure; '
+                                                                                                                     'then '
+                                                                                                                     'PR4C.1 '
+                                                                                                                     '(Jake '
+                                                                                                                     '2026-11-12): '
+                                                                                                                     "Morpho's "
+                                                                                                                     'relocked '
+                                                                                                                     'tokens '
+                                                                                                                     '(Founders '
+                                                                                                                     '152M '
+                                                                                                                     '+ '
+                                                                                                                     'Cohort '
+                                                                                                                     '3 '
+                                                                                                                     '67M, '
+                                                                                                                     'daily '
+                                                                                                                     'linear '
+                                                                                                                     '2025-11-21..2027-11-21) '
+                                                                                                                     'MODELLED '
+                                                                                                                     'from '
+                                                                                                                     'the '
+                                                                                                                     'schedule '
+                                                                                                                     'and '
+                                                                                                                     'out '
+                                                                                                                     'of '
+                                                                                                                     'circulating; '
+                                                                                                                     'each '
+                                                                                                                     "day's "
+                                                                                                                     'vesting '
+                                                                                                                     'an '
+                                                                                                                     'unlock '
+                                                                                                                     '(e)'},
+ 'audit|CP Comparability|REVENUE Q0 ($) — S13 line 2, THE HEADLINE: fees − the cost of delivering them': {'date': '2026-11-12',
+                                                                                                          'to': 0.0,
+                                                                                                          'why': 'PR4.1-4.3 '
+                                                                                                                 '(Jake '
+                                                                                                                 '2026-11-12): '
+                                                                                                                 "Morpho's "
+                                                                                                                 'circulating '
+                                                                                                                 'under '
+                                                                                                                 'the '
+                                                                                                                 'release '
+                                                                                                                 'rule '
+                                                                                                                 '(the '
+                                                                                                                 'DAO '
+                                                                                                                 'out; '
+                                                                                                                 'the '
+                                                                                                                 'released '
+                                                                                                                 'entities '
+                                                                                                                 'in '
+                                                                                                                 'circulating '
+                                                                                                                 'and '
+                                                                                                                 'out '
+                                                                                                                 'of '
+                                                                                                                 'the '
+                                                                                                                 'float), '
+                                                                                                                 'its '
+                                                                                                                 'three '
+                                                                                                                 'revenue '
+                                                                                                                 'lines, '
+                                                                                                                 'one '
+                                                                                                                 'emissions '
+                                                                                                                 'figure'},
+ "audit|CP Comparability|TRADEABLE FLOAT = circulating − staked/locked − protocol/treasury-held (tokens) — protocol/treasury-held is already out of circulating by the convention, so this is A2's free float": {'date': '2026-11-12',
+                                                                                                                                                                                                                 'to': 426052377.0,
+                                                                                                                                                                                                                 'why': 'PR4C.1 '
+                                                                                                                                                                                                                        '(Jake '
+                                                                                                                                                                                                                        '2026-11-12): '
+                                                                                                                                                                                                                        "Morpho's "
+                                                                                                                                                                                                                        'relocked '
+                                                                                                                                                                                                                        'tokens '
+                                                                                                                                                                                                                        '(Founders '
+                                                                                                                                                                                                                        '152M '
+                                                                                                                                                                                                                        '+ '
+                                                                                                                                                                                                                        'Cohort '
+                                                                                                                                                                                                                        '3 '
+                                                                                                                                                                                                                        '67M, '
+                                                                                                                                                                                                                        'daily '
+                                                                                                                                                                                                                        'linear '
+                                                                                                                                                                                                                        '2025-11-21..2027-11-21) '
+                                                                                                                                                                                                                        'MODELLED '
+                                                                                                                                                                                                                        'from '
+                                                                                                                                                                                                                        'the '
+                                                                                                                                                                                                                        'schedule '
+                                                                                                                                                                                                                        'and '
+                                                                                                                                                                                                                        'out '
+                                                                                                                                                                                                                        'of '
+                                                                                                                                                                                                                        'circulating; '
+                                                                                                                                                                                                                        'each '
+                                                                                                                                                                                                                        "day's "
+                                                                                                                                                                                                                        'vesting '
+                                                                                                                                                                                                                        'an '
+                                                                                                                                                                                                                        'unlock '
+                                                                                                                                                                                                                        '(e)'},
+ 'audit|CP Comparability|Tradeable float ÷ circulating': {'date': '2026-11-12',
+                                                          'to': 0.741216992,
+                                                          'why': "PR4.1-4.3 (Jake 2026-11-12): Morpho's circulating "
+                                                                 'under the release rule (the DAO out; the released '
+                                                                 'entities in circulating and out of the float), its '
+                                                                 'three revenue lines, one emissions figure; then '
+                                                                 "PR4C.1 (Jake 2026-11-12): Morpho's relocked tokens "
+                                                                 '(Founders 152M + Cohort 3 67M, daily linear '
+                                                                 '2025-11-21..2027-11-21) MODELLED from the schedule '
+                                                                 "and out of circulating; each day's vesting an unlock "
+                                                                 '(e)'},
+ 'audit|CP Comparability|Trend — cp_float (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)': {'date': '2026-11-12',
+                                                                                                              'to': '↑ '
+                                                                                                                    '· '
+                                                                                                                    '+199%/yr '
+                                                                                                                    '(4Q) '
+                                                                                                                    '· '
+                                                                                                                    'QoQ '
+                                                                                                                    '+12.0%',
+                                                                                                              'why': 'PR4C.1 '
+                                                                                                                     '(Jake '
+                                                                                                                     '2026-11-12): '
+                                                                                                                     "Morpho's "
+                                                                                                                     'relocked '
+                                                                                                                     'tokens '
+                                                                                                                     '(Founders '
+                                                                                                                     '152M '
+                                                                                                                     '+ '
+                                                                                                                     'Cohort '
+                                                                                                                     '3 '
+                                                                                                                     '67M, '
+                                                                                                                     'daily '
+                                                                                                                     'linear '
+                                                                                                                     '2025-11-21..2027-11-21) '
+                                                                                                                     'MODELLED '
+                                                                                                                     'from '
+                                                                                                                     'the '
+                                                                                                                     'schedule '
+                                                                                                                     'and '
+                                                                                                                     'out '
+                                                                                                                     'of '
+                                                                                                                     'circulating; '
+                                                                                                                     'each '
+                                                                                                                     "day's "
+                                                                                                                     'vesting '
+                                                                                                                     'an '
+                                                                                                                     'unlock '
+                                                                                                                     '(e)'},
+ 'audit|CP Comparability|UNIFORMITY = whole-token yield ÷ staker yield (1 = every holder alike) (PROPOSED)': {'date': '2026-11-12',
+                                                                                                              'to': 'n/a '
+                                                                                                                    '— '
+                                                                                                                    'no '
+                                                                                                                    'staker '
+                                                                                                                    'yield '
+                                                                                                                    'exists: '
+                                                                                                                    'no '
+                                                                                                                    'MORPHO '
+                                                                                                                    'staking '
+                                                                                                                    'exists '
+                                                                                                                    "(Morpho's "
+                                                                                                                    'Blockworks '
+                                                                                                                    'filing '
+                                                                                                                    'Q3(c): '
+                                                                                                                    "'No "
+                                                                                                                    'locking '
+                                                                                                                    'or '
+                                                                                                                    'staking '
+                                                                                                                    'mechanism '
+                                                                                                                    'currently '
+                                                                                                                    'exists '
+                                                                                                                    'for '
+                                                                                                                    "MORPHO'), "
+                                                                                                                    'read '
+                                                                                                                    '2026-11-12',
+                                                                                                              'why': 'PR4B.3-4 '
+                                                                                                                     '(Jake '
+                                                                                                                     '2026-11-12): '
+                                                                                                                     'the '
+                                                                                                                     'Contributor '
+                                                                                                                     'Grants '
+                                                                                                                     'reserve '
+                                                                                                                     'not '
+                                                                                                                     'released; '
+                                                                                                                     'no '
+                                                                                                                     'MORPHO '
+                                                                                                                     'staking '
+                                                                                                                     'exists '
+                                                                                                                     '(UNIFORMITY '
+                                                                                                                     'declared)'},
+ 'audit|CP Comparability|Unlocks Q0 (tokens) — releases from the non-circulating wallets': {'date': '2026-11-12',
+                                                                                            'to': 27000000.0,
+                                                                                            'why': 'PR4.1-4.3 (Jake '
+                                                                                                   '2026-11-12): '
+                                                                                                   "Morpho's "
+                                                                                                   'circulating under '
+                                                                                                   'the release rule '
+                                                                                                   '(the DAO out; the '
+                                                                                                   'released entities '
+                                                                                                   'in circulating and '
+                                                                                                   'out of the float), '
+                                                                                                   'its three revenue '
+                                                                                                   'lines, one '
+                                                                                                   'emissions figure; '
+                                                                                                   'then PR4C.1 (Jake '
+                                                                                                   '2026-11-12): '
+                                                                                                   "Morpho's relocked "
+                                                                                                   'tokens (Founders '
+                                                                                                   '152M + Cohort 3 '
+                                                                                                   '67M, daily linear '
+                                                                                                   '2025-11-21..2027-11-21) '
+                                                                                                   'MODELLED from the '
+                                                                                                   'schedule and out '
+                                                                                                   'of circulating; '
+                                                                                                   "each day's vesting "
+                                                                                                   'an unlock (e)'},
+ 'audit|Master|Circulating supply (used)': {'date': '2026-11-12',
+                                            'to': 574801147.0,
+                                            'why': "PR4.1-4.3 (Jake 2026-11-12): Morpho's circulating under the "
+                                                   'release rule (the DAO out; the released entities in circulating '
+                                                   'and out of the float), its three revenue lines, one emissions '
+                                                   "figure; then PR4C.1 (Jake 2026-11-12): Morpho's relocked tokens "
+                                                   '(Founders 152M + Cohort 3 67M, daily linear '
+                                                   '2025-11-21..2027-11-21) MODELLED from the schedule and out of '
+                                                   "circulating; each day's vesting an unlock (e)"},
+ 'audit|Master|Market cap ($)': {'date': '2026-11-12',
+                                 'to': 1372468760.0,
+                                 'why': "PR4.1-4.3 (Jake 2026-11-12): Morpho's circulating under the release rule (the "
+                                        'DAO out; the released entities in circulating and out of the float), its '
+                                        'three revenue lines, one emissions figure; then PR4C.1 (Jake 2026-11-12): '
+                                        "Morpho's relocked tokens (Founders 152M + Cohort 3 67M, daily linear "
+                                        '2025-11-21..2027-11-21) MODELLED from the schedule and out of circulating; '
+                                        "each day's vesting an unlock (e)"},
+ 'audit|Master|NET SUPPLY CHANGE Q0 (tokens) = closing − opening circulating supply': {'date': '2026-11-12',
+                                                                                       'to': 27000000.0,
+                                                                                       'why': 'PR4.1-4.3 (Jake '
+                                                                                              "2026-11-12): Morpho's "
+                                                                                              'circulating under the '
+                                                                                              'release rule (the DAO '
+                                                                                              'out; the released '
+                                                                                              'entities in circulating '
+                                                                                              'and out of the float), '
+                                                                                              'its three revenue '
+                                                                                              'lines, one emissions '
+                                                                                              'figure; then PR4C.1 '
+                                                                                              '(Jake 2026-11-12): '
+                                                                                              "Morpho's relocked "
+                                                                                              'tokens (Founders 152M + '
+                                                                                              'Cohort 3 67M, daily '
+                                                                                              'linear '
+                                                                                              '2025-11-21..2027-11-21) '
+                                                                                              'MODELLED from the '
+                                                                                              'schedule and out of '
+                                                                                              "circulating; each day's "
+                                                                                              'vesting an unlock (e)'},
+ 'audit|Master|Net supply change, annualised % of circulating': {'date': '2026-11-12',
+                                                                 'to': 0.190500664,
+                                                                 'why': "PR4.1-4.3 (Jake 2026-11-12): Morpho's "
+                                                                        'circulating under the release rule (the DAO '
+                                                                        'out; the released entities in circulating and '
+                                                                        'out of the float), its three revenue lines, '
+                                                                        'one emissions figure; then PR4C.1 (Jake '
+                                                                        "2026-11-12): Morpho's relocked tokens "
+                                                                        '(Founders 152M + Cohort 3 67M, daily linear '
+                                                                        '2025-11-21..2027-11-21) MODELLED from the '
+                                                                        "schedule and out of circulating; each day's "
+                                                                        'vesting an unlock (e)'},
+ 'audit|Master|Trend — master_circulating_supply_used (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)': {'date': '2026-11-12',
+                                                                                                                          'to': '↑ '
+                                                                                                                                '· '
+                                                                                                                                '+125%/yr '
+                                                                                                                                '(4Q) '
+                                                                                                                                '· '
+                                                                                                                                'QoQ '
+                                                                                                                                '+4.9%',
+                                                                                                                          'why': 'PR4.1-4.3 '
+                                                                                                                                 '(Jake '
+                                                                                                                                 '2026-11-12): '
+                                                                                                                                 "Morpho's "
+                                                                                                                                 'circulating '
+                                                                                                                                 'under '
+                                                                                                                                 'the '
+                                                                                                                                 'release '
+                                                                                                                                 'rule '
+                                                                                                                                 '(the '
+                                                                                                                                 'DAO '
+                                                                                                                                 'out; '
+                                                                                                                                 'the '
+                                                                                                                                 'released '
+                                                                                                                                 'entities '
+                                                                                                                                 'in '
+                                                                                                                                 'circulating '
+                                                                                                                                 'and '
+                                                                                                                                 'out '
+                                                                                                                                 'of '
+                                                                                                                                 'the '
+                                                                                                                                 'float), '
+                                                                                                                                 'its '
+                                                                                                                                 'three '
+                                                                                                                                 'revenue '
+                                                                                                                                 'lines, '
+                                                                                                                                 'one '
+                                                                                                                                 'emissions '
+                                                                                                                                 'figure; '
+                                                                                                                                 'then '
+                                                                                                                                 'PR4C.1 '
+                                                                                                                                 '(Jake '
+                                                                                                                                 '2026-11-12): '
+                                                                                                                                 "Morpho's "
+                                                                                                                                 'relocked '
+                                                                                                                                 'tokens '
+                                                                                                                                 '(Founders '
+                                                                                                                                 '152M '
+                                                                                                                                 '+ '
+                                                                                                                                 'Cohort '
+                                                                                                                                 '3 '
+                                                                                                                                 '67M, '
+                                                                                                                                 'daily '
+                                                                                                                                 'linear '
+                                                                                                                                 '2025-11-21..2027-11-21) '
+                                                                                                                                 'MODELLED '
+                                                                                                                                 'from '
+                                                                                                                                 'the '
+                                                                                                                                 'schedule '
+                                                                                                                                 'and '
+                                                                                                                                 'out '
+                                                                                                                                 'of '
+                                                                                                                                 'circulating; '
+                                                                                                                                 'each '
+                                                                                                                                 "day's "
+                                                                                                                                 'vesting '
+                                                                                                                                 'an '
+                                                                                                                                 'unlock '
+                                                                                                                                 '(e)'},
+ 'audit|Master|Trend — master_market_cap (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)': {'date': '2026-11-12',
+                                                                                                             'to': '▲ '
+                                                                                                                   '· '
+                                                                                                                   '+324%/yr '
+                                                                                                                   '(4Q) '
+                                                                                                                   '· '
+                                                                                                                   '3/4 '
+                                                                                                                   'improved '
+                                                                                                                   '· '
+                                                                                                                   'QoQ '
+                                                                                                                   '+21.6%',
+                                                                                                             'why': 'PR4.1-4.3 '
+                                                                                                                    '(Jake '
+                                                                                                                    '2026-11-12): '
+                                                                                                                    "Morpho's "
+                                                                                                                    'circulating '
+                                                                                                                    'under '
+                                                                                                                    'the '
+                                                                                                                    'release '
+                                                                                                                    'rule '
+                                                                                                                    '(the '
+                                                                                                                    'DAO '
+                                                                                                                    'out; '
+                                                                                                                    'the '
+                                                                                                                    'released '
+                                                                                                                    'entities '
+                                                                                                                    'in '
+                                                                                                                    'circulating '
+                                                                                                                    'and '
+                                                                                                                    'out '
+                                                                                                                    'of '
+                                                                                                                    'the '
+                                                                                                                    'float), '
+                                                                                                                    'its '
+                                                                                                                    'three '
+                                                                                                                    'revenue '
+                                                                                                                    'lines, '
+                                                                                                                    'one '
+                                                                                                                    'emissions '
+                                                                                                                    'figure; '
+                                                                                                                    'then '
+                                                                                                                    'PR4C.1 '
+                                                                                                                    '(Jake '
+                                                                                                                    '2026-11-12): '
+                                                                                                                    "Morpho's "
+                                                                                                                    'relocked '
+                                                                                                                    'tokens '
+                                                                                                                    '(Founders '
+                                                                                                                    '152M '
+                                                                                                                    '+ '
+                                                                                                                    'Cohort '
+                                                                                                                    '3 '
+                                                                                                                    '67M, '
+                                                                                                                    'daily '
+                                                                                                                    'linear '
+                                                                                                                    '2025-11-21..2027-11-21) '
+                                                                                                                    'MODELLED '
+                                                                                                                    'from '
+                                                                                                                    'the '
+                                                                                                                    'schedule '
+                                                                                                                    'and '
+                                                                                                                    'out '
+                                                                                                                    'of '
+                                                                                                                    'circulating; '
+                                                                                                                    'each '
+                                                                                                                    "day's "
+                                                                                                                    'vesting '
+                                                                                                                    'an '
+                                                                                                                    'unlock '
+                                                                                                                    '(e)'},
+ 'audit|Master|Trend — master_net_supply_change_annualised_of_circulating (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)': {'date': '2026-11-12',
+                                                                                                                                              'to': '▼ '
+                                                                                                                                                    '· '
+                                                                                                                                                    '+19%/yr '
+                                                                                                                                                    '(4Q) '
+                                                                                                                                                    '· '
+                                                                                                                                                    '1/3 '
+                                                                                                                                                    'improved '
+                                                                                                                                                    '· '
+                                                                                                                                                    'QoQ '
+                                                                                                                                                    'lumpy '
+                                                                                                                                                    '(81.5% '
+                                                                                                                                                    'of '
+                                                                                                                                                    'the '
+                                                                                                                                                    'window '
+                                                                                                                                                    'on '
+                                                                                                                                                    '1 '
+                                                                                                                                                    'day)',
+                                                                                                                                              'why': 'PR4.1-4.3 '
+                                                                                                                                                     '(Jake '
+                                                                                                                                                     '2026-11-12): '
+                                                                                                                                                     "Morpho's "
+                                                                                                                                                     'circulating '
+                                                                                                                                                     'under '
+                                                                                                                                                     'the '
+                                                                                                                                                     'release '
+                                                                                                                                                     'rule '
+                                                                                                                                                     '(the '
+                                                                                                                                                     'DAO '
+                                                                                                                                                     'out; '
+                                                                                                                                                     'the '
+                                                                                                                                                     'released '
+                                                                                                                                                     'entities '
+                                                                                                                                                     'in '
+                                                                                                                                                     'circulating '
+                                                                                                                                                     'and '
+                                                                                                                                                     'out '
+                                                                                                                                                     'of '
+                                                                                                                                                     'the '
+                                                                                                                                                     'float), '
+                                                                                                                                                     'its '
+                                                                                                                                                     'three '
+                                                                                                                                                     'revenue '
+                                                                                                                                                     'lines, '
+                                                                                                                                                     'one '
+                                                                                                                                                     'emissions '
+                                                                                                                                                     'figure; '
+                                                                                                                                                     'then '
+                                                                                                                                                     'PR4C.1 '
+                                                                                                                                                     '(Jake '
+                                                                                                                                                     '2026-11-12): '
+                                                                                                                                                     "Morpho's "
+                                                                                                                                                     'relocked '
+                                                                                                                                                     'tokens '
+                                                                                                                                                     '(Founders '
+                                                                                                                                                     '152M '
+                                                                                                                                                     '+ '
+                                                                                                                                                     'Cohort '
+                                                                                                                                                     '3 '
+                                                                                                                                                     '67M, '
+                                                                                                                                                     'daily '
+                                                                                                                                                     'linear '
+                                                                                                                                                     '2025-11-21..2027-11-21) '
+                                                                                                                                                     'MODELLED '
+                                                                                                                                                     'from '
+                                                                                                                                                     'the '
+                                                                                                                                                     'schedule '
+                                                                                                                                                     'and '
+                                                                                                                                                     'out '
+                                                                                                                                                     'of '
+                                                                                                                                                     'circulating; '
+                                                                                                                                                     'each '
+                                                                                                                                                     "day's "
+                                                                                                                                                     'vesting '
+                                                                                                                                                     'an '
+                                                                                                                                                     'unlock '
+                                                                                                                                                     '(e)'},
+ 'audit|Master|Trend — master_net_supply_change_q0_tokens_closing_opening_circulating_supp (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)': {'date': '2026-11-12',
+                                                                                                                                                               'to': '▼ '
+                                                                                                                                                                     '· '
+                                                                                                                                                                     '+167%/yr '
+                                                                                                                                                                     '(4Q) '
+                                                                                                                                                                     '· '
+                                                                                                                                                                     '1/3 '
+                                                                                                                                                                     'improved '
+                                                                                                                                                                     '· '
+                                                                                                                                                                     'QoQ '
+                                                                                                                                                                     'lumpy '
+                                                                                                                                                                     '(81.5% '
+                                                                                                                                                                     'of '
+                                                                                                                                                                     'the '
+                                                                                                                                                                     'window '
+                                                                                                                                                                     'on '
+                                                                                                                                                                     '1 '
+                                                                                                                                                                     'day)',
+                                                                                                                                                               'why': 'PR4.1-4.3 '
+                                                                                                                                                                      '(Jake '
+                                                                                                                                                                      '2026-11-12): '
+                                                                                                                                                                      "Morpho's "
+                                                                                                                                                                      'circulating '
+                                                                                                                                                                      'under '
+                                                                                                                                                                      'the '
+                                                                                                                                                                      'release '
+                                                                                                                                                                      'rule '
+                                                                                                                                                                      '(the '
+                                                                                                                                                                      'DAO '
+                                                                                                                                                                      'out; '
+                                                                                                                                                                      'the '
+                                                                                                                                                                      'released '
+                                                                                                                                                                      'entities '
+                                                                                                                                                                      'in '
+                                                                                                                                                                      'circulating '
+                                                                                                                                                                      'and '
+                                                                                                                                                                      'out '
+                                                                                                                                                                      'of '
+                                                                                                                                                                      'the '
+                                                                                                                                                                      'float), '
+                                                                                                                                                                      'its '
+                                                                                                                                                                      'three '
+                                                                                                                                                                      'revenue '
+                                                                                                                                                                      'lines, '
+                                                                                                                                                                      'one '
+                                                                                                                                                                      'emissions '
+                                                                                                                                                                      'figure; '
+                                                                                                                                                                      'then '
+                                                                                                                                                                      'PR4C.1 '
+                                                                                                                                                                      '(Jake '
+                                                                                                                                                                      '2026-11-12): '
+                                                                                                                                                                      "Morpho's "
+                                                                                                                                                                      'relocked '
+                                                                                                                                                                      'tokens '
+                                                                                                                                                                      '(Founders '
+                                                                                                                                                                      '152M '
+                                                                                                                                                                      '+ '
+                                                                                                                                                                      'Cohort '
+                                                                                                                                                                      '3 '
+                                                                                                                                                                      '67M, '
+                                                                                                                                                                      'daily '
+                                                                                                                                                                      'linear '
+                                                                                                                                                                      '2025-11-21..2027-11-21) '
+                                                                                                                                                                      'MODELLED '
+                                                                                                                                                                      'from '
+                                                                                                                                                                      'the '
+                                                                                                                                                                      'schedule '
+                                                                                                                                                                      'and '
+                                                                                                                                                                      'out '
+                                                                                                                                                                      'of '
+                                                                                                                                                                      'circulating; '
+                                                                                                                                                                      'each '
+                                                                                                                                                                      "day's "
+                                                                                                                                                                      'vesting '
+                                                                                                                                                                      'an '
+                                                                                                                                                                      'unlock '
+                                                                                                                                                                      '(e)'},
+ 'audit|Master|Turnover = 30d volume ÷ market cap (x)': {'date': '2026-11-12',
+                                                         'to': 0.655720322,
+                                                         'why': "PR4.1-4.3 (Jake 2026-11-12): Morpho's circulating "
+                                                                'under the release rule (the DAO out; the released '
+                                                                'entities in circulating and out of the float), its '
+                                                                'three revenue lines, one emissions figure; then '
+                                                                "PR4C.1 (Jake 2026-11-12): Morpho's relocked tokens "
+                                                                '(Founders 152M + Cohort 3 67M, daily linear '
+                                                                '2025-11-21..2027-11-21) MODELLED from the schedule '
+                                                                "and out of circulating; each day's vesting an unlock "
+                                                                '(e)'},
+ 'reader|A2 Coordination|Circulating supply': {'date': '2026-11-12',
+                                               'to': 574801147.0,
+                                               'why': "PR4.1-4.3 (Jake 2026-11-12): Morpho's circulating under the "
+                                                      'release rule (the DAO out; the released entities in circulating '
+                                                      'and out of the float), its three revenue lines, one emissions '
+                                                      "figure; then PR4C.1 (Jake 2026-11-12): Morpho's relocked tokens "
+                                                      '(Founders 152M + Cohort 3 67M, daily linear '
+                                                      '2025-11-21..2027-11-21) MODELLED from the schedule and out of '
+                                                      "circulating; each day's vesting an unlock (e)"},
+ 'reader|A2 Coordination|Free float (tokens)': {'date': '2026-11-12',
+                                                'to': 426052377.0,
+                                                'why': "PR4C.1 (Jake 2026-11-12): Morpho's relocked tokens (Founders "
+                                                       '152M + Cohort 3 67M, daily linear 2025-11-21..2027-11-21) '
+                                                       "MODELLED from the schedule and out of circulating; each day's "
+                                                       'vesting an unlock (e)'},
+ 'reader|A2 Coordination|Free float market cap': {'date': '2026-11-12',
+                                                  'to': 1017297170.0,
+                                                  'why': "PR4C.1 (Jake 2026-11-12): Morpho's relocked tokens (Founders "
+                                                         '152M + Cohort 3 67M, daily linear 2025-11-21..2027-11-21) '
+                                                         'MODELLED from the schedule and out of circulating; each '
+                                                         "day's vesting an unlock (e)"},
+ 'reader|A2 Coordination|Free float ÷ ARR (x)': {'date': '2026-11-12',
+                                                 'to': 4.4996934,
+                                                 'why': "PR4C.1 (Jake 2026-11-12): Morpho's relocked tokens (Founders "
+                                                        '152M + Cohort 3 67M, daily linear 2025-11-21..2027-11-21) '
+                                                        "MODELLED from the schedule and out of circulating; each day's "
+                                                        'vesting an unlock (e)'},
+ 'reader|A2 Coordination|Market cap': {'date': '2026-11-12',
+                                       'to': 1372468760.0,
+                                       'why': "PR4.1-4.3 (Jake 2026-11-12): Morpho's circulating under the release "
+                                              'rule (the DAO out; the released entities in circulating and out of the '
+                                              'float), its three revenue lines, one emissions figure; then PR4C.1 '
+                                              "(Jake 2026-11-12): Morpho's relocked tokens (Founders 152M + Cohort 3 "
+                                              '67M, daily linear 2025-11-21..2027-11-21) MODELLED from the schedule '
+                                              "and out of circulating; each day's vesting an unlock (e)"},
+ 'reader|A2 Coordination|Quarter change [44]': {'date': '2026-11-12',
+                                                'to': 0.119851327,
+                                                'why': "PR4C.1 (Jake 2026-11-12): Morpho's relocked tokens (Founders "
+                                                       '152M + Cohort 3 67M, daily linear 2025-11-21..2027-11-21) '
+                                                       "MODELLED from the schedule and out of circulating; each day's "
+                                                       'vesting an unlock (e)'},
+ 'reader|A2 Coordination|UNLOCK DILUTION last 90 days': {'date': '2026-11-12',
+                                                         'to': 27000000.0,
+                                                         'why': "PR4.1-4.3 (Jake 2026-11-12): Morpho's circulating "
+                                                                'under the release rule (the DAO out; the released '
+                                                                'entities in circulating and out of the float), its '
+                                                                'three revenue lines, one emissions figure; then '
+                                                                "PR4C.1 (Jake 2026-11-12): Morpho's relocked tokens "
+                                                                '(Founders 152M + Cohort 3 67M, daily linear '
+                                                                '2025-11-21..2027-11-21) MODELLED from the schedule '
+                                                                "and out of circulating; each day's vesting an unlock "
+                                                                '(e)'},
+ 'reader|A2 Coordination|Unlocks, % of free float a year': {'date': '2026-11-12',
+                                                            'to': 0.190500664,
+                                                            'why': "PR4.1-4.3 (Jake 2026-11-12): Morpho's circulating "
+                                                                   'under the release rule (the DAO out; the released '
+                                                                   'entities in circulating and out of the float), its '
+                                                                   'three revenue lines, one emissions figure; then '
+                                                                   "PR4C.1 (Jake 2026-11-12): Morpho's relocked tokens "
+                                                                   '(Founders 152M + Cohort 3 67M, daily linear '
+                                                                   '2025-11-21..2027-11-21) MODELLED from the schedule '
+                                                                   "and out of circulating; each day's vesting an "
+                                                                   'unlock (e)'},
+ 'reader|Business|Holder revenue (S13), 90 days': {'date': '2026-11-12',
+                                                   'to': 0.0,
+                                                   'why': "PR4.1-4.3 (Jake 2026-11-12): Morpho's circulating under the "
+                                                          'release rule (the DAO out; the released entities in '
+                                                          'circulating and out of the float), its three revenue lines, '
+                                                          'one emissions figure'},
+ 'reader|Business|Holder share (S13)': {'date': '2026-11-12',
+                                        'to': 'n/a',
+                                        'why': "PR4.1-4.3 (Jake 2026-11-12): Morpho's circulating under the release "
+                                               'rule (the DAO out; the released entities in circulating and out of the '
+                                               'float), its three revenue lines, one emissions figure'},
+ 'reader|Comparison|Fees (S13), 90 days': {'date': '2026-11-12',
+                                           'to': 55126707.6,
+                                           'why': "PR4.1-4.3 (Jake 2026-11-12): Morpho's circulating under the release "
+                                                  'rule (the DAO out; the released entities in circulating and out of '
+                                                  'the float), its three revenue lines, one emissions figure'},
+ 'reader|Comparison|Holder revenue (S13), 90 days': {'date': '2026-11-12',
+                                                     'to': 0.0,
+                                                     'why': "PR4.1-4.3 (Jake 2026-11-12): Morpho's circulating under "
+                                                            'the release rule (the DAO out; the released entities in '
+                                                            'circulating and out of the float), its three revenue '
+                                                            'lines, one emissions figure'},
+ 'reader|Comparison|Holder share (S13)': {'date': '2026-11-12',
+                                          'to': 'n/a',
+                                          'why': "PR4.1-4.3 (Jake 2026-11-12): Morpho's circulating under the release "
+                                                 'rule (the DAO out; the released entities in circulating and out of '
+                                                 'the float), its three revenue lines, one emissions figure'},
+ 'reader|Comparison|Revenue (S13), 90 days': {'date': '2026-11-12',
+                                              'to': 0.0,
+                                              'why': "PR4.1-4.3 (Jake 2026-11-12): Morpho's circulating under the "
+                                                     'release rule (the DAO out; the released entities in circulating '
+                                                     'and out of the float), its three revenue lines, one emissions '
+                                                     'figure'},
+ 'reader|Summary|Confidence (share green)': {'date': '2026-11-12',
+                                             'to': 1.0,
+                                             'why': "PR4.1-4.3 (Jake 2026-11-12): Morpho's circulating under the "
+                                                    'release rule (the DAO out; the released entities in circulating '
+                                                    'and out of the float), its three revenue lines, one emissions '
+                                                    'figure'},
+ 'reader|Summary|Market cap': {'date': '2026-11-12',
+                               'to': 1372468760.0,
+                               'why': "PR4.1-4.3 (Jake 2026-11-12): Morpho's circulating under the release rule (the "
+                                      'DAO out; the released entities in circulating and out of the float), its three '
+                                      "revenue lines, one emissions figure; then PR4C.1 (Jake 2026-11-12): Morpho's "
+                                      'relocked tokens (Founders 152M + Cohort 3 67M, daily linear '
+                                      '2025-11-21..2027-11-21) MODELLED from the schedule and out of circulating; each '
+                                      "day's vesting an unlock (e)"},
+ 'reader|Summary|Net supply change, % a year': {'date': '2026-11-12',
+                                                'to': 0.190500664,
+                                                'why': "PR4.1-4.3 (Jake 2026-11-12): Morpho's circulating under the "
+                                                       'release rule (the DAO out; the released entities in '
+                                                       'circulating and out of the float), its three revenue lines, '
+                                                       "one emissions figure; then PR4C.1 (Jake 2026-11-12): Morpho's "
+                                                       'relocked tokens (Founders 152M + Cohort 3 67M, daily linear '
+                                                       '2025-11-21..2027-11-21) MODELLED from the schedule and out of '
+                                                       "circulating; each day's vesting an unlock (e)"},
+ 'reader|Summary|Net supply change, 90 days': {'date': '2026-11-12',
+                                               'to': 27000000.0,
+                                               'why': "PR4.1-4.3 (Jake 2026-11-12): Morpho's circulating under the "
+                                                      'release rule (the DAO out; the released entities in circulating '
+                                                      'and out of the float), its three revenue lines, one emissions '
+                                                      "figure; then PR4C.1 (Jake 2026-11-12): Morpho's relocked tokens "
+                                                      '(Founders 152M + Cohort 3 67M, daily linear '
+                                                      '2025-11-21..2027-11-21) MODELLED from the schedule and out of '
+                                                      "circulating; each day's vesting an unlock (e)"},
+ 'reader|Summary|What changed': {'date': '2026-11-12',
+                                 'to': 'over 90D: Price +16% · Market cap +22% · Fees +14% · TVL +55% · ',
+                                 'why': "PR4.1-4.3 (Jake 2026-11-12): Morpho's circulating under the release rule (the "
+                                        'DAO out; the released entities in circulating and out of the float), its '
+                                        'three revenue lines, one emissions figure; then PR4C.1 (Jake 2026-11-12): '
+                                        "Morpho's relocked tokens (Founders 152M + Cohort 3 67M, daily linear "
+                                        '2025-11-21..2027-11-21) MODELLED from the schedule and out of circulating; '
+                                        "each day's vesting an unlock (e)"}}
