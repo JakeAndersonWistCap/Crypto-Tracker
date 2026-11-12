@@ -89,4 +89,6 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
+    import progress
+    progress.line_buffered()
     sys.exit(main())
