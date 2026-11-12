@@ -82,7 +82,9 @@ def test_2_the_chain_tier_is_one_tier_per_project_each_with_the_chain_budget():
     src = open(fetch.__file__, encoding="utf-8").read()
     assert 'name.split("@", 1)[0] == "chain" and "chain" in sources' in src   # --source chain still selects them
     csrc = open("fetch/chain.py", encoding="utf-8").read()
-    assert "with connection_slot(rpc_host(url)):" in csrc                # the RPC posts take the run-wide slots
+    # PR4D.1: the RPC posts take the run-wide slots through requests' patched send — the 4C outer slot nested a second
+    # acquire of the same host and deadlocked it; it is gone
+    assert "with connection_slot(rpc_host(url)):" not in csrc
 
 
 def test_2_morphos_base_claims_read_only_the_new_days():
@@ -124,9 +126,10 @@ def test_3_the_pin_has_mantle_and_the_report_prints_no_key():
                       "not_tried": {}}}
     rep = config.probe_report(st)
     assert "ABCDEFGHIJ" not in rep and "/v2/api" not in rep and "https://" not in rep
-    assert "PIN MATCH" in rep and "Pendle:gauge_pendle_out_mantle" in rep
-    st["served"] = [5000, 146, 9745]
-    assert "PIN DIFFERS" in config.probe_report(st) and "only in the file [146]" in config.probe_report(st)
+    # PR4D.5a: the pin also carries Sonic 146 and HyperEVM 999 (Jake's file) — a file without them differs
+    assert "PIN DIFFERS" in rep and "only in the pin [146, 999]" in rep and "Pendle:gauge_pendle_out_mantle" in rep
+    st["served"] = [5000, 146, 999, 9745]
+    assert "PIN MATCH" in config.probe_report(st)
 
 
 # ================================================================================================= 5: Morpho frozen

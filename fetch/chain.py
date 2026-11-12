@@ -678,12 +678,13 @@ def _guarded_provider_class(HTTPProvider):
                 alchemy_usage.pace(url, method)
                 t0 = time.monotonic()
                 try:
-                    # PR4C.2: the per-project chain tiers run side by side — every RPC post takes the run-wide
-                    # connection slots (MAX_CONN, MAX_CONN_PER_HOST per host), as the Http calls do
-                    from .base import connection_slot
-                    with connection_slot(rpc_host(url)):
-                        out = self._request_session_manager.make_post_request(
-                            self.endpoint_uri, request_data, **self.get_request_kwargs())
+                    # PR4D.1: NO slot here. The post goes through requests' HTTPAdapter.send, which fetch.base patches
+                    # to take the run-wide and per-host connection slots for every call (_instrumented_send). 4C took a
+                    # second slot on the same host around it: four threads each holding the outer slot waited forever
+                    # for an inner one — publicnode deadlocked (Jake's 2026-11-12 18:50 run: 3 calls answered, 184
+                    # queued, every chain@ / explorer@ tier on Ethereum timed out with 0 frames)
+                    out = self._request_session_manager.make_post_request(
+                        self.endpoint_uri, request_data, **self.get_request_kwargs())
                 except requests.exceptions.Timeout as e:   # connect or read: NEVER retried here
                     _time_rpc(url, method, time.monotonic() - t0, "timeout")
                     BREAKER.timeout(self.chain, url, e)

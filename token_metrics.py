@@ -1212,6 +1212,11 @@ def apply_run_cleanups(st, run_id: str, log) -> list[str]:
                 if c.get("dates"):              # D6-5: once, on exactly these days
                     q = (q[0] + f" AND substr(date, 1, 10) IN ({','.join('?' * len(c['dates']))})",
                          q[1] + tuple(c["dates"]))
+            elif c.get("repeat") and c.get("not_current_set"):
+                # PR4D.3: EVERY RUN, a switch leg's rows read on another wallet set than the config serves it from now
+                # (config.current_set_point) — selected here, filtered and deleted by exact key below; the catch-up
+                # refills those days on the current set in the same run
+                q = ("FROM metrics WHERE project=? AND metric=?", (proj, c["metric"]))
             elif c.get("repeat") and c.get("superseded_by") == "restatement":
                 # P2d-1: EVERY RUN, any row of the series on another set, whatever its date (filtered below by
                 # config.restatement_superseded) — the rows the once-only pass left beside the current set
@@ -1240,8 +1245,10 @@ def apply_run_cleanups(st, run_id: str, log) -> list[str]:
                 q = ("FROM metrics WHERE project=? AND metric=? AND substr(date, 1, 10)=? AND source=?",
                      (proj, c["metric"], c["date"], c["source"]))
             rows = st.conn.execute("SELECT date, value, source " + q[0], q[1]).fetchall()
-            restating = c.get("superseded_by") == "restatement"
-            if restating:
+            restating = c.get("superseded_by") == "restatement" or bool(c.get("not_current_set"))
+            if c.get("not_current_set"):
+                rows = [r for r in rows if not config.on_current_set(proj, c["metric"], r[2])]
+            elif restating:
                 rows = [r for r in rows if config.restatement_superseded(proj, c["metric"], r[0], r[2])]
             if c.get("once"):
                 # the marker is recorded whatever was found (a store with no such row never needs it); a line is

@@ -534,6 +534,60 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11en. Project round 4D — fix the 4C fetch regression, finish Morpho (2026-11-12)
+
+**Read-only checks first** (PowerShell 5.1, from the repo folder; nothing here writes to `metrics.db`):
+
+```
+git fetch origin claude/crypto-metrics-supply-demand-ovkg8g
+git rev-parse --short HEAD origin/claude/crypto-metrics-supply-demand-ovkg8g   # expect: the same id twice
+python circ_legs.py Morpho                                                      # ITEM 3: per circulating leg
+#   expect: total_supply / noncirculating_holding_tokens with few or no MISSING days; morpho_relocked_tokens "built at
+#   read time … MODELLED"; morpho_released_held_tokens ~all days held (your archive filled it);
+#   morpho_undistributed_tokens with MISSING days and/or "ON ANOTHER WALLET SET n: 2026-11-12…" — the day(s) your 12:10
+#   run stored on the round-4 set; those are what kept the switch PENDING
+python -c "import config; print(config.probe_report().splitlines()[-1])"         # ITEM 5a
+#   expect: PIN MATCH: the frozen / test builds wire the same chains as this file ([56, 146, 999, 5000, 8453, 9745, 80094])
+```
+
+**Then the run, the backfill, and the check:**
+
+```
+python token_metrics.py
+#   expect (ITEM 1): no TIER TIMED OUT for any chain@… or explorer@… tier; the connections line queues far fewer calls
+#   (4C's 184 / 640 s came from the deadlock). Expect (ITEM 2): explorer_l2:base@Morpho done within its 240 s — and if it
+#   ever times out again, its line now ends "Time by phase: …". Expect the clean-up line "CLEAN-UP PR4D.3: … removed"
+#   for the old-set day(s).
+python archive_backfill.py --run --project Morpho --budget-min 30   # ITEM 3: rerun until it reports nothing left
+python circ_legs.py Morpho
+#   expect: every switch leg "none missing", no "ON ANOTHER WALLET SET"
+python token_metrics.py --no-fetch                                  # rebuild the workbook from the store
+```
+
+**One command per item** (after the rebuild):
+
+```
+@'
+import openpyxl, xlcalc
+wb = openpyxl.load_workbook("token_metrics_audit.xlsx"); X = xlcalc.Workbook(wb)
+for tab, heads in (("CP Comparability", ("Circulating supply (tokens)", "TRADEABLE FLOAT", "Emissions Q0 (tokens)")),
+                   ("Master", ("Circulating supply (used)",))):
+    ws = wb[tab]; hr = next(r for r in range(1, 13) if ws.cell(r, 1).value == "Project")
+    row = next(r for r in range(hr + 1, ws.max_row + 1) if ws.cell(r, 1).value == "Morpho")
+    for h in heads:
+        c = next(c for c in range(1, ws.max_column + 1) if str(ws.cell(hr, c).value or "").startswith(h))
+        cell = ws.cell(row, c); note = cell.comment.text if cell.comment else ""
+        print(tab, "|", h, "|", X.value(tab, row, c), "| fill", cell.fill.fgColor.rgb[-6:],
+              "| PARTLY MODELLED" if "PARTLY MODELLED" in note else "", "| switch in force" if "in force" in note else "")
+'@ | python -                                                                  # ITEMS 2-4
+#   expect: CP circulating ~548.4M "switch in force", float ~458.4M, Emissions Q0 ~1.59M (ITEM 2 leaves it as it was);
+#   circulating fill FDE9D0 (AMBER, not green) "PARTLY MODELLED" on CP and Master (ITEM 4)
+python project_freeze.py --compare Morpho     # expect: Morpho: 285 cells, 0 undeclared move(s)
+python project_freeze.py --compare Maple      # expect: Maple: 360 cells, 0 undeclared move(s)
+python project_freeze.py --compare Fluid      # expect: Fluid: 353 cells, 0 undeclared move(s)
+python project_freeze.py --compare Uniswap    # expect: Uniswap: 309 cells, 0 undeclared move(s)
+```
+
 ## 11em. Project round 4C — finish Morpho, and the timeouts (2026-11-12)
 
 **Read-only checks first** (PowerShell 5.1, from the repo folder; nothing here writes to `metrics.db` or the probe file):

@@ -601,9 +601,27 @@ _PHASES: dict = {}
 _PHASES_LOCK = threading.Lock()
 
 
+_PHASE_HIST: dict = {}      # PR4D.2: per source, the phases entered and when (the last 30), for a timeout's message
+
+
 def set_phase(what: str) -> None:
     with _PHASES_LOCK:
-        _PHASES[_owner_thread().name] = (what, time.monotonic())
+        name, now = _owner_thread().name, time.monotonic()
+        _PHASES[name] = (what, now)
+        hist = _PHASE_HIST.setdefault(name, [])
+        hist.append((what, now))
+        del hist[:-30]
+
+
+def phase_times(source: str) -> str:
+    """PR4D.2: 'phase A 12s; phase B 210s (still in it)' — how long `source` spent in each phase it entered."""
+    with _PHASES_LOCK:
+        hist = list(_PHASE_HIST.get(source) or ())
+    if not hist:
+        return ""
+    now = time.monotonic()
+    parts = [f"{w} {((hist[i + 1][1] if i + 1 < len(hist) else now) - t):.0f}s" for i, (w, t) in enumerate(hist)]
+    return "; ".join(parts[-8:]) + " (still in the last)"
 
 
 def last_phase(source: str) -> tuple[str, float] | None:
@@ -795,9 +813,22 @@ def connection_stats() -> dict:
         return dict(_CONN_STATS)
 
 
+_SLOTS_HELD = threading.local()      # PR4D.1: the hosts this thread already holds a slot for
+
+
 @contextlib.contextmanager
 def connection_slot(host: str):
-    """A run-wide slot and a slot for `host`, always taken host first (one fixed order: no deadlock)."""
+    """A run-wide slot and a slot for `host`, always taken host first (one fixed order: no deadlock). RE-ENTRANT per
+    thread (PR4D.1): a thread that already holds `host`'s slot does not take a second one — a nested acquire could wait
+    forever on slots the waiting threads themselves hold."""
+    held = _SLOTS_HELD.__dict__.setdefault("hosts", {})
+    if held.get(host):
+        held[host] += 1
+        try:
+            yield
+        finally:
+            held[host] -= 1
+        return
     host_sem = _host_slots(host)
     t0 = time.monotonic()
     if host_sem.acquire(blocking=False):
@@ -817,9 +848,11 @@ def connection_slot(host: str):
     with _CONN_STATS_LOCK:
         _CONN_STATS["open"] += 1
         _CONN_STATS["peak"] = max(_CONN_STATS["peak"], _CONN_STATS["open"])
+    held[host] = 1
     try:
         yield
     finally:
+        held.pop(host, None)
         with _CONN_STATS_LOCK:
             _CONN_STATS["open"] -= 1
         _GLOBAL_SLOTS.release()

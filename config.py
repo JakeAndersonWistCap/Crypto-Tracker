@@ -40790,3 +40790,359 @@ FROZEN_MOVES["Morpho"] = {'audit|A2 Coordination|UNLOCK DILUTION Q0 (tokens) —
                                         "Morpho's relocked tokens (Founders 152M + Cohort 3 67M, daily linear "
                                         '2025-11-21..2027-11-21) MODELLED from the schedule and out of circulating; '
                                         "each day's vesting an unlock (e)"}}
+
+
+# =====================================================================================================================
+# PROJECT ROUND 4D — FIX THE 4C FETCH REGRESSION, FINISH MORPHO (Jake 2026-11-12).
+# =====================================================================================================================
+# PR4D.3 A SWITCH LEG READ ON AN EARLIER WALLET SET NEVER COUNTS, AND IS REPLACED. Morpho's not-yet-released leg changed
+# its wallet set in 4B (+ the Contributor Grants Safes): a day stored on the round-4 set (Jake's 12:10 run of 2026-11-12)
+# is not held for the switch (current_set_only), and archive_backfill writes only days with no row — so that day kept the
+# switch PENDING for good. Every run now removes such rows before the catch-up, which owes the day again (from the
+# window's start for a switch leg) and reads it on the current set.
+def on_current_set(project_name: str, metric: str, source: str) -> bool:
+    """PR4D.3: is this stored row read on the wallet set the config serves `metric` from now?"""
+    from fetch.base import _measuring_point                       # noqa: PLC0415
+    return _sum_set(_measuring_point(str(source))) == current_set_point(project_name, metric)
+
+
+RUN_CLEANUPS = RUN_CLEANUPS + tuple(
+    {"id": "PR4D.3", "metric": m, "projects": (n,), "repeat": True, "not_current_set": True,
+     "why": "a switch leg's row read on an earlier wallet set (Morpho's not-yet-released leg gained the Contributor "
+            "Grants Safes in 4B) — never held for the switch; the catch-up re-reads the day on the current set"}
+    for n, m in sorted(switch_legs()) if (CIRCULATING_ONCHAIN.get(n, {}).get("subtract_when_complete") or {})
+    .get("current_set_only"))
+
+
+# PR4D.4 A CIRCULATING FIGURE WITH A MODELLED LEG IS NEVER "VERIFIED": Morpho's relocked MORPHO is computed from the
+# published schedule (no wallet is disclosed), so every cell built on circulating — Master, CP, the A-tabs, the reader —
+# reads MODELLED (partly modelled: the DAO / supply legs are read on chain), with this source (coverage_audit G9 M traces
+# circulating_supply_used -> circulating_supply_onchain -> its legs).
+MODELLED_POINTS["modelled:relock_schedule"] = (
+    "PARTLY MODELLED — Morpho's relocked MORPHO (Founders 152M + Cohort 3 67M, daily linear 2025-11-21..2027-11-21) is "
+    "computed from the published schedule, no wallet being disclosed: Morpho's Blockworks filing and docs.morpho.org "
+    "morpho-token, read 2026-11-12; the supply and the excluded wallets are read on chain")
+
+# the series built on the circulating figure (their Data rows' band follows it)
+_CIRC_BUILT = ("circulating_supply_used", "circulating_supply_onchain", "market_cap_usd", "circulating_change_tokens")
+
+
+def partly_modelled(project_name: str, metric: str) -> str:
+    """PR4D.4: 'PARTLY MODELLED — …' where `metric` is built on the circulating figure and a leg of the project's on-chain
+    circulating is a MODELLED point (Morpho's relock); '' otherwise."""
+    if metric not in _CIRC_BUILT:
+        return ""
+    spec = CIRCULATING_ONCHAIN.get(project_name) or {}
+    legs = (*(spec.get("subtract") or ()), *(spec.get("add") or ()))
+    if project_name == "Morpho" and MORPHO_RELOCK["metric"] in legs:
+        return ("PARTLY MODELLED: circulating subtracts morpho_relocked_tokens — "
+                + MODELLED_POINTS["modelled:relock_schedule"].removeprefix("PARTLY MODELLED — "))
+    return ""
+
+
+# PR4D.5a Jake's probe_report on 1ef8754 (2026-11-12): "PIN DIFFERS … only in the file [146, 999]" — his file serves Sonic
+# and HyperEVM (Etherscan; Alchemy refuses Sonic, line 27), so his build wires Pendle's Sonic and HyperEVM gauge scans: the
+# pin takes both and reads PIN MATCH.
+FROZEN_PROBE_PIN["served"] = sorted(set(FROZEN_PROBE_PIN["served"]) | {146, 999})
+
+
+# PR4D.4 (Jake 2026-11-12): Morpho's circulating is PARTLY MODELLED (the relock schedule) — 4 cells moved, declared; the
+# baseline rewritten from the same build.
+FROZEN_MOVES["Morpho"].update({'audit|CP Comparability|Trend — cp_float (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)': {'date': '2026-11-12',
+                                                                                                              'to': 'MODELLED '
+                                                                                                                    'Q0, '
+                                                                                                                    'Q-1, '
+                                                                                                                    'Q-2, '
+                                                                                                                    'Q-3, '
+                                                                                                                    'Q-4 '
+                                                                                                                    '· '
+                                                                                                                    '↑ '
+                                                                                                                    '· '
+                                                                                                                    '+199%/yr '
+                                                                                                                    '(4Q) '
+                                                                                                                    '· '
+                                                                                                                    'QoQ '
+                                                                                                                    '+12.0%',
+                                                                                                              'why': 'PR4C.1 '
+                                                                                                                     '(Jake '
+                                                                                                                     '2026-11-12): '
+                                                                                                                     "Morpho's "
+                                                                                                                     'relocked '
+                                                                                                                     'tokens '
+                                                                                                                     '(Founders '
+                                                                                                                     '152M '
+                                                                                                                     '+ '
+                                                                                                                     'Cohort '
+                                                                                                                     '3 '
+                                                                                                                     '67M, '
+                                                                                                                     'daily '
+                                                                                                                     'linear '
+                                                                                                                     '2025-11-21..2027-11-21) '
+                                                                                                                     'MODELLED '
+                                                                                                                     'from '
+                                                                                                                     'the '
+                                                                                                                     'schedule '
+                                                                                                                     'and '
+                                                                                                                     'out '
+                                                                                                                     'of '
+                                                                                                                     'circulating; '
+                                                                                                                     'each '
+                                                                                                                     "day's "
+                                                                                                                     'vesting '
+                                                                                                                     'an '
+                                                                                                                     'unlock '
+                                                                                                                     '(e); '
+                                                                                                                     'then '
+                                                                                                                     'PR4D.4 '
+                                                                                                                     '(Jake '
+                                                                                                                     '2026-11-12): '
+                                                                                                                     "Morpho's "
+                                                                                                                     'circulating '
+                                                                                                                     'has '
+                                                                                                                     'a '
+                                                                                                                     'MODELLED '
+                                                                                                                     'leg '
+                                                                                                                     '(the '
+                                                                                                                     'relock '
+                                                                                                                     'schedule) '
+                                                                                                                     '— '
+                                                                                                                     'partly '
+                                                                                                                     'modelled, '
+                                                                                                                     'never '
+                                                                                                                     'VERIFIED: '
+                                                                                                                     'the '
+                                                                                                                     'trends '
+                                                                                                                     'name '
+                                                                                                                     'the '
+                                                                                                                     'modelled '
+                                                                                                                     'quarters '
+                                                                                                                     'and '
+                                                                                                                     'the '
+                                                                                                                     'cells '
+                                                                                                                     'are '
+                                                                                                                     'AMBER'},
+ 'audit|Master|Trend — master_circulating_supply_used (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)': {'date': '2026-11-12',
+                                                                                                                          'to': 'MODELLED '
+                                                                                                                                'Q0, '
+                                                                                                                                'Q-1, '
+                                                                                                                                'Q-2, '
+                                                                                                                                'Q-3, '
+                                                                                                                                'Q-4 '
+                                                                                                                                '· '
+                                                                                                                                '↑ '
+                                                                                                                                '· '
+                                                                                                                                '+125%/yr '
+                                                                                                                                '(4Q) '
+                                                                                                                                '· '
+                                                                                                                                'QoQ '
+                                                                                                                                '+4.9%',
+                                                                                                                          'why': 'PR4.1-4.3 '
+                                                                                                                                 '(Jake '
+                                                                                                                                 '2026-11-12): '
+                                                                                                                                 "Morpho's "
+                                                                                                                                 'circulating '
+                                                                                                                                 'under '
+                                                                                                                                 'the '
+                                                                                                                                 'release '
+                                                                                                                                 'rule '
+                                                                                                                                 '(the '
+                                                                                                                                 'DAO '
+                                                                                                                                 'out; '
+                                                                                                                                 'the '
+                                                                                                                                 'released '
+                                                                                                                                 'entities '
+                                                                                                                                 'in '
+                                                                                                                                 'circulating '
+                                                                                                                                 'and '
+                                                                                                                                 'out '
+                                                                                                                                 'of '
+                                                                                                                                 'the '
+                                                                                                                                 'float), '
+                                                                                                                                 'its '
+                                                                                                                                 'three '
+                                                                                                                                 'revenue '
+                                                                                                                                 'lines, '
+                                                                                                                                 'one '
+                                                                                                                                 'emissions '
+                                                                                                                                 'figure; '
+                                                                                                                                 'then '
+                                                                                                                                 'PR4C.1 '
+                                                                                                                                 '(Jake '
+                                                                                                                                 '2026-11-12): '
+                                                                                                                                 "Morpho's "
+                                                                                                                                 'relocked '
+                                                                                                                                 'tokens '
+                                                                                                                                 '(Founders '
+                                                                                                                                 '152M '
+                                                                                                                                 '+ '
+                                                                                                                                 'Cohort '
+                                                                                                                                 '3 '
+                                                                                                                                 '67M, '
+                                                                                                                                 'daily '
+                                                                                                                                 'linear '
+                                                                                                                                 '2025-11-21..2027-11-21) '
+                                                                                                                                 'MODELLED '
+                                                                                                                                 'from '
+                                                                                                                                 'the '
+                                                                                                                                 'schedule '
+                                                                                                                                 'and '
+                                                                                                                                 'out '
+                                                                                                                                 'of '
+                                                                                                                                 'circulating; '
+                                                                                                                                 'each '
+                                                                                                                                 "day's "
+                                                                                                                                 'vesting '
+                                                                                                                                 'an '
+                                                                                                                                 'unlock '
+                                                                                                                                 '(e); '
+                                                                                                                                 'then '
+                                                                                                                                 'PR4D.4 '
+                                                                                                                                 '(Jake '
+                                                                                                                                 '2026-11-12): '
+                                                                                                                                 "Morpho's "
+                                                                                                                                 'circulating '
+                                                                                                                                 'has '
+                                                                                                                                 'a '
+                                                                                                                                 'MODELLED '
+                                                                                                                                 'leg '
+                                                                                                                                 '(the '
+                                                                                                                                 'relock '
+                                                                                                                                 'schedule) '
+                                                                                                                                 '— '
+                                                                                                                                 'partly '
+                                                                                                                                 'modelled, '
+                                                                                                                                 'never '
+                                                                                                                                 'VERIFIED: '
+                                                                                                                                 'the '
+                                                                                                                                 'trends '
+                                                                                                                                 'name '
+                                                                                                                                 'the '
+                                                                                                                                 'modelled '
+                                                                                                                                 'quarters '
+                                                                                                                                 'and '
+                                                                                                                                 'the '
+                                                                                                                                 'cells '
+                                                                                                                                 'are '
+                                                                                                                                 'AMBER'},
+ 'audit|Master|Trend — master_net_supply_change_annualised_of_circulating (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)': {'date': '2026-11-12',
+                                                                                                                                              'to': 'MODELLED '
+                                                                                                                                                    'Q0, '
+                                                                                                                                                    'Q-1, '
+                                                                                                                                                    'Q-2, '
+                                                                                                                                                    'Q-3, '
+                                                                                                                                                    'Q-4 '
+                                                                                                                                                    '· '
+                                                                                                                                                    '▼ '
+                                                                                                                                                    '· '
+                                                                                                                                                    '+19%/yr '
+                                                                                                                                                    '(4Q) '
+                                                                                                                                                    '· '
+                                                                                                                                                    '1/3 '
+                                                                                                                                                    'improved '
+                                                                                                                                                    '· '
+                                                                                                                                                    'QoQ '
+                                                                                                                                                    'lumpy '
+                                                                                                                                                    '(81.5% '
+                                                                                                                                                    'of '
+                                                                                                                                                    'the '
+                                                                                                                                                    'window '
+                                                                                                                                                    'on '
+                                                                                                                                                    '1 '
+                                                                                                                                                    'day)',
+                                                                                                                                              'why': 'PR4.1-4.3 '
+                                                                                                                                                     '(Jake '
+                                                                                                                                                     '2026-11-12): '
+                                                                                                                                                     "Morpho's "
+                                                                                                                                                     'circulating '
+                                                                                                                                                     'under '
+                                                                                                                                                     'the '
+                                                                                                                                                     'release '
+                                                                                                                                                     'rule '
+                                                                                                                                                     '(the '
+                                                                                                                                                     'DAO '
+                                                                                                                                                     'out; '
+                                                                                                                                                     'the '
+                                                                                                                                                     'released '
+                                                                                                                                                     'entities '
+                                                                                                                                                     'in '
+                                                                                                                                                     'circulating '
+                                                                                                                                                     'and '
+                                                                                                                                                     'out '
+                                                                                                                                                     'of '
+                                                                                                                                                     'the '
+                                                                                                                                                     'float), '
+                                                                                                                                                     'its '
+                                                                                                                                                     'three '
+                                                                                                                                                     'revenue '
+                                                                                                                                                     'lines, '
+                                                                                                                                                     'one '
+                                                                                                                                                     'emissions '
+                                                                                                                                                     'figure; '
+                                                                                                                                                     'then '
+                                                                                                                                                     'PR4C.1 '
+                                                                                                                                                     '(Jake '
+                                                                                                                                                     '2026-11-12): '
+                                                                                                                                                     "Morpho's "
+                                                                                                                                                     'relocked '
+                                                                                                                                                     'tokens '
+                                                                                                                                                     '(Founders '
+                                                                                                                                                     '152M '
+                                                                                                                                                     '+ '
+                                                                                                                                                     'Cohort '
+                                                                                                                                                     '3 '
+                                                                                                                                                     '67M, '
+                                                                                                                                                     'daily '
+                                                                                                                                                     'linear '
+                                                                                                                                                     '2025-11-21..2027-11-21) '
+                                                                                                                                                     'MODELLED '
+                                                                                                                                                     'from '
+                                                                                                                                                     'the '
+                                                                                                                                                     'schedule '
+                                                                                                                                                     'and '
+                                                                                                                                                     'out '
+                                                                                                                                                     'of '
+                                                                                                                                                     'circulating; '
+                                                                                                                                                     'each '
+                                                                                                                                                     "day's "
+                                                                                                                                                     'vesting '
+                                                                                                                                                     'an '
+                                                                                                                                                     'unlock '
+                                                                                                                                                     '(e); '
+                                                                                                                                                     'then '
+                                                                                                                                                     'PR4D.4 '
+                                                                                                                                                     '(Jake '
+                                                                                                                                                     '2026-11-12): '
+                                                                                                                                                     "Morpho's "
+                                                                                                                                                     'circulating '
+                                                                                                                                                     'has '
+                                                                                                                                                     'a '
+                                                                                                                                                     'MODELLED '
+                                                                                                                                                     'leg '
+                                                                                                                                                     '(the '
+                                                                                                                                                     'relock '
+                                                                                                                                                     'schedule) '
+                                                                                                                                                     '— '
+                                                                                                                                                     'partly '
+                                                                                                                                                     'modelled, '
+                                                                                                                                                     'never '
+                                                                                                                                                     'VERIFIED: '
+                                                                                                                                                     'the '
+                                                                                                                                                     'trends '
+                                                                                                                                                     'name '
+                                                                                                                                                     'the '
+                                                                                                                                                     'modelled '
+                                                                                                                                                     'quarters '
+                                                                                                                                                     'and '
+                                                                                                                                                     'the '
+                                                                                                                                                     'cells '
+                                                                                                                                                     'are '
+                                                                                                                                                     'AMBER'},
+ 'reader|Summary|Confidence (share green)': {'date': '2026-11-12',
+                                             'to': 0.5,
+                                             'why': "PR4.1-4.3 (Jake 2026-11-12): Morpho's circulating under the "
+                                                    'release rule (the DAO out; the released entities in circulating '
+                                                    'and out of the float), its three revenue lines, one emissions '
+                                                    "figure; then PR4D.4 (Jake 2026-11-12): Morpho's circulating has a "
+                                                    'MODELLED leg (the relock schedule) — partly modelled, never '
+                                                    'VERIFIED: the trends name the modelled quarters and the cells are '
+                                                    'AMBER'}})

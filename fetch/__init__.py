@@ -2450,6 +2450,11 @@ def _abandon(name, st, budget) -> tuple:
     from .base import last_phase
     lp = last_phase(name)
     doing = f"{lp[0]} (entered {lp[1]:.0f}s before the cut-off)" if lp else "no phase recorded"
+    # PR4D.2: every phase's time, so a timeout says where the budget went, not only where it ended
+    from .base import phase_times
+    pt = phase_times(name)
+    if pt:
+        doing += f". Time by phase: {pt}"
     # NAME WHAT WAS GAPPED (Jake's run 2026-10-08 11:27: "everything else it serves is gapped" named nothing). An
     # adapter that lists what it planned to serve (LogScan.planned) has those not in the kept frames printed.
     planned = list(getattr(st.get("adapter"), "planned", None) or [])

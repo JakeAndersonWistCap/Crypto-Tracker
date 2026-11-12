@@ -1936,6 +1936,11 @@ def confidence_for(project: str, metric: str, row: dict, asof: pd.Timestamp) -> 
     if row.get("not_read"):
         why.append(row["not_read"])                  # G14 1: the last stored value stands, dated
 
+    # PR4D.4: A FIGURE BUILT ON A MODELLED LEG IS NEVER GREEN (Morpho's circulating subtracts its relocked MORPHO, computed
+    # from the published schedule) — AMBER, "PARTLY MODELLED", with the leg's source
+    pm = config.partly_modelled(project, metric)
+    if pm:
+        why.append(pm)
     return ("AMBER", " | ".join(why)) if why else ("GREEN", "")
 
 

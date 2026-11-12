@@ -57,13 +57,15 @@ def test_0b_the_frozen_build_carries_exactly_the_pinned_probe_whatever_the_local
     monkeypatch.setitem(config.OUTFLOW_CATEGORIES["Fluid"], "b", ("emissions_tokens", "emissions_tokens_arbitrum"))
     routes = {k: list(v) for k, v in config.EXPLORER_LOG_ROUTES.items()}
     troutes = {k: list(v) for k, v in config.EXPLORER_TRANSFER_ROUTES.items()}
-    # a machine whose file serves Sonic as well (PR4C.3: Mantle is in the pin now — Jake's file serves it)
+    # PR4D.5a: every probed chain is in the pin now (Jake's file serves Mantle, Sonic, HyperEVM too) — so the test pin
+    # leaves Sonic out, to prove a chain the local file wires beyond the pin is taken out
+    monkeypatch.setitem(config.FROZEN_PROBE_PIN, "served", [c for c in config.FROZEN_PROBE_PIN["served"] if c != 146])
     assert config.wire_probed_scans({"served": [146]}, open_routes=False) == ["gauge_pendle_out_sonic"]
     wired = config.pin_frozen_probe()
     assert sorted(wired) == sorted(k for _p, _c, k, _m in config.frozen_probe_wiring())
     assert sorted((p, c) for p, c, _k, _m in config.frozen_probe_wiring()) == [
         ("Fluid", "base"), ("Fluid", "plasma"), ("Morpho", "base"), ("Pendle", "base"), ("Pendle", "berachain"),
-        ("Pendle", "bsc"), ("Pendle", "mantle")]
+        ("Pendle", "bsc"), ("Pendle", "hyperevm"), ("Pendle", "mantle")]
     keys = {s["key"] for s in config.PROJECT_BY_NAME["Pendle"]["log_scans"]}
     assert "gauge_pendle_out_sonic" not in keys and {"gauge_pendle_out_bsc", "gauge_pendle_out_base",
                                                       "gauge_pendle_out_berachain", "gauge_pendle_out_mantle"} <= keys
