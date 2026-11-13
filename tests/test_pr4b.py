@@ -68,7 +68,7 @@ def test_3_morphos_contributor_reserve_is_not_released_and_the_float_leg_is_its_
     und = config.current_set_point("Morpho", "morpho_undistributed_tokens")
     assert {"ethereum:undist_contributor_grants_safe", "ethereum:undist_contributor_grants_safe_2",
             "ethereum:undist_contributor_grants_2_legacy", "ethereum:undist_rewards_multisig",
-            "base:undist_merkl_distributor_base"} <= und and len(und) == 9
+            "base:undist_merkl_distributor_base"} <= und and len(und) == 17      # PR4F.1/3: 9 -> 17
     rel = config.current_set_point("Morpho", "morpho_released_held_tokens")
     assert rel == {"ethereum:rel_association_master", "ethereum:rel_association_master_legacy",
                    "ethereum:rel_association_ops", "ethereum:rel_operative_1", "ethereum:rel_operative_2",

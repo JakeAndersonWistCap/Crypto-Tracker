@@ -92,7 +92,12 @@ def test_1_morphos_circulating_takes_out_only_what_is_not_released():
     assert set(undist) == {"undist_rewards_multisig", "undist_rewards_multisig_legacy", "undist_merkl_distributor",
                            "undist_merkl_distributor_base", "undist_urd", "undist_urd_legacy",
                            "undist_contributor_grants_safe", "undist_contributor_grants_safe_2",
-                           "undist_contributor_grants_2_legacy"}
+                           "undist_contributor_grants_2_legacy",
+                           # PR4F.1/3 (Jake 2026-11-13): the Rewards Safe on every chain with MORPHO, the Base Rewards
+                           # Multisig, Merkl's Distributor on Arbitrum / Katana, the campaign funder
+                           "undist_rewards_safe_base", "undist_rewards_multisig_base", "undist_rewards_safe_arbitrum",
+                           "undist_merkl_distributor_arbitrum", "undist_rewards_safe_katana",
+                           "undist_merkl_distributor_katana", "undist_campaign_funder", "undist_campaign_funder_base"}
     # the entities' stock is the float's leg while pending; in force, the released part's own series (PR4B.3)
     assert config.float_released_held("Morpho")["from"] == "noncirculating_entities_tokens"
     assert "decision 1 on 6f8c86c" not in config.DISCRETIONARY_SUPPLY["Morpho"][1]
@@ -129,7 +134,10 @@ def test_1_unlocks_follow_the_set_circulating_subtracts_and_never_count_claims_t
     assert config.release_less("Morpho") == ((), False)
     monkeypatch.setitem(swc, "in_force", True)
     assert config.unlock_stock_metrics("Morpho") == ("noncirculating_holding_tokens", "morpho_undistributed_tokens")
-    assert config.release_less("Morpho") == (("emissions_tokens_claims_ethereum", "emissions_tokens_claims_base"), True)
+    # PR4F.2: every claims leg of emissions_tokens (legacy URD, Arbitrum, Katana too) is netted out of (e) once
+    assert config.release_less("Morpho") == (("emissions_tokens_claims_ethereum", "emissions_tokens_claims_ethereum_legacy",
+                                              "emissions_tokens_claims_base", "emissions_tokens_claims_arbitrum",
+                                              "emissions_tokens_claims_katana"), True)
     # a required leg with no rows leaves (e) unbuilt — never a release that counts the claims twice
     days = pd.date_range("2026-01-01", periods=4)
     rows = lambda m, v: pd.DataFrame({"date": days, "project": "Morpho", "metric": m, "value": v,  # noqa: E731
@@ -143,6 +151,9 @@ def test_1_unlocks_follow_the_set_circulating_subtracts_and_never_count_claims_t
     # with the claims stored, they come out of the falls: day 3 falls 2 (1 DAO + 1 distributor), 1 of it claimed
     groups[("Morpho", "emissions_tokens_claims_ethereum")] = rows("emissions_tokens_claims_ethereum", [0.0, 0.0, 1.0, 0.0])
     groups[("Morpho", "emissions_tokens_claims_base")] = rows("emissions_tokens_claims_base", [0.0, 0.0, 0.0, 0.0])
+    for m in ("emissions_tokens_claims_ethereum_legacy", "emissions_tokens_claims_arbitrum",      # PR4F.2: required too
+              "emissions_tokens_claims_katana"):
+        groups[("Morpho", m)] = rows(m, [0.0, 0.0, 0.0, 0.0])
     bw._unlock_release_view(groups, "Morpho", "unlock_release_tokens", config.unlock_stock_metrics("Morpho"))
     rel = groups[("Morpho", "unlock_release_tokens")].set_index("date")["value"]
     assert list(rel.round(6)) == [1.0, 1.0, 0.0]
