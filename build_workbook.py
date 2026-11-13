@@ -5884,6 +5884,7 @@ def _unlock_views(groups: dict) -> None:
     the set is a change of measuring point, never an unlock (Aerodrome's filing wallets 2026-10-07: 4.9M -> 36.2M)."""
     _ONE_OFF_UNMATCHED.clear()
     UNLOCK_LESS_MISSING.clear()
+    UNLOCK_LESS_TAKEN.clear()
     UNLOCK_LEGACY_DROPPED.clear()
     UNLOCK_DUST_LOG.clear()
     for p in scoped_projects():
@@ -5897,6 +5898,9 @@ def _unlock_views(groups: dict) -> None:
 
 
 UNLOCK_LESS_MISSING: dict = {}   # (project, metric) -> the required RELEASE_LESS leg with no rows (PR4.1), last build
+# PR4E.1: (project, metric) -> the daily claims netted out of the release (a required, in-force RELEASE_LESS: Morpho's
+# Ethereum + Base distributor claims), last build — the Flows tab adds them back as their own "+" line
+UNLOCK_LESS_TAKEN: dict = {}
 UNLOCK_DUST_LOG: dict = {}   # project -> days whose stock fall read 0 (unresolvable or under the fee floor), last build
 
 
@@ -6029,6 +6033,11 @@ def _unlock_release_view(groups: dict, name: str, metric: str, legs: tuple) -> N
                     t = min(left, float(total.loc[day]))
                     total.loc[day] -= t
                     left -= t
+                    if less_required:
+                        # PR4E.1: what was netted out of (e), on the day it was netted — the claims that left the
+                        # non-circulating set and entered circulating; the Flows statement's "+ claimed" line
+                        taken = UNLOCK_LESS_TAKEN.setdefault((name, metric), pd.Series(0.0, index=total.index))
+                        taken.loc[day] += t
         split_src += f"-{m}"
     groups[(name, metric)] = _as_stored(pd.DataFrame(
         {"date": total.index, "project": name, "metric": metric, "value": total.values,
@@ -14393,6 +14402,11 @@ def _flow_at(s: pd.Series, day, slack: int = 3):
     return float(w.iloc[-1]) if not w.empty else None
 
 
+FLOW_CLAIMS_LEG = "claims netted out of unlock_release_tokens (config.release_less: " \
+                 "emissions_tokens_claims_*, the distributors inside the set)"
+FLOW_CLAIMS_LABEL = "+ claimed out of the distributors inside the non-circulating set (b) — netted out of (e)"
+
+
 def flow_statements(groups: dict, asof) -> list[dict]:
     """The rows of the Flows tab (see FLOWS_HEAD); also returned for the tests and coverage_audit."""
     period = GLOBALS["period_days"]
@@ -14402,7 +14416,8 @@ def flow_statements(groups: dict, asof) -> list[dict]:
         # what the project's tabs read: the metrics that apply to it, and any series stored or built for it (Aerodrome's
         # Minter emissions are stored though no archetype lists them)
         have = set(config.metrics_for_project(p)) | {m for (n, m) in groups if n == name}
-        d = lambda m: _daily(groups.get((name, m)))  # noqa: E731
+        d = lambda m: (UNLOCK_LESS_TAKEN.get((name, "unlock_release_tokens"), pd.Series(dtype=float))  # noqa: E731
+                       if m == FLOW_CLAIMS_LEG else _daily(groups.get((name, m))))
         circ = d("circulating_supply_used")
         gc = groups.get((name, "circulating_supply_used"))
         circ_mp = (pd.Series(gc["source"].astype(str).map(lambda x: trajectory.basis_of("circulating_supply_used", x)).values,
@@ -14437,6 +14452,12 @@ def flow_statements(groups: dict, asof) -> list[dict]:
             ret_m = "issuer_return_tokens" if (name, "issuer_return_tokens") in groups else None
             legs = [("+ minted", mint_m, 1), *[(lab, m, 1) for lab, m in fl],
                     ("− returned to issuer-side wallets", ret_m, -1), ("− burned", burn_m, -1)]
+        # PR4E.1 (Jake's 11-13 run: Morpho's residual positive in every quarter, Q-3 +0.97%): claims out of a
+        # distributor inside the non-circulating set leave the set and enter circulating, but (e) is formed net of them
+        # (they are (b), PR4.1) — so they are their own "+" line, the amount actually netted out of (e) each day
+        if rel_m == "unlock_release_tokens" and (name, "unlock_release_tokens") in UNLOCK_LESS_TAKEN:
+            at = next(i for i, (_l, m, _s) in enumerate(legs) if m == "unlock_release_tokens") + 1
+            legs.insert(at, (FLOW_CLAIMS_LABEL, FLOW_CLAIMS_LEG, 1))
         note_tok = {"Sky": "MKR -> SKY conversions (converter 0xA1Ea1bA1…) enter circulating with NO series — NOT WIRED "
                            "(149.6M SKY in the 90 days to 2026-10-12, research of 2026-10-13); they are not dilution "
                            "(SPEC.md section 12, item 7) and show here as residual",

@@ -534,6 +534,54 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11eo. Project round 4E — Morpho's token-flow residual (2026-11-13)
+
+**Read-only checks first** (PowerShell 5.1, from the repo folder; nothing here writes to `metrics.db`):
+
+```
+git fetch origin claude/crypto-metrics-supply-demand-ovkg8g
+git rev-parse --short HEAD origin/claude/crypto-metrics-supply-demand-ovkg8g   # expect: the same id twice
+python circ_legs.py Morpho                                                      # expect: every leg "none missing"
+python circ_legs.py --release Morpho                                            # ITEM 2: Unlocks Q0, leg by leg
+#   expect: morpho_relocked_tokens fall 27,000,000.00 (MODELLED); noncirculating_holding_tokens fall ~20.28M (the DAO's
+#   11-06 and 11-11 releases; plus the DAO on Base, which this session could not read); morpho_undistributed_tokens
+#   fall ~5.7M + Base (Rewards Multisig 3.77M, Grants Safes 1.21M, URD legacy claims 0.63M, the current-token claims
+#   1.06M + Base's); "less emissions_tokens_claims_ethereum" ~1.06M; "less emissions_tokens_claims_base" ~0.5M;
+#   "falls − claims" a little above 51,721,569 (the workbook nets each day's rises first)
+```
+
+**Then rebuild from the store** (no fetch is needed: the fix is in the build):
+
+```
+python token_metrics.py --no-fetch
+```
+
+**One command per item** (after the rebuild):
+
+```
+@'
+import openpyxl
+ws = openpyxl.load_workbook("token_metrics_audit.xlsx", data_only=True)["Flows"]
+hr = next(r for r in range(1, 13) if ws.cell(r, 1).value == "Project")
+head = [ws.cell(hr, c).value for c in range(1, ws.max_column + 1)]
+for r in range(hr + 1, ws.max_row + 1):
+    v = {h: ws.cell(r, c + 1).value for c, h in enumerate(head)}
+    if v["Project"] == "Morpho" and v["Statement"] == "Token flow" and (
+            v["Line"].startswith(("+ claimed", "+ released", "Residual")) or v["Line"] == "Status"):
+        print(v["Line"][:40], "|", *[(round(x) if isinstance(x, float) else str(x)[:40]) for x in
+                                     (v["Q0"], v["Q-1"], v["Q-2"], v["Q-3"])], sep=" ")
+'@ | python -                                                                  # ITEM 1
+#   expect: a "+ claimed out of the distributors inside…" line of about 1,555,751 / 938,937 / 1,358,919 / 2,436,754
+#   (Q0..Q-3: the old residuals); Residual about 0 in every quarter; Status "OK — balances within ±0.5%" in each
+python done_check.py --verbose                 # expect: Morpho READY (and Uniswap, Fluid, Maple READY as before)
+python project_freeze.py --compare Morpho     # expect: Morpho: 285 cells, 0 undeclared move(s)
+python project_freeze.py --compare Maple      # expect: Maple: 360 cells, 0 undeclared move(s)
+python project_freeze.py --compare Fluid      # expect: Fluid: 353 cells, 0 undeclared move(s)
+python project_freeze.py --compare Uniswap    # expect: Uniswap: 309 cells, 0 undeclared move(s)
+```
+
+If a quarter still shows a residual, paste its "+ claimed" and "+ released" lines back; nothing is fitted to close it.
+
 ## 11en. Project round 4D — fix the 4C fetch regression, finish Morpho (2026-11-12)
 
 **Read-only checks first** (PowerShell 5.1, from the repo folder; nothing here writes to `metrics.db`):
