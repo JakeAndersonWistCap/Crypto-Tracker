@@ -1576,6 +1576,60 @@ def _subsidy_common_views(groups: dict, asof) -> None:
                                                          "value": v.values, "tier": 2, "source": tag}), cols)
 
 
+LAG_MATCH: dict = {}     # project -> {"ok", "last", "first", "days", "lag"} (R5.3), last build
+
+
+def _lag_matched_views(groups: dict, asof) -> None:
+    """R5.3 (config.LAG_MATCHED): a lead series that stops at a DECLARED publish lag (Pendle's buyback, published at each
+    sPENDLE epoch's end) is compared with the follow series over the days both cover — each follow series cut at the
+    lead's last stored day, as `<metric>_lagm`. Only while the lag is within max_lag_days (else the gap is not the
+    declared lag, and the cells keep their own coverage guard); the unpublished epoch is never filled or estimated."""
+    LAG_MATCH.clear()
+    hi = pd.Timestamp(asof).normalize()
+    for name, spec in config.LAG_MATCHED.items():
+        lead = _daily(groups.get((name, spec["lead"])))
+        if lead.empty:
+            continue
+        last = pd.Timestamp(lead.index.max()).normalize()
+        lag = int((hi - last).days)
+        ok = 0 <= lag <= int(spec["max_lag_days"])
+        lo = last - pd.Timedelta(days=int(GLOBALS["period_days"]))
+        LAG_MATCH[name] = {"ok": ok, "last": str(last.date()), "lag": lag, "first": str((lo + pd.Timedelta(days=1)).date()),
+                           "days": int(((lead.index > lo) & (lead.index <= last)).sum()), "why": spec["why"],
+                           "cut": set()}
+        if not ok:
+            continue
+        for m in spec["follow"]:
+            g = groups.get((name, m))
+            if g is None or g.empty:
+                continue
+            cut = g[pd.to_datetime(g["date"]).dt.normalize() <= last]
+            groups[(name, f"{m}_lagm")] = _as_stored(cut.assign(
+                metric=f"{m}_lagm", source=cut["source"].astype(str) + f"[cut at {last.date()}: R5.3 lag-matched]"),
+                g.columns)
+            LAG_MATCH[name]["cut"].add(m)
+
+
+def lag_matched(p: dict, m: str) -> str:
+    """R5.3: the follow series a lag-matched cell reads (`<m>_lagm`) where this build matched the project's window."""
+    st = LAG_MATCH.get(p["name"]) or {}
+    # a follow series with no rows is not cut: the cell keeps its own (it says why it is empty)
+    return f"{m}_lagm" if st.get("ok") and m in st.get("cut", ()) else m
+
+
+def lag_matched_note(p: dict) -> str:
+    st = LAG_MATCH.get(p["name"]) or {}
+    if not st:
+        return ""
+    if not st["ok"]:
+        return (f"NOT LAG-MATCHED (R5.3): the buyback's last stored day {st['last']} is {st['lag']} days before the "
+                f"as-of — beyond the declared publish lag, so each side keeps its own coverage")
+    return (f"MATCHED WINDOW (R5.3, Jake 2026-11-13): both sides over the days both cover, ending at the buyback's last "
+            f"published day {st['last']} ({st['lag']} day(s) before the as-of; the buyback holds {st['days']} of the "
+            f"{GLOBALS['period_days']} days to then). {st['why']}. The epoch in progress is left out of BOTH sides — "
+            f"never filled or estimated")
+
+
 def _daily_twin_views(groups: dict, asof) -> None:
     """G11 D3 / G13 1c (config.DAILY_TWIN): a declared "daily" series whose rows are its monthly twin's values
     (daily_twin) is the monthly series under a daily name. Windowed as days, a month's total dated on one day lands in
@@ -4132,6 +4186,16 @@ def _released_held_view(groups: dict, name: str, swc: dict, cols) -> None:
     fr = config.float_released_held(name)
     if not fr:
         return
+    if fr.get("only_in_force") and not swc.get("in_force"):
+        # R5.1 (Pendle): while the add-back is pending circulating still leaves the released wallets out, so nothing
+        # more comes off the floats — a measured 0 on the circulating series' own days, never their stock twice
+        circ = _daily(groups.get((name, "total_supply")))
+        if circ.empty:
+            return
+        groups[(name, fr["metric"])] = _as_stored(pd.DataFrame(
+            {"date": circ.index, "project": name, "metric": fr["metric"], "value": 0.0, "tier": 2,
+             "source": f"derived:released_held[0: {fr['in_force_metric']} not yet added back — PENDING]"}), cols)
+        return
     ent = _daily(groups.get((name, fr["from"])))
     if ent.empty:
         return
@@ -6033,9 +6097,10 @@ def _unlock_release_view(groups: dict, name: str, metric: str, legs: tuple) -> N
                     t = min(left, float(total.loc[day]))
                     total.loc[day] -= t
                     left -= t
-                    if less_required:
+                    if less_required or config.flow_less_line(name):
                         # PR4E.1: what was netted out of (e), on the day it was netted — the claims that left the
-                        # non-circulating set and entered circulating; the Flows statement's "+ claimed" line
+                        # non-circulating set and entered circulating; the Flows statement's "+ claimed" line. R5.1:
+                        # Pendle's gauge funding too (RELEASE_LESS, not required: config.FLOW_LESS_LINE)
                         taken = UNLOCK_LESS_TAKEN.setdefault((name, metric), pd.Series(0.0, index=total.index))
                         taken.loc[day] += t
         split_src += f"-{m}"
@@ -6546,6 +6611,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _daily_twin_views(groups, asof)   # G11 D3: a "daily" series that IS its monthly twin in every window is dropped
     _LAST_GROUPS.clear()
     _subsidy_common_views(groups, asof)   # G13 6: subsidy cover over the days every leg covers once (b) is complete
+    _lag_matched_views(groups, asof)      # R5.3: a declared publish lag — the follow series cut at the lead's last day
     _LAST_GROUPS.update(groups)       # the views, for Credibility rows that read them (credibility.VIEWS_LONG)
     _market_share_mean_views(groups)  # PR1.U4: market share's 30- / 60-day means (config.MARKET_SHARE_MEAN)
     _one_off_shares(groups, asof)     # P5-1C.B1: the share of each window that is a declared one-off (cell notes)
@@ -7834,11 +7900,11 @@ def live_emission_metrics(name: str) -> list:
     return [m for m in config.absorption_emission_metrics(name) if not emissions_absent(name, m)]
 
 
-def _absorption_emissions(R, r: int, p: dict, w: str = "q0") -> str:
+def _absorption_emissions(R, r: int, p: dict, w: str = "q0", lag: bool = False) -> str:
     """The emissions net absorption subtracts: config.absorption_emission_metrics (Aerodrome, Jake 2026-10-11 decision
     A3: the Minter's gauge emissions AND the RewardsDistributor rebase, consistent with Pendle's gauge emissions),
-    else emissions_tokens. A leg 0 by declaration (emissions_absent, PR1.S9) is 0."""
-    ms = live_emission_metrics(p["name"])
+    else emissions_tokens. A leg 0 by declaration (emissions_absent, PR1.S9) is 0. `lag`: the lag-matched series (R5.3)."""
+    ms = [lag_matched(p, m) if lag else m for m in live_emission_metrics(p["name"])]
     if not ms:
         return "0"
     return "(" + "+".join(R.D(r, m, w) for m in ms) + ")" if len(ms) > 1 else R.D(r, ms[0], w)
@@ -7853,10 +7919,11 @@ def _absorption_emissions_cell(R, r: int, p: dict) -> str:
 
 
 def _absorption_guard(R, r: int, p: dict, legs: list, expr: str, same_span: bool | None = None,
-                      bare: bool = False) -> str:
+                      bare: bool = False, lag: bool = False) -> str:
     """_coverage_guard over `legs` plus one leg per absorption emissions metric. same_span compares the first two legs
-    (the buyback / revenue side against the first emissions series), as before; every leg must still cover a week."""
-    live = live_emission_metrics(p["name"])          # PR1.S9: a leg 0 by declaration has no coverage to guard
+    (the buyback / revenue side against the first emissions series), as before; every leg must still cover a week.
+    `lag`: the emissions legs are the lag-matched series (R5.3)."""
+    live = [lag_matched(p, m) if lag else m for m in live_emission_metrics(p["name"])]  # PR1.S9: a 0 leg has no coverage
     ems = [("emissions" if len(live) == 1 else m.replace("_tokens", "").replace("_", " "), m, "q0") for m in live]
     return _coverage_guard(R, r, list(legs) + ems, expr, same_span=same_span, bare=bare)
 
@@ -9586,6 +9653,9 @@ def _a3_key_col(R: Refs, data_by_key: dict | None = None) -> tuple:
             return "=0"
         name = p["name"]
         lg = a3_key_legs(name)
+        # R5.3: a declared publish lag on the burn's side is matched (Pendle: the buyback stops at its last epoch)
+        lg = dict(lg, emissions=[lag_matched(p, m) for m in lg["emissions"]],
+                  unlocks=[lag_matched(p, m) for m in lg["unlocks"]])
         den_parts = ([f"({R.D(r, lg['rate'], 'now')}/{G('days_per_year')})"] if lg["rate"] else []) + \
             [_flow_rate(R, r, m, p=p) for m in lg["emissions"] + lg["unlocks"]]
         if not den_parts:
@@ -9599,7 +9669,8 @@ def _a3_key_col(R: Refs, data_by_key: dict | None = None) -> tuple:
     # P2e-2: the key's own trajectory row (Q0 = this cell; Q-1..Q-4 the same builder shifted) — the reader's A3 tab
     # shows the key's last four quarters from it
     return (A3_KEY_HEAD, build, FMT_X, "calc", False,
-            {"metric": "buyback_burned_tokens", "trajectory_id": A3_KEY_TRAJECTORY_ID, "note_fn": a3_key_note})
+            {"metric": "buyback_burned_tokens", "trajectory_id": A3_KEY_TRAJECTORY_ID,
+             "note_fn": lambda p: "\n\n".join(x for x in (a3_key_note(p), lag_matched_note(p)) if x)})
 
 
 A3_KEY_TRAJECTORY_ID = "a3_burned_vs_new_supply"
@@ -12342,15 +12413,16 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
             return ("n/a — no holder value yield: " + no_hv(p)[6:])[:240] \
                 if p["name"] in config.BUYBACK_ROUTE_OVERRIDE else "n/a — no holder value yield"
         cats = _cp_cats(p)
-        dil = "+".join(ann(r, p, f"outflow_{c}_usd") for c in cats) or "0"
+        om = lambda c: lag_matched(p, f"outflow_{c}_usd")  # noqa: E731 — R5.3: a declared publish lag is matched
+        dil = "+".join(ann(r, p, om(c)) for c in cats) or "0"
         legs = [("holder value", "holder_value_revenue_usd", "q0")] + \
-            [(f"outflow {c}", f"outflow_{c}_usd", "q0") for c in cats]
+            [(f"outflow {c}", om(c), "q0") for c in cats]
         out = _coverage_guard(R, r, legs, f"({hvy_expr(r, p)})-({dil})/{mc(r)}")[1:]
         # NAME THE STARVED LEG (item 24, Jake's run on 3500042): an outflow with no value in the window says which
         # and why (its Data note), never a bare n/a
         for c in reversed(cats):
-            q = R.D(r, f"outflow_{c}_usd", "q0")
-            note = R.D(r, f"outflow_{c}_usd", "note")
+            q = R.D(r, om(c), "q0")
+            note = R.D(r, om(c), "note")
             out = (f'IF(NOT(ISNUMBER({q})),"n/a — outflow ({c}) = {"+".join(config.outflow_metrics(p["name"], c))} '
                    f'has no value in this window: "&'
                    f'IFERROR(IF({note}="","no rows stored",{note}),"no Data row"),{out})')
@@ -12419,6 +12491,7 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
                         f'there is no ratio (the holder value beside it is a measured 0)")')
             hv = ("holder_value_fees_only_usd" if "holder_value_fees_only_usd" in config.metrics_for_project(p)
                   else "holder_value_revenue_usd")
+            rv = lag_matched(p, rv)          # R5.3: the holder value stops at a declared publish lag (Pendle)
             return _coverage_guard(R, r, [("holder value", hv, "q0"), ("revenue", rv, "q0")],
                                    f"{_flow_rate(R, r, hv)}/{_flow_rate(R, r, rv)}")
         return build
@@ -12432,6 +12505,10 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         mon = config.INSIDER_SHARE_MONITOR[p["name"]]
         n = R.D(r, mon["numerator"], "now")
         txt = mon["not_wired"].replace('"', '""')
+        if mon.get("wallets_published"):
+            # R5.5 (Pendle): the issuer-side wallets are the project's own published list — their measured shares,
+            # 0 included, ARE the insider share; only an unread numerator is missing
+            return f'=IF(ISNUMBER({n}),{ratio(n, R.D(r, mon["denominator"], "now"))},"{txt}")'
         return f'=IF(AND(ISNUMBER({n}),{n}>0),{ratio(n, R.D(r, mon["denominator"], "now"))},"{txt}")'
 
     def insider(r, p):
@@ -12646,7 +12723,7 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         ("Holder value RECORDED, NOT CREDITED (treasury / emissions-funded) ÷ market cap", hv_other, FMT_PCT, "calc"),
         ("Holder value funding by period (config HOLDER_VALUE)", lambda r, p: funding_text(p), FMT_TEXT, "text"),
         (CP_NHY_HEAD, nhy, FMT_PCT, "calc", True, {"metric": "holder_value_revenue_usd", "note_fn": lambda p: "\n\n".join(
-            x for x in (_holder_value_note(p), one_off_dilution_note(p)) if x)}),
+            x for x in (_holder_value_note(p), one_off_dilution_note(p), lag_matched_note(p)) if x)}),
         *_tbill_cols(R, [("Holder value yield", hvy), ("Net holder yield", nhy),
                          ("Staker yield — validator", lambda r, p: vyield(r, p)),
                          ("Staker yield — protocol, tokens", lambda r, p: tyield(r, p))]),
@@ -12662,10 +12739,10 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         # ---- PAYOUT RATIO (item 3) ----
         # PR1.S11: a ratio, in x like every note about it (1.0x = the whole base credited) — it was a %
         ("Payout ratio — gross = credited holder value ÷ fees", payout(lambda p: config.fees_headline_metric(p["name"])),
-         FMT_X, "calc", False, {"note_fn": lambda p: _payout_note(p)}),
+         FMT_X, "calc", False, {"note_fn": lambda p: "\n\n".join(x for x in (_payout_note(p), lag_matched_note(p)) if x)}),
         ("Payout ratio — the project's own net basis = credited holder value ÷ revenue (config revenue basis)",
          payout(lambda p: config.revenue_ratio_base_metric(p["name"]), "n/a — the project's net basis is gross fees (as left)"),
-         FMT_X, "calc", False, {"note_fn": lambda p: _payout_note(p)}),
+         FMT_X, "calc", False, {"note_fn": lambda p: "\n\n".join(x for x in (_payout_note(p), lag_matched_note(p)) if x)}),
         # ---- THE THREE REVENUE LINES (PR1.S13, Jake 2026-11-05; config.REVENUE_LINE_DEFS / REVENUE_SPLIT) ----
         *_revenue_line_cols(R),
         # ---- ATTRIBUTES (amendments 2 and 5: never penalties) ----
@@ -13176,8 +13253,9 @@ def write_a3(ws, R: Refs, data_by_key: dict):
         ("Net absorption Q0 (tokens) = RETIRED buyback (burned + held) − emissions",
          lambda r, p: _absorption_guard(R, r, p, [("buyback", "actual_buyback_tokens", "q0")],
                                         net_absorption(p, R.D(r, "retired_buyback_tokens", "q0"),
-                                                       _absorption_emissions(R, r, p)), same_span=True),
-         FMT_NUM, "calc", True, {"supply_additive": True}),
+                                                       _absorption_emissions(R, r, p, lag=True)), same_span=True,
+                                        lag=True),
+         FMT_NUM, "calc", True, {"supply_additive": True, "note_fn": lag_matched_note}),
         ("Net absorption, implied basis (tokens)",
          lambda r, p: _absorption_guard(R, r, p, [], net_absorption(p, "0", _absorption_emissions(R, r, p)))
          if _implied_zero(p) else base_gated(p, threshold_gated(p, gated(st(r), _absorption_guard(
@@ -14416,8 +14494,9 @@ def flow_statements(groups: dict, asof) -> list[dict]:
         # what the project's tabs read: the metrics that apply to it, and any series stored or built for it (Aerodrome's
         # Minter emissions are stored though no archetype lists them)
         have = set(config.metrics_for_project(p)) | {m for (n, m) in groups if n == name}
+        _fl_key = (config.flow_less_line(name) or {}).get("series", FLOW_CLAIMS_LEG)
         d = lambda m: (UNLOCK_LESS_TAKEN.get((name, "unlock_release_tokens"), pd.Series(dtype=float))  # noqa: E731
-                       if m == FLOW_CLAIMS_LEG else _daily(groups.get((name, m))))
+                       if m == _fl_key else _daily(groups.get((name, m))))
         circ = d("circulating_supply_used")
         gc = groups.get((name, "circulating_supply_used"))
         circ_mp = (pd.Series(gc["source"].astype(str).map(lambda x: trajectory.basis_of("circulating_supply_used", x)).values,
@@ -14457,7 +14536,9 @@ def flow_statements(groups: dict, asof) -> list[dict]:
         # (they are (b), PR4.1) — so they are their own "+" line, the amount actually netted out of (e) each day
         if rel_m == "unlock_release_tokens" and (name, "unlock_release_tokens") in UNLOCK_LESS_TAKEN:
             at = next(i for i, (_l, m, _s) in enumerate(legs) if m == "unlock_release_tokens") + 1
-            legs.insert(at, (FLOW_CLAIMS_LABEL, FLOW_CLAIMS_LEG, 1))
+            # R5.1: a project's own words for the line (Pendle: the gauge funding), else the distributors' claims
+            fl = config.flow_less_line(name) or {}
+            legs.insert(at, (fl.get("label", FLOW_CLAIMS_LABEL), fl.get("series", FLOW_CLAIMS_LEG), 1))
         note_tok = {"Sky": "MKR -> SKY conversions (converter 0xA1Ea1bA1…) enter circulating with NO series — NOT WIRED "
                            "(149.6M SKY in the 90 days to 2026-10-12, research of 2026-10-13); they are not dilution "
                            "(SPEC.md section 12, item 7) and show here as residual",

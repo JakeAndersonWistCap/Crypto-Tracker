@@ -101,7 +101,8 @@ def test_2_morphos_base_claims_read_only_the_new_days():
 def test_2_a_switch_leg_is_owed_from_the_window_start_and_the_switch_span_is_the_window():
     from fetch.archive import catch_up_window_days, owed_days
     assert config.switch_legs() == {("Maple", "maple_ssf_safe_tokens"), ("Morpho", "morpho_undistributed_tokens"),
-                                    ("Morpho", "morpho_released_held_tokens")}
+                                    ("Morpho", "morpho_released_held_tokens"),
+                                    ("Pendle", "pendle_released_held_tokens")}          # R5.1: Pendle's add-back
     rows = [("2026-11-10", "chain:ethereum:noncirc_ssf_safe")]
     assert owed_days("Maple", "maple_ssf_safe_tokens", rows, "2026-11-01", "2026-11-11") == ["2026-11-11"]
     full = owed_days("Maple", "maple_ssf_safe_tokens", rows, "2026-11-01", "2026-11-11", from_window=True)

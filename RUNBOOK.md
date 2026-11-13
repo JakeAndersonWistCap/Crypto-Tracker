@@ -534,6 +534,88 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11eq. Project round 5 — Pendle (2026-11-13; for Jake's return)
+
+The store export branch `data/store-exports` was not on the remote, so round 5 ran on the dumps. These steps confirm it
+on your store. **Read-only checks first** (PowerShell 5.1, from the repo folder; nothing here writes to `metrics.db`):
+
+```
+git fetch origin claude/crypto-metrics-supply-demand-ovkg8g
+git log --oneline -1                                                       # expect: the round-5 commit (R5: Pendle ...)
+git log --oneline -1 origin/claude/crypto-metrics-supply-demand-ovkg8g     # expect: the same line
+python circ_legs.py Pendle
+#   expect: total_supply / treasury_holding_tokens / noncirculating_holding_tokens with few or no MISSING days;
+#   pendle_released_held_tokens [switch (added when held)]: 0 of N day(s) held; MISSING N (the new leg: the Team
+#   multisig + the fee wallet); "switch: comes into force once every switch leg above has none missing"
+python -c "import config; print(config.REVENUE_SPLIT['Pendle']['round'], config.LAG_MATCHED['Pendle']['max_lag_days'])"
+#   expect: R5.4 (Jake 2026-11-13) 30
+```
+
+**The store export, on the side branch** (the round's export was missing; this puts it where the next round reads it):
+
+```
+python store_export.py --project Pendle
+#   expect: wrote exports/pendle-2026-...json.gz — metrics N, review_queue N, manual_overrides N, run_log N, gap_report N
+python store_export.py --project Morpho
+#   expect: wrote exports/morpho-2026-...json.gz — metrics N, …
+git switch -c data/store-exports
+git add -f exports
+git commit -m "data: Pendle and Morpho store exports"
+git push -u origin data/store-exports
+git switch claude/crypto-metrics-supply-demand-ovkg8g
+git log --oneline -1                                                       # expect: the round-5 commit again
+```
+
+**Then the run, the backfill, and the rebuild** (long steps last):
+
+```
+python token_metrics.py
+#   expect: the chain tier reads rel_team_multisig and rel_fee_wallet (pendle_released_held_tokens); the gauge scans of
+#   all nine chains store (BNB, Base, Mantle, Sonic, Berachain, HyperEVM beside mainnet / Arbitrum / Optimism)
+python archive_backfill.py --run --project Pendle --budget-min 30          # rerun until it reports nothing left
+python circ_legs.py Pendle                                                  # expect: every leg "none missing"
+python circ_legs.py --release Pendle
+#   expect: the "Unlocks Q0 (per day: released − claims taken)" line = CP Unlocks Q0; no Team-multisig fall once in force
+python token_metrics.py --no-fetch
+```
+
+**One command per item** (after the rebuild):
+
+```
+@'
+import openpyxl
+wb = openpyxl.load_workbook("token_metrics_audit.xlsx", data_only=True)
+def cells(tab, heads):
+    ws = wb[tab]; hr = next(r for r in range(1, 13) if ws.cell(r, 1).value == "Project")
+    row = next(r for r in range(hr + 1, ws.max_row + 1) if ws.cell(r, 1).value == "Pendle")
+    for h in heads:
+        c = next(c for c in range(1, ws.max_column + 1) if str(ws.cell(hr, c).value or "").startswith(h))
+        cell = ws.cell(row, c); note = (cell.comment.text if cell.comment else "")
+        print(tab, "|", h[:40], "|", str(cell.value)[:80], "|", "MATCHED WINDOW" if "MATCHED WINDOW" in note else "")
+cells("CP Comparability", ("Circulating supply (tokens)", "TRADEABLE FLOAT", "Emissions Q0 (tokens)", "Unlocks Q0",
+                           "FEES Q0", "REVENUE Q0", "HOLDER REVENUE Q0", "HOLDER SHARE", "Payout ratio — gross",
+                           "NET HOLDER YIELD", "Insider share of staked"))
+cells("A3 Revenue Buyback", ("Emissions Q0 (tokens)", "Net absorption Q0 (tokens)", "BURNED ÷ (EMISSIONS"))
+ws = wb["Flows"]; hr = next(r for r in range(1, 13) if ws.cell(r, 1).value == "Project")
+for r in range(hr + 1, ws.max_row + 1):
+    if ws.cell(r, 1).value == "Pendle" and ws.cell(r, 2).value == "Token flow" and ws.cell(r, 3).value == "Status":
+        print("Flows | Status |", *[str(ws.cell(r, c).value)[:40] for c in range(4, 8)])
+'@ | python -                                                                  # ITEMS 1-5
+#   expect: circulating 237.9M while PENDING; once in force ~245.7M (+ the Team multisig 7.73M + the fee wallet), the
+#   float unchanged (143.6M: both wallets come off it); CP Emissions Q0 = A3 Emissions Q0 (~65,450, no "0 — fixed
+#   supply"); FEES / REVENUE / HOLDER REVENUE / HOLDER SHARE numbers; payout ratio, net holder yield, net absorption
+#   and the key numbers with "MATCHED WINDOW"; insider share 0; Flows Status "OK — balances within ±0.5%" x4
+python credibility_report.py --project Pendle
+#   expect: in_emissions PASS (the three chains, ours vs the direct count); in_emissions_other_chains DOCUMENTED
+#   LIMITATION naming the six chains' sum (= 65,450 − 62,130 = ~3,320 on the 11-13 build); in_revenue CHECK 10.07%
+#   with the components on its working (not widened)
+python done_check.py --verbose        # expect: Pendle's NOT READY list — paste it back; Uniswap/Fluid/Maple/Morpho as before
+python project_freeze.py --compare Morpho     # expect: Morpho: 285 cells, 0 undeclared move(s)
+python project_freeze.py --compare Maple      # expect: Maple: 360 cells, 0 undeclared move(s)
+python project_freeze.py --compare Fluid      # expect: Fluid: 353 cells, 0 undeclared move(s)
+python project_freeze.py --compare Uniswap    # expect: Uniswap: 309 cells, 0 undeclared move(s)
+```
+
 ## 11ep. Project round 4F — Morpho's unlocks finished, the store export (2026-11-13)
 
 **Read-only checks first** (PowerShell 5.1, from the repo folder; nothing here writes to `metrics.db`):

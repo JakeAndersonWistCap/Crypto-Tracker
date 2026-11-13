@@ -41873,3 +41873,205 @@ FROZEN_MOVES["Morpho"].update({'audit|A2 Coordination|CUSTOMER REVENUE PER TOKEN
                                                                                                                                                       'no '
                                                                                                                                                       'value '
                                                                                                                                                       'moves'}})
+
+
+# =====================================================================================================================
+# PROJECT ROUND 5 — PENDLE (Jake 2026-11-13). Pendle cells only; Uniswap, Fluid, Maple and Morpho must not move.
+# =====================================================================================================================
+# R5.1 CIRCULATING UNDER JAKE'S RULE. Pendle's own Tokenomics.md (pendle-finance/documentation, master = @3cc3658, read
+# 2026-11-13): "As of September 2024, all team and investor tokens have fully vested" (L12); its circulating figure leaves
+# out five addresses (L25-31): sPENDLE 0x999999…, vePENDLE 0x4f30A9D4…, the Ecosystem Fund 0x399Be606…, the Governance
+# multisig 0x8119EC16…, the Team multisig 0x918cF6b1…. Under Jake's rule (circulating = every RELEASED token wherever it
+# sits; out: only unreleased — unvested, the DAO's / treasury's undistributed allocation incl. incentive reserves,
+# unclaimed distributor balances; voluntary stakes and locks in circulating, off free float only):
+#   sPENDLE 30,626,249.75, vePENDLE 63,177,152.18 (read 2026-11-13, block 26,407,493) — voluntary locks: IN circulating,
+#     off free float (already so: locked_tokens + locked_tokens_legacy_vependle). The ~63.4M Jake's facts call
+#     "protocol/treasury-held" is THIS: the legacy vePENDLE contract's balance (63,439,720.82 on the 10-13 dumps) — users'
+#     voluntary locks, not a treasury wallet; CoinGecko leaves it out, which is the whole of the +36.8% gap.
+#   Ecosystem Fund 16,120,440.00 — the reserve "incentives and ecosystem building" draw on (L12): OUT (unreleased reserve).
+#   Governance multisig 19,751,622.07 — the DAO's treasury, paying incentives / grants (3.3M and 2.98M to two EOAs since
+#     2025-08, eth.blockscout.com): OUT (undistributed treasury allocation).
+#   Team multisig 7,733,190.01 — team tokens, "fully vested" since 2024-09 (L12), paid out to one EOA ~97,000 a month (12
+#     transfers 2025-08..2026-10, 1,164,000): RELEASED — IN circulating, out of the floats (Jake's example: "team …
+#     holdings already vested → stays in").
+#   the fee wallet 0x8270… 11,228.67 — PENDLE collected as protocol fees (Fees.md; deployments network.treasury): released
+#     supply, not an allocation — IN circulating, out of the floats.
+# The stored series noncirculating_holding_tokens sums all three multisigs, so the released two are their own series
+# (pendle_released_held_tokens) ADDED BACK once held on every day of the catch-up window (Maple's pattern, PR4B.2) — the
+# whole series moves in one build, never two bases. Until then circulating stays as it was (PENDING, said on the cell).
+_PENDLE_TOKENOMICS = ("https://github.com/pendle-finance/documentation/blob/master/docs/pendle-docs/ProtocolMechanics/"
+                      "Mechanisms/Tokenomics.md (L12, L24-33; = @3cc3658, read 2026-11-13)")
+for _key, _addr, _why in (
+        ("rel_team_multisig", "0x918cF6b16D1426B5aA0Edf0492ced1Aa89f9659A",
+         "Pendle Team multisig — team tokens fully vested since 2024-09 (Tokenomics.md L12): RELEASED, in circulating and "
+         "out of the floats (R5.1)"),
+        ("rel_fee_wallet", "0x8270400d528c34e1596EF367eeDEc99080A1b592",
+         "Pendle fee wallet — PENDLE collected as protocol fees (Fees.md): released supply, in circulating and out of "
+         "the floats (R5.1)")):
+    PROJECT_BY_NAME["Pendle"]["contracts"][_key] = _contract(
+        _addr, "ethereum", "treasury_holding", "PENDLE", _PENDLE_TOKENOMICS, verified="2026-11-13", purpose=_why,
+        provenance="Jake 2026-11-13 (R5.1): released per Pendle's docs — circulating, out of the floats",
+        holder_has_code=True, metric_override="pendle_released_held_tokens")
+METRICS["pendle_released_held_tokens"] = {
+    "label": "PENDLE RELEASED and held by Pendle-side wallets (R5.1): the Team multisig 0x918cF6b1… (vested since 2024-09) "
+             "+ the fee wallet 0x8270… — in circulating, out of the floats",
+    "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9,
+    "only_projects": ("Pendle",)}
+CIRCULATING_ONCHAIN["Pendle"].update({
+    "subtract_when_complete": {
+        "metric": "pendle_released_held_tokens", "whole_series": True, "sign": 1, "unlock_legs": True,
+        "symbol": "PENDLE", "current_set_only": True,
+        "why": "the Team multisig (vested since 2024-09) and the fee wallet are RELEASED (Jake's rule, R5.1): added back "
+               "into circulating once their own series is held on every day of the catch-up window"},
+    "handover": {"on": "2026-11-13", "decided": "Jake 2026-11-13 (R5.1)",
+                 "from": "total − the fee wallet − the Ecosystem Fund − the Governance multisig − the Team multisig "
+                         "(Pendle's own list less its two staking contracts)",
+                 "to": "total − the Ecosystem Fund − the Governance multisig (unreleased reserves only); the Team "
+                       "multisig (vested) and the fee wallet are circulating, out of the floats",
+                 "how": "the whole series is restated from stored legs: the two released wallets' own series is added "
+                        "back when held on every day of the catch-up window"},
+    "decision": "ON-CHAIN, JAKE'S RULE (2026-11-13, R5.1): circulating = every PENDLE released per Pendle's docs. Out: "
+                "the Ecosystem Fund and the Governance multisig (unreleased reserves). In circulating, out of the "
+                "floats: the Team multisig (vested since 2024-09) and the fee wallet. sPENDLE and vePENDLE are voluntary "
+                "locks: in circulating, off free float only. Pendle's own figure also leaves out sPENDLE, vePENDLE and "
+                "the Team multisig; CoinGecko's leaves out vePENDLE (named on the cell)",
+})
+CIRCULATING_POLICY["Pendle"].update({
+    "now": "ON-CHAIN under Jake's release rule (R5.1, 2026-11-13)",
+    "definition": "total − the Ecosystem Fund − the Governance multisig (unreleased); the Team multisig and the fee "
+                  "wallet are released (in circulating, out of the floats); sPENDLE and vePENDLE off free float only",
+})
+FLOAT_RELEASED_HELD["Pendle"] = {
+    "metric": "issuer_held_released_tokens", "from": "pendle_released_held_tokens",
+    "in_force_metric": "pendle_released_held_tokens", "only_in_force": True,
+    "why": "released per Pendle's docs, so circulating; held by the Team multisig 0x918cF6b1… (vested since 2024-09) and "
+           "the fee wallet 0x8270… — out of the tradeable float and A2's free float while held (Jake's rule, R5.1). "
+           "While the add-back is pending circulating still leaves them out, so nothing more comes off the float (0)"}
+METRICS["issuer_held_released_tokens"]["only_projects"] = tuple(
+    dict.fromkeys((*METRICS["issuer_held_released_tokens"]["only_projects"], "Pendle")))
+PENDLE_CIRC_REFERENCES = {
+    "read_on": "2026-11-13",
+    "pendle_definition": "Pendle's own definition (Tokenomics.md L25-33): total − sPENDLE − vePENDLE − Ecosystem Fund − "
+                         "Governance multisig − Team multisig — Pendle publishes the method, no number",
+    "coingecko": "CoinGecko leaves out vePENDLE (its circulating ≈ ours − the legacy vePENDLE balance: 173,833,547 vs "
+                 "237,886,870 − 63,439,721 = 174,447,149 on the 10-13 dumps, −0.35%)",
+}
+
+# R5.2 EMISSIONS, ONE FIGURE: PENDLE the gauges pay is incentive spend, outflow (b), whether minted or paid from the
+# treasury (Jake 2026-11-13). CP "Emissions Q0" read "0 — fixed supply" while A3 and (b) read the gauge payouts: now CP
+# reads emissions_tokens too. Gross issuance stays 0 (totalSupply flat since ~Mar 2025).
+EMISSIONS_ARE_INCENTIVE_SPEND["Pendle"] = (
+    "PENDLE paid by Pendle's GaugeControllers to their markets is incentive spend, outflow (b), whether minted or paid "
+    "from the treasury (R5.2, Jake 2026-11-13): emissions_tokens = the gauge payouts on every wired chain (Ethereum, "
+    "Arbitrum, Optimism, BNB, Base, Mantle, Sonic, Berachain, HyperEVM) — the same figure as A3 'Emissions Q0' and CP "
+    "outflow (b). Nothing is minted (totalSupply flat at 281,527,448): gross issuance stays 0")
+# the credibility row, LIKE FOR LIKE: Pendle's direct count reads three chains (mainnet, Arbitrum, Optimism); ours is
+# compared over those three, and the other six wired chains are their own row, named (65,450 vs 62,130 on Jake's
+# 2026-11-13 build = the six chains' payouts, the direct count not reading them)
+_PENDLE_DIRECT = ("emissions_tokens_gauge_mainnet", "emissions_tokens_gauge_arbitrum", "emissions_tokens_gauge_optimism")
+_PENDLE_OTHER_CHAINS = ("emissions_tokens_gauge_bsc", "emissions_tokens_gauge_base", "emissions_tokens_gauge_mantle",
+                        "emissions_tokens_gauge_sonic", "emissions_tokens_gauge_berachain",
+                        "emissions_tokens_gauge_hyperevm")
+_pend_em = CREDIBILITY["Pendle"]["in_emissions"]
+CREDIBILITY["Pendle"]["in_emissions"] = _c_in_py(
+    "Emissions Q0 on the three chains Pendle's direct count reads (mainnet, Arbitrum, Optimism) — ours (the reconciled "
+    "scans) vs the direct count, like for like (R5.2)", "scans_q0",
+    {"metrics": _PENDLE_DIRECT, "labels": ("mainnet", "Arbitrum", "Optimism"), "require_all": True},
+    dict(_pend_em["ref"], note=_pend_em["ref"]["note"].split(" Chains 56 / 146")[0]
+         + " The headline emissions_tokens = these three + in_emissions_other_chains (the six chains the direct count "
+           "does not read) — the 65,450 vs 62,130 gap on Jake's 2026-11-13 build is those six (R5.2)."))
+CREDIBILITY["Pendle"].pop("in_emissions_unrouted", None)
+CREDIBILITY["Pendle"]["in_emissions_other_chains"] = _c_in_py(
+    "Gauge payouts Q0 on the six wired chains no direct count reads (BNB 56, Base 8453, Mantle 5000, Sonic 146, "
+    "Berachain 80094, HyperEVM 999) — inside emissions_tokens", "scans_q0",
+    {"metrics": _PENDLE_OTHER_CHAINS, "labels": ("BNB", "Base", "Mantle", "Sonic", "Berachain", "HyperEVM")},
+    _c_lim("No second count reads these six chains: the direct count (fetch/logscan _direct_count) runs on the three "
+           "explorer routes only. Each chain's scan is reconciled to the wei (balanceOf change = in − out) before it is "
+           "stored, and every one is wired by Jake's probe (explorer_routes.json: 56, 146, 999, 5000, 8453, 9745, "
+           "80094; round 4D) — none is unrouted now.",
+           "config.FROZEN_PROBE_PIN and EXPLORER_PROBED_SCANS (gauge_pendle_out_bsc / _base / _mantle / _sonic / "
+           "_berachain / _hyperevm); pendle-core-v2-public @87685c8 deployments/{56,8453,5000,146,80094,999}-core.json",
+           "a direct windowed count on each of the six routes"))
+CREDIBILITY["Pendle"]["a3_net_absorption"] = dict(
+    CREDIBILITY["Pendle"]["a3_net_absorption"], inputs=("in_buyback", "in_emissions", "in_emissions_other_chains"),
+    why="Actual buyback − emissions, where emissions are the PENDLE every wired chain's GaugeController paid its "
+        "markets over Q0 (nine chains; three also counted directly, in_emissions; six by their reconciled scans only, "
+        "in_emissions_other_chains).")
+
+# R5.4 PENDLE'S THREE REVENUE LINES (S13), from Pendle's own basis (D4-5: statistics/market-fees, spendle/data, each
+# complete 14-day epoch spread evenly; DefiLlama pendle-v2 only for the epoch in progress and before Pendle's first
+# stored epoch — the declared handover).
+REVENUE_SPLIT["Pendle"] = {
+    "round": "R5.4 (Jake 2026-11-13)",
+    "fees": {"metric": "fees_usd", "primary": True,
+             "route": "Pendle's own statistics/market-fees (api-v2.pendle.finance/core, read 2026-11-13): every market's "
+                      "pool fee + realized YT fee, + the PT-looping service fee (spendle/data ptLoopingFees) — all fees "
+                      "users paid, the LPs' share included; each complete sPENDLE epoch spread evenly over its 14 days "
+                      "(D4-5). PRIMARY in the sense of first-party (Pendle's own figure)"},
+    "revenue": {"metric": "revenue_usd", "primary": True,
+                "route": "Pendle's own statistics/market-fees: every market's protocol fee + realized YT fee, + the "
+                         "PT-looping service fee — what Pendle keeps after LPs (D4-5). The part of spendle/data "
+                         "`revenues` Pendle attributes to no market is OUT (Jake, D4-5: undecomposed, includes "
+                         "unrealized YT fees) — the reconciling line against DefiLlama"},
+    "holder_revenue": {"metric": "holders_revenue_usd", "primary": True,
+                       "route": "Pendle's own buyback per sPENDLE epoch (spendle/data sPendleHistoricalData.fees — "
+                                "Pendle's docs: the buyback amount, $), distributed to sPENDLE holders — the part of "
+                                "revenue reaching PENDLE holders (D4-5)"},
+    "holder_share": {"route": "holder revenue ÷ revenue per covered day — the buyback's share of Pendle's revenue"},
+    "other_recipients": "LPs: fees − revenue (their share of pool fees). The treasury: revenue − the buyback",
+    "crosscheck": "DefiLlama pendle-v2 dailyFees / dailyRevenue / dailyHoldersRevenue, stored as *_defillama; the "
+                  "revenue gap (10.07% on Jake's 2026-11-13 build) is named by component on the Credibility row "
+                  "in_revenue: tokens DefiLlama cannot price (Robinhood Chain, HyperEVM markets read near 0) against "
+                  "the airdrop-distributor tokens it adds, on its own timing",
+}
+
+# R5.5 INSIDER SHARE OF THE STAKE: the issuer-side wallets are PUBLISHED by Pendle (Tokenomics.md L29-31: Ecosystem Fund,
+# Governance multisig, Team multisig; Fees.md: the fee wallet; deployments/1-core.json: the dev multisig and the
+# governance timelock) — so their measured sPENDLE shares, 0 on every read, ARE the insider share, not a missing list.
+INSIDER_SHARE_MONITOR["Pendle"] = dict(
+    INSIDER_SHARE_MONITOR["Pendle"], wallets_published=(
+        "the issuer-side wallets Pendle publishes — Tokenomics.md L29-31 (Ecosystem Fund 0x399Be606…, Governance "
+        "multisig 0x8119EC16…, Team multisig 0x918cF6b1…), Fees.md (the fee wallet 0x8270…), deployments/1-core.json "
+        "(dev multisig 0xE6F0489E…, timelock 0x68d8D192…); read 2026-11-13"),
+    not_wired="MISSING E — insider_stake_shares stored nothing yet (the six wallets Pendle publishes are read by the "
+              "chain tier)")
+
+# R5.3 A DECLARED PUBLISH LAG IS NOT A COVERAGE GAP (Jake 2026-11-13): Pendle publishes each sPENDLE epoch's buyback at
+# the epoch's end, so the buyback series stops at the last published epoch while emissions run to yesterday — Net
+# absorption Q0 and Net holder yield read "BLOCKED — unequal coverage" for a known lag. Both sides are compared over the
+# days both cover, ending at the buyback's last stored day: the follow series are cut there (…_lagm views), only while
+# the lag is within the buyback's own staleness (two epochs + two days); the unpublished epoch is never filled.
+LAG_MATCHED = {
+    "Pendle": {"lead": "actual_buyback_tokens",
+               "follow": ("emissions_tokens", "outflow_b_usd", "outflow_e_usd", "unlock_release_tokens", "revenue_usd",
+                          "fees_usd"),
+               "max_lag_days": 30,
+               "why": "Pendle publishes an sPENDLE epoch's buyback at the epoch's end (spendle/data; MEASURED_BUYBACK, "
+                      "G11 B9): the epoch in progress is a publish lag, not a hole"},
+}
+for _m in LAG_MATCHED["Pendle"]["follow"]:
+    METRICS[f"{_m}_lagm"] = {
+        "label": f"{_m}, cut at the buyback's last published day (R5.3: compared with the buyback over the days both "
+                 f"cover)", "kind": "flow", "unit": METRICS[_m]["unit"], "archetypes": [3], "tiers": [2],
+        "sanity_min": 0, "sanity_max": METRICS[_m].get("sanity_max", 1e12), "view_only": True,
+        "only_projects": ("Pendle",)}
+
+# R5.1 THE TOKEN FLOW'S "+" LINE FOR WHAT IS NETTED OUT OF (e) (PR4E.1's line, any project): Pendle's issuer wallets fund
+# the GaugeControllers (RELEASE_LESS issuer_to_gauges_tokens — (b), paid on to LPs as emissions_tokens, so netted out of
+# the release); the funded PENDLE leaves the excluded set and enters circulating — its own "+" line, so every quarter
+# balances.
+FLOW_LESS_LINE = {
+    "Pendle": {"label": "+ funded to the GaugeControllers from the excluded wallets (b) — netted out of (e)",
+               "series": "funding netted out of unlock_release_tokens (config.RELEASE_LESS: issuer_to_gauges_tokens)"},
+}
+
+
+def flow_less_line(project_name: str) -> dict | None:
+    """R5.1: the Token flow line for the legs netted out of (e) where they are not a required in-force leg."""
+    return FLOW_LESS_LINE.get(project_name)
+for _m in ("unlock_release_tokens", "revenue_usd", "fees_usd"):
+    METRICS[f"{_m}_lagm"] = {
+        "label": f"{_m}, cut at the buyback's last published day (R5.3: compared with the buyback over the days both "
+                 f"cover)", "kind": "flow", "unit": METRICS[_m]["unit"], "archetypes": [3], "tiers": [2],
+        "sanity_min": 0, "sanity_max": METRICS[_m].get("sanity_max", 1e12), "view_only": True,
+        "only_projects": ("Pendle",)}

@@ -445,8 +445,11 @@ def test_pendle_emissions_are_the_gauge_payouts_of_every_chain_read(tmp_path, mo
     q0 = [d for d in _days() if pd.Timestamp(ASOF) - pd.Timedelta(days=90) < d <= pd.Timestamp(ASOF)]
     assert abs(float(em["ours"]) - 930.0 * len(q0)) < 1e-6, em
     assert em["verdict"].startswith("PASS") and "Arbitrum" in em["note"], em
-    assert o["in_emissions_unrouted"]["verdict"] == "DOCUMENTED LIMITATION", o["in_emissions_unrouted"]
-    assert "80094" in o["in_emissions_unrouted"]["note"]
+    # R5.2: no chain is unrouted any more (Jake's probe wires all nine); the six without a direct count are their own
+    # row, named — a DOCUMENTED LIMITATION
+    assert "in_emissions_unrouted" not in o
+    assert o["in_emissions_other_chains"]["verdict"] == "DOCUMENTED LIMITATION", o["in_emissions_other_chains"]
+    assert "80094" in o["in_emissions_other_chains"]["what"]
     assert config.ISSUANCE_PRIMARY["Pendle"]["kind"] == "first_party"
 
 
