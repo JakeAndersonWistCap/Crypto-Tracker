@@ -124,7 +124,7 @@ def test_g2_d1_ct_renames_the_ethereum_claims():
 def test_g2_d1_morpho_b_is_claims_on_every_chain_and_the_schedule_is_context_only():
     p = config.PROJECT_BY_NAME["Morpho"]
     legs = ("emissions_tokens_claims_ethereum", "emissions_tokens_claims_arbitrum", "emissions_tokens_claims_base",
-            "emissions_tokens_claims_katana")
+            "emissions_tokens_claims_katana", "emissions_tokens_claims_ethereum_legacy")      # PR4F.2: the legacy URD
     assert tuple(p["emissions_from_metric"]) == legs
     assert config.OUTFLOW_CATEGORIES["Morpho"]["b"] == ("emissions_tokens",)
     used = {m for cat in config.OUTFLOW_CATEGORIES["Morpho"].values() if isinstance(cat, tuple) for m in cat}
@@ -158,7 +158,9 @@ def test_g2_d1_base_claims_wire_when_the_alchemy_probe_serves_base(monkeypatch):
     wired = config.wire_probed_scans({"alchemy": {"served": [8453], "probed_on": "2026-10-19"}})
     assert "merkl_morpho_out_base" in wired
     s = next(x for x in p["log_scans"] if x["key"] == "merkl_morpho_out_base")
-    assert s["exclude_counterparties"] == ["0x0000000000000000000000000000000000000000"]
+    # PR4F.2: a transfer to another wallet of Morpho's set (the Rewards Safe, …) is not a claim either
+    assert s["exclude_counterparties"][0] == "0x0000000000000000000000000000000000000000"
+    assert "0xF057afeEc22E220f47AD4220871364e9E828b2e9" in s["exclude_counterparties"]
     assert "merkl-contracts" in s["attribution_sources"][0] and "Alchemy" in s["route"]
     assert config.OUTFLOW_CATEGORIES["Fluid"]["b"] == config.OUTFLOW_CATEGORIES["Fluid"]["b"]   # untouched by Morpho
 
@@ -197,7 +199,10 @@ def test_g2_d1_the_sum_starts_where_the_window_only_katana_read_starts(monkeypat
          ("Morpho", "emissions_tokens_claims_base"):
              _frame("Morpho", "emissions_tokens_claims_base", rng("2026-05-01", "2026-10-17", 100.0)),
          ("Morpho", "emissions_tokens_claims_katana"):
-             _frame("Morpho", "emissions_tokens_claims_katana", rng("2026-07-10", "2026-10-17", 5.0))}
+             _frame("Morpho", "emissions_tokens_claims_katana", rng("2026-07-10", "2026-10-17", 5.0)),
+         # PR4F.2: the legacy URD leg, read over its whole history
+         ("Morpho", "emissions_tokens_claims_ethereum_legacy"):
+             _frame("Morpho", "emissions_tokens_claims_ethereum_legacy", rng("2026-01-01", "2026-10-17", 0.0))}
     bw._emissions_from_metric_views(g)
     e = g[("Morpho", "emissions_tokens")].set_index("date")["value"]
     assert e.index.min() == pd.Timestamp("2026-07-10"), "before the Katana window nothing was read there"

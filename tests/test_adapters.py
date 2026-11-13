@@ -8592,8 +8592,9 @@ def test_the_refused_component_partial_rule_dry_run_is_exactly_one_metric():
                 if c["kind"] in REFERENCE_ONLY_KINDS]
     # +Aethir staking_gaming_pool/staking_ai_pool, 2026-09-24; +veaethir_token 2026-10-06; +Morpho token_legacy and
     # token_base (2026-10-11, decision A5: the tokens the DAO's legacy / Base holdings are read against); +Aethir
-    # token_arbitrum (E2 2026-10-14: locked in the Ethereum escrow — reconciled, never summed)
-    assert len(ref_only) == 17, ref_only
+    # token_arbitrum (E2 2026-10-14: locked in the Ethereum escrow — reconciled, never summed); +Morpho token_arbitrum and
+    # token_katana (PR4F.1 2026-11-13: the tokens the Rewards Safe / Merkl's Distributor there are read against)
+    assert len(ref_only) == 19, ref_only
     for name, key in ref_only:
         for (pn, _), d in change.items():
             assert not (pn == name and key in d["refused"]), f"{name}/{key} must never trigger it"

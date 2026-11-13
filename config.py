@@ -41272,6 +41272,17 @@ PROJECT_BY_NAME["Morpho"]["emissions_from_metric"] = tuple(PROJECT_BY_NAME["Morp
 for _s in PROJECT_BY_NAME["Morpho"]["log_scans"]:
     if _s["key"] in ("merkl_morpho_out_arbitrum", "merkl_morpho_out_katana"):
         _s["exclude_counterparties"] = list(_s["exclude_counterparties"]) + [_REWARDS_SAFE]   # internal, not a claim
+# the chain tier reads Katana: its RPC joined DEFAULT_RPC in G2-D1b (rpc.katana.network, archive state served — a
+# 450-day-old balanceOf read 2026-11-13), after EVM_CHAINS was taken from DEFAULT_RPC, so the gate refused Katana holders
+EVM_CHAINS.add("katana")
+PROJECT_BY_NAME["Morpho"]["log_scans"][-1]["own_tier"] = scan_tier("Morpho", {})          # explorer@Morpho, like Ethereum's
+# Rule 10: emissions_tokens gains the legacy leg — a DECLARED COMPONENT (the guard's registry), from the leg's first day
+DECLARED_COMPONENTS[("Morpho", "emissions_tokens")] = [
+    {"metric": "emissions_tokens_claims_ethereum_legacy", "from": None,
+     "source": "derived:sum(emissions_tokens_claims_ethereum+emissions_tokens_claims_arbitrum+emissions_tokens_claims_base"
+               "+emissions_tokens_claims_katana+emissions_tokens_claims_ethereum_legacy)",
+     "why": "Jake 2026-11-13 (PR4F.2): legacy MORPHO claimed out of the URD is (b), 1:1 — a fifth claims leg, read over "
+            "its whole history by urd_morpho_legacy_out"}]
 # every chain's claims out of a distributor inside the set are (b): netted out of (e), counted once
 CIRCULATING_ONCHAIN["Morpho"]["subtract_when_complete"]["release_less"] = (
     "emissions_tokens_claims_ethereum", "emissions_tokens_claims_ethereum_legacy", "emissions_tokens_claims_base",

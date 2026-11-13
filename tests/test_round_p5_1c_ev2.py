@@ -211,11 +211,11 @@ def _store(path: Path, legs: dict, rev: float = 700_000.0, price: float = 2.0, d
 
 def test_store_inputs_sums_the_four_claim_legs_read_only_and_a_missing_leg_is_unknown(tmp_path):
     legs = config.PROJECT_BY_NAME["Morpho"]["emissions_from_metric"]
-    assert len(legs) == 4
+    assert len(legs) == 5                                           # PR4F.2: + the legacy URD leg
     db = _store(tmp_path / "m.db", {m: 10.0 for m in legs})
     s = mc.store_inputs(db, "2026-08-07", "2026-08-08")
     assert s["rev_usd"] == 1_400_000.0 and s["rev_days"] == 2 and s["price"] == 2.0 and s["window_days"] == 2
-    assert s["emissions_tokens"] == 80.0 and s["emis_days"] == 2
+    assert s["emissions_tokens"] == 100.0 and s["emis_days"] == 2
     db2 = _store(tmp_path / "m2.db", {legs[0]: 10.0})
     assert mc.store_inputs(db2, "2026-08-07", "2026-08-08")["emissions_tokens"] is None, "unknown, never a partial sum"
     db3 = _store(tmp_path / "m3.db", {"emissions_tokens": 5.0})
@@ -270,7 +270,8 @@ def test_apply_refuses_above_the_cap_then_reads_splits_and_writes(monkeypatch, t
     days = [f"2026-{m:02d}-{d:02d}" for m, d in [(8, x) for x in range(7, 32)] + [(9, x) for x in range(1, 31)]
             + [(10, x) for x in range(1, 32)] + [(11, x) for x in range(1, 5)]]
     assert len(days) == 90
-    db = _store(tmp_path / "m.db", {legs[0]: 1_582_040.0 / 90 - 3, legs[1]: 1.0, legs[2]: 1.0, legs[3]: 1.0},
+    db = _store(tmp_path / "m.db", {legs[0]: 1_582_040.0 / 90 - 3, legs[1]: 1.0, legs[2]: 1.0, legs[3]: 1.0,
+                                      legs[4]: 0.0},                    # PR4F.2: the legacy leg, stored
                 rev=63.2e6 / 90, price=2.3568, days=days)
     assert mc.main(["--apply", "--db", str(db)]) == 0
     out = capsys.readouterr().out
