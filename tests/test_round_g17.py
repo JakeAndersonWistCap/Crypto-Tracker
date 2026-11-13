@@ -46,6 +46,9 @@ def test_2a_a_route_waiting_on_a_wallet_list_is_missing_e_and_no_route_is_not_wi
         if t == config.INSIDER_SHARE_MONITOR["Maple"]["not_wired"]:   # PR3.2: Maple's is a documented limitation
             assert st == "N/A BY DESIGN" and "DOCUMENTED LIMITATION" in why, t
             continue
+        if t == config.INSIDER_SHARE_MONITOR["Pendle"]["not_wired"]:  # R5.5: Pendle publishes its wallets — only an
+            assert st == "MISSING" and "insider_stake_shares stored nothing yet" in why, t   # unread numerator is missing
+            continue
         assert st == "MISSING" and "needs issuer wallet list (Jake)" in why, t
     fallback = ("NOT WIRED — no issuer / insider wallet is identified among the stakers or lockers (route: the staking "
                 "contract's depositors crossed with the issuer-wallet list)")

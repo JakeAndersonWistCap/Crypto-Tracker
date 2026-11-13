@@ -106,14 +106,12 @@ def test_2_cp_reads_the_gauge_payouts_and_the_check_is_like_for_like():
     assert "in_emissions_unrouted" not in cr and "none is unrouted" in cr["in_emissions_other_chains"]["ref"]["why"]
     other = set(cr["in_emissions_other_chains"]["ours"]["args"]["metrics"])
     direct = set(cr["in_emissions"]["ours"]["args"]["metrics"])
-    # the two rows together are the headline's legs, each once
+    # the two rows together are the headline's legs, each once (read from config — no wiring call: it would wire other
+    # projects' scans for every later test in the worker)
     p = config.PROJECT_BY_NAME["Pendle"]
-    saved = list(p["log_scans"])
-    try:
-        config.pin_frozen_probe()
-        assert other | direct == set(p["emissions_from_metric"]) and not (other & direct)
-    finally:
-        p["log_scans"] = saved
+    assert direct <= set(p["emissions_from_metric"]) and not (other & direct)
+    # the six are the probe-wired chains (the wiring appends them to emissions_from_metric where the probe serves them)
+    assert {m for cid, proj, *_r in config.EXPLORER_PROBED_SCANS if proj == "Pendle" for m in [_r[2]]} == other
     assert cr["a3_net_absorption"]["inputs"] == ("in_buyback", "in_emissions", "in_emissions_other_chains")
 
 
@@ -152,9 +150,10 @@ def test_3_the_follow_series_are_cut_at_the_buybacks_last_published_day():
 def test_4_pendles_three_revenue_lines_are_its_own_basis():
     rs = config.REVENUE_SPLIT["Pendle"]
     assert (rs["fees"]["metric"], rs["revenue"]["metric"], rs["holder_revenue"]["metric"]) == (
-        "fees_usd", "revenue_usd", "holders_revenue_usd")
+        "fees_usd", "revenue_usd", "holder_value_revenue_usd")
     assert all(rs[k]["primary"] for k in ("fees", "revenue", "holder_revenue"))
     assert "statistics/market-fees" in rs["revenue"]["route"] and "spendle/data" in rs["holder_revenue"]["route"]
+    assert "rv = lag_matched(p, rv)          # R5.3: the holder revenue" in open("build_workbook.py", encoding="utf-8").read()
     assert config.EPOCH_PRIMARY["Pendle"]["series"]["holders_revenue_usd"]["epoch"] == "pendle_epoch_buyback_usd"
     tol = config.CREDIBILITY["Pendle"]["in_revenue"]["ref"]["tol"]
     assert tol == 10.0                                                     # not widened

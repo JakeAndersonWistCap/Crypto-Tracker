@@ -12004,6 +12004,7 @@ def _revenue_line_cols(R: Refs) -> list[tuple]:
         if not split:
             return config.not_yet_split_text(p["name"])
         hv, rv = split["holder_revenue"]["metric"], split["revenue"]["metric"]
+        rv = lag_matched(p, rv)          # R5.3: the holder revenue stops at a declared publish lag (Pendle)
         f = _coverage_guard(R, r, [("holder revenue", hv, "q0"), ("revenue", rv, "q0")],
                             f"{_flow_rate(R, r, hv)}/{_flow_rate(R, r, rv)}")
         zz = split["holder_share"].get("zero_over_zero_text")
@@ -12019,8 +12020,9 @@ def _revenue_line_cols(R: Refs) -> list[tuple]:
         if not split:
             return ""
         above = _payout_above(p["name"])
+        lag = lag_matched_note(p)
         return (f"HOLDER SHARE (PR1.S13) = holder revenue ÷ revenue: {split['holder_share']['route']}."
-                + (f" {above}" if above else ""))
+                + (f" {above}" if above else "") + (f"\n\n{lag}" if lag else ""))
 
     def mf(role):
         return lambda n: (config.revenue_split(n) or {}).get(role, {}).get("metric")

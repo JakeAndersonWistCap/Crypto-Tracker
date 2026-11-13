@@ -177,6 +177,10 @@ def test_4bc_share_token_checks_hold_the_approved_wallets_each_with_source_and_d
             assert "the 9 issuer-side wallets on file hold 0 stSYRUP" in mon["not_wired"]
             assert mon["not_wired"].startswith("n/a — DOCUMENTED LIMITATION") and len(mon["not_wired"]) <= 255
             continue
+        if n == "Pendle":  # R5.5 (Jake 2026-11-13): the wallets are Pendle's published list — a measured 0 is the share
+            assert "Wallets checked (6, 0 sPENDLE each" in mon["what"] and "Tokenomics.md" in mon["wallets_published"]
+            assert mon["not_wired"].startswith("MISSING E — insider_stake_shares stored nothing yet")
+            continue
         assert f"the {counts[n]} issuer-side wallets checked hold 0" in mon["not_wired"]
         assert mon["not_wired"].startswith("MISSING E — ") and len(mon["not_wired"]) <= 255
     # Ether.fi's Q18 wallets are non-circulating like the other five Q18 addresses; the admin Safes / timelocks of

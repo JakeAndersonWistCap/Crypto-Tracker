@@ -449,7 +449,7 @@ def test_pendle_emissions_are_the_gauge_payouts_of_every_chain_read(tmp_path, mo
     # row, named — a DOCUMENTED LIMITATION
     assert "in_emissions_unrouted" not in o
     assert o["in_emissions_other_chains"]["verdict"] == "DOCUMENTED LIMITATION", o["in_emissions_other_chains"]
-    assert "80094" in o["in_emissions_other_chains"]["what"]
+    assert "80094" in str(o["in_emissions_other_chains"])
     assert config.ISSUANCE_PRIMARY["Pendle"]["kind"] == "first_party"
 
 

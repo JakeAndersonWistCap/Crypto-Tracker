@@ -429,6 +429,8 @@ def test_w6_insider_share_is_not_wired_when_no_checked_wallet_holds_shares(tmp_p
     # G17-2a: still never 0 — now MISSING E, naming what Jake must supply (the issuer wallet list); PR3.2 (Jake
     # 2026-11-11): Maple's is a DOCUMENTED LIMITATION with its evidence (no first-party list; the 9 wallets hold 0)
     lead = ("n/a — DOCUMENTED LIMITATION: no first-party list ties stSYRUP stakers to Maple" if project == "Maple"
+            # R5.5 (Jake 2026-11-13): Pendle's wallets are its published list — the dump holds no insider_stake_shares
+            else "MISSING E — insider_stake_shares stored nothing yet" if project == "Pendle"
             else f"{config.INSIDER_LIST_NEEDED}no insider wallet identified among {sym} holders")
     assert cell.startswith(lead), cell
     assert len(cell) <= 255                                                   # an Excel string constant
@@ -438,7 +440,8 @@ def test_w6_insider_share_is_not_wired_when_no_checked_wallet_holds_shares(tmp_p
     assert (f"Wallets checked ({n}" in what and "26,278,435" in what) if project == "Maple" else \
         f"Wallets checked ({n}, 0 {sym} each at Ethereum block 26,278,435, 2026-10-26)" in what
     leak = _get(o, "Leakage (i)")
-    assert leak in ("", None) or str(leak).startswith(lead[:40] if project == "Maple" else config.INSIDER_LIST_NEEDED), leak
+    assert leak in ("", None) or str(leak).startswith(lead[:40] if project in ("Maple", "Pendle")
+                                                      else config.INSIDER_LIST_NEEDED), leak
 
 
 def test_only_declared_gaps_block():

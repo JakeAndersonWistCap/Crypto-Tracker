@@ -42013,11 +42013,13 @@ REVENUE_SPLIT["Pendle"] = {
                          "PT-looping service fee — what Pendle keeps after LPs (D4-5). The part of spendle/data "
                          "`revenues` Pendle attributes to no market is OUT (Jake, D4-5: undecomposed, includes "
                          "unrealized YT fees) — the reconciling line against DefiLlama"},
-    "holder_revenue": {"metric": "holders_revenue_usd", "primary": True,
-                       "route": "Pendle's own buyback per sPENDLE epoch (spendle/data sPendleHistoricalData.fees — "
-                                "Pendle's docs: the buyback amount, $), distributed to sPENDLE holders — the part of "
-                                "revenue reaching PENDLE holders (D4-5)"},
-    "holder_share": {"route": "holder revenue ÷ revenue per covered day — the buyback's share of Pendle's revenue"},
+    "holder_revenue": {"metric": "holder_value_revenue_usd", "primary": True,
+                       "route": "the sPENDLE buyback distribution credited as revenue-funded holder value — Pendle's "
+                                "own per-epoch distribution (spendle/data buybackAmounts, MEASURED_BUYBACK, G11 B9) "
+                                "spread over each 14-day epoch, x the day's price: the part of revenue reaching PENDLE "
+                                "holders. The epoch in progress is Pendle's publish lag (left out, never filled)"},
+    "holder_share": {"route": "holder revenue ÷ revenue per covered day over the days both cover (R5.3: revenue cut at "
+                              "the buyback's last published day) — the buyback's share of Pendle's revenue"},
     "other_recipients": "LPs: fees − revenue (their share of pool fees). The treasury: revenue − the buyback",
     "crosscheck": "DefiLlama pendle-v2 dailyFees / dailyRevenue / dailyHoldersRevenue, stored as *_defillama; the "
                   "revenue gap (10.07% on Jake's 2026-11-13 build) is named by component on the Credibility row "

@@ -97,8 +97,10 @@ def test_cp_net_holder_yield_and_whole_token_yield_on_the_real_pendle_dump(tmp_p
     # PR1.S1 (Jake 2026-11-05): holder value (the epoch distributions) covers fewer days than the outflows once the days
     # after its last row are not counted as covered — the two sides cover different days, so BLOCKED (rule 9); was
     # hvy − dil ÷ mc
-    nhy = str(_get(o, "NET HOLDER YIELD"))
-    assert nhy.startswith("BLOCKED — unequal coverage") and "holder_value_revenue_usd" in nhy, (nhy, hvy, dil, mc)
+    # R5.3 (Jake 2026-11-13): the publish lag is DECLARED — the outflows are cut at the distributions' last day, so both
+    # sides cover the same days and the yield is a number (the window on the cell note)
+    nhy = _get(o, "NET HOLDER YIELD")
+    assert isinstance(nhy, float) and -1 < nhy < 1, (nhy, hvy, dil, mc)
     assert _get(o, "Whole-token yield — protocol") < _get(o, "Staker yield — protocol")
     # V1 (Jake's round-2 run): Pendle's gauge emissions are read on 3 of its 9 chains — the denominator is known to be
     # incomplete, so the ratio is BLOCKED (unequal coverage), never a number

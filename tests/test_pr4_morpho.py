@@ -210,4 +210,5 @@ def test_3_cp_emissions_reads_the_same_figure_as_a2_and_outflow_b(morpho):
     assert config.outflow_metrics("Morpho", "b") == ("emissions_tokens",)
     # gross issuance stays the fixed-supply convention (nothing is minted); Pendle's CP emissions cell is unchanged
     assert config.fixed_supply_reason("Morpho")
-    assert "Morpho" in config.EMISSIONS_ARE_INCENTIVE_SPEND and "Pendle" not in config.EMISSIONS_ARE_INCENTIVE_SPEND
+    # R5.2 (Jake 2026-11-13): Pendle's gauge payouts are incentive spend too — CP reads emissions_tokens there as well
+    assert set(config.EMISSIONS_ARE_INCENTIVE_SPEND) == {"Morpho", "Pendle"}
